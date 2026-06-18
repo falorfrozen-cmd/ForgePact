@@ -27,9 +27,19 @@ It does **not** include, provide, or explain any anti-cheat bypass, crack, or an
 ## 📥 Download
 Grab the latest **[Release](../../releases/latest)** → download `ForgePact.zip`, extract it anywhere, and run `ForgePact.exe`.
 
-### What's in the download
-- `ForgePact.exe` — the control panel (native window)
-- `modfiles/` — the mod plugin + loader, installed automatically by the **Install Mod Plugin** button
+## 📦 Source layout
+- `src/forgepact.py` — the control panel (Python). The released `.exe` is a PyInstaller build of this file.
+- `plugin/` — **BloodPactPlugin** source: the C++ mod that hooks the game (`ModuleMain.cpp`) + build scripts + [BUILD.md](plugin/BUILD.md).
+- `yytoolkit-modified/` — our one-file change to YYToolkit, with build/upstream notes ([NOTICE.md](yytoolkit-modified/NOTICE.md)).
 
----
-*ForgePact is an unsigned indie tool, so Windows SmartScreen may show an "unknown publisher" prompt — that's expected for tools like this.*
+## 📜 License — AGPL-3.0
+ForgePact is built on **Aurie Framework** and **YYToolkit**, both licensed under the **GNU Affero General Public License v3.0**. Because of their copyleft, **all of ForgePact** — this control panel, the BloodPactPlugin, and our YYToolkit modification — **is released under AGPL-3.0** (see [LICENSE](LICENSE)).
+
+You may use, study, modify, and redistribute it under the same license. If you distribute a modified version, you must also make its complete source available under AGPL-3.0.
+
+## 🙏 Credits
+ForgePact stands entirely on the work of the **AurieFramework** authors:
+- **Aurie Framework** — https://github.com/AurieFramework/Aurie (AGPL-3.0)
+- **YYToolkit (YYTK)** — https://github.com/AurieFramework/YYToolkit (AGPL-3.0)
+
+ForgePact is an independent, fan-made project and is **not affiliated with or endorsed by** AurieFramework, Panic Art Studios, or Hero Siege. See [CREDITS.md](CREDITS.md).
