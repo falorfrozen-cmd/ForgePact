@@ -17,6 +17,8 @@ A one-click desktop control panel for tuning your **offline** Hero Siege runs. N
 
 > The first modded launch does a one-time ~1 minute setup (the mod scans the game once), then it's cached and every launch after that starts instantly. Your settings are saved and re-applied automatically.
 
+**To uninstall:** click **Remove Plugin** (with the game closed) — it restores your original exe from the backup and removes the mod files, returning the game to normal. The backup is kept, so you can re-install any time.
+
 ## ⚠️ Offline only — read this
 This works **only** with anti-cheat (**EAC**) disabled — it does **NOT** work on the normal online Steam client, and it never will (EAC blocks it by design). This is a **single-player / offline** tool.
 
