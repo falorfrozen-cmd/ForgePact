@@ -296,12 +296,9 @@ def op_install_mod(cfg) -> dict:
         return {"err": "game exe not found - set Game Location first"}
     if game_running(cfg):
         return {"err": "Close the game first, then click Install again."}
-    if eac_status(exe) == "legit_eac":
-        return {"err": "This looks like a LEGIT Steam / EasyAntiCheat install. "
-                       "Patching it would break online play and won't even load the mod "
-                       "(EAC relaunches into the clean exe). Use a separate EAC-free / offline "
-                       "copy of the game and point Game Location there - the original Steam "
-                       "install stays untouched for online."}
+    # No hard block: the user installs at their own risk (the original exe is backed up
+    # and Remove Plugin restores it). eac_status() is only used for the informational
+    # heads-up in the status line - it does NOT prevent installing.
     b = exe.parent
     core = find_src("AurieCore.dll", MODFILE_SOURCES)
     yytk = find_src("YYToolkit.dll", MODFILE_SOURCES)
@@ -685,7 +682,7 @@ function status(){
   document.getElementById('ipcnote').textContent=ST.ipcOk?'':'bp_ipc appears after the first modded launch';
   document.getElementById('ipcnote').style.color='#8a7a64';
   const en=document.getElementById('eacnote');
-  if(ST.eacStatus==='legit_eac'){en.textContent='⚠ Legit Steam/EAC install - do NOT mod this one (breaks online, mod won’t load). Point to an EAC-free / offline copy.';en.style.color='#ff8080';}
+  if(ST.eacStatus==='legit_eac'){en.textContent='Note: this looks like a Steam/EAC copy. If EAC is active, online play may break and the mod may not load (EAC can relaunch the clean exe). Your exe is backed up - Remove Plugin reverts it. For best results use an offline / EAC-off copy. Installing is allowed at your own risk.';en.style.color='#e0b060';}
   else if(ST.eacStatus==='eac_free'){en.textContent='';}
   else{en.textContent='';}
 }
