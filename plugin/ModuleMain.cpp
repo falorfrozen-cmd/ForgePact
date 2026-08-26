@@ -36,6 +36,8 @@
 #include <cctype>
 #include <unordered_map>
 #include <map>
+#include <set>
+#include <deque>
 #include <cmath>
 #include <intrin.h>
 
@@ -87,9 +89,13 @@ static void Out(const std::string& s)
 // so if the game crashes during init we can see the LAST step reached.
 static void Trace(const char* phase)
 {
+#ifdef FORGEPACT_RELEASE
+    (void)phase; return;   // yayin: teshis izi yok
+#else
     std::ofstream f(IPC_DIR + "\\loadtrace.txt", std::ios::app);
     f << phase << "\n";
     f.flush();
+#endif
 }
 
 static std::string Lower(std::string s)
@@ -150,6 +156,198 @@ static void DoExists(const std::string& name)
     RValue r = g_Yytk->CallBuiltin("variable_global_exists", { RValue(name) });
     Out("exists '" + name + "' -> " + Describe(r));
 }
+
+
+// Global bir dizinin tek elemanini okur/yazar.
+// PSet ile ayni yol: variable_global_get -> tur kontrolu -> array_set.
+// Tur kontrolu SART; dizi olmayan bir degere array_set tanimsiz davranistir.
+static RValue GlobalArray(const std::string& var, int& len)
+{
+    len = -1;
+    RValue ex = g_Yytk->CallBuiltin("variable_global_exists", { RValue(var) });
+    if (!ex.ToBoolean()) return RValue();
+    RValue arr = g_Yytk->CallBuiltin("variable_global_get", { RValue(var) });
+    if (arr.m_Kind != VALUE_ARRAY) return RValue();
+    RValue n = g_Yytk->CallBuiltin("array_length", { arr });
+    len = (int)n.ToDouble();
+    return arr;
+}
+
+static void GlobalArrayGet(const std::string& var, int idx)
+{
+    try {
+        int len = -1; RValue arr = GlobalArray(var, len);
+        if (len < 0) { Out("gaget: global '" + var + "' yok ya da dizi degil"); return; }
+        if (idx < 0 || idx >= len) { Out("gaget: indeks disarida (len=" + std::to_string(len) + ")"); return; }
+        RValue e = g_Yytk->CallBuiltin("array_get", { arr, RValue((double)idx) });
+        Out("gaget " + var + "[" + std::to_string(idx) + "] -> " + Describe(e));
+    } catch (...) { Out("gaget EXCEPTION"); }
+}
+
+static void GlobalArraySet(const std::string& var, int idx, double value)
+{
+    try {
+        int len = -1; RValue arr = GlobalArray(var, len);
+        if (len < 0) { Out("gaset: global '" + var + "' yok ya da dizi degil"); return; }
+        if (idx < 0 || idx >= len) { Out("gaset: indeks disarida (len=" + std::to_string(len) + ")"); return; }
+        g_Yytk->CallBuiltin("array_set", { arr, RValue((double)idx), RValue(value) });
+        RValue e = g_Yytk->CallBuiltin("array_get", { arr, RValue((double)idx) });
+        Out("gaset " + var + "[" + std::to_string(idx) + "] = " + std::to_string(value)
+            + " -> simdi " + Describe(e));
+    } catch (...) { Out("gaset EXCEPTION"); }
+}
+
+
+// --- eSt zorlama -----------------------------------------------------------
+// Oyun her oda baslangicinda eSt'i yeniden dolduruyor; kapiyi acik tutmak
+// icin degeri her karede geri yaziyoruz.  Yalnizca gercekten farkliysa
+// yaziyoruz, boylece bosuna array_set cagrilmiyor.
+static std::map<int, double> g_EstForce;
+static uint64_t g_EstForceWrites = 0;
+
+static void EstForceApply()
+{
+    if (g_EstForce.empty() || !g_Yytk) return;
+    try {
+        int len = -1;
+        RValue arr = GlobalArray("eSt", len);
+        if (len < 0) return;
+        for (auto& kv : g_EstForce) {
+            if (kv.first < 0 || kv.first >= len) continue;
+            RValue cur = g_Yytk->CallBuiltin("array_get", { arr, RValue((double)kv.first) });
+            if (cur.ToDouble() == kv.second) continue;
+            g_Yytk->CallBuiltin("array_set", { arr, RValue((double)kv.first), RValue(kv.second) });
+            g_EstForceWrites++;
+        }
+    } catch (...) {}
+}
+
+static void EstStat()
+{
+    int len = -1;
+    RValue arr = GlobalArray("eSt", len);
+    std::string s = "eststat: len=" + std::to_string(len)
+                  + " yazma=" + std::to_string(g_EstForceWrites) + " | zorlanan:";
+    if (g_EstForce.empty()) s += " (yok)";
+    for (auto& kv : g_EstForce)
+        s += " [" + std::to_string(kv.first) + "]=" + std::to_string((int)kv.second);
+    Out(s);
+    if (len > 0) {
+        std::string v = "  guncel eSt:";
+        for (int i = 0; i < len; i++) {
+            try {
+                RValue e = g_Yytk->CallBuiltin("array_get", { arr, RValue((double)i) });
+                v += " " + std::to_string((int)e.ToDouble());
+            } catch (...) { v += " ?"; }
+        }
+        Out(v);
+    }
+}
+
+
+// --- Oyunun kendi gunlugu --------------------------------------------------
+// DebugLogAddExt'i kancalayip argumanlari diske yaziyoruz.  Shadow Realm /
+// Abyss / Traveling Merchant mekanikleri bunu cagiriyor; neden vazgectiklerini
+// oyunun kendi agzindan ogrenmek icin.
+static PFUNC_YYGMLScript g_Orig_DebugLogAddExt = nullptr;
+static bool g_GameLogOn = false;
+static uint64_t g_GameLogLines = 0;
+
+static void GameLogWrite(const std::string& s)
+{
+    std::ofstream f(IPC_DIR + "\\gamelog.txt", std::ios::app);
+    f << s << "\n";
+    f.flush();
+    g_GameLogLines++;
+}
+
+static RValue& Hook_DebugLogAddExt(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    if (g_GameLogOn) {
+        try {
+            std::string line;
+            for (int i = 0; i < argc && i < 8; i++) {
+                if (!A[i]) continue;
+                if (!line.empty()) line += " | ";
+                line += Describe(*A[i]);
+            }
+            if (!line.empty()) GameLogWrite(line);
+        } catch (...) {}
+    }
+    return g_Orig_DebugLogAddExt ? g_Orig_DebugLogAddExt(S, O, R, argc, A) : R;
+}
+
+
+// --- Abyss izleme ----------------------------------------------------------
+static PFUNC_YYGMLScript g_Orig_AbyssMech = nullptr;
+static PFUNC_YYGMLScript g_Orig_GPV_Trace = nullptr;
+static bool g_AbyssTraceOn = false;
+static bool g_InAbyss = false;
+static uint64_t g_AbyssRuns = 0;
+
+static void AbyssWrite(const std::string& s)
+{
+    std::ofstream f(IPC_DIR + "\\abyss.txt", std::ios::app);
+    f << s << "\n";
+    f.flush();
+}
+
+// GPV yalnizca Abyss mekanigi calisirken kaydedilir.
+static RValue& Hook_GPV_Trace(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    const bool inside = g_AbyssTraceOn && g_InAbyss;
+    std::string args;
+    if (inside) {
+        try {
+            for (int i = 0; i < argc && i < 6; i++) {
+                if (!A[i]) continue;
+                if (!args.empty()) args += ", ";
+                args += Describe(*A[i]);
+            }
+        } catch (...) {}
+    }
+    RValue& r = g_Orig_GPV_Trace ? g_Orig_GPV_Trace(S, O, R, argc, A) : R;
+    if (inside) {
+        try { AbyssWrite("  GPV(" + args + ") -> " + Describe(r)); } catch (...) {}
+    }
+    return r;
+}
+
+static RValue& Hook_AbyssMech(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    const bool prev = g_InAbyss;
+    g_InAbyss = true;
+    g_AbyssRuns++;
+    if (g_AbyssTraceOn) AbyssWrite("=== Abyss mekanigi calisti #" + std::to_string(g_AbyssRuns));
+    RValue& r = g_Orig_AbyssMech ? g_Orig_AbyssMech(S, O, R, argc, A) : R;
+    if (g_AbyssTraceOn) AbyssWrite("=== bitti -> " + Describe(r));
+    g_InAbyss = prev;
+    return r;
+}
+
+
+// --- Abyss konum kapisini zorlama ------------------------------------------
+static PFUNC_YYGMLScript g_Orig_Obtain = nullptr;
+static bool g_ForceObtain = false;
+static uint64_t g_ObtainCalls = 0;    // Abyss icindeyken kac kez soruldu
+static uint64_t g_ObtainFalse = 0;    // kacinda oyun "olmaz" dedi
+static uint64_t g_ObtainForced = 0;   // kacini biz "olur"a cevirdik
+
+static RValue& Hook_Obtain(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    RValue& r = g_Orig_Obtain ? g_Orig_Obtain(S, O, R, argc, A) : R;
+    if (g_InAbyss) {
+        g_ObtainCalls++;
+        bool ok = true;
+        try { ok = r.ToBoolean(); } catch (...) {}
+        if (!ok) {
+            g_ObtainFalse++;
+            if (g_ForceObtain) { r = RValue(1.0); g_ObtainForced++; }
+        }
+    }
+    return r;
+}
+
 
 static void DoGet(const std::string& name)
 {
@@ -346,9 +544,80 @@ static bool IsEnemyObject(int objIdx)
     return res;
 }
 
-static void DoMultiCreate(TRoutine orig, RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args, int objIdx)
+static void LogCreatePos(int objIdx, RValue* Args, int argc);
+static void PullNearApply(int objIdx, RValue* Args, int argc);
+static void PostCreateCheck(int objIdx, RValue& Result, RValue* Args, int argc);
+
+
+// --- Ozel icerik yaratimini zamana yayma -----------------------------------
+// Room Start'ta butun marker kopyalari ayni karede yaratilinca oyun cokuyordu.
+// Kopyalar kuyruga alinip her karede birkac tanesi yaratilir; sonuc ayni,
+// tepe yuk bolunur.  Density yolu bundan etkilenmez.
+struct GecikmeliYaratim { bool katman; double x, y; RValue yuva; RValue nesne; unsigned long long dogum; };
+static std::deque<GecikmeliYaratim> g_Kuyruk;
+static int  g_KareBasina = 3;          // 0 = kapali (aninda yarat)
+static bool g_KuyruktanYaratim = false; // yeniden girisi engeller
+static uint64_t g_KuyrukToplam = 0;
+
+static int g_OrnekButce = 14000;  // 0 = sinirsiz
+static uint64_t g_ButceIptal = 0;  // butce/yas yuzunden atilan yaratim sayisi
+static unsigned long long g_KuyrukKare = 0;
+
+// Oyundaki toplam etkin ornek sayisi (GML'de `all` = -3).  Hata olursa -1.
+static int ToplamOrnek()
+{
+    try {
+        RValue r = g_Yytk->CallBuiltin("instance_number", { RValue(-3.0) });
+        return (int)r.ToDouble();
+    } catch (...) { return -1; }
+}
+
+
+#ifdef FORGEPACT_RELEASE
+// YYToolkit'in "YYToolkit Log" konsolu oyuncuya gorunmesin.
+// (sinif ConsoleWindowClass, oyunun kendi surecinde AllocConsole ile aciliyor)
+static void KonsoluGizle()
+{
+    HWND h = GetConsoleWindow();
+    if (h && IsWindowVisible(h)) ShowWindow(h, SW_HIDE);
+}
+#endif
+
+static void KuyrukIsle()
+{
+    g_KuyrukKare++;
+    if (g_Kuyruk.empty() || !g_Yytk || g_KareBasina <= 0) return;
+
+    // Butce asildiysa kalan kuyrugu birak.  Olculdu: ~13.600'de oyun yasiyor,
+    // 22.575'te oluyor.  Mekanikler yaratimdan SONRA da dusman dogurdugu icin
+    // butce bilerek bu araligin altinda.
+    // Butce asilmissa BU KAREYI ATLA - kuyruk korunur, yer acilinca devam eder.
+    // (Once temizliyordum: harita yuklenirken olusan anlik tepe tum icerigi
+    //  kalicii olarak iptal ediyordu.)
+    if (g_OrnekButce > 0) {
+        int n = ToplamOrnek();
+        if (n >= 0 && n >= g_OrnekButce) return;
+    }
+
+    g_KuyruktanYaratim = true;
+    for (int i = 0; i < g_KareBasina && !g_Kuyruk.empty(); i++) {
+        GecikmeliYaratim g = g_Kuyruk.front();
+        g_Kuyruk.pop_front();
+        // Cok bekleyen oge dusurulur, yoksa bir sonraki haritada dogar.
+        if (g_KuyrukKare > g.dogum + 900) { g_ButceIptal++; continue; }
+        try {
+            g_Yytk->CallBuiltin(g.katman ? "instance_create_layer" : "instance_create_depth",
+                                { RValue(g.x), RValue(g.y), g.yuva, g.nesne });
+        } catch (...) {}
+    }
+    g_KuyruktanYaratim = false;
+}
+
+static void DoMultiCreate(TRoutine orig, RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args, int objIdx, bool katman)
 {
     if (objIdx >= 0 && g_LogCreates) g_CreateCounts[objIdx]++;
+    PullNearApply(objIdx, Args, argc);
+    LogCreatePos(objIdx, Args, argc);
     int mult = 1;
     auto it = g_ObjMult.find(objIdx);
     if (it != g_ObjMult.end()) mult = it->second;
@@ -358,9 +627,23 @@ static void DoMultiCreate(TRoutine orig, RValue& Result, CInstance* S, CInstance
     // (optional) direct enemy-descendant multiplier — off by default, creators are the right layer
     else if (g_EnemyMultAll > 1 && IsEnemyObject(objIdx) && g_EnemyMultAll > mult)
         mult = g_EnemyMultAll;
-    if (mult > 1 && argc >= 4 && orig) {
+    const bool ozelIcerik = (it != g_ObjMult.end());
+    if (mult > 1 && argc >= 4 && orig && !g_KuyruktanYaratim) {
         for (int i = 1; i < mult; i++) {
             try {
+                // Ozel icerik marker'i: kuyruga al, karelere yay.
+                if (ozelIcerik && g_KareBasina > 0) {
+                    GecikmeliYaratim g;
+                    g.katman = katman;
+                    g.x = Args[0].ToDouble() + (double)(((i % 5) - 2) * 28);
+                    g.y = Args[1].ToDouble() + (double)(((i / 5) - 2) * 28);
+                    g.yuva = Args[2];
+                    g.nesne = Args[3];
+                    g.dogum = g_KuyrukKare;
+                    g_Kuyruk.push_back(g);
+                    g_KuyrukToplam++;
+                    continue;
+                }
                 std::vector<RValue> a(Args, Args + argc);
                 a[0] = RValue(Args[0].ToDouble() + (double)(((i % 5) - 2) * 28));
                 a[1] = RValue(Args[1].ToDouble() + (double)(((i / 5) - 2) * 28));
@@ -372,6 +655,134 @@ static void DoMultiCreate(TRoutine orig, RValue& Result, CInstance* S, CInstance
         }
     }
     orig(Result, S, O, argc, Args);
+    PostCreateCheck(objIdx, Result, Args, argc);
+}
+
+
+// --- Yaratim konumu kaydi --------------------------------------------------
+static std::set<int> g_LogCreatePos;
+static uint64_t g_LogCreatePosLines = 0;
+
+static void LogCreatePos(int objIdx, RValue* Args, int argc)
+{
+    if (g_LogCreatePos.empty() || objIdx < 0) return;
+    if (!g_LogCreatePos.count(objIdx)) return;
+    if (argc < 2 || !Args) return;
+    try {
+        double x = Args[0].ToDouble();
+        double y = Args[1].ToDouble();
+        std::string nm;
+        try {
+            RValue n = g_Yytk->CallBuiltin("object_get_name", { RValue((double)objIdx) });
+            nm = n.ToString();
+        } catch (...) { nm = std::to_string(objIdx); }
+        std::ofstream f(IPC_DIR + "\\createpos.txt", std::ios::app);
+        f << nm << "  x=" << (int)x << "  y=" << (int)y << "\n";
+        f.flush();
+        g_LogCreatePosLines++;
+    } catch (...) {}
+}
+
+
+// --- Yaratimi oyuncunun yanina cekme ---------------------------------------
+static std::set<int> g_PullNear;
+static double g_PullRadius = 700.0;
+static uint64_t g_PullCount = 0;
+
+// Ust uste binmesinler diye halka seklinde dagitilir.
+static void PullNearApply(int objIdx, RValue* Args, int argc)
+{
+    if (g_PullNear.empty() || objIdx < 0 || argc < 2 || !Args) return;
+    if (!g_PullNear.count(objIdx)) return;
+    try {
+        RValue pobj = g_Yytk->CallBuiltin("asset_get_index", { RValue("Player_obj") });
+        RValue pid = g_Yytk->CallBuiltin("instance_find", { pobj, RValue(0.0) });
+        if (pid.ToDouble() < 0) return;
+        RValue px = g_Yytk->CallBuiltin("variable_instance_get", { pid, RValue("x") });
+        RValue py = g_Yytk->CallBuiltin("variable_instance_get", { pid, RValue("y") });
+
+        const double step = 0.7;                 // halka acisi adimi (radyan)
+        const double a = g_PullCount * step;
+        const double r = g_PullRadius * (0.45 + 0.55 * ((g_PullCount % 3) / 2.0));
+        Args[0] = RValue(px.ToDouble() + cos(a) * r);
+        Args[1] = RValue(py.ToDouble() + sin(a) * r);
+        g_PullCount++;
+    } catch (...) {}
+}
+
+
+// --- Yaratim sonrasi dogrulama ---------------------------------------------
+static void PostCreateCheck(int objIdx, RValue& Result, RValue* Args, int argc)
+{
+    if (g_LogCreatePos.empty() || objIdx < 0) return;
+    if (!g_LogCreatePos.count(objIdx)) return;
+    try {
+        std::string nm;
+        try {
+            RValue n = g_Yytk->CallBuiltin("object_get_name", { RValue((double)objIdx) });
+            nm = n.ToString();
+        } catch (...) { nm = std::to_string(objIdx); }
+
+        double id = -1.0;
+        try { id = Result.ToDouble(); } catch (...) {}
+
+        int ex = -1;
+        try {
+            RValue e = g_Yytk->CallBuiltin("instance_exists", { Result });
+            ex = e.ToBoolean() ? 1 : 0;
+        } catch (...) {}
+
+        double x = (argc >= 2 && Args) ? Args[0].ToDouble() : 0.0;
+        double y = (argc >= 2 && Args) ? Args[1].ToDouble() : 0.0;
+
+        std::ofstream f(IPC_DIR + "\\postcheck.txt", std::ios::app);
+        f << nm << "  id=" << (long long)id << "  exists=" << ex
+          << "  x=" << (int)x << " y=" << (int)y << "\n";
+        f.flush();
+    } catch (...) {}
+}
+
+
+// --- Silme izleme ----------------------------------------------------------
+static TRoutine g_OrigDestroy = nullptr;
+static std::set<int> g_DestroyWatch;
+static uint64_t g_DestroyHits = 0;
+
+static void HookDestroy(RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)
+{
+    void* ret = _ReturnAddress();
+    if (!g_DestroyWatch.empty()) {
+        try {
+            // Argumansiz cagri: kendini yok ediyor -> S'nin nesne indeksi
+            int idx = -1;
+            if (argc >= 1 && Args) {
+                RValue oi = g_Yytk->CallBuiltin("instance_exists", { Args[0] });
+                if (oi.ToBoolean()) {
+                    RValue r = g_Yytk->CallBuiltin("variable_instance_get",
+                                                   { Args[0], RValue("object_index") });
+                    idx = (int)r.ToDouble();
+                }
+            } else if (S) {
+                RValue r = g_Yytk->CallBuiltin("variable_instance_get",
+                                               { RValue(S), RValue("object_index") });
+                idx = (int)r.ToDouble();
+            }
+            if (idx >= 0 && g_DestroyWatch.count(idx)) {
+                std::string nm;
+                try {
+                    RValue n = g_Yytk->CallBuiltin("object_get_name", { RValue((double)idx) });
+                    nm = n.ToString();
+                } catch (...) { nm = std::to_string(idx); }
+                char rb[32];
+                sprintf_s(rb, "0x%llX", (unsigned long long)((uintptr_t)ret - g_Base));
+                std::ofstream f(IPC_DIR + "\\destroy.txt", std::ios::app);
+                f << nm << "  silen_rva=" << rb << "\n";
+                f.flush();
+                g_DestroyHits++;
+            }
+        } catch (...) {}
+    }
+    if (g_OrigDestroy) g_OrigDestroy(Result, S, O, argc, Args);
 }
 
 static void WatchLog(void* ret, int objIdx)
@@ -388,7 +799,7 @@ static void HookICD(RValue& Result, CInstance* S, CInstance* O, int argc, RValue
     int objIdx = -1;
     try { if (argc >= 4) objIdx = (int)Args[3].ToDouble(); } catch (...) {}
     WatchLog(ret, objIdx);
-    if (g_OrigICD) DoMultiCreate(g_OrigICD, Result, S, O, argc, Args, objIdx);
+    if (g_OrigICD) DoMultiCreate(g_OrigICD, Result, S, O, argc, Args, objIdx, false);
 }
 static void HookICL(RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)
 {
@@ -396,7 +807,7 @@ static void HookICL(RValue& Result, CInstance* S, CInstance* O, int argc, RValue
     int objIdx = -1;
     try { if (argc >= 4) objIdx = (int)Args[3].ToDouble(); } catch (...) {}
     WatchLog(ret, objIdx);
-    if (g_OrigICL) DoMultiCreate(g_OrigICL, Result, S, O, argc, Args, objIdx);
+    if (g_OrigICL) DoMultiCreate(g_OrigICL, Result, S, O, argc, Args, objIdx, true);
 }
 
 static bool HookBuiltin(const char* name, const char* id, PVOID dest, TRoutine* origOut)
@@ -1003,6 +1414,18 @@ static void InstallHook()
 {
     if (g_HookInstalled) { Out("hook already installed"); return; }
     g_Base = (uintptr_t)GetModuleHandleA(nullptr);
+
+    // Density ve ozel icerik SADECE buna bagli.  En basta ve kosulsuz
+    // kuruluyor: eskiden asagidaki GetBloodPactInfo erken-return'une
+    // takilirsa density sessizce olurdu.
+    InstallCreateHooks();
+
+#ifdef FORGEPACT_RELEASE
+    // Yayin derlemesi: arastirma kancasi ve teshis gunlugu yok.
+    g_HookInstalled = true;
+    Out("BloodPact: yayin modu (density + ozel icerik + minimap)");
+    return;
+#else
     PVOID p = nullptr;
     AurieStatus st = g_Yytk->GetNamedRoutinePointer("gml_Script_GetBloodPactInfo", &p);
     if (!AurieSuccess(st) || !p) { Out("InstallHook: cannot find GetBloodPactInfo st=" + std::to_string((int)st)); return; }
@@ -1025,9 +1448,9 @@ static void InstallHook()
     InstallHitRegHook();
     InstallBuffHooks();
     InstallEnemyHooks();
-    InstallCreateHooks();
     InstallChaosTowerHooks();
     InstallDropHooks();
+#endif
 }
 
 static void HookStats()
@@ -1436,38 +1859,15 @@ static void ForceRelicDrop(int n)
     } catch (...) { Out("forcerelic EXCEPTION"); }
 }
 
-// ===== Relic gate: NOP the conditional jump in gml_Script_DropItem that gates the relic
-// drop, so the game's OWN relic drop fires on EVERY kill (then the relic dropmult multiplies
-// it). Verified-safe length-preserving 6-byte NOP at VA 0x14207F837 (RVA 0x207F837). The
-// original bytes are signature-checked first, so a different exe build is left untouched.
-static BYTE g_RelicGateOrig[6] = { 0 };
-static bool g_RelicGatePatched = false;
-static void SetRelicGate(bool open)
+// ===== Relic gate: KALDIRILDI ===============================================
+// Sabit RVA 0x207F837 kullaniyordu.  O adres mevcut S10 derlemesinde
+// gml_Script_DropItem'in icinde bile degil (DropItem 0x184c310..0x1870BE0),
+// yani oyun her yeniden derlendiginde alakasiz bir yeri gosteriyor.  Imza
+// kontrolu yamayi engelledigi icin ozellik zaten calismiyordu.
+// Komut, eski ayar dosyalari gurultu uretmesin diye duruyor; artik no-op.
+static void SetRelicGate(bool)
 {
-    const uintptr_t RVA = 0x207F837;                                 // VA - imagebase(0x140000000)
-    const BYTE EXPECT[6] = { 0x0F, 0x8E, 0xD3, 0x02, 0x00, 0x00 };   // jle 0x14207FB10
-    const BYTE NOPS[6]   = { 0x90, 0x90, 0x90, 0x90, 0x90, 0x90 };
-    BYTE* addr = (BYTE*)GetModuleHandleW(nullptr) + RVA;
-    DWORD oldProt = 0;
-    if (open) {
-        if (g_RelicGatePatched) { Out("relicgate: already OPEN"); return; }
-        if (memcmp(addr, EXPECT, 6) != 0) { Out("relicgate: signature mismatch (different exe build) - NOT patching"); return; }
-        memcpy(g_RelicGateOrig, addr, 6);
-        if (!VirtualProtect(addr, 6, PAGE_EXECUTE_READWRITE, &oldProt)) { Out("relicgate: VirtualProtect failed"); return; }
-        memcpy(addr, NOPS, 6);
-        VirtualProtect(addr, 6, oldProt, &oldProt);
-        FlushInstructionCache(GetCurrentProcess(), addr, 6);
-        g_RelicGatePatched = true;
-        Out("relicgate: OPEN - DropItem now drops a relic every kill (scale with relic dropmult)");
-    } else {
-        if (!g_RelicGatePatched) { Out("relicgate: already CLOSED"); return; }
-        if (!VirtualProtect(addr, 6, PAGE_EXECUTE_READWRITE, &oldProt)) { Out("relicgate: VirtualProtect failed"); return; }
-        memcpy(addr, g_RelicGateOrig, 6);
-        VirtualProtect(addr, 6, oldProt, &oldProt);
-        FlushInstructionCache(GetCurrentProcess(), addr, 6);
-        g_RelicGatePatched = false;
-        Out("relicgate: CLOSED - relic drops back to normal");
-    }
+    Out("relicgate: bu ozellik kaldirildi (sabit adres oyun guncellemeleriyle kayiyor)");
 }
 
 // ============================================================
@@ -2097,6 +2497,67 @@ static void NiSet(const std::string& obj, int n, const std::string& var, double 
     } catch (...) { Out("niset EXCEPTION"); }
 }
 // nicall <Script> <obj> <n> -- call gml_Script_<Script> passing the Nth instance id as its arg
+// --- Ozel icerik oranlari --------------------------------------------------
+// Dogrulanmis tarif: paylasilan eSt kapisini ac, marker'i n kez yarat.
+// Marker ADLA cozulur; indeksler oyun guncellemesiyle kayar.
+struct SpecialContent { const char* key; const char* obj; int estSlot; double estVal; };
+static const SpecialContent kSpecial[] = {
+    { "rift",         "Spawn_Rift_obj",          -1, 0.0  },
+    { "battlefield",  "Spawn_Battlefield_obj",   -1, 0.0  },
+    { "cursedorb",    "Spawn_Cursed_Orb_obj",     7, 14.0 },
+    { "summonportal", "Spawn_Summon_Portal_obj", -1, 0.0  },
+    { "chaospillars", "Spawn_Chaos_Pillars_obj", -1, 0.0  },
+    { "chaostower",   "Spawn_Chaos_Tower_obj",   -1, 0.0  },
+};
+
+static void SpecialRate(const std::string& key, int n)
+{
+    const SpecialContent* sc = nullptr;
+    for (const auto& e : kSpecial) if (key == e.key) { sc = &e; break; }
+    if (!sc) { Out("specialrate: bilinmeyen icerik '" + key + "'"); return; }
+    if (n < 1) n = 1;
+    try {
+        RValue idx = g_Yytk->CallBuiltin("asset_get_index", { RValue(sc->obj) });
+        int oi = (int)idx.ToDouble();
+        if (oi < 0) { Out(std::string("specialrate: ") + sc->obj + " bulunamadi"); return; }
+        g_ObjMult[oi] = n;
+        if (n > 1) {
+            g_EstForce[0] = 0.0;                                  // paylasilan kapi
+            if (sc->estSlot >= 0) g_EstForce[sc->estSlot] = sc->estVal;
+        }
+        Out("specialrate " + key + " -> " + std::to_string(n)
+            + " (" + sc->obj + " idx " + std::to_string(oi) + ")");
+    } catch (...) { Out("specialrate: EXCEPTION"); }
+}
+
+
+#ifndef FORGEPACT_RELEASE
+// --- Cokme teshisi: periyodik ornek sayimi (gelistirme derlemesi) ----------
+static bool g_CensusOn = false;
+static int  g_CensusEvery = 120;          // kare (60 fps'te ~2 sn)
+
+static void CensusTick(unsigned long long fc)
+{
+    if (!g_CensusOn || !g_Yytk) return;
+    if (g_CensusEvery <= 0 || (fc % (unsigned long long)g_CensusEvery) != 0) return;
+    try {
+        // GML'de `all` = -3
+        RValue all = g_Yytk->CallBuiltin("instance_number", { RValue(-3.0) });
+        std::ofstream f(IPC_DIR + "\\census.txt", std::ios::app);
+        f << "kare=" << fc << "  TOPLAM=" << (long long)all.ToDouble();
+        for (const auto& e : kSpecial) {
+            RValue idx = g_Yytk->CallBuiltin("asset_get_index", { RValue(e.obj) });
+            int oi = (int)idx.ToDouble();
+            if (oi < 0) continue;
+            RValue n = g_Yytk->CallBuiltin("instance_number", { RValue((double)oi) });
+            f << "  " << e.key << "=" << (int)n.ToDouble();
+        }
+        f << "\n";
+        f.flush();
+    } catch (...) {}
+}
+#endif
+
 static void NiCall(const std::string& script, const std::string& obj, int n)
 {
     try {
@@ -2179,6 +2640,109 @@ static void RunCommand(const std::string& line)
         DoScriptLookup(rest);
     } else if (lc == "exists") {
         DoExists(rest);
+    } else if (lc == "estforce") {
+        std::string idx, val; idx = FirstToken(rest, val);
+        try {
+            int i = std::stoi(idx); double v = std::stod(val);
+            g_EstForce[i] = v;
+            Out("estforce eSt[" + std::to_string(i) + "] -> her karede " + std::to_string(v));
+        } catch (...) { Out("estforce: kullanim -> estforce 0 0"); }
+    } else if (lc == "estfree") {
+        std::string v = Lower(rest);
+        while (!v.empty() && (v.back()=='\r'||v.back()=='\n'||v.back()==' ')) v.pop_back();
+        if (v == "all" || v.empty()) { g_EstForce.clear(); Out("estfree: tum zorlamalar kaldirildi"); }
+        else {
+            try { g_EstForce.erase(std::stoi(v)); Out("estfree: " + v + " birakildi"); }
+            catch (...) { Out("estfree: kullanim -> estfree 0 | estfree all"); }
+        }
+    } else if (lc == "eststat") {
+        EstStat();
+    } else if (lc == "debuglog") {
+        std::string v = Lower(rest);
+        while (!v.empty() && (v.back()=='\r'||v.back()=='\n'||v.back()==' ')) v.pop_back();
+        if (v == "off") { g_GameLogOn = false; Out("debuglog: KAPALI (satir=" + std::to_string(g_GameLogLines) + ")"); }
+        else {
+            if (!g_Orig_DebugLogAddExt)
+                HookOneScript("DebugLogAddExt", "bp_dbglog", (PVOID)Hook_DebugLogAddExt, &g_Orig_DebugLogAddExt);
+            g_GameLogOn = (g_Orig_DebugLogAddExt != nullptr);
+            Out(std::string("debuglog: ") + (g_GameLogOn ? "ACIK -> bp_ipc\\gamelog.txt" : "kanca kurulamadi"));
+        }
+    } else if (lc == "abysstrace") {
+        std::string v = Lower(rest);
+        while (!v.empty() && (v.back()=='\r'||v.back()=='\n'||v.back()==' ')) v.pop_back();
+        if (v == "off") { g_AbyssTraceOn = false; Out("abysstrace: KAPALI"); }
+        else {
+            if (!g_Orig_AbyssMech)
+                HookOneScript("anon@119@gml_Object_Spawn_Abyss_obj_Create_0",
+                              "bp_abyss", (PVOID)Hook_AbyssMech, &g_Orig_AbyssMech);
+            if (!g_Orig_GPV_Trace)
+                HookOneScript("GPV", "bp_gpvtrace", (PVOID)Hook_GPV_Trace, &g_Orig_GPV_Trace);
+            g_AbyssTraceOn = (g_Orig_AbyssMech != nullptr);
+            Out(std::string("abysstrace: ") + (g_AbyssTraceOn ? "ACIK -> bp_ipc\\abyss.txt" : "mekanik kancasi kurulamadi"));
+        }
+    } else if (lc == "logcreate") {
+        std::string v = Lower(rest);
+        while (!v.empty() && (v.back()=='\r'||v.back()=='\n'||v.back()==' ')) v.pop_back();
+        if (v == "off" || v.empty()) { g_LogCreatePos.clear(); Out("logcreate: kapali"); }
+        else {
+            try {
+                g_LogCreatePos.insert(std::stoi(v));
+                Out("logcreate: " + v + " -> bp_ipc\\createpos.txt");
+            } catch (...) { Out("logcreate: kullanim -> logcreate 3"); }
+        }
+    } else if (lc == "pullnear") {
+        std::string a1, a2; a1 = FirstToken(rest, a2);
+        std::string v = Lower(a1);
+        while (!v.empty() && (v.back()=='\r'||v.back()=='\n'||v.back()==' ')) v.pop_back();
+        if (v == "off" || v.empty()) { g_PullNear.clear(); Out("pullnear: kapali"); }
+        else {
+            try {
+                g_PullNear.insert(std::stoi(v));
+                if (!a2.empty()) { try { g_PullRadius = std::stod(a2); } catch (...) {} }
+                Out("pullnear: " + v + " -> oyuncunun " + std::to_string((int)g_PullRadius) + " birim yakinina");
+            } catch (...) { Out("pullnear: kullanim -> pullnear 3 700"); }
+        }
+    } else if (lc == "destroywatch") {
+        std::string v = Lower(rest);
+        while (!v.empty() && (v.back()=='\r'||v.back()=='\n'||v.back()==' ')) v.pop_back();
+        if (v == "off" || v.empty()) { g_DestroyWatch.clear(); Out("destroywatch: kapali (yakalanan=" + std::to_string(g_DestroyHits) + ")"); }
+        else {
+            try {
+                g_DestroyWatch.insert(std::stoi(v));
+                if (!g_OrigDestroy)
+                    HookBuiltin("instance_destroy", "bp_destroy", (PVOID)HookDestroy, &g_OrigDestroy);
+                Out("destroywatch: " + v + " -> bp_ipc\\destroy.txt");
+            } catch (...) { Out("destroywatch: kullanim -> destroywatch 3"); }
+        }
+    } else if (lc == "abyssforce") {
+        std::string v = Lower(rest);
+        while (!v.empty() && (v.back()=='\r'||v.back()=='\n'||v.back()==' ')) v.pop_back();
+        if (v == "stat") {
+            Out("abyssforce: mekanik=" + std::to_string(g_AbyssRuns)
+                + " sorgu=" + std::to_string(g_ObtainCalls)
+                + " olmaz=" + std::to_string(g_ObtainFalse)
+                + " zorlanan=" + std::to_string(g_ObtainForced));
+        } else if (v == "off") {
+            g_ForceObtain = false; Out("abyssforce: KAPALI");
+        } else {
+            if (!g_Orig_AbyssMech)
+                HookOneScript("anon@119@gml_Object_Spawn_Abyss_obj_Create_0",
+                              "bp_abyss", (PVOID)Hook_AbyssMech, &g_Orig_AbyssMech);
+            if (!g_Orig_Obtain)
+                HookOneScript("IsObtainablePlace", "bp_obtain",
+                              (PVOID)Hook_Obtain, &g_Orig_Obtain);
+            g_ForceObtain = (g_Orig_AbyssMech != nullptr && g_Orig_Obtain != nullptr);
+            Out(std::string("abyssforce: ") + (g_ForceObtain ? "ACIK" : "kanca kurulamadi"));
+        }
+    } else if (lc == "gaget") {
+        std::string name, idx; name = FirstToken(rest, idx);
+        try { GlobalArrayGet(name, std::stoi(idx)); }
+        catch (...) { Out("gaget: kullanim -> gaget eSt 0"); }
+    } else if (lc == "gaset") {
+        std::string name, r2; name = FirstToken(rest, r2);
+        std::string idx, val; idx = FirstToken(r2, val);
+        try { GlobalArraySet(name, std::stoi(idx), std::stod(val)); }
+        catch (...) { Out("gaset: kullanim -> gaset eSt 0 0"); }
     } else if (lc == "get") {
         DoGet(rest);
     } else if (lc == "dump") {
@@ -2319,6 +2883,55 @@ static void RunCommand(const std::string& line)
         catch (...) { Out("watchobj: bad value"); }
     } else if (lc == "watchcallers") {
         Out("watchobj=" + std::to_string(g_WatchObj) + " callers(rva): " + (g_WatchCallers.empty() ? std::string("(none)") : g_WatchCallers));
+    } else if (lc == "specialrate") {
+        std::string key, num; key = FirstToken(rest, num);
+        while (!num.empty() && (num.back()=='\r'||num.back()=='\n'||num.back()==' ')) num.pop_back();
+        try { SpecialRate(Lower(key), std::stoi(num)); }
+        catch (...) { Out("specialrate: kullanim -> specialrate rift 3"); }
+    } else if (lc == "reveal") {
+        std::string v = Lower(rest);
+        while (!v.empty() && (v.back()=='\r'||v.back()=='\n'||v.back()==' ')) v.pop_back();
+        g_AutoReveal = !(v == "0" || v == "off" || v == "false");
+        Out(std::string("reveal: ") + (g_AutoReveal ? "ACIK" : "KAPALI"));
+    } else if (lc == "census") {
+#ifdef FORGEPACT_RELEASE
+        Out("census: yayin derlemesinde yok");
+#else
+        std::string a1, a2; a1 = FirstToken(rest, a2);
+        std::string v = Lower(a1);
+        while (!v.empty() && (v.back()=='\r'||v.back()=='\n'||v.back()==' ')) v.pop_back();
+        if (v == "off") { g_CensusOn = false; Out("census: KAPALI"); }
+        else {
+            if (!a2.empty()) { try { g_CensusEvery = std::stoi(a2); } catch (...) {} }
+            if (g_CensusEvery < 10) g_CensusEvery = 10;
+            g_CensusOn = true;
+            Out("census: ACIK, her " + std::to_string(g_CensusEvery) + " karede -> bp_ipc\\census.txt");
+        }
+#endif
+    } else if (lc == "spread") {
+        std::string v = Lower(rest);
+        while (!v.empty() && (v.back()=='\r'||v.back()=='\n'||v.back()==' ')) v.pop_back();
+        if (!v.empty()) { try { g_KareBasina = std::stoi(v); } catch (...) {} }
+        Out("spread: karede " + std::to_string(g_KareBasina)
+            + " yaratim (0=kapali) | bekleyen=" + std::to_string(g_Kuyruk.size())
+            + " toplam=" + std::to_string(g_KuyrukToplam));
+    } else if (lc == "budget") {
+        std::string v = Lower(rest);
+        while (!v.empty() && (v.back()=='\r'||v.back()=='\n'||v.back()==' ')) v.pop_back();
+        if (!v.empty()) { try { g_OrnekButce = std::stoi(v); } catch (...) {} }
+        Out("budget: " + std::to_string(g_OrnekButce) + " ornek (0=sinirsiz)"
+            + " | su an=" + std::to_string(ToplamOrnek())
+            + " | butce yuzunden atilan=" + std::to_string(g_ButceIptal));
+    } else if (lc == "multname") {
+        std::string nm, num; nm = FirstToken(rest, num);
+        while (!num.empty() && (num.back()=='\r'||num.back()=='\n'||num.back()==' ')) num.pop_back();
+        try {
+            int n = std::stoi(num);
+            RValue idx = g_Yytk->CallBuiltin("asset_get_index", { RValue(nm) });
+            int oi = (int)idx.ToDouble();
+            if (oi < 0) { Out("multname: '" + nm + "' bulunamadi"); }
+            else { g_ObjMult[oi] = n; Out("multname " + nm + " (idx " + std::to_string(oi) + ") -> " + num); }
+        } catch (...) { Out("multname: kullanim -> multname Spawn_Rift_obj 3"); }
     } else if (lc == "multobj") {
         std::string idx, num; idx = FirstToken(rest, num);
         try { int oi = std::stoi(idx); int n = std::stoi(num); g_ObjMult[oi] = n; Out("multobj " + idx + " -> " + num); }
@@ -2469,18 +3082,34 @@ void FrameCallback(FWFrame& FrameContext)
     static uint32_t fc = 0;
     if (fc == 1) Trace("0-framecallback-running");
 
+    EstForceApply();
+    KuyrukIsle();
+#ifdef FORGEPACT_RELEASE
+    if ((fc % 60) == 0) KonsoluGizle();
+#endif
+#ifndef FORGEPACT_RELEASE
+    CensusTick(fc);
+#endif
+
     // one-time setup once the runner is fully alive: load config + install hook
     if (!g_Setup && fc > 60) {
         g_Setup = true;
         Trace("1-setup-start");
         try { LoadConfig(); Trace("2-loadconfig-ok"); InstallHook(); Trace("3-installhook-ok"); }
         catch (...) { Out("setup EXCEPTION"); Trace("X-setup-cppexception"); }
+#ifndef FORGEPACT_RELEASE
         try { LoadCoopConfigAndMaybeStart(); Trace("4-coop-ok"); }
         catch (...) { Out("coop auto-start EXCEPTION"); Trace("X-coop-cppexception"); }
         try { SetRelicGate(true); } catch (...) {}   // relic gate ALWAYS ON (every kill drops a relic; only generates in Satanic Zones)
+#endif
         Trace("5-setup-done");
     }
 
+#ifndef FORGEPACT_RELEASE
+    // Gelistirici kisayollari.  Yayin derlemesinde YOK: F6 oyuncunun
+    // dibine Damien boss'u cagiriyor, F10 isinlanma portali aciyor,
+    // F11 relic dusuruyor, F7/F8/F9 density'yi panelden bagimsiz
+    // degistirip arayuzle celisiyordu.  F5 (minimap) asagida kalir.
     // ===== Hotkeys for one-button control =====
     static bool f8p = false, f9p = false, f7p = false, f6p = false;
     bool f8 = (GetAsyncKeyState(VK_F8) & 0x8000) != 0;
@@ -2524,6 +3153,7 @@ void FrameCallback(FWFrame& FrameContext)
     }
     f11p = f11;
 
+#endif
     // auto map reveal (every ~20 frames so each new map clears quickly)
     if (g_AutoReveal && (fc % 20) == 0) {
         try { AutoRevealTick(); } catch (...) {}
@@ -2622,6 +3252,9 @@ EXPORTED AurieStatus ModuleInitialize(
 
     CreateDirectoryA(IPC_DIR.c_str(), nullptr);
     Out("==== BloodPact plugin loaded ====");
+#ifdef FORGEPACT_RELEASE
+    KonsoluGizle();
+#endif
 
     AurieStatus st = g_Yytk->CreateCallback(Module, EVENT_FRAME, (PVOID)FrameCallback, 0);
     if (!AurieSuccess(st))

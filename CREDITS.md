@@ -1,7 +1,9 @@
 # Credits & License Notices
 
-ForgePact is built on the following open-source projects, both licensed under the
-**GNU Affero General Public License, version 3 (AGPL-3.0)**:
+ForgePact loads Aurie Framework and YYToolkit at runtime; both are AGPL-3.0, so
+this project is released under the same license. The `native_s10/` tree is an
+earlier self-contained runtime that did not use them - it is no longer the
+shipping path and remains here for its research notes and tools.
 
 ## Aurie Framework
 - Repository: https://github.com/AurieFramework/Aurie
@@ -21,11 +23,17 @@ ForgePact is built on the following open-source projects, both licensed under th
 ## This project (ForgePact + BloodPactPlugin)
 - The control panel (`src/forgepact.py`) and the mod plugin (`plugin/ModuleMain.cpp`)
   are original work, released under **AGPL-3.0** to satisfy the copyleft of the
-  frameworks above.
+frameworks above.
+
+## MinHook
+- Repository: https://github.com/TsudaKageyu/minhook
+- License: BSD 2-Clause
+- Used by: the patcherless Season 10 native runtime for targeted x64 trampolines.
+- Vendored license: `native_s10/third_party/minhook/LICENSE.txt`.
 
 ---
-Because both frameworks are AGPL-3.0 (strong copyleft), the entire ForgePact
-distribution is AGPL-3.0. The full license text is in `LICENSE`.
+The project continues to be distributed under AGPL-3.0. The full license text
+is in `LICENSE`; MinHook retains its separate BSD 2-Clause notice.
 
 ForgePact is an independent, fan-made project. It is **not affiliated with, sponsored
 by, or endorsed by** AurieFramework, Panic Art Studios, or Hero Siege. All trademarks

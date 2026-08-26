@@ -27,29 +27,24 @@ ROOT = Path.home() / "AppData" / "Local" / "Hero_Siege"
 CONFIG = ROOT / "forgepact.json"
 DEFAULT_EXE = r""  # set your own Hero_Siege.exe path in the app's "Game Location" field
 
+# Ikinci alan yalnizca bilgi amacli: S10'daki marker nesne indeksi.
+# Eklenti markeri ADLA cozer (specialrate -> asset_get_index), cunku bu
+# indeksler oyun her guncellendiginde kayiyor.
 SPAWNERS = [
-    ("rift", 3516, "Rift Portals"),
-    ("battlefield", 4990, "Battlefields"),
-    ("cursedorb", 5664, "Cursed Orbs"),
-    ("summonportal", 3565, "Summon Portals"),
-    ("chaospillars", 4624, "Chaos Pillars"),
+    ("rift", 4672, "Rift Portals", 100),
+    ("battlefield", 4659, "Battlefields", 100),
+    ("cursedorb", 4665, "Cursed Orbs", 100),
+    ("summonportal", 4676, "Summon Portals", 100),
+    ("chaospillars", 4662, "Chaos Pillars", 100),
+    ("chaostower", 4663, "Chaos Tower (one per zone)", 1),
 ]
-DROPS = [
-    ("relic", "Relics", "only works in Satanic Zones"),
-    ("keys", "Dungeon Keys", ""),
-    ("gold", "Gold", ""),
-]
-
 DEFAULTS = {
     "game_exe": DEFAULT_EXE,
     "density": 3,
     "density_on": True,
     "auto_apply": True,
     "map_reveal": True,
-    "relic_gate": True,
-    "block_online": True,
     "spawners": {k: 1 for k, *_ in SPAWNERS},
-    "drops": {k: 1 for k, *_ in DROPS},
 }
 
 _lock = threading.Lock()
@@ -61,7 +56,7 @@ def load_cfg() -> dict:
         try:
             saved = json.loads(CONFIG.read_text(encoding="utf-8"))
             for k, v in saved.items():
-                if k in ("spawners", "drops"):
+                if k == "spawners":
                     cfg[k] = {**cfg[k], **v}
                 else:
                     cfg[k] = v
@@ -86,7 +81,10 @@ def ipc_dir(cfg=None) -> Path:
 # YYTK RunnerInterface cache: pre-writing it skips the ~1 min first-launch disassembly.
 # Keyed by exe size; YYTK validates the size, so a stale cache (different exe build) is
 # safely ignored (it just falls back to a one-time scan + re-caches). Known patched build:
-KNOWN_RI_CACHE = {309551616: "309551616 207703889 207705042\n"}
+KNOWN_RI_CACHE = {
+    303584768: "303584768 208133041 208134210\n",   # S10, AuriePatcher'li kopya (dogrulandi 26.08.2026)
+    309551616: "309551616 207703889 207705042\n",   # onceki derleme
+}
 
 
 def ensure_ri_cache(cfg=None) -> bool:
@@ -102,15 +100,6 @@ def ensure_ri_cache(cfg=None) -> bool:
         return True
     except Exception:
         return False
-
-
-MODDED_NAME = "Hero_Siege_Modded.exe"
-
-
-def modded_exe(cfg=None) -> Path:
-    """The PATCHED COPY we launch for modding (offline). The original Hero_Siege.exe
-    is never modified, so launching it normally from Steam still works online."""
-    return exe_path(cfg).with_name(MODDED_NAME)
 
 
 WEBVIEW_WINDOW = None  # set in main() when running as a native pywebview window
@@ -196,15 +185,74 @@ def pick_exe_dialog(cfg=None) -> str:
 CREATE_NO_WINDOW = 0x08000000  # subprocess'in konsol penceresi acmasini engeller
 
 
-def game_running(cfg=None) -> bool:
-    name = exe_path(cfg).name
+def running_paths(name: str) -> list:
+    """`name` adli calisan sureclerin TAM YOLLARI.
+
+    Sadece isme bakmak yetmiyor: bir oyuncunun Steam kopyasi ile offline
+    kopyasi ayni anda acik olabiliyor.  Isme bakan eski surum, baska bir
+    klasordeki Hero_Siege.exe'yi "oyun calisiyor" sayip Launch'i sessizce
+    atliyordu.
+    """
+    yollar = []
     try:
-        r = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {name}"],
-                           capture_output=True, text=True, timeout=10,
-                           creationflags=CREATE_NO_WINDOW)
-        return name.lower() in r.stdout.lower()
+        r = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {name}", "/FO", "CSV", "/NH"],
+                           capture_output=True, text=True, encoding="utf-8", errors="replace",
+                           timeout=10, creationflags=CREATE_NO_WINDOW)
+        pidler = []
+        for satir in r.stdout.splitlines():
+            parcalar = [p.strip('"') for p in satir.split('","')]
+            if len(parcalar) >= 2 and parcalar[0].strip('"').lower() == name.lower():
+                try:
+                    pidler.append(int(parcalar[1]))
+                except ValueError:
+                    pass
+        if not pidler:
+            return yollar
+
+        import ctypes
+        from ctypes import wintypes
+        k32 = ctypes.windll.kernel32
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        k32.OpenProcess.restype = wintypes.HANDLE
+        k32.QueryFullProcessImageNameW.argtypes = [
+            wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)]
+        for pid in pidler:
+            h = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+            if not h:
+                continue
+            try:
+                buf = ctypes.create_unicode_buffer(32768)
+                boyut = wintypes.DWORD(32768)
+                if k32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(boyut)):
+                    yollar.append(buf.value)
+            finally:
+                k32.CloseHandle(h)
     except Exception:
-        return False
+        pass
+    return yollar
+
+
+def other_copy_running(cfg=None) -> str:
+    """Ayarlanan kopya DISINDA calisan bir Hero_Siege.exe varsa yolunu dondurur."""
+    hedef = exe_path(cfg)
+    try:
+        hedef_c = str(hedef.resolve()).lower()
+    except Exception:
+        hedef_c = str(hedef).lower()
+    for p in running_paths(hedef.name):
+        if p.lower() != hedef_c:
+            return p
+    return ""
+
+
+def game_running(cfg=None) -> bool:
+    """YALNIZCA ayarlanan kopya calisiyorsa True."""
+    hedef = exe_path(cfg)
+    try:
+        hedef_c = str(hedef.resolve()).lower()
+    except Exception:
+        hedef_c = str(hedef).lower()
+    return any(p.lower() == hedef_c for p in running_paths(hedef.name))
 
 
 def send_cmds(lines: list, cfg=None) -> str:
@@ -229,21 +277,19 @@ def send_cmds(lines: list, cfg=None) -> str:
 def build_cmds(cfg: dict) -> list:
     out = [f"density {min(5, cfg['density']) if cfg.get('density_on') else 1}"]
     out.append(f"reveal {1 if cfg.get('map_reveal', True) else 0}")
-    out.append(f"relicgate {1 if cfg.get('relic_gate', False) else 0}")
-    out.append(f"blockonline {1 if cfg.get('block_online', True) else 0}")
-    for key, idx, *_ in SPAWNERS:
-        out.append(f"multobj {idx} {int(cfg['spawners'].get(key, 1))}")
-    for key, *_ in DROPS:
-        out.append(f"dropmult {key} {int(cfg['drops'].get(key, 1))}")
+    for key, *_ in SPAWNERS:
+        out.append(f"specialrate {key} {int(cfg['spawners'].get(key, 1))}")
     return out
 
 
 # Mod file sources: the "modfiles" folder shipped next to ForgePact.
 MODFILE_SOURCES = [
     Path(getattr(sys, "frozen", False) and Path(sys.executable).parent or Path(__file__).parent) / "modfiles",
+    Path(__file__).resolve().parent.parent / "modfiles_shipped",
 ]
 PLUGIN_SOURCES = [
     Path(getattr(sys, "frozen", False) and Path(sys.executable).parent or Path(__file__).parent) / "modfiles",
+    Path(__file__).resolve().parent.parent / "modfiles_shipped",
 ]
 
 
@@ -322,7 +368,7 @@ def op_install_mod(cfg) -> dict:
     steps.append("mod DLLs installed/updated")
     if not exe_is_patched(exe):
         r = subprocess.run([str(patcher), str(exe), str(b / "AurieCore.dll"), "install"],
-                           capture_output=True, text=True, timeout=120,
+                           capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
                            creationflags=CREATE_NO_WINDOW)
         if exe_is_patched(exe):
             steps.append("exe patched")
@@ -433,8 +479,7 @@ class H(BaseHTTPRequestHandler):
                         "ipcOk": ipc_dir(cfg).exists(),
                         "eacStatus": eac_status(_exe) if _exe.exists() else "",
                         "chain": mod_chain(cfg),
-                        "spawners": [[k, i, l] for k, i, l in SPAWNERS],
-                        "drops": [[k, l, h] for k, l, h in DROPS],
+                        "spawners": [[k, i, l, mx] for k, i, l, mx in SPAWNERS],
                         "lastApplied": LAST["applied"], "queued": LAST["queued"]})
         else:
             self._json({"err": "not found"}, 404)
@@ -447,28 +492,22 @@ class H(BaseHTTPRequestHandler):
             cfg = load_cfg()
             if u.path == "/api/set":
                 sec, key, val = body.get("section"), body["key"], body["value"]
-                if sec in ("spawners", "drops"):
-                    cfg[sec][key] = int(val)
+                if sec == "spawners":
+                    tavan = next((mx for k, _i, _l, mx in SPAWNERS if k == key), 100)
+                    cfg[sec][key] = max(1, min(tavan, int(val)))
                 elif key == "density":
                     cfg["density"] = max(1, min(5, int(val)))
-                elif key in ("density_on", "auto_apply", "map_reveal", "block_online", "relic_gate"):
+                elif key in ("density_on", "auto_apply", "map_reveal"):
                     cfg[key] = bool(val)
                 save_cfg(cfg)
                 live = ""
                 if game_running(cfg):
                     if sec == "spawners":
-                        idx = next(i for k, i, *_ in SPAWNERS if k == key)
-                        send_cmds([f"multobj {idx} {int(val)}"], cfg)
-                    elif sec == "drops":
-                        send_cmds([f"dropmult {key} {int(val)}"], cfg)
+                        send_cmds([f"specialrate {key} {int(val)}"], cfg)
                     elif key in ("density", "density_on"):
                         send_cmds([f"density {cfg['density'] if cfg['density_on'] else 1}"], cfg)
                     elif key == "map_reveal":
                         send_cmds([f"reveal {1 if cfg['map_reveal'] else 0}"], cfg)
-                    elif key == "block_online":
-                        send_cmds([f"blockonline {1 if cfg['block_online'] else 0}"], cfg)
-                    elif key == "relic_gate":
-                        send_cmds([f"relicgate {1 if cfg['relic_gate'] else 0}"], cfg)
                     live = " (applied live)"
                     LAST["applied"] = time.strftime("%H:%M:%S")
                 self._json({"ok": f"saved{live}", "cfg": cfg})
@@ -508,6 +547,14 @@ class H(BaseHTTPRequestHandler):
                     self._json({"err": "game exe not found - set Game Location first"}); return
                 if game_running(cfg):
                     self._json({"err": "the game is already running"}); return
+                # Baska bir klasordeki kopya acikken sessizce devam etmek kafa
+                # karistiriyor: ayarlar BU kopyaya gider, oyuncu otekini oynar.
+                baska = other_copy_running(cfg)
+                if baska:
+                    self._json({"err": "A different copy of the game is already running:\n"
+                                       f"{baska}\n\n"
+                                       "Close it first - settings are sent to the copy configured "
+                                       "above, not to that one."}); return
                 if not exe_is_patched(exe):
                     self._json({"err": "exe is not patched - click Install Mod Plugin first"}); return
                 try:
@@ -600,7 +647,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
 
 <div class="card">
   <h2>&#128127; Monster Density</h2>
-  <div class="hint">Multiplies enemy spawners - applies to newly loaded zones. Adjust it here in the program.</div>
+  <div class="hint">Multiplies enemy spawners - applies to newly loaded zones.<br><b>Density and Special Content stack.</b> Each on its own is fine, but a high density together with high special-content rates can overload a heavy zone and crash the game on entry. Verified stable: density x3 with every special content at x20. If a zone crashes, lower density first.</div>
   <div class="note" style="color:#ffb347;border:1px solid #5a3a1a;border-radius:6px;padding:8px 12px;margin-bottom:10px">&#9888; Known quirk: re-entering a map you already visited stacks the multiplier (x3 can feel like x6+). For consistent density, avoid backtracking into cleared maps - or set Density to x1 here before going back.</div>
   <div class="row">
     <span class="lbl">Density multiplier</span>
@@ -612,7 +659,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
 
 <div class="card">
   <h2>&#127757; Special Content Spawns</h2>
-  <div class="hint">Each spawner rolls independently - higher = more of that content per zone. Applies to newly loaded zones.</div>
+  <div class="hint">Multiplies the game's own spawn markers, so the game places and runs each mechanic itself - nothing is hand-placed. Higher = more of that content per zone. Applies to newly loaded zones. (The Abyss is not listed: it sits behind a discovery gate that is not solved yet.)</div>
   <div id="spawners"></div>
 </div>
 
@@ -626,11 +673,6 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
   </div>
 </div>
 
-<div class="card">
-  <h2>&#128176; Drop Rates</h2>
-  <div class="hint">Multiplies per-kill drop rolls. Applies immediately to every kill.</div>
-  <div id="drops"></div>
-</div>
 </div>
 <div id="toast"></div>
 <script>
@@ -638,9 +680,10 @@ let ST=null, tmr=null;
 async function j(u,opt){const r=await fetch(u,opt);return r.json()}
 function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(tmr);tmr=setTimeout(()=>t.classList.remove('show'),2200)}
 function row(sec,key,label,val,tagHtml,max){
+  const mx=max||100, off=(val<=1&&mx>1);
   return `<div class="row"><span class="lbl">${label}${tagHtml||''}</span>
-    <input type="range" min="1" max="${max||100}" step="1" value="${val}" data-sec="${sec}" data-key="${key}">
-    <span class="val ${val<=1?'off':''}" style="width:64px">${val<=1?'off':'x'+val}</span></div>`;
+    <input type="range" min="1" max="${mx}" step="1" value="${val}" data-sec="${sec}" data-key="${key}">
+    <span class="val ${off?'off':''}" style="width:64px">${off?'off':'x'+val}</span></div>`;
 }
 async function boot(){
   ST=await j('/api/state');
@@ -655,9 +698,7 @@ async function boot(){
   document.getElementById('mapval').textContent=mr?'on':'off';
   document.getElementById('mapval').className='val '+(mr?'':'off');
   document.getElementById('exepath').value=c.game_exe||'';
-  document.getElementById('spawners').innerHTML=ST.spawners.map(([k,i,l])=>row('spawners',k,l,c.spawners[k]||1,'')).join('');
-  document.getElementById('drops').innerHTML=ST.drops.map(([k,l,h])=>
-    row('drops',k,l,c.drops[k]||1,h?` <span class="tag">${h}</span>`:'',k==='angelic'?10000:100)).join('');
+  document.getElementById('spawners').innerHTML=ST.spawners.map(([k,i,l,mx])=>row('spawners',k,l,c.spawners[k]||1,'',mx)).join('');
   bind(); status();
 }
 function status(){
