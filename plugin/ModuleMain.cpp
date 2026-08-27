@@ -3149,12 +3149,18 @@ static std::map<int, double> g_DkTipCarpan;
 //     olasilik = olcek * kaydirac   (1.0'da kirpilir)
 // OLCULEREK ayarlandi (dusen esyalarin yuzde kaci relic):
 //     eski davranis          %30,2   (567 esyada 171 relic)
-//     on-zar 0.01            %6,4
-//     on-zar 0.0005          %0,7    (138 esyada 1 relic)  <- secilen
-// Kaydirac 2'de her 10.000 olumden 10'unda denenir; kaydirac 100'de
-// her 200 olumden birinde.
+//     dogrusal 0.01,  x2      %6,4   - cok fazla
+//     dogrusal 0.0005, x2     %0,7   - iyi
+//     dogrusal 0.0005, x100   %4,3   - cok az
+//
+// Dogrusal esleme ikisini birden veremiyor: 50 katlik kaydirac araligi
+// yalnizca 6 kat fark uretiyordu.  x2'yi dogru yapan deger x100'u zayif
+// birakiyor, tersi de seli geri getiriyor.  Bu yuzden egri KARELI:
+//     olasilik = olcek * kaydirac^2   (1.0'da kirpilir)
+// 0.00025 ile:  x2 -> 0.001 (olculen iyi deger korunur)
+//               x10 -> 0.025 | x20 -> 0.10 | x50 -> 0.63 | x100 -> 1.0
 static std::map<int, double> g_DkTipOlcek = {
-    { 41, 0.0005 },   // relic
+    { 41, 0.00025 },   // relic
 };
 
 // Kendi zarimiz.  Oyunun rastgele dizisine dokunmuyoruz ki diger
@@ -3225,44 +3231,6 @@ static void OranlariGeriAl(const std::vector<std::pair<int, int>>& dokunulan)
     }
 }
 
-// LoadDrops birikme kaplarinin boyu.  Hangisinin kullanildigini bilmiyoruz,
-// ikisine de bakiyoruz; olmayan -1 doner ve fark hesabina girmez.
-static int ListeBoyu(RValue& v)
-{
-    try {
-        if (v.m_Kind != VALUE_ARRAY) return -1;
-        return (int)g_Yytk->CallBuiltin("array_length", { v }).ToDouble();
-    } catch (...) { return -1; }
-}
-
-static int DsListeBoyu(RValue& v)
-{
-    try {
-        double id = v.ToDouble();
-        if (id < 0) return -1;
-        RValue var = g_Yytk->CallBuiltin("ds_exists", { RValue(id), RValue(2.0) });   // ds_type_list = 2
-        if (!var.ToBoolean()) return -1;
-        return (int)g_Yytk->CallBuiltin("ds_list_size", { RValue(id) }).ToDouble();
-    } catch (...) { return -1; }
-}
-
-// Kaptaki bir ogeyi okunur metne cevir.  Struct/array ise json'a dok.
-static std::string OgeOzeti(RValue& kap, double indeks, bool dsListe)
-{
-    try {
-        RValue oge = dsListe
-            ? g_Yytk->CallBuiltin("ds_list_find_value", { RValue(kap.ToDouble()), RValue(indeks) })
-            : g_Yytk->CallBuiltin("array_get", { kap, RValue(indeks) });
-        if (oge.m_Kind == VALUE_OBJECT || oge.m_Kind == VALUE_ARRAY) {
-            try {
-                std::string js = g_Yytk->CallBuiltin("json_stringify", { oge }).ToString();
-                if (js.size() > 400) js = js.substr(0, 400) + "...";
-                return js;
-            } catch (...) {}
-        }
-        return Describe(oge);
-    } catch (...) { return "(okunamadi)"; }
-}
 #endif
 
 static RValue& Hook_LoadDrops(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
@@ -3415,7 +3383,9 @@ static RValue& Hook_LoadDrops(CInstance* S, CInstance* O, RValue& R, int argc, R
             // (irandom tam sayi), o yuzden seyreltmeyi BURADA yapiyoruz.
             double olcek = TipOlcek(tipEk);
             if (olcek < 1.0) {
-                double olasilik = olcek * kendiCarpan;
+                // Kareli egri - altta yumusak, ustte sert.  Aciklama
+                // g_DkTipOlcek tanimindaki olcum tablosunda.
+                double olasilik = olcek * kendiCarpan * kendiCarpan;
                 if (olasilik > 1.0) olasilik = 1.0;
                 if (KendiZar() >= olasilik) continue;   // bu olumde hic denenmiyor
             }

@@ -523,7 +523,9 @@ class H(BaseHTTPRequestHandler):
                         "chain": mod_chain(cfg),
                         "spawners": [[k, i, l, mx] for k, i, l, mx in SPAWNERS],
                         "drops": [[k, l, h] for k, l, h in DROPS],
-                        "keys": [[k, l] for k, l, _t in KEYS],
+                        # Ucuncu alan damla tipi: paneldeki aciklama metni
+                        # aileye gore degisiyor cunku hepsi ayni anlama gelmiyor.
+                        "keys": [[k, l, t] for k, l, t in KEYS],
                         "lastApplied": LAST["applied"], "queued": LAST["queued"]})
         else:
             self._json({"err": "not found"}, 404)
@@ -648,6 +650,7 @@ h1{font-size:26px;margin:0;letter-spacing:2px;background:linear-gradient(90deg,v
 .card{background:linear-gradient(180deg,var(--card2),var(--card));border:1px solid var(--line);border-radius:12px;padding:18px 22px;margin-bottom:18px;box-shadow:0 4px 24px #00000055}
 .card h2{margin:0 0 4px;font-size:16px;color:var(--ember2);letter-spacing:1px}
 .card .hint{color:var(--mut);font-size:12px;margin-bottom:14px}
+.note{color:var(--mut);font-size:11px;margin:-6px 0 10px 2px;opacity:.85}
 .row{display:flex;align-items:center;gap:14px;padding:9px 0;border-top:1px solid #221a13}
 .row:first-of-type{border-top:none}
 .row .lbl{width:200px;font-size:13px}
@@ -746,11 +749,27 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
 let ST=null, tmr=null;
 async function j(u,opt){const r=await fetch(u,opt);return r.json()}
 function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(tmr);tmr=setTimeout(()=>t.classList.remove('show'),2200)}
-function row(sec,key,label,val,tagHtml,max){
+function row(sec,key,label,val,tagHtml,max,note){
   const mx=max||100, off=(val<=1&&mx>1);
+  const n=note?`<div class="note" data-note="${key}">${note}</div>`:'';
   return `<div class="row"><span class="lbl">${label}${tagHtml||''}</span>
     <input type="range" min="1" max="${mx}" step="1" value="${val}" data-sec="${sec}" data-key="${key}">
-    <span class="val ${off?'off':''}" style="width:64px">${off?'off':'x'+val}</span></div>`;
+    <span class="val ${off?'off':''}" style="width:64px">${off?'off':'x'+val}</span></div>${n}`;
+}
+// "x2" tek basina bir sey anlatmiyor - hangi ailede ne demek oldugu farkli.
+// Chaos/Bifrost'un kapisi zaten acik, orada x2 gercekten iki kat.  Dungeon ve
+// Angelic'te oyunun normalde atmadigi zari biz actiriyoruz.  Relic'te ise
+// vanilya ev bolgesi disinda SIFIR, yani "kat" diye bir sey yok - kaydirac
+// zarin ne siklikta atilacagini belirliyor.
+function keyNote(key,tip,v){
+  if(v<=1) return 'off';
+  if(tip===null||tip===undefined) return `${v}x more likely than normal`;
+  if(key==='relic'){
+    // Eklentideki egri ile ayni:  olasilik = 0.00025 * v^2  (1.0'da kirpilir)
+    const p=Math.min(1,0.00025*v*v);
+    return (p>=1)?'rolls on every kill':`rolls on about 1 kill in ${Math.round(1/p).toLocaleString()}`;
+  }
+  return `${v}x the monster's key chance`;
 }
 async function boot(){
   ST=await j('/api/state');
@@ -766,8 +785,10 @@ async function boot(){
   document.getElementById('mapval').className='val '+(mr?'':'off');
   document.getElementById('exepath').value=c.game_exe||'';
   document.getElementById('spawners').innerHTML=ST.spawners.map(([k,i,l,mx])=>row('spawners',k,l,c.spawners[k]||1,'',mx)).join('');
-  document.getElementById('keys').innerHTML=ST.keys.map(([k,l])=>
-    row('keys',k,l,(c.keys&&c.keys[k])||1,'',100)).join('');
+  document.getElementById('keys').innerHTML=ST.keys.map(([k,l,t])=>{
+    const v=(c.keys&&c.keys[k])||1;
+    return row('keys',k,l,v,'',100,keyNote(k,t,v));
+  }).join('');
   document.getElementById('drops').innerHTML=ST.drops.map(([k,l,h])=>
     row('drops',k,l,(c.drops&&c.drops[k])||1,h?` <span class="tag">${h}</span>`:'')).join('');
   bind(); status();
@@ -801,7 +822,10 @@ function status(){
 function bind(){
   document.querySelectorAll('input[type=range][data-sec]').forEach(r=>{
     const valEl=r.parentElement.querySelector('.val');
-    r.oninput=()=>{const v=+r.value;valEl.textContent=v<=1?'off':'x'+v;valEl.className='val '+(v<=1?'off':'')};
+    const noteEl=r.parentElement.parentElement.querySelector(`.note[data-note="${r.dataset.key}"]`);
+    const tipOf=(k)=>{const e=(ST.keys||[]).find(x=>x[0]===k);return e?e[2]:undefined;};
+    r.oninput=()=>{const v=+r.value;valEl.textContent=v<=1?'off':'x'+v;valEl.className='val '+(v<=1?'off':'');
+      if(noteEl&&r.dataset.sec==='keys')noteEl.textContent=keyNote(r.dataset.key,tipOf(r.dataset.key),v);};
     r.onchange=async()=>{
       const res=await j('/api/set',{method:'POST',body:JSON.stringify({section:r.dataset.sec,key:r.dataset.key,value:+r.value})});
       toast((r.dataset.key)+' = x'+r.value+' - '+(res.ok||res.err));
