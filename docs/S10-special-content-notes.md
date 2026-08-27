@@ -1412,3 +1412,182 @@ Room Start (`gml_Object_Controller_obj_Other_5`) - mevcut `HookOneScript`
 yalnizca `gml_Script_` onekini cozuyor, once onu genisletmek gerekiyor.
 Sinir degeri, density 5'te olusan ek uretici sayisi olculerek belirlenmeli
 (`proof` komutu `extra spawners created` sayisini veriyor).
+
+---
+
+## Kesirli density  (26.08.2026)
+
+Density artik 0.5 kademeli: 1, 1.5, 2, 2.5 ... 5.
+Talep Discord'dan geldi ama asil degeri baska: olculen cokme sinirlari
+(density 3 stabil, density 5 cokuyor) arasinda ara basamak yoktu.
+
+### Nasil - rastgelelik YOK
+`g_CreatorMult` int -> double.  Tam kisim her ureticiye uygulanir, kesir
+kismi bir birikimde toplanir; birikim 1'e ulasinca O uretici bir fazla
+kopya alir ve birikimden 1 dusulur.
+
+    1.5x  ->  desen [1,2,1,2,...]   ortalama tam 1.5
+
+Deterministik ve tekrarlanabilir.  Algoritmanin birebir simulasyonunda
+1.0'dan 5.0'a butun kademelerde sapma SIFIR (400 uretici uzerinden).
+
+Tamsayi davranisi degismedi: `g_CreatorMult > 1.0` kosulu 1.0'da hic
+girmiyor, birikim calismiyor, 3.0'da kesir 0 oldugu icin eski kodla
+ayni sonucu veriyor.
+
+### Oyunda olculen  (7.0.30)
+    1.5x  ->  74 ek uretici,  toplam 3.971 ornek   (haritada ~148 uretici)
+    2.0x  ->  282 ek uretici, toplam 4.710 ornek   (haritada 282 uretici)
+
+Iliski tutarli: 2x'te uretici basina tam 1 ek, 1.5x'te iki ureticide 1 ek.
+Ikisi de cokme bolgesi olan ~13.000 orneginin cok altinda, yani 1.5/2.5
+gercek anlamda guvenli ara kademeler.
+
+DIKKAT: uretici sayisini oyunda dogrudan sayamadigim icin [1,2,1,2] deseni
+oyunda birebir DOGRULANMADI - yalnizca simulasyonla kanitlandi.  Kesin
+dogrulama istenirse DoMultiCreate'e bir "uretici cagrisi" sayaci eklenip
+ek sayisiyla oranlanmali.
+
+### Panel
+Kaydirac `step="0.5"`.  Sunucu tarafinda `round(d*2)/2` ile 0.5'e hizalanir.
+Komut `density 1.5` seklinde gonderilir (`%g`, gereksiz sifir yok).
+
+### Yan bulgu: 7.0.30 RI onbellegi
+Bu derlemenin exe boyutu (303.708.672) KNOWN_RI_CACHE'te yoktu, bu yuzden
+ilk acilista YYToolkit ~1 dakika tarama yapti.  Yakalanan deger panele
+eklendi:  303708672 208216097 208217266
+
+### Yan bulgu: Remove Plugin dogrulandi
+Test kopyasinda "Remove Plugin" calistirilmis: exe yedekten geri yuklenmis
+(303.708.672 -> 303.426.048), AurieCore.dll ve YYToolkit.dll silinmis.
+Yani kaldirma akisi da uctan uca calisiyor.
+
+---
+
+## Drop carpanlari - neden calismiyordu  (26.08.2026)
+
+Iki ayri sorun ust uste binmisti.
+
+### 1) Kancalar yayin derlemesinde hic kurulmuyordu
+`dropmult` komutu ve DROP_HOOK makrosu tam implement, ama kancalari kuran
+InstallDropHooks() ayni gun yayin derlemesinden cikarilmisti (8 MB'lik
+itemdrops.jsonl yuzunden).  Komut cevap veriyor, HICBIR SEY yapmiyordu.
+
+Cozum - ayrim DROP_HOOK makrosunun icinden geciyor:
+    for (...) orig(...)   -> carpan,  HER IKI derlemede
+    BP_LOGDROP(...)       -> gunluk,  yalnizca gelistirmede (yayinda (void)0)
+
+InstallDropHooks ikiye bolundu:
+    InstallDropMultHooks()     -> her iki derleme  (dropmult buna dayanir)
+    InstallItemInspectHooks()  -> yalnizca gelistirme (esya duzenleme kancalari)
+
+### 2) Anahtarlar icin YANLIS fonksiyon kancaliydi
+Olculdu (bir harita dolusu yaratik):
+    DungeonKeys c=0     <- kancaliydi, HIC cagrilmiyor
+    RubyKey     c=0     <- hic cagrilmiyor
+    Keys        c=57    <- ANAHTARLARIN GERCEK YOLU
+    ChaosKey    c=65    <- bu da ateşliyor
+    Gold        c=70    <- DropGold zaten dogru yolmus
+    MonsterGold c=7     <- nadir
+    Item        c=392
+    Bifrost     c=65    <- sik dusuyor, panelde YOK (ileride eklenebilir)
+
+DUZELTME: "DropGold yanlis fonksiyon" seklindeki ilk teshis YANLISTI.  Ilk
+olcumdeki `Gold c=4` az yaratik oldurulmus kucuk bir orneklemdi.  Altini
+cozen sey DropMonsterGold eklenmesi degil, kancalarin yayina alinmasiydi.
+
+Panel tek "Keys" kaydiraci gosteriyor; SetDropMult onu DropDungeonKeys +
+DropKeys + DropChaosKey + DropRubyKey'e birden uyguluyor.  "Gold" kaydiraci
+DropGold + DropMonsterGold'a uygulaniyor.
+
+Relic: yalnizca Satanic Zone'larda uretiliyor (c=0 normal haritada), panelde
+etiketinde yaziyor.
+
+---
+
+## Zindan anahtarlari - arastirma sonucu  (27.08.2026)
+
+Tam rapor: `ZINDAN_ANAHTARI_ARASTIRMA.md` (ayni klasor).
+
+### Kisa sonuc
+Zindan anahtari hatti BOZUK DEGIL.  LoadDrops case 12 (DropDungeonKeys)
+kapisi, calistigi olculen case 11 (DropKeys) / 31 (Bifrost) / 40 (Chaos)
+kapilariyla BAYT BAYT ayni ve ayni paydayi kullaniyor:
+    irandom(gDataProtected.<0xAF>) < chances[tip]
+
+Case bloklari:
+    11 DropKeys        blok 0x428946b  kapi 0x42898a2  cagri 0x42899a9
+    12 DropDungeonKeys blok 0x42899b3  kapi 0x4289df2  cagri 0x428a009
+    31 DropBifrostKey  blok 0x428a013  kapi 0x428a452  cagri 0x428a559
+    40 DropChaosKey    blok 0x428a563  kapi 0x428a9a2  cagri 0x428aa74
+
+Ustelik tip 12, canavar dropTable'larinda tip 11'den DAHA COK var:
+    LoadMonsterDropTables (0x432d190): tip 12 -> 10 kez (5,5,40,40,75,75,100x4)
+                                       tip 11 -> 3 kez  (5, 9, 18)
+    EnemyRaritySettings   (0x19bad60): [12,60] x3, [12,70] x3, [11,18] x5
+Yani sistematik kapali olmasi matematiksel olarak mumkun degil.
+
+### Iki olasi aciklama - ONCE bunu ayirt et
+(a) Olcum dogru, veri aciklamasi: tip 12 her zaman 18 (RubyKey) ve
+    17 (SatanicDice) ile AYNI blokta; tip 11 ise 1/3/5/6/9/10 ile ayri
+    bloklarda.  Ikisi hic birlikte gecmiyor.  Farm edilen canavarlar
+    "normal" tablolari kullaniyorsa 12 hic gorulmez.
+    HIZLI TEST: Ruby Key veya Satanic Dice dusuyor mu?  Dusmuyorsa
+    o tablolari hic acmamissin demektir, c=0 normaldir.
+(b) Olcum hatali.  "LootGroundCreate hic cagrilmadi (c=0)" notumuz KESIN
+    yanlisti (anahtarlar dusuyor ve tek yere-koyma yolu o).  Yani sayac
+    altyapisi en az bir kez yanlis sifir uretti.  Oyun logunda
+    "HOOK INSTALLED on DropDungeonKeys" satiri gercekten var mi, dogrula.
+
+### Cozum yolu (dogal orani korur, zorlama degil)
+gml_Script_LoadDrops kancalanir (rva 0x4283ca0).
+    A[2] = damla tipi, A[8] = chances dizisi  (olculdu: 0x4289a4a / 0x4289a59)
+Akis: once VANILYA cagrisi aynen yapilir; sonra tip 11 ise ve chances[12]
+zaten >0 DEGILSE, chances[12] o canavarin chances[11] degerine kopyalanir ve
+ayni arguman dizisiyle (yalnizca slot 2 = 12) orijinal BIR KEZ DAHA cagrilir.
+Kapi ve zar %100 vanilya - atlanmiyor, bir kez daha geciliyor.  Sonra
+chances[12] geri 0 yapilir.
+Sandik filtresi gerekmiyor: tip 11/12 iceren dropTable literali yalnizca
+LoadMonsterDropTables, EnemyRaritySettings ve TalentsPirate'ta var.
+
+Tam kod iskeleti raporda.
+
+### COZULDU - zindan anahtarlari dogal olarak dusuyor  (27.08.2026)
+
+Kullanici dogruladi: zindan anahtarlari + Bifrost + Chaos bol miktarda dusuyor.
+
+Mekanizma IKI KADEMELI - ikisi de gerekli, biri eksikse hicbir sey dusmez:
+
+  1. DIS ZAR - LoadDrops kapisi
+     `dungeonkey on`  -> Hook_LoadDrops
+     Once vanilya cagri aynen yapilir.  Tip 11 (normal anahtar) ise ve o
+     canavarda chances[12] ZATEN 0 ise, chances[12] = chances[11] yapilip
+     ayni argumanlarla orijinal BIR KEZ DAHA cagrilir (slot 2 = 12), sonra
+     chances[12] geri 0 yapilir.  Kapi ATLANMIYOR, kapidan bir kez daha
+     geciliyor - zar oyunun zari.
+     Olculdu: 1233 ek zar -> 95 gecti (~%7,7).  chances[11] 5-9 olcumuyle
+     birebir tutuyor.  Zorlama olsaydi 1233/1233 gecerdi.
+
+  2. IC ZAR - esyanin kendi droprate'i
+     `droprate set <i> <deger>` (kategori 12 = Keys, indeks 0..43)
+     DropDungeonKeys cagrildiktan SONRA, sectigi anahtarin kendi
+     droprate.base zarini atiyor.  Varsayilan cogu zindan anahtarinda 1500.
+     Olculdu: 95 cagri x 1/1500 = pratikte sifir -> kullanici hicbir sey
+     gormedi.  50'ye cekilince ~2, 3'e cekilince gorulur hale geldi.
+
+TESHIS ARACI (yalnizca gelistirme derlemesi):
+    dungeonkey probe <n>   -> bp_ipc/loaddrops.txt
+    Her LoadDrops cagrisinda tip + chances[11]/[12]/[17]/[18] yazar.
+    Bu olcum meseleyi kapatti: 200 cagrida tip 12 HIC gorulmedi ve
+    chances[12] 200/200 sifirdi.  Yani normal anahtar dusuren canavarlar
+    zindan anahtari tablosunu tasimiyor - eski "c=0" olcumu DOGRUYDU.
+
+CALISAN TARIF:
+    dungeonkey on
+    dungeonkey chance auto        (canavarin kendi anahtar orani)
+    droprate set 0..43 <deger>    (3 = cok sik, 50 = olculu, 1500 = vanilya)
+
+DIKKAT - "c=N" SAYACI CAGRI SAYAR, DUSUS DEGIL.
+Bu oturumda tam bu hata iki kez yapildi.  DungeonKeys c=4 iken envanterde
+hicbir sey yoktu cunku ic zar 1500'deydi.  Sayac arttiginda "calisiyor"
+demeden once ic zari da kontrol et.

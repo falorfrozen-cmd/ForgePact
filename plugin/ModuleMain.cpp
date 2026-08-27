@@ -503,7 +503,8 @@ static int  g_WatchObj = -1;                 // when this object is created, log
 static std::string g_WatchCallers;           // distinct caller RVAs of the watched object's creation
 static int  g_EnemyParentIdx = -1;           // asset index of Enemy_Parent_obj
 static int  g_EnemyMultAll = 1;              // multiplier applied to ALL enemy descendants (direct)
-static int  g_CreatorMult = 3;               // multiplier applied to ALL Enemy_Creator* spawners (density) - default 3x ON
+static double g_CreatorMult = 3.0;          // ALL Enemy_Creator* spawners (density).  Kesirli olabilir: 1.5, 2.5 ...
+static double g_CreatorFrac = 0.0;          // kesir birikimi - 1.5x'te her ikinci ureticiye bir fazla kopya
 static std::map<int, bool> g_IsEnemyCache;   // object index -> is enemy descendant
 static std::map<int, bool> g_IsCreatorCache; // object index -> name starts with "Enemy_Creator"
 static volatile long g_ExtraCreators = 0;    // extra spawner instances the multiplier created
@@ -622,8 +623,18 @@ static void DoMultiCreate(TRoutine orig, RValue& Result, CInstance* S, CInstance
     auto it = g_ObjMult.find(objIdx);
     if (it != g_ObjMult.end()) mult = it->second;
     // density: multiply all Enemy_Creator* spawners (produces fully-configured enemies)
-    if (g_CreatorMult > 1 && IsCreatorObject(objIdx) && g_CreatorMult > mult)
-        mult = g_CreatorMult;
+    if (g_CreatorMult > 1.0 && IsCreatorObject(objIdx)) {
+        // Tam kisim herkese; kesir kismi birikime yayilir ve 1'e ulasinca
+        // O ureticiye bir fazla kopya dusar.  Rastgelelik yok, deterministik.
+        int tam = (int)g_CreatorMult;
+        double kesir = g_CreatorMult - (double)tam;
+        int m = tam;
+        if (kesir > 0.0) {
+            g_CreatorFrac += kesir;
+            if (g_CreatorFrac >= 1.0) { g_CreatorFrac -= 1.0; m += 1; }
+        }
+        if (m > mult) mult = m;
+    }
     // (optional) direct enemy-descendant multiplier — off by default, creators are the right layer
     else if (g_EnemyMultAll > 1 && IsEnemyObject(objIdx) && g_EnemyMultAll > mult)
         mult = g_EnemyMultAll;
@@ -996,6 +1007,14 @@ static void LogDrop(const char* fn, RValue& res, int argc, RValue** A)
 }
 
 // ===== Drop-rate hooks (multiply drop calls = more items per drop event) =====
+// Gunluk yalnizca gelistirme derlemesinde: itemdrops.jsonl tek oturumda 8 MB'a
+// ulasiyordu.  Carpan mantigi her iki derlemede de calisir.
+#ifdef FORGEPACT_RELEASE
+  #define BP_LOGDROP(a,b,c,d) ((void)0)
+#else
+  #define BP_LOGDROP(a,b,c,d) LogDrop(a,b,c,d)
+#endif
+
 #define DROP_HOOK(NAME) \
     static PFUNC_YYGMLScript g_Orig_##NAME = nullptr; \
     static volatile long g_cnt_##NAME = 0; \
@@ -1004,7 +1023,7 @@ static void LogDrop(const char* fn, RValue& res, int argc, RValue** A)
         InterlockedIncrement(&g_cnt_##NAME); \
         for (int i = 1; i < g_mult_##NAME; i++) { RValue t; if (g_Orig_##NAME) g_Orig_##NAME(S, O, t, argc, A); } \
         RValue& _res = g_Orig_##NAME ? g_Orig_##NAME(S, O, R, argc, A) : R; \
-        LogDrop(#NAME, _res, argc, A); \
+        BP_LOGDROP(#NAME, _res, argc, A); \
         return _res; \
     }
 
@@ -1022,6 +1041,43 @@ DROP_HOOK(CreateItemDrop)
 DROP_HOOK(DropItemAngelic)
 DROP_HOOK(DropAngelicKey)
 DROP_HOOK(DropAngelicCharm)
+// Asil trafik bu yollardan geciyor - olculdu: DropGold 4 cagri, DropMonsterGold
+// yaratik basina.  DropDungeonKeys hic cagrilmiyor, anahtarlar DropKeys'ten.
+DROP_HOOK(DropMonsterGold)
+#ifdef FORGEPACT_RELEASE
+DROP_HOOK(DropKeys)
+#else
+static PFUNC_YYGMLScript g_Orig_DropKeys = nullptr; static volatile long g_cnt_DropKeys = 0; static int g_mult_DropKeys = 1;
+static RValue& Hook_DropKeys(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) {
+    InterlockedIncrement(&g_cnt_DropKeys);
+    for (int i = 1; i < g_mult_DropKeys; i++) { RValue t; if (g_Orig_DropKeys) g_Orig_DropKeys(S, O, t, argc, A); }
+    RValue& _res = g_Orig_DropKeys ? g_Orig_DropKeys(S, O, R, argc, A) : R;
+    BP_LOGDROP("DropKeys", _res, argc, A);
+    // Hangi anahtar secildi, neden - kullanici gozlemi: yalnizca Chaos/Basic/Crystal dusuyor.
+    try {
+        std::string ad = "?";
+        if (_res.m_Kind == VALUE_OBJECT) {
+            RValue info = g_Yytk->CallBuiltin("variable_struct_get", { _res, RValue("itemInfoStruct") });
+            if (info.m_Kind == VALUE_OBJECT) {
+                RValue nm = g_Yytk->CallBuiltin("variable_struct_get", { info, RValue("28") });
+                ad = nm.ToString();
+            }
+        }
+        RValue rm = g_Yytk->CallBuiltin("variable_global_get", { RValue("room") });
+        std::ofstream f(IPC_DIR + "\\keychoice.txt", std::ios::app);
+        f << "DropKeys -> " << ad << "   room=" << (int)rm.ToDouble() << "\n";
+        f.flush();
+    } catch (...) {}
+    return _res;
+}
+#endif
+DROP_HOOK(DropChaosKey)
+DROP_HOOK(DropRubyKey)
+// Esyayi YERE koyan fonksiyon - "yaratildi" ile "dustu" farkini olcmek icin.
+DROP_HOOK(LootGroundCreate)
+// LootGroundCreate calisma aninda HIC cagrilmadi (olculdu: 0).
+// Gercek yere-koyma yolu bu olmali.
+DROP_HOOK(LootGroundCreateFromItem)
 // item CREATION hooks: fire for every item built (incl. all jewels on save load).
 // LogDrop captures (raw definition n -> computed itemStatStruct) automatically.
 DROP_HOOK(CreateItemNew)
@@ -1120,7 +1176,8 @@ static RValue& Hook_GetItemStatString(CInstance* S, CInstance* O, RValue& R, int
     return r;
 }
 
-static void InstallDropHooks()
+// Drop carpani kancalari - HER IKI derlemede kurulur; `dropmult` bunlara dayanir.
+static void InstallDropMultHooks()
 {
     HookOneScript("DropRelic",           "bp_drelic",   (PVOID)Hook_DropRelic,           &g_Orig_DropRelic);
     HookOneScript("DropBossGems",        "bp_dgems",    (PVOID)Hook_DropBossGems,        &g_Orig_DropBossGems);
@@ -1136,12 +1193,26 @@ static void InstallDropHooks()
     HookOneScript("DropItemAngelic",     "bp_dangit",   (PVOID)Hook_DropItemAngelic,     &g_Orig_DropItemAngelic);
     HookOneScript("DropAngelicKey",      "bp_dangkey",  (PVOID)Hook_DropAngelicKey,      &g_Orig_DropAngelicKey);
     HookOneScript("DropAngelicCharm",    "bp_dangchm",  (PVOID)Hook_DropAngelicCharm,    &g_Orig_DropAngelicCharm);
+    HookOneScript("DropMonsterGold",     "bp_dmgold",   (PVOID)Hook_DropMonsterGold,     &g_Orig_DropMonsterGold);
+    HookOneScript("DropKeys",            "bp_dkeys",    (PVOID)Hook_DropKeys,            &g_Orig_DropKeys);
+    HookOneScript("DropChaosKey",        "bp_dckey",    (PVOID)Hook_DropChaosKey,        &g_Orig_DropChaosKey);
+    HookOneScript("DropRubyKey",         "bp_drkey",    (PVOID)Hook_DropRubyKey,         &g_Orig_DropRubyKey);
+}
+
+#ifndef FORGEPACT_RELEASE
+// Esya inceleme/duzenleme kancalari - yalnizca gelistirme derlemesi.
+static void InstallItemInspectHooks()
+{
     HookOneScript("GetItemTooltipString","bp_gitip",    (PVOID)Hook_GetItemTooltipString,&g_Orig_GetItemTooltipString);
     HookOneScript("GetItemStatString",   "bp_gistat",   (PVOID)Hook_GetItemStatString,   &g_Orig_GetItemStatString);
     HookOneScript("CreateItemNew",       "bp_citemn",   (PVOID)Hook_CreateItemNew,       &g_Orig_CreateItemNew);
     HookOneScript("CreateItemInit",      "bp_citemi",   (PVOID)Hook_CreateItemInit,      &g_Orig_CreateItemInit);
     HookOneScript("GenerateItemRandomStats","bp_girs",  (PVOID)Hook_GenerateItemRandomStats,&g_Orig_GenerateItemRandomStats);
+    HookOneScript("LootGroundCreate",    "bp_lgc",      (PVOID)Hook_LootGroundCreate,    &g_Orig_LootGroundCreate);
+    HookOneScript("LootGroundCreateFromItem", "bp_lgcfi", (PVOID)Hook_LootGroundCreateFromItem, &g_Orig_LootGroundCreateFromItem);
 }
+#endif
+
 
 static void DropStats()
 {
@@ -1158,19 +1229,29 @@ static void DropStats()
         g_cnt_DropItemBoss, g_mult_DropItemBoss, g_cnt_DropItem, g_mult_DropItem,
         g_cnt_CreateItemDrop, g_mult_CreateItemDrop);
     Out(b);
+    // Asil trafigin gectigi yollar - DropGold/DropDungeonKeys neredeyse hic
+    // cagrilmiyor, gercek altin ve anahtarlar buradan geliyor.
+    sprintf_s(b, "          MonsterGold c=%ld x%d | Keys c=%ld x%d | ChaosKey c=%ld x%d | RubyKey c=%ld x%d",
+        g_cnt_DropMonsterGold, g_mult_DropMonsterGold, g_cnt_DropKeys, g_mult_DropKeys,
+        g_cnt_DropChaosKey, g_mult_DropChaosKey, g_cnt_DropRubyKey, g_mult_DropRubyKey);
+    Out(b);
 }
 
 static void SetDropMult(const std::string& name, int n)
 {
     std::string l = Lower(name);
+    // Tek kaydirac, ilgili BUTUN yollari ayarlar (olculdu: tek fonksiyon yetmiyor).
     if (l == "relic") { g_mult_DropRelic = n; }
     else if (l == "bossgems" || l == "gems") { g_mult_DropBossGems = n; }
-    else if (l == "dungeonkeys" || l == "keys") { g_mult_DropDungeonKeys = n; }
+    else if (l == "dungeonkeys" || l == "keys") {
+        g_mult_DropDungeonKeys = n; g_mult_DropKeys = n;
+        g_mult_DropChaosKey = n; g_mult_DropRubyKey = n;
+    }
     else if (l == "bossrunes" || l == "runes") { g_mult_DropBossRunes = n; }
     else if (l == "battlefragments" || l == "frags") { g_mult_DropBattleFragments = n; }
     else if (l == "dimshard" || l == "shards") { g_mult_DropDimensionalShard = n; }
     else if (l == "bifrost") { g_mult_DropBifrostKey = n; }
-    else if (l == "gold") { g_mult_DropGold = n; }
+    else if (l == "gold") { g_mult_DropGold = n; g_mult_DropMonsterGold = n; }
     else if (l == "bossitem" || l == "itemboss") { g_mult_DropItemBoss = n; }
     else if (l == "item") { g_mult_DropItem = n; }
     else if (l == "createitem") { g_mult_CreateItemDrop = n; }
@@ -1419,6 +1500,7 @@ static void InstallHook()
     // kuruluyor: eskiden asagidaki GetBloodPactInfo erken-return'une
     // takilirsa density sessizce olurdu.
     InstallCreateHooks();
+    InstallDropMultHooks();   // dropmult bunlara dayanir; gunluk yazmazlar
 
 #ifdef FORGEPACT_RELEASE
     // Yayin derlemesi: arastirma kancasi ve teshis gunlugu yok.
@@ -1449,7 +1531,7 @@ static void InstallHook()
     InstallBuffHooks();
     InstallEnemyHooks();
     InstallChaosTowerHooks();
-    InstallDropHooks();
+    InstallItemInspectHooks();
 #endif
 }
 
@@ -2558,6 +2640,343 @@ static void CensusTick(unsigned long long fc)
 }
 #endif
 
+
+
+// --- Esya dusus sansi (droprate) -------------------------------------------
+// GetNormalRepoStruct(kategori, 0, indeks) esyanin tanim struct'ini donduruyor.
+// Icindeki `droprate.base` sayisi ne kadar BUYUKSE o esya o kadar NADIR:
+//   keys_key 100 | keys_crystal_key 400 | keys_chaos_key 2700 | keys_bifrost_key 32750
+// Bu alan yazilabilir; cagriyi cogaltmak yerine zarin kendisini degistiriyoruz.
+static int g_DropRateKat = 12;   // 12 = Keys
+// Vanilya droprate.base degerleri - carpan HER ZAMAN bunlardan hesaplanir,
+// yoksa ust uste uygulayinca 5x5=25 olur.  Anahtar: kategori*1000 + indeks.
+static std::map<int, double> g_DropRateVanilya;
+
+static bool RepoStruct(int kategori, int indeks, RValue& out)
+{
+    try {
+        out = g_Yytk->CallGameScript("gml_Script_GetNormalRepoStruct",
+                                     { RValue((double)kategori), RValue(0.0), RValue((double)indeks) });
+        return out.m_Kind == VALUE_OBJECT;
+    } catch (...) { return false; }
+}
+
+// Esyanin ic adi: itemBaseInfoStruct["28"]
+static std::string RepoAd(RValue& st)
+{
+    try {
+        RValue info = g_Yytk->CallBuiltin("variable_struct_get", { st, RValue("itemBaseInfoStruct") });
+        if (info.m_Kind != VALUE_OBJECT) return "?";
+        RValue nm = g_Yytk->CallBuiltin("variable_struct_get", { info, RValue("28") });
+        return nm.ToString();
+    } catch (...) { return "?"; }
+}
+
+// Esyanin VANILYA base degeri.  Ilk cagrida o anki deger saklanir.
+static double VanilyaBase(int kategori, int indeks, RValue& st, RValue& drOut)
+{
+    drOut = g_Yytk->CallBuiltin("variable_struct_get", { st, RValue("droprate") });
+    if (drOut.m_Kind != VALUE_OBJECT) return -1.0;
+    RValue simdi = g_Yytk->CallBuiltin("variable_struct_get", { drOut, RValue("base") });
+    int anahtar = kategori * 1000 + indeks;
+    auto it = g_DropRateVanilya.find(anahtar);
+    if (it == g_DropRateVanilya.end()) {
+        g_DropRateVanilya[anahtar] = simdi.ToDouble();
+        return simdi.ToDouble();
+    }
+    return it->second;
+}
+
+static void DropRateCmd(const std::string& rest)
+{
+    std::string alt, kalan; alt = FirstToken(rest, kalan);
+    alt = Lower(alt);
+    while (!alt.empty() && (alt.back()=='\r'||alt.back()=='\n'||alt.back()==' ')) alt.pop_back();
+
+    if (alt == "cat") {
+        try { g_DropRateKat = std::stoi(kalan); Out("droprate: kategori -> " + std::to_string(g_DropRateKat)); }
+        catch (...) { Out("droprate: kullanim -> droprate cat 12"); }
+        return;
+    }
+
+    if (alt == "list" || alt.empty()) {
+        int kat = g_DropRateKat;
+        if (!kalan.empty()) { try { kat = std::stoi(kalan); } catch (...) {} }
+        Out("droprate list: kategori " + std::to_string(kat) + "  (base kucukse daha SIK duser)");
+        int bos = 0;
+        for (int i = 0; i < 200 && bos < 6; i++) {
+            RValue st;
+            if (!RepoStruct(kat, i, st)) { bos++; continue; }
+            bos = 0;
+            std::string ad = RepoAd(st);
+            double b = -1.0;
+            try {
+                RValue dr = g_Yytk->CallBuiltin("variable_struct_get", { st, RValue("droprate") });
+                if (dr.m_Kind == VALUE_OBJECT) {
+                    RValue bv = g_Yytk->CallBuiltin("variable_struct_get", { dr, RValue("base") });
+                    b = bv.ToDouble();
+                }
+            } catch (...) {}
+            char ln[200];
+            sprintf_s(ln, "   [%3d] %-34s base=%.0f", i, ad.c_str(), b);
+            Out(ln);
+        }
+        return;
+    }
+
+    if (alt == "group") {
+        // Grup adi + deger.  Dungeon havuzu oyundan okunur (GetDungeonKeys).
+        std::string grup, degers; grup = FirstToken(kalan, degers);
+        grup = Lower(grup);
+        double v = 0.0;
+        try { v = std::stod(degers); } catch (...) { Out("droprate: kullanim -> droprate group dungeon 50"); return; }
+        if (v <= 0.0) v = 1.0;   // 0/negatif -> vanilya
+
+        int sayac = 0;
+        double ornekEski = -1.0, ornekYeni = -1.0;
+
+        std::vector<int> hedef;
+        if (grup == "bifrost")      hedef = { 2 };
+        else if (grup == "angelic") hedef = { 8 };
+        else if (grup == "chaos")   hedef = { 33, 1 };   // Chaos + Crystal
+        else if (grup == "basic")   hedef = { 0, 1 };
+        else if (grup == "relic") {
+            // Relic'ler ayri kategoride (16) ve oranlari 2.5-50 milyon arasi.
+            // Kategoriyi grup kendisi tasir; g_DropRateKat degistirilmez.
+            int bosSayac = 0;
+            for (int i = 0; i < 200 && bosSayac < 6; i++) {
+                RValue st;
+                if (!RepoStruct(16, i, st)) { bosSayac++; continue; }
+                bosSayac = 0;
+                try {
+                    RValue dr;
+                    double vanilya = VanilyaBase(16, i, st, dr);
+                    if (vanilya <= 0.0) continue;
+                    double yeni = (v <= 1.0) ? vanilya : (vanilya / v);
+                    if (yeni < 1.0) yeni = 1.0;
+                    g_Yytk->CallBuiltin("variable_struct_set", { dr, RValue("base"), RValue(yeni) });
+                    if (ornekEski < 0.0) { ornekEski = vanilya; ornekYeni = yeni; }
+                    sayac++;
+                } catch (...) {}
+            }
+            char rb[220];
+            sprintf_s(rb, "droprate group relic: x%.0f, %d esya  (ornek: %.0f -> %.0f)",
+                      v, sayac, ornekEski, ornekYeni);
+            Out(rb);
+            return;
+        }
+        else if (grup == "dungeon") {
+            try {
+                RValue liste = g_Yytk->CallGameScript("gml_Script_GetDungeonKeys", {});
+                RValue n = g_Yytk->CallBuiltin("array_length", { liste });
+                int len = (int)n.ToDouble();
+                for (int i = 0; i < len; i++) {
+                    RValue e = g_Yytk->CallBuiltin("array_get", { liste, RValue((double)i) });
+                    hedef.push_back((int)e.ToDouble());
+                }
+            } catch (...) { Out("droprate group dungeon: havuz okunamadi"); return; }
+        }
+        else { Out("droprate group: bifrost | angelic | dungeon | basic | chaos | relic"); return; }
+
+        // v artik CARPAN: 1 = vanilya, 5 = 5 kat daha sik.
+        for (int i : hedef) {
+            RValue st;
+            if (!RepoStruct(g_DropRateKat, i, st)) continue;
+            try {
+                RValue dr;
+                double vanilya = VanilyaBase(g_DropRateKat, i, st, dr);
+                if (vanilya <= 0.0) continue;
+                double yeni = (v <= 1.0) ? vanilya : (vanilya / v);
+                if (yeni < 1.0) yeni = 1.0;
+                g_Yytk->CallBuiltin("variable_struct_set", { dr, RValue("base"), RValue(yeni) });
+                if (ornekEski < 0.0) { ornekEski = vanilya; ornekYeni = yeni; }
+                sayac++;
+            } catch (...) {}
+        }
+        char b[220];
+        sprintf_s(b, "droprate group %s: x%.0f, %d esya  (ornek: %.0f -> %.0f)",
+                  grup.c_str(), v, sayac, ornekEski, ornekYeni);
+        Out(b);
+        return;
+    }
+
+    if (alt == "set") {
+        std::string idxs, vals; idxs = FirstToken(kalan, vals);
+        try {
+            int i = std::stoi(idxs);
+            double v = std::stod(vals);
+            RValue st;
+            if (!RepoStruct(g_DropRateKat, i, st)) { Out("droprate: [" + idxs + "] yok"); return; }
+            std::string ad = RepoAd(st);
+            RValue dr = g_Yytk->CallBuiltin("variable_struct_get", { st, RValue("droprate") });
+            if (dr.m_Kind != VALUE_OBJECT) { Out("droprate: droprate alani yok"); return; }
+            RValue eski = g_Yytk->CallBuiltin("variable_struct_get", { dr, RValue("base") });
+            g_Yytk->CallBuiltin("variable_struct_set", { dr, RValue("base"), RValue(v) });
+            char ln[220];
+            sprintf_s(ln, "droprate set [%d] %s : %.0f -> %.0f", i, ad.c_str(), eski.ToDouble(), v);
+            Out(ln);
+        } catch (...) { Out("droprate: kullanim -> droprate set 2 100"); }
+        return;
+    }
+
+    Out("droprate: list | set <i> <mutlak> | group <ad> <carpan> | cat <kategori>");
+}
+
+
+// --- Zindan anahtarlari: dogal kapi ---------------------------------------
+// LoadDrops case 12'nin kapisi, calisan case 11/31/40 ile bayt bayt ayni ve
+// ayni zari kullaniyor.  Sorun kodda degil: normal anahtar dusuren canavarlar
+// zindan anahtari tablosunu tasimiyor.  Cozum kapiyi ATLAMAK degil, ayni
+// kapidan bir kez daha gecmek - zar yine oyunun zari.
+static PFUNC_YYGMLScript g_OrigLoadDrops = nullptr;
+static bool g_DkOn = false;
+static double g_DkChance = -1.0;      // -1 = auto (canavarin kendi chances[11]'i)
+static double g_DkChanceMult = 1.0;   // auto modunda dis kapi carpani
+static std::set<int> g_DkTipler = { 12 };   // ek zar atilacak damla tipleri (12 = zindan anahtari)
+static volatile long g_DkRolls = 0;   // ek zar atilan olum sayisi
+static volatile long g_DkNative = 0;  // tip 12 zaten yerli -> dokunulmadi
+static int g_DkProbe = 0;             // teshis: ilk N cagriyi kaydet
+
+static RValue& Hook_LoadDrops(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    // 1) Once VANILYA davranis, hicbir sey degistirmeden.
+    RValue& res = g_OrigLoadDrops ? g_OrigLoadDrops(S, O, R, argc, A) : R;
+    if (!A || argc < 9 || !A[2] || !A[8] || !g_Yytk) return res;
+
+    try {
+        int tip = (int)A[2]->ToDouble();
+
+#ifndef FORGEPACT_RELEASE
+        if (g_DkProbe > 0) {
+            RValue c11 = g_Yytk->CallBuiltin("array_get", { *A[8], RValue(11.0) });
+            RValue c12 = g_Yytk->CallBuiltin("array_get", { *A[8], RValue(12.0) });
+            RValue c17 = g_Yytk->CallBuiltin("array_get", { *A[8], RValue(17.0) });
+            RValue c18 = g_Yytk->CallBuiltin("array_get", { *A[8], RValue(18.0) });
+            std::ofstream f(IPC_DIR + "\\loaddrops.txt", std::ios::app);
+            f << "tip=" << tip
+              << "  chances[11]=" << c11.ToDouble()
+              << "  [12]=" << c12.ToDouble()
+              << "  [17]=" << c17.ToDouble()
+              << "  [18]=" << c18.ToDouble() << "\n";
+            f.flush();
+            g_DkProbe--;
+        }
+#endif
+
+        if (!g_DkOn || tip != 11) return res;   // yalnizca normal-anahtar zarindan sonra
+
+        // Oran: o canavarin KENDI normal-anahtar orani (auto) ya da sabit.
+        // Auto sayesinde paydayi (gDataProtected.<0xAF>) bilmemize gerek yok.
+        double oran = g_DkChance;
+        if (oran < 0.0) {
+            RValue taban = g_Yytk->CallBuiltin("array_get", { *A[8], RValue(11.0) });
+            // Dis kapiyi da carp - yoksa kaydirac yalnizca ic zari suruyor ve
+            // yuksek degerlerde bile gorunur fark olmuyor (olculdu).
+            oran = taban.ToDouble() * g_DkChanceMult;
+        }
+        if (oran <= 0.0) return res;
+
+        std::vector<RValue*> A2(A, A + argc);
+        for (int tipEk : g_DkTipler) {
+            // Bu canavarda o tip zaten yerli mi?  Oyleyse DOKUNMA - yoksa ayni
+            // olumde iki bagimsiz zar atilir ve boss'un kendi orani ezilir.
+            RValue mevcut = g_Yytk->CallBuiltin("array_get", { *A[8], RValue((double)tipEk) });
+            if (mevcut.ToDouble() > 0.0) { InterlockedIncrement(&g_DkNative); continue; }
+
+            g_Yytk->CallBuiltin("array_set", { *A[8], RValue((double)tipEk), RValue(oran) });
+
+            // AYNI arguman dizisi, yalnizca damla tipi degisiyor.  Kapi ve zar vanilya.
+            RValue tipRV((double)tipEk);
+            A2[2] = &tipRV;
+            RValue r2;
+            if (g_OrigLoadDrops) g_OrigLoadDrops(S, O, r2, argc, A2.data());
+            InterlockedIncrement(&g_DkRolls);
+
+            // Izi sil - ayni cerceve sonraki damla tipleri icin kullaniliyor.
+            g_Yytk->CallBuiltin("array_set", { *A[8], RValue((double)tipEk), RValue(0.0) });
+        }
+    } catch (...) {}
+    return res;
+}
+
+static void DungeonKeyCmd(const std::string& rest)
+{
+    std::string a1, a2; a1 = FirstToken(rest, a2);
+    std::string v = Lower(a1);
+    while (!v.empty() && (v.back()=='\r'||v.back()=='\n'||v.back()==' ')) v.pop_back();
+
+    if (v == "off") { g_DkOn = false; Out("dungeonkey: KAPALI"); return; }
+
+    if (v == "stat") {
+        std::string o = (g_DkChance < 0.0)
+            ? ("auto x" + std::to_string((int)g_DkChanceMult))
+            : std::to_string((int)g_DkChance);
+        std::string liste;
+        for (int x : g_DkTipler) { if (!liste.empty()) liste += ","; liste += std::to_string(x); }
+        Out(std::string("dungeonkey: ") + (g_DkOn ? "ACIK" : "kapali")
+            + " | tipler=" + (liste.empty() ? std::string("(bos)") : liste)
+            + " | oran=" + o
+            + " | ek zar=" + std::to_string(g_DkRolls)
+            + " | yerli(dokunulmadi)=" + std::to_string(g_DkNative));
+        return;
+    }
+
+    if (v == "add" || v == "del") {
+        try {
+            int n = std::stoi(a2);
+            if (v == "add") g_DkTipler.insert(n); else g_DkTipler.erase(n);
+            std::string liste;
+            for (int x : g_DkTipler) { if (!liste.empty()) liste += ","; liste += std::to_string(x); }
+            Out("dungeonkey tipler: " + (liste.empty() ? std::string("(bos)") : liste));
+        } catch (...) { Out("dungeonkey: kullanim -> dungeonkey add 7"); }
+        return;
+    }
+
+    if (v == "list") {
+        std::string liste;
+        for (int x : g_DkTipler) { if (!liste.empty()) liste += ","; liste += std::to_string(x); }
+        Out("dungeonkey tipler: " + (liste.empty() ? std::string("(bos)") : liste));
+        return;
+    }
+
+    if (v == "chance") {
+        // a2 "autox 50" gibi iki parca gelebilir - once ayir, sonra karsilastir.
+        std::string carpanStr;
+        std::string c = Lower(FirstToken(a2, carpanStr));
+        while (!c.empty() && (c.back()=='\r'||c.back()=='\n'||c.back()==' ')) c.pop_back();
+        if (c == "auto" || c.empty()) { g_DkChance = -1.0; g_DkChanceMult = 1.0; Out("dungeonkey: oran = auto (canavarin kendi anahtar orani)"); }
+        else if (c == "autox") {
+            double m = 1.0;
+            try { m = std::stod(carpanStr); } catch (...) {}
+            if (m < 1.0) m = 1.0;
+            g_DkChance = -1.0; g_DkChanceMult = m;
+            char b[120]; sprintf_s(b, "dungeonkey: oran = auto x%.0f (dis kapi carpani)", m);
+            Out(b);
+        }
+        else {
+            try { g_DkChance = std::stod(c); Out("dungeonkey: oran = " + c); }
+            catch (...) { Out("dungeonkey: kullanim -> dungeonkey chance auto|60"); }
+        }
+        return;
+    }
+
+    if (v == "probe") {
+#ifdef FORGEPACT_RELEASE
+        Out("dungeonkey probe: yayin derlemesinde yok");
+#else
+        try { g_DkProbe = std::stoi(a2); } catch (...) { g_DkProbe = 60; }
+        if (!g_OrigLoadDrops) HookOneScript("LoadDrops", "fp_loaddrops", (PVOID)Hook_LoadDrops, &g_OrigLoadDrops);
+        Out("dungeonkey probe: " + std::to_string(g_DkProbe) + " cagri -> bp_ipc\\loaddrops.txt");
+#endif
+        return;
+    }
+
+    if (!g_OrigLoadDrops)
+        HookOneScript("LoadDrops", "fp_loaddrops", (PVOID)Hook_LoadDrops, &g_OrigLoadDrops);
+    g_DkOn = (g_OrigLoadDrops != nullptr);
+    Out(std::string("dungeonkey: ") + (g_DkOn ? "ACIK (dogal zar, zorlama yok)" : "kanca kurulamadi"));
+}
+
 static void NiCall(const std::string& script, const std::string& obj, int n)
 {
     try {
@@ -2780,7 +3199,14 @@ static void RunCommand(const std::string& line)
         try { g_EnemyMultAll = std::stoi(rest); Out("enemyall -> " + std::to_string(g_EnemyMultAll)); }
         catch (...) { Out("enemyall: bad value"); }
     } else if (lc == "density") {
-        try { g_CreatorMult = std::stoi(rest); Out("density (creator mult) -> " + std::to_string(g_CreatorMult)); }
+        try {
+            double d = std::stod(rest);
+            if (d < 1.0) d = 1.0;
+            g_CreatorMult = d;
+            g_CreatorFrac = 0.0;          // kademe degisince birikim sifirlanir
+            char db[64]; sprintf_s(db, "%.2g", g_CreatorMult);
+            Out(std::string("density (creator mult) -> ") + db);
+        }
         catch (...) { Out("density: bad value"); }
     } else if (lc == "dropstats") {
         DropStats();
@@ -2816,7 +3242,7 @@ static void RunCommand(const std::string& line)
         }
     } else if (lc == "proof") {
         char b[200];
-        sprintf_s(b, "PROOF: density=x%d | extra spawners created=%ld | extra enemies created=%ld",
+        sprintf_s(b, "PROOF: density=x%g | extra spawners created=%ld | extra enemies created=%ld",
             g_CreatorMult, g_ExtraCreators, g_ExtraEnemies);
         Out(b);
     } else if (lc == "clearlog") {
@@ -2922,6 +3348,10 @@ static void RunCommand(const std::string& line)
         Out("budget: " + std::to_string(g_OrnekButce) + " ornek (0=sinirsiz)"
             + " | su an=" + std::to_string(ToplamOrnek())
             + " | butce yuzunden atilan=" + std::to_string(g_ButceIptal));
+    } else if (lc == "droprate") {
+        DropRateCmd(rest);
+    } else if (lc == "dungeonkey") {
+        DungeonKeyCmd(rest);
     } else if (lc == "multname") {
         std::string nm, num; nm = FirstToken(rest, num);
         while (!num.empty() && (num.back()=='\r'||num.back()=='\n'||num.back()==' ')) num.pop_back();
@@ -3122,16 +3552,16 @@ void FrameCallback(FWFrame& FrameContext)
     }
     f6p = f6;
     if (f8 && !f8p) {
-        g_CreatorMult = (g_CreatorMult > 1) ? 1 : 3;
-        if (g_Yytk) g_Yytk->Print(CM_LIGHTGREEN, "[BloodPact] Monster density x%d", g_CreatorMult);
+        g_CreatorMult = (g_CreatorMult > 1.0) ? 1.0 : 3.0;
+        if (g_Yytk) g_Yytk->Print(CM_LIGHTGREEN, "[BloodPact] Monster density x%g", g_CreatorMult);
     }
     if (f9 && !f9p) {
-        if (g_CreatorMult < 20) g_CreatorMult++;
-        if (g_Yytk) g_Yytk->Print(CM_LIGHTGREEN, "[BloodPact] Monster density x%d", g_CreatorMult);
+        if (g_CreatorMult < 20.0) g_CreatorMult += 0.5;
+        if (g_Yytk) g_Yytk->Print(CM_LIGHTGREEN, "[BloodPact] Monster density x%g", g_CreatorMult);
     }
     if (f7 && !f7p) {
-        if (g_CreatorMult > 1) g_CreatorMult--;
-        if (g_Yytk) g_Yytk->Print(CM_LIGHTGREEN, "[BloodPact] Monster density x%d", g_CreatorMult);
+        if (g_CreatorMult > 1.0) g_CreatorMult -= 0.5;
+        if (g_Yytk) g_Yytk->Print(CM_LIGHTGREEN, "[BloodPact] Monster density x%g", g_CreatorMult);
     }
     f8p = f8; f9p = f9; f7p = f7;
 

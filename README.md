@@ -8,8 +8,9 @@ panel; settings are applied live while the game runs and re-applied on every lau
 
 | Feature | What it does |
 | --- | --- |
-| **Monster Density** | 1–5× more enemies, through the game's own `Enemy_Creator` spawners |
+| **Monster Density** | 1–5× more enemies in 0.5 steps (1, 1.5, 2 …), through the game's own `Enemy_Creator` spawners |
 | **Special Content** | Rift Portals, Battlefields, Cursed Orbs, Summon Portals, Chaos Pillars, Chaos Tower — up to 100× per zone |
+| **Drop Rates** | Gold, Dungeon Keys, Angelic Keys, Chaos + Crystal Keys, Bifröst Key and Relics — up to 100× |
 | **Full Map Reveal** | Clears fog of war in every zone (toggleable; F5 in-game also toggles it) |
 | **Auto-apply** | Saved settings are re-sent every time the game starts |
 
@@ -21,6 +22,18 @@ High multipliers are throttled automatically. Extra spawn markers are queued and
 a few per frame instead of all at once, and creation pauses while the room is at its
 heaviest (during a zone load the game briefly passes through 20–30k instances before
 settling). Without this, high settings crashed the game on zone entry.
+
+Drops are **not forced**. Every multiplier feeds the game's own dice: an item's
+`droprate.base` is a "1 in N" value, so `x5` divides it by five — five times more
+likely, still random, still capped by the game's own rules. The vanilla value is stored
+on first touch, so moving the slider twice never compounds. `x1` restores vanilla
+exactly.
+
+Key and Relic families are also gated a second time: outside their home zone the game
+rolls their drop type at zero chance, so the item can never come up no matter how good
+its rate is. ForgePact opens that outer roll for the families you enable — using the
+monster's **own** key chance as the base, never a fixed number. Families the zone
+already rolls natively are left untouched.
 
 Special content is spawned through the game's **own** mechanic: ForgePact multiplies
 the `Spawn_<Name>_obj` marker objects and opens the shared `eSt` gate, then the game
@@ -84,6 +97,9 @@ load there anyway.
 - `docs/S10-special-content-notes.md` — the Season 10 reverse-engineering log: mechanic
   addresses, gate behaviour, measured crash thresholds, and every approach that did not
   work (written in Turkish).
+- `docs/dungeon-key-research.md` — how the two-stage key/relic drop system was found:
+  the outer `LoadDrops` chance gate, the per-item `droprate.base` roll, and why keys
+  outside their home zone can never drop without opening the outer gate (Turkish).
 
 ## 📜 License — AGPL-3.0
 

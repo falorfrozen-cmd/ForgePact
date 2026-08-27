@@ -39,6 +39,17 @@ def main() -> int:
     if eksik:
         print("HATA: modfiles_shipped eksik ->", ", ".join(eksik)); return 1
 
+    # Paketteki eklenti, kaynaktan derlenen son yayin surumuyle ayni mi?
+    # Ayni degilse Install basan kullanici ESKI eklentiyi kurar ve bugunku
+    # komutlar taninmaz - bu bir kez yasandi, oyun acilista coktu.
+    ship = ROOT / "plugin_build" / "BloodPactPlugin_ship.dll"
+    paket = MODFILES / "BloodPactPlugin.dll"
+    if ship.is_file() and paket.is_file() and ship.read_bytes() != paket.read_bytes():
+        print("HATA: modfiles_shipped/BloodPactPlugin.dll, plugin_build/BloodPactPlugin_ship.dll")
+        print("      ile ayni degil.  Once plugin_build/derle.bat yayin calistirip")
+        print("      cikan DLL'i modfiles_shipped'e kopyalayin.")
+        return 1
+
     try:
         import PyInstaller  # noqa: F401
     except ImportError:

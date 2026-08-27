@@ -38,6 +38,20 @@ SPAWNERS = [
     ("chaospillars", 4662, "Chaos Pillars", 100),
     ("chaostower", 4663, "Chaos Tower (one per zone)", 1),
 ]
+# Anahtar aileleri.  ucuncu alan LoadDrops damla tipi; None ise o ailenin
+# kapisi zaten acik ve yalnizca oran ayarlanir.
+KEYS = [
+    ("dungeon", "Dungeon Keys", 12),
+    ("angelic", "Angelic Keys", 16),
+    ("chaos", "Chaos + Crystal Keys", None),
+    ("bifrost", "Bifrost Key", None),
+    ("relic", "Relics", 41),
+]
+
+DROPS = [
+    ("gold", "Gold", ""),
+]
+
 DEFAULTS = {
     "game_exe": DEFAULT_EXE,
     "density": 3,
@@ -45,6 +59,8 @@ DEFAULTS = {
     "auto_apply": True,
     "map_reveal": True,
     "spawners": {k: 1 for k, *_ in SPAWNERS},
+    "drops": {k: 1 for k, *_ in DROPS},
+    "keys": {k: 1 for k, *_ in KEYS},
 }
 
 _lock = threading.Lock()
@@ -56,7 +72,7 @@ def load_cfg() -> dict:
         try:
             saved = json.loads(CONFIG.read_text(encoding="utf-8"))
             for k, v in saved.items():
-                if k == "spawners":
+                if k in ("spawners", "drops", "keys"):
                     cfg[k] = {**cfg[k], **v}
                 else:
                     cfg[k] = v
@@ -82,8 +98,9 @@ def ipc_dir(cfg=None) -> Path:
 # Keyed by exe size; YYTK validates the size, so a stale cache (different exe build) is
 # safely ignored (it just falls back to a one-time scan + re-caches). Known patched build:
 KNOWN_RI_CACHE = {
-    303584768: "303584768 208133041 208134210\n",   # S10, AuriePatcher'li kopya (dogrulandi 26.08.2026)
-    309551616: "309551616 207703889 207705042\n",   # onceki derleme
+    303708672: "303708672 208216097 208217266\n",   # 7.0.30, AuriePatcher'li (dogrulandi 26.08.2026)
+    303584768: "303584768 208133041 208134210\n",   # onceki S10 derlemesi, AuriePatcher'li
+    309551616: "309551616 207703889 207705042\n",   # daha eski
 }
 
 
@@ -275,10 +292,30 @@ def send_cmds(lines: list, cfg=None) -> str:
 
 
 def build_cmds(cfg: dict) -> list:
-    out = [f"density {min(5, cfg['density']) if cfg.get('density_on') else 1}"]
+    d = min(5.0, float(cfg.get("density", 1))) if cfg.get("density_on") else 1.0
+    out = [f"density {d:g}"]
     out.append(f"reveal {1 if cfg.get('map_reveal', True) else 0}")
     for key, *_ in SPAWNERS:
         out.append(f"specialrate {key} {int(cfg['spawners'].get(key, 1))}")
+    for key, *_ in DROPS:
+        out.append(f"dropmult {key} {int(cfg['drops'].get(key, 1))}")
+
+    # Anahtarlar: once kapi (yalnizca tipi olanlar), sonra oran.
+    ayar = cfg.get("keys", {})
+    kapili = [tip for k, _l, tip in KEYS if tip and int(ayar.get(k, 1)) > 1]
+    for _k, _l, tip in KEYS:
+        if tip:
+            out.append(f"dungeonkey del {tip}")
+    for tip in kapili:
+        out.append(f"dungeonkey add {tip}")
+    # Kaydirac IKI kademeyi birden surer: dis kapi (kac ölümde zar atilir)
+    # ve ic zar (secilen anahtarin nadirligi).  Yalnizca ikincisi surulunce
+    # x100'de bile gorunur fark olmuyordu - olculdu: 338 zar -> 1 anahtar.
+    enYuksek = max([int(ayar.get(k, 1)) for k, *_ in KEYS] + [1])
+    out.append(f"dungeonkey chance autox {enYuksek}")
+    out.append("dungeonkey on" if kapili else "dungeonkey off")
+    for k, _l, _tip in KEYS:
+        out.append(f"droprate group {k} {max(1, int(ayar.get(k, 1)))}")
     return out
 
 
@@ -480,6 +517,8 @@ class H(BaseHTTPRequestHandler):
                         "eacStatus": eac_status(_exe) if _exe.exists() else "",
                         "chain": mod_chain(cfg),
                         "spawners": [[k, i, l, mx] for k, i, l, mx in SPAWNERS],
+                        "drops": [[k, l, h] for k, l, h in DROPS],
+                        "keys": [[k, l] for k, l, _t in KEYS],
                         "lastApplied": LAST["applied"], "queued": LAST["queued"]})
         else:
             self._json({"err": "not found"}, 404)
@@ -492,17 +531,29 @@ class H(BaseHTTPRequestHandler):
             cfg = load_cfg()
             if u.path == "/api/set":
                 sec, key, val = body.get("section"), body["key"], body["value"]
-                if sec == "spawners":
+                if sec == "keys":
+                    cfg[sec][key] = max(1, min(100, int(val)))
+                elif sec == "drops":
+                    cfg[sec][key] = max(1, min(100, int(val)))
+                elif sec == "spawners":
                     tavan = next((mx for k, _i, _l, mx in SPAWNERS if k == key), 100)
                     cfg[sec][key] = max(1, min(tavan, int(val)))
                 elif key == "density":
-                    cfg["density"] = max(1, min(5, int(val)))
+                    # 0.5 kademeli: 1, 1.5, 2 ...  Tamsayilar float("3") -> 3.0 olarak
+                    # saklanir; eklenti %g ile yazdigi icin "x3" gorunur.
+                    d = max(1.0, min(5.0, float(val)))
+                    cfg["density"] = round(d * 2) / 2
                 elif key in ("density_on", "auto_apply", "map_reveal"):
                     cfg[key] = bool(val)
                 save_cfg(cfg)
                 live = ""
                 if game_running(cfg):
-                    if sec == "spawners":
+                    if sec == "keys":
+                        # Kapi + oran birlikte gonderilmeli; tam sozlesmeyi uret.
+                        send_cmds(build_cmds(cfg), cfg)
+                    elif sec == "drops":
+                        send_cmds([f"dropmult {key} {int(val)}"], cfg)
+                    elif sec == "spawners":
                         send_cmds([f"specialrate {key} {int(val)}"], cfg)
                     elif key in ("density", "density_on"):
                         send_cmds([f"density {cfg['density'] if cfg['density_on'] else 1}"], cfg)
@@ -652,7 +703,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
   <div class="row">
     <span class="lbl">Density multiplier</span>
     <label class="switch"><input type="checkbox" id="den_on"><span class="sl"></span></label>
-    <input type="range" id="den" min="1" max="5" step="1">
+    <input type="range" id="den" min="1" max="5" step="0.5">
     <span class="val" id="denval">x3</span>
   </div>
 </div>
@@ -661,6 +712,17 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
   <h2>&#127757; Special Content Spawns</h2>
   <div class="hint">Multiplies the game's own spawn markers, so the game places and runs each mechanic itself - nothing is hand-placed. Higher = more of that content per zone. Applies to newly loaded zones. (The Abyss is not listed: it sits behind a discovery gate that is not solved yet.)</div>
   <div id="spawners"></div>
+</div>
+
+<div class="card">
+  <h2>&#128176; Drop Rates</h2>
+  <div class="hint">All of these use the game's own dice - <b>nothing is forced</b>.
+  <b>x5 means five times more likely than vanilla</b>; <b>off</b> (x1) leaves that drop completely untouched.
+  Applies immediately, no zone reload needed.<br>
+  Keys and Relics additionally open the game's own roll for families it normally
+  skips outside their home zones.</div>
+  <div id="drops"></div>
+  <div id="keys"></div>
 </div>
 
 <div class="card">
@@ -699,6 +761,10 @@ async function boot(){
   document.getElementById('mapval').className='val '+(mr?'':'off');
   document.getElementById('exepath').value=c.game_exe||'';
   document.getElementById('spawners').innerHTML=ST.spawners.map(([k,i,l,mx])=>row('spawners',k,l,c.spawners[k]||1,'',mx)).join('');
+  document.getElementById('keys').innerHTML=ST.keys.map(([k,l])=>
+    row('keys',k,l,(c.keys&&c.keys[k])||1,'',100)).join('');
+  document.getElementById('drops').innerHTML=ST.drops.map(([k,l,h])=>
+    row('drops',k,l,(c.drops&&c.drops[k])||1,h?` <span class="tag">${h}</span>`:'')).join('');
   bind(); status();
 }
 function status(){
