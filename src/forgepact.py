@@ -302,17 +302,22 @@ def build_cmds(cfg: dict) -> list:
 
     # Anahtarlar: once kapi (yalnizca tipi olanlar), sonra oran.
     ayar = cfg.get("keys", {})
-    kapili = [tip for k, _l, tip in KEYS if tip and int(ayar.get(k, 1)) > 1]
+    kapili = [(tip, int(ayar.get(k, 1))) for k, _l, tip in KEYS
+              if tip and int(ayar.get(k, 1)) > 1]
     for _k, _l, tip in KEYS:
         if tip:
             out.append(f"dungeonkey del {tip}")
-    for tip in kapili:
-        out.append(f"dungeonkey add {tip}")
+    for tip, carpan in kapili:
+        out.append(f"dungeonkey add {tip} {carpan}")
     # Kaydirac IKI kademeyi birden surer: dis kapi (kac ölümde zar atilir)
-    # ve ic zar (secilen anahtarin nadirligi).  Yalnizca ikincisi surulunce
+    # ve ic zar (secilen esyanin nadirligi).  Yalnizca ikincisi surulunce
     # x100'de bile gorunur fark olmuyordu - olculdu: 338 zar -> 1 anahtar.
-    enYuksek = max([int(ayar.get(k, 1)) for k, *_ in KEYS] + [1])
-    out.append(f"dungeonkey chance autox {enYuksek}")
+    #
+    # Kapi carpani HER AILEYE AYRI gonderilir.  Onceki surum tek ortak deger
+    # kullaniyor ve ona tum kaydiraclarin EN YUKSEGINI veriyordu: Dungeon
+    # Keys'i 20 yapan biri Relic'i 2'de biraksa bile relic kapisi 20 ile
+    # aciliyordu.  Kaydirac yalan soyluyordu ve relic'ler sel gibi dusuyordu.
+    out.append("dungeonkey chance auto")
     out.append("dungeonkey on" if kapili else "dungeonkey off")
     for k, _l, _tip in KEYS:
         out.append(f"droprate group {k} {max(1, int(ayar.get(k, 1)))}")

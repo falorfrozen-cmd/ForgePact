@@ -988,15 +988,54 @@ static RValue& HookGetBloodPactInfo(CInstance* Self, CInstance* Other, RValue& R
 // Auto-decode: log any item struct (return value or arg) that a drop/create passes through.
 // The item here is REAL + fully computed (n-array + computed stats + name) -> full decode.
 static std::unordered_set<std::string> g_SeenDrop;
+
+#ifndef FORGEPACT_RELEASE
+// typemap taramasi sirasinda hangi damla tipinin islendigini soyler (-1 = tarama yok).
+// LoadDrops bir sey DONDURMUYOR ve birikme listesi kullanmiyor - esyayi dogrudan
+// yaratiyor.  O yuzden tipi esyaya baglamanin tek guvenilir yolu, yaratim
+// kancalarini o an aktif olan tiple etiketlemek.
+static int g_TypeMapAktifTip = -1;
+static std::vector<std::string> g_TypeMapAdlar;
+// Kanca hic atesledi mi?  "Esya uretilmedi" ile "yaratim sonraki kareye
+// ertelendi" farkini ayirt etmek icin - ikisi de bos liste veriyor ama
+// birinde sayac artiyor, digerinde artmiyor.
+static int g_TypeMapKancaSayaci = 0;
+
+// Esyanin gorunen ic adi: itemInfoStruct["28"]
+static std::string EsyaAdiJson(const std::string& js)
+{
+    size_t p = js.find("\"28\":");
+    if (p == std::string::npos) return "";
+    p = js.find('"', p + 5);
+    if (p == std::string::npos) return "";
+    size_t q = js.find('"', p + 1);
+    if (q == std::string::npos) return "";
+    return js.substr(p + 1, q - p - 1);
+}
+#endif
+
 static void LogDrop(const char* fn, RValue& res, int argc, RValue** A)
 {
     try {
+#ifndef FORGEPACT_RELEASE
+        if (g_TypeMapAktifTip >= 0) g_TypeMapKancaSayaci++;
+#endif
         CInstance* g = nullptr; g_Yytk->GetGlobalInstance(&g);
         auto tryLog = [&](RValue* v) {
             if (!v || v->m_Kind != VALUE_OBJECT) return;
             RValue js; g_Yytk->CallBuiltinEx(js, "json_stringify", g, g, { *v });
             std::string s = js.ToString();
             if (s.find("itemDefinitionStruct") == std::string::npos) return; // must be an item
+#ifndef FORGEPACT_RELEASE
+            if (g_TypeMapAktifTip >= 0) {
+                // Tarama modu: tekillestirmeyi ATLA.  g_SeenDrop tum oturum
+                // boyunca birikiyor; daha once gorulen bir esya elenirse o tip
+                // "hicbir sey uretmedi" gibi gorunur ve harita yanlis cikar.
+                std::string ad = EsyaAdiJson(s);
+                g_TypeMapAdlar.push_back(std::string(fn) + ":" + (ad.empty() ? "(adsiz)" : ad));
+                return;
+            }
+#endif
             if (!g_SeenDrop.insert(s).second) return;
             std::ofstream of(IPC_DIR + "\\itemdrops.jsonl", std::ios::app);
             of << "{\"fn\":\"" << fn << "\",\"it\":" << s << "}\n";
@@ -1026,6 +1065,44 @@ static void LogDrop(const char* fn, RValue& res, int argc, RValue** A)
         BP_LOGDROP(#NAME, _res, argc, A); \
         return _res; \
     }
+
+// ===== Oyuncu istatistigi carpanlari =====================================
+// Blood Pact'in Magic Find / Attack Speed / Cast Rate / Experience gain /
+// Movement Speed / Total Damage satirlari bir DEPODA durmuyor.  Oyuncunun
+// uzerinde boyle degiskenler yok (olculdu: iget magic_find -> "boyle bir
+// degisken yok"), pSt dizisi de deger degil tutamac tutuyor.
+//
+// Her stat icin bir Stat<Ad> betigi var ve oyun degeri her ihtiyac duydugunda
+// oradan okuyor.  O yuzden depoyu aramak yerine DONEN DEGERI carpiyoruz -
+// tek nokta, tum kullanicilari birden etkiliyor.
+//
+// Carpan 1.0 iken kanca hicbir sey yapmaz; vanilya davranis birebir korunur.
+
+// Carpan her kanca icin AYRI bir double.  Onceki surum std::map'te metin
+// anahtariyla ariyordu; bu her cagrida gecici bir std::string kurup bellek
+// ayiriyordu.  Bu fonksiyonlar oyunun en sicak yollarinda (olculdu: tek
+// oturumda StatMovementSpeed 6083, StatTotalDamage 2350 cagri), oraya
+// tahsis koymak dogru degil.
+#define STAT_HOOK(NAME) \
+    static PFUNC_YYGMLScript g_OrigStat_##NAME = nullptr; \
+    static volatile long g_StatSayac_##NAME = 0; \
+    static double g_StatCarpan_##NAME = 1.0; \
+    static RValue& HookStat_##NAME(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) { \
+        InterlockedIncrement(&g_StatSayac_##NAME); \
+        RValue& _r = g_OrigStat_##NAME ? g_OrigStat_##NAME(S, O, R, argc, A) : R; \
+        if (g_StatCarpan_##NAME != 1.0) { \
+            try { _r = RValue(_r.ToDouble() * g_StatCarpan_##NAME); } catch (...) {} \
+        } \
+        return _r; \
+    }
+
+STAT_HOOK(StatMagicFind)
+STAT_HOOK(StatAttackSpeed)
+STAT_HOOK(StatFasterCastRate)
+STAT_HOOK(StatExperienceGain)
+STAT_HOOK(StatMovementSpeed)
+STAT_HOOK(StatTotalDamage)
+STAT_HOOK(StatExtraGold)
 
 DROP_HOOK(DropRelic)
 DROP_HOOK(DropBossGems)
@@ -1656,6 +1733,128 @@ static void GJson(const std::string& name)
         std::ofstream f(path, std::ios::binary); f << js;
         Out("gjson '" + name + "' (" + Describe(v) + ") -> " + std::to_string(js.size()) + " bytes -> gjson.json");
     } catch (...) { Out("gjson EXCEPTION on " + name); }
+}
+
+#ifndef FORGEPACT_RELEASE
+// ---- Blood Pact degerlerini avlamak icin arama komutlari (yalnizca dev derleme) ----
+//
+// Bulunan gercek: blood_pact_* isimlerinin HICBIRI degisken degil; hepsi
+// ceviri anahtari (etiket metni).  Yani modifiye degerleri baska adlarla,
+// buyuk ihtimalle bir struct icinde duruyor.  Asagidakiler o yuzeyi tek
+// oturumda dokmek icin.
+
+// GameMaker'da global kapsam -5 numarali sahte ornek.  variable_instance_get_names
+// onu kabul ediyor, boylece TUM global degisken adlarini alabiliyoruz.
+static void GlobalNames(const std::string& filter)
+{
+    try {
+        RValue names = g_Yytk->CallBuiltin("variable_instance_get_names", { RValue(-5.0) });
+        RValue cnt = g_Yytk->CallBuiltin("array_length", { names });
+        int n = (int)cnt.ToDouble();
+        std::string flt = Lower(filter);
+        std::string line; int shown = 0;
+        for (int i = 0; i < n; i++) {
+            RValue nm = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) });
+            std::string s = nm.ToString();
+            if (!flt.empty() && Lower(s).find(flt) == std::string::npos) continue;
+            line += s + " ";
+            if (++shown % 8 == 0) { Out("  " + line); line.clear(); }
+        }
+        if (!line.empty()) Out("  " + line);
+        Out("gnames: " + std::to_string(shown) + " / " + std::to_string(n) + " global"
+            + (flt.empty() ? "" : (", filtre '" + filter + "'")));
+    } catch (...) { Out("gnames EXCEPTION"); }
+}
+
+// Oyuncunun bir ornek degiskenini json'a dokup dosyaya yazar.  Stat struct'lari
+// icin: once inames ile adi bul, sonra ijson ile icini gor.
+static void PlayerVarJson(const std::string& var)
+{
+    try {
+        RValue pid = GetPlayerId();
+        if (pid.ToDouble() < 0) { Out("ijson: oyuncu yok"); return; }
+        RValue ex = g_Yytk->CallBuiltin("variable_instance_exists", { pid, RValue(var) });
+        if (!ex.ToBoolean()) { Out("ijson '" + var + "' -> oyuncuda boyle bir degisken yok"); return; }
+        RValue v = g_Yytk->CallBuiltin("variable_instance_get", { pid, RValue(var) });
+        RValue s = g_Yytk->CallBuiltin("json_stringify", { v });
+        std::string js = s.ToString();
+        std::string path = IPC_DIR + "\\ijson_" + var + ".json";
+        std::ofstream f(path, std::ios::binary); f << js;
+        Out("ijson '" + var + "' (" + Describe(v) + ") -> " + std::to_string(js.size())
+            + " bayt -> ijson_" + var + ".json");
+    } catch (...) { Out("ijson EXCEPTION on " + var); }
+}
+
+// Bir nesnenin ornek degiskenini json'a doker (oyuncu disindaki nesneler icin).
+static void ObjVarJson(const std::string& objName, const std::string& var)
+{
+    try {
+        RValue oi = g_Yytk->CallBuiltin("asset_get_index", { RValue(objName) });
+        RValue id = g_Yytk->CallBuiltin("instance_find", { oi, RValue(0.0) });
+        if (id.ToDouble() < 0) { Out("ojson: " + objName + " ornegi yok"); return; }
+        RValue ex = g_Yytk->CallBuiltin("variable_instance_exists", { id, RValue(var) });
+        if (!ex.ToBoolean()) { Out("ojson '" + var + "' -> " + objName + " icinde yok"); return; }
+        RValue v = g_Yytk->CallBuiltin("variable_instance_get", { id, RValue(var) });
+        RValue s = g_Yytk->CallBuiltin("json_stringify", { v });
+        std::string js = s.ToString();
+        std::string path = IPC_DIR + "\\ojson_" + objName + "_" + var + ".json";
+        std::ofstream f(path, std::ios::binary); f << js;
+        Out("ojson " + objName + "." + var + " (" + Describe(v) + ") -> "
+            + std::to_string(js.size()) + " bayt -> ojson_" + objName + "_" + var + ".json");
+    } catch (...) { Out("ojson EXCEPTION"); }
+}
+#endif
+
+// stat <ad> <carpan> | stat list  -- oyuncu istatistigi carpanlari
+static void StatCmd(const std::string& rest)
+{
+    std::string a1, a2; a1 = FirstToken(rest, a2);
+    while (!a1.empty() && std::isspace((unsigned char)a1.back())) a1.pop_back();
+    while (!a2.empty() && std::isspace((unsigned char)a2.back())) a2.pop_back();
+
+    struct Kayit { const char* ad; const char* kimlik; PVOID kanca; PFUNC_YYGMLScript* orij; volatile long* sayac; double* carpan; };
+    static const Kayit kTablo[] = {
+        { "StatMagicFind", "fp_st_mf",      (PVOID)HookStat_StatMagicFind,      &g_OrigStat_StatMagicFind, &g_StatSayac_StatMagicFind, &g_StatCarpan_StatMagicFind },
+        { "StatAttackSpeed", "fp_st_as",    (PVOID)HookStat_StatAttackSpeed,    &g_OrigStat_StatAttackSpeed, &g_StatSayac_StatAttackSpeed, &g_StatCarpan_StatAttackSpeed },
+        { "StatFasterCastRate", "fp_st_fcr", (PVOID)HookStat_StatFasterCastRate, &g_OrigStat_StatFasterCastRate, &g_StatSayac_StatFasterCastRate, &g_StatCarpan_StatFasterCastRate },
+        { "StatExperienceGain", "fp_st_xp", (PVOID)HookStat_StatExperienceGain, &g_OrigStat_StatExperienceGain, &g_StatSayac_StatExperienceGain, &g_StatCarpan_StatExperienceGain },
+        { "StatMovementSpeed", "fp_st_ms",  (PVOID)HookStat_StatMovementSpeed,  &g_OrigStat_StatMovementSpeed, &g_StatSayac_StatMovementSpeed, &g_StatCarpan_StatMovementSpeed },
+        { "StatTotalDamage", "fp_st_td",    (PVOID)HookStat_StatTotalDamage,    &g_OrigStat_StatTotalDamage, &g_StatSayac_StatTotalDamage, &g_StatCarpan_StatTotalDamage },
+        { "StatExtraGold", "fp_st_eg",      (PVOID)HookStat_StatExtraGold,      &g_OrigStat_StatExtraGold, &g_StatSayac_StatExtraGold, &g_StatCarpan_StatExtraGold },
+    };
+
+    if (Lower(a1) == "list" || a1.empty()) {
+        for (const auto& k : kTablo) {
+            char b[160];
+            sprintf_s(b, "  %-20s x%.2f  %-12s cagri=%ld", k.ad, *k.carpan,
+                      *k.orij ? "kanca kurulu" : "kanca yok", *k.sayac);
+            Out(b);
+        }
+        return;
+    }
+
+    // Kisa ad da kabul et: "magicfind" -> "StatMagicFind"
+    std::string ara = Lower(a1);
+    const Kayit* hedef = nullptr;
+    for (const auto& k : kTablo) {
+        std::string tam = Lower(k.ad);
+        if (ara == tam || ara == tam.substr(4)) { hedef = &k; break; }
+    }
+    if (!hedef) { Out("stat: bilinmeyen ad '" + a1 + "'  (stat list ile bak)"); return; }
+
+    double c = 1.0;
+    try { c = std::stod(a2); } catch (...) { Out("stat: carpan sayi olmali"); return; }
+    if (c < 0.0) c = 0.0;
+
+    if (!*hedef->orij) {
+        // Betik adindaki "gml_Script_" onekini HookOneScript kendisi ekliyor.
+        HookOneScript(hedef->ad, hedef->kimlik, hedef->kanca, hedef->orij);
+        if (!*hedef->orij) { Out(std::string("stat: ") + hedef->ad + " kancasi kurulamadi"); return; }
+    }
+    *hedef->carpan = c;
+    char b[160];
+    sprintf_s(b, "stat %s -> x%.2f", hedef->ad, c);
+    Out(b);
 }
 
 // itemjson <path> -- json_parse file -> InitItemFromJson -> json_stringify result to bp_ipc\iteminfo.json
@@ -2687,6 +2886,82 @@ static double VanilyaBase(int kategori, int indeks, RValue& st, RValue& drOut)
     return it->second;
 }
 
+// --- Blood Pact aileleri: ada gore eslesen genel gruplar -------------------
+// Eski gruplar sabit indeks listesi tasiyordu (bifrost={2} gibi).  Yeni
+// aileler onlarca esya iceriyor ve indeksleri oyun guncellemesinde kayiyor,
+// o yuzden ADA gore esliyoruz - isimler surumler arasi sabit.
+//
+// tip = LoadDrops damla tipi (2026-08-27 taramasinda olculdu).
+// tip -1 = o ailenin dis kapisi zaten acik, yalnizca ic zar carpilir.
+struct DropGrup {
+    const char* ad;
+    int         kategori;
+    const char* parcalar;   // virgulle ayrilmis; esya adi bunlardan birini ICERIYORSA sayilir
+    int         tip;
+};
+static const DropGrup kDropGruplar[] = {
+    // Sondaki '$' = ad bununla BITMELI.  Duz icerme yetmiyordu:
+    //   "_rune" -> socketable_orb_of_runeforge'u da yakaliyordu (o bir orb)
+    //   "satanic" -> 6 tane material_salvage_*_satanic_dust'i da yakaliyordu
+    { "rune",       15, "_rune$",                                                    4 },
+    { "orb",        15, "socketable_orb",                                           37 },
+    { "bossgem",    15, "socketable_gem",                                           -1 },
+    { "scrollofra", 13, "scroll_of_ra",                                             34 },
+    { "primeevil",  13, "gurags_,deaths_,damiens_,anubis_,karp_kings_,satans_horn", 41 },
+    { "dimshard",   13, "dimensional_shard",                                        43 },
+    { "battlefrag", 13, "battle_fragment",                                          25 },
+    { "colosfrag",  13, "colosseum_fragment",                                       38 },
+    { "satanic",    14, "material_satanic_",                                        39 },
+};
+
+static const DropGrup* DropGrupBul(const std::string& ad)
+{
+    for (const auto& g : kDropGruplar) if (ad == g.ad) return &g;
+    return nullptr;
+}
+
+// Adi parcalardan birini iceren esyalarin ic zarini carpar.
+// Donen: dokunulan esya sayisi.  ornekEski/ornekYeni ilk esyanin degerleri.
+static int DropGrupUygula(const DropGrup& g, double carpan, double& ornekEski, double& ornekYeni)
+{
+    std::vector<std::string> parcalar;
+    {
+        std::string p = g.parcalar, tek;
+        std::stringstream ss(p);
+        while (std::getline(ss, tek, ',')) if (!tek.empty()) parcalar.push_back(Lower(tek));
+    }
+    int sayac = 0, bos = 0;
+    for (int i = 0; i < 260 && bos < 8; i++) {
+        RValue st;
+        if (!RepoStruct(g.kategori, i, st)) { bos++; continue; }
+        bos = 0;
+        std::string ad = Lower(RepoAd(st));
+        bool uydu = false;
+        for (const auto& p : parcalar) {
+            if (!p.empty() && p.back() == '$') {          // sonek eslesmesi
+                std::string s = p.substr(0, p.size() - 1);
+                if (ad.size() >= s.size() && ad.compare(ad.size() - s.size(), s.size(), s) == 0) {
+                    uydu = true; break;
+                }
+            } else if (ad.find(p) != std::string::npos) { // duz icerme
+                uydu = true; break;
+            }
+        }
+        if (!uydu) continue;
+        try {
+            RValue dr;
+            double vanilya = VanilyaBase(g.kategori, i, st, dr);
+            if (vanilya <= 0.0) continue;
+            double yeni = (carpan <= 1.0) ? vanilya : (vanilya / carpan);
+            if (yeni < 1.0) yeni = 1.0;
+            g_Yytk->CallBuiltin("variable_struct_set", { dr, RValue("base"), RValue(yeni) });
+            if (ornekEski < 0.0) { ornekEski = vanilya; ornekYeni = yeni; }
+            sayac++;
+        } catch (...) {}
+    }
+    return sayac;
+}
+
 static void DropRateCmd(const std::string& rest)
 {
     std::string alt, kalan; alt = FirstToken(rest, kalan);
@@ -2776,7 +3051,31 @@ static void DropRateCmd(const std::string& rest)
                 }
             } catch (...) { Out("droprate group dungeon: havuz okunamadi"); return; }
         }
-        else { Out("droprate group: bifrost | angelic | dungeon | basic | chaos | relic"); return; }
+        else if (const DropGrup* g = DropGrupBul(grup)) {
+            // Yeni Blood Pact aileleri: ada gore eslesir, kendi kategorisini tasir.
+            int n = DropGrupUygula(*g, v, ornekEski, ornekYeni);
+            char gb[240];
+            if (n == 0) {
+                sprintf_s(gb, "droprate group %s: HIC ESYA BULUNAMADI (kategori %d, ad parcasi '%s')",
+                          g->ad, g->kategori, g->parcalar);
+            } else {
+                sprintf_s(gb, "droprate group %s: x%.0f, %d esya  (ornek: %.0f -> %.0f)%s",
+                          g->ad, v, n, ornekEski, ornekYeni,
+                          g->tip >= 0 ? "  [dis kapi icin: dungeonkey add " : "  [dis kapi zaten acik]");
+                if (g->tip >= 0) {
+                    char ek[16]; sprintf_s(ek, "%d]", g->tip);
+                    strcat_s(gb, ek);
+                }
+            }
+            Out(gb);
+            return;
+        }
+        else {
+            std::string liste = "bifrost | angelic | dungeon | basic | chaos | relic";
+            for (const auto& g : kDropGruplar) liste += std::string(" | ") + g.ad;
+            Out("droprate group: " + liste);
+            return;
+        }
 
         // v artik CARPAN: 1 = vanilya, 5 = 5 kat daha sik.
         for (int i : hedef) {
@@ -2833,9 +3132,117 @@ static bool g_DkOn = false;
 static double g_DkChance = -1.0;      // -1 = auto (canavarin kendi chances[11]'i)
 static double g_DkChanceMult = 1.0;   // auto modunda dis kapi carpani
 static std::set<int> g_DkTipler = { 12 };   // ek zar atilacak damla tipleri (12 = zindan anahtari)
+// Tip basina dis-kapi carpani.  Yoksa g_DkChanceMult'e duser.
+static std::map<int, double> g_DkTipCarpan;
+
+// Tip basina OLCEK.  Kapi tabani olarak canavarin kendi ANAHTAR sansini
+// kullaniyoruz (chances[11], tipik olarak 5).  Anahtar aileleri icin bu
+// dogru bir taban, ama her aile ayni dogal nadirlikte degil:
+// relic'ler anahtardan cok daha nadir olmali.  Olcek 1.0 iken aile
+// anahtarla ayni siklikta acilir; 0.05 iken yirmi kat nadir.
+//
+// Bu sayilar OLCUM DEGIL, ayarlanabilir varsayilan.  Oyun icinde
+// "dungeonkey scale <tip> <deger>" ile yeniden derlemeden degistirilebilir.
+static std::map<int, double> g_DkTipOlcek = {
+    { 41, 0.05 },   // relic - x2'de bile anahtardan 10 kat nadir kalir
+};
+
+static double TipOlcek(int tip)
+{
+    auto it = g_DkTipOlcek.find(tip);
+    return (it == g_DkTipOlcek.end()) ? 1.0 : it->second;
+}
 static volatile long g_DkRolls = 0;   // ek zar atilan olum sayisi
 static volatile long g_DkNative = 0;  // tip 12 zaten yerli -> dokunulmadi
 static int g_DkProbe = 0;             // teshis: ilk N cagriyi kaydet
+static int g_DkFullProbe = 0;         // teshis: chances dizisinin tamamini dok
+
+#ifndef FORGEPACT_RELEASE
+// typemap: bir sonraki olumde tum damla tiplerini tara (asagida anlatildi)
+static bool   g_TypeMapIste = false;
+static bool   g_TypeMapCalisiyor = false;
+static double g_TypeMapSans = 100000.0;
+
+// Tarama sirasinda esyalarin IC zarini da acmak icin.
+//
+// Neden gerekli: chances[t]=100000 yalnizca DIS kapiyi aciyor.  Kapi gecse bile
+// esyanin kendi droprate.base'i geciyor - rune 350..334800, orb 11000+.  Tek
+// denemede tutma sansi binde bir, o yuzden gecerli tipler bile "hicbir sey
+// uretmedi" gorunuyordu.  base=1 yapinca gecerli her tip ilk denemede urun verir.
+static bool g_TypeMapTumOranlar = false;
+
+static void TumOranlariAc(std::vector<std::pair<int, int>>& dokunulan)
+{
+    for (int kat = 0; kat <= 19; kat++) {
+        int bos = 0;
+        for (int i = 0; i < 250 && bos < 6; i++) {
+            RValue st;
+            if (!RepoStruct(kat, i, st)) { bos++; continue; }
+            bos = 0;
+            try {
+                RValue dr;
+                double vanilya = VanilyaBase(kat, i, st, dr);   // vanilyayi saklar
+                if (vanilya <= 0.0) continue;
+                g_Yytk->CallBuiltin("variable_struct_set", { dr, RValue("base"), RValue(1.0) });
+                dokunulan.push_back({ kat, i });
+            } catch (...) {}
+        }
+    }
+}
+
+static void OranlariGeriAl(const std::vector<std::pair<int, int>>& dokunulan)
+{
+    for (const auto& p : dokunulan) {
+        RValue st;
+        if (!RepoStruct(p.first, p.second, st)) continue;
+        try {
+            RValue dr;
+            double vanilya = VanilyaBase(p.first, p.second, st, dr);
+            if (vanilya > 0.0)
+                g_Yytk->CallBuiltin("variable_struct_set", { dr, RValue("base"), RValue(vanilya) });
+        } catch (...) {}
+    }
+}
+
+// LoadDrops birikme kaplarinin boyu.  Hangisinin kullanildigini bilmiyoruz,
+// ikisine de bakiyoruz; olmayan -1 doner ve fark hesabina girmez.
+static int ListeBoyu(RValue& v)
+{
+    try {
+        if (v.m_Kind != VALUE_ARRAY) return -1;
+        return (int)g_Yytk->CallBuiltin("array_length", { v }).ToDouble();
+    } catch (...) { return -1; }
+}
+
+static int DsListeBoyu(RValue& v)
+{
+    try {
+        double id = v.ToDouble();
+        if (id < 0) return -1;
+        RValue var = g_Yytk->CallBuiltin("ds_exists", { RValue(id), RValue(2.0) });   // ds_type_list = 2
+        if (!var.ToBoolean()) return -1;
+        return (int)g_Yytk->CallBuiltin("ds_list_size", { RValue(id) }).ToDouble();
+    } catch (...) { return -1; }
+}
+
+// Kaptaki bir ogeyi okunur metne cevir.  Struct/array ise json'a dok.
+static std::string OgeOzeti(RValue& kap, double indeks, bool dsListe)
+{
+    try {
+        RValue oge = dsListe
+            ? g_Yytk->CallBuiltin("ds_list_find_value", { RValue(kap.ToDouble()), RValue(indeks) })
+            : g_Yytk->CallBuiltin("array_get", { kap, RValue(indeks) });
+        if (oge.m_Kind == VALUE_OBJECT || oge.m_Kind == VALUE_ARRAY) {
+            try {
+                std::string js = g_Yytk->CallBuiltin("json_stringify", { oge }).ToString();
+                if (js.size() > 400) js = js.substr(0, 400) + "...";
+                return js;
+            } catch (...) {}
+        }
+        return Describe(oge);
+    } catch (...) { return "(okunamadi)"; }
+}
+#endif
 
 static RValue& Hook_LoadDrops(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
@@ -2847,6 +3254,102 @@ static RValue& Hook_LoadDrops(CInstance* S, CInstance* O, RValue& R, int argc, R
         int tip = (int)A[2]->ToDouble();
 
 #ifndef FORGEPACT_RELEASE
+        // chances dizisinin TAMAMINI dok.  Blood Pact'teki 10 damla oranini
+        // (rune, orb, gem, ore, satanic, heroic...) bulmanin en kisa yolu:
+        // bu dizide sifirdan buyuk her indeks o canavarin attigi bir zar.
+        if (g_DkFullProbe > 0) {
+            RValue boyRV = g_Yytk->CallBuiltin("array_length", { *A[8] });
+            int boy = (int)boyRV.ToDouble();
+            std::ofstream f(IPC_DIR + "\\chances.txt", std::ios::app);
+            f << "== cagri tip=" << tip << " argc=" << argc << " boy=" << boy << "\n";
+            for (int i = 0; i < boy; i++) {
+                RValue c = g_Yytk->CallBuiltin("array_get", { *A[8], RValue((double)i) });
+                double d = c.ToDouble();
+                if (d != 0.0) f << "   [" << i << "] = " << d << "\n";
+            }
+            // Diger argumanlar da ise yarayabilir - tipini/degerini yaz.
+            for (int i = 0; i < argc; i++)
+                f << "   arg" << i << " = " << (A[i] ? Describe(*A[i]) : std::string("(null)")) << "\n";
+            f.flush();
+            g_DkFullProbe--;
+        }
+
+        // --- typemap: tek olumde TUM damla tiplerini aileye esle ---------------
+        // Sorun: chances dizisinde 70 slot var ama normal bir canavarda yalnizca
+        // 9'u sifirdan buyuk.  Rune/orb/gem/ore hangi indekste, bilmiyoruz ve
+        // 61 tipi tek tek oyunda denemek gunler surer.
+        //
+        // Cozum: her tip icin sirayla kapiyi ac, LoadDrops'u cagir, birikme
+        // listesinin (arg6 dizisi / arg7 ds_list) BUYUYUP buyumedigine bak,
+        // sonra izi sil.  Buyuduyse o tip bir eşya uretti - json'i yaz.
+        if (g_TypeMapIste && !g_TypeMapCalisiyor) {
+            g_TypeMapIste = false;
+            g_TypeMapCalisiyor = true;   // yeniden girisi engelle
+            std::ofstream f(IPC_DIR + "\\typemap.txt", std::ios::app);
+            int boy = 0;
+            try { boy = (int)g_Yytk->CallBuiltin("array_length", { *A[8] }).ToDouble(); } catch (...) {}
+            std::vector<std::pair<int, int>> dokunulan;
+            if (g_TypeMapTumOranlar) {
+                try { TumOranlariAc(dokunulan); } catch (...) {}
+            }
+            f << "===== typemap taramasi  tip_sayisi=" << boy
+              << "  sans=" << g_TypeMapSans
+              << "  ic_zar=" << (g_TypeMapTumOranlar
+                                 ? ("acik(" + std::to_string(dokunulan.size()) + " esya)")
+                                 : std::string("vanilya"))
+              << "  argc=" << argc << " =====\n";
+            f.flush();
+
+            std::vector<RValue*> A2(A, A + argc);
+            for (int t = 0; t < boy; t++) {
+                // HER TIP kendi korumasinda.  Bazi tipler bu canavar icin
+                // gecersiz ve oyunun kendi kodu istisna atiyor; tek bir ortak
+                // try kullanilinca ilk gecersiz tip tum taramayi dusuruyordu.
+                double eskiD = 0.0;
+                bool geriAlindi = false;
+                g_TypeMapAdlar.clear();
+                g_TypeMapKancaSayaci = 0;
+                try {
+                    eskiD = g_Yytk->CallBuiltin("array_get", { *A[8], RValue((double)t) }).ToDouble();
+
+                    g_Yytk->CallBuiltin("array_set", { *A[8], RValue((double)t), RValue(g_TypeMapSans) });
+                    RValue tipRV((double)t);
+                    A2[2] = &tipRV;
+                    RValue r2;
+                    g_TypeMapAktifTip = t;               // yaratim kancalari bu tiple etiketlesin
+                    if (g_OrigLoadDrops) g_OrigLoadDrops(S, O, r2, argc, A2.data());
+                    g_TypeMapAktifTip = -1;
+
+                    g_Yytk->CallBuiltin("array_set", { *A[8], RValue((double)t), RValue(eskiD) });
+                    geriAlindi = true;
+
+                    f << "[" << t << "] vanilya=" << eskiD
+                      << "  uretilen=" << g_TypeMapAdlar.size() << "\n";
+                    for (const auto& ad : g_TypeMapAdlar)
+                        f << "      " << ad << "\n";
+                } catch (...) {
+                    g_TypeMapAktifTip = -1;
+                    f << "[" << t << "] ISTISNA (bu canavar icin gecersiz tip olabilir)"
+                      << "  uretilen=" << g_TypeMapAdlar.size() << "\n";
+                    for (const auto& ad : g_TypeMapAdlar)
+                        f << "      " << ad << "\n";
+                }
+                // Izi HER durumda sil - yoksa 100000 sans dizide kalir.
+                if (!geriAlindi) {
+                    try { g_Yytk->CallBuiltin("array_set", { *A[8], RValue((double)t), RValue(eskiD) }); }
+                    catch (...) {}
+                }
+                f.flush();
+            }
+            if (g_TypeMapTumOranlar) {
+                try { OranlariGeriAl(dokunulan); } catch (...) {}
+                f << "-- " << dokunulan.size() << " esyanin ic zari vanilyaya geri alindi\n";
+            }
+            f << "===== tarama bitti =====\n";
+            f.flush();
+            g_TypeMapCalisiyor = false;
+        }
+
         if (g_DkProbe > 0) {
             RValue c11 = g_Yytk->CallBuiltin("array_get", { *A[8], RValue(11.0) });
             RValue c12 = g_Yytk->CallBuiltin("array_get", { *A[8], RValue(12.0) });
@@ -2867,14 +3370,9 @@ static RValue& Hook_LoadDrops(CInstance* S, CInstance* O, RValue& R, int argc, R
 
         // Oran: o canavarin KENDI normal-anahtar orani (auto) ya da sabit.
         // Auto sayesinde paydayi (gDataProtected.<0xAF>) bilmemize gerek yok.
-        double oran = g_DkChance;
-        if (oran < 0.0) {
-            RValue taban = g_Yytk->CallBuiltin("array_get", { *A[8], RValue(11.0) });
-            // Dis kapiyi da carp - yoksa kaydirac yalnizca ic zari suruyor ve
-            // yuksek degerlerde bile gorunur fark olmuyor (olculdu).
-            oran = taban.ToDouble() * g_DkChanceMult;
-        }
-        if (oran <= 0.0) return res;
+        // Kapi orani icin taban: o canavarin KENDI normal-anahtar sansi.
+        RValue tabanRV = g_Yytk->CallBuiltin("array_get", { *A[8], RValue(11.0) });
+        double taban = tabanRV.ToDouble();
 
         std::vector<RValue*> A2(A, A + argc);
         for (int tipEk : g_DkTipler) {
@@ -2882,6 +3380,18 @@ static RValue& Hook_LoadDrops(CInstance* S, CInstance* O, RValue& R, int argc, R
             // olumde iki bagimsiz zar atilir ve boss'un kendi orani ezilir.
             RValue mevcut = g_Yytk->CallBuiltin("array_get", { *A[8], RValue((double)tipEk) });
             if (mevcut.ToDouble() > 0.0) { InterlockedIncrement(&g_DkNative); continue; }
+
+            // HER TIPIN KENDI CARPANI.  Onceki surum tek ortak carpan
+            // kullaniyordu ve panel ona TUM kaydiraclarin EN YUKSEGINI
+            // gonderiyordu: Dungeon Keys'i 20 yapan biri Relic'i 2'de biraksa
+            // bile relic kapisi 20 ile aciliyordu.  Kaydirac yalan soyluyordu.
+            double kendiCarpan = g_DkChanceMult;          // eski davranis (geriye donuk)
+            auto itc = g_DkTipCarpan.find(tipEk);
+            if (itc != g_DkTipCarpan.end()) kendiCarpan = itc->second;
+
+            double oran = (g_DkChance >= 0.0) ? g_DkChance
+                                              : (taban * kendiCarpan * TipOlcek(tipEk));
+            if (oran <= 0.0) continue;
 
             g_Yytk->CallBuiltin("array_set", { *A[8], RValue((double)tipEk), RValue(oran) });
 
@@ -2907,12 +3417,66 @@ static void DungeonKeyCmd(const std::string& rest)
 
     if (v == "off") { g_DkOn = false; Out("dungeonkey: KAPALI"); return; }
 
+#ifndef FORGEPACT_RELEASE
+    if (v == "typemap") {
+        std::string sansStr, bayrak; sansStr = FirstToken(a2, bayrak);
+        try { g_TypeMapSans = std::stod(sansStr); } catch (...) { g_TypeMapSans = 100000.0; }
+        // "all" -> tarama suresince TUM esyalarin ic zari da 1'e cekilir
+        g_TypeMapTumOranlar = (Lower(bayrak).find("all") != std::string::npos);
+        if (!g_OrigLoadDrops)
+            HookOneScript("LoadDrops", "fp_loaddrops", (PVOID)Hook_LoadDrops, &g_OrigLoadDrops);
+        g_TypeMapIste = (g_OrigLoadDrops != nullptr);
+        if (!g_TypeMapIste) { Out("dungeonkey typemap: kanca kurulamadi"); return; }
+        char b[200];
+        sprintf_s(b, "dungeonkey typemap: SONRAKI olumde tum tipler taranacak (sans=%.0f, ic_zar=%s) -> bp_ipc\\typemap.txt",
+                  g_TypeMapSans, g_TypeMapTumOranlar ? "ACIK" : "vanilya");
+        Out(b);
+        return;
+    }
+
+    if (v == "fullprobe") {
+        int n = 3;
+        try { n = std::stoi(a2); } catch (...) {}
+        g_DkFullProbe = n;
+        // Kancayi BURADA da kur.  Yoksa sonda kurulur ama LoadDrops hic
+        // yakalanmaz ve dosya bos kalir - bir kez yasandi.
+        if (!g_OrigLoadDrops)
+            HookOneScript("LoadDrops", "fp_loaddrops", (PVOID)Hook_LoadDrops, &g_OrigLoadDrops);
+        Out("dungeonkey: sonraki " + std::to_string(n) + " LoadDrops cagrisinin chances dizisi -> bp_ipc\\chances.txt"
+            + (g_OrigLoadDrops ? "" : "  (UYARI: kanca kurulamadi)"));
+        return;
+    }
+#endif
+
+    if (v == "scale") {
+        // Aileye gore kapi olcegi - yeniden derlemeden ayarlanabilsin diye.
+        std::string tipStr, degStr;
+        tipStr = FirstToken(a2, degStr);
+        try {
+            int n = std::stoi(tipStr);
+            double d = std::stod(degStr);
+            if (d <= 0.0) d = 1.0;
+            g_DkTipOlcek[n] = d;
+            char sb[140];
+            sprintf_s(sb, "dungeonkey scale: tip %d -> olcek %.4f", n, d);
+            Out(sb);
+        } catch (...) { Out("dungeonkey: kullanim -> dungeonkey scale 41 0.05"); }
+        return;
+    }
+
     if (v == "stat") {
         std::string o = (g_DkChance < 0.0)
             ? ("auto x" + std::to_string((int)g_DkChanceMult))
             : std::to_string((int)g_DkChance);
         std::string liste;
-        for (int x : g_DkTipler) { if (!liste.empty()) liste += ","; liste += std::to_string(x); }
+        for (int x : g_DkTipler) {
+            if (!liste.empty()) liste += ",";
+            liste += std::to_string(x);
+            auto ic = g_DkTipCarpan.find(x);
+            double kc = (ic == g_DkTipCarpan.end()) ? g_DkChanceMult : ic->second;
+            char cb[56]; sprintf_s(cb, "(x%.0f olcek %.3f)", kc, TipOlcek(x));
+            liste += cb;
+        }
         Out(std::string("dungeonkey: ") + (g_DkOn ? "ACIK" : "kapali")
             + " | tipler=" + (liste.empty() ? std::string("(bos)") : liste)
             + " | oran=" + o
@@ -2923,8 +3487,19 @@ static void DungeonKeyCmd(const std::string& rest)
 
     if (v == "add" || v == "del") {
         try {
-            int n = std::stoi(a2);
-            if (v == "add") g_DkTipler.insert(n); else g_DkTipler.erase(n);
+            std::string tipStr, carpStr;
+            tipStr = FirstToken(a2, carpStr);
+            int n = std::stoi(tipStr);
+            if (v == "add") {
+                g_DkTipler.insert(n);
+                // Ikinci arguman verilirse o tipin KENDI kapi carpani olur.
+                if (!carpStr.empty()) {
+                    try { g_DkTipCarpan[n] = std::stod(carpStr); } catch (...) {}
+                }
+            } else {
+                g_DkTipler.erase(n);
+                g_DkTipCarpan.erase(n);
+            }
             std::string liste;
             for (int x : g_DkTipler) { if (!liste.empty()) liste += ","; liste += std::to_string(x); }
             Out("dungeonkey tipler: " + (liste.empty() ? std::string("(bos)") : liste));
@@ -3251,6 +3826,20 @@ static void RunCommand(const std::string& line)
         try { SpawnAtPlayer(std::stoi(rest)); } catch (...) { Out("spawnat: bad index"); }
     } else if (lc == "cb") {
         CallBuiltinCmd(rest);
+#ifndef FORGEPACT_RELEASE
+    } else if (lc == "gnames") {
+        std::string f = rest;
+        while (!f.empty() && std::isspace((unsigned char)f.back())) f.pop_back();
+        GlobalNames(f);
+    } else if (lc == "ijson") {
+        std::string v = rest;
+        while (!v.empty() && std::isspace((unsigned char)v.back())) v.pop_back();
+        PlayerVarJson(v);
+    } else if (lc == "ojson") {
+        std::string obj, var; obj = FirstToken(rest, var);
+        while (!var.empty() && std::isspace((unsigned char)var.back())) var.pop_back();
+        ObjVarJson(obj, var);
+#endif
     } else if (lc == "gjson") {
         std::string n = rest; while (!n.empty() && (n.back()=='\r'||n.back()=='\n'||n.back()==' ')) n.pop_back();
         GJson(n);
@@ -3348,6 +3937,8 @@ static void RunCommand(const std::string& line)
         Out("budget: " + std::to_string(g_OrnekButce) + " ornek (0=sinirsiz)"
             + " | su an=" + std::to_string(ToplamOrnek())
             + " | butce yuzunden atilan=" + std::to_string(g_ButceIptal));
+    } else if (lc == "stat") {
+        StatCmd(rest);
     } else if (lc == "droprate") {
         DropRateCmd(rest);
     } else if (lc == "dungeonkey") {
