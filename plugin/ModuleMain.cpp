@@ -3135,17 +3135,38 @@ static std::set<int> g_DkTipler = { 12 };   // ek zar atilacak damla tipleri (12
 // Tip basina dis-kapi carpani.  Yoksa g_DkChanceMult'e duser.
 static std::map<int, double> g_DkTipCarpan;
 
-// Tip basina OLCEK.  Kapi tabani olarak canavarin kendi ANAHTAR sansini
-// kullaniyoruz (chances[11], tipik olarak 5).  Anahtar aileleri icin bu
-// dogru bir taban, ama her aile ayni dogal nadirlikte degil:
-// relic'ler anahtardan cok daha nadir olmali.  Olcek 1.0 iken aile
-// anahtarla ayni siklikta acilir; 0.05 iken yirmi kat nadir.
+// Tip basina OLCEK = o olumde bu tip icin zar atma OLASILIGI.
 //
-// Bu sayilar OLCUM DEGIL, ayarlanabilir varsayilan.  Oyun icinde
-// "dungeonkey scale <tip> <deger>" ile yeniden derlemeden degistirilebilir.
+// OLCULDU (2026-08-28): oyunun kapisi  irandom(payda) < chances[tip]
+// seklinde ve irandom TAM SAYI donduruyor.  Bu yuzden chances degerini
+// 1'in altina cekmek hicbir sey yapmiyor - 0.5 de 0.01 de ayni kapiyi
+// veriyor, ikisi de yalnizca irandom sifir cektiginde geciyor.
+// Olculen sonuc: olcek 0.05 -> dusen esyalarin %30'u relic,
+//                olcek 0.001 -> %69.  Yani hic azalmadi.
+//
+// Dogru cozum orani kucultmek degil, O OLUMDE ZARI HIC ATMAMAK.
+// Asagidaki deger, kaydirac birimi basina zar atma olasiligi:
+//     olasilik = olcek * kaydirac   (1.0'da kirpilir)
+// OLCULEREK ayarlandi (dusen esyalarin yuzde kaci relic):
+//     eski davranis          %30,2   (567 esyada 171 relic)
+//     on-zar 0.01            %6,4
+//     on-zar 0.0005          %0,7    (138 esyada 1 relic)  <- secilen
+// Kaydirac 2'de her 10.000 olumden 10'unda denenir; kaydirac 100'de
+// her 200 olumden birinde.
 static std::map<int, double> g_DkTipOlcek = {
-    { 41, 0.05 },   // relic - x2'de bile anahtardan 10 kat nadir kalir
+    { 41, 0.0005 },   // relic
 };
+
+// Kendi zarimiz.  Oyunun rastgele dizisine dokunmuyoruz ki diger
+// damlalarin sirasi degismesin.
+static unsigned long long g_ZarTohum = 88172645463325252ULL;
+static double KendiZar()
+{
+    g_ZarTohum ^= g_ZarTohum << 13;
+    g_ZarTohum ^= g_ZarTohum >> 7;
+    g_ZarTohum ^= g_ZarTohum << 17;
+    return (double)(g_ZarTohum >> 11) / 9007199254740992.0;   // [0,1)
+}
 
 static double TipOlcek(int tip)
 {
@@ -3389,8 +3410,17 @@ static RValue& Hook_LoadDrops(CInstance* S, CInstance* O, RValue& R, int argc, R
             auto itc = g_DkTipCarpan.find(tipEk);
             if (itc != g_DkTipCarpan.end()) kendiCarpan = itc->second;
 
-            double oran = (g_DkChance >= 0.0) ? g_DkChance
-                                              : (taban * kendiCarpan * TipOlcek(tipEk));
+            // ON-ZAR: bu olumde bu tipi denemeye deger mi?
+            // Oyunun kapisina 1'in altinda bir sayi vermek ise yaramiyor
+            // (irandom tam sayi), o yuzden seyreltmeyi BURADA yapiyoruz.
+            double olcek = TipOlcek(tipEk);
+            if (olcek < 1.0) {
+                double olasilik = olcek * kendiCarpan;
+                if (olasilik > 1.0) olasilik = 1.0;
+                if (KendiZar() >= olasilik) continue;   // bu olumde hic denenmiyor
+            }
+
+            double oran = (g_DkChance >= 0.0) ? g_DkChance : (taban * kendiCarpan);
             if (oran <= 0.0) continue;
 
             g_Yytk->CallBuiltin("array_set", { *A[8], RValue((double)tipEk), RValue(oran) });
@@ -3474,7 +3504,7 @@ static void DungeonKeyCmd(const std::string& rest)
             liste += std::to_string(x);
             auto ic = g_DkTipCarpan.find(x);
             double kc = (ic == g_DkTipCarpan.end()) ? g_DkChanceMult : ic->second;
-            char cb[56]; sprintf_s(cb, "(x%.0f olcek %.3f)", kc, TipOlcek(x));
+            char cb[56]; sprintf_s(cb, "(x%.0f olcek %.5f)", kc, TipOlcek(x));
             liste += cb;
         }
         Out(std::string("dungeonkey: ") + (g_DkOn ? "ACIK" : "kapali")
