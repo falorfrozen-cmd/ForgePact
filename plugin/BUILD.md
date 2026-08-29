@@ -9,7 +9,7 @@ controls over a small file-based IPC channel that the ForgePact panel writes to.
 - **YYToolkit headers** (the `YYToolkit`, `Aurie`, and `FunctionWrapper` include trees)
   plus `YYToolkit/YYTK_Shared_Types.cpp`. These come from YYToolkit upstream —
   https://github.com/AurieFramework/YYToolkit (AGPL-3.0). Place them under an `include/`
-  folder inside `plugin_build/`, next to `derle.bat`.
+  folder inside `plugin_build/`, next to `build.bat`.
 
 The plugin must be built against the **same** YYToolkit headers as the `YYToolkit.dll`
 you ship, or you will get crashes at load time — the interface is a raw vtable.
@@ -17,7 +17,7 @@ you ship, or you will get crashes at load time — the interface is a raw vtable
 ## Build
 
 ```
-plugin_build\derle.bat yayin
+plugin_build\build.bat release
 ```
 
 Output: `plugin_build\BloodPactPlugin_ship.dll` — the player build. Copy it to
@@ -25,7 +25,7 @@ Output: `plugin_build\BloodPactPlugin_ship.dll` — the player build. Copy it to
 two files differ, so a stale plugin cannot ship by accident.
 
 ```
-plugin_build\derle.bat
+plugin_build\build.bat
 ```
 
 Output: `plugin_build\BloodPactPlugin_rel.dll` — the research build. Same code, but
@@ -33,7 +33,7 @@ without `/DFORGEPACT_RELEASE`, so the runtime-inspection commands (`structdump`,
 `readmem`, `census`, `enemylog`, `probestruct`, …) are compiled in. Use this one for
 analysis; never ship it.
 
-The exact compile line is in `derle.bat`; the only difference between the two builds is
+The exact compile line is in `build.bat`; the only difference between the two builds is
 the `/DFORGEPACT_RELEASE` define.
 
 ## The IPC channel

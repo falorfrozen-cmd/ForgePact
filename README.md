@@ -11,12 +11,15 @@ panel; settings are applied live while the game runs and re-applied on every lau
 | **Monster Density** | 1–5× more enemies in 0.5 steps (1, 1.5, 2 …), through the game's own `Enemy_Creator` spawners |
 | **Special Content** | Rift Portals, Battlefields, Cursed Orbs, Summon Portals, Chaos Pillars, Chaos Tower — up to 100× per zone |
 | **Drop Rates** | Gold, Dungeon Keys, Angelic Keys, Chaos + Crystal Keys, Bifröst Key and Relics — up to 100× |
+| **Combat Modifiers** | Total Damage, Attack Speed, Faster Cast Rate, Defense, Life/Mana Replenish, physical and spell Critical Chance/Damage |
+| **Character Stats** | Experience, Magic Find and Movement Speed use the character's current total value, including equipment bonuses |
 | **Full Map Reveal** | Clears fog of war in every zone (toggleable; F5 in-game also toggles it) |
 | **Auto-apply** | Saved settings are re-sent every time the game starts |
 
-ForgePact never writes to the game's code. Everything above goes through the game's
-own scripts and objects, hooked by name at runtime — so a game update shifts addresses
-without breaking anything.
+ForgePact does not write permanent stat changes into your save or modify the game exe
+for individual settings. Features are resolved by script/object name and applied in
+memory while the offline game is running. Turning a modifier off restores its normal
+value for that session.
 
 High multipliers are throttled automatically. Extra spawn markers are queued and created
 a few per frame instead of all at once, and creation pauses while the room is at its
@@ -49,10 +52,14 @@ a reason we have not identified. Details and every ruled-out hypothesis are in
 ## 🔧 How to use
 
 1. Run `ForgePact.exe` and set the path to your Season 10 `Hero_Siege.exe`.
-2. Press **Install**. ForgePact will back up your exe, copy the mod files into the
+2. Press **Install Mod Plugin**. ForgePact will back up your exe, copy the mod files into the
    game folder, and patch the exe so it loads Aurie on start.
-3. Press **Launch** and play offline. Change any setting in the panel and it applies
+3. Press **Launch Modded Game** and play offline. Change any setting in the panel and it applies
    immediately.
+
+All gameplay modifiers are **Off by default** for a new player. No manual hook,
+command file or DLL copying is required; the two buttons above handle installation
+and launch.
 
 ### What gets installed
 Into the game's `bin` folder:
@@ -90,7 +97,7 @@ load there anyway.
   panel's commands over `bp_ipc`.
 - `yytoolkit-modified/` — our YYToolkit build and the notes for the one changed file.
 - `modfiles_shipped/` — the binaries copied into the game folder.
-- `plugin_build/derle.bat` — builds the plugin. `derle.bat yayin` produces the shipping
+- `plugin_build/build.bat` — builds the plugin. `build.bat release` produces the shipping
   build (features only); without an argument it produces the development build, which
   additionally carries the diagnostic commands used to investigate the game.
 - `build_release.py` — packages `dist/ForgePact/` (the release zip contents).

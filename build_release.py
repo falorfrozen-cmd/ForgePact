@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""ForgePact yayin paketini uretir:  dist/ForgePact/  -> zip'lenmeye hazir.
+"""Build the ForgePact release package:  dist/ForgePact/  -> ready to zip.
 
     py build_release.py
 
-Uretilen duzen (panel frozen haldeyken exe'nin YANINDAKI modfiles/ klasorune
-bakar - src/forgepact.py icindeki MODFILE_SOURCES):
+Layout produced (when frozen, the panel looks for the modfiles/ folder NEXT TO
+the exe - see MODFILE_SOURCES in src/forgepact.py):
 
     dist/ForgePact/
         ForgePact.exe
@@ -16,8 +16,8 @@ bakar - src/forgepact.py icindeki MODFILE_SOURCES):
         CREDITS.md
         LICENSE
 
-pywebview kuruluysa panel yerel bir masaustu penceresinde acilir; kurulu
-degilse varsayilan tarayiciya duser (ikisi de calisir).
+If pywebview is installed the panel opens in a native desktop window; if not it
+falls back to the default browser (both work).
 """
 import shutil
 import subprocess
@@ -33,31 +33,32 @@ NEEDED = ["AurieCore.dll", "AuriePatcher.exe", "YYToolkit.dll", "BloodPactPlugin
 
 def main() -> int:
     if not SRC.is_file():
-        print(f"HATA: {SRC} yok"); return 1
+        print(f"ERROR: {SRC} does not exist"); return 1
 
-    eksik = [n for n in NEEDED if not (MODFILES / n).is_file()]
-    if eksik:
-        print("HATA: modfiles_shipped eksik ->", ", ".join(eksik)); return 1
+    missing = [n for n in NEEDED if not (MODFILES / n).is_file()]
+    if missing:
+        print("ERROR: modfiles_shipped is incomplete ->", ", ".join(missing)); return 1
 
-    # Paketteki eklenti, kaynaktan derlenen son yayin surumuyle ayni mi?
-    # Ayni degilse Install basan kullanici ESKI eklentiyi kurar ve bugunku
-    # komutlar taninmaz - bu bir kez yasandi, oyun acilista coktu.
+    # Is the plugin in the package the same as the last release build from source?
+    # If not, anyone pressing Install gets the OLD plugin, today's commands are not
+    # recognised - this happened once and the game crashed on startup.
     ship = ROOT / "plugin_build" / "BloodPactPlugin_ship.dll"
-    paket = MODFILES / "BloodPactPlugin.dll"
-    if ship.is_file() and paket.is_file() and ship.read_bytes() != paket.read_bytes():
-        print("HATA: modfiles_shipped/BloodPactPlugin.dll, plugin_build/BloodPactPlugin_ship.dll")
-        print("      ile ayni degil.  Once plugin_build/derle.bat yayin calistirip")
-        print("      cikan DLL'i modfiles_shipped'e kopyalayin.")
+    packaged = MODFILES / "BloodPactPlugin.dll"
+    if ship.is_file() and packaged.is_file() and ship.read_bytes() != packaged.read_bytes():
+        print("ERROR: modfiles_shipped/BloodPactPlugin.dll does not match")
+        print("       plugin_build/BloodPactPlugin_ship.dll.  Run")
+        print("       plugin_build/build.bat release and copy the resulting DLL")
+        print("       into modfiles_shipped.")
         return 1
 
     try:
         import PyInstaller  # noqa: F401
     except ImportError:
-        print("HATA: PyInstaller yok  ->  py -m pip install pyinstaller"); return 1
+        print("ERROR: PyInstaller is missing  ->  py -m pip install pyinstaller"); return 1
 
-    # Onceki paketten kalan ForgePact.exe dist/ klasorunu kilitler.  Onefile
-    # bootloader'i gercek uygulamayi ALT SURECTE calistirdigi icin genelde iki
-    # tane olur; ikisi de durdurulmali.
+    # A ForgePact.exe left over from a previous package locks the dist/ folder.
+    # The onefile bootloader runs the real app in a CHILD PROCESS, so there are
+    # usually two of them; both have to be stopped.
     if sys.platform == "win32":
         subprocess.run(["taskkill", "/F", "/IM", "ForgePact.exe"],
                        capture_output=True)
@@ -67,7 +68,7 @@ def main() -> int:
         if p.exists():
             shutil.rmtree(p, ignore_errors=True)
         if p.exists():
-            print(f"HATA: {p} silinemedi (dosya kilitli mi?)"); return 1
+            print(f"ERROR: could not delete {p} (is the file locked?)"); return 1
 
     print("== PyInstaller ==")
     cmd = [
@@ -76,9 +77,9 @@ def main() -> int:
         "--distpath", str(DIST.parent), "--workpath", str(build),
         "--specpath", str(build),
     ]
-    # tkinter yalnizca dosya seciciyle ilgili ve YEDEK yol: birincil secici
-    # comdlg32 (Win32) uzerinden aciliyor, o da olmazsa yol elle yazilabiliyor.
-    # tkinter'i almak PIL'i de beraberinde getirip pakete ~30 MB ekliyor.
+    # tkinter is only used by the file picker, and only as a FALLBACK: the primary
+    # picker opens through comdlg32 (Win32), and failing that the path can be typed
+    # by hand.  Bundling tkinter drags PIL in with it and adds ~30 MB to the package.
     for mod in ("tkinter", "PIL", "numpy", "pandas", "matplotlib", "scipy",
                 "PyQt5", "PyQt6", "PySide2", "PySide6", "IPython",
                 "pytest", "setuptools", "pip"):
@@ -86,11 +87,11 @@ def main() -> int:
     cmd.append(str(SRC))
     r = subprocess.run(cmd)
     if r.returncode != 0:
-        print("HATA: PyInstaller basarisiz"); return r.returncode
+        print("ERROR: PyInstaller failed"); return r.returncode
 
     exe = DIST.parent / "ForgePact.exe"
     if not exe.is_file():
-        print("HATA: ForgePact.exe uretilemedi"); return 1
+        print("ERROR: ForgePact.exe was not produced"); return 1
 
     DIST.mkdir(parents=True, exist_ok=True)
     shutil.move(str(exe), str(DIST / "ForgePact.exe"))
@@ -105,12 +106,12 @@ def main() -> int:
         if p.is_file():
             shutil.copy2(p, DIST / n)
 
-    print("\n== paket ==")
+    print("\n== package ==")
     for p in sorted(DIST.rglob("*")):
         if p.is_file():
             print(f"  {p.relative_to(DIST).as_posix():<34} {p.stat().st_size:>9}")
-    print(f"\nhazir: {DIST}")
-    print("zip'le ve yayinla.")
+    print(f"\nready: {DIST}")
+    print("zip it and publish.")
     return 0
 
 

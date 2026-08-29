@@ -1068,7 +1068,7 @@ static void LogDrop(const char* fn, RValue& res, int argc, RValue** A)
 
 // ===== Oyuncu istatistigi carpanlari =====================================
 // Blood Pact'in Magic Find / Attack Speed / Cast Rate / Experience gain /
-// Movement Speed / Total Damage satirlari bir DEPODA durmuyor.  Oyuncunun
+// Movement Speed satirlari bir DEPODA durmuyor.  Oyuncunun
 // uzerinde boyle degiskenler yok (olculdu: iget magic_find -> "boyle bir
 // degisken yok"), pSt dizisi de deger degil tutamac tutuyor.
 //
@@ -1083,6 +1083,49 @@ static void LogDrop(const char* fn, RValue& res, int argc, RValue** A)
 // ayiriyordu.  Bu fonksiyonlar oyunun en sicak yollarinda (olculdu: tek
 // oturumda StatMovementSpeed 6083, StatTotalDamage 2350 cagri), oraya
 // tahsis koymak dogru degil.
+// Stat* betikleri DIZI donduruyor - olculdu 2026-08-28:
+//     StatMovementSpeed -> [305.108..., 0, 0, 600]
+// ve ilk eleman karakter ekranindaki degerin ta kendisi (305).  Onceki surum
+// dizinin ToDouble()'ini carpiyordu; bu anlamsiz bir sayi uretiyordu.  Magic
+// Find'da hicbir etki gorulmemesinin ve hareket hizinda oyunun kasmasinin
+// sebebi buydu.
+//
+// Diziyi YERINDE degistirmiyoruz: oyun ayni diziyi her cagrida yeniden
+// kullaniyor olabilir, o zaman carpan her karede birikip patlardi.  Kopya
+// uretip yalnizca [0]'i olcekliyoruz.
+static RValue StatOlcekle(RValue& deger, double carpan)
+{
+    if (deger.m_Kind != VALUE_ARRAY)
+        return RValue(deger.ToDouble() * carpan);
+    int n = (int)g_Yytk->CallBuiltin("array_length", { deger }).ToDouble();
+    if (n <= 0) return deger;
+    RValue kopya = g_Yytk->CallBuiltin("array_create", { RValue((double)n) });
+    for (int i = 0; i < n; i++) {
+        RValue e = g_Yytk->CallBuiltin("array_get", { deger, RValue((double)i) });
+        if (i == 0) e = RValue(e.ToDouble() * carpan);
+        g_Yytk->CallBuiltin("array_set", { kopya, RValue((double)i), e });
+    }
+    return kopya;
+}
+
+// Faster Cast Rate'in vanilya tabani 0'dır.  Sifiri carpmak her zaman sifir
+// verdigi icin bu statta yuzde puani EKLEMEK gerekir (+50 -> FCR 0'dan 50'ye).
+// Diger statlar mevcut toplam uzerinden oransal olarak carpilir.
+static RValue StatEkle(RValue& deger, double ek)
+{
+    if (deger.m_Kind != VALUE_ARRAY)
+        return RValue(deger.ToDouble() + ek);
+    int n = (int)g_Yytk->CallBuiltin("array_length", { deger }).ToDouble();
+    if (n <= 0) return deger;
+    RValue kopya = g_Yytk->CallBuiltin("array_create", { RValue((double)n) });
+    for (int i = 0; i < n; i++) {
+        RValue e = g_Yytk->CallBuiltin("array_get", { deger, RValue((double)i) });
+        if (i == 0) e = RValue(e.ToDouble() + ek);
+        g_Yytk->CallBuiltin("array_set", { kopya, RValue((double)i), e });
+    }
+    return kopya;
+}
+
 #define STAT_HOOK(NAME) \
     static PFUNC_YYGMLScript g_OrigStat_##NAME = nullptr; \
     static volatile long g_StatSayac_##NAME = 0; \
@@ -1091,18 +1134,88 @@ static void LogDrop(const char* fn, RValue& res, int argc, RValue** A)
         InterlockedIncrement(&g_StatSayac_##NAME); \
         RValue& _r = g_OrigStat_##NAME ? g_OrigStat_##NAME(S, O, R, argc, A) : R; \
         if (g_StatCarpan_##NAME != 1.0) { \
-            try { _r = RValue(_r.ToDouble() * g_StatCarpan_##NAME); } catch (...) {} \
+            try { _r = StatOlcekle(_r, g_StatCarpan_##NAME); } catch (...) {} \
+        } \
+        return _r; \
+    }
+
+#define STAT_ADD_HOOK(NAME) \
+    static PFUNC_YYGMLScript g_OrigStatAdd_##NAME = nullptr; \
+    static volatile long g_StatAddSayac_##NAME = 0; \
+    static double g_StatEk_##NAME = 0.0; \
+    static RValue& HookStatAdd_##NAME(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) { \
+        InterlockedIncrement(&g_StatAddSayac_##NAME); \
+        RValue& _r = g_OrigStatAdd_##NAME ? g_OrigStatAdd_##NAME(S, O, R, argc, A) : R; \
+        if (g_StatEk_##NAME != 0.0) { \
+            try { _r = StatEkle(_r, g_StatEk_##NAME); } catch (...) {} \
         } \
         return _r; \
     }
 
 STAT_HOOK(StatMagicFind)
-STAT_HOOK(StatAttackSpeed)
-STAT_HOOK(StatFasterCastRate)
+STAT_HOOK(StatAttackSpeedMainHand)
+STAT_HOOK(StatAttackSpeedOffHand)
+STAT_ADD_HOOK(StatFasterCastRate)
 STAT_HOOK(StatExperienceGain)
 STAT_HOOK(StatMovementSpeed)
-STAT_HOOK(StatTotalDamage)
 STAT_HOOK(StatExtraGold)
+STAT_HOOK(StatLifeReplenish)
+STAT_HOOK(StatManaReplenish)
+STAT_HOOK(StatDefense)
+STAT_HOOK(StatCritDamage)
+STAT_HOOK(StatCritRate)
+STAT_HOOK(StatSpellCritDamage)
+STAT_HOOK(StatSpellCritRate)
+// Gercek son vurus hasari.  StatTotalDamage yalnizca karakter istatistigi
+// hesap/arayuz yoludur; onu carpmak dusmana giden hasari degistirmedi.
+// Canli olcumde CalculateEndDamage her vurus icin 5645/5807/6007 gibi nihai
+// sayiyi dondurdu ve ayni sayi hemen RunDamageSync'e girdi.  Bu nedenle hasar
+// carpani tam burada, oyunun kendi hesaplamasi bittikten sonra uygulanir.
+STAT_HOOK(CalculateEndDamage)
+// XP carpani.  Hedef EnemyCalculateExperience'in DONUS degeri.
+// HSStatForge burayi degil, fonksiyonun icindeki bir `1.0` SABITINI
+// yamaliyordu (xmm11 basta .rdata'dan yukleniyor ve hic degismiyor),
+// o yuzden orada carpan hicbir sey yapmiyor.  Donus degeri ise tanimi
+// geregi hesaplanan deneyim - carpilacak dogru yer burasi.
+STAT_HOOK(EnemyCalculateExperience)
+
+// Yaratigin ustunde beliren "2 XP" baloncugu.
+//
+// Olculdu: oyuncuya verilen deger dogru carpiliyor
+// (EnemyGiveExperience 200, ExperienceUpdate 200) ama baloncuk sayiyi degil
+// ZATEN BICIMLENMIS bir metin aliyor - CombatText("2 XP", ...) - ve o metin
+// carpandan once uretiliyor.  Sonuc: oyuncu 200 aliyor, ekranda 2 yaziyor.
+//
+// Burada yalnizca METNI yeniden yaziyoruz.  Verilen XP'ye dokunulmuyor;
+// bu tamamen gorsel bir duzeltme.
+static PFUNC_YYGMLScript g_OrigCombatText = nullptr;
+static RValue& Hook_CombatText(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    RValue yeni;
+    std::vector<RValue*> A2;
+    double c = g_StatCarpan_EnemyCalculateExperience;
+    if (c != 1.0 && A && argc > 0 && A[0] && A[0]->m_Kind == VALUE_STRING) {
+        try {
+            std::string s = A[0]->ToString();
+            static const std::string sonek = " XP";
+            if (s.size() > sonek.size() &&
+                s.compare(s.size() - sonek.size(), sonek.size(), sonek) == 0) {
+                std::string sayi = s.substr(0, s.size() - sonek.size());
+                size_t kac = 0;
+                double n = std::stod(sayi, &kac);
+                if (kac == sayi.size()) {          // tamami sayi olmali
+                    char b[64];
+                    sprintf_s(b, "%.0f XP", n * c);
+                    yeni = RValue(b);
+                    A2.assign(A, A + argc);
+                    A2[0] = &yeni;
+                }
+            }
+        } catch (...) {}
+    }
+    RValue** kullan = A2.empty() ? A : A2.data();
+    return g_OrigCombatText ? g_OrigCombatText(S, O, R, argc, kullan) : R;
+}
 
 DROP_HOOK(DropRelic)
 DROP_HOOK(DropBossGems)
@@ -1396,6 +1509,200 @@ static RValue& HookZoneGenCT(CInstance* S, CInstance* O, RValue& R, int argc, RV
     return g_OrigZoneGenCT ? g_OrigZoneGenCT(S, O, R, argc, A) : R;
 }
 
+#ifndef FORGEPACT_RELEASE
+// ---- GPV / SPV: oyunun sayisal anahtarli ortak deger deposu ----------------
+// Bulundu (2026-08-28): Blood Pact Edit ekrani, LoadDrops ve Controller_obj'in
+// Create olayi hep bu ikiliyi kullaniyor.  Modifiyerler isimle degil KIMLIKLE
+// saklandigi icin isim aramalari bosa cikmisti.  Burada her okuma/yazmayi
+// kimligiyle birlikte kaydediyoruz; kimlik -> anlam eslemesi boyle cikacak.
+static PFUNC_YYGMLScript g_OrigGPV = nullptr;
+static PFUNC_YYGMLScript g_OrigSPV = nullptr;
+static int g_GpvLog = 0;
+static std::map<std::string, long> g_GpvGorulen;   // "id=deger" -> kac kez
+
+static void GpvYaz(const char* etiket, int argc, RValue** A, RValue* sonuc)
+{
+    try {
+        std::string s = etiket;
+        for (int i = 0; i < argc && i < 4; i++)
+            s += std::string(" arg") + std::to_string(i) + "=" + (A && A[i] ? Describe(*A[i]) : "(null)");
+        if (sonuc) s += " -> " + Describe(*sonuc);
+        auto it = g_GpvGorulen.find(s);
+        if (it != g_GpvGorulen.end()) { it->second++; return; }   // tekrarlari sikistir
+        g_GpvGorulen[s] = 1;
+        std::ofstream f(IPC_DIR + "\\gpv.txt", std::ios::app);
+        f << s << "\n";
+        f.flush();
+    } catch (...) {}
+}
+
+static RValue& HookGPV(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    RValue& r = g_OrigGPV ? g_OrigGPV(S, O, R, argc, A) : R;
+    if (g_GpvLog > 0) { GpvYaz("GET", argc, A, &r); }
+    return r;
+}
+
+static RValue& HookSPV(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    if (g_GpvLog > 0) { GpvYaz("SET", argc, A, nullptr); }
+    return g_OrigSPV ? g_OrigSPV(S, O, R, argc, A) : R;
+}
+#endif
+
+#ifndef FORGEPACT_RELEASE
+// ---- scount: HERHANGI bir GML betigini say ve donusunu kaydet -------------
+// Bugun uc kez ayni seye ihtiyac duyuldu (StatMagicFind cagriliyor mu,
+// ZoneGenChaosTower cagriliyor mu, EnemyGiveExperience cagriliyor mu) ve her
+// seferinde elle kanca yazildi.  Burada sabit sayida genel yuva var; komutla
+// istenen betige baglanir.
+struct SayacYuvasi {
+    const char*        ad;      // bagli betik (bos = kullanilmiyor)
+    PFUNC_YYGMLScript  orij;
+    volatile long      sayi;
+    std::string        ornek;   // ilk birkac cagrinin arguman/donus ozeti
+};
+static SayacYuvasi g_Yuva[8] = {};
+
+template <int N>
+static RValue& HookSayac(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    SayacYuvasi& y = g_Yuva[N];
+    InterlockedIncrement(&y.sayi);
+    RValue& r = y.orij ? y.orij(S, O, R, argc, A) : R;
+    if (y.sayi <= 3) {
+        try {
+            std::string s = "  #" + std::to_string(y.sayi) + " argc=" + std::to_string(argc);
+            for (int i = 0; i < argc && i < 3; i++)
+                s += " a" + std::to_string(i) + "=" + (A && A[i] ? Describe(*A[i]) : "(null)");
+            // Stat* betikleri DIZI donduruyor (olculdu 2026-08-28).  Describe
+            // yalnizca "array" yaziyor; hangi elemanin gercek stat oldugunu
+            // gormek icin icerigi de dokuyoruz.
+            s += " -> " + Describe(r);
+            if (r.m_Kind == VALUE_ARRAY || r.m_Kind == VALUE_OBJECT) {
+                try {
+                    std::string js = g_Yytk->CallBuiltin("json_stringify", { r }).ToString();
+                    if (js.size() > 300) js = js.substr(0, 300) + "...";
+                    s += " = " + js;
+                } catch (...) {}
+            }
+            s += "\n";
+            y.ornek += s;
+        } catch (...) {}
+    }
+    return r;
+}
+
+static PVOID SayacKancasi(int n)
+{
+    switch (n) {
+        case 0: return (PVOID)HookSayac<0>;   case 1: return (PVOID)HookSayac<1>;
+        case 2: return (PVOID)HookSayac<2>;   case 3: return (PVOID)HookSayac<3>;
+        case 4: return (PVOID)HookSayac<4>;   case 5: return (PVOID)HookSayac<5>;
+        case 6: return (PVOID)HookSayac<6>;   case 7: return (PVOID)HookSayac<7>;
+    }
+    return nullptr;
+}
+
+static void SCountCmd(const std::string& rest)
+{
+    std::string ad = rest;
+    while (!ad.empty() && std::isspace((unsigned char)ad.back())) ad.pop_back();
+
+    if (ad.empty() || Lower(ad) == "stat") {
+        for (int i = 0; i < 8; i++) {
+            if (!g_Yuva[i].ad) continue;
+            Out(std::string("scount[") + std::to_string(i) + "] " + g_Yuva[i].ad
+                + " -> " + std::to_string(g_Yuva[i].sayi) + " cagri");
+            if (!g_Yuva[i].ornek.empty()) Out(g_Yuva[i].ornek);
+        }
+        return;
+    }
+    for (int i = 0; i < 8; i++) {
+        if (g_Yuva[i].ad) continue;
+        static char kimlik[8][16];
+        sprintf_s(kimlik[i], "fp_sc%d", i);
+        g_Yuva[i].ad = _strdup(ad.c_str());
+        if (!HookOneScript(ad.c_str(), kimlik[i], SayacKancasi(i), &g_Yuva[i].orij)) {
+            g_Yuva[i].ad = nullptr;
+            Out("scount: " + ad + " kancalanamadi");
+        }
+        return;
+    }
+    Out("scount: bos yuva kalmadi (8/8)");
+}
+#endif
+
+#ifndef FORGEPACT_RELEASE
+// ---- Bolge uretim izi -----------------------------------------------------
+// ZoneGenChaosTower'i KIMIN cagirdigi statik olarak bulunamadi: dogrudan
+// cagri, betik tanimlayicisi, degisken slotu ve isim metni - dordu de sifir
+// dondu (arac bilinen bir dogru cevapla test edildi).
+//
+// O yuzden soruyu tersten soruyoruz: bir bolge uretilirken hangi ZoneGen
+// adimlari SIRAYLA calisiyor?  Chaos Tower listede hic yoksa karar daha
+// yukarida veriliyor; varsa hangi adimda elendigi gorunur.
+static int g_ZgLog = 0;
+static volatile long g_ZgSira = 0;
+
+static void ZgYaz(const char* ad, int argc, RValue** A, void* donus = nullptr)
+{
+    if (g_ZgLog <= 0) return;
+    try {
+        long n = InterlockedIncrement(&g_ZgSira);
+        std::ofstream f(IPC_DIR + "\\zonegen.txt", std::ios::app);
+        f << "[" << n << "] " << ad << " argc=" << argc;
+        // Cagiranin donus adresi.  Statik arama bu betiklerin cagiranini
+        // bulamadi (dogrudan cagri, tanimlayici, slot, isim - dordu de sifir),
+        // ama RandomChaosTower'da ayni teknik surucuyu vermisti.
+        if (donus && g_Base)
+            f << "  cagiran_rva=0x" << std::hex
+              << (unsigned long long)((uintptr_t)donus - g_Base) << std::dec;
+        for (int i = 0; i < argc && i < 3; i++)
+            f << "  arg" << i << "=" << (A && A[i] ? Describe(*A[i]) : std::string("(null)"));
+        f << "\n";
+        f.flush();
+    } catch (...) {}
+}
+
+#define ZG_HOOK(NAME) \
+    static PFUNC_YYGMLScript g_OrigZg_##NAME = nullptr; \
+    static RValue& HookZg_##NAME(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) { \
+        ZgYaz(#NAME, argc, A, _ReturnAddress()); \
+        return g_OrigZg_##NAME ? g_OrigZg_##NAME(S, O, R, argc, A) : R; \
+    }
+
+ZG_HOOK(ZoneGenGenerateKeyPresets)
+ZG_HOOK(ZoneGenPlacePreset)
+ZG_HOOK(ZoneGenFindNextPreset)
+ZG_HOOK(ZoneGenPopulateGroundPresets)
+ZG_HOOK(ZoneGenPopulatePresetObjects)
+ZG_HOOK(PushPresetToGrid)
+ZG_HOOK(ZoneGenMakeZoneWalls)
+ZG_HOOK(ZoneGenRestart)
+
+static void ZoneGenLogKur()
+{
+    struct K { const char* ad; const char* kimlik; PVOID k; PFUNC_YYGMLScript* o; };
+    static const K kTablo[] = {
+        { "ZoneGenGenerateKeyPresets",   "fp_zg1", (PVOID)HookZg_ZoneGenGenerateKeyPresets,   &g_OrigZg_ZoneGenGenerateKeyPresets },
+        { "ZoneGenPlacePreset",          "fp_zg2", (PVOID)HookZg_ZoneGenPlacePreset,          &g_OrigZg_ZoneGenPlacePreset },
+        { "ZoneGenFindNextPreset",       "fp_zg3", (PVOID)HookZg_ZoneGenFindNextPreset,       &g_OrigZg_ZoneGenFindNextPreset },
+        { "ZoneGenPopulateGroundPresets","fp_zg4", (PVOID)HookZg_ZoneGenPopulateGroundPresets,&g_OrigZg_ZoneGenPopulateGroundPresets },
+        { "ZoneGenPopulatePresetObjects","fp_zg5", (PVOID)HookZg_ZoneGenPopulatePresetObjects,&g_OrigZg_ZoneGenPopulatePresetObjects },
+        { "PushPresetToGrid",            "fp_zg6", (PVOID)HookZg_PushPresetToGrid,            &g_OrigZg_PushPresetToGrid },
+        { "ZoneGenMakeZoneWalls",        "fp_zg7", (PVOID)HookZg_ZoneGenMakeZoneWalls,        &g_OrigZg_ZoneGenMakeZoneWalls },
+        { "ZoneGenRestart",              "fp_zg8", (PVOID)HookZg_ZoneGenRestart,              &g_OrigZg_ZoneGenRestart },
+    };
+    int kurulan = 0;
+    for (const auto& k : kTablo) {
+        if (!*k.o) HookOneScript(k.ad, k.kimlik, k.k, k.o);
+        if (*k.o) kurulan++;
+    }
+    Out("zonegenlog: " + std::to_string(kurulan) + "/8 kanca kurulu -> bp_ipc\\zonegen.txt");
+}
+#endif
+
 static void InstallChaosTowerHooks()
 {
     HookOneScript("RandomChaosTower", "bp_randomct", (PVOID)HookRandomCT, &g_OrigRandomCT);
@@ -1566,6 +1873,41 @@ static void LoadConfig()
             });
         Out("LoadConfig: " + std::to_string(g_Config.size()) + " modifiers loaded");
     } catch (...) { Out("LoadConfig: json_parse EXCEPTION"); }
+}
+
+// Bazi ayarlar cmd.txt ile GEC kaliyor.  Ornek: RandomChaosTower yalnizca
+// Controller_obj'in Create olayinda, yani oyun acilirken BIR KEZ cagriliyor
+// ve kulenin cikabilecegi 10 bolgeyi orada seciyor.  Panel komutu ilk
+// cerceveden sonra islendigi icin o secime yetisemiyor.
+//
+// startup.txt eklentinin YUKLENDIGI anda okunur - hicbir oyun kodu daha
+// calismamistir.  Yalnizca oyun cagrisi gerektirmeyen, duz degisken atayan
+// komutlar burada gecerli.
+static void LoadStartup()
+{
+    std::ifstream f(IPC_DIR + "\\startup.txt", std::ios::binary);
+    if (!f) return;
+    std::string satir;
+    int uygulanan = 0;
+    while (std::getline(f, satir)) {
+        while (!satir.empty() && (satir.back() == '\r' || satir.back() == '\n' || satir.back() == ' '))
+            satir.pop_back();
+        if (satir.empty() || satir[0] == '#') continue;
+        std::string kalan;
+        std::string komut = Lower(FirstToken(satir, kalan));
+        if (komut == "ctsize") {
+            try { g_ctArrayN = std::stoi(kalan); uygulanan++; } catch (...) {}
+        } else if (komut == "ctarray") {
+            g_ctCustom.clear();
+            std::stringstream ss(kalan);
+            std::string tek;
+            while (std::getline(ss, tek, ',')) {
+                try { g_ctCustom.push_back(std::stod(tek)); } catch (...) {}
+            }
+            if (!g_ctCustom.empty()) uygulanan++;
+        }
+    }
+    if (uygulanan) Out("LoadStartup: " + std::to_string(uygulanan) + " erken ayar uygulandi");
 }
 
 static void InstallHook()
@@ -1806,27 +2148,553 @@ static void ObjVarJson(const std::string& objName, const std::string& var)
 #endif
 
 // stat <ad> <carpan> | stat list  -- oyuncu istatistigi carpanlari
+// ---- Rare drop controls: Heroic / loot ceiling / Satanic tier --------------
+// All three intercept values the game READS.  Nothing is written into game
+// state, so putting a slider back to x1 restores vanilla exactly - there is no
+// "restore" step to get wrong.
+//
+// Static analysis 2026-08-28, full write-up in
+// native_s10/DROP_RATE_RESEARCH.md:
+//
+//   Every rare-drop ladder rolls  irandom( GPV(gDataProtected[175]) )  and
+//   compares the result with a threshold, so each threshold is a literal
+//   percent:
+//       gDataProtected[175] = 99.0   roll ceiling, shared by EVERY ladder
+//       gDataProtected[177] = 28.0   base Heroic chance
+//       gDataProtected[178] = 37.0   boosted Heroic chance
+//   Slots 177/178 are read by nothing except DropItem, so they are clean
+//   levers.  The stored values are runtime handles minted at startup, not
+//   constants in the exe, so we resolve them once from global.gDataProtected
+//   and then override what GPV RETURNS for those keys.
+//
+//   Satanic has no such slot: it is decided by LoadSatanicDropTier(monsterLevel,
+//   multiplier), which brackets on monster level (200/123/100/75/42/24/15) and
+//   rolls cumulative cut-offs inside the bracket.  Its `multiplier` argument
+//   only widens ONE threshold in the level>=200 bracket, so scaling it is
+//   useless below level 200.  Instead we raise the monster level it is given,
+//   capped at 200 - the game's own top bracket.  Every number it then uses is
+//   vanilla; we only choose which vanilla row applies.
+static PFUNC_YYGMLScript g_OrigGpvRate = nullptr;
+static PFUNC_YYGMLScript g_OrigSatTier = nullptr;
+
+static double g_HeroicMult  = 1.0;   // 1 = vanilla (28% base / 37% boosted)
+static double g_CeilingMult = 1.0;   // 1 = vanilla (roll 0..99)
+static double g_SatanicMult = 1.0;   // 1 = vanilla monster level
+
+// Angelic is different from the other three.  Its gate is not a value the game
+// reads - DropItem asks "does the player have buff 332?" and, when the answer is
+// no, never runs the angelic code at all.  gml_Script_GetBuff is inlined at
+// every use site (0 real calls in the whole exe), so there is nothing to hook:
+// the only way in is to neutralise the branch itself.
+//
+// The chance the game then rolls against is NOT a constant - DropItem builds it
+// up at runtime with floor() and additions, so opening the gate gives the game's
+// own computed rate rather than a flood.  We log that value so the real number
+// can be read instead of guessed.
+//
+// slider: x1 = off, x2 = gate open at the game's own rate,
+//         x3..x5 = gate open and the internal roll ceiling divided by (mult-1).
+static double g_AngelicMult     = 1.0;   // what the panel asked for
+static double g_AngelicRateMult = 1.0;   // 1 = the game's own rate
+
+static volatile long g_RateCeilHits = 0;
+static volatile long g_RateHeroHits = 0;
+static volatile long g_SatTierHits  = 0;
+
+static const int kSlotAngelic     = 172;   // ceiling of the roll inside DropItemAngelicChance
+static const int kSlotCeiling     = 175;
+static const int kSlotHeroic      = 177;
+static const int kSlotHeroicBoost = 178;
+
+static const double kHeroicBase  = 28.0;
+static const double kHeroicBoost = 37.0;
+static const double kSatanicTopBracket = 200.0;
+
+static volatile long g_AngRateHits = 0;
+static volatile long g_AngChanceCalls = 0;
+static double g_AngLastChance = -1.0;
+
+static bool   g_RateKeysOk = false;
+static double g_KeyCeiling = 0.0, g_KeyHeroic = 0.0, g_KeyHeroicBoost = 0.0;
+static double g_KeyAngelic = 0.0;
+
+// Resolve the three GPV keys out of global.gDataProtected.  Called only from
+// the command handler (a safe frame context), never from inside a hook.
+static bool ResolveRateKeys()
+{
+    if (g_RateKeysOk) return true;
+    try {
+        int len = -1;
+        RValue arr = GlobalArray("gDataProtected", len);
+        if (len <= kSlotHeroicBoost) {
+            Out("raredrop: gDataProtected not ready yet (len=" + std::to_string(len)
+                + ") - enter a map once, then apply again");
+            return false;
+        }
+        RValue d = g_Yytk->CallBuiltin("array_get", { arr, RValue((double)kSlotAngelic) });
+        RValue a = g_Yytk->CallBuiltin("array_get", { arr, RValue((double)kSlotCeiling) });
+        RValue b = g_Yytk->CallBuiltin("array_get", { arr, RValue((double)kSlotHeroic) });
+        RValue c = g_Yytk->CallBuiltin("array_get", { arr, RValue((double)kSlotHeroicBoost) });
+        if (a.m_Kind != VALUE_REAL || b.m_Kind != VALUE_REAL || c.m_Kind != VALUE_REAL) {
+            Out("raredrop: unexpected key types - controls stay off");
+            return false;
+        }
+        double ka = a.ToDouble(), kb = b.ToDouble(), kc = c.ToDouble();
+        // Three distinct slots must give three distinct keys.  If they collide,
+        // the layout moved and overriding would hit the wrong value.
+        if (ka == kb || ka == kc || kb == kc) {
+            Out("raredrop: keys are not distinct - build layout changed, controls stay off");
+            return false;
+        }
+        g_KeyCeiling = ka; g_KeyHeroic = kb; g_KeyHeroicBoost = kc;
+        g_KeyAngelic = (d.m_Kind == VALUE_REAL) ? d.ToDouble() : 0.0;
+        g_RateKeysOk = true;
+        char msg[256];
+        sprintf_s(msg, "raredrop: keys resolved (ceiling=%g heroic=%g boosted=%g)", ka, kb, kc);
+        Out(msg);
+    } catch (...) { Out("raredrop: key resolve EXCEPTION"); }
+    return g_RateKeysOk;
+}
+
+// The protected-variable store is NATIVE: ac_dll_gm.dll (the anti-cheat GM
+// extension) exports GetVariable / SetVariable / InitNewVariableFast.  Every
+// inlined GPV copy in game code dispatches through the global `GetVariable`,
+// which holds a reference to that export.  GML-level hooks (GPV, the PC_*
+// wrappers) never fire - measured: reads seen = 0.  A MinHook on the export
+// itself intercepts every read regardless of inlining.
+// GM extension ABI: double __cdecl GetVariable(double key); key equals the
+// gDataProtected index (measured live: gaget gDataProtected[177] -> 177).
+typedef double (__cdecl *AcGetVariableFn)(double);
+static AcGetVariableFn g_OrigProtGet = nullptr;
+static volatile long g_ProtGetCalls = 0;
+// Diagnostics: count reads of the three keys we care about no matter the
+// multiplier, and optionally sample distinct (key, value) pairs so the real
+// key space can be READ instead of guessed (ac_dll_gm also exports ScrambleKey,
+// so the keys may not be the plain indices).
+static volatile long g_Seen175 = 0, g_Seen177 = 0, g_Seen178 = 0;
+static bool g_ProtProbe = false;
+static std::map<double, double> g_ProbeSeen;
+static std::mutex g_ProbeLock;
+
+static double __cdecl HookProtGet(double key)
+{
+    double v = g_OrigProtGet ? g_OrigProtGet(key) : 0.0;
+    InterlockedIncrement(&g_ProtGetCalls);
+    if (key == 175.0) InterlockedIncrement(&g_Seen175);
+    else if (key == 177.0) InterlockedIncrement(&g_Seen177);
+    else if (key == 178.0) InterlockedIncrement(&g_Seen178);
+    if (g_ProtProbe) {
+        try {
+            std::lock_guard<std::mutex> lk(g_ProbeLock);
+            if (g_ProbeSeen.size() < 400 && g_ProbeSeen.find(key) == g_ProbeSeen.end())
+                g_ProbeSeen[key] = v;
+        } catch (...) {}
+    }
+    if (!std::isfinite(v) || v <= 0.0) return v;   // sentinel / not set: hands off
+    if (g_HeroicMult > 1.0 && (key == (double)kSlotHeroic || key == (double)kSlotHeroicBoost)) {
+        double nv = v * g_HeroicMult;
+        if (nv > 100.0) nv = 100.0;                // roll is irandom(99): 100 = always
+        InterlockedIncrement(&g_RateHeroHits);
+        return nv;
+    }
+    if (g_CeilingMult > 1.0 && key == (double)kSlotCeiling) {
+        double nv = std::floor(v / g_CeilingMult); // smaller ceiling = every chance scaled up
+        if (nv < 1.0) nv = 1.0;
+        InterlockedIncrement(&g_RateCeilHits);
+        return nv;
+    }
+    return v;
+}
+
+static bool EnsureProtGetHook()
+{
+    if (g_OrigProtGet) return true;
+    HMODULE ac = GetModuleHandleA("ac_dll_gm.dll");
+    if (!ac) { Out("raredrop: ac_dll_gm.dll is not loaded"); return false; }
+    PVOID src = (PVOID)GetProcAddress(ac, "GetVariable");
+    if (!src) { Out("raredrop: ac_dll_gm.dll!GetVariable export not found"); return false; }
+    PVOID tramp = nullptr;
+    AurieStatus hs = MmCreateHook(g_ArSelfModule, "fp_acgetvar", src, (PVOID)HookProtGet, &tramp);
+    if (!AurieSuccess(hs)) {
+        Out("raredrop: hook on ac_dll_gm!GetVariable failed st=" + std::to_string((int)hs));
+        return false;
+    }
+    g_OrigProtGet = reinterpret_cast<AcGetVariableFn>(tramp);
+    Out("HOOK INSTALLED on ac_dll_gm!GetVariable (native store)");
+    return true;
+}
+
+static RValue& HookGpvRate(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    RValue& r = g_OrigGpvRate ? g_OrigGpvRate(S, O, R, argc, A) : R;
+    if (!g_RateKeysOk || argc < 1 || !A || !A[0]) return r;
+    if (A[0]->m_Kind != VALUE_REAL) return r;
+    const double k = A[0]->ToDouble();
+    try {
+        if (k == g_KeyCeiling) {
+            if (g_CeilingMult > 1.0) {
+                // P(roll < T) = T/(ceiling+1), so dividing the ceiling the game
+                // just returned multiplies every chance by the same factor -
+                // whatever scale those thresholds happen to use.
+                double v = r.ToDouble();
+                if (std::isfinite(v) && v > 1.0) {
+                    double n = std::floor(v / g_CeilingMult);
+                    if (n < 1.0) n = 1.0;
+                    r = RValue(n);
+                    InterlockedIncrement(&g_RateCeilHits);
+                }
+            }
+        } else if (k == g_KeyHeroic) {
+            if (g_HeroicMult != 1.0) {
+                double v = kHeroicBase * g_HeroicMult;
+                if (v > 100.0) v = 100.0;
+                r = RValue(v);
+                InterlockedIncrement(&g_RateHeroHits);
+            }
+        } else if (k == g_KeyHeroicBoost) {
+            if (g_HeroicMult != 1.0) {
+                double v = kHeroicBoost * g_HeroicMult;
+                if (v > 100.0) v = 100.0;
+                r = RValue(v);
+                InterlockedIncrement(&g_RateHeroHits);
+            }
+        }
+    } catch (...) {}
+    return r;
+}
+
+static RValue& HookSatanicTier(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    if (g_SatanicMult > 1.0 && argc >= 1 && A && A[0] && A[0]->m_Kind == VALUE_REAL) {
+        try {
+            double level = A[0]->ToDouble();
+            double lifted = level * g_SatanicMult;
+            if (lifted > kSatanicTopBracket) lifted = kSatanicTopBracket;
+            if (lifted > level) {
+                RValue liftedRV(lifted);
+                RValue* args[8];
+                int n = argc < 8 ? argc : 8;
+                for (int i = 0; i < n; i++) args[i] = A[i];
+                args[0] = &liftedRV;
+                InterlockedIncrement(&g_SatTierHits);
+                return g_OrigSatTier ? g_OrigSatTier(S, O, R, n, args) : R;
+            }
+        } catch (...) {}
+    }
+    return g_OrigSatTier ? g_OrigSatTier(S, O, R, argc, A) : R;
+}
+
+// Write over code bytes.  Used only for the angelic gate; everything else in
+// this file works without touching code.
+static bool WriteCodeBytes(void* addr, const unsigned char* bytes, size_t n)
+{
+    DWORD old = 0;
+    if (!VirtualProtect(addr, n, PAGE_EXECUTE_READWRITE, &old)) return false;
+    memcpy(addr, bytes, n);
+    DWORD tmp = 0;
+    VirtualProtect(addr, n, old, &tmp);
+    FlushInstructionCache(GetCurrentProcess(), addr, n);
+    return true;
+}
+
+static unsigned char* g_AngelicGate = nullptr;
+static unsigned char  g_AngelicGateOrig[6] = {};
+static bool           g_AngelicGatePatched = false;
+
+static unsigned char* ScriptCode(const char* fullName)
+{
+    PVOID pv = nullptr;
+    if (!AurieSuccess(g_Yytk->GetNamedRoutinePointer(fullName, &pv)) || !pv) return nullptr;
+    try { return (unsigned char*)((CScript*)pv)->m_Functions->m_ScriptFunction; }
+    catch (...) { return nullptr; }
+}
+
+// Locate the branch that skips the DropItemAngelicChance call.  Found by
+// meaning, not by a fixed address, so it survives game updates:
+//   1. find the real `call gml_Script_DropItemAngelicChance` inside DropItem
+//   2. look back for a `test al,al` + `je rel32` whose target lands just after
+//      that call
+//   3. accept only if exactly ONE candidate matches
+static unsigned char* FindAngelicGate()
+{
+    if (g_AngelicGate) return g_AngelicGate;
+    unsigned char* drop   = ScriptCode("gml_Script_DropItem");
+    unsigned char* chance = ScriptCode("gml_Script_DropItemAngelicChance");
+    if (!drop || !chance) { Out("angelic: DropItem/DropItemAngelicChance not found"); return nullptr; }
+
+    const size_t kScan = 0x30000;          // DropItem is about 0x24A50 bytes
+    unsigned char* call = nullptr;
+    for (size_t i = 0; i + 5 < kScan; i++) {
+        if (drop[i] != 0xE8) continue;
+        int rel = *reinterpret_cast<int*>(drop + i + 1);
+        if (drop + i + 5 + rel == chance) { call = drop + i; break; }
+    }
+    if (!call) { Out("angelic: call site not found - game build changed"); return nullptr; }
+
+    unsigned char* from = (call - drop) > 0x300 ? call - 0x300 : drop;
+    unsigned char* found = nullptr;
+    int hits = 0;
+    for (unsigned char* q = from + 2; q + 6 <= call; q++) {
+        if (q[0] != 0x0F || q[1] != 0x84) continue;              // je rel32
+        if (q[-2] != 0x84 || q[-1] != 0xC0) continue;            // preceded by test al,al
+        int rel = *reinterpret_cast<int*>(q + 2);
+        unsigned char* dest = q + 6 + rel;
+        if (dest >= call && dest <= call + 0x40) { found = q; hits++; }
+    }
+    if (hits != 1) {
+        Out("angelic: gate not uniquely identified (" + std::to_string(hits)
+            + " candidates) - nothing patched");
+        return nullptr;
+    }
+    g_AngelicGate = found;
+    char b[128];
+    sprintf_s(b, "angelic: gate found at DropItem+0x%llX", (unsigned long long)(found - drop));
+    Out(b);
+    return found;
+}
+
+static bool OpenAngelicGate()
+{
+    if (g_AngelicGatePatched) return true;
+    unsigned char* gate = FindAngelicGate();
+    if (!gate) return false;
+    memcpy(g_AngelicGateOrig, gate, sizeof(g_AngelicGateOrig));
+    const unsigned char nops[6] = { 0x90, 0x90, 0x90, 0x90, 0x90, 0x90 };
+    if (!WriteCodeBytes(gate, nops, sizeof(nops))) { Out("angelic: write failed"); return false; }
+    g_AngelicGatePatched = true;
+    Out("angelic: gate OPEN (the game now rolls for angelic drops)");
+    return true;
+}
+
+static void CloseAngelicGate()
+{
+    if (!g_AngelicGatePatched || !g_AngelicGate) return;
+    WriteCodeBytes(g_AngelicGate, g_AngelicGateOrig, sizeof(g_AngelicGateOrig));
+    g_AngelicGatePatched = false;
+    Out("angelic: gate closed, original bytes restored");
+}
+
+// Measurement: the chance DropItem computed is argument2.  Logged so the real
+// number can be read on the first run instead of guessed.
+static PFUNC_YYGMLScript g_OrigAngChance = nullptr;
+static RValue& HookAngelicChance(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    long n = InterlockedIncrement(&g_AngChanceCalls);
+    // First few calls: report argc and the RValue kinds only.  These are small
+    // integers, so this line can never overflow the buffer - if the process dies
+    // anyway, the fault is not in the formatting.
+    if (n <= 5) {
+        char k[160];
+        sprintf_s(k, "angelic: enter #%ld argc=%d kind0=%d kind1=%d kind2=%d kind3=%d", n, argc,
+                  (argc > 0 && A && A[0]) ? (int)A[0]->m_Kind : -1,
+                  (argc > 1 && A && A[1]) ? (int)A[1]->m_Kind : -1,
+                  (argc > 2 && A && A[2]) ? (int)A[2]->m_Kind : -1,
+                  (argc > 3 && A && A[3]) ? (int)A[3]->m_Kind : -1);
+        Out(k);
+    }
+    // Formatting a game-supplied double is not safe with %f: a huge or non-finite
+    // value expands to hundreds of digits, overruns the buffer and makes sprintf_s
+    // abort the whole process (0xC0000409).  Check the type, reject non-finite,
+    // and use %g, whose output is bounded.
+    if (argc >= 3 && A && A[2] && A[2]->m_Kind == VALUE_REAL) {
+        try {
+            double chance = A[2]->ToDouble();
+            if (std::isfinite(chance)) {
+                g_AngLastChance = chance;
+                if (n <= 15 || (n % 100) == 0) {
+                    char b[256];
+                    sprintf_s(b, "angelic: roll #%ld  chance=%g", n, chance);
+                    Out(b);
+                }
+            } else if (n <= 5) {
+                Out("angelic: roll with a non-finite chance value, not logged");
+            }
+        } catch (...) {}
+    }
+    if (g_AngelicRateMult > 1.0 && argc >= 3 && A && A[2] && A[2]->m_Kind == VALUE_REAL) {
+        try {
+            double c = A[2]->ToDouble();
+            if (std::isfinite(c) && c > 0.0) {
+                *A[2] = RValue(c * g_AngelicRateMult);
+                long hits = InterlockedIncrement(&g_AngRateHits);
+                if (hits <= 5) {
+                    char b[192];
+                    sprintf_s(b, "angelic: chance %g -> %g in place (x%.2f)",
+                              c, c * g_AngelicRateMult, g_AngelicRateMult);
+                    Out(b);
+                }
+            }
+        } catch (...) {}
+    }
+    return g_OrigAngChance ? g_OrigAngChance(S, O, R, argc, A) : R;
+}
+
+// raredrop heroic|ceiling|satanic|angelic <multiplier>   |   raredrop list
+static void RareDropCmd(const std::string& rest)
+{
+    std::string a1, a2;
+    a1 = FirstToken(rest, a2);
+    while (!a1.empty() && std::isspace((unsigned char)a1.back())) a1.pop_back();
+    while (!a2.empty() && std::isspace((unsigned char)a2.back())) a2.pop_back();
+    std::string what = Lower(a1);
+    Out("raredrop: enter '" + what + "' arg='" + a2 + "'");
+
+    if (what.empty() || what == "list") {
+        char b[224];
+        sprintf_s(b, "  heroic  x%.2f  -> base %.0f / boosted %.0f percent  (vanilla 28/37)  hits=%ld",
+                  g_HeroicMult,
+                  (kHeroicBase * g_HeroicMult > 100.0 ? 100.0 : kHeroicBase * g_HeroicMult),
+                  (kHeroicBoost * g_HeroicMult > 100.0 ? 100.0 : kHeroicBoost * g_HeroicMult),
+                  g_RateHeroHits);
+        Out(b);
+        sprintf_s(b, "  ceiling x%.2f  -> every rare ladder rolls on a %.2fx smaller range  hits=%ld",
+                  g_CeilingMult, g_CeilingMult, g_RateCeilHits);
+        Out(b);
+        sprintf_s(b, "  satanic x%.2f  -> monster level lifted, capped at %.0f  hits=%ld",
+                  g_SatanicMult, kSatanicTopBracket, g_SatTierHits);
+        Out(b);
+        sprintf_s(b, "  angelic x%.2f  -> gate %s, rate x%.2f, rolls=%ld, scaled=%ld, last chance=%g",
+                  g_AngelicMult, g_AngelicGatePatched ? "OPEN" : "closed",
+                  g_AngelicRateMult, g_AngChanceCalls, g_AngRateHits,
+                  std::isfinite(g_AngLastChance) ? g_AngLastChance : -1.0);
+        Out(b);
+        sprintf_s(b, "  store hook: %s, reads seen=%ld  key175=%ld key177=%ld key178=%ld",
+                  g_OrigProtGet ? "on" : "off", g_ProtGetCalls, g_Seen175, g_Seen177, g_Seen178);
+        Out(b);
+        Out(std::string("  hooks: GPV=") + (g_OrigGpvRate ? "on" : "off")
+            + " LoadSatanicDropTier=" + (g_OrigSatTier ? "on" : "off")
+            + " keys=" + (g_RateKeysOk ? "resolved" : "not resolved"));
+        return;
+    }
+
+    double mult = 1.0;
+    try { mult = std::stod(a2); } catch (...) { Out("raredrop: multiplier must be a number"); return; }
+    if (mult < 1.0) mult = 1.0;
+    if (mult > 100.0) mult = 100.0;
+
+    if (what == "heroic" || what == "ceiling") {
+        if (mult > 1.0 && !EnsureProtGetHook()) {
+            Out("raredrop " + what + ": could not hook the variable store - staying vanilla");
+            return;
+        }
+        if (what == "heroic") {
+            // Measured live (55M store reads over two sessions): keys 177/178 are
+            // NEVER read during normal monster kills, so this multiplier cannot
+            // change kill loot.  It stays wired for the special contexts that do
+            // read them (vault/chest paths), but is reported honestly.
+            g_HeroicMult = mult;
+            Out("raredrop heroic: set, but NOTE - normal monster kills never read the "
+                "heroic chance (measured); this only matters for special chest paths");
+        } else {
+            g_CeilingMult = mult;
+            char b[192];
+            sprintf_s(b, "raredrop ceiling: x%.2f -> every rare chance multiplied (affects EVERY ladder)",
+                      mult);
+            Out(b);
+        }
+        return;
+    }
+
+    if (what == "probe") {
+        if (!EnsureProtGetHook()) return;
+        if (!g_ProtProbe) {
+            { std::lock_guard<std::mutex> lk(g_ProbeLock); g_ProbeSeen.clear(); }
+            g_ProtProbe = true;
+            Out("raredrop probe: ON - sampling distinct store keys; run it again to dump");
+        } else {
+            g_ProtProbe = false;
+            std::map<double, double> snap;
+            { std::lock_guard<std::mutex> lk(g_ProbeLock); snap = g_ProbeSeen; }
+            char b[160];
+            sprintf_s(b, "raredrop probe: OFF - %zu distinct keys:", snap.size());
+            Out(b);
+            std::string line;
+            int shown = 0;
+            for (const auto& kv : snap) {
+                char e[64];
+                sprintf_s(e, " %g=%g", kv.first, kv.second);
+                line += e;
+                if (++shown % 6 == 0) { Out("  " + line); line.clear(); }
+            }
+            if (!line.empty()) Out("  " + line);
+        }
+        return;
+    }
+
+    if (what == "angelic") {
+        if (mult <= 1.0) {
+            CloseAngelicGate();
+            g_AngelicMult = 1.0;
+            g_AngelicRateMult = 1.0;
+            Out("raredrop angelic: off (vanilla)");
+            return;
+        }
+        if (!OpenAngelicGate()) { Out("raredrop angelic: nothing changed"); return; }
+        if (!g_OrigAngChance)
+            HookOneScript("DropItemAngelicChance", "fp_angch",
+                          (PVOID)HookAngelicChance, &g_OrigAngChance);
+        g_AngelicMult = mult;
+        g_AngelicRateMult = mult - 1.0;      // x2 = the game's own rate
+        // Measured live: x9 scaling works (26% per roll), x99 produces ZERO drops -
+        // an oversized chance value breaks the game's own check.  Hard cap at x9.
+        if (g_AngelicRateMult > 9.0) g_AngelicRateMult = 9.0;
+        if (g_AngelicRateMult > 1.0) {
+            if (ResolveRateKeys() && !g_OrigGpvRate)
+                HookOneScript("GPV", "fp_gpvrate", (PVOID)HookGpvRate, &g_OrigGpvRate);
+        }
+        char b[176];
+        sprintf_s(b, "raredrop angelic: x%.2f -> gate open, rate x%.2f (x2 = the game's own rate)",
+                  mult, g_AngelicRateMult);
+        Out(b);
+        return;
+    }
+
+    if (what == "satanic") {
+        if (mult > 1.0 && !g_OrigSatTier
+            && !HookOneScript("LoadSatanicDropTier", "fp_sattier",
+                              (PVOID)HookSatanicTier, &g_OrigSatTier)) {
+            Out("raredrop: could not hook LoadSatanicDropTier");
+            return;
+        }
+        g_SatanicMult = mult;
+        char b[192];
+        sprintf_s(b, "raredrop satanic: x%.2f -> monster level lifted for the tier roll (cap %.0f)",
+                  mult, kSatanicTopBracket);
+        Out(b);
+        return;
+    }
+
+    Out("raredrop: unknown '" + a1 + "'  (heroic | ceiling | satanic | angelic | list)");
+}
+
 static void StatCmd(const std::string& rest)
 {
     std::string a1, a2; a1 = FirstToken(rest, a2);
     while (!a1.empty() && std::isspace((unsigned char)a1.back())) a1.pop_back();
     while (!a2.empty() && std::isspace((unsigned char)a2.back())) a2.pop_back();
 
-    struct Kayit { const char* ad; const char* kimlik; PVOID kanca; PFUNC_YYGMLScript* orij; volatile long* sayac; double* carpan; };
+    struct Kayit { const char* ad; const char* kimlik; PVOID kanca; PFUNC_YYGMLScript* orij; volatile long* sayac; double* carpan; const char* takma; };
     static const Kayit kTablo[] = {
-        { "StatMagicFind", "fp_st_mf",      (PVOID)HookStat_StatMagicFind,      &g_OrigStat_StatMagicFind, &g_StatSayac_StatMagicFind, &g_StatCarpan_StatMagicFind },
-        { "StatAttackSpeed", "fp_st_as",    (PVOID)HookStat_StatAttackSpeed,    &g_OrigStat_StatAttackSpeed, &g_StatSayac_StatAttackSpeed, &g_StatCarpan_StatAttackSpeed },
-        { "StatFasterCastRate", "fp_st_fcr", (PVOID)HookStat_StatFasterCastRate, &g_OrigStat_StatFasterCastRate, &g_StatSayac_StatFasterCastRate, &g_StatCarpan_StatFasterCastRate },
-        { "StatExperienceGain", "fp_st_xp", (PVOID)HookStat_StatExperienceGain, &g_OrigStat_StatExperienceGain, &g_StatSayac_StatExperienceGain, &g_StatCarpan_StatExperienceGain },
-        { "StatMovementSpeed", "fp_st_ms",  (PVOID)HookStat_StatMovementSpeed,  &g_OrigStat_StatMovementSpeed, &g_StatSayac_StatMovementSpeed, &g_StatCarpan_StatMovementSpeed },
-        { "StatTotalDamage", "fp_st_td",    (PVOID)HookStat_StatTotalDamage,    &g_OrigStat_StatTotalDamage, &g_StatSayac_StatTotalDamage, &g_StatCarpan_StatTotalDamage },
-        { "StatExtraGold", "fp_st_eg",      (PVOID)HookStat_StatExtraGold,      &g_OrigStat_StatExtraGold, &g_StatSayac_StatExtraGold, &g_StatCarpan_StatExtraGold },
+        { "StatMagicFind", "fp_st_mf",      (PVOID)HookStat_StatMagicFind,      &g_OrigStat_StatMagicFind, &g_StatSayac_StatMagicFind, &g_StatCarpan_StatMagicFind, "magicfind" },
+        { "StatAttackSpeedMainHand", "fp_st_as", (PVOID)HookStat_StatAttackSpeedMainHand, &g_OrigStat_StatAttackSpeedMainHand, &g_StatSayac_StatAttackSpeedMainHand, &g_StatCarpan_StatAttackSpeedMainHand, "attackspeed" },
+        { "StatExperienceGain", "fp_st_xp", (PVOID)HookStat_StatExperienceGain, &g_OrigStat_StatExperienceGain, &g_StatSayac_StatExperienceGain, &g_StatCarpan_StatExperienceGain, "expgain" },
+        { "StatMovementSpeed", "fp_st_ms",  (PVOID)HookStat_StatMovementSpeed,  &g_OrigStat_StatMovementSpeed, &g_StatSayac_StatMovementSpeed, &g_StatCarpan_StatMovementSpeed, "movespeed" },
+        { "CalculateEndDamage", "fp_st_td", (PVOID)HookStat_CalculateEndDamage, &g_OrigStat_CalculateEndDamage, &g_StatSayac_CalculateEndDamage, &g_StatCarpan_CalculateEndDamage, "damage" },
+        { "StatExtraGold", "fp_st_eg",      (PVOID)HookStat_StatExtraGold,      &g_OrigStat_StatExtraGold, &g_StatSayac_StatExtraGold, &g_StatCarpan_StatExtraGold, "extragold" },
+        { "StatLifeReplenish", "fp_st_lr",  (PVOID)HookStat_StatLifeReplenish,  &g_OrigStat_StatLifeReplenish, &g_StatSayac_StatLifeReplenish, &g_StatCarpan_StatLifeReplenish, "lifereplenish" },
+        { "StatManaReplenish", "fp_st_mr",  (PVOID)HookStat_StatManaReplenish,  &g_OrigStat_StatManaReplenish, &g_StatSayac_StatManaReplenish, &g_StatCarpan_StatManaReplenish, "manareplenish" },
+        { "StatDefense", "fp_st_def",        (PVOID)HookStat_StatDefense,        &g_OrigStat_StatDefense, &g_StatSayac_StatDefense, &g_StatCarpan_StatDefense, "defense" },
+        { "StatCritDamage", "fp_st_cd",      (PVOID)HookStat_StatCritDamage,     &g_OrigStat_StatCritDamage, &g_StatSayac_StatCritDamage, &g_StatCarpan_StatCritDamage, "critdamage" },
+        { "StatCritRate", "fp_st_cr",        (PVOID)HookStat_StatCritRate,       &g_OrigStat_StatCritRate, &g_StatSayac_StatCritRate, &g_StatCarpan_StatCritRate, "critchance" },
+        { "StatSpellCritDamage", "fp_st_scd", (PVOID)HookStat_StatSpellCritDamage, &g_OrigStat_StatSpellCritDamage, &g_StatSayac_StatSpellCritDamage, &g_StatCarpan_StatSpellCritDamage, "spellcritdamage" },
+        { "StatSpellCritRate", "fp_st_scr",  (PVOID)HookStat_StatSpellCritRate,  &g_OrigStat_StatSpellCritRate, &g_StatSayac_StatSpellCritRate, &g_StatCarpan_StatSpellCritRate, "spellcritchance" },
+        { "EnemyCalculateExperience", "fp_st_xpc", (PVOID)HookStat_EnemyCalculateExperience, &g_OrigStat_EnemyCalculateExperience, &g_StatSayac_EnemyCalculateExperience, &g_StatCarpan_EnemyCalculateExperience, "exp" },
     };
 
     if (Lower(a1) == "list" || a1.empty()) {
         for (const auto& k : kTablo) {
             char b[160];
-            sprintf_s(b, "  %-20s x%.2f  %-12s cagri=%ld", k.ad, *k.carpan,
+            sprintf_s(b, "  %-26s (%-11s) x%.2f  %-12s cagri=%ld", k.ad, k.takma ? k.takma : "-", *k.carpan,
                       *k.orij ? "kanca kurulu" : "kanca yok", *k.sayac);
             Out(b);
         }
@@ -1838,7 +2706,8 @@ static void StatCmd(const std::string& rest)
     const Kayit* hedef = nullptr;
     for (const auto& k : kTablo) {
         std::string tam = Lower(k.ad);
-        if (ara == tam || ara == tam.substr(4)) { hedef = &k; break; }
+        if (ara == tam || ara == tam.substr(4)
+            || (k.takma && ara == Lower(k.takma))) { hedef = &k; break; }
     }
     if (!hedef) { Out("stat: bilinmeyen ad '" + a1 + "'  (stat list ile bak)"); return; }
 
@@ -1852,8 +2721,48 @@ static void StatCmd(const std::string& rest)
         if (!*hedef->orij) { Out(std::string("stat: ") + hedef->ad + " kancasi kurulamadi"); return; }
     }
     *hedef->carpan = c;
+    // Attack speed has separate final values for the two weapon hands.  A single
+    // panel setting must scale both or dual-wield characters become asymmetric.
+    if (std::string(hedef->takma) == "attackspeed") {
+        if (!g_OrigStat_StatAttackSpeedOffHand)
+            HookOneScript("StatAttackSpeedOffHand", "fp_st_aso",
+                          (PVOID)HookStat_StatAttackSpeedOffHand,
+                          &g_OrigStat_StatAttackSpeedOffHand);
+        g_StatCarpan_StatAttackSpeedOffHand = c;
+    }
+    // XP carpani acilinca baloncuk metnini de duzelt (yalnizca gorsel).
+    if (std::string(hedef->ad) == "EnemyCalculateExperience" && !g_OrigCombatText)
+        HookOneScript("CombatText", "fp_ctext", (PVOID)Hook_CombatText, &g_OrigCombatText);
     char b[160];
     sprintf_s(b, "stat %s -> x%.2f", hedef->ad, c);
+    Out(b);
+}
+
+static void StatAddCmd(const std::string& rest)
+{
+    std::string ad, deger; ad = FirstToken(rest, deger);
+    while (!ad.empty() && std::isspace((unsigned char)ad.back())) ad.pop_back();
+    while (!deger.empty() && std::isspace((unsigned char)deger.back())) deger.pop_back();
+    std::string ara = Lower(ad);
+    if (ara != "castrate" && ara != "statfastercastrate" && ara != "fastercastrate") {
+        Out("statadd: unknown '" + ad + "' (castrate)");
+        return;
+    }
+    double ek = 0.0;
+    try { ek = std::stod(deger); } catch (...) { Out("statadd: bonus sayi olmali"); return; }
+    if (ek < 0.0) ek = 0.0;
+    if (!g_OrigStatAdd_StatFasterCastRate) {
+        HookOneScript("StatFasterCastRate", "fp_sta_fcr",
+                      (PVOID)HookStatAdd_StatFasterCastRate,
+                      &g_OrigStatAdd_StatFasterCastRate);
+        if (!g_OrigStatAdd_StatFasterCastRate) {
+            Out("statadd: StatFasterCastRate kancasi kurulamadi");
+            return;
+        }
+    }
+    g_StatEk_StatFasterCastRate = ek;
+    char b[128];
+    sprintf_s(b, "statadd StatFasterCastRate -> +%.2f", ek);
     Out(b);
 }
 
@@ -2097,6 +3006,56 @@ static void SpawnAtPlayer(int objIdx)
         sprintf_s(b, "spawned obj %d at player (%.0f, %.0f)", objIdx, px.ToDouble(), py.ToDouble());
         Out(b);
     } catch (...) { Out("SpawnAtPlayer EXCEPTION"); }
+}
+
+// --- Chaos Tower ------------------------------------------------------------
+// OLCULDU (2026-08-28): kule bolgede yalnizca oyunun sectigi 10 bolgede
+// olusuyor ve o secimi yapan ZoneGenChaosTower disaridan cagrilinca hata
+// veriyor (bolge uretiminin ortasinda calismak uzere yazilmis).  Marker'i
+// (Spawn_Chaos_Tower_obj) sonradan yaratmak da ise yaramiyor: bes ornek
+// canli kaldi, hicbiri tepki vermedi - o marker bolge uretilirken tuketiliyor.
+//
+// Calisan tek yol: Chaos_Tower_obj nesnesini DOGRUDAN yaratmak.  Tek basina
+// yeterli - NPC, kontrolcu, marker ya da eSt kapisi gerekmiyor (temiz bir
+// bolgede tek ornekle dogrulandi, oyuncu kuleye girebildi).
+//
+// Bu, projedeki diger ozelliklerin aksine oyunun kendi yerlestirmesini
+// kullanmiyor; kuleyi biz koyuyoruz.  Dogal yol ZoneGenChaosTower'i oyunun
+// kendisine cagirtmaktan geciyor ama onu tetikleyen sart henuz bulunamadi.
+static bool g_CtOto = false;          // her bolgede bir kule
+static double g_CtSonOda = -1.0;      // bolge degisimini yakalamak icin
+static int  g_CtGecikme = 0;          // oyuncu yerlesene kadar bekle (kare)
+
+static void ChaosTowerKur(bool sessiz)
+{
+    try {
+        RValue idx = g_Yytk->CallBuiltin("asset_get_index", { RValue("Chaos_Tower_obj") });
+        int oi = (int)idx.ToDouble();
+        if (oi < 0) { if (!sessiz) Out("chaostower: Chaos_Tower_obj bulunamadi"); return; }
+        RValue n = g_Yytk->CallBuiltin("instance_number", { RValue((double)oi) });
+        if ((int)n.ToDouble() > 0) {          // bu bolgede zaten var - ikinciyi koyma
+            if (!sessiz) Out("chaostower: bu bolgede zaten bir kule var");
+            return;
+        }
+        SpawnAtPlayer(oi);
+        if (!sessiz) Out("chaostower: kule kuruldu");
+    } catch (...) { if (!sessiz) Out("chaostower EXCEPTION"); }
+}
+
+// Her karede cagrilir; bolge degisimini yakalayip kuleyi kurar.
+static void ChaosTowerTick()
+{
+    if (!g_CtOto || !g_Yytk) return;
+    try {
+        RValue oda = g_Yytk->CallBuiltin("variable_global_get", { RValue("room") });
+        double o = oda.ToDouble();
+        if (o != g_CtSonOda) {
+            g_CtSonOda = o;
+            g_CtGecikme = 90;   // ~1.5 sn: oyuncu ve zemin yerlessin
+            return;
+        }
+        if (g_CtGecikme > 0 && --g_CtGecikme == 0) ChaosTowerKur(true);
+    } catch (...) {}
 }
 
 static void SpawnByName(const std::string& name)
@@ -3627,6 +4586,20 @@ static void RunCommand(const std::string& line)
     if (cmd.empty()) return;
     std::string lc = Lower(cmd);
 
+#ifdef FORGEPACT_RELEASE
+    // Player builds accept only commands emitted by the ForgePact panel.  The
+    // research build keeps the inspection, arbitrary write, spawn and manual
+    // hook commands below; none of those surfaces are available to players.
+    static const std::unordered_set<std::string> kPlayerCommands = {
+        "ping", "density", "reveal", "specialrate", "dropmult",
+        "stat", "statadd", "raredrop", "droprate", "dungeonkey"
+    };
+    if (kPlayerCommands.find(lc) == kPlayerCommands.end()) {
+        Out("command unavailable in player build: " + cmd);
+        return;
+    }
+#endif
+
     if (lc == "ping") {
         short ma=0, mi=0, pa=0; g_Yytk->QueryVersion(ma, mi, pa);
         Out("pong (YYTK " + std::to_string(ma) + "." + std::to_string(mi) + "." + std::to_string(pa) + ")");
@@ -3793,6 +4766,30 @@ static void RunCommand(const std::string& line)
         ForceRelicDrop(n);
     } else if (lc == "relicgate") {
         SetRelicGate(rest == "1" || rest == "on" || rest == "true");
+#ifndef FORGEPACT_RELEASE
+    } else if (lc == "scount") {
+        SCountCmd(rest);
+    } else if (lc == "gpvlog") {
+        std::string v = Lower(rest);
+        while (!v.empty() && std::isspace((unsigned char)v.back())) v.pop_back();
+        if (v == "off") { g_GpvLog = 0; Out("gpvlog -> KAPALI"); }
+        else if (v == "stat") {
+            Out("gpvlog: " + std::to_string(g_GpvGorulen.size()) + " farkli kayit -> bp_ipc\gpv.txt");
+        } else {
+            if (!g_OrigGPV) HookOneScript("GPV", "fp_gpv", (PVOID)HookGPV, &g_OrigGPV);
+            if (!g_OrigSPV) HookOneScript("SPV", "fp_spv", (PVOID)HookSPV, &g_OrigSPV);
+            g_GpvLog = 1;
+            Out(std::string("gpvlog -> ACIK  (GPV kanca=") + (g_OrigGPV ? "var" : "YOK")
+                + ", SPV kanca=" + (g_OrigSPV ? "var" : "YOK") + ")  -> bp_ipc\gpv.txt");
+        }
+#endif
+#ifndef FORGEPACT_RELEASE
+    } else if (lc == "zonegenlog") {
+        std::string v = Lower(rest);
+        while (!v.empty() && std::isspace((unsigned char)v.back())) v.pop_back();
+        if (v == "off") { g_ZgLog = 0; Out("zonegenlog: KAPALI"); }
+        else { ZoneGenLogKur(); g_ZgLog = 1; g_ZgSira = 0; Out("zonegenlog: ACIK"); }
+#endif
     } else if (lc == "ctstats") {
         ChaosTowerStats();
     } else if (lc == "ctforce") {
@@ -3939,6 +4936,10 @@ static void RunCommand(const std::string& line)
             + " | butce yuzunden atilan=" + std::to_string(g_ButceIptal));
     } else if (lc == "stat") {
         StatCmd(rest);
+    } else if (lc == "statadd") {
+        StatAddCmd(rest);
+    } else if (lc == "raredrop") {
+        RareDropCmd(rest);
     } else if (lc == "droprate") {
         DropRateCmd(rest);
     } else if (lc == "dungeonkey") {
@@ -4273,6 +5274,7 @@ EXPORTED AurieStatus ModuleInitialize(
 
     CreateDirectoryA(IPC_DIR.c_str(), nullptr);
     Out("==== BloodPact plugin loaded ====");
+    LoadStartup();   // oyun kodu calismadan once uygulanmasi gereken ayarlar
 #ifdef FORGEPACT_RELEASE
     KonsoluGizle();
 #endif
