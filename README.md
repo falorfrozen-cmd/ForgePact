@@ -78,6 +78,12 @@ bp_ipc/                          the panel's command channel (created on first l
 deletes the mod files. Install on an offline copy of the game, not on the one you
 play online with.
 
+ForgePact verifies that the backup belongs to the same game build before restoring
+it. If a game update has already replaced the exe with a newer clean copy, the old
+backup is preserved as `Hero_Siege.exe.aurie_backup.stale-<date>` and the main
+backup is refreshed. A missing, patched, or mismatched backup is never restored
+over the current exe.
+
 ## ⚠️ Offline only — read this
 
 This works **only** with anti-cheat (**EAC**) disabled. It does **not** work on the

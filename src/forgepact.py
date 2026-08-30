@@ -10,8 +10,10 @@ Talks to BloodPactPlugin (Aurie/YYTK) over bp_ipc:
 Settings persist in %LOCALAPPDATA%/Hero_Siege/forgepact.json.
 """
 
+import hashlib
 import json
 import os
+import struct
 import subprocess
 import sys
 import threading
@@ -407,10 +409,366 @@ def find_src(fname, sources):
 
 def exe_is_patched(exe: Path) -> bool:
     try:
-        head = exe.open("rb").read(4096)
+        with exe.open("rb") as handle:
+            head = handle.read(4096)
         return b".aurie" in head
     except Exception:
         return False
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _pe_layout(path: Path) -> dict:
+    """Parse the PE fields needed for exact Aurie/clean-base comparison."""
+    file_size = path.stat().st_size
+    with path.open("rb") as handle:
+        dos = handle.read(64)
+        if len(dos) != 64 or dos[:2] != b"MZ":
+            raise ValueError(f"{path.name} is not a valid PE executable")
+        pe_offset = struct.unpack_from("<I", dos, 0x3C)[0]
+        if pe_offset < 64 or pe_offset + 24 > file_size:
+            raise ValueError(f"{path.name} has an invalid PE header offset")
+        handle.seek(pe_offset)
+        if handle.read(4) != b"PE\0\0":
+            raise ValueError(f"{path.name} has no PE signature")
+        coff = handle.read(20)
+        if len(coff) != 20:
+            raise ValueError(f"{path.name} has a truncated COFF header")
+        machine, section_count = struct.unpack_from("<HH", coff, 0)
+        optional_size = struct.unpack_from("<H", coff, 16)[0]
+        if not 1 <= section_count <= 96 or not 64 <= optional_size <= 4096:
+            raise ValueError(f"{path.name} has invalid PE header sizes")
+        optional = handle.read(optional_size)
+        if len(optional) != optional_size:
+            raise ValueError(f"{path.name} has a truncated optional header")
+        optional_magic = struct.unpack_from("<H", optional, 0)[0]
+        if optional_magic not in (0x10B, 0x20B):
+            raise ValueError(f"{path.name} has an unsupported PE format")
+        entry_point = struct.unpack_from("<I", optional, 16)[0]
+        section_alignment = struct.unpack_from("<I", optional, 32)[0]
+        size_of_image = struct.unpack_from("<I", optional, 56)[0]
+        size_of_headers = struct.unpack_from("<I", optional, 60)[0]
+        if section_alignment <= 0 or section_alignment & (section_alignment - 1):
+            raise ValueError(f"{path.name} has invalid section alignment")
+        section_table_offset = pe_offset + 24 + optional_size
+        section_table_end = section_table_offset + section_count * 40
+        if section_table_end > size_of_headers or size_of_headers > file_size:
+            raise ValueError(f"{path.name} has an invalid PE section table")
+        section_table = handle.read(section_count * 40)
+        if len(section_table) != section_count * 40:
+            raise ValueError(f"{path.name} has a truncated section table")
+
+        sections = []
+        for index in range(section_count):
+            entry = section_table[index * 40:(index + 1) * 40]
+            raw_name = entry[:8].rstrip(b"\0")
+            (virtual_size, virtual_address, raw_size, raw_offset,
+             relocations_offset, line_numbers_offset) = struct.unpack_from("<IIIIII", entry, 8)
+            relocation_count, line_number_count = struct.unpack_from("<HH", entry, 32)
+            characteristics = struct.unpack_from("<I", entry, 36)[0]
+            if raw_size and raw_offset + raw_size > file_size:
+                raise ValueError(f"{path.name} section {raw_name!r} is outside the file")
+            sections.append({
+                "name": raw_name,
+                "virtual_size": virtual_size,
+                "virtual_address": virtual_address,
+                "raw_size": raw_size,
+                "raw_offset": raw_offset,
+                "relocations_offset": relocations_offset,
+                "line_numbers_offset": line_numbers_offset,
+                "relocation_count": relocation_count,
+                "line_number_count": line_number_count,
+                "characteristics": characteristics,
+            })
+
+        if not sections:
+            raise ValueError(f"{path.name} has no PE sections")
+        raw_end = max(
+            [size_of_headers]
+            + [section["raw_offset"] + section["raw_size"] for section in sections]
+        )
+        return {
+            "file_size": file_size,
+            "pe_offset": pe_offset,
+            "file_header_offset": pe_offset + 4,
+            "optional_header_offset": pe_offset + 24,
+            "optional_size": optional_size,
+            "section_table_offset": section_table_offset,
+            "section_table_end": section_table_end,
+            "machine": machine,
+            "optional_magic": optional_magic,
+            "number_of_sections": section_count,
+            "entry_point": entry_point,
+            "section_alignment": section_alignment,
+            "size_of_image": size_of_image,
+            "size_of_headers": size_of_headers,
+            "raw_end": raw_end,
+            "sections": sections,
+        }
+
+
+def _mapped_pe_export_u32(image: bytes, export_name: bytes) -> int | None:
+    """Read a 32-bit exported data value from Aurie's mapped PE payload."""
+    if len(image) < 64 or image[:2] != b"MZ":
+        return None
+    pe_offset = struct.unpack_from("<I", image, 0x3C)[0]
+    if pe_offset < 64 or pe_offset + 24 > len(image):
+        return None
+    if image[pe_offset:pe_offset + 4] != b"PE\0\0":
+        return None
+    file_header_offset = pe_offset + 4
+    optional_size = struct.unpack_from("<H", image, file_header_offset + 16)[0]
+    optional_offset = file_header_offset + 20
+    if optional_offset + optional_size > len(image) or optional_size < 104:
+        return None
+    magic = struct.unpack_from("<H", image, optional_offset)[0]
+    data_directory_offset = 112 if magic == 0x20B else 96 if magic == 0x10B else 0
+    if not data_directory_offset or data_directory_offset + 8 > optional_size:
+        return None
+    export_rva, export_size = struct.unpack_from(
+        "<II", image, optional_offset + data_directory_offset
+    )
+    if export_size < 40 or export_rva + 40 > len(image):
+        return None
+    number_of_functions, number_of_names = struct.unpack_from(
+        "<II", image, export_rva + 20
+    )
+    functions_rva, names_rva, ordinals_rva = struct.unpack_from(
+        "<III", image, export_rva + 28
+    )
+    if (
+        number_of_functions == 0
+        or number_of_functions > 65_536
+        or number_of_names > 65_536
+        or functions_rva + number_of_functions * 4 > len(image)
+        or names_rva + number_of_names * 4 > len(image)
+        or ordinals_rva + number_of_names * 2 > len(image)
+    ):
+        return None
+    for index in range(number_of_names):
+        name_rva = struct.unpack_from("<I", image, names_rva + index * 4)[0]
+        if name_rva >= len(image):
+            return None
+        name_end = image.find(b"\0", name_rva, min(len(image), name_rva + 256))
+        if name_end < 0:
+            return None
+        if image[name_rva:name_end] != export_name:
+            continue
+        ordinal = struct.unpack_from("<H", image, ordinals_rva + index * 2)[0]
+        if ordinal >= number_of_functions:
+            return None
+        value_rva = struct.unpack_from("<I", image, functions_rva + ordinal * 4)[0]
+        if value_rva + 4 > len(image):
+            return None
+        return struct.unpack_from("<I", image, value_rva)[0]
+    return None
+
+
+def _same_aurie_base(exe: Path, backup: Path) -> bool:
+    """Compare the complete reconstructed clean exe with its proposed backup."""
+    try:
+        if not exe_is_patched(exe) or exe_is_patched(backup):
+            return False
+        patched = _pe_layout(exe)
+        clean = _pe_layout(backup)
+        clean_sections = clean["sections"]
+        patched_sections = patched["sections"]
+        if any(section["name"] == b".aurie" for section in clean_sections):
+            return False
+        if len(patched_sections) != len(clean_sections) + 1:
+            return False
+        if any(section["name"] == b".aurie" for section in patched_sections[:-1]):
+            return False
+        aurie = patched_sections[-1]
+        if aurie["name"] != b".aurie":
+            return False
+        if (
+            patched["machine"] != clean["machine"]
+            or patched["optional_magic"] != clean["optional_magic"]
+            or patched["pe_offset"] != clean["pe_offset"]
+            or patched["optional_size"] != clean["optional_size"]
+            or patched["section_table_offset"] != clean["section_table_offset"]
+        ):
+            return False
+        if clean["raw_end"] != clean["file_size"]:
+            return False  # AuriePatcher does not preserve a pre-existing overlay.
+        if aurie["raw_offset"] != clean["file_size"]:
+            return False
+        if patched["file_size"] != clean["file_size"] + aurie["raw_size"]:
+            return False
+        if patched["raw_end"] != patched["file_size"]:
+            return False
+        if (
+            aurie["virtual_size"] <= 0
+            or aurie["raw_size"] <= 0
+            or aurie["raw_size"] > 16 * 1024 * 1024
+            or aurie["virtual_size"] > aurie["raw_size"]
+            or aurie["virtual_address"] != clean["size_of_image"]
+            or aurie["characteristics"] != 0xE0000000
+            or aurie["relocations_offset"] != 0
+            or aurie["line_numbers_offset"] != 0
+            or aurie["relocation_count"] != 0
+            or aurie["line_number_count"] != 0
+        ):
+            return False
+        expected_image_size = (
+            aurie["virtual_address"]
+            + aurie["virtual_size"]
+            + clean["section_alignment"] - 1
+        ) & ~(clean["section_alignment"] - 1)
+        if patched["size_of_image"] != expected_image_size:
+            return False
+        if not (
+            aurie["virtual_address"]
+            <= patched["entry_point"]
+            < aurie["virtual_address"] + aurie["virtual_size"]
+        ):
+            return False
+
+        new_section_offset = (
+            clean["section_table_offset"] + clean["number_of_sections"] * 40
+        )
+        header_end = new_section_offset + 40
+        if (
+            header_end > clean["size_of_headers"]
+            or header_end > patched["size_of_headers"]
+        ):
+            return False
+        with exe.open("rb") as patched_file, backup.open("rb") as clean_file:
+            patched_file.seek(aurie["raw_offset"])
+            aurie_image = patched_file.read(aurie["raw_size"])
+            if len(aurie_image) != aurie["raw_size"]:
+                return False
+            if _mapped_pe_export_u32(aurie_image, b"g_OldOEP") != clean["entry_point"]:
+                return False
+            patched_file.seek(0)
+            clean_file.seek(0)
+            patched_header = bytearray(patched_file.read(header_end))
+            clean_header = clean_file.read(header_end)
+            if len(patched_header) != header_end or len(clean_header) != header_end:
+                return False
+
+            file_header_offset = clean["file_header_offset"]
+            optional_header_offset = clean["optional_header_offset"]
+            patched_header[file_header_offset + 2:file_header_offset + 4] = (
+                clean_header[file_header_offset + 2:file_header_offset + 4]
+            )
+            patched_header[optional_header_offset + 16:optional_header_offset + 20] = (
+                clean_header[optional_header_offset + 16:optional_header_offset + 20]
+            )
+            patched_header[optional_header_offset + 56:optional_header_offset + 60] = (
+                clean_header[optional_header_offset + 56:optional_header_offset + 60]
+            )
+            patched_header[new_section_offset:header_end] = (
+                clean_header[new_section_offset:header_end]
+            )
+            if bytes(patched_header) != clean_header:
+                return False
+
+            remaining = clean["file_size"] - header_end
+            while remaining:
+                size = min(4 * 1024 * 1024, remaining)
+                patched_chunk = patched_file.read(size)
+                clean_chunk = clean_file.read(size)
+                if len(patched_chunk) != size or patched_chunk != clean_chunk:
+                    return False
+                remaining -= size
+        return True
+    except (OSError, ValueError, struct.error):
+        return False
+
+
+def _unique_sibling(path: Path, label: str) -> Path:
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    candidate = path.with_name(f"{path.name}.{label}-{stamp}")
+    number = 2
+    while candidate.exists():
+        candidate = path.with_name(f"{path.name}.{label}-{stamp}-{number}")
+        number += 1
+    return candidate
+
+
+def _stage_verified_copy(source: Path, destination: Path) -> tuple[Path, str]:
+    """Copy beside destination and prove the copy/source did not change."""
+    import shutil as _sh
+
+    staged = _unique_sibling(destination, f"tmp-{os.getpid()}-{time.time_ns()}")
+    try:
+        source_before = _sha256_file(source)
+        _sh.copy2(source, staged)
+        source_after = _sha256_file(source)
+        staged_hash = _sha256_file(staged)
+        if source_before != source_after or staged_hash != source_after:
+            raise RuntimeError(f"{source.name} changed while it was being copied")
+        return staged, staged_hash
+    except Exception:
+        try:
+            staged.unlink()
+        except OSError:
+            pass
+        raise
+
+
+def _atomic_verified_copy(source: Path, destination: Path) -> None:
+    staged, expected_hash = _stage_verified_copy(source, destination)
+    try:
+        os.replace(staged, destination)
+        if _sha256_file(destination) != expected_hash:
+            raise RuntimeError(f"verification failed after replacing {destination.name}")
+    finally:
+        try:
+            staged.unlink()
+        except OSError:
+            pass
+
+
+def _prepare_backup_from_clean_exe(exe: Path, backup: Path) -> Path | None:
+    """Create/refresh a clean backup; preserve a stale backup under a new name.
+
+    Returns the archived stale-backup path, or ``None`` when no rotation was
+    needed.  The current clean exe is authoritative after a game update.
+    """
+    if exe_is_patched(exe):
+        raise ValueError("cannot create a clean backup from an Aurie-patched exe")
+    layout = _pe_layout(exe)  # Refuse to back up a malformed/non-PE file.
+    if any(section["name"] == b".aurie" for section in layout["sections"]):
+        raise ValueError("cannot create a clean backup from an Aurie-patched exe")
+    current_hash = _sha256_file(exe)
+    if backup.exists() and not exe_is_patched(backup) and _sha256_file(backup) == current_hash:
+        return None
+
+    staged, expected_hash = _stage_verified_copy(exe, backup)
+    archived = None
+    try:
+        if backup.exists():
+            archived = _unique_sibling(backup, "stale")
+            os.replace(backup, archived)
+        try:
+            os.replace(staged, backup)
+        except Exception:
+            if archived is not None and archived.exists() and not backup.exists():
+                os.replace(archived, backup)
+                archived = None
+            raise
+        if _sha256_file(backup) != expected_hash:
+            failed = _unique_sibling(backup, "failed-refresh")
+            os.replace(backup, failed)
+            if archived is not None and archived.exists():
+                os.replace(archived, backup)
+                archived = None
+            raise RuntimeError(f"verification failed after refreshing {backup.name}")
+        return archived
+    finally:
+        try:
+            staged.unlink()
+        except OSError:
+            pass
 
 
 def eac_status(exe: Path) -> str:
@@ -461,23 +819,66 @@ def op_install_mod(cfg) -> dict:
                        " (put them in a 'modfiles' folder next to ForgePact)"}
     steps = []
     bak = exe.with_name(exe.name + ".aurie_backup")
-    if not bak.exists():
-        _sh.copy2(exe, bak)
-        steps.append("exe backed up")
+    patched_before_install = exe_is_patched(exe)
+    try:
+        if patched_before_install:
+            if not bak.exists():
+                return {"err": f"the exe is already Aurie-patched but {bak.name} is missing. "
+                               "Install stopped so Remove Plugin cannot become unsafe. Restore a clean "
+                               "Hero_Siege.exe, then install again."}
+            if exe_is_patched(bak):
+                return {"err": f"{bak.name} is also Aurie-patched, so it is not a safe restore point. "
+                               "Install stopped; restore a clean Hero_Siege.exe first."}
+            if not _same_aurie_base(exe, bak):
+                return {"err": f"{bak.name} belongs to a different Hero Siege build. Install stopped "
+                               "rather than keeping a stale restore point. Restore/verify a clean game "
+                               "exe, then install again."}
+            steps.append("clean backup verified for this build")
+        else:
+            backup_existed = bak.exists()
+            archived = _prepare_backup_from_clean_exe(exe, bak)
+            if archived is not None:
+                steps.append(f"stale backup archived as {archived.name}")
+                steps.append("backup refreshed for the current build")
+            elif backup_existed:
+                steps.append("clean backup verified")
+            else:
+                steps.append("exe backed up")
+    except Exception as e:
+        return {"err": f"could not validate/prepare the clean exe backup: {e}"}
+
     _sh.copy2(core, b / "AurieCore.dll")
     (b / "mods" / "aurie").mkdir(parents=True, exist_ok=True)
     (b / "mods" / "native").mkdir(parents=True, exist_ok=True)
     _sh.copy2(yytk, b / "mods" / "aurie" / "YYToolkit.dll")
     _sh.copy2(plug, b / "mods" / "aurie" / "BloodPactPlugin.dll")
     steps.append("mod DLLs installed/updated")
-    if not exe_is_patched(exe):
-        r = subprocess.run([str(patcher), str(exe), str(b / "AurieCore.dll"), "install"],
-                           capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
-                           creationflags=CREATE_NO_WINDOW)
-        if exe_is_patched(exe):
-            steps.append("exe patched")
-        else:
-            return {"err": "patching failed: " + (r.stdout or r.stderr or "?")[-200:]}
+    if not patched_before_install:
+        patch_error = ""
+        patch_output = ""
+        try:
+            r = subprocess.run([str(patcher), str(exe), str(b / "AurieCore.dll"), "install"],
+                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
+                               creationflags=CREATE_NO_WINDOW)
+            patch_output = (r.stdout or r.stderr or "?")[-200:]
+            if r.returncode != 0:
+                patch_error = f"AuriePatcher exited with code {r.returncode}: {patch_output}"
+            elif not exe_is_patched(exe):
+                patch_error = "AuriePatcher reported success but the .aurie section is missing: " + patch_output
+            elif not _same_aurie_base(exe, bak):
+                patch_error = "AuriePatcher changed original game sections unexpectedly"
+        except Exception as e:
+            patch_error = str(e)
+
+        if patch_error:
+            try:
+                _atomic_verified_copy(bak, exe)
+                rollback = " The clean exe was restored from the verified backup."
+            except Exception as restore_error:
+                rollback = (f" Automatic restore also failed ({restore_error}); the verified clean copy is "
+                            f"still available as {bak.name}.")
+            return {"err": "patching failed: " + patch_error + rollback}
+        steps.append("exe patched and base build verified")
     else:
         steps.append("exe already patched")
     return {"ok": "MOD INSTALLED: " + ", ".join(steps) +
@@ -486,22 +887,41 @@ def op_install_mod(cfg) -> dict:
 
 
 def op_remove_mod(cfg) -> dict:
-    import shutil as _sh
     exe = exe_path(cfg)
     if not exe.exists():
         return {"err": "game exe not found - set Game Location first"}
     if game_running(cfg):
         return {"err": "Close the game first, then click Remove Plugin again."}
-    bak = exe.with_name(exe.name + ".aurie_backup")
-    if not bak.exists():
-        return {"err": f"no backup found ({bak.name}) - nothing to restore. "
-                       "The exe may already be the original, or it was installed from a different folder."}
     steps = []
+    bak = exe.with_name(exe.name + ".aurie_backup")
+    patched = exe_is_patched(exe)
     try:
-        _sh.copy2(bak, exe)
-        steps.append("original exe restored from backup")
+        if patched:
+            if not bak.exists():
+                return {"err": f"no backup found ({bak.name}). Remove stopped without touching the "
+                               "patched exe; restore a clean Hero_Siege.exe manually."}
+            if exe_is_patched(bak):
+                return {"err": f"{bak.name} is Aurie-patched too. Remove stopped without touching the "
+                               "current exe; restore a clean Hero_Siege.exe manually."}
+            if not _same_aurie_base(exe, bak):
+                return {"err": f"{bak.name} belongs to a different Hero Siege build. Remove stopped "
+                               "instead of downgrading/replacing the current exe. Verify the game files "
+                               "to obtain a clean exe first."}
+            _atomic_verified_copy(bak, exe)
+            steps.append("matching original exe restored from backup")
+        else:
+            backup_existed = bak.exists()
+            archived = _prepare_backup_from_clean_exe(exe, bak)
+            steps.append("exe was already original; it was left unchanged")
+            if archived is not None:
+                steps.append(f"stale backup archived as {archived.name}")
+                steps.append("backup refreshed for the current build")
+            elif backup_existed:
+                steps.append("clean backup verified")
+            else:
+                steps.append("clean backup created")
     except Exception as e:
-        return {"err": f"could not restore the exe: {e}"}
+        return {"err": f"could not safely remove the mod: {e}"}
     if exe_is_patched(exe):
         return {"err": "restore ran but the exe still looks patched - check the .aurie_backup file."}
     b = exe.parent
