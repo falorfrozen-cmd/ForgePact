@@ -288,13 +288,13 @@ namespace YYTK
 			if (!AurieSuccess(last_status))
 				return last_status;
 
-			// ExecuteIt kancasi S10'da DEVRE DISI.
-			// Bu kanca, oyunun instance referanslarini (kind 15, paketlenmis
-			// (tag<<32)|id) bozup "Unable to find any instance for object
-			// index 'NNNNNN'" olumcul hatasina yol aciyordu.  Yalnizca
-			// EVENT_OBJECT_CALL'u besliyor; kullandigimiz EVENT_FRAME
-			// HkPresent'ten geliyor, dolayisiyla kaybimiz yok.
-			// Isaretci yine doldurulur - baska yerler ona bakabilir.
+			// The ExecuteIt hook is DISABLED on S10.
+			// It corrupted the game's instance references (kind 15, packed
+			// (tag<<32)|id) and caused the fatal "Unable to find any instance
+			// for object index 'NNNNNN'" error.  It only feeds
+			// EVENT_OBJECT_CALL; the EVENT_FRAME we use comes from HkPresent,
+			// so nothing is lost.
+			// The pointer is still filled in - other places may read it.
 			(void)HkExecuteIt;
 
 			g_ModuleInterface.m_CodeExecute = code_execute;

@@ -99,6 +99,7 @@ DEFAULTS = {
     "density_on": False,
     "auto_apply": True,
     "map_reveal": False,
+    "necro_balance": False,
     "spawners": {k: 1 for k, *_ in SPAWNERS},
     "drops": {k: 1 for k, *_ in DROPS},
     "keys": {k: 1 for k, *_ in KEYS},
@@ -340,6 +341,7 @@ def build_cmds(cfg: dict) -> list:
     d = min(5.0, float(cfg.get("density", 1))) if cfg.get("density_on") else 1.0
     out = [f"density {d:g}"]
     out.append(f"reveal {1 if cfg.get('map_reveal', True) else 0}")
+    out.append(f"necrobal {1 if cfg.get('necro_balance', False) else 0}")
     for key, *_ in SPAWNERS:
         out.append(f"specialrate {key} {int(cfg['spawners'].get(key, 1))}")
     for key, *_ in DROPS:
@@ -1048,7 +1050,7 @@ class H(BaseHTTPRequestHandler):
                     # float("3") -> 3.0; the plugin prints with %g so it shows as "x3".
                     d = max(1.0, min(5.0, float(val)))
                     cfg["density"] = round(d * 2) / 2
-                elif key in ("density_on", "auto_apply", "map_reveal"):
+                elif key in ("density_on", "auto_apply", "map_reveal", "necro_balance"):
                     cfg[key] = bool(val)
                 save_cfg(cfg)
                 live = ""
@@ -1073,6 +1075,8 @@ class H(BaseHTTPRequestHandler):
                         send_cmds([f"density {cfg['density'] if cfg['density_on'] else 1}"], cfg)
                     elif key == "map_reveal":
                         send_cmds([f"reveal {1 if cfg['map_reveal'] else 0}"], cfg)
+                    elif key == "necro_balance":
+                        send_cmds([f"necrobal {1 if cfg['necro_balance'] else 0}"], cfg)
                     live = " (applied live)"
                     LAST["applied"] = time.strftime("%H:%M:%S")
                 self._json({"ok": f"saved{live}", "cfg": cfg})
@@ -1191,6 +1195,12 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
 .note{font-size:11px;color:var(--mut);font-style:italic}
 .modifier-card{position:relative;overflow:hidden;border-color:#49375d;background:radial-gradient(800px 260px at 85% -70px,#44255b55 0%,transparent 62%),linear-gradient(180deg,#1c151f,#151116)}
 .modifier-card:before{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(120deg,transparent 0 47%,#a77cff08 50%,transparent 53%)}
+.necro-card{position:relative;overflow:hidden;border-color:#64303a;background:radial-gradient(760px 250px at 88% -80px,#7b263b55 0%,transparent 62%),linear-gradient(180deg,#211317,#171013)}
+.necro-card h2{color:#ff8796}
+.live-badge.necro-badge{color:#ffd4da;border-color:#8b4351;background:#34151c;box-shadow:0 0 12px #ff5b6e22}
+.n1-summary{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 0 10px}
+.n1-item{padding:9px 11px;border:1px solid #47252d;border-radius:8px;background:#100b0dcc;color:#bda9ad;font-size:11px;line-height:1.45}
+.n1-item b{display:block;color:#f0c7ce;font-size:12px;margin-bottom:2px}
 .section-title{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;position:relative}
 .live-badge{font-size:10px;letter-spacing:1.4px;color:#bdffd0;border:1px solid #34794a;background:#122619;padding:4px 9px;border-radius:999px;box-shadow:0 0 12px #5ad87a22}
 .modifier-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;position:relative}
@@ -1203,7 +1213,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
 .modifier-group .row{display:grid;grid-template-columns:minmax(145px,190px) 1fr 64px;gap:10px;padding:8px 0}
 .modifier-group .row .lbl{width:auto}
 .modifier-group .note{margin:-4px 0 8px}
-@media(max-width:820px){.tabbar{grid-template-columns:1fr 1fr}.modifier-grid{grid-template-columns:1fr}.modifier-group.wide{grid-column:auto}.modifier-group .row{grid-template-columns:150px 1fr 64px}}
+@media(max-width:820px){.tabbar{grid-template-columns:1fr 1fr}.modifier-grid,.n1-summary{grid-template-columns:1fr}.modifier-group.wide{grid-column:auto}.modifier-group .row{grid-template-columns:150px 1fr 64px}}
 </style></head><body><div id="wrap">
 <header><div class="logo">&#128293;</div><div>
   <h1>FORGEPACT</h1><div class="sub">Hero Siege game mods &middot; live control</div>
@@ -1272,6 +1282,27 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
   skips outside their home zones.</div>
   <div id="drops"></div>
   <div id="keys"></div>
+</div>
+
+<div class="card necro-card tab-card" data-tab="modifiers">
+  <div class="section-title">
+    <div><h2>&#9760; Necromancer Balance Patch</h2>
+      <div class="hint"><b>Offline / EAC-disabled play only.</b> N1 applies to newly created summons and the next Frenzy or Amplify Damage cast. Turning it off restores vanilla values for subsequent summons and casts.</div>
+    </div>
+    <span class="live-badge necro-badge">N1 PROFILE</span>
+  </div>
+  <div class="row" style="border-color:#47252d">
+    <span class="lbl" style="width:auto;flex:1"><b>Enable Necromancer N1</b></span>
+    <label class="switch"><input type="checkbox" id="necro_balance"><span class="sl"></span></label>
+    <span class="val off" id="necrobalval">off</span>
+  </div>
+  <div class="n1-summary">
+    <div class="n1-item"><b>Skeleton Warrior</b>Damage slope 8 &rarr; 9.40<br>Follow range 48 &rarr; 64</div>
+    <div class="n1-item"><b>Skeleton Mage</b>Damage slope 7.25 &rarr; 8.51<br>Life slope 55 &rarr; 68 &middot; cap metadata 2</div>
+    <div class="n1-item"><b>Frenzy</b>Duration 25 &rarr; 35 &middot; cooldown 70 &rarr; 30<br>Attack Speed starts at 8, then +1/rank (was +2); Movement Speed stays 4 +1/rank</div>
+    <div class="n1-item"><b>Amplify &amp; Spirit</b>Amplify duration 5 &rarr; 10<br>Vengeful Spirit cap metadata 1</div>
+  </div>
+  <div class="note" style="margin:0;color:#c69aa2">N1 does not add a corpse fallback. Existing summons keep the values they were created with.</div>
 </div>
 
 <div class="card modifier-card tab-card" data-tab="modifiers">
@@ -1417,6 +1448,10 @@ async function boot(){
   document.getElementById('map_reveal').checked=mr;
   document.getElementById('mapval').textContent=mr?'on':'off';
   document.getElementById('mapval').className='val '+(mr?'':'off');
+  const nb=!!c.necro_balance;
+  document.getElementById('necro_balance').checked=nb;
+  document.getElementById('necrobalval').textContent=nb?'on':'off';
+  document.getElementById('necrobalval').className='val '+(nb?'':'off');
   document.getElementById('exepath').value=c.game_exe||'';
   document.getElementById('spawners').innerHTML=ST.spawners.map(([k,i,l,mx])=>row('spawners',k,l,c.spawners[k]||1,'',mx)).join('');
   document.getElementById('keys').innerHTML=ST.keys.map(([k,l,t])=>{
@@ -1501,6 +1536,15 @@ function bind(){
     document.getElementById('mapval').textContent=e.target.checked?'on':'off';
     document.getElementById('mapval').className='val '+(e.target.checked?'':'off');
     toast('map reveal '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
+  };
+  document.getElementById('necro_balance').onchange=async(e)=>{
+    const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'necro_balance',value:e.target.checked})});
+    if(res.err){e.target.checked=!e.target.checked;}
+    const enabled=e.target.checked;
+    document.getElementById('necrobalval').textContent=enabled?'on':'off';
+    document.getElementById('necrobalval').className='val '+(enabled?'':'off');
+    if(res.cfg)ST.cfg=res.cfg;
+    toast('Necromancer N1 '+(enabled?'ON':'OFF')+' - '+(res.ok||res.err));
   };
   document.getElementById('applyall').onclick=async()=>{
     const res=await j('/api/applyall',{method:'POST',body:'{}'});

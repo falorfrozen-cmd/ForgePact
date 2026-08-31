@@ -46,6 +46,15 @@ using namespace YYTK;
 
 static YYTKInterface* g_Yytk = nullptr;
 
+// Player builds keep only counters that affect behaviour.  Telemetry counters
+// are useful while reverse-engineering, but their atomic increments sit on hot
+// combat/drop/stat paths and must be free in the shipped build.
+#ifdef FORGEPACT_RELEASE
+#define BP_DIAG_INCREMENT(counter) ((void)0)
+#else
+#define BP_DIAG_INCREMENT(counter) InterlockedIncrement(&(counter))
+#endif
+
 // ===== Hook state =====
 static std::unordered_map<std::string, double> g_Config;   // modifier key -> value
 static PFUNC_YYGMLScript g_OrigGetInfo = nullptr;           // trampoline to original GetBloodPactInfo
@@ -61,6 +70,60 @@ static std::string g_SlotLog;          // distinct GetSlotBloodPact (arg->orig) 
 static std::string g_CallerLog;        // distinct caller RVAs of GetBloodPactInfo
 static uintptr_t g_Base = 0;           // game module base
 static bool g_ProbeStruct = true;      // numeric-arg probe returns full modifier struct
+
+// ===== Necromancer balance N1 ==============================================
+// Keep these values named and centralized: the panel/tests consume this block
+// as the runtime contract.  N1 is OFF by default and is applied only after the
+// live talent structs have passed an exact vanilla/N1 semantic preflight.
+static constexpr double kN1WarriorValue1Vanilla = 8.0;
+static constexpr double kN1WarriorValue1Balanced = 9.40;
+static constexpr double kN1MageValue1Vanilla = 7.25;
+static constexpr double kN1MageValue1Balanced = 8.51;
+static constexpr double kN1MageLifeValue2Vanilla = 55.0;
+static constexpr double kN1MageLifeValue2Balanced = 68.0;
+static constexpr double kN1AmplifyDurationVanilla = 5.0;
+static constexpr double kN1AmplifyDurationBalanced = 10.0;
+static constexpr double kN1FrenzyDurationVanilla = 25.0;
+static constexpr double kN1FrenzyDurationBalanced = 35.0;
+static constexpr double kN1FrenzyCooldownVanilla = 70.0;
+static constexpr double kN1FrenzyCooldownBalanced = 30.0;
+static constexpr double kN1FrenzyStartingValue1Vanilla = 8.0;
+static constexpr double kN1FrenzyStartingValue1Balanced = 8.0;
+static constexpr double kN1FrenzyValue1Vanilla = 2.0;
+static constexpr double kN1FrenzyValue1Balanced = 1.0;
+static constexpr double kN1FrenzyStartingValue2Vanilla = 4.0;
+static constexpr double kN1FrenzyStartingValue2Balanced = 4.0;
+static constexpr double kN1FrenzyValue2Vanilla = 1.0;
+static constexpr double kN1FrenzyValue2Balanced = 1.0;
+static constexpr double kN1MageMaxSummonsVanilla = 0.0;
+static constexpr double kN1MageMaxSummonsBalanced = 2.0;
+static constexpr double kN1SpiritMaxSummonsVanilla = 2.0;
+static constexpr double kN1SpiritMaxSummonsBalanced = 1.0;
+static constexpr double kN1WarriorPlayerRangeVanilla = 48.0;
+static constexpr double kN1WarriorPlayerRangeBalanced = 64.0;
+
+static std::atomic<bool> g_NecroBalanceEnabled{ false };
+static std::atomic<bool> g_NecroBalanceOwned{ false };
+static std::atomic<bool> g_NecroRestorePending{ false };
+static std::atomic<bool> g_NecroRangeIntegrity{ true };
+static std::atomic<bool> g_NecroPostCreateHooksInstalled{ false };
+static bool g_NecroBalanceHookInstalled = false;
+static int g_NecroWarriorObjectIndex = -1;
+static PFUNC_YYGMLScript g_OrigPopulateTalentStructMapNecromancer = nullptr;
+static PFUNC_YYGMLScript g_OrigLoadSummonStatsN1 = nullptr;
+static volatile long g_NecroPopulateCalls = 0;
+static volatile long g_NecroApplyOk = 0;
+static volatile long g_NecroApplyRejected = 0;
+static volatile long g_NecroLoadStatsCalls = 0;
+static volatile long g_NecroLoadStatsDeferred = 0;
+static volatile long g_NecroRangeWrites = 0;
+static volatile long g_NecroRangeRejected = 0;
+static std::string g_NecroLastStatus = "not installed";
+
+static void NecroBalancePostCreatedInstance(int objectIndex, RValue& instanceId);
+static void InstallNecroBalanceHooks();
+static void SetNecroBalance(bool enabled);
+static void NecroBalanceStatus();
 
 // Derive the IPC dir from the game exe location so EACH game copy (main + backup)
 // uses its OWN bp_ipc channel — required for the 2-instance co-op test + real 2-PC deploy.
@@ -725,6 +788,11 @@ static void PullNearApply(int objIdx, RValue* Args, int argc)
 // --- Yaratim sonrasi dogrulama ---------------------------------------------
 static void PostCreateCheck(int objIdx, RValue& Result, RValue* Args, int argc)
 {
+    // N1 uses the final instance returned by GameMaker's own create builtin.
+    // This is later than LoadSummonStats/the child's Create assignments, so the
+    // Warrior's vanilla playerRange=48 can no longer overwrite our value.
+    NecroBalancePostCreatedInstance(objIdx, Result);
+
     if (g_LogCreatePos.empty() || objIdx < 0) return;
     if (!g_LogCreatePos.count(objIdx)) return;
     try {
@@ -836,8 +904,19 @@ static bool HookBuiltin(const char* name, const char* id, PVOID dest, TRoutine* 
 
 static void InstallCreateHooks()
 {
-    HookBuiltin("instance_create_depth", "bp_icd", (PVOID)HookICD, &g_OrigICD);
-    HookBuiltin("instance_create_layer", "bp_icl", (PVOID)HookICL, &g_OrigICL);
+    if (g_OrigICD && g_OrigICL) {
+        g_NecroPostCreateHooksInstalled.store(true);
+        return;
+    }
+    bool depthReady = g_OrigICD != nullptr;
+    bool layerReady = g_OrigICL != nullptr;
+    if (!depthReady)
+        depthReady = HookBuiltin("instance_create_depth", "bp_icd", (PVOID)HookICD, &g_OrigICD);
+    if (!layerReady)
+        layerReady = HookBuiltin("instance_create_layer", "bp_icl", (PVOID)HookICL, &g_OrigICL);
+    // N1's authoritative final-range patch needs both creation paths.  Existing
+    // trampolines count as ready, making repeated InstallHook calls idempotent.
+    g_NecroPostCreateHooksInstalled.store(depthReady && layerReady);
     try {
         RValue r = g_Yytk->CallBuiltin("asset_get_index", { RValue("Enemy_Parent_obj") });
         g_EnemyParentIdx = (int)r.ToDouble();
@@ -907,6 +986,980 @@ static bool HookOneScript(const char* shortName, const char* id, PVOID dest, PFU
     *origOut = reinterpret_cast<PFUNC_YYGMLScript>(tramp);
     Out(std::string("HOOK INSTALLED on ") + shortName);
     return true;
+}
+
+struct N1TalentField
+{
+    int talentId;
+    const char* field;
+    double vanilla;
+    double balanced;
+};
+
+// Talent IDs are deliberately explicit.  No class-wide/global scalar is ever
+// changed, so shared constants (notably Mage/Corpse Explosion's old 7.25) stay
+// untouched.
+static constexpr N1TalentField kN1TalentFields[] = {
+    { 120, "abilityValue1",       kN1WarriorValue1Vanilla,          kN1WarriorValue1Balanced },
+    { 122, "abilityValue1",       kN1MageValue1Vanilla,             kN1MageValue1Balanced },
+    { 122, "abilityValue2",       kN1MageLifeValue2Vanilla,         kN1MageLifeValue2Balanced },
+    { 119, "abilityDuration",     kN1AmplifyDurationVanilla,        kN1AmplifyDurationBalanced },
+    { 124, "abilityDuration",     kN1FrenzyDurationVanilla,         kN1FrenzyDurationBalanced },
+    { 124, "abilityCooldown",     kN1FrenzyCooldownVanilla,         kN1FrenzyCooldownBalanced },
+    { 124, "abilityStartingValue1", kN1FrenzyStartingValue1Vanilla, kN1FrenzyStartingValue1Balanced },
+    { 124, "abilityValue1",       kN1FrenzyValue1Vanilla,           kN1FrenzyValue1Balanced },
+    { 124, "abilityStartingValue2", kN1FrenzyStartingValue2Vanilla, kN1FrenzyStartingValue2Balanced },
+    { 124, "abilityValue2",       kN1FrenzyValue2Vanilla,           kN1FrenzyValue2Balanced },
+    { 122, "abilityMaxSummons",   kN1MageMaxSummonsVanilla,         kN1MageMaxSummonsBalanced },
+    { 127, "abilityMaxSummons",   kN1SpiritMaxSummonsVanilla,       kN1SpiritMaxSummonsBalanced },
+};
+static constexpr int kN1TalentFieldCount =
+    (int)(sizeof(kN1TalentFields) / sizeof(kN1TalentFields[0]));
+
+struct N1ObservedField
+{
+    const N1TalentField* spec;
+    RValue talent;
+    double before;
+};
+
+static bool N1NearlyEqual(double a, double b)
+{
+    return std::isfinite(a) && std::isfinite(b) && std::fabs(a - b) <= 0.000001;
+}
+
+static bool N1Numeric(const RValue& value)
+{
+    return value.m_Kind == VALUE_REAL || value.m_Kind == VALUE_INT32 ||
+           value.m_Kind == VALUE_INT64;
+}
+
+// GameMaker 2024+ can expose asset/object indices as VALUE_REF even though its
+// REAL_RValue converter still yields the integral index.  Keep this separate
+// from N1Numeric: talent scalars remain strict and booleans remain rejected.
+static bool N1ObjectIndex(const RValue& value, int& index)
+{
+    const auto kind = static_cast<uint32_t>(value.m_Kind) & 0x0FFFFFFFU;
+    if (kind != VALUE_REAL && kind != VALUE_INT32 && kind != VALUE_INT64 &&
+        kind != VALUE_REF)
+        return false;
+    try {
+        const double converted = value.ToDouble();
+        if (!std::isfinite(converted) || converted < 0.0 ||
+            converted > 2147483647.0 ||
+            !N1NearlyEqual(converted, std::floor(converted)))
+            return false;
+        index = (int)converted;
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+static bool N1GetTalentStruct(const RValue& map, int talentId, RValue& talent, std::string& why)
+{
+    try {
+        RValue key((double)talentId);
+        RValue exists = g_Yytk->CallBuiltin("ds_map_exists", { map, key });
+        if (!exists.ToBoolean()) {
+            why = "talentStructMap missing id " + std::to_string(talentId);
+            return false;
+        }
+        talent = g_Yytk->CallBuiltin("ds_map_find_value", { map, key });
+        if (talent.m_Kind != VALUE_OBJECT) {
+            why = "talent " + std::to_string(talentId) + " is not a struct";
+            return false;
+        }
+        return true;
+    } catch (...) {
+        why = "talent lookup threw for id " + std::to_string(talentId);
+        return false;
+    }
+}
+
+static bool N1ReadStructNumber(const RValue& talent, const char* field, double& value, std::string& why)
+{
+    try {
+        RValue exists = g_Yytk->CallBuiltin("variable_struct_exists", { talent, RValue(field) });
+        if (!exists.ToBoolean()) {
+            why = std::string("missing field ") + field;
+            return false;
+        }
+        RValue current = g_Yytk->CallBuiltin("variable_struct_get", { talent, RValue(field) });
+        if (!N1Numeric(current)) {
+            why = std::string("non-numeric field ") + field;
+            return false;
+        }
+        value = current.ToDouble();
+        if (!std::isfinite(value)) {
+            why = std::string("non-finite field ") + field;
+            return false;
+        }
+        return true;
+    } catch (...) {
+        why = std::string("read threw for field ") + field;
+        return false;
+    }
+}
+
+static bool N1WriteStructNumber(const RValue& talent, const N1TalentField& spec,
+                                double target, std::string& why)
+{
+    try {
+        g_Yytk->CallBuiltin("variable_struct_set",
+                            { talent, RValue(spec.field), RValue(target) });
+        double after = 0.0;
+        if (!N1ReadStructNumber(talent, spec.field, after, why) || !N1NearlyEqual(after, target)) {
+            why = "write verify failed id " + std::to_string(spec.talentId) + "." + spec.field;
+            return false;
+        }
+        return true;
+    } catch (...) {
+        why = "write threw id " + std::to_string(spec.talentId) + "." + spec.field;
+        return false;
+    }
+}
+
+static bool N1GetTalentMap(RValue& map, std::string& why)
+{
+    try {
+        RValue exists = g_Yytk->CallBuiltin("variable_global_exists", { RValue("talentStructMap") });
+        if (!exists.ToBoolean()) { why = "global.talentStructMap is not ready"; return false; }
+        map = g_Yytk->CallBuiltin("variable_global_get", { RValue("talentStructMap") });
+        // GameMaker's ds_exists(id, ds_type_map) is the lifetime/type gate.
+        // ds_type_map is 1.  It is authoritative because current runners may
+        // represent a live data-structure handle as VALUE_REF, not a real.
+        RValue liveMap = g_Yytk->CallBuiltin("ds_exists", { map, RValue(1.0) });
+        if (!liveMap.ToBoolean()) { why = "global.talentStructMap is not a live ds-map"; return false; }
+        return true;
+    } catch (...) {
+        why = "talentStructMap lookup threw";
+        return false;
+    }
+}
+
+static bool N1ApplyTalentMap(bool enable, std::string& detail)
+{
+    RValue map;
+    if (!N1GetTalentMap(map, detail)) return false;
+
+    std::vector<N1ObservedField> observed;
+    observed.reserve(sizeof(kN1TalentFields) / sizeof(kN1TalentFields[0]));
+    int mismatches = 0;
+    bool sawVanillaProfile = false;
+    bool sawBalancedProfile = false;
+
+    for (const auto& spec : kN1TalentFields) {
+        RValue talent;
+        std::string why;
+        double abilityId = 0.0;
+        double current = 0.0;
+        if (!N1GetTalentStruct(map, spec.talentId, talent, why)) {
+            detail = why;
+            return false;
+        }
+        if (!N1ReadStructNumber(talent, "abilityId", abilityId, why)) {
+            detail = "id " + std::to_string(spec.talentId) + ": " + why;
+            return false;
+        }
+        if (!N1NearlyEqual(abilityId, (double)spec.talentId)) {
+            detail = "semantic gate rejected map key " + std::to_string(spec.talentId) +
+                     " abilityId=" + std::to_string(abilityId);
+            return false;
+        }
+        if (!N1ReadStructNumber(talent, spec.field, current, why)) {
+            detail = why;
+            return false;
+        }
+        const bool known = N1NearlyEqual(current, spec.vanilla) ||
+                           N1NearlyEqual(current, spec.balanced);
+        if (!known) {
+            mismatches++;
+            if (enable) {
+                detail = "semantic gate rejected id " + std::to_string(spec.talentId) + "." +
+                         spec.field + " current=" + std::to_string(current);
+                return false; // whole-set preflight: enabling never partially writes
+            }
+        } else if (!N1NearlyEqual(spec.vanilla, spec.balanced)) {
+            if (N1NearlyEqual(current, spec.vanilla)) sawVanillaProfile = true;
+            else sawBalancedProfile = true;
+        }
+        observed.push_back({ &spec, talent, current });
+    }
+
+    // Exact per-field values are not enough: an interrupted/foreign partial N1
+    // profile must not be normalized silently.  Enable accepts only a complete
+    // vanilla profile or a complete N1 profile.  Equal vanilla/N1 pairs do not
+    // participate in this decision.
+    if (enable && sawVanillaProfile && sawBalancedProfile) {
+        detail = "semantic gate rejected mixed vanilla/N1 profile";
+        return false;
+    }
+    if (enable && sawBalancedProfile && !sawVanillaProfile &&
+        !g_NecroBalanceOwned.load()) {
+        detail = "semantic gate rejected unowned full N1 profile";
+        return false;
+    }
+
+    int writes = 0;
+    int writeFailures = 0;
+    std::string firstWriteFailure;
+    for (size_t i = 0; i < observed.size(); i++) {
+        auto& item = observed[i];
+        const double target = enable ? item.spec->balanced : item.spec->vanilla;
+
+        // On disable, restore only values which are recognizably vanilla/N1.
+        // A third-party value is left untouched rather than being overwritten.
+        if (!N1NearlyEqual(item.before, item.spec->vanilla) &&
+            !N1NearlyEqual(item.before, item.spec->balanced))
+            continue;
+        if (N1NearlyEqual(item.before, target)) continue;
+
+        std::string why;
+        if (!N1WriteStructNumber(item.talent, *item.spec, target, why)) {
+            if (enable) {
+                // A setter can mutate the current field and still fail its read-back
+                // verification. Restore it too, then every earlier write in reverse.
+                bool rollbackOk = true;
+                std::string rollbackWhy;
+                {
+                    std::string currentWhy;
+                    if (!N1WriteStructNumber(item.talent, *item.spec, item.before, currentWhy)) {
+                        rollbackOk = false;
+                        rollbackWhy = "current=" + currentWhy;
+                    }
+                }
+                for (size_t j = i; j-- > 0;) {
+                    auto& previous = observed[j];
+                    if (!N1NearlyEqual(previous.before, previous.spec->balanced)) {
+                        std::string previousWhy;
+                        if (!N1WriteStructNumber(previous.talent, *previous.spec,
+                                                 previous.before, previousWhy)) {
+                            rollbackOk = false;
+                            if (!rollbackWhy.empty()) rollbackWhy += "; ";
+                            rollbackWhy += "id " + std::to_string(previous.spec->talentId) +
+                                           "." + previous.spec->field + "=" + previousWhy;
+                        }
+                    }
+                }
+                if (!rollbackOk) {
+                    g_NecroBalanceEnabled.store(false);
+                    g_NecroBalanceOwned.store(true);
+                    g_NecroRestorePending.store(true);
+                    detail = why + "; rollback FAILED: " + rollbackWhy;
+                } else {
+                    detail = why + "; rollback verified";
+                }
+                return false;
+            }
+            writeFailures++;
+            if (firstWriteFailure.empty()) firstWriteFailure = why;
+            continue;
+        }
+        writes++;
+    }
+
+    detail = std::string(enable ? "N1 applied" : "vanilla restored") +
+              " writes=" + std::to_string(writes);
+    if (mismatches) detail += " untouched-mismatches=" + std::to_string(mismatches);
+    if (writeFailures) {
+        detail += " write-failures=" + std::to_string(writeFailures) +
+                  " first=" + firstWriteFailure;
+    }
+    return mismatches == 0 && writeFailures == 0;
+}
+
+// Restore is intentionally not the inverse activation transaction.  Each field
+// is independent so one missing/foreign entry cannot prevent later owned exact
+// N1 values from being restored.  Unknown values are never overwritten.
+static bool N1RestoreTalentMapOwned(std::string& detail)
+{
+    RValue map;
+    if (!N1GetTalentMap(map, detail)) return false;
+
+    int writes = 0;
+    int failures = 0;
+    std::string firstFailure;
+    for (const auto& spec : kN1TalentFields) {
+        RValue talent;
+        std::string why;
+        double abilityId = 0.0;
+        double current = 0.0;
+        bool fieldOk = true;
+        if (!N1GetTalentStruct(map, spec.talentId, talent, why)) {
+            fieldOk = false;
+        } else if (!N1ReadStructNumber(talent, "abilityId", abilityId, why)) {
+            fieldOk = false;
+        } else if (!N1NearlyEqual(abilityId, (double)spec.talentId)) {
+            why = "abilityId mismatch=" + std::to_string(abilityId);
+            fieldOk = false;
+        } else if (!N1ReadStructNumber(talent, spec.field, current, why)) {
+            fieldOk = false;
+        } else if (N1NearlyEqual(current, spec.vanilla)) {
+            continue;
+        } else if (!N1NearlyEqual(current, spec.balanced)) {
+            why = "unknown current=" + std::to_string(current);
+            fieldOk = false;
+        } else if (!N1WriteStructNumber(talent, spec, spec.vanilla, why)) {
+            fieldOk = false;
+        } else {
+            writes++;
+            continue;
+        }
+
+        if (!fieldOk) {
+            failures++;
+            if (firstFailure.empty()) {
+                firstFailure = "id " + std::to_string(spec.talentId) + "." +
+                               spec.field + " " + why;
+            }
+        }
+    }
+
+    detail = "owned talent restore writes=" + std::to_string(writes) +
+             " failures=" + std::to_string(failures);
+    if (!firstFailure.empty()) detail += " first=" + firstFailure;
+    return failures == 0;
+}
+
+// Pure read-only live audit for the IPC status command.  Besides reporting the
+// profile, this independently checks every map key's embedded abilityId.
+static std::string N1AuditTalentProfile(int& fields, std::string& why)
+{
+    fields = 0;
+    RValue map;
+    if (!N1GetTalentMap(map, why)) return "UNAVAILABLE";
+
+    bool sawVanilla = false;
+    bool sawBalanced = false;
+    for (const auto& spec : kN1TalentFields) {
+        RValue talent;
+        double abilityId = 0.0;
+        double current = 0.0;
+        if (!N1GetTalentStruct(map, spec.talentId, talent, why) ||
+            !N1ReadStructNumber(talent, "abilityId", abilityId, why) ||
+            !N1NearlyEqual(abilityId, (double)spec.talentId) ||
+            !N1ReadStructNumber(talent, spec.field, current, why)) {
+            if (why.empty()) {
+                why = "abilityId mismatch at map key " + std::to_string(spec.talentId);
+            }
+            return "UNAVAILABLE";
+        }
+        fields++;
+
+        if (N1NearlyEqual(spec.vanilla, spec.balanced)) {
+            if (!N1NearlyEqual(current, spec.vanilla)) {
+                why = "unknown value at id " + std::to_string(spec.talentId) + "." + spec.field;
+                return "UNAVAILABLE";
+            }
+        } else if (N1NearlyEqual(current, spec.vanilla)) {
+            sawVanilla = true;
+        } else if (N1NearlyEqual(current, spec.balanced)) {
+            sawBalanced = true;
+        } else {
+            why = "unknown value at id " + std::to_string(spec.talentId) + "." + spec.field;
+            return "UNAVAILABLE";
+        }
+    }
+
+    if (sawVanilla && sawBalanced) return "MIXED";
+    if (sawBalanced) return "N1";
+    if (sawVanilla) return "VANILLA";
+    why = "no changed fields in manifest";
+    return "UNAVAILABLE";
+}
+
+struct N1RangeAudit
+{
+    bool available = false;
+    int warriors = 0;
+    int vanilla = 0;
+    int balanced = 0;
+    int other = 0;
+    double firstOther = 0.0;
+    bool sameOther = true;
+    std::string why;
+};
+
+// Read-only enumeration used both by activation preflight and status.  It never
+// resolves/caches an asset, writes an instance field, or changes telemetry.
+static N1RangeAudit N1AuditWarriorRanges()
+{
+    N1RangeAudit audit;
+    if (!g_Yytk || g_NecroWarriorObjectIndex < 0) {
+        audit.why = "exact Warrior object unavailable";
+        return audit;
+    }
+    try {
+        RValue object((double)g_NecroWarriorObjectIndex);
+        RValue countValue = g_Yytk->CallBuiltin("instance_number", { object });
+        if (!N1Numeric(countValue) || !std::isfinite(countValue.ToDouble()) ||
+            countValue.ToDouble() < 0.0 ||
+            !N1NearlyEqual(countValue.ToDouble(), std::floor(countValue.ToDouble()))) {
+            audit.why = "invalid Warrior instance count";
+            return audit;
+        }
+        audit.warriors = (int)countValue.ToDouble();
+        for (int i = 0; i < audit.warriors; i++) {
+            RValue instance = g_Yytk->CallBuiltin("instance_find", { object, RValue((double)i) });
+            if (!g_Yytk->CallBuiltin("instance_exists", { instance }).ToBoolean()) {
+                audit.why = "Warrior disappeared during audit";
+                return audit;
+            }
+            RValue objectIndex = g_Yytk->CallBuiltin("variable_instance_get",
+                                                     { instance, RValue("object_index") });
+            int exactObjectIndex = -1;
+            if (!N1ObjectIndex(objectIndex, exactObjectIndex) ||
+                exactObjectIndex != g_NecroWarriorObjectIndex) {
+                audit.why = "instance_find returned a non-Warrior";
+                return audit;
+            }
+            RValue range = g_Yytk->CallBuiltin("variable_instance_get",
+                                               { instance, RValue("playerRange") });
+            if (!N1Numeric(range) || !std::isfinite(range.ToDouble())) {
+                audit.why = "non-numeric Warrior playerRange";
+                return audit;
+            }
+            const double current = range.ToDouble();
+            if (N1NearlyEqual(current, kN1WarriorPlayerRangeVanilla)) {
+                audit.vanilla++;
+            } else if (N1NearlyEqual(current, kN1WarriorPlayerRangeBalanced)) {
+                audit.balanced++;
+            } else {
+                if (audit.other == 0) audit.firstOther = current;
+                else if (!N1NearlyEqual(audit.firstOther, current)) audit.sameOther = false;
+                audit.other++;
+            }
+        }
+        audit.available = true;
+        return audit;
+    } catch (...) {
+        audit.why = "Warrior range audit threw";
+        return audit;
+    }
+}
+
+static std::string N1RangeAuditLabel(const N1RangeAudit& audit)
+{
+    if (!audit.available) return "UNAVAILABLE";
+    if (audit.warriors == 0) return "NO_INSTANCES";
+    if (audit.vanilla == audit.warriors) return "48";
+    if (audit.balanced == audit.warriors) return "64";
+    if (audit.other == audit.warriors && audit.sameOther)
+        return "OTHER(" + std::to_string(audit.firstOther) + ")";
+    return "MIXED";
+}
+
+static bool N1RangeAuditMatches(const N1RangeAudit& audit, bool enable)
+{
+    if (!audit.available) return false;
+    if (audit.warriors == 0) return true;
+    return enable ? audit.balanced == audit.warriors
+                  : audit.vanilla == audit.warriors;
+}
+
+static bool N1PatchWarriorRange(const RValue& instance, bool enable)
+{
+    if (!g_Yytk || g_NecroWarriorObjectIndex < 0) return false;
+    try {
+        RValue exists = g_Yytk->CallBuiltin("instance_exists", { instance });
+        if (!exists.ToBoolean()) return false;
+        RValue objectIndex = g_Yytk->CallBuiltin("variable_instance_get",
+                                                 { instance, RValue("object_index") });
+        int exactObjectIndex = -1;
+        if (!N1ObjectIndex(objectIndex, exactObjectIndex) ||
+            exactObjectIndex != g_NecroWarriorObjectIndex)
+            return false;
+        RValue range = g_Yytk->CallBuiltin("variable_instance_get",
+                                           { instance, RValue("playerRange") });
+        if (!N1Numeric(range)) { InterlockedIncrement(&g_NecroRangeRejected); return false; }
+        const double current = range.ToDouble();
+        const double source = enable ? kN1WarriorPlayerRangeVanilla
+                                     : kN1WarriorPlayerRangeBalanced;
+        const double target = enable ? kN1WarriorPlayerRangeBalanced
+                                     : kN1WarriorPlayerRangeVanilla;
+        if (N1NearlyEqual(current, target)) return true;
+        if (!N1NearlyEqual(current, source)) {
+            InterlockedIncrement(&g_NecroRangeRejected);
+            return false;
+        }
+        g_Yytk->CallBuiltin("variable_instance_set",
+                            { instance, RValue("playerRange"), RValue(target) });
+        RValue after = g_Yytk->CallBuiltin("variable_instance_get",
+                                           { instance, RValue("playerRange") });
+        if (!N1Numeric(after) || !N1NearlyEqual(after.ToDouble(), target)) {
+            InterlockedIncrement(&g_NecroRangeRejected);
+            return false;
+        }
+        InterlockedIncrement(&g_NecroRangeWrites);
+        return true;
+    } catch (...) {
+        InterlockedIncrement(&g_NecroRangeRejected);
+        return false;
+    }
+}
+
+static void N1ResolveWarriorObject()
+{
+    if (g_NecroWarriorObjectIndex >= 0 || !g_Yytk) return;
+    try {
+        static constexpr const char* kExactWarriorObjectName =
+            "Summon_Skeleton_Warrior_obj";
+        RValue object = g_Yytk->CallBuiltin("asset_get_index",
+                                            { RValue(kExactWarriorObjectName) });
+        int candidate = -1;
+        if (!N1ObjectIndex(object, candidate)) return;
+
+        // Never trust the numeric/reference conversion by itself.  The
+        // round-trip name gate prevents a stale or differently tagged asset
+        // reference from granting write access to an unrelated object.
+        RValue resolvedName = g_Yytk->CallBuiltin("object_get_name",
+                                                  { RValue((double)candidate) });
+        if (resolvedName.m_Kind != VALUE_STRING ||
+            resolvedName.ToString() != kExactWarriorObjectName)
+            return;
+        g_NecroWarriorObjectIndex = candidate;
+    } catch (...) {}
+}
+
+static bool N1SweepWarriorRange(bool enable, int& warriors, std::string& why)
+{
+    warriors = 0;
+    why.clear();
+    N1ResolveWarriorObject();
+    if (g_NecroWarriorObjectIndex < 0) {
+        why = "exact Warrior object unavailable";
+        return false;
+    }
+    try {
+        RValue object((double)g_NecroWarriorObjectIndex);
+        RValue countValue = g_Yytk->CallBuiltin("instance_number", { object });
+        if (!N1Numeric(countValue) || !std::isfinite(countValue.ToDouble()) ||
+            countValue.ToDouble() < 0.0 ||
+            !N1NearlyEqual(countValue.ToDouble(), std::floor(countValue.ToDouble()))) {
+            why = "invalid Warrior instance count";
+            return false;
+        }
+        warriors = (int)countValue.ToDouble();
+        int failed = 0;
+        for (int i = 0; i < warriors; i++) {
+            RValue instance = g_Yytk->CallBuiltin("instance_find", { object, RValue((double)i) });
+            if (!N1PatchWarriorRange(instance, enable)) failed++;
+        }
+        if (failed) {
+            why = "Warrior range failures=" + std::to_string(failed) +
+                  "/" + std::to_string(warriors);
+            return false;
+        }
+        why = "Warrior ranges verified=" + std::to_string(warriors);
+        return true;
+    } catch (...) {
+        InterlockedIncrement(&g_NecroRangeRejected);
+        why = "Warrior range sweep threw";
+        return false;
+    }
+}
+
+static bool N1VerifyExpectedLiveProfile(bool enable, std::string& profile,
+                                        int& fields, N1RangeAudit& range,
+                                        std::string& why)
+{
+    std::string talentWhy;
+    profile = N1AuditTalentProfile(fields, talentWhy);
+    range = N1AuditWarriorRanges();
+    const bool talentOk = fields == kN1TalentFieldCount &&
+                          profile == (enable ? "N1" : "VANILLA");
+    const bool rangeOk = N1RangeAuditMatches(range, enable);
+    if (talentOk && rangeOk) {
+        why.clear();
+        return true;
+    }
+    why = "profile=" + profile + " fields=" + std::to_string(fields) +
+          " range=" + N1RangeAuditLabel(range);
+    if (!talentWhy.empty()) why += " talent=" + talentWhy;
+    if (!range.why.empty()) why += " warrior=" + range.why;
+    return false;
+}
+
+// Ownership is released only after an independent read-only audit proves that
+// both resources we may have changed are fully vanilla again.  Operation return
+// values are retained in telemetry, but the final audit is authoritative.
+static bool N1RestoreOwnedState(std::string& detail)
+{
+    g_NecroBalanceEnabled.store(false);
+    g_NecroBalanceOwned.store(true);
+    g_NecroRestorePending.store(true);
+
+    std::string mapDetail;
+    const bool mapWriteOk = N1RestoreTalentMapOwned(mapDetail);
+    int sweptWarriors = 0;
+    std::string sweepDetail;
+    const bool rangeWriteOk = N1SweepWarriorRange(false, sweptWarriors, sweepDetail);
+
+    std::string profile;
+    int fields = 0;
+    N1RangeAudit range;
+    std::string verifyWhy;
+    const bool verified = N1VerifyExpectedLiveProfile(false, profile, fields, range, verifyWhy);
+    if (verified) {
+        g_NecroRangeIntegrity.store(true);
+        g_NecroRestorePending.store(false);
+        g_NecroBalanceOwned.store(false);
+        detail = "restore verified; map_op=" + std::string(mapWriteOk ? "OK" : "FINAL_OK") +
+                 " range_op=" + std::string(rangeWriteOk ? "OK" : "FINAL_OK") +
+                 " warriors=" + std::to_string(range.warriors);
+        return true;
+    }
+
+    g_NecroBalanceOwned.store(true);
+    g_NecroRestorePending.store(true);
+    g_NecroRangeIntegrity.store(N1RangeAuditMatches(range, false));
+    detail = "RESTORE PENDING; map_op=" + std::string(mapWriteOk ? "OK" : "FAIL") +
+             " (" + mapDetail + ") range_op=" + std::string(rangeWriteOk ? "OK" : "FAIL") +
+             " (" + sweepDetail + ") verify=" + verifyWhy;
+    return false;
+}
+
+static bool N1RecoverRangeIntegrityIfVerified()
+{
+    if (!g_NecroBalanceEnabled.load() || !g_NecroBalanceOwned.load()) return false;
+    N1RangeAudit range = N1AuditWarriorRanges();
+    if (!N1RangeAuditMatches(range, true)) return false;
+    g_NecroRangeIntegrity.store(true);
+    return true;
+}
+
+static void NecroBalancePostCreatedInstance(int objectIndex, RValue& instanceId)
+{
+    if (!g_NecroBalanceEnabled.load()) return;
+    N1ResolveWarriorObject();
+    if (objectIndex != g_NecroWarriorObjectIndex) return;
+    if (!N1PatchWarriorRange(instanceId, true)) {
+        g_NecroRangeIntegrity.store(false);
+        g_NecroBalanceEnabled.store(false);
+        g_NecroBalanceOwned.store(true);
+        g_NecroRestorePending.store(true);
+        InterlockedIncrement(&g_NecroApplyRejected);
+        // Do not re-enter the toggle command path from an instance-create hook.
+        // The restore helper performs no creates and independently verifies both
+        // the talent map and every surviving Warrior before releasing ownership.
+        std::string restoreDetail;
+        const bool restored = N1RestoreOwnedState(restoreDetail);
+        g_NecroLastStatus = "INTEGRITY FAIL: post-create Warrior range patch rejected; " +
+                            restoreDetail + (restored ? "; OffClean" : "; retry OFF");
+        Out("necrobal: " + g_NecroLastStatus);
+        return;
+    }
+    if (!g_NecroRangeIntegrity.load() && N1RecoverRangeIntegrityIfVerified()) {
+        g_NecroLastStatus = "range integrity recovered by verified post-create patch";
+        Out("necrobal: " + g_NecroLastStatus);
+    }
+}
+
+static RValue& HookPopulateTalentStructMapNecromancerN1(
+    CInstance* Self, CInstance* Other, RValue& Result, int argc, RValue** Args)
+{
+    InterlockedIncrement(&g_NecroPopulateCalls);
+    RValue& result = g_OrigPopulateTalentStructMapNecromancer
+        ? g_OrigPopulateTalentStructMapNecromancer(Self, Other, Result, argc, Args)
+        : Result;
+
+    if (g_NecroBalanceEnabled.load()) {
+        // Populate replaces the map generation.  Re-establish both halves of
+        // N1, then independently verify before keeping enabled published.
+        std::string mapDetail;
+        const bool mapOk = N1ApplyTalentMap(true, mapDetail);
+        int sweptWarriors = 0;
+        std::string sweepDetail = "not run";
+        const bool rangeOk = mapOk &&
+            N1SweepWarriorRange(true, sweptWarriors, sweepDetail);
+        std::string profile;
+        int fields = 0;
+        N1RangeAudit range;
+        std::string verifyDetail = "not run";
+        const bool verified = mapOk && rangeOk &&
+            N1VerifyExpectedLiveProfile(true, profile, fields, range, verifyDetail);
+        if (verified) {
+            g_NecroBalanceOwned.store(true);
+            g_NecroRestorePending.store(false);
+            g_NecroRangeIntegrity.store(true);
+            InterlockedIncrement(&g_NecroApplyOk);
+            g_NecroLastStatus = "populate hook verified: " + mapDetail +
+                                "; " + sweepDetail;
+        } else {
+            // This path was entered only while N1 was enabled, therefore the
+            // aggregate ownership is ours even if this new map generation fails.
+            g_NecroBalanceEnabled.store(false);
+            g_NecroBalanceOwned.store(true);
+            g_NecroRestorePending.store(true);
+            if (!rangeOk) g_NecroRangeIntegrity.store(false);
+            InterlockedIncrement(&g_NecroApplyRejected);
+            std::string restoreDetail;
+            const bool restored = N1RestoreOwnedState(restoreDetail);
+            g_NecroLastStatus = "populate hook rejected: map=" + mapDetail +
+                                " range=" + sweepDetail + " verify=" + verifyDetail +
+                                "; " + restoreDetail;
+            Out(std::string("necrobal: FAIL-CLOSED - ") + g_NecroLastStatus +
+                (restored ? "" : " (retry OFF)"));
+        }
+    }
+    return result;
+}
+
+static RValue& HookLoadSummonStatsN1(
+    CInstance* Self, CInstance* Other, RValue& Result, int argc, RValue** Args)
+{
+    InterlockedIncrement(&g_NecroLoadStatsCalls);
+    RValue& result = g_OrigLoadSummonStatsN1
+        ? g_OrigLoadSummonStatsN1(Self, Other, Result, argc, Args)
+        : Result;
+    // This is useful if LoadSummonStats is called after child initialization.
+    // The post-create path remains authoritative because initial inherited
+    // Create can run before summonTalent/playerRange are assigned by Warrior.
+    if (g_NecroBalanceEnabled.load() && Self) {
+        // LoadSummonStats can run from inherited Create before Warrior's child
+        // Create assigns playerRange=48.  A false result here is therefore only
+        // deferred telemetry; the final post-create result is authoritative.
+        bool exactWarrior = false;
+        try {
+            RValue instance(Self);
+            RValue objectIndex = g_Yytk->CallBuiltin("variable_instance_get",
+                                                     { instance, RValue("object_index") });
+            int exactObjectIndex = -1;
+            exactWarrior = N1ObjectIndex(objectIndex, exactObjectIndex) &&
+                exactObjectIndex == g_NecroWarriorObjectIndex;
+            if (exactWarrior && !N1PatchWarriorRange(instance, true))
+                InterlockedIncrement(&g_NecroLoadStatsDeferred);
+        } catch (...) {
+            if (exactWarrior) InterlockedIncrement(&g_NecroLoadStatsDeferred);
+        }
+    }
+    return result;
+}
+
+static void InstallNecroBalanceHooks()
+{
+    if (g_NecroBalanceHookInstalled) return;
+    N1ResolveWarriorObject();
+    bool populate = g_OrigPopulateTalentStructMapNecromancer != nullptr;
+    if (!populate) {
+        populate = HookOneScript("PopulateTalentStructMapNecromancer", "fp_n1_necro_populate",
+                                 (PVOID)HookPopulateTalentStructMapNecromancerN1,
+                                 &g_OrigPopulateTalentStructMapNecromancer);
+    }
+    // Optional second safe boundary; post-create still guarantees final range.
+    if (!g_OrigLoadSummonStatsN1) {
+        HookOneScript("LoadSummonStats", "fp_n1_load_summon_stats",
+                      (PVOID)HookLoadSummonStatsN1, &g_OrigLoadSummonStatsN1);
+    }
+    g_NecroBalanceHookInstalled = populate;
+    g_NecroLastStatus = populate ? "hooks ready; N1 off" : "populate hook unavailable; N1 locked off";
+}
+
+static void SetNecroBalance(bool enabled)
+{
+    if (enabled) {
+        // N1 is opt-in. Its hooks are installed only on the first ON command;
+        // an untouched player build has no Necromancer interception cost.
+        InstallCreateHooks();
+        InstallNecroBalanceHooks();
+        bool wasEnabled = g_NecroBalanceEnabled.load();
+        bool wasOwned = g_NecroBalanceOwned.load();
+        const bool postCreateReady = g_NecroPostCreateHooksInstalled.load();
+        if (!g_NecroBalanceHookInstalled || !postCreateReady) {
+            g_NecroBalanceEnabled.store(false);
+            if (wasOwned) {
+                g_NecroBalanceOwned.store(true);
+                g_NecroRestorePending.store(true);
+            }
+            InterlockedIncrement(&g_NecroApplyRejected);
+            g_NecroLastStatus = "enable rejected: required hooks unavailable populate=" +
+                                std::to_string(g_NecroBalanceHookInstalled ? 1 : 0) +
+                                " postcreate=" + std::to_string(postCreateReady ? 1 : 0) +
+                                (wasOwned ? "; RESTORE PENDING" : "; zero mutation");
+            Out("necrobal: FAIL-CLOSED - " + g_NecroLastStatus);
+            return;
+        }
+        N1ResolveWarriorObject();
+        if (g_NecroWarriorObjectIndex < 0) {
+            g_NecroBalanceEnabled.store(false);
+            if (wasOwned) {
+                g_NecroBalanceOwned.store(true);
+                g_NecroRestorePending.store(true);
+            }
+            InterlockedIncrement(&g_NecroApplyRejected);
+            g_NecroLastStatus = std::string("enable rejected: exact Warrior object unavailable") +
+                                (wasOwned ? "; RESTORE PENDING" : "; zero mutation");
+            Out("necrobal: FAIL-CLOSED - " + g_NecroLastStatus);
+            return;
+        }
+
+        // A disabled-but-owned state must finish its previous cleanup before a
+        // fresh activation.  This also repairs any impossible enabled&&!owned
+        // state conservatively by assuming ownership.
+        if ((wasOwned && (!wasEnabled || g_NecroRestorePending.load())) ||
+            (wasEnabled && !wasOwned)) {
+            g_NecroBalanceEnabled.store(false);
+            g_NecroBalanceOwned.store(true);
+            g_NecroRestorePending.store(true);
+            std::string cleanupDetail;
+            if (!N1RestoreOwnedState(cleanupDetail)) {
+                InterlockedIncrement(&g_NecroApplyRejected);
+                g_NecroLastStatus = "enable deferred: " + cleanupDetail;
+                Out("necrobal: FAIL-CLOSED - " + g_NecroLastStatus);
+                return;
+            }
+            wasEnabled = false;
+            wasOwned = false;
+        }
+
+        // An unowned activation may claim only a completely vanilla map and
+        // exact-48 existing Warriors.  Therefore every initial rejection below
+        // is guaranteed to be zero-mutation with respect to game state.
+        if (!g_NecroBalanceOwned.load()) {
+            std::string preflightProfile;
+            int preflightFields = 0;
+            N1RangeAudit preflightRange;
+            std::string preflightWhy;
+            if (!N1VerifyExpectedLiveProfile(false, preflightProfile, preflightFields,
+                                             preflightRange, preflightWhy)) {
+                g_NecroBalanceEnabled.store(false);
+                InterlockedIncrement(&g_NecroApplyRejected);
+                g_NecroLastStatus = "enable rejected zero-mutation preflight: " + preflightWhy;
+                Out("necrobal: FAIL-CLOSED - " + g_NecroLastStatus);
+                return;
+            }
+        }
+
+        // Stop hook-side writes while the map+range transaction is in flight.
+        g_NecroBalanceEnabled.store(false);
+        const bool activationWasOwned = g_NecroBalanceOwned.load();
+        std::string mapDetail;
+        if (!N1ApplyTalentMap(true, mapDetail)) {
+            const bool mustRestore = activationWasOwned || g_NecroBalanceOwned.load();
+            if (mustRestore) {
+                g_NecroBalanceOwned.store(true);
+                g_NecroRestorePending.store(true);
+                std::string restoreDetail;
+                const bool restored = N1RestoreOwnedState(restoreDetail);
+                g_NecroLastStatus = "enable rejected: " + mapDetail + "; " + restoreDetail;
+                if (!restored) g_NecroLastStatus += " (retry OFF)";
+            } else {
+                g_NecroRestorePending.store(false);
+                g_NecroLastStatus = "enable rejected zero-mutation: " + mapDetail;
+            }
+            InterlockedIncrement(&g_NecroApplyRejected);
+            Out("necrobal: FAIL-CLOSED - " + g_NecroLastStatus);
+            return;
+        }
+
+        // From the first successful talent write onward this process owns N1,
+        // but remains disabled/pending until Warrior range and live audit pass.
+        g_NecroBalanceOwned.store(true);
+        g_NecroRestorePending.store(true);
+        int sweptWarriors = 0;
+        std::string sweepDetail;
+        const bool rangeOk = N1SweepWarriorRange(true, sweptWarriors, sweepDetail);
+        std::string profile;
+        int fields = 0;
+        N1RangeAudit range;
+        std::string verifyDetail;
+        const bool verified = rangeOk &&
+            N1VerifyExpectedLiveProfile(true, profile, fields, range, verifyDetail);
+        if (!verified) {
+            if (!rangeOk) g_NecroRangeIntegrity.store(false);
+            std::string restoreDetail;
+            const bool restored = N1RestoreOwnedState(restoreDetail);
+            InterlockedIncrement(&g_NecroApplyRejected);
+            g_NecroLastStatus = "enable range/verify rejected: " + sweepDetail +
+                                " verify=" + verifyDetail + "; " + restoreDetail;
+            if (!restored) g_NecroLastStatus += " (retry OFF)";
+            Out("necrobal: FAIL-CLOSED - " + g_NecroLastStatus);
+            return;
+        }
+
+        g_NecroBalanceOwned.store(true);
+        g_NecroRestorePending.store(false);
+        g_NecroRangeIntegrity.store(true);
+        g_NecroBalanceEnabled.store(true); // publish LAST
+        InterlockedIncrement(&g_NecroApplyOk);
+        g_NecroLastStatus = mapDetail + "; " + sweepDetail + "; live verified";
+        Out("necrobal: ON - " + g_NecroLastStatus);
+    } else {
+        // Clear enabled first.  OFF is a no-op only when this process owns
+        // nothing and has no unfinished cleanup from a previous attempt.
+        const bool wasEnabled = g_NecroBalanceEnabled.exchange(false);
+        bool owned = g_NecroBalanceOwned.load();
+        const bool pending = g_NecroRestorePending.load();
+        if (!wasEnabled && !owned && !pending) {
+            g_NecroLastStatus = "off: already disabled (no-op)";
+            Out("necrobal: OFF - already disabled (no-op)");
+            return;
+        }
+        if (wasEnabled && !owned) {
+            owned = true; // impossible invariant: retain ownership conservatively
+            g_NecroBalanceOwned.store(true);
+        }
+        if (pending && !owned) {
+            owned = true;
+            g_NecroBalanceOwned.store(true);
+        }
+        g_NecroRestorePending.store(true);
+        std::string detail;
+        const bool restored = N1RestoreOwnedState(detail);
+        if (restored) InterlockedIncrement(&g_NecroApplyOk);
+        else InterlockedIncrement(&g_NecroApplyRejected);
+        g_NecroLastStatus = "off: " + detail;
+        Out(std::string("necrobal: OFF - ") + detail +
+            (restored ? "" : " (retry OFF)"));
+    }
+}
+
+static void NecroBalanceStatus()
+{
+    // All calls below are read-only game queries; status never repairs or claims.
+    const bool enabled = g_NecroBalanceEnabled.load();
+    const bool owned = g_NecroBalanceOwned.load();
+    const bool pending = g_NecroRestorePending.load();
+    const bool integrity = g_NecroRangeIntegrity.load();
+    int auditFields = 0;
+    std::string auditWhy;
+    const std::string profile = N1AuditTalentProfile(auditFields, auditWhy);
+    const N1RangeAudit range = N1AuditWarriorRanges();
+    const std::string rangeLabel = N1RangeAuditLabel(range);
+
+    const bool stateOk = enabled ? (owned && !pending)
+                                 : (owned ? pending : !pending);
+    const bool profileOk = enabled ? profile == "N1"
+                                   : (!owned && !pending && profile == "VANILLA");
+    const bool rangeOk = enabled ? N1RangeAuditMatches(range, true)
+                                 : (!owned && !pending && N1RangeAuditMatches(range, false));
+    const bool verified = stateOk && profileOk && rangeOk && integrity &&
+                          auditFields == kN1TalentFieldCount &&
+                          (!enabled || (g_NecroBalanceHookInstalled &&
+                                        g_NecroPostCreateHooksInstalled.load()));
+
+    Out("necrobal: verify=" + std::string(verified ? "PASS" : "FAIL") +
+        " profile=" + profile + " fields=" + std::to_string(auditFields) +
+        " range=" + rangeLabel + " warriors=" + std::to_string(range.warriors) +
+        " owned=" + std::to_string(owned ? 1 : 0) +
+        " enabled=" + std::to_string(enabled ? 1 : 0) +
+        " postcreate_hooks=" + std::to_string(g_NecroPostCreateHooksInstalled.load() ? 1 : 0) +
+        " restore_pending=" + std::to_string(pending ? 1 : 0) +
+        " integrity=" + std::to_string(integrity ? 1 : 0));
+    char counters[384];
+    sprintf_s(counters,
+        "  telemetry: hook=%d postcreate_hooks=%d warrior_obj=%d populate=%ld apply_ok=%ld rejected=%ld "
+        "loadstats=%ld deferred=%ld range_writes=%ld range_rejected=%ld",
+        g_NecroBalanceHookInstalled ? 1 : 0,
+        g_NecroPostCreateHooksInstalled.load() ? 1 : 0, g_NecroWarriorObjectIndex,
+        g_NecroPopulateCalls, g_NecroApplyOk, g_NecroApplyRejected,
+        g_NecroLoadStatsCalls, g_NecroLoadStatsDeferred,
+        g_NecroRangeWrites, g_NecroRangeRejected);
+    Out(counters);
+    if (!auditWhy.empty() || !range.why.empty())
+        Out("  audit: talent=" + auditWhy + " range=" + range.why);
+    Out("  last: " + g_NecroLastStatus);
 }
 
 static void InstallEnemyHooks()
@@ -1059,7 +2112,7 @@ static void LogDrop(const char* fn, RValue& res, int argc, RValue** A)
     static volatile long g_cnt_##NAME = 0; \
     static int g_mult_##NAME = 1; \
     static RValue& Hook_##NAME(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) { \
-        InterlockedIncrement(&g_cnt_##NAME); \
+        BP_DIAG_INCREMENT(g_cnt_##NAME); \
         for (int i = 1; i < g_mult_##NAME; i++) { RValue t; if (g_Orig_##NAME) g_Orig_##NAME(S, O, t, argc, A); } \
         RValue& _res = g_Orig_##NAME ? g_Orig_##NAME(S, O, R, argc, A) : R; \
         BP_LOGDROP(#NAME, _res, argc, A); \
@@ -1131,7 +2184,7 @@ static RValue StatEkle(RValue& deger, double ek)
     static volatile long g_StatSayac_##NAME = 0; \
     static double g_StatCarpan_##NAME = 1.0; \
     static RValue& HookStat_##NAME(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) { \
-        InterlockedIncrement(&g_StatSayac_##NAME); \
+        BP_DIAG_INCREMENT(g_StatSayac_##NAME); \
         RValue& _r = g_OrigStat_##NAME ? g_OrigStat_##NAME(S, O, R, argc, A) : R; \
         if (g_StatCarpan_##NAME != 1.0) { \
             try { _r = StatOlcekle(_r, g_StatCarpan_##NAME); } catch (...) {} \
@@ -1144,7 +2197,7 @@ static RValue StatEkle(RValue& deger, double ek)
     static volatile long g_StatAddSayac_##NAME = 0; \
     static double g_StatEk_##NAME = 0.0; \
     static RValue& HookStatAdd_##NAME(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) { \
-        InterlockedIncrement(&g_StatAddSayac_##NAME); \
+        BP_DIAG_INCREMENT(g_StatAddSayac_##NAME); \
         RValue& _r = g_OrigStatAdd_##NAME ? g_OrigStatAdd_##NAME(S, O, R, argc, A) : R; \
         if (g_StatEk_##NAME != 0.0) { \
             try { _r = StatEkle(_r, g_StatEk_##NAME); } catch (...) {} \
@@ -1153,8 +2206,12 @@ static RValue StatEkle(RValue& deger, double ek)
     }
 
 STAT_HOOK(StatMagicFind)
-STAT_HOOK(StatAttackSpeedMainHand)
-STAT_HOOK(StatAttackSpeedOffHand)
+// The aggregate StatAttackSpeed result is the value consumed by the live
+// attack-timing path.  MainHand/OffHand are detail helpers used by the stat
+// query/UI path and can remain completely idle after the character is loaded.
+// Hooking the aggregate script also matches the previously live-verified
+// ForgePact implementation.
+STAT_HOOK(StatAttackSpeed)
 STAT_ADD_HOOK(StatFasterCastRate)
 STAT_HOOK(StatExperienceGain)
 STAT_HOOK(StatMovementSpeed)
@@ -1367,8 +2424,13 @@ static RValue& Hook_GetItemStatString(CInstance* S, CInstance* O, RValue& R, int
 }
 
 // Drop carpani kancalari - HER IKI derlemede kurulur; `dropmult` bunlara dayanir.
+static bool g_DropMultHooksInstalled = false;
 static void InstallDropMultHooks()
 {
+    if (g_DropMultHooksInstalled) return;
+    // Mark before installing so a partially unavailable optional script cannot
+    // cause duplicate MmCreateHook attempts on the hooks that did succeed.
+    g_DropMultHooksInstalled = true;
     HookOneScript("DropRelic",           "bp_drelic",   (PVOID)Hook_DropRelic,           &g_Orig_DropRelic);
     HookOneScript("DropBossGems",        "bp_dgems",    (PVOID)Hook_DropBossGems,        &g_Orig_DropBossGems);
     HookOneScript("DropDungeonKeys",     "bp_ddkeys",   (PVOID)Hook_DropDungeonKeys,     &g_Orig_DropDungeonKeys);
@@ -1430,6 +2492,10 @@ static void DropStats()
 static void SetDropMult(const std::string& name, int n)
 {
     std::string l = Lower(name);
+    if (n < 1) n = 1;
+    // Shipped builds start without drop hooks. Install them only when a real
+    // multiplier is requested; x1 is native behaviour and needs no interception.
+    if (n > 1) InstallDropMultHooks();
     // Tek kaydirac, ilgili BUTUN yollari ayarlar (olculdu: tek fonksiyon yetmiyor).
     if (l == "relic") { g_mult_DropRelic = n; }
     else if (l == "bossgems" || l == "gems") { g_mult_DropBossGems = n; }
@@ -1912,14 +2978,24 @@ static void LoadStartup()
 
 static void InstallHook()
 {
-    if (g_HookInstalled) { Out("hook already installed"); return; }
+    if (g_HookInstalled) {
+#ifndef FORGEPACT_RELEASE
+        InstallCreateHooks();
+        InstallNecroBalanceHooks();
+#endif
+        Out("hook already installed");
+        return;
+    }
     g_Base = (uintptr_t)GetModuleHandleA(nullptr);
 
-    // Density ve ozel icerik SADECE buna bagli.  En basta ve kosulsuz
-    // kuruluyor: eskiden asagidaki GetBloodPactInfo erken-return'une
-    // takilirsa density sessizce olurdu.
+    // Development builds install the complete research surface eagerly.
+    // Player builds install only the functional hook group requested by a
+    // non-vanilla command (density/specialrate/dropmult/necrobal).
+#ifndef FORGEPACT_RELEASE
     InstallCreateHooks();
-    InstallDropMultHooks();   // dropmult bunlara dayanir; gunluk yazmazlar
+    InstallDropMultHooks();
+    InstallNecroBalanceHooks();
+#endif
 
 #ifdef FORGEPACT_RELEASE
     // Yayin derlemesi: arastirma kancasi ve teshis gunlugu yok.
@@ -2279,6 +3355,7 @@ static std::mutex g_ProbeLock;
 static double __cdecl HookProtGet(double key)
 {
     double v = g_OrigProtGet ? g_OrigProtGet(key) : 0.0;
+#ifndef FORGEPACT_RELEASE
     InterlockedIncrement(&g_ProtGetCalls);
     if (key == 175.0) InterlockedIncrement(&g_Seen175);
     else if (key == 177.0) InterlockedIncrement(&g_Seen177);
@@ -2290,17 +3367,18 @@ static double __cdecl HookProtGet(double key)
                 g_ProbeSeen[key] = v;
         } catch (...) {}
     }
+#endif
     if (!std::isfinite(v) || v <= 0.0) return v;   // sentinel / not set: hands off
     if (g_HeroicMult > 1.0 && (key == (double)kSlotHeroic || key == (double)kSlotHeroicBoost)) {
         double nv = v * g_HeroicMult;
         if (nv > 100.0) nv = 100.0;                // roll is irandom(99): 100 = always
-        InterlockedIncrement(&g_RateHeroHits);
+        BP_DIAG_INCREMENT(g_RateHeroHits);
         return nv;
     }
     if (g_CeilingMult > 1.0 && key == (double)kSlotCeiling) {
         double nv = std::floor(v / g_CeilingMult); // smaller ceiling = every chance scaled up
         if (nv < 1.0) nv = 1.0;
-        InterlockedIncrement(&g_RateCeilHits);
+        BP_DIAG_INCREMENT(g_RateCeilHits);
         return nv;
     }
     return v;
@@ -2341,7 +3419,7 @@ static RValue& HookGpvRate(CInstance* S, CInstance* O, RValue& R, int argc, RVal
                     double n = std::floor(v / g_CeilingMult);
                     if (n < 1.0) n = 1.0;
                     r = RValue(n);
-                    InterlockedIncrement(&g_RateCeilHits);
+                    BP_DIAG_INCREMENT(g_RateCeilHits);
                 }
             }
         } else if (k == g_KeyHeroic) {
@@ -2349,14 +3427,14 @@ static RValue& HookGpvRate(CInstance* S, CInstance* O, RValue& R, int argc, RVal
                 double v = kHeroicBase * g_HeroicMult;
                 if (v > 100.0) v = 100.0;
                 r = RValue(v);
-                InterlockedIncrement(&g_RateHeroHits);
+                BP_DIAG_INCREMENT(g_RateHeroHits);
             }
         } else if (k == g_KeyHeroicBoost) {
             if (g_HeroicMult != 1.0) {
                 double v = kHeroicBoost * g_HeroicMult;
                 if (v > 100.0) v = 100.0;
                 r = RValue(v);
-                InterlockedIncrement(&g_RateHeroHits);
+                BP_DIAG_INCREMENT(g_RateHeroHits);
             }
         }
     } catch (...) {}
@@ -2376,7 +3454,7 @@ static RValue& HookSatanicTier(CInstance* S, CInstance* O, RValue& R, int argc, 
                 int n = argc < 8 ? argc : 8;
                 for (int i = 0; i < n; i++) args[i] = A[i];
                 args[0] = &liftedRV;
-                InterlockedIncrement(&g_SatTierHits);
+                BP_DIAG_INCREMENT(g_SatTierHits);
                 return g_OrigSatTier ? g_OrigSatTier(S, O, R, n, args) : R;
             }
         } catch (...) {}
@@ -2479,6 +3557,7 @@ static void CloseAngelicGate()
 static PFUNC_YYGMLScript g_OrigAngChance = nullptr;
 static RValue& HookAngelicChance(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
+#ifndef FORGEPACT_RELEASE
     long n = InterlockedIncrement(&g_AngChanceCalls);
     // First few calls: report argc and the RValue kinds only.  These are small
     // integers, so this line can never overflow the buffer - if the process dies
@@ -2511,11 +3590,13 @@ static RValue& HookAngelicChance(CInstance* S, CInstance* O, RValue& R, int argc
             }
         } catch (...) {}
     }
+#endif
     if (g_AngelicRateMult > 1.0 && argc >= 3 && A && A[2] && A[2]->m_Kind == VALUE_REAL) {
         try {
             double c = A[2]->ToDouble();
             if (std::isfinite(c) && c > 0.0) {
                 *A[2] = RValue(c * g_AngelicRateMult);
+#ifndef FORGEPACT_RELEASE
                 long hits = InterlockedIncrement(&g_AngRateHits);
                 if (hits <= 5) {
                     char b[192];
@@ -2523,6 +3604,7 @@ static RValue& HookAngelicChance(CInstance* S, CInstance* O, RValue& R, int argc
                               c, c * g_AngelicRateMult, g_AngelicRateMult);
                     Out(b);
                 }
+#endif
             }
         } catch (...) {}
     }
@@ -2676,7 +3758,7 @@ static void StatCmd(const std::string& rest)
     struct Kayit { const char* ad; const char* kimlik; PVOID kanca; PFUNC_YYGMLScript* orij; volatile long* sayac; double* carpan; const char* takma; };
     static const Kayit kTablo[] = {
         { "StatMagicFind", "fp_st_mf",      (PVOID)HookStat_StatMagicFind,      &g_OrigStat_StatMagicFind, &g_StatSayac_StatMagicFind, &g_StatCarpan_StatMagicFind, "magicfind" },
-        { "StatAttackSpeedMainHand", "fp_st_as", (PVOID)HookStat_StatAttackSpeedMainHand, &g_OrigStat_StatAttackSpeedMainHand, &g_StatSayac_StatAttackSpeedMainHand, &g_StatCarpan_StatAttackSpeedMainHand, "attackspeed" },
+        { "StatAttackSpeed", "fp_st_as", (PVOID)HookStat_StatAttackSpeed, &g_OrigStat_StatAttackSpeed, &g_StatSayac_StatAttackSpeed, &g_StatCarpan_StatAttackSpeed, "attackspeed" },
         { "StatExperienceGain", "fp_st_xp", (PVOID)HookStat_StatExperienceGain, &g_OrigStat_StatExperienceGain, &g_StatSayac_StatExperienceGain, &g_StatCarpan_StatExperienceGain, "expgain" },
         { "StatMovementSpeed", "fp_st_ms",  (PVOID)HookStat_StatMovementSpeed,  &g_OrigStat_StatMovementSpeed, &g_StatSayac_StatMovementSpeed, &g_StatCarpan_StatMovementSpeed, "movespeed" },
         { "CalculateEndDamage", "fp_st_td", (PVOID)HookStat_CalculateEndDamage, &g_OrigStat_CalculateEndDamage, &g_StatSayac_CalculateEndDamage, &g_StatCarpan_CalculateEndDamage, "damage" },
@@ -2721,15 +3803,6 @@ static void StatCmd(const std::string& rest)
         if (!*hedef->orij) { Out(std::string("stat: ") + hedef->ad + " kancasi kurulamadi"); return; }
     }
     *hedef->carpan = c;
-    // Attack speed has separate final values for the two weapon hands.  A single
-    // panel setting must scale both or dual-wield characters become asymmetric.
-    if (std::string(hedef->takma) == "attackspeed") {
-        if (!g_OrigStat_StatAttackSpeedOffHand)
-            HookOneScript("StatAttackSpeedOffHand", "fp_st_aso",
-                          (PVOID)HookStat_StatAttackSpeedOffHand,
-                          &g_OrigStat_StatAttackSpeedOffHand);
-        g_StatCarpan_StatAttackSpeedOffHand = c;
-    }
     // XP carpani acilinca baloncuk metnini de duzelt (yalnizca gorsel).
     if (std::string(hedef->ad) == "EnemyCalculateExperience" && !g_OrigCombatText)
         HookOneScript("CombatText", "fp_ctext", (PVOID)Hook_CombatText, &g_OrigCombatText);
@@ -3756,6 +4829,7 @@ static void SpecialRate(const std::string& key, int n)
     for (const auto& e : kSpecial) if (key == e.key) { sc = &e; break; }
     if (!sc) { Out("specialrate: bilinmeyen icerik '" + key + "'"); return; }
     if (n < 1) n = 1;
+    if (n > 1) InstallCreateHooks();
     try {
         RValue idx = g_Yytk->CallBuiltin("asset_get_index", { RValue(sc->obj) });
         int oi = (int)idx.ToDouble();
@@ -3806,12 +4880,33 @@ static void CensusTick(unsigned long long fc)
 //   keys_key 100 | keys_crystal_key 400 | keys_chaos_key 2700 | keys_bifrost_key 32750
 // Bu alan yazilabilir; cagriyi cogaltmak yerine zarin kendisini degistiriyoruz.
 static int g_DropRateKat = 12;   // 12 = Keys
+// Verified Season 10 repository sizes for the supported build.  Unknown and
+// empty categories fail closed.  Do not probe past these bounds:
+// GetNormalRepoStruct raises a runner-level array error before C++ can catch it.
+static constexpr int kSeason10RepoCounts[] = {
+    15, 20, 15, 0, 20, 25, 18, 30, 15, 0,
+    60, 27, 44, 65, 74, 200, 156, 0, 16, 7,
+};
+static constexpr bool RepoIndexValid(int kategori, int indeks)
+{
+    return kategori >= 0
+        && kategori < static_cast<int>(sizeof(kSeason10RepoCounts) / sizeof(kSeason10RepoCounts[0]))
+        && indeks >= 0
+        && indeks < kSeason10RepoCounts[kategori];
+}
+static constexpr int kSeason10RelicRepoCount = kSeason10RepoCounts[16];
+static_assert(RepoIndexValid(16, 155));
+static_assert(!RepoIndexValid(16, 156));
+static_assert(RepoIndexValid(15, 199));
+static_assert(!RepoIndexValid(15, 200));
+static_assert(!RepoIndexValid(3, 0));
 // Vanilya droprate.base degerleri - carpan HER ZAMAN bunlardan hesaplanir,
 // yoksa ust uste uygulayinca 5x5=25 olur.  Anahtar: kategori*1000 + indeks.
 static std::map<int, double> g_DropRateVanilya;
 
 static bool RepoStruct(int kategori, int indeks, RValue& out)
 {
+    if (!RepoIndexValid(kategori, indeks)) return false;
     try {
         out = g_Yytk->CallGameScript("gml_Script_GetNormalRepoStruct",
                                      { RValue((double)kategori), RValue(0.0), RValue((double)indeks) });
@@ -3977,11 +5072,9 @@ static void DropRateCmd(const std::string& rest)
         else if (grup == "relic") {
             // Relic'ler ayri kategoride (16) ve oranlari 2.5-50 milyon arasi.
             // Kategoriyi grup kendisi tasir; g_DropRateKat degistirilmez.
-            int bosSayac = 0;
-            for (int i = 0; i < 200 && bosSayac < 6; i++) {
+            for (int i = 0; i < kSeason10RelicRepoCount; i++) {
                 RValue st;
-                if (!RepoStruct(16, i, st)) { bosSayac++; continue; }
-                bosSayac = 0;
+                if (!RepoStruct(16, i, st)) continue;
                 try {
                     RValue dr;
                     double vanilya = VanilyaBase(16, i, st, dr);
@@ -4592,7 +5685,7 @@ static void RunCommand(const std::string& line)
     // hook commands below; none of those surfaces are available to players.
     static const std::unordered_set<std::string> kPlayerCommands = {
         "ping", "density", "reveal", "specialrate", "dropmult",
-        "stat", "statadd", "raredrop", "droprate", "dungeonkey"
+        "stat", "statadd", "raredrop", "droprate", "dungeonkey", "necrobal"
     };
     if (kPlayerCommands.find(lc) == kPlayerCommands.end()) {
         Out("command unavailable in player build: " + cmd);
@@ -4735,6 +5828,13 @@ static void RunCommand(const std::string& line)
         LoadConfig(); InstallHook();
     } else if (lc == "hookstats") {
         HookStats();
+    } else if (lc == "necrobal") {
+        std::string value = Lower(rest);
+        while (!value.empty() && std::isspace((unsigned char)value.back())) value.pop_back();
+        if (value.empty() || value == "status" || value == "stat") NecroBalanceStatus();
+        else if (value == "1" || value == "on" || value == "true") SetNecroBalance(true);
+        else if (value == "0" || value == "off" || value == "false") SetNecroBalance(false);
+        else Out("necrobal: usage -> necrobal 0|1  (no argument = status)");
     } else if (lc == "reloadcfg") {
         LoadConfig();
     } else if (lc == "enemystats") {
@@ -4750,6 +5850,7 @@ static void RunCommand(const std::string& line)
         try {
             double d = std::stod(rest);
             if (d < 1.0) d = 1.0;
+            if (d > 1.0) InstallCreateHooks();
             g_CreatorMult = d;
             g_CreatorFrac = 0.0;          // kademe degisince birikim sifirlanir
             char db[64]; sprintf_s(db, "%.2g", g_CreatorMult);
@@ -5189,6 +6290,9 @@ void FrameCallback(FWFrame& FrameContext)
     }
     f5p = f5;
 
+// Research-only co-op/companion/buff features are not accepted by the player
+// command whitelist, so their per-frame branches do not belong in ship builds.
+#ifndef FORGEPACT_RELEASE
     // P2P receive poll: every frame while enabled, drain incoming steam_net packets.
     if (g_P2PPoll) {
         try { P2PReceiveTick(); } catch (...) {}
@@ -5210,8 +6314,11 @@ void FrameCallback(FWFrame& FrameContext)
     if (g_MBuff.load()) {
         try { MBuffTick(); } catch (...) {}
     }
+#endif
 
-    if ((fc++ % 12) == 0) {
+    // Keep fc advancing before setup, but do not consume queued player commands
+    // until the one-shot hook installation attempt has completed.
+    if (((fc++) % 12) == 0 && g_Setup) {
         try { PollCommands(); } catch (...) {}
     }
 }
