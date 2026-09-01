@@ -562,6 +562,12 @@ static TRoutine g_OrigICD = nullptr; // instance_create_depth
 static TRoutine g_OrigICL = nullptr; // instance_create_layer
 static std::map<int, long> g_CreateCounts;   // object index -> times created
 static std::unordered_map<int, int> g_ObjMult; // object index -> spawn multiplier
+// The instance-create builtins are also used by every projectile and hit effect.
+// Keep the six Special Content lookups as a direct indexed read instead of a
+// hash-table lookup on that combat-hot path. Very large/nonstandard asset
+// indices still fall back to g_ObjMult.
+static std::vector<int> g_ObjMultFast;
+static constexpr int kFastObjectIndexLimit = 1 << 20;
 static bool g_LogCreates = true;
 static int  g_WatchObj = -1;                 // when this object is created, log the caller RVA
 static std::string g_WatchCallers;           // distinct caller RVAs of the watched object's creation
@@ -571,9 +577,83 @@ static double g_CreatorMult = 1.0;          // ALL Enemy_Creator* spawners (dens
 static double g_CreatorFrac = 0.0;          // kesir birikimi - 1.5x'te her ikinci ureticiye bir fazla kopya
 static std::unordered_map<int, bool> g_IsEnemyCache;   // object index -> is enemy descendant
 static std::unordered_map<int, bool> g_IsCreatorCache; // object index -> name starts with "Enemy_Creator"
+static std::vector<int8_t> g_IsCreatorFast;
 static volatile long g_ExtraCreators = 0;    // extra spawner instances the multiplier created
 static volatile long g_ExtraEnemies = 0;     // extra enemy instances the multiplier created
 static volatile long g_DensityRevisitSkips = 0;
+
+// Density is a map-generation feature, not a combat-event feature. The global
+// create builtins remain hooked after installation, so without a generation
+// window every projectile/effect created during combat was classified as a
+// possible Enemy_Creator. Open the window on a zone transition and close it
+// shortly after the last normal creator was seen.
+static uint64_t g_RuntimeFrame = 0;
+static uint64_t g_DensityWindowHardEnd = 0;
+static uint64_t g_DensityWindowLastCreator = 0;
+static bool g_DensityWindowSawCreator = false;
+static constexpr uint64_t kDensityWindowHardFrames = 900;
+static constexpr uint64_t kDensityWindowIdleFrames = 60;
+
+static void OpenDensityWindow()
+{
+    g_DensityWindowHardEnd = g_RuntimeFrame + kDensityWindowHardFrames;
+    g_DensityWindowLastCreator = 0;
+    g_DensityWindowSawCreator = false;
+}
+
+static bool DensityWindowActive()
+{
+    if (g_CreatorMult <= 1.0 || g_RuntimeFrame > g_DensityWindowHardEnd)
+        return false;
+    return !g_DensityWindowSawCreator
+        || g_RuntimeFrame <= g_DensityWindowLastCreator + kDensityWindowIdleFrames;
+}
+
+static void NoteDensityCreator()
+{
+    g_DensityWindowSawCreator = true;
+    g_DensityWindowLastCreator = g_RuntimeFrame;
+}
+
+static int ObjectMultiplier(int objIdx)
+{
+    if (objIdx >= 0 && objIdx < static_cast<int>(g_ObjMultFast.size()))
+        return g_ObjMultFast[static_cast<size_t>(objIdx)];
+    auto it = g_ObjMult.find(objIdx);
+    return it == g_ObjMult.end() ? 1 : it->second;
+}
+
+static void SetObjectMultiplier(int objIdx, int multiplier)
+{
+    if (objIdx < 0) return;
+    if (multiplier < 1) multiplier = 1;
+    if (objIdx <= kFastObjectIndexLimit) {
+        const size_t wanted = static_cast<size_t>(objIdx) + 1;
+        if (g_ObjMultFast.size() < wanted) g_ObjMultFast.resize(wanted, 1);
+        g_ObjMultFast[static_cast<size_t>(objIdx)] = multiplier;
+    }
+    if (multiplier > 1) g_ObjMult[objIdx] = multiplier;
+    else g_ObjMult.erase(objIdx);
+}
+
+// GameMaker runs an instance's Create event before instance_create_* returns.
+// This scope identifies Enemy_Creator objects produced by Special Content.
+// They belong to that content multiplier and must not be multiplied a second
+// time by Monster Density.
+static thread_local uint32_t g_SpecialCreateDepth = 0;
+
+struct SpecialCreateScope
+{
+    bool active;
+    explicit SpecialCreateScope(bool enabled) : active(enabled)
+    {
+        if (active) ++g_SpecialCreateDepth;
+    }
+    ~SpecialCreateScope()
+    {
+        if (active) --g_SpecialCreateDepth;
+    }
+};
 
 // Hero Siege S10 saves every creator placement in ZoneState.  Cloning a creator
 // therefore works on the first visit, but the saved original + ForgePact copies
@@ -657,6 +737,10 @@ static size_t DensityPlacementCount()
 static bool IsCreatorObject(int objIdx)
 {
     if (objIdx < 0) return false;
+    if (objIdx < static_cast<int>(g_IsCreatorFast.size())) {
+        const int8_t cached = g_IsCreatorFast[static_cast<size_t>(objIdx)];
+        if (cached >= 0) return cached != 0;
+    }
     auto it = g_IsCreatorCache.find(objIdx);
     if (it != g_IsCreatorCache.end()) return it->second;
     bool res = false;
@@ -666,6 +750,11 @@ static bool IsCreatorObject(int objIdx)
         res = (name.rfind("Enemy_Creator", 0) == 0);
     } catch (...) { res = false; }
     g_IsCreatorCache[objIdx] = res;
+    if (objIdx <= kFastObjectIndexLimit) {
+        const size_t wanted = static_cast<size_t>(objIdx) + 1;
+        if (g_IsCreatorFast.size() < wanted) g_IsCreatorFast.resize(wanted, -1);
+        g_IsCreatorFast[static_cast<size_t>(objIdx)] = res ? 1 : 0;
+    }
     return res;
 }
 
@@ -717,12 +806,6 @@ static void KuyruktanNesneyiSil(int objIdx)
             catch (...) { return false; }
         }),
         g_Kuyruk.end());
-}
-
-static void KuyruguTemizle()
-{
-    g_Kuyruk.clear();
-    g_SonOrnekSayisi = -1;
 }
 
 // Oyundaki toplam etkin ornek sayisi (GML'de `all` = -3).  Hata olursa -1.
@@ -787,22 +870,29 @@ static void DoMultiCreate(TRoutine orig, RValue& Result, CInstance* S, CInstance
     PullNearApply(objIdx, Args, argc);
     LogCreatePos(objIdx, Args, argc);
 #endif
-    int mult = 1;
-    auto it = g_ObjMult.find(objIdx);
-    if (it != g_ObjMult.end()) mult = it->second;
-    const bool ozelIcerik = (it != g_ObjMult.end());
-    const bool isCreator = IsCreatorObject(objIdx);
+    int mult = ObjectMultiplier(objIdx);
+    const bool ozelIcerik = mult > 1;
+    const bool specialChild = g_SpecialCreateDepth > 0;
+    const bool inspectCreator = g_CreatorMult > 1.0
+        && (DensityWindowActive() || specialChild);
+    const bool isCreator = inspectCreator && IsCreatorObject(objIdx);
 
     bool densityAlreadyApplied = false;
-    if (isCreator && g_CreatorMult > 1.0 && Args && argc >= 4 && !g_KuyruktanYaratim) {
+    if (isCreator && Args && argc >= 4) {
         const DensityPlacementKey key = MakeDensityPlacementKey(objIdx, Args, argc);
-        if (!RememberDensityPlacement(key)) {
+        if (specialChild) {
+            // Preserve this exemption across a ZoneState revisit as well.
+            RememberDensityPlacement(key);
+            densityAlreadyApplied = true;
+        } else if (!g_KuyruktanYaratim && !RememberDensityPlacement(key)) {
             densityAlreadyApplied = true;
             BP_DIAG_INCREMENT(g_DensityRevisitSkips);
         }
     }
+    if (isCreator && !specialChild) NoteDensityCreator();
     // density: multiply all Enemy_Creator* spawners (produces fully-configured enemies)
-    if (g_CreatorMult > 1.0 && isCreator && !densityAlreadyApplied) {
+    if (g_CreatorMult > 1.0 && isCreator && !specialChild
+        && !densityAlreadyApplied && DensityWindowActive()) {
         // Tam kisim herkese; kesir kismi birikime yayilir ve 1'e ulasinca
         // O ureticiye bir fazla kopya dusar.  Rastgelelik yok, deterministik.
         int tam = (int)g_CreatorMult;
@@ -848,7 +938,10 @@ static void DoMultiCreate(TRoutine orig, RValue& Result, CInstance* S, CInstance
             } catch (...) {}
         }
     }
-    orig(Result, S, O, argc, Args);
+    {
+        SpecialCreateScope specialScope(ozelIcerik);
+        orig(Result, S, O, argc, Args);
+    }
 #ifndef FORGEPACT_RELEASE
     PostCreateCheck(objIdx, Result, Args, argc);
 #endif
@@ -1004,12 +1097,30 @@ static void HookICD(RValue& Result, CInstance* S, CInstance* O, int argc, RValue
         if (g_OrigICD) g_OrigICD(Result, S, O, argc, Args);
         return;
     }
+    // Density remains selected in the panel, but after map generation combat
+    // creations have no density work. With Special Content Off this becomes a
+    // complete native pass-through for attacks, projectiles and hit effects.
+    if (!DensityWindowActive() && g_EnemyMultAll <= 1 && g_ObjMult.empty()
+        && g_SpecialCreateDepth == 0) {
+        if (g_OrigICD) g_OrigICD(Result, S, O, argc, Args);
+        return;
+    }
 #endif
 #ifndef FORGEPACT_RELEASE
     void* ret = _ReturnAddress();
 #endif
     int objIdx = -1;
     try { if (argc >= 4) objIdx = (int)Args[3].ToDouble(); } catch (...) {}
+#ifdef FORGEPACT_RELEASE
+    // Special Content keeps the create hook installed, but ordinary combat
+    // objects are not special markers. One indexed read is enough to return to
+    // the original builtin without entering the multiplier machinery.
+    if (!DensityWindowActive() && g_EnemyMultAll <= 1
+        && g_SpecialCreateDepth == 0 && ObjectMultiplier(objIdx) <= 1) {
+        if (g_OrigICD) g_OrigICD(Result, S, O, argc, Args);
+        return;
+    }
+#endif
 #ifndef FORGEPACT_RELEASE
     WatchLog(ret, objIdx);
 #endif
@@ -1022,12 +1133,24 @@ static void HookICL(RValue& Result, CInstance* S, CInstance* O, int argc, RValue
         if (g_OrigICL) g_OrigICL(Result, S, O, argc, Args);
         return;
     }
+    if (!DensityWindowActive() && g_EnemyMultAll <= 1 && g_ObjMult.empty()
+        && g_SpecialCreateDepth == 0) {
+        if (g_OrigICL) g_OrigICL(Result, S, O, argc, Args);
+        return;
+    }
 #endif
 #ifndef FORGEPACT_RELEASE
     void* ret = _ReturnAddress();
 #endif
     int objIdx = -1;
     try { if (argc >= 4) objIdx = (int)Args[3].ToDouble(); } catch (...) {}
+#ifdef FORGEPACT_RELEASE
+    if (!DensityWindowActive() && g_EnemyMultAll <= 1
+        && g_SpecialCreateDepth == 0 && ObjectMultiplier(objIdx) <= 1) {
+        if (g_OrigICL) g_OrigICL(Result, S, O, argc, Args);
+        return;
+    }
+#endif
 #ifndef FORGEPACT_RELEASE
     WatchLog(ret, objIdx);
 #endif
@@ -1138,16 +1261,26 @@ static bool HookOneScript(const char* shortName, const char* id, PVOID dest, PFU
 // it caused the guard to forget a map immediately before a revisit and recreated
 // the original cumulative-density bug.
 static PFUNC_YYGMLScript g_OrigZoneStateResetAllDensity = nullptr;
-static PFUNC_YYGMLScript g_OrigZoneStateResetSingleSpecial = nullptr;
+static PFUNC_YYGMLScript g_OrigZoneStateResetSingleDensityWindow = nullptr;
 static bool g_DensityLifecycleHooksInstalled = false;
-static bool g_SpecialLifecycleHookInstalled = false;
 
 static RValue& HookZoneStateResetAllDensity(
     CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
     ForgetDensityPlacements();
+    OpenDensityWindow();
     return g_OrigZoneStateResetAllDensity
         ? g_OrigZoneStateResetAllDensity(S, O, R, argc, A) : R;
+}
+
+static RValue& HookZoneStateResetSingleDensityWindow(
+    CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    // A single-zone reset marks a transition. It must never clear the stable
+    // placement set: doing that is what caused density to multiply on revisit.
+    OpenDensityWindow();
+    return g_OrigZoneStateResetSingleDensityWindow
+        ? g_OrigZoneStateResetSingleDensityWindow(S, O, R, argc, A) : R;
 }
 
 static void InstallDensityLifecycleHooks()
@@ -1156,28 +1289,9 @@ static void InstallDensityLifecycleHooks()
     g_DensityLifecycleHooksInstalled = true;
     HookOneScript("ZoneStateResetAll", "fp_density_reset_all",
                   (PVOID)HookZoneStateResetAllDensity, &g_OrigZoneStateResetAllDensity);
-}
-
-// Delayed special-content markers belong only to the zone in which they were
-// queued.  Carrying a remainder into the next zone can inject content into
-// Eternal Battlefield or another scripted arena.  ResetSingle is the ordinary
-// transition boundary, so it is correct for this queue even though density's
-// persistent placement guard intentionally must not use it.
-static RValue& HookZoneStateResetSingleSpecial(
-    CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
-{
-    KuyruguTemizle();
-    return g_OrigZoneStateResetSingleSpecial
-        ? g_OrigZoneStateResetSingleSpecial(S, O, R, argc, A) : R;
-}
-
-static void InstallSpecialLifecycleHook()
-{
-    if (g_SpecialLifecycleHookInstalled) return;
-    g_SpecialLifecycleHookInstalled = true;
-    HookOneScript("ZoneStateResetSingle", "fp_special_queue_reset_single",
-                  (PVOID)HookZoneStateResetSingleSpecial,
-                  &g_OrigZoneStateResetSingleSpecial);
+    HookOneScript("ZoneStateResetSingle", "fp_density_window_single",
+                  (PVOID)HookZoneStateResetSingleDensityWindow,
+                  &g_OrigZoneStateResetSingleDensityWindow);
 }
 
 struct N1TalentField
@@ -5065,7 +5179,6 @@ static void SpecialRate(const std::string& key, int n)
     if (n < 1) n = 1;
     if (n > 1) {
         InstallCreateHooks();
-        InstallSpecialLifecycleHook();
     }
     try {
         RValue idx = g_Yytk->CallBuiltin("asset_get_index", { RValue(sc->obj) });
@@ -5074,9 +5187,9 @@ static void SpecialRate(const std::string& key, int n)
         // Vanilla entries do not belong in the instance-create hot-path map.
         // Keeping six x1 entries made every object creation perform a tree
         // lookup even when Special Content was completely disabled.
-        if (n > 1) g_ObjMult[oi] = n;
+        if (n > 1) SetObjectMultiplier(oi, n);
         else {
-            g_ObjMult.erase(oi);
+            SetObjectMultiplier(oi, 1);
             // Off means Off immediately: discard copies that this marker had
             // already scheduled instead of draining them after the UI changed.
             KuyruktanNesneyiSil(oi);
@@ -6116,6 +6229,7 @@ static void RunCommand(const std::string& line)
             }
             g_CreatorMult = d;
             g_CreatorFrac = 0.0;          // kademe degisince birikim sifirlanir
+            if (d > 1.0) OpenDensityWindow();
             char db[64]; sprintf_s(db, "%.2g", g_CreatorMult);
             Out(std::string("density (creator mult) -> ") + db);
         }
@@ -6317,11 +6431,11 @@ static void RunCommand(const std::string& line)
             RValue idx = g_Yytk->CallBuiltin("asset_get_index", { RValue(nm) });
             int oi = (int)idx.ToDouble();
             if (oi < 0) { Out("multname: '" + nm + "' bulunamadi"); }
-            else { g_ObjMult[oi] = n; Out("multname " + nm + " (idx " + std::to_string(oi) + ") -> " + num); }
+            else { SetObjectMultiplier(oi, n); Out("multname " + nm + " (idx " + std::to_string(oi) + ") -> " + num); }
         } catch (...) { Out("multname: kullanim -> multname Spawn_Rift_obj 3"); }
     } else if (lc == "multobj") {
         std::string idx, num; idx = FirstToken(rest, num);
-        try { int oi = std::stoi(idx); int n = std::stoi(num); g_ObjMult[oi] = n; Out("multobj " + idx + " -> " + num); }
+        try { int oi = std::stoi(idx); int n = std::stoi(num); SetObjectMultiplier(oi, n); Out("multobj " + idx + " -> " + num); }
         catch (...) { Out("multobj: bad args"); }
     } else if (lc == "mult") {
         std::string which, num; which = FirstToken(rest, num); which = Lower(which);
@@ -6467,11 +6581,12 @@ void FrameCallback(FWFrame& FrameContext)
 {
     UNREFERENCED_PARAMETER(FrameContext);
     static uint32_t fc = 0;
+    g_RuntimeFrame = fc;
     if (fc == 1) Trace("0-framecallback-running");
 
-#ifndef FORGEPACT_RELEASE
+    // Special Content uses the game's eSt gates.  The helper is also safe in
+    // all-off mode: it returns immediately while g_EstForce is empty.
     EstForceApply();
-#endif
     KuyrukIsle();
 #ifndef FORGEPACT_RELEASE
     CensusTick(fc);

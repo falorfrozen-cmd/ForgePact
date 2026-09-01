@@ -50,7 +50,7 @@ class ReleaseHookContractTests(unittest.TestCase):
         special = function_body(self.plugin, "static void SpecialRate(")
         self.assertIn("if (n > 1)", special)
         self.assertIn("InstallCreateHooks();", special)
-        self.assertIn("InstallSpecialLifecycleHook();", special)
+        self.assertNotIn("InstallSpecialLifecycleHook();", special)
 
         command = function_body(self.plugin, "static void RunCommand(")
         density = command.split('else if (lc == "density")', 1)[1].split(
@@ -106,22 +106,25 @@ class ReleaseHookContractTests(unittest.TestCase):
         self.assertIn("roomKey == g_AutoRevealLastRoom", reveal)
 
         special = function_body(self.plugin, "static void SpecialRate(")
-        self.assertIn("if (n > 1) g_ObjMult[oi] = n;", special)
-        self.assertIn("g_ObjMult.erase(oi);", special)
+        self.assertIn("if (n > 1) SetObjectMultiplier(oi, n);", special)
+        self.assertIn("SetObjectMultiplier(oi, 1);", special)
         self.assertIn("KuyruktanNesneyiSil(oi);", special)
 
         queue = function_body(self.plugin, "static void KuyrukIsle()")
         self.assertIn("(g_KuyrukKare % 10) == 0", queue)
 
+        create = function_body(self.plugin, "static void DoMultiCreate(")
+        self.assertIn("ObjectMultiplier(objIdx)", create)
+        self.assertIn("SpecialCreateScope specialScope(ozelIcerik);", create)
+
         frame = function_body(self.plugin, "void FrameCallback(")
         self.assertIn("((fc++) % 30) == 0", frame)
 
-    def test_player_frame_loop_excludes_developer_polling(self):
+    def test_player_frame_loop_keeps_only_required_polling(self):
         frame = function_body(self.plugin, "void FrameCallback(")
-        self.assertRegex(
-            frame,
-            r"#ifndef FORGEPACT_RELEASE\s*EstForceApply\(\);\s*#endif",
-        )
+        self.assertIn("EstForceApply();", frame)
+        est = function_body(self.plugin, "static void EstForceApply()")
+        self.assertIn("if (g_EstForce.empty() || !g_Yytk) return;", est)
         self.assertRegex(
             frame,
             r"#ifndef FORGEPACT_RELEASE\s*"
@@ -158,10 +161,11 @@ class ReleaseHookContractTests(unittest.TestCase):
         install = stat.index("HookOneScript(hedef->ad", native)
         self.assertLess(native, install)
 
-    def test_special_queue_cannot_cross_zone_boundary(self):
-        hook = function_body(self.plugin, "static RValue& HookZoneStateResetSingleSpecial(")
-        self.assertIn("KuyruguTemizle();", hook)
-        self.assertNotIn("ForgetDensityPlacements", hook)
+    def test_special_queue_is_not_cleared_during_zone_generation(self):
+        self.assertNotIn("HookZoneStateResetSingleSpecial", self.plugin)
+        self.assertNotIn("fp_special_queue_reset_single", self.plugin)
+        special = function_body(self.plugin, "static void SpecialRate(")
+        self.assertIn("KuyruktanNesneyiSil(oi);", special)
 
 
 class PanelAllOffContractTests(unittest.TestCase):
@@ -175,6 +179,15 @@ class PanelAllOffContractTests(unittest.TestCase):
     def test_default_config_emits_no_gameplay_commands(self):
         cfg = copy.deepcopy(self.panel.DEFAULTS)
         self.assertEqual([], self.panel.build_cmds(cfg))
+
+    def test_panel_started_after_game_still_auto_applies(self):
+        source = PANEL_PATH.read_text(encoding="utf-8")
+        watcher = source.split("def watcher():", 1)[1].split("\n\nclass H", 1)[0]
+        self.assertIn("was_running = False", watcher)
+        self.assertIn("wait_for_plugin_ready(cfg)", watcher)
+        ready = source.split("def wait_for_plugin_ready(", 1)[1].split("\n\ndef watcher", 1)[0]
+        self.assertIn('send_cmds(["ping"], cfg)', ready)
+        self.assertIn("not command_file.exists()", ready)
 
 
 if __name__ == "__main__":

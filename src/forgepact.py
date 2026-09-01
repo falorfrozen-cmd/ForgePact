@@ -974,27 +974,43 @@ def apply_all(cfg: dict) -> str:
     return msg
 
 
+def wait_for_plugin_ready(cfg: dict, timeout: float = 60.0) -> bool:
+    """Wait for this game's plugin to consume a harmless ping command.
+
+    Watching out.txt timestamps was not sufficient when the panel was opened
+    after an already-running game: a healthy plugin could have an old log and
+    the saved settings were never applied until a slider was changed.
+    """
+    deadline = time.time() + timeout
+    command_sent = False
+    command_file = ipc_dir(cfg) / "cmd.txt"
+    while time.time() < deadline:
+        if not game_running(cfg):
+            return False
+        if not command_sent and ipc_dir(cfg).exists():
+            if send_cmds(["ping"], cfg).startswith("ERROR"):
+                time.sleep(0.5)
+                continue
+            command_sent = True
+        if command_sent and not command_file.exists():
+            return True
+        time.sleep(0.25)
+    return False
+
+
 def watcher():
     """Re-apply the settings automatically every time the game LAUNCHES."""
-    was_running = game_running()
+    # False is intentional: if the panel itself starts after the game, the
+    # first pass must still attach and apply the saved configuration.
+    was_running = False
     while True:
         time.sleep(5)
         try:
             cfg = load_cfg()
             now = game_running(cfg)
             if now and not was_running and cfg.get("auto_apply"):
-                # wait until the plugin reports ready (out.txt freshly written), max 60 s
-                out = ipc_dir(cfg) / "out.txt"
-                t0 = time.time()
-                while time.time() - t0 < 60:
-                    try:
-                        if out.exists() and out.stat().st_mtime >= t0 - 10:
-                            break
-                    except Exception:
-                        pass
-                    time.sleep(2)
-                time.sleep(2)  # son log satirlari otursun
-                apply_all(cfg)
+                if wait_for_plugin_ready(cfg):
+                    apply_all(cfg)
             was_running = now
         except Exception:
             pass
