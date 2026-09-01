@@ -51,14 +51,9 @@ class NecromancerN1ContractTests(unittest.TestCase):
     def n1(self, suffix: str) -> float:
         return _cpp_number(self.plugin, "kN1" + suffix)
 
-    def test_panel_manifest_is_off_by_default_and_wires_necrobal_both_ways(self):
+    def test_panel_hides_inactive_necromancer_patch(self):
         defaults = _python_dict(self.panel, "DEFAULTS")
-        self.assertIs(defaults["necro_balance"], False)
-
-        # Apply-all/launch and the live toggle must use the same reversible command.
-        self.assertGreaterEqual(self.panel.count('f"necrobal {1 if'), 2)
-        self.assertIn("cfg.get('necro_balance', False)", self.panel)
-        self.assertIn("cfg['necro_balance']", self.panel)
+        self.assertNotIn("necro_balance", defaults)
 
         for fragment in (
             'class="card necro-card tab-card"',
@@ -74,9 +69,11 @@ class NecromancerN1ContractTests(unittest.TestCase):
             "N1 does not add a corpse fallback",
             "document.getElementById('necro_balance').onchange",
         ):
-            self.assertIn(fragment, self.panel)
+            self.assertNotIn(fragment, self.panel)
+        self.assertNotIn('out.append("necrobal 1")', self.panel)
+        self.assertNotIn('f"necrobal {1 if', self.panel)
 
-    def test_plugin_manifest_is_reversible_and_available_in_player_builds(self):
+    def test_plugin_manifest_is_reversible_but_not_exposed_in_player_builds(self):
         expected = {
             "WarriorValue1Vanilla": 8.0,
             "WarriorValue1Balanced": 9.40,
@@ -116,7 +113,7 @@ class NecromancerN1ContractTests(unittest.TestCase):
             r"kPlayerCommands\s*=\s*\{(?P<body>.*?)\};", self.plugin, re.DOTALL
         )
         self.assertIsNotNone(player_commands)
-        self.assertIn('"necrobal"', player_commands.group("body"))
+        self.assertNotIn('"necrobal"', player_commands.group("body"))
         self.assertRegex(self.plugin, r'(?:if|else\s+if)\s*\(\s*lc\s*==\s*"necrobal"\s*\)')
         self.assertRegex(self.plugin, r"static\s+void\s+InstallNecroBalanceHooks\s*\([^;]*\)\s*\{")
         self.assertRegex(self.plugin, r"static\s+void\s+SetNecroBalance\s*\([^;]*\)\s*\{")
@@ -260,7 +257,7 @@ class NecromancerN1ContractTests(unittest.TestCase):
         # the one-time hook setup has run; fc still increments before setup.
         self.assertRegex(
             self.plugin,
-            r"if\s*\(\s*\(\(fc\+\+\)\s*%\s*12\)\s*==\s*0\s*&&\s*g_Setup\s*\)",
+            r"if\s*\(\s*\(\(fc\+\+\)\s*%\s*30\)\s*==\s*0\s*&&\s*g_Setup\s*\)",
         )
 
     def test_warrior_and_mage_damage_slopes_gain_17_45_percent_together(self):

@@ -22,6 +22,7 @@
 #include <ws2tcpip.h>
 #include <YYToolkit/YYTK_Shared.hpp>
 #include <windows.h>
+#include <algorithm>
 #include <fstream>
 #include <unordered_set>
 #include <thread>
@@ -560,18 +561,98 @@ static void DoReadMem(const std::string& hexaddr, const std::string& lenstr)
 static TRoutine g_OrigICD = nullptr; // instance_create_depth
 static TRoutine g_OrigICL = nullptr; // instance_create_layer
 static std::map<int, long> g_CreateCounts;   // object index -> times created
-static std::map<int, int>  g_ObjMult;        // object index -> spawn multiplier
+static std::unordered_map<int, int> g_ObjMult; // object index -> spawn multiplier
 static bool g_LogCreates = true;
 static int  g_WatchObj = -1;                 // when this object is created, log the caller RVA
 static std::string g_WatchCallers;           // distinct caller RVAs of the watched object's creation
 static int  g_EnemyParentIdx = -1;           // asset index of Enemy_Parent_obj
 static int  g_EnemyMultAll = 1;              // multiplier applied to ALL enemy descendants (direct)
-static double g_CreatorMult = 3.0;          // ALL Enemy_Creator* spawners (density).  Kesirli olabilir: 1.5, 2.5 ...
+static double g_CreatorMult = 1.0;          // ALL Enemy_Creator* spawners (density).  Kesirli olabilir: 1.5, 2.5 ...
 static double g_CreatorFrac = 0.0;          // kesir birikimi - 1.5x'te her ikinci ureticiye bir fazla kopya
-static std::map<int, bool> g_IsEnemyCache;   // object index -> is enemy descendant
-static std::map<int, bool> g_IsCreatorCache; // object index -> name starts with "Enemy_Creator"
+static std::unordered_map<int, bool> g_IsEnemyCache;   // object index -> is enemy descendant
+static std::unordered_map<int, bool> g_IsCreatorCache; // object index -> name starts with "Enemy_Creator"
 static volatile long g_ExtraCreators = 0;    // extra spawner instances the multiplier created
 static volatile long g_ExtraEnemies = 0;     // extra enemy instances the multiplier created
+static volatile long g_DensityRevisitSkips = 0;
+
+// Hero Siege S10 saves every creator placement in ZoneState.  Cloning a creator
+// therefore works on the first visit, but the saved original + ForgePact copies
+// all pass through instance_create_* again on a revisit.  Multiplying every one
+// of those entries turns 4x into 16x, then 64x.  Remember the exact placements
+// which have already received density, including the copies we create.
+//
+// Do NOT include global.room, the runner room, depth/layer or another transient
+// load value in this key.  Those values can differ while the same ZoneState is
+// being restored, which made a saved placement look new and expanded it again.
+// Object + rounded position is deliberately conservative: a coincident creator
+// in another zone may be left at vanilla density, but density can never grow on
+// every revisit.  Preventing cumulative growth is the stronger invariant.
+struct DensityPlacementKey
+{
+    int32_t objectIndex;
+    int64_t x;
+    int64_t y;
+
+    bool operator==(const DensityPlacementKey& other) const
+    {
+        return objectIndex == other.objectIndex && x == other.x && y == other.y;
+    }
+};
+
+static uint64_t DensityHashMix(uint64_t seed, uint64_t value)
+{
+    value += 0x9E3779B97F4A7C15ull;
+    value = (value ^ (value >> 30)) * 0xBF58476D1CE4E5B9ull;
+    value = (value ^ (value >> 27)) * 0x94D049BB133111EBull;
+    value ^= value >> 31;
+    return seed ^ (value + (seed << 6) + (seed >> 2));
+}
+
+struct DensityPlacementHash
+{
+    size_t operator()(const DensityPlacementKey& key) const
+    {
+        uint64_t h = DensityHashMix(0x46504744454E5349ull,
+                                    static_cast<uint32_t>(key.objectIndex));
+        h = DensityHashMix(h, static_cast<uint64_t>(key.x));
+        h = DensityHashMix(h, static_cast<uint64_t>(key.y));
+        return static_cast<size_t>(h);
+    }
+};
+
+static std::unordered_set<DensityPlacementKey, DensityPlacementHash> g_DensityKnownPlacements;
+static std::mutex g_DensityPlacementMutex;
+
+static DensityPlacementKey MakeDensityPlacementKey(
+    int objIdx, RValue* args, int argc)
+{
+    DensityPlacementKey key{};
+    key.objectIndex = objIdx;
+    if (args && argc >= 2) {
+        try { key.x = static_cast<int64_t>(std::llround(args[0].ToDouble())); } catch (...) {}
+        try { key.y = static_cast<int64_t>(std::llround(args[1].ToDouble())); } catch (...) {}
+    }
+    return key;
+}
+
+static bool RememberDensityPlacement(const DensityPlacementKey& key)
+{
+    std::lock_guard<std::mutex> lock(g_DensityPlacementMutex);
+    return g_DensityKnownPlacements.insert(key).second;
+}
+
+static void ForgetDensityPlacements()
+{
+    std::lock_guard<std::mutex> lock(g_DensityPlacementMutex);
+    g_DensityKnownPlacements.clear();
+    g_CreatorFrac = 0.0;
+}
+
+static size_t DensityPlacementCount()
+{
+    std::lock_guard<std::mutex> lock(g_DensityPlacementMutex);
+    return g_DensityKnownPlacements.size();
+}
 
 static bool IsCreatorObject(int objIdx)
 {
@@ -626,6 +707,23 @@ static uint64_t g_KuyrukToplam = 0;
 static int g_OrnekButce = 14000;  // 0 = sinirsiz
 static uint64_t g_ButceIptal = 0;  // butce/yas yuzunden atilan yaratim sayisi
 static unsigned long long g_KuyrukKare = 0;
+static int g_SonOrnekSayisi = -1;
+
+static void KuyruktanNesneyiSil(int objIdx)
+{
+    g_Kuyruk.erase(
+        std::remove_if(g_Kuyruk.begin(), g_Kuyruk.end(), [objIdx](const GecikmeliYaratim& g) {
+            try { return static_cast<int>(g.nesne.ToDouble()) == objIdx; }
+            catch (...) { return false; }
+        }),
+        g_Kuyruk.end());
+}
+
+static void KuyruguTemizle()
+{
+    g_Kuyruk.clear();
+    g_SonOrnekSayisi = -1;
+}
 
 // Oyundaki toplam etkin ornek sayisi (GML'de `all` = -3).  Hata olursa -1.
 static int ToplamOrnek()
@@ -659,8 +757,12 @@ static void KuyrukIsle()
     // (Once temizliyordum: harita yuklenirken olusan anlik tepe tum icerigi
     //  kalicii olarak iptal ediyordu.)
     if (g_OrnekButce > 0) {
-        int n = ToplamOrnek();
-        if (n >= 0 && n >= g_OrnekButce) return;
+        // instance_number(all) traverses the live instance table.  Calling it
+        // every frame while a large special-content queue drains caused
+        // avoidable spikes in heavy maps such as Eternal Battlefield.
+        if (g_SonOrnekSayisi < 0 || (g_KuyrukKare % 10) == 0)
+            g_SonOrnekSayisi = ToplamOrnek();
+        if (g_SonOrnekSayisi >= 0 && g_SonOrnekSayisi >= g_OrnekButce) return;
     }
 
     g_KuyruktanYaratim = true;
@@ -672,6 +774,7 @@ static void KuyrukIsle()
         try {
             g_Yytk->CallBuiltin(g.katman ? "instance_create_layer" : "instance_create_depth",
                                 { RValue(g.x), RValue(g.y), g.yuva, g.nesne });
+            if (g_SonOrnekSayisi >= 0) g_SonOrnekSayisi++;
         } catch (...) {}
     }
     g_KuyruktanYaratim = false;
@@ -679,14 +782,27 @@ static void KuyrukIsle()
 
 static void DoMultiCreate(TRoutine orig, RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args, int objIdx, bool katman)
 {
+#ifndef FORGEPACT_RELEASE
     if (objIdx >= 0 && g_LogCreates) g_CreateCounts[objIdx]++;
     PullNearApply(objIdx, Args, argc);
     LogCreatePos(objIdx, Args, argc);
+#endif
     int mult = 1;
     auto it = g_ObjMult.find(objIdx);
     if (it != g_ObjMult.end()) mult = it->second;
+    const bool ozelIcerik = (it != g_ObjMult.end());
+    const bool isCreator = IsCreatorObject(objIdx);
+
+    bool densityAlreadyApplied = false;
+    if (isCreator && g_CreatorMult > 1.0 && Args && argc >= 4 && !g_KuyruktanYaratim) {
+        const DensityPlacementKey key = MakeDensityPlacementKey(objIdx, Args, argc);
+        if (!RememberDensityPlacement(key)) {
+            densityAlreadyApplied = true;
+            BP_DIAG_INCREMENT(g_DensityRevisitSkips);
+        }
+    }
     // density: multiply all Enemy_Creator* spawners (produces fully-configured enemies)
-    if (g_CreatorMult > 1.0 && IsCreatorObject(objIdx)) {
+    if (g_CreatorMult > 1.0 && isCreator && !densityAlreadyApplied) {
         // Tam kisim herkese; kesir kismi birikime yayilir ve 1'e ulasinca
         // O ureticiye bir fazla kopya dusar.  Rastgelelik yok, deterministik.
         int tam = (int)g_CreatorMult;
@@ -701,7 +817,6 @@ static void DoMultiCreate(TRoutine orig, RValue& Result, CInstance* S, CInstance
     // (optional) direct enemy-descendant multiplier — off by default, creators are the right layer
     else if (g_EnemyMultAll > 1 && IsEnemyObject(objIdx) && g_EnemyMultAll > mult)
         mult = g_EnemyMultAll;
-    const bool ozelIcerik = (it != g_ObjMult.end());
     if (mult > 1 && argc >= 4 && orig && !g_KuyruktanYaratim) {
         for (int i = 1; i < mult; i++) {
             try {
@@ -721,15 +836,22 @@ static void DoMultiCreate(TRoutine orig, RValue& Result, CInstance* S, CInstance
                 std::vector<RValue> a(Args, Args + argc);
                 a[0] = RValue(Args[0].ToDouble() + (double)(((i % 5) - 2) * 28));
                 a[1] = RValue(Args[1].ToDouble() + (double)(((i / 5) - 2) * 28));
+                // Register the generated placement before GameMaker sees it.
+                // ZoneState may serialize it immediately during the original
+                // call; on reload it must be recognized as an existing copy.
+                if (isCreator)
+                    RememberDensityPlacement(MakeDensityPlacementKey(objIdx, a.data(), argc));
                 RValue tmp;
                 orig(tmp, S, O, argc, a.data());
-                if (IsCreatorObject(objIdx)) InterlockedIncrement(&g_ExtraCreators);
-                else InterlockedIncrement(&g_ExtraEnemies);
+                if (isCreator) BP_DIAG_INCREMENT(g_ExtraCreators);
+                else BP_DIAG_INCREMENT(g_ExtraEnemies);
             } catch (...) {}
         }
     }
     orig(Result, S, O, argc, Args);
+#ifndef FORGEPACT_RELEASE
     PostCreateCheck(objIdx, Result, Args, argc);
+#endif
 }
 
 
@@ -874,18 +996,41 @@ static void WatchLog(void* ret, int objIdx)
 }
 static void HookICD(RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)
 {
+#ifdef FORGEPACT_RELEASE
+    // A hook installed earlier in this process cannot be removed safely while
+    // the game is running.  With every related feature Off, take a true native
+    // pass-through path: no object lookup, cache access or post-create work.
+    if (g_CreatorMult <= 1.0 && g_EnemyMultAll <= 1 && g_ObjMult.empty()) {
+        if (g_OrigICD) g_OrigICD(Result, S, O, argc, Args);
+        return;
+    }
+#endif
+#ifndef FORGEPACT_RELEASE
     void* ret = _ReturnAddress();
+#endif
     int objIdx = -1;
     try { if (argc >= 4) objIdx = (int)Args[3].ToDouble(); } catch (...) {}
+#ifndef FORGEPACT_RELEASE
     WatchLog(ret, objIdx);
+#endif
     if (g_OrigICD) DoMultiCreate(g_OrigICD, Result, S, O, argc, Args, objIdx, false);
 }
 static void HookICL(RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)
 {
+#ifdef FORGEPACT_RELEASE
+    if (g_CreatorMult <= 1.0 && g_EnemyMultAll <= 1 && g_ObjMult.empty()) {
+        if (g_OrigICL) g_OrigICL(Result, S, O, argc, Args);
+        return;
+    }
+#endif
+#ifndef FORGEPACT_RELEASE
     void* ret = _ReturnAddress();
+#endif
     int objIdx = -1;
     try { if (argc >= 4) objIdx = (int)Args[3].ToDouble(); } catch (...) {}
+#ifndef FORGEPACT_RELEASE
     WatchLog(ret, objIdx);
+#endif
     if (g_OrigICL) DoMultiCreate(g_OrigICL, Result, S, O, argc, Args, objIdx, true);
 }
 
@@ -986,6 +1131,53 @@ static bool HookOneScript(const char* shortName, const char* id, PVOID dest, PFU
     *origOut = reinterpret_cast<PFUNC_YYGMLScript>(tramp);
     Out(std::string("HOOK INSTALLED on ") + shortName);
     return true;
+}
+
+// Only a full ZoneState reset is a safe boundary for forgetting placements.
+// ZoneStateResetSingle is also used during ordinary zone transitions, so hooking
+// it caused the guard to forget a map immediately before a revisit and recreated
+// the original cumulative-density bug.
+static PFUNC_YYGMLScript g_OrigZoneStateResetAllDensity = nullptr;
+static PFUNC_YYGMLScript g_OrigZoneStateResetSingleSpecial = nullptr;
+static bool g_DensityLifecycleHooksInstalled = false;
+static bool g_SpecialLifecycleHookInstalled = false;
+
+static RValue& HookZoneStateResetAllDensity(
+    CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    ForgetDensityPlacements();
+    return g_OrigZoneStateResetAllDensity
+        ? g_OrigZoneStateResetAllDensity(S, O, R, argc, A) : R;
+}
+
+static void InstallDensityLifecycleHooks()
+{
+    if (g_DensityLifecycleHooksInstalled) return;
+    g_DensityLifecycleHooksInstalled = true;
+    HookOneScript("ZoneStateResetAll", "fp_density_reset_all",
+                  (PVOID)HookZoneStateResetAllDensity, &g_OrigZoneStateResetAllDensity);
+}
+
+// Delayed special-content markers belong only to the zone in which they were
+// queued.  Carrying a remainder into the next zone can inject content into
+// Eternal Battlefield or another scripted arena.  ResetSingle is the ordinary
+// transition boundary, so it is correct for this queue even though density's
+// persistent placement guard intentionally must not use it.
+static RValue& HookZoneStateResetSingleSpecial(
+    CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    KuyruguTemizle();
+    return g_OrigZoneStateResetSingleSpecial
+        ? g_OrigZoneStateResetSingleSpecial(S, O, R, argc, A) : R;
+}
+
+static void InstallSpecialLifecycleHook()
+{
+    if (g_SpecialLifecycleHookInstalled) return;
+    g_SpecialLifecycleHookInstalled = true;
+    HookOneScript("ZoneStateResetSingle", "fp_special_queue_reset_single",
+                  (PVOID)HookZoneStateResetSingleSpecial,
+                  &g_OrigZoneStateResetSingleSpecial);
 }
 
 struct N1TalentField
@@ -2990,7 +3182,7 @@ static void InstallHook()
 
     // Development builds install the complete research surface eagerly.
     // Player builds install only the functional hook group requested by a
-    // non-vanilla command (density/specialrate/dropmult/necrobal).
+    // non-vanilla command (density/specialrate/dropmult).
 #ifndef FORGEPACT_RELEASE
     InstallCreateHooks();
     InstallDropMultHooks();
@@ -3074,22 +3266,54 @@ static void PlayerVarSet(const std::string& var, double val)
     } catch (...) { Out("iset EXCEPTION"); }
 }
 
-// Auto map-reveal: fill the current minimap discovered grid (ds_type_grid=1) every tick.
-static bool g_AutoReveal = true;
+// Auto map-reveal: fill each zone's discovered grid once.  The previous version
+// cleared the already-revealed grid every 20 frames for the entire session,
+// producing avoidable GameMaker calls during dense combat.
+static bool g_AutoReveal = false;
+static int64_t g_AutoRevealLastInstance = INT64_MIN;
+static int64_t g_AutoRevealLastGrid = INT64_MIN;
+static int64_t g_AutoRevealLastRoom = INT64_MIN;
+
+static void ResetAutoRevealIdentity()
+{
+    g_AutoRevealLastInstance = INT64_MIN;
+    g_AutoRevealLastGrid = INT64_MIN;
+    g_AutoRevealLastRoom = INT64_MIN;
+}
+
 static void AutoRevealTick()
 {
     try {
         RValue oi = g_Yytk->CallBuiltin("asset_get_index", { RValue("objMinimap") });
         RValue id = g_Yytk->CallBuiltin("instance_find", { oi, RValue(0.0) });
-        if (id.ToDouble() < 0) return;
+        if (id.ToDouble() < 0) { ResetAutoRevealIdentity(); return; }
         RValue ex0 = g_Yytk->CallBuiltin("variable_instance_exists", { id, RValue("minimapDiscoveredGrid") });
-        if (!ex0.ToBoolean()) return;
+        if (!ex0.ToBoolean()) { ResetAutoRevealIdentity(); return; }
         RValue grid = g_Yytk->CallBuiltin("variable_instance_get", { id, RValue("minimapDiscoveredGrid") });
         double gid = grid.ToDouble();
-        if (gid < 0) return;
+        if (gid < 0) { ResetAutoRevealIdentity(); return; }
         RValue ex = g_Yytk->CallBuiltin("ds_exists", { RValue(gid), RValue(1.0) });
-        if (!ex.ToBoolean()) return;
+        if (!ex.ToBoolean()) { ResetAutoRevealIdentity(); return; }
+
+        int64_t roomKey = INT64_MIN;
+        CInstance* global = nullptr;
+        if (AurieSuccess(g_Yytk->GetGlobalInstance(&global)) && global) {
+            RValue* room = nullptr;
+            if (AurieSuccess(g_Yytk->GetInstanceMember(RValue(global), "room", room)) && room) {
+                try { roomKey = static_cast<int64_t>(std::llround(room->ToDouble())); } catch (...) {}
+            }
+        }
+
+        const int64_t instanceKey = static_cast<int64_t>(std::llround(id.ToDouble()));
+        const int64_t gridKey = static_cast<int64_t>(std::llround(gid));
+        if (instanceKey == g_AutoRevealLastInstance &&
+            gridKey == g_AutoRevealLastGrid && roomKey == g_AutoRevealLastRoom)
+            return;
+
         g_Yytk->CallBuiltin("ds_grid_clear", { RValue(gid), RValue(1.0) });
+        g_AutoRevealLastInstance = instanceKey;
+        g_AutoRevealLastGrid = gridKey;
+        g_AutoRevealLastRoom = roomKey;
     } catch (...) {}
 }
 
@@ -3797,6 +4021,11 @@ static void StatCmd(const std::string& rest)
     try { c = std::stod(a2); } catch (...) { Out("stat: carpan sayi olmali"); return; }
     if (c < 0.0) c = 0.0;
 
+    if (c == 1.0 && !*hedef->orij) {
+        *hedef->carpan = 1.0;
+        Out(std::string("stat ") + hedef->ad + " -> x1.00 (native, no hook)");
+        return;
+    }
     if (!*hedef->orij) {
         // Betik adindaki "gml_Script_" onekini HookOneScript kendisi ekliyor.
         HookOneScript(hedef->ad, hedef->kimlik, hedef->kanca, hedef->orij);
@@ -3804,7 +4033,7 @@ static void StatCmd(const std::string& rest)
     }
     *hedef->carpan = c;
     // XP carpani acilinca baloncuk metnini de duzelt (yalnizca gorsel).
-    if (std::string(hedef->ad) == "EnemyCalculateExperience" && !g_OrigCombatText)
+    if (c != 1.0 && std::string(hedef->ad) == "EnemyCalculateExperience" && !g_OrigCombatText)
         HookOneScript("CombatText", "fp_ctext", (PVOID)Hook_CombatText, &g_OrigCombatText);
     char b[160];
     sprintf_s(b, "stat %s -> x%.2f", hedef->ad, c);
@@ -3824,6 +4053,11 @@ static void StatAddCmd(const std::string& rest)
     double ek = 0.0;
     try { ek = std::stod(deger); } catch (...) { Out("statadd: bonus sayi olmali"); return; }
     if (ek < 0.0) ek = 0.0;
+    if (ek == 0.0 && !g_OrigStatAdd_StatFasterCastRate) {
+        g_StatEk_StatFasterCastRate = 0.0;
+        Out("statadd StatFasterCastRate -> +0.00 (native, no hook)");
+        return;
+    }
     if (!g_OrigStatAdd_StatFasterCastRate) {
         HookOneScript("StatFasterCastRate", "fp_sta_fcr",
                       (PVOID)HookStatAdd_StatFasterCastRate,
@@ -4829,15 +5063,34 @@ static void SpecialRate(const std::string& key, int n)
     for (const auto& e : kSpecial) if (key == e.key) { sc = &e; break; }
     if (!sc) { Out("specialrate: bilinmeyen icerik '" + key + "'"); return; }
     if (n < 1) n = 1;
-    if (n > 1) InstallCreateHooks();
+    if (n > 1) {
+        InstallCreateHooks();
+        InstallSpecialLifecycleHook();
+    }
     try {
         RValue idx = g_Yytk->CallBuiltin("asset_get_index", { RValue(sc->obj) });
         int oi = (int)idx.ToDouble();
         if (oi < 0) { Out(std::string("specialrate: ") + sc->obj + " bulunamadi"); return; }
-        g_ObjMult[oi] = n;
+        // Vanilla entries do not belong in the instance-create hot-path map.
+        // Keeping six x1 entries made every object creation perform a tree
+        // lookup even when Special Content was completely disabled.
+        if (n > 1) g_ObjMult[oi] = n;
+        else {
+            g_ObjMult.erase(oi);
+            // Off means Off immediately: discard copies that this marker had
+            // already scheduled instead of draining them after the UI changed.
+            KuyruktanNesneyiSil(oi);
+        }
         if (n > 1) {
             g_EstForce[0] = 0.0;                                  // paylasilan kapi
             if (sc->estSlot >= 0) g_EstForce[sc->estSlot] = sc->estVal;
+        } else {
+            if (sc->estSlot >= 0) g_EstForce.erase(sc->estSlot);
+            bool anySpecialEnabled = false;
+            for (const auto& entry : g_ObjMult) {
+                if (entry.second > 1) { anySpecialEnabled = true; break; }
+            }
+            if (!anySpecialEnabled) g_EstForce.erase(0);
         }
         Out("specialrate " + key + " -> " + std::to_string(n)
             + " (" + sc->obj + " idx " + std::to_string(oi) + ")");
@@ -5289,6 +5542,11 @@ static RValue& Hook_LoadDrops(CInstance* S, CInstance* O, RValue& R, int argc, R
 {
     // 1) Once VANILYA davranis, hicbir sey degistirmeden.
     RValue& res = g_OrigLoadDrops ? g_OrigLoadDrops(S, O, R, argc, A) : R;
+#ifdef FORGEPACT_RELEASE
+    // If a key feature was enabled and later switched Off, the hook remains
+    // installed for this process.  Do not parse arguments or touch arrays.
+    if (!g_DkOn) return res;
+#endif
     if (!A || argc < 9 || !A[2] || !A[8] || !g_Yytk) return res;
 
     try {
@@ -5685,7 +5943,7 @@ static void RunCommand(const std::string& line)
     // hook commands below; none of those surfaces are available to players.
     static const std::unordered_set<std::string> kPlayerCommands = {
         "ping", "density", "reveal", "specialrate", "dropmult",
-        "stat", "statadd", "raredrop", "droprate", "dungeonkey", "necrobal"
+        "stat", "statadd", "raredrop", "droprate", "dungeonkey"
     };
     if (kPlayerCommands.find(lc) == kPlayerCommands.end()) {
         Out("command unavailable in player build: " + cmd);
@@ -5828,6 +6086,7 @@ static void RunCommand(const std::string& line)
         LoadConfig(); InstallHook();
     } else if (lc == "hookstats") {
         HookStats();
+#ifndef FORGEPACT_RELEASE
     } else if (lc == "necrobal") {
         std::string value = Lower(rest);
         while (!value.empty() && std::isspace((unsigned char)value.back())) value.pop_back();
@@ -5835,6 +6094,7 @@ static void RunCommand(const std::string& line)
         else if (value == "1" || value == "on" || value == "true") SetNecroBalance(true);
         else if (value == "0" || value == "off" || value == "false") SetNecroBalance(false);
         else Out("necrobal: usage -> necrobal 0|1  (no argument = status)");
+#endif
     } else if (lc == "reloadcfg") {
         LoadConfig();
     } else if (lc == "enemystats") {
@@ -5850,7 +6110,10 @@ static void RunCommand(const std::string& line)
         try {
             double d = std::stod(rest);
             if (d < 1.0) d = 1.0;
-            if (d > 1.0) InstallCreateHooks();
+            if (d > 1.0) {
+                InstallCreateHooks();
+                InstallDensityLifecycleHooks();
+            }
             g_CreatorMult = d;
             g_CreatorFrac = 0.0;          // kademe degisince birikim sifirlanir
             char db[64]; sprintf_s(db, "%.2g", g_CreatorMult);
@@ -5914,9 +6177,10 @@ static void RunCommand(const std::string& line)
             Out("ctarray -> " + std::to_string(g_ctCustom.size()) + " elements");
         }
     } else if (lc == "proof") {
-        char b[200];
-        sprintf_s(b, "PROOF: density=x%g | extra spawners created=%ld | extra enemies created=%ld",
-            g_CreatorMult, g_ExtraCreators, g_ExtraEnemies);
+        char b[280];
+        sprintf_s(b, "PROOF: density=x%g | extra spawners created=%ld | revisit expansions blocked=%ld | tracked placements=%llu | extra enemies created=%ld",
+            g_CreatorMult, g_ExtraCreators, g_DensityRevisitSkips,
+            (unsigned long long)DensityPlacementCount(), g_ExtraEnemies);
         Out(b);
     } else if (lc == "clearlog") {
         g_CreateCounts.clear(); Out("create log cleared");
@@ -6205,11 +6469,10 @@ void FrameCallback(FWFrame& FrameContext)
     static uint32_t fc = 0;
     if (fc == 1) Trace("0-framecallback-running");
 
+#ifndef FORGEPACT_RELEASE
     EstForceApply();
-    KuyrukIsle();
-#ifdef FORGEPACT_RELEASE
-    if ((fc % 60) == 0) KonsoluGizle();
 #endif
+    KuyrukIsle();
 #ifndef FORGEPACT_RELEASE
     CensusTick(fc);
 #endif
@@ -6282,6 +6545,7 @@ void FrameCallback(FWFrame& FrameContext)
         try { AutoRevealTick(); } catch (...) {}
     }
 
+#ifndef FORGEPACT_RELEASE
     static bool f5p = false;
     bool f5 = (GetAsyncKeyState(VK_F5) & 0x8000) != 0;
     if (f5 && !f5p) {
@@ -6289,6 +6553,7 @@ void FrameCallback(FWFrame& FrameContext)
         if (g_Yytk) g_Yytk->Print(CM_LIGHTGREEN, "[BloodPact] Auto map-reveal: %s", g_AutoReveal ? "ON" : "OFF");
     }
     f5p = f5;
+#endif
 
 // Research-only co-op/companion/buff features are not accepted by the player
 // command whitelist, so their per-frame branches do not belong in ship builds.
@@ -6318,13 +6583,16 @@ void FrameCallback(FWFrame& FrameContext)
 
     // Keep fc advancing before setup, but do not consume queued player commands
     // until the one-shot hook installation attempt has completed.
-    if (((fc++) % 12) == 0 && g_Setup) {
+    // Two IPC checks per second are enough for a settings panel and avoid five
+    // filesystem probes per second during gameplay.
+    if (((fc++) % 30) == 0 && g_Setup) {
         try { PollCommands(); } catch (...) {}
     }
 }
 
 // ===== Single-instance bypass: clear ERROR_ALREADY_EXISTS on mutex/event creation so a
 // 2nd game copy doesn't detect the 1st and self-exit. Installed as early as possible. =====
+#ifndef FORGEPACT_RELEASE
 typedef HANDLE(WINAPI* PFN_CreateMutexW)(LPSECURITY_ATTRIBUTES, BOOL, LPCWSTR);
 typedef HANDLE(WINAPI* PFN_CreateMutexA)(LPSECURITY_ATTRIBUTES, BOOL, LPCSTR);
 typedef HANDLE(WINAPI* PFN_CreateEventW)(LPSECURITY_ATTRIBUTES, BOOL, BOOL, LPCWSTR);
@@ -6367,6 +6635,7 @@ static void InstallSingleInstanceBypass()
         if (AurieSuccess(MmCreateHook(g_ArSelfModule, e.id, p, e.hook, &tr))) *e.orig = tr;
     }
 }
+#endif
 
 EXPORTED AurieStatus ModuleInitialize(
     IN AurieModule* Module,

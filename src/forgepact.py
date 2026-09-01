@@ -13,6 +13,7 @@ Settings persist in %LOCALAPPDATA%/Hero_Siege/forgepact.json.
 import hashlib
 import json
 import os
+import socket
 import struct
 import subprocess
 import sys
@@ -99,7 +100,6 @@ DEFAULTS = {
     "density_on": False,
     "auto_apply": True,
     "map_reveal": False,
-    "necro_balance": False,
     "spawners": {k: 1 for k, *_ in SPAWNERS},
     "drops": {k: 1 for k, *_ in DROPS},
     "keys": {k: 1 for k, *_ in KEYS},
@@ -337,19 +337,60 @@ def send_cmds(lines: list, cfg=None) -> str:
     return f"{len(lines)} command(s) sent"
 
 
+def build_key_cmds(settings: dict, include_resets: bool = False) -> list:
+    """Build only the key/drop-rate command group.
+
+    Fresh processes need sparse commands.  A live slider change needs explicit
+    x1/off resets because the current process may already contain modified repo
+    values and an installed LoadDrops hook.
+    """
+    out = []
+    gated = [(drop_type, int(settings.get(k, 1))) for k, _l, drop_type in KEYS
+             if drop_type and int(settings.get(k, 1)) > 1]
+    if include_resets:
+        for _k, _l, drop_type in KEYS:
+            if drop_type:
+                out.append(f"dungeonkey del {drop_type}")
+    for drop_type, multiplier in gated:
+        out.append(f"dungeonkey add {drop_type} {multiplier}")
+    if gated:
+        out.append("dungeonkey chance auto")
+        out.append("dungeonkey on")
+    elif include_resets:
+        out.append("dungeonkey off")
+    for k, _l, _drop_type in KEYS:
+        value = max(1, int(settings.get(k, 1)))
+        if value > 1 or include_resets:
+            out.append(f"droprate group {k} {value}")
+    return out
+
+
 def build_cmds(cfg: dict) -> list:
     d = min(5.0, float(cfg.get("density", 1))) if cfg.get("density_on") else 1.0
-    out = [f"density {d:g}"]
-    out.append(f"reveal {1 if cfg.get('map_reveal', True) else 0}")
-    out.append(f"necrobal {1 if cfg.get('necro_balance', False) else 0}")
+    # A new game process already starts at vanilla values.  Sending x1/Off
+    # commands was not harmless: x1 stat commands installed pass-through hooks
+    # and x1 drop-rate commands walked and rewrote hundreds of repository
+    # entries.  Startup auto-apply now emits only features that are actually on.
+    # Live slider changes still send their explicit reset command through
+    # /api/set, so an enabled feature can be turned off in the current session.
+    out = []
+    if d > 1.0:
+        out.append(f"density {d:g}")
+    if cfg.get("map_reveal", False):
+        out.append("reveal 1")
     for key, *_ in SPAWNERS:
-        out.append(f"specialrate {key} {int(cfg['spawners'].get(key, 1))}")
+        value = int(cfg['spawners'].get(key, 1))
+        if value > 1:
+            out.append(f"specialrate {key} {value}")
     for key, *_ in DROPS:
-        out.append(f"dropmult {key} {int(cfg['drops'].get(key, 1))}")
+        value = int(cfg['drops'].get(key, 1))
+        if value > 1:
+            out.append(f"dropmult {key} {value}")
     for key, _label, ceiling, step in STATS:
         value = max(1.0, min(float(ceiling), float(cfg.get("stats", {}).get(key, 1))))
         value = round(value / step) * step
-        out.append(f"stat {key} {value:g}")
+        if value > 1.0:
+            out.append(f"stat {key} {value:g}")
     for key, _label, ceiling, step, mode in PERCENT_STATS:
         bonus = max(0.0, min(float(ceiling), float(cfg.get("percent_stats", {}).get(key, 0))))
         bonus = round(bonus / step) * step
@@ -363,30 +404,12 @@ def build_cmds(cfg: dict) -> list:
         else:
             out.append(f"stat {key} {1.0 + bonus / 100.0:g}")
     for key, _label, ceiling in RARE:
-        out.append(f"raredrop {key} {max(1, min(ceiling, int(cfg.get('rare', {}).get(key, 1))))}")
+        value = max(1, min(ceiling, int(cfg.get('rare', {}).get(key, 1))))
+        if value > 1:
+            out.append(f"raredrop {key} {value}")
 
-    # Keys: the gate first (only the families that have a type), then the rate.
     settings = cfg.get("keys", {})
-    gated = [(drop_type, int(settings.get(k, 1))) for k, _l, drop_type in KEYS
-             if drop_type and int(settings.get(k, 1)) > 1]
-    for _k, _l, drop_type in KEYS:
-        if drop_type:
-            out.append(f"dungeonkey del {drop_type}")
-    for drop_type, multiplier in gated:
-        out.append(f"dungeonkey add {drop_type} {multiplier}")
-    # The slider drives TWO stages at once: the outer gate (how many kills before
-    # a roll happens) and the inner roll (the rarity of the chosen item).  Driving
-    # only the second one produced no visible difference even at x100 - measured:
-    # 338 rolls -> 1 key.
-    #
-    # The gate multiplier is sent PER FAMILY.  The previous version used a single
-    # shared value and gave it the HIGHEST of all sliders: someone who set Dungeon
-    # Keys to 20 got the relic gate opened at 20 as well, even with Relic left at
-    # 2.  The slider was lying and relics poured out.
-    out.append("dungeonkey chance auto")
-    out.append("dungeonkey on" if gated else "dungeonkey off")
-    for k, _l, _drop_type in KEYS:
-        out.append(f"droprate group {k} {max(1, int(settings.get(k, 1)))}")
+    out.extend(build_key_cmds(settings, include_resets=False))
     return out
 
 
@@ -1050,14 +1073,15 @@ class H(BaseHTTPRequestHandler):
                     # float("3") -> 3.0; the plugin prints with %g so it shows as "x3".
                     d = max(1.0, min(5.0, float(val)))
                     cfg["density"] = round(d * 2) / 2
-                elif key in ("density_on", "auto_apply", "map_reveal", "necro_balance"):
+                elif key in ("density_on", "auto_apply", "map_reveal"):
                     cfg[key] = bool(val)
                 save_cfg(cfg)
                 live = ""
                 if game_running(cfg):
                     if sec == "keys":
-                        # Kapi + oran birlikte gonderilmeli; tam sozlesmeyi uret.
-                        send_cmds(build_cmds(cfg), cfg)
+                        # A live change must also restore families moved back to
+                        # x1; startup's sparse command list deliberately cannot.
+                        send_cmds(build_key_cmds(cfg.get("keys", {}), include_resets=True), cfg)
                     elif sec == "drops":
                         send_cmds([f"dropmult {key} {int(val)}"], cfg)
                     elif sec == "stats":
@@ -1075,8 +1099,6 @@ class H(BaseHTTPRequestHandler):
                         send_cmds([f"density {cfg['density'] if cfg['density_on'] else 1}"], cfg)
                     elif key == "map_reveal":
                         send_cmds([f"reveal {1 if cfg['map_reveal'] else 0}"], cfg)
-                    elif key == "necro_balance":
-                        send_cmds([f"necrobal {1 if cfg['necro_balance'] else 0}"], cfg)
                     live = " (applied live)"
                     LAST["applied"] = time.strftime("%H:%M:%S")
                 self._json({"ok": f"saved{live}", "cfg": cfg})
@@ -1195,12 +1217,6 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
 .note{font-size:11px;color:var(--mut);font-style:italic}
 .modifier-card{position:relative;overflow:hidden;border-color:#49375d;background:radial-gradient(800px 260px at 85% -70px,#44255b55 0%,transparent 62%),linear-gradient(180deg,#1c151f,#151116)}
 .modifier-card:before{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(120deg,transparent 0 47%,#a77cff08 50%,transparent 53%)}
-.necro-card{position:relative;overflow:hidden;border-color:#64303a;background:radial-gradient(760px 250px at 88% -80px,#7b263b55 0%,transparent 62%),linear-gradient(180deg,#211317,#171013)}
-.necro-card h2{color:#ff8796}
-.live-badge.necro-badge{color:#ffd4da;border-color:#8b4351;background:#34151c;box-shadow:0 0 12px #ff5b6e22}
-.n1-summary{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 0 10px}
-.n1-item{padding:9px 11px;border:1px solid #47252d;border-radius:8px;background:#100b0dcc;color:#bda9ad;font-size:11px;line-height:1.45}
-.n1-item b{display:block;color:#f0c7ce;font-size:12px;margin-bottom:2px}
 .section-title{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;position:relative}
 .live-badge{font-size:10px;letter-spacing:1.4px;color:#bdffd0;border:1px solid #34794a;background:#122619;padding:4px 9px;border-radius:999px;box-shadow:0 0 12px #5ad87a22}
 .modifier-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;position:relative}
@@ -1213,7 +1229,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
 .modifier-group .row{display:grid;grid-template-columns:minmax(145px,190px) 1fr 64px;gap:10px;padding:8px 0}
 .modifier-group .row .lbl{width:auto}
 .modifier-group .note{margin:-4px 0 8px}
-@media(max-width:820px){.tabbar{grid-template-columns:1fr 1fr}.modifier-grid,.n1-summary{grid-template-columns:1fr}.modifier-group.wide{grid-column:auto}.modifier-group .row{grid-template-columns:150px 1fr 64px}}
+@media(max-width:820px){.tabbar{grid-template-columns:1fr 1fr}.modifier-grid{grid-template-columns:1fr}.modifier-group.wide{grid-column:auto}.modifier-group .row{grid-template-columns:150px 1fr 64px}}
 </style></head><body><div id="wrap">
 <header><div class="logo">&#128293;</div><div>
   <h1>FORGEPACT</h1><div class="sub">Hero Siege game mods &middot; live control</div>
@@ -1258,7 +1274,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
 <div class="card tab-card" data-tab="world">
   <h2>&#128127; Monster Density</h2>
   <div class="hint">Multiplies enemy spawners - applies to newly loaded zones.<br><b>Density and Special Content stack.</b> Each on its own is fine, but a high density together with high special-content rates can overload a heavy zone and crash the game on entry. Verified stable: density x3 with every special content at x20. If a zone crashes, lower density first.</div>
-  <div class="note" style="color:#ffb347;border:1px solid #5a3a1a;border-radius:6px;padding:8px 12px;margin-bottom:10px">&#9888; Known quirk: re-entering a map you already visited stacks the multiplier (x3 can feel like x6+). For consistent density, avoid backtracking into cleared maps - or set Density to x1 here before going back.</div>
+  <div class="note" style="color:#72d6a5;border:1px solid #245a43;border-radius:6px;padding:8px 12px;margin-bottom:10px">Density is applied once per creator placement. Returning to a previously visited zone does not multiply it again.</div>
   <div class="row">
     <span class="lbl">Density multiplier</span>
     <label class="switch"><input type="checkbox" id="den_on"><span class="sl"></span></label>
@@ -1282,27 +1298,6 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
   skips outside their home zones.</div>
   <div id="drops"></div>
   <div id="keys"></div>
-</div>
-
-<div class="card necro-card tab-card" data-tab="modifiers">
-  <div class="section-title">
-    <div><h2>&#9760; Necromancer Balance Patch</h2>
-      <div class="hint"><b>Offline / EAC-disabled play only.</b> N1 applies to newly created summons and the next Frenzy or Amplify Damage cast. Turning it off restores vanilla values for subsequent summons and casts.</div>
-    </div>
-    <span class="live-badge necro-badge">N1 PROFILE</span>
-  </div>
-  <div class="row" style="border-color:#47252d">
-    <span class="lbl" style="width:auto;flex:1"><b>Enable Necromancer N1</b></span>
-    <label class="switch"><input type="checkbox" id="necro_balance"><span class="sl"></span></label>
-    <span class="val off" id="necrobalval">off</span>
-  </div>
-  <div class="n1-summary">
-    <div class="n1-item"><b>Skeleton Warrior</b>Damage slope 8 &rarr; 9.40<br>Follow range 48 &rarr; 64</div>
-    <div class="n1-item"><b>Skeleton Mage</b>Damage slope 7.25 &rarr; 8.51<br>Life slope 55 &rarr; 68 &middot; cap metadata 2</div>
-    <div class="n1-item"><b>Frenzy</b>Duration 25 &rarr; 35 &middot; cooldown 70 &rarr; 30<br>Attack Speed starts at 8, then +1/rank (was +2); Movement Speed stays 4 +1/rank</div>
-    <div class="n1-item"><b>Amplify &amp; Spirit</b>Amplify duration 5 &rarr; 10<br>Vengeful Spirit cap metadata 1</div>
-  </div>
-  <div class="note" style="margin:0;color:#c69aa2">N1 does not add a corpse fallback. Existing summons keep the values they were created with.</div>
 </div>
 
 <div class="card modifier-card tab-card" data-tab="modifiers">
@@ -1448,10 +1443,6 @@ async function boot(){
   document.getElementById('map_reveal').checked=mr;
   document.getElementById('mapval').textContent=mr?'on':'off';
   document.getElementById('mapval').className='val '+(mr?'':'off');
-  const nb=!!c.necro_balance;
-  document.getElementById('necro_balance').checked=nb;
-  document.getElementById('necrobalval').textContent=nb?'on':'off';
-  document.getElementById('necrobalval').className='val '+(nb?'':'off');
   document.getElementById('exepath').value=c.game_exe||'';
   document.getElementById('spawners').innerHTML=ST.spawners.map(([k,i,l,mx])=>row('spawners',k,l,c.spawners[k]||1,'',mx)).join('');
   document.getElementById('keys').innerHTML=ST.keys.map(([k,l,t])=>{
@@ -1537,15 +1528,6 @@ function bind(){
     document.getElementById('mapval').className='val '+(e.target.checked?'':'off');
     toast('map reveal '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
   };
-  document.getElementById('necro_balance').onchange=async(e)=>{
-    const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'necro_balance',value:e.target.checked})});
-    if(res.err){e.target.checked=!e.target.checked;}
-    const enabled=e.target.checked;
-    document.getElementById('necrobalval').textContent=enabled?'on':'off';
-    document.getElementById('necrobalval').className='val '+(enabled?'':'off');
-    if(res.cfg)ST.cfg=res.cfg;
-    toast('Necromancer N1 '+(enabled?'ON':'OFF')+' - '+(res.ok||res.err));
-  };
   document.getElementById('applyall').onclick=async()=>{
     const res=await j('/api/applyall',{method:'POST',body:'{}'});
     toast(res.ok||res.err); ST.lastApplied=new Date().toTimeString().slice(0,8); status();
@@ -1598,6 +1580,15 @@ def main():
     global PORT
     srv = None
     for p in PORT_CANDIDATES:
+        # ``ThreadingHTTPServer`` enables address reuse.  On Windows that can
+        # allow two unrelated local tools to listen on the same port, causing
+        # requests to land in the wrong application.  Skip any port that is
+        # already accepting connections before attempting the bind.
+        try:
+            with socket.create_connection(("127.0.0.1", p), timeout=0.15):
+                continue
+        except OSError:
+            pass
         try:
             srv = ThreadingHTTPServer(("127.0.0.1", p), H)
             PORT = p
