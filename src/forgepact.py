@@ -148,6 +148,7 @@ def ipc_dir(cfg=None) -> Path:
 # Keyed by exe size; YYTK validates the size, so a stale cache (different exe build) is
 # safely ignored (it just falls back to a one-time scan + re-caches). Known patched build:
 KNOWN_RI_CACHE = {
+    282105856: "282105856 190392081 190393250\n",   # 7.0.90, AuriePatcher-ed (verified 2026-09-02)
     303708672: "303708672 208216097 208217266\n",   # 7.0.30, AuriePatcher-ed (verified 2026-08-26)
     303584768: "303584768 208133041 208134210\n",   # previous S10 build, AuriePatcher-ed
     309551616: "309551616 207703889 207705042\n",   # older still

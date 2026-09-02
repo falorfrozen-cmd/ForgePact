@@ -57,6 +57,10 @@ a reason we have not identified. Details and every ruled-out hypothesis are in
 3. Press **Launch Modded Game** and play offline. Change any setting in the panel and it applies
    immediately.
 
+After a Hero Siege update, press **Install Mod Plugin** again before launching. Steam replaces
+the patched game exe during updates; ForgePact safely keeps the previous backup and prepares the
+new game build.
+
 All gameplay modifiers are **Off by default** for a new player. No manual hook,
 command file or DLL copying is required; the two buttons above handle installation
 and launch.
