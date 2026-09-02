@@ -40,8 +40,11 @@ SPAWNERS = [
     ("cursedorb", 4665, "Cursed Orbs", 100),
     ("summonportal", 4676, "Summon Portals", 100),
     ("chaospillars", 4662, "Chaos Pillars", 100),
-    ("chaostower", 4663, "Chaos Tower (one per zone)", 1),
 ]
+# Chaos Tower stays unavailable until its Season 10 route is verified.  Keep it
+# out of both the UI and accepted panel commands so an old saved setting cannot
+# accidentally activate it in a new package.
+DISABLED_SPAWNER_KEYS = {"chaostower"}
 # Key families.  The third field is the LoadDrops drop type; when it is None
 # that family's gate is already open and only the rate is adjusted.
 KEYS = [
@@ -123,6 +126,8 @@ def load_cfg() -> dict:
                     cfg[k] = v
         except Exception:
             pass
+    for key in DISABLED_SPAWNER_KEYS:
+        cfg.get("spawners", {}).pop(key, None)
     return cfg
 
 
@@ -1082,6 +1087,10 @@ class H(BaseHTTPRequestHandler):
                 elif sec == "drops":
                     cfg[sec][key] = max(1, min(100, int(val)))
                 elif sec == "spawners":
+                    allowed = {k for k, _i, _l, _mx in SPAWNERS}
+                    if key not in allowed:
+                        self._json({"err": "special content is unavailable"}, 400)
+                        return
                     ceiling = next((mx for k, _i, _l, mx in SPAWNERS if k == key), 100)
                     cfg[sec][key] = max(1, min(ceiling, int(val)))
                 elif key == "density":

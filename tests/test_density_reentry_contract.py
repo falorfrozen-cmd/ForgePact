@@ -35,7 +35,8 @@ class DensityReentryContractTests(unittest.TestCase):
         fractional = body.index("g_CreatorFrac += kesir")
         self.assertLess(guard, fractional)
         self.assertIn("isCreator && !specialChild", body)
-        self.assertIn("!densityAlreadyApplied && DensityWindowActive()", body)
+        self.assertIn("!densityAlreadyApplied", body)
+        self.assertIn("knownCreator || DensityWindowActive()", body)
 
     def test_generated_copies_are_registered_before_zone_state_can_see_them(self):
         start = SOURCE.index("static void DoMultiCreate")
@@ -78,16 +79,40 @@ class DensityReentryContractTests(unittest.TestCase):
         self.assertIn("if (specialChild)", body)
         self.assertIn("!specialChild", body)
 
-    def test_combat_create_path_closes_after_map_generation(self):
+    def test_known_creators_remain_active_after_generation_window_closes(self):
         self.assertIn("static bool DensityWindowActive()", SOURCE)
         self.assertIn("kDensityWindowIdleFrames", SOURCE)
+        self.assertIn("kKnownDensityCreatorObjects", SOURCE)
+        self.assertIn("ResolveKnownCreatorObjects();", SOURCE)
+        create_start = SOURCE.index("static void DoMultiCreate")
+        create_end = SOURCE.index("// --- Yaratim konumu kaydi", create_start)
+        create = SOURCE[create_start:create_end]
+        self.assertIn("const bool knownCreator = IsCachedCreatorObject(objIdx);", create)
+        self.assertIn("knownCreator || DensityWindowActive()", create)
         for signature in ("static void HookICD", "static void HookICL"):
             start = SOURCE.index(signature)
             end = SOURCE.index("\n}", start) + 2
             body = SOURCE[start:end]
-            self.assertIn("!DensityWindowActive()", body)
+            self.assertIn("IsCachedCreatorObject(objIdx)", body)
+            self.assertIn("const bool densityCreate", body)
             self.assertIn("g_ObjMult.empty()", body)
             self.assertIn("ObjectMultiplier(objIdx) <= 1", body)
+
+    def test_creator_cache_uses_names_not_build_specific_indices(self):
+        start = SOURCE.index("kKnownDensityCreatorObjects")
+        end = SOURCE.index("static bool IsEnemyObject", start)
+        block = SOURCE[start:end]
+        for name in (
+            "Enemy_Creator_obj",
+            "Enemy_Creator_Ambush_obj",
+            "Enemy_Creator_Ancient_obj",
+            "Enemy_Creator_Champion_obj",
+            "Enemy_Creator_Colossal_Chest_obj",
+            "Enemy_Creator_Legion_obj",
+            "Enemy_Creator_Miniboss_obj",
+        ):
+            self.assertIn(f'"{name}"', block)
+        self.assertIn('CallBuiltin("asset_get_index"', block)
 
     def test_no_global_object_event_observer_was_added(self):
         self.assertNotIn("CreateCallback(Module, EVENT_OBJECT_CALL", SOURCE)

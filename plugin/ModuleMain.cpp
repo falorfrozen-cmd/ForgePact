@@ -578,6 +578,7 @@ static double g_CreatorFrac = 0.0;          // kesir birikimi - 1.5x'te her ikin
 static std::unordered_map<int, bool> g_IsEnemyCache;   // object index -> is enemy descendant
 static std::unordered_map<int, bool> g_IsCreatorCache; // object index -> name starts with "Enemy_Creator"
 static std::vector<int8_t> g_IsCreatorFast;
+static bool g_KnownCreatorObjectsResolved = false;
 static volatile long g_ExtraCreators = 0;    // extra spawner instances the multiplier created
 static volatile long g_ExtraEnemies = 0;     // extra enemy instances the multiplier created
 static volatile long g_DensityRevisitSkips = 0;
@@ -758,6 +759,58 @@ static bool IsCreatorObject(int objIdx)
     return res;
 }
 
+// These are the complete Season 10 map-density creator family. Resolve them by
+// name once, rather than relying on build-specific numeric object indices. The
+// create hooks can then recognize creators in every zone with one indexed read,
+// even when a zone-transition script did not open the discovery window.
+static constexpr const char* kKnownDensityCreatorObjects[] = {
+    "Enemy_Creator_obj",
+    "Enemy_Creator_Ambush_obj",
+    "Enemy_Creator_Ancient_obj",
+    "Enemy_Creator_Champion_obj",
+    "Enemy_Creator_Colossal_Chest_obj",
+    "Enemy_Creator_Legion_obj",
+    "Enemy_Creator_Miniboss_obj",
+};
+
+static bool IsCachedCreatorObject(int objIdx)
+{
+    if (objIdx < 0) return false;
+    if (objIdx < static_cast<int>(g_IsCreatorFast.size()))
+        return g_IsCreatorFast[static_cast<size_t>(objIdx)] == 1;
+    auto it = g_IsCreatorCache.find(objIdx);
+    return it != g_IsCreatorCache.end() && it->second;
+}
+
+static void CacheCreatorObject(int objIdx)
+{
+    if (objIdx < 0) return;
+    g_IsCreatorCache[objIdx] = true;
+    if (objIdx <= kFastObjectIndexLimit) {
+        const size_t wanted = static_cast<size_t>(objIdx) + 1;
+        if (g_IsCreatorFast.size() < wanted) g_IsCreatorFast.resize(wanted, -1);
+        g_IsCreatorFast[static_cast<size_t>(objIdx)] = 1;
+    }
+}
+
+static void ResolveKnownCreatorObjects()
+{
+    if (g_KnownCreatorObjectsResolved || !g_Yytk) return;
+    int resolved = 0;
+    for (const char* name : kKnownDensityCreatorObjects) {
+        try {
+            RValue r = g_Yytk->CallBuiltin("asset_get_index", { RValue(name) });
+            const int objIdx = static_cast<int>(r.ToDouble());
+            if (objIdx >= 0) {
+                CacheCreatorObject(objIdx);
+                ++resolved;
+            }
+        } catch (...) {}
+    }
+    g_KnownCreatorObjectsResolved = true;
+    Out("density creators cached = " + std::to_string(resolved));
+}
+
 static bool IsEnemyObject(int objIdx)
 {
     if (objIdx < 0) return false;
@@ -873,9 +926,11 @@ static void DoMultiCreate(TRoutine orig, RValue& Result, CInstance* S, CInstance
     int mult = ObjectMultiplier(objIdx);
     const bool ozelIcerik = mult > 1;
     const bool specialChild = g_SpecialCreateDepth > 0;
+    const bool knownCreator = IsCachedCreatorObject(objIdx);
     const bool inspectCreator = g_CreatorMult > 1.0
-        && (DensityWindowActive() || specialChild);
-    const bool isCreator = inspectCreator && IsCreatorObject(objIdx);
+        && (knownCreator || DensityWindowActive() || specialChild);
+    const bool isCreator = inspectCreator
+        && (knownCreator || IsCreatorObject(objIdx));
 
     bool densityAlreadyApplied = false;
     if (isCreator && Args && argc >= 4) {
@@ -892,7 +947,8 @@ static void DoMultiCreate(TRoutine orig, RValue& Result, CInstance* S, CInstance
     if (isCreator && !specialChild) NoteDensityCreator();
     // density: multiply all Enemy_Creator* spawners (produces fully-configured enemies)
     if (g_CreatorMult > 1.0 && isCreator && !specialChild
-        && !densityAlreadyApplied && DensityWindowActive()) {
+        && !densityAlreadyApplied
+        && (knownCreator || DensityWindowActive())) {
         // Tam kisim herkese; kesir kismi birikime yayilir ve 1'e ulasinca
         // O ureticiye bir fazla kopya dusar.  Rastgelelik yok, deterministik.
         int tam = (int)g_CreatorMult;
@@ -1097,14 +1153,6 @@ static void HookICD(RValue& Result, CInstance* S, CInstance* O, int argc, RValue
         if (g_OrigICD) g_OrigICD(Result, S, O, argc, Args);
         return;
     }
-    // Density remains selected in the panel, but after map generation combat
-    // creations have no density work. With Special Content Off this becomes a
-    // complete native pass-through for attacks, projectiles and hit effects.
-    if (!DensityWindowActive() && g_EnemyMultAll <= 1 && g_ObjMult.empty()
-        && g_SpecialCreateDepth == 0) {
-        if (g_OrigICD) g_OrigICD(Result, S, O, argc, Args);
-        return;
-    }
 #endif
 #ifndef FORGEPACT_RELEASE
     void* ret = _ReturnAddress();
@@ -1115,8 +1163,10 @@ static void HookICD(RValue& Result, CInstance* S, CInstance* O, int argc, RValue
     // Special Content keeps the create hook installed, but ordinary combat
     // objects are not special markers. One indexed read is enough to return to
     // the original builtin without entering the multiplier machinery.
-    if (!DensityWindowActive() && g_EnemyMultAll <= 1
-        && g_SpecialCreateDepth == 0 && ObjectMultiplier(objIdx) <= 1) {
+    const bool densityCreate = g_CreatorMult > 1.0
+        && (DensityWindowActive() || IsCachedCreatorObject(objIdx));
+    if (!densityCreate && g_EnemyMultAll <= 1 && g_SpecialCreateDepth == 0
+        && ObjectMultiplier(objIdx) <= 1) {
         if (g_OrigICD) g_OrigICD(Result, S, O, argc, Args);
         return;
     }
@@ -1133,11 +1183,6 @@ static void HookICL(RValue& Result, CInstance* S, CInstance* O, int argc, RValue
         if (g_OrigICL) g_OrigICL(Result, S, O, argc, Args);
         return;
     }
-    if (!DensityWindowActive() && g_EnemyMultAll <= 1 && g_ObjMult.empty()
-        && g_SpecialCreateDepth == 0) {
-        if (g_OrigICL) g_OrigICL(Result, S, O, argc, Args);
-        return;
-    }
 #endif
 #ifndef FORGEPACT_RELEASE
     void* ret = _ReturnAddress();
@@ -1145,8 +1190,10 @@ static void HookICL(RValue& Result, CInstance* S, CInstance* O, int argc, RValue
     int objIdx = -1;
     try { if (argc >= 4) objIdx = (int)Args[3].ToDouble(); } catch (...) {}
 #ifdef FORGEPACT_RELEASE
-    if (!DensityWindowActive() && g_EnemyMultAll <= 1
-        && g_SpecialCreateDepth == 0 && ObjectMultiplier(objIdx) <= 1) {
+    const bool densityCreate = g_CreatorMult > 1.0
+        && (DensityWindowActive() || IsCachedCreatorObject(objIdx));
+    if (!densityCreate && g_EnemyMultAll <= 1 && g_SpecialCreateDepth == 0
+        && ObjectMultiplier(objIdx) <= 1) {
         if (g_OrigICL) g_OrigICL(Result, S, O, argc, Args);
         return;
     }
@@ -1172,6 +1219,9 @@ static bool HookBuiltin(const char* name, const char* id, PVOID dest, TRoutine* 
 
 static void InstallCreateHooks()
 {
+    // This is idempotent and must run even if Special Content installed the
+    // create hooks before Monster Density was enabled.
+    ResolveKnownCreatorObjects();
     if (g_OrigICD && g_OrigICL) {
         g_NecroPostCreateHooksInstalled.store(true);
         return;
@@ -3950,6 +4000,190 @@ static RValue& HookAngelicChance(CInstance* S, CInstance* O, RValue& R, int argc
 }
 
 // raredrop heroic|ceiling|satanic|angelic <multiplier>   |   raredrop list
+#ifndef FORGEPACT_RELEASE
+// ---- socketprobe: capture the two socket rolls -----------------------------
+// Socket count is stat 20 and it is GENERATED, never loaded: nothing written
+// into the save survives, because CreateItemNew recomputes it from the item
+// seed.  Static analysis put the two socket rolls at chain slots 2 and 3 of the
+// cpr_* calls inside CreateItemNew.  Both cpr_irandom and CreateItemNew have
+// real call sites, so this hooks BY NAME and needs no addresses - it therefore
+// survives game updates.
+static HMODULE g_GameBase = GetModuleHandleW(nullptr);
+static PFUNC_YYGMLScript g_OrigCreateItemNew = nullptr;
+static PFUNC_YYGMLScript g_OrigCprIrandom = nullptr;
+static PFUNC_YYGMLScript g_OrigLoadCommonItems = nullptr;
+static bool g_SockProbe = false;
+static thread_local int  g_InCreate = 0;
+static thread_local int  g_InLoadCommon = 0;
+static thread_local int  g_CprIndex = 0;
+static thread_local int  g_LcRolls = 0;
+static thread_local char g_SockLine[2048];
+static thread_local int  g_SockLen = 0;
+static thread_local char g_SockJson[2048];
+static thread_local int  g_SockJsonLen = 0;
+static thread_local char g_SockName[160];
+static volatile long g_SockItems = 0;
+
+// Copies an argument into buf as readable text.  Never throws, never indexes an
+// RValue of an unexpected kind.
+static void DescribeArg(RValue* a, char* buf, size_t cap)
+{
+    buf[0] = 0;
+    if (!a) { strcpy_s(buf, cap, "null"); return; }
+    try {
+        if (a->m_Kind == VALUE_STRING) {
+            const char* s = a->ToCString();
+            sprintf_s(buf, cap, "\"%s\"", s ? s : "");
+        } else if (a->m_Kind == VALUE_REAL || a->m_Kind == VALUE_INT32
+                   || a->m_Kind == VALUE_INT64 || a->m_Kind == VALUE_BOOL) {
+            sprintf_s(buf, cap, "%g", a->ToDouble());
+        } else {
+            sprintf_s(buf, cap, "kind%d", (int)a->m_Kind);
+        }
+    } catch (...) { strcpy_s(buf, cap, "?"); }
+}
+
+static RValue& HookCprIrandom(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    double bound = -1.0;
+    if (argc >= 1 && A && A[0] && A[0]->m_Kind == VALUE_REAL) {
+        try { bound = A[0]->ToDouble(); } catch (...) {}
+    }
+    // cpr_irandom is also reached from scripts nested inside CreateItemNew, so a
+    // plain ordinal is meaningless.  Record the CALL SITE (return address as a
+    // module RVA) - that identifies which of the game's call sites produced the
+    // roll, and the two socket sites can then be picked out exactly.
+    void* ret = _ReturnAddress();
+    RValue& r = g_OrigCprIrandom ? g_OrigCprIrandom(S, O, R, argc, A) : R;
+    // CreateItemNew calls LoadCommonItems first, and that routine burns a large
+    // and item-dependent number of rolls.  They flooded the buffer on the first
+    // run, so they are skipped here: what remains is CreateItemNew's own chain,
+    // whose slots 2 and 3 are the two sides of the socket if/else.
+    if (g_SockProbe && g_InCreate > 0 && g_InLoadCommon > 0) {
+        // Only the count matters: it is how far LoadCommonItems advances the
+        // shared RNG stream before the socket roll, so the editor's simulator
+        // has to skip exactly this many draws to line up with the socket draw.
+        g_LcRolls++;
+    }
+    if (g_SockProbe && g_InCreate > 0 && g_InLoadCommon == 0) {
+        int idx = g_CprIndex++;
+        double out = 0.0;
+        try { if (r.m_Kind == VALUE_REAL) out = r.ToDouble(); } catch (...) {}
+        unsigned long long rva = 0;
+        if (g_GameBase) rva = (unsigned long long)ret - (unsigned long long)g_GameBase;
+        if (idx < 64 && g_SockLen < (int)sizeof(g_SockLine) - 64) {
+            int n = sprintf_s(g_SockLine + g_SockLen, sizeof(g_SockLine) - g_SockLen,
+                              " [%llX b=%g r=%g]", rva, bound, out);
+            if (n > 0) g_SockLen += n;
+        }
+        if (idx < 64 && g_SockJsonLen < (int)sizeof(g_SockJson) - 64) {
+            int n = sprintf_s(g_SockJson + g_SockJsonLen, sizeof(g_SockJson) - g_SockJsonLen,
+                              "%s[%llu,%g,%g]", idx ? "," : "", rva, bound, out);
+            if (n > 0) g_SockJsonLen += n;
+        }
+    }
+    return r;
+}
+
+// CreateItemInit is a one-line wrapper that forwards its argument to cpr_init,
+// and CreateItemNew calls it before LoadCommonItems and before the socket roll.
+// Logging its seed identifies which saved field drives the socket draw.
+static PFUNC_YYGMLScript g_OrigCreateItemInit = nullptr;
+static thread_local double g_InitSeed = -1.0;
+
+static RValue& HookCreateItemInit(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    if (g_SockProbe && argc >= 1 && A && A[0]) {
+        try { g_InitSeed = A[0]->ToDouble(); } catch (...) { g_InitSeed = -2.0; }
+    }
+    return g_OrigCreateItemInit ? g_OrigCreateItemInit(S, O, R, argc, A) : R;
+}
+
+static RValue& HookLoadCommonItems(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    g_InLoadCommon++;
+    RValue& r = g_OrigLoadCommonItems ? g_OrigLoadCommonItems(S, O, R, argc, A) : R;
+    g_InLoadCommon--;
+    return r;
+}
+
+static RValue& HookCreateItemNew(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    const bool probing = g_SockProbe;
+    if (probing && g_InCreate == 0) {
+        g_CprIndex = 0; g_SockLen = 0; g_SockLine[0] = 0; g_LcRolls = 0; g_InitSeed = -1.0;
+        g_SockJsonLen = 0; g_SockJson[0] = 0;
+        // Record which item this is so the two items we care about can be found
+        // in the log by name.
+        char a0[80], a1[64];
+        DescribeArg(argc > 0 && A ? A[0] : nullptr, a0, sizeof(a0));
+        DescribeArg(argc > 1 && A ? A[1] : nullptr, a1, sizeof(a1));
+        sprintf_s(g_SockName, "%s, %s", a0, a1);
+    }
+    g_InCreate++;
+    RValue& r = g_OrigCreateItemNew ? g_OrigCreateItemNew(S, O, R, argc, A) : R;
+    g_InCreate--;
+    if (probing && g_InCreate == 0 && g_SockLen > 0) {
+        long n = InterlockedIncrement(&g_SockItems);
+        // The chain alone cannot say WHICH item it belongs to - CreateItemNew's
+        // first argument is a struct, so it prints as a bare kind.  Serialising
+        // the created item gives its base name and definition fields, which is
+        // what turns a measured chain into a per-item socket entry.  Uses the
+        // same json_stringify path the drop log already relies on.
+        std::string itemJson;
+        try {
+            if (r.m_Kind == VALUE_OBJECT) {
+                CInstance* g = nullptr; g_Yytk->GetGlobalInstance(&g);
+                RValue js; g_Yytk->CallBuiltinEx(js, "json_stringify", g, g, { r });
+                itemJson = js.ToString();
+                if (itemJson.find("itemDefinitionStruct") == std::string::npos) itemJson.clear();
+            }
+        } catch (...) { itemJson.clear(); }
+        try {
+            std::ofstream of(IPC_DIR + "\\socketchain.jsonl", std::ios::app);
+            of << "{\"n\":" << n << ",\"seed\":" << (long long)g_InitSeed
+               << ",\"lc\":" << g_LcRolls << ",\"rolls\":[" << g_SockJson << "]";
+            if (!itemJson.empty()) of << ",\"it\":" << itemJson;
+            of << "}\n";
+        } catch (...) {}
+        if (n <= 40) {
+            char b[2600];
+            sprintf_s(b, "socketprobe item#%ld (%s) seed=%.0f lc=%d rolls:%s", n, g_SockName, g_InitSeed, g_LcRolls, g_SockLine);
+            Out(b);
+        } else if (n % 250 == 0) {
+            Out("socketprobe: " + std::to_string(n) + " items -> bp_ipc\\socketchain.jsonl");
+        }
+    }
+    return r;
+}
+
+static void SocketProbeCmd(const std::string& rest)
+{
+    std::string v = Lower(rest);
+    while (!v.empty() && std::isspace((unsigned char)v.back())) v.pop_back();
+    if (v == "off") { g_SockProbe = false; Out("socketprobe: OFF"); return; }
+    if (!g_OrigCprIrandom
+        && !HookOneScript("cpr_irandom", "fp_cprir", (PVOID)HookCprIrandom, &g_OrigCprIrandom)) {
+        Out("socketprobe: could not hook cpr_irandom"); return;
+    }
+    if (!g_OrigCreateItemNew
+        && !HookOneScript("CreateItemNew", "fp_citemnew", (PVOID)HookCreateItemNew, &g_OrigCreateItemNew)) {
+        Out("socketprobe: could not hook CreateItemNew"); return;
+    }
+    if (!g_OrigLoadCommonItems
+        && !HookOneScript("LoadCommonItems", "fp_loadcommon", (PVOID)HookLoadCommonItems, &g_OrigLoadCommonItems)) {
+        Out("socketprobe: could not hook LoadCommonItems"); return;
+    }
+    if (!g_OrigCreateItemInit
+        && !HookOneScript("CreateItemInit", "fp_citeminit", (PVOID)HookCreateItemInit, &g_OrigCreateItemInit)) {
+        Out("socketprobe: could not hook CreateItemInit"); return;
+    }
+    g_SockItems = 0;
+    g_SockProbe = true;
+    Out("socketprobe: ON - the socket roll is CreateItemNew chain slot 2 or 3");
+}
+#endif
+
 static void RareDropCmd(const std::string& rest)
 {
     std::string a1, a2;
@@ -6419,6 +6653,10 @@ static void RunCommand(const std::string& line)
         StatAddCmd(rest);
     } else if (lc == "raredrop") {
         RareDropCmd(rest);
+#ifndef FORGEPACT_RELEASE
+    } else if (lc == "socketprobe") {
+        SocketProbeCmd(rest);
+#endif
     } else if (lc == "droprate") {
         DropRateCmd(rest);
     } else if (lc == "dungeonkey") {

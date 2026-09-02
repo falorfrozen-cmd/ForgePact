@@ -142,6 +142,22 @@ class ReleaseHookContractTests(unittest.TestCase):
             r"#ifndef FORGEPACT_RELEASE[\s\S]*#endif\s*$",
         )
 
+    def test_socket_research_hooks_are_excluded_from_player_binary(self):
+        marker = "// ---- socketprobe: capture the two socket rolls"
+        marker_at = self.plugin.index(marker)
+        guard_at = self.plugin.rfind("#ifndef FORGEPACT_RELEASE", 0, marker_at)
+        end_at = self.plugin.index("\n#endif", marker_at)
+        rare_at = self.plugin.index("static void RareDropCmd", marker_at)
+        self.assertGreaterEqual(guard_at, marker_at - 40)
+        self.assertLess(end_at, rare_at)
+
+        command = function_body(self.plugin, "static void RunCommand(")
+        socket_at = command.index('lc == "socketprobe"')
+        command_guard = command.rfind("#ifndef FORGEPACT_RELEASE", 0, socket_at)
+        command_end = command.index("#endif", socket_at)
+        self.assertGreater(command_guard, command.rfind('lc == "raredrop"', 0, socket_at))
+        self.assertLess(command_end, command.index('lc == "droprate"', socket_at))
+
     def test_all_off_runtime_is_native_pass_through(self):
         self.assertIn("static double g_CreatorMult = 1.0;", self.plugin)
         self.assertIn("static bool g_AutoReveal = false;", self.plugin)
@@ -179,6 +195,13 @@ class PanelAllOffContractTests(unittest.TestCase):
     def test_default_config_emits_no_gameplay_commands(self):
         cfg = copy.deepcopy(self.panel.DEFAULTS)
         self.assertEqual([], self.panel.build_cmds(cfg))
+
+    def test_unverified_chaos_tower_is_hidden_and_never_emitted(self):
+        self.assertNotIn("chaostower", {key for key, *_ in self.panel.SPAWNERS})
+        cfg = copy.deepcopy(self.panel.DEFAULTS)
+        cfg["spawners"]["chaostower"] = 100
+        commands = self.panel.build_cmds(cfg)
+        self.assertFalse(any("chaostower" in command for command in commands))
 
     def test_panel_started_after_game_still_auto_applies(self):
         source = PANEL_PATH.read_text(encoding="utf-8")
