@@ -42,6 +42,22 @@ Special content is spawned through the game's **own** mechanic: ForgePact multip
 the `Spawn_<Name>_obj` marker objects and opens the shared `eSt` gate, then the game
 places and runs the mechanic itself. Nothing is faked or hand-placed.
 
+**Chaos Tower and Shadow Realm** need one extra step: the game rolls for them once
+per run and then latches a flag so they can never appear again. ForgePact clears
+that flag right before each zone's markers activate, so every fresh zone gets its
+own honest roll.
+
+**Chaos Tower** and **Shadow Realm** are once-per-run mechanics. Their activation code
+reads persistent flags (`Controller_obj.shadowRealmSpawned`, the protected
+`chaosTowerStarted` / `chaosTowerSpawnZone`), so multiplying the marker alone changes
+nothing after the first copy. While either slider is above x1, ForgePact resets those
+flags immediately before each marker copy activates; the game's own placement, roll and
+object creation then run unchanged. Both also carry a difficulty gate (Shadow Realm
+needs the third tier or higher, Chaos Tower the second) — with the slider on, that single
+check is satisfied for the duration of the activation call only, so both can appear on
+every difficulty. Verified live on 2026-09-03: two markers gave two Shadow Realm portals
+and two Chaos Towers in one zone.
+
 ### Known limitation — The Abyss
 `Spawn_Abyss_obj` is **not** supported. It is the only mechanic in its family that
 sets `discoverable = true`, which puts it behind a two-stage discover-then-activate

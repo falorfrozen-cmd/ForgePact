@@ -1591,3 +1591,91 @@ DIKKAT - "c=N" SAYACI CAGRI SAYAR, DUSUS DEGIL.
 Bu oturumda tam bu hata iki kez yapildi.  DungeonKeys c=4 iken envanterde
 hicbir sey yoktu cunku ic zar 1500'deydi.  Sayac arttiginda "calisiyor"
 demeden once ic zari da kontrol et.
+
+---
+
+# SHADOW REALM VE CHAOS TOWER - KAPILAR COZULDU  (2026-09-03, statik)
+
+## Nerede takiliyordu
+multobj + estforce tarifi bu ikisinde ise yaramiyordu.  Sebep kapi degil,
+KALICI BAYRAK: iki mekanigin activate fonksiyonu da "bu kosuda zaten cikti mi"
+bayragi okuyor.  Ilk kopya bayragi kapatiyor, kalan kopyalar sessizce cikiyor.
+Eski ctauto/ChaosTowerKur yolu (oyuncunun yanina dogrudan Chaos_Tower_obj)
+bu yuzden gerekmisti; artik gerekmiyor.
+
+## Shadow Realm  (anon@119@gml_Object_Spawn_Shadow_Realm_obj_Create_0 = m_activateMechanic)
+    1. GPV(gDataProtected[68]) >= 2          zorluk (68'i 200+ drop/rarity rutini okur)
+    2. Controller_obj.shadowRealmSpawned == 0
+         Portal_Shadow_Realm_obj Create -> true
+         MultiplayerReset / UiAIngameRestart / kosu sifirlama (Controller anon@28441) -> false
+    3. eSt[0] <= 0
+    4. random(zrmb) < (13 + max(eSt[9], 0)) * 100
+    5. sCP(Portal_Shadow_Realm_obj, x, y)
+    Bolge kisiti YOK.
+
+## Chaos Tower  (anon@97@gml_Object_Spawn_Chaos_Tower_obj_Create_0 = m_activateMechanic)
+    0. GPV(gDataProtected[68]) >= 1          zorluk; 0 iken zar HIC atilmiyor (canli olculdu,
+                                             asagida)
+    1. GPV(Controller_obj.chaosTowerStarted) == 0
+    2. GPV(Controller_obj.chaosTowerSpawnZone) == -1
+         spawn sonrasi SPV(chaosTowerSpawnZone, room)
+         m_ChaosTowerReset (Controller anon@16294): -1, started 0,
+         chaosTowerFloorList = RandomChaosTower()   <- 10'luk dizi KAT listesi, bolge degil
+    3. eSt[0] <= 0
+    4. GetCodexType / buffZone == room / buffArray  (yuzde bonusu)
+    5. sans = taban(GPV 68 zorluk tablosu, GPV 251) + eSt[6]
+       bonus varsa sans = floor(sans + sans * bonus/100)
+       random(zrmb) < floor(sans) * 100
+    6. RunningHost()
+    -> instance_create_layer(Chaos_Tower_obj), SPV(chaosTowerSpawnZone = room),
+       NetworkSendChaosTowerZone
+
+## Uygulama (plugin/ModuleMain.cpp, 2026-09-03)
+    kSpecial : chaostower  slot 6 = 100  (sans %100)
+               shadowrealm slot 9 = 87   (13 + 87 = %100)
+    Hook_ChaosTowerGate  : activate'ten hemen once
+                           SPV(chaosTowerSpawnZone, -1) ; SPV(chaosTowerStarted, 0)
+    Hook_ShadowRealmGate : Controller_obj.shadowRealmSpawned = 0
+                           GPV68 < 2 ise cagri suresince SPV(68, 2), donuste eski deger
+    Hook_ChaosTowerGate  : ayrica GPV68 < 1 ise cagri suresince SPV(68, 1), donuste eski deger
+                           (DifficultyGateForce yardimcisi, iki kanca ortak)
+    Yalnizca marker carpani > 1 iken calisir (SpecialMultiplierOn); kapaliyken
+    kancalar dokunmadan gecer.  specialrate n>1 -> InstallMechGateHooks().
+    anon@N adi Create kaynagindaki karakter ofseti: oyun Create'i degistirirse
+    HookOneScript "not found" yazar, icerik vanilyaya duser (cokmez).
+    Gelistirme komutlari: gatestats  |  srdiff on|off  |  ctdiff on|off
+    Panel: SPAWNERS'a chaostower (4663) ve shadowrealm (4674) eklendi,
+           DISABLED_SPAWNER_KEYS bos.
+
+## CANLI DOGRULAMA (2026-09-03, AnkerGames test kopyasi, gelistirme derlemesi)
+    zrmb = 9999  -> sans*100 zari: CT 100 -> 10000, SR 13+87 -> 10000, ikisi de kesin
+    gpv 251 = 0  (offline)
+    gpv 68 : Town_01 ve ilk bolgede 0, sonra oyun kendisi 1 yapti (Town_03_rm'a
+             sekince).  Zorluk mu, act/kademe mi kesin degil; kapilar icin onemi yok.
+
+    Deney (specialrate shadowrealm 2 / chaostower 2, her bolge yeni):
+      Act_01_03  GPV68=0 : Portal_Shadow_Realm 2   Chaos_Tower 0   spawnZone -1 kaldi
+      Act_01_02  GPV68=1 : Portal_Shadow_Realm 2   Chaos_Tower 2   spawnZone = 3
+      Act_01_04  spv 68 0: Portal_Shadow_Realm 2   Chaos_Tower 0   (kontrollu)
+      Act_01_05  spv 68 1: Portal_Shadow_Realm 2   Chaos_Tower 2   spawnZone = 7 (kontrollu)
+    -> CT zorluk kapisi GPV68 >= 1 ; SR kapisi GPV68 >= 2 (gecici zorlama ile her ikisi
+       de 0'da calisir).  Kancalar: 8 cagri / 8 acilis, sifir istisna.
+    shadowRealmSpawned portal yaratilinca true oluyor, kanca her aktivasyonda sifirliyor.
+
+    Test duzenegi (ekransiz):
+      NetProbe netcmd.txt : call UiAMainMenuLocal -> call UiACharacterPlay (Town_01_rm)
+                            call RoomGoto <oda idx>   (1 Act_01_01, 3 Act_01_02, 4 Act_01_03,
+                                                       6 Act_01_04, 7 Act_01_05; cb room_get_name N)
+                            ocount Portal_Shadow_Realm_obj / Chaos_Tower_obj ; gpv 68 ; spv 68 <v>
+      ForgePact cmd.txt   : specialrate shadowrealm 2 ; specialrate chaostower 2 ; gatestats ; eststat
+      Bu yolda Player_obj bolgede 0 kaliyor (duzenek artefakti); oyun bazen kendisi Town'a
+      geri atiyor.  Marker indeksleri bu derlemede: Spawn_Shadow_Realm 4675, Spawn_Chaos_Tower 4664.
+
+    TUZAK: Aurie mods\aurie ALT KLASORLERINDEKI dll'leri de yukluyor.  Test kopyasinda
+    mods\aurie\backups\BloodPactPlugin.pre-custom-forge-20260902-151017.dll ikinci bir
+    eklenti olarak (yayin derlemesi) calisiyordu -> .disabled_by_aurie_autoload yapildi.
+    Yedekleri hicbir zaman .dll uzantisiyla mods\aurie altinda tutma.
+
+    Acik kalan: Chaos Tower icindeyken normal bolgeye gecip donmek (kanca started'i
+    sifirliyor) - oyun icinde denenmedi.
+

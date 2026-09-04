@@ -40,11 +40,16 @@ SPAWNERS = [
     ("cursedorb", 4665, "Cursed Orbs", 100),
     ("summonportal", 4676, "Summon Portals", 100),
     ("chaospillars", 4662, "Chaos Pillars", 100),
+    # Chaos Tower and Shadow Realm are "once per run" mechanics.  The plugin
+    # resets their persistent flags right before each marker activates
+    # (see plugin: Hook_ChaosTowerGate / Hook_ShadowRealmGate), so the game's
+    # own placement code runs for every copy.
+    ("chaostower", 4663, "Chaos Tower", 100),
+    ("shadowrealm", 4674, "Shadow Realm", 100),
 ]
-# Chaos Tower stays unavailable until its Season 10 route is verified.  Keep it
-# out of both the UI and accepted panel commands so an old saved setting cannot
-# accidentally activate it in a new package.
-DISABLED_SPAWNER_KEYS = {"chaostower"}
+# Keys listed here are removed from saved settings and never emitted.  Empty
+# since Chaos Tower's Season 10 route was decoded (2026-09-03).
+DISABLED_SPAWNER_KEYS = set()
 # Key families.  The third field is the LoadDrops drop type; when it is None
 # that family's gate is already open and only the rate is adjusted.
 KEYS = [

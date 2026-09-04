@@ -183,6 +183,40 @@ class ReleaseHookContractTests(unittest.TestCase):
         special = function_body(self.plugin, "static void SpecialRate(")
         self.assertIn("KuyruktanNesneyiSil(oi);", special)
 
+    def test_once_only_mechanics_reset_their_flags_before_activation(self):
+        # Shadow Realm and Chaos Tower activate once per run.  The plugin resets
+        # the persistent flags immediately before the game's own activate code
+        # runs, and only while the marker multiplier is above vanilla.
+        self.assertIn('{ "chaostower",   "Spawn_Chaos_Tower_obj",    6,', self.plugin)
+        self.assertIn('{ "shadowrealm",  "Spawn_Shadow_Realm_obj",   9,', self.plugin)
+        special = function_body(self.plugin, "static void SpecialRate(")
+        self.assertIn("if (sc->gateHook) InstallMechGateHooks();", special)
+        self.assertLess(special.index("if (n > 1)"), special.index("InstallMechGateHooks();"))
+
+        install = function_body(self.plugin, "static void InstallMechGateHooks()")
+        self.assertIn('"anon@119@gml_Object_Spawn_Shadow_Realm_obj_Create_0"', install)
+        self.assertIn('"anon@97@gml_Object_Spawn_Chaos_Tower_obj_Create_0"', install)
+
+        sr = function_body(self.plugin, "static RValue& Hook_ShadowRealmGate(")
+        orig = "g_Orig_ShadowRealmGate(S, O, R, argc, A)"
+        self.assertIn("SpecialMultiplierOn(", sr)
+        self.assertLess(sr.index('"shadowRealmSpawned"'), sr.index(orig))
+        # The difficulty gate is only forced for the duration of the call.
+        self.assertLess(sr.index("diff.Arm(2.0)"), sr.index(orig))
+        self.assertLess(sr.index(orig), sr.index("diff.Restore()"))
+
+        ct = function_body(self.plugin, "static RValue& Hook_ChaosTowerGate(")
+        orig = "g_Orig_ChaosTowerGate(S, O, R, argc, A)"
+        self.assertIn("SpecialMultiplierOn(", ct)
+        for flag in ('"chaosTowerSpawnZone"', '"chaosTowerStarted"', '"gml_Script_SPV"'):
+            self.assertLess(ct.index(flag), ct.index(orig), flag)
+        self.assertLess(ct.index("diff.Arm(1.0)"), ct.index(orig))
+        self.assertLess(ct.index(orig), ct.index("diff.Restore()"))
+
+        force = function_body(self.plugin, "struct DifficultyGateForce")
+        self.assertIn("if (old < minValue)", force)
+        self.assertIn("RValue(old)", force)
+
 
 class PanelAllOffContractTests(unittest.TestCase):
     @classmethod
@@ -196,12 +230,24 @@ class PanelAllOffContractTests(unittest.TestCase):
         cfg = copy.deepcopy(self.panel.DEFAULTS)
         self.assertEqual([], self.panel.build_cmds(cfg))
 
-    def test_unverified_chaos_tower_is_hidden_and_never_emitted(self):
-        self.assertNotIn("chaostower", {key for key, *_ in self.panel.SPAWNERS})
+    def test_once_only_mechanics_are_offered_and_emitted(self):
+        # Chaos Tower and Shadow Realm became available once their Season 10
+        # activation gates were decoded (2026-09-03).  Nothing stays hidden.
+        keys = {key for key, *_ in self.panel.SPAWNERS}
+        self.assertIn("chaostower", keys)
+        self.assertIn("shadowrealm", keys)
+        self.assertEqual(set(), set(self.panel.DISABLED_SPAWNER_KEYS))
         cfg = copy.deepcopy(self.panel.DEFAULTS)
         cfg["spawners"]["chaostower"] = 100
+        cfg["spawners"]["shadowrealm"] = 3
         commands = self.panel.build_cmds(cfg)
-        self.assertFalse(any("chaostower" in command for command in commands))
+        self.assertIn("specialrate chaostower 100", commands)
+        self.assertIn("specialrate shadowrealm 3", commands)
+        # x1 is vanilla and must stay silent.
+        cfg["spawners"]["chaostower"] = 1
+        cfg["spawners"]["shadowrealm"] = 1
+        self.assertFalse(any("chaostower" in c or "shadowrealm" in c
+                             for c in self.panel.build_cmds(cfg)))
 
     def test_panel_started_after_game_still_auto_applies(self):
         source = PANEL_PATH.read_text(encoding="utf-8")
