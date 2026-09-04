@@ -429,6 +429,9 @@ MODFILE_SOURCES = [
     Path(getattr(sys, "frozen", False) and Path(sys.executable).parent or Path(__file__).parent) / "modfiles",
     Path(__file__).resolve().parent.parent / "modfiles_shipped",
 ]
+# HS Offline Tracker's live sensor (read-only Aurie module). Installed beside
+# BloodPactPlugin.dll when it ships with ForgePact; optional.
+TRACKER_SENSOR_DLL = "HSOfflineTrackerProducer.dll"
 PLUGIN_SOURCES = [
     Path(getattr(sys, "frozen", False) and Path(sys.executable).parent or Path(__file__).parent) / "modfiles",
     Path(__file__).resolve().parent.parent / "modfiles_shipped",
@@ -830,6 +833,7 @@ def mod_chain(cfg=None) -> dict:
         "aurieCore": (b / "AurieCore.dll").exists(),
         "yytk": (b / "mods" / "aurie" / "YYToolkit.dll").exists(),
         "plugin": (b / "mods" / "aurie" / "BloodPactPlugin.dll").exists(),
+        "trackerSensor": (b / "mods" / "aurie" / TRACKER_SENSOR_DLL).exists(),
     }
 
 
@@ -848,6 +852,10 @@ def op_install_mod(cfg) -> dict:
     yytk = find_src("YYToolkit.dll", MODFILE_SOURCES)
     plug = find_src("BloodPactPlugin.dll", PLUGIN_SOURCES)
     patcher = find_src("AuriePatcher.exe", MODFILE_SOURCES)
+    # HS Offline Tracker's live sensor rides along when it ships with ForgePact.
+    # It is a separate, read-only Aurie module; a package without it installs
+    # exactly as before, so its absence is not an error.
+    sensor = find_src(TRACKER_SENSOR_DLL, PLUGIN_SOURCES)
     missing = [n for n, f in (("AurieCore.dll", core), ("YYToolkit.dll", yytk),
                               ("BloodPactPlugin.dll", plug), ("AuriePatcher.exe", patcher)) if f is None]
     if missing:
@@ -889,6 +897,9 @@ def op_install_mod(cfg) -> dict:
     _sh.copy2(yytk, b / "mods" / "aurie" / "YYToolkit.dll")
     _sh.copy2(plug, b / "mods" / "aurie" / "BloodPactPlugin.dll")
     steps.append("mod DLLs installed/updated")
+    if sensor is not None:
+        _sh.copy2(sensor, b / "mods" / "aurie" / TRACKER_SENSOR_DLL)
+        steps.append("HS Offline Tracker sensor installed")
     if not patched_before_install:
         patch_error = ""
         patch_output = ""
@@ -961,7 +972,8 @@ def op_remove_mod(cfg) -> dict:
     if exe_is_patched(exe):
         return {"err": "restore ran but the exe still looks patched - check the .aurie_backup file."}
     b = exe.parent
-    for rel in ("AurieCore.dll", "mods/aurie/YYToolkit.dll", "mods/aurie/BloodPactPlugin.dll"):
+    for rel in ("AurieCore.dll", "mods/aurie/YYToolkit.dll", "mods/aurie/BloodPactPlugin.dll",
+                "mods/aurie/" + TRACKER_SENSOR_DLL):
         try:
             p = b / rel
             if p.exists():

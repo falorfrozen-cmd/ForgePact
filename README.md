@@ -67,6 +67,8 @@ a reason we have not identified. Details and every ruled-out hypothesis are in
 
 ## 🔧 How to use
 
+The Install button also places the **HS Offline Tracker** live sensor (`HSOfflineTrackerProducer.dll`) beside the plugin when it ships with ForgePact. It is a separate, read-only module: it only reports gold, XP, kills, drops, room and satanic zone to the tracker and changes nothing in the game. Remove Plugin takes it away again.
+
 1. Run `ForgePact.exe` and set the path to your Season 10 `Hero_Siege.exe`.
 2. Press **Install Mod Plugin**. ForgePact will back up your exe, copy the mod files into the
    game folder, and patch the exe so it loads Aurie on start.

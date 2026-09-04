@@ -12,6 +12,7 @@ the exe - see MODFILE_SOURCES in src/forgepact.py):
         modfiles/AuriePatcher.exe
         modfiles/YYToolkit.dll
         modfiles/BloodPactPlugin.dll
+        modfiles/HSOfflineTrackerProducer.dll   (optional: HS Offline Tracker live sensor)
         README.md
         CREDITS.md
         LICENSE
@@ -29,6 +30,8 @@ SRC = ROOT / "src" / "forgepact.py"
 MODFILES = ROOT / "modfiles_shipped"
 DIST = ROOT / "dist" / "ForgePact"
 NEEDED = ["AurieCore.dll", "AuriePatcher.exe", "YYToolkit.dll", "BloodPactPlugin.dll"]
+# Shipped when present; a package without them is still complete.
+OPTIONAL = ["HSOfflineTrackerProducer.dll"]  # HS Offline Tracker live sensor
 
 
 def main() -> int:
@@ -100,6 +103,9 @@ def main() -> int:
     out_mod.mkdir(exist_ok=True)
     for n in NEEDED:
         shutil.copy2(MODFILES / n, out_mod / n)
+    for n in OPTIONAL:
+        if (MODFILES / n).is_file():
+            shutil.copy2(MODFILES / n, out_mod / n)
 
     for n in ("README.md", "CREDITS.md", "LICENSE"):
         p = ROOT / n
