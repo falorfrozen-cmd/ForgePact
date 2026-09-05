@@ -2618,24 +2618,34 @@ static void RecordItemStats(const RValue& item, const RValue& stats)
         g_ItemStatsDirty = true;
     } catch (...) {}
 }
+static std::atomic<bool> g_ItemStatsWriting{ false };
 static void FlushItemStats(uint32_t frame)
 {
-    if (!g_ItemStatsDirty.load() || frame - g_ItemStatsLastFlush < 120) return;
+    if (!g_ItemStatsDirty.load() || frame - g_ItemStatsLastFlush < 300) return;
+    if (g_ItemStatsWriting.load()) return;   // previous write still on disk; try next interval
     g_ItemStatsLastFlush = frame;
     g_ItemStatsDirty = false;
     try {
+        // Assemble on the game thread (the map is only touched here), write on a
+        // detached thread so a loot-heavy frame never waits for the disk.
+        std::string body;
+        body.reserve(g_ItemStatsDump.size() * 160 + 64);
+        body += "{\"schemaVersion\":1,\"items\":{";
+        bool first = true;
+        for (const auto& kv : g_ItemStatsDump) { body += (first ? "" : ","); body += '"'; body += kv.first; body += "\":"; body += kv.second; first = false; }
+        body += "}}";
         const std::string path = IPC_DIR + "\\itemstats.json", tmp = path + ".tmp";
-        {
-            std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
-            f << "{\"schemaVersion\":1,\"items\":{";
-            bool first = true;
-            for (const auto& kv : g_ItemStatsDump) { f << (first ? "" : ",") << '"' << kv.first << "\":" << kv.second; first = false; }
-            f << "}}";
-        }
-        std::error_code ec;
-        std::filesystem::rename(tmp, path, ec);
-        if (ec) { std::filesystem::copy_file(tmp, path, std::filesystem::copy_options::overwrite_existing, ec); std::filesystem::remove(tmp, ec); }
-    } catch (...) {}
+        g_ItemStatsWriting = true;
+        std::thread([path, tmp, body = std::move(body)]() {
+            try {
+                { std::ofstream f(tmp, std::ios::binary | std::ios::trunc); f << body; }
+                std::error_code ec;
+                std::filesystem::rename(tmp, path, ec);
+                if (ec) { std::filesystem::copy_file(tmp, path, std::filesystem::copy_options::overwrite_existing, ec); std::filesystem::remove(tmp, ec); }
+            } catch (...) {}
+            g_ItemStatsWriting = false;
+        }).detach();
+    } catch (...) { g_ItemStatsWriting = false; }
 }
 static bool g_CustomForgeHooksAttempted = false;
 static bool g_CustomForgeHooksActive = false;
@@ -3615,6 +3625,8 @@ static long g_BeScanNear = 0, g_BeScanMid = 0, g_BeScanFar = 0;   // scanning mo
 static RValue& Hook_PathFindScanTick(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
     ++g_BeScans;
+#ifndef FORGEPACT_RELEASE
+    // research telemetry: distance histogram of scans
     if (S && (g_BeScans % 10) == 0) {
         try {
             RValue player; if (HhResolveLocalPlayer(player)) {
@@ -3626,6 +3638,7 @@ static RValue& Hook_PathFindScanTick(CInstance* S, CInstance* O, RValue& R, int 
             }
         } catch (...) {}
     }
+#endif
     if (S) {
         try {
             RValue inst = S->ToRValue();
@@ -3647,7 +3660,7 @@ static RValue& Hook_PathFindScanTick(CInstance* S, CInstance* O, RValue& R, int 
                         }
                     }
                 }
-            } else {
+            } else if (g_BeRanged > 0) {   // nothing to restore until a hunt widened a monster
                 for (const char* field : { "distance", "aggroRange" }) {
                     const std::string backup = std::string("fp_") + field;
                     RValue has = g_Yytk->CallBuiltin("variable_instance_exists", { inst, RValue(backup) });
