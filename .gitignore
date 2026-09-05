@@ -9,3 +9,7 @@ obj_*/
 *.obj
 *.exp
 *.lib
+
+# session backups and build logs
+*.pre_*
+*.log

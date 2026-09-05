@@ -33,6 +33,12 @@
 #pragma comment(lib, "ws2_32.lib")
 #include <sstream>
 #include <string>
+#include <filesystem>
+#include <unordered_map>
+#include <array>
+#include <map>
+#include <random>
+#include <chrono>
 #include <vector>
 #include <cctype>
 #include <unordered_map>
@@ -2496,6 +2502,14 @@ struct CustomForgeEntry
     // item (today only "headhunter").  The item struct is tagged with
     // fp_mechanic so the runtime can recognise it while it is equipped.
     std::string mechanic;
+    // Optional "name=<percent-encoded>" extra: replaces the display name the
+    // game stored in itemInfoStruct["28"] (already localized text by the time
+    // CreateItemNew returns) and blanks the magic prefix/suffix fields ["5"]/["4"]
+    // so a forged item is shown under exactly this name.
+    std::string name;
+    // Optional "affix=<percent-encoded>" extra: up to three gold text rows drawn
+    // above the item's stat rows in the inventory tooltip (fp_affix on the struct).
+    std::string affix;
 };
 
 static std::string TrimCopy(const std::string& input)
@@ -2554,6 +2568,18 @@ static bool ParseCustomForgeExtras(const std::string& text, CustomForgeEntry& en
             double number = 0.0;
             if (!ParseFiniteNumber(value, number) || number < 0.0 || number > 20.0) return false;
             entry.rarity = (int)number;
+        } else if (key == "affix") {
+            entry.affix = TrimCopy(PercentDecode(value));
+            if (entry.affix.empty() || entry.affix.size() > 240) return false;
+            int rows = 1;
+            for (unsigned char ch : entry.affix) {
+                if (ch == '\n') { if (++rows > 3) return false; }
+                else if (ch < 32) return false;
+            }
+        } else if (key == "name") {
+            entry.name = TrimCopy(PercentDecode(value));
+            if (entry.name.empty() || entry.name.size() > 64) return false;
+            for (unsigned char ch : entry.name) if (ch < 32) return false;
         } else if (key == "mechanic") {
             std::string m = Lower(TrimCopy(value));
             if (m.empty() || m.size() > 32) return false;
@@ -2567,10 +2593,59 @@ static bool ParseCustomForgeExtras(const std::string& text, CustomForgeEntry& en
 }
 
 static std::vector<CustomForgeEntry> g_CustomForgeEntries;
+
+// ---- item stat dump for the Item Editor -------------------------------------------
+// The editor cannot decode every rolled affix from the save, but the game hands us the
+// finished itemStatStruct of every item it builds.  Keyed by itemTimeStamp (the middle
+// part of the editor's item key "0-0-<timestamp>-<n>"), flushed to bp_ipc\itemstats.json.
+static std::unordered_map<std::string, std::string> g_ItemStatsDump;
+static std::atomic<bool> g_ItemStatsDirty{ false };
+static uint32_t g_ItemStatsLastFlush = 0;
+static void RecordItemStats(const RValue& item, const RValue& stats)
+{
+    try {
+        RValue ts = g_Yytk->CallBuiltin("variable_struct_get", { item, RValue("itemTimeStamp") });
+        std::string key = ts.ToString();
+        if (key.empty() || key == "undefined" || key.size() > 32) return;
+        CInstance* g = nullptr; g_Yytk->GetGlobalInstance(&g);
+        RValue js; g_Yytk->CallBuiltinEx(js, "json_stringify", g, g, { stats });
+        std::string body = js.ToString();
+        if (body.empty() || body[0] != '{' || body.size() > 4000) return;
+        auto it = g_ItemStatsDump.find(key);
+        if (it != g_ItemStatsDump.end() && it->second == body) return;
+        if (it == g_ItemStatsDump.end() && g_ItemStatsDump.size() >= 6000) g_ItemStatsDump.clear();
+        g_ItemStatsDump[key] = body;
+        g_ItemStatsDirty = true;
+    } catch (...) {}
+}
+static void FlushItemStats(uint32_t frame)
+{
+    if (!g_ItemStatsDirty.load() || frame - g_ItemStatsLastFlush < 120) return;
+    g_ItemStatsLastFlush = frame;
+    g_ItemStatsDirty = false;
+    try {
+        const std::string path = IPC_DIR + "\\itemstats.json", tmp = path + ".tmp";
+        {
+            std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+            f << "{\"schemaVersion\":1,\"items\":{";
+            bool first = true;
+            for (const auto& kv : g_ItemStatsDump) { f << (first ? "" : ",") << '"' << kv.first << "\":" << kv.second; first = false; }
+            f << "}}";
+        }
+        std::error_code ec;
+        std::filesystem::rename(tmp, path, ec);
+        if (ec) { std::filesystem::copy_file(tmp, path, std::filesystem::copy_options::overwrite_existing, ec); std::filesystem::remove(tmp, ec); }
+    } catch (...) {}
+}
 static bool g_CustomForgeHooksAttempted = false;
 static bool g_CustomForgeHooksActive = false;
 static volatile long g_CustomForgeApplyCount = 0;
 static volatile long g_CustomForgeMechanicTags = 0;
+// Set once an item struct tagged mechanic=tyrant has been created this session.  Read
+// instead of walking g_ForgedItems, whose entries may point at structs the game already
+// freed (walking them at the main menu crashed the game, 2026-09-05).
+static std::atomic<bool> g_TyItemTagged{ false };
+static std::atomic<bool> g_BeItemTagged{ false };   // same, for mechanic=beacon
 // Runtime item structs that carry a mechanic tag.  The game re-creates every
 // item struct on load, so the registry is refreshed by TryApplyCustomForge and
 // entries whose struct pointer reappears are replaced, never duplicated.
@@ -2744,6 +2819,10 @@ static bool TryApplyCustomForge(RValue* candidate)
         RValue stats = g_Yytk->CallBuiltin(
             "variable_struct_get", { *candidate, RValue("itemStatStruct") });
         if (definition.m_Kind != VALUE_OBJECT || stats.m_Kind != VALUE_OBJECT) return false;
+        {   // record the stat struct once, before any forge entry touches it: the editor wants the item's own values
+            RValue recorded = g_Yytk->CallBuiltin("variable_struct_exists", { *candidate, RValue("fp_recorded") });
+            if (!recorded.ToBoolean()) { RecordItemStats(*candidate, stats); g_Yytk->CallBuiltin("variable_struct_set", { *candidate, RValue("fp_recorded"), RValue(true) }); }
+        }
 
         for (const CustomForgeEntry& entry : g_CustomForgeEntries) {
             if (!CustomForgeMatches(entry, *candidate, definition)) continue;
@@ -2757,13 +2836,30 @@ static bool TryApplyCustomForge(RValue* candidate)
                         g_Yytk->CallBuiltin("variable_struct_remove", { stats, name });
                     }
                 }
+                // keep=0: the rolled affix names describe rows that no longer exist
+                // ("Armorer's " = Enhanced Defense, " of the Viper" = Poison Res), so
+                // blank ["5"] (prefix) and ["4"] (suffix) as well.  A custom name=
+                // rewrites ["28"] later in this pass; ["28"] itself is left alone here
+                // because for a plain base it is the localized base name.
+                RValue hasInfo0 = g_Yytk->CallBuiltin(
+                    "variable_struct_exists", { *candidate, RValue("itemInfoStruct") });
+                if (hasInfo0.ToBoolean()) {
+                    RValue info0 = g_Yytk->CallBuiltin("variable_struct_get", { *candidate, RValue("itemInfoStruct") });
+                    if (info0.m_Kind == VALUE_OBJECT) {
+                        for (const char* affixField : { "4", "5" }) {
+                            RValue hasAffix = g_Yytk->CallBuiltin("variable_struct_exists", { info0, RValue(affixField) });
+                            if (hasAffix.ToBoolean())
+                                g_Yytk->CallBuiltin("variable_struct_set", { info0, RValue(affixField), RValue("") });
+                        }
+                    }
+                }
             }
             for (const auto& stat : entry.stats) {
                 g_Yytk->CallBuiltin("variable_struct_set", {
                     stats, RValue(std::to_string(stat.first)), RValue(stat.second)
                 });
             }
-            if (entry.rarity >= 0 || !entry.lore.empty()) {
+            if (entry.rarity >= 0 || !entry.lore.empty() || !entry.name.empty()) {
                 RValue hasInfo = g_Yytk->CallBuiltin(
                     "variable_struct_exists", { *candidate, RValue("itemInfoStruct") });
                 RValue info = hasInfo.ToBoolean()
@@ -2772,6 +2868,23 @@ static bool TryApplyCustomForge(RValue* candidate)
                 if (info.m_Kind == VALUE_OBJECT) {
                     if (entry.rarity >= 0)
                         g_Yytk->CallBuiltin("variable_struct_set", { info, RValue("27"), RValue((double)entry.rarity) });
+                    if (!entry.name.empty()) {
+                        // ["28"] holds the finished display text once CreateItemNew
+                        // returns (GenerateItemRandomStats still sees the CSV key);
+                        // this post-process runs after both, so the last write wins.
+                        // ["5"] = magic prefix ("Eagle "), ["4"] = suffix (" of Energy").
+                        g_Yytk->CallBuiltin("variable_struct_set", { info, RValue("28"), RValue(entry.name) });
+                        for (const char* affixField : { "4", "5" }) {
+                            RValue hasAffix = g_Yytk->CallBuiltin("variable_struct_exists", { info, RValue(affixField) });
+                            if (hasAffix.ToBoolean())
+                                g_Yytk->CallBuiltin("variable_struct_set", { info, RValue(affixField), RValue("") });
+                        }
+                        // Safety net if a draw path resolves the name through
+                        // GetLocalized: the text maps to itself.
+                        RValue map = g_Yytk->CallBuiltin("variable_global_get", { RValue("localization") });
+                        if (map.m_Kind == VALUE_REAL || map.m_Kind == VALUE_INT32 || map.m_Kind == VALUE_INT64 || map.m_Kind == VALUE_REF)
+                            g_Yytk->CallBuiltin("ds_map_replace", { map, RValue(entry.name), RValue(entry.name) });
+                    }
                     if (!entry.lore.empty()) {
                         // One private localization key per configured item; the
                         // game draws the description with GetLocalized(info["29"])
@@ -2788,9 +2901,13 @@ static bool TryApplyCustomForge(RValue* candidate)
                     }
                 }
             }
+            if (!entry.affix.empty())
+                g_Yytk->CallBuiltin("variable_struct_set", { *candidate, RValue("fp_affix"), RValue(entry.affix) });
             if (!entry.mechanic.empty()) {
                 g_Yytk->CallBuiltin("variable_struct_set", { *candidate, RValue("fp_mechanic"), RValue(entry.mechanic) });
                 InterlockedIncrement(&g_CustomForgeMechanicTags);
+                if (entry.mechanic == "tyrant") g_TyItemTagged = true;
+                if (entry.mechanic == "beacon") g_BeItemTagged = true;
             }
             RememberForgedItem(*candidate);
             // This counter is part of the release runtime contract, not merely
@@ -2832,10 +2949,86 @@ static std::atomic<bool> g_HhEnabled{ false };
 static std::atomic<bool> g_HhForced{ false };          // "headhunter force": ignore the belt check (testing)
 static double g_HhDurationSec = 20.0;
 static bool g_HhTrace = false;
-static std::map<std::string, HhBuff> g_HhMap;          // affix key -> buff
+// enemyAffix index -> affix key, in the game's own order (translationsEnemy.csv [Affixes];
+// live-confirmed 2026-09-04: index 21 = Fallen Angel on a rarity-3 rare).
+static const char* const kHhAffixNames[] = {
+    // 0..21 confirmed live (hhscan pairs): CSV order.
+    "champion", "fractal", "raging", "enraged", "haunted", "vampiric", "burstshot", "possessed",
+    "extrafast", "extrastrong", "stoneskin", "coldenchanted", "fireenchanted", "lightningenchanted",
+    "magicresistant", "manaburn", "multishot", "treasuregobbler", "arcanascurse", "venomous",
+    "punisher", "fallenangel",
+    // 22..24: three of Commander / Guardian of Hell / Bloating / Sharpshooter (one CSV entry is
+    // absent at runtime: live 25 = Pyromaniac = CSV 26).  Unconfirmed order.
+    "commander", "guardianofhell", "bloating",
+    // 25 Pyromaniac confirmed live; 26 Berserker inferred (CSV 27 - 1).
+    "pyromaniac", "berserker",
+    // 27..29: one more CSV entry missing before 30 (live 30 = Thick Skin = CSV 32).  Unconfirmed.
+    "sharpshooter", "shielding", "fearless",
+    // 30 Thick Skin, 31 Antimagus confirmed live; 36 Blazing, 38 Meteoric confirmed live.
+    "thickskin", "antimagus", "colossal", "stealthy", "timelapsing", "wasped", "blazing",
+    "thundercaller", "meteoric"
+};
+static std::string HhAffixName(int idx)
+{
+    if (idx >= 0 && idx < (int)(sizeof(kHhAffixNames) / sizeof(kHhAffixNames[0]))) return kHhAffixNames[idx];
+    return "";   // slots past the affix list (e.g. 45 = Shadow Realm zone flag) are not affixes
+}
+// affix key -> buff.  Keys are the affix names above (or "#<index>" for unknown slots).
+// Buff ids measured live 2026-09-04 with the game's own BuffAdd: 44 = movement speed
+// (Burst of Speed), 177 = attack speed, 178 = faster cast rate, 144 = life replenish.
+// Everything else falls back to g_HhDefault until its id is measured.  `hhmap` overrides.
+static std::map<std::string, HhBuff> g_HhMap = {
+    // Buff ids measured live 2026-09-04 (distinct-value probe, value = the [v0,v1] passed to BuffAdd):
+    //  44 movement speed (x4)   177 attack speed (x1.25)   178 faster cast rate   144 life replenish + life/kill
+    //  27 fire skill damage     71 lightning skill damage  85 arcane skill damage 20 mana replenish + arcane
+    //   2 phys+magic damage reduction (cap 75)   297 defense (flat)   10 max life + max mana   82 dodge (cap 90)
+    //  67 magic find (x100 in the stat array)  309 experience gain
+    { "extrafast",          { 44,   25.0,  25.0 } },   // +100 movement
+    { "raging",             { 177,  40.0,  40.0 } },   // +50 attack speed
+    { "enraged",            { 177,  40.0,  40.0 } },
+    { "berserker",          { 177,  60.0,  60.0 } },
+    { "extrastrong",        { 177,  40.0,  40.0 } },   // no plain damage buff id found yet; attack speed stands in
+    { "vampiric",           { 144,  50.0,  50.0 } },
+    { "fireenchanted",      { 27,   40.0,  40.0 } },
+    { "pyromaniac",         { 27,   40.0,  40.0 } },
+    { "blazing",            { 27,   40.0,  40.0 } },
+    { "meteoric",           { 27,   40.0,  40.0 } },
+    { "lightningenchanted", { 71,   40.0,  40.0 } },
+    { "thundercaller",      { 71,   40.0,  40.0 } },
+    { "coldenchanted",      { 178,  40.0,  40.0 } },   // no cold-damage buff id found yet; cast rate stands in
+    { "arcanascurse",       { 85,   40.0,  40.0 } },
+    { "manaburn",           { 20,   40.0,  40.0 } },
+    { "stoneskin",          { 2,    25.0,  25.0 } },
+    { "thickskin",          { 2,    25.0,  25.0 } },
+    { "magicresistant",     { 2,    25.0,  25.0 } },
+    { "antimagus",          { 2,    25.0,  25.0 } },
+    { "shielding",          { 297, 150.0, 150.0 } },
+    { "fearless",           { 297, 150.0, 150.0 } },
+    { "divine",             { 297, 150.0, 150.0 } },
+    { "colossal",           { 10,  200.0, 200.0 } },
+    { "champion",           { 10,  150.0, 150.0 } },
+    { "commander",          { 10,  150.0, 150.0 } },
+    { "guardianofhell",     { 10,  200.0, 200.0 } },
+    { "stealthy",           { 82,   20.0,  20.0 } },
+    { "timelapsing",        { 82,   20.0,  20.0 } },
+    { "wasped",             { 82,   20.0,  20.0 } },
+    { "treasuregobbler",    { 67,   50.0,  50.0 } },
+    { "fractal",            { 309,  50.0,  50.0 } },   // experience gain
+    { "possessed",          { 85,   40.0,  40.0 } },
+    { "haunted",            { 82,   20.0,  20.0 } },
+    { "venomous",           { 144,  50.0,  50.0 } },
+    { "punisher",           { 177,  40.0,  40.0 } },
+    { "sharpshooter",       { 177,  40.0,  40.0 } },
+    { "multishot",          { 177,  40.0,  40.0 } },
+    { "burstshot",          { 177,  40.0,  40.0 } },
+    { "bloating",           { 10,  150.0, 150.0 } },
+    { "fallenangel",        { 297, 150.0, 150.0 } },
+};
 static bool g_HhDefaultOn = true;                       // unmapped affix -> default buff
-static HhBuff g_HhDefault{ 44, 100.0, 100.0 };          // id 44 = the game's Burst of Speed buff (visible test buff)
+static HhBuff g_HhDefault{ 44, 25.0, 25.0 };          // id 44 = the game's Burst of Speed buff (visible test buff)
 static volatile long g_HhKills = 0, g_HhRareKills = 0, g_HhBuffsApplied = 0, g_HhSkippedNotEquipped = 0;
+static volatile long g_HhRarityKills = 0;   // kills with enemyRarity >= 2 (rare/champion by the game's own flag)
+static volatile long g_HhAffixKills = 0;    // kills where affix data (affixList or enemyAffix flags) was present
 static PFUNC_YYGMLScript g_Orig_EnemyDestroyKillProc = nullptr;
 static bool g_HhHookInstalled = false;
 static bool g_HhEquippedCache = false;
@@ -2940,15 +3133,750 @@ static bool HhEquipped(CInstance* player)
     // Research build only: the registry holds raw struct pointers that the GC
     // may reclaim, so dereferencing them is not acceptable in a player build
     // until equipped-state detection is finished (planned for 1.3.8).
+    // The item struct carries no equipped flag (live 2026-09-04), so while the
+    // real check is pending a Headhunter item that was CREATED for this character
+    // counts as active.  This makes the research build independent of the panel's
+    // "headhunter force" command.
     for (const RValue& item : g_ForgedItems) {
         if (!HhItemIsHeadhunter(item)) continue;
         double who = HhReadNumber(item, "itemEquippedPlayer", -1.0);
-        if (g_HhTrace && g_HhLastShape.empty()) { g_HhLastShape = "seen"; Out("hh: headhunter item itemEquippedPlayer=" + std::to_string(who)); }
-        if (who >= 0.0) { found = true; break; }
+        if (g_HhTrace && g_HhLastShape.empty()) { g_HhLastShape = "seen"; Out("hh: headhunter item present (itemEquippedPlayer=" + std::to_string(who) + "), treating as equipped"); }
+        found = true; break;
     }
 #endif
     g_HhEquippedCache = found;
     return found;
+}
+
+// ===== Headhunter head labels ===================================================
+// Every stolen affix is remembered with its expiry (wall clock, current_time ms) and
+// drawn above the player's head right after the game's own Player_obj Draw event, in
+// the affix-row gold with a 1 px dark outline: "Extra Fast 12s   Vampiric 12s".
+struct HhStolen { std::string name; double expiryMs; int64_t buffId; double bornMs; };
+static std::vector<HhStolen> g_HhStolen;
+static std::atomic<bool> g_HhLabelOn{ true };
+static size_t g_HhLabelMax = 12;           // oldest label drops when more affixes are active
+static std::string g_HhLabelFont;          // font asset name override ("" = current font)
+static int g_HhLabelPlayerId = -1;         // instance id of the player who received the buffs
+static bool g_HhObjectCallbackInstalled = false;
+static const std::pair<const char*, const char*> kHhAffixDisplay[] = {
+    {"antimagus","Antimagus"}, {"arcanascurse","Arcana's Curse"}, {"berserker","Berserker"}, {"blazing","Blazing"},
+    {"bloating","Bloating"}, {"burstshot","Burst Shot"}, {"champion","Champion"}, {"coldenchanted","Cold Enchanted"},
+    {"colossal","Colossal"}, {"commander","Commander"}, {"divine","Divine"}, {"enraged","Enraged"},
+    {"extrafast","Extra Fast"}, {"extrastrong","Extra Strong"}, {"fallenangel","Fallen Angel"}, {"fearless","Fearless"},
+    {"fireenchanted","Fire Enchanted"}, {"fractal","Fractal"}, {"guardianofhell","Guardian of Hell"}, {"haunted","Haunted"},
+    {"lightningenchanted","Lightning Enchanted"}, {"magicresistant","Magic Resistant"}, {"manaburn","Manaburn"},
+    {"meteoric","Meteoric"}, {"multishot","Multishot"}, {"possessed","Possessed"}, {"punisher","Punisher"},
+    {"pyromaniac","Pyromaniac"}, {"raging","Raging"}, {"sharpshooter","Sharpshooter"}, {"shielding","Shielding"},
+    {"stealthy","Stealthy"}, {"stoneskin","Stoneskin"}, {"thickskin","Thick Skin"}, {"thundercaller","Thunder Caller"},
+    {"timelapsing","Time Lapsing"}, {"treasuregobbler","Treasure Gobbler"}, {"vampiric","Vampiric"},
+    {"venomous","Venomous"}, {"wasped","Wasped"},
+};
+static std::string HhDisplayName(const std::string& key)
+{
+    for (const auto& e : kHhAffixDisplay) if (key == e.first) return e.second;
+    std::string s = key; if (!s.empty()) s[0] = (char)std::toupper((unsigned char)s[0]);
+    return s;
+}
+static double HhNowMs()
+{
+    using namespace std::chrono;
+    return (double)duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+}
+// Is the buff still on the local player?  global.playerBuff[1][0][buffId] holds the
+// Draw_Player_Buff_obj instance (or -4).  Unknown layout -> assume alive.
+static bool HhBuffAlive(int64_t buffId)
+{
+    try {
+        RValue pb = g_Yytk->CallBuiltin("variable_global_get", { RValue("playerBuff") });
+        if (pb.m_Kind != VALUE_ARRAY) return true;
+        RValue a1 = g_Yytk->CallBuiltin("array_get", { pb, RValue(1.0) });
+        if (a1.m_Kind != VALUE_ARRAY) return true;
+        RValue a0 = g_Yytk->CallBuiltin("array_get", { a1, RValue(0.0) });
+        if (a0.m_Kind != VALUE_ARRAY) return true;
+        RValue len = g_Yytk->CallBuiltin("array_length", { a0 });
+        if ((double)buffId >= len.ToDouble()) return true;
+        RValue ref = g_Yytk->CallBuiltin("array_get", { a0, RValue((double)buffId) });
+        if (ref.m_Kind == VALUE_UNDEFINED) return false;
+        if ((ref.m_Kind == VALUE_REAL || ref.m_Kind == VALUE_INT32 || ref.m_Kind == VALUE_INT64) && ref.ToDouble() < 0) return false;
+        RValue ex = g_Yytk->CallBuiltin("instance_exists", { ref });
+        return ex.ToBoolean();
+    } catch (...) { return true; }
+}
+static void HhRememberStolen(CInstance* player, const std::string& key, double seconds, int64_t buffId)
+{
+    try {
+        if (player) {
+            RValue pid = g_Yytk->CallBuiltin("variable_instance_get", { player->ToRValue(), RValue("id") });
+            g_HhLabelPlayerId = (int)pid.ToDouble();
+        }
+        const double expiry = HhNowMs() + seconds * 1000.0;
+        const std::string name = HhDisplayName(key);
+        for (auto& s : g_HhStolen) if (s.name == name) { s.expiryMs = expiry; s.buffId = buffId; s.bornMs = HhNowMs(); return; }
+        while (g_HhStolen.size() >= g_HhLabelMax && !g_HhStolen.empty()) g_HhStolen.erase(g_HhStolen.begin());
+        g_HhStolen.push_back({ name, expiry, buffId, HhNowMs() });
+    } catch (...) {}
+}
+static void HhDrawOutlinedWorld(double x, double y, const std::string& text, const RValue& colour)
+{
+    g_Yytk->CallBuiltin("draw_set_colour", { RValue(0.0) });
+    for (double dx = -1; dx <= 1; dx += 2) g_Yytk->CallBuiltin("draw_text", { RValue(x + dx), RValue(y), RValue(text) });
+    for (double dy = -1; dy <= 1; dy += 2) g_Yytk->CallBuiltin("draw_text", { RValue(x), RValue(y + dy), RValue(text) });
+    g_Yytk->CallBuiltin("draw_set_colour", { colour });
+    g_Yytk->CallBuiltin("draw_text", { RValue(x), RValue(y), RValue(text) });
+}
+static double g_HhLabelOffsetPx = 150.0;  // GUI pixels above the player's bounding box top (tuned live 2026-09-05)
+// The local player as an RValue usable with variable_instance_get: the game's own
+// GetMyPlayer() first, then the first Player_obj instance.  Returns false if none.
+static bool HhResolveLocalPlayer(RValue& out, std::string* how = nullptr)
+{
+    try {
+        CInstance* g = nullptr; g_Yytk->GetGlobalInstance(&g);
+        RValue p;
+        AurieStatus st = g_Yytk->CallGameScriptEx(p, "gml_Script_GetMyPlayer", g, g, {});
+        if (AurieSuccess(st) && (p.m_Kind == VALUE_REAL || p.m_Kind == VALUE_INT32 || p.m_Kind == VALUE_INT64 || p.m_Kind == VALUE_REF || p.m_Kind == VALUE_OBJECT)) {
+            RValue ex = g_Yytk->CallBuiltin("instance_exists", { p });
+            if (ex.ToBoolean()) { out = p; if (how) *how = "GetMyPlayer"; return true; }
+        }
+    } catch (...) {}
+    try {
+        RValue obj = g_Yytk->CallBuiltin("asset_get_index", { RValue("Player_obj") });
+        if (obj.ToDouble() >= 0) {
+            RValue inst = g_Yytk->CallBuiltin("instance_find", { obj, RValue(0.0) });
+            RValue ex = g_Yytk->CallBuiltin("instance_exists", { inst });
+            if (ex.ToBoolean()) { out = inst; if (how) *how = "instance_find(Player_obj)"; return true; }
+        }
+    } catch (...) {}
+    if (how) *how = "none";
+    return false;
+}
+static long g_HhHudCalls = 0, g_HhLabelDraws = 0;
+static std::string g_HhLabelLastErr;
+// Draw GUI phase: project the player's position through the active camera and draw the
+// stolen-affix labels above the head, centred, in the affix-row gold with a dark outline.
+static void HhDrawHeadLabels()
+{
+    if (!g_HhLabelOn.load() || g_HhStolen.empty()) return;
+    const double now = HhNowMs();
+    g_HhStolen.erase(std::remove_if(g_HhStolen.begin(), g_HhStolen.end(),
+        [&](const HhStolen& s) { return s.expiryMs <= now || (now - s.bornMs > 500.0 && !HhBuffAlive(s.buffId)); }), g_HhStolen.end());
+    if (g_HhStolen.empty()) return;
+    try {
+        RValue id;
+        if (!HhResolveLocalPlayer(id)) { g_HhLabelLastErr = "local player not found"; return; }
+        const double x = g_Yytk->CallBuiltin("variable_instance_get", { id, RValue("x") }).ToDouble();
+        const double top = g_Yytk->CallBuiltin("variable_instance_get", { id, RValue("bbox_top") }).ToDouble();
+        RValue cam = g_Yytk->CallBuiltin("view_get_camera", { RValue(0.0) });
+        const double vx = g_Yytk->CallBuiltin("camera_get_view_x", { cam }).ToDouble();
+        const double vy = g_Yytk->CallBuiltin("camera_get_view_y", { cam }).ToDouble();
+        const double vw = g_Yytk->CallBuiltin("camera_get_view_width", { cam }).ToDouble();
+        const double vh = g_Yytk->CallBuiltin("camera_get_view_height", { cam }).ToDouble();
+        const double gw = g_Yytk->CallBuiltin("display_get_gui_width", {}).ToDouble();
+        const double gh = g_Yytk->CallBuiltin("display_get_gui_height", {}).ToDouble();
+        if (vw <= 0 || vh <= 0) { g_HhLabelLastErr = "camera view size 0 (vw=" + std::to_string(vw) + " vh=" + std::to_string(vh) + ")"; return; }
+        const double sx = (x - vx) * gw / vw;
+        const double sy = (top - vy) * gh / vh - g_HhLabelOffsetPx;
+        std::vector<std::string> lines; std::string line; int inLine = 0;
+        for (const HhStolen& s : g_HhStolen) {
+            const int left = (int)std::ceil((s.expiryMs - now) / 1000.0);
+            std::string label = s.name + " " + std::to_string(left < 0 ? 0 : left) + "s";
+            if (inLine == 3) { lines.push_back(line); line.clear(); inLine = 0; }
+            line += (inLine ? "   " : "") + label; ++inLine;
+        }
+        if (!line.empty()) lines.push_back(line);
+        RValue prevFont = g_Yytk->CallBuiltin("draw_get_font", {});
+        RValue prevHalign = g_Yytk->CallBuiltin("draw_get_halign", {});
+        RValue prevValign = g_Yytk->CallBuiltin("draw_get_valign", {});
+        RValue prevColour = g_Yytk->CallBuiltin("draw_get_colour", {});
+        RValue prevAlpha = g_Yytk->CallBuiltin("draw_get_alpha", {});
+        if (!g_HhLabelFont.empty()) {
+            try {
+                RValue f = g_Yytk->CallBuiltin("asset_get_index", { RValue(g_HhLabelFont) });
+                if (f.ToDouble() < 0) f = RValue(std::stod(g_HhLabelFont));
+                if (f.ToDouble() >= 0) g_Yytk->CallBuiltin("draw_set_font", { f });
+            } catch (...) {}
+        }
+        g_Yytk->CallBuiltin("draw_set_halign", { RValue(1.0) });
+        g_Yytk->CallBuiltin("draw_set_valign", { RValue(2.0) });   // bottom-aligned: stack upwards from sy
+        g_Yytk->CallBuiltin("draw_set_alpha", { RValue(1.0) });
+        const double lineH = g_Yytk->CallBuiltin("string_height", { RValue("Ag") }).ToDouble();
+        RValue gold = g_Yytk->CallBuiltin("make_colour_rgb", { RValue(242.0), RValue(196.0), RValue(98.0) });
+        double y = sy - lineH * (double)(lines.size() - 1);
+        for (const std::string& l : lines) { HhDrawOutlinedWorld(sx, y, l, gold); y += lineH; }
+        ++g_HhLabelDraws;
+        g_Yytk->CallBuiltin("draw_set_alpha", { prevAlpha });
+        g_Yytk->CallBuiltin("draw_set_colour", { prevColour });
+        g_Yytk->CallBuiltin("draw_set_valign", { prevValign });
+        g_Yytk->CallBuiltin("draw_set_halign", { prevHalign });
+        g_Yytk->CallBuiltin("draw_set_font", { prevFont });
+    } catch (...) { g_HhLabelLastErr = "exception while drawing"; }
+}
+// DrawHudBuffs runs once per frame in the Draw GUI phase (the buff icon row); the labels
+// are drawn right after it so they sit on top of the world and under nothing.
+static PFUNC_YYGMLScript g_Orig_DrawHudBuffs = nullptr;
+static RValue& Hook_DrawHudBuffs(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    RValue& r = g_Orig_DrawHudBuffs ? g_Orig_DrawHudBuffs(S, O, R, argc, A) : R;
+    ++g_HhHudCalls;
+    HhDrawHeadLabels();
+    return r;
+}
+static bool g_HhLabelHookAttempted = false;
+static void InstallHeadLabelHook()
+{
+    if (g_HhLabelHookAttempted) return;
+    g_HhLabelHookAttempted = true;
+    g_HhObjectCallbackInstalled = HookOneScript("DrawHudBuffs", "fp_hh_hudlabels", (PVOID)Hook_DrawHudBuffs, &g_Orig_DrawHudBuffs);
+}
+
+// ===== Tyrant's Crown mechanic ====================================================
+// EnemyRaritySettings(typeId) runs from Enemy_Parent_obj Alarm_4 with self = the enemy
+// AFTER the spawner decided enemyRarity (1 normal / 2 champion / 3 rare / 4 ancient) and
+// filled enemyAffix / affixList, and BEFORE stats, affix effects and the health bar are
+// built (live-traced 2026-09-05: entry and exit state identical, myHealthBar still -4).
+// Changing the rarity and the affix flags at its entry therefore makes the game build the
+// monster exactly as if it had rolled that way.
+static void InstallBeaconHook();   // defined with the Beacon module below; the crown shares its hunt hooks
+static std::atomic<bool> g_TyEnabled{ false };
+static std::atomic<bool> g_TyForced{ false };
+static double g_TyRarePct = 30.0;      // chance a normal monster rises to rare (15 was too subtle to notice; 30 = 2-3 rares per pack)
+static double g_TyAffixPct = 100.0;    // chance a rare / champion carries one more affix
+static long g_TySeen = 0, g_TyUpgraded = 0, g_TyAffixed = 0;
+static bool g_TyHookInstalled = false, g_TyHookAttempted = false;
+static PFUNC_YYGMLScript g_Orig_EnemyRaritySettings = nullptr;
+// enemyAffix indices whose meaning is live-confirmed (see kHhAffixNames); 0 = champion marker.
+static const int kTyAffixPool[] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 25, 30, 31, 36, 38 };
+static std::mt19937& TyRng() { static std::mt19937 rng{ std::random_device{}() }; return rng; }
+static bool TyRoll(double pct) { if (pct <= 0.0) return false; if (pct >= 100.0) return true; return std::uniform_real_distribution<double>(0.0, 100.0)(TyRng()) < pct; }
+
+static bool ForgedItemMechanicIs(const RValue& item, const char* mech)
+{
+    try {
+        if (item.m_Kind != VALUE_OBJECT || !item.m_Object) return false;
+        RValue has = g_Yytk->CallBuiltin("variable_struct_exists", { item, RValue("fp_mechanic") });
+        if (!has.ToBoolean()) return false;
+        RValue m = g_Yytk->CallBuiltin("variable_struct_get", { item, RValue("fp_mechanic") });
+        return Lower(m.ToString()) == mech;
+    } catch (...) { return false; }
+}
+static bool TyrantItemLoaded()
+{
+    return g_TyItemTagged.load();
+}
+static bool TyrantActive()
+{
+    if (!g_TyEnabled.load()) return false;
+    if (g_TyForced.load()) return true;
+#ifndef FORGEPACT_RELEASE
+    return TyrantItemLoaded();   // research build: a loaded crown counts as worn (equip detection pending)
+#else
+    return false;
+#endif
+}
+// Adds `count` random affixes the monster does not have yet: flag in enemyAffix, index in affixList.
+static int TyAddAffixes(const RValue& inst, int count)
+{
+    int added = 0;
+    try {
+        RValue ea = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("enemyAffix") });
+        if (ea.m_Kind != VALUE_ARRAY) return 0;
+        const int n = (int)g_Yytk->CallBuiltin("array_length", { ea }).ToDouble();
+        RValue al = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("affixList") });
+        std::vector<int> pool;
+        for (int k : kTyAffixPool) {
+            if (k >= n) continue;
+            RValue v = g_Yytk->CallBuiltin("array_get", { ea, RValue((double)k) });
+            if (v.ToDouble() == 0.0) pool.push_back(k);
+        }
+        std::shuffle(pool.begin(), pool.end(), TyRng());
+        for (int i = 0; i < count && i < (int)pool.size(); ++i) {
+            g_Yytk->CallBuiltin("array_set", { ea, RValue((double)pool[i]), RValue(1.0) });
+            if (al.m_Kind == VALUE_ARRAY) g_Yytk->CallBuiltin("array_push", { al, RValue((double)pool[i]) });
+            ++added;
+        }
+    } catch (...) {}
+    return added;
+}
+static int TyCountAffixes(const RValue& inst)
+{
+    try {
+        RValue ea = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("enemyAffix") });
+        if (ea.m_Kind != VALUE_ARRAY) return 0;
+        const int n = (int)g_Yytk->CallBuiltin("array_length", { ea }).ToDouble();
+        int c = 0;
+        for (int k = 0; k < n; ++k) if (g_Yytk->CallBuiltin("array_get", { ea, RValue((double)k) }).ToDouble() != 0.0) ++c;
+        return c;
+    } catch (...) { return 0; }
+}
+#ifndef FORGEPACT_RELEASE
+static std::string TyInstName(const RValue& inst)
+{
+    try {
+        RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("object_index") });
+        RValue nm = g_Yytk->CallBuiltin("object_get_name", { oi });
+        RValue id = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("id") });
+        return nm.ToString() + "#" + std::to_string((long long)id.ToDouble());
+    } catch (...) { return "?"; }
+}
+static std::string TyArgs(int argc, RValue** A)
+{
+    std::string a;
+    for (int i = 0; i < argc && i < 8; ++i) a += " a" + std::to_string(i) + "=" + (A && A[i] ? Describe(*A[i]) : std::string("?"));
+    return a;
+}
+static int g_RarTraceLeft = 0, g_RarForceLeft = 0, g_RarPreLeft = 0;
+static double g_RarForceVal = 3, g_RarPreVal = 3;
+static std::string RarState(const RValue& inst)
+{
+    std::string s;
+    auto get = [&](const char* nm) -> std::string {
+        try { RValue v = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(nm) }); return Describe(v); } catch (...) { return "?"; }
+    };
+    s += " enemyRarity=" + get("enemyRarity") + " forceRarity=" + get("forceRarity");
+    try {
+        RValue al = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("affixList") });
+        s += " affixList=" + (al.m_Kind == VALUE_ARRAY ? std::to_string((int)g_Yytk->CallBuiltin("array_length", { al }).ToDouble()) + HhDescribeList(al) : Describe(al));
+        RValue ea = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("enemyAffix") });
+        if (ea.m_Kind == VALUE_ARRAY) {
+            int n = (int)g_Yytk->CallBuiltin("array_length", { ea }).ToDouble(); std::string idx;
+            for (int i = 0; i < n; ++i) { RValue v = g_Yytk->CallBuiltin("array_get", { ea, RValue((double)i) }); if (v.ToDouble() != 0.0) idx += (idx.empty() ? "" : ",") + std::to_string(i); }
+            s += " enemyAffix[" + std::to_string(n) + "] set=" + (idx.empty() ? "-" : idx);
+        } else s += " enemyAffix=" + Describe(ea);
+        RValue hb = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("myHealthBar") });
+        s += " myHealthBar=" + Describe(hb);
+    } catch (...) { s += " (state exc)"; }
+    return s;
+}
+#endif
+static RValue& Hook_EnemyRaritySettings(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    ++g_TySeen;
+    RValue inst; try { if (S) inst = S->ToRValue(); } catch (...) { S = nullptr; }
+#ifndef FORGEPACT_RELEASE
+    bool trace = g_RarTraceLeft > 0;
+    if (trace) { --g_RarTraceLeft; Out("rarity #" + std::to_string(g_TySeen) + " ENTRY self=" + TyInstName(inst) + " argc=" + std::to_string(argc) + TyArgs(argc, A) + RarState(inst)); }
+    if (g_RarForceLeft > 0 && S) { --g_RarForceLeft; try { g_Yytk->CallBuiltin("variable_instance_set", { inst, RValue("forceRarity"), RValue(g_RarForceVal) }); Out("   -> forceRarity set to " + std::to_string((int)g_RarForceVal)); } catch (...) {} }
+    if (g_RarPreLeft > 0 && S) { --g_RarPreLeft; try { g_Yytk->CallBuiltin("variable_instance_set", { inst, RValue("enemyRarity"), RValue(g_RarPreVal) }); Out("   -> enemyRarity pre-set to " + std::to_string((int)g_RarPreVal)); } catch (...) {} }
+#endif
+    if (S && TyrantActive()) {
+        try {
+            RValue rv = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("enemyRarity") });
+            const double rar = (rv.m_Kind == VALUE_REAL || rv.m_Kind == VALUE_INT32 || rv.m_Kind == VALUE_INT64) ? rv.ToDouble() : -1.0;
+            if (rar == 1.0 && TyRoll(g_TyRarePct)) {
+                g_Yytk->CallBuiltin("variable_instance_set", { inst, RValue("enemyRarity"), RValue(3.0) });
+                const int have = TyCountAffixes(inst);
+                if (have < 2) TyAddAffixes(inst, 2 - have);
+                ++g_TyUpgraded;
+            } else if ((rar == 2.0 || rar == 3.0) && TyRoll(g_TyAffixPct)) {
+                if (TyAddAffixes(inst, 1) > 0) ++g_TyAffixed;
+            }
+        } catch (...) {}
+    }
+    RValue& r = g_Orig_EnemyRaritySettings ? g_Orig_EnemyRaritySettings(S, O, R, argc, A) : R;
+#ifndef FORGEPACT_RELEASE
+    if (trace) Out("rarity #" + std::to_string(g_TySeen) + " EXIT  -> " + Describe(r) + RarState(inst));
+#endif
+    return r;
+}
+static void InstallTyrantHook()
+{
+    if (g_TyHookAttempted) return;
+    g_TyHookAttempted = true;
+    g_TyHookInstalled = HookOneScript("EnemyRaritySettings", "fp_tyrant_rarity", (PVOID)Hook_EnemyRaritySettings, &g_Orig_EnemyRaritySettings);
+}
+static void TyrantAutoArm()
+{
+    bool wanted = g_TyForced.load();
+#ifndef FORGEPACT_RELEASE
+    for (const CustomForgeEntry& e : g_CustomForgeEntries) if (e.mechanic == "tyrant") { wanted = true; break; }
+#else
+    for (const CustomForgeEntry& e : g_CustomForgeEntries) if (e.mechanic == "tyrant") { Out("tyrant: item found; mechanic is a preview in this build (use 'tyrant force' to try it)"); break; }
+#endif
+    if (!wanted) return;
+    InstallTyrantHook();
+    InstallBeaconHook();   // "Rare monsters hunt you": rares use the Beacon's scan/leash/wake hooks
+    g_TyEnabled.store(g_TyHookInstalled);
+    Out(std::string("tyrant: ") + (g_TyHookInstalled ? "armed" : "hook failed") + " (rare " + std::to_string((int)g_TyRarePct) + " pct, extra affix " + std::to_string((int)g_TyAffixPct) + " pct)");
+}
+static void TyrantStatus()
+{
+    Out(std::string("tyrant: ") + (g_TyEnabled.load() ? "ON" : "off") + (g_TyForced.load() ? " (forced)" : "")
+        + " hook=" + (g_TyHookInstalled ? "yes" : "no") + " active=" + (TyrantActive() ? "yes" : "no")
+        + " rarePct=" + std::to_string((int)g_TyRarePct) + " affixPct=" + std::to_string((int)g_TyAffixPct)
+        + " seen=" + std::to_string(g_TySeen) + " upgraded=" + std::to_string(g_TyUpgraded) + " extraAffix=" + std::to_string(g_TyAffixed)
+        + " itemLoaded=" + (TyrantItemLoaded() ? "yes" : "no"));
+}
+
+#ifndef FORGEPACT_RELEASE
+// --- monster AI target trace (Beacon amulet groundwork) ------------------------------
+static int g_AggroTraceLeft = 0;
+static std::set<std::string> g_AggroScanSeen;
+static std::string AggroArgs(int argc, RValue** A)
+{
+    std::string a;
+    for (int i = 0; i < argc && i < 8; ++i) {
+        std::string d = A && A[i] ? Describe(*A[i]) : std::string("?");
+        if (A && A[i] && A[i]->m_Kind == VALUE_OBJECT) {
+            try { CInstance* g = nullptr; g_Yytk->GetGlobalInstance(&g); RValue js; g_Yytk->CallBuiltinEx(js, "json_stringify", g, g, { *A[i] }); d = "struct" + js.ToString(); } catch (...) {}
+        }
+        if (d.size() > 200) d = d.substr(0, 200) + "...";
+        a += " a" + std::to_string(i) + "=" + d;
+    }
+    return a;
+}
+static std::string AggroVars(CInstance* S)
+{
+    std::string line;
+    try {
+        RValue id = S->ToRValue();
+        RValue names = g_Yytk->CallBuiltin("variable_instance_get_names", { id });
+        int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+        for (int i = 0; i < n; ++i) {
+            RValue nm = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) });
+            std::string s = nm.ToString(), ls = Lower(s);
+            if (ls.find("target") != std::string::npos || ls.find("socket") != std::string::npos || ls.find("scan") != std::string::npos || ls.find("aggro") != std::string::npos
+                || ls.find("range") != std::string::npos || ls.find("radius") != std::string::npos || ls.find("leash") != std::string::npos || ls.find("home") != std::string::npos
+                || ls.find("state") != std::string::npos || ls.find("idle") != std::string::npos || ls.find("chase") != std::string::npos || ls.find("sight") != std::string::npos
+                || ls.find("detect") != std::string::npos || ls.find("spawn") != std::string::npos || ls.find("taunt") != std::string::npos) {
+                RValue v = g_Yytk->CallBuiltin("variable_instance_get", { id, nm });
+                std::string d = Describe(v); if (d.size() > 60) d = d.substr(0, 60) + "...";
+                line += " " + s + "=" + d;
+            }
+        }
+    } catch (...) { line += " (exc)"; }
+    return line;
+}
+#define AGGRO_TRACE_HOOK(NAME) \
+    static PFUNC_YYGMLScript g_OrigAggro_##NAME = nullptr; \
+    static RValue& Hook_Trace##NAME(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) { \
+        bool tr = g_AggroTraceLeft > 0; if (tr) --g_AggroTraceLeft; \
+        std::string before = tr ? AggroArgs(argc, A) : std::string(); \
+        RValue& r = g_OrigAggro_##NAME ? g_OrigAggro_##NAME(S, O, R, argc, A) : R; \
+        if (tr) Out(std::string("aggro " #NAME " self=") + TyInstName(S ? S->ToRValue() : RValue()) + " other=" + TyInstName(O ? O->ToRValue() : RValue()) + " argc=" + std::to_string(argc) + before + " -> " + Describe(r)); \
+        return r; \
+    }
+AGGRO_TRACE_HOOK(PathFindTakeTarget)
+AGGRO_TRACE_HOOK(SocketSetTarget)
+AGGRO_TRACE_HOOK(PathFindAggroBroadcast)
+static bool g_AggroHooksInstalled = false;
+static void InstallAggroTraceHooks()
+{
+    if (g_AggroHooksInstalled) return; g_AggroHooksInstalled = true;
+    HookOneScript("PathFindTakeTarget",     "bp_tr_take",  (PVOID)Hook_TracePathFindTakeTarget,     &g_OrigAggro_PathFindTakeTarget);
+    HookOneScript("SocketSetTarget",        "bp_tr_sst",   (PVOID)Hook_TraceSocketSetTarget,        &g_OrigAggro_SocketSetTarget);
+    HookOneScript("PathFindAggroBroadcast", "bp_tr_bc",    (PVOID)Hook_TracePathFindAggroBroadcast, &g_OrigAggro_PathFindAggroBroadcast);
+}
+#endif
+// ===== Beacon amulet mechanic =====================================================
+// Live-traced 2026-09-05: idle monsters run PathFindScanTick (self = monster), which takes
+// the player as target once it is inside `aggroRange` (300 px vanilla) through
+// PathFindTakeTarget(playerRef) -> SocketSetTarget + PathFindAggroBroadcast(1) (pack mates
+// follow).  In chase state PathFindLeashCheck releases the target (SocketSetTarget(-4)) when
+// the monster strays too far from home.  The Beacon hands every scanning monster a
+// map-sized aggroRange (vanilla value kept in fp_aggroRange, restored when the amulet is
+// off) and skips the leash check, so the game's own scan / target / broadcast code does
+// everything else: monsters come from anywhere and never turn back.
+static std::atomic<bool> g_BeEnabled{ false };
+static std::atomic<bool> g_BeForced{ false };
+static double g_BeRange = 1000000.0;   // aggroRange handed out while the amulet is on
+static bool g_BeRareOnly = false;      // beaconmode rare: only rares / champions hunt you
+static long g_BeScans = 0, g_BeRanged = 0, g_BeLeashSkips = 0;
+static bool g_BeHookInstalled = false, g_BeHookAttempted = false;
+static PFUNC_YYGMLScript g_Orig_PathFindScanTick = nullptr;
+static PFUNC_YYGMLScript g_Orig_PathFindLeashCheck = nullptr;
+static bool BeaconActive()
+{
+    if (!g_BeEnabled.load()) return false;
+    if (g_BeForced.load()) return true;
+#ifndef FORGEPACT_RELEASE
+    return g_BeItemTagged.load();   // research build: a loaded amulet counts as worn
+#else
+    return false;
+#endif
+}
+// Who hunts the player right now: 0 = nobody, 1 = rares and champions only, 2 = everyone.
+// The Beacon amulet decides all/rare through beaconmode; a Tyrant's Crown alone means rares.
+static int HuntPolicy()
+{
+    if (BeaconActive()) return g_BeRareOnly ? 1 : 2;
+    if (TyrantActive()) return 1;
+    return 0;
+}
+static bool HuntWants(const RValue& inst, int policy)
+{
+    if (policy == 2) return true;
+    if (policy != 1) return false;
+    try {
+        RValue rv = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("enemyRarity") });
+        return (rv.m_Kind == VALUE_REAL || rv.m_Kind == VALUE_INT32 || rv.m_Kind == VALUE_INT64) && rv.ToDouble() >= 2.0;
+    } catch (...) { return false; }
+}
+static long g_BeScanNear = 0, g_BeScanMid = 0, g_BeScanFar = 0;   // scanning monsters by distance to the player
+static RValue& Hook_PathFindScanTick(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    ++g_BeScans;
+    if (S && (g_BeScans % 10) == 0) {
+        try {
+            RValue player; if (HhResolveLocalPlayer(player)) {
+                RValue inst = S->ToRValue();
+                double px = g_Yytk->CallBuiltin("variable_instance_get", { player, RValue("x") }).ToDouble(), py = g_Yytk->CallBuiltin("variable_instance_get", { player, RValue("y") }).ToDouble();
+                double ex = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("x") }).ToDouble(), ey = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("y") }).ToDouble();
+                double d = std::sqrt((ex - px) * (ex - px) + (ey - py) * (ey - py));
+                if (d < 1500) ++g_BeScanNear; else if (d < 3000) ++g_BeScanMid; else ++g_BeScanFar;
+            }
+        } catch (...) {}
+    }
+    if (S) {
+        try {
+            RValue inst = S->ToRValue();
+            const int policy = HuntPolicy();
+            if (policy != 0) {
+                if (HuntWants(inst, policy)) {
+                    // PathFindScanTick (decompiled): nearest = instance_nearest(x, y, <player obj>);
+                    // if point_distance(...) < self.distance -> PathFindTakeTarget(nearest).
+                    // `distance` is the detection radius; aggroRange is widened too for the
+                    // broadcast / attack code that reads it.
+                    for (const char* field : { "distance", "aggroRange" }) {
+                        RValue cur = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(field) });
+                        if (cur.m_Kind == VALUE_UNDEFINED || cur.ToDouble() < g_BeRange) {
+                            const std::string backup = std::string("fp_") + field;
+                            RValue has = g_Yytk->CallBuiltin("variable_instance_exists", { inst, RValue(backup) });
+                            if (!has.ToBoolean()) g_Yytk->CallBuiltin("variable_instance_set", { inst, RValue(backup), cur.m_Kind == VALUE_UNDEFINED ? RValue(300.0) : cur });
+                            g_Yytk->CallBuiltin("variable_instance_set", { inst, RValue(field), RValue(g_BeRange) });
+                            if (field[0] == 'd') ++g_BeRanged;
+                        }
+                    }
+                }
+            } else {
+                for (const char* field : { "distance", "aggroRange" }) {
+                    const std::string backup = std::string("fp_") + field;
+                    RValue has = g_Yytk->CallBuiltin("variable_instance_exists", { inst, RValue(backup) });
+                    if (!has.ToBoolean()) continue;
+                    RValue orig = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(backup) });
+                    RValue cur = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(field) });
+                    if (cur.ToDouble() != orig.ToDouble()) g_Yytk->CallBuiltin("variable_instance_set", { inst, RValue(field), orig });
+                }
+            }
+        } catch (...) {}
+    }
+    RValue& r = g_Orig_PathFindScanTick ? g_Orig_PathFindScanTick(S, O, R, argc, A) : R;
+#ifndef FORGEPACT_RELEASE
+    if (g_AggroTraceLeft > 0 && S) {
+        std::string nm = TyInstName(S->ToRValue()); std::string obj = nm.substr(0, nm.find('#'));
+        if (g_AggroScanSeen.insert(obj).second) { --g_AggroTraceLeft; Out("aggro ScanTick self=" + nm + " argc=" + std::to_string(argc) + AggroArgs(argc, A) + " -> " + Describe(r) + " | vars:" + AggroVars(S)); }
+    }
+#endif
+    return r;
+}
+static RValue& Hook_PathFindLeashCheck(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    if (S) {
+        const int policy = HuntPolicy();
+        if (policy != 0 && HuntWants(S->ToRValue(), policy)) { ++g_BeLeashSkips; return R; }   // no leash: they never turn back
+    }
+    RValue& r = g_Orig_PathFindLeashCheck ? g_Orig_PathFindLeashCheck(S, O, R, argc, A) : R;
+#ifndef FORGEPACT_RELEASE
+    if (g_AggroTraceLeft > 0) { --g_AggroTraceLeft; Out("aggro PathFindLeashCheck self=" + TyInstName(S ? S->ToRValue() : RValue()) + " argc=" + std::to_string(argc) + " -> " + Describe(r)); }
+#endif
+    return r;
+}
+// Wake radius: the game freezes monsters outside the view boxes every frame
+// ((Local)ActivateDeactivateProps from Controller_obj Step).  After that call the Beacon
+// re-activates every Enemy_Parent_obj and sends the ones farther than g_BeWakeRadius from
+// the player back to sleep, so monsters within the radius keep stepping, scanning and
+// hunting.  0 = leave the game's own freezing alone, < 0 = the whole map.
+static double g_BeWakeRadius = 4000.0;
+static long g_BeWakeCalls = 0, g_BeWoken = 0, g_BeCreatorsAwake = 0;
+static bool g_BeWakeCreators = true;   // also wake Enemy_Creator* spawners inside the radius
+static const char* const kBeCreatorObjects[] = {
+    "Enemy_Creator_obj", "Enemy_Creator_Ambush_obj", "Enemy_Creator_Ancient_obj", "Enemy_Creator_Champion_obj",
+    "Enemy_Creator_Colossal_Chest_obj", "Enemy_Creator_Legion_obj", "Enemy_Creator_Miniboss_obj",
+};
+// Re-activate every instance of `obj`, then put the ones beyond `radius` of (px,py) back to
+// sleep.  radius < 0 keeps them all awake.  Returns the number left awake.
+// policy: 2 = wake every instance of obj inside the radius, 1 = only enemyRarity >= 2.
+// Instances the game itself left active are never touched.
+static long BeWakeObject(const RValue& obj, double px, double py, double radius, int policy)
+{
+    std::unordered_set<int> gameActive;
+    {
+        const int n0 = (int)g_Yytk->CallBuiltin("instance_number", { obj }).ToDouble();
+        for (int i = 0; i < n0; ++i) {
+            RValue inst = g_Yytk->CallBuiltin("instance_find", { obj, RValue((double)i) });
+            gameActive.insert((int)g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("id") }).ToDouble());
+        }
+    }
+    g_Yytk->CallBuiltin("instance_activate_object", { obj });
+    const int n = (int)g_Yytk->CallBuiltin("instance_number", { obj }).ToDouble();
+    long awake = 0;
+    for (int i = n - 1; i >= 0; --i) {
+        RValue inst = g_Yytk->CallBuiltin("instance_find", { obj, RValue((double)i) });
+        const int id = (int)g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("id") }).ToDouble();
+        if (gameActive.count(id)) { ++awake; continue; }
+        bool keep = HuntWants(inst, policy);
+        if (keep && radius >= 0.0) {
+            const double ex = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("x") }).ToDouble();
+            const double ey = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("y") }).ToDouble();
+            const double dx = ex - px, dy = ey - py;
+            keep = dx * dx + dy * dy <= radius * radius;
+        }
+        if (keep) ++awake; else g_Yytk->CallBuiltin("instance_deactivate_object", { inst });
+    }
+    return awake;
+}
+static PFUNC_YYGMLScript g_Orig_ActivateDeactivateProps = nullptr;
+static PFUNC_YYGMLScript g_Orig_LocalActivateDeactivateProps = nullptr;
+static void BeaconWakeEnemies()
+{
+    const int policy = HuntPolicy();
+    if (policy == 0 || g_BeWakeRadius == 0.0) return;
+    try {
+        RValue obj = g_Yytk->CallBuiltin("asset_get_index", { RValue("Enemy_Parent_obj") });
+        if (obj.ToDouble() < 0) return;
+        RValue player;
+        if (!HhResolveLocalPlayer(player)) return;
+        const double px = g_Yytk->CallBuiltin("variable_instance_get", { player, RValue("x") }).ToDouble();
+        const double py = g_Yytk->CallBuiltin("variable_instance_get", { player, RValue("y") }).ToDouble();
+        ++g_BeWakeCalls;
+        g_BeWoken = BeWakeObject(obj, px, py, g_BeWakeRadius, policy);
+        if (g_BeWakeCreators && BeaconActive()) {   // spawners only matter for the amulet
+            long awake = 0;
+            for (const char* nm : kBeCreatorObjects) {
+                RValue cobj = g_Yytk->CallBuiltin("asset_get_index", { RValue(nm) });
+                if (cobj.ToDouble() >= 0) awake += BeWakeObject(cobj, px, py, g_BeWakeRadius, 2);
+            }
+            g_BeCreatorsAwake = awake;
+        }
+    } catch (...) {}
+}
+// An instance activated inside the controller's Step does not step in that frame, and the
+// next frame the controller freezes it again before it gets a turn - so monsters woken every
+// frame never move (measured: zero scans from beyond 1500 px).  While a hunt is on, the
+// game's freeze pass therefore runs only every g_BeWakeEvery frames; in between, the monsters
+// woken by the last pass keep stepping.  Props at the screen edge appear a few frames late.
+static int g_BeWakeEvery = 6;
+static long g_BeFreezeCalls = 0, g_BeFreezeSkipped = 0;
+static bool BeaconFreezeGate()
+{
+    ++g_BeFreezeCalls;
+    if (HuntPolicy() == 0 || g_BeWakeRadius == 0.0 || g_BeWakeEvery <= 1) return true;
+    if ((g_BeFreezeCalls % g_BeWakeEvery) != 0) { ++g_BeFreezeSkipped; return false; }
+    return true;
+}
+// The game steps monsters through Controller_obj -> EnemyStepHandleNew -> monsterHandleArray,
+// and far monsters never get their turn (measured: zero scans beyond 1500 px even while
+// active).  While a hunt is on, hunted monsters farther than g_BeFarFrom px get their AI
+// tick (PathFindStep: scan -> take target -> chase -> path_start) from the plugin every
+// frame; GameMaker moves them along the started path by itself.  Near monsters are left to
+// the game so nothing is stepped twice.
+static bool g_BeFarStep = false;   // EXPERIMENTAL, off: forcing PathFindStep on far monsters crashed the game on zone entry (0xc0000005 @ Hero_Siege+0x4d967ab, 2026-09-05)
+static double g_BeFarFrom = 1500.0;
+static long g_BeFarSteps = 0, g_BeFarStepErrors = 0;
+static void BeaconStepFarHunters()
+{
+    if (!g_BeFarStep) return;
+    const int policy = HuntPolicy();
+    if (policy == 0) return;
+    try {
+        RValue eobj = g_Yytk->CallBuiltin("asset_get_index", { RValue("Enemy_Parent_obj") });
+        RValue player; if (!HhResolveLocalPlayer(player)) return;
+        const double px = g_Yytk->CallBuiltin("variable_instance_get", { player, RValue("x") }).ToDouble();
+        const double py = g_Yytk->CallBuiltin("variable_instance_get", { player, RValue("y") }).ToDouble();
+        const int n = (int)g_Yytk->CallBuiltin("instance_number", { eobj }).ToDouble();
+        for (int i = 0; i < n; ++i) {
+            RValue inst = g_Yytk->CallBuiltin("instance_find", { eobj, RValue((double)i) });
+            const double ex = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("x") }).ToDouble();
+            const double ey = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("y") }).ToDouble();
+            const double dx = ex - px, dy = ey - py;
+            if (dx * dx + dy * dy <= g_BeFarFrom * g_BeFarFrom) continue;
+            if (!HuntWants(inst, policy)) continue;
+            CInstance* ci = inst.ToInstance();
+            if (!ci) { ++g_BeFarStepErrors; continue; }
+            RValue res;
+            AurieStatus st = g_Yytk->CallGameScriptEx(res, "gml_Script_PathFindStep", ci, ci, {});
+            if (AurieSuccess(st)) ++g_BeFarSteps; else ++g_BeFarStepErrors;
+        }
+    } catch (...) { ++g_BeFarStepErrors; }
+}
+static RValue& Hook_ActivateDeactivateProps(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    BeaconStepFarHunters();
+    if (!BeaconFreezeGate()) return R;
+    RValue& r = g_Orig_ActivateDeactivateProps ? g_Orig_ActivateDeactivateProps(S, O, R, argc, A) : R;
+    BeaconWakeEnemies();
+    return r;
+}
+static RValue& Hook_LocalActivateDeactivateProps(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    BeaconStepFarHunters();
+    if (!BeaconFreezeGate()) return R;
+    RValue& r = g_Orig_LocalActivateDeactivateProps ? g_Orig_LocalActivateDeactivateProps(S, O, R, argc, A) : R;
+    BeaconWakeEnemies();
+    return r;
+}
+// Spawn as if approached: Enemy_Creator_obj's periodic check (anon@849, decompiled
+// 2026-09-05) calls distance_to_object(Player_obj) and spawns its pack (alarm[2]) below
+// 1050 px.  With the Beacon on, the builtin answers 0 to every creator inside the wake
+// radius, so awake spawners give birth at once and the newborns join the hunt.
+static bool g_BeSpawnNear = false;   // experimental: spawners in this zone type had already given birth at load; off by default
+static long g_BeSpawnLies = 0;
+static TRoutine g_OrigDistanceToObject = nullptr;
+static void Hook_distance_to_object(RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)
+{
+    if (g_OrigDistanceToObject) g_OrigDistanceToObject(Result, S, O, argc, Args);
+    if (!g_BeSpawnNear || !S || !BeaconActive()) return;
+    try {
+        RValue inst = S->ToRValue();
+        RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("object_index") });
+        if (!IsCreatorObject((int)oi.ToDouble())) return;
+        if (g_BeWakeRadius > 0.0) {
+            RValue player; if (!HhResolveLocalPlayer(player)) return;
+            const double px = g_Yytk->CallBuiltin("variable_instance_get", { player, RValue("x") }).ToDouble();
+            const double py = g_Yytk->CallBuiltin("variable_instance_get", { player, RValue("y") }).ToDouble();
+            const double cx = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("x") }).ToDouble();
+            const double cy = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("y") }).ToDouble();
+            const double dx = cx - px, dy = cy - py;
+            if (dx * dx + dy * dy > g_BeWakeRadius * g_BeWakeRadius) return;
+        }
+        Result = RValue(0.0);
+        ++g_BeSpawnLies;
+    } catch (...) {}
+}
+static void InstallBeaconHook()
+{
+    if (g_BeHookAttempted) return;
+    g_BeHookAttempted = true;
+    HookBuiltin("distance_to_object", "fp_beacon_dist", (PVOID)Hook_distance_to_object, &g_OrigDistanceToObject);
+    bool a = HookOneScript("PathFindScanTick",   "fp_beacon_scan",  (PVOID)Hook_PathFindScanTick,   &g_Orig_PathFindScanTick);
+    bool b = HookOneScript("PathFindLeashCheck", "fp_beacon_leash", (PVOID)Hook_PathFindLeashCheck, &g_Orig_PathFindLeashCheck);
+    HookOneScript("ActivateDeactivateProps",      "fp_beacon_wake",  (PVOID)Hook_ActivateDeactivateProps,      &g_Orig_ActivateDeactivateProps);
+    HookOneScript("LocalActivateDeactivateProps", "fp_beacon_wakel", (PVOID)Hook_LocalActivateDeactivateProps, &g_Orig_LocalActivateDeactivateProps);
+    g_BeHookInstalled = a && b;
+}
+static void BeaconStatus()
+{
+    Out(std::string("beacon: ") + (g_BeEnabled.load() ? "ON" : "off") + (g_BeForced.load() ? " (forced)" : "")
+        + " hook=" + (g_BeHookInstalled ? "yes" : "no") + " active=" + (BeaconActive() ? "yes" : "no")
+        + " range=" + std::to_string((long long)g_BeRange) + " mode=" + (g_BeRareOnly ? "rare" : "all")
+        + " scans=" + std::to_string(g_BeScans) + " ranged=" + std::to_string(g_BeRanged) + " leashSkips=" + std::to_string(g_BeLeashSkips)
+        + " wake=" + std::to_string((long long)g_BeWakeRadius) + " every=" + std::to_string(g_BeWakeEvery) + " wakeCalls=" + std::to_string(g_BeWakeCalls) + " freezeSkipped=" + std::to_string(g_BeFreezeSkipped) + " awake=" + std::to_string(g_BeWoken)
+        + " creators=" + (g_BeWakeCreators ? "on" : "off") + " creatorsAwake=" + std::to_string(g_BeCreatorsAwake)
+        + " farStep=" + (g_BeFarStep ? "on" : "off") + " farFrom=" + std::to_string((long long)g_BeFarFrom) + " farSteps=" + std::to_string(g_BeFarSteps) + " farErrors=" + std::to_string(g_BeFarStepErrors)
+        + " spawnNear=" + (g_BeSpawnNear ? "on" : "off") + " spawnLies=" + std::to_string(g_BeSpawnLies)
+        + " itemLoaded=" + (g_BeItemTagged.load() ? "yes" : "no"));
+}
+static void BeaconAutoArm()
+{
+    bool wanted = g_BeForced.load();
+#ifndef FORGEPACT_RELEASE
+    for (const CustomForgeEntry& e : g_CustomForgeEntries) if (e.mechanic == "beacon") { wanted = true; break; }
+#else
+    for (const CustomForgeEntry& e : g_CustomForgeEntries) if (e.mechanic == "beacon") { Out("beacon: item found; mechanic is a preview in this build (use 'beacon force' to try it)"); break; }
+#endif
+    if (!wanted) return;
+    InstallBeaconHook();
+    g_BeEnabled.store(g_BeHookInstalled);
+    Out(std::string("beacon: ") + (g_BeHookInstalled ? "armed" : "hook failed") + " (range " + std::to_string((long long)g_BeRange) + ", mode " + (g_BeRareOnly ? "rare" : "all") + ")");
 }
 
 static void HhApplyBuff(CInstance* player, const HhBuff& b, double frames)
@@ -2959,7 +3887,7 @@ static void HhApplyBuff(CInstance* player, const HhBuff& b, double frames)
         std::vector<RValue> vals = { RValue(b.v0), RValue(b.v1) };
         std::vector<RValue> args = {
             RValue(mplr), RValue(b.id), RValue(vals), RValue(frames),
-            RValue(false), RValue(false), RValue(1.0), RValue(false), RValue(false), RValue(true)
+            RValue(true), RValue(false), RValue(1.0), RValue(false), RValue(false), RValue(true)
         };
         RValue result;
         AurieStatus st = g_Yytk->CallGameScriptEx(result, "gml_Script_BuffAdd", player, player, args);
@@ -2973,34 +3901,147 @@ static void HhOnKill(CInstance* player, const RValue& enemy)
 {
     InterlockedIncrement(&g_HhKills);
     try {
-        RValue hasList = g_Yytk->CallBuiltin("variable_instance_exists", { enemy, RValue("affixList") });
-        if (!hasList.ToBoolean()) return;
-        RValue list = g_Yytk->CallBuiltin("variable_instance_get", { enemy, RValue("affixList") });
-        if (list.m_Kind != VALUE_ARRAY) return;
-        int n = (int)g_Yytk->CallBuiltin("array_length", { list }).ToDouble();
-        if (n <= 0) return;
-        InterlockedIncrement(&g_HhRareKills);
+#ifndef FORGEPACT_RELEASE
+        // Research build: prove what argument 2 really is on the first kills (object name,
+        // whether it carries the enemy fields), so the detection logic rests on evidence.
+        if (g_HhTrace && g_HhKills <= 5) {
+            std::string what = Describe(enemy);
+            try {
+                RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { enemy, RValue("object_index") });
+                RValue nm = g_Yytk->CallBuiltin("object_get_name", { oi });
+                RValue hasR = g_Yytk->CallBuiltin("variable_instance_exists", { enemy, RValue("enemyRarity") });
+                RValue hasL = g_Yytk->CallBuiltin("variable_instance_exists", { enemy, RValue("affixList") });
+                RValue hasF = g_Yytk->CallBuiltin("variable_instance_exists", { enemy, RValue("enemyAffix") });
+                what += " object=" + nm.ToString() + " enemyRarity?" + (hasR.ToBoolean() ? "y" : "n") + " affixList?" + (hasL.ToBoolean() ? "y" : "n") + " enemyAffix?" + (hasF.ToBoolean() ? "y" : "n");
+                if (hasR.ToBoolean()) what += " rarity=" + Describe(g_Yytk->CallBuiltin("variable_instance_get", { enemy, RValue("enemyRarity") }));
+            } catch (...) { what += " (field probe failed)"; }
+            Out("hh: kill #" + std::to_string(g_HhKills) + " arg2=" + what);
+        }
+#endif
+        // Rarity flag of the dying enemy (1 = normal; higher = champion/rare/... by the game's own scale).
         double rarity = -1.0;
-        try { RValue r = g_Yytk->CallBuiltin("variable_instance_get", { enemy, RValue("enemyRarity") }); rarity = r.ToDouble(); } catch (...) {}
-        if (g_HhTrace) Out("hh: rare kill rarity=" + std::to_string((int)rarity) + " affixList=" + HhDescribeList(list));
+        try {
+            RValue hasR = g_Yytk->CallBuiltin("variable_instance_exists", { enemy, RValue("enemyRarity") });
+            if (hasR.ToBoolean()) rarity = g_Yytk->CallBuiltin("variable_instance_get", { enemy, RValue("enemyRarity") }).ToDouble();
+        } catch (...) {}
+        if (rarity >= 2.0) InterlockedIncrement(&g_HhRarityKills);
+        // Live 2026-09-04: normal monsters (rarity 1) can carry affix slots (#2, #16, #21 seen)
+        // and even a filled affixList, so ONLY the game's own rarity flag decides.
+        if (rarity < 2.0) return;
+
+        // Affix keys.  Best source: the enemy's own health bar (enemy.myHealthBar ->
+        // Enemy_Health_Bar_Parent_obj) carries `affixName`, the array of displayed affix
+        // strings ("Fallen Angel", "Extra Fast", ...).  Normalised to lower-case letters so
+        // they match the kHhAffixNames keys ("fallenangel", "extrafast").  Fallbacks: the
+        // numeric affixList / enemyAffix flags translated through the index table.
+        std::vector<std::string> keys;
+        try {
+            RValue bar = g_Yytk->CallBuiltin("variable_instance_get", { enemy, RValue("myHealthBar") });
+            if (bar.m_Kind != VALUE_UNDEFINED) {
+                RValue names = g_Yytk->CallBuiltin("variable_instance_get", { bar, RValue("affixName") });
+                if (names.m_Kind == VALUE_ARRAY) {
+                    int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+                    for (int i = 0; i < n && i < 8; ++i) {
+                        RValue s = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) });
+                        std::string raw = s.ToString(), k;
+                        for (unsigned char ch : raw) if (std::isalnum(ch) && ch < 128) k += (char)std::tolower(ch);
+                        if (!k.empty()) keys.push_back(k);
+                    }
+                } else if (names.m_Kind == VALUE_STRING) {
+                    std::string raw = names.ToString(), k;
+                    for (unsigned char ch : raw) if (std::isalnum(ch) && ch < 128) k += (char)std::tolower(ch);
+                    if (!k.empty()) keys.push_back(k);
+                }
+            }
+        } catch (...) {}
+        if (!keys.empty() && g_HhTrace) {
+            std::string ks; for (const auto& k : keys) ks += (ks.empty() ? "" : ",") + k;
+            Out("hh: health bar affixes = [" + ks + "]");
+        }
+        if (keys.empty()) try {
+            RValue hasList = g_Yytk->CallBuiltin("variable_instance_exists", { enemy, RValue("affixList") });
+            if (hasList.ToBoolean()) {
+                RValue list = g_Yytk->CallBuiltin("variable_instance_get", { enemy, RValue("affixList") });
+                if (list.m_Kind == VALUE_ARRAY) {
+                    int n = (int)g_Yytk->CallBuiltin("array_length", { list }).ToDouble();
+                    for (int i = 0; i < n && i < 16; ++i) {
+                        RValue e = g_Yytk->CallBuiltin("array_get", { list, RValue((double)i) });
+                        std::string k = (e.m_Kind == VALUE_REAL || e.m_Kind == VALUE_INT32 || e.m_Kind == VALUE_INT64) ? HhAffixName((int)e.ToDouble()) : HhKeyOf(e);
+                        if (!k.empty()) keys.push_back(k);
+                    }
+                }
+            }
+        } catch (...) {}
+        // Live 2026-09-04: normal monsters (enemyRarity 1) also carry a few non-zero enemyAffix
+        // slots (#16, #21 seen), so the flag array is only trusted on rarity >= 2.
+        if (keys.empty() && rarity >= 2.0) {
+            try {
+                RValue hasFlags = g_Yytk->CallBuiltin("variable_instance_exists", { enemy, RValue("enemyAffix") });
+                if (hasFlags.ToBoolean()) {
+                    RValue flags = g_Yytk->CallBuiltin("variable_instance_get", { enemy, RValue("enemyAffix") });
+                    if (flags.m_Kind == VALUE_ARRAY) {
+                        int n = (int)g_Yytk->CallBuiltin("array_length", { flags }).ToDouble();
+                        for (int i = 0; i < n && i < 128; ++i) {
+                            RValue f = g_Yytk->CallBuiltin("array_get", { flags, RValue((double)i) });
+                            double v = (f.m_Kind == VALUE_BOOL) ? (f.ToBoolean() ? 1.0 : 0.0)
+                                     : ((f.m_Kind == VALUE_REAL || f.m_Kind == VALUE_INT32 || f.m_Kind == VALUE_INT64) ? f.ToDouble() : 0.0);
+                            if (v != 0.0) keys.push_back(HhAffixName(i));
+                        }
+                    }
+                }
+            } catch (...) {}
+        }
+        // The enemy also carries its display affix data (affixName = text drawn above the
+        // health bar, affixMod = modifier list).  Add their lower-cased words as keys so
+        // hhmap can address affixes by name (e.g. "berserker") as well as by index ("#7").
+        std::string affixText;
+        for (const char* field : { "affixMod", "affixName" }) {
+            try {
+                RValue has = g_Yytk->CallBuiltin("variable_instance_exists", { enemy, RValue(field) });
+                if (!has.ToBoolean()) continue;
+                RValue v = g_Yytk->CallBuiltin("variable_instance_get", { enemy, RValue(field) });
+                if (v.m_Kind == VALUE_STRING) { std::string s = v.ToString(); if (!s.empty()) affixText += (affixText.empty() ? "" : " ") + s; }
+                else if (v.m_Kind == VALUE_ARRAY) {
+                    int n = (int)g_Yytk->CallBuiltin("array_length", { v }).ToDouble();
+                    for (int i = 0; i < n && i < 16; ++i) {
+                        RValue e = g_Yytk->CallBuiltin("array_get", { v, RValue((double)i) });
+                        std::string k = HhKeyOf(e);
+                        if (!k.empty()) affixText += (affixText.empty() ? "" : " ") + k;
+                    }
+                }
+            } catch (...) {}
+        }
+        if (!affixText.empty() && (rarity >= 2.0 || !keys.empty())) {
+            std::string word;
+            for (char ch : affixText + " ") {
+                if (std::isalnum((unsigned char)ch)) word += (char)std::tolower((unsigned char)ch);
+                else { if (word.size() > 2 && word != "affix") keys.push_back(word.rfind("affix", 0) == 0 ? word.substr(5) : word); word.clear(); }
+            }
+        }
+        if (g_HhTrace && (rarity >= 2.0 || !keys.empty())) Out("hh: affix text=\"" + affixText + "\"");
+        if (!keys.empty()) InterlockedIncrement(&g_HhAffixKills);
+
+        // A kill counts when the game flags it rare (rarity >= 2) or the string affix list is filled.
+        if (rarity < 2.0 && keys.empty()) return;
+        InterlockedIncrement(&g_HhRareKills);
+        if (g_HhTrace) {
+            std::string ks; for (const auto& k : keys) ks += (ks.empty() ? "" : ",") + k;
+            Out("hh: rare kill rarity=" + std::to_string((int)rarity) + " affixes=[" + ks + "]");
+        }
         if (!HhEquipped(player)) { InterlockedIncrement(&g_HhSkippedNotEquipped); if (g_HhTrace) Out("hh: belt not equipped, skipped"); return; }
         double spd = 60.0;
         try { spd = g_Yytk->CallBuiltin("game_get_speed", { RValue(0.0) }).ToDouble(); if (spd < 1.0) spd = 60.0; } catch (...) {}
         double frames = g_HhDurationSec * spd;
         int applied = 0;
-        if (n > 16) n = 16;
-        for (int i = 0; i < n; ++i) {
-            RValue e = g_Yytk->CallBuiltin("array_get", { list, RValue((double)i) });
-            std::string key = HhKeyOf(e);
+        for (const std::string& key : keys) {
             auto it = g_HhMap.find(key);
             if (it == g_HhMap.end() && key.rfind("affix", 0) == 0) it = g_HhMap.find(key.substr(5));
-            if (it != g_HhMap.end()) { HhApplyBuff(player, it->second, frames); ++applied; }
+            if (it != g_HhMap.end()) { HhApplyBuff(player, it->second, frames); ++applied; HhRememberStolen(player, it->first, g_HhDurationSec, it->second.id); }
             else if (g_HhTrace) Out("hh: no mapping for affix '" + key + "'");
         }
-        if (applied == 0 && g_HhDefaultOn) HhApplyBuff(player, g_HhDefault, frames);
+        if (applied == 0 && g_HhDefaultOn) { HhApplyBuff(player, g_HhDefault, frames); HhRememberStolen(player, "Rare Essence", g_HhDurationSec, g_HhDefault.id); }
     } catch (...) { Out("hh: EXCEPTION in HhOnKill"); }
 }
-
 
 #ifndef FORGEPACT_RELEASE
 // --- equip tracing (research build) ------------------------------------------
@@ -3060,11 +4101,24 @@ static void InstallEquipTraceHooks()
 }
 #endif
 
+// Live-verified 2026-09-04 (research probe, 5 real kills): EnemyDestroyKillProc runs with
+// self = the DYING ENEMY and argument 2 = the killing Player_obj (the earlier reading had
+// the roles swapped, which is why no kill ever showed enemy data).
 static RValue& Hook_EnemyDestroyKillProc(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
     RValue& res = g_Orig_EnemyDestroyKillProc ? g_Orig_EnemyDestroyKillProc(S, O, R, argc, A) : R;
     if (g_HhEnabled.load() && S && argc >= 3 && A && A[2]) {
-        try { HhOnKill(S, *A[2]); } catch (...) {}
+        try {
+            CInstance* player = nullptr;
+            try {
+                RValue pid = g_Yytk->CallBuiltin("variable_instance_get", { *A[2], RValue("id") });
+                if (pid.m_Kind == VALUE_REAL || pid.m_Kind == VALUE_INT32 || pid.m_Kind == VALUE_INT64)
+                    g_Yytk->GetInstanceObject((int32_t)pid.ToDouble(), player);
+            } catch (...) { player = nullptr; }
+            if (!player) player = O;
+            RValue enemy = S->ToRValue();
+            if (player) HhOnKill(player, enemy);
+        } catch (...) {}
     }
     return res;
 }
@@ -3103,6 +4157,7 @@ static void HeadhunterStatus()
     Out(std::string("headhunter: ") + (g_HhEnabled.load() ? "ON" : "off") + (g_HhForced.load() ? " (forced)" : "")
         + " hook=" + (g_HhHookInstalled ? "yes" : "no") + " dur=" + std::to_string(g_HhDurationSec) + "s"
         + " kills=" + std::to_string(g_HhKills) + " rare=" + std::to_string(g_HhRareKills)
+        + " rarityFlag=" + std::to_string(g_HhRarityKills) + " withAffixData=" + std::to_string(g_HhAffixKills)
         + " buffs=" + std::to_string(g_HhBuffsApplied) + " skippedNoBelt=" + std::to_string(g_HhSkippedNotEquipped)
         + " default=" + (g_HhDefaultOn ? std::to_string((long long)g_HhDefault.id) : std::string("off"))
         + " map=[" + m + "]");
@@ -3254,6 +4309,92 @@ STAT_HOOK(CalculateEndDamage)
 // o yuzden orada carpan hicbir sey yapmiyor.  Donus degeri ise tanimi
 // geregi hesaplanan deneyim - carpilacak dogru yer burasi.
 STAT_HOOK(EnemyCalculateExperience)
+
+// ===== Enemy movement speed (World -> Enemy Movement Speed) =====
+// PathFindStartPath is the one place the game turns an enemy's base speed
+// into path speed:  moveSpeedCur = moveSpeed * movementSpdMultiplier
+// (x1.35 while sprinting) -> path_start(myPath, moveSpeedCur, ...).
+// Scaling moveSpeed only for the duration of that call keeps the walk
+// animation in step with the path speed and cannot compound: the base value
+// is restored right after, before the enemy's own slow/debuff logic rewrites
+// movementSpdMultiplier.  Goblins (GoblinMovement) and online client
+// movement use their own paths and are intentionally left alone.
+static PFUNC_YYGMLScript g_OrigPathFindStartPath = nullptr;
+static double g_EnemySpeedMult = 1.0;
+static bool   g_EnemySpeedCtOnly = true;
+static volatile long g_EnemySpeedCalls = 0;
+static volatile long g_EnemySpeedApplied = 0;
+
+// IsChaosTower only looks at the room name, so a 250 ms cache is exact enough
+// and keeps a script call off the per-enemy path-start hot path.
+static bool InChaosTowerCached()
+{
+    static ULONGLONG last = 0;
+    static bool inside = false;
+    ULONGLONG now = GetTickCount64();
+    if (now - last > 250) {
+        last = now;
+        try { inside = g_Yytk->CallGameScript("gml_Script_IsChaosTower", {}).ToBoolean(); }
+        catch (...) { inside = false; }
+    }
+    return inside;
+}
+
+static RValue& Hook_PathFindStartPath(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    // Real counters even in player builds: a path start is a per-enemy,
+    // per-second event, not a per-frame hot path, and the status line is the
+    // only way a player can prove the hook is doing something.
+    InterlockedIncrement(&g_EnemySpeedCalls);
+    const double mult = g_EnemySpeedMult;
+    if (mult == 1.0 || !S || (g_EnemySpeedCtOnly && !InChaosTowerCached()))
+        return g_OrigPathFindStartPath ? g_OrigPathFindStartPath(S, O, R, argc, A) : R;
+    RValue inst = RValue(S);
+    RValue base;
+    bool scaled = false;
+    try {
+        base = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("moveSpeed") });
+        g_Yytk->CallBuiltin("variable_instance_set", { inst, RValue("moveSpeed"), RValue(base.ToDouble() * mult) });
+        scaled = true;
+    } catch (...) {}
+    RValue& r = g_OrigPathFindStartPath ? g_OrigPathFindStartPath(S, O, R, argc, A) : R;
+    if (scaled) {
+        try { g_Yytk->CallBuiltin("variable_instance_set", { inst, RValue("moveSpeed"), base }); } catch (...) {}
+        InterlockedIncrement(&g_EnemySpeedApplied);
+    }
+    return r;
+}
+
+static void InstallEnemySpeedHook()
+{
+    if (g_OrigPathFindStartPath) return;
+    HookOneScript("PathFindStartPath", "fp_enemy_speed", (PVOID)Hook_PathFindStartPath, &g_OrigPathFindStartPath);
+}
+
+// enemyspeed                  -> status
+// enemyspeed <mult> [ct|all]  -> e.g. "enemyspeed 1.5 ct"; x1 = vanilla
+static void EnemySpeedCmd(const std::string& rest)
+{
+    std::string a1, a2; a1 = FirstToken(rest, a2);
+    a1 = TrimCopy(a1);
+    if (!a1.empty() && Lower(a1) != "status") {
+        double mult = 1.0;
+        try { mult = std::stod(a1); } catch (...) { Out("enemyspeed: usage enemyspeed <mult> [ct|all]"); return; }
+        if (!(mult >= 1.0 && mult <= 4.0)) mult = 1.0;   // NaN or out of range -> vanilla
+        std::string scope = Lower(TrimCopy(a2));
+        if (scope == "ct") g_EnemySpeedCtOnly = true;
+        else if (scope == "all") g_EnemySpeedCtOnly = false;
+        g_EnemySpeedMult = mult;
+        // Shipped builds start without this hook; x1 is native behaviour.
+        if (mult > 1.0) InstallEnemySpeedHook();
+    }
+    char b[200];
+    sprintf_s(b, "enemyspeed: x%.2f %s | %s | path starts=%ld scaled=%ld",
+              g_EnemySpeedMult, g_EnemySpeedCtOnly ? "Chaos Tower only" : "every zone",
+              g_OrigPathFindStartPath ? "hook installed" : "vanilla (no hook)",
+              g_EnemySpeedCalls, g_EnemySpeedApplied);
+    Out(b);
+}
 
 // Yaratigin ustunde beliren "2 XP" baloncugu.
 //
@@ -3407,9 +4548,43 @@ static RValue& Hook_GetItemTooltipString(CInstance* S, CInstance* O, RValue& R, 
     }
     return r;
 }
+#ifndef FORGEPACT_RELEASE
+static int g_TipTraceLeft = 0;   // "tiptrace [n]": log the next n tooltip/stat-string calls
+static int g_TipDrawTraceLeft = 0;
+static std::string TipTraceArgs(int argc, RValue** A)
+{
+    std::string a;
+    for (int i = 0; i < argc && i < 12; ++i) {
+        std::string d = A && A[i] ? Describe(*A[i]) : std::string("?");
+        if (A && A[i] && A[i]->m_Kind == VALUE_OBJECT) {
+            try {
+                RValue isItem = g_Yytk->CallBuiltin("variable_struct_exists", { *A[i], RValue("itemInfoStruct") });
+                if (isItem.ToBoolean()) d = "item-struct";
+                else {
+                    CInstance* g = nullptr; g_Yytk->GetGlobalInstance(&g);
+                    RValue js; g_Yytk->CallBuiltinEx(js, "json_stringify", g, g, { *A[i] });
+                    d = "struct" + js.ToString();
+                }
+            } catch (...) {}
+        }
+        if (d.size() > 220) d = d.substr(0, 220) + "...";
+        for (auto& ch : d) if (ch == '\n' || ch == '\r') ch = '~';
+        a += " a" + std::to_string(i) + "=" + d;
+    }
+    return a;
+}
+#endif
 static PFUNC_YYGMLScript g_Orig_GetItemStatString = nullptr;
 static RValue& Hook_GetItemStatString(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) {
     RValue& r = g_Orig_GetItemStatString ? g_Orig_GetItemStatString(S, O, R, argc, A) : R;
+#ifndef FORGEPACT_RELEASE
+    if (g_TipTraceLeft > 0) {
+        --g_TipTraceLeft;
+        std::string out = r.ToString(); if (out.size() > 160) out = out.substr(0, 160) + "...";
+        for (auto& ch : out) if (ch == '\n' || ch == '\r') ch = '~';
+        Out("tiptrace GetItemStatString argc=" + std::to_string(argc) + TipTraceArgs(argc, A) + " -> \"" + out + "\"");
+    }
+#endif
     if (argc >= 1 && A) LogItemDict("statstr", A[0], r);
     // SWEEP: when armed and this is an uncut jewel, vary definition n[slot] across [lo..hi],
     // recompute via ReCreateItem, dump each resulting item. One jewel -> whole affix pool.
@@ -3470,10 +4645,239 @@ static void InstallDropMultHooks()
     HookOneScript("DropRubyKey",         "bp_drkey",    (PVOID)Hook_DropRubyKey,         &g_Orig_DropRubyKey);
 }
 
+// ===== Forged tooltip rows (Custom Forge `affix=` / Headhunter) ==================
+// Live-traced 2026-09-04: DrawInventoryItemV2(x, y, scale, item, ...) draws the whole
+// inventory tooltip and calls DrawInventoryStatsNew(x, y, item, statId, label, format,
+// style, ...) once per known stat.  That helper draws a row only when the item has the
+// stat and returns the row height (30) or 0; the caller adds the return value to its y
+// cursor.  Forged rows go in front of the first real stat row (format 2 = percent,
+// 3 = flat): ours are drawn at y, the game's row is handed y + rows*30, and the combined
+// height is returned so everything below (stats, lore, requirements, the box itself)
+// moves down with it.
+static PFUNC_YYGMLScript g_Orig_DrawInventoryItemV2 = nullptr;
+static PFUNC_YYGMLScript g_Orig_DrawInventoryStatsNew = nullptr;
+static int g_TipStatCallsInTooltip = 0;
+static std::vector<std::string> g_TipRows;   // rows still to draw in the current tooltip pass
+static bool g_TipRowsPending = false;
+static bool g_TipInsideStat = false;
+static const double kTipRowHeight = 30.0;
+
+static std::string HhTooltipLine()
+{
+    return "Steals the affixes of slain rare monsters for " + std::to_string((int)(g_HhDurationSec + 0.5)) + "s";
+}
+
+// Rows for a forged item: explicit fp_affix text (split on newlines, max 3), else the
+// built-in Headhunter line for mechanic=headhunter items, else nothing.
+static std::vector<std::string> ForgedTooltipRows(const RValue& item)
+{
+    std::vector<std::string> rows;
+    try {
+        if (item.m_Kind != VALUE_OBJECT || !item.m_Object) return rows;
+        std::string text;
+        RValue hasAffix = g_Yytk->CallBuiltin("variable_struct_exists", { item, RValue("fp_affix") });
+        if (hasAffix.ToBoolean()) text = g_Yytk->CallBuiltin("variable_struct_get", { item, RValue("fp_affix") }).ToString();
+        else if (HhItemIsHeadhunter(item)) text = HhTooltipLine();
+        else if (ForgedItemMechanicIs(item, "tyrant")) text = "Rare monsters hunt you\nMonsters near you rise to rare more often\nRares bear one more affix";
+        else if (ForgedItemMechanicIs(item, "beacon")) text = "Every monster on the map hunts you\nThey never lose your trail";
+        if (text.empty()) return rows;
+        std::stringstream stream(text);
+        std::string row;
+        while (std::getline(stream, row, '\n')) {
+            row = TrimCopy(row);
+            if (!row.empty() && rows.size() < 3) rows.push_back(row);
+        }
+    } catch (...) { rows.clear(); }
+    return rows;
+}
+
+// Draws one tooltip text row the way DrawInventoryStatsNew does (centred on x, current
+// font, 2 px dark outline) in gold, restoring the draw state afterwards.
+static void HhDrawTooltipLine(double x, double y, const std::string& text)
+{
+    RValue prevHalign = g_Yytk->CallBuiltin("draw_get_halign", {});
+    RValue prevColour = g_Yytk->CallBuiltin("draw_get_colour", {});
+    g_Yytk->CallBuiltin("draw_set_halign", { RValue(1.0) });
+    g_Yytk->CallBuiltin("draw_set_colour", { RValue(0.0) });
+    const double o = 2.0;
+    g_Yytk->CallBuiltin("draw_text", { RValue(x - o), RValue(y), RValue(text) });
+    g_Yytk->CallBuiltin("draw_text", { RValue(x + o), RValue(y), RValue(text) });
+    g_Yytk->CallBuiltin("draw_text", { RValue(x), RValue(y - o), RValue(text) });
+    g_Yytk->CallBuiltin("draw_text", { RValue(x), RValue(y + o), RValue(text) });
+    RValue gold = g_Yytk->CallBuiltin("make_colour_rgb", { RValue(242.0), RValue(196.0), RValue(98.0) });
+    g_Yytk->CallBuiltin("draw_set_colour", { gold });
+    g_Yytk->CallBuiltin("draw_text", { RValue(x), RValue(y), RValue(text) });
+    g_Yytk->CallBuiltin("draw_set_colour", { prevColour });
+    g_Yytk->CallBuiltin("draw_set_halign", { prevHalign });
+}
+
+static bool TipStatPresent(RValue** A, int argc)
+{
+    try {
+        if (argc < 4 || !A || !A[2] || !A[3] || A[2]->m_Kind != VALUE_OBJECT) return false;
+        RValue has = g_Yytk->CallBuiltin("variable_struct_exists", { *A[2], RValue("itemStatStruct") });
+        if (!has.ToBoolean()) return false;
+        RValue stats = g_Yytk->CallBuiltin("variable_struct_get", { *A[2], RValue("itemStatStruct") });
+        std::string key = std::to_string((long long)A[3]->ToDouble());
+        RValue present = g_Yytk->CallBuiltin("variable_struct_exists", { stats, RValue(key) });
+        return present.ToBoolean();
+    } catch (...) { return false; }
+}
+
+static RValue& Hook_DrawInventoryItemV2(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) {
+#ifndef FORGEPACT_RELEASE
+    bool trace = g_TipTraceLeft > 0;
+    if (trace) {
+        --g_TipTraceLeft;
+        Out("tiptrace DrawInventoryItemV2 self=" + HhSelfName(S) + " other=" + HhSelfName(O) + " argc=" + std::to_string(argc) + TipTraceArgs(argc, A));
+    }
+#endif
+    g_TipRows.clear();
+    g_TipRowsPending = false;
+    try {
+        if (argc > 3 && A && A[3]) { g_TipRows = ForgedTooltipRows(*A[3]); g_TipRowsPending = !g_TipRows.empty(); }
+    } catch (...) { g_TipRows.clear(); g_TipRowsPending = false; }
+    g_TipStatCallsInTooltip = 0;
+    RValue& r = g_Orig_DrawInventoryItemV2 ? g_Orig_DrawInventoryItemV2(S, O, R, argc, A) : R;
+#ifndef FORGEPACT_RELEASE
+    if (trace) Out("   DrawInventoryItemV2 -> " + Describe(r) + " statLines=" + std::to_string(g_TipStatCallsInTooltip) + " forgedRows=" + std::to_string(g_TipRows.size()));
+#endif
+    g_TipRowsPending = false;
+    return r;
+}
+
+static RValue& Hook_DrawInventoryStatsNew(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) {
+    ++g_TipStatCallsInTooltip;
+#ifndef FORGEPACT_RELEASE
+    bool trace = false;
+    if (g_TipTraceLeft > 0) {
+        double fmt = -1.0; try { if (argc > 5 && A && A[5] && (A[5]->m_Kind == VALUE_REAL || A[5]->m_Kind == VALUE_INT32 || A[5]->m_Kind == VALUE_INT64)) fmt = A[5]->ToDouble(); } catch (...) {}
+        trace = g_TipStatCallsInTooltip <= 2 || (fmt != 2.0 && fmt != 3.0) || TipStatPresent(A, argc);
+        if (trace) --g_TipTraceLeft;
+    }
+#endif
+    auto isNum = [](const RValue* v) { return v && (v->m_Kind == VALUE_REAL || v->m_Kind == VALUE_INT32 || v->m_Kind == VALUE_INT64); };
+    if (g_TipRowsPending && argc > 5 && A && isNum(A[0]) && isNum(A[1]) && isNum(A[5])) {
+        double fmt = -1.0; try { fmt = A[5]->ToDouble(); } catch (...) { fmt = -1.0; }
+        if ((fmt == 2.0 || fmt == 3.0) && TipStatPresent(A, argc)) {
+            try {
+                const double x = A[0]->ToDouble(), y = A[1]->ToDouble();
+                double extra = 0.0;
+                for (const std::string& row : g_TipRows) { HhDrawTooltipLine(x, y + extra, row); extra += kTipRowHeight; }
+                g_TipRowsPending = false;
+                RValue shifted(y + extra);
+                RValue* savedY = A[1];
+                A[1] = &shifted;
+                RValue& rr = g_Orig_DrawInventoryStatsNew ? g_Orig_DrawInventoryStatsNew(S, O, R, argc, A) : R;
+                A[1] = savedY;
+#ifndef FORGEPACT_RELEASE
+                if (g_TipTraceLeft > 0) Out("tiptrace forged rows at y=" + std::to_string(y) + " (" + std::to_string(g_TipRows.size()) + " rows), game row moved to y=" + std::to_string(y + extra) + " -> " + Describe(rr));
+#endif
+                R = RValue(rr.ToDouble() + extra);
+                return R;
+            } catch (...) { g_TipRowsPending = false; }
+        }
+    }
+    g_TipInsideStat = g_TipRowsPending;
+    RValue& r = g_Orig_DrawInventoryStatsNew ? g_Orig_DrawInventoryStatsNew(S, O, R, argc, A) : R;
+    g_TipInsideStat = false;
+#ifndef FORGEPACT_RELEASE
+    if (trace) Out("tiptrace DrawInventoryStatsNew #" + std::to_string(g_TipStatCallsInTooltip) + " present=" + (TipStatPresent(A, argc) ? "yes" : "no") + " argc=" + std::to_string(argc) + TipTraceArgs(argc, A) + " -> " + Describe(r));
+#endif
+    return r;
+}
+
+static bool g_ForgedTooltipHooksAttempted = false;
+static void InstallForgedTooltipHooks()
+{
+    if (g_ForgedTooltipHooksAttempted) return;
+    g_ForgedTooltipHooksAttempted = true;
+    HookOneScript("DrawInventoryItemV2",  "fp_tip_item", (PVOID)Hook_DrawInventoryItemV2,  &g_Orig_DrawInventoryItemV2);
+    HookOneScript("DrawInventoryStatsNew","fp_tip_stat", (PVOID)Hook_DrawInventoryStatsNew,&g_Orig_DrawInventoryStatsNew);
+}
+
+#ifndef FORGEPACT_RELEASE
+static PFUNC_YYGMLScript g_Orig_DrawTextOutline = nullptr;
+static RValue& Hook_TraceDrawTextOutline(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) {
+    if (g_TipInsideStat && g_TipDrawTraceLeft > 0) {
+        --g_TipDrawTraceLeft;
+        Out("tiptrace draw_text_outline self=" + HhSelfName(S) + " argc=" + std::to_string(argc) + TipTraceArgs(argc, A));
+    }
+    return g_Orig_DrawTextOutline ? g_Orig_DrawTextOutline(S, O, R, argc, A) : R;
+}
+static PFUNC_YYGMLScript g_Orig_DrawTooltip = nullptr;
+static RValue& Hook_DrawTooltip(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) {
+    if (g_TipTraceLeft > 0) {
+        --g_TipTraceLeft;
+        Out("tiptrace DrawTooltip argc=" + std::to_string(argc) + TipTraceArgs(argc, A));
+    }
+    return g_Orig_DrawTooltip ? g_Orig_DrawTooltip(S, O, R, argc, A) : R;
+}
+#endif
+
+
+#ifndef FORGEPACT_RELEASE
+// --- spawner CheckSpawn trace (Beacon: spawn-as-if-near groundwork) --------------------
+static int g_SpawnTraceLeft = 0;
+static long g_SpawnCheckCalls = 0, g_SpawnCheckSpawned = 0;
+static double g_SpawnDistMin = -1, g_SpawnDistMax = -1, g_SpawnNoMin = -1;   // spawn distances seen while tracing
+static PFUNC_YYGMLScript g_OrigCreatorCheckSpawn = nullptr;
+static RValue& Hook_TraceCreatorCheckSpawn(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    ++g_SpawnCheckCalls;
+    bool tr = g_SpawnTraceLeft > 0;
+    double dist = -1, cx = 0, cy = 0; int before = -1;
+    RValue enemyObj;
+    if (tr && S) {
+        try {
+            RValue inst = S->ToRValue();
+            cx = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("x") }).ToDouble();
+            cy = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("y") }).ToDouble();
+            RValue player; if (HhResolveLocalPlayer(player)) {
+                double px = g_Yytk->CallBuiltin("variable_instance_get", { player, RValue("x") }).ToDouble();
+                double py = g_Yytk->CallBuiltin("variable_instance_get", { player, RValue("y") }).ToDouble();
+                dist = std::sqrt((cx - px) * (cx - px) + (cy - py) * (cy - py));
+            }
+            enemyObj = g_Yytk->CallBuiltin("asset_get_index", { RValue("Enemy_Parent_obj") });
+            before = (int)g_Yytk->CallBuiltin("instance_number", { enemyObj }).ToDouble();
+        } catch (...) {}
+    }
+    std::string args = tr ? AggroArgs(argc, A) : std::string();
+    RValue& r = g_OrigCreatorCheckSpawn ? g_OrigCreatorCheckSpawn(S, O, R, argc, A) : R;
+    if (tr) {
+        int after = before;
+        try { if (before >= 0) after = (int)g_Yytk->CallBuiltin("instance_number", { enemyObj }).ToDouble(); } catch (...) {}
+        const bool spawned = after > before;
+        if (spawned) { ++g_SpawnCheckSpawned; if (dist >= 0) { if (g_SpawnDistMin < 0 || dist < g_SpawnDistMin) g_SpawnDistMin = dist; if (dist > g_SpawnDistMax) g_SpawnDistMax = dist; } }
+        else if (dist >= 0 && (g_SpawnNoMin < 0 || dist < g_SpawnNoMin)) g_SpawnNoMin = dist;
+        // log every spawn, plus one in twenty of the silent checks so the budget lasts
+        if (spawned || (g_SpawnCheckCalls % 20) == 0) {
+            --g_SpawnTraceLeft;
+            Out(std::string(spawned ? "spawn SPAWNED  " : "spawn check    ") + "self=" + TyInstName(S ? S->ToRValue() : RValue()) + " argc=" + std::to_string(argc) + args
+                + " dist=" + std::to_string((long long)dist) + " at=" + std::to_string((long long)cx) + "," + std::to_string((long long)cy)
+                + " -> " + Describe(r) + " enemies " + std::to_string(before) + "->" + std::to_string(after));
+        }
+    }
+    return r;
+}
+static void InstallSpawnTraceHook()
+{
+    if (g_OrigCreatorCheckSpawn) return;
+    HookOneScript("anon@849@gml_Object_Enemy_Creator_obj_Create_0", "bp_tr_checkspawn", (PVOID)Hook_TraceCreatorCheckSpawn, &g_OrigCreatorCheckSpawn);
+}
+#endif
 #ifndef FORGEPACT_RELEASE
 // Esya inceleme/duzenleme kancalari - yalnizca gelistirme derlemesi.
+
 static void InstallItemInspectHooks()
 {
+    InstallSpawnTraceHook();
+    InstallAggroTraceHooks();
+    InstallBeaconHook();
+    InstallTyrantHook();   // research build: always, for raritytrace / experiments
+    HookOneScript("DrawTooltip",         "bp_drawtip",  (PVOID)Hook_DrawTooltip,         &g_Orig_DrawTooltip);
+    InstallForgedTooltipHooks();   // research build: always, so tiptrace can watch any item
+    HookOneScript("draw_text_outline",   "bp_dto",      (PVOID)Hook_TraceDrawTextOutline, &g_Orig_DrawTextOutline);
     HookOneScript("GetItemTooltipString","bp_gitip",    (PVOID)Hook_GetItemTooltipString,&g_Orig_GetItemTooltipString);
     HookOneScript("GetItemStatString",   "bp_gistat",   (PVOID)Hook_GetItemStatString,   &g_Orig_GetItemStatString);
     if (!g_Orig_CreateItemNew)
@@ -3502,6 +4906,9 @@ static void InstallCustomForgeItemHooks()
                       (PVOID)Hook_GenerateItemRandomStats, &g_Orig_GenerateItemRandomStats);
     g_CustomForgeHooksActive = g_Orig_CreateItemNew || g_Orig_CreateItemInit ||
                                g_Orig_GenerateItemRandomStats;
+    for (const CustomForgeEntry& entry : g_CustomForgeEntries) {
+        if (!entry.affix.empty() || !entry.mechanic.empty()) { InstallForgedTooltipHooks(); break; }
+    }
     WriteCustomForgeStatus(g_CustomForgeHooksActive ? "runtime hooks installed"
                                                      : "runtime hook installation failed");
 }
@@ -4034,6 +5441,8 @@ static void InstallHook()
     LoadCustomForgeEntries();
     InstallCustomForgeItemHooks();
     HeadhunterAutoArm();
+    TyrantAutoArm();
+    BeaconAutoArm();
 
     // Development builds install the complete research surface eagerly.
     // Player builds install only the functional hook group requested by a
@@ -7207,6 +8616,220 @@ static bool HandleHeadhunterCommand(const std::string& lc, const std::string& re
             } catch (...) { Out("hhdefault: usage hhdefault <buffId> [v0] [v1] | off"); }
         }
 #ifndef FORGEPACT_RELEASE
+#ifndef FORGEPACT_RELEASE
+    } else if (lc == "spawnforce") {
+        // spawnforce <alarm> <count>: perform Alarm <alarm> on the <count> nearest awake
+        // Enemy_Creator_obj spawners (real `with`-style self via InvokeWithObject) and report
+        // the enemy count delta.
+        int alarmIdx = 1, count = 3; { std::stringstream ss(rest); ss >> alarmIdx >> count; }
+        try {
+            RValue cobj = g_Yytk->CallBuiltin("asset_get_index", { RValue("Enemy_Creator_obj") });
+            RValue eobj = g_Yytk->CallBuiltin("asset_get_index", { RValue("Enemy_Parent_obj") });
+            RValue player; if (!HhResolveLocalPlayer(player)) { Out("spawnforce: no player"); return true; }
+            double px = g_Yytk->CallBuiltin("variable_instance_get", { player, RValue("x") }).ToDouble();
+            double py = g_Yytk->CallBuiltin("variable_instance_get", { player, RValue("y") }).ToDouble();
+            std::vector<std::pair<double, CInstance*>> order;
+            AurieStatus ws = g_Yytk->InvokeWithObject(cobj, [&](CInstance* self, CInstance* other) {
+                try {
+                    RValue inst = self->ToRValue();
+                    double cx = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("x") }).ToDouble();
+                    double cy = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("y") }).ToDouble();
+                    order.push_back({ std::sqrt((cx - px) * (cx - px) + (cy - py) * (cy - py)), self });
+                } catch (...) {}
+            });
+            std::sort(order.begin(), order.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+            int before = (int)g_Yytk->CallBuiltin("instance_number", { eobj }).ToDouble();
+            int done = 0;
+            for (size_t i = 0; i < order.size() && done < count; ++i) {
+                CInstance* ci = order[i].second;
+                RValue res; AurieStatus es = g_Yytk->CallBuiltinEx(res, "event_perform", ci, ci, { RValue(2.0), RValue((double)alarmIdx) });   // ev_alarm = 2
+                ++done;
+                Out("spawnforce: creator " + TyInstName(ci->ToRValue()) + " dist=" + std::to_string((long long)order[i].first) + " alarm " + std::to_string(alarmIdx) + " performed st=" + std::to_string((int)es));
+            }
+            int after = (int)g_Yytk->CallBuiltin("instance_number", { eobj }).ToDouble();
+            Out("spawnforce: " + std::to_string(done) + " creators (of " + std::to_string(order.size()) + " visited, with st=" + std::to_string((int)ws) + "), enemies " + std::to_string(before) + " -> " + std::to_string(after));
+        } catch (...) { Out("spawnforce: EXC"); }
+    } else if (lc == "huntstats") {
+        // Snapshot of every awake Enemy_Parent_obj: per rarity, how many chase (mySocketTarget set),
+        // how many idle, and how far the idle ones are from the player (proves or disproves far aggro).
+        try {
+            RValue eobj = g_Yytk->CallBuiltin("asset_get_index", { RValue("Enemy_Parent_obj") });
+            RValue player; if (!HhResolveLocalPlayer(player)) { Out("huntstats: no player"); return true; }
+            double px = g_Yytk->CallBuiltin("variable_instance_get", { player, RValue("x") }).ToDouble();
+            double py = g_Yytk->CallBuiltin("variable_instance_get", { player, RValue("y") }).ToDouble();
+            int n = (int)g_Yytk->CallBuiltin("instance_number", { eobj }).ToDouble();
+            std::map<int, std::array<long, 6>> byRar;   // rarity -> {chasing, idle, idleFar(>1500), idleFarBigRange, chasingFar, canAggroIdle}
+            std::string farIdle;
+            for (int i = 0; i < n; ++i) {
+                RValue inst = g_Yytk->CallBuiltin("instance_find", { eobj, RValue((double)i) });
+                auto num = [&](const char* nm) { try { return g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(nm) }).ToDouble(); } catch (...) { return -99999.0; } };
+                int rar = (int)num("enemyRarity");
+                double ex = num("x"), ey = num("y"); double d = std::sqrt((ex - px) * (ex - px) + (ey - py) * (ey - py));
+                double tgt = num("mySocketTarget"), range = num("distance"), can = num("canAggro");
+                bool chasing = tgt >= 0;
+                auto& a = byRar[rar];
+                if (chasing) { ++a[0]; if (d > 1500) ++a[4]; }
+                else { ++a[1]; if (d > 1500) { ++a[2]; if (range > 100000) ++a[3]; } if (can > 0) ++a[5]; }
+                if (!chasing && rar >= 2 && d > 1500 && farIdle.size() < 900) farIdle += " " + TyInstName(inst) + "(d=" + std::to_string((long long)d) + ",range=" + std::to_string((long long)range) + ",canAggro=" + std::to_string((int)can) + ",tgt=" + std::to_string((long long)tgt)
+                    + ",vis=" + std::to_string((int)num("visible")) + ",dis=" + std::to_string((int)num("isDisabled")) + ",aggroT=" + std::to_string((int)num("aggroTimer")) + ",upd=" + std::to_string((int)num("enemyUpdateOnline")) + ",spawnAnim=" + std::to_string((int)num("spawnAnimationDone")) + ",delta=" + std::to_string((int)num("deltaTimer")) + ")";
+            }
+            Out("huntstats: awake enemies=" + std::to_string(n) + " policy=" + std::to_string(HuntPolicy()) + " scans(sampled 1/10) near<1500=" + std::to_string(g_BeScanNear) + " mid=" + std::to_string(g_BeScanMid) + " far>3000=" + std::to_string(g_BeScanFar));
+            for (auto& kv : byRar) Out("  rarity " + std::to_string(kv.first) + ": chasing=" + std::to_string(kv.second[0]) + " (far>1500: " + std::to_string(kv.second[4]) + ")  idle=" + std::to_string(kv.second[1]) + " (far>1500: " + std::to_string(kv.second[2]) + ", of which bigRange: " + std::to_string(kv.second[3]) + ", canAggro>0: " + std::to_string(kv.second[5]) + ")");
+            if (!farIdle.empty()) Out("  far idle rares:" + farIdle);
+        } catch (...) { Out("huntstats: EXC"); }
+    } else if (lc == "spawntrace") {
+        int n = 40; try { n = std::stoi(TrimCopy(rest)); } catch (...) {}
+        g_SpawnTraceLeft = n; Out("spawntrace -> next " + std::to_string(n) + " logged checks (so far calls " + std::to_string(g_SpawnCheckCalls) + ", spawned " + std::to_string(g_SpawnCheckSpawned)
+            + ", spawn dist min/max " + std::to_string((long long)g_SpawnDistMin) + "/" + std::to_string((long long)g_SpawnDistMax) + ", closest silent check " + std::to_string((long long)g_SpawnNoMin) + ")");
+    } else if (lc == "aggrotrace") {
+        int n = 40; try { n = std::stoi(TrimCopy(rest)); } catch (...) {}
+        g_AggroTraceLeft = n; g_AggroScanSeen.clear(); Out("aggrotrace -> next " + std::to_string(n) + " AI target events");
+    } else if (lc == "raritytrace") {
+        int n = 20; try { n = std::stoi(TrimCopy(rest)); } catch (...) {}
+        InstallTyrantHook();
+        g_RarTraceLeft = n; Out("raritytrace -> next " + std::to_string(n) + " EnemyRaritySettings calls (total so far " + std::to_string(g_TySeen) + ")");
+    } else if (lc == "rarityforce" || lc == "raritypre") {
+        double v = 3; int k = 5; { std::stringstream ss(rest); ss >> v >> k; }
+        if (lc == "rarityforce") { g_RarForceVal = v; g_RarForceLeft = k; } else { g_RarPreVal = v; g_RarPreLeft = k; }
+        Out(lc + " -> " + std::to_string((int)v) + " for the next " + std::to_string(k) + " enemies");
+    } else if (lc == "tiptrace") {
+        int n = 40; try { n = std::stoi(TrimCopy(rest)); } catch (...) {}
+        g_TipTraceLeft = n; g_TipDrawTraceLeft = 16; Out("tiptrace -> next " + std::to_string(n) + " tooltip calls");
+#endif
+    } else if (lc == "tyrant") {
+        std::string v = Lower(TrimCopy(rest));
+        if (v == "status" || v.empty()) { TyrantStatus(); return true; }
+        if (v == "off") { g_TyEnabled = false; g_TyForced = false; Out("tyrant: off"); return true; }
+        if (v == "force") g_TyForced = true;
+        InstallTyrantHook(); InstallBeaconHook(); g_TyEnabled.store(g_TyHookInstalled);
+        TyrantStatus();
+    } else if (lc == "beacon") {
+        std::string v = Lower(TrimCopy(rest));
+        if (v == "status" || v.empty()) { BeaconStatus(); return true; }
+        if (v == "off") { g_BeEnabled = false; g_BeForced = false; Out("beacon: off"); return true; }
+        if (v == "force") g_BeForced = true;
+        InstallBeaconHook(); g_BeEnabled.store(g_BeHookInstalled);
+        BeaconStatus();
+    } else if (lc == "beaconrange") {
+        try { double p = std::stod(TrimCopy(rest)); if (p >= 100.0 && p <= 10000000.0) g_BeRange = p; } catch (...) {}
+        Out("beaconrange -> " + std::to_string((long long)g_BeRange) + " px");
+    } else if (lc == "beaconwake" && Lower(TrimCopy(rest)).rfind("every", 0) == 0) {
+        try { int n = std::stoi(TrimCopy(rest.substr(rest.find("every") + 5))); if (n >= 1 && n <= 60) g_BeWakeEvery = n; } catch (...) {}
+        Out("beaconwake every -> " + std::to_string(g_BeWakeEvery) + " frames (1 = vanilla freezing every frame)");
+    } else if (lc == "beaconwake" && Lower(TrimCopy(rest)).rfind("creators", 0) == 0) {
+        std::string v = Lower(TrimCopy(rest.substr(rest.find("creators") + 8)));
+        if (v == "off" || v == "0") g_BeWakeCreators = false; else g_BeWakeCreators = true;
+        Out(std::string("beaconwake creators -> ") + (g_BeWakeCreators ? "on (spawners inside the radius wake up too)" : "off"));
+#ifndef FORGEPACT_RELEASE
+    } else if (lc == "creatorprobe") {
+        // Research: how many spawners exist vs are awake, and what a spawner carries.
+        for (const char* nm : kBeCreatorObjects) {
+            try {
+                RValue cobj = g_Yytk->CallBuiltin("asset_get_index", { RValue(nm) });
+                if (cobj.ToDouble() < 0) continue;
+                int before = (int)g_Yytk->CallBuiltin("instance_number", { cobj }).ToDouble();
+                g_Yytk->CallBuiltin("instance_activate_object", { cobj });
+                int after = (int)g_Yytk->CallBuiltin("instance_number", { cobj }).ToDouble();
+                Out(std::string("creatorprobe ") + nm + ": awake " + std::to_string(before) + " / total " + std::to_string(after));
+                if (after > 0 && std::string(nm) == "Enemy_Creator_obj") {
+                    RValue inst = g_Yytk->CallBuiltin("instance_find", { cobj, RValue(0.0) });
+                    RValue names = g_Yytk->CallBuiltin("variable_instance_get_names", { inst });
+                    int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble(); std::string line;
+                    for (int i = 0; i < n; ++i) {
+                        RValue vn = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) });
+                        std::string s = vn.ToString(), ls = Lower(s);
+                        if (ls.find("range") != std::string::npos || ls.find("dist") != std::string::npos || ls.find("spawn") != std::string::npos || ls.find("activ") != std::string::npos
+                            || ls.find("trigger") != std::string::npos || ls.find("done") != std::string::npos || ls.find("creat") != std::string::npos || ls.find("wait") != std::string::npos
+                            || ls.find("radius") != std::string::npos || ls.find("amount") != std::string::npos || ls.find("count") != std::string::npos || ls.find("alarm") != std::string::npos) {
+                            RValue v = g_Yytk->CallBuiltin("variable_instance_get", { inst, vn });
+                            std::string d = Describe(v); if (d.size() > 50) d = d.substr(0, 50) + "...";
+                            line += " " + s + "=" + d;
+                        }
+                    }
+                    Out("   vars:" + line);
+                    try { RValue al = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("alarm") }); Out("   alarm array: " + HhDescribeList(al)); } catch (...) {}
+                }
+            } catch (...) { Out(std::string("creatorprobe ") + nm + ": EXC"); }
+        }
+#endif
+    } else if (lc == "beaconwake") {
+        std::string v = Lower(TrimCopy(rest));
+        if (v == "all") g_BeWakeRadius = -1.0; else if (v == "off") g_BeWakeRadius = 0.0;
+        else { try { double p = std::stod(v); if (p >= 500.0 && p <= 100000.0) g_BeWakeRadius = p; } catch (...) {} }
+        Out("beaconwake -> " + (g_BeWakeRadius < 0 ? std::string("whole map") : g_BeWakeRadius == 0 ? std::string("off (vanilla freezing)") : std::to_string((long long)g_BeWakeRadius) + " px"));
+    } else if (lc == "beaconspawn") {
+        std::string v = Lower(TrimCopy(rest));
+        if (v == "off" || v == "0") g_BeSpawnNear = false; else g_BeSpawnNear = true;
+        Out(std::string("beaconspawn -> ") + (g_BeSpawnNear ? "on (awake spawners give birth as if you stood next to them)" : "off"));
+    } else if (lc == "beaconfarstep") {
+        std::string v = Lower(TrimCopy(rest));
+        if (v == "off" || v == "0") g_BeFarStep = false; else if (v == "on" || v == "1" || v.empty()) g_BeFarStep = true;
+        else { try { double d = std::stod(v); if (d >= 300 && d <= 20000) g_BeFarFrom = d; } catch (...) {} }
+        Out(std::string("beaconfarstep -> ") + (g_BeFarStep ? "on" : "off") + " from " + std::to_string((long long)g_BeFarFrom) + " px");
+    } else if (lc == "beaconmode") {
+        std::string v = Lower(TrimCopy(rest));
+        if (v == "rare") g_BeRareOnly = true; else if (v == "all") g_BeRareOnly = false;
+        Out(std::string("beaconmode -> ") + (g_BeRareOnly ? "rare (rares and champions only)" : "all monsters"));
+    } else if (lc == "tyrantchance" || lc == "tyrantaffix") {
+        try { double p = std::stod(TrimCopy(rest)); if (p >= 0.0 && p <= 100.0) { if (lc == "tyrantchance") g_TyRarePct = p; else g_TyAffixPct = p; } } catch (...) {}
+        Out(lc + " -> " + std::to_string((int)(lc == "tyrantchance" ? g_TyRarePct : g_TyAffixPct)) + " percent");
+    } else if (lc == "hhlabel") {
+        std::string v = Lower(TrimCopy(rest));
+        if (v == "off" || v == "0") g_HhLabelOn = false; else if (!v.empty()) g_HhLabelOn = true;
+        Out(std::string("hhlabel -> ") + (g_HhLabelOn.load() ? "ON" : "off") + " (" + std::to_string(g_HhStolen.size()) + " active, callback " + (g_HhObjectCallbackInstalled ? "ok" : "missing") + ")"
+            + " hudCalls=" + std::to_string(g_HhHudCalls) + " draws=" + std::to_string(g_HhLabelDraws) + " playerId=" + std::to_string(g_HhLabelPlayerId) + " offset=" + std::to_string((int)g_HhLabelOffsetPx) + " lastErr=" + g_HhLabelLastErr);
+    } else if (lc == "hhlabelprobe") {
+        auto num = [&](const char* fn, std::vector<RValue> a) -> std::string {
+            try { RValue v = g_Yytk->CallBuiltin(fn, a); return Describe(v); } catch (...) { return "EXC"; }
+        };
+        std::string s = "hhlabelprobe: playerId=" + std::to_string(g_HhLabelPlayerId);
+        if (g_HhLabelPlayerId >= 0) {
+            RValue id((double)g_HhLabelPlayerId);
+            s += " exists=" + num("instance_exists", { id }) + " x=" + num("variable_instance_get", { id, RValue("x") }) + " y=" + num("variable_instance_get", { id, RValue("y") }) + " bbox_top=" + num("variable_instance_get", { id, RValue("bbox_top") });
+        }
+        Out(s);
+        { RValue lp; std::string how; bool ok = HhResolveLocalPlayer(lp, &how);
+          Out("  resolver: " + how + (ok ? " -> " + Describe(lp) + " x=" + num("variable_instance_get", { lp, RValue("x") }) + " y=" + num("variable_instance_get", { lp, RValue("y") }) + " bbox_top=" + num("variable_instance_get", { lp, RValue("bbox_top") }) + " id=" + num("variable_instance_get", { lp, RValue("id") }) : std::string(" (not found)"))); }
+        RValue cam0 = g_Yytk->CallBuiltin("view_get_camera", { RValue(0.0) });
+        Out("  view_get_camera(0)=" + Describe(cam0) + " camera_get_active=" + num("camera_get_active", {}) + " camera_get_default=" + num("camera_get_default", {}) + " view_enabled=" + num("variable_global_get", { RValue("view_enabled") }));
+        for (int i = 0; i < 2; ++i) {
+            RValue c = i == 0 ? cam0 : g_Yytk->CallBuiltin("camera_get_default", {});
+            Out(std::string("  cam") + (i == 0 ? "0" : "Default") + ": view_x=" + num("camera_get_view_x", { c }) + " view_y=" + num("camera_get_view_y", { c }) + " view_w=" + num("camera_get_view_width", { c }) + " view_h=" + num("camera_get_view_height", { c }));
+            try {
+                RValue m = g_Yytk->CallBuiltin("camera_get_view_mat", { c });
+                RValue p = g_Yytk->CallBuiltin("camera_get_proj_mat", { c });
+                std::string ms, ps;
+                for (int k = 0; k < 16; ++k) { ms += " " + std::to_string(g_Yytk->CallBuiltin("array_get", { m, RValue((double)k) }).ToDouble()); ps += " " + std::to_string(g_Yytk->CallBuiltin("array_get", { p, RValue((double)k) }).ToDouble()); }
+                Out("    viewmat:" + ms); Out("    projmat:" + ps);
+            } catch (...) { Out("    matrices: EXC"); }
+        }
+        Out("  gui=" + num("display_get_gui_width", {}) + "x" + num("display_get_gui_height", {}) + " window=" + num("window_get_width", {}) + "x" + num("window_get_height", {}) + " room=" + num("variable_global_get", { RValue("room_width") }) + "x" + num("variable_global_get", { RValue("room_height") }) + " view_wport0=" + num("view_get_wport", { RValue(0.0) }) + " view_hport0=" + num("view_get_hport", { RValue(0.0) }) + " view_visible0=" + num("view_get_visible", { RValue(0.0) }));
+        Out("  active labels=" + std::to_string(g_HhStolen.size()) + " lastErr=" + g_HhLabelLastErr);
+    } else if (lc == "hhlabelmax") {
+        try { long v = std::stol(TrimCopy(rest)); if (v >= 1 && v <= 40) g_HhLabelMax = (size_t)v; } catch (...) {}
+        while (g_HhStolen.size() > g_HhLabelMax) g_HhStolen.erase(g_HhStolen.begin());
+        Out("hhlabelmax -> " + std::to_string(g_HhLabelMax) + " labels");
+    } else if (lc == "hhlabeloffset") {
+        try { g_HhLabelOffsetPx = std::stod(TrimCopy(rest)); } catch (...) {}
+        Out("hhlabeloffset -> " + std::to_string((int)g_HhLabelOffsetPx) + " px above the head");
+    } else if (lc == "hhlabelfont") {
+        std::string v = TrimCopy(rest);
+        if (Lower(v) == "off" || v.empty()) g_HhLabelFont.clear(); else g_HhLabelFont = v;
+        Out("hhlabelfont -> " + (g_HhLabelFont.empty() ? std::string("(current font)") : g_HhLabelFont));
+#ifndef FORGEPACT_RELEASE
+    } else if (lc == "fonts") {
+        std::string out;
+        for (int i = 0; i < 300; ++i) {
+            try {
+                RValue ex = g_Yytk->CallBuiltin("font_exists", { RValue((double)i) });
+                if (!ex.ToBoolean()) continue;
+                RValue nm = g_Yytk->CallBuiltin("font_get_name", { RValue((double)i) });
+                out += " " + std::to_string(i) + ":" + nm.ToString();
+            } catch (...) {}
+        }
+        Out("fonts:" + out);
+        try { RValue cur = g_Yytk->CallBuiltin("draw_get_font", {}); Out("current draw font index=" + std::to_string((int)cur.ToDouble())); } catch (...) {}
+#endif
     } else if (lc == "hhtrace") {
         g_HhTrace = (Lower(TrimCopy(rest)) != "off"); g_HhLastShape.clear(); Out(std::string("hhtrace -> ") + (g_HhTrace ? "ON" : "off"));
         if (g_HhTrace) InstallEquipTraceHooks();
@@ -7258,6 +8881,63 @@ static bool HandleHeadhunterCommand(const std::string& lc, const std::string& re
                 Out(line);
             } catch (...) { Out("  [" + std::to_string(i) + "] (dead struct)"); }
         }
+    } else if (lc == "hhscan") {
+        // hhscan -- research: pair every rare Enemy_Parent_obj (enemyRarity >= 2, or affix-flagged)
+        // with the Enemy_Health_Bar_Parent_obj drawn over it (nearest by position); the bar carries
+        // healthBarName and the affixName array = the displayed affix strings.  Output: index <-> name.
+        try {
+            struct E { double x, y; int rarity; std::string obj; std::vector<int> idx; };
+            std::vector<E> enemies;
+            RValue eobj = g_Yytk->CallBuiltin("asset_get_index", { RValue("Enemy_Parent_obj") });
+            int total = (int)g_Yytk->CallBuiltin("instance_number", { eobj }).ToDouble();
+            for (int n = 0; n < total && n < 600; ++n) {
+                RValue id = g_Yytk->CallBuiltin("instance_find", { eobj, RValue((double)n) });
+                E e; e.rarity = (int)HhReadNumber(id, "enemyRarity", -1.0);
+                e.x = HhReadNumber(id, "x", 0.0); e.y = HhReadNumber(id, "y", 0.0);
+                try {
+                    RValue flags = g_Yytk->CallBuiltin("variable_instance_get", { id, RValue("enemyAffix") });
+                    if (flags.m_Kind == VALUE_ARRAY) {
+                        int len = (int)g_Yytk->CallBuiltin("array_length", { flags }).ToDouble();
+                        for (int i = 0; i < len && i < 128; ++i) {
+                            RValue f = g_Yytk->CallBuiltin("array_get", { flags, RValue((double)i) });
+                            double v = (f.m_Kind == VALUE_BOOL) ? (f.ToBoolean() ? 1.0 : 0.0) : ((f.m_Kind == VALUE_REAL || f.m_Kind == VALUE_INT32 || f.m_Kind == VALUE_INT64) ? f.ToDouble() : 0.0);
+                            if (v != 0.0) e.idx.push_back(i);
+                        }
+                    }
+                } catch (...) {}
+                if (e.rarity < 2 && e.idx.empty()) continue;
+                try { RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { id, RValue("object_index") }); e.obj = g_Yytk->CallBuiltin("object_get_name", { oi }).ToString(); } catch (...) { e.obj = "?"; }
+                enemies.push_back(e);
+            }
+            RValue bobj = g_Yytk->CallBuiltin("asset_get_index", { RValue("Enemy_Health_Bar_Parent_obj") });
+            int bars = (int)g_Yytk->CallBuiltin("instance_number", { bobj }).ToDouble();
+            int paired = 0;
+            for (int n = 0; n < bars && n < 600; ++n) {
+                RValue id = g_Yytk->CallBuiltin("instance_find", { bobj, RValue((double)n) });
+                std::string names;
+                try {
+                    RValue v = g_Yytk->CallBuiltin("variable_instance_get", { id, RValue("affixName") });
+                    if (v.m_Kind == VALUE_ARRAY) {
+                        int len = (int)g_Yytk->CallBuiltin("array_length", { v }).ToDouble();
+                        for (int i = 0; i < len && i < 8; ++i) { RValue s = g_Yytk->CallBuiltin("array_get", { v, RValue((double)i) }); names += (i ? "|" : "") + s.ToString(); }
+                    } else if (v.m_Kind == VALUE_STRING) names = v.ToString();
+                } catch (...) {}
+                if (names.empty()) continue;
+                double bx = HhReadNumber(id, "x", 0.0), by = HhReadNumber(id, "y", 0.0);
+                std::string title; try { title = g_Yytk->CallBuiltin("variable_instance_get", { id, RValue("healthBarName") }).ToString(); } catch (...) {}
+                const E* best = nullptr; double bestD = 1e18;
+                for (const E& e : enemies) { double d = (e.x - bx) * (e.x - bx) + (e.y - by) * (e.y - by); if (d < bestD) { bestD = d; best = &e; } }
+                std::string line = "hhpair bar[" + std::to_string(n) + "] \"" + title + "\" affixes=[" + names + "]";
+                if (best) {
+                    line += " -> " + best->obj + " rarity=" + std::to_string(best->rarity) + " idx=[";
+                    for (size_t k = 0; k < best->idx.size(); ++k) line += (k ? "," : "") + std::to_string(best->idx[k]);
+                    line += "] dist=" + std::to_string((int)std::sqrt(bestD));
+                    ++paired;
+                }
+                Out(line);
+            }
+            Out("hhscan: " + std::to_string(total) + " enemies (" + std::to_string(enemies.size()) + " rare/flagged), " + std::to_string(bars) + " bars, " + std::to_string(paired) + " named pairs");
+        } catch (...) { Out("hhscan EXCEPTION"); }
     } else if (lc == "pcall") {
         // pcall <Script> [args...] -- call gml_Script_<Script> with self = first Player_obj.  Numeric tokens -> real,
         // true/false -> bool, else string.  Result is Describe'd and, for structs/arrays, json_stringify'd to bp_ipc\pcall.json.
@@ -7308,7 +8988,8 @@ static void RunCommand(const std::string& line)
     static const std::unordered_set<std::string> kPlayerCommands = {
         "ping", "density", "reveal", "specialrate", "dropmult",
         "stat", "statadd", "raredrop", "droprate", "dungeonkey",
-        "headhunter", "hhdur", "hhmap", "hhdefault"
+        "headhunter", "hhdur", "hhmap", "hhdefault", "hhlabel", "tyrant", "beacon", "beaconrange", "beaconmode", "beaconwake", "beaconspawn", "beaconfarstep", "tyrantchance", "tyrantaffix", "hhlabelfont", "hhlabeloffset", "hhlabelmax",
+        "enemyspeed"
     };
     if (kPlayerCommands.find(lc) == kPlayerCommands.end()) {
         Out("command unavailable in player build: " + cmd);
@@ -7644,6 +9325,8 @@ static void RunCommand(const std::string& line)
         while (!num.empty() && (num.back()=='\r'||num.back()=='\n'||num.back()==' ')) num.pop_back();
         try { SpecialRate(Lower(key), std::stoi(num)); }
         catch (...) { Out("specialrate: kullanim -> specialrate rift 3"); }
+    } else if (lc == "enemyspeed") {
+        EnemySpeedCmd(rest);
     } else if (lc == "reveal") {
         std::string v = Lower(rest);
         while (!v.empty() && (v.back()=='\r'||v.back()=='\n'||v.back()==' ')) v.pop_back();
@@ -7851,6 +9534,7 @@ void FrameCallback(FWFrame& FrameContext)
     UNREFERENCED_PARAMETER(FrameContext);
     static uint32_t fc = 0;
     g_RuntimeFrame = fc;
+    FlushItemStats(fc);
     if (fc == 1) Trace("0-framecallback-running");
 
     // Special Content uses the game's eSt gates.  The helper is also safe in
@@ -8041,6 +9725,7 @@ EXPORTED AurieStatus ModuleInitialize(
 #endif
 
     AurieStatus st = g_Yytk->CreateCallback(Module, EVENT_FRAME, (PVOID)FrameCallback, 0);
+    InstallHeadLabelHook();
     if (!AurieSuccess(st))
         Out("FAILED to register frame callback st=" + std::to_string((int)st));
     else

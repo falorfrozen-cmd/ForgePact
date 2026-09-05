@@ -108,6 +108,12 @@ DEFAULTS = {
     "density_on": False,
     "auto_apply": True,
     "map_reveal": False,
+    "headhunter": False,
+    "tyrant": False,
+    "beacon": False,
+    # Enemy movement speed bonus in percent (0 = vanilla) and its scope.
+    "enemy_speed": 0,
+    "enemy_speed_ct": True,
     "spawners": {k: 1 for k, *_ in SPAWNERS},
     "drops": {k: 1 for k, *_ in DROPS},
     "keys": {k: 1 for k, *_ in KEYS},
@@ -376,6 +382,29 @@ def build_key_cmds(settings: dict, include_resets: bool = False) -> list:
     return out
 
 
+ENEMY_SPEED_MAX = 300   # percent; x4 is where ranged sprinters stop being fair
+ENEMY_SPEED_STEP = 5
+
+
+def enemy_speed_pct(value) -> int:
+    """Clamp an enemy speed bonus to the panel's 0..300 % range in 5 % steps."""
+    try:
+        pct = float(value)
+    except (TypeError, ValueError):
+        return 0
+    if pct != pct:  # NaN
+        return 0
+    pct = max(0.0, min(float(ENEMY_SPEED_MAX), pct))
+    return int(round(pct / ENEMY_SPEED_STEP) * ENEMY_SPEED_STEP)
+
+
+def enemy_speed_cmd(cfg: dict) -> str:
+    """Plugin command for the current enemy speed setting; x1 resets a live hook."""
+    pct = enemy_speed_pct(cfg.get("enemy_speed", 0))
+    scope = "ct" if cfg.get("enemy_speed_ct", True) else "all"
+    return f"enemyspeed {1.0 + pct / 100.0:g} {scope}"
+
+
 def build_cmds(cfg: dict) -> list:
     d = min(5.0, float(cfg.get("density", 1))) if cfg.get("density_on") else 1.0
     # A new game process already starts at vanilla values.  Sending x1/Off
@@ -389,6 +418,20 @@ def build_cmds(cfg: dict) -> list:
         out.append(f"density {d:g}")
     if cfg.get("map_reveal", False):
         out.append("reveal 1")
+    if cfg.get("headhunter", False):
+        # Custom Forge Headhunter item: rare kills grant the monster's affixes as buffs.
+        # "force" also covers the not-yet-finished equipped-belt check (see plugin notes).
+        out.append("headhunter force")
+    if cfg.get("tyrant", False):
+        # Custom Forge Tyrant's Crown item: monsters near you rise to rare more often,
+        # rares carry one more affix.  "force" stands in for the equipped-item check.
+        out.append("tyrant force")
+    if cfg.get("beacon", False):
+        # Custom Forge Beacon amulet: every monster on the map hunts the player.
+        out.append("beacon force")
+    if enemy_speed_pct(cfg.get("enemy_speed", 0)) > 0:
+        # Enemies path-find toward you faster; "ct" keeps it to Chaos Tower.
+        out.append(enemy_speed_cmd(cfg))
     for key, *_ in SPAWNERS:
         value = int(cfg['spawners'].get(key, 1))
         if value > 1:
@@ -1021,19 +1064,39 @@ def wait_for_plugin_ready(cfg: dict, timeout: float = 60.0) -> bool:
     return False
 
 
+def plugin_boot_count(cfg=None) -> int:
+    """How many times the plugin has started, read from its own log.
+
+    The plugin appends one 'BloodPact plugin loaded' line per game start, so a
+    change in this count identifies a NEW game process even when the game was
+    closed and reopened between two 5-second polls (a boolean running flag
+    misses that and the startup commands are never sent).
+    """
+    try:
+        text = (ipc_dir(cfg) / "out.txt").read_text(encoding="utf-8", errors="ignore")
+        return text.count("BloodPact plugin loaded")
+    except Exception:
+        return -1
+
+
 def watcher():
     """Re-apply the settings automatically every time the game LAUNCHES."""
     # False is intentional: if the panel itself starts after the game, the
     # first pass must still attach and apply the saved configuration.
     was_running = False
+    last_boot = None
     while True:
         time.sleep(5)
         try:
             cfg = load_cfg()
             now = game_running(cfg)
-            if now and not was_running and cfg.get("auto_apply"):
+            boot = plugin_boot_count(cfg)
+            new_process = now and (not was_running or (last_boot is not None and boot != last_boot))
+            if new_process and cfg.get("auto_apply"):
                 if wait_for_plugin_ready(cfg):
                     apply_all(cfg)
+            if now:
+                last_boot = boot
             was_running = now
         except Exception:
             pass
@@ -1116,7 +1179,11 @@ class H(BaseHTTPRequestHandler):
                     # float("3") -> 3.0; the plugin prints with %g so it shows as "x3".
                     d = max(1.0, min(5.0, float(val)))
                     cfg["density"] = round(d * 2) / 2
-                elif key in ("density_on", "auto_apply", "map_reveal"):
+                elif key == "enemy_speed":
+                    cfg["enemy_speed"] = enemy_speed_pct(val)
+                elif key == "enemy_speed_ct":
+                    cfg["enemy_speed_ct"] = bool(val)
+                elif key in ("density_on", "auto_apply", "map_reveal", "headhunter", "tyrant", "beacon"):
                     cfg[key] = bool(val)
                 save_cfg(cfg)
                 live = ""
@@ -1142,6 +1209,15 @@ class H(BaseHTTPRequestHandler):
                         send_cmds([f"density {cfg['density'] if cfg['density_on'] else 1}"], cfg)
                     elif key == "map_reveal":
                         send_cmds([f"reveal {1 if cfg['map_reveal'] else 0}"], cfg)
+                    elif key == "headhunter":
+                        send_cmds(["headhunter force" if cfg["headhunter"] else "headhunter off"], cfg)
+                    elif key == "tyrant":
+                        send_cmds(["tyrant force" if cfg["tyrant"] else "tyrant off"], cfg)
+                    elif key == "beacon":
+                        send_cmds(["beacon force" if cfg["beacon"] else "beacon off"], cfg)
+                    elif key in ("enemy_speed", "enemy_speed_ct"):
+                        # Always explicit: "enemyspeed 1 ct" turns a live hook back to vanilla.
+                        send_cmds([enemy_speed_cmd(cfg)], cfg)
                     live = " (applied live)"
                     LAST["applied"] = time.strftime("%H:%M:%S")
                 self._json({"ok": f"saved{live}", "cfg": cfg})
@@ -1327,6 +1403,21 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
 </div>
 
 <div class="card tab-card" data-tab="world">
+  <h2>&#127939; Enemy Movement Speed</h2>
+  <div class="hint">Enemies run at you faster, so waves end sooner. Scales the game's own path speed (base speed &times; bonus); slows and debuffs still apply on top, goblins keep their own pace. <b>Only inside Chaos Tower</b> leaves every other zone vanilla - switch it off to speed up enemies everywhere.</div>
+  <div class="row">
+    <span class="lbl">Speed bonus</span>
+    <input type="range" id="enemyspeed" min="0" max="300" step="5">
+    <span class="val" id="enemyspeedval">off</span>
+  </div>
+  <div class="row" style="border:none">
+    <span class="lbl">Only inside Chaos Tower</span>
+    <label class="switch"><input type="checkbox" id="enemyspeed_ct"><span class="sl"></span></label>
+    <span class="val" id="enemyspeedctval">CT only</span>
+  </div>
+</div>
+
+<div class="card tab-card" data-tab="world">
   <h2>&#127757; Special Content Spawns</h2>
   <div class="hint">Multiplies the game's own spawn markers, so the game places and runs each mechanic itself - nothing is hand-placed. Higher = more of that content per zone. Applies to newly loaded zones. (The Abyss is not listed: it sits behind a discovery gate that is not solved yet.)</div>
   <div id="spawners"></div>
@@ -1395,6 +1486,34 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
     <span class="lbl">Reveal full map</span>
     <label class="switch"><input type="checkbox" id="map_reveal"><span class="sl"></span></label>
     <span class="val" id="mapval">on</span>
+  </div>
+</div>
+
+<div class="card tab-card" data-tab="world">
+  <h2>&#129686; Headhunter</h2>
+  <div class="hint">For an item forged with <b>Mechanic: Headhunter</b> in the Item Editor. While on, killing a rare or champion monster grants its affixes to you as 20-second buffs (Extra Fast &rarr; movement speed, Berserker/Raging/Enraged &rarr; attack speed, Vampiric &rarr; life replenish, elemental Enchanted &rarr; cast rate, others &rarr; movement speed for now). The equipped-belt check is still in progress, so the effect is active whenever this switch is on and the forged item exists.</div>
+  <div class="row" style="border:none">
+    <span class="lbl">Headhunter buffs on rare kills</span>
+    <label class="switch"><input type="checkbox" id="headhunter"><span class="sl"></span></label>
+    <span class="val" id="hhval">on</span>
+  </div>
+</div>
+<div class="card tab-card" data-tab="world">
+  <h2>&#128081; Tyrant's Crown</h2>
+  <div class="hint">For an item forged with <b>Mechanic: Tyrant's Crown</b> in the Item Editor. While on, normal monsters near you rise to rare more often (15% each) and every rare or champion carries one extra affix. Pairs with Headhunter: more rares, more affixes to steal.</div>
+  <div class="row" style="border:none">
+    <span class="lbl">Tyrant's Crown: more rares, richer rares</span>
+    <label class="switch"><input type="checkbox" id="tyrant"><span class="sl"></span></label>
+    <span class="val" id="tyval">on</span>
+  </div>
+</div>
+<div class="card tab-card" data-tab="world">
+  <h2>&#128293; Beacon</h2>
+  <div class="hint">For an amulet forged with <b>Mechanic: Beacon</b> in the Item Editor. While on, every monster on the map hunts you the moment it spawns and never turns back, through the game's own aggro system. Plugin commands: <code>beaconmode rare</code> limits it to rares and champions, <code>beaconrange &lt;px&gt;</code> caps the distance.</div>
+  <div class="row" style="border:none">
+    <span class="lbl">Beacon: every monster hunts you</span>
+    <label class="switch"><input type="checkbox" id="beacon"><span class="sl"></span></label>
+    <span class="val" id="beval">on</span>
   </div>
 </div>
 
@@ -1479,6 +1598,12 @@ async function boot(){
   openTab(initial,false);
   document.getElementById('autoapply').checked=!!c.auto_apply;
   document.getElementById('den_on').checked=!!c.density_on;
+  const esp=+(c.enemy_speed||0), esc=(c.enemy_speed_ct!==false);
+  document.getElementById('enemyspeed').value=esp;
+  document.getElementById('enemyspeedval').textContent=esp>0?'+'+esp+'%':'off';
+  document.getElementById('enemyspeedval').className='val '+(esp>0?'':'off');
+  document.getElementById('enemyspeed_ct').checked=esc;
+  document.getElementById('enemyspeedctval').textContent=esc?'CT only':'all zones';
   document.getElementById('den').value=c.density;
   document.getElementById('denval').textContent=(c.density_on?'x'+c.density:'off');
   document.getElementById('denval').className='val '+(c.density_on?'':'off');
@@ -1486,6 +1611,18 @@ async function boot(){
   document.getElementById('map_reveal').checked=mr;
   document.getElementById('mapval').textContent=mr?'on':'off';
   document.getElementById('mapval').className='val '+(mr?'':'off');
+  const hh=!!c.headhunter;
+  document.getElementById('headhunter').checked=hh;
+  document.getElementById('hhval').textContent=hh?'on':'off';
+  const ty=!!c.tyrant;
+  document.getElementById('tyrant').checked=ty;
+  document.getElementById('tyval').textContent=ty?'on':'off';
+  document.getElementById('tyval').className='val '+(ty?'':'off');
+  const be=!!c.beacon;
+  document.getElementById('beacon').checked=be;
+  document.getElementById('beval').textContent=be?'on':'off';
+  document.getElementById('beval').className='val '+(be?'':'off');
+  document.getElementById('hhval').className='val '+(hh?'':'off');
   document.getElementById('exepath').value=c.game_exe||'';
   document.getElementById('spawners').innerHTML=ST.spawners.map(([k,i,l,mx])=>row('spawners',k,l,c.spawners[k]||1,'',mx)).join('');
   document.getElementById('keys').innerHTML=ST.keys.map(([k,l,t])=>{
@@ -1565,11 +1702,41 @@ function bind(){
     await j('/api/set',{method:'POST',body:JSON.stringify({key:'auto_apply',value:e.target.checked})});
     toast('auto-apply '+(e.target.checked?'ON':'OFF'));
   };
+  const esp=document.getElementById('enemyspeed');
+  const espText=(v)=>v>0?'+'+v+'%':'off';
+  esp.oninput=()=>{const v=+esp.value;document.getElementById('enemyspeedval').textContent=espText(v);document.getElementById('enemyspeedval').className='val '+(v>0?'':'off');};
+  esp.onchange=async()=>{
+    const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'enemy_speed',value:+esp.value})});
+    toast('enemy speed '+espText(+esp.value)+' - '+(res.ok||res.err));
+  };
+  document.getElementById('enemyspeed_ct').onchange=async(e)=>{
+    const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'enemy_speed_ct',value:e.target.checked})});
+    document.getElementById('enemyspeedctval').textContent=e.target.checked?'CT only':'all zones';
+    toast('enemy speed scope: '+(e.target.checked?'Chaos Tower only':'all zones')+' - '+(res.ok||res.err));
+  };
   document.getElementById('map_reveal').onchange=async(e)=>{
     const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'map_reveal',value:e.target.checked})});
     document.getElementById('mapval').textContent=e.target.checked?'on':'off';
     document.getElementById('mapval').className='val '+(e.target.checked?'':'off');
     toast('map reveal '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
+  };
+  document.getElementById('headhunter').onchange=async(e)=>{
+    const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'headhunter',value:e.target.checked})});
+    document.getElementById('hhval').textContent=e.target.checked?'on':'off';
+    document.getElementById('hhval').className='val '+(e.target.checked?'':'off');
+    toast('headhunter '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
+  };
+  document.getElementById('tyrant').onchange=async(e)=>{
+    const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'tyrant',value:e.target.checked})});
+    document.getElementById('tyval').textContent=e.target.checked?'on':'off';
+    document.getElementById('tyval').className='val '+(e.target.checked?'':'off');
+    toast('tyrant '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
+  };
+  document.getElementById('beacon').onchange=async(e)=>{
+    const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'beacon',value:e.target.checked})});
+    document.getElementById('beval').textContent=e.target.checked?'on':'off';
+    document.getElementById('beval').className='val '+(e.target.checked?'':'off');
+    toast('beacon '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
   };
   document.getElementById('applyall').onclick=async()=>{
     const res=await j('/api/applyall',{method:'POST',body:'{}'});

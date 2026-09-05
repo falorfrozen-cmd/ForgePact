@@ -58,6 +58,148 @@ check is satisfied for the duration of the activation call only, so both can app
 every difficulty. Verified live on 2026-09-03: two markers gave two Shadow Realm portals
 and two Chaos Towers in one zone.
 
+### Enemy Movement Speed
+**World → Enemy Movement Speed** adds 0-300 % to how fast monsters run at you, which is the
+quickest way to shorten Chaos Tower waves. The plugin hooks `PathFindStartPath`, the single
+place the game turns an enemy's base speed into path speed
+(`moveSpeedCur = moveSpeed × movementSpdMultiplier` → `path_start`), and scales the base speed
+only for the duration of that call: the walk animation stays in step, slows and debuffs still
+apply on top, and nothing compounds. **Only inside Chaos Tower** (default on) keeps every other
+zone vanilla; goblins and online client movement use their own movement code and are not
+touched. Command: `enemyspeed <multiplier> [ct|all]` (`enemyspeed 1.5 ct`), `enemyspeed` alone
+prints the status with path-start and applied counters.
+
+### Headhunter (Custom Forge mechanic)
+Forge any item in the Item Editor with **Mechanic: Headhunter** and switch on **World →
+Headhunter** in the panel. Killing a **rare or champion** monster then grants its affixes to
+you as 20-second buffs, through the game's own on-kill dispatcher and `BuffAdd`:
+
+| monster affix | buff you gain (20 s) |
+|---|---|
+| Extra Fast | movement speed |
+| Berserker, Raging, Enraged, Extra Strong, Punisher, Sharpshooter, Multishot, Burst Shot | attack speed |
+| Vampiric, Venomous | life replenish |
+| Fire Enchanted, Pyromaniac, Blazing, Meteoric | fire skill damage |
+| Lightning Enchanted, Thunder Caller | lightning skill damage |
+| Cold Enchanted | cast rate (no cold-damage buff id measured yet) |
+| Arcana's Curse, Possessed | arcane skill damage |
+| Manaburn | mana replenish + arcane damage |
+| Stoneskin, Thick Skin, Magic Resistant, Antimagus | physical + magic damage reduction |
+| Shielding, Fearless, Divine, Fallen Angel | defense |
+| Colossal, Champion, Commander, Guardian of Hell, Bloating | max life + max mana |
+| Stealthy, Time Lapsing, Wasped, Haunted | dodge |
+| Treasure Gobbler | magic find |
+| Fractal | experience gain |
+
+**Head labels.** Every stolen affix floats above the character's name bar in gold with its
+seconds left (`Extra Fast 17s   Vampiric 19s`, three per row), so you can see what you took
+without opening the buff bar. The labels are drawn right after the game's own HUD buff row
+(`DrawHudBuffs`) and projected through the active camera, so they follow the character at any
+resolution. Commands: `hhlabel on|off`, `hhlabeloffset <px>` (height above the head, default
+150), `hhlabelmax <n>` (labels kept, default 12, oldest drops first), `hhlabelfont <index|off>`.
+
+Commands: `headhunter on|off|force|status`, `hhdur <seconds>`, `hhmap <affix> <buffId> [v0] [v1]`,
+`hhdefault <buffId>|off`. The panel sends `headhunter force` at every game start while the switch
+is on; `force` also stands in for the equipped-item check, which is not finished yet.
+
+### Tyrant's Crown (Custom Forge mechanic)
+Forge a helmet in the Item Editor with **Mechanic: Tyrant's Crown** and switch on **World →
+Tyrant's Crown** in the panel. While it is on, monsters that spawn near you rise from normal to
+**rare** with a 30 % chance (they get two affixes), and every rare or champion carries **one more
+affix**. Ancients and bosses are never touched.
+
+How: `EnemyRaritySettings(typeId)` runs from `Enemy_Parent_obj` Alarm 4 with the monster as
+self, after the spawner decided `enemyRarity` and filled `enemyAffix` / `affixList`, but before
+the stats, affix effects and the health bar are built (live-traced 2026-09-05: entry and exit
+state identical). ForgePact changes the rarity and the affix flags at its entry, and the game
+builds the monster exactly as if it had rolled that way — yellow name, affix labels and affix
+behaviour included. Only live-confirmed affix indices are handed out. Live test: 847 monsters,
+259 raised, 354 extra affixes, no crash.
+
+**Rare monsters hunt you.** While the crown is on, every rare or champion also uses the Beacon's
+hunt rules (see below): a map-sized aggro range, no leash, and it is kept awake inside the
+`beaconwake` radius, so rares come for you from across the zone while normal monsters keep the
+vanilla rules. Live check 2026-09-05 at the default 15 %: 243 monsters seen, 30 raised to rare,
+64 extra affixes.
+
+Commands: `tyrant on|off|force|status`, `tyrantchance <pct>` (normal → rare, default 30),
+`tyrantaffix <pct>` (extra affix on rares/champions, default 100). The panel sends `tyrant force`
+at every game start while its switch is on. Research build: `raritytrace <n>` logs entry/exit
+state of the next n monsters.
+
+### Beacon (Custom Forge mechanic)
+Forge an amulet in the Item Editor with **Mechanic: Beacon** and switch on **World → Beacon**
+in the panel. While it is on, **every monster on the map hunts you** the moment it spawns, and
+none of them turns back.
+
+How: an idle monster runs `PathFindScanTick` every few frames: `instance_nearest` finds the
+player and, if `point_distance` is below the monster's **`distance`** variable (300 px vanilla;
+`aggroRange` is a different value), `PathFindTakeTarget(player)` sets the target and
+`PathFindAggroBroadcast` wakes the pack. In chase state `PathFindLeashCheck` drops the target
+when the monster strays too far from home. ForgePact hands every scanning monster a map-sized
+`distance` (and `aggroRange`; the vanilla values are kept in `fp_distance` / `fp_aggroRange` and
+restored when the hunt is off) and skips the leash check; the game's own scan, target and pack
+code does the rest, so the behaviour is the vanilla one, only without the distance limit.
+Verified 2026-09-05 with the crown: 32 rares chasing at once, 65 monsters widened, 14 700 leash
+checks skipped, packs following their rare leader through the game's own broadcast.
+
+**Wake radius.** The game freezes every instance outside the players' view boxes each frame
+(`ActivateDeactivateProps` from `Controller_obj` Step), and a frozen monster never scans, so on
+its own the range change only reaches monsters near the screen. After that call the Beacon
+re-activates every monster (and every `Enemy_Creator*` spawner) within `beaconwake` px of the
+player (default 4000 ≈ 3-4 screens) and puts the ones beyond back to sleep, so everything inside
+the radius keeps hunting. `beaconwake all` keeps the whole map awake (watch the frame rate in
+dense zones), `beaconwake off` leaves the game's own freezing alone, `beaconwake creators off`
+stops waking spawners.
+
+**How far "hunts you" reaches.** The game steps monsters from `Controller_obj` through
+`EnemyStepHandleNew` and its `monsterHandleArray`, and monsters beyond roughly 1500 px never get
+an AI tick even while active (measured: zero scans from farther away, with or without the freeze
+pass). So hunted monsters come for you from anywhere inside that update zone (about 1.5 screens,
+far beyond the vanilla 300 px) and keep coming once they have you; monsters still farther out
+wait until they enter the zone. Forcing their AI tick from the plugin (`beaconfarstep on`,
+experimental) crashed the game on zone entry and ships off; `beaconwake every <n>` (default 6)
+runs the game's freeze pass every n frames while a hunt is on.
+
+**Spawn as if approached (experimental, off).** The spawner's periodic check (decompiled) calls
+`distance_to_object(Player_obj)` and spawns its pack (`alarm[2]`) below 1050 px. `beaconspawn on`
+makes that builtin answer 0 to every awake spawner; live it produced no extra packs in the tested
+zone (those spawners had already spent their pack at zone load), so it ships off by default.
+
+Commands: `beacon on|off|force|status`, `beaconrange <px>` (default 1000000 = whole map),
+`beaconmode all|rare` (rare: only rares and champions hunt you), `beaconwake <px>|all|off`,
+`beaconwake creators on|off`, `beaconspawn on|off`. The panel sends `beacon force` at every game
+start while its switch is on. Research build: `aggrotrace <n>` logs the target events (take / set /
+broadcast) and the scan variables of each monster type, `spawntrace <n>` samples the spawner
+checks, `creatorprobe` counts awake spawners.
+
+### Custom Forge identity: name, special affix, description
+A forged item's sidecar line can carry three identity extras next to its stats; the Item
+Editor (Item Forge → Identity) writes them and the plugin applies them when the item's
+struct is created:
+
+| extra | where the game shows it | how it is applied |
+|---|---|---|
+| `name=` | the tooltip title | written over `itemInfoStruct["28"]` after the game localized it; the magic prefix/suffix fields `["5"]`/`["4"]` are blanked so the item is shown under exactly that name |
+| `affix=` | gold rows above the stat list (up to 3 lines) | the struct is tagged `fp_affix`; hooks on `DrawInventoryItemV2` / `DrawInventoryStatsNew` draw the rows in front of the first real stat row and return the added height, so the stats, lore and the box move down with it (see below) |
+| `lore=` | the italic description under the stats | private localization key in `itemInfoStruct["29"]` |
+
+**Base stats for the Item Editor.** While the Custom Forge hooks are active the plugin also records
+the finished `itemStatStruct` of every item the game builds (keyed by `itemTimeStamp`) and writes
+`bp_ipc\itemstats.json` at most once every two seconds. The Item Editor reads it to list an owned
+item's exact stats — rolled affixes included — as editable base rows in the Item Forge; without
+the file it falls back to its own tooltip model (base rows only) and says so.
+
+Headhunter items without an `affix=` show the built-in line *Steals the affixes of slain
+rare monsters for 20s*.
+
+How the affix rows fit in: `DrawInventoryItemV2(x, y, scale, item, …)` draws the whole
+inventory tooltip and calls `DrawInventoryStatsNew(x, y, item, statId, label, format, style,
+…)` once for every known stat. That helper draws a row only when the item has the stat and
+returns the row height (30) or 0, and the caller adds the return value to its y cursor. The
+plugin draws its rows at `y`, hands the game `y + rows·30` for its own row, and returns both
+heights, so nothing overlaps and the box grows by exactly the rows added.
+
 ### Known limitation — The Abyss
 `Spawn_Abyss_obj` is **not** supported. It is the only mechanic in its family that
 sets `discoverable = true`, which puts it behind a two-stage discover-then-activate
