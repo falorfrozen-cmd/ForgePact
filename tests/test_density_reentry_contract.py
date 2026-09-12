@@ -4,6 +4,11 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SOURCE = (ROOT / "plugin" / "ModuleMain.cpp").read_text(encoding="utf-8")
+# ForgePact::DensityManager (2026-09 class split): the multiplier, its
+# fractional carry, and the "density <mult>" command handler moved here.
+# DoMultiCreate/HookICD/HookICL/the placement guard/the generation window all
+# stay in ModuleMain.cpp - see the header's own comment for why.
+DENSITY_HEADER = (ROOT / "plugin" / "include" / "ForgePact" / "DensityManager.hpp").read_text(encoding="utf-8")
 
 
 class DensityReentryContractTests(unittest.TestCase):
@@ -32,7 +37,8 @@ class DensityReentryContractTests(unittest.TestCase):
         end = SOURCE.index("// --- Yaratim konumu kaydi", start)
         body = SOURCE[start:end]
         guard = body.index("densityAlreadyApplied = true")
-        fractional = body.index("g_CreatorFrac += kesir")
+        # Frac moved to ForgePact::DensityManager (2026-09 class split).
+        fractional = body.index("ForgePact::DensityManager::Instance().Frac += kesir")
         self.assertLess(guard, fractional)
         self.assertIn("isCreator && !specialChild", body)
         self.assertIn("!densityAlreadyApplied", body)
@@ -67,8 +73,13 @@ class DensityReentryContractTests(unittest.TestCase):
         self.assertIn("OpenDensityWindow();", single)
         self.assertNotIn("ForgetDensityPlacements();", single)
         self.assertNotIn("g_DensityKnownPlacements.clear();", single)
-        density_command = SOURCE[SOURCE.index('lc == "density"'):]
-        self.assertIn("InstallDensityLifecycleHooks();", density_command[:1200])
+        # The density command handler itself moved to
+        # ForgePact::DensityManager::HandleCommand (2026-09 class split).
+        self.assertIn(
+            'ForgePact::DensityManager::Instance().HandleCommand(rest);',
+            SOURCE[SOURCE.index('lc == "density"'):][:200],
+        )
+        self.assertIn("InstallDensityLifecycleHooks();", DENSITY_HEADER)
 
     def test_special_content_creators_are_exempt_from_density(self):
         start = SOURCE.index("static void DoMultiCreate")

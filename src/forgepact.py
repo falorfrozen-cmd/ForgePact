@@ -23,6 +23,47 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
+try:
+    from hs_game_sdk import (
+        GameObject,
+        GameScript,
+        StatId,
+        PROC_FAMILIES,
+        EquipmentSlot,
+        PlayerEquipment,
+        scan_relic_levels,
+        ModDefinition,
+        GLOBAL_MOD_REGISTRY,
+        SATANIC_BUFFS,
+        SATANIC_DEBUFFS,
+    )
+except ImportError:
+    _sdk_path = Path(__file__).resolve().parents[2] / "hs-game-sdk" / "python"
+    if _sdk_path.exists() and str(_sdk_path) not in sys.path:
+        sys.path.insert(0, str(_sdk_path))
+    try:
+        from hs_game_sdk import (
+            GameObject,
+            GameScript,
+            StatId,
+            PROC_FAMILIES,
+            EquipmentSlot,
+            PlayerEquipment,
+            scan_relic_levels,
+            ModDefinition,
+            GLOBAL_MOD_REGISTRY,
+            SATANIC_BUFFS,
+            SATANIC_DEBUFFS,
+        )
+    except Exception:
+        GameObject = None
+        GameScript = None
+        StatId = None
+        PROC_FAMILIES = {}
+        GLOBAL_MOD_REGISTRY = None
+        SATANIC_BUFFS = ()
+        SATANIC_DEBUFFS = ()
+
 PORT = 8766
 # Windows sometimes reserves a port range (Hyper-V/WSL) and refuses the bind.
 # So free ports are tried in order; whichever works is opened in the browser.
@@ -83,6 +124,17 @@ DROPS = [
     ("gold", "Gold", ""),
 ]
 
+# Satanic Zone buff/debuff pool.  Names/ids/descriptions come from
+# hs-game-sdk (hand-verified game knowledge, not mechanically extracted --
+# see hs-game-sdk/curated/satanic_zone.json).  All on by default; deselecting
+# one keeps the plugin from letting the game roll it into a future zone.
+# Below the floor per column is refused client- and server-side.  Buffs and
+# debuffs get different floors (user-set, 2026-09-10).
+SATANIC_BUFF_LIST = [(m.id, m.name, m.description) for m in SATANIC_BUFFS]
+SATANIC_DEBUFF_LIST = [(m.id, m.name, m.description) for m in SATANIC_DEBUFFS]
+MIN_ENABLED_SATANIC_BUFFS = 3
+MIN_ENABLED_SATANIC_DEBUFFS = 2
+
 # Oyuncu istatistigi carpanlari.  Bunlar sabit bir taban deger yazmaz: oyunun
 # hesapladigi guncel toplam YYToolkit tarafinda okunur ve DONUS degeri carpilir.
 # Ucuncu alan panelde izin verilen guvenli/yararli ust sinir, dorduncu alan
@@ -121,9 +173,21 @@ DEFAULTS = {
     "density_on": False,
     "auto_apply": True,
     "map_reveal": False,
+    # Sub-toggle of map_reveal.  Only meaningful while map_reveal is on, and
+    # separate from it because it is the half that costs frame time: revealing
+    # the fog is free, populating the map is not.
+    "map_reveal_packs": True,
     "headhunter": False,
     "tyrant": False,
     "beacon": False,
+    "mod_filter_max_relics": False,
+    "mod_orb_pickup_radius": False,
+    # Pet collects quest items on screen without hovering + pressing interact.
+    # Scaffolding only as of 2026-09-10: the toggle/tick exist and count
+    # candidates, but the actual collect call is pending live research (see
+    # ForgePact/docs/pet-quest-collector-plan.md). Off by default like the
+    # other mod toggles.
+    "mod_pet_quest_pickup": False,
     # Monster Rarity: the share of normal monsters raised to Rare and to Ancient
     # (percent each, together at most 100; the rest stay normal).
     "rarity_rare": 0,
@@ -139,6 +203,13 @@ DEFAULTS = {
     "keys": {k: 1 for k, *_ in KEYS},
     "stats": {k: 1 for k, *_ in STATS},
     "percent_stats": {k: 0 for k, *_ in PERCENT_STATS},
+    # All mods enabled by default; a saved config only ever lists the ones a
+    # user turned off, so a game update that adds new buff/debuff ids picks
+    # up the "enabled" default automatically (see load_cfg's nested merge).
+    "satanic_mods": {
+        "buff": {str(i): True for i, *_ in SATANIC_BUFF_LIST},
+        "debuff": {str(i): True for i, *_ in SATANIC_DEBUFF_LIST},
+    },
 }
 
 _lock = threading.Lock()
@@ -152,6 +223,15 @@ def load_cfg() -> dict:
             for k, v in saved.items():
                 if k in ("spawners", "drops", "keys", "stats", "percent_stats"):
                     cfg[k] = {**cfg[k], **v}
+                elif k == "satanic_mods" and isinstance(v, dict):
+                    # Nested: merge each polarity's id->bool dict on its own,
+                    # so ids missing from an older saved file (a mod added by
+                    # a later update) still default to enabled rather than
+                    # being dropped by a flat overwrite.
+                    cfg[k] = {
+                        "buff": {**cfg[k]["buff"], **v.get("buff", {})},
+                        "debuff": {**cfg[k]["debuff"], **v.get("debuff", {})},
+                    }
                 else:
                     cfg[k] = v
         except Exception:
@@ -186,13 +266,15 @@ KNOWN_RI_CACHE = {
 
 
 def ensure_ri_cache(cfg=None) -> bool:
-    """Write the known YYTK RI cache next to the exe so the FIRST launch is also instant."""
+    """Use only a verified cache; remove unknown caches so YYTK must rescan."""
     try:
         exe = exe_path(cfg)
         content = KNOWN_RI_CACHE.get(exe.stat().st_size)
-        if not content:
-            return False
         cache = exe.with_name(exe.name + ".yytkcache")
+        if not content:
+            if cache.exists():
+                cache.unlink()
+            return False
         if not cache.exists() or cache.read_text(errors="ignore").split()[:1] != content.split()[:1]:
             cache.write_text(content, encoding="ascii")
         return True
@@ -358,7 +440,14 @@ def send_cmds(lines: list, cfg=None) -> str:
     closed they are processed on startup)."""
     d = ipc_dir(cfg)
     if not d.exists():
-        return "ERROR: bp_ipc folder not found next to the game exe (is the mod plugin installed?)"
+        exe = exe_path(cfg)
+        if exe.parent.exists():
+            try:
+                d.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                return "ERROR: bp_ipc folder not found next to the game exe (is the mod plugin installed?)"
+        else:
+            return "ERROR: bp_ipc folder not found next to the game exe (is the mod plugin installed?)"
     with _lock:
         cmd = d / "cmd.txt"
         existing = ""
@@ -490,6 +579,11 @@ def build_cmds(cfg: dict) -> list:
         out.append(f"density {d:g}")
     if cfg.get("map_reveal", False):
         out.append("reveal 1")
+        # Only emitted to turn the pack pass OFF: the plugin defaults it on, so
+        # the common case sends nothing extra (same rule as the rest of this
+        # function - emit only what is actually needed).
+        if not cfg.get("map_reveal_packs", True):
+            out.append("reveal packs 0")
     if cfg.get("headhunter", False):
         # Custom Forge Headhunter item: rare kills grant the monster's affixes as buffs.
         # "force" also covers the not-yet-finished equipped-belt check (see plugin notes).
@@ -501,6 +595,17 @@ def build_cmds(cfg: dict) -> list:
     if cfg.get("beacon", False):
         # Custom Forge Beacon amulet: every monster on the map hunts the player.
         out.append("beacon force")
+    if cfg.get("mod_filter_max_relics", False):
+        # Safe to send at launch: the plugin only ARMS the filter here and installs
+        # the DropRelic hook once a player exists.  Withholding it used to mean the
+        # toggle stayed on in the panel but did nothing after a game restart.
+        out.append("relicfilter 1")
+    if cfg.get("mod_orb_pickup_radius", False):
+        out.append("orbpickup 10")
+    if cfg.get("mod_pet_quest_pickup", False):
+        # Safe to send at launch: no hook is installed, so unlike relicfilter
+        # there is no arm/defer lifecycle to worry about.
+        out.append("petquest 1")
     rare, ancient = rarity_setting(cfg)
     if rare > 0 or ancient > 0:
         out.append(f"rarity {rare} {ancient}")
@@ -536,6 +641,11 @@ def build_cmds(cfg: dict) -> list:
             out.append(f"stat {key} {1.0 + bonus / 100.0:g}")
     settings = cfg.get("keys", {})
     out.extend(build_key_cmds(settings, include_resets=False))
+    for polarity in ("buff", "debuff"):
+        pool = cfg.get("satanic_mods", {}).get(polarity, {})
+        disabled = [k for k, v in pool.items() if not v]
+        if disabled:
+            out.append(f"satmods {polarity} {','.join(disabled)}")
     return out
 
 
@@ -1209,6 +1319,10 @@ class H(BaseHTTPRequestHandler):
                         # Third field is the drop type: the panel's explanation text
                         # differs per family because they do not all mean the same thing.
                         "keys": [[k, l, t] for k, l, t in KEYS],
+                        "satanicBuffs": [[i, l, d] for i, l, d in SATANIC_BUFF_LIST],
+                        "satanicDebuffs": [[i, l, d] for i, l, d in SATANIC_DEBUFF_LIST],
+                        "minEnabledSatanicBuffs": MIN_ENABLED_SATANIC_BUFFS,
+                        "minEnabledSatanicDebuffs": MIN_ENABLED_SATANIC_DEBUFFS,
                         "lastApplied": LAST["applied"], "queued": LAST["queued"]})
         else:
             self._json({"err": "not found"}, 404)
@@ -1220,7 +1334,10 @@ class H(BaseHTTPRequestHandler):
         try:
             cfg = load_cfg()
             if u.path == "/api/set":
-                sec, key, val = body.get("section"), body["key"], body["value"]
+                # key is optional only for the satanic_mods bulk form (body["keys"]
+                # instead of a single body["key"]) - every other section still
+                # requires it and gets a KeyError same as before if it's missing.
+                sec, key, val = body.get("section"), body.get("key"), body["value"]
                 if sec == "keys":
                     cfg[sec][key] = max(1, min(100, int(val)))
                 elif sec == "stats":
@@ -1241,6 +1358,41 @@ class H(BaseHTTPRequestHandler):
                         return
                     ceiling = next((mx for k, _i, _l, mx in SPAWNERS if k == key), 100)
                     cfg[sec][key] = max(1, min(ceiling, int(val)))
+                elif sec == "satanic_mods":
+                    polarity = body.get("polarity")
+                    if polarity not in ("buff", "debuff"):
+                        self._json({"err": "polarity must be buff or debuff"}, 400); return
+                    pool = cfg["satanic_mods"][polarity]
+                    floor = MIN_ENABLED_SATANIC_BUFFS if polarity == "buff" else MIN_ENABLED_SATANIC_DEBUFFS
+                    new_val = bool(val)
+                    keys_bulk = body.get("keys")
+                    if keys_bulk is not None:
+                        # Select All / Deselect All: one request for the whole column
+                        # instead of one per row, so it applies (and sends its one
+                        # live "satmods" command) instantly rather than row-by-row.
+                        ids = [str(k) for k in keys_bulk if str(k) in pool]
+                        if not new_val:
+                            # Never drop below the floor - silently keep enough of
+                            # the requested ids enabled rather than erroring, since
+                            # this is a "turn off everything you can" bulk action.
+                            # Only ids that are CURRENTLY enabled count against the
+                            # budget - one already off costs nothing to "re-disable".
+                            enabled_ids = [k for k in ids if pool[k]]
+                            allowed = max(0, len(enabled_ids) - floor)
+                            ids = enabled_ids[:allowed]
+                        for k in ids:
+                            pool[k] = new_val
+                    else:
+                        if key not in pool:
+                            self._json({"err": "unknown satanic mod id"}, 400); return
+                        if pool[key] and not new_val:
+                            # Deselecting one: refuse if it would drop this polarity's
+                            # enabled count below its floor (buffs and debuffs differ).
+                            enabled_after = sum(1 for v in pool.values() if v) - 1
+                            if enabled_after < floor:
+                                self._json({"err": f"at least {floor} {polarity}s must stay enabled"}, 400)
+                                return
+                        pool[key] = new_val
                 elif key == "density":
                     # 0.5 steps: 1, 1.5, 2 ...  Whole numbers are stored as
                     # float("3") -> 3.0; the plugin prints with %g so it shows as "x3".
@@ -1258,7 +1410,7 @@ class H(BaseHTTPRequestHandler):
                     # moved wins and the other gives way
                     other = "rarity_ancient" if key == "rarity_rare" else "rarity_rare"
                     cfg[other] = min(_pct(cfg.get(other, 0)), 100 - cfg[key])
-                elif key in ("density_on", "auto_apply", "map_reveal", "headhunter", "tyrant", "beacon"):
+                elif key in ("density_on", "auto_apply", "map_reveal", "map_reveal_packs", "headhunter", "tyrant", "beacon", "mod_filter_max_relics", "mod_orb_pickup_radius", "mod_pet_quest_pickup"):
                     cfg[key] = bool(val)
                 save_cfg(cfg)
                 live = ""
@@ -1278,16 +1430,35 @@ class H(BaseHTTPRequestHandler):
                         send_cmds([command], cfg)
                     elif sec == "spawners":
                         send_cmds([f"specialrate {key} {int(val)}"], cfg)
+                    elif sec == "satanic_mods":
+                        polarity = body.get("polarity")
+                        disabled_csv = ",".join(k for k, v in cfg["satanic_mods"][polarity].items() if not v)
+                        send_cmds([f"satmods {polarity} {disabled_csv}"], cfg)
                     elif key in ("density", "density_on"):
                         send_cmds([f"density {cfg['density'] if cfg['density_on'] else 1}"], cfg)
                     elif key == "map_reveal":
-                        send_cmds([f"reveal {1 if cfg['map_reveal'] else 0}"], cfg)
+                        cmds = [f"reveal {1 if cfg['map_reveal'] else 0}"]
+                        # Turning the parent back on has to restate the child:
+                        # `reveal 1` does not reset the plugin's pack flag, so
+                        # without this a player who turned packs off, toggled
+                        # the parent, and came back would silently get them on.
+                        if cfg["map_reveal"]:
+                            cmds.append(f"reveal packs {1 if cfg.get('map_reveal_packs', True) else 0}")
+                        send_cmds(cmds, cfg)
+                    elif key == "map_reveal_packs":
+                        send_cmds([f"reveal packs {1 if cfg['map_reveal_packs'] else 0}"], cfg)
                     elif key == "headhunter":
                         send_cmds(["headhunter force" if cfg["headhunter"] else "headhunter off"], cfg)
                     elif key == "tyrant":
                         send_cmds(["tyrant force" if cfg["tyrant"] else "tyrant off"], cfg)
                     elif key == "beacon":
                         send_cmds(["beacon force" if cfg["beacon"] else "beacon off"], cfg)
+                    elif key == "mod_filter_max_relics":
+                        send_cmds([f"relicfilter {1 if cfg['mod_filter_max_relics'] else 0}"], cfg)
+                    elif key == "mod_orb_pickup_radius":
+                        send_cmds([f"orbpickup {10 if cfg['mod_orb_pickup_radius'] else 0}"], cfg)
+                    elif key == "mod_pet_quest_pickup":
+                        send_cmds([f"petquest {1 if cfg['mod_pet_quest_pickup'] else 0}"], cfg)
                     elif key in ("rarity_rare", "rarity_ancient"):
                         # Always explicit: "rarity off" returns a live hook to vanilla.
                         send_cmds([rarity_cmd(cfg)], cfg)
@@ -1366,6 +1537,11 @@ HTML = r"""<!DOCTYPE html>
 <style>
 :root{--bg:#0d0a08;--card:#171210;--card2:#1e1713;--ember:#ff7a1a;--ember2:#ffb347;--tx:#e8dcc8;--mut:#8a7a64;--line:#33261c;--ok:#5ad87a;--arcane:#a77cff;--blood:#ff5b6e;--steel:#65c7d5}
 *{box-sizing:border-box}
+*{scrollbar-width:thin;scrollbar-color:var(--line) var(--card)}
+*::-webkit-scrollbar{width:10px;height:10px}
+*::-webkit-scrollbar-track{background:var(--card)}
+*::-webkit-scrollbar-thumb{background:var(--line);border-radius:6px;border:2px solid var(--card)}
+*::-webkit-scrollbar-thumb:hover{background:var(--ember)}
 body{margin:0;font:14px/1.5 'Segoe UI',sans-serif;background:radial-gradient(1200px 500px at 50% -150px,#2a1408 0%,var(--bg) 60%);color:var(--tx);min-height:100vh}
 #wrap{max-width:980px;margin:0 auto;padding:26px 20px 60px}
 header{display:flex;align-items:center;gap:16px;margin-bottom:6px;position:relative;padding:4px 0 10px}
@@ -1375,11 +1551,12 @@ h1{font-size:26px;margin:0;letter-spacing:2px;background:linear-gradient(90deg,v
 .sub{color:var(--mut);font-size:12px;letter-spacing:3px;text-transform:uppercase}
 .control-dock{position:sticky;top:0;z-index:10;margin:8px 0 18px;padding:9px 0 12px;background:linear-gradient(180deg,#0d0a08fa 82%,#0d0a0800);backdrop-filter:blur(9px)}
 #statusbar{display:flex;gap:10px;align-items:center;margin:9px 0 0;flex-wrap:wrap}
-.tabbar{display:grid;grid-template-columns:repeat(4,minmax(120px,1fr));gap:8px;padding:5px;border:1px solid #33261c;border-radius:12px;background:#100c0ae8;box-shadow:0 5px 22px #0008}
+.tabbar{display:grid;grid-template-columns:repeat(5,minmax(100px,1fr));gap:8px;padding:5px;border:1px solid #33261c;border-radius:12px;background:#100c0ae8;box-shadow:0 5px 22px #0008}
 .tabbtn{appearance:none;border:1px solid transparent;background:transparent;color:#8f816e;border-radius:8px;padding:9px 12px;cursor:pointer;font-size:12px;font-weight:700;letter-spacing:.9px;text-transform:uppercase;transition:.18s}
 .tabbtn:hover{color:var(--ember2);background:#241711;border-color:#49301f}
 .tabbtn.active{color:#fff2dc;background:linear-gradient(180deg,#563018,#33200e);border-color:#8e5526;box-shadow:inset 0 0 16px #ff8a2130,0 0 15px #ff7a1a20}
 .tabbtn[data-tab="modifiers"].active{background:linear-gradient(180deg,#49305c,#291c35);border-color:#8059a4;box-shadow:inset 0 0 16px #a77cff30,0 0 15px #a77cff22}
+.tabbtn[data-tab="mods"].active{background:linear-gradient(180deg,#204a43,#132c28);border-color:#388e7d;color:#d1fffa;box-shadow:inset 0 0 16px #388e7d30,0 0 15px #388e7d22}
 .chip{padding:6px 14px;border-radius:20px;font-size:12px;border:1px solid var(--line);background:var(--card)}
 .chip.on{border-color:var(--ok);color:var(--ok);box-shadow:0 0 12px #5ad87a22}
 .chip.off{border-color:#777;color:#999}
@@ -1429,6 +1606,14 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
 .modifier-group .row .lbl{width:auto}
 .modifier-group .note{margin:-4px 0 8px}
 @media(max-width:820px){.tabbar{grid-template-columns:1fr 1fr}.modifier-grid{grid-template-columns:1fr}.modifier-group.wide{grid-column:auto}.modifier-group .row{grid-template-columns:150px 1fr 64px}}
+.sat-list{max-height:420px;overflow-y:auto;padding-right:4px}
+.sat-list .row{display:flex;align-items:center;gap:10px;border-bottom:1px solid #241d2c}
+.sat-list .row:last-child{border-bottom:none}
+.sat-desc{font-size:11px;color:#8f816e;font-weight:normal}
+.group-title.positive{color:#72d6a5}
+.group-title.negative{color:#e0697a}
+.sat-bulk{display:flex;gap:8px;margin:2px 0 8px}
+.sat-bulk button{font-size:11px;padding:4px 10px}
 </style></head><body><div id="wrap">
 <header><div class="logo">&#128293;</div><div>
   <h1>FORGEPACT</h1><div class="sub">Hero Siege game mods &middot; live control</div>
@@ -1439,6 +1624,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
   <button class="tabbtn" data-tab="modifiers" role="tab">&#9876; Modifiers</button>
   <button class="tabbtn" data-tab="world" role="tab">&#127757; World</button>
   <button class="tabbtn" data-tab="loot" role="tab">&#128176; Loot</button>
+  <button class="tabbtn" data-tab="mods" role="tab">&#10024; Mods</button>
 </nav>
 <div id="statusbar">
   <span class="chip" id="chipGame">...</span>
@@ -1575,39 +1761,114 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
   <div class="note" id="raritynote">off</div>
 </div>
 
-<div class="card tab-card" data-tab="world">
-  <h2>&#128506; Map Reveal</h2>
-  <div class="hint">Reveals the full minimap in every zone (removes fog of war). Off by default; enable it when you want every map revealed.</div>
-  <div class="row" style="border:none">
-    <span class="lbl">Reveal full map</span>
-    <label class="switch"><input type="checkbox" id="map_reveal"><span class="sl"></span></label>
-    <span class="val" id="mapval">on</span>
+<div class="card modifier-card tab-card" data-tab="world">
+  <h2><svg width="26" height="26" viewBox="0 0 64 64" style="vertical-align:-6px" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <defs>
+      <radialGradient id="satRedGlow" cx="50%" cy="50%" r="50%">
+        <stop offset="0%" stop-color="#ff6b7a" stop-opacity="1"/>
+        <stop offset="55%" stop-color="#c81a34" stop-opacity="0.6"/>
+        <stop offset="100%" stop-color="#c81a34" stop-opacity="0"/>
+      </radialGradient>
+      <radialGradient id="satSkullFill" cx="42%" cy="32%" r="75%">
+        <stop offset="0%" stop-color="#2b2622"/>
+        <stop offset="55%" stop-color="#14100d"/>
+        <stop offset="100%" stop-color="#060504"/>
+      </radialGradient>
+      <linearGradient id="satFadeGrad" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="black"/>
+        <stop offset="0.35" stop-color="white"/>
+        <stop offset="1" stop-color="white"/>
+      </linearGradient>
+      <mask id="satFadeTop"><rect x="0" y="0" width="64" height="64" fill="url(#satFadeGrad)"/></mask>
+      <filter id="satSmokeBlur" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="2.2"/></filter>
+      <filter id="satSoftBlur" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="1.1"/></filter>
+    </defs>
+    <g filter="url(#satSmokeBlur)" stroke-linecap="round" fill="none">
+      <path d="M20,52 C14,46 18,38 12,30 C7,23 13,15 9,6" stroke="#15110e" stroke-width="5" opacity="0.22"/>
+      <path d="M20,52 C14,46 18,38 12,30 C7,23 13,15 9,6" stroke="#100c0a" stroke-width="2" opacity="0.45"/>
+      <path d="M44,52 C50,45 45,36 51,28 C56,20 49,13 54,4" stroke="#15110e" stroke-width="5" opacity="0.22"/>
+      <path d="M44,52 C50,45 45,36 51,28 C56,20 49,13 54,4" stroke="#100c0a" stroke-width="2" opacity="0.45"/>
+      <path d="M30,50 C26,44 31,40 27,34 C24,29 29,24 26,16" stroke="#15110e" stroke-width="4" opacity="0.18"/>
+    </g>
+    <ellipse cx="32" cy="34" rx="24" ry="22" fill="#0a0705" opacity="0.25" filter="url(#satSmokeBlur)"/>
+    <ellipse cx="32" cy="30" rx="19" ry="17" fill="url(#satRedGlow)" opacity="0.5" filter="url(#satSoftBlur)"/>
+    <g mask="url(#satFadeTop)">
+      <path d="M32,6 C20,6 12,15 12,26 C12,33 15,37 18,40 C17,43 17,46 18,48 C20,52 24,54 32,54 C40,54 44,52 46,48 C47,46 47,43 46,40 C49,37 52,33 52,26 C52,15 44,6 32,6 Z" fill="url(#satSkullFill)"/>
+      <ellipse cx="23" cy="27" rx="5.2" ry="6.4" fill="#050403"/>
+      <ellipse cx="41" cy="27" rx="5.2" ry="6.4" fill="#050403"/>
+      <circle cx="23" cy="28.5" r="2.6" fill="url(#satRedGlow)"/>
+      <circle cx="41" cy="28.5" r="2.6" fill="url(#satRedGlow)"/>
+      <path d="M32,33 L28.5,40 L35.5,40 Z" fill="#050403"/>
+      <path d="M27,46 L27,52 M32,46 L32,52 M37,46 L37,52" stroke="#050403" stroke-width="1.6" stroke-linecap="round"/>
+      <path d="M46,14 C50,19 52,23 52,26 C52,33 49,37 46,40" fill="none" stroke="#ff5b6e" stroke-width="1.6" opacity="0.85" filter="url(#satSoftBlur)"/>
+    </g>
+  </svg> Satanic Zone Mods</h2>
+  <div class="hint">The World Section modifiers Hero Siege can roll onto a Satanic Zone. Every mod is on by default; deselect the ones you never want to see and the plugin keeps the game's own roll away from them. At least <span id="satminbuffnote">3</span> positive and <span id="satmindebuffnote">2</span> negative mods must stay enabled - a Satanic Zone still needs a pool to roll from.</div>
+  <div class="modifier-grid">
+    <div class="modifier-group">
+      <div class="group-title positive">Positive</div>
+      <div class="sat-bulk">
+        <button class="btn" id="satbuffAll" type="button">Select All</button>
+        <button class="btn" id="satbuffNone" type="button">Deselect All</button>
+      </div>
+      <div class="sat-list" id="satbuffs"></div>
+    </div>
+    <div class="modifier-group">
+      <div class="group-title negative">Negative</div>
+      <div class="sat-bulk">
+        <button class="btn" id="satdebuffAll" type="button">Select All</button>
+        <button class="btn" id="satdebuffNone" type="button">Deselect All</button>
+      </div>
+      <div class="sat-list" id="satdebuffs"></div>
+    </div>
   </div>
 </div>
 
-<div class="card tab-card" data-tab="world">
-  <h2>&#129686; Headhunter</h2>
-  <div class="hint">For an item forged with <b>Mechanic: Headhunter</b> in the Item Editor. While on, killing a rare or champion monster grants its affixes to you as 20-second buffs (Extra Fast &rarr; movement speed, Berserker/Raging/Enraged &rarr; attack speed, Vampiric &rarr; life replenish, elemental Enchanted &rarr; cast rate, others &rarr; movement speed for now). The equipped-belt check is still in progress, so the effect is active whenever this switch is on and the forged item exists.</div>
+<div class="card tab-card" data-tab="mods">
+  <h2>&#10024; Gameplay Mods</h2>
+  <div class="hint">Toggle custom game modifications, drop pool adjustments, and quality-of-life tweaks. Settings apply immediately while the game is running.</div>
   <div class="row" style="border:none">
-    <span class="lbl">Headhunter buffs on rare kills</span>
+    <span class="lbl" style="width:auto;flex:1">Remove owned relics from drop pool<br><span style="font-size:11px;color:#8f816e;font-weight:normal">When a relic is dropped, prevents relics already at maximum level (10 out of 10) in your equipped slots, backpack, or inventory from dropping.</span></span>
+    <label class="switch"><input type="checkbox" id="mod_filter_max_relics"><span class="sl"></span></label>
+    <span class="val" id="mfmrval">on</span>
+  </div>
+    <div class="row" style="border:none">
+        <span class="lbl" style="width:auto;flex:1">Experience and Magic Find orb pickup radius<br><span style="font-size:11px;color:#8f816e;font-weight:normal">Makes the player collect matching orbs from 10 times the normal distance.</span></span>
+        <label class="switch"><input type="checkbox" id="mod_orb_pickup_radius"><span class="sl"></span></label>
+        <span class="val" id="morval">off</span>
+    </div>
+    <div class="row" style="border:none">
+        <span class="lbl" style="width:auto;flex:1">Reveal full map<br><span style="font-size:11px;color:#8f816e;font-weight:normal">Reveals the full minimap in every zone (removes fog of war). Waypoints, dungeon entrances, chests, shrines and mining nodes come with it - they are hidden by the fog, not by anything else.</span></span>
+        <label class="switch"><input type="checkbox" id="map_reveal"><span class="sl"></span></label>
+        <span class="val" id="mapval">on</span>
+    </div>
+    <div class="row" id="map_reveal_packs_row" style="border:none;margin-left:22px;border-left:1px solid #33261c;padding-left:14px">
+        <span class="lbl" style="width:auto;flex:1">&#8627; Also fill the map with monsters<br><span style="font-size:11px;color:#8f816e;font-weight:normal">Most mob packs do not exist until you walk near them, so a revealed map still shows no monsters. This makes each new zone create its packs on arrival, so they appear on the minimap right away. It is the only part of this mod that adds work for the game - turn it off if a zone feels heavy.</span></span>
+        <label class="switch"><input type="checkbox" id="map_reveal_packs"><span class="sl"></span></label>
+        <span class="val" id="mrpval">on</span>
+    </div>
+    <div class="row" style="border:none">
+        <span class="lbl" style="width:auto;flex:1">Pet collects quest items<br><span style="font-size:11px;color:#8f816e;font-weight:normal">While your pet is out, it walks to quest items on screen and picks them up for you - one at a time, crediting the quest objective exactly as collecting it by hand does. Only applies to pick-up quest items; things you activate, break or talk to are left alone.</span></span>
+        <label class="switch"><input type="checkbox" id="mod_pet_quest_pickup"><span class="sl"></span></label>
+        <span class="val" id="mpqpval">off</span>
+    </div>
+</div>
+
+<div class="card tab-card" data-tab="mods">
+  <h2>&#129686; Items</h2>
+  <div class="hint">Custom forge mechanics tied to items made in the Item Editor. Settings apply immediately while the game is running.</div>
+  <div class="row" style="border:none">
+    <span class="lbl" style="width:auto;flex:1">Headhunter buffs on rare kills<br><span style="font-size:11px;color:#8f816e;font-weight:normal">For an item forged with Mechanic: Headhunter. While on, killing a rare or champion monster grants its affixes to you as 20-second buffs (Extra Fast &rarr; movement speed, Berserker/Raging/Enraged &rarr; attack speed, Vampiric &rarr; life replenish, elemental Enchanted &rarr; cast rate, others &rarr; movement speed for now). The equipped-belt check is still in progress, so the effect is active whenever this switch is on and the forged item exists.</span></span>
     <label class="switch"><input type="checkbox" id="headhunter"><span class="sl"></span></label>
     <span class="val" id="hhval">on</span>
   </div>
-</div>
-<div class="card tab-card" data-tab="world">
-  <h2>&#128081; Tyrant's Crown</h2>
-  <div class="hint">For an item forged with <b>Mechanic: Tyrant's Crown</b> in the Item Editor. While on, normal monsters near you rise to rare more often (15% each) and every rare or champion carries one extra affix. Pairs with Headhunter: more rares, more affixes to steal.</div>
   <div class="row" style="border:none">
-    <span class="lbl">Tyrant's Crown: more rares, richer rares</span>
+    <span class="lbl" style="width:auto;flex:1">Tyrant's Crown: more rares, richer rares<br><span style="font-size:11px;color:#8f816e;font-weight:normal">For an item forged with Mechanic: Tyrant's Crown. While on, normal monsters near you rise to rare more often (15% each) and every rare or champion carries one extra affix. Pairs with Headhunter: more rares, more affixes to steal.</span></span>
     <label class="switch"><input type="checkbox" id="tyrant"><span class="sl"></span></label>
     <span class="val" id="tyval">on</span>
   </div>
-</div>
-<div class="card tab-card" data-tab="world">
-  <h2>&#128293; Beacon</h2>
-  <div class="hint">For an amulet forged with <b>Mechanic: Beacon</b> in the Item Editor. While on, every monster on the map hunts you the moment it spawns and never turns back, through the game's own aggro system. Plugin commands: <code>beaconmode rare</code> limits it to rares and champions, <code>beaconrange &lt;px&gt;</code> caps the distance.</div>
   <div class="row" style="border:none">
-    <span class="lbl">Beacon: every monster hunts you</span>
+    <span class="lbl" style="width:auto;flex:1">Beacon: every monster hunts you<br><span style="font-size:11px;color:#8f816e;font-weight:normal">For an amulet forged with Mechanic: Beacon. While on, every monster on the map hunts you the moment it spawns and never turns back, through the game's own aggro system. Plugin commands: beaconmode rare limits it to rares and champions, beaconrange &lt;px&gt; caps the distance.</span></span>
     <label class="switch"><input type="checkbox" id="beacon"><span class="sl"></span></label>
     <span class="val" id="beval">on</span>
   </div>
@@ -1645,6 +1906,18 @@ function rarityLoad(c){
   document.getElementById('rarity_ancient').value=+(c.rarity_ancient||0);
   rarityPaint();
 }
+// The monster half only does anything while the parent reveal is on, so the
+// row greys out and reads "n/a" rather than silently claiming to be on.
+function syncRevealPacks(parentOn,packsOn){
+  const row=document.getElementById('map_reveal_packs_row');
+  const box=document.getElementById('map_reveal_packs');
+  const val=document.getElementById('mrpval');
+  if(!row||!box||!val)return;
+  box.disabled=!parentOn;
+  row.style.opacity=parentOn?'1':'0.45';
+  val.textContent=parentOn?(packsOn?'on':'off'):'n/a';
+  val.className='val '+(parentOn&&packsOn?'':'off');
+}
 function sliderOff(sec,v){return sec==='percent_stats'?v<=0:v<=1}
 function sliderText(sec,v){return sliderOff(sec,v)?'off':(sec==='percent_stats'?'+'+v+'%':'x'+v)}
 function row(sec,key,label,val,tagHtml,max,note,step){
@@ -1653,6 +1926,12 @@ function row(sec,key,label,val,tagHtml,max,note,step){
   return `<div class="row"><span class="lbl">${label}${tagHtml||''}</span>
     <input type="range" min="${mn}" max="${mx}" step="${step||1}" value="${val}" data-sec="${sec}" data-key="${key}">
     <span class="val ${off?'off':''}" style="width:64px" title="Click to type a value">${sliderText(sec,val)}</span></div>${n}`;
+}
+function satRow(polarity,id,name,desc,enabled){
+  return `<div class="row">
+    <span class="lbl" style="width:auto;flex:1">${name}<br><span class="sat-desc">${desc}</span></span>
+    <label class="switch"><input type="checkbox" data-sat-polarity="${polarity}" data-sat-id="${id}" ${enabled?'checked':''}><span class="sl"></span></label>
+  </div>`;
 }
 // Click the value next to a slider to type it.  Sliders with 100-200 steps on a
 // 200 px track skip values (80, 85, 95 ...); typing lands exactly.  Enter or
@@ -1764,6 +2043,9 @@ async function boot(){
   document.getElementById('map_reveal').checked=mr;
   document.getElementById('mapval').textContent=mr?'on':'off';
   document.getElementById('mapval').className='val '+(mr?'':'off');
+  const mrp=c.map_reveal_packs!==false;
+  document.getElementById('map_reveal_packs').checked=mrp;
+  syncRevealPacks(mr,mrp);
   const hh=!!c.headhunter;
   document.getElementById('headhunter').checked=hh;
   document.getElementById('hhval').textContent=hh?'on':'off';
@@ -1775,10 +2057,29 @@ async function boot(){
   document.getElementById('beacon').checked=be;
   document.getElementById('beval').textContent=be?'on':'off';
   document.getElementById('beval').className='val '+(be?'':'off');
+  const mfmr=!!c.mod_filter_max_relics;
+  document.getElementById('mod_filter_max_relics').checked=mfmr;
+  document.getElementById('mfmrval').textContent=mfmr?'on':'off';
+  document.getElementById('mfmrval').className='val '+(mfmr?'':'off');
+    const mor=!!c.mod_orb_pickup_radius;
+    document.getElementById('mod_orb_pickup_radius').checked=mor;
+    document.getElementById('morval').textContent=mor?'on':'off';
+    document.getElementById('morval').className='val '+(mor?'':'off');
+    const mpqp=!!c.mod_pet_quest_pickup;
+    document.getElementById('mod_pet_quest_pickup').checked=mpqp;
+    document.getElementById('mpqpval').textContent=mpqp?'on':'off';
+    document.getElementById('mpqpval').className='val '+(mpqp?'':'off');
   rarityLoad(c);
   document.getElementById('hhval').className='val '+(hh?'':'off');
   document.getElementById('exepath').value=c.game_exe||'';
   document.getElementById('spawners').innerHTML=ST.spawners.map(([k,i,l,mx])=>row('spawners',k,l,c.spawners[k]||1,'',mx)).join('');
+  document.getElementById('satminbuffnote').textContent=ST.minEnabledSatanicBuffs||3;
+  document.getElementById('satmindebuffnote').textContent=ST.minEnabledSatanicDebuffs||2;
+  const satPool=(polarity)=>(c.satanic_mods&&c.satanic_mods[polarity])||{};
+  document.getElementById('satbuffs').innerHTML=(ST.satanicBuffs||[]).map(([id,name,desc])=>
+    satRow('buff',id,name,desc,satPool('buff')[id]!==false)).join('');
+  document.getElementById('satdebuffs').innerHTML=(ST.satanicDebuffs||[]).map(([id,name,desc])=>
+    satRow('debuff',id,name,desc,satPool('debuff')[id]!==false)).join('');
   document.getElementById('keys').innerHTML=ST.keys.map(([k,l,t])=>{
     const v=(c.keys&&c.keys[k])||1;
     return row('keys',k,l,v,'',100,keyNote(k,t,v));
@@ -1870,10 +2171,20 @@ function bind(){
     toast('enemy speed scope: '+(e.target.checked?'Chaos Tower only':'all zones')+' - '+(res.ok||res.err));
   };
   document.getElementById('map_reveal').onchange=async(e)=>{
-    const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'map_reveal',value:e.target.checked})});
+    // Repaint the pair BEFORE awaiting the POST. If the panel's server is
+    // gone the fetch throws, and anything after the await never runs - which
+    // left the child row enabled and reading "on" under a switched-off
+    // parent, inviting a click that could do nothing.
     document.getElementById('mapval').textContent=e.target.checked?'on':'off';
     document.getElementById('mapval').className='val '+(e.target.checked?'':'off');
+    syncRevealPacks(e.target.checked,document.getElementById('map_reveal_packs').checked);
+    const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'map_reveal',value:e.target.checked})});
     toast('map reveal '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
+  };
+  document.getElementById('map_reveal_packs').onchange=async(e)=>{
+    syncRevealPacks(document.getElementById('map_reveal').checked,e.target.checked);
+    const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'map_reveal_packs',value:e.target.checked})});
+    toast('map monsters '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
   };
   document.getElementById('headhunter').onchange=async(e)=>{
     const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'headhunter',value:e.target.checked})});
@@ -1893,6 +2204,21 @@ function bind(){
     document.getElementById('beval').className='val '+(e.target.checked?'':'off');
     toast('beacon '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
   };
+  document.getElementById('mod_filter_max_relics').onchange=async(e)=>{
+    const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_filter_max_relics',value:e.target.checked})});
+    const v=document.getElementById('mfmrval');v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
+    toast('Remove owned relics from drop pool '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
+  };
+    document.getElementById('mod_orb_pickup_radius').onchange=async(e)=>{
+        const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_orb_pickup_radius',value:e.target.checked})});
+        const v=document.getElementById('morval');v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
+        toast('Orb pickup radius '+(e.target.checked?'10x ON':'OFF')+' - '+(res.ok||res.err));
+    };
+    document.getElementById('mod_pet_quest_pickup').onchange=async(e)=>{
+        const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_pet_quest_pickup',value:e.target.checked})});
+        const v=document.getElementById('mpqpval');v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
+        toast('Pet collects quest items '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
+    };
   { const el=document.getElementById('angelic_items');
     el.oninput=angelicPaint;
     el.onchange=async()=>{ const v=sliderVal(el); const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'angelic_items',value:v})}); angelicPaint(); toast('angelic drops '+(v>1?'x'+v:'off')+' - '+(res.ok||res.err)); };
@@ -1950,6 +2276,45 @@ function bind(){
     if(res.cfg) ST.cfg=res.cfg;
     toast(res.ok||res.err); status();
   };
+  bindSatanicMods();
+}
+// One row's checkbox posts {section:'satanic_mods', polarity, key:id, value}. The
+// server re-validates the per-polarity floor (see /api/set), so a rejected
+// deselect below the floor snaps the checkbox back rather than trusting the client.
+function bindSatanicMods(){
+  const setOne=async(box)=>{
+    const polarity=box.dataset.satPolarity, id=box.dataset.satId, value=box.checked;
+    const res=await j('/api/set',{method:'POST',body:JSON.stringify({section:'satanic_mods',polarity,key:id,value})});
+    if(res.err){ box.checked=!value; toast(res.err); return false; }
+    if(res.cfg) ST.cfg=res.cfg;
+    return true;
+  };
+  document.querySelectorAll('input[data-sat-polarity]').forEach(box=>{
+    box.onchange=()=>setOne(box);
+  });
+  // One request for the whole column (not one per row - that was the slow,
+  // one-by-one-with-animation path). The server clamps a "deselect all" to
+  // the polarity's floor itself (see /api/set), so the client just asks for
+  // everything and repaints from whatever cfg comes back.
+  const bulkSet=async(polarity,ids,value)=>{
+    const res=await j('/api/set',{method:'POST',body:JSON.stringify({section:'satanic_mods',polarity,keys:ids,value})});
+    if(res.err){ toast(res.err); return; }
+    if(res.cfg){
+      ST.cfg=res.cfg;
+      const pool=res.cfg.satanic_mods[polarity]||{};
+      document.querySelectorAll(`input[data-sat-polarity="${polarity}"]`).forEach(box=>{
+        box.checked=pool[box.dataset.satId]!==false;
+      });
+    }
+    toast(`${polarity==='buff'?'positive':'negative'} mods: ${value?'all selected':'deselected to the minimum'}`);
+  };
+  const wireBulk=(polarity,allId,noneId,list)=>{
+    const ids=list.map(m=>String(m[0]));
+    document.getElementById(allId).onclick=()=>bulkSet(polarity,ids,true);
+    document.getElementById(noneId).onclick=()=>bulkSet(polarity,ids,false);
+  };
+  wireBulk('buff','satbuffAll','satbuffNone',ST.satanicBuffs||[]);
+  wireBulk('debuff','satdebuffAll','satdebuffNone',ST.satanicDebuffs||[]);
 }
 setInterval(async()=>{const s=await j('/api/state');ST.gameRunning=s.gameRunning;ST.lastApplied=s.lastApplied;ST.queued=s.queued;ST.ipcOk=s.ipcOk;status()},5000);
 boot();

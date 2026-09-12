@@ -28,10 +28,59 @@ def function_body(source: str, signature: str) -> str:
     raise AssertionError(f"unterminated body for {signature}")
 
 
+def strip_research_blocks(source: str) -> str:
+    """What the player build compiles, i.e. with FORGEPACT_RELEASE defined.
+
+    This evaluates the conditional rather than pattern-matching one spelling
+    of it. Research code is written BOTH ways in this file - as
+    `#ifndef FORGEPACT_RELEASE ... #endif` and as the `#else` half of
+    `#ifdef FORGEPACT_RELEASE ... #else ... #endif` - and an earlier version
+    of this helper only understood the first, so it reported a research-only
+    call as shipping. Conditionals on anything other than FORGEPACT_RELEASE
+    are passed through untouched; nesting is tracked so an inner `#if` cannot
+    end an outer block early.
+    """
+    kept = []
+    # One entry per open conditional: (is it about FORGEPACT_RELEASE,
+    # is its current branch compiled). Unrelated conditionals keep both
+    # halves, so `#else` must not flip them.
+    stack = []
+    for line in source.split("\n"):
+        stripped = line.strip()
+        if stripped.startswith("#ifdef FORGEPACT_RELEASE"):
+            stack.append([True, True])
+        elif stripped.startswith("#ifndef FORGEPACT_RELEASE"):
+            stack.append([True, False])
+        elif stripped.startswith("#if"):
+            stack.append([False, True])
+        elif stripped.startswith("#else") and stack:
+            if stack[-1][0]:
+                stack[-1][1] = not stack[-1][1]
+        elif stripped.startswith("#endif") and stack:
+            stack.pop()
+        elif all(active for _, active in stack):
+            kept.append(line)
+    return "\n".join(kept)
+
+
+def strip_comments(source: str) -> str:
+    """Code only. Research notes name plenty of addresses; comments are fine."""
+    source = re.sub(r"/\*.*?\*/", "", source, flags=re.S)
+    return re.sub(r"//[^\n]*", "", source)
+
+
+MAP_REVEAL_HEADER_PATH = PROJECT_ROOT / "plugin" / "include" / "ForgePact" / "MapRevealManager.hpp"
+STATS_HEADER_PATH = PROJECT_ROOT / "plugin" / "include" / "ForgePact" / "StatsManager.hpp"
+DENSITY_HEADER_PATH = PROJECT_ROOT / "plugin" / "include" / "ForgePact" / "DensityManager.hpp"
+
+
 class ReleaseHookContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.plugin = PLUGIN_PATH.read_text(encoding="utf-8")
+        cls.map_reveal_header = MAP_REVEAL_HEADER_PATH.read_text(encoding="utf-8")
+        cls.stats_header = STATS_HEADER_PATH.read_text(encoding="utf-8")
+        cls.density_header = DENSITY_HEADER_PATH.read_text(encoding="utf-8")
 
     def test_release_initialization_has_no_eager_gameplay_hook_group(self):
         body = function_body(self.plugin, "static void InstallHook()")
@@ -43,6 +92,40 @@ class ReleaseHookContractTests(unittest.TestCase):
         ):
             self.assertNotIn(eager, release)
 
+    def test_release_build_still_loads_custom_forge_and_auto_arms_items(self):
+        # A prior edit moved the `#ifdef FORGEPACT_RELEASE ... return;` early
+        # exit above these calls, so a shipped build skipped the Item Editor
+        # sidecar and Headhunter/Tyrant's Crown/Beacon auto-arm entirely.
+        # They must run unconditionally, before the release/dev split.
+        body = function_body(self.plugin, "static void InstallHook()")
+        guard_at = body.index("#ifdef FORGEPACT_RELEASE")
+        unconditional = body[:guard_at]
+        for call in (
+            "LoadCustomForgeEntries();",
+            "InstallCustomForgeItemHooks();",
+            "HeadhunterAutoArm();",
+            "TyrantAutoArm();",
+            "BeaconAutoArm();",
+        ):
+            self.assertIn(call, unconditional)
+
+    def test_module_initialize_registers_headhunter_hud_label_hook(self):
+        # InstallHeadLabelHook() registers Hook_DrawHudBuffs, which renders the
+        # stolen-affix labels; a rewrite of ModuleInitialize previously dropped
+        # this call, so the labels stopped rendering even when the underlying
+        # buff application kept working.
+        init = function_body(self.plugin, "EXPORTED AurieStatus ModuleInitialize(")
+        self.assertIn("InstallHeadLabelHook();", init)
+
+    def test_safe_f_bounds_large_finite_magnitudes_not_just_nan_and_inf(self):
+        # SafeF must reject not only inf/NaN but also large finite doubles
+        # (e.g. an IPC-supplied "1e300"): %.0f of a merely-finite huge value
+        # still overruns every fixed sprintf_s buffer it feeds.
+        safe_f = function_body(self.plugin, "static inline double SafeF(double v)")
+        self.assertIn("std::isfinite(v)", safe_f)
+        self.assertRegex(safe_f, r"kMaxSafeF|1e1[0-9]|1e[2-9][0-9]?")
+        self.assertIn("return kMaxSafeF;", safe_f)
+
     def test_functional_hooks_install_only_for_non_vanilla_commands(self):
         drop = function_body(self.plugin, "static void SetDropMult(")
         self.assertIn("if (n > 1) InstallDropMultHooks();", drop)
@@ -52,10 +135,14 @@ class ReleaseHookContractTests(unittest.TestCase):
         self.assertIn("InstallCreateHooks();", special)
         self.assertNotIn("InstallSpecialLifecycleHook();", special)
 
+        # The density command handler itself moved to
+        # ForgePact::DensityManager::HandleCommand (2026-09 class split).
         command = function_body(self.plugin, "static void RunCommand(")
-        density = command.split('else if (lc == "density")', 1)[1].split(
+        density_call = command.split('else if (lc == "density")', 1)[1].split(
             'else if (lc == "dropstats")', 1
         )[0]
+        self.assertIn("DensityManager::Instance().HandleCommand(rest);", density_call)
+        density = function_body(self.density_header, "void HandleCommand(const std::string& rest)")
         self.assertIn("if (d > 1.0)", density)
         self.assertIn("InstallCreateHooks();", density)
         self.assertIn("InstallDensityLifecycleHooks();", density)
@@ -68,8 +155,10 @@ class ReleaseHookContractTests(unittest.TestCase):
         )
         self.assertIsNotNone(macro)
         self.assertIn("BP_DIAG_INCREMENT(g_cnt_##NAME);", self.plugin)
-        self.assertIn("BP_DIAG_INCREMENT(g_StatSayac_##NAME);", self.plugin)
-        self.assertIn("BP_DIAG_INCREMENT(g_StatAddSayac_##NAME);", self.plugin)
+        # Stat hook telemetry moved to ForgePact::StatsManager (2026-09 class
+        # split): same BP_DIAG_INCREMENT macro, now on class members.
+        self.assertIn("BP_DIAG_INCREMENT(mgr.m_Calls_##NAME);", self.stats_header)
+        self.assertIn("BP_DIAG_INCREMENT(mgr.m_CallsAdd_StatFasterCastRate);", self.stats_header)
 
         create = function_body(self.plugin, "static void DoMultiCreate(")
         research_prefix = create.split("#endif", 1)[0]
@@ -100,10 +189,13 @@ class ReleaseHookContractTests(unittest.TestCase):
             )
 
     def test_repeated_frame_work_is_bounded(self):
-        reveal = function_body(self.plugin, "static void AutoRevealTick()")
-        self.assertIn("instanceKey == g_AutoRevealLastInstance", reveal)
-        self.assertIn("gridKey == g_AutoRevealLastGrid", reveal)
-        self.assertIn("roomKey == g_AutoRevealLastRoom", reveal)
+        # Migrated into ForgePact::MapRevealManager::Tick() (2026-09 class split);
+        # ModuleMain.cpp now only calls it via MapRevealManager::Instance().
+        self.assertIn("ForgePact::MapRevealManager::Instance().OnFrame(g_RuntimeFrame);", self.plugin)
+        reveal = function_body(self.map_reveal_header, "void Tick()")
+        self.assertIn("instanceKey == m_LastInstance", reveal)
+        self.assertIn("gridKey == m_LastGrid", reveal)
+        self.assertIn("roomKey == m_LastRoom", reveal)
 
         special = function_body(self.plugin, "static void SpecialRate(")
         self.assertIn("if (n > 1) SetObjectMultiplier(oi, n);", special)
@@ -159,23 +251,112 @@ class ReleaseHookContractTests(unittest.TestCase):
         self.assertLess(command_end, command.index('lc == "droprate"', socket_at))
 
     def test_all_off_runtime_is_native_pass_through(self):
-        self.assertIn("static double g_CreatorMult = 1.0;", self.plugin)
-        self.assertIn("static bool g_AutoReveal = false;", self.plugin)
+        # Migrated into ForgePact::DensityManager (2026-09 class split).
+        self.assertIn("double Mult{ 1.0 };", self.density_header)
+        # Migrated into ForgePact::MapRevealManager (2026-09 class split).
+        self.assertIn("bool m_Enabled{ false };", self.map_reveal_header)
 
         for signature, original in (
             ("static void HookICD(", "g_OrigICD(Result, S, O, argc, Args);"),
             ("static void HookICL(", "g_OrigICL(Result, S, O, argc, Args);"),
         ):
             hook = function_body(self.plugin, signature)
-            self.assertIn("g_CreatorMult <= 1.0", hook)
+            self.assertIn("ForgePact::DensityManager::Instance().Mult <= 1.0", hook)
             self.assertIn("g_ObjMult.empty()", hook)
             self.assertNotIn("g_NecroBalanceEnabled", hook)
             self.assertIn(original, hook)
 
-        stat = function_body(self.plugin, "static void StatCmd(")
-        native = stat.index("c == 1.0 && !*hedef->orij")
-        install = stat.index("HookOneScript(hedef->ad", native)
+        # StatCmd moved to ForgePact::StatsManager::HandleStatCommand (2026-09
+        # class split); same "x1.0 with no hook installed stays native" guard.
+        stat = function_body(self.stats_header, "void HandleStatCommand(const std::string& rest)")
+        native = stat.index("c == 1.0 && !*hedef->orig")
+        install = stat.index("HookOneScript(hedef->name", native)
         self.assertLess(native, install)
+
+    def test_gameplay_hooks_intercept_direct_native_calls(self):
+        # REPORTED 2026-09-12 (origin's review of PR #2, issue 1): the script
+        # table swap alone is blind to compiled GML's direct `call rel32` -
+        # the finding this branch itself documented after 34 hooked call sites
+        # reported "0 calls" while the game was demonstrably running them.
+        # Read-only inspection of the shipped exe found direct callers for
+        # StatMovementSpeed, StatAttackSpeed, DropRelic, DropMonsterGold and
+        # DropGold, so stat scaling, drop multipliers and the max-level relic
+        # filter could report "HOOK INSTALLED" and change nothing.
+        #
+        # The interception belongs in the installer, not bolted onto whichever
+        # names a review happened to verify.
+        body = function_body(self.plugin, "static bool HookOneScript(")
+        self.assertIn("MmCreateHook", body)
+        self.assertIn("m_ScriptFunction", body)   # both routes, not one
+
+    def test_native_detour_is_installed_once_and_only_on_the_real_target(self):
+        # Three guards make repeat installation safe, which matters because
+        # shared chokepoints (DropRelic) are installed from more than one call
+        # site and re-install is how this file makes that idempotent.
+        body = function_body(self.plugin, "static bool HookOneScript(")
+        # 1. only the first install, when the table still holds the game's fn
+        self.assertIn("const bool firstInstall = (origOut && !*origOut);", body)
+        self.assertIn("if (firstInstall) {", body)
+        self.assertLess(body.index("if (firstInstall) {"), body.index("MmCreateHook"))
+        # 2. never patch a pointer that is not the game's code (another hook
+        #    may already have swapped the entry to something in this module)
+        self.assertIn("AddrIsExecutableInModule(GetModuleHandleA(nullptr)", body)
+        self.assertLess(body.index("AddrIsExecutableInModule"), body.index("MmCreateHook"))
+        # 3. a failed detour degrades to table-only and says so, rather than
+        #    leaving *origOut null or pretending it worked
+        self.assertIn("*origOut = tableEntry;", body)
+        self.assertIn("TABLE-ONLY", body)
+
+    def test_hook_bodies_call_through_the_trampoline(self):
+        # MmCreateHook patches the bytes at the target, so a hook body that
+        # called the original address directly would re-enter itself forever.
+        # *origOut must become the trampoline.
+        body = function_body(self.plugin, "static bool HookOneScript(")
+        self.assertIn("*origOut = reinterpret_cast<PFUNC_YYGMLScript>(tramp);", body)
+        # The Headhunter's hand-rolled supplemental detour must be gone - it
+        # would now patch the trampoline HookOneScript just returned.
+        install = function_body(self.plugin, "static void InstallHeadhunterHook()")
+        self.assertNotIn("MmCreateHook", install)
+
+    def test_research_hooks_stay_table_only(self):
+        # `citrace nativetrace` runs a native detour beside a table hook on the
+        # same target and prints both counters; that comparison is what proved
+        # the blindness, and it only means something while one side really is
+        # table-only. So the research hooks keep the old installer.
+        table = function_body(self.plugin, "static bool HookOneScriptTable(")
+        self.assertNotIn("MmCreateHook", table)
+        # ...and nothing in the player build may use it.
+        shipped = strip_comments(strip_research_blocks(self.plugin))
+        calls = [m for m in re.findall(r"HookOneScriptTable\(", shipped)]
+        self.assertEqual(
+            len(calls), 1,  # the definition itself
+            "HookOneScriptTable is reachable from the player build; gameplay hooks must use HookOneScript",
+        )
+
+    def test_player_binary_calls_no_hand_resolved_game_address(self):
+        # The defect that killed `relicgate` and nearly shipped in the pet
+        # quest collector: a constant RVA read off one build's decompiled body
+        # points at unrelated bytes the moment the game is rebuilt, and a call
+        # through it transfers control into whatever is there. Everything in
+        # the player binary must resolve by name (GetNamedRoutinePointer,
+        # asset_get_index, CallBuiltin) or off a runtime struct YYToolkit
+        # defines - never off an address anybody typed in.
+        #
+        # See agents.md, "Never Call an Address You Resolved by Hand".
+        shipped = strip_comments(strip_research_blocks(self.plugin))
+        offender = re.search(r"\bk\w*Rva\w*\b", shipped)
+        self.assertIsNone(
+            offender,
+            "fixed game-address constant reachable from the player build: "
+            + (offender.group(0) if offender else ""),
+        )
+        call_target = re.search(
+            r"\(\s*char\s*\*\s*\)\s*\w+\s*\+\s*(?:0x[0-9A-Fa-f]+|k\w*Rva\w*)", shipped)
+        self.assertIsNone(
+            call_target,
+            "player build computes a call target from a module base plus a literal offset: "
+            + (call_target.group(0) if call_target else ""),
+        )
 
     def test_special_queue_is_not_cleared_during_zone_generation(self):
         self.assertNotIn("HookZoneStateResetSingleSpecial", self.plugin)

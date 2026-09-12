@@ -14,7 +14,9 @@ panel; settings are applied live while the game runs and re-applied on every lau
 | **Angelic / Unholy Drops (Experimental)** | ForgePact's own die per kill; on a hit the game builds one of its 49 real Angelic / Unholy uniques. x2 = 1 in 7,500 kills, each step adds a die, typable |
 | **Combat Modifiers** | Total Damage, Attack Speed, Faster Cast Rate, Defense, Life/Mana Replenish, physical and spell Critical Chance/Damage |
 | **Character Stats** | Experience, Magic Find and Movement Speed use the character's current total value, including equipment bonuses |
-| **Full Map Reveal** | Clears fog of war in every zone (toggleable; F5 in-game also toggles it) |
+| **Full Map Reveal** | Clears fog of war in every zone, so waypoints, dungeon entrances, chests, shrines and mining nodes show immediately (toggleable; F5 in-game also toggles it). An optional sub-toggle also fills the map with monsters: most packs do not exist until you walk near them, so it has each new zone create its packs on arrival |
+| **Pet Collects Quest Items** | While your pet is out it walks to pick-up quest items on screen and collects them one at a time, crediting the objective through the game's own collect. Pick-up items only; activate/break/talk objectives are left alone |
+| **Satanic Zone Mods** | Pick which of the game's 25 positive / 26 negative World Section mods can roll onto a Satanic Zone; everything is on by default |
 | **Auto-apply** | Saved settings are re-sent every time the game starts |
 
 ForgePact does not write permanent stat changes into your save or modify the game exe
@@ -217,6 +219,28 @@ returns the row height (30) or 0, and the caller adds the return value to its y 
 plugin draws its rows at `y`, hands the game `y + rows·30` for its own row, and returns both
 heights, so nothing overlaps and the box grows by exactly the rows added.
 
+### Satanic Zone Mods
+**World → Satanic Zone Mods** lists every World Section modifier Hero Siege can put on a
+Satanic Zone — 25 positive (buffs) and 26 negative (debuffs), names and descriptions from
+the game's own data. Everything starts enabled; deselecting one keeps the plugin from
+letting a future zone roll it, while the game still rolls the rest itself — nothing is
+forced. Positive mods keep a minimum of 3 enabled, negative mods a minimum of 2, since a
+Satanic Zone still needs a pool to draw from. Plugin command: `satmods <buff|debuff> <csv
+of disabled ids>`.
+
+No single game routine could be pinned down as "the roll" (see the research doc), so this
+does not hook one: a poll running every 15 frames off the plugin's existing frame callback
+watches `Controller_obj.satanicZoneBuff`/`satanicZoneDebuff` and, the instant either array's
+content changes, swaps out any id you disabled for a random still-enabled one — live-tested
+correcting a disabled id within one poll tick, leaving every enabled id untouched.
+
+The buff/debuff table lives in [`hs-game-sdk/curated/satanic_zone.json`](../hs-game-sdk/curated/satanic_zone.json)
+(hand-verified game knowledge, not extracted from the binary) and is shared with the rest
+of the toolkit through the generated `hs_game_sdk` bindings — see
+[`tools/generate_satanic_zone_sdk.py`](../tools/generate_satanic_zone_sdk.py). Full method
+and live findings are in
+[`docs/satanic-zone-mods-research.md`](docs/satanic-zone-mods-research.md).
+
 ### Known limitation — The Abyss
 `Spawn_Abyss_obj` is **not** supported. It is the only mechanic in its family that
 sets `discoverable = true`, which puts it behind a two-stage discover-then-activate
@@ -288,12 +312,42 @@ load there anyway.
   build (features only); without an argument it produces the development build, which
   additionally carries the diagnostic commands used to investigate the game.
 - `build_release.py` — packages `dist/ForgePact/` (the release zip contents).
+- `tools/` — developer helpers, not shipped to players: `ipc.ps1` sends one command to
+  the running plugin and prints only its reply, and `ghidra/ImportSymbols.java` names the
+  stripped game binary in Ghidra from the game's own script table.
 - `docs/S10-special-content-notes.md` — the Season 10 reverse-engineering log: mechanic
   addresses, gate behaviour, measured crash thresholds, and every approach that did not
   work (written in Turkish).
 - `docs/dungeon-key-research.md` — how the two-stage key/relic drop system was found:
   the outer `LoadDrops` chance gate, the per-item `droprate.base` roll, and why keys
   outside their home zone can never drop without opening the outer gate (Turkish).
+
+### Building the plugin
+
+`plugin_build/build.bat` compiles `plugin/ModuleMain.cpp` against three header-only
+dependencies:
+
+- **Aurie Framework** headers (`Aurie/shared.hpp`) — expected in
+  `plugin_build/include/`, which is not tracked by this repository (the headers are
+  upstream's, not ours). Copy them in from an Aurie checkout before the first build.
+- **YYToolkit** shared headers (`YYToolkit/YYTK_Shared.hpp`, plus
+  `YYTK_Shared_Types.cpp`, which `build.bat` compiles alongside `ModuleMain.cpp`) —
+  same place, same reason.
+- **hs-game-sdk** (`hs_game_sdk/hs_game_sdk.hpp`) — the typed Hero Siege object/player/room
+  wrappers `ModuleMain.cpp` uses. This one is not yet a submodule of this repository; it
+  currently lives in the
+  [hero-siege-offline-toolkit](https://github.com/S-Borkowski/hero-siege-offline-toolkit)
+  super-repo (see `hs-game-sdk/` there), on the `feature/hs-game-sdk-and-agent-guidelines`
+  branch as of this writing. Until it is published as its own pinned dependency, building
+  ForgePact standalone means checking that repo out alongside this one and pointing
+  `build.bat` at `hs-game-sdk/cpp/include`. Building from inside a full toolkit checkout
+  (where ForgePact is already a submodule next to `hs-game-sdk/`) needs no extra setup.
+
+Without `hs-game-sdk/cpp/include` on the include path, compilation fails immediately at
+the `#include <hs_game_sdk/hs_game_sdk.hpp>` line (`fatal error C1083`). The Python test
+suite (`py -m unittest discover -s tests`) checks the plugin's *source* against its
+documented contracts and does not compile it, so a green test run does not confirm the
+plugin actually builds.
 
 ## 📜 License — AGPL-3.0
 

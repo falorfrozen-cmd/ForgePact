@@ -47,7 +47,11 @@ def main() -> int:
     # recognised - this happened once and the game crashed on startup.
     ship = ROOT / "plugin_build" / "BloodPactPlugin_ship.dll"
     packaged = MODFILES / "BloodPactPlugin.dll"
-    if ship.is_file() and packaged.is_file() and ship.read_bytes() != packaged.read_bytes():
+    if not ship.is_file():
+        print("ERROR: plugin_build/BloodPactPlugin_ship.dll is missing")
+        print("       Run plugin_build\\build.bat release before packaging.")
+        return 1
+    if not packaged.is_file() or ship.read_bytes() != packaged.read_bytes():
         print("ERROR: modfiles_shipped/BloodPactPlugin.dll does not match")
         print("       plugin_build/BloodPactPlugin_ship.dll.  Run")
         print("       plugin_build/build.bat release and copy the resulting DLL")
@@ -67,7 +71,7 @@ def main() -> int:
                        capture_output=True)
 
     build = ROOT / "build"
-    for p in (DIST.parent, build):
+    for p in (DIST, build):
         if p.exists():
             shutil.rmtree(p, ignore_errors=True)
         if p.exists():
