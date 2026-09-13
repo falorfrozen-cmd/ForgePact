@@ -1,0 +1,75 @@
+# Sends a `repository_dispatch` to the toolkit hub when a commit lands on
+# `main`, so the hub's recorded submodule pointer for this repository is
+# refreshed instead of drifting until someone bumps it by hand.
+#
+# This is the sending half of `.github/workflows/submodule-dispatch.yml` in
+# `falorfrozen-cmd/hero-siege-offline-toolkit`. The receiving side validates
+# the payload against an allowlist of submodule paths, checks the SHA is 40
+# hex characters, and then opens a pull request rather than pushing — so
+# firing this event cannot move the hub's default branch. A human still
+# merges the bump.
+#
+# Setup, once:
+#
+#   1. Add a repository secret named exactly `HUB_DISPATCH_TOKEN`, under
+#      Settings > Secrets and variables > Actions > New repository secret, in
+#      THIS repository. Its value is a token scoped to the HUB repository: a
+#      fine-grained token whose resource owner is `falorfrozen-cmd`, whose
+#      repository access is only `hero-siege-offline-toolkit`, and whose
+#      only permission is `Contents: Read and write`. (A classic token needs
+#      the `repo` scope, which is broader than necessary.)
+#
+#      Read and write is not a typo. `POST /repos/{owner}/{repo}/dispatches`
+#      is documented under Contents *write*; a read-only token gets a 403,
+#      "Resource not accessible by personal access token".
+#
+#      The token needs no access to this repository at all — the secret is
+#      stored here but spends its permission on the hub. The default
+#      `GITHUB_TOKEN` cannot dispatch across repositories, which is why a
+#      separate secret is needed. One token can serve every tool repository.
+#
+#   2. Nothing needs to be added on the hub side, but the hub repository does
+#      need Settings > Actions > General > Workflow permissions > "Allow
+#      GitHub Actions to create and approve pull requests" ticked. That box is
+#      off by default, and with it off the dispatch arrives and the receiver
+#      runs, but its last step cannot open the bump pull request.
+#
+# With no token set the job reports that it is skipping and succeeds, so
+# merging this before the secret exists does not paint `main` red.
+
+name: Notify hub on merge to main
+
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check for the dispatch token
+        id: token
+        env:
+          TOKEN: ${{ secrets.HUB_DISPATCH_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "HUB_DISPATCH_TOKEN is not set; skipping the notification."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The payload carries only the submodule path and the commit. The hub
+      # resolves everything else itself, so a forged payload cannot talk it
+      # into recording a commit that is not on this repository.
+      - name: Tell the hub
+        if: steps.token.outputs.present == 'true'
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.HUB_DISPATCH_TOKEN }}
+          repository: falorfrozen-cmd/hero-siege-offline-toolkit
+          event-type: submodule-updated
+          client-payload: >-
+            {"submodule": "ForgePact", "sha": "${{ github.sha }}"}
