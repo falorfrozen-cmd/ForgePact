@@ -1,0 +1,57 @@
+# Sends a `repository_dispatch` to the toolkit hub when a commit lands on
+# `main`, so the hub's recorded submodule pointer for this repository is
+# refreshed instead of drifting until someone bumps it by hand.
+#
+# This is the sending half of `.github/workflows/submodule-dispatch.yml` in
+# `falorfrozen-cmd/hero-siege-offline-toolkit`. The receiving side validates
+# the payload against an allowlist of submodule paths and opens a pull request
+# rather than pushing, so firing this event cannot move the hub repository's
+# default branch.
+#
+# Setup, once:
+#
+#   1. Create a personal access token that can dispatch to the hub repository
+#      (a fine-grained token with `Contents: read` on it is enough). The
+#      default `GITHUB_TOKEN` cannot dispatch across repositories, which is
+#      why a separate secret is needed.
+#   2. Add it as the repository secret `HUB_DISPATCH_TOKEN`.
+#
+# With no token set the job reports that it is skipping and succeeds, so
+# merging this before the secret exists does not paint `main` red.
+
+name: Notify hub on merge to main
+
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check for the dispatch token
+        id: token
+        env:
+          TOKEN: ${{ secrets.HUB_DISPATCH_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "HUB_DISPATCH_TOKEN is not set; skipping the notification."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The payload carries only the submodule path and the commit. The hub
+      # resolves everything else itself, so a forged payload cannot talk it
+      # into recording a commit that is not on this repository.
+      - name: Tell the hub
+        if: steps.token.outputs.present == 'true'
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.HUB_DISPATCH_TOKEN }}
+          repository: falorfrozen-cmd/hero-siege-offline-toolkit
+          event-type: submodule-updated
+          client-payload: >-
+            {"submodule": "ForgePact", "sha": "${{ github.sha }}"}
