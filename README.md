@@ -264,13 +264,31 @@ The plugin reports what it is doing in `<game>\bin\bp_ipc\out.txt`:
 ```
 relicfilter -> ON (armed, applies once you are in-game)
 relicfilter: hook installed -> ON
-relicfilter: holding back 3 maxed relic(s) on this roll
+relicfilter: holding back 3 of 5 maxed relic(s) on this roll
 ```
 
-The third line is the one that says the mod is actually filtering. `0` means the scan
-ran and you have no maxed relics yet; no such line at all means it is not running.
-Until 1.3.19 only the first two lines existed, and they printed just as happily while
-the mod held nothing back — see `release-notes-v1.3.19.md`.
+The first two lines only mean the mod is *armed and hooked* — until 1.3.19 they were
+all there was, and they printed just as happily while it held nothing back.
+
+The third line is the one that reports what actually happened, and it says which of
+these five states you are in. Only the first is the mod working:
+
+| Line | What it means |
+| --- | --- |
+| `holding back N of M maxed relic(s) on this roll` | Working. `M` maxed relics were found, `N` of them were withheld from this roll |
+| `scanned, no maxed relics to hold back` | Working, nothing to do — you own no relics at 10/10 yet |
+| `no player resolved yet, nothing scanned` | The scan did not run. Normal for a moment after the hook installs; persistent means it cannot find your character |
+| `all 156 relics maxed, filter stands down (nothing left to drop instead)` | Every relic is maxed, so there is nothing better to drop and the filter deliberately does nothing |
+| `found N maxed relic(s) but held back none (repository lookup failed)` | The scan worked, the drop table did not — usually an index that moved in a game update |
+
+It is printed once per change of state, so a normal session stays quiet after the
+first line. **No line at all means the filter is not running.**
+
+The count is deliberately what was *applied*, not what was found: the first version of
+this line reported the scan's input before the guards and writes that decide whether
+anything is withheld had run, so it claimed a working filter on the last three rows of
+that table (reported in review of PR #4). `tests/test_relic_filter_behavior.py` runs
+the real hook against each of those cases.
 
 ### Known limitation — The Abyss
 `Spawn_Abyss_obj` is **not** supported. It is the only mechanic in its family that

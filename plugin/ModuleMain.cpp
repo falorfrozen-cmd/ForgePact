@@ -9200,23 +9200,7 @@ static RValue& Hook_DropRelic(CInstance* S, CInstance* O, RValue& R, int argc, R
     std::vector<std::pair<int, double>> modifiedBases;
 
     if (ForgePact::RelicFilterMod::Instance().IsEnabled()) {
-        ForgePact::RelicFilterMod::Instance().GetPlayerMaxedRelics(maxedRelics);
-
-        // The filter's only visible sign was "hook installed -> ON", which it
-        // printed just as happily while it was holding nothing back (the scan
-        // returned an empty set for every player until 2026-09-14 - see
-        // IsInstanceHandle in the SDK's player.hpp).  Reported once per change
-        // in the count, so "armed" and "actually filtering N" can be told
-        // apart from the log without a research build; release keeps it,
-        // because BP_DIAG counters do not exist here.
-        {
-            static size_t s_lastReported = static_cast<size_t>(-1);
-            if (maxedRelics.size() != s_lastReported) {
-                s_lastReported = maxedRelics.size();
-                Out("relicfilter: holding back " + std::to_string(maxedRelics.size())
-                    + " maxed relic(s) on this roll");
-            }
-        }
+        const bool scanRan = ForgePact::RelicFilterMod::Instance().GetPlayerMaxedRelics(maxedRelics);
 
         if (!maxedRelics.empty() && maxedRelics.size() < static_cast<size_t>(kSeason10RelicRepoCount)) {
             for (int rId : maxedRelics) {
@@ -9232,6 +9216,41 @@ static RValue& Hook_DropRelic(CInstance* S, CInstance* O, RValue& R, int argc, R
                     }
                 } catch (...) {}
             }
+        }
+
+        // Report what the filter DID, never what the scan handed it.  Reported
+        // after the guards and the writes above, because those are what decide
+        // whether anything is actually held back: the first version of this
+        // line printed the scan's input count before either had run, so it
+        // announced "holding back 156" on the all-maxed path that deliberately
+        // skips filtering, and "holding back 1" when the repository lookup
+        // failed and nothing was written (REPORTED 2026-09-15 in review of
+        // PR #4).  A diagnostic added to prove the mod works is worthless if it
+        // can say so when it did not - that was the original bug here.
+        //
+        // The all-maxed bypass itself is existing gameplay policy and is left
+        // alone: with every relic maxed there is nothing left to drop instead,
+        // so the filter stands down rather than blocking relic drops entirely.
+        // One line per change of state, so a normal session stays quiet.
+        {
+            static std::string s_lastReport;
+            std::string report;
+            if (!scanRan) {
+                report = "relicfilter: no player resolved yet, nothing scanned";
+            } else if (maxedRelics.empty()) {
+                report = "relicfilter: scanned, no maxed relics to hold back";
+            } else if (maxedRelics.size() >= static_cast<size_t>(kSeason10RelicRepoCount)) {
+                report = "relicfilter: all " + std::to_string(maxedRelics.size())
+                       + " relics maxed, filter stands down (nothing left to drop instead)";
+            } else if (modifiedBases.empty()) {
+                report = "relicfilter: found " + std::to_string(maxedRelics.size())
+                       + " maxed relic(s) but held back none (repository lookup failed)";
+            } else {
+                report = "relicfilter: holding back " + std::to_string(modifiedBases.size())
+                       + " of " + std::to_string(maxedRelics.size())
+                       + " maxed relic(s) on this roll";
+            }
+            if (report != s_lastReport) { s_lastReport = report; Out(report); }
         }
     }
 

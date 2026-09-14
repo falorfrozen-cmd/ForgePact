@@ -15,10 +15,12 @@ Two things that looked like they worked, and did not.
   as intended.
 
   The plugin also says so in its log (`<game>\bin\bp_ipc\out.txt`) now:
-  `relicfilter: holding back 3 maxed relic(s) on this roll`. Previously the only
-  sign of life was "hook installed", which it printed just as cheerfully while
-  filtering nothing — if you turned this mod on before and could not tell whether
-  it was doing anything, that is why.
+  `relicfilter: holding back 3 of 5 maxed relic(s) on this roll`, counting what it
+  actually withheld. Previously the only sign of life was "hook installed", which
+  it printed just as cheerfully while filtering nothing — if you turned this mod on
+  before and could not tell whether it was doing anything, that is why. The log also
+  names the cases where it deliberately or unavoidably does nothing, rather than
+  staying silent about them; the README lists what each line means.
 
 - **The Satanic Zone mod lists were missing from the World tab.** The section
   header and its explanation were there, with nothing underneath — no positive
