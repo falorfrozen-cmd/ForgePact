@@ -9202,6 +9202,22 @@ static RValue& Hook_DropRelic(CInstance* S, CInstance* O, RValue& R, int argc, R
     if (ForgePact::RelicFilterMod::Instance().IsEnabled()) {
         ForgePact::RelicFilterMod::Instance().GetPlayerMaxedRelics(maxedRelics);
 
+        // The filter's only visible sign was "hook installed -> ON", which it
+        // printed just as happily while it was holding nothing back (the scan
+        // returned an empty set for every player until 2026-09-14 - see
+        // IsInstanceHandle in the SDK's player.hpp).  Reported once per change
+        // in the count, so "armed" and "actually filtering N" can be told
+        // apart from the log without a research build; release keeps it,
+        // because BP_DIAG counters do not exist here.
+        {
+            static size_t s_lastReported = static_cast<size_t>(-1);
+            if (maxedRelics.size() != s_lastReported) {
+                s_lastReported = maxedRelics.size();
+                Out("relicfilter: holding back " + std::to_string(maxedRelics.size())
+                    + " maxed relic(s) on this roll");
+            }
+        }
+
         if (!maxedRelics.empty() && maxedRelics.size() < static_cast<size_t>(kSeason10RelicRepoCount)) {
             for (int rId : maxedRelics) {
                 if (!RepoIndexValid(16, rId)) continue;
