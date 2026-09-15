@@ -45,14 +45,22 @@ public:
         Out(std::string("relicfilter -> ") + (enabled ? (alreadyHooked ? "ON" : "ON (armed, applies once you are in-game)") : "OFF"));
     }
 
-    void GetPlayerMaxedRelics(std::unordered_set<int>& outMaxed) const {
+    // Returns whether the scan actually RAN, which is not the same question as
+    // whether it found anything. An empty set means "this player has no maxed
+    // relics" only when this returned true; when it returns false the set is
+    // empty because there was nothing to scan (filter off, no player instance
+    // yet, or the read threw). A caller that cannot tell those apart reports
+    // "0 maxed relics" for a scan that never happened - which is exactly how
+    // the dead scanner went unnoticed before 2026-09-14.
+    bool GetPlayerMaxedRelics(std::unordered_set<int>& outMaxed) const {
         outMaxed.clear();
-        if (!m_Enabled.load()) return;
+        if (!m_Enabled.load()) return false;
         try {
             RValue player;
-            if (!HhResolveLocalPlayer(player)) return;
+            if (!HhResolveLocalPlayer(player)) return false;
             outMaxed = HeroSiege::Player::GetMaxedRelicIds(g_Yytk, player);
-        } catch (...) {}
+            return true;
+        } catch (...) { return false; }
     }
 
     // NOTE: an earlier container-walking scan (recursively inspecting struct/

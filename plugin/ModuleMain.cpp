@@ -9199,8 +9199,10 @@ static RValue& Hook_DropRelic(CInstance* S, CInstance* O, RValue& R, int argc, R
     std::unordered_set<int> maxedRelics;
     std::vector<std::pair<int, double>> modifiedBases;
 
+    size_t suppressed = 0;   // writes CONFIRMED to have landed, not writes attempted
+
     if (ForgePact::RelicFilterMod::Instance().IsEnabled()) {
-        ForgePact::RelicFilterMod::Instance().GetPlayerMaxedRelics(maxedRelics);
+        const bool scanRan = ForgePact::RelicFilterMod::Instance().GetPlayerMaxedRelics(maxedRelics);
 
         if (!maxedRelics.empty() && maxedRelics.size() < static_cast<size_t>(kSeason10RelicRepoCount)) {
             for (int rId : maxedRelics) {
@@ -9211,11 +9213,83 @@ static RValue& Hook_DropRelic(CInstance* S, CInstance* O, RValue& R, int argc, R
                     RValue dr = g_Yytk->CallBuiltin("variable_struct_get", { st, RValue("droprate") });
                     if (dr.m_Kind == VALUE_OBJECT) {
                         RValue curBase = g_Yytk->CallBuiltin("variable_struct_get", { dr, RValue("base") });
+                        // Rollback bookkeeping FIRST and unconditionally: if the
+                        // write lands even partially, the restore below has to
+                        // know the vanilla value.  This list is therefore "what
+                        // to put back", never "what was suppressed" - the two
+                        // were the same variable until review of PR #4 pointed
+                        // out they answer different questions.
                         modifiedBases.push_back({ rId, curBase.ToDouble() });
-                        g_Yytk->CallBuiltin("variable_struct_set", { dr, RValue("base"), RValue(1e18) });
+
+                        // Status-returning call: CallBuiltin alone cannot fail
+                        // out loud - it hands back an unset RValue and the
+                        // catch below swallows a throw - so neither reaching
+                        // this line nor the rollback list growing is evidence
+                        // the base actually changed.
+                        CInstance* self = nullptr;
+                        g_Yytk->GetGlobalInstance(&self);
+                        RValue setResult;
+                        const AurieStatus setStatus = g_Yytk->CallBuiltinEx(
+                            setResult, "variable_struct_set", self, self,
+                            { dr, RValue("base"), RValue(1e18) });
+
+                        // ... and then confirm by reading the value back, which
+                        // is the only check that survives a call that reports
+                        // success while writing nothing.
+                        if (AurieSuccess(setStatus)) {
+                            RValue written = g_Yytk->CallBuiltin("variable_struct_get", { dr, RValue("base") });
+                            const bool numeric = written.m_Kind == VALUE_REAL
+                                              || written.m_Kind == VALUE_INT32
+                                              || written.m_Kind == VALUE_INT64;
+                            if (numeric && written.ToDouble() >= 1e18) ++suppressed;
+                        }
                     }
                 } catch (...) {}
             }
+        }
+
+        // Report what the filter DID, never what the scan handed it.  Reported
+        // after the guards and the writes above, because those are what decide
+        // whether anything is actually held back: the first version of this
+        // line printed the scan's input count before either had run, so it
+        // announced "holding back 156" on the all-maxed path that deliberately
+        // skips filtering, and "holding back 1" when the repository lookup
+        // failed and nothing was written (REPORTED 2026-09-15 in review of
+        // PR #4).  A diagnostic added to prove the mod works is worthless if it
+        // can say so when it did not - that was the original bug here.
+        //
+        // The all-maxed bypass itself is existing gameplay policy and is left
+        // alone: with every relic maxed there is nothing left to drop instead,
+        // so the filter stands down rather than blocking relic drops entirely.
+        // One line per change of state, so a normal session stays quiet.
+        {
+            static std::string s_lastReport;
+            std::string report;
+            if (!scanRan) {
+                report = "relicfilter: no player resolved yet, nothing scanned";
+            } else if (maxedRelics.empty()) {
+                report = "relicfilter: scanned, no maxed relics to hold back";
+            } else if (maxedRelics.size() >= static_cast<size_t>(kSeason10RelicRepoCount)) {
+                report = "relicfilter: all " + std::to_string(maxedRelics.size())
+                       + " relics maxed, filter stands down (nothing left to drop instead)";
+            } else if (modifiedBases.empty()) {
+                report = "relicfilter: found " + std::to_string(maxedRelics.size())
+                       + " maxed relic(s) but held back none (repository lookup failed)";
+            } else if (suppressed == 0) {
+                report = "relicfilter: found " + std::to_string(maxedRelics.size())
+                       + " maxed relic(s) but held back none (drop table write failed)";
+            } else if (suppressed < modifiedBases.size()) {
+                report = "relicfilter: holding back " + std::to_string(suppressed)
+                       + " of " + std::to_string(maxedRelics.size())
+                       + " maxed relic(s) on this roll ("
+                       + std::to_string(modifiedBases.size() - suppressed)
+                       + " write(s) failed)";
+            } else {
+                report = "relicfilter: holding back " + std::to_string(suppressed)
+                       + " of " + std::to_string(maxedRelics.size())
+                       + " maxed relic(s) on this roll";
+            }
+            if (report != s_lastReport) { s_lastReport = report; Out(report); }
         }
     }
 

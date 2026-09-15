@@ -10,6 +10,12 @@ controls over a small file-based IPC channel that the ForgePact panel writes to.
   plus `YYToolkit/YYTK_Shared_Types.cpp`. These come from YYToolkit upstream —
   https://github.com/AurieFramework/YYToolkit (AGPL-3.0). Place them under an `include/`
   folder inside `plugin_build/`, next to `build.bat`.
+- **hs-game-sdk** headers — `ModuleMain.cpp` includes `<hs_game_sdk/hs_game_sdk.hpp>` for
+  the typed object/script/player wrappers, and `build.bat` adds
+  `..\..\hs-game-sdk\cpp\include` to the include path. In a full toolkit checkout that
+  path already resolves (ForgePact sits next to `hs-game-sdk/`); standalone, check the
+  hub out alongside this repository. Without it the build stops at that include with
+  `fatal error C1083`.
 
 The plugin must be built against the **same** YYToolkit headers as the `YYToolkit.dll`
 you ship, or you will get crashes at load time — the interface is a raw vtable.

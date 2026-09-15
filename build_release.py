@@ -27,6 +27,15 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 SRC = ROOT / "src" / "forgepact.py"
+# src/forgepact.py imports hs_game_sdk for the Satanic Zone mod pool (names,
+# ids and descriptions).  Its own fallback inserts this path at RUNTIME, which
+# a frozen build never reaches: PyInstaller resolves imports at BUILD time, and
+# the exe runs from a temp unpack directory with no toolkit checkout above it.
+# Without --paths the analysis logged "missing module named hs_game_sdk
+# (optional)", the except branch set SATANIC_BUFFS/SATANIC_DEBUFFS to (), and
+# the packaged panel served empty pool lists - the World tab's Satanic Zone
+# section rendered its heading with no rows under it (user report 2026-09-14).
+SDK_PY = ROOT.parent / "hs-game-sdk" / "python"
 MODFILES = ROOT / "modfiles_shipped"
 DIST = ROOT / "dist" / "ForgePact"
 NEEDED = ["AurieCore.dll", "AuriePatcher.exe", "YYToolkit.dll", "BloodPactPlugin.dll"]
@@ -58,6 +67,16 @@ def main() -> int:
         print("       into modfiles_shipped.")
         return 1
 
+    # Refused rather than warned: a package built without the SDK looks fine,
+    # starts fine, and is missing a whole panel section.  That shipped once.
+    if not (SDK_PY / "hs_game_sdk" / "__init__.py").is_file():
+        print(f"ERROR: hs_game_sdk not found at {SDK_PY}")
+        print("       The Satanic Zone mod pool comes from it; a package built")
+        print("       without it has an empty World tab section.  Build from a")
+        print("       full toolkit checkout, where hs-game-sdk sits next to")
+        print("       ForgePact.")
+        return 1
+
     try:
         import PyInstaller  # noqa: F401
     except ImportError:
@@ -83,6 +102,7 @@ def main() -> int:
         "--onefile", "--windowed", "--name", "ForgePact",
         "--distpath", str(DIST.parent), "--workpath", str(build),
         "--specpath", str(build),
+        "--paths", str(SDK_PY),
     ]
     # tkinter is only used by the file picker, and only as a FALLBACK: the primary
     # picker opens through comdlg32 (Win32), and failing that the path can be typed
@@ -99,6 +119,16 @@ def main() -> int:
     exe = DIST.parent / "ForgePact.exe"
     if not exe.is_file():
         print("ERROR: ForgePact.exe was not produced"); return 1
+
+    # PyInstaller does not fail a build over an import it could not resolve, it
+    # just notes it here.  The one import whose absence is invisible until a
+    # player opens the World tab is checked explicitly.
+    warn = build / "ForgePact" / "warn-ForgePact.txt"
+    if warn.is_file() and "missing module named hs_game_sdk" in warn.read_text(
+            encoding="utf-8", errors="replace"):
+        print("ERROR: hs_game_sdk did not make it into the package")
+        print(f"       (see {warn}).  The Satanic Zone lists would be empty.")
+        return 1
 
     DIST.mkdir(parents=True, exist_ok=True)
     shutil.move(str(exe), str(DIST / "ForgePact.exe"))

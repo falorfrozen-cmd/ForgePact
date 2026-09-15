@@ -17,6 +17,7 @@ panel; settings are applied live while the game runs and re-applied on every lau
 | **Full Map Reveal** | Clears fog of war in every zone, so waypoints, dungeon entrances, chests, shrines and mining nodes show immediately (toggleable; F5 in-game also toggles it). An optional sub-toggle also fills the map with monsters: most packs do not exist until you walk near them, so it has each new zone create its packs on arrival |
 | **Pet Collects Quest Items** | While your pet is out it walks to pick-up quest items on screen and collects them one at a time, crediting the objective through the game's own collect. Pick-up items only; activate/break/talk objectives are left alone |
 | **Satanic Zone Mods** | Pick which of the game's 25 positive / 26 negative World Section mods can roll onto a Satanic Zone; everything is on by default |
+| **Remove Owned Relics** | Relics already at maximum level (10 out of 10) in your equipped slots, backpack or inventory stop dropping again, so a relic drop is one you can still use |
 | **Auto-apply** | Saved settings are re-sent every time the game starts |
 
 ForgePact does not write permanent stat changes into your save or modify the game exe
@@ -241,6 +242,63 @@ of the toolkit through the generated `hs_game_sdk` bindings — see
 and live findings are in
 [`docs/satanic-zone-mods-research.md`](docs/satanic-zone-mods-research.md).
 
+## Remove owned relics from drop pool
+
+Mods tab → Gameplay Mods. While it is on, a relic that is already at 10/10 in your
+equipped slots, backpack or inventory is withheld when the game rolls a relic drop,
+so what lands is one you can still level.
+
+It is not a forced reroll of the loot table: the maxed relics are excluded for the
+duration of that one roll and their normal drop rates are restored immediately
+afterwards, so every other relic keeps the odds the game gives it. Turning the
+toggle off restores vanilla behaviour for the session.
+
+The panel sends `relicfilter 1`, which only **arms** the mod — the `DropRelic` hook
+goes in later, once a player instance exists. Installing it during character
+selection stalled the runner for about a minute (measured 2026-09-09), so the plugin
+defers it to its frame callback. That is why the mod applies a moment after you are
+in-game rather than at launch.
+
+The plugin reports what it is doing in `<game>\bin\bp_ipc\out.txt`:
+
+```
+relicfilter -> ON (armed, applies once you are in-game)
+relicfilter: hook installed -> ON
+relicfilter: holding back 3 of 5 maxed relic(s) on this roll
+```
+
+The first two lines only mean the mod is *armed and hooked* — until 1.3.19 they were
+all there was, and they printed just as happily while it held nothing back.
+
+The third line is the one that reports what actually happened, and it says which of
+these five states you are in. Only the first is the mod working:
+
+| Line | What it means |
+| --- | --- |
+| `holding back N of M maxed relic(s) on this roll` | Working. `M` maxed relics were found, `N` of them were withheld from this roll |
+| `scanned, no maxed relics to hold back` | Working, nothing to do — you own no relics at 10/10 yet |
+| `no player resolved yet, nothing scanned` | The scan did not run. Normal for a moment after the hook installs; persistent means it cannot find your character |
+| `all 156 relics maxed, filter stands down (nothing left to drop instead)` | Every relic is maxed, so there is nothing better to drop and the filter deliberately does nothing |
+| `found N maxed relic(s) but held back none (repository lookup failed)` | The scan worked, the drop table entry could not be read — usually an index that moved in a game update |
+| `found N maxed relic(s) but held back none (drop table write failed)` | Both worked, the change to the drop rate did not land |
+
+A working roll that could not hold back everything it found says so too, rather than
+rounding up: `holding back 2 of 5 maxed relic(s) on this roll (1 write(s) failed)`.
+
+It is printed once per change of state, so a normal session stays quiet after the
+first line. **No line at all means the filter is not running.**
+
+The count is what the plugin *confirmed it changed* — each suppression is written
+through a status-returning call and then read back — not what the scan found and not
+what it attempted. Those are three different numbers, and the first two versions of
+this line reported the wrong one: the original printed the scan's input before the
+guards and writes had run at all, and its replacement counted the rollback list, which
+grows before each write and therefore still counted writes that threw or silently did
+nothing (both reported in review of PR #4). The rollback list is deliberately kept
+separate and still covers every *attempt*, because a write whose outcome is unknown
+must still be restored. `tests/test_relic_filter_behavior.py` runs the real hook
+against every case in this table.
+
 ### Known limitation — The Abyss
 `Spawn_Abyss_obj` is **not** supported. It is the only mechanic in its family that
 sets `discoverable = true`, which puts it behind a two-stage discover-then-activate
@@ -309,8 +367,10 @@ load there anyway.
 - `yytoolkit-modified/` — our YYToolkit build and the notes for the one changed file.
 - `modfiles_shipped/` — the binaries copied into the game folder.
 - `plugin_build/build.bat` — builds the plugin. `build.bat release` produces the shipping
-  build (features only); without an argument it produces the development build, which
-  additionally carries the diagnostic commands used to investigate the game.
+  build (features only); `build.bat dev` produces the development build, which additionally
+  carries the diagnostic commands used to investigate the game. The literal `dev` argument
+  is required: `dev` is the only special-cased value, so a bare `build.bat` with no
+  argument produces the *shipping* build, not the development one.
 - `build_release.py` — packages `dist/ForgePact/` (the release zip contents).
 - `tools/` — developer helpers, not shipped to players: `ipc.ps1` sends one command to
   the running plugin and prints only its reply, and `ghidra/ImportSymbols.java` names the
@@ -335,19 +395,34 @@ dependencies:
   same place, same reason.
 - **hs-game-sdk** (`hs_game_sdk/hs_game_sdk.hpp`) — the typed Hero Siege object/player/room
   wrappers `ModuleMain.cpp` uses. This one is not yet a submodule of this repository; it
-  currently lives in the
-  [hero-siege-offline-toolkit](https://github.com/S-Borkowski/hero-siege-offline-toolkit)
-  super-repo (see `hs-game-sdk/` there), on the `feature/hs-game-sdk-and-agent-guidelines`
-  branch as of this writing. Until it is published as its own pinned dependency, building
-  ForgePact standalone means checking that repo out alongside this one and pointing
-  `build.bat` at `hs-game-sdk/cpp/include`. Building from inside a full toolkit checkout
-  (where ForgePact is already a submodule next to `hs-game-sdk/`) needs no extra setup.
+  lives in the
+  [hero-siege-offline-toolkit](https://github.com/falorfrozen-cmd/hero-siege-offline-toolkit)
+  super-repo (see `hs-game-sdk/` there) on its default branch. Until it is published as its
+  own pinned dependency, building ForgePact standalone means checking that repo out
+  alongside this one and pointing `build.bat` at `hs-game-sdk/cpp/include`. Building from
+  inside a full toolkit checkout (where ForgePact is already a submodule next to
+  `hs-game-sdk/`) needs no extra setup.
 
 Without `hs-game-sdk/cpp/include` on the include path, compilation fails immediately at
 the `#include <hs_game_sdk/hs_game_sdk.hpp>` line (`fatal error C1083`). The Python test
 suite (`py -m unittest discover -s tests`) checks the plugin's *source* against its
 documented contracts and does not compile it, so a green test run does not confirm the
 plugin actually builds.
+
+### Packaging the panel
+
+`build_release.py` needs hs-game-sdk too, for a different reason and from a different
+path: `src/forgepact.py` imports `hs_game_sdk` for the Satanic Zone buff/debuff pool, so
+the packager puts `hs-game-sdk/python` on PyInstaller's analysis path.
+
+This is a hard requirement, and the script fails rather than warns — twice, once before
+the build if the directory is missing and once after it if PyInstaller still reports the
+module as missing. The panel's own import falls back to empty pools, and its runtime
+`sys.path` fallback cannot rescue a frozen build (PyInstaller resolves imports when it
+builds; the exe unpacks to a temp directory with no toolkit checkout above it). A package
+built without the SDK therefore builds, starts, and looks completely normal — except the
+World tab's Satanic Zone section has no rows under its heading. That shipped in every
+release up to 1.3.18.
 
 ## 📜 License — AGPL-3.0
 
