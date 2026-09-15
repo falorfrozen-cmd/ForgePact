@@ -279,16 +279,25 @@ these five states you are in. Only the first is the mod working:
 | `scanned, no maxed relics to hold back` | Working, nothing to do — you own no relics at 10/10 yet |
 | `no player resolved yet, nothing scanned` | The scan did not run. Normal for a moment after the hook installs; persistent means it cannot find your character |
 | `all 156 relics maxed, filter stands down (nothing left to drop instead)` | Every relic is maxed, so there is nothing better to drop and the filter deliberately does nothing |
-| `found N maxed relic(s) but held back none (repository lookup failed)` | The scan worked, the drop table did not — usually an index that moved in a game update |
+| `found N maxed relic(s) but held back none (repository lookup failed)` | The scan worked, the drop table entry could not be read — usually an index that moved in a game update |
+| `found N maxed relic(s) but held back none (drop table write failed)` | Both worked, the change to the drop rate did not land |
+
+A working roll that could not hold back everything it found says so too, rather than
+rounding up: `holding back 2 of 5 maxed relic(s) on this roll (1 write(s) failed)`.
 
 It is printed once per change of state, so a normal session stays quiet after the
 first line. **No line at all means the filter is not running.**
 
-The count is deliberately what was *applied*, not what was found: the first version of
-this line reported the scan's input before the guards and writes that decide whether
-anything is withheld had run, so it claimed a working filter on the last three rows of
-that table (reported in review of PR #4). `tests/test_relic_filter_behavior.py` runs
-the real hook against each of those cases.
+The count is what the plugin *confirmed it changed* — each suppression is written
+through a status-returning call and then read back — not what the scan found and not
+what it attempted. Those are three different numbers, and the first two versions of
+this line reported the wrong one: the original printed the scan's input before the
+guards and writes had run at all, and its replacement counted the rollback list, which
+grows before each write and therefore still counted writes that threw or silently did
+nothing (both reported in review of PR #4). The rollback list is deliberately kept
+separate and still covers every *attempt*, because a write whose outcome is unknown
+must still be restored. `tests/test_relic_filter_behavior.py` runs the real hook
+against every case in this table.
 
 ### Known limitation — The Abyss
 `Spawn_Abyss_obj` is **not** supported. It is the only mechanic in its family that

@@ -9199,6 +9199,8 @@ static RValue& Hook_DropRelic(CInstance* S, CInstance* O, RValue& R, int argc, R
     std::unordered_set<int> maxedRelics;
     std::vector<std::pair<int, double>> modifiedBases;
 
+    size_t suppressed = 0;   // writes CONFIRMED to have landed, not writes attempted
+
     if (ForgePact::RelicFilterMod::Instance().IsEnabled()) {
         const bool scanRan = ForgePact::RelicFilterMod::Instance().GetPlayerMaxedRelics(maxedRelics);
 
@@ -9211,8 +9213,36 @@ static RValue& Hook_DropRelic(CInstance* S, CInstance* O, RValue& R, int argc, R
                     RValue dr = g_Yytk->CallBuiltin("variable_struct_get", { st, RValue("droprate") });
                     if (dr.m_Kind == VALUE_OBJECT) {
                         RValue curBase = g_Yytk->CallBuiltin("variable_struct_get", { dr, RValue("base") });
+                        // Rollback bookkeeping FIRST and unconditionally: if the
+                        // write lands even partially, the restore below has to
+                        // know the vanilla value.  This list is therefore "what
+                        // to put back", never "what was suppressed" - the two
+                        // were the same variable until review of PR #4 pointed
+                        // out they answer different questions.
                         modifiedBases.push_back({ rId, curBase.ToDouble() });
-                        g_Yytk->CallBuiltin("variable_struct_set", { dr, RValue("base"), RValue(1e18) });
+
+                        // Status-returning call: CallBuiltin alone cannot fail
+                        // out loud - it hands back an unset RValue and the
+                        // catch below swallows a throw - so neither reaching
+                        // this line nor the rollback list growing is evidence
+                        // the base actually changed.
+                        CInstance* self = nullptr;
+                        g_Yytk->GetGlobalInstance(&self);
+                        RValue setResult;
+                        const AurieStatus setStatus = g_Yytk->CallBuiltinEx(
+                            setResult, "variable_struct_set", self, self,
+                            { dr, RValue("base"), RValue(1e18) });
+
+                        // ... and then confirm by reading the value back, which
+                        // is the only check that survives a call that reports
+                        // success while writing nothing.
+                        if (AurieSuccess(setStatus)) {
+                            RValue written = g_Yytk->CallBuiltin("variable_struct_get", { dr, RValue("base") });
+                            const bool numeric = written.m_Kind == VALUE_REAL
+                                              || written.m_Kind == VALUE_INT32
+                                              || written.m_Kind == VALUE_INT64;
+                            if (numeric && written.ToDouble() >= 1e18) ++suppressed;
+                        }
                     }
                 } catch (...) {}
             }
@@ -9245,8 +9275,17 @@ static RValue& Hook_DropRelic(CInstance* S, CInstance* O, RValue& R, int argc, R
             } else if (modifiedBases.empty()) {
                 report = "relicfilter: found " + std::to_string(maxedRelics.size())
                        + " maxed relic(s) but held back none (repository lookup failed)";
+            } else if (suppressed == 0) {
+                report = "relicfilter: found " + std::to_string(maxedRelics.size())
+                       + " maxed relic(s) but held back none (drop table write failed)";
+            } else if (suppressed < modifiedBases.size()) {
+                report = "relicfilter: holding back " + std::to_string(suppressed)
+                       + " of " + std::to_string(maxedRelics.size())
+                       + " maxed relic(s) on this roll ("
+                       + std::to_string(modifiedBases.size() - suppressed)
+                       + " write(s) failed)";
             } else {
-                report = "relicfilter: holding back " + std::to_string(modifiedBases.size())
+                report = "relicfilter: holding back " + std::to_string(suppressed)
                        + " of " + std::to_string(maxedRelics.size())
                        + " maxed relic(s) on this roll";
             }

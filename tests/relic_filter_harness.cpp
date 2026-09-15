@@ -15,6 +15,7 @@
 #include <iostream>
 #include <map>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -48,6 +49,13 @@ struct World {
     bool playerResolves = true;         // HhResolveLocalPlayer
     bool repoLookupWorks = true;        // RepoStruct / RepoIndexValid
     bool scanThrows = false;
+    // The two ways a repository WRITE fails after a successful lookup, both
+    // reported 2026-09-15. A throw is swallowed by the hook's own catch; an
+    // unset return is CallBuiltin's documented failure signal and writes
+    // nothing while looking like an ordinary call.
+    bool setThrows = false;
+    bool setFailsSilently = false;
+    int failWriteForRelic = -1;         // silent write failure for ONE relic only
 
     long baseSuppressions = 0;          // droprate.base <- 1e18
     long baseRestores = 0;              // droprate.base <- original
@@ -65,9 +73,10 @@ static FakeStruct* newStruct() {
 }
 
 // A repo entry is { droprate: { base: <n> } }, the shape the hook walks.
-static FakeStruct* makeRepoEntry(double base) {
+static FakeStruct* makeRepoEntry(double base, int relicId) {
     FakeStruct* dr = newStruct();
     dr->fields["base"] = RValue(base);
+    dr->fields["__relicid"] = RValue(relicId);   // harness tag, so a write can fail per relic
     FakeStruct* item = newStruct();
     item->fields["droprate"] = RValue(dr);
     return item;
@@ -84,8 +93,15 @@ struct FakeRunner {
         if (fn == "variable_struct_set") {
             if (args.empty() || !args[0].m_Object) return RValue();
             const std::string key = args[1].ToString();
+            const bool suppressing = key == "base" && args[2].ToDouble() >= 1e17;
+            if (suppressing && world.setThrows) throw std::runtime_error("struct set failed");
+            int writingFor = -1;
+            auto tag = args[0].m_Object->fields.find("__relicid");
+            if (tag != args[0].m_Object->fields.end()) writingFor = static_cast<int>(tag->second.ToDouble());
+            if (suppressing && (world.setFailsSilently || writingFor == world.failWriteForRelic))
+                return RValue();  // unset, writes nothing
             if (key == "base") {
-                if (args[2].ToDouble() >= 1e17) ++world.baseSuppressions;
+                if (suppressing) ++world.baseSuppressions;
                 else ++world.baseRestores;
             }
             args[0].m_Object->fields[key] = args[2];
@@ -97,7 +113,22 @@ struct FakeRunner {
         }
         return RValue();
     }
+
+    // The status-returning variant. `setFailsSilently` deliberately reports
+    // SUCCESS while writing nothing, so the only thing that can catch it is
+    // reading the value back - which is the point of the case.
+    int CallBuiltinEx(RValue& result, const char* name, CInstance*, CInstance*, std::vector<RValue> args) {
+        result = CallBuiltin(name, args);
+        return 0;
+    }
+
+    void GetGlobalInstance(CInstance** out) {
+        static CInstance instance;
+        if (out) *out = &instance;
+    }
 };
+using AurieStatus = int;
+static bool AurieSuccess(AurieStatus status) { return status == 0; }
 static FakeRunner g_Runner;
 static FakeRunner* g_Yytk = &g_Runner;
 
@@ -151,7 +182,7 @@ static void reset() {
     world = World();
     g_arena.clear();
     g_repo.clear();
-    for (int i = 0; i < kSeason10RelicRepoCount; ++i) g_repo[i] = makeRepoEntry(1000.0 + i);
+    for (int i = 0; i < kSeason10RelicRepoCount; ++i) g_repo[i] = makeRepoEntry(1000.0 + i, i);
 }
 
 static void runHook() {
@@ -204,6 +235,33 @@ int main() {
     reset();
     runHook();
     report("scanned_none_maxed");
+
+    // 6. The lookup succeeds and the suppression write THROWS. The hook's own
+    //    catch swallows it, so nothing but a confirmed read-back can tell.
+    reset();
+    world.maxed = { 42 };
+    world.setThrows = true;
+    runHook();
+    report("write_throws");
+
+    // 7. The write reports success and changes nothing - CallBuiltin's
+    //    documented unset-on-failure shape. A status check alone passes here.
+    reset();
+    // Two relics, so this scenario's line differs from case 6's: the report
+    // dedupes on its own text, which is correct in a session and means the
+    // harness must not run two scenarios that would word themselves alike.
+    world.maxed = { 7, 8 };
+    world.setFailsSilently = true;
+    runHook();
+    report("write_fails_silently");
+
+    // 8. Two maxed relics, one write lands and one does not: the count must be
+    //    the confirmed one, and the shortfall must be named.
+    reset();
+    world.maxed = { 11, 12 };
+    world.failWriteForRelic = 12;
+    runHook();
+    report("partial_write");
 
     std::cout << "HARNESS DONE\n";
     return 0;

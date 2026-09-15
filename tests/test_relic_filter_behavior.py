@@ -146,10 +146,49 @@ class RelicFilterBehaviorTests(unittest.TestCase):
         self.assertIn("scanned, no maxed relics to hold back", logged)
         self.assertNotIn("nothing scanned", logged)
 
+    def test_a_thrown_write_is_not_counted_as_held_back(self):
+        """REPORTED: the rollback list grew before the write, so a swallowed throw read as success."""
+        counts = self.counts("write_throws")
+        self.assertEqual(counts["suppressed"], 0, self.output)
+        logged = " ".join(self.logs("write_throws"))
+        self.assertNotIn("holding back 1 of 1", logged)
+        self.assertIn("held back none", logged)
+        self.assertIn("drop table write failed", logged)
+
+    def test_a_write_that_reports_success_but_changes_nothing_is_not_counted(self):
+        """The harness returns SUCCESS and writes nothing, so only a read-back can catch it."""
+        counts = self.counts("write_fails_silently")
+        self.assertEqual(counts["suppressed"], 0, self.output)
+        logged = " ".join(self.logs("write_fails_silently"))
+        self.assertNotIn("holding back", logged)
+        self.assertIn("found 2 maxed relic(s) but held back none", logged)
+        self.assertIn("drop table write failed", logged)
+
+    def test_a_partial_write_reports_the_confirmed_count_and_names_the_shortfall(self):
+        counts = self.counts("partial_write")
+        self.assertEqual(counts["suppressed"], 1, self.output)
+        logged = " ".join(self.logs("partial_write"))
+        self.assertIn("holding back 1 of 2 maxed relic(s) on this roll", logged)
+        self.assertIn("1 write(s) failed", logged)
+
+    def test_the_rollback_list_still_covers_every_attempt(self):
+        """Bookkeeping and the applied count answer different questions.
+
+        A write whose outcome is unknown must still be restored, so restoration
+        attempts track attempts - not confirmed suppressions.
+        """
+        # partial_write attempted two writes and confirmed one: two restores.
+        self.assertEqual(self.counts("partial_write")["restored"], 2, self.output)
+        self.assertEqual(self.counts("partial_write")["suppressed"], 1, self.output)
+        # write_fails_silently confirmed none and still restores both attempts.
+        self.assertEqual(self.counts("write_fails_silently")["restored"], 2, self.output)
+        self.assertEqual(self.counts("write_fails_silently")["suppressed"], 0, self.output)
+
     def test_every_scenario_reports_a_distinct_state(self):
         """The line dedupes on its own text, so each state must read differently."""
         lines = [self.logs(label)[-1] for label in (
-            "positive_control", "all_maxed", "repo_lookup_fails", "no_player", "scanned_none_maxed")]
+            "positive_control", "all_maxed", "repo_lookup_fails", "no_player",
+            "scanned_none_maxed", "write_throws", "write_fails_silently", "partial_write")]
         self.assertEqual(len(set(lines)), len(lines), lines)
 
 
