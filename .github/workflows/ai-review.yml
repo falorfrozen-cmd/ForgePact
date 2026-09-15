@@ -19,6 +19,12 @@ name: AI Code Review
 #   - the requesting user must have write access to this repository, and
 #   - a bot actor is rejected, so labelling from automation cannot start a run.
 #
+# Two things must be in place or the job fails before it reviews anything:
+#   - the Claude GitHub App (https://github.com/apps/claude) installed on this
+#     repository. Without it the token exchange returns 401, "Claude Code is
+#     not installed on this repository", and nothing runs.
+#   - the `CLAUDE_CODE_OAUTH_TOKEN` secret, from `claude setup-token`.
+#
 # On a fork pull request GitHub withholds secrets, so the run cannot
 # authenticate and the review does not happen. Branches pushed to this
 # repository are unaffected, which is how work lands here.
