@@ -82,6 +82,23 @@ class ReleaseHookContractTests(unittest.TestCase):
         cls.stats_header = STATS_HEADER_PATH.read_text(encoding="utf-8")
         cls.density_header = DENSITY_HEADER_PATH.read_text(encoding="utf-8")
 
+    def test_every_toggle_command_treats_zero_as_off(self):
+        # `census 0` used to turn census ON: its handler only tested "off", so a
+        # zero fell through to the enable branch and answered ACIK. Found the
+        # expensive way on 2026-09-15 - census costs ~72 ms per run and silently
+        # contaminated a perf measurement until the reply was read closely.
+        #
+        # Asserted across every toggle rather than just census, because the bug
+        # was an inconsistency with the house idiom, and one handler drifting
+        # from it is exactly how it happened.
+        for verb, marker in (
+            ("census", 'v == "off" || v == "0"'),
+            ("objidxprobe", 'oiArg == "off" || oiArg == "0"'),
+            ("beaconspawn", 'v == "off" || v == "0"'),
+        ):
+            self.assertIn(marker, self.plugin,
+                          f"{verb} must accept 0 as off, like every other toggle")
+
     def test_release_initialization_has_no_eager_gameplay_hook_group(self):
         body = function_body(self.plugin, "static void InstallHook()")
         release = body.split("#ifdef FORGEPACT_RELEASE", 1)[1].split("#else", 1)[0]

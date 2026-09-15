@@ -15379,12 +15379,28 @@ static void RunCommand(const std::string& line)
         std::string a1, a2; a1 = FirstToken(rest, a2);
         std::string v = Lower(a1);
         while (!v.empty() && (v.back()=='\r'||v.back()=='\n'||v.back()==' ')) v.pop_back();
-        if (v == "off") { g_CensusOn = false; Out("census: KAPALI"); }
+        // `0` is off here, the same as every other toggle in this file. It used
+        // to fall through to the enable branch, so `census 0` turned census ON
+        // and answered ACIK - which cost a contaminated perf measurement on
+        // 2026-09-15 before anyone read the reply closely enough to notice.
+        if (v == "off" || v == "0" || v == "false") { g_CensusOn = false; Out("census: KAPALI"); }
         else {
-            if (!a2.empty()) { try { g_CensusEvery = std::stoi(a2); } catch (...) {} }
+            // The period may come on its own (`census 120`) or after the verb
+            // (`census on 120`). Only the second form used to work; the first
+            // looked like it set the interval and silently kept the old one.
+            std::string period = a2;
+            if (period.empty() && !v.empty() &&
+                v.find_first_not_of("0123456789") == std::string::npos) period = v;
+            if (!period.empty()) { try { g_CensusEvery = std::stoi(period); } catch (...) {} }
             if (g_CensusEvery < 10) g_CensusEvery = 10;
             g_CensusOn = true;
-            Out("census: ACIK, her " + std::to_string(g_CensusEvery) + " karede -> bp_ipc\\census.txt");
+            // Measured 2026-09-15: ~72 ms per run, because instance_number(all)
+            // walks every instance in the room and the result is appended to a
+            // file. At the default period that is a visible hitch every two
+            // seconds, so say so rather than letting it be discovered in a
+            // frame-time graph.
+            Out("census: ACIK, her " + std::to_string(g_CensusEvery) +
+                " karede -> bp_ipc\\census.txt  (~72 ms per yazma; `census off` ile kapat)");
         }
 #endif
     } else if (lc == "spread") {
