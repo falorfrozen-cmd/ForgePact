@@ -14624,9 +14624,17 @@ static void RunCommand(const std::string& line)
         OrbCacheReset();
         if (enable) {
             ResolveOrbAssets();
-            char ob[180];
-            sprintf_s(ob, "orbpickup -> globes pulled from %.0f px (player obj=%d, globe objs=%zu, driven per frame)",
-                      kGlobeBaseRadius * kOrbPickupFactor, g_PlayerObjIdx, g_GlobeObjIdx.size());
+            // "pulled every frame, found every %u" rather than the old "driven
+            // per frame", which stopped being true when the enumeration was
+            // throttled: the glide still runs every frame, the scan that finds
+            // globes does not. A line that says per-frame invites a reader to
+            // reconstruct elapsed frames from the stat counters, which are on
+            // the scan clock - the same misreading the stat line itself had.
+            char ob[240];
+            sprintf_s(ob, "orbpickup -> globes pulled from %.0f px (player obj=%d, globe objs=%zu, "
+                          "pulled every frame, found by a scan at most every %u frames)",
+                      kGlobeBaseRadius * kOrbPickupFactor, g_PlayerObjIdx, g_GlobeObjIdx.size(),
+                      kOrbScanFrames);
             Out(ob);
         } else {
             Out("orbpickup -> OFF");

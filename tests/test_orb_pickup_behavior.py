@@ -315,6 +315,15 @@ class OrbPickupSourceConstraintTests(unittest.TestCase):
         self.assertNotIn("%u-frame scan", body)
         self.assertIn("at most every %u frames", body)
 
+    def test_the_arming_line_does_not_claim_the_mod_is_driven_per_frame(self):
+        # Found in a real session log, not by a test: the arming line still read
+        # "driven per frame" after the enumeration was throttled. The pull is
+        # per frame; the scan that finds globes is not. Same defect as the stat
+        # line above - a diagnostic describing work the code no longer does -
+        # and the stat line was corrected twice before anyone read this one.
+        self.assertNotIn("driven per frame", self.plugin)
+        self.assertIn("pulled every frame, found by a scan at most every %u frames", self.plugin)
+
     def test_the_movement_maths_is_untouched(self):
         body = implementation(self.plugin, "static void PullOneGlobe(")
         self.assertIn("(kGlobePullSpeed >= d) ? 1.0 : (kGlobePullSpeed / d)", body)
