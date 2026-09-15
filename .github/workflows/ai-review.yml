@@ -1,0 +1,77 @@
+name: AI Code Review
+
+# Opt-in review. Nothing here runs on its own: a person either adds the
+# `ai-review` label to a pull request or comments `@claude review` on it.
+#
+# There is deliberately no `on: pull_request` trigger. Review is requested, not
+# automatic, so that routine pull requests -- a release-notes touch-up, a
+# version bump -- do not each spend a review. This matches the hub repository,
+# where automation opens pointer and catalog pull requests that have nothing to
+# review.
+#
+# Requesting a review:
+#   - Add the `ai-review` label in the PR sidebar, or
+#   - comment `@claude review` on the PR.
+# Either one may be used again later for a fresh review after pushing changes;
+# the label alone does not re-run on later pushes.
+#
+# Two gates beyond the triggers, both enforced by the action itself:
+#   - the requesting user must have write access to this repository, and
+#   - a bot actor is rejected, so labelling from automation cannot start a run.
+#
+# On a fork pull request GitHub withholds secrets, so the run cannot
+# authenticate and the review does not happen. Branches pushed to this
+# repository are unaffected, which is how work lands here.
+
+on:
+  pull_request:
+    types: [labeled]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+  id-token: write
+
+concurrency:
+  group: ai-review-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    if: >-
+      github.repository == 'falorfrozen-cmd/ForgePact'
+      && (
+        (github.event_name == 'pull_request' && github.event.label.name == 'ai-review')
+        || (
+          github.event_name == 'issue_comment'
+          && github.event.issue.pull_request != null
+          && startsWith(github.event.comment.body, '@claude review')
+        )
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Full history: the review compares the PR against its base.
+          fetch-depth: 0
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          # A subscription OAuth token from `claude setup-token`, not an API
+          # key, stored as a repository secret here. Same arrangement as the
+          # hub repository; the hub's docs/hub/design.md documents it under
+          # "Repository secrets".
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          plugin_marketplaces: "https://github.com/anthropics/claude-code.git"
+          plugins: "code-review@claude-code-plugins"
+          prompt: >-
+            /code-review:code-review --comment
+            ${{ github.repository }}/pull/${{ github.event.pull_request.number || github.event.issue.number }}
+          # `--allowedTools` has to name the inline-comment tool even though the
+          # skill's own frontmatter already does: the action only starts the MCP
+          # server that posts inline comments when this argument names it.
+          claude_args: '--allowedTools "mcp__github_inline_comment__create_inline_comment"'
