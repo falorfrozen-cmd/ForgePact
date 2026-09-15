@@ -32,9 +32,13 @@ struct RValue {
     RValue(const std::string& s) : m_Kind(VALUE_STRING), text(s) {}
     explicit RValue(CInstance* p) : m_Kind(VALUE_OBJECT) { (void)p; }
     double ToDouble() const { return number; }
+    int64_t ToInt64() const { return (int64_t)number; }
     bool ToBoolean() const { return number != 0; }
     std::string ToString() const { return text; }
 };
+#ifndef NULL_INDEX
+#define NULL_INDEX INT_MIN
+#endif
 struct CInstance { int id = 0; };
 using AurieStatus = int;
 static bool AurieSuccess(int s) { return s == 0; }
@@ -48,6 +52,9 @@ struct World {
     std::vector<Globe> globes;
     int64_t room = 100;
     bool roomReadable = true;
+    // The live runner returns a REF for `room`; true switches the fake to a
+    // plain number, so both kinds are exercised against one key derivation.
+    bool roomIsReal = false;
     // What kind instance_find hands back. VALUE_REF is what this runner really
     // returns; the other two exist so the scenarios can ask what happens when
     // a runner returns something else, which is the whole point of validating
@@ -119,14 +126,23 @@ struct FakeRunner {
         return RValue();
     }
     AurieStatus GetGlobalInstance(CInstance** out) { *out = &g_GlobalInstance; return 0; }
-    AurieStatus GetInstanceMember(RValue, const char* name, RValue*& out) {
-        if (std::string(name) == "room" && world.roomReadable) {
-            g_RoomMember = RValue((double)world.room);
-            out = &g_RoomMember;
-            return 0;
-        }
+    // `room` is a BUILT-IN, so GetInstanceMember never answers for it on the
+    // real runner - kept here, always failing, as the negative control that
+    // pins why CurrentRoomKey stopped using it.
+    AurieStatus GetInstanceMember(RValue, const char*, RValue*& out) {
         out = nullptr;
         return 1;
+    }
+    // Measured live 2026-09-15 (`roomprobe`): the runner answers `room` as a
+    // VALUE_REF stringifying to "ref room Act_06_01" - NOT a real. A stub that
+    // handed back a convenient number could not represent the input that broke
+    // this, so it hands back a ref by default.
+    AurieStatus GetBuiltin(const char* name, CInstance*, int, RValue& out) {
+        if (std::string(name) != "room" || !world.roomReadable) return 1;
+        out = RValue();
+        if (world.roomIsReal) { out.m_Kind = VALUE_REAL; out.number = (double)world.room; }
+        else { out.m_Kind = VALUE_REF; out.text = "ref room Act_" + std::to_string(world.room); }
+        return 0;
     }
 };
 static FakeRunner runnerStorage;

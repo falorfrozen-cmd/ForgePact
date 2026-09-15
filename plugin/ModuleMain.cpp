@@ -408,11 +408,40 @@ static void EstForceClear()
 // MapRevealManager::RoomKey(): one member read, no CallBuiltin.
 static int64_t CurrentRoomKey()
 {
-    CInstance* global = nullptr;
-    if (!AurieSuccess(g_Yytk->GetGlobalInstance(&global)) || !global) return INT64_MIN;
-    RValue* room = nullptr;
-    if (!AurieSuccess(g_Yytk->GetInstanceMember(RValue(global), "room", room)) || !room) return INT64_MIN;
-    try { return static_cast<int64_t>(std::llround(room->ToDouble())); } catch (...) { return INT64_MIN; }
+    // `room` is a GameMaker BUILT-IN, not a user global, so the instance-member
+    // read on the global instance never answers for it. This function therefore
+    // returned INT64_MIN on every call - and because ReadIdentity() refuses an
+    // unreadable identity, map reveal's pack pass never opened a window in any
+    // zone, while this feature's room gating fell back to its 15-frame poll
+    // forever. Both were silent: the fog still cleared, and the eSt correction
+    // still happened, just late.
+    //
+    // Measured live 2026-09-15 with the `roomprobe` command, every candidate in
+    // one build with controls either side:
+    //   [1] instance-member read of "room"    -> FAILED          (the bug)
+    //   [2] GetBuiltinVariableIndex("room")   -> index 118
+    //   [3] GetBuiltin("room", nullptr)       -> kind=15 "ref room Act_06_01"
+    //   [5] variable_global_exists("room")    -> false  (negative control)
+    //   [6] GetBuiltin("fps", nullptr)        -> real:129  (positive control)
+    RValue v;
+    if (!AurieSuccess(g_Yytk->GetBuiltin("room", nullptr, NULL_INDEX, v))) return INT64_MIN;
+    try {
+        // The runner answers with a REF, not a real, so no numeric conversion
+        // is assumed: take a number only when the kind IS a number, and
+        // otherwise key off the ref's own text, which carries the room name and
+        // is stable for as long as the player is in that room. Masking the hash
+        // positive means a real key can never collide with the INT64_MIN
+        // "unreadable" sentinel - the failure AGENTS.md calls out by name.
+        if (v.m_Kind == VALUE_REAL || v.m_Kind == VALUE_INT32 || v.m_Kind == VALUE_INT64) {
+            const int64_t n = v.ToInt64();
+            return n == INT64_MIN ? INT64_MIN + 1 : n;
+        }
+        const std::string s = v.ToString();
+        if (s.empty()) return INT64_MIN;
+        uint64_t h = 1469598103934665603ull;                 // FNV-1a
+        for (unsigned char c : s) { h ^= c; h *= 1099511628211ull; }
+        return static_cast<int64_t>(h & 0x7FFFFFFFFFFFFFFFull);
+    } catch (...) { return INT64_MIN; }
 }
 
 // Called every frame from FrameCallback, and the reason it is not a flat
@@ -14337,6 +14366,85 @@ static bool HandleHeadhunterCommand(const std::string& lc, const std::string& re
         Out("  gui=" + num("display_get_gui_width", {}) + "x" + num("display_get_gui_height", {}) + " window=" + num("window_get_width", {}) + "x" + num("window_get_height", {}) + " room=" + num("variable_global_get", { RValue("room_width") }) + "x" + num("variable_global_get", { RValue("room_height") }) + " view_wport0=" + num("view_get_wport", { RValue(0.0) }) + " view_hport0=" + num("view_get_hport", { RValue(0.0) }) + " view_visible0=" + num("view_get_visible", { RValue(0.0) }));
         Out("  active labels=" + std::to_string(g_HhStolen.size()) + " lastErr=" + g_HhLabelLastErr);
 #ifndef FORGEPACT_RELEASE
+    } else if (lc == "roomprobe") {
+        // Research only. Established live 2026-09-15: map reveal's pack pass
+        // has never opened a window on this build, because ReadIdentity()
+        // refuses when RoomKey() returns INT64_MIN, and RoomKey() reads `room`
+        // with GetInstanceMember on the global instance. `room` is a GameMaker
+        // BUILT-IN, not a user global, so that read fails - the same reason
+        // `variable_global_exists("room")` answers false.
+        //
+        // Every candidate is tried in ONE build, with controls either side,
+        // because a round trip here costs a rebuild and a relaunch
+        // (AGENTS.md, "Limit Rebuilds & Reruns"). Two of these are expected to
+        // FAIL: they are the negative controls that prove the probe can tell
+        // failure from success, so a row of successes cannot be the probe
+        // reporting blindly.
+        CInstance* global = nullptr;
+        const bool haveGlobal = AurieSuccess(g_Yytk->GetGlobalInstance(&global)) && global;
+        Out(std::string("roomprobe: global instance ") + (haveGlobal ? "OK" : "UNAVAILABLE"));
+
+        // 1. NEGATIVE CONTROL - what RoomKey()/CurrentRoomKey() do today.
+        if (haveGlobal) {
+            RValue* rp = nullptr;
+            const bool ok = AurieSuccess(g_Yytk->GetInstanceMember(RValue(global), "room", rp)) && rp;
+            Out("  [1] GetInstanceMember(global,\"room\")   -> " +
+                std::string(ok ? Describe(*rp) : "FAILED  <- the current bug"));
+        }
+
+        // 2. Is `room` even known to the runtime as a built-in?
+        {
+            size_t idx = 0;
+            const bool ok = AurieSuccess(g_Yytk->GetBuiltinVariableIndex("room", idx));
+            Out("  [2] GetBuiltinVariableIndex(\"room\")     -> " +
+                std::string(ok ? ("index " + std::to_string(idx)) : "not a builtin"));
+        }
+
+        // 3/4. The API YYToolkit provides for built-ins, both target shapes.
+        {
+            RValue v;
+            const bool ok = AurieSuccess(g_Yytk->GetBuiltin("room", nullptr, NULL_INDEX, v));
+            Out("  [3] GetBuiltin(\"room\", nullptr)         -> " +
+                std::string(ok ? Describe(v) : "FAILED"));
+        }
+        if (haveGlobal) {
+            RValue v;
+            const bool ok = AurieSuccess(g_Yytk->GetBuiltin("room", global, NULL_INDEX, v));
+            Out("  [4] GetBuiltin(\"room\", global)          -> " +
+                std::string(ok ? Describe(v) : "FAILED"));
+        }
+
+        // 5. NEGATIVE CONTROL - expected to fail; `room` is not a user global.
+        try {
+            RValue ex = g_Yytk->CallBuiltin("variable_global_exists", { RValue("room") });
+            Out("  [5] variable_global_exists(\"room\")      -> " + Describe(ex) +
+                "   <- expected false (negative control)");
+        } catch (...) { Out("  [5] variable_global_exists(\"room\")      -> threw"); }
+
+        // 6. POSITIVE CONTROL on the API this fix would actually use. `fps` is
+        //    a global built-in that certainly exists, so a real number here
+        //    proves GetBuiltin works on this runtime - which is what makes a
+        //    FAILED in [3]/[4] mean something about `room` rather than about
+        //    the call. Without this, a row of failures could just be a probe
+        //    that cannot succeed at anything.
+        {
+            RValue v;
+            const bool ok = AurieSuccess(g_Yytk->GetBuiltin("fps", nullptr, NULL_INDEX, v));
+            Out("  [6] GetBuiltin(\"fps\", nullptr)          -> " +
+                std::string(ok ? Describe(v) : "FAILED") +
+                "   <- expected a real (positive control)");
+        }
+
+        // 7. The shipped read itself. CurrentRoomKey() is character-for-
+        //    character MapRevealManager::RoomKey(), so this one line covers
+        //    both the dead pack pass AND finding 5's room gating, which is
+        //    inert for exactly the same reason.
+        {
+            const int64_t rk = CurrentRoomKey();
+            Out("  [7] CurrentRoomKey() as shipped         -> " +
+                std::string(rk == INT64_MIN ? "INT64_MIN (unreadable) <- why packs never spawn"
+                                            : std::to_string(rk)));
+        }
     } else if (lc == "objidxprobe") {
         const std::string oiArg = Lower(TrimCopy(rest));
         if (oiArg == "reset") { ObjIdxProbeReset(); Out("objidxprobe: counters reset"); }

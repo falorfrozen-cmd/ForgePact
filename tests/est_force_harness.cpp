@@ -36,9 +36,13 @@ struct RValue {
     RValue(const std::string& s) : m_Kind(VALUE_STRING), text(s) {}
     explicit RValue(CInstance* p) : m_Kind(VALUE_OBJECT), instance(p) {}
     double ToDouble() const { return number; }
+    int64_t ToInt64() const { return (int64_t)number; }
     bool ToBoolean() const { return number != 0; }
     std::string ToString() const { return text; }
 };
+#ifndef NULL_INDEX
+#define NULL_INDEX INT_MIN
+#endif
 struct CInstance { int id = 0; };
 using AurieStatus = int;
 static bool AurieSuccess(int s) { return s == 0; }
@@ -54,6 +58,9 @@ struct World {
     std::vector<double> est = kVanillaEst;
     int64_t room = 100;
     bool roomReadable = true;
+    // The live runner returns a REF for `room`; true switches the fake to a
+    // plain number, so both kinds are exercised against one key derivation.
+    bool roomIsReal = false;
     // Every runtime call the eSt path can make, counted by name.
     long globalExists = 0, globalGet = 0, arrayLength = 0, arrayGet = 0, arraySet = 0;
     void resetCounts() { globalExists = arrayGet = arraySet = globalGet = arrayLength = 0; }
@@ -91,14 +98,24 @@ struct FakeRunner {
         return RValue();
     }
     AurieStatus GetGlobalInstance(CInstance** out) { *out = &g_GlobalInstance; return 0; }
-    AurieStatus GetInstanceMember(RValue, const char* name, RValue*& out) {
-        if (std::string(name) == "room" && world.roomReadable) {
-            g_RoomMember = RValue((double)world.room);
-            out = &g_RoomMember;
-            return 0;
-        }
+    // `room` is a BUILT-IN, so GetInstanceMember never answers for it on the
+    // real runner - it is kept here, always failing, as the negative control
+    // that pins why CurrentRoomKey stopped using it.
+    AurieStatus GetInstanceMember(RValue, const char*, RValue*& out) {
         out = nullptr;
         return 1;
+    }
+    // Measured live 2026-09-15 (`roomprobe`): the runner answers `room` as a
+    // VALUE_REF stringifying to "ref room Act_06_01" - NOT a real. A stub that
+    // handed back a convenient number could not represent the input that broke
+    // this, so it hands back a ref, and `world.roomIsReal` can switch it to a
+    // number to prove both kinds produce a usable key.
+    AurieStatus GetBuiltin(const char* name, CInstance*, int, RValue& out) {
+        if (std::string(name) != "room" || !world.roomReadable) return 1;
+        out = RValue();
+        if (world.roomIsReal) { out.m_Kind = VALUE_REAL; out.number = (double)world.room; }
+        else { out.m_Kind = VALUE_REF; out.text = "ref room Act_" + std::to_string(world.room); }
+        return 0;
     }
 };
 static FakeRunner runnerStorage;
@@ -164,6 +181,26 @@ int main() {
     world.roomStart(200);                   // the game refills eSt and the room changes
     EstForceTick(2);                        // frame 2 is NOT a multiple of the poll period
     checkInt("room_start/corrected_same_frame", (long long)g_EstForceWrites, 1);
+
+    // --- 3b. the same, with `room` answered as a NUMBER instead of a ref -----
+    // This runner returns a VALUE_REF ("ref room Act_06_01"), which is what
+    // scenario 3 above exercises by default and what the shipped key derivation
+    // hashes. The numeric branch exists for a runner that answers with a real,
+    // and an untaken branch is an untested one - so take it here. Both kinds
+    // must produce a key that changes when the room does.
+    resetAll(100);
+    world.roomIsReal = true;
+    g_EstForce = { { 0, -1.0 } };
+    EstForceTick(1);
+    g_EstForceWrites = 0;
+    world.roomStart(200);
+    EstForceTick(2);
+    checkInt("room_start_numeric/corrected_same_frame", (long long)g_EstForceWrites, 1);
+    // ...and does NOT change when the room does not, or the gate would reopen
+    // every frame and the throttle would be doing nothing.
+    g_EstForceWrites = 0;
+    EstForceTick(3);
+    checkInt("room_start_numeric/no_rewrite_same_room", (long long)g_EstForceWrites, 0);
     checkInt("room_start/est0", (long long)world.est[0], -1);
 
     // --- 4. baseline: an overwrite with NO room change is still corrected ----

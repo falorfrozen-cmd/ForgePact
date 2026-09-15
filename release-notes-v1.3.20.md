@@ -4,6 +4,14 @@ Everything that got slower the longer you played.
 
 ## Fixed
 
+- **Map Reveal showed you the map but never filled it with monsters.** Turning on
+  "Reveal full map" cleared the fog exactly as it should, and then the rest of the
+  zone stayed empty — the monster half had not been working at all, in any zone, and
+  it failed silently, so there was nothing to see but an empty map. It works now:
+  in the zone this was confirmed in, revealing went from **42 monsters to 547**.
+  If you turned this on and concluded the monster option did nothing, you were
+  right, and it was not your settings.
+
 - **The panel got heavier the longer a session ran.** Every five seconds it read
   the plugin's entire log file from the start to count how many times the game had
   launched — and that log only ever grows, so by the end of a long evening each of
@@ -24,8 +32,8 @@ Everything that got slower the longer you played.
   Orb Pickup and Map Reveal's monster pass each repeated work every single frame
   that only needed doing occasionally, or did the same check twice for the same
   monster spawner. Special Content still opens its gate at the same moment it always
-  did, globes still glide in at the same steady speed, and a revealed zone still
-  fills with the same packs — they simply stop paying for it sixty times a second.
+  did, globes still glide in at the same steady speed, and a revealed zone fills
+  with packs — they simply stop paying for it sixty times a second.
   One thing did change, and it is the price of the rest: a globe that comes into
   range can take up to a quarter-second longer to start gliding toward you. It is
   never missed, and once it starts moving the glide is exactly what it was.

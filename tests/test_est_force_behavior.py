@@ -206,8 +206,19 @@ class EstForceSourceConstraintTests(unittest.TestCase):
 
     def test_the_room_change_is_detected_by_a_read_not_a_hook(self):
         body = implementation(self.plugin, "static int64_t CurrentRoomKey()")
-        self.assertIn("GetInstanceMember", body)
+        # GetBuiltin, not GetInstanceMember: `room` is a GameMaker built-in and
+        # the instance-member read never answered for it, so this returned the
+        # INT64_MIN "unreadable" sentinel on every call. Measured live with
+        # `roomprobe` 2026-09-15. Still a read, which is what this test is for -
+        # the eSt path must never hook Room Start.
+        self.assertIn("GetBuiltin", body)
+        self.assertNotIn("GetInstanceMember", body)
         self.assertIn('"room"', body)
+        # The runner answers with a ref, so a bare numeric conversion is wrong.
+        # Pin that the non-numeric kind is handled rather than assumed away.
+        self.assertIn("ToString()", body)
+        # ...and that a valid key can never collide with the unknown sentinel.
+        self.assertIn("0x7FFFFFFFFFFFFFFF", body)
         self.assertNotIn("HookOneScript", body)
         self.assertNotIn("HookBuiltin", body)
 

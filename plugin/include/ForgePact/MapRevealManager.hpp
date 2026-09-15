@@ -212,12 +212,36 @@ private:
     }
 
     // The `room` global, or INT64_MIN when it cannot be read.
+    // `room` is a GameMaker BUILT-IN, not a user global. GetInstanceMember on
+    // the global instance never answers for it, so this returned INT64_MIN
+    // every time - and ReadIdentity() refuses an unreadable identity, so
+    // TryOpenSpawnWindow could never open a window. The pack pass had been
+    // dead in every zone, silently, while the fog-clearing half kept working
+    // because Tick() stores whatever RoomKey() returns without checking it.
+    // Diagnosed live 2026-09-15: zonesPopulated=0 and creatorLies=0 across two
+    // zones with 92 ready creators, then `roomprobe` named the failing read.
+    //
+    // Kept character-identical to ModuleMain.cpp's CurrentRoomKey(), which the
+    // eSt tick uses and the behaviour harnesses inject by signature. If you
+    // change one, change the other.
     int64_t RoomKey() const {
-        CInstance* global = nullptr;
-        if (!AurieSuccess(g_Yytk->GetGlobalInstance(&global)) || !global) return INT64_MIN;
-        RValue* room = nullptr;
-        if (!AurieSuccess(g_Yytk->GetInstanceMember(RValue(global), "room", room)) || !room) return INT64_MIN;
-        try { return static_cast<int64_t>(std::llround(room->ToDouble())); } catch (...) { return INT64_MIN; }
+        RValue v;
+        if (!AurieSuccess(g_Yytk->GetBuiltin("room", nullptr, NULL_INDEX, v))) return INT64_MIN;
+        try {
+            // A REF, not a real, on this runner - so derive from the kind the
+            // runtime actually produced instead of assuming a conversion. The
+            // hash is masked positive so a valid key can never equal the
+            // INT64_MIN "unknown" sentinel this class compares against.
+            if (v.m_Kind == VALUE_REAL || v.m_Kind == VALUE_INT32 || v.m_Kind == VALUE_INT64) {
+                const int64_t n = v.ToInt64();
+                return n == INT64_MIN ? INT64_MIN + 1 : n;
+            }
+            const std::string s = v.ToString();
+            if (s.empty()) return INT64_MIN;
+            uint64_t h = 1469598103934665603ull;             // FNV-1a
+            for (unsigned char c : s) { h ^= c; h *= 1099511628211ull; }
+            return static_cast<int64_t>(h & 0x7FFFFFFFFFFFFFFFull);
+        } catch (...) { return INT64_MIN; }
     }
 
     // The full zone identity: room, the live minimap instance, and its grid.

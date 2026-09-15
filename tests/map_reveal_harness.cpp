@@ -38,10 +38,14 @@ struct RValue {
     RValue(const char* s) : m_Kind(VALUE_STRING), text(s) {}
     explicit RValue(CInstance* p) : m_Kind(VALUE_OBJECT), instance(p) {}
     double ToDouble() const { return number; }
+    int64_t ToInt64() const { return (int64_t)number; }
     bool ToBoolean() const { return number != 0; }
     std::string ToString() const { return text; }
     CInstance* ToInstance() const { return instance; }
 };
+#ifndef NULL_INDEX
+#define NULL_INDEX INT_MIN
+#endif
 struct CInstance {
     int id = 0;
     int object = 0;
@@ -55,6 +59,9 @@ struct Creator { int id; bool timerDefined; };
 struct World {
     int64_t room = 100;
     bool roomReadable = true;
+    // The live runner answers `room` as a REF, not a real; true switches
+    // the fake to a number so both kinds meet the same key derivation.
+    bool roomIsReal = false;
     double minimapInstance = 7000;   // objMinimap instance id; <0 = absent
     double grid = 500;               // minimapDiscoveredGrid; <0 = absent
     bool gridVarExists = true;
@@ -141,14 +148,24 @@ struct FakeRunner {
         return RValue();
     }
     AurieStatus GetGlobalInstance(CInstance** out) { *out = &g_GlobalInstance; return 0; }
-    AurieStatus GetInstanceMember(RValue, const char* name, RValue*& out) {
-        if (std::string(name) == "room" && world.roomReadable) {
-            g_RoomMember = RValue((double)world.room);
-            out = &g_RoomMember;
-            return 0;
-        }
+    // `room` is a BUILT-IN: the instance-member read never answers for it on
+    // the real runner, which is why RoomKey() returned INT64_MIN forever and
+    // the pack pass never opened a window. Kept, always failing, as the
+    // negative control that pins why this route was abandoned.
+    AurieStatus GetInstanceMember(RValue, const char*, RValue*& out) {
         out = nullptr;
         return 1;
+    }
+    // Measured live 2026-09-15 (`roomprobe`): GetBuiltin answers, as a
+    // VALUE_REF stringifying to "ref room Act_06_01". The fake returns a ref by
+    // default so the scenarios run against the shape the runner really
+    // produces, not a convenient number.
+    AurieStatus GetBuiltin(const char* name, CInstance*, int, RValue& out) {
+        if (std::string(name) != "room" || !world.roomReadable) return 1;
+        out = RValue();
+        if (world.roomIsReal) { out.m_Kind = VALUE_REAL; out.number = (double)world.room; }
+        else { out.m_Kind = VALUE_REF; out.text = "ref room Act_" + std::to_string(world.room); }
+        return 0;
     }
 };
 static FakeRunner runnerStorage;
