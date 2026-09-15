@@ -22,6 +22,7 @@
 #include <ws2tcpip.h>
 #include <YYToolkit/YYTK_Shared.hpp>
 #include <hs_game_sdk/hs_game_sdk.hpp>
+#include <ForgePact/Version.hpp>
 #include <windows.h>
 #include <algorithm>
 #include <fstream>
@@ -350,7 +351,12 @@ static void EstForceApply()
         int len = -1;
         RValue arr = GlobalArray("eSt", len);
         if (len < 0) return;
-        for (auto& kv : g_EstForce) {
+        // const: this loop only reads.  A non-const reference here was the one
+        // way to change what is forced without going through a mutator, and so
+        // without dropping g_EstLastRoom - invisible to a source test that
+        // inventories g_EstForce references, because it adds no new reference.
+        // Const makes that spelling a compile error instead.
+        for (const auto& kv : g_EstForce) {
             if (kv.first < 0 || kv.first >= len) continue;
             RValue cur = g_Yytk->CallBuiltin("array_get", { arr, RValue((double)kv.first) });
             if (cur.ToDouble() == kv.second) continue;
@@ -360,6 +366,90 @@ static void EstForceApply()
     } catch (...) {}
 }
 
+// How often the safety re-poll runs when the room has NOT changed.  Same
+// 15-frame family as kSatanicPollFrames (~0.25 s at 60 fps), declared here
+// because that constant lives further down the file, next to its own feature.
+static const uint32_t kEstPollFrames = 15;
+static int64_t g_EstLastRoom = INT64_MIN;
+
+// Every mutation of g_EstForce goes through one of these three.  Two things
+// hold that, and neither alone is enough: a source test inventories every
+// g_EstForce reference in this file, which catches a new .insert/.emplace/.at
+// site, and EstForceApply's loop is const, which catches the one spelling an
+// inventory cannot see - a write through a non-const reference, adding no new
+// reference of its own.  They exist for the g_EstLastRoom line:
+// EstForceTick only applies on the frame the room key CHANGES, so changing
+// what is forced without leaving the room looked like no change at all and
+// waited for the next kEstPollFrames re-poll - up to ~250 ms of vanilla gate
+// straight after a user action, in a feature whose consumers read eSt at step
+// time.  The per-frame write this replaced had no such gap.  Forgetting the
+// remembered room makes the next frame look like a room change, which is both
+// the correct timing and cheaper than tracking a second dirty flag; INT64_MIN
+// is the same "unknown" sentinel the tick already refuses to store.
+static void EstForceSet(int slot, double value)
+{
+    g_EstForce[slot] = value;
+    g_EstLastRoom = INT64_MIN;
+}
+
+static void EstForceErase(int slot)
+{
+    g_EstForce.erase(slot);
+    g_EstLastRoom = INT64_MIN;
+}
+
+static void EstForceClear()
+{
+    g_EstForce.clear();
+    g_EstLastRoom = INT64_MIN;
+}
+
+// The `room` global, or INT64_MIN when it cannot be read.  Same shape as
+// MapRevealManager::RoomKey(): one member read, no CallBuiltin.
+static int64_t CurrentRoomKey()
+{
+    CInstance* global = nullptr;
+    if (!AurieSuccess(g_Yytk->GetGlobalInstance(&global)) || !global) return INT64_MIN;
+    RValue* room = nullptr;
+    if (!AurieSuccess(g_Yytk->GetInstanceMember(RValue(global), "room", room)) || !room) return INT64_MIN;
+    try { return static_cast<int64_t>(std::llround(room->ToDouble())); } catch (...) { return INT64_MIN; }
+}
+
+// Called every frame from FrameCallback, and the reason it is not a flat
+// throttle is the whole design.
+//
+// The game refills all eleven eSt entries at Room Start, and the
+// special-content mechanic bodies read global.eSt DIRECTLY, at step time,
+// inside that same room-load sequence (docs/S10-special-content-notes.md).
+// So a correction 15 frames late is a correction after the read that decided
+// whether anything spawns - up to ~250 ms of vanilla gate value exactly where
+// the mechanics evaluate.  That is AGENTS.md's "Check a Permission Where It
+// Is Used" defect, and the same shape as Known Limitation 13: the first call
+// in a new zone is the one that does the damage.  SatanicPollTick can throttle
+// because its consumer is a die rolled at an arbitrary moment; this one cannot.
+//
+// So: gate on the room, do not throttle the correction.  A changed room key
+// applies on that frame - identical timing to the per-frame write it replaces,
+// zero added latency on the only overwrite anybody has observed.  Anything
+// else re-polls every kEstPollFrames frames, because nobody has proven the
+// game only writes eSt at Room Start and an unproven negative stays unproven.
+//
+// Two hard constraints from the crash history in the same document: the write
+// still happens ONLY from FrameCallback (every attempt to write eSt from a
+// Room Start hook or a mechanic scope crashed the game), and the room change
+// is detected by a READ of the global instance's `room` member, never a hook.
+static void EstForceTick(uint32_t frame)
+{
+    if (g_EstForce.empty() || !g_Yytk) return;   // all-off: not even a read
+    const int64_t room = CurrentRoomKey();
+    // An unreadable room key must never SUPPRESS the correction - it falls
+    // through to the periodic path.  INT64_MIN means "unknown" and is never
+    // stored, so it cannot later compare equal to a real key.
+    const bool roomChanged = (room != INT64_MIN) && (room != g_EstLastRoom);
+    if (roomChanged) g_EstLastRoom = room;
+    if (roomChanged || (frame % kEstPollFrames) == 0) EstForceApply();
+}
+
 static void EstStat()
 {
     int len = -1;
@@ -367,7 +457,7 @@ static void EstStat()
     std::string s = "eststat: len=" + std::to_string(len)
                   + " yazma=" + std::to_string(g_EstForceWrites) + " | zorlanan:";
     if (g_EstForce.empty()) s += " (yok)";
-    for (auto& kv : g_EstForce)
+    for (const auto& kv : g_EstForce)   // const for the same reason as EstForceApply's
         s += " [" + std::to_string(kv.first) + "]=" + std::to_string((int)kv.second);
     Out(s);
     if (len > 0) {
@@ -4744,6 +4834,131 @@ static constexpr double kGlobeBaseRadius = 48.0;
 // step >= d check now only prevents overshooting past the player).
 static constexpr double kGlobePullSpeed  = 6.0;    // px per frame, constant
 
+#ifndef FORGEPACT_RELEASE
+// ---- object_index struct-read probe (RESEARCH ONLY, never ships) ----------
+// Reading object_index off the CInstance instead of through
+// variable_instance_get would remove half of what the lied-to path still
+// costs (the behaviour harness prints the share: 1 of 2 runtime calls).  It
+// is deliberately NOT shipped, and the reason is a rule rather than taste.
+//
+// With /DYYTK_DEFINE_INTERNAL=1 - which build.bat passes - CInstance holds an
+// anonymous union of THREE layouts, and the only way in is GetMembers(),
+// which is not a field read: it calls GetBuiltin("id") on every invocation
+// and compares m_ID in each arm to pick one.  If none match it prints an
+// error and returns a layout that is not this build's.  The failure mode is
+// the bad one - a garbage index makes IsCreatorObject() false, so map reveal
+// and the Beacon silently stop lying: a feature that reports armed and does
+// nothing.  AGENTS.md classes a struct layout with a hand-resolved address
+// for exactly this reason, and requires a positive control on this runtime
+// before one ships.  GetMembers() is used nowhere else in this plugin, so
+// there is none, and the behaviour harness cannot supply one either (it stubs
+// CInstance as a plain struct, which cannot represent the union question).
+//
+// THIS is that control.  It computes both answers, compares them, and times
+// both, so finding 8 closes on measured numbers rather than a judgement call.
+// It decides nothing: the shipped path uses the CallBuiltin answer on every
+// path, exactly as before.
+//
+// Two things the numbers do NOT say, recorded here because both would be read
+// the other way round:
+//  - the probe runs BEFORE IsCreatorObject, so it samples every instance that
+//    reaches the hook, not only creators.  Report the counts as instances
+//    through the hook; they are not a creator count.
+//  - getmembers-failed counts THROWN exceptions only.  The documented failure
+//    mode of GetMembers() is to match no arm, print an error and return a
+//    layout that is not this build's - which does not throw.  A zero there is
+//    therefore not evidence that GetMembers() succeeded; that failure would
+//    arrive as a disagreement instead.
+// OFF until `objidxprobe on` asks for it, and that is not tidiness.  The
+// documented GetMembers() failure is to match no arm and return a layout that
+// is not this build's; if the real CInstance is smaller than the arm it picks,
+// reading m_ObjectIndex is a read past the allocation, and the plugin is
+// compiled /EHsc so the catch (...) below cannot catch an access violation.
+// A tester who turns the probe on and finds the game unhappy should be able to
+// back out with a command rather than a rebuild.
+static std::atomic<bool> g_ObjIdxProbeOn{ false };
+static volatile long g_ObjIdxAgree = 0;
+static volatile long g_ObjIdxDisagree = 0;
+static volatile long g_ObjIdxFailed = 0;
+static bool g_ObjIdxLoggedMismatch = false;
+static constexpr size_t kObjIdxSamples = 4096;
+static std::vector<long long> g_ObjIdxBuiltinTicks;
+static std::vector<long long> g_ObjIdxStructTicks;
+
+static void ObjIdxProbe(CInstance* S, int builtinAnswer, long long builtinTicks)
+{
+    if (!g_ObjIdxProbeOn.load() || !S) return;
+    LARGE_INTEGER t0, t1;
+    int structAnswer = 0;
+    bool ok = false;
+    QueryPerformanceCounter(&t0);
+    try { structAnswer = (int)S->GetMembers().m_ObjectIndex; ok = true; }
+    catch (...) { ok = false; }
+    QueryPerformanceCounter(&t1);
+    if (!ok) { InterlockedIncrement(&g_ObjIdxFailed); return; }
+    if (structAnswer == builtinAnswer) {
+        InterlockedIncrement(&g_ObjIdxAgree);
+    } else {
+        InterlockedIncrement(&g_ObjIdxDisagree);
+        // One line naming what mismatched, the first time only - the same
+        // discipline the shipped design would use before falling back.
+        if (!g_ObjIdxLoggedMismatch) {
+            g_ObjIdxLoggedMismatch = true;
+            Out("objidx MISMATCH: variable_instance_get=" + std::to_string(builtinAnswer)
+                + " GetMembers().m_ObjectIndex=" + std::to_string(structAnswer));
+        }
+    }
+    if (g_ObjIdxBuiltinTicks.size() < kObjIdxSamples) {
+        g_ObjIdxBuiltinTicks.push_back(builtinTicks);
+        g_ObjIdxStructTicks.push_back(t1.QuadPart - t0.QuadPart);
+    }
+}
+
+static long long ObjIdxMedianNs(std::vector<long long> ticks)
+{
+    if (ticks.empty()) return -1;
+    LARGE_INTEGER freq;
+    if (!QueryPerformanceFrequency(&freq) || freq.QuadPart <= 0) return -1;
+    std::sort(ticks.begin(), ticks.end());
+    const long long median = ticks[ticks.size() / 2];
+    return (median * 1000000000LL) / freq.QuadPart;
+}
+
+// Threshold condition 2 from finding 8: the struct read has to be at or below
+// 50% of the builtin's median to be worth a self-validating fallback
+// mechanism.  Condition 1 (the object_index share of the remaining hot-path
+// calls, >= 33%) comes from the behaviour harness, which prints it.
+static void ObjIdxProbeReport()
+{
+    const long long builtinNs = ObjIdxMedianNs(g_ObjIdxBuiltinTicks);
+    const long long structNs = ObjIdxMedianNs(g_ObjIdxStructTicks);
+    const long long ratio = (builtinNs > 0 && structNs >= 0) ? (100 * structNs) / builtinNs : -1;
+    char b[340];
+    sprintf_s(b, "objidxprobe: %s agree=%ld disagree=%ld getmembers-failed=%ld samples=%zu | variable_instance_get median=%lldns GetMembers median=%lldns ratio=%lld%% (threshold <=50%%)",
+              g_ObjIdxProbeOn.load() ? "ON" : "OFF",
+              g_ObjIdxAgree, g_ObjIdxDisagree, g_ObjIdxFailed, g_ObjIdxBuiltinTicks.size(),
+              builtinNs, structNs, ratio);
+    Out(b);
+    // What the two counts are NOT, said here rather than left to be assumed by
+    // whoever pastes this line into the guide months from now.
+    Out("objidxprobe: counts are instances reaching the hook while a lie is wanted, not creators (the probe runs "
+        "after the beacon/reveal early-out and before IsCreatorObject); getmembers-failed counts throws only - "
+        "a wrong-layout return does not throw and shows up as a disagreement");
+    if (g_ObjIdxAgree == 0 && g_ObjIdxDisagree == 0)
+        Out(g_ObjIdxProbeOn.load()
+            ? "objidxprobe: 0/0 has measured NOTHING - the hook never ran. Turn map reveal packs on and enter a zone."
+            : "objidxprobe: 0/0 has measured NOTHING - the probe is OFF. `objidxprobe on` first.");
+}
+
+static void ObjIdxProbeReset()
+{
+    g_ObjIdxAgree = g_ObjIdxDisagree = g_ObjIdxFailed = 0;
+    g_ObjIdxLoggedMismatch = false;
+    g_ObjIdxBuiltinTicks.clear();
+    g_ObjIdxStructTicks.clear();
+}
+#endif
+
 static void Hook_distance_to_object(RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)
 {
     if (g_OrigDistanceToObject) g_OrigDistanceToObject(Result, S, O, argc, Args);
@@ -4762,13 +4977,22 @@ static void Hook_distance_to_object(RValue& Result, CInstance* S, CInstance* O, 
     if ((!beaconWants && !revealWants) || !S) return;   // native pass-through
     try {
         RValue inst = S->ToRValue();
+#ifndef FORGEPACT_RELEASE
+        LARGE_INTEGER oiT0; QueryPerformanceCounter(&oiT0);
+#endif
         RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("object_index") });
+#ifndef FORGEPACT_RELEASE
+        LARGE_INTEGER oiT1; QueryPerformanceCounter(&oiT1);
+        // Research only: reads, times and counts. It never decides - the line
+        // below still uses the CallBuiltin answer, on every path.
+        ObjIdxProbe(S, (int)oi.ToDouble(), oiT1.QuadPart - oiT0.QuadPart);
+#endif
         if (!IsCreatorObject((int)oi.ToDouble())) return;
 
         // Never answer 0 to a creator that has not finished initialising: it
         // takes its spawn branch once, early, and comes out inert, leaving
         // the zone emptier than vanilla and permanently so (measured
-        // 2026-09-11, docs/map-reveal-research.md).
+        // 2026-09-11, docs/map-reveal-research.md - Known Limitation 13).
         //
         // This is checked HERE, at the moment the result would be changed,
         // rather than at a frame boundary. EVENT_FRAME is dispatched from
@@ -4777,14 +5001,21 @@ static void Hook_distance_to_object(RValue& Result, CInstance* S, CInstance* O, 
         // too late for the first call in a new zone (reported 2026-09-12).
         // The creator in hand is the only thing that can answer this
         // question at the only moment it matters.
-        if (!ForgePact::MapRevealManager::CreatorIsReady(inst)) return;
-
+        //
+        // MayPopulate IS that check for the reveal path - it is
+        // `window > 0 && CreatorIsReady(creator)` - so the guard lives once
+        // per path rather than once before both. A standalone guard above
+        // this line ran the same enemyCreatorTimer read a second time for
+        // every creator on the open pack window, deciding nothing new.
         const bool revealOk = revealWants
             && ForgePact::MapRevealManager::Instance().MayPopulate(inst);
         if (!revealOk) {
             // Reveal declined (or was never asking). The Beacon's own lie is
-            // unchanged, wake radius and all.
+            // unchanged, wake radius and all - but it needs the same Known
+            // Limitation 13 guard, because the spawner comes out inert
+            // whichever feature answered 0.
             if (!beaconWants) return;
+            if (!ForgePact::MapRevealManager::CreatorIsReady(inst)) return;
             if (g_BeWakeRadius > 0.0) {
                 RValue player; if (!HhResolveLocalPlayer(player)) return;
                 const double px = g_Yytk->CallBuiltin("variable_instance_get", { player, RValue("x") }).ToDouble();
@@ -4837,6 +5068,10 @@ static int g_PlayerObjIdx = -1;
 static std::vector<int> g_GlobeObjIdx;
 static bool g_OrbAssetsResolved = false;
 static volatile long g_OrbGlobesSeen = 0;
+// Globes whose handle could not be held across frames - see OrbCacheableHandle.
+// Expected to stay 0 forever on this runner; it is printed by `orbpickup stat`
+// so that a runtime which changed reports a number instead of a crash dump.
+static volatile long g_OrbUncacheableKind = 0;
 
 // The name is what gets looked up at runtime, so an index shift after a game
 // patch cannot break it; the SDK constant alongside makes a rename a build error.
@@ -4846,6 +5081,12 @@ static constexpr OrbAsset kOrbAssets[] = {
     { "Magic_Find_Globe_obj",       HeroSiege::Objects::GameObject::Magic_Find_Globe_obj },
 };
 
+// Resolved exactly once per process - nothing ever clears g_OrbAssetsResolved -
+// so there is no RE-resolution for the handle cache further down to be
+// invalidated against, and an OrbCacheReset() here could only ever run against
+// a cache that is still empty.  Saying so beats a call that reads as a third
+// invalidation point and is not one; the two real ones are the mod being
+// switched off and a room change.
 static void ResolveOrbAssets()
 {
     if (g_OrbAssetsResolved) return;
@@ -4864,9 +5105,14 @@ static void ResolveOrbAssets()
     }
 }
 
+// The pull runs every frame, so it does no stat accounting: seen, noplayer and
+// outofreach are all counted once per globe per scan, in OrbScan.  Counting
+// them here too would put them on the frame clock while `seen` sat on the scan
+// clock, and one globe parked inside the band would then report ~15 outofreach
+// per 1 seen under a line claiming they share a clock.
 static void PullOneGlobe(const RValue& inst)
 {
-    if (!g_PlayerPosValid.load()) { InterlockedIncrement(&g_OrbNoPlayer); return; }
+    if (!g_PlayerPosValid.load()) return;
     try {
         const double gx = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("x") }).ToDouble();
         const double gy = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("y") }).ToDouble();
@@ -4877,7 +5123,7 @@ static void PullOneGlobe(const RValue& inst)
             const long px = (long)std::sqrt(d2);
             if (g_OrbNearestPx < 0 || px < g_OrbNearestPx) g_OrbNearestPx = px;
         }
-        if (d2 > reach * reach) { InterlockedIncrement(&g_OrbOutOfReach); return; }
+        if (d2 > reach * reach) return;               // counted by OrbScan, not here
         if (d2 < 1.0) return;                         // already on the player
         const double d = std::sqrt(d2);
         // Constant speed toward the player; clamp to 1.0 only so the last frame
@@ -4889,13 +5135,89 @@ static void PullOneGlobe(const RValue& inst)
     } catch (...) {}
 }
 
-// Called once per frame from FrameCallback while the mod is on.  Globes are few
-// (tens on screen at worst), and the per-frame cost is one instance_number per
-// globe object plus four calls per globe actually present.
-static void OrbPickupTick()
+// The pull needs per-frame work; the ENUMERATION does not.  Walking every
+// globe instance of every globe type every frame cost up to ~196 CallBuiltins
+// per frame (4 + 64 x 3) for a set of objects that barely changes between
+// frames, so the scan is throttled and the pull is not.
+static const uint32_t kOrbScanFrames = 15;   // same family as kSatanicPollFrames, ~0.25 s
+// The band of approach a scan looks past reach, expressed as a per-frame
+// closing speed.  Globes are not observed to move on their own - they are
+// dropped and sit still until the plugin pulls them - so the gap is closed by
+// the PLAYER walking into it, and 24 px/frame (~1440 px/s, four times
+// kGlobePullSpeed) is the budget each scan allows for that.
+//
+// It is a BUDGET, not a claim about how fast the player can move, and the
+// difference is the whole of the fix below.  The panel's own Movement Speed
+// control multiplies total movement speed by up to 10x (src/forgepact.py, the
+// `movespeed` slider), so a fixed margin is a bound nothing enforces; above it
+// a globe crosses into reach between two scans without ever being cached, is
+// never pulled, and `orbpickup stat` still reads seen>0 pulled>0 - the mod's
+// widened radius quietly applying only some of the time.  So the scan is
+// forced by distance travelled as well as by the frame counter (see
+// OrbPickupTick), and the budget then holds by construction at any speed
+// rather than by an unmeasured assumption about the game's top speed.
+static constexpr double kOrbApproachMargin = 24.0;   // px per frame
+
+// Whether a handle may be HELD across frames.  The cache is the one
+// cross-frame instance lifetime this feature has: a handle found by one scan
+// is handed to instance_exists and variable_instance_get up to kOrbScanFrames
+// frames later, by which time the game may have collected the globe.  That is
+// safe for an id - a VALUE_REF is a runtime-validated reference and a bare
+// number is an instance id, and instance_exists simply answers false for
+// either once the instance is gone (docs/RUNTIME_DATA_MODELS.md).  It is NOT
+// safe for a VALUE_OBJECT, which carries a CInstance* the runtime has freed -
+// the same hazard the forged-item registry has to work around.  Today this
+// runner returns VALUE_REF, but that is a measured property of the runner and
+// nothing in the code was holding it to that, so validate here, refuse, and
+// count the refusal (AGENTS.md, "validate it and refuse ... count the refusal
+// so it surfaces in a stat command instead of as silence").
+//
+// Deliberately a SET of kinds rather than one value.  Every accessor involved
+// takes any of them straight through, so the kind decides only whether the
+// handle can be STORED, never whether the work happens at all; narrowing it to
+// the single kind seen today is Known Limitation 7's bug repeated.
+static bool OrbCacheableHandle(const RValue& v)
 {
-    ResolveOrbAssets();
+    return v.m_Kind == VALUE_REF
+        || v.m_Kind == VALUE_REAL || v.m_Kind == VALUE_INT32 || v.m_Kind == VALUE_INT64;
+}
+
+static std::vector<RValue> g_OrbCachedGlobes;
+static uint32_t g_OrbNextScanFrame = 0;
+static int64_t g_OrbCacheRoom = INT64_MIN;
+// Where the player stood at the last scan, so the tick can tell how much of
+// the approach budget has been spent since.  Costs no CallBuiltin:
+// g_PlayerX/g_PlayerY are refreshed in FrameCallback immediately before
+// OrbPickupTick runs.
+static double g_OrbScanPlayerX = 0.0, g_OrbScanPlayerY = 0.0;
+static bool g_OrbScanPlayerValid = false;
+
+// Dropped when the mod is switched off and on a room change - the two moments
+// a cached handle stops meaning anything.
+static void OrbCacheReset()
+{
+    g_OrbCachedGlobes.clear();
+    g_OrbNextScanFrame = 0;
+    g_OrbCacheRoom = INT64_MIN;
+    g_OrbScanPlayerValid = false;
+}
+
+// Enumerate the globes worth pulling, every kOrbScanFrames frames.  Everything
+// inside reach, plus the band a globe could cross before the next scan, so one
+// that comes into range between scans starts gliding at most kOrbScanFrames
+// frames (~250 ms) later than it used to.  It is never MISSED.
+static void OrbScan()
+{
+    g_OrbCachedGlobes.clear();
     if (g_GlobeObjIdx.empty()) return;
+    const double reach = kGlobeBaseRadius * kOrbPickupFactor;
+    const double band = reach + (double)kOrbScanFrames * kOrbApproachMargin;
+    const bool havePlayer = g_PlayerPosValid.load();
+    // The origin the approach budget is measured from, recorded whether or not
+    // anything is cached: a scan that found nothing still spent its budget.
+    g_OrbScanPlayerValid = havePlayer;
+    g_OrbScanPlayerX = g_PlayerX;
+    g_OrbScanPlayerY = g_PlayerY;
     int budget = 64;                       // a runaway globe count cannot cost a frame
     for (int objIdx : g_GlobeObjIdx) {
         int n = 0;
@@ -4906,21 +5228,126 @@ static void OrbPickupTick()
                 RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue((double)objIdx), RValue((double)i) });
                 if (inst.m_Kind == VALUE_UNDEFINED) continue;
                 InterlockedIncrement(&g_OrbGlobesSeen);
-                PullOneGlobe(inst);
+                // Refused for the CACHE, not for the work, because the question
+                // is not "is this a globe" but "can this handle still be used
+                // in fifteen frames' time".  The handle is fine right now - it
+                // is holding it across frames that is not - so pull it here and
+                // then drop it.  Refusing the work instead would make orb
+                // pickup fully inert on a runner whose instance_find returns a
+                // kind we decline to cache, which is the "never let a kind
+                // check decide whether the work happens at all" bug class this
+                // predicate was written to avoid.  PullOneGlobe early-returns
+                // without a player position, so it is safe above that check.
+                if (!OrbCacheableHandle(inst)) {
+                    InterlockedIncrement(&g_OrbUncacheableKind);
+                    PullOneGlobe(inst);
+                    continue;
+                }
+                if (!havePlayer) { InterlockedIncrement(&g_OrbNoPlayer); continue; }
+                const double gx = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("x") }).ToDouble();
+                const double gy = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("y") }).ToDouble();
+                const double dx = g_PlayerX - gx, dy = g_PlayerY - gy;
+                const double d2 = dx * dx + dy * dy;
+                if (std::isfinite(d2)) {
+                    const long px = (long)std::sqrt(d2);
+                    if (g_OrbNearestPx < 0 || px < g_OrbNearestPx) g_OrbNearestPx = px;
+                }
+                // All three of seen/noplayer/outofreach are counted here, once
+                // per globe per scan, so `orbpickup stat` can be read as the
+                // ratio Known Limitation 7 was diagnosed from.  outofreach is
+                // measured against REACH, not the band: a globe inside the
+                // band is cached but still not being pulled, which is exactly
+                // what "the radius is simply too small" means.
+                if (d2 > reach * reach) InterlockedIncrement(&g_OrbOutOfReach);
+                if (d2 > band * band) continue;
+                g_OrbCachedGlobes.push_back(inst);
             } catch (...) {}
         }
+    }
+}
+
+// Called once per frame from FrameCallback while the mod is on.  The scan runs
+// every kOrbScanFrames frames (or at once when the room changes, because every
+// cached handle belongs to the zone that has just been left); the pull runs
+// every frame over the cached handles only, with PullOneGlobe's movement maths
+// untouched - the glide a user asked for in 2026-09-10 is byte-for-byte the
+// same motion.
+static void OrbPickupTick(uint32_t frame)
+{
+    ResolveOrbAssets();
+    if (g_GlobeObjIdx.empty()) return;
+    const int64_t room = CurrentRoomKey();
+    // An unreadable room key must not force a rescan every frame, and must not
+    // suppress one either: INT64_MIN is never stored as a room.
+    if (room != INT64_MIN && room != g_OrbCacheRoom) {
+        g_OrbCacheRoom = room;
+        g_OrbCachedGlobes.clear();
+        g_OrbNextScanFrame = frame;
+    }
+    // The player resolving again is a change no frame counter can see.  A scan
+    // that ran while the player was unresolved cached nothing at all - it has
+    // no position to measure reach against - so without forcing one here the
+    // widened radius does nothing until the counter comes round: up to
+    // kOrbScanFrames frames of stationary globes after every resolution
+    // dropout, on the one feature whose documented failure mode IS
+    // intermittent player resolution (Known Limitation 7,
+    // `seen=176993 noplayer=176993`).  `orbpickup stat` cannot show it either -
+    // noplayer ticks once and the next scan reads healthy.  The per-frame
+    // enumeration this replaced resumed on the very next frame; so does this.
+    if (!g_OrbScanPlayerValid && g_PlayerPosValid.load()) g_OrbNextScanFrame = frame;
+    // Spend the approach budget, then rescan - whatever the frame counter
+    // says.  The band assumes the player closes at most kOrbApproachMargin px
+    // per frame; the panel's Movement Speed slider goes to 10x, so above that
+    // a globe crosses into reach uncached and is never pulled at all, while
+    // seen>0/pulled>0 keep the stat line looking healthy.  Measuring the
+    // budget in px travelled rather than in frames elapsed makes the bound
+    // hold at any speed, and costs no CallBuiltin - g_PlayerX/g_PlayerY were
+    // refreshed just before this call.
+    if (g_OrbScanPlayerValid && g_PlayerPosValid.load()) {
+        const double budget = (double)kOrbScanFrames * kOrbApproachMargin;
+        const double mx = g_PlayerX - g_OrbScanPlayerX, my = g_PlayerY - g_OrbScanPlayerY;
+        if (mx * mx + my * my >= budget * budget) g_OrbNextScanFrame = frame;
+    }
+    if (frame >= g_OrbNextScanFrame) {
+        OrbScan();
+        g_OrbNextScanFrame = frame + kOrbScanFrames;
+    }
+    for (const RValue& inst : g_OrbCachedGlobes) {
+        try {
+            // A globe can be collected between scans; a write to a dead
+            // instance is what this guard exists to prevent.
+            if (!g_Yytk->CallBuiltin("instance_exists", { inst }).ToBoolean()) continue;
+            PullOneGlobe(inst);
+        } catch (...) {}
     }
 }
 
 // Reads as a decision tree: seen=0 while standing next to globes means the object
 // indices are wrong; seen>0 with noplayer>0 means the player never resolved;
 // only outofreach means the radius is simply too small (nearest= says by how much).
+// NOTE seen, noplayer and outofreach are all counted once per globe per SCAN
+// since the enumeration was throttled, so they stay comparable with each
+// other - which is what the tree above actually reads.  `pulled` is per frame,
+// because pulling is the part that still happens every frame; it is the one
+// number that did not change scale.  Zero-versus-nonzero is unchanged
+// throughout.
+//
+// What the scan-clock numbers are NOT is 1/15th of the pre-1.3.20 ones: a scan
+// runs at MOST every kOrbScanFrames frames and sooner while the player is
+// moving fast (the travel-forced rescan, measured at 5 scans per 15 frames at
+// ~10x movement speed), so elapsed frames cannot be reconstructed from them.
+// The line says so, because the ratio is sound and the period is not.
+// uncacheable= is expected to stay 0; see OrbCacheableHandle.
+// These stay plain InterlockedIncrements rather than BP_DIAG_INCREMENT on
+// purpose: `orbpickup` is in kPlayerCommands, `orbpickup stat` is handled in
+// every build, and Known Limitation 7 is the bug this output diagnosed.
 static void OrbPickupStats()
 {
-    char b[300];
-    sprintf_s(b, "orbpickup stat: globe objs=%zu | seen=%ld pulled=%ld noplayer=%ld outofreach=%ld | nearest=%ld px (reach %.0f px) | player via %s",
+    char b[460];
+    sprintf_s(b, "orbpickup stat: globe objs=%zu | seen=%ld noplayer=%ld outofreach=%ld uncacheable=%ld (each once per globe per scan, not per frame; a scan runs at most every %u frames, sooner while the player is moving fast) pulled=%ld (per frame) | nearest=%ld px (reach %.0f px) | player via %s",
               g_GlobeObjIdx.size(),
-              g_OrbGlobesSeen, g_OrbPickupHits, g_OrbNoPlayer, g_OrbOutOfReach,
+              g_OrbGlobesSeen, g_OrbNoPlayer, g_OrbOutOfReach, g_OrbUncacheableKind,
+              kOrbScanFrames, g_OrbPickupHits,
               g_OrbNearestPx, kGlobeBaseRadius * kOrbPickupFactor, g_OrbPlayerHow.c_str());
     Out(b);
 }
@@ -12770,15 +13197,15 @@ static void SpecialRate(const std::string& key, int n)
             KuyruktanNesneyiSil(oi);
         }
         if (n > 1) {
-            g_EstForce[0] = 0.0;                                  // paylasilan kapi
-            if (sc->estSlot >= 0) g_EstForce[sc->estSlot] = sc->estVal;
+            EstForceSet(0, 0.0);                                  // paylasilan kapi
+            if (sc->estSlot >= 0) EstForceSet(sc->estSlot, sc->estVal);
         } else {
-            if (sc->estSlot >= 0) g_EstForce.erase(sc->estSlot);
+            if (sc->estSlot >= 0) EstForceErase(sc->estSlot);
             bool anySpecialEnabled = false;
             for (const auto& entry : g_ObjMult) {
                 if (entry.second > 1) { anySpecialEnabled = true; break; }
             }
-            if (!anySpecialEnabled) g_EstForce.erase(0);
+            if (!anySpecialEnabled) EstForceErase(0);
         }
         Out("specialrate " + key + " -> " + std::to_string(n)
             + " (" + sc->obj + " idx " + std::to_string(oi) + ")");
@@ -13910,6 +14337,14 @@ static bool HandleHeadhunterCommand(const std::string& lc, const std::string& re
         Out("  gui=" + num("display_get_gui_width", {}) + "x" + num("display_get_gui_height", {}) + " window=" + num("window_get_width", {}) + "x" + num("window_get_height", {}) + " room=" + num("variable_global_get", { RValue("room_width") }) + "x" + num("variable_global_get", { RValue("room_height") }) + " view_wport0=" + num("view_get_wport", { RValue(0.0) }) + " view_hport0=" + num("view_get_hport", { RValue(0.0) }) + " view_visible0=" + num("view_get_visible", { RValue(0.0) }));
         Out("  active labels=" + std::to_string(g_HhStolen.size()) + " lastErr=" + g_HhLabelLastErr);
 #ifndef FORGEPACT_RELEASE
+    } else if (lc == "objidxprobe") {
+        const std::string oiArg = Lower(TrimCopy(rest));
+        if (oiArg == "reset") { ObjIdxProbeReset(); Out("objidxprobe: counters reset"); }
+        else if (oiArg == "on" || oiArg == "1") { g_ObjIdxProbeOn.store(true); Out("objidxprobe: ON - GetMembers() is read on every lie-wanting call until `objidxprobe off`"); }
+        else if (oiArg == "off" || oiArg == "0") { g_ObjIdxProbeOn.store(false); Out("objidxprobe: OFF - counters kept, use `objidxprobe reset` to clear them"); }
+        else ObjIdxProbeReport();
+#endif
+#ifndef FORGEPACT_RELEASE
     } else if (lc == "perf") {
         if (Lower(TrimCopy(rest)) == "reset") { PerfReset(); Out("perf: counters reset"); } else PerfReport();
 #endif
@@ -14183,6 +14618,10 @@ static void RunCommand(const std::string& line)
         if (ov == "stat") { OrbPickupStats(); return; }
         bool enable = (ov == "10" || ov == "1" || ov == "true" || ov == "on");
         g_OrbPickupRadius.store(enable);
+        // Cached globe handles belong to a session of the mod being on; they
+        // mean nothing once it is off, and must not be reused if it comes back
+        // on in a different zone.
+        OrbCacheReset();
         if (enable) {
             ResolveOrbAssets();
             char ob[180];
@@ -14225,15 +14664,15 @@ static void RunCommand(const std::string& line)
         std::string idx, val; idx = FirstToken(rest, val);
         try {
             int i = std::stoi(idx); double v = std::stod(val);
-            g_EstForce[i] = v;
+            EstForceSet(i, v);
             Out("estforce eSt[" + std::to_string(i) + "] -> her karede " + std::to_string(v));
         } catch (...) { Out("estforce: kullanim -> estforce 0 0"); }
     } else if (lc == "estfree") {
         std::string v = Lower(rest);
         while (!v.empty() && (v.back()=='\r'||v.back()=='\n'||v.back()==' ')) v.pop_back();
-        if (v == "all" || v.empty()) { g_EstForce.clear(); Out("estfree: tum zorlamalar kaldirildi"); }
+        if (v == "all" || v.empty()) { EstForceClear(); Out("estfree: tum zorlamalar kaldirildi"); }
         else {
-            try { g_EstForce.erase(std::stoi(v)); Out("estfree: " + v + " birakildi"); }
+            try { EstForceErase(std::stoi(v)); Out("estfree: " + v + " birakildi"); }
             catch (...) { Out("estfree: kullanim -> estfree 0 | estfree all"); }
         }
     } else if (lc == "eststat") {
@@ -15142,7 +15581,7 @@ void FrameCallback(FWFrame& FrameContext)
 
     // Special Content uses the game's eSt gates.  The helper is also safe in
     // all-off mode: it returns immediately while g_EstForce is empty.
-    EstForceApply();
+    EstForceTick(fc);
     ++g_HhFrame;
     if (g_HhEnabled.load() && (g_HhFrame % 120) == 0) HeadhunterActivityTick();
     if ((fc % kSatanicPollFrames) == 0) SatanicPollTick();
@@ -15184,7 +15623,7 @@ void FrameCallback(FWFrame& FrameContext)
                 } else { g_PlayerPosValid.store(false); }
             } catch (...) { g_PlayerPosValid.store(false); }
         } else { g_OrbPlayerHow = how; g_PlayerPosValid.store(false); }
-        OrbPickupTick();
+        OrbPickupTick(fc);
     }
 
     // Pet quest collector, toggled by `petquest 1`: walks the pet to the
@@ -15307,10 +15746,15 @@ void FrameCallback(FWFrame& FrameContext)
 
     // Keep fc advancing before setup, but do not consume queued player commands
     // until the one-shot hook installation attempt has completed.
-    // Two IPC checks per second are enough for a settings panel and avoid five
-    // filesystem probes per second during gameplay.
+    // Every 30 frames - about twice a second at 60 fps - which is enough for a
+    // settings panel and avoids five filesystem probes per second during
+    // gameplay. A second, inner six-frame test used to sit here and was dead:
+    // g_RuntimeFrame = fc is assigned at the top of this callback, before the
+    // fc++ below, so whenever the outer test passes g_RuntimeFrame equals fc
+    // and is a multiple of 30, hence always a multiple of 6 as well.
     if (((fc++) % 30) == 0 && g_Setup) {
-        if ((g_RuntimeFrame % 6) == 0) { PERF_SCOPE(g_PerfPoll); try { ForgePact::IpcServer::Instance().PollCommands(); } catch (...) {} }
+        PERF_SCOPE(g_PerfPoll);
+        try { ForgePact::IpcServer::Instance().PollCommands(); } catch (...) {}
     }
 }
 
@@ -15390,7 +15834,7 @@ EXPORTED AurieStatus ModuleInitialize(
         Out("FAILED to register frame callback st=" + std::to_string((int)st));
         g_Yytk->PrintError(__FILE__, __LINE__, "[BloodPact] Failed to register frame callback (st=%d)", (int)st);
     } else {
-        g_Yytk->PrintInfo("[BloodPact] BloodPact plugin successfully loaded into YYToolkit.");
+        g_Yytk->PrintInfo("[BloodPact] BloodPact plugin " FORGEPACT_VERSION " successfully loaded into YYToolkit.");
         g_Yytk->Print(CM_LIGHTGREEN, "[BloodPact] ready - watching bp_ipc\\cmd.txt");
         StartStallWatchdog();
     }

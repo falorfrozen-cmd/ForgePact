@@ -18,6 +18,33 @@ if str(SRC_DIR) not in sys.path:
 import forgepact
 
 
+def body(source, signature):
+    """The whole of `signature`'s definition, brace-matched.
+
+    The fixed-length windows elsewhere in this file are fine for short bodies,
+    but a function that grows a paragraph of comment silently slides its own
+    code out of the window and the assertion starts measuring the comment.
+    Same helper the two behaviour-harness runners use - including their
+    `rfind`, which takes the LAST occurrence. A forward declaration would make
+    `index` return the declaration's span instead, and the assertions built on
+    this include negative ones (`assertNotIn`), which a wrong span satisfies
+    vacuously rather than failing.
+    """
+    start = source.rfind(signature)
+    if start < 0:
+        raise AssertionError(f"not found: {signature}")
+    brace = source.index("{", start)
+    depth = 0
+    for index in range(brace, len(source)):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start:index + 1]
+    raise AssertionError(f"unterminated: {signature}")
+
+
 class TestRelicFilterContract(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -125,11 +152,17 @@ class TestRelicFilterContract(unittest.TestCase):
         # distance_to_object (0 matches) nor by hooking their step scripts
         # (installed, ran 0 times).  The pull is therefore driven from the frame
         # callback, which is known to run, by enumerating globe instances.
-        self.assertIn("static void OrbPickupTick()", self.plugin_code)
-        self.assertIn("OrbPickupTick();", self.plugin_code)
-        tick = self.plugin_code.split("static void OrbPickupTick()", 1)[1][:900]
-        self.assertIn("instance_number", tick)
-        self.assertIn("instance_find", tick)
+        self.assertIn("static void OrbPickupTick(uint32_t frame)", self.plugin_code)
+        self.assertIn("OrbPickupTick(fc);", self.plugin_code)
+        # Since 1.3.20 the enumeration is throttled to one scan every
+        # kOrbScanFrames frames while the pull still runs every frame, so the
+        # instance walk lives in OrbScan and the tick drives it.
+        scan = body(self.plugin_code, "static void OrbScan()")
+        self.assertIn("instance_number", scan)
+        self.assertIn("instance_find", scan)
+        tick = body(self.plugin_code, "static void OrbPickupTick(uint32_t frame)")
+        self.assertIn("OrbScan();", tick)
+        self.assertIn("PullOneGlobe", tick)
 
     def test_orb_pickup_no_longer_relies_on_interception(self):
         # Both dead interception points must be gone, not left behind as noise.
@@ -138,14 +171,12 @@ class TestRelicFilterContract(unittest.TestCase):
 
     def test_orb_pickup_tick_is_bounded(self):
         # A runaway globe count must not be able to cost a frame.
-        tick = self.plugin_code.split("static void OrbPickupTick()", 1)[1][:900]
-        self.assertIn("budget", tick)
+        self.assertIn("budget", body(self.plugin_code, "static void OrbScan()"))
 
     def test_orb_pickup_reads_player_position_once_per_frame(self):
         # Not once per globe per step.
         self.assertIn("g_PlayerPosValid", self.plugin_code)
-        pull = self.plugin_code.split("static void PullOneGlobe", 1)[1][:1200]
-        self.assertNotIn("HhResolveLocalPlayer", pull)
+        self.assertNotIn("HhResolveLocalPlayer", body(self.plugin_code, "static void PullOneGlobe("))
 
     def test_orb_pickup_counts_why_it_did_nothing(self):
         # "pulled 0 globes" has several different causes; each is counted so one

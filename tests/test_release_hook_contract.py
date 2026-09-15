@@ -214,7 +214,11 @@ class ReleaseHookContractTests(unittest.TestCase):
 
     def test_player_frame_loop_keeps_only_required_polling(self):
         frame = function_body(self.plugin, "void FrameCallback(")
-        self.assertIn("EstForceApply();", frame)
+        self.assertIn("EstForceTick(fc);", frame)
+        # Both halves early-return while nothing is forced, so the all-off
+        # baseline costs one comparison per frame and no runtime call at all.
+        tick = function_body(self.plugin, "static void EstForceTick(")
+        self.assertIn("if (g_EstForce.empty() || !g_Yytk) return;", tick)
         est = function_body(self.plugin, "static void EstForceApply()")
         self.assertIn("if (g_EstForce.empty() || !g_Yytk) return;", est)
         self.assertRegex(
@@ -223,6 +227,77 @@ class ReleaseHookContractTests(unittest.TestCase):
             r"static bool f5p[\s\S]*?f5p = f5;\s*#endif",
         )
         self.assertNotIn("if ((fc % 60) == 0) KonsoluGizle();", frame)
+
+    def test_the_object_index_struct_read_never_reaches_the_player_build(self):
+        # Finding 8 plants an instrument, not a feature. GetMembers() is not a
+        # field read - it calls GetBuiltin("id") per invocation and picks one
+        # of three union layouts by comparing m_ID, and on a build where none
+        # match it returns a layout that is not this one. A garbage object
+        # index makes IsCreatorObject() false, so map reveal and the Beacon
+        # would report armed and silently stop lying. AGENTS.md wants a
+        # positive control on this runtime first; the probe is that control.
+        player = strip_research_blocks(self.plugin)
+        self.assertNotIn("GetMembers(", player)
+        self.assertNotIn("ObjIdxProbe", player)
+        self.assertNotIn("QueryPerformanceCounter", player)
+
+    def test_the_player_build_still_reads_object_index_through_the_builtin(self):
+        hook = function_body(strip_research_blocks(self.plugin),
+                             "static void Hook_distance_to_object(")
+        self.assertIn('CallBuiltin("variable_instance_get", { inst, RValue("object_index") })', hook)
+        self.assertIn("IsCreatorObject((int)oi.ToDouble())", hook)
+
+    def test_the_probe_reports_both_counters_and_both_timings(self):
+        # A probe that cannot produce timings closes finding 8 as "measured,
+        # not worth it", so the numbers it must print are pinned here.
+        report = function_body(self.plugin, "static void ObjIdxProbeReport()")
+        for field in ("agree=", "disagree=", "getmembers-failed=",
+                      "variable_instance_get median=", "GetMembers median=", "ratio="):
+            self.assertIn(field, report)
+        # 0/0 has measured nothing; it must not be readable as "no
+        # disagreements found".
+        self.assertIn("measured NOTHING", report)
+        probe = function_body(self.plugin, "static void ObjIdxProbe(")
+        for counter in ("g_ObjIdxAgree", "g_ObjIdxDisagree", "g_ObjIdxFailed"):
+            self.assertIn(counter, probe)
+
+    def test_the_probe_is_off_until_it_is_asked_for(self):
+        # GetMembers() picking an arm this build does not have is documented to
+        # return a wrong layout, and if the real CInstance is smaller than that
+        # arm the field read is past the allocation - which /EHsc means the
+        # probe's own catch (...) will not catch. Backing out of that has to
+        # cost a command, not a rebuild, so the probe does not run until it is
+        # switched on.
+        self.assertIn("static std::atomic<bool> g_ObjIdxProbeOn{ false };", self.plugin)
+        self.assertIn("g_ObjIdxProbeOn.load()", function_body(self.plugin, "static void ObjIdxProbe("))
+        self.assertIn('oiArg == "on"', self.plugin)
+        # ...and `reset` must not be readable as "stop" - it only clears.
+        reset = function_body(self.plugin, "static void ObjIdxProbeReset()")
+        self.assertNotIn("g_ObjIdxProbeOn", reset)
+
+    def test_the_probe_says_what_its_counts_are_scoped_to(self):
+        # It runs after the beacon/reveal early-out and before IsCreatorObject,
+        # so the number is instances through the hook while a lie was wanted -
+        # not creators, which is how the guide would otherwise read it.
+        report = function_body(self.plugin, "static void ObjIdxProbeReport()")
+        self.assertIn("while a lie is wanted", report)
+        self.assertIn("not creators", report)
+
+    def test_the_probe_command_is_not_a_player_command(self):
+        allowlist = re.search(r"kPlayerCommands\s*=\s*\{(?P<body>.*?)\};",
+                              self.plugin, re.DOTALL)
+        self.assertIsNotNone(allowlist)
+        self.assertNotIn("objidxprobe", allowlist.group("body"))
+        self.assertNotIn("objidxprobe", strip_research_blocks(self.plugin))
+
+    def test_the_head_label_hook_install_is_untouched(self):
+        # Not changed here; the live session measures it, and "leave it alone"
+        # is a legitimate outcome. Pinned so this change cannot drift into it.
+        body = function_body(self.plugin, "static void InstallHeadLabelHook()")
+        self.assertIn("g_HhLabelHookAttempted", body)
+        self.assertIn('HookOneScript("DrawHudBuffs"', body)
+        init = function_body(self.plugin, "EXPORTED AurieStatus ModuleInitialize")
+        self.assertIn("InstallHeadLabelHook();", init)
 
     def test_disabled_single_instance_hooks_are_not_in_player_binary(self):
         block = self.plugin.split("// ===== Single-instance bypass:", 1)[1].split(

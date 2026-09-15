@@ -75,7 +75,10 @@ class TestMapRevealContract(unittest.TestCase):
         self.assertIn('v.rfind("packs", 0) == 0', self.plugin_code)
 
     def test_reveal_is_in_the_release_whitelist(self):
-        block = self.plugin_code[self.plugin_code.index("kPlayerCommands"):][:2000]
+        # Anchored on the declaration, not the first mention: the name is
+        # cited in comments elsewhere in the file, and a prose reference is
+        # not the allowlist.
+        block = self.plugin_code[self.plugin_code.index("kPlayerCommands = {"):][:2000]
         self.assertIn('"reveal"', block)
 
     def test_stat_is_research_only(self):
@@ -168,6 +171,24 @@ class TestMapRevealContract(unittest.TestCase):
         # The guard must precede the assignment it guards.
         self.assertLess(hook.index("CreatorIsReady(inst)"), hook.index("Result = RValue(0.0);"))
         self.assertLess(hook.index("MayPopulate(inst)"), hook.index("Result = RValue(0.0);"))
+
+    def test_the_readiness_check_is_not_performed_twice(self):
+        # MayPopulate IS `window > 0 && CreatorIsReady(creator)`, so a
+        # standalone CreatorIsReady above it ran the same enemyCreatorTimer
+        # read twice for every creator on an open pack window and decided
+        # nothing new. The remaining occurrence is the Beacon branch's, which
+        # MayPopulate does not cover. Call counts are asserted behaviourally
+        # in test_map_reveal_behavior.py (ready_zone/timer_reads).
+        hook = self.plugin_code[self.plugin_code.index("static void Hook_distance_to_object("):]
+        hook = hook[: hook.index("\nstatic void InstallDistanceLieHook")]
+        self.assertEqual(hook.count("MapRevealManager::CreatorIsReady("), 1, hook)
+
+    def test_the_dead_ipc_poll_condition_is_gone(self):
+        # g_RuntimeFrame = fc is assigned at the top of FrameCallback, before
+        # the fc++ that gates the outer 30-frame test, so the inner
+        # `% 6` test was always true when it was reached. The real rate is,
+        # and always was, every 30 frames.
+        self.assertNotIn("(g_RuntimeFrame % 6) == 0", self.plugin_code)
 
     def test_window_identity_is_full_and_never_unknown(self):
         # Two related gaps reported with the above: the per-frame check
