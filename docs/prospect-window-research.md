@@ -146,12 +146,12 @@ measured — it is a candidate list.
 The `s_` prefix is this game's struct-constructor naming, so `s_ItemGridInfo`
 and `s_InvNode` are very likely the per-grid and per-node records.
 
-*Controls:*
+*Control, and one input candidate:*
 
 | Probe label | Runtime name | Why |
 |---|---|---|
-| `CheckPlayerInteraction` | `gml_Script_CheckPlayerInteraction` | proven to fire from every interactable's Step event (`citrace nativetrace`); must count |
-| `PlayerMouseAction` | `gml_Script_PlayerMouseAction` | fires on a click |
+| `CheckPlayerInteraction` | `gml_Script_CheckPlayerInteraction` | **the control**: proven to fire from every interactable's Step event (`citrace nativetrace`); must count |
+| `PlayerMouseAction` | `gml_Script_PlayerMouseAction` | a candidate, not a control: expected to fire on a click, but its one native measurement (pet quest research, 2026-09-11) read 0 |
 
 Both already have `citrace nativetrace` rows; `prospectprobe` hooks them
 again under its own ids so the control runs through the *same* installer as
@@ -175,8 +175,8 @@ the targets.
 |---|---|---|---|
 | **H1** | A named script receives the input grid's dimensions as arguments when the window opens (`UiSetGrid`, `UiCreateNode`, `s_ItemGridInfo`, `InventoryInitGrids`, …). | **Design A**: `HookOneScript` (both routes) on that script; when the call belongs to the prospect window, scale the dimension arguments before the trampoline. | (a) R4: a row fired between `arm` and `show` on a window open whose logged args carry R3's numbers, with `self`/`other`/an argument identifying the prospect window or its node; (b) **positive control on the same row: `prospectprobe override <row> <argIndex> <value> 1` followed by a reopen draws a grid of the overridden size** (R5a = yes) — a row that carries the numbers but whose override changes nothing is recorded and does not count; (c) R6: items placed in the new cells are consumed by the prospect button; (d) `CheckPlayerInteraction` counted > 0 in the same session (C). |
 | **H2** | The dimensions live in instance variables on the window (or its grid node) that the draw and the cell store follow. | **Design B**: a frame-driven pass that, once per new `UI_Prospect_obj` instance, writes the variables the game left, validated numeric and read back. | (a) R2: numeric variables on R1 whose vanilla values equal R3; (b) **`prospectprobe set` on them, without reopening, changes the drawn grid *and* accepts an item dropped into a new cell with no error** (R5b = yes) — a bigger frame that refuses items proves the store did not follow; (c) R6 as H1; (d) the `x` write control moved the window (C) and (e) a reopen restores vanilla (the write was per-instance). |
-| **H3** | The size is fixed (literals in event code with a fixed store), and no named call or variable governs it. | **No one-value mod exists.** Blocked, with the numbers; follow-up below. | Every H1 row's override and every H2 candidate's write measured with its control passing, none positive; C passing. |
-| **not observed** | Any control failed, the window object never resolved, the enumeration printed nothing, or the session ended on a GML error before a control ran. | No hypothesis is concluded; Stage B does not start. | Record each R-field as `not observed (<which instrument, which control>)`. |
+| **H3** | The size is fixed (literals in event code with a fixed store), and no named call or variable governs it. | **No one-value mod exists.** Blocked, with the numbers; follow-up below. | R2 and R4 both non-empty; every row that fired during the L10 open fully logged (no `UNLOGGED`); every H1 row's override landed on the R4 call and every H2 candidate's write measured, each with its control passing, none positive; C passing. An empty R2 or R4 is **not observed**, never H3. |
+| **not observed** | Any control failed, the window object never resolved, the enumeration printed nothing, R2 or R4 came back empty, a row that fired stayed `UNLOGGED`, an override landed on a different call than R4's, or the session ended on a GML error before a control ran. | No hypothesis is concluded; Stage B does not start. | Record each R-field as `not observed (<which instrument, which control>)`. |
 
 Both designs stay in the "change one value inside a call the game is already
 making" class (`AGENTS.md`, "Don't Suspend the Game's Own Runtime"): Design A
@@ -239,8 +239,13 @@ Not in `kPlayerCommands`; dispatched from `HandleProspectCommand`. Bare
   runner's fatal dialog. The instance from `instance_find` is passed through
   with whatever kind it has (`VALUE_REF` on this runner). Prints
   `prospectprobe set <Obj>[nth].<var>: was=<v> now=<read-back> (readback ok|MISMATCH) exists=…`.
+  An asset name that is not an object (a sprite, a sound) is refused as
+  `unknown object` too (`object_exists`).
   **Write control:** `prospectprobe set UI_Prospect_obj 0 x <x+60>` must move
-  the window by eye before any other write is believed.
+  the window by eye before any other write is believed. A UI window may lay
+  itself out from its own variables rather than `x`, so if `x` moves nothing,
+  `prospectprobe set UI_Prospect_obj 0 image_alpha 0.3` is the second write
+  control; the write control passes if either visibly changes the window.
 - **`prospectprobe hook [substr ...]`** — native-detours every row of the
   table in § Static search (or only rows whose label contains one of the
   substrings, to bisect a crash). Each name resolves through
@@ -252,30 +257,54 @@ Not in `kPlayerCommands`; dispatched from `HandleProspectCommand`. Bare
   `MmCreateHook failed st=…`, then `N detoured, M failed`. Idempotent per row.
   Do not run `citrace nativetrace` in the same session: it detours two of the
   same addresses, and the second hook on an address fails.
-- **`prospectprobe arm`** — zeroes every counter and log budget and arms
-  logging: the next 6 calls of each row are written to `out.txt` as
-  `prospectprobe <label> #n self=… other=… argc=… a0=… a1=…`. A `self` or
-  `other` without a numeric `object_index` (a struct, as constructors and
-  struct closures receive) is printed as `(not an instance: …)` and never
-  handed to `object_get_name`.
-- **`prospectprobe show`** — per row: `calls`, `since` the previous show, and
-  whether the log budget is spent; `(not detoured)` for a row that did not
-  install. The last line is the control, `CheckPlayerInteraction: calls=N`:
-  **`0` voids every row above**, and a control that did not install says so.
+- **`prospectprobe arm [budget=N] [substr ...]`** — zeroes every counter and
+  arms logging: the next `N` calls (default 6, at most 5000; anything else is
+  refused and nothing is armed) of each *selected* row are written to
+  `out.txt` as `prospectprobe <label> #n self=… other=… argc=… a0=… a1=…`.
+  With no substrings every row except the `CheckPlayerInteraction` control is
+  selected (the control fires every frame from every interactable; its count
+  is the measurement — name it to log it); with substrings, only rows whose
+  label contains one of them. Unselected rows still count. A `self` or `other`
+  without a numeric `object_index` (a struct, as constructors and struct
+  closures receive) is printed as `(not an instance: …)` and never handed to
+  `object_get_name`.
+- **`prospectprobe show`** — per row: `calls` since `arm`, `since` the
+  previous show, and, while armed, `logged=L` and — when the row made more
+  calls than it logged — `UNLOGGED=K (budget spent - not observed)`; a row the
+  last `arm` did not select says `(not selected for logging)`; `(not detoured)`
+  for a row that did not install. The first line names a pending override
+  with its `left` and `notApplied` counts. The last line is the control,
+  `CheckPlayerInteraction: calls=N`: **`0` voids every row above**, and a
+  control that did not install says so.
 - **`prospectprobe reset`** — zeroes counters and disarms.
-- **`prospectprobe override <label> <argIndex> <number> [calls=1]`** — for the
-  next `calls` calls of an already-detoured row, if argument `argIndex` exists
-  and is numeric, replace it before forwarding and log
-  `override <label> a<i>: was=<v> now=<value>`. Refuses a label that is not a
-  row, and a row that is not detoured (`hook it first`). A call whose argument
-  is missing or not numeric is logged as `not applied` (up to 6 lines) and does
-  not use up the count. `prospectprobe override clear` cancels. Labels may
-  contain a space (`UI_Prospect_obj anon@1038`); everything before the trailing
-  numbers is the label. This is H1's positive control.
+- **`prospectprobe override <label> <argIndex> <number> [calls=1] [self=<Obj>] [other=<Obj>] [when=<number>]`**
+  — for the next `calls` calls of an already-detoured row, if argument
+  `argIndex` exists, is numeric, and the call matches every selector given
+  (`self=` / `other=`: the object name of `self` / `other`, which a struct
+  never matches; `when=`: argument `argIndex` currently equals that number),
+  replace it before forwarding and log
+  `override <label> #n a<i>: was=<v> now=<value> (left=…) self=… other=… argc=… a0=… …`
+  — the call's own `self`, `other` and every argument, so the line can be
+  checked against the R4 call. Refuses a label that is not a row, and a row
+  that is not detoured (`hook it first`). A call whose argument is missing, not
+  numeric, or that fails a selector is logged as `not applied (…)` with the
+  reason (up to 6 lines), counted in `show`'s `notApplied`, and does not use
+  up the count. `prospectprobe override clear` cancels. Labels may contain a
+  space (`UI_Prospect_obj anon@1038`); the `key=value` selectors are taken off
+  the end first, then everything before the trailing numbers is the label.
+  This is H1's positive control.
 
-Counting is unconditional; logging is budgeted per row so a hot row
-(`GridHasSpace`, the controls) cannot drown `out.txt`. Every detour forwards to
+Counting is unconditional; logging is budgeted per row and per `arm` so a hot
+row cannot drown `out.txt`, and `show` reports every call the budget hid, so a
+spent budget is visible rather than read as silence. Every detour forwards to
 the game's own function through the trampoline.
+
+What a count through this route can and cannot prove: `CheckPlayerInteraction`
+is the one row with a positive native measurement (`citrace nativetrace`).
+`PlayerMouseAction` is a **candidate, not a control** — its only earlier
+native measurement read 0. No constructor (`s_*`) or `___struct___` row has
+ever counted through a native detour, so a zero on one of those is
+uncontrolled: record it as `not observed`, never as "not called".
 
 ## Live procedure
 
@@ -310,7 +339,10 @@ result, not a failure of the procedure.
    on UI_Prospect_obj or any grid node; enumeration control <passed|failed>)`.
 5. **L5 (write control).** `oget UI_Prospect_obj x`, then
    `prospectprobe set UI_Prospect_obj 0 x <x+60>` → the window moves right by
-   eye (**C-write = yes/no**). Restore with the original value.
+   eye. Restore with the original value. If it did not move, `oget
+   UI_Prospect_obj image_alpha`, `prospectprobe set UI_Prospect_obj 0
+   image_alpha 0.3` → the window fades, then restore (**C-write = yes** if
+   either write visibly changed the window, else no).
 6. **L6.** Close and reopen the window: R2's values are vanilla again
    (Create re-ran) — record yes/no.
 7. **L7 (H2 experiment).** For each R2 candidate: `prospectprobe set <R1 obj>
@@ -327,15 +359,31 @@ result, not a failure of the procedure.
    `N detoured, M failed` and every `not found`/`refused` row.
    `prospectprobe show` → `CheckPlayerInteraction: calls=` must already be
    climbing (**C-hook**); if 0, stop and record `not observed (control)`.
-10. **L10.** `prospectprobe arm`, open the window, `prospectprobe show` and
-    read the logged lines in `bp_ipc\out.txt`: rows that fired between arm
-    and show, with `self`, `other`, args (**R4** = every row whose args carry
-    R3's numbers, with the arg indices; else `not observed among detoured
-    rows (list the rows that did fire)`).
+10. **L10.** Stand next to the Prospect Cube with the window closed.
+    `prospectprobe arm budget=500`, open the window at once, then
+    `prospectprobe show` and read the logged lines in `bp_ipc\out.txt`: rows
+    that fired between arm and show, with `self`, `other`, args. Any row
+    `show` marks `UNLOGGED=K` had calls nobody saw: close the window, re-arm
+    with a larger budget restricted to those rows
+    (`prospectprobe arm budget=<calls+50> <label substr> ...`), reopen, and
+    `show` again, until no row that fired reports `UNLOGGED`. A row still
+    `UNLOGGED` after that is recorded `not observed (budget spent)`. **R4** =
+    every row whose logged args carry R3's numbers, with the arg indices and
+    that call's `self`/`other`; else `not observed among detoured rows (list
+    the rows that did fire, and any still UNLOGGED)`.
 11. **L11 (H1 experiment).** For each R4 row: close the window,
-    `prospectprobe override <label> <argIndex> <vanilla×2> 1`, reopen → is
-    the drawn grid the overridden size (**R5a** per row)? If yes, repeat L8's
-    R6/R7 checks against this grid. `prospectprobe override clear`.
+    `prospectprobe override <label> <argIndex> <vanilla×2> 1 when=<vanilla>`
+    plus `self=<Obj>` (or `other=<Obj>`) naming the object the R4 call's
+    `self` (or `other`) printed — omit a selector only when that side printed
+    `(not an instance: …)`. Reopen. First read the
+    `prospectprobe override <label> #n a<i>: was=… now=…` line in `out.txt`:
+    its `self`, `other` and the arguments other than `a<i>` must match the R4
+    call logged in L10; if they do not, or no applied line appeared (`show`
+    still lists the override pending, `notApplied` counting), R5a =
+    `not observed (override landed elsewhere)` for this row — not "no". Only
+    then: is the drawn grid the overridden size (**R5a** per row)? If yes,
+    repeat L8's R6/R7 checks against this grid. `prospectprobe override
+    clear`.
 12. **L12.** Fill `## Results`: R1–R8, C (C-write, C-hook, enumeration
     control, R6), H per § Deciding the hypothesis. Add the log line
     `phase0: complete` to this workorder **only** if H reads H1 or H2; an H3
@@ -356,13 +404,25 @@ Read § Hypotheses' required-evidence column as a conjunction: every item of a
 row must be present, with its control passing, in the same session.
 
 - **H1** needs R4 (a row carrying R3's numbers on a window open, identifying
-  the prospect window), R5a = yes on that same row, R6 = consumed, and
-  C-hook > 0.
+  the prospect window), R5a = yes on that same row with its applied override
+  line matching the R4 call (`self`, `other`, the other arguments), R6 =
+  consumed, and C-hook > 0.
 - **H2** needs R2 (numeric variables equal to R3), R5b = accepted for them
   without a reopen, R6 = consumed, C-write = yes, and L6 = vanilla again on
   reopen.
-- **H3** needs every H1 override and every H2 write measured with its control
-  passing, and none positive.
+- **A row whose calls during the open exceed its logged lines is
+  `not observed (budget spent)`** — `show` prints it as `UNLOGGED=K`. Its
+  arguments were never seen, so it is neither in R4 nor evidence against it.
+- **An override whose applied line does not match the R4 call** (different
+  `self`/`other`/arguments), or that never applied, is
+  `not observed (override landed elsewhere)` — not R5a = no.
+- **H3** needs **R2 and R4 both non-empty**, every row that fired during the
+  L10 open **fully logged** (no `UNLOGGED` left), every R4 row's override
+  applied to the R4 call and every R2 write measured, each with its control
+  passing, and none positive. An empty R2 or an empty R4, a row left
+  `UNLOGGED`, or an override that landed elsewhere makes H **not observed**,
+  never H3: a hypothesis that nothing governs the size cannot be concluded
+  from candidates that were never seen or never tried.
 - Anything else is **not observed**, naming the instrument and the control
   that failed. A zero from a detour without a climbing `CheckPlayerInteraction`,
   or an empty enumeration without a passing `oget` read-back, is a statement

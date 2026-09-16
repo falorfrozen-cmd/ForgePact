@@ -161,6 +161,80 @@ class ProspectWindowContractTests(unittest.TestCase):
         observe = function_body(self.plugin, "static void PpObserve(")
         self.assertLess(observe.index("PpIsNumber(*A[i])"), observe.index("*A[i] = RValue("))
 
+    # ---- a spent budget and a misplaced override are visible, not silent -----
+    # Round-0 review B1/B2: a fixed 6-line budget let rows that fire before the
+    # window opens hide the sizing call's arguments, and an override could land
+    # on another caller of the same row with nothing saying so. Either would
+    # have turned an unseen candidate into evidence for H3.
+
+    def test_arm_accepts_a_budget_and_label_filters(self):
+        arm = strip_comments(function_body(self.plugin, "static void PpArm("))
+        self.assertIn('"budget="', arm)
+        self.assertIn("kPpMaxLogBudget", arm)
+        self.assertIn("InterlockedExchange(t.logOn", arm)
+        self.assertIn("InterlockedExchange(&g_PpLogBudget, budget)", arm)
+        # A refused budget arms nothing.
+        self.assertLess(arm.index("not armed"), arm.index("g_PpArmed.store(true)"))
+        command = function_body(self.plugin, "static void PpCommand(")
+        self.assertIn("PpArm(std::vector<std::string>(tok.begin() + 1, tok.end()))", command)
+        observe = strip_comments(function_body(self.plugin, "static void PpObserve("))
+        self.assertIn("g_PpLogBudget", observe)
+        self.assertIn("*logOn", observe)
+        self.assertNotRegex(self.plugin, r"\bkPpLogBudget\b")
+
+    def test_show_reports_unlogged_calls(self):
+        show = function_body(self.plugin, "static void PpShow(")
+        self.assertIn("UNLOGGED=", show)
+        self.assertIn("not observed", show)
+        self.assertIn("calls - logged", show)
+        self.assertIn("notApplied=", show)
+
+    def test_override_applied_line_describes_self_other_and_args(self):
+        observe = strip_comments(function_body(self.plugin, "static void PpObserve("))
+        write = observe.index("*A[i] = RValue(g_PpOverrideValue)")
+        applied = observe[write:observe.index("Out(line)", write)]
+        self.assertIn("PpDescribeSelf(S)", applied)
+        self.assertIn("PpDescribeSelf(O)", applied)
+        self.assertIn("AggroArgs(argc, A)", applied)
+
+    def test_override_selector_gates_the_write(self):
+        observe = strip_comments(function_body(self.plugin, "static void PpObserve("))
+        self.assertLess(observe.index("PpSelectorMismatch(S, O, *A[i])"),
+                        observe.index("*A[i] = RValue(g_PpOverrideValue)"))
+        self.assertIn("numeric && mismatch.empty()", observe)
+        selector = function_body(self.plugin, "static std::string PpSelectorMismatch(")
+        for field in ("g_PpOverrideWhen", "g_PpOverrideSelf", "g_PpOverrideOther", "PpObjectName(S)", "PpObjectName(O)"):
+            self.assertIn(field, selector)
+        # A struct self has no numeric object_index and must never reach object_get_name.
+        name = function_body(self.plugin, "static std::string PpObjectName(")
+        self.assertLess(name.index("numeric"), name.index('"object_get_name"'))
+        parser = function_body(self.plugin, "static void PpOverrideCommand(")
+        for key in ('"self="', '"other="', '"when="'):
+            self.assertIn(key, parser)
+
+    def test_research_doc_h3_requires_non_empty_fully_logged_r2_r4(self):
+        deciding = collapse(section(self.doc, "## Deciding the hypothesis"))
+        self.assertIn("**H3** needs **R2 and R4 both non-empty**", deciding)
+        self.assertIn("**fully logged** (no `UNLOGGED` left)", deciding)
+        self.assertIn("never H3", deciding)
+        self.assertIn("`not observed (budget spent)`", deciding)
+        self.assertIn("`not observed (override landed elsewhere)`", deciding)
+
+    def test_research_doc_live_procedure_budgets_and_matches_the_override(self):
+        live = collapse(section(self.doc, "## Live procedure"))
+        l10 = live[live.index("**L10.**"):live.index("**L11")]
+        l11 = live[live.index("**L11"):live.index("**L12.**")]
+        self.assertIn("prospectprobe arm budget=", l10)
+        self.assertIn("UNLOGGED", l10)
+        self.assertIn("when=<vanilla>", l11)
+        self.assertIn("self=<Obj>", l11)
+        self.assertIn("must match the R4 call", l11)
+        self.assertIn("not observed (override landed elsewhere)", l11)
+        # The instrument section documents what the procedure uses.
+        instrument = collapse(section(self.doc, "## Instrument"))
+        self.assertIn("`prospectprobe arm [budget=N] [substr ...]`", instrument)
+        self.assertIn("[self=<Obj>] [other=<Obj>] [when=<number>]", instrument)
+
     # ---- nothing on the frame path -------------------------------------------
 
     def test_frame_callback_unchanged(self):

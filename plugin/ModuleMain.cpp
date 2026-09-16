@@ -9349,15 +9349,33 @@ static void CiNativeTraceReset()
 // other subcommand only counts and logs. Do not run `citrace nativetrace` in
 // the same session: it detours two of the same addresses, and a second
 // MmCreateHook on an address already hooked fails for that row.
-static constexpr long kPpLogBudget = 6;          // logged calls per row per `arm`
+//
+// Log budget (B1 of the round-0 review): a fixed 6 lines per row let rows that
+// fire before the window opens (GridHasSpace, UiMoveNode, ...) or once per node
+// on open spend their lines first, so the sizing call was counted but never
+// logged - and an empty R4 then read as evidence. `arm [budget=N] [substr ...]`
+// therefore takes the budget and restricts logging to named rows, and `show`
+// prints every call a row made that was NOT logged, which the research doc's
+// decision rule turns into `not observed (budget spent)`.
+static constexpr long kPpDefaultLogBudget = 6;   // logged calls per row per `arm` unless budget=N
+static constexpr long kPpMaxLogBudget = 5000;    // out.txt stays readable
 static constexpr long kPpRefusalLogBudget = 6;   // "override not applied" lines per override
 
 static std::atomic<bool> g_PpArmed{ false };
+static volatile long g_PpLogBudget = kPpDefaultLogBudget;
 static std::string g_PpOverrideLabel;             // game thread only (IPC poll and detours)
 static int g_PpOverrideArg = -1;
 static double g_PpOverrideValue = 0.0;
 static volatile long g_PpOverrideLeft = 0;
 static volatile long g_PpOverrideRefusalsLogged = 0;
+static volatile long g_PpOverrideNotApplied = 0;  // calls of the row that the override passed over
+// Override selector (B2): a row can fire from several callers (the inventory
+// grid and the prospect grid in the same window, or while the window is
+// closed), so `calls=1` could be spent on the wrong call. Empty = any.
+static std::string g_PpOverrideSelf;
+static std::string g_PpOverrideOther;
+static bool g_PpOverrideWhenSet = false;
+static double g_PpOverrideWhen = 0.0;
 
 // `self` may be a struct (constructors such as s_ItemGridInfo, struct
 // closures), not an instance. Asking object_get_name about a struct's missing
@@ -9378,30 +9396,80 @@ static std::string PpDescribeSelf(CInstance* inst)
     } catch (...) { return "(unresolved)"; }
 }
 
+// The object name only, for the override's self=/other= selector: "" for a
+// null, a struct, or anything else without a numeric object_index (same guard
+// as PpDescribeSelf, for the same reason).
+static std::string PpObjectName(CInstance* inst)
+{
+    if (!inst) return "";
+    try {
+        RValue r = inst->ToRValue();
+        RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { r, RValue("object_index") });
+        const bool numeric = oi.m_Kind == VALUE_REAL || oi.m_Kind == VALUE_INT32 || oi.m_Kind == VALUE_INT64;
+        if (!numeric || oi.ToDouble() < 0) return "";
+        return g_Yytk->CallBuiltin("object_get_name", { oi }).ToString();
+    } catch (...) { return ""; }
+}
+
 static bool PpIsNumber(const RValue& v)
 {
     return v.m_Kind == VALUE_REAL || v.m_Kind == VALUE_INT32 || v.m_Kind == VALUE_INT64;
 }
 
-static void PpObserve(const char* label, long n, volatile long* logged, CInstance* S, CInstance* O, int argc, RValue** A)
+// Why this call does not match the pending override's selector, or "" if it does.
+static std::string PpSelectorMismatch(CInstance* S, CInstance* O, const RValue& arg)
+{
+    if (g_PpOverrideWhenSet && std::fabs(arg.ToDouble() - g_PpOverrideWhen) > 1e-9)
+        return "when=" + Describe(RValue(g_PpOverrideWhen)) + " but arg is " + Describe(arg);
+    if (!g_PpOverrideSelf.empty()) {
+        const std::string s = PpObjectName(S);
+        if (Lower(s) != Lower(g_PpOverrideSelf)) return "self=" + g_PpOverrideSelf + " but self is " + PpDescribeSelf(S);
+    }
+    if (!g_PpOverrideOther.empty()) {
+        const std::string o = PpObjectName(O);
+        if (Lower(o) != Lower(g_PpOverrideOther)) return "other=" + g_PpOverrideOther + " but other is " + PpDescribeSelf(O);
+    }
+    return std::string();
+}
+
+static void PpObserve(const char* label, long n, volatile long* logged, volatile long* logOn,
+                      CInstance* S, CInstance* O, int argc, RValue** A)
 {
     if (g_PpOverrideLeft > 0 && g_PpOverrideLabel == label) {
         const int i = g_PpOverrideArg;
-        if (A && i >= 0 && i < argc && A[i] && PpIsNumber(*A[i])) {
+        const bool numeric = A && i >= 0 && i < argc && A[i] && PpIsNumber(*A[i]);
+        const std::string mismatch = numeric ? PpSelectorMismatch(S, O, *A[i]) : std::string();
+        if (numeric && mismatch.empty()) {
             const std::string was = Describe(*A[i]);
             *A[i] = RValue(g_PpOverrideValue);
             InterlockedDecrement(&g_PpOverrideLeft);
-            Out(std::string("prospectprobe override ") + label + " a" + std::to_string(i) + ": was=" + was
-                + " now=" + Describe(*A[i]) + " (left=" + std::to_string(g_PpOverrideLeft) + ")");
-        } else if (InterlockedIncrement(&g_PpOverrideRefusalsLogged) <= kPpRefusalLogBudget) {
+            // The applied line names the call it landed on (self, other, every
+            // argument), so L11 can check it is the R4 call and not another
+            // caller of the same row.
+            std::string line = std::string("prospectprobe override ") + label + " #" + std::to_string(n) + " a"
+                + std::to_string(i) + ": was=" + was + " now=" + Describe(*A[i])
+                + " (left=" + std::to_string(g_PpOverrideLeft) + ")";
+            try {
+                line += " self=" + PpDescribeSelf(S) + " other=" + PpDescribeSelf(O)
+                    + " argc=" + std::to_string(argc) + AggroArgs(argc, A);
+            } catch (...) {}
+            Out(line);
+        } else {
             // Not consumed: the next call of this row is tried again.
-            Out(std::string("prospectprobe override ") + label + " a" + std::to_string(i) + ": not applied (argc="
-                + std::to_string(argc) + ((A && i >= 0 && i < argc && A[i]) ? ", arg is " + Describe(*A[i]) : std::string(", no such argument"))
-                + "; only a numeric argument is replaced)");
+            InterlockedIncrement(&g_PpOverrideNotApplied);
+            if (InterlockedIncrement(&g_PpOverrideRefusalsLogged) <= kPpRefusalLogBudget) {
+                std::string why = !numeric
+                    ? ((A && i >= 0 && i < argc && A[i]) ? "arg is " + Describe(*A[i]) + "; only a numeric argument is replaced"
+                                                           : std::string("no such argument"))
+                    : "selector: " + mismatch;
+                Out(std::string("prospectprobe override ") + label + " #" + std::to_string(n) + " a" + std::to_string(i)
+                    + ": not applied (argc=" + std::to_string(argc) + ", " + why + ")");
+            }
         }
     }
-    if (!g_PpArmed.load() || *logged >= kPpLogBudget) return;
-    if (InterlockedIncrement(logged) > kPpLogBudget) return;
+    const long budget = g_PpLogBudget;
+    if (!g_PpArmed.load() || !*logOn || *logged >= budget) return;
+    if (InterlockedIncrement(logged) > budget) return;
     try {
         Out(std::string("prospectprobe ") + label + " #" + std::to_string(n)
             + " self=" + PpDescribeSelf(S) + " other=" + PpDescribeSelf(O)
@@ -9413,9 +9481,10 @@ static void PpObserve(const char* label, long n, volatile long* logged, CInstanc
     static PFUNC_YYGMLScript g_PpOrig_##SAFE = nullptr; \
     static volatile long g_PpCalls_##SAFE = 0; \
     static volatile long g_PpLogged_##SAFE = 0; \
+    static volatile long g_PpLogOn_##SAFE = 1; \
     static RValue& PpDetour_##SAFE(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) { \
         const long n = InterlockedIncrement(&g_PpCalls_##SAFE); \
-        PpObserve(LABEL, n, &g_PpLogged_##SAFE, S, O, argc, A); \
+        PpObserve(LABEL, n, &g_PpLogged_##SAFE, &g_PpLogOn_##SAFE, S, O, argc, A); \
         return g_PpOrig_##SAFE ? g_PpOrig_##SAFE(S, O, R, argc, A) : R; \
     }
 
@@ -9474,7 +9543,9 @@ static void PpObserve(const char* label, long n, volatile long* logged, CInstanc
     X(GetItemPreferredGrid, "GetItemPreferredGrid", gml_Script_GetItemPreferredGrid) \
     X(InvGridClearItemNode, "InvGridClearItemNode", gml_Script_InvGridClearItemNode) \
     X(GetStackOpLocationFromGridType, "GetStackOpLocationFromGridType", gml_Script_GetStackOpLocationFromGridType) \
-    /* controls: fire constantly / on a click, through the same installer */ \
+    /* PlayerMouseAction: expected to fire on a click, but its only earlier  */ \
+    /* native measurement read 0 - a candidate, NOT a control. The control   */ \
+    /* is CheckPlayerInteraction alone.                                      */ \
     X(PlayerMouseAction, "PlayerMouseAction", gml_Script_PlayerMouseAction) \
     X(CheckPlayerInteraction, "CheckPlayerInteraction", gml_Script_CheckPlayerInteraction)
 
@@ -9491,13 +9562,14 @@ struct PpTarget {
     PFUNC_YYGMLScript* origSlot;
     volatile long*     calls;
     volatile long*     logged;
+    volatile long*     logOn;         // selected for logging by the last `arm`
     std::atomic<bool>  installed;
     long               lastShown;     // calls at the previous `show`
 };
 
 #define PP_ENTRY(SAFE, LABEL, CONSTANT) \
     { LABEL, HeroSiege::Scripts::CONSTANT.data(), "fp_pp_" #SAFE, (PVOID)PpDetour_##SAFE, &g_PpOrig_##SAFE, \
-      &g_PpCalls_##SAFE, &g_PpLogged_##SAFE, false, 0 },
+      &g_PpCalls_##SAFE, &g_PpLogged_##SAFE, &g_PpLogOn_##SAFE, false, 0 },
 static PpTarget g_PpTargets[] = {
     PROSPECTPROBE_TARGETS(PP_ENTRY)
 };
@@ -9579,12 +9651,39 @@ static void PpZeroCounters()
     }
 }
 
-static void PpArm()
+// `arm [budget=N] [substr ...]`: with no substrings every row except the
+// CheckPlayerInteraction control logs (it fires every frame from every
+// interactable; its count is the measurement, and naming it logs it too).
+static void PpArm(const std::vector<std::string>& args)
 {
+    long budget = kPpDefaultLogBudget;
+    std::vector<std::string> filters;
+    for (const std::string& a : args) {
+        const std::string la = Lower(a);
+        if (la.rfind("budget=", 0) == 0) {
+            try { budget = std::stol(la.substr(7)); }
+            catch (...) { Out("prospectprobe arm: budget=N needs a whole number; not armed"); return; }
+            if (budget < 1 || budget > kPpMaxLogBudget) {
+                Out("prospectprobe arm: budget must be 1.." + std::to_string(kPpMaxLogBudget) + "; not armed");
+                return;
+            }
+        } else filters.push_back(la);
+    }
     PpZeroCounters();
+    int selected = 0;
+    for (PpTarget& t : g_PpTargets) {
+        const std::string ll = Lower(t.label);
+        bool on = filters.empty() ? ll != "checkplayerinteraction" : false;
+        for (const std::string& f : filters) if (ll.find(f) != std::string::npos) { on = true; break; }
+        InterlockedExchange(t.logOn, on ? 1 : 0);
+        if (on && t.installed.load()) ++selected;
+    }
+    InterlockedExchange(&g_PpLogBudget, budget);
     g_PpArmed.store(true);
-    Out("prospectprobe arm: counters and log budgets reset; the next " + std::to_string(kPpLogBudget)
-        + " calls of every detoured row are logged. Open the prospect window, then `prospectprobe show`.");
+    Out("prospectprobe arm: counters reset; the next " + std::to_string(budget) + " calls of each of "
+        + std::to_string(selected) + " selected detoured row(s) are logged"
+        + (filters.empty() ? " (all but the CheckPlayerInteraction control)" : " (label filters)")
+        + ". Open the prospect window, then `prospectprobe show` - a row reporting unlogged calls is `not observed (budget spent)`.");
 }
 
 static void PpShow()
@@ -9594,7 +9693,8 @@ static void PpShow()
     Out("prospectprobe show: " + std::to_string(installed) + "/" + std::to_string((int)(sizeof(g_PpTargets) / sizeof(g_PpTargets[0])))
         + " rows detoured, " + (g_PpArmed.load() ? "armed" : "not armed")
         + (g_PpOverrideLeft > 0 ? ", override pending on " + g_PpOverrideLabel + " a" + std::to_string(g_PpOverrideArg)
-                                  + " (" + std::to_string(g_PpOverrideLeft) + " left)" : std::string()));
+                                  + " (" + std::to_string(g_PpOverrideLeft) + " left, notApplied="
+                                  + std::to_string(g_PpOverrideNotApplied) + ")" : std::string()));
     long control = -1;
     for (PpTarget& t : g_PpTargets) {
         const long calls = *t.calls;
@@ -9602,8 +9702,17 @@ static void PpShow()
         std::string line = std::string("  ") + t.label + ": ";
         if (!t.installed.load()) line += "(not detoured)";
         else {
+            // calls and logged both count from the last `arm`, so their
+            // difference is exactly the calls whose arguments nobody saw.
+            const long logged = (std::min)((long)*t.logged, (long)g_PpLogBudget);
             line += "calls=" + std::to_string(calls) + " since=" + std::to_string(calls - t.lastShown);
-            if (*t.logged >= kPpLogBudget) line += " (log budget spent)";
+            if (g_PpArmed.load()) {
+                if (!*t.logOn) line += " (not selected for logging)";
+                else {
+                    line += " logged=" + std::to_string(logged);
+                    if (calls > logged) line += " UNLOGGED=" + std::to_string(calls - logged) + " (budget spent - not observed)";
+                }
+            }
         }
         t.lastShown = calls;
         Out(line);
@@ -9637,6 +9746,12 @@ static void PpSet(const std::string& objName, int nth, const std::string& var, d
     try {
         const int idx = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(objName) }).ToDouble();
         if (idx < 0) { Out(tag + ": refused: unknown object; no write made"); return; }
+        // asset_get_index answers for sprites, sounds and rooms too; only an
+        // object index may reach instance_number.
+        if (!g_Yytk->CallBuiltin("object_exists", { RValue((double)idx) }).ToBoolean()) {
+            Out(tag + ": refused: unknown object (" + objName + " is an asset, not an object); no write made");
+            return;
+        }
         const int total = (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)idx) }).ToDouble();
         if (nth < 0 || nth >= total) {
             Out(tag + ": refused: no such instance (" + std::to_string(total) + " live); no write made");
@@ -9660,19 +9775,38 @@ static void PpSet(const std::string& objName, int nth, const std::string& var, d
     } catch (...) { Out(tag + ": EXCEPTION; the write may or may not have happened - read it back with oget"); }
 }
 
-static void PpOverride(const std::string& label, int argIndex, double value, long calls)
+struct PpSelector {
+    std::string self;
+    std::string other;
+    bool        whenSet = false;
+    double      when = 0.0;
+};
+
+static void PpOverride(const std::string& label, int argIndex, double value, long calls, const PpSelector& sel)
 {
     PpTarget* row = PpFindRow(label);
     if (!row) { Out("prospectprobe override: no row labelled '" + label + "' (labels are listed by `prospectprobe show`)"); return; }
     if (!row->installed.load()) { Out("prospectprobe override: " + label + " is not detoured - hook it first"); return; }
     if (argIndex < 0 || calls <= 0) { Out("prospectprobe override: argIndex must be >= 0 and calls >= 1"); return; }
+    InterlockedExchange(&g_PpOverrideLeft, 0);   // selector fields change below; nothing applies meanwhile
     g_PpOverrideLabel = row->label;
     g_PpOverrideArg = argIndex;
     g_PpOverrideValue = value;
+    g_PpOverrideSelf = sel.self;
+    g_PpOverrideOther = sel.other;
+    g_PpOverrideWhenSet = sel.whenSet;
+    g_PpOverrideWhen = sel.when;
     InterlockedExchange(&g_PpOverrideRefusalsLogged, 0);
+    InterlockedExchange(&g_PpOverrideNotApplied, 0);
     InterlockedExchange(&g_PpOverrideLeft, calls);
+    std::string only;
+    if (!sel.self.empty()) only += " self=" + sel.self;
+    if (!sel.other.empty()) only += " other=" + sel.other;
+    if (sel.whenSet) only += " when a" + std::to_string(argIndex) + "==" + Describe(RValue(sel.when));
     Out("prospectprobe override: the next " + std::to_string(calls) + " call(s) of " + label + " get a"
-        + std::to_string(argIndex) + "=" + std::to_string(value) + " if that argument is numeric. Reopen the window.");
+        + std::to_string(argIndex) + "=" + std::to_string(value) + " if that argument is numeric"
+        + (only.empty() ? std::string(" (any caller)") : " and the call matches" + only)
+        + ". Reopen the window; check the applied line's self/other/args are the R4 call.");
 }
 
 static void PpOverrideClear()
@@ -9685,17 +9819,33 @@ static void PpUsage()
 {
     Out("prospectprobe (research build only) - prospect window Phase 0, see docs/prospect-window-research.md");
     Out("  hook [substr ...]                      native-detour every candidate row (or rows whose label contains a substring)");
-    Out("  arm | show | reset                     log the next calls / counts per row + control / zero and disarm");
+    Out("  arm [budget=N] [substr ...]            log the next N (default 6) calls of each selected row");
+    Out("  show | reset                           counts, logged/UNLOGGED per row + control / zero and disarm");
     Out("  set <Obj> <nth> <var> <number>         write one existing numeric variable of one instance, read back");
-    Out("  override <label> <argIndex> <number> [calls=1] | override clear");
+    Out("  override <label> <argIndex> <number> [calls=1] [self=<Obj>] [other=<Obj>] [when=<number>] | override clear");
 }
 
 // Labels contain spaces ("UI_Prospect_obj anon@1038"), so `override` takes the
-// label as everything before the last two or three numeric tokens.
-static void PpOverrideCommand(const std::vector<std::string>& tok)
+// trailing key=value selectors off first, then the label as everything before
+// the last two or three numeric tokens.
+static void PpOverrideCommand(const std::vector<std::string>& tokIn)
 {
-    if (tok.size() == 2 && Lower(tok[1]) == "clear") { PpOverrideClear(); return; }
+    if (tokIn.size() == 2 && Lower(tokIn[1]) == "clear") { PpOverrideClear(); return; }
     auto isNum = [](const std::string& s) { try { size_t k = 0; (void)std::stod(s, &k); return k == s.size(); } catch (...) { return false; } };
+    std::vector<std::string> tok = tokIn;
+    PpSelector sel;
+    while (tok.size() > 1) {
+        const std::string& last = tok.back();
+        const std::string ll = Lower(last);
+        if (ll.rfind("self=", 0) == 0) sel.self = last.substr(5);
+        else if (ll.rfind("other=", 0) == 0) sel.other = last.substr(6);
+        else if (ll.rfind("when=", 0) == 0) {
+            if (!isNum(last.substr(5))) { Out("prospectprobe override: when= needs a number; nothing set"); return; }
+            sel.whenSet = true;
+            sel.when = std::stod(last.substr(5));
+        } else break;
+        tok.pop_back();
+    }
     size_t n = tok.size();
     size_t numeric = 0;
     while (numeric < 3 && n - numeric > 2 && isNum(tok[n - 1 - numeric])) ++numeric;
@@ -9706,7 +9856,7 @@ static void PpOverrideCommand(const std::vector<std::string>& tok)
     const int argIndex = (int)std::stod(tok[first]);
     const double value = std::stod(tok[first + 1]);
     const long calls = numeric == 3 ? (long)std::stod(tok[first + 2]) : 1;
-    PpOverride(label, argIndex, value, calls);
+    PpOverride(label, argIndex, value, calls, sel);
 }
 
 static void PpCommand(const std::string& rest)
@@ -9716,7 +9866,7 @@ static void PpCommand(const std::string& rest)
     if (tok.empty()) { PpUsage(); return; }
     const std::string sub = Lower(tok[0]);
     if (sub == "hook") PpInstall(std::vector<std::string>(tok.begin() + 1, tok.end()));
-    else if (sub == "arm") PpArm();
+    else if (sub == "arm") PpArm(std::vector<std::string>(tok.begin() + 1, tok.end()));
     else if (sub == "show") PpShow();
     else if (sub == "reset") PpReset();
     else if (sub == "set" && tok.size() == 5) {
