@@ -1,0 +1,134 @@
+# Delete the release-notes files a published release carried.
+#
+# A `release-notes-vX.Y.Z.md` file exists so the notes can be written and
+# reviewed in the PR that makes the change, and so forgepact-tag.yml can
+# compose the draft from them. Once the release is published its page is the
+# record, and the files only duplicate it. This workflow removes them, so the
+# repository root only ever holds notes for versions not yet published.
+#
+# What it deletes is decided by tools/forgepact_tag.py --published-notes:
+# every notes file at or below the published version (the release's own and
+# every skipped version it rolled up; anything older was carried by an
+# earlier release). Versions above it are never touched.
+#
+# It commits straight to main as the bot, the same way forgepact-tag.yml's
+# version bump does. That push, being made with GITHUB_TOKEN, does not fire
+# notify-hub.yml; the hub's pointer picks the deletion up with the next
+# ordinary merge, which is fine for files the hub never reads.
+#
+# Run it by hand from Actions with a tag to clean up after a release whose
+# automatic run failed. It refuses a release that is still a draft.
+name: ForgePact notes cleanup
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Published release to clean up after, e.g. v1.3.20'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: forgepact-notes-cleanup
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    # Prereleases do not fire notify-hub-release.yml either; their notes are
+    # still pending a real release.
+    if: github.event_name == 'workflow_dispatch' || github.event.release.prerelease == false
+    permissions:
+      # Committing the deletion to main.
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Which release this is for
+        id: tag
+        env:
+          RAW_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          # Captured first, not piped: a refusal must fail the step rather
+          # than write nothing and succeed.
+          out=$(python tools/release_ci.py tag --tag "$RAW_TAG")
+          echo "$out" >> "$GITHUB_OUTPUT"
+          echo "$out"
+
+      # The release event only fires for a published release, but a manual
+      # run can name anything. Deleting a draft's notes would lose the text the
+      # draft is still being reviewed against.
+      - name: The release is published
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -o pipefail
+          drafts=$(gh api "repos/$REPO/releases?per_page=100" --jq "[.[] | select(.tag_name == \"$TAG\") | .draft] | map(tostring) | join(\" \")")
+          if [ -z "$drafts" ]; then
+            echo "::error::$TAG has no release -- nothing was published, so nothing is deleted."
+            exit 1
+          fi
+          if [ "$drafts" != "false" ]; then
+            echo "::error::$TAG is not a single published release (draft flags: $drafts) -- refusing to delete notes a draft still needs."
+            exit 1
+          fi
+
+      - name: Delete the notes it carried
+        id: delete
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          files=$(python tools/forgepact_tag.py --published-notes --version "$VERSION")
+          if [ -z "$files" ]; then
+            echo "No notes files at or below $VERSION -- nothing to delete."
+            echo "deleted=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          echo "$files" | xargs git rm --quiet --
+          git commit --message "Delete release notes carried by $TAG" --message "$TAG is published; its release page is the record now."
+          for attempt in 1 2 3; do
+            if git push origin HEAD:main; then
+              break
+            fi
+            if [ "$attempt" = 3 ]; then
+              echo "::error::Could not push the deletion to main after 3 attempts. Re-run this workflow by hand with tag $TAG."
+              exit 1
+            fi
+            # Someone merged while this ran. Replay the deletion on top; if
+            # they touched the same files the rebase stops and the job fails
+            # visibly rather than guessing.
+            git pull --rebase origin main
+          done
+          echo "deleted=$(echo "$files" | tr '\n' ' ')" >> "$GITHUB_OUTPUT"
+
+      - name: Summary
+        if: always()
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          DELETED: ${{ steps.delete.outputs.deleted }}
+        run: |
+          {
+            echo "### Notes cleanup: $TAG"
+            echo
+            if [ -n "$DELETED" ]; then
+              echo "Deleted from main: \`$DELETED\`"
+            else
+              echo "Nothing deleted."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

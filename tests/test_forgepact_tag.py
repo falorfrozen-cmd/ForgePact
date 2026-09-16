@@ -380,5 +380,59 @@ class ComposeNotesCli(unittest.TestCase):
             self.assertEqual(done.stdout, "")
 
 
+class PublishedNotesAreEverythingUpToTheVersion(unittest.TestCase):
+    def test_it_takes_every_version_at_or_below_numerically(self):
+        available = ["1.3.21", "1.3.9", "1.3.20", "1.3.10", "1.3.17", "1.3.16"]
+        self.assertEqual(
+            forgepact_tag.published_notes(available, "1.3.20"),
+            ["1.3.9", "1.3.10", "1.3.16", "1.3.17", "1.3.20"],
+        )
+
+    def test_a_version_without_its_own_file_still_takes_the_older_ones(self):
+        # A release published from generated notes still carried the skipped
+        # versions' files below it.
+        self.assertEqual(
+            forgepact_tag.published_notes(["1.3.17", "1.3.19", "1.3.21"], "1.3.20"),
+            ["1.3.17", "1.3.19"],
+        )
+
+    def test_nothing_to_delete_is_an_empty_list(self):
+        self.assertEqual(forgepact_tag.published_notes(["1.3.21"], "1.3.20"), [])
+
+
+class PublishedNotesCli(unittest.TestCase):
+    run_it = ComposeNotesCli.run_it
+
+    def test_it_prints_the_filenames_to_delete_and_nothing_else(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for name in ("release-notes-v1.3.19.md", "release-notes-v1.3.20.md",
+                         "release-notes-v1.3.21.md", "release-notes-v1.3.20-rc1.md",
+                         "README.md"):
+                (root / name).write_text("x", encoding="utf-8")
+            done = self.run_it("--published-notes", "--version", "v1.3.20", "--root", str(root))
+            self.assertEqual(
+                done.stdout.splitlines(),
+                ["release-notes-v1.3.19.md", "release-notes-v1.3.20.md"],
+            )
+
+    def test_an_empty_root_prints_nothing_and_succeeds(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            done = self.run_it("--published-notes", "--version", "1.3.20", "--root", tmp)
+            self.assertEqual(done.stdout, "")
+
+    def test_a_malformed_version_exits_nonzero_with_empty_stdout(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "release-notes-v1.3.1.md").write_text("x", encoding="utf-8")
+            done = self.run_it("--published-notes", "--version", "1.3", "--root", tmp, expect=1)
+            self.assertEqual(done.stdout, "")
+
+    def test_it_cannot_be_combined_with_another_mode(self):
+        done = self.run_it("--published-notes", "--compose-notes", "--version", "1.3.20", expect=2)
+        self.assertEqual(done.stdout, "")
+        done = self.run_it("--published-notes", "--version", "1.3.20", "--tag", "1.3.20", expect=2)
+        self.assertEqual(done.stdout, "")
+
+
 if __name__ == "__main__":
     unittest.main()
