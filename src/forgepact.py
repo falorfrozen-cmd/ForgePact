@@ -14,7 +14,7 @@ Settings persist in %LOCALAPPDATA%/Hero_Siege/forgepact.json.
 # and works with no compiled DLL at all, so tools/cut_release.py reads the
 # current version from here. Do NOT hand-edit it - `py tools/cut_release.py
 # <version>` moves every site at once and `--check` fails if they disagree.
-__version__ = "1.3.20"
+__version__ = "1.4.0"
 
 import hashlib
 import json
