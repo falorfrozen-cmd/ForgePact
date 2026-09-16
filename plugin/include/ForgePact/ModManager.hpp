@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Common.hpp"
+#include "Version.hpp"
 
 namespace ForgePact {
 
@@ -40,7 +41,13 @@ public:
 
     void Initialize() {
         CreateDirectoryA(IPC_DIR.c_str(), nullptr);
-        Out("==== BloodPact plugin loaded ====");
+        // The version goes AFTER the marker, never inside it: the panel's
+        // plugin_boot_count() counts occurrences of the literal "BloodPact
+        // plugin loaded" to notice a new game process, and interpolating the
+        // version would break auto-apply after a restart with no error
+        // anywhere. An out.txt that does not say which build wrote it makes
+        // every bug report about rates or timing ambiguous.
+        Out("==== BloodPact plugin loaded ==== v" FORGEPACT_VERSION);
     }
 
 private:

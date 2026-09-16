@@ -20,6 +20,7 @@ the exe - see MODFILE_SOURCES in src/forgepact.py):
 If pywebview is installed the panel opens in a native desktop window; if not it
 falls back to the default browser (both work).
 """
+import re
 import shutil
 import subprocess
 import sys
@@ -41,6 +42,50 @@ DIST = ROOT / "dist" / "ForgePact"
 NEEDED = ["AurieCore.dll", "AuriePatcher.exe", "YYToolkit.dll", "BloodPactPlugin.dll"]
 # Shipped when present; a package without them is still complete.
 OPTIONAL = ["HSOfflineTrackerProducer.dll"]  # HS Offline Tracker live sensor
+
+
+def panel_version() -> str:
+    """ForgePact's version, read from its canonical site."""
+    match = re.search(r'^__version__ = "([^"]+)"$', SRC.read_text(encoding="utf-8"), re.M)
+    if not match:
+        raise SystemExit("ERROR: src/forgepact.py has no __version__ line")
+    return match.group(1)
+
+
+def version_tuple(version: str) -> tuple[int, int, int, int]:
+    """"1.3.20" -> (1, 3, 20, 0), the four-part form a Windows resource wants."""
+    parts = [int(p) for p in version.split(".")]
+    if len(parts) != 3:
+        raise SystemExit(f"ERROR: {version!r} is not a three-part version")
+    return (parts[0], parts[1], parts[2], 0)
+
+
+def version_info(version: str) -> str:
+    """The PyInstaller --version-file body, DERIVED from __version__.
+
+    Generated into build/ at package time rather than checked in, for the same
+    reason the release-notes filename is derived: a checked-in resource file
+    would be a third place to keep in step, and the one that fails silently -
+    nothing reads it back. HS-Offline-Launcher keeps a tracked version_info.txt;
+    ForgePact deliberately does not.
+    """
+    numbers = version_tuple(version)
+    return f"""VSVersionInfo(
+  ffi=FixedFileInfo(filevers={numbers}, prodvers={numbers}, mask=0x3f, flags=0x0,
+                    OS=0x40004, fileType=0x1, subtype=0x0, date=(0, 0)),
+  kids=[
+    StringFileInfo([StringTable('040904B0', [
+      StringStruct('CompanyName', 'falorfrozen-cmd'),
+      StringStruct('FileDescription', 'ForgePact - Hero Siege game mods control panel'),
+      StringStruct('FileVersion', '{version}'),
+      StringStruct('InternalName', 'ForgePact'),
+      StringStruct('OriginalFilename', 'ForgePact.exe'),
+      StringStruct('ProductName', 'ForgePact'),
+      StringStruct('ProductVersion', '{version}')])]),
+    VarFileInfo([VarStruct('Translation', [1033, 1200])])
+  ]
+)
+"""
 
 
 def main() -> int:
@@ -97,12 +142,16 @@ def main() -> int:
             print(f"ERROR: could not delete {p} (is the file locked?)"); return 1
 
     print("== PyInstaller ==")
+    build.mkdir(parents=True, exist_ok=True)
+    version_file = build / "version_info.txt"
+    version_file.write_text(version_info(panel_version()), encoding="utf-8")
     cmd = [
         sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean",
         "--onefile", "--windowed", "--name", "ForgePact",
         "--distpath", str(DIST.parent), "--workpath", str(build),
         "--specpath", str(build),
         "--paths", str(SDK_PY),
+        "--version-file", str(version_file),
     ]
     # tkinter is only used by the file picker, and only as a FALLBACK: the primary
     # picker opens through comdlg32 (Win32), and failing that the path can be typed

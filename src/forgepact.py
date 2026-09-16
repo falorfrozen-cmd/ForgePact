@@ -10,6 +10,12 @@ Talks to BloodPactPlugin (Aurie/YYTK) over bp_ipc:
 Settings persist in %LOCALAPPDATA%/Hero_Siege/forgepact.json.
 """
 
+# ForgePact's version. Canonical: the panel is the always-present entry point
+# and works with no compiled DLL at all, so tools/cut_release.py reads the
+# current version from here. Do NOT hand-edit it - `py tools/cut_release.py
+# <version>` moves every site at once and `--check` fails if they disagree.
+__version__ = "1.3.20"
+
 import hashlib
 import json
 import os
@@ -365,6 +371,137 @@ def pick_exe_dialog(cfg=None) -> str:
 CREATE_NO_WINDOW = 0x08000000  # subprocess'in konsol penceresi acmasini engeller
 
 
+# --- Win32 process enumeration, set up exactly once -------------------------
+# REPORTED 2026-09-16 (ForgePact PR #22 review): these prototypes used to be
+# built INSIDE snapshot_processes() on every call - a fresh PROCESSENTRY32W
+# class each time, with argtypes assigned onto the SHARED
+# ctypes.windll.kernel32 function objects. Two threads doing that concurrently
+# corrupt each other. Measured by the reviewer against the real functions, no
+# mocks: 159 of 160 concurrent scans raised
+#     argument 2: TypeError: expected LP_PROCESSENTRY32W instance instead of
+#     pointer to PROCESSENTRY32W
+# and - the part that matters - with only TWO workers, 39 of 40 running_paths()
+# calls returned a FALSE NEGATIVE, against 5/5 correct sequentially.
+#
+# A false negative here is not a slow answer, it is a wrong one:
+# running_paths() turns OSError into [], so game_running() reads False while
+# the game is up. Commands are then queued instead of sent live, and the next
+# successful scan can look like a brand-new launch and re-run auto-apply.
+#
+# The panel genuinely is concurrent here - watcher() polls every 5 s on its own
+# daemon thread while /api/state is served on ThreadingHTTPServer handler
+# threads - so this was reachable in normal use, not only under a stress test.
+#
+# Two properties, and the second matters as much as the first: define the
+# structure and the prototypes ONCE, and hang them off a PRIVATE WinDLL handle.
+# ctypes.windll is a process-wide cache, so assigning argtypes there mutates
+# function objects any other library in this process may also be using.
+#
+# The launcher's processes() was checked against this and deliberately NOT
+# changed: its PROCESSENTRY32W is module-level, so ctypes.POINTER(...) yields
+# the same type object every call and its repeated argtypes assignment writes
+# an identical value - idempotent, not a race. The defect here came from
+# building a NEW class per call, which made the pointer type differ each time.
+# The two copies are consistent in behaviour; only this one needed the fix.
+if os.name == "nt":
+    import ctypes as _ctypes
+    from ctypes import wintypes as _wintypes
+
+    class _PROCESSENTRY32W(_ctypes.Structure):
+        _fields_ = [
+            ("dwSize", _wintypes.DWORD), ("cntUsage", _wintypes.DWORD),
+            ("th32ProcessID", _wintypes.DWORD),
+            ("th32DefaultHeapID", _ctypes.POINTER(_ctypes.c_ulong)),
+            ("th32ModuleID", _wintypes.DWORD), ("cntThreads", _wintypes.DWORD),
+            ("th32ParentProcessID", _wintypes.DWORD), ("pcPriClassBase", _ctypes.c_long),
+            ("dwFlags", _wintypes.DWORD), ("szExeFile", _wintypes.WCHAR * 260),
+        ]
+
+    _K32 = _ctypes.WinDLL("kernel32", use_last_error=True)
+    _K32.CreateToolhelp32Snapshot.argtypes = [_wintypes.DWORD, _wintypes.DWORD]
+    _K32.CreateToolhelp32Snapshot.restype = _wintypes.HANDLE
+    _K32.Process32FirstW.argtypes = [_wintypes.HANDLE, _ctypes.POINTER(_PROCESSENTRY32W)]
+    _K32.Process32FirstW.restype = _wintypes.BOOL
+    _K32.Process32NextW.argtypes = [_wintypes.HANDLE, _ctypes.POINTER(_PROCESSENTRY32W)]
+    _K32.Process32NextW.restype = _wintypes.BOOL
+    _K32.CloseHandle.argtypes = [_wintypes.HANDLE]
+    _K32.CloseHandle.restype = _wintypes.BOOL
+    _K32.OpenProcess.argtypes = [_wintypes.DWORD, _wintypes.BOOL, _wintypes.DWORD]
+    _K32.OpenProcess.restype = _wintypes.HANDLE
+    _K32.QueryFullProcessImageNameW.argtypes = [
+        _wintypes.HANDLE, _wintypes.DWORD, _wintypes.LPWSTR,
+        _ctypes.POINTER(_wintypes.DWORD)]
+    _K32.QueryFullProcessImageNameW.restype = _wintypes.BOOL
+    _INVALID_HANDLE_VALUE = _wintypes.HANDLE(-1).value
+else:                                   # pragma: no cover - non-Windows host
+    _ctypes = None
+    _PROCESSENTRY32W = None
+    _K32 = None
+    _INVALID_HANDLE_VALUE = None
+
+
+def snapshot_processes() -> list:
+    """(pid, image name) for every running process, without spawning one.
+
+    Deliberately a second copy of
+    HS-Offline-Launcher/src/hs_offline_launcher.py's ``processes()``: that
+    application is a standalone single-file tool with no hs_game_sdk
+    dependency, and routing a Win32 helper through the SDK would change its
+    packaging for no functional gain.  Keep the two in step.
+
+    The old panel implementation spawned a console process-listing tool on
+    every poll, and wait_for_plugin_ready() calls game_running() every 0.25 s
+    for up to 60 s - up to ~240 short-lived processes during game startup, at
+    the most latency-sensitive moment there is.
+
+    Raises OSError when the snapshot cannot be created or read; returns [] on
+    a non-Windows host.
+    """
+    if os.name != "nt":
+        return []
+    # Nothing is defined or re-prototyped here: _K32 and _PROCESSENTRY32W are
+    # module-level and configured once, so overlapping callers cannot corrupt
+    # each other's argtypes. Only per-call state - the snapshot handle and one
+    # entry buffer - is local, which is what makes this re-entrant.
+    snapshot = _K32.CreateToolhelp32Snapshot(0x00000002, 0)   # TH32CS_SNAPPROCESS
+    if snapshot in (None, _INVALID_HANDLE_VALUE):
+        raise OSError("Windows process snapshot could not be created")
+    rows = []
+    entry = _PROCESSENTRY32W()
+    entry.dwSize = _ctypes.sizeof(entry)
+    try:
+        ok = _K32.Process32FirstW(snapshot, _ctypes.byref(entry))
+        if not ok:
+            raise OSError("Windows process snapshot could not be read")
+        while ok:
+            rows.append((int(entry.th32ProcessID), entry.szExeFile))
+            ok = _K32.Process32NextW(snapshot, _ctypes.byref(entry))
+    finally:
+        _K32.CloseHandle(snapshot)
+    return rows
+
+
+def process_image_path(pid: int) -> str:
+    """The full image path of one PID, or "" when it cannot be opened."""
+    if os.name != "nt":
+        return ""
+    # Same reason as snapshot_processes(): the prototypes live at module scope,
+    # so this never writes to a shared function object while another thread is
+    # inside a call on it.
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    h = _K32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not h:
+        return ""
+    try:
+        buf = _ctypes.create_unicode_buffer(32768)
+        boyut = _wintypes.DWORD(32768)
+        if _K32.QueryFullProcessImageNameW(h, 0, buf, _ctypes.byref(boyut)):
+            return buf.value
+    finally:
+        _K32.CloseHandle(h)
+    return ""
+
+
 def running_paths(name: str) -> list:
     """FULL PATHS of the running processes named `name`.
 
@@ -372,41 +509,27 @@ def running_paths(name: str) -> list:
     offline copy can be open at the same time.  The old name-only version
     treated a Hero_Siege.exe in a different folder as "the game is running" and
     atliyordu.
+
+    NOT cached, on purpose: game_running() decides whether a command goes out
+    live or is queued into cmd.txt, so a stale "running" sends a command to a
+    dead game and a stale "not running" silently queues one the player
+    expected to apply now.  The fix for the per-poll cost is the cheaper
+    enumeration above, not a memoised answer.
+
+    A failed snapshot yields [] - i.e. "the game is not running" - which makes
+    the panel queue instead of sending.  That is the pre-existing behaviour and
+    it is harmless; the launcher's fail-closed posture belongs to the launcher,
+    where an empty list gates a safety decision.
     """
     yollar = []
     try:
-        r = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {name}", "/FO", "CSV", "/NH"],
-                           capture_output=True, text=True, encoding="utf-8", errors="replace",
-                           timeout=10, creationflags=CREATE_NO_WINDOW)
-        pidler = []
-        for satir in r.stdout.splitlines():
-            parcalar = [p.strip('"') for p in satir.split('","')]
-            if len(parcalar) >= 2 and parcalar[0].strip('"').lower() == name.lower():
-                try:
-                    pidler.append(int(parcalar[1]))
-                except ValueError:
-                    pass
-        if not pidler:
-            return yollar
-
-        import ctypes
-        from ctypes import wintypes
-        k32 = ctypes.windll.kernel32
-        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-        k32.OpenProcess.restype = wintypes.HANDLE
-        k32.QueryFullProcessImageNameW.argtypes = [
-            wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)]
-        for pid in pidler:
-            h = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-            if not h:
+        wanted = name.lower()
+        for pid, image in snapshot_processes():
+            if image.lower() != wanted:
                 continue
-            try:
-                buf = ctypes.create_unicode_buffer(32768)
-                boyut = wintypes.DWORD(32768)
-                if k32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(boyut)):
-                    yollar.append(buf.value)
-            finally:
-                k32.CloseHandle(h)
+            path = process_image_path(pid)
+            if path:
+                yollar.append(path)
     except Exception:
         pass
     return yollar
@@ -1246,6 +1369,30 @@ def wait_for_plugin_ready(cfg: dict, timeout: float = 60.0) -> bool:
     return False
 
 
+BOOT_MARKER = b"BloodPact plugin loaded"
+BOOT_SCAN_CHUNK = 1 << 16
+# Bytes actually read by the last scans; the timing harness and the tests read
+# it to prove the incremental path is incremental rather than just faster.
+BOOT_SCAN_BYTES = 0
+_BOOT_LOCK = threading.Lock()
+# Bytes kept from just before the counted region, to prove the file that
+# produced the stored offset is still the file being read.
+_BOOT_ANCHOR_BYTES = 64
+# Offset and count belong together: the offset is only meaningful as "how far
+# the stored count has already counted".  They are therefore only ever written
+# as a pair, under the lock, from one scan.
+# `ident` is (st_dev, st_ino) and `anchor` the bytes ending at `offset`.
+# Both exist to answer one question the size alone cannot: is this the same
+# file, with the same already-counted content, that produced that offset?
+_BOOT_CACHE = {"path": None, "offset": 0, "count": 0, "ident": None, "anchor": b""}
+
+
+def reset_boot_count_cache() -> None:
+    """Forget the incremental scan state (tests, and anything that moves the log)."""
+    with _BOOT_LOCK:
+        _BOOT_CACHE.update(path=None, offset=0, count=0, ident=None, anchor=b"")
+
+
 def plugin_boot_count(cfg=None) -> int:
     """How many times the plugin has started, read from its own log.
 
@@ -1253,11 +1400,86 @@ def plugin_boot_count(cfg=None) -> int:
     change in this count identifies a NEW game process even when the game was
     closed and reopened between two 5-second polls (a boolean running flag
     misses that and the startup commands are never sent).
+
+    out.txt is append-only and grows to several megabytes over a session, so
+    the scan resumes from where the previous one stopped instead of re-reading
+    and re-decoding the whole file every five seconds.  The result must stay
+    EXACTLY equal to a full-file count in every case, including rotation,
+    truncation and replacement - a boot silently dropped here is a game
+    restart the watcher never notices, and the saved settings are then never
+    re-applied.  So the resumed read overlaps the previous one by
+    len(marker)-1 bytes (a marker can straddle two polls) and discards any
+    match that already ended inside the counted region.
     """
+    global BOOT_SCAN_BYTES
     try:
-        text = (ipc_dir(cfg) / "out.txt").read_text(encoding="utf-8", errors="ignore")
-        return text.count("BloodPact plugin loaded")
+        path = ipc_dir(cfg) / "out.txt"
+        key = str(path).lower()
+        with _BOOT_LOCK:
+            offset = _BOOT_CACHE["offset"]
+            count = _BOOT_CACHE["count"]
+            st = path.stat()
+            ident = (st.st_dev, st.st_ino)
+            # REPORTED 2026-09-16 (PR #22 review): testing only "different path
+            # or smaller" let a REPLACEMENT log of the same or greater size keep
+            # the old offset and count. Reproduced: two markers counted (2), the
+            # file atomically replaced with a same-size log holding one marker,
+            # and this still answered 2 where a full scan answers 1. That loses
+            # the count CHANGE watcher() uses to notice a restart between polls,
+            # so auto-apply silently stops - the exact failure this cache was
+            # required not to cause.
+            #
+            # Three questions now, not one. Identity catches a replace-by-rename
+            # (a new file has a new st_ino). The anchor - the bytes ending at
+            # the stored offset - catches a rewrite in place, including
+            # truncate-then-regrow to the same size, which shares both path and
+            # identity. Checking the head instead would not do: every out.txt
+            # opens with the same boot banner, so two different logs agree there.
+            if (_BOOT_CACHE["path"] != key
+                    or _BOOT_CACHE["ident"] != ident
+                    or st.st_size < offset):
+                offset, count = 0, 0
+            overlap = min(offset, len(BOOT_MARKER) - 1)
+            found = 0
+            with path.open("rb") as fh:
+                anchor_want = _BOOT_CACHE["anchor"]
+                if offset and anchor_want:
+                    fh.seek(offset - len(anchor_want))
+                    if fh.read(len(anchor_want)) != anchor_want:
+                        offset, count, overlap = 0, 0, 0
+                position = offset - overlap
+                fh.seek(position)
+                carry = b""
+                while True:
+                    chunk = fh.read(BOOT_SCAN_CHUNK)
+                    if not chunk:
+                        break
+                    BOOT_SCAN_BYTES += len(chunk)
+                    buf = carry + chunk
+                    base = position - len(carry)
+                    at = 0
+                    while True:
+                        hit = buf.find(BOOT_MARKER, at)
+                        if hit < 0:
+                            break
+                        # Every already-counted marker ends at or before the
+                        # stored offset; one straddling it does not.
+                        if base + hit + len(BOOT_MARKER) > offset:
+                            found += 1
+                        at = hit + len(BOOT_MARKER)
+                    position += len(chunk)
+                    carry = buf[-(len(BOOT_MARKER) - 1):]
+            anchor = b""
+            if position:
+                fh_anchor = min(position, _BOOT_ANCHOR_BYTES)
+                with path.open("rb") as fh2:
+                    fh2.seek(position - fh_anchor)
+                    anchor = fh2.read(fh_anchor)
+            _BOOT_CACHE.update(path=key, offset=position, count=count + found,
+                               ident=ident, anchor=anchor)
+            return count + found
     except Exception:
+        reset_boot_count_cache()
         return -1
 
 
@@ -1308,7 +1530,8 @@ class H(BaseHTTPRequestHandler):
         elif u.path == "/api/state":
             cfg = load_cfg()
             _exe = exe_path(cfg)
-            self._json({"cfg": cfg, "gameRunning": game_running(cfg),
+            self._json({"cfg": cfg, "version": __version__,
+                        "gameRunning": game_running(cfg),
                         "ipcOk": ipc_dir(cfg).exists(),
                         "eacStatus": eac_status(_exe) if _exe.exists() else "",
                         "chain": mod_chain(cfg),
@@ -1532,6 +1755,58 @@ class H(BaseHTTPRequestHandler):
             self._json({"err": f"error: {e}"}, 500)
 
 
+# ---- adaptive poll policy -------------------------------------------------
+# Shared, deliberately verbatim, with
+# HS-Offline-Launcher/src/hs_offline_launcher.py: same function, same three
+# constant names, same values.  A fixed interval forces a trade nobody wins -
+# fast costs poll work for the whole session, slow costs feedback latency at
+# exactly the moments somebody is watching.  The trade only exists because the
+# interval is fixed, and both clients can already tell when a change is
+# plausible: the user just moved a control, or the payload they just received
+# differs from the previous one.
+#
+# Known gap, documented rather than special-cased: a window OCCLUDED by a
+# fullscreen game is not necessarily document.hidden, so it idles (one poll
+# per 30 s) instead of suspending.
+#
+# Kept as a named constant instead of being buried in an inline arrow so the
+# tests can assert its structure always and execute it through node when one
+# is installed.
+POLL_WATCHED_FIELDS = ["gameRunning", "ipcOk", "lastApplied", "queued"]
+
+POLL_POLICY_JS = r"""
+const POLL_FAST_MS = 2000;          // something just happened; the user is watching
+const POLL_IDLE_MS = 30000;         // nothing has changed for a while
+const POLL_FAST_WINDOW_MS = 15000;  // how long "just happened" lasts
+const POLL_WATCHED_FIELDS = __POLL_WATCHED_FIELDS__;
+// null means: do not schedule a poll at all.
+function pollDelayMs(hidden, msSinceChange){
+  if(hidden) return null;
+  return msSinceChange < POLL_FAST_WINDOW_MS ? POLL_FAST_MS : POLL_IDLE_MS;
+}
+// Watched fields are dotted paths so a nested one (game.build) reads the same
+// way as a flat one.
+function pollFieldValue(payload, field){
+  let cur = payload;
+  for(const part of field.split('.')){
+    if(cur === null || cur === undefined) return undefined;
+    cur = cur[part];
+  }
+  return cur;
+}
+function pollPayloadChanged(prev, next){
+  if(!prev) return true;
+  return POLL_WATCHED_FIELDS.some(f =>
+    JSON.stringify(pollFieldValue(prev, f)) !== JSON.stringify(pollFieldValue(next, f)));
+}
+// The change clock: a local action, or an observed difference in a watched
+// field, resets it.  Anything else leaves it where it was.
+function pollNextChangeAt(prev, next, localAction, now, lastChange){
+  return (localAction || pollPayloadChanged(prev, next)) ? now : lastChange;
+}
+""".replace("__POLL_WATCHED_FIELDS__", json.dumps(POLL_WATCHED_FIELDS))
+
+
 HTML = r"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><title>ForgePact</title>
 <style>
@@ -1616,7 +1891,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
 .sat-bulk button{font-size:11px;padding:4px 10px}
 </style></head><body><div id="wrap">
 <header><div class="logo">&#128293;</div><div>
-  <h1>FORGEPACT</h1><div class="sub">Hero Siege game mods &middot; live control</div>
+  <h1>FORGEPACT</h1><div class="sub">Hero Siege game mods &middot; live control<span id="panelver"></span></div>
 </div></header>
 <div class="control-dock">
 <nav class="tabbar" role="tablist" aria-label="ForgePact categories">
@@ -1877,6 +2152,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
 </div>
 <div id="toast"></div>
 <script>
+""" + POLL_POLICY_JS + r"""
 let ST=null, tmr=null;
 async function j(u,opt){const r=await fetch(u,opt);return r.json()}
 function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(tmr);tmr=setTimeout(()=>t.classList.remove('show'),2200)}
@@ -2097,7 +2373,14 @@ async function boot(){
   document.getElementById('offensivestats').innerHTML=percentRows(['damage','attackspeed','castrate']);
   document.getElementById('sustainstats').innerHTML=percentRows(['lifereplenish','manareplenish','defense']);
   document.getElementById('criticalstats').innerHTML=percentRows(['critdamage','critchance','spellcritdamage','spellcritchance']);
-  bind(); status();
+  bind(); status(); paintVersion();
+}
+function paintVersion(){
+  // Rendered from /api/state, never embedded in this page: the panel and the
+  // plugin DLL are installed separately and can be different builds, and a
+  // bug report needs to say which one it is looking at.
+  const el=document.getElementById('panelver');
+  if(el&&ST&&ST.version)el.textContent=' \u00b7 v'+ST.version;
 }
 function status(){
   const g=document.getElementById('chipGame'), a=document.getElementById('chipApply');
@@ -2316,8 +2599,43 @@ function bindSatanicMods(){
   wireBulk('buff','satbuffAll','satbuffNone',ST.satanicBuffs||[]);
   wireBulk('debuff','satdebuffAll','satdebuffNone',ST.satanicDebuffs||[]);
 }
-setInterval(async()=>{const s=await j('/api/state');ST.gameRunning=s.gameRunning;ST.lastApplied=s.lastApplied;ST.queued=s.queued;ST.ipcOk=s.ipcOk;status()},5000);
-boot();
+// Self-scheduling poll: fast while something is happening, idle when nothing
+// is, suspended entirely while the window is hidden.
+let pollTimer=null, pollLastChange=Date.now(), pollPrev=null;
+function schedulePoll(){
+  if(pollTimer){clearTimeout(pollTimer);pollTimer=null}
+  const delay=pollDelayMs(document.hidden,Date.now()-pollLastChange);
+  if(delay===null)return;
+  pollTimer=setTimeout(pollOnce,delay);
+}
+function noteLocalAction(){pollLastChange=Date.now();schedulePoll()}
+async function pollOnce(){
+  pollTimer=null;
+  try{
+    const s=await j('/api/state');
+    pollLastChange=pollNextChangeAt(pollPrev,s,false,Date.now(),pollLastChange);
+    pollPrev=s;
+    if(ST){ST.gameRunning=s.gameRunning;ST.lastApplied=s.lastApplied;ST.queued=s.queued;ST.ipcOk=s.ipcOk;status()}
+  }catch(e){}
+  schedulePoll();
+}
+// One listener instead of a call in every handler: any control the user
+// touches is a local action, and so is pressing Apply.
+['input','change','click'].forEach(ev=>document.addEventListener(ev,noteLocalAction,true));
+document.addEventListener('visibilitychange',()=>{
+  // Coming back: poll at once, so the first thing a returning user sees is
+  // fresh, and reset the clock so the fast tier covers the time they look.
+  if(document.hidden){schedulePoll()}else{pollLastChange=Date.now();pollOnce()}
+});
+// finally, not then: boot() does ~40 unguarded DOM lookups after its first
+// await, and if any of them throws, a .then() never runs - so the panel would
+// sit there forever with no poll scheduled and no message, every chip frozen on
+// its initial value. The fixed setInterval this replaced was registered
+// unconditionally and could not fail that way, so .then() alone was a
+// regression. Say so in the UI as well: a panel that stops updating silently is
+// the thing a user cannot report.
+boot().catch(e=>{try{toast('panel failed to load: '+e)}catch(_){}})
+      .finally(()=>{pollPrev=ST;schedulePoll()});
 </script></body></html>"""
 
 
