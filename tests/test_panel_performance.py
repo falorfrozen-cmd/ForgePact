@@ -21,6 +21,7 @@ Three separate problems, all of which only show up over a long session:
 
 import inspect
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -111,6 +112,67 @@ class BootCountTests(unittest.TestCase):
     def assertMatchesNaive(self, label: str):
         self.assertEqual(forgepact.plugin_boot_count(self.cfg),
                          naive_boot_count(self.log), label)
+
+    # --- replacement cases (PR #22 review, 2026-09-16) ---------------------
+    # The cache used to invalidate only on "different path" or "smaller file",
+    # so a REPLACEMENT of the same or greater size kept the stale offset and
+    # count. That loses the count CHANGE watcher() uses to spot a restart
+    # between polls, and auto-apply then silently stops working.
+
+    def test_same_size_replacement_is_recounted(self):
+        # The reviewer's exact reproduction: count 2, atomically replace with a
+        # same-size log holding ONE marker, and the answer must follow the file.
+        self.write(MARKER + "\npad pad pad\n" + MARKER + "\n")
+        self.assertEqual(forgepact.plugin_boot_count(self.cfg), 2)
+        original = self.log.stat().st_size
+
+        replacement = MARKER + "\n"
+        replacement += "x" * (original - len(replacement.encode("utf-8")))
+        other = self.ipc / "replacement.txt"
+        other.write_bytes(replacement.encode("utf-8"))
+        self.assertEqual(other.stat().st_size, original, "fixture must be same-size")
+        os.replace(other, self.log)
+
+        self.assertEqual(naive_boot_count(self.log), 1, "fixture sanity")
+        self.assertMatchesNaive("same-size replacement")
+
+    def test_larger_replacement_is_recounted(self):
+        self.write(MARKER + "\n" + MARKER + "\n" + MARKER + "\n")
+        self.assertEqual(forgepact.plugin_boot_count(self.cfg), 3)
+        other = self.ipc / "bigger.txt"
+        other.write_bytes((MARKER + "\n" + "y" * 4096).encode("utf-8"))
+        self.assertGreater(other.stat().st_size, self.log.stat().st_size)
+        os.replace(other, self.log)
+        self.assertMatchesNaive("larger replacement")
+
+    def test_truncate_then_regrow_in_place_is_recounted(self):
+        # Same path, same file identity, and back to the same size - so neither
+        # the path check nor st_ino nor the size can see it. Only the anchor
+        # bytes ending at the stored offset differ, which is why they are kept.
+        self.write(MARKER + "\nAAAA\n" + MARKER + "\nBBBB\n")
+        before = self.log.stat().st_size
+        self.assertEqual(forgepact.plugin_boot_count(self.cfg), 2)
+        rewritten = MARKER + "\nCCCC\n"
+        rewritten += "z" * (before - len(rewritten.encode("utf-8")))
+        with self.log.open("r+b") as fh:        # in place: no rename, same inode
+            fh.truncate(0)
+            fh.seek(0)
+            fh.write(rewritten.encode("utf-8"))
+        self.assertEqual(self.log.stat().st_size, before, "fixture must be same-size")
+        self.assertEqual(naive_boot_count(self.log), 1, "fixture sanity")
+        self.assertMatchesNaive("truncate then regrow in place")
+
+    def test_a_plain_append_still_uses_the_cache(self):
+        # The negative control for the three above: hardening invalidation must
+        # not turn every poll into a full rescan, or the fix quietly undoes the
+        # optimisation it exists to protect.
+        self.write(MARKER + "\n" + "q" * 200000 + "\n")
+        forgepact.plugin_boot_count(self.cfg)
+        forgepact.BOOT_SCAN_BYTES = 0
+        self.append(MARKER + "\n")
+        self.assertMatchesNaive("append after warm call")
+        self.assertLess(forgepact.BOOT_SCAN_BYTES, 4096,
+                        "an append must not trigger a full rescan")
 
     def test_empty_log(self):
         self.write("")
@@ -230,6 +292,68 @@ class BootCountTests(unittest.TestCase):
 
 
 class ProcessEnumerationTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "nt", "Win32 process enumeration")
+    def test_overlapping_scans_do_not_corrupt_each_other(self):
+        # REPORTED 2026-09-16 (PR #22 review): the ctypes prototypes used to be
+        # assigned onto the SHARED ctypes.windll.kernel32 function objects
+        # inside every call, so two threads mid-call corrupted each other.
+        # Measured against the real functions: 159 of 160 concurrent scans
+        # raised TypeError, and with only TWO workers 39 of 40 running_paths()
+        # calls returned a false negative against 5/5 correct sequentially.
+        #
+        # That is reachable in normal use - watcher() polls on its own thread
+        # while /api/state is served on ThreadingHTTPServer handler threads -
+        # and a false negative is a wrong answer, not a slow one:
+        # running_paths() turns OSError into [], so game_running() reads False
+        # while the game is up.
+        #
+        # This drives the REAL functions against the real OS on purpose. The
+        # defect lives entirely in the ctypes plumbing that a mocked row list
+        # replaces, so a test with fake rows cannot see it - which is why the
+        # existing mocked cases all passed over it.
+        import concurrent.futures
+        me = Path(sys.executable).name          # certainly running: this process
+
+        errors = []
+
+        def scan():
+            try:
+                return len(forgepact.snapshot_processes())
+            except Exception as exc:                      # noqa: BLE001
+                errors.append(repr(exc))
+                return -1
+
+        def find():
+            try:
+                return len(forgepact.running_paths(me))
+            except Exception as exc:                      # noqa: BLE001
+                errors.append(repr(exc))
+                return -1
+
+        # Sequential control first: if these fail, the environment is the
+        # problem and a concurrent failure below would mean nothing.
+        self.assertGreater(scan(), 0, "sequential snapshot found no processes")
+        self.assertGreater(find(), 0, f"sequential scan did not find {me}")
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+            results = list(pool.map(lambda fn: fn(), [scan, find] * 40))
+
+        self.assertEqual(errors, [], "concurrent scans must not raise")
+        self.assertTrue(all(r > 0 for r in results),
+                        f"every concurrent scan must succeed; got {sorted(set(results))}")
+
+    def test_the_prototypes_are_not_rebuilt_per_call(self):
+        # The structural half of the case above, so the reason survives even on
+        # a host where the threaded test skips: nothing inside either function
+        # may define the structure or assign argtypes, and neither may touch
+        # ctypes.windll - a process-wide cache shared with every other library
+        # in this process.
+        for fn in (forgepact.snapshot_processes, forgepact.process_image_path):
+            body = inspect.getsource(fn)
+            self.assertNotIn("windll", body, f"{fn.__name__} must not use ctypes.windll")
+            self.assertNotIn(".argtypes", body, f"{fn.__name__} must not set argtypes per call")
+            self.assertNotIn("class PROCESSENTRY32W", body)
+
     def test_no_process_is_spawned_to_list_processes(self):
         self.assertNotIn("tasklist", inspect.getsource(forgepact.running_paths))
         self.assertNotIn("tasklist", inspect.getsource(forgepact.snapshot_processes))

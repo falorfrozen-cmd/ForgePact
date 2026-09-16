@@ -371,6 +371,75 @@ def pick_exe_dialog(cfg=None) -> str:
 CREATE_NO_WINDOW = 0x08000000  # subprocess'in konsol penceresi acmasini engeller
 
 
+# --- Win32 process enumeration, set up exactly once -------------------------
+# REPORTED 2026-09-16 (ForgePact PR #22 review): these prototypes used to be
+# built INSIDE snapshot_processes() on every call - a fresh PROCESSENTRY32W
+# class each time, with argtypes assigned onto the SHARED
+# ctypes.windll.kernel32 function objects. Two threads doing that concurrently
+# corrupt each other. Measured by the reviewer against the real functions, no
+# mocks: 159 of 160 concurrent scans raised
+#     argument 2: TypeError: expected LP_PROCESSENTRY32W instance instead of
+#     pointer to PROCESSENTRY32W
+# and - the part that matters - with only TWO workers, 39 of 40 running_paths()
+# calls returned a FALSE NEGATIVE, against 5/5 correct sequentially.
+#
+# A false negative here is not a slow answer, it is a wrong one:
+# running_paths() turns OSError into [], so game_running() reads False while
+# the game is up. Commands are then queued instead of sent live, and the next
+# successful scan can look like a brand-new launch and re-run auto-apply.
+#
+# The panel genuinely is concurrent here - watcher() polls every 5 s on its own
+# daemon thread while /api/state is served on ThreadingHTTPServer handler
+# threads - so this was reachable in normal use, not only under a stress test.
+#
+# Two properties, and the second matters as much as the first: define the
+# structure and the prototypes ONCE, and hang them off a PRIVATE WinDLL handle.
+# ctypes.windll is a process-wide cache, so assigning argtypes there mutates
+# function objects any other library in this process may also be using.
+#
+# The launcher's processes() was checked against this and deliberately NOT
+# changed: its PROCESSENTRY32W is module-level, so ctypes.POINTER(...) yields
+# the same type object every call and its repeated argtypes assignment writes
+# an identical value - idempotent, not a race. The defect here came from
+# building a NEW class per call, which made the pointer type differ each time.
+# The two copies are consistent in behaviour; only this one needed the fix.
+if os.name == "nt":
+    import ctypes as _ctypes
+    from ctypes import wintypes as _wintypes
+
+    class _PROCESSENTRY32W(_ctypes.Structure):
+        _fields_ = [
+            ("dwSize", _wintypes.DWORD), ("cntUsage", _wintypes.DWORD),
+            ("th32ProcessID", _wintypes.DWORD),
+            ("th32DefaultHeapID", _ctypes.POINTER(_ctypes.c_ulong)),
+            ("th32ModuleID", _wintypes.DWORD), ("cntThreads", _wintypes.DWORD),
+            ("th32ParentProcessID", _wintypes.DWORD), ("pcPriClassBase", _ctypes.c_long),
+            ("dwFlags", _wintypes.DWORD), ("szExeFile", _wintypes.WCHAR * 260),
+        ]
+
+    _K32 = _ctypes.WinDLL("kernel32", use_last_error=True)
+    _K32.CreateToolhelp32Snapshot.argtypes = [_wintypes.DWORD, _wintypes.DWORD]
+    _K32.CreateToolhelp32Snapshot.restype = _wintypes.HANDLE
+    _K32.Process32FirstW.argtypes = [_wintypes.HANDLE, _ctypes.POINTER(_PROCESSENTRY32W)]
+    _K32.Process32FirstW.restype = _wintypes.BOOL
+    _K32.Process32NextW.argtypes = [_wintypes.HANDLE, _ctypes.POINTER(_PROCESSENTRY32W)]
+    _K32.Process32NextW.restype = _wintypes.BOOL
+    _K32.CloseHandle.argtypes = [_wintypes.HANDLE]
+    _K32.CloseHandle.restype = _wintypes.BOOL
+    _K32.OpenProcess.argtypes = [_wintypes.DWORD, _wintypes.BOOL, _wintypes.DWORD]
+    _K32.OpenProcess.restype = _wintypes.HANDLE
+    _K32.QueryFullProcessImageNameW.argtypes = [
+        _wintypes.HANDLE, _wintypes.DWORD, _wintypes.LPWSTR,
+        _ctypes.POINTER(_wintypes.DWORD)]
+    _K32.QueryFullProcessImageNameW.restype = _wintypes.BOOL
+    _INVALID_HANDLE_VALUE = _wintypes.HANDLE(-1).value
+else:                                   # pragma: no cover - non-Windows host
+    _ctypes = None
+    _PROCESSENTRY32W = None
+    _K32 = None
+    _INVALID_HANDLE_VALUE = None
+
+
 def snapshot_processes() -> list:
     """(pid, image name) for every running process, without spawning one.
 
@@ -390,65 +459,46 @@ def snapshot_processes() -> list:
     """
     if os.name != "nt":
         return []
-    import ctypes
-    from ctypes import wintypes
-
-    class PROCESSENTRY32W(ctypes.Structure):
-        _fields_ = [
-            ("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD),
-            ("th32ProcessID", wintypes.DWORD), ("th32DefaultHeapID", ctypes.POINTER(ctypes.c_ulong)),
-            ("th32ModuleID", wintypes.DWORD), ("cntThreads", wintypes.DWORD),
-            ("th32ParentProcessID", wintypes.DWORD), ("pcPriClassBase", ctypes.c_long),
-            ("dwFlags", wintypes.DWORD), ("szExeFile", wintypes.WCHAR * 260),
-        ]
-
-    k32 = ctypes.windll.kernel32
-    k32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
-    k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
-    k32.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
-    k32.Process32FirstW.restype = wintypes.BOOL
-    k32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
-    k32.Process32NextW.restype = wintypes.BOOL
-    k32.CloseHandle.argtypes = [wintypes.HANDLE]
-    k32.CloseHandle.restype = wintypes.BOOL
-    snapshot = k32.CreateToolhelp32Snapshot(0x00000002, 0)   # TH32CS_SNAPPROCESS
-    invalid_handle = wintypes.HANDLE(-1).value
-    if snapshot in (None, invalid_handle):
+    # Nothing is defined or re-prototyped here: _K32 and _PROCESSENTRY32W are
+    # module-level and configured once, so overlapping callers cannot corrupt
+    # each other's argtypes. Only per-call state - the snapshot handle and one
+    # entry buffer - is local, which is what makes this re-entrant.
+    snapshot = _K32.CreateToolhelp32Snapshot(0x00000002, 0)   # TH32CS_SNAPPROCESS
+    if snapshot in (None, _INVALID_HANDLE_VALUE):
         raise OSError("Windows process snapshot could not be created")
     rows = []
-    entry = PROCESSENTRY32W()
-    entry.dwSize = ctypes.sizeof(entry)
+    entry = _PROCESSENTRY32W()
+    entry.dwSize = _ctypes.sizeof(entry)
     try:
-        ok = k32.Process32FirstW(snapshot, ctypes.byref(entry))
+        ok = _K32.Process32FirstW(snapshot, _ctypes.byref(entry))
         if not ok:
             raise OSError("Windows process snapshot could not be read")
         while ok:
             rows.append((int(entry.th32ProcessID), entry.szExeFile))
-            ok = k32.Process32NextW(snapshot, ctypes.byref(entry))
+            ok = _K32.Process32NextW(snapshot, _ctypes.byref(entry))
     finally:
-        k32.CloseHandle(snapshot)
+        _K32.CloseHandle(snapshot)
     return rows
 
 
 def process_image_path(pid: int) -> str:
     """The full image path of one PID, or "" when it cannot be opened."""
-    import ctypes
-    from ctypes import wintypes
-    k32 = ctypes.windll.kernel32
+    if os.name != "nt":
+        return ""
+    # Same reason as snapshot_processes(): the prototypes live at module scope,
+    # so this never writes to a shared function object while another thread is
+    # inside a call on it.
     PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-    k32.OpenProcess.restype = wintypes.HANDLE
-    k32.QueryFullProcessImageNameW.argtypes = [
-        wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)]
-    h = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    h = _K32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
     if not h:
         return ""
     try:
-        buf = ctypes.create_unicode_buffer(32768)
-        boyut = wintypes.DWORD(32768)
-        if k32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(boyut)):
+        buf = _ctypes.create_unicode_buffer(32768)
+        boyut = _wintypes.DWORD(32768)
+        if _K32.QueryFullProcessImageNameW(h, 0, buf, _ctypes.byref(boyut)):
             return buf.value
     finally:
-        k32.CloseHandle(h)
+        _K32.CloseHandle(h)
     return ""
 
 
@@ -1325,16 +1375,22 @@ BOOT_SCAN_CHUNK = 1 << 16
 # it to prove the incremental path is incremental rather than just faster.
 BOOT_SCAN_BYTES = 0
 _BOOT_LOCK = threading.Lock()
+# Bytes kept from just before the counted region, to prove the file that
+# produced the stored offset is still the file being read.
+_BOOT_ANCHOR_BYTES = 64
 # Offset and count belong together: the offset is only meaningful as "how far
 # the stored count has already counted".  They are therefore only ever written
 # as a pair, under the lock, from one scan.
-_BOOT_CACHE = {"path": None, "offset": 0, "count": 0}
+# `ident` is (st_dev, st_ino) and `anchor` the bytes ending at `offset`.
+# Both exist to answer one question the size alone cannot: is this the same
+# file, with the same already-counted content, that produced that offset?
+_BOOT_CACHE = {"path": None, "offset": 0, "count": 0, "ident": None, "anchor": b""}
 
 
 def reset_boot_count_cache() -> None:
     """Forget the incremental scan state (tests, and anything that moves the log)."""
     with _BOOT_LOCK:
-        _BOOT_CACHE.update(path=None, offset=0, count=0)
+        _BOOT_CACHE.update(path=None, offset=0, count=0, ident=None, anchor=b"")
 
 
 def plugin_boot_count(cfg=None) -> int:
@@ -1362,13 +1418,35 @@ def plugin_boot_count(cfg=None) -> int:
         with _BOOT_LOCK:
             offset = _BOOT_CACHE["offset"]
             count = _BOOT_CACHE["count"]
-            # A different log, or one that shrank, means the previous offset
-            # no longer describes anything: rotated, truncated or replaced.
-            if _BOOT_CACHE["path"] != key or path.stat().st_size < offset:
+            st = path.stat()
+            ident = (st.st_dev, st.st_ino)
+            # REPORTED 2026-09-16 (PR #22 review): testing only "different path
+            # or smaller" let a REPLACEMENT log of the same or greater size keep
+            # the old offset and count. Reproduced: two markers counted (2), the
+            # file atomically replaced with a same-size log holding one marker,
+            # and this still answered 2 where a full scan answers 1. That loses
+            # the count CHANGE watcher() uses to notice a restart between polls,
+            # so auto-apply silently stops - the exact failure this cache was
+            # required not to cause.
+            #
+            # Three questions now, not one. Identity catches a replace-by-rename
+            # (a new file has a new st_ino). The anchor - the bytes ending at
+            # the stored offset - catches a rewrite in place, including
+            # truncate-then-regrow to the same size, which shares both path and
+            # identity. Checking the head instead would not do: every out.txt
+            # opens with the same boot banner, so two different logs agree there.
+            if (_BOOT_CACHE["path"] != key
+                    or _BOOT_CACHE["ident"] != ident
+                    or st.st_size < offset):
                 offset, count = 0, 0
             overlap = min(offset, len(BOOT_MARKER) - 1)
             found = 0
             with path.open("rb") as fh:
+                anchor_want = _BOOT_CACHE["anchor"]
+                if offset and anchor_want:
+                    fh.seek(offset - len(anchor_want))
+                    if fh.read(len(anchor_want)) != anchor_want:
+                        offset, count, overlap = 0, 0, 0
                 position = offset - overlap
                 fh.seek(position)
                 carry = b""
@@ -1391,7 +1469,14 @@ def plugin_boot_count(cfg=None) -> int:
                         at = hit + len(BOOT_MARKER)
                     position += len(chunk)
                     carry = buf[-(len(BOOT_MARKER) - 1):]
-            _BOOT_CACHE.update(path=key, offset=position, count=count + found)
+            anchor = b""
+            if position:
+                fh_anchor = min(position, _BOOT_ANCHOR_BYTES)
+                with path.open("rb") as fh2:
+                    fh2.seek(position - fh_anchor)
+                    anchor = fh2.read(fh_anchor)
+            _BOOT_CACHE.update(path=key, offset=position, count=count + found,
+                               ident=ident, anchor=anchor)
             return count + found
     except Exception:
         reset_boot_count_cache()
