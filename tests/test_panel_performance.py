@@ -162,6 +162,32 @@ class BootCountTests(unittest.TestCase):
         self.assertEqual(naive_boot_count(self.log), 1, "fixture sanity")
         self.assertMatchesNaive("truncate then regrow in place")
 
+    def test_rewrite_that_preserves_the_trailing_bytes_is_recounted(self):
+        # REPORTED 2026-09-16 (second review pass), and the sharper version of
+        # the case above. A rewrite in place can keep the anchor bytes intact
+        # while removing a marker EARLIER in the file, so identity, size and the
+        # trailing bytes all agree and only the content between them differs.
+        #
+        # My own truncate-then-regrow test missed this because its fixture was
+        # short enough to sit entirely inside the 64-byte anchor - the assertion
+        # could not fail in the direction it was testing. The tail here is
+        # deliberately much longer than the anchor.
+        marker = MARKER + "\n"
+        tail = "Settings applied successfully.\n" * 10        # ~310 bytes > anchor
+        old = marker * 2 + tail
+        new = marker + " " * len(marker) + tail                # same size, one marker
+        self.assertEqual(len(old.encode("utf-8")), len(new.encode("utf-8")))
+        self.assertGreater(len(tail.encode("utf-8")), 64, "tail must exceed the anchor")
+
+        self.write(old)
+        self.assertEqual(forgepact.plugin_boot_count(self.cfg), 2)
+        with self.log.open("r+b") as fh:
+            fh.truncate(0)
+            fh.seek(0)
+            fh.write(new.encode("utf-8"))
+        self.assertEqual(naive_boot_count(self.log), 1, "fixture sanity")
+        self.assertMatchesNaive("rewrite preserving the trailing bytes")
+
     def test_a_plain_append_still_uses_the_cache(self):
         # The negative control for the three above: hardening invalidation must
         # not turn every poll into a full rescan, or the fix quietly undoes the

@@ -1384,13 +1384,15 @@ _BOOT_ANCHOR_BYTES = 64
 # `ident` is (st_dev, st_ino) and `anchor` the bytes ending at `offset`.
 # Both exist to answer one question the size alone cannot: is this the same
 # file, with the same already-counted content, that produced that offset?
-_BOOT_CACHE = {"path": None, "offset": 0, "count": 0, "ident": None, "anchor": b""}
+_BOOT_CACHE = {"path": None, "offset": 0, "count": 0, "ident": None, "anchor": b"",
+               "size": -1, "mtime_ns": -1}
 
 
 def reset_boot_count_cache() -> None:
     """Forget the incremental scan state (tests, and anything that moves the log)."""
     with _BOOT_LOCK:
-        _BOOT_CACHE.update(path=None, offset=0, count=0, ident=None, anchor=b"")
+        _BOOT_CACHE.update(path=None, offset=0, count=0, ident=None, anchor=b"",
+                           size=-1, mtime_ns=-1)
 
 
 def plugin_boot_count(cfg=None) -> int:
@@ -1429,15 +1431,39 @@ def plugin_boot_count(cfg=None) -> int:
             # so auto-apply silently stops - the exact failure this cache was
             # required not to cause.
             #
-            # Three questions now, not one. Identity catches a replace-by-rename
-            # (a new file has a new st_ino). The anchor - the bytes ending at
-            # the stored offset - catches a rewrite in place, including
-            # truncate-then-regrow to the same size, which shares both path and
-            # identity. Checking the head instead would not do: every out.txt
-            # opens with the same boot banner, so two different logs agree there.
+            # Identity catches a replace-by-rename (a new st_ino for the path).
+            # Checking the head instead of the anchor would not do: every
+            # out.txt opens with the same boot banner, so two different logs
+            # agree there.
+            #
+            # REPORTED AGAIN 2026-09-16, and this is the sharper case: a rewrite
+            # in place can preserve the anchor bytes while changing a marker
+            # earlier in the file (`marker*2 + tail` -> `marker + spaces +
+            # tail`). Identity, size and the trailing bytes all match, so the
+            # cache stayed at 2 where a full count says 1. My own
+            # truncate-then-regrow test missed it because the fixture was short
+            # enough to sit entirely inside the anchor - an assertion that could
+            # not fail in the direction it was testing.
+            #
+            # So the cache is now trusted only when the file looks like a strict
+            # APPEND: it grew, or nothing was written at all. A write that did
+            # not extend the file is a rewrite by definition, whatever the bytes
+            # happen to look like.
+            #
+            # NOT CLOSED, and deliberately so: a rewrite that BOTH grows the
+            # file AND leaves the anchor bytes intact still reads as an append.
+            # No O(1) metadata check can separate that from a real append - the
+            # only sound test is re-reading the counted prefix, which is the
+            # exact cost this cache exists to avoid. The plugin only ever
+            # appends to out.txt, so the remaining case needs an external writer
+            # that grows the file while rewriting earlier markers. Recorded as
+            # "not covered", not as "cannot happen".
+            grew = st.st_size > _BOOT_CACHE["size"]
+            touched = st.st_mtime_ns != _BOOT_CACHE["mtime_ns"]
             if (_BOOT_CACHE["path"] != key
                     or _BOOT_CACHE["ident"] != ident
-                    or st.st_size < offset):
+                    or st.st_size < offset
+                    or (touched and not grew)):
                 offset, count = 0, 0
             overlap = min(offset, len(BOOT_MARKER) - 1)
             found = 0
@@ -1475,8 +1501,13 @@ def plugin_boot_count(cfg=None) -> int:
                 with path.open("rb") as fh2:
                     fh2.seek(position - fh_anchor)
                     anchor = fh2.read(fh_anchor)
+            # Re-stat rather than reuse `st`: the file may have been appended
+            # to while this scan was reading it, and storing the pre-read size
+            # would make the next call see "grew" for bytes already counted.
+            final = path.stat()
             _BOOT_CACHE.update(path=key, offset=position, count=count + found,
-                               ident=ident, anchor=anchor)
+                               ident=ident, anchor=anchor,
+                               size=final.st_size, mtime_ns=final.st_mtime_ns)
             return count + found
     except Exception:
         reset_boot_count_cache()
