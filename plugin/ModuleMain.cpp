@@ -15590,6 +15590,12 @@ static void RunCommand(const std::string& line)
 // The frame thread is suspended ONLY for the GetThreadContext call and every
 // allocation/format happens after it is resumed, so a lock the stalled thread
 // holds (heap, CRT, loader) can never deadlock the watchdog.
+//
+// Research build only.  It is a diagnostic - a thread waking twice a second
+// plus a per-frame heartbeat - and the freeze it was built for turned out not
+// to be ForgePact (a control run without the plugin froze the same way), so
+// players do not pay for it.
+#ifndef FORGEPACT_RELEASE
 static std::atomic<uint64_t> g_LastFrameTickMs{ 0 };
 static HANDLE g_FrameThread = nullptr;
 static std::atomic<bool> g_WatchdogRun{ false };
@@ -15691,6 +15697,7 @@ static void StartStallWatchdog()
     try { std::thread(StallWatchdogLoop).detach(); }
     catch (...) { g_WatchdogRun.store(false); }
 }
+#endif // FORGEPACT_RELEASE (stall watchdog)
 
 void FrameCallback(FWFrame& FrameContext)
 {
@@ -15698,13 +15705,13 @@ void FrameCallback(FWFrame& FrameContext)
     static uint32_t fc = 0;
     g_RuntimeFrame = fc;
 
+#ifndef FORGEPACT_RELEASE
     // Watchdog heartbeat.  One tick read + one atomic store per frame.
     g_LastFrameTickMs.store(GetTickCount64());
     if (!g_FrameThread) {
         DuplicateHandle(GetCurrentProcess(), GetCurrentThread(),
                         GetCurrentProcess(), &g_FrameThread, 0, FALSE, DUPLICATE_SAME_ACCESS);
     }
-#ifndef FORGEPACT_RELEASE
     PerfFrameTick();
 #endif
     PERF_SCOPE(g_PerfFrame);
@@ -15968,7 +15975,9 @@ EXPORTED AurieStatus ModuleInitialize(
     } else {
         g_Yytk->PrintInfo("[BloodPact] BloodPact plugin " FORGEPACT_VERSION " successfully loaded into YYToolkit.");
         g_Yytk->Print(CM_LIGHTGREEN, "[BloodPact] ready - watching bp_ipc\\cmd.txt");
+#ifndef FORGEPACT_RELEASE
         StartStallWatchdog();
+#endif
     }
 
     Aurie::DbgPrint("[BloodPact] BloodPact plugin initialized successfully.\n");

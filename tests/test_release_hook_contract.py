@@ -245,6 +245,20 @@ class ReleaseHookContractTests(unittest.TestCase):
         )
         self.assertNotIn("if ((fc % 60) == 0) KonsoluGizle();", frame)
 
+    def test_stall_watchdog_never_reaches_the_player_build(self):
+        # A diagnostic, not a feature: a thread waking twice a second that
+        # suspends the game's frame thread during a stall, plus a per-frame
+        # heartbeat. The freeze it was built to name was concluded not to be
+        # ForgePact, and a player gains nothing from paying for it.
+        release = strip_comments(strip_research_blocks(self.plugin))
+        for name in ("StallWatchdogLoop", "StartStallWatchdog", "g_LastFrameTickMs",
+                     "g_FrameThread", "SuspendThread", "GetThreadContext"):
+            self.assertNotIn(name, release)
+        # Positive control: the same helper keeps the research build's copy.
+        research = strip_comments(self.plugin)
+        self.assertIn("StartStallWatchdog();", research)
+        self.assertIn("g_LastFrameTickMs.store(GetTickCount64());", research)
+
     def test_the_object_index_struct_read_never_reaches_the_player_build(self):
         # Finding 8 plants an instrument, not a feature. GetMembers() is not a
         # field read - it calls GetBuiltin("id") per invocation and picks one
