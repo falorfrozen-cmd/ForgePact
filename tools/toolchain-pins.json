@@ -1,0 +1,75 @@
+{
+  "$schema_note": "Consumed by tools/fetch_toolchain.py. One entry per output file, dest relative to the ForgePact repo root. Zip-member entries additionally carry archive_sha256 (checked before any member is read) and member (the path inside the archive).",
+  "files": [
+    {
+      "dest": "plugin_build/include/YYToolkit/YYTK_Shared.hpp",
+      "url": "https://raw.githubusercontent.com/AurieFramework/YYToolkit/5a95e46cc4b4e99f16ee3dc0f2ab9ea3c77d18db/ExamplePlugin/include/YYToolkit/YYTK_Shared.hpp",
+      "sha256": "6d6666f1db2553ea0c17658bdc53e65c396bc402053d73257038e66bd713d22a",
+      "provenance": "YYToolkit v4.0.1 (commit 5a95e46), ExamplePlugin/include/YYToolkit/YYTK_Shared.hpp"
+    },
+    {
+      "dest": "plugin_build/include/YYToolkit/YYTK_Shared_Base.hpp",
+      "url": "https://raw.githubusercontent.com/AurieFramework/YYToolkit/5a95e46cc4b4e99f16ee3dc0f2ab9ea3c77d18db/ExamplePlugin/include/YYToolkit/YYTK_Shared_Base.hpp",
+      "sha256": "ab64a23eed8a2358e3fb37a2789bce42cf557b9dbcc4051dc61029859ffcb887",
+      "provenance": "YYToolkit v4.0.1 (commit 5a95e46), ExamplePlugin/include/YYToolkit/YYTK_Shared_Base.hpp"
+    },
+    {
+      "dest": "plugin_build/include/YYToolkit/YYTK_Shared_Interface.hpp",
+      "url": "https://raw.githubusercontent.com/AurieFramework/YYToolkit/5a95e46cc4b4e99f16ee3dc0f2ab9ea3c77d18db/ExamplePlugin/include/YYToolkit/YYTK_Shared_Interface.hpp",
+      "sha256": "bec19a3f956568d85d717acc906de24bed2b5ed965940a82af393808d213a102",
+      "provenance": "YYToolkit v4.0.1 (commit 5a95e46), ExamplePlugin/include/YYToolkit/YYTK_Shared_Interface.hpp"
+    },
+    {
+      "dest": "plugin_build/include/YYToolkit/YYTK_Shared_Types.cpp",
+      "url": "https://raw.githubusercontent.com/AurieFramework/YYToolkit/5a95e46cc4b4e99f16ee3dc0f2ab9ea3c77d18db/ExamplePlugin/include/YYToolkit/YYTK_Shared_Types.cpp",
+      "sha256": "93531e2d1827ec411376b0e4baa7663a8a111c9e7ede49a708cf75ce6c58011e",
+      "provenance": "YYToolkit v4.0.1 (commit 5a95e46), ExamplePlugin/include/YYToolkit/YYTK_Shared_Types.cpp"
+    },
+    {
+      "dest": "plugin_build/include/YYToolkit/YYTK_Shared_Types.hpp",
+      "url": "https://raw.githubusercontent.com/AurieFramework/YYToolkit/5a95e46cc4b4e99f16ee3dc0f2ab9ea3c77d18db/ExamplePlugin/include/YYToolkit/YYTK_Shared_Types.hpp",
+      "sha256": "7d3ad5426a7014e290beba84ed4660dbe7f7c97081efbb3c4a62a7b0cdfbfc1a",
+      "provenance": "YYToolkit v4.0.1 (commit 5a95e46), ExamplePlugin/include/YYToolkit/YYTK_Shared_Types.hpp"
+    },
+    {
+      "dest": "plugin_build/include/FunctionWrapper/FunctionWrapper.hpp",
+      "url": "https://raw.githubusercontent.com/AurieFramework/YYToolkit/5a95e46cc4b4e99f16ee3dc0f2ab9ea3c77d18db/ExamplePlugin/include/FunctionWrapper/FunctionWrapper.hpp",
+      "sha256": "e72e263dcf3403efb196552fa08f2beea8f46f3ff67ae16c7de2b1599c0bccff",
+      "provenance": "YYToolkit v4.0.1 (commit 5a95e46), ExamplePlugin/include/FunctionWrapper/FunctionWrapper.hpp"
+    },
+    {
+      "dest": "plugin_build/include/Aurie/shared.hpp",
+      "url": "https://raw.githubusercontent.com/AurieFramework/Aurie/5c4839ea19d47c6afb7d459358f53643b2774e3a/Aurie/source/framework/shared.hpp",
+      "sha256": "c830652fc89854723520b26ee3fdc7b468abed94131109c032d3b32ed2e1dc5d",
+      "provenance": "Aurie v2.0.2 (commit 5c4839e), Aurie/source/framework/shared.hpp -- NOT YYToolkit v4.0.1's own bundled include/Aurie/shared.hpp, which is a different (older, 1.x) header; players run AurieCore 2.0.2"
+    },
+    {
+      "dest": "modfiles_shipped/AurieCore.dll",
+      "url": "https://github.com/AurieFramework/Aurie/releases/download/v2.0.2/AurieCore.dll",
+      "sha256": "18e3a1de980f487a6b3858b673d2030e96984dd96de3a047b43a263a5ba829ae",
+      "provenance": "Aurie Framework release v2.0.2, unmodified"
+    },
+    {
+      "dest": "modfiles_shipped/AuriePatcher.exe",
+      "url": "https://github.com/AurieFramework/Aurie/releases/download/v2.0.2/AuriePatcher.exe",
+      "sha256": "4d3aec439dbba5209ad48fb0a40d6324406247fe678541df9031f5b89363d536",
+      "provenance": "Aurie Framework release v2.0.2, unmodified"
+    },
+    {
+      "dest": "modfiles_shipped/YYToolkit.dll",
+      "url": "https://github.com/falorfrozen-cmd/ForgePact/releases/download/v1.3.16/ForgePact-1.3.16.zip",
+      "archive_sha256": "e0bbe3a087af20c4a89137db386e06e3421316286bd2a076a4982f02869d1516",
+      "member": "ForgePact-1.3.16/modfiles/YYToolkit.dll",
+      "sha256": "bb113eefc9a5d485231ced1dc85d773dbc6b762ee680214851c56541359ad297",
+      "provenance": "modified YYToolkit, see yytoolkit-modified/NOTICE.md; shipped byte-identical in every release v1.3.1 through v1.3.16, extracted here from the published v1.3.16 zip"
+    },
+    {
+      "dest": "modfiles_shipped/HSOfflineTrackerProducer.dll",
+      "url": "https://github.com/falorfrozen-cmd/ForgePact/releases/download/v1.3.16/ForgePact-1.3.16.zip",
+      "archive_sha256": "e0bbe3a087af20c4a89137db386e06e3421316286bd2a076a4982f02869d1516",
+      "member": "ForgePact-1.3.16/modfiles/HSOfflineTrackerProducer.dll",
+      "sha256": "36608aa041b31e23f35fbf010554715657d14269c61c541e717fde76a481b14e",
+      "provenance": "HS-Offline-Tracker's live sensor producer (optional), a 2026-09-07-or-earlier build shipped in every ForgePact release since v1.3.10, extracted here from the published v1.3.16 zip"
+    }
+  ]
+}

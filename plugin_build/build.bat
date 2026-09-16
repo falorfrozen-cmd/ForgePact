@@ -4,6 +4,33 @@ REM folder tree; no dependency on Downloads.
 REM   build.bat release  -> BloodPactPlugin_ship.dll (the one players get)
 REM   build.bat          -> BloodPactPlugin_rel.dll  (research, all commands)
 setlocal
+REM Compiler discovery, in order:
+REM   1. Already-initialised MSVC environment (a caller that already ran
+REM      vcvars, e.g. this repo's own tests via vswhere).
+REM   2. vswhere, asking for whichever VS install actually has the C++ tools
+REM      component -- this is what finds VS 18.9 Enterprise on a GitHub
+REM      windows-2025-vs2026 runner, which none of the four hardcoded paths
+REM      below match (they were written against VS 2022 / VS 18 BuildTools).
+REM   3. The four hardcoded paths, unchanged, as a last-resort fallback.
+if defined VSCMD_VER (
+    where cl >nul 2>nul
+    if not errorlevel 1 (
+        echo using already-initialised MSVC environment ^(VSCMD_VER=%VSCMD_VER%^)
+        goto :have_vs
+    )
+)
+
+set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+if not exist "%VSWHERE%" goto :try_legacy_paths
+for /f "usebackq tokens=* delims=" %%i in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do (
+    set "VSWHERE_PATH=%%i"
+)
+if not defined VSWHERE_PATH goto :try_legacy_paths
+if not exist "%VSWHERE_PATH%\VC\Auxiliary\Build\vcvars64.bat" goto :try_legacy_paths
+set "VS=%VSWHERE_PATH%\VC\Auxiliary\Build\vcvars64.bat"
+goto :call_vcvars
+
+:try_legacy_paths
 if exist "C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvars64.bat" (
     set "VS=C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
 ) else if exist "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvars64.bat" (
@@ -16,7 +43,11 @@ if exist "C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxili
     echo ERROR: Visual Studio not found
     exit /b 1
 )
+
+:call_vcvars
+echo using %VS%
 call "%VS%" >nul
+:have_vs
 cd /d "%~dp0"
 set "SOURCE=%~dp0..\plugin\ModuleMain.cpp"
 if /I "%~1"=="dev" (

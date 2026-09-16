@@ -389,10 +389,13 @@ dependencies:
 
 - **Aurie Framework** headers (`Aurie/shared.hpp`) — expected in
   `plugin_build/include/`, which is not tracked by this repository (the headers are
-  upstream's, not ours). Copy them in from an Aurie checkout before the first build.
+  upstream's, not ours). Run `py tools/fetch_toolchain.py` before the first build: it
+  downloads this and every other pinned header/binary from its upstream commit or
+  release and verifies its SHA-256 before writing anything, all-or-nothing (see
+  `tools/toolchain-pins.json`). This is also what CI runs (`forgepact-release.yml`).
 - **YYToolkit** shared headers (`YYToolkit/YYTK_Shared.hpp`, plus
   `YYTK_Shared_Types.cpp`, which `build.bat` compiles alongside `ModuleMain.cpp`) —
-  same place, same reason.
+  same place, same tool, same reason.
 - **hs-game-sdk** (`hs_game_sdk/hs_game_sdk.hpp`) — the typed Hero Siege object/player/room
   wrappers `ModuleMain.cpp` uses. This one is not yet a submodule of this repository; it
   lives in the

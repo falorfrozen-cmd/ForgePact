@@ -14,11 +14,11 @@ obj_*/
 *.pre_*
 *.log
 
-# Upstream's header-only dependencies, copied in before the first build and
+# Upstream's header-only dependencies, placed before the first build and
 # never ours to commit: plugin_build/build.bat compiles against them via
 # /I "include" and builds YYTK_Shared_Types.cpp alongside ModuleMain.cpp, but
-# they belong to Aurie Framework and YYToolkit (both AGPL-3.0). README.md's
-# "Building the plugin" already says to copy them in from an Aurie checkout;
+# they belong to Aurie Framework and YYToolkit (both AGPL-3.0).
+# tools/fetch_toolchain.py places them (README.md's "Building the plugin");
 # this stops them showing up as untracked afterwards, which in a full toolkit
 # checkout also leaves the super-repo reporting ForgePact as dirty forever.
 plugin_build/include/

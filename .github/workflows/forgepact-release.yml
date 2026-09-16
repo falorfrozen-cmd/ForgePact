@@ -1,0 +1,319 @@
+# Build the ForgePact release zip in CI and upload it to the tag's draft
+# release.
+#
+# Started two ways: forgepact-tag.yml starts this workflow right after it
+# leaves the draft, passing the tag as an input (see that workflow's "Start
+# the build" step) -- the way hub-tag.yml starts hub-release.yml -- except
+# THIS workflow is dispatched against `main`, never against the tag ref. A
+# person can also run it by hand with a `tag` input, e.g. to fill a draft that
+# already exists (v1.3.20, whose tag tree predates this workflow entirely).
+#
+# Why `main` and not the tag: v1.3.20's tag tree has none of this -- no
+# forgepact-release.yml, no fetch script, no vswhere-aware build.bat -- so
+# `--ref v1.3.20` could not run at all, and a fix made here could never apply
+# to an already-tagged version. The plugin and panel source, the packaging
+# script and the tests still come from the TAG (checked out into
+# `ForgePact`); only the pins, the fetch/package scripts and build.bat's
+# compiler discovery come from `main` (checked out into `forgepact-ci`). See
+# the module guide, "The build half (forgepact-release.yml)".
+#
+# It only ever uploads assets onto an EXISTING DRAFT release -- it never
+# makes a new release object, never edits one, never flips a release out of
+# draft, and never touches which release is "latest". Publishing stays a
+# human act, and the module guide's CI launch gate is what that human runs --
+# installing from this exact zip and launching the game -- before pressing
+# Publish.
+name: ForgePact release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build, e.g. v1.3.20 (or just 1.3.20)'
+        required: true
+        type: string
+      dry_run:
+        description: 'Build and test without uploading anything to the draft'
+        type: boolean
+        required: false
+        default: true
+      hub_ref:
+        description: 'hs-game-sdk is checked out from the hub at this ref'
+        type: string
+        required: false
+        default: main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: forgepact-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-2025-vs2026
+    permissions:
+      # Uploading assets to the draft. Nothing here starts another workflow
+      # run, so this job needs no permission over the Actions API itself.
+      contents: write
+    steps:
+      # A release is built from main -- see the header comment for why this
+      # workflow does not take the tag ref itself.
+      - name: This has to be run from main
+        shell: bash
+        env:
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          if [ "$BRANCH" != "main" ]; then
+            echo "::error::Run this from main. It was started on '$BRANCH'."
+            exit 1
+          fi
+
+      # The pins, the fetch/package scripts and build.bat's compiler
+      # discovery -- everything a CI checkout needs that the tag's own tree
+      # does not carry.
+      - uses: actions/checkout@v4
+        with:
+          path: forgepact-ci
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Normalise the tag
+        id: tag
+        shell: bash
+        env:
+          TAG_INPUT: ${{ inputs.tag }}
+        run: |
+          plan=$(python forgepact-ci/tools/release_ci.py tag --tag "$TAG_INPUT")
+          echo "$plan"
+          echo "$plan" >> "$GITHUB_OUTPUT"
+
+      # First of two draft guards -- this one before any checkout of the tag,
+      # so a bad tag or an already-published release fails fast on a cheap
+      # step. The second sits right before the upload, because a human can
+      # publish the draft during the ~15 minutes this job runs.
+      - name: This release exists and is still a draft (guard 1)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          count=$(gh api "repos/$REPO/releases?per_page=100" \
+            --jq "[.[] | select(.tag_name == \"$TAG\")] | length")
+          if [ "$count" = "0" ]; then
+            echo "::error::$TAG has no release yet -- run \"ForgePact tag\" first."
+            exit 1
+          fi
+          if [ "$count" != "1" ]; then
+            echo "::error::$TAG has $count releases; expected exactly one."
+            exit 1
+          fi
+          draft=$(gh api "repos/$REPO/releases?per_page=100" \
+            --jq "[.[] | select(.tag_name == \"$TAG\")][0].draft")
+          if [ "$draft" != "true" ]; then
+            echo "::error::$TAG is already published -- refusing to replace a published release's assets."
+            exit 1
+          fi
+          echo "draft release confirmed for $TAG"
+
+      # hs-game-sdk comes from the hub at inputs.hub_ref (default main), not
+      # from any hub commit whose ForgePact gitlink matches this tag -- at
+      # dispatch time that commit usually does not exist yet. Sparse, and
+      # into its own directory first: checking a second repository straight
+      # onto the workspace root would need to be the very first checkout of
+      # the job (actions/checkout wipes the target path), and forgepact-ci
+      # above already needed to go first so the tag could be normalised.
+      - name: Check out hs-game-sdk from the hub
+        uses: actions/checkout@v4
+        with:
+          repository: falorfrozen-cmd/hero-siege-offline-toolkit
+          ref: ${{ inputs.hub_ref }}
+          path: hub
+          sparse-checkout: |
+            hs-game-sdk
+          sparse-checkout-cone-mode: false
+
+      # build.bat compiles against ../../hs-game-sdk/cpp/include relative to
+      # plugin_build/, i.e. two directories up from ForgePact/ -- the
+      # workspace root. So hs-game-sdk has to end up there, a sibling of
+      # ForgePact (checked out next), not nested under hub/.
+      - name: Place hs-game-sdk as a sibling of ForgePact
+        id: hub_commit
+        shell: bash
+        run: |
+          mv hub/hs-game-sdk hs-game-sdk
+          echo "sha=$(git -C hub rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      # The plugin and panel source, the packaging script, tools/cut_release.py,
+      # tests/ and the compile line all come from the tag, never from main.
+      - name: Check out the tagged ForgePact tree
+        uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ steps.tag.outputs.tag }}
+          path: ForgePact
+
+      - name: Record the source commit
+        id: source_commit
+        shell: bash
+        working-directory: ForgePact
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      # webview's absence is silent: a PyInstaller build on a machine without
+      # it produces a panel that falls back to the browser with no error.
+      - name: Install build/package dependencies
+        shell: bash
+        run: |
+          python -m pip install -r forgepact-ci/requirements-build.txt
+          python -c "import webview, PyInstaller"
+
+      - name: The tree agrees with the tag
+        shell: bash
+        working-directory: ForgePact
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: python tools/cut_release.py --check --expect "$VERSION" --allow-missing-notes
+
+      # The native harnesses (test_headhunter_dispatch.py, etc.) find MSVC
+      # via vswhere themselves -- see AGENTS.md's "Prove the instrument"; they
+      # are not skipped on a runner that has a compiler.
+      - name: Contract tests
+        shell: bash
+        working-directory: ForgePact
+        run: python -m unittest discover -s tests
+
+      - name: Fetch the pinned toolchain
+        shell: bash
+        run: python forgepact-ci/tools/fetch_toolchain.py --root ForgePact
+
+      # Discovery may differ between the tag's build.bat and main's; what
+      # gets compiled may not. Only once that is proven does main's copy (the
+      # one that can find MSVC on this runner) replace the tag's own.
+      - name: The copied build.bat still compiles the same thing
+        shell: bash
+        run: |
+          python forgepact-ci/tools/release_ci.py compile-line \
+            --tag-bat ForgePact/plugin_build/build.bat \
+            --ci-bat forgepact-ci/plugin_build/build.bat
+          cp forgepact-ci/plugin_build/build.bat ForgePact/plugin_build/build.bat
+
+      # Independent of the compile step below -- build.bat's own `setlocal`
+      # rolls back the vcvars environment it sets up before returning, so
+      # there is nothing left to read `cl`'s banner from afterwards.
+      - name: Find the compiler version for BUILD-INFO.json
+        id: cl_version
+        shell: cmd
+        run: |
+          for /f "usebackq tokens=* delims=" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set VSPATH=%%i
+          call "%VSPATH%\VC\Auxiliary\Build\vcvars64.bat" >nul
+          cl 2>&1 > "%RUNNER_TEMP%\cl_banner.txt"
+          set CL_BANNER=
+          for /f "usebackq delims=" %%b in ("%RUNNER_TEMP%\cl_banner.txt") do if not defined CL_BANNER set CL_BANNER=%%b
+          echo banner=%CL_BANNER%>>"%GITHUB_OUTPUT%"
+
+      - name: Compile the plugin (release)
+        shell: cmd
+        working-directory: ForgePact
+        run: plugin_build\build.bat release
+
+      - name: Package the panel (build_release.py)
+        shell: bash
+        working-directory: ForgePact
+        run: python build_release.py
+
+      - name: Zip the release (release_ci.py package)
+        id: package
+        shell: bash
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          SOURCE_COMMIT: ${{ steps.source_commit.outputs.sha }}
+          HUB_COMMIT: ${{ steps.hub_commit.outputs.sha }}
+          RUNNER_IMAGE: ${{ env.ImageOS }}-${{ env.ImageVersion }}
+          CL_VERSION: ${{ steps.cl_version.outputs.banner }}
+          WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          out=$(python forgepact-ci/tools/release_ci.py package --root ForgePact --version "$VERSION" \
+            --out "$RUNNER_TEMP/out" \
+            --info source_commit="$SOURCE_COMMIT" \
+            --info tag="$TAG" \
+            --info hub_commit="$HUB_COMMIT" \
+            --info runner_image="$RUNNER_IMAGE" \
+            --info cl_version="$CL_VERSION" \
+            --info workflow_run_url="$WORKFLOW_RUN_URL")
+          echo "$out"
+          echo "zip_hash=$(echo "$out" | tail -1)" >> "$GITHUB_OUTPUT"
+
+      # A dry run never touches the draft; the built zip is only kept as a
+      # downloadable artifact so it can be inspected without re-running.
+      - name: Keep the zip as an artifact on a dry run
+        if: inputs.dry_run
+        uses: actions/upload-artifact@v4
+        with:
+          name: forgepact-release-dry-run
+          path: |
+            ${{ runner.temp }}/out/*
+          retention-days: 7
+
+      # Second draft guard, right before the write this job exists to make.
+      # A human can publish the draft while this job was building (~15
+      # minutes), and the upload step below is only safe with --clobber
+      # because both guards ran.
+      - name: This release is still a draft (guard 2)
+        if: ${{ !inputs.dry_run }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          draft=$(gh api "repos/$REPO/releases?per_page=100" \
+            --jq "[.[] | select(.tag_name == \"$TAG\")][0].draft")
+          if [ "$draft" != "true" ]; then
+            echo "::error::$TAG is no longer a draft -- refusing to upload. A human may have published it during this build."
+            exit 1
+          fi
+
+      - name: Upload to the draft
+        if: ${{ !inputs.dry_run }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          gh release upload "$TAG" \
+            "$RUNNER_TEMP/out/ForgePact-$VERSION.zip" \
+            "$RUNNER_TEMP/out/ForgePact-$VERSION.zip.sha256" \
+            --clobber --repo "$REPO"
+
+      - name: Summary
+        if: always()
+        shell: bash
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          ZIP_HASH: ${{ steps.package.outputs.zip_hash }}
+          HUB_SHA: ${{ steps.hub_commit.outputs.sha }}
+          CL_VERSION: ${{ steps.cl_version.outputs.banner }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          {
+            echo "### ForgePact release: $TAG"
+            echo
+            echo "- zip sha256: \`$ZIP_HASH\`"
+            echo "- hub commit (hs-game-sdk): \`$HUB_SHA\`"
+            echo "- compiler: \`$CL_VERSION\`"
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "- dry run: nothing uploaded"
+            else
+              echo "- uploaded to the draft"
+            fi
+            echo
+            echo "**Not live-verified.** Install from this zip and launch the"
+            echo "game before publishing -- see the module guide's \"CI build"
+            echo "launch gate\" table."
+          } >> "$GITHUB_STEP_SUMMARY"

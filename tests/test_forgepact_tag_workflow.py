@@ -1,12 +1,15 @@
 """Tests for the workflow that tags a ForgePact release and drafts its notes.
 
 `forgepact-tag.yml` is a `git tag` wrapped in guards, plus a draft release
-whose body `tools/forgepact_tag.py` composes -- and the guards are the point:
-once a tag is pushed, nothing here is undone from the repository's side. This
-mirrors the hub's `tests/test_hub_tag_workflow.py`, minus the dispatch of a
-second workflow (ForgePact leaves a draft directly; there is no build half to
-dispatch into, see the module guide) and plus the notes-composition and
-draft-only assertions this workflow adds.
+whose body `tools/forgepact_tag.py` composes, plus a dispatch of the build
+half (`forgepact-release.yml`) right after the draft is left -- the same
+shape as the hub's `tests/test_hub_tag_workflow.py`, except the dispatch here
+targets `main` rather than the tag ref (see `forgepact-release.yml`'s own
+header comment for why: the tag tree it would otherwise run against does not
+carry the build workflow itself). The guards are still the point: once a tag
+is pushed, nothing here is undone from the repository's side. This file also
+carries the notes-composition and draft-only assertions this workflow adds
+that the hub's tagger has no equivalent of.
 """
 
 import re
@@ -216,17 +219,20 @@ class ThePermissionsCoverWhatItDoes(unittest.TestCase):
             "without contents: write the bump, tag and draft are all a 403",
         )
 
-    def test_it_never_needs_actions_write(self):
-        # Unlike the hub's tagger, this workflow never dispatches another
-        # workflow run -- there is no build half to start.
-        self.assertNotIn("actions: write", workflow_text())
+    def test_it_may_start_the_build(self):
+        # Starting forgepact-release.yml needs actions: write, the documented
+        # exception to "events made with GITHUB_TOKEN start no runs" -- the
+        # same permission the hub's tagger carries for the same reason.
+        self.assertTrue(
+            re.search(r"(?m)^\s*actions: write\s*$", workflow_text()),
+            "gh workflow run forgepact-release.yml is a 403 without this",
+        )
 
 
 class NeverBuildsUploadsOrPublishes(unittest.TestCase):
     def test_none_of_these_appear(self):
         text = workflow_text()
         for forbidden in (
-            "gh workflow run",
             "gh release edit",
             "gh release upload",
             "--draft=false",
@@ -236,6 +242,37 @@ class NeverBuildsUploadsOrPublishes(unittest.TestCase):
             "upload-artifact",
         ):
             self.assertNotIn(forbidden, text, f"{forbidden!r} is out of scope for this workflow")
+
+
+class TheBuildIsDispatchedAfterTheDraft(unittest.TestCase):
+    def test_the_dispatch_exists(self):
+        lines = code_lines(workflow_text())
+        self.assertTrue(
+            any("gh workflow run forgepact-release.yml" in line for line in lines),
+            "the draft is left with nothing building it",
+        )
+
+    def test_it_comes_after_the_draft_is_created(self):
+        text = workflow_text()
+        create_at = text.find("gh release create")
+        dispatch_at = text.find("gh workflow run forgepact-release.yml")
+        self.assertNotEqual(create_at, -1)
+        self.assertNotEqual(dispatch_at, -1)
+        self.assertLess(
+            create_at, dispatch_at,
+            "starting the build before the draft exists races the tag",
+        )
+
+    def test_it_targets_main_with_the_tag_and_a_real_run(self):
+        lines = code_lines(workflow_text())
+        dispatch = next(
+            (line for line in lines if "gh workflow run forgepact-release.yml" in line),
+            None,
+        )
+        self.assertIsNotNone(dispatch)
+        self.assertIn("--ref main", dispatch)
+        self.assertIn('-f tag="$TAG"', dispatch)
+        self.assertIn("-f dry_run=false", dispatch)
 
 
 class ThePrefixAgreesWithTheTool(unittest.TestCase):
