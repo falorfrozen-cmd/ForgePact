@@ -203,15 +203,21 @@ jobs:
       # Independent of the compile step below -- build.bat's own `setlocal`
       # rolls back the vcvars environment it sets up before returning, so
       # there is nothing left to read `cl`'s banner from afterwards.
+      # `cl` writes its banner to stderr and its usage line to stdout, and cmd
+      # applies redirections left to right: `> file 2>&1` captures both, while
+      # `2>&1 > file` sends the banner to the log and keeps only the usage
+      # line (what v1.3.20's first dry run recorded). Pick the banner line by
+      # content rather than position.
       - name: Find the compiler version for BUILD-INFO.json
         id: cl_version
         shell: cmd
         run: |
           for /f "usebackq tokens=* delims=" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set VSPATH=%%i
           call "%VSPATH%\VC\Auxiliary\Build\vcvars64.bat" >nul
-          cl 2>&1 > "%RUNNER_TEMP%\cl_banner.txt"
+          cl > "%RUNNER_TEMP%\cl_banner.txt" 2>&1
           set CL_BANNER=
-          for /f "usebackq delims=" %%b in ("%RUNNER_TEMP%\cl_banner.txt") do if not defined CL_BANNER set CL_BANNER=%%b
+          for /f "usebackq delims=" %%b in (`findstr /c:"Compiler Version" "%RUNNER_TEMP%\cl_banner.txt"`) do if not defined CL_BANNER set CL_BANNER=%%b
+          if not defined CL_BANNER set CL_BANNER=unknown
           echo banner=%CL_BANNER%>>"%GITHUB_OUTPUT%"
 
       - name: Compile the plugin (release)
@@ -232,10 +238,14 @@ jobs:
           TAG: ${{ steps.tag.outputs.tag }}
           SOURCE_COMMIT: ${{ steps.source_commit.outputs.sha }}
           HUB_COMMIT: ${{ steps.hub_commit.outputs.sha }}
-          RUNNER_IMAGE: ${{ env.ImageOS }}-${{ env.ImageVersion }}
           CL_VERSION: ${{ steps.cl_version.outputs.banner }}
           WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        # ImageOS/ImageVersion are the runner machine's own environment
+        # variables. The `env` expression context only holds variables the
+        # workflow itself defines, so `${{ env.ImageOS }}` is always empty
+        # (v1.3.20's first dry run recorded "-"). Read them in the shell.
         run: |
+          RUNNER_IMAGE="${ImageOS:-unknown}-${ImageVersion:-unknown}"
           out=$(python forgepact-ci/tools/release_ci.py package --root ForgePact --version "$VERSION" \
             --out "$RUNNER_TEMP/out" \
             --info source_commit="$SOURCE_COMMIT" \
