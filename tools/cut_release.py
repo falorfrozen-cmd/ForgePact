@@ -105,19 +105,34 @@ def current(root: Path) -> str:
     return found.group(1).decode()
 
 
-def derived(root: Path, version: str) -> Tuple[bool, List[str]]:
-    """The checks that are not sites: release notes, and the boot stamp."""
+def derived(
+    root: Path, version: str, notes_required: bool = True
+) -> Tuple[bool, List[str]]:
+    """The checks that are not sites: release notes, and the boot stamp.
+
+    `notes_required=False` is for the ForgePact tag workflow only: it composes
+    the draft release body from whatever notes files exist (falling back to
+    generated notes under a banner when the top one is missing), so a missing
+    file there is not a reason to refuse the tag. Every other caller keeps the
+    default, because a version with player-visible changes and no notes file
+    is still an incomplete change to land on `main` by hand.
+    """
     lines = []
     ok = True
 
     notes = root / RELEASE_NOTES.format(version=version)
     if notes.is_file():
         lines.append(f"  ok      {version}  {notes.name} -- the release notes exist")
-    else:
+    elif notes_required:
         ok = False
         lines.append(
             f"  MISSING {version}  {notes.name} -- a version with player-visible "
             "changes and no release notes is an incomplete change"
+        )
+    else:
+        lines.append(
+            f"  NOTE    {version}  {notes.name} -- missing, but --allow-missing-notes "
+            "was given: the tag workflow will fall back to generated notes"
         )
 
     boot = (root / BOOT_LINE_FILE).read_bytes()
@@ -139,7 +154,9 @@ def derived(root: Path, version: str) -> Tuple[bool, List[str]]:
     return ok, lines
 
 
-def check(root: Path, expect: str | None) -> Tuple[bool, List[str]]:
+def check(
+    root: Path, expect: str | None, notes_required: bool = True
+) -> Tuple[bool, List[str]]:
     """Does every site hold the same version, and is it the one expected?"""
     here = current(root)
     lines = []
@@ -159,7 +176,7 @@ def check(root: Path, expect: str | None) -> Tuple[bool, List[str]]:
                 f"  MISSING {here}  {site.path} -- {site.what} ({hits} matches)"
             )
 
-    derived_ok, derived_lines = derived(root, here)
+    derived_ok, derived_lines = derived(root, here, notes_required)
     ok = ok and derived_ok
     lines.extend(derived_lines)
 
@@ -231,6 +248,13 @@ def main(argv: List[str] | None = None) -> int:
         help="with --check, also require the version to be this (e.g. the tag)",
     )
     parser.add_argument(
+        "--allow-missing-notes",
+        action="store_true",
+        help="with --check, don't fail when release-notes-vX.Y.Z.md is missing "
+             "(the ForgePact tag workflow only: it composes the draft release "
+             "body itself, falling back to generated notes)",
+    )
+    parser.add_argument(
         "--root",
         type=Path,
         default=ROOT,
@@ -238,8 +262,11 @@ def main(argv: List[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    if args.allow_missing_notes and not args.check:
+        parser.error("--allow-missing-notes only makes sense with --check")
+
     if args.check:
-        ok, lines = check(args.root, args.expect)
+        ok, lines = check(args.root, args.expect, notes_required=not args.allow_missing_notes)
         print(f"ForgePact version: {current(args.root)}")
         print("\n".join(lines))
         if not ok:

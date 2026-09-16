@@ -54,10 +54,15 @@ A pull request that leaves them stale is unfinished.
 Both are spelled out in the module guide; they are repeated here only because
 each has already cost a shipped mistake.
 
-- **A player-visible change needs a `release-notes-vX.Y.Z.md` file.** The guide
-  treats a shipped version without one as an incomplete change. Player language,
-  symptom before fix, and never claim a fix that is not real — release notes are
-  read by players deciding whether to update.
+- **A player-visible change adds player-language notes to
+  `release-notes-vX.Y.Z.md`.** Player language, symptom before fix, and never
+  claim a fix that is not real — release notes are read by players deciding
+  whether to update. The tag workflow (`forgepact-tag.yml`) composes the
+  draft release body from these files, newest first, so writing the file in
+  the PR is what makes tagging need no extra step later. When a version has
+  no file yet, the workflow falls back to GitHub's own generated notes under
+  a banner — those must be rewritten into player language before the draft is
+  published, the same as a hand-written file would be.
 - **`plugin_build\build.bat dev` needs the literal `dev`.** Any other argument,
   including none at all, produces the *shipping* build. Ship builds compile out
   the research commands and the `BP_DIAG` counters, so a diagnostic that "does
