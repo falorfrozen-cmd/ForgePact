@@ -149,6 +149,34 @@ class MapRevealBehaviorTests(unittest.TestCase):
         self.assertScenario("never_ready/no_window")
         self.assertScenario("never_ready/distance")
 
+    def test_the_readiness_check_runs_once_per_creator(self):
+        # The hook asked CreatorIsReady directly and then asked MayPopulate,
+        # which asks CreatorIsReady again - two variable_instance_get calls
+        # for one decision, on the builtin every spawner polls. No behavioural
+        # assertion can see that, because the decision is identical; only the
+        # call count can.
+        self.assertScenario("ready_zone/timer_reads")
+        self.assertScenario("beacon/ready_creator_timer_reads")
+
+    def test_the_timer_counter_can_report_something_other_than_one(self):
+        # The positive control for the counter above. Window open, Beacon on,
+        # creator unready is the one case that pays two reads after the dedup
+        # (reveal asks and declines, then the Beacon asks for itself) - a
+        # transient zone-load case whose decision is unchanged. Without this,
+        # an instrument stuck at 1 would look like a pass everywhere.
+        self.assertScenario("beacon_and_window/window")
+        self.assertScenario("beacon_and_window/unready_creator")
+        self.assertScenario("beacon_and_window/timer_reads")
+
+    def test_the_lied_to_path_cost_is_printed(self):
+        # Finding 8's first threshold condition: after the dedup a lied-to
+        # creator costs exactly two runtime calls, so the object_index read is
+        # 50% of what is left. The threshold is 33%, so this passes - which
+        # deliberately moves the decision onto the measured timing ratio the
+        # research probe produces live.
+        self.assertScenario("liedto/callbuiltins")
+        self.assertScenario("liedto/object_index_share_pct")
+
     def test_the_beacon_lie_is_gated_by_the_same_invariant(self):
         # "Never answer 0 to an uninitialised creator" is a property of the
         # creator, not of whichever feature asked - the spawner comes out

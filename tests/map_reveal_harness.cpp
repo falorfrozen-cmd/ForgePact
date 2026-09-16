@@ -10,6 +10,12 @@
 // dispatched from HkPresent at the END of the frame. Only a test that calls
 // the hook at the right point in that order can tell the difference, and the
 // string assertions passed the whole time the ordering was wrong.
+//
+// The hook is compiled the way the PLAYER build sees it. Since 1.3.20 its
+// body also carries a research-only object_index probe (finding 8), which is
+// stripped by /DFORGEPACT_RELEASE and is not what these scenarios are about -
+// tests/test_release_hook_contract.py is what pins it out of the player build.
+#define FORGEPACT_RELEASE 1
 #include <atomic>
 #include <cmath>
 #include <cstdint>
@@ -32,10 +38,14 @@ struct RValue {
     RValue(const char* s) : m_Kind(VALUE_STRING), text(s) {}
     explicit RValue(CInstance* p) : m_Kind(VALUE_OBJECT), instance(p) {}
     double ToDouble() const { return number; }
+    int64_t ToInt64() const { return (int64_t)number; }
     bool ToBoolean() const { return number != 0; }
     std::string ToString() const { return text; }
     CInstance* ToInstance() const { return instance; }
 };
+#ifndef NULL_INDEX
+#define NULL_INDEX INT_MIN
+#endif
 struct CInstance {
     int id = 0;
     int object = 0;
@@ -49,6 +59,9 @@ struct Creator { int id; bool timerDefined; };
 struct World {
     int64_t room = 100;
     bool roomReadable = true;
+    // The live runner answers `room` as a REF, not a real; true switches
+    // the fake to a number so both kinds meet the same key derivation.
+    bool roomIsReal = false;
     double minimapInstance = 7000;   // objMinimap instance id; <0 = absent
     double grid = 500;               // minimapDiscoveredGrid; <0 = absent
     bool gridVarExists = true;
@@ -66,8 +79,22 @@ static Creator* findCreator(int id) {
     return nullptr;
 }
 
+// What one call through the hook costs the runner. The readiness check is one
+// variable_instance_get("enemyCreatorTimer") on the builtin every spawner
+// polls, so counting those is how "the check runs twice" is visible at all -
+// every decision the hook makes is identical either way, which is precisely
+// why a behavioural assertion cannot see the difference.
+struct CallCounts {
+    long total = 0;          // every CallBuiltin, whatever its name
+    long timerReads = 0;     // variable_instance_get(..., "enemyCreatorTimer")
+    long objectIndexReads = 0;
+};
+static CallCounts counts;
+static void resetCounts() { counts = CallCounts{}; }
+
 struct FakeRunner {
     RValue CallBuiltin(const char* name, std::vector<RValue> args) {
+        ++counts.total;
         const std::string key(name);
         if (key == "asset_get_index") {
             const std::string a = args[0].ToString();
@@ -97,10 +124,12 @@ struct FakeRunner {
             const std::string v = args[1].ToString();
             if (v == "minimapDiscoveredGrid") return RValue(world.grid);
             if (v == "object_index") {
+                ++counts.objectIndexReads;
                 if (args[0].m_Kind == VALUE_OBJECT && args[0].instance) return RValue((double)args[0].instance->object);
                 return RValue(-1.0);
             }
             if (v == "enemyCreatorTimer") {
+                ++counts.timerReads;
                 int id = -1;
                 if (args[0].m_Kind == VALUE_OBJECT && args[0].instance) id = args[0].instance->id;
                 else id = (int)args[0].ToDouble();
@@ -119,14 +148,24 @@ struct FakeRunner {
         return RValue();
     }
     AurieStatus GetGlobalInstance(CInstance** out) { *out = &g_GlobalInstance; return 0; }
-    AurieStatus GetInstanceMember(RValue, const char* name, RValue*& out) {
-        if (std::string(name) == "room" && world.roomReadable) {
-            g_RoomMember = RValue((double)world.room);
-            out = &g_RoomMember;
-            return 0;
-        }
+    // `room` is a BUILT-IN: the instance-member read never answers for it on
+    // the real runner, which is why RoomKey() returned INT64_MIN forever and
+    // the pack pass never opened a window. Kept, always failing, as the
+    // negative control that pins why this route was abandoned.
+    AurieStatus GetInstanceMember(RValue, const char*, RValue*& out) {
         out = nullptr;
         return 1;
+    }
+    // Measured live 2026-09-15 (`roomprobe`): GetBuiltin answers, as a
+    // VALUE_REF stringifying to "ref room Act_06_01". The fake returns a ref by
+    // default so the scenarios run against the shape the runner really
+    // produces, not a convenient number.
+    AurieStatus GetBuiltin(const char* name, CInstance*, int, RValue& out) {
+        if (std::string(name) != "room" || !world.roomReadable) return 1;
+        out = RValue();
+        if (world.roomIsReal) { out.m_Kind = VALUE_REAL; out.number = (double)world.room; }
+        else { out.m_Kind = VALUE_REF; out.text = "ref room Act_" + std::to_string(world.room); }
+        return 0;
     }
 };
 static FakeRunner runnerStorage;
@@ -189,7 +228,18 @@ int main() {
     mgr().SetPacks(true);
     mgr().OnFrame(20);
     checkInt("ready_zone/window", mgr().SpawnWindowLeft(), 900);
+    resetCounts();
     check("ready_zone/distance", distanceFor(1), 0.0);
+    // The readiness check used to run twice for the same creator on this
+    // path: once standalone, then again inside MayPopulate. Same decision,
+    // twice the runtime calls, on the builtin every spawner polls.
+    checkInt("ready_zone/timer_reads", counts.timerReads, 1);
+    // Finding 8's first threshold condition, printed as a number rather than
+    // argued in a comment: what one lied-to creator costs the runner, and how
+    // much of that is the object_index read a struct read would remove.
+    checkInt("liedto/callbuiltins", counts.total, 2);
+    checkInt("liedto/object_index_share_pct",
+             counts.total ? (100 * counts.objectIndexReads) / counts.total : 0, 50);
 
     // --- 2. THE REGRESSION: a new zone, consumed before the next Present ----
     // The room, minimap instance and grid all change and the new zone's
@@ -290,7 +340,29 @@ int main() {
     g_BeWakeRadius = 0.0;                  // no radius limit, so only readiness gates
     checkInt("beacon/reveal_is_off", mgr().SpawnWindowLeft(), 0);
     check("beacon/unready_creator", distanceFor(40), kRealDistance);
+    resetCounts();
     check("beacon/ready_creator", distanceFor(41), 0.0);
+    // Reveal off means MayPopulate short-circuits on WantsPackSpawn(), so the
+    // Beacon path already paid exactly one readiness read and still does.
+    checkInt("beacon/ready_creator_timer_reads", counts.timerReads, 1);
+
+    // --- 10. the counter's positive control --------------------------------
+    // A scenario whose expected count is something other than 1, proving the
+    // counter can report a difference at all. Window open, Beacon on, creator
+    // unready: reveal asks (and declines), then the Beacon asks for itself.
+    // This is the one accepted regression of the dedup - a transient
+    // zone-load case whose decision is identical either way.
+    world = World{};
+    world.creators = { { 50, true } };
+    mgr().SetEnabled(false);
+    mgr().SetEnabled(true);
+    mgr().SetPacks(true);
+    mgr().OnFrame(300);
+    checkInt("beacon_and_window/window", mgr().SpawnWindowLeft(), 900);
+    world.creators.push_back({ 51, false });
+    resetCounts();
+    check("beacon_and_window/unready_creator", distanceFor(51), kRealDistance);
+    checkInt("beacon_and_window/timer_reads", counts.timerReads, 2);
     g_BeSpawnNear = false;
     g_BeaconActive = false;
 
