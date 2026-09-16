@@ -176,6 +176,34 @@ class Dependencies(unittest.TestCase):
         self.assertTrue(any("import webview" in line for line in lines))
 
 
+class BuildInfoMetadataIsActuallyRead(unittest.TestCase):
+    """v1.3.20's first dry run recorded `cl_version` as cl's usage line and
+    `runner_image` as "-". Both steps ran green; only the zip's
+    BUILD-INFO.json showed the values were wrong."""
+
+    def test_cl_redirects_stdout_before_stderr(self):
+        cl_calls = [line for line in code_lines(workflow_text()) if line.startswith("cl ")]
+        self.assertTrue(cl_calls, "positive control: the banner step's cl call is found")
+        for call in cl_calls:
+            # cmd applies redirections left to right, so `2>&1 > file` sends
+            # stderr -- where the banner goes -- to the log, not the file.
+            self.assertNotIn("2>&1 >", call)
+            self.assertRegex(call, r">\s*\S.*2>&1")
+
+    def test_the_banner_is_picked_by_content(self):
+        self.assertTrue(any("Compiler Version" in line for line in code_lines(workflow_text())))
+
+    def test_runner_image_comes_from_the_shell_not_the_env_context(self):
+        # `${{ env.X }}` sees only workflow-defined variables, never the
+        # runner machine's own ImageOS/ImageVersion.
+        yaml_lines = [
+            line for line in workflow_text().splitlines()
+            if not line.strip().startswith("#")
+        ]
+        self.assertFalse(any("env.Image" in line for line in yaml_lines))
+        self.assertTrue(any("${ImageOS" in line for line in code_lines(workflow_text())))
+
+
 class Permissions(unittest.TestCase):
     def test_no_job_has_actions_write(self):
         self.assertNotIn("actions: write", workflow_text())
