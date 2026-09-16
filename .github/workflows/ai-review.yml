@@ -121,7 +121,7 @@ jobs:
       # is visible to anyone with read access to this repository.
       - name: Keep the run's full result
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: claude-execution-output
           path: ${{ runner.temp }}/claude-execution-output.json
