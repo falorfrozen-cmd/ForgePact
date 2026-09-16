@@ -1458,6 +1458,13 @@ def plugin_boot_count(cfg=None) -> int:
             # appends to out.txt, so the remaining case needs an external writer
             # that grows the file while rewriting earlier markers. Recorded as
             # "not covered", not as "cannot happen".
+            #
+            # ALSO NOT COVERED (measured 2026-09-16): a same-size rewrite in
+            # place that lands inside the same filesystem timestamp tick as the
+            # previous write leaves st_mtime_ns unchanged, so it reads as
+            # "nothing was written" and keeps the stale count. The rewrite test
+            # hit this about 2% of the time locally and once in CI. Same
+            # reasoning as above: only an external writer produces it.
             grew = st.st_size > _BOOT_CACHE["size"]
             touched = st.st_mtime_ns != _BOOT_CACHE["mtime_ns"]
             if (_BOOT_CACHE["path"] != key
