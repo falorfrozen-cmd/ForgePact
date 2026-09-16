@@ -273,6 +273,7 @@ static void RunCommand(const std::string& line);
 #include <ForgePact/MapRevealManager.hpp>
 #include <ForgePact/StatsManager.hpp>
 #include <ForgePact/RelicFilterMod.hpp>
+#include <ForgePact/ProspectWindowMod.hpp>
 #include <ForgePact/PetQuestCollectorMod.hpp>
 #include <ForgePact/DensityManager.hpp>
 #include <ForgePact/DropManager.hpp>
@@ -9328,6 +9329,405 @@ static void CiNativeTraceReset()
 
 #endif // FORGEPACT_RELEASE (CiFindNearestQuestItem .. CiCaptureStackWalk)
 
+#ifndef FORGEPACT_RELEASE
+// ---- prospectprobe: the prospect window Phase 0 instrument (issue #9) --------
+// What sizes the prospecting cube's input grid (`UI_Prospect_obj`) is not
+// known; docs/prospect-window-research.md holds the static search, the
+// hypotheses and the live procedure this instrument serves. Research build
+// only, never in kPlayerCommands, dispatched from HandleProspectCommand.
+//
+// Every candidate the static search found is native-detoured in ONE build
+// (agents.md: batch every candidate before asking for a relaunch), with
+// MmCreateHook at the function's own address - the same attach route as
+// `citrace nativetrace`, because a table-only hook is blind to this build's
+// direct `call rel32` sites. CheckPlayerInteraction rides in the same table as
+// the positive control: a 0 there voids every other row's count.
+//
+// Two bounded writes exist, both research-only: `set` writes one numeric
+// variable of one named instance (never creating one), and `override` replaces
+// one numeric argument of a detoured row for a counted number of calls. Every
+// other subcommand only counts and logs. Do not run `citrace nativetrace` in
+// the same session: it detours two of the same addresses, and a second
+// MmCreateHook on an address already hooked fails for that row.
+static constexpr long kPpLogBudget = 6;          // logged calls per row per `arm`
+static constexpr long kPpRefusalLogBudget = 6;   // "override not applied" lines per override
+
+static std::atomic<bool> g_PpArmed{ false };
+static std::string g_PpOverrideLabel;             // game thread only (IPC poll and detours)
+static int g_PpOverrideArg = -1;
+static double g_PpOverrideValue = 0.0;
+static volatile long g_PpOverrideLeft = 0;
+static volatile long g_PpOverrideRefusalsLogged = 0;
+
+// `self` may be a struct (constructors such as s_ItemGridInfo, struct
+// closures), not an instance. Asking object_get_name about a struct's missing
+// object_index would hand a builtin `undefined`, and a GML type error inside a
+// builtin is the runner's fatal dialog rather than a catchable exception - so
+// only a numeric object_index is described as an instance.
+static std::string PpDescribeSelf(CInstance* inst)
+{
+    if (!inst) return "(null)";
+    try {
+        RValue r = inst->ToRValue();
+        RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { r, RValue("object_index") });
+        const bool numeric = oi.m_Kind == VALUE_REAL || oi.m_Kind == VALUE_INT32 || oi.m_Kind == VALUE_INT64;
+        if (!numeric || oi.ToDouble() < 0) return "(not an instance: " + Describe(r) + ")";
+        std::string d = CiDescribeInstance(inst);
+        if (d == "(unresolved)") d += " " + Describe(r);
+        return d;
+    } catch (...) { return "(unresolved)"; }
+}
+
+static bool PpIsNumber(const RValue& v)
+{
+    return v.m_Kind == VALUE_REAL || v.m_Kind == VALUE_INT32 || v.m_Kind == VALUE_INT64;
+}
+
+static void PpObserve(const char* label, long n, volatile long* logged, CInstance* S, CInstance* O, int argc, RValue** A)
+{
+    if (g_PpOverrideLeft > 0 && g_PpOverrideLabel == label) {
+        const int i = g_PpOverrideArg;
+        if (A && i >= 0 && i < argc && A[i] && PpIsNumber(*A[i])) {
+            const std::string was = Describe(*A[i]);
+            *A[i] = RValue(g_PpOverrideValue);
+            InterlockedDecrement(&g_PpOverrideLeft);
+            Out(std::string("prospectprobe override ") + label + " a" + std::to_string(i) + ": was=" + was
+                + " now=" + Describe(*A[i]) + " (left=" + std::to_string(g_PpOverrideLeft) + ")");
+        } else if (InterlockedIncrement(&g_PpOverrideRefusalsLogged) <= kPpRefusalLogBudget) {
+            // Not consumed: the next call of this row is tried again.
+            Out(std::string("prospectprobe override ") + label + " a" + std::to_string(i) + ": not applied (argc="
+                + std::to_string(argc) + ((A && i >= 0 && i < argc && A[i]) ? ", arg is " + Describe(*A[i]) : std::string(", no such argument"))
+                + "; only a numeric argument is replaced)");
+        }
+    }
+    if (!g_PpArmed.load() || *logged >= kPpLogBudget) return;
+    if (InterlockedIncrement(logged) > kPpLogBudget) return;
+    try {
+        Out(std::string("prospectprobe ") + label + " #" + std::to_string(n)
+            + " self=" + PpDescribeSelf(S) + " other=" + PpDescribeSelf(O)
+            + " argc=" + std::to_string(argc) + AggroArgs(argc, A));
+    } catch (...) {}
+}
+
+#define PROSPECTPROBE_DETOUR(SAFE, LABEL) \
+    static PFUNC_YYGMLScript g_PpOrig_##SAFE = nullptr; \
+    static volatile long g_PpCalls_##SAFE = 0; \
+    static volatile long g_PpLogged_##SAFE = 0; \
+    static RValue& PpDetour_##SAFE(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) { \
+        const long n = InterlockedIncrement(&g_PpCalls_##SAFE); \
+        PpObserve(LABEL, n, &g_PpLogged_##SAFE, S, O, argc, A); \
+        return g_PpOrig_##SAFE ? g_PpOrig_##SAFE(S, O, R, argc, A) : R; \
+    }
+
+// One row per candidate in docs/prospect-window-research.md § Static search.
+// SAFE, label, SDK constant. The runtime name is always the hs-game-sdk
+// constant's own value - never retyped here - so a row that prints `not
+// found` is a finding about the runtime, not a typo.
+#define PROSPECTPROBE_TARGETS(X) \
+    /* prospect family */ \
+    X(UiAProspectButton, "UiAProspectButton", gml_Script_UiAProspectButton) \
+    X(Struct120, "___struct___120@UiAProspectButton", gml_Script____struct___120_UiAProspectButton_DefineProspectCombos) \
+    X(Struct121, "___struct___121@UiAProspectButton", gml_Script____struct___121_UiAProspectButton_DefineProspectCombos) \
+    X(Struct122, "___struct___122@___struct___121", gml_Script____struct___122____struct___121_UiAProspectButton_DefineProspectCombos) \
+    X(Struct123, "___struct___123@UiAProspectButton", gml_Script____struct___123_UiAProspectButton_DefineProspectCombos) \
+    X(Struct124, "___struct___124@___struct___123", gml_Script____struct___124____struct___123_UiAProspectButton_DefineProspectCombos) \
+    X(ProspectCreate1038, "UI_Prospect_obj anon@1038", gml_Script_anon_1038_gml_Object_UI_Prospect_obj_Create_0) \
+    X(ProspectCreate2729, "UI_Prospect_obj anon@2729", gml_Script_anon_2729_gml_Object_UI_Prospect_obj_Create_0) \
+    X(ProspectCreate3551, "UI_Prospect_obj anon@3551", gml_Script_anon_3551_gml_Object_UI_Prospect_obj_Create_0) \
+    X(CubeCreate320, "Prospect_Cube_obj anon@320", gml_Script_anon_320_gml_Object_Prospect_Cube_obj_Create_0) \
+    X(JournalButton324, "UI_Button_Journal_Prospect_obj anon@324", gml_Script_anon_324_gml_Object_UI_Button_Journal_Prospect_obj_Create_0) \
+    X(JournalTab1003, "UI_Journal_Prospecting_obj anon@1003", gml_Script_anon_1003_gml_Object_UI_Journal_Prospecting_obj_Create_0) \
+    X(NodeParent1508, "UI_Node_Parent_obj anon@1508", gml_Script_anon_1508_gml_Object_UI_Node_Parent_obj_Create_0) \
+    X(NodeParent1909, "UI_Node_Parent_obj anon@1909", gml_Script_anon_1909_gml_Object_UI_Node_Parent_obj_Create_0) \
+    /* UI framework (UiFuncs) */ \
+    X(UiCreate, "UiCreate", gml_Script_UiCreate) \
+    X(UiCreateNode, "UiCreateNode", gml_Script_UiCreateNode) \
+    X(UiSetGrid, "UiSetGrid", gml_Script_UiSetGrid) \
+    X(UiSetGridArray, "UiSetGridArray", gml_Script_UiSetGridArray) \
+    X(UiResetGrid, "UiResetGrid", gml_Script_UiResetGrid) \
+    X(UiMoveNode, "UiMoveNode", gml_Script_UiMoveNode) \
+    X(UiCreateSameLevel, "UiCreateSameLevel", gml_Script_UiCreateSameLevel) \
+    X(UiCreateContainer, "UiCreateContainer", gml_Script_UiCreateContainer) \
+    X(UiContainerChange, "UiContainerChange", gml_Script_UiContainerChange) \
+    X(UiChangeVisibility, "UiChangeVisibility", gml_Script_UiChangeVisibility) \
+    X(UiSetRef, "UiSetRef", gml_Script_UiSetRef) \
+    X(UiSetNodeScale, "UiSetNodeScale", gml_Script_UiSetNodeScale) \
+    X(UiRemoveNode, "UiRemoveNode", gml_Script_UiRemoveNode) \
+    X(Struct408, "___struct___408@UiCreate", gml_Script____struct___408_UiCreate_UiFuncs) \
+    X(Struct409, "___struct___409@UiCreateNode", gml_Script____struct___409_UiCreateNode_UiFuncs) \
+    X(Struct410, "___struct___410@UiCreateContainer", gml_Script____struct___410_UiCreateContainer_UiFuncs) \
+    /* inventory-grid family */ \
+    X(InventoryResetTabs, "InventoryResetTabs", gml_Script_InventoryResetTabs) \
+    X(InventoryInitGrids, "InventoryInitGrids", gml_Script_InventoryInitGrids) \
+    X(GetInventoryGridNode, "GetInventoryGridNode", gml_Script_GetInventoryGridNode) \
+    X(UiResizeInventoryNodes, "UiResizeInventoryNodes", gml_Script_UiResizeInventoryNodes) \
+    X(SItemOperation, "s_ItemOperation", gml_Script_s_ItemOperation) \
+    X(SInvNode, "s_InvNode", gml_Script_s_InvNode) \
+    X(InventoryGridAddItem, "InventoryGridAddItem", gml_Script_InventoryGridAddItem) \
+    X(GridHasSpace, "GridHasSpace", gml_Script_GridHasSpace) \
+    X(InventoryGridHasSpace, "InventoryGridHasSpace", gml_Script_InventoryGridHasSpace) \
+    X(GridAddItem, "GridAddItem", gml_Script_GridAddItem) \
+    X(GetGridTypeName, "GetGridTypeName", gml_Script_GetGridTypeName) \
+    X(GridClear, "GridClear", gml_Script_GridClear) \
+    X(ParseItemToGrid, "ParseItemToGrid", gml_Script_ParseItemToGrid) \
+    X(SItemGridInfo, "s_ItemGridInfo", gml_Script_s_ItemGridInfo) \
+    X(GetItemPreferredGrid, "GetItemPreferredGrid", gml_Script_GetItemPreferredGrid) \
+    X(InvGridClearItemNode, "InvGridClearItemNode", gml_Script_InvGridClearItemNode) \
+    X(GetStackOpLocationFromGridType, "GetStackOpLocationFromGridType", gml_Script_GetStackOpLocationFromGridType) \
+    /* controls: fire constantly / on a click, through the same installer */ \
+    X(PlayerMouseAction, "PlayerMouseAction", gml_Script_PlayerMouseAction) \
+    X(CheckPlayerInteraction, "CheckPlayerInteraction", gml_Script_CheckPlayerInteraction)
+
+#define PP_DEFINE_DETOUR(SAFE, LABEL, CONSTANT) PROSPECTPROBE_DETOUR(SAFE, LABEL)
+PROSPECTPROBE_TARGETS(PP_DEFINE_DETOUR)
+#undef PP_DEFINE_DETOUR
+#undef PROSPECTPROBE_DETOUR
+
+struct PpTarget {
+    const char*        label;
+    const char*        runtimeName;   // the SDK constant's value, used as-is
+    const char*        hookId;
+    PVOID              detour;
+    PFUNC_YYGMLScript* origSlot;
+    volatile long*     calls;
+    volatile long*     logged;
+    std::atomic<bool>  installed;
+    long               lastShown;     // calls at the previous `show`
+};
+
+#define PP_ENTRY(SAFE, LABEL, CONSTANT) \
+    { LABEL, HeroSiege::Scripts::CONSTANT.data(), "fp_pp_" #SAFE, (PVOID)PpDetour_##SAFE, &g_PpOrig_##SAFE, \
+      &g_PpCalls_##SAFE, &g_PpLogged_##SAFE, false, 0 },
+static PpTarget g_PpTargets[] = {
+    PROSPECTPROBE_TARGETS(PP_ENTRY)
+};
+#undef PP_ENTRY
+#undef PROSPECTPROBE_TARGETS
+
+static PpTarget* PpFindRow(const std::string& label)
+{
+    for (PpTarget& t : g_PpTargets) if (label == t.label) return &t;
+    return nullptr;
+}
+
+// Same resolution as CiNativeAddressOf: name -> CScript -> the compiled
+// function. The address is refused unless it is committed, executable code
+// inside Hero_Siege.exe's own image - which also refuses the case where some
+// table hook already swapped this entry for a plugin detour, since patching
+// that would hook the plugin instead of the game. The check comes before
+// MmCreateHook, never after.
+static PVOID PpResolve(const PpTarget& t, std::string& why)
+{
+    PVOID p = nullptr;
+    AurieStatus st = g_Yytk->GetNamedRoutinePointer(t.runtimeName, &p);
+    if (!AurieSuccess(st) || !p) { why = "not found st=" + std::to_string((int)st); return nullptr; }
+    CScript* sc = reinterpret_cast<CScript*>(p);
+    if (!ReadablePtr(sc, sizeof(CScript)) || !ReadablePtr(sc->m_Functions, sizeof(*sc->m_Functions))) {
+        why = "refused (name resolved, but not to a readable script record)";
+        return nullptr;
+    }
+    PVOID fn = (PVOID)sc->m_Functions->m_ScriptFunction;
+    if (!fn) { why = "refused (script record carries no function)"; return nullptr; }
+    if (!AddrIsExecutableInModule(GetModuleHandleA(nullptr), fn)) {
+        why = "refused (function address is not executable code inside Hero_Siege.exe - a table hook may hold this entry)";
+        return nullptr;
+    }
+    return fn;
+}
+
+static void PpInstall(const std::vector<std::string>& filters)
+{
+    HMODULE mainMod = GetModuleHandleA(nullptr);
+    int ok = 0, failed = 0, skipped = 0;
+    for (PpTarget& t : g_PpTargets) {
+        if (!filters.empty()) {
+            const std::string ll = Lower(t.label);
+            bool match = false;
+            for (const std::string& f : filters) if (ll.find(Lower(f)) != std::string::npos) { match = true; break; }
+            if (!match) { ++skipped; continue; }
+        }
+        if (t.installed.load()) { Out(std::string("prospectprobe hook: ") + t.label + " already detoured"); ++ok; continue; }
+        std::string why;
+        PVOID src = PpResolve(t, why);
+        if (!src) { Out(std::string("prospectprobe hook: ") + t.label + " " + why); ++failed; continue; }
+        PVOID tramp = nullptr;
+        AurieStatus hs = MmCreateHook(g_ArSelfModule, t.hookId, src, t.detour, &tramp);
+        if (!AurieSuccess(hs) || !tramp) {
+            Out(std::string("prospectprobe hook: ") + t.label + " MmCreateHook failed st=" + std::to_string((int)hs));
+            ++failed;
+            continue;
+        }
+        *t.origSlot = reinterpret_cast<PFUNC_YYGMLScript>(tramp);
+        t.installed.store(true);
+        char b[320];
+        sprintf_s(b, "prospectprobe hook: detoured %s at exe+0x%llX", t.label,
+                  (unsigned long long)((char*)src - (char*)mainMod));
+        Out(b);
+        ++ok;
+    }
+    Out("prospectprobe hook: " + std::to_string(ok) + " detoured, " + std::to_string(failed) + " failed"
+        + (skipped ? ", " + std::to_string(skipped) + " not selected" : std::string()) + ".");
+    Out("  Next: `prospectprobe show` - CheckPlayerInteraction must already be climbing, or nothing here counts.");
+}
+
+static void PpZeroCounters()
+{
+    for (PpTarget& t : g_PpTargets) {
+        InterlockedExchange(t.calls, 0);
+        InterlockedExchange(t.logged, 0);
+        t.lastShown = 0;
+    }
+}
+
+static void PpArm()
+{
+    PpZeroCounters();
+    g_PpArmed.store(true);
+    Out("prospectprobe arm: counters and log budgets reset; the next " + std::to_string(kPpLogBudget)
+        + " calls of every detoured row are logged. Open the prospect window, then `prospectprobe show`.");
+}
+
+static void PpShow()
+{
+    int installed = 0;
+    for (const PpTarget& t : g_PpTargets) if (t.installed.load()) ++installed;
+    Out("prospectprobe show: " + std::to_string(installed) + "/" + std::to_string((int)(sizeof(g_PpTargets) / sizeof(g_PpTargets[0])))
+        + " rows detoured, " + (g_PpArmed.load() ? "armed" : "not armed")
+        + (g_PpOverrideLeft > 0 ? ", override pending on " + g_PpOverrideLabel + " a" + std::to_string(g_PpOverrideArg)
+                                  + " (" + std::to_string(g_PpOverrideLeft) + " left)" : std::string()));
+    long control = -1;
+    for (PpTarget& t : g_PpTargets) {
+        const long calls = *t.calls;
+        if (std::string(t.label) == "CheckPlayerInteraction") { control = t.installed.load() ? calls : -1; continue; }
+        std::string line = std::string("  ") + t.label + ": ";
+        if (!t.installed.load()) line += "(not detoured)";
+        else {
+            line += "calls=" + std::to_string(calls) + " since=" + std::to_string(calls - t.lastShown);
+            if (*t.logged >= kPpLogBudget) line += " (log budget spent)";
+        }
+        t.lastShown = calls;
+        Out(line);
+    }
+    if (control < 0) Out("CheckPlayerInteraction: not detoured - every count above is uncontrolled.");
+    else Out("CheckPlayerInteraction: calls=" + std::to_string(control)
+             + (control == 0 ? "   <-- 0 voids every row above (the instrument is not seeing calls)" : ""));
+}
+
+static void PpReset()
+{
+    PpZeroCounters();
+    g_PpArmed.store(false);
+    Out("prospectprobe reset: counters zeroed, disarmed.");
+}
+
+// Built-in instance variables always exist and cannot be created by a write,
+// so they are accepted even if variable_instance_exists answers false for
+// them (whether it does on this runner is unmeasured - the output prints the
+// answer). `x` is the write control in the live procedure.
+static bool PpIsBuiltinVar(const std::string& var)
+{
+    static const char* const kBuiltins[] = { "x", "y", "depth", "visible", "image_xscale", "image_yscale", "image_alpha" };
+    for (const char* b : kBuiltins) if (var == b) return true;
+    return false;
+}
+
+static void PpSet(const std::string& objName, int nth, const std::string& var, double value)
+{
+    const std::string tag = "prospectprobe set " + objName + "[" + std::to_string(nth) + "]." + var;
+    try {
+        const int idx = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(objName) }).ToDouble();
+        if (idx < 0) { Out(tag + ": refused: unknown object; no write made"); return; }
+        const int total = (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)idx) }).ToDouble();
+        if (nth < 0 || nth >= total) {
+            Out(tag + ": refused: no such instance (" + std::to_string(total) + " live); no write made");
+            return;
+        }
+        // Passed through with whatever kind instance_find returns (VALUE_REF on
+        // this runner); the kind never decides whether the write happens.
+        RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue((double)idx), RValue((double)nth) });
+        const bool exists = g_Yytk->CallBuiltin("variable_instance_exists", { inst, RValue(var) }).ToBoolean();
+        if (!exists && !PpIsBuiltinVar(var)) { Out(tag + ": refused: no such variable (exists=false); no write made"); return; }
+        RValue was = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(var) });
+        if (!PpIsNumber(was) || !std::isfinite(was.ToDouble())) {
+            Out(tag + ": refused: " + var + " is " + Describe(was) + ", not a number; no write made");
+            return;
+        }
+        g_Yytk->CallBuiltin("variable_instance_set", { inst, RValue(var), RValue(value) });
+        RValue now = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(var) });
+        const bool ok = PpIsNumber(now) && std::fabs(now.ToDouble() - value) < 1e-9;
+        Out(tag + ": was=" + Describe(was) + " now=" + Describe(now) + " (readback " + (ok ? "ok" : "MISMATCH") + ")"
+            + " exists=" + (exists ? "true" : "false (built-in)"));
+    } catch (...) { Out(tag + ": EXCEPTION; the write may or may not have happened - read it back with oget"); }
+}
+
+static void PpOverride(const std::string& label, int argIndex, double value, long calls)
+{
+    PpTarget* row = PpFindRow(label);
+    if (!row) { Out("prospectprobe override: no row labelled '" + label + "' (labels are listed by `prospectprobe show`)"); return; }
+    if (!row->installed.load()) { Out("prospectprobe override: " + label + " is not detoured - hook it first"); return; }
+    if (argIndex < 0 || calls <= 0) { Out("prospectprobe override: argIndex must be >= 0 and calls >= 1"); return; }
+    g_PpOverrideLabel = row->label;
+    g_PpOverrideArg = argIndex;
+    g_PpOverrideValue = value;
+    InterlockedExchange(&g_PpOverrideRefusalsLogged, 0);
+    InterlockedExchange(&g_PpOverrideLeft, calls);
+    Out("prospectprobe override: the next " + std::to_string(calls) + " call(s) of " + label + " get a"
+        + std::to_string(argIndex) + "=" + std::to_string(value) + " if that argument is numeric. Reopen the window.");
+}
+
+static void PpOverrideClear()
+{
+    InterlockedExchange(&g_PpOverrideLeft, 0);
+    Out("prospectprobe override: cleared.");
+}
+
+static void PpUsage()
+{
+    Out("prospectprobe (research build only) - prospect window Phase 0, see docs/prospect-window-research.md");
+    Out("  hook [substr ...]                      native-detour every candidate row (or rows whose label contains a substring)");
+    Out("  arm | show | reset                     log the next calls / counts per row + control / zero and disarm");
+    Out("  set <Obj> <nth> <var> <number>         write one existing numeric variable of one instance, read back");
+    Out("  override <label> <argIndex> <number> [calls=1] | override clear");
+}
+
+// Labels contain spaces ("UI_Prospect_obj anon@1038"), so `override` takes the
+// label as everything before the last two or three numeric tokens.
+static void PpOverrideCommand(const std::vector<std::string>& tok)
+{
+    if (tok.size() == 2 && Lower(tok[1]) == "clear") { PpOverrideClear(); return; }
+    auto isNum = [](const std::string& s) { try { size_t k = 0; (void)std::stod(s, &k); return k == s.size(); } catch (...) { return false; } };
+    size_t n = tok.size();
+    size_t numeric = 0;
+    while (numeric < 3 && n - numeric > 2 && isNum(tok[n - 1 - numeric])) ++numeric;
+    if (numeric < 2) { PpUsage(); return; }
+    const size_t first = n - numeric;
+    std::string label;
+    for (size_t i = 1; i < first; ++i) label += (i > 1 ? " " : "") + tok[i];
+    const int argIndex = (int)std::stod(tok[first]);
+    const double value = std::stod(tok[first + 1]);
+    const long calls = numeric == 3 ? (long)std::stod(tok[first + 2]) : 1;
+    PpOverride(label, argIndex, value, calls);
+}
+
+static void PpCommand(const std::string& rest)
+{
+    std::vector<std::string> tok;
+    { std::stringstream ss(rest); std::string w; while (ss >> w) tok.push_back(w); }
+    if (tok.empty()) { PpUsage(); return; }
+    const std::string sub = Lower(tok[0]);
+    if (sub == "hook") PpInstall(std::vector<std::string>(tok.begin() + 1, tok.end()));
+    else if (sub == "arm") PpArm();
+    else if (sub == "show") PpShow();
+    else if (sub == "reset") PpReset();
+    else if (sub == "set" && tok.size() == 5) {
+        try { PpSet(tok[1], std::stoi(tok[2]), tok[3], std::stod(tok[4])); }
+        catch (...) { Out("prospectprobe set: nth must be an integer and the value a number; no write made"); }
+    }
+    else if (sub == "override") PpOverrideCommand(tok);
+    else PpUsage();
+}
+#endif // FORGEPACT_RELEASE (prospectprobe)
+
 static bool HhIsPlayerInstance(CInstance* instance)
 {
     if (!instance) return false;
@@ -14051,6 +14451,20 @@ static void MBuffTick()
     ApplyBuff(g_MBuffId, g_MBuffV0, g_MBuffV1, 90.0);
 }
 
+// Prospect window (issue #9) commands live in their own function for the same
+// reason as the Headhunter's: RunCommand's else-if chain is at MSVC's nesting
+// limit (C1061). Research stage: only the Phase 0 instrument, research build
+// only - the player-facing toggle arrives with Stage B, once the live session
+// has established what sizes the window (docs/prospect-window-research.md).
+static bool HandleProspectCommand(const std::string& lc, const std::string& rest)
+{
+#ifndef FORGEPACT_RELEASE
+    if (lc == "prospectprobe") { PpCommand(rest); return true; }
+#endif
+    (void)lc; (void)rest;
+    return false;
+}
+
 // Headhunter + player-context diagnostics live in their own function so the
 // main RunCommand else-if chain stays below the compiler nesting limit (C1061).
 static bool HandleHeadhunterCommand(const std::string& lc, const std::string& rest)
@@ -14713,6 +15127,7 @@ static void RunCommand(const std::string& line)
 #endif
 
     if (HandleHeadhunterCommand(lc, rest)) return;
+    if (HandleProspectCommand(lc, rest)) return;
     if (lc == "relicfilter") {
         bool enable = (rest == "1" || rest == "true" || rest == "on");
         // Hooking DropRelic while character selection is still running stalls the
