@@ -111,6 +111,16 @@ directory, calls them, and writes the result:
   concatenated version -- it is identical every time and would otherwise
   spend roughly 800 characters of that budget per repetition for no new
   information.
+
+**Published notes** (`--published-notes --version X`) is the third mode, used
+by `forgepact-notes-cleanup.yml` once a release is published. It prints the
+bare filenames of every `release-notes-v<version>.md` at or below `X`,
+numerically oldest first, one per line, and nothing else. Once `X` is published
+its own file and every skipped version it rolled up are on the release page,
+and anything older was carried by an earlier published release, so all of them
+are safe to delete. A version with no file of its own still lists the older
+ones. Versions above `X` are never listed. A malformed version exits non-zero
+having printed nothing, so the workflow has nothing to delete.
 """
 
 from __future__ import annotations
@@ -286,6 +296,12 @@ def notes_plan(available: Iterable[str], version: str, previous: str) -> NotesPl
     return NotesPlan(top_from_file=top_from_file, skipped=skipped)
 
 
+def published_notes(available: Iterable[str], version: str) -> List[str]:
+    """Versions whose notes a published `version` has made redundant, oldest first."""
+    ceiling = as_numbers(version)
+    return sorted((v for v in available if as_numbers(v) <= ceiling), key=as_numbers)
+
+
 def _normalise(text: str) -> str:
     return text.replace("\r\n", "\n").strip()
 
@@ -445,7 +461,31 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--generated", help="path to GitHub's generated notes (compose-notes mode)")
     parser.add_argument("--out", help="path to write the composed body to (compose-notes mode)")
 
+    parser.add_argument(
+        "--published-notes",
+        action="store_true",
+        help="list the notes files a published --version makes redundant",
+    )
+
     args = parser.parse_args(argv)
+
+    if args.published_notes:
+        if args.compose_notes:
+            parser.error("--published-notes and --compose-notes are separate modes")
+        if not args.version:
+            parser.error("--published-notes needs --version")
+        if args.tag or args.existing or args.generated or args.out or args.previous is not None:
+            parser.error("--published-notes takes only --version and --root")
+        version = args.version.strip()
+        if version.startswith(PREFIX):
+            version = version[len(PREFIX):]
+        if not SHAPE.match(version):
+            print(f"{args.version!r} is not a version this can list notes for.", file=sys.stderr)
+            return 1
+        available = note_versions(p.name for p in args.root.iterdir())
+        for v in published_notes(available, version):
+            print(f"release-notes-v{v}.md")
+        return 0
 
     if args.compose_notes:
         if not args.version or not args.generated or not args.out:
