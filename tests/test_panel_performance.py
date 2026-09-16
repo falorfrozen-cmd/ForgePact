@@ -181,10 +181,21 @@ class BootCountTests(unittest.TestCase):
 
         self.write(old)
         self.assertEqual(forgepact.plugin_boot_count(self.cfg), 2)
+        counted_mtime = self.log.stat().st_mtime_ns
         with self.log.open("r+b") as fh:
             fh.truncate(0)
             fh.seek(0)
             fh.write(new.encode("utf-8"))
+        # FLAKED 2026-09-16 (about 2% locally, and once in CI run 35097983691):
+        # the rewrite can land inside the same filesystem timestamp tick as the
+        # first write, so st_mtime_ns does not move and the cache is - by its
+        # documented design - trusted. That same-tick case is recorded as not
+        # covered in plugin_boot_count; what this test pins is that a rewrite
+        # the metadata CAN see is recounted, so make the clock visibly move.
+        if self.log.stat().st_mtime_ns == counted_mtime:
+            st = self.log.stat()
+            os.utime(self.log, ns=(st.st_atime_ns, counted_mtime + 1_000_000_000))
+        self.assertNotEqual(self.log.stat().st_mtime_ns, counted_mtime, "fixture sanity")
         self.assertEqual(naive_boot_count(self.log), 1, "fixture sanity")
         self.assertMatchesNaive("rewrite preserving the trailing bytes")
 
