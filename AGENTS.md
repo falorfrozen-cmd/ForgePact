@@ -62,7 +62,11 @@ each has already cost a shipped mistake.
   the PR is what makes tagging need no extra step later. When a version has
   no file yet, the workflow falls back to GitHub's own generated notes under
   a banner — those must be rewritten into player language before the draft is
-  published, the same as a hand-written file would be.
+  published, the same as a hand-written file would be. **Once a release is
+  published, delete the notes files it carried** (its own and every skipped
+  version it rolled up): the published release page is then the record, and
+  git history keeps the file. Only unpublished versions' notes live in the
+  tree, so the repo root never accumulates them.
 - **`plugin_build\build.bat dev` needs the literal `dev`.** Any other argument,
   including none at all, produces the *shipping* build. Ship builds compile out
   the research commands and the `BP_DIAG` counters, so a diagnostic that "does
