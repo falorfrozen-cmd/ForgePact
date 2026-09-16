@@ -213,13 +213,14 @@ class TestRelicFilterContract(unittest.TestCase):
         self.assertIn("GlobalMemoryStatusEx", self.plugin_code)
         self.assertIn("free RAM", self.plugin_code)
 
-    def test_stall_watchdog_is_present_in_every_build(self):
-        # Names the culprit when frames stop arriving; must not be dev-only.
+    def test_stall_watchdog_is_present_in_the_research_build(self):
+        # Names the culprit when frames stop arriving. The player build does
+        # not carry it - see test_release_hook_contract.py's
+        # test_stall_watchdog_never_reaches_the_player_build.
         self.assertIn("static void StallWatchdogLoop()", self.plugin_code)
         self.assertIn("StartStallWatchdog();", self.plugin_code)
         watchdog = self.plugin_code.split("static void StallWatchdogLoop()", 1)[1]
         watchdog = watchdog[:watchdog.index("static void StartStallWatchdog()")]
-        self.assertNotIn("#ifndef FORGEPACT_RELEASE", watchdog)
         # The frame thread must be resumed before anything that can allocate,
         # or the watchdog deadlocks on a lock the stalled thread is holding.
         self.assertLess(watchdog.index("ResumeThread"), watchdog.index("ms - frame thread at"))
