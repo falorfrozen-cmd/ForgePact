@@ -2,19 +2,20 @@
 # notes.
 #
 # Run it from Actions > ForgePact tag > Run workflow, give it the tag, and it
-# does the four things that otherwise happen by hand and in the wrong order:
+# does the five things that otherwise happen by hand and in the wrong order:
 # checks the tag is one this repository can actually release, moves the
-# version to match, pushes the tag, and leaves a draft release on it whose
-# body is composed from the tagged version's own notes file, if one has been
-# written (or, when it has not, GitHub's own generated notes under a banner
-# demanding a rewrite).
+# version to match, pushes the tag, leaves a draft release on it whose body is
+# composed from the tagged version's own notes file, if one has been written
+# (or, when it has not, GitHub's own generated notes under a banner demanding
+# a rewrite), and starts the build workflow (`forgepact-release.yml`) against
+# that tag.
 #
-# There is no build half here. `modfiles_shipped/` tracks only `.keep` and
-# `plugin_build/include/` is gitignored, so a CI checkout cannot compile or
-# package this plugin -- see the module guide's "Tagging a release" section
-# for what a build half would actually require. Building the zip, uploading
-# it to this draft, reviewing the body, and publishing all stay manual.
-# Publishing is what fires notify-hub-release.yml.
+# The build still stays a separate workflow, dispatched with `workflow_dispatch`
+# rather than inlined here, and it is dispatched against `main` rather than the
+# tag this job just pushed -- see `forgepact-release.yml`'s own header comment
+# for why. This workflow itself still never builds, uploads or publishes; see
+# "The build is dispatched, never inlined" below. Publishing the draft stays a
+# human act, and it is what fires notify-hub-release.yml.
 name: ForgePact tag
 
 on:
@@ -37,10 +38,14 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       # Committing the version bump, pushing the tag, and leaving the draft
-      # release. No permission to start another workflow run, unlike the
-      # hub's tagger -- this workflow never dispatches a build; there isn't
-      # one.
+      # release.
       contents: write
+      # Starting forgepact-release.yml. Without it the dispatch below is a
+      # 403 from a job that has already pushed the tag and left the draft --
+      # exactly the "tag exists, nothing is building it" state the dispatch
+      # exists to avoid. The same permission the hub's tagger carries, for
+      # the same reason.
+      actions: write
     steps:
       # A release is cut from main. Run from anywhere else, the bump below
       # would push a branch's tree to main and the tag would point at code
@@ -207,6 +212,22 @@ jobs:
         run: |
           gh release create "$TAG" --draft --verify-tag --title "ForgePact $VERSION" --notes-file "$RUNNER_TEMP/release-notes.md"
 
+      # Dispatched against main, not the tag this job just pushed -- the
+      # tag's own tree does not carry forgepact-release.yml, the fetch
+      # script or a compiler-discovery fix, for any version tagged before
+      # this workflow existed, and a fix made to the build workflow could
+      # never apply to an already-tagged version otherwise. See
+      # forgepact-release.yml's header comment. If this dispatch fails, the
+      # draft exists with no build behind it -- recovery is running
+      # "ForgePact release" by hand with the same tag.
+      - name: Start the build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.plan.outputs.tag }}
+        run: |
+          gh workflow run forgepact-release.yml --ref main -f tag="$TAG" -f dry_run=false
+          echo "dispatched forgepact-release.yml for $TAG"
+
       - name: Say what still needs a human
         env:
           REPO: ${{ github.repository }}
@@ -235,9 +256,14 @@ jobs:
               echo "it is GitHub's own pull-request-title text, not player language."
             fi
             echo
+            echo "\"ForgePact release\" is building it now against this tag. What it"
+            echo "leaves behind is still only a draft's assets -- nothing is published"
+            echo "yet."
+            echo
             echo "Remaining steps, all manual:"
-            echo "1. Build the release per the module guide's checklist."
-            echo "2. Upload the zip to the draft at https://github.com/$REPO/releases"
+            echo "1. Wait for the ForgePact release run to finish."
+            echo "2. Download the zip from the draft and run the launch gate (module"
+            echo "   guide, \"CI build launch gate\")."
             echo "3. Review the composed body, and rewrite any generated section."
             echo "4. Publish. That fires notify-hub-release.yml."
           } >> "$GITHUB_STEP_SUMMARY"
