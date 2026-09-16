@@ -37,7 +37,7 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read
+  pull-requests: write
   issues: read
   id-token: write
 
@@ -102,7 +102,28 @@ jobs:
           prompt: >-
             /code-review:code-review --comment
             ${{ github.repository }}/pull/${{ github.event.pull_request.number || github.event.issue.number }}
-          # `--allowedTools` has to name the inline-comment tool even though the
-          # skill's own frontmatter already does: the action only starts the MCP
+          # `--allowedTools` is the whole allow-list for the run, not an addition
+          # to the skill's own. It must name every tool the code-review command
+          # declares in its `allowed-tools` frontmatter. The first version named
+          # only the inline-comment tool: `gh pr view` and `gh pr diff` were
+          # denied, so the review could not read the pull request, and
+          # `gh pr comment` was denied, so its "No issues found" summary could
+          # not post either. The job still went green, with
+          # `permission_denials_count: 5` and nothing on the PR (hub #56). The
+          # inline-comment tool must stay listed: the action only starts the MCP
           # server that posts inline comments when this argument names it.
-          claude_args: '--allowedTools "mcp__github_inline_comment__create_inline_comment"'
+          claude_args: '--allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh search:*)"'
+
+      # The action prints a trimmed result to the log: per-model token counts
+      # are dropped, and the full result file stays on the runner, which is
+      # gone once the job ends. Keeping it is the only way to see what a review
+      # used or what it was denied. It also holds the review transcript, which
+      # is visible to anyone with read access to this repository.
+      - name: Keep the run's full result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-execution-output
+          path: ${{ runner.temp }}/claude-execution-output.json
+          if-no-files-found: warn
+          retention-days: 14
