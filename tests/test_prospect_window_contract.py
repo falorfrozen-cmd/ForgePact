@@ -188,6 +188,9 @@ class ProspectWindowContractTests(unittest.TestCase):
         self.assertIn("not observed", show)
         self.assertIn("calls - logged", show)
         self.assertIn("notApplied=", show)
+        # R1-N2: after a filtered re-arm, a row left out of the filter that
+        # still fired had calls nobody saw, and says so rather than looking clean.
+        self.assertIn("(not selected - not observed)", show)
 
     def test_override_applied_line_describes_self_other_and_args(self):
         observe = strip_comments(function_body(self.plugin, "static void PpObserve("))
@@ -218,7 +221,10 @@ class ProspectWindowContractTests(unittest.TestCase):
         self.assertIn("**fully logged** (no `UNLOGGED` left)", deciding)
         self.assertIn("never H3", deciding)
         self.assertIn("`not observed (budget spent)`", deciding)
-        self.assertIn("`not observed (override landed elsewhere)`", deciding)
+        self.assertIn("`not observed (override landed elsewhere; grid <changed|unchanged>)`", deciding)
+        self.assertIn("`@id` ignored", deciding)
+        # R1-N4: a row the maximum budget cannot cover stays unseen, by design.
+        self.assertIn("`not observed (budget spent)` by design", deciding)
 
     def test_research_doc_live_procedure_budgets_and_matches_the_override(self):
         live = collapse(section(self.doc, "## Live procedure"))
@@ -228,8 +234,20 @@ class ProspectWindowContractTests(unittest.TestCase):
         self.assertIn("UNLOGGED", l10)
         self.assertIn("when=<vanilla>", l11)
         self.assertIn("self=<Obj>", l11)
-        self.assertIn("must match the R4 call", l11)
-        self.assertIn("not observed (override landed elsewhere)", l11)
+        # R1-N5: the selector takes the object name alone.
+        self.assertIn("`self=UI_Prospect_obj`, not `self=UI_Prospect_obj#5220@100456`", l11)
+        self.assertIn("not observed (override landed elsewhere", l11)
+        # Round-1 review R1-B: a reopen re-runs Create, so the right call always
+        # carries a new `@id`. A match rule that compared it would record the real
+        # mechanism as "landed elsewhere" with the enlarged grid on screen.
+        self.assertIn("**ignore `@id`**", l11)
+        self.assertIn("same `#object_index`", l11)
+        self.assertIn("instance ids or handles", l11)
+        self.assertIn("`(not an instance: …)` matches `(not an instance: …)`", l11)
+        # The grid observation is always recorded, and before nothing is dropped.
+        self.assertIn("Record both, always", l11)
+        self.assertIn("grid <changed|unchanged>", l11)
+        self.assertNotIn("Only then", l11)
         # The instrument section documents what the procedure uses.
         instrument = collapse(section(self.doc, "## Instrument"))
         self.assertIn("`prospectprobe arm [budget=N] [substr ...]`", instrument)

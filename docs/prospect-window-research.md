@@ -271,7 +271,8 @@ Not in `kPlayerCommands`; dispatched from `HandleProspectCommand`. Bare
 - **`prospectprobe show`** — per row: `calls` since `arm`, `since` the
   previous show, and, while armed, `logged=L` and — when the row made more
   calls than it logged — `UNLOGGED=K (budget spent - not observed)`; a row the
-  last `arm` did not select says `(not selected for logging)`; `(not detoured)`
+  last `arm` did not select says `UNLOGGED=<calls> (not selected - not observed)`
+  if it fired and `(not selected for logging)` if it did not; `(not detoured)`
   for a row that did not install. The first line names a pending override
   with its `left` and `notApplied` counts. The last line is the control,
   `CheckPlayerInteraction: calls=N`: **`0` voids every row above**, and a
@@ -280,9 +281,10 @@ Not in `kPlayerCommands`; dispatched from `HandleProspectCommand`. Bare
 - **`prospectprobe override <label> <argIndex> <number> [calls=1] [self=<Obj>] [other=<Obj>] [when=<number>]`**
   — for the next `calls` calls of an already-detoured row, if argument
   `argIndex` exists, is numeric, and the call matches every selector given
-  (`self=` / `other=`: the object name of `self` / `other`, which a struct
-  never matches; `when=`: argument `argIndex` currently equals that number),
-  replace it before forwarding and log
+  (`self=` / `other=`: the object name of `self` / `other`, written as the
+  name alone — `self=UI_Prospect_obj`, never with the `#object_index@id`
+  suffix the log lines print — which a struct never matches; `when=`: argument
+  `argIndex` currently equals that number), replace it before forwarding and log
   `override <label> #n a<i>: was=<v> now=<value> (left=…) self=… other=… argc=… a0=… …`
   — the call's own `self`, `other` and every argument, so the line can be
   checked against the R4 call. Refuses a label that is not a row, and a row
@@ -366,24 +368,44 @@ result, not a failure of the procedure.
     `show` marks `UNLOGGED=K` had calls nobody saw: close the window, re-arm
     with a larger budget restricted to those rows
     (`prospectprobe arm budget=<calls+50> <label substr> ...`), reopen, and
-    `show` again, until no row that fired reports `UNLOGGED`. A row still
-    `UNLOGGED` after that is recorded `not observed (budget spent)`. **R4** =
+    `show` again, until every row that fired has had one pass with no
+    `UNLOGGED`. (A row fully logged in an earlier pass and left out of a later
+    filter prints `UNLOGGED=<calls> (not selected - not observed)` there; its
+    earlier pass stands. A row that never had a clean pass does not.) A row
+    still `UNLOGGED` after that is recorded `not observed (budget spent)`; so is
+    a row whose calls on one open exceed the 5000 maximum budget. **R4** =
     every row whose logged args carry R3's numbers, with the arg indices and
     that call's `self`/`other`; else `not observed among detoured rows (list
     the rows that did fire, and any still UNLOGGED)`.
 11. **L11 (H1 experiment).** For each R4 row: close the window,
     `prospectprobe override <label> <argIndex> <vanilla×2> 1 when=<vanilla>`
-    plus `self=<Obj>` (or `other=<Obj>`) naming the object the R4 call's
-    `self` (or `other`) printed — omit a selector only when that side printed
-    `(not an instance: …)`. Reopen. First read the
-    `prospectprobe override <label> #n a<i>: was=… now=…` line in `out.txt`:
-    its `self`, `other` and the arguments other than `a<i>` must match the R4
-    call logged in L10; if they do not, or no applied line appeared (`show`
-    still lists the override pending, `notApplied` counting), R5a =
-    `not observed (override landed elsewhere)` for this row — not "no". Only
-    then: is the drawn grid the overridden size (**R5a** per row)? If yes,
-    repeat L8's R6/R7 checks against this grid. `prospectprobe override
-    clear`.
+    plus `self=<Obj>` (or `other=<Obj>`), where `<Obj>` is the object name
+    alone that the R4 call's `self` (or `other`) printed —
+    `self=UI_Prospect_obj`, not `self=UI_Prospect_obj#5220@100456`. Omit a
+    selector only when that side printed `(not an instance: …)`. If L10 logged
+    more than one call on a single open that these selectors would all accept,
+    use that number instead of `1` and note it beside R5a. Reopen. Record both,
+    always, for this row:
+    - **The match verdict.** Compare the
+      `prospectprobe override <label> #n a<i>: was=… now=…` line in `out.txt`
+      with the R4 call logged in L10. It matches when `self` and `other` each
+      name the same object with the same `#object_index` — **ignore `@id`**:
+      L6 showed a reopen re-runs Create, so the window and its nodes are new
+      instances and the right call always carries a new id; a
+      `(not an instance: …)` matches `(not an instance: …)`; and every numeric
+      argument other than `a<i>` is equal, except arguments that are instance
+      ids or handles (a value equal to an `@id` printed in that same call, or
+      one that differed between L10's opens), which are ignored like `@id`.
+      No applied line at all (`show` still lists the override pending,
+      `notApplied` counting) is a mismatch.
+    - **The grid observation.** Is the drawn grid the overridden size — yes
+      or no? Written down whatever the match verdict was.
+
+    **R5a** for the row: match and yes = `yes`; match and no = `no`; mismatch
+    = `not observed (override landed elsewhere; grid <changed|unchanged>)` —
+    not "no", and a mismatch with a changed grid is recorded as exactly that,
+    never dropped. If R5a = yes, repeat L8's R6/R7 checks against this grid.
+    `prospectprobe override clear`.
 12. **L12.** Fill `## Results`: R1–R8, C (C-write, C-hook, enumeration
     control, R6), H per § Deciding the hypothesis. Add the log line
     `phase0: complete` to this workorder **only** if H reads H1 or H2; an H3
@@ -405,17 +427,25 @@ row must be present, with its control passing, in the same session.
 
 - **H1** needs R4 (a row carrying R3's numbers on a window open, identifying
   the prospect window), R5a = yes on that same row with its applied override
-  line matching the R4 call (`self`, `other`, the other arguments), R6 =
-  consumed, and C-hook > 0.
+  line matching the R4 call under L11's rule (`self` and `other` by object
+  name and `#object_index` with `@id` ignored, the other numeric arguments
+  equal except instance ids or handles), R6 = consumed, and C-hook > 0.
 - **H2** needs R2 (numeric variables equal to R3), R5b = accepted for them
   without a reopen, R6 = consumed, C-write = yes, and L6 = vanilla again on
   reopen.
 - **A row whose calls during the open exceed its logged lines is
   `not observed (budget spent)`** — `show` prints it as `UNLOGGED=K`. Its
   arguments were never seen, so it is neither in R4 nor evidence against it.
-- **An override whose applied line does not match the R4 call** (different
-  `self`/`other`/arguments), or that never applied, is
-  `not observed (override landed elsewhere)` — not R5a = no.
+  A row whose calls on one open exceed the 5000 maximum budget stays
+  `not observed (budget spent)` by design: the cap keeps `out.txt` readable,
+  and no decision rule may read past it.
+- **An override whose applied line does not match the R4 call** under L11's
+  rule (a different object or `#object_index` on `self`/`other`, or a
+  different non-id argument), or that never applied, is
+  `not observed (override landed elsewhere; grid <changed|unchanged>)` — not
+  R5a = no. The grid observation is recorded beside the verdict every time,
+  so a mismatch that still changed the grid stays on the page as a lead for a
+  re-run with tighter selectors. `@id` differing is never a mismatch.
 - **H3** needs **R2 and R4 both non-empty**, every row that fired during the
   L10 open **fully logged** (no `UNLOGGED` left), every R4 row's override
   applied to the R4 call and every R2 write measured, each with its control

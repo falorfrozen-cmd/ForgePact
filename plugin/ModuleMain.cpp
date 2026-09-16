@@ -9707,7 +9707,10 @@ static void PpShow()
             const long logged = (std::min)((long)*t.logged, (long)g_PpLogBudget);
             line += "calls=" + std::to_string(calls) + " since=" + std::to_string(calls - t.lastShown);
             if (g_PpArmed.load()) {
-                if (!*t.logOn) line += " (not selected for logging)";
+                // A row left out of a filtered re-arm that still fired made
+                // calls nobody saw; say so, or it reads as clean.
+                if (!*t.logOn) line += calls > 0 ? " UNLOGGED=" + std::to_string(calls) + " (not selected - not observed)"
+                                                 : std::string(" (not selected for logging)");
                 else {
                     line += " logged=" + std::to_string(logged);
                     if (calls > logged) line += " UNLOGGED=" + std::to_string(calls - logged) + " (budget spent - not observed)";
