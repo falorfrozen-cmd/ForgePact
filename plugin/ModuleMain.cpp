@@ -9170,7 +9170,7 @@ static void CiCaptureStackWalk(const char* whatFired)
 // blindness is demonstrated outright rather than argued.
 //
 // Read-only: every detour counts, optionally logs, and tail-calls the
-// trampoline. Nothing here writes game state, so none of it sits behind the
+// trampoline. No game state is written here, so none of it sits behind the
 // `confirm` gate (plan C §4 applies to mutation, and there is none).
 static constexpr long kCiNatLogBudget = 6;   // per target, so one hot hook cannot drown out.txt
 
@@ -9327,6 +9327,1111 @@ static void CiNativeTraceReset()
 }
 
 #endif // FORGEPACT_RELEASE (CiFindNearestQuestItem .. CiCaptureStackWalk)
+
+#ifndef FORGEPACT_RELEASE
+// ---- mmprobe: minimap smoothing, Phase 0 instrument (research build only) ---
+// ForgePact issue #19 asks for the minimap's markers to glide in the game's
+// performance mode instead of jumping about once a second. Nothing about how
+// the game produces those markers has been measured: which routine refills
+// them, which draws them, where they live, what a record holds, and what
+// "performance mode" even is (no SDK name contains "performance"). The
+// interpolation core (plugin/include/ForgePact/MinimapSmoothManager.hpp) does
+// not depend on any of that; the adapter that would feed it does. This is the
+// one instrument that answers all of it in a single live round, with controls
+// (docs/minimap-smoothing-research.md, "Live procedure").
+//
+//   mmprobe hook [substr ...]   native-detour every candidate (or those whose
+//                               label contains a substring - bisect a crash
+//                               without a rebuild)
+//   mmprobe show                per target: calls, calls since the last show,
+//                               last gap, and the two commonest gaps in frames
+//                               (the cadence), plus fps / fps_real / room speed
+//   mmprobe reset               zero every counter and histogram
+//   mmprobe verbose on|off      log the first 3 calls' arguments per target
+//   mmprobe vars [Obj]          every instance variable of Obj's first
+//                               instance, with its kind (default objMinimap)
+//   mmprobe snap global|<Obj>   snapshot every scalar member ...
+//   mmprobe diff                ... and print what changed since (re-baselines)
+//   mmprobe watch <Obj|global> <var> [frames] [list]   sample one variable per
+//                               frame and print the frames it changed on - the
+//                               refresh cadence measured WITHOUT any hook. With
+//                               `list`, the variable is a ds_list id and its
+//                               contents are compared, not the id
+//   mmprobe hold <Obj|global> <var> <index> <field> <delta> [frames] [list] [at <label> [pre|post]]
+//                               add delta to one numeric field of one marker
+//                               record every frame, then restore it: reads the
+//                               first write back, counts the frames the game
+//                               overwrote it, and shows whether the draw
+//                               depends on the container between refreshes.
+//                               With `at`, the write happens inside that
+//                               already-detoured script row (before or after
+//                               the game's own call, default post) instead of
+//                               at frame end
+//   mmprobe hold stop           end a hold early (restores)
+//   mmprobe dslist <id> [n]     size and first n entries of a ds_list
+//
+// Why native detours and not HookOneScript / HookOneScriptTable: a table swap
+// is blind to this build's direct `call rel32` sites (AGENTS.md, "Prove the
+// Instrument"), so a zero from one would say nothing. MmCreateHook patches the
+// function's own bytes, as `citrace nativetrace` does. The address is resolved
+// by name and refused unless it lies inside Hero_Siege.exe - which also refuses
+// a table entry some other command already swapped for a detour of ours.
+//
+// CheckPlayerInteraction is the positive control, as in `citrace nativetrace`:
+// every interactable's step event calls it, so it must count thousands. A show
+// in which it reads 0 has measured the instrument, not the minimap.
+//
+// Every subcommand is read-only except `hold`. Every detour counts, optionally
+// logs, and calls the trampoline. `hold` writes one numeric field of one marker
+// record - never a game instance, which it refuses - for a bounded number of
+// frames, and writes the original value back when it ends (or aborts) if the
+// game has not already overwritten it.
+//
+// A hold that is never displaced proves nothing about the draw - for H2 only at <refill row> post with performance mode on counts; a displacement by the frame-end write with performance mode off only ties the record to the mode-off draw. The frame-end
+// write lands at HkPresent, so a refill that runs before the next draw clobbers
+// it whether or not the draw reads the field; a post-original write inside the
+// refill row is placed by the game's call order instead.
+
+struct MmProbeSlot {
+    PFUNC_YYGMLScript orig = nullptr;
+    uint64_t calls = 0;
+    uint64_t callsAtShow = 0;
+    uint64_t lastFrame = 0;
+    bool     seen = false;          // a call since the last reset, so a gap is meaningful
+    int64_t  lastGap = -1;
+    uint32_t gapHist[256] = {};     // gap in frames between consecutive calls, 255 = 255 or more
+    uint32_t logged = 0;
+};
+
+static bool g_MmProbeVerbose = false;
+static constexpr uint32_t kMmProbeLogBudget = 3;
+static uint64_t g_MmProbeResetFrame = 0;
+
+static void MmProbeCount(MmProbeSlot& s, const char* label, CInstance* self, int argc, RValue** args)
+{
+    ++s.calls;
+    const uint64_t now = g_RuntimeFrame;
+    if (s.seen) {
+        const uint64_t gap = now - s.lastFrame;
+        s.lastGap = (int64_t)gap;
+        ++s.gapHist[gap > 255 ? 255 : gap];
+    }
+    s.seen = true;
+    s.lastFrame = now;
+    if (g_MmProbeVerbose && s.logged < kMmProbeLogBudget) {
+        ++s.logged;
+        try {
+            std::string line = std::string("mmprobe ") + label + " #" + std::to_string(s.calls)
+                + " frame=" + std::to_string(now) + " argc=" + std::to_string(argc);
+            for (int i = 0; i < argc && i < 4; ++i)
+                line += " a" + std::to_string(i) + "=" + ((args && args[i]) ? Describe(*args[i]) : std::string("<null>"));
+            line += " self=" + (self ? Describe(self->ToRValue()) : std::string("<null>"));
+            Out(line);
+        } catch (...) { Out(std::string("mmprobe ") + label + ": argument log EXCEPTION"); }
+    }
+}
+
+// Every candidate, one row each. Named scripts resolve through hs-game-sdk's
+// constant (full runtime name); the label is the short name HookOneScript
+// would take. Static search that produced this list: the research doc,
+// "Static search".
+#define MMPROBE_SCRIPTS(X) \
+    X(DrawMinimap,                      "DrawMinimap",                      HeroSiege::Scripts::gml_Script_DrawMinimap) \
+    X(DrawMinimapDynamic,               "DrawMinimapDynamic",               HeroSiege::Scripts::gml_Script_DrawMinimapDynamic) \
+    X(MinimapRefresh,                   "MinimapRefresh",                   HeroSiege::Scripts::gml_Script_MinimapRefresh) \
+    X(MinimapChangeSize,                "MinimapChangeSize",                HeroSiege::Scripts::gml_Script_MinimapChangeSize) \
+    X(MMStamp,                          "MMStamp",                          HeroSiege::Scripts::gml_Script_MMStamp) \
+    X(PlayerUpdateMinimap,              "PlayerUpdateMinimap",              HeroSiege::Scripts::gml_Script_PlayerUpdateMinimap) \
+    X(playerUpdateTimer,                "playerUpdateTimer",                HeroSiege::Scripts::gml_Script_playerUpdateTimer) \
+    X(playerUpdateTimerLife,            "playerUpdateTimerLife",            HeroSiege::Scripts::gml_Script_playerUpdateTimerLife) \
+    X(s_MinimapPoint,                   "s_MinimapPoint",                   HeroSiege::Scripts::gml_Script_s_MinimapPoint) \
+    X(s_MinimapLine,                    "s_MinimapLine",                    HeroSiege::Scripts::gml_Script_s_MinimapLine) \
+    X(outline_start_minimap,            "outline_start_minimap",            HeroSiege::Scripts::gml_Script_outline_start_minimap) \
+    X(ZoneStateParseMinimapDataSend,    "ZoneStateParseMinimapDataSend",    HeroSiege::Scripts::gml_Script_ZoneStateParseMinimapDataSend) \
+    X(ZoneStateParseMinimapDataReceive, "ZoneStateParseMinimapDataReceive", HeroSiege::Scripts::gml_Script_ZoneStateParseMinimapDataReceive) \
+    X(MinimapAnon2958,                  "anon@2958@gml_Object_objMinimap_Create_0",  HeroSiege::Scripts::gml_Script_anon_2958_gml_Object_objMinimap_Create_0) \
+    X(MinimapAnon6403,                  "anon@6403@gml_Object_objMinimap_Create_0",  HeroSiege::Scripts::gml_Script_anon_6403_gml_Object_objMinimap_Create_0) \
+    X(MinimapAnon7771,                  "anon@7771@gml_Object_objMinimap_Create_0",  HeroSiege::Scripts::gml_Script_anon_7771_gml_Object_objMinimap_Create_0) \
+    X(MinimapAnon8167,                  "anon@8167@gml_Object_objMinimap_Create_0",  HeroSiege::Scripts::gml_Script_anon_8167_gml_Object_objMinimap_Create_0) \
+    X(MinimapAnon11068,                 "anon@11068@gml_Object_objMinimap_Create_0", HeroSiege::Scripts::gml_Script_anon_11068_gml_Object_objMinimap_Create_0) \
+    X(UiAOptionsVideoFPSOption,         "UiAOptionsVideoFPSOption",         HeroSiege::Scripts::gml_Script_UiAOptionsVideoFPSOption) \
+    X(UiAOptionsVideoFPSOptionSelected, "UiAOptionsVideoFPSOptionSelected", HeroSiege::Scripts::gml_Script_UiAOptionsVideoFPSOptionSelected) \
+    X(UiUpOptionsVideoFps,              "UiUpOptionsVideoFps",              HeroSiege::Scripts::gml_Script_UiUpOptionsVideoFps) \
+    X(UiAOptionsVideoVsync,             "UiAOptionsVideoVsync",             HeroSiege::Scripts::gml_Script_UiAOptionsVideoVsync) \
+    X(UiAOptionsVideo,                  "UiAOptionsVideo",                  HeroSiege::Scripts::gml_Script_UiAOptionsVideo) \
+    X(UiAOptionsGameplay,               "UiAOptionsGameplay",               HeroSiege::Scripts::gml_Script_UiAOptionsGameplay) \
+    X(CheckPlayerInteraction,           "CheckPlayerInteraction",           HeroSiege::Scripts::gml_Script_CheckPlayerInteraction)
+
+// objMinimap's own event code, tried under the raw name
+// `gml_Object_objMinimap_<Event>` (no `gml_Script_` prefix). Every row is
+// EXPECTED to print "not found" (st=14): session 7 tried 22 raw object-event
+// names through GetNamedRoutinePointer and none resolved
+// (docs/pet-quest-collector-research.md, "MEASURED 2026-09-10, session 7") -
+// the named-routine table does not index object-event code. The rows stay
+// because trying costs nothing and settles it for objMinimap on this build; a
+// row that prints `detoured` contradicts that measurement and is a result for
+// the research doc. Only the named-script rows above can therefore count.
+//
+// The Other-group Room Start event is deliberately NOT a target. First, event
+// names are not expected to resolve at all (session 7, above). Second, hooking
+// Room Start crashed the game during the eSt work, and
+// tests/test_est_force_behavior.py keeps that event's name out of this file.
+#define MMPROBE_EVENTS(X) \
+    X(Create_0) X(Destroy_0) X(CleanUp_0) X(Step_0) X(Step_1) X(Step_2) \
+    X(Draw_0) X(Draw_64) X(Draw_72) X(Draw_73) X(Draw_74) X(Draw_75) X(Draw_76) X(Draw_77) \
+    X(Alarm_0) X(Alarm_1) X(Alarm_2) X(Alarm_3) X(Alarm_4) X(Alarm_5) \
+    X(Alarm_6) X(Alarm_7) X(Alarm_8) X(Alarm_9) X(Alarm_10) X(Alarm_11) \
+    X(Other_4)
+
+// `mmprobe hold ... at <label> [pre|post]`: the one script row the hold writes
+// from, and on which side of the game's own call. Null means the hold (if any)
+// writes from the frame tick. Event rows are never write points.
+static MmProbeSlot* g_MmProbeHoldAtSlot = nullptr;
+static bool g_MmProbeHoldAtPost = true;
+static void MmProbeHoldApply();
+
+#define MMPROBE_SCRIPT_DETOUR(SAFE, LABEL, NAME) \
+    static MmProbeSlot g_MmProbe_##SAFE; \
+    static RValue& MmProbe_##SAFE(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) { \
+        MmProbeCount(g_MmProbe_##SAFE, LABEL, S, argc, A); \
+        if (g_MmProbeHoldAtSlot == &g_MmProbe_##SAFE && !g_MmProbeHoldAtPost) MmProbeHoldApply(); \
+        RValue& r = g_MmProbe_##SAFE.orig ? g_MmProbe_##SAFE.orig(S, O, R, argc, A) : R; \
+        if (g_MmProbeHoldAtSlot == &g_MmProbe_##SAFE && g_MmProbeHoldAtPost) MmProbeHoldApply(); \
+        return r; \
+    }
+// An object event is called with (self, other) only: argc and A are whatever the
+// caller left in r9 / [rsp+28h], so the log reads self and never those. The
+// forward still passes all five slots unchanged - a two-argument callee ignores
+// the extra three, and a void callee's rax is ignored by its caller.
+#define MMPROBE_EVENT_DETOUR(EVENT) \
+    static MmProbeSlot g_MmProbe_Ev_##EVENT; \
+    static RValue& MmProbe_Ev_##EVENT(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) { \
+        MmProbeCount(g_MmProbe_Ev_##EVENT, "objMinimap_" #EVENT, S, 0, nullptr); \
+        return g_MmProbe_Ev_##EVENT.orig ? g_MmProbe_Ev_##EVENT.orig(S, O, R, argc, A) : R; \
+    }
+MMPROBE_SCRIPTS(MMPROBE_SCRIPT_DETOUR)
+MMPROBE_EVENTS(MMPROBE_EVENT_DETOUR)
+#undef MMPROBE_SCRIPT_DETOUR
+#undef MMPROBE_EVENT_DETOUR
+
+struct MmProbeTarget {
+    const char*  label;
+    std::string  runtimeName;   // exact runtime name, no prefix added later
+    const char*  hookId;
+    PVOID        detour;
+    MmProbeSlot* slot;
+    bool         installed;
+};
+
+#define MMPROBE_SCRIPT_ROW(SAFE, LABEL, NAME) \
+    { LABEL, std::string(NAME), "fp_mmprobe_" #SAFE, (PVOID)MmProbe_##SAFE, &g_MmProbe_##SAFE, false },
+#define MMPROBE_EVENT_ROW(EVENT) \
+    { "objMinimap_" #EVENT, "gml_Object_objMinimap_" #EVENT, "fp_mmprobe_ev_" #EVENT, (PVOID)MmProbe_Ev_##EVENT, &g_MmProbe_Ev_##EVENT, false },
+static MmProbeTarget g_MmProbeTargets[] = {
+    MMPROBE_SCRIPTS(MMPROBE_SCRIPT_ROW)
+    MMPROBE_EVENTS(MMPROBE_EVENT_ROW)
+};
+#undef MMPROBE_SCRIPT_ROW
+#undef MMPROBE_EVENT_ROW
+
+static void MmProbeHook(const std::string& filters)
+{
+    std::vector<std::string> wanted;
+    std::string remaining = filters;
+    for (;;) {
+        std::string next;
+        std::string tok = FirstToken(remaining, next);
+        if (tok.empty()) break;
+        wanted.push_back(Lower(tok));
+        remaining = next;
+    }
+
+    const HMODULE mainMod = GetModuleHandleA(nullptr);
+    int ok = 0, failed = 0, already = 0;
+    for (MmProbeTarget& t : g_MmProbeTargets) {
+        if (!wanted.empty()) {
+            const std::string label = Lower(t.label);
+            bool hit = false;
+            for (const std::string& w : wanted) if (label.find(w) != std::string::npos) { hit = true; break; }
+            if (!hit) continue;
+        }
+        if (t.installed) { ++already; Out(std::string("mmprobe hook: ") + t.label + " - already installed"); continue; }
+
+        PVOID p = nullptr;
+        const AurieStatus st = g_Yytk->GetNamedRoutinePointer(t.runtimeName.c_str(), &p);
+        if (!AurieSuccess(st) || !p) {
+            Out(std::string("mmprobe hook: ") + t.label + " - not found (" + t.runtimeName + ") st=" + std::to_string((int)st));
+            ++failed;
+            continue;
+        }
+        // A builtin name resolves to a function address, not a CScript record.
+        // Reading m_Functions off code would dereference instruction bytes.
+        if (AddrIsExecutableInModule(mainMod, p)) {
+            Out(std::string("mmprobe hook: ") + t.label + " - resolved to a code address, not a CScript; not detoured (record it)");
+            ++failed;
+            continue;
+        }
+        CScript* sc = reinterpret_cast<CScript*>(p);
+        PVOID fn = (sc && sc->m_Functions) ? (PVOID)sc->m_Functions->m_ScriptFunction : nullptr;
+        if (!fn) {
+            Out(std::string("mmprobe hook: ") + t.label + " - resolved, but no script function (not a CScript with code)");
+            ++failed;
+            continue;
+        }
+        // Refuse anything that is not code inside the game's own image. This is
+        // also what refuses an entry another command already swapped for one
+        // of this plugin's detours: patching that would hook our own code.
+        if (!AddrIsExecutableInModule(GetModuleHandleA(nullptr), fn)) {
+            Out(std::string("mmprobe hook: ") + t.label + " - not code inside Hero_Siege.exe (already table-hooked by another command?)");
+            ++failed;
+            continue;
+        }
+        PVOID tramp = nullptr;
+        const AurieStatus hs = MmCreateHook(g_ArSelfModule, t.hookId, fn, t.detour, &tramp);
+        if (!AurieSuccess(hs) || !tramp) {
+            Out(std::string("mmprobe hook: ") + t.label + " - MmCreateHook st=" + std::to_string((int)hs));
+            ++failed;
+            continue;
+        }
+        t.slot->orig = reinterpret_cast<PFUNC_YYGMLScript>(tramp);
+        t.installed = true;
+        char b[256];
+        sprintf_s(b, "mmprobe hook: %s - detoured exe+0x%llX", t.label,
+                  (unsigned long long)((char*)fn - (char*)mainMod));
+        Out(b);
+        ++ok;
+    }
+    Out("mmprobe hook: " + std::to_string(ok) + " detoured, " + std::to_string(failed) + " failed"
+        + (already ? ", " + std::to_string(already) + " already installed" : std::string()) + ".");
+    if (ok || already) Out("  Now `mmprobe reset`, wait ~10 s, `mmprobe show`.");
+}
+
+static void MmProbeReset()
+{
+    for (MmProbeTarget& t : g_MmProbeTargets) {
+        MmProbeSlot& s = *t.slot;
+        s.calls = 0; s.callsAtShow = 0; s.lastFrame = 0; s.seen = false; s.lastGap = -1; s.logged = 0;
+        std::fill(std::begin(s.gapHist), std::end(s.gapHist), 0u);
+    }
+    g_MmProbeResetFrame = g_RuntimeFrame;
+    Out("mmprobe: counters, gap histograms and log budgets reset at frame " + std::to_string(g_RuntimeFrame));
+}
+
+static void MmProbeShow()
+{
+    int installed = 0;
+    for (const MmProbeTarget& t : g_MmProbeTargets) if (t.installed) ++installed;
+    if (!installed) { Out("mmprobe show: nothing installed - run `mmprobe hook` first"); return; }
+
+    std::string fps = "?", fpsReal = "?", roomSpeed = "?";
+    try { RValue v; if (AurieSuccess(g_Yytk->GetBuiltin("fps", nullptr, NULL_INDEX, v))) fps = Describe(v); } catch (...) {}
+    try { RValue v; if (AurieSuccess(g_Yytk->GetBuiltin("fps_real", nullptr, NULL_INDEX, v))) fpsReal = Describe(v); } catch (...) {}
+    try { roomSpeed = Describe(g_Yytk->CallBuiltin("game_get_speed", { RValue(0.0) })); } catch (...) {}
+    const uint64_t elapsed = g_RuntimeFrame - g_MmProbeResetFrame;
+    Out("mmprobe show: " + std::to_string(installed) + " detours, " + std::to_string(elapsed)
+        + " frames since reset | fps=" + fps + " fps_real=" + fpsReal + " game_get_speed(fps)=" + roomSpeed);
+    Out("  gap = frames between consecutive calls; gap=0 means several calls in one frame.");
+
+    const MmProbeSlot* control = nullptr;
+    for (MmProbeTarget& t : g_MmProbeTargets) {
+        if (!t.installed) continue;
+        MmProbeSlot& s = *t.slot;
+        if (std::string(t.label) == "CheckPlayerInteraction") { control = &s; continue; }
+        int best = -1, second = -1;
+        for (int g = 0; g < 256; ++g) {
+            if (!s.gapHist[g]) continue;
+            if (best < 0 || s.gapHist[g] > s.gapHist[best]) { second = best; best = g; }
+            else if (second < 0 || s.gapHist[g] > s.gapHist[second]) second = g;
+        }
+        std::string line = std::string("  ") + t.label + ": calls=" + std::to_string(s.calls)
+            + " since=" + std::to_string(s.calls - s.callsAtShow)
+            + " lastGap=" + std::to_string(s.lastGap);
+        if (best >= 0) line += " gap=" + std::string(best == 255 ? ">=255" : std::to_string(best)) + " x " + std::to_string(s.gapHist[best]);
+        if (second >= 0) line += ", gap=" + std::string(second == 255 ? ">=255" : std::to_string(second)) + " x " + std::to_string(s.gapHist[second]);
+        s.callsAtShow = s.calls;
+        Out(line);
+    }
+    if (control) {
+        Out("  CheckPlayerInteraction: calls=" + std::to_string(control->calls)
+            + " <- positive control; 0 here voids every row above");
+        for (MmProbeTarget& t : g_MmProbeTargets)
+            if (t.slot == control) t.slot->callsAtShow = t.slot->calls;
+    } else {
+        Out("  CheckPlayerInteraction: NOT INSTALLED <- no positive control; a 0 above proves nothing. `mmprobe hook CheckPlayer`");
+    }
+}
+
+// First instance of an object, by name. False (and a line saying why) if none.
+static bool MmProbeFirstInstance(const std::string& objName, RValue& id)
+{
+    RValue oi = g_Yytk->CallBuiltin("asset_get_index", { RValue(objName) });
+    if (oi.ToDouble() < 0) { Out("mmprobe: unknown object " + objName); return false; }
+    id = g_Yytk->CallBuiltin("instance_find", { oi, RValue(0.0) });
+    if (id.ToDouble() < 0) { Out("mmprobe: no instance of " + objName); return false; }
+    return true;
+}
+
+static void MmProbeVars(const std::string& objName)
+{
+    try {
+        RValue id;
+        if (!MmProbeFirstInstance(objName, id)) return;
+        RValue names = g_Yytk->CallBuiltin("variable_instance_get_names", { id });
+        const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+        for (int i = 0; i < n; ++i) {
+            const std::string nm = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) }).ToString();
+            std::string d;
+            try { d = Describe(g_Yytk->CallBuiltin("variable_instance_get", { id, RValue(nm) })); }
+            catch (...) { d = "<read failed>"; }
+            if (d.size() > 200) d = d.substr(0, 200) + "...(truncated)";
+            Out("  " + objName + "." + nm + " = " + d);
+        }
+        Out("mmprobe vars " + objName + ": " + std::to_string(n) + " variables");
+        Out("  custom variables only (a built-in such as x is never listed); this print is uncontrolled unless a name already known on " + objName + " appears above" + (n == 0 ? std::string(" - 0 names is the builtin returning nothing") : std::string()));
+    } catch (...) { Out("mmprobe vars EXCEPTION"); }
+}
+
+// Scalar kinds only: a snapshot of arrays/structs would compare handles, and a
+// changed option is a number, a bool or a string.
+static bool MmProbeIsScalar(const RValue& v)
+{
+    return v.m_Kind == VALUE_REAL || v.m_Kind == VALUE_INT32 || v.m_Kind == VALUE_INT64
+        || v.m_Kind == VALUE_BOOL || v.m_Kind == VALUE_STRING;
+}
+
+static std::string g_MmProbeSnapTarget;
+static std::map<std::string, std::string> g_MmProbeSnap;
+
+static bool MmProbeReadScalars(const std::string& target, std::map<std::string, std::string>& out)
+{
+    out.clear();
+    if (Lower(target) == "global") {
+        CInstance* global = nullptr;
+        const AurieStatus st = g_Yytk->GetGlobalInstance(&global);
+        if (!AurieSuccess(st) || !global) { Out("mmprobe snap: GetGlobalInstance failed st=" + std::to_string((int)st)); return false; }
+        RValue globalrv = RValue(global);
+        g_Yytk->EnumInstanceMembers(globalrv, [&](const char* name, RValue* val) -> bool {
+            if (name && val && MmProbeIsScalar(*val)) out[name] = Describe(*val);
+            return false;   // keep enumerating
+        });
+        return true;
+    }
+    RValue id;
+    if (!MmProbeFirstInstance(target, id)) return false;
+    RValue names = g_Yytk->CallBuiltin("variable_instance_get_names", { id });
+    const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+    for (int i = 0; i < n; ++i) {
+        const std::string nm = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) }).ToString();
+        try {
+            RValue v = g_Yytk->CallBuiltin("variable_instance_get", { id, RValue(nm) });
+            if (MmProbeIsScalar(v)) out[nm] = Describe(v);
+        } catch (...) {}
+    }
+    return true;
+}
+
+static void MmProbeSnapTake(const std::string& target)
+{
+    try {
+        std::map<std::string, std::string> snap;
+        if (!MmProbeReadScalars(target, snap)) return;
+        g_MmProbeSnapTarget = target;
+        g_MmProbeSnap.swap(snap);
+        Out("mmprobe snap " + target + ": " + std::to_string(g_MmProbeSnap.size())
+            + " scalar members. Change ONE setting in the game, then `mmprobe diff`.");
+    } catch (...) { Out("mmprobe snap EXCEPTION"); }
+}
+
+static void MmProbeDiff()
+{
+    if (g_MmProbeSnapTarget.empty()) { Out("mmprobe diff: no snapshot - `mmprobe snap global|<Obj>` first"); return; }
+    try {
+        std::map<std::string, std::string> now;
+        if (!MmProbeReadScalars(g_MmProbeSnapTarget, now)) return;
+        constexpr int kMaxDiffLines = 200;
+        int changed = 0, added = 0, removed = 0, printed = 0;
+        auto emit = [&](const std::string& s) { if (printed++ < kMaxDiffLines) Out(s); };
+        for (const auto& [name, value] : now) {
+            auto it = g_MmProbeSnap.find(name);
+            if (it == g_MmProbeSnap.end()) { ++added; emit("  + " + name + " = " + value); }
+            else if (it->second != value) { ++changed; emit("  ~ " + name + ": " + it->second + " -> " + value); }
+        }
+        for (const auto& [name, value] : g_MmProbeSnap)
+            if (!now.count(name)) { ++removed; emit("  - " + name + " (was " + value + ")"); }
+        Out("mmprobe diff " + g_MmProbeSnapTarget + ": " + std::to_string(changed) + " changed, "
+            + std::to_string(added) + " added, " + std::to_string(removed) + " removed"
+            + (printed > kMaxDiffLines ? " (output capped at 200 lines)" : "")
+            + ". Re-baselined: the next diff compares against now.");
+        g_MmProbeSnap.swap(now);
+    } catch (...) { Out("mmprobe diff EXCEPTION"); }
+}
+
+// watch: sampled from FrameCallback, so the cadence it reports is independent
+// of every detour above - the cross-check that makes a hook's cadence
+// believable. Arrays and structs are compared by their full json_stringify
+// text (only the first 120 characters are kept for printing). A frame whose
+// read failed (no instance, a throw, an undefined value) is counted and skipped,
+// never compared: otherwise a zone change reads as two change frames.
+// With `list`, the variable must hold a live ds_list id and its size plus
+// contents are compared - comparing the id alone would report 0 changes on a
+// list the game refills every second.
+struct MmProbeWatch {
+    bool active = false;
+    std::string obj, var;
+    bool asList = false;
+    int framesLeft = 0;
+    uint64_t startFrame = 0;
+    bool haveLast = false;
+    bool lastWasReal = false;
+    std::string last;
+    std::vector<uint64_t> changes;   // frames (relative to start) the value changed on
+    std::string firstShown, lastShown;
+    uint64_t readFailures = 0;
+};
+static MmProbeWatch g_MmProbeWatch;
+static constexpr int kMmProbeWatchMaxFrames = 3600;
+static constexpr int kMmProbeListMaxElements = 64;
+static constexpr double kMmProbeDsTypeList = 2.0;
+
+// hold: the one write in mmprobe. Adds `delta` to one numeric field of one
+// marker record (element `index` of an array or ds_list container) every frame
+// for a bounded number of frames, then restores it. It answers two questions no
+// read can: does this route write (the first write is read straight back), and
+// does the draw read the container between refreshes (the player's own marker
+// is visibly displaced, snapping back once per refresh). Every frame on which
+// the value is not what was last written counts as the game overwriting it, so
+// the overwrite gaps are the refresh cadence measured a third way. Refuses a
+// game instance outright - this writes marker records, never instances.
+//
+// With `at <label> [pre|post]` the write is made inside that detoured script
+// row instead of at frame end (every call of the row writes; the frame tick
+// only counts the hold down). `overwritten` keeps its meaning - the value was
+// not what we last wrote - so post-original on the refill row sees it on every
+// call, which is expected.
+struct MmProbeHold {
+    bool active = false;
+    std::string obj, var, field;
+    std::string atLabel;            // empty: frame-end writes
+    bool atPost = true;
+    int index = 0;
+    double delta = 0.0;
+    bool asList = false;
+    int framesLeft = 0;
+    uint64_t startFrame = 0;
+    bool started = false;           // at least one frame read a value
+    double base = 0.0;
+    double lastWritten = 0.0;
+    uint64_t wrote = 0, stuck = 0, overwritten = 0, readFailures = 0;
+    std::vector<uint64_t> overwriteFrames;
+    RValue instance;                 // `at` hold only: the objMinimap instance
+    double instanceId = -1.0;        // pinned at Start, so a zone change stops the hold
+};
+static MmProbeHold g_MmProbeHold;
+
+static void MmProbeWatchStart(const std::string& obj, const std::string& var, int frames, bool asList)
+{
+    if (obj.empty() || var.empty()) { Out("mmprobe watch: usage -> mmprobe watch <Obj|global> <var> [frames=180] [list]"); return; }
+    if (g_MmProbeHold.active) { Out("mmprobe watch: a hold is running - `mmprobe hold stop` first"); return; }
+    g_MmProbeWatch = MmProbeWatch{};
+    g_MmProbeWatch.active = true;
+    g_MmProbeWatch.obj = obj;
+    g_MmProbeWatch.var = var;
+    g_MmProbeWatch.asList = asList;
+    g_MmProbeWatch.framesLeft = std::clamp(frames, 1, kMmProbeWatchMaxFrames);
+    g_MmProbeWatch.startFrame = g_RuntimeFrame;
+    Out("mmprobe watch: sampling " + obj + "." + var + (asList ? " as a ds_list" : "")
+        + " for " + std::to_string(g_MmProbeWatch.framesLeft) + " frames");
+}
+
+static void MmProbeWatchFinish()
+{
+    MmProbeWatch& w = g_MmProbeWatch;
+    w.active = false;
+    std::string frames, gaps;
+    for (size_t i = 0; i < w.changes.size() && i < 120; ++i) {
+        frames += " " + std::to_string(w.changes[i]);
+        if (i) gaps += " " + std::to_string(w.changes[i] - w.changes[i - 1]);
+    }
+    Out("mmprobe watch " + w.obj + "." + w.var + ": " + std::to_string(w.changes.size())
+        + " changes, read failures=" + std::to_string(w.readFailures));
+    Out("  changed on frames:" + (frames.empty() ? std::string(" (none)") : frames));
+    Out("  gaps:" + (gaps.empty() ? std::string(" (fewer than two changes)") : gaps));
+    Out("  first: " + w.firstShown);
+    Out("  last:  " + w.lastShown);
+    if (w.changes.empty())
+        Out("  0 changes is only a result if the same variable is known to change - watch a moving control (Player_obj x) once");
+    if (w.readFailures > 0)
+        Out("  read failures are skipped, not counted as changes; do not change zones during a watch");
+    if (w.lastWasReal && !w.asList)
+        Out("  a number is compared as a number; if it is a ds_list id, re-run with 'list'");
+}
+
+// The container a watch or hold names: `global.<var>`, or `<var>` on the first
+// instance of Obj. False when there is no such instance (a read failure).
+static bool MmProbeReadVar(const std::string& obj, const std::string& var, RValue& out)
+{
+    if (Lower(obj) == "global") {
+        out = g_Yytk->CallBuiltin("variable_global_get", { RValue(var) });
+        return true;
+    }
+    RValue oi = g_Yytk->CallBuiltin("asset_get_index", { RValue(obj) });
+    if (oi.ToDouble() < 0) return false;
+    RValue id = g_Yytk->CallBuiltin("instance_find", { oi, RValue(0.0) });
+    if (id.ToDouble() < 0) return false;
+    out = g_Yytk->CallBuiltin("variable_instance_get", { id, RValue(var) });
+    return true;
+}
+
+static std::string MmProbeElementText(const RValue& e)
+{
+    if (e.m_Kind == VALUE_ARRAY || e.m_Kind == VALUE_OBJECT)
+        return g_Yytk->CallBuiltin("json_stringify", { e }).ToString();
+    return Describe(e);
+}
+
+static void MmProbeHoldTick();
+
+static void MmProbeWatchTick()
+{
+    MmProbeHoldTick();
+    MmProbeWatch& w = g_MmProbeWatch;
+    if (!w.active) return;
+    try {
+        RValue v;
+        bool readOk = MmProbeReadVar(w.obj, w.var, v);
+        if (readOk && v.m_Kind == VALUE_UNDEFINED) readOk = false;
+        std::string text;
+        if (readOk) {
+            const bool isReal = v.m_Kind == VALUE_REAL || v.m_Kind == VALUE_INT32 || v.m_Kind == VALUE_INT64;
+            w.lastWasReal = isReal;
+            if (w.asList) {
+                if (!isReal || !g_Yytk->CallBuiltin("ds_exists", { v, RValue(kMmProbeDsTypeList) }).ToBoolean()) {
+                    readOk = false;
+                } else {
+                    const int size = (int)g_Yytk->CallBuiltin("ds_list_size", { v }).ToDouble();
+                    text = "size=" + std::to_string(size);
+                    for (int i = 0; i < size && i < kMmProbeListMaxElements; ++i)
+                        text += "|" + MmProbeElementText(g_Yytk->CallBuiltin("ds_list_find_value", { v, RValue((double)i) }));
+                }
+            } else {
+                text = MmProbeElementText(v);
+            }
+        }
+        if (!readOk) {
+            ++w.readFailures;
+        } else {
+            std::string shown = text.size() > 120 ? text.substr(0, 120) + "..." : text;
+            if (!w.haveLast) { w.haveLast = true; w.firstShown = shown; }
+            else if (text != w.last) { w.changes.push_back(g_RuntimeFrame - w.startFrame); }
+            w.last.swap(text);
+            w.lastShown = shown;
+        }
+    } catch (...) { ++w.readFailures; }
+    if (--w.framesLeft <= 0) MmProbeWatchFinish();
+}
+
+static bool MmProbeIsNumber(const RValue& v)
+{
+    return v.m_Kind == VALUE_REAL || v.m_Kind == VALUE_INT32 || v.m_Kind == VALUE_INT64;
+}
+
+static std::string MmProbeHoldName()
+{
+    const MmProbeHold& h = g_MmProbeHold;
+    return h.obj + "." + h.var + "[" + std::to_string(h.index) + "]." + h.field;
+}
+
+static std::string MmProbeHoldAtText()
+{
+    const MmProbeHold& h = g_MmProbeHold;
+    return h.atLabel.empty() ? std::string("frame") : h.atLabel + (h.atPost ? " post" : " pre");
+}
+
+static void MmProbeHoldStart(const std::string& obj, const std::string& var, const std::string& indexText,
+                             const std::string& field, const std::string& deltaText, int frames, bool asList,
+                             const std::string& atLabel, bool atPost)
+{
+    if (obj.empty() || var.empty() || indexText.empty() || field.empty() || deltaText.empty()) {
+        Out("mmprobe hold: usage -> mmprobe hold <Obj|global> <var> <index> <field> <delta> [frames=180] [list] [at <label> [pre|post]] | hold stop");
+        return;
+    }
+    if (g_MmProbeWatch.active) { Out("mmprobe hold: a watch is running - wait for it to finish"); return; }
+    if (g_MmProbeHold.active) { Out("mmprobe hold: a hold is already running - `mmprobe hold stop` first"); return; }
+    int index = 0;
+    double delta = 0.0;
+    try { index = std::stoi(indexText); delta = std::stod(deltaText); }
+    catch (...) { Out("mmprobe hold: <index> must be an integer and <delta> a number"); return; }
+    if (index < 0) { Out("mmprobe hold: <index> must be >= 0"); return; }
+
+    // `at`: only a named-script row this session already detoured. An event row
+    // is never a write point - its detour does not call the hold at all.
+    MmProbeSlot* atSlot = nullptr;
+    std::string atName;
+    if (!atLabel.empty()) {
+        const std::string wanted = Lower(atLabel);
+        MmProbeTarget* target = nullptr;
+        for (MmProbeTarget& t : g_MmProbeTargets)
+            if (Lower(t.label) == wanted) { target = &t; break; }
+        if (!target) { Out("mmprobe hold: at " + atLabel + " - not a mmprobe row (see `mmprobe show` for labels)"); return; }
+        if (std::string(target->hookId).rfind("fp_mmprobe_ev_", 0) == 0) {
+            Out(std::string("mmprobe hold: at ") + target->label + " - event rows are never write points; name a script row");
+            return;
+        }
+        if (!target->installed) {
+            Out(std::string("mmprobe hold: at ") + target->label + " is not detoured - hook it first (mmprobe hook " + target->label + ")");
+            return;
+        }
+        atSlot = target->slot;
+        atName = target->label;
+    }
+
+    // Pin the objMinimap instance an `at` hold writes into, so a zone change
+    // (a new instance) stops the hold instead of writing into - and later
+    // "restoring" - a record that was never held. A frame-tick or `global`
+    // hold re-resolves the container every call (MmProbeReadVar) and is never
+    // pinned; only `at` needs it, since it is the one that outlives a frame.
+    RValue pinnedInstance;
+    double pinnedId = -1.0;
+    if (!atName.empty() && Lower(obj) != "global") {
+        try {
+            RValue oi = g_Yytk->CallBuiltin("asset_get_index", { RValue(obj) });
+            if (oi.ToDouble() < 0) {
+                Out("mmprobe hold: at " + atLabel + " - unknown object " + obj);
+                return;
+            }
+            RValue inst = g_Yytk->CallBuiltin("instance_find", { oi, RValue(0.0) });
+            if (inst.ToDouble() < 0) {
+                Out("mmprobe hold: at " + atLabel + " - no " + obj + " instance to pin");
+                return;
+            }
+            // The exact kind set HhResolveInstance hands to instance_exists -
+            // what the restore path below (MmProbeHoldElement) will check.
+            if (inst.m_Kind != VALUE_REAL && inst.m_Kind != VALUE_INT32
+                && inst.m_Kind != VALUE_INT64 && inst.m_Kind != VALUE_REF) {
+                Out("mmprobe hold: at " + atLabel + " - " + obj + " instance is " + Describe(inst) + ", not an instance kind");
+                return;
+            }
+            const double id = InstanceIdOf(inst);
+            if (id < 0) {
+                Out("mmprobe hold: at " + atLabel + " - could not read its id");
+                return;
+            }
+            pinnedInstance = inst;
+            pinnedId = id;
+        } catch (...) {
+            Out("mmprobe hold: at " + atLabel + " - no " + obj + " instance to pin");
+            return;
+        }
+    }
+
+    g_MmProbeHold = MmProbeHold{};
+    MmProbeHold& h = g_MmProbeHold;
+    h.obj = obj;
+    h.var = var;
+    h.index = index;
+    h.field = field;
+    h.delta = delta;
+    h.asList = asList;
+    h.atLabel = atName;
+    h.atPost = atPost;
+    h.instance = pinnedInstance;
+    h.instanceId = pinnedId;
+    h.framesLeft = std::clamp(frames, 1, kMmProbeWatchMaxFrames);
+    h.startFrame = g_RuntimeFrame;
+    h.active = true;
+    g_MmProbeHoldAtPost = atPost;
+    g_MmProbeHoldAtSlot = atSlot;
+    Out("mmprobe hold: " + MmProbeHoldName() + " += " + Describe(RValue(delta)) + " for "
+        + std::to_string(h.framesLeft) + " frames" + (asList ? " (ds_list container)" : "")
+        + (pinnedId >= 0 ? (", pinned " + obj + " id=" + std::to_string((int64_t)pinnedId)) : std::string())
+        + ", at=" + MmProbeHoldAtText());
+}
+
+static bool MmProbeHoldElement(RValue& element);
+
+// Write the original value back if the field still holds what the hold last
+// wrote. Disarms the `at` row first, so no detour writes during the restore.
+// Returns the text printed as `restored=`.
+static std::string MmProbeHoldRestore()
+{
+    g_MmProbeHoldAtSlot = nullptr;
+    MmProbeHold& h = g_MmProbeHold;
+    if (h.wrote == 0) return "no (nothing was written)";
+    std::string restored = "no (could not read the field back)";
+    try {
+        RValue element;
+        // Restore only into an array or something typeof calls a struct; any
+        // other kind is left alone, and no instance check is needed to decide.
+        const bool found = MmProbeHoldElement(element);
+        const bool isStruct = found && element.m_Kind == VALUE_OBJECT
+            && g_Yytk->CallBuiltin("typeof", { element }).ToString() == "struct";
+        if (!found) {
+            // keeps "could not read the field back"
+        } else if (!isStruct && element.m_Kind != VALUE_ARRAY) {
+            restored = "no (the element is no longer a struct or array)";
+        } else {
+            RValue now = isStruct
+                ? g_Yytk->CallBuiltin("variable_struct_get", { element, RValue(h.field) })
+                : g_Yytk->CallBuiltin("array_get", { element, RValue((double)std::stoi(h.field)) });
+            if (MmProbeIsNumber(now) && now.ToDouble() == h.lastWritten) {
+                if (isStruct) g_Yytk->CallBuiltin("variable_struct_set", { element, RValue(h.field), RValue(h.base) });
+                else g_Yytk->CallBuiltin("array_set", { element, RValue((double)std::stoi(h.field)), RValue(h.base) });
+                restored = "yes";
+            } else {
+                restored = "no (game overwrote it)";
+            }
+        }
+    } catch (...) { restored = "no (EXCEPTION while restoring)"; }
+    return restored;
+}
+
+// Stop and say why. Anything already written is restored the same way a normal
+// end restores it (a record replaced mid-hold, or a throw after some writes).
+static void MmProbeHoldAbort(const std::string& why)
+{
+    g_MmProbeHold.active = false;
+    g_MmProbeHoldAtSlot = nullptr;
+    const std::string restored = MmProbeHoldRestore();
+    Out("mmprobe hold " + MmProbeHoldName() + ": stopped - " + why + " (wrote=" + std::to_string(g_MmProbeHold.wrote)
+        + " restored=" + restored + ", at=" + MmProbeHoldAtText() + ")");
+}
+
+// The record `index` of the container, or false (a read failure) when the
+// container is not the kind the hold was started for. An `at` hold on a
+// non-global object reads from the instance pinned at Start rather than a
+// re-resolved one - this is what makes the restore after an abort write into
+// the OLD record (or report it gone) instead of a new instance's after a zone
+// change. A frame-tick or `global` hold still calls MmProbeReadVar, unchanged.
+static bool MmProbeHoldElement(RValue& element)
+{
+    MmProbeHold& h = g_MmProbeHold;
+    RValue container;
+    if (!h.atLabel.empty() && Lower(h.obj) != "global") {
+        if (!g_Yytk->CallBuiltin("instance_exists", { h.instance }).ToBoolean()) return false;
+        container = g_Yytk->CallBuiltin("variable_instance_get", { h.instance, RValue(h.var) });
+    } else {
+        if (!MmProbeReadVar(h.obj, h.var, container)) return false;
+    }
+    if (h.asList) {
+        if (!MmProbeIsNumber(container)
+            || !g_Yytk->CallBuiltin("ds_exists", { container, RValue(kMmProbeDsTypeList) }).ToBoolean()) return false;
+        if (h.index >= (int)g_Yytk->CallBuiltin("ds_list_size", { container }).ToDouble()) return false;
+        element = g_Yytk->CallBuiltin("ds_list_find_value", { container, RValue((double)h.index) });
+        return true;
+    }
+    if (container.m_Kind != VALUE_ARRAY) return false;
+    if (h.index >= (int)g_Yytk->CallBuiltin("array_length", { container }).ToDouble()) return false;
+    element = g_Yytk->CallBuiltin("array_get", { container, RValue((double)h.index) });
+    return true;
+}
+
+// True when an `at` hold's pinned objMinimap instance no longer exists or was
+// replaced by a new one (a zone change). A frame-tick or `global` hold is
+// never pinned, so this returns false immediately for either.
+static bool MmProbeHoldInstanceChanged(std::string& why)
+{
+    MmProbeHold& h = g_MmProbeHold;
+    if (h.atLabel.empty() || Lower(h.obj) == "global") return false;
+    double currentId = -1.0;
+    try {
+        RValue oi = g_Yytk->CallBuiltin("asset_get_index", { RValue(h.obj) });
+        RValue current = g_Yytk->CallBuiltin("instance_find", { oi, RValue(0.0) });
+        if (current.ToDouble() >= 0) currentId = InstanceIdOf(current);
+    } catch (...) { currentId = -1.0; }
+    if (currentId < 0 || currentId != h.instanceId) {
+        why = "minimap instance changed (" + h.obj + " id was " + std::to_string((int64_t)h.instanceId)
+            + ", now " + (currentId < 0 ? std::string("none") : std::to_string((int64_t)currentId)) + ")";
+        return true;
+    }
+    return false;
+}
+
+static void MmProbeHoldFinish()
+{
+    MmProbeHold& h = g_MmProbeHold;
+    h.active = false;
+    g_MmProbeHoldAtSlot = nullptr;
+    const std::string restored = MmProbeHoldRestore();
+    const uint64_t frames = g_RuntimeFrame - h.startFrame;
+    Out("mmprobe hold " + MmProbeHoldName() + ": frames=" + std::to_string(frames) + " wrote=" + std::to_string(h.wrote)
+        + " stuck=" + std::to_string(h.stuck) + " overwritten=" + std::to_string(h.overwritten)
+        + " readFailures=" + std::to_string(h.readFailures) + " restored=" + restored
+        + " at=" + MmProbeHoldAtText());
+    std::string at, gaps;
+    for (size_t i = 0; i < h.overwriteFrames.size() && i < 120; ++i) {
+        at += " " + std::to_string(h.overwriteFrames[i]);
+        if (i) gaps += " " + std::to_string(h.overwriteFrames[i] - h.overwriteFrames[i - 1]);
+    }
+    Out("  overwritten on frames:" + (at.empty() ? std::string(" (none)") : at));
+    Out("  gaps:" + (gaps.empty() ? std::string(" (fewer than two overwrites)") : gaps));
+    Out("  displaced marker seen = the draw, in the performance mode set during this hold, depends on this record, field and route; not seen proves nothing unless the same record, field and route was displaced at this write point - for H2 only at <refill row> post with performance mode on counts");
+}
+
+// One hold write: read the record, decide its route, count an overwrite, write,
+// and read the first write back. Called from the frame tick, or - with `at` -
+// from inside the named script row's detour, before or after the game's call.
+//
+// Marker records only; a game instance is refused before any write. The kind is
+// decided before any instance check, and deliberately so: instance_exists wants
+// a number or a reference, and a GML conversion error inside a builtin is
+// forwarded by YYToolkit to the runner's fatal dialog - no catch here stops it.
+// So it is only ever handed the kinds HhResolveInstance hands it. In order:
+//   - an array takes the array route (an array cannot be an instance);
+//   - an object is asked the runtime's own typeof (the game's scripts call it on
+//     this build): "struct" takes the struct route, "method" is refused, and
+//     anything else goes through the instance check and is refused either way;
+//   - a real, int32, int64 or reference goes through the instance check and is
+//     refused either way;
+//   - every other kind (string, undefined, pointer, bool, ...) is refused on its
+//     Describe text alone, with no runtime call.
+// typeof picks the struct route. Whether this runner reports an instance-backed
+// object as "struct" is unmeasured, so the first-write line prints `typeof=`
+// and the session records it; the write is bounded and restored either way.
+static bool g_MmProbeHoldInApply = false;
+
+static void MmProbeHoldApply()
+{
+    MmProbeHold& h = g_MmProbeHold;
+    if (!h.active || g_MmProbeHoldInApply) return;
+    // One write per call. Every refusal returns through MmProbeHoldAbort, which
+    // restores anything already written and disarms the `at` row.
+    const auto apply = [&h]() {
+        std::string why;
+        if (MmProbeHoldInstanceChanged(why)) { MmProbeHoldAbort(why); return; }
+        RValue element;
+        if (!MmProbeHoldElement(element)) {
+            ++h.readFailures;
+            return;
+        }
+        const std::string idx = std::to_string(h.index);
+        bool isStruct = false;
+        std::string typeName = "n/a";
+        int slot = -1;
+        const auto kind = element.m_Kind;
+        if (kind == VALUE_ARRAY) {
+            try { slot = std::stoi(h.field); } catch (...) { slot = -1; }
+            if (slot < 0) { MmProbeHoldAbort("element is an array, so <field> must be a non-negative index"); return; }
+        } else if (kind == VALUE_REAL || kind == VALUE_INT32 || kind == VALUE_INT64 || kind == VALUE_REF) {
+            // The exact kind set HhResolveInstance hands to instance_exists.
+            const bool isInstance = g_Yytk->CallBuiltin("instance_exists", { element }).ToBoolean();
+            MmProbeHoldAbort(isInstance
+                ? "element " + idx + " is a game instance; hold writes marker records, never instances"
+                : "element " + idx + " is " + Describe(element) + ", not a struct or array");
+            return;
+        } else if (kind == VALUE_OBJECT) {
+            typeName = g_Yytk->CallBuiltin("typeof", { element }).ToString();
+            if (typeName == "method") {
+                MmProbeHoldAbort("element " + idx + " is a method value (typeof=method); refused, not handed to instance_exists");
+                return;
+            }
+            isStruct = typeName == "struct";
+            if (!isStruct) {
+                const bool isInstance = g_Yytk->CallBuiltin("instance_exists", { element }).ToBoolean();
+                MmProbeHoldAbort(isInstance
+                    ? "element " + idx + " is a game instance (typeof=" + typeName + "); hold writes marker records, never instances"
+                    : "element " + idx + " is an object (typeof=" + typeName + "), not a struct");
+                return;
+            }
+        } else {
+            MmProbeHoldAbort("element " + idx + " is " + Describe(element) + "; refused without any runtime call");
+            return;
+        }
+        const RValue v = isStruct
+            ? g_Yytk->CallBuiltin("variable_struct_get", { element, RValue(h.field) })
+            : g_Yytk->CallBuiltin("array_get", { element, RValue((double)slot) });
+        if (!MmProbeIsNumber(v)) {
+            MmProbeHoldAbort("field is " + Describe(v) + ", not a number");
+            return;
+        }
+        const double value = v.ToDouble();
+        const bool first = !h.started;
+        if (first || value != h.lastWritten) {
+            // The game (re)wrote the field since our last write.
+            if (!first) {
+                ++h.overwritten;
+                h.overwriteFrames.push_back(g_RuntimeFrame - h.startFrame);
+            }
+            h.base = value;
+        } else {
+            ++h.stuck;
+        }
+        h.started = true;
+        const double target = h.base + h.delta;
+        if (isStruct) g_Yytk->CallBuiltin("variable_struct_set", { element, RValue(h.field), RValue(target) });
+        else g_Yytk->CallBuiltin("array_set", { element, RValue((double)slot), RValue(target) });
+        h.lastWritten = target;
+        ++h.wrote;
+        if (h.wrote == 1) {
+            const RValue back = isStruct
+                ? g_Yytk->CallBuiltin("variable_struct_get", { element, RValue(h.field) })
+                : g_Yytk->CallBuiltin("array_get", { element, RValue((double)slot) });
+            const bool readback = MmProbeIsNumber(back) && back.ToDouble() == h.lastWritten;
+            Out("mmprobe hold " + MmProbeHoldName() + ": route=" + std::string(h.asList ? "list" : "array") + ">"
+                + (isStruct ? "struct via variable_struct_set" : "array via array_set")
+                + ", typeof=" + typeName + ", at=" + MmProbeHoldAtText()
+                + ", base=" + Describe(v) + ", readback " + (readback ? std::string("ok") : "MISMATCH (" + Describe(back) + ")"));
+        }
+    };
+    // A CallBuiltin made from inside a detoured row could in principle call that
+    // row again; the nested call returns at once instead of writing twice.
+    // A local RAII scope, not a standalone set/clear pair: if MmProbeHoldAbort
+    // throws inside the catch below, a plain `= false;` after the try would be
+    // skipped and every later hold write would return at the guard forever.
+    struct InApplyScope {
+        InApplyScope() { g_MmProbeHoldInApply = true; }
+        ~InApplyScope() { g_MmProbeHoldInApply = false; }
+    };
+    InApplyScope inApplyScope;
+    try {
+        apply();
+    } catch (...) {
+        MmProbeHoldAbort("a runtime call threw (EXCEPTION)");
+    }
+}
+
+// Serviced from MmProbeWatchTick, i.e. inside FrameCallback's research block.
+// Without `at`, the write happens here: a write at the end of frame F is what
+// frame F+1's draw sees, unless the game refreshes the container first - which
+// is exactly what `overwritten` counts. With `at`, the armed detour writes and
+// this only counts the hold down.
+static void MmProbeHoldTick()
+{
+    MmProbeHold& h = g_MmProbeHold;
+    if (!h.active) return;
+    if (!g_MmProbeHoldAtSlot) MmProbeHoldApply();
+    if (!h.active) return;
+    if (--h.framesLeft <= 0) MmProbeHoldFinish();
+}
+
+static void MmProbeDsList(const std::string& idText, int n)
+{
+    try {
+        const double id = std::stod(idText);
+        constexpr double kDsTypeList = 2.0;
+        if (!g_Yytk->CallBuiltin("ds_exists", { RValue(id), RValue(kDsTypeList) }).ToBoolean()) {
+            Out("mmprobe dslist: " + idText + " is not a live ds_list");
+            return;
+        }
+        const int size = (int)g_Yytk->CallBuiltin("ds_list_size", { RValue(id) }).ToDouble();
+        Out("mmprobe dslist " + idText + ": size=" + std::to_string(size));
+        for (int i = 0; i < size && i < n; ++i) {
+            RValue e = g_Yytk->CallBuiltin("ds_list_find_value", { RValue(id), RValue((double)i) });
+            std::string d = Describe(e);
+            if (e.m_Kind == VALUE_ARRAY || e.m_Kind == VALUE_OBJECT) {
+                try { d += " " + g_Yytk->CallBuiltin("json_stringify", { e }).ToString(); } catch (...) {}
+            }
+            if (d.size() > 300) d = d.substr(0, 300) + "...(truncated)";
+            Out("  [" + std::to_string(i) + "] " + d);
+        }
+    } catch (...) { Out("mmprobe dslist: usage -> mmprobe dslist <id> [n=10]"); }
+}
+
+static void MmProbeCommand(const std::string& rest)
+{
+    std::string args;
+    const std::string sub = Lower(FirstToken(rest, args));
+    if (sub == "hook") { MmProbeHook(args); return; }
+    if (sub == "show") { MmProbeShow(); return; }
+    if (sub == "reset") { MmProbeReset(); return; }
+    if (sub == "verbose") {
+        const std::string v = Lower(TrimCopy(args));
+        g_MmProbeVerbose = (v == "on" || v == "1" || v == "true");
+        Out(std::string("mmprobe verbose: ") + (g_MmProbeVerbose ? "ON - first 3 calls per target are logged (reset re-arms)" : "OFF"));
+        return;
+    }
+    if (sub == "vars") {
+        std::string obj = TrimCopy(args);
+        MmProbeVars(obj.empty() ? std::string("objMinimap") : obj);
+        return;
+    }
+    if (sub == "snap") { MmProbeSnapTake(TrimCopy(args)); return; }
+    if (sub == "diff") { MmProbeDiff(); return; }
+    // Trailing optional tokens of watch: a frame count and/or `list` (hold parses
+    // its own tail, which may also carry `at <label> [pre|post]`).
+    const auto parseTail = [](std::string tail, int& frames, bool& asList) {
+        for (;;) {
+            std::string next;
+            const std::string tok = FirstToken(tail, next);
+            if (tok.empty()) break;
+            if (Lower(tok) == "list") asList = true;
+            else { try { frames = std::stoi(tok); } catch (...) {} }
+            tail = next;
+        }
+    };
+    if (sub == "watch") {
+        std::string r2, r3;
+        const std::string obj = FirstToken(args, r2);
+        const std::string var = FirstToken(r2, r3);
+        int frames = 180;
+        bool asList = false;
+        parseTail(r3, frames, asList);
+        MmProbeWatchStart(obj, var, frames, asList);
+        return;
+    }
+    if (sub == "hold") {
+        std::string r2, r3, r4, r5, r6;
+        const std::string obj = FirstToken(args, r2);
+        if (Lower(obj) == "stop") {
+            if (g_MmProbeHold.active) MmProbeHoldFinish();
+            else Out("mmprobe hold: no hold running");
+            return;
+        }
+        const std::string var = FirstToken(r2, r3);
+        const std::string index = FirstToken(r3, r4);
+        const std::string field = FirstToken(r4, r5);
+        const std::string delta = FirstToken(r5, r6);
+        int frames = 180;
+        bool asList = false;
+        std::string atLabel;
+        bool atPost = true;
+        // The hold's own tail: [frames] [list] [at <label> [pre|post]].
+        std::string tail = r6;
+        for (;;) {
+            std::string next;
+            const std::string tok = FirstToken(tail, next);
+            if (tok.empty()) break;
+            const std::string low = Lower(tok);
+            if (low == "list") asList = true;
+            else if (low == "at") {
+                std::string afterLabel;
+                atLabel = FirstToken(next, afterLabel);
+                if (atLabel.empty()) { Out("mmprobe hold: `at` needs a mmprobe row label"); return; }
+                std::string afterSide;
+                const std::string side = Lower(FirstToken(afterLabel, afterSide));
+                if (side == "pre") { atPost = false; next = afterSide; }
+                else if (side == "post") { atPost = true; next = afterSide; }
+                else next = afterLabel;
+            }
+            else { try { frames = std::stoi(tok); } catch (...) {} }
+            tail = next;
+        }
+        MmProbeHoldStart(obj, var, index, field, delta, frames, asList, atLabel, atPost);
+        return;
+    }
+    if (sub == "dslist") {
+        std::string r2;
+        const std::string id = FirstToken(args, r2);
+        int n = 10;
+        try { const std::string f = TrimCopy(r2); if (!f.empty()) n = std::stoi(f); } catch (...) {}
+        MmProbeDsList(id, n);
+        return;
+    }
+
+    int installed = 0;
+    for (const MmProbeTarget& t : g_MmProbeTargets) if (t.installed) ++installed;
+    Out("mmprobe: " + std::to_string(installed) + "/" + std::to_string(std::size(g_MmProbeTargets))
+        + " detours installed, verbose " + (g_MmProbeVerbose ? "on" : "off")
+        + ", watch " + (g_MmProbeWatch.active ? "running" : "idle")
+        + ", hold " + (g_MmProbeHold.active ? "running" : "idle")
+        + ", snapshot " + (g_MmProbeSnapTarget.empty() ? std::string("none") : g_MmProbeSnapTarget));
+    Out("  usage: mmprobe hook [substr ...] | show | reset | verbose on|off | vars [Obj=objMinimap]");
+    Out("         | snap global|<Obj> | diff | watch <Obj|global> <var> [frames=180] [list] | dslist <id> [n=10]");
+    Out("         | hold <Obj|global> <var> <index> <field> <delta> [frames=180] [list] [at <label> [pre|post]] | hold stop   (the one write)");
+    Out("  a hold never displaced proves nothing about the draw unless the same record, field and route was displaced through some write point");
+    Out("  for H2 only at <refill row> post with performance mode on counts (a mode-off displacement only ties the record to the mode-off draw)");
+    Out("  see ForgePact/docs/minimap-smoothing-research.md, \"Live procedure\"");
+}
+#endif // FORGEPACT_RELEASE (mmprobe)
 
 static bool HhIsPlayerInstance(CInstance* instance)
 {
@@ -11010,6 +12115,7 @@ static void GlobalNames(const std::string& filter)
         if (!line.empty()) Out("  " + line);
         Out("gnames: " + std::to_string(shown) + " / " + std::to_string(n) + " global"
             + (flt.empty() ? "" : (", filtre '" + filter + "'")));
+        if (n == 0) Out("  0 global names: the names builtin returned nothing - this print is uncontrolled");
     } catch (...) { Out("gnames EXCEPTION"); }
 }
 
@@ -14451,6 +15557,9 @@ static bool HandleHeadhunterCommand(const std::string& lc, const std::string& re
         else if (oiArg == "on" || oiArg == "1") { g_ObjIdxProbeOn.store(true); Out("objidxprobe: ON - GetMembers() is read on every lie-wanting call until `objidxprobe off`"); }
         else if (oiArg == "off" || oiArg == "0") { g_ObjIdxProbeOn.store(false); Out("objidxprobe: OFF - counters kept, use `objidxprobe reset` to clear them"); }
         else ObjIdxProbeReport();
+    } else if (lc == "mmprobe") {
+        // Research only: minimap smoothing Phase 0 (ForgePact issue #19).
+        MmProbeCommand(rest);
 #endif
 #ifndef FORGEPACT_RELEASE
     } else if (lc == "perf") {
@@ -15772,6 +16881,8 @@ void FrameCallback(FWFrame& FrameContext)
     // land regardless of whether `citrace <on|off>` tracing itself is armed -
     // see docs/pet-quest-collector-plan-b4-input-simulation.md §3a.
     CiPokeKeyTick();
+    // `mmprobe watch`: read-only per-frame sample, idle unless a watch runs.
+    MmProbeWatchTick();
 #endif
 
     // Relic filter, armed by `relicfilter 1`: the DropRelic hook goes in only

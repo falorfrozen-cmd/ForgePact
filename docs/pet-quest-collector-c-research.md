@@ -1393,9 +1393,10 @@ concluded the interaction does not go through any named script; what they
 actually measured is that it does not go through the *script table*, which is
 a different and much weaker statement.
 
-It also explains a smaller puzzle these notes never resolved: session 7 found
-22 raw object-event names that resolved but still never fired. Same cause —
-object event code is invoked directly too.
+It also bears on session 7's raw object-event names: all 22 returned "not
+found" (status 14, `pet-quest-collector-research.md`, session 7), so they never
+fired because they were never installed; had they resolved, object event code
+being invoked directly would have blinded a table swap the same way.
 
 The `citrace dispatchtrace` result is **unaffected**: that one hooks the
 builtin dispatcher with `MmCreateHook`, which patches the function's own
