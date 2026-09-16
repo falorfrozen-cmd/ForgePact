@@ -111,6 +111,32 @@ class CutReleaseTests(unittest.TestCase):
         self.notes.write_bytes(b"# ForgePact " + self.version.encode() + b"\r\n")
         self.assertEqual(self.run_cli("--check").returncode, 0)
 
+    def test_allow_missing_notes_does_not_fail_the_check(self):
+        # Only the tag workflow passes this: the notes file is composed into
+        # the draft release body instead of being a prerequisite to tagging.
+        self.notes.unlink()
+        result = self.run_cli("--check", "--allow-missing-notes")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("NOTE", result.stdout)
+        self.assertIn(self.notes.name, result.stdout)
+
+    def test_allow_missing_notes_still_fails_a_literal_boot_line(self):
+        # Negative control: the flag only relaxes the notes-file site, not
+        # every derived check.
+        self.notes.unlink()
+        boot = self._tmp / cut_release.BOOT_LINE_FILE
+        boot.write_bytes(boot.read_bytes().replace(
+            b'==== v" FORGEPACT_VERSION', b'==== v1.3.19"'))
+        result = self.run_cli("--check", "--allow-missing-notes")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("FORGEPACT_VERSION", result.stdout)
+
+    def test_allow_missing_notes_needs_check(self):
+        result = self.run_cli("1.3.99", "--allow-missing-notes")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("--allow-missing-notes", result.stderr)
+        self.assertIn("--check", result.stderr)
+
     def test_a_literal_version_in_the_boot_line_fails_the_check(self):
         boot = self._tmp / cut_release.BOOT_LINE_FILE
         boot.write_bytes(boot.read_bytes().replace(
