@@ -41,10 +41,6 @@ permissions:
   issues: read
   id-token: write
 
-concurrency:
-  group: ai-review-${{ github.event.pull_request.number || github.event.issue.number }}
-  cancel-in-progress: true
-
 jobs:
   review:
     if: >-
@@ -57,6 +53,35 @@ jobs:
           && startsWith(github.event.comment.body, '@claude review')
         )
       )
+    # Concurrency lives on the job, and its group is only shared when the
+    # event is a real request. Every issue comment and every label starts a
+    # run of this workflow, including a plain "thanks" or an unrelated label.
+    # At workflow level those runs joined `ai-review-<PR>` before the `if`
+    # above was ever looked at, so with cancel-in-progress they cancelled a
+    # review that was already running. An unrequested event now gets a group
+    # unique to its own run and can cancel nothing, whether or not GitHub
+    # evaluates the `if` before the group. The predicate is written out twice
+    # because neither `concurrency` nor `if` can read a value the other
+    # computes, so change both copies together. The hub repository carries the
+    # same workflow, and its tests/test_ai_review_workflow.py pins that shape.
+    concurrency:
+      group: >-
+        ${{
+        (
+        github.repository == 'falorfrozen-cmd/ForgePact'
+        && (
+        (github.event_name == 'pull_request' && github.event.label.name == 'ai-review')
+        || (
+        github.event_name == 'issue_comment'
+        && github.event.issue.pull_request != null
+        && startsWith(github.event.comment.body, '@claude review')
+        )
+        )
+        )
+        && format('ai-review-{0}', github.event.pull_request.number || github.event.issue.number)
+        || format('ai-review-unrequested-{0}', github.run_id)
+        }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
