@@ -5,11 +5,19 @@
 controls over a small file-based IPC channel that the ForgePact panel writes to.
 
 ## What you need
-- **MSVC** (Visual Studio Build Tools) with the C++ desktop workload.
+- **MSVC** (Visual Studio Build Tools) with the C++ desktop workload. `build.bat` finds
+  it via an already-initialised `vcvars` environment first, then `vswhere`, then four
+  hardcoded install paths as a last resort — no manual setup needed if any of the three
+  applies.
 - **YYToolkit headers** (the `YYToolkit`, `Aurie`, and `FunctionWrapper` include trees)
-  plus `YYToolkit/YYTK_Shared_Types.cpp`. These come from YYToolkit upstream —
-  https://github.com/AurieFramework/YYToolkit (AGPL-3.0). Place them under an `include/`
-  folder inside `plugin_build/`, next to `build.bat`.
+  plus `YYToolkit/YYTK_Shared_Types.cpp`, and the third-party binaries in
+  `modfiles_shipped/` (`AurieCore.dll`, `AuriePatcher.exe`, `YYToolkit.dll`, optionally
+  `HSOfflineTrackerProducer.dll`). Run `py tools/fetch_toolchain.py` to place all of
+  them — it downloads each from a pinned commit or release and verifies its SHA-256
+  before writing anything (all-or-nothing; see `tools/toolchain-pins.json` for exactly
+  where each one comes from). These come from YYToolkit and Aurie upstream —
+  https://github.com/AurieFramework/YYToolkit and https://github.com/AurieFramework/Aurie
+  (both AGPL-3.0) — and are never committed to this repository (`.gitignore`).
 - **hs-game-sdk** headers — `ModuleMain.cpp` includes `<hs_game_sdk/hs_game_sdk.hpp>` for
   the typed object/script/player wrappers, and `build.bat` adds
   `..\..\hs-game-sdk\cpp\include` to the include path. In a full toolkit checkout that
