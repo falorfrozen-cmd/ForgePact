@@ -25,6 +25,50 @@ shipping path and remains here for its research notes and tools.
   are original work, released under **AGPL-3.0** to satisfy the copyleft of the
 frameworks above.
 
+### Panel artwork
+The bronze anvil in the panel is the original vector artwork from Falor's
+Hero Siege Toolkit UI source package, `hub/src/ToolIcon.svelte` (`anvil` variant).
+It is adapted inline in `src/forgepact.py`, retaining the stroke and gradient
+colors. The body outline is closed and its top face is drawn continuously to
+correct the missing upper-left surface. No download is needed.
+
+The 69 setting icons in `src/panel_icons.py` are original vector illustrations
+created for ForgePact/Falor and distributed under this project's AGPL-3.0
+license. They depict the corresponding gameplay concepts; they are not
+extracted game sprites. The export command produces standalone SVG files and
+a local gallery from the same source used by the panel.
+
+## HS Offline Launcher
+- Repository: https://github.com/falorfrozen-cmd/HS-Offline-Launcher
+- Source revision: `59108803f776e7dcbd9488b21b0428ea26de5617`.
+- The embedded engine in `src/offline_launcher.py` reuses its Steam discovery,
+  PE/runtime validation and protection/process checks. The explicit-path API,
+  ForgePact plugin preflight, isolated Win32 wrapper and cached launch result
+  are integration adaptations. No separate launcher application is required.
+- These portions retain their MIT license, reproduced below.
+
+MIT License
+
+Copyright (c) 2026 falorfrozen-cmd
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
 ## MinHook
 - Repository: https://github.com/TsudaKageyu/minhook
 - License: BSD 2-Clause
