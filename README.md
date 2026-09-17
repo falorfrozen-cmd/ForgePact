@@ -44,7 +44,38 @@ number; Prime Evil parts, which share the relic roll, are skipped. Every other f
 (runes, gems, orbs, scrolls, shards, fragments, ruby keys) only scales its own roll where
 the game already drops it, so zone rules stay intact.
 
-Click the number next to any slider to type an exact value (Enter applies, Escape cancels).
+### Using the panel
+
+Use the sidebar to move between **Setup**, **Modifiers**, **World**, **Loot** and
+**Mods**. On narrow windows these become tabs across the top. The header shows
+whether the game is running and whether your latest setting has saved. **Auto-apply**
+and **Apply all now** keep their existing behavior.
+
+Every slider has **− / +** buttons and an editable value. Click the value, or focus
+it and press Enter, to type an exact number; Enter applies and Escape cancels.
+Exact saved decimal values remain visible after reopening the panel. Search
+**Modifiers** or **Loot**, or choose **Modified**, to find changed settings quickly.
+These filters never alter your settings. **How it works** expands the full details
+for density, rarity, special content and drops.
+
+Setting names now have matching icons: coin stacks for Gold, distinct portals
+and towers for special content, different key families, and combat/stat symbols.
+Satanic Zone modifiers use the same visual families. Names remain visible; the
+icons do not replace descriptions or selection checkmarks. All artwork is
+embedded locally and stays sharp at different display scales.
+
+**Mods** groups related switches in cards. The sidebar shows only the five
+main sections: Setup, Modifiers, World, Loot and Mods. Map population depends on Reveal full map;
+its switch is unavailable while the parent is off. All settings still use the
+existing local configuration and game plugin. The panel adds no UI dependencies.
+
+The reusable icon pack lives in `src/panel_icons.py`, beside `forgepact.py`.
+Keep both files together when copying the Python source. To export the 69
+individual SVGs and an offline preview gallery, run from the ForgePact folder:
+
+```powershell
+py src/panel_icons.py "C:\path\to\ForgePact-Icon-Pack"
+```
 
 Special content is spawned through the game's **own** mechanic: ForgePact multiplies
 the `Spawn_<Name>_obj` marker objects and opens the shared `eSt` gate, then the game
@@ -229,6 +260,21 @@ forced. Positive mods keep a minimum of 3 enabled, negative mods a minimum of 2,
 Satanic Zone still needs a pool to draw from. Plugin command: `satmods <buff|debuff> <csv
 of disabled ids>`.
 
+Click anywhere on a modifier card to enable or disable it. Checked green cards are
+positive modifiers; checked rose cards are negative modifiers. Search by name or
+effect, or use **All mods / Enabled / Disabled** to narrow the lists. The counters
+always show the entire enabled pool, including modifiers hidden by a filter.
+At the minimum, enable a replacement before removing another modifier; the panel
+explains this next to each list. **Enable all** restores a whole column, including
+filtered-out entries. **Restore defaults** enables both pools and leaves every
+other ForgePact setting alone. Changes save automatically; existing selections
+are retained when reopening the panel. Pending saves lock further pool edits,
+and a failed save reads back the stored selections and displays an error.
+
+The lists scroll independently, stack on narrow screens, and support Tab/Space
+keyboard selection. These controls change only the eligible pool, not the number
+of modifiers that the game rolls.
+
 No single game routine could be pinned down as "the roll" (see the research doc), so this
 does not hook one: a poll running every 15 frames off the plugin's existing frame callback
 watches `Controller_obj.satanicZoneBuff`/`satanicZoneDebuff` and, the instant either array's
@@ -308,13 +354,35 @@ a reason we have not identified. Details and every ruled-out hypothesis are in
 
 ## 🔧 How to use
 
+**Running from source:** Python opens the control panel, but the game also needs
+the compiled plugin. In a full toolkit checkout, run `Prepare-Plugin.bat` once
+(requires Python and Visual Studio C++ Build Tools). It verifies the pinned
+dependencies and builds the player plugin into `modfiles_shipped/`, without
+changing your game. Then open `src/forgepact.py` and use **Install Mod Plugin**
+with the game closed. A source zip does not include the ignored DLLs; a complete
+release zip does.
+
+**Game open** reports the game process, not a confirmed plugin connection. If
+the installation is incomplete, a warning appears on every tab with a shortcut
+to Setup. **Commands sent** means settings were handed to the plugin's command
+file; it does not claim the game has already applied them.
+
 The Install button also places the **HS Offline Tracker** live sensor (`HSOfflineTrackerProducer.dll`) beside the plugin when it ships with ForgePact. It is a separate, read-only module: it only reports gold, XP, kills, drops, room and satanic zone to the tracker and changes nothing in the game. Remove Plugin takes it away again.
 
 1. Run `ForgePact.exe` and set the path to your Season 10 `Hero_Siege.exe`.
 2. Press **Install Mod Plugin**. ForgePact will back up your exe, copy the mod files into the
    game folder, and patch the exe so it loads Aurie on start.
-3. Press **Launch Modded Game** and play offline. Change any setting in the panel and it applies
-   immediately.
+3. Press **Launch Modded Game**. HS Offline Launcher is built into this button:
+   it uses your ForgePact game path, starts Steam if necessary and sets the Steam
+   environment before launching. You do not need to install or open a second
+   launcher. Play with offline characters; saved modifiers apply through the plugin.
+
+The Setup page keeps the launch result visible, including missing Steam/runtime
+files or protection that is still active. It checks for an existing game and
+inactive EAC before launch and after waiting for Steam. It never stops EAC or
+falls back to launching without those checks. After a successful request, one
+startup check reports whether the game process is still running; this is not a
+confirmation that every gameplay modifier has applied.
 
 After a Hero Siege update, press **Install Mod Plugin** again before launching. Steam replaces
 the patched game exe during updates; ForgePact safely keeps the previous backup and prepares the
@@ -413,6 +481,12 @@ documented contracts and does not compile it, so a green test run does not confi
 plugin actually builds.
 
 ### Packaging the panel
+
+`src/offline_launcher.py` is a normal Python import bundled into ForgePact.exe.
+Keep it beside `src/forgepact.py` when running from source. Its launch engine is
+included in this repository; neither source use nor release packaging needs an
+HS-Offline-Launcher installation or checkout. The build refuses a missing module.
+Its MIT license is included in `CREDITS.md`, which ships in the release package.
 
 `build_release.py` needs hs-game-sdk too, for a different reason and from a different
 path: `src/forgepact.py` imports `hs_game_sdk` for the Satanic Zone buff/debuff pool, so

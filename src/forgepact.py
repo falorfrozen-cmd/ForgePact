@@ -1,7 +1,7 @@
 ﻿#!/usr/bin/env python3
 """ForgePact - Hero Siege Game Mods control panel.
 
-Single-file local web app: http://127.0.0.1:8766
+Local web app: http://127.0.0.1:8766 (artwork in sibling panel_icons.py)
 Talks to BloodPactPlugin (Aurie/YYTK) over bp_ipc:
 - settings apply instantly while the game is running
 - while the game is closed, commands are queued in cmd.txt (the plugin
@@ -28,6 +28,8 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
+from panel_icons import ICON_SPRITE, ICON_MAP_JS
+import offline_launcher
 
 try:
     from hs_game_sdk import (
@@ -1207,8 +1209,12 @@ def op_install_mod(cfg) -> dict:
     missing = [n for n, f in (("AurieCore.dll", core), ("YYToolkit.dll", yytk),
                               ("BloodPactPlugin.dll", plug), ("AuriePatcher.exe", patcher)) if f is None]
     if missing:
-        return {"err": "mod source files missing: " + ", ".join(missing) +
-                       " (put them in a 'modfiles' folder next to ForgePact)"}
+        remedy = ("Extract the complete ForgePact release, including its modfiles folder."
+                  if getattr(sys, "frozen", False) else
+                  "Source checkout: run Prepare-Plugin.bat in the ForgePact folder once, "
+                  "then click Install Mod Plugin again. It needs Python, Visual Studio C++ "
+                  "Build Tools and the full toolkit checkout.")
+        return {"err": "Plugin installation files missing: " + ", ".join(missing) + ". " + remedy}
     steps = []
     bak = exe.with_name(exe.name + ".aurie_backup")
     patched_before_install = exe_is_patched(exe)
@@ -1544,6 +1550,18 @@ def watcher():
             pass
 
 
+def launch_modded_game(cfg: dict) -> dict:
+    """Use the embedded launcher with this panel's path, never a second config."""
+    def validate_plugin() -> str:
+        chain = mod_chain(cfg)
+        if not all(chain.get(key) for key in ("patched", "aurieCore", "yytk", "plugin")):
+            return "The mod plugin installation is incomplete. Close the game and click Install Mod Plugin first."
+        return ""
+
+    return offline_launcher.launch_game(exe_path(cfg), validate_extra=validate_plugin,
+                                        prepare=lambda: ensure_ri_cache(cfg))
+
+
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -1584,7 +1602,8 @@ class H(BaseHTTPRequestHandler):
                         "satanicDebuffs": [[i, l, d] for i, l, d in SATANIC_DEBUFF_LIST],
                         "minEnabledSatanicBuffs": MIN_ENABLED_SATANIC_BUFFS,
                         "minEnabledSatanicDebuffs": MIN_ENABLED_SATANIC_DEBUFFS,
-                        "lastApplied": LAST["applied"], "queued": LAST["queued"]})
+                        "lastApplied": LAST["applied"], "queued": LAST["queued"],
+                        "launch": offline_launcher.launch_status()})
         else:
             self._json({"err": "not found"}, 404)
 
@@ -1728,7 +1747,7 @@ class H(BaseHTTPRequestHandler):
                     elif key in ("enemy_speed", "enemy_speed_ct"):
                         # Always explicit: "enemyspeed 1 ct" turns a live hook back to vanilla.
                         send_cmds([enemy_speed_cmd(cfg)], cfg)
-                    live = " (applied live)"
+                    live = " (commands sent to the plugin)"
                     LAST["applied"] = time.strftime("%H:%M:%S")
                 self._json({"ok": f"saved{live}", "cfg": cfg})
             elif u.path == "/api/setexe":
@@ -1762,31 +1781,7 @@ class H(BaseHTTPRequestHandler):
                 suffix = "" if game_running(cfg) else " - will run when the game starts"
                 self._json({"ok": msg + suffix} if not msg.startswith("ERROR") else {"err": msg})
             elif u.path == "/api/launch":
-                exe = exe_path(cfg)
-                if not exe.exists():
-                    self._json({"err": "game exe not found - set Game Location first"}); return
-                if game_running(cfg):
-                    self._json({"err": "the game is already running"}); return
-                # Silently continuing while a copy in another folder is open is
-                # confusing: the settings go to THIS copy while the player plays
-                # the other one.
-                other = other_copy_running(cfg)
-                if other:
-                    self._json({"err": "A different copy of the game is already running:\n"
-                                       f"{other}\n\n"
-                                       "Close it first - settings are sent to the copy configured "
-                                       "above, not to that one."}); return
-                if not exe_is_patched(exe):
-                    self._json({"err": "exe is not patched - click Install Mod Plugin first"}); return
-                try:
-                    # Pre-write the YYTK RI cache so even the FIRST launch skips the ~1 min disassembly.
-                    fast = ensure_ri_cache(cfg)
-                    # Launch the patched (EAC-free copy) exe directly so the mod loads, offline.
-                    subprocess.Popen([str(exe)], cwd=str(exe.parent), creationflags=0x00000008)
-                    self._json({"ok": "Launching modded Hero Siege (direct, offline)"
-                                + (" - fast (cache primed)" if fast else "") + "..."})
-                except Exception as e:
-                    self._json({"err": f"launch failed: {e}"})
+                self._json(launch_modded_game(cfg))
             else:
                 self._json({"err": "not found"}, 404)
         except Exception as e:
@@ -1846,131 +1841,187 @@ function pollNextChangeAt(prev, next, localAction, now, lastChange){
 
 
 HTML = r"""<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8"><title>ForgePact</title>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>ForgePact</title>
 <style>
-:root{--bg:#0d0a08;--card:#171210;--card2:#1e1713;--ember:#ff7a1a;--ember2:#ffb347;--tx:#e8dcc8;--mut:#8a7a64;--line:#33261c;--ok:#5ad87a;--arcane:#a77cff;--blood:#ff5b6e;--steel:#65c7d5}
-*{box-sizing:border-box}
-*{scrollbar-width:thin;scrollbar-color:var(--line) var(--card)}
-*::-webkit-scrollbar{width:10px;height:10px}
-*::-webkit-scrollbar-track{background:var(--card)}
-*::-webkit-scrollbar-thumb{background:var(--line);border-radius:6px;border:2px solid var(--card)}
-*::-webkit-scrollbar-thumb:hover{background:var(--ember)}
-body{margin:0;font:14px/1.5 'Segoe UI',sans-serif;background:radial-gradient(1200px 500px at 50% -150px,#2a1408 0%,var(--bg) 60%);color:var(--tx);min-height:100vh}
-#wrap{max-width:980px;margin:0 auto;padding:26px 20px 60px}
-header{display:flex;align-items:center;gap:16px;margin-bottom:6px;position:relative;padding:4px 0 10px}
-header:after{content:"";position:absolute;left:0;right:0;bottom:0;height:1px;background:linear-gradient(90deg,var(--ember),#8b3b1600 70%);box-shadow:0 0 16px #ff7a1a55}
-.logo{font-size:34px;filter:drop-shadow(0 0 12px #ff7a1a88)}
-h1{font-size:26px;margin:0;letter-spacing:2px;background:linear-gradient(90deg,var(--ember2),var(--ember),#c44a0a);-webkit-background-clip:text;background-clip:text;color:transparent}
-.sub{color:var(--mut);font-size:12px;letter-spacing:3px;text-transform:uppercase}
-.control-dock{position:sticky;top:0;z-index:10;margin:8px 0 18px;padding:9px 0 12px;background:linear-gradient(180deg,#0d0a08fa 82%,#0d0a0800);backdrop-filter:blur(9px)}
-#statusbar{display:flex;gap:10px;align-items:center;margin:9px 0 0;flex-wrap:wrap}
-.tabbar{display:grid;grid-template-columns:repeat(5,minmax(100px,1fr));gap:8px;padding:5px;border:1px solid #33261c;border-radius:12px;background:#100c0ae8;box-shadow:0 5px 22px #0008}
-.tabbtn{appearance:none;border:1px solid transparent;background:transparent;color:#8f816e;border-radius:8px;padding:9px 12px;cursor:pointer;font-size:12px;font-weight:700;letter-spacing:.9px;text-transform:uppercase;transition:.18s}
-.tabbtn:hover{color:var(--ember2);background:#241711;border-color:#49301f}
-.tabbtn.active{color:#fff2dc;background:linear-gradient(180deg,#563018,#33200e);border-color:#8e5526;box-shadow:inset 0 0 16px #ff8a2130,0 0 15px #ff7a1a20}
-.tabbtn[data-tab="modifiers"].active{background:linear-gradient(180deg,#49305c,#291c35);border-color:#8059a4;box-shadow:inset 0 0 16px #a77cff30,0 0 15px #a77cff22}
-.tabbtn[data-tab="mods"].active{background:linear-gradient(180deg,#204a43,#132c28);border-color:#388e7d;color:#d1fffa;box-shadow:inset 0 0 16px #388e7d30,0 0 15px #388e7d22}
-.chip{padding:6px 14px;border-radius:20px;font-size:12px;border:1px solid var(--line);background:var(--card)}
-.chip.on{border-color:var(--ok);color:var(--ok);box-shadow:0 0 12px #5ad87a22}
-.chip.off{border-color:#777;color:#999}
-.chip.warn{border-color:var(--ember);color:var(--ember2)}
-.chip.err{border-color:#e05050;color:#ff8080}
-.card{background:linear-gradient(180deg,var(--card2),var(--card));border:1px solid var(--line);border-radius:12px;padding:18px 22px;margin-bottom:18px;box-shadow:0 4px 24px #00000055}
-.tab-card{display:none}
-.tab-card.active{display:block;animation:tabIn .18s ease-out}
-@keyframes tabIn{from{opacity:.25;transform:translateY(5px)}to{opacity:1;transform:none}}
-.card h2{margin:0 0 4px;font-size:16px;color:var(--ember2);letter-spacing:1px}
-.card .hint{color:var(--mut);font-size:12px;margin-bottom:14px}
-.note{color:var(--mut);font-size:11px;margin:-6px 0 10px 2px;opacity:.85}
-.row{display:flex;align-items:center;gap:14px;padding:9px 0;border-top:1px solid #221a13}
-.row:first-of-type{border-top:none}
-.row .lbl{width:200px;font-size:13px}
-.row .lbl .tag{font-size:10px;color:var(--mut);margin-left:6px}
-input[type=range]{flex:1;-webkit-appearance:none;height:6px;border-radius:3px;background:linear-gradient(90deg,#3a2516,#241811);outline:none}
-.numedit{width:62px;background:#1a120c;color:#ffd9a0;border:1px solid #6b4a2a;border-radius:6px;font:inherit;text-align:right;padding:2px 4px;outline:none}
-.numedit:focus{border-color:#ff9a3c}
-input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;border-radius:50%;background:radial-gradient(circle at 35% 35%,var(--ember2),var(--ember) 60%,#a03c08);cursor:pointer;box-shadow:0 0 10px #ff7a1a99}
-.val{width:52px;text-align:center;font-weight:bold;font-size:15px;color:var(--ember2)}
-.val.off{color:#777}
-.switch{position:relative;width:46px;height:24px;flex:none}
-.switch input{display:none}
-.sl{position:absolute;inset:0;border-radius:24px;background:#2a1d13;border:1px solid var(--line);cursor:pointer;transition:.2s}
-.sl:before{content:"";position:absolute;width:18px;height:18px;border-radius:50%;left:2px;top:2px;background:#6a5440;transition:.2s}
-.switch input:checked + .sl{background:#3a2008;border-color:var(--ember)}
-.switch input:checked + .sl:before{transform:translateX(22px);background:radial-gradient(circle at 35% 35%,var(--ember2),var(--ember));box-shadow:0 0 8px #ff7a1aaa}
-.btn{background:linear-gradient(180deg,#4a2a10,#33200e);color:var(--ember2);border:1px solid #7a4a1d;border-radius:8px;padding:9px 20px;cursor:pointer;font-size:13px;letter-spacing:.5px}
-.btn:hover{background:linear-gradient(180deg,#5e3514,#3d2812);box-shadow:0 0 14px #ff7a1a33}
-#exepath{flex:1;background:#0d0907;color:var(--tx);border:1px solid var(--line);border-radius:6px;padding:8px 10px;font-size:12px}
-#toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1e150d;border:1px solid var(--ember);color:var(--ember2);border-radius:8px;padding:10px 22px;font-size:13px;opacity:0;transition:.3s;pointer-events:none;box-shadow:0 0 20px #ff7a1a44}
-#toast.show{opacity:1}
-.note{font-size:11px;color:var(--mut);font-style:italic}
-.modifier-card{position:relative;overflow:hidden;border-color:#49375d;background:radial-gradient(800px 260px at 85% -70px,#44255b55 0%,transparent 62%),linear-gradient(180deg,#1c151f,#151116)}
-.modifier-card:before{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(120deg,transparent 0 47%,#a77cff08 50%,transparent 53%)}
-.section-title{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;position:relative}
-.live-badge{font-size:10px;letter-spacing:1.4px;color:#bdffd0;border:1px solid #34794a;background:#122619;padding:4px 9px;border-radius:999px;box-shadow:0 0 12px #5ad87a22}
-.modifier-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;position:relative}
-.modifier-group{background:#0d0b10aa;border:1px solid #342943;border-radius:10px;padding:11px 14px}
-.modifier-group.wide{grid-column:1/-1}
-.group-title{font-size:11px;text-transform:uppercase;letter-spacing:1.4px;margin-bottom:4px;font-weight:700}
-.group-title.offense{color:var(--blood)}
-.group-title.critical{color:var(--arcane)}
-.group-title.sustain{color:var(--steel)}
-.modifier-group .row{display:grid;grid-template-columns:minmax(145px,190px) 1fr 64px;gap:10px;padding:8px 0}
-.modifier-group .row .lbl{width:auto}
-.modifier-group .note{margin:-4px 0 8px}
-@media(max-width:820px){.tabbar{grid-template-columns:1fr 1fr}.modifier-grid{grid-template-columns:1fr}.modifier-group.wide{grid-column:auto}.modifier-group .row{grid-template-columns:150px 1fr 64px}}
-.sat-list{max-height:420px;overflow-y:auto;padding-right:4px}
-.sat-list .row{display:flex;align-items:center;gap:10px;border-bottom:1px solid #241d2c}
-.sat-list .row:last-child{border-bottom:none}
-.sat-desc{font-size:11px;color:#8f816e;font-weight:normal}
-.group-title.positive{color:#72d6a5}
-.group-title.negative{color:#e0697a}
-.sat-bulk{display:flex;gap:8px;margin:2px 0 8px}
-.sat-bulk button{font-size:11px;padding:4px 10px}
-</style></head><body><div id="wrap">
-<header><div class="logo">&#128293;</div><div>
-  <h1>FORGEPACT</h1><div class="sub">Hero Siege game mods &middot; live control<span id="panelver"></span></div>
-</div></header>
-<div class="control-dock">
-<nav class="tabbar" role="tablist" aria-label="ForgePact categories">
-  <button class="tabbtn" data-tab="setup" role="tab">&#9881; Setup</button>
-  <button class="tabbtn" data-tab="modifiers" role="tab">&#9876; Modifiers</button>
-  <button class="tabbtn" data-tab="world" role="tab">&#127757; World</button>
-  <button class="tabbtn" data-tab="loot" role="tab">&#128176; Loot</button>
-  <button class="tabbtn" data-tab="mods" role="tab">&#10024; Mods</button>
+:root{--bg:#100d0b;--card:#191512;--card2:#211b16;--ember:#e99a4c;--ember2:#ffc47e;--tx:#eee2d2;--mut:#b7a996;--line:#43362a;--ok:#8bd3a6;--arcane:#ccb4ee;--blood:#f29ba6;--steel:#9dced5}
+*{box-sizing:border-box;scrollbar-width:thin;scrollbar-color:#65513d #15120f}
+body{margin:0;font:14px/1.5 'Segoe UI',sans-serif;background:var(--bg);color:var(--tx)}
+button,input{font:inherit}button{touch-action:manipulation}button:disabled{opacity:.45;cursor:default!important}
+button:focus-visible,input:focus-visible,summary:focus-visible,[role=button]:focus-visible{outline:2px solid var(--ember2);outline-offset:3px}
+[hidden]{display:none!important}
+#appShell{min-height:100vh;padding-left:222px}
+.sidebar{position:fixed;inset:0 auto 0 0;width:222px;display:flex;flex-direction:column;padding:24px 14px 18px;border-right:1px solid var(--line);background:#17130f;z-index:20;overflow-y:auto}
+.brand{display:flex;gap:8px;align-items:center;margin:0 0 34px}
+.brand svg{width:57px;height:65px;flex:none;filter:drop-shadow(0 3px 3px #0005)}
+.brand-name{font-size:20px;font-weight:750;letter-spacing:.4px;color:#ead6be}
+.brand-sub{font-size:9px;letter-spacing:1.3px;color:var(--mut);margin-top:2px}
+.tabbar{display:flex;flex-direction:column;gap:7px}
+.tabbtn{display:flex;align-items:center;gap:13px;position:relative;text-align:left;border:1px solid transparent;border-radius:8px;background:transparent;color:#d8caba;padding:13px 14px;cursor:pointer;font-size:14px}
+.tabbtn svg{width:22px;height:22px;flex:none;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.tabbtn:hover{background:#261e17;color:var(--ember2)}
+.tabbtn.active{color:var(--ember2);background:#3b2a1b;border-color:#6a482a}
+.tabbtn.active:before{content:"";position:absolute;left:-1px;top:10px;bottom:10px;width:3px;border-radius:3px;background:var(--ember)}
+.sidebar-foot{margin-top:auto;padding:22px 12px 0;color:var(--mut);font-size:12px}.sidebar-foot p{margin:4px 0}.sidebar-foot hr{border:0;border-top:1px solid var(--line);margin:20px 0 13px}
+#wrap{max-width:1560px;margin:0 auto;padding:0 28px 50px;min-width:0}
+.control-dock{position:sticky;top:0;z-index:10;background:#100d0bf7;border-bottom:1px solid var(--line);padding:14px 0;backdrop-filter:blur(10px)}
+.topline{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.breadcrumb{color:var(--mut);font-size:12px}.breadcrumb strong{color:var(--tx);font-weight:500;margin-left:8px}
+#statusbar{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+.chip{font-size:12px;color:var(--mut)}.chip.on{color:var(--ok)}.chip.err,.chip.warn{color:var(--ember2)}
+#chipGame:before{content:"";display:inline-block;width:7px;height:7px;margin-right:7px;border-radius:50%;background:#8e867c}#chipGame.on:before{background:var(--ok)}
+#saveIndicator{font-size:12px;min-width:105px;text-align:right;color:var(--mut)}#saveIndicator.error{color:#ffae91}#saveIndicator.saving{color:var(--ember2)}
+.page-heading{padding:24px 0 20px;display:flex;align-items:flex-start;justify-content:space-between;gap:18px}
+.page-heading h1{font-size:29px;letter-spacing:-.5px;line-height:1.2;margin:0 0 7px;color:#fff2e2}.page-heading p{margin:0;color:var(--mut);font-size:13px}
+.page-actions{display:flex;align-items:center;gap:12px;padding-top:2px}.auto-control{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--mut);white-space:nowrap}
+.btn{background:#2e2218;color:var(--ember2);border:1px solid #755131;border-radius:7px;padding:9px 13px;cursor:pointer;font-size:12px;white-space:nowrap}.btn:hover{background:#3b2a1b;border-color:#ca8c4f}
+.btn.primary{background:var(--ember);color:#201308;border-color:var(--ember);font-weight:650}.btn.primary:hover{background:var(--ember2)}
+#workspace{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:18px;align-items:start}
+.card{min-width:0;background:linear-gradient(145deg,#211b16,#171310);border:1px solid var(--line);border-radius:10px;padding:21px;margin:0;grid-column:1/-1}
+.tab-card{display:none}.tab-card.active{display:block}.card.half{grid-column:auto;align-self:stretch}
+.card h2{margin:0 0 6px;font-size:18px;letter-spacing:.1px;color:#f5e7d4;display:flex;align-items:center;gap:10px}
+.card .hint{color:var(--mut);font-size:12px;line-height:1.65;margin-bottom:16px}
+.note{font-size:12px;color:var(--mut);margin:8px 0;line-height:1.6}.note:empty{display:none}
+.help-details{margin-top:12px;color:var(--mut);font-size:12px}.help-details summary{cursor:pointer;color:#d8bd97;font-size:12px;width:fit-content}.help-details[open] summary{margin-bottom:8px}.help-details .hint{margin:0}
+.row{display:flex;align-items:center;gap:14px;padding:14px 0;border-top:1px solid #352b22;min-width:0}
+.row .lbl{width:210px;font-size:13px;flex-shrink:0}.row .lbl .tag{font-size:10px;color:var(--mut);margin-left:6px}.row .lbl>span[style]{color:var(--mut)!important;line-height:1.65;font-size:12px!important}
+.range-control{display:flex;gap:12px;align-items:center;min-width:0;flex:1}
+input[type=range]{flex:1;min-width:55px;width:100%;appearance:none;height:6px;border-radius:5px;background:#4a3a2b;cursor:pointer;accent-color:var(--ember)}
+input[type=range]::-webkit-slider-thumb{appearance:none;width:17px;height:17px;border-radius:50%;background:var(--ember2);border:2px solid #d39453;box-shadow:none}input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:var(--ember2);border:2px solid #d39453}
+.value-stepper{display:flex;align-items:center;flex:none;border:1px solid #62472e;border-radius:6px;overflow:visible;background:#120f0d}
+.step-button{padding:5px 9px;min-width:28px;min-height:32px;border:0;background:transparent;color:#dbc3a5;cursor:pointer;font-size:18px;line-height:1}.step-button:hover{background:#39291c;color:var(--ember2)}
+.val{min-width:42px;width:60px;text-align:center;color:var(--ember2);font-size:13px;font-weight:600;flex:none}.val.off{color:#ab9a86}.value-stepper>.val{padding:4px;min-width:51px;border-left:1px solid #493725;border-right:1px solid #493725}
+.numedit{width:100%;min-width:48px;border:0;background:#2a1e15;color:#fff0db;text-align:center;padding:0;outline:0;font-size:13px}
+.switch{position:relative;width:42px;height:23px;flex:none;display:inline-block}.switch input{position:absolute;inset:0;opacity:0;width:100%;height:100%;margin:0;z-index:1;cursor:pointer}.switch input:disabled{cursor:not-allowed}.switch:focus-within{outline:2px solid var(--ember2);outline-offset:4px;border-radius:20px}
+.sl{position:absolute;inset:0;border-radius:23px;background:#413529;border:1px solid #67513a;pointer-events:none}.sl:before{content:"";position:absolute;width:17px;height:17px;left:2px;top:2px;background:#b2a38f;border-radius:50%;transition:transform .12s}
+.switch input:checked+.sl{background:#ad6b2e;border-color:#efb46a}.switch input:checked+.sl:before{transform:translateX(19px);background:#ffe2b4}
+#exepath{min-width:180px;flex:1;background:#100e0c;color:var(--tx);border:1px solid #65513d;border-radius:7px;padding:11px 12px;font-size:13px}.setup-path-row{flex-wrap:wrap}.setup-path-row #exepath{flex-basis:100%}.setup-launch{flex-wrap:wrap}
+#toast{position:fixed;bottom:22px;left:calc(50% + 90px);transform:translateX(-50%);max-width:min(600px,calc(100vw - 36px));z-index:100;background:#292018;color:#ffe3be;border:1px solid #996a3e;border-radius:8px;padding:11px 18px;opacity:0;transition:opacity .15s;pointer-events:none;box-shadow:0 5px 25px #0005;font-size:12px}#toast.show{opacity:1}
+.section-title{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}.live-badge{font-size:10px;padding:4px 8px;white-space:nowrap;border:1px solid #3e6650;border-radius:20px;background:#18281f;color:var(--ok)}
+.modifier-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px}.modifier-group{min-width:0;background:#13100e;border:1px solid #403329;border-radius:9px;padding:16px}.modifier-group.wide{grid-column:1/-1}
+.group-title{font-size:12px;font-weight:600;color:#e8c797;margin-bottom:7px}.group-title.offense{color:#f2aba6}.group-title.critical{color:#cab5e4}.group-title.sustain{color:#a0cec2}
+.modifier-group .row{display:block;border:0;padding:10px 0}.modifier-group .row .lbl{display:block;width:auto;margin-bottom:9px}.modifier-group .note{margin:0 0 5px;font-size:11px}.modifier-group .setting-entry+.setting-entry{border-top:1px solid #31271f}
+.setting-entry{min-width:0;padding:0 2px}.setting-entry .row{border:0}.setting-entry .note{margin:-5px 0 12px}.settings-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 24px}.settings-grid .row{display:block}.settings-grid .lbl{display:block;width:auto;margin-bottom:9px}.settings-grid .setting-entry{border-bottom:1px solid #382b21}
+#dropSettings>#drops,#dropSettings>#keys{display:contents}
+#controlToolbar{display:flex;gap:12px;margin:0 0 18px}.control-search{flex:1;min-width:0;background:#17120f;border:1px solid #55422e;border-radius:7px;padding:10px 12px;color:var(--tx)}.control-search::placeholder{color:var(--mut)}.control-filters{display:flex;gap:4px;background:#17120f;border:1px solid #55422e;padding:4px;border-radius:7px}.control-filters button{background:transparent;border:0;border-radius:4px;color:var(--mut);padding:4px 13px;cursor:pointer}.control-filters button[aria-pressed=true]{background:#4d3420;color:#ffd396}
+.empty-settings{color:var(--mut);padding:20px;text-align:center;grid-column:1/-1}
+.hero-number{color:var(--ember2);font-size:35px;line-height:1.25;font-weight:700;margin:9px 0}.density-top{display:flex;align-items:center;justify-content:space-between}.density-top .row{border:0;padding:0;gap:8px}.density-top .lbl{width:auto;font-size:11px;color:var(--mut)}
+#densityCard>.row{border:0;padding:6px 0}#densityCard>.row>.lbl{display:none}.density-scale{display:flex;justify-content:space-between;font-size:11px;color:var(--mut);margin-top:5px}
+#rarityCard .row{border:0;display:flex;padding:12px 0}#rarityCard .lbl{display:block;width:62px;margin:0}#rarityCard .note{font-size:11px}
+.mods-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-items:start}.feature-card{padding:15px!important;background:#15110e;border:1px solid #45352a!important;border-radius:8px;margin:0!important;align-items:flex-start}.feature-card>.lbl{flex:1!important;width:auto!important;min-width:0}.feature-card .switch{margin-top:1px}.feature-card>.val{min-width:0;width:24px;font-size:11px;margin-top:2px}.feature-card:has(>.switch>input:checked),.feature-with-child:has(>.feature-card:first-child>.switch>input:checked){border-color:#85603a!important}.feature-with-child{border:1px solid #45352a;border-radius:8px;background:#15110e;overflow:hidden}.feature-with-child>.feature-card{border:0!important;border-radius:0}.feature-with-child>#map_reveal_packs_row{border:0!important;border-top:1px solid #45352a!important;margin:0!important;padding:14px!important;background:#1d1711;border-radius:0}
+.feature-card{display:grid;grid-template-columns:minmax(0,1fr) 42px 24px;gap:8px 12px;align-content:start}.feature-card>.lbl{font-weight:600}.feature-description{grid-column:1/-1;color:var(--mut)!important;line-height:1.65;font-size:12px!important;font-weight:normal}.switch input:disabled+.sl{opacity:.4;filter:grayscale(1)}
+@media(min-width:1700px){#wrap{padding-left:38px;padding-right:38px}}
+@media(max-width:1150px){#appShell{padding-left:190px}.sidebar{width:190px;padding:20px 10px}.brand svg{width:44px}.brand-name{font-size:17px}.brand-sub{font-size:8px}.page-heading{flex-wrap:wrap}.modifier-grid,.mods-grid{grid-template-columns:1fr}.settings-grid{grid-template-columns:1fr}.card.half{grid-column:1/-1}.row .lbl{width:180px}#wrap{padding:0 20px 40px}}
+@media(max-width:720px){#appShell{padding-left:0}.sidebar{position:static;width:auto;padding:12px 14px;border-right:0;border-bottom:1px solid var(--line);overflow:visible}.brand{margin:0 0 10px}.brand svg{width:39px;height:39px}.brand-name{font-size:18px}.brand-sub{display:none}.tabbar{flex-direction:row;gap:3px}.tabbtn{flex:1;justify-content:center;padding:10px 6px;gap:4px;font-size:11px}.tabbtn svg{width:15px;height:15px}.sidebar-foot{display:none}#wrap{padding:0 14px 35px}.control-dock{position:static}.page-heading h1{font-size:25px}.page-actions{width:100%;justify-content:space-between;flex-wrap:wrap}.row{flex-wrap:wrap}.row .lbl{width:100%;flex-shrink:1}.row:has(.range-control)>.range-control{flex-basis:100%}.range-control{gap:8px}.step-button{padding:5px 6px}.value-stepper>.val{min-width:44px;width:52px!important}.card{padding:16px}#workspace{gap:14px}.topline{gap:8px}#statusbar{gap:10px}#saveIndicator{min-width:0}#toast{left:50%}#controlToolbar{flex-wrap:wrap}.control-search{flex-basis:100%}.control-filters{width:100%}.control-filters button{flex:1}.feature-card{flex-wrap:nowrap}.density-top .row{flex-wrap:nowrap}.section-title{flex-wrap:wrap}}
+@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
+#satanicMods{background:linear-gradient(145deg,#211a17,#161210 65%);border-color:#48362b;padding:24px}
+.sat-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:18px}
+#satanicMods h2{font-size:22px;letter-spacing:.3px;margin-bottom:6px}
+.sat-intro{margin:0;color:#d1c3b2;font-size:13px}
+.sat-intro span{display:block;color:#a99a89;font-size:12px;margin-top:3px}
+.sat-button{font:inherit;font-size:12px;color:#ebc799;background:#271e18;border:1px solid #5b4533;border-radius:7px;padding:8px 12px;cursor:pointer;white-space:nowrap}
+.sat-button:hover:not(:disabled){background:#37271b;border-color:#c78a4c}
+.sat-button:disabled{opacity:.45;cursor:default}
+.sat-toolbar{display:flex;gap:12px;align-items:center;margin:22px 0 18px}
+.sat-search{display:flex;gap:10px;align-items:center;flex:1;min-width:0;background:#100e0d;border:1px solid #46392f;border-radius:8px;padding:0 12px;color:#a99a89}
+.sat-search:focus-within{outline:2px solid var(--ember2);outline-offset:2px}
+.sat-search svg{width:17px;height:17px;flex:none}
+#satSearch{width:100%;min-width:0;padding:11px 0;background:none;border:0;outline:none;color:var(--tx);font:inherit;font-size:13px}
+#satSearch::placeholder{color:#a99a89}
+.sat-filters{display:flex;gap:3px;padding:4px;border:1px solid #403329;border-radius:8px;background:#100e0d}
+.sat-filters button{font:inherit;font-size:12px;padding:7px 12px;color:#b6a794;background:transparent;border:1px solid transparent;border-radius:5px;cursor:pointer}
+.sat-filters button[aria-pressed="true"]{background:#3c2a1b;border-color:#79512d;color:#ffcf90}
+.sat-filters button:hover{color:#ffcf90}
+.sat-columns{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px}
+.sat-panel{--sat-accent:#85d4aa;--sat-tint:#182820;--sat-border:#385b48;min-width:0;border:1px solid #40362e;border-radius:10px;background:#110f0e;overflow:hidden}
+.sat-panel[data-polarity="debuff"]{--sat-accent:#f19aa5;--sat-tint:#2b1b20;--sat-border:#65404a}
+.sat-panel-head{padding:16px;border-bottom:1px solid #302720}
+.sat-panel-title{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.sat-panel h3{margin:0;font-size:15px;font-weight:600;color:var(--sat-accent)}
+.sat-sign{display:inline-grid;place-items:center;width:22px;height:22px;border:1px solid var(--sat-border);border-radius:6px;color:var(--sat-accent);font-size:16px;background:var(--sat-tint)}
+.sat-count{margin-left:auto;color:var(--sat-accent);background:var(--sat-tint);border:1px solid var(--sat-border);border-radius:20px;padding:2px 8px;font-size:11px;white-space:nowrap}
+.sat-panel-tools{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px;color:#b6a794;font-size:12px}
+.sat-panel-tools .sat-button{padding:5px 10px}
+.sat-list{height:300px;overflow-y:auto;overscroll-behavior:contain;padding:10px;scrollbar-gutter:stable}
+.sat-option{display:flex;align-items:flex-start;gap:12px;padding:13px 12px;margin-bottom:7px;min-height:70px;border:1px solid #352d27;border-radius:7px;background:#1a1613;cursor:pointer;transition:border-color .12s,background .12s}
+.sat-option:last-child{margin-bottom:0}
+.sat-option[hidden]{display:none}
+.sat-option:hover{border-color:#7d6854;background:#231d18}
+.sat-option.is-enabled{background:var(--sat-tint);border-color:var(--sat-border)}
+.sat-option:focus-within{outline:2px solid var(--ember2);outline-offset:1px}
+.sat-option input{appearance:none;width:19px;height:19px;flex:none;position:relative;margin:3px 0 0;border:1px solid #8c7b68;border-radius:4px;background:#100e0d;cursor:inherit}
+.sat-option input:checked{background:var(--sat-accent);border-color:var(--sat-accent)}
+.sat-option input:checked:after{content:"";position:absolute;left:5px;top:2px;width:5px;height:9px;border:solid #18211b;border-width:0 2px 2px 0;transform:rotate(45deg)}
+.sat-option input:focus{outline:none}
+.sat-option.is-locked{cursor:not-allowed}
+#satanicMods[aria-busy="true"] .sat-option{cursor:wait}
+.sat-name{display:block;font-size:13px;font-weight:600;color:#f0e4d4}
+.sat-desc{display:block;font-size:12px;line-height:1.5;color:#b9ae9f;margin-top:3px;overflow-wrap:anywhere}
+.sat-panel-foot{min-height:69px;padding:11px 16px;border-top:1px solid #302720;font-size:11px;color:#b7aa98}
+.sat-panel-foot strong{display:block;color:#dbc5a7;font-size:12px;margin-bottom:2px;font-weight:500}
+.sat-empty{padding:35px 12px;text-align:center;color:#b7aa98;font-size:13px}
+.sat-footer{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;padding-top:17px;font-size:12px;color:#b7aa98}
+#satSummary{color:#a8d1b5}
+#satSummary.is-invalid,#satSaveState.is-error{color:#ffbd89}
+.sat-footer-note{margin-left:8px;color:#b7aa98}
+#satanicMods button:focus-visible{outline:2px solid var(--ember2);outline-offset:3px}
+@media(max-width:720px){.control-dock{position:static}#satanicMods{padding:18px}.sat-heading{flex-wrap:wrap}.sat-toolbar{flex-wrap:wrap}.sat-search{flex-basis:100%}.sat-filters{width:100%}.sat-filters button{flex:1}.sat-columns{grid-template-columns:1fr}.sat-list{height:340px}.sat-footer{align-items:flex-start;flex-direction:column}.sat-footer-note{display:block;margin:3px 0 0}}
+.icon-definitions{position:absolute;overflow:hidden;pointer-events:none}
+.setting-icon{width:28px;height:28px;flex:none;display:inline-block;vertical-align:middle;pointer-events:none;filter:drop-shadow(0 1px 1px #0005)}
+.has-setting-icon{display:flex!important;align-items:center;gap:9px}.label-copy{min-width:0}
+.row .lbl.has-setting-icon{line-height:1.4}.card h2.has-setting-icon{gap:10px}
+#densityCard>.row>.lbl.has-setting-icon{display:none!important}
+.group-title .setting-icon,.btn .setting-icon,.auto-control .setting-icon{width:20px;height:20px}
+.sat-name{display:flex;align-items:center;gap:8px}.sat-name .setting-icon{width:24px;height:24px}.sat-desc{margin-left:32px}
+.sat-option>span{min-width:0}.feature-card>.lbl .setting-icon{align-self:flex-start}
+#rarityCard .lbl{width:96px;flex-shrink:0}
+@media(max-width:720px){.setting-icon{width:25px;height:25px}.sat-option{gap:9px;padding:12px 10px}.sat-desc{margin-left:0}.sat-name .setting-icon{width:24px;height:24px}#rarityCard .lbl{width:96px}.btn.has-setting-icon{justify-content:center}}
+.plugin-warning{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 16px;margin:0 0 18px;border:1px solid #805d32;border-radius:8px;background:#2c2115;color:#ffcf90;font-size:13px;line-height:1.5}.plugin-warning[hidden]{display:none}.plugin-warning .btn{flex:none}@media(max-width:720px){.plugin-warning{align-items:flex-start;flex-direction:column;gap:10px}}
+.launch-feedback{padding:11px 13px;margin:10px 0;border:1px solid #483b2c;border-radius:7px;background:#181510;color:#c8b59b;font-size:13px;line-height:1.5;overflow-wrap:anywhere}.launch-feedback.starting{color:#ffcf90;border-color:#805d32}.launch-feedback.error,.launch-feedback.warning{color:#ffc397;border-color:#996140}.launch-feedback.verified{color:#9bdab8;border-color:#385b48}@media(max-width:720px){.setup-launch{align-items:flex-start}.setup-launch>.note{flex-basis:100%!important}.setup-launch>.btn{width:100%;justify-content:center}}
+</style></head><body>""" + ICON_SPRITE + r"""<div id="appShell">
+<aside class="sidebar" aria-label="ForgePact navigation">
+  <!-- Anvil adapted from Falor's toolkit ToolIcon.svelte; closed body and continuous top face. -->
+  <div class="brand"><svg viewBox="0 0 80 80" fill="none" aria-hidden="true"><defs><linearGradient id="forge-anvil" x1="15" y1="8" x2="65" y2="73" gradientUnits="userSpaceOnUse"><stop stop-color="#efc79b"/><stop offset=".48" stop-color="#b27a48"/><stop offset="1" stop-color="#563d2c"/></linearGradient></defs><g stroke="#efc79b" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"><path d="M39 3 51 17 40 31 29 17Z" fill="url(#forge-anvil)"/><path d="m40 9-5 8 5 8 5-8Z" fill="#141619"/><path d="M28 27H47V30H70C68 38 60 42 47 43V55L55 64H28L35 55V43H24C15 43 8 38 3 30H28Z" fill="url(#forge-anvil)"/><path d="M3 30H70L66 34H8Z" fill="#d8aa7b"/><path d="M30 64h23l5 7H24Z" fill="url(#forge-anvil)"/><path d="M39 34v25m-7 8h19" opacity=".7"/></g></svg><div><div class="brand-name">FORGEPACT</div><div class="brand-sub">HERO SIEGE TOOLS</div></div></div>
+  <nav class="tabbar" role="tablist" aria-label="ForgePact categories" aria-orientation="vertical"><button class="tabbtn" data-tab="setup" role="tab" id="nav-setup" aria-controls="workspace"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 3h4l1 3 3 1 3 2v4l-3 2-1 3-3 3h-4l-1-3-3-1-3-2v-4l3-2 1-3zM15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0"/></svg>Setup</button>
+<button class="tabbtn" data-tab="modifiers" role="tab" id="nav-modifiers" aria-controls="workspace"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18M7 3v6M16 9v6M10 15v6"/></svg>Modifiers</button>
+<button class="tabbtn" data-tab="world" role="tab" id="nav-world" aria-controls="workspace"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0M3 12h18M12 3c5 5 5 13 0 18-5-5-5-13 0-18"/></svg>World</button>
+<button class="tabbtn" data-tab="loot" role="tab" id="nav-loot" aria-controls="workspace"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h16v12H4zM3 8l3-5h12l3 5M9 8v5h6V8"/></svg>Loot</button>
+<button class="tabbtn" data-tab="mods" role="tab" id="nav-mods" aria-controls="workspace"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6V2a3 3 0 0 1 6 0v2h5v6h-2a3 3 0 0 0 0 6h2v5h-6v-2a3 3 0 0 0-6 0v2H4v-6H2a3 3 0 0 1 0-6h2Z"/></svg>Mods</button>
 </nav>
-<div id="statusbar">
-  <span class="chip" id="chipGame">...</span>
-  <span class="chip" id="chipApply">...</span>
-  <label class="chip" style="display:flex;align-items:center;gap:8px;cursor:pointer">
-    auto-apply on game launch
-    <span class="switch"><input type="checkbox" id="autoapply"><span class="sl"></span></span>
-  </label>
-  <button class="btn" id="applyall">Apply All Now</button>
-</div>
-</div>
-
-<div class="card tab-card" data-tab="setup">
-  <h2>&#127918; Game Location</h2>
+  <div class="sidebar-foot"><hr><p>Offline tools</p><p>Created by Falor</p><p id="panelver"></p></div>
+</aside>
+<main id="wrap">
+  <div class="control-dock"><div class="topline">
+    <div class="breadcrumb">ForgePact / <strong id="breadcrumbPage">Modifiers</strong></div>
+    <div id="statusbar"><span class="chip" id="chipGame">Connecting...</span><span id="saveIndicator" role="status" aria-live="polite">Loading settings...</span></div>
+  </div></div>
+  <div id="pluginWarning" class="plugin-warning" role="status" hidden><span id="pluginWarningText"></span><button class="btn" type="button" onclick="openTab('setup')">Open Setup</button></div>
+  <div class="page-heading"><div><h1 id="pageTitle">Character modifiers</h1><p id="pageDescription">Tune your character and combat bonuses.</p></div>
+    <div class="page-actions"><label class="auto-control">Auto-apply <span class="switch"><input type="checkbox" id="autoapply" aria-label="Auto-apply on game launch"><span class="sl"></span></span></label><button class="btn" id="applyall" title="Send all saved settings to the game">Apply all now</button></div>
+  </div>
+  <div id="controlToolbar" hidden><input type="search" id="controlSearch" class="control-search" placeholder="Search settings by name or effect..." aria-label="Search settings in this section"><div class="control-filters" role="group" aria-label="Filter settings"><button data-control-filter="all" aria-pressed="true">All settings</button><button data-control-filter="modified" aria-pressed="false">Modified</button></div></div>
+  <div id="workspace" role="tabpanel" aria-labelledby="nav-modifiers">
+<div class="card tab-card" data-tab="setup" id="setupCard">
+  <h2>Game Location</h2>
   <div class="hint">ForgePact talks to the mod plugin sitting next to this exe. Change it if your game lives somewhere else.</div>
-  <div class="row" style="border:none">
+  <div class="row setup-path-row" style="border:none">
     <input id="exepath" placeholder="C:\...\HeroSiege\bin\Hero_Siege.exe">
     <button class="btn" id="exebrowse" title="Open a file picker to choose Hero_Siege.exe">&#128193; Browse...</button>
     <button class="btn" id="exesave">Save</button>
     <button class="btn" id="installmod" title="One click: backs up the exe, copies mod DLLs, patches the exe">Install Mod Plugin</button>
     <button class="btn" id="removeplugin" title="Restores your original exe from the backup and removes the mod files (game must be closed)">Remove Plugin</button>
   </div>
-  <div class="row" style="border:none;margin-top:6px">
-    <button class="btn" id="launchgame" style="background:linear-gradient(180deg,#1f5a2a,#163f1e);color:#9be8a8;border-color:#2f8a44;font-weight:bold" title="Launches the patched Hero_Siege.exe directly (no EAC) so the mod loads and you stay offline">&#9654; Launch Modded Game</button>
-    <span class="note" style="flex:1">Launches the patched exe <b>directly</b> (no EAC launcher) - mod loads, fully offline, online disabled.</span>
+  <div class="row setup-launch" style="border:none;margin-top:6px">
+    <button class="btn primary" id="launchgame" title="Start through the built-in HS Offline Launcher">&#9654; Launch Modded Game</button>
+    <span class="note" style="flex:1"><b>HS Offline Launcher · Built in</b><br>Starts Steam if needed and launches your selected game with the correct Steam settings. Use offline characters.</span>
   </div>
+  <div class="launch-feedback" id="launchFeedback" role="status" aria-live="polite">HS Offline Launcher is built in. No separate installation needed.</div>
   <div class="note" id="eacnote"></div>
   <div class="note" id="ipcnote"></div>
   <div class="note" id="chainnote"></div>
 </div>
 
-<div class="card tab-card" data-tab="world">
-  <h2>&#128127; Monster Density</h2>
+<div class="card tab-card" data-tab="world" id="densityCard">
+  <h2>Monster Density</h2>
   <div class="hint">Multiplies enemy spawners - applies to newly loaded zones.<br><b>Density and Special Content stack.</b> Each on its own is fine, but a high density together with high special-content rates can overload a heavy zone and crash the game on entry. Verified stable: density x3 with every special content at x20. If a zone crashes, lower density first.</div>
   <div class="note" style="color:#72d6a5;border:1px solid #245a43;border-radius:6px;padding:8px 12px;margin-bottom:10px">Density is applied once per creator placement. Returning to a previously visited zone does not multiply it again.</div>
   <div class="row">
@@ -1981,8 +2032,8 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
   </div>
 </div>
 
-<div class="card tab-card" data-tab="world">
-  <h2>&#127939; Enemy Movement Speed</h2>
+<div class="card tab-card" data-tab="world" id="speedCard">
+  <h2>Enemy Movement Speed</h2>
   <div class="hint">Enemies run at you faster, so waves end sooner. Scales the game's own path speed (base speed &times; bonus); slows and debuffs still apply on top, goblins keep their own pace. <b>Only inside Chaos Tower</b> leaves every other zone vanilla - switch it off to speed up enemies everywhere.</div>
   <div class="row">
     <span class="lbl">Speed bonus</span>
@@ -1996,14 +2047,14 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
   </div>
 </div>
 
-<div class="card tab-card" data-tab="world">
-  <h2>&#127757; Special Content Spawns</h2>
+<div class="card tab-card" data-tab="world" id="spawnsCard">
+  <h2>Special Content Spawns</h2>
   <div class="hint">Multiplies the game's own spawn markers, so the game places and runs each mechanic itself - nothing is hand-placed. Higher = more of that content per zone. Applies to newly loaded zones. (The Abyss is not listed: it sits behind a discovery gate that is not solved yet.)</div>
   <div id="spawners"></div>
 </div>
 
-<div class="card tab-card" data-tab="loot">
-  <h2>&#128176; Drop Rates</h2>
+<div class="card tab-card" data-tab="loot" id="dropsCard">
+  <h2>Drop Rates</h2>
   <div class="hint">All of these use the game's own dice - <b>nothing is forced</b>.
   <b>x5 means five times more likely than vanilla</b>; <b>off</b> (x1) leaves that drop completely untouched.
   Applies immediately, no zone reload needed.<br>
@@ -2011,12 +2062,14 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
   Families the game never rolls outside their home zone (Dungeon and Angelic keys, Orbs,
   Scrolls, Shards, Fragments) first get their roll opened at the monster's normal-key
   chance; Relics use their own curve, explained on the row.</div>
-  <div id="drops"></div>
-  <div id="keys"></div>
+  <div id="dropSettings">
+    <div id="drops"></div>
+    <div id="keys"></div>
+  </div>
 </div>
 
-<div class="card tab-card" data-tab="loot">
-  <h2>&#128081; Angelic / Unholy Drops (Experimental)</h2>
+<div class="card tab-card" data-tab="loot" id="angelicCard">
+  <h2>Angelic / Unholy Drops (Experimental)</h2>
   <div class="hint">The game only rolls for Angelic or Unholy items while an "Angelic item drop chance"
   effect (a Blood Pact or dungeon modifier) is active, so this is ForgePact's own die: on every monster
   kill it rolls, and on a hit the game itself builds one of its 49 real Angelic / Unholy uniques (no
@@ -2033,10 +2086,10 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
 
 <div class="card modifier-card tab-card" data-tab="modifiers">
   <div class="section-title">
-    <div><h2>&#9876; Combat &amp; Character Modifiers</h2>
+    <div><h2>Combat &amp; Character Modifiers</h2>
       <div class="hint">Live modifiers use the character's current total value, including equipment and other bonuses. <b>Off</b> keeps the game at its normal value.</div>
     </div>
-    <span class="live-badge">LIVE MEMORY</span>
+    <span class="live-badge">LIVE MODIFIERS</span>
   </div>
   <div class="modifier-grid">
     <div class="modifier-group">
@@ -2058,87 +2111,69 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
   </div>
 </div>
 
-<div class="card tab-card" data-tab="world">
-  <h2>&#128128; Monster Rarity</h2>
+<div class="card tab-card" data-tab="world" id="rarityCard">
+  <h2>Monster Rarity</h2>
   <div class="hint">Raises a share of the normal monsters to <b>Rare</b> (yellow) or <b>Ancient</b> (skull) as they spawn, through the game's own rarity setup: the monster gets that tier's stats, affixes and health bar exactly as if it had rolled that way. The two shares are separate and together stay at 100% or less - 25% Rare with 15% Ancient leaves 60% normal. Champions and the game's own rares are not touched. Stacks with Tyrant's Crown and Density.</div>
   <div class="row" style="border:none">
-    <span class="lbl">Normal monsters raised to Rare</span>
+    <span class="lbl">Rare</span>
     <input type="range" min="0" max="100" step="5" id="rarity_rare" value="0">
     <span class="val off" id="rarityrareval" style="width:64px">off</span>
   </div>
   <div class="row" style="border:none">
-    <span class="lbl">Normal monsters raised to Ancient</span>
+    <span class="lbl">Ancient</span>
     <input type="range" min="0" max="100" step="5" id="rarity_ancient" value="0">
     <span class="val off" id="rarityancval" style="width:64px">off</span>
   </div>
   <div class="note" id="raritynote">off</div>
 </div>
 
-<div class="card modifier-card tab-card" data-tab="world">
-  <h2><svg width="26" height="26" viewBox="0 0 64 64" style="vertical-align:-6px" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-    <defs>
-      <radialGradient id="satRedGlow" cx="50%" cy="50%" r="50%">
-        <stop offset="0%" stop-color="#ff6b7a" stop-opacity="1"/>
-        <stop offset="55%" stop-color="#c81a34" stop-opacity="0.6"/>
-        <stop offset="100%" stop-color="#c81a34" stop-opacity="0"/>
-      </radialGradient>
-      <radialGradient id="satSkullFill" cx="42%" cy="32%" r="75%">
-        <stop offset="0%" stop-color="#2b2622"/>
-        <stop offset="55%" stop-color="#14100d"/>
-        <stop offset="100%" stop-color="#060504"/>
-      </radialGradient>
-      <linearGradient id="satFadeGrad" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0" stop-color="black"/>
-        <stop offset="0.35" stop-color="white"/>
-        <stop offset="1" stop-color="white"/>
-      </linearGradient>
-      <mask id="satFadeTop"><rect x="0" y="0" width="64" height="64" fill="url(#satFadeGrad)"/></mask>
-      <filter id="satSmokeBlur" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="2.2"/></filter>
-      <filter id="satSoftBlur" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="1.1"/></filter>
-    </defs>
-    <g filter="url(#satSmokeBlur)" stroke-linecap="round" fill="none">
-      <path d="M20,52 C14,46 18,38 12,30 C7,23 13,15 9,6" stroke="#15110e" stroke-width="5" opacity="0.22"/>
-      <path d="M20,52 C14,46 18,38 12,30 C7,23 13,15 9,6" stroke="#100c0a" stroke-width="2" opacity="0.45"/>
-      <path d="M44,52 C50,45 45,36 51,28 C56,20 49,13 54,4" stroke="#15110e" stroke-width="5" opacity="0.22"/>
-      <path d="M44,52 C50,45 45,36 51,28 C56,20 49,13 54,4" stroke="#100c0a" stroke-width="2" opacity="0.45"/>
-      <path d="M30,50 C26,44 31,40 27,34 C24,29 29,24 26,16" stroke="#15110e" stroke-width="4" opacity="0.18"/>
-    </g>
-    <ellipse cx="32" cy="34" rx="24" ry="22" fill="#0a0705" opacity="0.25" filter="url(#satSmokeBlur)"/>
-    <ellipse cx="32" cy="30" rx="19" ry="17" fill="url(#satRedGlow)" opacity="0.5" filter="url(#satSoftBlur)"/>
-    <g mask="url(#satFadeTop)">
-      <path d="M32,6 C20,6 12,15 12,26 C12,33 15,37 18,40 C17,43 17,46 18,48 C20,52 24,54 32,54 C40,54 44,52 46,48 C47,46 47,43 46,40 C49,37 52,33 52,26 C52,15 44,6 32,6 Z" fill="url(#satSkullFill)"/>
-      <ellipse cx="23" cy="27" rx="5.2" ry="6.4" fill="#050403"/>
-      <ellipse cx="41" cy="27" rx="5.2" ry="6.4" fill="#050403"/>
-      <circle cx="23" cy="28.5" r="2.6" fill="url(#satRedGlow)"/>
-      <circle cx="41" cy="28.5" r="2.6" fill="url(#satRedGlow)"/>
-      <path d="M32,33 L28.5,40 L35.5,40 Z" fill="#050403"/>
-      <path d="M27,46 L27,52 M32,46 L32,52 M37,46 L37,52" stroke="#050403" stroke-width="1.6" stroke-linecap="round"/>
-      <path d="M46,14 C50,19 52,23 52,26 C52,33 49,37 46,40" fill="none" stroke="#ff5b6e" stroke-width="1.6" opacity="0.85" filter="url(#satSoftBlur)"/>
-    </g>
-  </svg> Satanic Zone Mods</h2>
-  <div class="hint">The World Section modifiers Hero Siege can roll onto a Satanic Zone. Every mod is on by default; deselect the ones you never want to see and the plugin keeps the game's own roll away from them. At least <span id="satminbuffnote">3</span> positive and <span id="satmindebuffnote">2</span> negative mods must stay enabled - a Satanic Zone still needs a pool to roll from.</div>
-  <div class="modifier-grid">
-    <div class="modifier-group">
-      <div class="group-title positive">Positive</div>
-      <div class="sat-bulk">
-        <button class="btn" id="satbuffAll" type="button">Select All</button>
-        <button class="btn" id="satbuffNone" type="button">Deselect All</button>
-      </div>
-      <div class="sat-list" id="satbuffs"></div>
+<section class="card tab-card" data-tab="world" id="satanicMods" aria-labelledby="satTitle" aria-busy="false">
+  <div class="sat-heading">
+    <div>
+      <h2 id="satTitle">Satanic Zone Mods</h2>
+      <p class="sat-intro">Choose which modifiers can roll in your zones.
+        <span>Enabled mods are eligible, not guaranteed. The game still rolls your zone.</span>
+      </p>
     </div>
-    <div class="modifier-group">
-      <div class="group-title negative">Negative</div>
-      <div class="sat-bulk">
-        <button class="btn" id="satdebuffAll" type="button">Select All</button>
-        <button class="btn" id="satdebuffNone" type="button">Deselect All</button>
-      </div>
-      <div class="sat-list" id="satdebuffs"></div>
+    <button type="button" class="sat-button" id="satRestore" title="Enable every positive and negative zone modifier">&#8634; Restore defaults</button>
+  </div>
+  <div class="sat-toolbar">
+    <label class="sat-search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg>
+      <input type="search" id="satSearch" placeholder="Search by name or effect..." aria-label="Search zone modifiers" autocomplete="off">
+    </label>
+    <div class="sat-filters" role="group" aria-label="Filter zone modifiers">
+      <button type="button" data-sat-filter="all" aria-pressed="true">All mods</button>
+      <button type="button" data-sat-filter="enabled" aria-pressed="false">Enabled</button>
+      <button type="button" data-sat-filter="disabled" aria-pressed="false">Disabled</button>
     </div>
   </div>
-</div>
+  <div class="sat-columns">
+    <section class="sat-panel" data-polarity="buff" aria-labelledby="satbuffTitle">
+      <div class="sat-panel-head">
+        <div class="sat-panel-title"><span class="sat-sign" aria-hidden="true">+</span><h3 id="satbuffTitle">Positive modifiers</h3><span class="sat-count" id="satbuffCount"></span></div>
+        <div class="sat-panel-tools"><span>Keep at least <strong id="satbuffMin">3</strong> enabled</span><button type="button" class="sat-button" id="satbuffAll" aria-label="Enable all positive modifiers">Enable all</button></div>
+      </div>
+      <div class="sat-list" id="satbuffs" role="group" aria-labelledby="satbuffTitle"></div>
+      <div class="sat-panel-foot" id="satbuffHelp"></div>
+    </section>
+    <section class="sat-panel" data-polarity="debuff" aria-labelledby="satdebuffTitle">
+      <div class="sat-panel-head">
+        <div class="sat-panel-title"><span class="sat-sign" aria-hidden="true">&minus;</span><h3 id="satdebuffTitle">Negative modifiers</h3><span class="sat-count" id="satdebuffCount"></span></div>
+        <div class="sat-panel-tools"><span>Keep at least <strong id="satdebuffMin">2</strong> enabled</span><button type="button" class="sat-button" id="satdebuffAll" aria-label="Enable all negative modifiers">Enable all</button></div>
+      </div>
+      <div class="sat-list" id="satdebuffs" role="group" aria-labelledby="satdebuffTitle"></div>
+      <div class="sat-panel-foot" id="satdebuffHelp"></div>
+    </section>
+  </div>
+  <div class="sat-footer">
+    <div id="satSummary" role="status" aria-live="polite"></div>
+    <span id="satSaveState" role="status" aria-live="polite">Changes save automatically</span>
+  </div>
+</section>
 
-<div class="card tab-card" data-tab="mods">
-  <h2>&#10024; Gameplay Mods</h2>
+<div class="card tab-card" data-tab="mods" id="gameplayCard">
+  <h2>Gameplay Mods</h2>
   <div class="hint">Toggle custom game modifications, drop pool adjustments, and quality-of-life tweaks. Settings apply immediately while the game is running.</div>
   <div class="row" style="border:none">
     <span class="lbl" style="width:auto;flex:1">Remove owned relics from drop pool<br><span style="font-size:11px;color:#8f816e;font-weight:normal">When a relic is dropped, prevents relics already at maximum level (10 out of 10) in your equipped slots, backpack, or inventory from dropping.</span></span>
@@ -2167,8 +2202,8 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
     </div>
 </div>
 
-<div class="card tab-card" data-tab="mods">
-  <h2>&#129686; Items</h2>
+<div class="card tab-card" data-tab="mods" id="itemsCard">
+  <h2>Items</h2>
   <div class="hint">Custom forge mechanics tied to items made in the Item Editor. Settings apply immediately while the game is running.</div>
   <div class="row" style="border:none">
     <span class="lbl" style="width:auto;flex:1">Headhunter buffs on rare kills<br><span style="font-size:11px;color:#8f816e;font-weight:normal">For an item forged with Mechanic: Headhunter. While on, killing a rare or champion monster grants its affixes to you as 20-second buffs (Extra Fast &rarr; movement speed, Berserker/Raging/Enraged &rarr; attack speed, Vampiric &rarr; life replenish, elemental Enchanted &rarr; cast rate, others &rarr; movement speed for now). The equipped-belt check is still in progress, so the effect is active whenever this switch is on and the forged item exists.</span></span>
@@ -2188,18 +2223,93 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
 </div>
 
 </div>
-<div id="toast"></div>
+<div class="note" id="chipApply" role="status"></div>
+</main></div>
+<div id="toast" role="status"></div>
 <script>
-""" + POLL_POLICY_JS + r"""
+""" + POLL_POLICY_JS + ICON_MAP_JS + r"""
 let ST=null, tmr=null;
-async function j(u,opt){const r=await fetch(u,opt);return r.json()}
+function iconMarkup(name){
+  return name?`<svg class="setting-icon" data-icon="${name}" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><use href="#fp-icon-${name}"></use></svg>`:'';
+}
+function decorateIconLabel(label,name){
+  if(!label||!name||label.querySelector('.setting-icon'))return;
+  const copy=document.createElement('span');copy.className='label-copy';
+  while(label.firstChild)copy.append(label.firstChild);
+  label.classList.add('has-setting-icon');label.innerHTML=iconMarkup(name);label.append(copy);
+}
+function decoratePanelIcons(){
+  document.querySelectorAll('input[data-sec][data-key]').forEach(input=>
+    decorateIconLabel(input.closest('.row')?.querySelector('.lbl'),PANEL_ICON_MAP.controls[input.dataset.sec]?.[input.dataset.key]));
+  for(const [id,name] of Object.entries(PANEL_ICON_MAP.static))
+    decorateIconLabel(document.getElementById(id)?.closest('.row')?.querySelector('.lbl'),name);
+  for(const [id,name] of Object.entries(PANEL_ICON_MAP.sections))
+    decorateIconLabel(document.getElementById(id)?.querySelector('h2'),name);
+  for(const [id,name] of Object.entries(PANEL_ICON_MAP.actions)){
+    const button=document.getElementById(id);
+    if(!button.querySelector('.setting-icon')){
+      button.textContent=button.textContent.replace(/^[\u{1F4C1}\u25B6]\s*/u,'');
+      decorateIconLabel(button,name);
+    }
+  }
+  document.querySelectorAll('.group-title').forEach((label,i)=>decorateIconLabel(label,['experience','damage','defense','critical-chance'][i]));
+  decorateIconLabel(document.querySelector('.modifier-card h2'),'damage');
+}
+// Serialize panel writes because each server request saves the whole config.
+let writeQueue=Promise.resolve(),pendingWrites=0;
+async function j(u,opt){
+  if(!opt||opt.method!=='POST'){const r=await fetch(u,opt);return r.json()}
+  pendingWrites++;
+  const indicator=document.getElementById('saveIndicator');
+  indicator.textContent='Saving...';indicator.className='saving';
+  const run=async()=>{
+    try{
+      const r=await fetch(u,opt),result=await r.json();
+      if(!r.ok&&!result.err)result.err='Request failed ('+r.status+')';
+      if(result.cfg&&ST)ST.cfg=result.cfg;
+      indicator.textContent=result.err?'Could not save':u==='/api/set'?'✓ Saved':'Request completed';
+      indicator.className=result.err?'error':'';
+      return result;
+    }catch(e){
+      // A disconnected response may still have committed the settings. Read
+      // them back before painting controls instead of assuming the write failed.
+      if(u==='/api/set'){
+        try{const r=await fetch('/api/state');if(r.ok){const state=await r.json();if(state.cfg&&ST)ST.cfg=state.cfg}}catch(_){}
+      }
+      indicator.textContent='Connection lost · retry';indicator.className='error';
+      return {err:'Could not reach ForgePact. Reconnect and try again.'};
+    }finally{
+      pendingWrites--;
+      if(pendingWrites){indicator.textContent='Saving...';indicator.className='saving'}
+      setTimeout(()=>{if(!pendingWrites){refreshSavedControls();filterControlRows()}},0);
+    }
+  };
+  const request=writeQueue.then(run,run);
+  writeQueue=request.catch(()=>{});
+  return request;
+}
 function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(tmr);tmr=setTimeout(()=>t.classList.remove('show'),2200)}
+const PAGE_INFO={
+  setup:['Game setup','Connect your offline game and manage the mod plugin.'],
+  modifiers:['Character modifiers','Tune your character and combat bonuses.'],
+  world:['World settings','Shape your zones. Keep every choice in sight.'],
+  loot:['Loot settings','Adjust drop rates and see exactly what each multiplier changes.'],
+  mods:['Gameplay mods','Choose the features you want for your offline adventure.']
+};
+let activeTab='modifiers',controlFilter='all';
 function openTab(name,remember=true){
   if(!document.querySelector(`.tabbtn[data-tab="${name}"]`))name='modifiers';
-  document.querySelectorAll('.tabbtn').forEach(b=>{const on=b.dataset.tab===name;b.classList.toggle('active',on);b.setAttribute('aria-selected',on?'true':'false')});
-  document.querySelectorAll('.tab-card').forEach(c=>c.classList.toggle('active',c.dataset.tab===name));
+  activeTab=name;
+  document.querySelectorAll('.tabbtn').forEach(b=>{const on=b.dataset.tab===name;b.classList.toggle('active',on);b.setAttribute('aria-selected',on?'true':'false');b.tabIndex=on?0:-1});
+  document.querySelectorAll('.tab-card').forEach(c=>{c.hidden=false;c.classList.toggle('active',c.dataset.tab===name)});
+  document.getElementById('workspace').setAttribute('aria-labelledby','nav-'+name);
+  document.getElementById('pageTitle').textContent=PAGE_INFO[name][0];
+  document.getElementById('pageDescription').textContent=PAGE_INFO[name][1];
+  document.getElementById('breadcrumbPage').textContent=name[0].toUpperCase()+name.slice(1);
+  document.getElementById('controlToolbar').hidden=!['loot','modifiers'].includes(name);
+  document.getElementById('controlSearch').value='';controlFilter='all';filterControlRows();
   if(remember){try{sessionStorage.setItem('forgepact_tab',name)}catch(e){}}
-  window.scrollTo({top:0,behavior:'smooth'});
+  window.scrollTo({top:0,behavior:'instant'});
 }
 function angelicPaint(){
   const el=document.getElementById('angelic_items'); const v=sliderVal(el);
@@ -2221,14 +2331,14 @@ function rarityLoad(c){
   rarityPaint();
 }
 // The monster half only does anything while the parent reveal is on, so the
-// row greys out and reads "n/a" rather than silently claiming to be on.
+// control is disabled and reads "n/a" rather than silently claiming to be on.
 function syncRevealPacks(parentOn,packsOn){
   const row=document.getElementById('map_reveal_packs_row');
   const box=document.getElementById('map_reveal_packs');
   const val=document.getElementById('mrpval');
   if(!row||!box||!val)return;
   box.disabled=!parentOn;
-  row.style.opacity=parentOn?'1':'0.45';
+  row.title=parentOn?'':'Enable Reveal full map first.';
   val.textContent=parentOn?(packsOn?'on':'off'):'n/a';
   val.className='val '+(parentOn&&packsOn?'':'off');
 }
@@ -2242,10 +2352,13 @@ function row(sec,key,label,val,tagHtml,max,note,step){
     <span class="val ${off?'off':''}" style="width:64px" title="Click to type a value">${sliderText(sec,val)}</span></div>${n}`;
 }
 function satRow(polarity,id,name,desc,enabled){
-  return `<div class="row">
-    <span class="lbl" style="width:auto;flex:1">${name}<br><span class="sat-desc">${desc}</span></span>
-    <label class="switch"><input type="checkbox" data-sat-polarity="${polarity}" data-sat-id="${id}" ${enabled?'checked':''}><span class="sl"></span></label>
-  </div>`;
+  const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  return `<label class="sat-option ${enabled?'is-enabled':''}">
+    <input type="checkbox" data-sat-polarity="${polarity}" data-sat-id="${esc(id)}" ${enabled?'checked':''}
+      aria-labelledby="sat-${polarity}-${esc(id)}" aria-describedby="sat-desc-${polarity}-${esc(id)} sat${polarity}Help">
+    <span><span class="sat-name" id="sat-${polarity}-${esc(id)}">${iconMarkup(PANEL_ICON_MAP.satanic[polarity]?.[id])}<span>${esc(name)}</span></span>
+      <span class="sat-desc" id="sat-desc-${polarity}-${esc(id)}">${esc(desc)}</span></span>
+  </label>`;
 }
 // Click the value next to a slider to type it.  Sliders with 100-200 steps on a
 // 200 px track skip values (80, 85, 95 ...); typing lands exactly.  Enter or
@@ -2266,7 +2379,7 @@ function typable(r,valEl){
   valEl.onclick=()=>{
     if(valEl.querySelector('input'))return;
     const inp=document.createElement('input');
-    inp.type='number'; inp.className='numedit'; inp.min=r.min; inp.max=r.max; inp.step='any'; inp.value=r.value;
+    inp.type='number'; inp.setAttribute('aria-label',r.getAttribute('aria-label')||'Setting value'); inp.className='numedit'; inp.min=r.min; inp.max=r.max; inp.step='any'; inp.value=r.value;
     valEl.textContent=''; valEl.appendChild(inp); inp.focus(); inp.select();
     let finished=false;
     const done=async(apply)=>{
@@ -2279,6 +2392,7 @@ function typable(r,valEl){
         r.step='any'; r.value=v; r.dataset.typed='1';
         try{ if(r.oninput)r.oninput(); if(r.onchange)await r.onchange(); } finally { delete r.dataset.typed; }
       } else { if(r.oninput)r.oninput(); else valEl.textContent=r.value; }
+      if(!pendingWrites){refreshSavedControls();filterControlRows()}
     };
     inp.onkeydown=(e)=>{ if(e.key==='Enter'){e.preventDefault();done(true);} else if(e.key==='Escape'){e.preventDefault();done(false);} };
     inp.onblur=()=>done(true);
@@ -2387,13 +2501,7 @@ async function boot(){
   document.getElementById('hhval').className='val '+(hh?'':'off');
   document.getElementById('exepath').value=c.game_exe||'';
   document.getElementById('spawners').innerHTML=ST.spawners.map(([k,i,l,mx])=>row('spawners',k,l,c.spawners[k]||1,'',mx)).join('');
-  document.getElementById('satminbuffnote').textContent=ST.minEnabledSatanicBuffs||3;
-  document.getElementById('satmindebuffnote').textContent=ST.minEnabledSatanicDebuffs||2;
-  const satPool=(polarity)=>(c.satanic_mods&&c.satanic_mods[polarity])||{};
-  document.getElementById('satbuffs').innerHTML=(ST.satanicBuffs||[]).map(([id,name,desc])=>
-    satRow('buff',id,name,desc,satPool('buff')[id]!==false)).join('');
-  document.getElementById('satdebuffs').innerHTML=(ST.satanicDebuffs||[]).map(([id,name,desc])=>
-    satRow('debuff',id,name,desc,satPool('debuff')[id]!==false)).join('');
+  renderSatanicMods();
   document.getElementById('keys').innerHTML=ST.keys.map(([k,l,t])=>{
     const v=(c.keys&&c.keys[k])||1;
     return row('keys',k,l,v,'',100,keyNote(k,t,v));
@@ -2411,7 +2519,8 @@ async function boot(){
   document.getElementById('offensivestats').innerHTML=percentRows(['damage','attackspeed','castrate']);
   document.getElementById('sustainstats').innerHTML=percentRows(['lifereplenish','manareplenish','defense']);
   document.getElementById('criticalstats').innerHTML=percentRows(['critdamage','critchance','spellcritdamage','spellcritchance']);
-  bind(); status(); paintVersion();
+  bind(); preparePanelUI(); refreshSavedControls(); status(); paintVersion();
+  document.getElementById('saveIndicator').textContent='Settings loaded';
 }
 function paintVersion(){
   // Rendered from /api/state, never embedded in this page: the panel and the
@@ -2420,14 +2529,28 @@ function paintVersion(){
   const el=document.getElementById('panelver');
   if(el&&ST&&ST.version)el.textContent=' \u00b7 v'+ST.version;
 }
+let launcherBusy=false;
+function renderLaunchStatus(){
+  const info=ST?.launch;
+  const btn=document.getElementById('launchgame');
+  btn.disabled=launcherBusy||!!ST?.gameRunning||info?.phase==='starting';
+  const box=document.getElementById('launchFeedback');
+  if(info){box.textContent=info.message;box.className='launch-feedback '+info.phase;}
+}
 function status(){
   const g=document.getElementById('chipGame'), a=document.getElementById('chipApply');
-  g.textContent=ST.gameRunning?'GAME RUNNING - changes apply live':'game closed - changes queue for next launch';
-  g.className='chip '+(ST.gameRunning?'on':'off');
-  a.textContent=ST.lastApplied?('last applied: '+ST.lastApplied+(ST.queued?' (queued)':'')):'not applied yet this session';
-  a.className='chip '+(ST.lastApplied?'warn':'off');
   const ch=ST.chain||{};
   const ok=ch.patched&&ch.aurieCore&&ch.yytk&&ch.plugin;
+  g.textContent=ST.gameRunning?(ok?'Game open':'Game open · plugin missing'):'Game offline';
+  g.title=ST.gameRunning?'This detects the game process. The plugin must be installed and loaded to apply modifiers.':'Settings are saved locally. Auto-apply sends them on game launch when enabled.';
+  g.className='chip '+(ST.gameRunning?(ok?'on':'warn'):'off');
+  a.textContent=ST.lastApplied?('commands sent: '+ST.lastApplied+(ST.queued?' (queued)':'')):'No settings sent this session';
+  a.className='chip '+(ST.lastApplied?'warn':'off');
+  const warning=document.getElementById('pluginWarning');
+  warning.hidden=!!ok;
+  document.getElementById('pluginWarningText').textContent=ch.exeExists?
+    'Plugin not installed. Your settings are saved, but modifiers cannot apply. Close the game, then install the plugin in Setup.':
+    'Choose your Hero_Siege.exe in Setup, then install the plugin to use modifiers.';
   const cn=document.getElementById('chainnote');
   if(ok){cn.textContent='';}
   else{
@@ -2445,6 +2568,7 @@ function status(){
   if(ST.eacStatus==='legit_eac'){en.textContent='Note: this looks like a Steam/EAC copy. If EAC is active, online play may break and the mod may not load (EAC can relaunch the clean exe). Your exe is backed up - Remove Plugin reverts it. For best results use an offline / EAC-off copy. Installing is allowed at your own risk.';en.style.color='#e0b060';}
   else if(ST.eacStatus==='eac_free'){en.textContent='';}
   else{en.textContent='';}
+  renderLaunchStatus();
 }
 function bind(){
   document.querySelectorAll('input[type=range][data-sec]').forEach(r=>{
@@ -2557,7 +2681,7 @@ function bind(){
   }
   document.getElementById('applyall').onclick=async()=>{
     const res=await j('/api/applyall',{method:'POST',body:'{}'});
-    toast(res.ok||res.err); ST.lastApplied=new Date().toTimeString().slice(0,8); status();
+    toast(res.ok||res.err); if(!res.err)ST.lastApplied=new Date().toTimeString().slice(0,8); status();
   };
   document.getElementById('installmod').onclick=async()=>{
     const btn=document.getElementById('installmod');
@@ -2581,11 +2705,18 @@ function bind(){
     toast(res.ok||res.err); status();
   };
   document.getElementById('launchgame').onclick=async()=>{
-    const btn=document.getElementById('launchgame'); const old=btn.innerHTML;
-    btn.disabled=true; btn.textContent='Launching...';
-    const res=await j('/api/launch',{method:'POST',body:'{}'});
-    setTimeout(()=>{btn.disabled=false; btn.innerHTML=old;}, 3000);
-    toast(res.ok||res.err);
+    if(launcherBusy||ST.gameRunning||ST.launch?.phase==='starting')return;
+    const btn=document.getElementById('launchgame'),old=btn.innerHTML;
+    launcherBusy=true;btn.disabled=true;btn.textContent='Starting offline...';
+    const box=document.getElementById('launchFeedback');
+    box.textContent='Checking the game and Steam...';box.className='launch-feedback starting';
+    try{
+      const res=await j('/api/launch',{method:'POST',body:'{}'});
+      ST.launch=res.launch||{phase:res.err?'error':'started',message:res.err||res.ok};
+      toast(res.ok||res.err);
+    }finally{
+      launcherBusy=false;btn.innerHTML=old;renderLaunchStatus();
+    }
   };
   document.getElementById('exebrowse').onclick=async()=>{
     const btn=document.getElementById('exebrowse'); const old=btn.innerHTML;
@@ -2599,43 +2730,293 @@ function bind(){
   };
   bindSatanicMods();
 }
-// One row's checkbox posts {section:'satanic_mods', polarity, key:id, value}. The
-// server re-validates the per-polarity floor (see /api/set), so a rejected
-// deselect below the floor snaps the checkbox back rather than trusting the client.
-function bindSatanicMods(){
-  const setOne=async(box)=>{
-    const polarity=box.dataset.satPolarity, id=box.dataset.satId, value=box.checked;
-    const res=await j('/api/set',{method:'POST',body:JSON.stringify({section:'satanic_mods',polarity,key:id,value})});
-    if(res.err){ box.checked=!value; toast(res.err); return false; }
-    if(res.cfg) ST.cfg=res.cfg;
-    return true;
+function preparePanelUI(){
+  const workspace=document.getElementById('workspace');
+  if(!workspace.dataset.navigationReady){
+    workspace.dataset.navigationReady='1';
+    const compact=matchMedia('(max-width:720px)');
+    const orient=()=>document.querySelector('.tabbar').setAttribute('aria-orientation',compact.matches?'horizontal':'vertical');
+    compact.addEventListener('change',orient);orient();
+  }
+  // Real DOM order matches the visual and keyboard order.
+  ['densityCard','rarityCard','satanicMods','speedCard','spawnsCard'].forEach(id=>workspace.appendChild(document.getElementById(id)));
+  for(const id of ['densityCard','rarityCard'])document.getElementById(id).classList.add('half');
+  const summaries={
+    densityCard:'Adjust the number of monster packs in newly loaded zones.',
+    rarityCard:'Choose the share of normal monsters upgraded to Rare or Ancient.',
+    speedCard:'Increase enemy movement speed. Choose all zones or Chaos Tower only.',
+    spawnsCard:'Choose how frequently special content appears in new zones.',
+    dropsCard:'Multiply drop chances. ×1 keeps a drop at its normal rate.',
+    angelicCard:'Extra chances to drop Angelic / Unholy items on monster kills.'
   };
-  document.querySelectorAll('input[data-sat-polarity]').forEach(box=>{
-    box.onchange=()=>setOne(box);
-  });
-  // One request for the whole column (not one per row - that was the slow,
-  // one-by-one-with-animation path). The server clamps a "deselect all" to
-  // the polarity's floor itself (see /api/set), so the client just asks for
-  // everything and repaints from whatever cfg comes back.
-  const bulkSet=async(polarity,ids,value)=>{
-    const res=await j('/api/set',{method:'POST',body:JSON.stringify({section:'satanic_mods',polarity,keys:ids,value})});
-    if(res.err){ toast(res.err); return; }
-    if(res.cfg){
-      ST.cfg=res.cfg;
-      const pool=res.cfg.satanic_mods[polarity]||{};
-      document.querySelectorAll(`input[data-sat-polarity="${polarity}"]`).forEach(box=>{
-        box.checked=pool[box.dataset.satId]!==false;
-      });
+  for(const [id,summary] of Object.entries(summaries)){
+    const card=document.getElementById(id);
+    if(card.dataset.prepared)continue;
+    card.dataset.prepared='1';
+    const hint=card.querySelector('.hint'),details=document.createElement('details');
+    details.className='help-details';details.innerHTML='<summary>How it works</summary>';
+    hint.before(Object.assign(document.createElement('div'),{className:'hint',textContent:summary}));
+    details.append(hint);
+    if(id==='densityCard'){
+      const note=card.querySelector('.note');if(note)details.append(note);
+      const head=document.createElement('div');head.className='density-top';
+      const heading=card.querySelector('h2');heading.before(head);head.append(heading);
+      const toggle=card.querySelector('.switch');const row=document.createElement('div');row.className='row';
+      row.innerHTML='<span class="lbl">Enabled</span>';row.append(toggle);head.append(row);
+      const hero=document.createElement('div');hero.className='hero-number';hero.id='densityHero';
+      card.querySelector(':scope>.row').before(hero);
     }
-    toast(`${polarity==='buff'?'positive':'negative'} mods: ${value?'all selected':'deselected to the minimum'}`);
-  };
-  const wireBulk=(polarity,allId,noneId,list)=>{
-    const ids=list.map(m=>String(m[0]));
-    document.getElementById(allId).onclick=()=>bulkSet(polarity,ids,true);
-    document.getElementById(noneId).onclick=()=>bulkSet(polarity,ids,false);
-  };
-  wireBulk('buff','satbuffAll','satbuffNone',ST.satanicBuffs||[]);
-  wireBulk('debuff','satdebuffAll','satdebuffNone',ST.satanicDebuffs||[]);
+    card.append(details);
+  }
+  for(const id of ['spawners','dropSettings'])document.getElementById(id).classList.add('settings-grid');
+  for(const id of ['gameplayCard','itemsCard']){
+    const card=document.getElementById(id);
+    if(card.querySelector('.mods-grid'))continue;
+    const grid=document.createElement('div');grid.className='mods-grid';
+    card.querySelectorAll(':scope>.row').forEach(row=>{
+      row.classList.add('feature-card');
+      const description=row.querySelector('.lbl>span');
+      if(description){row.querySelector('.lbl>br')?.remove();description.classList.add('feature-description');row.append(description)}
+      grid.append(row);
+    });
+    card.append(grid);
+    if(id==='gameplayCard'){
+      const parent=document.getElementById('map_reveal').closest('.row'),child=document.getElementById('map_reveal_packs_row');
+      const group=document.createElement('div');group.className='feature-with-child';parent.before(group);group.append(parent,child);
+    }
+  }
+  document.querySelectorAll('input[type=range]').forEach((range,index)=>{
+    const row=range.closest('.row');if(!row)return;
+    const label=row.querySelector('.lbl')?.textContent.trim()||'Density multiplier';
+    range.setAttribute('aria-label',label);
+    if(!range.id)range.id='setting-'+(range.dataset.sec||'value')+'-'+(range.dataset.key||index);
+    if(range.parentElement.classList.contains('range-control'))return;
+    const value=row.querySelector('.val');if(!value)return;
+    const controls=document.createElement('div');controls.className='range-control';range.before(controls);controls.append(range);
+    const stepper=document.createElement('div');stepper.className='value-stepper';
+    for(const direction of [-1,1]){
+      const button=document.createElement('button');button.type='button';button.className='step-button';button.textContent=direction<0?'−':'+';
+      button.setAttribute('aria-label',(direction<0?'Decrease ':'Increase ')+label);
+      button.onclick=async()=>{
+        const step=parseFloat(range.dataset.step0||range.step)||1;
+        range.value=Math.max(+range.min,Math.min(+range.max,+(Number(range.value)+direction*step).toFixed(2)));
+        range.dispatchEvent(new Event('input',{bubbles:true}));
+        if(range.onchange)await range.onchange();
+        updateControlDecoration();filterControlRows();
+      };
+      stepper.append(button);if(direction<0)stepper.append(value);
+    }
+    controls.append(stepper);
+    value.setAttribute('role','button');value.tabIndex=0;value.setAttribute('aria-label','Edit '+label);
+    value.onkeydown=e=>{if(e.target===value&&['Enter',' '].includes(e.key)){e.preventDefault();value.click()}};
+    range.addEventListener('input',updateControlDecoration);
+    if(range.dataset.sec){
+      const entry=document.createElement('div');entry.className='setting-entry';
+      const note=row.nextElementSibling?.matches('.note')?row.nextElementSibling:null;
+      row.before(entry);entry.append(row);if(note)entry.append(note);
+      entry.dataset.search=(label+' '+(note?.textContent||'')).toLowerCase();
+    }
+  });
+  document.querySelectorAll('.switch input').forEach(box=>{
+    if(!box.getAttribute('aria-label'))box.setAttribute('aria-label',box.closest('.row')?.querySelector('.lbl')?.childNodes[0]?.textContent.trim()||'Enable setting');
+  });
+  document.getElementById('den_on').setAttribute('aria-label','Enable monster density');
+  document.getElementById('exepath').setAttribute('aria-label','Hero Siege executable path');
+  document.getElementById('controlSearch').oninput=filterControlRows;
+  document.querySelectorAll('[data-control-filter]').forEach(button=>button.onclick=()=>{controlFilter=button.dataset.controlFilter;filterControlRows()});
+  document.querySelectorAll('.tabbtn').forEach((button,index,buttons)=>button.onkeydown=e=>{
+    const direction=['ArrowRight','ArrowDown'].includes(e.key)?1:['ArrowLeft','ArrowUp'].includes(e.key)?-1:0;
+    if(!direction&&!['Home','End'].includes(e.key))return;
+    e.preventDefault();const next=e.key==='Home'?0:e.key==='End'?buttons.length-1:(index+direction+buttons.length)%buttons.length;
+    buttons[next].click();buttons[next].focus();
+  });
+  updateControlDecoration();filterControlRows();decoratePanelIcons();
+}
+function updateControlDecoration(){
+  for(const range of document.querySelectorAll('input[type=range]')){
+    const fill=100*(Number(range.value)-Number(range.min))/(Number(range.max)-Number(range.min));
+    range.style.background=`linear-gradient(to right,var(--ember) ${fill}%,#4a3a2b ${fill}%)`;
+    const buttons=range.parentElement.querySelectorAll('.step-button');
+    if(buttons.length===2){buttons[0].disabled=+range.value<=+range.min;buttons[1].disabled=+range.value>=+range.max}
+  }
+  const hero=document.getElementById('densityHero');
+  if(hero){
+    const density=document.getElementById('den'),value=document.getElementById('denval');
+    hero.textContent='×'+Number(density.value).toFixed(1);
+    if(!value.querySelector('input'))value.textContent='x'+density.value;
+  }
+}
+function refreshSavedControls(){
+  if(!ST?.cfg||document.querySelector('.numedit'))return;
+  const c=ST.cfg,map={den:'density',enemyspeed:'enemy_speed',angelic_items:'angelic_items',rarity_rare:'rarity_rare',rarity_ancient:'rarity_ancient'};
+  const painted=[];
+  document.querySelectorAll('input[type=range]').forEach(range=>{
+    const value=range.dataset.sec?c[range.dataset.sec]?.[range.dataset.key]:c[map[range.id]];
+    if(value!==undefined){
+      // Rendering saved decimal values must not snap them to the drag step.
+      if(!range.dataset.step0)range.dataset.step0=range.step||'1';
+      range.step='any';range.value=value;
+      painted.push([range,range.dataset.typed]);range.dataset.typed='1';
+    }
+  });
+  for(const [range] of painted)if(range.oninput)range.oninput();
+  for(const [range,typed] of painted){if(typed===undefined)delete range.dataset.typed;else range.dataset.typed=typed}
+  const booleans={den_on:'density_on',autoapply:'auto_apply',enemyspeed_ct:'enemy_speed_ct',map_reveal:'map_reveal',map_reveal_packs:'map_reveal_packs',headhunter:'headhunter',tyrant:'tyrant',beacon:'beacon',mod_filter_max_relics:'mod_filter_max_relics',mod_orb_pickup_radius:'mod_orb_pickup_radius',mod_pet_quest_pickup:'mod_pet_quest_pickup'};
+  for(const [id,key] of Object.entries(booleans))document.getElementById(id).checked=!!c[key];
+  for(const [id,key] of Object.entries({hhval:'headhunter',tyval:'tyrant',beval:'beacon',mfmrval:'mod_filter_max_relics',morval:'mod_orb_pickup_radius',mpqpval:'mod_pet_quest_pickup',mapval:'map_reveal'})){
+    const value=document.getElementById(id);value.textContent=c[key]?'on':'off';value.className='val '+(c[key]?'':'off');
+  }
+  document.getElementById('enemyspeedctval').textContent=c.enemy_speed_ct?'CT only':'all zones';
+  document.getElementById('denval').textContent=c.density_on?'x'+c.density:'off';
+  document.getElementById('denval').className='val '+(c.density_on?'':'off');
+  syncRevealPacks(!!c.map_reveal,!!c.map_reveal_packs);
+  updateControlDecoration();decoratePanelIcons();
+}
+function filterControlRows(){
+  if(!document.getElementById('controlSearch'))return;
+  const query=document.getElementById('controlSearch').value.trim().toLowerCase();
+  document.querySelectorAll('[data-control-filter]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.controlFilter===controlFilter)));
+  const filtering=['loot','modifiers'].includes(activeTab);
+  let count=0;
+  document.querySelectorAll('.setting-entry').forEach(entry=>{
+    const range=entry.querySelector('input[type=range]');
+    const matches=(entry.textContent.toLowerCase().includes(query))&&(controlFilter==='all'||!sliderOff(range.dataset.sec,Number(range.value)));
+    entry.hidden=filtering&&entry.closest('.tab-card').dataset.tab===activeTab&&!matches;
+    if(entry.closest('.tab-card').dataset.tab===activeTab&&!entry.hidden)count++;
+  });
+  document.querySelectorAll('.modifier-group').forEach(group=>{group.hidden=filtering&&!group.querySelector('.setting-entry:not([hidden])')});
+  // Angelic drops use a standalone card but participate in the same Loot filter.
+  const angelic=document.getElementById('angelicCard');
+  if(angelic){
+    angelic.hidden=activeTab==='loot'&&(!angelic.textContent.toLowerCase().includes(query)||(controlFilter==='modified'&&+document.getElementById('angelic_items').value<=1));
+    if(activeTab==='loot'&&!angelic.hidden)count++;
+  }
+  let empty=document.getElementById('emptySettings');
+  if(!empty){empty=document.createElement('div');empty.id='emptySettings';empty.className='empty-settings';empty.textContent='No matching settings. Try another search or show all settings.';document.getElementById('workspace').append(empty)}
+  empty.hidden=!filtering||count>0;
+}
+// These controls edit the allowed pool, never the game's roll or its minimums.
+// Keep rows in place while saving so keyboard focus and list scroll do not jump.
+const SAT_UI={filter:'all',busy:false};
+function satData(polarity){
+  return polarity==='buff'
+    ? {list:ST.satanicBuffs||[],floor:ST.minEnabledSatanicBuffs||3}
+    : {list:ST.satanicDebuffs||[],floor:ST.minEnabledSatanicDebuffs||2};
+}
+function satPool(polarity){return ST.cfg.satanic_mods?.[polarity]||{}}
+function satCount(polarity){return satData(polarity).list.filter(([id])=>satPool(polarity)[id]!==false).length}
+function renderSatanicMods(){
+  for(const polarity of ['buff','debuff']){
+    const list=document.getElementById(`sat${polarity}s`);
+    list.innerHTML=satData(polarity).list.map(([id,name,desc])=>satRow(polarity,id,name,desc,satPool(polarity)[id]!==false)).join('')+
+      '<p class="sat-empty" hidden>No matching modifiers.<br>Try another search or filter.</p>';
+    list.querySelectorAll('.sat-option').forEach(row=>{row.dataset.search=row.textContent.toLocaleLowerCase()});
+  }
+  syncSatanicMods();
+}
+function filterSatanicMods(){
+  const query=document.getElementById('satSearch').value.trim().toLocaleLowerCase();
+  for(const polarity of ['buff','debuff']){
+    const list=document.getElementById(`sat${polarity}s`);
+    let visible=0;
+    list.querySelectorAll('.sat-option').forEach(row=>{
+      const enabled=row.querySelector('input').checked;
+      const match=row.dataset.search.includes(query)&&(SAT_UI.filter==='all'||(SAT_UI.filter==='enabled')===enabled);
+      row.hidden=!match;
+      if(match)visible++;
+    });
+    const empty=list.querySelector('.sat-empty');
+    empty.hidden=visible>0;
+    if(!satData(polarity).list.length)empty.textContent='Modifier data unavailable. Restart with the complete ForgePact package.';
+  }
+  document.querySelectorAll('[data-sat-filter]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.satFilter===SAT_UI.filter)));
+}
+function syncSatanicMods(){
+  let valid=true,allEnabled=true,available=true;
+  document.getElementById('satanicMods').setAttribute('aria-busy',String(SAT_UI.busy));
+  for(const polarity of ['buff','debuff']){
+    const {list,floor}=satData(polarity),count=satCount(polarity),pool=satPool(polarity);
+    valid=valid&&count>=floor;
+    available=available&&list.length>0;
+    allEnabled=allEnabled&&count===list.length;
+    document.getElementById(`sat${polarity}Count`).textContent=`${count} enabled`;
+    document.getElementById(`sat${polarity}Min`).textContent=floor;
+    document.getElementById(`sat${polarity}All`).disabled=SAT_UI.busy||!list.length||count===list.length;
+    document.querySelectorAll(`input[data-sat-polarity="${polarity}"]`).forEach(box=>{
+      box.checked=pool[box.dataset.satId]!==false;
+      const locked=box.checked&&count<=floor;
+      box.setAttribute('aria-disabled',String(SAT_UI.busy||locked));
+      const row=box.closest('.sat-option');
+      row.classList.toggle('is-enabled',box.checked);
+      row.classList.toggle('is-locked',locked);
+      row.title=locked?'Enable another modifier before removing this one.':'';
+    });
+    const help=document.getElementById(`sat${polarity}Help`);
+    if(!list.length)help.innerHTML='<strong>Modifier data unavailable</strong>Selections cannot be edited.';
+    else if(count<floor)help.innerHTML=`<strong>Enable ${floor-count} more to continue</strong>At least ${floor} modifiers must stay enabled.`;
+    else if(count===floor)help.innerHTML='<strong>Minimum reached</strong>Enable another mod before removing one.';
+    else help.innerHTML=`<strong>${count} of ${list.length} enabled</strong>You can disable ${count-floor} more. Keep at least ${floor}.`;
+  }
+  document.getElementById('satRestore').disabled=SAT_UI.busy||!available||allEnabled;
+  const summary=document.getElementById('satSummary');
+  summary.classList.toggle('is-invalid',!valid);
+  summary.innerHTML=`${valid?'&#10003; Selection valid':available?'Selection incomplete':'Modifier data unavailable'} <span class="sat-footer-note">${satCount('buff')} positive &middot; ${satCount('debuff')} negative enabled</span>`;
+  filterSatanicMods();
+}
+async function saveSatanicMods(changes){
+  if(SAT_UI.busy)return;
+  SAT_UI.busy=true;
+  const focused=document.activeElement,saveState=document.getElementById('satSaveState');
+  saveState.classList.remove('is-error');
+  saveState.textContent='Saving changes...';
+  syncSatanicMods();
+  try{
+    // Bulk actions are sequential, not one request per row. Restore defaults
+    // uses the existing API for each pool and preserves every unrelated setting.
+    for(const change of changes){
+      const res=await j('/api/set',{method:'POST',body:JSON.stringify({section:'satanic_mods',...change})});
+      if(res.err||!res.cfg)throw new Error(res.err||'The server did not confirm the save.');
+      ST.cfg.satanic_mods=res.cfg.satanic_mods;
+    }
+    saveState.textContent='Saved · Changes save automatically';
+  }catch(e){
+    // A lost response may still have saved. Read back the real settings before
+    // allowing another edit; never leave a speculative checkmark in the UI.
+    let confirmed=false;
+    try{const state=await j('/api/state');if(state.cfg){ST.cfg.satanic_mods=state.cfg.satanic_mods;confirmed=true}}catch(_){}
+    saveState.classList.add('is-error');
+    saveState.textContent=confirmed?'Save interrupted. Showing saved selections.':'Save unconfirmed. Reconnect and reload.';
+    toast('Could not finish saving: '+e.message);
+  }finally{
+    SAT_UI.busy=false;
+    syncSatanicMods();
+    if(document.activeElement===document.body&&focused?.isConnected&&!focused.disabled)focused.focus({preventScroll:true});
+  }
+}
+function bindSatanicMods(){
+  document.getElementById('satSearch').oninput=filterSatanicMods;
+  document.querySelectorAll('[data-sat-filter]').forEach(b=>{
+    b.onclick=()=>{SAT_UI.filter=b.dataset.satFilter;filterSatanicMods()};
+  });
+  document.querySelectorAll('input[data-sat-polarity]').forEach(box=>{
+    // aria-disabled keeps minimum-locked checkboxes reachable by keyboard so
+    // their name, effect and the explanation can still be read together.
+    box.onclick=e=>{
+      if(box.getAttribute('aria-disabled')==='true'){
+        e.preventDefault();
+        if(!SAT_UI.busy)toast('Enable another modifier before removing this one.');
+      }
+    };
+    box.onchange=()=>{
+      if(SAT_UI.busy){syncSatanicMods();return}
+      const polarity=box.dataset.satPolarity;
+      if(!box.checked&&satCount(polarity)<=satData(polarity).floor){syncSatanicMods();return}
+      saveSatanicMods([{polarity,key:box.dataset.satId,value:box.checked}]);
+    };
+  });
+  const enableAll=polarity=>({polarity,keys:satData(polarity).list.map(m=>String(m[0])),value:true});
+  for(const polarity of ['buff','debuff'])document.getElementById(`sat${polarity}All`).onclick=()=>saveSatanicMods([enableAll(polarity)]);
+  document.getElementById('satRestore').onclick=()=>saveSatanicMods(['buff','debuff'].map(enableAll));
 }
 // Self-scheduling poll: fast while something is happening, idle when nothing
 // is, suspended entirely while the window is hidden.
@@ -2653,7 +3034,7 @@ async function pollOnce(){
     const s=await j('/api/state');
     pollLastChange=pollNextChangeAt(pollPrev,s,false,Date.now(),pollLastChange);
     pollPrev=s;
-    if(ST){ST.gameRunning=s.gameRunning;ST.lastApplied=s.lastApplied;ST.queued=s.queued;ST.ipcOk=s.ipcOk;status()}
+    if(ST){ST.gameRunning=s.gameRunning;ST.lastApplied=s.lastApplied;ST.queued=s.queued;ST.ipcOk=s.ipcOk;ST.chain=s.chain;ST.eacStatus=s.eacStatus;ST.launch=s.launch;status()}
   }catch(e){}
   schedulePoll();
 }
