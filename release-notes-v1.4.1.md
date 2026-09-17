@@ -11,6 +11,10 @@ A clearer control panel with the offline launcher built in.
 
 ## Changed
 
+- **Disabled Monster Density stays visibly off.** Reopening the panel or
+  adjusting another slider no longer makes it look enabled. Its saved
+  multiplier is retained for the next time you enable it.
+
 - **A simpler sidebar.** Removed the fixed Map Reveal, Headhunter and Pet Quest
   Collector shortcuts, which could be mistaken for a list of enabled mods.
   All three settings remain available in the Mods tab.

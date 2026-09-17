@@ -2588,7 +2588,7 @@ function bind(){
     typable(r,valEl);
   });
   const den=document.getElementById('den');
-  den.oninput=()=>{document.getElementById('denval').textContent='x'+sliderVal(den)};
+  den.oninput=()=>{const v=sliderVal(den);document.getElementById('denval').textContent=document.getElementById('den_on').checked?'x'+v:'off'};
   den.onchange=async()=>{const v=sliderVal(den);const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'density',value:v})});toast('density x'+v+' - '+(res.ok||res.err))};
   typable(den,document.getElementById('denval'));
   document.getElementById('den_on').onchange=async(e)=>{
@@ -2841,9 +2841,9 @@ function updateControlDecoration(){
   }
   const hero=document.getElementById('densityHero');
   if(hero){
-    const density=document.getElementById('den'),value=document.getElementById('denval');
-    hero.textContent='×'+Number(density.value).toFixed(1);
-    if(!value.querySelector('input'))value.textContent='x'+density.value;
+    const density=document.getElementById('den'),value=document.getElementById('denval'),on=document.getElementById('den_on').checked;
+    hero.textContent=on?'×'+Number(density.value).toFixed(1):'off';
+    if(!value.querySelector('input'))value.textContent=on?'x'+density.value:'off';
   }
 }
 function refreshSavedControls(){

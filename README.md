@@ -53,7 +53,8 @@ and **Apply all now** keep their existing behavior.
 
 Every slider has **− / +** buttons and an editable value. Click the value, or focus
 it and press Enter, to type an exact number; Enter applies and Escape cancels.
-Exact saved decimal values remain visible after reopening the panel. Search
+Saved decimal values are retained after reopening the panel. Disabled Monster
+Density shows **off**; enabling it restores the saved multiplier. Search
 **Modifiers** or **Loot**, or choose **Modified**, to find changed settings quickly.
 These filters never alter your settings. **How it works** expands the full details
 for density, rarity, special content and drops.

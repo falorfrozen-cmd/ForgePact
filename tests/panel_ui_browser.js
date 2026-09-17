@@ -46,7 +46,12 @@
     passed.push('All five pages, headings, selected states and overflow');
 
     tab('world');
+    const densityOff=context=>assert(!el('#den_on').checked&&el('#denval').textContent==='off'&&el('#densityHero').textContent==='off'&&el('#denval').classList.contains('off'),'Disabled density looks enabled: '+context);
+    densityOff('initial load');
+    el('[data-sec="stats"][data-key="exp"]').dispatchEvent(new Event('input',{bubbles:true}));
+    densityOff('unrelated slider input');
     await tap('#densityCard .step-button:last-child');
+    densityOff('editing saved density while off');
     assert((await read()).density===3.5&&+el('#den').value===3.5,'Density increment');
     await tap('#densityCard .step-button:first-child');
     assert((await read()).density===3,'Density decrement');
@@ -54,8 +59,22 @@
     await settled();delay=0;assert((await read()).density===4,'Rapid increments were dropped');
     await typeValue('#denval','2.25');
     assert((await read()).density===2.25&&+el('#den').value===2.25,'Decimal snapped after save');
-    await boot();
-    assert(+el('#den').value===2.25&&el('#denval').textContent==='x2.25','Decimal lost on reload');
+    densityOff('typed decimal while off');
+    await boot();densityOff('reload while off');
+    assert(+el('#den').value===2.25,'Disabled density lost its saved multiplier');
+    el('#denval').click();const densityEditor=el('#denval .numedit');densityEditor.value='4';
+    el('[data-sec="stats"][data-key="exp"]').dispatchEvent(new Event('input',{bubbles:true}));
+    assert(el('#denval .numedit')===densityEditor&&densityEditor.value==='4','Unrelated slider replaced the density editor');
+    densityEditor.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));await settled();
+    densityOff('cancelled numeric edit');
+    assert((await read()).density===2.25,'Cancelled density edit was saved');
+    failure='before';await tap('#den_on');failure='';densityOff('failed enable rolls back');
+    await tap('#den_on');await boot();
+    assert(el('#den_on').checked&&+el('#den').value===2.25&&el('#denval').textContent==='x2.25','Enabling density lost its saved multiplier');
+    assert(el('#densityHero').textContent.startsWith('×'),'Enabled density has no multiplier');
+    await tap('#den_on');densityOff('disabled after enabling');
+    await tap('#den_on');
+    passed.push('Density off state across load, refresh, slider input, editing, toggles and failed saves');
     await typeValue('#denval','4','Escape');assert((await read()).density===2.25,'Escape saved an edit');
     await typeValue('#denval','900');assert((await read()).density===5&&el('#densityCard .step-button:last-child').disabled,'Upper bound');
     await typeValue('#denval','-10');assert((await read()).density===1&&el('#densityCard .step-button').disabled,'Lower bound');
