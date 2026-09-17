@@ -268,6 +268,14 @@ static void InstallCreateHooks();
 static void InstallDensityLifecycleHooks();
 static void OpenDensityWindow();
 static void RunCommand(const std::string& line);
+#ifndef FORGEPACT_RELEASE
+// tgprobe entry notes (docs/toggle-skills-research.md), defined with the rest
+// of tgprobe just before RunCommand; called from the first line of three hook
+// bodies that already hold rows the probe cannot detour itself.
+static void TgProbeNoteDrawHudBuffs(CInstance* S, CInstance* O, int argc, RValue** A);
+static void TgProbeNoteTalentUse(CInstance* S, CInstance* O, int argc, RValue** A);
+static void TgProbeNoteBuffAdd(CInstance* S, CInstance* O, int argc, RValue** A);
+#endif
 
 #include <ForgePact/Common.hpp>
 #include <ForgePact/MapRevealManager.hpp>
@@ -4285,6 +4293,9 @@ static PFUNC_YYGMLScript g_Orig_DrawHudBuffs = nullptr;
 static RValue& Hook_DrawHudBuffs(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
     PERF_SCOPE(g_PerfHud);
+#ifndef FORGEPACT_RELEASE
+    TgProbeNoteDrawHudBuffs(S, O, argc, A);
+#endif
     RValue& r = g_Orig_DrawHudBuffs ? g_Orig_DrawHudBuffs(S, O, R, argc, A) : R;
     ++g_HhHudCalls;
     HhDrawHeadLabels();
@@ -10601,6 +10612,9 @@ static void LogBuffCall(const char* tag, CInstance* S, int argc, RValue** A)
 }
 static RValue& HookBuffAdd(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
+#ifndef FORGEPACT_RELEASE
+    TgProbeNoteBuffAdd(S, O, argc, A);
+#endif
     LogBuffCall("BuffAdd", S, argc, A);
     return g_OrigBuffAdd ? g_OrigBuffAdd(S, O, R, argc, A) : R;
 }
@@ -12776,6 +12790,9 @@ static bool g_BlockPuppetSkills = true;
 static CInstance* g_CompInst = nullptr;   // companion body (also skill-blocked)
 static RValue& HookTalentUse(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
+#ifndef FORGEPACT_RELEASE
+    TgProbeNoteTalentUse(S, O, argc, A);
+#endif
     // Block skills for any instance marked coop_puppet=1 (the co-op puppet AND the companion).
     if (g_BlockPuppetSkills && S) {
         if (S == g_PuppetInst || S == g_CompInst) return R;   // fast path
@@ -14689,6 +14706,691 @@ static bool HandleHeadhunterCommand(const std::string& lc, const std::string& re
     return true;
 }
 
+#ifndef FORGEPACT_RELEASE
+// ---- tgprobe: toggle-skill research instrument (ForgePact issue #11) -------
+// docs/toggle-skills-research.md. Nothing about toggle skills has been
+// measured yet: which routine runs once per press, where the on/off state
+// lives, and what a zone change does to it are all open. This is the one
+// batched instrument for that - every candidate the static search turned up,
+// hooked in one build behind one command, so one live session answers all of
+// it instead of one relaunch per guess.
+//
+// Shape copied from `citrace nativetrace`: a per-row native detour that counts,
+// optionally logs, and calls through its trampoline. Read-only; nothing here
+// writes game state.
+//
+// Placed here, directly before RunCommand, and not beside `citrace
+// nativetrace`: the target table binds the saved originals of three hooks this
+// file installs for real (the head labels, the buff logger, the co-op skill
+// block), and those are file-scope statics that cannot be forward-declared, so
+// the table has to follow all of them.
+//
+// How a row attaches is the subtle part, and it is what TgProbeAttach decides.
+// A row that ForgePact's own installer already holds cannot simply be
+// detoured again: the installer put our hook body into the script table and
+// kept a MinHook trampoline as the "original", and neither of those is code
+// inside Hero_Siege.exe - while the game's own bytes already carry a patch.
+// So such a row is counted from a one-line research note at the top of that
+// hook body instead ("via <hook>"), and a row nothing can reach is reported as
+// blocked with calls=n/a - never as a 0, which would be the instrument talking.
+static constexpr long kTgLogBudget = 3;   // verbose lines per row between resets
+
+enum : uint32_t {
+    kTgCount = 0,   // count only, never logged (hot rows)
+    kTgArgs  = 1,   // verbose: self/other/argc/args, first kTgLogBudget calls
+    kTgRet   = 2,   // verbose: also the return value (native detours only)
+    kTgHud   = 4,   // the DrawHudBuffs row: keeps hudSinceRoomChange
+};
+
+enum : long {
+    kTgUnhooked = 0,
+    kTgNative,
+    kTgViaNative,
+    kTgViaTableOnly,
+    kTgBlocked,
+    kTgNotFound,
+};
+
+// Script rows: X(SAFE, SDK CONSTANT, LABEL, FLAGS, EXISTING ORIGINAL, VIA HOOK).
+// Every runtime name is an hs-game-sdk constant, never a literal.
+#define TGPROBE_SCRIPTS(X) \
+    X(TalentUse, HeroSiege::Scripts::gml_Script_TalentUse, "TalentUse", kTgArgs | kTgRet, &g_OrigTalentUse, "HookTalentUse") \
+    X(TalentUseClass, HeroSiege::Scripts::gml_Script_TalentUseClass, "TalentUseClass", kTgArgs, nullptr, nullptr) \
+    X(CheckTalentUse, HeroSiege::Scripts::gml_Script_CheckTalentUse, "CheckTalentUse", kTgArgs | kTgRet, nullptr, nullptr) \
+    X(TalentUseSetSpeed, HeroSiege::Scripts::gml_Script_TalentUseSetSpeed, "TalentUseSetSpeed", kTgCount, nullptr, nullptr) \
+    X(NetworkSendClientTalentUse, HeroSiege::Scripts::gml_Script_NetworkSendClientTalentUse, "NetworkSendClientTalentUse", kTgArgs, nullptr, nullptr) \
+    X(CA_playerTalentActive, HeroSiege::Scripts::gml_Script_CA_playerTalentActive, "CA_playerTalentActive", kTgArgs, nullptr, nullptr) \
+    X(CA_playerTalentUpdate, HeroSiege::Scripts::gml_Script_CA_playerTalentUpdate, "CA_playerTalentUpdate", kTgArgs, nullptr, nullptr) \
+    X(TalentsWhiteMage, HeroSiege::Scripts::gml_Script_TalentsWhiteMage, "TalentsWhiteMage", kTgArgs, nullptr, nullptr) \
+    X(TalentsUniversal, HeroSiege::Scripts::gml_Script_TalentsUniversal, "TalentsUniversal", kTgArgs, nullptr, nullptr) \
+    X(GetTalentInfo, HeroSiege::Scripts::gml_Script_GetTalentInfo, "GetTalentInfo", kTgArgs, nullptr, nullptr) \
+    X(GetTalentId, HeroSiege::Scripts::gml_Script_GetTalentId, "GetTalentId", kTgArgs, nullptr, nullptr) \
+    X(ReturnTalentLevel, HeroSiege::Scripts::gml_Script_ReturnTalentLevel, "ReturnTalentLevel", kTgArgs, nullptr, nullptr) \
+    X(ReturnTalentValue, HeroSiege::Scripts::gml_Script_ReturnTalentValue, "ReturnTalentValue", kTgArgs, nullptr, nullptr) \
+    X(GetTalentCooldown, HeroSiege::Scripts::gml_Script_GetTalentCooldown, "GetTalentCooldown", kTgArgs, nullptr, nullptr) \
+    X(GetSubTalentInfo, HeroSiege::Scripts::gml_Script_GetSubTalentInfo, "GetSubTalentInfo", kTgArgs | kTgRet, nullptr, nullptr) \
+    X(ReturnSubTalentLevel, HeroSiege::Scripts::gml_Script_ReturnSubTalentLevel, "ReturnSubTalentLevel", kTgArgs | kTgRet, nullptr, nullptr) \
+    X(LoadSkillTagsString, HeroSiege::Scripts::gml_Script_LoadSkillTagsString, "LoadSkillTagsString", kTgArgs | kTgRet, nullptr, nullptr) \
+    X(ClearPersistSkill, HeroSiege::Scripts::gml_Script_ClearPersistSkill, "ClearPersistSkill", kTgArgs, nullptr, nullptr) \
+    X(StepAbilityParentDestroyTimer, HeroSiege::Scripts::gml_Script_StepAbilityParentDestroyTimer, "StepAbilityParentDestroyTimer", kTgArgs, nullptr, nullptr) \
+    X(PlayerUpdateTimers, HeroSiege::Scripts::gml_Script_PlayerUpdateTimers, "PlayerUpdateTimers", kTgCount, nullptr, nullptr) \
+    X(BuffAdd, HeroSiege::Scripts::gml_Script_BuffAdd, "BuffAdd", kTgArgs, &g_OrigBuffAdd, "HookBuffAdd") \
+    X(BuffRemove, HeroSiege::Scripts::gml_Script_BuffRemove, "BuffRemove", kTgArgs, nullptr, nullptr) \
+    X(GetBuff, HeroSiege::Scripts::gml_Script_GetBuff, "GetBuff", kTgCount, nullptr, nullptr) \
+    X(RoomGoto, HeroSiege::Scripts::gml_Script_RoomGoto, "RoomGoto", kTgArgs, nullptr, nullptr) \
+    X(NetworkRoomGoto, HeroSiege::Scripts::gml_Script_NetworkRoomGoto, "NetworkRoomGoto", kTgArgs, nullptr, nullptr) \
+    X(NetworkRoomSetupDone, HeroSiege::Scripts::gml_Script_NetworkRoomSetupDone, "NetworkRoomSetupDone", kTgArgs, nullptr, nullptr) \
+    X(CA_playerRoomSetupDone, HeroSiege::Scripts::gml_Script_CA_playerRoomSetupDone, "CA_playerRoomSetupDone", kTgArgs, nullptr, nullptr) \
+    X(SetupRoomEffects, HeroSiege::Scripts::gml_Script_SetupRoomEffects, "SetupRoomEffects", kTgArgs, nullptr, nullptr) \
+    X(DrawHudAbilityButtons, HeroSiege::Scripts::gml_Script_DrawHudAbilityButtons, "DrawHudAbilityButtons", kTgArgs, nullptr, nullptr) \
+    X(DrawHudBuffs, HeroSiege::Scripts::gml_Script_DrawHudBuffs, "DrawHudBuffs", kTgArgs | kTgHud, &g_Orig_DrawHudBuffs, "Hook_DrawHudBuffs") \
+    X(DrawHud, HeroSiege::Scripts::gml_Script_DrawHud, "DrawHud", kTgArgs, nullptr, nullptr) \
+    X(GetPlayerTalentHudObj, HeroSiege::Scripts::gml_Script_GetPlayerTalentHudObj, "GetPlayerTalentHudObj", kTgArgs, nullptr, nullptr) \
+    X(UiHudTalentNavigation, HeroSiege::Scripts::gml_Script_UiHudTalentNavigation, "UiHudTalentNavigation", kTgArgs, nullptr, nullptr) \
+    X(DrawKeyBindSprites, HeroSiege::Scripts::gml_Script_DrawKeyBindSprites, "DrawKeyBindSprites", kTgArgs, nullptr, nullptr) \
+    X(HudTalentAnon1183, HeroSiege::Scripts::gml_Script_anon_1183_gml_Object_UI_Hud_Talent_obj_Create_0, "UI_Hud_Talent_obj.anon@1183", kTgArgs, nullptr, nullptr) \
+    X(HudTalentAnon2413, HeroSiege::Scripts::gml_Script_anon_2413_gml_Object_UI_Hud_Talent_obj_Create_0, "UI_Hud_Talent_obj.anon@2413", kTgArgs, nullptr, nullptr) \
+    X(HudTalentAnon10430, HeroSiege::Scripts::gml_Script_anon_10430_gml_Object_UI_Hud_Talent_obj_Create_0, "UI_Hud_Talent_obj.anon@10430", kTgArgs, nullptr, nullptr) \
+    X(HudTalentAnon11283, HeroSiege::Scripts::gml_Script_anon_11283_gml_Object_UI_Hud_Talent_obj_Create_0, "UI_Hud_Talent_obj.anon@11283", kTgArgs, nullptr, nullptr) \
+    X(HudTalentAnon11677, HeroSiege::Scripts::gml_Script_anon_11677_gml_Object_UI_Hud_Talent_obj_Create_0, "UI_Hud_Talent_obj.anon@11677", kTgArgs, nullptr, nullptr) \
+    X(HudTalentAnon12084, HeroSiege::Scripts::gml_Script_anon_12084_gml_Object_UI_Hud_Talent_obj_Create_0, "UI_Hud_Talent_obj.anon@12084", kTgArgs, nullptr, nullptr) \
+    X(HudTalentAnon12530, HeroSiege::Scripts::gml_Script_anon_12530_gml_Object_UI_Hud_Talent_obj_Create_0, "UI_Hud_Talent_obj.anon@12530", kTgArgs, nullptr, nullptr) \
+    X(HudTalentAnon13033, HeroSiege::Scripts::gml_Script_anon_13033_gml_Object_UI_Hud_Talent_obj_Create_0, "UI_Hud_Talent_obj.anon@13033", kTgArgs, nullptr, nullptr) \
+    X(CheckPlayerInteraction, HeroSiege::Scripts::gml_Script_CheckPlayerInteraction, "CheckPlayerInteraction(control)", kTgCount, &g_OrigCi_CheckPlayerInteraction, nullptr) \
+    X(InputPressed, HeroSiege::Scripts::gml_Script_InputPressed, "InputPressed", kTgCount, nullptr, nullptr) \
+    X(LoadAura, HeroSiege::Scripts::gml_Script_LoadAura, "LoadAura(negctl)", kTgCount, nullptr, nullptr) \
+    X(skillsAura, HeroSiege::Scripts::gml_Script_skillsAura, "skillsAura(negctl)", kTgCount, nullptr, nullptr)
+
+// Object events: X(GameObject enumerator, event suffix, FLAGS). The runtime
+// name is built from the SDK's own object name plus the suffix; the SDK has no
+// event table, so an event that does not resolve means the object has no
+// such event - a result, not an error. Step_0 rows are count-only. There is
+// deliberately no Room Start or Room End row on any object: hooking the room
+// start event has crashed the game before (test_est_force_behavior pins it),
+// and the zone-change read is the room key plus the Destroy/CleanUp rows.
+#define TGPROBE_EVENTS(X) \
+    X(White_Mage_Soul_Spurn_obj, Create_0, kTgArgs) \
+    X(White_Mage_Soul_Spurn_obj, Step_0, kTgCount) \
+    X(White_Mage_Soul_Spurn_obj, Destroy_0, kTgArgs) \
+    X(White_Mage_Soul_Spurn_obj, CleanUp_0, kTgArgs) \
+    X(White_Mage_Soul_Spurn_obj, Alarm_0, kTgArgs) \
+    X(Player_Ability_Parent_obj, Create_0, kTgArgs) \
+    X(Player_Ability_Parent_obj, Step_0, kTgCount) \
+    X(Player_Ability_Parent_obj, Destroy_0, kTgArgs) \
+    X(Player_Ability_Parent_obj, CleanUp_0, kTgArgs) \
+    X(Draw_Player_Buff_obj, Create_0, kTgArgs) \
+    X(Draw_Player_Buff_obj, Destroy_0, kTgArgs) \
+    X(UI_Hud_Talent_obj, Create_0, kTgArgs) \
+    X(UI_Hud_Talent_obj, Step_0, kTgCount) \
+    X(UI_Hud_Talent_obj, Draw_0, kTgArgs) \
+    X(UI_Hud_Talent_obj, Draw_64, kTgArgs) \
+    X(Skill_Controller_obj, Create_0, kTgArgs) \
+    X(Skill_Controller_obj, Step_0, kTgCount)
+
+enum TgProbeRowId : int {
+#define TG_SCRIPT_ID(SAFE, NAME, LABEL, FLAGS, ORIG, VIA) kTg_##SAFE,
+#define TG_EVENT_ID(OBJ, EV, FLAGS) kTg_##OBJ##_##EV,
+    TGPROBE_SCRIPTS(TG_SCRIPT_ID)
+    TGPROBE_EVENTS(TG_EVENT_ID)
+#undef TG_SCRIPT_ID
+#undef TG_EVENT_ID
+    kTgRowCount
+};
+
+#define TG_SCRIPT_DECL(SAFE, NAME, LABEL, FLAGS, ORIG, VIA) \
+    static RValue& TgNat_##SAFE(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A);
+#define TG_EVENT_DECL(OBJ, EV, FLAGS) \
+    static RValue& TgNat_##OBJ##_##EV(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A);
+TGPROBE_SCRIPTS(TG_SCRIPT_DECL)
+TGPROBE_EVENTS(TG_EVENT_DECL)
+#undef TG_SCRIPT_DECL
+#undef TG_EVENT_DECL
+
+struct TgProbeTarget {
+    const char*                     label;
+    std::string_view                script;         // SDK constant; empty for an object event
+    HeroSiege::Objects::GameObject  object;         // object event rows only
+    const char*                     eventSuffix;    // nullptr for a script row
+    uint32_t                        flags;
+    PFUNC_YYGMLScript*              existingOrig;   // the ForgePact hook that may already hold this entry
+    const char*                     viaHook;        // that hook's body, when it carries an entry note
+    const char*                     hookId;
+    PVOID                           detour;
+    PFUNC_YYGMLScript               tramp;
+    volatile long                   mode;
+    std::string                     modeText;
+    volatile long                   calls;
+    volatile long                   logged;
+    uint64_t                        lastFrame;
+    uint64_t                        lastGap;
+};
+
+static TgProbeTarget g_TgRows[kTgRowCount] = {
+#define TG_SCRIPT_ROW(SAFE, NAME, LABEL, FLAGS, ORIG, VIA) \
+    { LABEL, NAME, HeroSiege::Objects::GameObject(0), nullptr, FLAGS, ORIG, VIA, \
+      "fp_tg_" #SAFE, (PVOID)TgNat_##SAFE, nullptr, kTgUnhooked, "unhooked", 0, 0, 0, 0 },
+#define TG_EVENT_ROW(OBJ, EV, FLAGS) \
+    { #OBJ "." #EV, std::string_view(), HeroSiege::Objects::GameObject::OBJ, #EV, FLAGS, nullptr, nullptr, \
+      "fp_tg_" #OBJ "_" #EV, (PVOID)TgNat_##OBJ##_##EV, nullptr, kTgUnhooked, "unhooked", 0, 0, 0, 0 },
+    TGPROBE_SCRIPTS(TG_SCRIPT_ROW)
+    TGPROBE_EVENTS(TG_EVENT_ROW)
+#undef TG_SCRIPT_ROW
+#undef TG_EVENT_ROW
+};
+
+static std::atomic<bool> g_TgInstalled{ false };
+static std::atomic<bool> g_TgVerbose{ false };
+
+// Q6's "first frame after a zone change" counter, kept on every DrawHudBuffs
+// call the instrument sees. An unreadable room key is counted separately and
+// never stored, so "unreadable" can never compare equal to anything.
+static int64_t g_TgHudRoomKey = 0;
+static bool g_TgHudRoomKnown = false;
+static volatile long g_TgHudSinceRoomChange = 0;
+static volatile long g_TgHudRoomUnreadable = 0;
+
+static void TgProbeHudRoomTick(int64_t key)
+{
+    if (key == INT64_MIN) {
+        InterlockedIncrement(&g_TgHudRoomUnreadable);
+    } else if (!g_TgHudRoomKnown || key != g_TgHudRoomKey) {
+        g_TgHudRoomKey = key;
+        g_TgHudRoomKnown = true;
+        InterlockedExchange(&g_TgHudSinceRoomChange, 0);
+    }
+    InterlockedIncrement(&g_TgHudSinceRoomChange);
+}
+
+static bool TgProbeIsPiggyback(long mode)
+{
+    return mode == kTgViaNative || mode == kTgViaTableOnly;
+}
+
+// Entry bookkeeping shared by the native detours and the entry notes. The hot
+// path is two interlocked increments and a frame read; nothing allocates
+// unless verbose is on and this row still has log budget. Returns the call
+// number when this call was logged, else 0.
+static long TgProbeEnter(TgProbeTarget& t, CInstance* S, CInstance* O, int argc, RValue** A)
+{
+    const long n = InterlockedIncrement(&t.calls);
+    const uint64_t frame = g_RuntimeFrame;
+    if (n > 1) t.lastGap = frame - t.lastFrame;
+    t.lastFrame = frame;
+    if ((t.flags & (kTgArgs | kTgRet)) == 0 || !g_TgVerbose.load(std::memory_order_relaxed)) return 0;
+    if (t.logged >= kTgLogBudget || InterlockedIncrement(&t.logged) > kTgLogBudget) return 0;
+    try {
+        Out(std::string("tgprobe ") + t.label + " #" + std::to_string(n)
+            + " frame=" + std::to_string((unsigned long long)frame)
+            + " self=" + CiDescribeInstance(S) + " other=" + CiDescribeInstance(O)
+            + " argc=" + std::to_string(argc) + AggroArgs(argc, A));
+    } catch (...) {}
+    return n;
+}
+
+static RValue& TgProbeDetourBody(int idx, CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    TgProbeTarget& t = g_TgRows[idx];
+    if (t.flags & kTgHud) TgProbeHudRoomTick(CurrentRoomKey());
+    const long logged = TgProbeEnter(t, S, O, argc, A);
+    RValue& r = t.tramp ? t.tramp(S, O, R, argc, A) : R;
+    if (logged && (t.flags & kTgRet)) {
+        try { Out(std::string("tgprobe ") + t.label + " #" + std::to_string(logged) + " ret=" + Describe(r)); } catch (...) {}
+    }
+    return r;
+}
+
+#define TG_SCRIPT_DETOUR(SAFE, NAME, LABEL, FLAGS, ORIG, VIA) \
+    static RValue& TgNat_##SAFE(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) \
+    { return TgProbeDetourBody(kTg_##SAFE, S, O, R, argc, A); }
+#define TG_EVENT_DETOUR(OBJ, EV, FLAGS) \
+    static RValue& TgNat_##OBJ##_##EV(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) \
+    { return TgProbeDetourBody(kTg_##OBJ##_##EV, S, O, R, argc, A); }
+TGPROBE_SCRIPTS(TG_SCRIPT_DETOUR)
+TGPROBE_EVENTS(TG_EVENT_DETOUR)
+#undef TG_SCRIPT_DETOUR
+#undef TG_EVENT_DETOUR
+
+// The entry notes. Each is the first line of a ForgePact hook body, and each
+// does nothing unless that row attached "via" the hook - so a row that got its
+// own native detour is never counted twice. The return value is not visible
+// from the top of a hook body, so a piggyback row logs ret=n/a.
+static void TgProbeNote(int idx, CInstance* S, CInstance* O, int argc, RValue** A)
+{
+    TgProbeTarget& t = g_TgRows[idx];
+    const long logged = TgProbeEnter(t, S, O, argc, A);
+    if (logged && (t.flags & kTgRet)) {
+        try { Out(std::string("tgprobe ") + t.label + " #" + std::to_string(logged) + " ret=n/a (via hook)"); } catch (...) {}
+    }
+}
+
+static void TgProbeNoteDrawHudBuffs(CInstance* S, CInstance* O, int argc, RValue** A)
+{
+    if (!TgProbeIsPiggyback(g_TgRows[kTg_DrawHudBuffs].mode)) return;
+    TgProbeHudRoomTick(CurrentRoomKey());
+    TgProbeNote(kTg_DrawHudBuffs, S, O, argc, A);
+}
+
+static void TgProbeNoteTalentUse(CInstance* S, CInstance* O, int argc, RValue** A)
+{
+    if (!TgProbeIsPiggyback(g_TgRows[kTg_TalentUse].mode)) return;
+    TgProbeNote(kTg_TalentUse, S, O, argc, A);
+}
+
+static void TgProbeNoteBuffAdd(CInstance* S, CInstance* O, int argc, RValue** A)
+{
+    if (!TgProbeIsPiggyback(g_TgRows[kTg_BuffAdd].mode)) return;
+    TgProbeNote(kTg_BuffAdd, S, O, argc, A);
+}
+
+static void TgProbeSetMode(TgProbeTarget& t, long mode, const std::string& text)
+{
+    t.modeText = text;
+    InterlockedExchange(&t.mode, mode);
+}
+
+// The decision order, fixed; docs/toggle-skills-research.md "Instrument"
+// describes each outcome. Every pointer handed to the hooking library has just
+// been checked to be executable code inside Hero_Siege.exe, and the hooking
+// library is called from exactly one place: the lambda below.
+//   (a) resolve by name; nothing there -> not found
+//   (b) the table entry is game code -> nobody here holds it -> native detour
+//   (c) a ForgePact hook holds the table and its saved original is game code
+//       -> that hook is table-only, so the original IS the game body -> native
+//   (d) a ForgePact hook holds the table with a trampoline, and its body
+//       carries an entry note -> count from the note, no detour
+//   (e) anything else in this module holds the table -> blocked
+//   (f) the hooking library refuses -> blocked (or, for a note row whose hook
+//       is table-only, the note as a table-only fallback)
+static void TgProbeAttach(TgProbeTarget& t)
+{
+    const std::string runtimeName = t.eventSuffix
+        ? "gml_Object_" + std::string(HeroSiege::Objects::GetObjectName(t.object)) + "_" + t.eventSuffix
+        : std::string(t.script);
+    PVOID p = nullptr;
+    AurieStatus st = g_Yytk->GetNamedRoutinePointer(runtimeName.c_str(), &p);
+    CScript* sc = (AurieSuccess(st) && p) ? reinterpret_cast<CScript*>(p) : nullptr;
+    if (!sc || !sc->m_Functions || !sc->m_Functions->m_ScriptFunction) {
+        TgProbeSetMode(t, kTgNotFound, "not found (" + runtimeName + " st=" + std::to_string((int)st) + ")");
+        return;
+    }
+    const PVOID tableEntry = (PVOID)sc->m_Functions->m_ScriptFunction;
+
+    auto detourAt = [&](PVOID src, std::string& why) -> bool {
+        if (!AddrIsExecutableInModule(GetModuleHandleA(nullptr), (const void*)src)) {
+            why = "target is not code inside Hero_Siege.exe";
+            return false;
+        }
+        PVOID tramp = nullptr;
+        AurieStatus hs = MmCreateHook(g_ArSelfModule, t.hookId, src, t.detour, &tramp);
+        if (!AurieSuccess(hs) || !tramp) {
+            why = "MmCreateHook st=" + std::to_string((int)hs);
+            return false;
+        }
+        t.tramp = reinterpret_cast<PFUNC_YYGMLScript>(tramp);
+        return true;
+    };
+
+    std::string why;
+    if (AddrIsExecutableInModule(GetModuleHandleA(nullptr), (const void*)tableEntry)) {
+        if (detourAt(tableEntry, why)) TgProbeSetMode(t, kTgNative, "native");
+        else TgProbeSetMode(t, kTgBlocked, "blocked: " + why);
+        return;
+    }
+    const PVOID held = (t.existingOrig && *t.existingOrig) ? (PVOID)*t.existingOrig : nullptr;
+    if (held && AddrIsExecutableInModule(GetModuleHandleA(nullptr), (const void*)held)) {
+        if (detourAt(held, why)) {
+            TgProbeSetMode(t, kTgNative, "native (under table-only " + std::string(t.viaHook ? t.viaHook : "citrace hook") + ")");
+        } else if (t.viaHook) {
+            TgProbeSetMode(t, kTgViaTableOnly, "via " + std::string(t.viaHook) + " (TABLE-ONLY; detour " + why + ")");
+        } else {
+            TgProbeSetMode(t, kTgBlocked, "blocked: " + why);
+        }
+        return;
+    }
+    if (held && t.viaHook) {
+        TgProbeSetMode(t, kTgViaNative, "via " + std::string(t.viaHook) + " (native)");
+        return;
+    }
+    TgProbeSetMode(t, kTgBlocked, "blocked: table entry is not code inside Hero_Siege.exe");
+}
+
+static bool TgProbeLabelMatches(const TgProbeTarget& t, const std::vector<std::string>& subs)
+{
+    if (subs.empty()) return true;
+    const std::string label = Lower(t.label);
+    for (const std::string& s : subs) if (label.find(s) != std::string::npos) return true;
+    return false;
+}
+
+static void TgProbeHook(const std::string& filter)
+{
+    std::vector<std::string> subs;
+    {
+        std::string rest = filter, tok;
+        while (!(tok = FirstToken(rest, rest)).empty()) subs.push_back(Lower(tok));
+    }
+    g_TgInstalled.exchange(true);
+    int native = 0, via = 0, blocked = 0, notFound = 0;
+    std::vector<std::string> lines;
+    for (TgProbeTarget& t : g_TgRows) {
+        if (!TgProbeLabelMatches(t, subs)) continue;
+        if (t.mode == kTgUnhooked) TgProbeAttach(t);
+        switch (t.mode) {
+        case kTgNative:       ++native; if (t.modeText != "native") lines.push_back(std::string("  ") + t.label + ": " + t.modeText); break;
+        case kTgViaNative:
+        case kTgViaTableOnly: ++via; lines.push_back(std::string("  ") + t.label + ": " + t.modeText); break;
+        case kTgBlocked:      ++blocked; lines.push_back(std::string("  ") + t.label + ": " + t.modeText); break;
+        case kTgNotFound:     ++notFound; lines.push_back(std::string("  ") + t.label + ": " + t.modeText); break;
+        default: break;
+        }
+    }
+    Out("tgprobe hook: " + std::to_string(native) + " native, " + std::to_string(via) + " via hook, "
+        + std::to_string(blocked) + " blocked, " + std::to_string(notFound) + " not found");
+    for (const std::string& l : lines) Out(l);
+    Out("  controls: CheckPlayerInteraction(control) must read native; DrawHudBuffs via Hook_DrawHudBuffs (native),");
+    Out("  cross-checked against the hudCalls= delta of two `hhlabel` replies. No `citrace` command in this session.");
+}
+
+static std::string TgProbeRoomName()
+{
+    try {
+        RValue v;
+        if (!AurieSuccess(g_Yytk->GetBuiltin("room", nullptr, NULL_INDEX, v))) return "(unreadable)";
+        return g_Yytk->CallBuiltin("room_get_name", { v }).ToString();
+    } catch (...) { return "(unreadable)"; }
+}
+
+static void TgProbeShow()
+{
+    Out("tgprobe show: frame=" + std::to_string((unsigned long long)g_RuntimeFrame)
+        + " verbose=" + (g_TgVerbose.load() ? "on" : "off")
+        + (g_TgInstalled.load() ? "" : "  (nothing hooked yet - run `tgprobe hook`)"));
+    for (const TgProbeTarget& t : g_TgRows) {
+        std::string line = std::string("  ") + t.label + " mode=" + t.modeText;
+        const long mode = t.mode;
+        if (mode == kTgNative || TgProbeIsPiggyback(mode)) {
+            line += " calls=" + std::to_string(t.calls)
+                + " lastFrame=" + std::to_string((unsigned long long)t.lastFrame)
+                + " lastGap=" + std::to_string((unsigned long long)t.lastGap);
+            if ((t.flags & kTgRet) && TgProbeIsPiggyback(mode)) line += " ret=n/a (via hook)";
+            if (mode == kTgViaTableOnly) line += "   <- TABLE-ONLY: direct calls bypass this count; a 0 is not observed";
+        } else {
+            // Not attached (unhooked, blocked or not found): there is no count
+            // to report, and printing 0 would be a claim about the game.
+            line += " calls=n/a";
+        }
+        Out(line);
+    }
+    const int64_t key = CurrentRoomKey();
+    Out("  room=" + (key == INT64_MIN ? std::string("unreadable") : std::to_string((long long)key))
+        + " name=" + TgProbeRoomName()
+        + " hudSinceRoomChange=" + (g_TgHudRoomKnown ? std::to_string(g_TgHudSinceRoomChange) : std::string("n/a (no DrawHudBuffs call counted yet)"))
+        + " hudRoomUnreadable=" + std::to_string(g_TgHudRoomUnreadable));
+}
+
+static void TgProbeReset()
+{
+    for (TgProbeTarget& t : g_TgRows) {
+        InterlockedExchange(&t.calls, 0);
+        InterlockedExchange(&t.logged, 0);
+        t.lastFrame = 0;
+        t.lastGap = 0;
+    }
+    Out("tgprobe: counters, lastFrame/lastGap and per-row log budgets reset (hudSinceRoomChange keeps counting).");
+}
+
+static double TgProbeObjectIndex(const std::string& name)
+{
+    try { return g_Yytk->CallBuiltin("asset_get_index", { RValue(name) }).ToDouble(); } catch (...) { return -1.0; }
+}
+
+static std::string TgProbeDescribeShort(const RValue& v, size_t cap = 80)
+{
+    std::string d = Describe(v);
+    if (d.size() > cap) d = d.substr(0, cap) + "...";
+    return d;
+}
+
+static std::string TgProbeRead(const RValue& inst, const char* name)
+{
+    try { return TgProbeDescribeShort(g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(name) })); }
+    catch (...) { return "?"; }
+}
+
+// Every custom variable on an instance, name=value, values capped.
+static std::string TgProbeCustomVars(const RValue& inst)
+{
+    std::string line;
+    try {
+        RValue names = g_Yytk->CallBuiltin("variable_instance_get_names", { inst });
+        int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+        for (int i = 0; i < n; ++i) {
+            RValue nm = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) });
+            RValue v = g_Yytk->CallBuiltin("variable_instance_get", { inst, nm });
+            line += " " + nm.ToString() + "=" + TgProbeDescribeShort(v);
+        }
+    } catch (...) { line += " (exc)"; }
+    return line;
+}
+
+static std::string TgProbeObjectNameOf(const RValue& inst)
+{
+    try {
+        RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("object_index") });
+        return g_Yytk->CallBuiltin("object_get_name", { oi }).ToString();
+    } catch (...) { return "?"; }
+}
+
+static void TgProbeSlots()
+{
+    const std::string objName(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::UI_Hud_Talent_obj));
+    const double obj = TgProbeObjectIndex(objName);
+    if (obj < 0) { Out("tgprobe slots: " + objName + " not found by name"); return; }
+    try {
+        const int count = (int)g_Yytk->CallBuiltin("instance_number", { RValue(obj) }).ToDouble();
+        Out("tgprobe slots: " + objName + " instances=" + std::to_string(count)
+            + " gui=" + TgProbeDescribeShort(g_Yytk->CallBuiltin("display_get_gui_width", {}))
+            + "x" + TgProbeDescribeShort(g_Yytk->CallBuiltin("display_get_gui_height", {})));
+        for (int i = 0; i < count && i < 16; ++i) {
+            RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue(obj), RValue((double)i) });
+            std::string spriteName = "?";
+            try {
+                RValue spr = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("sprite_index") });
+                if (spr.ToDouble() >= 0) spriteName = g_Yytk->CallBuiltin("sprite_get_name", { spr }).ToString();
+            } catch (...) {}
+            Out("  [" + std::to_string(i) + "] id=" + TgProbeRead(inst, "id")
+                + " x=" + TgProbeRead(inst, "x") + " y=" + TgProbeRead(inst, "y")
+                + " sprite_index=" + TgProbeRead(inst, "sprite_index") + " (" + spriteName + ")"
+                + " sprite_width=" + TgProbeRead(inst, "sprite_width") + " sprite_height=" + TgProbeRead(inst, "sprite_height")
+                + " image_xscale=" + TgProbeRead(inst, "image_xscale") + " image_yscale=" + TgProbeRead(inst, "image_yscale"));
+            Out("      vars:" + TgProbeCustomVars(inst));
+        }
+    } catch (...) { Out("tgprobe slots: EXCEPTION"); }
+}
+
+// global.playerBuff[1][0][i], walked the same way HhBuffAlive reads one slot.
+static void TgProbeBuffs()
+{
+    try {
+        RValue pb = g_Yytk->CallBuiltin("variable_global_get", { RValue("playerBuff") });
+        if (pb.m_Kind != VALUE_ARRAY) { Out("tgprobe buffs: global.playerBuff is " + Describe(pb)); return; }
+        RValue a1 = g_Yytk->CallBuiltin("array_get", { pb, RValue(1.0) });
+        if (a1.m_Kind != VALUE_ARRAY) { Out("tgprobe buffs: playerBuff[1] is " + Describe(a1)); return; }
+        RValue a0 = g_Yytk->CallBuiltin("array_get", { a1, RValue(0.0) });
+        if (a0.m_Kind != VALUE_ARRAY) { Out("tgprobe buffs: playerBuff[1][0] is " + Describe(a0)); return; }
+        const int len = (int)g_Yytk->CallBuiltin("array_length", { a0 }).ToDouble();
+        int empty = 0, detailed = 0;
+        Out("tgprobe buffs: playerBuff[1][0] length=" + std::to_string(len));
+        for (int i = 0; i < len; ++i) {
+            RValue ref = g_Yytk->CallBuiltin("array_get", { a0, RValue((double)i) });
+            const bool number = ref.m_Kind == VALUE_REAL || ref.m_Kind == VALUE_INT32 || ref.m_Kind == VALUE_INT64;
+            if (ref.m_Kind == VALUE_UNDEFINED || (number && ref.ToDouble() < 0)) { ++empty; continue; }
+            const bool exists = g_Yytk->CallBuiltin("instance_exists", { ref }).ToBoolean();
+            std::string line = "  [" + std::to_string(i) + "] kind=" + std::to_string((int)ref.m_Kind)
+                + " value=" + TgProbeDescribeShort(ref) + " instance_exists=" + (exists ? "1" : "0");
+            if (exists) {
+                line += " object=" + TgProbeObjectNameOf(ref);
+                if (detailed < 8) { line += " vars:" + TgProbeCustomVars(ref); ++detailed; }
+            }
+            Out(line);
+        }
+        Out("  (" + std::to_string(empty) + " empty slots not listed)");
+    } catch (...) { Out("tgprobe buffs: EXCEPTION"); }
+}
+
+// Every live Player_Ability_Parent_obj descendant: the working hypothesis is
+// that a toggled skill is an effect instance that stays alive.
+static void TgProbeAbilities()
+{
+    const std::string objName(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Player_Ability_Parent_obj));
+    const double obj = TgProbeObjectIndex(objName);
+    if (obj < 0) { Out("tgprobe abilities: " + objName + " not found by name"); return; }
+    try {
+        const int count = (int)g_Yytk->CallBuiltin("instance_number", { RValue(obj) }).ToDouble();
+        Out("tgprobe abilities: " + objName + " (and descendants) instances=" + std::to_string(count)
+            + " frame=" + std::to_string((unsigned long long)g_RuntimeFrame));
+        for (int i = 0; i < count && i < 64; ++i) {
+            RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue(obj), RValue((double)i) });
+            std::string alarms;
+            CInstance* ci = HhResolveInstance(inst);
+            for (int a = 0; a < 12; ++a) {
+                RValue v;
+                const bool ok = ci && AurieSuccess(g_Yytk->GetBuiltin("alarm", ci, a, v));
+                alarms += (a ? "," : "") + (ok ? std::to_string((long long)SafeF(v.ToDouble())) : std::string("?"));
+            }
+            Out("  [" + std::to_string(i) + "] " + TgProbeObjectNameOf(inst) + " id=" + TgProbeRead(inst, "id")
+                + " alarm=[" + alarms + "]");
+            Out("      vars:" + TgProbeCustomVars(inst));
+        }
+    } catch (...) { Out("tgprobe abilities: EXCEPTION"); }
+}
+
+// `vars`/`snap`/`diff` target: "global", or the first instance of an object
+// named by the caller.
+static bool TgProbeResolveTarget(const std::string& spec, RValue& out, std::string& what)
+{
+    if (Lower(spec) == "global") { out = RValue(-5.0); what = "global"; return true; }
+    const double obj = TgProbeObjectIndex(spec);
+    if (obj < 0) { what = spec + " not found by name"; return false; }
+    try {
+        if (g_Yytk->CallBuiltin("instance_number", { RValue(obj) }).ToDouble() < 1) { what = spec + " has no instance"; return false; }
+        out = g_Yytk->CallBuiltin("instance_find", { RValue(obj), RValue(0.0) });
+        what = spec + " id=" + TgProbeRead(out, "id");
+        return true;
+    } catch (...) { what = spec + " lookup failed"; return false; }
+}
+
+using TgProbeScalars = std::map<std::string, std::string>;
+
+// Scalars only (real/int/bool/string): a change inside an array or struct is
+// invisible here, which is what the abilities/buffs/slots walkers are for.
+static TgProbeScalars TgProbeReadScalars(const RValue& target)
+{
+    TgProbeScalars out;
+    try {
+        RValue names = g_Yytk->CallBuiltin("variable_instance_get_names", { target });
+        int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+        for (int i = 0; i < n; ++i) {
+            RValue nm = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) });
+            RValue v = g_Yytk->CallBuiltin("variable_instance_get", { target, nm });
+            if (v.m_Kind == VALUE_REAL || v.m_Kind == VALUE_INT32 || v.m_Kind == VALUE_INT64
+                || v.m_Kind == VALUE_BOOL || v.m_Kind == VALUE_STRING) {
+                out[nm.ToString()] = TgProbeDescribeShort(v, 120);
+            }
+        }
+    } catch (...) {}
+    return out;
+}
+
+static std::string g_TgSnapSpec, g_TgSnapWhat;
+static TgProbeScalars g_TgSnap;
+static bool g_TgSnapTaken = false;
+
+static void TgProbeVars(const std::string& spec)
+{
+    RValue target; std::string what;
+    if (!TgProbeResolveTarget(spec, target, what)) { Out("tgprobe vars: " + what); return; }
+    const TgProbeScalars s = TgProbeReadScalars(target);
+    Out("tgprobe vars: " + what + " scalars=" + std::to_string(s.size()));
+    for (const auto& kv : s) Out("  " + kv.first + "=" + kv.second);
+}
+
+static void TgProbeSnap(const std::string& spec)
+{
+    RValue target; std::string what;
+    if (!TgProbeResolveTarget(spec, target, what)) { Out("tgprobe snap: " + what); return; }
+    g_TgSnap = TgProbeReadScalars(target);
+    g_TgSnapSpec = spec;
+    g_TgSnapWhat = what;
+    g_TgSnapTaken = true;
+    Out("tgprobe snap: " + what + " scalars=" + std::to_string(g_TgSnap.size())
+        + " room=" + TgProbeRoomName() + " - now act, then `tgprobe diff`");
+}
+
+static void TgProbeDiff()
+{
+    if (!g_TgSnapTaken) { Out("tgprobe diff: no snapshot - run `tgprobe snap <Obj|global>` first"); return; }
+    RValue target; std::string what;
+    if (!TgProbeResolveTarget(g_TgSnapSpec, target, what)) { Out("tgprobe diff: " + what); return; }
+    const TgProbeScalars now = TgProbeReadScalars(target);
+    int changed = 0, added = 0, removed = 0;
+    std::vector<std::string> lines;
+    for (const auto& kv : now) {
+        auto it = g_TgSnap.find(kv.first);
+        if (it == g_TgSnap.end()) { ++added; lines.push_back("  + " + kv.first + "=" + kv.second); }
+        else if (it->second != kv.second) { ++changed; lines.push_back("  ~ " + kv.first + ": " + it->second + " -> " + kv.second); }
+    }
+    for (const auto& kv : g_TgSnap) {
+        if (now.find(kv.first) == now.end()) { ++removed; lines.push_back("  - " + kv.first + " (was " + kv.second + ")"); }
+    }
+    Out("tgprobe diff: snap " + g_TgSnapWhat + " -> now " + what + " room=" + TgProbeRoomName()
+        + " changed=" + std::to_string(changed) + " added=" + std::to_string(added) + " removed=" + std::to_string(removed));
+    int shown = 0;
+    for (const std::string& l : lines) {
+        if (shown++ >= 200) { Out("  ... (" + std::to_string(lines.size() - 200) + " more)"); break; }
+        Out(l);
+    }
+}
+
+static void TgProbeRoom()
+{
+    const int64_t key = CurrentRoomKey();
+    Out("tgprobe room: key=" + (key == INT64_MIN ? std::string("unreadable") : std::to_string((long long)key))
+        + " readable=" + (key == INT64_MIN ? "no" : "yes") + " name=" + TgProbeRoomName());
+}
+
+static void TgProbeCommand(const std::string& rest)
+{
+    std::string subRest;
+    const std::string sub = Lower(FirstToken(rest, subRest));
+    if (sub == "hook") { TgProbeHook(subRest); return; }
+    if (sub == "show") { TgProbeShow(); return; }
+    if (sub == "reset") { TgProbeReset(); return; }
+    if (sub == "verbose") {
+        std::string ignored;
+        const std::string v = Lower(FirstToken(subRest, ignored));
+        g_TgVerbose.store(v == "on" || v == "1");
+        Out(std::string("tgprobe verbose ") + (g_TgVerbose.load() ? "on" : "off")
+            + " (" + std::to_string(kTgLogBudget) + " lines per row until `tgprobe reset`)");
+        return;
+    }
+    if (sub == "slots") { TgProbeSlots(); return; }
+    if (sub == "buffs") { TgProbeBuffs(); return; }
+    if (sub == "abilities") { TgProbeAbilities(); return; }
+    if (sub == "vars" || sub == "snap") {
+        std::string ignored;
+        const std::string spec = FirstToken(subRest, ignored);
+        if (spec.empty()) { Out("tgprobe " + sub + ": usage -> tgprobe " + sub + " <ObjectName|global>"); return; }
+        if (sub == "vars") TgProbeVars(spec); else TgProbeSnap(spec);
+        return;
+    }
+    if (sub == "diff") { TgProbeDiff(); return; }
+    if (sub == "room") { TgProbeRoom(); return; }
+    Out("tgprobe: usage -> tgprobe hook [substr...] | show | reset | verbose on|off | slots | buffs | abilities"
+        " | vars <Obj|global> | snap <Obj|global> | diff | room");
+}
+#endif // FORGEPACT_RELEASE (tgprobe)
+
 static void RunCommand(const std::string& line)
 {
     std::string rest;
@@ -14713,6 +15415,12 @@ static void RunCommand(const std::string& line)
 #endif
 
     if (HandleHeadhunterCommand(lc, rest)) return;
+#ifndef FORGEPACT_RELEASE
+    // Toggle-skill research (issue #11), docs/toggle-skills-research.md. A
+    // standalone early return rather than one more `else if` below: that chain
+    // is already at MSVC's block-nesting limit (C1061).
+    if (lc == "tgprobe") { TgProbeCommand(rest); return; }
+#endif
     if (lc == "relicfilter") {
         bool enable = (rest == "1" || rest == "true" || rest == "on");
         // Hooking DropRelic while character selection is still running stalls the
