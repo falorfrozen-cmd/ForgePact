@@ -646,10 +646,26 @@ class ProspectWindowContractTests(unittest.TestCase):
         self.assertIn("PpBackingCapture(", after)
         self.assertLess(after.index("PpBackingCapture("), after.index("if (!logged"))
         capture = bodies["PpBackingCapture"]
-        self.assertLess(capture.index("g_PpBacking.load()"), capture.index("PpBackingJsonText("))
+        self.assertLess(capture.index("g_PpBacking.load()"), capture.index("PpBackingShape("))
         self.assertIn('"json_stringify"', bodies["PpBackingJsonText"])
         self.assertIn("kPpBackingLogBudget", capture)
         self.assertIn("g_PpInBacking", capture)
+        # Round-0 N2: nothing is serialised inside the game's own getter call (a
+        # struct cycle would overflow json_stringify there, at character load).
+        # `backing dump` writes the files, and only after a depth-capped walk
+        # of the value finished without hitting the cap.
+        self.assertNotIn("PpBackingJsonText(", capture)
+        self.assertNotIn("PpBackingJsonFile(", capture)
+        self.assertNotIn("json_stringify", capture)
+        json_file = bodies["PpBackingJsonFile"]
+        self.assertLess(json_file.index("PpBackingWalk("), json_file.index("PpBackingJsonText("))
+        self.assertLess(json_file.index("scan.depthCapped > 0"), json_file.index("PpBackingJsonText("))
+        self.assertIn("PpBackingJsonFile(", bodies["PpBackingDump"])
+        # Round-0 N1: an RValue copy roots an array, not a struct, so every kept
+        # value is also assigned to a research global, cleared on release.
+        self.assertIn('"variable_global_set", { RValue(root), result }', capture)
+        self.assertIn('"variable_global_set"', bodies["PpBackingClearSlot"])
+        self.assertIn("PpBackingClearSlot(", bodies["PpBackingRelease"])
         # Off by default, and reset turns it off and releases what it kept.
         self.assertIn("static std::atomic<bool> g_PpBacking{ false };", self.plugin)
         reset = strip_comments(function_body(self.plugin, "static void PpReset("))
@@ -682,6 +698,88 @@ class ProspectWindowContractTests(unittest.TestCase):
         # `copy` needs a complete scan; an incomplete one is not observed.
         self.assertIn("scan incomplete", body)
         self.assertLess(body.index("scan incomplete"), body.rindex("copy"))
+        # Round-0 P0c-B1: a value the walk cannot look inside is not a leaf. Only
+        # a number, bool, string, undefined, null or unset is; a reference
+        # (VALUE_REF, how this runner hands out instances), a method value or a
+        # pointer counts as unwalked, and an unwalked value makes the walk
+        # incomplete - so storage behind a handle can never read as `copy`.
+        bodies = self.backing_functions()
+        leaf = bodies["PpBackingIsPlainLeaf"]
+        for kind in ("VALUE_REAL", "VALUE_INT32", "VALUE_INT64", "VALUE_BOOL", "VALUE_STRING", "VALUE_UNDEFINED"):
+            self.assertIn(kind, leaf)
+        for kind in ("VALUE_REF", "VALUE_PTR", "VALUE_OBJECT", "VALUE_ARRAY"):
+            self.assertNotIn(kind, leaf)
+        self.assertIn("return false;", leaf[leaf.index("default:"):])
+        walk = bodies["PpBackingWalk"]
+        self.assertLess(walk.index("PpBackingIsPlainLeaf(v)"), walk.index("++scan.references"))
+        self.assertIn("++scan.methods", walk)
+        self.assertIn("bool Complete() const { return !truncated && depthCapped == 0 && Unwalked() == 0; }", self.plugin)
+        self.assertIn("long Unwalked() const { return methods + references; }", self.plugin)
+        # Any kept return of any getter holding the sentinel decides
+        # `reference-identical (via <getter> ...)`; `copy` only when every walk
+        # completed and none hit. No getter is skipped when reading the hits.
+        self.assertNotIn("g_PpBackingProfile) continue", body)
+        self.assertIn("reference-identical (via ", body)
+        reading = body[body.index("for (const PpBackingHit& h : results) {"):body.index("std::string verdict;")]
+        self.assertNotIn("continue", reading)
+        self.assertNotIn("return", reading)
+        self.assertIn("if (!h.hits.empty() && via.empty()) via = h.what", reading)
+        verdict = body[body.index("std::string verdict;"):]
+        self.assertLess(verdict.index("!via.empty()"), verdict.index("incomplete > 0"))
+        self.assertLess(verdict.index("incomplete > 0"), verdict.index('"copy: every walk'))
+        walked = body[body.index('"array_set", { row, RValue((double)c), RValue(kPpBackingSentinel) }'):
+                      body.index('"array_set", { row, RValue((double)c), original }')]
+        self.assertIn("PpBackingForEachKept(", walked)
+
+    def test_idcheck_refuses_unless_a_kept_return_came_from_the_open_window(self):
+        # Round-0 P0c-B2: UI_Prospect_obj holds two grids and a later open calls
+        # the getters again, so the last return is not necessarily what this
+        # ProspectGrid was built from. Every window-self return is kept (bounded)
+        # with its @id, and idcheck writes nothing unless one of them came from
+        # the window open now.
+        bodies = self.backing_functions()
+        capture = bodies["PpBackingCapture"]
+        self.assertIn("st->windowKept % kPpBackingKeepMax", capture)
+        self.assertIn("windowSelf ? st->window[slotIndex] : st->other", capture)
+        self.assertIn("PpInstanceId(S->ToRValue(), slot.selfId)", capture)
+        self.assertIn("static constexpr int kPpBackingKeepMax = 8;", self.plugin)
+        # An unreadable id is -1 and a failed read returns false, so two
+        # unreadable ids never match each other.
+        instance_id = strip_comments(function_body(self.plugin, "static bool PpInstanceId("))
+        self.assertIn("id = -1;", instance_id)
+        self.assertIn("v.ToDouble() <= 0) return false;", instance_id)
+        body = bodies["PpBackingIdCheck"]
+        write = body.index('"array_set", { row, RValue((double)c), RValue(kPpBackingSentinel) }')
+        refusal = body.index("no kept return came from the open window")
+        self.assertLess(refusal, write)
+        self.assertIn("return;", body[refusal:write])
+        self.assertIn("k.selfId != windowId", body[:refusal])
+        self.assertLess(body.index("PpInstanceId(window, windowId)"), refusal)
+        self.assertIn("no open UI_Prospect_obj window with a readable id", body)
+        self.assertLess(body.index("no open UI_Prospect_obj window with a readable id"), write)
+        # The live procedure runs idcheck before any item is moved: C3 comes
+        # before C2b, and before the first item is placed.
+        live = collapse(section(self.doc, "## Phase 0c live procedure"))
+        self.assertLess(live.index("**C3"), live.index("**C2b"))
+        self.assertLess(live.index("`prospectprobe backing idcheck`"), live.index("places one item"))
+        self.assertIn("with no item moved", live[:live.index("**C2b")])
+
+    def test_structural_agreement_counts_only_non_empty_cells_and_is_a_lead(self):
+        # Round-0 P0c-B3: an empty 6x9 agrees with any 6x9 of empties, and a copy
+        # agrees by construction. Agreement counts only nodeGrid's non-empty
+        # cells, compares objects by identity rather than by how they print, and
+        # the dump says it never picks a gate branch.
+        bodies = self.backing_functions()
+        agree = bodies["PpBackingCellsAgree"]
+        self.assertLess(agree.index("PpBackingIsEmptyCell(g)) continue;"), agree.index("++same"))
+        self.assertIn("++occupied", agree)
+        same = bodies["PpBackingSameValue"]
+        self.assertIn("a.m_Pointer == b.m_Pointer", same)
+        self.assertNotIn("Describe(", same)
+        dump = bodies["PpBackingDump"]
+        self.assertIn("occupied == 0", dump)
+        self.assertIn("nodeGrid holds no item - nothing to compare", dump)
+        self.assertIn("never picks a gate branch", dump)
 
     def test_idcheck_restores_the_cell_and_only_writes_an_empty_one(self):
         body = self.backing_functions()["PpBackingIdCheck"]
@@ -741,6 +839,25 @@ class ProspectWindowContractTests(unittest.TestCase):
             self.assertIn(text, deciding)
         gate = deciding[deciding.index("auto-prospect"):]
         self.assertIn("claims to verify", gate)
+        # Round-0 P0c-B3: the gate's rules have an order, and structural
+        # agreement is not one of them.
+        rules = deciding[deciding.index("### Decision gate"):]
+        self.assertIn("in this order, and the first that holds decides", rules)
+        saved = rules.index("- **Save-backed** —")
+        not_saved = rules.index("- **Not save-backed** — only when save-backed does not hold")
+        inconclusive = rules.index("- **Inconclusive** — everything else")
+        self.assertLess(saved, not_saved)
+        self.assertLess(not_saved, inconclusive)
+        self.assertNotIn("mirrors a profile sub-array", rules[saved:not_saved])
+        self.assertIn("**Structural agreement is a lead, never a branch.**", rules)
+        self.assertIn("it never picks save-backed, not save-backed or inconclusive", rules)
+        # Round-0 P0c-B1, in the doc: what counts as unwalked, and `copy` only
+        # when every walk completed.
+        instrument = collapse(section(self.doc, "## Instrument"))
+        self.assertIn("an instance reference (`VALUE_REF`, how this runner hands out instances), a method "
+                      "value (its bound `self` may hold the storage), a pointer — counts as unwalked.", instrument)
+        self.assertIn("`copy` **only** when every walk completed and none holds it", instrument)
+        self.assertIn("**no kept window return whose `@id` is the open window's**", instrument)
 
     # Tokens a decompiler prints and this repository never commits. Spelled in
     # pieces so this file does not match its own guard.

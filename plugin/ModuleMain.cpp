@@ -9682,27 +9682,45 @@ static bool PpObserve(const char* label, long n, volatile long* logged, volatile
 // correct self - crashed the game. So nothing here calls a getter. While
 // `backing` is on, a getter row's detour keeps the value the game's OWN call
 // returned (after the trampoline), and `backing dump` / `backing idcheck` read
-// only that. A kept RValue is a counted reference to the runtime's array or
-// struct; whether it also sees later writes on this runner is what idcheck's
-// positive control measures before any verdict.
-static constexpr long kPpBackingLogBudget = 6;             // logged captures (line + json file) per getter per `backing on`
+// only that. Keeping an RValue copy holds a counted reference only for an
+// array; a struct is not rooted by it and the collector may free it while we
+// hold the pointer. So every kept value is also assigned to a research global
+// (`__pp_backing_<getter>_<slot>`), which the collector does see. Whether a
+// kept array also sees later writes on this runner is what idcheck's positive
+// control measures before any verdict.
+static constexpr long kPpBackingLogBudget = 6;             // logged capture lines per getter per `backing on`
+static constexpr int kPpBackingKeepMax = 8;                 // window-self returns kept per getter (the oldest is dropped)
 static constexpr long kPpBackingScanLimit = 200000;         // values a scan visits before it stops (and then proves nothing)
 static constexpr int kPpBackingScanDepth = 10;
 static constexpr double kPpBackingSentinel = -7654321.25;  // not an item id, count or index any grid holds
 static std::atomic<bool> g_PpBacking{ false };
 static bool g_PpInBacking = false;                          // game thread only; a capture never nests
 
-struct PpBackingStash {
-    const char* getter;              // the probe row label, which is the script name
+// One kept return. `call` 0 = the slot is empty.
+struct PpBackingKept {
     // Heap-held and never deleted: a global RValue's destructor would free a
     // runtime reference at DLL unload, after the runtime is gone. `reset`
     // releases the reference while the game is still running.
     RValue*     value = nullptr;
-    long        calls = 0;           // getter calls seen while `backing` was on
-    long        logged = 0;
-    long        keptCall = 0;        // the call number the stash holds; 0 = nothing kept
+    long        call = 0;            // the getter's call number
     std::string self;                // how that call's self described itself
+    double      selfId = -1;         // that self's instance id; -1 = not read (never matches)
     bool        windowSelf = false;  // that call's self was the UI_Prospect_obj window
+    std::string root;                // the research global rooting the value
+};
+
+struct PpBackingStash {
+    const char* getter;              // the probe row label, which is the script name
+    // UI_Prospect_obj holds more than one grid, so the window may call a getter
+    // more than once per open, and a later open calls it again: every
+    // window-self return is kept (ring of kPpBackingKeepMax, each with its @id)
+    // rather than the last one winning. The latest call from any other self is
+    // kept apart and never replaces a window return.
+    PpBackingKept window[kPpBackingKeepMax];
+    long          windowKept = 0;    // window-self returns kept since `backing on` (> kPpBackingKeepMax = oldest dropped)
+    PpBackingKept other;
+    long          calls = 0;         // getter calls seen while `backing` was on
+    long          logged = 0;
 };
 static PpBackingStash g_PpBackingProfile{ "GetProfileInventoryData" };
 static PpBackingStash g_PpBackingOwner{ "GetPlayerItemOwner" };
@@ -9714,6 +9732,30 @@ static PpBackingStash* PpBackingStashFor(const char* label)
 {
     for (PpBackingStash* s : g_PpBackingStashes) if (std::strcmp(label, s->getter) == 0) return s;
     return nullptr;
+}
+
+// Every non-empty kept return of every getter, window slots first.
+template <typename F>
+static void PpBackingForEachKept(F f)
+{
+    for (PpBackingStash* s : g_PpBackingStashes) {
+        for (PpBackingKept& k : s->window) if (k.value && k.call > 0) f(*s, k);
+        if (s->other.value && s->other.call > 0) f(*s, s->other);
+    }
+}
+
+// An instance's `id`, read the same way CiDescribeInstance prints `@id`. False
+// when the read fails or is not a positive number, so an unreadable id never
+// compares equal to another unreadable one.
+static bool PpInstanceId(const RValue& inst, double& id)
+{
+    id = -1;
+    try {
+        RValue v = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("id") });
+        if (!PpIsNumber(v) || v.ToDouble() <= 0) return false;
+        id = v.ToDouble();
+        return true;
+    } catch (...) { return false; }
 }
 
 // 1 = a plain struct (walkable), 0 = a method value (a leaf), -1 = could not tell.
@@ -9747,6 +9789,9 @@ static std::string PpBackingShape(const RValue& v)
 
 // json_stringify only an array or a plain struct; anything else is `null`
 // (its kind is in the metadata), so no builtin is handed a type it rejects.
+// Never called from a detour: a struct cycle would overflow json_stringify's
+// recursion inside the game's own call. `backing dump` calls it, and only on a
+// value its depth-capped walk finished without hitting the cap.
 static std::string PpBackingJsonText(const RValue& v)
 {
     if (v.m_Kind != VALUE_ARRAY && !(v.m_Kind == VALUE_OBJECT && PpBackingObjectKind(v) == 1)) return "null";
@@ -9775,10 +9820,24 @@ static size_t PpBackingWriteFile(const std::string& name, const std::string& get
     return text.size();
 }
 
+// Empties one slot: the research global first, then our copy.
+static void PpBackingClearSlot(PpBackingKept& k)
+{
+    if (!k.root.empty()) {
+        try { g_Yytk->CallBuiltin("variable_global_set", { RValue(k.root), RValue() }); } catch (...) {}
+    }
+    if (k.value) *k.value = RValue();
+    k.call = 0;
+    k.self.clear();
+    k.selfId = -1;
+    k.windowSelf = false;
+}
+
 // After the trampoline, on a getter row, while `backing` is on: keep the value
-// the game's own call returned. A call whose self is the window is the one the
-// ProspectGrid is built from, so once one is kept a later call from elsewhere
-// does not replace it. The line and the json file are budgeted per getter.
+// the game's own call returned. A window-self return goes into the next ring
+// slot (with the window's @id); any other self replaces only the `other` slot.
+// Nothing is serialised here - only the shallow shape is read for the budgeted
+// line; `backing dump` writes the json files.
 static void PpBackingCapture(const char* label, long n, CInstance* S, const RValue& result)
 {
     if (!g_PpBacking.load() || g_PpInBacking) return;
@@ -9788,38 +9847,40 @@ static void PpBackingCapture(const char* label, long n, CInstance* S, const RVal
     try {
         ++st->calls;
         const bool windowSelf = PpObjectName(S) == std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::UI_Prospect_obj));
-        const bool keep = windowSelf || !st->windowSelf;
-        if (keep) {
-            if (!st->value) st->value = new RValue();
-            *st->value = result;
-            st->keptCall = n;
-            st->self = PpDescribeSelf(S);
-            st->windowSelf = windowSelf;
-        }
+        const int slotIndex = (int)(st->windowKept % kPpBackingKeepMax);
+        PpBackingKept& slot = windowSelf ? st->window[slotIndex] : st->other;
+        const std::string root = std::string("__pp_backing_") + st->getter + (windowSelf ? "_window" + std::to_string(slotIndex) : std::string("_other"));
+        if (!slot.value) slot.value = new RValue();
+        *slot.value = result;
+        slot.root = root;
+        g_Yytk->CallBuiltin("variable_global_set", { RValue(root), result });
+        slot.call = n;
+        slot.self = PpDescribeSelf(S);
+        slot.windowSelf = windowSelf;
+        if (!S || !PpInstanceId(S->ToRValue(), slot.selfId)) slot.selfId = -1;
+        if (windowSelf) ++st->windowKept;
         if (st->logged < kPpBackingLogBudget) {
             ++st->logged;
-            const std::string self = PpDescribeSelf(S);
-            const std::string shape = PpBackingShape(result);
-            const std::string file = std::string("pp_backing_") + st->getter + ".json";
-            const size_t bytes = PpBackingWriteFile(file, st->getter, n, self, shape, PpBackingJsonText(result));
-            Out(std::string("prospectprobe backing ") + label + " #" + std::to_string(n) + " self=" + self
-                + " result=" + shape + (keep ? " kept" : " not kept (a call with the window as self is held)")
-                + " -> " + file + " (" + std::to_string(bytes) + " bytes)");
+            Out(std::string("prospectprobe backing ") + label + " #" + std::to_string(n) + " self=" + slot.self
+                + " result=" + PpBackingShape(result)
+                + (windowSelf ? " kept as window return " + std::to_string(slotIndex) + " of " + std::to_string(kPpBackingKeepMax)
+                                    + (st->windowKept > kPpBackingKeepMax ? " (oldest dropped)" : "")
+                              : std::string(" kept as the latest non-window return")));
         }
     } catch (...) { Out(std::string("prospectprobe backing ") + label + " #" + std::to_string(n) + ": EXCEPTION while capturing"); }
     g_PpInBacking = false;
 }
 
-// Drops every kept reference and zeroes the counters (`reset`, `backing on`).
+// Drops every kept reference and its global root, and zeroes the counters
+// (`reset`, `backing on`).
 static void PpBackingRelease()
 {
     for (PpBackingStash* s : g_PpBackingStashes) {
-        if (s->value) *s->value = RValue();
+        for (PpBackingKept& k : s->window) PpBackingClearSlot(k);
+        PpBackingClearSlot(s->other);
+        s->windowKept = 0;
         s->calls = 0;
         s->logged = 0;
-        s->keptCall = 0;
-        s->self.clear();
-        s->windowSelf = false;
     }
 }
 
@@ -10672,33 +10733,53 @@ static void PpSetAtCommand(const std::vector<std::string>& tokIn)
 
 // ---- Phase 0c commands: backing on|off, backing dump, backing idcheck --------
 
-// What a walk over a kept value saw. A walk that stopped early, or met a
-// container it could not open, has not looked everywhere, so its "not found"
+// What a walk over a kept value saw. A walk that stopped early, or met a value
+// it could not look inside, has not looked everywhere, so its "not found"
 // proves nothing.
 struct PpBackingScan {
     long visited = 0;
     long depthCapped = 0;   // arrays/structs deeper than kPpBackingScanDepth (a struct cycle lands here)
-    long unwalked = 0;      // objects that answered neither is_method nor is_struct
+    long methods = 0;       // method values: the bound self may hold the storage, and is not walked
+    long references = 0;    // every other value that can refer to storage: an instance ref, a ptr, an object that is neither struct nor method
     bool truncated = false; // kPpBackingScanLimit reached
-    bool Complete() const { return !truncated && depthCapped == 0 && unwalked == 0; }
+    long Unwalked() const { return methods + references; }
+    bool Complete() const { return !truncated && depthCapped == 0 && Unwalked() == 0; }
     std::string Text() const
     {
         return "visited=" + std::to_string(visited) + (truncated ? " truncated" : "")
-            + " depth-capped=" + std::to_string(depthCapped) + " unwalked=" + std::to_string(unwalked);
+            + " depth-capped=" + std::to_string(depthCapped) + " unwalked=" + std::to_string(Unwalked())
+            + " (methods=" + std::to_string(methods) + " references=" + std::to_string(references) + ")";
     }
 };
 
+// A value that holds nothing else: a number, bool, string, undefined, null or unset.
+static bool PpBackingIsPlainLeaf(const RValue& v)
+{
+    switch (v.m_Kind) {
+    case VALUE_REAL: case VALUE_INT32: case VALUE_INT64: case VALUE_BOOL:
+    case VALUE_STRING: case VALUE_UNDEFINED: case VALUE_NULL: case VALUE_UNSET:
+        return true;
+    default:
+        return false;
+    }
+}
+
 // Depth-first over arrays and plain structs, calling visit(value, path) for
-// every value. Builtins only; a reference (an instance, a ds_*) is a leaf.
+// every value. Builtins only. Anything else that is not a plain leaf - an
+// instance reference (VALUE_REF on this runner), a method value, a pointer -
+// may be where the storage lives, so it is counted as unwalked and the walk is
+// incomplete rather than silently treated as a leaf. A ds_* id held as a plain
+// number cannot be told from a number and stays a leaf (the doc says so).
 template <typename Visit>
 static void PpBackingWalk(const RValue& v, const std::string& path, int depth, PpBackingScan& scan, Visit& visit)
 {
     if (scan.truncated) return;
     if (++scan.visited > kPpBackingScanLimit) { scan.truncated = true; return; }
     visit(v, path);
+    if (PpBackingIsPlainLeaf(v)) return;
     const bool array = v.m_Kind == VALUE_ARRAY;
-    const int kind = !array && v.m_Kind == VALUE_OBJECT ? PpBackingObjectKind(v) : 0;
-    if (!array && kind != 1) { if (kind < 0) ++scan.unwalked; return; }
+    const int kind = !array && v.m_Kind == VALUE_OBJECT ? PpBackingObjectKind(v) : -1;
+    if (!array && kind != 1) { if (kind == 0) ++scan.methods; else ++scan.references; return; }
     if (depth >= kPpBackingScanDepth) { ++scan.depthCapped; return; }
     if (array) {
         const int n = (int)g_Yytk->CallBuiltin("array_length", { v }).ToDouble();
@@ -10723,6 +10804,21 @@ static std::vector<std::string> PpBackingFindSentinel(const RValue& v, PpBacking
     };
     PpBackingWalk(v, "", 0, scan, visit);
     return hits;
+}
+
+// bp_ipc\<name> for one value, written only when a depth-capped walk of it
+// finished without hitting the cap or the value limit: json_stringify has no
+// depth limit of its own, and a struct cycle would overflow it. Returns what
+// the log line says about the file.
+static std::string PpBackingJsonFile(const std::string& name, const std::string& getter, long call, const std::string& self, const RValue& v)
+{
+    PpBackingScan scan;
+    auto ignore = [](const RValue&, const std::string&) {};
+    PpBackingWalk(v, "", 0, scan, ignore);
+    if (scan.truncated || scan.depthCapped > 0)
+        return name + " not written (walk " + scan.Text() + " - a cycle would overflow json_stringify)";
+    const size_t bytes = PpBackingWriteFile(name, getter, call, self, PpBackingShape(v), PpBackingJsonText(v));
+    return name + " (" + std::to_string(bytes) + " bytes)";
 }
 
 // nodeGrid's shape: rows, and the column count every row shares (-1 if rows differ or a row is not an array).
@@ -10753,72 +10849,8 @@ static std::vector<std::pair<std::string, RValue>> PpBackingFindShape(const RVal
     };
     PpBackingWalk(v, "", 0, scan, visit);
     flat = !flats.empty();
-    for (const std::string& p : flats) Out("    flat array of " + std::to_string(rows * cols) + " values at " + p);
+    for (const std::string& p : flats) Out("    flat array of " + std::to_string(rows * cols) + " values at " + p + " (shape only - a lead)");
     return found;
-}
-
-// Cells of two rows x cols arrays that describe the same (a number equal, or the same kind otherwise).
-static int PpBackingCellsAgree(const RValue& a, const RValue& b, int rows, int cols)
-{
-    int same = 0;
-    for (int i = 0; i < rows; ++i) {
-        RValue ra = g_Yytk->CallBuiltin("array_get", { a, RValue((double)i) });
-        RValue rb = g_Yytk->CallBuiltin("array_get", { b, RValue((double)i) });
-        for (int j = 0; j < cols; ++j)
-            if (Describe(g_Yytk->CallBuiltin("array_get", { ra, RValue((double)j) })) == Describe(g_Yytk->CallBuiltin("array_get", { rb, RValue((double)j) }))) ++same;
-    }
-    return same;
-}
-
-// `backing dump`: what was kept, the live nodeGrid, and whether nodeGrid's shape
-// appears inside a kept value. Read-only; json files for offline comparison.
-static void PpBackingDump()
-{
-    const std::string tag = "prospectprobe backing dump";
-    try {
-        std::string snap;
-        RValue node;
-        const bool haveNode = PpGridSnapshot(snap, &node);
-        Out(tag + ": grid=" + snap + " (backing " + (g_PpBacking.load() ? "on" : "off") + ")");
-        int rows = -1, cols = -1;
-        RValue grid;
-        if (haveNode && g_Yytk->CallBuiltin("variable_instance_exists", { node, RValue("nodeGrid") }).ToBoolean()) {
-            grid = g_Yytk->CallBuiltin("variable_instance_get", { node, RValue("nodeGrid") });
-            if (grid.m_Kind == VALUE_ARRAY) {
-                PpBackingGridDims(grid, rows, cols);
-                std::string row0;
-                if (rows > 0) row0 = CiExpandContainer(g_Yytk->CallBuiltin("array_get", { grid, RValue(0.0) }));
-                const size_t bytes = PpBackingWriteFile("pp_backing_nodegrid.json", "nodeGrid", 0, snap, PpBackingShape(grid), PpBackingJsonText(grid));
-                Out("  nodeGrid: rows=" + std::to_string(rows) + " cols=" + std::to_string(cols) + " row0=" + row0
-                    + " -> pp_backing_nodegrid.json (" + std::to_string(bytes) + " bytes)");
-            } else Out("  nodeGrid is " + Describe(grid) + ", not an array");
-        } else Out("  no ProspectGrid node with nodeGrid (open the window) - no structural comparison");
-        for (PpBackingStash* st : g_PpBackingStashes) {
-            if (!st->value || st->keptCall == 0) {
-                Out(std::string("  ") + st->getter + ": never captured (calls while backing was on: " + std::to_string(st->calls) + ")");
-                continue;
-            }
-            const RValue& kept = *st->value;
-            const std::string shape = PpBackingShape(kept);
-            const std::string file = std::string("pp_backing_") + st->getter + "_kept.json";
-            const size_t bytes = PpBackingWriteFile(file, st->getter, st->keptCall, st->self, shape, PpBackingJsonText(kept));
-            Out(std::string("  ") + st->getter + ": kept call #" + std::to_string(st->keptCall) + " self=" + st->self
-                + (st->windowSelf ? " (the window)" : " (not the window)") + " shape=" + shape
-                + " calls=" + std::to_string(st->calls) + " -> " + file + " (" + std::to_string(bytes) + " bytes)");
-            if (rows <= 0 || cols <= 0) continue;
-            PpBackingScan scan;
-            bool flat = false;
-            const auto matches = PpBackingFindShape(kept, rows, cols, flat, scan);
-            for (const auto& m : matches)
-                Out("    " + std::to_string(rows) + "x" + std::to_string(cols) + " sub-array at " + m.first + ": cells agreeing with nodeGrid "
-                    + std::to_string(PpBackingCellsAgree(grid, m.second, rows, cols)) + "/" + std::to_string(rows * cols));
-            if (matches.empty() && !flat)
-                Out("    no " + std::to_string(rows) + "x" + std::to_string(cols) + " sub-array (" + scan.Text() + ")"
-                    + (scan.Complete() ? "" : " - the walk did not look everywhere: not observed, not absent"));
-            else Out("    walk: " + scan.Text());
-        }
-        Out("  Structural agreement is a lead, not identity: `prospectprobe backing idcheck` tests whether they are the same array.");
-    } catch (...) { Out(tag + ": EXCEPTION while reading"); }
 }
 
 // An empty grid cell: `undefined` or the number 0. Anything else may be an item
@@ -10829,11 +10861,118 @@ static bool PpBackingIsEmptyCell(const RValue& cell)
     return PpIsNumber(cell) && cell.ToDouble() == 0.0;
 }
 
+// The same value in two cells: an equal number, bool or string, or - for
+// anything else - the same runtime object (same kind, same non-null pointer).
+// Two structs that merely print alike are not the same value.
+static bool PpBackingSameValue(const RValue& a, const RValue& b)
+{
+    if (PpIsNumber(a) && PpIsNumber(b)) return a.ToDouble() == b.ToDouble();
+    if (a.m_Kind != b.m_Kind) return false;
+    if (a.m_Kind == VALUE_BOOL) return a.ToBoolean() == b.ToBoolean();
+    if (a.m_Kind == VALUE_STRING) return a.ToString() == b.ToString();
+    return a.m_Pointer != nullptr && a.m_Pointer == b.m_Pointer;
+}
+
+// Structural agreement, counted over nodeGrid's NON-empty cells only: an empty
+// 6x9 agrees with any 6x9 of empties, which says nothing. `occupied` = the
+// non-empty cells of nodeGrid; 0 means there was nothing to compare.
+static int PpBackingCellsAgree(const RValue& grid, const RValue& other, int rows, int cols, int& occupied)
+{
+    int same = 0;
+    occupied = 0;
+    for (int i = 0; i < rows; ++i) {
+        RValue rg = g_Yytk->CallBuiltin("array_get", { grid, RValue((double)i) });
+        RValue ro = g_Yytk->CallBuiltin("array_get", { other, RValue((double)i) });
+        for (int j = 0; j < cols; ++j) {
+            RValue g = g_Yytk->CallBuiltin("array_get", { rg, RValue((double)j) });
+            if (PpBackingIsEmptyCell(g)) continue;
+            ++occupied;
+            if (PpBackingSameValue(g, g_Yytk->CallBuiltin("array_get", { ro, RValue((double)j) }))) ++same;
+        }
+    }
+    return same;
+}
+
+// `window3` / `other`, from the slot's root name.
+static std::string PpBackingSlotName(const PpBackingKept& k)
+{
+    const size_t u = k.root.rfind('_');
+    return u == std::string::npos ? k.root : k.root.substr(u + 1);
+}
+
+// `backing dump`: what was kept, the live nodeGrid, and whether nodeGrid's shape
+// appears inside a kept value. Read-only; json files for offline comparison.
+// Structural agreement is a lead and never picks a gate branch.
+static void PpBackingDump()
+{
+    const std::string tag = "prospectprobe backing dump";
+    try {
+        std::string snap;
+        RValue node, window;
+        double windowId = -1;
+        const bool haveNode = PpGridSnapshot(snap, &node);
+        const bool haveWindow = PpFindWindow(window) && PpInstanceId(window, windowId);
+        Out(tag + ": grid=" + snap + " open window=" + (haveWindow ? "@" + PpNum(RValue(windowId)) : std::string("none"))
+            + " (backing " + (g_PpBacking.load() ? "on" : "off") + ")");
+        int rows = -1, cols = -1;
+        RValue grid;
+        if (haveNode && g_Yytk->CallBuiltin("variable_instance_exists", { node, RValue("nodeGrid") }).ToBoolean()) {
+            grid = g_Yytk->CallBuiltin("variable_instance_get", { node, RValue("nodeGrid") });
+            if (grid.m_Kind == VALUE_ARRAY) {
+                PpBackingGridDims(grid, rows, cols);
+                std::string row0;
+                if (rows > 0) row0 = CiExpandContainer(g_Yytk->CallBuiltin("array_get", { grid, RValue(0.0) }));
+                Out("  nodeGrid: rows=" + std::to_string(rows) + " cols=" + std::to_string(cols) + " row0=" + row0
+                    + " -> " + PpBackingJsonFile("pp_backing_nodegrid.json", "nodeGrid", 0, snap, grid));
+            } else Out("  nodeGrid is " + Describe(grid) + ", not an array");
+        } else Out("  no ProspectGrid node with nodeGrid (open the window) - no structural comparison");
+        for (const PpBackingStash* st : g_PpBackingStashes) {
+            Out(std::string("  ") + st->getter + ": calls while backing was on=" + std::to_string(st->calls)
+                + " window returns kept=" + std::to_string(std::min<long>(st->windowKept, kPpBackingKeepMax))
+                + (st->windowKept > kPpBackingKeepMax ? " (" + std::to_string(st->windowKept - kPpBackingKeepMax) + " oldest dropped)" : std::string())
+                + " other return kept=" + (st->other.call > 0 ? "1" : "0"));
+        }
+        bool any = false;
+        PpBackingForEachKept([&](PpBackingStash& st, PpBackingKept& k) {
+            any = true;
+            const bool open = haveWindow && k.windowSelf && k.selfId == windowId;
+            const std::string slot = PpBackingSlotName(k);
+            const std::string file = std::string("pp_backing_") + st.getter + "_" + slot + ".json";
+            Out(std::string("  ") + st.getter + " " + slot + ": call #" + std::to_string(k.call) + " self=" + k.self
+                + (open ? " (the open window)" : k.windowSelf ? " (a window that is not open now)" : " (not the window)")
+                + " shape=" + PpBackingShape(*k.value) + " -> " + PpBackingJsonFile(file, st.getter, k.call, k.self, *k.value));
+            if (rows <= 0 || cols <= 0) return;
+            PpBackingScan scan;
+            bool flat = false;
+            const auto matches = PpBackingFindShape(*k.value, rows, cols, flat, scan);
+            for (const auto& m : matches) {
+                int occupied = 0;
+                const int agree = PpBackingCellsAgree(grid, m.second, rows, cols, occupied);
+                Out("    " + std::to_string(rows) + "x" + std::to_string(cols) + " sub-array at " + m.first + ": "
+                    + (occupied == 0 ? std::string("nodeGrid holds no item - nothing to compare (place a junk item, then dump again)")
+                                     : "non-empty nodeGrid cells agreeing " + std::to_string(agree) + "/" + std::to_string(occupied)));
+            }
+            if (matches.empty() && !flat)
+                Out("    no " + std::to_string(rows) + "x" + std::to_string(cols) + " sub-array (" + scan.Text() + ")"
+                    + (scan.Complete() ? "" : " - the walk did not look everywhere: not observed, not absent"));
+            else Out("    walk: " + scan.Text());
+        });
+        if (!any) Out("  nothing kept (`prospectprobe hook`, `backing on`, then load a character or open the window)");
+        Out("  Structural agreement is a lead only - a copy agrees by construction - and never picks a gate branch; `prospectprobe backing idcheck` tests identity.");
+    } catch (...) { Out(tag + ": EXCEPTION while reading"); }
+}
+
+// One kept return's walk for the sentinel, for idcheck's report.
+struct PpBackingHit {
+    std::string              what;   // `<getter> <slot> call #n (the open window | ...)`
+    std::vector<std::string> hits;
+    PpBackingScan            scan;
+};
+
 // `backing idcheck`: is the live nodeGrid the same runtime array as (part of)
-// what the game's own GetProfileInventoryData call returned? One handler, no
-// Draw in between: the positive control, then one sentinel into one empty
-// cell, a walk of every kept value for it, and the cell restored before any
-// verdict is printed.
+// anything the game's own getter calls returned? One handler, no Draw in
+// between: the positive control, then one sentinel into one empty cell, a walk
+// of every kept return for it, and the cell restored before any verdict.
 static void PpBackingIdCheck()
 {
     const std::string tag = "prospectprobe backing idcheck";
@@ -10867,10 +11006,44 @@ static void PpBackingIdCheck()
         Out(tag + ": control passed (a kept array sees a later write: read back " + PpNum(throughKept) + "; scan finds it at "
             + controlHits[0] + ", not in a separate array)");
 
-        // 2. Refusals, nothing written.
-        const PpBackingStash& profile = g_PpBackingProfile;
-        if (!profile.value || profile.keptCall == 0) {
-            Out(tag + ": refused: backing never captured a GetProfileInventoryData return (`prospectprobe hook`, `backing on`, then open the window); no write made");
+        // 2. Refusals, nothing written. The kept returns must include one whose
+        // self is the window open now: a return from an earlier open, or from
+        // the window's other grid only, could be a dead array this grid was never
+        // built from, and would read as `copy`.
+        long keptCount = 0;
+        std::string windowReturns;
+        PpBackingForEachKept([&](PpBackingStash& st, PpBackingKept& k) {
+            ++keptCount;
+            if (k.windowSelf && windowReturns.size() < 240)
+                windowReturns += std::string(" ") + st.getter + "#" + std::to_string(k.call) + "@" + PpNum(RValue(k.selfId));
+        });
+        if (keptCount == 0) {
+            Out(tag + ": refused: backing never captured a getter return (`prospectprobe hook`, `backing on`, then open the window); no write made");
+            return;
+        }
+        RValue window;
+        double windowId = -1;
+        if (!PpFindWindow(window) || !PpInstanceId(window, windowId)) {
+            Out(tag + ": refused: no open UI_Prospect_obj window with a readable id (open the window); no write made");
+            return;
+        }
+        long fromOpen = 0;
+        PpBackingKept* openProfile = nullptr;
+        PpBackingKept* openOwner = nullptr;
+        PpBackingForEachKept([&](PpBackingStash& st, PpBackingKept& k) {
+            if (!k.windowSelf || k.selfId != windowId) return;
+            ++fromOpen;
+            if (!openProfile && &st == &g_PpBackingProfile) openProfile = &k;
+            if (!openOwner && &st == &g_PpBackingOwner) openOwner = &k;
+        });
+        // The return the before/after cell is read from: the open window's
+        // GetProfileInventoryData, else its GetPlayerItemOwner.
+        const PpBackingKept* openSource = openProfile ? openProfile : openOwner;
+        const std::string sourceName = openProfile ? "GetProfileInventoryData" : "GetPlayerItemOwner";
+        if (fromOpen == 0) {
+            Out(tag + ": refused: no kept return came from the open window @" + PpNum(RValue(windowId)) + " (window returns kept:"
+                + (windowReturns.empty() ? std::string(" none") : windowReturns)
+                + ") - `backing on` before opening, then idcheck before moving any item; no write made");
             return;
         }
         std::string snap;
@@ -10902,13 +11075,14 @@ static void PpBackingIdCheck()
             return;
         }
         // The cell at the same position in the first nodeGrid-shaped sub-array of
-        // the kept value, read before and after, where one exists.
+        // openSource, read before and after, where one exists. Reported only;
+        // the verdict comes from the walks.
         int gridRows = 0, gridCols = 0;
         PpBackingGridDims(grid, gridRows, gridCols);
         PpBackingScan shapeScan;
         bool flat = false;
         std::vector<std::pair<std::string, RValue>> matches;
-        if (gridRows > 0 && gridCols > 0) matches = PpBackingFindShape(*profile.value, gridRows, gridCols, flat, shapeScan);
+        if (openSource && gridRows > 0 && gridCols > 0) matches = PpBackingFindShape(*openSource->value, gridRows, gridCols, flat, shapeScan);
         auto matchedCell = [&]() {
             return matches.empty() ? std::string("-")
                 : Describe(g_Yytk->CallBuiltin("array_get", { g_Yytk->CallBuiltin("array_get", { matches[0].second, RValue((double)r) }), RValue((double)c) }));
@@ -10918,7 +11092,7 @@ static void PpBackingIdCheck()
         // 3. The one write, into the empty cell, then read everything before the restore.
         bool landed = false;
         std::string matchedAfter = "-", landedText = "(not read)";
-        std::vector<std::pair<const PpBackingStash*, std::pair<std::vector<std::string>, PpBackingScan>>> results;
+        std::vector<PpBackingHit> results;
         try {
             g_Yytk->CallBuiltin("array_set", { row, RValue((double)c), RValue(kPpBackingSentinel) });
             // Read through a fresh fetch of the live store, not through `row`:
@@ -10930,14 +11104,15 @@ static void PpBackingIdCheck()
             landed = PpIsNumber(fresh) && fresh.ToDouble() == kPpBackingSentinel;
             if (landed) {
                 matchedAfter = matchedCell();
-                // The profile return decides the verdict; the owner and the two
-                // load-time getters are walked too, and reported beside it.
-                for (const PpBackingStash* st : { &g_PpBackingProfile, &g_PpBackingOwner, &g_PpBackingInvArray, &g_PpBackingProfileObj }) {
-                    if (!st->value || st->keptCall == 0) continue;
-                    PpBackingScan scan;
-                    auto hits = PpBackingFindSentinel(*st->value, scan);
-                    results.push_back({ st, { hits, scan } });
-                }
+                // Every kept return of every getter is walked; any one holding
+                // the sentinel decides.
+                PpBackingForEachKept([&](PpBackingStash& st, PpBackingKept& k) {
+                    PpBackingHit h;
+                    h.what = std::string(st.getter) + " " + PpBackingSlotName(k) + " call #" + std::to_string(k.call)
+                        + (k.windowSelf && k.selfId == windowId ? " (the open window)" : k.windowSelf ? " (a window that is not open now)" : " (not the window)");
+                    h.hits = PpBackingFindSentinel(*k.value, h.scan);
+                    results.push_back(std::move(h));
+                });
             }
         } catch (...) { landedText = "(EXCEPTION after the write)"; landed = false; }
         // 4. Restore, before any verdict.
@@ -10951,33 +11126,37 @@ static void PpBackingIdCheck()
             restoredText = Describe(back);
             restored = restoredText == Describe(original);
         } catch (...) {}
-        Out(tag + ": grid=" + snap + " cell [" + std::to_string(r) + "][" + std::to_string(c) + "] was=" + Describe(original)
+        Out(tag + ": grid=" + snap + " window=@" + PpNum(RValue(windowId)) + " cell [" + std::to_string(r) + "][" + std::to_string(c) + "] was=" + Describe(original)
             + " sentinel=" + PpNum(RValue(kPpBackingSentinel)) + " read-after-write=" + landedText + " now=" + restoredText
             + (restored ? " (restored)" : " (NOT restored - close the window without moving items, and record it)"));
-        Out(tag + ": kept GetProfileInventoryData call #" + std::to_string(profile.keptCall) + " self=" + profile.self
-            + (matches.empty() ? std::string(" - no ") + std::to_string(gridRows) + "x" + std::to_string(gridCols) + " sub-array in it"
-                               : " - " + std::to_string(gridRows) + "x" + std::to_string(gridCols) + " sub-array at " + matches[0].first
-                                 + ": that cell before=" + matchedBefore + " after=" + matchedAfter));
+        Out(tag + ": kept returns from the open window: " + std::to_string(fromOpen) + " of " + std::to_string(keptCount)
+            + (!openSource ? std::string("; neither GetProfileInventoryData nor GetPlayerItemOwner among them")
+               : matches.empty() ? "; its " + sourceName + " call #" + std::to_string(openSource->call) + " has no "
+                                     + std::to_string(gridRows) + "x" + std::to_string(gridCols) + " sub-array"
+               : "; its " + sourceName + " call #" + std::to_string(openSource->call) + " " + std::to_string(gridRows) + "x"
+                     + std::to_string(gridCols) + " sub-array at " + matches[0].first + ": that cell before=" + matchedBefore + " after=" + matchedAfter));
         if (!landed) {
             Out(tag + ": verdict: not observed (the sentinel write did not land in the live nodeGrid)");
             return;
         }
-        std::string verdict;
-        for (const auto& res : results) {
-            const auto& hits = res.second.first;
-            const PpBackingScan& scan = res.second.second;
+        std::string via;
+        long incomplete = 0;
+        for (const PpBackingHit& h : results) {
             std::string where;
-            for (const std::string& h : hits) where += " " + h;
-            Out(std::string("  ") + res.first->getter + ": " + (hits.empty() ? "sentinel not found" : "sentinel found at" + where)
-                + " (" + scan.Text() + ")");
-            if (res.first != &g_PpBackingProfile) continue;
-            if (!hits.empty())
-                verdict = "reference-identical: nodeGrid shares its array with the kept GetProfileInventoryData return (at" + where + ")";
-            else if (!scan.Complete())
-                verdict = "not observed (scan incomplete: " + scan.Text() + ") - a missing sentinel proves nothing";
-            else
-                verdict = "copy: nodeGrid is not the same array as anything in the kept GetProfileInventoryData return";
+            for (const std::string& p : h.hits) where += " " + p;
+            Out("  " + h.what + ": " + (h.hits.empty() ? std::string("sentinel not found") : "sentinel found at" + where) + " (" + h.scan.Text() + ")");
+            if (!h.hits.empty() && via.empty()) via = h.what + " at" + where;
+            if (!h.scan.Complete()) ++incomplete;
         }
+        std::string verdict;
+        if (!via.empty())
+            verdict = "reference-identical (via " + via + "): nodeGrid shares its array with a kept getter return";
+        else if (incomplete > 0)
+            verdict = "not observed (scan incomplete: " + std::to_string(incomplete) + " of " + std::to_string(results.size())
+                + " walks unwalked, depth-capped or truncated) - a missing sentinel proves nothing";
+        else
+            verdict = "copy: every walk of the " + std::to_string(results.size()) + " kept returns (" + std::to_string(fromOpen)
+                + " from the open window) completed and none holds the sentinel";
         Out(tag + ": verdict: " + verdict);
     } catch (...) { Out(tag + ": EXCEPTION - read `prospectprobe grid` and the cell before doing anything else"); }
 }
@@ -10995,8 +11174,9 @@ static void PpBackingCommand(const std::vector<std::string>& tok)
             if (row && row->installed.load()) ++detoured;
         }
         Out("prospectprobe backing: on - kept values released; the game's own calls of the " + std::to_string(detoured)
-            + "/4 detoured getter rows are kept (after the call returns) and the first "
-            + std::to_string(kPpBackingLogBudget) + " per getter logged to pp_backing_<getter>.json. Nothing is invoked."
+            + "/4 detoured getter rows are kept after the call returns (every window-self return, up to "
+            + std::to_string(kPpBackingKeepMax) + " per getter, with its @id; the latest other call apart) and the first "
+            + std::to_string(kPpBackingLogBudget) + " per getter logged. `backing dump` writes the json files. Nothing is invoked."
             + (detoured < 4 ? " Run `prospectprobe hook` first - an undetoured getter is never seen." : ""));
     }
     else if (sub == "off") {
@@ -11021,9 +11201,9 @@ static void PpUsage()
     Out("  call window|grid <m_Method> [number ...]   invoke a method value by name (script_execute), snapshot before/after");
     Out("  resize <cols> <rows> via [window:]<m_Method> [number ...]   write the node's size + run that builder in one step; reverts if nodeGrid did not follow");
     Out("  setat <label> pre|post window|grid <var> <number> [self=<Obj>] [other=<Obj>] [arg<i>=<text>] | setat clear");
-    Out("  backing on|off                         keep what the game's own profile/inventory getter calls return (nothing invoked)");
-    Out("  backing dump                           kept getter shapes + live nodeGrid, json files, nodeGrid-shaped sub-arrays");
-    Out("  backing idcheck                        positive control, then one sentinel in an EMPTY nodeGrid cell, find it via the kept values, restore");
+    Out("  backing on|off                         keep what the game's own profile/inventory getter calls return, each window return with its @id (nothing invoked)");
+    Out("  backing dump                           kept returns + live nodeGrid, json files, nodeGrid-shaped sub-arrays (a lead only)");
+    Out("  backing idcheck                        positive control; refuses unless a kept return came from the open window; one sentinel in an EMPTY nodeGrid cell, walk every kept return, restore");
 }
 
 // Labels contain spaces ("UI_Prospect_obj anon@1038"), so `override` takes the
