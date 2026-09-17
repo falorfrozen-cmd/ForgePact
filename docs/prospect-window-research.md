@@ -549,18 +549,25 @@ the whole design, because a blind `callnum GetProfileInventoryData` (no correct
   `GetPlayerItemOwner`, `GetInventoryArray`, `GetPlayerProfileObj`; they must be
   detoured — `prospectprobe hook` first, and `on` says how many of the four
   are) keep the value each call returned, after the game's function returned.
-  **Every call whose `self` is the `UI_Prospect_obj` window is kept**, in a ring
-  of 8 per getter with that window's `@id` (the oldest is dropped past 8, and
-  `dump` says how many were): the window holds two grids and every open calls
-  the getters again, so "the last call" is not necessarily the one this
-  ProspectGrid was built from. The latest call from any other `self` is kept
-  apart and never replaces a window return. A kept value is the runtime's own
+  **Calls whose `self` is the `UI_Prospect_obj` window are kept** with that
+  window's `@id`: the window holds two grids and every open calls the getters
+  again, so "the last call" is not necessarily the one this ProspectGrid was
+  built from. **The first 8 window returns per getter are kept and never
+  overwritten**; every later one is counted as not kept (`dump` and `idcheck`
+  print the count). The build-time returns come first after `backing on`, so a
+  ring that dropped the oldest would drop exactly those; and because a return
+  that was not kept might be the one this grid was built from, **any window
+  return not kept rules out `copy`**. The latest call from any other `self` is
+  kept apart and never replaces a window return. A kept value is the runtime's own
   array or struct, not a serialised copy: our copy of the `RValue` holds a
   counted reference for an array, but not for a struct, so each kept value is
   also assigned to a research global (`__pp_backing_<getter>_window<k>` /
-  `_other`) that the collector sees; release clears those globals. The first 6
+  `_other`) that the collector sees; release clears those globals. The global
+  is set first, and the slot's value, call number, `self` and `@id` only after
+  it succeeded, so a slot never holds an unrooted value or another call's
+  details (a window return lost that way is counted as not kept). The first 6
   calls of each getter per `on` are logged as
-  `prospectprobe backing <getter> #n self=… result=<array len=N len0=M|struct members=N|kind> kept as window return <k> of 8|kept as the latest non-window return`.
+  `prospectprobe backing <getter> #n self=… result=<array len=N len0=M|struct members=N|kind> kept as window return <k> of 8|kept as the latest non-window return|NOT kept (the first 8 window returns are kept; …)`.
   **Nothing is serialised inside the getter's call** — a cyclic profile struct
   would overflow `json_stringify` there, at character load — only the shallow
   shape is read. Builtins only, never nested, never on the frame path. `off`
@@ -568,7 +575,7 @@ the whole design, because a blind `callnum GetProfileInventoryData` (no correct
 - **`prospectprobe backing dump`** — read-only. Prints the live grid snapshot
   and the open window's `@id`; the live `nodeGrid` (rows, the column count
   every row shares, row 0's cells) into `pp_backing_nodegrid.json`; per getter
-  its call count and how many window returns are kept; and for every kept
+  its call count and how many window returns are `kept=` and `not kept=`; and for every kept
   return its call number, `self`, whether that `self` is `(the open window)`,
   `(a window that is not open now)` or `(not the window)`, its shape, and
   `pp_backing_<getter>_<window<k>|other>.json`. The json files are written
@@ -584,9 +591,12 @@ the whole design, because a blind `callnum GetProfileInventoryData` (no correct
   two structs that merely print alike do not. With no item in the grid it
   prints `nodeGrid holds no item - nothing to compare`. **Structural agreement
   is a lead only and never picks a gate branch**: a copy of the profile data
-  agrees with it by construction. A walk that stopped early, hit the depth cap
-  or met a value it could not look inside says so; its "no sub-array" is
-  `not observed`, not absent.
+  agrees with it by construction. A `K/N` below N is not evidence of a copy
+  either: an instance reference compared by its bits, or an item struct the UI
+  copied from the storage, can disagree with the storage it came from, so a
+  shortfall is a lead too and never picks a branch. A walk that stopped early,
+  hit the depth cap or met a value it could not look inside says so; its
+  "no sub-array" is `not observed`, not absent.
 - **`prospectprobe backing idcheck`** — the **reference-identity** probe, in
   one handler so no Draw runs in between. Run it **before any item is moved**
   after the open (§ Phase 0c live procedure, C3).
@@ -617,20 +627,37 @@ the whole design, because a blind `callnum GetProfileInventoryData` (no correct
      and read back (`now=… (restored)`, or `NOT restored` — close the window
      without moving items and record it).
   5. **Verdict**, from all the walks together (each is printed with its
-     `visited`/`depth-capped`/`unwalked` counts):
-     `reference-identical (via <getter> <slot> call #n … at <path>)` when **any**
-     kept return holds the sentinel — `nodeGrid` shares its array with that
-     return, so changing that storage changes the grid live; otherwise
-     `not observed (scan incomplete: …)` when any walk was incomplete; and
-     `copy` **only** when every walk completed and none holds it. A walk is
+     `visited`/`depth-capped`/`unwalked` counts and, when incomplete, why —
+     e.g. `incomplete: 1 unwalked (first: root VALUE_REF (an instance or other runtime reference), nothing to walk)`).
+     The `kept returns from the open window` line first prints
+     `window returns dropped (not kept past the first 8 per getter): N`, per
+     getter. Then, in this order: `reference-identical (via <getter> <slot>
+     call #n … self=… at <path>)` when a kept return of `GetProfileInventoryData`
+     or `GetPlayerProfileObj` holds the sentinel — `nodeGrid` shares its array
+     with the profile's own data, so changing that storage changes the grid
+     live; else `reference-identical (via <getter> …; not a profile getter - …)`
+     when only a `GetPlayerItemOwner` or `GetInventoryArray` return holds it —
+     recorded with its getter and `self`, a lead that decides no gate branch
+     (neither getter's return has been measured to be profile storage; it could
+     be a UI array); else `not observed (scan incomplete: N of M walks; <each
+     incomplete walk and why>)` when any walk was incomplete; else
+     `not observed (N window returns not kept …) - never copy` when any window
+     return was not kept; and `copy` **only** when every walk completed, no
+     window return was dropped, and none holds it. A walk is
      complete only if it was not truncated, hit no depth cap, and left nothing
      unwalked: **every value that is not a number, bool, string, `undefined`,
      `null` or unset and not a walkable array or plain struct — an instance
      reference (`VALUE_REF`, how this runner hands out instances), a method
      value (its bound `self` may hold the storage), a pointer — counts as
-     unwalked.** A `ds_*` id held as a plain number cannot be told from a
-     number, so storage behind one is not seen; that limit stands beside
-     every `copy`.
+     unwalked.** A getter whose return is itself an instance reference counts against `copy`
+     the same way (`root VALUE_REF …, nothing to walk`): the instance may hold
+     the storage, and nothing looked inside it. So `copy` needs every kept
+     return, of every getter, to be an array or plain struct walked to the
+     end; if `GetPlayerItemOwner` or `GetPlayerProfileObj` hands back an
+     instance, idcheck reads `not observed`, never `copy`, and the gate is
+     inconclusive unless identity or R7 decides it. A `ds_*` id held as a
+     plain number cannot be told from a number, so storage behind one is not
+     seen; that limit stands beside every `copy`.
 
 Counting is unconditional; logging is budgeted per row and per `arm` so a hot
 row cannot drown `out.txt`, and `show` reports every call the budget hid, so a
@@ -839,7 +866,8 @@ what Phase 0b ran.
    capture that reads as `copy`. `prospectprobe grid` → confirm
    `w=9 h=6 rows=6 cols0=9` (**C-grid** control: `citrace dumpobj` agrees).
    `prospectprobe backing dump` → record the open window's `@id`; per getter
-   how many window returns were kept and which say `(the open window)`; their
+   how many window returns were kept, how many were not kept (only the first 8
+   per getter are), and which say `(the open window)`; their
    shapes; the live `nodeGrid` shape; and any `nodeGrid`-shaped sub-array (with
    the grid empty the dump prints `nodeGrid holds no item - nothing to compare`
    — the structural lead is taken in C2b). If no kept return says
@@ -850,8 +878,11 @@ what Phase 0b ran.
    first (if it fails, the whole probe is `not observed`); any refusal
    verbatim (a `no kept return came from the open window` refusal makes the
    probe `not observed`, never `copy`); the `kept returns from the open
-   window` line; every walk line with its `unwalked` count; the verdict
-   (`reference-identical (via …)` / `copy` / `not observed (scan incomplete …)`);
+   window` line with its `window returns dropped` count; every walk line with
+   its `unwalked` count and, for an incomplete walk, its reason; the verdict
+   (`reference-identical (via …)` with the getter and `self` it names /
+   `copy` / `not observed (scan incomplete …)` / `not observed (N window
+   returns not kept …)`);
    both cell values; and confirm the chosen cell was empty and was restored
    (re-run `prospectprobe grid` / `dumpobj` to confirm no item moved). This is
    the one bounded write Phase 0c makes.
@@ -896,12 +927,16 @@ what Phase 0b ran.
    gate.)
 5. **C5 (decision-gate inputs).** From C3 and C4 state which gate branch
    holds, reading the decision gate's rules in their order: **save-backed** if
-   idcheck = `reference-identical` (control passing) or R7 = kept in the
-   prospect grid across a written save; otherwise **not save-backed** if
-   idcheck = `copy` (control passing, a kept return from the open window, every
-   walk complete) and R7 = returned to inventory; otherwise **inconclusive**.
-   The structural agreement from C2/C2b is recorded as a lead and decides
-   nothing.
+   idcheck = `reference-identical` via `GetProfileInventoryData` or
+   `GetPlayerProfileObj` (control passing) or R7 = kept in the prospect grid
+   across a written save; otherwise **not save-backed** if idcheck = `copy`
+   (control passing, a kept return from the open window, no window return
+   dropped, every walk complete — so every kept return an array or struct,
+   none an instance) and R7 = returned to inventory; otherwise
+   **inconclusive**. An identity through `GetPlayerItemOwner` or
+   `GetInventoryArray` only is recorded in § Results with its getter and
+   `self`, and decides nothing by itself. The structural agreement from
+   C2/C2b is recorded as a lead and decides nothing.
 6. **C6.** Fill § Results' **Phase 0c** column (R7, R12 button-call-shape +
    leftover-material claims, backing structural, backing idcheck + its
    control, the load-time capture, the gate branch, H). **Do not** change
@@ -992,9 +1027,14 @@ build. Unanswered, nothing is built.
 
 The rules are read **in this order, and the first that holds decides**:
 
-- **Save-backed** — `backing idcheck` = `reference-identical (via …)` (with its
-  control passing), **or** R7 = kept in the prospect grid across a *written*
-  save. Either one decides it, whatever the other says. Then enlarging the grid
+- **Save-backed** — `backing idcheck` = `reference-identical (via …)` through a
+  kept return of a profile getter — via `GetProfileInventoryData` or `GetPlayerProfileObj` —
+  (with its control passing), **or** R7 = kept in the prospect grid across a
+  *written* save. Either one decides it, whatever the other says. Identity
+  through `GetPlayerItemOwner` or `GetInventoryArray` does not: neither
+  return has been measured to be profile storage (it could be a UI array), so
+  it is recorded in § Results with the getter and `self` idcheck names, as a
+  lead. Then enlarging the grid
   changes save-data shape, and the risks are:
   - **Stranded items.** An enlarged grid holds items in cells vanilla does not
     have; turning the mod off, or opening the save in a vanilla or online
@@ -1016,8 +1056,10 @@ The rules are read **in this order, and the first that holds decides**:
   **auto-prospect on insert**, below; (c) close #9 as not feasible, with this
   finding recorded so it is not re-investigated.
 - **Not save-backed** — only when save-backed does not hold: `idcheck` =
-  `copy` (control passing, a kept return from the open window, every walk
-  complete) **and** R7 = returned to inventory. The store is a transient copy
+  `copy` (control passing, a kept return from the open window, no window
+  return dropped, every walk complete — so every kept return of every getter
+  an array or plain struct, none an instance reference) **and** R7 = returned
+  to inventory. The store is a transient copy
   of the profile data, and the next experiment (not run in Phase 0c) is
   **H2''**: grow the `GetProfileInventoryData` return array inside its detour,
   before `m_SetInventoryLocalPlayer` consumes it, and see whether `nodeGrid` is
@@ -1025,8 +1067,10 @@ The rules are read **in this order, and the first that holds decides**:
   asks for more measurement.
 - **Inconclusive** — everything else: a control failed, no getter return from
   the open window was kept, `idcheck` refused or read
-  `not observed (scan incomplete …)`, R7 was not measured across a written
-  save, or `copy` with R7 = lost. H stays `not observed`; the fallback is a
+  `not observed (scan incomplete …)` (including a getter that returned an
+  instance) or `not observed (N window returns not kept …)`, identity through
+  `GetPlayerItemOwner` or `GetInventoryArray` only (with R7 not kept), R7 was
+  not measured across a written save, or `copy` with R7 = lost. H stays `not observed`; the fallback is a
   local Ghidra read of the profile storage's *construction* path (paraphrase
   only, C7), which informs a further replan and never closes the issue.
 
@@ -1093,6 +1137,6 @@ instrument failure — the stale SDK closure names — and never a negative.
 | R12 | auto-prospect: `UiAProspectButton` call shape (self/other/args/`object_index`; no positive control, so 0 after a press is `not observed`), which insert closure fired for the drag-in and for the click-in, `grid-post` snapshots, the window variable holding the handler's method value, whether items left the grid inside that call or later, and the leftover-material claims checked live (C2b, after C3) | not run | not run | unknown |
 | load-time capture | getters that fired at character load, each kept return's `self` and shape, and the `pp_backing_*.json` the C1 `backing dump` wrote (C1) | not run | not run (no `backing` instrument) | unknown |
 | backing structural | `backing dump`: the open window's `@id`, kept returns per getter and which came from the open window, their shapes, live `nodeGrid` shape, and any `nodeGrid`-shaped sub-array with `non-empty nodeGrid cells agreeing K/N` (taken with a junk item in the grid) and walk completeness (C2, C2b). A lead only; never picks a gate branch | not run | not run | unknown |
-| backing idcheck | `backing idcheck`, run before any item is moved: the control verdict first, any refusal, `kept returns from the open window`, every walk with its `unwalked` count, then `reference-identical (via …)` / `copy` / `not observed`, the cell, both values, and `restored` (C3) | not run | not run | unknown |
+| backing idcheck | `backing idcheck`, run before any item is moved: the control verdict first, any refusal, `kept returns from the open window` with its `window returns dropped` count, every walk with its `unwalked` count and reason, then `reference-identical (via …)` with the getter and `self` it names / `copy` / `not observed`, the cell, both values, and `restored` (C3) | not run | not run | unknown |
 | gate branch | save-backed / not save-backed / inconclusive, per § Decision gate read in its order (C5); the human picks the branch | not run | not run | unknown |
 | H | H1 / H2' / H3 / not observed | **not observed (instrument blind: stale SDK closure names).** The live window's method values named its Create closures `m_SetInventoryLocalPlayer` = `anon@1065`, `m_Resize` = `anon@2806`, `m_UpdateInventoryGrid` = `anon@3657` (all `@gml_Object_UI_Prospect_obj_Create_0`), and the grid node's `m_RefreshNode` = `anon@36159@gml_Object_UI_Inventory_Grid_obj_Create_0`; the stale SDK tables carried `anon@1038/2729/3551` and no `36159`. | **not observed** — H1 unsupported (R4' empty); H2' no positive (R11 applied and matched but the store stayed 9 wide → crash; every R10 grow `reverted` with `invoked=yes`); H3 not concludable (R2-window is an empty field, two rows stayed `UNLOGGED`, four grid methods unprobed, and the Ghidra read above is not live-confirmed). | unknown |

@@ -723,7 +723,8 @@ class ProspectWindowContractTests(unittest.TestCase):
         reading = body[body.index("for (const PpBackingHit& h : results) {"):body.index("std::string verdict;")]
         self.assertNotIn("continue", reading)
         self.assertNotIn("return", reading)
-        self.assertIn("if (!h.hits.empty() && via.empty()) via = h.what", reading)
+        self.assertIn("std::string& into = PpBackingIsProfileGetter(h.stash) ? via : viaLead;", reading)
+        self.assertIn("if (into.empty()) into = h.what", reading)
         verdict = body[body.index("std::string verdict;"):]
         self.assertLess(verdict.index("!via.empty()"), verdict.index("incomplete > 0"))
         self.assertLess(verdict.index("incomplete > 0"), verdict.index('"copy: every walk'))
@@ -739,9 +740,8 @@ class ProspectWindowContractTests(unittest.TestCase):
         # the window open now.
         bodies = self.backing_functions()
         capture = bodies["PpBackingCapture"]
-        self.assertIn("st->windowKept % kPpBackingKeepMax", capture)
         self.assertIn("windowSelf ? st->window[slotIndex] : st->other", capture)
-        self.assertIn("PpInstanceId(S->ToRValue(), slot.selfId)", capture)
+        self.assertIn("PpInstanceId(S->ToRValue(), selfId)", capture)
         self.assertIn("static constexpr int kPpBackingKeepMax = 8;", self.plugin)
         # An unreadable id is -1 and a failed read returns false, so two
         # unreadable ids never match each other.
@@ -763,6 +763,87 @@ class ProspectWindowContractTests(unittest.TestCase):
         self.assertLess(live.index("**C3"), live.index("**C2b"))
         self.assertLess(live.index("`prospectprobe backing idcheck`"), live.index("places one item"))
         self.assertIn("with no item moved", live[:live.index("**C2b")])
+
+    def test_idcheck_never_reads_copy_after_a_window_return_was_dropped(self):
+        # Round-1 P0c-R1-B1: a ring overwrote the oldest window return, and
+        # `backing on` runs before the open, so the build-time returns this grid
+        # was made from were exactly the ones evicted - and idcheck could still
+        # print `copy`. Now the FIRST kPpBackingKeepMax window returns are kept
+        # and never overwritten; the rest are counted as not kept, and idcheck
+        # reads that count before `copy` and refuses `copy` while it is non-zero.
+        bodies = self.backing_functions()
+        capture = bodies["PpBackingCapture"]
+        self.assertNotIn("% kPpBackingKeepMax", capture)
+        self.assertIn("++st->windowSeen", capture)
+        full = capture.index("st->windowKept >= kPpBackingKeepMax")
+        self.assertLess(full, capture.index("st->window[slotIndex]"))
+        self.assertIn("return", capture[full:capture.index("st->window[slotIndex]")])
+        self.assertIn("long WindowDropped() const { return windowSeen - windowKept; }", self.plugin)
+        self.assertIn("s->windowSeen = 0;", bodies["PpBackingRelease"])
+        self.assertIn("WindowDropped()", bodies["PpBackingDump"])
+        # Round-1 N-R1-3: the research global roots the value first; only then
+        # are the slot's value, call, self and @id written, together.
+        root = capture.index('"variable_global_set", { RValue(root), result }')
+        for field in ("*slot.value = result", "slot.call = n", "slot.self = self", "slot.selfId = selfId"):
+            self.assertLess(root, capture.index(field), field)
+        body = bodies["PpBackingIdCheck"]
+        copy = body.index('"copy: every walk')
+        self.assertLess(body.index("WindowDropped()"), copy)
+        self.assertLess(body.index("kPpBackingKeepMax"), copy)
+        verdict = body[body.index("std::string verdict;"):]
+        self.assertLess(verdict.index("incomplete > 0"), verdict.index("dropped > 0"))
+        self.assertLess(verdict.index("dropped > 0"), verdict.index('"copy: every walk'))
+        self.assertIn("window returns not kept", verdict)
+        # The dropped count is on the `kept returns from the open window` line.
+        line = body[body.index("kept returns from the open window: "):]
+        line = line[:line.index(");")]
+        self.assertIn("dropped", line)
+        # The doc carries the same condition at C5 and in the gate.
+        live = collapse(section(self.doc, "## Phase 0c live procedure"))
+        c5 = live[live.index("**C5"):live.index("**C6")]
+        self.assertIn("no window return dropped", c5)
+        gate = collapse(section(self.doc, "## Deciding the hypothesis"))
+        not_saved = gate[gate.index("- **Not save-backed** —"):gate.index("- **Inconclusive** —")]
+        self.assertIn("no window return dropped", not_saved)
+        instrument = collapse(section(self.doc, "## Instrument"))
+        self.assertIn("**The first 8 window returns per getter are kept and never overwritten**", instrument)
+        self.assertIn("any window return not kept rules out `copy`", instrument)
+
+    def test_idcheck_names_each_incomplete_walk_and_only_profile_getters_decide(self):
+        # Round-1 N-R1-1: an incomplete walk is named with its reason (a getter
+        # that returns an instance is `root VALUE_REF, nothing to walk`), and the
+        # doc says a top-level instance return counts against `copy`.
+        bodies = self.backing_functions()
+        walk = bodies["PpBackingWalk"]
+        self.assertIn("scan.Note(", walk)
+        self.assertIn("nothing to walk", self.plugin)
+        body = bodies["PpBackingIdCheck"]
+        verdict = body[body.index("for (const PpBackingHit& h : results) {"):]
+        self.assertIn("h.scan.Why()", verdict)
+        self.assertIn("incompleteNames", verdict)
+        # Round-1 N-R1-2: identity decides save-backed only through
+        # GetProfileInventoryData or GetPlayerProfileObj; identity through any
+        # other getter is printed as a lead that decides no gate branch.
+        self.assertIn("PpBackingIsProfileGetter(", verdict)
+        profile = bodies["PpBackingIsProfileGetter"]
+        self.assertIn("&g_PpBackingProfile", profile)
+        self.assertIn("&g_PpBackingProfileObj", profile)
+        self.assertNotIn("g_PpBackingOwner", profile)
+        self.assertNotIn("g_PpBackingInvArray", profile)
+        self.assertIn("not a profile getter", verdict)
+        instrument = collapse(section(self.doc, "## Instrument"))
+        self.assertIn("A getter whose return is itself an instance reference counts against `copy`", instrument)
+        # Round-1 N-R1-4: a K/N below N is not copy evidence either.
+        self.assertIn("A `K/N` below N is not evidence of a copy either", instrument)
+        live = collapse(section(self.doc, "## Phase 0c live procedure"))
+        c5 = live[live.index("**C5"):live.index("**C6")]
+        self.assertIn("every kept return an array or struct", c5)
+        self.assertIn("via `GetProfileInventoryData` or `GetPlayerProfileObj`", c5)
+        gate = collapse(section(self.doc, "## Deciding the hypothesis"))
+        saved = gate[gate.index("- **Save-backed** —"):gate.index("- **Not save-backed** —")]
+        self.assertIn("via `GetProfileInventoryData` or `GetPlayerProfileObj`", saved)
+        inconclusive = gate[gate.index("- **Inconclusive** —"):]
+        self.assertIn("`GetPlayerItemOwner` or `GetInventoryArray` only", inconclusive)
 
     def test_structural_agreement_counts_only_non_empty_cells_and_is_a_lead(self):
         # Round-0 P0c-B3: an empty 6x9 agrees with any 6x9 of empties, and a copy
@@ -856,7 +937,8 @@ class ProspectWindowContractTests(unittest.TestCase):
         instrument = collapse(section(self.doc, "## Instrument"))
         self.assertIn("an instance reference (`VALUE_REF`, how this runner hands out instances), a method "
                       "value (its bound `self` may hold the storage), a pointer — counts as unwalked.", instrument)
-        self.assertIn("`copy` **only** when every walk completed and none holds it", instrument)
+        self.assertIn("`copy` **only** when every walk completed, no window return was dropped, and none holds it",
+                      instrument)
         self.assertIn("**no kept window return whose `@id` is the open window's**", instrument)
 
     # Tokens a decompiler prints and this repository never commits. Spelled in

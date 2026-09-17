@@ -9689,7 +9689,7 @@ static bool PpObserve(const char* label, long n, volatile long* logged, volatile
 // kept array also sees later writes on this runner is what idcheck's positive
 // control measures before any verdict.
 static constexpr long kPpBackingLogBudget = 6;             // logged capture lines per getter per `backing on`
-static constexpr int kPpBackingKeepMax = 8;                 // window-self returns kept per getter (the oldest is dropped)
+static constexpr int kPpBackingKeepMax = 8;                 // window-self returns kept per getter (the first 8; later ones are not kept)
 static constexpr long kPpBackingScanLimit = 200000;         // values a scan visits before it stops (and then proves nothing)
 static constexpr int kPpBackingScanDepth = 10;
 static constexpr double kPpBackingSentinel = -7654321.25;  // not an item id, count or index any grid holds
@@ -9712,15 +9712,22 @@ struct PpBackingKept {
 struct PpBackingStash {
     const char* getter;              // the probe row label, which is the script name
     // UI_Prospect_obj holds more than one grid, so the window may call a getter
-    // more than once per open, and a later open calls it again: every
-    // window-self return is kept (ring of kPpBackingKeepMax, each with its @id)
-    // rather than the last one winning. The latest call from any other self is
-    // kept apart and never replaces a window return.
+    // more than once per open, and a later open calls it again: window-self
+    // returns are kept, each with its @id, rather than the last one winning.
+    // The FIRST kPpBackingKeepMax since `backing on` are kept and never
+    // overwritten - the build-time returns come first, and a ring would evict
+    // exactly those - and every later one is counted as not kept, so idcheck
+    // can refuse `copy` when a return it never saw might be the source. The
+    // latest call from any other self is kept apart and never replaces a
+    // window return.
     PpBackingKept window[kPpBackingKeepMax];
-    long          windowKept = 0;    // window-self returns kept since `backing on` (> kPpBackingKeepMax = oldest dropped)
+    long          windowSeen = 0;    // window-self returns the getter produced since `backing on`
+    long          windowKept = 0;    // of those, kept (at most kPpBackingKeepMax)
     PpBackingKept other;
     long          calls = 0;         // getter calls seen while `backing` was on
     long          logged = 0;
+    // Window-self returns not kept: past the first kPpBackingKeepMax, or lost to an exception while keeping.
+    long WindowDropped() const { return windowSeen - windowKept; }
 };
 static PpBackingStash g_PpBackingProfile{ "GetProfileInventoryData" };
 static PpBackingStash g_PpBackingOwner{ "GetPlayerItemOwner" };
@@ -9834,40 +9841,59 @@ static void PpBackingClearSlot(PpBackingKept& k)
 }
 
 // After the trampoline, on a getter row, while `backing` is on: keep the value
-// the game's own call returned. A window-self return goes into the next ring
-// slot (with the window's @id); any other self replaces only the `other` slot.
-// Nothing is serialised here - only the shallow shape is read for the budgeted
-// line; `backing dump` writes the json files.
+// the game's own call returned. A window-self return goes into the next free
+// window slot (with the window's @id) until all kPpBackingKeepMax are used, and
+// is then only counted; any other self replaces only the `other` slot. The
+// research global is set first and the slot's value, call, self and @id only
+// after it succeeded, so a slot never holds an unrooted value or another
+// call's details. Nothing is serialised here - only the shallow shape is read
+// for the budgeted line; `backing dump` writes the json files.
 static void PpBackingCapture(const char* label, long n, CInstance* S, const RValue& result)
 {
     if (!g_PpBacking.load() || g_PpInBacking) return;
     PpBackingStash* st = PpBackingStashFor(label);
     if (!st) return;
     g_PpInBacking = true;
+    bool windowSelf = false;
     try {
         ++st->calls;
-        const bool windowSelf = PpObjectName(S) == std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::UI_Prospect_obj));
-        const int slotIndex = (int)(st->windowKept % kPpBackingKeepMax);
-        PpBackingKept& slot = windowSelf ? st->window[slotIndex] : st->other;
+        windowSelf = PpObjectName(S) == std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::UI_Prospect_obj));
+        if (windowSelf) ++st->windowSeen;
+        const std::string self = PpDescribeSelf(S);
+        const bool log = st->logged < kPpBackingLogBudget;
+        if (log) ++st->logged;
+        if (windowSelf && st->windowKept >= kPpBackingKeepMax) {
+            if (log)
+                Out(std::string("prospectprobe backing ") + label + " #" + std::to_string(n) + " self=" + self
+                    + " result=" + PpBackingShape(result) + " NOT kept (the first " + std::to_string(kPpBackingKeepMax)
+                    + " window returns are kept; " + std::to_string(st->WindowDropped()) + " not kept so far - idcheck will not read `copy`)");
+            g_PpInBacking = false;
+            return;
+        }
+        const int slotIndex = (int)st->windowKept;
         const std::string root = std::string("__pp_backing_") + st->getter + (windowSelf ? "_window" + std::to_string(slotIndex) : std::string("_other"));
+        double selfId = -1;
+        if (!S || !PpInstanceId(S->ToRValue(), selfId)) selfId = -1;
+        // Root first: if this throws, the slot is left exactly as it was.
+        g_Yytk->CallBuiltin("variable_global_set", { RValue(root), result });
+        PpBackingKept& slot = windowSelf ? st->window[slotIndex] : st->other;
         if (!slot.value) slot.value = new RValue();
         *slot.value = result;
         slot.root = root;
-        g_Yytk->CallBuiltin("variable_global_set", { RValue(root), result });
         slot.call = n;
-        slot.self = PpDescribeSelf(S);
+        slot.self = self;
+        slot.selfId = selfId;
         slot.windowSelf = windowSelf;
-        if (!S || !PpInstanceId(S->ToRValue(), slot.selfId)) slot.selfId = -1;
         if (windowSelf) ++st->windowKept;
-        if (st->logged < kPpBackingLogBudget) {
-            ++st->logged;
-            Out(std::string("prospectprobe backing ") + label + " #" + std::to_string(n) + " self=" + slot.self
+        if (log)
+            Out(std::string("prospectprobe backing ") + label + " #" + std::to_string(n) + " self=" + self
                 + " result=" + PpBackingShape(result)
                 + (windowSelf ? " kept as window return " + std::to_string(slotIndex) + " of " + std::to_string(kPpBackingKeepMax)
-                                    + (st->windowKept > kPpBackingKeepMax ? " (oldest dropped)" : "")
                               : std::string(" kept as the latest non-window return")));
-        }
-    } catch (...) { Out(std::string("prospectprobe backing ") + label + " #" + std::to_string(n) + ": EXCEPTION while capturing"); }
+    } catch (...) {
+        Out(std::string("prospectprobe backing ") + label + " #" + std::to_string(n) + ": EXCEPTION while capturing"
+            + (windowSelf ? " - this window return is not kept (counted as dropped)" : ""));
+    }
     g_PpInBacking = false;
 }
 
@@ -9878,6 +9904,7 @@ static void PpBackingRelease()
     for (PpBackingStash* s : g_PpBackingStashes) {
         for (PpBackingKept& k : s->window) PpBackingClearSlot(k);
         PpBackingClearSlot(s->other);
+        s->windowSeen = 0;
         s->windowKept = 0;
         s->calls = 0;
         s->logged = 0;
@@ -10742,15 +10769,39 @@ struct PpBackingScan {
     long methods = 0;       // method values: the bound self may hold the storage, and is not walked
     long references = 0;    // every other value that can refer to storage: an instance ref, a ptr, an object that is neither struct nor method
     bool truncated = false; // kPpBackingScanLimit reached
+    std::string firstUnwalked;  // the first unwalked value: `root VALUE_REF, nothing to walk` / `VALUE_REF at [2].owner`
+    std::string firstCapped;    // the path of the first depth-capped value
     long Unwalked() const { return methods + references; }
     bool Complete() const { return !truncated && depthCapped == 0 && Unwalked() == 0; }
+    void Note(std::string& first, const std::string& text) { if (first.empty()) first = text; }
     std::string Text() const
     {
         return "visited=" + std::to_string(visited) + (truncated ? " truncated" : "")
             + " depth-capped=" + std::to_string(depthCapped) + " unwalked=" + std::to_string(Unwalked())
             + " (methods=" + std::to_string(methods) + " references=" + std::to_string(references) + ")";
     }
+    // Why the walk is incomplete, naming the first place each cause was met.
+    std::string Why() const
+    {
+        std::string w;
+        if (truncated) w = "stopped at the " + std::to_string(kPpBackingScanLimit) + "-value limit";
+        if (depthCapped > 0) w += (w.empty() ? "" : ", ") + std::to_string(depthCapped) + " past depth " + std::to_string(kPpBackingScanDepth) + " (first at " + firstCapped + ")";
+        if (Unwalked() > 0) w += (w.empty() ? "" : ", ") + std::to_string(Unwalked()) + " unwalked (first: " + firstUnwalked + ")";
+        return w.empty() ? std::string("complete") : w;
+    }
 };
+
+// What kind of unwalkable value a walk met, for its reason. No ToString on it:
+// a reference or pointer is named by kind only.
+static std::string PpBackingKindName(const RValue& v, int objectKind)
+{
+    switch (v.m_Kind) {
+    case VALUE_REF:    return "VALUE_REF (an instance or other runtime reference)";
+    case VALUE_PTR:    return "VALUE_PTR";
+    case VALUE_OBJECT: return objectKind == 0 ? "method value" : "VALUE_OBJECT that is neither struct nor method";
+    default:           return "kind=" + std::to_string((int)v.m_Kind);
+    }
+}
 
 // A value that holds nothing else: a number, bool, string, undefined, null or unset.
 static bool PpBackingIsPlainLeaf(const RValue& v)
@@ -10779,8 +10830,13 @@ static void PpBackingWalk(const RValue& v, const std::string& path, int depth, P
     if (PpBackingIsPlainLeaf(v)) return;
     const bool array = v.m_Kind == VALUE_ARRAY;
     const int kind = !array && v.m_Kind == VALUE_OBJECT ? PpBackingObjectKind(v) : -1;
-    if (!array && kind != 1) { if (kind == 0) ++scan.methods; else ++scan.references; return; }
-    if (depth >= kPpBackingScanDepth) { ++scan.depthCapped; return; }
+    if (!array && kind != 1) {
+        if (kind == 0) ++scan.methods; else ++scan.references;
+        scan.Note(scan.firstUnwalked, path.empty() ? "root " + PpBackingKindName(v, kind) + ", nothing to walk"
+                                                   : PpBackingKindName(v, kind) + " at " + path);
+        return;
+    }
+    if (depth >= kPpBackingScanDepth) { ++scan.depthCapped; scan.Note(scan.firstCapped, path.empty() ? "(top)" : path); return; }
     if (array) {
         const int n = (int)g_Yytk->CallBuiltin("array_length", { v }).ToDouble();
         for (int i = 0; i < n && !scan.truncated; ++i)
@@ -10928,8 +10984,9 @@ static void PpBackingDump()
         } else Out("  no ProspectGrid node with nodeGrid (open the window) - no structural comparison");
         for (const PpBackingStash* st : g_PpBackingStashes) {
             Out(std::string("  ") + st->getter + ": calls while backing was on=" + std::to_string(st->calls)
-                + " window returns kept=" + std::to_string(std::min<long>(st->windowKept, kPpBackingKeepMax))
-                + (st->windowKept > kPpBackingKeepMax ? " (" + std::to_string(st->windowKept - kPpBackingKeepMax) + " oldest dropped)" : std::string())
+                + " window returns kept=" + std::to_string(st->windowKept)
+                + " not kept=" + std::to_string(st->WindowDropped())
+                + (st->WindowDropped() > 0 ? " (only the first " + std::to_string(kPpBackingKeepMax) + " are kept; idcheck will not read `copy`)" : std::string())
                 + " other return kept=" + (st->other.call > 0 ? "1" : "0"));
         }
         bool any = false;
@@ -10964,10 +11021,19 @@ static void PpBackingDump()
 
 // One kept return's walk for the sentinel, for idcheck's report.
 struct PpBackingHit {
-    std::string              what;   // `<getter> <slot> call #n (the open window | ...)`
+    const PpBackingStash*    stash = nullptr;
+    std::string              what;   // `<getter> <slot> call #n (the open window | ...) self=...`
     std::vector<std::string> hits;
     PpBackingScan            scan;
 };
+
+// The getters whose return IS the profile's own data: identity through one of
+// these is a save-backed input. Identity through GetPlayerItemOwner or
+// GetInventoryArray (never measured - it could be a UI array) is only a lead.
+static bool PpBackingIsProfileGetter(const PpBackingStash* st)
+{
+    return st == &g_PpBackingProfile || st == &g_PpBackingProfileObj;
+}
 
 // `backing idcheck`: is the live nodeGrid the same runtime array as (part of)
 // anything the game's own getter calls returned? One handler, no Draw in
@@ -11108,8 +11174,10 @@ static void PpBackingIdCheck()
                 // the sentinel decides.
                 PpBackingForEachKept([&](PpBackingStash& st, PpBackingKept& k) {
                     PpBackingHit h;
+                    h.stash = &st;
                     h.what = std::string(st.getter) + " " + PpBackingSlotName(k) + " call #" + std::to_string(k.call)
-                        + (k.windowSelf && k.selfId == windowId ? " (the open window)" : k.windowSelf ? " (a window that is not open now)" : " (not the window)");
+                        + (k.windowSelf && k.selfId == windowId ? " (the open window)" : k.windowSelf ? " (a window that is not open now)" : " (not the window)")
+                        + " self=" + k.self;
                     h.hits = PpBackingFindSentinel(*k.value, h.scan);
                     results.push_back(std::move(h));
                 });
@@ -11129,7 +11197,19 @@ static void PpBackingIdCheck()
         Out(tag + ": grid=" + snap + " window=@" + PpNum(RValue(windowId)) + " cell [" + std::to_string(r) + "][" + std::to_string(c) + "] was=" + Describe(original)
             + " sentinel=" + PpNum(RValue(kPpBackingSentinel)) + " read-after-write=" + landedText + " now=" + restoredText
             + (restored ? " (restored)" : " (NOT restored - close the window without moving items, and record it)"));
+        // Window returns the capture could not keep: past the first
+        // kPpBackingKeepMax per getter (or lost to an exception). The one this
+        // grid was built from may be among them, so any of them rules out `copy`.
+        long dropped = 0;
+        std::string droppedBy;
+        for (const PpBackingStash* s : g_PpBackingStashes) {
+            if (s->WindowDropped() <= 0) continue;
+            dropped += s->WindowDropped();
+            droppedBy += std::string(" ") + s->getter + "=" + std::to_string(s->WindowDropped());
+        }
         Out(tag + ": kept returns from the open window: " + std::to_string(fromOpen) + " of " + std::to_string(keptCount)
+            + "; window returns dropped (not kept past the first " + std::to_string(kPpBackingKeepMax) + " per getter): "
+            + std::to_string(dropped) + (droppedBy.empty() ? std::string() : " (" + droppedBy.substr(1) + ")")
             + (!openSource ? std::string("; neither GetProfileInventoryData nor GetPlayerItemOwner among them")
                : matches.empty() ? "; its " + sourceName + " call #" + std::to_string(openSource->call) + " has no "
                                      + std::to_string(gridRows) + "x" + std::to_string(gridCols) + " sub-array"
@@ -11139,24 +11219,38 @@ static void PpBackingIdCheck()
             Out(tag + ": verdict: not observed (the sentinel write did not land in the live nodeGrid)");
             return;
         }
-        std::string via;
+        // `via` = a hit through a profile getter (a save-backed input);
+        // `viaLead` = a hit through any other getter only (a lead).
+        std::string via, viaLead, incompleteNames;
         long incomplete = 0;
         for (const PpBackingHit& h : results) {
             std::string where;
             for (const std::string& p : h.hits) where += " " + p;
-            Out("  " + h.what + ": " + (h.hits.empty() ? std::string("sentinel not found") : "sentinel found at" + where) + " (" + h.scan.Text() + ")");
-            if (!h.hits.empty() && via.empty()) via = h.what + " at" + where;
-            if (!h.scan.Complete()) ++incomplete;
+            Out("  " + h.what + ": " + (h.hits.empty() ? std::string("sentinel not found") : "sentinel found at" + where) + " (" + h.scan.Text()
+                + (h.scan.Complete() ? std::string() : "; incomplete: " + h.scan.Why()) + ")");
+            if (!h.hits.empty()) {
+                std::string& into = PpBackingIsProfileGetter(h.stash) ? via : viaLead;
+                if (into.empty()) into = h.what + " at" + where;
+            }
+            if (!h.scan.Complete()) {
+                ++incomplete;
+                if (incompleteNames.size() < 600) incompleteNames += "; " + h.what + ": " + h.scan.Why();
+            }
         }
         std::string verdict;
         if (!via.empty())
-            verdict = "reference-identical (via " + via + "): nodeGrid shares its array with a kept getter return";
+            verdict = "reference-identical (via " + via + "): nodeGrid shares its array with a profile getter's return";
+        else if (!viaLead.empty())
+            verdict = "reference-identical (via " + viaLead + "; not a profile getter - record the getter and self, a lead that decides no gate branch)";
         else if (incomplete > 0)
             verdict = "not observed (scan incomplete: " + std::to_string(incomplete) + " of " + std::to_string(results.size())
-                + " walks unwalked, depth-capped or truncated) - a missing sentinel proves nothing";
+                + " walks" + incompleteNames + ") - a missing sentinel proves nothing";
+        else if (dropped > 0)
+            verdict = "not observed (" + std::to_string(dropped) + " window returns not kept - only the first "
+                + std::to_string(kPpBackingKeepMax) + " per getter are, and the return this grid was built from may be among the rest) - never `copy`";
         else
             verdict = "copy: every walk of the " + std::to_string(results.size()) + " kept returns (" + std::to_string(fromOpen)
-                + " from the open window) completed and none holds the sentinel";
+                + " from the open window) completed, no window return was dropped, and none holds the sentinel";
         Out(tag + ": verdict: " + verdict);
     } catch (...) { Out(tag + ": EXCEPTION - read `prospectprobe grid` and the cell before doing anything else"); }
 }
@@ -11174,8 +11268,9 @@ static void PpBackingCommand(const std::vector<std::string>& tok)
             if (row && row->installed.load()) ++detoured;
         }
         Out("prospectprobe backing: on - kept values released; the game's own calls of the " + std::to_string(detoured)
-            + "/4 detoured getter rows are kept after the call returns (every window-self return, up to "
-            + std::to_string(kPpBackingKeepMax) + " per getter, with its @id; the latest other call apart) and the first "
+            + "/4 detoured getter rows are kept after the call returns (the first "
+            + std::to_string(kPpBackingKeepMax) + " window-self returns per getter, with their @id, never overwritten - later ones are counted, not kept;"
+            + " the latest other call apart) and the first "
             + std::to_string(kPpBackingLogBudget) + " per getter logged. `backing dump` writes the json files. Nothing is invoked."
             + (detoured < 4 ? " Run `prospectprobe hook` first - an undetoured getter is never seen." : ""));
     }
