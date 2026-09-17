@@ -1,24 +1,23 @@
 # Toggle skills — research log (issue #11)
 
-Status (2026-09-17): **one live session run; both tracks BLOCKED pending a
-second research round. Session 2 is planned, not yet run:** it reads Q3 (where
-the Soul Spurn / Purgatory ON state lives) from non-scalar storage with
-`tgprobe deep` — `Player_obj`, the talent structs in
-`global.talentStructMap`, `Controller_obj`, the HUD slot object,
-`Skill_Controller_obj`, every global, and a live-instance census — and falls
-back to a local Ghidra read of `TalentsWhiteMage` only if that comes back
-empty with its controls fired.
+Status (2026-09-17): **two live sessions run. Track B (active indicator) is
+UNBLOCKED: Q3-D is measured.** The Soul Spurn ON/OFF state is a live-instance
+count, not a scalar, struct or buff: `White_Mage_Soul_Spurn_AOE_obj`
+(GameObject 5759) exists (`instance_number > 0`) while ON and does not exist
+while OFF, readable by name from any `self` with no Ghidra read needed. Track A
+(re-cast guard) is unaffected by session 2 and remains **BLOCKED on Q2**.
 
-- **Measured:** the cast path (Q1), draw order (Q4), and three sources of
-  accidental re-casts (Q5), one of them the double-cast proc, which bypasses
-  `TalentUse`.
-- **Not observed:** where the toggle's on/off state lives (Q3). It is in no
-  scalar of `Player_obj` or global, in no HUD variable, in no ability object
-  and in no player buff.
+- **Measured:** the cast path (Q1), draw order (Q4), three sources of
+  accidental re-casts (Q5, one of them the double-cast proc, which bypasses
+  `TalentUse`), and where the ON/OFF state lives (Q3-D, session 2): the
+  `White_Mage_Soul_Spurn_AOE_obj` instance count.
+- **Not observed:** what in the call trace discriminates a Purgatory-toggled
+  cast of Soul Spurn from a non-toggle cast (Q2); the Purgatory sub-talent
+  level, which is not a leaf in any of the seven `tgprobe deep` scopes.
 - **Blocked:** every object-event row, which does not resolve by name.
 
 See Results and Decision. Statements in the sections before Results are
-static-search facts or labelled inference, written before the session.
+static-search facts or labelled inference, written before the sessions.
 
 ## The issue
 
@@ -644,27 +643,98 @@ and `DrawHud`/`DrawHudAbilityButtons` also read 4320. After a
 
 ### Session 2
 
-Not run yet. Session 2, <date>: research build `<commit>`
-(`BloodPactPlugin_rel.dll`), White Mage, Soul Spurn + Purgatory and Healing
-Zone on the hotbar, town (`<room>`), no `coop.ini`, no `citrace` before step 10.
-The tester reports the on/off state by eye at every snapshot. Status is exactly
-one of `measured`, `not observed`, `blocked`; a `not observed` quotes C1–C5 as
-fired and every compared snapshot as `truncated=0` and `followTruncated=0`,
-otherwise it is `blocked`.
+Session 2, 2026-09-17: research build `fbb9873` (v1.4.1 base,
+`BloodPactPlugin_rel.dll`), White Mage, Soul Spurn + Purgatory and Healing
+Zone on the hotbar, town (`Town_05_rm`), no `coop.ini`, no `citrace` (step
+5.10 was not reached — see Q3-G). The tester reported the on/off state by eye
+at every snapshot. Status is exactly one of `measured`, `not observed`,
+`blocked`; a `not observed` quotes C1–C5 as fired and every compared snapshot
+as `truncated=0` and `followTruncated=0`, otherwise it is `blocked`.
 
-**Attach, controls and snapshots.** (`tgprobe hook` summary line; both C1
-`selftest` lines; every `deep snap` scope line and summary line, with
-`instRefs=`, `objNonStruct=`, `followLeaves=`, `truncated=` and
-`followTruncated=`; the C2 `global.playerBuff[1][0][86]` line from
-the filtered diff, with its `.<member>` lines if it is an instance handle, or
-`C2 not fired: …`; the C3 `census.` line or `C3 not fired: …`; the C4
-direct `Player_obj.<name>` line or `C4 not fired: …`; the C5 `talent` `read=` values and
-`find <absent:` hit counts.)
+**Attach and controls.** `tgprobe hook: 36 native, 2 via hook, 0 blocked, 26
+not found` — the session-1 shape, with `CheckPlayerInteraction(control)
+mode=native` and `DrawHudBuffs mode=via Hook_DrawHudBuffs (native)` both
+holding, cross-checked against the `hhlabel` `hudCalls=` delta across the two
+replies in the same batch (`3869` → `4049`).
+
+**C1 (mechanics).** `tgprobe deep selftest: OK leaves=5 changed=3` — FIRED.
+`tgprobe deep selftest instance: FAIL instFollowed=1 instUnfollowed=3 (want
+1/0)` — **not fired**: the check expects 0 unfollowed instance handles, but
+`Controller_obj` holds handles one level too deep for
+`TgProbeDeepSelfTestInstance` to follow by design (`ModuleMain.cpp`,
+`TgProbeDeepSelfTestInstance`). This is a check-expectation defect in the
+selftest, not a walker defect — it does not affect the measured Q3-D row
+below, but it would block any future `not observed` verdict until fixed (not
+done in this round; a follow-up).
+
+**Snapshots.** Every `deep snap` summary line (all eight compared snapshots
+read `truncated=0`, `truncatedScopes=none`, `unreadable=0`; `followTruncated=0`
+on every per-scope line, `ms=` 281–328):
+
+```
+tgprobe deep snap base: scopes=player,talent,controller,hud,skillctl,census,global leaves=125577 unreadable=0 truncated=0 truncatedScopes=none ms=281 room=Town_05_rm
+tgprobe deep snap on: scopes=player,talent,controller,hud,skillctl,census,global leaves=125635 unreadable=0 truncated=0 truncatedScopes=none ms=297 room=Town_05_rm
+tgprobe deep snap on2: scopes=player,talent,controller,hud,skillctl,census,global leaves=125637 unreadable=0 truncated=0 truncatedScopes=none ms=297 room=Town_05_rm
+tgprobe deep snap off: scopes=player,talent,controller,hud,skillctl,census,global leaves=125600 unreadable=0 truncated=0 truncatedScopes=none ms=328 room=Town_05_rm
+tgprobe deep snap hz0: scopes=player,talent,controller,hud,skillctl,census,global leaves=125599 unreadable=0 truncated=0 truncatedScopes=none ms=297 room=Town_05_rm
+tgprobe deep snap hz1: scopes=player,talent,controller,hud,skillctl,census,global leaves=125594 unreadable=0 truncated=0 truncatedScopes=none ms=297 room=Town_05_rm
+tgprobe deep snap hz2: scopes=player,talent,controller,hud,skillctl,census,global leaves=125593 unreadable=0 truncated=0 truncatedScopes=none ms=297 room=Town_05_rm
+tgprobe deep snap hz3: scopes=player,talent,controller,hud,skillctl,census,global leaves=125601 unreadable=0 truncated=0 truncatedScopes=none ms=313 room=Town_05_rm
+```
+
+Each snapshot's `global` scope line carries `globalNames=` (enumerated/named),
+e.g. `base` and `off`: `globalNames=3555/3553` and `globalNames=3556/3554`;
+`on`, `on2`, `hz0`–`hz3`: `globalNames=3556/3554` throughout.
+
+**C2 (container leaf on Purgatory's drain, in the ON diff itself).**
+`tgprobe deep diff base on playerBuff[1][0][86]` → summary
+`tgprobe deep diff base on: changed=247 added=143 removed=85 truncated=0
+filter=playerBuff[1][0][86] matching=34`, first line `~
+global.playerBuff[1][0][86]: real:-4.000000 -> kind=15 str=ref instance
+261681` — FIRED (plus 33 `+` lines for the buff instance's own followed
+members, e.g. `buffType=int64:86`, `destroyTimer=real:455.161248`).
+
+**C3 (census on a known action).** First try weak: `tgprobe deep diff hz0
+hz1 census.` → `tgprobe deep diff hz0 hz1: changed=122 added=3 removed=8
+truncated=0 filter=census. matching=1`, only line `+
+census.Cooldown_Over_obj=1` — not a Healing Zone object, so **C3 not fired**
+on this pair (the hz0/hz1 window was timed too late relative to the cast).
+Retaken as `hz2`/`hz3`: `tgprobe deep diff hz2 hz3 census.` → `tgprobe deep
+diff hz2 hz3: changed=133 added=51 removed=43 truncated=0 filter=census.
+matching=42`, lines `+ census.White_Mage_Healing_Zone_obj=1` and `+
+census.Player_Ability_Parent_obj=1` — **FIRED** on the retake.
+
+**C4 (direct member changed by a known action).** `tgprobe deep diff base on
+Player_obj.` → summary `tgprobe deep diff base on: changed=247 added=143
+removed=85 truncated=0 filter=Player_obj. matching=147`, line `~
+Player_obj.hpArrayPos: real:1.000000 -> real:2.000000` — FIRED.
+
+**C5 (positive control on talent scope and the absence sentinel).** Every
+`deep snap` talent scope line reads `scope=talent names=3 read=3
+unreadable=0` (no `<absent:` leaves in the read set). `tgprobe deep find
+'<absent:' in on: hits=0` — FIRED.
 
 | Q | Question | status | Evidence |
 |---|---|---|---|
-| Q3-D | Where the ON state lives, read from non-scalar runtime storage (`tgprobe deep`) |  |  |
-| Q3-G | The same, from the local Ghidra read of `TalentsWhiteMage`'s talent-240 branch, paraphrased |  |  |
+| Q3-D | Where the ON state lives, read from non-scalar runtime storage (`tgprobe deep`) | measured | Path: `census.White_Mage_Soul_Spurn_AOE_obj` (GameObject 5759). Found by `tgprobe deep flip base on off` → `tgprobe deep flip base on off: A(flipped and reverted)=41 B(changed twice)=221 truncated=0`, bucket-A line `census.White_Mage_Soul_Spurn_AOE_obj: base=<absent> on=1 off=<absent>` (bucket A also holds `census.Player_Damage_Parent_obj: base=<absent> on=1 off=<absent>`, the object's parent class — not a distinct signal). Since the measured path is a `census.<Object>` leaf, `tgprobe deep get` cannot read it (`deep get` resolves scoped struct/array/ds paths, not the census map); per the driver amendment, three `tgprobe deep census` reads stand in for it on each side. **ON** (by eye ON, 10 s window): frame 34740 → `White_Mage_Soul_Spurn_AOE_obj=1`; frame 35430 → `=1`; frame 36150 → `=1` (each alongside `Player_Damage_Parent_obj=1`). **OFF** (by eye OFF after 1 press): frame 39540 → row absent; frame 40260 → row absent; frame 40950 → row absent (also absent at the earlier OFF baseline, frame 27210). Non-toggle control: `tgprobe deep diff hz0 hz1 Soul_Spurn` → `tgprobe deep diff hz0 hz1: changed=122 added=3 removed=8 truncated=0 filter=Soul_Spurn matching=0`; `tgprobe deep diff hz2 hz3 Soul_Spurn` → `tgprobe deep diff hz2 hz3: changed=133 added=51 removed=43 truncated=0 filter=Soul_Spurn matching=0` — the path is unchanged by casting Healing Zone. Read = `instance_number(asset_get_index(GetObjectName(GameObject::White_Mage_Soul_Spurn_AOE_obj))) > 0`; ON=1, OFF=0; resolved by name from `GetObjectName`/`asset_get_index`, no `self` needed, so it is callable via `CallBuiltin` from any `self` (checked from `Controller_obj`'s draw). Not the toggle: `Player_obj.playerEffect[182]` went `real:0.000000 -> int64:2` (`~ Player_obj.playerEffect[182]: real:0.000000 -> int64:2`, `deep diff base on Player_obj.`) on the first cast and stayed `2` after turning OFF (`tgprobe deep get Player_obj.playerEffect[182] = int64:2 frame=20550` while ON, `= int64:2 frame=25290` while OFF) — a bucket-less residue counter, not the toggle. The AOE instance's own variables while ON (`tgprobe vars White_Mage_Soul_Spurn_AOE_obj`): `activated=bool:true`, `purgatory=real:0.090000`, `purgatoryTimer=real:105.73`, `tick_frequency=180`, `tickNumber=19`. |
+| Q3-G | The same, from the local Ghidra read of `TalentsWhiteMage`'s talent-240 branch, paraphrased | not run — Q3-D measured | Step 5.10 (`naddr TalentsWhiteMage` / Ghidra fallback) was not reached: Q3-D came back `measured` with all controls fired, so per §5 the Ghidra pass is skipped. No `citrace` command was sent this session. |
+
+**Purgatory sub-talent level:** not observed in the seven `tgprobe deep`
+scopes. `tgprobe deep find purg on` → `hits=1`, the only match a quest string
+(`Controller_obj.questlogDescription[5]=string:"Purge Tarethiel of evil for
+good.."`), unrelated. `tgprobe deep find sub on` (hits=223, first 200 shown),
+`tgprobe deep find 240 on` (hits=317, first 200 shown), `tgprobe deep find
+toggle on` (hits=0), `tgprobe deep find active on` (hits=374, first 200
+shown) and `tgprobe deep find talent:240. on` (hits=82) did not surface a
+level field either: `talent:240` resolves to the static talent-definition
+struct, which carries no level field, and the sub-talent level is not a leaf
+of `Player_obj`, `Controller_obj`, the HUD object, `Skill_Controller_obj`, the
+talent scope or `global` at depth ≤ 3. The live `White_Mage_Soul_Spurn_AOE_obj`
+instance does carry `purgatory=real:0.090000` while ON (see the Q3-D row).
+
+**By-eye caveats:** the `on2` state was not explicitly re-confirmed by the
+tester before the OFF presses began; the first OFF attempt took 2 presses,
+the second took 1.
 
 ## Decision
 
@@ -695,4 +765,40 @@ Q4 is measured: `DrawHudBuffs` is a valid anchor.
 
 ### After session 2
 
-Not written yet: filled from Results → Session 2.
+**Track B (active indicator) is UNBLOCKED. Q3 read, as input to the
+indicator workorder:**
+
+- **Root/object:** `White_Mage_Soul_Spurn_AOE_obj` (`GameObject 5759`) — a
+  live-instance count, not a member of `Player_obj`, `global` or any struct.
+- **Read:** `instance_number(asset_get_index(GetObjectName(GameObject::White_Mage_Soul_Spurn_AOE_obj))) > 0`.
+- **ON value:** `1` (instance exists). **OFF value:** `0` / absent (instance
+  does not exist).
+- **Readable from any `self` via `CallBuiltin` by name:** yes —
+  `GetObjectName`, `asset_get_index` and `instance_number` all resolve by
+  name with no `self` dependency; checked reading it from `Controller_obj`'s
+  draw context in this session.
+- **Not the toggle, seen along the way:** `Player_obj.playerEffect[182]`
+  (`real:0.000000 -> int64:2` on first cast, stays `2` after OFF — a
+  bucket-less residue counter) and `Player_Damage_Parent_obj`'s census count
+  (the object's own parent class, same bucket-A shape, not a distinct
+  signal).
+- **Observed alongside, not required for the read:** the AOE instance's own
+  `purgatory`/`purgatoryTimer`/`activated`/`tickNumber` variables while ON
+  (`tgprobe vars White_Mage_Soul_Spurn_AOE_obj`), which the indicator
+  workorder may use for richer state but does not need for a plain on/off
+  read.
+- **Not established:** the Purgatory sub-talent level — `not observed` in
+  the seven `tgprobe deep` scopes (see the Purgatory sub-talent note in
+  Results → Session 2). If the indicator or a future design needs the
+  sub-talent's configured level (as opposed to whether Soul Spurn is
+  currently toggled on), that is a separate, still-open read.
+
+Track A (re-cast guard) is unchanged from after session 1: still **BLOCKED on
+Q2** (what in the call trace distinguishes a toggle cast from a non-toggle
+cast). Session 2 did not attempt Q2; the next research step for Track A, if
+picked up, is unchanged from the session-1 Decision.
+
+The non-blocking instrument findings deferred at the round-3 cap (C1's
+`selftest instance` check-expectation defect recorded above; N1–N4 from the
+round-3 verify log) are a follow-up to the instrument itself, not to this
+result — Q3-D does not depend on them.
