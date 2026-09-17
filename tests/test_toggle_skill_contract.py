@@ -270,7 +270,7 @@ class ToggleProbeContractTests(unittest.TestCase):
     def test_subcommands(self):
         command = function_body(self.plugin, "static void TgProbeCommand(")
         for sub in ("hook", "show", "reset", "verbose", "slots", "buffs", "abilities",
-                    "vars", "snap", "diff", "room"):
+                    "vars", "snap", "diff", "room", "deep"):
             self.assertIn(f'"{sub}"', command)
 
     def test_installers_the_probe_attaches_around_are_unchanged(self):
@@ -285,6 +285,94 @@ class ToggleProbeContractTests(unittest.TestCase):
         for signature in ("static void InstallHeadLabelHook()", "static void InstallBuffHooks()",
                           "static void CoopRenderTick()"):
             self.assertEqual(function_body(origin, signature), function_body(working, signature), signature)
+
+
+class ToggleDeepReadContractTests(unittest.TestCase):
+    """`tgprobe deep`: session 2's non-scalar read for Q3.
+
+    Session 1's scalar snapshot could not see inside a container, and wrapped
+    its whole enumeration loop in one error handler, so a throw on one member
+    silently dropped every member after it. These tests pin the parts of the
+    replacement that make its negatives worth something: every member read
+    individually guarded and counted, containers of every kind walked, the
+    coverage printed, a selftest fixture as the mechanics control, objects
+    named through the SDK, and no hook of any kind.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.plugin = PLUGIN_SRC.read_text(encoding="utf-8")
+        start = cls.plugin.index(BLOCK_START)
+        end = cls.plugin.index(BLOCK_END, start)
+        cls.block = cls.plugin[start:end]
+
+    def test_deep_is_dispatched_and_has_every_subcommand(self):
+        self.assertIn('"deep"', function_body(self.plugin, "static void TgProbeCommand("))
+        command = function_body(self.plugin, "static void TgProbeDeepCommand(")
+        for sub in ("snap", "diff", "flip", "find", "get", "census", "selftest"):
+            self.assertIn(f'"{sub}"', command)
+
+    def test_research_build_only(self):
+        self.assertGreater(self.block.count("TgProbeDeep"), 0)
+        self.assertEqual(self.plugin.count("TgProbeDeep"), self.block.count("TgProbeDeep"))
+        self.assertNotIn("TgProbeDeep", strip_research_blocks(self.plugin))
+
+    def test_walker_expands_every_container_kind_within_caps(self):
+        walk = function_body(self.plugin, "static void TgProbeDeepWalk(")
+        for needle in ("variable_struct_get_names", "is_struct", "array_length", "ds_map_find_first",
+                       "ds_list_size", "kTgDeepMaxDepth", "kTgDeepMaxElems"):
+            self.assertIn(needle, walk)
+        self.assertRegex(self.block, r"kTgDeepMaxDepth\s*=\s*3")
+        self.assertRegex(self.block, r"kTgDeepMaxElems\s*=\s*200")
+
+    def test_every_member_read_is_guarded_on_its_own(self):
+        # The session-1 defect: one try around the whole loop. Here the loop
+        # comes first and each member gets its own handler.
+        members = function_body(self.plugin, "static void TgProbeDeepReadMembers(")
+        self.assertLess(members.index("for ("), members.index("try {"))
+        self.assertIn("unreadable", members)
+
+    def test_snapshot_prints_its_coverage_and_enumerates_globals_both_ways(self):
+        snap = function_body(self.plugin, "static void TgProbeDeepSnap(")
+        for literal in ("names=", "read=", "unreadable=", "leaves=", "truncated=", "ms=", "globalNames="):
+            self.assertIn(literal, snap)
+        self.assertIn("EnumInstanceMembers", snap)
+        self.assertIn("variable_instance_get_names", snap)
+
+    def test_objects_are_named_through_the_sdk(self):
+        for obj in ("Player_obj", "Controller_obj", "UI_Hud_Talent_obj", "Skill_Controller_obj"):
+            self.assertIn(f"GameObject::{obj}", self.block)
+            self.assertNotIn(f'"{obj}"', self.block)
+
+    def test_talent_scope_uses_the_validated_readers(self):
+        self.assertIn("N1GetTalentMap(", self.block)
+        self.assertIn("N1GetTalentStruct(", self.block)
+        # Session-1 measurements (Soul Spurn, the chained crow talent, Healing
+        # Zone as the non-toggle control), not SDK constants.
+        self.assertIn("{ 240, 243, 252 }", self.block)
+
+    def test_selftest_is_a_builtin_only_fixture_with_a_verdict(self):
+        selftest = function_body(self.plugin, "static void TgProbeDeepSelfTest(")
+        for needle in ("json_parse", "ds_map_create", "variable_struct_set", "ds_map_replace",
+                       "ds_map_destroy", "OK leaves=", "FAIL"):
+            self.assertIn(needle, selftest)
+
+    def test_get_resolves_every_root_by_name(self):
+        get = function_body(self.plugin, "static bool TgProbeDeepGet(")
+        for needle in ("talent:", "'#'", "variable_global_get"):
+            self.assertIn(needle, get)
+
+    def test_census_counts_every_existing_object(self):
+        census = function_body(self.plugin, "static void TgProbeDeepCensus(")
+        for needle in ("object_exists", "instance_number", "object_get_name"):
+            self.assertIn(needle, census)
+
+    def test_no_float_format_and_no_new_hook(self):
+        self.assertNotIn('"%f"', self.block)
+        self.assertNotRegex(self.block, r"%\.\d+f")
+        self.assertEqual(self.block.count("MmCreateHook("), 1)
+        for call in ("HookOneScript(", "HookOneScriptTable(", "HookRawNamedRoutine(", "HookBuiltin("):
+            self.assertNotIn(call, self.block)
 
 
 if __name__ == "__main__":

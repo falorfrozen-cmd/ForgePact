@@ -1,7 +1,13 @@
 # Toggle skills — research log (issue #11)
 
 Status (2026-09-17): **one live session run; both tracks BLOCKED pending a
-second research round.**
+second research round. Session 2 is planned, not yet run:** it reads Q3 (where
+the Soul Spurn / Purgatory ON state lives) from non-scalar storage with
+`tgprobe deep` — `Player_obj`, the talent structs in
+`global.talentStructMap`, `Controller_obj`, the HUD slot object,
+`Skill_Controller_obj`, every global, and a live-instance census — and falls
+back to a local Ghidra read of `TalentsWhiteMage` only if that comes back
+empty with its controls fired.
 
 - **Measured:** the cast path (Q1), draw order (Q4), and three sources of
   accidental re-casts (Q5), one of them the double-cast proc, which bypasses
@@ -228,7 +234,102 @@ measures the instrument, not the game. Object-event rows have their own
 control, `Player_obj.Step_0` (thousands in 2 s if the lookup works for events
 at all).
 
+### tgprobe deep — the non-scalar read (session 2)
+
+Session 1 left Q3 `not observed` at scalar depth only, and that negative is
+weaker than it reads. `tgprobe snap`/`diff` compare real/int/bool/string
+members, so a change inside an array, struct, ds_map or ds_list is invisible by
+design. And the scalar reader wraps its **whole** enumeration loop in one
+error handler: if reading member N throws, members N+1… are dropped without a
+trace and the printed `scalars=` count says nothing about it. No control ever
+showed that enumeration reached the end, so "not in any `Player_obj` or global
+scalar" is *not observed at unknown coverage*, not "not present".
+
+`tgprobe deep` is the read for everything else. Like the rest of `tgprobe` it
+is research build only, installs no hook of any kind, and writes no game state
+except inside its own `selftest` fixture. All of its work happens at command
+time, on the frame that consumes `cmd.txt`.
+
+**What it reads.** One snapshot captures up to seven scopes; each leaf's path
+starts with a root that `deep get` accepts, so a path from any diff can be
+pasted straight into `deep get`:
+
+| Scope | Root in paths | What |
+|---|---|---|
+| `player` | `Player_obj` | the first `Player_obj` instance: every instance variable, containers expanded, plus builtin `alarm[0..11]` |
+| `talent` | `talent:<id>` | `global.talentStructMap{<id>}` for the ids given (default `240,243,252`: Soul Spurn, the chained crow talent, Healing Zone as the non-toggle control — session-1 measurements), read through the same validated readers the Blood Pact feature uses |
+| `controller` | `Controller_obj` | the first `Controller_obj` instance — `self` of the whole HUD draw chain, never read in session 1 |
+| `hud` | `UI_Hud_Talent_obj` | the slot object, with `row0`/`row1`/`grid` expanded |
+| `skillctl` | `Skill_Controller_obj#<k>` | every `Skill_Controller_obj` instance, descendants included (cap 8) |
+| `global` | `global` | every global, enumerated **both** with the YYTK member enumerator and with `variable_instance_get_names(-5)`, unioned by name; the summary prints both counts as `globalNames=<enum>/<names>` so a short enumeration is visible |
+| `census` | `census` | `instance_number` of every existing object index from 0 to the highest SDK `GameObject` enumerator + 512, non-zero rows only, as `census.<ObjectName>` |
+
+**Walker rules.** Arrays → `[i]`; structs → `.name`; a `ds_map` → `{key}`
+and a `ds_list` → `[i]`, each recognised from the value's own `ref ds_map` /
+`ref ds_list` description and confirmed with `ds_exists`; a non-struct object
+(a method value) is a leaf naming the method; everything else is a leaf holding
+the kind-tagged value (strings capped at 120 characters). Caps: **depth 3**
+(a root member's own value is depth 1, and containers at depth 1, 2 and 3 are
+expanded, so `Player_obj.arr[3].field` and `global.playerBuff[1][0][86]` are
+both leaves; a container below that is the leaf `<container n=N>`, so a size
+change still shows), **200 elements per container** (then one
+`…(+N more)` leaf), 250,000 leaves per snapshot (then `truncated=1`). No cycle
+detection beyond the depth cap. Every member is read inside its own error
+handler, and so is every builtin call inside the walk: a throw becomes the
+leaf `<unreadable>` and is counted, never an aborted walk. That is the fix for
+session 1's defect, and each scope's summary says so in numbers:
+`names=N read=M unreadable=U`.
+
+**Cost.** A full snapshot is a deliberate one-shot stall (the `citrace symdump`
+precedent). The research build's stall watchdog may print a `STALL` line while
+it runs — expected and harmless. If `ms=` is above about 15 s, take scoped
+snapshots instead.
+
+| Command | Does / prints |
+|---|---|
+| `tgprobe deep snap <name> [scope…] [talent=240,243,252]` | Captures the listed scopes (none = all seven) under `<name>`; re-using a name overwrites it. One line per scope `tgprobe deep snap <name> scope=<scope> names=N read=M unreadable=U leaves=L` (the global line adds `globalNames=<enum>/<names>`), then `tgprobe deep snap <name>: scopes=… leaves=… unreadable=… truncated=0\|1 ms=<elapsed> room=<name>`. |
+| `tgprobe deep diff <a> <b>` | Leaves changed / added / removed between two snapshots, one line each (`~ <path>: <old> -> <new>`, `+ <path>=<value>`, `- <path> (was <value>)`), capped at 300 lines, then per-scope counts. |
+| `tgprobe deep flip <base> <on> <off>` | Bucket **A**: leaves with `on != base` and `off == base` — flipped and reverted, the shape a toggle state has. Bucket **B**: `on != base`, `off != on`, `off != base` — changed twice, the shape of a cast counter or timestamp. Each capped at 200 lines; both counts printed. Frame timers and positions churn in every diff; `flip` is what makes the session readable. |
+| `tgprobe deep find <substr> [name]` | Case-insensitive search over paths and leaf values of a snapshot (default: the last one taken), cap 200 lines. `find sub`, `find 240`, `find purg` are the Purgatory sub-talent reads. |
+| `tgprobe deep get <path>` | Resolves the path **live** and prints the value (and `n=` for a container). Roots: `Player_obj`, `Controller_obj`, `UI_Hud_Talent_obj`, `Skill_Controller_obj#<k>`, `global`, `talent:<id>`; then any of `.name`, `[i]`, `{key}` (numeric keys as reals, else strings). A failing segment is named. Every step is a builtin called by name, so this is the read an indicator can copy from any `self`. |
+| `tgprobe deep census` | The current non-zero `instance_number` rows, `<ObjectName>=<n>` (cap 300), with the SDK's name beside the runtime's when they differ. |
+| `tgprobe deep selftest` | Builds a fixture from builtins alone (a parsed JSON struct with a nested array and struct, plus a created `ds_map` attached as a field), walks it, checks the four expected leaves, changes two of them, walks again and expects exactly those two in the diff, then destroys the map. Prints `tgprobe deep selftest: OK leaves=4 changed=2` or `FAIL <which check>`. |
+
+**Positive controls.** The deep diff is a new instrument, and a zero from it
+is worth nothing until it has produced a non-zero on something known. Three,
+all in session 2, two of them inside the measurement's own diffs:
+
+- **C1, mechanics:** `tgprobe deep selftest` → `OK leaves=4 changed=2`. A
+  `FAIL` means the walker or diff is broken; nothing after it counts.
+- **C2, a nested-array leaf on a known action:** while Purgatory drains HP,
+  buff 86 (Martyr) appears in `global.playerBuff[1][0]` (session 1). So
+  `deep diff base on` must contain a `global.playerBuff[1][0][86]` line. If
+  `tgprobe buffs` shows slot 86 alive and the diff does not list it, the walker
+  is blind to nested arrays on this runner: stop, fix, rebuild, and record no
+  Q3 negative.
+- **C3, the census on a known action:** a Healing Zone cast creates instances
+  that live about 700–1150 frames. `deep diff hz0 hz1` must show a
+  `census.` row for the object(s) that cast creates (record the name). If not,
+  the census scope is blind.
+
+**What a negative means.** A Q3 `not observed` is a result only if C1, C2 and
+C3 all fired, and it means exactly: *the ON/OFF state is not a leaf reachable
+from the seven scopes at depth ≤ 3 with ≤ 200 elements per container, and no
+live instance count changes with it.* A `not observed` with any control
+missing is `blocked`.
+
+**Order: runtime read first, Ghidra second.** The deliverable is a path an
+indicator can read by name at runtime, and a Ghidra read would still need
+`deep get` to confirm its variable live — so running the deep read first can
+make the decompiler read unnecessary, while the reverse cannot. The local
+Ghidra read of `TalentsWhiteMage`'s talent-240 branch (one native function for
+every White Mage talent, variables behind name-slot helpers) is the fallback,
+run in the same session only if Q3-D comes back `not observed` with all three
+controls fired; only a paraphrase of what it finds may be written here.
+
 ## Live procedure
+
+### Session 1
 
 Research DLL in `mods/aurie/`, driven with `ForgePact/tools/ipc.ps1`.
 Character: White Mage, Soul Spurn with Purgatory allocated on the hotbar, one
@@ -317,7 +418,73 @@ non-toggle skill on the hotbar. Start in town or a cleared zone.
 Paste every quoted line into Results; fill status per Q; write
 Decision. Stop the game; nothing else is left running.
 
+### Session 2
+
+Q3 only. Research DLL (`plugin_build\build.bat dev`) in `mods/aurie/`; no
+`coop.ini` (or `enabled=0`); **no `citrace` command until step 10**. White
+Mage with Soul Spurn + Purgatory and Healing Zone on the hotbar, in town. The
+tester reports the toggle's state by eye at every snapshot; Purgatory's HP
+drain can turn it off during a 10 s wait, and if it did, the snapshot is
+retaken.
+
+1. Fresh launch, town. `hhlabel`; `tgprobe hook` — expect the session-1 shape
+   (`36 native, 2 via hook, 0 blocked, 26 not found`, event rows `not found`);
+   record the summary line. Stand 2 s; `hhlabel` + `tgprobe show` in one
+   `ipc.ps1 -Lines` write; the two controls must hold as in session 1.
+2. `tgprobe deep selftest` → must print `OK leaves=4 changed=2` (C1). Record.
+   If `FAIL`, stop: rebuild before anything else.
+3. Toggle OFF (by eye). `tgprobe deep snap base` → record every summary line.
+   If `unreadable=` is non-zero, note it; if `ms=` is above ~15 s, switch to
+   scoped snapshots for the rest (`snap base player talent controller hud
+   skillctl census`, then `snap baseg global`, and diff each pair; say which
+   in Results).
+4. `tgprobe reset`; press Soul Spurn **once** (ON by eye). Wait 3 s.
+   `tgprobe show` (`TalentUse` +1, `TalentUseClass` ≥ 2). `tgprobe deep snap
+   on`. Wait 10 s (still ON by eye; if it self-cancelled, turn it on and
+   retake). `tgprobe deep snap on2`. `tgprobe deep diff base on` — must list
+   `global.playerBuff[1][0][86]` (C2; if absent, `tgprobe buffs`: slot 86
+   alive ⇒ the walker is blind ⇒ stop). `tgprobe deep diff on on2` — leaves
+   that changed base→on but **not** on→on2 are the candidates.
+5. Press Soul Spurn until OFF by eye (count presses; session 1 needed up to
+   3). Wait 3 s. `tgprobe deep snap off`. `tgprobe deep flip base on off` →
+   record bucket A and B counts and lines. `tgprobe deep diff on2 off`.
+6. For each candidate path (bucket A first, cap 10): `tgprobe deep get <path>`
+   now (OFF); turn ON; `get` three times over 10 s; turn OFF; `get` three
+   times. Record all reads with the by-eye state.
+7. Non-toggle control: `tgprobe deep snap hz0`; cast Healing Zone; wait 3 s;
+   `tgprobe deep snap hz1`; `tgprobe deep diff hz0 hz1` — must show a
+   `census.` row for the Healing Zone object(s) (C3) and must **not** show the
+   candidate path.
+8. `tgprobe deep find sub`, `find 240`, `find purg`, `find toggle`,
+   `find active` on `on` — record the Purgatory sub-talent location if it
+   appears, and anything the names suggest that `flip` did not surface;
+   `deep get` it ON/OFF if so.
+9. If a candidate survived 6–7: `Q3-D = measured`. Otherwise `not observed`
+   (with C1–C3 quoted) or `blocked`. Fill the row.
+10. Only if `Q3-D` is not `measured`: `naddr TalentsWhiteMage` → compare its
+    `rva=` with the `TalentsWhiteMage` row of the local `symbols.csv` that the
+    Ghidra project was imported from; record `match` or `mismatch` — never the
+    address. Keep the game running in town and go to step 11. On mismatch the
+    exe changed: `citrace symdump` now (the last command of the session), copy
+    the CSV out of `bp_ipc`, and re-import per `ImportSymbols.java`'s header.
+11. **Ghidra fallback (local only, only if reached).** In the local project,
+    decompile `TalentsWhiteMage` with a local script (kept outside this
+    repository). Find the talent-240 branch by its measured fingerprint — it
+    is the branch that also dispatches talent 243 with 57, the crows — then
+    the Purgatory sub-talent check and what is written on either side of it
+    and compared against HP in the step path. Write **only** a paraphrase into
+    `Q3-G`: which lookup, which sub-index, which root/variable/field and its
+    ON/OFF values. No listing, pseudo-code, screenshot or decompiler function
+    address. While the game is still up, confirm with `tgprobe deep get
+    <path>` ON and OFF; otherwise the row says `confirmation pending`.
+12. Paste everything into Results → Session 2; write Decision → After
+    session 2; update the status lines. Stop the game; nothing else left
+    running.
+
 ## Results
+
+### Session 1
+
 
 Session 1, 2026-09-17: research build `81c0f67` (`BloodPactPlugin_rel.dll`),
 White Mage, Soul Spurn + Purgatory on the hotbar, Healing Zone (E) as the
@@ -346,6 +513,25 @@ and `DrawHud`/`DrawHudAbilityButtons` also read 4320. After a
 | Q5 | Whether an accidental double-press is two cast calls, and whether a held key streams calls | measured | There are **three** sources. (a) **The double-cast proc:** `TalentUseClass` from `self=Universal_Double_Cast_obj`, `a0=240 a4=false a6/a7=<world x,y>`, 36–56 frames after the player's cast, **with no `TalentUse` call**. It was seen on 3 casts (frames 33519, 78330, 107183), and the tester twice reported the toggle ending in the wrong state after a proc. (b) **A held key auto-repeats** `TalentUse` every 57 frames (4 calls in about 1 s: frames ~94859, 94916, 94972, 95029), so holding flips the toggle repeatedly. (c) Real re-presses: 3 separate `TalentUse` calls were needed to turn it OFF once, with gaps of 308–354 frames. Whether a proc re-cast always flips the state is not observed: at frame 107183 the tap plus the proc ended OFF. |
 | Q6 | What a zone change does to the state and in what order; is the state OFF on the first `DrawHudBuffs` in the new zone | blocked | Not run. The first-draw read counts `White_Mage_Soul_Spurn_obj` instances, but Q3 showed the toggle keeps no such instance (`abilities instances=0` while ON), so a 0 there would measure nothing (see the N-a note in the workorder). The tester reports that the toggle ends on zone change **and when health falls too low** (observed: the first cast of the session turned itself off at low health). |
 
+### Session 2
+
+Not run yet. Session 2, <date>: research build `<commit>`
+(`BloodPactPlugin_rel.dll`), White Mage, Soul Spurn + Purgatory and Healing
+Zone on the hotbar, town (`<room>`), no `coop.ini`, no `citrace` before step 10.
+The tester reports the on/off state by eye at every snapshot. Status is exactly
+one of `measured`, `not observed`, `blocked`; a `not observed` quotes C1, C2
+and C3 as fired, otherwise it is `blocked`.
+
+**Attach, controls and snapshots.** (`tgprobe hook` summary line; the C1
+`selftest` line; every `deep snap` summary line; the C2
+`global.playerBuff[1][0][86]` line or `C2 not fired: …`; the C3 `census.` line
+or `C3 not fired: …`.)
+
+| Q | Question | status | Evidence |
+|---|---|---|---|
+| Q3-D | Where the ON state lives, read from non-scalar runtime storage (`tgprobe deep`) |  |  |
+| Q3-G | The same, from the local Ghidra read of `TalentsWhiteMage`'s talent-240 branch, paraphrased |  |  |
+
 ## Decision
 
 **Track A (re-cast guard): BLOCKED on Q2/Q3, redesign required.** Q1 and Q5
@@ -372,3 +558,7 @@ Q4 is measured: `DrawHudBuffs` is a valid anchor.
 2. Read the Purgatory sub-talent level
    (`ReturnSubTalentLevel(1, 240, <index>)`).
 3. Expand the `row0`/`row1` button arrays for Q4's talent key.
+
+### After session 2
+
+Not written yet: filled from Results → Session 2.
