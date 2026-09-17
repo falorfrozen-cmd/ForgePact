@@ -374,6 +374,76 @@ class ToggleDeepReadContractTests(unittest.TestCase):
         for call in ("HookOneScript(", "HookOneScriptTable(", "HookRawNamedRoutine(", "HookBuiltin("):
             self.assertNotIn(call, self.block)
 
+    # ---- round 2: four gaps that could each fake a Q3 "not observed" ----
+
+    def test_instance_handles_are_followed_one_level_and_counted(self):
+        # I1: an instance handle was an opaque leaf, so a toggle living as a
+        # variable on an instance that exists both ON and OFF was invisible.
+        walk = function_body(self.plugin, "static void TgProbeDeepWalk(")
+        self.assertIn("TgProbeDeepFollowInstance(", walk)
+        # Asked only after every container kind has had its chance.
+        self.assertLess(walk.index("ref ds_list "), walk.index("TgProbeDeepFollowInstance("))
+        follow = function_body(self.plugin, "static bool TgProbeDeepFollowInstance(")
+        # Identified by what it is (the runtime's own description, then a live
+        # check), never by a kind comparison deciding whether it is read.
+        for needle in ("ref instance ", "instance_exists", "variable_instance_get",
+                       "walkedInstances", "followDepth", "depth + 1", "instFollowed", "instUnfollowed"):
+            self.assertIn(needle, follow)
+        self.assertNotIn("m_Kind", follow)
+        self.assertIn("TgProbeDeepInstanceNames(", follow)
+        # Each member of the followed instance is read in its own handler.
+        loop = follow.index("for (")
+        self.assertLess(loop, follow.index("try {", loop))
+        self.assertNotIn("try {", follow[:loop].split("TgProbeDeepInstanceNames(")[-1])
+        # A scope root is marked walked, so a reference back to it is not walked twice.
+        self.assertIn("walkedInstances", function_body(self.plugin, "static void TgProbeDeepScopeObject("))
+        self.assertIn("instRefs=", function_body(self.plugin, "static void TgProbeDeepSnap("))
+
+    def test_leaf_budget_is_per_scope_and_truncation_is_reported_per_scope(self):
+        # I2: one snapshot-wide budget let `global` (walked last) starve, and
+        # its cut-off move between snapshots with one flag to show for it.
+        self.assertRegex(self.block, r"kTgDeepMaxLeavesPerScope\s*=\s*250000")
+        self.assertNotRegex(self.block, r"kTgDeepMaxLeaves\b")
+        leaf = function_body(self.plugin, "static void TgProbeDeepLeaf(")
+        self.assertIn("st.leaves >= kTgDeepMaxLeavesPerScope", leaf)
+        self.assertIn("st.truncated = true", leaf)
+        self.assertNotIn("out.leaves.size()", leaf)
+        self.assertNotIn("out.truncated", function_body(self.plugin, "static void TgProbeDeepWalk("))
+        snap = function_body(self.plugin, "static void TgProbeDeepSnap(")
+        self.assertGreaterEqual(snap.count("truncated="), 2)   # every scope line, and the summary
+        self.assertIn("truncatedScopes=", snap)
+        self.assertIn("truncated=", function_body(self.plugin, "static void TgProbeDeepFlip("))
+
+    def test_diff_takes_a_path_filter(self):
+        # I3: 300 lines in path order put `global.` last, so the C2 line could
+        # fall past the cap under HP-drain churn and read as a blind walker.
+        self.assertRegex(self.plugin, r"static void TgProbeDeepDiff\(const std::string& a, const std::string& b, "
+                                      r"const std::string& filter\)")
+        diff = function_body(self.plugin, "static void TgProbeDeepDiff(")
+        for needle in ("Lower(", "matching=", "filter="):
+            self.assertIn(needle, diff)
+        command = function_body(self.plugin, "static void TgProbeDeepCommand(")
+        self.assertIn("TgProbeDeepDiff(a, b, filter)", command)
+        self.assertIn("diff <a> <b> [substr]", command)
+
+    def test_selftest_covers_ds_lists_and_instance_handles(self):
+        # I4: no positive control reached a ds_list or a followed instance.
+        selftest = function_body(self.plugin, "static void TgProbeDeepSelfTest(")
+        for needle in ("ds_list_create", "ds_list_add", "ds_list_replace", "ds_list_destroy",
+                       '"selftest.l[0]"', "TgProbeDeepSelfTestInstance("):
+            self.assertIn(needle, selftest)
+        instance = function_body(self.plugin, "static void TgProbeDeepSelfTestInstance(")
+        for needle in ("GameObject::Controller_obj", "instance_find", "instFollowed", "instUnfollowed",
+                       "OK followed=", "FAIL", "SKIP"):
+            self.assertIn(needle, instance)
+
+    def test_get_names_a_bad_index_instead_of_a_throw(self):
+        # I6: std::stoi on a bad index surfaced as "a builtin threw", and a
+        # global the snapshot enumerated could be refused by an exists gate.
+        get = function_body(self.plugin, "static bool TgProbeDeepGet(")
+        self.assertIn("bad index", get)
+        self.assertIn("variable_global_exists=false", get)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -15433,7 +15433,10 @@ static void TgProbeRoom()
 // so a size change still shows.
 static constexpr int kTgDeepMaxDepth = 3;
 static constexpr int kTgDeepMaxElems = 200;          // per container, then one "...(+N more)" leaf
-static constexpr size_t kTgDeepMaxLeaves = 250000;   // per snapshot, then truncated=1
+// Per scope, not per snapshot: `global` is walked last, and one shared budget
+// let it starve - with a cut-off that moved between snapshots. A scope that
+// reaches its budget says truncated=1 on its own line.
+static constexpr size_t kTgDeepMaxLeavesPerScope = 250000;
 static constexpr size_t kTgDeepValueCap = 120;
 static constexpr int kTgDeepMaxSkillControllers = 8;
 static constexpr size_t kTgDeepDiffLines = 300;
@@ -15449,12 +15452,17 @@ struct TgDeepStats {
     size_t read = 0;
     size_t unreadable = 0;
     size_t leaves = 0;
+    size_t instFollowed = 0;     // live instance handles whose members were read here
+    size_t instUnfollowed = 0;   // live instance handles whose members were read nowhere in this snapshot
+    bool truncated = false;      // this scope reached kTgDeepMaxLeavesPerScope
 };
 
 struct TgDeepSnap {
     std::map<std::string, std::string> leaves;   // path -> kind-tagged value
     std::map<std::string, TgDeepStats> scopes;
-    bool truncated = false;
+    std::set<std::string> walkedInstances;       // Describe() of every instance whose members were read
+    int followDepth = 0;                         // > 0 while reading a followed instance's members
+    bool truncated = false;                      // any scope truncated
 };
 
 static std::map<std::string, TgDeepSnap> g_TgDeepSnaps;
@@ -15462,7 +15470,7 @@ static std::string g_TgDeepLastSnap;
 
 static void TgProbeDeepLeaf(TgDeepSnap& out, TgDeepStats& st, const std::string& path, const std::string& value)
 {
-    if (out.leaves.size() >= kTgDeepMaxLeaves) { out.truncated = true; return; }
+    if (st.leaves >= kTgDeepMaxLeavesPerScope) { st.truncated = true; out.truncated = true; return; }
     out.leaves[path] = value.size() > kTgDeepValueCap ? value.substr(0, kTgDeepValueCap) + "..." : value;
     ++st.leaves;
 }
@@ -15497,14 +15505,16 @@ static std::string TgProbeDeepKeyText(const RValue& key)
     } catch (...) { return "<key>"; }
 }
 
+static bool TgProbeDeepFollowInstance(const RValue& v, const std::string& path, int depth, TgDeepSnap& out, TgDeepStats& st);
+
 static void TgProbeDeepWalk(const RValue& v, const std::string& path, int depth, TgDeepSnap& out, TgDeepStats& st)
 {
-    if (out.truncated) return;
+    if (st.truncated) return;
     try {
         if (v.m_Kind == VALUE_ARRAY) {
             const int n = (int)g_Yytk->CallBuiltin("array_length", { v }).ToDouble();
             if (depth > kTgDeepMaxDepth) { TgProbeDeepLeaf(out, st, path, "<container n=" + std::to_string(n) + ">"); return; }
-            for (int i = 0; i < n && i < kTgDeepMaxElems && !out.truncated; ++i) {
+            for (int i = 0; i < n && i < kTgDeepMaxElems && !st.truncated; ++i) {
                 const std::string child = path + "[" + std::to_string(i) + "]";
                 RValue el;
                 try { el = g_Yytk->CallBuiltin("array_get", { v, RValue((double)i) }); }
@@ -15523,7 +15533,7 @@ static void TgProbeDeepWalk(const RValue& v, const std::string& path, int depth,
             RValue names = g_Yytk->CallBuiltin("variable_struct_get_names", { v });
             const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
             if (depth > kTgDeepMaxDepth) { TgProbeDeepLeaf(out, st, path, "<container n=" + std::to_string(n) + ">"); return; }
-            for (int i = 0; i < n && i < kTgDeepMaxElems && !out.truncated; ++i) {
+            for (int i = 0; i < n && i < kTgDeepMaxElems && !st.truncated; ++i) {
                 std::string name;
                 try { name = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) }).ToString(); }
                 catch (...) { TgProbeDeepUnreadable(out, st, path + ".<name#" + std::to_string(i) + ">"); continue; }
@@ -15541,7 +15551,7 @@ static void TgProbeDeepWalk(const RValue& v, const std::string& path, int depth,
             if (depth > kTgDeepMaxDepth) { TgProbeDeepLeaf(out, st, path, "<container n=" + std::to_string(n) + ">"); return; }
             RValue key = g_Yytk->CallBuiltin("ds_map_find_first", { v });
             int seen = 0;
-            while (key.m_Kind != VALUE_UNDEFINED && seen < kTgDeepMaxElems && !out.truncated) {
+            while (key.m_Kind != VALUE_UNDEFINED && seen < kTgDeepMaxElems && !st.truncated) {
                 const std::string child = path + "{" + TgProbeDeepKeyText(key) + "}";
                 try { TgProbeDeepWalk(g_Yytk->CallBuiltin("ds_map_find_value", { v, key }), child, depth + 1, out, st); }
                 catch (...) { TgProbeDeepUnreadable(out, st, child); }
@@ -15555,7 +15565,7 @@ static void TgProbeDeepWalk(const RValue& v, const std::string& path, int depth,
         if (TgProbeDeepIsDs(v, "ref ds_list ", 2.0)) {
             const int n = (int)g_Yytk->CallBuiltin("ds_list_size", { v }).ToDouble();
             if (depth > kTgDeepMaxDepth) { TgProbeDeepLeaf(out, st, path, "<container n=" + std::to_string(n) + ">"); return; }
-            for (int i = 0; i < n && i < kTgDeepMaxElems && !out.truncated; ++i) {
+            for (int i = 0; i < n && i < kTgDeepMaxElems && !st.truncated; ++i) {
                 const std::string child = path + "[" + std::to_string(i) + "]";
                 try { TgProbeDeepWalk(g_Yytk->CallBuiltin("ds_list_find_value", { v, RValue((double)i) }), child, depth + 1, out, st); }
                 catch (...) { TgProbeDeepUnreadable(out, st, child); }
@@ -15563,6 +15573,7 @@ static void TgProbeDeepWalk(const RValue& v, const std::string& path, int depth,
             if (n > kTgDeepMaxElems) TgProbeDeepLeaf(out, st, path + "[...]", "...(+" + std::to_string(n - kTgDeepMaxElems) + " more)");
             return;
         }
+        if (TgProbeDeepFollowInstance(v, path, depth, out, st)) return;
         TgProbeDeepLeaf(out, st, path, Describe(v));
     } catch (...) {
         TgProbeDeepUnreadable(out, st, path);
@@ -15584,6 +15595,49 @@ static void TgProbeDeepInstanceNames(const RValue& inst, std::vector<std::string
     }
 }
 
+// An instance handle held in a variable, array slot or struct field is followed
+// one level: its instance variables are read under the handle's own path
+// (`global.playerBuff[1][0][86].destroyTimer`) at depth + 1, with the same
+// container caps. Without this a toggle kept as a variable on an instance that
+// exists both ON and OFF was one unchanging `ref instance N` leaf, and the
+// census would not move either.
+//
+// Identified by what it is: the runtime's own description says `ref instance`,
+// and instance_exists confirms it is live. No kind comparison decides it (this
+// runner hands instances out as VALUE_REF). A non-struct VALUE_OBJECT is a
+// method value and is never asked - instance_exists on one is not known safe.
+//
+// The handle itself always stays a leaf, so a slot that starts pointing at a
+// different instance still diffs. One level only: a live handle met while
+// reading a followed instance is not followed and counts as instUnfollowed. An
+// instance already read in this snapshot (a scope root, or reached first by
+// another path) counts as neither; its members are under that first path.
+static bool TgProbeDeepFollowInstance(const RValue& v, const std::string& path, int depth, TgDeepSnap& out, TgDeepStats& st)
+{
+    const std::string handle = Describe(v);
+    if (handle.find("ref instance ") == std::string::npos) return false;
+    TgProbeDeepLeaf(out, st, path, handle);
+    bool live = false;
+    try { live = g_Yytk->CallBuiltin("instance_exists", { v }).ToBoolean(); } catch (...) { live = false; }
+    if (!live || out.walkedInstances.count(handle) != 0) return true;
+    if (out.followDepth > 0) { ++st.instUnfollowed; return true; }
+    out.walkedInstances.insert(handle);
+    ++st.instFollowed;
+    std::vector<std::string> names;
+    TgProbeDeepInstanceNames(v, names, st);
+    ++out.followDepth;
+    for (const std::string& name : names) {
+        if (st.truncated) break;
+        const std::string child = path + "." + name;
+        RValue member;
+        try { member = g_Yytk->CallBuiltin("variable_instance_get", { v, RValue(name) }); }
+        catch (...) { TgProbeDeepUnreadable(out, st, child); continue; }
+        TgProbeDeepWalk(member, child, depth + 1, out, st);
+    }
+    --out.followDepth;
+    return true;
+}
+
 // Every named member of an instance (or of the global scope), each read inside
 // its own try so one bad member costs one leaf, never the rest of the list.
 static void TgProbeDeepReadMembers(const RValue& inst, bool isGlobal, const std::vector<std::string>& names,
@@ -15591,7 +15645,7 @@ static void TgProbeDeepReadMembers(const RValue& inst, bool isGlobal, const std:
 {
     st.names += names.size();
     for (const std::string& name : names) {
-        if (out.truncated) break;
+        if (st.truncated) break;
         const std::string path = root + "." + name;
         try {
             RValue v = isGlobal
@@ -15627,10 +15681,13 @@ static void TgProbeDeepScopeObject(HeroSiege::Objects::GameObject obj, int maxIn
     try { count = (int)g_Yytk->CallBuiltin("instance_number", { RValue(idx) }).ToDouble(); }
     catch (...) { note = objName + " instance_number threw"; return; }
     if (count < 1) { note = objName + " has no instance"; return; }
-    for (int k = 0; k < count && k < maxInstances && !out.truncated; ++k) {
+    for (int k = 0; k < count && k < maxInstances && !st.truncated; ++k) {
         RValue inst;
         try { inst = g_Yytk->CallBuiltin("instance_find", { RValue(idx), RValue((double)k) }); }
         catch (...) { ++st.unreadable; continue; }
+        // A scope root counts as walked, so a handle pointing back at it (a
+        // buff's owner, a target) is a leaf rather than a second copy.
+        out.walkedInstances.insert(Describe(inst));
         std::vector<std::string> names;
         TgProbeDeepInstanceNames(inst, names, st);
         const std::string root = numbered ? objName + "#" + std::to_string(k) : objName;
@@ -15752,14 +15809,22 @@ static void TgProbeDeepSnap(const std::string& name, const std::set<std::string>
         Out("tgprobe deep snap " + name + " scope=" + scope
             + " names=" + std::to_string(st.names) + " read=" + std::to_string(st.read)
             + " unreadable=" + std::to_string(st.unreadable) + " leaves=" + std::to_string(st.leaves)
+            + " instRefs=" + std::to_string(st.instFollowed) + "/" + std::to_string(st.instUnfollowed)
+            + " truncated=" + (st.truncated ? "1" : "0")
             + extra + (note.empty() ? "" : " note=" + note));
     }
     size_t unreadable = 0;
-    for (const auto& kv : snap.scopes) unreadable += kv.second.unreadable;
+    std::string truncatedScopes;
+    for (const auto& kv : snap.scopes) {
+        unreadable += kv.second.unreadable;
+        if (kv.second.truncated) truncatedScopes += (truncatedScopes.empty() ? "" : ",") + kv.first;
+    }
     const ULONGLONG elapsed = GetTickCount64() - started;
     Out("tgprobe deep snap " + name + ": scopes=" + scopeList
         + " leaves=" + std::to_string(snap.leaves.size()) + " unreadable=" + std::to_string(unreadable)
-        + " truncated=" + (snap.truncated ? "1" : "0") + " ms=" + std::to_string((unsigned long long)elapsed)
+        + " truncated=" + (snap.truncated ? "1" : "0")
+        + " truncatedScopes=" + (truncatedScopes.empty() ? std::string("none") : truncatedScopes)
+        + " ms=" + std::to_string((unsigned long long)elapsed)
         + " room=" + TgProbeRoomName());
     g_TgDeepSnaps[name] = std::move(snap);
     g_TgDeepLastSnap = name;
@@ -15801,7 +15866,17 @@ static std::string TgProbeDeepValueIn(const TgDeepSnap& s, const std::string& pa
     return it == s.leaves.end() ? std::string("<absent>") : it->second;
 }
 
-static void TgProbeDeepDiff(const std::string& a, const std::string& b)
+static bool TgProbeDeepScopeTruncated(const TgDeepSnap& s, const std::string& scope)
+{
+    auto it = s.scopes.find(scope);
+    return it != s.scopes.end() && it->second.truncated;
+}
+
+// Lines print in path order and stop at kTgDeepDiffLines, and `global.` sorts
+// after every object root and `census.` - so under per-frame churn a known
+// global line can fall past the cap. `filter` (case-insensitive, on the path)
+// narrows what prints; the counts above the lines stay totals.
+static void TgProbeDeepDiff(const std::string& a, const std::string& b, const std::string& filter)
 {
     const TgDeepSnap* sa = TgProbeDeepFindSnap(a, "diff");
     const TgDeepSnap* sb = TgProbeDeepFindSnap(b, "diff");
@@ -15810,29 +15885,33 @@ static void TgProbeDeepDiff(const std::string& a, const std::string& b)
     std::map<std::string, Counts> perScope;
     std::vector<std::string> lines;
     size_t changed = 0, added = 0, removed = 0;
+    const std::string lowerFilter = Lower(filter);
+    const auto shown = [&](const std::string& path) { return lowerFilter.empty() || Lower(path).find(lowerFilter) != std::string::npos; };
     for (const auto& kv : sb->leaves) {
         auto it = sa->leaves.find(kv.first);
         if (it == sa->leaves.end()) {
             ++added; ++perScope[TgProbeDeepScopeOf(kv.first)].added;
-            lines.push_back("  + " + kv.first + "=" + kv.second);
+            if (shown(kv.first)) lines.push_back("  + " + kv.first + "=" + kv.second);
         } else if (it->second != kv.second) {
             ++changed; ++perScope[TgProbeDeepScopeOf(kv.first)].changed;
-            lines.push_back("  ~ " + kv.first + ": " + it->second + " -> " + kv.second);
+            if (shown(kv.first)) lines.push_back("  ~ " + kv.first + ": " + it->second + " -> " + kv.second);
         }
     }
     for (const auto& kv : sa->leaves) {
         if (sb->leaves.find(kv.first) != sb->leaves.end()) continue;
         ++removed; ++perScope[TgProbeDeepScopeOf(kv.first)].removed;
-        lines.push_back("  - " + kv.first + " (was " + kv.second + ")");
+        if (shown(kv.first)) lines.push_back("  - " + kv.first + " (was " + kv.second + ")");
     }
     Out("tgprobe deep diff " + a + " " + b + ": changed=" + std::to_string(changed)
         + " added=" + std::to_string(added) + " removed=" + std::to_string(removed)
-        + " truncated=" + (sa->truncated || sb->truncated ? "1" : "0"));
+        + " truncated=" + (sa->truncated || sb->truncated ? "1" : "0")
+        + (filter.empty() ? std::string() : " filter=" + filter + " matching=" + std::to_string(lines.size())));
     for (size_t i = 0; i < lines.size() && i < kTgDeepDiffLines; ++i) Out(lines[i]);
     if (lines.size() > kTgDeepDiffLines) Out("  ... (" + std::to_string(lines.size() - kTgDeepDiffLines) + " more)");
     for (const auto& kv : perScope) {
         Out("  scope=" + kv.first + " changed=" + std::to_string(kv.second.changed)
-            + " added=" + std::to_string(kv.second.added) + " removed=" + std::to_string(kv.second.removed));
+            + " added=" + std::to_string(kv.second.added) + " removed=" + std::to_string(kv.second.removed)
+            + " truncated=" + (TgProbeDeepScopeTruncated(*sa, kv.first) || TgProbeDeepScopeTruncated(*sb, kv.first) ? "1" : "0"));
     }
 }
 
@@ -15853,7 +15932,8 @@ static void TgProbeDeepFlip(const std::string& base, const std::string& on, cons
         else if (voff != von) bucketB.push_back(line);
     }
     Out("tgprobe deep flip " + base + " " + on + " " + off + ": A(flipped and reverted)=" + std::to_string(bucketA.size())
-        + " B(changed twice)=" + std::to_string(bucketB.size()));
+        + " B(changed twice)=" + std::to_string(bucketB.size())
+        + " truncated=" + (sBase->truncated || sOn->truncated || sOff->truncated ? "1" : "0"));
     Out(" bucket A:");
     for (size_t i = 0; i < bucketA.size() && i < kTgDeepBucketLines; ++i) Out(bucketA[i]);
     if (bucketA.size() > kTgDeepBucketLines) Out("  ... (" + std::to_string(bucketA.size() - kTgDeepBucketLines) + " more)");
@@ -15877,6 +15957,17 @@ static void TgProbeDeepFind(const std::string& needle, const std::string& snapNa
     }
     Out("tgprobe deep find '" + needle + "' in " + name + ": hits=" + std::to_string(hits)
         + (hits > kTgDeepFindLines ? " (first " + std::to_string(kTgDeepFindLines) + " shown)" : ""));
+}
+
+// A whole-token decimal index; anything else is refused by name rather than
+// surfacing as "a builtin threw".
+static bool TgProbeDeepParseIndex(const std::string& text, int& index)
+{
+    try {
+        size_t used = 0;
+        index = std::stoi(text, &used);
+        return used == text.size();
+    } catch (...) { return false; }
 }
 
 // Resolves a path live. Roots: Player_obj, Controller_obj, UI_Hud_Talent_obj,
@@ -15942,13 +16033,19 @@ static bool TgProbeDeepGet(const std::string& path, RValue& out, std::string& er
         try {
             if (open == '.') {
                 if (where == kGlobal) {
-                    if (!g_Yytk->CallBuiltin("variable_global_exists", { RValue(seg) }).ToBoolean()) { error = "segment " + label + ": no such global"; return false; }
-                    cur = g_Yytk->CallBuiltin("variable_global_get", { RValue(seg) });
+                    // The snapshot reads every enumerated global with no exists
+                    // gate, so a name it listed is read the same way here; the
+                    // exists answer only words the refusal.
+                    const bool exists = g_Yytk->CallBuiltin("variable_global_exists", { RValue(seg) }).ToBoolean();
+                    try { cur = g_Yytk->CallBuiltin("variable_global_get", { RValue(seg) }); }
+                    catch (...) { error = "segment " + label + ": no such global (variable_global_exists=" + (exists ? "true" : "false") + ", variable_global_get threw)"; return false; }
+                    if (!exists && cur.m_Kind == VALUE_UNDEFINED) { error = "segment " + label + ": no such global (variable_global_exists=false, variable_global_get=undefined)"; return false; }
                 } else if (where == kInstance && seg == "alarm" && next < path.size() && path[next] == '[') {
                     // alarm[i] is a builtin array, not an instance variable.
                     const size_t close = path.find(']', next);
                     if (close == std::string::npos) { error = "segment .alarm: unclosed ["; return false; }
-                    const int a = std::stoi(path.substr(next + 1, close - next - 1));
+                    int a = 0;
+                    if (!TgProbeDeepParseIndex(path.substr(next + 1, close - next - 1), a)) { error = "segment .alarm: bad index '" + path.substr(next + 1, close - next - 1) + "'"; return false; }
                     CInstance* ci = HhResolveInstance(cur);
                     RValue v;
                     if (!ci || a < 0 || a > 11 || !AurieSuccess(g_Yytk->GetBuiltin("alarm", ci, a, v))) { error = "segment .alarm[" + std::to_string(a) + "]: unreadable"; return false; }
@@ -15967,7 +16064,8 @@ static bool TgProbeDeepGet(const std::string& path, RValue& out, std::string& er
                 }
             } else if (open == '[') {
                 if (where != kValue) { error = "segment " + label + ": index on a root"; return false; }
-                const int i = std::stoi(seg);
+                int i = 0;
+                if (!TgProbeDeepParseIndex(seg, i)) { error = "segment " + label + ": bad index '" + seg + "'"; return false; }
                 if (cur.m_Kind == VALUE_ARRAY) {
                     const int n = (int)g_Yytk->CallBuiltin("array_length", { cur }).ToDouble();
                     if (i < 0 || i >= n) { error = "segment " + label + ": out of range n=" + std::to_string(n); return false; }
@@ -16007,14 +16105,60 @@ static bool TgProbeDeepGet(const std::string& path, RValue& out, std::string& er
     return true;
 }
 
+// Instance-handle control (I1): the one walker path a builtin fixture cannot
+// build, because only the game makes instances. It reads - never writes - the
+// Controller_obj instance the HUD draw chain runs on. A struct holding that one
+// handle twice must follow it exactly once: both handles stay leaves, members
+// appear under exactly one of the two paths, instFollowed=1, instUnfollowed=0.
+// Printed on its own line so C1's verdict stays independent of game state;
+// SKIP means no Controller_obj instance existed, and the control did not fire.
+static void TgProbeDeepSelfTestInstance()
+{
+    using HeroSiege::Objects::GameObject;
+    const std::string objName(HeroSiege::Objects::GetObjectName(GameObject::Controller_obj));
+    std::string fail;
+    size_t members = 0;
+    TgDeepStats st;
+    try {
+        const double idx = TgProbeObjectIndex(objName);
+        const int count = idx < 0 ? 0 : (int)g_Yytk->CallBuiltin("instance_number", { RValue(idx) }).ToDouble();
+        if (count < 1) { Out("tgprobe deep selftest instance: SKIP no " + objName + " instance"); return; }
+        RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue(idx), RValue(0.0) });
+        RValue root = g_Yytk->CallBuiltin("json_parse", { RValue(std::string("{\"n\":1}")) });
+        g_Yytk->CallBuiltin("variable_struct_set", { root, RValue(std::string("i")), inst });
+        g_Yytk->CallBuiltin("variable_struct_set", { root, RValue(std::string("j")), inst });
+        TgDeepSnap snap;
+        TgProbeDeepWalk(root, "selftest", 0, snap, st);
+        size_t underI = 0, underJ = 0;
+        for (const auto& kv : snap.leaves) {
+            if (kv.first.rfind("selftest.i.", 0) == 0) ++underI;
+            if (kv.first.rfind("selftest.j.", 0) == 0) ++underJ;
+        }
+        members = underI + underJ;
+        const std::string leafI = TgProbeDeepValueIn(snap, "selftest.i"), leafJ = TgProbeDeepValueIn(snap, "selftest.j");
+        if (leafI.find("ref instance ") == std::string::npos || leafJ.find("ref instance ") == std::string::npos) {
+            fail = "handle leaves are not instance handles (i=" + leafI + " j=" + leafJ + ")";
+        } else if (st.instFollowed != 1 || st.instUnfollowed != 0) {
+            fail = "instFollowed=" + std::to_string(st.instFollowed) + " instUnfollowed=" + std::to_string(st.instUnfollowed) + " (want 1/0)";
+        } else if ((underI == 0) == (underJ == 0)) {
+            fail = "members under i=" + std::to_string(underI) + " j=" + std::to_string(underJ) + " (want exactly one non-zero)";
+        }
+    } catch (...) {
+        if (fail.empty()) fail = "a builtin threw";
+    }
+    if (fail.empty()) Out("tgprobe deep selftest instance: OK followed=" + std::to_string(st.instFollowed) + " members=" + std::to_string(members));
+    else Out("tgprobe deep selftest instance: FAIL " + fail);
+}
+
 // Mechanics control (C1): a fixture built from builtins alone, so an OK here
-// says the walker and the diff see arrays, nested structs and ds_maps on this
-// runner, independent of any game state.
+// says the walker and the diff see arrays, nested structs, ds_maps and ds_lists
+// on this runner, independent of any game state. The instance-handle control
+// follows on its own line.
 static void TgProbeDeepSelfTest()
 {
     std::string fail;
-    RValue map;
-    bool mapMade = false;
+    RValue map, list;
+    bool mapMade = false, listMade = false;
     size_t leaves = 0, changed = 0;
     try {
         RValue root = g_Yytk->CallBuiltin("json_parse", { RValue(std::string("{\"a\":[1,{\"b\":2}],\"c\":\"x\"}")) });
@@ -16025,12 +16169,16 @@ static void TgProbeDeepSelfTest()
             mapMade = true;
             g_Yytk->CallBuiltin("ds_map_add", { map, RValue(std::string("k")), RValue(5.0) });
             g_Yytk->CallBuiltin("variable_struct_set", { root, RValue(std::string("m")), map });
+            list = g_Yytk->CallBuiltin("ds_list_create", {});
+            listMade = true;
+            g_Yytk->CallBuiltin("ds_list_add", { list, RValue(7.0) });
+            g_Yytk->CallBuiltin("variable_struct_set", { root, RValue(std::string("l")), list });
 
             TgDeepSnap before;
             TgDeepStats st;
             TgProbeDeepWalk(root, "selftest", 0, before, st);
             leaves = before.leaves.size();
-            const std::vector<std::string> expected = { "selftest.a[0]", "selftest.a[1].b", "selftest.c", "selftest.m{k}" };
+            const std::vector<std::string> expected = { "selftest.a[0]", "selftest.a[1].b", "selftest.c", "selftest.m{k}", "selftest.l[0]" };
             for (const std::string& p : expected) {
                 if (fail.empty() && before.leaves.find(p) == before.leaves.end()) fail = "missing leaf " + p;
             }
@@ -16038,11 +16186,12 @@ static void TgProbeDeepSelfTest()
             if (!fail.empty()) {
                 std::string seen;
                 for (const auto& kv : before.leaves) seen += " " + kv.first + "=" + kv.second;
-                fail += " (map " + Describe(map) + "; leaves:" + seen + ")";
+                fail += " (map " + Describe(map) + "; list " + Describe(list) + "; leaves:" + seen + ")";
             } else {
                 RValue nested = g_Yytk->CallBuiltin("array_get", { g_Yytk->CallBuiltin("variable_struct_get", { root, RValue(std::string("a")) }), RValue(1.0) });
                 g_Yytk->CallBuiltin("variable_struct_set", { nested, RValue(std::string("b")), RValue(3.0) });
                 g_Yytk->CallBuiltin("ds_map_replace", { map, RValue(std::string("k")), RValue(6.0) });
+                g_Yytk->CallBuiltin("ds_list_replace", { list, RValue(0.0), RValue(8.0) });
                 TgDeepSnap after;
                 TgDeepStats st2;
                 TgProbeDeepWalk(root, "selftest", 0, after, st2);
@@ -16050,11 +16199,11 @@ static void TgProbeDeepSelfTest()
                 for (const auto& kv : after.leaves) if (TgProbeDeepValueIn(before, kv.first) != kv.second) diffs.insert(kv.first);
                 for (const auto& kv : before.leaves) if (after.leaves.find(kv.first) == after.leaves.end()) diffs.insert(kv.first);
                 changed = diffs.size();
-                const std::set<std::string> want = { "selftest.a[1].b", "selftest.m{k}" };
+                const std::set<std::string> want = { "selftest.a[1].b", "selftest.m{k}", "selftest.l[0]" };
                 if (diffs != want) {
                     std::string got;
                     for (const std::string& d : diffs) got += " " + d;
-                    fail = "diff expected selftest.a[1].b and selftest.m{k}, got" + (got.empty() ? std::string(" nothing") : got);
+                    fail = "diff expected selftest.a[1].b, selftest.m{k} and selftest.l[0], got" + (got.empty() ? std::string(" nothing") : got);
                 }
             }
         }
@@ -16062,8 +16211,10 @@ static void TgProbeDeepSelfTest()
         if (fail.empty()) fail = "a builtin threw";
     }
     if (mapMade) { try { g_Yytk->CallBuiltin("ds_map_destroy", { map }); } catch (...) {} }
+    if (listMade) { try { g_Yytk->CallBuiltin("ds_list_destroy", { list }); } catch (...) {} }
     if (fail.empty()) Out("tgprobe deep selftest: OK leaves=" + std::to_string(leaves) + " changed=" + std::to_string(changed));
     else Out("tgprobe deep selftest: FAIL " + fail);
+    TgProbeDeepSelfTestInstance();
 }
 
 static void TgProbeDeepCommand(const std::string& rest)
@@ -16099,11 +16250,12 @@ static void TgProbeDeepCommand(const std::string& rest)
         return;
     }
     if (sub == "diff") {
-        std::string t1, t2;
+        std::string t1, t2, t3;
         const std::string a = FirstToken(r, t1);
         const std::string b = FirstToken(t1, t2);
-        if (a.empty() || b.empty()) { Out("tgprobe deep diff: usage -> tgprobe deep diff <a> <b>"); return; }
-        TgProbeDeepDiff(a, b);
+        const std::string filter = FirstToken(t2, t3);
+        if (a.empty() || b.empty()) { Out("tgprobe deep diff: usage -> tgprobe deep diff <a> <b> [substr]"); return; }
+        TgProbeDeepDiff(a, b, filter);
         return;
     }
     if (sub == "flip") {
@@ -16155,7 +16307,7 @@ static void TgProbeDeepCommand(const std::string& rest)
         return;
     }
     if (sub == "selftest") { TgProbeDeepSelfTest(); return; }
-    Out("tgprobe deep: usage -> tgprobe deep snap <name> [scope...] [talent=240,243,252] | diff <a> <b>"
+    Out("tgprobe deep: usage -> tgprobe deep snap <name> [scope...] [talent=240,243,252] | diff <a> <b> [substr]"
         " | flip <base> <on> <off> | find <substr> [name] | get <path> | census | selftest");
 }
 
