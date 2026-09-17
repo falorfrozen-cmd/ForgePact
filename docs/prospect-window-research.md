@@ -7,15 +7,21 @@ Issue: [ForgePact #9](https://github.com/falorfrozen-cmd/ForgePact/issues/9),
 for the amount of items players can hold in their inventory."* Opened
 2026-09-15, label `enhancement`.
 
-Status (2026-09-17): **research stage.** Phase 0a ran 2026-09-17 and recorded
-H = not observed (instrument blind: stale SDK closure names; SDK regenerated,
-hub `4539e68`). Phase 0b pending. Nothing player-visible exists. What controls
-the window's size is **not yet established**: Phase 0a measured *where* the
-size lives (on the window's `"ProspectGrid"` node, § Results R1/R2) and that a
-bare write of it crashes the node's draw (R5b), but not *which call builds the
-node's cell store* — and the rows most likely to answer that were never hooked,
-because the `hs-game-sdk` closure names the instrument used had been
-renumbered by a game patch. So the work is staged:
+Status (2026-09-17): **research stage.** Phase 0a and Phase 0b both ran
+2026-09-17 and both recorded H = not observed. Phase 0a was blind (stale SDK
+closure names; SDK regenerated, hub `4539e68`). Phase 0b was not: it hooked
+every regenerated closure, snapshotted the grid around every logged call and
+ran both write experiments, and found that the node's cell store (`nodeGrid`)
+is built inside `m_SetInventoryLocalPlayer` (`anon@1065`) and does not follow
+`nodeGridWidth`/`nodeGridHeight` — a width written before that builder ran
+crashed the game, and re-running every probed builder changed nothing
+(§ Results, Phase 0b). A local Ghidra read (paraphrased in § Results) points at
+the player's **profile inventory** data as what the store comes from; that is
+a lead, **not established**. Phase 0c (instrument built, live session pending)
+tests it read-only, and its answer is a decision gate for the human (§ Deciding
+the hypothesis → Decision gate), because a profile-backed store would make
+"bigger" a save-data change. Nothing player-visible exists. So the work is
+staged:
 
 - **Stage A (done):** a research instrument, `prospectprobe` (research build
   only), that native-detours every static-search candidate in one build; a
@@ -24,14 +30,19 @@ renumbered by a game patch. So the work is staged:
   harness (`tests/test_prospect_window_behavior.py`); this document; and
   contract tests (`tests/test_prospect_window_contract.py`) pinning all of it.
 - **Phase 0a (live, done):** § Results, Phase 0a column.
-- **Phase 0b (instrument done, live session pending):** the target table
-  re-derived from the regenerated SDK (45 closure rows, enforced by a test), a
-  grid snapshot around every logged call (`watch`), a hook-free read of the
-  window and node (`grid`), and the two write experiments a positive result
-  needs (`setat`, `resize … via`). One research build, one relaunch unless a
-  crash forces a second — § Live procedure.
-- **Stage B (only once § Results names H1 or H2'):** the mod itself, a panel
-  toggle, docs and release notes.
+- **Phase 0b (live, done):** the target table re-derived from the regenerated
+  SDK (45 closure rows, enforced by a test), a grid snapshot around every
+  logged call (`watch`), a hook-free read of the window and node (`grid`), and
+  the two write experiments a positive result needs (`setat`, `resize … via`).
+  § Live procedure; § Results, Phase 0b column.
+- **Phase 0c (instrument done, live session pending):** four profile/inventory
+  getter rows, and `prospectprobe backing on|off` / `dump` / `idcheck`, which
+  keep what the game's *own* getter calls return and test whether `nodeGrid`
+  is that storage — no getter is ever invoked by the instrument. Plus a
+  controlled save test (R7) and the auto-prospect call-shape measurement
+  (R12). § Phase 0c live procedure.
+- **Stage B (only once the human has chosen a build-bearing branch of the
+  decision gate):** the mod itself, a panel toggle, docs and release notes.
 
 What "bigger" means here: **capacity** — more cells per prospect operation —
 not the same cells drawn larger. The complaint is relative to the inventory's
@@ -241,6 +252,23 @@ Deliberately not in the table: the item-operation scripts in the same file
 `ProcessInventoryGridInput` and its two structs) — they run when items move,
 not when the grid is built; if R6 needs them each is one row.
 
+*Profile inventory getters (Phase 0c):*
+
+| Probe label | Runtime name | SDK index |
+|---|---|---|
+| `GetProfileInventoryData` | `gml_Script_GetProfileInventoryData` | 1738 |
+| `GetPlayerItemOwner` | `gml_Script_GetPlayerItemOwner` | 2030 |
+| `GetInventoryArray` | `gml_Script_GetInventoryArray` | 1913 |
+| `GetPlayerProfileObj` | `gml_Script_GetPlayerProfileObj` | 1723 |
+
+`m_SetInventoryLocalPlayer` reads the first two before the ProspectGrid store
+exists (Ghidra read, § Results). The other two are rows so the same capture
+also sees character load, where the store may be sized. Plain script names, so
+not moved by a game patch the way closure numbers are. **These rows are
+detoured to observe the game's own calls and are never invoked by the
+instrument**: a blind `callnum GetProfileInventoryData` in Phase 0b, without the
+`self` the game passes, threw twice and then crashed the game.
+
 *Control, and one input candidate:*
 
 | Probe label | Runtime name | Why |
@@ -250,7 +278,7 @@ not when the grid is built; if R6 needs them each is one row.
 
 Both already have `citrace nativetrace` rows; `prospectprobe` hooks them
 again under its own ids so the control runs through the *same* installer as
-the targets. 87 rows in all.
+the targets. 91 rows in all (87 in Phase 0b, plus the four getters).
 
 ### Negative results, sourced
 
@@ -271,6 +299,7 @@ the targets. 87 rows in all.
 | **H1** | A named script or closure receives the input grid's dimensions as arguments when the window opens. | **Design A**: `HookOneScript` (both routes) on that row; when the call belongs to the prospect window, scale the dimension arguments before the trampoline. | (a) R4': a row whose logged args on a window open carry 9/6, with `self`/`other`/an argument identifying the prospect window or its node; (b) **positive control on the same row: `prospectprobe override <row> <argIndex> <value> 1` followed by a reopen draws a grid of the overridden size**, the applied line matching the R4' call with `@id` ignored (R5a = yes) — a row that carries the numbers but whose override changes nothing is recorded and does not count; (c) R6: items placed in the new cells are consumed by the prospect button; (d) C-hook: `CheckPlayerInteraction` counted > 0 in the same session. |
 | **H2** | The dimensions live in variables the draw *and the cell store* follow at write time. | **Design B**: a frame-driven write. | **Ruled out for a bare write by R5b**: writing `nodeGridWidth` 9 → 18 on the open node crashed its Draw within one frame (`index out of bounds request 9 maximum size is 9`) — the draw followed the write, the store (`nodeGrid`) did not. Kept in the table with that verdict. |
 | **H2'** | The dimensions live in variables (on the window or the node) that the game's own builder reads when it builds `nodeGrid`; writing them before the builder runs, or re-running the builder after the write, resizes the store. | **Design B'**: `HookOneScript` (both routes) on the R9 row; when the call belongs to the prospect window (the `self`/`other`/argument identification R9 recorded), write the scaled values into the recorded variables before the trampoline — or, if only `resize via` was positive, write + invoke the recorded method by name once per new window instance from a lazily installed hook on the R9 row's *post* side. | R9 identifies the builder's extent; R11 (`setat`) or R10 (`resize via`) = the drawn grid is the new size **and** an item dropped into a new cell is accepted (R5c); R6 = consumed; C-grid passing; C-hook passing. |
+| **H2''** | Phase 0c's branch if the store is a transient copy of profile data: `nodeGrid` is built from the array `GetProfileInventoryData` returns, so a larger returned array builds a larger store. | Not designed yet: a hook on `GetProfileInventoryData` that grows its **return array** before `m_SetInventoryLocalPlayer` consumes it — the same "one value inside a call the game is making" class as Design B', aimed at the getter's result. A fresh implement round, only after the human picks the "not save-backed" gate branch. | The decision gate reading **not save-backed** (idcheck `copy` with its control passing, and R7 = returned to inventory across a written save), then its own experiment. Never run in Phase 0c. |
 | **H3** | Fixed literals: no variable or argument governs the size. | **No one-value mod exists.** Blocked, with the numbers. | R2-window, R4' and R9 all measured with every fired row fully logged; `setat` tried against the R9 row and applied to the R9 call, negative; `resize via` tried against the R9 method, grown (`resize 18 6`), and `reverted` with `invoked=yes` and the `self`/argument shape L5 logged for the game's own call of that row — a shrink's `reverted` never counts; a local Ghidra read, paraphrased, naming the literal. Never from an empty field. |
 | **not observed** | Any control failed; a closure row printed `not found`; a row stayed `UNLOGGED`; an override or `setat` landed on a different call; the session ended before an experiment ran. | No hypothesis is concluded; Stage B does not start. | Record each field as `not observed (<which instrument, which control>)`. |
 
@@ -406,8 +435,8 @@ Not in `kPlayerCommands`; dispatched from `HandleProspectCommand`. Bare
   `notApplied` count, and whether `watch` is on. The last line is the control,
   `CheckPlayerInteraction: calls=N`: **`0` voids every row above**, and a
   control that did not install says so.
-- **`prospectprobe reset`** — zeroes counters, disarms, turns `watch` off and
-  clears a pending `setat`.
+- **`prospectprobe reset`** — zeroes counters, disarms, turns `watch` off,
+  clears a pending `setat`, turns `backing` off and releases what it kept.
 - **`prospectprobe override <label> <argIndex> <number> [calls=1] [self=<Obj>] [other=<Obj>] [when=<number>]`**
   — for the next `calls` calls of an already-detoured row, if argument
   `argIndex` exists, is numeric, and the call matches every selector given
@@ -505,6 +534,72 @@ Not in `kPlayerCommands`; dispatched from `HandleProspectCommand`. Bare
   `prospectprobe setat <label> #n pre|post <target>.<var>: was=… now=… (readback ok|MISMATCH) self=… other=… argc=… a0=…`,
   and for `post` a snapshot line. `prospectprobe setat clear` cancels. One
   pending `setat` at a time.
+
+Phase 0c adds one capture mode and two reads. None of them invokes a game
+script, by any route (no `callnum`, no `script_execute`, no `call`/`resize`):
+every value the game computes about the store is taken from the game's **own**
+call, inside the getter's detour, after the game's function returned. That is
+the whole design, because a blind `callnum GetProfileInventoryData` (no correct
+`self`) crashed the game in Phase 0b.
+
+- **`prospectprobe backing on|off`** — off by default; `reset` turns it off.
+  `on` releases anything kept before and starts over. While on, the detours on
+  the four getter rows (`GetProfileInventoryData`, `GetPlayerItemOwner`,
+  `GetInventoryArray`, `GetPlayerProfileObj`; they must be detoured —
+  `prospectprobe hook` first, and `on` says how many of the four are) keep the
+  value the call returned: a counted reference to the runtime's own array or
+  struct, not a serialised copy. A call whose `self` is the `UI_Prospect_obj`
+  window is held once kept (that is the call the ProspectGrid is built from);
+  otherwise the latest call replaces it. The first 6 calls of each getter per
+  `on` are logged as
+  `prospectprobe backing <getter> #n self=… result=<array len=N len0=M|struct members=N|kind> kept|not kept … -> pp_backing_<getter>.json (<bytes> bytes)`,
+  and the file (`bp_ipc\`) holds `{"getter","call","self","shape","value"}`
+  with `value` from `json_stringify` (only an array or plain struct is
+  stringified; anything else is `null`, its kind in `shape`). Builtins only,
+  never nested, never on the frame path. `off` stops capturing and keeps what
+  was kept for `dump` and `idcheck`.
+- **`prospectprobe backing dump`** — read-only. Prints the live grid snapshot;
+  the live `nodeGrid` (rows, the column count every row shares, row 0's cells)
+  into `pp_backing_nodegrid.json`; and for each getter either
+  `never captured (calls while backing was on: N)` or the kept call number,
+  its `self` (and whether that was the window), its shape, and
+  `pp_backing_<getter>_kept.json`. Then it walks each kept value (arrays and
+  plain structs, depth ≤ 10, at most 200000 values) for a sub-array shaped like
+  `nodeGrid` (`rows` arrays of `cols`) or a flat array of `rows × cols`, and
+  prints each match's path with `cells agreeing with nodeGrid K/<rows×cols>`
+  — the **structural** comparison. A walk that stopped early, hit the depth cap
+  (a struct cycle lands there) or met an object that answered neither
+  `is_method` nor `is_struct` says so; its "no sub-array" is `not observed`,
+  not absent. Structural agreement is a lead, not identity.
+- **`prospectprobe backing idcheck`** — the **reference-identity** probe, in
+  one handler so no Draw runs in between:
+  1. **Positive control first**, on arrays the instrument builds itself: a
+     kept reference to a nested array must read back a sentinel written
+     afterwards through the live array, the walk must find the sentinel
+     through the kept reference, and it must *not* find it in a separately
+     built array. Any of those failing prints
+     `control: not observed (stash does not track live arrays on this runner …)`
+     (or which half of the scanner failed) and nothing else is done — no write
+     reaches the game.
+  2. **Refusals, nothing written:** `GetProfileInventoryData` never captured;
+     no ProspectGrid node; `nodeGrid` missing or not an array; **no empty
+     cell** (empty = `undefined` or the number 0; the refusal lists the cells
+     it saw) — an item is never written over.
+  3. **The one write:** the sentinel `-7654321.25` into the first empty
+     `nodeGrid[r][c]`, then a fresh read of the node's own `nodeGrid` to prove
+     it landed (a write that did not land is `not observed`, never `copy`),
+     the same cell of the first `nodeGrid`-shaped sub-array of the kept
+     profile return read before and after, and a walk of every kept value for
+     the sentinel.
+  4. **Restore before any verdict:** the original cell value is written back
+     and read back (`now=… (restored)`, or `NOT restored` — close the window
+     without moving items and record it).
+  5. **Verdict** (from the `GetProfileInventoryData` walk; the other getters
+     are reported beside it): `reference-identical` (the sentinel was found in
+     the kept return, with its path — `nodeGrid` shares its array with the
+     profile data, so changing that storage changes the grid live);
+     `copy` only when the walk was complete; otherwise
+     `not observed (scan incomplete: …)`.
 
 Counting is unconditional; logging is budgeted per row and per `arm` so a hot
 row cannot drown `out.txt`, and `show` reports every call the budget hid, so a
@@ -689,6 +784,76 @@ failure of the procedure (workorder D7).
     (paraphrase)`; nothing decompiled in any tracked file. This informs a
     replan; it never closes the issue.
 
+## Phase 0c live procedure
+
+One research build, one launch (a second only if a crash forces it). **Back up
+the save first** (`%LOCALAPPDATA%\Hero_Siege`), junk items only, no blind
+invoke of any getter. The Phase 0b procedure above is kept as the record of
+what Phase 0b ran.
+
+1. **C1.** `plugin_build\build.bat dev`; game closed; copy
+   `plugin_build\BloodPactPlugin_rel.dll` over
+   `<game>\mods\aurie\BloodPactPlugin.dll` (Install in the panel restores the
+   ship DLL). Launch; **before loading a character**, `prospectprobe hook`,
+   `prospectprobe backing on`, `prospectprobe arm budget=6 GetInventoryArray GetPlayerProfileObj GetProfileInventoryData GetPlayerItemOwner`.
+   Load a character. Record whether any getter fired at load and its captured
+   shape (`bp_ipc\pp_backing_*.json`) — this is the "where the store is sized"
+   read.
+2. **C2 (open + capture).** Walk to the Prospect Cube, open the window.
+   `prospectprobe grid` → confirm `w=9 h=6 rows=6 cols0=9` (**C-grid** control:
+   `citrace dumpobj` agrees). `prospectprobe backing dump` → record the
+   captured `GetProfileInventoryData` / `GetPlayerItemOwner` shapes and the
+   live `nodeGrid` shape, and note whether `nodeGrid`'s 6×9 appears as a
+   sub-structure of the profile return (**structural** identity). If no getter
+   was captured, stop: `not observed (backing never captured — getters not
+   called on this open)`.
+   **C2b (auto-prospect measurement — for the auto-prospect alternative under
+   § Decision gate).** With the window open and `prospectprobe watch on`,
+   `prospectprobe arm budget=20 UiAProspectButton anon@15345 anon@8881`
+   (`arm` filters by label substring; the grid closures' labels are
+   `UI_Inventory_Grid_obj anon@15345` = `m_MoveItemToGrid` and
+   `UI_Inventory_Grid_obj anon@8881` = `m_DropItem`, so the `anon@N` substrings
+   are what select them). The tester **places one item into the
+   prospect grid, then presses Prospect.** Record: the `self`/`other`/args and
+   `object_index` the insert closure and `UiAProspectButton` were called with
+   (so the shipped design can invoke the button's own handler with the measured
+   shape, no blind invoke), which insert closure actually fired for a
+   drag-in vs a click-in, and the `grid-post` snapshots. Then **verify the
+   leftover-material claims live** (record as claims, not facts): after
+   one prospect, does the result material sit in the grid; can a second item
+   still be inserted and prospected; is the material itself ever taken as
+   prospect input or does it block the next insert. **R12** = the button call
+   shape + the insert closure + the leftover-material observations.
+3. **C3 (reference identity, with its control).** `prospectprobe backing idcheck`.
+   Record: the **positive control** verdict first (stash tracks a live array —
+   if it fails, the whole probe is `not observed`), then the test verdict
+   (`reference-identical` / `copy`), both cell values, and confirm the chosen
+   cell was empty and was restored (re-run `prospectprobe grid` / `dumpobj` to
+   confirm no item moved). This is the one bounded write Phase 0c makes.
+4. **C4 (R7, controlled save).** Place a junk item (e.g. a spare ore/ring) in
+   the prospect grid. Note the `.hss` mtime. Close the window; **cause the game
+   to write a save** (a zone change / save point / return to menu — whatever
+   writes `%LOCALAPPDATA%\Hero_Siege\*.hss`); confirm the `.hss` mtime
+   **advanced** after the item was placed. Only then relaunch. Reopen and read
+   where the item is: **R7** = `returned to inventory` / `kept in the prospect
+   grid` / `lost`, with both mtimes. (The Phase 0b Molten Ring was void because
+   the save predated placing it — do not repeat that; the mtime check is the
+   gate.)
+5. **C5 (decision-gate inputs).** From C2/C3/C4 state which gate branch holds
+   (§ Deciding the hypothesis → Decision gate): **save-backed** (idcheck
+   reference-identical, or structural match, or R7 kept across a written save),
+   **not save-backed** (idcheck copy and R7 returned), or **inconclusive**.
+6. **C6.** Fill § Results' **Phase 0c** column (R7, R12 button-call-shape +
+   leftover-material claims, backing structural, backing idcheck + its
+   control, the load-time capture, the gate branch, H). **Do not** change
+   `phase0-status: pending` — that waits on the human's gate decision.
+7. **C7 (fallback, only if inconclusive).** A local Ghidra read of the
+   profile-storage *construction* path (found via `citrace symdump` +
+   `tools/ghidra/ImportSymbols.java`), paraphrased into § Results; nothing
+   decompiled in any tracked file. Informs a further replan; never closes #9.
+8. **C8.** Report the gate branch and the R7 fate; the human's decision on the
+   gate is recorded before any Stage B build.
+
 ## Deciding the hypothesis
 
 A row whose arguments carry the vanilla numbers is a candidate, not a result; only an override on that row that changes the drawn grid counts for H1.
@@ -757,32 +922,106 @@ does not have, and turning the mod off later could strand them. Stage B then
 ships only with a Known Limitations entry, panel copy telling the player to
 empty the grid first, and an explicit human acceptance — or does not ship.
 
+### Decision gate (Phase 0c → Stage B)
+
+Phase 0b's lead is that the ProspectGrid store is, or is copied from, the
+player's profile inventory data. If it is the storage itself, "bigger" is a
+**save-data** change — a different risk class from "one value inside a call
+the game is making". Phase 0c writes the gate's inputs into § Results and
+names which branch holds; **the human picks the branch** before any Stage B
+build. Unanswered, nothing is built.
+
+- **Save-backed** — `backing idcheck` = `reference-identical` (with its control
+  passing), **or** `backing dump` shows `nodeGrid` mirrors a profile sub-array,
+  **or** R7 = kept in the prospect grid across a *written* save. Then enlarging
+  the grid changes save-data shape, and the risks are:
+  - **Stranded items.** An enlarged grid holds items in cells vanilla does not
+    have; turning the mod off, or opening the save in a vanilla or online
+    client, leaves those items stranded in cells nothing else can address.
+  - **Save compatibility.** The game ships `ValidateInventory`,
+    `DetectInventoryModifications` and `DetectInventoryDuplicates`
+    (`hs-game-sdk` script names) — an anti-tamper surface. A save with a
+    non-vanilla prospect store may be rejected, "repaired", or flagged. Not
+    measured; a risk to state, not to wave away.
+  - **The save editors cannot see it.** HSSaveEditor and
+    hero-siege-item-editor model inventory and stash tabs but carry no
+    "prospect" anywhere (§ Static search, Negative results), so an item parked
+    in an enlarged prospect store could not be recovered through them.
+
+  The human's alternatives to a save-shape change: (a) a **prospect all**
+  batching helper — feed inventory ore through the vanilla 9×6 grid in
+  successive automated fills, so a full inventory takes fewer *manual* trips
+  (its own feasibility unproven; a separate research round); (b)
+  **auto-prospect on insert**, below; (c) close #9 as not feasible, with this
+  finding recorded so it is not re-investigated.
+- **Not save-backed** — `idcheck` = `copy` (control passing, walk complete)
+  **and** R7 = returned to inventory. The store is a transient copy of the
+  profile data, and the next experiment (not run in Phase 0c) is **H2''**:
+  grow the `GetProfileInventoryData` return array inside its detour, before
+  `m_SetInventoryLocalPlayer` consumes it, and see whether `nodeGrid` is then
+  built larger. The human approves that as the Stage-B-bound design or asks
+  for more measurement.
+- **Inconclusive** — a control failed, a getter was never captured, `idcheck`
+  refused, or its walk was incomplete. H stays `not observed`; the fallback is a
+  local Ghidra read of the profile storage's *construction* path (paraphrase
+  only, C7), which informs a further replan and never closes the issue.
+
+**Auto-prospect on insert** (the human's last-resort design; independent of
+what backs the store). Instead of a *bigger* grid, make one insert do more:
+each time an item is moved into the prospect grid, run the game's own
+prospect operation at once, so the grid clears after every item and 9×6 is
+never the limit. It changes what one insert does, not save-data shape, so it
+sidesteps the save-backed risks on either branch. Shape, subject to R12 and the
+human's approval: a lazily installed `HookOneScript` (both routes) on the insert
+closure R12 confirms (`m_MoveItemToGrid` `anon@15345` or `m_DropItem`
+`anon@8881`); when the item landed in the **prospect** grid (identified by the
+node's `uiNodeCallstack` naming `"ProspectGrid"` / its `object_index`, as
+measured — never by a variable's mere presence), invoke `UiAProspectButton`'s
+own handler once, with the `self` and arguments R12 measured when the tester
+pressed Prospect. No blind invoke. Two statements about it are **claims to
+verify** at C2b, not facts: that the prospected materials left in the grid
+cannot themselves be prospected, and that they do not block the next insert.
+If a leftover material blocks the next insert or is taken as input, the design
+needs a clear-or-relocate step, and that is a new finding. The risk the human
+weighs: prospecting stops being a batched, click-once action, and the mod fires
+the game's own operation at a moment the game was not calling it (the same
+class the human accepted for the pet quest collector). Off by default; a
+toggle.
+
 ## Results
 
-Two sessions. **Phase 0a** (2026-09-17, research build from ForgePact
+Three sessions. **Phase 0a** (2026-09-17, research build from ForgePact
 `cb77ad4`, Stage A instrument) is filled; every `not observed` in it is an
 instrument failure — the stale SDK closure names — and never a negative.
-**Phase 0b** reads `unknown` until its live session fills it.
+**Phase 0b** (2026-09-17, build `ef8d54f`) is filled; its `not observed` fields name their reason. **Phase 0c** reads `unknown` until its live session (§ Phase 0c live procedure) fills it.
 
-| Field | Meaning | Phase 0a | Phase 0b |
-|---|---|---|---|
-| R1 | object + nth of the instance carrying the grid size | `UI_Inventory_Grid_obj` instance nth **5 of 6** while the window is open — the one whose `uiNodeCallstack` reads `"ProspectGrid"` (`gridName` `"Prospectron RX9000"`, `masterUi`/`parent` = the `UI_Prospect_obj` instance). `UI_Prospect_obj.prospectGrid` references it. | unknown |
-| R1-note | window resident while closed? | window **not** resident while closed: `UI_Prospect_obj` has no live instance until opened; closing destroys it and its grid nodes (`UI_Inventory_Grid_obj` count drops to 1, the HUD `"PotionGrid"`). | unknown |
-| R2 | size variables on R1 and their vanilla values | on the ProspectGrid node: `nodeGridWidth` = 9, `nodeGridHeight` = 6, `nodeGrid` = array[6] of arrays (rows × cols), `nodeWidth` = `nodeHeight` = 92.8, `navBboxWidth` = 835.2 (= 9 × 92.8), `navBboxHeight` = 556.8 (= 6 × 92.8), `gridBackground` = `Craft_Grid_Large_spr`, `gridScale` = 1. The window's own 100 variables were dumped but **not searched for 9/6** — Phase 0b step L2 does. | unknown |
-| R2-window | `UI_Prospect_obj` variables equal to 9 or 6 (L2) | not run (added in Phase 0b) | unknown |
-| R3 | vanilla input grid, columns × rows, by eye | 9 columns × 6 rows (by eye, and equal to R2). | unknown |
-| R4 | detoured rows whose args carry R3 on a window open (Stage A table) | **not observed among detoured rows.** 41 rows detoured, 8 `not found st=14` (all eight object-Create closure rows: `UI_Prospect_obj anon@1038/2729/3551`, `Prospect_Cube_obj anon@320`, `UI_Button_Journal_Prospect_obj anon@324`, `UI_Journal_Prospecting_obj anon@1003`, `UI_Node_Parent_obj anon@1508/1909` — stale names). `arm budget=500`, one open, no row `UNLOGGED`. Fired: `UiCreate` 1 (`a0`=object `UI_Prospect_obj`, `a1`=1, `a2`=1), `UiCreateNode` 42 (#41 creates `UI_Inventory_Grid_obj` `"ProspectGrid"`: `a0`=0 `a1`=0 `a2`=object `UI_Inventory_Grid_obj` `a3`=script `UiAActivate` `a4`=`"ProspectGrid"` — no size), `UiSetGrid` 10 (`a0` = row index 0..5 / 0..3, `a1..a7` = instance refs, navigation links), `UiMoveNode` 131, `UiCreateContainer` 1, `UiSetRef` 2, `___struct___408/409/410` 1/42/1, `InventoryResetTabs` 1, `InventoryInitGrids` 1 (`a0`=true), `GetInventoryGridNode` 1, `UiResizeInventoryNodes` 2 (`a0`=2332 `a1`=1168.7), `PlayerMouseAction` 1. Zero: `UiAProspectButton` and its structs, `UiSetGridArray`, `UiResetGrid`, `UiContainerChange`, `UiChangeVisibility`, `UiSetNodeScale`, `UiRemoveNode`, `s_ItemGridInfo`, `s_InvNode`, `GridHasSpace`, `GridAddItem`, `ParseItemToGrid`, the rest. **No logged call carried 9 or 6 as a numeric argument.** | superseded by R4' |
-| R4' | detoured rows (regenerated table) whose logged args carry 9/6 on a window open, with identification (L5) | not observed (closure rows not detoured) | unknown |
-| R5a | override on each R4/R4' row changes the drawn grid (L6) | not run (R4 empty). | unknown |
-| R5b | bare `set` of a size variable changes the drawn grid and accepts an item | `nodeGridWidth` 9 → 18 on the open ProspectGrid node (`set`, readback ok): **fatal GML error within one frame, before any drag** — `crash.txt`: "ERROR in action number 1 of Draw Event for object UI_Inventory_Grid_obj: index out of bounds request 9 maximum size is 9", trace `gml_Object_UI_Inventory_Grid_obj_Draw_64` line 124, last UI node ProspectGrid; WER APPCRASH c0000005. The draw iterates `nodeGridWidth` over `nodeGrid` rows that were sized at build time. Save files were last written before the write; no save corruption. `nodeGridHeight` not tried (same class of crash expected: the array has 6 rows). | not re-run (R5b is the reason for `resize … via`) |
-| R5c | an item dropped into a new cell after a positive R5a/R10/R11: accepted / refused / error | not run | unknown |
-| R6 | items in new cells consumed by the prospect button | not observed (no accepted cell). | unknown |
-| R7 | items left in the grid on close: returned to inventory / kept in grid / lost | not observed. | unknown |
-| R8 | inventory grid, columns × rows | inventory grid (`"InventoryGrid"`, `UI_Inventory_Grid_obj` nth 2): 15 columns × 6 rows (`nodeGridWidth` 15, `nodeGridHeight` 6, `nodeGrid` array[6]). | unknown |
-| R9 | first logged call whose `grid-post` says `CHANGED`, with pre/post snapshots, and every later `CHANGED` (L5) | not run (no snapshot instrument) | unknown |
-| R10 | `resize … via <method> [args]`: per method and probe (every shrink, then grow every method whose shrink `kept` or `reverted` with `invoked=yes` and an unchanged store; only a grow's `reverted` counts toward H3), `kept`/`reverted`/`rebuilt`/`destroyed`, the `probe=`, `invoked=` and `size=` values, `self=` and the args supplied, the self/args the detour logged as received, the snapshot, and any `restore unsafe` / `size exceeds store` (L9) | not run | unknown |
-| R11 | `setat` before the R9 builder: applied line, `grid-post`, drawn grid (L7/L8) | not run | unknown |
-| C | write, hook and enumeration controls | **C-write = no**: `set UI_Prospect_obj 0 x` 60/600/1500 and `image_alpha` 0.3 (readback ok / float MISMATCH) and `set UI_Inventory_Grid_obj 5 gridScale 0.5` all landed and read back, none changed anything visible. **C-hook passed** (`CheckPlayerInteraction` 10200 → 14400 in two seconds). **Enumeration control passed** (`oget UI_Inventory_Grid_obj nodeGridWidth` = 4 = nth 0's dumped value; `inames` total 124 = `dumpobj` count). **L6 = yes** (reopen: new instances, vanilla values). | C-hook (L4): unknown |
-| C-grid | `prospectprobe grid` agrees with `citrace dumpobj` on the ProspectGrid node (L2) | not run | unknown |
-| C-write2 | `nodeWidth` / `navBboxWidth` by-eye write control on the node (L3) | not run (R5b already proves the node route reaches the draw) | unknown |
-| H | H1 / H2' / H3 / not observed | **not observed (instrument blind: stale SDK closure names).** The live window's method values named its Create closures `m_SetInventoryLocalPlayer` = `anon@1065`, `m_Resize` = `anon@2806`, `m_UpdateInventoryGrid` = `anon@3657` (all `@gml_Object_UI_Prospect_obj_Create_0`), and the grid node's `m_RefreshNode` = `anon@36159@gml_Object_UI_Inventory_Grid_obj_Create_0`; the stale SDK tables carried `anon@1038/2729/3551` and no `36159`. | unknown |
+| Field | Meaning | Phase 0a | Phase 0b | Phase 0c |
+|---|---|---|---|---|
+| R1 | object + nth of the instance carrying the grid size | `UI_Inventory_Grid_obj` instance nth **5 of 6** while the window is open — the one whose `uiNodeCallstack` reads `"ProspectGrid"` (`gridName` `"Prospectron RX9000"`, `masterUi`/`parent` = the `UI_Prospect_obj` instance). `UI_Prospect_obj.prospectGrid` references it. | unchanged: the `UI_Inventory_Grid_obj` whose `uiNodeCallstack` reads `"ProspectGrid"` (nth 5, `@265938`; `@261558` after the relaunch), found by `prospectprobe grid`'s resolver rather than by nth. | unknown |
+| R1-note | window resident while closed? | window **not** resident while closed: `UI_Prospect_obj` has no live instance until opened; closing destroys it and its grid nodes (`UI_Inventory_Grid_obj` count drops to 1, the HUD `"PotionGrid"`). | unchanged: `citrace dumpobj UI_Prospect_obj` with the window closed → no live instances (L2). | unknown |
+| R2 | size variables on R1 and their vanilla values | on the ProspectGrid node: `nodeGridWidth` = 9, `nodeGridHeight` = 6, `nodeGrid` = array[6] of arrays (rows × cols), `nodeWidth` = `nodeHeight` = 92.8, `navBboxWidth` = 835.2 (= 9 × 92.8), `navBboxHeight` = 556.8 (= 6 × 92.8), `gridBackground` = `Craft_Grid_Large_spr`, `gridScale` = 1. The window's own 100 variables were dumped but **not searched for 9/6** — Phase 0b step L2 does. | unchanged: `prospectprobe grid` = `w=9 h=6 rows=6 cols0=9 cell=92.8x92.8 bbox=835.2x556.8 scale=1`. **`nodeGrid` is not built from `nodeGridWidth`/`nodeGridHeight`** (R9, R10, R11); the Ghidra read below points at the player's profile inventory data instead — a lead, not established. | unknown |
+| R2-window | `UI_Prospect_obj` variables equal to 9 or 6 (L2) | not run (added in Phase 0b) | **empty** — the live `UI_Prospect_obj` has 100 variables, **0** equal to 9 or 6 (and 15 `m_*` methods). The window carries no variable the size could be written into before the node is built. | unknown |
+| R3 | vanilla input grid, columns × rows, by eye | 9 columns × 6 rows (by eye, and equal to R2). | 9 columns × 6 rows (unchanged). | unknown |
+| R4 | detoured rows whose args carry R3 on a window open (Stage A table) | **not observed among detoured rows.** 41 rows detoured, 8 `not found st=14` (all eight object-Create closure rows: `UI_Prospect_obj anon@1038/2729/3551`, `Prospect_Cube_obj anon@320`, `UI_Button_Journal_Prospect_obj anon@324`, `UI_Journal_Prospecting_obj anon@1003`, `UI_Node_Parent_obj anon@1508/1909` — stale names). `arm budget=500`, one open, no row `UNLOGGED`. Fired: `UiCreate` 1 (`a0`=object `UI_Prospect_obj`, `a1`=1, `a2`=1), `UiCreateNode` 42 (#41 creates `UI_Inventory_Grid_obj` `"ProspectGrid"`: `a0`=0 `a1`=0 `a2`=object `UI_Inventory_Grid_obj` `a3`=script `UiAActivate` `a4`=`"ProspectGrid"` — no size), `UiSetGrid` 10 (`a0` = row index 0..5 / 0..3, `a1..a7` = instance refs, navigation links), `UiMoveNode` 131, `UiCreateContainer` 1, `UiSetRef` 2, `___struct___408/409/410` 1/42/1, `InventoryResetTabs` 1, `InventoryInitGrids` 1 (`a0`=true), `GetInventoryGridNode` 1, `UiResizeInventoryNodes` 2 (`a0`=2332 `a1`=1168.7), `PlayerMouseAction` 1. Zero: `UiAProspectButton` and its structs, `UiSetGridArray`, `UiResetGrid`, `UiContainerChange`, `UiChangeVisibility`, `UiSetNodeScale`, `UiRemoveNode`, `s_ItemGridInfo`, `s_InvNode`, `GridHasSpace`, `GridAddItem`, `ParseItemToGrid`, the rest. **No logged call carried 9 or 6 as a numeric argument.** | superseded by R4' | superseded by R4' |
+| R4' | detoured rows (regenerated table) whose logged args carry 9/6 on a window open, with identification (L5) | not observed (closure rows not detoured) | **not observed among detoured rows** — no logged call in either L5 pass (budgets 500 and 5000) carried a real 9 or 6 as an argument. `UiCreateNode #41` creates the node with `a4="ProspectGrid"` and no size. | unknown |
+| R5a | override on each R4/R4' row changes the drawn grid (L6) | not run (R4 empty). | not run (R4' empty). | unknown |
+| R5b | bare `set` of a size variable changes the drawn grid and accepts an item | `nodeGridWidth` 9 → 18 on the open ProspectGrid node (`set`, readback ok): **fatal GML error within one frame, before any drag** — `crash.txt`: "ERROR in action number 1 of Draw Event for object UI_Inventory_Grid_obj: index out of bounds request 9 maximum size is 9", trace `gml_Object_UI_Inventory_Grid_obj_Draw_64` line 124, last UI node ProspectGrid; WER APPCRASH c0000005. The draw iterates `nodeGridWidth` over `nodeGrid` rows that were sized at build time. Save files were last written before the write; no save corruption. `nodeGridHeight` not tried (same class of crash expected: the array has 6 rows). | not re-run (R5b is the reason for `resize … via`) | not re-run |
+| R5c | an item dropped into a new cell after a positive R5a/R10/R11: accepted / refused / error | not run | not run (no accepted enlarged cell). | unknown |
+| R6 | items in new cells consumed by the prospect button | not observed (no accepted cell). | not observed (no accepted enlarged cell). | unknown |
+| R7 | items left in the grid on close: returned to inventory / kept in grid / lost | not observed. | **not observed (void attempt)** — a junk Molten Ring placed in the grid was back in the inventory after a crash and relaunch, but the last save (`herosiege13.hss` 16:40:00) predated placing it (crash 16:56:43), so that shows only that the crash lost an unsaved move, nothing about the grid. Phase 0c's C4 measures R7 across a written save. | unknown |
+| R8 | inventory grid, columns × rows | inventory grid (`"InventoryGrid"`, `UI_Inventory_Grid_obj` nth 2): 15 columns × 6 rows (`nodeGridWidth` 15, `nodeGridHeight` 6, `nodeGrid` array[6]). | 15 columns × 6 rows (unchanged). | unknown |
+| R9 | first logged call whose `grid-post` says `CHANGED`, with pre/post snapshots, and every later `CHANGED` (L5) | not run (no snapshot instrument) | the open is bracketed by `Prospect_Cube_obj anon@337`; inside `UiCreate(UI_Prospect_obj,1,1)`: `UiCreateNode #41` creates the node `w=0 h=0 rows=not-array`; **`nodeGridWidth`/`Height` become 9/6 before `UiCreateNode #42`, with no hooked call bracketing that write** (the window Create event's own body, which is not in the script table); **`nodeGrid` becomes a 6×9 array inside `m_SetInventoryLocalPlayer` (`anon@1065`) with no logged sub-call bracketing it**; `m_RefreshNode` (`anon@36159`) only sets `navBbox`. `anon@2143`/`anon@255` stayed `UNLOGGED` even at budget 5000 (they fire more than 17k times per open cycle) → `not observed (budget spent)` by design. | unknown |
+| R10 | `resize … via <method> [args]`: per method and probe (every shrink, then grow every method whose shrink `kept` or `reverted` with `invoked=yes` and an unchanged store; only a grow's `reverted` counts toward H3), `kept`/`reverted`/`rebuilt`/`destroyed`, the `probe=`, `invoked=` and `size=` values, `self=` and the args supplied, the self/args the detour logged as received, the snapshot, and any `restore unsafe` / `size exceeds store` (L9) | not run | every probed method — `m_RefreshNode`, `m_SetPosition`, `m_MouseInGrid`, `m_MouseInAnyGrid`, `window:m_Resize`, `window:m_UpdateInventoryGrid`, and (added) `window:m_SetInventoryLocalPlayer` — shrink (8×5) and grow (18×6) both **`reverted` with `invoked=yes`**, args none (argc=0, matching L5's game calls), store unchanged 6×9; only a grow's `reverted` counts toward H3, and every grow reverted. `m_RefreshNode`/`m_SetPosition`/`m_Resize`/`m_SetInventoryLocalPlayer` move only `navBbox`. Not probed (deviation: item-moving/buying methods, no known args): `m_MoveItemToGrid`, `m_StartInvDragging`, `m_DropItem`, `m_BuyItemConfirmed` → not observed. **No probed method resizes `nodeGrid` from `nodeGridWidth`/`Height`.** | unknown |
+| R11 | `setat` before the R9 builder: applied line, `grid-post`, drawn grid (L7/L8) | not run | `setat UI_Prospect_obj anon@1065 pre grid nodeGridWidth 18` **applied on the matching call** (`was=9 now=18`, self/other/argc matching L5) → game crash: `Step Event0` of `UI_Inventory_Grid_obj` line 75, `index out of bounds request 15 maximum size is 9`. The store built inside `anon@1065`'s extent **did not follow** the width written at its entry. Height not tried (the crash ended that launch). | unknown |
+| C | write, hook and enumeration controls | **C-write = no**: `set UI_Prospect_obj 0 x` 60/600/1500 and `image_alpha` 0.3 (readback ok / float MISMATCH) and `set UI_Inventory_Grid_obj 5 gridScale 0.5` all landed and read back, none changed anything visible. **C-hook passed** (`CheckPlayerInteraction` 10200 → 14400 in two seconds). **Enumeration control passed** (`oget UI_Inventory_Grid_obj nodeGridWidth` = 4 = nth 0's dumped value; `inames` total 124 = `dumpobj` count). **L6 = yes** (reopen: new instances, vanilla values). | C-hook (L4): **passed** — `CheckPlayerInteraction` 1500 → 5700, then 1800 → 6000 on the relaunch; `hook` 87 detoured / 0 failed, including the four live-read closures `UI_Prospect_obj anon@1065/2806/3657` and `UI_Inventory_Grid_obj anon@36159`. Phase 0a's stale-name blindness is closed. | unknown |
+| C-grid | `prospectprobe grid` agrees with `citrace dumpobj` on the ProspectGrid node (L2) | not run | **passed** — `prospectprobe grid` = `w=9 h=6 rows=6 cols0=9`; `citrace dumpobj` of the ProspectGrid node agreed; `inames` total 124 = `dumpobj` count. | unknown |
+| C-write2 | `nodeWidth` / `navBboxWidth` by-eye write control on the node (L3) | not run (R5b already proves the node route reaches the draw) | **`nodeWidth` changed live** (46.4: cells drawn half-width, same frame; restored 92.8). The background sprite `Craft_Grid_Large_spr` did **not** move (see Background sprite). Window `x` write: no visible change (as Phase 0a). | unknown |
+| Background sprite | `gridBackground` of the ProspectGrid node, and whether it follows the grid | `Craft_Grid_Large_spr` (R2) | `Craft_Grid_Large_spr` is a **fixed 9×6 image**: with cells drawn half-width (C-write2) it did not change, so a larger grid would draw cells beyond it and needs its own background handling (a Stage B note). | unknown |
+| Ghidra read (paraphrase) | local read of the open path on the current exe, paraphrased; nothing decompiled is in this repository | not run | `m_SetInventoryLocalPlayer` (`anon@1065`) begins by fetching the player's **profile inventory** data (`GetProfileInventoryData`) and the item owner (`GetPlayerItemOwner`), passing its own self/other and a profile reference, then wires the grid nodes from what those return; both getters take the window instance as their self. Resolving every numeric constant referenced by `anon@1065`, `InventoryInitGrids`, `GetProfileInventoryData`, `GetPlayerItemOwner`, `m_UpdateInventoryGrid`, `m_RefreshNode` and the cube's closure found no 9 or 6 (`m_Resize` references 18 once; layout, unverified). The window's Create event, where `nodeGridWidth`/`Height` are set, is not in the script table and was not read. **Reading, not live-confirmed:** `nodeGrid` is, or is copied from, per-profile inventory storage whose 9×6 shape is fixed where that data is created — consistent with R11 and R10. If it is the storage itself, "bigger" is a save-data change (§ Decision gate). Phase 0c tests it. | unknown |
+| Identity attempt (`callnum`) | calling a getter directly to compare its result with `nodeGrid` | not run | **instrument misuse, not a result**: `callnum GetProfileInventoryData` with no arguments, `0` and `1` — without the window as self, which the getter needs — threw twice and then crashed the game (`Controller_obj` Step: `array_get :: Index [-1] out of range [1]` in `EnemyStepHandleNew`). It establishes nothing about the store. Phase 0c never invokes a getter; it keeps what the game's own call returned (`prospectprobe backing`). | unknown |
+| R12 | auto-prospect: `UiAProspectButton` call shape (self/other/args/`object_index`), which insert closure fired (drag-in vs click-in), `grid-post` snapshots, and the leftover-material claims checked live (C2b) | not run | not run | unknown |
+| load-time capture | getters that fired at character load, with their kept shapes and `pp_backing_*.json` (C1) | not run | not run (no `backing` instrument) | unknown |
+| backing structural | `backing dump`: kept `GetProfileInventoryData` / `GetPlayerItemOwner` shapes, live `nodeGrid` shape, and any `nodeGrid`-shaped sub-array with its agreeing-cell count and walk completeness (C2) | not run | not run | unknown |
+| backing idcheck | `backing idcheck`: the control verdict first, then `reference-identical` / `copy` / `not observed`, the cell, both values, and `restored` (C3) | not run | not run | unknown |
+| gate branch | save-backed / not save-backed / inconclusive, per § Decision gate (C5); the human picks the branch | not run | not run | unknown |
+| H | H1 / H2' / H3 / not observed | **not observed (instrument blind: stale SDK closure names).** The live window's method values named its Create closures `m_SetInventoryLocalPlayer` = `anon@1065`, `m_Resize` = `anon@2806`, `m_UpdateInventoryGrid` = `anon@3657` (all `@gml_Object_UI_Prospect_obj_Create_0`), and the grid node's `m_RefreshNode` = `anon@36159@gml_Object_UI_Inventory_Grid_obj_Create_0`; the stale SDK tables carried `anon@1038/2729/3551` and no `36159`. | **not observed** — H1 unsupported (R4' empty); H2' no positive (R11 applied and matched but the store stayed 9 wide → crash; every R10 grow `reverted` with `invoked=yes`); H3 not concludable (R2-window is an empty field, two rows stayed `UNLOGGED`, four grid methods unprobed, and the Ghidra read above is not live-confirmed). | unknown |

@@ -605,6 +605,157 @@ class ProspectWindowContractTests(unittest.TestCase):
         self.assertIn("UNREADABLE", l5)
         self.assertIn("grid-post=@", l5)
 
+    # ---- Phase 0c: what backs nodeGrid, read from the game's own calls -------
+    # Phase 0b found nodeGrid built inside m_SetInventoryLocalPlayer from the
+    # player's profile inventory data, and a blind `callnum
+    # GetProfileInventoryData` (no correct self) crashed the game. So Phase 0c
+    # never calls a getter: it keeps what the game's own call returned, and
+    # tests identity against that, with a positive control first.
+
+    GETTERS = ("GetProfileInventoryData", "GetPlayerItemOwner", "GetInventoryArray", "GetPlayerProfileObj")
+
+    def backing_functions(self):
+        # name -> body, by the full `static ... PpBackingX(` signature, so a call
+        # site later in the file is never mistaken for the definition.
+        found = re.findall(r"^(static [^\n(]*?\b(PpBacking\w+)\()", self.plugin, re.M)
+        bodies = {name: strip_comments(function_body(self.plugin, signature)) for signature, name in found}
+        for name in ("PpBackingCapture", "PpBackingCommand", "PpBackingDump", "PpBackingIdCheck",
+                     "PpBackingIsEmptyCell", "PpBackingRelease"):
+            self.assertIn(name, bodies)
+        return bodies
+
+    def test_backing_captures_getter_returns_without_invoking(self):
+        labels = [label for _, label, _ in self.rows]
+        for getter in self.GETTERS:
+            self.assertIn(getter, labels)
+        bodies = self.backing_functions()
+        joined = "\n".join(bodies.values())
+        for used in ('"json_stringify"', '"array_length"', '"variable_instance_get"', "g_PpBackingProfile",
+                     "g_PpBackingOwner"):
+            self.assertIn(used, joined)
+        # Nothing in the backing instrument calls a game script, by any route.
+        for name, body in bodies.items():
+            for forbidden in ("CallGameScript", "script_execute", "InvokeMethodValue", "MethodValueFunction",
+                              "callnum", "PpCall(", "PpResize("):
+                self.assertNotIn(forbidden, body, name)
+        # The capture runs after the game's own function returned, inside PpAfter,
+        # and it is handed the value the trampoline produced.
+        detour = self.plugin[self.plugin.index("#define PROSPECTPROBE_DETOUR"):self.plugin.index("#define PROSPECTPROBE_TARGETS")]
+        self.assertIn("PpAfter(LABEL, n, logged, gridPre, S, O, argc, A, r)", detour)
+        after = strip_comments(function_body(self.plugin, "static void PpAfter("))
+        self.assertIn("PpBackingCapture(", after)
+        self.assertLess(after.index("PpBackingCapture("), after.index("if (!logged"))
+        capture = bodies["PpBackingCapture"]
+        self.assertLess(capture.index("g_PpBacking.load()"), capture.index("PpBackingJsonText("))
+        self.assertIn('"json_stringify"', bodies["PpBackingJsonText"])
+        self.assertIn("kPpBackingLogBudget", capture)
+        self.assertIn("g_PpInBacking", capture)
+        # Off by default, and reset turns it off and releases what it kept.
+        self.assertIn("static std::atomic<bool> g_PpBacking{ false };", self.plugin)
+        reset = strip_comments(function_body(self.plugin, "static void PpReset("))
+        self.assertIn("g_PpBacking.store(false)", reset)
+        self.assertIn("PpBackingRelease()", reset)
+        frame = function_body(self.plugin, "void FrameCallback(")
+        self.assertNotIn("PpBacking", frame)
+        self.assertNotIn("g_PpBacking", frame)
+        command = strip_comments(function_body(self.plugin, "static void PpCommand("))
+        self.assertIn('sub == "backing"', command)
+        usage = function_body(self.plugin, "static void PpUsage(")
+        for text in ("backing on|off", "backing dump", "backing idcheck"):
+            self.assertIn(text, usage)
+        self.assertNotIn("PpBacking", strip_research_blocks(self.plugin))
+
+    def test_idcheck_runs_a_positive_control_before_its_verdict(self):
+        body = self.backing_functions()["PpBackingIdCheck"]
+        control = body.index('"array_create"')
+        message = body.index("stash does not track live arrays")
+        self.assertLess(control, message)
+        for later in ('"nodeGrid"', "reference-identical", "copy"):
+            self.assertLess(message, body.index(later), later)
+        # The control and the scanner are proven both ways: the scan finds the
+        # sentinel through the stash, and does not find it in a separate array.
+        self.assertIn("scanner finds it in a separate array", body)
+        self.assertLess(body.index("scanner finds it in a separate array"), body.index('"nodeGrid"'))
+        # A failed control returns before anything touches the game's store.
+        failed = body[message:]
+        self.assertLess(failed.index("return;"), failed.index('"nodeGrid"'))
+        # `copy` needs a complete scan; an incomplete one is not observed.
+        self.assertIn("scan incomplete", body)
+        self.assertLess(body.index("scan incomplete"), body.rindex("copy"))
+
+    def test_idcheck_restores_the_cell_and_only_writes_an_empty_one(self):
+        body = self.backing_functions()["PpBackingIdCheck"]
+        # The control writes the sentinel into an array it built itself; the one
+        # write into the game's store is the one on `row`.
+        write = body.index('"array_set", { row, RValue((double)c), RValue(kPpBackingSentinel) }')
+        self.assertEqual(body.count('"array_set", { row,'), 2, "one sentinel write and one restore on the live row")
+        empty = self.backing_functions()["PpBackingIsEmptyCell"]
+        self.assertIn("VALUE_UNDEFINED", empty)
+        self.assertIn("== 0.0", empty)
+        self.assertLess(body.index("PpBackingIsEmptyCell("), write)
+        refusal = body.index("no empty cell")
+        self.assertLess(refusal, write)
+        self.assertIn("return;", body[refusal:write])
+        restore = body.index('"array_set", { row, RValue((double)c), original }')
+        self.assertLess(write, restore)
+        self.assertLess(restore, body.rindex("reference-identical"))
+        self.assertIn("restored", body[restore:])
+        # Refusals before any write: no capture, no node.
+        for refusal in ("never captured", "no ProspectGrid node"):
+            self.assertLess(body.index(refusal), write, refusal)
+        # The write is checked against a fresh read of the live store; a write
+        # that did not land cannot be read as a copy.
+        self.assertIn("did not land", body)
+
+    def test_research_doc_records_phase0b_and_the_ghidra_reading(self):
+        self.assertIn("phase0-status: pending", self.doc)
+        results = section(self.doc, "## Results")
+        for text in ("Phase 0b", "profile inventory", "Ghidra read (paraphrase)", "instrument misuse",
+                     "Craft_Grid_Large_spr"):
+            self.assertIn(text, results)
+        self.assertNotIn("does not happen", self.doc.lower())
+        header = [line for line in results.replace("\r\n", "\n").split("\n") if line.startswith("| Field |")][0]
+        self.assertIn("Phase 0b", header)
+        self.assertIn("Phase 0c", header)
+        row = [line for line in results.replace("\r\n", "\n").split("\n") if line.startswith("| R1 |")][0]
+        cells = [c.strip() for c in row.strip("|").split("|")]
+        self.assertEqual(len(cells), 5)
+        self.assertNotEqual(cells[3], "unknown")   # Phase 0b, filled
+        # Phase 0c's cells stay `unknown` until the live session fills them.
+        for field in ("R7", "R12", "backing structural", "backing idcheck", "load-time capture", "gate branch", "H"):
+            self.assertTrue(any(line.startswith("| " + field + " |") for line in results.replace("\r\n", "\n").split("\n")),
+                            field)
+        self.assertIn("## Phase 0c live procedure", self.doc)
+        live = collapse(section(self.doc, "## Phase 0c live procedure"))
+        for label in ("**C1.**", "**C2", "**C2b", "**C3", "**C4", "**C5", "**C6.**", "**C7", "**C8.**"):
+            self.assertIn(label, live)
+        instrument = collapse(section(self.doc, "## Instrument"))
+        for command in ("`prospectprobe backing on|off`", "`prospectprobe backing dump`", "`prospectprobe backing idcheck`"):
+            self.assertIn(command, instrument)
+        self.assertLess(instrument.index("`prospectprobe grid`"), instrument.index("`prospectprobe backing on|off`"))
+
+    def test_research_doc_states_the_decision_gate(self):
+        deciding = collapse(section(self.doc, "## Deciding the hypothesis"))
+        for text in ("save-data", "save-backed", "reference-identical", "stranded", "ValidateInventory",
+                     "prospect all", "auto-prospect", "UiAProspectButton", "H2''"):
+            self.assertIn(text, deciding)
+        gate = deciding[deciding.index("auto-prospect"):]
+        self.assertIn("claims to verify", gate)
+
+    # Tokens a decompiler prints and this repository never commits. Spelled in
+    # pieces so this file does not match its own guard.
+    DECOMPILER_TOKENS = ("FUN" + "_14", "undefined" + "8", "__fast" + "call", "gml_push" + "glb",
+                         "@@This" + "@@", "uStack" + "_", "param" + "_1")
+
+    def test_research_doc_carries_no_decompiler_tokens(self):
+        for token in self.DECOMPILER_TOKENS:
+            self.assertNotIn(token, self.doc)
+
+    def test_contract_tests_carry_no_decompiler_tokens(self):
+        this = Path(__file__).read_text(encoding="utf-8")
+        for token in self.DECOMPILER_TOKENS:
+            self.assertNotIn(token, this)
+
 
 if __name__ == "__main__":
     unittest.main()
