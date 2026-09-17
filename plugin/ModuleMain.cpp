@@ -9377,6 +9377,32 @@ static std::string g_PpOverrideOther;
 static bool g_PpOverrideWhenSet = false;
 static double g_PpOverrideWhen = 0.0;
 
+// Phase 0b (docs/prospect-window-research.md § Instrument). Phase 0a found the
+// ProspectGrid node created by a UiCreateNode call with no size in any
+// argument, and a bare nodeGridWidth write crashing the node's Draw within a
+// frame (R5b: the draw indexes nodeGrid rows that were sized at build time).
+// So `watch` reads the node's shape before and after every LOGGED call - the
+// call whose extent the shape changes in brackets the builder - and the two
+// new writes either land before the builder runs (`setat`) or are followed by
+// the game's own builder, invoked by name, in the same handler (`resize via`).
+static std::atomic<bool> g_PpWatch{ false };
+static bool g_PpInSnapshot = false;               // game thread only; a snapshot never nests
+static int g_PpGridObjIdx = -1;                    // asset_get_index caches, set on first success
+static int g_PpWindowObjIdx = -1;
+// Pending `setat` (one at a time, one-shot). Game thread only, like the override.
+static bool g_PpSetAtPending = false;
+static std::string g_PpSetAtLabel;
+static bool g_PpSetAtPost = false;
+static bool g_PpSetAtGrid = false;                 // false = the window, true = the ProspectGrid node
+static std::string g_PpSetAtVar;
+static double g_PpSetAtValue = 0.0;
+static std::string g_PpSetAtSelf;
+static std::string g_PpSetAtOther;
+static int g_PpSetAtArgIndex = -1;                 // -1 = no arg<i>= selector
+static std::string g_PpSetAtArgText;
+static volatile long g_PpSetAtRefusalsLogged = 0;
+static volatile long g_PpSetAtNotApplied = 0;
+
 // `self` may be a struct (constructors such as s_ItemGridInfo, struct
 // closures), not an instance. Asking object_get_name about a struct's missing
 // object_index would hand a builtin `undefined`, and a GML type error inside a
@@ -9432,9 +9458,171 @@ static std::string PpSelectorMismatch(CInstance* S, CInstance* O, const RValue& 
     return std::string();
 }
 
-static void PpObserve(const char* label, long n, volatile long* logged, volatile long* logOn,
-                      CInstance* S, CInstance* O, int argc, RValue** A)
+// Object indices through the SDK's names and the runtime's own lookup - never
+// a literal index, which a game patch moves.
+static int PpObjectIndexByName(HeroSiege::Objects::GameObject obj, int& cache)
 {
+    if (cache >= 0) return cache;
+    try {
+        const std::string name(HeroSiege::Objects::GetObjectName(obj));
+        const int idx = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(name) }).ToDouble();
+        if (idx >= 0 && g_Yytk->CallBuiltin("object_exists", { RValue((double)idx) }).ToBoolean()) cache = idx;
+    } catch (...) {}
+    return cache;
+}
+static int PpGridObjectIndex() { return PpObjectIndexByName(HeroSiege::Objects::GameObject::UI_Inventory_Grid_obj, g_PpGridObjIdx); }
+static int PpWindowObjectIndex() { return PpObjectIndexByName(HeroSiege::Objects::GameObject::UI_Prospect_obj, g_PpWindowObjIdx); }
+
+// Instance 0 of the live window, passed through with whatever kind
+// instance_find returns (VALUE_REF on this runner).
+static bool PpFindWindow(RValue& out)
+{
+    const int idx = PpWindowObjectIndex();
+    if (idx < 0) return false;
+    if ((int)g_Yytk->CallBuiltin("instance_number", { RValue((double)idx) }).ToDouble() <= 0) return false;
+    out = g_Yytk->CallBuiltin("instance_find", { RValue((double)idx), RValue(0.0) });
+    return out.m_Kind != VALUE_UNDEFINED;
+}
+
+// A number as the log prints it: 9, 92.8 - not real:9.000000.
+static std::string PpNum(const RValue& v)
+{
+    if (!PpIsNumber(v)) return Describe(v);
+    char b[64];
+    sprintf_s(b, "%.6g", v.ToDouble());
+    return b;
+}
+
+// One variable of the node for the snapshot line: `?` when it does not exist
+// (never created by reading it).
+static std::string PpSnapVar(const RValue& node, const char* var)
+{
+    if (!g_Yytk->CallBuiltin("variable_instance_exists", { node, RValue(var) }).ToBoolean()) return "?";
+    return PpNum(g_Yytk->CallBuiltin("variable_instance_get", { node, RValue(var) }));
+}
+
+// Hook-free read of the ProspectGrid node's shape. The node is identified by
+// what it is - the UI_Inventory_Grid_obj whose uiNodeCallstack names
+// "ProspectGrid" (Phase 0a R1) - not by nth, which shifts with the HUD's own
+// grid nodes. Builtins only; called from a detour only for a call that is being
+// logged while `watch` is on, and never from FrameCallback. `out` is
+// `@<id> w=.. h=.. rows=.. cols0=.. cell=WxH bbox=WxH scale=..` or `none`.
+static bool PpGridSnapshot(std::string& out, RValue* nodeOut = nullptr)
+{
+    if (g_PpInSnapshot) { out = "(nested - not read)"; return false; }
+    g_PpInSnapshot = true;
+    bool found = false;
+    out = "none";
+    try {
+        const int idx = PpGridObjectIndex();
+        const int total = idx < 0 ? 0 : (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)idx) }).ToDouble();
+        for (int nth = 0; nth < total && !found; ++nth) {
+            RValue node = g_Yytk->CallBuiltin("instance_find", { RValue((double)idx), RValue((double)nth) });
+            if (node.m_Kind == VALUE_UNDEFINED) continue;
+            if (!g_Yytk->CallBuiltin("variable_instance_exists", { node, RValue("uiNodeCallstack") }).ToBoolean()) continue;
+            RValue stack = g_Yytk->CallBuiltin("variable_instance_get", { node, RValue("uiNodeCallstack") });
+            // A string prints as string:"ProspectGrid"; an array is expanded
+            // element by element. The quotes keep a longer name from matching.
+            const std::string text = stack.m_Kind == VALUE_ARRAY ? CiExpandContainer(stack) : Describe(stack);
+            if (text.find("\"ProspectGrid\"") == std::string::npos) continue;
+            found = true;
+            if (nodeOut) *nodeOut = node;
+            std::string rows = "not-array", cols0 = "-";
+            if (g_Yytk->CallBuiltin("variable_instance_exists", { node, RValue("nodeGrid") }).ToBoolean()) {
+                RValue grid = g_Yytk->CallBuiltin("variable_instance_get", { node, RValue("nodeGrid") });
+                if (grid.m_Kind == VALUE_ARRAY) {
+                    const int n = (int)g_Yytk->CallBuiltin("array_length", { grid }).ToDouble();
+                    rows = std::to_string(n);
+                    if (n > 0) {
+                        RValue row0 = g_Yytk->CallBuiltin("array_get", { grid, RValue(0.0) });
+                        if (row0.m_Kind == VALUE_ARRAY)
+                            cols0 = std::to_string((int)g_Yytk->CallBuiltin("array_length", { row0 }).ToDouble());
+                    }
+                }
+            } else rows = "?";
+            out = "@" + PpNum(g_Yytk->CallBuiltin("variable_instance_get", { node, RValue("id") }))
+                + " w=" + PpSnapVar(node, "nodeGridWidth") + " h=" + PpSnapVar(node, "nodeGridHeight")
+                + " rows=" + rows + " cols0=" + cols0
+                + " cell=" + PpSnapVar(node, "nodeWidth") + "x" + PpSnapVar(node, "nodeHeight")
+                + " bbox=" + PpSnapVar(node, "navBboxWidth") + "x" + PpSnapVar(node, "navBboxHeight")
+                + " scale=" + PpSnapVar(node, "gridScale");
+        }
+    } catch (...) { out = "(read failed)"; found = false; }
+    g_PpInSnapshot = false;
+    return found;
+}
+
+static bool PpIsBuiltinVar(const std::string& var);   // defined with PpSet below
+
+// Why this call does not match the pending `setat`'s selectors, or "".
+static std::string PpSetAtMismatch(CInstance* S, CInstance* O, int argc, RValue** A)
+{
+    if (!g_PpSetAtSelf.empty() && Lower(PpObjectName(S)) != Lower(g_PpSetAtSelf))
+        return "self=" + g_PpSetAtSelf + " but self is " + PpDescribeSelf(S);
+    if (!g_PpSetAtOther.empty() && Lower(PpObjectName(O)) != Lower(g_PpSetAtOther))
+        return "other=" + g_PpSetAtOther + " but other is " + PpDescribeSelf(O);
+    if (g_PpSetAtArgIndex >= 0) {
+        const std::string sel = "arg" + std::to_string(g_PpSetAtArgIndex) + "=" + g_PpSetAtArgText;
+        if (!A || g_PpSetAtArgIndex >= argc || !A[g_PpSetAtArgIndex]) return sel + " but argc=" + std::to_string(argc);
+        const std::string d = Describe(*A[g_PpSetAtArgIndex]);
+        if (Lower(d).find(Lower(g_PpSetAtArgText)) == std::string::npos) return sel + " but a" + std::to_string(g_PpSetAtArgIndex) + " is " + d;
+    }
+    return std::string();
+}
+
+static void PpSetAtRefused(const char* label, long n, const std::string& why)
+{
+    InterlockedIncrement(&g_PpSetAtNotApplied);
+    if (InterlockedIncrement(&g_PpSetAtRefusalsLogged) <= kPpRefusalLogBudget)
+        Out(std::string("prospectprobe setat ") + label + " #" + std::to_string(n) + ": not applied (" + why + ")");
+}
+
+// Applies the pending `setat` if this call is its row, its phase and matches
+// every selector: same checks as `set` (existing variable, finite number, read
+// back), one-shot. A refusal is counted, logged within a budget, and leaves
+// the write pending for the next call.
+static void PpSetAtTry(const char* label, long n, bool post, CInstance* S, CInstance* O, int argc, RValue** A)
+{
+    if (!g_PpSetAtPending || g_PpSetAtPost != post || g_PpSetAtLabel != label) return;
+    try {
+        const std::string mismatch = PpSetAtMismatch(S, O, argc, A);
+        if (!mismatch.empty()) { PpSetAtRefused(label, n, "selector: " + mismatch); return; }
+        const char* targetName = g_PpSetAtGrid ? "grid" : "window";
+        RValue inst;
+        std::string ignored;
+        const bool resolved = g_PpSetAtGrid ? PpGridSnapshot(ignored, &inst) : PpFindWindow(inst);
+        if (!resolved) { PpSetAtRefused(label, n, std::string("no ") + targetName + " instance"); return; }
+        const RValue var(g_PpSetAtVar);
+        const bool exists = g_Yytk->CallBuiltin("variable_instance_exists", { inst, var }).ToBoolean();
+        if (!exists && !PpIsBuiltinVar(g_PpSetAtVar)) { PpSetAtRefused(label, n, "no such variable " + g_PpSetAtVar + " on the " + targetName); return; }
+        RValue was = g_Yytk->CallBuiltin("variable_instance_get", { inst, var });
+        if (!PpIsNumber(was) || !std::isfinite(was.ToDouble())) {
+            PpSetAtRefused(label, n, g_PpSetAtVar + " is " + Describe(was) + ", not a number");
+            return;
+        }
+        g_PpSetAtPending = false;   // one-shot: consumed before the write, so a fault cannot repeat it
+        g_Yytk->CallBuiltin("variable_instance_set", { inst, var, RValue(g_PpSetAtValue) });
+        RValue now = g_Yytk->CallBuiltin("variable_instance_get", { inst, var });
+        const bool ok = PpIsNumber(now) && std::fabs(now.ToDouble() - g_PpSetAtValue) < 1e-9;
+        std::string line = std::string("prospectprobe setat ") + label + " #" + std::to_string(n) + " " + (post ? "post" : "pre")
+            + " " + targetName + "." + g_PpSetAtVar + ": was=" + PpNum(was) + " now=" + PpNum(now)
+            + " (readback " + (ok ? "ok" : "MISMATCH") + ")";
+        line += " self=" + PpDescribeSelf(S) + " other=" + PpDescribeSelf(O) + " argc=" + std::to_string(argc) + AggroArgs(argc, A);
+        Out(line);
+        if (post) {
+            std::string snap;
+            PpGridSnapshot(snap);
+            Out(std::string("prospectprobe setat ") + label + " #" + std::to_string(n) + " grid=" + snap);
+        }
+    } catch (...) { Out(std::string("prospectprobe setat ") + label + " #" + std::to_string(n) + ": EXCEPTION; the write may or may not have happened"); }
+}
+
+// Returns whether this call's log line was emitted; `gridPre` carries the
+// pre-call snapshot to PpAfter when `watch` is on (empty otherwise).
+static bool PpObserve(const char* label, long n, volatile long* logged, volatile long* logOn,
+                      CInstance* S, CInstance* O, int argc, RValue** A, std::string& gridPre)
+{
+    if (g_PpSetAtPending) PpSetAtTry(label, n, false, S, O, argc, A);
     if (g_PpOverrideLeft > 0 && g_PpOverrideLabel == label) {
         const int i = g_PpOverrideArg;
         const bool numeric = A && i >= 0 && i < argc && A[i] && PpIsNumber(*A[i]);
@@ -9468,12 +9656,35 @@ static void PpObserve(const char* label, long n, volatile long* logged, volatile
         }
     }
     const long budget = g_PpLogBudget;
-    if (!g_PpArmed.load() || !*logOn || *logged >= budget) return;
-    if (InterlockedIncrement(logged) > budget) return;
+    if (!g_PpArmed.load() || !*logOn || *logged >= budget) return false;
+    if (InterlockedIncrement(logged) > budget) return false;
     try {
-        Out(std::string("prospectprobe ") + label + " #" + std::to_string(n)
+        std::string line = std::string("prospectprobe ") + label + " #" + std::to_string(n)
             + " self=" + PpDescribeSelf(S) + " other=" + PpDescribeSelf(O)
-            + " argc=" + std::to_string(argc) + AggroArgs(argc, A));
+            + " argc=" + std::to_string(argc) + AggroArgs(argc, A);
+        // Budgeted exactly like the line it rides on: only a logged call reads
+        // the grid, and only while `watch` is on.
+        if (g_PpWatch.load()) {
+            PpGridSnapshot(gridPre);
+            line += " grid-pre=" + gridPre;
+        }
+        Out(line);
+    } catch (...) {}
+    return true;
+}
+
+// After the trampoline: a pending `setat ... post`, then - for a call that was
+// logged with `watch` on - the post-call snapshot and whether it changed.
+static void PpAfter(const char* label, long n, bool logged, const std::string& gridPre,
+                    CInstance* S, CInstance* O, int argc, RValue** A)
+{
+    if (g_PpSetAtPending) PpSetAtTry(label, n, true, S, O, argc, A);
+    if (!logged || gridPre.empty() || !g_PpWatch.load()) return;
+    try {
+        std::string post;
+        PpGridSnapshot(post);
+        Out(std::string("prospectprobe ") + label + " #" + std::to_string(n) + " grid-post=" + post
+            + (post == gridPre ? " same" : " CHANGED"));
     } catch (...) {}
 }
 
@@ -9484,8 +9695,11 @@ static void PpObserve(const char* label, long n, volatile long* logged, volatile
     static volatile long g_PpLogOn_##SAFE = 1; \
     static RValue& PpDetour_##SAFE(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) { \
         const long n = InterlockedIncrement(&g_PpCalls_##SAFE); \
-        PpObserve(LABEL, n, &g_PpLogged_##SAFE, &g_PpLogOn_##SAFE, S, O, argc, A); \
-        return g_PpOrig_##SAFE ? g_PpOrig_##SAFE(S, O, R, argc, A) : R; \
+        std::string gridPre; \
+        const bool logged = PpObserve(LABEL, n, &g_PpLogged_##SAFE, &g_PpLogOn_##SAFE, S, O, argc, A, gridPre); \
+        RValue& r = g_PpOrig_##SAFE ? g_PpOrig_##SAFE(S, O, R, argc, A) : R; \
+        PpAfter(LABEL, n, logged, gridPre, S, O, argc, A); \
+        return r; \
     }
 
 // One row per candidate in docs/prospect-window-research.md § Static search.
@@ -9500,14 +9714,66 @@ static void PpObserve(const char* label, long n, volatile long* logged, volatile
     X(Struct122, "___struct___122@___struct___121", gml_Script____struct___122____struct___121_UiAProspectButton_DefineProspectCombos) \
     X(Struct123, "___struct___123@UiAProspectButton", gml_Script____struct___123_UiAProspectButton_DefineProspectCombos) \
     X(Struct124, "___struct___124@___struct___123", gml_Script____struct___124____struct___123_UiAProspectButton_DefineProspectCombos) \
-    X(ProspectCreate1038, "UI_Prospect_obj anon@1038", gml_Script_anon_1038_gml_Object_UI_Prospect_obj_Create_0) \
-    X(ProspectCreate2729, "UI_Prospect_obj anon@2729", gml_Script_anon_2729_gml_Object_UI_Prospect_obj_Create_0) \
-    X(ProspectCreate3551, "UI_Prospect_obj anon@3551", gml_Script_anon_3551_gml_Object_UI_Prospect_obj_Create_0) \
-    X(CubeCreate320, "Prospect_Cube_obj anon@320", gml_Script_anon_320_gml_Object_Prospect_Cube_obj_Create_0) \
-    X(JournalButton324, "UI_Button_Journal_Prospect_obj anon@324", gml_Script_anon_324_gml_Object_UI_Button_Journal_Prospect_obj_Create_0) \
-    X(JournalTab1003, "UI_Journal_Prospecting_obj anon@1003", gml_Script_anon_1003_gml_Object_UI_Journal_Prospecting_obj_Create_0) \
-    X(NodeParent1508, "UI_Node_Parent_obj anon@1508", gml_Script_anon_1508_gml_Object_UI_Node_Parent_obj_Create_0) \
-    X(NodeParent1909, "UI_Node_Parent_obj anon@1909", gml_Script_anon_1909_gml_Object_UI_Node_Parent_obj_Create_0) \
+    /* Object Create-event closures. Derived from the regenerated SDK (hub     */ \
+    /* 4539e68): every constant whose value names one of these ten objects'   */ \
+    /* Create_0, which test_target_table_covers_every_sdk_closure_of_the_ui_  */ \
+    /* objects enforces. The numbers move with every game patch, so a stale   */ \
+    /* row fails the compile, never a live session.                           */ \
+    /* UI_Prospect_obj (the window) */ \
+    X(Prospect1065, "UI_Prospect_obj anon@1065", gml_Script_anon_1065_gml_Object_UI_Prospect_obj_Create_0) \
+    X(Prospect2806, "UI_Prospect_obj anon@2806", gml_Script_anon_2806_gml_Object_UI_Prospect_obj_Create_0) \
+    X(Prospect3657, "UI_Prospect_obj anon@3657", gml_Script_anon_3657_gml_Object_UI_Prospect_obj_Create_0) \
+    /* UI_Inventory_Grid_obj (the ProspectGrid node's object) */ \
+    X(InvGrid2143, "UI_Inventory_Grid_obj anon@2143", gml_Script_anon_2143_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGrid2971, "UI_Inventory_Grid_obj anon@2971", gml_Script_anon_2971_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGrid4064, "UI_Inventory_Grid_obj anon@4064", gml_Script_anon_4064_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS517, "UI_Inventory_Grid_obj ___struct___517@anon@8881", gml_Script____struct___517_anon_8881_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS519, "UI_Inventory_Grid_obj ___struct___519@anon@8881", gml_Script____struct___519_anon_8881_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGrid8881, "UI_Inventory_Grid_obj anon@8881", gml_Script_anon_8881_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS522, "UI_Inventory_Grid_obj ___struct___522@anon@15345", gml_Script____struct___522_anon_15345_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS529, "UI_Inventory_Grid_obj ___struct___529@anon@15345", gml_Script____struct___529_anon_15345_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS532, "UI_Inventory_Grid_obj ___struct___532@anon@15345", gml_Script____struct___532_anon_15345_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS536, "UI_Inventory_Grid_obj ___struct___536@anon@15345", gml_Script____struct___536_anon_15345_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS538, "UI_Inventory_Grid_obj ___struct___538@anon@15345", gml_Script____struct___538_anon_15345_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS541, "UI_Inventory_Grid_obj ___struct___541@anon@15345", gml_Script____struct___541_anon_15345_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGrid15345, "UI_Inventory_Grid_obj anon@15345", gml_Script_anon_15345_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGrid34555, "UI_Inventory_Grid_obj anon@34555", gml_Script_anon_34555_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGrid36159, "UI_Inventory_Grid_obj anon@36159", gml_Script_anon_36159_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    /* UI_Inventory_Parent_obj (the window's parent) */ \
+    X(InvParent1621, "UI_Inventory_Parent_obj anon@1621", gml_Script_anon_1621_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent4028, "UI_Inventory_Parent_obj anon@4028", gml_Script_anon_4028_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent6164, "UI_Inventory_Parent_obj anon@6164", gml_Script_anon_6164_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent6272, "UI_Inventory_Parent_obj anon@6272", gml_Script_anon_6272_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent6754, "UI_Inventory_Parent_obj anon@6754", gml_Script_anon_6754_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent7597, "UI_Inventory_Parent_obj anon@7597", gml_Script_anon_7597_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent8615, "UI_Inventory_Parent_obj anon@8615", gml_Script_anon_8615_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent11250, "UI_Inventory_Parent_obj anon@11250", gml_Script_anon_11250_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent19615, "UI_Inventory_Parent_obj anon@19615", gml_Script_anon_19615_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent22055, "UI_Inventory_Parent_obj anon@22055", gml_Script_anon_22055_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    /* UI_Node_Parent_obj (every node's parent) */ \
+    X(NodeParent1577, "UI_Node_Parent_obj anon@1577", gml_Script_anon_1577_gml_Object_UI_Node_Parent_obj_Create_0) \
+    X(NodeParent1997, "UI_Node_Parent_obj anon@1997", gml_Script_anon_1997_gml_Object_UI_Node_Parent_obj_Create_0) \
+    /* UI_Grid_obj (sibling grid node) */ \
+    X(UiGrid933, "UI_Grid_obj anon@933", gml_Script_anon_933_gml_Object_UI_Grid_obj_Create_0) \
+    X(UiGrid1307, "UI_Grid_obj anon@1307", gml_Script_anon_1307_gml_Object_UI_Grid_obj_Create_0) \
+    X(UiGrid1577, "UI_Grid_obj anon@1577", gml_Script_anon_1577_gml_Object_UI_Grid_obj_Create_0) \
+    X(UiGrid2086, "UI_Grid_obj anon@2086", gml_Script_anon_2086_gml_Object_UI_Grid_obj_Create_0) \
+    X(UiGrid2244, "UI_Grid_obj anon@2244", gml_Script_anon_2244_gml_Object_UI_Grid_obj_Create_0) \
+    X(UiGrid2416, "UI_Grid_obj anon@2416", gml_Script_anon_2416_gml_Object_UI_Grid_obj_Create_0) \
+    /* UI_Container_obj (sibling container node) */ \
+    X(UiContainer197, "UI_Container_obj anon@197", gml_Script_anon_197_gml_Object_UI_Container_obj_Create_0) \
+    /* UI_Parent_obj (the window's grandparent) */ \
+    X(UiParent255, "UI_Parent_obj anon@255", gml_Script_anon_255_gml_Object_UI_Parent_obj_Create_0) \
+    X(UiParent874, "UI_Parent_obj anon@874", gml_Script_anon_874_gml_Object_UI_Parent_obj_Create_0) \
+    X(UiParent2234, "UI_Parent_obj anon@2234", gml_Script_anon_2234_gml_Object_UI_Parent_obj_Create_0) \
+    X(UiParent8601, "UI_Parent_obj anon@8601", gml_Script_anon_8601_gml_Object_UI_Parent_obj_Create_0) \
+    X(UiParent10129, "UI_Parent_obj anon@10129", gml_Script_anon_10129_gml_Object_UI_Parent_obj_Create_0) \
+    /* Prospect_Cube_obj (the world object) */ \
+    X(Cube337, "Prospect_Cube_obj anon@337", gml_Script_anon_337_gml_Object_Prospect_Cube_obj_Create_0) \
+    /* UI_Button_Journal_Prospect_obj (journal row) */ \
+    X(JournalButton342, "UI_Button_Journal_Prospect_obj anon@342", gml_Script_anon_342_gml_Object_UI_Button_Journal_Prospect_obj_Create_0) \
+    /* UI_Journal_Prospecting_obj (journal tab) */ \
+    X(JournalTab1039, "UI_Journal_Prospecting_obj anon@1039", gml_Script_anon_1039_gml_Object_UI_Journal_Prospecting_obj_Create_0) \
     /* UI framework (UiFuncs) */ \
     X(UiCreate, "UiCreate", gml_Script_UiCreate) \
     X(UiCreateNode, "UiCreateNode", gml_Script_UiCreateNode) \
@@ -9525,6 +9791,7 @@ static void PpObserve(const char* label, long n, volatile long* logged, volatile
     X(Struct408, "___struct___408@UiCreate", gml_Script____struct___408_UiCreate_UiFuncs) \
     X(Struct409, "___struct___409@UiCreateNode", gml_Script____struct___409_UiCreateNode_UiFuncs) \
     X(Struct410, "___struct___410@UiCreateContainer", gml_Script____struct___410_UiCreateContainer_UiFuncs) \
+    X(Struct411, "___struct___411@UiContainerChange", gml_Script____struct___411_UiContainerChange_UiFuncs) \
     /* inventory-grid family */ \
     X(InventoryResetTabs, "InventoryResetTabs", gml_Script_InventoryResetTabs) \
     X(InventoryInitGrids, "InventoryInitGrids", gml_Script_InventoryInitGrids) \
@@ -9694,7 +9961,11 @@ static void PpShow()
         + " rows detoured, " + (g_PpArmed.load() ? "armed" : "not armed")
         + (g_PpOverrideLeft > 0 ? ", override pending on " + g_PpOverrideLabel + " a" + std::to_string(g_PpOverrideArg)
                                   + " (" + std::to_string(g_PpOverrideLeft) + " left, notApplied="
-                                  + std::to_string(g_PpOverrideNotApplied) + ")" : std::string()));
+                                  + std::to_string(g_PpOverrideNotApplied) + ")" : std::string())
+        + (g_PpSetAtPending ? ", setat pending on " + g_PpSetAtLabel + " " + (g_PpSetAtPost ? "post " : "pre ")
+                              + (g_PpSetAtGrid ? "grid." : "window.") + g_PpSetAtVar + "=" + PpNum(RValue(g_PpSetAtValue))
+                              + " (notApplied=" + std::to_string(g_PpSetAtNotApplied) + ")" : std::string())
+        + (g_PpWatch.load() ? ", watch on" : ", watch off"));
     long control = -1;
     for (PpTarget& t : g_PpTargets) {
         const long calls = *t.calls;
@@ -9729,7 +10000,11 @@ static void PpReset()
 {
     PpZeroCounters();
     g_PpArmed.store(false);
-    Out("prospectprobe reset: counters zeroed, disarmed.");
+    g_PpWatch.store(false);
+    g_PpSetAtPending = false;
+    InterlockedExchange(&g_PpSetAtNotApplied, 0);
+    InterlockedExchange(&g_PpSetAtRefusalsLogged, 0);
+    Out("prospectprobe reset: counters zeroed, disarmed, watch off, pending setat cleared.");
 }
 
 // Built-in instance variables always exist and cannot be created by a write,
@@ -9818,14 +10093,275 @@ static void PpOverrideClear()
     Out("prospectprobe override: cleared.");
 }
 
+// ---- Phase 0b commands: grid, call, resize ... via, setat --------------------
+
+// Every variable of one instance that the live procedure reads: for the window,
+// the numeric ones equal to 9 or 6 (R2-window: the vanilla 9x6 size); for both,
+// every m_* method value with the closure it resolves to. Read-only.
+static void PpListVars(const std::string& tag, const RValue& inst, bool sizeValues)
+{
+    int sized = 0, methods = 0;
+    RValue names = g_Yytk->CallBuiltin("variable_instance_get_names", { inst });
+    const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+    for (int i = 0; i < n; ++i) {
+        RValue nm = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) });
+        const std::string name = nm.ToString();
+        RValue v = g_Yytk->CallBuiltin("variable_instance_get", { inst, nm });
+        if (sizeValues && PpIsNumber(v) && (v.ToDouble() == 9.0 || v.ToDouble() == 6.0)) {
+            Out("  " + tag + " equals " + PpNum(v) + ": " + name);
+            ++sized;
+        }
+        if (name.rfind("m_", 0) == 0) {
+            const std::string resolved = CiTryResolveMethod(v);
+            Out("  " + tag + " method: " + name + " = " + Describe(v) + (resolved.empty() ? " (unresolvable)" : resolved));
+            ++methods;
+        }
+    }
+    Out("prospectprobe grid: " + tag + " has " + std::to_string(n) + " variables"
+        + (sizeValues ? ", " + std::to_string(sized) + " equal to 9 or 6" : std::string())
+        + ", " + std::to_string(methods) + " m_* variables");
+}
+
+static void PpGridCommand()
+{
+    try {
+        std::string snap;
+        RValue node;
+        const bool haveNode = PpGridSnapshot(snap, &node);
+        Out("prospectprobe grid: grid=" + snap);
+        RValue window;
+        if (!PpFindWindow(window)) Out("prospectprobe grid: no live UI_Prospect_obj instance (the window is closed)");
+        else PpListVars("window", window, true);
+        if (haveNode) PpListVars("grid", node, false);
+        Out("  Control (C-grid): `citrace dumpobj UI_Inventory_Grid_obj <nth>` of the ProspectGrid node must print the same nodeGridWidth/nodeGridHeight.");
+    } catch (...) { Out("prospectprobe grid: EXCEPTION while reading"); }
+}
+
+// The live instance a `call`/`resize via` acts on and the method value it
+// invokes. Refuses - nothing called - on no instance, a missing variable, or a
+// value that is not a method value. The value is only ever handed to the
+// runtime's own script_execute by name: no CScriptRef read, no address.
+static bool PpMethodTarget(const std::string& target, const std::string& method, RValue& inst, RValue& methodValue,
+                           std::string& resolution, std::string& why)
+{
+    std::string ignored;
+    if (target == "window") { if (!PpFindWindow(inst)) { why = "no live UI_Prospect_obj instance"; return false; } }
+    else if (target == "grid") { if (!PpGridSnapshot(ignored, &inst)) { why = "no ProspectGrid node (" + ignored + ")"; return false; } }
+    else { why = "target must be window or grid"; return false; }
+    if (!g_Yytk->CallBuiltin("variable_instance_exists", { inst, RValue(method) }).ToBoolean()) {
+        why = "no such variable " + method + " on the " + target;
+        return false;
+    }
+    methodValue = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(method) });
+    if (methodValue.m_Kind != VALUE_OBJECT) {
+        why = method + " is " + Describe(methodValue) + ", not a method value";
+        return false;
+    }
+    resolution = CiTryResolveMethod(methodValue);
+    if (resolution.empty()) resolution = " unresolvable";
+    return true;
+}
+
+static void PpCall(const std::string& target, const std::string& method, const std::vector<double>& args)
+{
+    const std::string tag = "prospectprobe call " + target + " " + method;
+    try {
+        RValue inst, methodValue;
+        std::string resolution, why;
+        if (!PpMethodTarget(target, method, inst, methodValue, resolution, why)) { Out(tag + ": refused: " + why + "; no call made"); return; }
+        CInstance* self = HhResolveInstance(inst);
+        if (!self) { Out(tag + ": refused: the " + target + " instance did not resolve; no call made"); return; }
+        Out(tag + ":" + resolution);
+        std::string before;
+        PpGridSnapshot(before);
+        Out(tag + ": grid before=" + before);
+        std::vector<RValue> callArgs;
+        callArgs.push_back(methodValue);
+        for (double a : args) callArgs.push_back(RValue(a));
+        RValue res;
+        AurieStatus st = AURIE_EXTERNAL_ERROR;
+        bool threw = false;
+        try { st = g_Yytk->CallBuiltinEx(res, "script_execute", self, self, callArgs); }
+        catch (...) { threw = true; }
+        Out(tag + ": st=" + std::to_string((int)st) + (threw ? " (threw)" : "") + " res=" + Describe(res));
+        std::string after;
+        PpGridSnapshot(after);
+        Out(tag + ": grid after=" + after + (after == before ? " same" : " CHANGED"));
+    } catch (...) { Out(tag + ": EXCEPTION"); }
+}
+
+// `resize <cols> <rows> via [window:]<m_Method>`: write the ProspectGrid node's
+// nodeGridWidth/nodeGridHeight, invoke the game's own method by name, and keep
+// the write only if nodeGrid followed - all in one handler, because a Draw
+// between a bare size write and a rebuild is the R5b crash. Refusals come
+// before any write; a builder that did not follow gets both values restored
+// before this returns.
+static void PpResize(int cols, int rows, const std::string& via)
+{
+    const std::string tag = "prospectprobe resize " + std::to_string(cols) + " " + std::to_string(rows);
+    if (via.empty()) {
+        Out(tag + ": refused: `via <m_Method>` is required - a bare nodeGridWidth write crashed the node's Draw_64 within one frame in Phase 0a (R5b: nodeGrid is not resized by the write). No write made.");
+        return;
+    }
+    if (cols < 1 || rows < 1 || cols > 64 || rows > 64) { Out(tag + ": refused: cols and rows must be 1..64; no write made"); return; }
+    const bool onWindow = via.rfind("window:", 0) == 0;
+    const std::string target = onWindow ? "window" : "grid";
+    const std::string method = onWindow ? via.substr(7) : via;
+    try {
+        RValue node;
+        std::string before;
+        if (!PpGridSnapshot(before, &node)) { Out(tag + ": refused: no ProspectGrid node (" + before + "); open the window first; no write made"); return; }
+        RValue inst, methodValue;
+        std::string resolution, why;
+        if (!PpMethodTarget(target, method, inst, methodValue, resolution, why)) { Out(tag + ": refused: " + why + "; no write made"); return; }
+        CInstance* self = HhResolveInstance(inst);
+        if (!self) { Out(tag + ": refused: the " + target + " instance did not resolve; no write made"); return; }
+        const RValue wName("nodeGridWidth"), hName("nodeGridHeight");
+        if (!g_Yytk->CallBuiltin("variable_instance_exists", { node, wName }).ToBoolean()
+            || !g_Yytk->CallBuiltin("variable_instance_exists", { node, hName }).ToBoolean()) {
+            Out(tag + ": refused: the node has no nodeGridWidth/nodeGridHeight; no write made");
+            return;
+        }
+        RValue wasW = g_Yytk->CallBuiltin("variable_instance_get", { node, wName });
+        RValue wasH = g_Yytk->CallBuiltin("variable_instance_get", { node, hName });
+        if (!PpIsNumber(wasW) || !PpIsNumber(wasH) || !std::isfinite(wasW.ToDouble()) || !std::isfinite(wasH.ToDouble())) {
+            Out(tag + ": refused: nodeGridWidth is " + Describe(wasW) + ", nodeGridHeight is " + Describe(wasH) + " - not both numbers; no write made");
+            return;
+        }
+        Out(tag + " via " + via + ":" + resolution + "; grid before=" + before);
+
+        g_Yytk->CallBuiltin("variable_instance_set", { node, wName, RValue((double)cols) });
+        g_Yytk->CallBuiltin("variable_instance_set", { node, hName, RValue((double)rows) });
+        RValue res;
+        AurieStatus st = AURIE_EXTERNAL_ERROR;
+        bool threw = false;
+        try { st = g_Yytk->CallBuiltinEx(res, "script_execute", self, self, { methodValue }); }
+        catch (...) { threw = true; }
+        const bool called = !threw && AurieSuccess(st);
+
+        // Did the store follow? nodeGrid is rows x cols (Phase 0a R2).
+        int rowsNow = -1, colsNow = -1;
+        const bool nodeAlive = g_Yytk->CallBuiltin("instance_exists", { node }).ToBoolean();
+        if (nodeAlive && g_Yytk->CallBuiltin("variable_instance_exists", { node, RValue("nodeGrid") }).ToBoolean()) {
+            RValue grid = g_Yytk->CallBuiltin("variable_instance_get", { node, RValue("nodeGrid") });
+            if (grid.m_Kind == VALUE_ARRAY) {
+                rowsNow = (int)g_Yytk->CallBuiltin("array_length", { grid }).ToDouble();
+                if (rowsNow > 0) {
+                    RValue row0 = g_Yytk->CallBuiltin("array_get", { grid, RValue(0.0) });
+                    if (row0.m_Kind == VALUE_ARRAY) colsNow = (int)g_Yytk->CallBuiltin("array_length", { row0 }).ToDouble();
+                }
+            }
+        }
+        const std::string shape = "rows=" + std::to_string(rowsNow) + " cols0=" + std::to_string(colsNow);
+        if (!nodeAlive) {
+            Out(tag + ": the call st=" + std::to_string((int)st) + " destroyed the ProspectGrid node; nothing to restore on it");
+        } else if (!called || rowsNow != rows || colsNow != cols) {
+            g_Yytk->CallBuiltin("variable_instance_set", { node, wName, wasW });
+            g_Yytk->CallBuiltin("variable_instance_set", { node, hName, wasH });
+            Out(tag + ": reverted (" + (called ? "builder did not resize nodeGrid: " + shape
+                                              : "call failed st=" + std::to_string((int)st) + (threw ? " threw" : "") + "; " + shape)
+                + ") - nodeGridWidth/nodeGridHeight restored to " + PpNum(wasW) + "x" + PpNum(wasH)
+                + ". This is `not observed for " + via + "`, not evidence the builder ignores them.");
+        } else {
+            Out(tag + ": kept (nodeGrid now " + shape + ") st=" + std::to_string((int)st) + " res=" + Describe(res));
+        }
+        std::string after;
+        PpGridSnapshot(after);
+        Out(tag + ": grid after=" + after);
+    } catch (...) { Out(tag + ": EXCEPTION; read the node back with `prospectprobe grid` before anything else"); }
+}
+
+static void PpSetAt(const std::string& label, bool post, bool grid, const std::string& var, double value,
+                    const std::string& self, const std::string& other, int argIndex, const std::string& argText)
+{
+    PpTarget* row = PpFindRow(label);
+    if (!row) { Out("prospectprobe setat: no row labelled '" + label + "' (labels are listed by `prospectprobe show`)"); return; }
+    if (!row->installed.load()) { Out("prospectprobe setat: " + label + " is not detoured - hook it first"); return; }
+    if (!std::isfinite(value)) { Out("prospectprobe setat: the value must be a finite number; nothing set"); return; }
+    g_PpSetAtPending = false;   // fields change below; nothing applies meanwhile
+    g_PpSetAtLabel = row->label;
+    g_PpSetAtPost = post;
+    g_PpSetAtGrid = grid;
+    g_PpSetAtVar = var;
+    g_PpSetAtValue = value;
+    g_PpSetAtSelf = self;
+    g_PpSetAtOther = other;
+    g_PpSetAtArgIndex = argIndex;
+    g_PpSetAtArgText = argText;
+    InterlockedExchange(&g_PpSetAtRefusalsLogged, 0);
+    InterlockedExchange(&g_PpSetAtNotApplied, 0);
+    g_PpSetAtPending = true;
+    std::string only;
+    if (!self.empty()) only += " self=" + self;
+    if (!other.empty()) only += " other=" + other;
+    if (argIndex >= 0) only += " arg" + std::to_string(argIndex) + "=" + argText;
+    Out("prospectprobe setat: on the next call of " + label + (only.empty() ? std::string(" (any caller)") : " matching" + only)
+        + ", " + (post ? "after" : "before") + " the game's function runs, write " + (grid ? "grid." : "window.") + var
+        + "=" + PpNum(RValue(value)) + " (existing numeric variable only, read back; one-shot). Reopen the window.");
+}
+
+// `setat <label> pre|post window|grid <var> <number> [self=<Obj>] [other=<Obj>] [arg<i>=<text>]`.
+// Labels contain spaces, so selectors come off the end first, then the four
+// fixed tokens, and everything left is the label.
+static void PpSetAtCommand(const std::vector<std::string>& tokIn)
+{
+    if (tokIn.size() == 2 && Lower(tokIn[1]) == "clear") {
+        g_PpSetAtPending = false;
+        Out("prospectprobe setat: cleared.");
+        return;
+    }
+    const char* usage = "prospectprobe setat: usage -> setat <label> pre|post window|grid <var> <number> [self=<Obj>] [other=<Obj>] [arg<i>=<text>] | setat clear";
+    std::vector<std::string> tok = tokIn;
+    std::string self, other, argText;
+    int argIndex = -1;
+    while (tok.size() > 1) {
+        const std::string& last = tok.back();
+        const std::string ll = Lower(last);
+        if (ll.rfind("self=", 0) == 0) self = last.substr(5);
+        else if (ll.rfind("other=", 0) == 0) other = last.substr(6);
+        else if (ll.rfind("when=", 0) == 0) {
+            Out("prospectprobe setat: when= is not a setat selector (use self=, other= or arg<i>=<text>); nothing set");
+            return;
+        } else if (ll.rfind("arg", 0) == 0 && ll.find('=') != std::string::npos) {
+            const size_t eq = ll.find('=');
+            const std::string digits = ll.substr(3, eq - 3);
+            if (digits.empty() || digits.find_first_not_of("0123456789") != std::string::npos || eq + 1 >= last.size()) {
+                Out("prospectprobe setat: arg<i>=<text> needs a whole-number index and some text; nothing set");
+                return;
+            }
+            argIndex = std::stoi(digits);
+            argText = last.substr(eq + 1);
+        } else break;
+        tok.pop_back();
+    }
+    const size_t n = tok.size();
+    if (n < 6) { Out(usage); return; }
+    double value = 0.0;
+    try { size_t k = 0; value = std::stod(tok[n - 1], &k); if (k != tok[n - 1].size()) throw 0; }
+    catch (...) { Out("prospectprobe setat: the value must be a number; nothing set"); return; }
+    const std::string var = tok[n - 2];
+    const std::string target = Lower(tok[n - 3]);
+    const std::string phase = Lower(tok[n - 4]);
+    if ((target != "window" && target != "grid") || (phase != "pre" && phase != "post")) { Out(usage); return; }
+    std::string label;
+    for (size_t i = 1; i < n - 4; ++i) label += (i > 1 ? " " : "") + tok[i];
+    if (label.size() >= 2 && label.front() == '"' && label.back() == '"') label = label.substr(1, label.size() - 2);
+    PpSetAt(label, phase == "post", target == "grid", var, value, self, other, argIndex, argText);
+}
+
 static void PpUsage()
 {
     Out("prospectprobe (research build only) - prospect window Phase 0, see docs/prospect-window-research.md");
+    Out("  grid                                   hook-free: ProspectGrid node shape, window vars equal to 9/6, m_* methods");
     Out("  hook [substr ...]                      native-detour every candidate row (or rows whose label contains a substring)");
     Out("  arm [budget=N] [substr ...]            log the next N (default 6) calls of each selected row");
-    Out("  show | reset                           counts, logged/UNLOGGED per row + control / zero and disarm");
+    Out("  watch on|off                           grid snapshot before/after every logged call (grid-pre= / grid-post=)");
+    Out("  show | reset                           counts, logged/UNLOGGED per row + control / zero, disarm, watch off, clear setat");
     Out("  set <Obj> <nth> <var> <number>         write one existing numeric variable of one instance, read back");
     Out("  override <label> <argIndex> <number> [calls=1] [self=<Obj>] [other=<Obj>] [when=<number>] | override clear");
+    Out("  call window|grid <m_Method> [number ...]   invoke a method value by name (script_execute), snapshot before/after");
+    Out("  resize <cols> <rows> via [window:]<m_Method>   write the node's size + run that builder in one step; reverts if nodeGrid did not follow");
+    Out("  setat <label> pre|post window|grid <var> <number> [self=<Obj>] [other=<Obj>] [arg<i>=<text>] | setat clear");
 }
 
 // Labels contain spaces ("UI_Prospect_obj anon@1038"), so `override` takes the
@@ -9877,6 +10413,29 @@ static void PpCommand(const std::string& rest)
         catch (...) { Out("prospectprobe set: nth must be an integer and the value a number; no write made"); }
     }
     else if (sub == "override") PpOverrideCommand(tok);
+    else if (sub == "grid") PpGridCommand();
+    else if (sub == "watch" && tok.size() == 2 && (Lower(tok[1]) == "on" || Lower(tok[1]) == "off")) {
+        g_PpWatch.store(Lower(tok[1]) == "on");
+        Out(std::string("prospectprobe watch: ") + (g_PpWatch.load()
+            ? "on - every logged call appends grid-pre= and logs a grid-post= line (same|CHANGED). Arm to log."
+            : "off."));
+    }
+    else if (sub == "call" && tok.size() >= 3) {
+        std::vector<double> args;
+        for (size_t i = 3; i < tok.size(); ++i) {
+            try { size_t k = 0; args.push_back(std::stod(tok[i], &k)); if (k != tok[i].size()) throw 0; }
+            catch (...) { Out("prospectprobe call: arguments must be numbers; no call made"); return; }
+        }
+        PpCall(Lower(tok[1]), tok[2], args);
+    }
+    else if (sub == "resize" && tok.size() >= 3) {
+        int cols = 0, rows = 0;
+        try { cols = std::stoi(tok[1]); rows = std::stoi(tok[2]); }
+        catch (...) { Out("prospectprobe resize: cols and rows must be whole numbers; no write made"); return; }
+        const bool hasVia = tok.size() == 5 && Lower(tok[3]) == "via";
+        PpResize(cols, rows, hasVia ? tok[4] : std::string());
+    }
+    else if (sub == "setat") PpSetAtCommand(tok);
     else PpUsage();
 }
 #endif // FORGEPACT_RELEASE (prospectprobe)

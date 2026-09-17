@@ -99,7 +99,7 @@ class ProspectWindowContractTests(unittest.TestCase):
     # ---- the target table ----------------------------------------------------
 
     def test_target_table_names_every_candidate(self):
-        self.assertGreaterEqual(len(self.rows), 45)
+        self.assertGreaterEqual(len(self.rows), 85)
         labels = [label for _, label, _ in self.rows]
         self.assertEqual(len(labels), len(set(labels)), "duplicate probe label")
         names = [self.runtime_name(constant) for _, _, constant in self.rows]
@@ -109,9 +109,14 @@ class ProspectWindowContractTests(unittest.TestCase):
             "gml_Script_s_ItemGridInfo",
             "gml_Script_InventoryInitGrids",
             "gml_Script_UiAProspectButton",
-            "gml_Script_anon@1038@gml_Object_UI_Prospect_obj_Create_0",
-            "gml_Script_anon@2729@gml_Object_UI_Prospect_obj_Create_0",
-            "gml_Script_anon@3551@gml_Object_UI_Prospect_obj_Create_0",
+            # Phase 0a read these off the live window's method values
+            # (m_SetInventoryLocalPlayer, m_Resize, m_UpdateInventoryGrid) and
+            # the ProspectGrid node's m_RefreshNode.
+            "gml_Script_anon@1065@gml_Object_UI_Prospect_obj_Create_0",
+            "gml_Script_anon@2806@gml_Object_UI_Prospect_obj_Create_0",
+            "gml_Script_anon@3657@gml_Object_UI_Prospect_obj_Create_0",
+            "gml_Script_anon@36159@gml_Object_UI_Inventory_Grid_obj_Create_0",
+            "gml_Script____struct___411@UiContainerChange@UiFuncs",
             "gml_Script_CheckPlayerInteraction",
             "gml_Script_PlayerMouseAction",
         ):
@@ -122,6 +127,27 @@ class ProspectWindowContractTests(unittest.TestCase):
         # The table spells names through the SDK constant, never as a literal.
         entry = self.plugin[self.plugin.index("#define PP_ENTRY"):self.plugin.index("#undef PP_ENTRY")]
         self.assertIn("HeroSiege::Scripts::CONSTANT.data()", entry)
+
+    # The Phase 0a session was blind because the table named closures a game
+    # patch had renumbered. The table is now derived from the SDK: every
+    # closure the SDK names on these objects' Create events must be a row, so
+    # the next regeneration fails here, by name, instead of in a live session.
+    UI_CLOSURE_OBJECTS = (
+        "UI_Prospect_obj", "UI_Inventory_Grid_obj", "UI_Inventory_Parent_obj", "UI_Node_Parent_obj",
+        "UI_Grid_obj", "UI_Container_obj", "UI_Parent_obj", "Prospect_Cube_obj",
+        "UI_Button_Journal_Prospect_obj", "UI_Journal_Prospecting_obj",
+    )
+
+    def test_target_table_covers_every_sdk_closure_of_the_ui_objects(self):
+        table = {constant for _, _, constant in self.rows}
+        expected = []
+        for constant, value in re.findall(r'std::string_view (\w+) = "([^"]+)";', self.sdk):
+            if any("@gml_Object_" + obj + "_Create_0" in value for obj in self.UI_CLOSURE_OBJECTS):
+                expected.append(constant)
+        # A scan that finds nothing would pass the check below vacuously.
+        self.assertGreaterEqual(len(expected), 45, "SDK closure scan found too few constants - the regex is blind")
+        missing = [c for c in expected if c not in table]
+        self.assertEqual(missing, [], "SDK closures missing from PROSPECTPROBE_TARGETS: " + ", ".join(missing))
 
     def test_resolver_refuses_address_outside_module_before_hook(self):
         resolver = function_body(self.plugin, "static PVOID PpResolve(")
@@ -158,7 +184,7 @@ class ProspectWindowContractTests(unittest.TestCase):
         self.assertIn("!row->installed.load()", body)
         self.assertIn("hook it first", body)
         self.assertLess(body.index("!row->installed.load()"), body.index("InterlockedExchange(&g_PpOverrideLeft"))
-        observe = function_body(self.plugin, "static void PpObserve(")
+        observe = function_body(self.plugin, "static bool PpObserve(")
         self.assertLess(observe.index("PpIsNumber(*A[i])"), observe.index("*A[i] = RValue("))
 
     # ---- a spent budget and a misplaced override are visible, not silent -----
@@ -177,7 +203,7 @@ class ProspectWindowContractTests(unittest.TestCase):
         self.assertLess(arm.index("not armed"), arm.index("g_PpArmed.store(true)"))
         command = function_body(self.plugin, "static void PpCommand(")
         self.assertIn("PpArm(std::vector<std::string>(tok.begin() + 1, tok.end()))", command)
-        observe = strip_comments(function_body(self.plugin, "static void PpObserve("))
+        observe = strip_comments(function_body(self.plugin, "static bool PpObserve("))
         self.assertIn("g_PpLogBudget", observe)
         self.assertIn("*logOn", observe)
         self.assertNotRegex(self.plugin, r"\bkPpLogBudget\b")
@@ -193,7 +219,7 @@ class ProspectWindowContractTests(unittest.TestCase):
         self.assertIn("(not selected - not observed)", show)
 
     def test_override_applied_line_describes_self_other_and_args(self):
-        observe = strip_comments(function_body(self.plugin, "static void PpObserve("))
+        observe = strip_comments(function_body(self.plugin, "static bool PpObserve("))
         write = observe.index("*A[i] = RValue(g_PpOverrideValue)")
         applied = observe[write:observe.index("Out(line)", write)]
         self.assertIn("PpDescribeSelf(S)", applied)
@@ -201,7 +227,7 @@ class ProspectWindowContractTests(unittest.TestCase):
         self.assertIn("AggroArgs(argc, A)", applied)
 
     def test_override_selector_gates_the_write(self):
-        observe = strip_comments(function_body(self.plugin, "static void PpObserve("))
+        observe = strip_comments(function_body(self.plugin, "static bool PpObserve("))
         self.assertLess(observe.index("PpSelectorMismatch(S, O, *A[i])"),
                         observe.index("*A[i] = RValue(g_PpOverrideValue)"))
         self.assertIn("numeric && mismatch.empty()", observe)
@@ -215,9 +241,95 @@ class ProspectWindowContractTests(unittest.TestCase):
         for key in ('"self="', '"other="', '"when="'):
             self.assertIn(key, parser)
 
+    # ---- Phase 0b: the builder can be found without a size argument ----------
+    # Phase 0a showed the ProspectGrid node created with no size in any logged
+    # argument, and a bare nodeGridWidth write crashing the node's Draw (R5b).
+    # So the instrument reads the node's shape around each logged call, and the
+    # two writes it adds either land before the game's builder runs or are
+    # followed by the game's own builder in the same handler.
+
+    def test_grid_snapshot_is_hook_free_and_budgeted(self):
+        snap = strip_comments(function_body(self.plugin, "static bool PpGridSnapshot("))
+        for text in ('"instance_number"', '"instance_find"', '"variable_instance_exists"', '"array_length"',
+                     "g_PpInSnapshot", '\\"ProspectGrid\\"', '"uiNodeCallstack"'):
+            self.assertIn(text, snap)
+        self.assertNotIn("MmCreateHook", snap)
+        self.assertNotIn("_Create_0", snap)   # the node is found by what it is, not by a hook
+        # Objects by SDK name, never a literal index.
+        self.assertIn("GameObject::UI_Inventory_Grid_obj", self.plugin[self.plugin.index("static int PpGridObjectIndex("):])
+        # The pre-snapshot is taken only for a call that is being logged.
+        observe = strip_comments(function_body(self.plugin, "static bool PpObserve("))
+        self.assertLess(observe.index("InterlockedIncrement(logged)"), observe.index("grid-pre="))
+        self.assertLess(observe.index("g_PpWatch"), observe.index("grid-pre="))
+        frame = function_body(self.plugin, "void FrameCallback(")
+        self.assertNotIn("PpGrid", frame)
+        self.assertNotIn("g_PpWatch", frame)
+
+    def test_watch_post_line_exists_and_is_gated_on_logged(self):
+        after = strip_comments(function_body(self.plugin, "static void PpAfter("))
+        self.assertIn("grid-post=", after)
+        self.assertIn("CHANGED", after)
+        self.assertIn("if (!logged", after)
+        self.assertLess(after.index("if (!logged"), after.index("PpGridSnapshot("))
+        detour = self.plugin[self.plugin.index("#define PROSPECTPROBE_DETOUR"):self.plugin.index("#define PROSPECTPROBE_TARGETS")]
+        self.assertIn("PpAfter(", detour)
+        self.assertLess(detour.index("PpObserve("), detour.index("g_PpOrig_##SAFE(S, O, R, argc, A)"))
+        self.assertLess(detour.index("g_PpOrig_##SAFE(S, O, R, argc, A)"), detour.index("PpAfter("))
+        reset = function_body(self.plugin, "static void PpReset(")
+        self.assertIn("g_PpWatch.store(false)", reset)
+
+    def test_call_invokes_method_values_by_name_only(self):
+        for signature in ("static void PpCall(", "static void PpResize("):
+            body = strip_comments(function_body(self.plugin, signature))
+            self.assertIn('"script_execute"', body, signature)
+            self.assertIn("CallBuiltinEx(", body, signature)
+            for forbidden in ("MethodValueFunction", "CScriptRef", "m_CallYYC", "Rva", "InvokeMethodValue"):
+                self.assertNotIn(forbidden, body, signature)
+        # Refusals come before the call, and the resolution is printed.
+        target = strip_comments(function_body(self.plugin, "static bool PpMethodTarget("))
+        self.assertIn('"variable_instance_exists"', target)
+        self.assertIn("VALUE_OBJECT", target)
+        self.assertIn("CiTryResolveMethod(", target)
+        call = strip_comments(function_body(self.plugin, "static void PpCall("))
+        self.assertLess(call.index("PpMethodTarget("), call.index("CallBuiltinEx("))
+
+    def test_resize_requires_via_and_reverts_when_the_builder_does_not_follow(self):
+        resize = strip_comments(function_body(self.plugin, "static void PpResize("))
+        self.assertIn("R5b", resize)
+        self.assertLess(resize.index('"script_execute"'), resize.rindex('"array_length"'))
+        self.assertIn("reverted", resize)
+        self.assertIn("kept", resize)
+        self.assertGreaterEqual(resize.count('"variable_instance_set"'), 4)
+        # The method is resolved (and refused) before anything is written.
+        self.assertLess(resize.index("PpMethodTarget("), resize.index('"variable_instance_set"'))
+        command = strip_comments(function_body(self.plugin, "static void PpCommand("))
+        self.assertIn('"via"', command)
+
+    def test_setat_requires_a_detoured_row_and_an_existing_variable(self):
+        arm = strip_comments(function_body(self.plugin, "static void PpSetAt("))
+        self.assertIn("!row->installed.load()", arm)
+        self.assertIn("hook it first", arm)
+        apply = strip_comments(function_body(self.plugin, "static void PpSetAtTry("))
+        self.assertLess(apply.index('"variable_instance_exists"'), apply.index('"variable_instance_set"'))
+        self.assertLess(apply.index("PpIsNumber(was)"), apply.index('"variable_instance_set"'))
+        # Every refusal goes through one budgeted, counted "not applied" line.
+        self.assertLess(apply.index("PpSetAtRefused("), apply.index('"variable_instance_set"'))
+        refused = strip_comments(function_body(self.plugin, "static void PpSetAtRefused("))
+        self.assertIn("not applied", refused)
+        self.assertIn("kPpRefusalLogBudget", refused)
+        self.assertIn("g_PpSetAtNotApplied", refused)
+        parser = strip_comments(function_body(self.plugin, "static void PpSetAtCommand("))
+        self.assertIn('"arg"', parser)
+        self.assertIn('"when="', parser)   # refused, not silently accepted
+        observe = strip_comments(function_body(self.plugin, "static bool PpObserve("))
+        self.assertIn("PpSetAtTry(", observe)
+        after = strip_comments(function_body(self.plugin, "static void PpAfter("))
+        self.assertIn("PpSetAtTry(", after)
+        self.assertIn("g_PpSetAtPending = false", function_body(self.plugin, "static void PpReset("))
+
     def test_research_doc_h3_requires_non_empty_fully_logged_r2_r4(self):
         deciding = collapse(section(self.doc, "## Deciding the hypothesis"))
-        self.assertIn("**H3** needs **R2 and R4 both non-empty**", deciding)
+        self.assertIn("**H3** needs **R2-window, R4' and R9 all measured**", deciding)
         self.assertIn("**fully logged** (no `UNLOGGED` left)", deciding)
         self.assertIn("never H3", deciding)
         self.assertIn("`not observed (budget spent)`", deciding)
@@ -228,10 +340,12 @@ class ProspectWindowContractTests(unittest.TestCase):
 
     def test_research_doc_live_procedure_budgets_and_matches_the_override(self):
         live = collapse(section(self.doc, "## Live procedure"))
-        l10 = live[live.index("**L10.**"):live.index("**L11")]
-        l11 = live[live.index("**L11"):live.index("**L12.**")]
-        self.assertIn("prospectprobe arm budget=", l10)
-        self.assertIn("UNLOGGED", l10)
+        l5 = live[live.index("**L5"):live.index("**L6")]
+        l11 = live[live.index("**L6"):live.index("**L7")]
+        self.assertIn("prospectprobe watch on", l5)
+        self.assertIn("prospectprobe arm budget=", l5)
+        self.assertIn("UNLOGGED", l5)
+        self.assertIn("CHANGED", l5)
         self.assertIn("when=<vanilla>", l11)
         self.assertIn("self=<Obj>", l11)
         # R1-N5: the selector takes the object name alone.
@@ -248,10 +362,18 @@ class ProspectWindowContractTests(unittest.TestCase):
         self.assertIn("Record both, always", l11)
         self.assertIn("grid <changed|unchanged>", l11)
         self.assertNotIn("Only then", l11)
+        # The write-then-rebuild experiment can end the session (D7): it runs last.
+        l9 = live[live.index("**L9"):live.index("**L10")]
+        self.assertIn("via m_RefreshNode", l9)
+        self.assertIn("last", l9)
+        self.assertIn("Never a bare", l9)
         # The instrument section documents what the procedure uses.
         instrument = collapse(section(self.doc, "## Instrument"))
         self.assertIn("`prospectprobe arm [budget=N] [substr ...]`", instrument)
         self.assertIn("[self=<Obj>] [other=<Obj>] [when=<number>]", instrument)
+        for command in ("`prospectprobe grid`", "`prospectprobe watch on|off`", "`prospectprobe call ",
+                        "`prospectprobe resize <cols> <rows> via <m_Method>`", "`prospectprobe setat "):
+            self.assertIn(command, instrument)
 
     # ---- nothing on the frame path -------------------------------------------
 
@@ -289,8 +411,9 @@ class ProspectWindowContractTests(unittest.TestCase):
             hook = text.index("prospectprobe hook")
             self.assertLess(text.index("citrace dumpobj"), hook)
             self.assertLess(text.index("prospectprobe set"), hook)
+            self.assertLess(text.index("prospectprobe grid"), hook)
 
-    def test_research_doc_pins_the_two_sentences(self):
+    def test_research_doc_pins_the_three_sentences(self):
         doc = collapse(self.doc)
         self.assertIn(
             "A row whose arguments carry the vanilla numbers is a candidate, not a result; "
@@ -298,6 +421,30 @@ class ProspectWindowContractTests(unittest.TestCase):
         self.assertIn(
             "A variable write that enlarges the drawn frame but not the cells the game "
             "accepts items into does not count for H2.", doc)
+        self.assertIn(
+            "A snapshot that changes inside a call's extent names the builder's extent, not the "
+            "builder; only a write the builder then follows counts for H2'.", doc)
+
+    def test_research_doc_records_phase0a_as_instrument_failure(self):
+        self.assertIn("phase0-status: pending", self.doc)
+        results = section(self.doc, "## Results")
+        for text in ("Phase 0a", "Phase 0b", "instrument blind", "stale", "Draw_64", "not observed"):
+            self.assertIn(text, results)
+        self.assertNotIn("does not happen", self.doc.lower())
+        # Phase 0a's column is filled; Phase 0b's is still open.
+        for field in ("R2-window", "R4'", "R5c", "R9", "R10", "R11", "C-grid", "C-write2"):
+            self.assertIn("| " + field + " |", results)
+        rows = [line for line in results.replace("\r\n", "\n").split("\n") if line.startswith("| R1 |")]
+        self.assertEqual(len(rows), 1)
+        cells = [c.strip() for c in rows[0].strip("|").split("|")]
+        self.assertNotEqual(cells[-2], "unknown")
+        self.assertEqual(cells[-1], "unknown")
+
+    def test_research_doc_closure_rows_have_a_positive_control(self):
+        live = collapse(section(self.doc, "## Live procedure"))
+        l4 = live[live.index("**L4"):live.index("**L5")]
+        self.assertIn("must print `detoured`", l4)
+        self.assertIn("session 7", l4)
 
 
 if __name__ == "__main__":
