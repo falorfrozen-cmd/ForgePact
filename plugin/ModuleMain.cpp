@@ -14802,13 +14802,18 @@ enum : long {
     X(skillsAura, HeroSiege::Scripts::gml_Script_skillsAura, "skillsAura(negctl)", kTgCount, nullptr, nullptr)
 
 // Object events: X(GameObject enumerator, event suffix, FLAGS). The runtime
-// name is built from the SDK's own object name plus the suffix; the SDK has no
-// event table, so an event that does not resolve means the object has no
-// such event - a result, not an error. Step_0 rows are count-only. There is
+// name is built from the SDK's own object name plus the suffix. The SDK has no
+// event table, so `not found` on an event row says only that the name did not
+// resolve through GetNamedRoutinePointer - not that the object lacks the event
+// (an earlier session saw raw gml_Object_* names, Player_obj's Step_0 among
+// them, fail that lookup). Player_obj.Step_0 is the event rows' positive
+// control: the player steps every frame, so if that row is also `not found`
+// or reads 0, every event row is blind. Step_0 rows are count-only. There is
 // deliberately no Room Start or Room End row on any object: hooking the room
 // start event has crashed the game before (test_est_force_behavior pins it),
 // and the zone-change read is the room key plus the Destroy/CleanUp rows.
 #define TGPROBE_EVENTS(X) \
+    X(Player_obj, Step_0, kTgCount) \
     X(White_Mage_Soul_Spurn_obj, Create_0, kTgArgs) \
     X(White_Mage_Soul_Spurn_obj, Step_0, kTgCount) \
     X(White_Mage_Soul_Spurn_obj, Destroy_0, kTgArgs) \
@@ -14889,14 +14894,53 @@ static bool g_TgHudRoomKnown = false;
 static volatile long g_TgHudSinceRoomChange = 0;
 static volatile long g_TgHudRoomUnreadable = 0;
 
+// Q6's state read on that first counted draw. A `tgprobe show` typed after a
+// zone change lands tens of frames late, so the count of live Soul Spurn
+// effects (and of every ability-parent descendant) is taken here, inside the
+// Draw GUI hook, on the draw where the room key changes - two lookups by name
+// per room change, nothing per frame. `zoneChange` is false when the key was
+// first seen at attach time rather than changed: that snapshot is not a zone
+// change and cannot answer Q6. A failed read is `ok == false`, never a count.
+struct TgProbeFirstHudSnap {
+    bool     taken = false;
+    bool     zoneChange = false;
+    int64_t  roomKey = 0;
+    uint64_t frame = 0;
+    bool     spurnOk = false;
+    long     spurn = 0;
+    bool     abilityOk = false;
+    long     ability = 0;
+};
+static TgProbeFirstHudSnap g_TgFirstHud;
+
+static bool TgProbeCountByName(HeroSiege::Objects::GameObject obj, long& out)
+{
+    try {
+        const double idx = g_Yytk->CallBuiltin("asset_get_index",
+            { RValue(std::string(HeroSiege::Objects::GetObjectName(obj))) }).ToDouble();
+        if (idx < 0) return false;
+        out = (long)g_Yytk->CallBuiltin("instance_number", { RValue(idx) }).ToDouble();
+        return true;
+    } catch (...) { return false; }
+}
+
 static void TgProbeHudRoomTick(int64_t key)
 {
     if (key == INT64_MIN) {
         InterlockedIncrement(&g_TgHudRoomUnreadable);
     } else if (!g_TgHudRoomKnown || key != g_TgHudRoomKey) {
+        const bool zoneChange = g_TgHudRoomKnown;
         g_TgHudRoomKey = key;
         g_TgHudRoomKnown = true;
         InterlockedExchange(&g_TgHudSinceRoomChange, 0);
+        TgProbeFirstHudSnap snap;
+        snap.taken = true;
+        snap.zoneChange = zoneChange;
+        snap.roomKey = key;
+        snap.frame = g_RuntimeFrame;
+        snap.spurnOk = TgProbeCountByName(HeroSiege::Objects::GameObject::White_Mage_Soul_Spurn_obj, snap.spurn);
+        snap.abilityOk = TgProbeCountByName(HeroSiege::Objects::GameObject::Player_Ability_Parent_obj, snap.ability);
+        g_TgFirstHud = snap;
     }
     InterlockedIncrement(&g_TgHudSinceRoomChange);
 }
@@ -15089,6 +15133,7 @@ static void TgProbeHook(const std::string& filter)
     for (const std::string& l : lines) Out(l);
     Out("  controls: CheckPlayerInteraction(control) must read native; DrawHudBuffs via Hook_DrawHudBuffs (native),");
     Out("  cross-checked against the hudCalls= delta of two `hhlabel` replies. No `citrace` command in this session.");
+    Out("  event rows: Player_obj.Step_0 is their control; if it is not found, every event row is blocked, not a 0.");
 }
 
 static std::string TgProbeRoomName()
@@ -15126,6 +15171,16 @@ static void TgProbeShow()
         + " name=" + TgProbeRoomName()
         + " hudSinceRoomChange=" + (g_TgHudRoomKnown ? std::to_string(g_TgHudSinceRoomChange) : std::string("n/a (no DrawHudBuffs call counted yet)"))
         + " hudRoomUnreadable=" + std::to_string(g_TgHudRoomUnreadable));
+    const TgProbeFirstHudSnap snap = g_TgFirstHud;
+    if (!snap.taken) {
+        Out("  firstHud=n/a (no room key counted yet) firstHudSpurnInstances=n/a firstHudAbilityInstances=n/a");
+    } else {
+        Out(std::string("  firstHud=") + (snap.zoneChange ? "zone-change" : "attach (not a zone change)")
+            + " room=" + std::to_string((long long)snap.roomKey)
+            + " frame=" + std::to_string((unsigned long long)snap.frame)
+            + " firstHudSpurnInstances=" + (snap.spurnOk ? std::to_string(snap.spurn) : std::string("unreadable"))
+            + " firstHudAbilityInstances=" + (snap.abilityOk ? std::to_string(snap.ability) : std::string("unreadable")));
+    }
 }
 
 static void TgProbeReset()
@@ -15136,7 +15191,7 @@ static void TgProbeReset()
         t.lastFrame = 0;
         t.lastGap = 0;
     }
-    Out("tgprobe: counters, lastFrame/lastGap and per-row log budgets reset (hudSinceRoomChange keeps counting).");
+    Out("tgprobe: counters, lastFrame/lastGap and per-row log budgets reset (hudSinceRoomChange and the firstHud snapshot are kept).");
 }
 
 static double TgProbeObjectIndex(const std::string& name)

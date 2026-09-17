@@ -61,6 +61,9 @@ EXPECTED_SCRIPTS = {
 }
 
 EXPECTED_EVENTS = {
+    # The event rows' positive control: the player steps every frame.
+    ("Player_obj", "Step_0"),
+} | {
     ("White_Mage_Soul_Spurn_obj", ev)
     for ev in ("Create_0", "Step_0", "Destroy_0", "CleanUp_0", "Alarm_0")
 } | {
@@ -229,6 +232,34 @@ class ToggleProbeContractTests(unittest.TestCase):
             self.assertIn(literal, show)
         hook = function_body(self.plugin, "static void TgProbeHook(")
         self.assertIn('" blocked, "', hook)
+
+    def test_event_rows_have_a_positive_control(self):
+        # `not found` on an event row describes the name lookup, not the
+        # object; without a row that must fire, an all-`not found` event set
+        # would read as a result about the game.
+        self.assertIn(("Player_obj", "Step_0"), self.event_rows)
+        self.assertIn("Player_obj.Step_0", function_body(self.plugin, "static void TgProbeHook("))
+        self.assertNotIn("means the object has", self.block)
+
+    def test_first_draw_after_a_zone_change_reads_the_state(self):
+        # A `tgprobe show` typed after a zone change lands tens of frames late,
+        # so Q6's "OFF on the first draw" read is taken inside the draw hook on
+        # the draw where the room key changes, by name, and never as a count
+        # when the read failed.
+        tick = function_body(self.plugin, "static void TgProbeHudRoomTick(")
+        change = tick.index("key != g_TgHudRoomKey")
+        snap = tick.index("GameObject::White_Mage_Soul_Spurn_obj")
+        self.assertLess(change, snap)
+        self.assertIn("GameObject::Player_Ability_Parent_obj", tick)
+        self.assertIn("zoneChange", tick)
+        count = function_body(self.plugin, "static bool TgProbeCountByName(")
+        self.assertIn('"asset_get_index"', count)
+        self.assertIn('"instance_number"', count)
+        self.assertIn("GetObjectName(obj)", count)
+        show = function_body(self.plugin, "static void TgProbeShow(")
+        for literal in ("firstHudSpurnInstances=", "firstHudAbilityInstances=", "zone-change",
+                        "attach (not a zone change)", '"unreadable"'):
+            self.assertIn(literal, show)
 
     def test_unreadable_room_key_is_never_stored(self):
         tick = function_body(self.plugin, "static void TgProbeHudRoomTick(")

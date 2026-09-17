@@ -102,11 +102,17 @@ behind one command.
 | negative control | `gml_Script_LoadAura`, `gml_Script_skillsAura` | count; must not move on a Soul Spurn cast |
 
 Object events, by runtime name `gml_Object_<Obj>_<Event>` built from the SDK's
-object name (the SDK has no event table, so `not found` means the object has
-no such event):
+object name. The SDK has no event table, so `not found` on an event row means
+only that the name did not resolve through `GetNamedRoutinePointer` — a
+statement about the lookup, not about the object. That lookup is not proven
+for object events: `pet-quest-collector-research.md` (session 7) records 22 raw
+`gml_Object_*` names, `Player_obj_Step_0` among them, all failing it.
+`Player_obj` `Step_0` is therefore in the set as the event rows' positive
+control — the player steps every frame.
 
 | Object | Events |
 |---|---|
+| `Player_obj` (3553) | `Step_0` (positive control) |
 | `White_Mage_Soul_Spurn_obj` (5761) | `Create_0 Step_0 Destroy_0 CleanUp_0 Alarm_0` |
 | `Player_Ability_Parent_obj` (3536) | `Create_0 Step_0 Destroy_0 CleanUp_0` |
 | `Draw_Player_Buff_obj` (1362) | `Create_0 Destroy_0` |
@@ -179,8 +185,8 @@ turn co-op rendering on, and run no `citrace` command, after `tgprobe hook`.
 | Command | Prints |
 |---|---|
 | `tgprobe hook [substr…]` | Attaches every row whose label contains any given substring (none = all); rows already attached are left alone. First line `tgprobe hook: N native, P via hook, B blocked, F not found`, then one line per row that is not plain `native`, naming its mode and reason. |
-| `tgprobe show` | One line per row: `<label> mode=<mode> calls=N lastFrame=F lastGap=G`. `lastGap` is the number of frames between the last two calls (0 = same frame). A row that is not attached (unhooked, `blocked`, `not found`) prints `calls=n/a`, never `0`. A `via … (TABLE-ONLY…)` row is flagged: direct calls bypass it, so a 0 there is *not observed*. Last line: `room=<key> name=<room name> hudSinceRoomChange=<n> hudRoomUnreadable=<n>`. |
-| `tgprobe reset` | Zeroes every row's calls, lastFrame, lastGap and log budget. `hudSinceRoomChange` keeps counting. |
+| `tgprobe show` | One line per row: `<label> mode=<mode> calls=N lastFrame=F lastGap=G`. `lastGap` is the number of frames between the last two calls (0 = same frame). A row that is not attached (unhooked, `blocked`, `not found`) prints `calls=n/a`, never `0`. A `via … (TABLE-ONLY…)` row is flagged: direct calls bypass it, so a 0 there is *not observed*. Then `room=<key> name=<room name> hudSinceRoomChange=<n> hudRoomUnreadable=<n>`, and last `firstHud=<zone-change\|attach (not a zone change)> room=<key> frame=<F> firstHudSpurnInstances=<n\|unreadable> firstHudAbilityInstances=<n\|unreadable>`. |
+| `tgprobe reset` | Zeroes every row's calls, lastFrame, lastGap and log budget. `hudSinceRoomChange` keeps counting and the `firstHud` snapshot is kept. |
 | `tgprobe verbose on\|off` | While on, each row flagged for logging writes its first 3 calls since the last `reset` to `out.txt`: `tgprobe <label> #n frame=F self=<Obj#idx@id> other=… argc=N a0=… a1=…` (struct arguments as JSON, each capped at 200 characters), plus `tgprobe <label> #n ret=<value>` for rows that log a return. Count-only rows never log. |
 | `tgprobe slots` | Every `UI_Hud_Talent_obj` instance (cap 16): id, `x`, `y`, `sprite_index` and its sprite name, `sprite_width/height`, `image_xscale/yscale`, then every custom variable; the GUI size. |
 | `tgprobe buffs` | `global.playerBuff[1][0]`, walked the way `HhBuffAlive` reads it: every non-empty slot's index, value kind, `instance_exists`, object name, and for up to 8 live instances their custom variables. |
@@ -194,13 +200,27 @@ changed, including the first call in the new room. An unreadable room key is
 never stored — it is counted in `hudRoomUnreadable` instead — so "unreadable"
 cannot compare equal to anything.
 
+**The first draw after a zone change is read where it happens.** Every
+command reaches the plugin through `cmd.txt`, so a `tgprobe show` typed after
+arriving lands tens of frames into the new zone — too late to say what the
+first draw saw. So on the `DrawHudBuffs` call where the room key changes, the
+instrument itself counts the live `White_Mage_Soul_Spurn_obj` instances and
+the live `Player_Ability_Parent_obj` instances (descendants included), both
+looked up by name, and keeps them with that room key and frame; `tgprobe show`
+prints them as `firstHud=`. The key also counts as "changed" the first time it
+is seen after `tgprobe hook` attaches: that snapshot is labelled
+`attach (not a zone change)` and says nothing about Q6. A failed lookup prints
+`unreadable`, never a count.
+
 **Positive controls, one per attach mode, same session:** native →
 `CheckPlayerInteraction(control)` (every interactable's step runs it; thousands
 in 2 s under `citrace nativetrace`); via hook → `DrawHudBuffs`, whose count
 over a window must equal (±2) the `hudCalls=` delta of two `hhlabel` replies
 bracketing that window (`hhlabel` works in both builds). A native `0` with the
 native control at 0, or a via `0` with the `hhlabel` cross-check failing,
-measures the instrument, not the game.
+measures the instrument, not the game. Object-event rows have their own
+control, `Player_obj.Step_0` (thousands in 2 s if the lookup works for events
+at all).
 
 ## Live procedure
 
@@ -218,13 +238,23 @@ non-toggle skill on the hotbar. Start in town or a cleared zone.
    If `TalentUse` reads `via HookTalentUse`, co-op was on — say so in Results
    (its counts are still valid). If any `via` row reads `TABLE-ONLY`, or
    `CheckPlayerInteraction` is not `native`, stop and relaunch: the controls
-   must attach. An object-event row that is `not found` means the object has
-   no such event — a result, not an error.
-2. Stand still 2 s. `hhlabel` again, then `tgprobe show` → one control per
-   attach mode: `CheckPlayerInteraction` (native) in the thousands;
+   must attach. An object-event row that is `not found` means its name did
+   not resolve by lookup — not that the object lacks the event. Check
+   `Player_obj.Step_0` (the event control): if it is also `not found`, record
+   **every event row as `blocked`** (never `not observed`), and Q6 and the
+   step 7 negative control rest on the `tgprobe abilities` snapshots and the
+   `firstHud=` line only. If co-op rendering or (later) the re-cast guard is
+   to be on in this session, turn it on **before** `tgprobe hook`: a
+   `TalentUse` install after the probe attached degrades to table-only.
+2. Stand still 2 s. Send `hhlabel` and `tgprobe show` together in **one**
+   `cmd.txt` write (`tools/ipc.ps1 -Lines`; and `hhlabel` alone at the start
+   of the window), so both replies come from one consume rather than two
+   polls some frames apart → one control per attach
+   mode: `CheckPlayerInteraction` (native) in the thousands;
    `DrawHudBuffs` (via hook) ≈ frames elapsed **and equal (±2) to the
    `hudCalls=` delta between the two `hhlabel` replies** — that agreement is
-   what proves the entry-note path counts; the two `negctl` rows ideally 0. If
+   what proves the entry-note path counts; `Player_obj.Step_0` in the
+   thousands if event rows attached; the two `negctl` rows ideally 0. If
    either control is 0, nothing measured afterwards counts as a negative. Draw
    order (Q4): `tgprobe verbose on`, `tgprobe reset`, wait one frame,
    `tgprobe show`; the log order of the first verbose lines is the draw order.
@@ -257,12 +287,18 @@ non-toggle skill on the hotbar. Start in town or a cleared zone.
 10. **Zone change (Q6)**: with the toggle ON, `tgprobe room` (record the old
     key), `tgprobe reset`, take a waypoint/portal. As soon as the new zone is
     playable: `tgprobe show` — read the `room=` key (must differ from the
-    recorded one), `hudSinceRoomChange=` (the first-frame count), and which of
+    recorded one), `hudSinceRoomChange=`, the `firstHud=` line, and which of
     `White_Mage_Soul_Spurn_obj` `Destroy_0` / `CleanUp_0`,
     `ClearPersistSkill`, `BuffRemove`, `RoomGoto` moved — then
-    `tgprobe abilities`, `tgprobe buffs`, `tgprobe room`. There is no Room
-    End row (see "Static search"); do not add one. The state read must be
-    OFF here. Press Soul Spurn once → it must turn ON as a fresh cast.
+    `tgprobe abilities`, `tgprobe buffs`, `tgprobe room`. The first-draw
+    answer is `firstHud=`: it must read `zone-change` with `room=` equal to
+    the new key, and `firstHudSpurnInstances=0` is "OFF on the first draw"
+    (a non-zero count there sets Track B's BLOCKED condition; `unreadable`
+    makes Q6 `blocked`). If the room key did not change, or `firstHud=` still
+    reads `attach` or an older key, the portal did not change the room key
+    and Q6 is *not observed*. There is no Room End row (see "Static
+    search"); do not add one. Press Soul Spurn once → it must turn ON as a
+    fresh cast.
 11. If Q2 and Q3 are both empty after 4–7: `tgprobe snap global`, repeat 4–5
     with `tgprobe diff`; read the verbose `TalentUse` / `CheckTalentUse` /
     `GetSubTalentInfo` return values. If still empty: **Ghidra fallback** —
