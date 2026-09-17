@@ -271,7 +271,7 @@ the targets. 87 rows in all.
 | **H1** | A named script or closure receives the input grid's dimensions as arguments when the window opens. | **Design A**: `HookOneScript` (both routes) on that row; when the call belongs to the prospect window, scale the dimension arguments before the trampoline. | (a) R4': a row whose logged args on a window open carry 9/6, with `self`/`other`/an argument identifying the prospect window or its node; (b) **positive control on the same row: `prospectprobe override <row> <argIndex> <value> 1` followed by a reopen draws a grid of the overridden size**, the applied line matching the R4' call with `@id` ignored (R5a = yes) — a row that carries the numbers but whose override changes nothing is recorded and does not count; (c) R6: items placed in the new cells are consumed by the prospect button; (d) C-hook: `CheckPlayerInteraction` counted > 0 in the same session. |
 | **H2** | The dimensions live in variables the draw *and the cell store* follow at write time. | **Design B**: a frame-driven write. | **Ruled out for a bare write by R5b**: writing `nodeGridWidth` 9 → 18 on the open node crashed its Draw within one frame (`index out of bounds request 9 maximum size is 9`) — the draw followed the write, the store (`nodeGrid`) did not. Kept in the table with that verdict. |
 | **H2'** | The dimensions live in variables (on the window or the node) that the game's own builder reads when it builds `nodeGrid`; writing them before the builder runs, or re-running the builder after the write, resizes the store. | **Design B'**: `HookOneScript` (both routes) on the R9 row; when the call belongs to the prospect window (the `self`/`other`/argument identification R9 recorded), write the scaled values into the recorded variables before the trampoline — or, if only `resize via` was positive, write + invoke the recorded method by name once per new window instance from a lazily installed hook on the R9 row's *post* side. | R9 identifies the builder's extent; R11 (`setat`) or R10 (`resize via`) = the drawn grid is the new size **and** an item dropped into a new cell is accepted (R5c); R6 = consumed; C-grid passing; C-hook passing. |
-| **H3** | Fixed literals: no variable or argument governs the size. | **No one-value mod exists.** Blocked, with the numbers. | R2-window, R4' and R9 all measured with every fired row fully logged; `setat` and `resize via` both tried against the R9 row/method and negative, each with its control passing; a local Ghidra read, paraphrased, naming the literal. Never from an empty field. |
+| **H3** | Fixed literals: no variable or argument governs the size. | **No one-value mod exists.** Blocked, with the numbers. | R2-window, R4' and R9 all measured with every fired row fully logged; `setat` tried against the R9 row and applied to the R9 call, negative; `resize via` tried against the R9 method and `reverted` with `invoked=yes` and the `self`/argument shape L5 logged for the game's own call of that row; a local Ghidra read, paraphrased, naming the literal. Never from an empty field. |
 | **not observed** | Any control failed; a closure row printed `not found`; a row stayed `UNLOGGED`; an override or `setat` landed on a different call; the session ended before an experiment ran. | No hypothesis is concluded; Stage B does not start. | Record each field as `not observed (<which instrument, which control>)`. |
 
 All three designs stay in the "change one value inside a call the game is
@@ -388,7 +388,10 @@ Not in `kPlayerCommands`; dispatched from `HandleProspectCommand`. Bare
   `prospectprobe <label> #n grid-post=<snapshot> same|CHANGED`. The snapshot
   calls builtins only, never nests inside another snapshot, and is never taken
   on the frame path. Off by default; `reset` turns it off. The first logged
-  call whose `grid-post` says `CHANGED` brackets the builder (**R9**).
+  call whose `grid-post` says `CHANGED` brackets the builder (**R9**). `same`
+  and `CHANGED` are printed only when both reads resolved — a node
+  (`@<id> …`) or a definite `none`; a failed or nested read on either side
+  prints `UNREADABLE`, so two failed reads never look like "nothing changed".
 - **`prospectprobe show`** — per row: `calls` since `arm`, `since` the
   previous show, and, while armed, `logged=L` and — when the row made more
   calls than it logged — `UNLOGGED=K (budget spent - not observed)`; a row the
@@ -424,25 +427,49 @@ Not in `kPlayerCommands`; dispatched from `HandleProspectCommand`. Bare
   and `other`, through the runtime's own `script_execute` reached by name
   (`CallBuiltinEx`). Refuses, with no call made: no such instance; the variable
   does not exist (`variable_instance_exists`); the value is not a method value.
-  Prints the resolution (`->method:<name>#<index>` or `unresolvable`) before
-  calling, a snapshot before, `st=<status> res=<value>`, and a snapshot after
-  (`same|CHANGED`). Never reads the value's `CScriptRef` and never calls an
-  address.
-- **`prospectprobe resize <cols> <rows> via <m_Method>`** (or
+  Prints the resolution (`->method:<name>#<index>`, or `unresolvable` — an
+  unresolvable method value is still invoked, and its outcome is
+  `invoked=unproven`) before calling, a snapshot before,
+  `st=<status> res=<value> invoked=… self=… args=(…)`, and a snapshot after
+  (`same|CHANGED|UNREADABLE`). Never reads the value's `CScriptRef` and never
+  calls an address.
+  **`invoked=`** is what says whether the method's own body ran:
+  `script_execute` returning success proves the dispatch, not the body. The
+  resolved closure name is matched to its row in the probe table; if that row is
+  detoured, its call count is read before and after the invoke —
+  `invoked=yes (<label> +N)` or `invoked=NO (<label> +0)`. With no detoured
+  row for the closure it prints `invoked=unproven (…)`, and the outcome proves
+  nothing about the body. `self=` and `args=(none|…)` name what was supplied,
+  so a call shape can be compared with the game's own call of that row (L5).
+- **`prospectprobe resize <cols> <rows> via <m_Method> [number ...]`** (or
   `via window:<m_Method>`, which invokes the window's method with the window as
   `self`) — Phase 0b, H2' experiment 2. **`via` is required**: a bare `resize`
-  is refused with the R5b reason. In one handler, so no Draw can run in
-  between: refuses (nothing written) when there is no ProspectGrid node, the
-  method does not resolve as `call` would, or `nodeGridWidth`/`nodeGridHeight`
-  are missing or not numbers; otherwise writes both, invokes the method, then
-  reads `array_length(nodeGrid)` and `array_length(nodeGrid[0])`. If the call
-  failed or the store does not now measure `<rows>` × `<cols>`, both variables
-  are written back and it prints
-  `reverted (builder did not resize nodeGrid: rows=… cols0=…)`; else
-  `kept (nodeGrid now rows=… cols0=…)`. A snapshot after either way. A
-  `reverted` is `not observed for that method`, never "the builder does not
-  read them". A method with side effects beyond `nodeGrid` cannot be undone
-  (workorder D7) — run it last, with the save backed up.
+  is refused with the R5b reason. Trailing numbers are passed to the method as
+  arguments, as `call` does. In one handler, so no Draw can run in between:
+  refuses (nothing written) when there is no ProspectGrid node, the method
+  value is missing or not a method value (as `call` refuses), or
+  `nodeGridWidth`/`nodeGridHeight` are missing or not numbers; an unresolvable
+  method is invoked like `call` and reads `invoked=unproven`. Otherwise writes
+  both, invokes the method, then measures `nodeGrid` over **every** row
+  (`rows`, `cols0`, `cols=<min>..<max>`). Every outcome line carries
+  `invoked=… self=… args=(…) st=…`:
+  - `kept (nodeGrid now rows=… cols0=… cols=…)` — the call succeeded and every
+    row now measures `<cols>`, with `<rows>` rows;
+  - `reverted (builder did not resize nodeGrid to <cols>x<rows>: …)` or
+    `reverted (call failed; …)` — the size is written back, **capped per axis
+    at what the store now covers** (width at the shortest row, height at the
+    row count). When that cap is below the vanilla values, or `nodeGrid` is no
+    longer an array, the line adds `restore unsafe: the store no longer covers
+    the vanilla …` — close the window before anything else;
+  - `rebuilt (the call replaced the ProspectGrid node; new node …, rows=… - matches|does not match the request …)`
+    — the method destroyed the node the write was on and a new one exists;
+    nothing is restored, and the replacement's shape is the outcome;
+  - `destroyed (… no new one exists …)` — the node is gone and nothing replaced it.
+
+  A snapshot follows either way. A `reverted` is `not observed for that
+  method`, never "the builder does not read them", and counts toward H3 only
+  under § Deciding's rule. A method with side effects beyond `nodeGrid` cannot
+  be undone (workorder D7) — run it last, with the save backed up.
 - **`prospectprobe setat <label> pre|post window|grid <var> <number> [self=<Obj>] [other=<Obj>] [arg<i>=<text>]`**
   — Phase 0b, H2' experiment 1: a one-shot write at a hook point. Refuses a
   label that is not a row and a row that is not detoured (`hook it first`);
@@ -473,7 +500,10 @@ and again in Phase 0a: 10200 → 14400 in two seconds). `PlayerMouseAction` is a
 counted 1 in Phase 0a). No constructor (`s_*`) or `___struct___` row other than
 `___struct___408/409/410` has counted through a native detour, so a zero on one
 of those is uncontrolled: record it as `not observed`, never as "not called".
-The closure rows' own positive control is L4: they must install.
+L4's `detoured` on a closure row proves only that the name resolved, not that
+the detour sees the closure's calls. A count on a closure row is controlled once
+a `call` or `resize via` on that object's method printed `invoked=yes` for that
+row; until then a zero on it is `not observed`.
 
 ## Live procedure
 
@@ -505,11 +535,14 @@ failure of the procedure (workorder D7).
    Do **not** write `nodeGridWidth`/`nodeGridHeight` here (R5b).
 4. **L4 (hooks + positive controls).** Close the window. `prospectprobe hook`
    → record `N detoured, M failed` and every `not found`/`refused` row.
-   **Every `UI_Prospect_obj anon@…` and `UI_Inventory_Grid_obj …` row
-   must print `detoured`** — closures resolve by name when the name is current
-   (session 7), so a `not found` on one of them means the stale-name reading
-   was wrong; stop and record `not observed (closure rows not resolvable:
-   <rows>)`. Other objects' closure rows may fail; record them.
+   **The four closures Phase 0a read off the live instances —
+   `UI_Prospect_obj anon@1065`, `anon@2806`, `anon@3657` and
+   `UI_Inventory_Grid_obj anon@36159` — must print `detoured`**: closures
+   resolve by name when the name is current (session 7), so a `not found` on
+   one of them means the stale-name reading was wrong; stop and record
+   `not observed (closure rows not resolvable: <rows>)`. Every other closure
+   row, including the nested `___struct___K@anon@N` rows (never measured
+   resolving through this route), may fail; record them and go on.
    `prospectprobe show` → `CheckPlayerInteraction: calls=` climbing (**C-hook**).
 5. **L5 (the logged open with snapshots).** Stand next to the cube, window
    closed. `prospectprobe watch on`, `prospectprobe arm budget=500`, open the
@@ -527,10 +560,13 @@ failure of the procedure (workorder D7).
    earlier pass stands. A row that never had a clean pass does not; nor does a
    previously `UNLOGGED` row that did not refire on the re-arm pass — that is
    `not observed (did not refire)`.) A row still `UNLOGGED` is
-   `not observed (budget spent)`. If no line says `CHANGED` while the snapshot
-   went from `none` (L2 closed) to `9×6` (L2 open), R9 =
-   `not observed (change outside every logged extent)` and the size is set by
-   code no hooked row brackets.
+   `not observed (budget spent)`. A `grid-post` line reading `UNREADABLE` is
+   not a `same`: it brackets nothing. If no line says `CHANGED`: when at least
+   one `grid-post=@…` line was logged during the open (the snapshot resolved the
+   node inside a logged extent), R9 =
+   `not observed (change outside every logged extent)`; when none was, R9 =
+   `not observed (snapshot never resolved the node during the open)`. Neither
+   says where the size is set.
 6. **L6 (H1 experiment, only if R4' non-empty).** For each R4' row: close the
    window, `prospectprobe override <label> <argIndex> <vanilla×2> 1 when=<vanilla>`
    plus `self=<Obj>` (or `other=<Obj>`), where `<Obj>` is the object name
@@ -578,17 +614,26 @@ failure of the procedure (workorder D7).
    Record R11 = `not applicable (no window variable carries the size)`; go
    to L9.
 9. **L9 (H2' experiment, write then re-run the builder — last, D7).** With
-   the window open and the grid empty:
-   `prospectprobe resize 18 6 via m_RefreshNode` (the grid node's own method).
-   If it prints `reverted`, try `prospectprobe resize 18 6 via <m_*>` for each
-   other method L2 listed on the node, then
-   `prospectprobe resize 18 6 via window:m_Resize` and
-   `... via window:m_UpdateInventoryGrid`. Never a bare
-   `set` of the size followed by a separate `call` — a Draw can run between
-   two IPC polls, and that is the R5b crash. Record **R10** per method:
-   `kept`/`reverted` with the snapshot, and on `kept` the drawn grid, an item
-   in a new cell (R5c), the button (R6), close/reopen (R7). If a `kept`
-   result is followed by a GML error on the next frame, that is recorded as
+   the window open and the grid empty. Methods, in order: the grid node's own
+   `m_RefreshNode`, each other `m_*` method L2 listed on the node, then
+   `window:m_Resize` and `window:m_UpdateInventoryGrid`. For each, pass the
+   argument shape L5 logged when the game itself called that method's row
+   (numbers only, appended after the method name; with no logged call, pass
+   none and record the shape as unknown). **Shrink first**:
+   `prospectprobe resize 8 5 via m_RefreshNode` — a builder that ignores a
+   shrink leaves a store the smaller size still fits. Only a method whose
+   shrink printed `kept` is then grown:
+   `prospectprobe resize 9 6 via <method>` back to vanilla, then
+   `prospectprobe resize 18 6 via <method>`. A method whose shrink printed
+   `reverted`, `rebuilt` or `destroyed` is not grown. Never a bare `set` of
+   the size followed by a separate `call` — a Draw can run between two IPC
+   polls, and that is the R5b crash. Record **R10** per method and per probe:
+   `kept`/`reverted`/`rebuilt`/`destroyed`, the `invoked=` value, `self=`
+   and `args=` as printed, the snapshot, and on `kept` (or a `rebuilt` that
+   matches the request) the drawn grid, an item in a new cell (R5c), the
+   button (R6), close/reopen (R7). A line carrying `restore unsafe`: close the
+   window at once and record it. If a `kept` result is followed by a GML error
+   on the next frame, that is recorded as
    `kept but draw failed: <crash.txt line>` — a result, and the relaunch is
    the second one this procedure allows.
 10. **L10.** Fill § Results' Phase 0b column: R2-window, R4', R5a, R5c, R6,
@@ -610,6 +655,8 @@ A variable write that enlarges the drawn frame but not the cells the game accept
 
 A snapshot that changes inside a call's extent names the builder's extent, not the builder; only a write the builder then follows counts for H2'.
 
+A `reverted` from `resize via` counts toward H3 only when it printed `invoked=yes` and supplied the `self` and argument shape L5 logged when the game itself called that row; if L5 never logged the game calling it, it is `not observed (call shape unknown)`.
+
 Read § Hypotheses' required-evidence column as a conjunction: every item of a
 row must be present, with its control passing, in the same session.
 
@@ -620,7 +667,9 @@ row must be present, with its control passing, in the same session.
   instance ids or handles), R5c = accepted, R6 = consumed, and C-hook > 0.
 - **H2' needs all of:** R9 (a logged call whose `grid-post` says `CHANGED`,
   naming the builder's extent); R11 = applied on the R9 call with `rows`/`cols0`
-  following **or** R10 = `kept`; R5c = accepted in a new cell; R6 = consumed;
+  following **or** R10 = `kept` (with `invoked=yes`; a `kept` with
+  `invoked=unproven` still needs the drawn grid and R5c, and is written down
+  as unproven); R5c = accepted in a new cell; R6 = consumed;
   C-grid passing; C-hook > 0. A `CHANGED` snapshot alone is an extent, not a
   builder. A `reverted` on `resize via` is `not observed for that method`, never
   "the builder does not read them"; a `setat` that never applied, or applied to
@@ -643,11 +692,13 @@ row must be present, with its control passing, in the same session.
   re-run with tighter selectors. `@id` differing is never a mismatch.
 - **H3** needs **R2-window, R4' and R9 all measured**, every row that fired
   during the L5 open **fully logged** (no `UNLOGGED` left), every R4' row's
-  override applied to the R4' call, `setat` and `resize via` both tried against
-  the R9 row and method, each with its control passing, none positive, and a
-  local Ghidra read (paraphrased) naming the literal. An empty field, a row
-  left `UNLOGGED`, a closure row `not found`, or an override or `setat` that
-  landed elsewhere makes H **not observed**, never H3: a hypothesis that nothing
+  override applied to the R4' call, `setat` applied to the R9 call and
+  negative, `resize via` on the R9 method `reverted` with `invoked=yes` and the
+  call shape L5 logged for it (the rule above), none positive, and a local
+  Ghidra read (paraphrased) naming the literal. An empty field, a row left
+  `UNLOGGED`, a closure row `not found`, an override or `setat` that landed
+  elsewhere, or a `resize via` whose `invoked=` is `NO` or `unproven` or whose
+  call shape is unknown makes H **not observed**, never H3: a hypothesis that nothing
   governs the size cannot be concluded from candidates that were never seen or
   never tried.
 - Anything else is **not observed**, naming the instrument and the control
@@ -683,7 +734,7 @@ instrument failure — the stale SDK closure names — and never a negative.
 | R7 | items left in the grid on close: returned to inventory / kept in grid / lost | not observed. | unknown |
 | R8 | inventory grid, columns × rows | inventory grid (`"InventoryGrid"`, `UI_Inventory_Grid_obj` nth 2): 15 columns × 6 rows (`nodeGridWidth` 15, `nodeGridHeight` 6, `nodeGrid` array[6]). | unknown |
 | R9 | first logged call whose `grid-post` says `CHANGED`, with pre/post snapshots, and every later `CHANGED` (L5) | not run (no snapshot instrument) | unknown |
-| R10 | `resize … via <method>`: `kept`/`reverted` per method, with snapshot (L9) | not run | unknown |
+| R10 | `resize … via <method> [args]`: per method and probe (shrink, then grow), `kept`/`reverted`/`rebuilt`/`destroyed`, the `invoked=` value, `self=` and the args supplied, the snapshot, and any `restore unsafe` (L9) | not run | unknown |
 | R11 | `setat` before the R9 builder: applied line, `grid-post`, drawn grid (L7/L8) | not run | unknown |
 | C | write, hook and enumeration controls | **C-write = no**: `set UI_Prospect_obj 0 x` 60/600/1500 and `image_alpha` 0.3 (readback ok / float MISMATCH) and `set UI_Inventory_Grid_obj 5 gridScale 0.5` all landed and read back, none changed anything visible. **C-hook passed** (`CheckPlayerInteraction` 10200 → 14400 in two seconds). **Enumeration control passed** (`oget UI_Inventory_Grid_obj nodeGridWidth` = 4 = nth 0's dumped value; `inames` total 124 = `dumpobj` count). **L6 = yes** (reopen: new instances, vanilla values). | C-hook (L4): unknown |
 | C-grid | `prospectprobe grid` agrees with `citrace dumpobj` on the ProspectGrid node (L2) | not run | unknown |

@@ -268,7 +268,15 @@ class ProspectWindowContractTests(unittest.TestCase):
     def test_watch_post_line_exists_and_is_gated_on_logged(self):
         after = strip_comments(function_body(self.plugin, "static void PpAfter("))
         self.assertIn("grid-post=", after)
-        self.assertIn("CHANGED", after)
+        self.assertIn("PpSnapCompare(gridPre, post)", after)
+        # Round-1 N4: two failed reads must not print as `same`.
+        compare = strip_comments(function_body(self.plugin, "static const char* PpSnapCompare("))
+        for verdict in ('" UNREADABLE"', '" same"', '" CHANGED"'):
+            self.assertIn(verdict, compare)
+        self.assertLess(compare.index('" UNREADABLE"'), compare.index('" CHANGED"'))
+        self.assertIn('"none"', compare)
+        self.assertIn('"@"', compare)
+        self.assertIn("PpSnapCompare(before, after)", strip_comments(function_body(self.plugin, "static void PpCall(")))
         self.assertIn("if (!logged", after)
         self.assertLess(after.index("if (!logged"), after.index("PpGridSnapshot("))
         detour = self.plugin[self.plugin.index("#define PROSPECTPROBE_DETOUR"):self.plugin.index("#define PROSPECTPROBE_TARGETS")]
@@ -296,7 +304,7 @@ class ProspectWindowContractTests(unittest.TestCase):
     def test_resize_requires_via_and_reverts_when_the_builder_does_not_follow(self):
         resize = strip_comments(function_body(self.plugin, "static void PpResize("))
         self.assertIn("R5b", resize)
-        self.assertLess(resize.index('"script_execute"'), resize.rindex('"array_length"'))
+        self.assertLess(resize.index('"script_execute"'), resize.index("PpMeasureStore(node)"))
         self.assertIn("reverted", resize)
         self.assertIn("kept", resize)
         self.assertGreaterEqual(resize.count('"variable_instance_set"'), 4)
@@ -304,6 +312,59 @@ class ProspectWindowContractTests(unittest.TestCase):
         self.assertLess(resize.index("PpMethodTarget("), resize.index('"variable_instance_set"'))
         command = strip_comments(function_body(self.plugin, "static void PpCommand("))
         self.assertIn('"via"', command)
+        # Round-1 N3: the store is measured over every row, and `kept` needs
+        # every row to follow, not only row 0.
+        measure = strip_comments(function_body(self.plugin, "static PpStoreShape PpMeasureStore("))
+        self.assertIn('"array_length"', measure)
+        self.assertIn("for (int i = 0; i < s.rows; ++i)", measure)
+        self.assertIn("s.colsMin == cols && s.colsMax == cols", resize)
+
+    def test_resize_restore_never_exceeds_the_store(self):
+        # Round-1 N3: a builder that shrank or partly resized nodeGrid makes the
+        # vanilla values the R5b crash on the next Draw. The restore is capped
+        # per axis at what the store covers, and says so.
+        resize = strip_comments(function_body(self.plugin, "static void PpResize("))
+        revert = resize[resize.index("double w = wasW.ToDouble()"):]
+        self.assertIn("s.colsMin < w", revert)
+        self.assertIn("s.rows < h", revert)
+        self.assertIn("restore unsafe", revert)
+        self.assertLess(revert.index("s.colsMin < w"), revert.index('"variable_instance_set"'))
+        self.assertNotIn("{ node, wName, wasW }", resize)
+        # Round-1 N5: a method that replaced the node still gives an outcome.
+        self.assertIn("rebuilt (", resize)
+        self.assertIn("PpMeasureStore(newNode)", resize)
+        self.assertIn("destroyed (", resize)
+
+    def test_call_and_resize_prove_the_method_body_ran(self):
+        # Round-1 P0b-B1: script_execute succeeding proves the dispatch, not
+        # that the builder's body ran, so a `reverted` said nothing. The body's
+        # own detoured row counting during the invoke is the proof, and every
+        # outcome line names what was supplied.
+        row = strip_comments(function_body(self.plugin, "static PpTarget* PpInvokedRow("))
+        self.assertIn('"->method:"', row)
+        self.assertIn("t.runtimeName", row)
+        self.assertIn('"gml_Script_"', row)
+        text = strip_comments(function_body(self.plugin, "static std::string PpInvokedText("))
+        for verdict in ('"invoked=unproven (no detoured row for"', '"invoked=yes ("', '"invoked=NO ("',
+                        "row->installed.load()", "*row->calls - callsBefore"):
+            self.assertIn(verdict, text)
+        for signature in ("static void PpCall(", "static void PpResize("):
+            body = strip_comments(function_body(self.plugin, signature))
+            call = body.index("CallBuiltinEx(")
+            self.assertLess(body.index("PpInvokedRow(resolution)"), call, signature)
+            self.assertLess(body.index("callsBefore = row ? (long)*row->calls : 0"), call, signature)
+            self.assertLess(call, body.index("PpInvokedText(row, callsBefore, resolution)"), signature)
+            self.assertIn("PpArgsText(args)", body, signature)
+            self.assertIn('" self=" + PpDescribeSelf(self)', body, signature)
+            self.assertIn("callArgs.push_back(RValue(a))", body, signature)
+            self.assertIn("script_execute\", self, self, callArgs)", body, signature)
+        resize = strip_comments(function_body(self.plugin, "static void PpResize("))
+        self.assertIn("const std::vector<double>& args", self.plugin[self.plugin.index("static void PpResize("):][:120])
+        # `supplied` rides on the kept, reverted, rebuilt and destroyed lines.
+        self.assertGreaterEqual(resize.count("+ supplied"), 4)
+        command = strip_comments(function_body(self.plugin, "static void PpCommand("))
+        self.assertIn("PpResize(cols, rows, hasVia ? tok[4] : std::string(), args)", command)
+        self.assertIn("arguments after the method must be numbers", command)
 
     def test_setat_requires_a_detoured_row_and_an_existing_variable(self):
         arm = strip_comments(function_body(self.plugin, "static void PpSetAt("))
@@ -372,7 +433,7 @@ class ProspectWindowContractTests(unittest.TestCase):
         self.assertIn("`prospectprobe arm [budget=N] [substr ...]`", instrument)
         self.assertIn("[self=<Obj>] [other=<Obj>] [when=<number>]", instrument)
         for command in ("`prospectprobe grid`", "`prospectprobe watch on|off`", "`prospectprobe call ",
-                        "`prospectprobe resize <cols> <rows> via <m_Method>`", "`prospectprobe setat "):
+                        "`prospectprobe resize <cols> <rows> via <m_Method> [number ...]`", "`prospectprobe setat "):
             self.assertIn(command, instrument)
 
     # ---- nothing on the frame path -------------------------------------------
@@ -445,6 +506,45 @@ class ProspectWindowContractTests(unittest.TestCase):
         l4 = live[live.index("**L4"):live.index("**L5")]
         self.assertIn("must print `detoured`", l4)
         self.assertIn("session 7", l4)
+        # Round-1 N2: the stop condition covers the four names read live, not
+        # the nested struct closures nothing has measured resolving.
+        for name in ("anon@1065", "anon@2806", "anon@3657", "anon@36159"):
+            self.assertIn(name, l4)
+        self.assertNotIn("**Every `UI_Prospect_obj anon@…` and `UI_Inventory_Grid_obj …` row", l4)
+        # Round-1 N1: `detoured` proves resolution; a count needs invoked=yes.
+        instrument = collapse(section(self.doc, "## Instrument"))
+        self.assertIn("proves only that the name resolved", instrument)
+        self.assertIn("`invoked=yes`", instrument)
+
+    def test_research_doc_pins_the_resize_revert_rule(self):
+        # Round-1 P0b-B1: a `reverted` whose body never ran, or ran with a call
+        # shape the game does not use, is not evidence against the builder.
+        sentence = ("A `reverted` from `resize via` counts toward H3 only when it printed `invoked=yes` "
+                    "and supplied the `self` and argument shape L5 logged when the game itself called that "
+                    "row; if L5 never logged the game calling it, it is `not observed (call shape unknown)`.")
+        deciding = collapse(section(self.doc, "## Deciding the hypothesis"))
+        self.assertIn(sentence, deciding)
+        hypotheses = collapse(section(self.doc, "## Hypotheses"))
+        h3 = [line for line in hypotheses.split("| **H3** |")[1:]][0].split("| **not observed** |")[0]
+        self.assertIn("`invoked=yes`", h3)
+        self.assertNotIn("each with its control passing", h3)
+        results = section(self.doc, "## Results")
+        r10 = [line for line in results.replace("\r\n", "\n").split("\n") if line.startswith("| R10 |")][0]
+        self.assertIn("invoked=", r10)
+        self.assertIn("args", r10)
+        live = collapse(section(self.doc, "## Live procedure"))
+        l9 = live[live.index("**L9"):live.index("**L10")]
+        # Round-1 N3: each method is probed with a shrink first; grow only via a
+        # method whose shrink kept.
+        self.assertIn("prospectprobe resize 8 5 via m_RefreshNode", l9)
+        self.assertLess(l9.index("resize 8 5"), l9.index("resize 18 6"))
+        self.assertIn("restore unsafe", l9)
+        self.assertIn("invoked=", l9)
+        self.assertIn("rebuilt", l9)
+        l5 = live[live.index("**L5"):live.index("**L6")]
+        # Round-1 N4: "no CHANGED" is a result only if the snapshot resolved.
+        self.assertIn("UNREADABLE", l5)
+        self.assertIn("grid-post=@", l5)
 
 
 if __name__ == "__main__":

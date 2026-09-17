@@ -9673,6 +9673,16 @@ static bool PpObserve(const char* label, long n, volatile long* logged, volatile
     return true;
 }
 
+// `same` / `CHANGED` only when both reads resolved - a node (`@<id> ...`) or a
+// definite `none`. A failed or nested read on either side is `UNREADABLE`, so
+// two failed reads never print as "nothing changed".
+static const char* PpSnapCompare(const std::string& pre, const std::string& post)
+{
+    auto readable = [](const std::string& s) { return s == "none" || s.rfind("@", 0) == 0; };
+    if (!readable(pre) || !readable(post)) return " UNREADABLE";
+    return pre == post ? " same" : " CHANGED";
+}
+
 // After the trampoline: a pending `setat ... post`, then - for a call that was
 // logged with `watch` on - the post-call snapshot and whether it changed.
 static void PpAfter(const char* label, long n, bool logged, const std::string& gridPre,
@@ -9684,7 +9694,7 @@ static void PpAfter(const char* label, long n, bool logged, const std::string& g
         std::string post;
         PpGridSnapshot(post);
         Out(std::string("prospectprobe ") + label + " #" + std::to_string(n) + " grid-post=" + post
-            + (post == gridPre ? " same" : " CHANGED"));
+            + PpSnapCompare(gridPre, post));
     } catch (...) {}
 }
 
@@ -10158,8 +10168,46 @@ static bool PpMethodTarget(const std::string& target, const std::string& method,
         return false;
     }
     resolution = CiTryResolveMethod(methodValue);
-    if (resolution.empty()) resolution = " unresolvable";
+    if (resolution.empty()) resolution = " unresolvable";   // still invoked; its outcome is invoked=unproven
     return true;
+}
+
+// The table row a resolved method value's closure belongs to, or nullptr.
+// CiTryResolveMethod prints `->method:<name>#<index>`; the name is compared
+// with each row's SDK runtime name, `gml_Script_` ignored on both sides.
+static PpTarget* PpInvokedRow(const std::string& resolution)
+{
+    const size_t at = resolution.find("->method:");
+    if (at == std::string::npos) return nullptr;
+    std::string name = resolution.substr(at + 9);
+    const size_t hash = name.rfind('#');
+    if (hash != std::string::npos) name = name.substr(0, hash);
+    auto bare = [](const std::string& s) { const std::string p = "gml_Script_"; return s.rfind(p, 0) == 0 ? s.substr(p.size()) : s; };
+    name = bare(name);
+    if (name.empty()) return nullptr;
+    for (PpTarget& t : g_PpTargets) if (bare(t.runtimeName) == name) return &t;
+    return nullptr;
+}
+
+// Whether the method's own body ran. script_execute returning success proves
+// the dispatch, not the body; the body's native detour counting a call during
+// the invoke does. Without a detoured row for the closure there is no proof
+// either way.
+static std::string PpInvokedText(const PpTarget* row, long callsBefore, const std::string& resolution)
+{
+    if (!row) return "invoked=unproven (no detoured row for" + resolution + ")";
+    if (!row->installed.load()) return std::string("invoked=unproven (") + row->label + " is not detoured - `prospectprobe hook` it first)";
+    const long delta = *row->calls - callsBefore;
+    return delta > 0 ? std::string("invoked=yes (") + row->label + " +" + std::to_string(delta) + ")"
+                     : std::string("invoked=NO (") + row->label + " +0)";
+}
+
+static std::string PpArgsText(const std::vector<double>& args)
+{
+    if (args.empty()) return "args=(none)";
+    std::string s = "args=(";
+    for (size_t i = 0; i < args.size(); ++i) s += (i ? ", " : "") + PpNum(RValue(args[i]));
+    return s + ")";
 }
 
 static void PpCall(const std::string& target, const std::string& method, const std::vector<double>& args)
@@ -10178,25 +10226,64 @@ static void PpCall(const std::string& target, const std::string& method, const s
         std::vector<RValue> callArgs;
         callArgs.push_back(methodValue);
         for (double a : args) callArgs.push_back(RValue(a));
+        const PpTarget* row = PpInvokedRow(resolution);
+        const long callsBefore = row ? (long)*row->calls : 0;
         RValue res;
         AurieStatus st = AURIE_EXTERNAL_ERROR;
         bool threw = false;
         try { st = g_Yytk->CallBuiltinEx(res, "script_execute", self, self, callArgs); }
         catch (...) { threw = true; }
-        Out(tag + ": st=" + std::to_string((int)st) + (threw ? " (threw)" : "") + " res=" + Describe(res));
+        Out(tag + ": st=" + std::to_string((int)st) + (threw ? " (threw)" : "") + " res=" + Describe(res)
+            + " " + PpInvokedText(row, callsBefore, resolution) + " self=" + PpDescribeSelf(self) + " " + PpArgsText(args));
         std::string after;
         PpGridSnapshot(after);
-        Out(tag + ": grid after=" + after + (after == before ? " same" : " CHANGED"));
+        Out(tag + ": grid after=" + after + PpSnapCompare(before, after));
     } catch (...) { Out(tag + ": EXCEPTION"); }
 }
 
-// `resize <cols> <rows> via [window:]<m_Method>`: write the ProspectGrid node's
-// nodeGridWidth/nodeGridHeight, invoke the game's own method by name, and keep
-// the write only if nodeGrid followed - all in one handler, because a Draw
-// between a bare size write and a rebuild is the R5b crash. Refusals come
-// before any write; a builder that did not follow gets both values restored
-// before this returns.
-static void PpResize(int cols, int rows, const std::string& via)
+// nodeGrid's shape over every row, not only row 0: a builder that resized
+// some rows and not others leaves a Draw that indexes past the short ones.
+struct PpStoreShape {
+    bool array = false;   // nodeGrid exists and is an array
+    int  rows = -1;
+    int  cols0 = -1;
+    int  colsMin = -1;
+    int  colsMax = -1;
+};
+
+static PpStoreShape PpMeasureStore(const RValue& node)
+{
+    PpStoreShape s;
+    if (!g_Yytk->CallBuiltin("variable_instance_exists", { node, RValue("nodeGrid") }).ToBoolean()) return s;
+    RValue grid = g_Yytk->CallBuiltin("variable_instance_get", { node, RValue("nodeGrid") });
+    if (grid.m_Kind != VALUE_ARRAY) return s;
+    s.array = true;
+    s.rows = (int)g_Yytk->CallBuiltin("array_length", { grid }).ToDouble();
+    if (s.rows <= 0) { s.cols0 = s.colsMin = s.colsMax = 0; return s; }
+    for (int i = 0; i < s.rows; ++i) {
+        RValue row = g_Yytk->CallBuiltin("array_get", { grid, RValue((double)i) });
+        const int n = row.m_Kind == VALUE_ARRAY ? (int)g_Yytk->CallBuiltin("array_length", { row }).ToDouble() : 0;
+        if (i == 0) { s.cols0 = s.colsMin = s.colsMax = n; }
+        else { s.colsMin = (std::min)(s.colsMin, n); s.colsMax = (std::max)(s.colsMax, n); }
+    }
+    return s;
+}
+
+static std::string PpStoreText(const PpStoreShape& s)
+{
+    if (!s.array) return "nodeGrid is not an array";
+    return "rows=" + std::to_string(s.rows) + " cols0=" + std::to_string(s.cols0)
+        + " cols=" + std::to_string(s.colsMin) + ".." + std::to_string(s.colsMax);
+}
+
+// `resize <cols> <rows> via [window:]<m_Method> [number ...]`: write the
+// ProspectGrid node's nodeGridWidth/nodeGridHeight, invoke the game's own
+// method by name with the given arguments, and keep the write only if every
+// row of nodeGrid followed - all in one handler, because a Draw between a bare
+// size write and a rebuild is the R5b crash. Refusals come before any write; a
+// builder that did not follow gets the size restored before this returns, never
+// larger than the store now covers.
+static void PpResize(int cols, int rows, const std::string& via, const std::vector<double>& args)
 {
     const std::string tag = "prospectprobe resize " + std::to_string(cols) + " " + std::to_string(rows);
     if (via.empty()) {
@@ -10230,40 +10317,66 @@ static void PpResize(int cols, int rows, const std::string& via)
         }
         Out(tag + " via " + via + ":" + resolution + "; grid before=" + before);
 
+        std::vector<RValue> callArgs;
+        callArgs.push_back(methodValue);
+        for (double a : args) callArgs.push_back(RValue(a));
+        const PpTarget* row = PpInvokedRow(resolution);
+        const long callsBefore = row ? (long)*row->calls : 0;
         g_Yytk->CallBuiltin("variable_instance_set", { node, wName, RValue((double)cols) });
         g_Yytk->CallBuiltin("variable_instance_set", { node, hName, RValue((double)rows) });
         RValue res;
         AurieStatus st = AURIE_EXTERNAL_ERROR;
         bool threw = false;
-        try { st = g_Yytk->CallBuiltinEx(res, "script_execute", self, self, { methodValue }); }
+        try { st = g_Yytk->CallBuiltinEx(res, "script_execute", self, self, callArgs); }
         catch (...) { threw = true; }
         const bool called = !threw && AurieSuccess(st);
+        // What was supplied and whether the body ran ride on every outcome line:
+        // a `reverted` without them cannot say whether the builder was tested.
+        const std::string supplied = " " + PpInvokedText(row, callsBefore, resolution)
+            + " self=" + PpDescribeSelf(self) + " " + PpArgsText(args)
+            + " st=" + std::to_string((int)st) + (threw ? " (threw)" : "");
+        const std::string request = std::to_string(cols) + "x" + std::to_string(rows);
 
-        // Did the store follow? nodeGrid is rows x cols (Phase 0a R2).
-        int rowsNow = -1, colsNow = -1;
-        const bool nodeAlive = g_Yytk->CallBuiltin("instance_exists", { node }).ToBoolean();
-        if (nodeAlive && g_Yytk->CallBuiltin("variable_instance_exists", { node, RValue("nodeGrid") }).ToBoolean()) {
-            RValue grid = g_Yytk->CallBuiltin("variable_instance_get", { node, RValue("nodeGrid") });
-            if (grid.m_Kind == VALUE_ARRAY) {
-                rowsNow = (int)g_Yytk->CallBuiltin("array_length", { grid }).ToDouble();
-                if (rowsNow > 0) {
-                    RValue row0 = g_Yytk->CallBuiltin("array_get", { grid, RValue(0.0) });
-                    if (row0.m_Kind == VALUE_ARRAY) colsNow = (int)g_Yytk->CallBuiltin("array_length", { row0 }).ToDouble();
-                }
+        if (!g_Yytk->CallBuiltin("instance_exists", { node }).ToBoolean()) {
+            // The method replaced the node. The write was on the destroyed one,
+            // so there is nothing to restore; what the replacement measures is
+            // the outcome.
+            std::string fresh;
+            RValue newNode;
+            if (PpGridSnapshot(fresh, &newNode)) {
+                const PpStoreShape s = PpMeasureStore(newNode);
+                const bool matches = s.array && s.rows == rows && s.colsMin == cols && s.colsMax == cols;
+                Out(tag + ": rebuilt (the call replaced the ProspectGrid node; new node " + fresh + ", " + PpStoreText(s)
+                    + " - " + (matches ? "matches" : "does not match") + " the request " + request + ")" + supplied);
+            } else {
+                Out(tag + ": destroyed (the call removed the ProspectGrid node and no new one exists: " + fresh
+                    + "; nothing to restore)" + supplied);
             }
-        }
-        const std::string shape = "rows=" + std::to_string(rowsNow) + " cols0=" + std::to_string(colsNow);
-        if (!nodeAlive) {
-            Out(tag + ": the call st=" + std::to_string((int)st) + " destroyed the ProspectGrid node; nothing to restore on it");
-        } else if (!called || rowsNow != rows || colsNow != cols) {
-            g_Yytk->CallBuiltin("variable_instance_set", { node, wName, wasW });
-            g_Yytk->CallBuiltin("variable_instance_set", { node, hName, wasH });
-            Out(tag + ": reverted (" + (called ? "builder did not resize nodeGrid: " + shape
-                                              : "call failed st=" + std::to_string((int)st) + (threw ? " threw" : "") + "; " + shape)
-                + ") - nodeGridWidth/nodeGridHeight restored to " + PpNum(wasW) + "x" + PpNum(wasH)
-                + ". This is `not observed for " + via + "`, not evidence the builder ignores them.");
         } else {
-            Out(tag + ": kept (nodeGrid now " + shape + ") st=" + std::to_string((int)st) + " res=" + Describe(res));
+            // Did the store follow? nodeGrid is rows x cols (Phase 0a R2), every row.
+            const PpStoreShape s = PpMeasureStore(node);
+            if (called && s.array && s.rows == rows && s.colsMin == cols && s.colsMax == cols) {
+                Out(tag + ": kept (nodeGrid now " + PpStoreText(s) + ") res=" + Describe(res) + supplied);
+            } else {
+                // Restore, but never to a size the store no longer covers: a
+                // builder that shrank or partly resized nodeGrid would make the
+                // vanilla values the R5b crash on the next Draw.
+                double w = wasW.ToDouble(), h = wasH.ToDouble();
+                bool unsafe = !s.array;
+                if (s.array && s.colsMin < w) { w = (double)s.colsMin; unsafe = true; }
+                if (s.array && s.rows < h) { h = (double)s.rows; unsafe = true; }
+                g_Yytk->CallBuiltin("variable_instance_set", { node, wName, RValue(w) });
+                g_Yytk->CallBuiltin("variable_instance_set", { node, hName, RValue(h) });
+                Out(tag + ": reverted (" + (called ? "builder did not resize nodeGrid to " + request + ": " + PpStoreText(s)
+                                                  : "call failed; " + PpStoreText(s))
+                    + ") - nodeGridWidth/nodeGridHeight restored to " + PpNum(RValue(w)) + "x" + PpNum(RValue(h))
+                    + (unsafe ? " - restore unsafe: the store no longer covers the vanilla " + PpNum(wasW) + "x" + PpNum(wasH)
+                                    + (s.array ? "; wrote the size it does cover" : "; nothing safe to write")
+                                    + ". Close the window before anything else."
+                              : std::string())
+                    + supplied
+                    + ". Counts toward H3 only with invoked=yes and the self/args the game's own call used (research doc § Deciding).");
+            }
         }
         std::string after;
         PpGridSnapshot(after);
@@ -10360,7 +10473,7 @@ static void PpUsage()
     Out("  set <Obj> <nth> <var> <number>         write one existing numeric variable of one instance, read back");
     Out("  override <label> <argIndex> <number> [calls=1] [self=<Obj>] [other=<Obj>] [when=<number>] | override clear");
     Out("  call window|grid <m_Method> [number ...]   invoke a method value by name (script_execute), snapshot before/after");
-    Out("  resize <cols> <rows> via [window:]<m_Method>   write the node's size + run that builder in one step; reverts if nodeGrid did not follow");
+    Out("  resize <cols> <rows> via [window:]<m_Method> [number ...]   write the node's size + run that builder in one step; reverts if nodeGrid did not follow");
     Out("  setat <label> pre|post window|grid <var> <number> [self=<Obj>] [other=<Obj>] [arg<i>=<text>] | setat clear");
 }
 
@@ -10432,8 +10545,13 @@ static void PpCommand(const std::string& rest)
         int cols = 0, rows = 0;
         try { cols = std::stoi(tok[1]); rows = std::stoi(tok[2]); }
         catch (...) { Out("prospectprobe resize: cols and rows must be whole numbers; no write made"); return; }
-        const bool hasVia = tok.size() == 5 && Lower(tok[3]) == "via";
-        PpResize(cols, rows, hasVia ? tok[4] : std::string());
+        const bool hasVia = tok.size() >= 5 && Lower(tok[3]) == "via";
+        std::vector<double> args;
+        for (size_t i = 5; hasVia && i < tok.size(); ++i) {
+            try { size_t k = 0; args.push_back(std::stod(tok[i], &k)); if (k != tok[i].size()) throw 0; }
+            catch (...) { Out("prospectprobe resize: arguments after the method must be numbers; no write made"); return; }
+        }
+        PpResize(cols, rows, hasVia ? tok[4] : std::string(), args);
     }
     else if (sub == "setat") PpSetAtCommand(tok);
     else PpUsage();
