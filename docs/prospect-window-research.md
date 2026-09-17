@@ -648,9 +648,11 @@ the whole design, because a blind `callnum GetProfileInventoryData` (no correct
      the `at <path>` whose name starts with `ui` or contains `window`, `node`,
      `panel` or `menu`, case-insensitive (the walk never descends into an
      instance, so a member name is the only UI state a path can show); the
-     decided line's own `at <path>` list names every path that return hit, so it
-     may still contain a UI-looking one — the branch turns on how many
-     calls were clean, not on what the line prints. The UI-looking-field check
+     decided line's own `at <path>` list belongs to one kept return, the one
+     its `via` clause names, and lists every path on which the sentinel was
+     found in that return, not every path across the deciding calls; it may
+     still contain a UI-looking one — the branch turns on how many calls
+     were clean, not on what the line prints. The UI-looking-field check
      is a name rule standing in for "reached through the window's own state",
      not a measurement, and it can only demote a would-be save-backed identity
      to a lead, never promote one: a decided save-backed still rests on the
@@ -1119,7 +1121,8 @@ The rules are read **in this order, and the first that holds decides**:
   only` identity with R7 = returned is inconclusive, not not-save-backed:
   `copy` is never printed once a sentinel was found), identity where fewer
   than two of the calls holding it reached it on a path with no
-  **UI-looking field** (with R7 not kept —
+  **UI-looking field** (the mixed case counts, one clean call among several
+  UI-reached ones still decides nothing; with R7 not kept —
   with R7 = returned it is inconclusive too, not not-save-backed), identity
   through `GetPlayerItemOwner` or `GetInventoryArray` only (with R7 not kept), R7 was
   not measured across a written save, or `copy` with R7 = lost. H stays `not observed`; the fallback is a

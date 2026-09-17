@@ -882,6 +882,12 @@ class ProspectWindowContractTests(unittest.TestCase):
         self.assertIn("for (const PpBackingStash* s : g_PpBackingStashes) {", v)
         self.assertNotIn("break", v)
         self.assertNotIn("goto", v)
+        # The selection loop's one legitimate `continue` (skip a non-profile
+        # getter) is counted, so a second, skip-shaped one - e.g. skipping every
+        # stash but the first - cannot hide behind it. That mutant under-decides
+        # (prints the one-call lead when the second getter held two clean
+        # calls) and survived both earlier test files.
+        self.assertEqual(v.count("continue"), 1)
         self.assertNotIn("one call only", decided)
         self.assertNotIn("UI-looking", decided)
         self.assertIn("reached through a UI-looking field", ui)
@@ -983,7 +989,13 @@ class ProspectWindowContractTests(unittest.TestCase):
         self.assertIn("a name rule standing in for", instrument)
         self.assertIn("can only demote a would-be save-backed identity to a lead", instrument)
         self.assertIn("still rests on the two-call rule", instrument)
-        self.assertIn("names every path that return hit", instrument)
+        # The `at <path>` list on the decided line is one kept return's - the
+        # deciding getter's first clean hit, since profileCleanWhat is written
+        # once - so the doc scopes its caution to that return, not to every
+        # deciding call. (Round 1 pinned a sentence here that did not parse.)
+        self.assertIn("belongs to one kept return, the one its `via` clause names", instrument)
+        self.assertIn("lists every path on which the sentinel was found in that return, not every path across the deciding calls", instrument)
+        self.assertNotIn("names every path that return hit", instrument)
         self.assertNotIn("names every path that hit", instrument)
 
         live = collapse(section(self.doc, "## Phase 0c live procedure"))
@@ -991,6 +1003,7 @@ class ProspectWindowContractTests(unittest.TestCase):
         self.assertIn("UI-looking field", c5)
         self.assertIn("fewer than two of the calls holding it", c5)
         self.assertNotIn("decisive calls are reached only through", c5)
+        self.assertIn("one clean call among several UI-reached ones still decides nothing", c5)
 
         gate = collapse(section(self.doc, "## Deciding the hypothesis"))
         saved = gate[gate.index("- **Save-backed** —"):gate.index("- **Not save-backed** —")]
@@ -999,6 +1012,9 @@ class ProspectWindowContractTests(unittest.TestCase):
         self.assertIn("UI-looking field", inconclusive)
         self.assertIn("fewer than two of the calls holding it", inconclusive)
         self.assertNotIn("decisive calls are reached only through", inconclusive)
+        # The mixed-case aside is carried by both C5 and the gate rule, so the
+        # two descriptions of the same branch cannot drift apart.
+        self.assertIn("one clean call among several UI-reached ones still decides nothing", inconclusive)
 
         row = [line for line in self.doc.splitlines() if line.startswith("| backing idcheck |")][0]
         self.assertIn("UI-looking field", row)
