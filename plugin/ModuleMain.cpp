@@ -15437,6 +15437,11 @@ static constexpr int kTgDeepMaxElems = 200;          // per container, then one 
 // let it starve - with a cut-off that moved between snapshots. A scope that
 // reaches its budget says truncated=1 on its own line.
 static constexpr size_t kTgDeepMaxLeavesPerScope = 250000;
+// Leaves read through a followed instance handle have their own, smaller
+// budget per scope, printed as followLeaves= / followTruncated=. Charged to the
+// scope budget they could truncate a scope with nothing saying why, and a full
+// snapshot could hold several scopes' worth of them.
+static constexpr size_t kTgDeepMaxFollowLeavesPerScope = 50000;
 static constexpr size_t kTgDeepValueCap = 120;
 static constexpr int kTgDeepMaxSkillControllers = 8;
 static constexpr size_t kTgDeepDiffLines = 300;
@@ -15454,7 +15459,10 @@ struct TgDeepStats {
     size_t leaves = 0;
     size_t instFollowed = 0;     // live instance handles whose members were read here
     size_t instUnfollowed = 0;   // live instance handles whose members were read nowhere in this snapshot
+    size_t objNonStruct = 0;     // non-struct objects that resolve to no method: not followed, not asked
+    size_t followLeaves = 0;     // leaves read through followed handles (not in `leaves`)
     bool truncated = false;      // this scope reached kTgDeepMaxLeavesPerScope
+    bool followTruncated = false; // this scope reached kTgDeepMaxFollowLeavesPerScope
 };
 
 struct TgDeepSnap {
@@ -15470,9 +15478,18 @@ static std::string g_TgDeepLastSnap;
 
 static void TgProbeDeepLeaf(TgDeepSnap& out, TgDeepStats& st, const std::string& path, const std::string& value)
 {
-    if (st.leaves >= kTgDeepMaxLeavesPerScope) { st.truncated = true; out.truncated = true; return; }
+    const bool followed = out.followDepth > 0;
+    if (followed) {
+        if (st.followLeaves >= kTgDeepMaxFollowLeavesPerScope) { st.followTruncated = true; out.truncated = true; return; }
+    } else if (st.leaves >= kTgDeepMaxLeavesPerScope) { st.truncated = true; out.truncated = true; return; }
     out.leaves[path] = value.size() > kTgDeepValueCap ? value.substr(0, kTgDeepValueCap) + "..." : value;
-    ++st.leaves;
+    if (followed) ++st.followLeaves; else ++st.leaves;
+}
+
+// Whether the budget the next leaf would be charged to is already spent.
+static bool TgProbeDeepBudgetSpent(const TgDeepSnap& out, const TgDeepStats& st)
+{
+    return out.followDepth > 0 ? st.followTruncated : st.truncated;
 }
 
 static void TgProbeDeepUnreadable(TgDeepSnap& out, TgDeepStats& st, const std::string& path)
@@ -15481,13 +15498,29 @@ static void TgProbeDeepUnreadable(TgDeepSnap& out, TgDeepStats& st, const std::s
     TgProbeDeepLeaf(out, st, path, "<unreadable>");
 }
 
+// Whether a description is the runtime's own name for a handle of one kind.
+// Describe() gives a handle as `kind=15 str=ref ds_map 41`, and a string as
+// `string:"<its text>"` - so an unanchored substring match took any string that
+// merely contains "ref instance " (a game-built string(id), say) for a handle,
+// and handed it to instance_exists or ds_exists, whose behaviour on a string is
+// not known on this runner. The ref text must start the description, or start
+// what a `kind=N str=` description reports.
+static bool TgProbeDeepDescribesRef(const std::string& desc, const char* refPrefix)
+{
+    if (desc.rfind("string:", 0) == 0) return false;
+    if (desc.rfind(refPrefix, 0) == 0) return true;
+    if (desc.rfind("kind=", 0) != 0) return false;
+    const size_t str = desc.find(" str=");
+    return str != std::string::npos && desc.compare(str + 5, std::strlen(refPrefix), refPrefix) == 0;
+}
+
 // A ds_map/ds_list is recognised the way CiExpandContainer does - from the
-// value's own description - and then confirmed live with ds_exists, the gate
-// N1GetTalentMap uses. 1 = ds_type_map, 2 = ds_type_list.
+// value's own description, anchored - and then confirmed live with ds_exists,
+// the gate N1GetTalentMap uses. 1 = ds_type_map, 2 = ds_type_list.
 static bool TgProbeDeepIsDs(const RValue& v, const char* describedAs, double dsType)
 {
     try {
-        if (Describe(v).find(describedAs) == std::string::npos) return false;
+        if (!TgProbeDeepDescribesRef(Describe(v), describedAs)) return false;
         return g_Yytk->CallBuiltin("ds_exists", { v, RValue(dsType) }).ToBoolean();
     } catch (...) { return false; }
 }
@@ -15509,12 +15542,12 @@ static bool TgProbeDeepFollowInstance(const RValue& v, const std::string& path, 
 
 static void TgProbeDeepWalk(const RValue& v, const std::string& path, int depth, TgDeepSnap& out, TgDeepStats& st)
 {
-    if (st.truncated) return;
+    if (TgProbeDeepBudgetSpent(out, st)) return;
     try {
         if (v.m_Kind == VALUE_ARRAY) {
             const int n = (int)g_Yytk->CallBuiltin("array_length", { v }).ToDouble();
             if (depth > kTgDeepMaxDepth) { TgProbeDeepLeaf(out, st, path, "<container n=" + std::to_string(n) + ">"); return; }
-            for (int i = 0; i < n && i < kTgDeepMaxElems && !st.truncated; ++i) {
+            for (int i = 0; i < n && i < kTgDeepMaxElems && !TgProbeDeepBudgetSpent(out, st); ++i) {
                 const std::string child = path + "[" + std::to_string(i) + "]";
                 RValue el;
                 try { el = g_Yytk->CallBuiltin("array_get", { v, RValue((double)i) }); }
@@ -15527,13 +15560,19 @@ static void TgProbeDeepWalk(const RValue& v, const std::string& path, int depth,
         if (v.m_Kind == VALUE_OBJECT) {
             if (!g_Yytk->CallBuiltin("is_struct", { v }).ToBoolean()) {
                 // A method value (or other non-struct object): named, never invoked.
-                TgProbeDeepLeaf(out, st, path, "object/method" + CiTryResolveMethod(v));
+                // One that resolves to no method may be an instance held as a
+                // plain object; it is counted as objNonStruct= and never handed
+                // to an instance builtin - whether that is safe on this runner
+                // is not known.
+                const std::string method = CiTryResolveMethod(v);
+                if (method.empty()) ++st.objNonStruct;
+                TgProbeDeepLeaf(out, st, path, "object/method" + method);
                 return;
             }
             RValue names = g_Yytk->CallBuiltin("variable_struct_get_names", { v });
             const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
             if (depth > kTgDeepMaxDepth) { TgProbeDeepLeaf(out, st, path, "<container n=" + std::to_string(n) + ">"); return; }
-            for (int i = 0; i < n && i < kTgDeepMaxElems && !st.truncated; ++i) {
+            for (int i = 0; i < n && i < kTgDeepMaxElems && !TgProbeDeepBudgetSpent(out, st); ++i) {
                 std::string name;
                 try { name = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) }).ToString(); }
                 catch (...) { TgProbeDeepUnreadable(out, st, path + ".<name#" + std::to_string(i) + ">"); continue; }
@@ -15551,7 +15590,7 @@ static void TgProbeDeepWalk(const RValue& v, const std::string& path, int depth,
             if (depth > kTgDeepMaxDepth) { TgProbeDeepLeaf(out, st, path, "<container n=" + std::to_string(n) + ">"); return; }
             RValue key = g_Yytk->CallBuiltin("ds_map_find_first", { v });
             int seen = 0;
-            while (key.m_Kind != VALUE_UNDEFINED && seen < kTgDeepMaxElems && !st.truncated) {
+            while (key.m_Kind != VALUE_UNDEFINED && seen < kTgDeepMaxElems && !TgProbeDeepBudgetSpent(out, st)) {
                 const std::string child = path + "{" + TgProbeDeepKeyText(key) + "}";
                 try { TgProbeDeepWalk(g_Yytk->CallBuiltin("ds_map_find_value", { v, key }), child, depth + 1, out, st); }
                 catch (...) { TgProbeDeepUnreadable(out, st, child); }
@@ -15565,7 +15604,7 @@ static void TgProbeDeepWalk(const RValue& v, const std::string& path, int depth,
         if (TgProbeDeepIsDs(v, "ref ds_list ", 2.0)) {
             const int n = (int)g_Yytk->CallBuiltin("ds_list_size", { v }).ToDouble();
             if (depth > kTgDeepMaxDepth) { TgProbeDeepLeaf(out, st, path, "<container n=" + std::to_string(n) + ">"); return; }
-            for (int i = 0; i < n && i < kTgDeepMaxElems && !st.truncated; ++i) {
+            for (int i = 0; i < n && i < kTgDeepMaxElems && !TgProbeDeepBudgetSpent(out, st); ++i) {
                 const std::string child = path + "[" + std::to_string(i) + "]";
                 try { TgProbeDeepWalk(g_Yytk->CallBuiltin("ds_list_find_value", { v, RValue((double)i) }), child, depth + 1, out, st); }
                 catch (...) { TgProbeDeepUnreadable(out, st, child); }
@@ -15602,10 +15641,16 @@ static void TgProbeDeepInstanceNames(const RValue& inst, std::vector<std::string
 // exists both ON and OFF was one unchanging `ref instance N` leaf, and the
 // census would not move either.
 //
-// Identified by what it is: the runtime's own description says `ref instance`,
-// and instance_exists confirms it is live. No kind comparison decides it (this
-// runner hands instances out as VALUE_REF). A non-struct VALUE_OBJECT is a
-// method value and is never asked - instance_exists on one is not known safe.
+// Identified by what it is: the runtime's own description starts with
+// `ref instance` (TgProbeDeepDescribesRef - a string quoting that text is not a
+// handle), and instance_exists confirms it is live. No kind comparison decides
+// it (this runner hands instances out as VALUE_REF). A non-struct VALUE_OBJECT
+// never reaches here - instance_exists on one is not known safe - and one that
+// names no method is counted as objNonStruct= instead.
+//
+// Members read here are charged to the scope's follow budget, not its own
+// (followLeaves= / followTruncated=), so a busy handle cannot truncate the scope
+// it was found in without saying so.
 //
 // The handle itself always stays a leaf, so a slot that starts pointing at a
 // different instance still diffs. One level only: a live handle met while
@@ -15615,7 +15660,7 @@ static void TgProbeDeepInstanceNames(const RValue& inst, std::vector<std::string
 static bool TgProbeDeepFollowInstance(const RValue& v, const std::string& path, int depth, TgDeepSnap& out, TgDeepStats& st)
 {
     const std::string handle = Describe(v);
-    if (handle.find("ref instance ") == std::string::npos) return false;
+    if (!TgProbeDeepDescribesRef(handle, "ref instance ")) return false;
     TgProbeDeepLeaf(out, st, path, handle);
     bool live = false;
     try { live = g_Yytk->CallBuiltin("instance_exists", { v }).ToBoolean(); } catch (...) { live = false; }
@@ -15627,7 +15672,7 @@ static bool TgProbeDeepFollowInstance(const RValue& v, const std::string& path, 
     TgProbeDeepInstanceNames(v, names, st);
     ++out.followDepth;
     for (const std::string& name : names) {
-        if (st.truncated) break;
+        if (TgProbeDeepBudgetSpent(out, st)) break;
         const std::string child = path + "." + name;
         RValue member;
         try { member = g_Yytk->CallBuiltin("variable_instance_get", { v, RValue(name) }); }
@@ -15810,7 +15855,10 @@ static void TgProbeDeepSnap(const std::string& name, const std::set<std::string>
             + " names=" + std::to_string(st.names) + " read=" + std::to_string(st.read)
             + " unreadable=" + std::to_string(st.unreadable) + " leaves=" + std::to_string(st.leaves)
             + " instRefs=" + std::to_string(st.instFollowed) + "/" + std::to_string(st.instUnfollowed)
+            + " objNonStruct=" + std::to_string(st.objNonStruct)
+            + " followLeaves=" + std::to_string(st.followLeaves)
             + " truncated=" + (st.truncated ? "1" : "0")
+            + " followTruncated=" + (st.followTruncated ? "1" : "0")
             + extra + (note.empty() ? "" : " note=" + note));
     }
     size_t unreadable = 0;
@@ -15818,6 +15866,7 @@ static void TgProbeDeepSnap(const std::string& name, const std::set<std::string>
     for (const auto& kv : snap.scopes) {
         unreadable += kv.second.unreadable;
         if (kv.second.truncated) truncatedScopes += (truncatedScopes.empty() ? "" : ",") + kv.first;
+        if (kv.second.followTruncated) truncatedScopes += (truncatedScopes.empty() ? "" : ",") + kv.first + "(follow)";
     }
     const ULONGLONG elapsed = GetTickCount64() - started;
     Out("tgprobe deep snap " + name + ": scopes=" + scopeList
@@ -15869,7 +15918,7 @@ static std::string TgProbeDeepValueIn(const TgDeepSnap& s, const std::string& pa
 static bool TgProbeDeepScopeTruncated(const TgDeepSnap& s, const std::string& scope)
 {
     auto it = s.scopes.find(scope);
-    return it != s.scopes.end() && it->second.truncated;
+    return it != s.scopes.end() && (it->second.truncated || it->second.followTruncated);
 }
 
 // Lines print in path order and stop at kTgDeepDiffLines, and `global.` sorts
@@ -16307,8 +16356,19 @@ static void TgProbeDeepCommand(const std::string& rest)
         return;
     }
     if (sub == "selftest") { TgProbeDeepSelfTest(); return; }
+    if (sub == "drop") {
+        // A full snapshot can hold several hundred thousand leaves; the named
+        // ones are kept until the plugin unloads unless dropped here.
+        std::string t1;
+        const std::string name = FirstToken(r, t1);
+        if (name.empty()) { Out("tgprobe deep drop: usage -> tgprobe deep drop <name>"); return; }
+        if (g_TgDeepSnaps.erase(name) == 0) { Out("tgprobe deep drop: no snapshot named '" + name + "'"); return; }
+        if (g_TgDeepLastSnap == name) g_TgDeepLastSnap.clear();
+        Out("tgprobe deep drop " + name + ": dropped, " + std::to_string(g_TgDeepSnaps.size()) + " snapshot(s) kept");
+        return;
+    }
     Out("tgprobe deep: usage -> tgprobe deep snap <name> [scope...] [talent=240,243,252] | diff <a> <b> [substr]"
-        " | flip <base> <on> <off> | find <substr> [name] | get <path> | census | selftest");
+        " | flip <base> <on> <off> | find <substr> [name] | get <path> | census | selftest | drop <name>");
 }
 
 static void TgProbeCommand(const std::string& rest)
@@ -16341,7 +16401,7 @@ static void TgProbeCommand(const std::string& rest)
     if (sub == "deep") { TgProbeDeepCommand(subRest); return; }
     Out("tgprobe: usage -> tgprobe hook [substr...] | show | reset | verbose on|off | slots | buffs | abilities"
         " | vars <Obj|global> | snap <Obj|global> | diff | room"
-        " | deep snap|diff|flip|find|get|census|selftest ...");
+        " | deep snap|diff|flip|find|get|census|selftest|drop ...");
 }
 #endif // FORGEPACT_RELEASE (tgprobe)
 

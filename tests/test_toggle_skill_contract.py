@@ -444,6 +444,63 @@ class ToggleDeepReadContractTests(unittest.TestCase):
         self.assertIn("bad index", get)
         self.assertIn("variable_global_exists=false", get)
 
+    # ---- round 3: attribution, strings, non-struct objects ----
+
+    def test_a_string_is_never_taken_for_a_handle(self):
+        # R3: the handle checks matched "ref instance " / "ref ds_map " anywhere
+        # in Describe(), and a string's description quotes its text - so a
+        # game-built string(id) went to instance_exists or ds_exists.
+        describes = function_body(self.plugin, "static bool TgProbeDeepDescribesRef(")
+        self.assertIn('"string:"', describes)
+        # Anchored: the ref text starts the description, or starts what a
+        # `kind=N str=` description reports.
+        for needle in ('rfind("kind=", 0)', '" str="'):
+            self.assertIn(needle, describes)
+        self.assertLess(describes.index('"string:"'), describes.index('rfind("kind=", 0)'))
+        is_ds = function_body(self.plugin, "static bool TgProbeDeepIsDs(")
+        self.assertIn("TgProbeDeepDescribesRef(", is_ds)
+        self.assertNotIn(".find(describedAs)", is_ds)
+        self.assertLess(is_ds.index("TgProbeDeepDescribesRef("), is_ds.index("ds_exists"))
+        follow = function_body(self.plugin, "static bool TgProbeDeepFollowInstance(")
+        self.assertIn('TgProbeDeepDescribesRef(handle, "ref instance ")', follow)
+        self.assertNotIn('handle.find("ref instance ")', follow)
+        self.assertLess(follow.index("TgProbeDeepDescribesRef("), follow.index("instance_exists"))
+        self.assertNotIn("m_Kind", describes)
+        self.assertNotIn("m_Kind", follow)
+
+    def test_followed_members_have_their_own_budget_and_count(self):
+        # R1: members read through a followed handle were charged to the scope
+        # the handle sat in, so a scope could truncate with no attribution.
+        self.assertRegex(self.block, r"kTgDeepMaxFollowLeavesPerScope\s*=\s*50000")
+        leaf = function_body(self.plugin, "static void TgProbeDeepLeaf(")
+        for needle in ("out.followDepth > 0", "st.followLeaves >= kTgDeepMaxFollowLeavesPerScope",
+                       "st.followTruncated = true", "++st.followLeaves"):
+            self.assertIn(needle, leaf)
+        walk = function_body(self.plugin, "static void TgProbeDeepWalk(")
+        self.assertIn("TgProbeDeepBudgetSpent(out, st)", walk)
+        self.assertNotIn("st.truncated", walk)
+        self.assertIn("TgProbeDeepBudgetSpent(out, st)", function_body(self.plugin, "static bool TgProbeDeepFollowInstance("))
+        snap = function_body(self.plugin, "static void TgProbeDeepSnap(")
+        for needle in ("followLeaves=", "followTruncated="):
+            self.assertIn(needle, snap)
+        self.assertIn("followTruncated", function_body(self.plugin, "static bool TgProbeDeepScopeTruncated("))
+        # Six retained full snapshots had no way to be freed.
+        command = function_body(self.plugin, "static void TgProbeDeepCommand(")
+        self.assertIn('"drop"', command)
+        self.assertIn("g_TgDeepSnaps.erase(", command)
+        self.assertIn("drop <name>", command)
+
+    def test_non_struct_objects_are_counted_and_never_asked_about_instances(self):
+        # R2: a CInstance held as a non-struct object became an object/method
+        # leaf, neither followed nor counted.
+        walk = function_body(self.plugin, "static void TgProbeDeepWalk(")
+        branch = walk[walk.index('"is_struct"'):walk.index("variable_struct_get_names")]
+        self.assertIn("CiTryResolveMethod(v)", branch)
+        self.assertIn("++st.objNonStruct", branch)
+        for call in ("instance_exists", "variable_instance", "HhResolveInstance"):
+            self.assertNotIn(call, branch)
+        self.assertIn("objNonStruct=", function_body(self.plugin, "static void TgProbeDeepSnap("))
+
 
 if __name__ == "__main__":
     unittest.main()

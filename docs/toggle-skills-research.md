@@ -266,8 +266,13 @@ pasted straight into `deep get`:
 
 **Walker rules.** Arrays → `[i]`; structs → `.name`; a `ds_map` → `{key}`
 and a `ds_list` → `[i]`, each recognised from the value's own `ref ds_map` /
-`ref ds_list` description and confirmed with `ds_exists`; a non-struct object
-(a method value) is a leaf naming the method; everything else is a leaf holding
+`ref ds_list` description and confirmed with `ds_exists`. The description must
+*start* with that text (after the runtime's `kind=N str=` prefix): a string
+value describes itself as `string:"…"`, and one whose text merely contains
+`ref instance ` or `ref ds_map ` — a game-built `string(id)`, say — is a string
+leaf, never handed to `instance_exists` or `ds_exists`. A non-struct object
+(a method value) is a leaf naming the method; one that names no method is
+counted per scope as `objNonStruct=` (see below). Everything else is a leaf holding
 the kind-tagged value (strings capped at 120 characters). Caps: **depth 3**
 (a root member's own value is depth 1, and containers at depth 1, 2 and 3 are
 expanded, so `Player_obj.arr[3].field` and `global.playerBuff[1][0][86]` are
@@ -295,7 +300,14 @@ move either. Two limits keep this bounded, and both are visible:
 - **One level.** A live handle met *while reading a followed instance* is a
   leaf and is not followed. The scope line counts these as the second number of
   `instRefs=<followed>/<unfollowed>`; anything non-zero there is state this
-  snapshot did not read.
+  snapshot did not read. The unfollowed number is an **upper bound** on that
+  unread state (a handle can point at an instance whose variables hold nothing
+  that changes), not a disqualifier: a negative quotes it, it does not void it.
+- **Its own leaf budget.** Leaves read through a followed handle are charged
+  to a separate budget of 50,000 per scope, not to the scope's own 250,000, and
+  counted on the scope line as `followLeaves=`. A scope that exhausts it stops
+  following and says `followTruncated=1`, so a handle with a large instance
+  behind it cannot cut a scope short without the line saying why.
 - **Once per instance per snapshot.** An instance already read — a scope root
   (`Player_obj`, `Controller_obj`, …) or one reached earlier by another path —
   is a leaf the second time and counts as neither; its members are in the
@@ -305,29 +317,37 @@ move either. Two limits keep this bounded, and both are visible:
 
 A non-struct object value is never asked whether it is an instance (the
 runtime's answer for a method value is not known to be safe), and an instance
-id stored as a plain number is a number: neither is followed.
+id stored as a plain number is a number: neither is followed. A non-struct
+object whose method does not resolve is the case an instance held as a plain
+object would fall into, so the scope line counts those as `objNonStruct=`;
+non-zero is state that may not have been read.
 
 **The leaf budget is per scope.** One shared budget let `global`, walked
 last, be cut off by whatever the earlier scopes used, at a point that moved
 from one snapshot to the next. Each scope now has its own 250,000 leaves and
-its own `truncated=` on its line; the summary lists `truncatedScopes=`. A
-truncated scope's diff is not evidence of anything: every snapshot compared
-for Q3 must read `truncated=0` (see "What a negative means").
+its own `truncated=` on its line (and `followTruncated=` for the follow
+budget); the summary lists `truncatedScopes=`, naming a follow-budget cut as
+`<scope>(follow)`, and its `truncated=1` covers either. A truncated scope's
+diff is not evidence of anything: every snapshot compared for Q3 must read
+`truncated=0` and `followTruncated=0` (see "What a negative means").
 
 **Cost.** A full snapshot is a deliberate one-shot stall (the `citrace symdump`
 precedent). The research build's stall watchdog may print a `STALL` line while
 it runs — expected and harmless. If `ms=` is above about 15 s, or any scope
-reports `truncated=1`, take scoped snapshots instead.
+reports `truncated=1` or `followTruncated=1`, take scoped snapshots instead.
+Snapshots are kept in memory until the plugin unloads; `tgprobe deep drop
+<name>` frees one that is no longer needed.
 
 | Command | Does / prints |
 |---|---|
-| `tgprobe deep snap <name> [scope…] [talent=240,243,252]` | Captures the listed scopes (none = all seven) under `<name>`; re-using a name overwrites it. One line per scope `tgprobe deep snap <name> scope=<scope> names=N read=M unreadable=U leaves=L instRefs=F/U truncated=0\|1` (the global line adds `globalNames=<enum>/<names>`), then `tgprobe deep snap <name>: scopes=… leaves=… unreadable=… truncated=0\|1 truncatedScopes=none\|<list> ms=<elapsed> room=<name>`. |
+| `tgprobe deep snap <name> [scope…] [talent=240,243,252]` | Captures the listed scopes (none = all seven) under `<name>`; re-using a name overwrites it. One line per scope `tgprobe deep snap <name> scope=<scope> names=N read=M unreadable=U leaves=L instRefs=F/U objNonStruct=O followLeaves=FL truncated=0\|1 followTruncated=0\|1` (the global line adds `globalNames=<enum>/<names>`), then `tgprobe deep snap <name>: scopes=… leaves=… unreadable=… truncated=0\|1 truncatedScopes=none\|<list> ms=<elapsed> room=<name>`. `leaves=` on a scope line excludes its `followLeaves=`; the summary's `leaves=` counts both, and `truncatedScopes=` names a follow-budget cut as `<scope>(follow)`. |
 | `tgprobe deep diff <a> <b> [substr]` | Leaves changed / added / removed between two snapshots, one line each (`~ <path>: <old> -> <new>`, `+ <path>=<value>`, `- <path> (was <value>)`), in path order, capped at 300 lines, then per-scope counts with each scope's `truncated=`. With `substr`, only paths containing it (case-insensitive) print, and the header adds `filter=<substr> matching=N`; the counts stay totals. Path order puts `global.` after every object root and `census.`, so under per-frame churn a known global line can fall past 300 — check a specific leaf with the filter, never by scrolling the unfiltered diff. |
 | `tgprobe deep flip <base> <on> <off>` | Bucket **A**: leaves with `on != base` and `off == base` — flipped and reverted, the shape a toggle state has. Bucket **B**: `on != base`, `off != on`, `off != base` — changed twice, the shape of a cast counter or timestamp. Each capped at 200 lines; both counts printed, and `truncated=1` if any of the three snapshots was. Frame timers and positions churn in every diff; `flip` is what makes the session readable. |
 | `tgprobe deep find <substr> [name]` | Case-insensitive search over paths and leaf values of a snapshot (default: the last one taken), cap 200 lines. `find sub`, `find 240`, `find purg` are the Purgatory sub-talent reads. |
 | `tgprobe deep get <path>` | Resolves the path **live** and prints the value (and `n=` for a container). Roots: `Player_obj`, `Controller_obj`, `UI_Hud_Talent_obj`, `Skill_Controller_obj#<k>`, `global`, `talent:<id>`; then any of `.name` (a struct field, or a variable of a live instance handle), `[i]`, `{key}` (numeric keys as reals, else strings). A failing segment is named, including a non-numeric index (`bad index`). A global is read the way the snapshot reads it, so a name the snapshot listed is not refused just because `variable_global_exists` says false. Every step is a builtin called by name, so this is the read an indicator can copy from any `self`. |
 | `tgprobe deep census` | The current non-zero `instance_number` rows, `<ObjectName>=<n>` (cap 300), with the SDK's name beside the runtime's when they differ. |
 | `tgprobe deep selftest` | Builds a fixture from builtins alone (a parsed JSON struct with a nested array and struct, plus a created `ds_map` and a created `ds_list` attached as fields), walks it, checks the five expected leaves, changes three of them (the nested struct field, the map entry, the list element), walks again and expects exactly those three in the diff, then destroys the map and the list. Prints `tgprobe deep selftest: OK leaves=5 changed=3` or `FAIL <which check>`. Then, on its own line, the instance-handle check: a struct holding the live `Controller_obj` instance's handle twice (read only; nothing is written to the instance) must be followed exactly once — both handles leaves, members under exactly one of the two paths, `instFollowed=1`, `instUnfollowed=0`. Prints `tgprobe deep selftest instance: OK followed=1 members=N`, `FAIL <which check>`, or `SKIP no Controller_obj instance`. |
+| `tgprobe deep drop <name>` | Frees a snapshot (`tgprobe deep drop <name>: dropped, N snapshot(s) kept`). Snapshots otherwise stay in memory until the plugin unloads, and a full one can hold several hundred thousand leaves. |
 
 **Positive controls.** The deep diff is a new instrument, and a zero from it
 is worth nothing until it has produced a non-zero on something known. Five,
@@ -354,9 +374,13 @@ all in session 2, three of them inside the measurement's own diffs:
   `census.` row for the object(s) that cast creates (record the name). If not,
   the census scope is blind.
 - **C4, instance-member enumeration:** `deep diff base on Player_obj.` must
-  print at least one changed `Player_obj.` leaf (session 1's scalar diff saw
-  `Player_obj` variables change across a cast). Zero means the `player` scope
-  read nothing that changes, and it contributes no negative.
+  print at least one changed leaf that is a **direct** member of the player:
+  `Player_obj.<name>` or `Player_obj.alarm[i]`, with no second `.` after the
+  member name (session 1's scalar diff saw `Player_obj` variables change
+  across a cast). The filter also matches `Player_obj.<handle>.<member>` —
+  variables of an instance the player merely points at, read by the follow —
+  and those do not count. Zero direct members means the `player` scope read
+  nothing that changes, and it contributes no negative.
 - **C5, the talent scope:** the `talent` line of every compared snapshot reads
   `read=3`, and `tgprobe deep find <absent: <snapshot>` reports `hits=0`.
   Otherwise the talent structs were not read, and that scope contributes no
@@ -364,14 +388,21 @@ all in session 2, three of them inside the measurement's own diffs:
 
 **What a negative means.** A Q3 `not observed` is a result only if C1–C5 all
 fired **and** every compared snapshot (`base`, `on`, `on2`, `off`, `hz0`,
-`hz1`, or their scoped splits) reports `truncated=0` on every scope line. It
+`hz1`, or their scoped splits) reports `truncated=0` and `followTruncated=0`
+on every scope line. It
 means exactly: *the ON/OFF state is not a leaf reachable from the seven scopes
 at depth ≤ 3 (one level deeper under a `talent:<id>` root, whose struct is
 itself depth 0) with ≤ 200 elements per container, including one level of
 variables on every live instance handle met there, and no live instance count
 changes with it* — quoted together with each snapshot's `instRefs=` second
-number, the handles that were not followed. What it does **not** cover, by
-construction: a ds_map or ds_list whose handle is stored as a plain number
+number, the handles that were not followed, and its `objNonStruct=`. A non-zero
+unfollowed count is an upper bound on state this snapshot did not read, not a
+disqualifier. What it does **not** cover, by
+construction: the variables behind an instance handle met while reading a
+followed instance (counted in `instRefs=`'s second number); a non-struct object
+value that names no method (counted as `objNonStruct=`), which is how an
+instance held as a plain object would appear — its variables are not read,
+since no instance builtin is called on such a value; a ds_map or ds_list whose handle is stored as a plain number
 (only values that describe themselves as `ref ds_map` / `ref ds_list` are
 expanded), or an instance id stored as a plain number; a ds_map's entries past
 the first 200 in the map's own iteration order, which is not sorted and may
@@ -500,8 +531,9 @@ retaken.
    `Controller_obj` exists in town) before anything else.
 3. Toggle OFF (by eye). `tgprobe deep snap base` → record every scope line and
    the summary line. If `unreadable=` is non-zero, note it. **Every scope line
-   must read `truncated=0`** (the summary's `truncatedScopes=none`). If a scope
-   reads `truncated=1`, or `ms=` is above ~15 s, switch to scoped snapshots for
+   must read `truncated=0` and `followTruncated=0`** (the summary's
+   `truncatedScopes=none`). If a scope reads either as 1, or `ms=` is above
+   ~15 s, switch to scoped snapshots for
    the rest (`snap base player talent controller hud skillctl census`, then
    `snap baseg global`, and diff each pair; say which in Results). A scope still
    `truncated=1` when snapshotted alone cannot support a negative: record it,
@@ -520,21 +552,25 @@ retaken.
      nothing prints, `tgprobe buffs`: slot 86 alive ⇒ the walker is blind ⇒
      stop.
    - `tgprobe deep diff base on Player_obj.` — must print at least one changed
-     `Player_obj.` leaf (C4).
+     direct member, `Player_obj.<name>` or `Player_obj.alarm[i]` with no
+     second `.` after the member name (C4); a `Player_obj.<handle>.<member>`
+     line is a followed instance's variable and does not count.
    Then `tgprobe deep diff base on` and `tgprobe deep diff on on2` unfiltered —
    leaves that changed base→on but **not** on→on2 are the candidates; if either
    prints `... (N more)`, go through it by scope root with the filter
    (`Controller_obj`, `UI_Hud_Talent_obj`, `Skill_Controller_obj`, `talent:`,
    `global.`) so no line is left unread.
 5. Press Soul Spurn until OFF by eye (count presses; session 1 needed up to
-   3). Wait 3 s. `tgprobe deep snap off` (every scope `truncated=0`, C5).
+   3). Wait 3 s. `tgprobe deep snap off` (every scope `truncated=0` and
+   `followTruncated=0`, C5).
    `tgprobe deep flip base on off` → record bucket A and B counts and lines; the
    header must read `truncated=0`. `tgprobe deep diff on2 off`.
 6. For each candidate path (bucket A first, cap 10): `tgprobe deep get <path>`
    now (OFF); turn ON; `get` three times over 10 s; turn OFF; `get` three
    times. Record all reads with the by-eye state.
 7. Non-toggle control: `tgprobe deep snap hz0`; cast Healing Zone; wait 3 s;
-   `tgprobe deep snap hz1` (both `truncated=0`, C5); `tgprobe deep diff hz0 hz1
+   `tgprobe deep snap hz1` (both `truncated=0` and `followTruncated=0`, C5);
+   `tgprobe deep diff hz0 hz1
    census.` — must show a `census.` row for the Healing Zone object(s) (C3);
    and `tgprobe deep diff hz0 hz1 <candidate path>` must **not** show the
    candidate path.
@@ -543,9 +579,12 @@ retaken.
    appears, and anything the names suggest that `flip` did not surface;
    `deep get` it ON/OFF if so.
 9. If a candidate survived 6–7: `Q3-D = measured`. Otherwise `not observed`
-   (with C1–C5 quoted as fired, every compared snapshot's `truncated=0`, and
-   each snapshot's `instRefs=` second number) or `blocked` (naming the control
-   that did not fire or the scope that truncated). Fill the row.
+   (with C1–C5 quoted as fired, every compared snapshot's `truncated=0` and
+   `followTruncated=0`, and each snapshot's `instRefs=` second number and
+   `objNonStruct=` — an upper bound on unread state, not a disqualifier) or
+   `blocked` (naming the control that did not fire or the scope that
+   truncated). Fill the row. Snapshots no longer needed can be freed with
+   `tgprobe deep drop <name>`.
 10. Only if `Q3-D` is not `measured`: `naddr TalentsWhiteMage` → compare its
     `rva=` with the `TalentsWhiteMage` row of the local `symbols.csv` that the
     Ghidra project was imported from; record `match` or `mismatch` — never the
@@ -605,14 +644,16 @@ Not run yet. Session 2, <date>: research build `<commit>`
 Zone on the hotbar, town (`<room>`), no `coop.ini`, no `citrace` before step 10.
 The tester reports the on/off state by eye at every snapshot. Status is exactly
 one of `measured`, `not observed`, `blocked`; a `not observed` quotes C1–C5 as
-fired and every compared snapshot as `truncated=0`, otherwise it is `blocked`.
+fired and every compared snapshot as `truncated=0` and `followTruncated=0`,
+otherwise it is `blocked`.
 
 **Attach, controls and snapshots.** (`tgprobe hook` summary line; both C1
 `selftest` lines; every `deep snap` scope line and summary line, with
-`instRefs=` and `truncated=`; the C2 `global.playerBuff[1][0][86]` line from
+`instRefs=`, `objNonStruct=`, `followLeaves=`, `truncated=` and
+`followTruncated=`; the C2 `global.playerBuff[1][0][86]` line from
 the filtered diff, with its `.<member>` lines if it is an instance handle, or
 `C2 not fired: …`; the C3 `census.` line or `C3 not fired: …`; the C4
-`Player_obj.` line or `C4 not fired: …`; the C5 `talent` `read=` values and
+direct `Player_obj.<name>` line or `C4 not fired: …`; the C5 `talent` `read=` values and
 `find <absent:` hit counts.)
 
 | Q | Question | status | Evidence |
