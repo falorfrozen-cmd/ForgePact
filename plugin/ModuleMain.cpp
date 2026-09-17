@@ -9690,6 +9690,7 @@ static bool PpObserve(const char* label, long n, volatile long* logged, volatile
 // control measures before any verdict.
 static constexpr long kPpBackingLogBudget = 6;             // logged capture lines per getter per `backing on`
 static constexpr int kPpBackingKeepMax = 8;                 // window-self returns kept per getter (the first 8; later ones are not kept)
+static constexpr int kPpBackingProfileCallsToDecide = 2;    // a profile getter decides save-backed only once hits span this many distinct calls
 static constexpr long kPpBackingScanLimit = 200000;         // values a scan visits before it stops (and then proves nothing)
 static constexpr int kPpBackingScanDepth = 10;
 static constexpr double kPpBackingSentinel = -7654321.25;  // not an item id, count or index any grid holds
@@ -11022,6 +11023,7 @@ static void PpBackingDump()
 // One kept return's walk for the sentinel, for idcheck's report.
 struct PpBackingHit {
     const PpBackingStash*    stash = nullptr;
+    long                     call = 0;   // the kept return's own getter call number (k.call)
     std::string              what;   // `<getter> <slot> call #n (the open window | ...) self=...`
     std::vector<std::string> hits;
     PpBackingScan            scan;
@@ -11175,6 +11177,7 @@ static void PpBackingIdCheck()
                 PpBackingForEachKept([&](PpBackingStash& st, PpBackingKept& k) {
                     PpBackingHit h;
                     h.stash = &st;
+                    h.call = k.call;
                     h.what = std::string(st.getter) + " " + PpBackingSlotName(k) + " call #" + std::to_string(k.call)
                         + (k.windowSelf && k.selfId == windowId ? " (the open window)" : k.windowSelf ? " (a window that is not open now)" : " (not the window)")
                         + " self=" + k.self;
@@ -11219,10 +11222,18 @@ static void PpBackingIdCheck()
             Out(tag + ": verdict: not observed (the sentinel write did not land in the live nodeGrid)");
             return;
         }
-        // `via` = a hit through a profile getter (a save-backed input);
-        // `viaLead` = a hit through any other getter only (a lead).
+        // `via` = a hit through a profile getter (a save-backed input, split
+        // below by `profileHitCalls` into "outlived one call" vs "one call
+        // only"); `viaLead` = a hit through any other getter only (a lead).
+        // `profileHitCalls`/`profileFirstWhat` track, per profile-getter stash,
+        // the distinct call numbers whose kept return held the sentinel and
+        // that stash's first hit's `what at <path>` text - a single call only
+        // proves that one return is the same array, never that the getter's
+        // array outlives the call.
         std::string via, viaLead, incompleteNames;
         long incomplete = 0;
+        std::map<const PpBackingStash*, std::set<long>> profileHitCalls;
+        std::map<const PpBackingStash*, std::string> profileFirstWhat;
         for (const PpBackingHit& h : results) {
             std::string where;
             for (const std::string& p : h.hits) where += " " + p;
@@ -11231,6 +11242,11 @@ static void PpBackingIdCheck()
             if (!h.hits.empty()) {
                 std::string& into = PpBackingIsProfileGetter(h.stash) ? via : viaLead;
                 if (into.empty()) into = h.what + " at" + where;
+                if (PpBackingIsProfileGetter(h.stash)) {
+                    profileHitCalls[h.stash].insert(h.call);
+                    std::string& first = profileFirstWhat[h.stash];
+                    if (first.empty()) first = h.what + " at" + where;
+                }
             }
             if (!h.scan.Complete()) {
                 ++incomplete;
@@ -11238,8 +11254,32 @@ static void PpBackingIdCheck()
             }
         }
         std::string verdict;
-        if (!via.empty())
-            verdict = "reference-identical (via " + via + "): nodeGrid shares its array with a profile getter's return";
+        if (!via.empty()) {
+            // A profile getter decides save-backed only once its hits span at
+            // least kPpBackingProfileCallsToDecide distinct calls: two kept
+            // returns of the same getter with different call numbers are two
+            // separate executions of it, so a sentinel in both proves the array
+            // outlived one call - a single call only proves that one return is
+            // that array.
+            const PpBackingStash* decisive = nullptr;
+            for (const PpBackingStash* s : g_PpBackingStashes) {
+                if (!PpBackingIsProfileGetter(s)) continue;
+                auto it = profileHitCalls.find(s);
+                if (it != profileHitCalls.end() && (int)it->second.size() >= kPpBackingProfileCallsToDecide) { decisive = s; break; }
+            }
+            if (decisive) {
+                const std::set<long>& calls = profileHitCalls[decisive];
+                std::string callList;
+                for (long c : calls) callList += " #" + std::to_string(c);
+                verdict = "reference-identical (via " + profileFirstWhat[decisive] + "; sentinel in " + std::to_string(calls.size())
+                    + " calls of " + decisive->getter + ":" + callList + " - outlived one call): nodeGrid shares its array with a profile getter's return";
+            } else {
+                const PpBackingStash* lead = nullptr;
+                for (const PpBackingStash* s : g_PpBackingStashes) if (profileHitCalls.count(s)) { lead = s; break; }
+                verdict = "reference-identical (via " + profileFirstWhat[lead]
+                    + "; one call only - the getter may build this array per call, a lead that decides no gate branch)";
+            }
+        }
         else if (!viaLead.empty())
             verdict = "reference-identical (via " + viaLead + "; not a profile getter - record the getter and self, a lead that decides no gate branch)";
         else if (incomplete > 0)

@@ -845,6 +845,43 @@ class ProspectWindowContractTests(unittest.TestCase):
         inconclusive = gate[gate.index("- **Inconclusive** —"):]
         self.assertIn("`GetPlayerItemOwner` or `GetInventoryArray` only", inconclusive)
 
+    def test_idcheck_a_profile_getter_hit_from_one_call_only_is_a_lead(self):
+        # P0c-R2-B1: a sentinel found in one profile-getter return proves only
+        # that `nodeGrid` is that call's own array, never that the getter's
+        # array outlives the call - the same leap round 1 refused for
+        # GetInventoryArray. A profile getter now decides save-backed only
+        # once its hits span kPpBackingProfileCallsToDecide (two) distinct
+        # calls of the SAME getter; a single-call hit is a `one call only`
+        # lead that decides no gate branch.
+        self.assertIn("static constexpr int kPpBackingProfileCallsToDecide = 2;", self.plugin)
+        body = self.backing_functions()["PpBackingIdCheck"]
+        self.assertIn("h.call = k.call", body)
+        verdict = body[body.index("for (const PpBackingHit& h : results) {"):]
+        decide = verdict.index("kPpBackingProfileCallsToDecide")
+        outlived = verdict.index("outlived one call")
+        one_call = verdict.index("one call only")
+        self.assertLess(decide, outlived)
+        self.assertLess(outlived, one_call)
+
+        instrument = collapse(section(self.doc, "## Instrument"))
+        self.assertIn("two distinct calls of the same profile getter", instrument)
+        self.assertIn("one call only", instrument)
+
+        live = collapse(section(self.doc, "## Phase 0c live procedure"))
+        c5 = live[live.index("**C5"):live.index("**C6")]
+        self.assertIn("two distinct calls of the same profile getter", c5)
+        self.assertIn("one call only", c5)
+
+        gate = collapse(section(self.doc, "## Deciding the hypothesis"))
+        saved = gate[gate.index("- **Save-backed** —"):gate.index("- **Not save-backed** —")]
+        self.assertIn("two distinct calls of the same profile getter", saved)
+        self.assertIn("via `GetProfileInventoryData` or `GetPlayerProfileObj`", saved)
+        inconclusive = gate[gate.index("- **Inconclusive** —"):]
+        self.assertIn("one call only", inconclusive)
+
+        row = [line for line in self.doc.splitlines() if line.startswith("| backing idcheck |")][0]
+        self.assertIn("one call only", row)
+
     def test_structural_agreement_counts_only_non_empty_cells_and_is_a_lead(self):
         # Round-0 P0c-B3: an empty 6x9 agrees with any 6x9 of empties, and a copy
         # agrees by construction. Agreement counts only nodeGrid's non-empty
