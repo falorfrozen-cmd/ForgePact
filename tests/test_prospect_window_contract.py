@@ -876,6 +876,10 @@ class ProspectWindowContractTests(unittest.TestCase):
         self.assertIn("decides no gate branch", ui)
         self.assertNotIn("outlived one call", ui)
         self.assertNotIn("one call only", ui)
+        # R1-N1: the lead names how many calls were reached cleanly, so a
+        # reader can tell the mixed case from an all-UI one.
+        self.assertIn("std::to_string(profileCleanCalls[uiReached].size())", ui)
+        self.assertIn("of them reached on a path with no UI-looking field", ui)
         self.assertIn("; one call only - the getter may build this array per call, a lead that decides no gate branch)", lead)
         self.assertNotIn("outlived one call", lead)
         self.assertNotIn("UI-looking", lead)
@@ -922,10 +926,31 @@ class ProspectWindowContractTests(unittest.TestCase):
         self.assertLess(c.index('rfind("ui", 0) == 0'), c.index("return name;"))
         self.assertLess(c.index("return name;"), c.index("return std::string();"))
         self.assertEqual(c.count("return std::string();"), 1)
+        # N-R3-1/2/3: the clean bookkeeping decides the save-backed branch, so
+        # nothing may mark a hit clean unconditionally, insert into
+        # profileCleanCalls unguarded, cite a UI-reached path as the clean
+        # evidence, or stop the path loop before it has seen every hit path.
+        self.assertIn("bool clean = false;", body)
+        loop = collapse(body[body.index("bool clean = false;"):body.index("if (clean) profileCleanCalls")])
+        self.assertEqual(loop.count("clean = true"), 1)
+        self.assertNotIn("break", loop)
+        self.assertEqual(body.count("profileCleanCalls[h.stash].insert"), 1)
+        self.assertIn("if (clean && profileCleanWhat[h.stash].empty())", body)
+        # The classifier inspects every `.`-separated member, not just the last
+        # one (docs/prospect-window-research.md § Instrument says "a struct
+        # member on the `at <path>`", i.e. any of them).
+        self.assertIn("while ((pos = path.find('.', pos)) != std::string::npos)", c)
+        self.assertNotIn("continue", c)
+        self.assertLess(c.index("const std::string lower = Lower(name);"), c.index('rfind("ui", 0) == 0'))
 
         instrument = collapse(section(self.doc, "## Instrument"))
         self.assertIn("reached through a UI-looking field", instrument)
         self.assertIn("starts with `ui` or contains `window`, `node`, `panel` or `menu`", instrument)
+        self.assertIn("fewer than two of them reached it on a path with no UI-looking field", instrument)
+        self.assertIn("may still contain a UI-looking one", instrument)
+        self.assertIn("a name rule standing in for", instrument)
+        self.assertIn("can only demote a would-be save-backed identity to a lead", instrument)
+        self.assertIn("still rests on the two-call rule", instrument)
 
         live = collapse(section(self.doc, "## Phase 0c live procedure"))
         c5 = live[live.index("**C5"):live.index("**C6")]

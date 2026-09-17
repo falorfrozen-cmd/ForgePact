@@ -11320,7 +11320,9 @@ static void PpBackingIdCheck()
                 std::string callList;
                 for (long c : calls) callList += " #" + std::to_string(c);
                 verdict = "reference-identical (via " + profileFirstWhat[uiReached] + "; sentinel in " + std::to_string(calls.size())
-                    + " calls of " + uiReached->getter + ":" + callList + " but reached through a UI-looking field (" + profileUiField[uiReached]
+                    + " calls of " + uiReached->getter + ":" + callList + " but only " + std::to_string(profileCleanCalls[uiReached].size())
+                    + " of them reached on a path with no UI-looking field, fewer than " + std::to_string(kPpBackingProfileCallsToDecide)
+                    + " - reached through a UI-looking field (" + profileUiField[uiReached]
                     + ") - the array may be the window's own, a lead that decides no gate branch)";
             } else {
                 std::string leads;

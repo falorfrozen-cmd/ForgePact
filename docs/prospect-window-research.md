@@ -640,17 +640,24 @@ the whole design, because a blind `callnum GetProfileInventoryData` (no correct
      shares its array with the profile's own data and changing that storage
      changes the grid live — the sentinel found on a path through no
      UI-looking field; else `reference-identical (via <getter> <slot> call #n
-     … self=… at <path>; sentinel in N calls of <getter>: #a #b but reached
+     … self=… at <path>; sentinel in N calls of <getter>: #a #b but only M of them
+     reached on a path with no UI-looking field, fewer than 2 - reached
      through a UI-looking field (<member>) - the array may be the window's
-     own, a lead that decides no gate branch)` when that many distinct calls
-     hold it but every one of them is reached only through a UI-looking field
-     — a struct member on the `at <path>` whose name starts with `ui` or
-     contains `window`, `node`, `panel` or `menu`, case-insensitive (the walk
-     never descends into an instance, so a member name is the only UI state a
-     path can show); two calls prove the array outlives one call, not that it
-     is saved data, and an identity reached only through the window's own
-     state may be the window's own array; else `reference-identical (via
-     <getter> <slot> call #n … self=… at <path>; one call only - the getter
+     own, a lead that decides no gate branch)` when fewer than two of them
+     reached it on a path with no UI-looking field — a struct member on
+     the `at <path>` whose name starts with `ui` or contains `window`, `node`,
+     `panel` or `menu`, case-insensitive (the walk never descends into an
+     instance, so a member name is the only UI state a path can show); the
+     decided line's own `at <path>` list names every path that hit, so it
+     may still contain a UI-looking one — the branch turns on how many
+     calls were clean, not on what the line prints. The UI-looking-field check
+     is a name rule standing in for "reached through the window's own state",
+     not a measurement, and it can only demote a would-be save-backed identity
+     to a lead, never promote one: a decided save-backed still rests on the
+     two-call rule plus R7, not on the name rule. Two calls prove the array
+     outlives one call, not that it is saved data, and an identity reached
+     only through the window's own state may be the window's own
+     array; else `reference-identical (via <getter> <slot> call #n … self=… at <path>; one call only - the getter
      may build this array per call, a lead that decides no gate branch)` when
      only **one** distinct call of a profile getter holds it — a single
      return proves only that `nodeGrid` is that call's own array, not that the
