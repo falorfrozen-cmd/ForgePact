@@ -2,6 +2,7 @@ import copy
 import importlib.util
 import re
 import unittest
+from collections import Counter
 from pathlib import Path
 
 
@@ -72,6 +73,119 @@ def strip_comments(source: str) -> str:
 MAP_REVEAL_HEADER_PATH = PROJECT_ROOT / "plugin" / "include" / "ForgePact" / "MapRevealManager.hpp"
 STATS_HEADER_PATH = PROJECT_ROOT / "plugin" / "include" / "ForgePact" / "StatsManager.hpp"
 DENSITY_HEADER_PATH = PROJECT_ROOT / "plugin" / "include" / "ForgePact" / "DensityManager.hpp"
+PLUGIN_HEADER_DIR = PROJECT_ROOT / "plugin" / "include" / "ForgePact"
+SDK_SCRIPTS_HEADER_PATH = PROJECT_ROOT.parent / "hs-game-sdk" / "cpp" / "include" / "hs_game_sdk" / "scripts.hpp"
+
+# Every closure name (`anon@N@...`) the plugin can compile, spelled either as a
+# raw GML string literal or through an `HeroSiege::Scripts::` constant. A
+# literal matches the SDK once the `gml_Script_` prefix (present on every SDK
+# constant's value, absent from some literals) is added back. An SDK reference
+# resolves through the parsed identifier table instead of a regex on its value.
+SDK_CONSTANT_RE = re.compile(r'inline constexpr std::string_view (\w+) = "([^"]+)";')
+RAW_CLOSURE_RE = re.compile(r'"((?:gml_Script_)?[A-Za-z0-9_]*@?anon@\d+@[A-Za-z0-9_@]+)"')
+SDK_CLOSURE_REF_RE = re.compile(r"HeroSiege::Scripts::(\w*anon_\d+\w*)")
+
+
+def load_sdk_script_constants():
+    """identifier -> full SDK string value, parsed from hs-game-sdk's own header.
+
+    Skips (rather than fails) when the sibling checkout is absent, same as
+    `build.bat` itself needs it as `/I ..\\..\\hs-game-sdk\\cpp\\include`.
+    """
+    if not SDK_SCRIPTS_HEADER_PATH.exists():
+        raise unittest.SkipTest(f"hs-game-sdk header not found at {SDK_SCRIPTS_HEADER_PATH}")
+    text = SDK_SCRIPTS_HEADER_PATH.read_text(encoding="utf-8")
+    constants = dict(SDK_CONSTANT_RE.findall(text))
+    assert len(constants) > 6000, f"parsed only {len(constants)} SDK script constants; parser is broken"
+    return constants
+
+
+def raw_closure_literals(source, sdk_values):
+    """[(literal_text, full_sdk_name_or_None), ...] for every quoted `anon@N@...`
+    string in `source`. `full_sdk_name` is the SDK's own value once the literal
+    is matched (adding the `gml_Script_` prefix first, when the literal lacks
+    one), or None when nothing in the SDK matches it.
+    """
+    entries = []
+    for match in RAW_CLOSURE_RE.finditer(source):
+        raw = match.group(1)
+        full = raw if raw.startswith("gml_Script_") else "gml_Script_" + raw
+        entries.append((raw, full if full in sdk_values else None))
+    return entries
+
+
+def sdk_closure_refs(source, sdk_constants):
+    """[(identifier, full_sdk_name_or_None), ...] for every `HeroSiege::Scripts::`
+    closure identifier in `source`. None when the identifier isn't in the SDK
+    at all (a `_Index` suffix, if present, is stripped before the lookup).
+    """
+    entries = []
+    for match in SDK_CLOSURE_REF_RE.finditer(source):
+        ident = match.group(1)
+        if ident.endswith("_Index"):
+            ident = ident[: -len("_Index")]
+        entries.append((ident, sdk_constants.get(ident)))
+    return entries
+
+
+def closure_names(source, sdk_constants):
+    """[(spelling, full_sdk_name_or_None), ...] for every closure name `source`
+    compiles, raw literal or SDK reference alike."""
+    return (raw_closure_literals(source, set(sdk_constants.values()))
+            + sdk_closure_refs(source, sdk_constants))
+
+
+# `using namespace HeroSiege::Scripts;` or a namespace alias for it would let a
+# future call site spell a closure name unqualified - the whole point of the
+# contract above is that every closure name traces back to an explicit
+# `HeroSiege::Scripts::` reference this scanner can find.
+SDK_NAMESPACE_MISUSE_RE = re.compile(
+    r"\busing\s+namespace\s+HeroSiege::Scripts\s*;"
+    r"|\bnamespace\s+\w+\s*=\s*HeroSiege::Scripts\s*;"
+)
+
+# HookOneScript/HookOneScriptTable prepend "gml_Script_" themselves (see
+# SdkShortScriptName above them in the plugin). A raw `HeroSiege::Scripts::X.data()`
+# argument - skipping that helper - hands them the value that ALREADY has the
+# prefix, so the installed hook name doubles it and silently never resolves.
+HOOK_CALL_RAW_SDK_CONSTANT_RE = re.compile(
+    r"HookOneScript(?:Table)?\(\s*HeroSiege::Scripts::\w+\.data\(\)"
+)
+
+# CallGameScriptEx/GetNamedRoutinePointer need the FULL name (the constant's own
+# value); SdkShortScriptName strips the prefix HookOneScript needs instead, so
+# handing its result to one of these full-name APIs silently looks up the wrong name.
+FULL_NAME_API_GIVEN_SHORT_NAME_RE = re.compile(
+    r"CallGameScriptEx\([^,]*,\s*SdkShortScriptName\("
+    r"|GetNamedRoutinePointer\(\s*SdkShortScriptName\("
+)
+
+
+def scanner_misuse_violations(source):
+    """[description, ...] for every misuse of the HeroSiege::Scripts contract in
+    `source`: an alias/using-directive that would let a name go unqualified, a
+    HookOneScript*/HookOneScriptTable call given an already-prefixed full name
+    (doubles "gml_Script_"), or a full-name API given the short form instead.
+    Empty when `source` uses the contract correctly.
+    """
+    violations = []
+    for match in SDK_NAMESPACE_MISUSE_RE.finditer(source):
+        violations.append(f"HeroSiege::Scripts alias/using-directive: {match.group(0)!r}")
+    for match in HOOK_CALL_RAW_SDK_CONSTANT_RE.finditer(source):
+        violations.append("HookOneScript*/HookOneScriptTable given a raw SDK constant "
+                           f"instead of SdkShortScriptName(...): {match.group(0)!r}")
+    for match in FULL_NAME_API_GIVEN_SHORT_NAME_RE.finditer(source):
+        violations.append("full-name API given a short name via SdkShortScriptName(...) "
+                           f"instead of the constant's own gml_Script_ value: {match.group(0)!r}")
+    return violations
+
+
+def player_build_text(text):
+    return strip_comments(strip_research_blocks(text))
+
+
+def player_build_source(path):
+    return player_build_text(path.read_text(encoding="utf-8"))
 
 
 class ReleaseHookContractTests(unittest.TestCase):
@@ -413,6 +527,19 @@ class ReleaseHookContractTests(unittest.TestCase):
         self.assertIn("*origOut = tableEntry;", body)
         self.assertIn("TABLE-ONLY", body)
 
+    def test_routine_fallback_validates_the_pointer_before_calling_it(self):
+        # RefreshItemHash's last-resort route reads a function pointer off a
+        # game struct (CScript::m_Functions) and calls it directly. /EHsc does
+        # not turn an access violation into a C++ exception, so the try/catch
+        # around it is not a guard - the address has to be validated as code
+        # inside Hero_Siege.exe BEFORE the call, the same way HookOneScript
+        # validates a table entry before patching it (the test above). Without
+        # this the check could be reordered past the call by a later edit with
+        # every other test still green.
+        body = function_body(self.plugin, "static bool RefreshItemHash(")
+        self.assertIn("AddrIsExecutableInModule(GetModuleHandleA(nullptr)", body)
+        self.assertLess(body.index("AddrIsExecutableInModule"), body.index("fnp("))
+
     def test_hook_bodies_call_through_the_trampoline(self):
         # MmCreateHook patches the bytes at the target, so a hook body that
         # called the original address directly would re-enter itself forever.
@@ -481,8 +608,8 @@ class ReleaseHookContractTests(unittest.TestCase):
         self.assertLess(special.index("if (n > 1)"), special.index("InstallMechGateHooks();"))
 
         install = function_body(self.plugin, "static void InstallMechGateHooks()")
-        self.assertIn('"anon@119@gml_Object_Spawn_Shadow_Realm_obj_Create_0"', install)
-        self.assertIn('"anon@97@gml_Object_Spawn_Chaos_Tower_obj_Create_0"', install)
+        self.assertIn("HeroSiege::Scripts::gml_Script_anon_119_gml_Object_Spawn_Shadow_Realm_obj_Create_0", install)
+        self.assertIn("HeroSiege::Scripts::gml_Script_anon_97_gml_Object_Spawn_Chaos_Tower_obj_Create_0", install)
 
         sr = function_body(self.plugin, "static RValue& Hook_ShadowRealmGate(")
         orig = "g_Orig_ShadowRealmGate(S, O, R, argc, A)"
@@ -503,6 +630,117 @@ class ReleaseHookContractTests(unittest.TestCase):
         force = function_body(self.plugin, "struct DifficultyGateForce")
         self.assertIn("if (old < minValue)", force)
         self.assertIn("RValue(old)", force)
+
+
+class ClosureNameContractTests(unittest.TestCase):
+    """Every closure name (`anon@N@...`) the player build compiles must be a
+    name hs-game-sdk still has, so a game update that moves a closure breaks
+    the build when the SDK is regenerated instead of silently failing a name
+    lookup at runtime. See `AGENTS.md`, "HS Game SDK Usage".
+
+    Also rejects three ways of reaching an SDK constant that would defeat the
+    contract even though the name itself is fine: an unqualified `using
+    namespace`/alias, a HookOneScript*/HookOneScriptTable call given the
+    already-prefixed full name instead of the short one, and a full-name API
+    (CallGameScriptEx/GetNamedRoutinePointer) given the short name instead.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.sdk_constants = load_sdk_script_constants()
+        cls.plugin_source = PLUGIN_PATH.read_text(encoding="utf-8")
+
+    def test_player_build_closure_names_all_match_the_sdk(self):
+        sources = [player_build_source(PLUGIN_PATH)]
+        sources += [player_build_source(header) for header in sorted(PLUGIN_HEADER_DIR.glob("*.hpp"))]
+        unmatched = []
+        violations = []
+        for source in sources:
+            unmatched.extend(spelling for spelling, full in closure_names(source, self.sdk_constants)
+                              if full is None)
+            violations.extend(scanner_misuse_violations(source))
+        self.assertEqual([], unmatched, f"closure names the player build compiles but the SDK does not have: {unmatched}")
+        self.assertEqual([], violations, f"HeroSiege::Scripts contract misuse in the player build: {violations}")
+
+    def test_player_build_closure_scan_finds_the_known_sites(self):
+        entries = closure_names(player_build_source(PLUGIN_PATH), self.sdk_constants)
+        self.assertGreaterEqual(len(entries), 6, entries)
+        resolved = {full for _, full in entries if full}
+        for expected in (
+            "gml_Script_GenerateItemHash@anon@4645@s_ItemInstanceStruct@InventoryV2Funcs",
+            "gml_Script_anon@119@gml_Object_Spawn_Shadow_Realm_obj_Create_0",
+            "gml_Script_anon@97@gml_Object_Spawn_Chaos_Tower_obj_Create_0",
+            "gml_Script_anon@119@gml_Object_Spawn_Abyss_obj_Create_0",
+        ):
+            self.assertIn(expected, resolved)
+
+    def test_closure_scan_matches_every_research_literal(self):
+        # Deliberately NOT strip_research_blocks: this is the positive control
+        # proving the scanner can see the research-only literals (CITRACE_HOOK_NAMED,
+        # HookOneScriptTable, CINAT_ENTRY, the creator-trace anon@849) through the
+        # same regex the player-build test relies on to report an unmatched name at all.
+        # "Research literal" here means exactly that: an occurrence present in the
+        # full source but not in what the player build compiles, found by diffing the
+        # two scans rather than by guessing which macros are research-only, so this
+        # stays correct if the research/player split moves and independent of the
+        # RefreshItemHash fallback fix this same file makes elsewhere.
+        sdk_values = set(self.sdk_constants.values())
+        full_source = strip_comments(self.plugin_source)
+        full_entries = raw_closure_literals(full_source, sdk_values)
+        player_entries = raw_closure_literals(player_build_text(self.plugin_source), sdk_values)
+        research_counts = Counter(s for s, _ in full_entries) - Counter(s for s, _ in player_entries)
+        full_lookup = dict(full_entries)
+        research_entries = [(spelling, full_lookup[spelling])
+                             for spelling, count in research_counts.items() for _ in range(count)]
+        self.assertGreaterEqual(len(research_entries), 40, research_entries)
+        unmatched = [spelling for spelling, full in research_entries if full is None]
+        self.assertEqual([], unmatched)
+        self.assertTrue(any(spelling.startswith("gml_Script_") for spelling, _ in research_entries),
+                         "expected at least one research literal with the gml_Script_ prefix")
+        self.assertTrue(any(not spelling.startswith("gml_Script_") for spelling, _ in research_entries),
+                         "expected at least one research literal without the gml_Script_ prefix")
+
+    def test_closure_check_rejects_a_stale_name(self):
+        synthetic = "\n".join([
+            'const char* stale = "gml_Script_GenerateItemHash@anon@4638@s_ItemInstanceStruct@InventoryV2Funcs";',
+            'const char* wrong_offset = "anon@118@gml_Object_Spawn_Shadow_Realm_obj_Create_0";',
+            "auto bogus_sdk = HeroSiege::Scripts::gml_Script_anon_1_gml_Object_Bogus_obj_Create_0;",
+            'const char* correct = "anon@119@gml_Object_Spawn_Shadow_Realm_obj_Create_0";',
+            "#ifndef FORGEPACT_RELEASE",
+            'const char* research_bogus = "anon@2@gml_Object_Totally_Bogus_obj_Create_0";',
+            "#endif",
+            # Round 2: each new scanner rule gets a case here too, using a real,
+            # valid SDK identifier so the violation is isolated to the call
+            # SHAPE, not name validity (that part is already covered above).
+            "using namespace HeroSiege::Scripts;",
+            "namespace HSS = HeroSiege::Scripts;",
+            'HookOneScript(HeroSiege::Scripts::gml_Script_anon_119_gml_Object_Spawn_Shadow_Realm_obj_Create_0.data(), "id", nullptr, nullptr);',
+            "g_Yytk->CallGameScriptEx(res, SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_119_gml_Object_Spawn_Shadow_Realm_obj_Create_0), self, self, {});",
+            "g_Yytk->GetNamedRoutinePointer(SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_97_gml_Object_Spawn_Chaos_Tower_obj_Create_0), &p);",
+            # Correct usage of the same helper must NOT be flagged by any new rule.
+            'HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_119_gml_Object_Spawn_Abyss_obj_Create_0), "id2", nullptr, nullptr);',
+        ])
+        player_source = player_build_text(synthetic)
+        entries = closure_names(player_source, self.sdk_constants)
+        unmatched = [spelling for spelling, full in entries if full is None]
+        matched = [spelling for spelling, full in entries if full is not None]
+        self.assertEqual(3, len(unmatched), unmatched)
+        self.assertFalse(any("Totally_Bogus" in spelling for spelling in unmatched),
+                          "the research-only bogus literal must not even be seen by the player scan")
+        # The correct raw literal, plus the (valid) SDK identifiers the round-2
+        # misuse cases below reference - those calls are still shaped wrong,
+        # but the identifiers themselves are real, so closure_names() alone
+        # must not flag them; that is scanner_misuse_violations()'s job below.
+        self.assertIn("anon@119@gml_Object_Spawn_Shadow_Realm_obj_Create_0", matched)
+
+        violations = scanner_misuse_violations(player_source)
+        self.assertEqual(5, len(violations), violations)
+        self.assertEqual(2, sum("alias/using-directive" in v for v in violations), violations)
+        self.assertEqual(1, sum("raw SDK constant instead of SdkShortScriptName" in v for v in violations), violations)
+        self.assertEqual(2, sum("short name via SdkShortScriptName" in v for v in violations), violations)
+        # The one correctly-shaped HookOneScript(SdkShortScriptName(...)) call
+        # above must not itself be counted in any of the three buckets.
+        self.assertFalse(any("Abyss_obj_Create_0.data()" in v for v in violations), violations)
 
 
 class PanelAllOffContractTests(unittest.TestCase):

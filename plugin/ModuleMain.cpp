@@ -269,6 +269,27 @@ static void InstallDensityLifecycleHooks();
 static void OpenDensityWindow();
 static void RunCommand(const std::string& line);
 
+// HookOneScript/HookOneScriptTable prepend "gml_Script_" themselves, so a
+// closure hooked by an hs-game-sdk constant needs the prefix peeled back off.
+// An SDK constant views a whole string literal, so any suffix of it is
+// NUL-terminated - .data() is safe to hand back as a const char*. Spelling a
+// closure's name this way, instead of as a hand-typed literal, means a game
+// update that moves the closure fails the *build* once the SDK is
+// regenerated, rather than failing a name lookup silently at runtime.
+static constexpr std::string_view kGmlScriptPrefix = "gml_Script_";
+// consteval, not just constexpr: every call has to be evaluable at compile
+// time, so a future call site whose argument does not start with
+// "gml_Script_" fails to build right there - throwing during constant
+// evaluation is a compile error naming this line - instead of silently
+// handing HookOneScript a wrong short name. No per-call-site static_assert
+// needed; the three that used to stand in for this were removed with it.
+static consteval const char* SdkShortScriptName(std::string_view sdkConstant)
+{
+    return sdkConstant.starts_with(kGmlScriptPrefix)
+        ? sdkConstant.substr(kGmlScriptPrefix.size()).data()
+        : throw "SdkShortScriptName: SDK constant is missing the gml_Script_ prefix";
+}
+
 #include <ForgePact/Common.hpp>
 #include <ForgePact/MapRevealManager.hpp>
 #include <ForgePact/StatsManager.hpp>
@@ -3416,22 +3437,29 @@ static bool RefreshItemHash(const RValue& item, std::string* howOut = nullptr)
     try {
         RValue res;
         CInstance* self = (CInstance*)item.m_Object;
-        AurieStatus st = g_Yytk->CallGameScriptEx(res, "gml_Script_GenerateItemHash@anon@4638@s_ItemInstanceStruct@InventoryV2Funcs", self, self, {});
+        AurieStatus st = g_Yytk->CallGameScriptEx(res, HeroSiege::Scripts::gml_Script_GenerateItemHash_anon_4645_s_ItemInstanceStruct_InventoryV2Funcs.data(), self, self, {});
         if (AurieSuccess(st)) { if (howOut) *howOut = how + "+direct"; return true; }
         how += "+direct-fail";
     } catch (...) { how += "+direct-exc"; }
     // Last resort: the compiled routine behind the method, called like a hook trampoline
     // with the item struct as self (the same resolution HookOneScript uses).
+    // The function pointer is read off a game struct we never modify, but calling it is
+    // still calling an address by hand: validate it is code inside Hero_Siege.exe before
+    // doing so, the same way HookOneScript validates a table entry before hooking it.
+    // /EHsc does not turn an access violation into a C++ exception, so the catch(...)
+    // below is not a guard against a bad pointer - the check has to happen first.
     try {
         PVOID p = nullptr;
-        if (AurieSuccess(g_Yytk->GetNamedRoutinePointer("gml_Script_GenerateItemHash@anon@4638@s_ItemInstanceStruct@InventoryV2Funcs", &p)) && p) {
+        if (AurieSuccess(g_Yytk->GetNamedRoutinePointer(HeroSiege::Scripts::gml_Script_GenerateItemHash_anon_4645_s_ItemInstanceStruct_InventoryV2Funcs.data(), &p)) && p) {
             CScript* sc = reinterpret_cast<CScript*>(p);
             PFUNC_YYGMLScript fnp = (sc && sc->m_Functions) ? sc->m_Functions->m_ScriptFunction : nullptr;
             if (fnp) {
-                RValue res; CInstance* self = (CInstance*)item.m_Object;
-                fnp(self, self, res, 0, nullptr);
-                if (!ReadItemHash(item).empty()) { if (howOut) *howOut = how + "+routine"; return true; }
-                how += "+routine-nohash";
+                if (AddrIsExecutableInModule(GetModuleHandleA(nullptr), (const void*)fnp)) {
+                    RValue res; CInstance* self = (CInstance*)item.m_Object;
+                    fnp(self, self, res, 0, nullptr);
+                    if (!ReadItemHash(item).empty()) { if (howOut) *howOut = how + "+routine"; return true; }
+                    how += "+routine-nohash";
+                } else how += "+routine-notcode";
             } else how += "+routine-nofn";
         } else how += "+routine-notfound";
     } catch (...) { how += "+routine-exc"; }
@@ -13166,9 +13194,12 @@ static void InstallMechGateHooks()
     // anon@N = fonksiyonun Create kaynagindaki karakter ofseti; oyun guncellemesi
     // Create olayini degistirirse ad kayar, HookOneScript "not found" yazar ve
     // icerik vanilya davranisina (tek spawn) duser.
-    HookOneScript("anon@119@gml_Object_Spawn_Shadow_Realm_obj_Create_0",
+    // The names now come from hs-game-sdk, so a closure the game moves fails
+    // the build once the SDK is regenerated, rather than only failing this
+    // lookup silently at runtime.
+    HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_119_gml_Object_Spawn_Shadow_Realm_obj_Create_0),
                   "fp_sr_gate", (PVOID)Hook_ShadowRealmGate, &g_Orig_ShadowRealmGate);
-    HookOneScript("anon@97@gml_Object_Spawn_Chaos_Tower_obj_Create_0",
+    HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_97_gml_Object_Spawn_Chaos_Tower_obj_Create_0),
                   "fp_ct_gate", (PVOID)Hook_ChaosTowerGate, &g_Orig_ChaosTowerGate);
 }
 
@@ -14809,7 +14840,7 @@ static void RunCommand(const std::string& line)
         if (v == "off") { g_AbyssTraceOn = false; Out("abysstrace: KAPALI"); }
         else {
             if (!g_Orig_AbyssMech)
-                HookOneScript("anon@119@gml_Object_Spawn_Abyss_obj_Create_0",
+                HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_119_gml_Object_Spawn_Abyss_obj_Create_0),
                               "bp_abyss", (PVOID)Hook_AbyssMech, &g_Orig_AbyssMech);
             if (!g_Orig_GPV_Trace)
                 HookOneScript("GPV", "bp_gpvtrace", (PVOID)Hook_GPV_Trace, &g_Orig_GPV_Trace);
@@ -14862,7 +14893,7 @@ static void RunCommand(const std::string& line)
             g_ForceObtain = false; Out("abyssforce: KAPALI");
         } else {
             if (!g_Orig_AbyssMech)
-                HookOneScript("anon@119@gml_Object_Spawn_Abyss_obj_Create_0",
+                HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_119_gml_Object_Spawn_Abyss_obj_Create_0),
                               "bp_abyss", (PVOID)Hook_AbyssMech, &g_Orig_AbyssMech);
             if (!g_Orig_Obtain)
                 HookOneScript("IsObtainablePlace", "bp_obtain",
