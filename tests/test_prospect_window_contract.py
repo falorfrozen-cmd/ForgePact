@@ -276,6 +276,13 @@ class ProspectWindowContractTests(unittest.TestCase):
         self.assertLess(compare.index('" UNREADABLE"'), compare.index('" CHANGED"'))
         self.assertIn('"none"', compare)
         self.assertIn('"@"', compare)
+        # Round-2 N6': `none` on both sides is not evidence that nothing changed
+        # (a node without uiNodeCallstack yet also reads `none`).
+        self.assertIn('" same (no node)"', compare)
+        self.assertLess(compare.index('" same (no node)"'), compare.index('" CHANGED"'))
+        self.assertIn("`same (no node)`", collapse(section(self.doc, "## Instrument")))
+        l5 = collapse(section(self.doc, "## Live procedure"))
+        self.assertIn("`same (no node)`", l5[l5.index("**L5"):l5.index("**L6")])
         self.assertIn("PpSnapCompare(before, after)", strip_comments(function_body(self.plugin, "static void PpCall(")))
         self.assertIn("if (!logged", after)
         self.assertLess(after.index("if (!logged"), after.index("PpGridSnapshot("))
@@ -334,6 +341,30 @@ class ProspectWindowContractTests(unittest.TestCase):
         self.assertIn("rebuilt (", resize)
         self.assertIn("PpMeasureStore(newNode)", resize)
         self.assertIn("destroyed (", resize)
+        # Round-2 N4': a line may not say nothing was written after writing.
+        self.assertNotIn("nothing safe to write", resize)
+        # Round-2 N5': kept/rebuilt check the size variables against the store.
+        self.assertGreaterEqual(resize.count("PpSizeText("), 2)
+        size = strip_comments(function_body(self.plugin, "static std::string PpSizeText("))
+        self.assertIn("size exceeds store", size)
+        self.assertIn("s.colsMin", size)
+        self.assertIn("s.rows", size)
+        # Round-2 P0b-B2: the outcome line says whether the probe was a shrink,
+        # because a shrink's `reverted` never counts toward H3.
+        self.assertIn("probe=shrink", resize)
+        self.assertIn("a shrink's reverted never counts toward H3", resize)
+
+    def test_call_and_resize_refuse_while_a_rewrite_is_pending(self):
+        # Round-2 N2': a pending override or setat would fire inside our own
+        # invoke and rewrite what the method received while `args=` printed what
+        # was supplied. Both refuse, with nothing written or called.
+        pending = strip_comments(function_body(self.plugin, "static std::string PpPendingRewrite("))
+        self.assertIn("g_PpOverrideLeft", pending)
+        self.assertIn("g_PpSetAtPending", pending)
+        call = strip_comments(function_body(self.plugin, "static void PpCall("))
+        self.assertLess(call.index("PpPendingRewrite()"), call.index("CallBuiltinEx("))
+        resize = strip_comments(function_body(self.plugin, "static void PpResize("))
+        self.assertLess(resize.index("PpPendingRewrite()"), resize.index('"variable_instance_set"'))
 
     def test_call_and_resize_prove_the_method_body_ran(self):
         # Round-1 P0b-B1: script_execute succeeding proves the dispatch, not
@@ -534,13 +565,41 @@ class ProspectWindowContractTests(unittest.TestCase):
         self.assertIn("args", r10)
         live = collapse(section(self.doc, "## Live procedure"))
         l9 = live[live.index("**L9"):live.index("**L10")]
-        # Round-1 N3: each method is probed with a shrink first; grow only via a
-        # method whose shrink kept.
+        # Round-1 N3: each method is probed with a shrink first.
         self.assertIn("prospectprobe resize 8 5 via m_RefreshNode", l9)
         self.assertLess(l9.index("resize 8 5"), l9.index("resize 18 6"))
         self.assertIn("restore unsafe", l9)
         self.assertIn("invoked=", l9)
         self.assertIn("rebuilt", l9)
+        # Round-2 P0b-B2: GML's element assignment grows an array and never
+        # truncates it, so an assignment builder answers a shrink with an
+        # unchanged store. Forbidding the grow after that shrink skipped the one
+        # probe that would have kept, and H3 then counted the shrink.
+        grow_after_revert = ("A method whose shrink printed `reverted` with `invoked=yes` and an unchanged store "
+                             "is still grown: an assignment-built store grows and never truncates, so a shrink "
+                             "alone cannot show that the builder reads the size.")
+        shrink_never_counts = ("Only a grow's `reverted` from `resize via` counts toward H3; a shrink's `reverted` "
+                               "is `not observed (shrink only — an assignment-built store never truncates)`.")
+        self.assertIn(grow_after_revert, l9)
+        self.assertIn(shrink_never_counts, deciding)
+        self.assertIn("**Shrink every method first**", l9)
+        self.assertLess(l9.index("**Shrink every method first**"), l9.index("resize 9 6"))
+        self.assertNotIn("A method whose shrink printed `reverted`, `rebuilt` or `destroyed` is not grown", l9)
+        self.assertNotIn("Only a method whose shrink printed `kept` is then grown", l9)
+        self.assertIn("grown (`resize 18 6`)", h3)
+        self.assertIn("a shrink's `reverted` never counts", h3)
+        h3_rule = deciding[deciding.index("**H3** needs"):]
+        self.assertIn("a shrink's `reverted` never counts", h3_rule)
+        self.assertIn("only a grow's `reverted` counts toward H3", r10)
+        # Round-2 N3': the detour logs the self/args the method actually received.
+        self.assertIn("prospectprobe arm budget=10", l9)
+        self.assertLess(l9.index("prospectprobe arm budget=10"), l9.index("resize 8 5"))
+        # Round-2 N7': a non-numeric argument cannot be supplied.
+        self.assertIn("non-numeric", l9)
+        self.assertIn("`not observed (call shape unknown)`", l9)
+        # Round-2 N8': the name matcher failing voids every resize of the session.
+        self.assertIn("`invoked=unproven (no detoured row for …)`", l9)
+        self.assertIn("nothing from `resize` counts this session", l9)
         l5 = live[live.index("**L5"):live.index("**L6")]
         # Round-1 N4: "no CHANGED" is a result only if the snapshot resolved.
         self.assertIn("UNREADABLE", l5)

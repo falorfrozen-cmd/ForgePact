@@ -9675,11 +9675,14 @@ static bool PpObserve(const char* label, long n, volatile long* logged, volatile
 
 // `same` / `CHANGED` only when both reads resolved - a node (`@<id> ...`) or a
 // definite `none`. A failed or nested read on either side is `UNREADABLE`, so
-// two failed reads never print as "nothing changed".
+// two failed reads never print as "nothing changed". `none` on both sides is
+// `same (no node)`: `none` also covers a node that exists but has not set its
+// uiNodeCallstack yet, so it brackets nothing either.
 static const char* PpSnapCompare(const std::string& pre, const std::string& post)
 {
     auto readable = [](const std::string& s) { return s == "none" || s.rfind("@", 0) == 0; };
     if (!readable(pre) || !readable(post)) return " UNREADABLE";
+    if (pre == "none" && post == "none") return " same (no node)";
     return pre == post ? " same" : " CHANGED";
 }
 
@@ -10210,10 +10213,23 @@ static std::string PpArgsText(const std::vector<double>& args)
     return s + ")";
 }
 
+// A pending override or setat fires on the next matching call of its row,
+// including one made inside our own invoke - which would rewrite what the
+// method receives while `args=` prints what was supplied. `call`/`resize`
+// refuse while either is pending; empty when neither is.
+static std::string PpPendingRewrite()
+{
+    if (g_PpOverrideLeft > 0) return "an override is pending on " + g_PpOverrideLabel + " (`prospectprobe override clear` first)";
+    if (g_PpSetAtPending) return "a setat is pending on " + g_PpSetAtLabel + " (`prospectprobe setat clear` first)";
+    return std::string();
+}
+
 static void PpCall(const std::string& target, const std::string& method, const std::vector<double>& args)
 {
     const std::string tag = "prospectprobe call " + target + " " + method;
     try {
+        const std::string pending = PpPendingRewrite();
+        if (!pending.empty()) { Out(tag + ": refused: " + pending + " - it could rewrite the invoked call; no call made"); return; }
         RValue inst, methodValue;
         std::string resolution, why;
         if (!PpMethodTarget(target, method, inst, methodValue, resolution, why)) { Out(tag + ": refused: " + why + "; no call made"); return; }
@@ -10276,6 +10292,23 @@ static std::string PpStoreText(const PpStoreShape& s)
         + " cols=" + std::to_string(s.colsMin) + ".." + std::to_string(s.colsMax);
 }
 
+// The node's nodeGridWidth/nodeGridHeight as they read after the method ran,
+// checked against the store: a method may write the size itself, and a width
+// past the shortest row (or a height past the row count) is the R5b crash on
+// the next Draw even when nodeGrid matched the request.
+static std::string PpSizeText(const RValue& node, const PpStoreShape& s)
+{
+    const RValue w = g_Yytk->CallBuiltin("variable_instance_exists", { node, RValue("nodeGridWidth") }).ToBoolean()
+        ? g_Yytk->CallBuiltin("variable_instance_get", { node, RValue("nodeGridWidth") }) : RValue();
+    const RValue h = g_Yytk->CallBuiltin("variable_instance_exists", { node, RValue("nodeGridHeight") }).ToBoolean()
+        ? g_Yytk->CallBuiltin("variable_instance_get", { node, RValue("nodeGridHeight") }) : RValue();
+    std::string text = " size=" + PpNum(w) + "x" + PpNum(h);
+    if (!PpIsNumber(w) || !PpIsNumber(h)) return text + " (size unreadable - close the window before anything else)";
+    if (!s.array || w.ToDouble() > s.colsMin || h.ToDouble() > s.rows)
+        text += " - size exceeds store (" + PpStoreText(s) + "): close the window before anything else";
+    return text;
+}
+
 // `resize <cols> <rows> via [window:]<m_Method> [number ...]`: write the
 // ProspectGrid node's nodeGridWidth/nodeGridHeight, invoke the game's own
 // method by name with the given arguments, and keep the write only if every
@@ -10295,6 +10328,8 @@ static void PpResize(int cols, int rows, const std::string& via, const std::vect
     const std::string target = onWindow ? "window" : "grid";
     const std::string method = onWindow ? via.substr(7) : via;
     try {
+        const std::string pending = PpPendingRewrite();
+        if (!pending.empty()) { Out(tag + ": refused: " + pending + " - it could rewrite the invoked call; no write made"); return; }
         RValue node;
         std::string before;
         if (!PpGridSnapshot(before, &node)) { Out(tag + ": refused: no ProspectGrid node (" + before + "); open the window first; no write made"); return; }
@@ -10336,6 +10371,14 @@ static void PpResize(int cols, int rows, const std::string& via, const std::vect
             + " self=" + PpDescribeSelf(self) + " " + PpArgsText(args)
             + " st=" + std::to_string((int)st) + (threw ? " (threw)" : "");
         const std::string request = std::to_string(cols) + "x" + std::to_string(rows);
+        // Shrink or grow against the size the node carried: GML's element
+        // assignment grows an array and never truncates it, so an assignment
+        // builder answers a shrink with an unchanged store. That `reverted`
+        // says nothing about whether the builder reads the size.
+        const double vw = wasW.ToDouble(), vh = wasH.ToDouble();
+        const bool shrink = cols <= vw && rows <= vh && (cols < vw || rows < vh);
+        const bool grow = cols >= vw && rows >= vh && (cols > vw || rows > vh);
+        const std::string probe = shrink ? " probe=shrink" : grow ? " probe=grow" : (cols == vw && rows == vh) ? " probe=same" : " probe=mixed";
 
         if (!g_Yytk->CallBuiltin("instance_exists", { node }).ToBoolean()) {
             // The method replaced the node. The write was on the destroyed one,
@@ -10347,16 +10390,18 @@ static void PpResize(int cols, int rows, const std::string& via, const std::vect
                 const PpStoreShape s = PpMeasureStore(newNode);
                 const bool matches = s.array && s.rows == rows && s.colsMin == cols && s.colsMax == cols;
                 Out(tag + ": rebuilt (the call replaced the ProspectGrid node; new node " + fresh + ", " + PpStoreText(s)
-                    + " - " + (matches ? "matches" : "does not match") + " the request " + request + ")" + supplied);
+                    + " - " + (matches ? "matches" : "does not match") + " the request " + request + ")"
+                    + PpSizeText(newNode, s) + probe + supplied);
             } else {
                 Out(tag + ": destroyed (the call removed the ProspectGrid node and no new one exists: " + fresh
-                    + "; nothing to restore)" + supplied);
+                    + "; nothing to restore)" + probe + supplied);
             }
         } else {
             // Did the store follow? nodeGrid is rows x cols (Phase 0a R2), every row.
             const PpStoreShape s = PpMeasureStore(node);
             if (called && s.array && s.rows == rows && s.colsMin == cols && s.colsMax == cols) {
-                Out(tag + ": kept (nodeGrid now " + PpStoreText(s) + ") res=" + Describe(res) + supplied);
+                Out(tag + ": kept (nodeGrid now " + PpStoreText(s) + ")" + PpSizeText(node, s) + " res=" + Describe(res)
+                    + probe + supplied);
             } else {
                 // Restore, but never to a size the store no longer covers: a
                 // builder that shrank or partly resized nodeGrid would make the
@@ -10371,11 +10416,13 @@ static void PpResize(int cols, int rows, const std::string& via, const std::vect
                                                   : "call failed; " + PpStoreText(s))
                     + ") - nodeGridWidth/nodeGridHeight restored to " + PpNum(RValue(w)) + "x" + PpNum(RValue(h))
                     + (unsafe ? " - restore unsafe: the store no longer covers the vanilla " + PpNum(wasW) + "x" + PpNum(wasH)
-                                    + (s.array ? "; wrote the size it does cover" : "; nothing safe to write")
+                                    + (s.array ? "; wrote the size it does cover"
+                                               : "; nodeGrid is not an array, so no size is safe - wrote the vanilla size back")
                                     + ". Close the window before anything else."
                               : std::string())
-                    + supplied
-                    + ". Counts toward H3 only with invoked=yes and the self/args the game's own call used (research doc § Deciding).");
+                    + probe + supplied
+                    + (shrink ? ". Not observed (shrink only - an assignment-built store never truncates): a shrink's reverted never counts toward H3; grow this method too (research doc § Deciding)."
+                              : ". Counts toward H3 only on a grow, with invoked=yes and the self/args the game's own call used (research doc § Deciding)."));
             }
         }
         std::string after;
