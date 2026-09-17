@@ -304,10 +304,15 @@ move either. Two limits keep this bounded, and both are visible:
   unread state (a handle can point at an instance whose variables hold nothing
   that changes), not a disqualifier: a negative quotes it, it does not void it.
 - **Its own leaf budget.** Leaves read through a followed handle are charged
-  to a separate budget of 50,000 per scope, not to the scope's own 250,000, and
-  counted on the scope line as `followLeaves=`. A scope that exhausts it stops
-  following and says `followTruncated=1`, so a handle with a large instance
-  behind it cannot cut a scope short without the line saying why.
+  to a separate budget of 250,000 per scope, kept apart from the scope's own
+  250,000, and counted on the scope line as `followLeaves=`. A scope that
+  exhausts it stops following and says `followTruncated=1`, so a handle with a
+  large instance behind it cannot cut a scope short without the line saying
+  why. The follow budget is as large as the scope budget on purpose: a single
+  followed handle can hold around 200 × 200 leaves, and because the budget is
+  per scope, taking scoped snapshots cannot recover a smaller one — a
+  `followTruncated=1` on `player` or `global` would rule out a Q3 negative for
+  the whole session.
 - **Once per instance per snapshot.** An instance already read — a scope root
   (`Player_obj`, `Controller_obj`, …) or one reached earlier by another path —
   is a leaf the second time and counts as neither; its members are in the

@@ -471,7 +471,11 @@ class ToggleDeepReadContractTests(unittest.TestCase):
     def test_followed_members_have_their_own_budget_and_count(self):
         # R1: members read through a followed handle were charged to the scope
         # the handle sat in, so a scope could truncate with no attribution.
-        self.assertRegex(self.block, r"kTgDeepMaxFollowLeavesPerScope\s*=\s*50000")
+        # B1: the follow budget matches the scope budget. At 50,000 one followed
+        # handle (depth 1, ~200x200 leaves) could spend it, and because it is per
+        # scope a scoped retake could not recover - followTruncated=1 on player
+        # or global would make a Q3 negative unobtainable for the whole session.
+        self.assertRegex(self.block, r"kTgDeepMaxFollowLeavesPerScope\s*=\s*250000")
         leaf = function_body(self.plugin, "static void TgProbeDeepLeaf(")
         for needle in ("out.followDepth > 0", "st.followLeaves >= kTgDeepMaxFollowLeavesPerScope",
                        "st.followTruncated = true", "++st.followLeaves"):

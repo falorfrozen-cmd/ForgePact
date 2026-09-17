@@ -15437,11 +15437,13 @@ static constexpr int kTgDeepMaxElems = 200;          // per container, then one 
 // let it starve - with a cut-off that moved between snapshots. A scope that
 // reaches its budget says truncated=1 on its own line.
 static constexpr size_t kTgDeepMaxLeavesPerScope = 250000;
-// Leaves read through a followed instance handle have their own, smaller
-// budget per scope, printed as followLeaves= / followTruncated=. Charged to the
-// scope budget they could truncate a scope with nothing saying why, and a full
-// snapshot could hold several scopes' worth of them.
-static constexpr size_t kTgDeepMaxFollowLeavesPerScope = 50000;
+// Leaves read through a followed instance handle have their own budget per
+// scope, printed as followLeaves= / followTruncated=. Charged to the scope
+// budget they could truncate a scope with nothing saying why. It is as large as
+// the scope budget: one followed handle can hold ~200x200 leaves, and since the
+// budget is per scope a scoped retake cannot recover a smaller one - a
+// followTruncated=1 on player or global would void every Q3 negative.
+static constexpr size_t kTgDeepMaxFollowLeavesPerScope = 250000;
 static constexpr size_t kTgDeepValueCap = 120;
 static constexpr int kTgDeepMaxSkillControllers = 8;
 static constexpr size_t kTgDeepDiffLines = 300;
