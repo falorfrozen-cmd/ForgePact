@@ -846,22 +846,39 @@ class ProspectWindowContractTests(unittest.TestCase):
         self.assertIn("`GetPlayerItemOwner` or `GetInventoryArray` only", inconclusive)
 
     def test_idcheck_a_profile_getter_hit_from_one_call_only_is_a_lead(self):
-        # P0c-R2-B1: a sentinel found in one profile-getter return proves only
-        # that `nodeGrid` is that call's own array, never that the getter's
-        # array outlives the call - the same leap round 1 refused for
-        # GetInventoryArray. A profile getter now decides save-backed only
-        # once its hits span kPpBackingProfileCallsToDecide (two) distinct
-        # calls of the SAME getter; a single-call hit is a `one call only`
-        # lead that decides no gate branch.
+        # P0c-R2-B1 / ForgePact #9 follow-up: a sentinel found in one
+        # profile-getter return proves only that `nodeGrid` is that call's
+        # own array, never that the getter's array outlives the call - the
+        # same leap round 1 refused for GetInventoryArray. A profile getter
+        # now decides save-backed only once its CLEAN hits (paths through no
+        # UI-looking field) span kPpBackingProfileCallsToDecide (two) distinct
+        # calls of the SAME getter; each verdict literal is pinned to its own
+        # branch below, not just to text order (a swapped `if`/threshold used
+        # to pass the old, order-only pin).
         self.assertIn("static constexpr int kPpBackingProfileCallsToDecide = 2;", self.plugin)
         body = self.backing_functions()["PpBackingIdCheck"]
         self.assertIn("h.call = k.call", body)
-        verdict = body[body.index("for (const PpBackingHit& h : results) {"):]
-        decide = verdict.index("kPpBackingProfileCallsToDecide")
-        outlived = verdict.index("outlived one call")
-        one_call = verdict.index("one call only")
-        self.assertLess(decide, outlived)
-        self.assertLess(outlived, one_call)
+        v = collapse(body[body.index("std::string verdict;"):])
+        self.assertIn("(int)profileCleanCalls[s].size() >= kPpBackingProfileCallsToDecide)", v)
+        self.assertIn("(int)profileHitCalls[s].size() >= kPpBackingProfileCallsToDecide)", v)
+        d = v.index("if (decisive) {")
+        u = v.index("} else if (uiReached) {", d)
+        e = v.index("} else {", u)
+        end = v.index("else if (!viaLead.empty())", e)
+        decided = v[d:u]
+        ui = v[u:e]
+        lead = v[e:end]
+        self.assertIn("- outlived one call)", decided)
+        self.assertIn("profileCleanCalls[decisive]", decided)
+        self.assertNotIn("one call only", decided)
+        self.assertNotIn("UI-looking", decided)
+        self.assertIn("reached through a UI-looking field", ui)
+        self.assertIn("decides no gate branch", ui)
+        self.assertNotIn("outlived one call", ui)
+        self.assertNotIn("one call only", ui)
+        self.assertIn("; one call only - the getter may build this array per call, a lead that decides no gate branch)", lead)
+        self.assertNotIn("outlived one call", lead)
+        self.assertNotIn("UI-looking", lead)
 
         instrument = collapse(section(self.doc, "## Instrument"))
         self.assertIn("two distinct calls of the same profile getter", instrument)
@@ -881,6 +898,63 @@ class ProspectWindowContractTests(unittest.TestCase):
 
         row = [line for line in self.doc.splitlines() if line.startswith("| backing idcheck |")][0]
         self.assertIn("one call only", row)
+
+    def test_idcheck_a_decisive_identity_through_a_ui_looking_field_is_a_lead(self):
+        # ForgePact #9 follow-up: two distinct calls of a profile getter prove
+        # the array outlives one call, not that it is saved data - an array
+        # reached only through a window/node/panel/menu-named struct member
+        # may be the window's own. PpBackingWalk never descends into an
+        # instance, so a struct member name is the only UI state a hit path
+        # can show; the rule can only demote a would-be save-backed identity
+        # to a lead, never promote one.
+        bodies = self.backing_functions()
+        classifier = bodies["PpBackingUiLookingField"]
+        self.assertIn("Lower(", classifier)
+        self.assertIn('rfind("ui", 0) == 0', classifier)
+        for token in ("window", "node", "panel", "menu"):
+            self.assertIn('find("' + token + '")', classifier)
+        body = bodies["PpBackingIdCheck"]
+        self.assertIn("PpBackingUiLookingField(p)", body)
+        self.assertIn("if (f.empty()) clean = true;", body)
+        self.assertIn("if (clean) profileCleanCalls[h.stash].insert(h.call);", body)
+
+        instrument = collapse(section(self.doc, "## Instrument"))
+        self.assertIn("reached through a UI-looking field", instrument)
+        self.assertIn("starts with `ui` or contains `window`, `node`, `panel` or `menu`", instrument)
+
+        live = collapse(section(self.doc, "## Phase 0c live procedure"))
+        c5 = live[live.index("**C5"):live.index("**C6")]
+        self.assertIn("UI-looking field", c5)
+
+        gate = collapse(section(self.doc, "## Deciding the hypothesis"))
+        saved = gate[gate.index("- **Save-backed** —"):gate.index("- **Not save-backed** —")]
+        self.assertIn("UI-looking field", saved)
+        inconclusive = gate[gate.index("- **Inconclusive** —"):]
+        self.assertIn("UI-looking field", inconclusive)
+
+        row = [line for line in self.doc.splitlines() if line.startswith("| backing idcheck |")][0]
+        self.assertIn("UI-looking field", row)
+
+    def test_idcheck_one_call_only_lead_names_every_profile_getter_that_hit(self):
+        # ForgePact #9 follow-up: the `one call only` lead used to name
+        # whichever profile getter came first in stash order; it now names
+        # every profile getter whose kept returns held the sentinel.
+        body = self.backing_functions()["PpBackingIdCheck"]
+        v = collapse(body[body.index("std::string verdict;"):])
+        d = v.index("if (decisive) {")
+        u = v.index("} else if (uiReached) {", d)
+        e = v.index("} else {", u)
+        end = v.index("else if (!viaLead.empty())", e)
+        lead = v[e:end]
+        self.assertIn("for (const PpBackingStash* s : g_PpBackingStashes)", lead)
+        self.assertIn("PpBackingIsProfileGetter(s) && !profileHitCalls[s].empty()", lead)
+        self.assertIn('leads += (leads.empty() ? std::string() : std::string("; via ")) + profileFirstWhat[s];', lead)
+        self.assertIn('"reference-identical (via " + leads', lead)
+        self.assertNotIn("break", lead)
+        self.assertNotIn("profileHitCalls.count(", v)
+
+        instrument = collapse(section(self.doc, "## Instrument"))
+        self.assertIn("names every profile getter that hit", instrument)
 
     def test_structural_agreement_counts_only_non_empty_cells_and_is_a_lead(self):
         # Round-0 P0c-B3: an empty 6x9 agrees with any 6x9 of empties, and a copy

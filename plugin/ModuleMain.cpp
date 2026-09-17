@@ -11037,6 +11037,28 @@ static bool PpBackingIsProfileGetter(const PpBackingStash* st)
     return st == &g_PpBackingProfile || st == &g_PpBackingProfileObj;
 }
 
+// The one struct-member name on a hit path that looks like UI state.
+// PpBackingWalk never descends into an instance, method or pointer, so a
+// window/node/panel/menu-named struct member is the only UI state a path can
+// show - a name rule stands in for "reached through the window's own state",
+// not a measurement (docs/prospect-window-research.md § Instrument).
+// Can only demote a would-be save-backed identity to a lead.
+static std::string PpBackingUiLookingField(const std::string& path)
+{
+    size_t pos = 0;
+    while ((pos = path.find('.', pos)) != std::string::npos) {
+        ++pos;
+        const size_t end = path.find_first_of(".[", pos);
+        const std::string name = end == std::string::npos ? path.substr(pos) : path.substr(pos, end - pos);
+        const std::string lower = Lower(name);
+        if (lower.rfind("ui", 0) == 0 || lower.find("window") != std::string::npos || lower.find("node") != std::string::npos
+            || lower.find("panel") != std::string::npos || lower.find("menu") != std::string::npos)
+            return name;
+        pos = end == std::string::npos ? path.size() : end;
+    }
+    return std::string();
+}
+
 // `backing idcheck`: is the live nodeGrid the same runtime array as (part of)
 // anything the game's own getter calls returned? One handler, no Draw in
 // between: the positive control, then one sentinel into one empty cell, a walk
@@ -11234,6 +11256,14 @@ static void PpBackingIdCheck()
         long incomplete = 0;
         std::map<const PpBackingStash*, std::set<long>> profileHitCalls;
         std::map<const PpBackingStash*, std::string> profileFirstWhat;
+        // `profileCleanCalls`/`profileCleanWhat` track the same, but only for
+        // calls whose hits include at least one path with no UI-looking
+        // field - the two-call rule decides save-backed from these, never
+        // from `profileHitCalls`. `profileUiField` is the first UI-looking
+        // member name seen on a call that has no clean hit, for the lead text.
+        std::map<const PpBackingStash*, std::set<long>> profileCleanCalls;
+        std::map<const PpBackingStash*, std::string> profileCleanWhat;
+        std::map<const PpBackingStash*, std::string> profileUiField;
         for (const PpBackingHit& h : results) {
             std::string where;
             for (const std::string& p : h.hits) where += " " + p;
@@ -11246,6 +11276,15 @@ static void PpBackingIdCheck()
                     profileHitCalls[h.stash].insert(h.call);
                     std::string& first = profileFirstWhat[h.stash];
                     if (first.empty()) first = h.what + " at" + where;
+                    bool clean = false;
+                    std::string uiField;
+                    for (const std::string& p : h.hits) {
+                        const std::string f = PpBackingUiLookingField(p);
+                        if (f.empty()) clean = true; else if (uiField.empty()) uiField = f;
+                    }
+                    if (clean) profileCleanCalls[h.stash].insert(h.call);
+                    if (clean && profileCleanWhat[h.stash].empty()) profileCleanWhat[h.stash] = h.what + " at" + where;
+                    if (!clean && profileUiField[h.stash].empty()) profileUiField[h.stash] = uiField;
                 }
             }
             if (!h.scan.Complete()) {
@@ -11255,28 +11294,38 @@ static void PpBackingIdCheck()
         }
         std::string verdict;
         if (!via.empty()) {
-            // A profile getter decides save-backed only once its hits span at
-            // least kPpBackingProfileCallsToDecide distinct calls: two kept
-            // returns of the same getter with different call numbers are two
-            // separate executions of it, so a sentinel in both proves the array
-            // outlived one call - a single call only proves that one return is
-            // that array.
+            // A profile getter decides save-backed only once its CLEAN hits
+            // (hit paths with no UI-looking field) span at least
+            // kPpBackingProfileCallsToDecide distinct calls: two kept returns
+            // of the same getter with different call numbers, neither reached
+            // only through UI state, are two separate executions of it, so a
+            // sentinel in both proves the array outlived one call - a single
+            // call only proves that one return is that array, and calls
+            // reached only through a UI-looking field may be the window's own.
             const PpBackingStash* decisive = nullptr;
+            const PpBackingStash* uiReached = nullptr;
             for (const PpBackingStash* s : g_PpBackingStashes) {
                 if (!PpBackingIsProfileGetter(s)) continue;
-                auto it = profileHitCalls.find(s);
-                if (it != profileHitCalls.end() && (int)it->second.size() >= kPpBackingProfileCallsToDecide) { decisive = s; break; }
+                if (!decisive && (int)profileCleanCalls[s].size() >= kPpBackingProfileCallsToDecide) decisive = s;
+                if (!uiReached && (int)profileHitCalls[s].size() >= kPpBackingProfileCallsToDecide) uiReached = s;
             }
             if (decisive) {
-                const std::set<long>& calls = profileHitCalls[decisive];
+                const std::set<long>& calls = profileCleanCalls[decisive];
                 std::string callList;
                 for (long c : calls) callList += " #" + std::to_string(c);
-                verdict = "reference-identical (via " + profileFirstWhat[decisive] + "; sentinel in " + std::to_string(calls.size())
+                verdict = "reference-identical (via " + profileCleanWhat[decisive] + "; sentinel in " + std::to_string(calls.size())
                     + " calls of " + decisive->getter + ":" + callList + " - outlived one call): nodeGrid shares its array with a profile getter's return";
+            } else if (uiReached) {
+                const std::set<long>& calls = profileHitCalls[uiReached];
+                std::string callList;
+                for (long c : calls) callList += " #" + std::to_string(c);
+                verdict = "reference-identical (via " + profileFirstWhat[uiReached] + "; sentinel in " + std::to_string(calls.size())
+                    + " calls of " + uiReached->getter + ":" + callList + " but reached through a UI-looking field (" + profileUiField[uiReached]
+                    + ") - the array may be the window's own, a lead that decides no gate branch)";
             } else {
-                const PpBackingStash* lead = nullptr;
-                for (const PpBackingStash* s : g_PpBackingStashes) if (profileHitCalls.count(s)) { lead = s; break; }
-                verdict = "reference-identical (via " + profileFirstWhat[lead]
+                std::string leads;
+                for (const PpBackingStash* s : g_PpBackingStashes) if (PpBackingIsProfileGetter(s) && !profileHitCalls[s].empty()) leads += (leads.empty() ? std::string() : std::string("; via ")) + profileFirstWhat[s];
+                verdict = "reference-identical (via " + leads
                     + "; one call only - the getter may build this array per call, a lead that decides no gate branch)";
             }
         }
