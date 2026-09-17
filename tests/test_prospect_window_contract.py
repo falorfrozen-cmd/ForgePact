@@ -859,8 +859,8 @@ class ProspectWindowContractTests(unittest.TestCase):
         body = self.backing_functions()["PpBackingIdCheck"]
         self.assertIn("h.call = k.call", body)
         v = collapse(body[body.index("std::string verdict;"):])
-        self.assertIn("(int)profileCleanCalls[s].size() >= kPpBackingProfileCallsToDecide)", v)
-        self.assertIn("(int)profileHitCalls[s].size() >= kPpBackingProfileCallsToDecide)", v)
+        self.assertIn("if (!decisive && (int)profileCleanCalls[s].size() >= kPpBackingProfileCallsToDecide) decisive = s;", v)
+        self.assertIn("if (!uiReached && (int)profileHitCalls[s].size() >= kPpBackingProfileCallsToDecide) uiReached = s;", v)
         d = v.index("if (decisive) {")
         u = v.index("} else if (uiReached) {", d)
         e = v.index("} else {", u)
@@ -915,8 +915,13 @@ class ProspectWindowContractTests(unittest.TestCase):
             self.assertIn('find("' + token + '")', classifier)
         body = bodies["PpBackingIdCheck"]
         self.assertIn("PpBackingUiLookingField(p)", body)
-        self.assertIn("if (f.empty()) clean = true;", body)
+        self.assertIn("if (f.empty()) clean = true; else if (uiField.empty()) uiField = f;", body)
         self.assertIn("if (clean) profileCleanCalls[h.stash].insert(h.call);", body)
+        self.assertIn("if (!clean && profileUiField[h.stash].empty()) profileUiField[h.stash] = uiField;", body)
+        c = collapse(classifier)
+        self.assertLess(c.index('rfind("ui", 0) == 0'), c.index("return name;"))
+        self.assertLess(c.index("return name;"), c.index("return std::string();"))
+        self.assertEqual(c.count("return std::string();"), 1)
 
         instrument = collapse(section(self.doc, "## Instrument"))
         self.assertIn("reached through a UI-looking field", instrument)
