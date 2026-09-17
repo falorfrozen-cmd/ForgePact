@@ -870,6 +870,18 @@ class ProspectWindowContractTests(unittest.TestCase):
         lead = v[e:end]
         self.assertIn("- outlived one call)", decided)
         self.assertIn("profileCleanCalls[decisive]", decided)
+        # N-R3-2, read side: round 0 pinned the WRITE of the clean evidence but
+        # not the read. Citing profileFirstWhat here leaves the decision
+        # clean-based while the save-backed line cites a UI-reached path as its
+        # evidence, and a live log gives no way to tell.
+        self.assertIn("profileCleanWhat[decisive]", decided)
+        self.assertNotIn("profileFirstWhat", decided)
+        # The `at <path>` list that citation is built from must be every path of
+        # that return, and the selection loop must see every stash.
+        self.assertIn('for (const std::string& p : h.hits) where += " " + p;', body)
+        self.assertIn("for (const PpBackingStash* s : g_PpBackingStashes) {", v)
+        self.assertNotIn("break", v)
+        self.assertNotIn("goto", v)
         self.assertNotIn("one call only", decided)
         self.assertNotIn("UI-looking", decided)
         self.assertIn("reached through a UI-looking field", ui)
@@ -934,6 +946,12 @@ class ProspectWindowContractTests(unittest.TestCase):
         loop = collapse(body[body.index("bool clean = false;"):body.index("if (clean) profileCleanCalls")])
         self.assertEqual(loop.count("clean = true"), 1)
         self.assertNotIn("break", loop)
+        # Same family, the sibling loop: no other early exit, and the loop
+        # header itself is pinned so a bounded index rewrite cannot read only
+        # h.hits[0] without using the word `break`.
+        self.assertNotIn("goto", loop)
+        self.assertNotIn("return", loop)
+        self.assertIn("for (const std::string& p : h.hits) {", loop)
         self.assertEqual(body.count("profileCleanCalls[h.stash].insert"), 1)
         self.assertIn("if (clean && profileCleanWhat[h.stash].empty())", body)
         # The classifier inspects every `.`-separated member, not just the last
@@ -941,6 +959,20 @@ class ProspectWindowContractTests(unittest.TestCase):
         # member on the `at <path>`", i.e. any of them).
         self.assertIn("while ((pos = path.find('.', pos)) != std::string::npos)", c)
         self.assertNotIn("continue", c)
+        # The member walk must reach the END of the path. Nothing may leave the
+        # loop early by any route - break / goto / throw / an extra `return
+        # name;` - and the advance statement is pinned positively, because the
+        # worst mutants of this family (pos = path.size(); a ternary whose
+        # branches are both path.size(); a deleted ++pos) use no keyword at all
+        # and slip past every assertNotIn. A walk that stops after member 1
+        # makes `<root>.items.uiNodeGrid` read clean and prints the save-backed
+        # line for an array that is the window's own.
+        self.assertNotIn("break", c)
+        self.assertNotIn("goto", c)
+        self.assertNotIn("throw", c)
+        self.assertEqual(c.count("return name;"), 1)
+        self.assertIn("pos = end == std::string::npos ? path.size() : end;", c)
+        self.assertIn("++pos;", c)
         self.assertLess(c.index("const std::string lower = Lower(name);"), c.index('rfind("ui", 0) == 0'))
 
         instrument = collapse(section(self.doc, "## Instrument"))
@@ -951,16 +983,22 @@ class ProspectWindowContractTests(unittest.TestCase):
         self.assertIn("a name rule standing in for", instrument)
         self.assertIn("can only demote a would-be save-backed identity to a lead", instrument)
         self.assertIn("still rests on the two-call rule", instrument)
+        self.assertIn("names every path that return hit", instrument)
+        self.assertNotIn("names every path that hit", instrument)
 
         live = collapse(section(self.doc, "## Phase 0c live procedure"))
         c5 = live[live.index("**C5"):live.index("**C6")]
         self.assertIn("UI-looking field", c5)
+        self.assertIn("fewer than two of the calls holding it", c5)
+        self.assertNotIn("decisive calls are reached only through", c5)
 
         gate = collapse(section(self.doc, "## Deciding the hypothesis"))
         saved = gate[gate.index("- **Save-backed** —"):gate.index("- **Not save-backed** —")]
         self.assertIn("UI-looking field", saved)
         inconclusive = gate[gate.index("- **Inconclusive** —"):]
         self.assertIn("UI-looking field", inconclusive)
+        self.assertIn("fewer than two of the calls holding it", inconclusive)
+        self.assertNotIn("decisive calls are reached only through", inconclusive)
 
         row = [line for line in self.doc.splitlines() if line.startswith("| backing idcheck |")][0]
         self.assertIn("UI-looking field", row)

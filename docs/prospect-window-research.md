@@ -648,7 +648,7 @@ the whole design, because a blind `callnum GetProfileInventoryData` (no correct
      the `at <path>` whose name starts with `ui` or contains `window`, `node`,
      `panel` or `menu`, case-insensitive (the walk never descends into an
      instance, so a member name is the only UI state a path can show); the
-     decided line's own `at <path>` list names every path that hit, so it
+     decided line's own `at <path>` list names every path that return hit, so it
      may still contain a UI-looking one — the branch turns on how many
      calls were clean, not on what the line prints. The UI-looking-field check
      is a name rule standing in for "reached through the window's own state",
@@ -970,8 +970,10 @@ what Phase 0b ran.
    **inconclusive**. An identity through a profile getter found in **one call
    only** decides nothing by itself — a single return proves only that
    `nodeGrid` is that call's own array, not that the array outlives the call —
-   and neither does an identity whose decisive calls are reached only through
-   a **UI-looking field**, nor an identity through `GetPlayerItemOwner` or
+   and neither does an identity where fewer than two of the calls
+   holding it reached it on a path with no **UI-looking field** — the
+   mixed case counts, one clean call among several UI-reached ones still
+   decides nothing — nor an identity through `GetPlayerItemOwner` or
    `GetInventoryArray` only; all are recorded in § Results with their getter,
    `self` and call number. The structural agreement from
    C2/C2b is recorded as a lead and decides nothing.
@@ -1115,8 +1117,9 @@ The rules are read **in this order, and the first that holds decides**:
   instance) or `not observed (N window returns not kept …)`, identity through
   a profile getter found in **one call only** (with R7 not kept — a `one call
   only` identity with R7 = returned is inconclusive, not not-save-backed:
-  `copy` is never printed once a sentinel was found), identity whose decisive
-  calls are reached only through a **UI-looking field** (with R7 not kept —
+  `copy` is never printed once a sentinel was found), identity where fewer
+  than two of the calls holding it reached it on a path with no
+  **UI-looking field** (with R7 not kept —
   with R7 = returned it is inconclusive too, not not-save-backed), identity
   through `GetPlayerItemOwner` or `GetInventoryArray` only (with R7 not kept), R7 was
   not measured across a written save, or `copy` with R7 = lost. H stays `not observed`; the fallback is a
