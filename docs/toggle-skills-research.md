@@ -12,8 +12,9 @@ while OFF, readable by name from any `self` with no Ghidra read needed. Track A
   `TalentUse`), and where the ON/OFF state lives (Q3-D, session 2): the
   `White_Mage_Soul_Spurn_AOE_obj` instance count.
 - **Not observed:** what in the call trace discriminates a Purgatory-toggled
-  cast of Soul Spurn from a non-toggle cast (Q2); the Purgatory sub-talent
-  level, which is not a leaf in any of the seven `tgprobe deep` scopes.
+  cast of Soul Spurn from a non-toggle cast (Q2); *which* sub-index in
+  `global.subTalentMap[1].t240` (candidates s2/s6/s7/s9/s10/s12, all found) is
+  Purgatory's level.
 - **Blocked:** every object-event row, which does not resolve by name.
 
 See Results and Decision. Statements in the sections before Results are
@@ -716,21 +717,35 @@ unreadable=0` (no `<absent:` leaves in the read set). `tgprobe deep find
 
 | Q | Question | status | Evidence |
 |---|---|---|---|
-| Q3-D | Where the ON state lives, read from non-scalar runtime storage (`tgprobe deep`) | measured | Path: `census.White_Mage_Soul_Spurn_AOE_obj` (GameObject 5759). Found by `tgprobe deep flip base on off` → `tgprobe deep flip base on off: A(flipped and reverted)=41 B(changed twice)=221 truncated=0`, bucket-A line `census.White_Mage_Soul_Spurn_AOE_obj: base=<absent> on=1 off=<absent>` (bucket A also holds `census.Player_Damage_Parent_obj: base=<absent> on=1 off=<absent>`, the object's parent class — not a distinct signal). Since the measured path is a `census.<Object>` leaf, `tgprobe deep get` cannot read it (`deep get` resolves scoped struct/array/ds paths, not the census map); per the driver amendment, three `tgprobe deep census` reads stand in for it on each side. **ON** (by eye ON, 10 s window): frame 34740 → `White_Mage_Soul_Spurn_AOE_obj=1`; frame 35430 → `=1`; frame 36150 → `=1` (each alongside `Player_Damage_Parent_obj=1`). **OFF** (by eye OFF after 1 press): frame 39540 → row absent; frame 40260 → row absent; frame 40950 → row absent (also absent at the earlier OFF baseline, frame 27210). Non-toggle control: `tgprobe deep diff hz0 hz1 Soul_Spurn` → `tgprobe deep diff hz0 hz1: changed=122 added=3 removed=8 truncated=0 filter=Soul_Spurn matching=0`; `tgprobe deep diff hz2 hz3 Soul_Spurn` → `tgprobe deep diff hz2 hz3: changed=133 added=51 removed=43 truncated=0 filter=Soul_Spurn matching=0` — the path is unchanged by casting Healing Zone. Read = `instance_number(asset_get_index(GetObjectName(GameObject::White_Mage_Soul_Spurn_AOE_obj))) > 0`; ON=1, OFF=0; resolved by name from `GetObjectName`/`asset_get_index`, no `self` needed, so it is callable via `CallBuiltin` from any `self` (checked from `Controller_obj`'s draw). Not the toggle: `Player_obj.playerEffect[182]` went `real:0.000000 -> int64:2` (`~ Player_obj.playerEffect[182]: real:0.000000 -> int64:2`, `deep diff base on Player_obj.`) on the first cast and stayed `2` after turning OFF (`tgprobe deep get Player_obj.playerEffect[182] = int64:2 frame=20550` while ON, `= int64:2 frame=25290` while OFF) — a bucket-less residue counter, not the toggle. The AOE instance's own variables while ON (`tgprobe vars White_Mage_Soul_Spurn_AOE_obj`): `activated=bool:true`, `purgatory=real:0.090000`, `purgatoryTimer=real:105.73`, `tick_frequency=180`, `tickNumber=19`. |
+| Q3-D | Where the ON state lives, read from non-scalar runtime storage (`tgprobe deep`) | measured | Path: `census.White_Mage_Soul_Spurn_AOE_obj` (`GameObject::White_Mage_Soul_Spurn_AOE_obj` = SDK index 5759; the runtime object index itself was never printed this session). Found by `tgprobe deep flip base on off` → `tgprobe deep flip base on off: A(flipped and reverted)=41 B(changed twice)=221 truncated=0`, bucket-A line `census.White_Mage_Soul_Spurn_AOE_obj: base=<absent> on=1 off=<absent>` (bucket A also holds `census.Player_Damage_Parent_obj: base=<absent> on=1 off=<absent>`, the object's parent class — not a distinct signal). Since the measured path is a `census.<Object>` leaf, `tgprobe deep get` cannot read it (`deep get` resolves scoped struct/array/ds paths, not the census map); per the driver amendment, three `tgprobe deep census` reads stand in for it on each side — **the six quoted reads below are excerpts of the log, not the full census output.** **ON** (by eye ON, 10 s window; each read's own full `nonzero=` count — 181/161/179 — covers every nonzero object, but only the two relevant rows are shown): frame 34740 → `White_Mage_Soul_Spurn_AOE_obj=1` (`Player_Damage_Parent_obj=1` alongside); frame 35430 → `=1`; frame 36150 → `=1`. **OFF** (by eye OFF after 1 press): frame 39540, frame 40260 and frame 40950 each print only the header line `nonzero=177`, with no object rows in the log; absence of the row is *inferred* from that count matching the fully-listed baseline census at frame 27210 (177 rows enumerated in full, `White_Mage_Soul_Spurn_AOE_obj` not among them), not read directly at those three frames. Non-toggle control: `tgprobe deep diff hz2 hz3 Soul_Spurn` → `tgprobe deep diff hz2 hz3: changed=133 added=51 removed=43 truncated=0 filter=Soul_Spurn matching=0` — hz2/hz3 is the pair where C3 (the census positive control) fired, so it is the valid non-toggle control; the path does not change when Healing Zone is cast in that pair. (`tgprobe deep diff hz0 hz1 Soul_Spurn` also read `matching=0`, but hz0/hz1 is the pair where C3 did **not** fire, so it is not used as a control here — see C3 above.) Neither pair shows the AOE instance exists *only* because of the toggle; both show only that casting Healing Zone does not itself change this path. Read = `instance_number(asset_get_index(GetObjectName(GameObject::White_Mage_Soul_Spurn_AOE_obj))) > 0`; ON=1, OFF=0. This exact expression was **not run** this session — the census reads above use a loop index over the object range plus `object_get_name`, not `asset_get_index`/`instance_number` by name. That `GetObjectName`/`asset_get_index`/`instance_number` all resolve by name with no `self` dependency is an *inference* from "no self needed" in each builtin's own contract, not something exercised from `Controller_obj`'s draw or anywhere else this session; the indicator workorder must run this exact read as its own ON=1 positive control in its real call context before trusting an OFF/0 result from it. Not the toggle: `Player_obj.playerEffect[182]` went `real:0.000000 -> int64:2` (`~ Player_obj.playerEffect[182]: real:0.000000 -> int64:2`, `deep diff base on Player_obj.`) on the first cast and stayed `2` after turning OFF (`tgprobe deep get Player_obj.playerEffect[182] = int64:2 frame=20550` while ON, `= int64:2 frame=25290` while OFF) — stays `2` while OFF; what it means is not established. The AOE instance's own variables while ON (`tgprobe vars White_Mage_Soul_Spurn_AOE_obj`): `activated=bool:true`, `purgatory=real:0.090000`, `purgatoryTimer=real:105.73`, `tick_frequency=180`, `tickNumber=19`. |
 | Q3-G | The same, from the local Ghidra read of `TalentsWhiteMage`'s talent-240 branch, paraphrased | not run — Q3-D measured | Step 5.10 (`naddr TalentsWhiteMage` / Ghidra fallback) was not reached: Q3-D came back `measured` with all controls fired, so per §5 the Ghidra pass is skipped. No `citrace` command was sent this session. |
 
-**Purgatory sub-talent level:** not observed in the seven `tgprobe deep`
-scopes. `tgprobe deep find purg on` → `hits=1`, the only match a quest string
+**Purgatory sub-talent level:** the storage exists, but which field is
+Purgatory's level is **not identified**. `tgprobe deep find purg on` →
+`hits=1`, the only match a quest string
 (`Controller_obj.questlogDescription[5]=string:"Purge Tarethiel of evil for
-good.."`), unrelated. `tgprobe deep find sub on` (hits=223, first 200 shown),
-`tgprobe deep find 240 on` (hits=317, first 200 shown), `tgprobe deep find
-toggle on` (hits=0), `tgprobe deep find active on` (hits=374, first 200
-shown) and `tgprobe deep find talent:240. on` (hits=82) did not surface a
-level field either: `talent:240` resolves to the static talent-definition
-struct, which carries no level field, and the sub-talent level is not a leaf
-of `Player_obj`, `Controller_obj`, the HUD object, `Skill_Controller_obj`, the
-talent scope or `global` at depth ≤ 3. The live `White_Mage_Soul_Spurn_AOE_obj`
-instance does carry `purgatory=real:0.090000` while ON (see the Q3-D row).
+good.."`), unrelated. `tgprobe deep find sub on` (hits=223, first 200 shown)
+and `tgprobe deep find 240 on` (hits=317, first 200 shown, repeats the same
+values) both surfaced two candidate paths for talent 240's sub-talents:
+`global.subTalentMap[1].t240.s2=real:2.000000`,
+`global.subTalentMap[1].t240.s6=real:2.000000`,
+`global.subTalentMap[1].t240.s7=real:5.000000`,
+`global.subTalentMap[1].t240.s9=real:5.000000`,
+`global.subTalentMap[1].t240.s10=real:3.000000`,
+`global.subTalentMap[1].t240.s12=real:3.000000` (six sub-index slots, values
+2/2/5/5/3/3), and
+`UI_Hud_Talent_obj.playerSlot{subTalentMap}[0].t240=<container n=6>` (the
+same six-entry map, mirrored on the HUD slot object). Neither `deep find`
+nor anything else run this session names which `sN` corresponds to Purgatory
+— the map has no key-to-ability-name lookup in the scopes read, and
+`ReturnSubTalentLevel`'s own index argument (session-1 Decision item 2) was
+not called this session. `tgprobe deep find toggle on` (hits=0) and `tgprobe
+deep find active on` (hits=374, first 200 shown) did not add a candidate.
+`talent:240` itself resolves to the static talent-definition struct (no
+level field) — the *per-player* level lives in `subTalentMap`, not there.
+The live `White_Mage_Soul_Spurn_AOE_obj` instance separately carries
+`purgatory=real:0.090000` while ON (see the Q3-D row); whether that value is
+read from one of the six `subTalentMap` slots is not established.
 
 **By-eye caveats:** the `on2` state was not explicitly re-confirmed by the
 tester before the OFF presses began; the first OFF attempt took 2 presses,
@@ -768,30 +783,66 @@ Q4 is measured: `DrawHudBuffs` is a valid anchor.
 **Track B (active indicator) is UNBLOCKED. Q3 read, as input to the
 indicator workorder:**
 
-- **Root/object:** `White_Mage_Soul_Spurn_AOE_obj` (`GameObject 5759`) — a
-  live-instance count, not a member of `Player_obj`, `global` or any struct.
+- **Root/object:** `White_Mage_Soul_Spurn_AOE_obj` (`GameObject::White_Mage_Soul_Spurn_AOE_obj`
+  = SDK index 5759, the runtime index was never printed) — a live-instance
+  count, not a member of `Player_obj`, `global` or any struct.
 - **Read:** `instance_number(asset_get_index(GetObjectName(GameObject::White_Mage_Soul_Spurn_AOE_obj))) > 0`.
+  **This exact expression was not run this session** — the ON/OFF evidence is
+  six `tgprobe deep census` reads (a loop index over the object range plus
+  `object_get_name`), not a call to this expression; see the Q3-D row.
 - **ON value:** `1` (instance exists). **OFF value:** `0` / absent (instance
   does not exist).
-- **Readable from any `self` via `CallBuiltin` by name:** yes —
-  `GetObjectName`, `asset_get_index` and `instance_number` all resolve by
-  name with no `self` dependency; checked reading it from `Controller_obj`'s
-  draw context in this session.
+- **Readable from any `self` via `CallBuiltin` by name:** *inferred, not run
+  in draw context or anywhere else this session* — `GetObjectName`,
+  `asset_get_index` and `instance_number` are documented to resolve by name
+  with no `self` dependency, but that was not exercised here. **The indicator
+  workorder must run its own ON=1 positive control with this exact read, in
+  its real call context, before trusting an OFF/0 result from it.**
 - **Not the toggle, seen along the way:** `Player_obj.playerEffect[182]`
-  (`real:0.000000 -> int64:2` on first cast, stays `2` after OFF — a
-  bucket-less residue counter) and `Player_Damage_Parent_obj`'s census count
-  (the object's own parent class, same bucket-A shape, not a distinct
+  (`real:0.000000 -> int64:2` on first cast, stays `2` after OFF — what this
+  value means is not established) and `Player_Damage_Parent_obj`'s census
+  count (the object's own parent class, same bucket-A shape, not a distinct
   signal).
 - **Observed alongside, not required for the read:** the AOE instance's own
   `purgatory`/`purgatoryTimer`/`activated`/`tickNumber` variables while ON
   (`tgprobe vars White_Mage_Soul_Spurn_AOE_obj`), which the indicator
   workorder may use for richer state but does not need for a plain on/off
   read.
-- **Not established:** the Purgatory sub-talent level — `not observed` in
-  the seven `tgprobe deep` scopes (see the Purgatory sub-talent note in
-  Results → Session 2). If the indicator or a future design needs the
-  sub-talent's configured level (as opposed to whether Soul Spurn is
-  currently toggled on), that is a separate, still-open read.
+- **Not established — the read above is untested on all of the following,
+  and the indicator workorder must not assume it holds:**
+  - **Per-player / co-op scoping.** The AOE instance carries `playerNumber=1`,
+    and `instance_number` counts every player's instances of the object, not
+    just the local player's. Only single-player town was measured this
+    session; a co-op session with another player's Soul Spurn active is
+    untested and could read `> 0` while the local player's is OFF.
+  - **A Soul Spurn cast without Purgatory.** Never tested — Purgatory was on
+    the hotbar throughout. The AOE instance's `destroyTimer=-1` while ON (a
+    value that, on other objects in this snapshot, marks "not scheduled to
+    expire") hints that the toggled instance may differ from a plain,
+    non-Purgatory cast of the same skill, which this session cannot rule out.
+  - **Zone change.** The attach-time `firstHud=` read (session 1's
+    `tgprobe show`) counts `White_Mage_Soul_Spurn_obj` instances, a different
+    object from the `White_Mage_Soul_Spurn_AOE_obj` measured here — zone
+    change behavior for the actual Q3-D path is untested.
+  - **OFF lag.** The first OFF census read (frame 39540) is at least 3390
+    frames after the last confirmed-ON read (frame 36150); how long the AOE
+    instance persists after the OFF press, and whether the read momentarily
+    reads stale-ON during that window, is unmeasured.
+  - **HP self-cancel.** Session 1 observed Purgatory's health drain
+    self-cancelling the toggle at low HP; that path was not exercised in
+    session 2, so whether the AOE instance is torn down the same way is
+    untested.
+  - **More than one instance.** Every ON read this session showed exactly
+    `=1`; the read's behavior with 0, 2 or more simultaneous instances
+    (e.g. from a proc re-cast, Track A Q5) is unobserved.
+  - **The Purgatory sub-talent level.** Two candidate storage locations
+    exist (`global.subTalentMap[1].t240.{s2,s6,s7,s9,s10,s12}` and
+    `UI_Hud_Talent_obj.playerSlot{subTalentMap}[0].t240`, a six-entry map with
+    the same values), but *which* `sN` holds Purgatory's level was not
+    identified this session (see the Purgatory sub-talent note in
+    Results → Session 2). If the indicator or a future design needs the
+    sub-talent's configured level (as opposed to whether Soul Spurn is
+    currently toggled on), that is a separate, still-open read.
 
 Track A (re-cast guard) is unchanged from after session 1: still **BLOCKED on
 Q2** (what in the call trace distinguishes a toggle cast from a non-toggle
