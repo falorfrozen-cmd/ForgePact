@@ -23,7 +23,8 @@ class OfflineLaunchTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="forgepact-launch-")
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        # resolve(): the launcher resolves the exe, and a CI TEMP is an 8.3 short path (RUNNER~1).
+        self.root = Path(self.temp.name).resolve()
         self.exe = self.root / "Game with spaces" / "bin" / "Hero_Siege.exe"
         self.exe.parent.mkdir(parents=True)
         write_test_pe(self.exe, b"new", patched=True)
