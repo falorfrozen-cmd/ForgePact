@@ -1,12 +1,18 @@
 # Toggle skills — research log (issue #11)
 
-Status (2026-09-17): **instrument built, not yet run.** Nothing about toggle
-skills has been measured in-game by this toolkit. The research build carries
-`tgprobe`, one batched instrument for every candidate the static search below
-turned up; the live session in "Live procedure" has not happened, so
-Results and Decision are empty. Every statement about the game's
-behaviour below is either a static-search fact (a name exists or does not) or
-labelled as inference.
+Status (2026-09-17): **one live session run; both tracks BLOCKED pending a
+second research round.**
+
+- **Measured:** the cast path (Q1), draw order (Q4), and three sources of
+  accidental re-casts (Q5), one of them the double-cast proc, which bypasses
+  `TalentUse`.
+- **Not observed:** where the toggle's on/off state lives (Q3). It is in no
+  scalar of `Player_obj` or global, in no HUD variable, in no ability object
+  and in no player buff.
+- **Blocked:** every object-event row, which does not resolve by name.
+
+See Results and Decision. Statements in the sections before Results are
+static-search facts or labelled inference, written before the session.
 
 ## The issue
 
@@ -313,23 +319,56 @@ Decision. Stop the game; nothing else is left running.
 
 ## Results
 
-Not yet run. Status is exactly one of `measured`, `not observed`, `blocked`.
-A `not observed` row quotes both controls' counts from the same `tgprobe show`;
-a Q whose candidate rows all read `blocked` or `not found` is `blocked`, never
-`not observed`.
+Session 1, 2026-09-17: research build `81c0f67` (`BloodPactPlugin_rel.dll`),
+White Mage, Soul Spurn + Purgatory on the hotbar, Healing Zone (E) as the
+non-toggle skill, town (`Town_05_rm`), no `coop.ini`, no `citrace`. The tester
+reported the on/off state by eye after every press. Status is exactly one of
+`measured`, `not observed`, `blocked`.
+
+**Attach and controls.** `tgprobe hook: 36 native, 2 via hook, 0 blocked, 26
+not found`, with `BuffAdd: via HookBuffAdd (native)` and `DrawHudBuffs: via
+Hook_DrawHudBuffs (native)`. All 8 `UI_Hud_Talent_obj` closures and **all 18
+object-event rows were `not found` (st=14), including the `Player_obj.Step_0`
+control**, so every event row is `blocked`. This repeats the pet-quest session-7
+result: raw `gml_Object_*` event names do not resolve by name on this build.
+Script controls held throughout. In the same `tgprobe show` (frame=36120),
+`CheckPlayerInteraction(control) calls=43200` and `DrawHudBuffs calls=4320`,
+and `DrawHud`/`DrawHudAbilityButtons` also read 4320. After a
+`hhlabel`+`tgprobe reset` batch, a 3 s window read `DrawHudBuffs calls=570`,
+`CheckTalentUse calls=570`, `CheckPlayerInteraction calls=5700` (10 per frame).
 
 | Q | Question | status | Evidence |
 |---|---|---|---|
-| Q1 | Which routine runs once per toggle press, with what `self` and args | | |
-| Q2 | What distinguishes a Purgatory-toggled Soul Spurn from the same skill without Purgatory, and from a non-toggle skill | | |
-| Q3 | Where the on/off state lives, whether it stays flipped while on, and whether one read from the draw hook can see it | | |
-| Q4 | Where the slots draw: whether `DrawHudBuffs` runs after `DrawHudAbilityButtons`, slot geometry, which slot variable names the talent | | |
-| Q5 | Whether an accidental double-press is two cast calls, and whether a held key streams calls | | |
-| Q6 | What a zone change does to the state and in what order; is the state OFF on the first `DrawHudBuffs` in the new zone | | |
+| Q1 | Which routine runs once per toggle press, with what `self` and args | measured | Each tap of Soul Spurn is one `TalentUse` with `self=Player_obj`, `argc=5 a0=<player ref> a1=240 a2=1 a3=false a4=true`. About 19 frames later comes one `TalentUseClass` with `self=Player_obj a0=240 a4=true a5=0 a6=-1 a7=-1`, then `TalentsWhiteMage` (argc=0) and `GetTalentCooldown(240,1)`. Healing Zone takes the same path with talent **252**. Every player cast of 240 also chains `TalentUseClass a0=243 a4=false a5=57` in the same frame, which spawns 3 `White_Mage_Malediction_Crow_obj`. One cast also chained `a0=737 a5=10` (a Healing Zone proc). |
+| Q2 | What distinguishes a Purgatory-toggled Soul Spurn from the same skill without Purgatory, and from a non-toggle skill | not observed | The cast path is identical for 240 and 252, and the 243 chain plus the crows appear on casts that turned the toggle ON and on casts that turned it OFF (frames 102993 ON and 107147 OFF). So no routine, argument or spawned object seen here marks "toggle". The only discriminator in hand is the talent id (240) plus the Purgatory sub-talent, which was not read. The Purgatory-off control was not run. Controls in the same show: `CheckPlayerInteraction calls=49800`, `DrawHudBuffs calls=4980` (frame 110040). |
+| Q3 | Where the on/off state lives, whether it stays flipped while on, and whether one read from the draw hook can see it | not observed | Read in both directions (tester-confirmed OFF→ON with 1 press, ON→OFF with 3 presses) and found in none of these: `Player_obj` scalars (`tgprobe diff` changed only `depthUpdater`, `hpArrayPos`, `manaArrayPos`, `socketValidateTimer`, `updateMinimap`, `yDepthSet`); global scalars (253; `diff` changed only `cpr_seed`, `current_frames`, `deltaSpd`, `repeatGravity`); `UI_Hud_Talent_obj` instance variables (no change); `Player_Ability_Parent_obj` descendants (`instances=0` while ON, because the crow and Healing Zone objects expire after about 700–1150 frames). `playerBuff[1][0]` gains **buff 86** while ON, with `destroyTimer` held near 537–563, but the tester identified it as the **Martyr** passive, which any damage triggers (including Purgatory's health drain). So it follows the drain, not the toggle. **Not examined:** arrays, structs and ds_maps (the snapshot compares scalars only), for example the player's talent data. Controls in the same show: `CheckPlayerInteraction calls=47100`, `DrawHudBuffs calls=4710` (frame 81540). |
+| Q4 | Where the slots draw: whether `DrawHudBuffs` runs after `DrawHudAbilityButtons`, slot geometry, which slot variable names the talent | measured | Each frame is ordered `DrawHud` → `DrawHudAbilityButtons(1, 1986.5)` → `DrawHudBuffs(1, 1)`, all with `self=Controller_obj`, so drawing after `DrawHudBuffs` lands on top of the buttons. There is one `UI_Hud_Talent_obj` (x=0, y=0, `width=2035.8`, `height=232`, `buttonXOffset=43`, `buttonYOffset=48`, `row0X=104`, `row1X=5`, `rows=2`, `buttonScale=1`), on a GUI of 3840×2088. Buttons live in the `row0`/`row1`/`grid` arrays and were not expanded, so it is not observed which slot variable names the talent. |
+| Q5 | Whether an accidental double-press is two cast calls, and whether a held key streams calls | measured | There are **three** sources. (a) **The double-cast proc:** `TalentUseClass` from `self=Universal_Double_Cast_obj`, `a0=240 a4=false a6/a7=<world x,y>`, 36–56 frames after the player's cast, **with no `TalentUse` call**. It was seen on 3 casts (frames 33519, 78330, 107183), and the tester twice reported the toggle ending in the wrong state after a proc. (b) **A held key auto-repeats** `TalentUse` every 57 frames (4 calls in about 1 s: frames ~94859, 94916, 94972, 95029), so holding flips the toggle repeatedly. (c) Real re-presses: 3 separate `TalentUse` calls were needed to turn it OFF once, with gaps of 308–354 frames. Whether a proc re-cast always flips the state is not observed: at frame 107183 the tap plus the proc ended OFF. |
+| Q6 | What a zone change does to the state and in what order; is the state OFF on the first `DrawHudBuffs` in the new zone | blocked | Not run. The first-draw read counts `White_Mage_Soul_Spurn_obj` instances, but Q3 showed the toggle keeps no such instance (`abilities instances=0` while ON), so a 0 there would measure nothing (see the N-a note in the workorder). The tester reports that the toggle ends on zone change **and when health falls too low** (observed: the first cast of the session turned itself off at low health). |
 
 ## Decision
 
-Not yet made. Track A (re-cast guard) needs Q1 + a discriminator from Q2 or Q3
-+ Q5; Track B (active indicator) needs Q3 + Q4 + Q6. Each track is recorded
-here as `GO` with the routine / state read / anchor named, or `BLOCKED` with
-the question it failed.
+**Track A (re-cast guard): BLOCKED on Q2/Q3, redesign required.** Q1 and Q5
+are measured, and they change the design:
+
+- **`TalentUse` is the wrong hook.** The double-cast proc re-casts through
+  `TalentUseClass` directly, so a `TalentUse` guard would miss the case the
+  issue most likely describes.
+- **The press guard must allow for auto-repeat.** A held key re-fires every
+  57 frames, and that is also an "accidental double cast".
+- **Refusing the proc's re-cast is enough for Soul Spurn.** For talent 240,
+  when `self` is a `Universal_Double_Cast_obj`, no time window is needed. This
+  is keyed on the talent id, not on a measured "is a toggle" property, and
+  whether the Purgatory sub-talent should gate it is not established.
+
+**Track B (active indicator): BLOCKED on Q3 (state not found) and Q6.**
+Q4 is measured: `DrawHudBuffs` is a valid anchor.
+
+**Next research step:**
+1. Read the state from non-scalar storage. Either extend `tgprobe` with a
+   struct/array/ds_map diff of `Player_obj` and the talent data, or use the
+   Ghidra fallback (step 11) to read `TalentsWhiteMage`'s talent-240 branch
+   locally and record, paraphrased, what it sets and reads.
+2. Read the Purgatory sub-talent level
+   (`ReturnSubTalentLevel(1, 240, <index>)`).
+3. Expand the `row0`/`row1` button arrays for Q4's talent key.
