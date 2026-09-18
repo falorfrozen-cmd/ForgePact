@@ -36,8 +36,15 @@ değil (hub `AGENTS.md` › "Legal: Decompiled Output Never Reaches Any Origin")
   Lucifer's Crown 111.111.111. Görülen X: 2.148-3.586 (bugün), 204.944-216.469 (5 Eylül).
 - `DropItemAngelic` (garantili üretici) bölge listesinde aday yoksa sonsuz döngüye giriyor;
   oyuncu bağlamında çağırınca oyunu dondurdu. **Asla çağırma.**
-- `@anon@` metot rutinleri (GetItemDef, AddStat, GenerateItemHash) YYTK ile isimden
-  çözülmüyor (status 14). Global scriptleri kullan.
+- `@anon@` metot rutinleri (GetItemDef, AddStat, GenerateItemHash) o denemede YYTK ile
+  isimden çözülmedi (status 14 = `AURIE_OBJECT_NOT_FOUND`) - bu **not observed** demek,
+  "asla çözülmez" demek değil: denenen tam isim o zaman kayda geçmemişti. Eklentinin o
+  anki GenerateItemHash kopyası `@anon@4638@` yazımıydı; bu isim o zamanki hs-game-sdk
+  tablosunda yoktu (tabloda o zamanki (yama öncesi) oyun sürümü için sadece `@anon@4645@`
+  vardı). Oyun yaması sonrası hs-game-sdk yeniden üretildi; güncel sürümün adı
+  `@anon@4791@`. Yanlış bir isim zaten status 14 üretir - tek başına yeterli bir
+  açıklama. `hashprobe direct` (research build) bunu yeniden test ediyor. Global
+  scriptleri kullan.
 
 ## Plugin'de olanlar
 
@@ -51,6 +58,18 @@ değil (hub `AGENTS.md` › "Legal: Decompiled Output Never Reaches Any Origin")
 - `raredrop angelic <x>`: eski kapı yaması duruyor; şansı çarpmak yerine zar sayısını
   çarpıyor (x99'da sıfır düşüş sorunu böyle çözüldü). Panelde yok.
 - Panel: `angelic_items` (1 = kapalı, 2 = 7500'de 1, her kademe bir zar daha).
+- Note (1.4.3, in English): the 1.3.14 "122 kills = 122 drops" run used the old order - the
+  kill hook called the game's own kill proc first, then read the enemy and spawned the drop
+  with that enemy as self. Players then reported crashes at x100 on 1.4.1. 1.4.3 moves both
+  kill drops (angelic and signature) ahead of the original, so they read and spawn while the
+  enemy is still live, and nothing touches the enemy after the original. This removes a
+  suspected hazard; it is not proven to be the cause. Live, 2026-09-18, current game build:
+  the research build with this order gave `angelicdrop 1` 30 rolls = 30 drops, `fails=0`,
+  items on the ground and pickable, and `sigdrop 100 100` 17 = 17; the unmodified 1.4.1
+  plugin (old order) gave `angelicdrop 1` 30 = 30, `fails=0`, and neither crashed. The x100
+  crash was not reproduced, so the change stands as a precaution, not a fix.
+  `tests/test_headhunter_dispatch.py` (drop scenarios) and `tests/test_kill_drop_contract.py`
+  pin the order.
 
 ## Sıradaki adım (seçenek 2, vanilla-sadık)
 

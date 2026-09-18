@@ -35,6 +35,9 @@ class HeadhunterDispatchTests(unittest.TestCase):
             'static CInstance* HhResolveInstance(',
             'static bool HhIsPlayerInstance(',
             'static void HhSteal(',
+            # The kill drops, real: the kill hook below calls them.
+            'static void SignatureDropOnKill(',
+            'static void AngelicDropOnKill(',
             'static RValue& Hook_EnemyDestroyKillProc(',
             'static RValue& Hook_HhDeathEffects(',
             'static void EnableHeadhunter()',
@@ -81,6 +84,11 @@ class HeadhunterDispatchTests(unittest.TestCase):
             'standalone_fallback_install', 'fallback_without_primary', 'no_trigger_available',
             'death_without_visual_effect', 'both_death_paths', 'death_script_only',
             'automatic_combat_log', 'disabled_combat_log',
+            # Kill drops. Baseline: off, non-monster, position.
+            'drops_off_no_spawn', 'drop_skips_non_monster', 'drop_hit_at_enemy_position',
+            # Target: both drops read and spawn while the enemy is live, before the original.
+            'angelic_spawns_before_cleanup', 'sigdrop_spawns_before_cleanup',
+            'drops_read_nothing_after_original', 'drop_throw_still_calls_original',
         ):
             with self.subTest(scenario=scenario):
                 result = subprocess.run([str(self.binary), scenario], capture_output=True, text=True)
