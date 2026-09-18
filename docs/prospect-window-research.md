@@ -1,7 +1,7 @@
 # Bigger prospect window — research log
 
 phase0-status: complete
-phase1-status: pending
+phase1-status: complete
 
 Issue: [ForgePact #9](https://github.com/falorfrozen-cmd/ForgePact/issues/9),
 "[QoL] Bigger prospect window" — *"Currently prospect window is way too small
@@ -28,13 +28,26 @@ positive control (§ Stage B Phase 1 live procedure). The decision core
 unless a shape the player build can produce on its own is recorded in § Stage B results.
 
 Status (2026-09-18, Phase 1 live): **Phase 1 ran live (research DLL from commit
-`bbcdf53`); one short re-run remains** (`phase1-status: pending`). The positive control
+`bbcdf53`); one short re-run remained**, and it has run (next paragraph). The positive control
 passed, and five `self=captured` invoke shapes each printed `prospected` with
 `invoked=yes` and `inner=yes` and were seen turning the item into materials
 (§ Stage B results). No `self=found` shape could run: the button finder chose by the
 window link and every small button is linked, so it printed `ambiguous (3)`. The finder
 now chooses by the handler variable; a re-run of `button` and one `self=found` shape
 completes Phase 1.
+
+Status (2026-09-18, Stage B built): **Phase 1 is complete (`phase1-status: complete`)
+and Stage B is built; its Phase 3 live check is pending.** The re-run (research DLL from
+commit `cf451b3`) chose the button by its handler variable (`chosen=@261471`, the only
+one of three with `activationFunc`), and `press exec-index button:activationArgs
+self=found confirm` printed `prospected` with `invoked=yes` and `inner=yes`, seen by eye
+(§ Stage B results, P-shapes). That is the one shape the ship rule accepts, and the only
+one the player build uses. The mod is `autoprospect 1|0` (a player command; the panel's
+**Auto-prospect** switch in Gameplay Mods, off by default): a both-route hook on
+`m_MoveItemToGrid` tells the decision core an insert happened, and `FrameCallback`
+re-finds the window, the grid and the button and invokes the handler once per landed
+insert (§ Stage B ship design). `autoprospect stat` is research-build only. The `S-*`
+rows of § Stage B results wait on the Phase 3 procedure below.
 
 Status (2026-09-17): **research stage.** Phase 0a and Phase 0b both ran
 2026-09-17 and both recorded H = not observed. Phase 0a was blind (stale SDK
@@ -1220,7 +1233,7 @@ instrument failure — the stale SDK closure names — and never a negative.
 | Background sprite | `gridBackground` of the ProspectGrid node, and whether it follows the grid | `Craft_Grid_Large_spr` (R2) | `Craft_Grid_Large_spr` is a **fixed 9×6 image**: with cells drawn half-width (C-write2) it did not change, so a larger grid would draw cells beyond it and needs its own background handling (a Stage B note). | not run (not in the Phase 0c procedure) |
 | Ghidra read (paraphrase) | local read of the open path on the current exe, paraphrased; nothing decompiled is in this repository | not run | `m_SetInventoryLocalPlayer` (`anon@1065`) begins by fetching the player's **profile inventory** data (`GetProfileInventoryData`) and the item owner (`GetPlayerItemOwner`), passing its own self/other and a profile reference, then wires the grid nodes from what those return; both getters take the window instance as their self. Resolving every numeric constant referenced by `anon@1065`, `InventoryInitGrids`, `GetProfileInventoryData`, `GetPlayerItemOwner`, `m_UpdateInventoryGrid`, `m_RefreshNode` and the cube's closure found no 9 or 6 (`m_Resize` references 18 once; layout, unverified). The window's Create event, where `nodeGridWidth`/`Height` are set, is not in the script table and was not read. **Reading, not live-confirmed:** `nodeGrid` is, or is copied from, per-profile inventory storage whose 9×6 shape is fixed where that data is created — consistent with R11 and R10. If it is the storage itself, "bigger" is a save-data change (§ Decision gate). Phase 0c tests it. | not run. C7 is the fallback for the inconclusive gate below; not started |
 | Identity attempt (`callnum`) | calling a getter directly to compare its result with `nodeGrid` | not run | **instrument misuse, not a result**: `callnum GetProfileInventoryData` with no arguments, `0` and `1` — without the window as self, which the getter needs — threw twice and then crashed the game (`Controller_obj` Step: `array_get :: Index [-1] out of range [1]` in `EnemyStepHandleNew`). It establishes nothing about the store. Phase 0c never invokes a getter; it keeps what the game's own call returned (`prospectprobe backing`). | not run (not in the Phase 0c procedure) |
-| R12 | auto-prospect: `UiAProspectButton` call shape (self/other/args/`object_index`; no positive control, so 0 after a press is `not observed`), which insert closure fired for the drag-in and for the click-in, `grid-post` snapshots, the window variable holding the handler's method value, whether items left the grid inside that call or later, and the leftover-material claims checked live (C2b, after C3) | not run | not run | Drag-in and click-in both go through `m_MoveItemToGrid` (`anon@15345`); `m_DropItem` (`anon@8881`) never fired. Drag-in: `self` = `other` = the ProspectGrid node, 4 args `(undefined, 0, 0, 0)`. Click-in: `self` = the ProspectGrid node, `other` = the source inventory grid node, 0 args. Prospect: `UiAProspectButton` with `self` = the button (`UI_Button_Small_obj`) and `other` = the window, 1 arg (an array); the handler lives on the button, not among the window's `m_*` methods. Inside it, `___struct___123` ran with a real struct `self` (`object_index=undefined`) and args `(73|72, 0, 14)`; the one-item presses here gave one call each, which read as once per item, but Stage B Phase 1 corrected that (P-shapes / P-free-cells: 13 items in one press gave +3, one per material stack produced — measured, not proven). Claims checked by eye: the materials **stay** in the grid, a further item **can** still be inserted and prospected, and the materials were **not** taken as input (one inner call for one new item; counted, not proven). Materials stack down column 0 |
+| R12 | auto-prospect: `UiAProspectButton` call shape (self/other/args/`object_index`; no positive control, so 0 after a press is `not observed`), which insert closure fired for the drag-in and for the click-in, `grid-post` snapshots, the window variable holding the handler's method value, whether items left the grid inside that call or later, and the leftover-material claims checked live (C2b, after C3) | not run | not run | Drag-in and click-in both go through `m_MoveItemToGrid` (`anon@15345`); `m_DropItem` (`anon@8881`) never fired. Drag-in: `self` = `other` = the ProspectGrid node, 4 args `(undefined, 0, 0, 0)`. Click-in: `self` = the ProspectGrid node, `other` = the source inventory grid node, 0 args. Prospect: `UiAProspectButton` with `self` = the button (`UI_Button_Small_obj`) and `other` = the window, 1 arg (an array); the handler lives on the button, not among the window's `m_*` methods. Inside it, `___struct___123` ran with a real struct `self` (`object_index=undefined`) and args `(73|72, 0, 14)`; the one-item presses here gave one call each, which read as once per item, but Stage B Phase 1 corrected that (P-shapes / P-free-cells: 13 items in one press gave +3, one per material stack produced — measured, not proven). Claims checked by eye: the materials **stay** in the grid, a further item **can** still be inserted and prospected, and the materials were **not** taken as input — see Stage B's `P-materials-only`, where a press with only materials in the grid ran no inner call and changed nothing (the once-per-item reading of the inner count is withdrawn above). Materials stack down column 0 |
 | load-time capture | getters that fired at character load, each kept return's `self` and shape, and the `pp_backing_*.json` the C1 `backing dump` wrote (C1) | not run | not run (no `backing` instrument) | Launch 2 (launch 1 was blind; see the note above the table). All four getters fired at load: `GetProfileInventoryData` ~31,700 calls, latest from an `UI_Inventory_Grid_obj` node, returning an **instance** reference; `GetInventoryArray` ~12,900 calls, latest from `Player_obj`, returning an 18-string array; `GetPlayerItemOwner` ~1,800 calls, from `Flask_Controller_obj`, returning `int64 0`; `GetPlayerProfileObj` 13 calls, from `Achievement_Controller_obj`, returning an instance reference |
 | backing structural | `backing dump`: the open window's `@id`, kept returns per getter and which came from the open window, their shapes, live `nodeGrid` shape, and any `nodeGrid`-shaped sub-array with `non-empty nodeGrid cells agreeing K/N` (taken with a junk item in the grid) and walk completeness (C2, C2b). A lead only; never picks a gate branch | not run | not run | Open window `@261486`. At open, `UI_Prospect_obj` itself called `GetProfileInventoryData` once and `GetPlayerItemOwner` once, and never called `GetInventoryArray` or `GetPlayerProfileObj`. With an item in the grid, the window calls `GetProfileInventoryData` continuously (8 kept, 867 not kept). Every window return of it is the same **instance** reference that every other caller gets, and the walk does not enter instances (`unwalked=1 … references=1`), so the structural lead was **not observed**. Each `nodeGrid` cell with an item holds a node struct (`nodeStartX`, `nodeStartY`, `nodeLocked`, `nodeIsPermanent`, `nodeFingerprint` ending in `-14`); inventory fingerprints end in `-0` |
 | backing idcheck | `backing idcheck`, run before any item is moved: the control verdict first, any refusal, `kept returns from the open window` with its `window returns dropped` count, every walk with its `unwalked` count and reason, then `reference-identical (via …)` with the getter, `self` and call number it names — deciding only through two distinct calls of the same profile getter at a path through no UI-looking field, else a lead reached through a UI-looking field, else a `one call only` lead naming every profile getter that hit — / `copy` / `not observed`, the cell, both values, and `restored` (C3) | not run | not run | Control **passed**. The one write went to cell `[0][0]`: `was=undefined`, the sentinel read back, then `now=undefined (restored)`; no item was moved. Verdict: **not observed (scan incomplete: 3 of 6 walks; root VALUE_REF, an instance, nothing to walk)**. The window's `GetProfileInventoryData` return is an instance the walk cannot enter. Only one window call per getter was kept before any item moved, so a decided verdict was out of reach anyway |
@@ -1371,26 +1384,102 @@ Stage B adapter is built) fills the `S-*` rows. A row that could not be measured
 | Row | What fills it | Result |
 |---|---|---|
 | P-control | P3's hand press: `UiAProspectButton +1`, `___struct___123 +N`, and the `contents` change (filled and fingerprints), all three required; plus the click-in's `anon@15345` `contents=K->K'` | **PASS.** P1: `prospectprobe hook` detoured 91 rows, 0 failed, the three required rows among them (the install stalled frames for about 9 s in all). Hand press: `UiAProspectButton +1`, `___struct___123 +1`, `contents` 6->1 with the fingerprints changed, and the human saw materials appear. Click-in: the `anon@15345` line read `self=@261557` (the ProspectGrid node) `other=@261539 argc=0` and **`contents=6->6`** — the cells were already filled when `m_MoveItemToGrid` was entered (see the note under this table) |
-| P-button | P3's `button` after the press: `chosen=`, `captured-self=` (`same`/`DIFFERENT`), each handler variable with its kind, `index-match=` and `method-index-match=`, and any array marked as the captured argument | P2/P3 (grid @261557, 9×6): **`ambiguous (3)`** — all three `UI_Button_Small_obj` link to the window through `masterUi` and `parent`. Only @261558 carries a handler variable: `activationFunc`, a method value resolving to `UiAProspectButton`, `index-match=no method-index-match=yes`. `press show`: `self=@261558 other=@261511 argc=1`, and arg 0 is the same array as @261558's `activationArgs` (one element, an empty struct). `captured-self=@261558 DIFFERENT` only because nothing was chosen. The finder now keys on the handler variable (§ Instrument, `button`); its re-run is pending |
-| P-shapes | P4, per shape in order: the outcome line (`st=`, `res=`, `invoked=`, `inner=`, `self=`, `other=`, `route=`, `args=`), the verdict, and the item by eye; or the crash | All with `self=captured` (@261558), `other` = the window, `st=0`, `invoked=yes`, `inner=yes`, verdict `prospected`, each seen by eye turning into materials: `exec-index button:activationArgs` (filled 5->2); `exec-index captured` (8->3); `exec-var:activationFunc captured` (7->4); `exec-index copy` (10->5); `exec-index empty` (7->6). `scriptex captured`: not observed (skipped by the tester; `exec-index` already qualifies). No crash. **`self=found`: not observed (the finder printed `ambiguous (3)`); pending the finder fix and one re-run** — the candidate is `exec-index button:activationArgs self=found`, or `exec-index empty self=found` |
-| P-reentry | P3: `anon@15345` calls during the hand press (`since=` across it), i.e. whether the handler moves materials in through the insert closure | None: `anon@15345` stayed at 1 across the hand press, so the handler does not put materials in through the insert closure, and a prospect cannot re-trigger an insert-driven invoke |
+| P-button | P3's `button` after the press: `chosen=`, `captured-self=` (`same`/`DIFFERENT`), each handler variable with its kind, `index-match=` and `method-index-match=`, and any array marked as the captured argument | P2/P3 (grid @261557, 9×6): **`ambiguous (3)`** — all three `UI_Button_Small_obj` link to the window through `masterUi` and `parent`. Only @261558 carries a handler variable: `activationFunc`, a method value resolving to `UiAProspectButton`, `index-match=no method-index-match=yes`. `press show`: `self=@261558 other=@261511 argc=1`, and arg 0 is the same array as @261558's `activationArgs` (one element, an empty struct). `captured-self=@261558 DIFFERENT` only because nothing was chosen. The finder now keys on the handler variable (§ Instrument, `button`). Re-run (`cf451b3`, a new session, so new ids): 3 buttons, all linked to window @261424; only @261471 has a handler variable (`activationFunc`, `method-index-match=yes`) and it prints `qualifies`; verdict **`chosen=@261471`** |
+| P-shapes | P4, per shape in order: the outcome line (`st=`, `res=`, `invoked=`, `inner=`, `self=`, `other=`, `route=`, `args=`), the verdict, and the item by eye; or the crash | All with `self=captured` (@261558), `other` = the window, `st=0`, `invoked=yes`, `inner=yes`, verdict `prospected`, each seen by eye turning into materials: `exec-index button:activationArgs` (filled 5->2); `exec-index captured` (8->3); `exec-var:activationFunc captured` (7->4); `exec-index copy` (10->5); `exec-index empty` (7->6). `scriptex captured`: not observed (skipped by the tester; `exec-index` already qualifies). No crash. First session: `self=found` not observed (the finder printed `ambiguous (3)`). **Re-run (research DLL from `cf451b3`): `exec-index button:activationArgs self=found`** — `st=0`, `invoked=yes (+1)`, `inner=yes (+1)`, `self=@261471` (the found button), `other=@261424` (the window), `route=exec-index`, `args=(button:activationArgs=array[0]={})`, contents 8->1 with the fingerprints changed, verdict `prospected`, and the human saw the item become materials. It meets the ship rule: **`invoke-shape: exec-index button:activationArgs self=found`**. `exec-index empty self=found`: not observed (not run; the first shape already qualifies) |
+| P-reentry | P3: `anon@15345` calls during the hand press (`since=` across it), i.e. whether the handler moves materials in through the insert closure | not observed (one hand press): `anon@15345` stayed at 1 across it, so that press put no materials in through the insert closure. The ship adapter still ignores and counts any insert made inside its own call (`while-invoking=`) |
 | P-load-calls | P1: `anon@15345` calls at character load, before the cube was opened | 0 across the character load. Controls in the same `show`: `CheckPlayerInteraction` 9950, `anon@2143` 2985, `ParseItemToGrid` 33 — the instrument was counting |
 | P-materials-only | P3: a hand press with only materials in the grid — `UiAProspectButton` / `___struct___123` counts and the `contents` change | A harmless no-op: `UiAProspectButton +1`, `___struct___123 +0`, filled 1->1, fingerprints unchanged |
 | P-close | P6: materials left in the grid when the window closes, before any save — back in the inventory, still in the grid, or gone | Still in the grid, not returned to the inventory. The reopened window has a new grid node (@263885) holding the same 9 fingerprints |
-| P-free-cells | P5: `empty=` after each prospect; the fewest free cells that still took an insert, which sets `kAutoProspectMinFreeCells` (6, one column, if not measured) | Materials never merge: each press adds one single-cell stack per material type, filling column 0 rows 0–5, then column 1. The fewest free cells that still took an insert and prospected was 9 (45 of 54 filled); below 9 not observed, so `kAutoProspectMinFreeCells` stays 6. In that press (13 items, 6 material stacks already there) `___struct___123` ran +3 (args 73/72/61), all 13 items went, and 3 new stacks appeared with quantities that looked right to the tester — one inner call per material stack produced, not per item (measured, not proven) |
-| S-drag | Phase 3: a drag-in with `autoprospect 1` is prospected once | |
-| S-click | Phase 3: a click-in is prospected once | |
-| S-rearrange | Phase 3: moving an item inside the grid invokes nothing | |
-| S-off | Phase 3: after `autoprospect 0`, an insert stays in the grid | |
-| S-grid-full | Phase 3: filling the grid logs `grid-full` once and stops invoking | |
-| S-player-dll | Phase 3: the player DLL with the panel toggle on prospects one insert (seen by eye), and `out.txt` shows a line naming work done, not armed state: `autoprospect: ON invoked=<n≥1> prospected=<n≥1> …` in `StatLine()`'s format. `autoprospect stat` is research-only, and the player build logs no such line yet, so the round-2 adapter must log one on the first prospect of a session (`autoprospect: first prospect - ` followed by `StatLine()`'s fields) in the player build; a line saying only that the hook is installed or the mod is on is not acceptance | |
+| P-free-cells | P5: `empty=` after each prospect; the fewest free cells that still took an insert, which sets `kAutoProspectMinFreeCells` (6, one column, if not measured) | Materials were not observed to merge: each press added one single-cell stack per material type, filling column 0 rows 0–5, then column 1. The fewest free cells that still took an insert and prospected was 9 (45 of 54 filled); 6–8 free cells are not measured (not observed either way), so `kAutoProspectMinFreeCells` stays 6 and Phase 3's `S-grid-full` step measures 6–8. In that press (13 items, 6 material stacks already there) `___struct___123` ran +3 (args 73/72/61), all 13 items went, and 3 new stacks appeared with quantities that looked right to the tester — one inner call per material stack produced, not per item (measured, not proven) |
+| S-drag | Phase 3 (S2): a drag-in with `autoprospect 1` is prospected once; plus the drag-in's own `contents=K->K'`, bracketed in S1 (drag-in timing is not observed yet) | |
+| S-click | Phase 3 (S3): a click-in is prospected once | |
+| S-rearrange | Phase 3 (S4): moving an item (a material) inside the grid invokes nothing | |
+| S-off | Phase 3 (S6): after `autoprospect 0`, an insert stays in the grid | |
+| S-grid-full | Phase 3 (S5): filling the grid logs `grid-full` once and stops invoking; plus what an insert does with 6, 7 and 8 free cells (not measured in Phase 1) | |
+| S-player-dll | Phase 3 (S7): the player DLL with the panel toggle on prospects one insert (seen by eye), and `out.txt` shows a line naming work done, not armed state. `autoprospect stat` is research-only, so the player build logs `autoprospect: first prospect - invoked=<n≥1> prospected=<n≥1> …` (`StatLine()`'s fields) once, on the first prospect of a session; that line, after `autoprospect: hook installed -> ON`, is acceptance - a line saying only that the hook is installed or the mod is on is not | |
 
-**Insert timing — an input for the ship adapter.** The click-in's `watch` line read
+**Insert timing — an input for the ship adapter.** A click-in's `watch` line read
 `contents=6->6`: the grid's filled count was the same before and after `m_MoveItemToGrid`
 (`anon@15345`), and the new item was already counted before the closure was entered. So
-the cell is filled before the insert closure runs, not inside it (one click-in observed).
-The decision core (`AutoProspectMod.hpp`) treats "filled count unchanged since the insert"
-as a rearrangement that expires `not-landed`. If the ship adapter took that baseline at
-hook time, it would read every real insert as a rearrangement and never prospect. The core
-is unchanged in this round; the adapter's baseline, and the harness scenarios that feed it,
-must be re-checked against this before Stage B ships.
+for a click-in the cell is filled before the insert closure runs, not inside it (one
+click-in observed). Whether that fill can fall in an earlier frame than the hook is not
+measured, and a drag-in's timing is not observed at all (Phase 3 S1 brackets one).
+
+The ship core therefore never takes its baseline at hook time, and does not re-read it
+every frame either. It keeps a **settled** count: what the grid held when the core last
+accounted for all of it (first sight of the node, the grid re-read straight after an
+invoke, a refused insert whose item stays, or a pending insert that expired). Between
+those it only follows removals down. An insert invokes when the filled count is above the
+settled count, so a click-in filled before its hook - in the same frame or an earlier
+one - still prospects once, and moving something already settled (a material, a refused
+item) never does. The earlier core re-read the count every frame and kept the pre-invoke
+count after an invoke; against it, the harness recorded
+`FAIL target/click_in_filled_a_frame_before_the_hook_invokes_once invokes=0 notLanded=1`,
+and a rearrangement straight after an invoke fired the handler
+(`FAIL target/rearrangement_right_after_an_invoke_never_invokes invokes=2`). The measured
+same-frame click-in passed against both cores (`tests/auto_prospect_harness.cpp`).
+
+What is still unproven: an insert whose cell is filled and emptied again before any frame
+reads it, and a drag that empties the source cell while the item is held and fills it
+again on the drop (which would read as an insert, and prospect the dragged item). Phase 3
+S4 checks the second by moving a material; a material prospects to nothing
+(`P-materials-only`).
+
+## Stage B ship design
+
+- **Core:** `plugin/include/ForgePact/AutoProspectMod.hpp`, game-independent (it names no
+  runtime interface), pinned by `tests/test_auto_prospect_behavior.py` +
+  `tests/auto_prospect_harness.cpp` (baseline, target and `adapter/` scenarios, each
+  target's failing line recorded) and `tests/test_auto_prospect_contract.py`.
+- **Hook:** `HookOneScript` on `m_MoveItemToGrid` through the SDK constant, both routes,
+  installed once from `FrameCallback` after setup. A `TABLE-ONLY` or failed install turns
+  the mod off with a line saying so (a table swap never sees compiled GML's direct call).
+  The body runs the game's function first, and only while the mod is on checks that
+  `self` is the ProspectGrid node (`UI_Inventory_Grid_obj` by `object_index`, and a
+  `uiNodeCallstack` naming `"ProspectGrid"`). It never invokes.
+- **Invoke, at the point of use:** `AutoProspectTick`, from `FrameCallback` only while
+  the mod is on, re-finds the window, the grid and - only while an insert is pending -
+  the button (the `UI_Button_Small_obj` linked to the window through `masterUi`/`parent`
+  whose `activationFunc` is a method of `UiAProspectButton`, by `method_get_index`
+  against `asset_get_index`; exactly one must qualify), then runs the recorded shape once:
+  `script_execute` through `CallBuiltinEx`, the handler's asset index and the button's
+  own `activationArgs` array, `self` = the button, `other` = the window. It re-reads the
+  grid straight after the call and hands it to the core.
+- **Refusals**, each logged once per session in both builds: `no-window`, `no-grid`,
+  `unreadable`, `node-changed`, `no-button`, `no-args`, `grid-full` (fewer than
+  `kAutoProspectMinFreeCells` = 6 free cells: `holding back - N free cells, needs 6; take
+  the materials out`). A failed dispatch is logged once too. The player build also logs
+  `autoprospect: first prospect - …` once.
+- **Not built, on purpose:** returning materials to the inventory or clearing the grid (a
+  second unmeasured game operation; `grid-full` refuses instead), and any bigger grid.
+
+## Stage B Phase 3 live procedure
+
+Research DLL first, then the player DLL. Back up `%LOCALAPPDATA%\Hero_Siege`, junk items
+only. `prospectprobe hook` detours the same address as the Stage B hook, so one of the two
+would go table-only: it runs only in S1's own launch, with auto-prospect off, and never in
+a launch that runs `autoprospect 1` (nor does `citrace nativetrace`).
+
+- **S1, drag-in timing (its own launch, auto-prospect off).** `build.bat dev`; with the
+  game closed, copy `plugin_build\BloodPactPlugin_rel.dll` over
+  `<game>\bin\mods\aurie\BloodPactPlugin.dll` (the panel's Auto-prospect switch off).
+  Before loading a character run `prospectprobe hook`; `UI_Inventory_Grid_obj anon@15345`
+  must print `detoured`. Open the cube, run `prospectprobe watch on` and
+  `prospectprobe arm budget=5 anon@15345`, drag one item in, and record the logged
+  `anon@15345` line's `contents=K->K'` in `S-drag` (`K` = `K'` means the cell was filled
+  before the closure ran, as for the click-in). Close the game.
+- **S0.** Relaunch the same research DLL; do **not** run `prospectprobe hook`. Load a
+  character, run `autoprospect 1`; `out.txt` must show `autoprospect: hook installed -> ON`.
+- **S2 / S3.** A drag-in, then a click-in: each prospected once (seen by eye; `autoprospect
+  stat` shows `invoked=` and `prospected=` up by one each).
+- **S4.** Move one material to another cell inside the grid: `invoked=` unchanged,
+  `not-landed=` up by one.
+- **S5.** Keep inserting until `autoprospect: grid-full - holding back …` is logged, once.
+  Record what the inserts at 8, 7 and 6 free cells did (prospected, or refused), then
+  confirm a further insert stays put and `invoked=` stops rising.
+- **S6.** `autoprospect 0`; an insert stays in the grid.
+- **S7, the player DLL.** `build.bat release`; copy `plugin_build\BloodPactPlugin_ship.dll`
+  over `mods\aurie\BloodPactPlugin.dll`; turn the panel's **Auto-prospect** switch on;
+  prospect one insert (by eye) and confirm `out.txt` shows `autoprospect: hook installed
+  -> ON` and then `autoprospect: first prospect - invoked=1 prospected=1 …`.
+- Fill the `S-*` rows. The human decides which DLL stays installed.

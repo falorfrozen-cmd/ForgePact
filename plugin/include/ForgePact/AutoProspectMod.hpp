@@ -26,22 +26,37 @@ namespace ForgePact {
 //     AutoProspectView, and calls Decide - so the permission is checked at the
 //     point of use, on the objects being acted on, never on state a hook
 //     cached earlier;
-//   - on Invoke it runs the handler once and reports it with OnInvoked.
+//   - on Invoke it runs the handler once, re-reads the grid straight after the
+//     call, and reports both with OnInvoked.
 //
-// NOT YET CALLED: the adapter waits on the Phase 1 live measurement that the
-// handler can be invoked by ForgePact at all (research doc, § Stage B Phase 1
-// live procedure). Nothing includes this header until that is recorded.
+// Phase 1 (research doc, § Stage B results) proved the invoke live on
+// 2026-09-18 with one shape, the only one the adapter uses: the handler by its
+// own asset index through script_execute, self = the Prospect button found by
+// its handler variable, other = the window, and the button's own argument
+// array. Its names are below, so the harness pins them too.
 
-// Free cells an invoke needs. Prospected materials stay in the grid and stack
-// down column 0 (Phase 0c R12), so a grid that is nearly full refuses rather
-// than invoke into it. One full column (6 cells) until Phase 1 P5 measures how
-// fast the materials fill the grid.
+// The recorded shape's names. The Prospect button is the UI_Button_Small_obj
+// whose kAutoProspectHandlerVar is a method value of UiAProspectButton (three
+// small buttons link to the window live, and only this one carries the
+// handler); its kAutoProspectArgsVar array is what a press is handed. The grid
+// is the UI_Inventory_Grid_obj whose uiNodeCallstack names
+// kAutoProspectGridName.
+static constexpr const char* kAutoProspectHandlerVar = "activationFunc";
+static constexpr const char* kAutoProspectArgsVar = "activationArgs";
+static constexpr const char* kAutoProspectGridName = "ProspectGrid";
+
+// Free cells an invoke needs. Prospected materials stay in the grid, one
+// single-cell stack per material type, not observed to merge, filling column
+// 0 and then column 1 (Phase 1 P-free-cells), so a grid that is nearly full
+// refuses rather than invoke into it. 9 free cells is the fewest measured to
+// still take an insert and prospect; 6-8 are not measured, so this stays one
+// full column.
 static constexpr int kAutoProspectMinFreeCells = 6;
-// Frames a pending insert may wait for the filled count to rise before it
-// expires as `not-landed`. Whether the cells update inside the insert call or
-// a frame later is not measured (Phase 1 P3's `watch` line decides it); either
-// way an insert lands within a few frames, and a rearrangement inside the grid
-// never raises the count at all.
+// Frames a pending insert may wait for the filled count to rise above the
+// settled count before it expires as `not-landed`. A click-in's cell is
+// already filled when the insert closure runs (Phase 1: `contents=6->6`
+// across the hook), so a real insert has usually landed by the first frame;
+// a rearrangement inside the grid never raises the count at all.
 static constexpr int kAutoProspectLandFrames = 30;
 
 enum class AutoProspectAction { None, Invoke, Refuse };
@@ -56,6 +71,7 @@ enum class AutoProspectRefusal : int {
     NodeChanged,   // the pending insert was into a node that is gone
     NoButton,      // the Prospect button was not found, or was ambiguous
     GridFull,      // fewer free cells than kAutoProspectMinFreeCells
+    NoArgs,        // the button was found, but its kAutoProspectArgsVar is not an array
     Count
 };
 
@@ -65,6 +81,7 @@ struct AutoProspectView {
     bool        window = false;
     bool        grid = false;       // the ProspectGrid node was found
     bool        button = false;     // exactly one Prospect button, linked to the window
+    bool        args = false;       // that button's kAutoProspectArgsVar is an array
     bool        contents = false;   // the node's cells were read
     int64_t     nodeId = -1;
     int         filled = 0;         // cells holding something (idcheck's empty rule)
@@ -124,13 +141,26 @@ public:
 
     bool HasPending() const { return m_Pending; }
 
+    // True while the next Decide can use the button and the fingerprints: an
+    // insert is pending, or an invoke's effect is checked this frame. The
+    // adapter reads them only then, so an open window with nothing happening
+    // costs a cell count per frame, not a button search.
+    bool NeedsDetail() const { return m_Pending || m_CheckEffect; }
+
     // Once per frame while the mod is on. Invoke only when an insert was seen
-    // into THIS node AND the filled count rose above the count settled before
-    // it - which holds whether the cells update inside the insert or a frame
-    // later, and never for a rearrangement inside the grid. The settled count
-    // is re-read on every frame with nothing pending, so a new node (the
-    // window reopened) and a removal (the player took materials out) both
-    // reset it.
+    // into THIS node AND the filled count is above the SETTLED count.
+    //
+    // The settled count is what the grid held when the core last accounted
+    // for all of it: first sight of the node, the grid re-read straight after
+    // an invoke, an insert that was refused (its item stays), or a pending
+    // insert that expired. Between those it only ever goes DOWN, following
+    // removals (the player took materials out); a fill the core was not told
+    // about never raises it. That matters because a click-in's cell is already
+    // filled when the insert closure runs (Phase 1: `contents=6->6` across the
+    // hook), and whether that fill can fall in an earlier frame than the hook
+    // is not measured: an earlier core re-read the count every frame and so
+    // read such an insert as a rearrangement. Moving something already
+    // settled inside the grid never raises the count, so it still never fires.
     AutoProspectDecision Decide(const AutoProspectView& in) {
         AutoProspectDecision d;
         if (!m_Enabled.load()) { m_Pending = false; return d; }
@@ -138,13 +168,17 @@ public:
         if (!in.window) { m_NodeId = -1; m_Settled = -1; return RefuseIfPending(AutoProspectRefusal::NoWindow); }
         if (!in.grid) { m_NodeId = -1; m_Settled = -1; return RefuseIfPending(AutoProspectRefusal::NoGrid); }
         if (!in.contents) return RefuseIfPending(AutoProspectRefusal::Unreadable);
-        if (in.nodeId != m_NodeId) {
-            // First sight of this node: its count is the baseline.
+        if (in.nodeId != m_NodeId || m_Settled < 0) {
+            // First sight of this node (or its count was lost): the count is
+            // the baseline.
             m_NodeId = in.nodeId;
             m_Settled = in.filled;
             if (m_Pending && m_PendingNode != in.nodeId) return RefuseIfPending(AutoProspectRefusal::NodeChanged);
         }
-        if (!m_Pending) { m_Settled = in.filled; return d; }
+        if (!m_Pending) {
+            if (in.filled < m_Settled) m_Settled = in.filled;
+            return d;
+        }
         if (m_PendingNode != in.nodeId) return RefuseIfPending(AutoProspectRefusal::NodeChanged);
         if (in.filled <= m_Settled) {
             if (++m_PendingAge > kAutoProspectLandFrames) {
@@ -154,11 +188,14 @@ public:
             }
             return d;
         }
-        // The insert landed. Everything below re-reads this frame's objects.
-        if (!in.button) return RefuseIfPending(AutoProspectRefusal::NoButton);
+        // The insert landed. Everything below re-reads this frame's objects,
+        // and a refusal settles the count: the refused item stays in the grid,
+        // and moving it later must not prospect it.
+        if (!in.button) return RefuseIfPending(AutoProspectRefusal::NoButton, &in);
+        if (!in.args) return RefuseIfPending(AutoProspectRefusal::NoArgs, &in);
         if (in.empty < kAutoProspectMinFreeCells) {
             m_LastFree = in.empty;
-            return RefuseIfPending(AutoProspectRefusal::GridFull);
+            return RefuseIfPending(AutoProspectRefusal::GridFull, &in);
         }
         m_Pending = false;
         m_PendingAge = 0;
@@ -171,10 +208,35 @@ public:
 
     // After the adapter's one call. `dispatched`: the call reported success
     // (not that the body ran; that is what the next frame's cells show).
-    void OnInvoked(bool dispatched) {
+    // `after`: the grid re-read straight after the call - the handler changes
+    // it inside the call (Phase 1 P-shapes), so its count, materials included,
+    // is the new settled count. An unreadable `after` loses the count, and the
+    // next readable frame takes it again as a first sight: an insert pending
+    // by then waits for a rise, and expires if it never comes.
+    void OnInvoked(bool dispatched, const AutoProspectView& after) {
         m_Invoked.fetch_add(1);
+        if (after.window && after.grid && after.contents && after.nodeId == m_EffectNode) m_Settled = after.filled;
+        else m_Settled = -1;
         if (!dispatched) { m_InvokeFailed.fetch_add(1); m_CheckEffect = false; return; }
         m_CheckEffect = true;
+    }
+
+    // True once per session, on the frame the first prospect is confirmed -
+    // for the one line the PLAYER build logs, naming work done rather than
+    // armed state (research doc, S-player-dll). `autoprospect stat` is
+    // research-build only.
+    bool TakeFirstProspect() {
+        if (!m_FirstProspectDue) return false;
+        m_FirstProspectDue = false;
+        return true;
+    }
+
+    // `autoprospect: first prospect - invoked=1 prospected=1 ...`: StatLine's
+    // fields, headed by what happened.
+    std::string FirstProspectLine() const {
+        const std::string stat = StatLine();
+        const std::string head = std::string("autoprospect: ") + (IsEnabled() ? "ON " : "off ");
+        return "autoprospect: first prospect - " + (stat.rfind(head, 0) == 0 ? stat.substr(head.size()) : stat);
     }
 
     // Each reason at most once per session, in the order first seen, for the
@@ -194,6 +256,7 @@ public:
         case AutoProspectRefusal::NodeChanged: return "node-changed";
         case AutoProspectRefusal::NoButton:    return "no-button";
         case AutoProspectRefusal::GridFull:    return "grid-full";
+        case AutoProspectRefusal::NoArgs:      return "no-args";
         default:                               return "none";
         }
     }
@@ -208,6 +271,8 @@ public:
                 + std::to_string(kAutoProspectMinFreeCells) + "; take the materials out";
         case AutoProspectRefusal::NoButton:
             return head + "the item stays in the grid; the Prospect button was not found (or not uniquely)";
+        case AutoProspectRefusal::NoArgs:
+            return head + "the item stays in the grid; the Prospect button's " + kAutoProspectArgsVar + " is not an array";
         case AutoProspectRefusal::NoWindow:
             return head + "the window closed with an insert pending; nothing was prospected";
         case AutoProspectRefusal::NoGrid:
@@ -262,11 +327,14 @@ public:
     }
 
 private:
-    AutoProspectDecision RefuseIfPending(AutoProspectRefusal r) {
+    // `settle`: the frame the refusal read, whose count now includes the
+    // refused item; null when this frame could not read the node.
+    AutoProspectDecision RefuseIfPending(AutoProspectRefusal r, const AutoProspectView* settle = nullptr) {
         AutoProspectDecision d;
         if (!m_Pending) return d;
         m_Pending = false;
         m_PendingAge = 0;
+        if (settle) m_Settled = settle->filled;
         m_Refused[(int)r].fetch_add(1);
         const unsigned bit = 1u << (int)r;
         if (!(m_ReportedMask & bit)) { m_ReportedMask |= bit; m_Unreported.push_back(r); }
@@ -284,7 +352,7 @@ private:
         m_CheckEffect = false;
         if (!in.window || !in.grid || !in.contents || in.nodeId != m_EffectNode) { m_EffectUnread.fetch_add(1); return; }
         if (in.filled == m_EffectFilled && in.fingerprints == m_EffectPrints) m_RanNoEffect.fetch_add(1);
-        else m_Prospected.fetch_add(1);
+        else if (m_Prospected.fetch_add(1) == 0) m_FirstProspectDue = true;
     }
 
     std::atomic<bool> m_Enabled{ false };
@@ -297,6 +365,7 @@ private:
     int         m_LastFree = 0;       // free cells at the last grid-full, for its line
 
     bool        m_CheckEffect = false;
+    bool        m_FirstProspectDue = false;
     int64_t     m_EffectNode = -1;
     int         m_EffectFilled = 0;
     std::string m_EffectPrints;

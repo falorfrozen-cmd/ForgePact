@@ -196,6 +196,11 @@ DEFAULTS = {
     # ForgePact/docs/pet-quest-collector-plan.md). Off by default like the
     # other mod toggles.
     "mod_pet_quest_pickup": False,
+    # Auto-prospect (ForgePact #9): every item put into the Prospect Cube's
+    # grid is prospected at once by the game's own Prospect. Off by default:
+    # the materials stay in the grid, and whatever is left there when the game
+    # saves is lost.
+    "mod_auto_prospect": False,
     # Monster Rarity: the share of normal monsters raised to Rare and to Ancient
     # (percent each, together at most 100; the rest stay normal).
     "rarity_rare": 0,
@@ -731,6 +736,10 @@ def build_cmds(cfg: dict) -> list:
         # Safe to send at launch: no hook is installed, so unlike relicfilter
         # there is no arm/defer lifecycle to worry about.
         out.append("petquest 1")
+    if cfg.get("mod_auto_prospect", False):
+        # Safe to send at launch: like relicfilter, the plugin only ARMS the mod
+        # here and installs its hook once the game has settled.
+        out.append("autoprospect 1")
     rare, ancient = rarity_setting(cfg)
     if rare > 0 or ancient > 0:
         out.append(f"rarity {rare} {ancient}")
@@ -1709,7 +1718,7 @@ class H(BaseHTTPRequestHandler):
                     # moved wins and the other gives way
                     other = "rarity_ancient" if key == "rarity_rare" else "rarity_rare"
                     cfg[other] = min(_pct(cfg.get(other, 0)), 100 - cfg[key])
-                elif key in ("density_on", "auto_apply", "map_reveal", "map_reveal_packs", "headhunter", "tyrant", "beacon", "mod_filter_max_relics", "mod_orb_pickup_radius", "mod_pet_quest_pickup"):
+                elif key in ("density_on", "auto_apply", "map_reveal", "map_reveal_packs", "headhunter", "tyrant", "beacon", "mod_filter_max_relics", "mod_orb_pickup_radius", "mod_pet_quest_pickup", "mod_auto_prospect"):
                     cfg[key] = bool(val)
                 save_cfg(cfg)
                 live = ""
@@ -1758,6 +1767,8 @@ class H(BaseHTTPRequestHandler):
                         send_cmds([f"orbpickup {10 if cfg['mod_orb_pickup_radius'] else 0}"], cfg)
                     elif key == "mod_pet_quest_pickup":
                         send_cmds([f"petquest {1 if cfg['mod_pet_quest_pickup'] else 0}"], cfg)
+                    elif key == "mod_auto_prospect":
+                        send_cmds([f"autoprospect {1 if cfg['mod_auto_prospect'] else 0}"], cfg)
                     elif key in ("rarity_rare", "rarity_ancient"):
                         # Always explicit: "rarity off" returns a live hook to vanilla.
                         send_cmds([rarity_cmd(cfg)], cfg)
@@ -2219,6 +2230,11 @@ input[type=range]::-webkit-slider-thumb{appearance:none;width:17px;height:17px;b
         <label class="switch"><input type="checkbox" id="mod_pet_quest_pickup"><span class="sl"></span></label>
         <span class="val" id="mpqpval">off</span>
     </div>
+    <div class="row" style="border:none">
+        <span class="lbl" style="width:auto;flex:1">Auto-prospect items put in the Prospect Cube<br><span style="font-size:11px;color:#8f816e;font-weight:normal">Every item you drag or click into the Prospect Cube's grid is prospected straight away, as if you had pressed Prospect, so the grid never fills with items waiting their turn. Materials stay in the grid: take them out as you go. Anything still in the prospect grid when the game saves is lost.</span></span>
+        <label class="switch"><input type="checkbox" id="mod_auto_prospect"><span class="sl"></span></label>
+        <span class="val" id="mapsval">off</span>
+    </div>
 </div>
 
 <div class="card tab-card" data-tab="mods" id="itemsCard">
@@ -2516,6 +2532,10 @@ async function boot(){
     document.getElementById('mod_pet_quest_pickup').checked=mpqp;
     document.getElementById('mpqpval').textContent=mpqp?'on':'off';
     document.getElementById('mpqpval').className='val '+(mpqp?'':'off');
+    const maps=!!c.mod_auto_prospect;
+    document.getElementById('mod_auto_prospect').checked=maps;
+    document.getElementById('mapsval').textContent=maps?'on':'off';
+    document.getElementById('mapsval').className='val '+(maps?'':'off');
   rarityLoad(c);
   document.getElementById('hhval').className='val '+(hh?'':'off');
   document.getElementById('exepath').value=c.game_exe||'';
@@ -2682,6 +2702,11 @@ function bind(){
         const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_pet_quest_pickup',value:e.target.checked})});
         const v=document.getElementById('mpqpval');v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
         toast('Pet collects quest items '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
+    };
+    document.getElementById('mod_auto_prospect').onchange=async(e)=>{
+        const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_auto_prospect',value:e.target.checked})});
+        const v=document.getElementById('mapsval');v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
+        toast('Auto-prospect '+(e.target.checked?'ON - take the materials out as you go':'OFF')+' - '+(res.ok||res.err));
     };
   { const el=document.getElementById('angelic_items');
     el.oninput=angelicPaint;
@@ -2880,9 +2905,9 @@ function refreshSavedControls(){
   });
   for(const [range] of painted)if(range.oninput)range.oninput();
   for(const [range,typed] of painted){if(typed===undefined)delete range.dataset.typed;else range.dataset.typed=typed}
-  const booleans={den_on:'density_on',autoapply:'auto_apply',enemyspeed_ct:'enemy_speed_ct',map_reveal:'map_reveal',map_reveal_packs:'map_reveal_packs',headhunter:'headhunter',tyrant:'tyrant',beacon:'beacon',mod_filter_max_relics:'mod_filter_max_relics',mod_orb_pickup_radius:'mod_orb_pickup_radius',mod_pet_quest_pickup:'mod_pet_quest_pickup'};
+  const booleans={den_on:'density_on',autoapply:'auto_apply',enemyspeed_ct:'enemy_speed_ct',map_reveal:'map_reveal',map_reveal_packs:'map_reveal_packs',headhunter:'headhunter',tyrant:'tyrant',beacon:'beacon',mod_filter_max_relics:'mod_filter_max_relics',mod_orb_pickup_radius:'mod_orb_pickup_radius',mod_pet_quest_pickup:'mod_pet_quest_pickup',mod_auto_prospect:'mod_auto_prospect'};
   for(const [id,key] of Object.entries(booleans))document.getElementById(id).checked=!!c[key];
-  for(const [id,key] of Object.entries({hhval:'headhunter',tyval:'tyrant',beval:'beacon',mfmrval:'mod_filter_max_relics',morval:'mod_orb_pickup_radius',mpqpval:'mod_pet_quest_pickup',mapval:'map_reveal'})){
+  for(const [id,key] of Object.entries({hhval:'headhunter',tyval:'tyrant',beval:'beacon',mfmrval:'mod_filter_max_relics',morval:'mod_orb_pickup_radius',mpqpval:'mod_pet_quest_pickup',mapsval:'mod_auto_prospect',mapval:'map_reveal'})){
     const value=document.getElementById(id);value.textContent=c[key]?'on':'off';value.className='val '+(c[key]?'':'off');
   }
   document.getElementById('enemyspeedctval').textContent=c.enemy_speed_ct?'CT only':'all zones';

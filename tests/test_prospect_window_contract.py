@@ -194,13 +194,22 @@ class ProspectWindowContractTests(unittest.TestCase):
         self.assertNotIn("PpDetour_", shipped)
         self.assertNotIn("g_PpTargets", shipped)
 
-    def test_prospectprobe_absent_from_player_commands(self):
+    def player_commands(self):
         start = self.plugin.index("kPlayerCommands = {")
         block = self.plugin[start:self.plugin.index("};", start)]
-        self.assertNotIn("prospect", block)
+        return re.findall(r'"([^"]+)"', block)
+
+    def test_prospectprobe_absent_from_player_commands(self):
+        # Stage B's `autoprospect` is the one prospect verb a player may send;
+        # the instrument, and any sizing verb, never are.
+        entries = self.player_commands()
+        self.assertEqual([e for e in entries if "prospect" in e], ["autoprospect"])
 
     def test_no_prospectsize_command_yet(self):
-        # Stage A ships nothing player-visible: no toggle command, no panel row.
+        # The window is never resized: the human chose auto-prospect on insert
+        # over a bigger grid (§ Decision gate). Its panel row and command are
+        # `mod_auto_prospect`/`autoprospect` (test_auto_prospect_contract.py);
+        # no sizing command, panel row or call into the sizing core exists.
         self.assertNotIn("prospectsize", self.plugin)
         self.assertNotIn("prospectsize", PANEL.read_text(encoding="utf-8"))
         self.assertNotIn("mod_prospect_window", PANEL.read_text(encoding="utf-8"))
@@ -593,11 +602,21 @@ class ProspectWindowContractTests(unittest.TestCase):
     # ---- nothing on the frame path -------------------------------------------
 
     def test_frame_callback_unchanged(self):
-        frame = function_body(self.plugin, "void FrameCallback(")
-        # Stage A adds nothing to the per-frame path (the frame-loop budget
-        # tests in test_release_hook_contract.py pin the rest of it).
+        frame = strip_comments(function_body(self.plugin, "void FrameCallback("))
+        # The research instrument adds nothing to the per-frame path (the
+        # frame-loop budget tests in test_release_hook_contract.py pin the rest
+        # of it). Stage B adds exactly one block: auto-prospect's lazy install
+        # and its tick, entered only while the mod is on
+        # (test_auto_prospect_contract.py pins what is inside).
+        stage_b = ("    if (ForgePact::AutoProspectMod::Instance().IsEnabled() && g_Setup) {\n"
+                   "        if (!g_AutoProspectInstallTried) AutoProspectInstall();\n"
+                   "        if (g_Orig_AutoProspectInsert && ForgePact::AutoProspectMod::Instance().IsEnabled()) AutoProspectTick();\n"
+                   "    }\n")
+        frame = frame.replace("\r\n", "\n")
+        self.assertEqual(frame.count(stage_b), 1)
+        rest = frame.replace(stage_b, "")
         for name in ("rospect", "PpCommand", "PpInstall", "PpShow", "PpArm", "PpSet", "g_Pp"):
-            self.assertNotIn(name, frame)
+            self.assertNotIn(name, rest)
 
     # ---- Stage B Phase 1: can ForgePact invoke the Prospect handler? ---------
     # Auto-prospect on insert (the human's 2026-09-18 decision) ships only once
@@ -621,10 +640,12 @@ class ProspectWindowContractTests(unittest.TestCase):
             self.assertIn(signature, self.plugin)
             self.assertNotIn(signature, shipped)
         self.assertNotIn("__pp_press_arg", shipped)
-        start = self.plugin.index("kPlayerCommands = {")
-        block = self.plugin[start:self.plugin.index("};", start)]
-        for word in ("press", "prospect", "button", "contents"):
-            self.assertNotIn(word, block)
+        # Stage B's `autoprospect` is the one prospect verb a player may send.
+        for entry in self.player_commands():
+            for word in ("press", "button", "contents"):
+                self.assertNotIn(word, entry)
+            if "prospect" in entry:
+                self.assertEqual(entry, "autoprospect")
         command = strip_comments(function_body(self.plugin, "static void PpCommand("))
         for dispatch in ('sub == "press"', 'sub == "button"', 'sub == "contents"'):
             self.assertIn(dispatch, command)

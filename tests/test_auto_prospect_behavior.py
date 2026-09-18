@@ -145,6 +145,29 @@ class AutoProspectBehaviorTests(unittest.TestCase):
     def test_target_stat_line_names_what_the_mod_did(self):
         self.assertScenario("target/statline_names_what_it_did")
 
+    # ---- target: insert timing (Phase 1 measured contents=6->6 across a click-in)
+
+    def test_target_an_insert_filled_before_its_hook_still_invokes_once(self):
+        self.assertScenario("target/click_in_filled_in_the_same_frame_invokes_once")
+        self.assertScenario("target/click_in_filled_a_frame_before_the_hook_invokes_once")
+        self.assertScenario("target/insert_right_after_an_invoke_invokes_again")
+
+    def test_target_what_is_already_settled_never_invokes_when_moved(self):
+        self.assertScenario("target/rearrangement_right_after_an_invoke_never_invokes")
+        self.assertScenario("target/refused_item_rearranged_never_invokes")
+
+    def test_target_no_args_refuses_and_says_why(self):
+        self.assertScenario("target/no_args_refuses_and_says_why")
+
+    def test_target_first_prospect_is_reported_once_in_the_players_log(self):
+        self.assertScenario("target/first_prospect_reported_once_in_the_players_log")
+
+    # ---- adapter: the shape Phase 1 recorded --------------------------------
+
+    def test_adapter_recorded_shape(self):
+        self.assertScenario("adapter/recorded_shape_exec_index_button_activation_args_self_found")
+        self.assertScenario("adapter/measured_session_prospects_each_insert_once")
+
 
 if __name__ == "__main__":
     unittest.main()

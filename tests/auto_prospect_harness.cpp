@@ -52,6 +52,7 @@ static AutoProspectView View(int64_t node, int filled, const std::string& prints
     v.window = true;
     v.grid = true;
     v.button = button;
+    v.args = button;
     v.contents = true;
     v.nodeId = node;
     v.filled = filled;
@@ -62,11 +63,16 @@ static AutoProspectView View(int64_t node, int filled, const std::string& prints
 
 struct Tally { int invokes = 0; int refusals = 0; AutoProspectRefusal last = AutoProspectRefusal::None; };
 
-// One adapter frame: Decide, and on Invoke "call the handler" and report it.
-static AutoProspectDecision Frame(AutoProspectMod& mod, const AutoProspectView& v, Tally& t, bool dispatched = true)
+// One adapter frame: Decide, and on Invoke "call the handler" and report it
+// with the grid as re-read straight after the call. The handler changes the
+// grid inside the call (Phase 1 P-shapes: every `press` line's contents-after
+// already showed the materials), so `after` is what the adapter reads then;
+// with no `after`, the call changed nothing.
+static AutoProspectDecision Frame(AutoProspectMod& mod, const AutoProspectView& v, Tally& t,
+                                  const AutoProspectView* after = nullptr, bool dispatched = true)
 {
     const AutoProspectDecision d = mod.Decide(v);
-    if (d.action == AutoProspectAction::Invoke) { ++t.invokes; mod.OnInvoked(dispatched); }
+    if (d.action == AutoProspectAction::Invoke) { ++t.invokes; mod.OnInvoked(dispatched, after ? *after : v); }
     if (d.action == AutoProspectAction::Refuse) { ++t.refusals; t.last = d.reason; }
     return d;
 }
@@ -142,8 +148,9 @@ static void TargetInsertIntoProspectGridInvokesOnce()
     Tally t;
     Frame(mod, View(kNode, 0), t);             // first sight settles 0
     mod.OnInsert(kNode, true, false);
-    Frame(mod, View(kNode, 1, "a-14"), t);     // landed: invoke
-    for (int i = 0; i < 5; ++i) Frame(mod, View(kNode, 3, "m-0"), t);   // materials stay; no new insert
+    const AutoProspectView mats = View(kNode, 3, "m-0");
+    Frame(mod, View(kNode, 1, "a-14"), t, &mats);   // landed: invoke; the materials appear inside the call
+    for (int i = 0; i < 5; ++i) Frame(mod, mats, t);   // materials stay; no new insert
     Check("target/insert_into_prospect_grid_invokes_once", t.invokes == 1 && mod.Invoked() == 1 && t.refusals == 0,
           "invokes=" + N(t.invokes) + " invoked=" + N(mod.Invoked()) + " refusals=" + N(t.refusals));
 }
@@ -203,7 +210,7 @@ static void TargetInsertWhileInvokingIgnoredAndCounted()
         // The game's own handler moves materials into the grid inside our call.
         mod.OnInsert(kNode, true, true);
         mod.OnInsert(kNode, true, true);
-        mod.OnInvoked(true);
+        mod.OnInvoked(true, View(kNode, 3, "m-0"));
     }
     for (int i = 0; i < 5; ++i) Frame(mod, View(kNode, 3, "m-0"), t);
     Check("target/insert_while_invoking_ignored_and_counted",
@@ -220,7 +227,8 @@ static void TargetInsertsInOneFrameCoalesce()
     mod.OnInsert(kNode, true, false);
     mod.OnInsert(kNode, true, false);
     mod.OnInsert(kNode, true, false);
-    Frame(mod, View(kNode, 3, "a-14,b-14,c-14"), t);
+    const AutoProspectView mats = View(kNode, 4, "m-0");
+    Frame(mod, View(kNode, 3, "a-14,b-14,c-14"), t, &mats);
     for (int i = 0; i < 3; ++i) Frame(mod, View(kNode, 4, "m-0"), t);
     Check("target/inserts_in_one_frame_coalesce",
           t.invokes == 1 && mod.Inserts() == 3 && mod.Coalesced() == 2,
@@ -338,7 +346,8 @@ static void TargetRanNoEffectCountedOneFrameLater()
     Frame(mod, View(kNode, 1, "a-14"), t);     // the grid did not change
     const long unchanged = mod.RanNoEffect();
     mod.OnInsert(kNode, true, false);
-    Frame(mod, View(kNode, 2, "a-14,b-14"), t);   // invoke
+    const AutoProspectView mats = View(kNode, 4, "m-0,n-0");
+    Frame(mod, View(kNode, 2, "a-14,b-14"), t, &mats);   // invoke
     Frame(mod, View(kNode, 4, "m-0,n-0"), t);  // changed: prospected
     Check("target/ran_no_effect_counted_one_frame_later",
           t.invokes == 2 && before == 0 && unchanged == 1 && mod.RanNoEffect() == 1 && mod.Prospected() == 1,
@@ -395,6 +404,209 @@ static void TargetStatlineNamesWhatItDid()
           "line=\"" + line + "\" off=\"" + off + "\"");
 }
 
+// ---- target: insert timing (Stage B Phase 1, the ship round) ----------------
+//
+// Phase 1's click-in `watch` line read `contents=6->6`: the cell was already
+// filled when m_MoveItemToGrid was entered. Whether the fill happened in the
+// same frame as the hook or an earlier one is not measured, and a drag-in's
+// timing is not observed at all. So an insert may land before the hook that
+// reports it, and "filled unchanged since the frame before the hook" can be a
+// real insert. The core tells an insert from a rearrangement by the count
+// SETTLED at the last invoke, refusal or first sight, lowered by every removal
+// it sees and never raised by an unreported fill - not by the count one frame
+// earlier.
+//
+// Observed 2026-09-18 against the round-2 core (settled re-read on every
+// frame with nothing pending, left at the pre-invoke count after an invoke and
+// after a refusal), shimmed with the new names only - `args` and NoArgs, the
+// three shape names, an OnInvoked that ignored the `after` view, and a
+// TakeFirstProspect/FirstProspectLine that reported nothing:
+//   FAIL target/click_in_filled_a_frame_before_the_hook_invokes_once invokes=0 notLanded=1
+//   FAIL target/rearrangement_right_after_an_invoke_never_invokes invokes=2 notLanded=0 pending=0
+//   FAIL target/refused_item_rearranged_never_invokes invokes=1 notLanded=0 noButton=1
+//   FAIL target/no_args_refuses_and_says_why action=1 reason=0 invokes=1 line="autoprospect: none - nothing"
+//   FAIL target/first_prospect_reported_once_in_the_players_log early=0 beforeEffect=0 first=0 second=0 prospected=2 line=""
+//   FAIL adapter/measured_session_prospects_each_insert_once invokes=1 prospected=1 ranNoEffect=0 first=0 refusals=0
+// The measured same-frame click-in and the insert straight after an invoke
+// PASSED against it: the old core read the measured sequence correctly, and
+// failed only when the fill ran a frame ahead of the hook (not measured
+// either way) or when the grid already held something it had not settled -
+// the materials of the invoke before, or an item a refusal left behind. The
+// second of those fired the handler on a rearrangement.
+
+static void TargetClickInFilledInTheSameFrameInvokesOnce()
+{
+    // The measured click-in: the frame before, 5 filled; during the step the
+    // cell fills and then m_MoveItemToGrid runs (6->6 across the hook).
+    AutoProspectMod mod;
+    mod.SetEnabled(true);
+    Tally t;
+    Frame(mod, View(kNode, 5, "m-0"), t);
+    mod.OnInsert(kNode, true, false);
+    const AutoProspectView mats = View(kNode, 5, "m-0,n-0");
+    Frame(mod, View(kNode, 6, "m-0,a-14"), t, &mats);
+    for (int i = 0; i < 3; ++i) Frame(mod, mats, t);
+    Check("target/click_in_filled_in_the_same_frame_invokes_once", t.invokes == 1 && mod.NotLanded() == 0,
+          "invokes=" + N(t.invokes) + " notLanded=" + N(mod.NotLanded()));
+}
+
+static void TargetClickInFilledAFrameBeforeTheHookInvokesOnce()
+{
+    // The same insert, with the fill one frame ahead of the hook that reports
+    // it: the frame between already shows 6.
+    AutoProspectMod mod;
+    mod.SetEnabled(true);
+    Tally t;
+    Frame(mod, View(kNode, 5, "m-0"), t);
+    Frame(mod, View(kNode, 6, "m-0,a-14"), t);   // filled, not yet reported
+    mod.OnInsert(kNode, true, false);
+    const AutoProspectView mats = View(kNode, 5, "m-0,n-0");
+    for (int i = 0; i < ForgePact::kAutoProspectLandFrames + 2 && t.invokes == 0; ++i)
+        Frame(mod, View(kNode, 6, "m-0,a-14"), t, &mats);
+    Check("target/click_in_filled_a_frame_before_the_hook_invokes_once", t.invokes == 1 && mod.NotLanded() == 0,
+          "invokes=" + N(t.invokes) + " notLanded=" + N(mod.NotLanded()));
+}
+
+static void TargetInsertRightAfterAnInvokeInvokesAgain()
+{
+    AutoProspectMod mod;
+    mod.SetEnabled(true);
+    Tally t;
+    Frame(mod, View(kNode, 0), t);
+    mod.OnInsert(kNode, true, false);
+    const AutoProspectView mats = View(kNode, 2, "m-0,n-0");
+    Frame(mod, View(kNode, 1, "a-14"), t, &mats);   // invoke
+    mod.OnInsert(kNode, true, false);                // the next click-in, the very next step
+    const AutoProspectView mats2 = View(kNode, 3, "m-0,n-0,o-0");
+    Frame(mod, View(kNode, 3, "m-0,n-0,b-14"), t, &mats2);
+    Check("target/insert_right_after_an_invoke_invokes_again", t.invokes == 2,
+          "invokes=" + N(t.invokes) + " notLanded=" + N(mod.NotLanded()));
+}
+
+static void TargetRearrangementRightAfterAnInvokeNeverInvokes()
+{
+    // The materials an invoke produced are part of the settled grid: moving
+    // one of them straight afterwards is a rearrangement, not an insert.
+    AutoProspectMod mod;
+    mod.SetEnabled(true);
+    Tally t;
+    Frame(mod, View(kNode, 0), t);
+    mod.OnInsert(kNode, true, false);
+    const AutoProspectView mats = View(kNode, 3, "m-0,n-0");
+    Frame(mod, View(kNode, 1, "a-14"), t, &mats);   // invoke
+    mod.OnInsert(kNode, true, false);                // a material moved to another cell
+    for (int i = 0; i < ForgePact::kAutoProspectLandFrames + 2; ++i) Frame(mod, mats, t);
+    Check("target/rearrangement_right_after_an_invoke_never_invokes",
+          t.invokes == 1 && mod.NotLanded() == 1 && !mod.HasPending(),
+          "invokes=" + N(t.invokes) + " notLanded=" + N(mod.NotLanded()) + " pending=" + N(mod.HasPending()));
+}
+
+static void TargetRefusedItemRearrangedNeverInvokes()
+{
+    // A refused insert leaves its item in the grid; it is settled there, so
+    // moving it inside the grid later does not prospect it.
+    AutoProspectMod mod;
+    mod.SetEnabled(true);
+    Tally t;
+    Frame(mod, View(kNode, 0), t);
+    mod.OnInsert(kNode, true, false);
+    Frame(mod, View(kNode, 1, "a-14", false), t);   // no-button: the item stays
+    mod.OnInsert(kNode, true, false);                // moved to another cell
+    for (int i = 0; i < ForgePact::kAutoProspectLandFrames + 2; ++i) Frame(mod, View(kNode, 1, "a-14"), t);
+    Check("target/refused_item_rearranged_never_invokes",
+          t.invokes == 0 && mod.NotLanded() == 1 && mod.Refused(AutoProspectRefusal::NoButton) == 1,
+          "invokes=" + N(t.invokes) + " notLanded=" + N(mod.NotLanded())
+              + " noButton=" + N(mod.Refused(AutoProspectRefusal::NoButton)));
+}
+
+static void TargetNoArgsRefusesAndSaysWhy()
+{
+    AutoProspectMod mod;
+    mod.SetEnabled(true);
+    Tally t;
+    Frame(mod, View(kNode, 0), t);
+    mod.OnInsert(kNode, true, false);
+    AutoProspectView v = View(kNode, 1, "a-14");
+    v.args = false;                                  // the button was found; its argument array was not
+    const AutoProspectDecision d = Frame(mod, v, t);
+    const std::string line = mod.RefusalLine(AutoProspectRefusal::NoArgs);
+    Check("target/no_args_refuses_and_says_why",
+          d.action == AutoProspectAction::Refuse && d.reason == AutoProspectRefusal::NoArgs && t.invokes == 0
+              && line.find(ForgePact::kAutoProspectArgsVar) != std::string::npos,
+          "action=" + N((int)d.action) + " reason=" + N((int)d.reason) + " invokes=" + N(t.invokes)
+              + " line=\"" + line + "\"");
+}
+
+static void TargetFirstProspectReportedOnceInThePlayersLog()
+{
+    // S-player-dll: the player build logs one line naming work done - the
+    // first prospect of the session - and never a second.
+    AutoProspectMod mod;
+    mod.SetEnabled(true);
+    Tally t;
+    Frame(mod, View(kNode, 0), t);
+    const bool early = mod.TakeFirstProspect();
+    mod.OnInsert(kNode, true, false);
+    const AutoProspectView mats = View(kNode, 2, "m-0,n-0");
+    Frame(mod, View(kNode, 1, "a-14"), t, &mats);   // invoke
+    const bool beforeEffect = mod.TakeFirstProspect();
+    Frame(mod, mats, t);                             // prospected
+    const bool first = mod.TakeFirstProspect();
+    const std::string line = mod.FirstProspectLine();
+    mod.OnInsert(kNode, true, false);
+    const AutoProspectView mats2 = View(kNode, 3, "m-0,n-0,o-0");
+    Frame(mod, View(kNode, 3, "m-0,n-0,b-14"), t, &mats2);
+    Frame(mod, mats2, t);
+    const bool second = mod.TakeFirstProspect();
+    Check("target/first_prospect_reported_once_in_the_players_log",
+          !early && !beforeEffect && first && !second && mod.Prospected() == 2
+              && line.rfind("autoprospect: first prospect - invoked=1 prospected=1 ", 0) == 0,
+          "early=" + N(early) + " beforeEffect=" + N(beforeEffect) + " first=" + N(first) + " second=" + N(second)
+              + " prospected=" + N(mod.Prospected()) + " line=\"" + line + "\"");
+}
+
+// ---- adapter: the recorded invoke shape ---------------------------------
+//
+// Phase 1 recorded ONE shape that meets the ship rule (research doc, § Stage B
+// results, P-shapes): `exec-index button:activationArgs self=found` - the
+// handler's own asset index through script_execute, `self` = the Prospect
+// button found by its handler variable, `other` = the window, and the
+// button's own activationArgs array as the one argument. The adapter reads
+// those names from the header, so they are pinned here, and the measured
+// sequence of that session is replayed through the core.
+
+static void AdapterRecordedShapeNames()
+{
+    const std::string handler = ForgePact::kAutoProspectHandlerVar;
+    const std::string args = ForgePact::kAutoProspectArgsVar;
+    const std::string grid = ForgePact::kAutoProspectGridName;
+    Check("adapter/recorded_shape_exec_index_button_activation_args_self_found",
+          handler == "activationFunc" && args == "activationArgs" && grid == "ProspectGrid",
+          "handler=\"" + handler + "\" args=\"" + args + "\" grid=\"" + grid + "\"");
+}
+
+static void AdapterMeasuredSessionProspectsEachInsertOnce()
+{
+    // P-control's click-in (6->6 across the hook), then the recorded shape's
+    // own invoke (filled 5->2 in P-shapes) and a materials-only grid that a
+    // further hand press left unchanged (P-materials-only): one invoke per
+    // insert, none for anything else, and the one player-log line.
+    AutoProspectMod mod;
+    mod.SetEnabled(true);
+    Tally t;
+    Frame(mod, View(kNode, 4, "m-0,n-0"), t);
+    mod.OnInsert(kNode, true, false);
+    const AutoProspectView after = View(kNode, 2, "m-0,n-0");
+    Frame(mod, View(kNode, 5, "m-0,n-0,a-14"), t, &after);
+    Frame(mod, after, t);
+    const bool first = mod.TakeFirstProspect();
+    for (int i = 0; i < 10; ++i) Frame(mod, after, t);   // materials only: nothing to do
+    Check("adapter/measured_session_prospects_each_insert_once",
+          t.invokes == 1 && mod.Prospected() == 1 && mod.RanNoEffect() == 0 && first && t.refusals == 0,
+          "invokes=" + N(t.invokes) + " prospected=" + N(mod.Prospected()) + " ranNoEffect=" + N(mod.RanNoEffect())
+              + " first=" + N(first) + " refusals=" + N(t.refusals));
+}
+
 int main()
 {
     BaselineOffByDefault();
@@ -414,6 +626,15 @@ int main()
     TargetRanNoEffectCountedOneFrameLater();
     TargetFirstRefusalReportedOncePerReason();
     TargetStatlineNamesWhatItDid();
+    TargetClickInFilledInTheSameFrameInvokesOnce();
+    TargetClickInFilledAFrameBeforeTheHookInvokesOnce();
+    TargetInsertRightAfterAnInvokeInvokesAgain();
+    TargetRearrangementRightAfterAnInvokeNeverInvokes();
+    TargetRefusedItemRearrangedNeverInvokes();
+    TargetNoArgsRefusesAndSaysWhy();
+    TargetFirstProspectReportedOnceInThePlayersLog();
+    AdapterRecordedShapeNames();
+    AdapterMeasuredSessionProspectsEachInsertOnce();
     std::cout << (g_Failures ? "RESULT FAIL" : "RESULT OK") << "\n";
     return g_Failures ? 1 : 0;
 }

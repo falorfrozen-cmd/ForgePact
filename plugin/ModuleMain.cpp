@@ -324,7 +324,8 @@ static std::string FirstToken(const std::string& line, std::string& rest)
 // the class bodies; everything else a class calls into ModuleMain for is
 // forward-declared right here, specifically so this include block can move
 // only forward from now on, never back:
-static bool HookOneScript(const char* shortName, const char* id, PVOID dest, PFUNC_YYGMLScript* origOut);
+static bool HookOneScript(const char* shortName, const char* id, PVOID dest, PFUNC_YYGMLScript* origOut,
+                          bool* nativeOut = nullptr);
 static bool AddrIsExecutableInModule(HMODULE mod, const void* addr);   // defined with the pet-quest collect call
 static bool HhResolveLocalPlayer(RValue& out, std::string* how = nullptr);
 static void InstallCreateHooks();
@@ -358,6 +359,7 @@ static consteval const char* SdkShortScriptName(std::string_view sdkConstant)
 #include <ForgePact/StatsManager.hpp>
 #include <ForgePact/RelicFilterMod.hpp>
 #include <ForgePact/ProspectWindowMod.hpp>
+#include <ForgePact/AutoProspectMod.hpp>
 #include <ForgePact/PetQuestCollectorMod.hpp>
 #include <ForgePact/DensityManager.hpp>
 #include <ForgePact/DropManager.hpp>
@@ -1763,8 +1765,15 @@ static bool HookOneScriptTable(const char* shortName, const char* id, PVOID dest
 //   3. A failed detour is not fatal: `*origOut` falls back to the table entry
 //      and the hook stays table-only, exactly as it behaved before. It says
 //      so in the log rather than pretending.
-static bool HookOneScript(const char* shortName, const char* id, PVOID dest, PFUNC_YYGMLScript* origOut)
+//
+// `nativeOut`, when given, is set true only when THIS call put the inline
+// detour in. A caller whose feature means nothing on the table route alone
+// (auto-prospect: compiled GML calls m_MoveItemToGrid directly) reads it and
+// turns itself off instead of shipping armed and inert.
+static bool HookOneScript(const char* shortName, const char* id, PVOID dest, PFUNC_YYGMLScript* origOut,
+                          bool* nativeOut)
 {
+    if (nativeOut) *nativeOut = false;
     std::string full = std::string("gml_Script_") + shortName;
     PVOID p = nullptr;
     AurieStatus st = g_Yytk->GetNamedRoutinePointer(full.c_str(), &p);
@@ -1789,6 +1798,7 @@ static bool HookOneScript(const char* shortName, const char* id, PVOID dest, PFU
             if (AurieSuccess(ns) && tramp) {
                 *origOut = reinterpret_cast<PFUNC_YYGMLScript>(tramp);
                 native = true;
+                if (nativeOut) *nativeOut = true;
             } else {
                 why = "MmCreateHook st=" + std::to_string((int)ns);
             }
@@ -17005,17 +17015,366 @@ static void MBuffTick()
     ApplyBuff(g_MBuffId, g_MBuffV0, g_MBuffV1, 90.0);
 }
 
+// ===== Auto-prospect on insert (ForgePact issue #9, Stage B) ================
+//
+// While `autoprospect 1` is on, every item moved into the Prospect Cube's grid
+// is prospected at once by the game's own Prospect handler, so the 9x6 grid
+// stops being the limit on a batch. Off by default; the panel toggle sends
+// the command. The decision - when an insert counts, when to invoke, when to
+// refuse and what to say - is ForgePact::AutoProspectMod
+// (AutoProspectMod.hpp), game-independent and pinned by
+// tests/test_auto_prospect_behavior.py. This adapter is the only part that
+// touches the game, in two places:
+//
+//   - Hook_AutoProspectInsert, on m_MoveItemToGrid (UI_Inventory_Grid_obj
+//     anon@15345), which both a drag-in and a click-in go through (Phase 0c
+//     R12). It runs the game's function first, then - only while the mod is
+//     on - asks whether `self` is the ProspectGrid node, and tells the core.
+//     It never invokes anything: inside the step the insert's own caller may
+//     still be mid-operation, and no invoke has been measured there.
+//   - AutoProspectTick, from FrameCallback while the mod is on - the context
+//     Phase 1's research-build invoke proved the call in, since IPC commands
+//     are polled from FrameCallback too. It re-finds the window, the grid and
+//     (only while an insert is pending) the Prospect button, each by what it
+//     is, and invokes at the point of use, never on anything the hook cached.
+//
+// The invoke is the one shape Phase 1 recorded (research doc, § Stage B
+// results, P-shapes: `exec-index button:activationArgs self=found`):
+// script_execute, reached by name through CallBuiltinEx, handed the
+// handler's own asset_get_index value and the button's own activationArgs
+// array, with self = that button and other = the window. No address, no
+// struct layout.
+//
+// The hook installs lazily and once, from FrameCallback once setup has run
+// (the relicfilter pattern), through HookOneScript's two routes. A table swap
+// alone never sees compiled GML's direct call to this closure, so an install
+// that comes back TABLE-ONLY turns the mod off and says so rather than
+// reporting ON and doing nothing (guide, Known Limitations item 12). The
+// research build's prospect instrument, when told to hook, detours the same
+// address: never do that in a session that turns this on.
+static PFUNC_YYGMLScript g_Orig_AutoProspectInsert = nullptr;
+static bool g_AutoProspectInstallTried = false;   // the one install attempt has run
+static bool g_AutoProspectBlind = false;          // ...and came back without the inline detour
+static bool g_AutoProspectInvoking = false;       // inside ForgePact's own call of the handler
+static bool g_AutoProspectDispatchLogged = false; // the first failed dispatch has been logged
+static int g_ApGridObjIdx = -1, g_ApWindowObjIdx = -1, g_ApButtonObjIdx = -1;
+
+// Object indices through the SDK's names and the runtime's own lookup - never
+// a literal index, which a game patch moves.
+static int ApObjectIndex(HeroSiege::Objects::GameObject obj, int& cache)
+{
+    if (cache >= 0) return cache;
+    try {
+        const std::string name(HeroSiege::Objects::GetObjectName(obj));
+        const int idx = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(name) }).ToDouble();
+        if (idx >= 0 && g_Yytk->CallBuiltin("object_exists", { RValue((double)idx) }).ToBoolean()) cache = idx;
+    } catch (...) {}
+    return cache;
+}
+
+// A number or an instance/asset reference (VALUE_REF on this runner), as a
+// double; false for anything else, so an unreadable value never compares
+// equal to another.
+static bool ApNumber(const RValue& v, double& out)
+{
+    out = -1;
+    if (v.m_Kind != VALUE_REAL && v.m_Kind != VALUE_INT32 && v.m_Kind != VALUE_INT64 && v.m_Kind != VALUE_REF) return false;
+    const double d = v.ToDouble();
+    if (!std::isfinite(d)) return false;
+    out = d;
+    return true;
+}
+
+static bool ApInstanceId(const RValue& inst, double& id)
+{
+    id = -1;
+    try {
+        double d = -1;
+        if (!ApNumber(g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("id") }), d) || d <= 0) return false;
+        id = d;
+        return true;
+    } catch (...) { return false; }
+}
+
+// The ProspectGrid node is the UI_Inventory_Grid_obj whose uiNodeCallstack -
+// a string, or an array of strings - names "ProspectGrid" (Phase 0a R1). The
+// HUD's own inventory grids are the same object, so the object alone
+// identifies nothing.
+static bool ApNamesProspectGrid(const RValue& node)
+{
+    if (!g_Yytk->CallBuiltin("variable_instance_exists", { node, RValue("uiNodeCallstack") }).ToBoolean()) return false;
+    const RValue stack = g_Yytk->CallBuiltin("variable_instance_get", { node, RValue("uiNodeCallstack") });
+    if (stack.m_Kind == VALUE_STRING) return stack.ToString() == ForgePact::kAutoProspectGridName;
+    if (stack.m_Kind != VALUE_ARRAY) return false;
+    const int n = (int)g_Yytk->CallBuiltin("array_length", { stack }).ToDouble();
+    for (int i = 0; i < n; ++i) {
+        const RValue e = g_Yytk->CallBuiltin("array_get", { stack, RValue((double)i) });
+        if (e.m_Kind == VALUE_STRING && e.ToString() == ForgePact::kAutoProspectGridName) return true;
+    }
+    return false;
+}
+
+// For the hook: is this call's `self` the ProspectGrid node? Its object by
+// index (object_index is VALUE_REF on this runner - N1ObjectIndex accepts
+// it), then its name. The id is what the tick later compares against.
+static bool ApIsProspectGrid(CInstance* self, int64_t& nodeId)
+{
+    nodeId = -1;
+    if (!self) return false;
+    const int gridIdx = ApObjectIndex(HeroSiege::Objects::GameObject::UI_Inventory_Grid_obj, g_ApGridObjIdx);
+    if (gridIdx < 0) return false;
+    const RValue node = self->ToRValue();
+    int objIdx = -1;
+    if (!N1ObjectIndex(g_Yytk->CallBuiltin("variable_instance_get", { node, RValue("object_index") }), objIdx) || objIdx != gridIdx)
+        return false;
+    if (!ApNamesProspectGrid(node)) return false;
+    double id = -1;
+    if (!ApInstanceId(node, id)) return false;
+    nodeId = (int64_t)id;
+    return true;
+}
+
+static RValue& Hook_AutoProspectInsert(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    RValue& res = g_Orig_AutoProspectInsert ? g_Orig_AutoProspectInsert(S, O, R, argc, A) : R;
+    ForgePact::AutoProspectMod& mod = ForgePact::AutoProspectMod::Instance();
+    if (!mod.IsEnabled()) { mod.OnInsert(-1, false, false); return res; }   // counted, nothing read
+    int64_t nodeId = -1;
+    bool isGrid = false;
+    try { isGrid = ApIsProspectGrid(S, nodeId); } catch (...) { isGrid = false; }
+    mod.OnInsert(nodeId, isGrid, g_AutoProspectInvoking);
+    return res;
+}
+
+// Instance 0 of the open prospect window, whatever kind instance_find hands
+// back (VALUE_REF on this runner).
+static bool ApFindWindow(RValue& window, double& windowId)
+{
+    windowId = -1;
+    const int idx = ApObjectIndex(HeroSiege::Objects::GameObject::UI_Prospect_obj, g_ApWindowObjIdx);
+    if (idx < 0) return false;
+    if ((int)g_Yytk->CallBuiltin("instance_number", { RValue((double)idx) }).ToDouble() <= 0) return false;
+    window = g_Yytk->CallBuiltin("instance_find", { RValue((double)idx), RValue(0.0) });
+    return window.m_Kind != VALUE_UNDEFINED && ApInstanceId(window, windowId);
+}
+
+static bool ApFindGrid(RValue& node, double& nodeId)
+{
+    nodeId = -1;
+    const int idx = ApObjectIndex(HeroSiege::Objects::GameObject::UI_Inventory_Grid_obj, g_ApGridObjIdx);
+    if (idx < 0) return false;
+    const int total = (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)idx) }).ToDouble();
+    for (int nth = 0; nth < total; ++nth) {
+        RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue((double)idx), RValue((double)nth) });
+        if (inst.m_Kind == VALUE_UNDEFINED || !ApNamesProspectGrid(inst)) continue;
+        node = inst;
+        return ApInstanceId(node, nodeId);
+    }
+    return false;
+}
+
+// The node's cells: a cell is empty when it is `undefined` or 0, as
+// the research instrument's contents read counts it. With `prints`, the distinct
+// nodeFingerprint values of the filled cells as well, in order - what tells a
+// prospect apart from nothing when the filled count happens not to move. A
+// read that fails returns false and is never an empty grid.
+static bool ApReadCells(const RValue& node, ForgePact::AutoProspectView& v, bool prints)
+{
+    v.filled = 0;
+    v.empty = 0;
+    v.fingerprints.clear();
+    if (!g_Yytk->CallBuiltin("variable_instance_exists", { node, RValue("nodeGrid") }).ToBoolean()) return false;
+    const RValue grid = g_Yytk->CallBuiltin("variable_instance_get", { node, RValue("nodeGrid") });
+    if (grid.m_Kind != VALUE_ARRAY) return false;
+    std::vector<std::string> seen;
+    const int rows = (int)g_Yytk->CallBuiltin("array_length", { grid }).ToDouble();
+    for (int i = 0; i < rows; ++i) {
+        const RValue row = g_Yytk->CallBuiltin("array_get", { grid, RValue((double)i) });
+        if (row.m_Kind != VALUE_ARRAY) return false;
+        const int cols = (int)g_Yytk->CallBuiltin("array_length", { row }).ToDouble();
+        for (int j = 0; j < cols; ++j) {
+            const RValue cell = g_Yytk->CallBuiltin("array_get", { row, RValue((double)j) });
+            double n = -1;
+            if (cell.m_Kind == VALUE_UNDEFINED || (cell.m_Kind != VALUE_REF && ApNumber(cell, n) && n == 0.0)) { ++v.empty; continue; }
+            ++v.filled;
+            if (!prints) continue;
+            // A method value is also VALUE_OBJECT; only a plain struct is asked for a member.
+            if (cell.m_Kind == VALUE_OBJECT && !g_Yytk->CallBuiltin("is_method", { cell }).ToBoolean()
+                && g_Yytk->CallBuiltin("is_struct", { cell }).ToBoolean()
+                && g_Yytk->CallBuiltin("variable_struct_exists", { cell, RValue("nodeFingerprint") }).ToBoolean()) {
+                const RValue f = g_Yytk->CallBuiltin("variable_struct_get", { cell, RValue("nodeFingerprint") });
+                const std::string fp = f.m_Kind == VALUE_STRING ? f.ToString() : Describe(f);
+                if (std::find(seen.begin(), seen.end(), fp) == seen.end()) seen.push_back(fp);
+            }
+        }
+    }
+    for (size_t i = 0; i < seen.size(); ++i) v.fingerprints += (i ? "," : "") + seen[i];
+    return true;
+}
+
+// The Prospect button, identified by what it is: the UI_Button_Small_obj that
+// links to the open window (masterUi or parent - live, all three small buttons
+// link both ways) AND whose kAutoProspectHandlerVar is a method value of
+// UiAProspectButton, compared through method_get_index against the handler's
+// own asset_get_index. Linked alone identifies nothing: three buttons link,
+// one carries the handler (Phase 1 P-button). Exactly one must qualify.
+// `args` is that button's kAutoProspectArgsVar when it is an array.
+static bool ApFindButton(double windowId, const RValue& handlerIndex, RValue& button, RValue& args, bool& argsOk)
+{
+    argsOk = false;
+    double scriptIdx = -1;
+    if (!ApNumber(handlerIndex, scriptIdx) || scriptIdx < 0) return false;
+    const int idx = ApObjectIndex(HeroSiege::Objects::GameObject::UI_Button_Small_obj, g_ApButtonObjIdx);
+    if (idx < 0) return false;
+    const int total = (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)idx) }).ToDouble();
+    int qualified = 0;
+    for (int nth = 0; nth < total; ++nth) {
+        const RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue((double)idx), RValue((double)nth) });
+        if (inst.m_Kind == VALUE_UNDEFINED) continue;
+        bool linked = false;
+        for (const char* link : { "masterUi", "parent" }) {
+            if (!g_Yytk->CallBuiltin("variable_instance_exists", { inst, RValue(link) }).ToBoolean()) continue;
+            double v = -1;
+            if (ApNumber(g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(link) }), v) && v == windowId) linked = true;
+        }
+        if (!linked) continue;
+        if (!g_Yytk->CallBuiltin("variable_instance_exists", { inst, RValue(ForgePact::kAutoProspectHandlerVar) }).ToBoolean()) continue;
+        const RValue handler = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(ForgePact::kAutoProspectHandlerVar) });
+        if (handler.m_Kind != VALUE_OBJECT || !g_Yytk->CallBuiltin("is_method", { handler }).ToBoolean()) continue;
+        double mi = -1;
+        if (!ApNumber(g_Yytk->CallBuiltin("method_get_index", { handler }), mi) || mi != scriptIdx) continue;
+        ++qualified;
+        button = inst;
+    }
+    if (qualified != 1) { button = RValue(); return false; }
+    if (g_Yytk->CallBuiltin("variable_instance_exists", { button, RValue(ForgePact::kAutoProspectArgsVar) }).ToBoolean()) {
+        args = g_Yytk->CallBuiltin("variable_instance_get", { button, RValue(ForgePact::kAutoProspectArgsVar) });
+        argsOk = args.m_Kind == VALUE_ARRAY;
+    }
+    return true;
+}
+
+// Once per frame while the mod is on (FrameCallback). Every value below is
+// re-read this frame; the core decides, and only an Invoke calls anything.
+static void AutoProspectTick()
+{
+    ForgePact::AutoProspectMod& mod = ForgePact::AutoProspectMod::Instance();
+    ForgePact::AutoProspectView v;
+    RValue window, node, button, args, handlerIndex;
+    CInstance* windowInst = nullptr;
+    CInstance* buttonInst = nullptr;
+    try {
+        double windowId = -1;
+        v.window = ApFindWindow(window, windowId);
+        double nodeId = -1;
+        if (v.window) v.grid = ApFindGrid(node, nodeId);
+        if (v.grid) {
+            v.nodeId = (int64_t)nodeId;
+            v.contents = ApReadCells(node, v, mod.NeedsDetail());
+        }
+        // The button only matters to an insert that is pending; nothing is
+        // searched for on the frames in between.
+        if (v.contents && mod.HasPending()) {
+            handlerIndex = g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(SdkShortScriptName(HeroSiege::Scripts::gml_Script_UiAProspectButton))) });
+            bool argsOk = false;
+            if (ApFindButton(windowId, handlerIndex, button, args, argsOk)) {
+                windowInst = HhResolveInstance(window);
+                buttonInst = HhResolveInstance(button);
+                v.button = windowInst && buttonInst;
+                v.args = v.button && argsOk;
+            }
+        }
+    } catch (...) { v.contents = false; v.button = false; v.args = false; }
+
+    const ForgePact::AutoProspectDecision d = mod.Decide(v);
+    if (d.action == ForgePact::AutoProspectAction::Invoke) {
+        RValue res;
+        AurieStatus st = AURIE_EXTERNAL_ERROR;
+        g_AutoProspectInvoking = true;
+        try {
+            std::vector<RValue> callArgs{ handlerIndex, args };
+            st = g_Yytk->CallBuiltinEx(res, "script_execute", buttonInst, windowInst, callArgs);
+        } catch (...) { st = AURIE_EXTERNAL_ERROR; }
+        g_AutoProspectInvoking = false;
+        // The handler changes the grid inside the call; what it holds now,
+        // materials included, is the core's new settled count.
+        ForgePact::AutoProspectView after;
+        try {
+            double windowId = -1, nodeId = -1;
+            RValue w, n;
+            after.window = ApFindWindow(w, windowId);
+            if (after.window) after.grid = ApFindGrid(n, nodeId);
+            if (after.grid) { after.nodeId = (int64_t)nodeId; after.contents = ApReadCells(n, after, true); }
+        } catch (...) { after.contents = false; }
+        const bool dispatched = AurieSuccess(st);
+        mod.OnInvoked(dispatched, after);
+        if (!dispatched && !g_AutoProspectDispatchLogged) {
+            g_AutoProspectDispatchLogged = true;
+            Out("autoprospect: the Prospect call did not dispatch (st=" + std::to_string((int)st)
+                + ") - nothing was prospected; the item stays in the grid");
+        }
+    }
+    for (ForgePact::AutoProspectRefusal r = mod.TakeFirstRefusal(); r != ForgePact::AutoProspectRefusal::None; r = mod.TakeFirstRefusal())
+        Out(mod.RefusalLine(r));
+    if (mod.TakeFirstProspect()) Out(mod.FirstProspectLine());
+}
+
+// The one install attempt, from FrameCallback once setup has run and the mod
+// is on. Both routes or nothing: without the inline detour the hook would
+// never see the game's own inserts.
+static void AutoProspectInstall()
+{
+    g_AutoProspectInstallTried = true;
+    bool native = false;
+    const bool ok = HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_15345_gml_Object_UI_Inventory_Grid_obj_Create_0),
+                                  "bp_autoprospect", (PVOID)Hook_AutoProspectInsert, &g_Orig_AutoProspectInsert, &native);
+    if (ok && native) { Out("autoprospect: hook installed -> ON"); return; }
+    g_AutoProspectBlind = true;
+    ForgePact::AutoProspectMod::Instance().SetEnabled(false);
+    Out(std::string("autoprospect: hook ") + (ok ? "TABLE-ONLY" : "not installed (m_MoveItemToGrid not found)")
+        + " -> OFF: the game's own inserts would never reach it, so nothing will be prospected this session");
+}
+
+// `autoprospect 1|0` (the panel's toggle; a player command) and, in the
+// research build only, `autoprospect stat`.
+static void AutoProspectCommand(const std::string& rest)
+{
+    ForgePact::AutoProspectMod& mod = ForgePact::AutoProspectMod::Instance();
+    const std::string v = Lower(TrimCopy(rest));
+#ifndef FORGEPACT_RELEASE
+    if (v == "stat") {
+        Out(mod.StatLine() + " hook=" + (g_AutoProspectBlind ? "TABLE-ONLY/failed" : g_Orig_AutoProspectInsert ? "installed" : "not yet"));
+        return;
+    }
+#endif
+    const bool on = v == "1" || v == "on" || v == "true";
+    const bool off = v == "0" || v == "off" || v == "false";
+    if (!on && !off) { Out("autoprospect: usage -> autoprospect 1|0"); return; }
+    if (off) {
+        mod.SetEnabled(false);
+        Out("autoprospect: off - items put in the prospect grid stay there");
+        return;
+    }
+    if (g_AutoProspectBlind) {
+        Out("autoprospect: unavailable this session - its hook could not see the game's inserts (see the earlier autoprospect line); nothing will be prospected");
+        return;
+    }
+    mod.SetEnabled(true);
+    Out(g_Orig_AutoProspectInsert ? "autoprospect: ON" : "autoprospect: armed - the hook installs once the game has settled");
+}
+
 // Prospect window (issue #9) commands live in their own function for the same
 // reason as the Headhunter's: RunCommand's else-if chain is at MSVC's nesting
-// limit (C1061). Research stage: only the Phase 0 instrument, research build
-// only - the player-facing toggle arrives with Stage B, once the live session
-// has established what sizes the window (docs/prospect-window-research.md).
+// limit (C1061). `autoprospect` is the Stage B player command; the research
+// instrument below it is research build only. No bigger-grid command
+// exists: the human chose auto-prospect on insert over resizing the window
+// (docs/prospect-window-research.md, § Decision gate).
 static bool HandleProspectCommand(const std::string& lc, const std::string& rest)
 {
+    if (lc == "autoprospect") { AutoProspectCommand(rest); return true; }
 #ifndef FORGEPACT_RELEASE
     if (lc == "prospectprobe") { PpCommand(rest); return true; }
 #endif
-    (void)lc; (void)rest;
     return false;
 }
 
@@ -17748,7 +18107,8 @@ static void RunCommand(const std::string& line)
         "ping", "density", "reveal", "specialrate", "dropmult",
         "stat", "statadd", "raredrop", "droprate", "dungeonkey",
         "headhunter", "hhdur", "hhmap", "hhdefault", "hhlabel", "tyrant", "beacon", "beaconrange", "beaconmode", "beaconwake", "beaconspawn", "beaconfarstep", "tyrantchance", "tyrantaffix", "hhlabelfont", "hhlabeloffset", "hhlabelmax",
-        "enemyspeed", "rarity", "sigdrop", "angelicdrop", "relicfilter", "orbpickup", "satmods", "petquest"
+        "enemyspeed", "rarity", "sigdrop", "angelicdrop", "relicfilter", "orbpickup", "satmods", "petquest",
+        "autoprospect"
     };
     if (kPlayerCommands.find(lc) == kPlayerCommands.end()) {
         Out("command unavailable in player build: " + cmd);
@@ -18838,6 +19198,15 @@ void FrameCallback(FWFrame& FrameContext)
             HookOneScript("DropRelic", "bp_drelic", (PVOID)Hook_DropRelic, &g_Orig_DropRelic);
             Out(std::string("relicfilter: hook installed -> ") + (g_Orig_DropRelic ? "ON" : "FAILED (DropRelic not found)"));
         }
+    }
+
+    // Auto-prospect, toggled by `autoprospect 1`: the m_MoveItemToGrid hook
+    // goes in once, here, after setup (the relicfilter pattern), and the
+    // invoke happens here too - at the point of use, on objects re-found this
+    // frame (AutoProspectTick). Nothing runs while the mod is off.
+    if (ForgePact::AutoProspectMod::Instance().IsEnabled() && g_Setup) {
+        if (!g_AutoProspectInstallTried) AutoProspectInstall();
+        if (g_Orig_AutoProspectInsert && ForgePact::AutoProspectMod::Instance().IsEnabled()) AutoProspectTick();
     }
 
 #ifndef FORGEPACT_RELEASE
