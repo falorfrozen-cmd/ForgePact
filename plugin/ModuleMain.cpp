@@ -275,6 +275,11 @@ static void RunCommand(const std::string& line);
 static void TgProbeNoteDrawHudBuffs(CInstance* S, CInstance* O, int argc, RValue** A);
 static void TgProbeNoteTalentUse(CInstance* S, CInstance* O, int argc, RValue** A);
 static void TgProbeNoteBuffAdd(CInstance* S, CInstance* O, int argc, RValue** A);
+// toggle-skill indicator research control (issue #11, Track B), defined with
+// the rest of tgprobe just before RunCommand; called from Hook_DrawHudBuffs
+// right after HhDrawHeadLabels() so it samples the production read in the
+// exact place and `self` the shipped indicator will use.
+static void TgProbeSpurnAfterDraw();
 #endif
 
 // HookOneScript/HookOneScriptTable prepend "gml_Script_" themselves, so a
@@ -302,6 +307,7 @@ static consteval const char* SdkShortScriptName(std::string_view sdkConstant)
 #include <ForgePact/MapRevealManager.hpp>
 #include <ForgePact/StatsManager.hpp>
 #include <ForgePact/RelicFilterMod.hpp>
+#include <ForgePact/ToggleSkillMod.hpp>
 #include <ForgePact/ProspectWindowMod.hpp>
 #include <ForgePact/PetQuestCollectorMod.hpp>
 #include <ForgePact/DensityManager.hpp>
@@ -4255,6 +4261,104 @@ static bool HhResolveLocalPlayer(RValue& out, std::string* how)
     return false;
 }
 
+// ===== Toggle-skill active indicator (issue #11, Track B) ==================
+// The production read for whether the local player's Soul Spurn/Purgatory
+// drain is currently active. Lives outside every research block: in P1 it is
+// reachable only from the research sampler further down this file (itself
+// research-only), so a player build's behaviour does not change yet, but the
+// read itself is the one the shipped indicator will call.
+// docs/toggle-skills-research.md, "The read, and exactly what has been
+// proven" and "Co-op / ownership: the answer" are the measured basis for
+// every branch below.
+//
+// Two-argument CallBuiltin only (the global-context form) - this is the
+// exact shape the research doc's ON=1 positive control has to prove, and
+// switching to the `self`-taking CallBuiltinEx later would invalidate that
+// control (see the research doc's "Rejected alternatives").
+static constexpr int kToggleIndicatorScanCap = 64;   // mirrors the pet-quest collector's instance budget
+
+static bool ToggleIndicatorResolveAoeObject(double& outObjIdx)
+{
+    try {
+        outObjIdx = g_Yytk->CallBuiltin("asset_get_index",
+            { RValue(std::string(HeroSiege::Objects::GetObjectName(
+                HeroSiege::Objects::GameObject::White_Mage_Soul_Spurn_AOE_obj))) }).ToDouble();
+        return outObjIdx >= 0;
+    } catch (...) { return false; }
+}
+
+// `overrideLocalNumber` lets a research command run the identical
+// enumeration and decision with the local player's number replaced, without
+// writing anything to the game - the non-mutating negative control the
+// research doc's "Co-op / ownership" section calls for. `detail` is optional
+// and lets a caller (the research sampler, or a test) see the counted
+// evidence behind the decision.
+static ForgePact::ToggleIndicatorState ToggleIndicatorRead(ForgePact::ToggleIndicatorReadDetail* detail,
+                                                            const double* overrideLocalNumber)
+{
+    ForgePact::ToggleIndicatorReadDetail d;
+    double objIdx = -1.0;
+    d.objectResolved = ToggleIndicatorResolveAoeObject(objIdx);
+    if (!d.objectResolved) {
+        if (detail) *detail = d;
+        return ForgePact::ToggleIndicatorModel::Decide(d);
+    }
+
+    try { d.n = (long)g_Yytk->CallBuiltin("instance_number", { RValue(objIdx) }).ToDouble(); }
+    catch (...) { d.n = 0; }
+    if (d.n <= 0) {
+        // Off without ever resolving the player: a real, cheap negative that
+        // must not pay for (or depend on) a player lookup that never mattered.
+        if (detail) *detail = d;
+        return ForgePact::ToggleIndicatorModel::Decide(d);
+    }
+
+    double localNumber = 0.0;
+    if (overrideLocalNumber) {
+        localNumber = *overrideLocalNumber;
+        d.localResolved = true;
+        d.localNumberReadable = true;
+    } else {
+        RValue player;
+        if (HhResolveLocalPlayer(player)) {
+            d.localResolved = true;
+            try {
+                RValue pn = g_Yytk->CallBuiltin("variable_instance_get", { player, RValue("playerNumber") });
+                if (pn.m_Kind == VALUE_REAL || pn.m_Kind == VALUE_INT32 || pn.m_Kind == VALUE_INT64) {
+                    localNumber = pn.ToDouble();
+                    d.localNumberReadable = true;
+                }
+            } catch (...) {}
+        }
+    }
+    d.localNumber = localNumber;
+
+    if (!d.localResolved || !d.localNumberReadable) {
+        if (detail) *detail = d;
+        return ForgePact::ToggleIndicatorModel::Decide(d);
+    }
+
+    // Every AOE instance's own playerNumber decides ownership; one whose
+    // number cannot be read is unattributed and never lights the indicator.
+    const long cap = kToggleIndicatorScanCap;
+    const long scanCount = d.n < cap ? d.n : cap;
+    d.capped = d.n > cap;
+    for (long i = 0; i < scanCount; ++i) {
+        try {
+            RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue(objIdx), RValue((double)i) });
+            RValue pn = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("playerNumber") });
+            if (pn.m_Kind == VALUE_REAL || pn.m_Kind == VALUE_INT32 || pn.m_Kind == VALUE_INT64) {
+                if (pn.ToDouble() == localNumber) ++d.mine; else ++d.others;
+            } else {
+                ++d.unattributed;
+            }
+        } catch (...) { ++d.unattributed; }
+    }
+
+    if (detail) *detail = d;
+    return ForgePact::ToggleIndicatorModel::Decide(d);
+}
+
 static long g_HhHudCalls = 0, g_HhLabelDraws = 0;
 static std::string g_HhLabelLastErr;
 // Draw GUI phase: project the player's position through the active camera and draw the
@@ -4328,6 +4432,9 @@ static RValue& Hook_DrawHudBuffs(CInstance* S, CInstance* O, RValue& R, int argc
     RValue& r = g_Orig_DrawHudBuffs ? g_Orig_DrawHudBuffs(S, O, R, argc, A) : R;
     ++g_HhHudCalls;
     HhDrawHeadLabels();
+#ifndef FORGEPACT_RELEASE
+    TgProbeSpurnAfterDraw();
+#endif
     return r;
 }
 static bool g_HhLabelHookAttempted = false;
@@ -18568,6 +18675,285 @@ static void TgProbeDeepCommand(const std::string& rest)
         " | flip <base> <on> <off> | find <substr> [name] | get <path> | census | selftest | drop <name>");
 }
 
+// ===== tgprobe spurn / tgprobe mark - toggle-skill indicator research control
+// (issue #11, Track B) =======================================================
+// Everything below is research-only: it samples the production
+// ToggleIndicatorRead() (defined above, outside every research block) on
+// every DrawHudBuffs draw, and (with `mark` armed) draws a rectangle at GUI
+// coordinates so a tester can tell which candidate slot rectangle sits on
+// Soul Spurn's button. See docs/toggle-skills-research.md, "Research-build
+// control (P1)" and "Slot location (Q4): what is known".
+
+// Every custom member of a STRUCT (not an instance), name=value, capped at
+// 80 chars each - the struct twin of TgProbeCustomVars above.
+static std::string TgProbeStructVars(const RValue& st)
+{
+    std::string line;
+    try {
+        RValue names = g_Yytk->CallBuiltin("variable_struct_get_names", { st });
+        int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+        for (int i = 0; i < n; ++i) {
+            RValue nm = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) });
+            RValue v = g_Yytk->CallBuiltin("variable_struct_get", { st, nm });
+            line += " " + nm.ToString() + "=" + TgProbeDescribeShort(v);
+        }
+    } catch (...) { line += " (exc)"; }
+    return line;
+}
+
+// `tgprobe spurn slots`: prints every element of UI_Hud_Talent_obj's row0/row1
+// arrays, and the entries of playerSlot{bind_skill}[0] and global.mySkills,
+// whose value is talent 240 (Soul Spurn) - session 3 measures by eye which
+// array is the drawn hotbar and which of a hit element's members hold the
+// button's position. Read-only; no write, no hook.
+static void TgProbeSpurnSlots()
+{
+    const std::string objName(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::UI_Hud_Talent_obj));
+    const double obj = TgProbeObjectIndex(objName);
+    if (obj < 0) { Out("tgprobe spurn slots: " + objName + " not found by name"); return; }
+    RValue inst;
+    try { inst = g_Yytk->CallBuiltin("instance_find", { RValue(obj), RValue(0.0) }); }
+    catch (...) { Out("tgprobe spurn slots: instance_find EXCEPTION"); return; }
+    if (inst.m_Kind == VALUE_UNDEFINED) { Out("tgprobe spurn slots: no " + objName + " instance"); return; }
+
+    for (const char* arrayName : { "row0", "row1" }) {
+        try {
+            RValue arr = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(arrayName) });
+            if (arr.m_Kind != VALUE_ARRAY) { Out(std::string("tgprobe spurn slots: ") + arrayName + " is " + Describe(arr)); continue; }
+            const int len = (int)g_Yytk->CallBuiltin("array_length", { arr }).ToDouble();
+            for (int i = 0; i < len; ++i) {
+                RValue elem = g_Yytk->CallBuiltin("array_get", { arr, RValue((double)i) });
+                if (elem.m_Kind != VALUE_OBJECT && elem.m_Kind != VALUE_REF) continue;
+                RValue tid = g_Yytk->CallBuiltin("variable_struct_get", { elem, RValue("talentId") });
+                const bool isNumber = tid.m_Kind == VALUE_REAL || tid.m_Kind == VALUE_INT32 || tid.m_Kind == VALUE_INT64;
+                if (!isNumber || (int)tid.ToDouble() != 240) continue;
+                Out(std::string("tgprobe spurn slots: ") + arrayName + "[" + std::to_string(i) + "] talentId=240 members:" + TgProbeStructVars(elem));
+            }
+        } catch (...) { Out(std::string("tgprobe spurn slots: ") + arrayName + " EXCEPTION"); }
+    }
+
+    try {
+        RValue ps = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("playerSlot") });
+        if (ps.m_Kind != VALUE_OBJECT && ps.m_Kind != VALUE_REF) { Out("tgprobe spurn slots: playerSlot is " + Describe(ps)); }
+        else {
+            RValue bindSkill = g_Yytk->CallBuiltin("variable_struct_get", { ps, RValue("bind_skill") });
+            if (bindSkill.m_Kind != VALUE_ARRAY) { Out("tgprobe spurn slots: playerSlot.bind_skill is " + Describe(bindSkill)); }
+            else {
+                const int rows = (int)g_Yytk->CallBuiltin("array_length", { bindSkill }).ToDouble();
+                for (int r = 0; r < rows; ++r) {
+                    RValue row = g_Yytk->CallBuiltin("array_get", { bindSkill, RValue((double)r) });
+                    if (row.m_Kind != VALUE_ARRAY) continue;
+                    const int cols = (int)g_Yytk->CallBuiltin("array_length", { row }).ToDouble();
+                    for (int c = 0; c < cols; ++c) {
+                        RValue v = g_Yytk->CallBuiltin("array_get", { row, RValue((double)c) });
+                        const bool isNumber = v.m_Kind == VALUE_REAL || v.m_Kind == VALUE_INT32 || v.m_Kind == VALUE_INT64;
+                        if (isNumber && (int)v.ToDouble() == 240)
+                            Out("tgprobe spurn slots: playerSlot.bind_skill[" + std::to_string(r) + "][" + std::to_string(c) + "]=240");
+                    }
+                }
+            }
+        }
+    } catch (...) { Out("tgprobe spurn slots: playerSlot EXCEPTION"); }
+
+    try {
+        RValue ms = g_Yytk->CallBuiltin("variable_global_get", { RValue("mySkills") });
+        if (ms.m_Kind != VALUE_ARRAY) { Out("tgprobe spurn slots: global.mySkills is " + Describe(ms)); }
+        else {
+            const int len = (int)g_Yytk->CallBuiltin("array_length", { ms }).ToDouble();
+            for (int i = 0; i < len; ++i) {
+                RValue v = g_Yytk->CallBuiltin("array_get", { ms, RValue((double)i) });
+                const bool isNumber = v.m_Kind == VALUE_REAL || v.m_Kind == VALUE_INT32 || v.m_Kind == VALUE_INT64;
+                if (isNumber && (int)v.ToDouble() == 240)
+                    Out("tgprobe spurn slots: global.mySkills[" + std::to_string(i) + "]=240");
+            }
+        }
+    } catch (...) { Out("tgprobe spurn slots: global.mySkills EXCEPTION"); }
+}
+
+// `tgprobe mark <x> <y> <w> <h>|off`: a static outline rectangle at GUI
+// coordinates, armed by TgProbeMarkCommand and drawn every frame from
+// TgProbeSpurnAfterDraw. Colour and alpha are saved before the first
+// draw_set_ and restored after the last draw - the same pattern
+// HhDrawHeadLabels uses.
+static bool g_TgMarkActive = false;
+static double g_TgMarkX = 0, g_TgMarkY = 0, g_TgMarkW = 0, g_TgMarkH = 0;
+
+static void TgProbeDrawMark()
+{
+    if (!g_TgMarkActive) return;
+    try {
+        RValue prevColour = g_Yytk->CallBuiltin("draw_get_colour", {});
+        RValue prevAlpha = g_Yytk->CallBuiltin("draw_get_alpha", {});
+        RValue red = g_Yytk->CallBuiltin("make_colour_rgb", { RValue(255.0), RValue(64.0), RValue(64.0) });
+        g_Yytk->CallBuiltin("draw_set_colour", { red });
+        g_Yytk->CallBuiltin("draw_set_alpha", { RValue(1.0) });
+        for (int t = 0; t < 3; ++t) {
+            g_Yytk->CallBuiltin("draw_rectangle", {
+                RValue(g_TgMarkX - t), RValue(g_TgMarkY - t),
+                RValue(g_TgMarkX + g_TgMarkW + t), RValue(g_TgMarkY + g_TgMarkH + t),
+                RValue(1.0) });   // outline only (the last arg is GameMaker's "outline" flag)
+        }
+        g_Yytk->CallBuiltin("draw_set_alpha", { prevAlpha });
+        g_Yytk->CallBuiltin("draw_set_colour", { prevColour });
+    } catch (...) {}
+}
+
+static void TgProbeMarkCommand(const std::string& rest)
+{
+    std::string subRest;
+    const std::string first = Lower(FirstToken(rest, subRest));
+    if (first.empty() || first == "off") {
+        g_TgMarkActive = false;
+        Out("tgprobe mark -> off");
+        return;
+    }
+    try {
+        std::string t1, t2, t3;
+        const double x = std::stod(first);
+        const double y = std::stod(FirstToken(subRest, t1));
+        const double w = std::stod(FirstToken(t1, t2));
+        const double h = std::stod(FirstToken(t2, t3));
+        g_TgMarkX = x; g_TgMarkY = y; g_TgMarkW = w; g_TgMarkH = h;
+        g_TgMarkActive = true;
+        Out("tgprobe mark -> x=" + std::to_string(x) + " y=" + std::to_string(y)
+            + " w=" + std::to_string(w) + " h=" + std::to_string(h));
+    } catch (...) {
+        Out("tgprobe mark: usage -> tgprobe mark <x> <y> <w> <h> | off");
+    }
+}
+
+// Running counters and last-sample state for `tgprobe spurn`. Sampled once
+// per DrawHudBuffs call (TgProbeSpurnAfterDraw), never cached across calls -
+// the same point-of-use rule as the guide's Known Limitations item 13.
+struct TgProbeSpurnCounters {
+    volatile long samples = 0, on = 0, off = 0, unreadable = 0;
+    volatile long maxN = 0, transitions = 0;
+};
+static TgProbeSpurnCounters g_TgSpurn;
+static long g_TgSpurnLastState = -1;   // -1 = never sampled
+static ForgePact::ToggleIndicatorReadDetail g_TgSpurnLastDetail;
+static bool g_TgSpurnHasLastDetail = false;
+static bool g_TgSpurnRoomKeyKnown = false;
+static int64_t g_TgSpurnRoomKey = INT64_MIN;
+static long g_TgSpurnFirstAfterRoomChangeState = -1;
+static long g_TgSpurnFirstAfterRoomChangeN = -1;
+static long g_TgSpurnDrawsSinceRoomChange = 0;
+static bool g_TgSpurnSawOffSinceRoomChange = false;
+static long g_TgSpurnDrawsSinceRoomChangeToOff = -1;   // -1 = not off yet since the change
+static std::atomic<bool> g_TgSpurnLogOn{ false };
+static long g_TgSpurnLogged = 0;   // budgeted by kTgLogBudget, like every other tgprobe row
+
+// Sampled on every logged state change while `spurn log on`: each instance's
+// own playerNumber and isMyClient, budgeted the same way every other tgprobe
+// row is (kTgLogBudget lines until `tgprobe reset`).
+static void TgProbeSpurnLogInstances(const ForgePact::ToggleIndicatorReadDetail& d)
+{
+    if (g_TgSpurnLogged >= kTgLogBudget) return;
+    ++g_TgSpurnLogged;
+    double objIdx = -1.0;
+    if (!ToggleIndicatorResolveAoeObject(objIdx)) return;
+    const long cap = kToggleIndicatorScanCap;
+    const long scanCount = d.n < cap ? d.n : cap;
+    for (long i = 0; i < scanCount; ++i) {
+        try {
+            RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue(objIdx), RValue((double)i) });
+            RValue pn = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("playerNumber") });
+            RValue mc = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("isMyClient") });
+            Out("  spurn log [" + std::to_string(i) + "] playerNumber=" + TgProbeDescribeShort(pn)
+                + " isMyClient=" + TgProbeDescribeShort(mc));
+        } catch (...) { Out("  spurn log [" + std::to_string(i) + "] EXCEPTION"); }
+    }
+}
+
+static void TgProbeSpurnAfterDraw()
+{
+    ForgePact::ToggleIndicatorReadDetail detail;
+    const ForgePact::ToggleIndicatorState state = ToggleIndicatorRead(&detail, nullptr);
+
+    InterlockedIncrement(&g_TgSpurn.samples);
+    if (detail.n > g_TgSpurn.maxN) InterlockedExchange(&g_TgSpurn.maxN, detail.n);
+    const long s = (long)state;
+    const bool changed = g_TgSpurnLastState >= 0 && s != g_TgSpurnLastState;
+    if (changed) InterlockedIncrement(&g_TgSpurn.transitions);
+    if (state == ForgePact::ToggleIndicatorState::On) InterlockedIncrement(&g_TgSpurn.on);
+    else if (state == ForgePact::ToggleIndicatorState::Off) InterlockedIncrement(&g_TgSpurn.off);
+    else InterlockedIncrement(&g_TgSpurn.unreadable);
+    if (changed && g_TgSpurnLogOn.load()) TgProbeSpurnLogInstances(detail);
+    g_TgSpurnLastState = s;
+    g_TgSpurnLastDetail = detail;
+    g_TgSpurnHasLastDetail = true;
+
+    const int64_t key = CurrentRoomKey();
+    if (key != INT64_MIN) {
+        if (!g_TgSpurnRoomKeyKnown || key != g_TgSpurnRoomKey) {
+            g_TgSpurnRoomKeyKnown = true;
+            g_TgSpurnRoomKey = key;
+            g_TgSpurnFirstAfterRoomChangeState = s;
+            g_TgSpurnFirstAfterRoomChangeN = detail.n;
+            g_TgSpurnDrawsSinceRoomChange = 0;
+            g_TgSpurnSawOffSinceRoomChange = (state == ForgePact::ToggleIndicatorState::Off);
+            g_TgSpurnDrawsSinceRoomChangeToOff = g_TgSpurnSawOffSinceRoomChange ? 0 : -1;
+        } else {
+            ++g_TgSpurnDrawsSinceRoomChange;
+            if (!g_TgSpurnSawOffSinceRoomChange && state == ForgePact::ToggleIndicatorState::Off) {
+                g_TgSpurnSawOffSinceRoomChange = true;
+                g_TgSpurnDrawsSinceRoomChangeToOff = g_TgSpurnDrawsSinceRoomChange;
+            }
+        }
+    }
+
+    TgProbeDrawMark();
+}
+
+static void TgProbeSpurnCommand(const std::string& rest)
+{
+    std::string subRest;
+    const std::string sub = Lower(FirstToken(rest, subRest));
+    if (sub == "log") {
+        std::string ignored;
+        const std::string v = Lower(FirstToken(subRest, ignored));
+        g_TgSpurnLogOn.store(v == "on" || v == "1");
+        Out(std::string("tgprobe spurn log ") + (g_TgSpurnLogOn.load() ? "on" : "off")
+            + " (" + std::to_string(kTgLogBudget) + " lines until `tgprobe reset`)");
+        return;
+    }
+    if (sub == "as") {
+        std::string ignored;
+        const std::string v = Lower(FirstToken(subRest, ignored));
+        if (v.empty() || v == "off") { Out("tgprobe spurn as: usage -> tgprobe spurn as <n>"); return; }
+        double n;
+        try { n = std::stod(v); } catch (...) { Out("tgprobe spurn as: not a number: " + v); return; }
+        // A one-shot read with the local number overridden; it never touches
+        // the real counters above, so it is the non-mutating negative control
+        // the research doc's "Co-op / ownership" section calls for.
+        ForgePact::ToggleIndicatorReadDetail detail;
+        const ForgePact::ToggleIndicatorState state = ToggleIndicatorRead(&detail, &n);
+        Out("tgprobe spurn as " + v + " -> " + ForgePact::ToggleIndicatorStateName(state)
+            + " n=" + std::to_string(detail.n) + " mine=" + std::to_string(detail.mine)
+            + " others=" + std::to_string(detail.others) + " unattributed=" + std::to_string(detail.unattributed));
+        return;
+    }
+    if (sub == "slots") { TgProbeSpurnSlots(); return; }
+    if (!sub.empty()) { Out("tgprobe spurn: usage -> tgprobe spurn | log on|off | as <n> | slots"); return; }
+
+    const ForgePact::ToggleIndicatorReadDetail& d = g_TgSpurnLastDetail;
+    Out("tgprobe spurn: frame=" + std::to_string((unsigned long long)g_RuntimeFrame)
+        + " room=" + (g_TgSpurnRoomKeyKnown ? std::to_string((long long)g_TgSpurnRoomKey) : std::string("unreadable"))
+        + " n=" + std::to_string(d.n) + " mine=" + std::to_string(d.mine) + " others=" + std::to_string(d.others)
+        + " unattributed=" + std::to_string(d.unattributed) + " capped=" + (d.capped ? "1" : "0")
+        + " localNumber=" + (d.localNumberReadable ? std::to_string(d.localNumber) : std::string("unreadable"))
+        + " state=" + (g_TgSpurnHasLastDetail ? ForgePact::ToggleIndicatorStateName((ForgePact::ToggleIndicatorState)g_TgSpurnLastState) : "n/a")
+        + " samples=" + std::to_string(g_TgSpurn.samples) + " on=" + std::to_string(g_TgSpurn.on)
+        + " off=" + std::to_string(g_TgSpurn.off) + " unreadable=" + std::to_string(g_TgSpurn.unreadable)
+        + " maxN=" + std::to_string(g_TgSpurn.maxN) + " transitions=" + std::to_string(g_TgSpurn.transitions));
+    if (g_TgSpurnRoomKeyKnown) {
+        Out("  firstAfterRoomChange: state=" + (g_TgSpurnFirstAfterRoomChangeState >= 0
+                ? std::string(ForgePact::ToggleIndicatorStateName((ForgePact::ToggleIndicatorState)g_TgSpurnFirstAfterRoomChangeState)) : std::string("n/a"))
+            + " n=" + std::to_string(g_TgSpurnFirstAfterRoomChangeN)
+            + " drawsToOff=" + std::to_string(g_TgSpurnDrawsSinceRoomChangeToOff));
+    }
+}
+
 static void TgProbeCommand(const std::string& rest)
 {
     std::string subRest;
@@ -18596,9 +18982,13 @@ static void TgProbeCommand(const std::string& rest)
     if (sub == "diff") { TgProbeDiff(); return; }
     if (sub == "room") { TgProbeRoom(); return; }
     if (sub == "deep") { TgProbeDeepCommand(subRest); return; }
+    // Toggle-skill indicator research control (issue #11, Track B).
+    if (sub == "spurn") { TgProbeSpurnCommand(subRest); return; }
+    if (sub == "mark") { TgProbeMarkCommand(subRest); return; }
     Out("tgprobe: usage -> tgprobe hook [substr...] | show | reset | verbose on|off | slots | buffs | abilities"
         " | vars <Obj|global> | snap <Obj|global> | diff | room"
-        " | deep snap|diff|flip|find|get|census|selftest|drop ...");
+        " | deep snap|diff|flip|find|get|census|selftest|drop ..."
+        " | spurn [log on|off | as <n> | slots] | mark <x> <y> <w> <h> | off");
 }
 #endif // FORGEPACT_RELEASE (tgprobe)
 

@@ -613,6 +613,86 @@ retaken.
     session 2; update the status lines. Stop the game; nothing else left
     running.
 
+### Session 3
+
+The indicator workorder's own live session (issue #11, Track B, P1-LIVE).
+Research DLL (`BloodPactPlugin_rel.dll`, `plugin_build\build.bat dev`) copied
+over `<game>\mods\aurie\BloodPactPlugin.dll`, previous file backed up; driven
+with `ForgePact/tools/ipc.ps1`. White Mage with Soul Spurn + Purgatory and
+Healing Zone (the non-toggle skill) on the hotbar, in town. No `bp_ipc\coop.ini`
+(or `enabled=0`), no `cooprender`, no `citrace` command at any point in the
+session. The tester reports ON/OFF by eye and, for R5, whether a marked
+rectangle sits on Soul Spurn's slot.
+
+R1–R10 below are the rows Results → Session 3 fills; each status is exactly
+one of `measured`, `not observed` or `blocked` — a row not run is `blocked`,
+never `not observed`.
+
+1. **Instrument control (before R1).** `hhlabel` → record `hudCalls=`.
+   `tgprobe spurn` → record the summary line (`samples=`, `on=`, `off=`,
+   `unreadable=`, `maxN=`, `transitions=`, the last `n=`/`mine=`/`others=`/
+   `unattributed=`/`state=`). Stand 2 s; send `hhlabel` and `tgprobe spurn`
+   together in one `ipc.ps1 -Lines` write, so both replies come from one
+   consume. The `samples=` delta across that window must match the `hhlabel`
+   `hudCalls=` delta (±2); otherwise every `spurn` answer in the session is
+   `blocked` — quote both deltas in the session preamble.
+2. **R1 (by eye OFF).** With Soul Spurn/Purgatory off by eye, `tgprobe spurn`
+   → record `state=` and `n=`. Expect `off` with `n=0`.
+3. **R2 (by eye ON).** Press Soul Spurn once (ON by eye). Wait 2 s. `tgprobe
+   spurn` → record `state=`, `n=`, `mine=`. Expect `on` with `n>=1`,
+   `mine>=1`. Cross-check with `tgprobe deep census` (from session 2): the AOE
+   object reads `=1` in the same window.
+4. **R3 (co-op negative control).** Still ON. `tgprobe spurn as 2` → record
+   the printed override line (`state=`, `n=`, `mine=`, `others=`). Expect
+   `off` with `others>=1`. This must not change `tgprobe spurn`'s own
+   counters — confirm the plain `tgprobe spurn` summary immediately after
+   still reads the same `samples=`/`on=`/`off=` it read before this step, plus
+   only the draws elapsed since.
+5. **R4 (local playerNumber scope).** `tgprobe spurn log on`; wait for the
+   next state change (or force one with a press) → record the logged line's
+   `playerNumber=`/`isMyClient=` per instance. If the local player's own
+   `playerNumber` is readable and equal to the AOE's, `scope: playerNumber`;
+   otherwise `scope: BLOCKED` and this plan's `## State` gate is set that way
+   (return `PLAN-DEFECT` if `Player_obj` has no `playerNumber` member at all).
+   `tgprobe spurn log off`.
+6. **R5 (slot location).** `tgprobe spurn slots` → record every printed
+   `talentId=240` line and its members. For each candidate array/element,
+   `tgprobe mark <x> <y> <w> <h>` using that element's own position-shaped
+   members (by eye, on the GUI) → the tester says whether the rectangle sits
+   on Soul Spurn's button. Record the winning array, id field and position
+   fields as `Slot geometry fields:` in "After session 3", or `none` if no
+   candidate lands on the button. `tgprobe mark off` when done.
+7. **R6 (OFF lag, Known Limitation).** Note the `TalentUse` press frame from
+   `tgprobe hook`'s existing controls (or a fresh `tgprobe show`). Press Soul
+   Spurn to turn it OFF; immediately and every ~10 draws until `tgprobe
+   spurn` reads `off`, record `state=` and the frame. Record the draw count
+   from the press to the On→Off transition.
+8. **R7 (zone change).** With the toggle ON, `tgprobe spurn` (record `room=`).
+   Take a waypoint/portal. As soon as the new zone is playable: `tgprobe
+   spurn` → read the `firstAfterRoomChange:` line (`state=`, `n=`,
+   `drawsToOff=`) and keep polling every ~10 draws until it reads `off` or
+   600 draws have elapsed. By eye, say whether the toggle actually ended on
+   the zone change. If it reads `on` past 600 draws while the tester reports
+   the toggle ended, `read: BLOCKED (zone)`; otherwise this row feeds
+   `read: GO` alongside R1–R3.
+9. **R8 (HP self-cancel, Known Limitation).** With the toggle ON, let
+   Purgatory's health drain run until it self-cancels (or trigger it by
+   taking damage). Poll `tgprobe spurn` until the state reads `off`; record
+   the transition.
+10. **R9 (maxN, Known Limitation).** After R2–R9, `tgprobe spurn` → record
+    `maxN=` for the session. A double-cast proc (Track A Q5) may have pushed
+    it to 2; record whatever it reads.
+11. **R10 (optional; Soul Spurn without Purgatory).** Only if the tester can
+    respec: remove Purgatory, cast Soul Spurn, `tgprobe spurn` → record
+    `state=`/`n=`. Restore Purgatory afterward. If infeasible, record R10 as
+    `blocked` and say why.
+12. **Gate values.** `read: GO` needs R1, R2 and R3 measured with the
+    instrument control (step 1) matched; `read: BLOCKED (zone)` if R7 alone
+    fails as described above. `scope: playerNumber` or `scope: BLOCKED` per
+    R4. `slotgeom:` the fields recorded in R5, or `none`. Paste every quoted
+    line into Results → Session 3; write Decision → After session 3; set this
+    plan's `## State` gates. Stop the game; nothing else left running.
+
 ## Results
 
 ### Session 1
@@ -720,7 +800,7 @@ unreadable=0` (no `<absent:` leaves in the read set). `tgprobe deep find
 
 | Q | Question | status | Evidence |
 |---|---|---|---|
-| Q3-D | Where the ON state lives, read from non-scalar runtime storage (`tgprobe deep`) | measured | Path: `census.White_Mage_Soul_Spurn_AOE_obj` (`GameObject::White_Mage_Soul_Spurn_AOE_obj` = SDK index 5759; the runtime object index itself was never printed this session). Found by `tgprobe deep flip base on off` → `tgprobe deep flip base on off: A(flipped and reverted)=41 B(changed twice)=221 truncated=0`, bucket-A line `census.White_Mage_Soul_Spurn_AOE_obj: base=<absent> on=1 off=<absent>` (bucket A also holds `census.Player_Damage_Parent_obj: base=<absent> on=1 off=<absent>`, the object's parent class — not a distinct signal). Since the measured path is a `census.<Object>` leaf, `tgprobe deep get` cannot read it (`deep get` resolves scoped struct/array/ds paths, not the census map); per the driver amendment, three `tgprobe deep census` reads stand in for it on each side — **the six quoted reads below are excerpts of the log, not the full census output.** **ON** (by eye ON, 10 s window; each read's own full `nonzero=` count — 181/161/179 — covers every nonzero object, but only the two relevant rows are shown): frame 34740 → `White_Mage_Soul_Spurn_AOE_obj=1` (`Player_Damage_Parent_obj=1` alongside); frame 35430 → `=1`; frame 36150 → `=1`. **OFF** (by eye OFF after 1 press): frame 39540, frame 40260 and frame 40950 each print only the header line `nonzero=177`, with no object rows in the log; absence of the row is *inferred* from that count matching the fully-listed baseline census at frame 27210 (177 rows enumerated in full, `White_Mage_Soul_Spurn_AOE_obj` not among them), not read directly at those three frames. Non-toggle control: `tgprobe deep diff hz2 hz3 Soul_Spurn` → `tgprobe deep diff hz2 hz3: changed=133 added=51 removed=43 truncated=0 filter=Soul_Spurn matching=0` — hz2/hz3 is the pair where C3 (the census positive control) fired, so it is the valid non-toggle control; the path does not change when Healing Zone is cast in that pair. (`tgprobe deep diff hz0 hz1 Soul_Spurn` also read `matching=0`, but hz0/hz1 is the pair where C3 did **not** fire, so it is not used as a control here — see C3 above.) Neither pair shows the AOE instance exists *only* because of the toggle; both show only that casting Healing Zone does not itself change this path. Read = `instance_number(asset_get_index(GetObjectName(GameObject::White_Mage_Soul_Spurn_AOE_obj))) > 0`; ON=1, OFF=0. The census reads above use a loop index over the object range plus `object_get_name`, not this shape directly on `White_Mage_Soul_Spurn_AOE_obj`. But the shape itself — `CallBuiltin("asset_get_index", …)` then `CallBuiltin("instance_number", …)`, by name (`TgProbeCountByName`, `ModuleMain.cpp:14916-14925`, invoked at `:14941-14942` from `TgProbeHudRoomTick`) — **did run this session**, on `White_Mage_Soul_Spurn_obj` and `Player_Ability_Parent_obj` (not the AOE object). No `self` was supplied to either call: `CallBuiltin` is the two-argument form YYTK documents as running in **the global context**, takes no `CInstance*` and never forwards the detour's `self` (`YYTK_Shared_Interface.hpp:66-74`; the `self`-taking form is the separate `CallBuiltinEx` at `:85`, not used here). So the only context this exercised is the global instance — no `self` value, `Controller_obj` or otherwise, has been supplied to this read yet, even though the call happens inside a `DrawHudBuffs` detour whose own GML `self` is `Controller_obj` (Q4). Timing: `TgProbeCountByName` runs only from the key-change branch of `TgProbeHudRoomTick` (`:14931-14943`; the per-frame part is just an interlocked counter at `:14945`), and the room key never changed this session — `firstHud=attach (not a zone change) room=4131119309451652171 frame=5400 firstHudSpurnInstances=0 firstHudAbilityInstances=0` is one snapshot taken once, at room attach, printed unchanged in three later `tgprobe show` replies (session2.log lines 127, 224, 1255; the rising `hudSinceRoomChange` in the same replies — 30, 11550, 43470 — is the separate per-frame counter, not a re-sample). So the shape ran **exactly twice**, once per object, at frame 5400. No cast had happened yet at that point: the same `tgprobe show` reply that samples `firstHud` also reads `TalentUse mode=native calls=0 lastFrame=0` at `frame=5430` (session2.log line 62); the first Soul Spurn cast is later — `TalentUse mode=native calls=1 lastFrame=14796` / `TalentsWhiteMage mode=native calls=1 lastFrame=14815` (log lines 159, 166) — matching the tester's by-eye OFF note at that point (log line 136). `0` is consistent with that: `White_Mage_Soul_Spurn_obj` never appears as a non-zero census row anywhere in this session, and `Player_Ability_Parent_obj` is absent from all three ON census reads (34740/35430/36150) and both OFF reads — it first shows up as `+ census.Player_Ability_Parent_obj=1` only much later, during the `hz2`/`hz3` Healing Zone cast (evidence about that cast, not about frame 5400). But neither object's own instance count was independently checked at frame 5400 itself, so `0` is consistent with, not proof of, the state at that moment. Both calls returned a number rather than the bare `unreadable` token (or `n/a` when no snapshot has been taken yet — `ModuleMain.cpp:15176`, `:15181-15182`), so the shape resolves in the global context at that one sample point; it shows nothing more than that. What it never returned this session, on any object, in any context, is a **non-zero**. The indicator workorder's positive control therefore cannot be "does the call return" — it must be an ON=1 read through this exact shape on `White_Mage_Soul_Spurn_AOE_obj`, in whatever context (global or a specific `self` via `CallBuiltinEx`) the indicator actually uses, which this session never obtained. Not the toggle: `Player_obj.playerEffect[182]` went `real:0.000000 -> int64:2` (`~ Player_obj.playerEffect[182]: real:0.000000 -> int64:2`, `deep diff base on Player_obj.`) on the first cast and stayed `2` after turning OFF (`tgprobe deep get Player_obj.playerEffect[182] = int64:2 frame=20550` while ON, `= int64:2 frame=25290` while OFF) — stays `2` while OFF; what it means is not established. The AOE instance's own variables while ON (`tgprobe vars White_Mage_Soul_Spurn_AOE_obj`): `activated=bool:true`, `purgatory=real:0.090000`, `purgatoryTimer=real:105.73`, `tick_frequency=180`, `tickNumber=19`. |
+| Q3-D | Where the ON state lives, read from non-scalar runtime storage (`tgprobe deep`) | measured | Path: `census.White_Mage_Soul_Spurn_AOE_obj` (`GameObject::White_Mage_Soul_Spurn_AOE_obj` = SDK index 5759; the runtime object index itself was never printed this session). Found by `tgprobe deep flip base on off` → `tgprobe deep flip base on off: A(flipped and reverted)=41 B(changed twice)=221 truncated=0`, bucket-A line `census.White_Mage_Soul_Spurn_AOE_obj: base=<absent> on=1 off=<absent>` (bucket A also holds `census.Player_Damage_Parent_obj: base=<absent> on=1 off=<absent>`, the object's parent class — not a distinct signal). Since the measured path is a `census.<Object>` leaf, `tgprobe deep get` cannot read it (`deep get` resolves scoped struct/array/ds paths, not the census map); per the driver amendment, three `tgprobe deep census` reads stand in for it on each side — **the six quoted reads below are excerpts of the log, not the full census output.** **ON** (by eye ON, 10 s window; each read's own full `nonzero=` count — 181/161/179 — covers every nonzero object, but only the two relevant rows are shown): frame 34740 → `White_Mage_Soul_Spurn_AOE_obj=1` (`Player_Damage_Parent_obj=1` alongside); frame 35430 → `=1`; frame 36150 → `=1`. **OFF** (by eye OFF after 1 press): frame 39540, frame 40260 and frame 40950 each print only the header line `nonzero=177`, with no object rows in the log; absence of the row is *inferred* from that count matching the fully-listed baseline census at frame 27210 (177 rows enumerated in full, `White_Mage_Soul_Spurn_AOE_obj` not among them), not read directly at those three frames. Non-toggle control: `tgprobe deep diff hz2 hz3 Soul_Spurn` → `tgprobe deep diff hz2 hz3: changed=133 added=51 removed=43 truncated=0 filter=Soul_Spurn matching=0` — hz2/hz3 is the pair where C3 (the census positive control) fired, so it is the valid non-toggle control; the path does not change when Healing Zone is cast in that pair. (`tgprobe deep diff hz0 hz1 Soul_Spurn` also read `matching=0`, but hz0/hz1 is the pair where C3 did **not** fire, so it is not used as a control here — see C3 above.) Neither pair shows the AOE instance exists *only* because of the toggle; both show only that casting Healing Zone does not itself change this path. Read = `instance_number(asset_get_index(GetObjectName(GameObject::White_Mage_Soul_Spurn_AOE_obj))) > 0`; ON=1, OFF=0. The census reads above use a loop index over the object range plus `object_get_name`, not this shape directly on `White_Mage_Soul_Spurn_AOE_obj`. But the shape itself — `CallBuiltin("asset_get_index", …)` then `CallBuiltin("instance_number", …)`, by name (`TgProbeCountByName`, `ModuleMain.cpp:14916-14925`, invoked at `:14941-14942` from `TgProbeHudRoomTick`) — **did run this session**, on `White_Mage_Soul_Spurn_obj` and `Player_Ability_Parent_obj` (not the AOE object). No `self` was supplied to either call: `CallBuiltin` is the two-argument form YYTK documents as running in **the global context**, takes no `CInstance*` and never forwards the detour's `self` (`YYTK_Shared_Interface.hpp:66-74`; the `self`-taking form is the separate `CallBuiltinEx` at `:85`, not used here). So the only context this exercised is the global instance — no `self` value, `Controller_obj` or otherwise, has been supplied to this read yet, even though the call happens inside a `DrawHudBuffs` detour whose own GML `self` is `Controller_obj` (Q4). Timing: `TgProbeCountByName` runs only from the key-change branch of `TgProbeHudRoomTick` (`:14931-14943`; the per-frame part is just an interlocked counter at `:14945`), and the room key never changed this session — `firstHud=attach (not a zone change) room=4131119309451652171 frame=5400 firstHudSpurnInstances=0 firstHudAbilityInstances=0` is one snapshot taken once, at room attach, printed unchanged in three later `tgprobe show` replies (session2.log lines 127, 224, 1255; the rising `hudSinceRoomChange` in the same replies — 30, 11550, 43470 — is the separate per-frame counter, not a re-sample). So the shape ran **exactly twice**, once per object, at frame 5400. No cast had happened yet at that point: the same `tgprobe show` reply that samples `firstHud` also reads `TalentUse mode=native calls=0 lastFrame=0` at `frame=5430` (session2.log line 62); the first Soul Spurn cast counted after `tgprobe reset` (log line 150) is later — `TalentUse mode=native calls=1 lastFrame=14796` / `TalentsWhiteMage mode=native calls=1 lastFrame=14815` (log lines 159, 166). The tester's by-eye OFF note (log line 136) comes before both the reset and that first counted cast, so it corroborates OFF shortly before frame 5400, not exactly at that point. `0` is consistent with that: `White_Mage_Soul_Spurn_obj` never appears as a non-zero census row anywhere in this session, and `Player_Ability_Parent_obj`'s absence rests on the fully enumerated census at frame 27210 (session2.log 757-935, `Player_Ability_Parent_obj` not among its 177 rows) and on its absence from both `deep flip base on off` buckets (log 490-737, A=41/B=221) — it is absent from all three ON census reads (34740/35430/36150) and all three OFF reads (39540/40260/40950), first showing up as `+ census.Player_Ability_Parent_obj=1` only much later, during the `hz2`/`hz3` Healing Zone cast (evidence about that cast, not about frame 5400). But neither object's own instance count was independently checked at frame 5400 itself, so `0` is consistent with, not proof of, the state at that moment. Both calls returned a number rather than the bare `unreadable` token (or `n/a` when no snapshot has been taken yet — `ModuleMain.cpp:15176`, `:15181-15182`), so the shape resolves in the global context at that one sample point; it shows nothing more than that. What it never returned this session, on any object, in any context, is a **non-zero**. The indicator workorder's positive control therefore cannot be "does the call return" — it must be an ON=1 read through this exact shape on `White_Mage_Soul_Spurn_AOE_obj`, in whatever context (global or a specific `self` via `CallBuiltinEx`) the indicator actually uses, which this session never obtained. Not the toggle: `Player_obj.playerEffect[182]` went `real:0.000000 -> int64:2` (`~ Player_obj.playerEffect[182]: real:0.000000 -> int64:2`, `deep diff base on Player_obj.`) on the first cast and stayed `2` after turning OFF (`tgprobe deep get Player_obj.playerEffect[182] = int64:2 frame=20550` while ON, `= int64:2 frame=25290` while OFF) — stays `2` while OFF; what it means is not established. The AOE instance's own variables while ON (`tgprobe vars White_Mage_Soul_Spurn_AOE_obj`): `activated=bool:true`, `purgatory=real:0.090000`, `purgatoryTimer=real:105.73`, `tick_frequency=180`, `tickNumber=19`. |
 | Q3-G | The same, from the local Ghidra read of `TalentsWhiteMage`'s talent-240 branch, paraphrased | not run — Q3-D measured | Step 5.10 (`naddr TalentsWhiteMage` / Ghidra fallback) was not reached: Q3-D came back `measured` with all controls fired, so per §5 the Ghidra pass is skipped. No `citrace` command was sent this session. |
 
 **Purgatory sub-talent level:** the storage exists, but which field is
@@ -810,16 +890,21 @@ indicator workorder:**
   `hudSinceRoomChange` that is a separate per-frame counter, not a
   re-sample). No cast had happened yet: the same reply samples `TalentUse
   mode=native calls=0 lastFrame=0` at `frame=5430` (log line 62), and the
-  first cast is later (`TalentUse ... lastFrame=14796` / `TalentsWhiteMage
-  ... lastFrame=14815`, log lines 159, 166), matching the tester's by-eye
-  OFF note at that point (log line 136). `0` is consistent with that —
-  `White_Mage_Soul_Spurn_obj` never appears as a non-zero census row
-  anywhere this session, and `Player_Ability_Parent_obj` is absent from all
-  three ON census reads and both OFF reads, first appearing only much later
-  (`+ census.Player_Ability_Parent_obj=1` during the `hz2`/`hz3` Healing Zone
-  cast) — but neither object's own count was independently checked at frame
-  5400, so `0` is consistent with, not proof of, the state at that moment.
-  See the Q3-D row for the full comparison.
+  first cast counted after `tgprobe reset` (log line 150) is later
+  (`TalentUse ... lastFrame=14796` / `TalentsWhiteMage ... lastFrame=14815`,
+  log lines 159, 166). The tester's by-eye OFF note (log line 136) comes
+  before both the reset and that first counted cast, so it corroborates OFF
+  shortly before frame 5400, not exactly at that point. `0` is consistent
+  with that — `White_Mage_Soul_Spurn_obj` never appears as a non-zero census
+  row anywhere this session, and `Player_Ability_Parent_obj`'s absence rests
+  on the fully enumerated census at frame 27210 (session2.log 757-935,
+  `Player_Ability_Parent_obj` not among its 177 rows) and on its absence
+  from both `deep flip base on off` buckets (log 490-737, A=41/B=221) — it
+  is absent from all three ON census reads and all three OFF reads, first
+  appearing only much later (`+ census.Player_Ability_Parent_obj=1` during
+  the `hz2`/`hz3` Healing Zone cast) — but neither object's own count was
+  independently checked at frame 5400, so `0` is consistent with, not proof
+  of, the state at that moment. See the Q3-D row for the full comparison.
 - **ON value:** `1` (instance exists). **OFF value:** `0` / absent (instance
   does not exist).
 - **`self` dependency: untested —** the shape is

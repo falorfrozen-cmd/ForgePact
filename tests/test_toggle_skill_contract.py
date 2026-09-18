@@ -508,5 +508,99 @@ class ToggleDeepReadContractTests(unittest.TestCase):
         self.assertIn("objNonStruct=", function_body(self.plugin, "static void TgProbeDeepSnap("))
 
 
+class ToggleIndicatorReadContractTests(unittest.TestCase):
+    """The toggle-skill active indicator's P1 research control (Track B).
+
+    Companion to test_toggle_skill_behavior.py, which runs the production
+    read end to end; this class asserts on source text and placement - which
+    function sits outside every research block, which call is research-only,
+    and that the player command table did not move.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.plugin = PLUGIN_SRC.read_text(encoding="utf-8")
+        cls.stripped = strip_research_blocks(cls.plugin)
+
+    def test_production_read_sits_outside_every_research_block(self):
+        # If either function were inside a research-only block, it would not
+        # survive stripping to what a player build actually compiles.
+        self.assertIn("static bool ToggleIndicatorResolveAoeObject(", self.stripped)
+        self.assertIn("static ForgePact::ToggleIndicatorState ToggleIndicatorRead(", self.stripped)
+
+    def test_production_read_uses_the_documented_shape(self):
+        read_body = function_body(self.plugin, "static ForgePact::ToggleIndicatorState ToggleIndicatorRead(")
+        resolve_body = function_body(self.plugin, "static bool ToggleIndicatorResolveAoeObject(")
+        combined = resolve_body + read_body
+        self.assertIn("GameObject::White_Mage_Soul_Spurn_AOE_obj", combined)
+        self.assertIn('"instance_number"', combined)
+        self.assertIn('"instance_find"', combined)
+        self.assertIn('"playerNumber"', combined)
+        self.assertIn("HhResolveLocalPlayer", combined)
+        # The read must stay the exact shape the research doc's ON=1 control
+        # proves: two-argument CallBuiltin, global context, never the
+        # self-taking CallBuiltinEx; and never a hand-resolved SDK index.
+        self.assertNotIn("CallBuiltinEx", combined)
+        self.assertNotIn("%f", combined)
+        self.assertNotIn("5759", combined)
+
+    def test_hook_draw_hud_buffs_calls_the_research_sampler_after_head_labels(self):
+        body = function_body(self.plugin, "static RValue& Hook_DrawHudBuffs(")
+        self.assertIn("HhDrawHeadLabels();", body)
+        self.assertIn("TgProbeSpurnAfterDraw();", body)
+        self.assertLess(body.index("HhDrawHeadLabels();"), body.index("TgProbeSpurnAfterDraw();"))
+        # The research call sits in its own #ifndef FORGEPACT_RELEASE pair -
+        # not merely somewhere inside a wider one, so a player build's
+        # Hook_DrawHudBuffs body is unchanged apart from removing this pair.
+        self.assertRegex(
+            body,
+            r"#ifndef FORGEPACT_RELEASE\s*\n\s*TgProbeSpurnAfterDraw\(\);\s*\n\s*#endif",
+        )
+
+    def test_research_sampler_calls_the_production_read_by_name(self):
+        sampler_body = function_body(self.plugin, "static void TgProbeSpurnAfterDraw()")
+        self.assertIn("ToggleIndicatorRead(", sampler_body)
+
+    def test_tgprobe_dispatches_spurn_and_mark(self):
+        dispatch_body = function_body(self.plugin, 'static void TgProbeCommand(const std::string& rest)')
+        self.assertIn('sub == "spurn"', dispatch_body)
+        self.assertIn('sub == "mark"', dispatch_body)
+
+    def test_mark_saves_and_restores_colour_and_alpha(self):
+        body = function_body(self.plugin, "static void TgProbeDrawMark()")
+        get_colour = body.index("draw_get_colour")
+        get_alpha = body.index("draw_get_alpha")
+        first_set = body.index("draw_set_")
+        self.assertLess(get_colour, first_set)
+        self.assertLess(get_alpha, first_set)
+        last_draw = body.rindex("draw_rectangle")
+        restore_alpha = body.rindex("draw_set_alpha")
+        restore_colour = body.rindex("draw_set_colour")
+        self.assertGreater(restore_alpha, last_draw)
+        self.assertGreater(restore_colour, last_draw)
+
+    def test_research_only_names_do_not_survive_stripping(self):
+        self.assertNotIn("TgProbeSpurn", self.stripped)
+        self.assertNotIn("TgProbeMark", self.stripped)
+        self.assertNotIn("TgProbeSpurnAfterDraw", self.stripped)
+
+    def test_kplayercommands_is_unchanged_from_7aa3c66(self):
+        match = re.search(
+            r"static const std::unordered_set<std::string> kPlayerCommands = \{(.*?)\};",
+            self.plugin, re.S)
+        self.assertIsNotNone(match, "kPlayerCommands not found")
+        entries = {tok.strip().strip('"') for tok in match.group(1).split(",") if tok.strip()}
+        expected = {
+            "ping", "density", "reveal", "specialrate", "dropmult",
+            "stat", "statadd", "raredrop", "droprate", "dungeonkey",
+            "headhunter", "hhdur", "hhmap", "hhdefault", "hhlabel", "tyrant", "beacon",
+            "beaconrange", "beaconmode", "beaconwake", "beaconspawn", "beaconfarstep",
+            "tyrantchance", "tyrantaffix", "hhlabelfont", "hhlabeloffset", "hhlabelmax",
+            "enemyspeed", "rarity", "sigdrop", "angelicdrop", "relicfilter", "orbpickup",
+            "satmods", "petquest",
+        }
+        self.assertEqual(entries, expected)
+
+
 if __name__ == "__main__":
     unittest.main()
