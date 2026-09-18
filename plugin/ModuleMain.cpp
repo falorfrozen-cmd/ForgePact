@@ -13038,25 +13038,23 @@ static const SpecialContent kSpecial[] = {
     { "cursedorb",    "Spawn_Cursed_Orb_obj",     7, 14.0,  false },
     { "summonportal", "Spawn_Summon_Portal_obj", -1, 0.0,   false },
     { "chaospillars", "Spawn_Chaos_Pillars_obj", -1, 0.0,   false },
-    // Chaos Tower: sans = taban(zorluk) + eSt[6]; zar random(zrmb) < floor(sans)*100.
-    // Shadow Realm: sans = 13 + eSt[9]; ayni zar.  eSt degeri sansi %100'e tamamlar.
+    // Iki mekanik de sansini ayni tur zarla dener; Chaos Tower'in sansi zorluga
+    // bagli bir tabandan, Shadow Realm'inki sabit bir tabandan gelir ve ikisine
+    // de eSt degeri eklenir.  Buradaki eSt degeri sansi %100'e tamamlar.
     { "chaostower",   "Spawn_Chaos_Tower_obj",    6, 100.0, true  },
     { "shadowrealm",  "Spawn_Shadow_Realm_obj",   9, 87.0,  true  },
 };
 
 // --- Shadow Realm / Chaos Tower "bir kere" kapilari ------------------------
-// Statik cozumleme (decompile, 2026-09-03):
-//   anon@119@gml_Object_Spawn_Shadow_Realm_obj_Create_0 (m_activateMechanic)
-//     GPV(gDataProtected[68]) >= 2            (zorluk kapisi)
-//     Controller_obj.shadowRealmSpawned == 0  (Portal_Shadow_Realm_obj Create true yapar,
-//                                              yalnizca kosu sifirlaninca geri doner)
-//     eSt[0] <= 0 ; random(zrmb) < (13 + max(eSt[9],0)) * 100 ; sCP(Portal_Shadow_Realm_obj)
-//   anon@97@gml_Object_Spawn_Chaos_Tower_obj_Create_0 (m_activateMechanic)
-//     GPV(gDataProtected[68]) >= 1            (zorluk; 0 iken zar atilmiyor - canli olculdu)
-//     GPV(Controller_obj.chaosTowerStarted) == 0
-//     GPV(Controller_obj.chaosTowerSpawnZone) == -1   (spawn sonrasi = oda; m_ChaosTowerReset -1 yapar)
-//     eSt[0] <= 0 ; codex/buff ; sans = taban(GPV 68, GPV 251) + eSt[6] ; RunningHost()
-//     -> instance_create_layer(Chaos_Tower_obj) ; SPV(chaosTowerSpawnZone, room)
+// Ne biliyoruz (kendi sozlerimizle; oyunun kodu burada yok):
+// Iki mekanigin activate adimi da ayni uc kapidan gecer - bir zorluk esigi
+// (asagida, canli olculdu), Controller_obj uzerinde kosu basina bir "zaten
+// cikti" durumu ve bir sans zari.  Shadow Realm'de bu durum
+// shadowRealmSpawned'dir: portal yaratilinca kurulur, yalnizca kosu
+// sifirlaninca temizlenir.  Chaos Tower'da chaosTowerStarted ile
+// chaosTowerSpawnZone'dur (bos hali -1; kule ciktiginda oda degerini alir,
+// kulenin reset'i -1'e dondurur).  Kancalar closure'lari
+// HeroSiege::Scripts sabitleriyle, isimle bulur.
 // Marker'i cogaltmak tek basina yetmez: ilk kopya bayragi kapatir, digerleri
 // sessizce cikar.  Bu kancalar, ozellik ACIKKEN (marker carpani > 1) her
 // activate cagrisindan hemen once bayraklari sifirlar; yer secimi, zar, ag
