@@ -33,13 +33,22 @@
 #include <vector>
 
 // ---- minimal game-API stand-ins ------------------------------------------
-enum { VALUE_REAL, VALUE_INT32, VALUE_INT64, VALUE_OBJECT, VALUE_REF, VALUE_STRING,
-       VALUE_UNDEFINED, VALUE_BOOL, VALUE_ARRAY };
+// The values match tests/cpp/stubs/YYToolkit/YYTK_Shared.hpp (VALUE_REF is
+// YYToolkit's own 15), so a kind carrying flag bits above the low 28 is
+// modelled the way the runner hands one over.
+enum { VALUE_REAL = 0, VALUE_STRING = 1, VALUE_ARRAY = 2, VALUE_UNDEFINED = 5, VALUE_OBJECT = 6,
+       VALUE_INT32 = 7, VALUE_INT64 = 8, VALUE_BOOL = 13, VALUE_REF = 15 };
+static const unsigned kKindFlagBit = 0x80000000u;   // a high flag bit on top of a kind
 // A script's `self`/`other`. Only what the guard can learn through a builtin
-// is modelled: its object_index as variable_instance_get answers it (a real
-// number, as the runner returns it), or a throw.
+// is modelled: its object_index as variable_instance_get answers it, or a
+// throw. The kind defaults to VALUE_REF because that is what this runner
+// returns for object_index (ModuleMain.cpp's N1ObjectIndex and the
+// Quest_Act_01_Brick_obj measurement, "kind=15 str=ref object ..."); a
+// stand-in that only answered VALUE_REAL let a guard that rejected VALUE_REF
+// pass every scenario while it would fail open on every live call.
 struct CInstance {
     double objectIndex = -1;
+    int objectIndexKind = VALUE_REF;
     bool objectIndexThrows = false;
 };
 struct RValue {
@@ -178,7 +187,8 @@ struct FakeRunner {
                 const CInstance* self = args[0].inst;
                 if (args[1].ToString() != "object_index") return RValue();
                 if (self->objectIndexThrows) throw std::runtime_error("object_index EXCEPTION");
-                return MakeReal(self->objectIndex);
+                RValue r; r.m_Kind = self->objectIndexKind; r.number = self->objectIndex;
+                return r;
             }
             const std::string tag = args[0].text;
             const std::string field = args[1].ToString();
@@ -791,6 +801,47 @@ int main() {
         checkInt("guard_on/counters/passed", g_TgdPassed, 3);
         checkInt("guard_on/counters/procSeen", g_TgdProcSeen, 2);
         checkInt("guard_on/counters", g_TgdSelfUnreadable + g_TgdObjUnresolved, 0);
+    }
+
+    // 39. The caller's object_index in every numeric kind the runner can hand
+    //     back - VALUE_REF (what this runner returns), the three plain number
+    //     kinds, and VALUE_REF with a flag bit set above the kind - identifies
+    //     the double-cast object, and its Soul Spurn re-cast is refused.
+    {
+        struct KindCase { const char* name; int kind; };
+        const KindCase kinds[] = {
+            { "ref", VALUE_REF }, { "real", VALUE_REAL }, { "int32", VALUE_INT32 },
+            { "int64", VALUE_INT64 }, { "ref_flagged", (int)(VALUE_REF | kKindFlagBit) },
+        };
+        for (const KindCase& k : kinds) {
+            resetGuard(true);
+            CInstance self; self.objectIndex = kDcObjIdx; self.objectIndexKind = k.kind;
+            GuardCall c = CallGuard(&self, 240.0, false);
+            const std::string label = std::string("guard_on/self_object_index_kinds/") + k.name;
+            checkInt(label + "/selfUnreadable", g_TgdSelfUnreadable, 0);
+            checkInt(label + "/refused", g_TgdRefused, 1);
+            checkInt(label, c.tramp, 0);
+        }
+    }
+
+    // 40. Negative control for 39: an object_index that is not an index at
+    //     all (undefined, a string, a bool carrying the same number) is
+    //     unreadable - counted, and the call passes. Widening the accepted
+    //     kinds must not become accepting anything.
+    {
+        struct KindCase { const char* name; int kind; };
+        const KindCase kinds[] = {
+            { "undefined", VALUE_UNDEFINED }, { "string", VALUE_STRING }, { "bool", VALUE_BOOL },
+        };
+        for (const KindCase& k : kinds) {
+            resetGuard(true);
+            CInstance self; self.objectIndex = kDcObjIdx; self.objectIndexKind = k.kind;
+            GuardCall c = CallGuard(&self, 240.0, false);
+            const std::string label = std::string("guard_on/self_object_index_not_an_index_passes/") + k.name;
+            checkInt(label + "/selfUnreadable", g_TgdSelfUnreadable, 1);
+            checkInt(label + "/refused", g_TgdRefused, 0);
+            checkInt(label, c.tramp, 1);
+        }
     }
 
     // The read never makes a player-resolving call, in any scenario above -

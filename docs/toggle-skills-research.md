@@ -1524,7 +1524,15 @@ the guard is off.
 **How the caller is identified.** By name: the caller's own `object_index`
 through `variable_instance_get` on `RValue(self)`, against
 `asset_get_index("Universal_Double_Cast_obj")` (an `hs-game-sdk` enumerator;
-the object has no parent). The index is cached only once it resolves to a real
+the object has no parent). Both values are read with the plugin's shared
+object-index predicate (`N1ObjectIndex`), which masks the flag bits above the
+kind and accepts `VALUE_REF` as well as the plain number kinds: this runner
+returns `object_index` as `VALUE_REF` (measured on other objects, see
+`N1ObjectIndex`), and a check that trusted only plain numbers would have
+failed open on every call while `toggleguard` reported ON. The behaviour
+harness answers `object_index` as `VALUE_REF` by default for that reason,
+with an undefined, string and bool answer as the negative control. The index
+is cached only once it resolves to a real
 index. Either read failing is counted (`selfUnreadable=`, `objUnresolved=`)
 and the call passes — the guard fails open and `toggleguard stat` says so. No
 `CInstance` field is read directly (guide "Finding 8").

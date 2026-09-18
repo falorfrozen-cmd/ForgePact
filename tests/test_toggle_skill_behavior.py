@@ -78,7 +78,11 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
             implementation(cls.plugin, "static bool ToggleIndicatorFindSlot("),
             implementation(cls.plugin, "static void ToggleIndicatorDraw("),
             # T1 (issue #11, Track A): the re-cast guard's real hook, its
-            # trampoline slot, counters and cached object index, verbatim.
+            # trampoline slot, counters and cached object index, verbatim,
+            # and the shared object-index predicate it reads the caller with
+            # (VALUE_REF-aware, flag bits masked).
+            implementation(cls.plugin, "static bool N1NearlyEqual("),
+            implementation(cls.plugin, "static bool N1ObjectIndex("),
             declaration(cls.plugin, "static PFUNC_YYGMLScript g_OrigTalentUseClass"),
             declaration(cls.plugin, "static volatile long g_TgdRefused"),
             declaration(cls.plugin, "static std::atomic<long> g_ToggleGuardDcObjIdx"),
@@ -336,6 +340,24 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
         self.assertScenario("guard_on/counters/passed")
         self.assertScenario("guard_on/counters/procSeen")
         self.assertScenario("guard_on/counters")
+
+    def test_guard_on_self_object_index_kinds(self):
+        # This runner returns object_index as VALUE_REF; a guard that only
+        # trusted plain number kinds would fail open on every live call.
+        for kind in ("ref", "real", "int32", "int64", "ref_flagged"):
+            label = f"guard_on/self_object_index_kinds/{kind}"
+            self.assertScenario(label + "/selfUnreadable")
+            self.assertScenario(label + "/refused")
+            self.assertScenario(label)
+
+    def test_guard_on_self_object_index_not_an_index_passes(self):
+        # Negative control: widening the accepted kinds is not accepting
+        # anything.
+        for kind in ("undefined", "string", "bool"):
+            label = f"guard_on/self_object_index_not_an_index_passes/{kind}"
+            self.assertScenario(label + "/selfUnreadable")
+            self.assertScenario(label + "/refused")
+            self.assertScenario(label)
 
 
 if __name__ == "__main__":

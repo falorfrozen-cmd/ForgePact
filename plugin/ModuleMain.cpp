@@ -4691,19 +4691,19 @@ static RValue& HookTalentUseClass(CInstance* S, CInstance* O, RValue& R, int arg
 
     // Who is calling, by name: the caller's own object_index (read through
     // the builtin, never off the CInstance - guide "Finding 8") against the
-    // double-cast object's index from asset_get_index. Either read failing
-    // is counted and the call passes: the guard fails open.
+    // double-cast object's index from asset_get_index. Both go through
+    // N1ObjectIndex: this runner returns object_index as VALUE_REF (measured,
+    // see N1ObjectIndex), sometimes with flag bits above the kind, and a
+    // plain-number-only check here would fail open on every live call.
+    // Either read failing is counted and the call passes: the guard fails open.
     bool callerIsDoubleCast = false;
-    long selfObj = -1;
+    int selfObj = -1;
     bool selfRead = false;
     if (S) {
         try {
             RValue inst = RValue(S);
             RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("object_index") });
-            if (oi.m_Kind == VALUE_REAL || oi.m_Kind == VALUE_INT32 || oi.m_Kind == VALUE_INT64) {
-                selfObj = (long)oi.ToDouble();
-                selfRead = true;
-            }
+            selfRead = N1ObjectIndex(oi, selfObj);
         } catch (...) {}
     }
     if (!selfRead) {
@@ -4712,10 +4712,11 @@ static RValue& HookTalentUseClass(CInstance* S, CInstance* O, RValue& R, int arg
         long dcIdx = g_ToggleGuardDcObjIdx.load();
         if (dcIdx < 0) {
             try {
-                const double d = g_Yytk->CallBuiltin("asset_get_index",
+                RValue dc = g_Yytk->CallBuiltin("asset_get_index",
                     { RValue(std::string(HeroSiege::Objects::GetObjectName(
-                        HeroSiege::Objects::GameObject::Universal_Double_Cast_obj))) }).ToDouble();
-                if (d >= 0) { dcIdx = (long)d; g_ToggleGuardDcObjIdx.store(dcIdx); }
+                        HeroSiege::Objects::GameObject::Universal_Double_Cast_obj))) });
+                int resolved = -1;
+                if (N1ObjectIndex(dc, resolved)) { dcIdx = resolved; g_ToggleGuardDcObjIdx.store(dcIdx); }
             } catch (...) {}
         }
         if (dcIdx < 0) InterlockedIncrement(&g_TgdObjUnresolved);

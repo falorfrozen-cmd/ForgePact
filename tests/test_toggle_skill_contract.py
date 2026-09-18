@@ -951,6 +951,20 @@ class ToggleGuardContractTests(unittest.TestCase):
             self.assertNotIn(forbidden, body, forbidden)
         self.assertIsNone(re.search(r"\b240\b", body))   # the one 240 is kToggleIndicatorTalentId
 
+    def test_caller_and_object_are_read_with_the_value_ref_aware_predicate(self):
+        # This runner returns object_index as VALUE_REF (ModuleMain.cpp's
+        # N1ObjectIndex, "kind=15 str=ref object ..."). A plain-number-only
+        # kind check here fails open on every live call, so both indices go
+        # through the shared predicate, which masks the flag bits and accepts
+        # VALUE_REF; the behavior harness's guard_on/self_object_index_kinds
+        # scenarios prove it end to end.
+        body = self.hook
+        self.assertEqual(body.count("N1ObjectIndex("), 2)
+        self.assertLess(body.index('"object_index"'), body.index("N1ObjectIndex("))
+        self.assertNotIn(".m_Kind == VALUE_REAL || oi.", body)
+        self.assertIsNone(re.search(r"\boi\.m_Kind\b", body))
+        self.assertIsNone(re.search(r"\.ToDouble\(\)", body[:body.index("ToggleGuardModel kGuard")]))
+
     def test_refusal_returns_the_result_without_the_original(self):
         body = self.hook
         refuse = body.index("ToggleGuardDecision::Refuse")
