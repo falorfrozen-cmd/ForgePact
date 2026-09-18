@@ -10,7 +10,7 @@ yaptığı burada kendi sözlerimizle, kapı kapı anlatılıyor, çağrı dizis
 değil (hub `AGENTS.md` › "Legal: Decompiled Output Never Reaches Any Origin").
 `tests/test_research_docs_no_decompiler_output.py` bu belgeyi bu standartta tutar.
 
-## Oyunun kendi mekanizması (statik + canlı doğrulandı)
+## Oyunun kendi mekanizması (statik okuma; canlı ölçülen yalnızca buff yokken zarın hiç atılmaması)
 
 - `gml_Script_DropItem` her öldürmede oyuncuda **buff 332** var mı diye bakıyor;
   bu kontrol DropItem'in içinde ve sonucu tek bir evet/hayır kapısı. Buff yoksa Angelic
