@@ -1,0 +1,269 @@
+"""Run the real toggle-skill indicator read against a controlled game API.
+
+Companion to toggle_skill_harness.cpp and test_toggle_skill_contract.py (which
+asserts on source text). This file proves the READ ITSELF - what
+ToggleIndicatorRead() and ToggleIndicatorModel::Decide() decide from a
+counted enumeration - end to end, before any drawing code exists (P1b;
+issue #11, Track B). Ownership is decided from each scanned instance's own
+`isMyClient`, not by comparing against the local player: session 3 measured
+that `Player_obj` has no `playerNumber` at all (docs/toggle-skills-research.md,
+"Co-op / ownership after session 3: isMyClient"). A second pass over the same
+evidence - `ToggleIndicatorModel::Decide(detail, requireMarker=true)` - is the
+marker-required decision session 4 controls ("Plain-cast flash (R10) and the
+Purgatory marker").
+"""
+import os
+import shutil
+import subprocess
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def implementation(source, signature):
+    """The full text of `signature`'s definition (last occurrence wins)."""
+    start = source.rfind(signature)
+    if start < 0:
+        raise AssertionError(f"not found: {signature}")
+    brace = source.index("{", start)
+    depth = 0
+    for index in range(brace, len(source)):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start:index + 1]
+    raise AssertionError(f"unterminated: {signature}")
+
+
+def declaration(source, prefix):
+    """One whole single-line declaration, so its value is never restated here."""
+    for line in source.split("\n"):
+        if line.strip().startswith(prefix):
+            return line
+    raise AssertionError(f"not found: {prefix}")
+
+
+class ToggleSkillBehaviorTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.plugin = (ROOT / "plugin/ModuleMain.cpp").read_text(encoding="utf-8")
+        header = (ROOT / "plugin/include/ForgePact/ToggleSkillMod.hpp").read_text(encoding="utf-8")
+
+        # The real class/struct/enum, verbatim, minus the include of
+        # Common.hpp (the harness supplies the stand-ins Common.hpp would
+        # have pulled in) - same shape as test_relic_filter_behavior.py.
+        klass = "\n".join(
+            line for line in header.split("\n")
+            if not line.strip().startswith("#pragma once")
+            and '#include "Common.hpp"' not in line
+        )
+        constants = "\n".join([
+            declaration(cls.plugin, "static constexpr int kToggleIndicatorScanCap"),
+            declaration(cls.plugin, "static constexpr int kToggleIndicatorTalentId"),
+        ])
+        production = "\n".join([
+            implementation(cls.plugin, "static bool ToggleIndicatorResolveAoeObject("),
+            implementation(cls.plugin, "static bool ToggleIndicatorReadTruth("),
+            implementation(cls.plugin, "static ForgePact::ToggleIndicatorState ToggleIndicatorRead("),
+            # P2 (the shipped indicator): the draw itself, and the slot
+            # lookup it calls. `g_ToggleBorderOn`/the counters are plain
+            # globals, spliced verbatim so a scenario can drive/inspect them
+            # the same way it drives `world` - toggleborder is off by
+            # default, same as in the plugin.
+            declaration(cls.plugin, "static std::atomic<bool> g_ToggleBorderOn"),
+            declaration(cls.plugin, "static volatile long g_TibDrawn"),
+            implementation(cls.plugin, "static bool ToggleIndicatorFindSlot("),
+            implementation(cls.plugin, "static void ToggleIndicatorDraw("),
+        ])
+
+        out = ROOT / "build/toggle-skill-behavior"
+        out.mkdir(parents=True, exist_ok=True)
+        code = (ROOT / "tests/toggle_skill_harness.cpp").read_text(encoding="utf-8")
+        code = code.replace("// PRODUCTION_CONSTANTS", constants)
+        code = code.replace("// PRODUCTION_TOGGLESKILL", klass)
+        code = code.replace("// PRODUCTION_FUNCTIONS", production)
+        cpp = out / "toggleskill.cpp"
+        cpp.write_text(code, encoding="utf-8")
+
+        cls.binary = out / ("toggleskill.exe" if os.name == "nt" else "toggleskill")
+        if os.name == "nt":
+            vswhere = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Microsoft Visual Studio/Installer/vswhere.exe"
+            if not vswhere.is_file():
+                raise unittest.SkipTest("Visual Studio C++ compiler is required for native behavior tests")
+            install = subprocess.check_output(
+                [str(vswhere), "-latest", "-products", "*", "-requires",
+                 "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "-property", "installationPath"],
+                text=True).strip()
+            if not install:
+                raise unittest.SkipTest("Visual Studio C++ toolchain not installed")
+            vcvars = Path(install) / "VC/Auxiliary/Build/vcvars64.bat"
+            batch = out / "compile.cmd"
+            batch.write_text(
+                f'@echo off\ncall "{vcvars}" >nul\nif errorlevel 1 exit /b 1\n'
+                f'cl /nologo /std:c++20 /EHsc /O2 "{cpp}" /Fe:"{cls.binary}" /Fo:"{out / "toggleskill.obj"}"\n'
+                f'exit /b %errorlevel%\n', encoding="utf-8")
+            command = ["cmd", "/d", "/c", str(batch)]
+        else:
+            compiler = shutil.which("c++")
+            if not compiler:
+                raise unittest.SkipTest("A C++20 compiler is required for native behavior tests")
+            command = [compiler, "-std=c++20", "-O2", str(cpp), "-o", str(cls.binary)]
+
+        result = subprocess.run(command, cwd=out, capture_output=True, text=True)
+        (out / "compile.log").write_text(result.stdout + result.stderr, encoding="utf-8")
+        if result.returncode:
+            raise AssertionError(result.stdout + result.stderr)
+
+        run = subprocess.run([str(cls.binary)], capture_output=True, text=True)
+        cls.output = run.stdout
+        (out / "run.log").write_text(run.stdout + run.stderr, encoding="utf-8")
+
+    def line(self, label):
+        for line in self.output.split("\n"):
+            if line.split(" ")[1:2] == [label]:
+                return line
+        raise AssertionError(f"scenario {label!r} not in harness output:\n{self.output}")
+
+    def assertScenario(self, label):
+        self.assertTrue(self.line(label).startswith("PASS "), self.line(label))
+
+    def test_harness_ran(self):
+        self.assertIn("RESULT OK", self.output, self.output)
+
+    # ---- ownership (isMyClient) --------------------------------------------
+
+    def test_no_aoe_is_off(self):
+        self.assertScenario("read/no_aoe_is_off")
+
+    def test_object_unresolved_is_unreadable(self):
+        # A different, stronger failure than "resolved but zero instances".
+        self.assertScenario("read/object_unresolved_is_unreadable")
+
+    def test_instance_number_throw_is_unreadable(self):
+        # A threw instance_number call is a failed read, not a measured zero
+        # - the catch's `d.n = 0` fallback must not decide a real, cheap Off.
+        self.assertScenario("read/instance_number_throw_is_unreadable")
+        self.assertScenario("read/instance_number_throw_is_unreadable/countReadFailed")
+
+    def test_own_bool_true_is_on(self):
+        self.assertScenario("read/own_bool_true_is_on")
+        self.assertScenario("read/own_bool_true_is_on/mine")
+
+    def test_own_real_one_is_on(self):
+        # isMyClient a nonzero numeric, not a VALUE_BOOL - still counts true.
+        self.assertScenario("read/own_real_one_is_on")
+
+    def test_foreign_bool_false_is_off(self):
+        self.assertScenario("read/foreign_bool_false_is_off")
+        self.assertScenario("read/foreign_bool_false_is_off/others")
+
+    def test_own_and_foreign_is_on(self):
+        self.assertScenario("read/own_and_foreign_is_on")
+        self.assertScenario("read/own_and_foreign_is_on/mine")
+        self.assertScenario("read/own_and_foreign_is_on/others")
+
+    def test_two_own_is_on(self):
+        self.assertScenario("read/two_own_is_on")
+        self.assertScenario("read/two_own_is_on/mine")
+
+    def test_unattributed_only_is_unreadable(self):
+        # A foreign AOE fails toward "absent"; an unattributed one (its own
+        # isMyClient could not be read) must not be guessed either way.
+        self.assertScenario("read/unattributed_only_is_unreadable")
+        self.assertScenario("read/unattributed_only_is_unreadable/unattributed")
+
+    def test_scan_is_capped(self):
+        self.assertScenario("read/scan_is_capped")
+        self.assertScenario("read/scan_is_capped/capped")
+        self.assertScenario("read/scan_is_capped/n")
+        self.assertScenario("read/scan_is_capped/mine")
+
+    def test_reread_every_call(self):
+        # No caching across calls - the same point-of-use rule as the guide's
+        # Known Limitations item 13.
+        self.assertScenario("read/reread_every_call/first_off")
+        self.assertScenario("read/reread_every_call")
+
+    def test_as_foreign_excludes_own(self):
+        # `spurn as foreign`: the non-mutating negative control.
+        self.assertScenario("read/as_foreign_excludes_own")
+        self.assertScenario("read/as_foreign_excludes_own/others")
+        self.assertScenario("read/as_foreign_excludes_own/mine")
+
+    def test_no_player_lookup(self):
+        # The read makes no player-resolving call at all, in any scenario
+        # above - Known Limitations item 7's kind-check bug had a different
+        # root cause than this workorder's, but the fix here is the same
+        # shape: read the thing itself, not something read off another
+        # object first.
+        self.assertScenario("read/no_player_lookup")
+
+    # ---- the Purgatory marker (session 4's discriminator) ------------------
+
+    def test_marked_own_on_when_required(self):
+        self.assertScenario("marker/marked_own_on_when_required/markedMine")
+        self.assertScenario("marker/marked_own_on_when_required")
+
+    def test_unmarked_own_off_when_required(self):
+        self.assertScenario("marker/unmarked_own_off_when_required/unmarkedMine")
+        self.assertScenario("marker/unmarked_own_off_when_required")
+
+    def test_unmarked_own_on_when_not_required(self):
+        # The SAME unmarked own instance: the plain ownership read (no
+        # marker required) does not consult purgatory at all.
+        self.assertScenario("marker/unmarked_own_on_when_not_required")
+
+    def test_unreadable_marker_unreadable_when_required(self):
+        self.assertScenario("marker/unreadable_marker_unreadable_when_required/markUnreadableMine")
+        self.assertScenario("marker/unreadable_marker_unreadable_when_required")
+
+    def test_foreign_marker_ignored(self):
+        # A foreign instance's own purgatory is never read for the marker
+        # split; only own instances count.
+        self.assertScenario("marker/foreign_marker_ignored/markedMine")
+        self.assertScenario("marker/foreign_marker_ignored")
+
+    # ---- the shipped indicator (P2): ToggleIndicatorDraw() -----------------
+
+    def test_indicator_off_makes_no_runtime_call(self):
+        self.assertScenario("indicator_off/no_runtime_calls")
+
+    def test_indicator_on_own_on_outlines_slot(self):
+        self.assertScenario("indicator_on/own_on_outlines_slot")
+        self.assertScenario("indicator_on/own_on_outlines_slot/rectangles")
+
+    def test_indicator_on_off_draws_nothing(self):
+        self.assertScenario("indicator_on/off_draws_nothing")
+        self.assertScenario("indicator_on/off_draws_nothing/rectangles")
+
+    def test_indicator_on_foreign_only_draws_nothing(self):
+        self.assertScenario("indicator_on/foreign_only_draws_nothing")
+        self.assertScenario("indicator_on/foreign_only_draws_nothing/counter")
+
+    def test_indicator_on_unreadable_draws_nothing_and_counts(self):
+        self.assertScenario("indicator_on/unreadable_draws_nothing_and_counts")
+        self.assertScenario("indicator_on/unreadable_draws_nothing_and_counts/counter")
+
+    def test_indicator_on_slot_not_found_draws_nothing_and_counts(self):
+        self.assertScenario("indicator_on/slot_not_found_draws_nothing_and_counts")
+        self.assertScenario("indicator_on/slot_not_found_draws_nothing_and_counts/counter")
+
+    def test_indicator_on_unmarked_own_draws_nothing(self):
+        # Session 4 measured the plain-cast flash (D-R2): the marker is
+        # required, so an unmarked own instance must not light the outline.
+        self.assertScenario("indicator_on/unmarked_own_draws_nothing")
+
+    def test_indicator_on_state_reread_every_draw(self):
+        self.assertScenario("indicator_on/state_reread_every_draw/first_off")
+        self.assertScenario("indicator_on/state_reread_every_draw")
+
+    def test_indicator_on_draw_colour_and_alpha_restored(self):
+        self.assertScenario("indicator_on/draw_colour_and_alpha_restored/colour")
+        self.assertScenario("indicator_on/draw_colour_and_alpha_restored/alpha")
+
+
+if __name__ == "__main__":
+    unittest.main()

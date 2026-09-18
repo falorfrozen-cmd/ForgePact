@@ -1,6 +1,7 @@
 import copy
 import importlib.util
 import re
+import sys
 import unittest
 from collections import Counter
 from pathlib import Path
@@ -1003,6 +1004,14 @@ class ClosureNameContractTests(unittest.TestCase):
 class PanelAllOffContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        # forgepact.py imports its sibling panel_icons.py by bare name;
+        # spec_from_file_location does not add the module's own directory to
+        # sys.path the way a normal package import would, so this exec would
+        # fail with a standalone run of this file (no other test module
+        # happened to insert src/ first) unless it is added here too.
+        src_dir = str(PANEL_PATH.parent)
+        if src_dir not in sys.path:
+            sys.path.insert(0, src_dir)
         spec = importlib.util.spec_from_file_location("forgepact_contract_module", PANEL_PATH)
         cls.panel = importlib.util.module_from_spec(spec)
         assert spec.loader is not None

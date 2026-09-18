@@ -47,6 +47,8 @@ EXPECTED_PLAYER_COMMANDS = {
     "beaconfarstep", "tyrantchance", "tyrantaffix", "hhlabelfont",
     "hhlabeloffset", "hhlabelmax", "enemyspeed", "rarity", "sigdrop",
     "angelicdrop", "relicfilter", "orbpickup", "satmods", "petquest",
+    # The Soul Spurn/Purgatory outline (issue #11, Track B), added alongside.
+    "toggleborder",
 }
 
 
