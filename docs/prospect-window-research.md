@@ -1486,3 +1486,275 @@ a launch that runs `autoprospect 1` (nor does `citrace nativetrace`).
   prospect one insert (by eye) and confirm `out.txt` shows `autoprospect: hook installed
   -> ON` and then `autoprospect: first prospect - invoked=1 prospected=1 …`.
 - Fill the `S-*` rows. The human decides which DLL stays installed.
+
+## Stage C: materials to the bag
+
+stage-c-status: pending
+
+The human asked (2026-09-18) for each prospect to first move the previous prospect's
+materials from the grid to the player's inventory ("bag"). The newest batch then stays
+visible until the next insert, the 9×6 grid stops filling with one-cell material stacks
+(today `grid-full` holds back), and only one batch is exposed to the save-time loss (R7).
+Moving a material is a **second game operation** nobody has observed: which routine runs
+when a player moves a material from the ProspectGrid to the bag, with what `self`, `other`
+and arguments, whether it merges into an existing stack, and what a full bag does. Stage C
+records all of it in one research build, with the player's own hand move as the positive
+control, before anything is built. Nothing ships unless a by-name shape qualifies (the rule
+at the end of § Stage C live procedure), and a move that empties a grid cell without the bag
+gaining it is a loss, never a success.
+
+What is already measured (§ Stage B results): both insert routes go through
+`m_MoveItemToGrid` (`UI_Inventory_Grid_obj anon@15345`); a click-in's `other` was an
+unnamed source grid (`@261539`), so which grid node is the bag is **not recorded**;
+materials are single-cell stacks, one per material type per prospect, not observed to
+merge; closing the window leaves them in the grid; moving a material inside the grid fires
+`m_MoveItemToGrid` and never invokes.
+
+### Stage C static search
+
+Done over `hs-game-sdk/cpp/include/hs_game_sdk/scripts.hpp` and `objects.hpp`: every
+script name containing move, transfer, stack, add, remove, space, quick, shift, take, loot,
+send, bag, inventory, grid, material or prospect (case-insensitive), then every Create-event
+closure of the bag window's object. 52 names not already rows were added to
+`prospectprobe`'s target table; each is the `HeroSiege::Scripts` constant's value, used
+as-is. Already rows, and not repeated: `InventoryGridAddItem`, `GridAddItem`,
+`GridHasSpace`, `InventoryGridHasSpace`, `GridClear`, `InvGridClearItemNode`,
+`GetStackOpLocationFromGridType`, `GetItemPreferredGrid`, `GetInventoryGridNode`,
+`ParseItemToGrid`, `s_ItemOperation`, `s_InvNode`, `s_ItemGridInfo`, every
+`UI_Inventory_Grid_obj`/`UI_Inventory_Parent_obj` closure, `PlayerMouseAction` and the
+`CheckPlayerInteraction` control. The hot rows (`ProcessInventoryGridInput` and its two
+structs, `UiDrawInventoryMaterialTab`) are ordinary rows: `arm`'s budget and label filters
+bound what they log. The table now has 143 rows, so `prospectprobe hook` stalls frames for
+longer than Phase 1's 91 rows did (about 9 s then).
+
+*Item operations the Stage A search left out:*
+
+| Probe label | Runtime name |
+|---|---|
+| `InventoryGridAddItemPos` | `gml_Script_InventoryGridAddItemPos` |
+| `InventoryGridRemoveItem` | `gml_Script_InventoryGridRemoveItem` |
+| `InventoryGridAddToStack` | `gml_Script_InventoryGridAddToStack` |
+| `InventoryGridCanAddToStack` | `gml_Script_InventoryGridCanAddToStack` |
+| `InventoryGridHasSpaceMulti` | `gml_Script_InventoryGridHasSpaceMulti` |
+| `InventoryGridAddItemToTab` | `gml_Script_InventoryGridAddItemToTab` |
+| `InventorySortTab` | `gml_Script_InventorySortTab` |
+| `___struct___187@InventorySortTab` | `gml_Script____struct___187@InventorySortTab@InventoryGrid` |
+| `ProcessInventoryGridInput` | `gml_Script_ProcessInventoryGridInput` (hot) |
+| `___struct___305@ProcessInventoryGridInput` | `gml_Script____struct___305@ProcessInventoryGridInput@ProcessInventoryGridInputFunc` (hot) |
+| `___struct___308@ProcessInventoryGridInput` | `gml_Script____struct___308@ProcessInventoryGridInput@ProcessInventoryGridInputFunc` (hot) |
+
+*Grid and stack primitives:*
+
+| Probe label | Runtime name |
+|---|---|
+| `GridAddToStack` | `gml_Script_GridAddToStack` |
+| `GridRemoveItem` | `gml_Script_GridRemoveItem` |
+| `GridSettle` | `gml_Script_GridSettle` |
+| `InventorySwapItemsNew` | `gml_Script_InventorySwapItemsNew` |
+| `InventoryStackHandler` | `gml_Script_InventoryStackHandler` |
+| `InventoryStackUpdateAndRemove` | `gml_Script_InventoryStackUpdateAndRemove` |
+| `___struct___161@InventoryStackUpdateAndRemove` | `gml_Script____struct___161@InventoryStackUpdateAndRemove@InventoryFuncs` |
+| `InventoryStackUpdateAndEdit` | `gml_Script_InventoryStackUpdateAndEdit` |
+| `InventorySplitOperation` | `gml_Script_InventorySplitOperation` |
+| `InventorySplitDrop` | `gml_Script_InventorySplitDrop` |
+| `UiASplitStack` | `gml_Script_UiASplitStack` |
+| `ItemsAreStackable` | `gml_Script_ItemsAreStackable` |
+| `IsStackable` | `gml_Script_IsStackable` |
+| `IsItemTypeStackable` | `gml_Script_IsItemTypeStackable` |
+| `GetMaxStack` | `gml_Script_GetMaxStack` |
+
+*Add-to-inventory family:*
+
+| Probe label | Runtime name |
+|---|---|
+| `AddToInventory` | `gml_Script_AddToInventory` |
+| `___struct___13@AddToInventory` | `gml_Script____struct___13@AddToInventory@AddToInventoryFunc` |
+| `___struct___16@OnlineAddToStack` | `gml_Script____struct___16@OnlineAddToStack@AddToInventoryFunc` |
+| `FindInventoryItemOperation` | `gml_Script_FindInventoryItemOperation` |
+| `___struct___152@FindInventoryItemOperation` | `gml_Script____struct___152@FindInventoryItemOperation@InventoryFuncs` |
+| `s_PendingStackOperation` | `gml_Script_s_PendingStackOperation` |
+| `s_InventoryDrag` | `gml_Script_s_InventoryDrag` (the held-item record's constructor) |
+| `GetItemOwnerFromStackOpLocation` | `gml_Script_GetItemOwnerFromStackOpLocation` |
+| `GetInventorySlotType` | `gml_Script_GetInventorySlotType` |
+| `GetItemFingerprint` | `gml_Script_GetItemFingerprint` |
+| `GetItemFromFingerprint` | `gml_Script_GetItemFromFingerprint` |
+| `InventoryUpdateExt` | `gml_Script_InventoryUpdateExt` |
+| `InventoryUpdateExtNoQue` | `gml_Script_InventoryUpdateExtNoQue` |
+| `InvGridEquipV2` | `gml_Script_InvGridEquipV2` |
+
+*Materials tab and command-arg pickup:*
+
+| Probe label | Runtime name |
+|---|---|
+| `UiAInventoryMaterialTabClick` | `gml_Script_UiAInventoryMaterialTabClick` |
+| `UiDrawInventoryMaterialTab` | `gml_Script_UiDrawInventoryMaterialTab` (hot) |
+| `CA_playerItemPickup` | `gml_Script_CA_playerItemPickup` |
+| `CA_playerItemPickupAccept` | `gml_Script_CA_playerItemPickupAccept` |
+| `CA_playerItemDrop` | `gml_Script_CA_playerItemDrop` |
+
+*The bag window's (`UI_Inventory_obj`) Create-event closures.* `UI_Inventory_obj` joined
+the object list of `test_target_table_covers_every_sdk_closure_of_the_ui_objects`, so the
+next SDK regeneration that renumbers these fails that test by name:
+
+| Probe label | Runtime name |
+|---|---|
+| `UI_Inventory_obj anon@495` | `gml_Script_anon@495@gml_Object_UI_Inventory_obj_Create_0` |
+| `UI_Inventory_obj anon@2261` | `gml_Script_anon@2261@gml_Object_UI_Inventory_obj_Create_0` |
+| `UI_Inventory_obj anon@2364` | `gml_Script_anon@2364@gml_Object_UI_Inventory_obj_Create_0` |
+| `UI_Inventory_obj anon@4391` | `gml_Script_anon@4391@gml_Object_UI_Inventory_obj_Create_0` |
+| `UI_Inventory_obj anon@5590` | `gml_Script_anon@5590@gml_Object_UI_Inventory_obj_Create_0` |
+| `UI_Inventory_obj anon@7874` | `gml_Script_anon@7874@gml_Object_UI_Inventory_obj_Create_0` |
+| `UI_Inventory_obj anon@14458` | `gml_Script_anon@14458@gml_Object_UI_Inventory_obj_Create_0` |
+
+**Negative results, sourced.** No script name in the SDK contains `Quick`, `ShiftClick`,
+`Transfer`, `TakeAll`, `LootAll`, `MoveAll`, `SendTo`, `ToInventory`, `ToBag` or
+`ToStash` (case-insensitive). `StashTakeItemOnline`/`StashAddItemOnline` exist but are the
+*online* stash routes and are not rows. `UI_Inventory_Drag_obj` has no Create-event closure
+in the SDK (grep of `scripts.hpp`); the held item is `s_InventoryDrag`. `hs-game-sdk` has
+no item-class constant in any binding (a grep of `hs-game-sdk/python/hs_game_sdk` and
+`player.hpp` for "material" finds sounds and sprites only). No ForgePact research doc has
+measured an inventory-add operation; the pet quest collector invoked `m_Questpickup` on a
+ground item, not an inventory move. These are "not found by name", not "does not exist":
+a quick-move the game offers under another name is what M3's right-click and shift-click
+test looks for.
+
+**Material identity, the expected signal.** The documented item-class table is
+`HSCraftSim/RESEARCH.md` § 2 ("Item types (= catalog `cls`)": 14 material, 15 socketable,
+16 relic, …), and the item instance struct carries an `itemType` field (same section). So a
+material is expected to be the cell's item instance with `itemType == 14`. Unverified:
+which member of a `nodeGrid` cell struct holds the item instance (only `nodeFingerprint`
+has been read) and that the field is spelled `itemType` there - `M-cell` and `M-identity`
+record both. The `-14` ending of a material's `nodeFingerprint` is a lead only, never the
+check: it is a field a material happens to carry, not what makes it a material.
+
+### Stage C hypotheses
+
+The positive control (M2/M3) decides between these, and `move` can express each:
+
+- **H-A** the bag grid node's own `m_MoveItemToGrid` (`anon@15345`) with `self` = the bag
+  node and `other` = the ProspectGrid, with the arguments the game passed. A click-in was
+  `argc=0`, so the item may come from the held-item state (`s_InventoryDrag`) rather than
+  an argument; if so, a by-name invoke with nothing held is recorded as it is, expected to
+  refuse or do nothing. Evidence: `anon@15345` logged on the bag node's `self` during the
+  hand move, with its `other` and `argc`.
+- **H-B** `m_DropItem` (`anon@8881`) on the bag node, the drop half of a drag. Evidence:
+  `anon@8881` logged on the bag node during M3's drag.
+- **H-C** a named inventory script those closures call, handed the item instance and a
+  destination (`InventoryGridAddItem`, `AddToInventory`, `InventoryGridAddToStack`,
+  `InventorySwapItemsNew`, or `GridRemoveItem` + `InvGridClearItemNode`) - the shape a
+  player build can produce from values read off the cell and the node. Evidence: which of
+  those rows fired during the hand move, and each logged argument's kind and value.
+- **H-D** a quick-move the game itself offers (a right-click or shift-click, keyed in
+  `ProcessInventoryGridInput`). If the human finds such a gesture, it is the preferred
+  control. Evidence: the gesture moves a material by eye, and which rows fired.
+
+Every hypothesis also needs: the ProspectGrid's `contents` before and after, the bag grid's
+filled count (or the stack count) before and after, and `CheckPlayerInteraction` non-zero
+with `anon@15345` counting in the same session - otherwise the instrument is not seeing
+calls and every row is `not observed`.
+
+### Stage C instrument (research build only, under `prospectprobe`)
+
+- **`grids`** (hook-free): every `UI_Inventory_Grid_obj` instance (object index by the SDK
+  name), as `bag:<k>` in `instance_find` order - its `@id`, its `uiNodeCallstack` printed
+  in full, `nodeGridWidth`/`nodeGridHeight`, `filled=`/`empty=` by `contents`'s rule, the
+  ids in `masterUi`/`parent`, and each `m_*` method with the closure it resolves to. The bag
+  grid is then named by its callstack, the way the ProspectGrid is by `"ProspectGrid"`.
+- **`cell <grid> <row> <col>`** (hook-free, read-only): `<grid>` is `prospect` or
+  `bag:<k|text>` (the k-th node `grids` listed, or the one node whose callstack contains
+  the text); row and col are indexed as `contents` prints them. It prints the cell's kind;
+  for a struct, every member with a shallow value, then each member that is itself a
+  struct one level down, so the item instance's type, fingerprint and stack count are
+  visible. `empty` and `unreadable, not empty` are never confused. Nothing is written.
+- **`move <self> <callable> [arg ...] [other=<sel>] [member=<name>] [bag=<k|text>]
+  confirm`**: one invoke per command, by name. `self`/`other` are `prospect`,
+  `bag:<k|text>` or `window` (`other` defaults to `self`). The callable is `m_<Method>` (a
+  method value read off `self`) or `script:<Name>` (its asset index); either goes to
+  `script_execute` through `CallBuiltinEx`, never an address. Arguments are `prospect`,
+  `bag:<k|text>`, `window`, `cell:<grid>,<r>,<c>` (the cell struct), `item:<grid>,<r>,<c>`
+  (the cell's `member=` member - M-cell's recorded item member; there is no default until
+  it is recorded), `n:<number>`, `undef` or `str:<text>`, each re-read at the command.
+  `bag=` names the bag grid (else the first `bag:` among self, other and the arguments).
+  Every refusal comes before any call and says `no call made`: no `confirm`; a callable
+  that is not `m_…`/`script:…`; no bag grid named; a pending `override`/`setat`; no open
+  window; no ProspectGrid; an unresolvable selector; a missing variable or one that is not
+  a method value; a script name with no asset index; the callable's row not detoured
+  (`invoked=` could not be proven - the rule `press` follows); an unreadable grid. The
+  outcome line carries `st=`, `(threw)`, `res=`, `invoked=` (the row's count across the
+  call), `self=`, `other=` and `args=` (each shallowly expanded); then the prospect
+  `contents K->K'` with its fingerprints, the bag's `filled B->B'`, `changed-cells=` and
+  `new-fingerprints=`, and a verdict decided from those deltas and `invoked=`, never from
+  `st=` alone:
+  - `left the grid but the bag did not gain it - POSSIBLE LOSS` - the prospect grid lost a
+    cell or a fingerprint, and the bag gained no cell, no fingerprint and no changed cell.
+    Decided first, whatever else happened;
+  - `moved (…)` - the prospect grid lost it, the bag gained it, and the callable's body
+    ran. When the bag gained no new cell or fingerprint, only a changed cell, the verdict
+    says so and asks for the stack's count by `cell` (a merge, or a POSSIBLE LOSS);
+  - `grids changed but handler not entered (invoked=NO) - not a move by this call`;
+  - `handler entered, nothing moved`;
+  - `dispatched but handler not entered (invoked=NO)`;
+  - `not dispatched`.
+
+### Stage C live procedure
+
+Research DLL, auto-prospect OFF for the whole session (`prospectprobe hook` and
+`autoprospect 1` detour the same `anon@15345` address), junk materials only,
+`%LOCALAPPDATA%\Hero_Siege` backed up, driven through `tools/ipc.ps1`.
+
+- **M0** build dev, install `plugin_build\BloodPactPlugin_rel.dll`, back up the save.
+- **M1** before loading a character: `prospectprobe hook` (rows must print `detoured`; record
+  `N detoured, M failed` and any `refused`). Load, open the cube, `prospectprobe grids`
+  (→ `M-grids`: every grid, its callstack name, which one is the bag), `contents`,
+  `cell prospect <r> <c>` on a material cell, the item's cell and an empty cell (→ `M-cell`,
+  `M-identity`). Prospect one junk item by hand first if the grid holds no material.
+- **M2, control by click.** `watch on`; `arm budget=40` (all rows). Click a material in the
+  ProspectGrid, click it into the bag. `show`, `contents`, `grids`, then `cell bag:<k> <r> <c>`
+  on the landed cell (→ `M-control-click`: every row that fired with `self`/`other`/args, the
+  two grids' deltas; `CheckPlayerInteraction` and `anon@15345` must be non-zero or every row
+  is `not observed`).
+- **M3, control by drag.** `reset`, `arm budget=40`; drag a material to the bag; same
+  records (→ `M-control-drag`). Also try a right-click and a shift-click on a material and
+  record whether the game itself quick-moves it (H-D).
+- **M4, stacking.** With one stack of a material type already in the bag, move another of the
+  same type by hand: merged (stack count up, bag filled unchanged) or a new cell; which stack
+  rows fired (→ `M-stack`). This defines "the bag gained it" for the adapter.
+- **M5, bag full.** Fill the bag (junk), move a material by hand: refused, and where (which
+  has-space row returned what), material still in the grid (→ `M-bagfull`). A hand move that
+  *loses* the material stops the session: record it, nothing ships.
+- **M6, re-entry.** Across M2 and M3, `anon@15345` calls on the ProspectGrid `self`
+  (→ `M-reentry`).
+- **M7, shapes.** In the order the controls suggest (H-A, H-B, H-C, then anything else the
+  rows showed), `prospectprobe move ... confirm` with every value from a selector (no captured
+  value). Record each outcome line, the verdict and the by-eye result (→ `M-shapes`). Repeat
+  the qualifying shape once with the bag full (must refuse or leave the material in place).
+  A crash: relaunch the same build, record it, continue.
+- **M8** fill the rows, `stage-c-status: complete`.
+
+**Qualifying rule for `move-shape`:** the shape printed `moved`, with `invoked=yes` on the
+row the control identified, every value from a selector a player build can produce by name
+(instances found by what they are, cell/item structs read off the node, numbers, `undef`),
+the material seen in the bag by eye, and its bag-full repeat left the material in the grid
+without a `POSSIBLE LOSS`. Otherwise `move-shape: none`.
+
+If nothing qualifies, Stage C stops there (`move-shape: none`): the next step is a
+paraphrased local read of the routine the control identified, then a second batched
+research build - never a guessed shape in a player build.
+
+## Stage C results
+
+Filled by the Stage C live session (research build, commit recorded at M0). A row that
+could not be measured says `not observed (<why>)`; no row is left empty once
+`stage-c-status` is `complete`.
+
+| Row | What fills it | Result |
+|---|---|---|
+| M-grids | M1's `grids`: every `UI_Inventory_Grid_obj` with its callstack name and size, and which one is the bag (the name the ship adapter finds it by) | |
+| M-cell | M1's `cell prospect` on a material cell: which cell-struct member holds the item instance, and that member's own fields (type, fingerprint, stack count) | |
+| M-identity | M1/M2's `cell`: the item-type value on a material cell (expected 14), on the inserted item's cell (expected not 14), and on the bag cell the material landed in (expected 14) | |
+| M-control-click | M2: every row that fired on a click-move of a material to the bag, with `self`/`other`/args, the two grids' deltas, and `CheckPlayerInteraction`/`anon@15345` non-zero | |
+| M-control-drag | M3: the same for a drag, plus whether a right-click or shift-click quick-moves a material (H-D) | |
+| M-stack | M4: a second material of a type already in the bag - merged (stack count up, bag filled unchanged) or a new cell, and which stack rows fired; defines "the bag gained it" | |
+| M-bagfull | M5: a hand move into a full bag - refused or not, which has-space row returned what, and the material still in the grid | |
+| M-reentry | M6: `anon@15345` calls on the ProspectGrid `self` across M2 and M3 | |
+| M-shapes | M7: per shape, the outcome line (`st=`, `res=`, `invoked=`, `self=`, `other=`, `args=`), the verdict, the by-eye result, or the crash; and the qualifying shape's bag-full repeat | |

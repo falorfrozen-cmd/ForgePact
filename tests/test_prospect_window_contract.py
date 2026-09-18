@@ -267,6 +267,8 @@ class ProspectWindowContractTests(unittest.TestCase):
         "UI_Prospect_obj", "UI_Inventory_Grid_obj", "UI_Inventory_Parent_obj", "UI_Node_Parent_obj",
         "UI_Grid_obj", "UI_Container_obj", "UI_Parent_obj", "Prospect_Cube_obj",
         "UI_Button_Journal_Prospect_obj", "UI_Journal_Prospecting_obj",
+        # Stage C: the bag window, whose closures may own the material move.
+        "UI_Inventory_obj",
     )
 
     def test_target_table_covers_every_sdk_closure_of_the_ui_objects(self):
@@ -826,6 +828,212 @@ class ProspectWindowContractTests(unittest.TestCase):
         snap = strip_comments(function_body(self.plugin, "static bool PpGridSnapshot("))
         self.assertNotIn("contents", snap)
         self.assertNotIn("nodeFingerprint", snap)
+
+    # ---- Stage C: materials to the bag ---------------------------------------
+    # Moving the previous batch's materials to the bag is a second game
+    # operation nobody has observed. It ships only after a research build has
+    # recorded the game's own move (a hand move as the positive control), a
+    # full bag, and a by-name invoke that qualifies. These pin that instrument:
+    # every candidate the static search found is a row, `grids` and `cell` only
+    # read, and `move` is research-only, confirm-gated, refuses before any
+    # call, and says what it supplied and whether a material was lost.
+
+    STAGE_C_CONSTANTS = (
+        "gml_Script_InventoryGridAddItemPos", "gml_Script_InventoryGridRemoveItem",
+        "gml_Script_InventoryGridAddToStack", "gml_Script_InventoryGridCanAddToStack",
+        "gml_Script_InventoryGridHasSpaceMulti", "gml_Script_InventoryGridAddItemToTab",
+        "gml_Script_InventorySortTab", "gml_Script____struct___187_InventorySortTab_InventoryGrid",
+        "gml_Script_ProcessInventoryGridInput",
+        "gml_Script____struct___305_ProcessInventoryGridInput_ProcessInventoryGridInputFunc",
+        "gml_Script____struct___308_ProcessInventoryGridInput_ProcessInventoryGridInputFunc",
+        "gml_Script_GridAddToStack", "gml_Script_GridRemoveItem", "gml_Script_GridSettle",
+        "gml_Script_InventorySwapItemsNew", "gml_Script_InventoryStackHandler",
+        "gml_Script_InventoryStackUpdateAndRemove",
+        "gml_Script____struct___161_InventoryStackUpdateAndRemove_InventoryFuncs",
+        "gml_Script_InventoryStackUpdateAndEdit", "gml_Script_InventorySplitOperation",
+        "gml_Script_InventorySplitDrop", "gml_Script_UiASplitStack", "gml_Script_ItemsAreStackable",
+        "gml_Script_IsStackable", "gml_Script_IsItemTypeStackable", "gml_Script_GetMaxStack",
+        "gml_Script_AddToInventory", "gml_Script____struct___13_AddToInventory_AddToInventoryFunc",
+        "gml_Script____struct___16_OnlineAddToStack_AddToInventoryFunc",
+        "gml_Script_FindInventoryItemOperation",
+        "gml_Script____struct___152_FindInventoryItemOperation_InventoryFuncs",
+        "gml_Script_s_PendingStackOperation", "gml_Script_s_InventoryDrag",
+        "gml_Script_GetItemOwnerFromStackOpLocation", "gml_Script_GetInventorySlotType",
+        "gml_Script_GetItemFingerprint", "gml_Script_GetItemFromFingerprint",
+        "gml_Script_InventoryUpdateExt", "gml_Script_InventoryUpdateExtNoQue", "gml_Script_InvGridEquipV2",
+        "gml_Script_UiAInventoryMaterialTabClick", "gml_Script_UiDrawInventoryMaterialTab",
+        "gml_Script_CA_playerItemPickup", "gml_Script_CA_playerItemPickupAccept", "gml_Script_CA_playerItemDrop",
+        "gml_Script_anon_495_gml_Object_UI_Inventory_obj_Create_0",
+        "gml_Script_anon_2261_gml_Object_UI_Inventory_obj_Create_0",
+        "gml_Script_anon_2364_gml_Object_UI_Inventory_obj_Create_0",
+        "gml_Script_anon_4391_gml_Object_UI_Inventory_obj_Create_0",
+        "gml_Script_anon_5590_gml_Object_UI_Inventory_obj_Create_0",
+        "gml_Script_anon_7874_gml_Object_UI_Inventory_obj_Create_0",
+        "gml_Script_anon_14458_gml_Object_UI_Inventory_obj_Create_0",
+    )
+
+    STAGE_C_FUNCTIONS = ("static std::vector<PpGridNode> PpListGridNodes(", "static bool PpResolveGridSel(",
+                         "static void PpGridsCommand(", "static bool PpReadCell(", "static std::string PpShallow(",
+                         "static void PpCellCommand(", "static void PpMoveCommand(")
+
+    def test_stage_c_rows_are_in_the_target_table(self):
+        self.assertEqual(len(self.STAGE_C_CONSTANTS), 52)
+        self.assertEqual(len(set(self.STAGE_C_CONSTANTS)), 52)
+        by_constant = {constant: label for _, label, constant in self.rows}
+        for constant in self.STAGE_C_CONSTANTS:
+            self.runtime_name(constant)   # exists in the SDK, or fails by name
+            self.assertIn(constant, by_constant, constant + " is not a PROSPECTPROBE_TARGETS row")
+        # The bag window's closures are labelled like every other object's.
+        for n in (495, 2261, 2364, 4391, 5590, 7874, 14458):
+            self.assertEqual(by_constant[f"gml_Script_anon_{n}_gml_Object_UI_Inventory_obj_Create_0"],
+                             f"UI_Inventory_obj anon@{n}")
+        self.assertEqual(by_constant["gml_Script_s_InventoryDrag"], "s_InventoryDrag")
+        self.assertEqual(by_constant["gml_Script_ProcessInventoryGridInput"], "ProcessInventoryGridInput")
+        # Every row still spells its C-safe name without a reserved double underscore.
+        for safe, _, _ in self.rows:
+            self.assertNotIn("__", safe)
+
+    def test_grids_is_hook_free(self):
+        shipped = strip_research_blocks(self.plugin)
+        for signature in self.STAGE_C_FUNCTIONS:
+            self.assertIn(signature, self.plugin)
+            self.assertNotIn(signature, shipped)
+        grids = strip_comments(function_body(self.plugin, "static void PpGridsCommand("))
+        lister = strip_comments(function_body(self.plugin, "static std::vector<PpGridNode> PpListGridNodes("))
+        # Every UI_Inventory_Grid_obj by its SDK name, whatever kind instance_find returns.
+        self.assertIn("PpGridObjectIndex()", lister)
+        self.assertIn('"instance_find"', lister)
+        self.assertNotIn("VALUE_OBJECT", lister)
+        self.assertIn('"uiNodeCallstack"', lister)
+        self.assertIn("CiExpandContainer(", lister)
+        self.assertIn("PpListGridNodes()", grids)
+        for text in ('"nodeGridWidth"', '"nodeGridHeight"', '"masterUi"', '"parent"', "CiTryResolveMethod(",
+                     "PpReadContents(", '" filled="', '" empty="', '"bag:"', "uiNodeCallstack=", "unreadable"):
+            self.assertIn(text, grids)
+        # Builtins only: no call into the game, no write, no detour.
+        for body in (grids, lister):
+            for forbidden in ("CallBuiltinEx", "CallGameScript", "script_execute", '"variable_instance_set"',
+                              '"variable_struct_set"', '"array_set"', '"variable_global_set"', "MmCreateHook",
+                              "PpDetour_", "PpInstall("):
+                self.assertNotIn(forbidden, body)
+        frame = function_body(self.plugin, "void FrameCallback(")
+        for name in ("PpGrids", "PpListGridNodes", "PpCell", "PpMove", "PpResolveGridSel", "PpReadCell"):
+            self.assertNotIn(name, frame)
+
+    def test_cell_is_hook_free_and_never_writes(self):
+        for signature in ("static void PpCellCommand(", "static bool PpReadCell(", "static std::string PpShallow(",
+                          "static bool PpResolveGridSel("):
+            body = strip_comments(function_body(self.plugin, signature))
+            for forbidden in ("CallBuiltinEx", "CallGameScript", "script_execute", '"variable_instance_set"',
+                              '"variable_struct_set"', '"array_set"', '"variable_global_set"', "MmCreateHook"):
+                self.assertNotIn(forbidden, body, signature)
+        cell = strip_comments(function_body(self.plugin, "static void PpCellCommand("))
+        self.assertIn("PpResolveGridSel(", cell)
+        self.assertIn("PpReadCell(", cell)
+        self.assertIn('"variable_struct_get_names"', cell)
+        # A struct member one level down is listed too, so the item instance's
+        # own fields (itemType, fingerprint, stack count) are visible.
+        self.assertIn("PpBackingObjectKind(", cell)
+        self.assertIn("one level down", cell)
+        # An empty cell and a failed read are said as such, never confused.
+        self.assertIn("PpBackingIsEmptyCell(", cell)
+        self.assertIn("unreadable, not empty", cell)
+        read = strip_comments(function_body(self.plugin, "static bool PpReadCell("))
+        for text in ('"nodeGrid"', "row < 0 || row >= rows", "col < 0 || col >= cols"):
+            self.assertIn(text, read)
+        shallow = strip_comments(function_body(self.plugin, "static std::string PpShallow("))
+        self.assertIn('"is_struct"', strip_comments(function_body(self.plugin, "static int PpBackingObjectKind(")))
+        self.assertIn("kPpShallowMembers", shallow)
+        # A kind check never decides which grid is read: `bag:<k>` counts
+        # every node instance_find returns.
+        sel = strip_comments(function_body(self.plugin, "static bool PpResolveGridSel("))
+        self.assertIn("PpListGridNodes()", sel)
+        self.assertIn("PpGridSnapshot(", sel)
+        self.assertIn("needs exactly one", sel)
+
+    def test_move_is_research_only_and_confirm_gated(self):
+        shipped = strip_research_blocks(self.plugin)
+        self.assertNotIn("PpMoveCommand", shipped)
+        for entry in self.player_commands():
+            for word in ("move", "grids", "cell"):
+                self.assertNotIn(word, entry)
+        command = strip_comments(function_body(self.plugin, "static void PpCommand("))
+        for dispatch in ('sub == "grids"', 'sub == "cell"', 'sub == "move"'):
+            self.assertIn(dispatch, command)
+        move = strip_comments(function_body(self.plugin, "static void PpMoveCommand("))
+        first_call = move.index("CallBuiltinEx(")
+        self.assertEqual(move.count("CallBuiltinEx("), 1)
+        self.assertIn('"confirm"', move)
+        self.assertLess(move.index('"confirm"'), move.index("PpFindWindow("))
+        self.assertLess(move.index('"confirm"'), first_call)
+        # By name only: a method value read off the instance, or a script's
+        # asset index - no address, no struct layout.
+        for forbidden in ("Rva", "MethodValueFunction", "CScriptRef", "m_CallYYC", "InvokeMethodValue",
+                          "GetModuleHandle", "CallGameScript"):
+            self.assertNotIn(forbidden, move)
+        self.assertIn('"script_execute", selfInst, otherInst, callArgs)', move)
+        self.assertIn('"asset_get_index"', move)
+        self.assertIn('"is_method"', move)
+        usage = function_body(self.plugin, "static void PpUsage(")
+        for text in ("grids", "cell <grid> <row> <col>", "move <self> <callable>", "confirm", "POSSIBLE LOSS"):
+            self.assertIn(text, usage)
+
+    def test_move_refuses_before_any_call(self):
+        move = strip_comments(function_body(self.plugin, "static void PpMoveCommand("))
+        first_call = move.index("CallBuiltinEx(")
+        self.assertGreaterEqual(move.count("no call made"), 12)
+        self.assertLess(move.rindex("no call made"), first_call)
+        for check in ("PpPendingRewrite()", "PpFindWindow(", "PpGridSnapshot(", "PpResolveInstanceSel(",
+                      "PpResolveValueSel(", "PpReadContents(", "HhResolveInstance("):
+            self.assertLess(move.index(check), first_call, check)
+        # The row that proves the body ran must be detoured, or no verdict
+        # could tell "nothing ran" from "ran and did nothing" (as for press).
+        guard = move.index("!row || !row->installed.load()")
+        self.assertLess(guard, first_call)
+        self.assertIn("is not detoured", move)
+        self.assertIn("no call made", move[guard:guard + 400])
+        # The loss verdict needs the bag grid read before and after.
+        self.assertIn("the loss verdict needs it", move)
+        for why in ("no open UI_Prospect_obj window", "no ProspectGrid", "not a method value", "member=<name>"):
+            self.assertIn(why, move)
+        # `item:` reads the member the live session recorded, never a guessed one.
+        value_sel = strip_comments(function_body(self.plugin, "static bool PpResolveValueSel("))
+        self.assertIn("member.empty()", value_sel)
+        self.assertIn('"variable_struct_exists"', value_sel)
+        for forbidden in ("CallBuiltinEx", "script_execute", '"variable_struct_set"', '"array_set"'):
+            self.assertNotIn(forbidden, value_sel)
+
+    def test_move_prints_what_was_supplied_and_the_loss_verdict(self):
+        move = strip_comments(function_body(self.plugin, "static void PpMoveCommand("))
+        first_call = move.index("CallBuiltinEx(")
+        self.assertLess(move.index("callsBefore ="), first_call)
+        self.assertLess(first_call, move.index("PpInvokedText(row, callsBefore"))
+        for field in ('" self="', '" other="', '" args="', 'st=" + std::to_string((int)st)', '" (threw)"',
+                      '" res="', '" callable="'):
+            self.assertIn(field, move)
+        # Both grids are read before and after the one call.
+        self.assertEqual(move.count("PpReadContents("), 4)
+        self.assertLess(move.index("PpReadContents("), first_call)
+        self.assertLess(first_call, move.rindex("PpReadContents("))
+        self.assertLess(move.index("PpGridDigest("), first_call)
+        self.assertLess(first_call, move.rindex("PpGridDigest("))
+        for text in ('" prospect contents "', '" bag filled "', '" changed-cells="', '" new-fingerprints="'):
+            self.assertIn(text, move)
+        verdicts = move[move.index("std::string verdict;"):]
+        for verdict in ('"moved (', "POSSIBLE LOSS", '"handler entered, nothing moved',
+                        '"dispatched but handler not entered (invoked=NO)"', '"not dispatched"',
+                        "UNREADABLE"):
+            self.assertIn(verdict, verdicts)
+        # A material that left the grid while the bag gained nothing is the
+        # first thing decided, whatever the handler count says.
+        self.assertIn("prospectLost && !bagGained", verdicts)
+        self.assertLess(verdicts.index("prospectLost && !bagGained"), verdicts.index('"moved ('))
+        self.assertLess(verdicts.index("prospectLost && !bagGained"), verdicts.index("invokedDelta > 0"))
+        self.assertIn("prospectLost && bagGained && invokedDelta > 0", verdicts)
+        self.assertLess(verdicts.index("else if (dispatched)"),
+                        verdicts.index('"dispatched but handler not entered (invoked=NO)"'))
+        self.assertIn("const long invokedDelta = *row->calls - callsBefore", move)
+        self.assertLess(first_call, move.index("const long invokedDelta"))
 
     # ---- the core header -----------------------------------------------------
 
