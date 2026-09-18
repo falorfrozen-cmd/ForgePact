@@ -692,6 +692,50 @@ class ToggleIndicatorShipContractTests(unittest.TestCase):
         self.assertIn('v == "off" || v == "0"', branch)
         self.assertNotIn("HookOneScript(", branch)
 
+    def test_toggleborder_dispatches_stat(self):
+        # Follow-up (indicator's reviews, F): `toggleborder stat` is
+        # read-only - it must not be reachable through the same branch that
+        # calls g_ToggleBorderOn.store(...).
+        start = self.plugin.index('if (lc == "toggleborder")')
+        end = self.plugin.index('if (lc == "relicfilter")', start)
+        branch = self.plugin[start:end]
+        self.assertIn('v == "stat"', branch)
+        stat_start = branch.index('v == "stat"')
+        stat_end = branch.index('v == "off" || v == "0"', stat_start)
+        stat_branch = branch[stat_start:stat_end]
+        self.assertIn("ToggleBorderStats()", stat_branch)
+        self.assertNotIn("g_ToggleBorderOn.store", stat_branch)
+
+    def test_toggleborder_outputs_name_every_counter(self):
+        # Both `toggleborder 0` and `toggleborder stat` share
+        # ToggleBorderCountersLine(), so both outputs name every counter by
+        # construction; `stat` additionally reports enabled=on|off.
+        counters_line = function_body(self.plugin, "static std::string ToggleBorderCountersLine(")
+        for key in ("drawn=", "on=", "off=", "unreadable=", "noHud=", "noRow0=",
+                    "noTalent=", "foreign=", "drawExc="):
+            self.assertIn(key, counters_line, key)
+        stats_body = function_body(self.plugin, "static void ToggleBorderStats(")
+        self.assertIn("ToggleBorderCountersLine()", stats_body)
+        self.assertIn("enabled=", stats_body)
+        start = self.plugin.index('if (lc == "toggleborder")')
+        end = self.plugin.index('if (lc == "relicfilter")', start)
+        branch = self.plugin[start:end]
+        zero_start = branch.index('v == "off" || v == "0"')
+        zero_body = branch[zero_start:branch.index("} else {", zero_start)]
+        self.assertIn("ToggleBorderCountersLine()", zero_body)
+
+    def test_no_slot_counter_removed(self):
+        # Follow-up: split into noHud/noRow0/noTalent - the old identifier
+        # must not survive anywhere in the plugin.
+        self.assertNotIn("g_TibNoSlot", self.plugin)
+
+    def test_draw_exception_is_counted(self):
+        # Follow-up: the catch after the outline loop must not swallow the
+        # exception uncounted.
+        body = function_body(self.plugin, "static void ToggleIndicatorDraw(")
+        catch_block = body[body.rindex("} catch (...)"):]
+        self.assertIn("g_TibDrawExc", catch_block)
+
     def test_draw_call_follows_head_labels_outside_research(self):
         body = function_body(self.plugin, "static RValue& Hook_DrawHudBuffs(")
         self.assertIn("HhDrawHeadLabels();", body)

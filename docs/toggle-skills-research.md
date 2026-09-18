@@ -926,7 +926,7 @@ The live `White_Mage_Soul_Spurn_AOE_obj` instance separately carries
 read from one of the six `subTalentMap` slots is not established.
 
 **By-eye caveats:** the `on2` state was not explicitly re-confirmed by the
-tester before the OFF presses began; the first OFF attempt took 2 presses,
+tester ahead of the OFF-press attempts; the first OFF attempt took 2 presses,
 the second took 1.
 
 ### Session 3
@@ -1002,8 +1002,52 @@ exactly — the sampler control passes for this session.
 | S1 | measured | By eye OFF (Purgatory just re-allocated, Soul Spurn not yet pressed). `tgprobe spurn: frame=5370 ... n=0 mine=0 others=0 unattributed=0 capped=0 state=off samples=3836 on=0 off=3836 unreadable=0 maxN=0 transitions=0 lastTransitionFrame=-1 markedOn=0 markedOff=3836 markedUnreadable=0`. |
 | S2 | measured | Tester pressed Soul Spurn once (ON by eye, Purgatory active), waited 2 s. `tgprobe spurn: frame=10920 ... n=1 mine=1 others=0 unattributed=0 capped=0 state=on samples=9386 on=1793 off=7593 unreadable=0 maxN=1 transitions=1 lastTransitionFrame=9127 markedOn=1793 markedOff=7593 markedUnreadable=0` — both `on=` and `markedOn=` rose from S1's `0`. `tgprobe spurn fields: appearance=1` first: `frame=9127 isMyClient=bool:true playerNumber=real:1.000000 targetNumber=real:1.000000 purgatory=real:0.090000 purgatoryTimer=real:14.400000 destroyTimer=real:144.000000`; last: `frame=10919 isMyClient=bool:true ... purgatory=real:0.090000 purgatoryTimer=real:84.588192 destroyTimer=real:-1.000000` — `isMyClient=bool:true` and `purgatory` numeric and greater than 0, both readings. |
 | S3 | measured | Still ON. `tgprobe spurn: frame=12270 ... n=1 mine=1 others=0 unattributed=0 capped=0 state=on samples=10736 on=3143 off=7593 ... transitions=1 lastTransitionFrame=9127 markedOn=3143 markedOff=7593`; `tgprobe spurn as foreign -> off n=1 mine=0 others=1 unattributed=0`; the next plain `tgprobe spurn` read immediately after is identical to the one just before (`frame=12270 ... samples=10736 on=3143 off=7593 ... transitions=1 lastTransitionFrame=9127 markedOn=3143 markedOff=7593` — every field unchanged), confirming the override never touched the real counters. |
-| S4 | measured | `tgprobe show` before the OFF press: `TalentUse mode=native calls=2 lastFrame=13791 lastGap=4683`; `TalentsWhiteMage mode=native calls=2 lastFrame=13810 lastGap=4683`. `tgprobe spurn: frame=15840 ... n=0 mine=0 others=0 ... state=off samples=14306 on=4683 off=9623 unreadable=0 maxN=1 transitions=2 lastTransitionFrame=13810 markedOn=4683 markedOff=9623`. `offlag:` = `lastTransitionFrame` (`13810`) minus the `TalentUse` press `lastFrame` (`13791`) = **19 frames**; the `TalentsWhiteMage` frame (`13810`) sits beside it, equal to `lastTransitionFrame` itself (0 frames after the cast resolves). |
+| S4 | measured | `tgprobe show`, taken after the OFF press (`.claude/workorders/forgepact-toggle-indicator-session4.log` 122-124, "S4: spurn + show after OFF press"), read: `TalentUse mode=native calls=2 lastFrame=13791 lastGap=4683`; `TalentsWhiteMage mode=native calls=2 lastFrame=13810 lastGap=4683`. `tgprobe spurn: frame=15840 ... n=0 mine=0 others=0 ... state=off samples=14306 on=4683 off=9623 unreadable=0 maxN=1 transitions=2 lastTransitionFrame=13810 markedOn=4683 markedOff=9623`. `offlag:` = `lastTransitionFrame` (`13810`) minus the `TalentUse` press `lastFrame` (`13791`) = **19 frames**; the `TalentsWhiteMage` frame (`13810`) sits beside it, equal to `lastTransitionFrame` itself (0 frames after the cast resolves). |
 | S5 | measured | Tester respecced Purgatory out, cast Soul Spurn once, waited ≥3 s. `tgprobe spurn: frame=21450 ... n=0 mine=0 others=0 ... state=off samples=19916 on=4829 off=15087 unreadable=0 maxN=1 transitions=4 lastTransitionFrame=19802 markedOn=4683 markedOff=15233`. `tgprobe spurn fields: appearance=2` first: `frame=19656 isMyClient=bool:true playerNumber=real:1.000000 targetNumber=real:1.000000 purgatory=real:0.000000 purgatoryTimer=real:14.400000 destroyTimer=real:144.000000`; last: `frame=19801 isMyClient=bool:true ... purgatory=real:0.000000 purgatoryTimer=real:14.400000 destroyTimer=real:-0.737424`. The new appearance's `purgatory` reads `0` (numeric, ≤ 0) in both "first" and "last"; `on=` rose `4683`→`4829` (+146) across this row while `markedOn=` stayed at `4683` — exactly the case the row's gate rule calls `flash: purgatory`. |
+
+### Ship-build confirmation (2026-09-18)
+
+Follow-up from the indicator's reviews: the shipped player build
+(`BloodPactPlugin_ship.dll`, no research commands, no `tgprobe`) was driven
+with `ForgePact/tools/ipc.ps1` in town, White Mage with Soul Spurn +
+Purgatory allocated. Full verbatim output, quoted from
+`.claude/workorders/forgepact-toggle-indicator-shipcheck.log` (a hub
+workorder artefact, not part of this submodule, never staged):
+
+```
+=== ship-build check 2026-09-18T23:46:30 === [by eye: in town]
+--- toggleborder 1 ---
+>> toggleborder 1
+---- running command file ----
+toggleborder -> ON (outlines Soul Spurn's skill-bar slot while the Purgatory-toggled drain is active)
+---- done ----
+
+[by eye: step 1 OFF -> no outline, HUD unchanged; step 2 pressed Soul Spurn ON with Purgatory -> GOLD OUTLINE shows on its button]
+[by eye: step 3 pressed Soul Spurn OFF -> outline GONE]
+[by eye: step 4 Soul Spurn ON (outline shown), waypoint to new zone -> no outline in new zone]
+[by eye: step 5 Soul Spurn ON (outline shown), drain self-cancelled -> outline GONE]
+[by eye: step 6 Purgatory respecced out, cast Soul Spurn once -> NO outline at any point]
+--- counters: toggleborder 0 + tgprobe (ship-build check) ---
+>> toggleborder 0
+>> tgprobe spurn
+---- running command file ----
+toggleborder -> off drawn=4599 on=4599 off=14279 unreadable=0 noSlot=0 foreign=0
+command unavailable in player build: tgprobe
+---- done ----
+
+--- re-enable ---
+>> toggleborder 1
+---- running command file ----
+toggleborder -> ON (outlines Soul Spurn's skill-bar slot while the Purgatory-toggled drain is active)
+---- done ----
+```
+
+The six by-eye lines confirm ON/OFF tracks the press, clears on a zone
+change, clears on self-cancel, and never flashes on a Purgatory-less cast
+(D-R2). `command unavailable in player build: tgprobe` confirms the research
+command is compiled out of this binary. `noSlot=0` is this build's pre-F
+field name (the follow-up above replaces it with `noHud=`/`noRow0=`/
+`noTalent=`) — quoted verbatim from the log, not rewritten to the new names.
 
 ## Decision
 
@@ -1207,8 +1251,9 @@ exactly the plain-cast flash D-R2 anticipated, and the marker-required
 decision (`markedOn`) does not. `flash: purgatory` follows: P2 requires the
 Purgatory marker.
 
-**Off lag: 19.** S4's `tgprobe show` before the press read `TalentUse
-... lastFrame=13791`; the following `tgprobe spurn` read
+**Off lag: measured once at 19 frames.** S4's `tgprobe show`, taken after the
+press, read `TalentUse ... lastFrame=13791` (the press itself); the same
+`tgprobe spurn` reply taken alongside it read
 `lastTransitionFrame=13810`, matching `TalentsWhiteMage ... lastFrame=13810`
 exactly (0 frames between the cast resolving and the ownership-only read
 flipping to `off`). `offlag:` = `13810 − 13791` = **19 frames** from the
@@ -1262,8 +1307,8 @@ decision.
 
 **Decision:** an AOE instance lights the indicator if its own `isMyClient`
 (read with `variable_instance_get`, no local-player read at all) is true. A
-`VALUE_BOOL` gives its truth directly; a numeric kind counts nonzero as true;
-anything else — undefined, a string, or a throw — is *unattributed* and never
+`VALUE_BOOL` gives its truth directly; a numeric kind counts true only when
+the value reads numeric > 0; anything else — undefined, a string, or a throw — is *unattributed* and never
 lights it. An own instance whose own `purgatory` reads numeric greater than
 zero is additionally *marked*; see "Plain-cast flash (R10) and the Purgatory
 marker" for when the marker is required. If every instance present is
@@ -1293,6 +1338,29 @@ real (un-overridden) answer is `on`. That proves the `others` branch runs on
 live values; it does not prove what `isMyClient` means for a real partner,
 which stays a Known Limitation. No natural `isMyClient=false` instance was
 looked for, and none is planned.
+
+#### Plain-cast flash (R10) and the Purgatory marker
+
+**Decision (D-R2): `flash: purgatory`.** The plain ownership read above (any
+own instance lights it) is not what P2 ships — R10 and session 4's S5 both
+cast Soul Spurn once *without* Purgatory allocated and watched the same
+`White_Mage_Soul_Spurn_AOE_obj` instance appear. R10 (Results → Session 3)
+saw `unreadable` and `transitions` both advance the same way a toggled cast
+does, from a respecced character, with `localNumber` unreadable throughout —
+so a non-Purgatory cast creates the identical AOE instance the toggled cast
+does; a plain ownership read cannot tell the two apart. Session 4's S5
+(Results → Session 4) measured the consequence directly: the new appearance's
+own `purgatory` field read `real:0.000000` (numeric, ≤ 0) in both the
+"first" and "last" latched snapshots, while the plain ownership counter
+`on=` still rose by 146 across the row and `markedOn=` — the same evidence
+gated on `purgatory` reading numeric > 0 — did not move at all. Left alone,
+the shipped indicator would flash gold on every plain cast of Soul Spurn, not
+only the Purgatory-toggled drain the feature is about. P2 therefore requires
+an own instance's own `purgatory` to read numeric > 0 before it lights the
+outline (`ToggleIndicatorModel::Decide(detail, requireMarker=true)`); an own
+instance that is only readably unmarked answers Off, and an own instance
+whose own marker could not be read, with none marked, answers Unreadable
+rather than guessing.
 
 #### Research-build control (P1/P1b): `tgprobe spurn` and `tgprobe mark`
 

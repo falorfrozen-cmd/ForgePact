@@ -104,7 +104,11 @@ struct World {
     // P2 slot lookup:
     bool hudTalentObjectResolves = true;
     bool hudTalentInstanceExists = true;
+    bool row0IsArray = true;   // false -> variable_instance_get("row0") answers non-array (noRow0)
     std::vector<HudRow0Elem> row0 = { { 240.0, 100.0, 200.0, 50.0, 60.0 } };
+    // Follow-up: a throwing draw_rectangle stub, to prove the catch after the
+    // outline loop counts the exception rather than swallowing it uncounted.
+    bool drawRectangleThrows = false;
 };
 static World world;
 static long g_ResolveCalls = 0;    // HhResolveLocalPlayer calls - must stay 0 (read/no_player_lookup)
@@ -144,6 +148,7 @@ struct FakeRunner {
             const std::string field = args[1].ToString();
             if (tag == "hud:0") {
                 if (field != "row0") return RValue();
+                if (!world.row0IsArray) return RValue();   // VALUE_UNDEFINED, not an array
                 RValue r; r.m_Kind = VALUE_ARRAY; r.text = "row0";
                 return r;
             }
@@ -194,7 +199,10 @@ struct FakeRunner {
         if (fn == "make_colour_rgb") return RValue(123456.0);
         if (fn == "draw_set_colour") { g_LastSetColour = args[0].ToDouble(); return RValue(); }
         if (fn == "draw_set_alpha") { g_LastSetAlpha = args[0].ToDouble(); return RValue(); }
-        if (fn == "draw_rectangle") { ++g_RectangleDraws; return RValue(); }
+        if (fn == "draw_rectangle") {
+            if (world.drawRectangleThrows) throw std::runtime_error("draw_rectangle EXCEPTION");
+            ++g_RectangleDraws; return RValue();
+        }
         return RValue();
     }
 };
@@ -510,17 +518,19 @@ int main() {
         checkInt("indicator_on/unreadable_draws_nothing_and_counts/counter", g_TibUnreadable, 1);
     }
 
-    // 24. ON, own+marked, but the slot never resolves: draws nothing, and
-    //     counts it separately from Unreadable.
+    // 24. ON, own+marked, but the slot never resolves (no element carries
+    //     talentId 240): draws nothing, and counts it separately from
+    //     Unreadable - via noTalent, the follow-up's three-way split of the
+    //     old single noSlot counter.
     resetWorld();
     g_ToggleBorderOn.store(true);
     world.instances = { OwnMarked(0.09) };
     world.row0.clear();
     {
-        g_TibDrawn = 0; g_RectangleDraws = 0; g_TibNoSlot = 0;
+        g_TibDrawn = 0; g_RectangleDraws = 0; g_TibNoTalent = 0;
         ToggleIndicatorDraw();
         checkInt("indicator_on/slot_not_found_draws_nothing_and_counts", g_TibDrawn, 0);
-        checkInt("indicator_on/slot_not_found_draws_nothing_and_counts/counter", g_TibNoSlot, 1);
+        checkInt("indicator_on/slot_not_found_draws_nothing_and_counts/counter", g_TibNoTalent, 1);
     }
 
     // 25. ON, own but unmarked (purgatory readable, <= 0): draws nothing -
@@ -559,6 +569,56 @@ int main() {
         ToggleIndicatorDraw();
         checkNear("indicator_on/draw_colour_and_alpha_restored/colour", g_LastSetColour, kPrevColour);
         checkNear("indicator_on/draw_colour_and_alpha_restored/alpha", g_LastSetAlpha, kPrevAlpha);
+    }
+
+    // 28. Follow-up: a throwing draw_rectangle stub. The catch after the
+    //     outline loop must count the exception rather than swallow it
+    //     uncounted, and drawn must stay 0 (the draw did not complete).
+    resetWorld();
+    g_ToggleBorderOn.store(true);
+    world.instances = { OwnMarked(0.09) };
+    world.drawRectangleThrows = true;
+    {
+        g_TibDrawn = 0; g_TibDrawExc = 0;
+        ToggleIndicatorDraw();
+        checkInt("indicator_on/draw_exception_counts/drawn", g_TibDrawn, 0);
+        checkInt("indicator_on/draw_exception_counts", g_TibDrawExc, 1);
+    }
+
+    // 29. Follow-up: ToggleIndicatorFindSlot's noSlot split into three
+    //     counters that mean something different, each failure mode leaving
+    //     the other two untouched. No HUD object -> noHud; row0 not an
+    //     array -> noRow0; no element with talentId 240 -> noTalent (the
+    //     same case scenario 24 above exercises, reused here for the split).
+    resetWorld();
+    g_ToggleBorderOn.store(true);
+    world.instances = { OwnMarked(0.09) };
+    world.hudTalentObjectResolves = false;
+    {
+        g_TibNoHud = 0; g_TibNoRow0 = 0; g_TibNoTalent = 0;
+        ToggleIndicatorDraw();
+        checkInt("indicator_on/slot_failures_are_split/noHud", g_TibNoHud, 1);
+        checkInt("indicator_on/slot_failures_are_split/noHud/others_zero", g_TibNoRow0 + g_TibNoTalent, 0);
+    }
+    resetWorld();
+    g_ToggleBorderOn.store(true);
+    world.instances = { OwnMarked(0.09) };
+    world.row0IsArray = false;
+    {
+        g_TibNoHud = 0; g_TibNoRow0 = 0; g_TibNoTalent = 0;
+        ToggleIndicatorDraw();
+        checkInt("indicator_on/slot_failures_are_split/noRow0", g_TibNoRow0, 1);
+        checkInt("indicator_on/slot_failures_are_split/noRow0/others_zero", g_TibNoHud + g_TibNoTalent, 0);
+    }
+    resetWorld();
+    g_ToggleBorderOn.store(true);
+    world.instances = { OwnMarked(0.09) };
+    world.row0.clear();
+    {
+        g_TibNoHud = 0; g_TibNoRow0 = 0; g_TibNoTalent = 0;
+        ToggleIndicatorDraw();
+        checkInt("indicator_on/slot_failures_are_split/noTalent", g_TibNoTalent, 1);
+        checkInt("indicator_on/slot_failures_are_split", g_TibNoHud + g_TibNoRow0, 0);
     }
 
     // The read never makes a player-resolving call, in any scenario above -

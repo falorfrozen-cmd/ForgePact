@@ -4544,8 +4544,12 @@ static ForgePact::ToggleIndicatorState ToggleIndicatorRead(ForgePact::ToggleIndi
 // (indicator_off/no_runtime_calls). Installs nothing: DrawHudBuffs is
 // already hooked by InstallHeadLabelHook() at init.
 static std::atomic<bool> g_ToggleBorderOn{ false };
-// Printed by `toggleborder 0`: drawn=/on=/off=/unreadable=/noSlot=/foreign=.
-static volatile long g_TibDrawn = 0, g_TibOn = 0, g_TibOff = 0, g_TibUnreadable = 0, g_TibNoSlot = 0, g_TibForeign = 0;
+// Printed by `toggleborder 0` and `toggleborder stat` (which also prints
+// enabled=on|off and touches nothing else): drawn=/on=/off=/unreadable=/
+// noHud=/noRow0=/noTalent=/foreign=/drawExc=. noHud/noRow0/noTalent replace
+// the old single noSlot= - see ToggleIndicatorFindSlot below for which of
+// its three meaningfully-different failures each one counts.
+static volatile long g_TibDrawn = 0, g_TibOn = 0, g_TibOff = 0, g_TibUnreadable = 0, g_TibNoHud = 0, g_TibNoRow0 = 0, g_TibNoTalent = 0, g_TibForeign = 0, g_TibDrawExc = 0;
 
 // Session 3's R5 measured the array: UI_Hud_Talent_obj instance 0's own
 // `row0` array holds one element per hotbar slot, and the element whose own
@@ -4555,6 +4559,12 @@ static volatile long g_TibDrawn = 0, g_TibOn = 0, g_TibOff = 0, g_TibUnreadable 
 // "Slot geometry fields"). No hs-game-sdk constant exists for talent id 240
 // (searched python/cpp/ts) - see the research doc's Q1.
 static constexpr int kToggleIndicatorTalentId = 240;   // Soul Spurn
+// Returns false at three meaningfully different points (follow-up from the
+// indicator's reviews): the HUD talent object/instance-0 side (noHud, which
+// also covers the two catch-alls - a resolve/lookup exception tells us
+// nothing more specific than "the HUD side failed"), row0 not an array
+// (noRow0), and no element carrying talentId == kToggleIndicatorTalentId
+// (noTalent). Each caller-visible failure increments exactly one counter.
 static bool ToggleIndicatorFindSlot(double& outX, double& outY, double& outW, double& outH)
 {
     try {
@@ -4563,12 +4573,12 @@ static bool ToggleIndicatorFindSlot(double& outX, double& outY, double& outW, do
             objIdx = g_Yytk->CallBuiltin("asset_get_index",
                 { RValue(std::string(HeroSiege::Objects::GetObjectName(
                     HeroSiege::Objects::GameObject::UI_Hud_Talent_obj))) }).ToDouble();
-        } catch (...) { return false; }
-        if (objIdx < 0) return false;
+        } catch (...) { InterlockedIncrement(&g_TibNoHud); return false; }
+        if (objIdx < 0) { InterlockedIncrement(&g_TibNoHud); return false; }
         RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue(objIdx), RValue(0.0) });
-        if (inst.m_Kind == VALUE_UNDEFINED) return false;
+        if (inst.m_Kind == VALUE_UNDEFINED) { InterlockedIncrement(&g_TibNoHud); return false; }
         RValue arr = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("row0") });
-        if (arr.m_Kind != VALUE_ARRAY) return false;
+        if (arr.m_Kind != VALUE_ARRAY) { InterlockedIncrement(&g_TibNoRow0); return false; }
         const int len = (int)g_Yytk->CallBuiltin("array_length", { arr }).ToDouble();
         for (int i = 0; i < len; ++i) {
             RValue elem = g_Yytk->CallBuiltin("array_get", { arr, RValue((double)i) });
@@ -4582,8 +4592,9 @@ static bool ToggleIndicatorFindSlot(double& outX, double& outY, double& outW, do
             outH = g_Yytk->CallBuiltin("variable_struct_get", { elem, RValue("navBboxHeight") }).ToDouble();
             return true;
         }
+        InterlockedIncrement(&g_TibNoTalent);
         return false;
-    } catch (...) { return false; }
+    } catch (...) { InterlockedIncrement(&g_TibNoHud); return false; }
 }
 
 // Called every draw, right after HhDrawHeadLabels() - the same point-of-use
@@ -4606,7 +4617,7 @@ static void ToggleIndicatorDraw()
     InterlockedIncrement(&g_TibOn);
 
     double x = 0, y = 0, w = 0, h = 0;
-    if (!ToggleIndicatorFindSlot(x, y, w, h)) { InterlockedIncrement(&g_TibNoSlot); return; }
+    if (!ToggleIndicatorFindSlot(x, y, w, h)) return;   // counted inside FindSlot: noHud/noRow0/noTalent
 
     try {
         RValue prevColour = g_Yytk->CallBuiltin("draw_get_colour", {});
@@ -4621,7 +4632,25 @@ static void ToggleIndicatorDraw()
         g_Yytk->CallBuiltin("draw_set_alpha", { prevAlpha });
         g_Yytk->CallBuiltin("draw_set_colour", { prevColour });
         InterlockedIncrement(&g_TibDrawn);
-    } catch (...) {}
+    } catch (...) { InterlockedIncrement(&g_TibDrawExc); }   // follow-up: count a swallowed draw exception
+}
+
+// Printed by `toggleborder 0`/`toggleborder stat` - shared so both outputs
+// name the same counters (follow-up from the indicator's reviews).
+static std::string ToggleBorderCountersLine()
+{
+    return "drawn=" + std::to_string(g_TibDrawn) + " on=" + std::to_string(g_TibOn)
+        + " off=" + std::to_string(g_TibOff) + " unreadable=" + std::to_string(g_TibUnreadable)
+        + " noHud=" + std::to_string(g_TibNoHud) + " noRow0=" + std::to_string(g_TibNoRow0)
+        + " noTalent=" + std::to_string(g_TibNoTalent) + " foreign=" + std::to_string(g_TibForeign)
+        + " drawExc=" + std::to_string(g_TibDrawExc);
+}
+// `toggleborder stat` is read-only: it stores nothing to g_ToggleBorderOn,
+// unlike `toggleborder 0`/`toggleborder 1`.
+static void ToggleBorderStats()
+{
+    Out("toggleborder stat: enabled=" + std::string(g_ToggleBorderOn.load() ? "on" : "off")
+        + " " + ToggleBorderCountersLine());
 }
 
 static long g_HhHudCalls = 0, g_HhLabelDraws = 0;
@@ -19472,11 +19501,10 @@ static void RunCommand(const std::string& line)
     // just above is one.
     if (lc == "toggleborder") {
         std::string v = Lower(TrimCopy(rest));
+        if (v == "stat") { ToggleBorderStats(); return; }   // read-only: stores nothing to g_ToggleBorderOn
         if (v == "off" || v == "0") {
             g_ToggleBorderOn.store(false);
-            Out("toggleborder -> off drawn=" + std::to_string(g_TibDrawn) + " on=" + std::to_string(g_TibOn)
-                + " off=" + std::to_string(g_TibOff) + " unreadable=" + std::to_string(g_TibUnreadable)
-                + " noSlot=" + std::to_string(g_TibNoSlot) + " foreign=" + std::to_string(g_TibForeign));
+            Out("toggleborder -> off " + ToggleBorderCountersLine());
         } else {
             g_ToggleBorderOn.store(true);
             Out("toggleborder -> ON (outlines Soul Spurn's skill-bar slot while the Purgatory-toggled drain is active)");

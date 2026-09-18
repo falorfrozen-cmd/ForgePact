@@ -264,6 +264,25 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
         self.assertScenario("indicator_on/draw_colour_and_alpha_restored/colour")
         self.assertScenario("indicator_on/draw_colour_and_alpha_restored/alpha")
 
+    # ---- follow-ups from the indicator's reviews (issue #11, Track B) ------
+
+    def test_indicator_on_draw_exception_counts(self):
+        # A throwing draw_rectangle stub: the catch after the outline loop
+        # must count the exception rather than swallow it uncounted.
+        self.assertScenario("indicator_on/draw_exception_counts/drawn")
+        self.assertScenario("indicator_on/draw_exception_counts")
+
+    def test_indicator_on_slot_failures_are_split(self):
+        # ToggleIndicatorFindSlot's old single noSlot counter split into
+        # three that mean something different, each leaving the other two
+        # untouched.
+        self.assertScenario("indicator_on/slot_failures_are_split/noHud")
+        self.assertScenario("indicator_on/slot_failures_are_split/noHud/others_zero")
+        self.assertScenario("indicator_on/slot_failures_are_split/noRow0")
+        self.assertScenario("indicator_on/slot_failures_are_split/noRow0/others_zero")
+        self.assertScenario("indicator_on/slot_failures_are_split/noTalent")
+        self.assertScenario("indicator_on/slot_failures_are_split")
+
 
 if __name__ == "__main__":
     unittest.main()

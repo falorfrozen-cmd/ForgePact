@@ -23,8 +23,8 @@ enum class ToggleIndicatorState { On, Off, Unreadable };
 // `isMyClient` field, not by comparing against anything read off the local
 // player: `mine`/`others`/`unattributed` classify every AOE instance the scan
 // actually visited (bounded by the scan cap, see `capped`) by that field alone
-// - a `VALUE_BOOL` gives its truth, a numeric kind counts nonzero as true, and
-// anything else (undefined, a string, or a throw) is unattributed and never
+// - a `VALUE_BOOL` gives its truth, a numeric kind counts true only when its
+// value is numeric > 0, and anything else (undefined, a string, or a throw) is unattributed and never
 // lights the indicator. `markedMine`/`unmarkedMine`/`markUnreadableMine`
 // further split the `mine` instances by their own `purgatory` field, read only
 // for instances already classified as `mine` (docs/toggle-skills-research.md,
