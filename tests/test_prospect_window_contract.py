@@ -646,14 +646,24 @@ class ProspectWindowContractTests(unittest.TestCase):
         for text in ("Phase 0a", "Phase 0b", "instrument blind", "stale", "Draw_64", "not observed"):
             self.assertIn(text, results)
         self.assertNotIn("does not happen", self.doc.lower())
-        # Phase 0a's column is filled; Phase 0b's is still open.
+        # Every column is filled now that Phase 0c has run (2026-09-18). No
+        # Phase 0c cell may still read `unknown`; R7 and the gate branch record
+        # what the session measured. phase0-status stays pending (asserted
+        # above) because the gate decision belongs to the human.
         for field in ("R2-window", "R4'", "R5c", "R9", "R10", "R11", "C-grid", "C-write2"):
             self.assertIn("| " + field + " |", results)
-        rows = [line for line in results.replace("\r\n", "\n").split("\n") if line.startswith("| R1 |")]
-        self.assertEqual(len(rows), 1)
-        cells = [c.strip() for c in rows[0].strip("|").split("|")]
-        self.assertNotEqual(cells[-2], "unknown")
-        self.assertEqual(cells[-1], "unknown")
+        table = [line for line in results.replace("\r\n", "\n").split("\n") if line.startswith("| ")]
+
+        def last_cell(field):
+            rows = [line for line in table if line.startswith("| " + field + " |")]
+            self.assertEqual(len(rows), 1, field)
+            return [c.strip() for c in rows[0].strip("|").split("|")][-1]
+
+        self.assertNotEqual(last_cell("R1").lower(), "unknown")
+        self.assertNotIn("| unknown |", "\n".join(table))
+        self.assertTrue(last_cell("R7").startswith("**lost**"))
+        self.assertTrue(last_cell("gate branch").startswith("**inconclusive**"))
+        self.assertIn("scan incomplete", last_cell("backing idcheck"))
 
     def test_research_doc_closure_rows_have_a_positive_control(self):
         live = collapse(section(self.doc, "## Live procedure"))
