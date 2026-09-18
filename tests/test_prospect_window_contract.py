@@ -356,9 +356,10 @@ class ProspectWindowContractTests(unittest.TestCase):
         selector = function_body(self.plugin, "static std::string PpSelectorMismatch(")
         for field in ("g_PpOverrideWhen", "g_PpOverrideSelf", "g_PpOverrideOther", "PpObjectName(S)", "PpObjectName(O)"):
             self.assertIn(field, selector)
-        # A struct self has no numeric object_index and must never reach object_get_name.
+        # A struct self has no readable object_index (N1ObjectIndex refuses an
+        # undefined one) and must never reach object_get_name.
         name = function_body(self.plugin, "static std::string PpObjectName(")
-        self.assertLess(name.index("numeric"), name.index('"object_get_name"'))
+        self.assertLess(name.index("N1ObjectIndex(oi, "), name.index('"object_get_name"'))
         parser = function_body(self.plugin, "static void PpOverrideCommand(")
         for key in ('"self="', '"other="', '"when="'):
             self.assertIn(key, parser)
@@ -869,7 +870,7 @@ class ProspectWindowContractTests(unittest.TestCase):
         # unreadable ids never match each other.
         instance_id = strip_comments(function_body(self.plugin, "static bool PpInstanceId("))
         self.assertIn("id = -1;", instance_id)
-        self.assertIn("v.ToDouble() <= 0) return false;", instance_id)
+        self.assertIn("d <= 0) return false;", instance_id)
         body = bodies["PpBackingIdCheck"]
         write = body.index('"array_set", { row, RValue((double)c), RValue(kPpBackingSentinel) }')
         refusal = body.index("no kept return came from the open window")
@@ -1056,6 +1057,34 @@ class ProspectWindowContractTests(unittest.TestCase):
 
         row = [line for line in self.doc.splitlines() if line.startswith("| backing idcheck |")][0]
         self.assertIn("one call only", row)
+
+    # ---- the probe reads this runner's VALUE_REF handles -----------------------
+
+    def test_probe_self_and_window_helpers_accept_value_ref(self):
+        """This runner hands `id` and `object_index` back as VALUE_REF (kind 15),
+        not as a number: measured in ModuleMain.cpp's round-3 note on the quest
+        brick, and again on Phase 0c's first launch (2026-09-18), where
+        `backing dump` printed `open window=none` with the window open and
+        idcheck refused `no open UI_Prospect_obj window with a readable id`.
+        A numeric-only kind test here files every getter call as `not the
+        window`, so backing keeps nothing and idcheck can only refuse - an
+        instrument reporting on itself, not on the game (AGENTS.md, "Prove the
+        Instrument"). The index is read the way N1ObjectIndex already reads
+        it, and a refused `self` names what object_index was, so a genuine
+        struct `self` (object_index undefined) can be told from a ref."""
+        describe = collapse(strip_comments(function_body(
+            self.plugin, "static std::string PpDescribeSelf(CInstance* inst)")))
+        name = collapse(strip_comments(function_body(
+            self.plugin, "static std::string PpObjectName(CInstance* inst)")))
+        for label, body in (("PpDescribeSelf", describe), ("PpObjectName", name)):
+            self.assertIn("N1ObjectIndex(oi, ", body, label)
+            self.assertNotIn("oi.m_Kind == VALUE_REAL", body, label)
+        self.assertIn('" object_index=" + Describe(oi)', describe)
+        ident = collapse(strip_comments(function_body(
+            self.plugin, "static bool PpInstanceId(const RValue& inst, double& id)")))
+        self.assertIn("v.m_Kind != VALUE_REF", ident)
+        self.assertNotIn("if (!PpIsNumber(v) || v.ToDouble() <= 0) return false;", ident)
+        self.assertIn("std::isfinite(", ident)
 
     def test_idcheck_a_decisive_identity_through_a_ui_looking_field_is_a_lead(self):
         # ForgePact #9 follow-up: two distinct calls of a profile getter prove

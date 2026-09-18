@@ -9449,9 +9449,12 @@ static std::string PpDescribeSelf(CInstance* inst)
     if (!inst) return "(null)";
     try {
         RValue r = inst->ToRValue();
+        // object_index is VALUE_REF on this runner (the quest brick note, and
+        // Phase 0c's first launch): read it the way N1ObjectIndex does, and
+        // name it on refusal so a real struct can be told from a ref.
         RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { r, RValue("object_index") });
-        const bool numeric = oi.m_Kind == VALUE_REAL || oi.m_Kind == VALUE_INT32 || oi.m_Kind == VALUE_INT64;
-        if (!numeric || oi.ToDouble() < 0) return "(not an instance: " + Describe(r) + ")";
+        int objIdx = -1;
+        if (!N1ObjectIndex(oi, objIdx)) return "(not an instance: " + Describe(r) + " object_index=" + Describe(oi) + ")";
         std::string d = CiDescribeInstance(inst);
         if (d == "(unresolved)") d += " " + Describe(r);
         return d;
@@ -9467,9 +9470,9 @@ static std::string PpObjectName(CInstance* inst)
     try {
         RValue r = inst->ToRValue();
         RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { r, RValue("object_index") });
-        const bool numeric = oi.m_Kind == VALUE_REAL || oi.m_Kind == VALUE_INT32 || oi.m_Kind == VALUE_INT64;
-        if (!numeric || oi.ToDouble() < 0) return "";
-        return g_Yytk->CallBuiltin("object_get_name", { oi }).ToString();
+        int objIdx = -1;
+        if (!N1ObjectIndex(oi, objIdx)) return "";
+        return g_Yytk->CallBuiltin("object_get_name", { RValue((double)objIdx) }).ToString();
     } catch (...) { return ""; }
 }
 
@@ -9793,9 +9796,14 @@ static bool PpInstanceId(const RValue& inst, double& id)
 {
     id = -1;
     try {
+        // `id` is VALUE_REF on this runner, and ToDouble() yields the instance
+        // number; a numeric-only test left `open window=none` with the window
+        // open (Phase 0c, first launch, 2026-09-18).
         RValue v = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("id") });
-        if (!PpIsNumber(v) || v.ToDouble() <= 0) return false;
-        id = v.ToDouble();
+        if (!PpIsNumber(v) && v.m_Kind != VALUE_REF) return false;
+        const double d = v.ToDouble();
+        if (!std::isfinite(d) || d <= 0) return false;
+        id = d;
         return true;
     } catch (...) { return false; }
 }
