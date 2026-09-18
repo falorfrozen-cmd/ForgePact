@@ -357,7 +357,7 @@ Uc kucuk yerel betik (scratchpad; depoya girmez):
 
 | Marker nesnesi                 | not                       |
 |--------------------------------|---------------------------|
-| `Spawn_Abyss_obj`              | ailede `discoverable = true` ayarlayan TEK uye (26.08 olcumu) |
+| `Spawn_Abyss_obj`              | ailede `discoverable = true` ayarlayan TEK uye (26.08 statik okuma; Abyss icin canli dogrulandi) |
 | `Spawn_Battlefield_obj`        | ARANAN                    |
 | `Spawn_Rift_obj`               | ARANAN                    |
 | `Spawn_Cursed_Orb_obj`         |                           |
@@ -368,9 +368,11 @@ Uc kucuk yerel betik (scratchpad; depoya girmez):
 | `Spawn_Chaos_Tower_obj`        | `discoverable`'a dokunmaz |
 
 Ilk statik okuma bu tablonun ilk yedisinde `discoverable` degerinin 1
-oldugunu yazmisti; 26.08 "ABYSS COZULDU" olcumu bunu duzeltti: ailede
-`discoverable = true` ayarlayan tek uye `Spawn_Abyss_obj`, digerleri dogrudan
-aktive oluyor. Aileye sonradan `Spawn_Cabin_obj` da eklendi (ayni bolum).
+oldugunu yazmisti; 26.08 "ABYSS COZULDU" bolumundeki ikinci statik okuma
+bunu duzeltti: ailede `discoverable = true` ayarlayan tek uye
+`Spawn_Abyss_obj`, digerleri dogrudan aktive oluyor. Canli olarak yalnizca
+Abyss isaretcileri olculdu (`discoverable` true, kesfedilince false); diger
+sekiz uyenin `discoverable`'a dokunmadigi statik okumadir, canli olculmedi. Aileye sonradan `Spawn_Cabin_obj` da eklendi (ayni bolum).
 
 Her cocugun Create olayi ayni seyi yapar: once ebeveynin Create olayini
 calistirir, sonra `m_activateMechanic`'e kendi kapanisini (anon@ adli bir

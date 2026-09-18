@@ -16,8 +16,9 @@ Two tiers:
   innocent reading in a research note.
 * Strict - the docs named in STRICT_DOCS, which were rewritten to the stricter
   standard: also no code addresses, no RVAs, no register names, no per-event
-  byte sizes, no offset listings, no pseudo-code call forms and no numbered
-  steps that follow a routine call by call. Other docs still carry
+  byte sizes, no offset listings, no pseudo-code call forms, no routine
+  quoted as a code-form call and no numbered steps that follow a routine
+  call by call. Each strict doc also states that posture in words. Other docs still carry
   interoperability addresses (hooked-script RVAs, measured function sizes)
   on purpose; add a doc here when it is rewritten to this standard.
 
@@ -31,9 +32,7 @@ import re
 import unittest
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-FORGEPACT_DIR = REPO_ROOT / "ForgePact"
-DOCS_DIR = FORGEPACT_DIR / "docs"
+DOCS_DIR = Path(__file__).resolve().parents[1] / "docs"
 
 # The seven tokens tests/test_prospect_window_contract.py uses on its branch,
 # plus a Ghidra data-label prefix and the decompiler's pointer-cast call form.
@@ -76,6 +75,15 @@ STRICT = {
         r"\b(?:GPV|SPV)\(|event_inherited\(|alarm\[0\]\s*=|SetVariableToUndefined|(?i:\bif \(global)"
     ),
     "numbered call step": re.compile(r"(?m)^\s*\d+\.\s+[A-Za-z_][\w.\[\]]*\("),
+    # A routine quoted in code form, one inline span at a time: a call with two
+    # or more arguments, a call compared against something, or a value assigned
+    # from a call. A bare name or a one-argument lookup stays allowed - naming
+    # a script is an interoperability fact, quoting how it is called is not.
+    "code-form call": re.compile(
+        r"(?<!`)`[A-Za-z_][\w.]*\([^`\n]*,[^`\n]*\)[^`\n]*`"
+        r"|(?<!`)`[^`\n]*\w\([^`\n]*\)\s*(?:[<>]=?|==|!=)[^`\n]*`"
+        r"|(?<!`)`\w[\w.\[\]]*\s*=\s*[^`\n=]*\w\([^`\n]*\)[^`\n]*`"
+    ),
 }
 
 STRICT_DOCS = (
@@ -97,6 +105,7 @@ POSITIVE_SAMPLES = {
     "event byte size": "Step" "_0 = 4" "12 B",
     "pseudo-code": "G" "PV(self, 3)",
     "numbered call step": "1. Some" "Script(x)",
+    "code-form call": "then `Drop" "Chance(x, y, X, undefined)` rolls",
 }
 
 NEGATIVE_SAMPLE = (
@@ -104,6 +113,7 @@ NEGATIVE_SAMPLE = (
     "Set the flag to 1 and let the game move on (a silent test, a daily call).\n"
     "3. Step the room and read the counter; +10 slots, 1.5 seconds.\n"
     "Stat 35 closes the gate, and 0xAF is a short value.\n"
+    "`DropItem` checks buff 332 via `HookOneScript(name)`; X < base (x, y).\n"
 )
 
 
@@ -147,7 +157,7 @@ class ResearchDocsNoDecompilerOutputTests(unittest.TestCase):
 
     def test_rewritten_docs_state_their_posture(self):
         # The pet-quest docs' convention: the doc says what it carries.
-        for name in ("S10-special-content-notes.md", "dungeon-key-research.md"):
+        for name in STRICT_DOCS:
             self.assertIn("no decompiled script text", (DOCS_DIR / name).read_text(encoding="utf-8"), name)
 
     def test_positive_control_every_category_flags_its_sample(self):

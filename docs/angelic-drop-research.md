@@ -3,21 +3,32 @@
 Durum: 1.3.14'te panele "Angelic / Unholy Drops" kaydırıcısı kondu (ForgePact'in kendi zarı).
 Vanilla mekanizma bu notta; "vanilla-sadık" mod (seçenek 2) henüz yapılmadı.
 
+Bu not ForgePact'in diğer araştırma belgeleriyle aynı kuralla yazıldı: ölçülen
+davranış, script/nesne adları ve indeksleri, bizim kendi kodumuz ve
+komutlarımız — no decompiled script text. Oyunun kodu yerelde okundu; ne
+yaptığı burada kendi sözlerimizle, kapı kapı anlatılıyor, çağrı dizisi olarak
+değil (hub `AGENTS.md` › "Legal: Decompiled Output Never Reaches Any Origin").
+`tests/test_research_docs_no_decompiler_output.py` bu belgeyi bu standartta tutar.
+
 ## Oyunun kendi mekanizması (statik + canlı doğrulandı)
 
-- `gml_Script_DropItem` her öldürmede oyuncuda **buff 332** var mı diye bakıyor
-  (`GetBuff(332)` DropItem'in içine gömülü; sonucu tek bir evet/hayır kapısı). Buff yoksa Angelic
+- `gml_Script_DropItem` her öldürmede oyuncuda **buff 332** var mı diye bakıyor;
+  bu kontrol DropItem'in içinde ve sonucu tek bir evet/hayır kapısı. Buff yoksa Angelic
   zarı hiç atılmıyor. Canlı: 984 öldürme, 0 zar (oyuncuda buff yoktu).
 - Buff 332'nin adı: `buff_angelic_chance` = "Angelic Item drop chances increased by X".
   Kaynakları: Blood Pact modifier'ı `blood_pact_angelic_rate` ("Angelic/Unholy drop rate")
   ve zindan modifier'ı `dungeon_angelic_rate` ("Angelic item drop rates").
-- Buff varsa: DropItem `X = Σ m_GetBuffValue(332)` (oyuncu başına toplanıyor, `ADD`)
-  hesaplayıp `DropItemAngelicChance(x, y, X, undefined)` çağırıyor.
-- `DropItemAngelicChance`: `lootListUnique` (Loot_Manager_obj üstünde, [tip, indeks]
-  dizileri) içinden aday seçer, `GetUniqueRepoStruct(tip, alt, indeks)` ile tanımı alır,
-  `GetBaseItemInfo(40)` **açık olanları atlar** (40 = gizli/dev eşya: Dev Charm, DEVELOPRE
-  BOOT, Elemelon... 9 tane), sonra `irandom(tanım.droprate.base) < X` ise
-  `CreateDefaultParams(j, b, true)` + `LootGroundCreate` ile düşürür.
+- Buff varsa şans değeri X, buff 332'nin oyuncudaki değerlerinin toplamı (buff
+  `ADD` türünde, yani birden fazla kaynak üst üste biner). DropItem bu X'i ve
+  öldürmenin konumunu `DropItemAngelicChance`'e verir; ne düşeceğine o karar verir.
+- `DropItemAngelicChance` adayı `lootListUnique`'ten seçer (Loot_Manager_obj üstünde,
+  her giriş bir tip ve bir indeks çifti) ve eşyanın tanımını unique deposundan
+  (`GetUniqueRepoStruct`) okur. Temel eşya bilgisinde **40 numaralı bayrağı açık olan
+  adayları atlar** (40 = gizli/dev eşya: Dev Charm, DEVELOPRE BOOT, Elemelon... 9 tane).
+  Kalan aday için zar, sıfırdan tanımın `droprate.base` değerine kadar düzgün bir
+  tamsayı; zar X'in altında kalırsa eşya varsayılan parametrelerle
+  (`CreateDefaultParams`) kurulur ve `LootGroundCreate` ile yere düşer. Yani bir
+  eşyanın Angelic şansı kabaca X / `droprate.base`.
 - Tanım bayrağı: `c = 1` unique repo demek (angelic'e özel bayrak yok; Angelic/Unholy
   eşyalar unique deposundaki ayrı girişler). Kayıt biçimi `{w,j,b,a,c}`; `j` silah alt türü.
 - Okunan `droprate.base` değerleri: Marcher's of Hatred 4.266.000, Annihilator 4.158.450,
