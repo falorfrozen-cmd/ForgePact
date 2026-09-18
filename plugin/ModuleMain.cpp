@@ -294,6 +294,7 @@ static consteval const char* SdkShortScriptName(std::string_view sdkConstant)
 #include <ForgePact/MapRevealManager.hpp>
 #include <ForgePact/StatsManager.hpp>
 #include <ForgePact/RelicFilterMod.hpp>
+#include <ForgePact/ProspectWindowMod.hpp>
 #include <ForgePact/PetQuestCollectorMod.hpp>
 #include <ForgePact/DensityManager.hpp>
 #include <ForgePact/DropManager.hpp>
@@ -9362,6 +9363,2151 @@ static void CiNativeTraceReset()
 
 #endif // FORGEPACT_RELEASE (CiFindNearestQuestItem .. CiCaptureStackWalk)
 
+#ifndef FORGEPACT_RELEASE
+// ---- prospectprobe: the prospect window Phase 0 instrument (issue #9) --------
+// What sizes the prospecting cube's input grid (`UI_Prospect_obj`) is not
+// known; docs/prospect-window-research.md holds the static search, the
+// hypotheses and the live procedure this instrument serves. Research build
+// only, never in kPlayerCommands, dispatched from HandleProspectCommand.
+//
+// Every candidate the static search found is native-detoured in ONE build
+// (agents.md: batch every candidate before asking for a relaunch), with
+// MmCreateHook at the function's own address - the same attach route as
+// `citrace nativetrace`, because a table-only hook is blind to this build's
+// direct `call rel32` sites. CheckPlayerInteraction rides in the same table as
+// the positive control: a 0 there voids every other row's count.
+//
+// Two bounded writes exist, both research-only: `set` writes one numeric
+// variable of one named instance (never creating one), and `override` replaces
+// one numeric argument of a detoured row for a counted number of calls. Every
+// other subcommand only counts and logs, except the later-phase ones below
+// (`setat`, `call`, `resize via`, and Phase 0c's `backing idcheck`, whose one
+// sentinel goes into an empty cell and is restored in the same handler). Do not run `citrace nativetrace` in
+// the same session: it detours two of the same addresses, and a second
+// MmCreateHook on an address already hooked fails for that row.
+//
+// Log budget (B1 of the round-0 review): a fixed 6 lines per row let rows that
+// fire before the window opens (GridHasSpace, UiMoveNode, ...) or once per node
+// on open spend their lines first, so the sizing call was counted but never
+// logged - and an empty R4 then read as evidence. `arm [budget=N] [substr ...]`
+// therefore takes the budget and restricts logging to named rows, and `show`
+// prints every call a row made that was NOT logged, which the research doc's
+// decision rule turns into `not observed (budget spent)`.
+static constexpr long kPpDefaultLogBudget = 6;   // logged calls per row per `arm` unless budget=N
+static constexpr long kPpMaxLogBudget = 5000;    // out.txt stays readable
+static constexpr long kPpRefusalLogBudget = 6;   // "override not applied" lines per override
+
+static std::atomic<bool> g_PpArmed{ false };
+static volatile long g_PpLogBudget = kPpDefaultLogBudget;
+static std::string g_PpOverrideLabel;             // game thread only (IPC poll and detours)
+static int g_PpOverrideArg = -1;
+static double g_PpOverrideValue = 0.0;
+static volatile long g_PpOverrideLeft = 0;
+static volatile long g_PpOverrideRefusalsLogged = 0;
+static volatile long g_PpOverrideNotApplied = 0;  // calls of the row that the override passed over
+// Override selector (B2): a row can fire from several callers (the inventory
+// grid and the prospect grid in the same window, or while the window is
+// closed), so `calls=1` could be spent on the wrong call. Empty = any.
+static std::string g_PpOverrideSelf;
+static std::string g_PpOverrideOther;
+static bool g_PpOverrideWhenSet = false;
+static double g_PpOverrideWhen = 0.0;
+
+// Phase 0b (docs/prospect-window-research.md § Instrument). Phase 0a found the
+// ProspectGrid node created by a UiCreateNode call with no size in any
+// argument, and a bare nodeGridWidth write crashing the node's Draw within a
+// frame (R5b: the draw indexes nodeGrid rows that were sized at build time).
+// So `watch` reads the node's shape before and after every LOGGED call - the
+// call whose extent the shape changes in brackets the builder - and the two
+// new writes either land before the builder runs (`setat`) or are followed by
+// the game's own builder, invoked by name, in the same handler (`resize via`).
+static std::atomic<bool> g_PpWatch{ false };
+static bool g_PpInSnapshot = false;               // game thread only; a snapshot never nests
+static int g_PpGridObjIdx = -1;                    // asset_get_index caches, set on first success
+static int g_PpWindowObjIdx = -1;
+// Pending `setat` (one at a time, one-shot). Game thread only, like the override.
+static bool g_PpSetAtPending = false;
+static std::string g_PpSetAtLabel;
+static bool g_PpSetAtPost = false;
+static bool g_PpSetAtGrid = false;                 // false = the window, true = the ProspectGrid node
+static std::string g_PpSetAtVar;
+static double g_PpSetAtValue = 0.0;
+static std::string g_PpSetAtSelf;
+static std::string g_PpSetAtOther;
+static int g_PpSetAtArgIndex = -1;                 // -1 = no arg<i>= selector
+static std::string g_PpSetAtArgText;
+static volatile long g_PpSetAtRefusalsLogged = 0;
+static volatile long g_PpSetAtNotApplied = 0;
+
+// `self` may be a struct (constructors such as s_ItemGridInfo, struct
+// closures), not an instance. Asking object_get_name about a struct's missing
+// object_index would hand a builtin `undefined`, and a GML type error inside a
+// builtin is the runner's fatal dialog rather than a catchable exception - so
+// only a numeric object_index is described as an instance.
+static std::string PpDescribeSelf(CInstance* inst)
+{
+    if (!inst) return "(null)";
+    try {
+        RValue r = inst->ToRValue();
+        RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { r, RValue("object_index") });
+        const bool numeric = oi.m_Kind == VALUE_REAL || oi.m_Kind == VALUE_INT32 || oi.m_Kind == VALUE_INT64;
+        if (!numeric || oi.ToDouble() < 0) return "(not an instance: " + Describe(r) + ")";
+        std::string d = CiDescribeInstance(inst);
+        if (d == "(unresolved)") d += " " + Describe(r);
+        return d;
+    } catch (...) { return "(unresolved)"; }
+}
+
+// The object name only, for the override's self=/other= selector: "" for a
+// null, a struct, or anything else without a numeric object_index (same guard
+// as PpDescribeSelf, for the same reason).
+static std::string PpObjectName(CInstance* inst)
+{
+    if (!inst) return "";
+    try {
+        RValue r = inst->ToRValue();
+        RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { r, RValue("object_index") });
+        const bool numeric = oi.m_Kind == VALUE_REAL || oi.m_Kind == VALUE_INT32 || oi.m_Kind == VALUE_INT64;
+        if (!numeric || oi.ToDouble() < 0) return "";
+        return g_Yytk->CallBuiltin("object_get_name", { oi }).ToString();
+    } catch (...) { return ""; }
+}
+
+static bool PpIsNumber(const RValue& v)
+{
+    return v.m_Kind == VALUE_REAL || v.m_Kind == VALUE_INT32 || v.m_Kind == VALUE_INT64;
+}
+
+// Why this call does not match the pending override's selector, or "" if it does.
+static std::string PpSelectorMismatch(CInstance* S, CInstance* O, const RValue& arg)
+{
+    if (g_PpOverrideWhenSet && std::fabs(arg.ToDouble() - g_PpOverrideWhen) > 1e-9)
+        return "when=" + Describe(RValue(g_PpOverrideWhen)) + " but arg is " + Describe(arg);
+    if (!g_PpOverrideSelf.empty()) {
+        const std::string s = PpObjectName(S);
+        if (Lower(s) != Lower(g_PpOverrideSelf)) return "self=" + g_PpOverrideSelf + " but self is " + PpDescribeSelf(S);
+    }
+    if (!g_PpOverrideOther.empty()) {
+        const std::string o = PpObjectName(O);
+        if (Lower(o) != Lower(g_PpOverrideOther)) return "other=" + g_PpOverrideOther + " but other is " + PpDescribeSelf(O);
+    }
+    return std::string();
+}
+
+// Object indices through the SDK's names and the runtime's own lookup - never
+// a literal index, which a game patch moves.
+static int PpObjectIndexByName(HeroSiege::Objects::GameObject obj, int& cache)
+{
+    if (cache >= 0) return cache;
+    try {
+        const std::string name(HeroSiege::Objects::GetObjectName(obj));
+        const int idx = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(name) }).ToDouble();
+        if (idx >= 0 && g_Yytk->CallBuiltin("object_exists", { RValue((double)idx) }).ToBoolean()) cache = idx;
+    } catch (...) {}
+    return cache;
+}
+static int PpGridObjectIndex() { return PpObjectIndexByName(HeroSiege::Objects::GameObject::UI_Inventory_Grid_obj, g_PpGridObjIdx); }
+static int PpWindowObjectIndex() { return PpObjectIndexByName(HeroSiege::Objects::GameObject::UI_Prospect_obj, g_PpWindowObjIdx); }
+
+// Instance 0 of the live window, passed through with whatever kind
+// instance_find returns (VALUE_REF on this runner).
+static bool PpFindWindow(RValue& out)
+{
+    const int idx = PpWindowObjectIndex();
+    if (idx < 0) return false;
+    if ((int)g_Yytk->CallBuiltin("instance_number", { RValue((double)idx) }).ToDouble() <= 0) return false;
+    out = g_Yytk->CallBuiltin("instance_find", { RValue((double)idx), RValue(0.0) });
+    return out.m_Kind != VALUE_UNDEFINED;
+}
+
+// A number as the log prints it: 9, 92.8 - not real:9.000000.
+static std::string PpNum(const RValue& v)
+{
+    if (!PpIsNumber(v)) return Describe(v);
+    char b[64];
+    sprintf_s(b, "%.6g", v.ToDouble());
+    return b;
+}
+
+// One variable of the node for the snapshot line: `?` when it does not exist
+// (never created by reading it).
+static std::string PpSnapVar(const RValue& node, const char* var)
+{
+    if (!g_Yytk->CallBuiltin("variable_instance_exists", { node, RValue(var) }).ToBoolean()) return "?";
+    return PpNum(g_Yytk->CallBuiltin("variable_instance_get", { node, RValue(var) }));
+}
+
+// Hook-free read of the ProspectGrid node's shape. The node is identified by
+// what it is - the UI_Inventory_Grid_obj whose uiNodeCallstack names
+// "ProspectGrid" (Phase 0a R1) - not by nth, which shifts with the HUD's own
+// grid nodes. Builtins only; called from a detour only for a call that is being
+// logged while `watch` is on, and never from FrameCallback. `out` is
+// `@<id> w=.. h=.. rows=.. cols0=.. cell=WxH bbox=WxH scale=..` or `none`.
+static bool PpGridSnapshot(std::string& out, RValue* nodeOut = nullptr)
+{
+    if (g_PpInSnapshot) { out = "(nested - not read)"; return false; }
+    g_PpInSnapshot = true;
+    bool found = false;
+    out = "none";
+    try {
+        const int idx = PpGridObjectIndex();
+        const int total = idx < 0 ? 0 : (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)idx) }).ToDouble();
+        for (int nth = 0; nth < total && !found; ++nth) {
+            RValue node = g_Yytk->CallBuiltin("instance_find", { RValue((double)idx), RValue((double)nth) });
+            if (node.m_Kind == VALUE_UNDEFINED) continue;
+            if (!g_Yytk->CallBuiltin("variable_instance_exists", { node, RValue("uiNodeCallstack") }).ToBoolean()) continue;
+            RValue stack = g_Yytk->CallBuiltin("variable_instance_get", { node, RValue("uiNodeCallstack") });
+            // A string prints as string:"ProspectGrid"; an array is expanded
+            // element by element. The quotes keep a longer name from matching.
+            const std::string text = stack.m_Kind == VALUE_ARRAY ? CiExpandContainer(stack) : Describe(stack);
+            if (text.find("\"ProspectGrid\"") == std::string::npos) continue;
+            found = true;
+            if (nodeOut) *nodeOut = node;
+            std::string rows = "not-array", cols0 = "-";
+            if (g_Yytk->CallBuiltin("variable_instance_exists", { node, RValue("nodeGrid") }).ToBoolean()) {
+                RValue grid = g_Yytk->CallBuiltin("variable_instance_get", { node, RValue("nodeGrid") });
+                if (grid.m_Kind == VALUE_ARRAY) {
+                    const int n = (int)g_Yytk->CallBuiltin("array_length", { grid }).ToDouble();
+                    rows = std::to_string(n);
+                    if (n > 0) {
+                        RValue row0 = g_Yytk->CallBuiltin("array_get", { grid, RValue(0.0) });
+                        if (row0.m_Kind == VALUE_ARRAY)
+                            cols0 = std::to_string((int)g_Yytk->CallBuiltin("array_length", { row0 }).ToDouble());
+                    }
+                }
+            } else rows = "?";
+            out = "@" + PpNum(g_Yytk->CallBuiltin("variable_instance_get", { node, RValue("id") }))
+                + " w=" + PpSnapVar(node, "nodeGridWidth") + " h=" + PpSnapVar(node, "nodeGridHeight")
+                + " rows=" + rows + " cols0=" + cols0
+                + " cell=" + PpSnapVar(node, "nodeWidth") + "x" + PpSnapVar(node, "nodeHeight")
+                + " bbox=" + PpSnapVar(node, "navBboxWidth") + "x" + PpSnapVar(node, "navBboxHeight")
+                + " scale=" + PpSnapVar(node, "gridScale");
+        }
+    } catch (...) { out = "(read failed)"; found = false; }
+    g_PpInSnapshot = false;
+    return found;
+}
+
+static bool PpIsBuiltinVar(const std::string& var);   // defined with PpSet below
+
+// Why this call does not match the pending `setat`'s selectors, or "".
+static std::string PpSetAtMismatch(CInstance* S, CInstance* O, int argc, RValue** A)
+{
+    if (!g_PpSetAtSelf.empty() && Lower(PpObjectName(S)) != Lower(g_PpSetAtSelf))
+        return "self=" + g_PpSetAtSelf + " but self is " + PpDescribeSelf(S);
+    if (!g_PpSetAtOther.empty() && Lower(PpObjectName(O)) != Lower(g_PpSetAtOther))
+        return "other=" + g_PpSetAtOther + " but other is " + PpDescribeSelf(O);
+    if (g_PpSetAtArgIndex >= 0) {
+        const std::string sel = "arg" + std::to_string(g_PpSetAtArgIndex) + "=" + g_PpSetAtArgText;
+        if (!A || g_PpSetAtArgIndex >= argc || !A[g_PpSetAtArgIndex]) return sel + " but argc=" + std::to_string(argc);
+        const std::string d = Describe(*A[g_PpSetAtArgIndex]);
+        if (Lower(d).find(Lower(g_PpSetAtArgText)) == std::string::npos) return sel + " but a" + std::to_string(g_PpSetAtArgIndex) + " is " + d;
+    }
+    return std::string();
+}
+
+static void PpSetAtRefused(const char* label, long n, const std::string& why)
+{
+    InterlockedIncrement(&g_PpSetAtNotApplied);
+    if (InterlockedIncrement(&g_PpSetAtRefusalsLogged) <= kPpRefusalLogBudget)
+        Out(std::string("prospectprobe setat ") + label + " #" + std::to_string(n) + ": not applied (" + why + ")");
+}
+
+// Applies the pending `setat` if this call is its row, its phase and matches
+// every selector: same checks as `set` (existing variable, finite number, read
+// back), one-shot. A refusal is counted, logged within a budget, and leaves
+// the write pending for the next call.
+static void PpSetAtTry(const char* label, long n, bool post, CInstance* S, CInstance* O, int argc, RValue** A)
+{
+    if (!g_PpSetAtPending || g_PpSetAtPost != post || g_PpSetAtLabel != label) return;
+    try {
+        const std::string mismatch = PpSetAtMismatch(S, O, argc, A);
+        if (!mismatch.empty()) { PpSetAtRefused(label, n, "selector: " + mismatch); return; }
+        const char* targetName = g_PpSetAtGrid ? "grid" : "window";
+        RValue inst;
+        std::string ignored;
+        const bool resolved = g_PpSetAtGrid ? PpGridSnapshot(ignored, &inst) : PpFindWindow(inst);
+        if (!resolved) { PpSetAtRefused(label, n, std::string("no ") + targetName + " instance"); return; }
+        const RValue var(g_PpSetAtVar);
+        const bool exists = g_Yytk->CallBuiltin("variable_instance_exists", { inst, var }).ToBoolean();
+        if (!exists && !PpIsBuiltinVar(g_PpSetAtVar)) { PpSetAtRefused(label, n, "no such variable " + g_PpSetAtVar + " on the " + targetName); return; }
+        RValue was = g_Yytk->CallBuiltin("variable_instance_get", { inst, var });
+        if (!PpIsNumber(was) || !std::isfinite(was.ToDouble())) {
+            PpSetAtRefused(label, n, g_PpSetAtVar + " is " + Describe(was) + ", not a number");
+            return;
+        }
+        g_PpSetAtPending = false;   // one-shot: consumed before the write, so a fault cannot repeat it
+        g_Yytk->CallBuiltin("variable_instance_set", { inst, var, RValue(g_PpSetAtValue) });
+        RValue now = g_Yytk->CallBuiltin("variable_instance_get", { inst, var });
+        const bool ok = PpIsNumber(now) && std::fabs(now.ToDouble() - g_PpSetAtValue) < 1e-9;
+        std::string line = std::string("prospectprobe setat ") + label + " #" + std::to_string(n) + " " + (post ? "post" : "pre")
+            + " " + targetName + "." + g_PpSetAtVar + ": was=" + PpNum(was) + " now=" + PpNum(now)
+            + " (readback " + (ok ? "ok" : "MISMATCH") + ")";
+        line += " self=" + PpDescribeSelf(S) + " other=" + PpDescribeSelf(O) + " argc=" + std::to_string(argc) + AggroArgs(argc, A);
+        Out(line);
+        if (post) {
+            std::string snap;
+            PpGridSnapshot(snap);
+            Out(std::string("prospectprobe setat ") + label + " #" + std::to_string(n) + " grid=" + snap);
+        }
+    } catch (...) { Out(std::string("prospectprobe setat ") + label + " #" + std::to_string(n) + ": EXCEPTION; the write may or may not have happened"); }
+}
+
+// Returns whether this call's log line was emitted; `gridPre` carries the
+// pre-call snapshot to PpAfter when `watch` is on (empty otherwise).
+static bool PpObserve(const char* label, long n, volatile long* logged, volatile long* logOn,
+                      CInstance* S, CInstance* O, int argc, RValue** A, std::string& gridPre)
+{
+    if (g_PpSetAtPending) PpSetAtTry(label, n, false, S, O, argc, A);
+    if (g_PpOverrideLeft > 0 && g_PpOverrideLabel == label) {
+        const int i = g_PpOverrideArg;
+        const bool numeric = A && i >= 0 && i < argc && A[i] && PpIsNumber(*A[i]);
+        const std::string mismatch = numeric ? PpSelectorMismatch(S, O, *A[i]) : std::string();
+        if (numeric && mismatch.empty()) {
+            const std::string was = Describe(*A[i]);
+            *A[i] = RValue(g_PpOverrideValue);
+            InterlockedDecrement(&g_PpOverrideLeft);
+            // The applied line names the call it landed on (self, other, every
+            // argument), so L11 can check it is the R4 call and not another
+            // caller of the same row.
+            std::string line = std::string("prospectprobe override ") + label + " #" + std::to_string(n) + " a"
+                + std::to_string(i) + ": was=" + was + " now=" + Describe(*A[i])
+                + " (left=" + std::to_string(g_PpOverrideLeft) + ")";
+            try {
+                line += " self=" + PpDescribeSelf(S) + " other=" + PpDescribeSelf(O)
+                    + " argc=" + std::to_string(argc) + AggroArgs(argc, A);
+            } catch (...) {}
+            Out(line);
+        } else {
+            // Not consumed: the next call of this row is tried again.
+            InterlockedIncrement(&g_PpOverrideNotApplied);
+            if (InterlockedIncrement(&g_PpOverrideRefusalsLogged) <= kPpRefusalLogBudget) {
+                std::string why = !numeric
+                    ? ((A && i >= 0 && i < argc && A[i]) ? "arg is " + Describe(*A[i]) + "; only a numeric argument is replaced"
+                                                           : std::string("no such argument"))
+                    : "selector: " + mismatch;
+                Out(std::string("prospectprobe override ") + label + " #" + std::to_string(n) + " a" + std::to_string(i)
+                    + ": not applied (argc=" + std::to_string(argc) + ", " + why + ")");
+            }
+        }
+    }
+    const long budget = g_PpLogBudget;
+    if (!g_PpArmed.load() || !*logOn || *logged >= budget) return false;
+    if (InterlockedIncrement(logged) > budget) return false;
+    try {
+        std::string line = std::string("prospectprobe ") + label + " #" + std::to_string(n)
+            + " self=" + PpDescribeSelf(S) + " other=" + PpDescribeSelf(O)
+            + " argc=" + std::to_string(argc) + AggroArgs(argc, A);
+        // Budgeted exactly like the line it rides on: only a logged call reads
+        // the grid, and only while `watch` is on.
+        if (g_PpWatch.load()) {
+            PpGridSnapshot(gridPre);
+            line += " grid-pre=" + gridPre;
+        }
+        Out(line);
+    } catch (...) {}
+    return true;
+}
+
+// ---- Phase 0c: `backing` - what the ProspectGrid store is built from ---------
+// Phase 0b found nodeGrid built inside m_SetInventoryLocalPlayer from the
+// player's profile inventory data (GetProfileInventoryData /
+// GetPlayerItemOwner), and a blind `callnum GetProfileInventoryData` - no
+// correct self - crashed the game. So nothing here calls a getter. While
+// `backing` is on, a getter row's detour keeps the value the game's OWN call
+// returned (after the trampoline), and `backing dump` / `backing idcheck` read
+// only that. Keeping an RValue copy holds a counted reference only for an
+// array; a struct is not rooted by it and the collector may free it while we
+// hold the pointer. So every kept value is also assigned to a research global
+// (`__pp_backing_<getter>_<slot>`), which the collector does see. Whether a
+// kept array also sees later writes on this runner is what idcheck's positive
+// control measures before any verdict.
+static constexpr long kPpBackingLogBudget = 6;             // logged capture lines per getter per `backing on`
+static constexpr int kPpBackingKeepMax = 8;                 // window-self returns kept per getter (the first 8; later ones are not kept)
+static constexpr int kPpBackingProfileCallsToDecide = 2;    // a profile getter decides save-backed only once hits span this many distinct calls
+static constexpr long kPpBackingScanLimit = 200000;         // values a scan visits before it stops (and then proves nothing)
+static constexpr int kPpBackingScanDepth = 10;
+static constexpr double kPpBackingSentinel = -7654321.25;  // not an item id, count or index any grid holds
+static std::atomic<bool> g_PpBacking{ false };
+static bool g_PpInBacking = false;                          // game thread only; a capture never nests
+
+// One kept return. `call` 0 = the slot is empty.
+struct PpBackingKept {
+    // Heap-held and never deleted: a global RValue's destructor would free a
+    // runtime reference at DLL unload, after the runtime is gone. `reset`
+    // releases the reference while the game is still running.
+    RValue*     value = nullptr;
+    long        call = 0;            // the getter's call number
+    std::string self;                // how that call's self described itself
+    double      selfId = -1;         // that self's instance id; -1 = not read (never matches)
+    bool        windowSelf = false;  // that call's self was the UI_Prospect_obj window
+    std::string root;                // the research global rooting the value
+};
+
+struct PpBackingStash {
+    const char* getter;              // the probe row label, which is the script name
+    // UI_Prospect_obj holds more than one grid, so the window may call a getter
+    // more than once per open, and a later open calls it again: window-self
+    // returns are kept, each with its @id, rather than the last one winning.
+    // The FIRST kPpBackingKeepMax since `backing on` are kept and never
+    // overwritten - the build-time returns come first, and a ring would evict
+    // exactly those - and every later one is counted as not kept, so idcheck
+    // can refuse `copy` when a return it never saw might be the source. The
+    // latest call from any other self is kept apart and never replaces a
+    // window return.
+    PpBackingKept window[kPpBackingKeepMax];
+    long          windowSeen = 0;    // window-self returns the getter produced since `backing on`
+    long          windowKept = 0;    // of those, kept (at most kPpBackingKeepMax)
+    PpBackingKept other;
+    long          calls = 0;         // getter calls seen while `backing` was on
+    long          logged = 0;
+    // Window-self returns not kept: past the first kPpBackingKeepMax, or lost to an exception while keeping.
+    long WindowDropped() const { return windowSeen - windowKept; }
+};
+static PpBackingStash g_PpBackingProfile{ "GetProfileInventoryData" };
+static PpBackingStash g_PpBackingOwner{ "GetPlayerItemOwner" };
+static PpBackingStash g_PpBackingInvArray{ "GetInventoryArray" };
+static PpBackingStash g_PpBackingProfileObj{ "GetPlayerProfileObj" };
+static PpBackingStash* const g_PpBackingStashes[] = { &g_PpBackingProfile, &g_PpBackingOwner, &g_PpBackingInvArray, &g_PpBackingProfileObj };
+
+static PpBackingStash* PpBackingStashFor(const char* label)
+{
+    for (PpBackingStash* s : g_PpBackingStashes) if (std::strcmp(label, s->getter) == 0) return s;
+    return nullptr;
+}
+
+// Every non-empty kept return of every getter, window slots first.
+template <typename F>
+static void PpBackingForEachKept(F f)
+{
+    for (PpBackingStash* s : g_PpBackingStashes) {
+        for (PpBackingKept& k : s->window) if (k.value && k.call > 0) f(*s, k);
+        if (s->other.value && s->other.call > 0) f(*s, s->other);
+    }
+}
+
+// An instance's `id`, read the same way CiDescribeInstance prints `@id`. False
+// when the read fails or is not a positive number, so an unreadable id never
+// compares equal to another unreadable one.
+static bool PpInstanceId(const RValue& inst, double& id)
+{
+    id = -1;
+    try {
+        RValue v = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("id") });
+        if (!PpIsNumber(v) || v.ToDouble() <= 0) return false;
+        id = v.ToDouble();
+        return true;
+    } catch (...) { return false; }
+}
+
+// 1 = a plain struct (walkable), 0 = a method value (a leaf), -1 = could not tell.
+static int PpBackingObjectKind(const RValue& v)
+{
+    try {
+        if (g_Yytk->CallBuiltin("is_method", { v }).ToBoolean()) return 0;
+        return g_Yytk->CallBuiltin("is_struct", { v }).ToBoolean() ? 1 : -1;
+    } catch (...) { return -1; }
+}
+
+// `array len=N len0=M`, `struct members=N`, or the value's kind.
+static std::string PpBackingShape(const RValue& v)
+{
+    if (v.m_Kind == VALUE_ARRAY) {
+        const int n = (int)g_Yytk->CallBuiltin("array_length", { v }).ToDouble();
+        std::string s = "array len=" + std::to_string(n);
+        if (n > 0) {
+            RValue e0 = g_Yytk->CallBuiltin("array_get", { v, RValue(0.0) });
+            s += " len0=" + (e0.m_Kind == VALUE_ARRAY ? std::to_string((int)g_Yytk->CallBuiltin("array_length", { e0 }).ToDouble())
+                                                      : Describe(e0));
+        }
+        return s;
+    }
+    if (v.m_Kind == VALUE_OBJECT && PpBackingObjectKind(v) == 1) {
+        RValue names = g_Yytk->CallBuiltin("variable_struct_get_names", { v });
+        return "struct members=" + std::to_string((int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble());
+    }
+    return Describe(v);
+}
+
+// json_stringify only an array or a plain struct; anything else is `null`
+// (its kind is in the metadata), so no builtin is handed a type it rejects.
+// Never called from a detour: a struct cycle would overflow json_stringify's
+// recursion inside the game's own call. `backing dump` calls it, and only on a
+// value its depth-capped walk finished without hitting the cap.
+static std::string PpBackingJsonText(const RValue& v)
+{
+    if (v.m_Kind != VALUE_ARRAY && !(v.m_Kind == VALUE_OBJECT && PpBackingObjectKind(v) == 1)) return "null";
+    return g_Yytk->CallBuiltin("json_stringify", { v }).ToString();
+}
+
+static std::string PpBackingEscape(const std::string& s)
+{
+    std::string o;
+    for (char ch : s) {
+        if (ch == '"' || ch == '\\') { o += '\\'; o += ch; }
+        else if ((unsigned char)ch < 0x20) o += ' ';
+        else o += ch;
+    }
+    return o;
+}
+
+// bp_ipc\<name>: {"getter":..,"call":..,"self":..,"shape":..,"value":<json_stringify>}. Returns bytes written.
+static size_t PpBackingWriteFile(const std::string& name, const std::string& getter, long call, const std::string& self,
+                                 const std::string& shape, const std::string& json)
+{
+    const std::string text = "{\"getter\":\"" + PpBackingEscape(getter) + "\",\"call\":" + std::to_string(call)
+        + ",\"self\":\"" + PpBackingEscape(self) + "\",\"shape\":\"" + PpBackingEscape(shape) + "\",\"value\":" + json + "}";
+    std::ofstream f(IPC_DIR + "\\" + name, std::ios::binary);
+    f << text;
+    return text.size();
+}
+
+// Empties one slot: the research global first, then our copy.
+static void PpBackingClearSlot(PpBackingKept& k)
+{
+    if (!k.root.empty()) {
+        try { g_Yytk->CallBuiltin("variable_global_set", { RValue(k.root), RValue() }); } catch (...) {}
+    }
+    if (k.value) *k.value = RValue();
+    k.call = 0;
+    k.self.clear();
+    k.selfId = -1;
+    k.windowSelf = false;
+}
+
+// After the trampoline, on a getter row, while `backing` is on: keep the value
+// the game's own call returned. A window-self return goes into the next free
+// window slot (with the window's @id) until all kPpBackingKeepMax are used, and
+// is then only counted; any other self replaces only the `other` slot. The
+// research global is set first and the slot's value, call, self and @id only
+// after it succeeded, so a slot never holds an unrooted value or another
+// call's details. Nothing is serialised here - only the shallow shape is read
+// for the budgeted line; `backing dump` writes the json files.
+static void PpBackingCapture(const char* label, long n, CInstance* S, const RValue& result)
+{
+    if (!g_PpBacking.load() || g_PpInBacking) return;
+    PpBackingStash* st = PpBackingStashFor(label);
+    if (!st) return;
+    g_PpInBacking = true;
+    bool windowSelf = false;
+    try {
+        ++st->calls;
+        windowSelf = PpObjectName(S) == std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::UI_Prospect_obj));
+        if (windowSelf) ++st->windowSeen;
+        const std::string self = PpDescribeSelf(S);
+        const bool log = st->logged < kPpBackingLogBudget;
+        if (log) ++st->logged;
+        if (windowSelf && st->windowKept >= kPpBackingKeepMax) {
+            if (log)
+                Out(std::string("prospectprobe backing ") + label + " #" + std::to_string(n) + " self=" + self
+                    + " result=" + PpBackingShape(result) + " NOT kept (the first " + std::to_string(kPpBackingKeepMax)
+                    + " window returns are kept; " + std::to_string(st->WindowDropped()) + " not kept so far - idcheck will not read `copy`)");
+            g_PpInBacking = false;
+            return;
+        }
+        const int slotIndex = (int)st->windowKept;
+        const std::string root = std::string("__pp_backing_") + st->getter + (windowSelf ? "_window" + std::to_string(slotIndex) : std::string("_other"));
+        double selfId = -1;
+        if (!S || !PpInstanceId(S->ToRValue(), selfId)) selfId = -1;
+        // Root first: if this throws, the slot is left exactly as it was.
+        g_Yytk->CallBuiltin("variable_global_set", { RValue(root), result });
+        PpBackingKept& slot = windowSelf ? st->window[slotIndex] : st->other;
+        if (!slot.value) slot.value = new RValue();
+        *slot.value = result;
+        slot.root = root;
+        slot.call = n;
+        slot.self = self;
+        slot.selfId = selfId;
+        slot.windowSelf = windowSelf;
+        if (windowSelf) ++st->windowKept;
+        if (log)
+            Out(std::string("prospectprobe backing ") + label + " #" + std::to_string(n) + " self=" + self
+                + " result=" + PpBackingShape(result)
+                + (windowSelf ? " kept as window return " + std::to_string(slotIndex) + " of " + std::to_string(kPpBackingKeepMax)
+                              : std::string(" kept as the latest non-window return")));
+    } catch (...) {
+        Out(std::string("prospectprobe backing ") + label + " #" + std::to_string(n) + ": EXCEPTION while capturing"
+            + (windowSelf ? " - this window return is not kept (counted as dropped)" : ""));
+    }
+    g_PpInBacking = false;
+}
+
+// Drops every kept reference and its global root, and zeroes the counters
+// (`reset`, `backing on`).
+static void PpBackingRelease()
+{
+    for (PpBackingStash* s : g_PpBackingStashes) {
+        for (PpBackingKept& k : s->window) PpBackingClearSlot(k);
+        PpBackingClearSlot(s->other);
+        s->windowSeen = 0;
+        s->windowKept = 0;
+        s->calls = 0;
+        s->logged = 0;
+    }
+}
+
+// `same` / `CHANGED` only when both reads resolved - a node (`@<id> ...`) or a
+// definite `none`. A failed or nested read on either side is `UNREADABLE`, so
+// two failed reads never print as "nothing changed". `none` on both sides is
+// `same (no node)`: `none` also covers a node that exists but has not set its
+// uiNodeCallstack yet, so it brackets nothing either.
+static const char* PpSnapCompare(const std::string& pre, const std::string& post)
+{
+    auto readable = [](const std::string& s) { return s == "none" || s.rfind("@", 0) == 0; };
+    if (!readable(pre) || !readable(post)) return " UNREADABLE";
+    if (pre == "none" && post == "none") return " same (no node)";
+    return pre == post ? " same" : " CHANGED";
+}
+
+// After the trampoline: a pending `setat ... post`, then - for a call that was
+// logged with `watch` on - the post-call snapshot and whether it changed.
+static void PpAfter(const char* label, long n, bool logged, const std::string& gridPre,
+                    CInstance* S, CInstance* O, int argc, RValue** A, const RValue& result)
+{
+    PpBackingCapture(label, n, S, result);
+    if (g_PpSetAtPending) PpSetAtTry(label, n, true, S, O, argc, A);
+    if (!logged || gridPre.empty() || !g_PpWatch.load()) return;
+    try {
+        std::string post;
+        PpGridSnapshot(post);
+        Out(std::string("prospectprobe ") + label + " #" + std::to_string(n) + " grid-post=" + post
+            + PpSnapCompare(gridPre, post));
+    } catch (...) {}
+}
+
+#define PROSPECTPROBE_DETOUR(SAFE, LABEL) \
+    static PFUNC_YYGMLScript g_PpOrig_##SAFE = nullptr; \
+    static volatile long g_PpCalls_##SAFE = 0; \
+    static volatile long g_PpLogged_##SAFE = 0; \
+    static volatile long g_PpLogOn_##SAFE = 1; \
+    static RValue& PpDetour_##SAFE(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) { \
+        const long n = InterlockedIncrement(&g_PpCalls_##SAFE); \
+        std::string gridPre; \
+        const bool logged = PpObserve(LABEL, n, &g_PpLogged_##SAFE, &g_PpLogOn_##SAFE, S, O, argc, A, gridPre); \
+        RValue& r = g_PpOrig_##SAFE ? g_PpOrig_##SAFE(S, O, R, argc, A) : R; \
+        PpAfter(LABEL, n, logged, gridPre, S, O, argc, A, r); \
+        return r; \
+    }
+
+// One row per candidate in docs/prospect-window-research.md § Static search.
+// SAFE, label, SDK constant. The runtime name is always the hs-game-sdk
+// constant's own value - never retyped here - so a row that prints `not
+// found` is a finding about the runtime, not a typo.
+#define PROSPECTPROBE_TARGETS(X) \
+    /* prospect family */ \
+    X(UiAProspectButton, "UiAProspectButton", gml_Script_UiAProspectButton) \
+    X(Struct120, "___struct___120@UiAProspectButton", gml_Script____struct___120_UiAProspectButton_DefineProspectCombos) \
+    X(Struct121, "___struct___121@UiAProspectButton", gml_Script____struct___121_UiAProspectButton_DefineProspectCombos) \
+    X(Struct122, "___struct___122@___struct___121", gml_Script____struct___122____struct___121_UiAProspectButton_DefineProspectCombos) \
+    X(Struct123, "___struct___123@UiAProspectButton", gml_Script____struct___123_UiAProspectButton_DefineProspectCombos) \
+    X(Struct124, "___struct___124@___struct___123", gml_Script____struct___124____struct___123_UiAProspectButton_DefineProspectCombos) \
+    /* Object Create-event closures. Derived from the regenerated SDK (hub     */ \
+    /* 4539e68): every constant whose value names one of these ten objects'   */ \
+    /* Create_0, which test_target_table_covers_every_sdk_closure_of_the_ui_  */ \
+    /* objects enforces. The numbers move with every game patch, so a stale   */ \
+    /* row fails the compile, never a live session.                           */ \
+    /* UI_Prospect_obj (the window) */ \
+    X(Prospect1065, "UI_Prospect_obj anon@1065", gml_Script_anon_1065_gml_Object_UI_Prospect_obj_Create_0) \
+    X(Prospect2806, "UI_Prospect_obj anon@2806", gml_Script_anon_2806_gml_Object_UI_Prospect_obj_Create_0) \
+    X(Prospect3657, "UI_Prospect_obj anon@3657", gml_Script_anon_3657_gml_Object_UI_Prospect_obj_Create_0) \
+    /* UI_Inventory_Grid_obj (the ProspectGrid node's object) */ \
+    X(InvGrid2143, "UI_Inventory_Grid_obj anon@2143", gml_Script_anon_2143_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGrid2971, "UI_Inventory_Grid_obj anon@2971", gml_Script_anon_2971_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGrid4064, "UI_Inventory_Grid_obj anon@4064", gml_Script_anon_4064_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS517, "UI_Inventory_Grid_obj ___struct___517@anon@8881", gml_Script____struct___517_anon_8881_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS519, "UI_Inventory_Grid_obj ___struct___519@anon@8881", gml_Script____struct___519_anon_8881_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGrid8881, "UI_Inventory_Grid_obj anon@8881", gml_Script_anon_8881_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS522, "UI_Inventory_Grid_obj ___struct___522@anon@15345", gml_Script____struct___522_anon_15345_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS529, "UI_Inventory_Grid_obj ___struct___529@anon@15345", gml_Script____struct___529_anon_15345_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS532, "UI_Inventory_Grid_obj ___struct___532@anon@15345", gml_Script____struct___532_anon_15345_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS536, "UI_Inventory_Grid_obj ___struct___536@anon@15345", gml_Script____struct___536_anon_15345_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS538, "UI_Inventory_Grid_obj ___struct___538@anon@15345", gml_Script____struct___538_anon_15345_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS541, "UI_Inventory_Grid_obj ___struct___541@anon@15345", gml_Script____struct___541_anon_15345_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGrid15345, "UI_Inventory_Grid_obj anon@15345", gml_Script_anon_15345_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGrid34555, "UI_Inventory_Grid_obj anon@34555", gml_Script_anon_34555_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGrid36159, "UI_Inventory_Grid_obj anon@36159", gml_Script_anon_36159_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    /* UI_Inventory_Parent_obj (the window's parent) */ \
+    X(InvParent1621, "UI_Inventory_Parent_obj anon@1621", gml_Script_anon_1621_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent4028, "UI_Inventory_Parent_obj anon@4028", gml_Script_anon_4028_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent6164, "UI_Inventory_Parent_obj anon@6164", gml_Script_anon_6164_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent6272, "UI_Inventory_Parent_obj anon@6272", gml_Script_anon_6272_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent6754, "UI_Inventory_Parent_obj anon@6754", gml_Script_anon_6754_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent7597, "UI_Inventory_Parent_obj anon@7597", gml_Script_anon_7597_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent8615, "UI_Inventory_Parent_obj anon@8615", gml_Script_anon_8615_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent11250, "UI_Inventory_Parent_obj anon@11250", gml_Script_anon_11250_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent19615, "UI_Inventory_Parent_obj anon@19615", gml_Script_anon_19615_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent22055, "UI_Inventory_Parent_obj anon@22055", gml_Script_anon_22055_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    /* UI_Node_Parent_obj (every node's parent) */ \
+    X(NodeParent1577, "UI_Node_Parent_obj anon@1577", gml_Script_anon_1577_gml_Object_UI_Node_Parent_obj_Create_0) \
+    X(NodeParent1997, "UI_Node_Parent_obj anon@1997", gml_Script_anon_1997_gml_Object_UI_Node_Parent_obj_Create_0) \
+    /* UI_Grid_obj (sibling grid node) */ \
+    X(UiGrid933, "UI_Grid_obj anon@933", gml_Script_anon_933_gml_Object_UI_Grid_obj_Create_0) \
+    X(UiGrid1307, "UI_Grid_obj anon@1307", gml_Script_anon_1307_gml_Object_UI_Grid_obj_Create_0) \
+    X(UiGrid1577, "UI_Grid_obj anon@1577", gml_Script_anon_1577_gml_Object_UI_Grid_obj_Create_0) \
+    X(UiGrid2086, "UI_Grid_obj anon@2086", gml_Script_anon_2086_gml_Object_UI_Grid_obj_Create_0) \
+    X(UiGrid2244, "UI_Grid_obj anon@2244", gml_Script_anon_2244_gml_Object_UI_Grid_obj_Create_0) \
+    X(UiGrid2416, "UI_Grid_obj anon@2416", gml_Script_anon_2416_gml_Object_UI_Grid_obj_Create_0) \
+    /* UI_Container_obj (sibling container node) */ \
+    X(UiContainer197, "UI_Container_obj anon@197", gml_Script_anon_197_gml_Object_UI_Container_obj_Create_0) \
+    /* UI_Parent_obj (the window's grandparent) */ \
+    X(UiParent255, "UI_Parent_obj anon@255", gml_Script_anon_255_gml_Object_UI_Parent_obj_Create_0) \
+    X(UiParent874, "UI_Parent_obj anon@874", gml_Script_anon_874_gml_Object_UI_Parent_obj_Create_0) \
+    X(UiParent2234, "UI_Parent_obj anon@2234", gml_Script_anon_2234_gml_Object_UI_Parent_obj_Create_0) \
+    X(UiParent8601, "UI_Parent_obj anon@8601", gml_Script_anon_8601_gml_Object_UI_Parent_obj_Create_0) \
+    X(UiParent10129, "UI_Parent_obj anon@10129", gml_Script_anon_10129_gml_Object_UI_Parent_obj_Create_0) \
+    /* Prospect_Cube_obj (the world object) */ \
+    X(Cube337, "Prospect_Cube_obj anon@337", gml_Script_anon_337_gml_Object_Prospect_Cube_obj_Create_0) \
+    /* UI_Button_Journal_Prospect_obj (journal row) */ \
+    X(JournalButton342, "UI_Button_Journal_Prospect_obj anon@342", gml_Script_anon_342_gml_Object_UI_Button_Journal_Prospect_obj_Create_0) \
+    /* UI_Journal_Prospecting_obj (journal tab) */ \
+    X(JournalTab1039, "UI_Journal_Prospecting_obj anon@1039", gml_Script_anon_1039_gml_Object_UI_Journal_Prospecting_obj_Create_0) \
+    /* UI framework (UiFuncs) */ \
+    X(UiCreate, "UiCreate", gml_Script_UiCreate) \
+    X(UiCreateNode, "UiCreateNode", gml_Script_UiCreateNode) \
+    X(UiSetGrid, "UiSetGrid", gml_Script_UiSetGrid) \
+    X(UiSetGridArray, "UiSetGridArray", gml_Script_UiSetGridArray) \
+    X(UiResetGrid, "UiResetGrid", gml_Script_UiResetGrid) \
+    X(UiMoveNode, "UiMoveNode", gml_Script_UiMoveNode) \
+    X(UiCreateSameLevel, "UiCreateSameLevel", gml_Script_UiCreateSameLevel) \
+    X(UiCreateContainer, "UiCreateContainer", gml_Script_UiCreateContainer) \
+    X(UiContainerChange, "UiContainerChange", gml_Script_UiContainerChange) \
+    X(UiChangeVisibility, "UiChangeVisibility", gml_Script_UiChangeVisibility) \
+    X(UiSetRef, "UiSetRef", gml_Script_UiSetRef) \
+    X(UiSetNodeScale, "UiSetNodeScale", gml_Script_UiSetNodeScale) \
+    X(UiRemoveNode, "UiRemoveNode", gml_Script_UiRemoveNode) \
+    X(Struct408, "___struct___408@UiCreate", gml_Script____struct___408_UiCreate_UiFuncs) \
+    X(Struct409, "___struct___409@UiCreateNode", gml_Script____struct___409_UiCreateNode_UiFuncs) \
+    X(Struct410, "___struct___410@UiCreateContainer", gml_Script____struct___410_UiCreateContainer_UiFuncs) \
+    X(Struct411, "___struct___411@UiContainerChange", gml_Script____struct___411_UiContainerChange_UiFuncs) \
+    /* inventory-grid family */ \
+    X(InventoryResetTabs, "InventoryResetTabs", gml_Script_InventoryResetTabs) \
+    X(InventoryInitGrids, "InventoryInitGrids", gml_Script_InventoryInitGrids) \
+    X(GetInventoryGridNode, "GetInventoryGridNode", gml_Script_GetInventoryGridNode) \
+    X(UiResizeInventoryNodes, "UiResizeInventoryNodes", gml_Script_UiResizeInventoryNodes) \
+    X(SItemOperation, "s_ItemOperation", gml_Script_s_ItemOperation) \
+    X(SInvNode, "s_InvNode", gml_Script_s_InvNode) \
+    X(InventoryGridAddItem, "InventoryGridAddItem", gml_Script_InventoryGridAddItem) \
+    X(GridHasSpace, "GridHasSpace", gml_Script_GridHasSpace) \
+    X(InventoryGridHasSpace, "InventoryGridHasSpace", gml_Script_InventoryGridHasSpace) \
+    X(GridAddItem, "GridAddItem", gml_Script_GridAddItem) \
+    X(GetGridTypeName, "GetGridTypeName", gml_Script_GetGridTypeName) \
+    X(GridClear, "GridClear", gml_Script_GridClear) \
+    X(ParseItemToGrid, "ParseItemToGrid", gml_Script_ParseItemToGrid) \
+    X(SItemGridInfo, "s_ItemGridInfo", gml_Script_s_ItemGridInfo) \
+    X(GetItemPreferredGrid, "GetItemPreferredGrid", gml_Script_GetItemPreferredGrid) \
+    X(InvGridClearItemNode, "InvGridClearItemNode", gml_Script_InvGridClearItemNode) \
+    X(GetStackOpLocationFromGridType, "GetStackOpLocationFromGridType", gml_Script_GetStackOpLocationFromGridType) \
+    /* Profile inventory getters (Phase 0c). m_SetInventoryLocalPlayer reads */ \
+    /* the first two before the ProspectGrid store exists; `backing on`     */ \
+    /* stashes what the game's own call returned. Never invoked by us - a   */ \
+    /* blind call of GetProfileInventoryData crashed the game in Phase 0b.  */ \
+    X(GetProfileInv, "GetProfileInventoryData", gml_Script_GetProfileInventoryData) \
+    X(GetItemOwner, "GetPlayerItemOwner", gml_Script_GetPlayerItemOwner) \
+    X(GetInvArray, "GetInventoryArray", gml_Script_GetInventoryArray) \
+    X(GetProfileObj, "GetPlayerProfileObj", gml_Script_GetPlayerProfileObj) \
+    /* PlayerMouseAction: expected to fire on a click, but its only earlier  */ \
+    /* native measurement read 0 - a candidate, NOT a control. The control   */ \
+    /* is CheckPlayerInteraction alone.                                      */ \
+    X(PlayerMouseAction, "PlayerMouseAction", gml_Script_PlayerMouseAction) \
+    X(CheckPlayerInteraction, "CheckPlayerInteraction", gml_Script_CheckPlayerInteraction)
+
+#define PP_DEFINE_DETOUR(SAFE, LABEL, CONSTANT) PROSPECTPROBE_DETOUR(SAFE, LABEL)
+PROSPECTPROBE_TARGETS(PP_DEFINE_DETOUR)
+#undef PP_DEFINE_DETOUR
+#undef PROSPECTPROBE_DETOUR
+
+struct PpTarget {
+    const char*        label;
+    const char*        runtimeName;   // the SDK constant's value, used as-is
+    const char*        hookId;
+    PVOID              detour;
+    PFUNC_YYGMLScript* origSlot;
+    volatile long*     calls;
+    volatile long*     logged;
+    volatile long*     logOn;         // selected for logging by the last `arm`
+    std::atomic<bool>  installed;
+    long               lastShown;     // calls at the previous `show`
+};
+
+#define PP_ENTRY(SAFE, LABEL, CONSTANT) \
+    { LABEL, HeroSiege::Scripts::CONSTANT.data(), "fp_pp_" #SAFE, (PVOID)PpDetour_##SAFE, &g_PpOrig_##SAFE, \
+      &g_PpCalls_##SAFE, &g_PpLogged_##SAFE, &g_PpLogOn_##SAFE, false, 0 },
+static PpTarget g_PpTargets[] = {
+    PROSPECTPROBE_TARGETS(PP_ENTRY)
+};
+#undef PP_ENTRY
+#undef PROSPECTPROBE_TARGETS
+
+static PpTarget* PpFindRow(const std::string& label)
+{
+    for (PpTarget& t : g_PpTargets) if (label == t.label) return &t;
+    return nullptr;
+}
+
+// Same resolution as CiNativeAddressOf: name -> CScript -> the compiled
+// function. The address is refused unless it is committed, executable code
+// inside Hero_Siege.exe's own image - which also refuses the case where some
+// table hook already swapped this entry for a plugin detour, since patching
+// that would hook the plugin instead of the game. The check comes before
+// MmCreateHook, never after.
+static PVOID PpResolve(const PpTarget& t, std::string& why)
+{
+    PVOID p = nullptr;
+    AurieStatus st = g_Yytk->GetNamedRoutinePointer(t.runtimeName, &p);
+    if (!AurieSuccess(st) || !p) { why = "not found st=" + std::to_string((int)st); return nullptr; }
+    CScript* sc = reinterpret_cast<CScript*>(p);
+    if (!ReadablePtr(sc, sizeof(CScript)) || !ReadablePtr(sc->m_Functions, sizeof(*sc->m_Functions))) {
+        why = "refused (name resolved, but not to a readable script record)";
+        return nullptr;
+    }
+    PVOID fn = (PVOID)sc->m_Functions->m_ScriptFunction;
+    if (!fn) { why = "refused (script record carries no function)"; return nullptr; }
+    if (!AddrIsExecutableInModule(GetModuleHandleA(nullptr), fn)) {
+        why = "refused (function address is not executable code inside Hero_Siege.exe - a table hook may hold this entry)";
+        return nullptr;
+    }
+    return fn;
+}
+
+static void PpInstall(const std::vector<std::string>& filters)
+{
+    HMODULE mainMod = GetModuleHandleA(nullptr);
+    int ok = 0, failed = 0, skipped = 0;
+    for (PpTarget& t : g_PpTargets) {
+        if (!filters.empty()) {
+            const std::string ll = Lower(t.label);
+            bool match = false;
+            for (const std::string& f : filters) if (ll.find(Lower(f)) != std::string::npos) { match = true; break; }
+            if (!match) { ++skipped; continue; }
+        }
+        if (t.installed.load()) { Out(std::string("prospectprobe hook: ") + t.label + " already detoured"); ++ok; continue; }
+        std::string why;
+        PVOID src = PpResolve(t, why);
+        if (!src) { Out(std::string("prospectprobe hook: ") + t.label + " " + why); ++failed; continue; }
+        PVOID tramp = nullptr;
+        AurieStatus hs = MmCreateHook(g_ArSelfModule, t.hookId, src, t.detour, &tramp);
+        if (!AurieSuccess(hs) || !tramp) {
+            Out(std::string("prospectprobe hook: ") + t.label + " MmCreateHook failed st=" + std::to_string((int)hs));
+            ++failed;
+            continue;
+        }
+        *t.origSlot = reinterpret_cast<PFUNC_YYGMLScript>(tramp);
+        t.installed.store(true);
+        char b[320];
+        sprintf_s(b, "prospectprobe hook: detoured %s at exe+0x%llX", t.label,
+                  (unsigned long long)((char*)src - (char*)mainMod));
+        Out(b);
+        ++ok;
+    }
+    Out("prospectprobe hook: " + std::to_string(ok) + " detoured, " + std::to_string(failed) + " failed"
+        + (skipped ? ", " + std::to_string(skipped) + " not selected" : std::string()) + ".");
+    Out("  Next: `prospectprobe show` - CheckPlayerInteraction must already be climbing, or nothing here counts.");
+}
+
+static void PpZeroCounters()
+{
+    for (PpTarget& t : g_PpTargets) {
+        InterlockedExchange(t.calls, 0);
+        InterlockedExchange(t.logged, 0);
+        t.lastShown = 0;
+    }
+}
+
+// `arm [budget=N] [substr ...]`: with no substrings every row except the
+// CheckPlayerInteraction control logs (it fires every frame from every
+// interactable; its count is the measurement, and naming it logs it too).
+static void PpArm(const std::vector<std::string>& args)
+{
+    long budget = kPpDefaultLogBudget;
+    std::vector<std::string> filters;
+    for (const std::string& a : args) {
+        const std::string la = Lower(a);
+        if (la.rfind("budget=", 0) == 0) {
+            try { budget = std::stol(la.substr(7)); }
+            catch (...) { Out("prospectprobe arm: budget=N needs a whole number; not armed"); return; }
+            if (budget < 1 || budget > kPpMaxLogBudget) {
+                Out("prospectprobe arm: budget must be 1.." + std::to_string(kPpMaxLogBudget) + "; not armed");
+                return;
+            }
+        } else filters.push_back(la);
+    }
+    PpZeroCounters();
+    int selected = 0;
+    for (PpTarget& t : g_PpTargets) {
+        const std::string ll = Lower(t.label);
+        bool on = filters.empty() ? ll != "checkplayerinteraction" : false;
+        for (const std::string& f : filters) if (ll.find(f) != std::string::npos) { on = true; break; }
+        InterlockedExchange(t.logOn, on ? 1 : 0);
+        if (on && t.installed.load()) ++selected;
+    }
+    InterlockedExchange(&g_PpLogBudget, budget);
+    g_PpArmed.store(true);
+    Out("prospectprobe arm: counters reset; the next " + std::to_string(budget) + " calls of each of "
+        + std::to_string(selected) + " selected detoured row(s) are logged"
+        + (filters.empty() ? " (all but the CheckPlayerInteraction control)" : " (label filters)")
+        + ". Open the prospect window, then `prospectprobe show` - a row reporting unlogged calls is `not observed (budget spent)`.");
+}
+
+static void PpShow()
+{
+    int installed = 0;
+    for (const PpTarget& t : g_PpTargets) if (t.installed.load()) ++installed;
+    Out("prospectprobe show: " + std::to_string(installed) + "/" + std::to_string((int)(sizeof(g_PpTargets) / sizeof(g_PpTargets[0])))
+        + " rows detoured, " + (g_PpArmed.load() ? "armed" : "not armed")
+        + (g_PpOverrideLeft > 0 ? ", override pending on " + g_PpOverrideLabel + " a" + std::to_string(g_PpOverrideArg)
+                                  + " (" + std::to_string(g_PpOverrideLeft) + " left, notApplied="
+                                  + std::to_string(g_PpOverrideNotApplied) + ")" : std::string())
+        + (g_PpSetAtPending ? ", setat pending on " + g_PpSetAtLabel + " " + (g_PpSetAtPost ? "post " : "pre ")
+                              + (g_PpSetAtGrid ? "grid." : "window.") + g_PpSetAtVar + "=" + PpNum(RValue(g_PpSetAtValue))
+                              + " (notApplied=" + std::to_string(g_PpSetAtNotApplied) + ")" : std::string())
+        + (g_PpWatch.load() ? ", watch on" : ", watch off"));
+    long control = -1;
+    for (PpTarget& t : g_PpTargets) {
+        const long calls = *t.calls;
+        if (std::string(t.label) == "CheckPlayerInteraction") { control = t.installed.load() ? calls : -1; continue; }
+        std::string line = std::string("  ") + t.label + ": ";
+        if (!t.installed.load()) line += "(not detoured)";
+        else {
+            // calls and logged both count from the last `arm`, so their
+            // difference is exactly the calls whose arguments nobody saw.
+            const long logged = (std::min)((long)*t.logged, (long)g_PpLogBudget);
+            line += "calls=" + std::to_string(calls) + " since=" + std::to_string(calls - t.lastShown);
+            if (g_PpArmed.load()) {
+                // A row left out of a filtered re-arm that still fired made
+                // calls nobody saw; say so, or it reads as clean.
+                if (!*t.logOn) line += calls > 0 ? " UNLOGGED=" + std::to_string(calls) + " (not selected - not observed)"
+                                                 : std::string(" (not selected for logging)");
+                else {
+                    line += " logged=" + std::to_string(logged);
+                    if (calls > logged) line += " UNLOGGED=" + std::to_string(calls - logged) + " (budget spent - not observed)";
+                }
+            }
+        }
+        t.lastShown = calls;
+        Out(line);
+    }
+    if (control < 0) Out("CheckPlayerInteraction: not detoured - every count above is uncontrolled.");
+    else Out("CheckPlayerInteraction: calls=" + std::to_string(control)
+             + (control == 0 ? "   <-- 0 voids every row above (the instrument is not seeing calls)" : ""));
+}
+
+static void PpReset()
+{
+    PpZeroCounters();
+    g_PpArmed.store(false);
+    g_PpWatch.store(false);
+    g_PpSetAtPending = false;
+    InterlockedExchange(&g_PpSetAtNotApplied, 0);
+    InterlockedExchange(&g_PpSetAtRefusalsLogged, 0);
+    g_PpBacking.store(false);
+    PpBackingRelease();
+    Out("prospectprobe reset: counters zeroed, disarmed, watch off, pending setat cleared, backing off and its kept values released.");
+}
+
+// Built-in instance variables always exist and cannot be created by a write,
+// so they are accepted even if variable_instance_exists answers false for
+// them (whether it does on this runner is unmeasured - the output prints the
+// answer). `x` is the write control in the live procedure.
+static bool PpIsBuiltinVar(const std::string& var)
+{
+    static const char* const kBuiltins[] = { "x", "y", "depth", "visible", "image_xscale", "image_yscale", "image_alpha" };
+    for (const char* b : kBuiltins) if (var == b) return true;
+    return false;
+}
+
+static void PpSet(const std::string& objName, int nth, const std::string& var, double value)
+{
+    const std::string tag = "prospectprobe set " + objName + "[" + std::to_string(nth) + "]." + var;
+    try {
+        const int idx = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(objName) }).ToDouble();
+        if (idx < 0) { Out(tag + ": refused: unknown object; no write made"); return; }
+        // asset_get_index answers for sprites, sounds and rooms too; only an
+        // object index may reach instance_number.
+        if (!g_Yytk->CallBuiltin("object_exists", { RValue((double)idx) }).ToBoolean()) {
+            Out(tag + ": refused: unknown object (" + objName + " is an asset, not an object); no write made");
+            return;
+        }
+        const int total = (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)idx) }).ToDouble();
+        if (nth < 0 || nth >= total) {
+            Out(tag + ": refused: no such instance (" + std::to_string(total) + " live); no write made");
+            return;
+        }
+        // Passed through with whatever kind instance_find returns (VALUE_REF on
+        // this runner); the kind never decides whether the write happens.
+        RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue((double)idx), RValue((double)nth) });
+        const bool exists = g_Yytk->CallBuiltin("variable_instance_exists", { inst, RValue(var) }).ToBoolean();
+        if (!exists && !PpIsBuiltinVar(var)) { Out(tag + ": refused: no such variable (exists=false); no write made"); return; }
+        RValue was = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(var) });
+        if (!PpIsNumber(was) || !std::isfinite(was.ToDouble())) {
+            Out(tag + ": refused: " + var + " is " + Describe(was) + ", not a number; no write made");
+            return;
+        }
+        g_Yytk->CallBuiltin("variable_instance_set", { inst, RValue(var), RValue(value) });
+        RValue now = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(var) });
+        const bool ok = PpIsNumber(now) && std::fabs(now.ToDouble() - value) < 1e-9;
+        Out(tag + ": was=" + Describe(was) + " now=" + Describe(now) + " (readback " + (ok ? "ok" : "MISMATCH") + ")"
+            + " exists=" + (exists ? "true" : "false (built-in)"));
+    } catch (...) { Out(tag + ": EXCEPTION; the write may or may not have happened - read it back with oget"); }
+}
+
+struct PpSelector {
+    std::string self;
+    std::string other;
+    bool        whenSet = false;
+    double      when = 0.0;
+};
+
+static void PpOverride(const std::string& label, int argIndex, double value, long calls, const PpSelector& sel)
+{
+    PpTarget* row = PpFindRow(label);
+    if (!row) { Out("prospectprobe override: no row labelled '" + label + "' (labels are listed by `prospectprobe show`)"); return; }
+    if (!row->installed.load()) { Out("prospectprobe override: " + label + " is not detoured - hook it first"); return; }
+    if (argIndex < 0 || calls <= 0) { Out("prospectprobe override: argIndex must be >= 0 and calls >= 1"); return; }
+    InterlockedExchange(&g_PpOverrideLeft, 0);   // selector fields change below; nothing applies meanwhile
+    g_PpOverrideLabel = row->label;
+    g_PpOverrideArg = argIndex;
+    g_PpOverrideValue = value;
+    g_PpOverrideSelf = sel.self;
+    g_PpOverrideOther = sel.other;
+    g_PpOverrideWhenSet = sel.whenSet;
+    g_PpOverrideWhen = sel.when;
+    InterlockedExchange(&g_PpOverrideRefusalsLogged, 0);
+    InterlockedExchange(&g_PpOverrideNotApplied, 0);
+    InterlockedExchange(&g_PpOverrideLeft, calls);
+    std::string only;
+    if (!sel.self.empty()) only += " self=" + sel.self;
+    if (!sel.other.empty()) only += " other=" + sel.other;
+    if (sel.whenSet) only += " when a" + std::to_string(argIndex) + "==" + Describe(RValue(sel.when));
+    Out("prospectprobe override: the next " + std::to_string(calls) + " call(s) of " + label + " get a"
+        + std::to_string(argIndex) + "=" + std::to_string(value) + " if that argument is numeric"
+        + (only.empty() ? std::string(" (any caller)") : " and the call matches" + only)
+        + ". Reopen the window; check the applied line's self/other/args are the R4 call.");
+}
+
+static void PpOverrideClear()
+{
+    InterlockedExchange(&g_PpOverrideLeft, 0);
+    Out("prospectprobe override: cleared.");
+}
+
+// ---- Phase 0b commands: grid, call, resize ... via, setat --------------------
+
+// Every variable of one instance that the live procedure reads: for the window,
+// the numeric ones equal to 9 or 6 (R2-window: the vanilla 9x6 size); for both,
+// every m_* method value with the closure it resolves to. Read-only.
+static void PpListVars(const std::string& tag, const RValue& inst, bool sizeValues)
+{
+    int sized = 0, methods = 0;
+    RValue names = g_Yytk->CallBuiltin("variable_instance_get_names", { inst });
+    const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+    for (int i = 0; i < n; ++i) {
+        RValue nm = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) });
+        const std::string name = nm.ToString();
+        RValue v = g_Yytk->CallBuiltin("variable_instance_get", { inst, nm });
+        if (sizeValues && PpIsNumber(v) && (v.ToDouble() == 9.0 || v.ToDouble() == 6.0)) {
+            Out("  " + tag + " equals " + PpNum(v) + ": " + name);
+            ++sized;
+        }
+        if (name.rfind("m_", 0) == 0) {
+            const std::string resolved = CiTryResolveMethod(v);
+            Out("  " + tag + " method: " + name + " = " + Describe(v) + (resolved.empty() ? " (unresolvable)" : resolved));
+            ++methods;
+        }
+    }
+    Out("prospectprobe grid: " + tag + " has " + std::to_string(n) + " variables"
+        + (sizeValues ? ", " + std::to_string(sized) + " equal to 9 or 6" : std::string())
+        + ", " + std::to_string(methods) + " m_* variables");
+}
+
+static void PpGridCommand()
+{
+    try {
+        std::string snap;
+        RValue node;
+        const bool haveNode = PpGridSnapshot(snap, &node);
+        Out("prospectprobe grid: grid=" + snap);
+        RValue window;
+        if (!PpFindWindow(window)) Out("prospectprobe grid: no live UI_Prospect_obj instance (the window is closed)");
+        else PpListVars("window", window, true);
+        if (haveNode) PpListVars("grid", node, false);
+        Out("  Control (C-grid): `citrace dumpobj UI_Inventory_Grid_obj <nth>` of the ProspectGrid node must print the same nodeGridWidth/nodeGridHeight.");
+    } catch (...) { Out("prospectprobe grid: EXCEPTION while reading"); }
+}
+
+// The live instance a `call`/`resize via` acts on and the method value it
+// invokes. Refuses - nothing called - on no instance, a missing variable, or a
+// value that is not a method value. The value is only ever handed to the
+// runtime's own script_execute by name: no CScriptRef read, no address.
+static bool PpMethodTarget(const std::string& target, const std::string& method, RValue& inst, RValue& methodValue,
+                           std::string& resolution, std::string& why)
+{
+    std::string ignored;
+    if (target == "window") { if (!PpFindWindow(inst)) { why = "no live UI_Prospect_obj instance"; return false; } }
+    else if (target == "grid") { if (!PpGridSnapshot(ignored, &inst)) { why = "no ProspectGrid node (" + ignored + ")"; return false; } }
+    else { why = "target must be window or grid"; return false; }
+    if (!g_Yytk->CallBuiltin("variable_instance_exists", { inst, RValue(method) }).ToBoolean()) {
+        why = "no such variable " + method + " on the " + target;
+        return false;
+    }
+    methodValue = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(method) });
+    if (methodValue.m_Kind != VALUE_OBJECT) {
+        why = method + " is " + Describe(methodValue) + ", not a method value";
+        return false;
+    }
+    resolution = CiTryResolveMethod(methodValue);
+    if (resolution.empty()) resolution = " unresolvable";   // still invoked; its outcome is invoked=unproven
+    return true;
+}
+
+// The table row a resolved method value's closure belongs to, or nullptr.
+// CiTryResolveMethod prints `->method:<name>#<index>`; the name is compared
+// with each row's SDK runtime name, `gml_Script_` ignored on both sides.
+static PpTarget* PpInvokedRow(const std::string& resolution)
+{
+    const size_t at = resolution.find("->method:");
+    if (at == std::string::npos) return nullptr;
+    std::string name = resolution.substr(at + 9);
+    const size_t hash = name.rfind('#');
+    if (hash != std::string::npos) name = name.substr(0, hash);
+    auto bare = [](const std::string& s) { const std::string p = "gml_Script_"; return s.rfind(p, 0) == 0 ? s.substr(p.size()) : s; };
+    name = bare(name);
+    if (name.empty()) return nullptr;
+    for (PpTarget& t : g_PpTargets) if (bare(t.runtimeName) == name) return &t;
+    return nullptr;
+}
+
+// Whether the method's own body ran. script_execute returning success proves
+// the dispatch, not the body; the body's native detour counting a call during
+// the invoke does. Without a detoured row for the closure there is no proof
+// either way.
+static std::string PpInvokedText(const PpTarget* row, long callsBefore, const std::string& resolution)
+{
+    if (!row) return "invoked=unproven (no detoured row for" + resolution + ")";
+    if (!row->installed.load()) return std::string("invoked=unproven (") + row->label + " is not detoured - `prospectprobe hook` it first)";
+    const long delta = *row->calls - callsBefore;
+    return delta > 0 ? std::string("invoked=yes (") + row->label + " +" + std::to_string(delta) + ")"
+                     : std::string("invoked=NO (") + row->label + " +0)";
+}
+
+static std::string PpArgsText(const std::vector<double>& args)
+{
+    if (args.empty()) return "args=(none)";
+    std::string s = "args=(";
+    for (size_t i = 0; i < args.size(); ++i) s += (i ? ", " : "") + PpNum(RValue(args[i]));
+    return s + ")";
+}
+
+// A pending override or setat fires on the next matching call of its row,
+// including one made inside our own invoke - which would rewrite what the
+// method receives while `args=` prints what was supplied. `call`/`resize`
+// refuse while either is pending; empty when neither is.
+static std::string PpPendingRewrite()
+{
+    if (g_PpOverrideLeft > 0) return "an override is pending on " + g_PpOverrideLabel + " (`prospectprobe override clear` first)";
+    if (g_PpSetAtPending) return "a setat is pending on " + g_PpSetAtLabel + " (`prospectprobe setat clear` first)";
+    return std::string();
+}
+
+static void PpCall(const std::string& target, const std::string& method, const std::vector<double>& args)
+{
+    const std::string tag = "prospectprobe call " + target + " " + method;
+    try {
+        const std::string pending = PpPendingRewrite();
+        if (!pending.empty()) { Out(tag + ": refused: " + pending + " - it could rewrite the invoked call; no call made"); return; }
+        RValue inst, methodValue;
+        std::string resolution, why;
+        if (!PpMethodTarget(target, method, inst, methodValue, resolution, why)) { Out(tag + ": refused: " + why + "; no call made"); return; }
+        CInstance* self = HhResolveInstance(inst);
+        if (!self) { Out(tag + ": refused: the " + target + " instance did not resolve; no call made"); return; }
+        Out(tag + ":" + resolution);
+        std::string before;
+        PpGridSnapshot(before);
+        Out(tag + ": grid before=" + before);
+        std::vector<RValue> callArgs;
+        callArgs.push_back(methodValue);
+        for (double a : args) callArgs.push_back(RValue(a));
+        const PpTarget* row = PpInvokedRow(resolution);
+        const long callsBefore = row ? (long)*row->calls : 0;
+        RValue res;
+        AurieStatus st = AURIE_EXTERNAL_ERROR;
+        bool threw = false;
+        try { st = g_Yytk->CallBuiltinEx(res, "script_execute", self, self, callArgs); }
+        catch (...) { threw = true; }
+        Out(tag + ": st=" + std::to_string((int)st) + (threw ? " (threw)" : "") + " res=" + Describe(res)
+            + " " + PpInvokedText(row, callsBefore, resolution) + " self=" + PpDescribeSelf(self) + " " + PpArgsText(args));
+        std::string after;
+        PpGridSnapshot(after);
+        Out(tag + ": grid after=" + after + PpSnapCompare(before, after));
+    } catch (...) { Out(tag + ": EXCEPTION"); }
+}
+
+// nodeGrid's shape over every row, not only row 0: a builder that resized
+// some rows and not others leaves a Draw that indexes past the short ones.
+struct PpStoreShape {
+    bool array = false;   // nodeGrid exists and is an array
+    int  rows = -1;
+    int  cols0 = -1;
+    int  colsMin = -1;
+    int  colsMax = -1;
+};
+
+static PpStoreShape PpMeasureStore(const RValue& node)
+{
+    PpStoreShape s;
+    if (!g_Yytk->CallBuiltin("variable_instance_exists", { node, RValue("nodeGrid") }).ToBoolean()) return s;
+    RValue grid = g_Yytk->CallBuiltin("variable_instance_get", { node, RValue("nodeGrid") });
+    if (grid.m_Kind != VALUE_ARRAY) return s;
+    s.array = true;
+    s.rows = (int)g_Yytk->CallBuiltin("array_length", { grid }).ToDouble();
+    if (s.rows <= 0) { s.cols0 = s.colsMin = s.colsMax = 0; return s; }
+    for (int i = 0; i < s.rows; ++i) {
+        RValue row = g_Yytk->CallBuiltin("array_get", { grid, RValue((double)i) });
+        const int n = row.m_Kind == VALUE_ARRAY ? (int)g_Yytk->CallBuiltin("array_length", { row }).ToDouble() : 0;
+        if (i == 0) { s.cols0 = s.colsMin = s.colsMax = n; }
+        else { s.colsMin = (std::min)(s.colsMin, n); s.colsMax = (std::max)(s.colsMax, n); }
+    }
+    return s;
+}
+
+static std::string PpStoreText(const PpStoreShape& s)
+{
+    if (!s.array) return "nodeGrid is not an array";
+    return "rows=" + std::to_string(s.rows) + " cols0=" + std::to_string(s.cols0)
+        + " cols=" + std::to_string(s.colsMin) + ".." + std::to_string(s.colsMax);
+}
+
+// The node's nodeGridWidth/nodeGridHeight as they read after the method ran,
+// checked against the store: a method may write the size itself, and a width
+// past the shortest row (or a height past the row count) is the R5b crash on
+// the next Draw even when nodeGrid matched the request.
+static std::string PpSizeText(const RValue& node, const PpStoreShape& s)
+{
+    const RValue w = g_Yytk->CallBuiltin("variable_instance_exists", { node, RValue("nodeGridWidth") }).ToBoolean()
+        ? g_Yytk->CallBuiltin("variable_instance_get", { node, RValue("nodeGridWidth") }) : RValue();
+    const RValue h = g_Yytk->CallBuiltin("variable_instance_exists", { node, RValue("nodeGridHeight") }).ToBoolean()
+        ? g_Yytk->CallBuiltin("variable_instance_get", { node, RValue("nodeGridHeight") }) : RValue();
+    std::string text = " size=" + PpNum(w) + "x" + PpNum(h);
+    if (!PpIsNumber(w) || !PpIsNumber(h)) return text + " (size unreadable - close the window before anything else)";
+    if (!s.array || w.ToDouble() > s.colsMin || h.ToDouble() > s.rows)
+        text += " - size exceeds store (" + PpStoreText(s) + "): close the window before anything else";
+    return text;
+}
+
+// `resize <cols> <rows> via [window:]<m_Method> [number ...]`: write the
+// ProspectGrid node's nodeGridWidth/nodeGridHeight, invoke the game's own
+// method by name with the given arguments, and keep the write only if every
+// row of nodeGrid followed - all in one handler, because a Draw between a bare
+// size write and a rebuild is the R5b crash. Refusals come before any write; a
+// builder that did not follow gets the size restored before this returns, never
+// larger than the store now covers.
+static void PpResize(int cols, int rows, const std::string& via, const std::vector<double>& args)
+{
+    const std::string tag = "prospectprobe resize " + std::to_string(cols) + " " + std::to_string(rows);
+    if (via.empty()) {
+        Out(tag + ": refused: `via <m_Method>` is required - a bare nodeGridWidth write crashed the node's Draw_64 within one frame in Phase 0a (R5b: nodeGrid is not resized by the write). No write made.");
+        return;
+    }
+    if (cols < 1 || rows < 1 || cols > 64 || rows > 64) { Out(tag + ": refused: cols and rows must be 1..64; no write made"); return; }
+    const bool onWindow = via.rfind("window:", 0) == 0;
+    const std::string target = onWindow ? "window" : "grid";
+    const std::string method = onWindow ? via.substr(7) : via;
+    try {
+        const std::string pending = PpPendingRewrite();
+        if (!pending.empty()) { Out(tag + ": refused: " + pending + " - it could rewrite the invoked call; no write made"); return; }
+        RValue node;
+        std::string before;
+        if (!PpGridSnapshot(before, &node)) { Out(tag + ": refused: no ProspectGrid node (" + before + "); open the window first; no write made"); return; }
+        RValue inst, methodValue;
+        std::string resolution, why;
+        if (!PpMethodTarget(target, method, inst, methodValue, resolution, why)) { Out(tag + ": refused: " + why + "; no write made"); return; }
+        CInstance* self = HhResolveInstance(inst);
+        if (!self) { Out(tag + ": refused: the " + target + " instance did not resolve; no write made"); return; }
+        const RValue wName("nodeGridWidth"), hName("nodeGridHeight");
+        if (!g_Yytk->CallBuiltin("variable_instance_exists", { node, wName }).ToBoolean()
+            || !g_Yytk->CallBuiltin("variable_instance_exists", { node, hName }).ToBoolean()) {
+            Out(tag + ": refused: the node has no nodeGridWidth/nodeGridHeight; no write made");
+            return;
+        }
+        RValue wasW = g_Yytk->CallBuiltin("variable_instance_get", { node, wName });
+        RValue wasH = g_Yytk->CallBuiltin("variable_instance_get", { node, hName });
+        if (!PpIsNumber(wasW) || !PpIsNumber(wasH) || !std::isfinite(wasW.ToDouble()) || !std::isfinite(wasH.ToDouble())) {
+            Out(tag + ": refused: nodeGridWidth is " + Describe(wasW) + ", nodeGridHeight is " + Describe(wasH) + " - not both numbers; no write made");
+            return;
+        }
+        Out(tag + " via " + via + ":" + resolution + "; grid before=" + before);
+
+        std::vector<RValue> callArgs;
+        callArgs.push_back(methodValue);
+        for (double a : args) callArgs.push_back(RValue(a));
+        const PpTarget* row = PpInvokedRow(resolution);
+        const long callsBefore = row ? (long)*row->calls : 0;
+        g_Yytk->CallBuiltin("variable_instance_set", { node, wName, RValue((double)cols) });
+        g_Yytk->CallBuiltin("variable_instance_set", { node, hName, RValue((double)rows) });
+        RValue res;
+        AurieStatus st = AURIE_EXTERNAL_ERROR;
+        bool threw = false;
+        try { st = g_Yytk->CallBuiltinEx(res, "script_execute", self, self, callArgs); }
+        catch (...) { threw = true; }
+        const bool called = !threw && AurieSuccess(st);
+        // What was supplied and whether the body ran ride on every outcome line:
+        // a `reverted` without them cannot say whether the builder was tested.
+        const std::string supplied = " " + PpInvokedText(row, callsBefore, resolution)
+            + " self=" + PpDescribeSelf(self) + " " + PpArgsText(args)
+            + " st=" + std::to_string((int)st) + (threw ? " (threw)" : "");
+        const std::string request = std::to_string(cols) + "x" + std::to_string(rows);
+        // Shrink or grow against the size the node carried: GML's element
+        // assignment grows an array and never truncates it, so an assignment
+        // builder answers a shrink with an unchanged store. That `reverted`
+        // says nothing about whether the builder reads the size.
+        const double vw = wasW.ToDouble(), vh = wasH.ToDouble();
+        const bool shrink = cols <= vw && rows <= vh && (cols < vw || rows < vh);
+        const bool grow = cols >= vw && rows >= vh && (cols > vw || rows > vh);
+        const std::string probe = shrink ? " probe=shrink" : grow ? " probe=grow" : (cols == vw && rows == vh) ? " probe=same" : " probe=mixed";
+
+        if (!g_Yytk->CallBuiltin("instance_exists", { node }).ToBoolean()) {
+            // The method replaced the node. The write was on the destroyed one,
+            // so there is nothing to restore; what the replacement measures is
+            // the outcome.
+            std::string fresh;
+            RValue newNode;
+            if (PpGridSnapshot(fresh, &newNode)) {
+                const PpStoreShape s = PpMeasureStore(newNode);
+                const bool matches = s.array && s.rows == rows && s.colsMin == cols && s.colsMax == cols;
+                Out(tag + ": rebuilt (the call replaced the ProspectGrid node; new node " + fresh + ", " + PpStoreText(s)
+                    + " - " + (matches ? "matches" : "does not match") + " the request " + request + ")"
+                    + PpSizeText(newNode, s) + probe + supplied);
+            } else {
+                Out(tag + ": destroyed (the call removed the ProspectGrid node and no new one exists: " + fresh
+                    + "; nothing to restore)" + probe + supplied);
+            }
+        } else {
+            // Did the store follow? nodeGrid is rows x cols (Phase 0a R2), every row.
+            const PpStoreShape s = PpMeasureStore(node);
+            if (called && s.array && s.rows == rows && s.colsMin == cols && s.colsMax == cols) {
+                Out(tag + ": kept (nodeGrid now " + PpStoreText(s) + ")" + PpSizeText(node, s) + " res=" + Describe(res)
+                    + probe + supplied);
+            } else {
+                // Restore, but never to a size the store no longer covers: a
+                // builder that shrank or partly resized nodeGrid would make the
+                // vanilla values the R5b crash on the next Draw.
+                double w = wasW.ToDouble(), h = wasH.ToDouble();
+                bool unsafe = !s.array;
+                if (s.array && s.colsMin < w) { w = (double)s.colsMin; unsafe = true; }
+                if (s.array && s.rows < h) { h = (double)s.rows; unsafe = true; }
+                g_Yytk->CallBuiltin("variable_instance_set", { node, wName, RValue(w) });
+                g_Yytk->CallBuiltin("variable_instance_set", { node, hName, RValue(h) });
+                Out(tag + ": reverted (" + (called ? "builder did not resize nodeGrid to " + request + ": " + PpStoreText(s)
+                                                  : "call failed; " + PpStoreText(s))
+                    + ") - nodeGridWidth/nodeGridHeight restored to " + PpNum(RValue(w)) + "x" + PpNum(RValue(h))
+                    + (unsafe ? " - restore unsafe: the store no longer covers the vanilla " + PpNum(wasW) + "x" + PpNum(wasH)
+                                    + (s.array ? "; wrote the size it does cover"
+                                               : "; nodeGrid is not an array, so no size is safe - wrote the vanilla size back")
+                                    + ". Close the window before anything else."
+                              : std::string())
+                    + probe + supplied
+                    + (shrink ? ". Not observed (shrink only - an assignment-built store never truncates): a shrink's reverted never counts toward H3; grow this method too (research doc § Deciding)."
+                              : ". Counts toward H3 only on a grow, with invoked=yes and the self/args the game's own call used (research doc § Deciding)."));
+            }
+        }
+        std::string after;
+        PpGridSnapshot(after);
+        Out(tag + ": grid after=" + after);
+    } catch (...) { Out(tag + ": EXCEPTION; read the node back with `prospectprobe grid` before anything else"); }
+}
+
+static void PpSetAt(const std::string& label, bool post, bool grid, const std::string& var, double value,
+                    const std::string& self, const std::string& other, int argIndex, const std::string& argText)
+{
+    PpTarget* row = PpFindRow(label);
+    if (!row) { Out("prospectprobe setat: no row labelled '" + label + "' (labels are listed by `prospectprobe show`)"); return; }
+    if (!row->installed.load()) { Out("prospectprobe setat: " + label + " is not detoured - hook it first"); return; }
+    if (!std::isfinite(value)) { Out("prospectprobe setat: the value must be a finite number; nothing set"); return; }
+    g_PpSetAtPending = false;   // fields change below; nothing applies meanwhile
+    g_PpSetAtLabel = row->label;
+    g_PpSetAtPost = post;
+    g_PpSetAtGrid = grid;
+    g_PpSetAtVar = var;
+    g_PpSetAtValue = value;
+    g_PpSetAtSelf = self;
+    g_PpSetAtOther = other;
+    g_PpSetAtArgIndex = argIndex;
+    g_PpSetAtArgText = argText;
+    InterlockedExchange(&g_PpSetAtRefusalsLogged, 0);
+    InterlockedExchange(&g_PpSetAtNotApplied, 0);
+    g_PpSetAtPending = true;
+    std::string only;
+    if (!self.empty()) only += " self=" + self;
+    if (!other.empty()) only += " other=" + other;
+    if (argIndex >= 0) only += " arg" + std::to_string(argIndex) + "=" + argText;
+    Out("prospectprobe setat: on the next call of " + label + (only.empty() ? std::string(" (any caller)") : " matching" + only)
+        + ", " + (post ? "after" : "before") + " the game's function runs, write " + (grid ? "grid." : "window.") + var
+        + "=" + PpNum(RValue(value)) + " (existing numeric variable only, read back; one-shot). Reopen the window.");
+}
+
+// `setat <label> pre|post window|grid <var> <number> [self=<Obj>] [other=<Obj>] [arg<i>=<text>]`.
+// Labels contain spaces, so selectors come off the end first, then the four
+// fixed tokens, and everything left is the label.
+static void PpSetAtCommand(const std::vector<std::string>& tokIn)
+{
+    if (tokIn.size() == 2 && Lower(tokIn[1]) == "clear") {
+        g_PpSetAtPending = false;
+        Out("prospectprobe setat: cleared.");
+        return;
+    }
+    const char* usage = "prospectprobe setat: usage -> setat <label> pre|post window|grid <var> <number> [self=<Obj>] [other=<Obj>] [arg<i>=<text>] | setat clear";
+    std::vector<std::string> tok = tokIn;
+    std::string self, other, argText;
+    int argIndex = -1;
+    while (tok.size() > 1) {
+        const std::string& last = tok.back();
+        const std::string ll = Lower(last);
+        if (ll.rfind("self=", 0) == 0) self = last.substr(5);
+        else if (ll.rfind("other=", 0) == 0) other = last.substr(6);
+        else if (ll.rfind("when=", 0) == 0) {
+            Out("prospectprobe setat: when= is not a setat selector (use self=, other= or arg<i>=<text>); nothing set");
+            return;
+        } else if (ll.rfind("arg", 0) == 0 && ll.find('=') != std::string::npos) {
+            const size_t eq = ll.find('=');
+            const std::string digits = ll.substr(3, eq - 3);
+            if (digits.empty() || digits.find_first_not_of("0123456789") != std::string::npos || eq + 1 >= last.size()) {
+                Out("prospectprobe setat: arg<i>=<text> needs a whole-number index and some text; nothing set");
+                return;
+            }
+            argIndex = std::stoi(digits);
+            argText = last.substr(eq + 1);
+        } else break;
+        tok.pop_back();
+    }
+    const size_t n = tok.size();
+    if (n < 6) { Out(usage); return; }
+    double value = 0.0;
+    try { size_t k = 0; value = std::stod(tok[n - 1], &k); if (k != tok[n - 1].size()) throw 0; }
+    catch (...) { Out("prospectprobe setat: the value must be a number; nothing set"); return; }
+    const std::string var = tok[n - 2];
+    const std::string target = Lower(tok[n - 3]);
+    const std::string phase = Lower(tok[n - 4]);
+    if ((target != "window" && target != "grid") || (phase != "pre" && phase != "post")) { Out(usage); return; }
+    std::string label;
+    for (size_t i = 1; i < n - 4; ++i) label += (i > 1 ? " " : "") + tok[i];
+    if (label.size() >= 2 && label.front() == '"' && label.back() == '"') label = label.substr(1, label.size() - 2);
+    PpSetAt(label, phase == "post", target == "grid", var, value, self, other, argIndex, argText);
+}
+
+// ---- Phase 0c commands: backing on|off, backing dump, backing idcheck --------
+
+// What a walk over a kept value saw. A walk that stopped early, or met a value
+// it could not look inside, has not looked everywhere, so its "not found"
+// proves nothing.
+struct PpBackingScan {
+    long visited = 0;
+    long depthCapped = 0;   // arrays/structs deeper than kPpBackingScanDepth (a struct cycle lands here)
+    long methods = 0;       // method values: the bound self may hold the storage, and is not walked
+    long references = 0;    // every other value that can refer to storage: an instance ref, a ptr, an object that is neither struct nor method
+    bool truncated = false; // kPpBackingScanLimit reached
+    std::string firstUnwalked;  // the first unwalked value: `root VALUE_REF, nothing to walk` / `VALUE_REF at [2].owner`
+    std::string firstCapped;    // the path of the first depth-capped value
+    long Unwalked() const { return methods + references; }
+    bool Complete() const { return !truncated && depthCapped == 0 && Unwalked() == 0; }
+    void Note(std::string& first, const std::string& text) { if (first.empty()) first = text; }
+    std::string Text() const
+    {
+        return "visited=" + std::to_string(visited) + (truncated ? " truncated" : "")
+            + " depth-capped=" + std::to_string(depthCapped) + " unwalked=" + std::to_string(Unwalked())
+            + " (methods=" + std::to_string(methods) + " references=" + std::to_string(references) + ")";
+    }
+    // Why the walk is incomplete, naming the first place each cause was met.
+    std::string Why() const
+    {
+        std::string w;
+        if (truncated) w = "stopped at the " + std::to_string(kPpBackingScanLimit) + "-value limit";
+        if (depthCapped > 0) w += (w.empty() ? "" : ", ") + std::to_string(depthCapped) + " past depth " + std::to_string(kPpBackingScanDepth) + " (first at " + firstCapped + ")";
+        if (Unwalked() > 0) w += (w.empty() ? "" : ", ") + std::to_string(Unwalked()) + " unwalked (first: " + firstUnwalked + ")";
+        return w.empty() ? std::string("complete") : w;
+    }
+};
+
+// What kind of unwalkable value a walk met, for its reason. No ToString on it:
+// a reference or pointer is named by kind only.
+static std::string PpBackingKindName(const RValue& v, int objectKind)
+{
+    switch (v.m_Kind) {
+    case VALUE_REF:    return "VALUE_REF (an instance or other runtime reference)";
+    case VALUE_PTR:    return "VALUE_PTR";
+    case VALUE_OBJECT: return objectKind == 0 ? "method value" : "VALUE_OBJECT that is neither struct nor method";
+    default:           return "kind=" + std::to_string((int)v.m_Kind);
+    }
+}
+
+// A value that holds nothing else: a number, bool, string, undefined, null or unset.
+static bool PpBackingIsPlainLeaf(const RValue& v)
+{
+    switch (v.m_Kind) {
+    case VALUE_REAL: case VALUE_INT32: case VALUE_INT64: case VALUE_BOOL:
+    case VALUE_STRING: case VALUE_UNDEFINED: case VALUE_NULL: case VALUE_UNSET:
+        return true;
+    default:
+        return false;
+    }
+}
+
+// Depth-first over arrays and plain structs, calling visit(value, path) for
+// every value. Builtins only. Anything else that is not a plain leaf - an
+// instance reference (VALUE_REF on this runner), a method value, a pointer -
+// may be where the storage lives, so it is counted as unwalked and the walk is
+// incomplete rather than silently treated as a leaf. A ds_* id held as a plain
+// number cannot be told from a number and stays a leaf (the doc says so).
+template <typename Visit>
+static void PpBackingWalk(const RValue& v, const std::string& path, int depth, PpBackingScan& scan, Visit& visit)
+{
+    if (scan.truncated) return;
+    if (++scan.visited > kPpBackingScanLimit) { scan.truncated = true; return; }
+    visit(v, path);
+    if (PpBackingIsPlainLeaf(v)) return;
+    const bool array = v.m_Kind == VALUE_ARRAY;
+    const int kind = !array && v.m_Kind == VALUE_OBJECT ? PpBackingObjectKind(v) : -1;
+    if (!array && kind != 1) {
+        if (kind == 0) ++scan.methods; else ++scan.references;
+        scan.Note(scan.firstUnwalked, path.empty() ? "root " + PpBackingKindName(v, kind) + ", nothing to walk"
+                                                   : PpBackingKindName(v, kind) + " at " + path);
+        return;
+    }
+    if (depth >= kPpBackingScanDepth) { ++scan.depthCapped; scan.Note(scan.firstCapped, path.empty() ? "(top)" : path); return; }
+    if (array) {
+        const int n = (int)g_Yytk->CallBuiltin("array_length", { v }).ToDouble();
+        for (int i = 0; i < n && !scan.truncated; ++i)
+            PpBackingWalk(g_Yytk->CallBuiltin("array_get", { v, RValue((double)i) }), path + "[" + std::to_string(i) + "]", depth + 1, scan, visit);
+        return;
+    }
+    RValue names = g_Yytk->CallBuiltin("variable_struct_get_names", { v });
+    const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+    for (int i = 0; i < n && !scan.truncated; ++i) {
+        RValue name = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) });
+        PpBackingWalk(g_Yytk->CallBuiltin("variable_struct_get", { v, name }), path + "." + name.ToString(), depth + 1, scan, visit);
+    }
+}
+
+// Every path in `v` holding the sentinel number.
+static std::vector<std::string> PpBackingFindSentinel(const RValue& v, PpBackingScan& scan)
+{
+    std::vector<std::string> hits;
+    auto visit = [&hits](const RValue& e, const std::string& path) {
+        if (PpIsNumber(e) && e.ToDouble() == kPpBackingSentinel && hits.size() < 16) hits.push_back(path.empty() ? "(top)" : path);
+    };
+    PpBackingWalk(v, "", 0, scan, visit);
+    return hits;
+}
+
+// bp_ipc\<name> for one value, written only when a depth-capped walk of it
+// finished without hitting the cap or the value limit: json_stringify has no
+// depth limit of its own, and a struct cycle would overflow it. Returns what
+// the log line says about the file.
+static std::string PpBackingJsonFile(const std::string& name, const std::string& getter, long call, const std::string& self, const RValue& v)
+{
+    PpBackingScan scan;
+    auto ignore = [](const RValue&, const std::string&) {};
+    PpBackingWalk(v, "", 0, scan, ignore);
+    if (scan.truncated || scan.depthCapped > 0)
+        return name + " not written (walk " + scan.Text() + " - a cycle would overflow json_stringify)";
+    const size_t bytes = PpBackingWriteFile(name, getter, call, self, PpBackingShape(v), PpBackingJsonText(v));
+    return name + " (" + std::to_string(bytes) + " bytes)";
+}
+
+// nodeGrid's shape: rows, and the column count every row shares (-1 if rows differ or a row is not an array).
+static void PpBackingGridDims(const RValue& grid, int& rows, int& cols)
+{
+    rows = (int)g_Yytk->CallBuiltin("array_length", { grid }).ToDouble();
+    cols = -2;
+    for (int i = 0; i < rows; ++i) {
+        RValue row = g_Yytk->CallBuiltin("array_get", { grid, RValue((double)i) });
+        const int n = row.m_Kind == VALUE_ARRAY ? (int)g_Yytk->CallBuiltin("array_length", { row }).ToDouble() : -1;
+        if (cols == -2) cols = n; else if (cols != n) cols = -1;
+    }
+    if (cols == -2) cols = -1;
+}
+
+// Every sub-array of `v` shaped like nodeGrid (`rows` arrays of `cols`), and every
+// flat array of rows*cols values. Path and value of each, at most 8.
+static std::vector<std::pair<std::string, RValue>> PpBackingFindShape(const RValue& v, int rows, int cols, bool& flat, PpBackingScan& scan)
+{
+    std::vector<std::pair<std::string, RValue>> found;
+    std::vector<std::string> flats;
+    auto visit = [&](const RValue& e, const std::string& path) {
+        if (e.m_Kind != VALUE_ARRAY || found.size() >= 8) return;
+        int r = 0, c = 0;
+        PpBackingGridDims(e, r, c);
+        if (r == rows && c == cols) found.emplace_back(path.empty() ? "(top)" : path, e);
+        else if (r == rows * cols && flats.size() < 8) flats.push_back(path.empty() ? "(top)" : path);
+    };
+    PpBackingWalk(v, "", 0, scan, visit);
+    flat = !flats.empty();
+    for (const std::string& p : flats) Out("    flat array of " + std::to_string(rows * cols) + " values at " + p + " (shape only - a lead)");
+    return found;
+}
+
+// An empty grid cell: `undefined` or the number 0. Anything else may be an item
+// and is never written over.
+static bool PpBackingIsEmptyCell(const RValue& cell)
+{
+    if (cell.m_Kind == VALUE_UNDEFINED) return true;
+    return PpIsNumber(cell) && cell.ToDouble() == 0.0;
+}
+
+// The same value in two cells: an equal number, bool or string, or - for
+// anything else - the same runtime object (same kind, same non-null pointer).
+// Two structs that merely print alike are not the same value.
+static bool PpBackingSameValue(const RValue& a, const RValue& b)
+{
+    if (PpIsNumber(a) && PpIsNumber(b)) return a.ToDouble() == b.ToDouble();
+    if (a.m_Kind != b.m_Kind) return false;
+    if (a.m_Kind == VALUE_BOOL) return a.ToBoolean() == b.ToBoolean();
+    if (a.m_Kind == VALUE_STRING) return a.ToString() == b.ToString();
+    return a.m_Pointer != nullptr && a.m_Pointer == b.m_Pointer;
+}
+
+// Structural agreement, counted over nodeGrid's NON-empty cells only: an empty
+// 6x9 agrees with any 6x9 of empties, which says nothing. `occupied` = the
+// non-empty cells of nodeGrid; 0 means there was nothing to compare.
+static int PpBackingCellsAgree(const RValue& grid, const RValue& other, int rows, int cols, int& occupied)
+{
+    int same = 0;
+    occupied = 0;
+    for (int i = 0; i < rows; ++i) {
+        RValue rg = g_Yytk->CallBuiltin("array_get", { grid, RValue((double)i) });
+        RValue ro = g_Yytk->CallBuiltin("array_get", { other, RValue((double)i) });
+        for (int j = 0; j < cols; ++j) {
+            RValue g = g_Yytk->CallBuiltin("array_get", { rg, RValue((double)j) });
+            if (PpBackingIsEmptyCell(g)) continue;
+            ++occupied;
+            if (PpBackingSameValue(g, g_Yytk->CallBuiltin("array_get", { ro, RValue((double)j) }))) ++same;
+        }
+    }
+    return same;
+}
+
+// `window3` / `other`, from the slot's root name.
+static std::string PpBackingSlotName(const PpBackingKept& k)
+{
+    const size_t u = k.root.rfind('_');
+    return u == std::string::npos ? k.root : k.root.substr(u + 1);
+}
+
+// `backing dump`: what was kept, the live nodeGrid, and whether nodeGrid's shape
+// appears inside a kept value. Read-only; json files for offline comparison.
+// Structural agreement is a lead and never picks a gate branch.
+static void PpBackingDump()
+{
+    const std::string tag = "prospectprobe backing dump";
+    try {
+        std::string snap;
+        RValue node, window;
+        double windowId = -1;
+        const bool haveNode = PpGridSnapshot(snap, &node);
+        const bool haveWindow = PpFindWindow(window) && PpInstanceId(window, windowId);
+        Out(tag + ": grid=" + snap + " open window=" + (haveWindow ? "@" + PpNum(RValue(windowId)) : std::string("none"))
+            + " (backing " + (g_PpBacking.load() ? "on" : "off") + ")");
+        int rows = -1, cols = -1;
+        RValue grid;
+        if (haveNode && g_Yytk->CallBuiltin("variable_instance_exists", { node, RValue("nodeGrid") }).ToBoolean()) {
+            grid = g_Yytk->CallBuiltin("variable_instance_get", { node, RValue("nodeGrid") });
+            if (grid.m_Kind == VALUE_ARRAY) {
+                PpBackingGridDims(grid, rows, cols);
+                std::string row0;
+                if (rows > 0) row0 = CiExpandContainer(g_Yytk->CallBuiltin("array_get", { grid, RValue(0.0) }));
+                Out("  nodeGrid: rows=" + std::to_string(rows) + " cols=" + std::to_string(cols) + " row0=" + row0
+                    + " -> " + PpBackingJsonFile("pp_backing_nodegrid.json", "nodeGrid", 0, snap, grid));
+            } else Out("  nodeGrid is " + Describe(grid) + ", not an array");
+        } else Out("  no ProspectGrid node with nodeGrid (open the window) - no structural comparison");
+        for (const PpBackingStash* st : g_PpBackingStashes) {
+            Out(std::string("  ") + st->getter + ": calls while backing was on=" + std::to_string(st->calls)
+                + " window returns kept=" + std::to_string(st->windowKept)
+                + " not kept=" + std::to_string(st->WindowDropped())
+                + (st->WindowDropped() > 0 ? " (only the first " + std::to_string(kPpBackingKeepMax) + " are kept; idcheck will not read `copy`)" : std::string())
+                + " other return kept=" + (st->other.call > 0 ? "1" : "0"));
+        }
+        bool any = false;
+        PpBackingForEachKept([&](PpBackingStash& st, PpBackingKept& k) {
+            any = true;
+            const bool open = haveWindow && k.windowSelf && k.selfId == windowId;
+            const std::string slot = PpBackingSlotName(k);
+            const std::string file = std::string("pp_backing_") + st.getter + "_" + slot + ".json";
+            Out(std::string("  ") + st.getter + " " + slot + ": call #" + std::to_string(k.call) + " self=" + k.self
+                + (open ? " (the open window)" : k.windowSelf ? " (a window that is not open now)" : " (not the window)")
+                + " shape=" + PpBackingShape(*k.value) + " -> " + PpBackingJsonFile(file, st.getter, k.call, k.self, *k.value));
+            if (rows <= 0 || cols <= 0) return;
+            PpBackingScan scan;
+            bool flat = false;
+            const auto matches = PpBackingFindShape(*k.value, rows, cols, flat, scan);
+            for (const auto& m : matches) {
+                int occupied = 0;
+                const int agree = PpBackingCellsAgree(grid, m.second, rows, cols, occupied);
+                Out("    " + std::to_string(rows) + "x" + std::to_string(cols) + " sub-array at " + m.first + ": "
+                    + (occupied == 0 ? std::string("nodeGrid holds no item - nothing to compare (place a junk item, then dump again)")
+                                     : "non-empty nodeGrid cells agreeing " + std::to_string(agree) + "/" + std::to_string(occupied)));
+            }
+            if (matches.empty() && !flat)
+                Out("    no " + std::to_string(rows) + "x" + std::to_string(cols) + " sub-array (" + scan.Text() + ")"
+                    + (scan.Complete() ? "" : " - the walk did not look everywhere: not observed, not absent"));
+            else Out("    walk: " + scan.Text());
+        });
+        if (!any) Out("  nothing kept (`prospectprobe hook`, `backing on`, then load a character or open the window)");
+        Out("  Structural agreement is a lead only - a copy agrees by construction - and never picks a gate branch; `prospectprobe backing idcheck` tests identity.");
+    } catch (...) { Out(tag + ": EXCEPTION while reading"); }
+}
+
+// One kept return's walk for the sentinel, for idcheck's report.
+struct PpBackingHit {
+    const PpBackingStash*    stash = nullptr;
+    long                     call = 0;   // the kept return's own getter call number (k.call)
+    std::string              what;   // `<getter> <slot> call #n (the open window | ...) self=...`
+    std::vector<std::string> hits;
+    PpBackingScan            scan;
+};
+
+// The getters whose return IS the profile's own data: identity through one of
+// these is a save-backed input. Identity through GetPlayerItemOwner or
+// GetInventoryArray (never measured - it could be a UI array) is only a lead.
+static bool PpBackingIsProfileGetter(const PpBackingStash* st)
+{
+    return st == &g_PpBackingProfile || st == &g_PpBackingProfileObj;
+}
+
+// The one struct-member name on a hit path that looks like UI state.
+// PpBackingWalk never descends into an instance, method or pointer, so a
+// window/node/panel/menu-named struct member is the only UI state a path can
+// show - a name rule stands in for "reached through the window's own state",
+// not a measurement (docs/prospect-window-research.md § Instrument).
+// Can only demote a would-be save-backed identity to a lead.
+static std::string PpBackingUiLookingField(const std::string& path)
+{
+    size_t pos = 0;
+    while ((pos = path.find('.', pos)) != std::string::npos) {
+        ++pos;
+        const size_t end = path.find_first_of(".[", pos);
+        const std::string name = end == std::string::npos ? path.substr(pos) : path.substr(pos, end - pos);
+        const std::string lower = Lower(name);
+        if (lower.rfind("ui", 0) == 0 || lower.find("window") != std::string::npos || lower.find("node") != std::string::npos
+            || lower.find("panel") != std::string::npos || lower.find("menu") != std::string::npos)
+            return name;
+        pos = end == std::string::npos ? path.size() : end;
+    }
+    return std::string();
+}
+
+// `backing idcheck`: is the live nodeGrid the same runtime array as (part of)
+// anything the game's own getter calls returned? One handler, no Draw in
+// between: the positive control, then one sentinel into one empty cell, a walk
+// of every kept return for it, and the cell restored before any verdict.
+static void PpBackingIdCheck()
+{
+    const std::string tag = "prospectprobe backing idcheck";
+    try {
+        // 1. Positive control, on arrays we own. A kept RValue must see a write
+        // made afterwards through the live array, and the walk must find the
+        // sentinel through it - and must not find it in a separately built array.
+        RValue live = g_Yytk->CallBuiltin("array_create", { RValue(1.0) });
+        RValue liveRow = g_Yytk->CallBuiltin("array_create", { RValue(3.0), RValue(0.0) });
+        g_Yytk->CallBuiltin("array_set", { live, RValue(0.0), liveRow });
+        RValue separate = g_Yytk->CallBuiltin("array_create", { RValue(1.0) });
+        g_Yytk->CallBuiltin("array_set", { separate, RValue(0.0), g_Yytk->CallBuiltin("array_create", { RValue(3.0), RValue(0.0) }) });
+        RValue kept = live;   // the same RValue assignment PpBackingCapture makes
+        RValue writeRow = g_Yytk->CallBuiltin("array_get", { live, RValue(0.0) });
+        g_Yytk->CallBuiltin("array_set", { writeRow, RValue(1.0), RValue(kPpBackingSentinel) });
+        RValue throughKept = g_Yytk->CallBuiltin("array_get", { g_Yytk->CallBuiltin("array_get", { kept, RValue(0.0) }), RValue(1.0) });
+        const bool tracks = PpIsNumber(throughKept) && throughKept.ToDouble() == kPpBackingSentinel;
+        if (!tracks) {
+            Out(tag + ": control: not observed (stash does not track live arrays on this runner; read back "
+                + Describe(throughKept) + ") - nothing else done, no write made to the game");
+            return;
+        }
+        PpBackingScan controlScan, separateScan;
+        const auto controlHits = PpBackingFindSentinel(kept, controlScan);
+        const auto separateHits = PpBackingFindSentinel(separate, separateScan);
+        if (controlHits.empty() || !separateHits.empty()) {
+            Out(tag + ": control: not observed (" + std::string(controlHits.empty() ? "the scanner misses the sentinel through the stash"
+                : "the scanner finds it in a separate array") + ") - nothing else done, no write made to the game");
+            return;
+        }
+        Out(tag + ": control passed (a kept array sees a later write: read back " + PpNum(throughKept) + "; scan finds it at "
+            + controlHits[0] + ", not in a separate array)");
+
+        // 2. Refusals, nothing written. The kept returns must include one whose
+        // self is the window open now: a return from an earlier open, or from
+        // the window's other grid only, could be a dead array this grid was never
+        // built from, and would read as `copy`.
+        long keptCount = 0;
+        std::string windowReturns;
+        PpBackingForEachKept([&](PpBackingStash& st, PpBackingKept& k) {
+            ++keptCount;
+            if (k.windowSelf && windowReturns.size() < 240)
+                windowReturns += std::string(" ") + st.getter + "#" + std::to_string(k.call) + "@" + PpNum(RValue(k.selfId));
+        });
+        if (keptCount == 0) {
+            Out(tag + ": refused: backing never captured a getter return (`prospectprobe hook`, `backing on`, then open the window); no write made");
+            return;
+        }
+        RValue window;
+        double windowId = -1;
+        if (!PpFindWindow(window) || !PpInstanceId(window, windowId)) {
+            Out(tag + ": refused: no open UI_Prospect_obj window with a readable id (open the window); no write made");
+            return;
+        }
+        long fromOpen = 0;
+        PpBackingKept* openProfile = nullptr;
+        PpBackingKept* openOwner = nullptr;
+        PpBackingForEachKept([&](PpBackingStash& st, PpBackingKept& k) {
+            if (!k.windowSelf || k.selfId != windowId) return;
+            ++fromOpen;
+            if (!openProfile && &st == &g_PpBackingProfile) openProfile = &k;
+            if (!openOwner && &st == &g_PpBackingOwner) openOwner = &k;
+        });
+        // The return the before/after cell is read from: the open window's
+        // GetProfileInventoryData, else its GetPlayerItemOwner.
+        const PpBackingKept* openSource = openProfile ? openProfile : openOwner;
+        const std::string sourceName = openProfile ? "GetProfileInventoryData" : "GetPlayerItemOwner";
+        if (fromOpen == 0) {
+            Out(tag + ": refused: no kept return came from the open window @" + PpNum(RValue(windowId)) + " (window returns kept:"
+                + (windowReturns.empty() ? std::string(" none") : windowReturns)
+                + ") - `backing on` before opening, then idcheck before moving any item; no write made");
+            return;
+        }
+        std::string snap;
+        RValue node;
+        if (!PpGridSnapshot(snap, &node)) { Out(tag + ": refused: no ProspectGrid node (open the window); no write made"); return; }
+        if (!g_Yytk->CallBuiltin("variable_instance_exists", { node, RValue("nodeGrid") }).ToBoolean()) {
+            Out(tag + ": refused: the ProspectGrid node has no nodeGrid; no write made");
+            return;
+        }
+        RValue grid = g_Yytk->CallBuiltin("variable_instance_get", { node, RValue("nodeGrid") });
+        if (grid.m_Kind != VALUE_ARRAY) { Out(tag + ": refused: nodeGrid is " + Describe(grid) + ", not an array; no write made"); return; }
+        int r = -1, c = -1;
+        RValue row, original;
+        std::string cells;
+        const int rows = (int)g_Yytk->CallBuiltin("array_length", { grid }).ToDouble();
+        for (int i = 0; i < rows && r < 0; ++i) {
+            RValue candidate = g_Yytk->CallBuiltin("array_get", { grid, RValue((double)i) });
+            if (candidate.m_Kind != VALUE_ARRAY) { if (cells.size() < 240) cells += " row" + std::to_string(i) + "=" + Describe(candidate); continue; }
+            const int n = (int)g_Yytk->CallBuiltin("array_length", { candidate }).ToDouble();
+            for (int j = 0; j < n; ++j) {
+                RValue cell = g_Yytk->CallBuiltin("array_get", { candidate, RValue((double)j) });
+                if (cells.size() < 240) cells += " " + Describe(cell);
+                if (PpBackingIsEmptyCell(cell)) { r = i; c = j; row = candidate; original = cell; break; }
+            }
+        }
+        if (r < 0) {
+            Out(tag + ": refused: no empty cell in nodeGrid (an empty cell is `undefined` or 0; cells seen:" + cells
+                + ") - an item is never written over; no write made");
+            return;
+        }
+        // The cell at the same position in the first nodeGrid-shaped sub-array of
+        // openSource, read before and after, where one exists. Reported only;
+        // the verdict comes from the walks.
+        int gridRows = 0, gridCols = 0;
+        PpBackingGridDims(grid, gridRows, gridCols);
+        PpBackingScan shapeScan;
+        bool flat = false;
+        std::vector<std::pair<std::string, RValue>> matches;
+        if (openSource && gridRows > 0 && gridCols > 0) matches = PpBackingFindShape(*openSource->value, gridRows, gridCols, flat, shapeScan);
+        auto matchedCell = [&]() {
+            return matches.empty() ? std::string("-")
+                : Describe(g_Yytk->CallBuiltin("array_get", { g_Yytk->CallBuiltin("array_get", { matches[0].second, RValue((double)r) }), RValue((double)c) }));
+        };
+        const std::string matchedBefore = matchedCell();
+
+        // 3. The one write, into the empty cell, then read everything before the restore.
+        bool landed = false;
+        std::string matchedAfter = "-", landedText = "(not read)";
+        std::vector<PpBackingHit> results;
+        try {
+            g_Yytk->CallBuiltin("array_set", { row, RValue((double)c), RValue(kPpBackingSentinel) });
+            // Read through a fresh fetch of the live store, not through `row`:
+            // proves the write reached the node's own nodeGrid.
+            RValue fresh = g_Yytk->CallBuiltin("array_get", {
+                g_Yytk->CallBuiltin("array_get", { g_Yytk->CallBuiltin("variable_instance_get", { node, RValue("nodeGrid") }), RValue((double)r) }),
+                RValue((double)c) });
+            landedText = Describe(fresh);
+            landed = PpIsNumber(fresh) && fresh.ToDouble() == kPpBackingSentinel;
+            if (landed) {
+                matchedAfter = matchedCell();
+                // Every kept return of every getter is walked; any one holding
+                // the sentinel decides.
+                PpBackingForEachKept([&](PpBackingStash& st, PpBackingKept& k) {
+                    PpBackingHit h;
+                    h.stash = &st;
+                    h.call = k.call;
+                    h.what = std::string(st.getter) + " " + PpBackingSlotName(k) + " call #" + std::to_string(k.call)
+                        + (k.windowSelf && k.selfId == windowId ? " (the open window)" : k.windowSelf ? " (a window that is not open now)" : " (not the window)")
+                        + " self=" + k.self;
+                    h.hits = PpBackingFindSentinel(*k.value, h.scan);
+                    results.push_back(std::move(h));
+                });
+            }
+        } catch (...) { landedText = "(EXCEPTION after the write)"; landed = false; }
+        // 4. Restore, before any verdict.
+        std::string restoredText = "(EXCEPTION)";
+        bool restored = false;
+        try {
+            g_Yytk->CallBuiltin("array_set", { row, RValue((double)c), original });
+            RValue back = g_Yytk->CallBuiltin("array_get", {
+                g_Yytk->CallBuiltin("array_get", { g_Yytk->CallBuiltin("variable_instance_get", { node, RValue("nodeGrid") }), RValue((double)r) }),
+                RValue((double)c) });
+            restoredText = Describe(back);
+            restored = restoredText == Describe(original);
+        } catch (...) {}
+        Out(tag + ": grid=" + snap + " window=@" + PpNum(RValue(windowId)) + " cell [" + std::to_string(r) + "][" + std::to_string(c) + "] was=" + Describe(original)
+            + " sentinel=" + PpNum(RValue(kPpBackingSentinel)) + " read-after-write=" + landedText + " now=" + restoredText
+            + (restored ? " (restored)" : " (NOT restored - close the window without moving items, and record it)"));
+        // Window returns the capture could not keep: past the first
+        // kPpBackingKeepMax per getter (or lost to an exception). The one this
+        // grid was built from may be among them, so any of them rules out `copy`.
+        long dropped = 0;
+        std::string droppedBy;
+        for (const PpBackingStash* s : g_PpBackingStashes) {
+            if (s->WindowDropped() <= 0) continue;
+            dropped += s->WindowDropped();
+            droppedBy += std::string(" ") + s->getter + "=" + std::to_string(s->WindowDropped());
+        }
+        Out(tag + ": kept returns from the open window: " + std::to_string(fromOpen) + " of " + std::to_string(keptCount)
+            + "; window returns dropped (not kept past the first " + std::to_string(kPpBackingKeepMax) + " per getter): "
+            + std::to_string(dropped) + (droppedBy.empty() ? std::string() : " (" + droppedBy.substr(1) + ")")
+            + (!openSource ? std::string("; neither GetProfileInventoryData nor GetPlayerItemOwner among them")
+               : matches.empty() ? "; its " + sourceName + " call #" + std::to_string(openSource->call) + " has no "
+                                     + std::to_string(gridRows) + "x" + std::to_string(gridCols) + " sub-array"
+               : "; its " + sourceName + " call #" + std::to_string(openSource->call) + " " + std::to_string(gridRows) + "x"
+                     + std::to_string(gridCols) + " sub-array at " + matches[0].first + ": that cell before=" + matchedBefore + " after=" + matchedAfter));
+        if (!landed) {
+            Out(tag + ": verdict: not observed (the sentinel write did not land in the live nodeGrid)");
+            return;
+        }
+        // `via` = a hit through a profile getter (a save-backed input, split
+        // below by `profileHitCalls` into "outlived one call" vs "one call
+        // only"); `viaLead` = a hit through any other getter only (a lead).
+        // `profileHitCalls`/`profileFirstWhat` track, per profile-getter stash,
+        // the distinct call numbers whose kept return held the sentinel and
+        // that stash's first hit's `what at <path>` text - a single call only
+        // proves that one return is the same array, never that the getter's
+        // array outlives the call.
+        std::string via, viaLead, incompleteNames;
+        long incomplete = 0;
+        std::map<const PpBackingStash*, std::set<long>> profileHitCalls;
+        std::map<const PpBackingStash*, std::string> profileFirstWhat;
+        // `profileCleanCalls`/`profileCleanWhat` track the same, but only for
+        // calls whose hits include at least one path with no UI-looking
+        // field - the two-call rule decides save-backed from these, never
+        // from `profileHitCalls`. `profileUiField` is the first UI-looking
+        // member name seen on a call that has no clean hit, for the lead text.
+        std::map<const PpBackingStash*, std::set<long>> profileCleanCalls;
+        std::map<const PpBackingStash*, std::string> profileCleanWhat;
+        std::map<const PpBackingStash*, std::string> profileUiField;
+        for (const PpBackingHit& h : results) {
+            std::string where;
+            for (const std::string& p : h.hits) where += " " + p;
+            Out("  " + h.what + ": " + (h.hits.empty() ? std::string("sentinel not found") : "sentinel found at" + where) + " (" + h.scan.Text()
+                + (h.scan.Complete() ? std::string() : "; incomplete: " + h.scan.Why()) + ")");
+            if (!h.hits.empty()) {
+                std::string& into = PpBackingIsProfileGetter(h.stash) ? via : viaLead;
+                if (into.empty()) into = h.what + " at" + where;
+                if (PpBackingIsProfileGetter(h.stash)) {
+                    profileHitCalls[h.stash].insert(h.call);
+                    std::string& first = profileFirstWhat[h.stash];
+                    if (first.empty()) first = h.what + " at" + where;
+                    bool clean = false;
+                    std::string uiField;
+                    for (const std::string& p : h.hits) {
+                        const std::string f = PpBackingUiLookingField(p);
+                        if (f.empty()) clean = true; else if (uiField.empty()) uiField = f;
+                    }
+                    if (clean) profileCleanCalls[h.stash].insert(h.call);
+                    if (clean && profileCleanWhat[h.stash].empty()) profileCleanWhat[h.stash] = h.what + " at" + where;
+                    if (!clean && profileUiField[h.stash].empty()) profileUiField[h.stash] = uiField;
+                }
+            }
+            if (!h.scan.Complete()) {
+                ++incomplete;
+                if (incompleteNames.size() < 600) incompleteNames += "; " + h.what + ": " + h.scan.Why();
+            }
+        }
+        std::string verdict;
+        if (!via.empty()) {
+            // A profile getter decides save-backed only once its CLEAN hits
+            // (hit paths with no UI-looking field) span at least
+            // kPpBackingProfileCallsToDecide distinct calls: two kept returns
+            // of the same getter with different call numbers, neither reached
+            // only through UI state, are two separate executions of it, so a
+            // sentinel in both proves the array outlived one call - a single
+            // call only proves that one return is that array, and calls
+            // reached only through a UI-looking field may be the window's own.
+            const PpBackingStash* decisive = nullptr;
+            const PpBackingStash* uiReached = nullptr;
+            for (const PpBackingStash* s : g_PpBackingStashes) {
+                if (!PpBackingIsProfileGetter(s)) continue;
+                if (!decisive && (int)profileCleanCalls[s].size() >= kPpBackingProfileCallsToDecide) decisive = s;
+                if (!uiReached && (int)profileHitCalls[s].size() >= kPpBackingProfileCallsToDecide) uiReached = s;
+            }
+            if (decisive) {
+                const std::set<long>& calls = profileCleanCalls[decisive];
+                std::string callList;
+                for (long c : calls) callList += " #" + std::to_string(c);
+                verdict = "reference-identical (via " + profileCleanWhat[decisive] + "; sentinel in " + std::to_string(calls.size())
+                    + " calls of " + decisive->getter + ":" + callList + " - outlived one call): nodeGrid shares its array with a profile getter's return";
+            } else if (uiReached) {
+                const std::set<long>& calls = profileHitCalls[uiReached];
+                std::string callList;
+                for (long c : calls) callList += " #" + std::to_string(c);
+                verdict = "reference-identical (via " + profileFirstWhat[uiReached] + "; sentinel in " + std::to_string(calls.size())
+                    + " calls of " + uiReached->getter + ":" + callList + " but only " + std::to_string(profileCleanCalls[uiReached].size())
+                    + " of them reached on a path with no UI-looking field, fewer than " + std::to_string(kPpBackingProfileCallsToDecide)
+                    + " - reached through a UI-looking field (" + profileUiField[uiReached]
+                    + ") - the array may be the window's own, a lead that decides no gate branch)";
+            } else {
+                std::string leads;
+                for (const PpBackingStash* s : g_PpBackingStashes) if (PpBackingIsProfileGetter(s) && !profileHitCalls[s].empty()) leads += (leads.empty() ? std::string() : std::string("; via ")) + profileFirstWhat[s];
+                verdict = "reference-identical (via " + leads
+                    + "; one call only - the getter may build this array per call, a lead that decides no gate branch)";
+            }
+        }
+        else if (!viaLead.empty())
+            verdict = "reference-identical (via " + viaLead + "; not a profile getter - record the getter and self, a lead that decides no gate branch)";
+        else if (incomplete > 0)
+            verdict = "not observed (scan incomplete: " + std::to_string(incomplete) + " of " + std::to_string(results.size())
+                + " walks" + incompleteNames + ") - a missing sentinel proves nothing";
+        else if (dropped > 0)
+            verdict = "not observed (" + std::to_string(dropped) + " window returns not kept - only the first "
+                + std::to_string(kPpBackingKeepMax) + " per getter are, and the return this grid was built from may be among the rest) - never `copy`";
+        else
+            verdict = "copy: every walk of the " + std::to_string(results.size()) + " kept returns (" + std::to_string(fromOpen)
+                + " from the open window) completed, no window return was dropped, and none holds the sentinel";
+        Out(tag + ": verdict: " + verdict);
+    } catch (...) { Out(tag + ": EXCEPTION - read `prospectprobe grid` and the cell before doing anything else"); }
+}
+
+// `backing on|off|dump|idcheck`.
+static void PpBackingCommand(const std::vector<std::string>& tok)
+{
+    const std::string sub = tok.size() == 2 ? Lower(tok[1]) : std::string();
+    if (sub == "on") {
+        PpBackingRelease();
+        g_PpBacking.store(true);
+        int detoured = 0;
+        for (const PpBackingStash* st : g_PpBackingStashes) {
+            const PpTarget* row = PpFindRow(st->getter);
+            if (row && row->installed.load()) ++detoured;
+        }
+        Out("prospectprobe backing: on - kept values released; the game's own calls of the " + std::to_string(detoured)
+            + "/4 detoured getter rows are kept after the call returns (the first "
+            + std::to_string(kPpBackingKeepMax) + " window-self returns per getter, with their @id, never overwritten - later ones are counted, not kept;"
+            + " the latest other call apart) and the first "
+            + std::to_string(kPpBackingLogBudget) + " per getter logged. `backing dump` writes the json files. Nothing is invoked."
+            + (detoured < 4 ? " Run `prospectprobe hook` first - an undetoured getter is never seen." : ""));
+    }
+    else if (sub == "off") {
+        g_PpBacking.store(false);
+        Out("prospectprobe backing: off - kept values stay for `backing dump` / `backing idcheck`; `reset` releases them.");
+    }
+    else if (sub == "dump") PpBackingDump();
+    else if (sub == "idcheck") PpBackingIdCheck();
+    else Out("prospectprobe backing on|off | backing dump | backing idcheck");
+}
+
+static void PpUsage()
+{
+    Out("prospectprobe (research build only) - prospect window Phase 0, see docs/prospect-window-research.md");
+    Out("  grid                                   hook-free: ProspectGrid node shape, window vars equal to 9/6, m_* methods");
+    Out("  hook [substr ...]                      native-detour every candidate row (or rows whose label contains a substring)");
+    Out("  arm [budget=N] [substr ...]            log the next N (default 6) calls of each selected row");
+    Out("  watch on|off                           grid snapshot before/after every logged call (grid-pre= / grid-post=)");
+    Out("  show | reset                           counts, logged/UNLOGGED per row + control / zero, disarm, watch off, clear setat");
+    Out("  set <Obj> <nth> <var> <number>         write one existing numeric variable of one instance, read back");
+    Out("  override <label> <argIndex> <number> [calls=1] [self=<Obj>] [other=<Obj>] [when=<number>] | override clear");
+    Out("  call window|grid <m_Method> [number ...]   invoke a method value by name (script_execute), snapshot before/after");
+    Out("  resize <cols> <rows> via [window:]<m_Method> [number ...]   write the node's size + run that builder in one step; reverts if nodeGrid did not follow");
+    Out("  setat <label> pre|post window|grid <var> <number> [self=<Obj>] [other=<Obj>] [arg<i>=<text>] | setat clear");
+    Out("  backing on|off                         keep what the game's own profile/inventory getter calls return, each window return with its @id (nothing invoked)");
+    Out("  backing dump                           kept returns + live nodeGrid, json files, nodeGrid-shaped sub-arrays (a lead only)");
+    Out("  backing idcheck                        positive control; refuses unless a kept return came from the open window; one sentinel in an EMPTY nodeGrid cell, walk every kept return, restore");
+}
+
+// Labels contain spaces ("UI_Prospect_obj anon@1038"), so `override` takes the
+// trailing key=value selectors off first, then the label as everything before
+// the last two or three numeric tokens.
+static void PpOverrideCommand(const std::vector<std::string>& tokIn)
+{
+    if (tokIn.size() == 2 && Lower(tokIn[1]) == "clear") { PpOverrideClear(); return; }
+    auto isNum = [](const std::string& s) { try { size_t k = 0; (void)std::stod(s, &k); return k == s.size(); } catch (...) { return false; } };
+    std::vector<std::string> tok = tokIn;
+    PpSelector sel;
+    while (tok.size() > 1) {
+        const std::string& last = tok.back();
+        const std::string ll = Lower(last);
+        if (ll.rfind("self=", 0) == 0) sel.self = last.substr(5);
+        else if (ll.rfind("other=", 0) == 0) sel.other = last.substr(6);
+        else if (ll.rfind("when=", 0) == 0) {
+            if (!isNum(last.substr(5))) { Out("prospectprobe override: when= needs a number; nothing set"); return; }
+            sel.whenSet = true;
+            sel.when = std::stod(last.substr(5));
+        } else break;
+        tok.pop_back();
+    }
+    size_t n = tok.size();
+    size_t numeric = 0;
+    while (numeric < 3 && n - numeric > 2 && isNum(tok[n - 1 - numeric])) ++numeric;
+    if (numeric < 2) { PpUsage(); return; }
+    const size_t first = n - numeric;
+    std::string label;
+    for (size_t i = 1; i < first; ++i) label += (i > 1 ? " " : "") + tok[i];
+    const int argIndex = (int)std::stod(tok[first]);
+    const double value = std::stod(tok[first + 1]);
+    const long calls = numeric == 3 ? (long)std::stod(tok[first + 2]) : 1;
+    PpOverride(label, argIndex, value, calls, sel);
+}
+
+static void PpCommand(const std::string& rest)
+{
+    std::vector<std::string> tok;
+    { std::stringstream ss(rest); std::string w; while (ss >> w) tok.push_back(w); }
+    if (tok.empty()) { PpUsage(); return; }
+    const std::string sub = Lower(tok[0]);
+    if (sub == "hook") PpInstall(std::vector<std::string>(tok.begin() + 1, tok.end()));
+    else if (sub == "arm") PpArm(std::vector<std::string>(tok.begin() + 1, tok.end()));
+    else if (sub == "show") PpShow();
+    else if (sub == "reset") PpReset();
+    else if (sub == "set" && tok.size() == 5) {
+        try { PpSet(tok[1], std::stoi(tok[2]), tok[3], std::stod(tok[4])); }
+        catch (...) { Out("prospectprobe set: nth must be an integer and the value a number; no write made"); }
+    }
+    else if (sub == "override") PpOverrideCommand(tok);
+    else if (sub == "grid") PpGridCommand();
+    else if (sub == "watch" && tok.size() == 2 && (Lower(tok[1]) == "on" || Lower(tok[1]) == "off")) {
+        g_PpWatch.store(Lower(tok[1]) == "on");
+        Out(std::string("prospectprobe watch: ") + (g_PpWatch.load()
+            ? "on - every logged call appends grid-pre= and logs a grid-post= line (same|CHANGED). Arm to log."
+            : "off."));
+    }
+    else if (sub == "call" && tok.size() >= 3) {
+        std::vector<double> args;
+        for (size_t i = 3; i < tok.size(); ++i) {
+            try { size_t k = 0; args.push_back(std::stod(tok[i], &k)); if (k != tok[i].size()) throw 0; }
+            catch (...) { Out("prospectprobe call: arguments must be numbers; no call made"); return; }
+        }
+        PpCall(Lower(tok[1]), tok[2], args);
+    }
+    else if (sub == "resize" && tok.size() >= 3) {
+        int cols = 0, rows = 0;
+        try { cols = std::stoi(tok[1]); rows = std::stoi(tok[2]); }
+        catch (...) { Out("prospectprobe resize: cols and rows must be whole numbers; no write made"); return; }
+        const bool hasVia = tok.size() >= 5 && Lower(tok[3]) == "via";
+        std::vector<double> args;
+        for (size_t i = 5; hasVia && i < tok.size(); ++i) {
+            try { size_t k = 0; args.push_back(std::stod(tok[i], &k)); if (k != tok[i].size()) throw 0; }
+            catch (...) { Out("prospectprobe resize: arguments after the method must be numbers; no write made"); return; }
+        }
+        PpResize(cols, rows, hasVia ? tok[4] : std::string(), args);
+    }
+    else if (sub == "setat") PpSetAtCommand(tok);
+    else if (sub == "backing") PpBackingCommand(tok);
+    else PpUsage();
+}
+#endif // FORGEPACT_RELEASE (prospectprobe)
+
 static bool HhIsPlayerInstance(CInstance* instance)
 {
     if (!instance) return false;
@@ -14086,6 +16232,20 @@ static void MBuffTick()
     ApplyBuff(g_MBuffId, g_MBuffV0, g_MBuffV1, 90.0);
 }
 
+// Prospect window (issue #9) commands live in their own function for the same
+// reason as the Headhunter's: RunCommand's else-if chain is at MSVC's nesting
+// limit (C1061). Research stage: only the Phase 0 instrument, research build
+// only - the player-facing toggle arrives with Stage B, once the live session
+// has established what sizes the window (docs/prospect-window-research.md).
+static bool HandleProspectCommand(const std::string& lc, const std::string& rest)
+{
+#ifndef FORGEPACT_RELEASE
+    if (lc == "prospectprobe") { PpCommand(rest); return true; }
+#endif
+    (void)lc; (void)rest;
+    return false;
+}
+
 // Headhunter + player-context diagnostics live in their own function so the
 // main RunCommand else-if chain stays below the compiler nesting limit (C1061).
 static bool HandleHeadhunterCommand(const std::string& lc, const std::string& rest)
@@ -14748,6 +16908,7 @@ static void RunCommand(const std::string& line)
 #endif
 
     if (HandleHeadhunterCommand(lc, rest)) return;
+    if (HandleProspectCommand(lc, rest)) return;
     if (lc == "relicfilter") {
         bool enable = (rest == "1" || rest == "true" || rest == "on");
         // Hooking DropRelic while character selection is still running stalls the
