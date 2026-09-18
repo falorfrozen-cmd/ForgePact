@@ -12937,26 +12937,6 @@ static void InstallLoginHook()
     HookOneScript("IsLoggedIn", "bp_islogged", (PVOID)HookIsLoggedIn, &g_OrigIsLoggedIn);
 }
 
-// ===== DIAGNOSTIC: log how the game deals damage to enemies (learn the signature) =====
-static PFUNC_YYGMLScript g_OrigHitReg = nullptr;
-static volatile long g_HitRegCalls = 0;
-static RValue& HookHitReg(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
-{
-    long n = InterlockedIncrement(&g_HitRegCalls);
-    if (n <= 10) {
-        std::string line = "HitReg#" + std::to_string(n) + " argc=" + std::to_string(argc) + " args:";
-        for (int i = 0; i < argc && i < 10; i++)
-            line += " [" + std::to_string(i) + "]=" + ((A && A[i]) ? Describe(*A[i]) : "?");
-        std::ofstream f(IPC_DIR + "\\hitreg.txt", std::ios::app);
-        f << line << "\n";
-    }
-    return g_OrigHitReg ? g_OrigHitReg(S, O, R, argc, A) : R;
-}
-static void InstallHitRegHook()
-{
-    HookOneScript("EnemyHitRegDamageParent", "bp_hitreg", (PVOID)HookHitReg, &g_OrigHitReg);
-}
-
 // ===== DIAGNOSTIC: observe how a buff is applied to the player (learn the signature) =====
 static PFUNC_YYGMLScript g_OrigBuffAdd = nullptr, g_OrigCABuffAdd = nullptr;
 static volatile long g_BuffAddCalls = 0;
@@ -13133,7 +13113,6 @@ static void InstallHook()
     InstallSlotHook();
     InstallLoginHook();
     InstallIsMyPlayerHook();
-    InstallHitRegHook();
     InstallBuffHooks();
     InstallEnemyHooks();
     InstallChaosTowerHooks();
@@ -13239,7 +13218,7 @@ static void NAddrAll()
         "LoadCommonItems", "ItemEquip", "IsObtainablePlace", "IsMyPlayer",
         "IsLoggedIn", "GetRuneword", "GetItemTooltipString", "GetItemStatString",
         "GenerateItemSpecialStats", "EquipItemUnequip", "EnemyRaritySettings",
-        "EnemyHitRegDamageParent", "EnemyDestroyKillProc", "EnemyDestroyDeathEffects",
+        "EnemyDestroyKillProc", "EnemyDestroyDeathEffects",
         "DropUberParts", "DropRubyKey", "DropOres", "DropOreMaterials",
         "DropMonsterGold", "DropKeys", "DropItemBoss", "DropItemAngelic",
         "DropItem", "DropGold", "DropDungeonKeys", "DropDimensionalShard",
