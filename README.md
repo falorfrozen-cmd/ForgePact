@@ -314,6 +314,14 @@ relicfilter: hook installed -> ON
 relicfilter: holding back 3 of 5 maxed relic(s) on this roll
 ```
 
+`out.txt` no longer grows without limit: once it passes 2 MB, the plugin rotates
+it to `out.prev.txt` the next time the game starts (never mid-session), so the
+total stays around 4 MB and the previous session's log is never lost. **If
+you're attaching a log to a bug report, attach both `out.txt` and
+`out.prev.txt`** — the session you actually want may be the one that was just
+rotated into the `.prev` file (e.g. the game crashed and you relaunched before
+sending the report).
+
 The first two lines only mean the mod is *armed and hooked* — until 1.3.19 they were
 all there was, and they printed just as happily while it held nothing back.
 
