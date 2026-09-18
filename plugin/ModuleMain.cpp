@@ -9788,6 +9788,21 @@ static bool PpGridSnapshot(std::string& out, RValue* nodeOut = nullptr)
 
 static bool PpIsBuiltinVar(const std::string& var);   // defined with PpSet below
 
+// Stage B Phase 1 (docs/prospect-window-research.md § Stage B Phase 1 live
+// procedure), defined with `contents`/`button`/`press` further down.
+// PpContentsFilledNow: the ProspectGrid node's filled cell count, -1 when it
+// cannot be read. PpPressCapture: keeps what the game's own UiAProspectButton
+// call was handed.
+static int PpContentsFilledNow(const RValue& node);
+static void PpPressCapture(const char* label, long n, bool post, CInstance* S, CInstance* O, int argc, RValue** A);
+static void PpPressRelease();
+// The filled count each logged, watched call read before the game's function
+// ran, for its grid-post line. A stack, because logged calls nest (UiCreate
+// runs UiCreateNode): PpObserve pushes exactly when it took a grid-pre
+// snapshot, and PpAfter pops for exactly those calls. Game thread only.
+static std::vector<int> g_PpContentsPre;
+static constexpr size_t kPpContentsPreMax = 256;   // a bound, never reached by real nesting
+
 // Why this call does not match the pending `setat`'s selectors, or "".
 static std::string PpSetAtMismatch(CInstance* S, CInstance* O, int argc, RValue** A)
 {
@@ -9856,6 +9871,7 @@ static void PpSetAtTry(const char* label, long n, bool post, CInstance* S, CInst
 static bool PpObserve(const char* label, long n, volatile long* logged, volatile long* logOn,
                       CInstance* S, CInstance* O, int argc, RValue** A, std::string& gridPre)
 {
+    PpPressCapture(label, n, false, S, O, argc, A);
     if (g_PpSetAtPending) PpSetAtTry(label, n, false, S, O, argc, A);
     if (g_PpOverrideLeft > 0 && g_PpOverrideLabel == label) {
         const int i = g_PpOverrideArg;
@@ -9899,7 +9915,12 @@ static bool PpObserve(const char* label, long n, volatile long* logged, volatile
         // Budgeted exactly like the line it rides on: only a logged call reads
         // the grid, and only while `watch` is on.
         if (g_PpWatch.load()) {
-            PpGridSnapshot(gridPre);
+            RValue node;
+            const bool haveNode = PpGridSnapshot(gridPre, &node);
+            // Pushed for exactly the calls that took a grid-pre snapshot;
+            // PpAfter pops for the same calls (logged, gridPre non-empty).
+            if (g_PpContentsPre.size() >= kPpContentsPreMax) g_PpContentsPre.clear();
+            g_PpContentsPre.push_back(haveNode ? PpContentsFilledNow(node) : -1);
             line += " grid-pre=" + gridPre;
         }
         Out(line);
@@ -10168,13 +10189,25 @@ static void PpAfter(const char* label, long n, bool logged, const std::string& g
                     CInstance* S, CInstance* O, int argc, RValue** A, const RValue& result)
 {
     PpBackingCapture(label, n, S, result);
+    PpPressCapture(label, n, true, S, O, argc, A);
     if (g_PpSetAtPending) PpSetAtTry(label, n, true, S, O, argc, A);
+    int contentsPre = -1;
+    if (logged && !gridPre.empty() && !g_PpContentsPre.empty()) {
+        contentsPre = g_PpContentsPre.back();
+        g_PpContentsPre.pop_back();
+    }
     if (!logged || gridPre.empty() || !g_PpWatch.load()) return;
     try {
         std::string post;
-        PpGridSnapshot(post);
+        RValue node;
+        const bool haveNode = PpGridSnapshot(post, &node);
+        // The filled count before -> after, beside the size comparison:
+        // grid-post compares only the shape, so it cannot show an item landing
+        // (Phase 0c R9). `?` = not read, never 0.
+        const int contentsPost = haveNode ? PpContentsFilledNow(node) : -1;
+        auto count = [](int k) { return k < 0 ? std::string("?") : std::to_string(k); };
         Out(std::string("prospectprobe ") + label + " #" + std::to_string(n) + " grid-post=" + post
-            + PpSnapCompare(gridPre, post));
+            + PpSnapCompare(gridPre, post) + " contents=" + count(contentsPre) + "->" + count(contentsPost));
     } catch (...) {}
 }
 
@@ -10504,7 +10537,9 @@ static void PpReset()
     InterlockedExchange(&g_PpSetAtRefusalsLogged, 0);
     g_PpBacking.store(false);
     PpBackingRelease();
-    Out("prospectprobe reset: counters zeroed, disarmed, watch off, pending setat cleared, backing off and its kept values released.");
+    PpPressRelease();
+    g_PpContentsPre.clear();
+    Out("prospectprobe reset: counters zeroed, disarmed, watch off, pending setat cleared, backing off and its kept values released, press capture released.");
 }
 
 // Built-in instance variables always exist and cannot be created by a write,
@@ -11611,6 +11646,525 @@ static void PpBackingCommand(const std::vector<std::string>& tok)
     else Out("prospectprobe backing on|off | backing dump | backing idcheck");
 }
 
+// ---- Stage B Phase 1: contents, button, press (auto-prospect on insert) -----
+// The human chose auto-prospect on insert (2026-09-18): every item moved into
+// the ProspectGrid is prospected at once by the game's own Prospect handler.
+// Nothing but the game's own press has ever run that handler, so this is the
+// measurement Stage B ships on or does not (docs/prospect-window-research.md
+// § Stage B Phase 1 live procedure):
+//   `contents`   hook-free: which cells hold something, and what;
+//   `button`     hook-free: which UI_Button_Small_obj is the open window's
+//                Prospect button, which variable holds the handler, and which
+//                of its arrays matches what a press is handed;
+//   `press show` what the game's own last press was handed;
+//   `press ...`  ONE invoke of the handler, by name, with a stated self, other
+//                and argument, the grid read before and after.
+// The positive control is a real press in the same session with the
+// UiAProspectButton row detoured. A faulting shape crashes the game - the
+// build uses /EHsc, so catch (...) does not catch an access violation - and the
+// session goes on after relaunching the same build.
+static constexpr const char* kPpPressLabel = SdkShortScriptName(HeroSiege::Scripts::gml_Script_UiAProspectButton);
+static constexpr const char* kPpPressInnerLabel = "___struct___123@UiAProspectButton";   // a target-table label
+static constexpr const char* kPpPressRoot = "__pp_press_arg";
+static constexpr long kPpPressLogBudget = 20;     // capture lines per session (reset re-opens it)
+static constexpr size_t kPpFingerprintsShown = 24;
+
+static int g_PpButtonObjIdx = -1;
+static int PpButtonObjectIndex() { return PpObjectIndexByName(HeroSiege::Objects::GameObject::UI_Button_Small_obj, g_PpButtonObjIdx); }
+
+// The game's own last UiAProspectButton call. Game thread only. The argument
+// is heap-held and never deleted (a global RValue's destructor would free a
+// runtime reference after the runtime is gone at unload), and rooted through a
+// research global as well, the `backing` pattern.
+static RValue* g_PpPressArg = nullptr;
+static long g_PpPressCall = 0;            // that call's number on the row; 0 = nothing captured
+static int g_PpPressArgc = 0;
+static double g_PpPressSelfId = -1;       // -1 = not read (never matches)
+static double g_PpPressOtherId = -1;
+static std::string g_PpPressSelf, g_PpPressOther, g_PpPressArgText;
+static long g_PpPressLogged = 0;
+// Set around `press`'s own call: that call runs through the same detour and
+// must never replace the game's capture it is being compared with.
+static bool g_PpPressInvoking = false;
+static std::atomic<bool> g_PpPressBannerShown{ false };
+
+static std::string PpIdText(double id) { return id > 0 ? std::to_string((long long)id) : std::string("?"); }
+
+struct PpContents {
+    bool        read = false;           // false: nothing below may be read as an empty grid
+    std::string why;                    // why it was not read
+    double      nodeId = -1;
+    std::string stackKind;              // uiNodeCallstack: string, array, missing, or its kind
+    int         filled = 0;
+    int         empty = 0;
+    std::vector<std::string> rows;      // per row, the filled column indexes ("0,3") or "-"
+    std::vector<std::string> fingerprints;   // distinct nodeFingerprint values, first seen first
+    int         noFingerprint = 0;      // filled cells with no readable nodeFingerprint
+};
+
+// The ProspectGrid node's cells. Builtins only, nothing written. "Filled" is
+// idcheck's rule turned around: a cell is empty when it is `undefined` or 0.
+// An item's cells hold a node struct whose nodeFingerprint names the item
+// (Phase 0c, backing structural), so the distinct fingerprints say WHICH items
+// are in the grid, and a prospect that turns an item into materials changes
+// them even when the filled count happens not to.
+static bool PpReadContents(const RValue& node, PpContents& out)
+{
+    out = PpContents();
+    try {
+        PpInstanceId(node, out.nodeId);
+        if (g_Yytk->CallBuiltin("variable_instance_exists", { node, RValue("uiNodeCallstack") }).ToBoolean()) {
+            const RValue stack = g_Yytk->CallBuiltin("variable_instance_get", { node, RValue("uiNodeCallstack") });
+            out.stackKind = stack.m_Kind == VALUE_ARRAY ? "array" : stack.m_Kind == VALUE_STRING ? "string" : Describe(stack);
+        } else out.stackKind = "missing";
+        if (!g_Yytk->CallBuiltin("variable_instance_exists", { node, RValue("nodeGrid") }).ToBoolean()) {
+            out.why = "the node has no nodeGrid";
+            return false;
+        }
+        const RValue grid = g_Yytk->CallBuiltin("variable_instance_get", { node, RValue("nodeGrid") });
+        if (grid.m_Kind != VALUE_ARRAY) { out.why = "nodeGrid is " + Describe(grid); return false; }
+        const int rows = (int)g_Yytk->CallBuiltin("array_length", { grid }).ToDouble();
+        for (int i = 0; i < rows; ++i) {
+            const RValue row = g_Yytk->CallBuiltin("array_get", { grid, RValue((double)i) });
+            if (row.m_Kind != VALUE_ARRAY) { out.why = "nodeGrid row " + std::to_string(i) + " is " + Describe(row); return false; }
+            const int cols = (int)g_Yytk->CallBuiltin("array_length", { row }).ToDouble();
+            std::string filledCols;
+            for (int j = 0; j < cols; ++j) {
+                const RValue cell = g_Yytk->CallBuiltin("array_get", { row, RValue((double)j) });
+                if (PpBackingIsEmptyCell(cell)) { ++out.empty; continue; }
+                ++out.filled;
+                filledCols += (filledCols.empty() ? "" : ",") + std::to_string(j);
+                std::string fp;
+                // A method value is also VALUE_OBJECT; only a plain struct is asked for a member.
+                if (cell.m_Kind == VALUE_OBJECT && !g_Yytk->CallBuiltin("is_method", { cell }).ToBoolean()
+                    && g_Yytk->CallBuiltin("is_struct", { cell }).ToBoolean()
+                    && g_Yytk->CallBuiltin("variable_struct_exists", { cell, RValue("nodeFingerprint") }).ToBoolean()) {
+                    const RValue f = g_Yytk->CallBuiltin("variable_struct_get", { cell, RValue("nodeFingerprint") });
+                    fp = f.m_Kind == VALUE_STRING ? f.ToString() : Describe(f);
+                }
+                if (fp.empty()) ++out.noFingerprint;
+                else if (std::find(out.fingerprints.begin(), out.fingerprints.end(), fp) == out.fingerprints.end())
+                    out.fingerprints.push_back(fp);
+            }
+            out.rows.push_back(filledCols.empty() ? "-" : filledCols);
+        }
+        out.read = true;
+    } catch (...) { out.read = false; out.why = "read failed (exception)"; }
+    return out.read;
+}
+
+static int PpContentsFilledNow(const RValue& node)
+{
+    PpContents c;
+    return PpReadContents(node, c) ? c.filled : -1;
+}
+
+// `@<id> filled=K fingerprints=[a, b]` for the press lines.
+static std::string PpContentsText(const PpContents& c)
+{
+    std::string fps;
+    for (size_t i = 0; i < c.fingerprints.size() && i < kPpFingerprintsShown; ++i) fps += (i ? ", " : "") + c.fingerprints[i];
+    if (c.fingerprints.size() > kPpFingerprintsShown) fps += ", ...";
+    return "@" + PpIdText(c.nodeId) + " filled=" + std::to_string(c.filled) + " fingerprints=[" + fps + "]"
+        + (c.noFingerprint ? " (" + std::to_string(c.noFingerprint) + " filled without one)" : std::string());
+}
+
+static void PpContentsCommand()
+{
+    try {
+        std::string snap;
+        RValue node;
+        if (!PpGridSnapshot(snap, &node)) {
+            Out("prospectprobe contents: no ProspectGrid node (" + snap + ") - open the cube first; nothing read");
+            return;
+        }
+        PpContents c;
+        if (!PpReadContents(node, c)) {
+            Out("prospectprobe contents: @" + PpIdText(c.nodeId) + " unreadable (" + c.why + ") - this is not an empty grid");
+            return;
+        }
+        Out("prospectprobe contents: contents=@" + PpIdText(c.nodeId) + " filled=" + std::to_string(c.filled)
+            + " empty=" + std::to_string(c.empty) + " uiNodeCallstack=" + c.stackKind);
+        for (size_t i = 0; i < c.rows.size(); ++i) Out("  row" + std::to_string(i) + ": " + c.rows[i]);
+        std::string fps;
+        for (size_t i = 0; i < c.fingerprints.size(); ++i) fps += (i ? ", " : "") + c.fingerprints[i];
+        Out("  fingerprints (" + std::to_string(c.fingerprints.size()) + " distinct"
+            + (c.noFingerprint ? ", " + std::to_string(c.noFingerprint) + " filled cells without one" : std::string())
+            + "): " + (fps.empty() ? "(none)" : fps));
+    } catch (...) { Out("prospectprobe contents: EXCEPTION while reading - unreadable, not empty"); }
+}
+
+// On the UiAProspectButton row only, before (post=false) and after (post=true)
+// the game's own function. Before: keep self, other and argument 0 - rooted
+// first, so the kept copy is never unrooted - and log arg 0 shallowly
+// expanded, as it was handed in. After: log what arg 0 holds now.
+static void PpPressCapture(const char* label, long n, bool post, CInstance* S, CInstance* O, int argc, RValue** A)
+{
+    if (std::strcmp(label, kPpPressLabel) != 0) return;
+    const bool log = g_PpPressLogged < kPpPressLogBudget;
+    if (log) ++g_PpPressLogged;
+    try {
+        if (g_PpPressInvoking) {
+            if (log && !post)
+                Out("prospectprobe press capture #" + std::to_string(n) + ": ForgePact's own `press` call - not kept (the capture stays the game's)");
+            return;
+        }
+        if (!post) {
+            const RValue arg = (A && argc > 0 && A[0]) ? *A[0] : RValue();
+            g_Yytk->CallBuiltin("variable_global_set", { RValue(kPpPressRoot), arg });
+            if (!g_PpPressArg) g_PpPressArg = new RValue();
+            *g_PpPressArg = arg;
+            g_PpPressCall = n;
+            g_PpPressArgc = argc;
+            g_PpPressSelf = PpDescribeSelf(S);
+            g_PpPressOther = PpDescribeSelf(O);
+            g_PpPressSelfId = -1;
+            g_PpPressOtherId = -1;
+            if (S) PpInstanceId(S->ToRValue(), g_PpPressSelfId);
+            if (O) PpInstanceId(O->ToRValue(), g_PpPressOtherId);
+            g_PpPressArgText = CiExpandContainer(arg);
+            if (log)
+                Out("prospectprobe press capture #" + std::to_string(n) + " (the game's own press): self=" + g_PpPressSelf
+                    + " @" + PpIdText(g_PpPressSelfId) + " other=" + g_PpPressOther + " @" + PpIdText(g_PpPressOtherId)
+                    + " argc=" + std::to_string(argc) + " arg0=" + g_PpPressArgText + " (rooted as " + kPpPressRoot + ")");
+        } else if (n == g_PpPressCall && g_PpPressArg && log) {
+            Out("prospectprobe press capture #" + std::to_string(n) + " after the call: arg0 now=" + CiExpandContainer(*g_PpPressArg));
+        }
+    } catch (...) { Out("prospectprobe press capture #" + std::to_string(n) + ": EXCEPTION while capturing"); }
+}
+
+static void PpPressRelease()
+{
+    if (g_PpPressArg) {
+        try { g_Yytk->CallBuiltin("variable_global_set", { RValue(kPpPressRoot), RValue() }); } catch (...) {}
+        *g_PpPressArg = RValue();
+    }
+    g_PpPressCall = 0;
+    g_PpPressArgc = 0;
+    g_PpPressSelfId = -1;
+    g_PpPressOtherId = -1;
+    g_PpPressSelf.clear();
+    g_PpPressOther.clear();
+    g_PpPressArgText.clear();
+    g_PpPressLogged = 0;
+}
+
+static void PpPressShow()
+{
+    if (g_PpPressCall <= 0 || !g_PpPressArg) {
+        Out(std::string("prospectprobe press show: ") + "none captured (`prospectprobe hook` the UiAProspectButton row, then press Prospect by hand)");
+        return;
+    }
+    try {
+        Out("prospectprobe press show: UiAProspectButton #" + std::to_string(g_PpPressCall) + " self=" + g_PpPressSelf
+            + " @" + PpIdText(g_PpPressSelfId) + " other=" + g_PpPressOther + " @" + PpIdText(g_PpPressOtherId)
+            + " argc=" + std::to_string(g_PpPressArgc) + " arg0 as handed in=" + g_PpPressArgText
+            + " arg0 now=" + CiExpandContainer(*g_PpPressArg) + " (rooted as " + kPpPressRoot + ")");
+    } catch (...) { Out("prospectprobe press show: EXCEPTION while reading the capture"); }
+}
+
+// Every UI_Button_Small_obj instance, examined whatever kind instance_find
+// hands back (VALUE_REF on this runner). A button is a candidate when one of
+// its variables holds the open window's id; `button` is set, and true
+// returned, only when exactly one is. Reads only - nothing is called or
+// written. `verbose` prints what `prospectprobe button` shows: per button its
+// @id, the variables linking it to the window, every variable that resolves
+// to the handler (with the two comparisons a player build could make with no
+// research helper), and its arrays, marking any that match the captured
+// argument; then chosen=@id / none / ambiguous (N), and captured-self= when
+// a capture exists - the control on the finder.
+static bool PpFindButton(const RValue& window, double windowId, bool verbose, RValue& button, double& buttonId, std::string& why)
+{
+    (void)window;
+    button = RValue();
+    buttonId = -1;
+    why.clear();
+    const int idx = PpButtonObjectIndex();
+    if (idx < 0) {
+        why = "UI_Button_Small_obj did not resolve by name";
+        if (verbose) Out("prospectprobe button: " + why);
+        return false;
+    }
+    const RValue handlerIndex = g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(kPpPressLabel)) });
+    const double scriptIdx = (PpIsNumber(handlerIndex) || handlerIndex.m_Kind == VALUE_REF) ? handlerIndex.ToDouble() : -1;
+    const bool haveCapture = g_PpPressCall > 0 && g_PpPressArg;
+    const int total = (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)idx) }).ToDouble();
+    if (verbose)
+        Out("prospectprobe button: " + std::to_string(total) + " UI_Button_Small_obj instance(s); open window @" + PpIdText(windowId)
+            + "; asset_get_index(" + kPpPressLabel + ")=" + Describe(handlerIndex));
+    int linked = 0;
+    for (int nth = 0; nth < total; ++nth) {
+        const RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue((double)idx), RValue((double)nth) });
+        if (inst.m_Kind == VALUE_UNDEFINED) continue;
+        double id = -1;
+        PpInstanceId(inst, id);
+        std::string links, details;
+        int handlers = 0;
+        const RValue names = g_Yytk->CallBuiltin("variable_instance_get_names", { inst });
+        const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+        for (int i = 0; i < n; ++i) {
+            const RValue nm = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) });
+            const std::string name = nm.ToString();
+            const RValue v = g_Yytk->CallBuiltin("variable_instance_get", { inst, nm });
+            const bool numberLike = PpIsNumber(v) || v.m_Kind == VALUE_REF;
+            if (windowId > 0 && numberLike && v.ToDouble() == windowId) links += (links.empty() ? "" : ",") + name;
+            const std::string resolved = CiTryResolveMethod(v);
+            const PpTarget* row = PpInvokedRow(resolved);
+            const bool resolvesToHandler = row && std::strcmp(row->label, kPpPressLabel) == 0;
+            const bool indexMatch = scriptIdx >= 0 && numberLike && v.ToDouble() == scriptIdx;
+            std::string methodMatch = "n/a (not a method value)";
+            if (v.m_Kind == VALUE_OBJECT && g_Yytk->CallBuiltin("is_method", { v }).ToBoolean()) {
+                const RValue mi = g_Yytk->CallBuiltin("method_get_index", { v });
+                const bool same = scriptIdx >= 0 && (PpIsNumber(mi) || mi.m_Kind == VALUE_REF) && mi.ToDouble() == scriptIdx;
+                methodMatch = same ? std::string("yes") : "no (" + Describe(mi) + ")";
+            }
+            if (resolvesToHandler || indexMatch || methodMatch == "yes") {
+                ++handlers;
+                details += "\n    handler " + name + " kind=" + Describe(v) + resolved
+                    + " index-match=" + std::string(indexMatch ? "yes" : "no")
+                    + " method-index-match=" + methodMatch
+                    + (resolvesToHandler ? "" : " (resolves by index only - a lead)");
+            }
+            if (v.m_Kind == VALUE_ARRAY) {
+                const std::string text = CiExpandContainer(v);
+                std::string mark;
+                if (haveCapture) {
+                    if (PpBackingSameValue(v, *g_PpPressArg)) mark = "  <== the captured argument (same array)";
+                    else if (text == g_PpPressArgText) mark = "  <== equal to the captured argument as handed in";
+                }
+                details += "\n    array " + name + " = " + text + mark;
+            }
+        }
+        if (!links.empty()) {
+            ++linked;
+            button = inst;
+            buttonId = id;
+        }
+        if (verbose)
+            Out("  button @" + PpIdText(id) + " (nth " + std::to_string(nth) + "): "
+                + (links.empty() ? std::string("not linked to the open window") : "window links: " + links)
+                + ", " + std::to_string(handlers) + " handler variable(s)" + details);
+    }
+    std::string verdict;
+    if (linked == 1) verdict = "chosen=@" + PpIdText(buttonId);
+    else if (linked == 0) verdict = windowId > 0 ? "none" : "none (no open window with a readable id)";
+    else verdict = "ambiguous (" + std::to_string(linked) + ")";
+    if (linked != 1) { button = RValue(); buttonId = -1; why = verdict; }
+    if (verbose) {
+        std::string control;
+        if (haveCapture)
+            control = " captured-self=@" + PpIdText(g_PpPressSelfId)
+                + (linked == 1 && g_PpPressSelfId > 0 && g_PpPressSelfId == buttonId ? " same" : " DIFFERENT");
+        Out("prospectprobe button: " + verdict + control);
+    }
+    return linked == 1;
+}
+
+static void PpButtonCommand()
+{
+    try {
+        RValue window;
+        double windowId = -1;
+        const bool open = PpFindWindow(window) && PpInstanceId(window, windowId);
+        if (!open) Out("prospectprobe button: no open UI_Prospect_obj window with a readable id - buttons are listed, none can be chosen");
+        RValue button;
+        double buttonId = -1;
+        std::string why;
+        PpFindButton(window, open ? windowId : -1, true, button, buttonId, why);
+    } catch (...) { Out("prospectprobe button: EXCEPTION while reading"); }
+}
+
+// `press <route> <argsrc> [self=found|captured] confirm`: one invoke of the
+// Prospect handler, by name, per command. Every refusal says `no call made`
+// and comes before any call. `self` is the found button (or the captured one),
+// `other` the open window - the shape the game's own press was measured with
+// (Phase 0c R12). Every outcome line names what was supplied, whether the
+// handler's body ran (invoked=: the detoured row's count across the call) and
+// whether its per-item step ran (inner=).
+static void PpPressCommand(const std::vector<std::string>& tok)
+{
+    const char* usage = "press show | press <route> <argsrc> [self=found|captured] confirm"
+                        " (route: exec-index | exec-var:<var> | scriptex; argsrc: captured | copy | button:<var> | empty)";
+    if (tok.size() == 2 && Lower(tok[1]) == "show") { PpPressShow(); return; }
+    if (tok.size() < 4 || tok.size() > 5) { Out(std::string("prospectprobe press: usage -> ") + usage + "; no call made"); return; }
+    const std::string route = tok[1];
+    const std::string argSource = tok[2];
+    const std::string lr = Lower(route), la = Lower(argSource);
+    std::string selfMode = "found";
+    if (tok.size() == 5) {
+        const std::string ls = Lower(tok[3]);
+        if (ls == "self=found" || ls == "self=captured") selfMode = ls.substr(5);
+        else { Out(std::string("prospectprobe press: ") + tok[3] + " is not self=found|captured; usage -> " + usage + "; no call made"); return; }
+    }
+    const std::string tag = "prospectprobe press " + route + " " + argSource + " self=" + selfMode;
+    if (Lower(tok.back()) != "confirm") {
+        Out(tag + ": refused: this invokes the game's Prospect handler - end the command with `confirm`; no call made");
+        return;
+    }
+    const bool execIndex = lr == "exec-index";
+    const bool scriptEx = lr == "scriptex";
+    const bool execVar = lr.rfind("exec-var:", 0) == 0 && route.size() > 9;
+    if (!execIndex && !scriptEx && !execVar) { Out(tag + ": refused: unknown route (" + usage + "); no call made"); return; }
+    const bool fromButton = la.rfind("button:", 0) == 0 && argSource.size() > 7;
+    if (la != "captured" && la != "copy" && la != "empty" && !fromButton) {
+        Out(tag + ": refused: unknown argument source (" + usage + "); no call made");
+        return;
+    }
+    try {
+        const std::string pending = PpPendingRewrite();
+        if (!pending.empty()) { Out(tag + ": refused: " + pending + " - it could rewrite the invoked call; no call made"); return; }
+        RValue window;
+        double windowId = -1;
+        if (!PpFindWindow(window) || !PpInstanceId(window, windowId)) {
+            Out(tag + ": refused: no open UI_Prospect_obj window with a readable id; no call made");
+            return;
+        }
+        CInstance* windowInst = HhResolveInstance(window);
+        if (!windowInst) { Out(tag + ": refused: the window @" + PpIdText(windowId) + " did not resolve; no call made"); return; }
+        RValue button;
+        double buttonId = -1;
+        std::string why;
+        if (selfMode == "found") {
+            if (!PpFindButton(window, windowId, false, button, buttonId, why)) {
+                Out(tag + ": refused: the Prospect button is not found or ambiguous (" + why + ") - see `prospectprobe button`; no call made");
+                return;
+            }
+        } else {
+            if (g_PpPressCall <= 0 || g_PpPressSelfId <= 0) {
+                Out(tag + ": refused: self=captured, but nothing captured - press Prospect by hand first; no call made");
+                return;
+            }
+            button = RValue(g_PpPressSelfId);
+            buttonId = g_PpPressSelfId;
+        }
+        CInstance* buttonInst = HhResolveInstance(button);
+        if (!buttonInst) { Out(tag + ": refused: the button @" + PpIdText(buttonId) + " did not resolve; no call made"); return; }
+        const RValue buttonValue = buttonInst->ToRValue();
+
+        // The callable. exec-index hands script_execute the handler's own
+        // asset index; exec-var the button variable's value; scriptex calls
+        // the script by its SDK name.
+        RValue callable;
+        std::string callableText = "UiAProspectButton by name";
+        if (execIndex) {
+            callable = g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(kPpPressLabel)) });
+            if (!(PpIsNumber(callable) || callable.m_Kind == VALUE_REF) || callable.ToDouble() < 0) {
+                Out(tag + ": refused: asset_get_index(" + kPpPressLabel + ") is " + Describe(callable) + "; no call made");
+                return;
+            }
+            callableText = std::string("asset_get_index(") + kPpPressLabel + ")=" + Describe(callable);
+        } else if (execVar) {
+            const std::string var = route.substr(9);
+            if (!g_Yytk->CallBuiltin("variable_instance_exists", { buttonValue, RValue(var) }).ToBoolean()) {
+                Out(tag + ": refused: the button has no variable " + var + "; no call made");
+                return;
+            }
+            callable = g_Yytk->CallBuiltin("variable_instance_get", { buttonValue, RValue(var) });
+            if (callable.m_Kind == VALUE_UNDEFINED) { Out(tag + ": refused: button." + var + " is undefined; no call made"); return; }
+            callableText = "button." + var + "=" + Describe(callable) + CiTryResolveMethod(callable);
+        }
+
+        // The argument's source must exist before anything is built from it.
+        RValue buttonArray;
+        if (la == "captured" || la == "copy") {
+            if (g_PpPressCall <= 0 || !g_PpPressArg) {
+                Out(tag + ": refused: argument source " + la + ", but nothing captured - press Prospect by hand first; no call made");
+                return;
+            }
+            if (la == "copy" && g_PpPressArg->m_Kind != VALUE_ARRAY) {
+                Out(tag + ": refused: the captured argument is " + Describe(*g_PpPressArg) + ", not an array - nothing to copy; no call made");
+                return;
+            }
+        } else if (fromButton) {
+            const std::string var = argSource.substr(7);
+            if (!g_Yytk->CallBuiltin("variable_instance_exists", { buttonValue, RValue(var) }).ToBoolean()) {
+                Out(tag + ": refused: the button has no variable " + var + "; no call made");
+                return;
+            }
+            buttonArray = g_Yytk->CallBuiltin("variable_instance_get", { buttonValue, RValue(var) });
+            if (buttonArray.m_Kind != VALUE_ARRAY) {
+                Out(tag + ": refused: button." + var + " is " + Describe(buttonArray) + ", not an array; no call made");
+                return;
+            }
+        }
+
+        // Something must be in the grid, or no outcome could be told apart.
+        std::string snap;
+        RValue node;
+        PpContents before;
+        if (!PpGridSnapshot(snap, &node)) { Out(tag + ": refused: no ProspectGrid node (" + snap + "); no call made"); return; }
+        if (!PpReadContents(node, before)) { Out(tag + ": refused: the grid is unreadable (" + before.why + "); no call made"); return; }
+        if (before.filled <= 0) { Out(tag + ": refused: the grid has no filled cell - insert one junk item first; no call made"); return; }
+
+        RValue arg;
+        if (la == "captured") arg = *g_PpPressArg;
+        else if (la == "copy") {
+            const int n = (int)g_Yytk->CallBuiltin("array_length", { *g_PpPressArg }).ToDouble();
+            arg = g_Yytk->CallBuiltin("array_create", { RValue((double)n) });
+            for (int i = 0; i < n; ++i)
+                g_Yytk->CallBuiltin("array_set", { arg, RValue((double)i), g_Yytk->CallBuiltin("array_get", { *g_PpPressArg, RValue((double)i) }) });
+        } else if (la == "empty") arg = g_Yytk->CallBuiltin("array_create", { RValue(0.0) });
+        else arg = buttonArray;
+        const std::string argText = "(" + argSource + "=" + CiExpandContainer(arg) + ")";
+
+        if (!g_PpPressBannerShown.exchange(true))
+            Out("prospectprobe press SAFETY - the first invoke this session: back up %LOCALAPPDATA%\\Hero_Siege first, junk items only, one call per command."
+                " A faulting shape crashes the game; relaunch the same build, record the crash and go on.");
+        Out(tag + ": contents before=" + PpContentsText(before) + " callable=" + callableText);
+
+        PpTarget* invokedRow = PpFindRow(kPpPressLabel);
+        PpTarget* innerRow = PpFindRow(kPpPressInnerLabel);
+        const long invokedBefore = invokedRow ? (long)*invokedRow->calls : 0;
+        const long innerBefore = innerRow ? (long)*innerRow->calls : 0;
+        RValue res;
+        AurieStatus st = AURIE_EXTERNAL_ERROR;
+        bool threw = false;
+        g_PpPressInvoking = true;
+        try {
+            if (scriptEx) {
+                st = g_Yytk->CallGameScriptEx(res, HeroSiege::Scripts::gml_Script_UiAProspectButton.data(), buttonInst, windowInst, { arg });
+            } else {
+                std::vector<RValue> callArgs{ callable, arg };
+                st = g_Yytk->CallBuiltinEx(res, "script_execute", buttonInst, windowInst, callArgs);
+            }
+        } catch (...) { threw = true; }
+        g_PpPressInvoking = false;
+        const bool dispatched = !threw && AurieSuccess(st);
+
+        std::string inner;
+        if (!innerRow || !innerRow->installed.load()) inner = std::string("inner=unproven (") + kPpPressInnerLabel + " is not detoured)";
+        else {
+            const long delta = *innerRow->calls - innerBefore;
+            inner = std::string("inner=") + (delta > 0 ? "yes" : "NO") + " (" + kPpPressInnerLabel + " +" + std::to_string(delta) + ")";
+        }
+        Out(tag + ": st=" + std::to_string((int)st) + (threw ? " (threw)" : "") + " res=" + Describe(res)
+            + " " + PpInvokedText(invokedRow, invokedBefore, std::string(" ") + kPpPressLabel) + " " + inner
+            + " self=" + PpDescribeSelf(buttonInst) + " other=" + PpDescribeSelf(windowInst)
+            + " route=" + route + " args=" + argText);
+
+        std::string snapAfter;
+        RValue nodeAfter;
+        PpContents after;
+        const bool afterRead = PpGridSnapshot(snapAfter, &nodeAfter) && PpReadContents(nodeAfter, after);
+        Out(tag + ": contents after=" + (afterRead ? PpContentsText(after) : "UNREADABLE (" + snapAfter + " " + after.why + ")"));
+        std::string verdict;
+        if (!afterRead) verdict = "grid UNREADABLE after the call - judge by eye";
+        else {
+            const bool fpChanged = after.fingerprints != before.fingerprints;
+            if (fpChanged || after.filled != before.filled)
+                verdict = "prospected (filled " + std::to_string(before.filled) + "->" + std::to_string(after.filled)
+                    + (fpChanged ? ", fingerprints changed)" : ", fingerprints unchanged)")
+                    + (dispatched ? "" : " - but the call reported no dispatch");
+            else if (dispatched) verdict = "ran, grid unchanged";
+            else verdict = "not dispatched";
+        }
+        Out(tag + ": " + verdict + ". Confirm by eye whether the item became materials.");
+    } catch (...) {
+        g_PpPressInvoking = false;
+        Out(tag + ": EXCEPTION - read the grid with `prospectprobe contents` before anything else");
+    }
+}
+
 static void PpUsage()
 {
     Out("prospectprobe (research build only) - prospect window Phase 0, see docs/prospect-window-research.md");
@@ -11627,6 +12181,12 @@ static void PpUsage()
     Out("  backing on|off                         keep what the game's own profile/inventory getter calls return, each window return with its @id (nothing invoked)");
     Out("  backing dump                           kept returns + live nodeGrid, json files, nodeGrid-shaped sub-arrays (a lead only)");
     Out("  backing idcheck                        positive control; refuses unless a kept return came from the open window; one sentinel in an EMPTY nodeGrid cell, walk every kept return, restore");
+    Out("  Stage B Phase 1 (auto-prospect on insert), see the research doc's Stage B Phase 1 live procedure:");
+    Out("  contents                               hook-free: ProspectGrid cells - filled/empty, filled columns per row, distinct nodeFingerprint values");
+    Out("  button                                 hook-free: every UI_Button_Small_obj - window links, handler variables, arrays; chosen=@id / none / ambiguous");
+    Out("  press show                             what the game's own last UiAProspectButton call was handed (self, other, arg0)");
+    Out("  press <route> <argsrc> [self=found|captured] confirm   ONE invoke of the Prospect handler, by name; route exec-index | exec-var:<var> | scriptex,");
+    Out("                                         argsrc captured | copy | button:<var> | empty; grid read before and after, invoked=/inner= proof");
 }
 
 // Labels contain spaces ("UI_Prospect_obj anon@1038"), so `override` takes the
@@ -11707,6 +12267,9 @@ static void PpCommand(const std::string& rest)
     }
     else if (sub == "setat") PpSetAtCommand(tok);
     else if (sub == "backing") PpBackingCommand(tok);
+    else if (sub == "contents") PpContentsCommand();
+    else if (sub == "button") PpButtonCommand();
+    else if (sub == "press") PpPressCommand(tok);
     else PpUsage();
 }
 #endif // FORGEPACT_RELEASE (prospectprobe)

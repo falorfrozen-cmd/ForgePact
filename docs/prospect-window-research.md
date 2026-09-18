@@ -1,6 +1,7 @@
 # Bigger prospect window — research log
 
 phase0-status: complete
+phase1-status: pending
 
 Issue: [ForgePact #9](https://github.com/falorfrozen-cmd/ForgePact/issues/9),
 "[QoL] Bigger prospect window" — *"Currently prospect window is way too small
@@ -17,6 +18,14 @@ insert** (§ Decision gate, last paragraph). It needs no save-shape change, and 
 measured its call shapes. Stage B is that mod. Before anything ships, the one
 unproven step, invoking the Prospect handler ourselves, still needs its own measured
 invoke with a control. The feature must be off by default, behind a panel toggle.
+
+Status (2026-09-18, later): **Stage B Phase 1 instrument built; live session pending**
+(`phase1-status`). `prospectprobe contents`, `button` and `press` (research build only)
+measure whether ForgePact can run the Prospect handler itself, beside a real press as the
+positive control (§ Stage B Phase 1 live procedure). The decision core
+(`plugin/include/ForgePact/AutoProspectMod.hpp`) and its baseline/target harness
+(`tests/test_auto_prospect_behavior.py`) exist; nothing player-visible does. Nothing ships
+unless a shape the player build can produce on its own is recorded in § Stage B results.
 
 Status (2026-09-17): **research stage.** Phase 0a and Phase 0b both ran
 2026-09-17 and both recorded H = not observed. Phase 0a was blind (stale SDK
@@ -1208,3 +1217,138 @@ instrument failure — the stale SDK closure names — and never a negative.
 | backing idcheck | `backing idcheck`, run before any item is moved: the control verdict first, any refusal, `kept returns from the open window` with its `window returns dropped` count, every walk with its `unwalked` count and reason, then `reference-identical (via …)` with the getter, `self` and call number it names — deciding only through two distinct calls of the same profile getter at a path through no UI-looking field, else a lead reached through a UI-looking field, else a `one call only` lead naming every profile getter that hit — / `copy` / `not observed`, the cell, both values, and `restored` (C3) | not run | not run | Control **passed**. The one write went to cell `[0][0]`: `was=undefined`, the sentinel read back, then `now=undefined (restored)`; no item was moved. Verdict: **not observed (scan incomplete: 3 of 6 walks; root VALUE_REF, an instance, nothing to walk)**. The window's `GetProfileInventoryData` return is an instance the walk cannot enter. Only one window call per getter was kept before any item moved, so a decided verdict was out of reach anyway |
 | gate branch | save-backed / not save-backed / inconclusive, per § Decision gate read in its order (C5); the human picks the branch | not run | not run | **inconclusive**. idcheck read `not observed (scan incomplete …)`, a getter returned an instance, and R7 = lost. Save-backed does not hold (no two-call identity; R7 is not kept), and not save-backed needs idcheck = `copy`. **Human decision (2026-09-18): auto-prospect on insert**, not a bigger grid |
 | H | H1 / H2' / H3 / not observed | **not observed (instrument blind: stale SDK closure names).** The live window's method values named its Create closures `m_SetInventoryLocalPlayer` = `anon@1065`, `m_Resize` = `anon@2806`, `m_UpdateInventoryGrid` = `anon@3657` (all `@gml_Object_UI_Prospect_obj_Create_0`), and the grid node's `m_RefreshNode` = `anon@36159@gml_Object_UI_Inventory_Grid_obj_Create_0`; the stale SDK tables carried `anon@1038/2729/3551` and no `36159`. | **not observed** — H1 unsupported (R4' empty); H2' no positive (R11 applied and matched but the store stayed 9 wide → crash; every R10 grow `reverted` with `invoked=yes`); H3 not concludable (R2-window is an empty field, two rows stayed `UNLOGGED`, four grid methods unprobed, and the Ghidra read above is not live-confirmed). | not observed |
+
+## Stage B Phase 1 live procedure
+
+The human chose auto-prospect on insert (§ Decision gate, last paragraph). One step of it
+has never been observed: the Prospect handler (`UiAProspectButton`) run by anything other
+than the game's own press. Phase 0c R12 measured that press — `self` = the
+`UI_Button_Small_obj` button, `other` = the `UI_Prospect_obj` window, one argument, an
+array — but not which button variable holds the handler, what the array holds, whether the
+insert closure (`m_MoveItemToGrid`, `UI_Inventory_Grid_obj anon@15345`) fires during a
+press or for every item at load, or what a press does with only materials in the grid.
+Phase 1 measures all of it in one research build, with a real press as the positive
+control in the same session. It follows the pet quest precedent (the guide's Known
+Limitations item 11): resolve by name only, record what was supplied beside every result,
+and say why every refusal happened. Nothing ships unless a shape is recorded here.
+
+### Instrument (research build only, under `prospectprobe`)
+
+- **`contents`** (hook-free): the ProspectGrid node, found the way `grid` finds it, as
+  `contents=@<id> filled=<K> empty=<E> uiNodeCallstack=<kind>`, then the filled column
+  indexes per row, then the distinct `nodeFingerprint` values of the filled cells. A cell
+  is empty when it is `undefined` or 0 (idcheck's rule). A read that fails says
+  `unreadable`, never an empty grid.
+- **`watch`**: a logged call's `grid-post=` line now ends in ` contents=<K>-><K'>`, the
+  filled count before and after the game's function. That shows whether an insert fills
+  the cells inside the call or later. `?` means not read.
+- **Press capture**: while `UiAProspectButton` is detoured, the game's own call keeps its
+  `self` and `other` ids and argument 0. The argument is rooted through the research
+  global `__pp_press_arg` and logged shallowly expanded before and after the call.
+  `press show` prints it, or `none captured`. ForgePact's own `press` never replaces it.
+- **`button`** (hook-free): every `UI_Button_Small_obj` with its `@id`, the variables whose
+  value is the open window's id, every variable that resolves to `UiAProspectButton` with
+  its kind, `index-match=` (the value against `asset_get_index`) and `method-index-match=`
+  (`method_get_index` of a method value against the same index), and its arrays, marked
+  when one is the captured argument or equal to it. It ends `chosen=@id` (exactly one
+  button linked to the window), `none` or `ambiguous (N)`, then `captured-self=@id same`
+  or `DIFFERENT` when a press was captured — the control on the finder.
+- **`press <route> <argsrc> [self=found|captured] confirm`**: one invoke per command, by
+  name, `self` = the button and `other` = the window. Routes: `exec-index` hands
+  `script_execute` the handler's own asset index; `exec-var:<var>` hands it the button
+  variable's value; `scriptex` calls the script by its SDK name. Argument sources:
+  `captured` (the rooted array itself), `copy` (a new array with the same elements),
+  `button:<var>` (the button's own array variable), `empty` (a new empty array). Every
+  refusal prints `no call made` and comes before any call: no `confirm`, a pending
+  override or setat, no open window, no button or an ambiguous one, an unavailable
+  argument source, or a grid with no filled cell. The outcome line carries `st=`,
+  `(threw)`, `res=`, `invoked=` (the `UiAProspectButton` row's count across the call),
+  `inner=` (the `___struct___123@UiAProspectButton` row's), `self=`, `other=`, `route=`
+  and `args=`, then the contents after and a verdict: `prospected (filled K->K',
+  fingerprints changed)`, `ran, grid unchanged` or `not dispatched`.
+
+### Shapes, in order
+
+1. `press exec-index captured confirm`
+2. `press exec-index button:<var> confirm`, if `button` marked a variable as the captured
+   argument
+3. `press exec-var:<var> captured confirm`, if `button` found a handler variable
+4. `press exec-index copy confirm` (does the array's content matter, or its identity?)
+5. `press exec-index empty confirm`
+6. `press scriptex captured confirm`
+7. `press exec-index captured self=captured confirm`, only if `captured-self=` printed
+   `DIFFERENT`
+
+To ship, a shape must print `prospected`, with `self=found` and an argument source the
+player build can produce on its own — `button:<var>` or `empty` — and the item must be
+seen turning into materials. If only `captured` or `copy` worked, the recorded elements
+decide how a player build could construct the array, and that is a replan, not a ship.
+
+### Conflicts
+
+- `prospectprobe hook` detours `anon@15345` at the same address the Stage B hook will
+  patch. Phase 1 runs `prospectprobe hook` and has no Stage B hook; the later Phase 3 must
+  not run `prospectprobe hook`. Do not run `citrace nativetrace` in either session.
+- A faulting shape crashes the game: the build uses `/EHsc`, so `catch (...)` does not
+  catch an access violation. Relaunch the same build, record the crash in `P-shapes`, and
+  go on with the next shape.
+
+### Procedure
+
+- **P0.** Build dev (`plugin_build\build.bat dev`). With the game closed, copy
+  `plugin_build\BloodPactPlugin_rel.dll` over `<game>\bin\mods\aurie\BloodPactPlugin.dll`
+  (the player DLL stays backed up as `BloodPactPlugin.dll.ship-backup-20260918_201853`).
+  Back up `%LOCALAPPDATA%\Hero_Siege`. Use junk items only. Record the build's commit in
+  § Stage B results.
+- **P1.** Before loading a character, run `prospectprobe hook`. The rows
+  `UiAProspectButton`, `___struct___123@UiAProspectButton` and
+  `UI_Inventory_Grid_obj anon@15345` must print `detoured`; if one does not, stop — every
+  count below would be blind. Load the character, then run `prospectprobe show` and record
+  the `anon@15345` calls made at load (`P-load-calls`).
+- **P2.** Open the cube. Run `prospectprobe grid`, `prospectprobe contents`,
+  `prospectprobe button` and `prospectprobe watch on`.
+- **P3, the positive control.** Run
+  `prospectprobe arm budget=50 UiAProspectButton ___struct___123 anon@15345`. Click one
+  item in, then run `contents` (and note the logged `anon@15345` line's
+  `contents=K->K'`). Run `show`, press Prospect by hand, then run `contents`, `show`,
+  `press show` and `button`. `button`'s `captured-self=` goes to `P-button`; the
+  `anon@15345` `since=` across the press goes to `P-reentry`. Press Prospect again with
+  only materials in the grid, and record what `show` and `contents` print
+  (`P-materials-only`).
+- **P4.** For each shape in the order above: insert one item, run the `press … confirm`
+  command, then `show`, and note by eye whether the item became materials. If the game
+  crashes, relaunch the same build, record the crash and go on (`P-shapes`).
+- **P5.** Keep inserting and prospecting (by hand, or with a working shape), running
+  `contents` after each prospect and recording `empty=`, until column 0 is full of
+  materials or the junk runs out (`P-free-cells`).
+- **P6.** Close the window with materials in it, before any save. Reopen it and record
+  whether they are back in the inventory, still in the grid, or gone (`P-close`).
+- **P7.** Fill the rows of § Stage B results and set `phase1-status: complete`.
+
+`P-control` passes only if the hand press shows `UiAProspectButton +1`,
+`___struct___123 +N` and a `contents` change. If it fails, every `P-shapes` verdict is
+`not observed`: an instrument that cannot see the game's own press has said nothing
+about ours.
+
+## Stage B results
+
+Phase 1 (research build, commit recorded at P0) fills the `P-*` rows; Phase 3 (after the
+Stage B adapter is built) fills the `S-*` rows. A row that could not be measured says
+`not observed (<why>)`; no row is left empty once its phase is complete.
+
+| Row | What fills it | Result |
+|---|---|---|
+| P-control | P3's hand press: `UiAProspectButton +1`, `___struct___123 +N`, and the `contents` change (filled and fingerprints), all three required; plus the click-in's `anon@15345` `contents=K->K'` | |
+| P-button | P3's `button` after the press: `chosen=`, `captured-self=` (`same`/`DIFFERENT`), each handler variable with its kind, `index-match=` and `method-index-match=`, and any array marked as the captured argument | |
+| P-shapes | P4, per shape in order: the outcome line (`st=`, `res=`, `invoked=`, `inner=`, `self=`, `other=`, `route=`, `args=`), the verdict, and the item by eye; or the crash | |
+| P-reentry | P3: `anon@15345` calls during the hand press (`since=` across it), i.e. whether the handler moves materials in through the insert closure | |
+| P-load-calls | P1: `anon@15345` calls at character load, before the cube was opened | |
+| P-materials-only | P3: a hand press with only materials in the grid — `UiAProspectButton` / `___struct___123` counts and the `contents` change | |
+| P-close | P6: materials left in the grid when the window closes, before any save — back in the inventory, still in the grid, or gone | |
+| P-free-cells | P5: `empty=` after each prospect; the fewest free cells that still took an insert, which sets `kAutoProspectMinFreeCells` (6, one column, if not measured) | |
+| S-drag | Phase 3: a drag-in with `autoprospect 1` is prospected once | |
+| S-click | Phase 3: a click-in is prospected once | |
+| S-rearrange | Phase 3: moving an item inside the grid invokes nothing | |
+| S-off | Phase 3: after `autoprospect 0`, an insert stays in the grid | |
+| S-grid-full | Phase 3: filling the grid logs `grid-full` once and stops invoking | |
+| S-player-dll | Phase 3: the player DLL with the panel toggle on prospects one insert, and `out.txt` shows `autoprospect: hook installed -> ON` | |

@@ -599,6 +599,169 @@ class ProspectWindowContractTests(unittest.TestCase):
         for name in ("rospect", "PpCommand", "PpInstall", "PpShow", "PpArm", "PpSet", "g_Pp"):
             self.assertNotIn(name, frame)
 
+    # ---- Stage B Phase 1: can ForgePact invoke the Prospect handler? ---------
+    # Auto-prospect on insert (the human's 2026-09-18 decision) ships only once
+    # a research build has invoked UiAProspectButton itself, beside a real
+    # press as the positive control. These pin that instrument: research-only,
+    # confirm-gated, every refusal before any call, and every outcome line
+    # naming what was supplied and whether the handler's body ran (the pet
+    # quest precedent: nine shapes were written off before the right self and
+    # argument were supplied).
+
+    PHASE1_FUNCTIONS = ("static void PpPressCommand(", "static void PpPressShow(", "static void PpPressCapture(",
+                        "static bool PpFindButton(", "static void PpButtonCommand(", "static void PpContentsCommand(",
+                        "static bool PpReadContents(")
+
+    def phase1_body(self, signature):
+        return strip_comments(function_body(self.plugin, signature))
+
+    def test_press_is_research_only_and_confirm_gated(self):
+        shipped = strip_research_blocks(self.plugin)
+        for signature in self.PHASE1_FUNCTIONS:
+            self.assertIn(signature, self.plugin)
+            self.assertNotIn(signature, shipped)
+        self.assertNotIn("__pp_press_arg", shipped)
+        start = self.plugin.index("kPlayerCommands = {")
+        block = self.plugin[start:self.plugin.index("};", start)]
+        for word in ("press", "prospect", "button", "contents"):
+            self.assertNotIn(word, block)
+        command = strip_comments(function_body(self.plugin, "static void PpCommand("))
+        for dispatch in ('sub == "press"', 'sub == "button"', 'sub == "contents"'):
+            self.assertIn(dispatch, command)
+        press = self.phase1_body("static void PpPressCommand(")
+        # `confirm` is a literal word, checked before anything else is read.
+        self.assertIn('"confirm"', press)
+        first_call = min(press.index("CallBuiltinEx("), press.index("CallGameScriptEx("))
+        self.assertLess(press.index('"confirm"'), press.index("PpFindWindow("))
+        self.assertLess(press.index('"confirm"'), first_call)
+        # By name only: no address, no struct layout, no helper that falls back to one.
+        for forbidden in ("Rva", "MethodValueFunction", "CScriptRef", "m_CallYYC", "InvokeMethodValue",
+                          "GetModuleHandle"):
+            self.assertNotIn(forbidden, press)
+        self.assertIn("SdkShortScriptName(HeroSiege::Scripts::gml_Script_UiAProspectButton)", self.plugin)
+        self.assertIn("HeroSiege::Scripts::gml_Script_UiAProspectButton.data()", press)
+        frame = function_body(self.plugin, "void FrameCallback(")
+        for name in ("PpPress", "PpButton", "PpContents", "PpFindButton", "PpReadContents"):
+            self.assertNotIn(name, frame)
+        usage = function_body(self.plugin, "static void PpUsage(")
+        for text in ("contents", "button", "press show", "press <route> <argsrc>", "confirm"):
+            self.assertIn(text, usage)
+
+    def test_press_refuses_before_any_call(self):
+        press = self.phase1_body("static void PpPressCommand(")
+        first_call = min(press.index("CallBuiltinEx("), press.index("CallGameScriptEx("))
+        # Every refusal prints `no call made`, and every one is textually
+        # before the first call.
+        self.assertGreaterEqual(press.count("no call made"), 8)
+        self.assertLess(press.rindex("no call made"), first_call)
+        for check in ("PpPendingRewrite()", "PpFindWindow(", "PpFindButton(", "PpReadContents(", "g_PpPressCall"):
+            self.assertLess(press.index(check), first_call, check)
+        for why in ("nothing captured", "not an array", "no filled cell", "ambiguous"):
+            self.assertIn(why, press)
+        self.assertLess(press.index("no filled cell"), first_call)
+        # The finder and the contents reader call nothing and write nothing.
+        for signature in ("static bool PpFindButton(", "static void PpButtonCommand(", "static bool PpReadContents(",
+                          "static void PpContentsCommand(", "static void PpPressShow("):
+            body = self.phase1_body(signature)
+            for forbidden in ("CallBuiltinEx", "CallGameScript", "script_execute", '"variable_instance_set"',
+                              '"array_set"', '"variable_global_set"', "MmCreateHook"):
+                self.assertNotIn(forbidden, body, signature)
+
+    def test_press_prints_what_was_supplied_and_invoked(self):
+        press = self.phase1_body("static void PpPressCommand(")
+        # The three routes, all by name.
+        for route in ('"exec-index"', '"exec-var:"', '"scriptex"'):
+            self.assertIn(route, press)
+        self.assertIn('"script_execute", buttonInst, windowInst, callArgs)', press)
+        self.assertIn("CallGameScriptEx(res, HeroSiege::Scripts::gml_Script_UiAProspectButton.data(), buttonInst, windowInst", press)
+        # The four argument sources.
+        for source in ('"captured"', '"copy"', '"button:"', '"empty"'):
+            self.assertIn(source, press)
+        # invoked= and inner= are the detoured rows' counts across the call.
+        first_call = min(press.index("CallBuiltinEx("), press.index("CallGameScriptEx("))
+        self.assertLess(press.index("invokedBefore ="), first_call)
+        self.assertLess(press.index("innerBefore ="), first_call)
+        self.assertLess(first_call, press.index("PpInvokedText(invokedRow, invokedBefore"))
+        for field in ('"inner="', '" self="', '" other="', '" route="', '" args="', 'st=" + std::to_string((int)st)', '" (threw)"', '" res="'):
+            self.assertIn(field, press)
+        for verdict in ('"prospected (filled "', '", fingerprints changed)"', '"ran, grid unchanged"', '"not dispatched"'):
+            self.assertIn(verdict, press)
+        # The contents are read before and after the one call.
+        self.assertLess(press.index("PpReadContents("), first_call)
+        self.assertLess(first_call, press.rindex("PpReadContents("))
+        # Our own call through the detour is never taken for the game's.
+        self.assertIn("g_PpPressInvoking = true", press)
+        self.assertLess(press.index("g_PpPressInvoking = true"), first_call)
+        self.assertLess(first_call, press.index("g_PpPressInvoking = false"))
+
+    def test_press_capture_roots_the_game_argument(self):
+        capture = self.phase1_body("static void PpPressCapture(")
+        self.assertIn("kPpPressLabel", capture)
+        self.assertIn("g_PpPressInvoking", capture)
+        self.assertIn('"variable_global_set", { RValue(kPpPressRoot), arg }', capture)
+        self.assertIn('kPpPressRoot = "__pp_press_arg"', self.plugin)
+        # Rooted first, kept after: the kept copy is never unrooted.
+        self.assertLess(capture.index('"variable_global_set"'), capture.index("*g_PpPressArg = arg"))
+        self.assertIn("CiExpandContainer(", capture)
+        for kept in ("g_PpPressSelfId", "g_PpPressOtherId", "g_PpPressCall = n"):
+            self.assertIn(kept, capture)
+        self.assertIn("kPpPressLabel = SdkShortScriptName(HeroSiege::Scripts::gml_Script_UiAProspectButton)", self.plugin)
+        # Captured before the game's call (what it was handed), reported after.
+        observe = strip_comments(function_body(self.plugin, "static bool PpObserve("))
+        self.assertIn("PpPressCapture(label, n, false, S, O, argc, A)", observe)
+        after = strip_comments(function_body(self.plugin, "static void PpAfter("))
+        self.assertIn("PpPressCapture(label, n, true, S, O, argc, A)", after)
+        self.assertLess(after.index("PpPressCapture("), after.index("if (!logged"))
+        show = self.phase1_body("static void PpPressShow(")
+        self.assertIn('"none captured', show)
+        reset = strip_comments(function_body(self.plugin, "static void PpReset("))
+        self.assertIn("PpPressRelease()", reset)
+        release = self.phase1_body("static void PpPressRelease(")
+        self.assertIn('"variable_global_set", { RValue(kPpPressRoot), RValue() }', release)
+
+    def test_button_finder_prints_the_control(self):
+        finder = self.phase1_body("static bool PpFindButton(")
+        self.assertIn("GameObject::UI_Button_Small_obj", self.plugin[self.plugin.index("static int PpButtonObjectIndex("):][:300])
+        self.assertIn("PpButtonObjectIndex()", finder)
+        self.assertIn("PpInstanceId(", finder)
+        self.assertIn("CiTryResolveMethod(", finder)
+        for text in ('" index-match="', '" method-index-match="', '"method_get_index"', '"is_method"',
+                     "CiExpandContainer(", '"chosen=@"', '"ambiguous ("', 'captured-self=@"', '" same"', '" DIFFERENT"'):
+            self.assertIn(text, finder)
+        # method_get_index only ever sees a method value.
+        self.assertLess(finder.index('"is_method"'), finder.index('"method_get_index"'))
+        # A kind check never decides whether a button is examined: ids and
+        # window links accept VALUE_REF (this runner's instance kind).
+        self.assertIn("VALUE_REF", finder)
+
+    def test_contents_is_hook_free(self):
+        read = self.phase1_body("static bool PpReadContents(")
+        for text in ("PpBackingIsEmptyCell(", '"nodeGrid"', '"nodeFingerprint"', '"uiNodeCallstack"', '"is_struct"'):
+            self.assertIn(text, read)
+        command = self.phase1_body("static void PpContentsCommand(")
+        self.assertIn("PpGridSnapshot(", command)
+        for text in ('contents=@"', '" filled="', '" empty="', "uiNodeCallstack="):
+            self.assertIn(text, command)
+        # A failed read is said as such, never printed as an empty grid.
+        self.assertIn("unreadable", command)
+
+    def test_watch_post_line_carries_contents(self):
+        observe = strip_comments(function_body(self.plugin, "static bool PpObserve("))
+        self.assertIn("g_PpContentsPre.push_back(", observe)
+        self.assertLess(observe.index("InterlockedIncrement(logged)"), observe.index("g_PpContentsPre.push_back("))
+        self.assertLess(observe.index("PpGridSnapshot(gridPre"), observe.index("g_PpContentsPre.push_back("))
+        after = strip_comments(function_body(self.plugin, "static void PpAfter("))
+        # Popped for exactly the calls that pushed, before the watch gate.
+        self.assertIn("logged && !gridPre.empty()", after)
+        self.assertLess(after.index("g_PpContentsPre.pop_back()"), after.index("if (!logged"))
+        post = after.index("grid-post=")
+        self.assertIn('" contents="', after[post:])
+        self.assertIn("PpSnapCompare(gridPre, post)", after)
+        # The snapshot's own format is unchanged; contents ride beside it.
+        snap = strip_comments(function_body(self.plugin, "static bool PpGridSnapshot("))
+        self.assertNotIn("contents", snap)
+        self.assertNotIn("nodeFingerprint", snap)
+
     # ---- the core header -----------------------------------------------------
 
     def test_core_header_is_game_independent(self):
