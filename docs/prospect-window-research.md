@@ -1702,6 +1702,45 @@ calls and every row is `not observed`.
   - `dispatched but handler not entered (invoked=NO)`;
   - `not dispatched`.
 
+  **`itemfp:<grid>,<r>,<c>`** (added for M7): the first live session found that a grid cell
+  is a small struct with no item instance and no stack count in it, only a
+  `nodeFingerprint`, so `item:` has no member to read and M7 was blocked by the instrument.
+  `itemfp:` reads the cell's `nodeFingerprint` and hands on what the game's own
+  `GetItemFromFingerprint(fp, 0)` returns for it - called by its SDK name through
+  `script_execute` with its `asset_get_index`, self = other = the grid node that holds the
+  cell. It is the one game call a selector makes, a lookup, made while the arguments are
+  resolved; a refusal after it means the callable was not called. An empty cell, a missing or
+  empty fingerprint, a lookup that did not dispatch, and a result that is not a plain struct
+  are refused. The outcome line's `args=` carries the fingerprint, the lookup's `st=` and
+  `invoked=`, the item's `itemType` compared with the SDK's `ItemType::Material` (14), and its
+  `itemDefinitionStruct` shallowly.
+- **`stackmove <row> <col> confirm`** (added for M7): the game's own click-move of one
+  material (M2/M4), as one command, on the ProspectGrid cell at row/col (found by its
+  `uiNodeCallstack`, as `grids` does), with self = other = that grid node. It gets the item
+  from the cell's fingerprint as `itemfp:` does, then calls `InventoryGridCanAddToStack(1,
+  undefined, item)`; only when that call's own body ran and returned true does it call
+  `InventoryGridAddToStack(1, item)`; only when the Add's own body ran (`invoked=yes`, not only
+  a dispatch) does it re-read the cell and, if it still holds the same fingerprint, call
+  `InvGridClearItemNode(cell, undefined)` on it. All four calls go by SDK name through
+  `script_execute` with the script's `asset_get_index` - the route the shipped Prospect invoke
+  uses - never `CallGameScriptEx` and never an address. Every refusal before the lookup says
+  `no call made`: no `confirm`; a pending `override`/`setat`; any of the three rows not
+  detoured; no open window; no ProspectGrid; an unreadable or empty cell; no fingerprint; a
+  script with no asset index; an unreadable grid. Later refusals name the calls not made. Each
+  call prints `st=`, `(threw)`, `res=` and `invoked=` (its row's count across the call); the
+  ProspectGrid's contents are printed before and after with the cell's fingerprint. The
+  verdict:
+  - `moved` - the cell emptied (or holds another fingerprint) and the Add was entered;
+  - `the cell emptied but ... was not entered - POSSIBLE LOSS`;
+  - `added-but-cell-kept` - the Add was entered and the cell still holds the material, a
+    possible duplicate the human checks by eye;
+  - `not dispatched` - CanAdd or Add did not dispatch or was not entered;
+  - `refused` - CanAdd returned false, and neither Add nor Clear was called.
+
+  The material lands in the bag's materials tab, which is not a grid node (M-grids), so no
+  read here sees it arrive: every verdict is followed by "check the materials-tab count by
+  eye", and that count is the evidence that the bag gained it.
+
 ### Stage C live procedure
 
 Research DLL, auto-prospect OFF for the whole session (`prospectprobe hook` and
@@ -1744,10 +1783,17 @@ Research DLL, auto-prospect OFF for the whole session (`prospectprobe hook` and
   *loses* the material stops the session: record it, nothing ships.
 - **M6, re-entry.** Across M2 and M3, `anon@15345` calls on the ProspectGrid `self`
   (→ `M-reentry`).
-- **M7, shapes.** In the order the controls suggest (H-A, H-B, H-C, then anything else the
-  rows showed), `prospectprobe move ... confirm` with every value from a selector (no captured
-  value). Record each outcome line, the verdict and the by-eye result (→ `M-shapes`). Repeat
-  the qualifying shape once with the bag full (must refuse or leave the material in place).
+- **M7, shapes.** The click control (M2/M4) identified the route: CanAdd, Add, then Clear,
+  each with the ProspectGrid as self, the item coming from the cell's fingerprint. With
+  `prospectprobe hook` done and the materials-tab count of the material's type read by eye:
+  `prospectprobe contents`, then `prospectprobe stackmove <r> <c> confirm` on one material
+  cell. Record the lines (the lookup with `itemType`, each call's `st=`/`res=`/`invoked=`, the
+  contents before and after), the verdict, and the tab count after by eye (→ `M-shapes`;
+  the `itemType` value also goes to ForgePact#52 once the human says to post it). For a single
+  call of the route, use `move prospect script:<Name> ... itemfp:prospect,<r>,<c> ... bag=<k>
+  confirm` with every value from a selector (no captured value). Then, in the order the
+  controls suggest, any other shape the rows showed. Repeat the qualifying shape once with
+  the bag full (must refuse or leave the material in place).
   A crash: relaunch the same build, record it, continue. If M2 found the bag's container is
   not a grid node, a `POSSIBLE LOSS` or `nothing moved` here is the instrument's blindness,
   not the shape's result: go by the by-eye check and leave the shape open. **If the material's

@@ -1070,6 +1070,177 @@ class ProspectWindowContractTests(unittest.TestCase):
         self.assertIn("const long invokedDelta = *row->calls - callsBefore", move)
         self.assertLess(first_call, move.index("const long invokedDelta"))
 
+    # ---- Stage C M7: the item behind a fingerprint, and the click route ------
+    # The live session (2026-09-19) found that a grid cell holds no item
+    # instance - only a nodeFingerprint - and that the game's click-move of a
+    # material runs InventoryGridCanAddToStack, InventoryGridAddToStack and
+    # then InvGridClearItemNode, all with the ProspectGrid as self. `itemfp:`
+    # hands `move` the item the game's own GetItemFromFingerprint returns for a
+    # cell, and `stackmove` makes that three-call route one command. Both are
+    # research-only, by name, and refuse before any call; stackmove clears the
+    # cell only after the Add's own body ran.
+
+    def test_itemfp_resolves_the_item_through_the_games_own_lookup(self):
+        value_sel = strip_comments(function_body(self.plugin, "static bool PpResolveValueSel("))
+        self.assertIn('"itemfp:"', value_sel)
+        # The one game call a value selector makes is the lookup, through its
+        # own helper; the selector itself still calls and writes nothing.
+        self.assertIn("PpItemFromFingerprint(", value_sel)
+        for forbidden in ("CallBuiltinEx", "script_execute", "CallGameScript"):
+            self.assertNotIn(forbidden, value_sel)
+        lookup = strip_comments(function_body(self.plugin, "static bool PpItemFromFingerprint("))
+        self.assertIn("kPpFromFpName", lookup)
+        self.assertIn('"script_execute"', lookup)
+        self.assertEqual(lookup.count("CallBuiltinEx("), 1)
+        for forbidden in ("Rva", "MethodValueFunction", "CScriptRef", "m_CallYYC", "InvokeMethodValue",
+                          "GetModuleHandle", "CallGameScript", '"variable_struct_set"', '"array_set"',
+                          '"variable_instance_set"'):
+            self.assertNotIn(forbidden, lookup)
+        # Anything but a plain struct is refused, never handed on.
+        self.assertIn("PpBackingObjectKind(item) != 1", lookup)
+        self.assertIn("not a struct", lookup)
+        self.assertLess(lookup.index("CallBuiltinEx("), lookup.index("not a struct"))
+        self.assertIn("kPpFromFpName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_GetItemFromFingerprint)",
+                      self.plugin)
+        # The fingerprint is read off the cell; an empty one is refused before the lookup.
+        fp = strip_comments(function_body(self.plugin, "static bool PpCellFingerprint("))
+        self.assertIn('"nodeFingerprint"', fp)
+        self.assertIn("empty fingerprint", fp)
+        for forbidden in ("CallBuiltinEx", "script_execute", '"variable_struct_set"'):
+            self.assertNotIn(forbidden, fp)
+        self.assertLess(value_sel.index("PpCellFingerprint("), value_sel.index("PpItemFromFingerprint("))
+        # The item's class is printed and compared with the SDK constant.
+        item_text = strip_comments(function_body(self.plugin, "static std::string PpItemText("))
+        for text in ('"itemType"', "HeroSiege::Items::ItemType::Material", '"itemDefinitionStruct"', "PpShallow("):
+            self.assertIn(text, item_text)
+        self.assertIn("PpItemText(", lookup)
+        # `move` names itemfp: in its usage and finds the bag through it too.
+        move = strip_comments(function_body(self.plugin, "static void PpMoveCommand("))
+        self.assertIn("itemfp:<grid>,<r>,<c>", move)
+        self.assertIn('"itemfp:"', move)
+        self.assertIn("itemfp:<grid>,<r>,<c>", function_body(self.plugin, "static void PpUsage("))
+
+    def test_stackmove_is_research_only_and_confirm_gated(self):
+        shipped = strip_research_blocks(self.plugin)
+        for signature in ("static void PpStackMoveCommand(", "static bool PpItemFromFingerprint(",
+                          "static PpStepCall PpCallRow("):
+            self.assertIn(signature, self.plugin)
+            self.assertNotIn(signature, shipped)
+        for entry in self.player_commands():
+            self.assertNotIn("stackmove", entry)
+        command = strip_comments(function_body(self.plugin, "static void PpCommand("))
+        self.assertIn('sub == "stackmove"', command)
+        stack = strip_comments(function_body(self.plugin, "static void PpStackMoveCommand("))
+        first_call = stack.index("PpItemFromFingerprint(")
+        self.assertIn('"confirm"', stack)
+        self.assertLess(stack.index('"confirm"'), stack.index("PpFindWindow("))
+        self.assertLess(stack.index('"confirm"'), first_call)
+        usage = function_body(self.plugin, "static void PpUsage(")
+        for text in ("stackmove <row> <col> confirm", "materials-tab"):
+            self.assertIn(text, usage)
+        frame = function_body(self.plugin, "void FrameCallback(")
+        for name in ("PpStackMove", "PpItemFromFingerprint", "PpCallRow"):
+            self.assertNotIn(name, frame)
+
+    def test_stackmove_refuses_before_any_call(self):
+        stack = strip_comments(function_body(self.plugin, "static void PpStackMoveCommand("))
+        first_call = stack.index("PpItemFromFingerprint(")
+        self.assertGreaterEqual(stack.count("no call made"), 12)
+        # Every plain `no call made` is before the lookup; the refusals after
+        # it name which calls were not made.
+        self.assertLess(stack.rindex("; no call made\""), first_call)
+        for check in ("PpPendingRewrite()", "PpFindWindow(", "PpResolveGridSel(", "HhResolveInstance(",
+                      "PpReadCell(", "PpBackingIsEmptyCell(", "PpCellFingerprint(", "PpScriptIndex(",
+                      "PpReadContents("):
+            self.assertLess(stack.index(check), first_call, check)
+        # All three rows must be detoured, or invoked= could not tell "nothing
+        # ran" from "ran and did nothing" for any of them.
+        for row in ("canRow", "addRow", "clearRow"):
+            self.assertIn(row, stack)
+        guard = stack.index("!r || !r->installed.load()")
+        self.assertLess(guard, first_call)
+        self.assertIn("is not detoured", stack)
+        self.assertIn("no call made", stack[guard:guard + 400])
+        # The ProspectGrid is found by its callstack name, as `grids` does.
+        self.assertIn('PpResolveGridSel("prospect"', stack)
+        for why in ("no open UI_Prospect_obj window", "is an empty cell", "not a struct"):
+            self.assertIn(why, stack + strip_comments(function_body(self.plugin, "static bool PpItemFromFingerprint(")))
+
+    def test_stackmove_clears_only_after_add_was_entered(self):
+        stack = strip_comments(function_body(self.plugin, "static void PpStackMoveCommand("))
+        can = stack.index("PpCallRow(canRow")
+        add = stack.index("PpCallRow(addRow")
+        clear = stack.index("PpCallRow(clearRow")
+        self.assertEqual(stack.count("PpCallRow("), 3)
+        self.assertLess(stack.index("PpItemFromFingerprint("), can)
+        self.assertLess(can, add)
+        self.assertLess(add, clear)
+        # The arguments the game's own click-move was measured with (M2/M4).
+        self.assertIn("PpCallRow(canRow, canIdx, gridInst, { RValue(1.0), RValue(), item })", stack)
+        self.assertIn("PpCallRow(addRow, addIdx, gridInst, { RValue(1.0), item })", stack)
+        self.assertIn("PpCallRow(clearRow, clearIdx, gridInst, { cellNow, RValue() })", stack)
+        # CanAdd said no, or did not run: Add and Clear are never called.
+        refuse = stack.index("!can.res.ToBoolean()")
+        self.assertLess(can, refuse)
+        self.assertLess(refuse, add)
+        self.assertIn("no call made to", stack[refuse:add])
+        self.assertIn("!can.dispatched || can.delta <= 0", stack)
+        self.assertLess(stack.index("!can.dispatched || can.delta <= 0"), add)
+        # Clear only when the Add dispatched AND its body ran, and only on the
+        # cell re-read after the Add, still holding the same fingerprint.
+        self.assertIn("const bool addEntered = add.dispatched && add.delta > 0;", stack)
+        gate = stack.index("if (!addEntered)")
+        self.assertLess(add, gate)
+        self.assertLess(gate, clear)
+        reread = stack.index("PpReadCell(node, row, col, cellNow, why)")
+        self.assertLess(gate, reread)
+        self.assertLess(reread, clear)
+        self.assertIn("fpNow != fp", stack[reread:clear])
+
+    def test_stackmove_calls_by_name_only(self):
+        stack = strip_comments(function_body(self.plugin, "static void PpStackMoveCommand("))
+        call = strip_comments(function_body(self.plugin, "static PpStepCall PpCallRow("))
+        index = strip_comments(function_body(self.plugin, "static bool PpScriptIndex("))
+        for body in (stack, call, index):
+            for forbidden in ("Rva", "MethodValueFunction", "CScriptRef", "m_CallYYC", "InvokeMethodValue",
+                              "GetModuleHandle", "CallGameScript", "GetNamedRoutinePointer"):
+                self.assertNotIn(forbidden, body)
+        self.assertNotIn("CallBuiltinEx(", stack)
+        self.assertEqual(call.count("CallBuiltinEx("), 1)
+        self.assertIn('"script_execute", self, self, callArgs)', call)
+        self.assertIn('"asset_get_index"', index)
+        # Each name is an SDK constant.
+        for name, constant in (("kPpCanAddName", "gml_Script_InventoryGridCanAddToStack"),
+                               ("kPpAddName", "gml_Script_InventoryGridAddToStack"),
+                               ("kPpClearName", "gml_Script_InvGridClearItemNode")):
+            self.assertIn(f"{name} = SdkShortScriptName(HeroSiege::Scripts::{constant})", self.plugin)
+            self.assertIn(name, stack)
+        # The count across the call is the row's own detour count.
+        self.assertLess(call.index("out.before = (long)*row->calls"), call.index("CallBuiltinEx("))
+        self.assertLess(call.index("CallBuiltinEx("), call.index("out.delta = *row->calls - out.before"))
+
+    def test_stackmove_prints_item_type_and_verdict(self):
+        stack = strip_comments(function_body(self.plugin, "static void PpStackMoveCommand("))
+        step = strip_comments(function_body(self.plugin, "static std::string PpStepText("))
+        for field in ('"st="', '" (threw)"', '" res="', "PpInvokedText("):
+            self.assertIn(field, step)
+        self.assertEqual(stack.count("PpStepText("), 3)
+        # itemType (PpItemText, through the lookup's note), contents before and
+        # after, and the cleared cell's fingerprint.
+        self.assertIn("note", stack)
+        self.assertEqual(stack.count("PpReadContents("), 2)
+        self.assertIn('" fingerprint="', stack)
+        verdicts = stack[stack.index("std::string verdict;"):]
+        for verdict in ('"moved', '"added-but-cell-kept', '"not dispatched', "POSSIBLE LOSS", "UNREADABLE"):
+            self.assertIn(verdict, verdicts)
+        # moved needs the cell emptied AND the Add entered; an emptied cell
+        # without the Add is a loss, decided before anything else.
+        self.assertIn("cellEmptied && addEntered", verdicts)
+        self.assertLess(verdicts.index("cellEmptied && addEntered"), verdicts.index('"moved'))
+        self.assertIn("refused", stack)
+        # The instrument cannot read the materials tab, and says so.
+        self.assertIn("check the materials-tab count by eye", stack)
+
     # ---- the core header -----------------------------------------------------
 
     def test_core_header_is_game_independent(self):
