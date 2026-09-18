@@ -2113,7 +2113,7 @@ input[type=range]::-webkit-slider-thumb{appearance:none;width:17px;height:17px;b
 
 <div class="card tab-card" data-tab="world" id="rarityCard">
   <h2>Monster Rarity</h2>
-  <div class="hint">Raises a share of the normal monsters to <b>Rare</b> (yellow) or <b>Ancient</b> (skull) as they spawn, through the game's own rarity setup: the monster gets that tier's stats, affixes and health bar exactly as if it had rolled that way. The two shares are separate and together stay at 100% or less - 25% Rare with 15% Ancient leaves 60% normal. Champions and the game's own rares are not touched. Stacks with Tyrant's Crown and Density.</div>
+  <div class="hint">Raises a share of the normal monsters to <b>Rare</b> (yellow) or <b>Ancient</b> (skull) as they spawn, through the game's own rarity setup: the monster gets that tier's stats, affixes and health bar exactly as if it had rolled that way. The two shares are separate and together stay at 100% or less - 25% Rare with 15% Ancient leaves 60% normal. Champions, the game's own rares, and bosses are left alone - bosses already have their own scripted health and affixes. Stacks with Tyrant's Crown and Density.</div>
   <div class="row" style="border:none">
     <span class="lbl">Rare</span>
     <input type="range" min="0" max="100" step="5" id="rarity_rare" value="0">
