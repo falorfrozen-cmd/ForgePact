@@ -12,6 +12,14 @@ name: AI Code Review
 # Requesting a review:
 #   - Add the `ai-review` label in the PR sidebar, or
 #   - comment `@claude review` on the PR.
+#
+# Anything written after the trigger phrase is passed to the reviewer as the
+# requester's instructions and takes precedence over the default scope:
+#   @claude review
+#   @claude review only plugin/
+#   @claude review skip the release notes, just the plugin and its tests
+# The label carries no instructions, so it always requests a full review.
+#
 # Either one may be used again later for a fresh review after pushing changes;
 # the label alone does not re-run on later pushes.
 #
@@ -87,13 +95,72 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          # Full history: the review compares the PR against its base.
+          # The pull request's own head, with full history and every branch,
+          # so the reviewer can diff a subset of paths against the base with
+          # git instead of pulling the whole pull request through `gh pr diff`.
+          # The code is only read, never built or run.
+          ref: refs/pull/${{ github.event.pull_request.number || github.event.issue.number }}/head
           fetch-depth: 0
 
       # The check after the review counts only comments created after this.
       - name: Note when the review started
         id: started
         run: echo "at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      # Turns the request into the text that follows the trigger phrase. The
+      # comment body reaches the shell only through an environment variable,
+      # never through `${{ }}` in the script, so it cannot inject commands.
+      - name: Read the request
+        id: request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number || github.event.issue.number }}
+          # Empty for the label trigger.
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        run: |
+          # `@claude review` is 14 characters long.
+          instructions=""
+          if [ -n "$COMMENT_BODY" ]; then
+            instructions="${COMMENT_BODY:14}"
+            # Trim surrounding whitespace, including the \r of CRLF comments.
+            instructions="${instructions#"${instructions%%[![:space:]]*}"}"
+            instructions="${instructions%"${instructions##*[![:space:]]}"}"
+          fi
+          base=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json baseRefName --jq .baseRefName)
+
+          delim="EOF_$(openssl rand -hex 16)"
+          {
+            echo "notes<<$delim"
+            echo
+            echo "The pull request head is checked out in the working directory with full history."
+            echo "\`git diff origin/$base...HEAD -- <pathspec>\` shows the pull request's changes for chosen paths only,"
+            echo "and \`git diff --stat origin/$base...HEAD\` lists every changed file with its size."
+            echo "Pathspecs can exclude too, for example \`-- . ':(exclude)*.md'\`."
+            echo "If \`gh pr diff\` fails because the diff is too large, use git instead."
+            if [ -n "$instructions" ]; then
+              echo
+              echo "The person who requested this review gave these instructions. They take precedence"
+              echo "over the default scope of the review and over any step that would read more than they allow:"
+              echo
+              echo "<requester-instructions>"
+              printf '%s\n' "$instructions"
+              echo "</requester-instructions>"
+              echo
+              echo "Pass these instructions verbatim to every agent you launch. When they narrow what to read,"
+              echo "do not run \`gh pr diff\`, whose output is the whole pull request: list the changed files with"
+              echo "\`git diff --stat\` and read only the permitted ones with a git pathspec. A review was explicitly"
+              echo "requested, so an earlier review on this pull request is not a reason to stop. State the scope"
+              echo "you reviewed in the final comment."
+            fi
+            echo "$delim"
+          } >> "$GITHUB_OUTPUT"
+
+          if [ -n "$instructions" ]; then
+            echo "Requester instructions:"
+            printf '%s\n' "$instructions"
+          else
+            echo "No requester instructions; full review."
+          fi
 
       - uses: anthropics/claude-code-action@v1
         env:
@@ -113,9 +180,9 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           plugin_marketplaces: "https://github.com/anthropics/claude-code.git"
           plugins: "code-review@claude-code-plugins"
-          prompt: >-
-            /code-review:code-review --comment
-            ${{ github.repository }}/pull/${{ github.event.pull_request.number || github.event.issue.number }}
+          prompt: |
+            /code-review:code-review --comment ${{ github.repository }}/pull/${{ github.event.pull_request.number || github.event.issue.number }}
+            ${{ steps.request.outputs.notes }}
           # `--allowedTools` is the whole allow-list for the run, not an addition
           # to the skill's own. It must name every tool the code-review command
           # declares in its `allowed-tools` frontmatter. The first version named
@@ -127,8 +194,10 @@ jobs:
           # inline-comment tool must stay listed: the action only starts the MCP
           # server that posts inline comments when this argument names it.
           # `Skill` is listed because the prompt is a plugin command: without
-          # it that first call is a permission denial (hub #59).
-          claude_args: '--allowedTools "Skill,mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh search:*)"'
+          # it that first call is a permission denial (hub #59). The read-only
+          # git commands and Read/Grep/Glob let a scoped request read only the
+          # part of the change it names.
+          claude_args: '--allowedTools "Skill,Read,Grep,Glob,mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh search:*),Bash(git diff:*),Bash(git log:*),Bash(git blame:*),Bash(git show:*)"'
 
       # The action succeeds whenever the model exits cleanly, which includes
       # a run that reviewed nothing -- hub #56 (tools denied) and hub #59 (the
