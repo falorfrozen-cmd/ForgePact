@@ -740,6 +740,13 @@ class ToggleIndicatorShipContractTests(unittest.TestCase):
         self.assertGreater(restore_alpha, last_draw)
         self.assertGreater(restore_colour, last_draw)
 
+    def test_marker_required_flag_matches_state_flash_purgatory(self):
+        # `## State` (forgepact-toggle-indicator-plan.md) reads `flash:
+        # purgatory` (session 4, D-R2): the shipped draw must require the
+        # Purgatory marker, i.e. call Decide with requireMarker=true.
+        body = function_body(self.plugin, "static void ToggleIndicatorDraw(")
+        self.assertIn("ToggleIndicatorModel::Decide(detail, /*requireMarker=*/true)", body)
+
     # ---- the panel (mirrors every mod_pet_quest_pickup site) ---------------
 
     def test_defaults_has_toggle_indicator_off(self):
