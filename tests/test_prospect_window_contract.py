@@ -1017,17 +1017,28 @@ class ProspectWindowContractTests(unittest.TestCase):
         self.assertLess(first_call, move.rindex("PpReadContents("))
         self.assertLess(move.index("PpGridDigest("), first_call)
         self.assertLess(first_call, move.rindex("PpGridDigest("))
-        for text in ('" prospect contents "', '" bag filled "', '" changed-cells="', '" new-fingerprints="'):
+        # Per-cell digests of BOTH grids, before and after: a material cell is
+        # a stack, so a partial move or loss changes a prospect cell's digest
+        # while the filled count and the fingerprints stay put.
+        self.assertEqual(move.count("PpGridDigest("), 4)
+        self.assertLess(move.index("PpGridDigest(prospectNode, prospectCellsBefore)"), first_call)
+        self.assertLess(first_call, move.index("PpGridDigest(prospectAfterNode, prospectCellsAfter)"))
+        self.assertIn("prospectChangedCells", move)
+        self.assertIn("const bool prospectLost = wholeCellLeft || prospectChangedCells > 0;", move)
+        for text in ('" prospect contents "', '" bag filled "', '" changed-cells="', '" new-fingerprints="',
+                     '" prospect-changed-cells="'):
             self.assertIn(text, move)
         verdicts = move[move.index("std::string verdict;"):]
-        for verdict in ('"moved (', "POSSIBLE LOSS", '"handler entered, nothing moved',
+        self.assertIn("lost a cell, a fingerprint or stack count", verdicts)
+        self.assertIn('" (partial)"', verdicts)
+        for verdict in ('"moved"', "POSSIBLE LOSS", '"handler entered, nothing moved',
                         '"dispatched but handler not entered (invoked=NO)"', '"not dispatched"',
                         "UNREADABLE"):
             self.assertIn(verdict, verdicts)
         # A material that left the grid while the bag gained nothing is the
         # first thing decided, whatever the handler count says.
         self.assertIn("prospectLost && !bagGained", verdicts)
-        self.assertLess(verdicts.index("prospectLost && !bagGained"), verdicts.index('"moved ('))
+        self.assertLess(verdicts.index("prospectLost && !bagGained"), verdicts.index('"moved"'))
         self.assertLess(verdicts.index("prospectLost && !bagGained"), verdicts.index("invokedDelta > 0"))
         self.assertIn("prospectLost && bagGained && invokedDelta > 0", verdicts)
         self.assertLess(verdicts.index("else if (dispatched)"),

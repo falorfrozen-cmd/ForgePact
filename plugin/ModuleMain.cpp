@@ -12690,8 +12690,12 @@ static void PpMoveCommand(const std::vector<std::string>& tok)
         PpContents prospectBefore, bagBefore;
         if (!PpReadContents(prospectNode, prospectBefore)) { Out(tag + ": refused: the ProspectGrid is unreadable (" + prospectBefore.why + "); no call made"); return; }
         if (!PpReadContents(bagNode, bagBefore)) { Out(tag + ": refused: the bag " + bagLabel + " is unreadable (" + bagBefore.why + "); no call made"); return; }
-        std::vector<std::string> bagCellsBefore;
+        std::vector<std::string> bagCellsBefore, prospectCellsBefore;
         if (!PpGridDigest(bagNode, bagCellsBefore)) { Out(tag + ": refused: the bag " + bagLabel + "'s cells could not be read; no call made"); return; }
+        // The prospect side per cell too: a material cell is a stack, and a
+        // shape that takes part of one leaves the filled count and the
+        // fingerprints as they were - only the cell's own digest changes.
+        if (!PpGridDigest(prospectNode, prospectCellsBefore)) { Out(tag + ": refused: the ProspectGrid's cells could not be read; no call made"); return; }
 
         if (!g_PpMoveBannerShown.exchange(true))
             Out("prospectprobe move SAFETY - the first move this session: back up %LOCALAPPDATA%\\Hero_Siege first, junk materials only, one call per command."
@@ -12719,10 +12723,23 @@ static void PpMoveCommand(const std::vector<std::string>& tok)
         RValue prospectAfterNode, bagAfterNode;
         std::string bagAfterLabel;
         PpContents prospectAfter, bagAfter;
-        std::vector<std::string> bagCellsAfter;
-        const bool prospectRead = PpGridSnapshot(snapAfter, &prospectAfterNode) && PpReadContents(prospectAfterNode, prospectAfter);
+        std::vector<std::string> bagCellsAfter, prospectCellsAfter;
+        const bool prospectRead = PpGridSnapshot(snapAfter, &prospectAfterNode) && PpReadContents(prospectAfterNode, prospectAfter)
+                                  && PpGridDigest(prospectAfterNode, prospectCellsAfter);
         const bool bagRead = PpResolveGridSel(bagSel, bagAfterNode, bagAfterLabel, why) && PpReadContents(bagAfterNode, bagAfter)
                              && PpGridDigest(bagAfterNode, bagCellsAfter);
+        // A prospect cell that held something before and reads differently
+        // after. Which member is the stack count is not measured yet (M-cell),
+        // so any change to a filled cell counts - a lower count, an emptied
+        // cell, a different item - and the verdict says to check it by `cell`.
+        int prospectChangedCells = 0;
+        if (prospectRead) {
+            for (size_t i = 0; i < prospectCellsBefore.size(); ++i) {
+                const std::string& b = prospectCellsBefore[i];
+                const bool wasFilled = b.size() < 2 || b.compare(b.size() - 2, 2, ":-") != 0;
+                if (wasFilled && (i >= prospectCellsAfter.size() || prospectCellsAfter[i] != b)) ++prospectChangedCells;
+            }
+        }
         int changedCells = 0, newFingerprints = 0;
         if (bagRead) {
             for (size_t i = 0; i < bagCellsAfter.size(); ++i)
@@ -12731,7 +12748,9 @@ static void PpMoveCommand(const std::vector<std::string>& tok)
                 if (std::find(bagBefore.fingerprints.begin(), bagBefore.fingerprints.end(), fp) == bagBefore.fingerprints.end()) ++newFingerprints;
         }
         Out(tag + ": after" + std::string(" prospect contents ") + (prospectRead ? std::to_string(prospectBefore.filled) + "->" + std::to_string(prospectAfter.filled)
-                                                                          + " " + PpContentsText(prospectAfter) : "UNREADABLE (" + snapAfter + " " + prospectAfter.why + ")")
+                                                                          + " " + PpContentsText(prospectAfter)
+                                                                          + " prospect-changed-cells=" + std::to_string(prospectChangedCells)
+                                                          : "UNREADABLE (" + snapAfter + " " + prospectAfter.why + ")")
             + " bag filled " + (bagRead ? std::to_string(bagBefore.filled) + "->" + std::to_string(bagAfter.filled) + " " + bagAfterLabel
                                         + " changed-cells=" + std::to_string(changedCells) + " new-fingerprints=" + std::to_string(newFingerprints)
                                       : "UNREADABLE (" + why + ")"));
@@ -12746,15 +12765,19 @@ static void PpMoveCommand(const std::vector<std::string>& tok)
             bool fingerprintLeft = false;
             for (const std::string& fp : prospectBefore.fingerprints)
                 if (std::find(prospectAfter.fingerprints.begin(), prospectAfter.fingerprints.end(), fp) == prospectAfter.fingerprints.end()) fingerprintLeft = true;
-            const bool prospectLost = prospectAfter.filled < prospectBefore.filled || fingerprintLeft;
+            const bool wholeCellLeft = prospectAfter.filled < prospectBefore.filled || fingerprintLeft;
+            const bool prospectLost = wholeCellLeft || prospectChangedCells > 0;
             const bool bagGainedCell = bagAfter.filled > bagBefore.filled || newFingerprints > 0;
             const bool bagGained = bagGainedCell || changedCells > 0;
             const std::string noDispatch = dispatched ? "" : " - but the call reported no dispatch";
+            const std::string partial = wholeCellLeft ? std::string("")
+                : ", partial: no whole cell left, " + std::to_string(prospectChangedCells) + " prospect cell(s) changed - check their stack count with `cell`";
             if (prospectLost && !bagGained)
-                verdict = "left the grid but the bag did not gain it - POSSIBLE LOSS (prospect filled " + std::to_string(prospectBefore.filled) + "->"
-                    + std::to_string(prospectAfter.filled) + ", bag unchanged). Stop, look at the bag, record it";
+                verdict = "the prospect grid lost a cell, a fingerprint or stack count but the bag did not gain it - POSSIBLE LOSS (prospect filled "
+                    + std::to_string(prospectBefore.filled) + "->" + std::to_string(prospectAfter.filled)
+                    + ", prospect-changed-cells=" + std::to_string(prospectChangedCells) + ", bag unchanged). Stop, look at the bag, record it";
             else if (prospectLost && bagGained && invokedDelta > 0)
-                verdict = "moved (prospect filled " + std::to_string(prospectBefore.filled) + "->" + std::to_string(prospectAfter.filled)
+                verdict = "moved" + std::string(wholeCellLeft ? "" : " (partial)") + " (prospect filled " + std::to_string(prospectBefore.filled) + "->" + std::to_string(prospectAfter.filled) + partial
                     + ", bag filled " + std::to_string(bagBefore.filled) + "->" + std::to_string(bagAfter.filled)
                     + (bagGainedCell ? std::string("")
                                      : ", no new cell or fingerprint - a merge into an existing stack, or a POSSIBLE LOSS: check that stack's count with `cell`")

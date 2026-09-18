@@ -1508,7 +1508,7 @@ What is already measured (§ Stage B results): both insert routes go through
 unnamed source grid (`@261539`), so which grid node is the bag is **not recorded**;
 materials are single-cell stacks, one per material type per prospect, not observed to
 merge; closing the window leaves them in the grid; moving a material inside the grid fires
-`m_MoveItemToGrid` and never invokes.
+`m_MoveItemToGrid` and was not observed to invoke (Stage B, S4 plus one unexplained case).
 
 ### Stage C static search
 
@@ -1682,14 +1682,20 @@ calls and every row is `not observed`.
   (`invoked=` could not be proven - the rule `press` follows); an unreadable grid. The
   outcome line carries `st=`, `(threw)`, `res=`, `invoked=` (the row's count across the
   call), `self=`, `other=` and `args=` (each shallowly expanded); then the prospect
-  `contents K->K'` with its fingerprints, the bag's `filled B->B'`, `changed-cells=` and
-  `new-fingerprints=`, and a verdict decided from those deltas and `invoked=`, never from
-  `st=` alone:
-  - `left the grid but the bag did not gain it - POSSIBLE LOSS` - the prospect grid lost a
-    cell or a fingerprint, and the bag gained no cell, no fingerprint and no changed cell.
+  `contents K->K'` with its fingerprints and `prospect-changed-cells=`, the bag's
+  `filled B->B'`, `changed-cells=` and `new-fingerprints=`, and a verdict decided from those
+  deltas and `invoked=`, never from `st=` alone. Both grids are digested per cell before and
+  after the call: a material cell is a stack, so a shape that takes part of one leaves the
+  prospect grid's filled count and fingerprints unchanged and shows only as a changed cell.
+  Which member holds the stack count is not recorded until `M-cell`, so any change to a cell
+  that was filled counts as the prospect grid losing something:
+  - `the prospect grid lost a cell, a fingerprint or stack count but the bag did not gain
+    it - POSSIBLE LOSS` - and the bag gained no cell, no fingerprint and no changed cell.
     Decided first, whatever else happened;
   - `moved (…)` - the prospect grid lost it, the bag gained it, and the callable's body
-    ran. When the bag gained no new cell or fingerprint, only a changed cell, the verdict
+    ran. `moved (partial)` when no whole cell left the prospect grid and only a filled
+    cell's digest changed (part of a stack moved); it asks for that cell's stack count by
+    `cell`. When the bag gained no new cell or fingerprint, only a changed cell, the verdict
     says so and asks for the stack's count by `cell` (a merge, or a POSSIBLE LOSS);
   - `grids changed but handler not entered (invoked=NO) - not a move by this call`;
   - `handler entered, nothing moved`;
@@ -1712,7 +1718,13 @@ Research DLL, auto-prospect OFF for the whole session (`prospectprobe hook` and
   ProspectGrid, click it into the bag. `show`, `contents`, `grids`, then `cell bag:<k> <r> <c>`
   on the landed cell (→ `M-control-click`: every row that fired with `self`/`other`/args, the
   two grids' deltas; `CheckPlayerInteraction` and `anon@15345` must be non-zero or every row
-  is `not observed`).
+  is `not observed`). **If the hand move leaves every node `grids` lists unchanged while the
+  material is in the bag by eye, the bag's material container is not a grid node**: `M-grids`
+  records that (the materials tab - the `UiDrawInventoryMaterialTab` and
+  `UiAInventoryMaterialTabClick` rows - is the likely container, and whichever of them fired
+  in this control is the lead), and no M7 verdict about a loss or "nothing moved" is evidence,
+  and no shape is recorded as a negative, until an instrument can read that container. M7
+  then records outcome lines and by-eye results only.
 - **M3, control by drag.** `reset`, `arm budget=40`; drag a material to the bag; same
   records (→ `M-control-drag`). Also try a right-click and a shift-click on a material and
   record whether the game itself quick-moves it (H-D).
@@ -1728,7 +1740,9 @@ Research DLL, auto-prospect OFF for the whole session (`prospectprobe hook` and
   rows showed), `prospectprobe move ... confirm` with every value from a selector (no captured
   value). Record each outcome line, the verdict and the by-eye result (→ `M-shapes`). Repeat
   the qualifying shape once with the bag full (must refuse or leave the material in place).
-  A crash: relaunch the same build, record it, continue.
+  A crash: relaunch the same build, record it, continue. If M2 found the bag's container is
+  not a grid node, a `POSSIBLE LOSS` or `nothing moved` here is the instrument's blindness,
+  not the shape's result: go by the by-eye check and leave the shape open.
 - **M8** fill the rows, `stage-c-status: complete`.
 
 **Qualifying rule for `move-shape`:** the shape printed `moved`, with `invoked=yes` on the
@@ -1749,7 +1763,7 @@ could not be measured says `not observed (<why>)`; no row is left empty once
 
 | Row | What fills it | Result |
 |---|---|---|
-| M-grids | M1's `grids`: every `UI_Inventory_Grid_obj` with its callstack name and size, and which one is the bag (the name the ship adapter finds it by) | |
+| M-grids | M1's `grids`: every `UI_Inventory_Grid_obj` with its callstack name and size, and which one is the bag (the name the ship adapter finds it by) - or, when M2's hand move changed no listed node while the material is in the bag by eye, that the bag's container is not a grid node | |
 | M-cell | M1's `cell prospect` on a material cell: which cell-struct member holds the item instance, and that member's own fields (type, fingerprint, stack count) | |
 | M-identity | M1/M2's `cell`: the item-type value on a material cell (expected 14), on the inserted item's cell (expected not 14), and on the bag cell the material landed in (expected 14) | |
 | M-control-click | M2: every row that fired on a click-move of a material to the bag, with `self`/`other`/args, the two grids' deltas, and `CheckPlayerInteraction`/`anon@15345` non-zero | |
