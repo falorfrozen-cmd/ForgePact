@@ -755,6 +755,29 @@ class ProspectWindowContractTests(unittest.TestCase):
         # window links accept VALUE_REF (this runner's instance kind).
         self.assertIn("VALUE_REF", finder)
 
+    def test_button_finder_chooses_by_the_handler_variable(self):
+        # Live (2026-09-18) all three UI_Button_Small_obj linked to the open
+        # window through masterUi/parent, and only one carried the Prospect
+        # handler, so "linked to the window" identifies nothing. The choice is
+        # keyed on a variable that IS the handler: a method value whose
+        # method_get_index is the handler's index, or one that resolves to the
+        # handler's row. A plain number equal to the index stays a printed lead.
+        finder = self.phase1_body("static bool PpFindButton(")
+        self.assertIn("const bool isHandler = resolvesToHandler || methodMatch == \"yes\";", finder)
+        self.assertIn("if (isHandler) ++handlers;", finder)
+        self.assertIn("if (!links.empty() && handlers > 0) {", finder)
+        self.assertIn("++qualified;", finder)
+        self.assertNotIn("++linked;", finder)
+        for text in ('if (qualified == 1) verdict = "chosen=@"', '"ambiguous (" + std::to_string(qualified)',
+                     "return qualified == 1;", "qualified == 1 && g_PpPressSelfId > 0"):
+            self.assertIn(text, finder)
+        # An index-only numeric match is still reported, never counted.
+        self.assertIn("resolves by index only - a lead", finder)
+        self.assertLess(finder.index("const bool isHandler"), finder.index("if (!links.empty() && handlers > 0) {"))
+        # `press self=found` uses this same finder.
+        press = self.phase1_body("static void PpPressCommand(")
+        self.assertIn("PpFindButton(window, windowId, false, button, buttonId, why)", press)
+
     def test_contents_is_hook_free(self):
         read = self.phase1_body("static bool PpReadContents(")
         for text in ("PpBackingIsEmptyCell(", '"nodeGrid"', '"nodeFingerprint"', '"uiNodeCallstack"', '"is_struct"'):

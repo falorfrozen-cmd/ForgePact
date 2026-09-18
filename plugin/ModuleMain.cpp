@@ -11864,9 +11864,12 @@ static void PpPressShow()
 }
 
 // Every UI_Button_Small_obj instance, examined whatever kind instance_find
-// hands back (VALUE_REF on this runner). A button is a candidate when one of
-// its variables holds the open window's id; `button` is set, and true
-// returned, only when exactly one is. Reads only - nothing is called or
+// hands back (VALUE_REF on this runner). A button qualifies when one of its
+// variables holds the open window's id AND one of its variables is the
+// Prospect handler itself; `button` is set, and true returned, only when
+// exactly one qualifies. The window link alone identifies nothing: live
+// (2026-09-18) all three small buttons linked to the window through
+// masterUi/parent, and only one carried the handler. Reads only - nothing is called or
 // written. `verbose` prints what `prospectprobe button` shows: per button its
 // @id, the variables linking it to the window, every variable that resolves
 // to the handler (with the two comparisons a player build could make with no
@@ -11892,7 +11895,7 @@ static bool PpFindButton(const RValue& window, double windowId, bool verbose, RV
     if (verbose)
         Out("prospectprobe button: " + std::to_string(total) + " UI_Button_Small_obj instance(s); open window @" + PpIdText(windowId)
             + "; asset_get_index(" + kPpPressLabel + ")=" + Describe(handlerIndex));
-    int linked = 0;
+    int qualified = 0;
     for (int nth = 0; nth < total; ++nth) {
         const RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue((double)idx), RValue((double)nth) });
         if (inst.m_Kind == VALUE_UNDEFINED) continue;
@@ -11918,12 +11921,17 @@ static bool PpFindButton(const RValue& window, double windowId, bool verbose, RV
                 const bool same = scriptIdx >= 0 && (PpIsNumber(mi) || mi.m_Kind == VALUE_REF) && mi.ToDouble() == scriptIdx;
                 methodMatch = same ? std::string("yes") : "no (" + Describe(mi) + ")";
             }
-            if (resolvesToHandler || indexMatch || methodMatch == "yes") {
-                ++handlers;
+            // What makes a button the Prospect button: a variable that IS the
+            // handler (a method on it, or one resolving to its row). A plain
+            // number equal to the index identifies nothing, so it is printed
+            // as a lead and never counted.
+            const bool isHandler = resolvesToHandler || methodMatch == "yes";
+            if (isHandler) ++handlers;
+            if (isHandler || indexMatch) {
                 details += "\n    handler " + name + " kind=" + Describe(v) + resolved
                     + " index-match=" + std::string(indexMatch ? "yes" : "no")
                     + " method-index-match=" + methodMatch
-                    + (resolvesToHandler ? "" : " (resolves by index only - a lead)");
+                    + (isHandler ? "" : " (resolves by index only - a lead)");
             }
             if (v.m_Kind == VALUE_ARRAY) {
                 const std::string text = CiExpandContainer(v);
@@ -11935,29 +11943,30 @@ static bool PpFindButton(const RValue& window, double windowId, bool verbose, RV
                 details += "\n    array " + name + " = " + text + mark;
             }
         }
-        if (!links.empty()) {
-            ++linked;
+        if (!links.empty() && handlers > 0) {
+            ++qualified;
             button = inst;
             buttonId = id;
         }
         if (verbose)
             Out("  button @" + PpIdText(id) + " (nth " + std::to_string(nth) + "): "
                 + (links.empty() ? std::string("not linked to the open window") : "window links: " + links)
-                + ", " + std::to_string(handlers) + " handler variable(s)" + details);
+                + ", " + std::to_string(handlers) + " handler variable(s)"
+                + (!links.empty() && handlers > 0 ? " - qualifies" : "") + details);
     }
     std::string verdict;
-    if (linked == 1) verdict = "chosen=@" + PpIdText(buttonId);
-    else if (linked == 0) verdict = windowId > 0 ? "none" : "none (no open window with a readable id)";
-    else verdict = "ambiguous (" + std::to_string(linked) + ")";
-    if (linked != 1) { button = RValue(); buttonId = -1; why = verdict; }
+    if (qualified == 1) verdict = "chosen=@" + PpIdText(buttonId);
+    else if (qualified == 0) verdict = windowId > 0 ? "none" : "none (no open window with a readable id)";
+    else verdict = "ambiguous (" + std::to_string(qualified) + ")";
+    if (qualified != 1) { button = RValue(); buttonId = -1; why = verdict; }
     if (verbose) {
         std::string control;
         if (haveCapture)
             control = " captured-self=@" + PpIdText(g_PpPressSelfId)
-                + (linked == 1 && g_PpPressSelfId > 0 && g_PpPressSelfId == buttonId ? " same" : " DIFFERENT");
+                + (qualified == 1 && g_PpPressSelfId > 0 && g_PpPressSelfId == buttonId ? " same" : " DIFFERENT");
         Out("prospectprobe button: " + verdict + control);
     }
-    return linked == 1;
+    return qualified == 1;
 }
 
 static void PpButtonCommand()
