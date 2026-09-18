@@ -1,23 +1,33 @@
 # Toggle skills — research log (issue #11)
 
-Status (2026-09-17): **two live sessions run. Track B (active indicator) is
-UNBLOCKED: Q3-D is measured.** The Soul Spurn ON/OFF state is a live-instance
-count, not a scalar, struct or buff: `White_Mage_Soul_Spurn_AOE_obj` (SDK
-index `GameObject 5759`, the runtime index was never printed) exists
-(`instance_number > 0`) while ON and does not exist while OFF, so no Ghidra
-read is needed for that path. That it is readable by name from any `self` is
-an *inference*, not exercised on this object this session — see Q3-D and
-`### After session 2` for what was and was not run. Track A (re-cast guard)
-is unaffected by session 2 and remains **BLOCKED on Q2**.
+Status (2026-09-18): **Track B shipped (off by default).** Four live
+sessions run across the indicator workorder and this research doc. Ownership
+is read from each `White_Mage_Soul_Spurn_AOE_obj` instance's own
+`isMyClient` (no local-player read: `Player_obj` has no `playerNumber`,
+session 3), the Purgatory marker (`purgatory` numeric > 0) is required
+(session 4 measured a plain, non-Purgatory cast otherwise flashes the
+outline for ~146 draws), the slot is `UI_Hud_Talent_obj`'s own `row0[5]`
+(`talentId` 240) at its own `navBboxX`/`navBboxY`/`navBboxWidth`/
+`navBboxHeight` (session 3), and the OFF lag is ~19 frames from the press
+(session 4). `toggleborder 1|0` ships in `kPlayerCommands`, off by default,
+panel key `mod_toggle_indicator`. Co-op is inferred, not measured against a
+second real player, and not a shipping concern (ForgePact is offline-only;
+see the hub guide's Known Limitations). Track A (re-cast guard) is
+unaffected by any of this and remains **BLOCKED on Q2**.
 
 - **Measured:** the cast path (Q1), draw order (Q4), three sources of
   accidental re-casts (Q5, one of them the double-cast proc, which bypasses
-  `TalentUse`), and where the ON/OFF state lives (Q3-D, session 2): the
-  `White_Mage_Soul_Spurn_AOE_obj` instance count.
+  `TalentUse`), where the ON/OFF state lives (Q3-D, session 2) and is read
+  from the draw hook (session 3/4), ownership by `isMyClient` from the draw
+  hook (session 4), the Purgatory marker as the plain-cast-flash
+  discriminator (session 4), the slot geometry (session 3) and the OFF lag
+  (session 4).
 - **Not observed:** what in the call trace discriminates a Purgatory-toggled
-  cast of Soul Spurn from a non-toggle cast (Q2); *which* sub-index in
+  cast of Soul Spurn from a non-toggle cast at the call-trace level (Q2 -
+  Track A only, not needed for Track B); *which* sub-index in
   `global.subTalentMap[1].t240` (candidates s2/s6/s7/s9/s10/s12, all found) is
-  Purgatory's level.
+  Purgatory's level; `isMyClient`'s co-op meaning against a second real
+  player (checked only in the harness and by `tgprobe spurn as foreign`).
 - **Blocked:** every object-event row, which does not resolve by name.
 
 See Results and Decision. Statements in the sections before Results are
@@ -958,6 +968,43 @@ exactly — the sampler control passes for this session.
 | R9 | measured | `maxN=1` on every `tgprobe spurn` read across the whole session, from the first (`frame=3870 ... maxN=0`, before any cast) through the last (`frame=72660 ... maxN=1`); no double-cast proc pushed it to 2 this session. |
 | R10 | measured | Tester removed Purgatory (respec) and cast Soul Spurn once: `TalentUseClass mode=native calls=6 lastFrame=69364 lastGap=0`, up from `calls=4 lastFrame=56748` at R8. `tgprobe spurn: frame=72660 room=9148364097822447407 n=0 mine=0 others=0 unattributed=0 capped=0 localNumber=unreadable state=off samples=71496 on=0 off=45653 unreadable=25843 maxN=1 transitions=10 markDraws=4530 markDrawExc=0`. Compared with R8's read: `unreadable` rose `25702`→`25843` (+141) and `transitions` rose `8`→`10` (+2). Since `localNumber` stayed `unreadable` for the whole session, a non-Purgatory cast of Soul Spurn creates the same `White_Mage_Soul_Spurn_AOE_obj` instance the toggled cast does — counted as `unreadable`, not `on`, for about 141 of the polled draws before the instance goes away again. |
 
+### Session 4
+
+Session 4, 2026-09-18: the P1b research build (`BloodPactPlugin_rel.dll`,
+built 21:54:09 from ForgePact `8fcf2fe`, hash-verified), town
+(`Town_05_rm`, room key `4131119309451652171`, held for the whole
+session — no zone change this time), White Mage with Soul Spurn +
+Purgatory (re-allocated before S1) and Healing Zone on the hotbar. No
+`bp_ipc\coop.ini`, no `cooprender`, no `citrace` command at any point. Driven
+with `ForgePact/tools/ipc.ps1`; the tester reported ON/OFF by eye for S0/S1/
+S2/S4. Full verbatim output:
+`.claude/workorders/forgepact-toggle-indicator-session4.log` (a hub workorder
+artefact, not part of this submodule).
+
+**Instrument control (S0, before S1).** Two `hhlabel` + `tgprobe spurn`
+pairs, 450 draws apart:
+
+```
+hhlabel -> ON (0 active, callback ok) hudCalls=3386 draws=0 playerId=-1 offset=150 lastErr=
+tgprobe spurn: frame=4920 room=4131119309451652171 n=0 mine=0 others=0 unattributed=0 capped=0 state=off samples=3386 on=0 off=3386 unreadable=0 maxN=0 transitions=0 lastTransitionFrame=-1 markedOn=0 markedOff=3386 markedUnreadable=0 markDraws=0 markDrawExc=0
+```
+```
+hhlabel -> ON (0 active, callback ok) hudCalls=3836 draws=0 playerId=-1 offset=150 lastErr=
+tgprobe spurn: frame=5370 room=4131119309451652171 n=0 mine=0 others=0 unattributed=0 capped=0 state=off samples=3836 on=0 off=3836 unreadable=0 maxN=0 transitions=0 lastTransitionFrame=-1 markedOn=0 markedOff=3836 markedUnreadable=0 markDraws=0 markDrawExc=0
+```
+
+`hudCalls` `3386`→`3836` (+450) matches `samples` `3386`→`3836` (+450)
+exactly — the sampler control passes for this session.
+
+| Row | Status | Evidence |
+|---|---|---|
+| S0 | measured | See the control pair above: `hudCalls` and `samples` both rose `3386`→`3836` (+450). |
+| S1 | measured | By eye OFF (Purgatory just re-allocated, Soul Spurn not yet pressed). `tgprobe spurn: frame=5370 ... n=0 mine=0 others=0 unattributed=0 capped=0 state=off samples=3836 on=0 off=3836 unreadable=0 maxN=0 transitions=0 lastTransitionFrame=-1 markedOn=0 markedOff=3836 markedUnreadable=0`. |
+| S2 | measured | Tester pressed Soul Spurn once (ON by eye, Purgatory active), waited 2 s. `tgprobe spurn: frame=10920 ... n=1 mine=1 others=0 unattributed=0 capped=0 state=on samples=9386 on=1793 off=7593 unreadable=0 maxN=1 transitions=1 lastTransitionFrame=9127 markedOn=1793 markedOff=7593 markedUnreadable=0` — both `on=` and `markedOn=` rose from S1's `0`. `tgprobe spurn fields: appearance=1` first: `frame=9127 isMyClient=bool:true playerNumber=real:1.000000 targetNumber=real:1.000000 purgatory=real:0.090000 purgatoryTimer=real:14.400000 destroyTimer=real:144.000000`; last: `frame=10919 isMyClient=bool:true ... purgatory=real:0.090000 purgatoryTimer=real:84.588192 destroyTimer=real:-1.000000` — `isMyClient=bool:true` and `purgatory` numeric and greater than 0, both readings. |
+| S3 | measured | Still ON. `tgprobe spurn: frame=12270 ... n=1 mine=1 others=0 unattributed=0 capped=0 state=on samples=10736 on=3143 off=7593 ... transitions=1 lastTransitionFrame=9127 markedOn=3143 markedOff=7593`; `tgprobe spurn as foreign -> off n=1 mine=0 others=1 unattributed=0`; the next plain `tgprobe spurn` read immediately after is identical to the one just before (`frame=12270 ... samples=10736 on=3143 off=7593 ... transitions=1 lastTransitionFrame=9127 markedOn=3143 markedOff=7593` — every field unchanged), confirming the override never touched the real counters. |
+| S4 | measured | `tgprobe show` before the OFF press: `TalentUse mode=native calls=2 lastFrame=13791 lastGap=4683`; `TalentsWhiteMage mode=native calls=2 lastFrame=13810 lastGap=4683`. `tgprobe spurn: frame=15840 ... n=0 mine=0 others=0 ... state=off samples=14306 on=4683 off=9623 unreadable=0 maxN=1 transitions=2 lastTransitionFrame=13810 markedOn=4683 markedOff=9623`. `offlag:` = `lastTransitionFrame` (`13810`) minus the `TalentUse` press `lastFrame` (`13791`) = **19 frames**; the `TalentsWhiteMage` frame (`13810`) sits beside it, equal to `lastTransitionFrame` itself (0 frames after the cast resolves). |
+| S5 | measured | Tester respecced Purgatory out, cast Soul Spurn once, waited ≥3 s. `tgprobe spurn: frame=21450 ... n=0 mine=0 others=0 ... state=off samples=19916 on=4829 off=15087 unreadable=0 maxN=1 transitions=4 lastTransitionFrame=19802 markedOn=4683 markedOff=15233`. `tgprobe spurn fields: appearance=2` first: `frame=19656 isMyClient=bool:true playerNumber=real:1.000000 targetNumber=real:1.000000 purgatory=real:0.000000 purgatoryTimer=real:14.400000 destroyTimer=real:144.000000`; last: `frame=19801 isMyClient=bool:true ... purgatory=real:0.000000 purgatoryTimer=real:14.400000 destroyTimer=real:-0.737424`. The new appearance's `purgatory` reads `0` (numeric, ≤ 0) in both "first" and "last"; `on=` rose `4683`→`4829` (+146) across this row while `markedOn=` stayed at `4683` — exactly the case the row's gate rule calls `flash: purgatory`. |
+
 ## Decision
 
 **Track A (re-cast guard): BLOCKED on Q2/Q3, redesign required.** Q1 and Q5
@@ -1137,6 +1184,35 @@ navBboxY=1711.000000 navBboxWidth=124.700000 navBboxHeight=139.200000` —
 SAT ON Soul Spurn's button, by eye. `row1[5]` (`hidden=bool:true
 drawButton=bool:false`) was not marked; its own `hidden`/`drawButton` values
 already explain why it is not the drawn slot.
+
+### After session 4
+
+**Scope: isMyClient.** S0's control matched (`hudCalls`/`samples` both
+`3386`→`3836`, +450), and S1, S2 and S3 (Results → Session 4) are all
+`measured` exactly as the row describes: S1 read `off n=0` by eye OFF; S2
+read `on n=1 mine=1` from the draw hook itself, with `isMyClient=bool:true`
+confirmed by `spurn fields` (the first time this session's read answered
+`on` from `Hook_DrawHudBuffs`, not from a command-line override); S3's
+`spurn as foreign` read `off n=1 mine=0 others=1` and left the real counters
+byte-identical before and after. Per Context "Session 4", `scope: isMyClient`
+follows.
+
+**Flash: purgatory.** S5 respecced Purgatory out and cast Soul Spurn once.
+The new appearance's `spurn fields` snapshot read `purgatory=real:0.000000`
+in both "first" (`frame=19656`) and "last" (`frame=19801`) — numeric and ≤ 0
+throughout, never the `>0` S2 measured for a Purgatory-toggled cast. `on=`
+rose `4683`→`4829` (+146) across the row while `markedOn=` stayed at `4683`:
+the plain ownership read (no marker) counts the flash as ON for ~146 draws,
+exactly the plain-cast flash D-R2 anticipated, and the marker-required
+decision (`markedOn`) does not. `flash: purgatory` follows: P2 requires the
+Purgatory marker.
+
+**Off lag: 19.** S4's `tgprobe show` before the press read `TalentUse
+... lastFrame=13791`; the following `tgprobe spurn` read
+`lastTransitionFrame=13810`, matching `TalentsWhiteMage ... lastFrame=13810`
+exactly (0 frames between the cast resolving and the ownership-only read
+flipping to `off`). `offlag:` = `13810 − 13791` = **19 frames** from the
+button press to the read leaving `on`.
 
 ### P1: the indicator's read, control and slot design
 

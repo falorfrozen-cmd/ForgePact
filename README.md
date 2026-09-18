@@ -16,6 +16,7 @@ panel; settings are applied live while the game runs and re-applied on every lau
 | **Character Stats** | Experience, Magic Find and Movement Speed use the character's current total value, including equipment bonuses |
 | **Full Map Reveal** | Clears fog of war in every zone, so waypoints, dungeon entrances, chests, shrines and mining nodes show immediately (toggleable; F5 in-game also toggles it). An optional sub-toggle also fills the map with monsters: most packs do not exist until you walk near them, so it has each new zone create its packs on arrival |
 | **Pet Collects Quest Items** | While your pet is out it walks to pick-up quest items on screen and collects them one at a time, crediting the objective through the game's own collect. Pick-up items only; activate/break/talk objectives are left alone |
+| **Outline Soul Spurn While Draining** | For the White Mage's Soul Spurn talent with the Purgatory sub-talent toggled on: a gold outline appears around Soul Spurn's skill-bar slot the whole time the drain is running, and disappears when it stops (off by default) |
 | **Satanic Zone Mods** | Pick which of the game's 25 positive / 26 negative World Section mods can roll onto a Satanic Zone; everything is on by default |
 | **Remove Owned Relics** | Relics already at maximum level (10 out of 10) in your equipped slots, backpack or inventory stop dropping again, so a relic drop is one you can still use |
 | **Auto-apply** | Saved settings are re-sent every time the game starts |

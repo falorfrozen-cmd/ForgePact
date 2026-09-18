@@ -4365,6 +4365,94 @@ static ForgePact::ToggleIndicatorState ToggleIndicatorRead(ForgePact::ToggleIndi
     return ForgePact::ToggleIndicatorModel::Decide(d);
 }
 
+// ===== Toggle-skill active indicator: the shipped draw (issue #11, Track B;
+// `toggleborder`) ============================================================
+// Off by default - the OFF branch below is this function's very first
+// statement, so a player who never enables it gets exactly today's
+// Hook_DrawHudBuffs behaviour, with no runtime call added at all
+// (indicator_off/no_runtime_calls). Installs nothing: DrawHudBuffs is
+// already hooked by InstallHeadLabelHook() at init.
+static std::atomic<bool> g_ToggleBorderOn{ false };
+// Printed by `toggleborder 0`: drawn=/on=/off=/unreadable=/noSlot=/foreign=.
+static volatile long g_TibDrawn = 0, g_TibOn = 0, g_TibOff = 0, g_TibUnreadable = 0, g_TibNoSlot = 0, g_TibForeign = 0;
+
+// Session 3's R5 measured the array: UI_Hud_Talent_obj instance 0's own
+// `row0` array holds one element per hotbar slot, and the element whose own
+// `talentId` reads 240 (Soul Spurn) sits at its own navBboxX/navBboxY/
+// navBboxWidth/navBboxHeight - the rectangle that sat on the button by eye
+// (docs/toggle-skills-research.md, "## Decision" -> "### After session 3" ->
+// "Slot geometry fields"). No hs-game-sdk constant exists for talent id 240
+// (searched python/cpp/ts) - see the research doc's Q1.
+static constexpr int kToggleIndicatorTalentId = 240;   // Soul Spurn
+static bool ToggleIndicatorFindSlot(double& outX, double& outY, double& outW, double& outH)
+{
+    try {
+        double objIdx = -1.0;
+        try {
+            objIdx = g_Yytk->CallBuiltin("asset_get_index",
+                { RValue(std::string(HeroSiege::Objects::GetObjectName(
+                    HeroSiege::Objects::GameObject::UI_Hud_Talent_obj))) }).ToDouble();
+        } catch (...) { return false; }
+        if (objIdx < 0) return false;
+        RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue(objIdx), RValue(0.0) });
+        if (inst.m_Kind == VALUE_UNDEFINED) return false;
+        RValue arr = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("row0") });
+        if (arr.m_Kind != VALUE_ARRAY) return false;
+        const int len = (int)g_Yytk->CallBuiltin("array_length", { arr }).ToDouble();
+        for (int i = 0; i < len; ++i) {
+            RValue elem = g_Yytk->CallBuiltin("array_get", { arr, RValue((double)i) });
+            if (elem.m_Kind != VALUE_OBJECT && elem.m_Kind != VALUE_REF) continue;
+            RValue tid = g_Yytk->CallBuiltin("variable_struct_get", { elem, RValue("talentId") });
+            const bool isNumber = tid.m_Kind == VALUE_REAL || tid.m_Kind == VALUE_INT32 || tid.m_Kind == VALUE_INT64;
+            if (!isNumber || (int)tid.ToDouble() != kToggleIndicatorTalentId) continue;
+            outX = g_Yytk->CallBuiltin("variable_struct_get", { elem, RValue("navBboxX") }).ToDouble();
+            outY = g_Yytk->CallBuiltin("variable_struct_get", { elem, RValue("navBboxY") }).ToDouble();
+            outW = g_Yytk->CallBuiltin("variable_struct_get", { elem, RValue("navBboxWidth") }).ToDouble();
+            outH = g_Yytk->CallBuiltin("variable_struct_get", { elem, RValue("navBboxHeight") }).ToDouble();
+            return true;
+        }
+        return false;
+    } catch (...) { return false; }
+}
+
+// Called every draw, right after HhDrawHeadLabels() - the same point-of-use
+// rule as the guide's Known Limitations item 13: nothing about the state is
+// cached across draws (indicator_on/state_reread_every_draw). Session 4
+// measured the plain-cast flash (D-R2, docs/toggle-skills-research.md
+// "Plain-cast flash (R10) and the Purgatory marker" / "After session 4"),
+// so the Purgatory marker is required.
+static void ToggleIndicatorDraw()
+{
+    if (!g_ToggleBorderOn.load()) return;
+
+    ForgePact::ToggleIndicatorReadDetail detail;
+    ToggleIndicatorRead(&detail, /*treatOwnAsForeign=*/false);
+    const ForgePact::ToggleIndicatorState state = ForgePact::ToggleIndicatorModel::Decide(detail, /*requireMarker=*/true);
+
+    if (detail.others > 0 && detail.mine == 0) InterlockedIncrement(&g_TibForeign);
+    if (state == ForgePact::ToggleIndicatorState::Unreadable) { InterlockedIncrement(&g_TibUnreadable); return; }
+    if (state == ForgePact::ToggleIndicatorState::Off) { InterlockedIncrement(&g_TibOff); return; }
+    InterlockedIncrement(&g_TibOn);
+
+    double x = 0, y = 0, w = 0, h = 0;
+    if (!ToggleIndicatorFindSlot(x, y, w, h)) { InterlockedIncrement(&g_TibNoSlot); return; }
+
+    try {
+        RValue prevColour = g_Yytk->CallBuiltin("draw_get_colour", {});
+        RValue prevAlpha = g_Yytk->CallBuiltin("draw_get_alpha", {});
+        RValue gold = g_Yytk->CallBuiltin("make_colour_rgb", { RValue(255.0), RValue(215.0), RValue(0.0) });
+        g_Yytk->CallBuiltin("draw_set_colour", { gold });
+        g_Yytk->CallBuiltin("draw_set_alpha", { RValue(1.0) });
+        for (int t = 0; t < 3; ++t) {   // 3 px outline, gold (product decision D-U1)
+            g_Yytk->CallBuiltin("draw_rectangle", {
+                RValue(x - t), RValue(y - t), RValue(x + w + t), RValue(y + h + t), RValue(1.0) });
+        }
+        g_Yytk->CallBuiltin("draw_set_alpha", { prevAlpha });
+        g_Yytk->CallBuiltin("draw_set_colour", { prevColour });
+        InterlockedIncrement(&g_TibDrawn);
+    } catch (...) {}
+}
+
 static long g_HhHudCalls = 0, g_HhLabelDraws = 0;
 static std::string g_HhLabelLastErr;
 // Draw GUI phase: project the player's position through the active camera and draw the
@@ -4438,6 +4526,7 @@ static RValue& Hook_DrawHudBuffs(CInstance* S, CInstance* O, RValue& R, int argc
     RValue& r = g_Orig_DrawHudBuffs ? g_Orig_DrawHudBuffs(S, O, R, argc, A) : R;
     ++g_HhHudCalls;
     HhDrawHeadLabels();
+    ToggleIndicatorDraw();
 #ifndef FORGEPACT_RELEASE
     TgProbeSpurnAfterDraw();
 #endif
@@ -19107,7 +19196,8 @@ static void RunCommand(const std::string& line)
         "ping", "density", "reveal", "specialrate", "dropmult",
         "stat", "statadd", "raredrop", "droprate", "dungeonkey",
         "headhunter", "hhdur", "hhmap", "hhdefault", "hhlabel", "tyrant", "beacon", "beaconrange", "beaconmode", "beaconwake", "beaconspawn", "beaconfarstep", "tyrantchance", "tyrantaffix", "hhlabelfont", "hhlabeloffset", "hhlabelmax",
-        "enemyspeed", "rarity", "sigdrop", "angelicdrop", "relicfilter", "orbpickup", "satmods", "petquest"
+        "enemyspeed", "rarity", "sigdrop", "angelicdrop", "relicfilter", "orbpickup", "satmods", "petquest",
+        "toggleborder"
     };
     if (kPlayerCommands.find(lc) == kPlayerCommands.end()) {
         Out("command unavailable in player build: " + cmd);
@@ -19123,6 +19213,23 @@ static void RunCommand(const std::string& line)
     // is already at MSVC's block-nesting limit (C1061).
     if (lc == "tgprobe") { TgProbeCommand(rest); return; }
 #endif
+    // Toggle-skill active indicator (issue #11, Track B). A standalone early
+    // return, not one more `else if` below: that chain is already at MSVC's
+    // block-nesting limit (C1061) - the same reason the research command
+    // just above is one.
+    if (lc == "toggleborder") {
+        std::string v = Lower(TrimCopy(rest));
+        if (v == "off" || v == "0") {
+            g_ToggleBorderOn.store(false);
+            Out("toggleborder -> off drawn=" + std::to_string(g_TibDrawn) + " on=" + std::to_string(g_TibOn)
+                + " off=" + std::to_string(g_TibOff) + " unreadable=" + std::to_string(g_TibUnreadable)
+                + " noSlot=" + std::to_string(g_TibNoSlot) + " foreign=" + std::to_string(g_TibForeign));
+        } else {
+            g_ToggleBorderOn.store(true);
+            Out("toggleborder -> ON (outlines Soul Spurn's skill-bar slot while the Purgatory-toggled drain is active)");
+        }
+        return;
+    }
     if (lc == "relicfilter") {
         bool enable = (rest == "1" || rest == "true" || rest == "on");
         // Hooking DropRelic while character selection is still running stalls the

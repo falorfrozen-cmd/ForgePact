@@ -60,11 +60,23 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
             if not line.strip().startswith("#pragma once")
             and '#include "Common.hpp"' not in line
         )
-        constants = declaration(cls.plugin, "static constexpr int kToggleIndicatorScanCap")
+        constants = "\n".join([
+            declaration(cls.plugin, "static constexpr int kToggleIndicatorScanCap"),
+            declaration(cls.plugin, "static constexpr int kToggleIndicatorTalentId"),
+        ])
         production = "\n".join([
             implementation(cls.plugin, "static bool ToggleIndicatorResolveAoeObject("),
             implementation(cls.plugin, "static bool ToggleIndicatorReadTruth("),
             implementation(cls.plugin, "static ForgePact::ToggleIndicatorState ToggleIndicatorRead("),
+            # P2 (the shipped indicator): the draw itself, and the slot
+            # lookup it calls. `g_ToggleBorderOn`/the counters are plain
+            # globals, spliced verbatim so a scenario can drive/inspect them
+            # the same way it drives `world` - toggleborder is off by
+            # default, same as in the plugin.
+            declaration(cls.plugin, "static std::atomic<bool> g_ToggleBorderOn"),
+            declaration(cls.plugin, "static volatile long g_TibDrawn"),
+            implementation(cls.plugin, "static bool ToggleIndicatorFindSlot("),
+            implementation(cls.plugin, "static void ToggleIndicatorDraw("),
         ])
 
         out = ROOT / "build/toggle-skill-behavior"
@@ -213,6 +225,44 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
         # split; only own instances count.
         self.assertScenario("marker/foreign_marker_ignored/markedMine")
         self.assertScenario("marker/foreign_marker_ignored")
+
+    # ---- the shipped indicator (P2): ToggleIndicatorDraw() -----------------
+
+    def test_indicator_off_makes_no_runtime_call(self):
+        self.assertScenario("indicator_off/no_runtime_calls")
+
+    def test_indicator_on_own_on_outlines_slot(self):
+        self.assertScenario("indicator_on/own_on_outlines_slot")
+        self.assertScenario("indicator_on/own_on_outlines_slot/rectangles")
+
+    def test_indicator_on_off_draws_nothing(self):
+        self.assertScenario("indicator_on/off_draws_nothing")
+        self.assertScenario("indicator_on/off_draws_nothing/rectangles")
+
+    def test_indicator_on_foreign_only_draws_nothing(self):
+        self.assertScenario("indicator_on/foreign_only_draws_nothing")
+        self.assertScenario("indicator_on/foreign_only_draws_nothing/counter")
+
+    def test_indicator_on_unreadable_draws_nothing_and_counts(self):
+        self.assertScenario("indicator_on/unreadable_draws_nothing_and_counts")
+        self.assertScenario("indicator_on/unreadable_draws_nothing_and_counts/counter")
+
+    def test_indicator_on_slot_not_found_draws_nothing_and_counts(self):
+        self.assertScenario("indicator_on/slot_not_found_draws_nothing_and_counts")
+        self.assertScenario("indicator_on/slot_not_found_draws_nothing_and_counts/counter")
+
+    def test_indicator_on_unmarked_own_draws_nothing(self):
+        # Session 4 measured the plain-cast flash (D-R2): the marker is
+        # required, so an unmarked own instance must not light the outline.
+        self.assertScenario("indicator_on/unmarked_own_draws_nothing")
+
+    def test_indicator_on_state_reread_every_draw(self):
+        self.assertScenario("indicator_on/state_reread_every_draw/first_off")
+        self.assertScenario("indicator_on/state_reread_every_draw")
+
+    def test_indicator_on_draw_colour_and_alpha_restored(self):
+        self.assertScenario("indicator_on/draw_colour_and_alpha_restored/colour")
+        self.assertScenario("indicator_on/draw_colour_and_alpha_restored/alpha")
 
 
 if __name__ == "__main__":

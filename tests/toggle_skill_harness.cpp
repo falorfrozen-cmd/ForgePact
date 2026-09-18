@@ -17,6 +17,8 @@
 // but empty" (Off); and the marker-required decision (the Purgatory field,
 // "Plain-cast flash (R10) and the Purgatory marker") is a separate pass over
 // the same evidence, not baked into the plain read.
+#include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <iostream>
 #include <stdexcept>
@@ -41,12 +43,18 @@ struct RValue {
 };
 static RValue MakeBool(bool b) { RValue r; r.m_Kind = VALUE_BOOL; r.boolean = b; return r; }
 static RValue MakeReal(double n) { RValue r; r.m_Kind = VALUE_REAL; r.number = n; return r; }
+// A stand-in for the Windows.h intrinsic the production counters use (same
+// pattern as tests/orb_pickup_harness.cpp and tests/headhunter_dispatch_harness.cpp).
+static long InterlockedIncrement(volatile long* target) { return ++(*target); }
 
-// A stand-in for HeroSiege::Objects - the harness needs the AOE object named
-// by the SDK constant to exist and resolve to a string, not the whole SDK.
+// A stand-in for HeroSiege::Objects - the harness needs the AOE and the slot
+// object named by the SDK constants to exist and resolve to a string, not
+// the whole SDK.
 namespace HeroSiege { namespace Objects {
 enum class GameObject { White_Mage_Soul_Spurn_AOE_obj, UI_Hud_Talent_obj };
-inline const char* GetObjectName(GameObject) { return "White_Mage_Soul_Spurn_AOE_obj"; }
+inline const char* GetObjectName(GameObject g) {
+    return g == GameObject::UI_Hud_Talent_obj ? "UI_Hud_Talent_obj" : "White_Mage_Soul_Spurn_AOE_obj";
+}
 }}
 
 // ---- the controlled world -------------------------------------------------
@@ -81,26 +89,52 @@ static AoeInst Unattributed() {
     AoeInst a; a.isMyClient = RValue(); return a;   // undefined
 }
 
+// P2 (the shipped indicator): UI_Hud_Talent_obj instance 0's own `row0`
+// array, the object ToggleIndicatorFindSlot walks (session 3's R5, "Slot
+// geometry fields"). One element per hotbar slot; the element whose own
+// talentId reads 240 (Soul Spurn) carries the rectangle.
+struct HudRow0Elem {
+    double talentId = 0, navBboxX = 0, navBboxY = 0, navBboxWidth = 0, navBboxHeight = 0;
+};
+
 struct World {
     bool aoeObjectResolves = true;
     std::vector<AoeInst> instances;
     bool instanceNumberThrows = false;   // instance_number itself throws
+    // P2 slot lookup:
+    bool hudTalentObjectResolves = true;
+    bool hudTalentInstanceExists = true;
+    std::vector<HudRow0Elem> row0 = { { 240.0, 100.0, 200.0, 50.0, 60.0 } };
 };
 static World world;
-static long g_ResolveCalls = 0;   // HhResolveLocalPlayer calls - must stay 0 (read/no_player_lookup)
+static long g_ResolveCalls = 0;    // HhResolveLocalPlayer calls - must stay 0 (read/no_player_lookup)
+static long g_AnyCallCount = 0;    // every CallBuiltin call, of any name - indicator_off/no_runtime_calls
+static int g_RectangleDraws = 0;   // draw_rectangle calls this draw
+static double g_LastSetColour = -1, g_LastSetAlpha = -1;
+static const double kAoeObjIdx = 42.0, kHudObjIdx = 99.0;
+static const double kPrevColour = 555.0, kPrevAlpha = 0.66;   // what draw_get_colour/draw_get_alpha answer
 
 struct FakeRunner {
     RValue CallBuiltin(const char* name, std::vector<RValue> args) {
+        ++g_AnyCallCount;
         const std::string fn = name;
         if (fn == "asset_get_index") {
-            return RValue(world.aoeObjectResolves ? 42.0 : -1.0);
+            const std::string want = args[0].ToString();
+            if (want == "UI_Hud_Talent_obj") return RValue(world.hudTalentObjectResolves ? kHudObjIdx : -1.0);
+            return RValue(world.aoeObjectResolves ? kAoeObjIdx : -1.0);
         }
         if (fn == "instance_number") {
             if (world.instanceNumberThrows) throw std::runtime_error("instance_number EXCEPTION");
             return RValue((double)world.instances.size());
         }
         if (fn == "instance_find") {
+            const double obj = args[0].ToDouble();
             const int i = (int)args[1].ToDouble();
+            if (obj == kHudObjIdx) {
+                if (!world.hudTalentInstanceExists || i != 0) return RValue();   // VALUE_UNDEFINED
+                RValue r; r.m_Kind = VALUE_REF; r.text = "hud:0";
+                return r;
+            }
             if (i < 0 || (size_t)i >= world.instances.size()) return RValue();   // VALUE_UNDEFINED
             RValue r; r.m_Kind = VALUE_REF; r.text = "aoe:" + std::to_string(i);
             return r;
@@ -108,6 +142,11 @@ struct FakeRunner {
         if (fn == "variable_instance_get") {
             const std::string tag = args[0].text;
             const std::string field = args[1].ToString();
+            if (tag == "hud:0") {
+                if (field != "row0") return RValue();
+                RValue r; r.m_Kind = VALUE_ARRAY; r.text = "row0";
+                return r;
+            }
             if (tag.rfind("aoe:", 0) != 0) return RValue();
             const size_t i = (size_t)std::stoi(tag.substr(4));
             if (i >= world.instances.size()) return RValue();
@@ -122,6 +161,40 @@ struct FakeRunner {
             }
             return RValue();
         }
+        if (fn == "array_length") {
+            if (args[0].text == "row0") return RValue((double)world.row0.size());
+            return RValue(0.0);
+        }
+        if (fn == "array_get") {
+            if (args[0].text == "row0") {
+                const int i = (int)args[1].ToDouble();
+                if (i < 0 || (size_t)i >= world.row0.size()) return RValue();
+                RValue r; r.m_Kind = VALUE_OBJECT; r.text = "row0elem:" + std::to_string(i);
+                return r;
+            }
+            return RValue();
+        }
+        if (fn == "variable_struct_get") {
+            const std::string tag = args[0].text;
+            const std::string field = args[1].ToString();
+            if (tag.rfind("row0elem:", 0) == 0) {
+                const size_t i = (size_t)std::stoi(tag.substr(9));
+                if (i >= world.row0.size()) return RValue();
+                const HudRow0Elem& e = world.row0[i];
+                if (field == "talentId") return RValue(e.talentId);
+                if (field == "navBboxX") return RValue(e.navBboxX);
+                if (field == "navBboxY") return RValue(e.navBboxY);
+                if (field == "navBboxWidth") return RValue(e.navBboxWidth);
+                if (field == "navBboxHeight") return RValue(e.navBboxHeight);
+            }
+            return RValue();
+        }
+        if (fn == "draw_get_colour") return RValue(kPrevColour);
+        if (fn == "draw_get_alpha") return RValue(kPrevAlpha);
+        if (fn == "make_colour_rgb") return RValue(123456.0);
+        if (fn == "draw_set_colour") { g_LastSetColour = args[0].ToDouble(); return RValue(); }
+        if (fn == "draw_set_alpha") { g_LastSetAlpha = args[0].ToDouble(); return RValue(); }
+        if (fn == "draw_rectangle") { ++g_RectangleDraws; return RValue(); }
         return RValue();
     }
 };
@@ -161,6 +234,11 @@ static void checkInt(const std::string& label, long long got, long long want) {
 }
 static void checkBool(const std::string& label, bool got, bool want) {
     const bool ok = got == want;
+    if (!ok) ++failures;
+    std::cout << (ok ? "PASS " : "FAIL ") << label << " got=" << got << " want=" << want << "\n";
+}
+static void checkNear(const std::string& label, double got, double want) {
+    const bool ok = std::fabs(got - want) < 1e-6;
     if (!ok) ++failures;
     std::cout << (ok ? "PASS " : "FAIL ") << label << " got=" << got << " want=" << want << "\n";
 }
@@ -368,6 +446,119 @@ int main() {
         checkInt("marker/foreign_marker_ignored/markedMine", d.markedMine, 0);
         auto state = ForgePact::ToggleIndicatorModel::Decide(d, /*requireMarker=*/true);
         checkState("marker/foreign_marker_ignored", state, ForgePact::ToggleIndicatorState::Off);
+    }
+
+    // ---- the shipped indicator (P2): ToggleIndicatorDraw() -----------------
+    // requireMarker is always true here - session 4 measured the plain-cast
+    // flash (D-R2), matching the shipped call.
+
+    // 19. OFF: the very first statement is an atomic load and return - no
+    //     runtime call happens at all.
+    resetWorld();
+    g_ToggleBorderOn.store(false);
+    world.instances = { OwnMarked() };   // must not matter - never read while off
+    {
+        long before = g_AnyCallCount;
+        ToggleIndicatorDraw();
+        checkInt("indicator_off/no_runtime_calls", g_AnyCallCount - before, 0);
+    }
+
+    // 20. ON, own+marked, slot found: outlines the slot exactly once (three
+    //     nested passes, for thickness).
+    resetWorld();
+    g_ToggleBorderOn.store(true);
+    world.instances = { OwnMarked(0.09) };
+    {
+        g_TibDrawn = 0; g_RectangleDraws = 0;
+        ToggleIndicatorDraw();
+        checkInt("indicator_on/own_on_outlines_slot", g_TibDrawn, 1);
+        checkInt("indicator_on/own_on_outlines_slot/rectangles", g_RectangleDraws, 3);
+    }
+
+    // 21. ON, no AOE at all: Off, draws nothing.
+    resetWorld();
+    g_ToggleBorderOn.store(true);
+    world.instances = {};
+    {
+        g_TibDrawn = 0; g_RectangleDraws = 0;
+        ToggleIndicatorDraw();
+        checkInt("indicator_on/off_draws_nothing", g_TibDrawn, 0);
+        checkInt("indicator_on/off_draws_nothing/rectangles", g_RectangleDraws, 0);
+    }
+
+    // 22. ON, every AOE's isMyClient reads bool:false ("foreign only"): Off,
+    //     draws nothing.
+    resetWorld();
+    g_ToggleBorderOn.store(true);
+    world.instances = { Foreign(0.09) };
+    {
+        g_TibDrawn = 0; g_RectangleDraws = 0; g_TibForeign = 0;
+        ToggleIndicatorDraw();
+        checkInt("indicator_on/foreign_only_draws_nothing", g_TibDrawn, 0);
+        checkInt("indicator_on/foreign_only_draws_nothing/counter", g_TibForeign, 1);
+    }
+
+    // 23. ON, the AOE object itself never resolves (Unreadable): draws
+    //     nothing, and counts it.
+    resetWorld();
+    g_ToggleBorderOn.store(true);
+    world.aoeObjectResolves = false;
+    {
+        g_TibDrawn = 0; g_RectangleDraws = 0; g_TibUnreadable = 0;
+        ToggleIndicatorDraw();
+        checkInt("indicator_on/unreadable_draws_nothing_and_counts", g_TibDrawn, 0);
+        checkInt("indicator_on/unreadable_draws_nothing_and_counts/counter", g_TibUnreadable, 1);
+    }
+
+    // 24. ON, own+marked, but the slot never resolves: draws nothing, and
+    //     counts it separately from Unreadable.
+    resetWorld();
+    g_ToggleBorderOn.store(true);
+    world.instances = { OwnMarked(0.09) };
+    world.row0.clear();
+    {
+        g_TibDrawn = 0; g_RectangleDraws = 0; g_TibNoSlot = 0;
+        ToggleIndicatorDraw();
+        checkInt("indicator_on/slot_not_found_draws_nothing_and_counts", g_TibDrawn, 0);
+        checkInt("indicator_on/slot_not_found_draws_nothing_and_counts/counter", g_TibNoSlot, 1);
+    }
+
+    // 25. ON, own but unmarked (purgatory readable, <= 0): draws nothing -
+    //     the plain-cast flash session 4 measured (D-R2).
+    resetWorld();
+    g_ToggleBorderOn.store(true);
+    world.instances = { OwnUnmarked() };
+    {
+        g_TibDrawn = 0; g_RectangleDraws = 0;
+        ToggleIndicatorDraw();
+        checkInt("indicator_on/unmarked_own_draws_nothing", g_TibDrawn, 0);
+    }
+
+    // 26. No caching: a later draw in the SAME session picks up a state
+    //     change with no restart.
+    resetWorld();
+    g_ToggleBorderOn.store(true);
+    world.instances = {};
+    {
+        g_TibDrawn = 0; g_RectangleDraws = 0;
+        ToggleIndicatorDraw();
+        checkInt("indicator_on/state_reread_every_draw/first_off", g_TibDrawn, 0);
+        world.instances = { OwnMarked(0.09) };
+        ToggleIndicatorDraw();
+        checkInt("indicator_on/state_reread_every_draw", g_TibDrawn, 1);
+    }
+
+    // 27. Colour and alpha are saved before the first draw_set_ and restored
+    //     to their PRE-draw values after the last draw - the same pattern
+    //     TgProbeDrawMark uses.
+    resetWorld();
+    g_ToggleBorderOn.store(true);
+    world.instances = { OwnMarked(0.09) };
+    {
+        g_LastSetColour = -999; g_LastSetAlpha = -999;
+        ToggleIndicatorDraw();
+        checkNear("indicator_on/draw_colour_and_alpha_restored/colour", g_LastSetColour, kPrevColour);
+        checkNear("indicator_on/draw_colour_and_alpha_restored/alpha", g_LastSetAlpha, kPrevAlpha);
     }
 
     // The read never makes a player-resolving call, in any scenario above -

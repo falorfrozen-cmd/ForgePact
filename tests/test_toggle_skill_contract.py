@@ -29,11 +29,19 @@ FORGEPACT_DIR = TESTS_DIR.parent
 REPO_ROOT = FORGEPACT_DIR.parent
 PLUGIN_SRC = FORGEPACT_DIR / "plugin" / "ModuleMain.cpp"
 SDK_INCLUDE = REPO_ROOT / "hs-game-sdk" / "cpp" / "include" / "hs_game_sdk"
+SRC_DIR = FORGEPACT_DIR / "src"
+SDK_PY_PATH = REPO_ROOT / "hs-game-sdk" / "python"
 
 if str(TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(TESTS_DIR))
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+if str(SDK_PY_PATH) not in sys.path:
+    sys.path.insert(0, str(SDK_PY_PATH))
 
 from test_release_hook_contract import function_body, strip_research_blocks  # noqa: E402
+
+import forgepact  # noqa: E402
 
 BLOCK_START = "// ---- tgprobe: toggle-skill research instrument"
 BLOCK_END = "#endif // FORGEPACT_RELEASE (tgprobe)"
@@ -630,7 +638,12 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
         self.assertNotIn("TgProbeMark", self.stripped)
         self.assertNotIn("TgProbeSpurnAfterDraw", self.stripped)
 
-    def test_kplayercommands_is_unchanged_from_7aa3c66(self):
+    def test_kplayercommands_is_unchanged_from_7aa3c66_plus_toggleborder(self):
+        # P2 (ToggleIndicatorShipContractTests below) adds `toggleborder` -
+        # the one entry this set has ever gained since 7aa3c66 - so this
+        # class's own P1b-era assertion (which held through session 4) is
+        # updated here rather than left to go stale once the ship command
+        # exists.
         match = re.search(
             r"static const std::unordered_set<std::string> kPlayerCommands = \{(.*?)\};",
             self.plugin, re.S)
@@ -643,9 +656,113 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
             "beaconrange", "beaconmode", "beaconwake", "beaconspawn", "beaconfarstep",
             "tyrantchance", "tyrantaffix", "hhlabelfont", "hhlabeloffset", "hhlabelmax",
             "enemyspeed", "rarity", "sigdrop", "angelicdrop", "relicfilter", "orbpickup",
-            "satmods", "petquest",
+            "satmods", "petquest", "toggleborder",
         }
         self.assertEqual(entries, expected)
+
+
+class ToggleIndicatorShipContractTests(unittest.TestCase):
+    """The shipped indicator (P2, issue #11, Track B): `toggleborder`.
+
+    Companion to test_toggle_skill_behavior.py (ToggleIndicatorDraw end to
+    end, source of the `indicator_` PASS lines) and ToggleIndicatorReadContractTests
+    (the read itself). This class pins the ship-only parts: the command is a
+    real player command with no new hook, the draw call sits right after the
+    head labels outside any research block, OFF is the function's very
+    first statement, the slot routine names every field session 3 recorded,
+    and the panel mirrors every `mod_pet_quest_pickup` site.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.plugin = PLUGIN_SRC.read_text(encoding="utf-8")
+        cls.research_doc = (FORGEPACT_DIR / "docs" / "toggle-skills-research.md").read_text(encoding="utf-8")
+        cls.panel = (SRC_DIR / "forgepact.py").read_text(encoding="utf-8")
+
+    def test_toggleborder_is_a_player_command_with_no_new_hook(self):
+        match = re.search(
+            r"static const std::unordered_set<std::string> kPlayerCommands = \{(.*?)\};",
+            self.plugin, re.S)
+        self.assertIsNotNone(match)
+        entries = {tok.strip().strip('"') for tok in match.group(1).split(",") if tok.strip()}
+        self.assertIn("toggleborder", entries)
+        start = self.plugin.index('if (lc == "toggleborder")')
+        end = self.plugin.index('if (lc == "relicfilter")', start)
+        branch = self.plugin[start:end]
+        self.assertIn('v == "off" || v == "0"', branch)
+        self.assertNotIn("HookOneScript(", branch)
+
+    def test_draw_call_follows_head_labels_outside_research(self):
+        body = function_body(self.plugin, "static RValue& Hook_DrawHudBuffs(")
+        self.assertIn("HhDrawHeadLabels();", body)
+        self.assertIn("ToggleIndicatorDraw();", body)
+        self.assertLess(body.index("HhDrawHeadLabels();"), body.index("ToggleIndicatorDraw();"))
+        stripped = strip_research_blocks(self.plugin)
+        self.assertIn("ToggleIndicatorDraw();", function_body(stripped, "static RValue& Hook_DrawHudBuffs("))
+
+    def test_off_is_the_first_statement(self):
+        body = function_body(self.plugin, "static void ToggleIndicatorDraw(")
+        first_statement = body.strip().splitlines()[0].strip()
+        self.assertEqual(first_statement, "if (!g_ToggleBorderOn.load()) return;")
+
+    def test_frame_callback_never_calls_the_indicator(self):
+        body = function_body(self.plugin, "void FrameCallback(")
+        self.assertNotIn("ToggleIndicator", body)
+
+    def test_slot_routine_names_every_recorded_field(self):
+        # The `### After session 3` decision line, not the earlier prose
+        # mentions of the phrase itself or the R5 results-table cell.
+        after = self.research_doc[self.research_doc.index("### After session 3"):]
+        m = re.search(r"^\*\*Slot geometry fields:.*$", after, re.M)
+        self.assertIsNotNone(m, "Slot geometry fields: line not found")
+        names = [n for n in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", m.group(0))
+                 if n not in ("Slot", "geometry", "fields")]
+        self.assertIn("row0", names)
+        self.assertIn("talentId", names)
+        self.assertIn("navBboxX", names)
+        self.assertIn("navBboxY", names)
+        self.assertIn("navBboxWidth", names)
+        self.assertIn("navBboxHeight", names)
+        slot_routine = function_body(self.plugin, "static bool ToggleIndicatorFindSlot(")
+        for name in names:
+            self.assertIn(f'"{name}"', slot_routine, name)
+
+    def test_draw_saves_and_restores_colour_and_alpha(self):
+        body = function_body(self.plugin, "static void ToggleIndicatorDraw(")
+        get_colour = body.index("draw_get_colour")
+        get_alpha = body.index("draw_get_alpha")
+        first_set = body.index("draw_set_")
+        self.assertLess(get_colour, first_set)
+        self.assertLess(get_alpha, first_set)
+        last_draw = body.rindex("draw_rectangle")
+        restore_alpha = body.rindex("draw_set_alpha")
+        restore_colour = body.rindex("draw_set_colour")
+        self.assertGreater(restore_alpha, last_draw)
+        self.assertGreater(restore_colour, last_draw)
+
+    # ---- the panel (mirrors every mod_pet_quest_pickup site) ---------------
+
+    def test_defaults_has_toggle_indicator_off(self):
+        self.assertIn("mod_toggle_indicator", forgepact.DEFAULTS)
+        self.assertFalse(forgepact.DEFAULTS["mod_toggle_indicator"])
+
+    def test_build_cmds_omits_toggleborder_when_disabled(self):
+        cfg = dict(forgepact.DEFAULTS)
+        self.assertNotIn("toggleborder 1", forgepact.build_cmds(cfg))
+
+    def test_build_cmds_emits_toggleborder_when_enabled(self):
+        cfg = dict(forgepact.DEFAULTS)
+        cfg["mod_toggle_indicator"] = True
+        self.assertIn("toggleborder 1", forgepact.build_cmds(cfg))
+
+    def test_html_has_the_mods_tab_control(self):
+        self.assertIn('id="mod_toggle_indicator"', forgepact.HTML)
+
+    def test_panel_sends_the_live_command(self):
+        self.assertIn(
+            "f\"toggleborder {1 if cfg['mod_toggle_indicator'] else 0}\"",
+            self.panel,
+        )
 
 
 if __name__ == "__main__":
