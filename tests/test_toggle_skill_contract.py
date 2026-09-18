@@ -57,7 +57,9 @@ EXPECTED_SCRIPTS = {
     "gml_Script_InputPressed", "gml_Script_LoadAura", "gml_Script_skillsAura",
 } | {
     f"gml_Script_anon_{n}_gml_Object_UI_Hud_Talent_obj_Create_0"
-    for n in (1183, 2413, 10430, 11283, 11677, 12084, 12530, 13033)
+    # Offsets of the SDK regenerated at hub 4539e68; a closure's name carries its
+    # offset in the Create event, so these move whenever that event changes.
+    for n in (1233, 2503, 10745, 11619, 12025, 12449, 12916, 13435)
 }
 
 EXPECTED_EVENTS = {

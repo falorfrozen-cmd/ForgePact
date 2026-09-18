@@ -14823,14 +14823,14 @@ enum : long {
     X(GetPlayerTalentHudObj, HeroSiege::Scripts::gml_Script_GetPlayerTalentHudObj, "GetPlayerTalentHudObj", kTgArgs, nullptr, nullptr) \
     X(UiHudTalentNavigation, HeroSiege::Scripts::gml_Script_UiHudTalentNavigation, "UiHudTalentNavigation", kTgArgs, nullptr, nullptr) \
     X(DrawKeyBindSprites, HeroSiege::Scripts::gml_Script_DrawKeyBindSprites, "DrawKeyBindSprites", kTgArgs, nullptr, nullptr) \
-    X(HudTalentAnon1183, HeroSiege::Scripts::gml_Script_anon_1183_gml_Object_UI_Hud_Talent_obj_Create_0, "UI_Hud_Talent_obj.anon@1183", kTgArgs, nullptr, nullptr) \
-    X(HudTalentAnon2413, HeroSiege::Scripts::gml_Script_anon_2413_gml_Object_UI_Hud_Talent_obj_Create_0, "UI_Hud_Talent_obj.anon@2413", kTgArgs, nullptr, nullptr) \
-    X(HudTalentAnon10430, HeroSiege::Scripts::gml_Script_anon_10430_gml_Object_UI_Hud_Talent_obj_Create_0, "UI_Hud_Talent_obj.anon@10430", kTgArgs, nullptr, nullptr) \
-    X(HudTalentAnon11283, HeroSiege::Scripts::gml_Script_anon_11283_gml_Object_UI_Hud_Talent_obj_Create_0, "UI_Hud_Talent_obj.anon@11283", kTgArgs, nullptr, nullptr) \
-    X(HudTalentAnon11677, HeroSiege::Scripts::gml_Script_anon_11677_gml_Object_UI_Hud_Talent_obj_Create_0, "UI_Hud_Talent_obj.anon@11677", kTgArgs, nullptr, nullptr) \
-    X(HudTalentAnon12084, HeroSiege::Scripts::gml_Script_anon_12084_gml_Object_UI_Hud_Talent_obj_Create_0, "UI_Hud_Talent_obj.anon@12084", kTgArgs, nullptr, nullptr) \
-    X(HudTalentAnon12530, HeroSiege::Scripts::gml_Script_anon_12530_gml_Object_UI_Hud_Talent_obj_Create_0, "UI_Hud_Talent_obj.anon@12530", kTgArgs, nullptr, nullptr) \
-    X(HudTalentAnon13033, HeroSiege::Scripts::gml_Script_anon_13033_gml_Object_UI_Hud_Talent_obj_Create_0, "UI_Hud_Talent_obj.anon@13033", kTgArgs, nullptr, nullptr) \
+    X(HudTalentAnon1233, HeroSiege::Scripts::gml_Script_anon_1233_gml_Object_UI_Hud_Talent_obj_Create_0, "UI_Hud_Talent_obj.anon@1233", kTgArgs, nullptr, nullptr) \
+    X(HudTalentAnon2503, HeroSiege::Scripts::gml_Script_anon_2503_gml_Object_UI_Hud_Talent_obj_Create_0, "UI_Hud_Talent_obj.anon@2503", kTgArgs, nullptr, nullptr) \
+    X(HudTalentAnon10745, HeroSiege::Scripts::gml_Script_anon_10745_gml_Object_UI_Hud_Talent_obj_Create_0, "UI_Hud_Talent_obj.anon@10745", kTgArgs, nullptr, nullptr) \
+    X(HudTalentAnon11619, HeroSiege::Scripts::gml_Script_anon_11619_gml_Object_UI_Hud_Talent_obj_Create_0, "UI_Hud_Talent_obj.anon@11619", kTgArgs, nullptr, nullptr) \
+    X(HudTalentAnon12025, HeroSiege::Scripts::gml_Script_anon_12025_gml_Object_UI_Hud_Talent_obj_Create_0, "UI_Hud_Talent_obj.anon@12025", kTgArgs, nullptr, nullptr) \
+    X(HudTalentAnon12449, HeroSiege::Scripts::gml_Script_anon_12449_gml_Object_UI_Hud_Talent_obj_Create_0, "UI_Hud_Talent_obj.anon@12449", kTgArgs, nullptr, nullptr) \
+    X(HudTalentAnon12916, HeroSiege::Scripts::gml_Script_anon_12916_gml_Object_UI_Hud_Talent_obj_Create_0, "UI_Hud_Talent_obj.anon@12916", kTgArgs, nullptr, nullptr) \
+    X(HudTalentAnon13435, HeroSiege::Scripts::gml_Script_anon_13435_gml_Object_UI_Hud_Talent_obj_Create_0, "UI_Hud_Talent_obj.anon@13435", kTgArgs, nullptr, nullptr) \
     X(CheckPlayerInteraction, HeroSiege::Scripts::gml_Script_CheckPlayerInteraction, "CheckPlayerInteraction(control)", kTgCount, &g_OrigCi_CheckPlayerInteraction, nullptr) \
     X(InputPressed, HeroSiege::Scripts::gml_Script_InputPressed, "InputPressed", kTgCount, nullptr, nullptr) \
     X(LoadAura, HeroSiege::Scripts::gml_Script_LoadAura, "LoadAura(negctl)", kTgCount, nullptr, nullptr) \
