@@ -36,8 +36,15 @@ değil (hub `AGENTS.md` › "Legal: Decompiled Output Never Reaches Any Origin")
   Lucifer's Crown 111.111.111. Görülen X: 2.148-3.586 (bugün), 204.944-216.469 (5 Eylül).
 - `DropItemAngelic` (garantili üretici) bölge listesinde aday yoksa sonsuz döngüye giriyor;
   oyuncu bağlamında çağırınca oyunu dondurdu. **Asla çağırma.**
-- `@anon@` metot rutinleri (GetItemDef, AddStat, GenerateItemHash) YYTK ile isimden
-  çözülmüyor (status 14). Global scriptleri kullan.
+- `@anon@` metot rutinleri (GetItemDef, AddStat, GenerateItemHash) o denemede YYTK ile
+  isimden çözülmedi (status 14 = `AURIE_OBJECT_NOT_FOUND`) - bu **not observed** demek,
+  "asla çözülmez" demek değil: denenen tam isim o zaman kayda geçmemişti. Eklentinin o
+  anki GenerateItemHash kopyası `@anon@4638@` yazımıydı; bu isim o zamanki hs-game-sdk
+  tablosunda yoktu (tabloda o zamanki (yama öncesi) oyun sürümü için sadece `@anon@4645@`
+  vardı). Oyun yaması sonrası hs-game-sdk yeniden üretildi; güncel sürümün adı
+  `@anon@4791@`. Yanlış bir isim zaten status 14 üretir - tek başına yeterli bir
+  açıklama. `hashprobe direct` (research build) bunu yeniden test ediyor. Global
+  scriptleri kullan.
 
 ## Plugin'de olanlar
 
