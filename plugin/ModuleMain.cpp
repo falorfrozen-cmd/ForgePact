@@ -3418,6 +3418,17 @@ static RValue FindStructMethod(const RValue& item, const char* name, std::string
 // Helpers never touch g_CustomForgeHashMisses or the per-route counters -
 // counting happens once, at the TryApplyCustomForge call site, so a probe
 // run never pollutes the player-facing numbers.
+//
+// The +routine fallback is the one exception: it stays inlined in
+// RefreshItemHash itself instead of getting its own HashRoute* helper.
+// test_routine_fallback_validates_the_pointer_before_calling_it
+// (tests/test_release_hook_contract.py) pins the AddrIsExecutableInModule
+// guard around the fnp() call as literally inside RefreshItemHash's own
+// body - moving that guard into a separate function would still run it,
+// but the test would no longer be able to see it where it looks, so the
+// pinned contract would go blind to a future edit that dropped it.
+// `routineOnly` lets `hashprobe routine` drive this route on its own
+// without a fourth helper: it skips straight past the other three.
 
 // Preferred: the game's own ItemCheckHash(item).  It calls item.GenerateItemHash() with
 // the proper self and STORES the new itemDataHash before comparing, so one call after
@@ -3478,15 +3489,28 @@ static bool HashRouteDirect(const RValue& item, std::string& how, RValue* retOut
     return false;
 }
 
-// Last resort: the compiled routine behind the method, called like a hook trampoline
-// with the item struct as self (the same resolution HookOneScript uses).
-// The function pointer is read off a game struct we never modify, but calling it is
-// still calling an address by hand: validate it is code inside Hero_Siege.exe before
-// doing so, the same way HookOneScript validates a table entry before hooking it.
-// /EHsc does not turn an access violation into a C++ exception, so the catch(...)
-// below is not a guard against a bad pointer - the check has to happen first.
-static bool HashRouteRoutine(const RValue& item, std::string& how, RValue* retOut = nullptr)
+// RefreshItemHash: ItemCheckHash first (proven live since v1.3.13), then the
+// method/direct helpers above, then the routine fallback below. `routineOnly`
+// skips straight to the last resort so `hashprobe routine` can drive it in
+// isolation - see the comment above HashRouteItemCheck for why this route,
+// alone of the four, is not its own HashRoute* helper.
+static bool RefreshItemHash(const RValue& item, std::string* howOut = nullptr, RValue* retOut = nullptr, bool routineOnly = false)
 {
+    std::string how;
+    RValue res;
+    RValue* out = retOut ? retOut : &res;
+    if (!routineOnly) {
+        if (HashRouteItemCheck(item, how, out)) { if (howOut) *howOut = how; return true; }
+        if (HashRouteMethod(item, how, out)) { if (howOut) *howOut = how; return true; }
+        if (HashRouteDirect(item, how, out)) { if (howOut) *howOut = how; return true; }
+    }
+    // Last resort: the compiled routine behind the method, called like a hook trampoline
+    // with the item struct as self (the same resolution HookOneScript uses).
+    // The function pointer is read off a game struct we never modify, but calling it is
+    // still calling an address by hand: validate it is code inside Hero_Siege.exe before
+    // doing so, the same way HookOneScript validates a table entry before hooking it.
+    // /EHsc does not turn an access violation into a C++ exception, so the catch(...)
+    // below is not a guard against a bad pointer - the check has to happen first.
     try {
         PVOID p = nullptr;
         if (AurieSuccess(g_Yytk->GetNamedRoutinePointer(HeroSiege::Scripts::gml_Script_GenerateItemHash_anon_4791_s_ItemInstanceStruct_InventoryV2Funcs.data(), &p)) && p) {
@@ -3494,26 +3518,15 @@ static bool HashRouteRoutine(const RValue& item, std::string& how, RValue* retOu
             PFUNC_YYGMLScript fnp = (sc && sc->m_Functions) ? sc->m_Functions->m_ScriptFunction : nullptr;
             if (fnp) {
                 if (AddrIsExecutableInModule(GetModuleHandleA(nullptr), (const void*)fnp)) {
-                    RValue res; CInstance* self = (CInstance*)item.m_Object;
-                    fnp(self, self, res, 0, nullptr);
-                    if (retOut) *retOut = res;
-                    if (!ReadItemHash(item).empty()) { how += "+routine"; return true; }
+                    RValue rres; CInstance* self = (CInstance*)item.m_Object;
+                    fnp(self, self, rres, 0, nullptr);
+                    *out = rres;
+                    if (!ReadItemHash(item).empty()) { how += "+routine"; if (howOut) *howOut = how; return true; }
                     how += "+routine-nohash";
                 } else how += "+routine-notcode";
             } else how += "+routine-nofn";
         } else how += "+routine-notfound";
     } catch (...) { how += "+routine-exc"; }
-    return false;
-}
-
-static bool RefreshItemHash(const RValue& item, std::string* howOut = nullptr)
-{
-    std::string how;
-    RValue res;
-    if (HashRouteItemCheck(item, how, &res)) { if (howOut) *howOut = how; return true; }
-    if (HashRouteMethod(item, how, &res)) { if (howOut) *howOut = how; return true; }
-    if (HashRouteDirect(item, how, &res)) { if (howOut) *howOut = how; return true; }
-    if (HashRouteRoutine(item, how, &res)) { if (howOut) *howOut = how; return true; }
     if (howOut) *howOut = how;
     return false;
 }
@@ -3893,8 +3906,14 @@ static bool TryApplyCustomForge(RValue* candidate, bool finalPass = false)
 // every route in the chain failed, so the item kept a stale hash.
 static void ForgeHashStats()
 {
-    char b[400];
-    sprintf_s(b, "forgehash stat: applications=%ld | refreshed via itemcheck=%ld method=%ld direct=%ld routine=%ld | direct-nohash=%ld | misses=%ld (a miss = every route failed; the item keeps a stale hash)",
+    // "direct-nohash" fires whenever +direct's own before/after compare found the hash
+    // unchanged - which includes +direct correctly re-storing a hash the forge pass
+    // never actually altered (nothing added this pass, or a refresh that already ran
+    // once this pass), not only a route that silently failed to write anything.
+    char b[480];
+    sprintf_s(b, "forgehash stat: applications=%ld | refreshed via itemcheck=%ld method=%ld direct=%ld routine=%ld"
+                 " | direct-nohash=%ld - unchanged (stored nothing, or hash already current)"
+                 " | misses=%ld (a miss = every route failed; the item keeps a stale hash)",
               g_CustomForgeApplyCount,
               g_ForgeHashViaItemCheck, g_ForgeHashViaMethod, g_ForgeHashViaDirect, g_ForgeHashViaRoutine,
               g_ForgeHashDirectNoHash, g_CustomForgeHashMisses);
@@ -14385,15 +14404,21 @@ static bool HandleHeadhunterCommand(const std::string& lc, const std::string& re
             // itself is broken, not the other routes.
             int n = 0;
             for (const RValue& it : g_ForgedItems) {
-                const std::string orig = ReadItemHash(it);
+                // Read the raw field, not just ReadItemHash()'s string view of it: an item
+                // whose itemDataHash was never a string (undefined, pre-first-hash) reads
+                // back as "" from ReadItemHash either way, so restoring RValue(orig) would
+                // turn "was never set" into "explicitly set to empty string". Restoring the
+                // raw RValue keeps that distinction.
+                RValue origRaw = g_Yytk->CallBuiltin("variable_struct_get", { it, RValue("itemDataHash") });
+                const std::string orig = (origRaw.m_Kind == VALUE_STRING) ? origRaw.ToString() : std::string();
                 g_Yytk->CallBuiltin("variable_struct_set", { it, RValue("itemDataHash"), RValue("hashprobe-sentinel") });
                 std::string how; RValue ret; bool ok = false;
                 if (route == "itemcheck") ok = HashRouteItemCheck(it, how, &ret);
                 else if (route == "direct") ok = HashRouteDirect(it, how, &ret);
-                else ok = HashRouteRoutine(it, how, &ret);
+                else ok = RefreshItemHash(it, &how, &ret, /*routineOnly=*/true);
                 const std::string after = ReadItemHash(it);
                 const bool wrote = !after.empty() && after != "hashprobe-sentinel";
-                if (!wrote) g_Yytk->CallBuiltin("variable_struct_set", { it, RValue("itemDataHash"), RValue(orig) });
+                if (!wrote) g_Yytk->CallBuiltin("variable_struct_set", { it, RValue("itemDataHash"), origRaw });
                 std::string kind;
                 switch (ret.m_Kind) {
                 case VALUE_REAL: kind = "VALUE_REAL"; break;
@@ -14410,8 +14435,16 @@ static bool HandleHeadhunterCommand(const std::string& lc, const std::string& re
                 }
                 std::string retDesc = kind;
                 if (ret.m_Kind == VALUE_STRING) retDesc += ":" + ret.ToString().substr(0, 8);
-                Out("hashprobe " + route + " #" + std::to_string(n++) + ": " + (ok ? "ok" : "refused") + " via " + how
-                    + " | wrote=" + (wrote ? "yes" : "no")
+                // Lead with the verdict from `wrote`, not the route's own return: after the
+                // sentinel write, itemcheck and routine report success (`ok`) on ANY non-empty
+                // hash, including the sentinel itself surviving untouched - so `ok` alone would
+                // read as a working route even when nothing happened. `route-said=` keeps what
+                // the route itself returned visible, separately, for routes whose `ok` really
+                // does mean something (e.g. +direct's own before/after refusal).
+                Out("hashprobe " + route + " #" + std::to_string(n++) + ": " + (wrote ? "wrote" : "refused")
+                    + " via " + how
+                    + " | route-said=" + (ok ? "ok" : "refused")
+                    + " wrote=" + (wrote ? "yes" : "no")
                     + " matches-original=" + (wrote ? (after == orig ? "yes" : "no") : "n/a")
                     + " | ret=" + retDesc);
             }

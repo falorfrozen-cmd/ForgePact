@@ -123,11 +123,20 @@ class ForgeHashTargetTests(unittest.TestCase):
         self.assertRegex(body, r"after\s*==\s*before")
 
     def test_route_helpers_do_not_touch_the_shared_counters(self):
+        # +routine has no HashRoute* helper of its own: it stays inlined in
+        # RefreshItemHash so tests.test_release_hook_contract's
+        # test_routine_fallback_validates_the_pointer_before_calling_it can
+        # keep finding the AddrIsExecutableInModule guard literally inside
+        # RefreshItemHash's own body (a separate HashRouteRoutine would still
+        # run the guard, but that test would no longer be looking at it).
+        # RefreshItemHash's own body is checked alongside the three real
+        # helpers so the routine fallback's inlining doesn't get a pass on
+        # this contract just because it isn't a named helper.
         for helper in (
             "static bool HashRouteItemCheck(",
             "static bool HashRouteMethod(",
             "static bool HashRouteDirect(",
-            "static bool HashRouteRoutine(",
+            "static bool RefreshItemHash(",
         ):
             body = function_body(self.plugin, helper)
             self.assertNotIn("g_CustomForgeHashMisses", body, helper)
@@ -138,14 +147,65 @@ class ForgeHashTargetTests(unittest.TestCase):
             'lc == "enemyvars"', 1
         )[0]
         self.assertIn("HashRouteDirect(", branch)
-        self.assertIn("HashRouteRoutine(", branch)
         self.assertIn("HashRouteItemCheck(", branch)
+        # +routine's probe drives RefreshItemHash directly with routineOnly
+        # set, rather than a HashRouteRoutine(...) call - see the comment on
+        # test_route_helpers_do_not_touch_the_shared_counters above.
+        self.assertIn("RefreshItemHash(", branch)
+        self.assertIn("routineOnly", branch)
         self.assertIn('"hashprobe-sentinel"', branch)
 
     def test_forgehash_stat_reports_the_counters(self):
         body = function_body(self.plugin, "static void ForgeHashStats(")
         self.assertIn("g_CustomForgeHashMisses", body)
         self.assertIn("g_ForgeHashDirectNoHash", body)
+
+    def test_forgehash_stat_labels_direct_nohash_as_unchanged_not_a_miss(self):
+        # direct-nohash also fires when +direct correctly re-stored a hash the
+        # forge pass never actually changed (nothing added this pass, or a
+        # refresh that already ran once), not only when a route silently
+        # failed to write - a reviewer finding on the first version of this
+        # counter, which just printed the bare number next to the others.
+        body = function_body(self.plugin, "static void ForgeHashStats(")
+        self.assertIn("unchanged", body)
+        self.assertIn("stored nothing, or hash already current", body)
+
+    def test_hashprobe_single_route_line_leads_with_the_wrote_verdict(self):
+        # Reviewer finding: after the sentinel write, itemcheck and routine
+        # report success (`ok`) on ANY non-empty hash - including the
+        # sentinel surviving untouched - so printing `ok`/`refused` straight
+        # from the route's own return is meaningless there. The printed line
+        # must lead with a verdict derived from `wrote`, and keep the route's
+        # own answer visible separately, explicitly labelled.
+        branch = self.plugin.split('lc == "hashprobe"', 1)[1].split(
+            'lc == "enemyvars"', 1
+        )[0]
+        self.assertIn('(wrote ? "wrote" : "refused")', branch)
+        self.assertIn('route-said=" + (ok ? "ok" : "refused")', branch)
+        # The old shape - the route's own `ok` printed as the leading verdict
+        # with no route-said= label at all - must be gone, not just amended
+        # to sit alongside a new field.
+        self.assertNotIn('": " + (ok ? "ok" : "refused") + " via "', branch)
+
+    def test_hashprobe_restores_a_non_string_original_as_undefined_not_empty_string(self):
+        # An item whose itemDataHash was never a string (pre-first-hash,
+        # genuinely undefined) reads back as "" from ReadItemHash the same as
+        # a real empty string would - restoring RValue(orig) after the
+        # sentinel write would turn "never set" into "explicitly set to
+        # empty string". The restore must use the raw RValue read before the
+        # sentinel overwrite, not a string reconstructed from ReadItemHash().
+        branch = self.plugin.split('lc == "hashprobe"', 1)[1].split(
+            'lc == "enemyvars"', 1
+        )[0]
+        code = strip_comments(branch)
+        raw_read_at = code.find('variable_struct_get')
+        sentinel_write_at = code.find('"hashprobe-sentinel"')
+        restore_at = code.rfind('variable_struct_set')
+        self.assertNotEqual(raw_read_at, -1)
+        self.assertNotEqual(sentinel_write_at, -1)
+        self.assertLess(raw_read_at, sentinel_write_at)
+        self.assertIn("origRaw", code[restore_at:])
+        self.assertNotIn("RValue(orig)", code)
 
     def test_release_build_gains_no_hash_diagnostics(self):
         # Fails today: `lc == "forgehash"` does not exist yet.
