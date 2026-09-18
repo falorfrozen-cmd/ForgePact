@@ -44,6 +44,94 @@ def section(doc, heading):
     return doc[start:] if following < 0 else doc[start:following]
 
 
+# ForgePact #9, M24: PpBackingIdCheck's decisive/uiReached selection, as
+# `collapse(strip_comments(body))` prints it - both declarations, the loop and
+# the opening of the decided branch. Pinned whole, because every keyword-free
+# way of narrowing that loop to the first stash (a wrapping `if`, a test folded
+# into the existing `continue`, a rebound `s`, a ternary reset, the skip moved
+# below the selections) keeps every substring the older asserts look for, and
+# each of those under- or over-decides the save-backed verdict. Changing the
+# block on purpose means changing SELECTION_BLOCK and SELECTION_MUTANTS with it.
+SELECTION_BLOCK = (
+    "const PpBackingStash* decisive = nullptr; "
+    "const PpBackingStash* uiReached = nullptr; "
+    "for (const PpBackingStash* s : g_PpBackingStashes) { "
+    "if (!PpBackingIsProfileGetter(s)) continue; "
+    "if (!decisive && (int)profileCleanCalls[s].size() >= kPpBackingProfileCallsToDecide) decisive = s; "
+    "if (!uiReached && (int)profileHitCalls[s].size() >= kPpBackingProfileCallsToDecide) uiReached = s; "
+    "} if (decisive) {")
+# A local that shadows the stash list or the threshold changes what the block
+# means without changing a character of it.
+SELECTION_SHADOW = re.compile(
+    r"[\w>*&\]]\s+(?:const\s+)?(?:g_PpBackingStashes|kPpBackingProfileCallsToDecide)\s*[\[={(]")
+
+
+def selection_block_problems(body):
+    """Why PpBackingIdCheck's selection block is not the pinned one; [] if it is."""
+    v = collapse(body)
+    start = v.find("const PpBackingStash* decisive = nullptr;")
+    end = v.find("if (decisive) {", start)
+    if start < 0 or end < 0:
+        return ["selection block not found"]
+    problems = []
+    if v[start:end + len("if (decisive) {")] != SELECTION_BLOCK:
+        problems.append("selection block differs from SELECTION_BLOCK")
+    if SELECTION_SHADOW.search(v):
+        problems.append("a local shadows g_PpBackingStashes or kPpBackingProfileCallsToDecide")
+    return problems
+
+
+_SKIP = "if (!PpBackingIsProfileGetter(s)) continue;"
+_DEC = "if (!decisive && (int)profileCleanCalls[s].size() >= kPpBackingProfileCallsToDecide) decisive = s;"
+_UIR = "if (!uiReached && (int)profileHitCalls[s].size() >= kPpBackingProfileCallsToDecide) uiReached = s;"
+_DECL = "const PpBackingStash* decisive = nullptr;"
+_LOOP = "const PpBackingStash* uiReached = nullptr; for (const PpBackingStash* s : g_PpBackingStashes) {"
+_END = "} if (decisive) {"
+_FIRST = "g_PpBackingStashes[0]"
+# In-memory mutation control for SELECTION_BLOCK: (label, old, new), applied
+# to the collapsed, comment-stripped PpBackingIdCheck body - the tree is never
+# written. Each mutant restricts or reorders the selection with no `break`,
+# `goto` or second `continue`, and each passed every test in this file as it
+# stood at ForgePact b56e626 (measured in memory, 2026-09-18).
+SELECTION_MUTANTS = [
+    ("M24 both selections wrapped in a first-stash if",
+     _DEC + " " + _UIR, "if (s == " + _FIRST + ") { " + _DEC + " " + _UIR + " }"),
+    ("S1 first-stash test folded into the skip with ||",
+     _SKIP, "if (!PpBackingIsProfileGetter(s) || s != " + _FIRST + ") continue;"),
+    ("S2 first-stash test put in front of the skip",
+     _SKIP, "if (s != " + _FIRST + " || !PpBackingIsProfileGetter(s)) continue;"),
+    ("S3 loop variable rebound to the first stash",
+     _SKIP, _SKIP + " s = " + _FIRST + ";"),
+    ("S4 ternary after the loop drops a later decisive",
+     _END, "} decisive = decisive == " + _FIRST + " ? decisive : nullptr; if (decisive) {"),
+    ("S5 if after the loop drops a later decisive",
+     _END, "} if (decisive != " + _FIRST + ") decisive = nullptr; if (decisive) {"),
+    ("S6 ternary inside the loop drops a later decisive",
+     _UIR, _UIR + " decisive = s == " + _FIRST + " ? decisive : nullptr;"),
+    ("S7 profile-getter skip moved below the selections",
+     _SKIP + " " + _DEC + " " + _UIR, _DEC + " " + _UIR + " " + _SKIP),
+    ("S8 stash list shadowed before the declarations",
+     _DECL, "PpBackingStash* const g_PpBackingStashes[] = { ::" + _FIRST + " }; " + _DECL),
+    ("S9 stash list shadowed between the declarations and the loop",
+     _LOOP, "const PpBackingStash* uiReached = nullptr; PpBackingStash* const g_PpBackingStashes[] = { ::"
+     + _FIRST + " }; for (const PpBackingStash* s : g_PpBackingStashes) {"),
+    ("S13 decisive pre-seeded with the first stash",
+     _DECL, "const PpBackingStash* decisive = " + _FIRST + ";"),
+    ("S14 comma expression drops a later decisive",
+     _DEC, _DEC + " (void)(s != " + _FIRST + " && (decisive = nullptr));"),
+    ("S16 full-range header kept as dead code, live loop over the first stash",
+     _LOOP, "const PpBackingStash* uiReached = nullptr; if (false) for (const PpBackingStash* s : g_PpBackingStashes) {} "
+     "for (const PpBackingStash* s : { (const PpBackingStash*)" + _FIRST + " }) {"),
+    ("S18 std::find index guard folded into the skip",
+     _SKIP, "if (!PpBackingIsProfileGetter(s) || std::find(std::begin(g_PpBackingStashes), "
+     "std::end(g_PpBackingStashes), s) != std::begin(g_PpBackingStashes)) continue;"),
+    ("S19 threshold shadowed by a local",
+     _DECL, "const int kPpBackingProfileCallsToDecide = 99; " + _DECL),
+    ("S20 pointer-offset guard folded into the skip",
+     _SKIP, "if (!PpBackingIsProfileGetter(s) || s - " + _FIRST + " > 0 * std::size(g_PpBackingStashes)) continue;"),
+]
+
+
 class ProspectWindowContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -888,6 +976,17 @@ class ProspectWindowContractTests(unittest.TestCase):
         # (prints the one-call lead when the second getter held two clean
         # calls) and survived both earlier test files.
         self.assertEqual(v.count("continue"), 1)
+        # M24 and its sweep: the count above only closes a continue-shaped
+        # skip. Pin the selection block whole, then prove - in memory, the
+        # tree is never written - that the pin rejects every keyword-free
+        # restriction that survived the earlier asserts.
+        self.assertEqual(selection_block_problems(body), [])
+        collapsed = collapse(body)
+        for label, old, new in SELECTION_MUTANTS:
+            self.assertEqual(collapsed.count(old), 1,
+                             label + ": no longer applies - update SELECTION_MUTANTS with SELECTION_BLOCK")
+            self.assertTrue(selection_block_problems(collapsed.replace(old, new)),
+                            label + " survives the selection-block pin")
         self.assertNotIn("one call only", decided)
         self.assertNotIn("UI-looking", decided)
         self.assertIn("reached through a UI-looking field", ui)
