@@ -698,11 +698,11 @@ so it survives the game closing) and **applied to the Ghidra project**:
 
 **The stripped 280 MB binary is now a named one.** 5,334 functions that had no
 Ghidra entry at all now exist and are named; 6,167 total carry a real name
-instead of `FUN_14xxxxxxx`. This is permanent (saved in the Ghidra project)
+instead of Ghidra's generic address-derived placeholder. This is permanent (saved in the Ghidra project)
 and available to every future session and every other tool in this toolkit —
 not just this mod.
 
-Together these turn `FUN_14xxxxxxx` into real names across the whole binary,
+Together these turn Ghidra's address-derived placeholders into real names across the whole binary,
 permanently, for **every** future session and every other tool in this toolkit
 — not just this mod. That is worth more than the single answer Phase C1 was
 opened to get, which is why it was built first.
@@ -757,7 +757,7 @@ scripts, per `agents.md`). Two results stand out:
   picked that name up automatically once imported. Confirms the hunch that
   its unusually low RVA (`0x6BA45A`, versus the `0x9-0xB` range everything
   else clusters in) meant "generic low-level helper", not quest-specific code.
-- **`[02]` is `FUN_14b488f40` — the exact address of the generic
+- **`[02]` is the function at `0x14b488f40` — the exact address of the generic
   script/builtin dispatcher already identified in the 2026-09-10 Ghidra
   session** by manually reading helper bodies (`ForgePact/docs/pet-quest-collector-research.md`'s
   "Native decompilation"). Independent confirmation from a completely
@@ -788,9 +788,9 @@ dispatchtrace`" below for the full result, including a builtin-call trace
 that turned out to close off the entire remaining "observe it through a
 dispatched call" category for this mod.
 
-`[04]` (`FUN_14952e2ff`, 12,734 bytes — by far the largest frame) is the
+`[04]` (the function at `0x14952e2ff`, 12,734 bytes — by far the largest frame) is the
 function that calls into `PollKeyboardInputs` and immediately after it, the
-dispatcher directly, twice, each preceded by a `_DAT_...` constant load — the
+dispatcher directly, twice, each preceded by a name-slot constant load — the
 same call-then-dispatch shape repeated across a huge raw function body.
 Consistent with session 7's finding that object-event code compiles inline
 with no separate script-table entry: this is plausibly `Profile_Manager_obj`'s
@@ -904,7 +904,7 @@ direct invocation (C0.2), `event_perform` (C0.3), and now the complete
 builtin dispatch surface — has come back with nothing. The only category not
 yet tried is reading the compiled code itself, byte by byte:
 
-1. **Finish reading `[04]`** (`FUN_14952e2ff`, 12.7 KB, plausibly
+1. **Finish reading `[04]`** (the function at `0x14952e2ff`, 12.7 KB, plausibly
    `Profile_Manager_obj`'s own Step body) for the actual field-write pattern
    — an inlined `self->canPickup = 0`-shaped write would show up directly in
    the decompile even though it triggers no hook.
@@ -953,16 +953,17 @@ through `.pdata` before decompiling it.** The other 14 stack-walk frames were
 created the same wrong way; their real bounds are now known too (they were
 all 57-2,211 bytes, so the distortion was smaller, but it was there).
 
-### 2. The name-slot table — every `_DAT_` in this binary resolves to a name
+### 2. The name-slot table — every unnamed data global in this binary resolves to a name
 
 The single most useful thing found this session, and it is not specific to
 this mod.
 
 Compiled GML in this build never names anything inline. Every variable
 access, every builtin call and every script reference goes through a 4-byte
-global that the decompiler shows as `_DAT_1506xxxxx` / `_DAT_1507xxxxx`.
+global that the decompiler shows only as an unnamed data label in the
+`0x1506xxxxx` / `0x1507xxxxx` range.
 Those globals are what the previous Ghidra pass gave up on ("the call-site
-IDs inside them, `_DAT_150740ee0` and friends, were opaque without a name
+IDs inside them, the one at `0x150740ee0` and friends, were opaque without a name
 table").
 
 They are not opaque. `.data` holds a flat array of 16-byte slots:
@@ -973,12 +974,12 @@ They are not opaque. `.data` holds a flat array of 16-byte slots:
 | `+0x08` | `int32` — the id, cached at runtime (`-1` = not yet resolved) |
 
 and the address the code references is the **`+0x08` half**. So the name for
-any `_DAT_<addr>` is the string pointed to at `<addr> - 8`. Walking `.data`
+any such data global at `<addr>` is the string pointed to at `<addr> - 8`. Walking `.data`
 for slots shaped this way yields **38,234 named slots**, covering instance
 variable names, builtin names and script names alike.
 
-Checked against things already known independently: `_DAT_150740ee0`, the
-example the prior session called opaque, is `interactText`; `_DAT_1506fdc98`
+Checked against things already known independently: `0x150740ee0`, the
+example the prior session called opaque, is `interactText`; `0x1506fdc98`
 is `inputState`, the array B4 measured flipping on F. Every builtin name
 recovered this way matched `builtins.csv` from `citrace dispatchdump`, which
 came from a completely different source (a live table read) — two independent

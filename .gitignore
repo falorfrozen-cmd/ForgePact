@@ -22,3 +22,24 @@ obj_*/
 # this stops them showing up as untracked afterwards, which in a full toolkit
 # checkout also leaves the super-repo reporting ForgePact as dirty forever.
 plugin_build/include/
+
+# Decompiler / disassembler artifacts - never committed, per the hub's
+# AGENTS.md "Legal: Decompiled Output Never Reaches Any Origin": reading the
+# game in Ghidra/IDA/UndertaleModTool locally is fine, its output stays on the
+# researcher's machine. This repository is its own origin and inherits none of
+# the hub's .gitignore, so the backstop is repeated here. Our own
+# tools/ghidra/ImportSymbols.java stays tracked; a local ghidra_scripts/
+# directory (where a decompile helper script lives) does not.
+*.i64
+*.idb
+*.idb0
+*.idb1
+*.til
+*.gpr
+*.rep/
+**/ghidra_projects/
+**/ghidra_scripts/
+**/UndertaleModTool_Export/
+**/decompiled/
+**/disassembly/
+*.dis
