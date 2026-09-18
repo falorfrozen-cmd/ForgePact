@@ -1527,24 +1527,43 @@ def plugin_boot_count(cfg=None) -> int:
         return -1
 
 
+def plugin_boot_generation(cfg=None):
+    """(file identity, boot count) - what watcher() actually needs to notice a
+    new game process.
+
+    plugin_boot_count() alone is not enough once out.txt is rotated at plugin
+    load (see ModManager::Initialize()'s rotation): a freshly rotated file
+    always opens with exactly one boot banner, so its count can coincidentally
+    equal the count the OLD file held right before it was renamed away, and a
+    bare count comparison then reads e.g. 1 -> 1 and misses the restart. File
+    identity (st_dev, st_ino) changes on every rotation - a moved-then-recreated
+    out.txt is a new inode - so pairing it with the count catches that case.
+    This reuses the identity plugin_boot_count() just computed (from its own
+    cache, under the same lock) rather than re-stat'ing the file.
+    """
+    count = plugin_boot_count(cfg)
+    with _BOOT_LOCK:
+        return (_BOOT_CACHE["ident"], count)
+
+
 def watcher():
     """Re-apply the settings automatically every time the game LAUNCHES."""
     # False is intentional: if the panel itself starts after the game, the
     # first pass must still attach and apply the saved configuration.
     was_running = False
-    last_boot = None
+    last_state = None
     while True:
         time.sleep(5)
         try:
             cfg = load_cfg()
             now = game_running(cfg)
-            boot = plugin_boot_count(cfg)
-            new_process = now and (not was_running or (last_boot is not None and boot != last_boot))
+            state = plugin_boot_generation(cfg)
+            new_process = now and (not was_running or (last_state is not None and state != last_state))
             if new_process and cfg.get("auto_apply"):
                 if wait_for_plugin_ready(cfg):
                     apply_all(cfg)
             if now:
-                last_boot = boot
+                last_state = state
             was_running = now
         except Exception:
             pass

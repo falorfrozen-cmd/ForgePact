@@ -41,6 +41,13 @@ public:
 
     void Initialize() {
         CreateDirectoryA(IPC_DIR.c_str(), nullptr);
+        // Rotate BEFORE the banner below, so the banner that marks this
+        // session's start always lands in a fresh-or-still-growing out.txt,
+        // never in the file that is about to be renamed away.
+        RotateOutLogIfNeeded();
+#ifndef FORGEPACT_RELEASE
+        RotateItemDropsLogIfNeeded();
+#endif
         // The version goes AFTER the marker, never inside it: the panel's
         // plugin_boot_count() counts occurrences of the literal "BloodPact
         // plugin loaded" to notice a new game process, and interpolating the

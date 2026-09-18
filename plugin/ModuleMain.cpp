@@ -170,6 +170,69 @@ static void Out(const std::string& s)
     if (g_Yytk) g_Yytk->PrintInfo("[BP] %s", s.c_str());
 }
 
+// out.txt is append-only and nothing ever trimmed it - one player's copy
+// reached 7.8 MB. Rotating it once, at load, before the "BloodPact plugin
+// loaded" banner (see ForgePact::ModManager::Initialize(), which creates
+// bp_ipc\ first) keeps the total around 2x kOutLogRotateBytes while
+// guaranteeing the PREVIOUS session's log always survives: a player who
+// crashes relaunches, and the crash report needs the session that crashed,
+// not the empty one that follows it. Compiled into both builds - the player
+// build's out.txt grows exactly as unbounded as the research build's.
+static constexpr uintmax_t kOutLogRotateBytes = 2ull * 1024 * 1024; // 2 MB
+
+static void RotateOutLogIfNeeded()
+{
+    std::error_code ec;
+    const std::string outPath = OutPath();
+    if (!fs::exists(outPath, ec) || ec) return;             // nothing to rotate yet
+    uintmax_t size = fs::file_size(outPath, ec);
+    if (ec || size <= kOutLogRotateBytes) return;
+
+    const std::string prevPath = IPC_DIR + "\\out.prev.txt";
+    std::wstring outW(outPath.begin(), outPath.end());
+    std::wstring prevW(prevPath.begin(), prevPath.end());
+    if (!MoveFileExW(outW.c_str(), prevW.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+        // The move can fail (e.g. the panel has out.txt open without
+        // FILE_SHARE_DELETE). NEVER truncate as a fallback - keep appending
+        // to the oversized file rather than lose history, and say why in the
+        // very session that could not rotate.
+        DWORD err = GetLastError();
+        std::ofstream f(outPath, std::ios::app);
+        f << "out.txt rotation skipped (size=" << size << " exceeds "
+          << kOutLogRotateBytes << " bytes but MoveFileExW to out.prev.txt "
+             "failed, GetLastError=" << err << ")\n";
+    }
+}
+
+#ifndef FORGEPACT_RELEASE
+// itemdrops.jsonl is research-build only (BP_LOGDROP is a no-op in the
+// player build, so a player's copy never grows this file at all) but the
+// research build's own copy reached 52 MB with nothing trimming it either.
+// Same rotation, same load-time timing, its own size threshold and its own
+// previous-file name.
+static constexpr uintmax_t kItemDropsRotateBytes = 20ull * 1024 * 1024; // 20 MB
+
+static void RotateItemDropsLogIfNeeded()
+{
+    std::error_code ec;
+    const std::string path = IPC_DIR + "\\itemdrops.jsonl";
+    if (!fs::exists(path, ec) || ec) return;
+    uintmax_t size = fs::file_size(path, ec);
+    if (ec || size <= kItemDropsRotateBytes) return;
+
+    const std::string prevPath = IPC_DIR + "\\itemdrops.prev.jsonl";
+    std::wstring pathW(path.begin(), path.end());
+    std::wstring prevW(prevPath.begin(), prevPath.end());
+    if (!MoveFileExW(pathW.c_str(), prevW.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+        DWORD err = GetLastError();
+        Out("itemdrops.jsonl rotation skipped (size=" + std::to_string(size) +
+            " exceeds " + std::to_string(kItemDropsRotateBytes) +
+            " bytes but MoveFileExW to itemdrops.prev.jsonl failed, GetLastError=" +
+            std::to_string(err) + ")");
+    }
+}
+#endif
+
 // Crash-pinpoint trace: flushes a marker to bp_ipc\loadtrace.txt at each load step,
 // so if the game crashes during init we can see the LAST step reached.
 static void Trace(const char* phase)
