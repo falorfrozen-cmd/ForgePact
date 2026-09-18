@@ -17,6 +17,13 @@
 // but empty" (Off); and the marker-required decision (the Purgatory field,
 // "Plain-cast flash (R10) and the Purgatory marker") is a separate pass over
 // the same evidence, not baked into the plain read.
+//
+// T1 (issue #11, Track A): the re-cast guard's real HookTalentUseClass and
+// ToggleGuardModel are injected too, compiled as the player build sees them
+// (FORGEPACT_RELEASE defined: the research-only entry note and the
+// lastProcRet record drop out). The caller's object_index, the double-cast
+// object's asset_get_index and the trampoline are the stand-ins.
+#define FORGEPACT_RELEASE 1
 #include <atomic>
 #include <cmath>
 #include <cstdint>
@@ -28,21 +35,31 @@
 // ---- minimal game-API stand-ins ------------------------------------------
 enum { VALUE_REAL, VALUE_INT32, VALUE_INT64, VALUE_OBJECT, VALUE_REF, VALUE_STRING,
        VALUE_UNDEFINED, VALUE_BOOL, VALUE_ARRAY };
+// A script's `self`/`other`. Only what the guard can learn through a builtin
+// is modelled: its object_index as variable_instance_get answers it (a real
+// number, as the runner returns it), or a throw.
+struct CInstance {
+    double objectIndex = -1;
+    bool objectIndexThrows = false;
+};
 struct RValue {
     int m_Kind = VALUE_UNDEFINED;
     double number = 0;
     bool boolean = false;
     std::string text;
+    CInstance* inst = nullptr;
     RValue() = default;
     RValue(double n) : m_Kind(VALUE_REAL), number(n) {}
     RValue(const char* s) : m_Kind(VALUE_STRING), text(s) {}
     RValue(const std::string& s) : m_Kind(VALUE_STRING), text(s) {}
+    RValue(CInstance* p) : m_Kind(VALUE_REF), inst(p) {}
     double ToDouble() const { return number; }
     bool ToBoolean() const { return boolean; }
     std::string ToString() const { return text; }
 };
 static RValue MakeBool(bool b) { RValue r; r.m_Kind = VALUE_BOOL; r.boolean = b; return r; }
 static RValue MakeReal(double n) { RValue r; r.m_Kind = VALUE_REAL; r.number = n; return r; }
+using PFUNC_YYGMLScript = RValue& (*)(CInstance* Self, CInstance* Other, RValue& Result, int argc, RValue** Args);
 // A stand-in for the Windows.h intrinsic the production counters use (same
 // pattern as tests/orb_pickup_harness.cpp and tests/headhunter_dispatch_harness.cpp).
 static long InterlockedIncrement(volatile long* target) { return ++(*target); }
@@ -51,8 +68,9 @@ static long InterlockedIncrement(volatile long* target) { return ++(*target); }
 // object named by the SDK constants to exist and resolve to a string, not
 // the whole SDK.
 namespace HeroSiege { namespace Objects {
-enum class GameObject { White_Mage_Soul_Spurn_AOE_obj, UI_Hud_Talent_obj };
+enum class GameObject { White_Mage_Soul_Spurn_AOE_obj, UI_Hud_Talent_obj, Universal_Double_Cast_obj };
 inline const char* GetObjectName(GameObject g) {
+    if (g == GameObject::Universal_Double_Cast_obj) return "Universal_Double_Cast_obj";
     return g == GameObject::UI_Hud_Talent_obj ? "UI_Hud_Talent_obj" : "White_Mage_Soul_Spurn_AOE_obj";
 }
 }}
@@ -109,8 +127,14 @@ struct World {
     // Follow-up: a throwing draw_rectangle stub, to prove the catch after the
     // outline loop counts the exception rather than swallowing it uncounted.
     bool drawRectangleThrows = false;
+    // T1 guard: whether the double-cast object's name resolves.
+    bool doubleCastObjectResolves = true;
 };
 static World world;
+static long g_DcResolveCalls = 0;      // asset_get_index("Universal_Double_Cast_obj") calls
+static long g_InstanceEnumCalls = 0;   // instance_number/instance_find calls - guard_on/state_not_consulted
+static long g_TrampCalls = 0;          // the TalentUseClass trampoline stand-in
+static const double kDcObjIdx = 5318.0, kPlayerObjIdx = 7.0;   // what the stand-in runner answers
 static long g_ResolveCalls = 0;    // HhResolveLocalPlayer calls - must stay 0 (read/no_player_lookup)
 static long g_AnyCallCount = 0;    // every CallBuiltin call, of any name - indicator_off/no_runtime_calls
 static int g_RectangleDraws = 0;   // draw_rectangle calls this draw
@@ -125,13 +149,19 @@ struct FakeRunner {
         if (fn == "asset_get_index") {
             const std::string want = args[0].ToString();
             if (want == "UI_Hud_Talent_obj") return RValue(world.hudTalentObjectResolves ? kHudObjIdx : -1.0);
+            if (want == "Universal_Double_Cast_obj") {
+                ++g_DcResolveCalls;
+                return RValue(world.doubleCastObjectResolves ? kDcObjIdx : -1.0);
+            }
             return RValue(world.aoeObjectResolves ? kAoeObjIdx : -1.0);
         }
         if (fn == "instance_number") {
+            ++g_InstanceEnumCalls;
             if (world.instanceNumberThrows) throw std::runtime_error("instance_number EXCEPTION");
             return RValue((double)world.instances.size());
         }
         if (fn == "instance_find") {
+            ++g_InstanceEnumCalls;
             const double obj = args[0].ToDouble();
             const int i = (int)args[1].ToDouble();
             if (obj == kHudObjIdx) {
@@ -144,6 +174,12 @@ struct FakeRunner {
             return r;
         }
         if (fn == "variable_instance_get") {
+            if (args[0].inst) {   // a script's self, handed over as RValue(S)
+                const CInstance* self = args[0].inst;
+                if (args[1].ToString() != "object_index") return RValue();
+                if (self->objectIndexThrows) throw std::runtime_error("object_index EXCEPTION");
+                return MakeReal(self->objectIndex);
+            }
             const std::string tag = args[0].text;
             const std::string field = args[1].ToString();
             if (tag == "hud:0") {
@@ -253,6 +289,34 @@ static void checkNear(const std::string& label, double got, double want) {
 
 static void resetWorld() {
     world = World{};
+}
+
+// T1: the TalentUseClass original, as the trampoline HookOneScript hands the
+// hook. It counts, and writes a return value the way a real call would, so a
+// refused call's untouched result is distinguishable; a refused call must
+// never reach it.
+static RValue& FakeTalentUseClassOriginal(CInstance*, CInstance*, RValue& R, int, RValue**) {
+    ++g_TrampCalls;
+    R = MakeReal(777);
+    return R;
+}
+struct GuardCall { long tramp; bool returnedResult; };
+// One TalentUseClass call with session 1's eight-argument shape.
+static GuardCall CallGuard(CInstance* self, double talent, bool a4) {
+    RValue a0 = MakeReal(talent), a1 = MakeReal(0), a2 = MakeReal(0), a3 = MakeReal(0);
+    RValue a4v = MakeBool(a4), a5 = MakeReal(0), a6 = MakeReal(-1), a7 = MakeReal(-1);
+    RValue* args[8] = { &a0, &a1, &a2, &a3, &a4v, &a5, &a6, &a7 };
+    RValue result = MakeReal(-12345);
+    const long before = g_TrampCalls;
+    RValue& r = HookTalentUseClass(self, nullptr, result, 8, args);
+    return { g_TrampCalls - before, &r == &result && r.number == -12345 };
+}
+static void resetGuard(bool enabled) {
+    world = World{};
+    g_OrigTalentUseClass = &FakeTalentUseClassOriginal;
+    ForgePact::ToggleGuardMod::Instance().SetEnabled(enabled, /*alreadyHooked=*/true);
+    g_TgdRefused = 0; g_TgdPassed = 0; g_TgdProcSeen = 0; g_TgdSelfUnreadable = 0; g_TgdObjUnresolved = 0;
+    g_ToggleGuardDcObjIdx.store(-1);
 }
 
 int main() {
@@ -619,6 +683,114 @@ int main() {
         ToggleIndicatorDraw();
         checkInt("indicator_on/slot_failures_are_split/noTalent", g_TibNoTalent, 1);
         checkInt("indicator_on/slot_failures_are_split", g_TibNoHud + g_TibNoRow0, 0);
+    }
+
+    // ---- T1: the re-cast guard, HookTalentUseClass ---------------------------
+    // Session 1's measured call shapes (docs/toggle-skills-research.md, Q1/Q5):
+    // a player cast is self=Player_obj a0=240 a4=true, chained by a0=243
+    // a4=false; the double-cast proc is self=Universal_Double_Cast_obj a0=240
+    // a4=false with world x,y in a6/a7.
+    CInstance dcSelf; dcSelf.objectIndex = kDcObjIdx;
+    CInstance playerSelf; playerSelf.objectIndex = kPlayerObjIdx;
+
+    // 30. Baseline: the guard is off (the default). A proc of Soul Spurn goes
+    //     straight to the original, and the hook makes no runtime call at all.
+    resetGuard(false);
+    {
+        const long calls = g_AnyCallCount;
+        GuardCall c = CallGuard(&dcSelf, 240.0, false);
+        checkInt("guard_off/proc_passes_and_no_runtime_call/runtime_calls", g_AnyCallCount - calls, 0);
+        checkInt("guard_off/proc_passes_and_no_runtime_call", c.tramp, 1);
+    }
+
+    // 31. Target: guard on, the double-cast object re-casting Soul Spurn is
+    //     refused - the original is not called and the result is handed back
+    //     untouched.
+    resetGuard(true);
+    {
+        GuardCall c = CallGuard(&dcSelf, 240.0, false);
+        checkBool("guard_on/proc_of_guarded_talent_refused/result_untouched", c.returnedResult, true);
+        checkInt("guard_on/proc_of_guarded_talent_refused/refused", g_TgdRefused, 1);
+        checkInt("guard_on/proc_of_guarded_talent_refused", c.tramp, 0);
+    }
+
+    // 32. A proc of another talent (Healing Zone, 252) passes, and is still
+    //     seen as a proc.
+    resetGuard(true);
+    {
+        GuardCall c = CallGuard(&dcSelf, 252.0, false);
+        checkInt("guard_on/proc_of_other_talent_passes/procSeen", g_TgdProcSeen, 1);
+        checkInt("guard_on/proc_of_other_talent_passes/refused", g_TgdRefused, 0);
+        checkInt("guard_on/proc_of_other_talent_passes", c.tramp, 1);
+    }
+
+    // 33. The player's own cast of Soul Spurn passes.
+    resetGuard(true);
+    {
+        GuardCall c = CallGuard(&playerSelf, 240.0, true);
+        checkInt("guard_on/player_cast_passes/refused", g_TgdRefused, 0);
+        checkInt("guard_on/player_cast_passes", c.tramp, 1);
+    }
+
+    // 34. The chained follow-up cast (243, a4 false) from the player passes.
+    resetGuard(true);
+    {
+        GuardCall c = CallGuard(&playerSelf, 243.0, false);
+        checkInt("guard_on/player_chain_passes", c.tramp, 1);
+    }
+
+    // 35. The caller's object_index cannot be read: fail open, and count it.
+    resetGuard(true);
+    {
+        CInstance broken; broken.objectIndex = kDcObjIdx; broken.objectIndexThrows = true;
+        GuardCall c = CallGuard(&broken, 240.0, false);
+        checkInt("guard_on/self_unreadable_passes_and_counts/selfUnreadable", g_TgdSelfUnreadable, 1);
+        checkInt("guard_on/self_unreadable_passes_and_counts", c.tramp, 1);
+    }
+
+    // 36. The double-cast object's name does not resolve: fail open, count
+    //     it, and never cache the negative - a later call resolves again and
+    //     then refuses.
+    resetGuard(true);
+    world.doubleCastObjectResolves = false;
+    {
+        const long resolvesBefore = g_DcResolveCalls;
+        GuardCall c = CallGuard(&dcSelf, 240.0, false);
+        checkInt("guard_on/double_cast_object_unresolved_passes_and_counts/objUnresolved", g_TgdObjUnresolved, 1);
+        checkInt("guard_on/double_cast_object_unresolved_passes_and_counts/trampoline", c.tramp, 1);
+        world.doubleCastObjectResolves = true;
+        GuardCall again = CallGuard(&dcSelf, 240.0, false);
+        checkInt("guard_on/double_cast_object_unresolved_passes_and_counts/re_resolved", g_DcResolveCalls - resolvesBefore, 2);
+        checkInt("guard_on/double_cast_object_unresolved_passes_and_counts", again.tramp, 0);
+        // Once resolved, the index is cached: a third call resolves nothing.
+        CallGuard(&dcSelf, 240.0, false);
+        checkInt("guard_on/double_cast_object_unresolved_passes_and_counts/cached", g_DcResolveCalls - resolvesBefore, 2);
+    }
+
+    // 37. D-N1: the guard never reads the toggle's state - no instance_number
+    //     or instance_find call on any path, refused or passed.
+    resetGuard(true);
+    world.instances = { OwnMarked(0.09) };   // an ON toggle, which must not be consulted
+    {
+        const long enumBefore = g_InstanceEnumCalls;
+        CallGuard(&dcSelf, 240.0, false);
+        CallGuard(&playerSelf, 240.0, true);
+        CallGuard(&dcSelf, 252.0, false);
+        checkInt("guard_on/state_not_consulted", g_InstanceEnumCalls - enumBefore, 0);
+    }
+
+    // 38. The counters over one mixed sequence: a refused proc, the player's
+    //     cast and its chain, a Healing Zone proc.
+    resetGuard(true);
+    {
+        CallGuard(&dcSelf, 240.0, false);
+        CallGuard(&playerSelf, 240.0, true);
+        CallGuard(&playerSelf, 243.0, false);
+        CallGuard(&dcSelf, 252.0, false);
+        checkInt("guard_on/counters/refused", g_TgdRefused, 1);
+        checkInt("guard_on/counters/passed", g_TgdPassed, 3);
+        checkInt("guard_on/counters/procSeen", g_TgdProcSeen, 2);
+        checkInt("guard_on/counters", g_TgdSelfUnreadable + g_TgdObjUnresolved, 0);
     }
 
     // The read never makes a player-resolving call, in any scenario above -

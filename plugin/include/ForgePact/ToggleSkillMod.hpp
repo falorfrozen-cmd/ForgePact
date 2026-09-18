@@ -97,4 +97,73 @@ inline const char* ToggleIndicatorStateName(ToggleIndicatorState s)
     }
 }
 
+// Re-cast guard (issue #11, Track A; `toggleguard`). Session 1 measured the
+// double-cast proc re-casting a toggle skill as a `TalentUseClass` call whose
+// `self` is `Universal_Double_Cast_obj`, with no `TalentUse` call in front of
+// it - so a proc can flip Soul Spurn straight back after the player's own
+// press. The guard refuses exactly that call: guard on, caller is the
+// double-cast object, talent is a guarded one. It never reads the toggle's
+// state (docs/toggle-skills-research.md, "## Decision" -> "### Track A design
+// (D-N1)": the state cannot tell "just turned off" from "never on"), so a
+// double-cast proc of a guarded talent is refused whether or not Purgatory
+// is allocated. Everything else - the player's own cast, the chained
+// follow-up casts, a proc of any other talent - passes.
+//
+// Game-independent like ToggleIndicatorModel above: who the caller is and
+// which talent it names are worked out in ModuleMain.cpp's HookTalentUseClass,
+// by name; this only decides. The guarded talent is a constructor argument so
+// the header needs no talent id of its own (ModuleMain.cpp's
+// kToggleIndicatorTalentId is the only one).
+enum class ToggleGuardDecision { Pass, Refuse };
+
+class ToggleGuardModel {
+public:
+    explicit constexpr ToggleGuardModel(int guardedTalentId) : m_GuardedTalentId(guardedTalentId) {}
+
+    constexpr bool Guards(int talentId) const { return talentId == m_GuardedTalentId; }
+
+    constexpr ToggleGuardDecision Decide(bool enabled, bool callerIsDoubleCast, int talentId) const
+    {
+        if (!enabled) return ToggleGuardDecision::Pass;
+        if (!callerIsDoubleCast) return ToggleGuardDecision::Pass;
+        if (!Guards(talentId)) return ToggleGuardDecision::Pass;
+        return ToggleGuardDecision::Refuse;
+    }
+
+private:
+    int m_GuardedTalentId;
+};
+
+// `toggleguard 1` only ARMS the guard, the RelicFilterMod shape: installing
+// a script hook while character selection is still running stalls the runner
+// (guide Known Limitations item 8), so FrameCallback installs the
+// `TalentUseClass` hook later, once the setup gate has passed and a player
+// exists, then calls ClearPending(). `toggleguard 0` clears the enabled flag
+// only; an installed hook stays, and its first statement passes every call
+// straight through while the flag is off.
+class ToggleGuardMod {
+public:
+    static ToggleGuardMod& Instance() {
+        static ToggleGuardMod s_Instance;
+        return s_Instance;
+    }
+
+    bool IsEnabled() const { return m_Enabled.load(); }
+    bool IsPending() const { return m_Pending.load(); }
+    void ClearPending() { m_Pending.store(false); }
+
+    // `alreadyHooked` is whether the TalentUseClass trampoline exists yet;
+    // this class does not own it (ModuleMain.cpp's g_OrigTalentUseClass).
+    void SetEnabled(bool enabled, bool alreadyHooked) {
+        m_Enabled.store(enabled);
+        if (enabled && !alreadyHooked) m_Pending.store(true);
+        if (!enabled) m_Pending.store(false);
+    }
+
+private:
+    ToggleGuardMod() = default;
+    std::atomic<bool> m_Enabled{ false };
+    std::atomic<bool> m_Pending{ false };
+};
+
 } // namespace ForgePact

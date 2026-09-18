@@ -333,11 +333,12 @@ static void OpenDensityWindow();
 static void RunCommand(const std::string& line);
 #ifndef FORGEPACT_RELEASE
 // tgprobe entry notes (docs/toggle-skills-research.md), defined with the rest
-// of tgprobe just before RunCommand; called from the first line of three hook
+// of tgprobe just before RunCommand; called from the first line of four hook
 // bodies that already hold rows the probe cannot detour itself.
 static void TgProbeNoteDrawHudBuffs(CInstance* S, CInstance* O, int argc, RValue** A);
 static void TgProbeNoteTalentUse(CInstance* S, CInstance* O, int argc, RValue** A);
 static void TgProbeNoteBuffAdd(CInstance* S, CInstance* O, int argc, RValue** A);
+static void TgProbeNoteTalentUseClass(CInstance* S, CInstance* O, int argc, RValue** A);
 // toggle-skill indicator research control (issue #11, Track B), defined with
 // the rest of tgprobe just before RunCommand; called from Hook_DrawHudBuffs
 // right after HhDrawHeadLabels() so it samples the production read in the
@@ -4651,6 +4652,137 @@ static void ToggleBorderStats()
 {
     Out("toggleborder stat: enabled=" + std::string(g_ToggleBorderOn.load() ? "on" : "off")
         + " " + ToggleBorderCountersLine());
+}
+
+// ===== Toggle-skill re-cast guard (issue #11, Track A; `toggleguard`) ========
+// Refuses one call the game is already making - a `TalentUseClass` call whose
+// `self` is the double-cast proc object and whose talent is Soul Spurn's - by
+// returning without calling the original, the same early return HookTalentUse
+// uses for the co-op puppet. It pauses, rewinds, writes or deactivates
+// nothing; every other call, and every call while the guard is off, goes
+// straight through (ForgePact::ToggleGuardModel, docs/toggle-skills-research.md
+// "### Track A design (D-N1)"). Off by default; installed only once armed
+// (FrameCallback, the relicfilter shape).
+static PFUNC_YYGMLScript g_OrigTalentUseClass = nullptr;
+// refused: calls not passed on. passed: every call that reached the original
+// while the guard was on. procSeen: the caller was the double-cast object,
+// any talent. selfUnreadable: the caller's object_index could not be read (the
+// call passes - the guard fails open). objUnresolved: the double-cast object's
+// name did not resolve (the call passes).
+static volatile long g_TgdRefused = 0, g_TgdPassed = 0, g_TgdProcSeen = 0, g_TgdSelfUnreadable = 0, g_TgdObjUnresolved = 0;
+// The double-cast object's index, resolved by name and cached only once it is
+// a real (>= 0) index; a failed resolve is never cached, so the next call
+// tries again.
+static std::atomic<long> g_ToggleGuardDcObjIdx{ -1 };
+static std::atomic<bool> g_ToggleGuardInstallFailed{ false };
+#ifndef FORGEPACT_RELEASE
+// Session 5's V7: what a native proc call returns, so a refused call's
+// untouched return value can be judged against it. Research build only.
+static std::mutex g_TgdLastProcRetMtx;
+static std::string g_TgdLastProcRet = "n/a";
+#endif
+
+static RValue& HookTalentUseClass(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+#ifndef FORGEPACT_RELEASE
+    TgProbeNoteTalentUseClass(S, O, argc, A);
+#endif
+    if (!ForgePact::ToggleGuardMod::Instance().IsEnabled()) return g_OrigTalentUseClass(S, O, R, argc, A);
+
+    // Who is calling, by name: the caller's own object_index (read through
+    // the builtin, never off the CInstance - guide "Finding 8") against the
+    // double-cast object's index from asset_get_index. Either read failing
+    // is counted and the call passes: the guard fails open.
+    bool callerIsDoubleCast = false;
+    long selfObj = -1;
+    bool selfRead = false;
+    if (S) {
+        try {
+            RValue inst = RValue(S);
+            RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("object_index") });
+            if (oi.m_Kind == VALUE_REAL || oi.m_Kind == VALUE_INT32 || oi.m_Kind == VALUE_INT64) {
+                selfObj = (long)oi.ToDouble();
+                selfRead = true;
+            }
+        } catch (...) {}
+    }
+    if (!selfRead) {
+        InterlockedIncrement(&g_TgdSelfUnreadable);
+    } else {
+        long dcIdx = g_ToggleGuardDcObjIdx.load();
+        if (dcIdx < 0) {
+            try {
+                const double d = g_Yytk->CallBuiltin("asset_get_index",
+                    { RValue(std::string(HeroSiege::Objects::GetObjectName(
+                        HeroSiege::Objects::GameObject::Universal_Double_Cast_obj))) }).ToDouble();
+                if (d >= 0) { dcIdx = (long)d; g_ToggleGuardDcObjIdx.store(dcIdx); }
+            } catch (...) {}
+        }
+        if (dcIdx < 0) InterlockedIncrement(&g_TgdObjUnresolved);
+        else callerIsDoubleCast = selfObj == dcIdx;
+    }
+    if (callerIsDoubleCast) InterlockedIncrement(&g_TgdProcSeen);
+
+    // The talent is the first argument; anything that is not a number is
+    // never a guarded talent, so the call passes. T1 guards Soul Spurn only.
+    static constexpr ForgePact::ToggleGuardModel kGuard{ kToggleIndicatorTalentId };
+    int talentId = -1;
+    if (argc >= 1 && A && A[0]) {
+        const RValue& a0 = *A[0];
+        if (a0.m_Kind == VALUE_REAL || a0.m_Kind == VALUE_INT32 || a0.m_Kind == VALUE_INT64) talentId = (int)a0.ToDouble();
+    }
+
+    if (kGuard.Decide(true, callerIsDoubleCast, talentId) == ForgePact::ToggleGuardDecision::Refuse) {
+        InterlockedIncrement(&g_TgdRefused);
+        return R;
+    }
+    InterlockedIncrement(&g_TgdPassed);
+#ifndef FORGEPACT_RELEASE
+    if (callerIsDoubleCast) {
+        RValue& ret = g_OrigTalentUseClass(S, O, R, argc, A);
+        try {
+            std::string d = Describe(ret);
+            std::lock_guard<std::mutex> lk(g_TgdLastProcRetMtx);
+            g_TgdLastProcRet = d;
+        } catch (...) {}
+        return ret;
+    }
+#endif
+    return g_OrigTalentUseClass(S, O, R, argc, A);
+}
+
+// hook=not installed|installed|TABLE-ONLY|FAILED. HookOneScript leaves the
+// trampoline in g_OrigTalentUseClass when its native detour went in, and the
+// game's own function (code inside Hero_Siege.exe) when it fell back to the
+// table swap alone - which compiled GML calling TalentUseClass directly would
+// bypass.
+static std::string ToggleGuardHookState()
+{
+    if (g_ToggleGuardInstallFailed.load()) return "FAILED (TalentUseClass not found)";
+    if (!g_OrigTalentUseClass) return "not installed";
+    if (AddrIsExecutableInModule(GetModuleHandleA(nullptr), (const void*)g_OrigTalentUseClass)) return "TABLE-ONLY";
+    return "installed";
+}
+
+// Printed by `toggleguard 0` and `toggleguard stat`.
+static std::string ToggleGuardCountersLine()
+{
+    std::string line = "refused=" + std::to_string(g_TgdRefused) + " passed=" + std::to_string(g_TgdPassed)
+        + " procSeen=" + std::to_string(g_TgdProcSeen) + " selfUnreadable=" + std::to_string(g_TgdSelfUnreadable)
+        + " objUnresolved=" + std::to_string(g_TgdObjUnresolved) + " hook=" + ToggleGuardHookState();
+#ifndef FORGEPACT_RELEASE
+    {
+        std::lock_guard<std::mutex> lk(g_TgdLastProcRetMtx);
+        line += " lastProcRet=" + g_TgdLastProcRet;
+    }
+#endif
+    return line;
+}
+// `toggleguard stat` is read-only: it stores nothing, unlike `toggleguard 0|1`.
+static void ToggleGuardStats()
+{
+    Out("toggleguard stat: enabled=" + std::string(ForgePact::ToggleGuardMod::Instance().IsEnabled() ? "on" : "off")
+        + " " + ToggleGuardCountersLine());
 }
 
 static long g_HhHudCalls = 0, g_HhLabelDraws = 0;
@@ -17399,9 +17531,9 @@ static bool HandleHeadhunterCommand(const std::string& lc, const std::string& re
 // writes game state.
 //
 // Placed here, directly before RunCommand, and not beside `citrace
-// nativetrace`: the target table binds the saved originals of three hooks this
+// nativetrace`: the target table binds the saved originals of four hooks this
 // file installs for real (the head labels, the buff logger, the co-op skill
-// block), and those are file-scope statics that cannot be forward-declared, so
+// block, the toggle re-cast guard), and those are file-scope statics that cannot be forward-declared, so
 // the table has to follow all of them.
 //
 // How a row attaches is the subtle part, and it is what TgProbeAttach decides.
@@ -17434,7 +17566,7 @@ enum : long {
 // Every runtime name is an hs-game-sdk constant, never a literal.
 #define TGPROBE_SCRIPTS(X) \
     X(TalentUse, HeroSiege::Scripts::gml_Script_TalentUse, "TalentUse", kTgArgs | kTgRet, &g_OrigTalentUse, "HookTalentUse") \
-    X(TalentUseClass, HeroSiege::Scripts::gml_Script_TalentUseClass, "TalentUseClass", kTgArgs, nullptr, nullptr) \
+    X(TalentUseClass, HeroSiege::Scripts::gml_Script_TalentUseClass, "TalentUseClass", kTgArgs | kTgRet, &g_OrigTalentUseClass, "HookTalentUseClass") \
     X(CheckTalentUse, HeroSiege::Scripts::gml_Script_CheckTalentUse, "CheckTalentUse", kTgArgs | kTgRet, nullptr, nullptr) \
     X(TalentUseSetSpeed, HeroSiege::Scripts::gml_Script_TalentUseSetSpeed, "TalentUseSetSpeed", kTgCount, nullptr, nullptr) \
     X(NetworkSendClientTalentUse, HeroSiege::Scripts::gml_Script_NetworkSendClientTalentUse, "NetworkSendClientTalentUse", kTgArgs, nullptr, nullptr) \
@@ -17703,6 +17835,17 @@ static void TgProbeNoteBuffAdd(CInstance* S, CInstance* O, int argc, RValue** A)
 {
     if (!TgProbeIsPiggyback(g_TgRows[kTg_BuffAdd].mode)) return;
     TgProbeNote(kTg_BuffAdd, S, O, argc, A);
+}
+
+// The re-cast guard's hook (HookTalentUseClass, `toggleguard`). The note runs
+// before the guard decides, so a refused call is still counted here. Session
+// rule: `toggleguard 1` and its `HOOK INSTALLED on TalentUseClass` line come
+// before `tgprobe hook` - the other order leaves a native probe detour on the
+// game body that the guard's install would then patch a second time.
+static void TgProbeNoteTalentUseClass(CInstance* S, CInstance* O, int argc, RValue** A)
+{
+    if (!TgProbeIsPiggyback(g_TgRows[kTg_TalentUseClass].mode)) return;
+    TgProbeNote(kTg_TalentUseClass, S, O, argc, A);
 }
 
 static void TgProbeSetMode(TgProbeTarget& t, long mode, const std::string& text)
@@ -19479,7 +19622,7 @@ static void RunCommand(const std::string& line)
         "stat", "statadd", "raredrop", "droprate", "dungeonkey",
         "headhunter", "hhdur", "hhmap", "hhdefault", "hhlabel", "tyrant", "beacon", "beaconrange", "beaconmode", "beaconwake", "beaconspawn", "beaconfarstep", "tyrantchance", "tyrantaffix", "hhlabelfont", "hhlabeloffset", "hhlabelmax",
         "enemyspeed", "rarity", "sigdrop", "angelicdrop", "relicfilter", "orbpickup", "satmods", "petquest",
-        "toggleborder"
+        "toggleborder", "toggleguard"
     };
     if (kPlayerCommands.find(lc) == kPlayerCommands.end()) {
         Out("command unavailable in player build: " + cmd);
@@ -19495,6 +19638,24 @@ static void RunCommand(const std::string& line)
     // is already at MSVC's block-nesting limit (C1061).
     if (lc == "tgprobe") { TgProbeCommand(rest); return; }
 #endif
+    // Toggle-skill re-cast guard (issue #11, Track A). A standalone early
+    // return for the same C1061 reason as `toggleborder` below. `1` only arms
+    // it: FrameCallback installs the TalentUseClass hook once a player exists
+    // (guide Known Limitations item 8), so the panel can send it at launch.
+    if (lc == "toggleguard") {
+        std::string v = Lower(TrimCopy(rest));
+        if (v == "stat") { ToggleGuardStats(); return; }   // read-only: stores nothing
+        if (v == "off" || v == "0") {
+            ForgePact::ToggleGuardMod::Instance().SetEnabled(false, g_OrigTalentUseClass != nullptr);
+            Out("toggleguard -> off " + ToggleGuardCountersLine());
+        } else {
+            const bool hooked = g_OrigTalentUseClass != nullptr;
+            ForgePact::ToggleGuardMod::Instance().SetEnabled(true, hooked);
+            Out(std::string("toggleguard -> ") + (hooked ? "ON" : "ON (armed, applies once you are in-game)")
+                + " (a double-cast proc no longer re-casts Soul Spurn)");
+        }
+        return;
+    }
     // Toggle-skill active indicator (issue #11, Track B). A standalone early
     // return, not one more `else if` below: that chain is already at MSVC's
     // block-nesting limit (C1061) - the same reason the research command
@@ -20590,6 +20751,19 @@ void FrameCallback(FWFrame& FrameContext)
             ForgePact::RelicFilterMod::Instance().ClearPending();
             HookOneScript("DropRelic", "bp_drelic", (PVOID)Hook_DropRelic, &g_Orig_DropRelic);
             Out(std::string("relicfilter: hook installed -> ") + (g_Orig_DropRelic ? "ON" : "FAILED (DropRelic not found)"));
+        }
+    }
+
+    // Re-cast guard, armed by `toggleguard 1`: the TalentUseClass hook goes in
+    // on the same terms as the relic filter's just above - runner settled, a
+    // real player exists, checked once a second at most.
+    if (ForgePact::ToggleGuardMod::Instance().IsPending() && g_Setup && (fc % 60) == 0) {
+        RValue player;
+        if (HhResolveLocalPlayer(player)) {
+            ForgePact::ToggleGuardMod::Instance().ClearPending();
+            const bool ok = HookOneScript("TalentUseClass", "bp_tuclass", (PVOID)HookTalentUseClass, &g_OrigTalentUseClass);
+            g_ToggleGuardInstallFailed.store(!ok);
+            Out("toggleguard: hook=" + ToggleGuardHookState());
         }
     }
 

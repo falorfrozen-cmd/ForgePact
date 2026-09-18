@@ -77,6 +77,12 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
             declaration(cls.plugin, "static volatile long g_TibDrawn"),
             implementation(cls.plugin, "static bool ToggleIndicatorFindSlot("),
             implementation(cls.plugin, "static void ToggleIndicatorDraw("),
+            # T1 (issue #11, Track A): the re-cast guard's real hook, its
+            # trampoline slot, counters and cached object index, verbatim.
+            declaration(cls.plugin, "static PFUNC_YYGMLScript g_OrigTalentUseClass"),
+            declaration(cls.plugin, "static volatile long g_TgdRefused"),
+            declaration(cls.plugin, "static std::atomic<long> g_ToggleGuardDcObjIdx"),
+            implementation(cls.plugin, "static RValue& HookTalentUseClass("),
         ])
 
         out = ROOT / "build/toggle-skill-behavior"
@@ -282,6 +288,54 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
         self.assertScenario("indicator_on/slot_failures_are_split/noRow0/others_zero")
         self.assertScenario("indicator_on/slot_failures_are_split/noTalent")
         self.assertScenario("indicator_on/slot_failures_are_split")
+
+    # ---- T1: the re-cast guard, HookTalentUseClass (issue #11, Track A) ----
+
+    def test_guard_off_proc_passes_and_no_runtime_call(self):
+        # Baseline: off by default, the hook is one atomic load and the
+        # original - no builtin is called at all.
+        self.assertScenario("guard_off/proc_passes_and_no_runtime_call/runtime_calls")
+        self.assertScenario("guard_off/proc_passes_and_no_runtime_call")
+
+    def test_guard_on_proc_of_guarded_talent_refused(self):
+        self.assertScenario("guard_on/proc_of_guarded_talent_refused/result_untouched")
+        self.assertScenario("guard_on/proc_of_guarded_talent_refused/refused")
+        self.assertScenario("guard_on/proc_of_guarded_talent_refused")
+
+    def test_guard_on_proc_of_other_talent_passes(self):
+        self.assertScenario("guard_on/proc_of_other_talent_passes/procSeen")
+        self.assertScenario("guard_on/proc_of_other_talent_passes/refused")
+        self.assertScenario("guard_on/proc_of_other_talent_passes")
+
+    def test_guard_on_player_cast_passes(self):
+        self.assertScenario("guard_on/player_cast_passes/refused")
+        self.assertScenario("guard_on/player_cast_passes")
+
+    def test_guard_on_player_chain_passes(self):
+        self.assertScenario("guard_on/player_chain_passes")
+
+    def test_guard_on_self_unreadable_passes_and_counts(self):
+        self.assertScenario("guard_on/self_unreadable_passes_and_counts/selfUnreadable")
+        self.assertScenario("guard_on/self_unreadable_passes_and_counts")
+
+    def test_guard_on_double_cast_object_unresolved_passes_and_counts(self):
+        # A failed resolve is never cached: the next call resolves again.
+        self.assertScenario("guard_on/double_cast_object_unresolved_passes_and_counts/objUnresolved")
+        self.assertScenario("guard_on/double_cast_object_unresolved_passes_and_counts/trampoline")
+        self.assertScenario("guard_on/double_cast_object_unresolved_passes_and_counts/re_resolved")
+        self.assertScenario("guard_on/double_cast_object_unresolved_passes_and_counts/cached")
+        self.assertScenario("guard_on/double_cast_object_unresolved_passes_and_counts")
+
+    def test_guard_on_state_not_consulted(self):
+        # D-N1: the toggle's state cannot tell "just turned off" from "never
+        # on", so the guard never reads it.
+        self.assertScenario("guard_on/state_not_consulted")
+
+    def test_guard_on_counters(self):
+        self.assertScenario("guard_on/counters/refused")
+        self.assertScenario("guard_on/counters/passed")
+        self.assertScenario("guard_on/counters/procSeen")
+        self.assertScenario("guard_on/counters")
 
 
 if __name__ == "__main__":

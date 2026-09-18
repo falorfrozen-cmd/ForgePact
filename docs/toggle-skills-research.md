@@ -12,8 +12,14 @@ outline for ~146 draws), the slot is `UI_Hud_Talent_obj`'s own `row0[5]`
 (session 4). `toggleborder 1|0` ships in `kPlayerCommands`, off by default,
 panel key `mod_toggle_indicator`. Co-op is inferred, not measured against a
 second real player, and not a shipping concern (ForgePact is offline-only;
-see the hub guide's Known Limitations). Track A (re-cast guard) is
-unaffected by any of this and remains **BLOCKED on Q2**.
+see the hub guide's Known Limitations).
+
+Status (2026-09-19): **Track A (re-cast guard) is built, off by default, and
+awaits its live session.** Q2 no longer blocks it: the guard refuses the
+double-cast proc's `TalentUseClass` re-cast of Soul Spurn by caller identity,
+without reading the toggle's state (`## Decision` → `### Track A design
+(D-N1)`). `toggleguard 1|0|stat`, panel key `mod_toggle_guard`. Session 5
+(`## Live procedure` → `### Session 5`) decides whether it ships.
 
 - **Measured:** the cast path (Q1), draw order (Q4), three sources of
   accidental re-casts (Q5, one of them the double-cast proc, which bypasses
@@ -160,7 +166,7 @@ read instead from the room key changing (`tgprobe show`'s `room=` and
 
 `tgprobe` is **research build only** (`plugin_build\build.bat dev`,
 `BloodPactPlugin_rel.dll`); it is not in `kPlayerCommands` and every trace of
-it, including the three entry notes below, is inside `#ifndef
+it, including the four entry notes below, is inside `#ifndef
 FORGEPACT_RELEASE`. It is read-only: nothing it does writes game state. Its
 shape is `citrace nativetrace`'s — a native detour per row that counts,
 optionally logs and calls through its trampoline — with its own resolver.
@@ -172,7 +178,11 @@ Four rows are already hooked by ForgePact before `tgprobe hook` can run:
 `DrawHudBuffs` (the head-label hook, installed at init in every build),
 `BuffAdd` (the buff logger, installed by the research build's setup at frame
 300), `TalentUse` (the co-op skill block, only if co-op rendering was turned
-on) and `CheckPlayerInteraction` (only if a `citrace` command ran). ForgePact's
+on) and `CheckPlayerInteraction` (only if a `citrace` command ran). Since T1
+a fifth can be: `TalentUseClass` (the re-cast guard's `HookTalentUseClass`,
+installed once `toggleguard 1` is armed and a player exists; `### Track A
+design (D-N1)`) - which is why `toggleguard 1` must come before `tgprobe
+hook` in a session. ForgePact's
 installer puts its hook body in the script table and keeps a trampoline as the
 "original"; neither is code inside `Hero_Siege.exe`, and the game's own bytes
 already carry a patch, so such a row cannot be detoured a second time. The
@@ -196,8 +206,9 @@ Every pointer handed to the hooking library has just been checked with
 `AddrIsExecutableInModule`, and the hooking library is called from one place.
 The entry notes are one research-only line at the top of `Hook_DrawHudBuffs`,
 `HookTalentUse` (before the co-op puppet early return, so a puppet's calls
-would be counted too; a single-player session has no puppet) and
-`HookBuffAdd`. Each does nothing unless its row attached `via` that hook, so a
+would be counted too; a single-player session has no puppet),
+`HookBuffAdd` and `HookTalentUseClass` (before the guard decides, so a
+refused call is still counted). Each does nothing unless its row attached `via` that hook, so a
 row with its own detour is never counted twice. A note cannot see the return
 value, so a `via` row prints `ret=n/a (via hook)`.
 
@@ -787,6 +798,73 @@ never `not observed`.
    `read: GO` and `slotgeom:` are not re-decided here. Paste every quoted line
    into Results → Session 4; write Decision → After session 4; set this
    plan's `## State` gates. Stop the game; nothing else left running.
+
+### Session 5
+
+The re-cast guard's session (T1-LIVE, issue #11, Track A; design in `##
+Decision` → `### Track A design (D-N1)`). It proves the guard's hook sees the
+double-cast proc's `TalentUseClass` call, measures the proc flipping the
+toggle with the guard off (baseline) and not flipping it with the guard on
+(target), and records what a native proc call returns. One research build
+(the T1 `BloodPactPlugin_rel.dll`), V0–V9 batched.
+
+**Setup.** The T1 research DLL; a White Mage with Soul Spurn + Purgatory and
+Healing Zone on the hotbar; **an equipped double-cast source** (session 1's
+proc came from gear; the tester supplies it); in town; no `bp_ipc\coop.ini`
+(or `enabled=0`), no `cooprender`, no `citrace` command at any point. Order:
+enter the game (the install needs a player instance), `toggleguard 1`, wait
+for `HOOK INSTALLED on TalentUseClass`, **then** `tgprobe hook` — never the
+other way round: `tgprobe hook` first puts its own native detour on the game's
+`TalentUseClass` body, and the guard's install would then patch the same bytes
+a second time. `tgprobe reset` before every cast, so the proc's verbose line
+falls inside the three-line log budget (a player cast alone spends two: 240
+and the 243 chain).
+
+V0–V9 below are the rows Results → Session 5 fills; each status is exactly
+one of `measured`, `not observed` or `blocked` — a row not run is `blocked`,
+never `not observed`.
+
+1. **V0 (controls, gates every row).** `tgprobe show` over about 2 s:
+   `CheckPlayerInteraction(control)` native count rises by more than 1000.
+   Three Healing Zone casts raise the `TalentUseClass` count by at least 3,
+   counted through the guard hook's entry note. Either failing makes every row
+   below `blocked`.
+2. **V1 (the hook, guard).** Quote the `HOOK INSTALLED on TalentUseClass`
+   line; `toggleguard stat` → `hook=installed`; `tgprobe hook` →
+   `TalentUseClass: via HookTalentUseClass (native)` and the `N via hook`
+   total (3 with `DrawHudBuffs` and `BuffAdd`).
+3. **V2 (baseline, guard + procret).** `toggleguard 0`; `tgprobe verbose on`.
+   Cast Soul Spurn, `tgprobe reset` before each cast, until a proc: a verbose
+   line `TalentUseClass … self=Universal_Double_Cast_obj#5318@… a0=240`. By
+   eye the toggle ends in the wrong state. `toggleguard stat` before and after
+   → `procSeen` +1, `refused=0`, and `lastProcRet=` (V7).
+4. **V3 (target, guard).** `toggleguard 1`; repeat until a proc. `toggleguard
+   stat` before and after → `refused` +1. By eye the state your press set is
+   kept; no error dialog; `tgprobe show` still counted the call (the entry
+   note runs before the guard decides).
+5. **V4 (another talent's proc, KL).** A Healing Zone proc (`a0=252` from the
+   double-cast object): `passed` +1, `refused` unchanged. `not observed` if no
+   proc of it occurs.
+6. **V5 (plain cycles, guard).** Three plain ON/OFF cycles with the guard on:
+   by eye normal; `refused` unchanged; `passed` +2 per cast (240 and the 243
+   chain).
+7. **V6 (zone change, KL).** Change zone with the guard on, then cast once:
+   normal; `refused` unchanged.
+8. **V7 (procret).** Quote `lastProcRet=` from V2 — what a native proc call
+   returns, beside which a refused call's untouched result is judged.
+9. **V8 (optional, purgslot).** `tgprobe deep get global.subTalentMap[1].t240`
+   before and after respeccing Purgatory out; the `sN` that changes is
+   Purgatory's level. Re-allocate afterwards.
+10. **V9 (ship build, with `guard: GO` only).** The ship build installed from
+    the panel: `toggleguard 0` before arming prints `hook=not installed`;
+    `toggleguard 1` → `HOOK INSTALLED on TalentUseClass`; a proc →
+    `toggleguard stat` `refused=1`; `tgprobe` → `command unavailable`.
+11. **Gate values.** `guard: GO` needs V0, V1, V2, V3 and V5 `measured` as
+    described; anything else is `guard: BLOCKED` (the guard does not ship).
+    `procret:` is V7's quoted value or `not observed`. `purgslot:` is `sN` or
+    `not identified`. No proc in ~50 casts makes V2/V3 `blocked`, not `not
+    observed`. Paste every quoted line into Results → Session 5 and write
+    Decision → After session 5. Stop the game; nothing else left running.
 
 ## Results
 
@@ -1418,3 +1496,76 @@ spurn`'s `markDraws=`/`markDrawExc=`. Session 3 step 6 now runs a draw control
 first — `tgprobe mark` at an obviously visible GUI spot, confirmed by eye —
 before touching any candidate slot rectangle, and records `blocked (draw
 control)` rather than `slotgeom: none` if that control fails.
+
+### Track A design (D-N1)
+
+**What it rests on (session 1, Q1 and Q5).** A player press is one
+`TalentUse` (`self=Player_obj`, talent 240) and, about 19 frames later, one
+`TalentUseClass` (`self=Player_obj`, `a0=240`, `a4=true`), chained in the same
+frame by `TalentUseClass a0=243 a4=false` (the three crows). The double-cast
+proc is a `TalentUseClass` call whose `self` is `Universal_Double_Cast_obj`,
+`a0=240 a4=false`, 36–56 frames after the player's cast, with no `TalentUse`
+in front of it (seen on three casts; the tester twice saw the toggle end in
+the wrong state; whether a proc *always* flips it is not observed). The AOE
+appears on the frame the cast resolves and is gone 19 frames after an OFF
+press (session 4), so at proc time the state reads ON after an ON press and
+OFF after an OFF press: **the state cannot tell "just turned off" from "never
+on"**, and a proc after an OFF press turns it straight back on.
+
+**Decision.** The guard refuses a `TalentUseClass` call when it is on, the
+caller's object is `Universal_Double_Cast_obj`, and `a0` is a guarded talent
+(T1: Soul Spurn, `kToggleIndicatorTalentId`) — without reading the toggle's
+state. Refused means the hook returns the result it was handed without
+calling the original, the same early return `HookTalentUse` uses for the
+co-op puppet. Every other call goes through: the player's cast and its
+chain, a proc of any other talent (Healing Zone, 252), and every call while
+the guard is off.
+
+**How the caller is identified.** By name: the caller's own `object_index`
+through `variable_instance_get` on `RValue(self)`, against
+`asset_get_index("Universal_Double_Cast_obj")` (an `hs-game-sdk` enumerator;
+the object has no parent). The index is cached only once it resolves to a real
+index. Either read failing is counted (`selfUnreadable=`, `objUnresolved=`)
+and the call passes — the guard fails open and `toggleguard stat` says so. No
+`CInstance` field is read directly (guide "Finding 8").
+
+**Install.** `toggleguard 1` only arms it; `FrameCallback` installs
+`HookOneScript("TalentUseClass", …)` once the setup gate has passed and a
+player exists, checked once a second — the `relicfilter` shape, because a
+hook installed during character selection stalls the runner (guide Known
+Limitations item 8). `toggleguard 0` clears the flag only; the hook stays,
+and its first statement passes every call straight through. `toggleguard
+stat` prints `refused=`/`passed=`/`procSeen=`/`selfUnreadable=`/
+`objUnresolved=` and `hook=not installed|installed|TABLE-ONLY`, plus, in the
+research build only, `lastProcRet=` (session 5's V7).
+
+**The research row.** `tgprobe`'s `TalentUseClass` row now binds the guard's
+trampoline and counts from a one-line entry note at the top of
+`HookTalentUseClass` (`via HookTalentUseClass (native)`), so the probe and the
+guard never both detour the same bytes. The note runs before the guard
+decides, so refused calls are still counted. Session rule: `toggleguard 1`
+before `tgprobe hook`.
+
+**Why it is not in the suspend class** (hub `AGENTS.md`, "Don't Suspend the
+Game's Own Runtime"): it refuses one call the game is making and nothing
+else; the game's loop, timers and every other instance proceed.
+`menu-pause-plan.md` §0 was read and does not apply.
+
+**Costs, accepted (user decision D-U4).** A double-cast proc of Soul Spurn is
+refused *with or without* Purgatory, so a plain Soul Spurn cast loses its
+double-cast re-cast while the guard is on. Gating on the Purgatory sub-talent
+needs its `global.subTalentMap[1].t240` slot (session 5's optional V8), and is
+a later follow-up. Key auto-repeat (a held key re-fires `TalentUse` every 57
+frames, Q5 (b)) is not covered: that is the player holding the key.
+
+**Rejected:** a guard on `TalentUse` (the proc never calls it); any time
+window (the proc lands 36–56 frames after the press, auto-repeat every 57, and
+a real re-press can come within a second); gating on the AOE state (misses the
+OFF-press-then-proc direction); editing or destroying the double-cast
+instance (the refusal alone does the job).
+
+**Tests.** `tests/toggle_skill_harness.cpp` runs the real `HookTalentUseClass`
+(`guard_off/*`, `guard_on/*` in `run.log`); `ToggleGuardContractTests` in
+`tests/test_toggle_skill_contract.py` pins the command, the install gate, the
+hook's order and what it must never contain, the research row and the panel.
+Live proof is session 5 (`## Live procedure` → `### Session 5`).

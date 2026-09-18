@@ -1,8 +1,9 @@
 # ForgePact 1.4.4
 
-A new, off-by-default Gameplay Mod for the White Mage: outline Soul Spurn's
-skill-bar slot while the Purgatory-toggled drain is running, so you can see
-at a glance that it is still active.
+Two new, off-by-default Gameplay Mods for the White Mage's Soul Spurn: outline
+its skill-bar slot while the Purgatory-toggled drain is running, so you can
+see at a glance that it is still active, and stop a double cast proc from
+flipping the toggle back.
 
 ## New
 
@@ -14,6 +15,15 @@ at a glance that it is still active.
   Purgatory drain is running, and disappears the moment it stops - on a
   re-press, on a zone change, or if your health forces it to cancel. A plain
   cast of Soul Spurn without Purgatory does not light the outline.
+- **Stop double cast re-casting Soul Spurn.** With a double cast effect
+  equipped, a double cast proc could cast Soul Spurn a second time on its
+  own, a moment after your press - which flipped the Purgatory toggle
+  straight back, so it ended off when you had just turned it on, or on when
+  you had just turned it off. With this mod turned on (Mods tab, off by
+  default), that extra cast of Soul Spurn is skipped and the toggle stays the
+  way your press left it. Your own presses, and double casts of every other
+  skill, are not affected. One trade-off: the double cast's extra Soul Spurn
+  is skipped even when you do not have Purgatory.
 
 ## How to update
 

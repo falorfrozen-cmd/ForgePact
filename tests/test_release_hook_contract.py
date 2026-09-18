@@ -281,6 +281,13 @@ class ReleaseHookContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, self.plugin,
                           f"{verb} must accept 0 as off, like every other toggle")
+        # Checked inside each handler, not anywhere in the file: the census
+        # marker above would otherwise satisfy a handler that lacks it.
+        for verb in ("toggleborder", "toggleguard"):
+            start = self.plugin.index(f'if (lc == "{verb}")')
+            branch = self.plugin[start:self.plugin.index("return;\n    }", start)]
+            self.assertIn('v == "off" || v == "0"', branch,
+                          f"{verb} must accept 0 as off, like every other toggle")
 
     def test_release_initialization_has_no_eager_gameplay_hook_group(self):
         body = function_body(self.plugin, "static void InstallHook()")

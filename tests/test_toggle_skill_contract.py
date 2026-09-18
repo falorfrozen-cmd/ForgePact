@@ -135,7 +135,7 @@ class ToggleProbeContractTests(unittest.TestCase):
         self.assertNotIn("tgprobe", allowlist.group("body"))
 
     def test_every_mention_is_stripped_from_the_player_build(self):
-        # The block, the forward declarations, the three entry notes and the
+        # The block, the forward declarations, the four entry notes and the
         # RunCommand branch all sit inside #ifndef FORGEPACT_RELEASE pairs.
         self.assertGreaterEqual(len(re.findall("tgprobe", self.plugin, re.IGNORECASE)), 20)
         self.assertEqual(len(re.findall("tgprobe", strip_research_blocks(self.plugin), re.IGNORECASE)), 0)
@@ -207,18 +207,23 @@ class ToggleProbeContractTests(unittest.TestCase):
             self.assertIn(literal, attach)
 
     def test_existing_hook_bindings(self):
+        # T1 (issue #11, Track A) added the re-cast guard's HookTalentUseClass:
+        # once it holds TalentUseClass, the probe row counts from its entry
+        # note instead of putting a second detour on the same bytes.
         origs = set(re.findall(r"&g_Orig\w+", self.block))
         self.assertEqual(origs, {"&g_Orig_DrawHudBuffs", "&g_OrigTalentUse", "&g_OrigBuffAdd",
-                                 "&g_OrigCi_CheckPlayerInteraction"})
+                                 "&g_OrigCi_CheckPlayerInteraction", "&g_OrigTalentUseClass"})
         by_orig = {r["orig"].strip(): r["via"].strip() for r in self.script_rows if r["orig"].strip() != "nullptr"}
         self.assertEqual(by_orig, {
             "&g_Orig_DrawHudBuffs": '"Hook_DrawHudBuffs"',
             "&g_OrigTalentUse": '"HookTalentUse"',
             "&g_OrigBuffAdd": '"HookBuffAdd"',
             "&g_OrigCi_CheckPlayerInteraction": "nullptr",
+            "&g_OrigTalentUseClass": '"HookTalentUseClass"',
         })
         vias = {r["via"].strip() for r in self.script_rows} - {"nullptr"}
-        self.assertEqual(vias, {'"Hook_DrawHudBuffs"', '"HookTalentUse"', '"HookBuffAdd"'})
+        self.assertEqual(vias, {'"Hook_DrawHudBuffs"', '"HookTalentUse"', '"HookBuffAdd"',
+                                '"HookTalentUseClass"'})
 
     def test_entry_notes_precede_the_hook_bodies_and_never_ship(self):
         shipped = strip_research_blocks(self.plugin)
@@ -227,6 +232,8 @@ class ToggleProbeContractTests(unittest.TestCase):
              "g_Orig_DrawHudBuffs(S, O, R, argc, A)"),
             ("static RValue& HookTalentUse(", "TgProbeNoteTalentUse(S, O, argc, A);", "g_BlockPuppetSkills"),
             ("static RValue& HookBuffAdd(", "TgProbeNoteBuffAdd(S, O, argc, A);", "LogBuffCall("),
+            ("static RValue& HookTalentUseClass(", "TgProbeNoteTalentUseClass(S, O, argc, A);",
+             "ToggleGuardMod::Instance().IsEnabled()"),
         )
         for signature, note, anchor in cases:
             body = function_body(self.plugin, signature)
@@ -657,6 +664,8 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
             "tyrantchance", "tyrantaffix", "hhlabelfont", "hhlabeloffset", "hhlabelmax",
             "enemyspeed", "rarity", "sigdrop", "angelicdrop", "relicfilter", "orbpickup",
             "satmods", "petquest", "toggleborder",
+            # T1 (issue #11, Track A): the re-cast guard (ToggleGuardContractTests).
+            "toggleguard",
         }
         self.assertEqual(entries, expected)
 
@@ -814,6 +823,178 @@ class ToggleIndicatorShipContractTests(unittest.TestCase):
             "f\"toggleborder {1 if cfg['mod_toggle_indicator'] else 0}\"",
             self.panel,
         )
+
+
+def git_show(ref_path: str):
+    """`git show <ref>:<path>` in ForgePact/, LF-normalised; None if unreadable."""
+    try:
+        return subprocess.run(
+            ["git", "-C", str(FORGEPACT_DIR), "show", ref_path],
+            capture_output=True, check=True,
+        ).stdout.decode("utf-8").replace("\r\n", "\n")
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+
+class ToggleGuardContractTests(unittest.TestCase):
+    """The re-cast guard (T1, issue #11, Track A): `toggleguard`.
+
+    Companion to test_toggle_skill_behavior.py (HookTalentUseClass end to
+    end, the `guard_` PASS lines). This class pins what a source read can:
+    the command is a real player command that installs nothing itself; the
+    one TalentUseClass install sits in FrameCallback behind the relicfilter
+    gate (guide Known Limitations item 8); the hook's order - the research
+    note, the off fast path, the caller by name, the guarded talent - and
+    what it must never contain; the `tgprobe` row rebound onto it; the shared
+    counters line in the player build; and the panel.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.plugin = PLUGIN_SRC.read_text(encoding="utf-8")
+        cls.stripped = strip_research_blocks(cls.plugin)
+        cls.header = (FORGEPACT_DIR / "plugin" / "include" / "ForgePact" / "ToggleSkillMod.hpp").read_text(encoding="utf-8")
+        cls.panel = (SRC_DIR / "forgepact.py").read_text(encoding="utf-8")
+        start = cls.plugin.index('if (lc == "toggleguard")')
+        end = cls.plugin.index('if (lc == "toggleborder")', start)
+        cls.branch = cls.plugin[start:end]
+        cls.hook = function_body(cls.plugin, "static RValue& HookTalentUseClass(")
+
+    # ---- the model (ToggleSkillMod.hpp) ---------------------------------------
+
+    def test_model_is_a_two_valued_decision_on_three_inputs(self):
+        self.assertIn("enum class ToggleGuardDecision { Pass, Refuse };", self.header)
+        self.assertIn("class ToggleGuardModel", self.header)
+        self.assertIn("ToggleGuardDecision Decide(bool enabled, bool callerIsDoubleCast, int talentId) const",
+                      self.header)
+        includes = [line.strip() for line in self.header.splitlines() if line.strip().startswith("#include")]
+        self.assertEqual(includes, ['#include "Common.hpp"'])
+
+    def test_enabled_flag_is_an_atomic_load(self):
+        self.assertIn("bool IsEnabled() const { return m_Enabled.load(); }",
+                      self.header[self.header.index("class ToggleGuardMod"):])
+
+    def test_indicator_decide_is_unchanged_from_ab6fed5(self):
+        old = git_show("ab6fed5:plugin/include/ForgePact/ToggleSkillMod.hpp")
+        if old is None:
+            self.skipTest("ab6fed5 is not readable here")
+        sig = "static ToggleIndicatorState Decide("
+        self.assertEqual(function_body(old, sig), function_body(self.header.replace("\r\n", "\n"), sig))
+
+    # ---- the command ------------------------------------------------------------
+
+    def test_toggleguard_is_a_player_command(self):
+        match = re.search(r"kPlayerCommands = \{(.*?)\};", self.plugin, re.S)
+        self.assertIsNotNone(match)
+        self.assertIn('"toggleguard"', match.group(1))
+
+    def test_handler_treats_zero_as_off_dispatches_stat_and_installs_nothing(self):
+        self.assertIn('v == "off" || v == "0"', self.branch)
+        self.assertIn('v == "stat"', self.branch)
+        stat = self.branch[self.branch.index('v == "stat"'):self.branch.index('v == "off" || v == "0"')]
+        self.assertIn("ToggleGuardStats()", stat)
+        self.assertNotIn("SetEnabled", stat)
+        self.assertNotIn("HookOneScript(", self.branch)
+        self.assertIn("ToggleGuardCountersLine()", self.branch)
+
+    def test_counters_reach_the_player_build(self):
+        # `toggleguard 0` and `toggleguard stat` share the counters line, and
+        # every key survives stripping.
+        line = function_body(self.stripped, "static std::string ToggleGuardCountersLine(")
+        for key in ("refused=", "passed=", "procSeen=", "selfUnreadable=", "objUnresolved=", "hook="):
+            self.assertIn(key, line, key)
+        self.assertNotIn("lastProcRet", line)   # research build only (session 5's V7)
+        self.assertIn("lastProcRet=", function_body(self.plugin, "static std::string ToggleGuardCountersLine("))
+        self.assertIn("ToggleGuardCountersLine()", function_body(self.stripped, "static void ToggleGuardStats("))
+        state = function_body(self.stripped, "static std::string ToggleGuardHookState(")
+        for literal in ('"not installed"', '"installed"', '"TABLE-ONLY"'):
+            self.assertIn(literal, state)
+
+    # ---- the install ------------------------------------------------------------
+
+    def test_one_install_behind_the_relicfilter_gate(self):
+        needle = 'HookOneScript("TalentUseClass"'
+        self.assertEqual(self.plugin.count(needle), 1)
+        frame = function_body(self.plugin, "void FrameCallback(")
+        self.assertIn(needle, frame)
+        call = frame.index(needle)
+        gate = frame.rindex("if (ForgePact::ToggleGuardMod::Instance().IsPending()", 0, call)
+        enclosing = frame[gate:call]
+        for name in ("g_Setup", "HhResolveLocalPlayer", "(fc % 60) == 0"):
+            self.assertIn(name, enclosing, name)
+        self.assertIn("ClearPending()", enclosing)
+        self.assertIn(needle, function_body(self.stripped, "void FrameCallback("))
+
+    # ---- the hook ----------------------------------------------------------------
+
+    def test_hook_order(self):
+        body = self.hook
+        note = body.index("TgProbeNoteTalentUseClass(S, O, argc, A);")
+        guard = body.rindex("#ifndef FORGEPACT_RELEASE", 0, note)
+        endif = body.index("#endif", note)
+        self.assertEqual(body[guard:note].count("\n"), 1)   # the note is the pair's only line
+        self.assertEqual(body[note:endif].count("\n"), 1)
+        fast = body.index("if (!ForgePact::ToggleGuardMod::Instance().IsEnabled()) "
+                          "return g_OrigTalentUseClass(S, O, R, argc, A);")
+        object_index = body.index('"object_index"')
+        obj = body.index("GameObject::Universal_Double_Cast_obj")
+        talent = body.index("kToggleIndicatorTalentId")
+        self.assertLess(endif, fast)
+        self.assertLess(fast, object_index)
+        self.assertLess(object_index, obj)
+        self.assertLess(obj, talent)
+
+    def test_hook_reads_nothing_it_must_not(self):
+        body = self.hook
+        for forbidden in ("GetMembers(", "CallBuiltinEx", "5318", "instance_number", "instance_find",
+                          "ToggleIndicatorRead"):
+            self.assertNotIn(forbidden, body, forbidden)
+        self.assertIsNone(re.search(r"\b240\b", body))   # the one 240 is kToggleIndicatorTalentId
+
+    def test_refusal_returns_the_result_without_the_original(self):
+        body = self.hook
+        refuse = body.index("ToggleGuardDecision::Refuse")
+        self.assertIn("return R;", body[refuse:body.index("}", refuse)])
+
+    def test_talent_use_hook_is_unchanged_from_ab6fed5(self):
+        old = git_show("ab6fed5:plugin/ModuleMain.cpp")
+        if old is None:
+            self.skipTest("ab6fed5 is not readable here")
+        sig = "static RValue& HookTalentUse("
+        self.assertEqual(function_body(old, sig), function_body(self.plugin.replace("\r\n", "\n"), sig))
+
+    # ---- the research row -----------------------------------------------------------
+
+    def test_probe_row_rebinds_to_the_guard_hook(self):
+        rows = [m.groupdict() for m in SCRIPT_ROW.finditer(macro_body(self.plugin, "#define TGPROBE_SCRIPTS(X)"))]
+        row = next(r for r in rows if r["safe"] == "TalentUseClass")
+        self.assertEqual(row["orig"].strip(), "&g_OrigTalentUseClass")
+        self.assertEqual(row["via"].strip(), '"HookTalentUseClass"')
+        self.assertIn("kTgRet", row["flags"])
+
+    def test_research_note_never_ships(self):
+        self.assertIn("TgProbeNoteTalentUseClass", self.plugin)
+        self.assertNotIn("TgProbeNoteTalentUseClass", self.stripped)
+
+    # ---- the panel (mirrors every mod_toggle_indicator site) --------------------------
+
+    def test_defaults_has_toggle_guard_off(self):
+        self.assertIn("mod_toggle_guard", forgepact.DEFAULTS)
+        self.assertIs(forgepact.DEFAULTS["mod_toggle_guard"], False)
+
+    def test_build_cmds_omits_toggleguard_when_disabled(self):
+        self.assertFalse([c for c in forgepact.build_cmds(dict(forgepact.DEFAULTS)) if "toggleguard" in c])
+
+    def test_build_cmds_emits_toggleguard_when_enabled(self):
+        cfg = dict(forgepact.DEFAULTS)
+        cfg["mod_toggle_guard"] = True
+        self.assertIn("toggleguard 1", forgepact.build_cmds(cfg))
+
+    def test_html_has_the_mods_tab_control(self):
+        self.assertIn('id="mod_toggle_guard"', forgepact.HTML)
+
+    def test_panel_sends_the_live_command(self):
+        self.assertIn("f\"toggleguard {1 if cfg['mod_toggle_guard'] else 0}\"", self.panel)
 
 
 if __name__ == "__main__":

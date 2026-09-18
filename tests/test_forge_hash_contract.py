@@ -49,6 +49,8 @@ EXPECTED_PLAYER_COMMANDS = {
     "angelicdrop", "relicfilter", "orbpickup", "satmods", "petquest",
     # The Soul Spurn/Purgatory outline (issue #11, Track B), added alongside.
     "toggleborder",
+    # The Soul Spurn double-cast re-cast guard (issue #11, Track A).
+    "toggleguard",
 }
 
 

@@ -201,6 +201,10 @@ DEFAULTS = {
     # toggles; offline only, no co-op claim (AGENTS.md "this is the rule of
     # ForgePact").
     "mod_toggle_indicator": False,
+    # Stops the double-cast proc from re-casting Soul Spurn on its own (issue
+    # #11, Track A), so a proc no longer flips the toggle straight back. Off
+    # by default; offline only, like every mod here.
+    "mod_toggle_guard": False,
     # Monster Rarity: the share of normal monsters raised to Rare and to Ancient
     # (percent each, together at most 100; the rest stay normal).
     "rarity_rare": 0,
@@ -740,6 +744,10 @@ def build_cmds(cfg: dict) -> list:
         # Safe to send at launch: DrawHudBuffs is already hooked at init;
         # this only flips an atomic read at the top of the existing draw.
         out.append("toggleborder 1")
+    if cfg.get("mod_toggle_guard", False):
+        # Safe to send at launch, like relicfilter: `toggleguard 1` only arms
+        # the guard, and the plugin installs its hook once a player exists.
+        out.append("toggleguard 1")
     rare, ancient = rarity_setting(cfg)
     if rare > 0 or ancient > 0:
         out.append(f"rarity {rare} {ancient}")
@@ -1718,7 +1726,7 @@ class H(BaseHTTPRequestHandler):
                     # moved wins and the other gives way
                     other = "rarity_ancient" if key == "rarity_rare" else "rarity_rare"
                     cfg[other] = min(_pct(cfg.get(other, 0)), 100 - cfg[key])
-                elif key in ("density_on", "auto_apply", "map_reveal", "map_reveal_packs", "headhunter", "tyrant", "beacon", "mod_filter_max_relics", "mod_orb_pickup_radius", "mod_pet_quest_pickup", "mod_toggle_indicator"):
+                elif key in ("density_on", "auto_apply", "map_reveal", "map_reveal_packs", "headhunter", "tyrant", "beacon", "mod_filter_max_relics", "mod_orb_pickup_radius", "mod_pet_quest_pickup", "mod_toggle_indicator", "mod_toggle_guard"):
                     cfg[key] = bool(val)
                 save_cfg(cfg)
                 live = ""
@@ -1769,6 +1777,8 @@ class H(BaseHTTPRequestHandler):
                         send_cmds([f"petquest {1 if cfg['mod_pet_quest_pickup'] else 0}"], cfg)
                     elif key == "mod_toggle_indicator":
                         send_cmds([f"toggleborder {1 if cfg['mod_toggle_indicator'] else 0}"], cfg)
+                    elif key == "mod_toggle_guard":
+                        send_cmds([f"toggleguard {1 if cfg['mod_toggle_guard'] else 0}"], cfg)
                     elif key in ("rarity_rare", "rarity_ancient"):
                         # Always explicit: "rarity off" returns a live hook to vanilla.
                         send_cmds([rarity_cmd(cfg)], cfg)
@@ -2235,6 +2245,11 @@ input[type=range]::-webkit-slider-thumb{appearance:none;width:17px;height:17px;b
         <label class="switch"><input type="checkbox" id="mod_toggle_indicator"><span class="sl"></span></label>
         <span class="val" id="mtival">off</span>
     </div>
+    <div class="row" style="border:none">
+        <span class="lbl" style="width:auto;flex:1">Stop double cast re-casting Soul Spurn<br><span style="font-size:11px;color:#8f816e;font-weight:normal">For the White Mage's Soul Spurn: a double cast proc can cast Soul Spurn a second time on its own, which flips the Purgatory toggle straight back to where it was before your press. With this on, that extra cast is skipped, so the toggle stays the way you set it. Your own presses are never affected. Also skips the double cast's extra Soul Spurn when you have no Purgatory.</span></span>
+        <label class="switch"><input type="checkbox" id="mod_toggle_guard"><span class="sl"></span></label>
+        <span class="val" id="mtgval">off</span>
+    </div>
 </div>
 
 <div class="card tab-card" data-tab="mods" id="itemsCard">
@@ -2536,6 +2551,10 @@ async function boot(){
     document.getElementById('mod_toggle_indicator').checked=mti;
     document.getElementById('mtival').textContent=mti?'on':'off';
     document.getElementById('mtival').className='val '+(mti?'':'off');
+    const mtg=!!c.mod_toggle_guard;
+    document.getElementById('mod_toggle_guard').checked=mtg;
+    document.getElementById('mtgval').textContent=mtg?'on':'off';
+    document.getElementById('mtgval').className='val '+(mtg?'':'off');
   rarityLoad(c);
   document.getElementById('hhval').className='val '+(hh?'':'off');
   document.getElementById('exepath').value=c.game_exe||'';
@@ -2707,6 +2726,11 @@ function bind(){
         const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_toggle_indicator',value:e.target.checked})});
         const v=document.getElementById('mtival');v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
         toast('Soul Spurn outline '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
+    };
+    document.getElementById('mod_toggle_guard').onchange=async(e)=>{
+        const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_toggle_guard',value:e.target.checked})});
+        const v=document.getElementById('mtgval');v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
+        toast('Soul Spurn double cast guard '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
     };
   { const el=document.getElementById('angelic_items');
     el.oninput=angelicPaint;
@@ -2905,9 +2929,9 @@ function refreshSavedControls(){
   });
   for(const [range] of painted)if(range.oninput)range.oninput();
   for(const [range,typed] of painted){if(typed===undefined)delete range.dataset.typed;else range.dataset.typed=typed}
-  const booleans={den_on:'density_on',autoapply:'auto_apply',enemyspeed_ct:'enemy_speed_ct',map_reveal:'map_reveal',map_reveal_packs:'map_reveal_packs',headhunter:'headhunter',tyrant:'tyrant',beacon:'beacon',mod_filter_max_relics:'mod_filter_max_relics',mod_orb_pickup_radius:'mod_orb_pickup_radius',mod_pet_quest_pickup:'mod_pet_quest_pickup',mod_toggle_indicator:'mod_toggle_indicator'};
+  const booleans={den_on:'density_on',autoapply:'auto_apply',enemyspeed_ct:'enemy_speed_ct',map_reveal:'map_reveal',map_reveal_packs:'map_reveal_packs',headhunter:'headhunter',tyrant:'tyrant',beacon:'beacon',mod_filter_max_relics:'mod_filter_max_relics',mod_orb_pickup_radius:'mod_orb_pickup_radius',mod_pet_quest_pickup:'mod_pet_quest_pickup',mod_toggle_indicator:'mod_toggle_indicator',mod_toggle_guard:'mod_toggle_guard'};
   for(const [id,key] of Object.entries(booleans))document.getElementById(id).checked=!!c[key];
-  for(const [id,key] of Object.entries({hhval:'headhunter',tyval:'tyrant',beval:'beacon',mfmrval:'mod_filter_max_relics',morval:'mod_orb_pickup_radius',mpqpval:'mod_pet_quest_pickup',mtival:'mod_toggle_indicator',mapval:'map_reveal'})){
+  for(const [id,key] of Object.entries({hhval:'headhunter',tyval:'tyrant',beval:'beacon',mfmrval:'mod_filter_max_relics',morval:'mod_orb_pickup_radius',mpqpval:'mod_pet_quest_pickup',mtival:'mod_toggle_indicator',mtgval:'mod_toggle_guard',mapval:'map_reveal'})){
     const value=document.getElementById(id);value.textContent=c[key]?'on':'off';value.className='val '+(c[key]?'':'off');
   }
   document.getElementById('enemyspeedctval').textContent=c.enemy_speed_ct?'CT only':'all zones';
