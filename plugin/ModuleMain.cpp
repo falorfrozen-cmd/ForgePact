@@ -3445,7 +3445,7 @@ static bool RefreshItemHash(const RValue& item, std::string* howOut = nullptr)
     try {
         RValue res;
         CInstance* self = (CInstance*)item.m_Object;
-        AurieStatus st = g_Yytk->CallGameScriptEx(res, HeroSiege::Scripts::gml_Script_GenerateItemHash_anon_4645_s_ItemInstanceStruct_InventoryV2Funcs.data(), self, self, {});
+        AurieStatus st = g_Yytk->CallGameScriptEx(res, HeroSiege::Scripts::gml_Script_GenerateItemHash_anon_4791_s_ItemInstanceStruct_InventoryV2Funcs.data(), self, self, {});
         if (AurieSuccess(st)) { if (howOut) *howOut = how + "+direct"; return true; }
         how += "+direct-fail";
     } catch (...) { how += "+direct-exc"; }
@@ -3458,7 +3458,7 @@ static bool RefreshItemHash(const RValue& item, std::string* howOut = nullptr)
     // below is not a guard against a bad pointer - the check has to happen first.
     try {
         PVOID p = nullptr;
-        if (AurieSuccess(g_Yytk->GetNamedRoutinePointer(HeroSiege::Scripts::gml_Script_GenerateItemHash_anon_4645_s_ItemInstanceStruct_InventoryV2Funcs.data(), &p)) && p) {
+        if (AurieSuccess(g_Yytk->GetNamedRoutinePointer(HeroSiege::Scripts::gml_Script_GenerateItemHash_anon_4791_s_ItemInstanceStruct_InventoryV2Funcs.data(), &p)) && p) {
             CScript* sc = reinterpret_cast<CScript*>(p);
             PFUNC_YYGMLScript fnp = (sc && sc->m_Functions) ? sc->m_Functions->m_ScriptFunction : nullptr;
             if (fnp) {
@@ -6337,28 +6337,34 @@ CITRACE_HOOK(GetQuestHoverDescription)
 // whatever shared loot-interaction system also drives Coin_obj /
 // Loot_Ground_obj. Traced together since MEASURED 2026-09-10 already ruled
 // out all five named candidates above on a real collect (0 calls each).
-CITRACE_HOOK_NAMED(Anon1400, "anon@1400@gml_Object_Quest_Object_Parent_obj_Create_0")
-CITRACE_HOOK_NAMED(Anon1584, "anon@1584@gml_Object_Quest_Object_Parent_obj_Create_0")
-CITRACE_HOOK_NAMED(Anon2113, "anon@2113@gml_Object_Quest_Object_Parent_obj_Create_0")
-CITRACE_HOOK_NAMED(Anon2786, "anon@2786@gml_Object_Quest_Object_Parent_obj_Create_0")
-CITRACE_HOOK_NAMED(Anon3858, "anon@3858@gml_Object_Quest_Object_Parent_obj_Create_0")
-CITRACE_HOOK_NAMED(Anon4737, "anon@4737@gml_Object_Quest_Object_Parent_obj_Create_0")
-CITRACE_HOOK_NAMED(Anon5164, "anon@5164@gml_Object_Quest_Object_Parent_obj_Create_0")
+// Updated 2026-09-18: the string literals below name the current game's
+// closures (hs-game-sdk regenerated against a newer data.win); the C++
+// identifiers (Anon1400, PmAnon1940, ...) and the macro-generated
+// g_OrigCi_*/g_CiCalls_*/Hook_Ci_* names built from them keep the numbers
+// they were first measured under, so renaming every reference was rejected -
+// see release-notes-v1.4.2.md.
+CITRACE_HOOK_NAMED(Anon1400, "anon@1468@gml_Object_Quest_Object_Parent_obj_Create_0")
+CITRACE_HOOK_NAMED(Anon1584, "anon@1661@gml_Object_Quest_Object_Parent_obj_Create_0")
+CITRACE_HOOK_NAMED(Anon2113, "anon@2209@gml_Object_Quest_Object_Parent_obj_Create_0")
+CITRACE_HOOK_NAMED(Anon2786, "anon@2910@gml_Object_Quest_Object_Parent_obj_Create_0")
+CITRACE_HOOK_NAMED(Anon3858, "anon@4014@gml_Object_Quest_Object_Parent_obj_Create_0")
+CITRACE_HOOK_NAMED(Anon4737, "anon@4922@gml_Object_Quest_Object_Parent_obj_Create_0")
+CITRACE_HOOK_NAMED(Anon5164, "anon@5366@gml_Object_Quest_Object_Parent_obj_Create_0")
 // MEASURED 2026-09-10, session 4: keyboard_check_pressed(70=F) fires with
 // Self=Profile_Manager_obj, not the quest item or the player - so whatever
 // this object does next with that "F just pressed" result is the real
 // dispatch point. Same technique as the Quest_Object_Parent_obj anons: every
 // script-table entry inside Profile_Manager_obj's own Create event.
-CITRACE_HOOK_NAMED(PmAnon1940, "anon@1940@gml_Object_Profile_Manager_obj_Create_0")
-CITRACE_HOOK_NAMED(PmAnon2426, "anon@2426@gml_Object_Profile_Manager_obj_Create_0")
-CITRACE_HOOK_NAMED(PmAnon3331, "anon@3331@gml_Object_Profile_Manager_obj_Create_0")
-CITRACE_HOOK_NAMED(PmAnon5032, "anon@5032@gml_Object_Profile_Manager_obj_Create_0")
-CITRACE_HOOK_NAMED(PmAnon5174, "anon@5174@gml_Object_Profile_Manager_obj_Create_0")
-CITRACE_HOOK_NAMED(PmAnon5646, "anon@5646@gml_Object_Profile_Manager_obj_Create_0")
-CITRACE_HOOK_NAMED(PmAnon6344, "anon@6344@gml_Object_Profile_Manager_obj_Create_0")
-CITRACE_HOOK_NAMED(PmAnon6662, "anon@6662@gml_Object_Profile_Manager_obj_Create_0")
-CITRACE_HOOK_NAMED(PmAnon7920, "anon@7920@gml_Object_Profile_Manager_obj_Create_0")
-CITRACE_HOOK_NAMED(PmAnon9698, "anon@9698@gml_Object_Profile_Manager_obj_Create_0")
+CITRACE_HOOK_NAMED(PmAnon1940, "anon@2012@gml_Object_Profile_Manager_obj_Create_0")
+CITRACE_HOOK_NAMED(PmAnon2426, "anon@2520@gml_Object_Profile_Manager_obj_Create_0")
+CITRACE_HOOK_NAMED(PmAnon3331, "anon@3454@gml_Object_Profile_Manager_obj_Create_0")
+CITRACE_HOOK_NAMED(PmAnon5032, "anon@5201@gml_Object_Profile_Manager_obj_Create_0")
+CITRACE_HOOK_NAMED(PmAnon5174, "anon@5349@gml_Object_Profile_Manager_obj_Create_0")
+CITRACE_HOOK_NAMED(PmAnon5646, "anon@5835@gml_Object_Profile_Manager_obj_Create_0")
+CITRACE_HOOK_NAMED(PmAnon6344, "anon@6549@gml_Object_Profile_Manager_obj_Create_0")
+CITRACE_HOOK_NAMED(PmAnon6662, "anon@6879@gml_Object_Profile_Manager_obj_Create_0")
+CITRACE_HOOK_NAMED(PmAnon7920, "anon@8168@gml_Object_Profile_Manager_obj_Create_0")
+CITRACE_HOOK_NAMED(PmAnon9698, "anon@9994@gml_Object_Profile_Manager_obj_Create_0")
 // MEASURED 2026-09-10, session 7: HookOneScript (used for every hook above)
 // always prepends "gml_Script_" - correct for script assets and the anon
 // closures above, but an object's own built-in event code is named
@@ -6761,25 +6767,25 @@ static void InstallCiTraceHooks()
     HookOneScriptTable("KeyboardMouseInput",     "fp_ci_kmi",  (PVOID)Hook_Ci_KeyboardMouseInput,     &g_OrigCi_KeyboardMouseInput);
     HookOneScriptTable("RefreshMouseMove",       "fp_ci_rmm",  (PVOID)Hook_Ci_RefreshMouseMove,       &g_OrigCi_RefreshMouseMove);
     HookOneScriptTable("GetQuestHoverDescription", "fp_ci_gqhd", (PVOID)Hook_Ci_GetQuestHoverDescription, &g_OrigCi_GetQuestHoverDescription);
-    HookOneScriptTable("anon@1400@gml_Object_Quest_Object_Parent_obj_Create_0", "fp_ci_a1400", (PVOID)Hook_Ci_Anon1400, &g_OrigCi_Anon1400);
-    HookOneScriptTable("anon@1584@gml_Object_Quest_Object_Parent_obj_Create_0", "fp_ci_a1584", (PVOID)Hook_Ci_Anon1584, &g_OrigCi_Anon1584);
-    HookOneScriptTable("anon@2113@gml_Object_Quest_Object_Parent_obj_Create_0", "fp_ci_a2113", (PVOID)Hook_Ci_Anon2113, &g_OrigCi_Anon2113);
-    HookOneScriptTable("anon@2786@gml_Object_Quest_Object_Parent_obj_Create_0", "fp_ci_a2786", (PVOID)Hook_Ci_Anon2786, &g_OrigCi_Anon2786);
-    HookOneScriptTable("anon@3858@gml_Object_Quest_Object_Parent_obj_Create_0", "fp_ci_a3858", (PVOID)Hook_Ci_Anon3858, &g_OrigCi_Anon3858);
-    HookOneScriptTable("anon@4737@gml_Object_Quest_Object_Parent_obj_Create_0", "fp_ci_a4737", (PVOID)Hook_Ci_Anon4737, &g_OrigCi_Anon4737);
-    HookOneScriptTable("anon@5164@gml_Object_Quest_Object_Parent_obj_Create_0", "fp_ci_a5164", (PVOID)Hook_Ci_Anon5164, &g_OrigCi_Anon5164);
+    HookOneScriptTable("anon@1468@gml_Object_Quest_Object_Parent_obj_Create_0", "fp_ci_a1400", (PVOID)Hook_Ci_Anon1400, &g_OrigCi_Anon1400);
+    HookOneScriptTable("anon@1661@gml_Object_Quest_Object_Parent_obj_Create_0", "fp_ci_a1584", (PVOID)Hook_Ci_Anon1584, &g_OrigCi_Anon1584);
+    HookOneScriptTable("anon@2209@gml_Object_Quest_Object_Parent_obj_Create_0", "fp_ci_a2113", (PVOID)Hook_Ci_Anon2113, &g_OrigCi_Anon2113);
+    HookOneScriptTable("anon@2910@gml_Object_Quest_Object_Parent_obj_Create_0", "fp_ci_a2786", (PVOID)Hook_Ci_Anon2786, &g_OrigCi_Anon2786);
+    HookOneScriptTable("anon@4014@gml_Object_Quest_Object_Parent_obj_Create_0", "fp_ci_a3858", (PVOID)Hook_Ci_Anon3858, &g_OrigCi_Anon3858);
+    HookOneScriptTable("anon@4922@gml_Object_Quest_Object_Parent_obj_Create_0", "fp_ci_a4737", (PVOID)Hook_Ci_Anon4737, &g_OrigCi_Anon4737);
+    HookOneScriptTable("anon@5366@gml_Object_Quest_Object_Parent_obj_Create_0", "fp_ci_a5164", (PVOID)Hook_Ci_Anon5164, &g_OrigCi_Anon5164);
     HookBuiltin("keyboard_check_pressed",     "fp_ci_kcp",  (PVOID)Hook_Ci_KeyboardCheckPressed,     &g_OrigCi_KeyboardCheckPressed);
     HookBuiltin("mouse_check_button_pressed", "fp_ci_mcbp", (PVOID)Hook_Ci_MouseCheckButtonPressed,  &g_OrigCi_MouseCheckButtonPressed);
-    HookOneScriptTable("anon@1940@gml_Object_Profile_Manager_obj_Create_0", "fp_ci_p1940", (PVOID)Hook_Ci_PmAnon1940, &g_OrigCi_PmAnon1940);
-    HookOneScriptTable("anon@2426@gml_Object_Profile_Manager_obj_Create_0", "fp_ci_p2426", (PVOID)Hook_Ci_PmAnon2426, &g_OrigCi_PmAnon2426);
-    HookOneScriptTable("anon@3331@gml_Object_Profile_Manager_obj_Create_0", "fp_ci_p3331", (PVOID)Hook_Ci_PmAnon3331, &g_OrigCi_PmAnon3331);
-    HookOneScriptTable("anon@5032@gml_Object_Profile_Manager_obj_Create_0", "fp_ci_p5032", (PVOID)Hook_Ci_PmAnon5032, &g_OrigCi_PmAnon5032);
-    HookOneScriptTable("anon@5174@gml_Object_Profile_Manager_obj_Create_0", "fp_ci_p5174", (PVOID)Hook_Ci_PmAnon5174, &g_OrigCi_PmAnon5174);
-    HookOneScriptTable("anon@5646@gml_Object_Profile_Manager_obj_Create_0", "fp_ci_p5646", (PVOID)Hook_Ci_PmAnon5646, &g_OrigCi_PmAnon5646);
-    HookOneScriptTable("anon@6344@gml_Object_Profile_Manager_obj_Create_0", "fp_ci_p6344", (PVOID)Hook_Ci_PmAnon6344, &g_OrigCi_PmAnon6344);
-    HookOneScriptTable("anon@6662@gml_Object_Profile_Manager_obj_Create_0", "fp_ci_p6662", (PVOID)Hook_Ci_PmAnon6662, &g_OrigCi_PmAnon6662);
-    HookOneScriptTable("anon@7920@gml_Object_Profile_Manager_obj_Create_0", "fp_ci_p7920", (PVOID)Hook_Ci_PmAnon7920, &g_OrigCi_PmAnon7920);
-    HookOneScriptTable("anon@9698@gml_Object_Profile_Manager_obj_Create_0", "fp_ci_p9698", (PVOID)Hook_Ci_PmAnon9698, &g_OrigCi_PmAnon9698);
+    HookOneScriptTable("anon@2012@gml_Object_Profile_Manager_obj_Create_0", "fp_ci_p1940", (PVOID)Hook_Ci_PmAnon1940, &g_OrigCi_PmAnon1940);
+    HookOneScriptTable("anon@2520@gml_Object_Profile_Manager_obj_Create_0", "fp_ci_p2426", (PVOID)Hook_Ci_PmAnon2426, &g_OrigCi_PmAnon2426);
+    HookOneScriptTable("anon@3454@gml_Object_Profile_Manager_obj_Create_0", "fp_ci_p3331", (PVOID)Hook_Ci_PmAnon3331, &g_OrigCi_PmAnon3331);
+    HookOneScriptTable("anon@5201@gml_Object_Profile_Manager_obj_Create_0", "fp_ci_p5032", (PVOID)Hook_Ci_PmAnon5032, &g_OrigCi_PmAnon5032);
+    HookOneScriptTable("anon@5349@gml_Object_Profile_Manager_obj_Create_0", "fp_ci_p5174", (PVOID)Hook_Ci_PmAnon5174, &g_OrigCi_PmAnon5174);
+    HookOneScriptTable("anon@5835@gml_Object_Profile_Manager_obj_Create_0", "fp_ci_p5646", (PVOID)Hook_Ci_PmAnon5646, &g_OrigCi_PmAnon5646);
+    HookOneScriptTable("anon@6549@gml_Object_Profile_Manager_obj_Create_0", "fp_ci_p6344", (PVOID)Hook_Ci_PmAnon6344, &g_OrigCi_PmAnon6344);
+    HookOneScriptTable("anon@6879@gml_Object_Profile_Manager_obj_Create_0", "fp_ci_p6662", (PVOID)Hook_Ci_PmAnon6662, &g_OrigCi_PmAnon6662);
+    HookOneScriptTable("anon@8168@gml_Object_Profile_Manager_obj_Create_0", "fp_ci_p7920", (PVOID)Hook_Ci_PmAnon7920, &g_OrigCi_PmAnon7920);
+    HookOneScriptTable("anon@9994@gml_Object_Profile_Manager_obj_Create_0", "fp_ci_p9698", (PVOID)Hook_Ci_PmAnon9698, &g_OrigCi_PmAnon9698);
     // Raw object-event names (no "gml_Script_" prefix) - see the comment
     // above these hooks' CITRACE_HOOK_NAMED declarations for why this is a
     // genuinely new code path, not a repeat of anything tried before.
@@ -6836,7 +6842,7 @@ static void CiTraceStats()
     sprintf_s(b, "  [quest-object-filtered] instance_destroy=%ld instance_deactivate_object=%ld instance_deactivate_all=%ld instance_change=%ld variable_instance_set(marker names)=%ld",
               g_CiCalls_InstanceDestroy, g_CiCalls_InstanceDeactivateObject, g_CiCalls_InstanceDeactivateAll, g_CiCalls_InstanceChange, g_CiCalls_VariableInstanceSet);
     Out(b);
-    sprintf_s(b, "  Quest_Object_Parent_obj Create anons: 1400=%ld 1584=%ld 2113=%ld 2786=%ld 3858=%ld 4737=%ld 5164=%ld",
+    sprintf_s(b, "  Quest_Object_Parent_obj Create anons: 1468=%ld 1661=%ld 2209=%ld 2910=%ld 4014=%ld 4922=%ld 5366=%ld",
               g_CiCalls_Anon1400, g_CiCalls_Anon1584, g_CiCalls_Anon2113, g_CiCalls_Anon2786,
               g_CiCalls_Anon3858, g_CiCalls_Anon4737, g_CiCalls_Anon5164);
     Out(b);
@@ -6844,10 +6850,10 @@ static void CiTraceStats()
               g_OrigCi_KeyboardCheckPressed ? "yes" : "no", g_CiCalls_KeyboardCheckPressed,
               g_OrigCi_MouseCheckButtonPressed ? "yes" : "no", g_CiCalls_MouseCheckButtonPressed);
     Out(b);
-    sprintf_s(b, "  Profile_Manager_obj Create anons: 1940=%ld 2426=%ld 3331=%ld 5032=%ld 5174=%ld",
+    sprintf_s(b, "  Profile_Manager_obj Create anons: 2012=%ld 2520=%ld 3454=%ld 5201=%ld 5349=%ld",
               g_CiCalls_PmAnon1940, g_CiCalls_PmAnon2426, g_CiCalls_PmAnon3331, g_CiCalls_PmAnon5032, g_CiCalls_PmAnon5174);
     Out(b);
-    sprintf_s(b, "  Profile_Manager_obj Create anons (cont.): 5646=%ld 6344=%ld 6662=%ld 7920=%ld 9698=%ld",
+    sprintf_s(b, "  Profile_Manager_obj Create anons (cont.): 5835=%ld 6549=%ld 6879=%ld 8168=%ld 9994=%ld",
               g_CiCalls_PmAnon5646, g_CiCalls_PmAnon6344, g_CiCalls_PmAnon6662, g_CiCalls_PmAnon7920, g_CiCalls_PmAnon9698);
     Out(b);
     sprintf_s(b, "  [raw object-event] Qo.Step=%ld Qo.Destroy=%ld Qo.Create=%ld Pm.Step=%ld Player.Step=%ld Player.Mouse3=%ld",
@@ -9234,13 +9240,13 @@ static constexpr long kCiNatLogBudget = 6;   // per target, so one hot hook cann
 CINATIVE_HOOK(PlayerMouseAction, "PlayerMouseAction")
 CINATIVE_HOOK(CheckPlayerInteraction, "CheckPlayerInteraction")
 CINATIVE_HOOK(UpdateQuest, "update_quest")
-CINATIVE_HOOK(Questpickup, "m_Questpickup(anon@2786)")
-CINATIVE_HOOK(QuestInteract, "m_QuestInteract(anon@3858)")
-CINATIVE_HOOK(QuestActivate, "m_QuestActivate(anon@1584)")
-CINATIVE_HOOK(QuestDestructible, "m_QuestDestructible(anon@2113)")
-CINATIVE_HOOK(QuestActive, "m_QuestActive(anon@4737)")
-CINATIVE_HOOK(QuestUseKey, "m_QuestUseKey(anon@1400)")
-CINATIVE_HOOK(LootGroundDeActiveStep, "m_LootGroundDeActiveStep(anon@5164)")
+CINATIVE_HOOK(Questpickup, "m_Questpickup(anon@2910)")
+CINATIVE_HOOK(QuestInteract, "m_QuestInteract(anon@4014)")
+CINATIVE_HOOK(QuestActivate, "m_QuestActivate(anon@1661)")
+CINATIVE_HOOK(QuestDestructible, "m_QuestDestructible(anon@2209)")
+CINATIVE_HOOK(QuestActive, "m_QuestActive(anon@4922)")
+CINATIVE_HOOK(QuestUseKey, "m_QuestUseKey(anon@1468)")
+CINATIVE_HOOK(LootGroundDeActiveStep, "m_LootGroundDeActiveStep(anon@5366)")
 #undef CINATIVE_HOOK
 
 struct CiNatTarget {
@@ -9268,19 +9274,19 @@ static CiNatTarget g_CiNatTargets[] = {
                 &g_OrigCi_CheckPlayerInteraction, &g_CiCalls_CheckPlayerInteraction),
     CINAT_ENTRY(UpdateQuest, "update_quest", "gml_Script_update_quest",
                 nullptr, nullptr),
-    CINAT_ENTRY(Questpickup, "m_Questpickup", "gml_Script_anon@2786@gml_Object_Quest_Object_Parent_obj_Create_0",
+    CINAT_ENTRY(Questpickup, "m_Questpickup", "gml_Script_anon@2910@gml_Object_Quest_Object_Parent_obj_Create_0",
                 &g_OrigCi_Anon2786, &g_CiCalls_Anon2786),
-    CINAT_ENTRY(QuestInteract, "m_QuestInteract", "gml_Script_anon@3858@gml_Object_Quest_Object_Parent_obj_Create_0",
+    CINAT_ENTRY(QuestInteract, "m_QuestInteract", "gml_Script_anon@4014@gml_Object_Quest_Object_Parent_obj_Create_0",
                 &g_OrigCi_Anon3858, &g_CiCalls_Anon3858),
-    CINAT_ENTRY(QuestActivate, "m_QuestActivate", "gml_Script_anon@1584@gml_Object_Quest_Object_Parent_obj_Create_0",
+    CINAT_ENTRY(QuestActivate, "m_QuestActivate", "gml_Script_anon@1661@gml_Object_Quest_Object_Parent_obj_Create_0",
                 &g_OrigCi_Anon1584, &g_CiCalls_Anon1584),
-    CINAT_ENTRY(QuestDestructible, "m_QuestDestructible", "gml_Script_anon@2113@gml_Object_Quest_Object_Parent_obj_Create_0",
+    CINAT_ENTRY(QuestDestructible, "m_QuestDestructible", "gml_Script_anon@2209@gml_Object_Quest_Object_Parent_obj_Create_0",
                 &g_OrigCi_Anon2113, &g_CiCalls_Anon2113),
-    CINAT_ENTRY(QuestActive, "m_QuestActive", "gml_Script_anon@4737@gml_Object_Quest_Object_Parent_obj_Create_0",
+    CINAT_ENTRY(QuestActive, "m_QuestActive", "gml_Script_anon@4922@gml_Object_Quest_Object_Parent_obj_Create_0",
                 &g_OrigCi_Anon4737, &g_CiCalls_Anon4737),
-    CINAT_ENTRY(QuestUseKey, "m_QuestUseKey", "gml_Script_anon@1400@gml_Object_Quest_Object_Parent_obj_Create_0",
+    CINAT_ENTRY(QuestUseKey, "m_QuestUseKey", "gml_Script_anon@1468@gml_Object_Quest_Object_Parent_obj_Create_0",
                 &g_OrigCi_Anon1400, &g_CiCalls_Anon1400),
-    CINAT_ENTRY(LootGroundDeActiveStep, "m_LootGroundDeActiveStep", "gml_Script_anon@5164@gml_Object_Quest_Object_Parent_obj_Create_0",
+    CINAT_ENTRY(LootGroundDeActiveStep, "m_LootGroundDeActiveStep", "gml_Script_anon@5366@gml_Object_Quest_Object_Parent_obj_Create_0",
                 &g_OrigCi_Anon5164, &g_CiCalls_Anon5164),
 };
 #undef CINAT_ENTRY
@@ -10205,7 +10211,7 @@ static RValue& Hook_TraceCreatorCheckSpawn(CInstance* S, CInstance* O, RValue& R
 static void InstallSpawnTraceHook()
 {
     if (g_OrigCreatorCheckSpawn) return;
-    HookOneScriptTable("anon@849@gml_Object_Enemy_Creator_obj_Create_0", "bp_tr_checkspawn", (PVOID)Hook_TraceCreatorCheckSpawn, &g_OrigCreatorCheckSpawn);
+    HookOneScriptTable("anon@886@gml_Object_Enemy_Creator_obj_Create_0", "bp_tr_checkspawn", (PVOID)Hook_TraceCreatorCheckSpawn, &g_OrigCreatorCheckSpawn);
 }
 #endif
 #ifndef FORGEPACT_RELEASE
@@ -13049,25 +13055,23 @@ static const SpecialContent kSpecial[] = {
     { "cursedorb",    "Spawn_Cursed_Orb_obj",     7, 14.0,  false },
     { "summonportal", "Spawn_Summon_Portal_obj", -1, 0.0,   false },
     { "chaospillars", "Spawn_Chaos_Pillars_obj", -1, 0.0,   false },
-    // Chaos Tower: sans = taban(zorluk) + eSt[6]; zar random(zrmb) < floor(sans)*100.
-    // Shadow Realm: sans = 13 + eSt[9]; ayni zar.  eSt degeri sansi %100'e tamamlar.
+    // Iki mekanik de sansini ayni tur zarla dener; Chaos Tower'in sansi zorluga
+    // bagli bir tabandan, Shadow Realm'inki sabit bir tabandan gelir ve ikisine
+    // de eSt degeri eklenir.  Buradaki eSt degeri sansi %100'e tamamlar.
     { "chaostower",   "Spawn_Chaos_Tower_obj",    6, 100.0, true  },
     { "shadowrealm",  "Spawn_Shadow_Realm_obj",   9, 87.0,  true  },
 };
 
 // --- Shadow Realm / Chaos Tower "bir kere" kapilari ------------------------
-// Statik cozumleme (decompile, 2026-09-03):
-//   anon@119@gml_Object_Spawn_Shadow_Realm_obj_Create_0 (m_activateMechanic)
-//     GPV(gDataProtected[68]) >= 2            (zorluk kapisi)
-//     Controller_obj.shadowRealmSpawned == 0  (Portal_Shadow_Realm_obj Create true yapar,
-//                                              yalnizca kosu sifirlaninca geri doner)
-//     eSt[0] <= 0 ; random(zrmb) < (13 + max(eSt[9],0)) * 100 ; sCP(Portal_Shadow_Realm_obj)
-//   anon@97@gml_Object_Spawn_Chaos_Tower_obj_Create_0 (m_activateMechanic)
-//     GPV(gDataProtected[68]) >= 1            (zorluk; 0 iken zar atilmiyor - canli olculdu)
-//     GPV(Controller_obj.chaosTowerStarted) == 0
-//     GPV(Controller_obj.chaosTowerSpawnZone) == -1   (spawn sonrasi = oda; m_ChaosTowerReset -1 yapar)
-//     eSt[0] <= 0 ; codex/buff ; sans = taban(GPV 68, GPV 251) + eSt[6] ; RunningHost()
-//     -> instance_create_layer(Chaos_Tower_obj) ; SPV(chaosTowerSpawnZone, room)
+// Ne biliyoruz (kendi sozlerimizle; oyunun kodu burada yok):
+// Iki mekanigin activate adimi da ayni uc kapidan gecer - bir zorluk esigi
+// (asagida, canli olculdu), Controller_obj uzerinde kosu basina bir "zaten
+// cikti" durumu ve bir sans zari.  Shadow Realm'de bu durum
+// shadowRealmSpawned'dir: portal yaratilinca kurulur, yalnizca kosu
+// sifirlaninca temizlenir.  Chaos Tower'da chaosTowerStarted ile
+// chaosTowerSpawnZone'dur (bos hali -1; kule ciktiginda oda degerini alir,
+// kulenin reset'i -1'e dondurur).  Kancalar closure'lari
+// HeroSiege::Scripts sabitleriyle, isimle bulur.
 // Marker'i cogaltmak tek basina yetmez: ilk kopya bayragi kapatir, digerleri
 // sessizce cikar.  Bu kancalar, ozellik ACIKKEN (marker carpani > 1) her
 // activate cagrisindan hemen once bayraklari sifirlar; yer secimi, zar, ag
@@ -13214,9 +13218,9 @@ static void InstallMechGateHooks()
     // The names now come from hs-game-sdk, so a closure the game moves fails
     // the build once the SDK is regenerated, rather than only failing this
     // lookup silently at runtime.
-    HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_119_gml_Object_Spawn_Shadow_Realm_obj_Create_0),
+    HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_126_gml_Object_Spawn_Shadow_Realm_obj_Create_0),
                   "fp_sr_gate", (PVOID)Hook_ShadowRealmGate, &g_Orig_ShadowRealmGate);
-    HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_97_gml_Object_Spawn_Chaos_Tower_obj_Create_0),
+    HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_102_gml_Object_Spawn_Chaos_Tower_obj_Create_0),
                   "fp_ct_gate", (PVOID)Hook_ChaosTowerGate, &g_Orig_ChaosTowerGate);
 }
 
@@ -16564,7 +16568,7 @@ static void RunCommand(const std::string& line)
         if (v == "off") { g_AbyssTraceOn = false; Out("abysstrace: KAPALI"); }
         else {
             if (!g_Orig_AbyssMech)
-                HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_119_gml_Object_Spawn_Abyss_obj_Create_0),
+                HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_126_gml_Object_Spawn_Abyss_obj_Create_0),
                               "bp_abyss", (PVOID)Hook_AbyssMech, &g_Orig_AbyssMech);
             if (!g_Orig_GPV_Trace)
                 HookOneScript("GPV", "bp_gpvtrace", (PVOID)Hook_GPV_Trace, &g_Orig_GPV_Trace);
@@ -16617,7 +16621,7 @@ static void RunCommand(const std::string& line)
             g_ForceObtain = false; Out("abyssforce: KAPALI");
         } else {
             if (!g_Orig_AbyssMech)
-                HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_119_gml_Object_Spawn_Abyss_obj_Create_0),
+                HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_126_gml_Object_Spawn_Abyss_obj_Create_0),
                               "bp_abyss", (PVOID)Hook_AbyssMech, &g_Orig_AbyssMech);
             if (!g_Orig_Obtain)
                 HookOneScript("IsObtainablePlace", "bp_obtain",

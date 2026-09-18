@@ -1603,6 +1603,13 @@ bayragi okuyor.  Ilk kopya bayragi kapatiyor, kalan kopyalar sessizce cikiyor.
 Eski ctauto/ChaosTowerKur yolu (oyuncunun yanina dogrudan Chaos_Tower_obj)
 bu yuzden gerekmisti; artik gerekmiyor.
 
+## Not (2026-09-18): anon@ numaralari bu derlemeye (2026-09-03) ait
+Asagidaki anon@119 (Shadow Realm, Abyss) ve anon@97 (Chaos Tower) numaralari
+olculdukleri derlemeyi anlatir; degistirilmedi. ForgePact'in yayindaki
+kancalari artik hs-game-sdk'nin guncel uretiminden gelen anon@126
+(Shadow Realm, Abyss) ve anon@102 (Chaos Tower) adlarini kullaniyor - bkz.
+`fix/closure-names-current-game` dalindaki `release-notes-v1.4.2.md`.
+
 ## Shadow Realm  (anon@119@gml_Object_Spawn_Shadow_Realm_obj_Create_0 = m_activateMechanic)
     1. GPV(gDataProtected[68]) >= 2          zorluk (68'i 200+ drop/rarity rutini okur)
     2. Controller_obj.shadowRealmSpawned == 0
