@@ -40,6 +40,14 @@ Vanilla mekanizma bu notta; "vanilla-sadık" mod (seçenek 2) henüz yapılmadı
 - `raredrop angelic <x>`: eski kapı yaması duruyor; şansı çarpmak yerine zar sayısını
   çarpıyor (x99'da sıfır düşüş sorunu böyle çözüldü). Panelde yok.
 - Panel: `angelic_items` (1 = kapalı, 2 = 7500'de 1, her kademe bir zar daha).
+- Note (1.4.3, in English): the 1.3.14 "122 kills = 122 drops" run used the old order - the
+  kill hook called the game's own kill proc first, then read the enemy and spawned the drop
+  with that enemy as self. Players then reported crashes at x100 on 1.4.1. 1.4.3 moves both
+  kill drops (angelic and signature) ahead of the original, so they read and spawn while the
+  enemy is still live, and nothing touches the enemy after the original. This removes a
+  suspected hazard; it is not proven to be the cause, and in-game confirmation is pending.
+  `tests/test_headhunter_dispatch.py` (drop scenarios) and `tests/test_kill_drop_contract.py`
+  pin the order.
 
 ## Sıradaki adım (seçenek 2, vanilla-sadık)
 
