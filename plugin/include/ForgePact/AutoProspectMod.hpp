@@ -17,7 +17,10 @@ namespace ForgePact {
 // tests/auto_prospect_harness.cpp compiles it whole with no runtime stub. The
 // adapter in ModuleMain.cpp stays the only code that touches the game:
 //   - the m_MoveItemToGrid hook calls OnInsert during the step, and never
-//     invokes anything itself;
+//     invokes anything itself. It installs through the both-route
+//     HookOneScript (table swap plus inline detour, the trampoline forwarded
+//     to the hook body), never HookOneScriptTable: compiled GML calls this
+//     closure directly, so a table-only install would ship armed and inert;
 //   - FrameCallback re-finds the window, the ProspectGrid node and the Prospect
 //     button, each by what it is, reads the node's cells into an
 //     AutoProspectView, and calls Decide - so the permission is checked at the

@@ -12013,6 +12013,15 @@ static void PpPressCommand(const std::vector<std::string>& tok)
     try {
         const std::string pending = PpPendingRewrite();
         if (!pending.empty()) { Out(tag + ": refused: " + pending + " - it could rewrite the invoked call; no call made"); return; }
+        // The verdict is the handler's own detoured count across the call.
+        // Without that detour no outcome could tell "nothing ran" from "ran
+        // and did nothing", so the invoke is not made at all.
+        PpTarget* invokedRow = PpFindRow(kPpPressLabel);
+        if (!invokedRow || !invokedRow->installed.load()) {
+            Out(tag + ": refused: " + kPpPressLabel + " is not detoured - run `prospectprobe hook` first"
+                " (invoked= could not be proven); no call made");
+            return;
+        }
         RValue window;
         double windowId = -1;
         if (!PpFindWindow(window) || !PpInstanceId(window, windowId)) {
@@ -12112,9 +12121,8 @@ static void PpPressCommand(const std::vector<std::string>& tok)
                 " A faulting shape crashes the game; relaunch the same build, record the crash and go on.");
         Out(tag + ": contents before=" + PpContentsText(before) + " callable=" + callableText);
 
-        PpTarget* invokedRow = PpFindRow(kPpPressLabel);
         PpTarget* innerRow = PpFindRow(kPpPressInnerLabel);
-        const long invokedBefore = invokedRow ? (long)*invokedRow->calls : 0;
+        const long invokedBefore = (long)*invokedRow->calls;
         const long innerBefore = innerRow ? (long)*innerRow->calls : 0;
         RValue res;
         AurieStatus st = AURIE_EXTERNAL_ERROR;
@@ -12130,6 +12138,7 @@ static void PpPressCommand(const std::vector<std::string>& tok)
         } catch (...) { threw = true; }
         g_PpPressInvoking = false;
         const bool dispatched = !threw && AurieSuccess(st);
+        const long invokedDelta = *invokedRow->calls - invokedBefore;
 
         std::string inner;
         if (!innerRow || !innerRow->installed.load()) inner = std::string("inner=unproven (") + kPpPressInnerLabel + " is not detoured)";
@@ -12147,15 +12156,22 @@ static void PpPressCommand(const std::vector<std::string>& tok)
         PpContents after;
         const bool afterRead = PpGridSnapshot(snapAfter, &nodeAfter) && PpReadContents(nodeAfter, after);
         Out(tag + ": contents after=" + (afterRead ? PpContentsText(after) : "UNREADABLE (" + snapAfter + " " + after.why + ")"));
+        // Every verdict word is decided by the handler's own count, never by
+        // script_execute's status alone: a success status with invoked=NO is
+        // "nothing ran", which must not read as "ran and did nothing".
         std::string verdict;
         if (!afterRead) verdict = "grid UNREADABLE after the call - judge by eye";
         else {
             const bool fpChanged = after.fingerprints != before.fingerprints;
-            if (fpChanged || after.filled != before.filled)
+            const bool gridChanged = fpChanged || after.filled != before.filled;
+            const std::string noDispatch = dispatched ? "" : " - but the call reported no dispatch";
+            if (gridChanged && invokedDelta > 0)
                 verdict = "prospected (filled " + std::to_string(before.filled) + "->" + std::to_string(after.filled)
-                    + (fpChanged ? ", fingerprints changed)" : ", fingerprints unchanged)")
-                    + (dispatched ? "" : " - but the call reported no dispatch");
-            else if (dispatched) verdict = "ran, grid unchanged";
+                    + (fpChanged ? ", fingerprints changed)" : ", fingerprints unchanged)") + noDispatch;
+            else if (gridChanged)
+                verdict = "grid changed but handler not entered (invoked=NO) - not a prospect by this call";
+            else if (invokedDelta > 0) verdict = "handler entered, grid unchanged" + noDispatch;
+            else if (dispatched) verdict = "dispatched but handler not entered (invoked=NO)";
             else verdict = "not dispatched";
         }
         Out(tag + ": " + verdict + ". Confirm by eye whether the item became materials.");

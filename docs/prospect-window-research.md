@@ -1261,11 +1261,20 @@ and say why every refusal happened. Nothing ships unless a shape is recorded her
   `button:<var>` (the button's own array variable), `empty` (a new empty array). Every
   refusal prints `no call made` and comes before any call: no `confirm`, a pending
   override or setat, no open window, no button or an ambiguous one, an unavailable
-  argument source, or a grid with no filled cell. The outcome line carries `st=`,
-  `(threw)`, `res=`, `invoked=` (the `UiAProspectButton` row's count across the call),
-  `inner=` (the `___struct___123@UiAProspectButton` row's), `self=`, `other=`, `route=`
-  and `args=`, then the contents after and a verdict: `prospected (filled K->K',
-  fingerprints changed)`, `ran, grid unchanged` or `not dispatched`.
+  argument source, a grid with no filled cell, or a `UiAProspectButton` row that is not
+  detoured (run `prospectprobe hook` first — without it `invoked=` could not be proven,
+  so no verdict could tell "nothing ran" from "ran and did nothing"). The outcome line
+  carries `st=`, `(threw)`, `res=`, `invoked=` (the `UiAProspectButton` row's count
+  across the call), `inner=` (the `___struct___123@UiAProspectButton` row's), `self=`,
+  `other=`, `route=` and `args=`, then the contents after and a verdict decided by the
+  `invoked=` count, never by `st=` alone:
+  - `prospected (filled K->K', fingerprints changed)` — the grid changed **and** the
+    handler was entered (invoked delta ≥ 1);
+  - `grid changed but handler not entered (invoked=NO) - not a prospect by this call`;
+  - `handler entered, grid unchanged` — invoked delta ≥ 1, no grid change;
+  - `dispatched but handler not entered (invoked=NO)` — `script_execute` reported
+    success, but the handler's body never ran;
+  - `not dispatched` — the call failed or threw and the handler was not entered.
 
 ### Shapes, in order
 
@@ -1279,9 +1288,11 @@ and say why every refusal happened. Nothing ships unless a shape is recorded her
 7. `press exec-index captured self=captured confirm`, only if `captured-self=` printed
    `DIFFERENT`
 
-To ship, a shape must print `prospected`, with `self=found` and an argument source the
-player build can produce on its own — `button:<var>` or `empty` — and the item must be
-seen turning into materials. If only `captured` or `copy` worked, the recorded elements
+To ship, a shape must print `prospected` **and** `invoked=yes` (delta ≥ 1) **and**
+`inner=yes` (delta ≥ 1) — the same two counters `P-control` needs, so a grid change that
+came from something other than the handler's body is never recorded as a prospect — with
+`self=found` and an argument source the player build can produce on its own —
+`button:<var>` or `empty` — and the item must be seen turning into materials. If only `captured` or `copy` worked, the recorded elements
 decide how a player build could construct the array, and that is a replan, not a ship.
 
 ### Conflicts
@@ -1316,8 +1327,13 @@ decide how a player build could construct the array, and that is a replan, not a
   only materials in the grid, and record what `show` and `contents` print
   (`P-materials-only`).
 - **P4.** For each shape in the order above: insert one item, run the `press … confirm`
-  command, then `show`, and note by eye whether the item became materials. If the game
-  crashes, relaunch the same build, record the crash and go on (`P-shapes`).
+  command, then `show`, and note by eye whether the item became materials. Record the
+  verdict word as printed together with `invoked=` and `inner=`: only `prospected` with
+  `invoked=yes` and `inner=yes` counts toward shipping; `handler entered, grid unchanged`,
+  `dispatched but handler not entered (invoked=NO)` and `not dispatched` are three
+  different results and are never merged. A `refused: … is not detoured` means P1 was
+  skipped or failed — go back to P1. If the game crashes, relaunch the same build, record
+  the crash and go on (`P-shapes`).
 - **P5.** Keep inserting and prospecting (by hand, or with a working shape), running
   `contents` after each prospect and recording `empty=`, until column 0 is full of
   materials or the junk runs out (`P-free-cells`).
@@ -1351,4 +1367,4 @@ Stage B adapter is built) fills the `S-*` rows. A row that could not be measured
 | S-rearrange | Phase 3: moving an item inside the grid invokes nothing | |
 | S-off | Phase 3: after `autoprospect 0`, an insert stays in the grid | |
 | S-grid-full | Phase 3: filling the grid logs `grid-full` once and stops invoking | |
-| S-player-dll | Phase 3: the player DLL with the panel toggle on prospects one insert, and `out.txt` shows `autoprospect: hook installed -> ON` | |
+| S-player-dll | Phase 3: the player DLL with the panel toggle on prospects one insert (seen by eye), and `out.txt` shows a line naming work done, not armed state: `autoprospect: ON invoked=<n≥1> prospected=<n≥1> …` in `StatLine()`'s format. `autoprospect stat` is research-only, and the player build logs no such line yet, so the round-2 adapter must log one on the first prospect of a session (`autoprospect: first prospect - ` followed by `StatLine()`'s fields) in the player build; a line saying only that the hook is installed or the mod is on is not acceptance | |

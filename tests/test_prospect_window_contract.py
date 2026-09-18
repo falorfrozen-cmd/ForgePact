@@ -659,6 +659,15 @@ class ProspectWindowContractTests(unittest.TestCase):
         for why in ("nothing captured", "not an array", "no filled cell", "ambiguous"):
             self.assertIn(why, press)
         self.assertLess(press.index("no filled cell"), first_call)
+        # Without the handler's own detour, invoked= cannot be proven, so no
+        # verdict could tell "nothing ran" from "ran and did nothing": refuse
+        # before anything is read or called (the same condition P1 checks).
+        self.assertIn("!invokedRow || !invokedRow->installed.load()", press)
+        self.assertIn("is not detoured", press)
+        guard = press.index("!invokedRow || !invokedRow->installed.load()")
+        self.assertLess(guard, press.index("PpFindWindow("))
+        self.assertLess(guard, first_call)
+        self.assertIn("no call made", press[guard:press.index("PpFindWindow(")])
         # The finder and the contents reader call nothing and write nothing.
         for signature in ("static bool PpFindButton(", "static void PpButtonCommand(", "static bool PpReadContents(",
                           "static void PpContentsCommand(", "static void PpPressShow("):
@@ -684,8 +693,20 @@ class ProspectWindowContractTests(unittest.TestCase):
         self.assertLess(first_call, press.index("PpInvokedText(invokedRow, invokedBefore"))
         for field in ('"inner="', '" self="', '" other="', '" route="', '" args="', 'st=" + std::to_string((int)st)', '" (threw)"', '" res="'):
             self.assertIn(field, press)
-        for verdict in ('"prospected (filled "', '", fingerprints changed)"', '"ran, grid unchanged"', '"not dispatched"'):
+        for verdict in ('"prospected (filled "', '", fingerprints changed)"', '"handler entered, grid unchanged"',
+                        '"dispatched but handler not entered (invoked=NO)"', '"not dispatched"'):
             self.assertIn(verdict, press)
+        # The verdict comes from the handler's own count across the call, not
+        # from script_execute's status: a success status with invoked=NO is
+        # "nothing ran", never "ran and did nothing".
+        self.assertNotIn("ran, grid unchanged", press)
+        self.assertIn("const long invokedDelta = *invokedRow->calls - invokedBefore", press)
+        self.assertLess(first_call, press.index("const long invokedDelta"))
+        verdicts = press[press.index("std::string verdict;"):]
+        self.assertIn("gridChanged && invokedDelta > 0", verdicts)
+        self.assertLess(verdicts.index("gridChanged && invokedDelta > 0"), verdicts.index('"prospected (filled "'))
+        self.assertLess(verdicts.index("invokedDelta > 0"), verdicts.index('"handler entered, grid unchanged"'))
+        self.assertLess(verdicts.index("else if (dispatched)"), verdicts.index('"dispatched but handler not entered (invoked=NO)"'))
         # The contents are read before and after the one call.
         self.assertLess(press.index("PpReadContents("), first_call)
         self.assertLess(first_call, press.rindex("PpReadContents("))
