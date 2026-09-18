@@ -12531,10 +12531,14 @@ static PpTarget* PpFindScriptRow(const std::string& name)
 
 // Per cell position, what a filled cell holds, one level down, so a stack
 // count rising inside an existing cell (a merge, M-stack) reads as a change
-// even when the filled count and the fingerprints stay put. Reads only.
-static bool PpGridDigest(const RValue& node, std::vector<std::string>& cells)
+// even when the filled count and the fingerprints stay put - and, from the
+// same walk, whether the cell was filled at all. One read gives both, so the
+// fill state can never describe a different grid than the digest does, and
+// nothing has to recover it from the digest's text. Reads only.
+static bool PpGridFillStates(const RValue& node, std::vector<std::string>& cells, std::vector<bool>& filled)
 {
     cells.clear();
+    filled.clear();
     try {
         if (!g_Yytk->CallBuiltin("variable_instance_exists", { node, RValue("nodeGrid") }).ToBoolean()) return false;
         const RValue grid = g_Yytk->CallBuiltin("variable_instance_get", { node, RValue("nodeGrid") });
@@ -12546,7 +12550,8 @@ static bool PpGridDigest(const RValue& node, std::vector<std::string>& cells)
             const int cols = (int)g_Yytk->CallBuiltin("array_length", { r }).ToDouble();
             for (int j = 0; j < cols; ++j) {
                 const RValue cell = g_Yytk->CallBuiltin("array_get", { r, RValue((double)j) });
-                std::string text = PpBackingIsEmptyCell(cell) ? std::string("-") : PpShallow(cell);
+                const bool isEmpty = PpBackingIsEmptyCell(cell);
+                std::string text = isEmpty ? std::string("-") : PpShallow(cell);
                 if (cell.m_Kind == VALUE_OBJECT && PpBackingObjectKind(cell) == 1) {
                     const RValue names = g_Yytk->CallBuiltin("variable_struct_get_names", { cell });
                     const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
@@ -12557,34 +12562,19 @@ static bool PpGridDigest(const RValue& node, std::vector<std::string>& cells)
                     }
                 }
                 cells.push_back(std::to_string(i) + "," + std::to_string(j) + ":" + text);
+                filled.push_back(!isEmpty);
             }
         }
         return true;
-    } catch (...) { cells.clear(); return false; }
+    } catch (...) { cells.clear(); filled.clear(); return false; }
 }
 
-// Per cell position, whether that cell is filled (not empty). Used to track fill
-// state directly rather than depending on the digest format. Must be called with
-// the same node as PpGridDigest to stay in sync. Returns false on any read error.
-static bool PpGridFillStates(const RValue& node, std::vector<bool>& fillStates)
+// The digest alone, where the fill states are not needed (the bag, and every
+// read after the call).
+static bool PpGridDigest(const RValue& node, std::vector<std::string>& cells)
 {
-    fillStates.clear();
-    try {
-        if (!g_Yytk->CallBuiltin("variable_instance_exists", { node, RValue("nodeGrid") }).ToBoolean()) return false;
-        const RValue grid = g_Yytk->CallBuiltin("variable_instance_get", { node, RValue("nodeGrid") });
-        if (grid.m_Kind != VALUE_ARRAY) return false;
-        const int rows = (int)g_Yytk->CallBuiltin("array_length", { grid }).ToDouble();
-        for (int i = 0; i < rows; ++i) {
-            const RValue r = g_Yytk->CallBuiltin("array_get", { grid, RValue((double)i) });
-            if (r.m_Kind != VALUE_ARRAY) return false;
-            const int cols = (int)g_Yytk->CallBuiltin("array_length", { r }).ToDouble();
-            for (int j = 0; j < cols; ++j) {
-                const RValue cell = g_Yytk->CallBuiltin("array_get", { r, RValue((double)j) });
-                fillStates.push_back(!PpBackingIsEmptyCell(cell));
-            }
-        }
-        return true;
-    } catch (...) { fillStates.clear(); return false; }
+    std::vector<bool> filled;
+    return PpGridFillStates(node, cells, filled);
 }
 
 static std::atomic<bool> g_PpMoveBannerShown{ false };
@@ -12719,19 +12709,18 @@ static void PpMoveCommand(const std::vector<std::string>& tok)
         // The prospect side per cell too: a material cell is a stack, and a
         // shape that takes part of one leaves the filled count and the
         // fingerprints as they were - only the cell's own digest changes.
-        if (!PpGridDigest(prospectNode, prospectCellsBefore)) { Out(tag + ": refused: the ProspectGrid's cells could not be read; no call made"); return; }
+        // Which cells were filled comes from this same read.
+        std::vector<bool> prospectFilledBefore;
+        if (!PpGridFillStates(prospectNode, prospectCellsBefore, prospectFilledBefore)) {
+            Out(tag + ": refused: the ProspectGrid's cells could not be read; no call made");
+            return;
+        }
 
         if (!g_PpMoveBannerShown.exchange(true))
             Out("prospectprobe move SAFETY - the first move this session: back up %LOCALAPPDATA%\\Hero_Siege first, junk materials only, one call per command."
                 " A faulting shape crashes the game; relaunch the same build, record the crash and go on.");
         Out(tag + ": before prospect=" + PpContentsText(prospectBefore) + " bag " + bagLabel + "=" + PpContentsText(bagBefore)
             + " callable=" + callableText);
-
-        std::vector<bool> prospectFilledBefore;
-        if (!PpGridFillStates(prospectNode, prospectFilledBefore)) {
-            Out(tag + ": refused: the ProspectGrid's fill states could not be read; no call made");
-            return;
-        }
 
         std::vector<RValue> callArgs;
         callArgs.push_back(fn);

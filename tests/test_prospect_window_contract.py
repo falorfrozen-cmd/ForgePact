@@ -1020,10 +1020,34 @@ class ProspectWindowContractTests(unittest.TestCase):
         # Per-cell digests of BOTH grids, before and after: a material cell is
         # a stack, so a partial move or loss changes a prospect cell's digest
         # while the filled count and the fingerprints stay put.
-        self.assertEqual(move.count("PpGridDigest("), 4)
-        self.assertLess(move.index("PpGridDigest(prospectNode, prospectCellsBefore)"), first_call)
+        self.assertEqual(move.count("PpGridDigest("), 3)
         self.assertLess(first_call, move.index("PpGridDigest(prospectAfterNode, prospectCellsAfter)"))
         self.assertIn("prospectChangedCells", move)
+
+    def test_move_takes_the_prospect_fill_state_from_the_digest_read(self):
+        # Which prospect cells were filled before the call comes from
+        # PpGridFillStates, in the same walk that produced the digest - never
+        # from the digest text's format (a ":-" suffix) and never from a
+        # second read that could see a different grid.
+        move = strip_comments(function_body(self.plugin, "static void PpMoveCommand("))
+        first_call = move.index("CallBuiltinEx(")
+        read = "PpGridFillStates(prospectNode, prospectCellsBefore, prospectFilledBefore)"
+        self.assertEqual(move.count("PpGridFillStates("), 1)
+        self.assertIn(read, move)
+        self.assertLess(move.index(read), first_call)
+        self.assertLess(move.index(read), move.rindex("no call made"))
+        self.assertNotIn('":-"', move)
+        self.assertIn("prospectFilledBefore[i]", move)
+        fill = strip_comments(function_body(self.plugin, "static bool PpGridFillStates("))
+        self.assertEqual(fill.count('"nodeGrid"'), 2)
+        self.assertIn("cells.push_back(", fill)
+        self.assertIn("filled.push_back(", fill)
+        for forbidden in ("PpGridDigest(", "CallBuiltinEx", '"variable_struct_set"', '"array_set"'):
+            self.assertNotIn(forbidden, fill)
+        # The digest is the same walk with the fill states dropped.
+        digest = strip_comments(function_body(self.plugin, "static bool PpGridDigest("))
+        self.assertIn("PpGridFillStates(node, cells,", digest)
+        self.assertNotIn('"nodeGrid"', digest)
         self.assertIn("const bool prospectLost = wholeCellLeft || prospectChangedCells > 0;", move)
         for text in ('" prospect contents "', '" bag filled "', '" changed-cells="', '" new-fingerprints="',
                      '" prospect-changed-cells="'):

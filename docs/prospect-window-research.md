@@ -1714,11 +1714,14 @@ Research DLL, auto-prospect OFF for the whole session (`prospectprobe hook` and
   (→ `M-grids`: every grid, its callstack name, which one is the bag), `contents`,
   `cell prospect <r> <c>` on a material cell, the item's cell and an empty cell (→ `M-cell`,
   `M-identity`). Prospect one junk item by hand first if the grid holds no material. **No-op
-  control:** run `move` with a shape that dispatches nothing (e.g. `self.is_valid () == true &&
-  other.is_valid () == false`, where `other` is never reached), or take the digest twice with no
-  action between (`prospectprobe cell prospect ... cell ...` twice). Record that
-  `prospect-changed-cells=0` and `changed-cells=0`, confirming the digests are stable when no
-  move is made.
+  control:** with nothing done in between, run `prospectprobe cell prospect <r> <c>` on the
+  material cell twice, `cell bag:<k> <r> <c>` on a filled bag cell twice, and `contents` twice.
+  `cell` prints exactly what `move`'s per-cell digest reads (the cell's members, and one level
+  into each plain-struct member), so each pair must match line for line. Record that in
+  `M-cell`. A pair that differs (a counter, a timer, a fresh reference) means `move`'s
+  `prospect-changed-cells` and `changed-cells` would count that cell with no move made: every M7
+  verdict resting on those counts is then not evidence, and M7 goes by the by-eye result and the
+  filled counts and fingerprints only.
 - **M2, control by click.** `watch on`; `arm budget=40` (all rows). Click a material in the
   ProspectGrid, click it into the bag. `show`, `contents`, `grids`, then `cell bag:<k> <r> <c>`
   on the landed cell (→ `M-control-click`: every row that fired with `self`/`other`/args, the
