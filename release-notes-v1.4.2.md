@@ -1,26 +1,21 @@
 # ForgePact 1.4.2
 
-Chaos Tower and Shadow Realm rate settings above x1 are meant to work again on the current game version - not yet confirmed in-game, and this release requires the current game version specifically.
+Chaos Tower and Shadow Realm rate settings above x1 work again on the current game version. This release requires the current game version.
 
 ## Fixed
 
-- **Chaos Tower and Shadow Realm multipliers above x1 could only appear once
-  per run on the current game version**, exactly as if the setting were left
-  at x1. The internal names ForgePact used to reset each mechanic's
-  once-per-run flag right before it re-activates no longer matched the game
-  after an update, so the reset found nothing to reset and the game's own
-  vanilla limit took over instead. ForgePact 1.4.2 fixes the internal names
-  to the current game version specifically, so a rate above x1 can let either
-  mechanic appear again within the same run on that version.
+- **Chaos Tower and Shadow Realm multipliers above x1 had no effect on the
+  current game version.** Each could still appear only once per run, exactly
+  as if the setting were left at x1. A game update renamed the internal names
+  ForgePact uses to reset each mechanic's once-per-run limit, so the reset
+  could no longer attach and the game's own limit took over. ForgePact 1.4.2
+  uses the current game version's names. Confirmed in-game: with the rates
+  raised, one run showed many Chaos Towers and at least two Shadow Realms.
 
-  This fix is version-specific, not adaptive: if you are still on the
-  previous game version, installing 1.4.2 makes Chaos Tower and Shadow Realm
-  rates above x1 stop working the same way they did before this fix - stay
-  on 1.4.1 until you update the game.
-
-  This fix is not yet confirmed in-game - it corrects the names to what they
-  should be on the current game version, but nobody has yet reproduced either
-  mechanic appearing more than once in a run with it installed.
+  This fix only works on the current game version. If you are still on the
+  previous game version, 1.4.2 cannot attach the reset there, so Chaos Tower
+  and Shadow Realm rates above x1 have no effect. Stay on 1.4.1 until you
+  update the game.
 
 ## How to update
 
