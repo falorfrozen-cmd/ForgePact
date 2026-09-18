@@ -853,6 +853,45 @@ read from one of the six `subTalentMap` slots is not established.
 tester before the OFF presses began; the first OFF attempt took 2 presses,
 the second took 1.
 
+### Session 3
+
+Session 3, 2026-09-18: research build `d64ff41` (`BloodPactPlugin_rel.dll`,
+built 20:08:19, hash-verified in `mods\aurie`), White Mage "Sorak" with Soul
+Spurn + Purgatory and Healing Zone on the hotbar; town (`Town_05_rm`), then a
+waypoint to `Act_05_01`. No `bp_ipc\coop.ini`, no `cooprender`, no `citrace`
+command at any point in the session. Driven with `ForgePact/tools/ipc.ps1`;
+the tester reported ON/OFF and slot placement by eye. Full verbatim output:
+`.claude/workorders/forgepact-toggle-indicator-session3.log` (a hub workorder
+artefact, not part of this submodule).
+
+**Instrument control (before R1).** Two `hhlabel` + `tgprobe spurn` pairs, 2 s
+apart:
+
+```
+hhlabel -> ON (0 active, callback ok) hudCalls=2728 draws=0 playerId=-1 offset=150 lastErr=
+tgprobe spurn: frame=3870 room=4131119309451652171 n=0 mine=0 others=0 unattributed=0 capped=0 localNumber=unreadable state=off samples=2728 on=0 off=2728 unreadable=0 maxN=0 transitions=0 markDraws=0 markDrawExc=0
+```
+```
+hhlabel -> ON (0 active, callback ok) hudCalls=3148 draws=0 playerId=-1 offset=150 lastErr=
+tgprobe spurn: frame=4290 room=4131119309451652171 n=0 mine=0 others=0 unattributed=0 capped=0 localNumber=unreadable state=off samples=3148 on=0 off=3148 unreadable=0 maxN=0 transitions=0 markDraws=0 markDrawExc=0
+```
+
+`hudCalls` `2728`→`3148` (+420) matches `samples` `2728`→`3148` (+420)
+exactly — the sampler control passes for this session.
+
+| Row | Status | Evidence |
+|---|---|---|
+| R1 | measured | By eye OFF (confirmed before the session). `tgprobe spurn: frame=4290 room=4131119309451652171 n=0 mine=0 others=0 unattributed=0 capped=0 localNumber=unreadable state=off samples=3148 on=0 off=3148 unreadable=0 maxN=0 transitions=0 markDraws=0 markDrawExc=0`. |
+| R2 | measured | By eye ON (tester pressed Soul Spurn once). `tgprobe spurn: frame=9750 room=4131119309451652171 n=1 mine=0 others=0 unattributed=0 capped=0 localNumber=unreadable state=unreadable samples=8608 on=0 off=6854 unreadable=1754 maxN=1 transitions=3 markDraws=0 markDrawExc=0`; `tgprobe deep census: objects=6017 nonzero=164 unreadable=0 frame=9750` lists `White_Mage_Soul_Spurn_AOE_obj=1`. The row's expected outcome ("`spurn` On, n≥1, mine≥1") did not hold: the sampler reached `n=1` and the census confirms the AOE instance at `1`, but `localNumber=unreadable`, so `state=unreadable`, never `on` — see R4. |
+| R3 | measured | `tgprobe spurn as 1 -> on n=1 mine=1 others=0 unattributed=0`; `tgprobe spurn as 2 -> off n=1 mine=0 others=1 unattributed=0`. The plain counters are unchanged by the override: the `tgprobe spurn` reads immediately before and after both read `samples=15448 on=0 off=6854 unreadable=8594 maxN=1 transitions=3` (identical). |
+| R4 | measured | `tgprobe deep get Player_obj.playerNumber: FAILED segment .playerNumber: no such instance variable`. Full player-scope walk: `tgprobe deep snap p1 scope=player names=116 read=116 unreadable=0 leaves=1092 instRefs=21/1 objNonStruct=0 followLeaves=673 truncated=0 followTruncated=0 note=instances=1`. Substring search: `tgprobe deep find 'playernumber' in p1: hits=1` → `Player_obj.myHealthBar.playerNumber=real:1.000000` (a followed instance handle, not a direct `Player_obj` field). `tgprobe vars White_Mage_Soul_Spurn_AOE_obj` reads `playerNumber=real:1.000000` and `isMyClient=bool:true` on the AOE instance. `Player_obj` has no `playerNumber` member at all; the only hit for the ownership key names a different field, `myHealthBar.playerNumber`, one level removed from `Player_obj` itself. `tgprobe spurn log on` was also issued (during R6 setup) but its per-instance log lines were not observed in the replies read; R4's evidence above comes from `tgprobe vars`/`tgprobe deep` instead. |
+| R5 | measured | Draw control: `tgprobe mark -> x=100.000000 y=100.000000 w=400.000000 h=200.000000 (watch \`tgprobe spurn\` or the next \`tgprobe mark off\` for draws=/drawExc=)`; tester: rectangle SEEN by eye; the next `tgprobe spurn` read `markDraws=270 markDrawExc=0`; `tgprobe mark -> off draws=4470 drawExc=0`. Candidates: `tgprobe spurn slots: row0[5] talentId=240 members: ... drawButton=bool:true hidden=bool:false ... navBboxHeight=real:139.200000 navBboxWidth=real:124.700000 navBboxX=real:385.700006 ... navBboxY=real:1711.000000 ...` and `row1[5] talentId=240 members: ... hidden=bool:true drawButton=bool:false ...`; `tgprobe spurn slots: playerSlot.bind_skill is undefined`; `tgprobe spurn slots: global.mySkills[3]=240`. Candidate A: `tgprobe mark -> x=385.700000 y=1711.000000 w=124.700000 h=139.200000 ...`; tester: the rectangle SITS ON Soul Spurn's button (by eye). `Slot geometry fields: row0[5].talentId + navBboxX/navBboxY/navBboxWidth/navBboxHeight`. |
+| R6 | measured | `tgprobe show` at the press: `TalentUse mode=native calls=1 lastFrame=31247 lastGap=0`, `TalentUseClass mode=native calls=1 lastFrame=31266 lastGap=0`, `TalentsWhiteMage mode=native calls=1 lastFrame=31266 lastGap=0`. Bracketing `tgprobe spurn` reads: `frame=28500 ... state=unreadable ... off=6854 ... transitions=3` (before the press resolved) and `frame=33060 room=4131119309451652171 n=0 mine=0 others=0 unattributed=0 capped=0 localNumber=unreadable state=off samples=31918 on=0 off=8648 unreadable=23270 maxN=1 transitions=4 markDraws=4530 markDrawExc=0` (after). The On→Off transition landed somewhere inside that ~4560-draw window, which contains both the press (`lastFrame=31247`) and the cast resolving (`lastFrame=31266`); no `tgprobe spurn` sample was taken between those two frames, so the exact draw count from press to OFF is not isolated further than the window itself. |
+| R7 | measured | `tgprobe show: RoomGoto mode=native calls=1 lastFrame=49084 lastGap=0`; `firstHud=zone-change room=9148364097822447407 frame=49106 firstHudSpurnInstances=0 firstHudAbilityInstances=0`; `tgprobe spurn: frame=51270 room=9148364097822447407 n=0 mine=0 others=0 unattributed=0 capped=0 localNumber=unreadable state=off samples=50106 on=0 off=26272 unreadable=23834 maxN=1 transitions=6 markDraws=4530 markDrawExc=0` with `firstAfterRoomChange: state=off n=0 drawsToOff=0`; `tgprobe room: key=9148364097822447407 readable=yes name=Act_05_01`. Tester: the toggle ended on the zone change (by eye). `drawsToOff=0` is well under the 600-draw cap, so this row feeds `read: GO` alongside R1–R3. |
+| R8 | measured | Tester turned Soul Spurn ON in `Act_05_01`, let the drain run to self-cancel (no press). `tgprobe spurn: frame=60030 room=9148364097822447407 n=0 mine=0 others=0 unattributed=0 capped=0 localNumber=unreadable state=off samples=58866 on=0 off=33164 unreadable=25702 maxN=1 transitions=8 markDraws=4530 markDrawExc=0`. Compared with R7's read: `unreadable` rose `23834`→`25702` (+1868) and `transitions` rose `6`→`8` (+2, one On, one Off) while `TalentUse mode=native calls=3 lastFrame=56729 lastGap=8228` recorded only the single ON press (up from `calls=2` at R7) — no second `TalentUse` call for the Off side, consistent with a self-cancel rather than a press. |
+| R9 | measured | `maxN=1` on every `tgprobe spurn` read across the whole session, from the first (`frame=3870 ... maxN=0`, before any cast) through the last (`frame=72660 ... maxN=1`); no double-cast proc pushed it to 2 this session. |
+| R10 | measured | Tester removed Purgatory (respec) and cast Soul Spurn once: `TalentUseClass mode=native calls=6 lastFrame=69364 lastGap=0`, up from `calls=4 lastFrame=56748` at R8. `tgprobe spurn: frame=72660 room=9148364097822447407 n=0 mine=0 others=0 unattributed=0 capped=0 localNumber=unreadable state=off samples=71496 on=0 off=45653 unreadable=25843 maxN=1 transitions=10 markDraws=4530 markDrawExc=0`. Compared with R8's read: `unreadable` rose `25702`→`25843` (+141) and `transitions` rose `8`→`10` (+2). Since `localNumber` stayed `unreadable` for the whole session, a non-Purgatory cast of Soul Spurn creates the same `White_Mage_Soul_Spurn_AOE_obj` instance the toggled cast does — counted as `unreadable`, not `on`, for about 141 of the polled draws before the instance goes away again. |
+
 ## Decision
 
 **Track A (re-cast guard): BLOCKED on Q2/Q3, redesign required.** Q1 and Q5
@@ -994,6 +1033,44 @@ The non-blocking instrument findings deferred at the round-3 cap (C1's
 `selftest instance` check-expectation defect recorded above; N1–N4 from the
 round-3 verify log) are a follow-up to the instrument itself, not to this
 result — Q3-D does not depend on them.
+
+### After session 3
+
+**Read: GO.** R1, R2 and R3 (Results → Session 3) are all `measured`, and the
+instrument control matched (`hudCalls` `2728`→`3148` (+420) = `samples`
+`2728`→`3148` (+420)). R7 is also `measured`, with `drawsToOff=0`, well under
+the 600-draw cap, so `read: BLOCKED (zone)` does not apply. R2's own reading
+diverged from the row's original expectation (`n=1`, `mine=0`,
+`state=unreadable`, never `on`, instead of "On, n≥1, mine≥1") because of the
+Scope finding below — the gate rule in `## Live procedure` → `### Session 3`
+only requires R1/R2/R3 `measured` with the control matched, so that divergence
+does not itself change `read:`.
+
+**Scope: BLOCKED.** `Player_obj` has no `playerNumber` member: `tgprobe deep
+get Player_obj.playerNumber: FAILED segment .playerNumber: no such instance
+variable`, and the full player-scope walk (`tgprobe deep snap p1 scope=player
+names=116 read=116 unreadable=0 ... note=instances=1`) read all 116 named
+leaves without one of them being `playerNumber`. The only hit for the
+ownership key, from a substring search across the whole player scope
+(`tgprobe deep find 'playernumber' in p1: hits=1`), is `Player_obj.myHealthBar.playerNumber=real:1.000000`
+— a field on a *followed instance handle* (`myHealthBar`) one level removed
+from `Player_obj`, not a direct member of the local player instance the
+production read (Context "Co-op / ownership: the answer") assumed it could
+read `playerNumber` off of directly. The AOE instance's own `playerNumber`
+(`real:1.000000`) and `isMyClient` (`bool:true`) are both readable and would
+match `myHealthBar.playerNumber`'s value, but that is a different ownership
+key than the one the P1 design built against. Per `## Steps` step 7, R4
+naming a different ownership key is a `PLAN-DEFECT`.
+
+**Slot geometry fields: `row0[5].talentId` + `navBboxX`/`navBboxY`/`navBboxWidth`/`navBboxHeight`.**
+R5.1's draw control passed (`markDraws=270 markDrawExc=0`, rectangle SEEN by
+eye at an arbitrary GUI spot before any candidate was tried), and R5.2's
+candidate A — `row0[5]` (`talentId=240`, `drawButton=bool:true
+hidden=bool:false`), marked at its own `navBboxX=385.700006
+navBboxY=1711.000000 navBboxWidth=124.700000 navBboxHeight=139.200000` —
+SAT ON Soul Spurn's button, by eye. `row1[5]` (`hidden=bool:true
+drawButton=bool:false`) was not marked; its own `hidden`/`drawButton` values
+already explain why it is not the drawn slot.
 
 ### P1: the indicator's read, control and slot design
 
