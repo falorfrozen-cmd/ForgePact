@@ -579,6 +579,25 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
         self.assertGreater(restore_alpha, last_draw)
         self.assertGreater(restore_colour, last_draw)
 
+    def test_mark_counts_draws_and_exceptions_separately(self):
+        # Section 3 of the instrument-blindness review: TgProbeDrawMark used
+        # to swallow every exception uncounted, so "never drew" and "drew in
+        # the wrong place" printed identically. draws=/drawExc= must be
+        # incremented on the two respective paths and surfaced to a tester.
+        body = function_body(self.plugin, "static void TgProbeDrawMark()")
+        self.assertIn("g_TgMarkDraws", body)
+        self.assertIn("g_TgMarkDrawExc", body)
+        self.assertIn("catch (...) { InterlockedIncrement(&g_TgMarkDrawExc); }", body)
+        last_draw = body.rindex("draw_rectangle")
+        draws_incremented = body.rindex("InterlockedIncrement(&g_TgMarkDraws)")
+        self.assertGreater(draws_incremented, last_draw)
+        mark_cmd = function_body(self.plugin, "static void TgProbeMarkCommand(const std::string& rest)")
+        self.assertIn("g_TgMarkDraws", mark_cmd)
+        self.assertIn("g_TgMarkDrawExc", mark_cmd)
+        spurn_cmd = function_body(self.plugin, "static void TgProbeSpurnCommand(const std::string& rest)")
+        self.assertIn("markDraws=", spurn_cmd)
+        self.assertIn("markDrawExc=", spurn_cmd)
+
     def test_research_only_names_do_not_survive_stripping(self):
         self.assertNotIn("TgProbeSpurn", self.stripped)
         self.assertNotIn("TgProbeMark", self.stripped)

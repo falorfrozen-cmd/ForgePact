@@ -15,6 +15,7 @@
 // than "resolved but empty" (Off).
 #include <cstdint>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -45,6 +46,7 @@ struct AoeInst { double playerNumber = 0; bool hasPlayerNumber = true; };
 struct World {
     bool aoeObjectResolves = true;
     std::vector<AoeInst> instances;
+    bool instanceNumberThrows = false;   // instance_number itself throws
     bool playerResolves = true;
     int playerKind = VALUE_REF;      // what this runner really hands back
     bool playerNumberReadable = true;
@@ -68,6 +70,7 @@ struct FakeRunner {
             return RValue(world.aoeObjectResolves ? 42.0 : -1.0);
         }
         if (fn == "instance_number") {
+            if (world.instanceNumberThrows) throw std::runtime_error("instance_number EXCEPTION");
             return RValue((double)world.instances.size());
         }
         if (fn == "instance_find") {
@@ -294,6 +297,20 @@ int main() {
         checkInt("read/override_number_excludes_own/others", d.others, 1);
         checkInt("read/override_number_excludes_own/mine", d.mine, 0);
         checkInt("read/override_number_excludes_own/resolve_calls", g_ResolveCalls, 0);
+    }
+
+    // 14. `instance_number` itself throws: a failed read, not a measured
+    //     zero. The catch's `d.n = 0` fallback must not be mistaken for a
+    //     real, cheap Off - it must count as a failure instead.
+    resetWorld();
+    world.instances = { { 1.0, true } };   // must not matter - the count never completes
+    world.instanceNumberThrows = true;
+    {
+        ForgePact::ToggleIndicatorReadDetail d;
+        auto state = ToggleIndicatorRead(&d, nullptr);
+        checkState("read/instance_number_throw_is_unreadable", state, ForgePact::ToggleIndicatorState::Unreadable);
+        checkBool("read/instance_number_throw_is_unreadable/countReadFailed", d.countReadFailed, true);
+        checkInt("read/instance_number_throw_is_unreadable/resolve_calls", g_ResolveCalls, 0);
     }
 
     std::cout << (failures ? "RESULT FAIL" : "RESULT OK") << "\n";

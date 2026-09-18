@@ -168,6 +168,12 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
         # `spurn as <n>`: the non-mutating negative control.
         self.assertScenario("read/override_number_excludes_own")
 
+    def test_instance_number_throw_is_unreadable(self):
+        # A threw instance_number call is a failed read, not a measured zero
+        # - the catch's `d.n = 0` fallback must not decide a real, cheap Off.
+        self.assertScenario("read/instance_number_throw_is_unreadable")
+        self.assertScenario("read/instance_number_throw_is_unreadable/countReadFailed")
+
 
 if __name__ == "__main__":
     unittest.main()

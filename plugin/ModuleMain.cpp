@@ -4267,7 +4267,8 @@ static bool HhResolveLocalPlayer(RValue& out, std::string* how)
 // reachable only from the research sampler further down this file (itself
 // research-only), so a player build's behaviour does not change yet, but the
 // read itself is the one the shipped indicator will call.
-// docs/toggle-skills-research.md, "The read, and exactly what has been
+// docs/toggle-skills-research.md, "## Decision" -> "### P1: the indicator's
+// read, control and slot design" -> "The read, and exactly what has been
 // proven" and "Co-op / ownership: the answer" are the measured basis for
 // every branch below.
 //
@@ -4305,7 +4306,15 @@ static ForgePact::ToggleIndicatorState ToggleIndicatorRead(ForgePact::ToggleIndi
     }
 
     try { d.n = (long)g_Yytk->CallBuiltin("instance_number", { RValue(objIdx) }).ToDouble(); }
-    catch (...) { d.n = 0; }
+    catch (...) { d.n = 0; d.countReadFailed = true; }
+    if (d.countReadFailed) {
+        // A threw read, not a measured zero: Decide already returns
+        // Unreadable for this, but return here too so a failed count is
+        // never charged the cost of a player lookup that could not mean
+        // anything on top of it.
+        if (detail) *detail = d;
+        return ForgePact::ToggleIndicatorModel::Decide(d);
+    }
     if (d.n <= 0) {
         // Off without ever resolving the player: a real, cheap negative that
         // must not pay for (or depend on) a player lookup that never mattered.
@@ -18681,7 +18690,8 @@ static void TgProbeDeepCommand(const std::string& rest)
 // ToggleIndicatorRead() (defined above, outside every research block) on
 // every DrawHudBuffs draw, and (with `mark` armed) draws a rectangle at GUI
 // coordinates so a tester can tell which candidate slot rectangle sits on
-// Soul Spurn's button. See docs/toggle-skills-research.md, "Research-build
+// Soul Spurn's button. See docs/toggle-skills-research.md, "## Decision" ->
+// "### P1: the indicator's read, control and slot design" -> "Research-build
 // control (P1)" and "Slot location (Q4): what is known".
 
 // Every custom member of a STRUCT (not an instance), name=value, capped at
@@ -18777,6 +18787,13 @@ static void TgProbeSpurnSlots()
 // HhDrawHeadLabels uses.
 static bool g_TgMarkActive = false;
 static double g_TgMarkX = 0, g_TgMarkY = 0, g_TgMarkW = 0, g_TgMarkH = 0;
+// `draws` counts a completed pass through the try block below (every
+// draw_rectangle call and both restores ran without throwing); `drawExc`
+// counts a pass that threw partway through. TgProbeDrawMark previously
+// swallowed every exception silently, so "the tester sees no rectangle"
+// could not be told apart from "the routine never ran" - the instrument
+// review this fixes (Section 3: a negative with no positive control).
+static volatile long g_TgMarkDraws = 0, g_TgMarkDrawExc = 0;
 
 static void TgProbeDrawMark()
 {
@@ -18795,7 +18812,8 @@ static void TgProbeDrawMark()
         }
         g_Yytk->CallBuiltin("draw_set_alpha", { prevAlpha });
         g_Yytk->CallBuiltin("draw_set_colour", { prevColour });
-    } catch (...) {}
+        InterlockedIncrement(&g_TgMarkDraws);
+    } catch (...) { InterlockedIncrement(&g_TgMarkDrawExc); }
 }
 
 static void TgProbeMarkCommand(const std::string& rest)
@@ -18804,7 +18822,8 @@ static void TgProbeMarkCommand(const std::string& rest)
     const std::string first = Lower(FirstToken(rest, subRest));
     if (first.empty() || first == "off") {
         g_TgMarkActive = false;
-        Out("tgprobe mark -> off");
+        Out("tgprobe mark -> off draws=" + std::to_string(g_TgMarkDraws)
+            + " drawExc=" + std::to_string(g_TgMarkDrawExc));
         return;
     }
     try {
@@ -18815,8 +18834,11 @@ static void TgProbeMarkCommand(const std::string& rest)
         const double h = std::stod(FirstToken(t2, t3));
         g_TgMarkX = x; g_TgMarkY = y; g_TgMarkW = w; g_TgMarkH = h;
         g_TgMarkActive = true;
+        InterlockedExchange(&g_TgMarkDraws, 0);
+        InterlockedExchange(&g_TgMarkDrawExc, 0);
         Out("tgprobe mark -> x=" + std::to_string(x) + " y=" + std::to_string(y)
-            + " w=" + std::to_string(w) + " h=" + std::to_string(h));
+            + " w=" + std::to_string(w) + " h=" + std::to_string(h)
+            + " (watch `tgprobe spurn` or the next `tgprobe mark off` for draws=/drawExc=)");
     } catch (...) {
         Out("tgprobe mark: usage -> tgprobe mark <x> <y> <w> <h> | off");
     }
@@ -18945,7 +18967,8 @@ static void TgProbeSpurnCommand(const std::string& rest)
         + " state=" + (g_TgSpurnHasLastDetail ? ForgePact::ToggleIndicatorStateName((ForgePact::ToggleIndicatorState)g_TgSpurnLastState) : "n/a")
         + " samples=" + std::to_string(g_TgSpurn.samples) + " on=" + std::to_string(g_TgSpurn.on)
         + " off=" + std::to_string(g_TgSpurn.off) + " unreadable=" + std::to_string(g_TgSpurn.unreadable)
-        + " maxN=" + std::to_string(g_TgSpurn.maxN) + " transitions=" + std::to_string(g_TgSpurn.transitions));
+        + " maxN=" + std::to_string(g_TgSpurn.maxN) + " transitions=" + std::to_string(g_TgSpurn.transitions)
+        + " markDraws=" + std::to_string(g_TgMarkDraws) + " markDrawExc=" + std::to_string(g_TgMarkDrawExc));
     if (g_TgSpurnRoomKeyKnown) {
         Out("  firstAfterRoomChange: state=" + (g_TgSpurnFirstAfterRoomChangeState >= 0
                 ? std::string(ForgePact::ToggleIndicatorStateName((ForgePact::ToggleIndicatorState)g_TgSpurnFirstAfterRoomChangeState)) : std::string("n/a"))

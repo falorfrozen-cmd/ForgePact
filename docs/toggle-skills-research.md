@@ -209,6 +209,8 @@ turn co-op rendering on, and run no `citrace` command, after `tgprobe hook`.
 | `tgprobe vars <Obj\|global>` | Scalar variables (real/int/bool/string) of the first instance of `<Obj>`, or of the global scope. |
 | `tgprobe snap <Obj\|global>` / `tgprobe diff` | Snapshot those scalars, then print changed / added / removed keys (cap 200 lines). A change inside an array or struct is invisible here; that is what the walkers are for. |
 | `tgprobe room` | The room key, whether it is readable, and the room name. |
+| `tgprobe spurn [log on\|off\|as <n>\|slots]` | Samples the production `ToggleIndicatorRead` on every `DrawHudBuffs` draw. Bare `spurn` prints the last sample (`n=`, `mine=`, `others=`, `unattributed=`, `capped=`, `localNumber=`, `state=`) plus running `samples=`/`on=`/`off=`/`unreadable=`/`maxN=`/`transitions=` counters and `firstAfterRoomChange=`. `spurn log on\|off` logs each instance's `playerNumber`/`isMyClient` on every state change (budgeted). `spurn as <n>` is the non-mutating negative control: the same enumeration and decision with the local number overridden, reported separately and never touching the real counters. `spurn slots` prints every `UI_Hud_Talent_obj` `row0`/`row1`/`playerSlot.bind_skill`/`global.mySkills` entry whose value is talent 240. |
+| `tgprobe mark <x> <y> <w> <h>\|off` | Draws (or clears) a static outline rectangle at GUI coordinates from the draw hook, to find which candidate slot rectangle sits on Soul Spurn's button; saves and restores `draw_get_colour`/`draw_get_alpha`. Prints `draws=`/`drawExc=` so "never drew" is separable from "drew in the wrong place". |
 
 `hudSinceRoomChange` counts `DrawHudBuffs` calls since the room key last
 changed, including the first call in the new room. An unreadable room key is
@@ -655,13 +657,27 @@ never `not observed`.
    otherwise `scope: BLOCKED` and this plan's `## State` gate is set that way
    (return `PLAN-DEFECT` if `Player_obj` has no `playerNumber` member at all).
    `tgprobe spurn log off`.
-6. **R5 (slot location).** `tgprobe spurn slots` → record every printed
-   `talentId=240` line and its members. For each candidate array/element,
-   `tgprobe mark <x> <y> <w> <h>` using that element's own position-shaped
-   members (by eye, on the GUI) → the tester says whether the rectangle sits
-   on Soul Spurn's button. Record the winning array, id field and position
-   fields as `Slot geometry fields:` in "After session 3", or `none` if no
-   candidate lands on the button. `tgprobe mark off` when done.
+6. **R5 (slot location).**
+   1. **Draw control, before any candidate.** `tgprobe mark 100 100 400 200`
+      (or another obviously-visible GUI spot, clear of any other HUD element)
+      → the tester confirms by eye that a red outline rectangle is actually on
+      screen at that spot. `tgprobe mark off` or the next `tgprobe spurn` →
+      record the printed `markDraws=`/`markDrawExc=` pair. If the rectangle is
+      not seen, or `markDraws=0`, or `markDrawExc>0`: **R5 is `blocked (draw
+      control)`, not `slotgeom: none`** — drawing from this hook has not been
+      shown to work at all, so no candidate result means anything yet. Do not
+      continue to step 6.2.
+   2. **Candidates.** `tgprobe spurn slots` → record every printed
+      `talentId=240` line and its members. For each candidate array/element,
+      `tgprobe mark <x> <y> <w> <h>` using that element's own position-shaped
+      members (by eye, on the GUI) → the tester says whether the rectangle sits
+      on Soul Spurn's button, and record `markDraws=`/`markDrawExc=` for that
+      candidate too (a candidate whose own draw threw or never drew is
+      `blocked`, not a plain "did not land on the button" negative). Record the
+      winning array, id field and position fields as `Slot geometry fields:` in
+      "After session 3", or `none` — only once the draw control (6.1) passed
+      and at least one candidate actually drew — if no candidate lands on the
+      button. `tgprobe mark off` when done.
 7. **R6 (OFF lag, Known Limitation).** Note the `TalentUse` press frame from
    `tgprobe hook`'s existing controls (or a fresh `tgprobe show`). Press Soul
    Spurn to turn it OFF; immediately and every ~10 draws until `tgprobe
@@ -689,7 +705,10 @@ never `not observed`.
 12. **Gate values.** `read: GO` needs R1, R2 and R3 measured with the
     instrument control (step 1) matched; `read: BLOCKED (zone)` if R7 alone
     fails as described above. `scope: playerNumber` or `scope: BLOCKED` per
-    R4. `slotgeom:` the fields recorded in R5, or `none`. Paste every quoted
+    R4. `slotgeom:` the fields recorded in R5.2, or `none` if the draw control
+    (R5.1) passed but no candidate landed on the button, or `blocked (draw
+    control)` if R5.1 itself did not pass — these are different outcomes and
+    must not be collapsed into each other. Paste every quoted
     line into Results → Session 3; write Decision → After session 3; set this
     plan's `## State` gates. Stop the game; nothing else left running.
 
@@ -800,7 +819,7 @@ unreadable=0` (no `<absent:` leaves in the read set). `tgprobe deep find
 
 | Q | Question | status | Evidence |
 |---|---|---|---|
-| Q3-D | Where the ON state lives, read from non-scalar runtime storage (`tgprobe deep`) | measured | Path: `census.White_Mage_Soul_Spurn_AOE_obj` (`GameObject::White_Mage_Soul_Spurn_AOE_obj` = SDK index 5759; the runtime object index itself was never printed this session). Found by `tgprobe deep flip base on off` → `tgprobe deep flip base on off: A(flipped and reverted)=41 B(changed twice)=221 truncated=0`, bucket-A line `census.White_Mage_Soul_Spurn_AOE_obj: base=<absent> on=1 off=<absent>` (bucket A also holds `census.Player_Damage_Parent_obj: base=<absent> on=1 off=<absent>`, the object's parent class — not a distinct signal). Since the measured path is a `census.<Object>` leaf, `tgprobe deep get` cannot read it (`deep get` resolves scoped struct/array/ds paths, not the census map); per the driver amendment, three `tgprobe deep census` reads stand in for it on each side — **the six quoted reads below are excerpts of the log, not the full census output.** **ON** (by eye ON, 10 s window; each read's own full `nonzero=` count — 181/161/179 — covers every nonzero object, but only the two relevant rows are shown): frame 34740 → `White_Mage_Soul_Spurn_AOE_obj=1` (`Player_Damage_Parent_obj=1` alongside); frame 35430 → `=1`; frame 36150 → `=1`. **OFF** (by eye OFF after 1 press): frame 39540, frame 40260 and frame 40950 each print only the header line `nonzero=177`, with no object rows in the log; absence of the row is *inferred* from that count matching the fully-listed baseline census at frame 27210 (177 rows enumerated in full, `White_Mage_Soul_Spurn_AOE_obj` not among them), not read directly at those three frames. Non-toggle control: `tgprobe deep diff hz2 hz3 Soul_Spurn` → `tgprobe deep diff hz2 hz3: changed=133 added=51 removed=43 truncated=0 filter=Soul_Spurn matching=0` — hz2/hz3 is the pair where C3 (the census positive control) fired, so it is the valid non-toggle control; the path does not change when Healing Zone is cast in that pair. (`tgprobe deep diff hz0 hz1 Soul_Spurn` also read `matching=0`, but hz0/hz1 is the pair where C3 did **not** fire, so it is not used as a control here — see C3 above.) Neither pair shows the AOE instance exists *only* because of the toggle; both show only that casting Healing Zone does not itself change this path. Read = `instance_number(asset_get_index(GetObjectName(GameObject::White_Mage_Soul_Spurn_AOE_obj))) > 0`; ON=1, OFF=0. The census reads above use a loop index over the object range plus `object_get_name`, not this shape directly on `White_Mage_Soul_Spurn_AOE_obj`. But the shape itself — `CallBuiltin("asset_get_index", …)` then `CallBuiltin("instance_number", …)`, by name (`TgProbeCountByName`, `ModuleMain.cpp:14916-14925`, invoked at `:14941-14942` from `TgProbeHudRoomTick`) — **did run this session**, on `White_Mage_Soul_Spurn_obj` and `Player_Ability_Parent_obj` (not the AOE object). No `self` was supplied to either call: `CallBuiltin` is the two-argument form YYTK documents as running in **the global context**, takes no `CInstance*` and never forwards the detour's `self` (`YYTK_Shared_Interface.hpp:66-74`; the `self`-taking form is the separate `CallBuiltinEx` at `:85`, not used here). So the only context this exercised is the global instance — no `self` value, `Controller_obj` or otherwise, has been supplied to this read yet, even though the call happens inside a `DrawHudBuffs` detour whose own GML `self` is `Controller_obj` (Q4). Timing: `TgProbeCountByName` runs only from the key-change branch of `TgProbeHudRoomTick` (`:14931-14943`; the per-frame part is just an interlocked counter at `:14945`), and the room key never changed this session — `firstHud=attach (not a zone change) room=4131119309451652171 frame=5400 firstHudSpurnInstances=0 firstHudAbilityInstances=0` is one snapshot taken once, at room attach, printed unchanged in three later `tgprobe show` replies (session2.log lines 127, 224, 1255; the rising `hudSinceRoomChange` in the same replies — 30, 11550, 43470 — is the separate per-frame counter, not a re-sample). So the shape ran **exactly twice**, once per object, at frame 5400. No cast had happened yet at that point: the same `tgprobe show` reply that samples `firstHud` also reads `TalentUse mode=native calls=0 lastFrame=0` at `frame=5430` (session2.log line 62); the first Soul Spurn cast counted after `tgprobe reset` (log line 150) is later — `TalentUse mode=native calls=1 lastFrame=14796` / `TalentsWhiteMage mode=native calls=1 lastFrame=14815` (log lines 159, 166). The tester's by-eye OFF note (log line 136) comes before both the reset and that first counted cast, so it corroborates OFF shortly before frame 5400, not exactly at that point. `0` is consistent with that: `White_Mage_Soul_Spurn_obj` never appears as a non-zero census row anywhere in this session, and `Player_Ability_Parent_obj`'s absence rests on the fully enumerated census at frame 27210 (session2.log 757-935, `Player_Ability_Parent_obj` not among its 177 rows) and on its absence from both `deep flip base on off` buckets (log 490-737, A=41/B=221) — it is absent from all three ON census reads (34740/35430/36150) and all three OFF reads (39540/40260/40950), first showing up as `+ census.Player_Ability_Parent_obj=1` only much later, during the `hz2`/`hz3` Healing Zone cast (evidence about that cast, not about frame 5400). But neither object's own instance count was independently checked at frame 5400 itself, so `0` is consistent with, not proof of, the state at that moment. Both calls returned a number rather than the bare `unreadable` token (or `n/a` when no snapshot has been taken yet — `ModuleMain.cpp:15176`, `:15181-15182`), so the shape resolves in the global context at that one sample point; it shows nothing more than that. What it never returned this session, on any object, in any context, is a **non-zero**. The indicator workorder's positive control therefore cannot be "does the call return" — it must be an ON=1 read through this exact shape on `White_Mage_Soul_Spurn_AOE_obj`, in whatever context (global or a specific `self` via `CallBuiltinEx`) the indicator actually uses, which this session never obtained. Not the toggle: `Player_obj.playerEffect[182]` went `real:0.000000 -> int64:2` (`~ Player_obj.playerEffect[182]: real:0.000000 -> int64:2`, `deep diff base on Player_obj.`) on the first cast and stayed `2` after turning OFF (`tgprobe deep get Player_obj.playerEffect[182] = int64:2 frame=20550` while ON, `= int64:2 frame=25290` while OFF) — stays `2` while OFF; what it means is not established. The AOE instance's own variables while ON (`tgprobe vars White_Mage_Soul_Spurn_AOE_obj`): `activated=bool:true`, `purgatory=real:0.090000`, `purgatoryTimer=real:105.73`, `tick_frequency=180`, `tickNumber=19`. |
+| Q3-D | Where the ON state lives, read from non-scalar runtime storage (`tgprobe deep`) | measured | Path: `census.White_Mage_Soul_Spurn_AOE_obj` (`GameObject::White_Mage_Soul_Spurn_AOE_obj` = SDK index 5759; the runtime object index itself was never printed this session). Found by `tgprobe deep flip base on off` → `tgprobe deep flip base on off: A(flipped and reverted)=41 B(changed twice)=221 truncated=0`, bucket-A line `census.White_Mage_Soul_Spurn_AOE_obj: base=<absent> on=1 off=<absent>` (bucket A also holds `census.Player_Damage_Parent_obj: base=<absent> on=1 off=<absent>`, the object's parent class — not a distinct signal). Since the measured path is a `census.<Object>` leaf, `tgprobe deep get` cannot read it (`deep get` resolves scoped struct/array/ds paths, not the census map); per the driver amendment, three `tgprobe deep census` reads stand in for it on each side — **the six quoted reads below are excerpts of the log, not the full census output.** **ON** (by eye ON, 10 s window; each read's own full `nonzero=` count — 181/161/179 — covers every nonzero object, but only the two relevant rows are shown): frame 34740 → `White_Mage_Soul_Spurn_AOE_obj=1` (`Player_Damage_Parent_obj=1` alongside); frame 35430 → `=1`; frame 36150 → `=1`. **OFF** (by eye OFF after 1 press): frame 39540, frame 40260 and frame 40950 each print only the header line `nonzero=177`, with no object rows in the log; absence of the row is *inferred* from that count matching the fully-listed baseline census at frame 27210 (177 rows enumerated in full, `White_Mage_Soul_Spurn_AOE_obj` not among them), not read directly at those three frames. Non-toggle control: `tgprobe deep diff hz2 hz3 Soul_Spurn` → `tgprobe deep diff hz2 hz3: changed=133 added=51 removed=43 truncated=0 filter=Soul_Spurn matching=0` — hz2/hz3 is the pair where C3 (the census positive control) fired, so it is the valid non-toggle control; the path does not change when Healing Zone is cast in that pair. (`tgprobe deep diff hz0 hz1 Soul_Spurn` also read `matching=0`, but hz0/hz1 is the pair where C3 did **not** fire, so it is not used as a control here — see C3 above.) Neither pair shows the AOE instance exists *only* because of the toggle; both show only that casting Healing Zone does not itself change this path. Read = `instance_number(asset_get_index(GetObjectName(GameObject::White_Mage_Soul_Spurn_AOE_obj))) > 0`; ON=1, OFF=0. The census reads above use a loop index over the object range plus `object_get_name`, not this shape directly on `White_Mage_Soul_Spurn_AOE_obj`. But the shape itself — `CallBuiltin("asset_get_index", …)` then `CallBuiltin("instance_number", …)`, by name (`TgProbeCountByName`, `ModuleMain.cpp:14916-14925`, invoked at `:14941-14942` from `TgProbeHudRoomTick`) — **did run this session**, on `White_Mage_Soul_Spurn_obj` and `Player_Ability_Parent_obj` (not the AOE object). No `self` was supplied to either call: `CallBuiltin` is the two-argument form YYTK documents as running in **the global context**, takes no `CInstance*` and never forwards the detour's `self` (`YYTK_Shared_Interface.hpp:66-74`; the `self`-taking form is the separate `CallBuiltinEx` at `:85`, not used here). So the only context this exercised is the global instance — no `self` value, `Controller_obj` or otherwise, has been supplied to this read yet, even though the call happens inside a `DrawHudBuffs` detour whose own GML `self` is `Controller_obj` (Q4). Timing: `TgProbeCountByName` runs only from the key-change branch of `TgProbeHudRoomTick` (`:14931-14943`; the per-frame part is just an interlocked counter at `:14945`), and the room key never changed this session — `firstHud=attach (not a zone change) room=4131119309451652171 frame=5400 firstHudSpurnInstances=0 firstHudAbilityInstances=0` is one snapshot taken once, at room attach, printed unchanged in three later `tgprobe show` replies (session2.log lines 127, 224, 1255; the rising `hudSinceRoomChange` in the same replies — 30, 11550, 43470 — is the separate per-frame counter, not a re-sample). So the shape ran **exactly twice**, once per object, at frame 5400. No cast had happened yet at that point: the same `tgprobe show` reply that samples `firstHud` also reads `TalentUse mode=native calls=0 lastFrame=0` at `frame=5430` (session2.log line 62); the first Soul Spurn cast counted after `tgprobe reset` (log line 150) is later — `TalentUse mode=native calls=1 lastFrame=14796` / `TalentsWhiteMage mode=native calls=1 lastFrame=14815` (log lines 159, 166). The tester's by-eye OFF note (log line 136) comes before both the reset and that first counted cast, so it corroborates OFF after frame 5400 and before the first counted cast, not exactly at frame 5400. `0` is consistent with that: `White_Mage_Soul_Spurn_obj` never appears as a non-zero census row anywhere in this session, and `Player_Ability_Parent_obj`'s absence rests on the fully enumerated census at frame 27210 (session2.log 757-935, `Player_Ability_Parent_obj` not among its 177 rows) and on its absence from both `deep flip base on off` buckets (log 490-737, A=41/B=221) — it is absent from all three ON census reads (34740/35430/36150) and all three OFF reads (39540/40260/40950), first showing up as `+ census.Player_Ability_Parent_obj=1` only much later, during the `hz2`/`hz3` Healing Zone cast (evidence about that cast, not about frame 5400). But neither object's own instance count was independently checked at frame 5400 itself, so `0` is consistent with, not proof of, the state at that moment. Both calls returned a number rather than the bare `unreadable` token (or `n/a` when no snapshot has been taken yet — `ModuleMain.cpp:15176`, `:15181-15182`), so the shape resolves in the global context at that one sample point; it shows nothing more than that. What it never returned this session, on any object, in any context, is a **non-zero**. The indicator workorder's positive control therefore cannot be "does the call return" — it must be an ON=1 read through this exact shape on `White_Mage_Soul_Spurn_AOE_obj`, in whatever context (global or a specific `self` via `CallBuiltinEx`) the indicator actually uses, which this session never obtained. Not the toggle: `Player_obj.playerEffect[182]` went `real:0.000000 -> int64:2` (`~ Player_obj.playerEffect[182]: real:0.000000 -> int64:2`, `deep diff base on Player_obj.`) on the first cast and stayed `2` after turning OFF (`tgprobe deep get Player_obj.playerEffect[182] = int64:2 frame=20550` while ON, `= int64:2 frame=25290` while OFF) — stays `2` while OFF; what it means is not established. The AOE instance's own variables while ON (`tgprobe vars White_Mage_Soul_Spurn_AOE_obj`): `activated=bool:true`, `purgatory=real:0.090000`, `purgatoryTimer=real:105.73`, `tick_frequency=180`, `tickNumber=19`. |
 | Q3-G | The same, from the local Ghidra read of `TalentsWhiteMage`'s talent-240 branch, paraphrased | not run — Q3-D measured | Step 5.10 (`naddr TalentsWhiteMage` / Ghidra fallback) was not reached: Q3-D came back `measured` with all controls fired, so per §5 the Ghidra pass is skipped. No `citrace` command was sent this session. |
 
 **Purgatory sub-talent level:** the storage exists, but which field is
@@ -894,8 +913,8 @@ indicator workorder:**
   (`TalentUse ... lastFrame=14796` / `TalentsWhiteMage ... lastFrame=14815`,
   log lines 159, 166). The tester's by-eye OFF note (log line 136) comes
   before both the reset and that first counted cast, so it corroborates OFF
-  shortly before frame 5400, not exactly at that point. `0` is consistent
-  with that — `White_Mage_Soul_Spurn_obj` never appears as a non-zero census
+  after frame 5400 and before the first counted cast, not exactly at frame
+  5400. `0` is consistent with that — `White_Mage_Soul_Spurn_obj` never appears as a non-zero census
   row anywhere this session, and `Player_Ability_Parent_obj`'s absence rests
   on the fully enumerated census at frame 27210 (session2.log 757-935,
   `Player_Ability_Parent_obj` not among its 177 rows) and on its absence
@@ -975,3 +994,106 @@ The non-blocking instrument findings deferred at the round-3 cap (C1's
 `selftest instance` check-expectation defect recorded above; N1–N4 from the
 round-3 verify log) are a follow-up to the instrument itself, not to this
 result — Q3-D does not depend on them.
+
+### P1: the indicator's read, control and slot design
+
+What the P1 build (`ToggleIndicatorRead`/`ToggleIndicatorModel`, plus the
+`tgprobe spurn`/`tgprobe mark` control) actually does with the evidence above,
+and what it still leaves open for session 3.
+
+#### The read, and exactly what has been proven
+
+`### After session 2` above measured the read **shape** —
+`CallBuiltin("asset_get_index", …)` then `CallBuiltin("instance_number", …)`,
+two-argument, global-context, no `self` — running twice this session, on the
+wrong objects, before any cast, always returning `0`. It never ran on
+`White_Mage_Soul_Spurn_AOE_obj` itself and never returned a non-zero. So P1's
+first job is to run that exact shape, through the production function, from
+where the indicator will actually call it: inside `Hook_DrawHudBuffs`,
+immediately after the trampoline and `HhDrawHeadLabels()` (the frame's GML
+`self` there is `Controller_obj`, though the read itself never uses `self`).
+`HhResolveLocalPlayer` is already called every frame from that same hook by
+`HhDrawHeadLabels`, so calling it again here leans on a proven call, not a
+cold one; `HhResolveLocalPlayer` can hand back `VALUE_REF` rather than
+`VALUE_OBJECT` (Known Limitations item 7), so the read must not gate on the
+player `RValue`'s own kind. `draw_rectangle` is not used anywhere in
+`ModuleMain.cpp` before this change, so whether this hook can draw at all is
+unproven until `tgprobe mark` shows it (Section 3's fix below).
+
+#### Co-op / ownership: the answer
+
+`instance_number` counts every player's instances of the AOE object, not just
+the local one's; the measured AOE instance carries `playerNumber=1`,
+`isMyClient=true`, `targetNumber=1` and `myCaster=-4`. The design taken in:
+an AOE instance lights the indicator only if its own `playerNumber` (read with
+`variable_instance_get`) equals the local player's own `playerNumber`. An
+instance whose `playerNumber` cannot be read is *unattributed* and never
+lights it; if every instance present is unattributed, or the local player's
+own number cannot be read, the answer is `Unreadable` — nothing is drawn, and
+a counter is raised — never guessed either way. A foreign AOE therefore fails
+toward "absent", never toward "wrong". Whether `Player_obj` actually carries a
+`playerNumber` member at all was not printed by either session 1 or 2; session
+3's R4 measures it (the `scope:` gate). A second real player cannot be
+produced in this toolkit's offline setting (see "Anti-Cheat & Offline
+Enforcement"), so the live negative control is non-mutating instead: `tgprobe
+spurn as <n>` runs the identical enumeration and decision with the local
+number overridden, and must answer `off` with `others>=1` while the real
+(un-overridden) answer is `on`. That proves the ownership filter runs on live
+values; it does not prove what `playerNumber` means for a real second
+player, which stays a Known Limitation. `isMyClient` is logged for the record
+only and used nowhere in the decision.
+
+#### Research-build control (P1): `tgprobe spurn` and `tgprobe mark`
+
+Both commands live inside the existing `tgprobe` research block, dispatched
+from `TgProbeCommand`. One research-only line follows `HhDrawHeadLabels();` in
+`Hook_DrawHudBuffs`, in its own `#ifndef FORGEPACT_RELEASE` pair: it samples
+the production read on every draw (`tgprobe spurn`'s running counters and last
+sample) and draws the `mark` rectangle if one is armed. `spurn as <n>` is the
+non-mutating negative control described above; `spurn log on|off` logs each
+instance's `playerNumber`/`isMyClient` on a budgeted number of state changes;
+`spurn slots` runs read-only from the command handler. `mark <x> <y> <w> <h>`
+saves `draw_get_colour`/`draw_get_alpha` before its first `draw_set_` and
+restores both after its last draw — the same pattern `HhDrawHeadLabels` uses —
+and now counts `draws=`/`drawExc=` so a tester (and `tgprobe spurn`'s own
+`markDraws=`/`markDrawExc=` line) can tell "never drew" apart from "drew
+somewhere the tester didn't see" (the fix for the instrument-blindness review
+below). The sampler's own instrument control: the `samples=` delta across a
+window must match the `hhlabel` `hudCalls=` delta over the same window (±2),
+or every `spurn` answer in that window is `blocked`, not a game finding.
+
+#### Slot location (Q4): what is known
+
+`UI_Hud_Talent_obj` (`GameObject` 5099) has `x=0 y=0 width=2035.8 height=232
+buttonXOffset=43 buttonYOffset=48 row0X=104 row1X=5 rows=2 buttonScale=1` on a
+3840×2088 GUI (session 1). Session 2's non-scalar search found talent 240 in
+four places: `UI_Hud_Talent_obj.row0[5].talentId`, `.row1[5].talentId`,
+`.playerSlot{bind_skill}[0][4]`, and `global.mySkills[3]`. `row0`/`row1` hold
+structs whose elements also carry `refreshInfoTimer`. Not established by any
+static source: which array is the drawn hotbar, why both rows hold 240 at
+index 5, or which members hold the button's actual screen position — this is
+a by-eye measurement only. `tgprobe spurn slots` prints every member of each
+`talentId == 240` element; `tgprobe mark x y w h`, once its own draw control
+has passed, draws a candidate outline from those members at GUI coordinates,
+and the tester says which one (if any) sits on Soul Spurn's slot. The winning
+array, id field and position fields are recorded as `Slot geometry fields:` in
+`### After session 3`; if the draw control itself never produced a visible
+rectangle, that is recorded separately (`blocked (draw control)`) rather than
+folded into "no candidate matched" — see `## Live procedure` → `### Session 3`
+step 6.
+
+#### Section 3 fix: a draw control before any candidate (instrument-blindness review)
+
+`TgProbeDrawMark` previously swallowed every exception from its own
+`draw_rectangle`/`draw_set_*` calls uncounted, so a broken draw (wrong GUI
+layer, a bad colour/alpha call, coordinates in the wrong space) and a working
+draw at the wrong coordinates would have looked identical to the tester —
+both print nothing extra, and the session-3 procedure would have recorded
+`slotgeom: none` either way, closing the feature on an instrument artifact
+rather than a real negative. `TgProbeDrawMark` now counts `draws=` (a
+completed pass, including both restores) and `drawExc=` (a threw pass)
+separately, both printed by `tgprobe mark`/`tgprobe mark off` and by `tgprobe
+spurn`'s `markDraws=`/`markDrawExc=`. Session 3 step 6 now runs a draw control
+first — `tgprobe mark` at an obviously visible GUI spot, confirmed by eye —
+before touching any candidate slot rectangle, and records `blocked (draw
+control)` rather than `slotgeom: none` if that control fails.
