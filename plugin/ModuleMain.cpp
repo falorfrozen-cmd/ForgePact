@@ -12563,6 +12563,30 @@ static bool PpGridDigest(const RValue& node, std::vector<std::string>& cells)
     } catch (...) { cells.clear(); return false; }
 }
 
+// Per cell position, whether that cell is filled (not empty). Used to track fill
+// state directly rather than depending on the digest format. Must be called with
+// the same node as PpGridDigest to stay in sync. Returns false on any read error.
+static bool PpGridFillStates(const RValue& node, std::vector<bool>& fillStates)
+{
+    fillStates.clear();
+    try {
+        if (!g_Yytk->CallBuiltin("variable_instance_exists", { node, RValue("nodeGrid") }).ToBoolean()) return false;
+        const RValue grid = g_Yytk->CallBuiltin("variable_instance_get", { node, RValue("nodeGrid") });
+        if (grid.m_Kind != VALUE_ARRAY) return false;
+        const int rows = (int)g_Yytk->CallBuiltin("array_length", { grid }).ToDouble();
+        for (int i = 0; i < rows; ++i) {
+            const RValue r = g_Yytk->CallBuiltin("array_get", { grid, RValue((double)i) });
+            if (r.m_Kind != VALUE_ARRAY) return false;
+            const int cols = (int)g_Yytk->CallBuiltin("array_length", { r }).ToDouble();
+            for (int j = 0; j < cols; ++j) {
+                const RValue cell = g_Yytk->CallBuiltin("array_get", { r, RValue((double)j) });
+                fillStates.push_back(!PpBackingIsEmptyCell(cell));
+            }
+        }
+        return true;
+    } catch (...) { fillStates.clear(); return false; }
+}
+
 static std::atomic<bool> g_PpMoveBannerShown{ false };
 
 // `move <self> <callable> [arg ...] [other=<sel>] [member=<name>] [bag=<k|text>]
@@ -12703,6 +12727,12 @@ static void PpMoveCommand(const std::vector<std::string>& tok)
         Out(tag + ": before prospect=" + PpContentsText(prospectBefore) + " bag " + bagLabel + "=" + PpContentsText(bagBefore)
             + " callable=" + callableText);
 
+        std::vector<bool> prospectFilledBefore;
+        if (!PpGridFillStates(prospectNode, prospectFilledBefore)) {
+            Out(tag + ": refused: the ProspectGrid's fill states could not be read; no call made");
+            return;
+        }
+
         std::vector<RValue> callArgs;
         callArgs.push_back(fn);
         for (const RValue& v : argValues) callArgs.push_back(v);
@@ -12735,9 +12765,8 @@ static void PpMoveCommand(const std::vector<std::string>& tok)
         int prospectChangedCells = 0;
         if (prospectRead) {
             for (size_t i = 0; i < prospectCellsBefore.size(); ++i) {
-                const std::string& b = prospectCellsBefore[i];
-                const bool wasFilled = b.size() < 2 || b.compare(b.size() - 2, 2, ":-") != 0;
-                if (wasFilled && (i >= prospectCellsAfter.size() || prospectCellsAfter[i] != b)) ++prospectChangedCells;
+                const bool wasFilled = i < prospectFilledBefore.size() && prospectFilledBefore[i];
+                if (wasFilled && (i >= prospectCellsAfter.size() || prospectCellsAfter[i] != prospectCellsBefore[i])) ++prospectChangedCells;
             }
         }
         int changedCells = 0, newFingerprints = 0;

@@ -1713,7 +1713,12 @@ Research DLL, auto-prospect OFF for the whole session (`prospectprobe hook` and
   `N detoured, M failed` and any `refused`). Load, open the cube, `prospectprobe grids`
   (→ `M-grids`: every grid, its callstack name, which one is the bag), `contents`,
   `cell prospect <r> <c>` on a material cell, the item's cell and an empty cell (→ `M-cell`,
-  `M-identity`). Prospect one junk item by hand first if the grid holds no material.
+  `M-identity`). Prospect one junk item by hand first if the grid holds no material. **No-op
+  control:** run `move` with a shape that dispatches nothing (e.g. `self.is_valid () == true &&
+  other.is_valid () == false`, where `other` is never reached), or take the digest twice with no
+  action between (`prospectprobe cell prospect ... cell ...` twice). Record that
+  `prospect-changed-cells=0` and `changed-cells=0`, confirming the digests are stable when no
+  move is made.
 - **M2, control by click.** `watch on`; `arm budget=40` (all rows). Click a material in the
   ProspectGrid, click it into the bag. `show`, `contents`, `grids`, then `cell bag:<k> <r> <c>`
   on the landed cell (→ `M-control-click`: every row that fired with `self`/`other`/args, the
@@ -1742,14 +1747,20 @@ Research DLL, auto-prospect OFF for the whole session (`prospectprobe hook` and
   the qualifying shape once with the bag full (must refuse or leave the material in place).
   A crash: relaunch the same build, record it, continue. If M2 found the bag's container is
   not a grid node, a `POSSIBLE LOSS` or `nothing moved` here is the instrument's blindness,
-  not the shape's result: go by the by-eye check and leave the shape open.
+  not the shape's result: go by the by-eye check and leave the shape open. **If the material's
+  stack count is an instance (`VALUE_REF`) or deeper than one level in the cell struct**, the
+  per-cell digest cannot read it (only two levels: the cell's own members, and one level into
+  plain struct members), so a `nothing moved` verdict is the instrument's blindness: go by the
+  by-eye result and do not rule out the shape.
 - **M8** fill the rows, `stage-c-status: complete`.
 
-**Qualifying rule for `move-shape`:** the shape printed `moved`, with `invoked=yes` on the
-row the control identified, every value from a selector a player build can produce by name
-(instances found by what they are, cell/item structs read off the node, numbers, `undef`),
-the material seen in the bag by eye, and its bag-full repeat left the material in the grid
-without a `POSSIBLE LOSS`. Otherwise `move-shape: none`.
+**Qualifying rule for `move-shape`:** the shape printed `moved` (or `moved (partial)` if the
+by-eye result confirms the material moved), with `invoked=yes` on the row the control identified,
+every value from a selector a player build can produce by name (instances found by what they are,
+cell/item structs read off the node, numbers, `undef`), the material seen in the bag by eye, and
+for a `moved (partial)` verdict the stack count on the moved cell confirmed by `cell` to have
+changed, and its bag-full repeat left the material in the grid without a `POSSIBLE LOSS`.
+Otherwise `move-shape: none`.
 
 If nothing qualifies, Stage C stops there (`move-shape: none`): the next step is a
 paraphrased local read of the routine the control identified, then a second batched
