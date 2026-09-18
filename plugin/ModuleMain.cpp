@@ -4348,6 +4348,9 @@ static long g_TySeen = 0, g_TyUpgraded = 0, g_TyAffixed = 0;
 static double g_RarRarePct = 0.0;
 static double g_RarAncientPct = 0.0;
 static long g_RarRaisedRare = 0, g_RarRaisedAncient = 0;
+#ifndef FORGEPACT_RELEASE
+static long g_RarSkippedBoss = 0;
+#endif
 static bool RarityFloorActive() { return g_RarRarePct > 0.0 || g_RarAncientPct > 0.0; }
 static bool g_TyHookInstalled = false, g_TyHookAttempted = false;
 static PFUNC_YYGMLScript g_Orig_EnemyRaritySettings = nullptr;
@@ -4455,6 +4458,23 @@ static std::string RarState(const RValue& inst)
     return s;
 }
 #endif
+// Bosses (Anubis, Damien, Cthulhu, the Uber_* variants, and the rest of the
+// Enemy_Child_Boss_obj family - hs-game-sdk's OBJECT_PARENT_INDEX confirms
+// Anubis_obj's own chain runs Anubis_obj -> Enemy_Child_Boss_obj ->
+// Enemy_Parent_obj) run through this same hook, since EnemyRaritySettings
+// fires from Enemy_Parent_obj's own Alarm_4 for every enemy, boss or not.
+// A boss already has its own scripted HP/affix setup; the Monster Rarity
+// sliders raising it a second time on top of that is what took a reported
+// Anubis from ~500k to ~4.5M HP with 20% rare + 20% ancient set. Same
+// ancestry check the Pet Quest Collector already uses for its own object
+// family (CiInstanceIsQuestObject, above).
+static bool RarInstanceIsBoss(const RValue& inst)
+{
+    try {
+        RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("object_index") });
+        return HeroSiege::Objects::IsDescendantOf((int32_t)oi.ToDouble(), (int32_t)HeroSiege::Objects::GameObject::Enemy_Child_Boss_obj);
+    } catch (...) { return false; }
+}
 static RValue& Hook_EnemyRaritySettings(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
     PERF_SCOPE(g_PerfRarity);
@@ -4471,7 +4491,11 @@ static RValue& Hook_EnemyRaritySettings(CInstance* S, CInstance* O, RValue& R, i
         try { const double id = InstanceIdOf(inst); if (id >= 0.0 && g_EnemyBornIds.erase((int)id)) enemyBorn = true; } catch (...) {}
     }
     if (enemyBorn && S && (RarityFloorActive() || TyrantActive())) InterlockedIncrement(&g_RarSkippedEnemyBorn);
-    if (S && !enemyBorn && RarityFloorActive()) {
+    if (S && !enemyBorn && RarityFloorActive() && RarInstanceIsBoss(inst)) {
+#ifndef FORGEPACT_RELEASE
+        InterlockedIncrement(&g_RarSkippedBoss);
+#endif
+    } else if (S && !enemyBorn && RarityFloorActive()) {
         try {
             RValue rv = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("enemyRarity") });
             const double rar = (rv.m_Kind == VALUE_REAL || rv.m_Kind == VALUE_INT32 || rv.m_Kind == VALUE_INT64) ? rv.ToDouble() : -1.0;
@@ -14364,7 +14388,11 @@ static bool HandleHeadhunterCommand(const std::string& lc, const std::string& re
             ? ("rare " + std::to_string((int)rare) + " pct, ancient " + std::to_string((int)anc) + " pct" + (g_TyHookInstalled ? "" : " (hook failed)"))
             : std::string("off"))
             + " | raised so far: rare=" + std::to_string(g_RarRaisedRare) + " ancient=" + std::to_string(g_RarRaisedAncient)
-            + " | enemy-born left alone: " + std::to_string(g_RarSkippedEnemyBorn) + " (seen " + std::to_string(g_EnemyBornSeen) + ")");
+            + " | enemy-born left alone: " + std::to_string(g_RarSkippedEnemyBorn) + " (seen " + std::to_string(g_EnemyBornSeen) + ")"
+#ifndef FORGEPACT_RELEASE
+            + " | bosses left alone: " + std::to_string(g_RarSkippedBoss)
+#endif
+        );
     } else if (lc == "tyrantchance" || lc == "tyrantaffix") {
         try { double p = std::stod(TrimCopy(rest)); if (p >= 0.0 && p <= 100.0) { if (lc == "tyrantchance") g_TyRarePct = p; else g_TyAffixPct = p; } } catch (...) {}
         Out(lc + " -> " + std::to_string((int)(lc == "tyrantchance" ? g_TyRarePct : g_TyAffixPct)) + " percent");
