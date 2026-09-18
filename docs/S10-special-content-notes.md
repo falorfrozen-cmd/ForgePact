@@ -1,6 +1,6 @@
 # ForgePact — Sezon 10 Special Content çalışma notu
 
-Tarih: 2026-08-25
+Tarih: 2026-08-25 (sonraki ekler kendi tarihleriyle)
 Doğrulanmış istemci: `Hero_Siege.exe` 303.302.144 B
 SHA256 `0766aa8bfc6eb5679df46f78546644e34fae333adc22474f96903c1d68f251f5`
 Profil: **S10-2026.08.24**
@@ -10,6 +10,24 @@ Test kurulumu (asıl oyuna dokunulmuyor):
 
 S9 çalışan kaynak yedeği:
 `source\ForgePact_S9_CALISAN_YEDEK\`
+
+## Bu belgenin duruşu
+
+Bu not ForgePact'in diğer araştırma belgeleriyle aynı kuralla yazıldı:
+ölçülen davranış, nesne/betik/değişken adları ve indeksleri, stat ve global
+değişken kimlikleri, bizim kendi komutlarımız, kancalarımız ve kodumuz —
+no decompiled script text. Oyunun betik gövdeleri, disassembly, decompiler'ın
+uydurduğu adlar ve oyun fonksiyonlarının adres/boyut listeleri burada yok:
+yerelde okunup ne yaptıkları kendi sözlerimizle anlatıldı (hub `AGENTS.md` ›
+"Legal: Decompiled Output Never Reaches Any Origin"). Bir mekanizma, oyunun
+onu hangi sırayla değerlendirdiğine göre değil, hangi kapının neyle
+kapandığına ve neyle açıldığına göre anlatılıyor. Ölçülen her sonuç, her
+olumsuz deneme ve her "çöktü, tekrar deneme" kaydı korunuyor.
+`tests/test_research_docs_no_decompiler_output.py` bu belgeyi bu standartta
+tutar.
+
+Not defterinin kendisi kronolojik: bir bölümün vardığı sonucu sonraki bir
+bölüm düzeltebiliyor, düzeltme yapıldığı yerde işaretlendi.
 
 ---
 
@@ -26,7 +44,7 @@ chaospillars 4624.
 
 Eklenti (`plugin/ModuleMain.cpp` → `DoMultiCreate`) `instance_create_layer` /
 `instance_create_depth` çağrısını yakalayıp nesneyi N kez, konumu kaydırarak
-yaratıyordu:
+yaratıyordu (bizim kodumuz):
 
 ```cpp
 a[0] = Args[0] + ((i % 5) - 2) * 28;   // x
@@ -34,17 +52,20 @@ a[1] = Args[1] + ((i / 5) - 2) * 28;   // y
 orig(tmp, S, O, argc, a.data());
 ```
 
-**S10'da neden çalışmıyor (ÖLÇÜLDÜ):**
-`Spawn_*_obj` nesneleri artık `instance_create_layer`'dan **sıfır kez** geçiyor —
-odaya gömülü geliyorlar. `creator_objects.log`'da hiç `Spawn_*` yok.
-`Enemy_Creator_*` ise eskisi gibi `instance_create` ile yaratılmaya devam ediyor,
-bu yüzden **density hâlâ çalışıyor** (`extra_creators=868` ölçüldü).
+**S10'da neden çalışmıyor (ÖLÇÜLDÜ, sonra düzeltildi):**
+O günkü native runtime'da `Spawn_*_obj` nesneleri `instance_create_layer`'dan
+**sıfır kez** geçiyor görünüyordu — `creator_objects.log`'da hiç `Spawn_*`
+yoktu. `Enemy_Creator_*` ise eskisi gibi `instance_create` ile yaratılmaya
+devam ediyordu, bu yüzden **density hâlâ çalışıyordu** (`extra_creators=868`
+ölçüldü). (2026-08-26'da YYToolkit tabanlı kurulumda bu "geçmiyor" okuması
+YANLIŞ çıktı: oyun marker'ların hepsini kendisi yaratıyor — bkz.
+"Uc bulgu, uc engel".)
 
 ---
 
 ## 2. ÇÖZÜM — S9'un asıl tekniği: SpawnAtPlayer
 
-S9'da `spawnname <NesneAdi>` komutu vardı:
+S9'da `spawnname <NesneAdi>` komutu vardı (bizim kodumuz):
 
 ```cpp
 pid = instance_find(asset_get_index("Player_obj"), 0)
@@ -73,24 +94,21 @@ Oran/kapı/ZoneState'e hiç dokunmuyor. Bu teknik S10 runtime'ına taşındı
 | Rift | `Rift_Portal_obj` | ❌ yaratılıyor, görünmüyor |
 | Battlefield | `Portal_Battlefield_obj` | ❌ yaratılıyor, görünmüyor |
 
-Çalışmayan ikisi **başka bölgeye götüren geçit**; hedef bölge verisini normal
-akışta spawner/zone state'ten alıyor. `Rift_Portal_obj` Create olayı 13.024 bayt,
-GPV okuyor + RNG çalıştırıyor → kurulum verisi olmadan kendini yok ediyor.
-Çalışan üçü bulunduğu haritada olay başlatıyor, kendine yetiyor.
+Çalışmayan ikisi **başka bölgeye götüren geçit**; o günkü yorum, hedef bölge
+verisini normal akışta spawner/zone state'ten aldıkları ve kurulum verisi
+olmadan kendilerini kapattıklarıydı (`Rift_Portal_obj`'un Create olayı global
+değer okuyup rastgele sayı çekiyor). §13 bu "kendini yok ediyor" yorumunu
+düzeltti; asıl açıklama "COZULDU" bölümünde: bunlar ödül portalı, mekanik
+nesnesi değil. Çalışan üçü bulunduğu haritada olay başlatıyor, kendine yetiyor.
 
 ---
 
 ## 4. Kapı analizi (Special Content neden doğal yoldan çıkmıyor)
 
-Callback'lerin kapısı (Cursed Orb örneği, rva 0xAFDD320):
-
-```
-+213  xorps xmm6, xmm6        ; xmm6 = 0.0  SABIT SIFIR
-+298  call  sub_c5b4ca0       ; eSt[<dinamik>] oku  -> 35
-+419  call  sub_c5d5620       ; RValue karsilastirma(35, 0)
-+436  setle sil               ; sil = (okunan <= 0)
-      test sil,sil / je       ; degilse ERKEN CIKIS
-```
+Callback'lerin (mekanik kapanışlarının) kapısı, Cursed Orb örneğinde: kapanış
+`global.eSt` dizisinden bir değer okuyor ve sabit 0.0 ile karşılaştırıyor;
+okunan değer 0'dan büyükse fonksiyon hemen dönüyor. Rastgele sayı üretimine
+bu durumda hiç ulaşılmıyor.
 
 Canlı ölçüm: beş callback de **tek** karşılaştırma yapıyor, `sol=35 sag=0`,
 sonuç 1 → atla. RNG'ye **hiç ulaşılmıyor**. Bu yüzden RNG hook'lama,
@@ -104,42 +122,41 @@ sabit yapılandırma tablosu.
 | # | Yöntem | Sonuç |
 |---|---|---|
 | 1 | Callback içi eSt oranını büyütme | çökme (mantık ters, kapıyı daha da kapatıyor) |
-| 2 | İç RNG (`sub_c605880`) hook'u | donma |
+| 2 | Oyunun iç `irandom` yardımcısına kanca (builtin tablosunu atlayan, §5) | donma |
 | 3 | Callback içi eSt sayacını sıfırlama | çökme |
 | 4 | Room Start'ta eSt override | çökme |
 | 5 | `Spawn_*_obj` instance'ını çoğaltma | çökme — spawner'lar ZoneState'e kayıtlı **tekil**; kopya anahtarı çakıştırıyor |
 
 Sonuç: kapı gerçek bir **ön koşul**, ayarlanabilir oran değil. Zorlamak =
 brief'te yasaklanan "placement validation bypass". Kod `kEstOverrideEnabled=false`,
-`kSpawnerDuplicationEnabled=false` ile kilitli.
+`kSpawnerDuplicationEnabled=false` ile kilitli. (Bu sonuç 2026-08-26'da
+değişti: `estforce` kapıyı güvenle açıyor — bkz. "CALISAN TARIF".)
 
 ---
 
-## 5. Faydalı adresler / bulgular (S10-2026.08.24)
+## 5. Faydalı bulgular (S10-2026.08.24)
 
-```
-sub_c605880   ic irandom (double doner; builtin tablosunu ATLAR -> builtin
-              random/irandom hook'lari asla atesleme)
-sub_c5d5620   RValue karsilastirma (rcx=sol, rdx=sag, xmm2=eps, r9b=flag)
-sub_c5b4ca0   degisken oku (src, varId, arrayIdx, dst, bool, bool)
-sub_1826a0    FreeRValue     sub_1827d0  CopyRValue
-gDataProtected[N] = N  -> anti-tamper dolaylama; sabitler buradan okunuyor
-```
+- Oyunun kendi iç `irandom` yardımcısı double döndürüyor ve builtin tablosunu
+  **atlıyor** — bu yüzden builtin `random`/`irandom` kancaları özel içerik
+  zarlarında asla ateşlenmiyor.
+- İki RValue'yu karşılaştıran bir runtime yardımcısı var (sol, sağ, epsilon ve
+  bir bayrak alıyor); kapıların hepsi bundan geçiyor.
+- Değişken okuma yardımcısı; `FreeRValue` ve `CopyRValue` runtime'ın bilinen
+  yardımcıları.
+- `gDataProtected[N] = N` → anti-tamper dolaylama; sabitler buradan okunuyor.
 
 Global değişken ID'leri (varmap **yanlış** nesneleri haritalıyor — C++ statik
 string nesneleri; `variable_get_hash` ile doğru ID alınır):
-```
-0x11BE1DF0 -> id 104359 -> gDataProtected
-0x11C00C20 -> id 103819 -> eSt
-0x11C27CC0 -> id 104325 -> gameLayer
-```
+
+| Ad | ID |
+|---|---|
+| `gDataProtected` | 104359 |
+| `eSt` | 103819 |
+| `gameLayer` | 104325 |
 
 Yerleştirme fonksiyonları (henüz kullanılmadı):
-```
-gml_Script_CreateInFreePos      rva 0x71a310   argc=5 (sira BILINMIYOR)
-gml_Script_IsObtainablePlace    rva 0x3f16160
-gml_Script_CreateLootInFreePos  rva 0x718db0
-```
+`gml_Script_CreateInFreePos` (argc=5, argüman sırası BİLİNMİYOR),
+`gml_Script_IsObtainablePlace`, `gml_Script_CreateLootInFreePos`.
 
 ---
 
@@ -220,33 +237,39 @@ Tum oyunda battlefield icin 3, rift icin 3 nesne var:
 Kullanicinin tarif ettigi "el" portalin acilmadan onceki hali.
 
 ### Nesne TAM KURULU yaratiliyor
-`Portal_Battlefield_obj` yaratildiginda 59 degiskeni dolu:
-```
-portalName   = "Eternal Battlefield"    enemySpawnCount = 149
-voidRadiusMax= 1472                     fragmentAmount  = 50
-portalDelay  = 30                       discoveryRange  = 750
-m_BattlefieldPortalEnter (method)
-setVisible=0 portalActive=0 portalUsable=0 isDiscovered=0 portalState=0
-```
+`Portal_Battlefield_obj` yaratildiginda 59 degiskeni dolu. Canli instance'tan
+okunan degerler (bizim `spawn` dokumumuz):
+
+| Degisken | Deger |
+|---|---|
+| `portalName` | "Eternal Battlefield" |
+| `enemySpawnCount` | 149 |
+| `voidRadiusMax` | 1472 |
+| `fragmentAmount` | 50 |
+| `portalDelay` | 30 |
+| `discoveryRange` | 750 |
+| `m_BattlefieldPortalEnter` | method |
+| `setVisible`, `portalActive`, `portalUsable`, `isDiscovered`, `portalState` | hepsi 0 |
 
 ### AMA kendini yok ediyor  <-- ASIL SORUN
 Yaratildiginda `variable_count=59`, ~4 sn sonra `variable_count=0`.
-Yani nesne olmus. Denenen ve ISE YARAMAYAN mudahaleler (hepsi ayni karede,
-`set lastvar` ile):
+O gunku yorum: nesne olmus. (§13: YANLIS okuma, nesne yasiyordu.) Denenen ve
+ISE YARAMAYAN mudahaleler (hepsi ayni karede, `set lastvar` ile):
 `isEligible=1  portalActive=1  portalUsable=1  setVisible=1
  isDiscovered=1 portalState=1 blendPortal=1 drawOutline=1 circleImage=1 visible=1`
 
-Karar Create olayinin ICINDE veriliyor; bayrak yazmak kurtarmiyor.
+Karar Create olayinin ICINDE veriliyor gibiydi; bayrak yazmak kurtarmiyor.
 
 ### HIPOTEZ (dogrulanmadi)
-Rift ve Battlefield **bolge gecisi** ozellikleri. `gml_Script_sc_rift` (1600 B,
-`StringStartsWith` ile oda adi karsilastirmasi) bir YUKLEM: "bu oda rift bolgesi mi".
+Rift ve Battlefield **bolge gecisi** ozellikleri. `gml_Script_sc_rift`, oda
+adinin bir onekle baslayip baslamadigina bakan bir YUKLEM: "bu oda rift bolgesi mi".
 Portal, gidecegi bolge yoksa kendini kapatiyor olabilir. Bu dogruysa bu iki ozellik
 yalnizca **uygun zone tiplerinde** calisir ve test edilen haritada zaten mumkun degil.
+(Sonradan: sebep bu degildi, bkz. "COZULDU" ve "KAPI BULUNDU".)
 
 ### Sonraki adim onerisi
 1. Farkli act/zone tiplerinde ayni testi tekrarla (ucuz, sadece spawn+dumplast)
-2. `Portal_Battlefield_obj_Create_0` icinde instance_destroy kosulunu bul
+2. Portal Create olayinda nesneyi yok eden kosulu bul
 3. Alternatif: mevcut `Spawn_Battlefield_obj` instance'inin `m_activateMechanic`
    metodunu dogrudan cagir (oyunun kendi aktivasyon yolu) - ama kapi yine
    eSt<=0'da takilabilir
@@ -279,36 +302,27 @@ farkli davraniyor ama OLMUYORLAR.
 
 ### Gercek durum: portal UYKUDA
 Nesne tam kurulu ve canli, sadece aktive edilmiyor:
-```
-setVisible=0 portalActive=0 portalUsable=0 isDiscovered=0 portalState=0
-voidRadius=0 (voidRadiusMax=1472'ye buyumesi gerekiyor)
-```
+`setVisible`, `portalActive`, `portalUsable`, `isDiscovered`, `portalState`
+hepsi 0; `voidRadius=0` (`voidRadiusMax`=1472'ye buyumesi gerekiyor).
 Bu bayraklari elle yazmak (10 farkli kombinasyon, ayni karede) ISE YARAMADI.
 
 ### Olay yapisi — asil is Alarm_0'da
-```
-Portal_Battlefield_obj : Alarm_0=8528B  Alarm_1=11072B  Alarm_8=1712B
-                         Create_0=19600B  Step_0=49248B  Draw_0=11776B
-Rift_Portal_obj        : Alarm_0=48048B  Alarm_8=1440B
-                         Create_0=13024B  Step_0=736B
-```
-Rift'in Step'i sadece 736 B: bir degisken oku -> karsilastir -> baska
-degiskene 1 yaz. Yani durum makinesi; motor Alarm_0.
-Spawner normalde portali yaratip ALARMINI kuruyor. Biz alarmi kurmuyoruz,
-portal hic uyanmiyor.
+Iki portalin da agir isi Alarm_0 olayinda; adim olayi yalnizca bir durum
+bayragini ilerleten kucuk bir durum makinesi. Spawner normalde portali
+yaratip ALARMINI kuruyor. Biz alarmi kurmuyoruz, portal hic uyanmiyor.
 
 ### Alarm'i dogrudan cagirma denemesi - TIKANDI
 `set fireevent <RoutineAdi>` komutu eklendi (rutini YYObjectEvent olarak
-cagirir). Ama instance_create_depth **kind=15** donduruyor ve
-`value.pointer` = 0x40000010004471f -> bu bir CInstance* DEGIL, paketlenmis
-instance referansi (dusuk 32 bit = 0x4471f = 280351 = instance id).
+cagirir). Ama `instance_create_depth` **kind 15** donduruyor ve deger bir
+CInstance* DEGIL, paketlenmis bir instance referansi: ust 32 bit bir etiket,
+alt 32 bit instance id (bu olcumde 280351).
 Olay cagrisi istisna firlatti (SEH yakaladi, oyun cokmedi).
 
 ### SONRAKI ADIM (statik, kullanici testi gerektirmez)
 Oyunun "instance id -> CInstance*" cozumleyicisini bulmak gerekiyor.
 YYToolkit'te bu `GetInstanceObject`. Oyunun kendi `with()` uygulamasi bunu
-kullanir; runner icinde bulunabilir. Bulununca:
-   id -> CInstance* -> Alarm_0(self, self)  cagrilabilir.
+kullanir; runner icinde bulunabilir. Bulununca id -> CInstance* ->
+Alarm_0(self, self) cagrilabilir.
 
 Alternatif: `event_perform_object` benzeri bir builtin varsa onunla.
 
@@ -326,71 +340,73 @@ duruyorlardi: onlari surecek hicbir olay yoktu.
 Haritadaki gercek mekanik nesnesi **`Spawn_Battlefield_obj`** /
 **`Spawn_Rift_obj`** - hepsi `Spawn_Mechanic_Parent_obj` cocugudur.
 
-## Statik analiz araclari (scratchpad)
+## Statik analiz araclari (yerel, depoda degil)
 
-- `an.py`  - degisken adlarini cozen disassembler.
-  `.data` icinde 16 hizali `{int32 id; int32 pad; const char* name;}` yuvalari
-  var. YYC kodu `mov edx, dword ptr [rip+X]` ile id alanini okur.
-  **Ad, `X-16` adresindeki yuvadan okunur (delta=-16).**
-  Dogrulama: `Portal_Battlefield_obj_Create_0` -> `portalName`, `enterPortal`,
-  `portalZone`, `isDiscovered` cikti.
-- `xref.py` - bayt taramasiyla rip-goreli erisim ve `e8` cagri capraz
-  referansi. Tam tarama ~3 saniye (232 MB .text icin).
-- `fp.py`   - PE okuyucu + capstone + rutin tablosu (20841 rutin).
+Uc kucuk yerel betik (scratchpad; depoya girmez):
+
+- `an.py` - derlenmis koddaki degisken erisimlerine ad veren arac. Oyunun
+  `.data` bolumunde 16 bayta hizali `{int32 id; int32 pad; const char* name;}`
+  kayitlari var; kodun okudugu id alaninin adi, o alanin **16 bayt oncesindeki**
+  kayittan okunuyor (delta=-16). Dogrulama: `Portal_Battlefield_obj` Create
+  olayinda `portalName`, `enterPortal`, `portalZone`, `isDiscovered` cikti.
+- `xref.py` - rip-goreli erisimler ve dogrudan cagrilar icin capraz referans
+  tarayicisi. Tam tarama ~3 saniye (232 MB .text icin).
+- `fp.py`   - PE okuyucu + rutin tablosu (20841 rutin).
 
 ## Mekanik listesi (9 adet, hepsi Spawn_Mechanic_Parent_obj cocugu)
 
-| Marker nesnesi                 | discoverable | not                       |
-|--------------------------------|--------------|---------------------------|
-| `Spawn_Abyss_obj`              | 1            |                           |
-| `Spawn_Battlefield_obj`        | 1            | ARANAN                    |
-| `Spawn_Rift_obj`               | 1            | ARANAN                    |
-| `Spawn_Cursed_Orb_obj`         | 1            |                           |
-| `Spawn_Summon_Portal_obj`      | 1            |                           |
-| `Spawn_Shadow_Realm_obj`       | 1            |                           |
-| `Spawn_Traveling_Merchant_obj` | 1            |                           |
-| `Spawn_Chaos_Pillars_obj`      | -            | randomizePosition/skipPosition kendi kurar |
-| `Spawn_Chaos_Tower_obj`        | -            | discoverable yok          |
+| Marker nesnesi                 | not                       |
+|--------------------------------|---------------------------|
+| `Spawn_Abyss_obj`              | ailede `discoverable = true` ayarlayan TEK uye (26.08 olcumu) |
+| `Spawn_Battlefield_obj`        | ARANAN                    |
+| `Spawn_Rift_obj`               | ARANAN                    |
+| `Spawn_Cursed_Orb_obj`         |                           |
+| `Spawn_Summon_Portal_obj`      |                           |
+| `Spawn_Shadow_Realm_obj`       |                           |
+| `Spawn_Traveling_Merchant_obj` |                           |
+| `Spawn_Chaos_Pillars_obj`      | `randomizePosition`/`skipPosition`'u kendisi kurar |
+| `Spawn_Chaos_Tower_obj`        | `discoverable`'a dokunmaz |
 
-Cocuk Create_0 (352 bayt, hepsi ayni):
-    event_inherited();              // sub_c6231c0
-    discoverable       = 1;
-    m_activateMechanic = <anon@119@...>;   // asil mekanigi kuran fonksiyon
+Ilk statik okuma bu tablonun ilk yedisinde `discoverable` degerinin 1
+oldugunu yazmisti; 26.08 "ABYSS COZULDU" olcumu bunu duzeltti: ailede
+`discoverable = true` ayarlayan tek uye `Spawn_Abyss_obj`, digerleri dogrudan
+aktive oluyor. Aileye sonradan `Spawn_Cabin_obj` da eklendi (ayni bolum).
 
-`sub_c6231c0` = **event_inherited**. Kanit: `Spawn_Mechanic_Parent_obj`
-cagirmiyor, cocuklar cagiriyor; govdesi nesne hash tablosundan ebeveyni bulup
-`[rcx+0x8c]` ile olay gonderiyor. 7345 cagri yeri, 5004'u `_obj_Create_0`.
+Her cocugun Create olayi ayni seyi yapar: once ebeveynin Create olayini
+calistirir, sonra `m_activateMechanic`'e kendi kapanisini (anon@ adli bir
+fonksiyon; asil mekanigi kuran kod) atar.
+
+Ebeveyn olayini calistiran runtime yardimcisi (`event_inherited`) yerel
+aracla tanindi: `Spawn_Mechanic_Parent_obj` onu cagirmiyor, cocuklar
+cagiriyor; yardimci nesne hash tablosundan ebeveyni bulup olayi ona
+gonderiyor. Oyunda 7345 cagri yeri var, 5004'u nesnelerin Create
+olaylarinda.
 
 ## Yasam dongusu (patch gerektirmiyor - nesne kendi kendini surer)
 
-`gml_Object_Spawn_Mechanic_Parent_obj_Create_0` @ 0xafe3c40
-    isActive       = <bos>
-    skipPosition   = <bos>
-    collisionRadius, discoverable=0, discoverRange
-    discoverTimer  = game_get_speed() * 0.5     // ~30 kare
-    activateTimer  = game_get_speed() * 0.05    // ~3 kare
-    m_activateMechanic = <varsayilan anon@259>
+`Spawn_Mechanic_Parent_obj`'un uc olayi bir marker'i su sekilde tasir:
 
-`gml_Object_Spawn_Mechanic_Parent_obj_Step_0` @ 0xafe7ff0
-    discoverable ise: discoverTimer sayar, distance_to_object(Player) <=
-    discoverRange olunca PlayerUpdateMinimap (minimapta gorunur olur)
-    activateTimer bitince:   **alarm[0] = 1**       (+4039, sub_c5b4800)
+| Olay | Ne yapar |
+|---|---|
+| Create | `isActive` ve `skipPosition` bos baslar; `collisionRadius`, `discoverRange` kurulur; varsayilan olarak kesfedilebilir DEGIL; `discoverTimer` yarim saniyeye (~30 kare), `activateTimer` ~3 kareye kurulur; `m_activateMechanic` varsayilan bir kapanisla (anon@259) dolar |
+| Step | `discoverable` ise: oyuncu `discoverRange` icindeyken `discoverTimer` sayar, bitince `PlayerUpdateMinimap` (minimapte gorunur olur). `activateTimer` bitince Alarm_0'i kurar |
+| Alarm_0 | mekanigi calistiran olay; asagidaki kosullarin hepsi saglaninca `m_activateMechanic`'i bir kez cagirir |
 
-`gml_Object_Spawn_Mechanic_Parent_obj_Alarm_0` @ 0xafe4c90  (13152 bayt)
-    1. StringStartsWith(room_get_name(room), ...)   // oda adi on eki
-    2. ZoneStateExists(room)                        // bolge durumu olmali
-    3. isActive guard
-    4. skipPosition degilse: **999 deneme** ile rastgele nokta sec
-         x in [128, room_width-128], y in [128, room_height-128]
-         collision_circle(...) x2  +  IsObtainablePlace(x, y)
-       -> nesne kendini gecerli bir noktaya TASIR
-    5. RunningHost()                                // tek kisilik = host
-    6. **m_activateMechanic()**                     // mekanik burada baslar
-    7. isActive = 1  (SPV)
-    8. m_activateMechanic = undefined  (SetVariableToUndefined) + SetVariable
+Alarm_0'in mekanigi calistirmadan once aradigi kosullar:
+
+| Kosul | Ne zaman gecer |
+|---|---|
+| Oda adi | oda adi beklenen bir onekle basliyorsa |
+| Bolge durumu | `ZoneStateExists` odanin bolge durumunu buluyorsa (sonraki DUZELTME'ye bak: bu dal sonradan eklenen marker'larda mekanigi atliyor) |
+| `isActive` | marker daha once aktive olmamissa |
+| Konum | `skipPosition` degilse nesne kendini 999 denemeye kadar rastgele, oda kenarindan 128 birim iceride bir noktaya tasir; nokta `collision_circle` kontrollerinden ve `IsObtainablePlace`'ten gecmeli |
+| Host | `RunningHost()` (tek kisilik oyunda host biziz) |
+
+Mekanik calistiktan sonra marker `isActive`'i 1 yapar ve `m_activateMechanic`'i
+bosaltir - tek atimlik.
 
 ### Neden kisitlarimizi ihlal etmiyor
-- **Tekrarlayan geri-cagri yok**: `isActive=1` ve `m_activateMechanic=undefined`
+- **Tekrarlayan geri-cagri yok**: `isActive=1` ve `m_activateMechanic` bosaltma
   aktivasyondan sonra kuruluyor; tek atimlik.
 - **Yerlesim dogrulamasi atlanmiyor**: tersine, oyunun kendi 999-denemeli
   collision_circle + IsObtainablePlace dogrulamasi calisiyor.
@@ -402,16 +418,17 @@ cagirmiyor, cocuklar cagiriyor; govdesi nesne hash tablosundan ebeveyni bulup
 Tek yapilmasi gereken: `instance_create_depth` ile **marker** nesnesini
 yaratmak. Konum onemsiz - Alarm_0 nesneyi zaten kendi tasiyor. Yani
 `gCreatorPositions` yayilimina da gerek yok; oyuncunun uzerinde yaratmak
-yeterli, oyun haritaya kendisi dagitir.
+yeterli, oyun haritaya kendisi dagitir. (Sonraki bolum: bu YANLIS cikti.)
 
 ## Yan bulgu: instance hash tablosu
 
-`event_inherited` govdesindeki nesne aramasi ile `instance_exists` icindeki
+Ebeveyn olayi yardimcisindaki nesne aramasi ile `instance_exists` icindeki
 instance aramasi ayni dugum duzenini kullaniyor: anahtar `+0x10`, sonraki
-`+8`, deger `+0x18`. Ama tablo/maske **tek bir struct isaretcisi** uzerinden
-okunuyor (`mov rcx,[rip+X]` sonra `[rcx]` = kovalar, `[rcx+8]` = maske),
-iki ayri global degil. `ResolveInstanceById`'nin nullptr donmesinin sebebi
-buydu. Marker cozumu bu yolu gereksiz kildigi icin duzeltilmedi.
+dugum `+0x8`, deger `+0x18`. Ama kovalar ve maske iki ayri global degil,
+**tek bir struct isaretcisi** uzerinden okunuyor: struct'in ilk alani kova
+dizisi, `+0x8` alani maske. `ResolveInstanceById`'nin nullptr donmesinin
+sebebi buydu (iki ayri global varsayiyordu). Marker cozumu bu yolu gereksiz
+kildigi icin duzeltilmedi.
 
 ---
 
@@ -420,29 +437,24 @@ buydu. Marker cozumu bu yolu gereksiz kildigi icin duzeltilmedi.
 Yukaridaki "COZULDU" bolumundeki su iddia **YANLIS**: "iki dal da
 m_activateMechanic'e cikiyor". Cikmiyor.
 
-`Spawn_Mechanic_Parent_obj_Alarm_0` @ 0xafe4c90 icinde:
-    +3730  ZoneStateExists(room, ...)
-    +3787  test bl,bl ; je 0xafe724a   ->  +9658'e sicrar
-    +9609  m_activateMechanic okunur
-    +9644  cagrilir (sub_c5b17e0)
-    +9649  jmp 0xafe7258
-    +9658  <-- SICRAMA HEDEFI: mekanik cagrisindan SONRA, isActive okumasindan once
-
-Yani ZoneStateExists dali `m_activateMechanic()` cagrisini **atliyor**.
+`Spawn_Mechanic_Parent_obj` Alarm_0'da `ZoneStateExists` bolge durumunu
+bulursa akis `m_activateMechanic` cagrisinin uzerinden atlayip dogrudan
+`isActive` kismina geciyor. Yani o dal mekanigi **hic calistirmiyor**.
 Uretilmis bir bolgeye sonradan isaretci enjekte edince hep bu dala giriliyor.
 
 Canli olcum (pid 62256, marker derlemesi):
     cursedorb Create cagrisi = 29,  Alarm_0 cagrisi = 63,  gorunur nesne = 0
 
-Dalin yonu `sub_c5d5620`'nin semantigine bagli; o fonksiyon bir RValue
-karsilastirma jump-table'i (0xc5d5620, r8d = kind_a*16 + kind_b ile dagitim,
-r9d = operator kodu). Yon kesinlestirilmeden yeni deneme yapilmamali.
+Dalin yonu, kapilarin kullandigi RValue karsilastirma yardimcisinin
+semantigine bagli; o yardimci iki degerin tur ciftine gore bir dagitim
+tablosundan gecen, operatoru ayri bir parametreyle alan bir fonksiyon.
+Yon kesinlestirilmeden yeni deneme yapilmamali.
 
 ## Karar
 Otomatik dagitim **dogrudan nesne yaratmaya geri alindi**
 (`Chaos_Pillar_obj` / `Cursed_Orb_obj` / `Summoning_Portal_obj`).
 Kaynak, marker denemesinden onceki yedekle davranis olarak ayni
-(`_backups/marker_fix_20260825/`), derleme boyutu yine 463872 bayt.
+(`_backups/marker_fix_20260825/`), eklenti derleme boyutu yine 463872 bayt.
 
 Marker yaratma hala `set spawn <ObjectName>` boru komutuyla elle
 denenebilir; otomatik yolda degil.
@@ -471,13 +483,13 @@ Iki ayri sey vardi:
    `HookReturnSpecificStat` (stat 588) yolu kalmis.
 
    Stat 588 yolu etkisiz: `ReturnSpecificStat` bir oturumda 140804 kez
-   cagriliyor ama **yalnizca 5'inde** 588 argumani geciyor.  Ustelik
-   `SetReal(output, max(natural, multiplier))` carpma degil, en fazla 5'e
-   sabitleme yapiyor.
+   cagriliyor ama **yalnizca 5'inde** 588 argumani geciyor.  Ustelik bizim
+   kancamiz ciktiyi dogal deger ile carpanin buyugune esitliyordu - bu carpma
+   degil, en fazla 5'e sabitleme.
 
 ## Onarim
 S9 blogu `_backups/BOZUK_20260825_1805.cpp.bak` icinden aynen kurtarildi ve
-`CallCreateWithDensity`'ye geri konuldu.  Derleme 464384 bayt.
+`CallCreateWithDensity`'ye geri konuldu.  Eklenti derlemesi 464384 bayt.
 Basari gostergesi artik `extra_creators` (yeniden canli sayac); calisirken
 haritada birkac yuz olmasi beklenir (eski olcum: 602).
 
@@ -491,35 +503,34 @@ yapilmali; boyut/derleme basarisi regresyonu yakalamiyor.
 # ASIL CEVAP: gml_Script_sCP  (2026-08-25 20:10, statik)
 
 ## Ayirt edici gozlem
-Mekanik govdelerinin degisken listesi karsilastirildiginda:
+Mekanik kapanislari karsilastirildiginda iki grup cikti:
 
-  KENDI YARATAN (instance_create_layer govdede):
-    Abyss, Chaos_Pillars, Chaos_Tower, Cursed_Orb, Summon_Portal,
-    Traveling_Merchant
-  sCP'YE DEVREDEN (govdede instance_create_layer YOK):
-    Battlefield, Rift, Shadow_Realm
+| Grup | Mekanikler |
+|---|---|
+| Portali KENDI yaratan (kapanis `instance_create_layer` kullaniyor) | Abyss, Chaos_Pillars, Chaos_Tower, Cursed_Orb, Summon_Portal, Traveling_Merchant |
+| `sCP`'YE DEVREDEN (kapanista `instance_create_layer` yok) | Battlefield, Rift, Shadow_Realm |
 
 Calismayanlar tam olarak sCP'ye devredenler.
 
 ## sCP imzasi
-`gml_Script_sCP` @ rva 0x3d81c0 (4256 bayt), 3 argumanli:
+`gml_Script_sCP` uc argumanli: nesne asset referansi, x, y.
 
-    sCP(nesneAssetRef, x, y)
-
-Govdesi: `instance_create_layer(x, y, gameLayer, nesne)` + `pSpwd`
-kaydi (SPV / SetVariable).  **Icinde erken donus kapisi yok** - cagrilirsa
+Yaptigi is: verilen nesneyi `gameLayer` katmaninda o noktada yaratir ve
+`pSpwd` kaydini tutar.  **Icinde erken donus kapisi yok** - cagrilirsa
 yaratir.
 
-Arguman 0 paketlenmis RValue, kind 15, ust dword `0x01000000` (asset
-etiketi), alt dword nesne indeksi.  Kodda `movabs rax, 0x1000000XXXXXXXX`
-olarak gorunur.
+Arguman 0 paketlenmis bir RValue, kind 15: ust 32 bit asset etiketi
+(`1 << 24`), alt 32 bit nesne indeksi.
 
 ## Dogrulanan nesne indeksleri
-    Battlefield    -> 3581  Portal_Battlefield_obj
-    Rift           -> 4126  Rift_Portal_obj
-    Shadow Realm   -> 3598  Portal_Shadow_Realm_obj
-    (957 Collision_Parent_obj ve 4669 Spawn_Mechanic_Parent_obj
-     yalnizca collision_circle / place_meeting maskeleri)
+| Icerik | Indeks | Nesne |
+|---|---|---|
+| Battlefield | 3581 | `Portal_Battlefield_obj` |
+| Rift | 4126 | `Rift_Portal_obj` |
+| Shadow Realm | 3598 | `Portal_Shadow_Realm_obj` |
+
+957 `Collision_Parent_obj` ve 4669 `Spawn_Mechanic_Parent_obj` yalnizca
+`collision_circle` / `place_meeting` maskeleri olarak geciyor.
 
 ## Neden onceki denemeler bosa gitti
 Biz de ayni `Portal_Battlefield_obj`'i yaratmistik, ama:
@@ -528,9 +539,9 @@ Biz de ayni `Portal_Battlefield_obj`'i yaratmistik, ama:
 Nesne tam kurulu ve canli oluyordu ama hicbir sey onu surmuyordu.
 
 ## Yapilacak
-1. `gml_Script_sCP` profile zorunlu rutin olarak eklenecek (rva 0x3d81c0).
-2. Runtime'da asset-ref RValue kurulup oyun ipliginde `sCP(obj, x, y)`
-   cagrilacak.
+1. `gml_Script_sCP` profile zorunlu rutin olarak eklenecek (adla cozulur).
+2. Runtime'da asset-ref RValue kurulup oyun ipliginde sCP cagrilacak
+   (nesne, x, y).
 3. Konum: zaten topladigimiz oyun-dogrulamali Enemy_Creator konumlari.
 4. rift / battlefield kaydiricilari buna baglanacak.
 
@@ -542,7 +553,7 @@ gecerli noktalar kullaniliyor), tek atimlik.
 sCP kullanmiyor.  `chaosTowerStarted`, `chaosTowerSpawnZone`, `buffZone`,
 `buffArray`, `buffValueArray`, `zonesVisited`, `RunningHost`,
 `NetworkSendChaosTowerZone` ve kat yonetimi icin `Spawn_Next_obj`
-(56880 bayt) gerekiyor.  Bu bir bolge modu; portal yaratmakla olmaz.
+gerekiyor.  Bu bir bolge modu; portal yaratmakla olmaz.
 Ayri is olarak ele alinmali.
 
 ---
@@ -550,7 +561,7 @@ Ayri is olarak ele alinmali.
 # SEZON 9'UN GERCEK MEKANIGI: multobj  (2026-08-25 20:35)
 
 ## S9 kaynagindan (ForgePact_S9_CALISAN_YEDEK)
-`src/forgepact.py`:
+`src/forgepact.py` (bizim kodumuz):
     SPAWNERS = [("rift", 3516, ...), ("battlefield", 4990, ...), ...]
     out.append(f"multobj {idx} {adet}")
 
@@ -563,7 +574,7 @@ Ayri is olarak ele alinmali.
 Bu yuzden hic cokmedi: oyuna yeni bir cagri girmiyor.
 
 ## S10 karsiligi
-`sCP` zaten `instance_create_layer(x, y, gameLayer, Portal_...)` cagiriyor,
+`sCP` portali zaten `instance_create_layer` ile `gameLayer`'a yaratiyor,
 yani oyun bir battlefield/rift actiginda **bizim kancamizdan geciyor**.
 Tek eksik, katalogda portal nesnelerinin ozellige baglanmamis olmasiydi.
 
@@ -600,13 +611,12 @@ Boylece sCP'nin instance_create_layer cagrisi 10 kez cogaltiliyordu.
 Sonuc: bolge yuklenmesi sonsuz donguye girdi.
 
 ## Dogrulanan sebep (statik)
-    Rift_Portal_obj_Create_0        -> instance_create_layer
-    Portal_Battlefield_obj_Step_0   -> instance_create_layer   (HER ADIMDA)
-    Portal_Battlefield_obj_Alarm_8  -> instance_create_layer
-    Rift_Portal_obj_Alarm_0         -> instance_create_layer
+Iki portal da kendi olaylarinda `instance_create_layer` ile yeni nesne
+yaratiyor: `Rift_Portal_obj` Create ve Alarm_0 olaylarinda,
+`Portal_Battlefield_obj` Alarm_8 olayinda ve **her adimda** (Step).
 
-Portal, kendi olaylarinda nesne yaratiyor.  Portali cogaltmak, o
-yaratimlarin da cogalmasi demek -> ussel buyume / adim dongusunun bogulmasi.
+Portali cogaltmak, o yaratimlarin da cogalmasi demek -> ussel buyume /
+adim dongusunun bogulmasi.
 
 **DERS: bir nesneyi cogaltmadan once, o nesnenin olaylarinin kendisi
 instance_create* cagirip cagirmadigi kontrol edilmeli.**
@@ -620,8 +630,8 @@ Enemy_Creator'lar guvenli cunku tek atimlik yaratici nesneler.
 ## Kalan yol
 Portali degil, **isaretciyi** (Spawn_Rift_obj / Spawn_Battlefield_obj)
 cogaltmak gerekiyor - S9'da da cogaltilan buydu.  Ama S10'da isaretciler
-instance_create_layer'dan gecmiyor; once onlari kimin yarattigini bulmak
-lazim.  Ayrica mekanik govdesindeki eSt kapisi hala cozulmedi:
+instance_create_layer'dan gecmiyor gorunuyordu; once onlari kimin yarattigini
+bulmak lazim.  Ayrica mekanik kapanisindaki eSt kapisi hala cozulmedi:
 canli olcumde `special_calls=rift:10,battlefield:10` yani mekanik 10'ar kez
 CAGRILDI ama portal uretmedi -> karar mekanigin icinde veriliyor.
 
@@ -637,28 +647,22 @@ Test kopyasi degismedi (303302144 B, sha 0766AA8B).
 hepsi gecersizdi (Rift'in yerinde Chaos Tower kodu goruluyordu).
 `fp.py` artik test kopyasini okuyor ve boyut kontrolu yapiyor.
 
-## Mekanik adresleri (KODDAN cikarildi, tablodan degil)
-Spawn_<X>_obj_Create_0 icindeki `lea rdx, [rip+X]` + `sub_c5b2670`
-(MakeMethod) ciftinden.  Rutin tablosu script isimleri icin guvenilmez.
-
-    Abyss              0xafce6d0     Rift            0xb00f660
-    Battlefield        0xafd0750     ShadowRealm     0xb017460
-    ChaosPillars       0xafd3c70     SummonPortal    0xb018cc0
-    ChaosTower         0xafd80e0     TravelingMerch  0xb01ccb0
-    CursedOrb          0xafdd320
+## Mekanik kapanislari nereden okundu
+Her `Spawn_<X>_obj` Create olayinin `m_activateMechanic`'e hangi kapanisi
+atadigi, rutin tablosundan degil koddan okundu: rutin tablosu script adlari
+icin guvenilmez.  Dokuz mekanigin (Abyss, Battlefield, ChaosPillars,
+ChaosTower, CursedOrb, Rift, ShadowRealm, SummonPortal, TravelingMerch)
+kapanis adresleri bu derlemeye ozgu oldugu icin burada tutulmuyor; kancalar
+kapanislari adla cozer (bkz. "Shadow Realm ve Chaos Tower kapilari" ve
+oradaki anon@ notu).
 
 ## Kapi
-Rift govdesi (0xb00f660):
-    +325  xorps xmm7, xmm7          ; karsilastirma operandi = 0.0
-    +399  eSt[0] okunur
-    +540  call sub_c5d5620          ; compare(eSt[0], 0.0)
-    +557  setle dil                 ; dil = (eSt[0] <= 0)
-    +588  test dil,dil / je +7669   ; degilse sCP'yi ATLA
+Rift kapanisi `eSt[0]`'i okuyup 0.0 ile karsilastiriyor; deger 0'dan
+buyukse sCP cagrisini tamamen atliyor.  Yani Rift portali yalnizca
+**`eSt[0] <= 0` iken** yaratiliyor.
 
-Yani:  **if (global.eSt[0] <= 0) { ... sCP ... }**
-
-Ayni `setle` kalibi Abyss, Battlefield, CursedOrb, SummonPortal,
-TravelingMerchant govdelerinde de var.  eSt[0] hepsi icin ORTAK kapi.
+Ayni kapi Abyss, Battlefield, CursedOrb, SummonPortal ve TravelingMerchant
+kapanislarinda da var.  eSt[0] hepsi icin ORTAK kapi.
 
 ## Olculen deger
 `est_roomstart.log`, onlarca oda basinda degismeden:
@@ -696,13 +700,13 @@ Bilerek denemek icin `set estgate 1`.
 1. Portali `instance_create_depth` ile elle yaratmak -> portal olu kalir
 2. `sCP`'yi dogrudan cagirmak                        -> cokme
 3. Portal nesnesini cogaltmak                        -> sonsuz loading
-   (sebep dogrulandi: portalin kendi Step/Create'i instance_create_layer
+   (sebep dogrulandi: portalin kendi olaylari instance_create_layer
     cagiriyor, ussel buyume)
 4. Room Start'ta global eSt override                 -> cokme (onceki oturum)
 5. Mekanik cagrisi kapsaminda eSt override           -> cokme (bu)
 
 ## Degismeyen gercek
-`if (global.eSt[0] <= 0)` kapisi ve olculen `eSt[0] = 35`.
+`eSt[0] <= 0` kapisi ve olculen `eSt[0] = 35`.
 Teshis dogru; sorun teshiste degil, o degeri guvenle degistirmede.
 
 ## Denenmemis kalan yol
@@ -717,9 +721,10 @@ bulunursa calisma zamaninda hicbir seye yazmadan kapi acilabilir.
 # eSt KAYNAGI BULUNDU + STAT KAPISI DENEMESI  (2026-08-25 22:50)
 
 ## eSt'i oyun kendisi dolduruyor
-`gml_Object_Controller_obj_Other_5` (Room Start) icinde 11 atama:
-
-    global.eSt[i] = ReturnSpecificStat(..., <istatistik>, ...)     (argc = 5)
+`gml_Object_Controller_obj_Other_5` (Room Start), `global.eSt`'in on bir
+slotunun her birini `ReturnSpecificStat`'a yapilan bes argumanli bir
+cagrinin sonucuyla dolduruyor; cagri slotun stat kimligini tasiyor.
+Slot -> stat eslemesi ve olculen degerler:
 
 | eSt | stat | icerik            | olculen |
 |-----|------|-------------------|---------|
@@ -760,7 +765,7 @@ icine hapsedildi.  **Yine haritaya girerken cokme oldu.**
 S9 eklentisi ozel icerik oranlarini `GetBloodPactInfo` uzerinden veriyordu
 (`blood_pact_rift_rate` vb.).  S10'da kanca kuruldu ve calisiyor ama
 `rate_info_hits = 0`: oyun bolge uretiminde bu anahtarlari hic sormuyor.
-Mekanik govdeleri dogrudan `eSt` okuyor.  Bu yol S10'da olu.
+Mekanik kapanislari dogrudan `eSt` okuyor.  Bu yol S10'da olu.
 
 # AURIE DURUMU (2026-08-25 23:00)
 
@@ -771,11 +776,12 @@ Ayri oyun kopyasi: `C:\Users\falor\Downloads\HeroSiege_Aurie`
 => **AuriePatcher S10 exe'sinde CALISMIYOR.**  Mod dosyalari dogru
    (md5'leri `ForgePact-error-fix (1)\modfiles` ile birebir ayni).
 
-Buna ragmen YYToolkit S10'da SAGLAM:
+Buna ragmen YYToolkit S10'da SAGLAM gorunuyordu; kendi logu:
     m_IsUsingMidFunctionHook = true, runner interface created
-    YYC::GmpFindFunctionsArray() => AURIE_SUCCESS, 0x00007FF64E244B80
+    YYC::GmpFindFunctionsArray() => AURIE_SUCCESS
 
-Yani sorun YYTK'da degil, yalnizca exe-yamalama yontemindeydi.
+Yani sorun YYTK'da degil, yalnizca exe-yamalama yontemindeydi (sonraki
+bolum bunu daraltti).
 
 ## Alternatif: yamasiz enjeksiyon
 `C:\Users\falor\Downloads\bp_aurie\inject.py` oyunu askiya alinmis baslatip
@@ -861,12 +867,13 @@ Boylece AurieCore giris noktasindan ONCE yukleniyor, exe diskte hic
 degismiyor (AuriePatcher S10'da bozuk oldugu icin bu sart).
 
 ## v5 neden hala yuklenemiyor: ZAMANLAMA DEGIL, YUKLEME ANI
-`MI_Aurie.cpp: YkSetupLateInitialization()`
-    WaitForSingleObject(m_RunnerInterfacePopulatedEvent, 10000)
+YYToolkit v5'in kendi kaynaginda (`MI_Aurie.cpp`,
+`YkSetupLateInitialization()`) modul, kosucu arayuzu dolduruldu olayini en
+fazla 10 saniye bekliyor.
 
-Olayi `Zeus-x64.cpp` icindeki **fonksiyon-ici kanca** (MmCreateMidfunctionHook)
-isaretliyor: oyunun kosucu arayuzunu kurdugu kod calisinca YYTK arayuzu
-kopyalayip `SetEvent` yapiyor.
+Olayi YYToolkit'in `Zeus-x64.cpp` icindeki **fonksiyon-ici kancasi**
+(MmCreateMidfunctionHook) isaretliyor: oyunun kosucu arayuzunu kurdugu kod
+calisinca YYTK arayuzu kopyalayip olayi isaretliyor.
 
 Kosucu arayuzu oyunun ILK anlarinda kuruluyor.  Enjeksiyon ne zaman
 yapilirsa yapilsin o kod coktan gecmis oluyor:
@@ -933,7 +940,7 @@ kosucu arayuzu coktan kurulmus oluyor.
 - YYTK v4 (stable): S10'da kosucu arayuzunu YAKALIYOR ve fonksiyon
   dizisini buluyor, ondan SONRA olduruyor:
       m_IsUsingMidFunctionHook = true, runner interface created
-      YYC::GmpFindFunctionsArray() => AURIE_SUCCESS, 0x00007FF64E244B80
+      YYC::GmpFindFunctionsArray() => AURIE_SUCCESS
 
 Yani gercek hedef v5 degil, v4'un o noktadan sonraki cokmesi.
 
@@ -973,11 +980,12 @@ hakkinda bilgi vermiyor.
 
 **S10 icin calisan bir YYToolkit yok.**  Sorun bizim kurulumumuzda degil;
 aracin kararli dali bu GameMaker surumunden eski, yeniden yazimi ise
-upstream'de bitmemis.
+upstream'de bitmemis.  (Ertesi sabah bu durum degisti: asagidaki
+"YYTOOLKIT TABANLI TEMIZ BASLANGIC".)
 
 ## Onemli cerceve (tekrar)
 YYTK calissaydi bile Rift/Battlefield'i acmazdi.  Kapi oyunun kendi
-kodunda: `if (global.eSt[0] <= 0)`.  YYTK yalnizca ayni fonksiyonlari
+kodunda: `eSt[0] <= 0`.  YYTK yalnizca ayni fonksiyonlari
 cagirmanin test edilmis bir yolu olurdu; native runtime bunu S10'da zaten
 basariyla yapiyor (22 builtin, 42 rutin, kancalar, GML cagrilari).
 
@@ -1009,7 +1017,7 @@ out.txt:
 
 Eklenti 489 yaraticiyi GORUYOR ama hepsini ATLIYOR.  ChatGPT'nin
 degistirdigi surumde bir eleme kosulu var.  S9'un orijinal
-`DoMultiCreate` kodunda boyle bir kosul yok:
+`DoMultiCreate` kodunda (bizim kodumuz) boyle bir kosul yok:
     if (g_CreatorMult > 1 && IsCreatorObject(objIdx) && g_CreatorMult > mult)
         mult = g_CreatorMult;
     if (mult > 1) { for (i=1..mult) { konum kaydir; orig(...) } }
@@ -1028,13 +1036,14 @@ kontrolu kullaniyor, creator_catalog=7).
   Protokol: bp_ipc\cmd.txt'ye satir satir komut, cevap out.txt'ye eklenir.
 
 ## YYTK v4'un S10'da urettigi olumcul hata (kayda gecti)
+Oyunun kendi hata mesaji, YYToolkit logunda:
     Unable to find any instance for object index '257087' name '<undefined>'
     ...gml_Script_timer_system_update+0x8E0
     ...Code_Execute <- YYToolkit!HkExecuteIt
 257087/277023 nesne indeksi degil, INSTANCE ID (S10 id araligi ~250k-300k).
-S10'da instance referansi kind 15 ile paketleniyor: (tag << 32) | id.
-Ama log "Runner caught the exception" diyor - oyun yakalayip devam ediyor,
-yani bu satirlar oyunu kapatan sey DEGIL.
+S10'da instance referansi kind 15 ile paketleniyor: ust 32 bit etiket, alt 32
+bit id.  Ama log "Runner caught the exception" diyor - oyun yakalayip devam
+ediyor, yani bu satirlar oyunu kapatan sey DEGIL.
 
 ---
 
@@ -1077,16 +1086,14 @@ Protokol: bp_ipc\cmd.txt'ye satir satir komut, cevap out.txt'ye eklenir.
    sayaci kopyalari SAYMAZ (kopyalar orig'i dogrudan cagirir), o yuzden
    count=1 gormek cogaltmanin calismadigi anlamina gelmez.
 
-3) Kapi: `global.eSt[0] <= 0` (ORTAK) + icerigin kendi slotu.
-   Kaynak dogrulamasi (CursedOrb mekanigi 0xafdd320):
-       +213 xorps xmm6, xmm6      -> karsilastirilan deger 0.0
-       +415 rcx = eSt[0]  +410 rdx = xmm6  +419 karsilastirma
-       +436 setle                 -> eSt[0] <= 0 ise devam
+3) Kapi: `eSt[0] <= 0` (ORTAK) + icerigin kendi slotu.
+   Kaynak dogrulamasi (CursedOrb kapanisi): eSt[0] sabit 0.0 ile
+   karsilastiriliyor ve mekanik yalnizca `eSt[0] <= 0` iken devam ediyor.
    Olculen: eSt = [35,50,3,4,12,25,15,0,14,18,28] -> eSt[0]=35, hepsi kapali.
    eSt[7]=0 oldugu halde Cursed Orb cikmiyordu, cunku ORTAK kapi kesiyor.
 
 ## Kritik ayrinti: tek sefer yazmak ISE YARAMAZ
-Oyun HER ODA BASLANGICINDA (Controller_obj_Other_5) 11 slotu
+Oyun HER ODA BASLANGICINDA (`gml_Object_Controller_obj_Other_5`) 11 slotu
 `ReturnSpecificStat`tan yeniden dolduruyor.  Yazdiktan sonra harita
 degisince eSt[0] tekrar 35 oluyordu.  Bu yuzden `estforce` her karede
 geri yaziyor.  `eststat` ciktisi: `yazma=4` -> oda basinda 4 slot geri
@@ -1143,6 +1150,9 @@ tuttuk; konum, rarity, bolge kaydi oyunun kendi isi.
     multobj  <marker idx> <adet>  marker'i cogalt
     -> YENI haritaya gir
 
+(Ikinci satir 10:30'da duzeltildi: icerik slotlari 0 yapilmamali, bkz.
+"Iki kapi TERS yonde".)
+
 ## Slot ve marker tablosu
     icerik            marker  eSt slot(lari)
     Chaos Pillars      4662    1, 2, 3
@@ -1158,8 +1168,8 @@ tuttuk; konum, rarity, bolge kaydi oyunun kendi isi.
 
 ## Neden `estforce` sart - en kritik bulgu
 `gaset eSt 0 0` tek basina ISE YARAMIYOR.  Oyun her oda baslangicinda
-(Controller_obj_Other_5) 11 slotu ReturnSpecificStat'tan yeniden
-dolduruyor; yazdigimiz deger marker'lar bakmadan siliniyor.
+(`gml_Object_Controller_obj_Other_5`) 11 slotu ReturnSpecificStat'tan
+yeniden dolduruyor; yazdigimiz deger marker'lar bakmadan siliniyor.
 Olculdu: yazdiktan sonra harita degisince eSt[0] tekrar 35.
 
 `estforce` degeri HER KAREDE geri yaziyor.  `eststat` ciktisindaki
@@ -1168,7 +1178,8 @@ gozlendi).
 
 Guvenli olmasinin sebebi: bolge ureticisi eSt'i oda baslangicinin ICINDE
 kullaniyor, kare geri-cagrisi o cagri bittikten SONRA calisiyor.  Yani
-uretim bozulmuyor, yalnizca marker'larin baktigi an degisiyor.
+uretim bozulmuyor, yalnizca marker'larin baktigi an degisiyor.  Mekanik
+kapanislari `global.eSt`'i oda yukleme dizisi sirasinda dogrudan okuyor.
 (Native runtime'da kaynagi uretim SIRASINDA ezmistim - oyun donuyordu.)
 
 ## Iki davranis notu
@@ -1205,21 +1216,30 @@ Cursed Orb, Summon Portal.  Hepsini OYUN uretti.
     multobj 4676 6        Summon Portal
     -> YENI haritaya gir
 
-## Iki kapi TERS yonde  (kaynaktan dogrulandi)
-    eSt[0]     <= 0  gerekli   (ortak)     -> setle
-    eSt[slot]   > 0  gerekli   (icerige ozel) -> setg
+## Iki kapi TERS yonde
+Iki kapi zit yonde karsilastiriyor (mekanik kapanislarinin karsilastirma
+yonleri yerel olarak okundu):
+
+| Kapi | Acik olmasi icin | Kapsam |
+|---|---|---|
+| `eSt[0]` | `<= 0` | ortak, butun mekanikler |
+| `eSt[slot]` | `> 0` | icerige ozel |
+
 Cursed Orb'un slotu (7) DOGAL OLARAK 0 -> oyun onu hic uretmiyor.
 Digerlerinin slotlari dogal olarak pozitif, yani kapilari zaten acik.
 
-Polarite tablosu (mekanik govdelerinden cikarildi):
-    Battlefield  [0]<=0  [4]>0  [5]>0
-    CursedOrb    [0]<=0  [7]>0
-    Rift         [0]<=0  [8]>0
-    SummonPortal [0]<=0  [10]>0
-    ShadowRealm  [0]<=0  [9]>0
-    Abyss        [0]<=0
-    TravelMerch  [0]<=0
-    ChaosPillars (farkli kalip - setle/setg yok)
+Hangi mekanik hangi slotlara bakiyor:
+
+| Mekanik | Ortak kapi | Icerik slot(lari) |
+|---|---|---|
+| Battlefield | [0] <= 0 | [4] > 0, [5] > 0 |
+| CursedOrb | [0] <= 0 | [7] > 0 |
+| Rift | [0] <= 0 | [8] > 0 |
+| SummonPortal | [0] <= 0 | [10] > 0 |
+| ShadowRealm | [0] <= 0 | [9] > 0 (sans parametresi, asagida) |
+| Abyss | [0] <= 0 | - |
+| TravelMerch | [0] <= 0 | - |
+| ChaosPillars | farkli bir kalip; bu iki yonlu karsilastirma yok | |
 
 ## YANLIS OLDUGU KANITLANAN IKI VARSAYIM
 1) "Tum slotlari 0 yapalim"  -> icerik kapilarini KAPATIR.
@@ -1262,29 +1282,24 @@ EVENT_OBJECT_CALL'u besliyor, biz EVENT_FRAME kullaniyoruz):
 
 ### Kok sebep
 `Spawn_Abyss_obj`, `Spawn_Mechanic_Parent_obj` ailesinin **`discoverable = true`
-ayarlayan tek uyesi**.  Create olayi (rva 0x0afd05f0, sadece 352 bayt) yalnizca
-iki sey yapar:
-
-    discoverable      = 1                       <- AILEDE TEK
-    m_activateMechanic = anon@119@gml_Object_Spawn_Abyss_obj_Create_0
-                                                   (rva 0x0afce6d0)
+ayarlayan tek uyesi**.  Create olayi kucuk ve yalnizca iki is yapar: marker'i
+kesfedilebilir yapar (AILEDE TEK) ve `m_activateMechanic`'e Abyss kapanisini
+(`anon@119@gml_Object_Spawn_Abyss_obj_Create_0`) atar.
 
 Diger butun mekanikler (Chaos_Pillars, Battlefield, Rift, Cursed_Orb,
 Summon_Portal, Chaos_Tower, Shadow_Realm, Traveling_Merchant, Cabin)
 `discoverable`'a dokunmaz, yani dogrudan aktive olur.  Abyss'in aylardir
-gorunmemesinin sebebi bu tek satir.
+gorunmemesinin sebebi bu tek ayar.
 
-### Iki asamali akis  (gml_Object_Spawn_Mechanic_Parent_obj_Step_0, rva 0x0afe7ff0)
+### Iki asamali akis  (Spawn_Mechanic_Parent_obj Step olayi)
 
-    +184   OKU discoverable      -> false ise kesif blogunu atla (je +2571)
-    +270   discoverTimer         -> menzil icindeyken geri sayar (baslangic 30)
-    +2126  OKU discoverRange     -> mesafe kontrolu (varsayilan 1000)
-    +2554  call gml_Script_PlayerUpdateMinimap   <- KESIF: minimapte simge cikar
-           discoverable = false, discoverTimer 30'a resetlenir
-    +2581  if (activateTimer)    -> -1 (kapali) ise sona atla (je 0xafe8fc7)
-    +2667  activateTimer -= dt
-    +4039  YAZ alarm             -> Alarm_0 (rva 0x0afe4c90, 13152 B)
-                                    -> m_activateMechanic -> "ABYSS SPAWNED"
+Kesfedilebilir bir marker iki asamadan gecer; ikisi de ebeveynin adim
+olayinda:
+
+| Asama | Ne zaman ilerler | Bitince |
+|---|---|---|
+| Kesif | yalnizca `discoverable` true iken; oyuncu `discoverRange` (varsayilan 1000) icindeyken `discoverTimer` geri sayar (baslangic 30), menzil disinda donuk | `PlayerUpdateMinimap` cagrilir, minimapte simge cikar; `discoverable` false olur, `discoverTimer` 30'a resetlenir |
+| Aktivasyon | yalnizca `activateTimer` -1 (kapali) degilken; her adimda gecen sure kadar azalir | Alarm_0 kurulur -> `m_activateMechanic` -> "ABYSS SPAWNED" |
 
 Yani oyuncunun normalde yapmasi gereken: isaretcinin 1000 birim yakininda
 30 saniye durmak (kesif + minimap simgesi), sonra uzerine gitmek (aktivasyon).
@@ -1344,24 +1359,22 @@ arama dongusu HIC donmuyor.  Mekanik konum aramasina bile girmeden, daha
 erken bir kosulda vazgeciyor.
 
 ### Kalan supheliler (buradan devam edilecek)
-`gml_Script_anon@119@gml_Object_Spawn_Abyss_obj_Create_0`, rva 0x0afce6d0,
-uzunluk 7968.  Bilinen capalar:
+`gml_Script_anon@119@gml_Object_Spawn_Abyss_obj_Create_0` kapanisinin
+kullandigi adlar ve her birinin ne durumda oldugu:
 
-    +484   eSt              (aciyoruz, geciyor)
-    +799   gDataProtected
-    +2487  DebugLogAddExt   "ABYSS SPAWNED"  <- buraya ULASILIYOR
-    +2572  x
-    +2651  y
-    +2969  gml_Script_sCP           <- 1. suphel: bos donuyor olabilir
-    +3602  x
-    +3934  y
-    +6002  gml_Script_IsObtainablePlace   <- ELENDI
-    +6431  room
-    +6489  gameLayer -> instance_create   <- buraya ULASILAMIYOR
+| Kapanista kullanilan | Durum |
+|---|---|
+| `eSt` okumasi | aciyoruz, geciyor |
+| `gDataProtected` okumasi | bilinmiyor |
+| `DebugLogAddExt` "ABYSS SPAWNED" | buraya ULASILIYOR |
+| `gml_Script_sCP` | 1. supheli: bos donuyor olabilir |
+| `gml_Script_IsObtainablePlace` | ELENDI |
+| `gameLayer` ile instance_create | buraya ULASILAMIYOR |
 
-Sonraki adim: +2487 ile +6002 arasini tam sokup (vn.ann, only=False)
-`sCP` donusunun nasil kullanildigina ve aradaki dallanmalara bakmak.
-`vn.py` degisken adi cozucusu hazir (ad = rip hedefi - 8).
+Sonraki adim: log satiri ile `IsObtainablePlace` arasindaki kisimda `sCP`
+donusunun nasil kullanildigina ve aradaki dallanmalara yerel olarak bakmak
+(`vn.py` degisken adi cozucusu hazir: ad, erisilen alanin 8 bayt oncesindeki
+kayitta).
 
 Not: `abyssforce` deneysel bir kancadir, YAYIN paketinde varsayilan KAPALI
 kalmali.
@@ -1473,7 +1486,7 @@ Iki ayri sorun ust uste binmisti.
 InstallDropHooks() ayni gun yayin derlemesinden cikarilmisti (8 MB'lik
 itemdrops.jsonl yuzunden).  Komut cevap veriyor, HICBIR SEY yapmiyordu.
 
-Cozum - ayrim DROP_HOOK makrosunun icinden geciyor:
+Cozum - ayrim DROP_HOOK makrosunun icinden geciyor (bizim kodumuz):
     for (...) orig(...)   -> carpan,  HER IKI derlemede
     BP_LOGDROP(...)       -> gunluk,  yalnizca gelistirmede (yayinda (void)0)
 
@@ -1507,24 +1520,20 @@ etiketinde yaziyor.
 
 ## Zindan anahtarlari - arastirma sonucu  (27.08.2026)
 
-Tam rapor: `ZINDAN_ANAHTARI_ARASTIRMA.md` (ayni klasor).
+Tam rapor: `docs/dungeon-key-research.md`.
 
 ### Kisa sonuc
-Zindan anahtari hatti BOZUK DEGIL.  LoadDrops case 12 (DropDungeonKeys)
-kapisi, calistigi olculen case 11 (DropKeys) / 31 (Bifrost) / 40 (Chaos)
-kapilariyla BAYT BAYT ayni ve ayni paydayi kullaniyor:
-    irandom(gDataProtected.<0xAF>) < chances[tip]
-
-Case bloklari:
-    11 DropKeys        blok 0x428946b  kapi 0x42898a2  cagri 0x42899a9
-    12 DropDungeonKeys blok 0x42899b3  kapi 0x4289df2  cagri 0x428a009
-    31 DropBifrostKey  blok 0x428a013  kapi 0x428a452  cagri 0x428a559
-    40 DropChaosKey    blok 0x428a563  kapi 0x428a9a2  cagri 0x428aa74
+Zindan anahtari hatti BOZUK DEGIL.  LoadDrops'un tip 12 (DropDungeonKeys)
+kapisi, calistigi olculen tip 11 (DropKeys) / 31 (Bifrost) / 40 (Chaos)
+kapilariyla yerel karsilastirmada birebir ayni ve ayni paydayi kullaniyor:
+her tip icin, ust siniri `gDataProtected`'in 0xAF sirasindaki sabiti olan bir
+tamsayi zari atiliyor ve canavarin o tip icin `chances` degeriyle
+karsilastiriliyor.
 
 Ustelik tip 12, canavar dropTable'larinda tip 11'den DAHA COK var:
-    LoadMonsterDropTables (0x432d190): tip 12 -> 10 kez (5,5,40,40,75,75,100x4)
-                                       tip 11 -> 3 kez  (5, 9, 18)
-    EnemyRaritySettings   (0x19bad60): [12,60] x3, [12,70] x3, [11,18] x5
+    LoadMonsterDropTables : tip 12 -> 10 kez (5,5,40,40,75,75,100x4)
+                            tip 11 -> 3 kez  (5, 9, 18)
+    EnemyRaritySettings   : [12,60] x3, [12,70] x3, [11,18] x5
 Yani sistematik kapali olmasi matematiksel olarak mumkun degil.
 
 ### Iki olasi aciklama - ONCE bunu ayirt et
@@ -1540,13 +1549,13 @@ Yani sistematik kapali olmasi matematiksel olarak mumkun degil.
     "HOOK INSTALLED on DropDungeonKeys" satiri gercekten var mi, dogrula.
 
 ### Cozum yolu (dogal orani korur, zorlama degil)
-gml_Script_LoadDrops kancalanir (rva 0x4283ca0).
-    A[2] = damla tipi, A[8] = chances dizisi  (olculdu: 0x4289a4a / 0x4289a59)
-Akis: once VANILYA cagrisi aynen yapilir; sonra tip 11 ise ve chances[12]
-zaten >0 DEGILSE, chances[12] o canavarin chances[11] degerine kopyalanir ve
-ayni arguman dizisiyle (yalnizca slot 2 = 12) orijinal BIR KEZ DAHA cagrilir.
-Kapi ve zar %100 vanilya - atlanmiyor, bir kez daha geciliyor.  Sonra
-chances[12] geri 0 yapilir.
+`gml_Script_LoadDrops` adla kancalanir.  Argumanlarindan A[2] damla tipi,
+A[8] `chances` dizisi (canli olculdu).
+Akis (bizim kancamiz): once VANILYA cagrisi aynen yapilir; sonra tip 11 ise ve
+chances[12] zaten >0 DEGILSE, chances[12] o canavarin chances[11] degerine
+kopyalanir ve ayni arguman dizisiyle (yalnizca slot 2 = 12) orijinal BIR KEZ
+DAHA cagrilir.  Kapi ve zar %100 vanilya - atlanmiyor, bir kez daha geciliyor.
+Sonra chances[12] geri 0 yapilir.
 Sandik filtresi gerekmiyor: tip 11/12 iceren dropTable literali yalnizca
 LoadMonsterDropTables, EnemyRaritySettings ve TalentsPirate'ta var.
 
@@ -1604,55 +1613,52 @@ Eski ctauto/ChaosTowerKur yolu (oyuncunun yanina dogrudan Chaos_Tower_obj)
 bu yuzden gerekmisti; artik gerekmiyor.
 
 ## Not (2026-09-18): anon@ numaralari bu derlemeye (2026-09-03) ait
-Asagidaki anon@119 (Shadow Realm, Abyss) ve anon@97 (Chaos Tower) numaralari
-olculdukleri derlemeyi anlatir; degistirilmedi. ForgePact'in yayindaki
-kancalari artik hs-game-sdk'nin guncel uretiminden gelen anon@126
+Bu bolumdeki anon@119 (Shadow Realm, Abyss) ve anon@97 (Chaos Tower)
+numaralari olculdukleri derlemeyi anlatir ve oyle birakildi.  ForgePact'in
+yayindaki kancalari artik hs-game-sdk'nin guncel uretiminden gelen anon@126
 (Shadow Realm, Abyss) ve anon@102 (Chaos Tower) adlarini kullaniyor - bkz.
 `fix/closure-names-current-game` dalindaki `release-notes-v1.4.2.md`.
 
-## Shadow Realm  (anon@119@gml_Object_Spawn_Shadow_Realm_obj_Create_0 = m_activateMechanic)
-    1. GPV(gDataProtected[68]) >= 2          zorluk (68'i 200+ drop/rarity rutini okur)
-    2. Controller_obj.shadowRealmSpawned == 0
-         Portal_Shadow_Realm_obj Create -> true
-         MultiplayerReset / UiAIngameRestart / kosu sifirlama (Controller anon@28441) -> false
-    3. eSt[0] <= 0
-    4. random(zrmb) < (13 + max(eSt[9], 0)) * 100
-    5. sCP(Portal_Shadow_Realm_obj, x, y)
-    Bolge kisiti YOK.
+## Shadow Realm ve Chaos Tower kapilari
+Iki mekanigin `m_activateMechanic` kapanislari (bu derlemede
+`anon@119@gml_Object_Spawn_Shadow_Realm_obj_Create_0` ve
+`anon@97@gml_Object_Spawn_Chaos_Tower_obj_Create_0`) portali ancak asagidaki
+kapilarin hepsi aciksa yaratiyor.  Kapilar ne ile kapandigina gore:
 
-## Chaos Tower  (anon@97@gml_Object_Spawn_Chaos_Tower_obj_Create_0 = m_activateMechanic)
-    0. GPV(gDataProtected[68]) >= 1          zorluk; 0 iken zar HIC atilmiyor (canli olculdu,
-                                             asagida)
-    1. GPV(Controller_obj.chaosTowerStarted) == 0
-    2. GPV(Controller_obj.chaosTowerSpawnZone) == -1
-         spawn sonrasi SPV(chaosTowerSpawnZone, room)
-         m_ChaosTowerReset (Controller anon@16294): -1, started 0,
-         chaosTowerFloorList = RandomChaosTower()   <- 10'luk dizi KAT listesi, bolge degil
-    3. eSt[0] <= 0
-    4. GetCodexType / buffZone == room / buffArray  (yuzde bonusu)
-    5. sans = taban(GPV 68 zorluk tablosu, GPV 251) + eSt[6]
-       bonus varsa sans = floor(sans + sans * bonus/100)
-       random(zrmb) < floor(sans) * 100
-    6. RunningHost()
-    -> instance_create_layer(Chaos_Tower_obj), SPV(chaosTowerSpawnZone = room),
-       NetworkSendChaosTowerZone
+| Kapi | Shadow Realm | Chaos Tower | Bizim kancamiz ne yapiyor |
+|---|---|---|---|
+| Zorluk (`gDataProtected[68]`; 68'i 200'den fazla drop/rarity rutini okuyor) | en az 2 olmali | en az 1 olmali; 0 iken zar HIC atilmiyor (canli olculdu, asagida) | cagri suresince degeri gecici olarak esige cikarir, donuste eski degeri geri koyar (`DifficultyGateForce`) |
+| Kosu bayragi | `Controller_obj.shadowRealmSpawned` 0 olmali; `Portal_Shadow_Realm_obj` Create'i onu true yapiyor, MultiplayerReset / UiAIngameRestart / kosu sifirlama (Controller anon@28441) false yapiyor | `Controller_obj.chaosTowerStarted` 0 olmali | activate'ten hemen once bayragi 0'a ceker |
+| Bolge kaydi | yok - Shadow Realm'de bolge kisiti YOK | `Controller_obj.chaosTowerSpawnZone` -1 olmali; kule dogunca odanin numarasina esitleniyor; `m_ChaosTowerReset` (Controller anon@16294) onu -1'e, started'i 0'a ceker ve `chaosTowerFloorList`'i `RandomChaosTower()` ile doldurur (10'luk dizi KAT listesi, bolge degil) | activate'ten hemen once -1'e ceker |
+| Ortak eSt kapisi | `eSt[0] <= 0` | `eSt[0] <= 0` | `estforce 0 0` (ayri komut) |
+| Sans zari | zar `zrmb`'ye kadar atiliyor ve sans yuzdesi x 100 ile karsilastiriliyor; sans yuzdesi = 13 + `eSt[9]` (negatifse 0 sayilir) | ayni zar; sans yuzdesi = zorluk tablosundan gelen taban (68 ve 251 numarali degerlere gore) + `eSt[6]`; codex/buff bolgesi bonusu (`GetCodexType`, `buffZone` odaya esitse `buffArray`) varsa yuzde olarak eklenip asagi yuvarlaniyor | `kSpecial` slot degerleri sansi %100 yapar (Uygulama) |
+| Host | - | `RunningHost()` | - |
+
+Chaos Tower kapilari gecince kule `instance_create_layer` ile
+`Chaos_Tower_obj` olarak yaratiliyor, `chaosTowerSpawnZone` odaya esitleniyor
+ve `NetworkSendChaosTowerZone` gonderiliyor.  Shadow Realm ise portali sCP
+ile (`Portal_Shadow_Realm_obj`) yaratiyor.
 
 ## Uygulama (plugin/ModuleMain.cpp, 2026-09-03)
-    kSpecial : chaostower  slot 6 = 100  (sans %100)
-               shadowrealm slot 9 = 87   (13 + 87 = %100)
-    Hook_ChaosTowerGate  : activate'ten hemen once
-                           SPV(chaosTowerSpawnZone, -1) ; SPV(chaosTowerStarted, 0)
-    Hook_ShadowRealmGate : Controller_obj.shadowRealmSpawned = 0
-                           GPV68 < 2 ise cagri suresince SPV(68, 2), donuste eski deger
-    Hook_ChaosTowerGate  : ayrica GPV68 < 1 ise cagri suresince SPV(68, 1), donuste eski deger
-                           (DifficultyGateForce yardimcisi, iki kanca ortak)
-    Yalnizca marker carpani > 1 iken calisir (SpecialMultiplierOn); kapaliyken
-    kancalar dokunmadan gecer.  specialrate n>1 -> InstallMechGateHooks().
-    anon@N adi Create kaynagindaki karakter ofseti: oyun Create'i degistirirse
-    HookOneScript "not found" yazar, icerik vanilyaya duser (cokmez).
-    Gelistirme komutlari: gatestats  |  srdiff on|off  |  ctdiff on|off
-    Panel: SPAWNERS'a chaostower (4663) ve shadowrealm (4674) eklendi,
-           DISABLED_SPAWNER_KEYS bos.
+Bizim kodumuz:
+
+- `kSpecial`: chaostower slot 6 = 100 (sans %100); shadowrealm slot 9 = 87
+  (13 + 87 = %100).
+- `Hook_ChaosTowerGate`: activate'ten hemen once `chaosTowerSpawnZone`'u -1'e,
+  `chaosTowerStarted`'i 0'a yazar.  Ayrica zorluk degeri (68) 1'den kucukse
+  cagri suresince 1 yapar, donuste eski degeri geri koyar.
+- `Hook_ShadowRealmGate`: `Controller_obj.shadowRealmSpawned`'i 0 yapar;
+  zorluk degeri 2'den kucukse cagri suresince 2 yapar, donuste eski degeri
+  geri koyar.
+- Iki kancanin zorluk kismi ortak `DifficultyGateForce` yardimcisinda.
+- Yalnizca marker carpani > 1 iken calisir (`SpecialMultiplierOn`); kapaliyken
+  kancalar dokunmadan gecer.  `specialrate` n>1 -> `InstallMechGateHooks()`.
+- anon@N adindaki N, kapanisin Create olayinin kaynak metnindeki karakter
+  konumu: oyun Create'i degistirirse `HookOneScript` "not found" yazar,
+  icerik vanilyaya duser (cokmez).
+- Gelistirme komutlari: `gatestats`  |  `srdiff on|off`  |  `ctdiff on|off`
+- Panel: SPAWNERS'a chaostower (4663) ve shadowrealm (4674) eklendi,
+  `DISABLED_SPAWNER_KEYS` bos.
 
 ## CANLI DOGRULAMA (2026-09-03, AnkerGames test kopyasi, gelistirme derlemesi)
     zrmb = 9999  -> sans*100 zari: CT 100 -> 10000, SR 13+87 -> 10000, ikisi de kesin
@@ -1685,4 +1691,3 @@ kancalari artik hs-game-sdk'nin guncel uretiminden gelen anon@126
 
     Acik kalan: Chaos Tower icindeyken normal bolgeye gecip donmek (kanca started'i
     sifirliyor) - oyun icinde denenmedi.
-

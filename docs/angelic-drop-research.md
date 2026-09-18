@@ -6,7 +6,7 @@ Vanilla mekanizma bu notta; "vanilla-sadık" mod (seçenek 2) henüz yapılmadı
 ## Oyunun kendi mekanizması (statik + canlı doğrulandı)
 
 - `gml_Script_DropItem` her öldürmede oyuncuda **buff 332** var mı diye bakıyor
-  (`GetBuff(332)` inline; kapı `test al,al / je`, DropItem+0x1ADEA). Buff yoksa Angelic
+  (`GetBuff(332)` DropItem'in içine gömülü; sonucu tek bir evet/hayır kapısı). Buff yoksa Angelic
   zarı hiç atılmıyor. Canlı: 984 öldürme, 0 zar (oyuncuda buff yoktu).
 - Buff 332'nin adı: `buff_angelic_chance` = "Angelic Item drop chances increased by X".
   Kaynakları: Blood Pact modifier'ı `blood_pact_angelic_rate` ("Angelic/Unholy drop rate")

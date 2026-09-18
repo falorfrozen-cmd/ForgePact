@@ -393,23 +393,24 @@ showed a real, readable *shape*: something resolved off `self` through a
 vtable-style indirect call, a dispatcher call (`0x14b488f40`) with a
 constant ID and one argument, a `Truthy()` check on the result, and -
 conditionally on that check - a call that looks exactly like a field *write*
-target-based on a constant ID (matching `FUN_14b4c0db0`'s `x.f = v` pattern
+target-based on a constant ID (matching the `x.f = v` pattern of the helper at `0x14b4c0db0`
 from HSCraftSim's contract, including the same `0x80000000` "no index"
 sentinel). That is structurally the right shape for "if some check passes,
 write a field" - plausibly the collect marker being set - but the IDs
-themselves (`_DAT_150740ee0`, `_DAT_1506d7a08`, `_DAT_1506e5ce8`) are opaque
+themselves (the data at `0x150740ee0`, `0x1506d7a08`, `0x1506e5ce8`) are opaque
 numbers without a name table to resolve them against.
 
 **Attempted a shortcut, caught the mistake before acting on it.** Rather
 than reverse-engineer the ID→name table from scratch, tried reading
-`_DAT_150740ee0`'s live value directly from the running game (computing the
+the live value at `0x150740ee0` directly from the running game (computing the
 live address from Ghidra's RVA + the live process's image base, both
 already known from earlier `naddr` output) via the plugin's existing
 `readmem` command. The first 8 bytes looked like a small integer (a
 plausible "ID"); the second 8 bytes looked like a valid pointer into
 `Hero_Siege.exe`, so it was followed - and led to unrelated string literals
 (`"playerSequences"`, `"playerSequencePaused"`). That disproved the reading:
-`(**(code **)(*param_1 + 8))(...)` is a **virtual call through the
+the indirect call it made (through a function pointer read 8 bytes into
+the table that the routine's first argument points at) is a **virtual call through the
 instance's own vtable**, a different and more fundamental part of the YYC
 object model than the `GetVar`/field-access pattern it was being matched
 against. This was caught before any conclusion was drawn from it or any code

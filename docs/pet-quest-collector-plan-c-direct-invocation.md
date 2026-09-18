@@ -308,7 +308,7 @@ is still on this machine.
 The previous pass failed for one reason worth stating plainly: **it had no
 good anchors.** It decompiled 16 anon closures picked because they were
 *hookable*, not because they were *involved*, and the call-site IDs inside
-them (`_DAT_150740ee0` and friends) were opaque without a name table.
+them (the one at `0x150740ee0` and friends) were opaque without a name table.
 
 There is now a confirmed live signal that pointed nowhere before but is an
 excellent anchor here: **`keyboard_check_pressed(70)` fires, with

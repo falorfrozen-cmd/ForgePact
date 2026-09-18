@@ -444,9 +444,10 @@ load there anyway.
 - `tools/` — developer helpers, not shipped to players: `ipc.ps1` sends one command to
   the running plugin and prints only its reply, and `ghidra/ImportSymbols.java` names the
   stripped game binary in Ghidra from the game's own script table.
-- `docs/S10-special-content-notes.md` — the Season 10 reverse-engineering log: mechanic
-  addresses, gate behaviour, measured crash thresholds, and every approach that did not
-  work (written in Turkish).
+- `docs/S10-special-content-notes.md` — the Season 10 reverse-engineering log, in our own
+  words: object, script and variable names with their indices, the special-content gates
+  and what opens each, measured values and crash thresholds, our own commands and hooks,
+  and every approach that did not work (written in Turkish).
 - `docs/dungeon-key-research.md` — how the two-stage key/relic drop system was found:
   the outer `LoadDrops` chance gate, the per-item `droprate.base` roll, and why keys
   outside their home zone can never drop without opening the outer gate (Turkish).
