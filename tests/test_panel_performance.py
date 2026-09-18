@@ -328,6 +328,77 @@ class BootCountTests(unittest.TestCase):
         self.assertEqual(errors, [])
 
 
+class BootGenerationTests(unittest.TestCase):
+    """plugin_boot_count() alone misses a restart once out.txt is rotated at
+    plugin load (ModManager::Initialize()): a freshly rotated file always
+    opens with exactly one boot banner, so a close-and-relaunch between two
+    polls can read the SAME count (1 -> 1) the old file held right before it
+    was renamed away. watcher() needs plugin_boot_generation()'s
+    (identity, count) pair instead - these pin the function directly, and a
+    structural check pins that watcher() actually uses it.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.ipc = self.root / "bin" / "bp_ipc"
+        self.ipc.mkdir(parents=True)
+        self.cfg = {"game_exe": str(self.root / "bin" / "Hero_Siege.exe")}
+        self.log = self.ipc / "out.txt"
+        forgepact.reset_boot_count_cache()
+        self.addCleanup(forgepact.reset_boot_count_cache)
+        self.addCleanup(self.tmp.cleanup)
+
+    # --- baseline: no rotation, plain appends still behave as before -------
+
+    def test_baseline_plain_appends_change_only_the_count_half(self):
+        self.log.write_text(f"==== {MARKER} ====\n", encoding="utf-8")
+        first = forgepact.plugin_boot_generation(self.cfg)
+        self.assertEqual(first[1], 1)
+
+        with self.log.open("ab") as fh:
+            fh.write(f"==== {MARKER} ====\n".encode("utf-8"))
+        second = forgepact.plugin_boot_generation(self.cfg)
+
+        self.assertEqual(second[1], 2)
+        self.assertEqual(first[0], second[0],
+                         "identity must not change across a plain append")
+        self.assertNotEqual(first, second,
+                            "the pair must still change when only the count does")
+
+    # --- target: the missed restart this fix exists for --------------------
+
+    def test_a_rotated_log_with_a_coincidentally_equal_count_is_a_new_generation(self):
+        self.log.write_text(f"==== {MARKER} ====\n", encoding="utf-8")
+        before = forgepact.plugin_boot_generation(self.cfg)
+        self.assertEqual(before[1], 1)
+
+        # Rotation: the old out.txt is renamed away (a new session's plugin
+        # load does this via MoveFileExW) and a fresh one is created with its
+        # own single boot banner - the plugin's actual behaviour at load.
+        os.replace(self.log, self.ipc / "out.prev.txt")
+        self.log.write_text(f"==== {MARKER} ====\n", encoding="utf-8")
+
+        after = forgepact.plugin_boot_generation(self.cfg)
+        self.assertEqual(after[1], 1,
+                         "fixture: the new file also opens with exactly one banner")
+        self.assertEqual(before[1], after[1],
+                         "fixture: the raw counts must coincide - that is the bug")
+        self.assertNotEqual(before, after,
+                            "a rotated out.txt must read as a new generation even "
+                            "when its own boot count matches the file it replaced")
+        self.assertNotEqual(before[0], after[0], "identity must change: new inode")
+
+    def test_watcher_uses_boot_generation_not_the_bare_count(self):
+        source = (SRC_DIR / "forgepact.py").read_text(encoding="utf-8")
+        watcher_body = source.split("def watcher():", 1)[1].split("\n\nclass H", 1)[0]
+        self.assertIn("plugin_boot_generation", watcher_body,
+                     "watcher() must compare (identity, count) pairs, not "
+                     "plugin_boot_count() alone, or a rotated out.txt with a "
+                     "coincidentally equal count is read as no restart at all")
+        self.assertNotIn("plugin_boot_count(cfg)", watcher_body)
+
+
 class ProcessEnumerationTests(unittest.TestCase):
     @unittest.skipUnless(os.name == "nt", "Win32 process enumeration")
     def test_overlapping_scans_do_not_corrupt_each_other(self):
