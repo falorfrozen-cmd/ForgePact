@@ -1,4 +1,4 @@
-# ForgePact 1.4.3
+# ForgePact 1.4.4
 
 A new, off-by-default Gameplay Mod for the White Mage: outline Soul Spurn's
 skill-bar slot while the Purgatory-toggled drain is running, so you can see
