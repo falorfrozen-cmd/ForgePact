@@ -233,11 +233,26 @@ public:
 
     // `autoprospect: first prospect - invoked=1 prospected=1 ...`: StatLine's
     // fields, headed by what happened.
-    std::string FirstProspectLine() const {
-        const std::string stat = StatLine();
-        const std::string head = std::string("autoprospect: ") + (IsEnabled() ? "ON " : "off ");
-        return "autoprospect: first prospect - " + (stat.rfind(head, 0) == 0 ? stat.substr(head.size()) : stat);
+    std::string FirstProspectLine() const { return HeadedStatLine("first prospect"); }
+
+    // True once per session, on the frame the first invoke that dispatched
+    // but left the grid unchanged is seen (ran-no-effect), and likewise for
+    // the first whose effect could not be read (unverified). The player build
+    // logs each, so "ON and nothing happened" is a line in out.txt rather
+    // than a missing one (Phase 3 S7 saw ran-no-effect=1 only by luck).
+    bool TakeFirstRanNoEffect() {
+        if (!m_FirstNoEffectDue) return false;
+        m_FirstNoEffectDue = false;
+        return true;
     }
+    bool TakeFirstUnverified() {
+        if (!m_FirstUnverifiedDue) return false;
+        m_FirstUnverifiedDue = false;
+        return true;
+    }
+
+    std::string RanNoEffectLine() const { return HeadedStatLine("the Prospect ran but the grid did not change"); }
+    std::string UnverifiedLine() const { return HeadedStatLine("the Prospect ran but the grid could not be read afterwards"); }
 
     // Each reason at most once per session, in the order first seen, for the
     // adapter's one log line; None when nothing new is waiting.
@@ -268,7 +283,7 @@ public:
         switch (r) {
         case AutoProspectRefusal::GridFull:
             return head + "holding back - " + std::to_string(m_LastFree) + " free cells, needs "
-                + std::to_string(kAutoProspectMinFreeCells) + "; take the materials out";
+                + std::to_string(kAutoProspectMinFreeCells) + "; empty some of the grid";
         case AutoProspectRefusal::NoButton:
             return head + "the item stays in the grid; the Prospect button was not found (or not uniquely)";
         case AutoProspectRefusal::NoArgs:
@@ -327,6 +342,14 @@ public:
     }
 
 private:
+    // `autoprospect: <what happened> - invoked=1 prospected=1 ...`: StatLine's
+    // fields, headed by what happened instead of by ON/off.
+    std::string HeadedStatLine(const std::string& what) const {
+        const std::string stat = StatLine();
+        const std::string head = std::string("autoprospect: ") + (IsEnabled() ? "ON " : "off ");
+        return "autoprospect: " + what + " - " + (stat.rfind(head, 0) == 0 ? stat.substr(head.size()) : stat);
+    }
+
     // `settle`: the frame the refusal read, whose count now includes the
     // refused item; null when this frame could not read the node.
     AutoProspectDecision RefuseIfPending(AutoProspectRefusal r, const AutoProspectView* settle = nullptr) {
@@ -350,8 +373,13 @@ private:
     void CheckEffect(const AutoProspectView& in) {
         if (!m_CheckEffect) return;
         m_CheckEffect = false;
-        if (!in.window || !in.grid || !in.contents || in.nodeId != m_EffectNode) { m_EffectUnread.fetch_add(1); return; }
-        if (in.filled == m_EffectFilled && in.fingerprints == m_EffectPrints) m_RanNoEffect.fetch_add(1);
+        if (!in.window || !in.grid || !in.contents || in.nodeId != m_EffectNode) {
+            if (m_EffectUnread.fetch_add(1) == 0) m_FirstUnverifiedDue = true;
+            return;
+        }
+        if (in.filled == m_EffectFilled && in.fingerprints == m_EffectPrints) {
+            if (m_RanNoEffect.fetch_add(1) == 0) m_FirstNoEffectDue = true;
+        }
         else if (m_Prospected.fetch_add(1) == 0) m_FirstProspectDue = true;
     }
 
@@ -366,6 +394,8 @@ private:
 
     bool        m_CheckEffect = false;
     bool        m_FirstProspectDue = false;
+    bool        m_FirstNoEffectDue = false;
+    bool        m_FirstUnverifiedDue = false;
     int64_t     m_EffectNode = -1;
     int         m_EffectFilled = 0;
     std::string m_EffectPrints;

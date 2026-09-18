@@ -17317,6 +17317,11 @@ static void AutoProspectTick()
     for (ForgePact::AutoProspectRefusal r = mod.TakeFirstRefusal(); r != ForgePact::AutoProspectRefusal::None; r = mod.TakeFirstRefusal())
         Out(mod.RefusalLine(r));
     if (mod.TakeFirstProspect()) Out(mod.FirstProspectLine());
+    // An invoke that dispatched and changed nothing, or whose effect could not
+    // be read, is said once too: otherwise a player's out.txt reads "ON" and
+    // then silence (Phase 3 S7's ran-no-effect=1 was visible only in `stat`).
+    if (mod.TakeFirstRanNoEffect()) Out(mod.RanNoEffectLine());
+    if (mod.TakeFirstUnverified()) Out(mod.UnverifiedLine());
 }
 
 // The one install attempt, from FrameCallback once setup has run and the mod

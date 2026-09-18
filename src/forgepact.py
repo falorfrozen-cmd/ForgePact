@@ -2233,7 +2233,7 @@ input[type=range]::-webkit-slider-thumb{appearance:none;width:17px;height:17px;b
     <div class="row" style="border:none">
         <span class="lbl" style="width:auto;flex:1">Auto-prospect items put in the Prospect Cube<br><span style="font-size:11px;color:#8f816e;font-weight:normal">Every item you drag or click into the Prospect Cube's grid is prospected straight away, as if you had pressed Prospect, so the grid never fills with items waiting their turn. Materials stay in the grid: take them out as you go. Anything still in the prospect grid when the game saves is lost.</span></span>
         <label class="switch"><input type="checkbox" id="mod_auto_prospect"><span class="sl"></span></label>
-        <span class="val" id="mapsval">off</span>
+        <span class="val" id="autoprospval">off</span>
     </div>
 </div>
 
@@ -2534,8 +2534,8 @@ async function boot(){
     document.getElementById('mpqpval').className='val '+(mpqp?'':'off');
     const maps=!!c.mod_auto_prospect;
     document.getElementById('mod_auto_prospect').checked=maps;
-    document.getElementById('mapsval').textContent=maps?'on':'off';
-    document.getElementById('mapsval').className='val '+(maps?'':'off');
+    document.getElementById('autoprospval').textContent=maps?'on':'off';
+    document.getElementById('autoprospval').className='val '+(maps?'':'off');
   rarityLoad(c);
   document.getElementById('hhval').className='val '+(hh?'':'off');
   document.getElementById('exepath').value=c.game_exe||'';
@@ -2705,7 +2705,7 @@ function bind(){
     };
     document.getElementById('mod_auto_prospect').onchange=async(e)=>{
         const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_auto_prospect',value:e.target.checked})});
-        const v=document.getElementById('mapsval');v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
+        const v=document.getElementById('autoprospval');v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
         toast('Auto-prospect '+(e.target.checked?'ON - take the materials out as you go':'OFF')+' - '+(res.ok||res.err));
     };
   { const el=document.getElementById('angelic_items');
@@ -2907,7 +2907,7 @@ function refreshSavedControls(){
   for(const [range,typed] of painted){if(typed===undefined)delete range.dataset.typed;else range.dataset.typed=typed}
   const booleans={den_on:'density_on',autoapply:'auto_apply',enemyspeed_ct:'enemy_speed_ct',map_reveal:'map_reveal',map_reveal_packs:'map_reveal_packs',headhunter:'headhunter',tyrant:'tyrant',beacon:'beacon',mod_filter_max_relics:'mod_filter_max_relics',mod_orb_pickup_radius:'mod_orb_pickup_radius',mod_pet_quest_pickup:'mod_pet_quest_pickup',mod_auto_prospect:'mod_auto_prospect'};
   for(const [id,key] of Object.entries(booleans))document.getElementById(id).checked=!!c[key];
-  for(const [id,key] of Object.entries({hhval:'headhunter',tyval:'tyrant',beval:'beacon',mfmrval:'mod_filter_max_relics',morval:'mod_orb_pickup_radius',mpqpval:'mod_pet_quest_pickup',mapsval:'mod_auto_prospect',mapval:'map_reveal'})){
+  for(const [id,key] of Object.entries({hhval:'headhunter',tyval:'tyrant',beval:'beacon',mfmrval:'mod_filter_max_relics',morval:'mod_orb_pickup_radius',mpqpval:'mod_pet_quest_pickup',autoprospval:'mod_auto_prospect',mapval:'map_reveal'})){
     const value=document.getElementById(id);value.textContent=c[key]?'on':'off';value.className='val '+(c[key]?'':'off');
   }
   document.getElementById('enemyspeedctval').textContent=c.enemy_speed_ct?'CT only':'all zones';

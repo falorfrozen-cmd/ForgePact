@@ -16,10 +16,10 @@ no longer have to stop every 54 items to press Prospect and start again.
     one stack per material type, as a normal Prospect does. Take them out as
     you go. When fewer than 6 cells are free, auto-prospect holds back and
     leaves your item in the grid (the first time in a session, it writes a
-    line to `bp_ipc\out.txt` saying so); take the materials out and carry on.
+    line to `bp_ipc\out.txt` saying so); empty some of the grid and carry on.
   - **Anything still in the prospect grid when the game saves is lost.** This
     is how the game itself treats that grid, with or without ForgePact: items
-    and materials left in it across a save are gone when you load again. With
+    left in it across a save were gone when we loaded again. With
     auto-prospect on, materials sitting in the grid become the normal state,
     so empty it before you leave the cube, and especially before you quit.
   - ForgePact runs the Prospect for you at a moment the game did not choose.
@@ -28,7 +28,8 @@ no longer have to stop every 54 items to press Prospect and start again.
   - If ForgePact cannot attach to the game's insert step on your copy of the
     game, the switch turns itself off for that session and `bp_ipc\out.txt`
     says why, instead of pretending to work. `out.txt` also records the first
-    item it prospects each session.
+    item it prospects each session, and says so once if a Prospect it ran left
+    the grid unchanged.
 
 ## How to update
 

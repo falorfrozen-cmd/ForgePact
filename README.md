@@ -372,7 +372,7 @@ away by the game's own Prospect, exactly as if you had pressed the button.
 - **Materials stay in the grid**, one single-cell stack per material type, as after a
   normal Prospect. Take them out as you go. With fewer than 6 free cells, auto-prospect
   holds back and leaves the item in the grid; the first time in a session it writes
-  `autoprospect: grid-full - holding back - N free cells, needs 6; take the materials out`
+  `autoprospect: grid-full - holding back - N free cells, needs 6; empty some of the grid`
   to `bp_ipc\out.txt`.
 - **Anything still in the prospect grid when the game saves is lost.** The game
   itself does not keep that grid across a save (measured with an unmodded grid: items
@@ -383,7 +383,9 @@ away by the game's own Prospect, exactly as if you had pressed the button.
 - It says what it did. If the hook it needs cannot see the game's own inserts, it turns
   itself off with an `autoprospect: hook TABLE-ONLY -> OFF` line; otherwise
   `autoprospect: hook installed -> ON`, and `autoprospect: first prospect - …` once the
-  first item has turned into materials.
+  first item has turned into materials. If a Prospect it runs leaves the grid unchanged,
+  it says that once too: `autoprospect: the Prospect ran but the grid did not change - …`
+  (or `… could not be read afterwards - …` when it could not check).
 
 How it works, and the research that proved ForgePact can run the Prospect itself, is in
 [`docs/prospect-window-research.md`](docs/prospect-window-research.md) (§ Stage B).

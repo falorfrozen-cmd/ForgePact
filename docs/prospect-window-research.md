@@ -37,7 +37,9 @@ now chooses by the handler variable; a re-run of `button` and one `self=found` s
 completes Phase 1.
 
 Status (2026-09-18, Stage B built): **Phase 1 is complete (`phase1-status: complete`)
-and Stage B is built; its Phase 3 live check is pending.** The re-run (research DLL from
+and Stage B is built; its Phase 3 live check is recorded** (§ Stage B results, the `S-*`
+rows: drag-in, click-in, rearrangement, off, grid-full and the player DLL all passed by
+eye, with one unexplained `ran-no-effect=1` on the player DLL). The re-run (research DLL from
 commit `cf451b3`) chose the button by its handler variable (`chosen=@261471`, the only
 one of three with `activationFunc`), and `press exec-index button:activationArgs
 self=found confirm` printed `prospected` with `invoked=yes` and `inner=yes`, seen by eye
@@ -46,8 +48,7 @@ one the player build uses. The mod is `autoprospect 1|0` (a player command; the 
 **Auto-prospect** switch in Gameplay Mods, off by default): a both-route hook on
 `m_MoveItemToGrid` tells the decision core an insert happened, and `FrameCallback`
 re-finds the window, the grid and the button and invokes the handler once per landed
-insert (§ Stage B ship design). `autoprospect stat` is research-build only. The `S-*`
-rows of § Stage B results wait on the Phase 3 procedure below.
+insert (§ Stage B ship design). `autoprospect stat` is research-build only.
 
 Status (2026-09-17): **research stage.** Phase 0a and Phase 0b both ran
 2026-09-17 and both recorded H = not observed. Phase 0a was blind (stale SDK
@@ -1388,15 +1389,15 @@ Stage B adapter is built) fills the `S-*` rows. A row that could not be measured
 | P-shapes | P4, per shape in order: the outcome line (`st=`, `res=`, `invoked=`, `inner=`, `self=`, `other=`, `route=`, `args=`), the verdict, and the item by eye; or the crash | All with `self=captured` (@261558), `other` = the window, `st=0`, `invoked=yes`, `inner=yes`, verdict `prospected`, each seen by eye turning into materials: `exec-index button:activationArgs` (filled 5->2); `exec-index captured` (8->3); `exec-var:activationFunc captured` (7->4); `exec-index copy` (10->5); `exec-index empty` (7->6). `scriptex captured`: not observed (skipped by the tester; `exec-index` already qualifies). No crash. First session: `self=found` not observed (the finder printed `ambiguous (3)`). **Re-run (research DLL from `cf451b3`): `exec-index button:activationArgs self=found`** — `st=0`, `invoked=yes (+1)`, `inner=yes (+1)`, `self=@261471` (the found button), `other=@261424` (the window), `route=exec-index`, `args=(button:activationArgs=array[0]={})`, contents 8->1 with the fingerprints changed, verdict `prospected`, and the human saw the item become materials. It meets the ship rule: **`invoke-shape: exec-index button:activationArgs self=found`**. `exec-index empty self=found`: not observed (not run; the first shape already qualifies) |
 | P-reentry | P3: `anon@15345` calls during the hand press (`since=` across it), i.e. whether the handler moves materials in through the insert closure | not observed (one hand press): `anon@15345` stayed at 1 across it, so that press put no materials in through the insert closure. The ship adapter still ignores and counts any insert made inside its own call (`while-invoking=`) |
 | P-load-calls | P1: `anon@15345` calls at character load, before the cube was opened | 0 across the character load. Controls in the same `show`: `CheckPlayerInteraction` 9950, `anon@2143` 2985, `ParseItemToGrid` 33 — the instrument was counting |
-| P-materials-only | P3: a hand press with only materials in the grid — `UiAProspectButton` / `___struct___123` counts and the `contents` change | A harmless no-op: `UiAProspectButton +1`, `___struct___123 +0`, filled 1->1, fingerprints unchanged |
+| P-materials-only | P3: a hand press with only materials in the grid — `UiAProspectButton` / `___struct___123` counts and the `contents` change | One materials-only press observed as a no-op: `UiAProspectButton +1`, `___struct___123 +0`, filled 1->1, fingerprints unchanged. One press with one set of materials, not every material |
 | P-close | P6: materials left in the grid when the window closes, before any save — back in the inventory, still in the grid, or gone | Still in the grid, not returned to the inventory. The reopened window has a new grid node (@263885) holding the same 9 fingerprints |
 | P-free-cells | P5: `empty=` after each prospect; the fewest free cells that still took an insert, which sets `kAutoProspectMinFreeCells` (6, one column, if not measured) | Materials were not observed to merge: each press added one single-cell stack per material type, filling column 0 rows 0–5, then column 1. The fewest free cells that still took an insert and prospected was 9 (45 of 54 filled); 6–8 free cells are not measured (not observed either way), so `kAutoProspectMinFreeCells` stays 6 and Phase 3's `S-grid-full` step measures 6–8. In that press (13 items, 6 material stacks already there) `___struct___123` ran +3 (args 73/72/61), all 13 items went, and 3 new stacks appeared with quantities that looked right to the tester — one inner call per material stack produced, not per item (measured, not proven) |
-| S-drag | Phase 3 (S2): a drag-in with `autoprospect 1` is prospected once; plus the drag-in's own `contents=K->K'`, bracketed in S1 (drag-in timing is not observed yet) | |
-| S-click | Phase 3 (S3): a click-in is prospected once | |
-| S-rearrange | Phase 3 (S4): moving an item (a material) inside the grid invokes nothing | |
-| S-off | Phase 3 (S6): after `autoprospect 0`, an insert stays in the grid | |
-| S-grid-full | Phase 3 (S5): filling the grid logs `grid-full` once and stops invoking; plus what an insert does with 6, 7 and 8 free cells (not measured in Phase 1) | |
-| S-player-dll | Phase 3 (S7): the player DLL with the panel toggle on prospects one insert (seen by eye), and `out.txt` shows a line naming work done, not armed state. `autoprospect stat` is research-only, so the player build logs `autoprospect: first prospect - invoked=<n≥1> prospected=<n≥1> …` (`StatLine()`'s fields) once, on the first prospect of a session; that line, after `autoprospect: hook installed -> ON`, is acceptance - a line saying only that the hook is installed or the mod is on is not | |
+| S-drag | Phase 3 (S2): a drag-in with `autoprospect 1` is prospected once; plus the drag-in's own `contents=K->K'`, bracketed in S1 (drag-in timing is not observed yet) | **PASS.** S1 (research DLL `3fc595c`, auto-prospect off, `prospectprobe hook` 91 detoured, 0 failed): the drag-in logged `anon@15345 #1` with `self` = `other` = the ProspectGrid node (@261415), `argc=4`, and **`contents=0->0`**; `contents` straight afterwards read `filled=6` (one 2×3 item). So a drag-in fills its cells *after* `m_MoveItemToGrid` returns, the opposite order to the click-in (`6->6`); the settled-count core handles both. S2 (a fresh launch, no `prospectprobe hook`, `autoprospect 1`): the drag-in was prospected with no press, materials seen by eye, and the player line read `autoprospect: first prospect - invoked=1 prospected=1 … inserts=1 not-landed=0` |
+| S-click | Phase 3 (S3): a click-in is prospected once | **PASS.** Prospected, seen by eye; `autoprospect stat` went to `invoked=2 prospected=2 inserts=2` - one invoke for the click-in |
+| S-rearrange | Phase 3 (S4): moving an item (a material) inside the grid invokes nothing | **PASS.** Moving a material from row 1 column 0 to column 5: `invoked=2` unchanged, `inserts=3`, `not-landed=1`. Also observed before `autoprospect 0`: one more insert and not-landed (`inserts=4`, `not-landed=2`) with `invoked` unchanged; what the player did to cause it was not observed, and it did not invoke |
+| S-off | Phase 3 (S6): after `autoprospect 0`, an insert stays in the grid | **PASS.** `autoprospect 0` printed `off - items put in the prospect grid stay there`. The grid was then filled to 48 of 54 cells with items and nothing was prospected: `while-off=24`, `invoked=2` unchanged. Reopening the window gave a new grid node (@263453) |
+| S-grid-full | Phase 3 (S5): filling the grid logs `grid-full` once and stops invoking; plus what an insert does with 6, 7 and 8 free cells (not measured in Phase 1) | **PASS.** `autoprospect 1` on its own invoked nothing. A 1-cell item into 5 free cells printed one line, `autoprospect: grid-full - holding back - 5 free cells, needs 6; …`, with `grid-full=1`, `invoked=2`, and the item stayed. A second insert into 4 free cells gave `grid-full=2` and no new line (once per reason holds). With items taken out to 16 free cells, one insert prospected everything in the grid at once (seen by eye): `invoked=3 prospected=3 elsewhere=4`, and the grid went to 2 material cells. 6, 7 and 8 free cells: not observed (the inserts fell at 5, 4 and 16), so `kAutoProspectMinFreeCells` stays 6. The grid was full of items, not materials, when the line first printed, so its advice now reads `empty some of the grid` instead of `take the materials out` |
+| S-player-dll | Phase 3 (S7): the player DLL with the panel toggle on prospects one insert (seen by eye), and `out.txt` shows a line naming work done, not armed state. `autoprospect stat` is research-only, so the player build logs `autoprospect: first prospect - invoked=<n≥1> prospected=<n≥1> …` (`StatLine()`'s fields) once, on the first prospect of a session; that line, after `autoprospect: hook installed -> ON`, is acceptance - a line saying only that the hook is installed or the mod is on is not | **PASS for both routes.** Player DLL `BloodPactPlugin_ship.dll` from `3fc595c` (sha256 `89B05DC2…DE61AB89`), the panel started from this checkout with Auto-prospect on: auto-apply sent `autoprospect 1`, which printed `armed`, then `HOOK INSTALLED on anon@15345@…` and `autoprospect: hook installed -> ON`. A click-in and a drag-in both became materials, seen by eye, and `out.txt` read `autoprospect: first prospect - invoked=2 prospected=1 ran-no-effect=1 … inserts=2 (… elsewhere=1 …) not-landed=0`. One invoke ran with no effect (`ran-no-effect=1`), which the research DLL did not show in S2/S3: observed, cause not observed, and harmless (nothing was lost). The player build logged no line of its own for it - it was visible only because the first-prospect line happened to carry the count - so it now logs `autoprospect: the Prospect ran but the grid did not change - …` once per session, and `… could not be read afterwards - …` for `unverified` (built after this run, not yet seen live) |
 
 **Insert timing — an input for the ship adapter.** A click-in's `watch` line read
 `contents=6->6`: the grid's filled count was the same before and after `m_MoveItemToGrid`
@@ -1422,8 +1423,8 @@ same-frame click-in passed against both cores (`tests/auto_prospect_harness.cpp`
 What is still unproven: an insert whose cell is filled and emptied again before any frame
 reads it, and a drag that empties the source cell while the item is held and fills it
 again on the drop (which would read as an insert, and prospect the dragged item). Phase 3
-S4 checks the second by moving a material; a material prospects to nothing
-(`P-materials-only`).
+S4 checked the second by moving a material, and it did not invoke (`S-rearrange`); one
+materials-only press was observed as a no-op (`P-materials-only`).
 
 ## Stage B ship design
 
@@ -1447,9 +1448,11 @@ S4 checks the second by moving a material; a material prospects to nothing
   grid straight after the call and hands it to the core.
 - **Refusals**, each logged once per session in both builds: `no-window`, `no-grid`,
   `unreadable`, `node-changed`, `no-button`, `no-args`, `grid-full` (fewer than
-  `kAutoProspectMinFreeCells` = 6 free cells: `holding back - N free cells, needs 6; take
-  the materials out`). A failed dispatch is logged once too. The player build also logs
-  `autoprospect: first prospect - …` once.
+  `kAutoProspectMinFreeCells` = 6 free cells: `holding back - N free cells, needs 6; empty
+  some of the grid`). A failed dispatch is logged once too. The player build also logs
+  `autoprospect: first prospect - …` once, and once each the first invoke that ran but
+  left the grid unchanged (`autoprospect: the Prospect ran but the grid did not change -
+  …`) and the first whose effect could not be read (`… could not be read afterwards - …`).
 - **Not built, on purpose:** returning materials to the inventory or clearing the grid (a
   second unmeasured game operation; `grid-full` refuses instead), and any bigger grid.
 

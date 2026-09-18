@@ -231,14 +231,25 @@ class AutoProspectContractTests(unittest.TestCase):
         self.assertIn("Out(mod.RefusalLine(r));", tick)
         # The player build's line naming work done (S-player-dll), once.
         self.assertIn("if (mod.TakeFirstProspect()) Out(mod.FirstProspectLine());", tick)
-        self.assertIn('"autoprospect: first prospect - "', self.header)
+        self.assertIn('HeadedStatLine("first prospect")', self.header)
+        # An invoke that ran and changed nothing, or could not be checked, is
+        # said once each (Phase 3 S7: ran-no-effect=1 reached only `stat`).
+        self.assertIn("if (mod.TakeFirstRanNoEffect()) Out(mod.RanNoEffectLine());", tick)
+        self.assertIn("if (mod.TakeFirstUnverified()) Out(mod.UnverifiedLine());", tick)
+        self.assertIn('HeadedStatLine("the Prospect ran but the grid did not change")', self.header)
+        self.assertIn('HeadedStatLine("the Prospect ran but the grid could not be read afterwards")', self.header)
         # A failed dispatch is said once, too.
         self.assertIn("if (!dispatched && !g_AutoProspectDispatchLogged) {", tick)
         # All of it ships: none of these lines sits behind the research guard.
         shipped_tick = self.body("static void AutoProspectTick(", strip_research_blocks(self.plugin))
-        for line in ("Out(mod.RefusalLine(r));", "Out(mod.FirstProspectLine());", "did not dispatch"):
+        for line in ("Out(mod.RefusalLine(r));", "Out(mod.FirstProspectLine());", "Out(mod.RanNoEffectLine());",
+                     "Out(mod.UnverifiedLine());", "did not dispatch"):
             self.assertIn(line, shipped_tick)
         self.assertIn('"holding back - "', self.header)
+        # The grid-full line names the grid, not materials: Phase 3 S5's grid
+        # was full of items when it first printed.
+        self.assertIn('"; empty some of the grid"', self.header)
+        self.assertNotIn("take the materials out", self.header)
 
     # ---- the panel, the notes, the docs ----------------------------------------
 

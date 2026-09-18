@@ -247,11 +247,13 @@ static void TargetGridFullRefusesAndCounts()
     for (int i = 0; i < 3; ++i) Frame(mod, View(kNode, start + 1), t);
     const std::string line = mod.RefusalLine(AutoProspectRefusal::GridFull);
     const std::string want = "holding back - " + N(ForgePact::kAutoProspectMinFreeCells - 1) + " free cells, needs "
-        + N(ForgePact::kAutoProspectMinFreeCells) + "; take the materials out";
+        + N(ForgePact::kAutoProspectMinFreeCells) + "; empty some of the grid";
+    // Phase 3 S5: the grid was full of items, not materials, when this line
+    // first printed, so it must not tell the player to take materials out.
     Check("target/grid_full_refuses_and_counts",
           d.action == AutoProspectAction::Refuse && d.reason == AutoProspectRefusal::GridFull && t.invokes == 0
               && mod.Refused(AutoProspectRefusal::GridFull) == 1 && !mod.HasPending()
-              && line.find(want) != std::string::npos,
+              && line.find(want) != std::string::npos && line.find("materials") == std::string::npos,
           "action=" + N((int)d.action) + " reason=" + N((int)d.reason) + " invokes=" + N(t.invokes)
               + " gridFull=" + N(mod.Refused(AutoProspectRefusal::GridFull)) + " line=\"" + line + "\"");
 }
@@ -565,6 +567,94 @@ static void TargetFirstProspectReportedOnceInThePlayersLog()
               + " prospected=" + N(mod.Prospected()) + " line=\"" + line + "\"");
 }
 
+// ---- the player's log: an invoke that did nothing (closing round) -----------
+//
+// Phase 3 S7 (player DLL) counted ran-no-effect=1, and the player build said
+// nothing about it: the count reached only `autoprospect stat`, which is
+// research-only. So the player build now logs the first ran-no-effect and the
+// first unverified of a session, once each, like the first prospect.
+//
+// Observed 2026-09-18 against the round-1 core with TakeFirstRanNoEffect /
+// TakeFirstUnverified returning false and both lines empty, and the grid-full
+// line still ending "; take the materials out":
+//   FAIL target/grid_full_refuses_and_counts action=2 reason=6 invokes=0 gridFull=1 line="autoprospect: grid-full - holding back - 5 free cells, needs 6; take the materials out"
+//   FAIL target/ran_no_effect_reported_once_in_the_players_log early=0 first=0 second=0 ranNoEffect=2 line=""
+//   FAIL target/unverified_reported_once_in_the_players_log early=0 first=0 second=0 unverified=2 line=""
+// baseline/prospects_with_effect_log_no_nothing_happened_line PASSED against
+// it, as the negative control must: a core that never reports trivially never
+// reports wrongly, and the target scenarios above are what it fails.
+
+static void BaselineProspectsWithEffectLogNoNothingHappenedLine()
+{
+    // Every invoke changes the grid: neither line may be taken, ever.
+    AutoProspectMod mod;
+    mod.SetEnabled(true);
+    Tally t;
+    Frame(mod, View(kNode, 0), t);
+    mod.OnInsert(kNode, true, false);
+    const AutoProspectView mats = View(kNode, 2, "m-0,n-0");
+    Frame(mod, View(kNode, 1, "a-14"), t, &mats);
+    Frame(mod, mats, t);
+    mod.OnInsert(kNode, true, false);
+    const AutoProspectView mats2 = View(kNode, 3, "m-0,n-0,o-0");
+    Frame(mod, View(kNode, 3, "m-0,n-0,b-14"), t, &mats2);
+    Frame(mod, mats2, t);
+    const bool noEffect = mod.TakeFirstRanNoEffect();
+    const bool unverified = mod.TakeFirstUnverified();
+    Check("baseline/prospects_with_effect_log_no_nothing_happened_line",
+          t.invokes == 2 && mod.Prospected() == 2 && !noEffect && !unverified,
+          "invokes=" + N(t.invokes) + " prospected=" + N(mod.Prospected()) + " noEffect=" + N(noEffect)
+              + " unverified=" + N(unverified));
+}
+
+static void TargetRanNoEffectReportedOnceInThePlayersLog()
+{
+    AutoProspectMod mod;
+    mod.SetEnabled(true);
+    Tally t;
+    Frame(mod, View(kNode, 0), t);
+    mod.OnInsert(kNode, true, false);
+    Frame(mod, View(kNode, 1, "a-14"), t);           // invoke; the grid does not change
+    const bool early = mod.TakeFirstRanNoEffect();   // nothing is known until the next frame
+    Frame(mod, View(kNode, 1, "a-14"), t);           // ran-no-effect
+    const bool first = mod.TakeFirstRanNoEffect();
+    const std::string line = mod.RanNoEffectLine();
+    mod.OnInsert(kNode, true, false);
+    Frame(mod, View(kNode, 2, "a-14,b-14"), t);      // invoke; unchanged again
+    Frame(mod, View(kNode, 2, "a-14,b-14"), t);
+    const bool second = mod.TakeFirstRanNoEffect();
+    Check("target/ran_no_effect_reported_once_in_the_players_log",
+          !early && first && !second && mod.RanNoEffect() == 2
+              && line.rfind("autoprospect: the Prospect ran but the grid did not change - invoked=1 prospected=0 ran-no-effect=1 ", 0) == 0,
+          "early=" + N(early) + " first=" + N(first) + " second=" + N(second)
+              + " ranNoEffect=" + N(mod.RanNoEffect()) + " line=\"" + line + "\"");
+}
+
+static void TargetUnverifiedReportedOnceInThePlayersLog()
+{
+    AutoProspectMod mod;
+    mod.SetEnabled(true);
+    Tally t;
+    Frame(mod, View(kNode, 0), t);
+    mod.OnInsert(kNode, true, false);
+    Frame(mod, View(kNode, 1, "a-14"), t);           // invoke
+    const bool early = mod.TakeFirstUnverified();
+    AutoProspectView closed;                         // the next frame cannot show the grid
+    Frame(mod, closed, t);
+    const bool first = mod.TakeFirstUnverified();
+    const std::string line = mod.UnverifiedLine();
+    Frame(mod, View(kNode, 1, "a-14"), t);           // readable again
+    mod.OnInsert(kNode, true, false);
+    Frame(mod, View(kNode, 2, "a-14,b-14"), t);      // invoke
+    Frame(mod, closed, t);                           // unreadable again
+    const bool second = mod.TakeFirstUnverified();
+    Check("target/unverified_reported_once_in_the_players_log",
+          !early && first && !second && mod.EffectUnread() == 2 && !mod.TakeFirstRanNoEffect()
+              && line.rfind("autoprospect: the Prospect ran but the grid could not be read afterwards - invoked=1 ", 0) == 0,
+          "early=" + N(early) + " first=" + N(first) + " second=" + N(second)
+              + " unverified=" + N(mod.EffectUnread()) + " line=\"" + line + "\"");
+}
+
 // ---- adapter: the recorded invoke shape ---------------------------------
 //
 // Phase 1 recorded ONE shape that meets the ship rule (research doc, § Stage B
@@ -633,6 +723,9 @@ int main()
     TargetRefusedItemRearrangedNeverInvokes();
     TargetNoArgsRefusesAndSaysWhy();
     TargetFirstProspectReportedOnceInThePlayersLog();
+    BaselineProspectsWithEffectLogNoNothingHappenedLine();
+    TargetRanNoEffectReportedOnceInThePlayersLog();
+    TargetUnverifiedReportedOnceInThePlayersLog();
     AdapterRecordedShapeNames();
     AdapterMeasuredSessionProspectsEachInsertOnce();
     std::cout << (g_Failures ? "RESULT FAIL" : "RESULT OK") << "\n";

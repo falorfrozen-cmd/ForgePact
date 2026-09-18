@@ -162,6 +162,13 @@ class AutoProspectBehaviorTests(unittest.TestCase):
     def test_target_first_prospect_is_reported_once_in_the_players_log(self):
         self.assertScenario("target/first_prospect_reported_once_in_the_players_log")
 
+    def test_target_an_invoke_that_did_nothing_is_reported_once_in_the_players_log(self):
+        # Phase 3 S7 counted ran-no-effect=1 that only the research-only stat
+        # line could show; the negative control keeps a working prospect quiet.
+        self.assertScenario("baseline/prospects_with_effect_log_no_nothing_happened_line")
+        self.assertScenario("target/ran_no_effect_reported_once_in_the_players_log")
+        self.assertScenario("target/unverified_reported_once_in_the_players_log")
+
     # ---- adapter: the shape Phase 1 recorded --------------------------------
 
     def test_adapter_recorded_shape(self):
