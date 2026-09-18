@@ -4,12 +4,12 @@ A change aimed at crashes during fights with the Angelic / Unholy drop setting t
 
 ## Fixed
 
-- **The game could crash in fights with the Angelic / Unholy slider at x100.**
+- **Possible fix (not yet confirmed): the game could crash in fights with the Angelic / Unholy slider at x100.**
   Players reported the crash with the setting at x100 on 1.4.1; 1.4.2 did not
   change this. When a monster dies, ForgePact rolls its own Angelic / Unholy
   drop and its Tyrant's Crown / Headhunter drop and places the item where the
-  monster fell. Until now it did this after the game had already finished
-  removing that monster, and still used the monster to place the item. With
+  monster fell. Until now it did this after the game's own kill handling had
+  run, and still used the monster to place the item. With
   1.4.3 both drops are rolled and placed while the monster is still there,
   before the game's own kill handling runs, and ForgePact no longer touches
   the monster after that. Drop rates and what can drop are unchanged.

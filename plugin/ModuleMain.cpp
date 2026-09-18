@@ -9389,8 +9389,9 @@ static RValue& Hook_EnemyDestroyKillProc(CInstance* S, CInstance* O, RValue& R, 
         else if (CallerIsEnemyInstance(third)) HhSteal(third, S, O);
     }
     // The kill drops read the enemy and spawn with it as self while it is still live, the
-    // same as the steal above. Until 1.4.2 they ran after the original, i.e. after the game
-    // had cleaned the enemy up (a suspected cause of the x100 Angelic crash - not proven).
+    // same as the steal above. Until 1.4.2 they ran after the original kill proc had run
+    // (which the harness models as cleaning the enemy up; not measured) - a suspected cause
+    // of the x100 Angelic crash, not proven.
     // Nothing below the trampoline touches S, and a throwing drop cannot skip the original.
     try { SignatureDropOnKill(S); AngelicDropOnKill(S); } catch (...) {}
     return g_Orig_EnemyDestroyKillProc ? g_Orig_EnemyDestroyKillProc(S, O, R, argc, A) : R;

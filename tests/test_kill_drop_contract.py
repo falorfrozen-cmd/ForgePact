@@ -2,8 +2,9 @@
 
 The angelic (`angelicdrop`) and signature (`sigdrop`: Tyrant's Crown /
 Headhunter) drops used to read the dying enemy and spawn their item, with that
-enemy as `self`, *after* the game's own kill proc had run - i.e. after the
-game's cleanup of that enemy. Since 1.4.3 both run before the trampoline, while
+enemy as `self`, *after* the game's own kill proc had run (which the dispatch
+harness models as cleaning the enemy up; not measured). Since 1.4.3 both run
+before the trampoline, while
 the enemy is still live, and nothing after the trampoline touches it.
 
 `test_headhunter_dispatch.py` exercises this behaviourally, but skips without a
