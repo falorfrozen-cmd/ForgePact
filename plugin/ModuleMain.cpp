@@ -4269,8 +4269,8 @@ static bool HhResolveLocalPlayer(RValue& out, std::string* how)
 // read itself is the one the shipped indicator will call.
 // docs/toggle-skills-research.md, "## Decision" -> "### P1: the indicator's
 // read, control and slot design" -> "The read, and exactly what has been
-// proven" and "Co-op / ownership: the answer" are the measured basis for
-// every branch below.
+// proven" and "Co-op / ownership after session 3: isMyClient" are the
+// measured basis for every branch below.
 //
 // Two-argument CallBuiltin only (the global-context form) - this is the
 // exact shape the research doc's ON=1 positive control has to prove, and
@@ -4288,14 +4288,28 @@ static bool ToggleIndicatorResolveAoeObject(double& outObjIdx)
     } catch (...) { return false; }
 }
 
-// `overrideLocalNumber` lets a research command run the identical
-// enumeration and decision with the local player's number replaced, without
+// A numeric-or-bool field read as a tri-state: attributed+true, attributed
+// +false, or unattributed (undefined, a string, or a throw). Shared by the
+// ownership read (`isMyClient`) and the marker read (`purgatory`, where
+// "true" means "reads numeric > 0").
+static bool ToggleIndicatorReadTruth(const RValue& v, bool& outTrue)
+{
+    if (v.m_Kind == VALUE_BOOL) { outTrue = v.ToBoolean(); return true; }
+    if (v.m_Kind == VALUE_REAL || v.m_Kind == VALUE_INT32 || v.m_Kind == VALUE_INT64) {
+        outTrue = v.ToDouble() > 0.0;
+        return true;
+    }
+    return false;
+}
+
+// `treatOwnAsForeign` lets a research command run the identical enumeration
+// and decision with every own instance re-interpreted as foreign, without
 // writing anything to the game - the non-mutating negative control the
-// research doc's "Co-op / ownership" section calls for. `detail` is optional
-// and lets a caller (the research sampler, or a test) see the counted
-// evidence behind the decision.
+// research doc's "Co-op / ownership after session 3: isMyClient" section
+// calls for. `detail` is optional and lets a caller (the research sampler,
+// or a test) see the counted evidence behind the decision.
 static ForgePact::ToggleIndicatorState ToggleIndicatorRead(ForgePact::ToggleIndicatorReadDetail* detail,
-                                                            const double* overrideLocalNumber)
+                                                            bool treatOwnAsForeign)
 {
     ForgePact::ToggleIndicatorReadDetail d;
     double objIdx = -1.0;
@@ -4310,57 +4324,40 @@ static ForgePact::ToggleIndicatorState ToggleIndicatorRead(ForgePact::ToggleIndi
     if (d.countReadFailed) {
         // A threw read, not a measured zero: Decide already returns
         // Unreadable for this, but return here too so a failed count is
-        // never charged the cost of a player lookup that could not mean
+        // never charged the cost of a per-instance scan that could not mean
         // anything on top of it.
         if (detail) *detail = d;
         return ForgePact::ToggleIndicatorModel::Decide(d);
     }
     if (d.n <= 0) {
-        // Off without ever resolving the player: a real, cheap negative that
-        // must not pay for (or depend on) a player lookup that never mattered.
+        // A real, cheap negative: no instance to scan, so nothing below runs.
         if (detail) *detail = d;
         return ForgePact::ToggleIndicatorModel::Decide(d);
     }
 
-    double localNumber = 0.0;
-    if (overrideLocalNumber) {
-        localNumber = *overrideLocalNumber;
-        d.localResolved = true;
-        d.localNumberReadable = true;
-    } else {
-        RValue player;
-        if (HhResolveLocalPlayer(player)) {
-            d.localResolved = true;
-            try {
-                RValue pn = g_Yytk->CallBuiltin("variable_instance_get", { player, RValue("playerNumber") });
-                if (pn.m_Kind == VALUE_REAL || pn.m_Kind == VALUE_INT32 || pn.m_Kind == VALUE_INT64) {
-                    localNumber = pn.ToDouble();
-                    d.localNumberReadable = true;
-                }
-            } catch (...) {}
-        }
-    }
-    d.localNumber = localNumber;
-
-    if (!d.localResolved || !d.localNumberReadable) {
-        if (detail) *detail = d;
-        return ForgePact::ToggleIndicatorModel::Decide(d);
-    }
-
-    // Every AOE instance's own playerNumber decides ownership; one whose
-    // number cannot be read is unattributed and never lights the indicator.
+    // Every AOE instance's own isMyClient decides ownership; one whose own
+    // isMyClient cannot be read is unattributed and never lights the
+    // indicator. Only an instance classified as own has its own purgatory
+    // read, for the marker split (markedMine/unmarkedMine/markUnreadableMine).
     const long cap = kToggleIndicatorScanCap;
     const long scanCount = d.n < cap ? d.n : cap;
     d.capped = d.n > cap;
     for (long i = 0; i < scanCount; ++i) {
         try {
             RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue(objIdx), RValue((double)i) });
-            RValue pn = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("playerNumber") });
-            if (pn.m_Kind == VALUE_REAL || pn.m_Kind == VALUE_INT32 || pn.m_Kind == VALUE_INT64) {
-                if (pn.ToDouble() == localNumber) ++d.mine; else ++d.others;
-            } else {
-                ++d.unattributed;
-            }
+            RValue mc = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("isMyClient") });
+            bool isMine = false;
+            if (!ToggleIndicatorReadTruth(mc, isMine)) { ++d.unattributed; continue; }
+            if (treatOwnAsForeign) isMine = false;
+            if (!isMine) { ++d.others; continue; }
+            ++d.mine;
+            try {
+                RValue pg = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("purgatory") });
+                bool marked = false;
+                if (!ToggleIndicatorReadTruth(pg, marked)) { ++d.markUnreadableMine; }
+                else if (marked) { ++d.markedMine; }
+                else { ++d.unmarkedMine; }
+            } catch (...) { ++d.markUnreadableMine; }
         } catch (...) { ++d.unattributed; }
     }
 
@@ -18850,11 +18847,19 @@ static void TgProbeMarkCommand(const std::string& rest)
 struct TgProbeSpurnCounters {
     volatile long samples = 0, on = 0, off = 0, unreadable = 0;
     volatile long maxN = 0, transitions = 0;
+    // The marker-required decision (ToggleIndicatorModel::Decide(detail,
+    // true)) taken from the SAME read as the plain counters above - session
+    // 4's S2/S5 control for whether the Purgatory marker is required to
+    // ship (docs/toggle-skills-research.md, "Session 4").
+    volatile long markedOn = 0, markedOff = 0, markedUnreadable = 0;
 };
 static TgProbeSpurnCounters g_TgSpurn;
 static long g_TgSpurnLastState = -1;   // -1 = never sampled
 static ForgePact::ToggleIndicatorReadDetail g_TgSpurnLastDetail;
 static bool g_TgSpurnHasLastDetail = false;
+// The g_RuntimeFrame of the last ownership-only state change (session 4's
+// S4 reads this against the TalentUse press frame for the OFF lag).
+static long g_TgSpurnLastTransitionFrame = -1;
 static bool g_TgSpurnRoomKeyKnown = false;
 static int64_t g_TgSpurnRoomKey = INT64_MIN;
 static long g_TgSpurnFirstAfterRoomChangeState = -1;
@@ -18864,6 +18869,22 @@ static bool g_TgSpurnSawOffSinceRoomChange = false;
 static long g_TgSpurnDrawsSinceRoomChangeToOff = -1;   // -1 = not off yet since the change
 static std::atomic<bool> g_TgSpurnLogOn{ false };
 static long g_TgSpurnLogged = 0;   // budgeted by kTgLogBudget, like every other tgprobe row
+
+// The latched per-appearance field snapshot (session 4's S2/S5): the plain
+// AOE lives ~2s, too short to catch with an IPC round trip, so instance 0 of
+// every appearance is recorded on its first draw ("first") and again on
+// every draw while present ("last") - a field the cast sets after the first
+// draw would otherwise be missed. It survives the instance's removal until
+// the next appearance starts. See docs/toggle-skills-research.md, "Session
+// 4: what it measures, and how each row is decided".
+struct TgProbeSpurnFieldSample {
+    bool have = false;
+    long frame = -1;
+    std::string isMyClient, playerNumber, targetNumber, purgatory, purgatoryTimer, destroyTimer;
+};
+static long g_TgSpurnAppearanceCount = 0;
+static bool g_TgSpurnAppearancePresent = false;   // n>=1 on the previous sample
+static TgProbeSpurnFieldSample g_TgSpurnFieldFirst, g_TgSpurnFieldLast;
 
 // Sampled on every logged state change while `spurn log on`: each instance's
 // own playerNumber and isMyClient, budgeted the same way every other tgprobe
@@ -18887,23 +18908,65 @@ static void TgProbeSpurnLogInstances(const ForgePact::ToggleIndicatorReadDetail&
     }
 }
 
+// Reads instance 0's own isMyClient/playerNumber/targetNumber/purgatory/
+// purgatoryTimer/destroyTimer via TgProbeRead (each field independently
+// guarded), and latches them into `out`. Read-only, capped to one instance -
+// this is the snapshot, not the ownership scan.
+static void TgProbeSpurnRecordSnapshot(double objIdx, long frame, TgProbeSpurnFieldSample& out)
+{
+    RValue inst;
+    try { inst = g_Yytk->CallBuiltin("instance_find", { RValue(objIdx), RValue(0.0) }); }
+    catch (...) { return; }
+    if (inst.m_Kind == VALUE_UNDEFINED) return;
+    out.have = true;
+    out.frame = frame;
+    out.isMyClient = TgProbeRead(inst, "isMyClient");
+    out.playerNumber = TgProbeRead(inst, "playerNumber");
+    out.targetNumber = TgProbeRead(inst, "targetNumber");
+    out.purgatory = TgProbeRead(inst, "purgatory");
+    out.purgatoryTimer = TgProbeRead(inst, "purgatoryTimer");
+    out.destroyTimer = TgProbeRead(inst, "destroyTimer");
+}
+
 static void TgProbeSpurnAfterDraw()
 {
     ForgePact::ToggleIndicatorReadDetail detail;
-    const ForgePact::ToggleIndicatorState state = ToggleIndicatorRead(&detail, nullptr);
+    const ForgePact::ToggleIndicatorState state = ToggleIndicatorRead(&detail, /*treatOwnAsForeign=*/false);
+    const ForgePact::ToggleIndicatorState markedState = ForgePact::ToggleIndicatorModel::Decide(detail, /*requireMarker=*/true);
 
     InterlockedIncrement(&g_TgSpurn.samples);
     if (detail.n > g_TgSpurn.maxN) InterlockedExchange(&g_TgSpurn.maxN, detail.n);
     const long s = (long)state;
     const bool changed = g_TgSpurnLastState >= 0 && s != g_TgSpurnLastState;
-    if (changed) InterlockedIncrement(&g_TgSpurn.transitions);
+    if (changed) {
+        InterlockedIncrement(&g_TgSpurn.transitions);
+        g_TgSpurnLastTransitionFrame = (long)g_RuntimeFrame;
+    }
     if (state == ForgePact::ToggleIndicatorState::On) InterlockedIncrement(&g_TgSpurn.on);
     else if (state == ForgePact::ToggleIndicatorState::Off) InterlockedIncrement(&g_TgSpurn.off);
     else InterlockedIncrement(&g_TgSpurn.unreadable);
+    if (markedState == ForgePact::ToggleIndicatorState::On) InterlockedIncrement(&g_TgSpurn.markedOn);
+    else if (markedState == ForgePact::ToggleIndicatorState::Off) InterlockedIncrement(&g_TgSpurn.markedOff);
+    else InterlockedIncrement(&g_TgSpurn.markedUnreadable);
     if (changed && g_TgSpurnLogOn.load()) TgProbeSpurnLogInstances(detail);
     g_TgSpurnLastState = s;
     g_TgSpurnLastDetail = detail;
     g_TgSpurnHasLastDetail = true;
+
+    // Latched field snapshot: an appearance starts on the first draw with
+    // n>=1 after a draw with n=0.
+    const bool present = detail.n >= 1;
+    double objIdx = -1.0;
+    if (present && ToggleIndicatorResolveAoeObject(objIdx)) {
+        if (!g_TgSpurnAppearancePresent) {
+            ++g_TgSpurnAppearanceCount;
+            g_TgSpurnFieldFirst = TgProbeSpurnFieldSample{};
+            g_TgSpurnFieldLast = TgProbeSpurnFieldSample{};
+            TgProbeSpurnRecordSnapshot(objIdx, (long)g_RuntimeFrame, g_TgSpurnFieldFirst);
+        }
+        TgProbeSpurnRecordSnapshot(objIdx, (long)g_RuntimeFrame, g_TgSpurnFieldLast);
+    }
+    g_TgSpurnAppearancePresent = present;
 
     const int64_t key = CurrentRoomKey();
     if (key != INT64_MIN) {
@@ -18942,32 +19005,46 @@ static void TgProbeSpurnCommand(const std::string& rest)
     if (sub == "as") {
         std::string ignored;
         const std::string v = Lower(FirstToken(subRest, ignored));
-        if (v.empty() || v == "off") { Out("tgprobe spurn as: usage -> tgprobe spurn as <n>"); return; }
-        double n;
-        try { n = std::stod(v); } catch (...) { Out("tgprobe spurn as: not a number: " + v); return; }
-        // A one-shot read with the local number overridden; it never touches
-        // the real counters above, so it is the non-mutating negative control
-        // the research doc's "Co-op / ownership" section calls for.
+        if (v != "foreign") { Out("tgprobe spurn as: usage -> tgprobe spurn as foreign"); return; }
+        // A one-shot read with every own instance re-interpreted as foreign;
+        // it never touches the real counters above, so it is the
+        // non-mutating negative control the research doc's "Co-op /
+        // ownership after session 3: isMyClient" section calls for.
         ForgePact::ToggleIndicatorReadDetail detail;
-        const ForgePact::ToggleIndicatorState state = ToggleIndicatorRead(&detail, &n);
-        Out("tgprobe spurn as " + v + " -> " + ForgePact::ToggleIndicatorStateName(state)
+        const ForgePact::ToggleIndicatorState state = ToggleIndicatorRead(&detail, /*treatOwnAsForeign=*/true);
+        Out(std::string("tgprobe spurn as foreign -> ") + ForgePact::ToggleIndicatorStateName(state)
             + " n=" + std::to_string(detail.n) + " mine=" + std::to_string(detail.mine)
             + " others=" + std::to_string(detail.others) + " unattributed=" + std::to_string(detail.unattributed));
         return;
     }
     if (sub == "slots") { TgProbeSpurnSlots(); return; }
-    if (!sub.empty()) { Out("tgprobe spurn: usage -> tgprobe spurn | log on|off | as <n> | slots"); return; }
+    if (sub == "fields") {
+        auto describe = [](const TgProbeSpurnFieldSample& s) {
+            if (!s.have) return std::string("none");
+            return "frame=" + std::to_string(s.frame) + " isMyClient=" + s.isMyClient
+                + " playerNumber=" + s.playerNumber + " targetNumber=" + s.targetNumber
+                + " purgatory=" + s.purgatory + " purgatoryTimer=" + s.purgatoryTimer
+                + " destroyTimer=" + s.destroyTimer;
+        };
+        Out("tgprobe spurn fields: appearance=" + std::to_string(g_TgSpurnAppearanceCount));
+        Out("  first: " + describe(g_TgSpurnFieldFirst));
+        Out("  last:  " + describe(g_TgSpurnFieldLast));
+        return;
+    }
+    if (!sub.empty()) { Out("tgprobe spurn: usage -> tgprobe spurn | log on|off | as foreign | slots | fields"); return; }
 
     const ForgePact::ToggleIndicatorReadDetail& d = g_TgSpurnLastDetail;
     Out("tgprobe spurn: frame=" + std::to_string((unsigned long long)g_RuntimeFrame)
         + " room=" + (g_TgSpurnRoomKeyKnown ? std::to_string((long long)g_TgSpurnRoomKey) : std::string("unreadable"))
         + " n=" + std::to_string(d.n) + " mine=" + std::to_string(d.mine) + " others=" + std::to_string(d.others)
         + " unattributed=" + std::to_string(d.unattributed) + " capped=" + (d.capped ? "1" : "0")
-        + " localNumber=" + (d.localNumberReadable ? std::to_string(d.localNumber) : std::string("unreadable"))
         + " state=" + (g_TgSpurnHasLastDetail ? ForgePact::ToggleIndicatorStateName((ForgePact::ToggleIndicatorState)g_TgSpurnLastState) : "n/a")
         + " samples=" + std::to_string(g_TgSpurn.samples) + " on=" + std::to_string(g_TgSpurn.on)
         + " off=" + std::to_string(g_TgSpurn.off) + " unreadable=" + std::to_string(g_TgSpurn.unreadable)
         + " maxN=" + std::to_string(g_TgSpurn.maxN) + " transitions=" + std::to_string(g_TgSpurn.transitions)
+        + " lastTransitionFrame=" + std::to_string(g_TgSpurnLastTransitionFrame)
+        + " markedOn=" + std::to_string(g_TgSpurn.markedOn) + " markedOff=" + std::to_string(g_TgSpurn.markedOff)
+        + " markedUnreadable=" + std::to_string(g_TgSpurn.markedUnreadable)
         + " markDraws=" + std::to_string(g_TgMarkDraws) + " markDrawExc=" + std::to_string(g_TgMarkDrawExc));
     if (g_TgSpurnRoomKeyKnown) {
         Out("  firstAfterRoomChange: state=" + (g_TgSpurnFirstAfterRoomChangeState >= 0
@@ -19011,7 +19088,7 @@ static void TgProbeCommand(const std::string& rest)
     Out("tgprobe: usage -> tgprobe hook [substr...] | show | reset | verbose on|off | slots | buffs | abilities"
         " | vars <Obj|global> | snap <Obj|global> | diff | room"
         " | deep snap|diff|flip|find|get|census|selftest|drop ..."
-        " | spurn [log on|off | as <n> | slots] | mark <x> <y> <w> <h> | off");
+        " | spurn [log on|off | as foreign | slots | fields] | mark <x> <y> <w> <h> | off");
 }
 #endif // FORGEPACT_RELEASE (tgprobe)
 

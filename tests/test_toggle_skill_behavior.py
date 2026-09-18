@@ -2,14 +2,15 @@
 
 Companion to toggle_skill_harness.cpp and test_toggle_skill_contract.py (which
 asserts on source text). This file proves the READ ITSELF - what
-ToggleIndicatorRead() decides from a counted enumeration - end to end, before
-any drawing code exists (P1; issue #11, Track B). The research doc
-(docs/toggle-skills-research.md, "The read, and exactly what has been
-proven") measured that the planned read shape ran exactly twice, on the wrong
-objects, before any cast - never a non-zero on the AOE object itself - so the
-indicator workorder's own positive control has to be this: the production
-read, called from where the indicator will call it, deciding ON vs OFF vs
-UNREADABLE against instances this harness controls directly.
+ToggleIndicatorRead() and ToggleIndicatorModel::Decide() decide from a
+counted enumeration - end to end, before any drawing code exists (P1b;
+issue #11, Track B). Ownership is decided from each scanned instance's own
+`isMyClient`, not by comparing against the local player: session 3 measured
+that `Player_obj` has no `playerNumber` at all (docs/toggle-skills-research.md,
+"Co-op / ownership after session 3: isMyClient"). A second pass over the same
+evidence - `ToggleIndicatorModel::Decide(detail, requireMarker=true)` - is the
+marker-required decision session 4 controls ("Plain-cast flash (R10) and the
+Purgatory marker").
 """
 import os
 import shutil
@@ -62,6 +63,7 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
         constants = declaration(cls.plugin, "static constexpr int kToggleIndicatorScanCap")
         production = "\n".join([
             implementation(cls.plugin, "static bool ToggleIndicatorResolveAoeObject("),
+            implementation(cls.plugin, "static bool ToggleIndicatorReadTruth("),
             implementation(cls.plugin, "static ForgePact::ToggleIndicatorState ToggleIndicatorRead("),
         ])
 
@@ -119,60 +121,98 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
     def test_harness_ran(self):
         self.assertIn("RESULT OK", self.output, self.output)
 
-    def test_no_aoe_is_off_without_resolving_player(self):
-        self.assertScenario("read/no_aoe_is_off_without_resolving_player")
-        self.assertScenario("read/no_aoe_is_off_without_resolving_player/resolve_calls")
+    # ---- ownership (isMyClient) --------------------------------------------
 
-    def test_own_aoe_is_on(self):
-        self.assertScenario("read/own_aoe_is_on")
-
-    def test_valueref_player_is_on(self):
-        # This runner hands back VALUE_REF for the local player, not
-        # VALUE_OBJECT - Known Limitations item 7 is what happens when a kind
-        # check decides whether the work happens at all.
-        self.assertScenario("read/valueref_player_is_on")
-
-    def test_foreign_aoe_is_off(self):
-        self.assertScenario("read/foreign_aoe_is_off")
-
-    def test_own_and_foreign_is_on(self):
-        self.assertScenario("read/own_and_foreign_is_on")
-
-    def test_two_own_is_on(self):
-        self.assertScenario("read/two_own_is_on")
-
-    def test_unattributed_only_is_unreadable(self):
-        # A foreign AOE fails toward "absent"; an unattributed one (its own
-        # playerNumber could not be read) must not be guessed either way.
-        self.assertScenario("read/unattributed_only_is_unreadable")
-
-    def test_no_local_player_is_unreadable(self):
-        self.assertScenario("read/no_local_player_is_unreadable")
-
-    def test_local_number_unreadable_is_unreadable(self):
-        self.assertScenario("read/local_number_unreadable_is_unreadable")
+    def test_no_aoe_is_off(self):
+        self.assertScenario("read/no_aoe_is_off")
 
     def test_object_unresolved_is_unreadable(self):
         # A different, stronger failure than "resolved but zero instances".
         self.assertScenario("read/object_unresolved_is_unreadable")
-
-    def test_scan_is_capped(self):
-        self.assertScenario("read/scan_is_capped")
-
-    def test_reread_every_call(self):
-        # No caching across calls - the same point-of-use rule as the guide's
-        # Known Limitations item 13.
-        self.assertScenario("read/reread_every_call")
-
-    def test_override_number_excludes_own(self):
-        # `spurn as <n>`: the non-mutating negative control.
-        self.assertScenario("read/override_number_excludes_own")
 
     def test_instance_number_throw_is_unreadable(self):
         # A threw instance_number call is a failed read, not a measured zero
         # - the catch's `d.n = 0` fallback must not decide a real, cheap Off.
         self.assertScenario("read/instance_number_throw_is_unreadable")
         self.assertScenario("read/instance_number_throw_is_unreadable/countReadFailed")
+
+    def test_own_bool_true_is_on(self):
+        self.assertScenario("read/own_bool_true_is_on")
+        self.assertScenario("read/own_bool_true_is_on/mine")
+
+    def test_own_real_one_is_on(self):
+        # isMyClient a nonzero numeric, not a VALUE_BOOL - still counts true.
+        self.assertScenario("read/own_real_one_is_on")
+
+    def test_foreign_bool_false_is_off(self):
+        self.assertScenario("read/foreign_bool_false_is_off")
+        self.assertScenario("read/foreign_bool_false_is_off/others")
+
+    def test_own_and_foreign_is_on(self):
+        self.assertScenario("read/own_and_foreign_is_on")
+        self.assertScenario("read/own_and_foreign_is_on/mine")
+        self.assertScenario("read/own_and_foreign_is_on/others")
+
+    def test_two_own_is_on(self):
+        self.assertScenario("read/two_own_is_on")
+        self.assertScenario("read/two_own_is_on/mine")
+
+    def test_unattributed_only_is_unreadable(self):
+        # A foreign AOE fails toward "absent"; an unattributed one (its own
+        # isMyClient could not be read) must not be guessed either way.
+        self.assertScenario("read/unattributed_only_is_unreadable")
+        self.assertScenario("read/unattributed_only_is_unreadable/unattributed")
+
+    def test_scan_is_capped(self):
+        self.assertScenario("read/scan_is_capped")
+        self.assertScenario("read/scan_is_capped/capped")
+        self.assertScenario("read/scan_is_capped/n")
+        self.assertScenario("read/scan_is_capped/mine")
+
+    def test_reread_every_call(self):
+        # No caching across calls - the same point-of-use rule as the guide's
+        # Known Limitations item 13.
+        self.assertScenario("read/reread_every_call/first_off")
+        self.assertScenario("read/reread_every_call")
+
+    def test_as_foreign_excludes_own(self):
+        # `spurn as foreign`: the non-mutating negative control.
+        self.assertScenario("read/as_foreign_excludes_own")
+        self.assertScenario("read/as_foreign_excludes_own/others")
+        self.assertScenario("read/as_foreign_excludes_own/mine")
+
+    def test_no_player_lookup(self):
+        # The read makes no player-resolving call at all, in any scenario
+        # above - Known Limitations item 7's kind-check bug had a different
+        # root cause than this workorder's, but the fix here is the same
+        # shape: read the thing itself, not something read off another
+        # object first.
+        self.assertScenario("read/no_player_lookup")
+
+    # ---- the Purgatory marker (session 4's discriminator) ------------------
+
+    def test_marked_own_on_when_required(self):
+        self.assertScenario("marker/marked_own_on_when_required/markedMine")
+        self.assertScenario("marker/marked_own_on_when_required")
+
+    def test_unmarked_own_off_when_required(self):
+        self.assertScenario("marker/unmarked_own_off_when_required/unmarkedMine")
+        self.assertScenario("marker/unmarked_own_off_when_required")
+
+    def test_unmarked_own_on_when_not_required(self):
+        # The SAME unmarked own instance: the plain ownership read (no
+        # marker required) does not consult purgatory at all.
+        self.assertScenario("marker/unmarked_own_on_when_not_required")
+
+    def test_unreadable_marker_unreadable_when_required(self):
+        self.assertScenario("marker/unreadable_marker_unreadable_when_required/markUnreadableMine")
+        self.assertScenario("marker/unreadable_marker_unreadable_when_required")
+
+    def test_foreign_marker_ignored(self):
+        # A foreign instance's own purgatory is never read for the marker
+        # split; only own instances count.
+        self.assertScenario("marker/foreign_marker_ignored/markedMine")
+        self.assertScenario("marker/foreign_marker_ignored")
 
 
 if __name__ == "__main__":

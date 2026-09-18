@@ -535,8 +535,17 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
         self.assertIn("GameObject::White_Mage_Soul_Spurn_AOE_obj", combined)
         self.assertIn('"instance_number"', combined)
         self.assertIn('"instance_find"', combined)
-        self.assertIn('"playerNumber"', combined)
-        self.assertIn("HhResolveLocalPlayer", combined)
+        self.assertIn('"isMyClient"', combined)
+        self.assertIn('"purgatory"', combined)
+        # P1b (replan 1): session 3 measured that Player_obj has no
+        # playerNumber at all, so ownership is decided from each scanned
+        # instance's own isMyClient - no local-player read, no fallback key
+        # (docs/toggle-skills-research.md, "Co-op / ownership after session
+        # 3: isMyClient").
+        self.assertNotIn("HhResolveLocalPlayer", combined)
+        self.assertNotIn('"playerNumber"', combined)
+        self.assertNotIn("myHealthBar", combined)
+        self.assertNotIn("CallGameScript", combined)
         # The read must stay the exact shape the research doc's ON=1 control
         # proves: two-argument CallBuiltin, global context, never the
         # self-taking CallBuiltinEx; and never a hand-resolved SDK index.
@@ -565,6 +574,24 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
         dispatch_body = function_body(self.plugin, 'static void TgProbeCommand(const std::string& rest)')
         self.assertIn('sub == "spurn"', dispatch_body)
         self.assertIn('sub == "mark"', dispatch_body)
+
+    def test_spurn_command_has_the_session_4_additions(self):
+        # `spurn fields` prints the latched per-appearance snapshot, `spurn
+        # as foreign` replaces `spurn as <n>` (P1b: there is no player number
+        # left to override), and the bare `spurn` print carries the
+        # marker-required counters and the last ownership-only transition
+        # frame - session 4's S2/S3/S4/S5 controls
+        # (docs/toggle-skills-research.md, "Session 4").
+        spurn_cmd = function_body(self.plugin, "static void TgProbeSpurnCommand(const std::string& rest)")
+        self.assertIn('"fields"', spurn_cmd)
+        self.assertIn('"foreign"', spurn_cmd)
+        self.assertIn("markedOn=", spurn_cmd)
+        self.assertIn("lastTransitionFrame=", spurn_cmd)
+
+    def test_latched_snapshot_fields_are_research_only(self):
+        for needle in ("targetNumber", "purgatoryTimer", "destroyTimer"):
+            self.assertIn(needle, self.plugin)
+            self.assertNotIn(needle, self.stripped)
 
     def test_mark_saves_and_restores_colour_and_alpha(self):
         body = function_body(self.plugin, "static void TgProbeDrawMark()")

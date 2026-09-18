@@ -209,7 +209,7 @@ turn co-op rendering on, and run no `citrace` command, after `tgprobe hook`.
 | `tgprobe vars <Obj\|global>` | Scalar variables (real/int/bool/string) of the first instance of `<Obj>`, or of the global scope. |
 | `tgprobe snap <Obj\|global>` / `tgprobe diff` | Snapshot those scalars, then print changed / added / removed keys (cap 200 lines). A change inside an array or struct is invisible here; that is what the walkers are for. |
 | `tgprobe room` | The room key, whether it is readable, and the room name. |
-| `tgprobe spurn [log on\|off\|as <n>\|slots]` | Samples the production `ToggleIndicatorRead` on every `DrawHudBuffs` draw. Bare `spurn` prints the last sample (`n=`, `mine=`, `others=`, `unattributed=`, `capped=`, `localNumber=`, `state=`) plus running `samples=`/`on=`/`off=`/`unreadable=`/`maxN=`/`transitions=` counters and `firstAfterRoomChange=`. `spurn log on\|off` logs each instance's `playerNumber`/`isMyClient` on every state change (budgeted). `spurn as <n>` is the non-mutating negative control: the same enumeration and decision with the local number overridden, reported separately and never touching the real counters. `spurn slots` prints every `UI_Hud_Talent_obj` `row0`/`row1`/`playerSlot.bind_skill`/`global.mySkills` entry whose value is talent 240. |
+| `tgprobe spurn [log on\|off\|as foreign\|slots\|fields]` | Samples the production `ToggleIndicatorRead` on every `DrawHudBuffs` draw. Bare `spurn` prints the last sample (`n=`, `mine=`, `others=`, `unattributed=`, `capped=`, `state=`) plus running `samples=`/`on=`/`off=`/`unreadable=`/`maxN=`/`transitions=`/`lastTransitionFrame=` counters, the marker-required counters `markedOn=`/`markedOff=`/`markedUnreadable=`, and `firstAfterRoomChange=`. `spurn log on\|off` logs each instance's `playerNumber`/`isMyClient` on every state change (budgeted). `spurn as foreign` is the non-mutating negative control (P1b: there is no local player number left to override): the same enumeration and decision with every own instance re-interpreted as foreign, reported separately and never touching the real counters. `spurn slots` prints every `UI_Hud_Talent_obj` `row0`/`row1`/`playerSlot.bind_skill`/`global.mySkills` entry whose value is talent 240. `spurn fields` prints the latched per-appearance snapshot (`isMyClient`, `playerNumber`, `targetNumber`, `purgatory`, `purgatoryTimer`, `destroyTimer`) taken on the appearance's first draw and refreshed on every draw while it is present. |
 | `tgprobe mark <x> <y> <w> <h>\|off` | Draws (or clears) a static outline rectangle at GUI coordinates from the draw hook, to find which candidate slot rectangle sits on Soul Spurn's button; saves and restores `draw_get_colour`/`draw_get_alpha`. Prints `draws=`/`drawExc=` so "never drew" is separable from "drew in the wrong place". |
 
 `hudSinceRoomChange` counts `DrawHudBuffs` calls since the room key last
@@ -712,6 +712,72 @@ never `not observed`.
     line into Results → Session 3; write Decision → After session 3; set this
     plan's `## State` gates. Stop the game; nothing else left running.
 
+### Session 4
+
+Replan 1's short session (P1b/P1b-LIVE, issue #11, Track B). Session 3 proved
+the read's shape from the draw hook (`n=1` while ON, `0` while OFF), but
+never proved `on` there: the per-instance loop only ran from the command
+handler (`spurn as 1/2`), because the old `playerNumber` design returned at
+"local number unreadable" first. P1b drops that design for the AOE's own
+`isMyClient` ("Co-op / ownership after session 3: isMyClient"); this session
+proves it from the draw hook, measures the plain-cast `purgatory` value
+("Plain-cast flash (R10) and the Purgatory marker") on both sides, and
+re-measures R6's OFF lag through `lastTransitionFrame`. One research build
+(the P1b `BloodPactPlugin_rel.dll`), one short session, S0–S5 batched.
+
+**Setup.** The P1b research DLL, in town, with no `bp_ipc\coop.ini` (or
+`enabled=0`), no `cooprender`, and no `citrace` command at any point.
+**Purgatory re-allocated first** — session 3 ended with it respecced out for
+R10. Healing Zone stays on the hotbar as the non-toggle control. Run `tgprobe
+hook` then `tgprobe reset` before S2.
+
+S0–S5 below are the rows Results → Session 4 fills; each status is exactly
+one of `measured`, `not observed` or `blocked` — a row not run is `blocked`,
+never `not observed`.
+
+1. **S0 (instrument control, gates every other row).** `hhlabel` → record
+   `hudCalls=`. `tgprobe spurn` → record the summary line. Stand a few
+   seconds; `hhlabel` and `tgprobe spurn` again, in one `ipc.ps1 -Lines`
+   write. The `samples=` delta across that window must match the `hhlabel`
+   `hudCalls=` delta (±2) — quote both deltas in the session preamble.
+   Otherwise every row below is `blocked`.
+2. **S1 (by eye OFF, scope).** With Soul Spurn/Purgatory off by eye, `tgprobe
+   spurn` → record `state=` and `n=`. Expect `off` with `n=0`. If this
+   contradicts `read: GO` from session 3, record it and set `scope: BLOCKED`.
+3. **S2 (by eye Purgatory ON, scope + flash).** Press Soul Spurn once (ON by
+   eye, Purgatory active). Wait 2 s. `tgprobe spurn` → record the last sample
+   (`state=`, `n=`, `mine=`) and the running `on=`/`markedOn=` counters.
+   Expect `on` with `mine>=1`, and both `on=` and `markedOn=` risen since S1.
+   `tgprobe spurn fields` → record the snapshot; expect `isMyClient=bool:true`
+   and `purgatory` numeric and greater than 0.
+4. **S3 (co-op negative control, scope).** Still ON. `tgprobe spurn as
+   foreign` → record the printed override line (`state=`, `n=`, `mine=`,
+   `others=`). Expect `off` with `others>=1`, `mine=0`. This must not change
+   `tgprobe spurn`'s own counters — confirm the plain `tgprobe spurn` summary
+   read just before and just after this step is otherwise identical (only the
+   draws elapsed between them differ).
+5. **S4 (OFF lag, offlag).** Note the `TalentUse`/`TalentsWhiteMage` press
+   frames from `tgprobe show`. Press Soul Spurn to turn it OFF; `tgprobe
+   spurn` → record `lastTransitionFrame=` and confirm `state=off`. `offlag:`
+   is `lastTransitionFrame` minus the `TalentUse` press `lastFrame`, in
+   frames, with the `TalentsWhiteMage` frame recorded beside it. If this row
+   is not run, `offlag:` is `not isolated (<= ~4560 draws, session 3 R6)`.
+6. **S5 (plain-cast flash, flash).** Respec Purgatory out. Cast Soul Spurn
+   once; wait at least 3 s. `tgprobe spurn` → record the state and counters.
+   `tgprobe spurn fields` → record the new appearance's snapshot, both
+   "first" and "last". `flash: purgatory` needs S2's snapshot `purgatory` > 0,
+   this row `measured` with the new appearance's `purgatory` numeric and ≤ 0
+   in both "first" and "last", and `on=` risen across this row while
+   `markedOn=` did not. Anything else — including this row `blocked` — is
+   `flash: KL`; record which case applied. Restore Purgatory afterward if
+   practical.
+7. **Gate values.** `scope: isMyClient` needs S0 matched and S1, S2 and S3 all
+   `measured` as described; otherwise `scope: BLOCKED`, which stops P2 (`##
+   Needs human judgement`). `flash:` and `offlag:` per steps 6 and 5 above.
+   `read: GO` and `slotgeom:` are not re-decided here. Paste every quoted line
+   into Results → Session 4; write Decision → After session 4; set this
+   plan's `## State` gates. Stop the game; nothing else left running.
+
 ## Results
 
 ### Session 1
@@ -1099,45 +1165,79 @@ unproven until `tgprobe mark` shows it (Section 3's fix below).
 
 #### Co-op / ownership: the answer
 
-`instance_number` counts every player's instances of the AOE object, not just
-the local one's; the measured AOE instance carries `playerNumber=1`,
-`isMyClient=true`, `targetNumber=1` and `myCaster=-4`. The design taken in:
-an AOE instance lights the indicator only if its own `playerNumber` (read with
-`variable_instance_get`) equals the local player's own `playerNumber`. An
-instance whose `playerNumber` cannot be read is *unattributed* and never
-lights it; if every instance present is unattributed, or the local player's
-own number cannot be read, the answer is `Unreadable` — nothing is drawn, and
-a counter is raised — never guessed either way. A foreign AOE therefore fails
-toward "absent", never toward "wrong". Whether `Player_obj` actually carries a
-`playerNumber` member at all was not printed by either session 1 or 2; session
-3's R4 measures it (the `scope:` gate). A second real player cannot be
-produced in this toolkit's offline setting (see "Anti-Cheat & Offline
-Enforcement"), so the live negative control is non-mutating instead: `tgprobe
-spurn as <n>` runs the identical enumeration and decision with the local
-number overridden, and must answer `off` with `others>=1` while the real
-(un-overridden) answer is `on`. That proves the ownership filter runs on live
-values; it does not prove what `playerNumber` means for a real second
-player, which stays a Known Limitation. `isMyClient` is logged for the record
-only and used nowhere in the decision.
+*(P1, superseded by session 3's R4 — kept for history; the current design is
+below, "Co-op / ownership after session 3: isMyClient".)* `instance_number`
+counts every player's instances of the AOE object, not just the local one's;
+the measured AOE instance carries `playerNumber=1`, `isMyClient=true`,
+`targetNumber=1` and `myCaster=-4`. The design P1 shipped as its research
+control: an AOE instance lights the indicator only if its own `playerNumber`
+(read with `variable_instance_get`) matches the local player's own
+`playerNumber`, read via `HhResolveLocalPlayer`. Whether `Player_obj` actually
+carries a `playerNumber` member at all was not printed by either session 1 or
+2; session 3's R4 measured it directly. It does not: `Player_obj` has no
+`playerNumber`, only `Player_obj.myHealthBar.playerNumber` (a followed
+instance handle) and a struct field `pNm`, neither of which this design read.
+So the local-number half of the comparison always failed, and the read could
+never answer `on` from anywhere it was actually exercised as a comparison.
+`isMyClient` was logged for the record only and used nowhere in this design's
+decision.
 
-#### Research-build control (P1): `tgprobe spurn` and `tgprobe mark`
+#### Co-op / ownership after session 3: isMyClient
+
+**Decision:** an AOE instance lights the indicator if its own `isMyClient`
+(read with `variable_instance_get`, no local-player read at all) is true. A
+`VALUE_BOOL` gives its truth directly; a numeric kind counts nonzero as true;
+anything else — undefined, a string, or a throw — is *unattributed* and never
+lights it. An own instance whose own `purgatory` reads numeric greater than
+zero is additionally *marked*; see "Plain-cast flash (R10) and the Purgatory
+marker" for when the marker is required. If every instance present is
+unattributed, the answer is `Unreadable` — nothing is drawn, and a counter is
+raised — never guessed either way. A foreign AOE therefore fails toward
+"absent", never toward "wrong".
+
+Why `isMyClient` over `playerNumber` (or `targetNumber`, `myCaster`, a game
+script call): it is one read on the instance being judged, at the point of
+use, with no second object whose shape has to be assumed — the exact failure
+mode that sank the P1 design above. It also drops `HhResolveLocalPlayer`, and
+with it a per-draw player lookup, from the read entirely. The game ships the
+same concept by name (`gml_Script_IsMyClient`, SDK `scripts.hpp` index 2070,
+beside `IsMyPlayer`/`GetMyPlayer`, which ForgePact already calls or hooks) —
+that is consistency, not proof of co-op meaning by itself
+(`AGENTS.md` "Identify a thing by what it is"). What is proven is narrower: it
+reads `true` on the local player's own AOE, twice, in session 3's R2/R3.
+Session 4 proves it from the draw hook itself (S2/S3).
+
+What stays inferred, and cannot be produced offline: that a co-op partner's
+AOE reads `false` on this client. A second real player cannot be produced in
+this toolkit's offline setting (see "Anti-Cheat & Offline Enforcement"), so
+the live negative control is non-mutating instead: `tgprobe spurn as foreign`
+runs the identical enumeration and decision with every own instance
+re-interpreted as foreign, and must answer `off` with `others>=1` while the
+real (un-overridden) answer is `on`. That proves the `others` branch runs on
+live values; it does not prove what `isMyClient` means for a real partner,
+which stays a Known Limitation. No natural `isMyClient=false` instance was
+looked for, and none is planned.
+
+#### Research-build control (P1/P1b): `tgprobe spurn` and `tgprobe mark`
 
 Both commands live inside the existing `tgprobe` research block, dispatched
 from `TgProbeCommand`. One research-only line follows `HhDrawHeadLabels();` in
 `Hook_DrawHudBuffs`, in its own `#ifndef FORGEPACT_RELEASE` pair: it samples
 the production read on every draw (`tgprobe spurn`'s running counters and last
-sample) and draws the `mark` rectangle if one is armed. `spurn as <n>` is the
-non-mutating negative control described above; `spurn log on|off` logs each
-instance's `playerNumber`/`isMyClient` on a budgeted number of state changes;
-`spurn slots` runs read-only from the command handler. `mark <x> <y> <w> <h>`
-saves `draw_get_colour`/`draw_get_alpha` before its first `draw_set_` and
-restores both after its last draw — the same pattern `HhDrawHeadLabels` uses —
-and now counts `draws=`/`drawExc=` so a tester (and `tgprobe spurn`'s own
-`markDraws=`/`markDrawExc=` line) can tell "never drew" apart from "drew
-somewhere the tester didn't see" (the fix for the instrument-blindness review
-below). The sampler's own instrument control: the `samples=` delta across a
-window must match the `hhlabel` `hudCalls=` delta over the same window (±2),
-or every `spurn` answer in that window is `blocked`, not a game finding.
+sample) and draws the `mark` rectangle if one is armed. `spurn as foreign` is
+the non-mutating negative control described above; `spurn log on|off` logs
+each instance's `playerNumber`/`isMyClient` on a budgeted number of state
+changes; `spurn slots` runs read-only from the command handler; `spurn fields`
+prints the latched per-appearance snapshot (see "Session 4" below). `mark <x>
+<y> <w> <h>` saves `draw_get_colour`/`draw_get_alpha` before its first
+`draw_set_` and restores both after its last draw — the same pattern
+`HhDrawHeadLabels` uses — and now counts `draws=`/`drawExc=` so a tester (and
+`tgprobe spurn`'s own `markDraws=`/`markDrawExc=` line) can tell "never drew"
+apart from "drew somewhere the tester didn't see" (the fix for the
+instrument-blindness review below). The sampler's own instrument control: the
+`samples=` delta across a window must match the `hhlabel` `hudCalls=` delta
+over the same window (±2), or every `spurn` answer in that window is
+`blocked`, not a game finding.
 
 #### Slot location (Q4): what is known
 

@@ -6,13 +6,17 @@
 // scan-cap constant, so no number or branch here restates one from the
 // plugin. Only the game API is replaced.
 //
-// This pins the decision the research doc's "Co-op / ownership: the answer"
-// and "The read, and exactly what has been proven" sections settled on
-// BEFORE any drawing code exists: zero instances answers Off without ever
-// resolving the local player; a resolved AOE whose own playerNumber cannot
-// be read is unattributed and never lights the indicator; and the object
-// itself failing to resolve is a different, stronger failure (Unreadable)
-// than "resolved but empty" (Off).
+// P1b (replan 1): ownership by the AOE's own `isMyClient`, not by comparing
+// against the local player - session 3 measured that `Player_obj` has no
+// `playerNumber` (docs/toggle-skills-research.md, "Co-op / ownership after
+// session 3: isMyClient"). This pins the decision settled on BEFORE any
+// drawing code exists: zero instances answers Off without reading any
+// instance's own fields; a resolved AOE whose own isMyClient cannot be read
+// is unattributed and never lights the indicator; the object itself failing
+// to resolve is a different, stronger failure (Unreadable) than "resolved
+// but empty" (Off); and the marker-required decision (the Purgatory field,
+// "Plain-cast flash (R10) and the Purgatory marker") is a separate pass over
+// the same evidence, not baked into the plain read.
 #include <cstdint>
 #include <iostream>
 #include <stdexcept>
@@ -25,14 +29,18 @@ enum { VALUE_REAL, VALUE_INT32, VALUE_INT64, VALUE_OBJECT, VALUE_REF, VALUE_STRI
 struct RValue {
     int m_Kind = VALUE_UNDEFINED;
     double number = 0;
+    bool boolean = false;
     std::string text;
     RValue() = default;
     RValue(double n) : m_Kind(VALUE_REAL), number(n) {}
     RValue(const char* s) : m_Kind(VALUE_STRING), text(s) {}
     RValue(const std::string& s) : m_Kind(VALUE_STRING), text(s) {}
     double ToDouble() const { return number; }
+    bool ToBoolean() const { return boolean; }
     std::string ToString() const { return text; }
 };
+static RValue MakeBool(bool b) { RValue r; r.m_Kind = VALUE_BOOL; r.boolean = b; return r; }
+static RValue MakeReal(double n) { RValue r; r.m_Kind = VALUE_REAL; r.number = n; return r; }
 
 // A stand-in for HeroSiege::Objects - the harness needs the AOE object named
 // by the SDK constant to exist and resolve to a string, not the whole SDK.
@@ -42,26 +50,44 @@ inline const char* GetObjectName(GameObject) { return "White_Mage_Soul_Spurn_AOE
 }}
 
 // ---- the controlled world -------------------------------------------------
-struct AoeInst { double playerNumber = 0; bool hasPlayerNumber = true; };
+// Every field is read independently, tagged by kind - the same shape
+// variable_instance_get actually hands back, never by a game-side identity
+// this harness happens to know. isMyClient is read for every scanned
+// instance; purgatory is read only for an instance already classified own
+// (mineExpected exists only to let a scenario assert the split without
+// duplicating the production classification here).
+struct AoeInst {
+    RValue isMyClient = MakeBool(true);
+    bool isMyClientThrows = false;
+    RValue purgatory;   // default VALUE_UNDEFINED: marker unreadable
+    bool purgatoryThrows = false;
+};
+static AoeInst OwnMarked(double purgatoryValue = 0.09) {
+    AoeInst a; a.isMyClient = MakeBool(true); a.purgatory = MakeReal(purgatoryValue); return a;
+}
+static AoeInst OwnUnmarked() {
+    AoeInst a; a.isMyClient = MakeBool(true); a.purgatory = MakeReal(0.0); return a;
+}
+static AoeInst OwnMarkerUnreadable() {
+    AoeInst a; a.isMyClient = MakeBool(true); a.purgatory = RValue(); return a;   // undefined
+}
+static AoeInst OwnByNumber(double n = 1.0) {
+    AoeInst a; a.isMyClient = MakeReal(n); a.purgatory = MakeReal(0.0); return a;
+}
+static AoeInst Foreign(double purgatoryValue = 0.0) {
+    AoeInst a; a.isMyClient = MakeBool(false); a.purgatory = MakeReal(purgatoryValue); return a;
+}
+static AoeInst Unattributed() {
+    AoeInst a; a.isMyClient = RValue(); return a;   // undefined
+}
+
 struct World {
     bool aoeObjectResolves = true;
     std::vector<AoeInst> instances;
     bool instanceNumberThrows = false;   // instance_number itself throws
-    bool playerResolves = true;
-    int playerKind = VALUE_REF;      // what this runner really hands back
-    bool playerNumberReadable = true;
-    double playerNumberValue = 1.0;
 };
 static World world;
-static long g_ResolveCalls = 0;
-
-// A player/instance handle tagged by identity rather than by kind - the
-// harness's variable_instance_get looks at the tag, exactly as the real
-// runtime looks at which instance id/ref was actually passed, not at the
-// RValue's own kind (which this runner is free to hand back as VALUE_REF).
-static RValue TagRef(const std::string& tag, int kind) {
-    RValue r; r.m_Kind = kind; r.text = tag; return r;
-}
+static long g_ResolveCalls = 0;   // HhResolveLocalPlayer calls - must stay 0 (read/no_player_lookup)
 
 struct FakeRunner {
     RValue CallBuiltin(const char* name, std::vector<RValue> args) {
@@ -76,19 +102,23 @@ struct FakeRunner {
         if (fn == "instance_find") {
             const int i = (int)args[1].ToDouble();
             if (i < 0 || (size_t)i >= world.instances.size()) return RValue();   // VALUE_UNDEFINED
-            return TagRef("aoe:" + std::to_string(i), VALUE_REF);
+            RValue r; r.m_Kind = VALUE_REF; r.text = "aoe:" + std::to_string(i);
+            return r;
         }
         if (fn == "variable_instance_get") {
-            if (args[1].ToString() != "playerNumber") return RValue();
             const std::string tag = args[0].text;
-            if (tag == "player") {
-                return world.playerNumberReadable ? RValue(world.playerNumberValue) : RValue();
+            const std::string field = args[1].ToString();
+            if (tag.rfind("aoe:", 0) != 0) return RValue();
+            const size_t i = (size_t)std::stoi(tag.substr(4));
+            if (i >= world.instances.size()) return RValue();
+            const AoeInst& a = world.instances[i];
+            if (field == "isMyClient") {
+                if (a.isMyClientThrows) throw std::runtime_error("isMyClient EXCEPTION");
+                return a.isMyClient;
             }
-            if (tag.rfind("aoe:", 0) == 0) {
-                const size_t i = (size_t)std::stoi(tag.substr(4));
-                if (i < world.instances.size() && world.instances[i].hasPlayerNumber)
-                    return RValue(world.instances[i].playerNumber);
-                return RValue();   // VALUE_UNDEFINED: unattributed
+            if (field == "purgatory") {
+                if (a.purgatoryThrows) throw std::runtime_error("purgatory EXCEPTION");
+                return a.purgatory;
             }
             return RValue();
         }
@@ -98,12 +128,13 @@ struct FakeRunner {
 static FakeRunner runnerStorage;
 static FakeRunner* g_Yytk = &runnerStorage;
 
-// The local player as ModuleMain.cpp's own HhResolveLocalPlayer would hand
-// it back - single-arg form, matching how ToggleIndicatorRead calls it.
+// Present only so the read/no_player_lookup scenario has something to count
+// - the production read must never call this (Context "Co-op / ownership
+// after session 3: isMyClient": "No local-player read at all").
 static bool HhResolveLocalPlayer(RValue& out) {
     ++g_ResolveCalls;
-    if (!world.playerResolves) return false;
-    out = TagRef("player", world.playerKind);
+    RValue r; r.m_Kind = VALUE_REF; r.text = "player";
+    out = r;
     return true;
 }
 
@@ -136,182 +167,212 @@ static void checkBool(const std::string& label, bool got, bool want) {
 
 static void resetWorld() {
     world = World{};
-    g_ResolveCalls = 0;
 }
 
 int main() {
-    // 1. Zero instances answers Off without ever resolving the local player -
-    //    a real, cheap negative that must not pay for a player lookup.
+    // 1. Zero instances answers Off without reading any instance's own
+    //    fields - a real, cheap negative.
     resetWorld();
     world.instances = {};
     {
         ForgePact::ToggleIndicatorReadDetail d;
-        auto state = ToggleIndicatorRead(&d, nullptr);
-        checkState("read/no_aoe_is_off_without_resolving_player", state, ForgePact::ToggleIndicatorState::Off);
-        checkInt("read/no_aoe_is_off_without_resolving_player/resolve_calls", g_ResolveCalls, 0);
+        auto state = ToggleIndicatorRead(&d, false);
+        checkState("read/no_aoe_is_off", state, ForgePact::ToggleIndicatorState::Off);
     }
 
-    // 2. One AOE whose playerNumber matches the local player: On.
+    // 2. The AOE object itself does not resolve by name at all - a
+    //    different, stronger failure than "resolved but zero instances".
     resetWorld();
-    world.instances = { { 1.0, true } };
-    world.playerNumberValue = 1.0;
+    world.aoeObjectResolves = false;
+    world.instances = { OwnMarked() };   // must not matter - object never resolved
     {
         ForgePact::ToggleIndicatorReadDetail d;
-        auto state = ToggleIndicatorRead(&d, nullptr);
-        checkState("read/own_aoe_is_on", state, ForgePact::ToggleIndicatorState::On);
-        checkInt("read/own_aoe_is_on/mine", d.mine, 1);
+        auto state = ToggleIndicatorRead(&d, false);
+        checkState("read/object_unresolved_is_unreadable", state, ForgePact::ToggleIndicatorState::Unreadable);
     }
 
-    // 3. This runner hands back VALUE_REF for the local player, not
-    //    VALUE_OBJECT (Known Limitations item 7) - the read must not gate on
-    //    the player RValue's own kind.
+    // 3. `instance_number` itself throws: a failed read, not a measured
+    //    zero. The catch's `d.n = 0` fallback must not be mistaken for a
+    //    real, cheap Off - it must count as a failure instead.
     resetWorld();
-    world.instances = { { 1.0, true } };
-    world.playerNumberValue = 1.0;
-    world.playerKind = VALUE_REF;
+    world.instances = { OwnMarked() };   // must not matter - the count never completes
+    world.instanceNumberThrows = true;
     {
         ForgePact::ToggleIndicatorReadDetail d;
-        auto state = ToggleIndicatorRead(&d, nullptr);
-        checkState("read/valueref_player_is_on", state, ForgePact::ToggleIndicatorState::On);
+        auto state = ToggleIndicatorRead(&d, false);
+        checkState("read/instance_number_throw_is_unreadable", state, ForgePact::ToggleIndicatorState::Unreadable);
+        checkBool("read/instance_number_throw_is_unreadable/countReadFailed", d.countReadFailed, true);
     }
 
-    // 4. A foreign player's AOE alone: Off, not On and not Unreadable.
+    // 4. Own AOE, isMyClient a VALUE_BOOL true: On.
     resetWorld();
-    world.instances = { { 2.0, true } };
-    world.playerNumberValue = 1.0;
+    world.instances = { OwnMarked() };
     {
         ForgePact::ToggleIndicatorReadDetail d;
-        auto state = ToggleIndicatorRead(&d, nullptr);
-        checkState("read/foreign_aoe_is_off", state, ForgePact::ToggleIndicatorState::Off);
-        checkInt("read/foreign_aoe_is_off/others", d.others, 1);
+        auto state = ToggleIndicatorRead(&d, false);
+        checkState("read/own_bool_true_is_on", state, ForgePact::ToggleIndicatorState::On);
+        checkInt("read/own_bool_true_is_on/mine", d.mine, 1);
     }
 
-    // 5. Own AOE plus a foreign one: still On - a foreign AOE never masks ours.
+    // 5. Own AOE, isMyClient a nonzero real (not a bool): still On - a
+    //    numeric kind counts nonzero as true.
     resetWorld();
-    world.instances = { { 1.0, true }, { 2.0, true } };
-    world.playerNumberValue = 1.0;
+    world.instances = { OwnByNumber(1.0) };
     {
         ForgePact::ToggleIndicatorReadDetail d;
-        auto state = ToggleIndicatorRead(&d, nullptr);
+        auto state = ToggleIndicatorRead(&d, false);
+        checkState("read/own_real_one_is_on", state, ForgePact::ToggleIndicatorState::On);
+    }
+
+    // 6. A foreign instance (isMyClient a VALUE_BOOL false) alone: Off, not
+    //    On and not Unreadable.
+    resetWorld();
+    world.instances = { Foreign() };
+    {
+        ForgePact::ToggleIndicatorReadDetail d;
+        auto state = ToggleIndicatorRead(&d, false);
+        checkState("read/foreign_bool_false_is_off", state, ForgePact::ToggleIndicatorState::Off);
+        checkInt("read/foreign_bool_false_is_off/others", d.others, 1);
+    }
+
+    // 7. Own AOE plus a foreign one: still On - a foreign AOE never masks ours.
+    resetWorld();
+    world.instances = { OwnMarked(), Foreign() };
+    {
+        ForgePact::ToggleIndicatorReadDetail d;
+        auto state = ToggleIndicatorRead(&d, false);
         checkState("read/own_and_foreign_is_on", state, ForgePact::ToggleIndicatorState::On);
         checkInt("read/own_and_foreign_is_on/mine", d.mine, 1);
         checkInt("read/own_and_foreign_is_on/others", d.others, 1);
     }
 
-    // 6. Two own instances (e.g. a double-cast proc, Track A Q5): still On.
+    // 8. Two own instances (e.g. a double-cast proc, Track A Q5): still On.
     resetWorld();
-    world.instances = { { 1.0, true }, { 1.0, true } };
-    world.playerNumberValue = 1.0;
+    world.instances = { OwnMarked(), OwnMarked() };
     {
         ForgePact::ToggleIndicatorReadDetail d;
-        auto state = ToggleIndicatorRead(&d, nullptr);
+        auto state = ToggleIndicatorRead(&d, false);
         checkState("read/two_own_is_on", state, ForgePact::ToggleIndicatorState::On);
         checkInt("read/two_own_is_on/mine", d.mine, 2);
     }
 
-    // 7. Every AOE present is unattributed (its own playerNumber unreadable):
+    // 9. Every AOE present is unattributed (its own isMyClient unreadable):
     //    Unreadable, not Off - a foreign AOE fails toward absent, but an
     //    unreadable one must not be guessed either way.
     resetWorld();
-    world.instances = { { 0.0, false }, { 0.0, false } };
+    world.instances = { Unattributed(), Unattributed() };
     {
         ForgePact::ToggleIndicatorReadDetail d;
-        auto state = ToggleIndicatorRead(&d, nullptr);
+        auto state = ToggleIndicatorRead(&d, false);
         checkState("read/unattributed_only_is_unreadable", state, ForgePact::ToggleIndicatorState::Unreadable);
         checkInt("read/unattributed_only_is_unreadable/unattributed", d.unattributed, 2);
     }
 
-    // 8. Instances exist but the local player cannot be resolved at all.
+    // 10. The scan is capped: more instances exist than the budget scans,
+    //     and the read still decides correctly on what it actually visited.
     resetWorld();
-    world.instances = { { 1.0, true } };
-    world.playerResolves = false;
+    for (int i = 0; i < kToggleIndicatorScanCap + 6; ++i) world.instances.push_back(OwnMarked());
     {
         ForgePact::ToggleIndicatorReadDetail d;
-        auto state = ToggleIndicatorRead(&d, nullptr);
-        checkState("read/no_local_player_is_unreadable", state, ForgePact::ToggleIndicatorState::Unreadable);
-    }
-
-    // 9. The player resolves but its own playerNumber cannot be read.
-    resetWorld();
-    world.instances = { { 1.0, true } };
-    world.playerResolves = true;
-    world.playerNumberReadable = false;
-    {
-        ForgePact::ToggleIndicatorReadDetail d;
-        auto state = ToggleIndicatorRead(&d, nullptr);
-        checkState("read/local_number_unreadable_is_unreadable", state, ForgePact::ToggleIndicatorState::Unreadable);
-    }
-
-    // 10. The AOE object itself does not resolve by name at all - a
-    //     different, stronger failure than "resolved but zero instances".
-    resetWorld();
-    world.aoeObjectResolves = false;
-    world.instances = { { 1.0, true } };   // must not matter - object never resolved
-    {
-        ForgePact::ToggleIndicatorReadDetail d;
-        auto state = ToggleIndicatorRead(&d, nullptr);
-        checkState("read/object_unresolved_is_unreadable", state, ForgePact::ToggleIndicatorState::Unreadable);
-        checkInt("read/object_unresolved_is_unreadable/resolve_calls", g_ResolveCalls, 0);
-    }
-
-    // 11. The scan is capped: more instances exist than the budget scans, and
-    //     the read still decides correctly on what it actually visited.
-    resetWorld();
-    for (int i = 0; i < kToggleIndicatorScanCap + 6; ++i) world.instances.push_back({ 1.0, true });
-    world.playerNumberValue = 1.0;
-    {
-        ForgePact::ToggleIndicatorReadDetail d;
-        auto state = ToggleIndicatorRead(&d, nullptr);
+        auto state = ToggleIndicatorRead(&d, false);
         checkState("read/scan_is_capped", state, ForgePact::ToggleIndicatorState::On);
         checkBool("read/scan_is_capped/capped", d.capped, true);
         checkInt("read/scan_is_capped/n", d.n, kToggleIndicatorScanCap + 6);
         checkInt("read/scan_is_capped/mine", d.mine, kToggleIndicatorScanCap);
     }
 
-    // 12. No caching across calls: a call reflects the CURRENT world, not a
+    // 11. No caching across calls: a call reflects the CURRENT world, not a
     //     stale snapshot from an earlier call in the same session.
     resetWorld();
     world.instances = {};
     {
         ForgePact::ToggleIndicatorReadDetail d1;
-        auto state1 = ToggleIndicatorRead(&d1, nullptr);
+        auto state1 = ToggleIndicatorRead(&d1, false);
         checkState("read/reread_every_call/first_off", state1, ForgePact::ToggleIndicatorState::Off);
-        world.instances = { { 1.0, true } };
-        world.playerNumberValue = 1.0;
+        world.instances = { OwnMarked() };
         ForgePact::ToggleIndicatorReadDetail d2;
-        auto state2 = ToggleIndicatorRead(&d2, nullptr);
+        auto state2 = ToggleIndicatorRead(&d2, false);
         checkState("read/reread_every_call", state2, ForgePact::ToggleIndicatorState::On);
     }
 
-    // 13. `spurn as <n>`: overriding the local number excludes the real own
-    //     AOE from "mine" and counts it as foreign instead - a non-mutating
-    //     negative control, so the real player number is never consulted.
+    // 12. `spurn as foreign`: treating every own instance as foreign - a
+    //     non-mutating negative control, so the real world is never touched.
     resetWorld();
-    world.instances = { { 1.0, true } };
-    world.playerNumberValue = 1.0;   // the real answer would be On
+    world.instances = { OwnMarked() };   // the real answer would be On
     {
-        const double overrideNumber = 2.0;
         ForgePact::ToggleIndicatorReadDetail d;
-        auto state = ToggleIndicatorRead(&d, &overrideNumber);
-        checkState("read/override_number_excludes_own", state, ForgePact::ToggleIndicatorState::Off);
-        checkInt("read/override_number_excludes_own/others", d.others, 1);
-        checkInt("read/override_number_excludes_own/mine", d.mine, 0);
-        checkInt("read/override_number_excludes_own/resolve_calls", g_ResolveCalls, 0);
+        auto state = ToggleIndicatorRead(&d, /*treatOwnAsForeign=*/true);
+        checkState("read/as_foreign_excludes_own", state, ForgePact::ToggleIndicatorState::Off);
+        checkInt("read/as_foreign_excludes_own/others", d.others, 1);
+        checkInt("read/as_foreign_excludes_own/mine", d.mine, 0);
     }
 
-    // 14. `instance_number` itself throws: a failed read, not a measured
-    //     zero. The catch's `d.n = 0` fallback must not be mistaken for a
-    //     real, cheap Off - it must count as a failure instead.
+    // ---- marker (Purgatory) scenarios: the marker-required decision is a
+    // separate pass (ToggleIndicatorModel::Decide(d, true)) over the SAME
+    // evidence one ToggleIndicatorRead call gathers -------------------------
+
+    // 14. An own instance whose own purgatory reads numeric > 0: On when the
+    //     marker is required.
     resetWorld();
-    world.instances = { { 1.0, true } };   // must not matter - the count never completes
-    world.instanceNumberThrows = true;
+    world.instances = { OwnMarked(0.09) };
     {
         ForgePact::ToggleIndicatorReadDetail d;
-        auto state = ToggleIndicatorRead(&d, nullptr);
-        checkState("read/instance_number_throw_is_unreadable", state, ForgePact::ToggleIndicatorState::Unreadable);
-        checkBool("read/instance_number_throw_is_unreadable/countReadFailed", d.countReadFailed, true);
-        checkInt("read/instance_number_throw_is_unreadable/resolve_calls", g_ResolveCalls, 0);
+        ToggleIndicatorRead(&d, false);
+        checkInt("marker/marked_own_on_when_required/markedMine", d.markedMine, 1);
+        auto state = ForgePact::ToggleIndicatorModel::Decide(d, /*requireMarker=*/true);
+        checkState("marker/marked_own_on_when_required", state, ForgePact::ToggleIndicatorState::On);
     }
+
+    // 15. An own instance whose own purgatory reads numeric <= 0 (readable,
+    //     just not positive): Off when the marker is required.
+    resetWorld();
+    world.instances = { OwnUnmarked() };
+    {
+        ForgePact::ToggleIndicatorReadDetail d;
+        ToggleIndicatorRead(&d, false);
+        checkInt("marker/unmarked_own_off_when_required/unmarkedMine", d.unmarkedMine, 1);
+        auto state = ForgePact::ToggleIndicatorModel::Decide(d, /*requireMarker=*/true);
+        checkState("marker/unmarked_own_off_when_required", state, ForgePact::ToggleIndicatorState::Off);
+    }
+
+    // 16. The SAME unmarked own instance, marker NOT required: On - the
+    //     plain ownership read does not consult purgatory at all.
+    resetWorld();
+    world.instances = { OwnUnmarked() };
+    {
+        ForgePact::ToggleIndicatorReadDetail d;
+        auto state = ToggleIndicatorRead(&d, false);   // requireMarker defaults to false in Decide()
+        checkState("marker/unmarked_own_on_when_not_required", state, ForgePact::ToggleIndicatorState::On);
+    }
+
+    // 17. An own instance whose own purgatory could not be read, and none
+    //     marked: Unreadable when the marker is required - never guessed as
+    //     Off.
+    resetWorld();
+    world.instances = { OwnMarkerUnreadable() };
+    {
+        ForgePact::ToggleIndicatorReadDetail d;
+        ToggleIndicatorRead(&d, false);
+        checkInt("marker/unreadable_marker_unreadable_when_required/markUnreadableMine", d.markUnreadableMine, 1);
+        auto state = ForgePact::ToggleIndicatorModel::Decide(d, /*requireMarker=*/true);
+        checkState("marker/unreadable_marker_unreadable_when_required", state, ForgePact::ToggleIndicatorState::Unreadable);
+    }
+
+    // 18. A foreign instance's own purgatory is never read for the marker
+    //     split - a marked foreign instance must not light the indicator.
+    resetWorld();
+    world.instances = { Foreign(/*purgatoryValue=*/0.09) };
+    {
+        ForgePact::ToggleIndicatorReadDetail d;
+        ToggleIndicatorRead(&d, false);
+        checkInt("marker/foreign_marker_ignored/markedMine", d.markedMine, 0);
+        auto state = ForgePact::ToggleIndicatorModel::Decide(d, /*requireMarker=*/true);
+        checkState("marker/foreign_marker_ignored", state, ForgePact::ToggleIndicatorState::Off);
+    }
+
+    // The read never makes a player-resolving call, in any scenario above -
+    // counted here, at the end, so it covers every one of them.
+    checkInt("read/no_player_lookup", g_ResolveCalls, 0);
 
     std::cout << (failures ? "RESULT FAIL" : "RESULT OK") << "\n";
     return failures ? 1 : 0;
