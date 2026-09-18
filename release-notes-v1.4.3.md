@@ -2,7 +2,7 @@
 
 A change aimed at crashes during fights with the Angelic / Unholy drop setting turned up high. The fix is not yet confirmed in-game.
 
-## Fixed
+## Changed
 
 - **Possible fix (not yet confirmed): the game could crash in fights with the Angelic / Unholy slider at x100.**
   Players reported the crash with the setting at x100 on 1.4.1; 1.4.2 did not
