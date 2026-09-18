@@ -45,7 +45,11 @@ Vanilla mekanizma bu notta; "vanilla-sadık" mod (seçenek 2) henüz yapılmadı
   with that enemy as self. Players then reported crashes at x100 on 1.4.1. 1.4.3 moves both
   kill drops (angelic and signature) ahead of the original, so they read and spawn while the
   enemy is still live, and nothing touches the enemy after the original. This removes a
-  suspected hazard; it is not proven to be the cause, and in-game confirmation is pending.
+  suspected hazard; it is not proven to be the cause. Live, 2026-09-18, current game build:
+  the research build with this order gave `angelicdrop 1` 30 rolls = 30 drops, `fails=0`,
+  items on the ground and pickable, and `sigdrop 100 100` 17 = 17; the unmodified 1.4.1
+  plugin (old order) gave `angelicdrop 1` 30 = 30, `fails=0`, and neither crashed. The x100
+  crash was not reproduced, so the change stands as a precaution, not a fix.
   `tests/test_headhunter_dispatch.py` (drop scenarios) and `tests/test_kill_drop_contract.py`
   pin the order.
 
