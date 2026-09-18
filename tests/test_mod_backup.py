@@ -142,6 +142,26 @@ class ModBackupTests(unittest.TestCase):
         with mock.patch.object(forgepact.subprocess, "run", side_effect=self._successful_patcher):
             return forgepact.op_install_mod(self.cfg)
 
+    def test_missing_source_files_explain_preparation_without_touching_game(self):
+        original = write_test_pe(self.exe, b"new")
+        (self.sources / "BloodPactPlugin.dll").unlink()
+        with mock.patch.object(forgepact.sys, "frozen", False, create=True):
+            result = forgepact.op_install_mod(self.cfg)
+        self.assertIn("Prepare-Plugin.bat", result["err"])
+        self.assertIn("BloodPactPlugin.dll", result["err"])
+        self.assertEqual(self.exe.read_bytes(), original)
+        self.assertFalse(self.backup.exists())
+        self.assertFalse((self.bin_dir / "AurieCore.dll").exists())
+
+    def test_missing_release_files_explain_extraction_not_source_build(self):
+        write_test_pe(self.exe, b"new")
+        (self.sources / "AurieCore.dll").unlink()
+        with mock.patch.object(forgepact.sys, "frozen", True, create=True):
+            result = forgepact.op_install_mod(self.cfg)
+        self.assertIn("complete ForgePact release", result["err"])
+        self.assertNotIn("Prepare-Plugin.bat", result["err"])
+        self.assertFalse(self.backup.exists())
+
     def _install_mod_files(self):
         (self.bin_dir / "AurieCore.dll").write_bytes(b"installed")
         aurie = self.bin_dir / "mods" / "aurie"

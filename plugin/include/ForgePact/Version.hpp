@@ -9,4 +9,4 @@
 //
 // Do NOT hand-edit this value. `py tools/cut_release.py <version>` moves every
 // site at once and `--check` fails if they disagree.
-#define FORGEPACT_VERSION "1.4.0"
+#define FORGEPACT_VERSION "1.4.1"

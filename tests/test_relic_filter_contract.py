@@ -259,7 +259,7 @@ class TestRelicFilterContract(unittest.TestCase):
         # the same "Gameplay Mods" card as the relic filter and orb pickup.
         html = forgepact.HTML
         gm_start = html.index("Gameplay Mods")
-        gm_end = html.index('<div class="card tab-card" data-tab="mods">', gm_start + 1)
+        gm_end = html.index('id="itemsCard"', gm_start + 1)
         self.assertIn('id="map_reveal"', html[gm_start:gm_end])
 
     def test_headhunter_tyrant_beacon_are_in_an_items_section(self):
@@ -274,7 +274,7 @@ class TestRelicFilterContract(unittest.TestCase):
         for control_id_attr in ('id="headhunter"', 'id="tyrant"', 'id="beacon"'):
             self.assertIn(control_id_attr, items_section[:items_section.index("</script>")])
         # And NOT inside the Gameplay Mods card itself.
-        gm_end = html.index('<div class="card tab-card" data-tab="mods">', gm_start + 1)
+        gm_end = html.index('id="itemsCard"', gm_start + 1)
         for control_id_attr in ('id="headhunter"', 'id="tyrant"', 'id="beacon"'):
             self.assertNotIn(control_id_attr, html[gm_start:gm_end])
 
@@ -293,7 +293,7 @@ class TestRelicFilterContract(unittest.TestCase):
             "<h2>&#128293; Beacon</h2>",
         ):
             self.assertNotIn(old_heading, html)
-        mods_first_card = html.index('<div class="card tab-card" data-tab="mods">')
+        mods_first_card = html.index('id="gameplayCard"')
         for row_label in ("Headhunter buffs on rare kills",
                           "Tyrant's Crown: more rares, richer rares",
                           "Beacon: every monster hunts you"):

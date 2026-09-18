@@ -28,6 +28,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 SRC = ROOT / "src" / "forgepact.py"
+OFFLINE_LAUNCHER = ROOT / "src" / "offline_launcher.py"
 # src/forgepact.py imports hs_game_sdk for the Satanic Zone mod pool (names,
 # ids and descriptions).  Its own fallback inserts this path at RUNTIME, which
 # a frozen build never reaches: PyInstaller resolves imports at BUILD time, and
@@ -91,6 +92,9 @@ def version_info(version: str) -> str:
 def main() -> int:
     if not SRC.is_file():
         print(f"ERROR: {SRC} does not exist"); return 1
+    if not OFFLINE_LAUNCHER.is_file():
+        print("ERROR: src/offline_launcher.py is missing; the built-in launch button needs it.")
+        return 1
 
     missing = [n for n in NEEDED if not (MODFILES / n).is_file()]
     if missing:
@@ -177,6 +181,11 @@ def main() -> int:
             encoding="utf-8", errors="replace"):
         print("ERROR: hs_game_sdk did not make it into the package")
         print(f"       (see {warn}).  The Satanic Zone lists would be empty.")
+        return 1
+
+    if warn.is_file() and "missing module named offline_launcher" in warn.read_text(
+            encoding="utf-8", errors="replace"):
+        print("ERROR: the built-in offline launcher did not make it into the package")
         return 1
 
     DIST.mkdir(parents=True, exist_ok=True)
