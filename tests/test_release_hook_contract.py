@@ -70,6 +70,60 @@ def strip_comments(source: str) -> str:
     return re.sub(r"//[^\n]*", "", source)
 
 
+def call_is_inside_addr_check_guard(body: str, call_text: str) -> bool:
+    """True iff every occurrence of `call_text` in `body` (there must be at
+    least one) sits inside the braced then-block of an `if` whose condition
+    *begins* with `AddrIsExecutableInModule(` - the same validate-before-call
+    shape `test_native_detour_is_installed_once_and_only_on_the_real_target`
+    pins for HookOneScript's own table entry, applied here to a function
+    pointer read off a game struct instead. A negated condition
+    (`if (!AddrIsExecutableInModule(`), an `else` block, code after the block
+    closes, and an unbraced then-statement all count as outside; none of them
+    validate the pointer before it is called. Fails closed: zero occurrences,
+    or any occurrence outside a guard, is False. Brace-matches the same way
+    `function_body` does, rather than trusting textual index order, which an
+    outside-the-guard call would still satisfy.
+    """
+    guarded_ranges = []
+    for guard in re.finditer(r"if\s*\(\s*AddrIsExecutableInModule\(", body):
+        cond_open = body.index("(", guard.start())
+        depth = 0
+        cond_close = None
+        for index in range(cond_open, len(body)):
+            if body[index] == "(":
+                depth += 1
+            elif body[index] == ")":
+                depth -= 1
+                if depth == 0:
+                    cond_close = index
+                    break
+        if cond_close is None:
+            continue
+        after_cond = body[cond_close + 1:]
+        stripped = after_cond.lstrip()
+        if not stripped.startswith("{"):
+            continue  # unbraced then-statement: not a block we can bound
+        brace_open = cond_close + 1 + (len(after_cond) - len(stripped))
+        depth = 0
+        block_end = None
+        for index in range(brace_open, len(body)):
+            if body[index] == "{":
+                depth += 1
+            elif body[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    block_end = index
+                    break
+        if block_end is None:
+            continue
+        guarded_ranges.append((brace_open + 1, block_end))
+
+    occurrences = [match.start() for match in re.finditer(re.escape(call_text), body)]
+    if not occurrences:
+        return False
+    return all(any(start <= at < end for start, end in guarded_ranges) for at in occurrences)
+
+
 MAP_REVEAL_HEADER_PATH = PROJECT_ROOT / "plugin" / "include" / "ForgePact" / "MapRevealManager.hpp"
 STATS_HEADER_PATH = PROJECT_ROOT / "plugin" / "include" / "ForgePact" / "StatsManager.hpp"
 DENSITY_HEADER_PATH = PROJECT_ROOT / "plugin" / "include" / "ForgePact" / "DensityManager.hpp"
@@ -138,10 +192,17 @@ def closure_names(source, sdk_constants):
 # `using namespace HeroSiege::Scripts;` or a namespace alias for it would let a
 # future call site spell a closure name unqualified - the whole point of the
 # contract above is that every closure name traces back to an explicit
-# `HeroSiege::Scripts::` reference this scanner can find.
+# `HeroSiege::Scripts::` reference this scanner can find. The same is true one
+# level up: `using namespace HeroSiege;` (or an alias of the PARENT namespace)
+# makes `Scripts::X` reachable unqualified too, since `Scripts` nests inside
+# it. Other sub-namespaces (`HeroSiege::Objects`, `HeroSiege::Stats`, ...) do
+# not expose script names, so they - and opening `namespace HeroSiege {`,
+# which is a declaration, not a using-directive - stay unflagged.
 SDK_NAMESPACE_MISUSE_RE = re.compile(
     r"\busing\s+namespace\s+HeroSiege::Scripts\s*;"
     r"|\bnamespace\s+\w+\s*=\s*HeroSiege::Scripts\s*;"
+    r"|\busing\s+namespace\s+HeroSiege\s*;"
+    r"|\bnamespace\s+\w+\s*=\s*HeroSiege\s*;"
 )
 
 # HookOneScript/HookOneScriptTable prepend "gml_Script_" themselves (see
@@ -152,25 +213,32 @@ HOOK_CALL_RAW_SDK_CONSTANT_RE = re.compile(
     r"HookOneScript(?:Table)?\(\s*HeroSiege::Scripts::\w+\.data\(\)"
 )
 
-# CallGameScriptEx/GetNamedRoutinePointer need the FULL name (the constant's own
-# value); SdkShortScriptName strips the prefix HookOneScript needs instead, so
-# handing its result to one of these full-name APIs silently looks up the wrong name.
+# CallGameScript(Ex)/GetNamedRoutinePointer/HookRawNamedRoutine all need the
+# FULL name (the constant's own value, prefixed with "gml_Script_" already);
+# SdkShortScriptName strips that prefix for HookOneScript's benefit instead,
+# so handing its result to one of these full-name APIs silently looks up the
+# wrong name. CallGameScript's own pattern (name is the first argument) is
+# deliberately distinct from CallGameScriptEx's (name is the second) so it
+# cannot also match the Ex call and double-count it.
 FULL_NAME_API_GIVEN_SHORT_NAME_RE = re.compile(
     r"CallGameScriptEx\([^,]*,\s*SdkShortScriptName\("
     r"|GetNamedRoutinePointer\(\s*SdkShortScriptName\("
+    r"|CallGameScript\(\s*SdkShortScriptName\("
+    r"|HookRawNamedRoutine\(\s*SdkShortScriptName\("
 )
 
 
 def scanner_misuse_violations(source):
     """[description, ...] for every misuse of the HeroSiege::Scripts contract in
-    `source`: an alias/using-directive that would let a name go unqualified, a
-    HookOneScript*/HookOneScriptTable call given an already-prefixed full name
-    (doubles "gml_Script_"), or a full-name API given the short form instead.
-    Empty when `source` uses the contract correctly.
+    `source`: an alias/using-directive for `HeroSiege::Scripts` or its parent
+    `HeroSiege`, a HookOneScript*/HookOneScriptTable call given an
+    already-prefixed full name (doubles "gml_Script_"), or a full-name API
+    (CallGameScript(Ex), GetNamedRoutinePointer, HookRawNamedRoutine) given the
+    short form instead. Empty when `source` uses the contract correctly.
     """
     violations = []
     for match in SDK_NAMESPACE_MISUSE_RE.finditer(source):
-        violations.append(f"HeroSiege::Scripts alias/using-directive: {match.group(0)!r}")
+        violations.append(f"HeroSiege(::Scripts) alias/using-directive: {match.group(0)!r}")
     for match in HOOK_CALL_RAW_SDK_CONSTANT_RE.finditer(source):
         violations.append("HookOneScript*/HookOneScriptTable given a raw SDK constant "
                            f"instead of SdkShortScriptName(...): {match.group(0)!r}")
@@ -533,12 +601,51 @@ class ReleaseHookContractTests(unittest.TestCase):
         # not turn an access violation into a C++ exception, so the try/catch
         # around it is not a guard - the address has to be validated as code
         # inside Hero_Siege.exe BEFORE the call, the same way HookOneScript
-        # validates a table entry before patching it (the test above). Without
-        # this the check could be reordered past the call by a later edit with
-        # every other test still green.
-        body = function_body(self.plugin, "static bool RefreshItemHash(")
+        # validates a table entry before patching it (the test above). An
+        # index-order assertion (check-comes-before-call, textually) would
+        # still pass if the call were moved after the guard's closing brace,
+        # into its `else`, or under a negated condition - all three call an
+        # unvalidated pointer. strip_comments first, so a comment mentioning
+        # either token can't satisfy this either.
+        body = function_body(strip_comments(self.plugin), "static bool RefreshItemHash(")
         self.assertIn("AddrIsExecutableInModule(GetModuleHandleA(nullptr)", body)
-        self.assertLess(body.index("AddrIsExecutableInModule"), body.index("fnp("))
+        self.assertTrue(
+            call_is_inside_addr_check_guard(body, "fnp("),
+            "fnp(...) must be called only inside the AddrIsExecutableInModule(...) guard's then-block",
+        )
+
+    def test_routine_fallback_check_rejects_a_call_outside_the_guard(self):
+        # The helper's own contract, pinned against synthetic bodies so a
+        # future edit to call_is_inside_addr_check_guard can't quietly widen
+        # what it accepts without a test noticing.
+        call = "fnp("
+
+        guarded = "if (AddrIsExecutableInModule(h, p)) { fnp(self, self, res, 0, nullptr); }"
+        self.assertTrue(call_is_inside_addr_check_guard(guarded, call))
+
+        # The old index-order assertion (`index(check) < index(call)`) would
+        # have accepted this: the call still comes textually after the check,
+        # but it is outside the guarded block.
+        after_block = (
+            "if (AddrIsExecutableInModule(h, p)) { how += \"+routine-notcode\"; } "
+            "fnp(self, self, res, 0, nullptr);"
+        )
+        self.assertFalse(call_is_inside_addr_check_guard(after_block, call))
+
+        negated = "if (!AddrIsExecutableInModule(h, p)) { fnp(self, self, res, 0, nullptr); }"
+        self.assertFalse(call_is_inside_addr_check_guard(negated, call))
+
+        in_else = (
+            "if (AddrIsExecutableInModule(h, p)) { how += \"+routine-notcode\"; } "
+            "else { fnp(self, self, res, 0, nullptr); }"
+        )
+        self.assertFalse(call_is_inside_addr_check_guard(in_else, call))
+
+        commented = (
+            "if (AddrIsExecutableInModule(h, p)) { // fnp(self, self, res, 0, nullptr);\n } "
+            "fnp(self, self, res, 0, nullptr);"
+        )
+        self.assertFalse(call_is_inside_addr_check_guard(strip_comments(commented), call))
 
     def test_hook_bodies_call_through_the_trampoline(self):
         # MmCreateHook patches the bytes at the target, so a hook body that
@@ -638,11 +745,20 @@ class ClosureNameContractTests(unittest.TestCase):
     the build when the SDK is regenerated instead of silently failing a name
     lookup at runtime. See `AGENTS.md`, "HS Game SDK Usage".
 
-    Also rejects three ways of reaching an SDK constant that would defeat the
+    Also rejects ways of reaching an SDK constant that would defeat the
     contract even though the name itself is fine: an unqualified `using
-    namespace`/alias, a HookOneScript*/HookOneScriptTable call given the
-    already-prefixed full name instead of the short one, and a full-name API
-    (CallGameScriptEx/GetNamedRoutinePointer) given the short name instead.
+    namespace`/alias of `HeroSiege::Scripts` OR its parent `HeroSiege` (the
+    latter exposes `Scripts::X` unqualified too), a
+    HookOneScript*/HookOneScriptTable call given the already-prefixed full
+    name instead of the short one, and a full-name API
+    (CallGameScriptEx/GetNamedRoutinePointer/CallGameScript/HookRawNamedRoutine)
+    given the short name instead - each with its own negative-control case.
+    These misuse rules run over the research build too (`#ifndef
+    FORGEPACT_RELEASE` blocks included), not only what the player build
+    compiles, because a doubled-prefix research-only hook call would never
+    resolve and its `citrace nativetrace` table counter would read a false
+    zero next to the native counter - see
+    `test_research_build_has_no_scripts_contract_misuse`.
     """
 
     @classmethod
@@ -741,6 +857,123 @@ class ClosureNameContractTests(unittest.TestCase):
         # The one correctly-shaped HookOneScript(SdkShortScriptName(...)) call
         # above must not itself be counted in any of the three buckets.
         self.assertFalse(any("Abyss_obj_Create_0.data()" in v for v in violations), violations)
+
+    def test_scanner_rejects_a_parent_namespace_using_directive_or_alias(self):
+        # `using namespace HeroSiege;` (or an alias of the parent) exposes
+        # `Scripts::X` unqualified the same way `using namespace
+        # HeroSiege::Scripts;` does - `SDK_CLOSURE_REF_RE` only matches the
+        # literal text `HeroSiege::Scripts::`, so either one would let a
+        # future closure reference go invisible to the name check.
+        v = scanner_misuse_violations
+        self.assertEqual(1, len(v("using namespace HeroSiege;")))
+        self.assertEqual(1, len(v("namespace HS = HeroSiege;")))
+        self.assertIn("alias/using-directive", v("using namespace HeroSiege;")[0])
+        self.assertIn("alias/using-directive", v("namespace HS = HeroSiege;")[0])
+
+        # Precision control: the parent-namespace rule must not fire on
+        # sub-namespaces other than Scripts, or on the declaration (not a
+        # using-directive/alias) that opens HeroSiege itself, or on an
+        # unrelated using-directive.
+        unflagged = "\n".join([
+            "using namespace HeroSiege::Objects;",
+            "namespace HSO = HeroSiege::Objects;",
+            "namespace HeroSiege {",
+            "using namespace YYTK;",
+        ])
+        self.assertEqual([], v(unflagged), v(unflagged))
+
+        # And the existing ::Scripts-scoped rule must still fire exactly
+        # once - the parent rule must not also match it and double-count.
+        self.assertEqual(1, len(v("namespace HSS = HeroSiege::Scripts;")))
+
+    def test_scanner_rejects_short_names_in_call_game_script_and_hook_raw_named_routine(self):
+        # CallGameScript and HookRawNamedRoutine both take the FULL name (see
+        # plugin_build/include/YYToolkit/YYTK_Shared_Interface.hpp for
+        # CallGameScript; ModuleMain.cpp's own HookRawNamedRoutine signature
+        # adds no prefix either) - SdkShortScriptName strips the prefix
+        # HookOneScript needs instead, so handing its result to either of
+        # these silently looks up the wrong name.
+        v = scanner_misuse_violations
+        name = "HeroSiege::Scripts::gml_Script_anon_119_gml_Object_Spawn_Abyss_obj_Create_0"
+        call_game_script_short = f"g_Yytk->CallGameScript(SdkShortScriptName({name}), {{}});"
+        hook_raw_short = f'HookRawNamedRoutine(SdkShortScriptName({name}), "id", nullptr, nullptr);'
+        self.assertEqual(1, len(v(call_game_script_short)), v(call_game_script_short))
+        self.assertEqual(1, len(v(hook_raw_short)), v(hook_raw_short))
+        self.assertIn("short name via SdkShortScriptName", v(call_game_script_short)[0])
+        self.assertIn("short name via SdkShortScriptName", v(hook_raw_short)[0])
+
+        # CallGameScript's pattern must not also match CallGameScriptEx, and
+        # each correct full-name (`.data()`) shape must stay unflagged.
+        correct = "\n".join([
+            f"g_Yytk->CallGameScript({name}.data(), {{}});",
+            f'HookRawNamedRoutine({name}.data(), "id", nullptr, nullptr);',
+            f"g_Yytk->CallGameScriptEx(res, {name}.data(), s, s, {{}});",
+        ])
+        self.assertEqual([], v(correct), v(correct))
+
+        # ...and the existing CallGameScriptEx-given-a-short-name rule must
+        # still fire exactly once - the new CallGameScript pattern must not
+        # also match the Ex call and double-count it.
+        ex_short = f"g_Yytk->CallGameScriptEx(res, SdkShortScriptName({name}), s, s, {{}});"
+        self.assertEqual(1, len(v(ex_short)), v(ex_short))
+
+    def test_research_build_has_no_scripts_contract_misuse(self):
+        # The player-build scan (`player_build_text`) never sees research
+        # code, so a doubled-prefix HookOneScriptTable install - or a
+        # short-name-given-to-a-full-name-API mistake - hidden in one of the
+        # 58 research-only call sites would slip past
+        # test_player_build_closure_names_all_match_the_sdk entirely. Scan
+        # the FULL source (still comment-stripped, so a mention in a comment
+        # doesn't count) with every misuse rule instead of only the two hook
+        # rules, since a using-directive or a short name given to
+        # CallGameScriptEx corrupts a research result just as much (Decision:
+        # F4 scans with every rule).
+        sources = [strip_comments(self.plugin_source)]
+        sources += [strip_comments(header.read_text(encoding="utf-8"))
+                    for header in sorted(PLUGIN_HEADER_DIR.glob("*.hpp"))]
+        violations = []
+        for source in sources:
+            violations.extend(scanner_misuse_violations(source))
+        self.assertEqual(
+            [], violations,
+            f"HeroSiege::Scripts contract misuse in the full source (player + research): {violations}",
+        )
+
+    def test_research_scan_catches_a_doubled_prefix_in_a_research_block(self):
+        # A synthetic stand-in for the real research-only HookOneScriptTable
+        # installs (e.g. ModuleMain.cpp around line 6739): written correctly
+        # they pass a short literal, but a doubled-prefix mistake -
+        # `HeroSiege::Scripts::X.data()` instead of `SdkShortScriptName(X)` -
+        # would look up "gml_Script_gml_Script_..." and never resolve, so
+        # `citrace nativetrace`'s table counter would read zero next to the
+        # native counter: indistinguishable from the blindness that
+        # comparison exists to detect (AGENTS.md, "Prove the Instrument
+        # Before Trusting a Negative Result"). Written in both research
+        # spellings this file uses, so `strip_research_blocks`'s handling of
+        # both is exercised too.
+        name = "HeroSiege::Scripts::gml_Script_anon_119_gml_Object_Spawn_Shadow_Realm_obj_Create_0"
+        synthetic = "\n".join([
+            "#ifndef FORGEPACT_RELEASE",
+            f'HookOneScriptTable({name}.data(), "id1", nullptr, nullptr);',
+            "#endif",
+            "#ifdef FORGEPACT_RELEASE",
+            "// nothing here in the player build",
+            "#else",
+            f'HookOneScriptTable({name}.data(), "id2", nullptr, nullptr);',
+            "#endif",
+        ])
+        player_source = player_build_text(synthetic)
+        self.assertEqual(
+            [], scanner_misuse_violations(player_source),
+            "the player-build scan must not see either research-only misuse - "
+            "that gap is exactly the false zero this rule closes",
+        )
+        full_violations = scanner_misuse_violations(strip_comments(synthetic))
+        self.assertEqual(2, len(full_violations), full_violations)
+        self.assertTrue(
+            all("raw SDK constant instead of SdkShortScriptName" in v for v in full_violations),
+            full_violations,
+        )
 
 
 class PanelAllOffContractTests(unittest.TestCase):
