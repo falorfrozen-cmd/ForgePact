@@ -79,7 +79,7 @@ class TestPetQuestCollectorContract(unittest.TestCase):
         # Plan §3's "one chokepoint" finding: the only script-table entries
         # inside Quest_Object_Parent_obj's own Create event, traced once the
         # five named candidates above measured 0 calls on a real collect.
-        for anon_id in ("1400", "1584", "2113", "2786", "3858", "4737", "5164"):
+        for anon_id in ("1468", "1661", "2209", "2910", "4014", "4922", "5366"):
             script_name = f"anon@{anon_id}@gml_Object_Quest_Object_Parent_obj_Create_0"
             self.assertIn(f'HookOneScriptTable("{script_name}"', self.plugin_code)
         guard = self.plugin_code.split("static std::atomic<bool> g_CiTraceOn{ false };", 1)[0][-300:]
@@ -800,7 +800,7 @@ class TestPetQuestCollectorContract(unittest.TestCase):
         targets = self.plugin_code.split("g_CiNatTargets[] = {", 1)[1]
         targets = targets[: targets.index("};")]
         self.assertIn("CheckPlayerInteraction", targets)
-        for name in ("PlayerMouseAction", "update_quest", "anon@2786@"):
+        for name in ("PlayerMouseAction", "update_quest", "anon@2910@"):
             self.assertIn(name, targets, f"{name} is missing from the native trace targets")
 
     def test_nativetrace_bounds_its_logging_per_target(self):

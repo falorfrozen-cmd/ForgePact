@@ -5,6 +5,16 @@ Companions: `pet-quest-collector-research.md` (B1/B2, blocked),
 `pet-quest-collector-b4-research.md` (B4, disproven). Per `agents.md`: record
 only names, indices and measured behavior — no decompiled script text.
 
+**Note (2026-09-18):** the `anon@N` closure numbers throughout this file
+(`anon@1400`, `anon@2786`, ... and the `Enemy_Creator_obj` `anon@849`) name the
+build they were measured on; ForgePact's shipped hooks now use that build's
+successors (`anon@1468`, `anon@2910`, ..., `anon@886`) per hs-game-sdk's
+current regeneration, on branch `fix/closure-names-current-game`. The
+`m_Quest*` method-name assignment for the seven `Quest_Object_Parent_obj`
+closures is unaffected by the renumbering itself, but on the current build it
+is an ordinal inference (same offset-in-Create-event position), not something
+observed there directly - see that branch's `release-notes-v1.4.2.md`.
+
 **Status (2026-09-11): SHIPPED. Phase C2 is implemented and live-measured —
 the mod collects.** The mechanism was confirmed first by reproduction (a
 `citrace collect confirm` advanced the quest counter 7/15 → 8/15 on
