@@ -4,6 +4,7 @@
 #include <atomic>
 #include <deque>
 #include <iostream>
+#include <random>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -32,6 +33,7 @@ struct CInstance {
     int id;
     int object;
     bool alive = true;
+    double enemyRarity = -1, x = 0, y = 0;   // what the kill drops read off the enemy
     RValue ToRValue() const { return RValue(const_cast<CInstance*>(this)); }
 };
 using AurieStatus = int;
@@ -122,8 +124,48 @@ static double nowMs = 0;
 static double HhNowMs() { return nowMs; }
 static void HeadhunterStatus(bool includeMap) { if (includeMap) throw std::runtime_error("automatic log included full mapping"); ++statusReports; }
 static volatile long g_HhHookCalls = 0, g_HhLastArgc = -1;
-static void SignatureDropOnKill(CInstance*) {}
-static void AngelicDropOnKill(CInstance*) {}
+// The kill drops (SignatureDropOnKill, AngelicDropOnKill) are the real functions. Only their
+// game boundary is stubbed: the field read, the dice, the pool and the two spawns. Each spawn
+// records the self it was handed, whether that instance was still alive, and whether the
+// original kill proc had already run - the order the live crash report is about.
+static int outLines = 0;
+static bool outThrows = false;
+static void Out(const std::string&) { ++outLines; if (outThrows) throw std::runtime_error("log write failed"); }
+static int readsAfterOriginal = 0;
+static double HhReadNumber(const RValue& value, const char* field, double fallback) {
+    CInstance* instance = value.instance;
+    if (!instance) return fallback;
+    if (originalCalls > 0) ++readsAfterOriginal;
+    const std::string name(field);
+    if (name == "enemyRarity") return instance->enemyRarity;
+    if (name == "x") return instance->x;
+    if (name == "y") return instance->y;
+    return fallback;
+}
+static std::mt19937& TyRng() { static std::mt19937 rng{ 7 }; return rng; }
+static bool TyRoll(double pct) { return pct >= 100.0; }   // deterministic: 100 hits, anything less misses
+static volatile long g_KillsSeen = 0;
+static double g_AngelicDropOneIn = 0.0;
+static volatile long g_AngelicDropRolls = 0, g_AngelicDropHits = 0, g_AngelicDropFails = 0;
+static double g_SigDropPct = 0.0, g_SigDropAncientPct = 0.0;
+static long g_SigDropPity = 0, g_SigDropSinceLast = 0;
+static long g_SigDropRolls = 0, g_SigDropHits = 0, g_SigDropFails = 0;
+static int g_SigDropNext = 0;
+struct AngelicCandidate { int type, sub, b; std::string name; bool angelic; };
+static std::vector<AngelicCandidate> g_AngelicPool;
+static void BuildAngelicPool(bool) { if (g_AngelicPool.empty()) g_AngelicPool.push_back({ 3, 1, 15, "test unique", true }); }
+struct SpawnRecord { CInstance* self; bool selfAlive; int originalCallsBefore; double x, y; };
+static std::vector<SpawnRecord> angelicSpawns, sigSpawns;
+static bool spawnThrows = false;
+static bool SpawnSignatureItem(int, double x, double y, CInstance* ctx) {
+    sigSpawns.push_back({ ctx, ctx && ctx->alive, originalCalls, x, y });
+    return true;
+}
+static bool SpawnAngelicItem(const AngelicCandidate&, double x, double y, CInstance* ctx) {
+    angelicSpawns.push_back({ ctx, ctx && ctx->alive, originalCalls, x, y });
+    if (spawnThrows) throw std::runtime_error("spawn threw");
+    return true;
+}
 static bool g_HhHookInstalled = false;
 static void* g_OrigICD = nullptr;
 static void* g_OrigICL = nullptr;
@@ -156,6 +198,24 @@ static void reset() {
     primaryAvailable = true; fallbackAvailable = true; createInstallCalls = 0;
     deathScriptAvailable = true; g_Orig_HhDeathEffects = originalKill; g_HhDeathScriptCalls = 0;
     g_HhHookCalls = 0; g_HhAltTrigger = 0; statusReports = 0; nowMs = 0;
+    outLines = 0; outThrows = false; readsAfterOriginal = 0; spawnThrows = false;
+    g_KillsSeen = 0; g_AngelicDropOneIn = 0.0; g_AngelicDropRolls = 0; g_AngelicDropHits = 0; g_AngelicDropFails = 0;
+    g_SigDropPct = 0.0; g_SigDropAncientPct = 0.0; g_SigDropPity = 0; g_SigDropSinceLast = 0;
+    g_SigDropRolls = 0; g_SigDropHits = 0; g_SigDropFails = 0; g_SigDropNext = 0;
+    g_AngelicPool.clear(); angelicSpawns.clear(); sigSpawns.clear();
+}
+// Both kill drops on at a certain hit: 1-in-1 angelic, 100 pct signature.
+static void dropsCertain() { g_AngelicDropOneIn = 1.0; g_SigDropPct = 100.0; g_SigDropAncientPct = 100.0; }
+static void killEnemy(CInstance& enemy, CInstance& player) {
+    RValue result, killer(&player); RValue* arguments[] = {nullptr,nullptr,&killer};
+    Hook_EnemyDestroyKillProc(&enemy,nullptr,result,3,arguments);
+}
+static void requireSpawnedLive(const std::vector<SpawnRecord>& spawns, CInstance* enemy, const char* what) {
+    if (spawns.size() != 1) throw std::runtime_error(std::string(what) + ": expected one spawn, got " + std::to_string(spawns.size()));
+    const SpawnRecord& s = spawns[0];
+    if (s.self != enemy) throw std::runtime_error(std::string(what) + ": spawned with a self other than the dying enemy");
+    if (s.originalCallsBefore != 0) throw std::runtime_error(std::string(what) + ": spawned after the original kill proc had run");
+    if (!s.selfAlive) throw std::runtime_error(std::string(what) + ": spawned with an enemy the original had already cleaned up");
 }
 static void require(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
@@ -281,6 +341,52 @@ int main(int argc, char** argv) {
         } else if (test == "disabled_combat_log") {
             g_HhEnabled = false; g_HhHookCalls = 4; HeadhunterActivityTick();
             require(statusReports == 0, "disabled mechanic emitted combat summaries");
+        // ---- kill drops: baseline (holds before and after the spawn moved) ----
+        } else if (test == "drops_off_no_spawn") {
+            enemy.enemyRarity = 4; g_AngelicPool.push_back({ 3, 1, 15, "test unique", true });
+            killEnemy(enemy, player);
+            require(angelicSpawns.empty() && sigSpawns.empty(), "a drop that is off still spawned");
+            require(g_AngelicDropRolls == 0 && g_SigDropRolls == 0, "a drop that is off still rolled");
+            require(originalCalls == 1, "original kill proc not called exactly once");
+        } else if (test == "drop_skips_non_monster") {
+            dropsCertain(); enemy.enemyRarity = 0;
+            killEnemy(enemy, player);
+            RValue result, victim(&enemy); RValue* arguments[] = {nullptr,nullptr,&victim};
+            Hook_EnemyDestroyKillProc(&player,nullptr,result,3,arguments);   // player-self shape: still no drop
+            require(angelicSpawns.empty() && sigSpawns.empty(), "a non-monster (enemyRarity < 1) got a drop");
+            require(g_AngelicDropRolls == 0 && g_SigDropRolls == 0, "a non-monster was rolled");
+            require(originalCalls == 2, "original kill proc not called exactly once per kill");
+        } else if (test == "drop_hit_at_enemy_position") {
+            dropsCertain(); enemy.enemyRarity = 1; enemy.x = 320.5; enemy.y = 144.25;
+            killEnemy(enemy, player);
+            require(angelicSpawns.size() == 1 && sigSpawns.size() == 1, "a certain hit did not spawn both drops");
+            require(angelicSpawns[0].x == 320.5 && angelicSpawns[0].y == 144.25, "angelic drop not at the enemy's x,y");
+            require(sigSpawns[0].x == 320.5 && sigSpawns[0].y == 144.25, "signature drop not at the enemy's x,y");
+            require(angelicSpawns[0].self == &enemy && sigSpawns[0].self == &enemy, "drop spawned with a self other than the enemy");
+            require(g_AngelicDropHits == 1 && g_AngelicDropRolls == 1 && g_SigDropRolls == 1, "drop counters wrong");
+            require(originalCalls == 1, "original kill proc not called exactly once");
+        // ---- kill drops: target (spawn while the enemy is still live, before the original) ----
+        } else if (test == "angelic_spawns_before_cleanup") {
+            originalRemovesEnemy = true; g_AngelicDropOneIn = 1.0; enemy.enemyRarity = 1;
+            killEnemy(enemy, player);
+            requireSpawnedLive(angelicSpawns, &enemy, "angelic");
+            require(originalCalls == 1 && !enemy.alive, "original kill proc not called exactly once");
+        } else if (test == "sigdrop_spawns_before_cleanup") {
+            originalRemovesEnemy = true; g_SigDropPct = 100.0; g_SigDropAncientPct = 100.0; enemy.enemyRarity = 4;
+            killEnemy(enemy, player);
+            requireSpawnedLive(sigSpawns, &enemy, "sigdrop");
+            require(originalCalls == 1 && !enemy.alive, "original kill proc not called exactly once");
+        } else if (test == "drops_read_nothing_after_original") {
+            originalRemovesEnemy = true; dropsCertain(); enemy.enemyRarity = 2;
+            killEnemy(enemy, player);
+            require(readsAfterOriginal == 0, "a kill drop read the enemy after the original kill proc had run");
+            require(angelicSpawns.size() == 1 && sigSpawns.size() == 1 && originalCalls == 1, "drops or original missing");
+        } else if (test == "drop_throw_still_calls_original") {
+            g_AngelicDropOneIn = 1.0; enemy.enemyRarity = 1; spawnThrows = true; outThrows = true;
+            bool escaped = false;
+            try { killEnemy(enemy, player); } catch (...) { escaped = true; }
+            require(!escaped, "an exception from a kill drop escaped the kill hook");
+            require(originalCalls == 1, "a throwing kill drop skipped or repeated the original kill proc");
 #ifdef HAS_ENABLE_HEADHUNTER
         } else if (test == "standalone_fallback_install") {
             EnableHeadhunter();
