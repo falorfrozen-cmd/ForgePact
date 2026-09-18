@@ -610,8 +610,15 @@ class ProspectWindowContractTests(unittest.TestCase):
 
     # ---- the research document -----------------------------------------------
 
-    def test_research_doc_has_its_sections_and_is_pending(self):
-        self.assertIn("phase0-status: pending", self.doc)
+    def test_research_doc_has_its_sections_and_records_the_gate_decision(self):
+        self.assertIn("phase0-status: complete", self.doc)
+        # Complete only because the human's gate decision is written down
+        # (C8): the status says what was chosen, and the gate cell carries it.
+        self.assertIn("the human chose auto-prospect on insert", collapse(self.doc))
+        self.assertIn("**Human decision (2026-09-18): auto-prospect on insert**", self.doc)
+        # The status LINE, not the procedure text (C6 quotes the old value).
+        status = [l for l in self.doc.replace("\r\n", "\n").split("\n") if l.startswith("phase0-status:")]
+        self.assertEqual(status, ["phase0-status: complete"])
         for heading in ("## Static search", "## Hypotheses", "## Instrument", "## Live procedure",
                         "## Deciding the hypothesis", "## Results"):
             self.assertIn("\n" + heading + "\n", self.doc.replace("\r\n", "\n"))
@@ -641,15 +648,15 @@ class ProspectWindowContractTests(unittest.TestCase):
             "builder; only a write the builder then follows counts for H2'.", doc)
 
     def test_research_doc_records_phase0a_as_instrument_failure(self):
-        self.assertIn("phase0-status: pending", self.doc)
+        self.assertIn("phase0-status: complete", self.doc)
         results = section(self.doc, "## Results")
         for text in ("Phase 0a", "Phase 0b", "instrument blind", "stale", "Draw_64", "not observed"):
             self.assertIn(text, results)
         self.assertNotIn("does not happen", self.doc.lower())
         # Every column is filled now that Phase 0c has run (2026-09-18). No
         # Phase 0c cell may still read `unknown`; R7 and the gate branch record
-        # what the session measured. phase0-status stays pending (asserted
-        # above) because the gate decision belongs to the human.
+        # what the session measured. phase0-status is complete (asserted
+        # above) only because the human's gate decision is recorded.
         for field in ("R2-window", "R4'", "R5c", "R9", "R10", "R11", "C-grid", "C-write2"):
             self.assertIn("| " + field + " |", results)
         table = [line for line in results.replace("\r\n", "\n").split("\n") if line.startswith("| ")]
@@ -1257,7 +1264,7 @@ class ProspectWindowContractTests(unittest.TestCase):
         self.assertIn("did not land", body)
 
     def test_research_doc_records_phase0b_and_the_ghidra_reading(self):
-        self.assertIn("phase0-status: pending", self.doc)
+        self.assertIn("phase0-status: complete", self.doc)
         results = section(self.doc, "## Results")
         for text in ("Phase 0b", "profile inventory", "Ghidra read (paraphrase)", "instrument misuse",
                      "Craft_Grid_Large_spr"):

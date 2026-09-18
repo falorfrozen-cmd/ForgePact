@@ -1,11 +1,22 @@
 # Bigger prospect window — research log
 
-phase0-status: pending
+phase0-status: complete
 
 Issue: [ForgePact #9](https://github.com/falorfrozen-cmd/ForgePact/issues/9),
 "[QoL] Bigger prospect window" — *"Currently prospect window is way too small
 for the amount of items players can hold in their inventory."* Opened
 2026-09-15, label `enhancement`.
+
+Status (2026-09-18): **Phase 0 complete; the gate is inconclusive, and the human chose
+auto-prospect on insert.** Phase 0c ran live (§ Results, Phase 0c column). A written
+save plus a relaunch destroyed everything left in the vanilla prospect grid (R7 = lost).
+idcheck could not see inside the instance the window's profile getter returns
+(`not observed (scan incomplete)`), so whether the grid is save data stays unknown.
+The human decided (2026-09-18) against enlarging the grid and for **auto-prospect on
+insert** (§ Decision gate, last paragraph). It needs no save-shape change, and R12
+measured its call shapes. Stage B is that mod. Before anything ships, the one
+unproven step, invoking the Prospect handler ourselves, still needs its own measured
+invoke with a control. The feature must be off by default, behind a panel toggle.
 
 Status (2026-09-17): **research stage.** Phase 0a and Phase 0b both ran
 2026-09-17 and both recorded H = not observed. Phase 0a was blind (stale SDK
@@ -1195,5 +1206,5 @@ instrument failure — the stale SDK closure names — and never a negative.
 | load-time capture | getters that fired at character load, each kept return's `self` and shape, and the `pp_backing_*.json` the C1 `backing dump` wrote (C1) | not run | not run (no `backing` instrument) | Launch 2 (launch 1 was blind; see the note above the table). All four getters fired at load: `GetProfileInventoryData` ~31,700 calls, latest from an `UI_Inventory_Grid_obj` node, returning an **instance** reference; `GetInventoryArray` ~12,900 calls, latest from `Player_obj`, returning an 18-string array; `GetPlayerItemOwner` ~1,800 calls, from `Flask_Controller_obj`, returning `int64 0`; `GetPlayerProfileObj` 13 calls, from `Achievement_Controller_obj`, returning an instance reference |
 | backing structural | `backing dump`: the open window's `@id`, kept returns per getter and which came from the open window, their shapes, live `nodeGrid` shape, and any `nodeGrid`-shaped sub-array with `non-empty nodeGrid cells agreeing K/N` (taken with a junk item in the grid) and walk completeness (C2, C2b). A lead only; never picks a gate branch | not run | not run | Open window `@261486`. At open, `UI_Prospect_obj` itself called `GetProfileInventoryData` once and `GetPlayerItemOwner` once, and never called `GetInventoryArray` or `GetPlayerProfileObj`. With an item in the grid, the window calls `GetProfileInventoryData` continuously (8 kept, 867 not kept). Every window return of it is the same **instance** reference that every other caller gets, and the walk does not enter instances (`unwalked=1 … references=1`), so the structural lead was **not observed**. Each `nodeGrid` cell with an item holds a node struct (`nodeStartX`, `nodeStartY`, `nodeLocked`, `nodeIsPermanent`, `nodeFingerprint` ending in `-14`); inventory fingerprints end in `-0` |
 | backing idcheck | `backing idcheck`, run before any item is moved: the control verdict first, any refusal, `kept returns from the open window` with its `window returns dropped` count, every walk with its `unwalked` count and reason, then `reference-identical (via …)` with the getter, `self` and call number it names — deciding only through two distinct calls of the same profile getter at a path through no UI-looking field, else a lead reached through a UI-looking field, else a `one call only` lead naming every profile getter that hit — / `copy` / `not observed`, the cell, both values, and `restored` (C3) | not run | not run | Control **passed**. The one write went to cell `[0][0]`: `was=undefined`, the sentinel read back, then `now=undefined (restored)`; no item was moved. Verdict: **not observed (scan incomplete: 3 of 6 walks; root VALUE_REF, an instance, nothing to walk)**. The window's `GetProfileInventoryData` return is an instance the walk cannot enter. Only one window call per getter was kept before any item moved, so a decided verdict was out of reach anyway |
-| gate branch | save-backed / not save-backed / inconclusive, per § Decision gate read in its order (C5); the human picks the branch | not run | not run | **inconclusive**. idcheck read `not observed (scan incomplete …)`, a getter returned an instance, and R7 = lost. Save-backed does not hold (no two-call identity; R7 is not kept), and not save-backed needs idcheck = `copy`. Awaiting the human's decision (§ Decision gate) |
+| gate branch | save-backed / not save-backed / inconclusive, per § Decision gate read in its order (C5); the human picks the branch | not run | not run | **inconclusive**. idcheck read `not observed (scan incomplete …)`, a getter returned an instance, and R7 = lost. Save-backed does not hold (no two-call identity; R7 is not kept), and not save-backed needs idcheck = `copy`. **Human decision (2026-09-18): auto-prospect on insert**, not a bigger grid |
 | H | H1 / H2' / H3 / not observed | **not observed (instrument blind: stale SDK closure names).** The live window's method values named its Create closures `m_SetInventoryLocalPlayer` = `anon@1065`, `m_Resize` = `anon@2806`, `m_UpdateInventoryGrid` = `anon@3657` (all `@gml_Object_UI_Prospect_obj_Create_0`), and the grid node's `m_RefreshNode` = `anon@36159@gml_Object_UI_Inventory_Grid_obj_Create_0`; the stale SDK tables carried `anon@1038/2729/3551` and no `36159`. | **not observed** — H1 unsupported (R4' empty); H2' no positive (R11 applied and matched but the store stayed 9 wide → crash; every R10 grow `reverted` with `invoked=yes`); H3 not concludable (R2-window is an empty field, two rows stayed `UNLOGGED`, four grid methods unprobed, and the Ghidra read above is not live-confirmed). | not observed |
