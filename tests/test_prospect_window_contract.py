@@ -60,10 +60,25 @@ SELECTION_BLOCK = (
     "if (!decisive && (int)profileCleanCalls[s].size() >= kPpBackingProfileCallsToDecide) decisive = s; "
     "if (!uiReached && (int)profileHitCalls[s].size() >= kPpBackingProfileCallsToDecide) uiReached = s; "
     "} if (decisive) {")
-# A local that shadows the stash list or the threshold changes what the block
-# means without changing a character of it.
-SELECTION_SHADOW = re.compile(
-    r"[\w>*&\]]\s+(?:const\s+)?(?:g_PpBackingStashes|kPpBackingProfileCallsToDecide)\s*[\[={(]")
+# Every name the block reads, and how many times PpBackingIdCheck may declare
+# it. A local, a reference or a macro that redeclares one changes what the
+# block means without changing a character of it. The two maps are declared
+# once each, earlier in the same body; the other three never are.
+SELECTION_NAMES_DECLARED = {
+    "g_PpBackingStashes": 0,
+    "kPpBackingProfileCallsToDecide": 0,
+    "PpBackingIsProfileGetter": 0,
+    "profileCleanCalls": 1,
+    "profileHitCalls": 1,
+}
+
+
+def selection_declarations(code, name):
+    """Declaration-shaped mentions of `name`: after a type-ish token
+    (`int x =`, `>> x;`, `auto x =`), directly after `*` or `&` (`auto &x =`),
+    or as a `#define`."""
+    return re.findall(r"(?:[\w>*&\]]\s+|[*&]\s*)(?:const\s+)?" + name + r"\s*[;={(\[]"
+                      r"|#\s*define\s+" + name + r"\b", code)
 
 
 def selection_block_problems(body):
@@ -76,8 +91,10 @@ def selection_block_problems(body):
     problems = []
     if v[start:end + len("if (decisive) {")] != SELECTION_BLOCK:
         problems.append("selection block differs from SELECTION_BLOCK")
-    if SELECTION_SHADOW.search(v):
-        problems.append("a local shadows g_PpBackingStashes or kPpBackingProfileCallsToDecide")
+    for name, allowed in SELECTION_NAMES_DECLARED.items():
+        declared = len(selection_declarations(v, name))
+        if declared != allowed:
+            problems.append("%s declared %d times in PpBackingIdCheck, expected %d" % (name, declared, allowed))
     return problems
 
 
@@ -129,6 +146,23 @@ SELECTION_MUTANTS = [
      _DECL, "const int kPpBackingProfileCallsToDecide = 99; " + _DECL),
     ("S20 pointer-offset guard folded into the skip",
      _SKIP, "if (!PpBackingIsProfileGetter(s) || s - " + _FIRST + " > 0 * std::size(g_PpBackingStashes)) continue;"),
+    # S21-S27 passed every test in this file as it stood at ForgePact cb4f65f,
+    # whose shadow check named only the stash list and the threshold, and
+    # missed a `#define` and an `auto &name` with no space before the name.
+    ("S21 profile-getter test shadowed by a local lambda",
+     _DECL, "auto PpBackingIsProfileGetter = [](const PpBackingStash* s) { return s == " + _FIRST + "; }; " + _DECL),
+    ("S22 profile-getter test redefined by a macro",
+     _DECL, "#define PpBackingIsProfileGetter(s) ((s) == " + _FIRST + ") " + _DECL),
+    ("S23 clean-call map rebound to the hit-call map",
+     _DECL, "auto &profileCleanCalls = profileHitCalls; " + _DECL),
+    ("S24 hit-call map shadowed by an empty local",
+     _DECL, "std::map<const PpBackingStash*, std::set<long>> profileHitCalls; " + _DECL),
+    ("S25 clean-call map shadowed by an empty local",
+     _DECL, "std::map<const PpBackingStash*, std::set<long>> profileCleanCalls; " + _DECL),
+    ("S26 threshold redefined by a macro",
+     _DECL, "#define kPpBackingProfileCallsToDecide 99 " + _DECL),
+    ("S27 stash list rebound by reference to its first element",
+     _DECL, "auto &g_PpBackingStashes = ::" + _FIRST + "; " + _DECL),
 ]
 
 
@@ -981,6 +1015,9 @@ class ProspectWindowContractTests(unittest.TestCase):
         # tree is never written - that the pin rejects every keyword-free
         # restriction that survived the earlier asserts.
         self.assertEqual(selection_block_problems(body), [])
+        # A macro works from anywhere above the function, not only inside it.
+        self.assertEqual([m for name in SELECTION_NAMES_DECLARED
+                          for m in re.findall(r"#\s*define\s+" + name + r"\b", strip_comments(self.plugin))], [])
         collapsed = collapse(body)
         for label, old, new in SELECTION_MUTANTS:
             self.assertEqual(collapsed.count(old), 1,
