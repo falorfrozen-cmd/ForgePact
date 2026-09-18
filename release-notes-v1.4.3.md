@@ -1,7 +1,7 @@
 # ForgePact 1.4.3
 
 Bosses stay normal with the Monster Rarity sliders up, ForgePact's log file no
-longer grows without limit, and ForgePact's own kill drops are placed more
+longer keeps every session forever, and ForgePact's own kill drops are placed more
 safely.
 
 ## Fixed
@@ -14,11 +14,13 @@ safely.
   Anubis at about 4.5M HP instead of about 500k with 20% Rare and 20% Ancient
   set. We have not reproduced that number, but a boss could clearly be
   raised when it should not have been.)
-- **`bp_ipc\out.txt` grew forever.** ForgePact only ever added to its log, so
-  it could reach several megabytes. Now, when you start the game and the log
-  is over 2 MB, the old one is kept as `out.prev.txt` and a fresh `out.txt`
-  begins. The log never grows during a session, and the previous session is
-  always kept, which is the one you need after a crash.
+- **`bp_ipc\out.txt` kept every session forever.** ForgePact only ever added
+  to its log, so it could reach several megabytes. Now, when you start the
+  game and the log is over 2 MB, the old one is kept as `out.prev.txt` and a
+  fresh `out.txt` begins, replacing any older `out.prev.txt`, so old logs no
+  longer pile up. The log still grows while you play and is only trimmed at
+  the next start, so one very long session can still make it large. The
+  previous log is always kept, which is the one you need after a crash.
 - **The panel could miss a quick restart.** With auto-apply on, the panel
   re-sends your saved settings whenever the game starts. It noticed a restart
   by counting startup lines in `out.txt`, which a fresh log could fool if you
