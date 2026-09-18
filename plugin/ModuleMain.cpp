@@ -170,6 +170,69 @@ static void Out(const std::string& s)
     if (g_Yytk) g_Yytk->PrintInfo("[BP] %s", s.c_str());
 }
 
+// out.txt is append-only and nothing ever trimmed it - one player's copy
+// reached 7.8 MB. Rotating it once, at load, before the "BloodPact plugin
+// loaded" banner (see ForgePact::ModManager::Initialize(), which creates
+// bp_ipc\ first) keeps the total around 2x kOutLogRotateBytes while
+// guaranteeing the PREVIOUS session's log always survives: a player who
+// crashes relaunches, and the crash report needs the session that crashed,
+// not the empty one that follows it. Compiled into both builds - the player
+// build's out.txt grows exactly as unbounded as the research build's.
+static constexpr uintmax_t kOutLogRotateBytes = 2ull * 1024 * 1024; // 2 MB
+
+static void RotateOutLogIfNeeded()
+{
+    std::error_code ec;
+    const std::string outPath = OutPath();
+    if (!fs::exists(outPath, ec) || ec) return;             // nothing to rotate yet
+    uintmax_t size = fs::file_size(outPath, ec);
+    if (ec || size <= kOutLogRotateBytes) return;
+
+    const std::string prevPath = IPC_DIR + "\\out.prev.txt";
+    std::wstring outW(outPath.begin(), outPath.end());
+    std::wstring prevW(prevPath.begin(), prevPath.end());
+    if (!MoveFileExW(outW.c_str(), prevW.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+        // The move can fail (e.g. the panel has out.txt open without
+        // FILE_SHARE_DELETE). NEVER truncate as a fallback - keep appending
+        // to the oversized file rather than lose history, and say why in the
+        // very session that could not rotate.
+        DWORD err = GetLastError();
+        std::ofstream f(outPath, std::ios::app);
+        f << "out.txt rotation skipped (size=" << size << " exceeds "
+          << kOutLogRotateBytes << " bytes but MoveFileExW to out.prev.txt "
+             "failed, GetLastError=" << err << ")\n";
+    }
+}
+
+#ifndef FORGEPACT_RELEASE
+// itemdrops.jsonl is research-build only (BP_LOGDROP is a no-op in the
+// player build, so a player's copy never grows this file at all) but the
+// research build's own copy reached 52 MB with nothing trimming it either.
+// Same rotation, same load-time timing, its own size threshold and its own
+// previous-file name.
+static constexpr uintmax_t kItemDropsRotateBytes = 20ull * 1024 * 1024; // 20 MB
+
+static void RotateItemDropsLogIfNeeded()
+{
+    std::error_code ec;
+    const std::string path = IPC_DIR + "\\itemdrops.jsonl";
+    if (!fs::exists(path, ec) || ec) return;
+    uintmax_t size = fs::file_size(path, ec);
+    if (ec || size <= kItemDropsRotateBytes) return;
+
+    const std::string prevPath = IPC_DIR + "\\itemdrops.prev.jsonl";
+    std::wstring pathW(path.begin(), path.end());
+    std::wstring prevW(prevPath.begin(), prevPath.end());
+    if (!MoveFileExW(pathW.c_str(), prevW.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+        DWORD err = GetLastError();
+        Out("itemdrops.jsonl rotation skipped (size=" + std::to_string(size) +
+            " exceeds " + std::to_string(kItemDropsRotateBytes) +
+            " bytes but MoveFileExW to itemdrops.prev.jsonl failed, GetLastError=" +
+            std::to_string(err) + ")");
+    }
+}
+#endif
+
 // Crash-pinpoint trace: flushes a marker to bp_ipc\loadtrace.txt at each load step,
 // so if the game crashes during init we can see the LAST step reached.
 static void Trace(const char* phase)
@@ -3422,40 +3485,103 @@ static RValue FindStructMethod(const RValue& item, const char* name, std::string
     } catch (...) { how = "lookup-exc"; return RValue(); }
     how = "missing"; return RValue();
 }
-static bool RefreshItemHash(const RValue& item, std::string* howOut = nullptr)
+// The fallback chain below used to live inline in RefreshItemHash, where
+// ItemCheckHash's own success meant the other three routes never ran in a
+// live session. Split into named helpers so the research build can drive
+// one route on its own (`hashprobe itemcheck|direct|routine`) instead of
+// only ever seeing whichever route ItemCheckHash's success already hid.
+// Each helper keeps the original try-block's labels and order; the chain
+// still accumulates `how` left-to-right across routes exactly as before
+// (e.g. "itemcheckhash-nohash,missing+direct-fail(14)+routine-notfound").
+// Helpers never touch g_CustomForgeHashMisses or the per-route counters -
+// counting happens once, at the TryApplyCustomForge call site, so a probe
+// run never pollutes the player-facing numbers.
+//
+// The +routine fallback is the one exception: it stays inlined in
+// RefreshItemHash itself instead of getting its own HashRoute* helper.
+// test_routine_fallback_validates_the_pointer_before_calling_it
+// (tests/test_release_hook_contract.py) pins the AddrIsExecutableInModule
+// guard around the fnp() call as literally inside RefreshItemHash's own
+// body - moving that guard into a separate function would still run it,
+// but the test would no longer be able to see it where it looks, so the
+// pinned contract would go blind to a future edit that dropped it.
+// `routineOnly` lets `hashprobe routine` drive this route on its own
+// without a fourth helper: it skips straight past the other three.
+
+// Preferred: the game's own ItemCheckHash(item).  It calls item.GenerateItemHash() with
+// the proper self and STORES the new itemDataHash before comparing, so one call after
+// dressing leaves the item consistent (its bool result is irrelevant here; it never
+// reports by itself - the callers do).  Plain script name, no method plumbing.
+static bool HashRouteItemCheck(const RValue& item, std::string& how, RValue* retOut = nullptr)
 {
-    std::string how;
-    // Preferred: the game's own ItemCheckHash(item).  It calls item.GenerateItemHash() with
-    // the proper self and STORES the new itemDataHash before comparing, so one call after
-    // dressing leaves the item consistent (its bool result is irrelevant here; it never
-    // reports by itself - the callers do).  Plain script name, no method plumbing.
     try {
         CInstance* g = nullptr; g_Yytk->GetGlobalInstance(&g);
         if (g) {
-            const std::string before = ReadItemHash(item);
             RValue res; AurieStatus st = g_Yytk->CallGameScriptEx(res, "gml_Script_ItemCheckHash", g, g, { item });
-            if (AurieSuccess(st) && !ReadItemHash(item).empty()) { if (howOut) *howOut = "itemcheckhash"; return true; }
+            if (retOut) *retOut = res;
+            if (AurieSuccess(st) && !ReadItemHash(item).empty()) { how = "itemcheckhash"; return true; }
             how = AurieSuccess(st) ? "itemcheckhash-nohash" : "itemcheckhash-fail";
         }
     } catch (...) { how = "itemcheckhash-exc"; }
+    return false;
+}
+
+static bool HashRouteMethod(const RValue& item, std::string& how, RValue* retOut = nullptr)
+{
     try {
         std::string how2;
         RValue fn = FindStructMethod(item, "GenerateItemHash", how2);
         how += "," + how2;
         if (fn.m_Kind != VALUE_UNDEFINED && fn.m_Kind != VALUE_UNSET) {
             RValue bound = g_Yytk->CallBuiltin("method", { item, fn });   // self = the item
-            g_Yytk->CallBuiltin("script_execute", { bound });
-            if (howOut) *howOut = how + "+method";
+            RValue res = g_Yytk->CallBuiltin("script_execute", { bound });
+            if (retOut) *retOut = res;
+            how += "+method";
             return true;
         }
     } catch (...) { how += "!exc"; }
+    return false;
+}
+
+// GenerateItemHash by its current hs-game-sdk name (scripts.hpp) - anon_4791
+// for this build. The plugin's earlier anon-4638/anon-4645 spellings named the
+// pre-patch game build's closure and are stale now that the game has been
+// patched and hs-game-sdk regenerated - see docs/angelic-drop-research.md for
+// the negative this replaces. Unlike the other routes, this one checks that
+// the stored hash actually changed rather than just that the call succeeded:
+// refuses with "+direct-nohash" and falls through to +routine when it did not.
+static bool HashRouteDirect(const RValue& item, std::string& how, RValue* retOut = nullptr)
+{
     try {
+        const std::string before = ReadItemHash(item);
         RValue res;
         CInstance* self = (CInstance*)item.m_Object;
         AurieStatus st = g_Yytk->CallGameScriptEx(res, HeroSiege::Scripts::gml_Script_GenerateItemHash_anon_4791_s_ItemInstanceStruct_InventoryV2Funcs.data(), self, self, {});
-        if (AurieSuccess(st)) { if (howOut) *howOut = how + "+direct"; return true; }
-        how += "+direct-fail";
+        if (!AurieSuccess(st)) { how += "+direct-fail(" + std::to_string((int)st) + ")"; return false; }
+        if (retOut) *retOut = res;
+        const std::string after = ReadItemHash(item);
+        if (after.empty() || after == before) { how += "+direct-nohash"; return false; }
+        how += "+direct";
+        return true;
     } catch (...) { how += "+direct-exc"; }
+    return false;
+}
+
+// RefreshItemHash: ItemCheckHash first (proven live since v1.3.13), then the
+// method/direct helpers above, then the routine fallback below. `routineOnly`
+// skips straight to the last resort so `hashprobe routine` can drive it in
+// isolation - see the comment above HashRouteItemCheck for why this route,
+// alone of the four, is not its own HashRoute* helper.
+static bool RefreshItemHash(const RValue& item, std::string* howOut = nullptr, RValue* retOut = nullptr, bool routineOnly = false)
+{
+    std::string how;
+    RValue res;
+    RValue* out = retOut ? retOut : &res;
+    if (!routineOnly) {
+        if (HashRouteItemCheck(item, how, out)) { if (howOut) *howOut = how; return true; }
+        if (HashRouteMethod(item, how, out)) { if (howOut) *howOut = how; return true; }
+        if (HashRouteDirect(item, how, out)) { if (howOut) *howOut = how; return true; }
+    }
     // Last resort: the compiled routine behind the method, called like a hook trampoline
     // with the item struct as self (the same resolution HookOneScript uses).
     // The function pointer is read off a game struct we never modify, but calling it is
@@ -3470,9 +3596,10 @@ static bool RefreshItemHash(const RValue& item, std::string* howOut = nullptr)
             PFUNC_YYGMLScript fnp = (sc && sc->m_Functions) ? sc->m_Functions->m_ScriptFunction : nullptr;
             if (fnp) {
                 if (AddrIsExecutableInModule(GetModuleHandleA(nullptr), (const void*)fnp)) {
-                    RValue res; CInstance* self = (CInstance*)item.m_Object;
-                    fnp(self, self, res, 0, nullptr);
-                    if (!ReadItemHash(item).empty()) { if (howOut) *howOut = how + "+routine"; return true; }
+                    RValue rres; CInstance* self = (CInstance*)item.m_Object;
+                    fnp(self, self, rres, 0, nullptr);
+                    *out = rres;
+                    if (!ReadItemHash(item).empty()) { how += "+routine"; if (howOut) *howOut = how; return true; }
                     how += "+routine-nohash";
                 } else how += "+routine-notcode";
             } else how += "+routine-nofn";
@@ -3677,6 +3804,17 @@ static std::map<std::string, double> TakeForgeAdditions(const RValue& item, cons
 }
 
 static volatile LONG g_CustomForgeHashMisses = 0;
+#ifndef FORGEPACT_RELEASE
+// Per-route counters for `forgehash stat`. Research build only: none of these
+// are read outside that command, so they compile out entirely in release
+// (decision D2 - "release for end user should be clean"). The existing
+// g_CustomForgeHashMisses above ships as-is; only what's below is new.
+static volatile LONG g_ForgeHashViaItemCheck = 0;
+static volatile LONG g_ForgeHashViaMethod = 0;
+static volatile LONG g_ForgeHashViaDirect = 0;
+static volatile LONG g_ForgeHashViaRoutine = 0;
+static volatile LONG g_ForgeHashDirectNoHash = 0;
+#endif
 static bool TryApplyCustomForge(RValue* candidate, bool finalPass = false)
 {
     if (!candidate || candidate->m_Kind != VALUE_OBJECT || g_CustomForgeEntries.empty())
@@ -3812,6 +3950,19 @@ static bool TryApplyCustomForge(RValue* candidate, bool finalPass = false)
                 static LONG s_HashLogs = 0;
                 if (!ok || after.empty() || after == before || InterlockedIncrement(&s_HashLogs) <= 24)
                     Out("forge hash: " + before.substr(0, 8) + " -> " + (after.empty() ? std::string("(none)") : after.substr(0, 8)) + " via " + how + (ok ? "" : " (FAILED)"));
+                // Classify from `how` rather than a route out-parameter: RefreshItemHash's
+                // signature stays player-shaped, so this counting is entirely additive.
+                if (how.find("+direct-nohash") != std::string::npos) InterlockedIncrement(&g_ForgeHashDirectNoHash);
+                if (ok) {
+                    auto hasSuffix = [](const std::string& hay, const char* suf) {
+                        size_t sl = strlen(suf);
+                        return hay.size() >= sl && hay.compare(hay.size() - sl, sl, suf) == 0;
+                    };
+                    if (how == "itemcheckhash") InterlockedIncrement(&g_ForgeHashViaItemCheck);
+                    else if (hasSuffix(how, "+method")) InterlockedIncrement(&g_ForgeHashViaMethod);
+                    else if (hasSuffix(how, "+direct")) InterlockedIncrement(&g_ForgeHashViaDirect);
+                    else if (hasSuffix(how, "+routine")) InterlockedIncrement(&g_ForgeHashViaRoutine);
+                }
 #endif
                 if (!ok) InterlockedIncrement(&g_CustomForgeHashMisses);
             }
@@ -3827,6 +3978,26 @@ static bool TryApplyCustomForge(RValue* candidate, bool finalPass = false)
     } catch (...) {}
     return false;
 }
+
+#ifndef FORGEPACT_RELEASE
+// `forgehash stat`: research build only, see the counters above. A miss means
+// every route in the chain failed, so the item kept a stale hash.
+static void ForgeHashStats()
+{
+    // "direct-nohash" fires whenever +direct's own before/after compare found the hash
+    // unchanged - which includes +direct correctly re-storing a hash the forge pass
+    // never actually altered (nothing added this pass, or a refresh that already ran
+    // once this pass), not only a route that silently failed to write anything.
+    char b[480];
+    sprintf_s(b, "forgehash stat: applications=%ld | refreshed via itemcheck=%ld method=%ld direct=%ld routine=%ld"
+                 " | direct-nohash=%ld - unchanged (stored nothing, or hash already current)"
+                 " | misses=%ld (a miss = every route failed; the item keeps a stale hash)",
+              g_CustomForgeApplyCount,
+              g_ForgeHashViaItemCheck, g_ForgeHashViaMethod, g_ForgeHashViaDirect, g_ForgeHashViaRoutine,
+              g_ForgeHashDirectNoHash, g_CustomForgeHashMisses);
+    Out(b);
+}
+#endif
 
 // Relic filter (RelicFilterManager, g_FilterMaxRelics, g_RelicFilterPending,
 // and the GetPlayerMaxedRelics wrapper) moved to ForgePact::RelicFilterMod
@@ -4562,6 +4733,9 @@ static long g_TySeen = 0, g_TyUpgraded = 0, g_TyAffixed = 0;
 static double g_RarRarePct = 0.0;
 static double g_RarAncientPct = 0.0;
 static long g_RarRaisedRare = 0, g_RarRaisedAncient = 0;
+#ifndef FORGEPACT_RELEASE
+static long g_RarSkippedBoss = 0;
+#endif
 static bool RarityFloorActive() { return g_RarRarePct > 0.0 || g_RarAncientPct > 0.0; }
 static bool g_TyHookInstalled = false, g_TyHookAttempted = false;
 static PFUNC_YYGMLScript g_Orig_EnemyRaritySettings = nullptr;
@@ -4669,6 +4843,23 @@ static std::string RarState(const RValue& inst)
     return s;
 }
 #endif
+// Bosses (Anubis, Damien, Cthulhu, the Uber_* variants, and the rest of the
+// Enemy_Child_Boss_obj family - hs-game-sdk's OBJECT_PARENT_INDEX confirms
+// Anubis_obj's own chain runs Anubis_obj -> Enemy_Child_Boss_obj ->
+// Enemy_Parent_obj) run through this same hook, since EnemyRaritySettings
+// fires from Enemy_Parent_obj's own Alarm_4 for every enemy, boss or not.
+// A boss already has its own scripted HP/affix setup; the Monster Rarity
+// sliders raising it a second time on top of that is what took a reported
+// Anubis from ~500k to ~4.5M HP with 20% rare + 20% ancient set. Same
+// ancestry check the Pet Quest Collector already uses for its own object
+// family (CiInstanceIsQuestObject, above).
+static bool RarInstanceIsBoss(const RValue& inst)
+{
+    try {
+        RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("object_index") });
+        return HeroSiege::Objects::IsDescendantOf((int32_t)oi.ToDouble(), (int32_t)HeroSiege::Objects::GameObject::Enemy_Child_Boss_obj);
+    } catch (...) { return false; }
+}
 static RValue& Hook_EnemyRaritySettings(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
     PERF_SCOPE(g_PerfRarity);
@@ -4685,7 +4876,11 @@ static RValue& Hook_EnemyRaritySettings(CInstance* S, CInstance* O, RValue& R, i
         try { const double id = InstanceIdOf(inst); if (id >= 0.0 && g_EnemyBornIds.erase((int)id)) enemyBorn = true; } catch (...) {}
     }
     if (enemyBorn && S && (RarityFloorActive() || TyrantActive())) InterlockedIncrement(&g_RarSkippedEnemyBorn);
-    if (S && !enemyBorn && RarityFloorActive()) {
+    if (S && !enemyBorn && RarityFloorActive() && RarInstanceIsBoss(inst)) {
+#ifndef FORGEPACT_RELEASE
+        InterlockedIncrement(&g_RarSkippedBoss);
+#endif
+    } else if (S && !enemyBorn && RarityFloorActive()) {
         try {
             RValue rv = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("enemyRarity") });
             const double rar = (rv.m_Kind == VALUE_REAL || rv.m_Kind == VALUE_INT32 || rv.m_Kind == VALUE_INT64) ? rv.ToDouble() : -1.0;
@@ -11747,10 +11942,13 @@ static RValue& Hook_EnemyDestroyKillProc(CInstance* S, CInstance* O, RValue& R, 
         if (CallerIsEnemyInstance(S)) HhSteal(S, third, O);
         else if (CallerIsEnemyInstance(third)) HhSteal(third, S, O);
     }
-    RValue& res = g_Orig_EnemyDestroyKillProc ? g_Orig_EnemyDestroyKillProc(S, O, R, argc, A) : R;
-    SignatureDropOnKill(S);
-    AngelicDropOnKill(S);
-    return res;
+    // The kill drops read the enemy and spawn with it as self while it is still live, the
+    // same as the steal above. Until 1.4.2 they ran after the original kill proc had run
+    // (which the harness models as cleaning the enemy up; not measured) - a suspected cause
+    // of the x100 Angelic crash, not proven.
+    // Nothing below the trampoline touches S, and a throwing drop cannot skip the original.
+    try { SignatureDropOnKill(S); AngelicDropOnKill(S); } catch (...) {}
+    return g_Orig_EnemyDestroyKillProc ? g_Orig_EnemyDestroyKillProc(S, O, R, argc, A) : R;
 }
 
 // Every monster death reaches the steal through here, whichever trigger noticed it.
@@ -12952,26 +13150,6 @@ static void InstallLoginHook()
     HookOneScript("IsLoggedIn", "bp_islogged", (PVOID)HookIsLoggedIn, &g_OrigIsLoggedIn);
 }
 
-// ===== DIAGNOSTIC: log how the game deals damage to enemies (learn the signature) =====
-static PFUNC_YYGMLScript g_OrigHitReg = nullptr;
-static volatile long g_HitRegCalls = 0;
-static RValue& HookHitReg(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
-{
-    long n = InterlockedIncrement(&g_HitRegCalls);
-    if (n <= 10) {
-        std::string line = "HitReg#" + std::to_string(n) + " argc=" + std::to_string(argc) + " args:";
-        for (int i = 0; i < argc && i < 10; i++)
-            line += " [" + std::to_string(i) + "]=" + ((A && A[i]) ? Describe(*A[i]) : "?");
-        std::ofstream f(IPC_DIR + "\\hitreg.txt", std::ios::app);
-        f << line << "\n";
-    }
-    return g_OrigHitReg ? g_OrigHitReg(S, O, R, argc, A) : R;
-}
-static void InstallHitRegHook()
-{
-    HookOneScript("EnemyHitRegDamageParent", "bp_hitreg", (PVOID)HookHitReg, &g_OrigHitReg);
-}
-
 // ===== DIAGNOSTIC: observe how a buff is applied to the player (learn the signature) =====
 static PFUNC_YYGMLScript g_OrigBuffAdd = nullptr, g_OrigCABuffAdd = nullptr;
 static volatile long g_BuffAddCalls = 0;
@@ -13151,7 +13329,6 @@ static void InstallHook()
     InstallSlotHook();
     InstallLoginHook();
     InstallIsMyPlayerHook();
-    InstallHitRegHook();
     InstallBuffHooks();
     InstallEnemyHooks();
     InstallChaosTowerHooks();
@@ -13257,7 +13434,7 @@ static void NAddrAll()
         "LoadCommonItems", "ItemEquip", "IsObtainablePlace", "IsMyPlayer",
         "IsLoggedIn", "GetRuneword", "GetItemTooltipString", "GetItemStatString",
         "GenerateItemSpecialStats", "EquipItemUnequip", "EnemyRaritySettings",
-        "EnemyHitRegDamageParent", "EnemyDestroyKillProc", "EnemyDestroyDeathEffects",
+        "EnemyDestroyKillProc", "EnemyDestroyDeathEffects",
         "DropUberParts", "DropRubyKey", "DropOres", "DropOreMaterials",
         "DropMonsterGold", "DropKeys", "DropItemBoss", "DropItemAngelic",
         "DropItem", "DropGold", "DropDungeonKeys", "DropDimensionalShard",
@@ -16653,12 +16830,84 @@ static bool HandleHeadhunterCommand(const std::string& lc, const std::string& re
         Out("forgeddump: " + std::to_string(n) + " items -> forged_dump.json");
     } else if (lc == "hashprobe") {
         // Research: refresh itemDataHash on every remembered forged item and report the path used.
-        int n = 0;
-        for (const RValue& it : g_ForgedItems) {
-            std::string how; const std::string b = ReadItemHash(it); const bool ok = RefreshItemHash(it, &how); const std::string a = ReadItemHash(it);
-            Out("hashprobe #" + std::to_string(n++) + ": " + b.substr(0, 8) + " -> " + (a.empty() ? std::string("(none)") : a.substr(0, 8)) + " via " + how + (ok ? "" : " FAILED"));
+        // Bare `hashprobe` keeps running the whole fallback chain, byte-for-byte as before.
+        // `hashprobe itemcheck|direct|routine` instead drives one named route directly, so a
+        // route hidden behind an earlier one's success (ItemCheckHash almost always succeeds)
+        // can be exercised on its own.
+        const std::string route = Lower(TrimCopy(rest));
+        if (route.empty()) {
+            int n = 0;
+            for (const RValue& it : g_ForgedItems) {
+                std::string how; const std::string b = ReadItemHash(it); const bool ok = RefreshItemHash(it, &how); const std::string a = ReadItemHash(it);
+                Out("hashprobe #" + std::to_string(n++) + ": " + b.substr(0, 8) + " -> " + (a.empty() ? std::string("(none)") : a.substr(0, 8)) + " via " + how + (ok ? "" : " FAILED"));
+            }
+            if (!n) Out("hashprobe: no forged items remembered yet");
+        } else if (route == "itemcheck" || route == "direct" || route == "routine") {
+            // A working route on an item whose hash is already current would just rewrite the
+            // same value, which a plain before/after compare reads as a refusal. Pre-write a
+            // sentinel no route can produce, so any write - to anything else - proves the route
+            // stored something, and a match against the saved original proves it computed the
+            // game's own hash rather than something else. `itemcheck` is the positive control:
+            // proven live since v1.3.13, so if it doesn't report wrote=yes here, the probe
+            // itself is broken, not the other routes.
+            int n = 0;
+            for (const RValue& it : g_ForgedItems) {
+                // Read the raw field, not just ReadItemHash()'s string view of it: an item
+                // whose itemDataHash was never a string (undefined, pre-first-hash) reads
+                // back as "" from ReadItemHash either way, so restoring RValue(orig) would
+                // turn "was never set" into "explicitly set to empty string". Restoring the
+                // raw RValue keeps that distinction.
+                RValue origRaw = g_Yytk->CallBuiltin("variable_struct_get", { it, RValue("itemDataHash") });
+                const std::string orig = (origRaw.m_Kind == VALUE_STRING) ? origRaw.ToString() : std::string();
+                g_Yytk->CallBuiltin("variable_struct_set", { it, RValue("itemDataHash"), RValue("hashprobe-sentinel") });
+                std::string how; RValue ret; bool ok = false;
+                if (route == "itemcheck") ok = HashRouteItemCheck(it, how, &ret);
+                else if (route == "direct") ok = HashRouteDirect(it, how, &ret);
+                else ok = RefreshItemHash(it, &how, &ret, /*routineOnly=*/true);
+                const std::string after = ReadItemHash(it);
+                const bool wrote = !after.empty() && after != "hashprobe-sentinel";
+                if (!wrote) g_Yytk->CallBuiltin("variable_struct_set", { it, RValue("itemDataHash"), origRaw });
+                std::string kind;
+                switch (ret.m_Kind) {
+                case VALUE_REAL: kind = "VALUE_REAL"; break;
+                case VALUE_INT32: kind = "VALUE_INT32"; break;
+                case VALUE_INT64: kind = "VALUE_INT64"; break;
+                case VALUE_BOOL: kind = "VALUE_BOOL"; break;
+                case VALUE_STRING: kind = "VALUE_STRING"; break;
+                case VALUE_OBJECT: kind = "VALUE_OBJECT"; break;
+                case VALUE_ARRAY: kind = "VALUE_ARRAY"; break;
+                case VALUE_REF: kind = "VALUE_REF"; break;
+                case VALUE_UNDEFINED: kind = "VALUE_UNDEFINED"; break;
+                case VALUE_NULL: kind = "VALUE_NULL"; break;
+                default: kind = "kind" + std::to_string((int)ret.m_Kind); break;
+                }
+                std::string retDesc = kind;
+                if (ret.m_Kind == VALUE_STRING) retDesc += ":" + ret.ToString().substr(0, 8);
+                // Lead with the verdict from `wrote`, not the route's own return: after the
+                // sentinel write, itemcheck and routine report success (`ok`) on ANY non-empty
+                // hash, including the sentinel itself surviving untouched - so `ok` alone would
+                // read as a working route even when nothing happened. `route-said=` keeps what
+                // the route itself returned visible, separately, for routes whose `ok` really
+                // does mean something (e.g. +direct's own before/after refusal).
+                Out("hashprobe " + route + " #" + std::to_string(n++) + ": " + (wrote ? "wrote" : "refused")
+                    + " via " + how
+                    + " | route-said=" + (ok ? "ok" : "refused")
+                    + " wrote=" + (wrote ? "yes" : "no")
+                    + " matches-original=" + (wrote ? (after == orig ? "yes" : "no") : "n/a")
+                    + " | ret=" + retDesc);
+            }
+            if (!n) Out("hashprobe " + route + ": no forged items remembered yet");
+        } else {
+            Out("usage: hashprobe [itemcheck|direct|routine]");
         }
-        if (!n) Out("hashprobe: no forged items remembered yet");
+    } else if (lc == "forgehash") {
+        // Research: `forgehash stat` prints the per-route counters next to
+        // g_CustomForgeHashMisses. The player-command allowlist below is
+        // untouched, so a player build already answers "command unavailable
+        // in player build: forgehash" on its own.
+        std::string v = Lower(TrimCopy(rest));
+        if (v == "stat" || v.empty()) ForgeHashStats();
+        else Out("usage: forgehash stat");
     } else if (lc == "enemyvars") {
         // Research: nearest monsters with rarity, affixes and the variables matching the filters.
         try {
@@ -16743,7 +16992,11 @@ static bool HandleHeadhunterCommand(const std::string& lc, const std::string& re
             ? ("rare " + std::to_string((int)rare) + " pct, ancient " + std::to_string((int)anc) + " pct" + (g_TyHookInstalled ? "" : " (hook failed)"))
             : std::string("off"))
             + " | raised so far: rare=" + std::to_string(g_RarRaisedRare) + " ancient=" + std::to_string(g_RarRaisedAncient)
-            + " | enemy-born left alone: " + std::to_string(g_RarSkippedEnemyBorn) + " (seen " + std::to_string(g_EnemyBornSeen) + ")");
+            + " | enemy-born left alone: " + std::to_string(g_RarSkippedEnemyBorn) + " (seen " + std::to_string(g_EnemyBornSeen) + ")"
+#ifndef FORGEPACT_RELEASE
+            + " | bosses left alone: " + std::to_string(g_RarSkippedBoss)
+#endif
+        );
     } else if (lc == "tyrantchance" || lc == "tyrantaffix") {
         try { double p = std::stod(TrimCopy(rest)); if (p >= 0.0 && p <= 100.0) { if (lc == "tyrantchance") g_TyRarePct = p; else g_TyAffixPct = p; } } catch (...) {}
         Out(lc + " -> " + std::to_string((int)(lc == "tyrantchance" ? g_TyRarePct : g_TyAffixPct)) + " percent");
