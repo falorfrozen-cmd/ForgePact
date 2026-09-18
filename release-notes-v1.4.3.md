@@ -1,47 +1,45 @@
 # ForgePact 1.4.3
 
-Bosses are left alone by the Monster Rarity sliders, the log file no longer grows without limit, and ForgePact's own kill drops are placed more carefully.
+Bosses stay normal with the Monster Rarity sliders up, ForgePact's log file no
+longer grows without limit, and ForgePact's own kill drops are placed more
+safely.
 
 ## Fixed
 
-- **The Monster Rarity sliders (Rare / Ancient) could raise a boss the same
-  way they raise an ordinary monster.** A boss already builds its own health
-  and affixes when it spawns; the sliders had no check for that and could
-  raise it a second time on top of it. A player reported an Anubis boss
-  going from ~500k to ~4.5M HP with 20% Rare and 20% Ancient set - we have
-  not reproduced that number ourselves, but the sliders clearly could reach
-  a boss when they should not have. Bosses are now left alone by both
-  sliders; ordinary monsters raise exactly as before.
-- **`bp_ipc\out.txt` no longer grows without limit.** The plugin only ever
-  appended to it, and nothing trimmed it - one player's copy reached 7.8 MB.
-  Now, once it passes 2 MB, the plugin rotates it to `out.prev.txt` the next
-  time the game starts (never mid-session), so the total stays around 4 MB and
-  the previous session's log is never lost - the one you'd actually want after
-  a crash, since you relaunch before you can report it. If a bug report needs
-  a log, please attach both `out.txt` and `out.prev.txt`.
-- **The panel now notices a restart across that rotation.** ForgePact's panel
-  detects a game restart by counting startup lines in `out.txt`; a rotated log
-  starts a fresh count that could coincidentally match the old one, which
-  could make the panel miss a quick close-and-relaunch and skip reapplying
-  your saved settings. The panel now also checks that it is reading the same
-  log file, not just the same count.
+- **Monster Rarity could turn a boss Rare or Ancient.** The Rare and Ancient
+  sliders are meant for ordinary monsters, but they had no check for bosses,
+  so a boss could be raised like any other monster, with that tier's extra
+  health and affixes on top of its own. Bosses are now always left alone;
+  ordinary monsters are raised exactly as before. (A player reported an
+  Anubis at about 4.5M HP instead of about 500k with 20% Rare and 20% Ancient
+  set. We have not reproduced that number, but a boss could clearly be
+  raised when it should not have been.)
+- **`bp_ipc\out.txt` grew forever.** ForgePact only ever added to its log, so
+  it could reach several megabytes. Now, when you start the game and the log
+  is over 2 MB, the old one is kept as `out.prev.txt` and a fresh `out.txt`
+  begins. The log never grows during a session, and the previous session is
+  always kept, which is the one you need after a crash.
+- **The panel could miss a quick restart.** With auto-apply on, the panel
+  re-sends your saved settings whenever the game starts. It noticed a restart
+  by counting startup lines in `out.txt`, which a fresh log could fool if you
+  closed and reopened the game within a few seconds. It now also checks
+  whether the log file itself changed.
 
 ## Changed
 
-- **ForgePact's own kill drops are now placed before the game finishes handling the kill.**
-  When a monster dies, ForgePact rolls its own Angelic / Unholy drop and its
-  Tyrant's Crown / Headhunter drop and places the item where the monster
-  fell. Until now it did this after the game's own kill handling had run, and
-  still used the monster to place the item. With 1.4.3 both drops are rolled
-  and placed while the monster is still there, and ForgePact no longer
-  touches the monster after that. Drop rates and what can drop are unchanged.
+- **ForgePact's own kill drops are placed before the game finishes the kill.**
+  The Angelic / Unholy drop and the Tyrant's Crown / Headhunter drop used to be
+  placed after the game had already handled the monster's death, still using
+  that monster. They are now rolled and placed while the monster is still
+  there. Drop rates and what can drop are unchanged. This removes a possible
+  source of crashes; it is not a confirmed fix. Players reported crashes with
+  the Angelic / Unholy slider at x100 on 1.4.1, but we could not reproduce
+  them: 1.4.1 and 1.4.3 each gave 30 drops from 30 kills without crashing.
 
-  Players reported crashes in fights with the Angelic / Unholy slider at x100
-  on 1.4.1. We could not reproduce that crash: in testing, 1.4.1 and 1.4.3
-  each dropped 30 angelic items from 30 kills without crashing. This change
-  removes a possible risk, it is not a confirmed fix for that report. If you
-  still get crashes, please report them with the last lines of
-  `bp_ipc\out.txt` and which ForgePact settings you had on.
+## Reporting a problem
+
+Please attach both `bp_ipc\out.txt` and `bp_ipc\out.prev.txt`, and say which
+ForgePact settings you had on.
 
 ## How to update
 
