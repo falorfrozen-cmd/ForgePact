@@ -28,10 +28,12 @@ Vanilla mekanizma bu notta; "vanilla-sadık" mod (seçenek 2) henüz yapılmadı
 - `@anon@` metot rutinleri (GetItemDef, AddStat, GenerateItemHash) o denemede YYTK ile
   isimden çözülmedi (status 14 = `AURIE_OBJECT_NOT_FOUND`) - bu **not observed** demek,
   "asla çözülmez" demek değil: denenen tam isim o zaman kayda geçmemişti. Eklentinin o
-  anki GenerateItemHash kopyası `@anon@4638@` yazımıydı; bu isim güncel hs-game-sdk
-  tablosunda yok (tabloda sadece `@anon@4645@` var), ve yanlış bir isim zaten status 14
-  üretir - tek başına yeterli bir açıklama. `hashprobe direct` (research build) bunu
-  yeniden test ediyor. Global scriptleri kullan.
+  anki GenerateItemHash kopyası `@anon@4638@` yazımıydı; bu isim o zamanki hs-game-sdk
+  tablosunda yoktu (tabloda o zamanki (yama öncesi) oyun sürümü için sadece `@anon@4645@`
+  vardı). Oyun yaması sonrası hs-game-sdk yeniden üretildi; güncel sürümün adı
+  `@anon@4791@`. Yanlış bir isim zaten status 14 üretir - tek başına yeterli bir
+  açıklama. `hashprobe direct` (research build) bunu yeniden test ediyor. Global
+  scriptleri kullan.
 
 ## Plugin'de olanlar
 
