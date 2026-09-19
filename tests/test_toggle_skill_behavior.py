@@ -100,6 +100,28 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
             implementation(cls.plugin, "static std::string TgProbeTglNumber("),
             implementation(cls.plugin, "static void TgProbeTglTimerNote("),
             implementation(cls.plugin, "static std::string TgProbeTglTimerLine("),
+            # Round 2: the sampler itself (its on/off gate and the field
+            # snapshot's throttle) and the snapshot of the read's own
+            # instance, with the table they walk.
+            implementation(cls.plugin, "static bool N1Numeric("),
+            declaration(cls.plugin, "static constexpr int kTgTglCap"),
+            declaration(cls.plugin, "static constexpr int kTgTglFieldCap"),
+            declaration(cls.plugin, "static constexpr double kTgTglPredictedInfinite"),
+            declaration(cls.plugin, "static constexpr long kTgTglSnapshotEveryDraws"),
+            declaration(cls.plugin, "static bool g_TgTglSamplerOn"),
+            implementation(cls.plugin, "struct TgTglFieldSample {") + ";",
+            implementation(cls.plugin, "struct TgTglRow {") + ";",
+            implementation(cls.plugin, "struct TgTglSeed {") + ";",
+            implementation(cls.plugin, "static const TgTglSeed kTgTglSeeds[] = {") + ";",
+            declaration(cls.plugin, "static std::vector<TgTglRow> g_TgTgl"),
+            declaration(cls.plugin, "static bool g_TgTglSeeded"),
+            declaration(cls.plugin, "static long g_TgTglAgree"),
+            declaration(cls.plugin, "static bool g_TgTglRoomKeyKnown"),
+            declaration(cls.plugin, "static int64_t g_TgTglRoomKey"),
+            implementation(cls.plugin, "static void TgProbeTglSeed("),
+            implementation(cls.plugin, "static void TgProbeTglSnapshot("),
+            implementation(cls.plugin, "static std::string TgProbeTglFieldsText("),
+            implementation(cls.plugin, "static void TgProbeTglAfterDraw("),
         ])
 
         out = ROOT / "build/toggle-skill-behavior"
@@ -403,6 +425,20 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
     def test_table_timer_unreadable_is_reported_not_defaulted(self):
         for suffix in ("/count", "/atPredicted", "/first", "/last", ""):
             self.assertScenario("table/timer_unreadable_is_reported_not_defaulted" + suffix)
+
+    def test_table_sampler_off_calls_no_builtin(self):
+        # Round 2: `tgprobe tgl` is off by default and costs nothing while
+        # off; switched on it reads (positive control).
+        for suffix in ("/default_off", "", "/control_on_reads"):
+            self.assertScenario("table/sampler_off_calls_no_builtin" + suffix)
+
+    def test_table_sampler_on_snapshots_at_most_every_30_draws(self):
+        for suffix in ("/per_row", "/timer_per_draw", ""):
+            self.assertScenario("table/sampler_on_snapshots_at_most_every_30_draws" + suffix)
+
+    def test_table_fields_snapshot_uses_own_instance(self):
+        for suffix in ("/own_fields", "", "/no_own_reads_nothing", "/no_own_stores_nothing", "/no_own_line"):
+            self.assertScenario("table/fields_snapshot_uses_own_instance" + suffix)
 
 
 if __name__ == "__main__":

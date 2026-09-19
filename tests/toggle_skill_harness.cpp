@@ -76,11 +76,24 @@ static long InterlockedIncrement(volatile long* target) { return ++(*target); }
 // A stand-in for HeroSiege::Objects - the harness needs the AOE and the slot
 // object named by the SDK constants to exist and resolve to a string, not
 // the whole SDK.
+// The six other candidate rows' objects exist so the research table's seed
+// rows (`tgprobe tgl`, spliced below) compile against their real enumerators.
 namespace HeroSiege { namespace Objects {
-enum class GameObject { White_Mage_Soul_Spurn_AOE_obj, UI_Hud_Talent_obj, Universal_Double_Cast_obj };
+enum class GameObject { White_Mage_Soul_Spurn_AOE_obj, UI_Hud_Talent_obj, Universal_Double_Cast_obj,
+                        Exo_Lunar_Orbit_obj, Plague_Doctor_Crematus_obj, Shield_Lancer_Counter_World_obj,
+                        Butcher_Submerged_Knives_obj, Prophet_Maelstrom_obj, Butcher_Blender_obj };
 inline const char* GetObjectName(GameObject g) {
-    if (g == GameObject::Universal_Double_Cast_obj) return "Universal_Double_Cast_obj";
-    return g == GameObject::UI_Hud_Talent_obj ? "UI_Hud_Talent_obj" : "White_Mage_Soul_Spurn_AOE_obj";
+    switch (g) {
+    case GameObject::Universal_Double_Cast_obj: return "Universal_Double_Cast_obj";
+    case GameObject::UI_Hud_Talent_obj: return "UI_Hud_Talent_obj";
+    case GameObject::Exo_Lunar_Orbit_obj: return "Exo_Lunar_Orbit_obj";
+    case GameObject::Plague_Doctor_Crematus_obj: return "Plague_Doctor_Crematus_obj";
+    case GameObject::Shield_Lancer_Counter_World_obj: return "Shield_Lancer_Counter_World_obj";
+    case GameObject::Butcher_Submerged_Knives_obj: return "Butcher_Submerged_Knives_obj";
+    case GameObject::Prophet_Maelstrom_obj: return "Prophet_Maelstrom_obj";
+    case GameObject::Butcher_Blender_obj: return "Butcher_Blender_obj";
+    default: return "White_Mage_Soul_Spurn_AOE_obj";
+    }
 }
 }}
 
@@ -153,6 +166,7 @@ static long g_TrampCalls = 0;          // the TalentUseClass trampoline stand-in
 static const double kDcObjIdx = 5318.0, kPlayerObjIdx = 7.0;   // what the stand-in runner answers
 static long g_ResolveCalls = 0;    // HhResolveLocalPlayer calls - must stay 0 (read/no_player_lookup)
 static long g_AnyCallCount = 0;    // every CallBuiltin call, of any name - indicator_off/no_runtime_calls
+static long g_NamesCalls = 0;      // variable_instance_get_names calls - the `tgl fields` snapshot
 static int g_RectangleDraws = 0;   // draw_rectangle calls this draw
 static double g_LastSetColour = -1, g_LastSetAlpha = -1;
 static const double kAoeObjIdx = 42.0, kHudObjIdx = 99.0;
@@ -223,11 +237,23 @@ struct FakeRunner {
             }
             return RValue();
         }
+        // R (`tgl fields`): an AOE instance's member names, tagged with the
+        // instance they came from, so a snapshot names which one it read.
+        if (fn == "variable_instance_get_names") {
+            ++g_NamesCalls;
+            RValue r; r.m_Kind = VALUE_ARRAY; r.text = "names:" + args[0].text;
+            return r;
+        }
         if (fn == "array_length") {
             if (args[0].text == "row0") return RValue((double)world.row0.size());
+            if (args[0].text.rfind("names:", 0) == 0) return RValue(2.0);
             return RValue(0.0);
         }
         if (fn == "array_get") {
+            if (args[0].text.rfind("names:", 0) == 0) {
+                const int i = (int)args[1].ToDouble();
+                return i == 0 ? RValue("isMyClient") : (i == 1 ? RValue("purgatory") : RValue());
+            }
             if (args[0].text == "row0") {
                 const int i = (int)args[1].ToDouble();
                 if (i < 0 || (size_t)i >= world.row0.size()) return RValue();
@@ -274,6 +300,19 @@ static bool HhResolveLocalPlayer(RValue& out) {
     RValue r; r.m_Kind = VALUE_REF; r.text = "player";
     out = r;
     return true;
+}
+
+// R (`tgprobe tgl`'s sampler): the frame counter and room key it reads. The
+// room key stands in for a builtin read, so it counts as a call.
+static uint64_t g_RuntimeFrame = 0;
+static int64_t CurrentRoomKey() { ++g_AnyCallCount; return 1; }
+// Describe()'s shape for the scalars the snapshot keeps, without the whole
+// describer.
+static std::string TgProbeDescribeShort(const RValue& v, size_t cap = 80) {
+    (void)cap;
+    if (v.m_Kind == VALUE_BOOL) return v.boolean ? "true" : "false";
+    if (v.m_Kind == VALUE_STRING) return v.text;
+    return std::to_string(v.number);
 }
 
 // ---- what the injected production code leans on ---------------------------
@@ -1026,6 +1065,76 @@ int main() {
         checkBool("table/timer_unreadable_is_reported_not_defaulted",
                   line.find("=-1") == std::string::npos && line.find("=0.000000") == std::string::npos
                   && line.find("first=unreadable") != std::string::npos, true);
+    }
+
+    // 46. `tgprobe tgl` is off by default, and off it returns before a single
+    //     builtin call, so no other research session pays for the per-draw
+    //     reads. Positive control: switched on, the same draw reads every row.
+    //     While on, a present instance's `last` field snapshot is retaken at
+    //     most once every kTgTglSnapshotEveryDraws draws; the reads and the
+    //     timer note stay per draw.
+    resetWorld();
+    world.instances = { OwnMarked(0.09) };
+    {
+        g_TgTgl.clear(); g_TgTglSeeded = false;
+        checkBool("table/sampler_off_calls_no_builtin/default_off", g_TgTglSamplerOn, false);
+        const long before = g_AnyCallCount;
+        TgProbeTglAfterDraw();
+        checkInt("table/sampler_off_calls_no_builtin", g_AnyCallCount - before, 0);
+
+        g_TgTglSamplerOn = true;
+        const long onBefore = g_AnyCallCount;
+        TgProbeTglAfterDraw();
+        checkBool("table/sampler_off_calls_no_builtin/control_on_reads",
+                  g_AnyCallCount - onBefore > 0 && !g_TgTgl.empty() && g_TgTgl[0].samples == 1, true);
+
+        g_TgTgl.clear(); g_TgTglSeeded = false;
+        const long namesBefore = g_NamesCalls;
+        const int draws = 2 * (int)kTgTglSnapshotEveryDraws + 1;
+        for (int i = 0; i < draws; ++i) { ++g_RuntimeFrame; TgProbeTglAfterDraw(); }
+        // One snapshot for `first` when the appearance starts, then one
+        // `last` per full kTgTglSnapshotEveryDraws draws: 3 per row, not 61.
+        checkInt("table/sampler_on_snapshots_at_most_every_30_draws/per_row",
+                 (g_NamesCalls - namesBefore) / (long)g_TgTgl.size(), 3);
+        checkInt("table/sampler_on_snapshots_at_most_every_30_draws/timer_per_draw",
+                 g_TgTgl[0].samples, draws);
+        checkBool("table/sampler_on_snapshots_at_most_every_30_draws",
+                  (g_NamesCalls - namesBefore) == 3 * (long)g_TgTgl.size()
+                  && g_TgTgl[0].fieldsLast.frame == (long)g_RuntimeFrame, true);
+        g_TgTglSamplerOn = false;
+        g_TgTgl.clear(); g_TgTglSeeded = false;
+    }
+
+    // 47. `tgl fields` snapshots the own instance the read used, not
+    //     instance 0: a foreign instance sits at index 0 and the own one at
+    //     index 1, and the snapshot shows the own one's fields. Negative
+    //     control: with only a foreign instance present, nothing is read or
+    //     stored and the line says `fields: no own instance`.
+    resetWorld();
+    world.instances = { Foreign(0.0), OwnMarked(0.09) };
+    {
+        TgTglReadResult r;
+        TgProbeTglRead(kAoeObjIdx, "purgatory", "", nullptr, &r);
+        TgTglFieldSample s;
+        TgProbeTglSnapshot(r, s);
+        checkBool("table/fields_snapshot_uses_own_instance/own_fields",
+                  s.have && s.text.find("isMyClient=true") != std::string::npos
+                  && s.text.find("purgatory=0.09") != std::string::npos, true);
+        checkBool("table/fields_snapshot_uses_own_instance",
+                  s.have && s.text.find("isMyClient=false") == std::string::npos, true);
+    }
+    resetWorld();
+    world.instances = { Foreign(0.0) };
+    {
+        TgTglReadResult r;
+        TgProbeTglRead(kAoeObjIdx, "purgatory", "", nullptr, &r);
+        TgTglFieldSample s;
+        const long namesBefore = g_NamesCalls;
+        TgProbeTglSnapshot(r, s);
+        checkInt("table/fields_snapshot_uses_own_instance/no_own_reads_nothing", g_NamesCalls - namesBefore, 0);
+        checkBool("table/fields_snapshot_uses_own_instance/no_own_stores_nothing", s.have || !s.text.empty(), false);
+        checkBool("table/fields_snapshot_uses_own_instance/no_own_line",
+                  TgProbeTglFieldsText(s).find("fields: no own instance") != std::string::npos, true);
     }
 
     // The read never makes a player-resolving call, in any scenario above -

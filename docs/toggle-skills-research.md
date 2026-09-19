@@ -295,7 +295,7 @@ turn co-op rendering on, and run no `citrace` command, after `tgprobe hook`.
 | `tgprobe spurn [log on\|off\|as foreign\|slots\|fields]` | Samples the production `ToggleIndicatorRead` on every `DrawHudBuffs` draw. Bare `spurn` prints the last sample (`n=`, `mine=`, `others=`, `unattributed=`, `capped=`, `state=`) plus running `samples=`/`on=`/`off=`/`unreadable=`/`maxN=`/`transitions=`/`lastTransitionFrame=` counters, the marker-required counters `markedOn=`/`markedOff=`/`markedUnreadable=`, and `firstAfterRoomChange=`. `spurn log on\|off` logs each instance's `playerNumber`/`isMyClient` on every state change (budgeted). `spurn as foreign` is the non-mutating negative control (P1b: there is no local player number left to override): the same enumeration and decision with every own instance re-interpreted as foreign, reported separately and never touching the real counters. `spurn slots` prints every `UI_Hud_Talent_obj` `row0`/`row1`/`playerSlot.bind_skill`/`global.mySkills` entry whose value is talent 240. `spurn fields` prints the latched per-appearance snapshot (`isMyClient`, `playerNumber`, `targetNumber`, `purgatory`, `purgatoryTimer`, `destroyTimer`) taken on the appearance's first draw and refreshed on every draw while it is present. |
 | `tgprobe mark <x> <y> <w> <h>\|off` | Draws (or clears) a static outline rectangle at GUI coordinates from the draw hook, to find which candidate slot rectangle sits on Soul Spurn's button; saves and restores `draw_get_colour`/`draw_get_alpha`. Prints `draws=`/`drawExc=` so "never drew" is separable from "drew in the wrong place". |
 | `tgprobe talents [substr\|tags]` | Session 6's C0. Walks `global.talentStructMap` (`ds_map_find_first`/`ds_map_find_next`, capped at 5000 keys) and prints, per talent id whose `abilityId` contains `substr` (none = all, at most 40 lines then `…(+N more)`): `abilityId`, `abilityAura`, `abilityDuration`, `abilityCooldown`, `abilityLength` and `abilityTags`, each read on its own (`absent` for a missing key, `unreadable` for a throw, never a default). `tags` instead prints each distinct tag id with its count. Last line `tgprobe talents: ids=N shown=M nonNumericKeys= notStruct= walkExc= truncated= tableRowsWithId=k/rows`. The walk also gives every `tgl` row whose `abilityId` it finds its talent id, which `tgl sub` and `tgl slots` use. |
-| `tgprobe tgl [add\|list\|clear\|slots\|fields\|sub\|timer]` | The runtime toggle-candidate table (cap 16), prefilled with the seven rows of `### Other toggle skills: the static candidate table`: row 0 is the measured Soul Spurn row (`White_Mage_Soul_Spurn_AOE_obj`, marker `purgatory`), rows 1–6 carry no marker, and every row's timer field is `destroyTimer` and its ownership field each instance's own `isMyClient`. Every row is read on every `DrawHudBuffs` draw through the shipped read's shape with the object, marker, ownership and timer as parameters (a row with no marker counts every own instance as marked; a row with ownership `none` counts every instance as own), and row 0 is also read through the shipped `ToggleIndicatorRead` on the same draw: `agree=` rising with `disagree=0` is the proof that the two reads are the same read. Bare `tgl` prints `agree=`/`disagree=` and per row the last sample (`state= n= mine= others= unattributed= marked= timer=`) plus `samples=`/`on=`/`off=`/`unreadable=`/`markedOn=`/`transitions=`/`lastTransitionFrame=` and `firstAfterRoomChange: state= n=`. `add <abilityId> <ObjectName> [marker\|none] [timer\|none] [ownership\|none] [sNN]` resolves the object by name first and prints `unresolved` (storing nothing) on a negative index, else the row with `idx=` and `sdk=<enumerator>\|none`; `list` prints every row's settings; `clear` keeps row 0. `fields [row]` prints instance 0's scalar members (cap 64) as first seen in the current appearance and as last seen, kept after the instance is gone (how a row's marker field is found). `slots` prints every `UI_Hud_Talent_obj` `row0` element's `talentId` and `navBbox*` rectangle, naming the row whose talent id it carries. `sub` prints `global.subTalentMap`'s `array_length`, then one line per array index per row: that index's `t<id>` keys and values, `absent`, or why not. `timer` prints per row, over the current appearance, `first= last= min= max= unreadable= atPredicted= draws=` of the row's timer field on the first own instance, where `atPredicted` counts draws at exactly `-1`; an unreadable draw prints `unreadable`, never `-1` or `0`. The timer is an instrument for finding an ON discriminator only, never a border input. |
+| `tgprobe tgl [on\|off\|add\|list\|clear\|slots\|fields\|sub\|timer]` | The runtime toggle-candidate table (cap 16), prefilled with the seven rows of `### Other toggle skills: the static candidate table`: row 0 is the measured Soul Spurn row (`White_Mage_Soul_Spurn_AOE_obj`, marker `purgatory`), rows 1–6 carry no marker, and every row's timer field is `destroyTimer` and its ownership field each instance's own `isMyClient`. **The sampler is off by default**: `tgl on` (or `1`) starts it, `tgl off` (or `0`) stops it and keeps the counters; while off, the draw hook returns before a single builtin call, so other research sessions using this DLL do not pay for it. `list` and bare `tgl` print `sampler=on\|off`. While on, every row is read on every `DrawHudBuffs` draw through the shipped read's shape with the object, marker, ownership and timer as parameters (a row with no marker counts every own instance as marked; a row with ownership `none` counts every instance as own), and row 0 is also read through the shipped `ToggleIndicatorRead` on the same draw: `agree=` rising with `disagree=0` is the proof that the two reads are the same read. Bare `tgl` prints `agree=`/`disagree=` and per row the last sample (`state= n= mine= others= unattributed= marked= timer=`) plus `samples=`/`on=`/`off=`/`unreadable=`/`markedOn=`/`transitions=`/`lastTransitionFrame=` and `firstAfterRoomChange: state= n=`. `add <abilityId> <ObjectName> [marker\|none] [timer\|none] [ownership\|none] [sNN]` resolves the object by name first and prints `unresolved` (storing nothing) on a negative index, else the row with `idx=` and `sdk=<enumerator>\|none`; `list` prints every row's settings; `clear` keeps row 0. `fields [row]` prints the scalar members (cap 64) of the first own instance the row's read scanned — the same instance its ownership, marker and timer reads used, not `instance_find(obj, 0)`, which can be a foreign or leftover one — as first seen in the current appearance and as last seen, kept after the instance is gone (how a row's marker field is found). `last` is retaken at most once every 30 draws while the instance is present. When the read found no own instance, nothing is read or stored and the line reads `fields: no own instance`. `slots` prints every `UI_Hud_Talent_obj` `row0` element's `talentId` and `navBbox*` rectangle, naming the row whose talent id it carries. `sub` prints `global.subTalentMap`'s `array_length`, then one line per array index per row: that index's `t<id>` keys and values, `absent`, or why not. `timer` prints per row, over the current appearance, `first= last= min= max= unreadable= atPredicted= draws=` of the row's timer field on the first own instance, where `atPredicted` counts draws at exactly `-1`; an unreadable draw prints `unreadable`, never `-1` or `0`. The timer is an instrument for finding an ON discriminator only, never a border input. |
 
 `hudSinceRoomChange` counts `DrawHudBuffs` calls since the room key last
 changed, including the first call in the new room. An unreadable room key is
@@ -940,9 +940,13 @@ hotbar slot live. One research build (`plugin_build\build.bat dev`, the
 `BloodPactPlugin_rel.dll` built at the phase-R commit), one pass per class;
 the tester has a character for every row, second-tier classes included.
 
-**Setup.** The research DLL; `toggleguard` off (never armed this session);
+**Setup.** The first command of the session is `tgprobe tgl on`: the table's
+sampler is off by default and reads nothing until then, so check that
+`tgprobe tgl list` prints `sampler=on` before anything else. The research
+DLL; `toggleguard` off (never armed this session);
 no `bp_ipc\coop.ini` (or `enabled=0`), no `cooprender`, no `citrace` command
-at any point. **Controls, every pass:** `tgprobe show`'s
+at any point. Run the White Mage pass first: its row-0 results are the
+same-session controls C2 and C5 below lean on. **Controls, every pass:** `tgprobe show`'s
 `CheckPlayerInteraction(control)` native count rising (only if `tgprobe hook`
 was run), and `tgprobe tgl`'s row-0 `agree=` rising with `disagree=0` (White
 Mage pass: across one Soul Spurn ON/OFF cycle; other classes: two minutes
@@ -964,7 +968,13 @@ below are the rows Results → `### Toggle skill table` fills; each is
    flip base on off`, and quote the bucket-A `census.<Obj>` rows. If the
    object that flips is not the row's prefilled one, `tgprobe tgl add
    <abilityId> <Object>` it (and use that row from here on). No object
-   flips → the row is `not a persistent-instance toggle`.
+   flips → the row is `no persistent instance observed (deep flip census)`,
+   and only when the same census caught row 0's `White_Mage_Soul_Spurn_AOE_obj`
+   flipping on and off in the White Mage pass of the same session (quote
+   that row too: the census's positive control). Without that control, or
+   without the tester seeing the skill on at the moment of `deep snap on`,
+   the row is `blocked`. One census that saw nothing is "not observed",
+   never "this skill is not a toggle".
 4. **C3 (ownership).** By eye on → the row's `tgprobe tgl` line reads
    `state=on n≥1 mine≥1` (all `unattributed` instead → ownership `none`,
    re-added with `tgl add … none`); `tgprobe tgl fields <row>` for the
@@ -982,7 +992,16 @@ below are the rows Results → `### Toggle skill table` fills; each is
    plain → `timer <field>=<value>` (quoted); else the plain form never
    creates the object (`n=0` throughout) → `none-needed`; else `none`. Row 0
    needs this only as confirmation: its discriminator is `marker purgatory`
-   (sessions 4 and the ship check).
+   (sessions 4 and the ship check). **`none-needed` needs two quotes from the
+   same pass**, because it ships as "light the outline on any own instance"
+   and a zero from a cast that never went off would light it on every
+   plain cast: (a) evidence the plain cast landed — the mana (or life) drop,
+   or the effect seen by eye, quoted as seen; and (b) the positive control
+   that the sampler catches a short plain appearance at all — in the White
+   Mage pass of the same session, one plain Soul Spurn cast (Purgatory
+   respecced out) raised row 0's `appearance=` in `tgprobe tgl timer` (or
+   `tgl fields 0`), quoted before and after. Missing either → the row's
+   discriminator is `blocked`, not `none-needed`.
 7. **C6 (the sub-talent map).** `tgprobe tgl sub` with the sub-talent
    allocated, then respecced out, then allocated again: the array index
    whose `t<id>` changes is `Sub index:`; the `s<NN>` that changes is the
@@ -1268,8 +1287,9 @@ field name (the follow-up above replaces it with `noHud=`/`noRow0=`/
 
 Session 6 (`## Live procedure` → `### Session 6`) has not run. One row per
 candidate; each cell is a quoted value or exactly `not observed`/`blocked`,
-and the status is `measured`, `not a persistent-instance toggle`, `no
-discriminator` or `blocked`. The preamble will quote the `tgprobe talents`
+and the status is `measured`, `no persistent instance observed (deep flip
+census)` (only with row 0's flip caught by the same census, same session;
+else `blocked`), `no discriminator` or `blocked`. The preamble will quote the `tgprobe talents`
 `ids=` line and row 0's `agree=`/`disagree=0` pair.
 
 | Class | Skill (in-game name, `abilityId`) | Talent id | Sub-talent (key, measured `sNN`) | ON object (SDK name, index) | Ownership field or `none` | Plain form creates the object (`yes`/`no`) | ON discriminator | Slot (`row0[i]`) | Status |

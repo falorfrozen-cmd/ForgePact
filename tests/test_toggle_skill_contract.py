@@ -1082,10 +1082,50 @@ class ToggleTableProbeContractTests(unittest.TestCase):
 
     def test_tgl_dispatches_every_subcommand(self):
         body = function_body(self.plugin, "static void TgProbeTglCommand(const std::string& rest)")
-        for sub in ("add", "list", "clear", "slots", "fields", "sub", "timer"):
+        for sub in ("on", "off", "add", "list", "clear", "slots", "fields", "sub", "timer"):
             self.assertIn(f'sub == "{sub}"', body)
         # `clear` keeps row 0 (the measured row and the agreement control).
         self.assertIn("g_TgTgl.resize(1)", body)
+
+    def test_sampler_switch_is_off_by_default_and_gates_every_read(self):
+        # Round 2: `tgprobe tgl on|off` (zero-as-off, as elsewhere); off by
+        # default, and off returns before any builtin call - the gate is the
+        # sampler's first statement, ahead of the room read, the seed, the
+        # name resolution and both reads (instance_number lives in those).
+        self.assertIn("static bool g_TgTglSamplerOn = false;", self.plugin)
+        command = function_body(self.plugin, "static void TgProbeTglCommand(const std::string& rest)")
+        on = command[command.index('sub == "on"'):command.index('sub == "off"')]
+        self.assertIn('sub == "1"', on)
+        self.assertIn("g_TgTglSamplerOn = true;", on)
+        off = command[command.index('sub == "off"'):command.index('sub == "add"')]
+        self.assertIn('sub == "0"', off)
+        self.assertIn("g_TgTglSamplerOn = false;", off)
+        sampler = function_body(self.plugin, "static void TgProbeTglAfterDraw()")
+        statements = sampler.strip()
+        self.assertTrue(statements.startswith("if (!g_TgTglSamplerOn) return;"), statements[:80])
+        gate = sampler.index("if (!g_TgTglSamplerOn) return;")
+        for call in ("TgProbeTglSeed()", "CurrentRoomKey()", "TgProbeTglResolveObject(", "TgProbeTglRead(",
+                     "ToggleIndicatorRead(", "TgProbeTglSnapshot("):
+            self.assertLess(gate, sampler.index(call), call)
+        self.assertNotIn("CallBuiltin", sampler[:sampler.index("TgProbeTglSeed()")])
+        self.assertIn("sampler=", function_body(self.plugin, "static void TgProbeTglList()"))
+        # The field snapshot is throttled; the reads stay per draw.
+        self.assertIn("static constexpr long kTgTglSnapshotEveryDraws = 30;", self.plugin)
+        self.assertIn(">= kTgTglSnapshotEveryDraws", sampler)
+
+    def test_fields_snapshot_reads_the_own_instance_the_read_used(self):
+        # Round 2: not instance_find(obj, 0), which can be a foreign or a
+        # leftover instance; the first own instance TgProbeTglRead scanned.
+        read = function_body(self.plugin, "static ForgePact::ToggleIndicatorState TgProbeTglRead(")
+        self.assertIn("r.ownInst = inst;", read)
+        self.assertLess(read.index("++d.mine;"), read.index("r.ownInst = inst;"))
+        snapshot = function_body(self.plugin, "static void TgProbeTglSnapshot(")
+        self.assertIn("static void TgProbeTglSnapshot(const TgTglReadResult& r, TgTglFieldSample& out)", self.plugin)
+        self.assertNotIn('"instance_find"', snapshot)
+        self.assertIn("r.ownInst", snapshot)
+        self.assertLess(snapshot.index("if (!r.ownFound)"), snapshot.index('"variable_instance_get_names"'))
+        self.assertIn("fields: no own instance", function_body(self.plugin, "static std::string TgProbeTglFieldsText("))
+        self.assertIn("TgProbeTglFieldsText(row.fieldsFirst)", function_body(self.plugin, "static void TgProbeTglFields("))
 
     def test_tgl_add_resolves_by_name_and_stores_nothing_when_unresolved(self):
         resolve = function_body(self.plugin, "static bool TgProbeTglResolveObject(")

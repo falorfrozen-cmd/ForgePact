@@ -19368,12 +19368,15 @@ static void TgProbeMarkCommand(const std::string& rest)
 // ON, and there is no countdown or partial draw (D-U9).
 
 // One generalised read: T1's counted detail, plus the row's timer field as
-// read on the first own instance scanned (research output only).
+// read on the first own instance scanned (research output only), and that
+// instance itself, so `tgl fields` snapshots the instance the read used.
 struct TgTglReadResult {
     ForgePact::ToggleIndicatorReadDetail d;
     bool timerAsked = false;      // the row names a timer field and an own instance was scanned
     bool timerReadable = false;   // that read returned a number (real/int32/int64)
     double timer = 0.0;
+    bool ownFound = false;        // an own instance was scanned; ownInst is the first one
+    RValue ownInst;
 };
 
 // One appearance's worth of a row's timer field. `first`/`last` hold the
@@ -19432,6 +19435,7 @@ static ForgePact::ToggleIndicatorState TgProbeTglRead(double objIdx, const char*
                 }
                 if (!isMine) { ++d.others; continue; }
                 ++d.mine;
+                if (!r.ownFound) { r.ownFound = true; r.ownInst = inst; }
                 if (!marker) {
                     ++d.markedMine;
                 } else {
@@ -19513,9 +19517,17 @@ static constexpr int kTgTglFieldCap = 64;   // scalars kept per `tgl fields` sna
 // Soul Spurn's toggled form holds destroyTimer at -1 (session 4); the same
 // value is the prediction for every row until session 6 measures it.
 static constexpr double kTgTglPredictedInfinite = -1.0;
+// While an instance is present, its `last` field snapshot is retaken at most
+// once every this many draws; the reads and the timer note stay per draw.
+static constexpr long kTgTglSnapshotEveryDraws = 30;
+// `tgprobe tgl on|off`. Off by default: the per-draw sampler returns before
+// any builtin call, so a research session that is not measuring the table
+// (a ship check, another probe) does not pay for it.
+static bool g_TgTglSamplerOn = false;
 
 struct TgTglFieldSample {
     bool have = false;
+    bool noOwn = false;   // the last snapshot found no own instance and stored nothing
     long frame = -1;
     std::string text;
 };
@@ -19539,6 +19551,7 @@ struct TgTglRow {
     long appearances = 0;
     TgTglTimer timerStats;
     TgTglFieldSample fieldsFirst, fieldsLast;
+    long drawsSinceSnapshot = 0;
 };
 
 // The seven rows of the static candidate table, one ON-object candidate each
@@ -19606,16 +19619,22 @@ static int TgProbeTglSdkIndex(const std::string& objectName)
     return -1;
 }
 
-// Instance 0's scalar members (real/int/bool/string), each read on its own,
-// capped at kTgTglFieldCap. Comparing a toggled appearance's snapshot with a
-// plain one is how a row's marker field is found, the way session 4 found
-// `purgatory`.
-static void TgProbeTglSnapshot(double objIdx, TgTglFieldSample& out)
+// The scalar members (real/int/bool/string) of the own instance the read
+// used, each read on its own, capped at kTgTglFieldCap. Comparing a toggled
+// appearance's snapshot with a plain one is how a row's marker field is
+// found, the way session 4 found `purgatory`. Not instance 0: a foreign or
+// leftover instance there would hand the marker search another instance's
+// fields than the ownership, marker and timer reads used. No own instance:
+// nothing is read or stored, and `tgl fields` says so.
+static void TgProbeTglSnapshot(const TgTglReadResult& r, TgTglFieldSample& out)
 {
-    RValue inst;
-    try { inst = g_Yytk->CallBuiltin("instance_find", { RValue(objIdx), RValue(0.0) }); }
-    catch (...) { return; }
-    if (inst.m_Kind == VALUE_UNDEFINED) return;
+    if (!r.ownFound) {
+        out = TgTglFieldSample{};
+        out.noOwn = true;
+        out.frame = (long)g_RuntimeFrame;
+        return;
+    }
+    const RValue& inst = r.ownInst;
     std::string text;
     long kept = 0, nonScalar = 0, unreadable = 0, overCap = 0;
     try {
@@ -19636,19 +19655,28 @@ static void TgProbeTglSnapshot(double objIdx, TgTglFieldSample& out)
         }
     } catch (...) { text += " (names EXCEPTION)"; }
     out.have = true;
+    out.noOwn = false;
     out.frame = (long)g_RuntimeFrame;
     out.text = text + " [scalars=" + std::to_string(kept) + " nonScalar=" + std::to_string(nonScalar)
         + " unreadable=" + std::to_string(unreadable) + " overCap=" + std::to_string(overCap) + "]";
 }
 
+// One `tgl fields` sample as printed.
+static std::string TgProbeTglFieldsText(const TgTglFieldSample& s)
+{
+    if (s.noOwn) return "frame=" + std::to_string(s.frame) + " fields: no own instance";
+    return s.have ? "frame=" + std::to_string(s.frame) + s.text : std::string("none");
+}
+
 // Called once per DrawHudBuffs draw from TgProbeSpurnAfterDraw (research
-// build only). Every row is read through the generalised read, never cached
-// across draws. Row 0 is also read through the shipped ToggleIndicatorRead on
-// the same draw and compared: agree= rising with disagree=0 is the proof
-// that the generalised read is the shipped read (the instrument's positive
-// control, session 6's C1).
+// build only), and does nothing until `tgprobe tgl on`. Every row is read
+// through the generalised read, never cached across draws. Row 0 is also read
+// through the shipped ToggleIndicatorRead on the same draw and compared:
+// agree= rising with disagree=0 is the proof that the generalised read is the
+// shipped read (the instrument's positive control, session 6's C1).
 static void TgProbeTglAfterDraw()
 {
+    if (!g_TgTglSamplerOn) return;   // off: not one builtin call
     TgProbeTglSeed();
     const int64_t key = CurrentRoomKey();
     const bool roomChanged = key != INT64_MIN && (!g_TgTglRoomKeyKnown || key != g_TgTglRoomKey);
@@ -19689,20 +19717,24 @@ static void TgProbeTglAfterDraw()
             row.firstAfterRoomChangeN = r.d.n;
         }
         // An appearance starts on the first draw with n >= 1 after a draw
-        // with n = 0; the timer record and the first field snapshot restart
+        // with n = 0; the timer record and both field snapshots restart
         // there and survive the instance's removal until the next one, since
         // a plain appearance is too short to catch with an IPC round trip.
+        // `last` starts as `first` and is retaken every
+        // kTgTglSnapshotEveryDraws draws while the instance stays present.
         const bool present = r.d.n >= 1;
         if (present && !row.present) {
             ++row.appearances;
             row.timerStats = TgTglTimer{};
             row.fieldsFirst = TgTglFieldSample{};
-            TgProbeTglSnapshot(objIdx, row.fieldsFirst);
+            TgProbeTglSnapshot(r, row.fieldsFirst);
+            row.fieldsLast = row.fieldsFirst;
+            row.drawsSinceSnapshot = 0;
+        } else if (present && ++row.drawsSinceSnapshot >= kTgTglSnapshotEveryDraws) {
+            TgProbeTglSnapshot(r, row.fieldsLast);
+            row.drawsSinceSnapshot = 0;
         }
-        if (present) {
-            TgProbeTglTimerNote(row.timerStats, r, kTgTglPredictedInfinite);
-            TgProbeTglSnapshot(objIdx, row.fieldsLast);
-        }
+        if (present) TgProbeTglTimerNote(row.timerStats, r, kTgTglPredictedInfinite);
         row.present = present;
     }
 }
@@ -19757,7 +19789,8 @@ static void TgProbeTglAdd(const std::string& rest)
 static void TgProbeTglList()
 {
     TgProbeTglSeed();
-    Out("tgprobe tgl list: rows=" + std::to_string(g_TgTgl.size()) + " cap=" + std::to_string(kTgTglCap));
+    Out("tgprobe tgl list: rows=" + std::to_string(g_TgTgl.size()) + " cap=" + std::to_string(kTgTglCap)
+        + " sampler=" + (g_TgTglSamplerOn ? "on" : "off"));
     for (size_t i = 0; i < g_TgTgl.size(); ++i) {
         const TgTglRow& row = g_TgTgl[i];
         double objIdx = -1.0;
@@ -19779,6 +19812,7 @@ static void TgProbeTglShow()
 {
     TgProbeTglSeed();
     Out("tgprobe tgl: frame=" + std::to_string((unsigned long long)g_RuntimeFrame)
+        + " sampler=" + (g_TgTglSamplerOn ? "on" : "off")
         + " room=" + (g_TgTglRoomKeyKnown ? std::to_string((long long)g_TgTglRoomKey) : std::string("unreadable"))
         + " rows=" + std::to_string(g_TgTgl.size())
         + " agree=" + std::to_string(g_TgTglAgree) + " disagree=" + std::to_string(g_TgTglDisagree));
@@ -19814,13 +19848,10 @@ static void TgProbeTglFields(const std::string& rest)
     for (size_t i = 0; i < g_TgTgl.size(); ++i) {
         if (only >= 0 && (size_t)only != i) continue;
         const TgTglRow& row = g_TgTgl[i];
-        auto describe = [](const TgTglFieldSample& s) {
-            return s.have ? "frame=" + std::to_string(s.frame) + s.text : std::string("none");
-        };
         Out("tgprobe tgl fields [" + std::to_string(i) + "] " + row.abilityId + " obj=" + row.objectName
             + " appearance=" + std::to_string(row.appearances));
-        Out("  first: " + describe(row.fieldsFirst));
-        Out("  last:  " + describe(row.fieldsLast));
+        Out("  first: " + TgProbeTglFieldsText(row.fieldsFirst));
+        Out("  last:  " + TgProbeTglFieldsText(row.fieldsLast));
     }
 }
 
@@ -19942,6 +19973,17 @@ static void TgProbeTglCommand(const std::string& rest)
     std::string subRest;
     const std::string sub = Lower(FirstToken(rest, subRest));
     if (sub.empty()) { TgProbeTglShow(); return; }
+    if (sub == "on" || sub == "1") {
+        g_TgTglSamplerOn = true;
+        Out("tgprobe tgl -> sampler=on (every row read on every DrawHudBuffs draw; field snapshots at most every "
+            + std::to_string(kTgTglSnapshotEveryDraws) + " draws)");
+        return;
+    }
+    if (sub == "off" || sub == "0") {
+        g_TgTglSamplerOn = false;
+        Out("tgprobe tgl -> sampler=off (no reads; counters and snapshots kept)");
+        return;
+    }
     if (sub == "add") { TgProbeTglAdd(subRest); return; }
     if (sub == "list") { TgProbeTglList(); return; }
     if (sub == "clear") {
@@ -19954,7 +19996,7 @@ static void TgProbeTglCommand(const std::string& rest)
     if (sub == "fields") { TgProbeTglFields(subRest); return; }
     if (sub == "sub") { TgProbeTglSub(); return; }
     if (sub == "timer") { TgProbeTglTimer(); return; }
-    Out("tgprobe tgl: usage -> tgprobe tgl | add <abilityId> <ObjectName> [marker] [timer] [ownership] [sNN]"
+    Out("tgprobe tgl: usage -> tgprobe tgl | on | off | add <abilityId> <ObjectName> [marker] [timer] [ownership] [sNN]"
         " | list | clear | slots | fields [row] | sub | timer");
 }
 
