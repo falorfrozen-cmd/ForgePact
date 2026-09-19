@@ -57,11 +57,9 @@
     },
     {
       "dest": "modfiles_shipped/YYToolkit.dll",
-      "url": "https://github.com/falorfrozen-cmd/ForgePact/releases/download/v1.3.16/ForgePact-1.3.16.zip",
-      "archive_sha256": "e0bbe3a087af20c4a89137db386e06e3421316286bd2a076a4982f02869d1516",
-      "member": "ForgePact-1.3.16/modfiles/YYToolkit.dll",
-      "sha256": "bb113eefc9a5d485231ced1dc85d773dbc6b762ee680214851c56541359ad297",
-      "provenance": "modified YYToolkit, see yytoolkit-modified/NOTICE.md; shipped byte-identical in every release v1.3.1 through v1.3.16, extracted here from the published v1.3.16 zip"
+      "url": "https://github.com/falorfrozen-cmd/hero-siege-offline-toolkit/releases/download/yytoolkit-v4.0.1-hs.1/YYToolkit.dll",
+      "sha256": "51a393d7e5291ad76bdb85b9f44faf5178b6b20e0ce8432fa26bdaf9e21eadf8",
+      "provenance": "modified YYToolkit, built from the hub's third_party/yytoolkit/ patch series (series_revision hs.1) at hub commit 848a26edb4f9f826c68d85c8223fc117e07c95ed; see yytoolkit-modified/NOTICE.md for the full corresponding-source pointer and yytoolkit-modified/YYToolkit-BUILD-INFO.json for the build record"
     },
     {
       "dest": "modfiles_shipped/HSOfflineTrackerProducer.dll",
