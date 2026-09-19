@@ -344,6 +344,13 @@ static void TgProbeNoteTalentUseClass(CInstance* S, CInstance* O, int argc, RVal
 // right after HhDrawHeadLabels() so it samples the production read in the
 // exact place and `self` the shipped indicator will use.
 static void TgProbeSpurnAfterDraw();
+// Sprite look probe (issue #11, R rounds 3-4), defined with the rest of
+// tgprobe; `fromHudLayer` identifies the after-draw call site (the `buffs`
+// site inside TgProbeSpurnAfterDraw, or TgProbeDetourBody's `hud` site for
+// the DrawHud candidate row), so only the one matching the active layer
+// (`tgprobe sprite layer hud|buffs`) actually draws.
+static void TgProbeDrawMark(bool fromHudLayer);
+static void TgProbeSpriteDraw(bool fromHudLayer);
 #endif
 
 // HookOneScript/HookOneScriptTable prepend "gml_Script_" themselves, so a
@@ -17792,6 +17799,14 @@ static RValue& TgProbeDetourBody(int idx, CInstance* S, CInstance* O, RValue& R,
     if (logged && (t.flags & kTgRet)) {
         try { Out(std::string("tgprobe ") + t.label + " #" + std::to_string(logged) + " ret=" + Describe(r)); } catch (...) {}
     }
+    // Sprite look probe `hud` layer (R round 4, issue #11): after DrawHud's
+    // whole body - including the nested DrawHudBuffs call - has returned, so
+    // a probe draw here lands on top of the button art. No new hook; this is
+    // the same detour every other candidate row already funnels through.
+    if (idx == kTg_DrawHud) {
+        TgProbeDrawMark(/*fromHudLayer=*/true);
+        TgProbeSpriteDraw(/*fromHudLayer=*/true);
+    }
     return r;
 }
 
@@ -19294,9 +19309,10 @@ static void TgProbeSpurnSlots()
 
 // `tgprobe mark <x> <y> <w> <h>|off`: a static outline rectangle at GUI
 // coordinates, armed by TgProbeMarkCommand and drawn every frame from
-// TgProbeSpurnAfterDraw. Colour and alpha are saved before the first
-// draw_set_ and restored after the last draw - the same pattern
-// HhDrawHeadLabels uses.
+// TgProbeSpurnAfterDraw (layer `buffs`, the default) or from the sprite
+// probe's `DrawHud` hook (layer `hud`, R round 4). Colour and alpha are
+// saved before the first draw_set_ and restored after the last draw - the
+// same pattern HhDrawHeadLabels uses.
 static bool g_TgMarkActive = false;
 static double g_TgMarkX = 0, g_TgMarkY = 0, g_TgMarkW = 0, g_TgMarkH = 0;
 // `draws` counts a completed pass through the try block below (every
@@ -19307,9 +19323,25 @@ static double g_TgMarkX = 0, g_TgMarkY = 0, g_TgMarkW = 0, g_TgMarkH = 0;
 // review this fixes (Section 3: a negative with no positive control).
 static volatile long g_TgMarkDraws = 0, g_TgMarkDrawExc = 0;
 
-static void TgProbeDrawMark()
+// Shared by `tgprobe mark` and `tgprobe sprite` (R round 4): which draw site
+// actually draws. `buffs` is the original site, the end of `DrawHudBuffs`
+// (`TgProbeSpurnAfterDraw`) - session live-tested (2026-09-20) and found to
+// sit *under* the hotbar button's own art, which paints later in the same
+// frame (see docs "Sprite look probe" - the inset-rectangle occlusion
+// finding). `hud` draws from a new research-only hook on the outermost
+// `DrawHud`, after its whole body - including the nested `DrawHudBuffs` call
+// - returns, so it should land on top. Set only by `tgprobe sprite layer`;
+// `tgprobe mark` has no layer subcommand of its own, it just reads this.
+static bool g_TgProbeLayerHud = false;
+static const char* TgProbeLayerName() { return g_TgProbeLayerHud ? "hud" : "buffs"; }
+
+// `fromHudLayer` identifies which after-draw site is calling; the routine
+// only actually draws when that matches the active layer, so exactly one
+// site draws at a time and switching layers needs no new build.
+static void TgProbeDrawMark(bool fromHudLayer)
 {
     if (!g_TgMarkActive) return;
+    if (fromHudLayer != g_TgProbeLayerHud) return;
     try {
         RValue prevColour = g_Yytk->CallBuiltin("draw_get_colour", {});
         RValue prevAlpha = g_Yytk->CallBuiltin("draw_get_alpha", {});
@@ -19335,7 +19367,7 @@ static void TgProbeMarkCommand(const std::string& rest)
     if (first.empty() || first == "off") {
         g_TgMarkActive = false;
         Out("tgprobe mark -> off draws=" + std::to_string(g_TgMarkDraws)
-            + " drawExc=" + std::to_string(g_TgMarkDrawExc));
+            + " drawExc=" + std::to_string(g_TgMarkDrawExc) + " layer=" + TgProbeLayerName());
         return;
     }
     try {
@@ -19349,32 +19381,39 @@ static void TgProbeMarkCommand(const std::string& rest)
         InterlockedExchange(&g_TgMarkDraws, 0);
         InterlockedExchange(&g_TgMarkDrawExc, 0);
         Out("tgprobe mark -> x=" + std::to_string(x) + " y=" + std::to_string(y)
-            + " w=" + std::to_string(w) + " h=" + std::to_string(h)
+            + " w=" + std::to_string(w) + " h=" + std::to_string(h) + " layer=" + TgProbeLayerName()
             + " (watch `tgprobe spurn` or the next `tgprobe mark off` for draws=/drawExc=)");
     } catch (...) {
         Out("tgprobe mark: usage -> tgprobe mark <x> <y> <w> <h> | off");
     }
 }
 
-// `tgprobe sprite <SpriteName> [talentId]|off|gold|list`: draws a named
-// sprite - or today's shipped gold rectangles - over a talent's hotbar slot
-// (default Soul Spurn, kToggleIndicatorTalentId) from the research after-draw
-// path, so the tester can judge a candidate look by eye next to the current
-// one without arming `toggleborder` (R round 3, issue #11: could the border
-// reuse the game's own aura-slot visual). Read-only, research build only;
-// never a shipped draw input - S still ships the gold rectangle (D-U9's
-// "no shipped draw change" extends to this probe).
+// `tgprobe sprite <SpriteName> [talentId|centre]|off|gold|list|gallery [cols]|layer hud|buffs`:
+// draws a named sprite - or today's shipped gold rectangles, or every
+// candidate at once, or one candidate centred - so the tester can judge a
+// look by eye next to the current one without arming `toggleborder` (R round
+// 3, issue #11: could the border reuse the game's own aura-slot visual).
+// R round 4 adds `gallery`, `centre` and `layer` after the live session found
+// two named-sprite candidates drew (draws=/drawExc=0 both said so) but were
+// not visible at the hotbar slot - occluded by the button's own art, not
+// empty sprites (docs "Sprite look probe" has the full finding). Read-only,
+// research build only; never a shipped draw input - S still ships the gold
+// rectangle (D-U9's "no shipped draw change" extends to this probe).
 static const char* const kTgSpriteCandidates[] = {
     "Talent_Aura_Frame_spr", "Talent_Frame_Indicator_spr", "Ability_Indicator_Border_spr",
     "Ability_Indicator_spr", "Ability_Indicator_White_spr", "Sub_Talent_Big_Border_spr",
     "Skill_Frames_spr",
 };
-static bool g_TgSpriteActive = false;
-static bool g_TgSpriteGold = false;
+enum class TgSpriteMode { Off, Named, Gold, Gallery, Centre };
+static TgSpriteMode g_TgSpriteMode = TgSpriteMode::Off;
 static double g_TgSpriteIdx = -1.0;
 static std::string g_TgSpriteName;
 static int g_TgSpriteTalentId = kToggleIndicatorTalentId;
-static double g_TgSpriteImageIndex = 0.0;
+static int g_TgSpriteGalleryCols = 4;
+// Advances once per draw pass (not per sprite/cell), read - never mutated -
+// by TgProbeSpriteDrawOne, so every sprite in a gallery animates in lockstep
+// instead of compounding once per cell per draw.
+static double g_TgSpriteAnimTime = 0.0;
 static volatile long g_TgSpriteDraws = 0, g_TgSpriteDrawExc = 0;
 
 static bool TgProbeSpriteResolve(const std::string& name, double& outIdx)
@@ -19418,48 +19457,123 @@ static bool TgProbeSpriteFindSlot(int talentId, double& outX, double& outY, doub
     } catch (...) { return false; }
 }
 
-// Called from TgProbeSpurnAfterDraw, the same research after-draw path
-// `tgprobe mark`/`tgprobe tgl` already use - never from FrameCallback or
-// Hook_DrawHudBuffs, both of which stay byte-identical (UNCHANGED_SINCE_T1).
-static void TgProbeSpriteDraw()
+// GUI centre, used by `centre` and `gallery`; falls back to a common GUI size
+// if the read throws, which only shifts where the probe draws, never how.
+static void TgProbeSpriteGuiSize(double& outW, double& outH)
 {
-    if (!g_TgSpriteActive) return;
-    double x = 0, y = 0, w = 0, h = 0;
-    if (!TgProbeSpriteFindSlot(g_TgSpriteTalentId, x, y, w, h)) return;
+    outW = 1920.0; outH = 1080.0;
+    try { outW = g_Yytk->CallBuiltin("display_get_gui_width", {}).ToDouble(); } catch (...) {}
+    try { outH = g_Yytk->CallBuiltin("display_get_gui_height", {}).ToDouble(); } catch (...) {}
+}
+
+// One sprite, scaled to a box and animated from the shared time base. Must
+// run inside a draw_get_/draw_set_ save-restore pair; does not save/restore
+// itself, so the gallery can call it many times per pass under one pair.
+static void TgProbeSpriteDrawOne(double idx, double x, double y, double w, double h)
+{
+    double sw = 0, sh = 0, frames = 1.0;
+    try { sw = g_Yytk->CallBuiltin("sprite_get_width", { RValue(idx) }).ToDouble(); } catch (...) {}
+    try { sh = g_Yytk->CallBuiltin("sprite_get_height", { RValue(idx) }).ToDouble(); } catch (...) {}
+    try { frames = g_Yytk->CallBuiltin("sprite_get_number", { RValue(idx) }).ToDouble(); } catch (...) {}
+    const double imageIndex = frames > 1.0 ? std::fmod(g_TgSpriteAnimTime, frames) : 0.0;
+    const double xscale = sw > 0 ? w / sw : 1.0;
+    const double yscale = sh > 0 ? h / sh : 1.0;
+    g_Yytk->CallBuiltin("draw_set_alpha", { RValue(1.0) });
+    g_Yytk->CallBuiltin("draw_sprite_ext", {
+        RValue(idx), RValue(imageIndex), RValue(x), RValue(y),
+        RValue(xscale), RValue(yscale), RValue(0.0), RValue(16777215.0), RValue(1.0) });
+}
+
+// Today's shipped look (ToggleIndicatorDraw's three nested outlines), drawn
+// through this probe path as the gallery/single-candidate positive control.
+static void TgProbeSpriteDrawGoldRect(double x, double y, double w, double h)
+{
+    RValue gold = g_Yytk->CallBuiltin("make_colour_rgb", { RValue(255.0), RValue(215.0), RValue(0.0) });
+    g_Yytk->CallBuiltin("draw_set_colour", { gold });
+    g_Yytk->CallBuiltin("draw_set_alpha", { RValue(1.0) });
+    for (int t = 0; t < 3; ++t) {   // 3 px outline, gold (product decision D-U1)
+        g_Yytk->CallBuiltin("draw_rectangle", {
+            RValue(x - t), RValue(y - t), RValue(x + w + t), RValue(y + h + t), RValue(1.0) });
+    }
+}
+
+// A name label under a gallery cell. Its own try: `draw_text` failing must
+// not take the rest of the gallery down with it, and the command's own
+// printed index->name legend (TgProbeSpriteGalleryLegend) is the fallback if
+// it never draws at all.
+static void TgProbeSpriteDrawGalleryLabel(double x, double y, const std::string& text)
+{
+    try {
+        RValue white = g_Yytk->CallBuiltin("make_colour_rgb", { RValue(255.0), RValue(255.0), RValue(255.0) });
+        g_Yytk->CallBuiltin("draw_set_colour", { white });
+        g_Yytk->CallBuiltin("draw_set_alpha", { RValue(1.0) });
+        g_Yytk->CallBuiltin("draw_text", { RValue(x), RValue(y), RValue(text) });
+    } catch (...) {}
+}
+
+// Every candidate from `sprite list`, plus one gold cell as the positive
+// control, laid out in a grid in the middle of the screen (well away from
+// the HUD, so occlusion by hotbar art is not a question here).
+static void TgProbeSpriteDrawGallery()
+{
+    double gw = 0, gh = 0;
+    TgProbeSpriteGuiSize(gw, gh);
+    const double cellBox = 96.0;
+    const double cellStep = cellBox + 52.0;   // room for the label under the cell
+    const int cols = g_TgSpriteGalleryCols > 0 ? g_TgSpriteGalleryCols : 4;
+    const int totalCells = (int)(sizeof(kTgSpriteCandidates) / sizeof(kTgSpriteCandidates[0])) + 1;
+    const int rows = (totalCells + cols - 1) / cols;
+    const double originX = gw / 2.0 - (cols * cellStep) / 2.0;
+    const double originY = gh / 2.0 - (rows * cellStep) / 2.0;
+    int i = 0;
+    for (const char* name : kTgSpriteCandidates) {
+        const double cx = originX + (double)(i % cols) * cellStep;
+        const double cy = originY + (double)(i / cols) * cellStep;
+        double idx = -1.0;
+        if (TgProbeSpriteResolve(name, idx)) TgProbeSpriteDrawOne(idx, cx, cy, cellBox, cellBox);
+        TgProbeSpriteDrawGalleryLabel(cx, cy + cellBox + 4.0, std::to_string(i) + " " + name);
+        ++i;
+    }
+    const double cx = originX + (double)(i % cols) * cellStep;
+    const double cy = originY + (double)(i / cols) * cellStep;
+    TgProbeSpriteDrawGoldRect(cx, cy, cellBox, cellBox);
+    TgProbeSpriteDrawGalleryLabel(cx, cy + cellBox + 4.0, std::to_string(i) + " gold");
+}
+
+// Called from TgProbeSpurnAfterDraw (`fromHudLayer=false`, the original
+// site, end of `DrawHudBuffs`) or from the sprite probe's own `DrawHud` hook
+// (`fromHudLayer=true`) - never from FrameCallback or Hook_DrawHudBuffs,
+// both of which stay byte-identical (UNCHANGED_SINCE_T1). Only the site
+// matching the active layer actually draws.
+static void TgProbeSpriteDraw(bool fromHudLayer)
+{
+    if (g_TgSpriteMode == TgSpriteMode::Off) return;
+    if (fromHudLayer != g_TgProbeLayerHud) return;
     try {
         RValue prevColour = g_Yytk->CallBuiltin("draw_get_colour", {});
         RValue prevAlpha = g_Yytk->CallBuiltin("draw_get_alpha", {});
-        if (g_TgSpriteGold) {
-            // Today's shipped look (ToggleIndicatorDraw), drawn through this
-            // probe path so it can be flipped against a candidate sprite.
-            RValue gold = g_Yytk->CallBuiltin("make_colour_rgb", { RValue(255.0), RValue(215.0), RValue(0.0) });
-            g_Yytk->CallBuiltin("draw_set_colour", { gold });
-            g_Yytk->CallBuiltin("draw_set_alpha", { RValue(1.0) });
-            for (int t = 0; t < 3; ++t) {   // 3 px outline, gold (product decision D-U1)
-                g_Yytk->CallBuiltin("draw_rectangle", {
-                    RValue(x - t), RValue(y - t), RValue(x + w + t), RValue(y + h + t), RValue(1.0) });
-            }
+        g_TgSpriteAnimTime += 1.0 / 15.0;   // ~15 draws/frame so an animated candidate looks animated
+        bool drew = false;
+        if (g_TgSpriteMode == TgSpriteMode::Gallery) {
+            TgProbeSpriteDrawGallery();
+            drew = true;
+        } else if (g_TgSpriteMode == TgSpriteMode::Centre) {
+            double gw = 0, gh = 0;
+            TgProbeSpriteGuiSize(gw, gh);
+            const double box = 256.0;
+            TgProbeSpriteDrawOne(g_TgSpriteIdx, gw / 2.0 - box / 2.0, gh / 2.0 - box / 2.0, box, box);
+            drew = true;
         } else {
-            double sw = 0, sh = 0, frames = 1.0;
-            try { sw = g_Yytk->CallBuiltin("sprite_get_width", { RValue(g_TgSpriteIdx) }).ToDouble(); } catch (...) {}
-            try { sh = g_Yytk->CallBuiltin("sprite_get_height", { RValue(g_TgSpriteIdx) }).ToDouble(); } catch (...) {}
-            try { frames = g_Yytk->CallBuiltin("sprite_get_number", { RValue(g_TgSpriteIdx) }).ToDouble(); } catch (...) {}
-            if (frames > 1.0) {
-                g_TgSpriteImageIndex += 1.0 / 15.0;   // ~15 draws/frame so an animated candidate looks animated
-                if (g_TgSpriteImageIndex >= frames) g_TgSpriteImageIndex -= frames;
-            } else {
-                g_TgSpriteImageIndex = 0.0;
+            double x = 0, y = 0, w = 0, h = 0;
+            if (TgProbeSpriteFindSlot(g_TgSpriteTalentId, x, y, w, h)) {
+                if (g_TgSpriteMode == TgSpriteMode::Gold) TgProbeSpriteDrawGoldRect(x, y, w, h);
+                else TgProbeSpriteDrawOne(g_TgSpriteIdx, x, y, w, h);
+                drew = true;
             }
-            const double xscale = sw > 0 ? w / sw : 1.0;
-            const double yscale = sh > 0 ? h / sh : 1.0;
-            g_Yytk->CallBuiltin("draw_set_alpha", { RValue(1.0) });
-            g_Yytk->CallBuiltin("draw_sprite_ext", {
-                RValue(g_TgSpriteIdx), RValue(g_TgSpriteImageIndex), RValue(x), RValue(y),
-                RValue(xscale), RValue(yscale), RValue(0.0), RValue(16777215.0), RValue(1.0) });
         }
         g_Yytk->CallBuiltin("draw_set_alpha", { prevAlpha });
         g_Yytk->CallBuiltin("draw_set_colour", { prevColour });
-        InterlockedIncrement(&g_TgSpriteDraws);
+        if (drew) InterlockedIncrement(&g_TgSpriteDraws);
     } catch (...) { InterlockedIncrement(&g_TgSpriteDrawExc); }
 }
 
@@ -19473,30 +19587,88 @@ static void TgProbeSpriteList()
     }
 }
 
+// The index->name mapping `gallery` prints when it runs - the fallback for
+// judging the grid if a cell's `draw_text` label is hard to read or absent.
+static void TgProbeSpriteGalleryLegend()
+{
+    int i = 0;
+    for (const char* name : kTgSpriteCandidates) {
+        double idx = -1.0;
+        const bool resolved = TgProbeSpriteResolve(name, idx);
+        Out("  [" + std::to_string(i) + "] " + name + " idx=" + (resolved ? std::to_string((long long)idx) : std::string("unresolved")));
+        ++i;
+    }
+    Out("  [" + std::to_string(i) + "] gold (positive control)");
+}
+
+// True once the DrawHud row's own detour is doing something other than
+// nothing (native on the table entry, or riding a table-only original) -
+// the shapes TgProbeAttach can actually put it in, since DrawHud carries no
+// existingOrig/viaHook for a note to piggyback on.
+static bool TgProbeSpriteHudRowAttached()
+{
+    const long mode = g_TgRows[kTg_DrawHud].mode;
+    return mode == kTgNative || mode == kTgViaNative || mode == kTgViaTableOnly;
+}
+
 static void TgProbeSpriteCommand(const std::string& rest)
 {
     std::string subRest;
     const std::string first = FirstToken(rest, subRest);
     const std::string lower = Lower(first);
     if (first.empty()) {
-        Out("tgprobe sprite: usage -> tgprobe sprite <SpriteName> [talentId] | off | gold | list");
+        Out("tgprobe sprite: usage -> tgprobe sprite <SpriteName> [talentId] | <SpriteName> centre"
+            " | off | gold | list | gallery [cols] | layer hud|buffs");
         return;
     }
     if (lower == "off") {
-        g_TgSpriteActive = false;
+        g_TgSpriteMode = TgSpriteMode::Off;
         Out("tgprobe sprite -> off draws=" + std::to_string(g_TgSpriteDraws)
-            + " drawExc=" + std::to_string(g_TgSpriteDrawExc));
+            + " drawExc=" + std::to_string(g_TgSpriteDrawExc) + " layer=" + TgProbeLayerName());
         return;
     }
     if (lower == "list") { TgProbeSpriteList(); return; }
+    if (lower == "layer") {
+        std::string ignored;
+        const std::string v = Lower(FirstToken(subRest, ignored));
+        if (v == "hud") {
+            g_TgProbeLayerHud = true;
+        } else if (v == "buffs") {
+            g_TgProbeLayerHud = false;
+        } else {
+            Out(std::string("tgprobe sprite layer: usage -> tgprobe sprite layer hud|buffs (currently ")
+                + TgProbeLayerName() + ")");
+            return;
+        }
+        Out(std::string("tgprobe sprite layer -> ") + TgProbeLayerName()
+            + (g_TgProbeLayerHud
+                ? (TgProbeSpriteHudRowAttached()
+                    ? " (DrawHud row attached: " + g_TgRows[kTg_DrawHud].modeText + ")"
+                    : " (DrawHud row not attached yet - run `tgprobe hook` first, no hud draws will show)")
+                : ""));
+        return;
+    }
     if (lower == "gold") {
-        g_TgSpriteGold = true;
+        g_TgSpriteMode = TgSpriteMode::Gold;
         g_TgSpriteTalentId = kToggleIndicatorTalentId;
         InterlockedExchange(&g_TgSpriteDraws, 0);
         InterlockedExchange(&g_TgSpriteDrawExc, 0);
-        g_TgSpriteActive = true;
-        Out("tgprobe sprite -> gold talentId=" + std::to_string(g_TgSpriteTalentId)
+        Out("tgprobe sprite -> gold talentId=" + std::to_string(g_TgSpriteTalentId) + " layer=" + TgProbeLayerName()
             + " (watch `tgprobe sprite off` for draws=/drawExc=)");
+        return;
+    }
+    if (lower == "gallery") {
+        std::string ignored;
+        const std::string colsStr = FirstToken(subRest, ignored);
+        int cols = 4;
+        if (!colsStr.empty()) { try { cols = std::max(1, std::stoi(colsStr)); } catch (...) { cols = 4; } }
+        g_TgSpriteGalleryCols = cols;
+        g_TgSpriteMode = TgSpriteMode::Gallery;
+        InterlockedExchange(&g_TgSpriteDraws, 0);
+        InterlockedExchange(&g_TgSpriteDrawExc, 0);
+        Out("tgprobe sprite -> gallery cols=" + std::to_string(cols) + " layer=" + TgProbeLayerName() + ":");
+        TgProbeSpriteGalleryLegend();
+        Out("(watch `tgprobe sprite off` for draws=/drawExc=)");
         return;
     }
     double idx = -1.0;
@@ -19506,26 +19678,26 @@ static void TgProbeSpriteCommand(const std::string& rest)
         return;
     }
     std::string t1;
-    const std::string talentIdStr = FirstToken(subRest, t1);
+    const std::string arg2 = FirstToken(subRest, t1);
+    const std::string arg2Lower = Lower(arg2);
+    const bool centre = arg2Lower == "centre" || arg2Lower == "center";
     int talentId = kToggleIndicatorTalentId;
-    if (!talentIdStr.empty()) {
-        try { talentId = std::stoi(talentIdStr); } catch (...) { talentId = kToggleIndicatorTalentId; }
+    if (!centre && !arg2.empty()) {
+        try { talentId = std::stoi(arg2); } catch (...) { talentId = kToggleIndicatorTalentId; }
     }
     double sw = 0, sh = 0, frames = 1.0;
     try { sw = g_Yytk->CallBuiltin("sprite_get_width", { RValue(idx) }).ToDouble(); } catch (...) {}
     try { sh = g_Yytk->CallBuiltin("sprite_get_height", { RValue(idx) }).ToDouble(); } catch (...) {}
     try { frames = g_Yytk->CallBuiltin("sprite_get_number", { RValue(idx) }).ToDouble(); } catch (...) {}
-    g_TgSpriteGold = false;
     g_TgSpriteName = first;
     g_TgSpriteTalentId = talentId;
-    g_TgSpriteImageIndex = 0.0;
     InterlockedExchange(&g_TgSpriteDraws, 0);
     InterlockedExchange(&g_TgSpriteDrawExc, 0);
     g_TgSpriteIdx = idx;
-    g_TgSpriteActive = true;
-    Out("tgprobe sprite -> " + first + " idx=" + std::to_string((long long)idx)
-        + " talentId=" + std::to_string(talentId) + " frames=" + std::to_string((long long)frames)
-        + " width=" + std::to_string(sw) + " height=" + std::to_string(sh)
+    g_TgSpriteMode = centre ? TgSpriteMode::Centre : TgSpriteMode::Named;
+    Out("tgprobe sprite -> " + first + (centre ? std::string(" centre") : (" talentId=" + std::to_string(talentId)))
+        + " idx=" + std::to_string((long long)idx) + " frames=" + std::to_string((long long)frames)
+        + " width=" + std::to_string(sw) + " height=" + std::to_string(sh) + " layer=" + TgProbeLayerName()
         + " (watch `tgprobe sprite off` for draws=/drawExc=)");
 }
 
@@ -20452,8 +20624,8 @@ static void TgProbeSpurnAfterDraw()
     // Session 6: every candidate row, and row 0's agreement control, on the
     // same draw (`tgprobe tgl`).
     TgProbeTglAfterDraw();
-    TgProbeDrawMark();
-    TgProbeSpriteDraw();
+    TgProbeDrawMark(/*fromHudLayer=*/false);
+    TgProbeSpriteDraw(/*fromHudLayer=*/false);
 }
 
 static void TgProbeSpurnCommand(const std::string& rest)
@@ -20561,7 +20733,7 @@ static void TgProbeCommand(const std::string& rest)
         " | vars <Obj|global> | snap <Obj|global> | diff | room"
         " | deep snap|diff|flip|find|get|census|selftest|drop ..."
         " | spurn [log on|off | as foreign | slots | fields] | mark <x> <y> <w> <h> | off"
-        " | sprite <SpriteName> [talentId] | off | gold | list"
+        " | sprite <SpriteName> [talentId|centre] | off | gold | list | gallery [cols] | layer hud|buffs"
         " | talents [substr|tags] | tgl [add|list|clear|slots|fields|sub|timer]");
 }
 #endif // FORGEPACT_RELEASE (tgprobe)

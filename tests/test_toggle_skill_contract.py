@@ -609,7 +609,7 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
             self.assertNotIn(needle, self.stripped)
 
     def test_mark_saves_and_restores_colour_and_alpha(self):
-        body = function_body(self.plugin, "static void TgProbeDrawMark()")
+        body = function_body(self.plugin, "static void TgProbeDrawMark(bool fromHudLayer)")
         get_colour = body.index("draw_get_colour")
         get_alpha = body.index("draw_get_alpha")
         first_set = body.index("draw_set_")
@@ -626,7 +626,7 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
         # to swallow every exception uncounted, so "never drew" and "drew in
         # the wrong place" printed identically. draws=/drawExc= must be
         # incremented on the two respective paths and surfaced to a tester.
-        body = function_body(self.plugin, "static void TgProbeDrawMark()")
+        body = function_body(self.plugin, "static void TgProbeDrawMark(bool fromHudLayer)")
         self.assertIn("g_TgMarkDraws", body)
         self.assertIn("g_TgMarkDrawExc", body)
         self.assertIn("catch (...) { InterlockedIncrement(&g_TgMarkDrawExc); }", body)
@@ -639,6 +639,16 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
         spurn_cmd = function_body(self.plugin, "static void TgProbeSpurnCommand(const std::string& rest)")
         self.assertIn("markDraws=", spurn_cmd)
         self.assertIn("markDrawExc=", spurn_cmd)
+
+    def test_mark_only_draws_at_the_active_layer(self):
+        # R round 4: `tgprobe mark` shares the layer setting with
+        # `tgprobe sprite`; only the after-draw call site matching the
+        # active layer actually draws.
+        body = function_body(self.plugin, "static void TgProbeDrawMark(bool fromHudLayer)")
+        gate = body.index("if (fromHudLayer != g_TgProbeLayerHud) return;")
+        self.assertLess(gate, body.index("draw_get_colour"))
+        mark_cmd = function_body(self.plugin, "static void TgProbeMarkCommand(const std::string& rest)")
+        self.assertIn("TgProbeLayerName()", mark_cmd)
 
     def test_research_only_names_do_not_survive_stripping(self):
         self.assertNotIn("TgProbeSpurn", self.stripped)
@@ -1283,33 +1293,104 @@ class ToggleTableProbeContractTests(unittest.TestCase):
             self.assertIn(f'"{name}"', self.plugin)
 
     def test_sprite_draws_from_the_probe_path_only_and_animates(self):
-        draw = function_body(self.plugin, "static void TgProbeSpriteDraw()")
-        self.assertIn('"draw_sprite_ext"', draw)
-        self.assertIn('"sprite_get_number"', draw)
-        self.assertIn("g_TgSpriteImageIndex", draw)
+        draw = function_body(self.plugin, "static void TgProbeSpriteDraw(bool fromHudLayer)")
+        self.assertIn("TgProbeSpriteDrawOne(", draw)
         self.assertIn('"draw_get_colour"', draw)
         self.assertIn('"draw_get_alpha"', draw)
         self.assertIn("InterlockedIncrement(&g_TgSpriteDraws)", draw)
         self.assertIn("InterlockedIncrement(&g_TgSpriteDrawExc)", draw)
+        one = function_body(self.plugin, "static void TgProbeSpriteDrawOne(")
+        self.assertIn('"draw_sprite_ext"', one)
+        self.assertIn('"sprite_get_number"', one)
+        self.assertIn("g_TgSpriteAnimTime", one)
+        # A shared, read-only time base - never mutated per sprite/cell, so a
+        # gallery's several sprites animate in lockstep rather than the
+        # counter compounding once per cell per draw.
+        self.assertNotIn("g_TgSpriteAnimTime +=", one)
+        self.assertIn("g_TgSpriteAnimTime += 1.0 / 15.0;", draw)
         self.assertEqual(self.plugin.count('"draw_sprite_ext"'), 1)
-        # Hung off the existing research after-draw path, not Hook_DrawHudBuffs
-        # or FrameCallback - both stay byte-identical (UNCHANGED_SINCE_T1).
-        self.assertIn("TgProbeSpriteDraw();", function_body(self.plugin, "static void TgProbeSpurnAfterDraw()"))
+        # Hung off the existing research after-draw path (buffs) and the new
+        # hud-layer hook - never Hook_DrawHudBuffs or FrameCallback directly,
+        # both of which stay byte-identical (UNCHANGED_SINCE_T1).
+        self.assertIn("TgProbeSpriteDraw(/*fromHudLayer=*/false);",
+                       function_body(self.plugin, "static void TgProbeSpurnAfterDraw()"))
+        self.assertIn("TgProbeSpriteDraw(/*fromHudLayer=*/true);",
+                       function_body(self.plugin, "static RValue& TgProbeDetourBody("))
         self.assertNotIn("TgProbeSpriteDraw", function_body(self.plugin, "static RValue& Hook_DrawHudBuffs("))
         self.assertNotIn("TgProbeSpriteDraw", function_body(self.plugin, "void FrameCallback("))
 
     def test_sprite_off_reports_draws_and_exceptions(self):
         sprite = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
         off = sprite[sprite.index('lower == "off"'):sprite.index('lower == "list"')]
-        self.assertIn("g_TgSpriteActive = false;", off)
+        self.assertIn("g_TgSpriteMode = TgSpriteMode::Off;", off)
         self.assertIn("draws=", off)
         self.assertIn("drawExc=", off)
 
     def test_sprite_research_only_names_do_not_survive_stripping(self):
         for name in ("TgProbeSpriteResolve", "TgProbeSpriteFindSlot", "TgProbeSpriteDraw",
-                     "TgProbeSpriteList", "TgProbeSpriteCommand", "g_TgSpriteActive", "kTgSpriteCandidates"):
+                     "TgProbeSpriteDrawOne", "TgProbeSpriteDrawGoldRect", "TgProbeSpriteDrawGallery",
+                     "TgProbeSpriteDrawGalleryLabel", "TgProbeSpriteGalleryLegend", "TgProbeSpriteGuiSize",
+                     "TgProbeSpriteHudRowAttached", "TgProbeSpriteList",
+                     "TgProbeSpriteCommand", "TgSpriteMode", "g_TgSpriteMode", "kTgSpriteCandidates"):
             self.assertIn(name, self.block)
             self.assertNotIn(name, self.stripped)
+
+    # ---- Sprite look probe round 4 (2026-09-20): gallery, centre, layer ----
+    # The live session found two named candidates drew (draws=/drawExc=0)
+    # but were not visible - occluded by the hotbar button's own art, painted
+    # after the `buffs`-layer draw. `gallery`/`centre` move the judgement off
+    # the hotbar entirely; `layer hud` moves the draw itself to after the
+    # outermost `DrawHud` call, on top of the button art.
+
+    def test_sprite_dispatches_gallery_centre_and_layer(self):
+        sprite = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
+        for needle in ('lower == "gallery"', 'lower == "layer"'):
+            self.assertIn(needle, sprite)
+        self.assertIn('arg2Lower == "centre"', sprite)
+        self.assertIn('arg2Lower == "center"', sprite)
+        self.assertIn("TgSpriteMode::Centre", sprite)
+        self.assertIn("TgSpriteMode::Gallery", sprite)
+        self.assertIn('v == "hud"', sprite)
+        self.assertIn('v == "buffs"', sprite)
+
+    def test_gallery_draws_every_candidate_plus_gold_and_prints_a_legend(self):
+        gallery = function_body(self.plugin, "static void TgProbeSpriteDrawGallery()")
+        self.assertIn("for (const char* name : kTgSpriteCandidates)", gallery)
+        self.assertIn("TgProbeSpriteDrawOne(", gallery)
+        self.assertIn("TgProbeSpriteDrawGoldRect(", gallery)
+        self.assertIn("TgProbeSpriteDrawGalleryLabel(", gallery)
+        legend = function_body(self.plugin, "static void TgProbeSpriteGalleryLegend()")
+        self.assertIn("for (const char* name : kTgSpriteCandidates)", legend)
+        self.assertIn("gold (positive control)", legend)
+        sprite_gallery = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
+        gallery_branch = sprite_gallery[sprite_gallery.index('lower == "gallery"'):sprite_gallery.index('lower == "gallery"') + 700]
+        self.assertIn("TgProbeSpriteGalleryLegend()", gallery_branch)
+
+    def test_hud_layer_is_a_separate_draw_site_reusing_the_one_resolver(self):
+        # No new hook for the hud layer: it reuses the DrawHud candidate row
+        # every other row already funnels through (TgProbeAttach/
+        # MmCreateHook, called from exactly one place - test_probe_installs_
+        # no_table_hooks and test_one_resolver_decides_every_detour pin that
+        # the block calls HookOneScript/HookOneScriptTable/HookRawNamedRoutine
+        # nowhere and MmCreateHook exactly once).
+        for call in ("HookOneScript(", "HookOneScriptTable(", "HookRawNamedRoutine("):
+            self.assertNotIn(call, self.block)
+        body = function_body(self.plugin, "static RValue& TgProbeDetourBody(")
+        drawhud_branch = body[body.index("idx == kTg_DrawHud"):]
+        self.assertIn("TgProbeDrawMark(/*fromHudLayer=*/true);", drawhud_branch)
+        self.assertIn("TgProbeSpriteDraw(/*fromHudLayer=*/true);", drawhud_branch)
+        # After the row's own trampoline call, not before - draws after
+        # DrawHud's whole body (including the nested DrawHudBuffs call).
+        self.assertLess(body.index("t.tramp ? t.tramp("), body.index("idx == kTg_DrawHud"))
+        # `layer hud` only flips the flag these draws check; it does not
+        # attach anything itself - the tester runs `tgprobe hook` for that,
+        # same as any other candidate row.
+        layer_branch = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
+        layer_branch = layer_branch[layer_branch.index('lower == "layer"'):]
+        self.assertIn("TgProbeSpriteHudRowAttached()", layer_branch)
+        attached = function_body(self.plugin, "static bool TgProbeSpriteHudRowAttached()")
+        self.assertIn("kTg_DrawHud", attached)
+        self.assertIn("kTgNative", attached)
 
     def test_shipped_draw_functions_unchanged_from_round_base(self):
         # Round base for R round 3 (context "R Round 3 - sprite look probe"):
