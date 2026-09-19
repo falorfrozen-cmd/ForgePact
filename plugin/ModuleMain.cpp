@@ -17936,8 +17936,9 @@ static void MBuffTick()
 //     (only while an insert is pending) the Prospect button, each by what it
 //     is, and invokes at the point of use, never on anything the hook cached.
 //     With the `bag` sub-option on (Stage C), the same frame first moves the
-//     grid's materials to the materials tab (ApMovePass), re-reads, and asks
-//     the core again before the invoke.
+//     previous prospect's batch - the cells the core names, which are only
+//     what its own last invoke produced - to the materials tab (ApMovePass),
+//     re-reads, and asks the core again before the invoke.
 //
 // The invoke is the one shape Phase 1 recorded (research doc, § Stage B
 // results, P-shapes: `exec-index button:activationArgs self=found`):
@@ -18077,13 +18078,18 @@ static bool ApFindGrid(RValue& node, double& nodeId)
 // The node's cells: a cell is empty when it is `undefined` or 0, as
 // the research instrument's contents read counts it. With `prints`, the distinct
 // nodeFingerprint values of the filled cells as well, in order - what tells a
-// prospect apart from nothing when the filled count happens not to move. A
-// read that fails returns false and is never an empty grid.
+// prospect apart from nothing when the filled count happens not to move. The
+// same values also go into `printList`, one per entry, which is what the core
+// records the previous batch from (the invoke frame's read against the read
+// straight after it) - never re-split from the joined text, since a
+// non-string fingerprint goes through Describe. A read that fails returns
+// false and is never an empty grid.
 static bool ApReadCells(const RValue& node, ForgePact::AutoProspectView& v, bool prints)
 {
     v.filled = 0;
     v.empty = 0;
     v.fingerprints.clear();
+    v.printList.clear();
     if (!g_Yytk->CallBuiltin("variable_instance_exists", { node, RValue("nodeGrid") }).ToBoolean()) return false;
     const RValue grid = g_Yytk->CallBuiltin("variable_instance_get", { node, RValue("nodeGrid") });
     if (grid.m_Kind != VALUE_ARRAY) return false;
@@ -18110,6 +18116,7 @@ static bool ApReadCells(const RValue& node, ForgePact::AutoProspectView& v, bool
         }
     }
     for (size_t i = 0; i < seen.size(); ++i) v.fingerprints += (i ? "," : "") + seen[i];
+    v.printList = seen;
     return true;
 }
 
@@ -18156,8 +18163,12 @@ static bool ApFindButton(double windowId, const RValue& handlerIndex, RValue& bu
 }
 
 // ---- Stage C: the previous batch to the materials tab ------------------------
-// Before a landed insert is prospected, the materials already in the grid (the
-// previous prospect's batch) go to the player's materials tab, by the route
+// Before a landed insert is prospected, the previous prospect's batch goes to
+// the player's materials tab. Which cells that is, the core decides: only
+// fingerprints its own last invoke produced, and of those only the cells
+// flagged as materials here - never "every material in the grid", since an
+// inserted ore is a material too (Phase 3 live on e63eed5 moved one back to
+// the tab unprospected). The move itself is the route
 // Stage C's M7 recorded live (research doc, § Stage C results, M-shapes), all
 // by name through script_execute with self = other = the ProspectGrid node:
 // the item behind the cell's fingerprint (GetItemFromFingerprint(fp, 0)), the

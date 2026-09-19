@@ -505,6 +505,49 @@ class AutoProspectContractTests(unittest.TestCase):
         self.assertRegex(doc, r"\nphase3c-status: (pending|complete)\n")
         self.assertNotIn("Not built, on purpose:** returning materials", doc)
 
+    def test_move_set_is_the_recorded_batch_not_every_material(self):
+        # Round 1: live on e63eed5 an inserted ore - itself a material - was
+        # moved back to the tab and never prospected, because the pass named
+        # every material cell. The batch is what the core's own invoke
+        # produced; the harness pins the behaviour, and this stops a later edit
+        # from quietly going back to "every material".
+        header = strip_comments(self.header)
+        decide = header[header.index("AutoProspectDecision Decide("):header.index("void OnInvoked(")]
+        push = decide.index("d.moves.push_back(c);")
+        condition = decide[decide.rindex("if (", 0, push):push]
+        self.assertIn("c.material", condition)
+        self.assertIn("Contains(m_Batch, c.fingerprint)", condition)
+        self.assertEqual(decide.count("d.moves.push_back("), 1)
+        self.assertNotRegex(decide, r"if \(c\.material\)\s*d\.moves\.push_back")
+        # The pass consumes the batch.
+        self.assertLess(push, decide.index("m_Batch.clear();", push))
+        # Recorded in OnInvoked from `after`, against the invoking view's list.
+        invoked = header[header.index("void OnInvoked("):]
+        invoked = invoked[:invoked.index("\n    }\n")]
+        self.assertIn("for (const std::string& fp : after.printList)", invoked)
+        self.assertIn("if (!Contains(m_InvokePrints, fp)) m_Batch.push_back(fp);", invoked)
+        self.assertIn("if (dispatched && readable)", invoked)
+        self.assertIn("m_InvokePrints = in.printList;", decide)
+        # Forgotten on first sight, a removal and a not-landed expiry.
+        first_sight = decide[decide.index("if (in.nodeId != m_NodeId || m_Settled < 0) {"):decide.index("if (!m_Pending) {")]
+        self.assertIn("m_Batch.clear();", first_sight)
+        self.assertIn("if (in.filled < m_Settled) { m_Settled = in.filled; m_Batch.clear(); }", decide)
+        expiry = decide[decide.index("if (++m_PendingAge > kAutoProspectLandFrames) {"):]
+        expiry = expiry[:expiry.index("return d;")]
+        self.assertIn("m_NotLanded.fetch_add(1);", expiry)
+        self.assertIn("m_Batch.clear();", expiry)
+        # No batch, no item lookups.
+        needs = header[header.index("bool NeedsMaterials() const {"):]
+        needs = needs[:needs.index("}")]
+        self.assertIn("!m_Batch.empty()", needs)
+        self.assertIn('" batch="', self.header)
+        # The adapter hands the core the distinct fingerprints as a list,
+        # filled by the same reader both the invoke frame and `after` use.
+        cells = self.body("static bool ApReadCells(")
+        self.assertIn("v.printList.clear();", cells)
+        self.assertIn("v.printList = seen;", cells)
+        self.assertLess(cells.index("v.printList.clear();"), cells.index("v.printList = seen;"))
+
 
 if __name__ == "__main__":
     unittest.main()

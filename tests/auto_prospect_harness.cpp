@@ -730,6 +730,14 @@ static void AdapterMeasuredSessionProspectsEachInsertOnce()
 // baseline/bag_off_never_moves and baseline/parent_off_never_moves PASSED
 // against it, as baselines must: a core that never asks for a pass trivially
 // never asks for one wrongly, and the targets above are what it fails.
+//
+// Round 1 re-seeded these targets on purpose. They first seeded "the previous
+// batch" as materials that simply sat in the grid, which under the round-1
+// rule (the batch is what the core's own invoke produced) seeds nothing; each
+// now seeds it through a prospect that records it (SeedBatch), and keeps its
+// name and what it asserts. The FAIL lines above are the round-0 history.
+// non_material_never_moved puts its non-material inside the batch, so the
+// material flag is still what keeps it in the grid.
 
 struct Mat { std::string fp; bool material; };
 
@@ -746,6 +754,8 @@ static AutoProspectView CellsView(int64_t node, const std::vector<Mat>& cells)
         c.material = cells[i].material;
         v.cells.push_back(c);
         prints += (i ? "," : "") + cells[i].fp;
+        if (std::find(v.printList.begin(), v.printList.end(), cells[i].fp) == v.printList.end())
+            v.printList.push_back(cells[i].fp);
     }
     v.fingerprints = prints;
     return v;
@@ -808,6 +818,27 @@ static void QuietFrame(AutoProspectMod& mod, const AutoProspectView& v, Tally& t
 {
     const AutoProspectDecision d = BagFrame(mod, v, t, b, v, MovedReport());
     if (d.action == AutoProspectAction::MoveMaterials) b.early = true;
+}
+
+// "The previous batch", seeded the way the core records one (round 1): a
+// prospect of one item on the grid as it stands (`before`), whose read
+// straight after the call holds `before` plus `batch`. The seed keeps its own
+// tallies, so a scenario's counts start at what the scenario itself does.
+static void SeedBatch(AutoProspectMod& mod, const std::vector<Mat>& before, const std::vector<Mat>& batch,
+                      int64_t node = kNode)
+{
+    Tally t;
+    BagTally b;
+    QuietFrame(mod, CellsView(node, before), t, b);
+    mod.OnInsert(node, true, false);
+    std::vector<Mat> in = before;
+    in.push_back({ "seed-14", false });
+    std::vector<Mat> after = before;
+    after.insert(after.end(), batch.begin(), batch.end());
+    const AutoProspectView inView = CellsView(node, in);
+    const AutoProspectView afterView = CellsView(node, after);
+    BagFrame(mod, inView, t, b, inView, MovedReport(), &afterView);
+    QuietFrame(mod, afterView, t, b);
 }
 
 static void BaselineBagOffNeverMoves()
@@ -884,7 +915,7 @@ static void TargetMovePassBeforeTheInvoke()
     mod.SetEnabled(true);
     Tally t;
     BagTally b;
-    QuietFrame(mod, CellsView(kNode, { { "m-0", true }, { "n-0", true } }), t, b);   // the previous batch, settled
+    SeedBatch(mod, {}, { { "m-0", true }, { "n-0", true } });                        // the previous batch, recorded
     mod.OnInsert(kNode, true, false);
     const AutoProspectView in = CellsView(kNode, { { "m-0", true }, { "n-0", true }, { "a-14", false } });
     const AutoProspectView moved = CellsView(kNode, { { "a-14", false } });
@@ -902,8 +933,9 @@ static void TargetNonMaterialNeverMoved()
     mod.SetEnabled(true);
     Tally t;
     BagTally b;
-    // A non-material left in the grid (a refused item) beside a material.
-    QuietFrame(mod, CellsView(kNode, { { "x-3", false }, { "m-0", true } }), t, b);
+    // A non-material inside the recorded batch, beside a material: the
+    // adapter's flag is what keeps it in the grid.
+    SeedBatch(mod, {}, { { "x-3", false }, { "m-0", true } });
     mod.OnInsert(kNode, true, false);
     const AutoProspectView in = CellsView(kNode, { { "x-3", false }, { "m-0", true }, { "a-14", false } });
     const AutoProspectView moved = CellsView(kNode, { { "x-3", false }, { "a-14", false } });
@@ -914,7 +946,7 @@ static void TargetNonMaterialNeverMoved()
     AutoProspectMod only;
     only.SetEnabled(true);
     BagTally b2;
-    QuietFrame(only, CellsView(kNode, { { "x-3", false } }), t, b2);
+    SeedBatch(only, {}, { { "x-3", false } });
     only.OnInsert(kNode, true, false);
     const AutoProspectView in2 = CellsView(kNode, { { "x-3", false }, { "a-14", false } });
     BagFrame(only, in2, t, b2, in2, MovedReport(), &after);
@@ -931,10 +963,13 @@ static void TargetMovePassOnlyWhenAnInsertLands()
     Tally t;
     BagTally b;
     const AutoProspectView mats = CellsView(kNode, { { "m-0", true }, { "n-0", true } });
-    for (int i = 0; i < 5; ++i) QuietFrame(mod, mats, t, b);               // materials sit there; no insert
+    SeedBatch(mod, {}, { { "m-0", true }, { "n-0", true } });
+    for (int i = 0; i < 5; ++i) QuietFrame(mod, mats, t, b);               // the batch sits there; no insert
     const bool quietNeeds = mod.NeedsMaterials();
     mod.OnInsert(kNode, true, false);                                       // a rearrangement: never lands
     for (int i = 0; i < ForgePact::kAutoProspectLandFrames + 2; ++i) QuietFrame(mod, mats, t, b);
+    // Round 1: the expiry forgot the batch, so a prospect records it again.
+    SeedBatch(mod, {}, { { "m-0", true }, { "n-0", true } });
     mod.OnInsert(kNode, true, false);                                       // a real insert, a frame late
     QuietFrame(mod, mats, t, b);
     const AutoProspectView in = CellsView(kNode, { { "m-0", true }, { "n-0", true }, { "a-14", false } });
@@ -961,7 +996,7 @@ static void TargetLandedInsertStaysLandedAcrossTheMovePass()
     BagTally b;
     std::vector<Mat> five;
     for (int i = 0; i < 5; ++i) five.push_back({ "m" + N(i) + "-0", true });
-    QuietFrame(mod, CellsView(kNode, five), t, b);
+    SeedBatch(mod, {}, five);
     mod.OnInsert(kNode, true, false);
     std::vector<Mat> six = five;
     six.push_back({ "a-14", false });
@@ -985,14 +1020,14 @@ static void TargetRefusedMoveLeavesTheMaterialAndIsLoggedOnce()
     mod.SetEnabled(true);
     Tally t;
     BagTally b;
-    const AutoProspectView mats = CellsView(kNode, { { "m-0", true } });
-    QuietFrame(mod, mats, t, b);
+    SeedBatch(mod, {}, { { "m-0", true } });
     const AutoProspectView in = CellsView(kNode, { { "m-0", true }, { "a-14", false } });
-    const AutoProspectView after = CellsView(kNode, { { "m-0", true }, { "o-0", true } });
+    // That prospect's batch is o and p; m stays behind and is not named again.
+    const AutoProspectView after = CellsView(kNode, { { "m-0", true }, { "o-0", true }, { "p-0", true } });
     mod.OnInsert(kNode, true, false);
     BagFrame(mod, in, t, b, in, Report(false, false, 1), &after);           // not-stackable
-    const AutoProspectView in2 = CellsView(kNode, { { "m-0", true }, { "o-0", true }, { "b-14", false } });
-    const AutoProspectView after2 = CellsView(kNode, { { "m-0", true }, { "o-0", true }, { "p-0", true } });
+    const AutoProspectView in2 = CellsView(kNode, { { "m-0", true }, { "o-0", true }, { "p-0", true }, { "b-14", false } });
+    const AutoProspectView after2 = CellsView(kNode, { { "m-0", true }, { "o-0", true }, { "p-0", true }, { "q-0", true } });
     mod.OnInsert(kNode, true, false);
     BagFrame(mod, in2, t, b, in2, Report(true, false, 1), &after2);         // not-added, twice
     ForgePact::AutoProspectMoveReport stale = MovedReport();
@@ -1027,7 +1062,7 @@ static bool TurnsOffForTheSession(const ForgePact::AutoProspectMoveReport& repor
     mod.SetEnabled(true);
     Tally t;
     BagTally b;
-    QuietFrame(mod, CellsView(kNode, { { "m-0", true }, { "n-0", true } }), t, b);
+    SeedBatch(mod, {}, { { "m-0", true }, { "n-0", true } });
     mod.OnInsert(kNode, true, false);
     const AutoProspectView in = CellsView(kNode, { { "m-0", true }, { "n-0", true }, { "a-14", false } });
     const AutoProspectView moved = CellsView(kNode, { { "n-0", true }, { "a-14", false } });
@@ -1078,29 +1113,265 @@ static void TargetFirstMoveReportedOnceInThePlayersLog()
     mod.SetEnabled(true);
     Tally t;
     BagTally b;
-    QuietFrame(mod, CellsView(kNode, { { "m-0", true }, { "n-0", true } }), t, b);
+    SeedBatch(mod, {}, { { "m-0", true }, { "n-0", true } });
     const bool early = mod.TakeFirstMove();
     mod.OnInsert(kNode, true, false);
     const AutoProspectView in = CellsView(kNode, { { "m-0", true }, { "n-0", true }, { "a-14", false } });
-    const AutoProspectView after = CellsView(kNode, { { "m-0", true }, { "n-0", true }, { "o-0", true } });
+    const AutoProspectView after = CellsView(kNode, { { "m-0", true }, { "n-0", true }, { "o-0", true }, { "p-0", true },
+                                                      { "q-0", true } });
     BagFrame(mod, in, t, b, in, Report(false, false, 1), &after);           // a pass that moved nothing
     const bool afterNothingMoved = mod.TakeFirstMove();
     mod.OnInsert(kNode, true, false);
-    const AutoProspectView in2 = CellsView(kNode, { { "m-0", true }, { "n-0", true }, { "o-0", true }, { "b-14", false } });
-    const AutoProspectView moved2 = CellsView(kNode, { { "b-14", false } });
-    const AutoProspectView after2 = CellsView(kNode, { { "p-0", true } });
-    BagFrame(mod, in2, t, b, moved2, MovedReport(), &after2);
+    const AutoProspectView in2 = CellsView(kNode, { { "m-0", true }, { "n-0", true }, { "o-0", true }, { "p-0", true },
+                                                    { "q-0", true }, { "b-14", false } });
+    const AutoProspectView moved2 = CellsView(kNode, { { "m-0", true }, { "n-0", true }, { "b-14", false } });
+    const AutoProspectView after2 = CellsView(kNode, { { "m-0", true }, { "n-0", true }, { "r-0", true } });
+    BagFrame(mod, in2, t, b, moved2, MovedReport(), &after2);               // the batch o, p, q
     const bool first = mod.TakeFirstMove();
     const std::string line = mod.FirstMoveLine();
     mod.OnInsert(kNode, true, false);
-    const AutoProspectView in3 = CellsView(kNode, { { "p-0", true }, { "c-14", false } });
-    BagFrame(mod, in3, t, b, CellsView(kNode, { { "c-14", false } }), MovedReport(), &after2);
+    const AutoProspectView in3 = CellsView(kNode, { { "m-0", true }, { "n-0", true }, { "r-0", true }, { "c-14", false } });
+    BagFrame(mod, in3, t, b, CellsView(kNode, { { "m-0", true }, { "n-0", true }, { "c-14", false } }), MovedReport(),
+             &after2);                                                      // the batch r
     const bool second = mod.TakeFirstMove();
     Check("target/first_move_reported_once_in_the_players_log",
           !early && !afterNothingMoved && first && !second && mod.Moved() == 4
               && line.rfind("autoprospect: first move to bag - ", 0) == 0 && line.find(" moved=3") != std::string::npos,
           "early=" + N(early) + " afterNothingMoved=" + N(afterNothingMoved) + " first=" + N(first)
               + " second=" + N(second) + " moved=" + N(mod.Moved()) + " line=\"" + line + "\"");
+}
+
+// ---- Stage C round 1: the move set is the recorded batch --------------------
+//
+// Phase 3 live on e63eed5 (research doc, § Stage C Phase 3 results): with two
+// materials in the grid the human inserted ONE ORE, and the pass moved three
+// cells - the two materials and the ore itself, which is a material too - so
+// the ore went straight back to the materials tab and was never prospected
+// (`moved` 3->6, `ran-no-effect=1`, ore count unchanged by eye). "Material"
+// names a kind of item, and the insert can be that kind. The previous batch is
+// identified by what it is instead: the fingerprints the core's own invoke
+// produced, read in the invoke's frame (OnInvoked's `after` against the view
+// the invoking Decide saw). Anything the core cannot account for forgets it,
+// and a forgotten batch moves nothing - the materials just stay.
+//
+// Observed 2026-09-19 against the round-0 core (e63eed5), unchanged but for the
+// one new name the scenarios need, shimmed inert (the view's `printList`,
+// which that core never reads):
+//   FAIL target/first_prospect_of_a_session_moves_nothing passes=1 invokes=1 needs=1 moves=m-0,n-0 moved=2
+//   FAIL target/ore_insert_moves_only_the_previous_batch passes=1 invokes=1 moves=ore-0,p-0,o-0 moved=3 batchBefore=0
+//   FAIL target/hand_placed_material_is_never_moved passes=1 invokes=1 moves=h-0,o-0 moved=3
+//   FAIL target/batch_forgotten_on_a_new_node_or_the_parent_toggle passes=3 invokes=3 moves=o-0,o-0,o-0 moved=3
+//   FAIL target/batch_forgotten_after_a_removal_or_an_unlanded_insert passes=2 invokes=2 moves=o-0,o-0,p-0 notLanded=1 moved=3
+//   FAIL target/a_batch_is_moved_at_most_once passes=2 tried=4 moves=o-0,p-0,o-0,p-0 invokes=2 notStackable=4 fullPasses=2 fullMoves=o-0,o-0
+//   FAIL target/success_with_an_unreadable_cell_turns_the_move_pass_off outcome=4 cellKept=0 passOn=1 line="autoprospect: cell-kept - the game confirmed the move but the material is still in the grid; moving materials to the bag is off for this session"
+// (hand_placed's moved=3: that core's pass during the seeding prospect had
+// already moved h-0 once; outcome=4 is move-failed.) Every one of these
+// failed on the cells the pass named, which is the defect itself.
+
+static void TargetFirstProspectOfASessionMovesNothing()
+{
+    // Materials put in by hand, the parent just turned on, then an insert:
+    // there is no recorded batch, so no pass and no item lookup at all.
+    AutoProspectMod mod;
+    mod.SetEnabled(true);
+    Tally t;
+    BagTally b;
+    QuietFrame(mod, CellsView(kNode, { { "m-0", true }, { "n-0", true } }), t, b);
+    mod.OnInsert(kNode, true, false);
+    const bool needs = mod.NeedsMaterials();
+    const AutoProspectView in = CellsView(kNode, { { "m-0", true }, { "n-0", true }, { "a-14", false } });
+    const AutoProspectView after = CellsView(kNode, { { "m-0", true }, { "n-0", true }, { "o-0", true } });
+    BagFrame(mod, in, t, b, in, MovedReport(), &after);
+    Check("target/first_prospect_of_a_session_moves_nothing",
+          b.passes == 0 && t.invokes == 1 && !needs && mod.Moved() == 0,
+          "passes=" + N(b.passes) + " invokes=" + N(t.invokes) + " needs=" + N(needs) + " moves=" + b.moves
+              + " moved=" + N(mod.Moved()));
+}
+
+static void TargetOreInsertMovesOnlyThePreviousBatch()
+{
+    // The live defect: a prospect recorded {o, p}; the player inserts an ore,
+    // which the adapter flags as a material like the batch, and the batch sits
+    // at new positions. Only o and p move; the ore is prospected.
+    AutoProspectMod mod;
+    mod.SetEnabled(true);
+    Tally t;
+    BagTally b;
+    SeedBatch(mod, {}, { { "o-0", true }, { "p-0", true } });
+    const std::string stat = mod.StatLine();
+    const bool batchBefore = stat.find(" batch=2") != std::string::npos;
+    mod.OnInsert(kNode, true, false);
+    const AutoProspectView in = CellsView(kNode, { { "ore-0", true }, { "p-0", true }, { "o-0", true } });
+    const AutoProspectView moved = CellsView(kNode, { { "ore-0", true } });
+    const AutoProspectView after = CellsView(kNode, { { "q-0", true }, { "r-0", true } });
+    BagFrame(mod, in, t, b, moved, MovedReport(), &after);
+    Check("target/ore_insert_moves_only_the_previous_batch",
+          b.passes == 1 && t.invokes == 1 && b.moves == "p-0,o-0" && mod.Moved() == 2 && batchBefore,
+          "passes=" + N(b.passes) + " invokes=" + N(t.invokes) + " moves=" + b.moves + " moved=" + N(mod.Moved())
+              + " batchBefore=" + N(batchBefore));
+}
+
+static void TargetHandPlacedMaterialIsNeverMoved()
+{
+    // A material already in the grid before the recording invoke sits beside
+    // the batch that invoke produced. Only the batch moves.
+    AutoProspectMod mod;
+    mod.SetEnabled(true);
+    Tally t;
+    BagTally b;
+    SeedBatch(mod, { { "h-0", true } }, { { "o-0", true } });
+    mod.OnInsert(kNode, true, false);
+    const AutoProspectView in = CellsView(kNode, { { "h-0", true }, { "o-0", true }, { "a-14", false } });
+    const AutoProspectView moved = CellsView(kNode, { { "h-0", true }, { "a-14", false } });
+    const AutoProspectView after = CellsView(kNode, { { "h-0", true }, { "p-0", true } });
+    BagFrame(mod, in, t, b, moved, MovedReport(), &after);
+    Check("target/hand_placed_material_is_never_moved",
+          b.passes == 1 && t.invokes == 1 && b.moves == "o-0" && mod.Moved() == 1,
+          "passes=" + N(b.passes) + " invokes=" + N(t.invokes) + " moves=" + b.moves + " moved=" + N(mod.Moved()));
+}
+
+static void TargetBatchForgottenOnANewNodeOrTheParentToggle()
+{
+    // After a new node id (the window reopened), after a frame with no window,
+    // and after the parent is toggled, the next insert moves nothing.
+    Tally t;
+    BagTally b;
+    long moved = 0;
+    const std::vector<Mat> left = { { "o-0", true } };
+    const std::vector<Mat> withItem = { { "o-0", true }, { "a-14", false } };
+    {
+        AutoProspectMod mod;
+        mod.SetEnabled(true);
+        SeedBatch(mod, {}, left);
+        QuietFrame(mod, CellsView(kOtherNode, left), t, b);
+        mod.OnInsert(kOtherNode, true, false);
+        const AutoProspectView in = CellsView(kOtherNode, withItem);
+        BagFrame(mod, in, t, b, CellsView(kOtherNode, { { "a-14", false } }), MovedReport(), &in);
+        moved += mod.Moved();
+    }
+    {
+        AutoProspectMod mod;
+        mod.SetEnabled(true);
+        SeedBatch(mod, {}, left);
+        QuietFrame(mod, AutoProspectView(), t, b);                        // no window this frame
+        QuietFrame(mod, CellsView(kNode, left), t, b);
+        mod.OnInsert(kNode, true, false);
+        const AutoProspectView in = CellsView(kNode, withItem);
+        BagFrame(mod, in, t, b, CellsView(kNode, { { "a-14", false } }), MovedReport(), &in);
+        moved += mod.Moved();
+    }
+    {
+        AutoProspectMod mod;
+        mod.SetEnabled(true);
+        SeedBatch(mod, {}, left);
+        mod.SetEnabled(false);
+        mod.SetEnabled(true);
+        QuietFrame(mod, CellsView(kNode, left), t, b);
+        mod.OnInsert(kNode, true, false);
+        const AutoProspectView in = CellsView(kNode, withItem);
+        BagFrame(mod, in, t, b, CellsView(kNode, { { "a-14", false } }), MovedReport(), &in);
+        moved += mod.Moved();
+    }
+    Check("target/batch_forgotten_on_a_new_node_or_the_parent_toggle",
+          b.passes == 0 && t.invokes == 3 && moved == 0,
+          "passes=" + N(b.passes) + " invokes=" + N(t.invokes) + " moves=" + b.moves + " moved=" + N(moved));
+}
+
+static void TargetBatchForgottenAfterARemovalOrAnUnlandedInsert()
+{
+    // The player took a stack out (the count dips with nothing pending), or an
+    // insert expired not-landed (a rearrangement or a swap): the core cannot
+    // account for the grid any more, so the next insert moves nothing.
+    Tally t;
+    BagTally b;
+    long moved = 0, notLanded = 0;
+    const std::vector<Mat> batch = { { "o-0", true }, { "p-0", true } };
+    {
+        AutoProspectMod mod;
+        mod.SetEnabled(true);
+        SeedBatch(mod, {}, batch);
+        QuietFrame(mod, CellsView(kNode, { { "o-0", true } }), t, b);   // p-0 taken out
+        mod.OnInsert(kNode, true, false);
+        const AutoProspectView in = CellsView(kNode, { { "o-0", true }, { "a-14", false } });
+        BagFrame(mod, in, t, b, CellsView(kNode, { { "a-14", false } }), MovedReport(), &in);
+        moved += mod.Moved();
+    }
+    {
+        AutoProspectMod mod;
+        mod.SetEnabled(true);
+        SeedBatch(mod, {}, batch);
+        mod.OnInsert(kNode, true, false);                                // never lands
+        for (int i = 0; i < ForgePact::kAutoProspectLandFrames + 2; ++i) QuietFrame(mod, CellsView(kNode, batch), t, b);
+        mod.OnInsert(kNode, true, false);
+        const AutoProspectView in = CellsView(kNode, { { "o-0", true }, { "p-0", true }, { "a-14", false } });
+        BagFrame(mod, in, t, b, CellsView(kNode, { { "a-14", false } }), MovedReport(), &in);
+        moved += mod.Moved();
+        notLanded += mod.NotLanded();
+    }
+    Check("target/batch_forgotten_after_a_removal_or_an_unlanded_insert",
+          b.passes == 0 && t.invokes == 2 && notLanded == 1 && moved == 0 && !b.early,
+          "passes=" + N(b.passes) + " invokes=" + N(t.invokes) + " moves=" + b.moves + " notLanded=" + N(notLanded)
+              + " moved=" + N(moved));
+}
+
+static void TargetABatchIsMovedAtMostOnce()
+{
+    // A pass the game refused (not-stackable) leaves the cells where they are;
+    // the next insert, whose prospect produced nothing new, names none of them
+    // again. Round 0 retried a refused cell on every insert.
+    using O = ForgePact::AutoProspectMoveOutcome;
+    AutoProspectMod mod;
+    mod.SetEnabled(true);
+    Tally t;
+    BagTally b;
+    SeedBatch(mod, {}, { { "o-0", true }, { "p-0", true } });
+    mod.OnInsert(kNode, true, false);
+    const AutoProspectView in = CellsView(kNode, { { "o-0", true }, { "p-0", true }, { "a-14", false } });
+    const AutoProspectView after = CellsView(kNode, { { "o-0", true }, { "p-0", true } });   // nothing new
+    BagFrame(mod, in, t, b, in, Report(false, false, 1), &after);
+    QuietFrame(mod, after, t, b);
+    mod.OnInsert(kNode, true, false);
+    const AutoProspectView in2 = CellsView(kNode, { { "o-0", true }, { "p-0", true }, { "b-14", false } });
+    BagFrame(mod, in2, t, b, in2, Report(false, false, 1), &after);
+    // The same with no invoke in between: the pass is followed by a grid-full
+    // refusal, and the next insert still does not name the refused cell.
+    AutoProspectMod full;
+    full.SetEnabled(true);
+    Tally t2;
+    BagTally b2;
+    SeedBatch(full, {}, { { "o-0", true } });
+    full.OnInsert(kNode, true, false);
+    AutoProspectView fin = CellsView(kNode, { { "o-0", true }, { "a-14", false } });
+    fin.empty = ForgePact::kAutoProspectMinFreeCells - 1;
+    BagFrame(full, fin, t2, b2, fin, Report(false, false, 1));
+    full.OnInsert(kNode, true, false);
+    AutoProspectView fin2 = CellsView(kNode, { { "o-0", true }, { "a-14", false }, { "b-14", false } });
+    fin2.empty = ForgePact::kAutoProspectMinFreeCells - 2;
+    BagFrame(full, fin2, t2, b2, fin2, Report(false, false, 1));
+    Check("target/a_batch_is_moved_at_most_once",
+          b.passes == 1 && b.tried == 2 && b.moves == "o-0,p-0" && t.invokes == 2 && mod.MoveOutcomes(O::NotStackable) == 2
+              && b2.passes == 1 && b2.moves == "o-0" && t2.refusals == 2,
+          "passes=" + N(b.passes) + " tried=" + N(b.tried) + " moves=" + b.moves + " invokes=" + N(t.invokes)
+              + " notStackable=" + N(mod.MoveOutcomes(O::NotStackable)) + " fullPasses=" + N(b2.passes)
+              + " fullMoves=" + b2.moves);
+}
+
+static void TargetSuccessWithAnUnreadableCellTurnsTheMovePassOff()
+{
+    // The add said success and the final read could not show the cell: the
+    // grid cannot show the material gone, so it is cell-kept (a possible
+    // duplicate) and the pass turns off. Its line must be true of both
+    // cell-kept cases, so it does not claim the material is still in the grid.
+    using O = ForgePact::AutoProspectMoveOutcome;
+    AutoProspectMod mod;
+    mod.SetEnabled(true);
+    const O outcome = mod.OnMoveReport(Report(true, true, -1));
+    const std::string line = mod.MoveProblemLine(O::CellKept);
+    Check("target/success_with_an_unreadable_cell_turns_the_move_pass_off",
+          outcome == O::CellKept && mod.MoveOutcomes(O::CellKept) == 1 && !mod.MovePassOn()
+              && line.find("still in the grid") == std::string::npos && line.find("off for this session") != std::string::npos,
+          "outcome=" + N((int)outcome) + " cellKept=" + N(mod.MoveOutcomes(O::CellKept)) + " passOn=" + N(mod.MovePassOn())
+              + " line=\"" + line + "\"");
 }
 
 int main()
@@ -1145,6 +1416,13 @@ int main()
     TargetVanishedTurnsTheMovePassOffForTheSession();
     TargetCellKeptAfterAddTurnsTheMovePassOffForTheSession();
     TargetFirstMoveReportedOnceInThePlayersLog();
+    TargetFirstProspectOfASessionMovesNothing();
+    TargetOreInsertMovesOnlyThePreviousBatch();
+    TargetHandPlacedMaterialIsNeverMoved();
+    TargetBatchForgottenOnANewNodeOrTheParentToggle();
+    TargetBatchForgottenAfterARemovalOrAnUnlandedInsert();
+    TargetABatchIsMovedAtMostOnce();
+    TargetSuccessWithAnUnreadableCellTurnsTheMovePassOff();
     std::cout << (g_Failures ? "RESULT FAIL" : "RESULT OK") << "\n";
     return g_Failures ? 1 : 0;
 }

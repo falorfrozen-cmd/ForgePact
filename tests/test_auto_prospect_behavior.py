@@ -18,14 +18,22 @@ removal, `ran-no-effect` one frame later, each refusal reported once, and a
 stat line that names what the mod did (Known Limitations item 7).
 
 Stage C adds the move pass: with the `bag` sub-option on (its default), a
-landed insert first sends the grid's materials - the previous prospect's
-batch, identified by the adapter through the SDK and handed in as a per-cell
-flag - to the materials tab, then prospects in the same frame. Baselines pin
-that bag off, or the parent off, never moves anything; targets pin one pass
-per landed insert, before the invoke, naming materials only, the landed
-insert staying landed across it, a refused move leaving the material and being
-named once, `vanished`/`cell-kept` turning the pass off for the session, and
-the player-log `first move to bag` line once.
+landed insert first sends the previous prospect's batch - the fingerprints the
+core's own invoke produced, as recorded in that invoke's frame, and of those
+only the cells the adapter flagged as materials through the SDK - to the
+materials tab, then prospects in the same frame. Baselines pin that bag off,
+or the parent off, never moves anything; targets pin one pass per landed
+insert, before the invoke, naming batch materials only, the landed insert
+staying landed across it, a refused move leaving the material and being named
+once, `vanished`/`cell-kept` turning the pass off for the session, and the
+player-log `first move to bag` line once.
+
+Round 1 (after Phase 3 live on e63eed5 moved an inserted ore back to the tab
+unprospected) pins that the insert is never moved, ore included: nothing moves
+on the first prospect of a session, a hand-placed material never moves, the
+batch is forgotten on a new node, the parent toggle, a removal or a
+`not-landed` expiry, a batch is named at most once, and success with an
+unreadable final cell is `cell-kept`.
 """
 import os
 import shutil
@@ -219,6 +227,31 @@ class AutoProspectBehaviorTests(unittest.TestCase):
 
     def test_target_first_move_reported_once_in_the_players_log(self):
         self.assertScenario("target/first_move_reported_once_in_the_players_log")
+
+    # ---- Stage C round 1: the move set is the recorded batch -------------------
+    # Live on e63eed5 an inserted ore (itself a material) was moved to the tab
+    # and never prospected; only what the core's own invoke produced moves now.
+
+    def test_target_first_prospect_of_a_session_moves_nothing(self):
+        self.assertScenario("target/first_prospect_of_a_session_moves_nothing")
+
+    def test_target_ore_insert_moves_only_the_previous_batch(self):
+        self.assertScenario("target/ore_insert_moves_only_the_previous_batch")
+
+    def test_target_hand_placed_material_is_never_moved(self):
+        self.assertScenario("target/hand_placed_material_is_never_moved")
+
+    def test_target_batch_forgotten_on_a_new_node_or_the_parent_toggle(self):
+        self.assertScenario("target/batch_forgotten_on_a_new_node_or_the_parent_toggle")
+
+    def test_target_batch_forgotten_after_a_removal_or_an_unlanded_insert(self):
+        self.assertScenario("target/batch_forgotten_after_a_removal_or_an_unlanded_insert")
+
+    def test_target_a_batch_is_moved_at_most_once(self):
+        self.assertScenario("target/a_batch_is_moved_at_most_once")
+
+    def test_target_success_with_an_unreadable_cell_turns_the_move_pass_off(self):
+        self.assertScenario("target/success_with_an_unreadable_cell_turns_the_move_pass_off")
 
 
 if __name__ == "__main__":

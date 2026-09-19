@@ -1853,7 +1853,8 @@ is recorded in the module guide's Known Limitations item 16.
 
 - **Where it runs.** Inside `AutoProspectTick`, on the frame a landed insert has passed the
   window, grid, button and argument checks, with only the free-cell check left: the core
-  (`AutoProspectMod::Decide`) returns `MoveMaterials` naming the material cells, the adapter
+  (`AutoProspectMod::Decide`) returns `MoveMaterials` naming the previous batch's material
+  cells (next bullet), the adapter
   (`ApMovePass`) moves them one by one, re-finds and re-reads everything, and asks the core
   again in the same frame; that second answer applies the free-cell rule and invokes or
   refuses `grid-full` as in Stage B. So the previous prospect's batch leaves the grid just
@@ -1864,13 +1865,41 @@ is recorded in the module guide's Known Limitations item 16.
   count, because materials left. The core keeps the insert landed until it is invoked or
   refused, so that read is never taken for `not-landed` or a rearrangement; the invoke's own
   re-read still sets the settled count, as before.
+- **What moves: the previous batch, as recorded (round 1).** Round 0 moved every material
+  cell, and live on e63eed5 that moved an inserted ore - itself a material - back to the tab
+  before its own prospect (§ Stage C Phase 3 results). "Material" names a kind of item, and
+  an insert can be that kind; the batch is identified by what it is instead. The core
+  cannot tell which cell an insert filled (an insert is known only by count;
+  `P-materials-only` was a no-op), but it can tell what its own invoke produced: at the
+  invoke it keeps the invoking view's distinct fingerprints, and `OnInvoked` records the
+  batch as the fingerprints in the read straight after the call that were not in that list.
+  The two reads share one frame (P-shapes: the handler changes the grid inside the call),
+  and an insert inside our own call counts as `while-invoking`, so nothing the player
+  inserts can be in the batch. A dispatch failure or an unreadable `after` records an empty
+  batch. The adapter hands the core the fingerprints as a list, filled by the same reader
+  (`ApReadCells`) for both reads, never re-split from the joined text. At the pass a cell is
+  named only when its fingerprint is in the batch **and** the adapter flagged it as a
+  material, at most one cell per fingerprint, matched by fingerprint so a batch stack the
+  player moved inside the grid is taken from where it sits now. The pass consumes the batch
+  whatever the outcomes, so a cell a refusal left is not retried.
+- **What forgets the batch.** Anything the core cannot account for, since between prospects
+  it reads only a count: first sight of a node (a new node, the window or grid gone, the
+  count lost, or the parent toggled), the settled count following a removal down, and a
+  pending insert expiring `not-landed`. A forgotten batch moves nothing - the materials
+  stay, which is Stage B's behaviour - so the first prospect after any of these moves
+  nothing and does no item lookup. The batch is recorded with `bag` on or off, so `bag 1`
+  after a `bag 0` prospect moves only the newest batch. **Accepted corner, not observed:**
+  the player swaps an item onto a batch cell and drops that batch stack back in within
+  `kAutoProspectLandFrames`, before the swap expires; the stack is still in the batch and
+  goes to the tab rather than being prospected. Nothing is lost, and the tab is where it was
+  going; closing it would need fingerprints read on every quiet frame.
 - **What is a material.** The adapter looks up each filled cell's item through the game's
   `GetItemFromFingerprint` (by name) and compares its `itemType` with the SDK's
   `HeroSiege::Items::ItemType::Material` - the value M7 observed. Only on frames with a
-  pending insert and the pass on (at most one lookup per cell). The core is handed a
-  per-cell flag and has no item-type value of its own; nothing reads the fingerprint's text.
-  An item the player inserts that is itself a material also goes to the tab, because the
-  insert is known only by count (`P-materials-only` was a no-op) - not observed live.
+  pending insert, the pass on and a recorded batch (at most one lookup per cell). The core is
+  handed a per-cell flag and has no item-type value of its own; nothing reads the
+  fingerprint's text. The flag is a second guard: it keeps a non-material that is somehow in
+  the batch from moving.
 - **The move, per cell,** by name through `script_execute`, self = other = the ProspectGrid
   node: the cell re-read and still holding the fingerprint the view saw; the item looked up
   again and still a material; `InventoryGridCanAddToStack` must answer truthy (it returns
@@ -1889,12 +1918,14 @@ is recorded in the module guide's Known Limitations item 16.
   - `vanished`: the cell lost the material without the add reporting success - a possible
     loss. The pass turns itself **off for the session**, says so, and `autoprospect bag 1`
     answers `unavailable this session`.
-  - `cell-kept`: the add reported success but the cell still holds the material after the
-    clear - a possible duplicate, as wrong as a loss. Also off for the session.
+  - `cell-kept`: the add reported success but the final read still holds the material, or
+    could not be made (round 1; round 0 called that `move-failed`) - the grid cannot show the
+    material gone, a possible duplicate, as wrong as a loss. Also off for the session, and
+    its line does not claim the material is still in the grid.
 - **Lines.** The player build logs `autoprospect: first move to bag - …` once, on the first
   pass that moved something, and each reason's line once. The research build's
-  `autoprospect stat` adds `moved=`, `passes=`, the five reason counts and
-  `bag=on|off|off-this-session`.
+  `autoprospect stat` adds `moved=`, `passes=`, the five reason counts, `batch=N` (the
+  recorded batch's size, so T7 is a count) and `bag=on|off|off-this-session`.
 - **The invoking flag** is held across the whole pass, so an `m_MoveItemToGrid` call the move
   makes counts as `while-invoking`, never as an insert. Whether the add calls it is not
   observed: M2 saw one (self = `InventoryGrid`), M7 moved without it.
@@ -1908,7 +1939,13 @@ is recorded in the module guide's Known Limitations item 16.
   fingerprint's suffix, a local item-type constant (the SDK enum), comparing `itemType` in
   the core (its test has no SDK), the drag route (M3: held-drag state, not callable by name),
   clearing on dispatch alone (can say `moved` when nothing moved), and a bag-side "gained"
-  check (the materials tab is not a grid node and cannot be read).
+  check (the materials tab is not a grid node and cannot be read). Round 1, after the ore:
+  moving every material cell (round 0; the insert can be a material), excluding "the newest
+  cell" by position or count (a click-in fills before its hook, a drag-in after), excluding
+  ore by item type or subtype (a field the insert happens to carry, not what it is),
+  recording the batch at the next frame's effect check (an insert can land in that frame's
+  step, before the read), and reading fingerprints every frame to track the batch cell by
+  cell (a struct read per filled cell per frame, where forgetting is safe).
 - **Not measured:** a full bag (`M-bagfull`), so the refusal path is designed but not
   observed; the has-a-stack check first and the success check before any clear are what
   keep a refusal from losing anything.
@@ -1930,19 +1967,43 @@ materials-tab counts by eye.
   (`T-bag-off`). `autoprospect bag 1` again.
 - **T4.** Optional: fill the bag, then insert (`T-bag-full`): a material stays in the grid
   and one reason line is logged, or `not observed (…)`.
-- **T5.** A non-material left in the grid (auto-prospect off, insert an item, on again) is not
-  moved by a new insert (`T-non-material`).
+- **T5 (revised for round 1).** Auto-prospect off, insert an item (it stays), then on again,
+  then insert: `moved=` does not rise on that insert, because the toggle forgets the batch,
+  and the item left behind is prospected, not moved. The next insert moves the batch that
+  prospect made (`T-non-material`). Round 0's T5 (`moved` +2 across the toggle) is the
+  behaviour round 1 removes on purpose.
 - **T6.** A material type with no stack in the tab yet is moved, or logs `not-stackable`
   once (`T-new-material-type`).
+- **T7 (new in round 1, the ore defect).** With a previous batch in the grid (`stat` shows
+  `batch=N`, N ≥ 1), insert **one ore**. `stat`: `moved=` rises by exactly N, `prospected=`
+  rises by 1, and `ran-no-effect=` does not rise. By eye: the previous batch's tab counts
+  rise, and the ore turns into materials that stay in the grid (`T-ore-insert`).
 - **Player DLL.** Switch to `plugin_build\BloodPactPlugin_ship.dll` and the panel's
   sub-switch; check one pass by eye and `autoprospect: first move to bag - …` in `out.txt`
   (`T-player-dll`).
 - Fill the `T-*` rows and set `phase3c-status: complete`. The human decides which DLL stays
-  installed.
+  installed. The round-1 re-run fills T0-T3, T5, T7 and the player-DLL row against the
+  round-1 build; T4 and T6 were skipped on e63eed5 and are recorded as such.
 
 ## Stage C Phase 3 results
 
 phase3c-status: pending
+
+**Round 0 live, 2026-09-19, research DLL built from e63eed5 - history, and the defect it
+found.** T0-T3 and T5 passed: `autoprospect 1` printed `hook installed -> ON` with `bag=on`
+by default; one item was prospected and its material stayed (`moved=0 passes=0`); the next
+insert logged `first move to bag` with `moved=1 passes=1` before the second prospect was
+counted, the materials-tab count rose 929→930 by eye and the new batch stayed; with
+`bag 0` `moved` stayed at 1; and across an off/on toggle the item left behind was
+prospected, not moved, while `moved` rose 1→3 (the two materials). T4 and T6 were skipped by
+the human. **Then, as an extra check the human asked for, one ore was inserted with two
+materials in the grid: `moved` rose 3→6 - the two materials and the inserted ore itself -
+followed by `the Prospect ran but the grid did not change` (`ran-no-effect=1`), and by eye
+the ore went straight back to the inventory, never prospected, its count unchanged.** Ore is
+a material (`itemType` 14, `ItemType::Material`), and round 0 moved every material cell.
+Round 1 moves only the recorded previous batch (§ Stage C ship design), and T7 re-checks the
+ore; round 0's T5 (`moved` +2 across the toggle) is the behaviour round 1 removes on
+purpose, so T5 is re-run too.
 
 A row that could not be checked says `not observed (<why>)`; no row is left empty once
 `phase3c-status` is `complete`.
@@ -1952,7 +2013,8 @@ A row that could not be checked says `not observed (<why>)`; no row is left empt
 | T-move-before-prospect | T2: the previous batch's tab counts rose before the new batch showed; `moved=` up, `invoked=` up by 1 | |
 | T-newest-batch-stays | T2: the new batch stays in the grid after the prospect | |
 | T-bag-off | T3: with `autoprospect bag 0`, the materials stay across a prospect | |
-| T-bag-full | T4 (optional): a full bag - the material stays, one reason line | |
-| T-non-material | T5: a non-material in the grid is not moved by a new insert | |
-| T-new-material-type | T6: a material type with no stack yet - moved, or `not-stackable` once | |
+| T-bag-full | T4 (optional): a full bag - the material stays, one reason line | not observed (human skipped, 2026-09-19, e63eed5) |
+| T-non-material | T5 (revised): after the toggle the next insert moves nothing and the item left behind is prospected; the insert after that moves only that prospect's batch | |
+| T-new-material-type | T6: a material type with no stack yet - moved, or `not-stackable` once | not observed (human skipped, 2026-09-19, e63eed5) |
+| T-ore-insert | T7: with `batch=N` shown, one ore inserted - `moved=` +N exactly, `prospected=` +1, `ran-no-effect=` unchanged; by eye the ore turns into materials that stay | |
 | T-player-dll | Player DLL with the panel sub-switch: one pass by eye and `autoprospect: first move to bag - …` in `out.txt` | |
