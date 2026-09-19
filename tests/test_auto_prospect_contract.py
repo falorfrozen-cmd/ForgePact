@@ -58,7 +58,9 @@ ADAPTER = ("static bool ApIsProspectGrid(", "static RValue& Hook_AutoProspectIns
            "static bool ApCellFingerprint(", "static bool ApCallScript(", "static bool ApIsMaterial(",
            "static bool ApItemFromFingerprint(", "static bool ApReadMaterials(", "static bool ApAddSucceeded(",
            "static int ApCellHolds(", "static ForgePact::AutoProspectMoveReport ApMoveCell(",
-           "static void ApMovePass(")
+           "static void ApMovePass(",
+           # Stage D: the new-type route's preferred grid.
+           "static bool ApPreferredGrid(")
 
 
 def collapse(text):
@@ -354,7 +356,8 @@ class AutoProspectContractTests(unittest.TestCase):
         self.assertIn("ApCallScript(kApAddName, gridInst, { RValue(1.0), item }, addRes)", move)
         self.assertIn("ApCallScript(kApClearName, gridInst, { cellNow, RValue() }, clearRes)", move)
         # The research command's names are not reused: the player build has none of them.
-        for forbidden in ("kPpFromFpName", "kPpCanAddName", "kPpAddName", "kPpClearName", "PpStackMoveCommand"):
+        for forbidden in ("kPpFromFpName", "kPpCanAddName", "kPpAddName", "kPpClearName", "kPpPreferredName",
+                          "kPpGridAddName", "PpStackMoveCommand", "PpPlaceSucceeded"):
             for signature in ADAPTER:
                 self.assertNotIn(forbidden, self.body(signature))
         # Exactly one invoke of the Prospect button, still: the moves use the grid.
@@ -392,13 +395,20 @@ class AutoProspectContractTests(unittest.TestCase):
 
     def test_clear_only_after_success_on_the_same_fingerprint(self):
         move = self.body("static ForgePact::AutoProspectMoveReport ApMoveCell(")
+        # Stage D: a has-a-stack "no" is the new-type route now, not a return;
+        # both routes end at the one clear site.
         steps = [move.index(s) for s in (
             "r.heldBefore = true;",
             "r.lookup = ApItemFromFingerprint(gridInst, fp, item) && ApIsMaterial(item);",
             "kApCanAddName",
-            "if (!r.canAdd) { r.heldAfter = ApCellHolds(node, c); return r; }",
+            "if (!r.canAddRan) { r.heldAfter = ApCellHolds(node, c); return r; }",
+            "if (r.canAdd) {",
             "kApAddName",
             "r.success = r.addRan && ApAddSucceeded(addRes);",
+            "} else {",
+            "kApPreferredName",
+            "kApPlaceName",
+            "r.success = r.placeRan && ApAddSucceeded(placeRes);",
             "if (r.success && ApCellHolds(node, c) == 1) {",
             "kApClearName",
             "r.heldAfter = ApCellHolds(node, c);\n    } catch")]
@@ -419,6 +429,71 @@ class AutoProspectContractTests(unittest.TestCase):
         self.assertIn("if (r.heldAfter == 0) return AutoProspectMoveOutcome::Moved;", classify)
         self.assertLess(classify.index("if (r.success) {"), classify.index("AutoProspectMoveOutcome::Moved"))
         self.assertIn("if (r.heldAfter == 0) return AutoProspectMoveOutcome::Vanished;", classify)
+
+    # ---- Stage D: a material whose type has no stack yet -----------------------
+
+    def test_new_type_route_runs_only_after_the_stack_check_said_no(self):
+        # The route the game's own click-move took (research doc, § Stage D
+        # results): the preferred grid for the item, then the place into its
+        # `grid` member, by SDK name through the same script_execute site, the
+        # grid node as self and other - and only on the has-a-stack check's "no".
+        for name in ("GetItemPreferredGrid", "GridAddItem"):
+            self.assertIn(f"SdkShortScriptName(HeroSiege::Scripts::gml_Script_{name})", self.shipped)
+        self.assertIn("kApPreferredName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_GetItemPreferredGrid)", self.shipped)
+        self.assertIn("kApPlaceName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_GridAddItem)", self.shipped)
+        self.assertIn('kApPreferredGridMember = "grid"', self.shipped)
+        move = self.body("static ForgePact::AutoProspectMoveReport ApMoveCell(")
+        stack = move.index("if (r.canAdd) {")
+        new_type = move.index("} else {", stack)
+        preferred = move.index("ApCallScript(kApPreferredName, gridInst, { RValue(1.0), item }, prefRes)")
+        place = move.index("ApCallScript(kApPlaceName, gridInst, { placeGrid, item, RValue(0.0), RValue() }, placeRes)")
+        self.assertLess(move.index("kApCanAddName"), stack)
+        self.assertLess(new_type, preferred)
+        self.assertLess(preferred, move.index("r.preferredOk = r.preferredRan && ApPreferredGrid(prefRes, placeGrid);"))
+        self.assertLess(move.index("if (!r.preferredOk) { r.heldAfter = ApCellHolds(node, c); return r; }"), place)
+        # Each name has exactly one call, inside the new-type branch.
+        self.assertEqual(move.count("kApPreferredName"), 1)
+        self.assertEqual(move.count("kApPlaceName"), 1)
+        self.assertLess(move.index("kApAddName"), new_type)
+        # The grid handed on is the struct's `grid` member, an array, read by name.
+        grid = self.body("static bool ApPreferredGrid(")
+        self.assertIn("ApIsPlainStruct(res)", grid)
+        self.assertIn('"variable_struct_get", { res, RValue(kApPreferredGridMember) }', grid)
+        self.assertIn("return grid.m_Kind == VALUE_ARRAY;", grid)
+        # Still one script_execute site for the grid, and still no address.
+        self.assertEqual(self.shipped.count('"script_execute", gridInst, gridInst'), 1)
+        # The core: the route is decided before the success rules, and a
+        # refused new type is its own outcome, never move-failed or moved.
+        classify = strip_comments(self.header[self.header.index("static AutoProspectMoveOutcome ClassifyMove("):])
+        classify = classify[:classify.index("\n    }\n")]
+        order = [classify.index(s) for s in (
+            "if (!r.heldBefore || !r.lookup || !r.canAddRan) return AutoProspectMoveOutcome::MoveFailed;",
+            "if (!r.canAdd) {",
+            "if (!r.preferredOk) return AutoProspectMoveOutcome::NoPreferredGrid;",
+            "if (r.placeRan && !r.success && r.heldAfter == 1) return AutoProspectMoveOutcome::NotPlaced;",
+            "if (r.success) {")]
+        self.assertEqual(order, sorted(order))
+        report = self.header[self.header.index("AutoProspectMoveOutcome OnMoveReport("):]
+        report = report[:report.index("\n    }\n")]
+        self.assertIn("if (r.route == AutoProspectMoveRoute::Place) m_MovedNew.fetch_add(1);", report)
+
+    def test_new_type_clear_only_on_the_recorded_success_signal(self):
+        # N-gridadd-return: the place returned `{tabNumber, x, y, tabType,
+        # success}`, the add's shape, so the same `success == true` check
+        # decides it; the one clear site follows either route's success.
+        move = self.body("static ForgePact::AutoProspectMoveReport ApMoveCell(")
+        self.assertIn("r.success = r.placeRan && ApAddSucceeded(placeRes);", move)
+        self.assertIn("if (r.placeRan) r.route = ForgePact::AutoProspectMoveRoute::Place;", move)
+        self.assertEqual(move.count("ApCallScript(kApClearName"), 1)
+        clear = move.index("ApCallScript(kApClearName")
+        self.assertLess(move.index("r.success = r.placeRan && ApAddSucceeded(placeRes);"), clear)
+        self.assertLess(move.index("if (r.success && ApCellHolds(node, c) == 1) {"), clear)
+        # No other success reading: not a truthy result, not the call dispatching.
+        self.assertNotIn("placeRes.ToBoolean()", move)
+        self.assertNotIn("r.success = r.placeRan;", move)
+        success = self.body("static bool ApAddSucceeded(")
+        self.assertIn('RValue("success")', success)
+        self.assertIn("if (!ApIsPlainStruct(res)) return false;", success)
 
     def test_bag_is_a_sub_option_of_autoprospect(self):
         # On by default in the core, left alone by the parent's toggle.
@@ -471,8 +546,12 @@ class AutoProspectContractTests(unittest.TestCase):
         shipped_tick = self.body("static void AutoProspectTick(", strip_research_blocks(self.plugin))
         for line in ("Out(mod.MoveProblemLine(o));", "Out(mod.FirstMoveLine());"):
             self.assertIn(line, shipped_tick)
-        for name in ('"not-stackable"', '"not-added"', '"move-failed"', '"vanished"', '"cell-kept"'):
+        for name in ('"no-preferred-grid"', '"not-placed"', '"not-added"', '"move-failed"', '"vanished"', '"cell-kept"'):
             self.assertIn(name, self.header)
+        # Stage D retired not-stackable: a has-a-stack "no" is a route now, and
+        # an outcome nothing can reach would print 0 forever.
+        self.assertNotIn("not-stackable", strip_comments(self.header))
+        self.assertNotIn("NotStackable", strip_comments(self.header))
         self.assertIn('HeadedStatLine("first move to bag")', self.header)
         # vanished and cell-kept turn the pass off for the session, and say so.
         report = self.header[self.header.index("AutoProspectMoveOutcome OnMoveReport("):]
@@ -481,7 +560,8 @@ class AutoProspectContractTests(unittest.TestCase):
         self.assertIn("m_BagOffThisSession.store(true);", report)
         self.assertEqual(self.header.count("off for this session"), 2)
         # The stat line names what the pass did.
-        for field in ('" moved="', '" not-stackable="', '" vanished="', '" cell-kept="', '" bag="', '"off-this-session"'):
+        for field in ('" moved="', '" moved-new="', '" no-preferred-grid="', '" not-placed="', '" vanished="',
+                      '" cell-kept="', '" bag="', '"off-this-session"'):
             self.assertIn(field, self.header)
 
     def test_release_notes_and_docs_record_the_bag_move(self):
@@ -504,6 +584,20 @@ class AutoProspectContractTests(unittest.TestCase):
         self.assertIn("\n## Stage C Phase 3 results\n", doc)
         self.assertRegex(doc, r"\nphase3c-status: (pending|complete)\n")
         self.assertNotIn("Not built, on purpose:** returning materials", doc)
+        # Stage D: the first-of-its-kind route and the ore finding, in player
+        # words, with no retired outcome name and no claim of a fix for the ore.
+        self.assertIn("first of its kind", notes)
+        self.assertIn("in your bag rather than the materials tab", collapse(notes))
+        self.assertIn("is the game, not the mod", collapse(notes))
+        self.assertNotIn("not-stackable", notes)
+        self.assertNotIn("we have not seen that happen yet", notes)
+        self.assertNotIn("## Fixed", notes)
+        for name in ("no-preferred-grid", "not-placed", "not-added", "move-failed"):
+            self.assertIn(name, section)
+        self.assertNotIn("not-stackable", section)
+        self.assertIn("\nstage-d-status: complete\n", doc)
+        self.assertIn("\n## Stage D ship design\n", doc)
+        self.assertRegex(doc, r"\nphase3d-status: (pending|complete)\n")
 
     def test_move_set_is_the_recorded_batch_not_every_material(self):
         # Round 1: live on e63eed5 an inserted ore - itself a material - was

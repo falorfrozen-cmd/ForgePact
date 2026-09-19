@@ -18,20 +18,26 @@ no longer have to stop every 54 items to press Prospect and start again.
     materials that the previous prospect made to your materials tab - the
     same move the game makes when you click a material - and then prospects,
     so the newest batch stays in the grid where you can see it and the grid
-    does not fill up with materials. Only that batch moves. The item you put
+    does not fill up with materials. A material that is the first of its kind
+    - one with no stack of it yet in your materials tab - is moved too, the
+    way a click on it moves it: the game puts it in your bag rather than the
+    materials tab. Only that batch moves. The item you put
     in is always prospected and never moved, even when it is itself a
     material such as ore, and materials you put in the grid yourself stay
-    where they are. After you reopen the cube, turn Auto-prospect off and on,
+    where they are. Prospecting an ore does not always give materials: the
+    game's own Prospect only has a chance to, with or without ForgePact, so
+    an ore that is used up with nothing in its place is the game, not the
+    mod. After you reopen the cube, turn Auto-prospect off and on,
     or take something out of the grid, the next prospect moves nothing, and
     moving starts again with the batch that prospect makes. This is its own
     switch under Auto-prospect, **Move the previous materials to your
     materials tab**, and it is **on by default** whenever Auto-prospect is
     on; turn it off to keep every material in the grid as before. If the
     game will not take a material, it stays in the grid and
-    `bp_ipc\out.txt` says so once; we have not seen that happen yet (we did
-    not test with a full materials tab). ForgePact only clears a
+    `bp_ipc\out.txt` says so once (a full bag or materials tab was not
+    tested). ForgePact only clears a
     material from the grid after the game confirms it reached your materials
-    tab; if one ever leaves the grid without that confirmation, the switch
+    tab or your bag; if one ever leaves the grid without that confirmation, the switch
     turns itself off for the rest of the session and `out.txt` says so. When fewer than 6 cells are free, auto-prospect holds
     back and leaves your item in the grid (the first time in a session, it
     writes a line to `bp_ipc\out.txt` saying so); empty some of the grid and
@@ -43,7 +49,8 @@ no longer have to stop every 54 items to press Prospect and start again.
     empty it before you leave the cube, and especially before you quit.
   - ForgePact runs the Prospect, and moves the materials, for you at a moment
     the game did not choose. The Prospect was tested with junk items; the
-    move to the materials tab is still being tested on this build. Keep a
+    move to the materials tab, and the move of a first-of-its-kind material
+    to your bag, are still being tested on this build. Keep a
     backup of your save before you try either with anything you care about.
   - If ForgePact cannot attach to the game's insert step on your copy of the
     game, the switch turns itself off for that session and `bp_ipc\out.txt`

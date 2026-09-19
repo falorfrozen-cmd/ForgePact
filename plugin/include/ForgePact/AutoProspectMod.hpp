@@ -43,6 +43,13 @@ namespace ForgePact {
 // before in the same frame. The adapter decides what a material is, through
 // the SDK; nothing here knows an item-type value.
 //
+// Stage D (research doc, § Stage D results and ship design): a material whose
+// type has no stack in the tab yet is refused by the has-a-stack check, and
+// the game's own click-move then places it through the grid the game prefers
+// for it - measured landing in the main bag grid, not the materials tab. The
+// adapter takes that route after a "no", and the core classifies it
+// (ClassifyMove) and counts it (`moved-new`).
+//
 // The batch is identified by what it is, not by being a material (round 1):
 // live on e63eed5 an inserted ore - itself a material - was moved back to the
 // tab in the pass before its own prospect and never prospected. The core
@@ -97,35 +104,51 @@ struct AutoProspectCell {
     bool        material = false;
 };
 
-// What became of one cell of a move pass (Stage C). Moved: the add reported
-// success and the cell no longer holds the material. The three below it leave
-// the material where it was and the pass stays on; the last two turn the pass
-// off for the session: a material left the grid without the game confirming
-// the move (a possible loss), or the game confirmed the move and the grid
-// cannot show the material gone (a possible duplicate).
+// What became of one cell of a move pass (Stage C, Stage D). Moved: the add or
+// the place reported success and the cell no longer holds the material. The
+// four below it leave the material where it was and the pass stays on; the
+// last two turn the pass off for the session: a material left the grid without
+// the game confirming the move (a possible loss), or the game confirmed the
+// move and the grid cannot show the material gone (a possible duplicate).
+//
+// Stage C's `not-stackable` (the has-a-stack check said no) is retired: for a
+// material whose type has no stack yet that check always says no, and Stage D
+// measured the route the game's own click takes then (research doc, § Stage D
+// results) - so a "no" is a route now, and its refusals are the two below.
 enum class AutoProspectMoveOutcome : int {
     None = 0,
     Moved,
-    NotStackable,  // the game's has-a-stack check said no; nothing was added
-    NotAdded,      // the add did not report success, and the cell is unchanged
-    MoveFailed,    // a call did not run, the lookup was not an item, the cell was unreadable or already changed
-    Vanished,      // the cell lost the material without the add reporting success
-    CellKept,      // the add reported success, and the final read still holds it or could not be made
+    NoPreferredGrid,  // the has-a-stack check said no, and the game named no grid for the item; nothing was placed
+    NotPlaced,        // the place into that grid did not report success, and the cell is unchanged
+    NotAdded,         // the add did not report success, and the cell is unchanged
+    MoveFailed,       // a call did not run, the lookup was not an item, the cell was unreadable or already changed
+    Vanished,         // the cell lost the material without the add or the place reporting success
+    CellKept,         // the add or the place reported success, and the final read still holds it or could not be made
     Count
 };
 
+// Which route a cell took: the existing stack (the has-a-stack check said yes,
+// then the add), or a new type's place (it said no, the game's preferred grid
+// for the item, then the place). None: neither call was made.
+enum class AutoProspectMoveRoute : int { None = 0, Stack, Place };
+
 // How the calls for one cell went, as the adapter saw them, in order: the
 // cell re-read before the first call, the item lookup, the has-a-stack check,
-// the add, the clear, and the cell re-read at the end.
+// then either the add or the preferred-grid lookup and the place, the clear,
+// and the cell re-read at the end.
 struct AutoProspectMoveReport {
-    bool heldBefore = false;  // the cell was read and still held the fingerprint the view saw
-    bool lookup = false;      // the item lookup ran and returned an item
-    bool canAddRan = false;   // the has-a-stack check ran
-    bool canAdd = false;      // and said yes
-    bool addRan = false;      // the add ran
-    bool success = false;     // the add's result said success
-    bool clearRan = false;    // the clear ran (only ever after success, on the same fingerprint)
-    int  heldAfter = -1;      // the final re-read: 1 still holds it, 0 no longer does, -1 unreadable
+    bool heldBefore = false;    // the cell was read and still held the fingerprint the view saw
+    bool lookup = false;        // the item lookup ran and returned an item
+    bool canAddRan = false;     // the has-a-stack check ran
+    bool canAdd = false;        // and said yes
+    bool addRan = false;        // the add ran (the stack route)
+    bool preferredRan = false;  // the preferred-grid lookup ran (the new-type route)
+    bool preferredOk = false;   // and returned the recorded shape: a struct whose `grid` member is an array
+    bool placeRan = false;      // the place into that grid ran
+    AutoProspectMoveRoute route = AutoProspectMoveRoute::None;
+    bool success = false;       // the add's or the place's result said success
+    bool clearRan = false;      // the clear ran (only ever after success, on the same fingerprint)
+    int  heldAfter = -1;        // the final re-read: 1 still holds it, 0 no longer does, -1 unreadable
 };
 
 // Why an insert was not prospected. Every one drops the pending insert: the
@@ -378,22 +401,28 @@ public:
     }
 
     // What one cell's calls add up to (Stage C, the recorded stackmove route
-    // plus the success check). Nothing before the has-a-stack check changes
-    // the grid, so a failure there leaves the material. After it, a cell that
-    // lost the material counts as moved only when the add said success. After
-    // a successful add, a final read that still holds the material, or that
-    // could not be made, cannot show the material gone: the tab has it and
-    // the grid may too, a possible duplicate (round 1; round 0 called the
-    // unreadable case move-failed and kept the pass on).
+    // plus the success check; Stage D, the recorded new-type route). Nothing
+    // before the add or the place changes the grid, so a failure there leaves
+    // the material: a has-a-stack "no" with no grid named is no-preferred-grid,
+    // a place that ran without success on an unchanged cell is not-placed.
+    // After either call, a cell that lost the material counts as moved only
+    // when that call said success. After a success, a final read that still
+    // holds the material, or that could not be made, cannot show the material
+    // gone: the destination has it and the grid may too, a possible duplicate
+    // (round 1; round 0 called the unreadable case move-failed and kept the
+    // pass on).
     static AutoProspectMoveOutcome ClassifyMove(const AutoProspectMoveReport& r) {
         if (!r.heldBefore || !r.lookup || !r.canAddRan) return AutoProspectMoveOutcome::MoveFailed;
-        if (!r.canAdd) return AutoProspectMoveOutcome::NotStackable;
+        if (!r.canAdd) {
+            if (!r.preferredOk) return AutoProspectMoveOutcome::NoPreferredGrid;
+            if (r.placeRan && !r.success && r.heldAfter == 1) return AutoProspectMoveOutcome::NotPlaced;
+        }
         if (r.success) {
             if (r.heldAfter == 0) return AutoProspectMoveOutcome::Moved;
             return AutoProspectMoveOutcome::CellKept;
         }
         if (r.heldAfter == 0) return AutoProspectMoveOutcome::Vanished;
-        if (r.heldAfter < 0 || !r.addRan) return AutoProspectMoveOutcome::MoveFailed;
+        if (r.heldAfter < 0 || !r.canAdd || !r.addRan) return AutoProspectMoveOutcome::MoveFailed;
         return AutoProspectMoveOutcome::NotAdded;
     }
 
@@ -404,6 +433,7 @@ public:
         const AutoProspectMoveOutcome o = ClassifyMove(r);
         m_MoveOutcomes[(int)o].fetch_add(1);
         if (o == AutoProspectMoveOutcome::Moved) {
+            if (r.route == AutoProspectMoveRoute::Place) m_MovedNew.fetch_add(1);
             if (m_Moved.fetch_add(1) == 0) m_FirstMoveDue = true;
             return o;
         }
@@ -425,13 +455,14 @@ public:
 
     static const char* MoveOutcomeName(AutoProspectMoveOutcome o) {
         switch (o) {
-        case AutoProspectMoveOutcome::Moved:        return "moved";
-        case AutoProspectMoveOutcome::NotStackable: return "not-stackable";
-        case AutoProspectMoveOutcome::NotAdded:     return "not-added";
-        case AutoProspectMoveOutcome::MoveFailed:   return "move-failed";
-        case AutoProspectMoveOutcome::Vanished:     return "vanished";
-        case AutoProspectMoveOutcome::CellKept:     return "cell-kept";
-        default:                                    return "none";
+        case AutoProspectMoveOutcome::Moved:           return "moved";
+        case AutoProspectMoveOutcome::NoPreferredGrid: return "no-preferred-grid";
+        case AutoProspectMoveOutcome::NotPlaced:       return "not-placed";
+        case AutoProspectMoveOutcome::NotAdded:        return "not-added";
+        case AutoProspectMoveOutcome::MoveFailed:      return "move-failed";
+        case AutoProspectMoveOutcome::Vanished:        return "vanished";
+        case AutoProspectMoveOutcome::CellKept:        return "cell-kept";
+        default:                                       return "none";
         }
     }
 
@@ -440,8 +471,10 @@ public:
     std::string MoveProblemLine(AutoProspectMoveOutcome o) const {
         const std::string head = std::string("autoprospect: ") + MoveOutcomeName(o) + " - ";
         switch (o) {
-        case AutoProspectMoveOutcome::NotStackable:
-            return head + "a material stays in the grid; the game would not stack it into your materials tab";
+        case AutoProspectMoveOutcome::NoPreferredGrid:
+            return head + "a material stays in the grid; it has no stack in your materials tab yet and the game named no grid for it";
+        case AutoProspectMoveOutcome::NotPlaced:
+            return head + "a material stays in the grid; it has no stack in your materials tab yet and the game did not confirm placing it in your bag";
         case AutoProspectMoveOutcome::NotAdded:
             return head + "a material stays in the grid; the game did not confirm adding it to your materials tab";
         case AutoProspectMoveOutcome::MoveFailed:
@@ -467,6 +500,8 @@ public:
     std::string FirstMoveLine() const { return HeadedStatLine("first move to bag"); }
 
     long Moved() const { return m_Moved.load(); }
+    // Of those, the ones the new-type route placed (`moved-new=`).
+    long MovedNew() const { return m_MovedNew.load(); }
     long MovePasses() const { return m_Passes.load(); }
     long MoveOutcomes(AutoProspectMoveOutcome o) const {
         const int i = (int)o;
@@ -592,8 +627,10 @@ public:
             + " not-landed=" + std::to_string(NotLanded())
             + " refused(" + refused + ")"
             + " moved=" + std::to_string(Moved())
+            + " moved-new=" + std::to_string(MovedNew())
             + " passes=" + std::to_string(MovePasses())
-            + " not-stackable=" + std::to_string(MoveOutcomes(AutoProspectMoveOutcome::NotStackable))
+            + " no-preferred-grid=" + std::to_string(MoveOutcomes(AutoProspectMoveOutcome::NoPreferredGrid))
+            + " not-placed=" + std::to_string(MoveOutcomes(AutoProspectMoveOutcome::NotPlaced))
             + " not-added=" + std::to_string(MoveOutcomes(AutoProspectMoveOutcome::NotAdded))
             + " move-failed=" + std::to_string(MoveOutcomes(AutoProspectMoveOutcome::MoveFailed))
             + " vanished=" + std::to_string(MoveOutcomes(AutoProspectMoveOutcome::Vanished))
@@ -704,6 +741,7 @@ private:
     unsigned    m_MoveReportedMask = 0;
     std::vector<AutoProspectMoveOutcome> m_MoveUnreported;
     std::atomic<long> m_Moved{ 0 };
+    std::atomic<long> m_MovedNew{ 0 };
     std::atomic<long> m_Passes{ 0 };
     std::atomic<long> m_MoveOutcomes[(int)AutoProspectMoveOutcome::Count]{};
 };

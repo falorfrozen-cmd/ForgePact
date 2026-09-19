@@ -380,9 +380,15 @@ away by the game's own Prospect, exactly as if you had pressed the button.
   moved, ore included, and a material you put in the grid yourself stays. After the
   cube is reopened, Auto-prospect is turned off and on, something is taken out of the
   grid, or the grid changes without an insert landing, ForgePact forgets the batch and
-  the next prospect moves nothing. A material the game will not stack stays in the grid
-  (`autoprospect: not-stackable - …`, `not-added` or `move-failed`, once each); a refusal
-  has not been observed yet (a full materials tab was not tested). A material is
+  the next prospect moves nothing. A material with no stack in the materials tab yet
+  (the first of its kind) takes the route the game's own click takes for it: the game's
+  preferred grid for the item, then a place into it - measured landing in the main bag,
+  not the materials tab. A material
+  the game will not take stays in the grid, and the reason is logged once each:
+  `autoprospect: no-preferred-grid - …` (the game named no grid for a new type),
+  `not-placed` (the place was not confirmed), `not-added` (the stack add was not
+  confirmed) or `move-failed`; a refusal has not been observed yet (a full bag or
+  materials tab was not tested). A material is
   cleared from the grid only after the game reports the move succeeded; if one leaves
   the grid without that (`vanished`), or the grid cannot show it gone after it
   (`cell-kept`), the move turns itself off for the session and says so. With the
@@ -398,7 +404,10 @@ away by the game's own Prospect, exactly as if you had pressed the button.
 - ForgePact runs the game's Prospect, and its stack move, at a moment the game did not
   choose. The Prospect was tested with junk items; the move to the materials tab is
   being re-tested on this build (an earlier build also moved an inserted ore back to
-  the tab unprospected). Back up `%LOCALAPPDATA%\Hero_Siege` first.
+  the tab unprospected). Prospecting an ore only has a chance of giving materials - the
+  game's own Prospect, pressed by hand with the mod off, used an ore up and gave nothing
+  on the same call that gave materials before - so an ore that vanishes with nothing in
+  its place is the game, not the mod. Back up `%LOCALAPPDATA%\Hero_Siege` first.
 - It says what it did. If the hook it needs cannot see the game's own inserts, it turns
   itself off with an `autoprospect: hook TABLE-ONLY -> OFF` line; otherwise
   `autoprospect: hook installed -> ON`, and `autoprospect: first prospect - …` once the
@@ -409,7 +418,8 @@ away by the game's own Prospect, exactly as if you had pressed the button.
 
 How it works, and the research that proved ForgePact can run the Prospect itself, is in
 [`docs/prospect-window-research.md`](docs/prospect-window-research.md) (§ Stage B; the
-move to the materials tab in § Stage C).
+move to the materials tab in § Stage C; first-of-its-kind materials and the ore finding
+in § Stage D).
 
 ## 🔧 How to use
 

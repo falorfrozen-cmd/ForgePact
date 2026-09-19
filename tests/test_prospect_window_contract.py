@@ -1420,7 +1420,9 @@ class ProspectWindowContractTests(unittest.TestCase):
         # ApMoveCell only notes what its own calls returned, as text.
         move = function_body(self.plugin, "static ForgePact::AutoProspectMoveReport ApMoveCell(")
         shipped_move = function_body(strip_research_blocks(self.plugin), "static ForgePact::AutoProspectMoveReport ApMoveCell(")
-        for call in ("ApResearchNoteItem(item);", "ApResearchNoteRet(false, canRes);", "ApResearchNoteRet(true, addRes);"):
+        for call in ("ApResearchNoteItem(item);", "ApResearchNoteRet(false, canRes);", "ApResearchNoteRet(true, addRes);",
+                     # Stage D round 2: the new-type route's two calls.
+                     "ApResearchNotePreferred(prefRes);", "ApResearchNoteRet(true, placeRes);"):
             self.assertRegex(move, r"#ifndef FORGEPACT_RELEASE\s*" + re.escape(call) + r"\s*#endif")
             self.assertNotIn(call, shipped_move)
         # Decide consumes the batch, so the decide line's batch is read before it.

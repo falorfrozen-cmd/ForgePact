@@ -34,6 +34,14 @@ on the first prospect of a session, a hand-placed material never moves, the
 batch is forgotten on a new node, the parent toggle, a removal or a
 `not-landed` expiry, a batch is named at most once, and success with an
 unreadable final cell is `cell-kept`.
+
+Stage D (after the c27cdad re-run left every material of a type with no stack
+yet in the grid) pins the new-type route: the stack route is unchanged, a
+material the game placed through its preferred grid and cleared counts as
+`moved` and `moved-new`, no named grid and an unconfirmed place each leave the
+material and are named once, `vanished`/`cell-kept` on the new route turn the
+pass off like the old one, and the stat line names the route (`not-stackable`
+is gone).
 """
 import os
 import shutil
@@ -252,6 +260,28 @@ class AutoProspectBehaviorTests(unittest.TestCase):
 
     def test_target_success_with_an_unreadable_cell_turns_the_move_pass_off(self):
         self.assertScenario("target/success_with_an_unreadable_cell_turns_the_move_pass_off")
+
+    # ---- Stage D: a material whose type has no stack yet -----------------------
+    # Live on c27cdad such a material was refused (`not-stackable`) and piled up;
+    # the game's own click-move uses the preferred grid and a place instead.
+
+    def test_baseline_existing_stack_route_is_unchanged(self):
+        self.assertScenario("baseline/existing_stack_route_is_unchanged")
+
+    def test_target_new_type_placed_and_cleared_counts_as_moved(self):
+        self.assertScenario("target/new_type_placed_and_cleared_counts_as_moved")
+
+    def test_target_new_type_without_a_preferred_grid_stays_and_is_logged_once(self):
+        self.assertScenario("target/new_type_without_a_preferred_grid_stays_and_is_logged_once")
+
+    def test_target_new_type_not_placed_stays_and_is_logged_once(self):
+        self.assertScenario("target/new_type_not_placed_stays_and_is_logged_once")
+
+    def test_target_new_type_vanished_or_kept_turns_the_move_pass_off(self):
+        self.assertScenario("target/new_type_vanished_or_kept_turns_the_move_pass_off")
+
+    def test_target_stat_line_names_the_new_type_route(self):
+        self.assertScenario("target/stat_line_names_the_new_type_route")
 
 
 if __name__ == "__main__":

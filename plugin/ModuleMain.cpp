@@ -18428,10 +18428,22 @@ static bool ApFindButton(double windowId, const RValue& handlerIndex, RValue& bu
 // identified by what it is: the item's itemType against the SDK's
 // ItemType::Material, never by anything the fingerprint's text carries. No
 // research helper is called here: those are compiled out of the player build.
+//
+// Stage D: when the has-a-stack check says no - a material whose type has no
+// stack in the tab yet - the cell takes the route the game's own click-move
+// took (research doc, § Stage D results, N-control-newtype, and `stackmove`'s
+// N-stackmove-newtype): GetItemPreferredGrid(1, item), which returns a struct
+// whose `grid` member is an array, then GridAddItem(that array, item, 0,
+// undefined), whose result carries `success` like the add's - the same check,
+// then the same clear. Measured by eye, the material lands in the main bag
+// grid, not the materials tab.
 static constexpr const char* kApFromFpName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_GetItemFromFingerprint);
 static constexpr const char* kApCanAddName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_InventoryGridCanAddToStack);
 static constexpr const char* kApAddName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_InventoryGridAddToStack);
 static constexpr const char* kApClearName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_InvGridClearItemNode);
+static constexpr const char* kApPreferredName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_GetItemPreferredGrid);
+static constexpr const char* kApPlaceName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_GridAddItem);
+static constexpr const char* kApPreferredGridMember = "grid";   // N-a0: the member the place is handed
 
 // A plain struct - a method value is also VALUE_OBJECT, and is never read.
 static bool ApIsPlainStruct(const RValue& v)
@@ -18535,7 +18547,19 @@ static bool ApReadMaterials(const RValue& node, CInstance* gridInst, ForgePact::
     return true;
 }
 
-// `success == true` on the add's result struct.
+// The preferred-grid lookup's `grid` member, when the result has the recorded
+// shape: a plain struct whose `grid` is an array. Anything else is no grid.
+static bool ApPreferredGrid(const RValue& res, RValue& grid)
+{
+    if (!ApIsPlainStruct(res)) return false;
+    if (!g_Yytk->CallBuiltin("variable_struct_exists", { res, RValue(kApPreferredGridMember) }).ToBoolean()) return false;
+    grid = g_Yytk->CallBuiltin("variable_struct_get", { res, RValue(kApPreferredGridMember) });
+    return grid.m_Kind == VALUE_ARRAY;
+}
+
+// `success == true` on the add's result struct - and on the place's, which
+// returned the same shape live (N-gridadd-return: `{tabNumber, x, y, tabType,
+// success}`).
 static bool ApAddSucceeded(const RValue& res)
 {
     if (!ApIsPlainStruct(res)) return false;
@@ -18574,7 +18598,8 @@ static int ApCellHolds(const RValue& node, const ForgePact::AutoProspectCell& c)
 static std::string g_ApResearchItemText = "not looked up";
 static std::string g_ApResearchCanText = "not called";
 static std::string g_ApResearchAddText = "not called";
-static std::vector<std::string> g_ApResearchPrevAfter;    // the previous invoke's `after` list
+static std::string g_ApResearchPrefText = "not called";
+static std::vector<std::string> g_ApResearchPrevAfter;   // the previous invoke's `after` list
 static bool g_ApResearchFateDue = false;                   // an invoke dispatched; its fate is read next tick
 static uint64_t g_ApResearchInvokeFrame = 0;
 static std::vector<std::string> g_ApResearchInserted;     // that invoke's view minus the previous `after`
@@ -18650,6 +18675,13 @@ static void ApResearchNoteRet(bool add, const RValue& res)
     (add ? g_ApResearchAddText : g_ApResearchCanText) = text;
 }
 
+// Stage D: the new-type route's preferred-grid lookup (its place goes to the
+// `add` slot above, since a cell takes one route or the other).
+static void ApResearchNotePreferred(const RValue& res)
+{
+    try { g_ApResearchPrefText = PpRetText(res); } catch (...) { g_ApResearchPrefText = "<read failed>"; }
+}
+
 static void ApResearchMove(const ForgePact::AutoProspectCell& c, const ForgePact::AutoProspectMoveReport& r)
 {
     auto held = [](int h) { return h == 1 ? std::string("yes") : h == 0 ? std::string("no") : std::string("unreadable"); };
@@ -18657,13 +18689,17 @@ static void ApResearchMove(const ForgePact::AutoProspectCell& c, const ForgePact
         + " cell=" + std::to_string(c.row) + "," + std::to_string(c.col) + " fp=" + c.fingerprint
         + " held-before=" + (r.heldBefore ? "yes" : "no") + " " + g_ApResearchItemText
         + " canadd" + (r.canAddRan ? "" : "(did not run)") + "=" + g_ApResearchCanText
-        + " add" + (r.addRan ? "" : "(did not run)") + "=" + g_ApResearchAddText
+        + " route=" + (r.route == ForgePact::AutoProspectMoveRoute::Stack ? "stack"
+                       : r.route == ForgePact::AutoProspectMoveRoute::Place ? "place" : "none")
+        + " preferred" + (r.preferredRan ? "" : "(did not run)") + "=" + g_ApResearchPrefText
+        + " add" + (r.addRan || r.placeRan ? "" : "(did not run)") + "=" + g_ApResearchAddText
         + " success=" + (r.success ? "yes" : "no") + " clear=" + (r.clearRan ? "ran" : "not called")
         + " held-after=" + held(r.heldAfter)
         + " outcome=" + ForgePact::AutoProspectMod::MoveOutcomeName(ForgePact::AutoProspectMod::ClassifyMove(r)));
     g_ApResearchItemText = "not looked up";
     g_ApResearchCanText = "not called";
     g_ApResearchAddText = "not called";
+    g_ApResearchPrefText = "not called";
 }
 
 static void ApResearchInvoke(bool dispatched, int st, const std::vector<std::string>& invoking, const ForgePact::AutoProspectView& after)
@@ -18742,10 +18778,13 @@ static void ApResearchFate()
 
 // One cell of the move pass, reported to the core as it went. The cell is
 // re-read before the first call and must still hold what the view saw; the
-// item must still be a material; the has-a-stack check must say yes before
-// the add; the clear runs only after the add said success, on the cell as it
-// reads then, still holding the same fingerprint. The final re-read is what
-// tells moved, vanished and cell-kept apart (the core's ClassifyMove).
+// item must still be a material; a check that did not run stops there. A
+// "yes" from the has-a-stack check takes the add (the stack route); a "no"
+// takes the new-type route - the preferred grid, which must have the recorded
+// shape, then the place. The clear runs only after the add or the place said
+// success, on the cell as it reads then, still holding the same fingerprint.
+// The final re-read is what tells moved, vanished and cell-kept apart (the
+// core's ClassifyMove).
 static ForgePact::AutoProspectMoveReport ApMoveCell(const RValue& node, CInstance* gridInst, const ForgePact::AutoProspectCell& c)
 {
     ForgePact::AutoProspectMoveReport r;
@@ -18769,13 +18808,33 @@ static ForgePact::AutoProspectMoveReport ApMoveCell(const RValue& node, CInstanc
 #ifndef FORGEPACT_RELEASE
         ApResearchNoteRet(false, canRes);
 #endif
-        if (!r.canAdd) { r.heldAfter = ApCellHolds(node, c); return r; }
-        RValue addRes;
-        r.addRan = ApCallScript(kApAddName, gridInst, { RValue(1.0), item }, addRes);
-        r.success = r.addRan && ApAddSucceeded(addRes);
+        if (!r.canAddRan) { r.heldAfter = ApCellHolds(node, c); return r; }
+        if (r.canAdd) {
+            RValue addRes;
+            r.route = ForgePact::AutoProspectMoveRoute::Stack;
+            r.addRan = ApCallScript(kApAddName, gridInst, { RValue(1.0), item }, addRes);
+            r.success = r.addRan && ApAddSucceeded(addRes);
 #ifndef FORGEPACT_RELEASE
-        ApResearchNoteRet(true, addRes);
+            ApResearchNoteRet(true, addRes);
 #endif
+        } else {
+            // Stage D, the new-type route: the grid the game prefers for the
+            // item, handed on as its `grid` member, exactly as N-stackmove-newtype.
+            RValue prefRes, placeGrid;
+            r.preferredRan = ApCallScript(kApPreferredName, gridInst, { RValue(1.0), item }, prefRes);
+            r.preferredOk = r.preferredRan && ApPreferredGrid(prefRes, placeGrid);
+#ifndef FORGEPACT_RELEASE
+            ApResearchNotePreferred(prefRes);
+#endif
+            if (!r.preferredOk) { r.heldAfter = ApCellHolds(node, c); return r; }
+            RValue placeRes;
+            r.placeRan = ApCallScript(kApPlaceName, gridInst, { placeGrid, item, RValue(0.0), RValue() }, placeRes);
+            if (r.placeRan) r.route = ForgePact::AutoProspectMoveRoute::Place;
+            r.success = r.placeRan && ApAddSucceeded(placeRes);
+#ifndef FORGEPACT_RELEASE
+            ApResearchNoteRet(true, placeRes);
+#endif
+        }
         if (r.success && ApCellHolds(node, c) == 1) {
             RValue cellNow, clearRes;
             if (ApReadCell(node, c.row, c.col, cellNow))

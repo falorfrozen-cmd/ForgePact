@@ -2196,19 +2196,107 @@ it, go on.
 
 ## Stage D results
 
-stage-d-status: pending
+stage-d-status: complete
 
-Filled by the Stage D live session. A row that could not be measured says `not observed
-(<why>)`; no row is left empty once `stage-d-status` is `complete`.
+Filled by the Stage D live session (2026-09-19, research DLL built from 67d2d9e), driven
+through `tools/ipc.ps1` with the human in game. A row that could not be measured says `not
+observed (<why>)`; no row is left empty once `stage-d-status` is `complete`.
 
 | Row | What fills it | Result |
 |---|---|---|
-| N-coexist | N0: `autoprospect 1` then `prospectprobe hook` (`142 detoured, 1 failed`), one insert, `inserts` and `prospected` +1 - or which session of the two-session fallback ran | |
-| N-control-newtype | N1: every row that fired on the hand click-move of a first-of-type material, in order, with self/other/arguments | |
-| N-a0 | N1: `GridAddItem`'s first-argument identity against `GetItemPreferredGrid`'s `ret=` identity - H-A1 (same array) or H-A2 (and which member or builder) | |
-| N-gridadd-return | N1: `GridAddItem`'s `ret=` - a struct with `success`, a plain boolean, or neither | |
-| N-stackmove-newtype | N2: the verdict, each call's `ret=`, the tab count by eye, and whether `stackmove clear` ran | |
-| N-stackmove-existing | N3: the existing-stack control's verdict (expected `moved`) and the tab by eye | |
-| N-fingerprint-identity | N4: two ore of one type prospected with `bag 0` - two distinct fingerprints or one | |
-| N-ore-play | N5: the research-log lines (and probe rows) around each "ore came back" | |
-| N-ore-cause | N5: the hypothesis (H-B1..H-B5) the lines pick out, with the deciding line - or `not observed` | |
+| N-coexist | N0: `autoprospect 1` then `prospectprobe hook` (`142 detoured, 1 failed`), one insert, `inserts` and `prospected` +1 - or which session of the two-session fallback ran | PASS, one session. `autoprospect 1` → `hook installed -> ON`; `prospectprobe hook` → `142 detoured, 1 failed` (`anon@15345`, the expected clash); one junk insert gave `inserts=1 prospected=1 batch=1` and the research log's `insert` (`into-prospect-grid=yes`), `invoke` and `fate` (the insert `gone`) lines. The two-session fallback was not needed. |
+| N-control-newtype | N1: every row that fired on the hand click-move of a first-of-type material, in order, with self/other/arguments | A hand click-move of one first-of-type material: `InventoryGridCanAddToStack` (1, undefined, item) returned undefined; `GetItemPreferredGrid` (1, item) returned a struct `{gridBits: 0, grid: <array 6×15>}`, running `s_ItemGridInfo` on that array inside; `GridAddItem` (that array, item, 0, undefined); `InvGridClearItemNode` (cell, undefined). By eye the material landed in the **main bag grid**, not the materials tab. |
+| N-a0 | N1: `GridAddItem`'s first-argument identity against `GetItemPreferredGrid`'s `ret=` identity - H-A1 (same array) or H-A2 (and which member or builder) | H-A2, the member: `GetItemPreferredGrid` returns a struct, and `GridAddItem`'s first argument is its `grid` member - in N1 the array handed to `s_ItemGridInfo` inside the lookup and `GridAddItem`'s first argument printed the same id (…32C0). The identity instrument was proven by N2's same-array control: `stackmove`'s own `GridAddItem` call, handed the `grid` member (`a0=grid`), printed that same id. |
+| N-gridadd-return | N1: `GridAddItem`'s `ret=` - a struct with `success`, a plain boolean, or neither | A struct with `success`, the add's shape: `{tabNumber: 0, x: 11, y: 3, tabType: 0, success: true}` (`tabType` 0 where the stack add's was -4). |
+| N-stackmove-newtype | N2: the verdict, each call's `ret=`, the tab count by eye, and whether `stackmove clear` ran | `stackmove 0 0 a0=grid confirm` on another new-type material: CanAdd undefined → `GetItemPreferredGrid` → `GridAddItem` (the `grid` member) returned `{x: 11, y: 4, tabType: 0, success: true}` → the clear. Verdict `moved`; by eye in the main bag. `stackmove clear` was not needed. |
+| N-stackmove-existing | N3: the existing-stack control's verdict (expected `moved`) and the tab by eye | not observed (N3 was not run as its own step): the stack route is M7's measurement, and it was seen again in this session's move pass - a batch fingerprint moved through `InventoryGridAddToStack` with `success: true`, `tabType` -4. |
+| N-fingerprint-identity | N4: two ore of one type prospected with `bag 0` - two distinct fingerprints or one | not observed as N4 (the `bag 0` step was not run); stand-in evidence from the same session: three ores of one type inserted in a row carried three distinct fingerprints, and every batch had its own. A fingerprint names one item instance, so the batch's fingerprint match is safe. |
+| N-ore-play | N5: the research-log lines (and probe rows) around each "ore came back" | With the bag pass not involved (the batch empty), three ore invokes each used the ore up and produced nothing: `after=[]`, `fate` `gone`, the main bag unchanged; `UiAProspectButton` ran 5 times since the probe was armed, `___struct___123` only twice. No `fate` line showed an ore returning to the bag. The N5 bag-read positive control was not run, because the vanilla control below settled B. |
+| N-ore-cause | N5: the hypothesis (H-B1..H-B5) the lines pick out, with the deciding line - or `not observed` | **The game's own chance, not a mod defect** - none of H-B1..H-B5. Vanilla control, auto-prospect off, hand presses on the same ore type: press 1 ran `___struct___123` and `GridAddItem` and produced materials; press 2, with the same self, other and argument array, ran no `___struct___123` and produced nothing. The human confirmed that prospecting ore only has a chance to give materials. The e63eed5 "ore moved back to the bag" defect was real and is fixed on c27cdad (round 1). No code fix for B. |
+
+**What Stage D decided.** A: ship the new-type route the game's click takes - `GridAddItem`
+with (`GetItemPreferredGrid`(1, item)`.grid`, item, 0, undefined), self and other the
+ProspectGrid node, success = the result's `success == true` - and note that it lands in the
+main bag grid, not the materials tab. B: no code change; the player notes say that an ore can
+be used up with nothing in its place, and that this is the game.
+
+## Stage D ship design
+
+What changed in the auto-prospect bag pass (ForgePact round 2 of Stage D), all of it in the
+player build:
+
+- **The new-type route, in `ApMoveCell`.** The cell re-read, the item lookup and the
+  has-a-stack check are unchanged, and a "yes" still takes the stack route (the add) exactly
+  as before. A "no" - which the check answers for every material whose type the tab holds no
+  stack of - now takes the route N-control-newtype recorded instead of stopping:
+  `GetItemPreferredGrid` with (1, the item), whose result must be a plain struct whose `grid`
+  member is an array (`ApPreferredGrid`, read by name with `variable_struct_get`), then
+  `GridAddItem` with (that array, the item, 0, undefined), both by SDK name through the same
+  `script_execute` site, self and other the ProspectGrid node (`kApPreferredName`,
+  `kApPlaceName`). The place's result is checked by the add's own `ApAddSucceeded` (N-gridadd-
+  return: the same `success` struct). The one clear site follows either route's success, on the
+  re-read cell still holding the same fingerprint.
+- **The core's outcomes.** `AutoProspectMoveReport` gains `preferredRan`, `preferredOk`,
+  `placeRan` and `route` (`Stack`/`Place`/`None`); `success` covers either route. `ClassifyMove`:
+  anything before the check failing is `move-failed`; a "no" with no grid of the recorded shape
+  is **`no-preferred-grid`**; a place that ran without success on an unchanged cell is
+  **`not-placed`** (a full bag has this shape); otherwise the rules are the stack route's -
+  success and the cell empty is `moved` (and **`moved-new`** when the place did it), success
+  with the cell still holding it or unreadable is `cell-kept`, the cell emptied without success
+  is `vanished`, and those two turn the pass off for the session. Each refusal is logged once
+  per session. Stage C's `not-stackable` is retired: the check's "no" is a route now, and an
+  outcome nothing can reach would print 0 forever.
+- **The stat line** gains `moved-new=`, `no-preferred-grid=` and `not-placed=` and loses
+  `not-stackable=`.
+- **Where it lands.** Measured by eye (N1, N2), the first-of-type material goes to the main bag
+  grid (`tabType` 0), the same place the game's own click puts it - not the materials tab.
+- **The ore (B).** No code change (§ Stage D results, N-ore-cause): the game's Prospect only
+  sometimes gives materials for an ore.
+- **Research build only:** the `move` research line prints `route=`, `preferred=` (the lookup's
+  return) and the place's return in its `add=` slot.
+- **Not changed:** the stack route's calls and arguments, the batch record, the insert and
+  settled-count rules, `kAutoProspectMinFreeCells`, the invoke shape and the
+  `m_MoveItemToGrid` hook.
+- **Tests.** The harness's Stage D scenarios (`baseline/existing_stack_route_is_unchanged` and
+  five targets) failed against the c27cdad core with the new names shimmed inert, and pass now;
+  the lines are recorded in `tests/auto_prospect_harness.cpp`. Two Stage C targets that used a
+  "no" from the check as their refusal now expect `no-preferred-grid`.
+- **Not measured:** a full bag (`not-placed`'s expected cause) and a `GetItemPreferredGrid` that
+  names no grid; both are refusals that leave the material, logged once.
+
+## Stage D Phase 3 live procedure
+
+The same re-run that completes `phase3c` (§ Stage C Phase 3 live procedure): research DLL
+first, save backed up, junk items only, read the tabs and the bag by eye. With the research DLL,
+run T0-T3, T5 and T7 from Stage C, then:
+
+- **T8 (`D-newtype-move`).** With a previous batch holding a material whose type has no stack in
+  the materials tab, insert an item: that material leaves the grid and appears in the main bag;
+  `autoprospect stat` shows `moved-new=` up by 1 (and `moved=` by the batch's size).
+- **T8b (`D-newtype-refusal`, optional).** Fill the main bag, then the same: the material stays
+  in the grid and `autoprospect: not-placed - …` (or `no-preferred-grid - …`) is logged once -
+  or `not observed (…)`.
+- **T9 (`D-ore-mixed`).** Click one ore in with leftover materials in the grid (a previous batch
+  and some materials put in by hand): the batch moves, the ore is prospected - it turns into
+  materials, or is used up with nothing in its place, which is the game's own chance - and the
+  ore is never moved back to the bag.
+- **T9b (`D-ore-drag`).** The same with a drag-in.
+- **Player DLL (`D-player-dll`).** Switch to `plugin_build\BloodPactPlugin_ship.dll`: one pass
+  with a first-of-type material by eye, and `autoprospect: first move to bag - …` in
+  `out.txt` naming `moved-new=`.
+- Fill the `T-*` and `D-*` rows and set `phase3c-status` and `phase3d-status` to `complete`.
+
+## Stage D Phase 3 results
+
+phase3d-status: pending
+
+A row that could not be checked says `not observed (<why>)`; no row is left empty once
+`phase3d-status` is `complete`.
+
+| Row | What fills it | Result |
+|---|---|---|
+| D-newtype-move | T8: a first-of-type batch material leaves the grid for the main bag; `moved-new=` +1 | |
+| D-newtype-refusal | T8b (optional): a full bag - the material stays, `not-placed` (or `no-preferred-grid`) once | |
+| D-ore-mixed | T9: a clicked-in ore with leftovers in the grid is prospected (materials, or nothing by the game's chance), never moved back; the batch moves | |
+| D-ore-drag | T9b: the same with a drag-in | |
+| D-player-dll | Player DLL: one first-of-type pass by eye and `first move to bag` in `out.txt` | |

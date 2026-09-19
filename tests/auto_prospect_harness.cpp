@@ -761,8 +761,14 @@ static AutoProspectView CellsView(int64_t node, const std::vector<Mat>& cells)
     return v;
 }
 
-// The adapter's report for one cell, by how the calls went.
-static ForgePact::AutoProspectMoveReport Report(bool canAdd, bool success, int heldAfter)
+// The adapter's report for one cell, by how the calls went. With the
+// has-a-stack check saying yes it is the stack route (the add); saying no, it
+// is the new-type route (Stage D): the preferred-grid lookup ran, named a grid
+// (`preferredOk`) or not, and the place ran (`placeRan`) or not. Stage C's
+// scenarios pass only the first three, so a "no" there is a new type the game
+// named no grid for.
+static ForgePact::AutoProspectMoveReport Report(bool canAdd, bool success, int heldAfter,
+                                               bool preferredOk = false, bool placeRan = false)
 {
     ForgePact::AutoProspectMoveReport r;
     r.heldBefore = true;
@@ -770,12 +776,19 @@ static ForgePact::AutoProspectMoveReport Report(bool canAdd, bool success, int h
     r.canAddRan = true;
     r.canAdd = canAdd;
     r.addRan = canAdd;
+    r.preferredRan = !canAdd;
+    r.preferredOk = !canAdd && preferredOk;
+    r.placeRan = r.preferredOk && placeRan;
+    r.route = canAdd ? ForgePact::AutoProspectMoveRoute::Stack
+                     : (r.placeRan ? ForgePact::AutoProspectMoveRoute::Place : ForgePact::AutoProspectMoveRoute::None);
     r.success = success;
     r.clearRan = success && heldAfter != 0;
     r.heldAfter = heldAfter;
     return r;
 }
 static ForgePact::AutoProspectMoveReport MovedReport() { return Report(true, true, 0); }
+// The new-type route with the grid named and the place called.
+static ForgePact::AutoProspectMoveReport PlaceReport(bool success, int heldAfter) { return Report(false, success, heldAfter, true, true); }
 
 struct BagTally {
     int passes = 0;
@@ -1013,9 +1026,11 @@ static void TargetLandedInsertStaysLandedAcrossTheMovePass()
 
 static void TargetRefusedMoveLeavesTheMaterialAndIsLoggedOnce()
 {
-    // The game would not stack it, then did not confirm the add, then a cell
-    // no longer held what the view saw: the material stays each time, the
-    // prospect still runs, and each reason is named once.
+    // The game would not stack it and named no grid for it (Stage D: the
+    // has-a-stack check saying no is the new-type route now, and this is its
+    // refusal; Stage C called it not-stackable), then did not confirm the add,
+    // then a cell no longer held what the view saw: the material stays each
+    // time, the prospect still runs, and each reason is named once.
     AutoProspectMod mod;
     mod.SetEnabled(true);
     Tally t;
@@ -1025,7 +1040,7 @@ static void TargetRefusedMoveLeavesTheMaterialAndIsLoggedOnce()
     // That prospect's batch is o and p; m stays behind and is not named again.
     const AutoProspectView after = CellsView(kNode, { { "m-0", true }, { "o-0", true }, { "p-0", true } });
     mod.OnInsert(kNode, true, false);
-    BagFrame(mod, in, t, b, in, Report(false, false, 1), &after);           // not-stackable
+    BagFrame(mod, in, t, b, in, Report(false, false, 1), &after);           // no-preferred-grid
     const AutoProspectView in2 = CellsView(kNode, { { "m-0", true }, { "o-0", true }, { "p-0", true }, { "b-14", false } });
     const AutoProspectView after2 = CellsView(kNode, { { "m-0", true }, { "o-0", true }, { "p-0", true }, { "q-0", true } });
     mod.OnInsert(kNode, true, false);
@@ -1033,20 +1048,20 @@ static void TargetRefusedMoveLeavesTheMaterialAndIsLoggedOnce()
     ForgePact::AutoProspectMoveReport stale = MovedReport();
     stale.heldBefore = false;                                               // the cell changed before the first call
     mod.OnMoveReport(stale);
-    mod.OnMoveReport(Report(false, false, 1));                              // not-stackable again
+    mod.OnMoveReport(Report(false, false, 1));                              // no-preferred-grid again
     const auto first = mod.TakeFirstMoveProblem();
     const auto second = mod.TakeFirstMoveProblem();
     const auto third = mod.TakeFirstMoveProblem();
     const auto fourth = mod.TakeFirstMoveProblem();
-    const std::string line = mod.MoveProblemLine(ForgePact::AutoProspectMoveOutcome::NotStackable);
+    const std::string line = mod.MoveProblemLine(ForgePact::AutoProspectMoveOutcome::NoPreferredGrid);
     using O = ForgePact::AutoProspectMoveOutcome;
     Check("target/refused_move_leaves_the_material_and_is_logged_once",
-          b.passes == 2 && t.invokes == 2 && mod.MoveOutcomes(O::NotStackable) == 2 && mod.MoveOutcomes(O::NotAdded) == 2
+          b.passes == 2 && t.invokes == 2 && mod.MoveOutcomes(O::NoPreferredGrid) == 2 && mod.MoveOutcomes(O::NotAdded) == 2
               && mod.MoveOutcomes(O::MoveFailed) == 1 && mod.Moved() == 0
-              && first == O::NotStackable && second == O::NotAdded && third == O::MoveFailed && fourth == O::None
-              && mod.MovePassOn() && line.rfind("autoprospect: not-stackable - ", 0) == 0
+              && first == O::NoPreferredGrid && second == O::NotAdded && third == O::MoveFailed && fourth == O::None
+              && mod.MovePassOn() && line.rfind("autoprospect: no-preferred-grid - ", 0) == 0
               && line.find("stays in the grid") != std::string::npos,
-          "passes=" + N(b.passes) + " invokes=" + N(t.invokes) + " notStackable=" + N(mod.MoveOutcomes(O::NotStackable))
+          "passes=" + N(b.passes) + " invokes=" + N(t.invokes) + " noPreferredGrid=" + N(mod.MoveOutcomes(O::NoPreferredGrid))
               + " notAdded=" + N(mod.MoveOutcomes(O::NotAdded)) + " moveFailed=" + N(mod.MoveOutcomes(O::MoveFailed))
               + " first=" + N((int)first) + " second=" + N((int)second) + " third=" + N((int)third)
               + " fourth=" + N((int)fourth) + " bagOn=" + N(mod.MovePassOn()) + " line=\"" + line + "\"");
@@ -1316,7 +1331,7 @@ static void TargetBatchForgottenAfterARemovalOrAnUnlandedInsert()
 
 static void TargetABatchIsMovedAtMostOnce()
 {
-    // A pass the game refused (not-stackable) leaves the cells where they are;
+    // A pass the game refused (no-preferred-grid) leaves the cells where they are;
     // the next insert, whose prospect produced nothing new, names none of them
     // again. Round 0 retried a refused cell on every insert.
     using O = ForgePact::AutoProspectMoveOutcome;
@@ -1349,10 +1364,10 @@ static void TargetABatchIsMovedAtMostOnce()
     fin2.empty = ForgePact::kAutoProspectMinFreeCells - 2;
     BagFrame(full, fin2, t2, b2, fin2, Report(false, false, 1));
     Check("target/a_batch_is_moved_at_most_once",
-          b.passes == 1 && b.tried == 2 && b.moves == "o-0,p-0" && t.invokes == 2 && mod.MoveOutcomes(O::NotStackable) == 2
+          b.passes == 1 && b.tried == 2 && b.moves == "o-0,p-0" && t.invokes == 2 && mod.MoveOutcomes(O::NoPreferredGrid) == 2
               && b2.passes == 1 && b2.moves == "o-0" && t2.refusals == 2,
           "passes=" + N(b.passes) + " tried=" + N(b.tried) + " moves=" + b.moves + " invokes=" + N(t.invokes)
-              + " notStackable=" + N(mod.MoveOutcomes(O::NotStackable)) + " fullPasses=" + N(b2.passes)
+              + " noPreferredGrid=" + N(mod.MoveOutcomes(O::NoPreferredGrid)) + " fullPasses=" + N(b2.passes)
               + " fullMoves=" + b2.moves);
 }
 
@@ -1372,6 +1387,169 @@ static void TargetSuccessWithAnUnreadableCellTurnsTheMovePassOff()
               && line.find("still in the grid") == std::string::npos && line.find("off for this session") != std::string::npos,
           "outcome=" + N((int)outcome) + " cellKept=" + N(mod.MoveOutcomes(O::CellKept)) + " passOn=" + N(mod.MovePassOn())
               + " line=\"" + line + "\"");
+}
+
+// ---- Stage D: a material whose type has no stack yet -------------------------
+//
+// The c27cdad re-run (research doc, § Stage D) found the pass refusing every
+// material whose type the materials tab does not hold yet: the has-a-stack
+// check answers with the existing stack, so for a new type it says no, and
+// Stage C stopped there (`not-stackable`). The game's own click-move of one,
+// and `stackmove` after it, took another route (§ Stage D results,
+// N-control-newtype and N-stackmove-newtype): the game's preferred grid for
+// the item, then a place into that grid's `grid` member, whose result carries
+// `success` like the add's. Measured by eye, the material lands in the main
+// bag grid, not the materials tab. The core now treats the "no" as a route,
+// not an outcome: the grid named or not, the place confirmed or not, and the
+// same vanished/cell-kept rules as the stack route. `moved-new` counts what
+// the new route moved; `not-stackable` is gone, since a check saying no is no
+// longer a reason for anything to stay.
+//
+// Observed 2026-09-19 against the c27cdad core, unchanged but for the new
+// names, shimmed inert (the route enum and the report's preferredRan,
+// preferredOk, placeRan and route fields, which that core never reads; the
+// NoPreferredGrid and NotPlaced outcomes, which it never returns; MovedNew(),
+// always 0):
+//   FAIL target/new_type_placed_and_cleared_counts_as_moved passes=1 invokes=1 moved=0 movedNew=0 problem=2 first=0 stat="autoprospect: ON invoked=2 prospected=1 ran-no-effect=0 unverified=0 failed=0 inserts=2 (coalesced=0 while-invoking=0 elsewhere=0 while-off=0) not-landed=0 refused(no-window=0 no-grid=0 unreadable=0 node-changed=0 no-button=0 grid-full=0 no-args=0) moved=0 passes=1 not-stackable=1 not-added=0 move-failed=0 vanished=0 cell-kept=0 batch=1 bag=on"
+//   FAIL target/new_type_without_a_preferred_grid_stays_and_is_logged_once passes=1 tried=2 invokes=1 no-preferred-grid=0 moved=0 first=2 second=0 passOn=1 line="autoprospect: none - nothing"
+//   FAIL target/new_type_not_placed_stays_and_is_logged_once passes=1 tried=2 invokes=1 not-placed=0 moved=0 first=2 second=0 passOn=1 line="autoprospect: none - nothing"
+//   FAIL target/new_type_vanished_or_kept_turns_the_move_pass_off vanished: passes=1 invokes=2 tried=2 vanished=0 first=2 reenable=1 line="autoprospect: vanished - a material left the grid without the game confirming the move; moving materials to the bag is off for this session" stat=0 | cell-kept: passes=1 invokes=2 tried=2 cell-kept=0 first=2 reenable=1 line="autoprospect: cell-kept - the game confirmed the move but the grid did not show the material gone; moving materials to the bag is off for this session" stat=0
+//   FAIL target/stat_line_names_the_new_type_route stat="autoprospect: ON invoked=0 prospected=0 ran-no-effect=0 unverified=0 failed=0 inserts=0 (coalesced=0 while-invoking=0 elsewhere=0 while-off=0) not-landed=0 refused(no-window=0 no-grid=0 unreadable=0 node-changed=0 no-button=0 grid-full=0 no-args=0) moved=1 passes=0 not-stackable=3 not-added=0 move-failed=0 vanished=0 cell-kept=0 batch=0 bag=on"
+// (first=2 is not-stackable: that core ended every new-type cell there.)
+// baseline/existing_stack_route_is_unchanged PASSED against it, as a baseline
+// must. Two Stage C targets were re-pointed on purpose and failed against it
+// too, for the same reason: refused_move_leaves_the_material_and_is_logged_once
+// and a_batch_is_moved_at_most_once used a "no" from the has-a-stack check as
+// their refusal, which is no-preferred-grid now (noPreferredGrid=0 there).
+
+static void BaselineExistingStackRouteIsUnchanged()
+{
+    // The has-a-stack check said yes: the add, the clear, `moved`, exactly as
+    // Stage C - and nothing of the new route runs or is counted.
+    AutoProspectMod mod;
+    mod.SetEnabled(true);
+    Tally t;
+    BagTally b;
+    SeedBatch(mod, {}, { { "m-0", true }, { "n-0", true } });
+    mod.OnInsert(kNode, true, false);
+    const AutoProspectView in = CellsView(kNode, { { "m-0", true }, { "n-0", true }, { "a-14", false } });
+    const AutoProspectView moved = CellsView(kNode, { { "a-14", false } });
+    const AutoProspectView after = CellsView(kNode, { { "o-0", true } });
+    const ForgePact::AutoProspectMoveReport report = MovedReport();
+    BagFrame(mod, in, t, b, moved, report, &after);
+    const auto outcome = ForgePact::AutoProspectMod::ClassifyMove(report);
+    const std::string stat = mod.StatLine();
+    const auto problem = mod.TakeFirstMoveProblem();
+    // A core without the new route has no moved-new field at all; one with it must say 0.
+    const bool noNew = stat.find(" moved-new=") == std::string::npos || stat.find(" moved-new=0 ") != std::string::npos;
+    Check("baseline/existing_stack_route_is_unchanged",
+          b.passes == 1 && t.invokes == 1 && mod.Moved() == 2 && outcome == ForgePact::AutoProspectMoveOutcome::Moved
+              && !report.placeRan && problem == ForgePact::AutoProspectMoveOutcome::None
+              && stat.find(" moved=2 ") != std::string::npos && noNew,
+          "passes=" + N(b.passes) + " invokes=" + N(t.invokes) + " moved=" + N(mod.Moved()) + " outcome=" + N((int)outcome)
+              + " placeRan=" + N(report.placeRan) + " problem=" + N((int)problem) + " stat=\"" + stat + "\"");
+}
+
+static void TargetNewTypePlacedAndClearedCountsAsMoved()
+{
+    // The grid named, the place confirmed, the cell cleared: moved, and
+    // counted as moved-new too, with no line but the first-move one.
+    AutoProspectMod mod;
+    mod.SetEnabled(true);
+    Tally t;
+    BagTally b;
+    SeedBatch(mod, {}, { { "g-0", true } });
+    mod.OnInsert(kNode, true, false);
+    const AutoProspectView in = CellsView(kNode, { { "g-0", true }, { "a-14", false } });
+    const AutoProspectView moved = CellsView(kNode, { { "a-14", false } });
+    const AutoProspectView after = CellsView(kNode, { { "o-0", true } });
+    BagFrame(mod, in, t, b, moved, PlaceReport(true, 0), &after);
+    const auto problem = mod.TakeFirstMoveProblem();
+    const bool first = mod.TakeFirstMove();
+    const std::string stat = mod.StatLine();
+    Check("target/new_type_placed_and_cleared_counts_as_moved",
+          b.passes == 1 && t.invokes == 1 && mod.Moved() == 1 && mod.MovedNew() == 1
+              && problem == ForgePact::AutoProspectMoveOutcome::None && first
+              && stat.find(" moved=1") != std::string::npos && stat.find(" moved-new=1") != std::string::npos,
+          "passes=" + N(b.passes) + " invokes=" + N(t.invokes) + " moved=" + N(mod.Moved()) + " movedNew=" + N(mod.MovedNew())
+              + " problem=" + N((int)problem) + " first=" + N(first) + " stat=\"" + stat + "\"");
+}
+
+// A new-type refusal: the material stays, the pass stays on, the prospect
+// still runs, and the reason is named once however often it happens.
+static bool NewTypeRefusalStaysAndIsLoggedOnce(const ForgePact::AutoProspectMoveReport& report,
+                                               ForgePact::AutoProspectMoveOutcome outcome, const std::string& name,
+                                               const std::string& words, std::string& detail)
+{
+    AutoProspectMod mod;
+    mod.SetEnabled(true);
+    Tally t;
+    BagTally b;
+    SeedBatch(mod, {}, { { "g-0", true }, { "h-0", true } });
+    mod.OnInsert(kNode, true, false);
+    const AutoProspectView in = CellsView(kNode, { { "g-0", true }, { "h-0", true }, { "a-14", false } });
+    const AutoProspectView after = CellsView(kNode, { { "g-0", true }, { "h-0", true }, { "o-0", true } });
+    BagFrame(mod, in, t, b, in, report, &after);
+    const auto first = mod.TakeFirstMoveProblem();
+    const auto second = mod.TakeFirstMoveProblem();
+    const std::string line = mod.MoveProblemLine(outcome);
+    const std::string stat = mod.StatLine();
+    detail = "passes=" + N(b.passes) + " tried=" + N(b.tried) + " invokes=" + N(t.invokes) + " " + name + "="
+        + N(mod.MoveOutcomes(outcome)) + " moved=" + N(mod.Moved()) + " first=" + N((int)first) + " second=" + N((int)second)
+        + " passOn=" + N(mod.MovePassOn()) + " line=\"" + line + "\"";
+    return b.passes == 1 && b.tried == 2 && t.invokes == 1 && mod.MoveOutcomes(outcome) == 2 && mod.Moved() == 0
+        && first == outcome && second == ForgePact::AutoProspectMoveOutcome::None && mod.MovePassOn()
+        && line.rfind("autoprospect: " + name + " - ", 0) == 0 && line.find("stays in the grid") != std::string::npos
+        && line.find(words) != std::string::npos && stat.find(" " + name + "=2") != std::string::npos;
+}
+
+static void TargetNewTypeWithoutAPreferredGridStaysAndIsLoggedOnce()
+{
+    std::string detail;
+    const bool ok = NewTypeRefusalStaysAndIsLoggedOnce(Report(false, false, 1),
+                                                       ForgePact::AutoProspectMoveOutcome::NoPreferredGrid,
+                                                       "no-preferred-grid", "named no grid", detail);
+    Check("target/new_type_without_a_preferred_grid_stays_and_is_logged_once", ok, detail);
+}
+
+static void TargetNewTypeNotPlacedStaysAndIsLoggedOnce()
+{
+    // The grid named, the place called, no success, the cell unchanged - a
+    // full bag's shape, and any other refusal of the place.
+    std::string detail;
+    const bool ok = NewTypeRefusalStaysAndIsLoggedOnce(PlaceReport(false, 1), ForgePact::AutoProspectMoveOutcome::NotPlaced,
+                                                       "not-placed", "did not confirm placing", detail);
+    Check("target/new_type_not_placed_stays_and_is_logged_once", ok, detail);
+}
+
+static void TargetNewTypeVanishedOrKeptTurnsTheMovePassOff()
+{
+    // The same two turn-offs as the stack route: the place said no and the
+    // cell emptied anyway (a possible loss), or the place said success and
+    // the cell still holds it (a possible duplicate).
+    std::string vanished, kept;
+    const bool v = TurnsOffForTheSession(PlaceReport(false, 0), ForgePact::AutoProspectMoveOutcome::Vanished,
+                                         "vanished", vanished);
+    const bool k = TurnsOffForTheSession(PlaceReport(true, 1), ForgePact::AutoProspectMoveOutcome::CellKept,
+                                         "cell-kept", kept);
+    Check("target/new_type_vanished_or_kept_turns_the_move_pass_off", v && k,
+          "vanished: " + vanished + " | cell-kept: " + kept);
+}
+
+static void TargetStatLineNamesTheNewTypeRoute()
+{
+    AutoProspectMod mod;
+    mod.SetEnabled(true);
+    mod.OnMoveReport(PlaceReport(true, 0));
+    mod.OnMoveReport(Report(false, false, 1));
+    mod.OnMoveReport(PlaceReport(false, 1));
+    mod.OnMoveReport(MovedReport());
+    const std::string stat = mod.StatLine();
+    Check("target/stat_line_names_the_new_type_route",
+          stat.find(" moved=2") != std::string::npos && stat.find(" moved-new=1") != std::string::npos
+              && stat.find(" no-preferred-grid=1") != std::string::npos && stat.find(" not-placed=1") != std::string::npos
+              && stat.find("not-stackable") == std::string::npos,
+          "stat=\"" + stat + "\"");
 }
 
 int main()
@@ -1423,6 +1601,12 @@ int main()
     TargetBatchForgottenAfterARemovalOrAnUnlandedInsert();
     TargetABatchIsMovedAtMostOnce();
     TargetSuccessWithAnUnreadableCellTurnsTheMovePassOff();
+    BaselineExistingStackRouteIsUnchanged();
+    TargetNewTypePlacedAndClearedCountsAsMoved();
+    TargetNewTypeWithoutAPreferredGridStaysAndIsLoggedOnce();
+    TargetNewTypeNotPlacedStaysAndIsLoggedOnce();
+    TargetNewTypeVanishedOrKeptTurnsTheMovePassOff();
+    TargetStatLineNamesTheNewTypeRoute();
     std::cout << (g_Failures ? "RESULT FAIL" : "RESULT OK") << "\n";
     return g_Failures ? 1 : 0;
 }
