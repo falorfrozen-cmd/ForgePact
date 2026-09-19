@@ -1,0 +1,324 @@
+{
+  "schema": 1,
+  "tool": "tools/build_yytoolkit.py",
+  "upstream": {
+    "repo": "https://github.com/AurieFramework/YYToolkit",
+    "tag": "v4.0.1",
+    "commit": "5a95e46cc4b4e99f16ee3dc0f2ab9ea3c77d18db",
+    "tree": "86db8e7370ee7ad05d47335b6376e5a77b3d3738"
+  },
+  "hub": {
+    "commit": "848a26edb4f9f826c68d85c8223fc117e07c95ed",
+    "patch_directory_dirty": false
+  },
+  "patches": [
+    {
+      "name": "0001-runner-interface-scan-hint.patch",
+      "sha256": "85e31edf7016485ba4db4b6626d96404be77cc3e00814251163035b9002ef437",
+      "log_markers": [
+        "RI scan hint hit",
+        "RI scan hint miss",
+        "RI scan hint key mismatch",
+        "RI scan hint refused",
+        "RI scan hint written",
+        "RI scan hint not written",
+        "RI scan hint unchanged",
+        "RI scan hint hook failed",
+        "RI pre-filter ranked",
+        "RI pre-filter hit",
+        "RI pre-filter miss",
+        "RI scan found no chain"
+      ]
+    },
+    {
+      "name": "0002-runner-interface-quiet-init-dump.patch",
+      "sha256": "1da3d52ce5a1f71d63879db1aae9a271d0aeced594613365e1de227e5e0b0989",
+      "log_markers": [
+        "RI init summary:",
+        "YYTK_RI_VERBOSE is",
+        "the dump stays off"
+      ]
+    },
+    {
+      "name": "0003-executeit-hook-off-by-design.patch",
+      "sha256": "2e52cbb84ca027a33f6639b0bfc572be5a90487ab4f7de31558b838323903d07",
+      "log_markers": [
+        "ExecuteIt hook NOT installed by design",
+        "REFUSED EVENT_OBJECT_CALL",
+        "further refusals will not be logged",
+        "crash-report frames may be mislabelled Code_Execute"
+      ]
+    },
+    {
+      "name": "0004-functions-array-validation.patch",
+      "sha256": "8cc442ab1d8f4c195037e9cd1359ba3d42205e872e975a8ad22e2a027e58e04c",
+      "log_markers": [
+        "GmpFindFunctionsArrayX64() rejected candidate",
+        "GmpFindFunctionsArrayX64() accepted candidate",
+        "GmpFindFunctionsArrayX64() => none of",
+        "GmpFindFunctionsArrayX64() refused to disassemble",
+        "VM::GmpFindFunctionsArray() rejected candidate",
+        "VM::GmpFindFunctionsArray() accepted candidate",
+        "VM::GmpFindFunctionsArray() refused to disassemble",
+        "VM::GmpFindFunctionsArray() => none of",
+        "VM::GmpFindFunctionsArray() => no candidate in",
+        "YkDetermineFunctionEntrySize() refused",
+        "names confirmed by Code_Function_Find",
+        "Functions array search not repeated",
+        "Functions array search attempt"
+      ]
+    },
+    {
+      "name": "0005-yyerror-report-once-and-measure.patch",
+      "sha256": "86a38b01b52d519182c30e2ce0614ef987dab9b0ff581156f79419c151781493",
+      "log_markers": [
+        "[hs] YYError summary: total=",
+        "[hs] YYError report cost",
+        "[hs] YYError hook install",
+        "[hs] game symbol table: built in",
+        "[hs] game symbol table: build attempt",
+        "[hs] game symbol table: builtin walk stopped at slot",
+        "[hs] game symbol table: given up",
+        "[hs] YYError summary unavailable",
+        "[hs] YYError report #",
+        "[hs] YYError: Aurie returned no trampoline",
+        "[hs] YYError message truncated",
+        "[hs] YYError message not expanded"
+      ]
+    },
+    {
+      "name": "0006-release-build-optimised-and-series-identity.patch",
+      "sha256": "c9ea74bd058224b8ef4ef4873c519de86e3d2f084aa7ed477572bc33702172cc",
+      "log_markers": [
+        "Hero Siege patch series"
+      ]
+    },
+    {
+      "name": "0007-runner-interface-refuse-unfound-interface.patch",
+      "sha256": "2627e1030719c40c817746abbc138ab1c4e0a8c36d488b9b75a723f9ca1ba952",
+      "log_markers": [
+        "REFUSED to publish the runner interface"
+      ]
+    }
+  ],
+  "toolchain": {
+    "visual_studio": "17.14.37710.0",
+    "vs_version_range": "[17.0,18.0)",
+    "msbuild": "C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\MSBuild\\Current\\Bin\\amd64\\MSBuild.exe",
+    "msbuild_version": "17.14.60.43110",
+    "build_state": "PlatformToolSet=v143:VCToolArchitecture=Native64Bit:VCToolsVersion=14.44.35207:TargetPlatformVersion=10.0.26100.0:",
+    "cl": "Microsoft (R) C/C++ Optimizing Compiler Version 19.44.35229 for x64"
+  },
+  "configuration": "Release|x64 + repro.props (/Brepro, /PDBALTPATH:%_PDB%)",
+  "warnings": 2,
+  "dll": {
+    "name": "YYToolkit.dll",
+    "size": 950784,
+    "sha256": "51a393d7e5291ad76bdb85b9f44faf5178b6b20e0ce8432fa26bdaf9e21eadf8"
+  },
+  "markers_verified": [
+    {
+      "patch": "0001-runner-interface-scan-hint.patch",
+      "marker": "RI scan hint hit"
+    },
+    {
+      "patch": "0001-runner-interface-scan-hint.patch",
+      "marker": "RI scan hint miss"
+    },
+    {
+      "patch": "0001-runner-interface-scan-hint.patch",
+      "marker": "RI scan hint key mismatch"
+    },
+    {
+      "patch": "0001-runner-interface-scan-hint.patch",
+      "marker": "RI scan hint refused"
+    },
+    {
+      "patch": "0001-runner-interface-scan-hint.patch",
+      "marker": "RI scan hint written"
+    },
+    {
+      "patch": "0001-runner-interface-scan-hint.patch",
+      "marker": "RI scan hint not written"
+    },
+    {
+      "patch": "0001-runner-interface-scan-hint.patch",
+      "marker": "RI scan hint unchanged"
+    },
+    {
+      "patch": "0001-runner-interface-scan-hint.patch",
+      "marker": "RI scan hint hook failed"
+    },
+    {
+      "patch": "0001-runner-interface-scan-hint.patch",
+      "marker": "RI pre-filter ranked"
+    },
+    {
+      "patch": "0001-runner-interface-scan-hint.patch",
+      "marker": "RI pre-filter hit"
+    },
+    {
+      "patch": "0001-runner-interface-scan-hint.patch",
+      "marker": "RI pre-filter miss"
+    },
+    {
+      "patch": "0001-runner-interface-scan-hint.patch",
+      "marker": "RI scan found no chain"
+    },
+    {
+      "patch": "0002-runner-interface-quiet-init-dump.patch",
+      "marker": "RI init summary:"
+    },
+    {
+      "patch": "0002-runner-interface-quiet-init-dump.patch",
+      "marker": "YYTK_RI_VERBOSE is"
+    },
+    {
+      "patch": "0002-runner-interface-quiet-init-dump.patch",
+      "marker": "the dump stays off"
+    },
+    {
+      "patch": "0003-executeit-hook-off-by-design.patch",
+      "marker": "ExecuteIt hook NOT installed by design"
+    },
+    {
+      "patch": "0003-executeit-hook-off-by-design.patch",
+      "marker": "REFUSED EVENT_OBJECT_CALL"
+    },
+    {
+      "patch": "0003-executeit-hook-off-by-design.patch",
+      "marker": "further refusals will not be logged"
+    },
+    {
+      "patch": "0003-executeit-hook-off-by-design.patch",
+      "marker": "crash-report frames may be mislabelled Code_Execute"
+    },
+    {
+      "patch": "0004-functions-array-validation.patch",
+      "marker": "GmpFindFunctionsArrayX64() rejected candidate"
+    },
+    {
+      "patch": "0004-functions-array-validation.patch",
+      "marker": "GmpFindFunctionsArrayX64() accepted candidate"
+    },
+    {
+      "patch": "0004-functions-array-validation.patch",
+      "marker": "GmpFindFunctionsArrayX64() => none of"
+    },
+    {
+      "patch": "0004-functions-array-validation.patch",
+      "marker": "GmpFindFunctionsArrayX64() refused to disassemble"
+    },
+    {
+      "patch": "0004-functions-array-validation.patch",
+      "marker": "VM::GmpFindFunctionsArray() rejected candidate"
+    },
+    {
+      "patch": "0004-functions-array-validation.patch",
+      "marker": "VM::GmpFindFunctionsArray() accepted candidate"
+    },
+    {
+      "patch": "0004-functions-array-validation.patch",
+      "marker": "VM::GmpFindFunctionsArray() refused to disassemble"
+    },
+    {
+      "patch": "0004-functions-array-validation.patch",
+      "marker": "VM::GmpFindFunctionsArray() => none of"
+    },
+    {
+      "patch": "0004-functions-array-validation.patch",
+      "marker": "VM::GmpFindFunctionsArray() => no candidate in"
+    },
+    {
+      "patch": "0004-functions-array-validation.patch",
+      "marker": "YkDetermineFunctionEntrySize() refused"
+    },
+    {
+      "patch": "0004-functions-array-validation.patch",
+      "marker": "names confirmed by Code_Function_Find"
+    },
+    {
+      "patch": "0004-functions-array-validation.patch",
+      "marker": "Functions array search not repeated"
+    },
+    {
+      "patch": "0004-functions-array-validation.patch",
+      "marker": "Functions array search attempt"
+    },
+    {
+      "patch": "0005-yyerror-report-once-and-measure.patch",
+      "marker": "[hs] YYError summary: total="
+    },
+    {
+      "patch": "0005-yyerror-report-once-and-measure.patch",
+      "marker": "[hs] YYError report cost"
+    },
+    {
+      "patch": "0005-yyerror-report-once-and-measure.patch",
+      "marker": "[hs] YYError hook install"
+    },
+    {
+      "patch": "0005-yyerror-report-once-and-measure.patch",
+      "marker": "[hs] game symbol table: built in"
+    },
+    {
+      "patch": "0005-yyerror-report-once-and-measure.patch",
+      "marker": "[hs] game symbol table: build attempt"
+    },
+    {
+      "patch": "0005-yyerror-report-once-and-measure.patch",
+      "marker": "[hs] game symbol table: builtin walk stopped at slot"
+    },
+    {
+      "patch": "0005-yyerror-report-once-and-measure.patch",
+      "marker": "[hs] game symbol table: given up"
+    },
+    {
+      "patch": "0005-yyerror-report-once-and-measure.patch",
+      "marker": "[hs] YYError summary unavailable"
+    },
+    {
+      "patch": "0005-yyerror-report-once-and-measure.patch",
+      "marker": "[hs] YYError report #"
+    },
+    {
+      "patch": "0005-yyerror-report-once-and-measure.patch",
+      "marker": "[hs] YYError: Aurie returned no trampoline"
+    },
+    {
+      "patch": "0005-yyerror-report-once-and-measure.patch",
+      "marker": "[hs] YYError message truncated"
+    },
+    {
+      "patch": "0005-yyerror-report-once-and-measure.patch",
+      "marker": "[hs] YYError message not expanded"
+    },
+    {
+      "patch": "0006-release-build-optimised-and-series-identity.patch",
+      "marker": "Hero Siege patch series"
+    },
+    {
+      "patch": "0007-runner-interface-refuse-unfound-interface.patch",
+      "marker": "REFUSED to publish the runner interface"
+    }
+  ],
+  "host_tests": {
+    "ran": 7,
+    "passed": 7,
+    "files": [
+      "fnarray_validation_test.cpp",
+      "game_symbol_walk_test.cpp",
+      "ObjectCallGateTest.cpp",
+      "ri_dump_test.cpp",
+      "ri_memory_test.cpp",
+      "ri_scan_test.cpp",
+      "yyerror_ledger_test.cpp"
+    ]
+  },
+  "source": {
+    "name": "yytoolkit-source-6880c009e053.zip",
+    "id": "6880c009e053b4e64b58ce0d3959b2e3a9f6555a6517a5ed5d636ba3382e1591",
+    "sha256": "c717ec90fb54a469071b5c6960b5f43432007a51815ebc4494521763ccd73eed"
+  },
+  "live_gameplay_verified": false
+}

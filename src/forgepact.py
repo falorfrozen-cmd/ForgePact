@@ -14,7 +14,7 @@ Settings persist in %LOCALAPPDATA%/Hero_Siege/forgepact.json.
 # and works with no compiled DLL at all, so tools/cut_release.py reads the
 # current version from here. Do NOT hand-edit it - `py tools/cut_release.py
 # <version>` moves every site at once and `--check` fails if they disagree.
-__version__ = "1.4.2"
+__version__ = "1.4.4"
 
 import hashlib
 import json
@@ -269,34 +269,6 @@ def exe_path(cfg=None) -> Path:
 
 def ipc_dir(cfg=None) -> Path:
     return exe_path(cfg).parent / "bp_ipc"
-
-
-# YYTK RunnerInterface cache: pre-writing it skips the ~1 min first-launch disassembly.
-# Keyed by exe size; YYTK validates the size, so a stale cache (different exe build) is
-# safely ignored (it just falls back to a one-time scan + re-caches). Known patched build:
-KNOWN_RI_CACHE = {
-    282105856: "282105856 190392081 190393250\n",   # 7.0.90, AuriePatcher-ed (verified 2026-09-02)
-    303708672: "303708672 208216097 208217266\n",   # 7.0.30, AuriePatcher-ed (verified 2026-08-26)
-    303584768: "303584768 208133041 208134210\n",   # previous S10 build, AuriePatcher-ed
-    309551616: "309551616 207703889 207705042\n",   # older still
-}
-
-
-def ensure_ri_cache(cfg=None) -> bool:
-    """Use only a verified cache; remove unknown caches so YYTK must rescan."""
-    try:
-        exe = exe_path(cfg)
-        content = KNOWN_RI_CACHE.get(exe.stat().st_size)
-        cache = exe.with_name(exe.name + ".yytkcache")
-        if not content:
-            if cache.exists():
-                cache.unlink()
-            return False
-        if not cache.exists() or cache.read_text(errors="ignore").split()[:1] != content.split()[:1]:
-            cache.write_text(content, encoding="ascii")
-        return True
-    except Exception:
-        return False
 
 
 WEBVIEW_WINDOW = None  # set in main() when running as a native pywebview window
@@ -1594,8 +1566,7 @@ def launch_modded_game(cfg: dict) -> dict:
             return "The mod plugin installation is incomplete. Close the game and click Install Mod Plugin first."
         return ""
 
-    return offline_launcher.launch_game(exe_path(cfg), validate_extra=validate_plugin,
-                                        prepare=lambda: ensure_ri_cache(cfg))
+    return offline_launcher.launch_game(exe_path(cfg), validate_extra=validate_plugin)
 
 
 class H(BaseHTTPRequestHandler):

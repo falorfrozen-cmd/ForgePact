@@ -315,9 +315,11 @@ relicfilter: hook installed -> ON
 relicfilter: holding back 3 of 5 maxed relic(s) on this roll
 ```
 
-`out.txt` no longer grows without limit: once it passes 2 MB, the plugin rotates
-it to `out.prev.txt` the next time the game starts (never mid-session), so the
-total stays around 4 MB and the previous session's log is never lost. **If
+`out.txt` no longer keeps every session forever: once it passes 2 MB, the plugin
+rotates it to `out.prev.txt` the next time the game starts (never mid-session),
+replacing any older `out.prev.txt`, so old logs no longer pile up and the
+previous log is never lost. The log still grows during a session, so one long
+session can make either file larger than 2 MB. **If
 you're attaching a log to a bug report, attach both `out.txt` and
 `out.prev.txt`** — the session you actually want may be the one that was just
 rotated into the `.prev` file (e.g. the game crashed and you relaunched before
@@ -469,7 +471,7 @@ Into the game's `bin` folder:
 Hero_Siege.exe                   PATCHED IN PLACE by AuriePatcher
 Hero_Siege.exe.aurie_backup      your original exe, kept for restore
 AurieCore.dll                    Aurie Framework  (AGPL-3.0, unmodified)
-mods/aurie/YYToolkit.dll         YYToolkit        (AGPL-3.0, one modified source file)
+mods/aurie/YYToolkit.dll         YYToolkit        (AGPL-3.0, modified — see yytoolkit-modified/)
 mods/aurie/BloodPactPlugin.dll   this project's mod plugin
 bp_ipc/                          the panel's command channel (created on first launch)
 ```
@@ -502,7 +504,10 @@ load there anyway.
 - `plugin/ModuleMain.cpp` — **the mod plugin** (BloodPactPlugin). This is the active
   implementation: it hooks the GameMaker runtime through YYToolkit and receives the
   panel's commands over `bp_ipc`.
-- `yytoolkit-modified/` — our YYToolkit build and the notes for the one changed file.
+- `yytoolkit-modified/` — a pointer at the modified YYToolkit's real source: the
+  patch series in the toolkit hub's `third_party/yytoolkit/`, at the commit the
+  shipped DLL was built from. Not the source itself, and not where a change to
+  YYToolkit is made.
 - `modfiles_shipped/` — the binaries copied into the game folder.
 - `plugin_build/build.bat` — builds the plugin. `build.bat release` produces the shipping
   build (features only); `build.bat dev` produces the development build, which additionally
@@ -587,8 +592,8 @@ under AGPL-3.0.
 - **Aurie Framework** — https://github.com/AurieFramework/Aurie (AGPL-3.0)
 - **YYToolkit** — https://github.com/AurieFramework/YYToolkit (AGPL-3.0)
 
-See [CREDITS.md](CREDITS.md) for the full notices, including which files are
-unmodified and what our YYToolkit change does.
+See [CREDITS.md](CREDITS.md) for the full notices, and `yytoolkit-modified/NOTICE.md`
+for where the modified YYToolkit's complete corresponding source is.
 
 ForgePact is an independent, fan-made project and is **not affiliated with or
 endorsed by** AurieFramework, Panic Art Studios, or Hero Siege.

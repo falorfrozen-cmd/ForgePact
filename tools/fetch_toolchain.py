@@ -10,12 +10,19 @@ Run it:
 What it fetches, from `tools/toolchain-pins.json`: the YYToolkit v4.0.1 and
 Aurie v2.0.2 headers `plugin_build/include/` needs to compile
 (`plugin/BUILD.md`; both are AGPL-3.0 and never ours to commit -- see
-`.gitignore`), the two unmodified Aurie binaries, and the modified
-`YYToolkit.dll` plus the optional `HSOfflineTrackerProducer.dll`, both
-extracted from the published `ForgePact-1.3.16.zip` (see
-`docs/submodules/ForgePact/instructions.md`'s "The build half" for why: that
-exact `YYToolkit.dll` has shipped byte-identical in every release from v1.3.1
-through v1.3.16).
+`.gitignore`), the two unmodified Aurie binaries, and two shipped mod files.
+The modified `YYToolkit.dll` is now a plain file pin, downloaded directly
+from the hub repository's own release (`hero-siege-offline-toolkit`, tag
+`yytoolkit-v4.0.1-hs.1`) and verified by SHA-256 like every other entry here;
+it is the "hs.1" build of the documented patch series the hub keeps under
+`third_party/yytoolkit/` (see `yytoolkit-modified/NOTICE.md` and the
+`YYToolkit-BUILD-INFO.json` installed beside it). It stays a pinned binary
+for the same reason it always has: ship the exact binary that was launched
+against the game, not a fresh CI build. The optional
+`HSOfflineTrackerProducer.dll` is unchanged -- still extracted as a zip
+member from the published `ForgePact-1.3.16.zip` (see
+`docs/submodules/ForgePact/instructions.md`'s "The build half" for why an
+already-launched binary is extracted rather than rebuilt in CI).
 
 **All-or-nothing.** Every hash is verified -- for a zip-member entry, the
 archive's own hash first, before any member is read out of it -- and only if
