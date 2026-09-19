@@ -27,8 +27,16 @@ Soul Spurn (`## Static search` → `### Other toggle skills: the static
 candidate table`); the research build's `tgprobe talents` and `tgprobe tgl`
 (`## Instrument` → `### Subcommands`) measure them in session 6 (`## Live
 procedure` → `### Session 6`), whose result is `## Results` → `### Toggle
-skill table`, still empty. Nothing a player runs changes until then: the
-outline and the guard still cover Soul Spurn only.
+skill table`. Nothing a player runs changes yet: the outline and the guard
+still cover Soul Spurn only.
+
+Status (2026-09-19, session 6 recorded): four rows beside Soul Spurn measured
+as persistent-instance toggles with a shippable ON discriminator
+(`lunarOrbit`, `crematus`, `submergedKnives`, `maelstromOfFrost`; `## Decision`
+→ `### After session 6`); `counter`'s toggle state is a player buff, not an
+instance, and `blender` was judged by the tester not to be a toggle skill —
+neither is a row. Building the shipped table (`## Decision` → `### S design`)
+is the next phase.
 
 - **Measured:** the cast path (Q1), draw order (Q4), three sources of
   accidental re-casts (Q5, one of them the double-cast proc, which bypasses
@@ -977,8 +985,9 @@ below are the rows Results → `### Toggle skill table` fills; each is
    never "this skill is not a toggle".
 4. **C3 (ownership).** By eye on → the row's `tgprobe tgl` line reads
    `state=on n≥1 mine≥1` (all `unattributed` instead → ownership `none`,
-   re-added with `tgl add … none`); `tgprobe tgl fields <row>` for the
-   toggled snapshot; off → `state=off`.
+   re-added with `tgprobe tgl add <abilityId> <ObjectName> [marker|none]
+   [timer|none] [ownership|none] [sNN]`, `none` in the ownership position);
+   `tgprobe tgl fields <row>` for the toggled snapshot; off → `state=off`.
 5. **C4 (zone change).** Toggle on, change zone: the row's
    `firstAfterRoomChange: state=off n=0`.
 6. **C5 (the ON discriminator).** The toggled form on for at least 2 s:
@@ -1285,15 +1294,140 @@ field name (the follow-up above replaces it with `noHud=`/`noRow0=`/
 
 ### Toggle skill table
 
-Session 6 (`## Live procedure` → `### Session 6`) has not run. One row per
-candidate; each cell is a quoted value or exactly `not observed`/`blocked`,
-and the status is `measured`, `no persistent instance observed (deep flip
-census)` (only with row 0's flip caught by the same census, same session;
-else `blocked`), `no discriminator` or `blocked`. The preamble will quote the `tgprobe talents`
-`ids=` line and row 0's `agree=`/`disagree=0` pair.
+Session 6 ran 2026-09-19 against the research DLL at `a149030`, one pass per
+class, White Mage first (row 0's same-session controls). Raw log:
+`.claude/workorders/forgepact-toggle-timer-border-session6.log` (a hub
+workorder artefact, not part of this submodule, never staged); every quoted
+value below is from it.
+
+**Preamble.** `tgprobe talents` (C0), first call of the session:
+
+```
+tgprobe talents: ids=817 shown=1 nonNumericKeys=0 notStruct=0 walkExc=0 truncated=0 tableRowsWithId=7/7
+  talent 240 abilityId=soulSpurn abilityAura=false abilityDuration=0 abilityCooldown=0.250000 abilityLength=420 abilityTags=[15,18,3]
+```
+
+`ids=817` held on every later `tgprobe talents` call in the session (rows
+grew from `tableRowsWithId=7/7` to `16/16` as `tgl add` rows were created;
+`ids=` itself never moved). Every row's `abilityId`/`abilityDuration`/
+`abilityCooldown`/`abilityLength` line, quoted once per class as it was
+tested:
+
+```
+talent 358 abilityId=lunarOrbit abilityAura=false abilityDuration=0 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,18,2]
+talent 283 abilityId=crematus abilityAura=false abilityDuration=0 abilityCooldown=5 abilityLength=320 abilityTags=[15,18,3]
+talent 301 abilityId=counter abilityAura=false abilityDuration=6 abilityCooldown=15 abilityLength=320 abilityTags=[15,18,23,4]
+talent 377 abilityId=submergedKnives abilityAura=false abilityDuration=2.500000 abilityCooldown=1.500000 abilityLength=320 abilityTags=[15,16,3,0]
+talent 379 abilityId=blender abilityAura=false abilityDuration=5 abilityCooldown=8 abilityLength=320 abilityTags=[15,16,2,0]
+talent 430 abilityId=maelstromOfFrost abilityAura=false abilityDuration=30 abilityCooldown=40 abilityLength=320 abilityTags=[15,16,3]
+```
+
+Row 0's C1 agreement control (`agree=` rose, `disagree=0`) held for the whole
+session: first `tgprobe tgl: frame=26370 sampler=on room=7200115676731348177
+rows=7 agree=2700 disagree=0`, last `tgprobe tgl: frame=1744050 sampler=on
+room=4011848663980962470 rows=16 agree=1705105 disagree=0`; no line in the
+session log reads `disagree=` other than `0`.
+
+One row per candidate; each cell is a quoted value or exactly `not
+observed`/`blocked`, and the status is `measured`, `no persistent instance
+observed (deep flip census)` (only with row 0's flip caught by the same
+census, same session; else `blocked`), `no discriminator` or `blocked`. Where
+the measured ON object differs from the row's prefilled one (`###
+Other toggle skills: the static candidate table`), the cell names the
+measured object and the notes below name the prefilled one and why it was
+rejected.
 
 | Class | Skill (in-game name, `abilityId`) | Talent id | Sub-talent (key, measured `sNN`) | ON object (SDK name, index) | Ownership field or `none` | Plain form creates the object (`yes`/`no`) | ON discriminator | Slot (`row0[i]`) | Status |
 |---|---|---|---|---|---|---|---|---|---|
+| White Mage | Soul Spurn (`soulSpurn`) | `240` | `subWhiteMageSoulSpurn12` → `s12` | `White_Mage_Soul_Spurn_AOE_obj` (5759) | `isMyClient` | `yes` | `marker purgatory` (`purgatory=real:0.090000` toggled, `purgatory=real:0.000000` plain) | `row0[5]` | measured |
+| Exo | Lunar Orbit (`lunarOrbit`) | `358` | `subExoLunarOrbit11` → `s11` | `Exo_Lunar_Orbit_Crescent_Moon_obj` (1471) | `none` | `no` | `none-needed` | `row0[3]` | measured |
+| Plague Doctor | Crematus (`crematus`) | `283` | `subPlagueDoctorCrematus13` → `s13` | `Plague_Doctor_Crematus_Controller_obj` (3502) | `none` | `yes` | `marker skillContamination` (`skillContamination=real:0.035000` toggled at sub-talent levels 3 and 1, `skillContamination=real:0.000000` plain) | `row0[3]` (moved from `row0[2]`) | measured |
+| Shield Lancer | Counter (`counter`) | `301` | `subShieldLancerCounter13` → `s13` | not observed | not observed | not observed | blocked | `row0[4]` | no persistent instance observed (deep flip census) |
+| Butcher | Submerged Knives (`submergedKnives`) | `377` | `subButcherSubmergedKnives13` → `s13` | `Butcher_Submerged_Knives_Knifehoarder_obj` (729) | `none` | `no` | `none-needed` | `row0[6]` | measured |
+| Prophet (second tier) | Maelstrom of Frost (`maelstromOfFrost`) | `430` | `subProphetMaelstromOfFrost11` → `s11` | `Prophet_Maelstrom_obj` (3697, prefilled object, unswapped) | `isMyClient` | `yes` | `timer destroyTimer=-1.000000` (`first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 unreadable=0 atPredicted=3903 draws=3903` toggled; plain `first=4320.000000 last=-0.659664 ... atPredicted=0 draws=4288`) | `row0[10]` | measured |
+| Butcher (second tier) | Blender (`blender`) | `379` | not observed (C6 not run) | not observed | not observed | not observed | blocked | `row0[5]` | blocked |
+
+**Notes (rejected prefilled objects, and the blocked/no-instance rows).**
+
+- **Soul Spurn** confirms the row-0 result already recorded in Results →
+  Session 4: `purgatory` > 0 toggled, 0 plain; `destroyTimer` also separates
+  (`-1.000000` held toggled) but the marker is the shipped discriminator
+  (D-R2). Census positive control for the whole session's `deep flip`/`deep
+  diff` calls: `census.White_Mage_Soul_Spurn_AOE_obj: base=<absent> on=1
+  off=<absent>` (`tgprobe deep flip base on off`, White Mage pass).
+- **Lunar Orbit.** The prefilled object `Exo_Lunar_Orbit_obj` (1473) also
+  flips in the same-session census (`+ census.Exo_Lunar_Orbit_obj=12` /
+  `- census.Exo_Lunar_Orbit_obj (was 12)`, `tgprobe deep diff base on`/`on
+  off` filter=`census.`), but its `destroyTimer` passes through `-1` during a
+  **plain** cast too (`tgprobe tgl timer [1] lunarOrbit … appearance=3
+  first=720.000000 last=-1.000000 min=-1.005696 … atPredicted=108
+  draws=1341`, taken after three plain Lunar Orbit casts): rejected, no
+  discriminator on this object. `Exo_Lunar_Orbit_Crescent_Moon_obj` (1471)
+  also flips in the same diff (`+ census.Exo_Lunar_Orbit_Crescent_Moon_obj=1`
+  / `- census.Exo_Lunar_Orbit_Crescent_Moon_obj (was 1)`); added as row 7
+  with `ownership=isMyClient` first, which read `unreadable` on every sample
+  (driver note: "row 7 caught Crescent Moon (appearance=1) but isMyClient
+  unreadable (unreadable=1647, fields 'no own')"), so it was re-added as row
+  9 with `ownership=none` (D-N3), which then read `markedOn=1963` across the
+  session's later polls. `none-needed`: three plain Lunar Orbit casts landed
+  (tester: `'mana dropped each time'`) with no Crescent Moon appearance in
+  that window (`[7] lunarOrbit state=off n=0 … samples=10650 on=0 off=10650
+  unreadable=0 …`, sampled only while the sub-talent was respecced out); the
+  required same-pass positive control is row 0's own plain-cast appearance
+  rise, quoted below under Soul Spurn's own control (one plain cast: `appearance=3` unchanged;
+  three more: `appearance=3`→`appearance=4`).
+- **Crematus.** The prefilled object `Plague_Doctor_Crematus_obj` (3503,
+  the projectile) also shows live instances while the toggle is on (`[2]
+  crematus state=on n=6…7 mine=6…7 … timer=-1.000000…35.291376 …`) but keeps
+  spawning independently: its own `lastTransitionFrame` (`1518541`) is 428
+  frames after the controller's (`1518113`) — it outlives the toggle instead
+  of tracking it, so it was rejected in favour of
+  `Plague_Doctor_Crematus_Controller_obj` (3502), added as row 10 with
+  `ownership=none` (a parallel row 11 with `ownership=isMyClient` read
+  `unreadable=4212` on the same samples, confirming D-N3). Plain casts do
+  create the controller: three plain Crematus casts landed (tester: `'mana
+  dropped each time'`) and the row's own object was live throughout
+  (`transitions=11`, unchanged before/after), with `skillContamination=real:0.000000`
+  in the post-cast `fields` snapshot versus `0.035000` toggled.
+- **Counter (Shield Lancer).** No object flips in the bucket-A (flip and
+  revert) sense: `Shield_Lancer_Counter_World_obj` (the prefilled row 3
+  object) was never caught (`tgprobe tgl fields [3] counter … appearance=0 /
+  first: none / last: none`). `Charge_Controller_obj` appears on cast
+  (`tgprobe deep diff base on filter=census.`: `+ census.Charge_Controller_obj=1`)
+  but is not removed on OFF (`tgprobe deep diff on off filter=census.`:
+  `matching=1`, the one line `- census.Draw_Player_Buff_obj (was 1)`, no
+  `Charge_Controller_obj` line) — it persists after off, so it was rejected.
+  The actual toggle state is a player buff: `global.playerBuff[1][0][104]`
+  appears on cast (`buffType=int64:104`, `global.activeBuffList[1][0][0]=int64:104`)
+  and is removed on OFF (`- global.playerBuff[1][0][104].destroyTimer (was
+  real:1036.800000)`, `- global.activeBuffList[1][0][0] (was int64:104)`),
+  generic `Draw_Player_Buff_obj` — not a per-skill instance, so not a row.
+  One plain Counter cast (tester: `'mana dropped'`) left no trace on that
+  buff (`tgprobe deep diff pbase plain filter=activeBuffList matching=0`,
+  `filter=playerBuff[1][0][104] matching=0`). Row 0's census control for this
+  pass: `census.White_Mage_Soul_Spurn_AOE_obj: base=<absent> on=1
+  off=<absent>` (same White Mage pass at the top of the session). Status:
+  no persistent instance observed (deep flip census); not shippable in this
+  design.
+- **Submerged Knives.** The prefilled object `Butcher_Submerged_Knives_obj`
+  (730) is live but flickers (`[4] submergedKnives … transitions=140` over
+  the pass) rather than reading as a stable on/off instance, so it was
+  rejected in favour of `Butcher_Submerged_Knives_Knifehoarder_obj` (729,
+  added as row 14 with `ownership=none`; a parallel row 15 with
+  `ownership=isMyClient` read `unreadable=2586`, confirming D-N3).
+  `none-needed`: three plain Submerged Knives casts landed (tester: `'mana
+  dropped each time'`) with row 14's `transitions=3`/`markedOn=2706`
+  unchanged before and after (`tgprobe tgl fields [14] submergedKnives …
+  appearance=2 … first/last skillTimer …` shows no new appearance), matching
+  the same-pass positive control (row 0's plain-cast appearance rise).
+- **Maelstrom of Frost.** The prefilled object needed no swap.
+- **Blender.** By eye the tester judged it not a toggle: `'blender is not a
+  toggle skill it seems'`. Measured: `Butcher_Blender_obj` (the prefilled
+  object) had one appearance of `on=744`/`markedOn=744`/`transitions=2` draws
+  that ended unprompted, with `base->on` census and `activeBuffList` diffs
+  empty (tester's own summary, quoted). C5 and C6 were not run for this row
+  (blocked, per Context "Session 6": a row not run in a live session is
+  `blocked`, never `not observed`).
 
 ## Decision
 
@@ -1504,6 +1638,51 @@ press, read `TalentUse ... lastFrame=13791` (the press itself); the same
 exactly (0 frames between the cast resolving and the ownership-only read
 flipping to `off`). `offlag:` = `13810 − 13791` = **19 frames** from the
 button press to the read leaving `on`.
+
+### After session 6
+
+Source: Results → `### Toggle skill table` and its Notes, quoted from
+`.claude/workorders/forgepact-toggle-timer-border-session6.log`.
+
+- **Entries: 4** (`lunarOrbit`, `crematus`, `submergedKnives`,
+  `maelstromOfFrost` — the rows other than Soul Spurn whose object, ownership
+  and slot columns read `measured` and whose discriminator is not `none`;
+  `counter` has no measured object and `blender` is `blocked`, so neither
+  counts).
+- **Sub index: 1** (`global.subTalentMap[1]`; index `[0]` and `[2]`–`[5]`
+  read `t<id>: absent` for every `abilityId` tested, every allocated
+  sub-talent's `t<id>` key appeared only at index `[1]`).
+- **Unallocated reads: 0** (key present, value `0`): respeccing Soul Spurn's
+  Purgatory out read `s12=real:0.000000` at index `[1]`, not `absent` — the
+  same shape held for every other row's slot on respec (`s11=real:0.000000`
+  for `lunarOrbit`, `s13=real:0.000000` for `crematus`, `s13=real:0.000000`
+  for `counter`, `s13=real:0.000000` for `submergedKnives`,
+  `s11=real:0.000000` for `maelstromOfFrost`).
+- **Purgatory slot: s12** (`soulSpurn`'s `s12` at index `[1]` moved
+  `3.000000`→`0.000000`→back on respec/reallocate). The other measured
+  slots: `lunarOrbit` `s11`, `crematus` `s13`, `counter` `s13`,
+  `submergedKnives` `s13`, `maelstromOfFrost` `s11` (all index `[1]`).
+  `blender`'s `s14` was seen only at its allocated value (`1.000000`); C6 was
+  not run for it (no respec/reallocate cycle recorded), so its slot is not
+  part of the sub-talent gate.
+- **ON discriminator: soulSpurn=marker purgatory**
+- **ON discriminator: lunarOrbit=none-needed**
+- **ON discriminator: crematus=marker skillContamination**
+- **ON discriminator: counter=blocked** (no persistent instance to read a
+  discriminator from; the toggle state is player buff 104, not a row)
+- **ON discriminator: submergedKnives=none-needed**
+- **ON discriminator: maelstromOfFrost=timer destroyTimer=-1.000000**
+- **ON discriminator: blender=blocked** (C5 not run; tester judged it not a
+  toggle skill)
+
+Four rows other than Soul Spurn are shippable in the outline (`lunarOrbit`,
+`crematus`, `submergedKnives`, `maelstromOfFrost`); all four also have a
+measured sub-talent slot at index `1`, so all four are shippable in the
+guard's set too, subject to the `## Decision` → `### S design` the next
+phase writes. `counter` and `blender` are results, not defects: neither
+measured as a persistent-instance toggle this session (`counter`'s toggle
+state lives on a player buff, and `blender` was judged by the tester not to
+be a toggle skill at all), so neither ships in this design.
 
 ### P1: the indicator's read, control and slot design
 
