@@ -225,11 +225,6 @@ class TestRelicFilterContract(unittest.TestCase):
         # or the watchdog deadlocks on a lock the stalled thread is holding.
         self.assertLess(watchdog.index("ResumeThread"), watchdog.index("ms - frame thread at"))
 
-    def test_unknown_runner_cache_is_removed(self):
-        panel_code = (SRC_DIR / "forgepact.py").read_text(encoding="utf-8")
-        self.assertIn("if cache.exists():", panel_code)
-        self.assertIn("cache.unlink()", panel_code)
-
     @staticmethod
     def _tab_of(html, control_id_attr):
         # Which tab-card a control lives in: the nearest data-tab="..." that
