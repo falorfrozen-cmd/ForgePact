@@ -697,6 +697,412 @@ static void AdapterMeasuredSessionProspectsEachInsertOnce()
               + " first=" + N(first) + " refusals=" + N(t.refusals));
 }
 
+// ---- Stage C: the previous batch goes to the materials tab first -------------
+//
+// Stage C's M7 (research doc, § Stage C results) moved one material from the
+// ProspectGrid into the materials tab by name: look the item up by the cell's
+// fingerprint, ask the game whether it stacks, add it to the stack, and clear
+// the cell only when the add reported success. The core does not know what a
+// material is - the adapter reads each cell's item type through the SDK and
+// hands the core a per-cell flag - and does not make the calls: it decides
+// WHEN the pass runs (once per landed insert, just before the invoke, with the
+// sub-option on), WHICH cells it names (materials only), and what each cell's
+// outcome means. `BagFrame` below is the adapter loop: Decide; on
+// MoveMaterials report each named cell, re-read, and Decide again in the same
+// frame; then the invoke as before.
+//
+// Observed 2026-09-19 against the unchanged core, shimmed with the new names
+// only (the MoveMaterials action, the per-cell view and moves, the move report
+// and its outcomes, the bag flag and its lines - every one inert: Decide never
+// asks for a pass, BagEnabled() false, SetBagEnabled refused, every count 0,
+// every line empty):
+//   FAIL target/bag_on_by_default_and_kept_across_the_parent_toggle byDefault=0 afterParentToggle=0 offKept=1 onAgain=0 line="autoprospect: ON invoked=0 prospected=0 ran-no-effect=0 unverified=0 failed=0 inserts=0 (coalesced=0 while-invoking=0 elsewhere=0 while-off=0) not-landed=0 refused(no-window=0 no-grid=0 unreadable=0 node-changed=0 no-button=0 grid-full=0 no-args=0)"
+//   FAIL target/move_pass_before_the_invoke passes=0 invokes=1 order=invoke moves= moved=0
+//   FAIL target/non_material_never_moved passes=0 invokes=2 moves= moved=0
+//   FAIL target/move_pass_only_when_an_insert_lands passes=0 early=0 invokes=1 moved=0
+//   FAIL target/landed_insert_stays_landed_across_the_move_pass passes=0 invokes=1 notLanded=0 settled=3 moved=0
+//   FAIL target/refused_move_leaves_the_material_and_is_logged_once passes=0 invokes=2 notStackable=0 notAdded=0 moveFailed=0 first=0 second=0 third=0 fourth=0 bagOn=0 line=""
+//   FAIL target/vanished_turns_the_move_pass_off_for_the_session passes=0 invokes=2 tried=0 vanished=0 first=0 reenable=0 line="" stat=0
+//   FAIL target/cell_kept_after_add_turns_the_move_pass_off_for_the_session passes=0 invokes=2 tried=0 cell-kept=0 first=0 reenable=0 line="" stat=0
+//   FAIL target/first_move_reported_once_in_the_players_log early=0 afterNothingMoved=0 first=0 second=0 moved=0 line=""
+// (The landed scenario's settled=3 is the shim invoking straight away, with
+// the five materials still in the grid, and settling on the invoke's own read.)
+// baseline/bag_off_never_moves and baseline/parent_off_never_moves PASSED
+// against it, as baselines must: a core that never asks for a pass trivially
+// never asks for one wrongly, and the targets above are what it fails.
+
+struct Mat { std::string fp; bool material; };
+
+// A view whose cells carry the adapter's per-cell material flag.
+static AutoProspectView CellsView(int64_t node, const std::vector<Mat>& cells)
+{
+    std::string prints;
+    AutoProspectView v = View(node, (int)cells.size());
+    for (size_t i = 0; i < cells.size(); ++i) {
+        ForgePact::AutoProspectCell c;
+        c.row = (int)(i % 6);
+        c.col = (int)(i / 6);
+        c.fingerprint = cells[i].fp;
+        c.material = cells[i].material;
+        v.cells.push_back(c);
+        prints += (i ? "," : "") + cells[i].fp;
+    }
+    v.fingerprints = prints;
+    return v;
+}
+
+// The adapter's report for one cell, by how the calls went.
+static ForgePact::AutoProspectMoveReport Report(bool canAdd, bool success, int heldAfter)
+{
+    ForgePact::AutoProspectMoveReport r;
+    r.heldBefore = true;
+    r.lookup = true;
+    r.canAddRan = true;
+    r.canAdd = canAdd;
+    r.addRan = canAdd;
+    r.success = success;
+    r.clearRan = success && heldAfter != 0;
+    r.heldAfter = heldAfter;
+    return r;
+}
+static ForgePact::AutoProspectMoveReport MovedReport() { return Report(true, true, 0); }
+
+struct BagTally {
+    int passes = 0;
+    int tried = 0;                 // cells the adapter attempted
+    std::string order;             // "move,move,invoke"
+    std::string moves;             // the fingerprints the passes named
+    bool early = false;            // a pass was asked for on a frame with no landed insert
+};
+
+// One adapter frame with the move pass: Decide; on MoveMaterials report each
+// named cell with `report` (stopping when the pass turns itself off), re-read
+// (`afterMove`), and Decide again the same frame; then invoke as `Frame` does.
+static AutoProspectDecision BagFrame(AutoProspectMod& mod, const AutoProspectView& v, Tally& t, BagTally& b,
+                                     const AutoProspectView& afterMove, const ForgePact::AutoProspectMoveReport& report,
+                                     const AutoProspectView* afterInvoke = nullptr)
+{
+    AutoProspectDecision d = mod.Decide(v);
+    if (d.action == AutoProspectAction::MoveMaterials) {
+        ++b.passes;
+        for (const auto& c : d.moves) {
+            if (!mod.MovePassOn()) break;
+            ++b.tried;
+            b.order += std::string(b.order.empty() ? "" : ",") + "move";
+            b.moves += std::string(b.moves.empty() ? "" : ",") + c.fingerprint;
+            mod.OnMoveReport(report);
+        }
+        d = mod.Decide(afterMove);
+    }
+    if (d.action == AutoProspectAction::Invoke) {
+        ++t.invokes;
+        b.order += std::string(b.order.empty() ? "" : ",") + "invoke";
+        mod.OnInvoked(true, afterInvoke ? *afterInvoke : afterMove);
+    }
+    if (d.action == AutoProspectAction::Refuse) { ++t.refusals; t.last = d.reason; }
+    return d;
+}
+
+// A frame with no insert landing: nothing may ask for a pass.
+static void QuietFrame(AutoProspectMod& mod, const AutoProspectView& v, Tally& t, BagTally& b)
+{
+    const AutoProspectDecision d = BagFrame(mod, v, t, b, v, MovedReport());
+    if (d.action == AutoProspectAction::MoveMaterials) b.early = true;
+}
+
+static void BaselineBagOffNeverMoves()
+{
+    // Parent on, bag off: exactly the Stage B core - no pass, one invoke per insert.
+    AutoProspectMod mod;
+    mod.SetEnabled(true);
+    mod.SetBagEnabled(false);
+    Tally t;
+    BagTally b;
+    const AutoProspectView mats = CellsView(kNode, { { "m-0", true }, { "n-0", true } });
+    QuietFrame(mod, mats, t, b);
+    std::vector<Mat> grid = { { "m-0", true }, { "n-0", true } };
+    for (int i = 0; i < 2; ++i) {
+        mod.OnInsert(kNode, true, false);
+        const bool needs = mod.NeedsMaterials();
+        std::vector<Mat> withItem = grid;
+        withItem.push_back({ "a" + N(i) + "-14", false });
+        grid.push_back({ "o" + N(i) + "-0", true });   // the insert's own materials, beside the old ones
+        const AutoProspectView in = CellsView(kNode, withItem);
+        const AutoProspectView after = CellsView(kNode, grid);
+        BagFrame(mod, in, t, b, in, MovedReport(), &after);
+        QuietFrame(mod, after, t, b);
+        if (needs) b.early = true;
+    }
+    Check("baseline/bag_off_never_moves",
+          b.passes == 0 && b.tried == 0 && t.invokes == 2 && mod.Moved() == 0 && !b.early,
+          "passes=" + N(b.passes) + " tried=" + N(b.tried) + " invokes=" + N(t.invokes) + " moved=" + N(mod.Moved())
+              + " needs=" + N(b.early));
+}
+
+static void BaselineParentOffNeverMoves()
+{
+    // Parent off (the default), bag at its default: nothing at all.
+    AutoProspectMod mod;
+    Tally t;
+    BagTally b;
+    const AutoProspectView mats = CellsView(kNode, { { "m-0", true }, { "n-0", true } });
+    QuietFrame(mod, mats, t, b);
+    mod.OnInsert(kNode, true, false);
+    const bool needs = mod.NeedsMaterials();
+    const AutoProspectView in = CellsView(kNode, { { "m-0", true }, { "n-0", true }, { "a-14", false } });
+    BagFrame(mod, in, t, b, in, MovedReport());
+    QuietFrame(mod, in, t, b);
+    Check("baseline/parent_off_never_moves",
+          b.passes == 0 && b.tried == 0 && t.invokes == 0 && mod.Moved() == 0 && !needs,
+          "passes=" + N(b.passes) + " tried=" + N(b.tried) + " invokes=" + N(t.invokes) + " moved=" + N(mod.Moved())
+              + " needs=" + N(needs));
+}
+
+static void TargetBagOnByDefaultAndKeptAcrossTheParentToggle()
+{
+    AutoProspectMod mod;
+    const bool byDefault = mod.BagEnabled();
+    mod.SetEnabled(true);
+    mod.SetEnabled(false);
+    const bool afterParentToggle = mod.BagEnabled();
+    mod.SetBagEnabled(false);
+    mod.SetEnabled(true);
+    mod.SetEnabled(false);
+    mod.SetEnabled(true);
+    const bool offKept = !mod.BagEnabled();
+    const bool onAgain = mod.SetBagEnabled(true) && mod.BagEnabled();
+    const std::string line = mod.StatLine();
+    Check("target/bag_on_by_default_and_kept_across_the_parent_toggle",
+          byDefault && afterParentToggle && offKept && onAgain && line.find(" bag=on") != std::string::npos,
+          "byDefault=" + N(byDefault) + " afterParentToggle=" + N(afterParentToggle) + " offKept=" + N(offKept)
+              + " onAgain=" + N(onAgain) + " line=\"" + line + "\"");
+}
+
+static void TargetMovePassBeforeTheInvoke()
+{
+    AutoProspectMod mod;
+    mod.SetEnabled(true);
+    Tally t;
+    BagTally b;
+    QuietFrame(mod, CellsView(kNode, { { "m-0", true }, { "n-0", true } }), t, b);   // the previous batch, settled
+    mod.OnInsert(kNode, true, false);
+    const AutoProspectView in = CellsView(kNode, { { "m-0", true }, { "n-0", true }, { "a-14", false } });
+    const AutoProspectView moved = CellsView(kNode, { { "a-14", false } });
+    const AutoProspectView after = CellsView(kNode, { { "o-0", true }, { "p-0", true } });
+    BagFrame(mod, in, t, b, moved, MovedReport(), &after);
+    Check("target/move_pass_before_the_invoke",
+          b.passes == 1 && t.invokes == 1 && b.order == "move,move,invoke" && b.moves == "m-0,n-0" && mod.Moved() == 2,
+          "passes=" + N(b.passes) + " invokes=" + N(t.invokes) + " order=" + b.order + " moves=" + b.moves
+              + " moved=" + N(mod.Moved()));
+}
+
+static void TargetNonMaterialNeverMoved()
+{
+    AutoProspectMod mod;
+    mod.SetEnabled(true);
+    Tally t;
+    BagTally b;
+    // A non-material left in the grid (a refused item) beside a material.
+    QuietFrame(mod, CellsView(kNode, { { "x-3", false }, { "m-0", true } }), t, b);
+    mod.OnInsert(kNode, true, false);
+    const AutoProspectView in = CellsView(kNode, { { "x-3", false }, { "m-0", true }, { "a-14", false } });
+    const AutoProspectView moved = CellsView(kNode, { { "x-3", false }, { "a-14", false } });
+    const AutoProspectView after = CellsView(kNode, { { "x-3", false }, { "o-0", true } });
+    BagFrame(mod, in, t, b, moved, MovedReport(), &after);
+    QuietFrame(mod, after, t, b);
+    // Nothing but non-materials beside the insert: no pass at all, the invoke as before.
+    AutoProspectMod only;
+    only.SetEnabled(true);
+    BagTally b2;
+    QuietFrame(only, CellsView(kNode, { { "x-3", false } }), t, b2);
+    only.OnInsert(kNode, true, false);
+    const AutoProspectView in2 = CellsView(kNode, { { "x-3", false }, { "a-14", false } });
+    BagFrame(only, in2, t, b2, in2, MovedReport(), &after);
+    Check("target/non_material_never_moved",
+          b.passes == 1 && b.moves == "m-0" && b2.passes == 0 && t.invokes == 2 && mod.Moved() == 1,
+          "passes=" + N(b.passes + b2.passes) + " invokes=" + N(t.invokes) + " moves=" + b.moves + b2.moves
+              + " moved=" + N(mod.Moved()));
+}
+
+static void TargetMovePassOnlyWhenAnInsertLands()
+{
+    AutoProspectMod mod;
+    mod.SetEnabled(true);
+    Tally t;
+    BagTally b;
+    const AutoProspectView mats = CellsView(kNode, { { "m-0", true }, { "n-0", true } });
+    for (int i = 0; i < 5; ++i) QuietFrame(mod, mats, t, b);               // materials sit there; no insert
+    const bool quietNeeds = mod.NeedsMaterials();
+    mod.OnInsert(kNode, true, false);                                       // a rearrangement: never lands
+    for (int i = 0; i < ForgePact::kAutoProspectLandFrames + 2; ++i) QuietFrame(mod, mats, t, b);
+    mod.OnInsert(kNode, true, false);                                       // a real insert, a frame late
+    QuietFrame(mod, mats, t, b);
+    const AutoProspectView in = CellsView(kNode, { { "m-0", true }, { "n-0", true }, { "a-14", false } });
+    const AutoProspectView moved = CellsView(kNode, { { "a-14", false } });
+    const AutoProspectView after = CellsView(kNode, { { "o-0", true } });
+    BagFrame(mod, in, t, b, moved, MovedReport(), &after);
+    for (int i = 0; i < 5; ++i) QuietFrame(mod, after, t, b);               // after the invoke: nothing
+    mod.SetEnabled(false);                                                  // turning off never moves
+    QuietFrame(mod, after, t, b);
+    Check("target/move_pass_only_when_an_insert_lands",
+          b.passes == 1 && !b.early && !quietNeeds && t.invokes == 1 && mod.Moved() == 2 && mod.NotLanded() == 1,
+          "passes=" + N(b.passes) + " early=" + N(b.early || quietNeeds) + " invokes=" + N(t.invokes)
+              + " moved=" + N(mod.Moved()));
+}
+
+static void TargetLandedInsertStaysLandedAcrossTheMovePass()
+{
+    // Five materials settled; the insert makes six; the pass takes the five
+    // out, so the second read (one cell) is far below the settled count. That
+    // is still the landed insert, not a not-landed one or a rearrangement.
+    AutoProspectMod mod;
+    mod.SetEnabled(true);
+    Tally t;
+    BagTally b;
+    std::vector<Mat> five;
+    for (int i = 0; i < 5; ++i) five.push_back({ "m" + N(i) + "-0", true });
+    QuietFrame(mod, CellsView(kNode, five), t, b);
+    mod.OnInsert(kNode, true, false);
+    std::vector<Mat> six = five;
+    six.push_back({ "a-14", false });
+    const AutoProspectView moved = CellsView(kNode, { { "a-14", false } });
+    const AutoProspectView after = CellsView(kNode, { { "o-0", true }, { "p-0", true }, { "q-0", true } });
+    BagFrame(mod, CellsView(kNode, six), t, b, moved, MovedReport(), &after);
+    const int settled = mod.Settled();
+    for (int i = 0; i < ForgePact::kAutoProspectLandFrames + 2; ++i) QuietFrame(mod, after, t, b);
+    Check("target/landed_insert_stays_landed_across_the_move_pass",
+          b.passes == 1 && t.invokes == 1 && mod.NotLanded() == 0 && settled == 3 && mod.Moved() == 5 && t.refusals == 0,
+          "passes=" + N(b.passes) + " invokes=" + N(t.invokes) + " notLanded=" + N(mod.NotLanded())
+              + " settled=" + N(settled) + " moved=" + N(mod.Moved()));
+}
+
+static void TargetRefusedMoveLeavesTheMaterialAndIsLoggedOnce()
+{
+    // The game would not stack it, then did not confirm the add, then a cell
+    // no longer held what the view saw: the material stays each time, the
+    // prospect still runs, and each reason is named once.
+    AutoProspectMod mod;
+    mod.SetEnabled(true);
+    Tally t;
+    BagTally b;
+    const AutoProspectView mats = CellsView(kNode, { { "m-0", true } });
+    QuietFrame(mod, mats, t, b);
+    const AutoProspectView in = CellsView(kNode, { { "m-0", true }, { "a-14", false } });
+    const AutoProspectView after = CellsView(kNode, { { "m-0", true }, { "o-0", true } });
+    mod.OnInsert(kNode, true, false);
+    BagFrame(mod, in, t, b, in, Report(false, false, 1), &after);           // not-stackable
+    const AutoProspectView in2 = CellsView(kNode, { { "m-0", true }, { "o-0", true }, { "b-14", false } });
+    const AutoProspectView after2 = CellsView(kNode, { { "m-0", true }, { "o-0", true }, { "p-0", true } });
+    mod.OnInsert(kNode, true, false);
+    BagFrame(mod, in2, t, b, in2, Report(true, false, 1), &after2);         // not-added, twice
+    ForgePact::AutoProspectMoveReport stale = MovedReport();
+    stale.heldBefore = false;                                               // the cell changed before the first call
+    mod.OnMoveReport(stale);
+    mod.OnMoveReport(Report(false, false, 1));                              // not-stackable again
+    const auto first = mod.TakeFirstMoveProblem();
+    const auto second = mod.TakeFirstMoveProblem();
+    const auto third = mod.TakeFirstMoveProblem();
+    const auto fourth = mod.TakeFirstMoveProblem();
+    const std::string line = mod.MoveProblemLine(ForgePact::AutoProspectMoveOutcome::NotStackable);
+    using O = ForgePact::AutoProspectMoveOutcome;
+    Check("target/refused_move_leaves_the_material_and_is_logged_once",
+          b.passes == 2 && t.invokes == 2 && mod.MoveOutcomes(O::NotStackable) == 2 && mod.MoveOutcomes(O::NotAdded) == 2
+              && mod.MoveOutcomes(O::MoveFailed) == 1 && mod.Moved() == 0
+              && first == O::NotStackable && second == O::NotAdded && third == O::MoveFailed && fourth == O::None
+              && mod.MovePassOn() && line.rfind("autoprospect: not-stackable - ", 0) == 0
+              && line.find("stays in the grid") != std::string::npos,
+          "passes=" + N(b.passes) + " invokes=" + N(t.invokes) + " notStackable=" + N(mod.MoveOutcomes(O::NotStackable))
+              + " notAdded=" + N(mod.MoveOutcomes(O::NotAdded)) + " moveFailed=" + N(mod.MoveOutcomes(O::MoveFailed))
+              + " first=" + N((int)first) + " second=" + N((int)second) + " third=" + N((int)third)
+              + " fourth=" + N((int)fourth) + " bagOn=" + N(mod.MovePassOn()) + " line=\"" + line + "\"");
+}
+
+// Vanished and cell-kept share their shape: the first such cell stops the
+// pass, the prospect still runs, the pass stays off for the session (no
+// sub-option or parent toggle brings it back), and the line says so.
+static bool TurnsOffForTheSession(const ForgePact::AutoProspectMoveReport& report,
+                                  ForgePact::AutoProspectMoveOutcome outcome, const std::string& name, std::string& detail)
+{
+    AutoProspectMod mod;
+    mod.SetEnabled(true);
+    Tally t;
+    BagTally b;
+    QuietFrame(mod, CellsView(kNode, { { "m-0", true }, { "n-0", true } }), t, b);
+    mod.OnInsert(kNode, true, false);
+    const AutoProspectView in = CellsView(kNode, { { "m-0", true }, { "n-0", true }, { "a-14", false } });
+    const AutoProspectView moved = CellsView(kNode, { { "n-0", true }, { "a-14", false } });
+    const AutoProspectView after = CellsView(kNode, { { "n-0", true }, { "o-0", true } });
+    BagFrame(mod, in, t, b, moved, report, &after);
+    const auto first = mod.TakeFirstMoveProblem();
+    const std::string line = mod.MoveProblemLine(outcome);
+    mod.SetEnabled(false);
+    mod.SetEnabled(true);
+    const bool reenable = mod.SetBagEnabled(true);
+    QuietFrame(mod, after, t, b);
+    mod.OnInsert(kNode, true, false);
+    const AutoProspectView in2 = CellsView(kNode, { { "n-0", true }, { "o-0", true }, { "b-14", false } });
+    BagFrame(mod, in2, t, b, in2, MovedReport(), &after);
+    const bool stat = mod.StatLine().find(" bag=off-this-session") != std::string::npos
+        && mod.StatLine().find(" " + name + "=1") != std::string::npos;
+    detail = "passes=" + N(b.passes) + " invokes=" + N(t.invokes) + " tried=" + N(b.tried) + " " + name + "="
+        + N(mod.MoveOutcomes(outcome)) + " first=" + N((int)first) + " reenable=" + N(reenable)
+        + " line=\"" + line + "\" stat=" + N(stat);
+    return b.passes == 1 && b.tried == 1 && t.invokes == 2 && mod.MoveOutcomes(outcome) == 1 && first == outcome
+        && !reenable && !mod.MovePassOn() && !mod.NeedsMaterials()
+        && line.rfind("autoprospect: " + name + " - ", 0) == 0 && line.find("off for this session") != std::string::npos
+        && stat;
+}
+
+static void TargetVanishedTurnsTheMovePassOffForTheSession()
+{
+    // The cell lost its fingerprint and the add did not report success.
+    std::string detail;
+    const bool ok = TurnsOffForTheSession(Report(true, false, 0), ForgePact::AutoProspectMoveOutcome::Vanished,
+                                          "vanished", detail);
+    Check("target/vanished_turns_the_move_pass_off_for_the_session", ok, detail);
+}
+
+static void TargetCellKeptAfterAddTurnsTheMovePassOffForTheSession()
+{
+    // The add reported success and the clear ran, but the cell still holds
+    // the material: a possible duplicate, as wrong as a loss.
+    std::string detail;
+    const bool ok = TurnsOffForTheSession(Report(true, true, 1), ForgePact::AutoProspectMoveOutcome::CellKept,
+                                          "cell-kept", detail);
+    Check("target/cell_kept_after_add_turns_the_move_pass_off_for_the_session", ok, detail);
+}
+
+static void TargetFirstMoveReportedOnceInThePlayersLog()
+{
+    AutoProspectMod mod;
+    mod.SetEnabled(true);
+    Tally t;
+    BagTally b;
+    QuietFrame(mod, CellsView(kNode, { { "m-0", true }, { "n-0", true } }), t, b);
+    const bool early = mod.TakeFirstMove();
+    mod.OnInsert(kNode, true, false);
+    const AutoProspectView in = CellsView(kNode, { { "m-0", true }, { "n-0", true }, { "a-14", false } });
+    const AutoProspectView after = CellsView(kNode, { { "m-0", true }, { "n-0", true }, { "o-0", true } });
+    BagFrame(mod, in, t, b, in, Report(false, false, 1), &after);           // a pass that moved nothing
+    const bool afterNothingMoved = mod.TakeFirstMove();
+    mod.OnInsert(kNode, true, false);
+    const AutoProspectView in2 = CellsView(kNode, { { "m-0", true }, { "n-0", true }, { "o-0", true }, { "b-14", false } });
+    const AutoProspectView moved2 = CellsView(kNode, { { "b-14", false } });
+    const AutoProspectView after2 = CellsView(kNode, { { "p-0", true } });
+    BagFrame(mod, in2, t, b, moved2, MovedReport(), &after2);
+    const bool first = mod.TakeFirstMove();
+    const std::string line = mod.FirstMoveLine();
+    mod.OnInsert(kNode, true, false);
+    const AutoProspectView in3 = CellsView(kNode, { { "p-0", true }, { "c-14", false } });
+    BagFrame(mod, in3, t, b, CellsView(kNode, { { "c-14", false } }), MovedReport(), &after2);
+    const bool second = mod.TakeFirstMove();
+    Check("target/first_move_reported_once_in_the_players_log",
+          !early && !afterNothingMoved && first && !second && mod.Moved() == 4
+              && line.rfind("autoprospect: first move to bag - ", 0) == 0 && line.find(" moved=3") != std::string::npos,
+          "early=" + N(early) + " afterNothingMoved=" + N(afterNothingMoved) + " first=" + N(first)
+              + " second=" + N(second) + " moved=" + N(mod.Moved()) + " line=\"" + line + "\"");
+}
+
 int main()
 {
     BaselineOffByDefault();
@@ -728,6 +1134,17 @@ int main()
     TargetUnverifiedReportedOnceInThePlayersLog();
     AdapterRecordedShapeNames();
     AdapterMeasuredSessionProspectsEachInsertOnce();
+    BaselineBagOffNeverMoves();
+    BaselineParentOffNeverMoves();
+    TargetBagOnByDefaultAndKeptAcrossTheParentToggle();
+    TargetMovePassBeforeTheInvoke();
+    TargetNonMaterialNeverMoved();
+    TargetMovePassOnlyWhenAnInsertLands();
+    TargetLandedInsertStaysLandedAcrossTheMovePass();
+    TargetRefusedMoveLeavesTheMaterialAndIsLoggedOnce();
+    TargetVanishedTurnsTheMovePassOffForTheSession();
+    TargetCellKeptAfterAddTurnsTheMovePassOffForTheSession();
+    TargetFirstMoveReportedOnceInThePlayersLog();
     std::cout << (g_Failures ? "RESULT FAIL" : "RESULT OK") << "\n";
     return g_Failures ? 1 : 0;
 }

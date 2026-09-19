@@ -1453,8 +1453,10 @@ materials-only press was observed as a no-op (`P-materials-only`).
   `autoprospect: first prospect - …` once, and once each the first invoke that ran but
   left the grid unchanged (`autoprospect: the Prospect ran but the grid did not change -
   …`) and the first whose effect could not be read (`… could not be read afterwards - …`).
-- **Not built, on purpose:** returning materials to the inventory or clearing the grid (a
-  second unmeasured game operation; `grid-full` refuses instead), and any bigger grid.
+- **Not built in Stage B:** returning materials to the inventory was a second game
+  operation nobody had measured, so Stage B left them in the grid and `grid-full` refused
+  instead. Stage C measured the move and built it (§ Stage C results, § Stage C ship
+  design). Clearing the grid wholesale and any bigger grid are still not built.
 
 ## Stage B Phase 3 live procedure
 
@@ -1489,7 +1491,7 @@ a launch that runs `autoprospect 1` (nor does `citrace nativetrace`).
 
 ## Stage C: materials to the bag
 
-stage-c-status: pending
+stage-c-status: complete
 
 The human asked (2026-09-18) for each prospect to first move the previous prospect's
 materials from the grid to the player's inventory ("bag"). The newest batch then stays
@@ -1811,6 +1813,15 @@ for a `moved (partial)` verdict the stack count on the moved cell confirmed by `
 changed, and its bag-full repeat left the material in the grid without a `POSSIBLE LOSS`.
 Otherwise `move-shape: none`.
 
+Recorded (2026-09-19): **`move-shape: stackmove route (plus success check)`** - the M7 shape
+above, by name, with the cell cleared only when the Add call returned `success == true` and the
+cell still holds the same fingerprint (`stackmove` itself did not check `success`; the ship
+code does). The bag-full repeat was not run: the human chose to skip filling the bag, from the
+experience that a click-move always sends a material to the materials tab. The ship design
+compensates for the missing measurement by asking `InventoryGridCanAddToStack` first and
+clearing a cell only after a successful Add, so a refused or failed move leaves the material in
+the grid (§ Stage C ship design).
+
 If nothing qualifies, Stage C stops there (`move-shape: none`): the next step is a
 paraphrased local read of the routine the control identified, then a second batched
 research build - never a guessed shape in a player build.
@@ -1823,12 +1834,125 @@ could not be measured says `not observed (<why>)`; no row is left empty once
 
 | Row | What fills it | Result |
 |---|---|---|
-| M-grids | M1's `grids`: every `UI_Inventory_Grid_obj` with its callstack name and size, and which one is the bag (the name the ship adapter finds it by) - or, when M2's hand move changed no listed node while the material is in the bag by eye, that the bag's container is not a grid node | |
-| M-cell | M1's `cell prospect` on a material cell: which cell-struct member holds the item instance, and that member's own fields (type, fingerprint, stack count) | |
-| M-identity | M1/M2's `cell`: the item-type value on a material cell (expected 14), on the inserted item's cell (expected not 14), and on the bag cell the material landed in (expected 14) | |
-| M-control-click | M2: every row that fired on a click-move of a material to the bag, with `self`/`other`/args, the two grids' deltas, and `CheckPlayerInteraction`/`anon@15345` non-zero | |
-| M-control-drag | M3: the same for a drag, plus whether a right-click or shift-click quick-moves a material (H-D) | |
-| M-stack | M4: a second material of a type already in the bag - merged (stack count up, bag filled unchanged) or a new cell, and which stack rows fired; defines "the bag gained it" | |
-| M-bagfull | M5: a hand move into a full bag - refused or not, which has-space row returned what, and the material still in the grid | |
-| M-reentry | M6: `anon@15345` calls on the ProspectGrid `self` across M2 and M3 | |
-| M-shapes | M7: per shape, the outcome line (`st=`, `res=`, `invoked=`, `self=`, `other=`, `args=`), the verdict, the by-eye result, or the crash; and the qualifying shape's bag-full repeat | |
+| M-grids | M1's `grids`: every `UI_Inventory_Grid_obj` with its callstack name and size, and which one is the bag (the name the ship adapter finds it by) - or, when M2's hand move changed no listed node while the material is in the bag by eye, that the bag's container is not a grid node | Research DLL `bb01fe1`; `prospectprobe hook` 143 detoured, 0 failed. `grids`: bag:0 and bag:1 `PotionGrid`; **bag:2 (@261715) `"InventoryGrid"`, 15×6**, 12 filled; bag:3 `InventoryCharmGrid`; bag:4 `InventoryVaultActiveGrid0` (unreadable, `nodeGrid` undefined); bag:5 (@261733) `ProspectGrid`, 2 materials. M2's hand move left `InventoryGrid` at 12 filled while the human saw the material in the **materials tab**: the materials container is not a grid node (`UiDrawInventoryMaterialTab` draws every frame), so nothing here can read the tab arriving |
+| M-cell | M1's `cell prospect` on a material cell: which cell-struct member holds the item instance, and that member's own fields (type, fingerprint, stack count) | A cell is a struct of five members - `nodeStartX`, `nodeStartY`, `nodeLocked`, `nodeIsPermanent`, `nodeFingerprint` - with **no item instance and no stack count**. The item has to be looked up through the fingerprint (`GetItemFromFingerprint(fp, 0)`, which the game itself calls every frame, about 57k calls in the session). The per-cell digest therefore cannot see a partial stack move. No-op control: `cell prospect 0 0`, `cell bag:2 0 0` and `contents`, each run twice with nothing done in between, matched line for line |
+| M-identity | M1/M2's `cell`: the item-type value on a material cell (expected 14), on the inserted item's cell (expected not 14), and on the bag cell the material landed in (expected 14) | The cell carries no item, so `cell` could not read it (M-cell). M7's `itemfp:` lookup read **`itemType=14`** on a material (a Mallet Fragment), matching the SDK's `HeroSiege::Items::ItemType::Material`; the existing stack that `InventoryGridCanAddToStack` returned also read `itemType=14`. The inserted item's value and the tab's own cell: not observed (not read; the tab is not a grid node) |
+| M-control-click | M2: every row that fired on a click-move of a material to the bag, with `self`/`other`/args, the two grids' deltas, and `CheckPlayerInteraction`/`anon@15345` non-zero | Click-move of a material from the ProspectGrid; the human saw it land in the materials tab. ProspectGrid 2→1 filled, `InventoryGrid` 12→12. Low-frequency rows, in order: `InventoryGridCanAddToStack` with self = other = the ProspectGrid, three arguments (1, undefined, the item struct); `GetItemPreferredGrid` (1, the item struct), then `s_ItemGridInfo`; **`InventoryGridAddToStack`** with self = other = the ProspectGrid, two arguments (1, the item struct), inside which `s_ItemOperation` ran; `anon@15345` (`m_MoveItemToGrid`) with self = `InventoryGrid`, other = the ProspectGrid, no arguments, contents 2→2 across it; **`InvGridClearItemNode`** with self = other = the ProspectGrid, arguments (the cell struct, undefined), contents **2→1** - the call that empties the cell. Not called: `AddToInventory`, `InventoryStackHandler`, `s_InventoryDrag`, `GridAddToStack`, `InventoryGridRemoveItem`, `CA_player*`. `CheckPlayerInteraction` and `anon@15345` were non-zero |
+| M-control-drag | M3: the same for a drag, plus whether a right-click or shift-click quick-moves a material (H-D) | A drag took the last material from the ProspectGrid into the main bag grid, where it stayed as a grid item - **not** in the materials tab. Fired: `m_StartInvDragging` (`anon@34555`, self = other = the ProspectGrid, a drag struct and the cell struct), then `anon@15345` with self = other = `InventoryGrid`, four arguments. No `InventoryGridAddToStack`, no `InvGridClearItemNode`. A drag moves the cell grid to grid through held-drag state and cannot be called by name. Right-click and shift-click: not observed (not tried) |
+| M-stack | M4: a second material of a type already in the bag - merged (stack count up, bag filled unchanged) or a new cell, and which stack rows fired; defines "the bag gained it" | A click-move of a material whose type was already stacked in the materials tab **merged** into that stack (by eye). The same rows as M2 in the same order (CanAdd, `GetItemPreferredGrid`, Add, `anon@15345` on `InventoryGrid`, Clear on the ProspectGrid); the ProspectGrid emptied. The tab cannot be read, so "the bag gained it" is the Add call's own `success` plus the tab count by eye |
+| M-bagfull | M5: a hand move into a full bag - refused or not, which has-space row returned what, and the material still in the grid | not observed (human experience: always goes to the materials tab). M5 was not run: the human chose not to fill the bag |
+| M-reentry | M6: `anon@15345` calls on the ProspectGrid `self` across M2 and M3 | In both M2 and M3 the `anon@15345` self was `InventoryGrid`, never the ProspectGrid. Only a click-in (bag → prospect grid, seen by the way) reached `anon@15345` on the ProspectGrid; it also cleared the source cell in the bag grid after the target accepted |
+| M-shapes | M7: per shape, the outcome line (`st=`, `res=`, `invoked=`, `self=`, `other=`, `args=`), the verdict, the by-eye result, or the crash; and the qualifying shape's bag-full repeat | First attempt (`bb01fe1`): `move ... item:prospect,0,0` refused (`needs member=<name>`, since a cell holds no item) and nothing was called. Research DLL `8c56ca7`, `hook` 143 detoured, 0 failed, a Mallet Fragment at ProspectGrid 0,0, materials-tab count 904 by eye. `stackmove 0 0 confirm`, route `script_execute` of `asset_get_index`, self = other = the ProspectGrid: `GetItemFromFingerprint` invoked, `itemType=14`; `InventoryGridCanAddToStack` invoked, returned the existing stack's item struct (truthy, not a bool); `InventoryGridAddToStack` invoked, returned `{tabNumber:0, x:14, y:4, tabType:-4, success:true}`; `InvGridClearItemNode` invoked, ProspectGrid 1→0. Verdict `moved`; **by eye the tab count went 904→905**. No crash. Bag-full repeat: not observed (skipped by the human's choice; see below) |
+
+## Stage C ship design
+
+What was built from `move-shape: stackmove route (plus success check)`. The human asked for
+it on 2026-09-18 and chose the sub-option's default (on, under the off-by-default parent).
+The risk acceptance for this second game operation - it writes the save-backed inventory -
+is recorded in the module guide's Known Limitations item 16.
+
+- **Where it runs.** Inside `AutoProspectTick`, on the frame a landed insert has passed the
+  window, grid, button and argument checks, with only the free-cell check left: the core
+  (`AutoProspectMod::Decide`) returns `MoveMaterials` naming the material cells, the adapter
+  (`ApMovePass`) moves them one by one, re-finds and re-reads everything, and asks the core
+  again in the same frame; that second answer applies the free-cell rule and invokes or
+  refuses `grid-full` as in Stage B. So the previous prospect's batch leaves the grid just
+  before the next prospect, and the newest batch stays visible until the next insert. At most
+  one pass per landed insert, and none with the parent off, with `bag` off, without a landed
+  insert, on close, on a timer, or on `autoprospect 0`.
+- **The landed insert stays landed.** The read after a pass can be at or below the settled
+  count, because materials left. The core keeps the insert landed until it is invoked or
+  refused, so that read is never taken for `not-landed` or a rearrangement; the invoke's own
+  re-read still sets the settled count, as before.
+- **What is a material.** The adapter looks up each filled cell's item through the game's
+  `GetItemFromFingerprint` (by name) and compares its `itemType` with the SDK's
+  `HeroSiege::Items::ItemType::Material` - the value M7 observed. Only on frames with a
+  pending insert and the pass on (at most one lookup per cell). The core is handed a
+  per-cell flag and has no item-type value of its own; nothing reads the fingerprint's text.
+  An item the player inserts that is itself a material also goes to the tab, because the
+  insert is known only by count (`P-materials-only` was a no-op) - not observed live.
+- **The move, per cell,** by name through `script_execute`, self = other = the ProspectGrid
+  node: the cell re-read and still holding the fingerprint the view saw; the item looked up
+  again and still a material; `InventoryGridCanAddToStack` must answer truthy (it returns
+  the existing stack); `InventoryGridAddToStack` must return a struct whose `success` is
+  true; and only then, on the cell as it reads then, still holding the same fingerprint,
+  `InvGridClearItemNode`. The cell is re-read at the end.
+- **Outcomes**, each counted, and each non-moved reason logged once per session in both
+  builds. In every case the prospect still runs, decided by the free-cell rule.
+  - `moved`: success, and the cell no longer holds the material.
+  - `not-stackable`: the has-a-stack check said no; the material stays.
+  - `not-added`: the add did not report success and the cell is unchanged; the material
+    stays.
+  - `move-failed`: a call did not dispatch or threw, the lookup was not an item, the cell was
+    unreadable, or it no longer held the viewed fingerprint before the first call; the
+    material stays.
+  - `vanished`: the cell lost the material without the add reporting success - a possible
+    loss. The pass turns itself **off for the session**, says so, and `autoprospect bag 1`
+    answers `unavailable this session`.
+  - `cell-kept`: the add reported success but the cell still holds the material after the
+    clear - a possible duplicate, as wrong as a loss. Also off for the session.
+- **Lines.** The player build logs `autoprospect: first move to bag - …` once, on the first
+  pass that moved something, and each reason's line once. The research build's
+  `autoprospect stat` adds `moved=`, `passes=`, the five reason counts and
+  `bag=on|off|off-this-session`.
+- **The invoking flag** is held across the whole pass, so an `m_MoveItemToGrid` call the move
+  makes counts as `while-invoking`, never as an insert. Whether the add calls it is not
+  observed: M2 saw one (self = `InventoryGrid`), M7 moved without it.
+- **Sub-option.** `autoprospect bag 1|0`, panel key `mod_auto_prospect_bag`, nested under
+  `mod_auto_prospect` the way `map_reveal_packs` sits under `map_reveal`; `build_cmds`
+  sends `autoprospect bag 0` only when it is off, and turning the parent on restates it.
+  Turning the parent off or on leaves it alone.
+- **Rejected:** moving in the insert hook (step time, nothing measured there), prospecting
+  first and moving straight afterwards (hides the newest batch), moving on close (a moment
+  the game did not choose, with no insert to gate on), writing `nodeGrid`, matching the
+  fingerprint's suffix, a local item-type constant (the SDK enum), comparing `itemType` in
+  the core (its test has no SDK), the drag route (M3: held-drag state, not callable by name),
+  clearing on dispatch alone (can say `moved` when nothing moved), and a bag-side "gained"
+  check (the materials tab is not a grid node and cannot be read).
+- **Not measured:** a full bag (`M-bagfull`), so the refusal path is designed but not
+  observed; the has-a-stack check first and the success check before any clear are what
+  keep a refusal from losing anything.
+
+## Stage C Phase 3 live procedure
+
+Research DLL first (`plugin_build\BloodPactPlugin_rel.dll`), on a fresh launch, with no
+`prospectprobe hook` and no `citrace nativetrace` in that session (they detour the same
+insert closure). Back up `%LOCALAPPDATA%\Hero_Siege`, junk items only, and read the
+materials-tab counts by eye.
+
+- **T0.** `autoprospect 1` prints `autoprospect: hook installed -> ON`; `autoprospect stat`
+  shows `bag=on` without any `bag` command (on by default).
+- **T1.** Insert an item: it is prospected and its materials stay in the grid.
+- **T2.** Insert another item: the first batch's materials-tab counts rise before the new
+  batch shows, and the new batch stays in the grid. `stat`: `moved=` goes up and `invoked=`
+  goes up by 1 (`T-move-before-prospect`, `T-newest-batch-stays`).
+- **T3.** `autoprospect bag 0`, then insert: the materials stay across the prospect
+  (`T-bag-off`). `autoprospect bag 1` again.
+- **T4.** Optional: fill the bag, then insert (`T-bag-full`): a material stays in the grid
+  and one reason line is logged, or `not observed (…)`.
+- **T5.** A non-material left in the grid (auto-prospect off, insert an item, on again) is not
+  moved by a new insert (`T-non-material`).
+- **T6.** A material type with no stack in the tab yet is moved, or logs `not-stackable`
+  once (`T-new-material-type`).
+- **Player DLL.** Switch to `plugin_build\BloodPactPlugin_ship.dll` and the panel's
+  sub-switch; check one pass by eye and `autoprospect: first move to bag - …` in `out.txt`
+  (`T-player-dll`).
+- Fill the `T-*` rows and set `phase3c-status: complete`. The human decides which DLL stays
+  installed.
+
+## Stage C Phase 3 results
+
+phase3c-status: pending
+
+A row that could not be checked says `not observed (<why>)`; no row is left empty once
+`phase3c-status` is `complete`.
+
+| Row | What fills it | Result |
+|---|---|---|
+| T-move-before-prospect | T2: the previous batch's tab counts rose before the new batch showed; `moved=` up, `invoked=` up by 1 | |
+| T-newest-batch-stays | T2: the new batch stays in the grid after the prospect | |
+| T-bag-off | T3: with `autoprospect bag 0`, the materials stay across a prospect | |
+| T-bag-full | T4 (optional): a full bag - the material stays, one reason line | |
+| T-non-material | T5: a non-material in the grid is not moved by a new insert | |
+| T-new-material-type | T6: a material type with no stack yet - moved, or `not-stackable` once | |
+| T-player-dll | Player DLL with the panel sub-switch: one pass by eye and `autoprospect: first move to bag - …` in `out.txt` | |

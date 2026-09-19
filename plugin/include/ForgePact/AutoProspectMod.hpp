@@ -34,6 +34,15 @@ namespace ForgePact {
 // own asset index through script_execute, self = the Prospect button found by
 // its handler variable, other = the window, and the button's own argument
 // array. Its names are below, so the harness pins them too.
+//
+// Stage C (research doc, § Stage C ship design): with the `bag` sub-option on
+// (the default), the frame a landed insert is about to be prospected first
+// sends the materials already in the grid - the previous prospect's batch -
+// to the player's materials tab, by the route Stage C's M7 recorded. The core
+// asks for that pass (MoveMaterials, naming only the cells the adapter flagged
+// as materials), turns each cell's report into an outcome, and then decides
+// the invoke as before in the same frame. The adapter decides what a material
+// is, through the SDK; nothing here knows an item-type value.
 
 // The recorded shape's names. The Prospect button is the UI_Button_Small_obj
 // whose kAutoProspectHandlerVar is a method value of UiAProspectButton (three
@@ -59,7 +68,52 @@ static constexpr int kAutoProspectMinFreeCells = 6;
 // a rearrangement inside the grid never raises the count at all.
 static constexpr int kAutoProspectLandFrames = 30;
 
-enum class AutoProspectAction { None, Invoke, Refuse };
+// MoveMaterials (Stage C): before the invoke, send the named cells to the
+// materials tab, report each cell with OnMoveReport, re-read, and call Decide
+// again in the same frame.
+enum class AutoProspectAction { None, Invoke, Refuse, MoveMaterials };
+
+// One cell of the ProspectGrid as the adapter read it. `material` is decided
+// by the adapter, by what the item is (its item type, through the SDK); the
+// core has no item-type value of its own and never looks at the fingerprint's
+// text. The adapter fills `cells` only on frames NeedsMaterials() asks for.
+struct AutoProspectCell {
+    int         row = 0;
+    int         col = 0;
+    std::string fingerprint;
+    bool        material = false;
+};
+
+// What became of one cell of a move pass (Stage C). Moved: the add reported
+// success and the cell no longer holds the material. The three below it leave
+// the material where it was and the pass stays on; the last two turn the pass
+// off for the session: a material left the grid without the game confirming
+// the move (a possible loss), or the game confirmed the move and the material
+// is still in the grid (a possible duplicate).
+enum class AutoProspectMoveOutcome : int {
+    None = 0,
+    Moved,
+    NotStackable,  // the game's has-a-stack check said no; nothing was added
+    NotAdded,      // the add did not report success, and the cell is unchanged
+    MoveFailed,    // a call did not run, the lookup was not an item, the cell was unreadable or already changed
+    Vanished,      // the cell lost the material without the add reporting success
+    CellKept,      // the add reported success, the clear ran, and the cell still holds it
+    Count
+};
+
+// How the calls for one cell went, as the adapter saw them, in order: the
+// cell re-read before the first call, the item lookup, the has-a-stack check,
+// the add, the clear, and the cell re-read at the end.
+struct AutoProspectMoveReport {
+    bool heldBefore = false;  // the cell was read and still held the fingerprint the view saw
+    bool lookup = false;      // the item lookup ran and returned an item
+    bool canAddRan = false;   // the has-a-stack check ran
+    bool canAdd = false;      // and said yes
+    bool addRan = false;      // the add ran
+    bool success = false;     // the add's result said success
+    bool clearRan = false;    // the clear ran (only ever after success, on the same fingerprint)
+    int  heldAfter = -1;      // the final re-read: 1 still holds it, 0 no longer does, -1 unreadable
+};
 
 // Why an insert was not prospected. Every one drops the pending insert: the
 // item stays in the grid for the player, and nothing retries it every frame.
@@ -87,11 +141,13 @@ struct AutoProspectView {
     int         filled = 0;         // cells holding something (idcheck's empty rule)
     int         empty = 0;
     std::string fingerprints;       // the distinct nodeFingerprint values, in order, joined
+    std::vector<AutoProspectCell> cells;   // filled only when NeedsMaterials() asked for it
 };
 
 struct AutoProspectDecision {
     AutoProspectAction  action = AutoProspectAction::None;
     AutoProspectRefusal reason = AutoProspectRefusal::None;
+    std::vector<AutoProspectCell> moves;   // MoveMaterials: the material cells, and only those
 };
 
 // Threading: every caller runs on the game thread - the hook body inside the
@@ -114,15 +170,35 @@ public:
     // Either way the node is forgotten, so the first frame after turning on
     // settles the count again, and a pending insert is dropped. Counters and
     // the once-per-reason report survive: they are what a stat line is read
-    // from, and a refusal already named this session is not named again.
+    // from, and a refusal already named this session is not named again. The
+    // bag sub-option is left alone: it is its own switch.
     void SetEnabled(bool enabled) {
         m_Enabled.store(enabled);
-        m_Pending = false;
-        m_PendingAge = 0;
+        DropPending();
         m_NodeId = -1;
         m_Settled = -1;
         m_CheckEffect = false;
     }
+
+    // The `bag` sub-option (Stage C): on by default, under the off-by-default
+    // parent. Turning it on is refused (false) once a `vanished` or
+    // `cell-kept` has turned the pass off for the session.
+    bool BagEnabled() const { return m_BagEnabled.load(); }
+    bool BagOffThisSession() const { return m_BagOffThisSession.load(); }
+    bool SetBagEnabled(bool on) {
+        if (on && m_BagOffThisSession.load()) return false;
+        m_BagEnabled.store(on);
+        return true;
+    }
+    // Whether a move pass may run at all: the sub-option on and not turned off
+    // for the session. The adapter re-checks it before every cell, so a pass
+    // stops at the first cell that turns it off.
+    bool MovePassOn() const { return m_BagEnabled.load() && !m_BagOffThisSession.load(); }
+
+    // True while the next Decide may ask for a move pass, so the adapter reads
+    // each cell's item type (at most one lookup per cell) only then: an
+    // insert is pending, the pass is on, and it has not run for this insert.
+    bool NeedsMaterials() const { return m_Enabled.load() && m_Pending && !m_PassDone && MovePassOn(); }
 
     // From the m_MoveItemToGrid hook, after the game's own function ran.
     // `isProspectGrid`: the call's self is the ProspectGrid node, identified by
@@ -134,6 +210,7 @@ public:
         if (!isProspectGrid) { m_Elsewhere.fetch_add(1); return; }
         m_Inserts.fetch_add(1);
         if (m_Pending && m_PendingNode == nodeId) m_Coalesced.fetch_add(1);
+        else { m_Landed = false; m_PassDone = false; }
         m_Pending = true;
         m_PendingNode = nodeId;
         m_PendingAge = 0;
@@ -163,7 +240,7 @@ public:
     // settled inside the grid never raises the count, so it still never fires.
     AutoProspectDecision Decide(const AutoProspectView& in) {
         AutoProspectDecision d;
-        if (!m_Enabled.load()) { m_Pending = false; return d; }
+        if (!m_Enabled.load()) { DropPending(); return d; }
         CheckEffect(in);
         if (!in.window) { m_NodeId = -1; m_Settled = -1; return RefuseIfPending(AutoProspectRefusal::NoWindow); }
         if (!in.grid) { m_NodeId = -1; m_Settled = -1; return RefuseIfPending(AutoProspectRefusal::NoGrid); }
@@ -180,25 +257,44 @@ public:
             return d;
         }
         if (m_PendingNode != in.nodeId) return RefuseIfPending(AutoProspectRefusal::NodeChanged);
-        if (in.filled <= m_Settled) {
-            if (++m_PendingAge > kAutoProspectLandFrames) {
-                m_Pending = false;
-                m_NotLanded.fetch_add(1);
-                m_Settled = in.filled;
+        // Once landed, the insert stays landed until it is invoked or refused:
+        // a move pass takes the previous batch out of the grid, so the read
+        // after it can be at or below the settled count, and that must not
+        // read as not-landed or a rearrangement.
+        if (!m_Landed) {
+            if (in.filled <= m_Settled) {
+                if (++m_PendingAge > kAutoProspectLandFrames) {
+                    DropPending();
+                    m_NotLanded.fetch_add(1);
+                    m_Settled = in.filled;
+                }
+                return d;
             }
-            return d;
+            m_Landed = true;
         }
         // The insert landed. Everything below re-reads this frame's objects,
         // and a refusal settles the count: the refused item stays in the grid,
         // and moving it later must not prospect it.
         if (!in.button) return RefuseIfPending(AutoProspectRefusal::NoButton, &in);
         if (!in.args) return RefuseIfPending(AutoProspectRefusal::NoArgs, &in);
+        // Stage C: only the free-cell check is left, so this is the frame the
+        // insert is about to be prospected - move the materials already in
+        // the grid (the previous prospect's batch) first, once per insert.
+        if (MovePassOn() && !m_PassDone) {
+            m_PassDone = true;
+            for (const AutoProspectCell& c : in.cells)
+                if (c.material) d.moves.push_back(c);
+            if (!d.moves.empty()) {
+                m_Passes.fetch_add(1);
+                d.action = AutoProspectAction::MoveMaterials;
+                return d;
+            }
+        }
         if (in.empty < kAutoProspectMinFreeCells) {
             m_LastFree = in.empty;
             return RefuseIfPending(AutoProspectRefusal::GridFull, &in);
         }
-        m_Pending = false;
-        m_PendingAge = 0;
+        DropPending();
         m_EffectNode = in.nodeId;
         m_EffectFilled = in.filled;
         m_EffectPrints = in.fingerprints;
@@ -219,6 +315,101 @@ public:
         else m_Settled = -1;
         if (!dispatched) { m_InvokeFailed.fetch_add(1); m_CheckEffect = false; return; }
         m_CheckEffect = true;
+    }
+
+    // What one cell's calls add up to (Stage C, the recorded stackmove route
+    // plus the success check). Nothing before the has-a-stack check changes
+    // the grid, so a failure there leaves the material. After it, a cell that
+    // lost the material counts as moved only when the add said success, and a
+    // cell that still holds it after a successful add and a clear is a
+    // possible duplicate. An unreadable final read decides neither.
+    static AutoProspectMoveOutcome ClassifyMove(const AutoProspectMoveReport& r) {
+        if (!r.heldBefore || !r.lookup || !r.canAddRan) return AutoProspectMoveOutcome::MoveFailed;
+        if (!r.canAdd) return AutoProspectMoveOutcome::NotStackable;
+        if (r.success) {
+            if (r.heldAfter == 0) return AutoProspectMoveOutcome::Moved;
+            if (r.heldAfter == 1) return AutoProspectMoveOutcome::CellKept;
+            return AutoProspectMoveOutcome::MoveFailed;
+        }
+        if (r.heldAfter == 0) return AutoProspectMoveOutcome::Vanished;
+        if (r.heldAfter < 0 || !r.addRan) return AutoProspectMoveOutcome::MoveFailed;
+        return AutoProspectMoveOutcome::NotAdded;
+    }
+
+    // The adapter's report for one cell of a MoveMaterials pass: counted, a
+    // non-moved reason queued for its one line per session, and `vanished`
+    // or `cell-kept` turning the pass off for the session.
+    AutoProspectMoveOutcome OnMoveReport(const AutoProspectMoveReport& r) {
+        const AutoProspectMoveOutcome o = ClassifyMove(r);
+        m_MoveOutcomes[(int)o].fetch_add(1);
+        if (o == AutoProspectMoveOutcome::Moved) {
+            if (m_Moved.fetch_add(1) == 0) m_FirstMoveDue = true;
+            return o;
+        }
+        if (o == AutoProspectMoveOutcome::Vanished || o == AutoProspectMoveOutcome::CellKept)
+            m_BagOffThisSession.store(true);
+        const unsigned bit = 1u << (int)o;
+        if (!(m_MoveReportedMask & bit)) { m_MoveReportedMask |= bit; m_MoveUnreported.push_back(o); }
+        return o;
+    }
+
+    // Each non-moved reason at most once per session, in the order first seen;
+    // None when nothing new is waiting.
+    AutoProspectMoveOutcome TakeFirstMoveProblem() {
+        if (m_MoveUnreported.empty()) return AutoProspectMoveOutcome::None;
+        const AutoProspectMoveOutcome o = m_MoveUnreported.front();
+        m_MoveUnreported.erase(m_MoveUnreported.begin());
+        return o;
+    }
+
+    static const char* MoveOutcomeName(AutoProspectMoveOutcome o) {
+        switch (o) {
+        case AutoProspectMoveOutcome::Moved:        return "moved";
+        case AutoProspectMoveOutcome::NotStackable: return "not-stackable";
+        case AutoProspectMoveOutcome::NotAdded:     return "not-added";
+        case AutoProspectMoveOutcome::MoveFailed:   return "move-failed";
+        case AutoProspectMoveOutcome::Vanished:     return "vanished";
+        case AutoProspectMoveOutcome::CellKept:     return "cell-kept";
+        default:                                    return "none";
+        }
+    }
+
+    // The one line a move problem is reported with. The prospect still runs
+    // in every case, decided by the free-cell rule.
+    std::string MoveProblemLine(AutoProspectMoveOutcome o) const {
+        const std::string head = std::string("autoprospect: ") + MoveOutcomeName(o) + " - ";
+        switch (o) {
+        case AutoProspectMoveOutcome::NotStackable:
+            return head + "a material stays in the grid; the game would not stack it into your materials tab";
+        case AutoProspectMoveOutcome::NotAdded:
+            return head + "a material stays in the grid; the game did not confirm adding it to your materials tab";
+        case AutoProspectMoveOutcome::MoveFailed:
+            return head + "a material stays in the grid; the move could not be made or checked";
+        case AutoProspectMoveOutcome::Vanished:
+            return head + "a material left the grid without the game confirming the move; moving materials to the bag is off for this session";
+        case AutoProspectMoveOutcome::CellKept:
+            return head + "the game confirmed the move but the material is still in the grid; moving materials to the bag is off for this session";
+        default:
+            return head + "nothing";
+        }
+    }
+
+    // True once per session, after the first pass that moved something - for
+    // the player build's one line naming work done.
+    bool TakeFirstMove() {
+        if (!m_FirstMoveDue) return false;
+        m_FirstMoveDue = false;
+        return true;
+    }
+
+    // `autoprospect: first move to bag - invoked=0 ... moved=2 ...`
+    std::string FirstMoveLine() const { return HeadedStatLine("first move to bag"); }
+
+    long Moved() const { return m_Moved.load(); }
+    long MovePasses() const { return m_Passes.load(); }
+    long MoveOutcomes(AutoProspectMoveOutcome o) const {
+        const int i = (int)o;
+        return i > 0 && i < (int)AutoProspectMoveOutcome::Count ? m_MoveOutcomes[i].load() : 0;
     }
 
     // True once per session, on the frame the first prospect is confirmed -
@@ -338,7 +529,15 @@ public:
             + " elsewhere=" + std::to_string(Elsewhere())
             + " while-off=" + std::to_string(SkippedDisabled()) + ")"
             + " not-landed=" + std::to_string(NotLanded())
-            + " refused(" + refused + ")";
+            + " refused(" + refused + ")"
+            + " moved=" + std::to_string(Moved())
+            + " passes=" + std::to_string(MovePasses())
+            + " not-stackable=" + std::to_string(MoveOutcomes(AutoProspectMoveOutcome::NotStackable))
+            + " not-added=" + std::to_string(MoveOutcomes(AutoProspectMoveOutcome::NotAdded))
+            + " move-failed=" + std::to_string(MoveOutcomes(AutoProspectMoveOutcome::MoveFailed))
+            + " vanished=" + std::to_string(MoveOutcomes(AutoProspectMoveOutcome::Vanished))
+            + " cell-kept=" + std::to_string(MoveOutcomes(AutoProspectMoveOutcome::CellKept))
+            + " bag=" + (m_BagOffThisSession.load() ? "off-this-session" : (m_BagEnabled.load() ? "on" : "off"));
     }
 
 private:
@@ -350,13 +549,21 @@ private:
         return "autoprospect: " + what + " - " + (stat.rfind(head, 0) == 0 ? stat.substr(head.size()) : stat);
     }
 
+    // The pending insert is done with - invoked, refused, expired, or the mod
+    // turned off - and with it its landed state and its move pass.
+    void DropPending() {
+        m_Pending = false;
+        m_PendingAge = 0;
+        m_Landed = false;
+        m_PassDone = false;
+    }
+
     // `settle`: the frame the refusal read, whose count now includes the
     // refused item; null when this frame could not read the node.
     AutoProspectDecision RefuseIfPending(AutoProspectRefusal r, const AutoProspectView* settle = nullptr) {
         AutoProspectDecision d;
         if (!m_Pending) return d;
-        m_Pending = false;
-        m_PendingAge = 0;
+        DropPending();
         if (settle) m_Settled = settle->filled;
         m_Refused[(int)r].fetch_add(1);
         const unsigned bit = 1u << (int)r;
@@ -384,10 +591,14 @@ private:
     }
 
     std::atomic<bool> m_Enabled{ false };
+    std::atomic<bool> m_BagEnabled{ true };          // the `bag` sub-option; on by default
+    std::atomic<bool> m_BagOffThisSession{ false };  // a vanished or cell-kept turned the pass off
 
     bool        m_Pending = false;
     int64_t     m_PendingNode = -1;
     int         m_PendingAge = 0;
+    bool        m_Landed = false;     // the pending insert has landed; it stays landed across a move pass
+    bool        m_PassDone = false;   // the move pass was considered for the pending insert
     int64_t     m_NodeId = -1;        // the node the settled count belongs to
     int         m_Settled = -1;
     int         m_LastFree = 0;       // free cells at the last grid-full, for its line
@@ -415,6 +626,13 @@ private:
     std::atomic<long> m_EffectUnread{ 0 };
     std::atomic<long> m_NotLanded{ 0 };
     std::atomic<long> m_Refused[(int)AutoProspectRefusal::Count]{};
+
+    bool        m_FirstMoveDue = false;
+    unsigned    m_MoveReportedMask = 0;
+    std::vector<AutoProspectMoveOutcome> m_MoveUnreported;
+    std::atomic<long> m_Moved{ 0 };
+    std::atomic<long> m_Passes{ 0 };
+    std::atomic<long> m_MoveOutcomes[(int)AutoProspectMoveOutcome::Count]{};
 };
 
 } // namespace ForgePact

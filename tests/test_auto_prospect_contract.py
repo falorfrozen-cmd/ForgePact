@@ -14,6 +14,17 @@ the mod is off by default and nothing of it runs while it is off; `autoprospect`
 is a player command and `autoprospect stat` is research-only; the player build
 logs each refusal once and the first prospect once; and the panel, the release
 notes and the docs carry it.
+
+Stage C (the previous batch to the materials tab) adds: a material is
+identified in the adapter by its itemType against the SDK's
+ItemType::Material, and the core knows no item type; the move is the recorded
+M7 route by name only (four SDK script names through script_execute, the grid
+node as self and other); the pass runs in AutoProspectTick between the core's
+first decision and the invoke, with a second read and decision in the same
+frame; a cell is cleared only after the add reported success on the same
+fingerprint; `bag` is a sub-option of `autoprospect`, on by default and nested
+in the panel; each reason a material stayed, and the pass turning itself off,
+is logged once; and the notes, README and research doc record it.
 """
 import importlib.util
 import re
@@ -41,7 +52,13 @@ strip_comments = _release.strip_comments
 
 ADAPTER = ("static bool ApIsProspectGrid(", "static RValue& Hook_AutoProspectInsert(", "static bool ApFindWindow(",
            "static bool ApFindGrid(", "static bool ApReadCells(", "static bool ApFindButton(",
-           "static void AutoProspectTick(", "static void AutoProspectInstall(", "static void AutoProspectCommand(")
+           "static void AutoProspectTick(", "static void AutoProspectInstall(", "static void AutoProspectCommand(",
+           # Stage C: the move of the previous batch to the materials tab.
+           "static bool ApIsPlainStruct(", "static bool ApIsEmptyCell(", "static bool ApReadCell(",
+           "static bool ApCellFingerprint(", "static bool ApCallScript(", "static bool ApIsMaterial(",
+           "static bool ApItemFromFingerprint(", "static bool ApReadMaterials(", "static bool ApAddSucceeded(",
+           "static int ApCellHolds(", "static ForgePact::AutoProspectMoveReport ApMoveCell(",
+           "static void ApMovePass(")
 
 
 def collapse(text):
@@ -266,14 +283,17 @@ class AutoProspectContractTests(unittest.TestCase):
         self.assertIn("autoprospect 1", panel.build_cmds(cfg))
         source = PANEL.read_text(encoding="utf-8")
         self.assertGreaterEqual(len([l for l in source.split("\n") if "mod_auto_prospect" in l]), 7)
-        self.assertIn('send_cmds([f"autoprospect {1 if cfg[\'mod_auto_prospect\'] else 0}"], cfg)', source)
+        # The live send; turning it on also restates the Stage C sub-option.
+        self.assertIn('cmds = [f"autoprospect {1 if cfg[\'mod_auto_prospect\'] else 0}"]', source)
         self.assertIn('id="mod_auto_prospect"', source)
-        # The switch's copy: materials stay, take them out, and what is left
-        # in the grid when the game saves is lost.
+        # The switch's copy: what is left in the grid when the game saves is
+        # lost. It no longer tells the player to take the materials out -
+        # Stage C's sub-switch moves them to the materials tab.
         row = source[source.index('id="mod_auto_prospect"') - 1200:source.index('id="mod_auto_prospect"')]
-        self.assertIn("Materials stay in the grid", row)
-        self.assertIn("take them out", row)
         self.assertIn("lost", row)
+        self.assertNotIn("Materials stay in the grid", row)
+        self.assertNotIn("take them out", row)
+        self.assertNotIn("take the materials out", source)
 
     def test_release_notes_and_docs_record_the_feature(self):
         notes = NOTES.read_text(encoding="utf-8")
@@ -292,6 +312,198 @@ class AutoProspectContractTests(unittest.TestCase):
         self.assertIn("exec-index button:activationArgs self=found", doc)
         self.assertNotIn("cannot re-trigger", doc)
         self.assertNotIn("Materials never merge", doc)
+
+    # ---- Stage C: the previous batch to the materials tab -----------------------
+
+    def test_material_identified_by_its_item_type_through_the_sdk(self):
+        material = self.body("static bool ApIsMaterial(")
+        self.assertIn('RValue("itemType")', material)
+        self.assertIn("HeroSiege::Items::ItemType::Material", material)
+        self.assertIn("ApIsPlainStruct(item)", material)
+        # The flag the core gets comes from the item, looked up by the game.
+        materials = self.body("static bool ApReadMaterials(")
+        self.assertIn("c.material = ApItemFromFingerprint(gridInst, fp, item) && ApIsMaterial(item);", materials)
+        # No local constant, no fingerprint suffix, and the core knows no item type.
+        for source in (self.header, self.plugin):
+            self.assertNotIn("kMaterialItemType", source)
+        self.assertNotIn('-14"', self.shipped)
+        for forbidden in ("ItemType", "itemType", "14"):
+            self.assertNotIn(forbidden, strip_comments(self.header))
+        self.assertIn("bool        material = false;", self.header)
+        # Identity is read only on frames the core may ask for a pass.
+        tick = self.body("static void AutoProspectTick(")
+        gate = tick.index("if (v.button && v.args && mod.NeedsMaterials()) {")
+        self.assertLess(gate, tick.index("ApReadMaterials(node, gridInst, v)"))
+        self.assertEqual(self.code.count("ApReadMaterials("), 2)   # its definition and this one call
+
+    def test_move_uses_the_recorded_shape_by_name_only(self):
+        # The four scripts by their SDK names, through script_execute with the
+        # grid node as self and other - the M7 route.
+        for name in ("GetItemFromFingerprint", "InventoryGridCanAddToStack", "InventoryGridAddToStack",
+                     "InvGridClearItemNode"):
+            self.assertIn(f"SdkShortScriptName(HeroSiege::Scripts::gml_Script_{name})", self.shipped)
+        call = self.body("static bool ApCallScript(")
+        self.assertIn('CallBuiltin("asset_get_index", { RValue(std::string(name)) })', call)
+        self.assertIn('CallBuiltinEx(res, "script_execute", gridInst, gridInst, callArgs)', call)
+        self.assertIn("return AurieSuccess(st);", call)
+        # The recorded arguments, exactly.
+        self.assertIn("ApCallScript(kApFromFpName, gridInst, { fp, RValue(0.0) }, item)",
+                      self.body("static bool ApItemFromFingerprint("))
+        move = self.body("static ForgePact::AutoProspectMoveReport ApMoveCell(")
+        self.assertIn("ApCallScript(kApCanAddName, gridInst, { RValue(1.0), RValue(), item }, canRes)", move)
+        self.assertIn("ApCallScript(kApAddName, gridInst, { RValue(1.0), item }, addRes)", move)
+        self.assertIn("ApCallScript(kApClearName, gridInst, { cellNow, RValue() }, clearRes)", move)
+        # The research command's names are not reused: the player build has none of them.
+        for forbidden in ("kPpFromFpName", "kPpCanAddName", "kPpAddName", "kPpClearName", "PpStackMoveCommand"):
+            for signature in ADAPTER:
+                self.assertNotIn(forbidden, self.body(signature))
+        # Exactly one invoke of the Prospect button, still: the moves use the grid.
+        self.assertEqual(self.shipped.count('"script_execute", buttonInst, windowInst'), 1)
+        self.assertEqual(self.shipped.count('"script_execute", gridInst, gridInst'), 1)
+
+    def test_move_pass_runs_at_the_point_of_use_before_the_invoke(self):
+        tick = self.body("static void AutoProspectTick(")
+        first = tick.index("ForgePact::AutoProspectDecision d = mod.Decide(v);")
+        self.assertLess(first, tick.index("if (d.action == ForgePact::AutoProspectAction::MoveMaterials) {"))
+        order = [tick.index(s) for s in ("ApMovePass(d, node);", "read(moved);", "d = mod.Decide(moved);",
+                                         "if (d.action == ForgePact::AutoProspectAction::Invoke) {", "CallBuiltinEx(")]
+        self.assertLess(first, order[0])
+        self.assertEqual(order, sorted(order))
+        # The second read re-finds everything the invoke uses, through the same reader.
+        self.assertIn("auto read = [&](ForgePact::AutoProspectView& v) {", tick)
+        self.assertLess(tick.index("auto read = [&]"), first)
+        # The pass holds the invoking flag across every move, and stops as
+        # soon as the core turns it off.
+        move_pass = self.body("static void ApMovePass(")
+        loop = move_pass.index("for (const ForgePact::AutoProspectCell& c : d.moves) {")
+        self.assertLess(move_pass.index("g_AutoProspectInvoking = true;"), loop)
+        self.assertLess(loop, move_pass.index("g_AutoProspectInvoking = false;"))
+        self.assertLess(loop, move_pass.index("if (!mod.MovePassOn()) break;"))
+        self.assertIn("mod.OnMoveReport(r);", move_pass)
+        self.assertEqual(self.code.count("ApMovePass(d, node);"), 1)
+        # The core asks only from Decide, once per landed insert, just before the free-cell check.
+        decide = self.header[self.header.index("AutoProspectDecision Decide("):]
+        self.assertLess(decide.index("if (!in.args)"), decide.index("if (MovePassOn() && !m_PassDone) {"))
+        self.assertLess(decide.index("if (MovePassOn() && !m_PassDone) {"), decide.index("if (in.empty < kAutoProspectMinFreeCells)"))
+        # Nothing new reaches FrameCallback.
+        frame = self.body("void FrameCallback(")
+        self.assertNotIn("ApMovePass", frame)
+        self.assertNotIn("MoveMaterials", frame)
+
+    def test_clear_only_after_success_on_the_same_fingerprint(self):
+        move = self.body("static ForgePact::AutoProspectMoveReport ApMoveCell(")
+        steps = [move.index(s) for s in (
+            "r.heldBefore = true;",
+            "r.lookup = ApItemFromFingerprint(gridInst, fp, item) && ApIsMaterial(item);",
+            "kApCanAddName",
+            "if (!r.canAdd) { r.heldAfter = ApCellHolds(node, c); return r; }",
+            "kApAddName",
+            "r.success = r.addRan && ApAddSucceeded(addRes);",
+            "if (r.success && ApCellHolds(node, c) == 1) {",
+            "kApClearName",
+            "r.heldAfter = ApCellHolds(node, c);\n    } catch")]
+        self.assertEqual(steps, sorted(steps))
+        self.assertEqual(move.count("kApClearName"), 1)
+        # Before the first call, the cell must still hold what the view saw.
+        self.assertIn("text != c.fingerprint", move[:move.index("r.heldBefore = true;")])
+        success = self.body("static bool ApAddSucceeded(")
+        self.assertIn('RValue("success")', success)
+        self.assertIn("VALUE_BOOL", success)
+        # An unreadable cell is never "gone".
+        holds = self.body("static int ApCellHolds(")
+        self.assertIn("if (!ApReadCell(node, c.row, c.col, cell)) return -1;", holds)
+        # The core: moved only with success and the cell no longer holding it.
+        classify = strip_comments(self.header[self.header.index("static AutoProspectMoveOutcome ClassifyMove("):])
+        classify = classify[:classify.index("\n    }\n")]
+        self.assertIn("if (r.success) {", classify)
+        self.assertIn("if (r.heldAfter == 0) return AutoProspectMoveOutcome::Moved;", classify)
+        self.assertLess(classify.index("if (r.success) {"), classify.index("AutoProspectMoveOutcome::Moved"))
+        self.assertIn("if (r.heldAfter == 0) return AutoProspectMoveOutcome::Vanished;", classify)
+
+    def test_bag_is_a_sub_option_of_autoprospect(self):
+        # On by default in the core, left alone by the parent's toggle.
+        self.assertIn("std::atomic<bool> m_BagEnabled{ true };", self.header)
+        set_enabled = self.header[self.header.index("void SetEnabled(bool enabled) {"):]
+        set_enabled = set_enabled[:set_enabled.index("\n    }\n")]
+        self.assertNotIn("m_BagEnabled", set_enabled)
+        self.assertNotIn("m_BagOffThisSession", set_enabled)
+        # `autoprospect bag 1|0`, a player command under the same verb.
+        command = self.body("static void AutoProspectCommand(", strip_research_blocks(self.plugin))
+        self.assertIn('if (v.rfind("bag", 0) == 0) {', command)
+        self.assertIn("mod.SetBagEnabled(false);", command)
+        self.assertIn("if (!mod.SetBagEnabled(true)) {", command)
+        self.assertIn("bag unavailable this session", command)
+        self.assertLess(command.index('if (v.rfind("bag", 0) == 0) {'),
+                        command.index('const bool on = v == "1" || v == "on" || v == "true";'))
+        # The panel: nested under the parent like map_reveal_packs, on by
+        # default, sent only to turn it off, restated when the parent turns on.
+        spec = importlib.util.spec_from_file_location("forgepact_ap_bag_contract", PANEL)
+        panel = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(panel)
+        import copy
+        cfg = copy.deepcopy(panel.DEFAULTS)
+        self.assertIs(cfg["mod_auto_prospect_bag"], True)
+        self.assertFalse(any(c.startswith("autoprospect") for c in panel.build_cmds(cfg)))
+        cfg["mod_auto_prospect"] = True
+        self.assertNotIn("autoprospect bag 0", panel.build_cmds(cfg))
+        cfg["mod_auto_prospect_bag"] = False
+        cmds = panel.build_cmds(cfg)
+        self.assertGreater(cmds.index("autoprospect bag 0"), cmds.index("autoprospect 1"))
+        cfg["mod_auto_prospect"] = False
+        self.assertFalse(any(c.startswith("autoprospect") for c in panel.build_cmds(cfg)))
+        source = PANEL.read_text(encoding="utf-8")
+        self.assertIn("cmds.append(f\"autoprospect bag {1 if cfg.get('mod_auto_prospect_bag', True) else 0}\")", source)
+        self.assertIn('send_cmds([f"autoprospect bag {1 if cfg[\'mod_auto_prospect_bag\'] else 0}"], cfg)', source)
+        self.assertIn('id="mod_auto_prospect_bag_row"', source)
+        self.assertIn("function syncProspectBag(parentOn,bagOn){", source)
+        self.assertIn("mod_auto_prospect_bag:'mod_auto_prospect_bag'", source)
+        self.assertIn("apGroup.className='feature-with-child'", source)
+        row = source[source.index('id="mod_auto_prospect_bag_row"'):source.index('id="mod_auto_prospect_bag"')]
+        self.assertIn("materials tab", row)
+        self.assertIn("newest batch stays in the grid", row)
+
+    def test_move_refusals_and_vanished_are_logged_once(self):
+        tick = self.body("static void AutoProspectTick(")
+        self.assertIn("for (ForgePact::AutoProspectMoveOutcome o = mod.TakeFirstMoveProblem(); "
+                      "o != ForgePact::AutoProspectMoveOutcome::None; o = mod.TakeFirstMoveProblem())", collapse(tick))
+        self.assertIn("Out(mod.MoveProblemLine(o));", tick)
+        self.assertIn("if (mod.TakeFirstMove()) Out(mod.FirstMoveLine());", tick)
+        shipped_tick = self.body("static void AutoProspectTick(", strip_research_blocks(self.plugin))
+        for line in ("Out(mod.MoveProblemLine(o));", "Out(mod.FirstMoveLine());"):
+            self.assertIn(line, shipped_tick)
+        for name in ('"not-stackable"', '"not-added"', '"move-failed"', '"vanished"', '"cell-kept"'):
+            self.assertIn(name, self.header)
+        self.assertIn('HeadedStatLine("first move to bag")', self.header)
+        # vanished and cell-kept turn the pass off for the session, and say so.
+        report = self.header[self.header.index("AutoProspectMoveOutcome OnMoveReport("):]
+        report = report[:report.index("\n    }\n")]
+        self.assertIn("if (o == AutoProspectMoveOutcome::Vanished || o == AutoProspectMoveOutcome::CellKept)", report)
+        self.assertIn("m_BagOffThisSession.store(true);", report)
+        self.assertEqual(self.header.count("off for this session"), 2)
+        # The stat line names what the pass did.
+        for field in ('" moved="', '" not-stackable="', '" vanished="', '" cell-kept="', '" bag="', '"off-this-session"'):
+            self.assertIn(field, self.header)
+
+    def test_release_notes_and_docs_record_the_bag_move(self):
+        notes = NOTES.read_text(encoding="utf-8")
+        self.assertIn("materials tab", notes.lower())
+        self.assertIn("are gone when you load again", notes)
+        self.assertNotIn("were gone when we loaded", notes)
+        self.assertIn("could not check", notes)
+        self.assertNotIn("take them out", notes.lower())
+        self.assertNotIn("stackmove", notes)
+        readme = README.read_text(encoding="utf-8")
+        section = readme[readme.index("## Auto-prospect"):readme.index("## 🔧")]
+        self.assertIn("materials tab", section.lower())
+        self.assertIn("autoprospect bag 1|0", section)
+        self.assertNotIn("take them out", readme.lower())
+        doc = DOC.read_text(encoding="utf-8").replace("\r\n", "\n")
+        self.assertIn("\nstage-c-status: complete\n", doc)
+        self.assertIn("move-shape: stackmove route (plus success check)", doc)
+        self.assertIn("\n## Stage C ship design\n", doc)
+        self.assertIn("\n## Stage C Phase 3 results\n", doc)
+        self.assertRegex(doc, r"\nphase3c-status: (pending|complete)\n")
+        self.assertNotIn("Not built, on purpose:** returning materials", doc)
 
 
 if __name__ == "__main__":

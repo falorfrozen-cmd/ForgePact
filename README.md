@@ -17,7 +17,7 @@ panel; settings are applied live while the game runs and re-applied on every lau
 | **Full Map Reveal** | Clears fog of war in every zone, so waypoints, dungeon entrances, chests, shrines and mining nodes show immediately (toggleable; F5 in-game also toggles it). An optional sub-toggle also fills the map with monsters: most packs do not exist until you walk near them, so it has each new zone create its packs on arrival |
 | **Pet Collects Quest Items** | While your pet is out it walks to pick-up quest items on screen and collects them one at a time, crediting the objective through the game's own collect. Pick-up items only; activate/break/talk objectives are left alone |
 | **Satanic Zone Mods** | Pick which of the game's 25 positive / 26 negative World Section mods can roll onto a Satanic Zone; everything is on by default |
-| **Auto-prospect** | Off by default. Every item you drag or click into the Prospect Cube's grid is prospected at once by the game's own Prospect, so the 9×6 grid stops being the limit on a batch. Materials stay in the grid; anything left in it when the game saves is lost ([details](#auto-prospect)) |
+| **Auto-prospect** | Off by default. Every item you drag or click into the Prospect Cube's grid is prospected at once by the game's own Prospect, so the 9×6 grid stops being the limit on a batch. Before each prospect the previous batch of materials goes to your materials tab (a sub-switch, on by default), so only the newest batch stays in the grid; anything left in it when the game saves is lost ([details](#auto-prospect)) |
 | **Remove Owned Relics** | Relics already at maximum level (10 out of 10) in your equipped slots, backpack or inventory stop dropping again, so a relic drop is one you can still use |
 | **Auto-apply** | Saved settings are re-sent every time the game starts |
 
@@ -369,26 +369,39 @@ default. The cube's 9×6 prospect grid fills long before a full inventory is thr
 it; with this on, every item you drag or click into the grid is prospected straight
 away by the game's own Prospect, exactly as if you had pressed the button.
 
-- **Materials stay in the grid**, one single-cell stack per material type, as after a
-  normal Prospect. Take them out as you go. With fewer than 6 free cells, auto-prospect
-  holds back and leaves the item in the grid; the first time in a session it writes
+- **The previous batch goes to your materials tab.** A Prospect leaves one single-cell
+  stack per material type in the grid. With the sub-switch **Move the previous materials
+  to your materials tab** (on by default under Auto-prospect; `autoprospect bag 1|0`),
+  each new insert first moves the materials already in the grid to your materials tab -
+  the game's own stack move, the one a click on a material makes - and then prospects,
+  so only the newest batch stays in the grid. Only materials move, identified by their
+  item type. A material the game will not stack stays in the grid (`autoprospect:
+  not-stackable - …`, `not-added` or `move-failed`, once each). A material is cleared
+  from the grid only after the game reports the move succeeded; if one leaves the grid
+  without that (`vanished`), or stays after it (`cell-kept`), the move turns itself off
+  for the session and says so. With the sub-switch off, materials stay in the grid as
+  after a normal Prospect.
+- With fewer than 6 free cells, auto-prospect holds back and leaves the item in the
+  grid; the first time in a session it writes
   `autoprospect: grid-full - holding back - N free cells, needs 6; empty some of the grid`
   to `bp_ipc\out.txt`.
 - **Anything still in the prospect grid when the game saves is lost.** The game
   itself does not keep that grid across a save (measured with an unmodded grid: items
-  left there were gone after a save and a relaunch). With auto-prospect on, leftover
-  materials are the normal state, so empty the grid before you leave the cube.
-- ForgePact runs the game's Prospect at a moment the game did not choose; the mod was
-  tested with junk items. Back up `%LOCALAPPDATA%\Hero_Siege` first.
+  left there were gone after a save and a relaunch). With auto-prospect on, the newest
+  batch of materials sits in the grid, so empty it before you leave the cube.
+- ForgePact runs the game's Prospect, and its stack move, at a moment the game did not
+  choose; both were tested with junk items. Back up `%LOCALAPPDATA%\Hero_Siege` first.
 - It says what it did. If the hook it needs cannot see the game's own inserts, it turns
   itself off with an `autoprospect: hook TABLE-ONLY -> OFF` line; otherwise
   `autoprospect: hook installed -> ON`, and `autoprospect: first prospect - …` once the
-  first item has turned into materials. If a Prospect it runs leaves the grid unchanged,
+  first item has turned into materials, and `autoprospect: first move to bag - …` once
+  the first batch has gone to the materials tab. If a Prospect it runs leaves the grid unchanged,
   it says that once too: `autoprospect: the Prospect ran but the grid did not change - …`
   (or `… could not be read afterwards - …` when it could not check).
 
 How it works, and the research that proved ForgePact can run the Prospect itself, is in
-[`docs/prospect-window-research.md`](docs/prospect-window-research.md) (§ Stage B).
+[`docs/prospect-window-research.md`](docs/prospect-window-research.md) (§ Stage B; the
+move to the materials tab in § Stage C).
 
 ## 🔧 How to use
 

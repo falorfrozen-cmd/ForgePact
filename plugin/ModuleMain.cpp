@@ -17935,6 +17935,9 @@ static void MBuffTick()
 //     are polled from FrameCallback too. It re-finds the window, the grid and
 //     (only while an insert is pending) the Prospect button, each by what it
 //     is, and invokes at the point of use, never on anything the hook cached.
+//     With the `bag` sub-option on (Stage C), the same frame first moves the
+//     grid's materials to the materials tab (ApMovePass), re-reads, and asks
+//     the core again before the invoke.
 //
 // The invoke is the one shape Phase 1 recorded (research doc, § Stage B
 // results, P-shapes: `exec-index button:activationArgs self=found`):
@@ -18152,39 +18155,261 @@ static bool ApFindButton(double windowId, const RValue& handlerIndex, RValue& bu
     return true;
 }
 
+// ---- Stage C: the previous batch to the materials tab ------------------------
+// Before a landed insert is prospected, the materials already in the grid (the
+// previous prospect's batch) go to the player's materials tab, by the route
+// Stage C's M7 recorded live (research doc, § Stage C results, M-shapes), all
+// by name through script_execute with self = other = the ProspectGrid node:
+// the item behind the cell's fingerprint (GetItemFromFingerprint(fp, 0)), the
+// game's has-a-stack check (InventoryGridCanAddToStack(1, undefined, item)),
+// the add (InventoryGridAddToStack(1, item), which returns a struct carrying
+// `success`), and - only when that said success and the cell still holds the
+// same fingerprint - the clear (InvGridClearItemNode(cell, undefined)). The
+// research command did not check `success`; this does. A material is
+// identified by what it is: the item's itemType against the SDK's
+// ItemType::Material, never by anything the fingerprint's text carries. No
+// research helper is called here: those are compiled out of the player build.
+static constexpr const char* kApFromFpName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_GetItemFromFingerprint);
+static constexpr const char* kApCanAddName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_InventoryGridCanAddToStack);
+static constexpr const char* kApAddName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_InventoryGridAddToStack);
+static constexpr const char* kApClearName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_InvGridClearItemNode);
+
+// A plain struct - a method value is also VALUE_OBJECT, and is never read.
+static bool ApIsPlainStruct(const RValue& v)
+{
+    return v.m_Kind == VALUE_OBJECT && !g_Yytk->CallBuiltin("is_method", { v }).ToBoolean()
+        && g_Yytk->CallBuiltin("is_struct", { v }).ToBoolean();
+}
+
+// Empty the way ApReadCells counts it: `undefined`, or the number 0.
+static bool ApIsEmptyCell(const RValue& cell)
+{
+    double n = -1;
+    return cell.m_Kind == VALUE_UNDEFINED || (cell.m_Kind != VALUE_REF && ApNumber(cell, n) && n == 0.0);
+}
+
+// nodeGrid[row][col] of the node, re-read; false when any level is missing.
+static bool ApReadCell(const RValue& node, int row, int col, RValue& cell)
+{
+    if (!g_Yytk->CallBuiltin("variable_instance_exists", { node, RValue("nodeGrid") }).ToBoolean()) return false;
+    const RValue grid = g_Yytk->CallBuiltin("variable_instance_get", { node, RValue("nodeGrid") });
+    if (grid.m_Kind != VALUE_ARRAY) return false;
+    if (row < 0 || row >= (int)g_Yytk->CallBuiltin("array_length", { grid }).ToDouble()) return false;
+    const RValue r = g_Yytk->CallBuiltin("array_get", { grid, RValue((double)row) });
+    if (r.m_Kind != VALUE_ARRAY) return false;
+    if (col < 0 || col >= (int)g_Yytk->CallBuiltin("array_length", { r }).ToDouble()) return false;
+    cell = g_Yytk->CallBuiltin("array_get", { r, RValue((double)col) });
+    return true;
+}
+
+// A filled cell's nodeFingerprint, as the runtime holds it and as text; false
+// for a cell that is not a struct or has no fingerprint.
+static bool ApCellFingerprint(const RValue& cell, RValue& fp, std::string& text)
+{
+    if (!ApIsPlainStruct(cell)) return false;
+    if (!g_Yytk->CallBuiltin("variable_struct_exists", { cell, RValue("nodeFingerprint") }).ToBoolean()) return false;
+    fp = g_Yytk->CallBuiltin("variable_struct_get", { cell, RValue("nodeFingerprint") });
+    if (fp.m_Kind == VALUE_UNDEFINED) return false;
+    text = fp.m_Kind == VALUE_STRING ? fp.ToString() : Describe(fp);
+    return !text.empty();
+}
+
+// One by-name call through script_execute, self = other = `gridInst`.
+// True only when it dispatched without throwing.
+static bool ApCallScript(const char* name, CInstance* gridInst, const std::vector<RValue>& args, RValue& res)
+{
+    double idx = -1;
+    const RValue index = g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(name)) });
+    if (!ApNumber(index, idx) || idx < 0) return false;
+    std::vector<RValue> callArgs{ index };
+    for (const RValue& a : args) callArgs.push_back(a);
+    AurieStatus st = AURIE_EXTERNAL_ERROR;
+    try { st = g_Yytk->CallBuiltinEx(res, "script_execute", gridInst, gridInst, callArgs); }
+    catch (...) { return false; }
+    return AurieSuccess(st);
+}
+
+// Is this item a material? Its itemType against the SDK's ItemType::Material
+// (14, observed live at M7). Anything unreadable is not a material.
+static bool ApIsMaterial(const RValue& item)
+{
+    if (!ApIsPlainStruct(item)) return false;
+    if (!g_Yytk->CallBuiltin("variable_struct_exists", { item, RValue("itemType") }).ToBoolean()) return false;
+    double t = -1;
+    return ApNumber(g_Yytk->CallBuiltin("variable_struct_get", { item, RValue("itemType") }), t)
+        && t == (double)(int)HeroSiege::Items::ItemType::Material;
+}
+
+// The item the game's own lookup returns for a fingerprint, when it is a struct.
+static bool ApItemFromFingerprint(CInstance* gridInst, const RValue& fp, RValue& item)
+{
+    return ApCallScript(kApFromFpName, gridInst, { fp, RValue(0.0) }, item) && ApIsPlainStruct(item);
+}
+
+// Each filled cell with its material flag, for the core's move decision. Only
+// on frames NeedsMaterials() asks for (an insert pending, the pass on and not
+// yet run for it): one lookup per filled cell, at most one grid's worth.
+static bool ApReadMaterials(const RValue& node, CInstance* gridInst, ForgePact::AutoProspectView& v)
+{
+    v.cells.clear();
+    if (!g_Yytk->CallBuiltin("variable_instance_exists", { node, RValue("nodeGrid") }).ToBoolean()) return false;
+    const RValue grid = g_Yytk->CallBuiltin("variable_instance_get", { node, RValue("nodeGrid") });
+    if (grid.m_Kind != VALUE_ARRAY) return false;
+    const int rows = (int)g_Yytk->CallBuiltin("array_length", { grid }).ToDouble();
+    for (int i = 0; i < rows; ++i) {
+        const RValue row = g_Yytk->CallBuiltin("array_get", { grid, RValue((double)i) });
+        if (row.m_Kind != VALUE_ARRAY) { v.cells.clear(); return false; }
+        const int cols = (int)g_Yytk->CallBuiltin("array_length", { row }).ToDouble();
+        for (int j = 0; j < cols; ++j) {
+            const RValue cell = g_Yytk->CallBuiltin("array_get", { row, RValue((double)j) });
+            RValue fp, item;
+            std::string text;
+            if (ApIsEmptyCell(cell) || !ApCellFingerprint(cell, fp, text)) continue;
+            ForgePact::AutoProspectCell c;
+            c.row = i;
+            c.col = j;
+            c.fingerprint = text;
+            c.material = ApItemFromFingerprint(gridInst, fp, item) && ApIsMaterial(item);
+            v.cells.push_back(c);
+        }
+    }
+    return true;
+}
+
+// `success == true` on the add's result struct.
+static bool ApAddSucceeded(const RValue& res)
+{
+    if (!ApIsPlainStruct(res)) return false;
+    if (!g_Yytk->CallBuiltin("variable_struct_exists", { res, RValue("success") }).ToBoolean()) return false;
+    const RValue s = g_Yytk->CallBuiltin("variable_struct_get", { res, RValue("success") });
+    double d = -1;
+    return s.m_Kind == VALUE_BOOL ? s.ToBoolean() : (ApNumber(s, d) && d == 1.0);
+}
+
+// Does the cell still hold `fingerprint`? 1 yes, 0 no (empty, or another
+// item), -1 when it cannot be told - an unreadable cell is never "gone".
+static int ApCellHolds(const RValue& node, const ForgePact::AutoProspectCell& c)
+{
+    try {
+        RValue cell, fp;
+        std::string text;
+        if (!ApReadCell(node, c.row, c.col, cell)) return -1;
+        if (ApIsEmptyCell(cell)) return 0;
+        if (!ApCellFingerprint(cell, fp, text)) return -1;
+        return text == c.fingerprint ? 1 : 0;
+    } catch (...) { return -1; }
+}
+
+// One cell of the move pass, reported to the core as it went. The cell is
+// re-read before the first call and must still hold what the view saw; the
+// item must still be a material; the has-a-stack check must say yes before
+// the add; the clear runs only after the add said success, on the cell as it
+// reads then, still holding the same fingerprint. The final re-read is what
+// tells moved, vanished and cell-kept apart (the core's ClassifyMove).
+static ForgePact::AutoProspectMoveReport ApMoveCell(const RValue& node, CInstance* gridInst, const ForgePact::AutoProspectCell& c)
+{
+    ForgePact::AutoProspectMoveReport r;
+    try {
+        RValue cell, fp;
+        std::string text;
+        if (!ApReadCell(node, c.row, c.col, cell) || ApIsEmptyCell(cell) || !ApCellFingerprint(cell, fp, text) || text != c.fingerprint)
+            return r;
+        r.heldBefore = true;
+        RValue item;
+        r.lookup = ApItemFromFingerprint(gridInst, fp, item) && ApIsMaterial(item);
+        if (!r.lookup) { r.heldAfter = ApCellHolds(node, c); return r; }
+        RValue canRes;
+        r.canAddRan = ApCallScript(kApCanAddName, gridInst, { RValue(1.0), RValue(), item }, canRes);
+        // CanAdd returns the existing stack's struct, not a bool (M7); a
+        // struct reads as true, undefined or 0 as false.
+        r.canAdd = r.canAddRan && canRes.ToBoolean();
+        if (!r.canAdd) { r.heldAfter = ApCellHolds(node, c); return r; }
+        RValue addRes;
+        r.addRan = ApCallScript(kApAddName, gridInst, { RValue(1.0), item }, addRes);
+        r.success = r.addRan && ApAddSucceeded(addRes);
+        if (r.success && ApCellHolds(node, c) == 1) {
+            RValue cellNow, clearRes;
+            if (ApReadCell(node, c.row, c.col, cellNow))
+                r.clearRan = ApCallScript(kApClearName, gridInst, { cellNow, RValue() }, clearRes);
+        }
+        r.heldAfter = ApCellHolds(node, c);
+    } catch (...) { r.heldAfter = ApCellHolds(node, c); }
+    return r;
+}
+
+// The move pass the core asked for, cell by cell, stopping as soon as the
+// core turns the pass off. The invoking flag is held across all of it, so an
+// m_MoveItemToGrid call the game makes inside a move counts as
+// while-invoking, never as an insert.
+static void ApMovePass(const ForgePact::AutoProspectDecision& d, const RValue& node)
+{
+    ForgePact::AutoProspectMod& mod = ForgePact::AutoProspectMod::Instance();
+    CInstance* gridInst = nullptr;
+    try { gridInst = HhResolveInstance(node); } catch (...) { gridInst = nullptr; }
+    g_AutoProspectInvoking = true;
+    for (const ForgePact::AutoProspectCell& c : d.moves) {
+        if (!mod.MovePassOn()) break;
+        ForgePact::AutoProspectMoveReport r;   // unresolved grid: nothing called, move-failed
+        if (gridInst) r = ApMoveCell(node, gridInst, c);
+        mod.OnMoveReport(r);
+    }
+    g_AutoProspectInvoking = false;
+}
+
 // Once per frame while the mod is on (FrameCallback). Every value below is
-// re-read this frame; the core decides, and only an Invoke calls anything.
+// re-read this frame; the core decides, and only a MoveMaterials or an Invoke
+// calls anything. A move pass is followed by a second read and a second
+// Decide in the same frame, so the invoke's checks see the grid the pass left.
 static void AutoProspectTick()
 {
     ForgePact::AutoProspectMod& mod = ForgePact::AutoProspectMod::Instance();
-    ForgePact::AutoProspectView v;
     RValue window, node, button, args, handlerIndex;
     CInstance* windowInst = nullptr;
     CInstance* buttonInst = nullptr;
-    try {
-        double windowId = -1;
-        v.window = ApFindWindow(window, windowId);
-        double nodeId = -1;
-        if (v.window) v.grid = ApFindGrid(node, nodeId);
-        if (v.grid) {
-            v.nodeId = (int64_t)nodeId;
-            v.contents = ApReadCells(node, v, mod.NeedsDetail());
-        }
-        // The button only matters to an insert that is pending; nothing is
-        // searched for on the frames in between.
-        if (v.contents && mod.HasPending()) {
-            handlerIndex = g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(SdkShortScriptName(HeroSiege::Scripts::gml_Script_UiAProspectButton))) });
-            bool argsOk = false;
-            if (ApFindButton(windowId, handlerIndex, button, args, argsOk)) {
-                windowInst = HhResolveInstance(window);
-                buttonInst = HhResolveInstance(button);
-                v.button = windowInst && buttonInst;
-                v.args = v.button && argsOk;
+    auto read = [&](ForgePact::AutoProspectView& v) {
+        windowInst = nullptr;
+        buttonInst = nullptr;
+        try {
+            double windowId = -1;
+            v.window = ApFindWindow(window, windowId);
+            double nodeId = -1;
+            if (v.window) v.grid = ApFindGrid(node, nodeId);
+            if (v.grid) {
+                v.nodeId = (int64_t)nodeId;
+                v.contents = ApReadCells(node, v, mod.NeedsDetail());
             }
-        }
-    } catch (...) { v.contents = false; v.button = false; v.args = false; }
+            // The button only matters to an insert that is pending; nothing is
+            // searched for on the frames in between.
+            if (v.contents && mod.HasPending()) {
+                handlerIndex = g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(SdkShortScriptName(HeroSiege::Scripts::gml_Script_UiAProspectButton))) });
+                bool argsOk = false;
+                if (ApFindButton(windowId, handlerIndex, button, args, argsOk)) {
+                    windowInst = HhResolveInstance(window);
+                    buttonInst = HhResolveInstance(button);
+                    v.button = windowInst && buttonInst;
+                    v.args = v.button && argsOk;
+                }
+            }
+            // Stage C: each cell's item type, only when the core may ask for
+            // a move pass on this frame's decision.
+            if (v.button && v.args && mod.NeedsMaterials()) {
+                CInstance* gridInst = HhResolveInstance(node);
+                if (gridInst) ApReadMaterials(node, gridInst, v);
+            }
+        } catch (...) { v.contents = false; v.button = false; v.args = false; v.cells.clear(); }
+    };
 
-    const ForgePact::AutoProspectDecision d = mod.Decide(v);
+    ForgePact::AutoProspectView v;
+    read(v);
+    ForgePact::AutoProspectDecision d = mod.Decide(v);
+    if (d.action == ForgePact::AutoProspectAction::MoveMaterials) {
+        ApMovePass(d, node);
+        // Re-found and re-read after the pass: the invoke's checks (the free
+        // cells above all) are decided on the grid the pass left.
+        ForgePact::AutoProspectView moved;
+        read(moved);
+        d = mod.Decide(moved);
+    }
     if (d.action == ForgePact::AutoProspectAction::Invoke) {
         RValue res;
         AurieStatus st = AURIE_EXTERNAL_ERROR;
@@ -18214,6 +18439,11 @@ static void AutoProspectTick()
     }
     for (ForgePact::AutoProspectRefusal r = mod.TakeFirstRefusal(); r != ForgePact::AutoProspectRefusal::None; r = mod.TakeFirstRefusal())
         Out(mod.RefusalLine(r));
+    // A material the move pass left, or a pass that turned itself off, is said
+    // once per reason; the first pass that moved something is said once.
+    for (ForgePact::AutoProspectMoveOutcome o = mod.TakeFirstMoveProblem(); o != ForgePact::AutoProspectMoveOutcome::None; o = mod.TakeFirstMoveProblem())
+        Out(mod.MoveProblemLine(o));
+    if (mod.TakeFirstMove()) Out(mod.FirstMoveLine());
     if (mod.TakeFirstProspect()) Out(mod.FirstProspectLine());
     // An invoke that dispatched and changed nothing, or whose effect could not
     // be read, is said once too: otherwise a player's out.txt reads "ON" and
@@ -18238,21 +18468,42 @@ static void AutoProspectInstall()
         + " -> OFF: the game's own inserts would never reach it, so nothing will be prospected this session");
 }
 
-// `autoprospect 1|0` (the panel's toggle; a player command) and, in the
-// research build only, `autoprospect stat`.
+// `autoprospect 1|0` (the panel's toggle; a player command), `autoprospect bag
+// 1|0` (its sub-option, Stage C: the previous batch to the materials tab; on
+// by default) and, in the research build only, `autoprospect stat`.
 static void AutoProspectCommand(const std::string& rest)
 {
     ForgePact::AutoProspectMod& mod = ForgePact::AutoProspectMod::Instance();
     const std::string v = Lower(TrimCopy(rest));
 #ifndef FORGEPACT_RELEASE
     if (v == "stat") {
+        // StatLine carries the move pass too: moved=, passes=, the five
+        // reasons a material stayed, and bag=on|off|off-this-session.
         Out(mod.StatLine() + " hook=" + (g_AutoProspectBlind ? "TABLE-ONLY/failed" : g_Orig_AutoProspectInsert ? "installed" : "not yet"));
         return;
     }
 #endif
+    if (v.rfind("bag", 0) == 0) {
+        const std::string b = TrimCopy(v.substr(3));
+        const bool bagOn = b == "1" || b == "on" || b == "true";
+        const bool bagOff = b == "0" || b == "off" || b == "false";
+        if (!bagOn && !bagOff) { Out("autoprospect: usage -> autoprospect bag 1|0"); return; }
+        if (bagOff) {
+            mod.SetBagEnabled(false);
+            Out("autoprospect: bag off - materials stay in the prospect grid");
+            return;
+        }
+        if (!mod.SetBagEnabled(true)) {
+            Out("autoprospect: bag unavailable this session - a move to the materials tab could not be confirmed (see the earlier autoprospect line); materials stay in the prospect grid");
+            return;
+        }
+        Out(std::string("autoprospect: bag on - before each prospect the previous batch goes to your materials tab")
+            + (mod.IsEnabled() ? "" : " (once autoprospect is on)"));
+        return;
+    }
     const bool on = v == "1" || v == "on" || v == "true";
     const bool off = v == "0" || v == "off" || v == "false";
-    if (!on && !off) { Out("autoprospect: usage -> autoprospect 1|0"); return; }
+    if (!on && !off) { Out("autoprospect: usage -> autoprospect 1|0, autoprospect bag 1|0"); return; }
     if (off) {
         mod.SetEnabled(false);
         Out("autoprospect: off - items put in the prospect grid stay there");

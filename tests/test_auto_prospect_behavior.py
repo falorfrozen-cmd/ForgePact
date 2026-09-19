@@ -16,6 +16,16 @@ invoke or a pending insert on a replaced node, coalescing, the grid-full, no
 window and no button refusals, the settled count following a new node and a
 removal, `ran-no-effect` one frame later, each refusal reported once, and a
 stat line that names what the mod did (Known Limitations item 7).
+
+Stage C adds the move pass: with the `bag` sub-option on (its default), a
+landed insert first sends the grid's materials - the previous prospect's
+batch, identified by the adapter through the SDK and handed in as a per-cell
+flag - to the materials tab, then prospects in the same frame. Baselines pin
+that bag off, or the parent off, never moves anything; targets pin one pass
+per landed insert, before the invoke, naming materials only, the landed
+insert staying landed across it, a refused move leaving the material and being
+named once, `vanished`/`cell-kept` turning the pass off for the session, and
+the player-log `first move to bag` line once.
 """
 import os
 import shutil
@@ -174,6 +184,41 @@ class AutoProspectBehaviorTests(unittest.TestCase):
     def test_adapter_recorded_shape(self):
         self.assertScenario("adapter/recorded_shape_exec_index_button_activation_args_self_found")
         self.assertScenario("adapter/measured_session_prospects_each_insert_once")
+
+    # ---- Stage C: the previous batch goes to the materials tab first ----------
+
+    def test_baseline_bag_off_never_moves(self):
+        self.assertScenario("baseline/bag_off_never_moves")
+
+    def test_baseline_parent_off_never_moves(self):
+        self.assertScenario("baseline/parent_off_never_moves")
+
+    def test_target_bag_on_by_default_and_kept_across_the_parent_toggle(self):
+        self.assertScenario("target/bag_on_by_default_and_kept_across_the_parent_toggle")
+
+    def test_target_move_pass_before_the_invoke(self):
+        self.assertScenario("target/move_pass_before_the_invoke")
+
+    def test_target_non_material_never_moved(self):
+        self.assertScenario("target/non_material_never_moved")
+
+    def test_target_move_pass_only_when_an_insert_lands(self):
+        self.assertScenario("target/move_pass_only_when_an_insert_lands")
+
+    def test_target_landed_insert_stays_landed_across_the_move_pass(self):
+        self.assertScenario("target/landed_insert_stays_landed_across_the_move_pass")
+
+    def test_target_refused_move_leaves_the_material_and_is_logged_once(self):
+        self.assertScenario("target/refused_move_leaves_the_material_and_is_logged_once")
+
+    def test_target_vanished_turns_the_move_pass_off_for_the_session(self):
+        self.assertScenario("target/vanished_turns_the_move_pass_off_for_the_session")
+
+    def test_target_cell_kept_after_add_turns_the_move_pass_off_for_the_session(self):
+        self.assertScenario("target/cell_kept_after_add_turns_the_move_pass_off_for_the_session")
+
+    def test_target_first_move_reported_once_in_the_players_log(self):
+        self.assertScenario("target/first_move_reported_once_in_the_players_log")
 
 
 if __name__ == "__main__":
