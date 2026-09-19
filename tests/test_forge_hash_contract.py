@@ -47,6 +47,9 @@ EXPECTED_PLAYER_COMMANDS = {
     "beaconfarstep", "tyrantchance", "tyrantaffix", "hhlabelfont",
     "hhlabeloffset", "hhlabelmax", "enemyspeed", "rarity", "sigdrop",
     "angelicdrop", "relicfilter", "orbpickup", "satmods", "petquest",
+    # Added on purpose by ForgePact #9 Stage B (auto-prospect on insert, the
+    # panel's Auto-prospect switch); test_auto_prospect_contract.py pins it.
+    "autoprospect",
 }
 
 
