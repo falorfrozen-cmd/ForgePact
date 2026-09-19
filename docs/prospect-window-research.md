@@ -2018,3 +2018,197 @@ A row that could not be checked says `not observed (<why>)`; no row is left empt
 | T-new-material-type | T6: a material type with no stack yet - moved, or `not-stackable` once | not observed (human skipped, 2026-09-19, e63eed5) |
 | T-ore-insert | T7: with `batch=N` shown, one ore inserted - `moved=` +N exactly, `prospected=` +1, `ran-no-effect=` unchanged; by eye the ore turns into materials that stay | |
 | T-player-dll | Player DLL with the panel sub-switch: one pass by eye and `autoprospect: first move to bag - …` in `out.txt` | |
+
+## Stage D: first-of-type materials, and the ore that came back
+
+The Stage C round-1 re-run on c27cdad (research DLL, 2026-09-19) passed T0, T1 and T7 and
+found two defects. Stage D is the research build that measures both before anything ships;
+nothing in it reaches the player build.
+
+- **A - a material whose type has no stack in the materials tab yet stays in the grid.**
+  `InventoryGridCanAddToStack` answers with the existing stack, so for a type the tab does not
+  hold yet it answers falsy, and the pass refused every such material (`not-stackable=4`: four
+  gold-ore outputs, one cell each, piled up). The human requires the mod to move these the
+  way a click does. The game's own click-move of one (same session, the new-type positive
+  control) did not call `InventoryGridAddToStack` at all: after CanAdd it ran
+  `GetItemPreferredGrid` with (1, the item) - which ran `s_ItemGridInfo` on an array, twice -
+  then `GridAddItem` with (an array, the item, 0, undefined), inside which `s_ItemOperation`
+  ran with the slot coordinates, then the same `InvGridClearItemNode` on the cell. Two things
+  that route needs were **not measured**: whether that array is `GetItemPreferredGrid`'s own
+  return, and what `GridAddItem` returns. The probe logged neither: `PpAfter` had the return
+  value and printed only the grid snapshot.
+- **B - an ore sometimes went back to the backpack instead of being prospected.** The human
+  saw it happen a few times during free ore play; in vanilla, ore can always be prospected,
+  even with leftover materials in the grid. `prospected` counts a changed grid plus an entered
+  handler, so an ore that left the grid for the bag counts exactly like one that was
+  prospected: the stat line cannot tell the two apart, and its cause is unknown.
+
+### Stage D static search
+
+Over `hs-game-sdk/cpp/include/hs_game_sdk/scripts.hpp` and `item_type.hpp`: the new-type route
+and every inventory-add routine the ore could come back through are already rows of
+`prospectprobe`'s 143-row target table, each the `HeroSiege::Scripts` constant's value -
+`GetItemPreferredGrid`, `GridAddItem`, `s_ItemGridInfo`, `s_ItemOperation`,
+`InventoryGridAddItem`, `InventoryGridAddItemToTab`, `GridAddToStack`, `GridHasSpace`,
+`InventoryGridHasSpace`, `InventoryGridHasSpaceMulti`, `InventoryGridRemoveItem`,
+`InvGridClearItemNode`, `GetItemFromFingerprint`, `AddToInventory`, `InventoryGridAddToStack`
+and `InventoryGridCanAddToStack`. `ItemType::Material` is 14 there. No row is added, so the
+table and its SDK-closure coverage test are unchanged.
+
+**Coexistence of `autoprospect` and `prospectprobe hook`, measured once.** Known Limitations
+16 said never to run them in one session, because both put an inline detour on
+`m_MoveItemToGrid` (`anon@15345`). The c27cdad session ran `autoprospect 1` (installed), later
+`autoprospect 0`, then `prospectprobe hook`, which printed **`142 detoured, 1 failed`**: the one
+failure was `anon@15345`, refused before any patching ("a table hook may hold this entry"), so
+the auto-prospect detour was left as it was. **Not verified:** that `autoprospect 1` afterwards
+still sees inserts. N0 is that control. If it passes, one session carries both, and the probe's
+rows show what the game does inside our own invoke - the instrument B needs. If it fails, the
+**two-session fallback** runs instead: session A with the probe only (N1-N4), session B with
+auto-prospect only (N5, research log lines but no probe rows), and the results say which ran.
+
+### Stage D hypotheses
+
+For A, the unknowns are two, and one hand move answers both (N1):
+
+- **H-A1** `GridAddItem`'s first argument is `GetItemPreferredGrid`'s return, handed on as it
+  is. Evidence: the `ret=` line of `GetItemPreferredGrid` and the `ids:` segment of the
+  `GridAddItem` line print the same `id=0x…`.
+- **H-A2** it is a member of that return, or an array `s_ItemGridInfo` builds from it.
+  Evidence: the identities differ; `ret=` then shows whether the return is a struct (whose
+  member `stackmove`'s `a0=` names) or something else.
+- **GridAddItem's return** is either `InventoryGridAddToStack`'s shape (a struct with
+  `success`), a plain boolean, or neither. Evidence: its `ret=` line.
+
+For B, each hypothesis names the line that decides it (the research log is § Stage D
+instrument):
+
+- **H-B1 the pass named the ore**: the batch record caught it (a click-in whose cell filled
+  before its hook, or a same-frame or queued insert). Evidence: the ore's fingerprint in a
+  `decide` line's `batch=`, or a `move` line naming it. A fix would be in the core (the record
+  moment) and harness-testable.
+- **H-B2 the game's own Prospect returned it.** Evidence: no `move` line names it; its `fate`
+  says `gone` and the bag grid gained it; with N0 passed, the probe rows logged inside our invoke
+  show `AddToInventory`, `InventoryGridAddItem` or `InventoryGridAddToStack` handed the ore,
+  and an `insert` line with `invoking=yes` and the bag as self. Sub-cases to record: a
+  same-type leftover in the grid, a stack of ore, held or drag state at the invoke, the free
+  cells. A precondition ForgePact controls would be a core fix; otherwise it is the game's
+  behaviour and no code fix.
+- **H-B3 the invoke did nothing** (`ran-no-effect`, `fate` says `still`) and a later hand action
+  returned the ore.
+- **H-B4 a stack of ore: one prospected, the rest returned** - vanilla behaviour. The `insert`
+  line's arguments and the `fate` lookup's print (a count member, if the item has one) show it.
+  No code fix.
+- **H-B5 the batch move touched the ore**: a batch fingerprint's lookup resolved the ore, or
+  CanAdd/Add had a side effect on it. Evidence: a `move` line whose `itemDefinitionStruct` is
+  the ore's, or a bag delta on a pass that refused. A fix would be in the adapter or the core.
+
+Instrument control: a plain non-ore prospect prints all five lines, its `fate` says `gone`
+with no bag delta. Fingerprints look per-instance and increasing (four same-type outputs that
+did not merge read …805012 < …809014 < …925022 < …933024) - inferred, not measured; N4
+records it.
+
+### Stage D instrument (research build only)
+
+- **`ret=` on every logged call.** For every call a row logs, whether or not `watch` is on,
+  `PpAfter` prints one more line, `prospectprobe <label> #n ret=<value>` - the value the
+  game's function returned, shallowly (a struct's members, an array's elements). An array
+  prints first as `array len=N id=0x…`, its length and the runtime's own array pointer as an
+  identity token. The call line itself gains an `ids:` segment naming each array argument
+  the same way, so a return and a later argument can be matched by identity. Budgeted
+  exactly like the call line: only a logged call prints either.
+- **`stackmove <row> <col> [a0=<member>] confirm`, the new-type route.** Everything before
+  CanAdd is unchanged, and all five rows it can call (`InventoryGridCanAddToStack`,
+  `InventoryGridAddToStack`, `InvGridClearItemNode`, `GetItemPreferredGrid`, `GridAddItem`)
+  must be detoured before anything is called; every refusal up to the item lookup still says
+  `no call made`. A truthy CanAdd takes the existing-stack route exactly as before. A falsy
+  one now takes the new-type route instead of refusing: `GetItemPreferredGrid` with (1, the
+  item), its return printed; an array return is handed on as it is, a struct return only as
+  the member `a0=` names - without `a0=` the command prints the members and stops (`no call
+  made to GridAddItem (give a0=<member>)`), so the human picks one in the same session -
+  and anything else stops too. Then `GridAddItem` with (a0, the item, 0, undefined), its
+  return printed. The **success signal** is a struct whose `success` is true, or a plain
+  `true`; only then does the cell get the existing re-read and clear. Without it nothing is
+  cleared and the verdict is **`placed-unconfirmed (ret=…) - the cell is kept; check the tab
+  by eye`**, naming the command below. Verdicts otherwise as in Stage C (`moved`, `POSSIBLE
+  LOSS`, `added-but-cell-kept`, `not dispatched`), decided first on a cell that emptied.
+- **`stackmove clear <row> <col> confirm`.** `InvGridClearItemNode` with (the cell, undefined)
+  on one ProspectGrid cell, by name, with the clear row detoured, and nothing else. It is for
+  one case: `placed-unconfirmed` and the materials tab gained the material by eye, so the cell
+  is now a duplicate the session must not carry. Every refusal comes before the call.
+- **The auto-prospect research log.** Five lines starting `autoprospect research:`, each from
+  a research-only function the adapter calls from one research-only line; the player build has
+  none of them. Each carries `frame=` (the frame counter `FrameCallback` keeps; an insert made
+  during a step prints the frame of the last callback before it):
+  - `insert`, from the insert hook after the core has counted it: whether the insert was into
+    the ProspectGrid, `invoking=yes|no` (an insert the game makes inside our own call),
+    `self`/`other`, the arguments' kinds, and the ProspectGrid's filled count and fingerprints
+    at hook time (a click-in has filled its cell by then, a drag-in has not);
+  - `decide`, on a move-pass decision: the pass number, the view's fingerprints, the recorded
+    batch as it stood before the decision consumed it (`BatchList()`, a copy), and the cells
+    named;
+  - `move`, per cell of a pass: the cell, its fingerprint, the looked-up item's `itemType` and
+    `itemDefinitionStruct`, what CanAdd and Add returned, whether the clear ran, the final
+    read and the outcome;
+  - `invoke`, after the core has recorded the invoke: whether it dispatched, the fingerprints
+    it was decided on, the read straight after it, the batch now recorded, the `inserted`
+    fingerprints (the view minus the previous invoke's after-read) and the bag grid's filled
+    count;
+  - `fate`, on the next tick - the frame the core's effect check reads: for each inserted
+    fingerprint, `gone` or `still` in the ProspectGrid, what `GetItemFromFingerprint` (fp, 0)
+    returns for it now (the one game call this log makes, a lookup, through the adapter's own
+    by-name helper), and whether the bag grid (`InventoryGrid`, M-grids) holds it; and the bag
+    grid's filled count and the fingerprints it gained and lost since the invoke. A returned
+    ore that merged into a bag stack loses its fingerprint: the count, the lists and the
+    lookup's print catch that.
+
+### Stage D live procedure
+
+Research DLL (`plugin_build\BloodPactPlugin_rel.dll`), `%LOCALAPPDATA%\Hero_Siege` backed up,
+junk materials only, driven through `tools/ipc.ps1`. A crash: relaunch the same build, record
+it, go on.
+
+- **N0, the coexistence control.** `autoprospect 1` prints `autoprospect: hook installed -> ON`;
+  then `prospectprobe hook` prints `142 detoured, 1 failed` (the one failure `anon@15345`);
+  insert one junk item; `autoprospect stat` shows `inserts` and `prospected` each up by 1 and
+  the research log prints its lines (→ `N-coexist`). If that fails, record it and switch to the
+  two-session fallback: N1-N4 with the probe only, then relaunch for N5 with auto-prospect only.
+- **N1, the new-type control by hand.** `prospectprobe arm budget=60` on the inventory and grid
+  rows, `watch on`; the human click-moves ONE material whose type has no stack in the tab (the
+  gold-ore outputs still in the grid qualify). `show`, then read the lines (→
+  `N-control-newtype`: the rows in order; `N-a0`: `GridAddItem`'s `ids:` against
+  `GetItemPreferredGrid`'s `ret=`; `N-gridadd-return`: `GridAddItem`'s `ret=`).
+- **N2.** `prospectprobe stackmove <r> <c> confirm` (with `a0=<member>` if N1 found a struct) on
+  another new-type material; the tab by eye; if the verdict is `placed-unconfirmed` and the tab
+  gained it, `prospectprobe stackmove clear <r> <c> confirm` (→ `N-stackmove-newtype`).
+- **N3.** `stackmove` on a material whose type is already in the tab: the control, expected
+  `moved` (→ `N-stackmove-existing`).
+- **N4.** `autoprospect bag 0`, then prospect two ore of one type; `prospectprobe contents` shows
+  two distinct fingerprints or one (→ `N-fingerprint-identity`).
+- **N5, free ore play.** `autoprospect bag 1`, `prospectprobe arm budget=400` on the inventory
+  rows. First the plain non-ore control (all five lines, `fate` says `gone`, no bag delta); then
+  play freely - several ore types, leftovers in the grid, click-in and drag-in, 10-20 inserts.
+  The human says "ore came back" the moment it happens and the driver pulls `-Tail` (→
+  `N-ore-play`: the lines around it; `N-ore-cause`: the hypothesis the lines pick out, with the
+  deciding line).
+- **N6.** Fill the rows, set `stage-d-status: complete`, and write the workorder's
+  `newtype-live` Log entry (the new-type shape, the ore cause, the fix design and the harness
+  scenarios it needs).
+
+## Stage D results
+
+stage-d-status: pending
+
+Filled by the Stage D live session. A row that could not be measured says `not observed
+(<why>)`; no row is left empty once `stage-d-status` is `complete`.
+
+| Row | What fills it | Result |
+|---|---|---|
+| N-coexist | N0: `autoprospect 1` then `prospectprobe hook` (`142 detoured, 1 failed`), one insert, `inserts` and `prospected` +1 - or which session of the two-session fallback ran | |
+| N-control-newtype | N1: every row that fired on the hand click-move of a first-of-type material, in order, with self/other/arguments | |
+| N-a0 | N1: `GridAddItem`'s first-argument identity against `GetItemPreferredGrid`'s `ret=` identity - H-A1 (same array) or H-A2 (and which member or builder) | |
+| N-gridadd-return | N1: `GridAddItem`'s `ret=` - a struct with `success`, a plain boolean, or neither | |
+| N-stackmove-newtype | N2: the verdict, each call's `ret=`, the tab count by eye, and whether `stackmove clear` ran | |
+| N-stackmove-existing | N3: the existing-stack control's verdict (expected `moved`) and the tab by eye | |
+| N-fingerprint-identity | N4: two ore of one type prospected with `bag 0` - two distinct fingerprints or one | |
+| N-ore-play | N5: the research-log lines (and probe rows) around each "ore came back" | |
+| N-ore-cause | N5: the hypothesis (H-B1..H-B5) the lines pick out, with the deciding line - or `not observed` | |

@@ -9876,6 +9876,8 @@ static void PpSetAtTry(const char* label, long n, bool post, CInstance* S, CInst
     } catch (...) { Out(std::string("prospectprobe setat ") + label + " #" + std::to_string(n) + ": EXCEPTION; the write may or may not have happened"); }
 }
 
+static std::string PpArgIdentities(int argc, RValue** A);   // defined with PpAfter below
+
 // Returns whether this call's log line was emitted; `gridPre` carries the
 // pre-call snapshot to PpAfter when `watch` is on (empty otherwise).
 static bool PpObserve(const char* label, long n, volatile long* logged, volatile long* logOn,
@@ -9921,7 +9923,7 @@ static bool PpObserve(const char* label, long n, volatile long* logged, volatile
     try {
         std::string line = std::string("prospectprobe ") + label + " #" + std::to_string(n)
             + " self=" + PpDescribeSelf(S) + " other=" + PpDescribeSelf(O)
-            + " argc=" + std::to_string(argc) + AggroArgs(argc, A);
+            + " argc=" + std::to_string(argc) + AggroArgs(argc, A) + PpArgIdentities(argc, A);
         // Budgeted exactly like the line it rides on: only a logged call reads
         // the grid, and only while `watch` is on.
         if (g_PpWatch.load()) {
@@ -10193,14 +10195,57 @@ static const char* PpSnapCompare(const std::string& pre, const std::string& post
     return pre == post ? " same" : " CHANGED";
 }
 
-// After the trampoline: a pending `setat ... post`, then - for a call that was
-// logged with `watch` on - the post-call snapshot and whether it changed.
+static std::string PpShallow(const RValue& v);   // defined with `cell` below
+
+// Stage D: `array len=N id=0x…` for an array - its length and the runtime's
+// own array pointer as an identity token, so two log lines can show the same
+// array being handed on (N1: GridAddItem's first argument against what
+// GetItemPreferredGrid returned); "" for anything else. Reads only.
+static std::string PpArrayIdentity(const RValue& v)
+{
+    if (v.m_Kind != VALUE_ARRAY) return std::string();
+    std::string len = "?";
+    try { len = std::to_string((int)g_Yytk->CallBuiltin("array_length", { v }).ToDouble()); } catch (...) {}
+    char id[32];
+    sprintf_s(id, "%p", v.m_Pointer);
+    return "array len=" + len + " id=0x" + id;
+}
+
+// A logged call's return value: an array's identity, then the shallow print.
+static std::string PpRetText(const RValue& v)
+{
+    const std::string id = PpArrayIdentity(v);
+    return id.empty() ? PpShallow(v) : id + " " + PpShallow(v);
+}
+
+// The pre-call line's extra segment: every array argument's identity
+// (` ids: a0=array len=N id=0x…`), "" when no argument is an array.
+// AggroArgs is left as it is - other instruments print through it.
+static std::string PpArgIdentities(int argc, RValue** A)
+{
+    std::string s;
+    for (int i = 0; A && i < argc && i < 8; ++i)
+        if (A[i] && A[i]->m_Kind == VALUE_ARRAY) s += " a" + std::to_string(i) + "=" + PpArrayIdentity(*A[i]);
+    return s.empty() ? s : " ids:" + s;
+}
+
+// After the trampoline: a pending `setat ... post`, then - for every call
+// that was logged - one `ret=` line with what the game's function returned
+// (Stage D: the c27cdad control could not say what GridAddItem returns,
+// because nothing printed it), and - for a logged call with `watch` on - the
+// post-call snapshot and whether it changed.
 static void PpAfter(const char* label, long n, bool logged, const std::string& gridPre,
                     CInstance* S, CInstance* O, int argc, RValue** A, const RValue& result)
 {
     PpBackingCapture(label, n, S, result);
     PpPressCapture(label, n, true, S, O, argc, A);
     if (g_PpSetAtPending) PpSetAtTry(label, n, true, S, O, argc, A);
+    // Budgeted exactly like the line it follows: only a logged call prints
+    // it, and it does not wait for `watch`.
+    if (logged) {
+        try { Out(std::string("prospectprobe ") + label + " #" + std::to_string(n) + " ret=" + PpRetText(result)); }
+        catch (...) { Out(std::string("prospectprobe ") + label + " #" + std::to_string(n) + " ret=<read failed>"); }
+    }
     int contentsPre = -1;
     if (logged && !gridPre.empty() && !g_PpContentsPre.empty()) {
         contentsPre = g_PpContentsPre.back();
@@ -12494,6 +12539,14 @@ static constexpr const char* kPpFromFpName = SdkShortScriptName(HeroSiege::Scrip
 static constexpr const char* kPpCanAddName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_InventoryGridCanAddToStack);
 static constexpr const char* kPpAddName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_InventoryGridAddToStack);
 static constexpr const char* kPpClearName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_InvGridClearItemNode);
+// Stage D: a material whose type has no stack in the materials tab yet. The
+// c27cdad click-move of one (the new-type positive control) ran, after CanAdd
+// came back falsy, GetItemPreferredGrid(1, item) and then GridAddItem(<an
+// array>, item, 0, undefined) - no InventoryGridAddToStack - and then the same
+// clear. Whether that array is GetItemPreferredGrid's own return, and what
+// GridAddItem returns, were not logged; `stackmove` prints both.
+static constexpr const char* kPpPreferredName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_GetItemPreferredGrid);
+static constexpr const char* kPpGridAddName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_GridAddItem);
 
 // A script's asset index by its name; false, with `why`, when the runtime has none.
 static bool PpScriptIndex(const char* name, RValue& index, std::string& why)
@@ -12947,24 +13000,129 @@ static void PpMoveCommand(const std::vector<std::string>& tok)
 
 static std::atomic<bool> g_PpStackMoveBannerShown{ false };
 
-// `stackmove <row> <col> confirm`: the game's own click-move of one material
-// (M2/M4), as one command. On the ProspectGrid cell at row/col: the item from
-// its fingerprint, then CanAdd; only a true answer from CanAdd's own body goes
-// on to Add; only an Add whose body ran goes on to Clear, and only on the cell
-// re-read after the Add still holding the same fingerprint. The material
-// lands in the bag's materials tab, which is not a grid node, so no read here
-// can see it arrive: the verdict is decided from the ProspectGrid and the
-// rows' own counts, and the tab count is checked by eye.
+// GridAddItem's success signal (Stage D): a struct whose `success` is true -
+// the shape InventoryGridAddToStack returned at M7 - or a plain `true`.
+// Anything else (a number, undefined, a struct without it) is no signal: the
+// cell is kept and the verdict says `placed-unconfirmed`.
+static bool PpPlaceSucceeded(const RValue& res)
+{
+    try {
+        if (res.m_Kind == VALUE_BOOL) return res.ToBoolean();
+        if (res.m_Kind != VALUE_OBJECT || PpBackingObjectKind(res) != 1) return false;
+        if (!g_Yytk->CallBuiltin("variable_struct_exists", { res, RValue("success") }).ToBoolean()) return false;
+        const RValue s = g_Yytk->CallBuiltin("variable_struct_get", { res, RValue("success") });
+        return s.m_Kind == VALUE_BOOL ? s.ToBoolean() : (PpIsNumber(s) && s.ToDouble() == 1.0);
+    } catch (...) { return false; }
+}
+
+// `stackmove clear <row> <col> confirm` (Stage D): InvGridClearItemNode(cell,
+// undefined) on one ProspectGrid cell, by name, self = other = the grid node -
+// the clear a click-move ends with, and nothing else. It exists for one case:
+// a new-type `stackmove` said `placed-unconfirmed` and the materials tab
+// gained the material by eye, so the cell is a duplicate the session must not
+// carry. Nothing here can read the tab (it is not a grid node): the human's
+// eye is the check, which is why this is its own confirm-gated command.
+static void PpStackClearCommand(const std::vector<std::string>& tok)
+{
+    if (tok.size() != 5) {
+        Out("prospectprobe stackmove clear: usage -> stackmove clear <row> <col> confirm (only after a placed-unconfirmed whose material the materials tab gained by eye); no call made");
+        return;
+    }
+    const std::string tag = "prospectprobe stackmove clear " + tok[2] + " " + tok[3];
+    if (Lower(tok[4]) != "confirm") {
+        Out(tag + ": refused: this empties a ProspectGrid cell - only after a placed-unconfirmed whose material the materials tab gained by eye; end the command with `confirm`; no call made");
+        return;
+    }
+    int row = -1, col = -1;
+    try { row = std::stoi(tok[2]); col = std::stoi(tok[3]); }
+    catch (...) { Out(tag + ": refused: row and col must be whole numbers; no call made"); return; }
+    try {
+        const std::string pending = PpPendingRewrite();
+        if (!pending.empty()) { Out(tag + ": refused: " + pending + " - it could rewrite the invoked call; no call made"); return; }
+        PpTarget* clearRow = PpFindScriptRow(kPpClearName);
+        if (!clearRow || !clearRow->installed.load()) {
+            Out(tag + ": refused: " + (clearRow ? std::string(clearRow->label) + " is not detoured - run `prospectprobe hook` first"
+                                                : std::string("the clear script has no target-table row, so it is not detoured"))
+                + " (invoked= could not be proven); no call made");
+            return;
+        }
+        RValue window;
+        double windowId = -1;
+        if (!PpFindWindow(window) || !PpInstanceId(window, windowId)) {
+            Out(tag + ": refused: no open UI_Prospect_obj window with a readable id; no call made");
+            return;
+        }
+        RValue node, cell, fp;
+        std::string label, why, fpText;
+        if (!PpResolveGridSel("prospect", node, label, why)) { Out(tag + ": refused: " + why + "; no call made"); return; }
+        CInstance* gridInst = HhResolveInstance(node);
+        if (!gridInst) { Out(tag + ": refused: " + label + " did not resolve to an instance; no call made"); return; }
+        if (!PpReadCell(node, row, col, cell, why)) { Out(tag + ": refused: " + label + " " + why + " - unreadable; no call made"); return; }
+        if (PpBackingIsEmptyCell(cell)) { Out(tag + ": refused: " + label + " " + tok[2] + "," + tok[3] + " is an empty cell; no call made"); return; }
+        if (!PpCellFingerprint(cell, fp, fpText, why)) { Out(tag + ": refused: " + why + "; no call made"); return; }
+        RValue clearIdx;
+        if (!PpScriptIndex(kPpClearName, clearIdx, why)) { Out(tag + ": refused: " + why + "; no call made"); return; }
+        PpContents before;
+        if (!PpReadContents(node, before)) { Out(tag + ": refused: the ProspectGrid is unreadable (" + before.why + "); no call made"); return; }
+        Out(tag + ": before prospect=" + PpContentsText(before) + " cell " + label + " " + tok[2] + "," + tok[3]
+            + " fingerprint=" + fpText + " self=other=" + PpDescribeSelf(gridInst));
+        const PpStepCall clear = PpCallRow(clearRow, clearIdx, gridInst, { cell, RValue() });
+        Out(tag + ": " + kPpClearName + "(cell, undefined) " + PpStepText(clearRow, clear));
+        const bool entered = clear.dispatched && clear.delta > 0;
+        RValue nodeAfter, cellAfter, fpAfterValue;
+        std::string labelAfter, fpAfter;
+        PpContents after;
+        const bool afterRead = PpResolveGridSel("prospect", nodeAfter, labelAfter, why) && PpReadContents(nodeAfter, after)
+                               && PpReadCell(nodeAfter, row, col, cellAfter, why);
+        const bool cellEmptied = afterRead && (PpBackingIsEmptyCell(cellAfter) || !PpCellFingerprint(cellAfter, fpAfterValue, fpAfter, why) || fpAfter != fpText);
+        std::string verdict;
+        if (!afterRead) verdict = "the ProspectGrid was UNREADABLE after the call - read it with `contents` before anything else";
+        else if (cellEmptied && entered) verdict = "cleared (prospect contents " + std::to_string(before.filled) + "->" + std::to_string(after.filled) + ")";
+        else if (cellEmptied) verdict = "the cell emptied but " + std::string(kPpClearName) + " was not entered - record it";
+        else if (entered) verdict = std::string(kPpClearName) + " was entered and the cell still holds fingerprint " + fpText;
+        else verdict = "not dispatched (" + std::string(kPpClearName) + (clear.dispatched ? " dispatched but not entered" : " did not dispatch") + ", the cell kept)";
+        Out(tag + ": " + verdict + ".");
+    } catch (...) {
+        Out(tag + ": EXCEPTION - read the grid with `prospectprobe contents` and the cell with `prospectprobe cell` before anything else");
+    }
+}
+
+// `stackmove <row> <col> [a0=<member>] confirm`: the game's own click-move of
+// one material, as one command. On the ProspectGrid cell at row/col: the item
+// from its fingerprint, then CanAdd, whose answer picks the route the game's
+// own click took. Truthy (it returns the existing stack, M7): the existing-
+// stack route of M2/M4 - the Add, and only an Add whose body ran goes on to
+// Clear. Falsy (no stack of this type yet, Stage D): the new-type route of the
+// c27cdad control - GetItemPreferredGrid(1, item), its return handed on as
+// GridAddItem's first argument (an array as it is, or the member `a0=` names
+// when it is a struct; with neither, nothing more is called), then
+// GridAddItem(a0, item, 0, undefined), and the Clear only when that returned
+// the success signal (PpPlaceSucceeded). Every return is printed, arrays with
+// their identity. Either Clear runs only on the cell re-read after the
+// placing call, still holding the same fingerprint. The material lands in the
+// bag's materials tab, which is not a grid node, so no read here can see it
+// arrive: the verdict is decided from the ProspectGrid and the rows' own
+// counts, and the tab count is checked by eye.
 static void PpStackMoveCommand(const std::vector<std::string>& tok)
 {
-    if (tok.size() != 4) {
-        Out("prospectprobe stackmove: usage -> stackmove <row> <col> confirm (a ProspectGrid cell, as `contents` prints it); no call made");
+    if (tok.size() >= 2 && Lower(tok[1]) == "clear") { PpStackClearCommand(tok); return; }
+    const std::string usage = "stackmove <row> <col> [a0=<member>] confirm (a ProspectGrid cell, as `contents` prints it)";
+    if (tok.size() != 4 && tok.size() != 5) {
+        Out("prospectprobe stackmove: usage -> " + usage + "; no call made");
         return;
     }
     const std::string tag = "prospectprobe stackmove " + tok[1] + " " + tok[2];
-    if (Lower(tok[3]) != "confirm") {
+    if (Lower(tok.back()) != "confirm") {
         Out(tag + ": refused: this runs the game's own stack move on a material - end the command with `confirm`; no call made");
         return;
+    }
+    std::string a0Member;
+    if (tok.size() == 5) {
+        if (Lower(tok[3]).rfind("a0=", 0) != 0 || tok[3].size() <= 3) {
+            Out(tag + ": refused: " + tok[3] + " is not a0=<member>; usage -> " + usage + "; no call made");
+            return;
+        }
+        a0Member = tok[3].substr(3);
     }
     int row = -1, col = -1;
     try { row = std::stoi(tok[1]); col = std::stoi(tok[2]); }
@@ -12972,12 +13130,15 @@ static void PpStackMoveCommand(const std::vector<std::string>& tok)
     try {
         const std::string pending = PpPendingRewrite();
         if (!pending.empty()) { Out(tag + ": refused: " + pending + " - it could rewrite an invoked call; no call made"); return; }
-        // All three rows detoured, or invoked= could not tell "nothing ran"
-        // from "ran and did nothing" for any of them.
+        // All five rows detoured, or invoked= could not tell "nothing ran"
+        // from "ran and did nothing" for any of them - whichever route CanAdd
+        // picks, so the check does not wait for its answer.
         PpTarget* canRow = PpFindScriptRow(kPpCanAddName);
         PpTarget* addRow = PpFindScriptRow(kPpAddName);
         PpTarget* clearRow = PpFindScriptRow(kPpClearName);
-        for (PpTarget* r : { canRow, addRow, clearRow }) {
+        PpTarget* prefRow = PpFindScriptRow(kPpPreferredName);
+        PpTarget* gridAddRow = PpFindScriptRow(kPpGridAddName);
+        for (PpTarget* r : { canRow, addRow, clearRow, prefRow, gridAddRow }) {
             if (!r || !r->installed.load()) {
                 Out(tag + ": refused: " + (r ? std::string(r->label) + " is not detoured - run `prospectprobe hook` first"
                                              : std::string("a stack-move script has no target-table row, so it is not detoured"))
@@ -12999,8 +13160,9 @@ static void PpStackMoveCommand(const std::vector<std::string>& tok)
         if (!PpReadCell(node, row, col, cell, why)) { Out(tag + ": refused: " + label + " " + why + " - unreadable; no call made"); return; }
         if (PpBackingIsEmptyCell(cell)) { Out(tag + ": refused: " + label + " " + tok[1] + "," + tok[2] + " is an empty cell; no call made"); return; }
         if (!PpCellFingerprint(cell, fp, fpText, why)) { Out(tag + ": refused: " + why + "; no call made"); return; }
-        RValue canIdx, addIdx, clearIdx;
-        if (!PpScriptIndex(kPpCanAddName, canIdx, why) || !PpScriptIndex(kPpAddName, addIdx, why) || !PpScriptIndex(kPpClearName, clearIdx, why)) {
+        RValue canIdx, addIdx, clearIdx, prefIdx, gridAddIdx;
+        if (!PpScriptIndex(kPpCanAddName, canIdx, why) || !PpScriptIndex(kPpAddName, addIdx, why) || !PpScriptIndex(kPpClearName, clearIdx, why)
+            || !PpScriptIndex(kPpPreferredName, prefIdx, why) || !PpScriptIndex(kPpGridAddName, gridAddIdx, why)) {
             Out(tag + ": refused: " + why + "; no call made");
             return;
         }
@@ -13017,7 +13179,8 @@ static void PpStackMoveCommand(const std::vector<std::string>& tok)
         RValue item;
         std::string note;
         if (!PpItemFromFingerprint(gridInst, fp, item, note, why)) {
-            Out(tag + ": refused: " + why + "; no call made to " + kPpCanAddName + ", " + kPpAddName + " or " + kPpClearName);
+            Out(tag + ": refused: " + why + "; no call made to " + kPpCanAddName + ", " + kPpAddName + ", " + kPpPreferredName
+                + ", " + kPpGridAddName + " or " + kPpClearName);
             return;
         }
         Out(tag + ": item " + note);
@@ -13028,30 +13191,83 @@ static void PpStackMoveCommand(const std::vector<std::string>& tok)
         std::string verdict;
         if (!can.dispatched || can.delta <= 0) {
             verdict = std::string("not dispatched (") + kPpCanAddName + (can.dispatched ? " dispatched but not entered" : " did not dispatch")
-                + "); no call made to " + kPpAddName + " or " + kPpClearName;
+                + "); no call made to " + kPpAddName + ", " + kPpPreferredName + ", " + kPpGridAddName + " or " + kPpClearName;
             Out(tag + ": " + verdict + ". Nothing moved; check the materials-tab count by eye.");
             return;
         }
-        if (!can.res.ToBoolean()) {
-            Out(tag + ": refused: " + kPpCanAddName + " returned " + PpShallow(can.res) + " - the game would not stack it"
-                "; no call made to " + kPpAddName + " or " + kPpClearName + ". The material stays in the cell; check the materials-tab count by eye.");
-            return;
+
+        // 2. The route fork. A truthy CanAdd is the existing stack: the Add
+        // (M7). A falsy one is a type with no stack yet: the new-type route.
+        // `addEntered`: the placing call's own body ran (the Add, or
+        // GridAddItem). `placed`: the Clear may follow - the Add entered, or
+        // GridAddItem returned the success signal.
+        const bool newType = !can.res.ToBoolean();
+        const char* placeName = newType ? kPpGridAddName : kPpAddName;
+        bool addEntered = false, placeDispatched = false, placed = false;
+        std::string placeRet;
+        if (!newType) {
+            const PpStepCall add = PpCallRow(addRow, addIdx, gridInst, { RValue(1.0), item });
+            Out(tag + ": " + kPpAddName + "(1, item) " + PpStepText(addRow, add));
+            placeDispatched = add.dispatched;
+            addEntered = add.dispatched && add.delta > 0;
+            placed = addEntered;
+        } else {
+            Out(tag + ": " + kPpCanAddName + " returned " + PpShallow(can.res) + " - no stack of this type yet; the new-type route: "
+                + kPpPreferredName + ", then " + kPpGridAddName);
+            const PpStepCall pref = PpCallRow(prefRow, prefIdx, gridInst, { RValue(1.0), item });
+            Out(tag + ": " + kPpPreferredName + "(1, item) " + PpStepText(prefRow, pref) + " ret=" + PpRetText(pref.res));
+            if (!pref.dispatched || pref.delta <= 0) {
+                Out(tag + ": not dispatched (" + kPpPreferredName + (pref.dispatched ? " dispatched but not entered" : " did not dispatch")
+                    + "); no call made to " + kPpGridAddName + " or " + kPpClearName + ". Nothing moved; check the materials-tab count by eye.");
+                return;
+            }
+            // GridAddItem's first argument: the return as it is when it is an
+            // array (H-A1), the member a0= names when it is a struct (H-A2).
+            RValue a0;
+            std::string a0Text;
+            if (pref.res.m_Kind == VALUE_ARRAY) {
+                a0 = pref.res;
+                a0Text = "the returned array as it is" + (a0Member.empty() ? std::string() : " (a0=" + a0Member + " names a struct member; ignored for an array)");
+            } else if (pref.res.m_Kind == VALUE_OBJECT && PpBackingObjectKind(pref.res) == 1) {
+                if (a0Member.empty()) {
+                    Out(tag + ": " + kPpPreferredName + " returned a struct " + PpShallow(pref.res) + "; no call made to " + kPpGridAddName
+                        + " (give a0=<member>) or " + kPpClearName + ". The material stays in the cell; run the same stackmove with a0=<member>.");
+                    return;
+                }
+                if (!g_Yytk->CallBuiltin("variable_struct_exists", { pref.res, RValue(a0Member) }).ToBoolean()) {
+                    Out(tag + ": refused: " + kPpPreferredName + "'s struct has no member " + a0Member + " (" + PpShallow(pref.res)
+                        + "); no call made to " + kPpGridAddName + " or " + kPpClearName + ". The material stays in the cell.");
+                    return;
+                }
+                a0 = g_Yytk->CallBuiltin("variable_struct_get", { pref.res, RValue(a0Member) });
+                a0Text = "member " + a0Member + " = " + PpRetText(a0);
+            } else {
+                Out(tag + ": refused: " + kPpPreferredName + " returned " + PpShallow(pref.res) + ", neither an array nor a struct"
+                    "; no call made to " + kPpGridAddName + " or " + kPpClearName + ". The material stays in the cell.");
+                return;
+            }
+            // The arguments the c27cdad click-move was measured with.
+            const PpStepCall place = PpCallRow(gridAddRow, gridAddIdx, gridInst, { a0, item, RValue(0.0), RValue() });
+            Out(tag + ": " + kPpGridAddName + "(a0, item, 0, undefined) " + PpStepText(gridAddRow, place)
+                + " ret=" + PpRetText(place.res) + " a0=" + a0Text);
+            placeDispatched = place.dispatched;
+            addEntered = place.dispatched && place.delta > 0;
+            placed = addEntered && PpPlaceSucceeded(place.res);
+            placeRet = PpShallow(place.res);
         }
 
-        // 2. The add.
-        const PpStepCall add = PpCallRow(addRow, addIdx, gridInst, { RValue(1.0), item });
-        Out(tag + ": " + kPpAddName + "(1, item) " + PpStepText(addRow, add));
-        const bool addEntered = add.dispatched && add.delta > 0;
-
-        // 3. The clear - only after the Add's own body ran, and only on the
+        // 3. The clear - only after the placing call succeeded (the Add's own
+        // body ran; GridAddItem gave the success signal), and only on the
         // cell as it reads now, still holding the same fingerprint.
         std::string clearText;
-        if (!addEntered) clearText = std::string("no call made to ") + kPpClearName + " (" + kPpAddName + " was not entered) - the cell is left as it is";
+        if (!placed)
+            clearText = std::string("no call made to ") + kPpClearName + " (" + placeName
+                + (newType && addEntered ? " gave no success signal" : " was not entered") + ") - the cell is left as it is";
         else {
             RValue cellNow, fpNowValue;
             std::string fpNow;
-            if (!PpReadCell(node, row, col, cellNow, why)) clearText = std::string("no call made to ") + kPpClearName + " (the cell is unreadable after the Add: " + why + ")";
-            else if (PpBackingIsEmptyCell(cellNow)) clearText = std::string("no call made to ") + kPpClearName + " (the cell was already empty after the Add)";
+            if (!PpReadCell(node, row, col, cellNow, why)) clearText = std::string("no call made to ") + kPpClearName + " (the cell is unreadable after " + placeName + ": " + why + ")";
+            else if (PpBackingIsEmptyCell(cellNow)) clearText = std::string("no call made to ") + kPpClearName + " (the cell was already empty after " + placeName + ")";
             else if (!PpCellFingerprint(cellNow, fpNowValue, fpNow, why) || fpNow != fpText)
                 clearText = std::string("no call made to ") + kPpClearName + " (the cell no longer holds fingerprint " + fpText + ")";
             else {
@@ -13071,11 +13287,16 @@ static void PpStackMoveCommand(const std::vector<std::string>& tok)
         Out(tag + ": after prospect contents " + (afterRead ? std::to_string(before.filled) + "->" + std::to_string(after.filled) + " " + PpContentsText(after)
                                                            : "UNREADABLE (" + why + ")")
             + " fingerprint=" + fpText + (afterRead ? (cellEmptied ? " left the cell" : " still in the cell") : ""));
+        const std::string placedText = newType ? " gave the success signal" : " was entered";
         if (!afterRead) verdict = "the ProspectGrid was UNREADABLE after the calls - judge by eye, and read it with `contents` before anything else";
-        else if (cellEmptied && addEntered) verdict = "moved (the cell emptied and " + std::string(kPpAddName) + " was entered)";
-        else if (cellEmptied) verdict = "the cell emptied but " + std::string(kPpAddName) + " was not entered - POSSIBLE LOSS. Stop, look at the materials tab, record it";
-        else if (addEntered) verdict = "added-but-cell-kept (" + std::string(kPpAddName) + " was entered and the cell still holds the material - a possible duplicate)";
-        else verdict = "not dispatched (" + std::string(kPpAddName) + (add.dispatched ? " dispatched but not entered" : " did not dispatch") + ", the cell kept)";
+        else if (cellEmptied && placed) verdict = "moved (the cell emptied and " + std::string(placeName) + placedText + ")";
+        else if (cellEmptied) verdict = "the cell emptied but " + std::string(placeName) + (newType ? " gave no success signal" : " was not entered")
+            + " - POSSIBLE LOSS. Stop, look at the materials tab, record it";
+        else if (newType && addEntered && !placed)
+            verdict = "placed-unconfirmed (ret=" + placeRet + ") - the cell is kept; check the tab by eye. If the tab gained it, run `prospectprobe stackmove clear "
+                + tok[1] + " " + tok[2] + " confirm` so the session carries no duplicate";
+        else if (addEntered) verdict = "added-but-cell-kept (" + std::string(placeName) + placedText + " and the cell still holds the material - a possible duplicate)";
+        else verdict = "not dispatched (" + std::string(placeName) + (placeDispatched ? " dispatched but not entered" : " did not dispatch") + ", the cell kept)";
         Out(tag + ": " + verdict + ". The instrument cannot read the materials tab: check the materials-tab count by eye.");
     } catch (...) {
         Out(tag + ": EXCEPTION - read the grid with `prospectprobe contents` and the cell with `prospectprobe cell` before anything else");
@@ -13112,10 +13333,15 @@ static void PpUsage()
     Out("                                         item:<grid>,<r>,<c> | n:<number> | undef | str:<text>; both grids read before and after, invoked= proof,");
     Out("                                         verdict moved / POSSIBLE LOSS / handler entered, nothing moved / dispatched but not entered / not dispatched");
     Out("                                         itemfp:<grid>,<r>,<c> = the item GetItemFromFingerprint(cell's nodeFingerprint, 0) returns (by name), with its itemType");
-    Out("  stackmove <row> <col> confirm          the game's own click-move of one ProspectGrid material, by name, self = the ProspectGrid:");
-    Out("                                         item from the fingerprint, InventoryGridCanAddToStack, then (only if true) InventoryGridAddToStack,");
-    Out("                                         then (only if Add was entered) InvGridClearItemNode; verdict moved / added-but-cell-kept / not dispatched /");
-    Out("                                         refused / POSSIBLE LOSS; the materials tab is not readable - check the materials-tab count by eye");
+    Out("  stackmove <row> <col> [a0=<member>] confirm   the game's own click-move of one ProspectGrid material, by name, self = the ProspectGrid:");
+    Out("                                         item from the fingerprint, InventoryGridCanAddToStack; if true (a stack exists) InventoryGridAddToStack,");
+    Out("                                         then (only if Add was entered) InvGridClearItemNode. If falsy (Stage D, no stack of this type yet):");
+    Out("                                         GetItemPreferredGrid(1, item), then GridAddItem(a0, item, 0, undefined) with a0 = that return (an array as is,");
+    Out("                                         a struct's member named by a0=), then the clear only on a success signal; every return printed (ret=, arrays");
+    Out("                                         with len and id); verdict moved / placed-unconfirmed / added-but-cell-kept / not dispatched / refused /");
+    Out("                                         POSSIBLE LOSS; the materials tab is not readable - check the materials-tab count by eye");
+    Out("  stackmove clear <row> <col> confirm    InvGridClearItemNode on that ProspectGrid cell only - after a placed-unconfirmed whose material the tab gained by eye");
+    Out("  every logged call also prints `ret=` (its return; an array as len + id), and array arguments' ids on the call line");
 }
 
 // Labels contain spaces ("UI_Prospect_obj anon@1038"), so `override` takes the
@@ -18036,6 +18262,25 @@ static bool ApIsProspectGrid(CInstance* self, int64_t& nodeId)
     return true;
 }
 
+#ifndef FORGEPACT_RELEASE
+// Stage D research log (research build only; defined with the move pass
+// below). Defect B on c27cdad: an ore sometimes went back to the backpack
+// instead of being prospected, and `prospected` cannot tell the two apart.
+// Five `autoprospect research:` lines, each called from one `#ifndef` line in
+// the adapter: `insert` (the hook), `decide` (a MoveMaterials decision),
+// `move` (each cell of a pass), `invoke` (after OnInvoked) and `fate` (the
+// next tick, where the core's effect check runs). They may use the probe's
+// read helpers, which the adapter itself never calls; they decide nothing.
+static void ApResearchInsert(CInstance* S, CInstance* O, int argc, RValue** A, int64_t nodeId, bool isGrid, bool invoking);
+static void ApResearchDecide(const ForgePact::AutoProspectDecision& d, const std::vector<std::string>& invoking,
+                             const std::vector<std::string>& batch);
+static void ApResearchNoteItem(const RValue& item);
+static void ApResearchNoteRet(bool add, const RValue& res);
+static void ApResearchMove(const ForgePact::AutoProspectCell& c, const ForgePact::AutoProspectMoveReport& r);
+static void ApResearchInvoke(bool dispatched, int st, const std::vector<std::string>& invoking, const ForgePact::AutoProspectView& after);
+static void ApResearchFate();
+#endif
+
 static RValue& Hook_AutoProspectInsert(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
     RValue& res = g_Orig_AutoProspectInsert ? g_Orig_AutoProspectInsert(S, O, R, argc, A) : R;
@@ -18045,6 +18290,9 @@ static RValue& Hook_AutoProspectInsert(CInstance* S, CInstance* O, RValue& R, in
     bool isGrid = false;
     try { isGrid = ApIsProspectGrid(S, nodeId); } catch (...) { isGrid = false; }
     mod.OnInsert(nodeId, isGrid, g_AutoProspectInvoking);
+#ifndef FORGEPACT_RELEASE
+    ApResearchInsert(S, O, argc, A, nodeId, isGrid, g_AutoProspectInvoking);
+#endif
     return res;
 }
 
@@ -18311,6 +18559,187 @@ static int ApCellHolds(const RValue& node, const ForgePact::AutoProspectCell& c)
     } catch (...) { return -1; }
 }
 
+#ifndef FORGEPACT_RELEASE
+// ---- Stage D: the auto-prospect research log (research build only) ---------
+// Declared above the hook. Every line starts `autoprospect research:` and
+// carries `frame=` (g_RuntimeFrame, the frame FrameCallback is on), so the
+// insert, the pass, the invoke and the fate of one prospect can be lined up.
+// What each line is for (research doc § Stage D hypotheses): `insert` shows a
+// click-in (its cell already filled at hook time) against a drag-in (not yet),
+// and any m_MoveItemToGrid the game makes while ours runs (`invoking=yes`);
+// `decide` and `move` show whether a pass named the ore (H-B1, H-B5); `invoke`
+// and `fate` show whether the inserted item left the grid and whether the bag
+// grid gained it (H-B2..H-B4). The texts ApMoveCell notes here are strings
+// made at the moment of the call, so no runtime value is kept across frames.
+static std::string g_ApResearchItemText = "not looked up";
+static std::string g_ApResearchCanText = "not called";
+static std::string g_ApResearchAddText = "not called";
+static std::vector<std::string> g_ApResearchPrevAfter;    // the previous invoke's `after` list
+static bool g_ApResearchFateDue = false;                   // an invoke dispatched; its fate is read next tick
+static uint64_t g_ApResearchInvokeFrame = 0;
+static std::vector<std::string> g_ApResearchInserted;     // that invoke's view minus the previous `after`
+static bool g_ApResearchBagRead = false;                   // the bag grid was read at that invoke
+static int g_ApResearchBagFilled = -1;
+static std::vector<std::string> g_ApResearchBagPrints;
+
+static std::string ApResearchList(const std::vector<std::string>& list)
+{
+    std::string s = "[";
+    for (size_t i = 0; i < list.size(); ++i) s += (i ? ", " : "") + list[i];
+    return s + "]";
+}
+
+static bool ApResearchHas(const std::vector<std::string>& list, const std::string& fp)
+{
+    return std::find(list.begin(), list.end(), fp) != list.end();
+}
+
+// The bag grid - the node whose uiNodeCallstack names "InventoryGrid"
+// (M-grids) - read as `contents` reads a grid. `text` says what was read, or why not.
+static bool ApResearchReadBag(PpContents& c, std::string& text)
+{
+    RValue bag;
+    std::string label, why;
+    if (!PpResolveGridSel("bag:InventoryGrid", bag, label, why)) { text = "bag unreadable (" + why + ")"; return false; }
+    if (!PpReadContents(bag, c)) { text = "bag " + label + " unreadable (" + c.why + ")"; return false; }
+    text = "bag " + label + " filled=" + std::to_string(c.filled);
+    return true;
+}
+
+static void ApResearchInsert(CInstance* S, CInstance* O, int argc, RValue** A, int64_t nodeId, bool isGrid, bool invoking)
+{
+    try {
+        std::string args;
+        for (int i = 0; A && i < argc && i < 8; ++i) args += (i ? ", " : "") + (A[i] ? Describe(*A[i]) : std::string("?"));
+        std::string grid = "no ProspectGrid";
+        RValue node;
+        double id = -1;
+        if (ApFindGrid(node, id)) {
+            PpContents c;
+            grid = PpReadContents(node, c) ? "@" + PpIdText(c.nodeId) + " filled=" + std::to_string(c.filled) + " fps=" + ApResearchList(c.fingerprints)
+                                           : "unreadable (" + c.why + ")";
+        }
+        Out("autoprospect research: insert frame=" + std::to_string(g_RuntimeFrame)
+            + " into-prospect-grid=" + (isGrid ? "yes node=" + std::to_string((long long)nodeId) : std::string("no"))
+            + " invoking=" + (invoking ? "yes" : "no") + " self=" + PpDescribeSelf(S) + " other=" + PpDescribeSelf(O)
+            + " argc=" + std::to_string(argc) + " args=[" + args + "] prospect-grid-at-hook=" + grid);
+    } catch (...) { Out("autoprospect research: insert frame=" + std::to_string(g_RuntimeFrame) + " - read failed"); }
+}
+
+static void ApResearchDecide(const ForgePact::AutoProspectDecision& d, const std::vector<std::string>& invoking,
+                             const std::vector<std::string>& batch)
+{
+    std::string named;
+    for (size_t i = 0; i < d.moves.size(); ++i)
+        named += (i ? ", " : "") + std::to_string(d.moves[i].row) + "," + std::to_string(d.moves[i].col) + ":" + d.moves[i].fingerprint;
+    Out("autoprospect research: decide frame=" + std::to_string(g_RuntimeFrame)
+        + " pass=" + std::to_string(ForgePact::AutoProspectMod::Instance().MovePasses())
+        + " view=" + ApResearchList(invoking) + " batch=" + ApResearchList(batch) + " named=[" + named + "]");
+}
+
+static void ApResearchNoteItem(const RValue& item)
+{
+    try { g_ApResearchItemText = ApIsPlainStruct(item) ? PpItemText(item) : "item=not a struct (" + PpShallow(item) + ")"; }
+    catch (...) { g_ApResearchItemText = "item=<read failed>"; }
+}
+
+static void ApResearchNoteRet(bool add, const RValue& res)
+{
+    std::string text;
+    try { text = PpRetText(res); } catch (...) { text = "<read failed>"; }
+    (add ? g_ApResearchAddText : g_ApResearchCanText) = text;
+}
+
+static void ApResearchMove(const ForgePact::AutoProspectCell& c, const ForgePact::AutoProspectMoveReport& r)
+{
+    auto held = [](int h) { return h == 1 ? std::string("yes") : h == 0 ? std::string("no") : std::string("unreadable"); };
+    Out("autoprospect research: move frame=" + std::to_string(g_RuntimeFrame)
+        + " cell=" + std::to_string(c.row) + "," + std::to_string(c.col) + " fp=" + c.fingerprint
+        + " held-before=" + (r.heldBefore ? "yes" : "no") + " " + g_ApResearchItemText
+        + " canadd" + (r.canAddRan ? "" : "(did not run)") + "=" + g_ApResearchCanText
+        + " add" + (r.addRan ? "" : "(did not run)") + "=" + g_ApResearchAddText
+        + " success=" + (r.success ? "yes" : "no") + " clear=" + (r.clearRan ? "ran" : "not called")
+        + " held-after=" + held(r.heldAfter)
+        + " outcome=" + ForgePact::AutoProspectMod::MoveOutcomeName(ForgePact::AutoProspectMod::ClassifyMove(r)));
+    g_ApResearchItemText = "not looked up";
+    g_ApResearchCanText = "not called";
+    g_ApResearchAddText = "not called";
+}
+
+static void ApResearchInvoke(bool dispatched, int st, const std::vector<std::string>& invoking, const ForgePact::AutoProspectView& after)
+{
+    try {
+        g_ApResearchInserted.clear();
+        for (const std::string& fp : invoking)
+            if (!ApResearchHas(g_ApResearchPrevAfter, fp)) g_ApResearchInserted.push_back(fp);
+        PpContents bag;
+        std::string bagText;
+        g_ApResearchBagRead = ApResearchReadBag(bag, bagText);
+        g_ApResearchBagFilled = g_ApResearchBagRead ? bag.filled : -1;
+        g_ApResearchBagPrints = g_ApResearchBagRead ? bag.fingerprints : std::vector<std::string>();
+        const bool afterRead = after.window && after.grid && after.contents;
+        Out("autoprospect research: invoke frame=" + std::to_string(g_RuntimeFrame)
+            + " dispatched=" + (dispatched ? "yes" : "no") + " st=" + std::to_string(st)
+            + " view=" + ApResearchList(invoking)
+            + " after=" + (afterRead ? ApResearchList(after.printList) + " filled=" + std::to_string(after.filled) : std::string("unreadable"))
+            + " batch=" + ApResearchList(ForgePact::AutoProspectMod::Instance().BatchList())
+            + " inserted=" + ApResearchList(g_ApResearchInserted) + " (the view minus the previous invoke's after) " + bagText);
+        g_ApResearchPrevAfter = afterRead ? after.printList : std::vector<std::string>();
+        g_ApResearchFateDue = dispatched;
+        g_ApResearchInvokeFrame = g_RuntimeFrame;
+    } catch (...) {
+        g_ApResearchFateDue = false;
+        Out("autoprospect research: invoke frame=" + std::to_string(g_RuntimeFrame) + " - read failed");
+    }
+}
+
+// The frame after a dispatched invoke: for each inserted fingerprint, is it
+// still in the ProspectGrid, what does the game's own lookup return for it now
+// (GetItemFromFingerprint(fp, 0), through ApCallScript - the one call this log
+// makes, a lookup), and did the bag grid gain it. A returned ore could merge
+// into a bag stack and lose its fingerprint: the bag's count and list delta
+// and the item's own members (a count, if it has one) show that.
+static void ApResearchFate()
+{
+    if (!g_ApResearchFateDue) return;
+    g_ApResearchFateDue = false;
+    try {
+        RValue node;
+        double id = -1;
+        PpContents grid;
+        const bool gridRead = ApFindGrid(node, id) && PpReadContents(node, grid);
+        CInstance* gridInst = gridRead ? HhResolveInstance(node) : nullptr;
+        PpContents bag;
+        std::string bagText;
+        const bool bagRead = ApResearchReadBag(bag, bagText);
+        std::string fates;
+        for (const std::string& fp : g_ApResearchInserted) {
+            std::string f = fp + ": " + (gridRead ? (ApResearchHas(grid.fingerprints, fp) ? "still" : "gone") : "grid unreadable");
+            if (!gridInst) f += " lookup=not made (no grid instance)";
+            else {
+                RValue item;
+                const bool ran = ApCallScript(kApFromFpName, gridInst, { RValue(fp), RValue(0.0) }, item);
+                f += " lookup=" + (ran ? PpShallow(item) : std::string("did not dispatch"));
+            }
+            f += " in-bag=" + (bagRead ? std::string(ApResearchHas(bag.fingerprints, fp) ? "yes" : "no") : std::string("?"));
+            fates += " {" + f + "}";
+        }
+        std::string bagDelta = bagText;
+        if (bagRead && g_ApResearchBagRead) {
+            std::vector<std::string> gained, lost;
+            for (const std::string& fp : bag.fingerprints) if (!ApResearchHas(g_ApResearchBagPrints, fp)) gained.push_back(fp);
+            for (const std::string& fp : g_ApResearchBagPrints) if (!ApResearchHas(bag.fingerprints, fp)) lost.push_back(fp);
+            bagDelta += " (at the invoke " + std::to_string(g_ApResearchBagFilled) + ") gained=" + ApResearchList(gained) + " lost=" + ApResearchList(lost);
+        } else bagDelta += " (at the invoke: " + std::string(g_ApResearchBagRead ? "read" : "unreadable") + ")";
+        Out("autoprospect research: fate frame=" + std::to_string(g_RuntimeFrame)
+            + " invoke-frame=" + std::to_string(g_ApResearchInvokeFrame)
+            + " grid=" + (gridRead ? "@" + PpIdText(grid.nodeId) + " filled=" + std::to_string(grid.filled) + " fps=" + ApResearchList(grid.fingerprints)
+                                   : std::string("unreadable"))
+            + " inserted:" + (fates.empty() ? std::string(" none") : fates) + " " + bagDelta);
+    } catch (...) { Out("autoprospect research: fate frame=" + std::to_string(g_RuntimeFrame) + " - read failed"); }
+}
+#endif
+
 // One cell of the move pass, reported to the core as it went. The cell is
 // re-read before the first call and must still hold what the view saw; the
 // item must still be a material; the has-a-stack check must say yes before
@@ -18328,16 +18757,25 @@ static ForgePact::AutoProspectMoveReport ApMoveCell(const RValue& node, CInstanc
         r.heldBefore = true;
         RValue item;
         r.lookup = ApItemFromFingerprint(gridInst, fp, item) && ApIsMaterial(item);
+#ifndef FORGEPACT_RELEASE
+        ApResearchNoteItem(item);
+#endif
         if (!r.lookup) { r.heldAfter = ApCellHolds(node, c); return r; }
         RValue canRes;
         r.canAddRan = ApCallScript(kApCanAddName, gridInst, { RValue(1.0), RValue(), item }, canRes);
         // CanAdd returns the existing stack's struct, not a bool (M7); a
         // struct reads as true, undefined or 0 as false.
         r.canAdd = r.canAddRan && canRes.ToBoolean();
+#ifndef FORGEPACT_RELEASE
+        ApResearchNoteRet(false, canRes);
+#endif
         if (!r.canAdd) { r.heldAfter = ApCellHolds(node, c); return r; }
         RValue addRes;
         r.addRan = ApCallScript(kApAddName, gridInst, { RValue(1.0), item }, addRes);
         r.success = r.addRan && ApAddSucceeded(addRes);
+#ifndef FORGEPACT_RELEASE
+        ApResearchNoteRet(true, addRes);
+#endif
         if (r.success && ApCellHolds(node, c) == 1) {
             RValue cellNow, clearRes;
             if (ApReadCell(node, c.row, c.col, cellNow))
@@ -18363,6 +18801,9 @@ static void ApMovePass(const ForgePact::AutoProspectDecision& d, const RValue& n
         ForgePact::AutoProspectMoveReport r;   // unresolved grid: nothing called, move-failed
         if (gridInst) r = ApMoveCell(node, gridInst, c);
         mod.OnMoveReport(r);
+#ifndef FORGEPACT_RELEASE
+        ApResearchMove(c, r);
+#endif
     }
     g_AutoProspectInvoking = false;
 }
@@ -18412,14 +18853,27 @@ static void AutoProspectTick()
 
     ForgePact::AutoProspectView v;
     read(v);
+#ifndef FORGEPACT_RELEASE
+    // Stage D research log: the previous invoke's fate (this is the frame the
+    // core's effect check reads), and what Decide is about to consume.
+    ApResearchFate();
+    const std::vector<std::string> apResearchBatch = mod.BatchList();
+    std::vector<std::string> apResearchInvoking = v.printList;
+#endif
     ForgePact::AutoProspectDecision d = mod.Decide(v);
     if (d.action == ForgePact::AutoProspectAction::MoveMaterials) {
+#ifndef FORGEPACT_RELEASE
+        ApResearchDecide(d, v.printList, apResearchBatch);
+#endif
         ApMovePass(d, node);
         // Re-found and re-read after the pass: the invoke's checks (the free
         // cells above all) are decided on the grid the pass left.
         ForgePact::AutoProspectView moved;
         read(moved);
         d = mod.Decide(moved);
+#ifndef FORGEPACT_RELEASE
+        apResearchInvoking = moved.printList;
+#endif
     }
     if (d.action == ForgePact::AutoProspectAction::Invoke) {
         RValue res;
@@ -18442,6 +18896,9 @@ static void AutoProspectTick()
         } catch (...) { after.contents = false; }
         const bool dispatched = AurieSuccess(st);
         mod.OnInvoked(dispatched, after);
+#ifndef FORGEPACT_RELEASE
+        ApResearchInvoke(dispatched, (int)st, apResearchInvoking, after);
+#endif
         if (!dispatched && !g_AutoProspectDispatchLogged) {
             g_AutoProspectDispatchLogged = true;
             Out("autoprospect: the Prospect call did not dispatch (st=" + std::to_string((int)st)

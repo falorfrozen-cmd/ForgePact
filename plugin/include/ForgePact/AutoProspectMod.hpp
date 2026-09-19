@@ -224,6 +224,10 @@ public:
     // How many distinct fingerprints the recorded batch holds (`batch=` on
     // the stat line).
     size_t BatchSize() const { return m_Batch.size(); }
+    // The recorded batch itself, a copy (Stage D: the research build's
+    // per-pass and per-invoke log lines name its fingerprints). Reading it
+    // changes nothing.
+    std::vector<std::string> BatchList() const { return m_Batch; }
 
     // From the m_MoveItemToGrid hook, after the game's own function ran.
     // `isProspectGrid`: the call's self is the ProspectGrid node, identified by

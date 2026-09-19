@@ -1136,7 +1136,9 @@ class ProspectWindowContractTests(unittest.TestCase):
         self.assertLess(stack.index('"confirm"'), stack.index("PpFindWindow("))
         self.assertLess(stack.index('"confirm"'), first_call)
         usage = function_body(self.plugin, "static void PpUsage(")
-        for text in ("stackmove <row> <col> confirm", "materials-tab"):
+        # Stage D: the optional a0= token names GridAddItem's first argument
+        # when GetItemPreferredGrid returns a struct.
+        for text in ("stackmove <row> <col> [a0=<member>] confirm", "materials-tab"):
             self.assertIn(text, usage)
         frame = function_body(self.plugin, "void FrameCallback(")
         for name in ("PpStackMove", "PpItemFromFingerprint", "PpCallRow"):
@@ -1153,10 +1155,10 @@ class ProspectWindowContractTests(unittest.TestCase):
                       "PpReadCell(", "PpBackingIsEmptyCell(", "PpCellFingerprint(", "PpScriptIndex(",
                       "PpReadContents("):
             self.assertLess(stack.index(check), first_call, check)
-        # All three rows must be detoured, or invoked= could not tell "nothing
-        # ran" from "ran and did nothing" for any of them.
-        for row in ("canRow", "addRow", "clearRow"):
-            self.assertIn(row, stack)
+        # All five rows must be detoured - the three of the existing-stack
+        # route and Stage D's two new-type rows - or invoked= could not tell
+        # "nothing ran" from "ran and did nothing" for any of them.
+        self.assertIn("for (PpTarget* r : { canRow, addRow, clearRow, prefRow, gridAddRow })", stack)
         guard = stack.index("!r || !r->installed.load()")
         self.assertLess(guard, first_call)
         self.assertIn("is not detoured", stack)
@@ -1171,7 +1173,9 @@ class ProspectWindowContractTests(unittest.TestCase):
         can = stack.index("PpCallRow(canRow")
         add = stack.index("PpCallRow(addRow")
         clear = stack.index("PpCallRow(clearRow")
-        self.assertEqual(stack.count("PpCallRow("), 3)
+        # Stage D: CanAdd, then the Add (existing stack) or GetItemPreferredGrid
+        # and GridAddItem (new type), then the one Clear.
+        self.assertEqual(stack.count("PpCallRow("), 5)
         self.assertLess(stack.index("PpItemFromFingerprint("), can)
         self.assertLess(can, add)
         self.assertLess(add, clear)
@@ -1179,17 +1183,25 @@ class ProspectWindowContractTests(unittest.TestCase):
         self.assertIn("PpCallRow(canRow, canIdx, gridInst, { RValue(1.0), RValue(), item })", stack)
         self.assertIn("PpCallRow(addRow, addIdx, gridInst, { RValue(1.0), item })", stack)
         self.assertIn("PpCallRow(clearRow, clearIdx, gridInst, { cellNow, RValue() })", stack)
-        # CanAdd said no, or did not run: Add and Clear are never called.
-        refuse = stack.index("!can.res.ToBoolean()")
-        self.assertLess(can, refuse)
-        self.assertLess(refuse, add)
-        self.assertIn("no call made to", stack[refuse:add])
+        # CanAdd not entered: nothing else is called. CanAdd's answer is the
+        # route fork (Stage D): truthy takes the Add, falsy the new-type route
+        # - never both, and the Add only on the truthy side.
         self.assertIn("!can.dispatched || can.delta <= 0", stack)
-        self.assertLess(stack.index("!can.dispatched || can.delta <= 0"), add)
-        # Clear only when the Add dispatched AND its body ran, and only on the
-        # cell re-read after the Add, still holding the same fingerprint.
-        self.assertIn("const bool addEntered = add.dispatched && add.delta > 0;", stack)
-        gate = stack.index("if (!addEntered)")
+        not_entered = stack.index("!can.dispatched || can.delta <= 0")
+        self.assertLess(not_entered, add)
+        self.assertIn("no call made to", stack[not_entered:stack.index("return;", not_entered)])
+        fork = stack.index("const bool newType = !can.res.ToBoolean();")
+        self.assertLess(can, fork)
+        self.assertLess(fork, add)
+        self.assertIn("if (!newType) {", stack[fork:add])
+        self.assertLess(add, stack.index("} else {", add))
+        self.assertLess(stack.index("} else {", add), stack.index("PpCallRow(prefRow"))
+        # On the existing-stack route the Clear follows only an Add that
+        # dispatched AND whose body ran, and only on the cell re-read after
+        # it, still holding the same fingerprint.
+        self.assertIn("addEntered = add.dispatched && add.delta > 0;", stack)
+        self.assertIn("placed = addEntered;", stack)
+        gate = stack.index("if (!placed)")
         self.assertLess(add, gate)
         self.assertLess(gate, clear)
         reread = stack.index("PpReadCell(node, row, col, cellNow, why)")
@@ -1224,22 +1236,212 @@ class ProspectWindowContractTests(unittest.TestCase):
         step = strip_comments(function_body(self.plugin, "static std::string PpStepText("))
         for field in ('"st="', '" (threw)"', '" res="', "PpInvokedText("):
             self.assertIn(field, step)
-        self.assertEqual(stack.count("PpStepText("), 3)
+        # CanAdd, Add, GetItemPreferredGrid, GridAddItem and Clear each print theirs.
+        self.assertEqual(stack.count("PpStepText("), 5)
         # itemType (PpItemText, through the lookup's note), contents before and
         # after, and the cleared cell's fingerprint.
         self.assertIn("note", stack)
         self.assertEqual(stack.count("PpReadContents("), 2)
         self.assertIn('" fingerprint="', stack)
         verdicts = stack[stack.index("std::string verdict;"):]
-        for verdict in ('"moved', '"added-but-cell-kept', '"not dispatched', "POSSIBLE LOSS", "UNREADABLE"):
+        for verdict in ('"moved', '"added-but-cell-kept', '"not dispatched', "POSSIBLE LOSS", "UNREADABLE",
+                        '"placed-unconfirmed'):
             self.assertIn(verdict, verdicts)
-        # moved needs the cell emptied AND the Add entered; an emptied cell
-        # without the Add is a loss, decided before anything else.
-        self.assertIn("cellEmptied && addEntered", verdicts)
-        self.assertLess(verdicts.index("cellEmptied && addEntered"), verdicts.index('"moved'))
+        # moved needs the cell emptied AND the placing call to have succeeded
+        # (the Add entered, or GridAddItem's success signal); an emptied cell
+        # without it is a loss, decided before anything else.
+        self.assertIn("cellEmptied && placed", verdicts)
+        self.assertLess(verdicts.index("cellEmptied && placed"), verdicts.index('"moved'))
         self.assertIn("refused", stack)
         # The instrument cannot read the materials tab, and says so.
         self.assertIn("check the materials-tab count by eye", stack)
+
+    # ---- Stage D: the new-type route, the probe's return values, and the
+    # auto-prospect research log (docs/prospect-window-research.md § Stage D).
+    # A material whose type has no stack in the tab yet was refused by
+    # CanAdd and piled up in the grid (c27cdad, defect A); the game's own
+    # click-move of one ran GetItemPreferredGrid then GridAddItem instead of
+    # the Add, but what GridAddItem was handed and what it returned were not
+    # logged. And an ore sometimes went back to the backpack (defect B), which
+    # no counter can tell from a prospect.
+
+    def test_stackmove_new_type_route_by_name_only(self):
+        stack = strip_comments(function_body(self.plugin, "static void PpStackMoveCommand("))
+        shipped = strip_comments(strip_research_blocks(self.plugin))
+        for name, constant in (("kPpPreferredName", "gml_Script_GetItemPreferredGrid"),
+                               ("kPpGridAddName", "gml_Script_GridAddItem")):
+            self.assertIn(f"{name} = SdkShortScriptName(HeroSiege::Scripts::{constant})", self.plugin)
+            self.assertIn(name, stack)
+            self.assertNotIn(name, shipped)
+        # Both rows are in the target table already, so `hook` detours them.
+        labels = [label for _, label, _ in self.rows]
+        for label in ("GetItemPreferredGrid", "GridAddItem"):
+            self.assertIn(label, labels)
+        # The measured arguments: GetItemPreferredGrid(1, item), then
+        # GridAddItem(a0, item, 0, undefined), through PpCallRow (script_execute
+        # of the asset index, the row's own count across the call).
+        fork = stack.index("const bool newType = !can.res.ToBoolean();")
+        pref = stack.index("PpCallRow(prefRow, prefIdx, gridInst, { RValue(1.0), item })")
+        place = stack.index("PpCallRow(gridAddRow, gridAddIdx, gridInst, { a0, item, RValue(0.0), RValue() })")
+        self.assertLess(fork, pref)
+        self.assertLess(pref, place)
+        self.assertLess(place, stack.index("PpCallRow(clearRow"))
+        # GridAddItem only after GetItemPreferredGrid's own body ran.
+        entered = stack.index("!pref.dispatched || pref.delta <= 0")
+        self.assertLess(pref, entered)
+        self.assertLess(entered, place)
+        self.assertIn("no call made to", stack[entered:stack.index("return;", entered)])
+        # a0: an array return as it is; a struct only through the member a0=
+        # names, refusing (no GridAddItem call) without one; anything else refused.
+        self.assertIn("if (pref.res.m_Kind == VALUE_ARRAY) {", stack)
+        self.assertIn("a0 = pref.res;", stack)
+        self.assertIn("(give a0=<member>)", stack)
+        self.assertIn('RValue(a0Member)', stack)
+        self.assertIn("neither an array nor a struct", stack)
+        for text in ("(give a0=<member>) or ", "neither an array nor a struct"):
+            self.assertLess(stack.index(text), place)
+        self.assertIn('Lower(tok[3]).rfind("a0=", 0) != 0', stack)
+        # Every return printed, arrays with their identity.
+        self.assertIn('" ret=" + PpRetText(pref.res)', stack)
+        self.assertIn('" ret=" + PpRetText(place.res)', stack)
+        for forbidden in ("Rva", "MethodValueFunction", "CScriptRef", "m_CallYYC", "InvokeMethodValue",
+                          "GetModuleHandle", "CallGameScript", "GetNamedRoutinePointer", "CallBuiltinEx("):
+            self.assertNotIn(forbidden, stack)
+
+    def test_stackmove_new_type_clears_only_on_a_success_signal(self):
+        stack = strip_comments(function_body(self.plugin, "static void PpStackMoveCommand("))
+        place = stack.index("PpCallRow(gridAddRow")
+        clear = stack.index("PpCallRow(clearRow")
+        # Clearing on dispatch or on GridAddItem merely entering would be a
+        # duplicate or a loss: only its success signal lets the Clear run.
+        self.assertIn("placed = addEntered && PpPlaceSucceeded(place.res);", stack)
+        self.assertLess(place, stack.index("placed = addEntered && PpPlaceSucceeded(place.res);"))
+        gate = stack.index("if (!placed)")
+        self.assertLess(place, gate)
+        self.assertLess(gate, clear)
+        self.assertEqual(stack.count("PpCallRow(clearRow"), 1)
+        # The signal: a struct whose `success` is true, or a plain true -
+        # nothing merely truthy.
+        signal = strip_comments(function_body(self.plugin, "static bool PpPlaceSucceeded("))
+        self.assertIn("if (res.m_Kind == VALUE_BOOL) return res.ToBoolean();", signal)
+        self.assertEqual(signal.count("res.ToBoolean()"), 1)
+        self.assertIn('RValue("success")', signal)
+        self.assertIn("PpBackingObjectKind(res) != 1", signal)
+        # No signal: no Clear, the cell kept, the verdict names the return and
+        # the command that clears the cell once the tab has it by eye.
+        verdicts = stack[stack.index("std::string verdict;"):]
+        self.assertIn('"placed-unconfirmed (ret=" + placeRet + ") - the cell is kept; check the tab by eye', verdicts)
+        self.assertIn("stackmove clear ", verdicts[verdicts.index('"placed-unconfirmed'):])
+        self.assertIn("newType && addEntered && !placed", verdicts)
+        # A cell that emptied without the signal is still a loss, decided first.
+        self.assertLess(verdicts.index("cellEmptied && placed"), verdicts.index("newType && addEntered && !placed"))
+        self.assertLess(verdicts.index("POSSIBLE LOSS"), verdicts.index('"placed-unconfirmed'))
+
+    def test_stackmove_clear_is_confirm_gated_and_research_only(self):
+        shipped = strip_research_blocks(self.plugin)
+        self.assertIn("static void PpStackClearCommand(", self.plugin)
+        self.assertNotIn("static void PpStackClearCommand(", shipped)
+        self.assertNotIn("PpPlaceSucceeded", shipped)
+        # Reached through `stackmove clear`, before anything stackmove itself reads.
+        stack = strip_comments(function_body(self.plugin, "static void PpStackMoveCommand("))
+        self.assertTrue(stack.lstrip().startswith(
+            'if (tok.size() >= 2 && Lower(tok[1]) == "clear") { PpStackClearCommand(tok); return; }'))
+        clear = strip_comments(function_body(self.plugin, "static void PpStackClearCommand("))
+        call = clear.index("PpCallRow(")
+        # One call, the clear the click-move ends with, on the cell as read now.
+        self.assertEqual(clear.count("PpCallRow("), 1)
+        self.assertIn("PpCallRow(clearRow, clearIdx, gridInst, { cell, RValue() })", clear)
+        self.assertIn('Lower(tok[4]) != "confirm"', clear)
+        # Every refusal before the call, each saying `no call made`.
+        self.assertGreaterEqual(clear.count("no call made"), 10)
+        self.assertLess(clear.rindex("no call made"), call)
+        for check in ('Lower(tok[4]) != "confirm"', "PpPendingRewrite()", "!clearRow || !clearRow->installed.load()",
+                      "PpFindWindow(", 'PpResolveGridSel("prospect"', "HhResolveInstance(", "PpReadCell(",
+                      "PpBackingIsEmptyCell(", "PpCellFingerprint(", "PpScriptIndex(kPpClearName", "PpReadContents("):
+            self.assertLess(clear.index(check), call, check)
+        self.assertLess(clear.index('Lower(tok[4]) != "confirm"'), clear.index("PpFindWindow("))
+        for forbidden in ("CallBuiltinEx(", "Rva", "CallGameScript", "GetNamedRoutinePointer"):
+            self.assertNotIn(forbidden, clear)
+        self.assertIn("stackmove clear <row> <col> confirm", function_body(self.plugin, "static void PpUsage("))
+        frame = function_body(self.plugin, "void FrameCallback(")
+        self.assertNotIn("PpStackClear", frame)
+
+    def test_probe_logs_the_return_value_of_every_logged_call(self):
+        after = strip_comments(function_body(self.plugin, "static void PpAfter("))
+        # For every logged call, whether or not `watch` is on: the ret= line
+        # comes before the watch-gated return and is gated on `logged` alone.
+        ret = after.index('" ret=" + PpRetText(result)')
+        logged_gate = after.index("if (logged) {")
+        self.assertLess(logged_gate, ret)
+        self.assertLess(ret, after.index("if (!logged || gridPre.empty() || !g_PpWatch.load()) return;"))
+        self.assertNotIn("g_PpWatch", after[logged_gate:ret])
+        # An array prints its length and the runtime's own pointer as an
+        # identity token; anything else prints shallowly.
+        identity = strip_comments(function_body(self.plugin, "static std::string PpArrayIdentity("))
+        for text in ("VALUE_ARRAY", '"array_length"', "v.m_Pointer", '" id=0x"', '"array len="'):
+            self.assertIn(text, identity)
+        ret_text = strip_comments(function_body(self.plugin, "static std::string PpRetText("))
+        self.assertIn("PpArrayIdentity(v)", ret_text)
+        self.assertIn("PpShallow(v)", ret_text)
+        # Argument identities ride on the pre-call line, inside its budget;
+        # AggroArgs itself is left alone.
+        observe = strip_comments(function_body(self.plugin, "static bool PpObserve("))
+        self.assertIn("AggroArgs(argc, A) + PpArgIdentities(argc, A)", observe)
+        self.assertLess(observe.index("if (InterlockedIncrement(logged) > budget) return false;"),
+                        observe.index("PpArgIdentities(argc, A)"))
+        self.assertIn("PpArrayIdentity(*A[i])", strip_comments(function_body(self.plugin, "static std::string PpArgIdentities(")))
+        self.assertNotIn("m_Pointer", function_body(self.plugin, "static std::string AggroArgs("))
+        # Research build only, like the rest of the instrument.
+        shipped = strip_research_blocks(self.plugin)
+        for signature in ("static std::string PpArrayIdentity(", "static std::string PpRetText(",
+                          "static std::string PpArgIdentities("):
+            self.assertIn(signature, self.plugin)
+            self.assertNotIn(signature, shipped)
+
+    def test_autoprospect_research_log_is_research_only(self):
+        code = strip_comments(self.plugin)
+        shipped = strip_comments(strip_research_blocks(self.plugin))
+        # Five lines, none of them in the player build.
+        for line in ('"autoprospect research: insert frame="', '"autoprospect research: decide frame="',
+                     '"autoprospect research: move frame="', '"autoprospect research: invoke frame="',
+                     '"autoprospect research: fate frame="'):
+            self.assertIn(line, code)
+        self.assertNotIn("autoprospect research:", shipped)
+        self.assertNotIn("ApResearch", shipped)
+        # Each is called from one line of the adapter, under the research guard.
+        for signature, call in (("static RValue& Hook_AutoProspectInsert(",
+                                 "ApResearchInsert(S, O, argc, A, nodeId, isGrid, g_AutoProspectInvoking);"),
+                                ("static void ApMovePass(", "ApResearchMove(c, r);"),
+                                ("static void AutoProspectTick(", "ApResearchFate();"),
+                                ("static void AutoProspectTick(", "ApResearchDecide(d, v.printList, apResearchBatch);"),
+                                ("static void AutoProspectTick(", "ApResearchInvoke(dispatched, (int)st, apResearchInvoking, after);")):
+            self.assertEqual(function_body(self.plugin, signature).count(call), 1, call)
+            self.assertNotIn(call, function_body(strip_research_blocks(self.plugin), signature))
+        # ApMoveCell only notes what its own calls returned, as text.
+        move = function_body(self.plugin, "static ForgePact::AutoProspectMoveReport ApMoveCell(")
+        shipped_move = function_body(strip_research_blocks(self.plugin), "static ForgePact::AutoProspectMoveReport ApMoveCell(")
+        for call in ("ApResearchNoteItem(item);", "ApResearchNoteRet(false, canRes);", "ApResearchNoteRet(true, addRes);"):
+            self.assertRegex(move, r"#ifndef FORGEPACT_RELEASE\s*" + re.escape(call) + r"\s*#endif")
+            self.assertNotIn(call, shipped_move)
+        # Decide consumes the batch, so the decide line's batch is read before it.
+        tick = strip_comments(function_body(self.plugin, "static void AutoProspectTick("))
+        self.assertLess(tick.index("mod.BatchList()"), tick.index("mod.Decide(v)"))
+        self.assertIn("std::vector<std::string> BatchList() const { return m_Batch; }", self.plugin_header())
+        # The research log's one game call is the fingerprint lookup, through
+        # the adapter's own by-name helper: no second script_execute site, no
+        # item-type lookup of its own, nothing on FrameCallback's path.
+        research = code[code.index("static std::string g_ApResearchItemText"):]
+        research = research[:research.index("static ForgePact::AutoProspectMoveReport ApMoveCell(")]
+        self.assertIn("ApCallScript(kApFromFpName, gridInst, { RValue(fp), RValue(0.0) }, item)", research)
+        for forbidden in ("CallBuiltinEx(", "script_execute", "ApReadMaterials(", "ApMoveCell(", ".Decide(",
+                          "OnInvoked(", "OnMoveReport(", "SetEnabled(", "SetBagEnabled(", '"variable_struct_set"',
+                          '"variable_instance_set"', '"array_set"'):
+            self.assertNotIn(forbidden, research)
+        self.assertEqual(shipped.count('"script_execute", gridInst, gridInst'), 1)
+        self.assertNotIn("ApResearch", function_body(self.plugin, "void FrameCallback("))
+
+    def plugin_header(self):
+        return (ROOT / "plugin" / "include" / "ForgePact" / "AutoProspectMod.hpp").read_text(encoding="utf-8")
 
     # ---- the core header -----------------------------------------------------
 
