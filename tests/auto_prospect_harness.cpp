@@ -1601,6 +1601,81 @@ static void TargetPreferredLookupNotRunIsMoveFailed()
               + " moved=" + N(mod.Moved()) + " invokes=" + N(t.invokes) + " line=\"" + line + "\"");
 }
 
+// ---- PR prep: move-failed names the step that failed -------------------------
+//
+// Review found `ClassifyMove` sending seven different failures to
+// `move-failed` (the cell changed or unreadable before the first call, the
+// item lookup, the has-a-stack check, the preferred-grid lookup, the add or
+// the place not running, the final re-read unreadable) while
+// `MoveProblemLine(MoveFailed)` printed one text for all of them - a bug
+// report from a player could not say which. The line is still written once
+// per reason per session; it names the step of the first move-failed seen.
+//
+// Observed 2026-09-19 against the c229cb5 core, unchanged:
+//   FAIL target/move_failed_names_the_step_that_failed cell-before=0 item-lookup=0 has-a-stack=0 preferred-grid=0 add=0 place=0 final-read=0 once=0 control=1 line="autoprospect: move-failed - a material stays in the grid; the move could not be made or checked"
+// (every step's line was the same text; `once` fails only on the step name -
+// one move-failed line for two different steps already held.)
+
+static bool MoveFailedLineNames(const ForgePact::AutoProspectMoveReport& r, const std::string& words, std::string& line)
+{
+    AutoProspectMod mod;
+    mod.SetEnabled(true);
+    mod.OnMoveReport(r);
+    const auto first = mod.TakeFirstMoveProblem();
+    line = mod.MoveProblemLine(first);
+    return first == ForgePact::AutoProspectMoveOutcome::MoveFailed && mod.MovePassOn()
+        && line.rfind("autoprospect: move-failed - a material stays in the grid; the move could not be made or checked (", 0) == 0
+        && line.find(words) != std::string::npos;
+}
+
+static void TargetMoveFailedNamesTheStepThatFailed()
+{
+    ForgePact::AutoProspectMoveReport cellBefore = MovedReport();
+    cellBefore.heldBefore = false;
+    ForgePact::AutoProspectMoveReport lookup = MovedReport();
+    lookup.lookup = false;
+    ForgePact::AutoProspectMoveReport canAdd = MovedReport();
+    canAdd.canAddRan = false;
+    ForgePact::AutoProspectMoveReport preferred = Report(false, false, 1);
+    preferred.preferredRan = false;
+    ForgePact::AutoProspectMoveReport add = Report(true, false, 1);
+    add.addRan = false;
+    const ForgePact::AutoProspectMoveReport place = Report(false, false, 1, true, false);  // grid named, place never ran
+    const ForgePact::AutoProspectMoveReport finalRead = Report(true, false, -1);              // add ran, no success, cell unreadable
+    std::string l1, l2, l3, l4, l5, l6, l7;
+    const bool s1 = MoveFailedLineNames(cellBefore, "(the cell could not be read, or had changed, before the move)", l1);
+    const bool s2 = MoveFailedLineNames(lookup, "(the item lookup did not run or found no material)", l2);
+    const bool s3 = MoveFailedLineNames(canAdd, "(the has-a-stack check did not run)", l3);
+    const bool s4 = MoveFailedLineNames(preferred, "(the preferred-grid lookup did not run)", l4);
+    const bool s5 = MoveFailedLineNames(add, "(the add to your materials tab did not run)", l5);
+    const bool s6 = MoveFailedLineNames(place, "(the place into your bag did not run)", l6);
+    const bool s7 = MoveFailedLineNames(finalRead, "(the cell could not be re-read after the move)", l7);
+    // Once per reason: two different failing steps give one move-failed
+    // line, naming the first step seen.
+    AutoProspectMod mod;
+    mod.SetEnabled(true);
+    mod.OnMoveReport(preferred);
+    mod.OnMoveReport(cellBefore);
+    const auto first = mod.TakeFirstMoveProblem();
+    const auto second = mod.TakeFirstMoveProblem();
+    const std::string onceLine = mod.MoveProblemLine(first);
+    const bool once = first == ForgePact::AutoProspectMoveOutcome::MoveFailed && second == ForgePact::AutoProspectMoveOutcome::None
+        && mod.MoveOutcomes(ForgePact::AutoProspectMoveOutcome::MoveFailed) == 2
+        && onceLine.find("(the preferred-grid lookup did not run)") != std::string::npos
+        && onceLine.find("before the move") == std::string::npos;
+    // Negative control: every other reason's line is unchanged and names no step.
+    AutoProspectMod other;
+    other.SetEnabled(true);
+    other.OnMoveReport(Report(true, false, 1));
+    const std::string notAdded = other.MoveProblemLine(other.TakeFirstMoveProblem());
+    const bool control = notAdded == "autoprospect: not-added - a material stays in the grid; the game did not confirm adding it to your materials tab";
+    Check("target/move_failed_names_the_step_that_failed",
+          s1 && s2 && s3 && s4 && s5 && s6 && s7 && once && control,
+          "cell-before=" + N(s1) + " item-lookup=" + N(s2) + " has-a-stack=" + N(s3) + " preferred-grid=" + N(s4)
+              + " add=" + N(s5) + " place=" + N(s6) + " final-read=" + N(s7) + " once=" + N(once) + " control=" + N(control)
+              + " line=\"" + l4 + "\"");
+}
+
 int main()
 {
     BaselineOffByDefault();
@@ -1657,6 +1732,7 @@ int main()
     TargetNewTypeVanishedOrKeptTurnsTheMovePassOff();
     TargetStatLineNamesTheNewTypeRoute();
     TargetPreferredLookupNotRunIsMoveFailed();
+    TargetMoveFailedNamesTheStepThatFailed();
     std::cout << (g_Failures ? "RESULT FAIL" : "RESULT OK") << "\n";
     return g_Failures ? 1 : 0;
 }

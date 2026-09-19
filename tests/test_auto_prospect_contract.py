@@ -494,6 +494,34 @@ class AutoProspectContractTests(unittest.TestCase):
         self.assertIn("r.preferredRan = ApCallScript(kApPreferredName,", move)
         self.assertIn("r.preferredOk = r.preferredRan && ApPreferredGrid(prefRes, placeGrid);", move)
 
+    def test_move_failed_line_names_the_failed_step_once_per_reason(self):
+        # PR prep: seven different failures classify as `move-failed`; the
+        # report carries which step failed so the one line names it, and the
+        # line is still written once per reason, not once per step.
+        header = strip_comments(self.header)
+        self.assertIn("enum class AutoProspectMoveStep : int {", header)
+        steps = header[header.index("enum class AutoProspectMoveStep : int {"):]
+        steps = steps[:steps.index("};")]
+        for name in ("CellBefore", "ItemLookup", "HasStackCheck", "PreferredGrid", "Add", "Place", "FinalRead"):
+            self.assertIn(name, steps)
+        failed = header[header.index("static AutoProspectMoveStep FailedStep("):]
+        failed = failed[:failed.index("\n    }\n")]
+        self.assertIn("if (ClassifyMove(r) != AutoProspectMoveOutcome::MoveFailed) return AutoProspectMoveStep::None;", failed)
+        report = header[header.index("AutoProspectMoveOutcome OnMoveReport("):]
+        report = report[:report.index("\n    }\n")]
+        # The step is recorded only inside the once-per-reason branch.
+        once = report.index("if (!(m_MoveReportedMask & bit)) {")
+        self.assertLess(once, report.index("m_MoveFailedStep = FailedStep(r);"))
+        self.assertEqual(report.count("m_MoveUnreported.push_back(o);"), 1)
+        line = header[header.index("std::string MoveProblemLine("):]
+        line = line[:line.index("\n    }\n")]
+        self.assertIn("MoveStepText(m_MoveFailedStep)", line)
+        # The step text is plain words, no script names.
+        text = header[header.index("static const char* MoveStepText("):]
+        text = text[:text.index("\n    }\n")]
+        for script in ("CanAdd", "GridAdd", "GetItemPreferredGrid", "Clear", "kAp"):
+            self.assertNotIn(script, text)
+
     def test_new_type_clear_only_on_the_recorded_success_signal(self):
         # N-gridadd-return: the place returned `{tabNumber, x, y, tabType,
         # success}`, the add's shape, so the same `success == true` check

@@ -387,7 +387,8 @@ away by the game's own Prospect, exactly as if you had pressed the button.
   the game will not take stays in the grid, and the reason is logged once each:
   `autoprospect: no-preferred-grid - …` (the game named no grid for a new type),
   `not-placed` (the place was not confirmed), `not-added` (the stack add was not
-  confirmed) or `move-failed`; a refusal has not been observed yet (a full bag or
+  confirmed) or `move-failed` (the move could not be made or checked; the line
+  names the step that failed); a refusal has not been observed yet (a full bag or
   materials tab was not tested). A material is
   cleared from the grid only after the game reports the move succeeded; if one leaves
   the grid without that (`vanished`), or the grid cannot show it gone after it

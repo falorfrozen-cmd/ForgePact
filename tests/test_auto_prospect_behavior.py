@@ -289,6 +289,12 @@ class AutoProspectBehaviorTests(unittest.TestCase):
     def test_target_preferred_lookup_not_run_is_move_failed(self):
         self.assertScenario("target/preferred_lookup_not_run_is_move_failed")
 
+    # PR prep: `move-failed` covers seven different failures; its once-per-
+    # session line names the step of the first one instead of one text for all.
+
+    def test_target_move_failed_names_the_step_that_failed(self):
+        self.assertScenario("target/move_failed_names_the_step_that_failed")
+
 
 if __name__ == "__main__":
     unittest.main()

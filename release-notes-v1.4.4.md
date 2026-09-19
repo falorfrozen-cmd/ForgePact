@@ -35,7 +35,8 @@ no longer have to stop every 54 items to press Prospect and start again.
     on; turn it off to keep every material in the grid as before. If the
     game will not take a material, it stays in the grid and
     `bp_ipc\out.txt` says so once (a full bag or materials tab was not
-    tested). ForgePact only clears a
+    tested); if ForgePact could not make the move at all, that line also
+    says which step failed, so a bug report can say where it stopped. ForgePact only clears a
     material from the grid after the game confirms it reached your materials
     tab or your bag; if one ever leaves the grid without that confirmation, the switch
     turns itself off for the rest of the session and `out.txt` says so. When fewer than 6 cells are free, auto-prospect holds

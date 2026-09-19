@@ -2013,9 +2013,10 @@ T0: `autoprospect 1` printed `hook installed -> ON` and `stat` showed `moved-new
 bag=on` with no `bag` command. T1/T2: `first move to bag` was logged at `prospected=1`, with
 `moved=1 passes=1 batch=1`. T3 and T5 passed by the human's check. The ore (T7, run as Stage
 D's T9 and T9b): `moved` rose by the batch only, and the ore was prospected, never moved back.
-T4 and T6 were skipped again. An item of item type 3 that the invoke left unchanged
-(`ran-no-effect=1`) is one the game will not prospect by hand either - the game's behaviour,
-not the mod's.
+T4 and T6 were skipped again. One 2×3 item of item type 3 (fingerprint ending `211440-3`) that
+the invoke left unchanged (`ran-no-effect=1`) was confirmed by hand as not prospectable - the
+game's behaviour for that item, not the mod's. Observed once; it is not a finding about item
+type 3 as a class.
 
 A row that could not be checked says `not observed (<why>)`; no row is left empty once
 `phase3c-status` is `complete`.
@@ -2315,12 +2316,14 @@ phase3d-status: complete
 **Live, 2026-09-19, research DLL built from ForgePact 20fc518 (sha256 157380B4…68C327BD), then
 the player DLL.** The same re-run filled § Stage C Phase 3 results. With the research DLL: T0,
 T1/T2, T3, T5, then the ore by click (T9) and by drag (T9b), each passed. After T9b the human
-inserted a 2×3 item of item type 3: the move pass first moved the three batch materials (all of
-types that already had a stack; the has-a-stack check answered with a struct and the add with
-`success`), `moved` 2→5; then the invoke dispatched and the grid did not change
-(`ran-no-effect=1`, the item's research `fate` line `still`). The human checked by hand that the
-game will not prospect that item at all, with or without ForgePact - so this is the game's own
-behaviour, and the `ran-no-effect` line said exactly what happened. The human took the item back
+inserted a 2×3 item of item type 3 (fingerprint ending `211440-3`): the move pass first moved
+the three batch materials (all of types that already had a stack; the has-a-stack check
+answered with a struct and the add with `success`), `moved` 2→5; then the invoke dispatched and
+the grid did not change (`ran-no-effect=1`, the item's research `fate` line `still`). The human
+confirmed by hand that this one item is not prospectable, with or without ForgePact - so for
+that item it is the game's own behaviour, and the `ran-no-effect` line said exactly what
+happened. Observed once, on one item; whether other items of item type 3 behave the same was
+not tested. The human took the item back
 out. T8 (a first-of-type material through the ship move pass) could not be run: the human had no
 source of a material type missing from the materials tab.
 

@@ -132,6 +132,20 @@ enum class AutoProspectMoveOutcome : int {
 // for the item, then the place). None: neither call was made.
 enum class AutoProspectMoveRoute : int { None = 0, Stack, Place };
 
+// Which step a `move-failed` cell failed at: the earliest call that did not
+// run, or the read that could not be made (FailedStep). None: the cell was
+// not move-failed. The player's one move-failed line names it.
+enum class AutoProspectMoveStep : int {
+    None = 0,
+    CellBefore,     // the cell was unreadable, or no longer held the fingerprint, before the first call
+    ItemLookup,     // the item lookup did not run, or returned no material
+    HasStackCheck,  // the has-a-stack check did not run
+    PreferredGrid,  // the preferred-grid lookup did not run
+    Add,            // the add did not run (the stack route)
+    Place,          // the place did not run (the new-type route, grid named)
+    FinalRead       // every call ran without success, and the final re-read could not be made
+};
+
 // How the calls for one cell went, as the adapter saw them, in order: the
 // cell re-read before the first call, the item lookup, the has-a-stack check,
 // then either the add or the preferred-grid lookup and the place, the clear,
@@ -429,6 +443,32 @@ public:
         return AutoProspectMoveOutcome::NotAdded;
     }
 
+    // For a `move-failed` cell, the earliest step that failed, in the order
+    // the adapter makes the calls; None for any other outcome.
+    static AutoProspectMoveStep FailedStep(const AutoProspectMoveReport& r) {
+        if (ClassifyMove(r) != AutoProspectMoveOutcome::MoveFailed) return AutoProspectMoveStep::None;
+        if (!r.heldBefore) return AutoProspectMoveStep::CellBefore;
+        if (!r.lookup) return AutoProspectMoveStep::ItemLookup;
+        if (!r.canAddRan) return AutoProspectMoveStep::HasStackCheck;
+        if (!r.canAdd && !r.preferredRan) return AutoProspectMoveStep::PreferredGrid;
+        if (!r.canAdd && !r.placeRan) return AutoProspectMoveStep::Place;
+        if (r.canAdd && !r.addRan) return AutoProspectMoveStep::Add;
+        return AutoProspectMoveStep::FinalRead;
+    }
+
+    static const char* MoveStepText(AutoProspectMoveStep s) {
+        switch (s) {
+        case AutoProspectMoveStep::CellBefore:    return "the cell could not be read, or had changed, before the move";
+        case AutoProspectMoveStep::ItemLookup:    return "the item lookup did not run or found no material";
+        case AutoProspectMoveStep::HasStackCheck: return "the has-a-stack check did not run";
+        case AutoProspectMoveStep::PreferredGrid: return "the preferred-grid lookup did not run";
+        case AutoProspectMoveStep::Add:           return "the add to your materials tab did not run";
+        case AutoProspectMoveStep::Place:         return "the place into your bag did not run";
+        case AutoProspectMoveStep::FinalRead:     return "the cell could not be re-read after the move";
+        default:                                  return "";
+        }
+    }
+
     // The adapter's report for one cell of a MoveMaterials pass: counted, a
     // non-moved reason queued for its one line per session, and `vanished`
     // or `cell-kept` turning the pass off for the session.
@@ -443,7 +483,13 @@ public:
         if (o == AutoProspectMoveOutcome::Vanished || o == AutoProspectMoveOutcome::CellKept)
             m_BagOffThisSession.store(true);
         const unsigned bit = 1u << (int)o;
-        if (!(m_MoveReportedMask & bit)) { m_MoveReportedMask |= bit; m_MoveUnreported.push_back(o); }
+        if (!(m_MoveReportedMask & bit)) {
+            m_MoveReportedMask |= bit;
+            m_MoveUnreported.push_back(o);
+            // Still one line per reason: a move-failed line names the step of
+            // the first move-failed cell of the session.
+            if (o == AutoProspectMoveOutcome::MoveFailed) m_MoveFailedStep = FailedStep(r);
+        }
         return o;
     }
 
@@ -481,7 +527,10 @@ public:
         case AutoProspectMoveOutcome::NotAdded:
             return head + "a material stays in the grid; the game did not confirm adding it to your materials tab";
         case AutoProspectMoveOutcome::MoveFailed:
-            return head + "a material stays in the grid; the move could not be made or checked";
+            if (m_MoveFailedStep == AutoProspectMoveStep::None)
+                return head + "a material stays in the grid; the move could not be made or checked";
+            return head + "a material stays in the grid; the move could not be made or checked ("
+                + MoveStepText(m_MoveFailedStep) + ")";
         case AutoProspectMoveOutcome::Vanished:
             return head + "a material left the grid without the game confirming the move; moving materials to the bag is off for this session";
         case AutoProspectMoveOutcome::CellKept:
@@ -743,6 +792,7 @@ private:
     bool        m_FirstMoveDue = false;
     unsigned    m_MoveReportedMask = 0;
     std::vector<AutoProspectMoveOutcome> m_MoveUnreported;
+    AutoProspectMoveStep m_MoveFailedStep = AutoProspectMoveStep::None;
     std::atomic<long> m_Moved{ 0 };
     std::atomic<long> m_MovedNew{ 0 };
     std::atomic<long> m_Passes{ 0 };
