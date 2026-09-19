@@ -38,7 +38,7 @@ if str(ROOT / "src") not in sys.path:
 HEADER = ROOT / "plugin" / "include" / "ForgePact" / "AutoProspectMod.hpp"
 PLUGIN = ROOT / "plugin" / "ModuleMain.cpp"
 PANEL = ROOT / "src" / "forgepact.py"
-NOTES = ROOT / "release-notes-v1.4.4.md"
+NOTES = ROOT / "release-notes-v1.4.5.md"
 README = ROOT / "README.md"
 DOC = ROOT / "docs" / "prospect-window-research.md"
 
@@ -300,9 +300,7 @@ class AutoProspectContractTests(unittest.TestCase):
     def test_release_notes_and_docs_record_the_feature(self):
         notes = NOTES.read_text(encoding="utf-8")
         headings = [l for l in notes.split("\n") if l.startswith("## ")]
-        # 1.4.4 also carries the mod-loader rebuild from main as its own
-        # `## Fixed`; auto-prospect itself is `## New` only.
-        self.assertEqual(headings, ["## New", "## Fixed", "## How to update"])
+        self.assertEqual(headings, ["## New", "## How to update"])
         self.assertIn("off by default", notes.lower())
         self.assertIn("lost", notes.lower())
         self.assertIn("9×6", notes)
@@ -638,11 +636,7 @@ class AutoProspectContractTests(unittest.TestCase):
         self.assertIn("is the game, not the mod", collapse(notes))
         self.assertNotIn("not-stackable", notes)
         self.assertNotIn("we have not seen that happen yet", notes)
-        # No fix is claimed for the ore: the only `## Fixed` entry is the
-        # mod loader's, and it says nothing about prospecting.
-        fixed = notes[notes.index("## Fixed"):notes.index("## How to update")].lower()
-        for word in ("prospect", "ore", "material"):
-            self.assertNotRegex(fixed, r"\b%s" % word)
+        self.assertNotIn("## Fixed", notes)   # no fix is claimed for the ore
         for name in ("no-preferred-grid", "not-placed", "not-added", "move-failed"):
             self.assertIn(name, section)
         self.assertNotIn("not-stackable", section)
