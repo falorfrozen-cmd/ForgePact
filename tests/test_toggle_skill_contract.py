@@ -1238,6 +1238,95 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         pattern = r"static const std::unordered_set<std::string> kPlayerCommands = \{(.*?)\};"
         self.assertEqual(re.search(pattern, self.plugin, re.S).group(1), re.search(pattern, old, re.S).group(1))
 
+    # ---- Sprite look probe (R round 3, issue #11): `tgprobe sprite ...` ----
+    # A research-only probe that draws a *named* sprite, or today's shipped
+    # gold rectangles, over a talent's hotbar slot so the tester can judge a
+    # candidate look by eye. Never a shipped draw input (D-U9 extends: no
+    # shipped draw change comes out of this probe either).
+
+    def test_sprite_command_dispatches_off_gold_list_and_a_named_sprite(self):
+        command = function_body(self.plugin, "static void TgProbeCommand(const std::string& rest)")
+        self.assertIn('sub == "sprite"', command)
+        self.assertIn("TgProbeSpriteCommand(subRest)", command)
+        sprite = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
+        for needle in ('lower == "off"', 'lower == "gold"', 'lower == "list"'):
+            self.assertIn(needle, sprite)
+        # A bare talentId argument after the sprite name, defaulting to Soul
+        # Spurn's talent id when omitted.
+        self.assertIn("FirstToken(subRest, t1)", sprite)
+        self.assertIn("kToggleIndicatorTalentId", sprite)
+
+    def test_sprite_resolves_by_name_and_stores_nothing_when_unresolved(self):
+        resolve = function_body(self.plugin, "static bool TgProbeSpriteResolve(")
+        self.assertIn('"asset_get_index"', resolve)
+        self.assertIn("return outIdx >= 0;", resolve)
+        sprite = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
+        self.assertIn("TgProbeSpriteResolve(first, idx)", sprite)
+        self.assertIn("unresolved", sprite)
+        # The only place a resolved sprite is actually stored/armed is
+        # `g_TgSpriteIdx = idx;`, further down than the unresolved return.
+        unresolved = sprite.index("unresolved")
+        stored = sprite.index("g_TgSpriteIdx = idx;")
+        self.assertLess(unresolved, stored)
+        self.assertIn("return;", sprite[unresolved:stored])
+
+    def test_sprite_list_names_the_round_brief_candidates_with_resolved_index(self):
+        listing = function_body(self.plugin, "static void TgProbeSpriteList()")
+        self.assertIn("TgProbeSpriteResolve(", listing)
+        self.assertIn("unresolved", listing)
+        self.assertIn("kTgSpriteCandidates", listing)
+        for name in (
+            "Talent_Aura_Frame_spr", "Talent_Frame_Indicator_spr", "Ability_Indicator_Border_spr",
+            "Ability_Indicator_spr", "Ability_Indicator_White_spr", "Sub_Talent_Big_Border_spr",
+            "Skill_Frames_spr",
+        ):
+            self.assertIn(f'"{name}"', self.plugin)
+
+    def test_sprite_draws_from_the_probe_path_only_and_animates(self):
+        draw = function_body(self.plugin, "static void TgProbeSpriteDraw()")
+        self.assertIn('"draw_sprite_ext"', draw)
+        self.assertIn('"sprite_get_number"', draw)
+        self.assertIn("g_TgSpriteImageIndex", draw)
+        self.assertIn('"draw_get_colour"', draw)
+        self.assertIn('"draw_get_alpha"', draw)
+        self.assertIn("InterlockedIncrement(&g_TgSpriteDraws)", draw)
+        self.assertIn("InterlockedIncrement(&g_TgSpriteDrawExc)", draw)
+        self.assertEqual(self.plugin.count('"draw_sprite_ext"'), 1)
+        # Hung off the existing research after-draw path, not Hook_DrawHudBuffs
+        # or FrameCallback - both stay byte-identical (UNCHANGED_SINCE_T1).
+        self.assertIn("TgProbeSpriteDraw();", function_body(self.plugin, "static void TgProbeSpurnAfterDraw()"))
+        self.assertNotIn("TgProbeSpriteDraw", function_body(self.plugin, "static RValue& Hook_DrawHudBuffs("))
+        self.assertNotIn("TgProbeSpriteDraw", function_body(self.plugin, "void FrameCallback("))
+
+    def test_sprite_off_reports_draws_and_exceptions(self):
+        sprite = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
+        off = sprite[sprite.index('lower == "off"'):sprite.index('lower == "list"')]
+        self.assertIn("g_TgSpriteActive = false;", off)
+        self.assertIn("draws=", off)
+        self.assertIn("drawExc=", off)
+
+    def test_sprite_research_only_names_do_not_survive_stripping(self):
+        for name in ("TgProbeSpriteResolve", "TgProbeSpriteFindSlot", "TgProbeSpriteDraw",
+                     "TgProbeSpriteList", "TgProbeSpriteCommand", "g_TgSpriteActive", "kTgSpriteCandidates"):
+            self.assertIn(name, self.block)
+            self.assertNotIn(name, self.stripped)
+
+    def test_shipped_draw_functions_unchanged_from_round_base(self):
+        # Round base for R round 3 (context "R Round 3 - sprite look probe"):
+        # hub eaaaf20, ForgePact 7169440. Stronger than the 62a67d2 pin above
+        # - it also covers everything phase R has touched since T1.
+        old = git_show("7169440:plugin/ModuleMain.cpp")
+        if old is None:
+            self.skipTest("git cannot read 7169440")
+        for signature in UNCHANGED_SINCE_T1:
+            self.assertEqual(function_body(self.plugin, signature), function_body(old, signature), signature)
+        old_hpp = git_show("7169440:plugin/include/ForgePact/ToggleSkillMod.hpp")
+        if old_hpp is None:
+            self.skipTest("git cannot read 7169440")
+        new_hpp = (FORGEPACT_DIR / "plugin" / "include" / "ForgePact" / "ToggleSkillMod.hpp").read_text(
+            encoding="utf-8").replace("\r\n", "\n")
+        self.assertEqual(new_hpp, old_hpp)
+
 
 if __name__ == "__main__":
     unittest.main()

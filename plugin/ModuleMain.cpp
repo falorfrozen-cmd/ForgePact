@@ -19356,6 +19356,179 @@ static void TgProbeMarkCommand(const std::string& rest)
     }
 }
 
+// `tgprobe sprite <SpriteName> [talentId]|off|gold|list`: draws a named
+// sprite - or today's shipped gold rectangles - over a talent's hotbar slot
+// (default Soul Spurn, kToggleIndicatorTalentId) from the research after-draw
+// path, so the tester can judge a candidate look by eye next to the current
+// one without arming `toggleborder` (R round 3, issue #11: could the border
+// reuse the game's own aura-slot visual). Read-only, research build only;
+// never a shipped draw input - S still ships the gold rectangle (D-U9's
+// "no shipped draw change" extends to this probe).
+static const char* const kTgSpriteCandidates[] = {
+    "Talent_Aura_Frame_spr", "Talent_Frame_Indicator_spr", "Ability_Indicator_Border_spr",
+    "Ability_Indicator_spr", "Ability_Indicator_White_spr", "Sub_Talent_Big_Border_spr",
+    "Skill_Frames_spr",
+};
+static bool g_TgSpriteActive = false;
+static bool g_TgSpriteGold = false;
+static double g_TgSpriteIdx = -1.0;
+static std::string g_TgSpriteName;
+static int g_TgSpriteTalentId = kToggleIndicatorTalentId;
+static double g_TgSpriteImageIndex = 0.0;
+static volatile long g_TgSpriteDraws = 0, g_TgSpriteDrawExc = 0;
+
+static bool TgProbeSpriteResolve(const std::string& name, double& outIdx)
+{
+    try {
+        outIdx = g_Yytk->CallBuiltin("asset_get_index", { RValue(name) }).ToDouble();
+    } catch (...) { outIdx = -1.0; }
+    return outIdx >= 0;
+}
+
+// Same shape as ToggleIndicatorFindSlot, parameterised on talentId so the
+// probe can point at any hotbar slot, not only the shipped row's.
+static bool TgProbeSpriteFindSlot(int talentId, double& outX, double& outY, double& outW, double& outH)
+{
+    try {
+        double objIdx = -1.0;
+        try {
+            objIdx = g_Yytk->CallBuiltin("asset_get_index",
+                { RValue(std::string(HeroSiege::Objects::GetObjectName(
+                    HeroSiege::Objects::GameObject::UI_Hud_Talent_obj))) }).ToDouble();
+        } catch (...) { return false; }
+        if (objIdx < 0) return false;
+        RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue(objIdx), RValue(0.0) });
+        if (inst.m_Kind == VALUE_UNDEFINED) return false;
+        RValue arr = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("row0") });
+        if (arr.m_Kind != VALUE_ARRAY) return false;
+        const int len = (int)g_Yytk->CallBuiltin("array_length", { arr }).ToDouble();
+        for (int i = 0; i < len; ++i) {
+            RValue elem = g_Yytk->CallBuiltin("array_get", { arr, RValue((double)i) });
+            if (elem.m_Kind != VALUE_OBJECT && elem.m_Kind != VALUE_REF) continue;
+            RValue tid = g_Yytk->CallBuiltin("variable_struct_get", { elem, RValue("talentId") });
+            const bool isNumber = tid.m_Kind == VALUE_REAL || tid.m_Kind == VALUE_INT32 || tid.m_Kind == VALUE_INT64;
+            if (!isNumber || (int)tid.ToDouble() != talentId) continue;
+            outX = g_Yytk->CallBuiltin("variable_struct_get", { elem, RValue("navBboxX") }).ToDouble();
+            outY = g_Yytk->CallBuiltin("variable_struct_get", { elem, RValue("navBboxY") }).ToDouble();
+            outW = g_Yytk->CallBuiltin("variable_struct_get", { elem, RValue("navBboxWidth") }).ToDouble();
+            outH = g_Yytk->CallBuiltin("variable_struct_get", { elem, RValue("navBboxHeight") }).ToDouble();
+            return true;
+        }
+        return false;
+    } catch (...) { return false; }
+}
+
+// Called from TgProbeSpurnAfterDraw, the same research after-draw path
+// `tgprobe mark`/`tgprobe tgl` already use - never from FrameCallback or
+// Hook_DrawHudBuffs, both of which stay byte-identical (UNCHANGED_SINCE_T1).
+static void TgProbeSpriteDraw()
+{
+    if (!g_TgSpriteActive) return;
+    double x = 0, y = 0, w = 0, h = 0;
+    if (!TgProbeSpriteFindSlot(g_TgSpriteTalentId, x, y, w, h)) return;
+    try {
+        RValue prevColour = g_Yytk->CallBuiltin("draw_get_colour", {});
+        RValue prevAlpha = g_Yytk->CallBuiltin("draw_get_alpha", {});
+        if (g_TgSpriteGold) {
+            // Today's shipped look (ToggleIndicatorDraw), drawn through this
+            // probe path so it can be flipped against a candidate sprite.
+            RValue gold = g_Yytk->CallBuiltin("make_colour_rgb", { RValue(255.0), RValue(215.0), RValue(0.0) });
+            g_Yytk->CallBuiltin("draw_set_colour", { gold });
+            g_Yytk->CallBuiltin("draw_set_alpha", { RValue(1.0) });
+            for (int t = 0; t < 3; ++t) {   // 3 px outline, gold (product decision D-U1)
+                g_Yytk->CallBuiltin("draw_rectangle", {
+                    RValue(x - t), RValue(y - t), RValue(x + w + t), RValue(y + h + t), RValue(1.0) });
+            }
+        } else {
+            double sw = 0, sh = 0, frames = 1.0;
+            try { sw = g_Yytk->CallBuiltin("sprite_get_width", { RValue(g_TgSpriteIdx) }).ToDouble(); } catch (...) {}
+            try { sh = g_Yytk->CallBuiltin("sprite_get_height", { RValue(g_TgSpriteIdx) }).ToDouble(); } catch (...) {}
+            try { frames = g_Yytk->CallBuiltin("sprite_get_number", { RValue(g_TgSpriteIdx) }).ToDouble(); } catch (...) {}
+            if (frames > 1.0) {
+                g_TgSpriteImageIndex += 1.0 / 15.0;   // ~15 draws/frame so an animated candidate looks animated
+                if (g_TgSpriteImageIndex >= frames) g_TgSpriteImageIndex -= frames;
+            } else {
+                g_TgSpriteImageIndex = 0.0;
+            }
+            const double xscale = sw > 0 ? w / sw : 1.0;
+            const double yscale = sh > 0 ? h / sh : 1.0;
+            g_Yytk->CallBuiltin("draw_set_alpha", { RValue(1.0) });
+            g_Yytk->CallBuiltin("draw_sprite_ext", {
+                RValue(g_TgSpriteIdx), RValue(g_TgSpriteImageIndex), RValue(x), RValue(y),
+                RValue(xscale), RValue(yscale), RValue(0.0), RValue(16777215.0), RValue(1.0) });
+        }
+        g_Yytk->CallBuiltin("draw_set_alpha", { prevAlpha });
+        g_Yytk->CallBuiltin("draw_set_colour", { prevColour });
+        InterlockedIncrement(&g_TgSpriteDraws);
+    } catch (...) { InterlockedIncrement(&g_TgSpriteDrawExc); }
+}
+
+static void TgProbeSpriteList()
+{
+    Out("tgprobe sprite list:");
+    for (const char* name : kTgSpriteCandidates) {
+        double idx = -1.0;
+        const bool resolved = TgProbeSpriteResolve(name, idx);
+        Out(std::string("  ") + name + " idx=" + (resolved ? std::to_string((long long)idx) : std::string("unresolved")));
+    }
+}
+
+static void TgProbeSpriteCommand(const std::string& rest)
+{
+    std::string subRest;
+    const std::string first = FirstToken(rest, subRest);
+    const std::string lower = Lower(first);
+    if (first.empty()) {
+        Out("tgprobe sprite: usage -> tgprobe sprite <SpriteName> [talentId] | off | gold | list");
+        return;
+    }
+    if (lower == "off") {
+        g_TgSpriteActive = false;
+        Out("tgprobe sprite -> off draws=" + std::to_string(g_TgSpriteDraws)
+            + " drawExc=" + std::to_string(g_TgSpriteDrawExc));
+        return;
+    }
+    if (lower == "list") { TgProbeSpriteList(); return; }
+    if (lower == "gold") {
+        g_TgSpriteGold = true;
+        g_TgSpriteTalentId = kToggleIndicatorTalentId;
+        InterlockedExchange(&g_TgSpriteDraws, 0);
+        InterlockedExchange(&g_TgSpriteDrawExc, 0);
+        g_TgSpriteActive = true;
+        Out("tgprobe sprite -> gold talentId=" + std::to_string(g_TgSpriteTalentId)
+            + " (watch `tgprobe sprite off` for draws=/drawExc=)");
+        return;
+    }
+    double idx = -1.0;
+    if (!TgProbeSpriteResolve(first, idx)) {
+        Out("tgprobe sprite: " + first + " unresolved (asset_get_index=" + std::to_string((long long)idx)
+            + "); nothing stored");
+        return;
+    }
+    std::string t1;
+    const std::string talentIdStr = FirstToken(subRest, t1);
+    int talentId = kToggleIndicatorTalentId;
+    if (!talentIdStr.empty()) {
+        try { talentId = std::stoi(talentIdStr); } catch (...) { talentId = kToggleIndicatorTalentId; }
+    }
+    double sw = 0, sh = 0, frames = 1.0;
+    try { sw = g_Yytk->CallBuiltin("sprite_get_width", { RValue(idx) }).ToDouble(); } catch (...) {}
+    try { sh = g_Yytk->CallBuiltin("sprite_get_height", { RValue(idx) }).ToDouble(); } catch (...) {}
+    try { frames = g_Yytk->CallBuiltin("sprite_get_number", { RValue(idx) }).ToDouble(); } catch (...) {}
+    g_TgSpriteGold = false;
+    g_TgSpriteName = first;
+    g_TgSpriteTalentId = talentId;
+    g_TgSpriteImageIndex = 0.0;
+    InterlockedExchange(&g_TgSpriteDraws, 0);
+    InterlockedExchange(&g_TgSpriteDrawExc, 0);
+    g_TgSpriteIdx = idx;
+    g_TgSpriteActive = true;
+    Out("tgprobe sprite -> " + first + " idx=" + std::to_string((long long)idx)
+        + " talentId=" + std::to_string(talentId) + " frames=" + std::to_string((long long)frames)
+        + " width=" + std::to_string(sw) + " height=" + std::to_string(sh)
+        + " (watch `tgprobe sprite off` for draws=/drawExc=)");
+}
+
 // ---- tgprobe talents / tgprobe tgl: every toggle-skill candidate (issue #11
 // generalisation, session 6) ------------------------------------------------
 // The static search (docs/toggle-skills-research.md, "### Other toggle
@@ -20280,6 +20453,7 @@ static void TgProbeSpurnAfterDraw()
     // same draw (`tgprobe tgl`).
     TgProbeTglAfterDraw();
     TgProbeDrawMark();
+    TgProbeSpriteDraw();
 }
 
 static void TgProbeSpurnCommand(const std::string& rest)
@@ -20377,6 +20551,9 @@ static void TgProbeCommand(const std::string& rest)
     // Toggle-skill indicator research control (issue #11, Track B).
     if (sub == "spurn") { TgProbeSpurnCommand(subRest); return; }
     if (sub == "mark") { TgProbeMarkCommand(subRest); return; }
+    // Sprite look probe (R round 3, issue #11): judge a candidate sprite by
+    // eye against today's gold rectangle. Never a shipped draw input.
+    if (sub == "sprite") { TgProbeSpriteCommand(subRest); return; }
     // Every toggle-skill candidate (issue #11 generalisation, session 6).
     if (sub == "talents") { TgProbeTalentsCommand(subRest); return; }
     if (sub == "tgl") { TgProbeTglCommand(subRest); return; }
@@ -20384,6 +20561,7 @@ static void TgProbeCommand(const std::string& rest)
         " | vars <Obj|global> | snap <Obj|global> | diff | room"
         " | deep snap|diff|flip|find|get|census|selftest|drop ..."
         " | spurn [log on|off | as foreign | slots | fields] | mark <x> <y> <w> <h> | off"
+        " | sprite <SpriteName> [talentId] | off | gold | list"
         " | talents [substr|tags] | tgl [add|list|clear|slots|fields|sub|timer]");
 }
 #endif // FORGEPACT_RELEASE (tgprobe)
