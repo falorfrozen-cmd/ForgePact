@@ -17,14 +17,20 @@ was lost.
   themselves; a `YYToolkit-BUILD-INFO.json` file installed beside the DLL
   records exactly what went into the copy you have.
 
-  **What this has been checked against so far:** launched once, by itself with
-  no ForgePact plugin loaded, for about two minutes of play in Chaos Tower — it
-  started normally, handled 133 of the game's own caught errors without the
-  heavy lag an earlier report described for the previous file, and the player
-  reported no lag at all. **It has not yet been launched with the ForgePact
-  plugin loaded**, which is the next check before this build is considered
-  safe to release, and this file will be corrected if that check finds a
-  problem.
+  **Checked so far (2026-09-19, one machine, one game build):** with the new
+  loader by itself, the game starts, and a roughly two-minute Chaos Tower
+  session that raised 133 of the game's own caught errors ran with no lag
+  seen, where the previous loader lagged heavily in the same content. With
+  ForgePact 1.4.4's plugin and the HS Offline Tracker producer also loaded on
+  the new loader, the game starts, the plugin loads and installs its hooks,
+  and a handful of panel commands — a ping, and the globe/orb pickup option
+  switched on, read back, and switched off again — answered normally.
+
+  **Not yet checked:** playing with mods switched on for any real length of
+  time on the new loader; whether the lag improvement holds once the plugin
+  is loaded (the lag observation above was made with the loader alone); and
+  other machines or game builds. This file will be corrected if any of that
+  turns up a problem.
 
 ## How to update
 
