@@ -1358,24 +1358,32 @@ rejected.
 - **Lunar Orbit.** The prefilled object `Exo_Lunar_Orbit_obj` (1473) also
   flips in the same-session census (`+ census.Exo_Lunar_Orbit_obj=12` /
   `- census.Exo_Lunar_Orbit_obj (was 12)`, `tgprobe deep diff base on`/`on
-  off` filter=`census.`), but its `destroyTimer` passes through `-1` during a
-  **plain** cast too (`tgprobe tgl timer [1] lunarOrbit … appearance=3
-  first=720.000000 last=-1.000000 min=-1.005696 … atPredicted=108
-  draws=1341`, taken after three plain Lunar Orbit casts): rejected, no
-  discriminator on this object. `Exo_Lunar_Orbit_Crescent_Moon_obj` (1471)
+  off` filter=`census.`), and is live while the toggle is allocated
+  (`tgprobe tgl timer [1] lunarOrbit … appearance=2 first=720.000000
+  last=215.496288 min=215.496288 max=720.000000 … draws=502`, taken before
+  three plain Lunar Orbit casts). But that same **plain** window moves it to
+  `tgprobe tgl timer [1] lunarOrbit … appearance=3 first=720.000000
+  last=-1.000000 min=-1.005696 … atPredicted=108 draws=1341` — the timer
+  passes through `-1` on a plain cast too (a real same-pass control: row [1]
+  went `appearance=2`→`appearance=3` across the plain-cast window): rejected,
+  no discriminator on this object. `Exo_Lunar_Orbit_Crescent_Moon_obj` (1471)
   also flips in the same diff (`+ census.Exo_Lunar_Orbit_Crescent_Moon_obj=1`
   / `- census.Exo_Lunar_Orbit_Crescent_Moon_obj (was 1)`); added as row 7
-  with `ownership=isMyClient` first, which read `unreadable` on every sample
-  (driver note: "row 7 caught Crescent Moon (appearance=1) but isMyClient
-  unreadable (unreadable=1647, fields 'no own')"), so it was re-added as row
-  9 with `ownership=none` (D-N3), which then read `markedOn=1963` across the
-  session's later polls. `none-needed`: three plain Lunar Orbit casts landed
-  (tester: `'mana dropped each time'`) with no Crescent Moon appearance in
-  that window (`[7] lunarOrbit state=off n=0 … samples=10650 on=0 off=10650
-  unreadable=0 …`, sampled only while the sub-talent was respecced out); the
-  required same-pass positive control is row 0's own plain-cast appearance
-  rise, quoted below under Soul Spurn's own control (one plain cast: `appearance=3` unchanged;
-  three more: `appearance=3`→`appearance=4`).
+  with `ownership=isMyClient` first. With Lunar Orbit allocated and toggled
+  on then off, row 7 caught it (`[7] lunarOrbit state=off … unreadable=1647
+  … transitions=2 lastTransitionFrame=1405399 …`, i.e. the instrument does
+  catch this object when it is there — `isMyClient` itself read unreadable on
+  every sample, `tgprobe tgl fields [7] … appearance=1 / first: fields: no
+  own instance`), so it was re-added as row 9 with `ownership=none` (D-N3),
+  which then read `markedOn=1963` across the session's later polls.
+  `none-needed`: three plain Lunar Orbit casts landed (tester: `'mana dropped
+  each time'`) with no Crescent Moon appearance in that window (`[7]
+  lunarOrbit state=off n=0 … samples=10650 on=0 off=10650 unreadable=0 …`,
+  sampled while the sub-talent was respecced out) — meaningful against row
+  7's own transitions=2 positive control above, not against Soul Spurn's. The
+  White Mage pass's own plain-cast control (one cast: `appearance=3`
+  unchanged; three more: `appearance=3`→`appearance=4`) belongs to the
+  session's controls preamble, not to this row.
 - **Crematus.** The prefilled object `Plague_Doctor_Crematus_obj` (3503,
   the projectile) also shows live instances while the toggle is on (`[2]
   crematus state=on n=6…7 mine=6…7 … timer=-1.000000…35.291376 …`) but keeps
@@ -1386,9 +1394,11 @@ rejected.
   `ownership=none` (a parallel row 11 with `ownership=isMyClient` read
   `unreadable=4212` on the same samples, confirming D-N3). Plain casts do
   create the controller: three plain Crematus casts landed (tester: `'mana
-  dropped each time'`) and the row's own object was live throughout
-  (`transitions=11`, unchanged before/after), with `skillContamination=real:0.000000`
-  in the post-cast `fields` snapshot versus `0.035000` toggled.
+  dropped each time'`) and the row's own transitions moved across that window
+  (`[10] crematus … transitions=3` before, `tgprobe tgl … [10] crematus …
+  transitions=9` after, `tgprobe tgl fields [10] crematus …
+  appearance=5`), with `skillContamination=real:0.000000` in that post-cast
+  `fields` snapshot versus `0.035000` toggled.
 - **Counter (Shield Lancer).** No object flips in the bucket-A (flip and
   revert) sense: `Shield_Lancer_Counter_World_obj` (the prefilled row 3
   object) was never caught (`tgprobe tgl fields [3] counter … appearance=0 /
@@ -1407,27 +1417,55 @@ rejected.
   `filter=playerBuff[1][0][104] matching=0`). Row 0's census control for this
   pass: `census.White_Mage_Soul_Spurn_AOE_obj: base=<absent> on=1
   off=<absent>` (same White Mage pass at the top of the session). Status:
-  no persistent instance observed (deep flip census); not shippable in this
-  design.
+  no persistent instance observed over the one Counter ON/OFF cycle this
+  pass measured (deep flip census) — the one instance-shaped candidate this
+  pass did observe, `Charge_Controller_obj`, appeared on cast and, in that
+  same cycle, was not removed on OFF; not shippable in this design.
 - **Submerged Knives.** The prefilled object `Butcher_Submerged_Knives_obj`
-  (730) is live but flickers (`[4] submergedKnives … transitions=140` over
-  the pass) rather than reading as a stable on/off instance, so it was
-  rejected in favour of `Butcher_Submerged_Knives_Knifehoarder_obj` (729,
-  added as row 14 with `ownership=none`; a parallel row 15 with
-  `ownership=isMyClient` read `unreadable=2586`, confirming D-N3).
-  `none-needed`: three plain Submerged Knives casts landed (tester: `'mana
-  dropped each time'`) with row 14's `transitions=3`/`markedOn=2706`
-  unchanged before and after (`tgprobe tgl fields [14] submergedKnives …
-  appearance=2 … first/last skillTimer …` shows no new appearance), matching
-  the same-pass positive control (row 0's plain-cast appearance rise).
-- **Maelstrom of Frost.** The prefilled object needed no swap.
-- **Blender.** By eye the tester judged it not a toggle: `'blender is not a
-  toggle skill it seems'`. Measured: `Butcher_Blender_obj` (the prefilled
-  object) had one appearance of `on=744`/`markedOn=744`/`transitions=2` draws
-  that ended unprompted, with `base->on` census and `activeBuffList` diffs
-  empty (tester's own summary, quoted). C5 and C6 were not run for this row
-  (blocked, per Context "Session 6": a row not run in a live session is
-  `blocked`, never `not observed`).
+  (730) is live but flickers rather than reading as a stable on/off instance
+  — its own transitions moved across the three-plain-casts window too
+  (`[4] submergedKnives … transitions=134` before, `[4] submergedKnives …
+  transitions=140` after: the base object reacts to a plain cast as well as
+  a toggled one) — so it was rejected in favour of
+  `Butcher_Submerged_Knives_Knifehoarder_obj` (729, added as row 14 with
+  `ownership=none`; a parallel row 15 with `ownership=isMyClient` read
+  `unreadable=2586`, confirming D-N3). Row 14's own toggled reading is the
+  same-pass positive control that the instrument catches this object when it
+  is there: `[14] submergedKnives state=on n=1 mine=1 … on=690 … markedOn=690
+  transitions=0 …`. `none-needed`: three plain Submerged Knives casts landed
+  (tester: `'mana dropped each time'`) with row 14's own `transitions=3`
+  unchanged before and after that window (`[14] submergedKnives … samples=8303
+  … transitions=3 …` before, `[14] submergedKnives … samples=15293 …
+  transitions=3 …` after) — meaningful against its own `on=690` positive
+  control above, not against Soul Spurn's.
+- **Maelstrom of Frost.** The prefilled object needed no swap. The toggled
+  side is solid: `first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000
+  unreadable=0 atPredicted=3903 draws=3903` — held at `-1` from the
+  appearance's first draw across all 3903 samples. The plain side is one
+  plain cast, **not observed at `-1`** (not "proven never `-1`"): its one
+  appearance's natural decay never landed on exactly `-1.000000` in 4288
+  sampled draws (`atPredicted=0`), but Lunar Orbit's plain form *did* land on
+  `-1.000000` repeatedly in the same session (`atPredicted=108` over `1341`
+  draws) — a continuously-decaying timer can pass through `-1` and be
+  sampled there by chance, so a single plain cast's `atPredicted=0` is weak
+  evidence on its own. **For phase S:** key the discriminator on the toggled
+  form's own shape — `-1` from the appearance's first draw, or held at `-1`
+  across several consecutive draws — not on any single sample reading `-1`,
+  since Lunar Orbit shows a plain, non-toggled timer can read `-1` too.
+- **Blender.** The tester's own by-eye impression, quoted as an impression,
+  not settled fact: `'blender is not a toggle skill it seems'`. The driver's
+  annotation of the same window (not the tester's words) records:
+  `Butcher_Blender_obj` (the prefilled object) had one appearance of
+  `on=744`/`markedOn=744`/`transitions=2` draws that ended unprompted. That
+  appearance had already ended — `[6] blender state=off n=0 … transitions=2
+  lastTransitionFrame=1655978 …` — by the time `tgprobe deep snap on` was
+  taken (the very next command), so the `base`→`on` `deep diff … filter=census.`
+  reading `matching=1` with only `~ census.Rain_obj: 19 -> 15` (unrelated
+  weather) is the snapshot arriving after the object ended, not evidence that
+  Blender creates no census-visible object. Status: `blocked` — C2 (a
+  correctly-timed `deep snap on`) and C5/C6 were not run for this row
+  (Context "Session 6": a row not run in a live session is `blocked`, never
+  `not observed`).
 
 ## Decision
 
