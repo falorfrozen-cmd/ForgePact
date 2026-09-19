@@ -283,6 +283,12 @@ class AutoProspectBehaviorTests(unittest.TestCase):
     def test_target_stat_line_names_the_new_type_route(self):
         self.assertScenario("target/stat_line_names_the_new_type_route")
 
+    # Closing round: a preferred-grid lookup that never ran is a call that did
+    # not run (`move-failed`), not the game naming no grid.
+
+    def test_target_preferred_lookup_not_run_is_move_failed(self):
+        self.assertScenario("target/preferred_lookup_not_run_is_move_failed")
+
 
 if __name__ == "__main__":
     unittest.main()

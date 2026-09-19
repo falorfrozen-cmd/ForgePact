@@ -1552,6 +1552,55 @@ static void TargetStatLineNamesTheNewTypeRoute()
           "stat=\"" + stat + "\"");
 }
 
+// ---- Closing round: a preferred-grid lookup that never ran -------------------
+//
+// Round 2's review found `ClassifyMove` calling a new-type "no" whose
+// preferred-grid lookup never ran (`ApCallScript` returned false: the name did
+// not resolve, or `script_execute` errored) `no-preferred-grid`, whose line
+// says "the game named no grid" - blaming the game's answer for a call that
+// was never made. Every other route calls a call that did not run
+// `move-failed`. The lookup that ran and named no grid of the recorded shape
+// stays `no-preferred-grid` (the negative control beside it here).
+//
+// Observed 2026-09-19 against the 20fc518 core, unchanged:
+//   FAIL target/preferred_lookup_not_run_is_move_failed notRun=2 ranNoGrid=2 move-failed=0 no-preferred-grid=1 first=2 second=0 passOn=1 moved=0 invokes=1 line="autoprospect: no-preferred-grid - a material stays in the grid; it has no stack in your materials tab yet and the game named no grid for it"
+// (outcome 2 is NoPreferredGrid, 5 is MoveFailed; the negative control,
+// ranNoGrid=2, already held there and must keep holding.)
+
+static void TargetPreferredLookupNotRunIsMoveFailed()
+{
+    AutoProspectMod mod;
+    mod.SetEnabled(true);
+    Tally t;
+    BagTally b;
+    SeedBatch(mod, {}, { { "g-0", true } });
+    mod.OnInsert(kNode, true, false);
+    const AutoProspectView in = CellsView(kNode, { { "g-0", true }, { "a-14", false } });
+    const AutoProspectView after = CellsView(kNode, { { "g-0", true }, { "o-0", true } });
+    ForgePact::AutoProspectMoveReport notRun = Report(false, false, 1);
+    notRun.preferredRan = false;  // the lookup was never made
+    const ForgePact::AutoProspectMoveReport ranNoGrid = Report(false, false, 1);  // made, and named no grid
+    BagFrame(mod, in, t, b, in, notRun, &after);
+    const auto first = mod.TakeFirstMoveProblem();
+    const auto second = mod.TakeFirstMoveProblem();
+    const auto outNotRun = ForgePact::AutoProspectMod::ClassifyMove(notRun);
+    const auto outRanNoGrid = ForgePact::AutoProspectMod::ClassifyMove(ranNoGrid);
+    const std::string line = mod.MoveProblemLine(first);
+    Check("target/preferred_lookup_not_run_is_move_failed",
+          outNotRun == ForgePact::AutoProspectMoveOutcome::MoveFailed
+              && outRanNoGrid == ForgePact::AutoProspectMoveOutcome::NoPreferredGrid
+              && mod.MoveOutcomes(ForgePact::AutoProspectMoveOutcome::MoveFailed) == 1
+              && mod.MoveOutcomes(ForgePact::AutoProspectMoveOutcome::NoPreferredGrid) == 0
+              && first == ForgePact::AutoProspectMoveOutcome::MoveFailed && second == ForgePact::AutoProspectMoveOutcome::None
+              && mod.MovePassOn() && mod.Moved() == 0 && t.invokes == 1
+              && line.rfind("autoprospect: move-failed - ", 0) == 0 && line.find("named no grid") == std::string::npos,
+          "notRun=" + N((int)outNotRun) + " ranNoGrid=" + N((int)outRanNoGrid)
+              + " move-failed=" + N(mod.MoveOutcomes(ForgePact::AutoProspectMoveOutcome::MoveFailed))
+              + " no-preferred-grid=" + N(mod.MoveOutcomes(ForgePact::AutoProspectMoveOutcome::NoPreferredGrid))
+              + " first=" + N((int)first) + " second=" + N((int)second) + " passOn=" + N(mod.MovePassOn())
+              + " moved=" + N(mod.Moved()) + " invokes=" + N(t.invokes) + " line=\"" + line + "\"");
+}
+
 int main()
 {
     BaselineOffByDefault();
@@ -1607,6 +1656,7 @@ int main()
     TargetNewTypeNotPlacedStaysAndIsLoggedOnce();
     TargetNewTypeVanishedOrKeptTurnsTheMovePassOff();
     TargetStatLineNamesTheNewTypeRoute();
+    TargetPreferredLookupNotRunIsMoveFailed();
     std::cout << (g_Failures ? "RESULT FAIL" : "RESULT OK") << "\n";
     return g_Failures ? 1 : 0;
 }

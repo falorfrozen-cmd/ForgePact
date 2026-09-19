@@ -403,7 +403,9 @@ public:
     // What one cell's calls add up to (Stage C, the recorded stackmove route
     // plus the success check; Stage D, the recorded new-type route). Nothing
     // before the add or the place changes the grid, so a failure there leaves
-    // the material: a has-a-stack "no" with no grid named is no-preferred-grid,
+    // the material: a has-a-stack "no" whose preferred-grid lookup never ran
+    // is move-failed (a call did not run - not the game's answer), one whose
+    // lookup ran and named no grid of the recorded shape is no-preferred-grid,
     // a place that ran without success on an unchanged cell is not-placed.
     // After either call, a cell that lost the material counts as moved only
     // when that call said success. After a success, a final read that still
@@ -414,6 +416,7 @@ public:
     static AutoProspectMoveOutcome ClassifyMove(const AutoProspectMoveReport& r) {
         if (!r.heldBefore || !r.lookup || !r.canAddRan) return AutoProspectMoveOutcome::MoveFailed;
         if (!r.canAdd) {
+            if (!r.preferredRan) return AutoProspectMoveOutcome::MoveFailed;
             if (!r.preferredOk) return AutoProspectMoveOutcome::NoPreferredGrid;
             if (r.placeRan && !r.success && r.heldAfter == 1) return AutoProspectMoveOutcome::NotPlaced;
         }

@@ -469,6 +469,7 @@ class AutoProspectContractTests(unittest.TestCase):
         order = [classify.index(s) for s in (
             "if (!r.heldBefore || !r.lookup || !r.canAddRan) return AutoProspectMoveOutcome::MoveFailed;",
             "if (!r.canAdd) {",
+            "if (!r.preferredRan) return AutoProspectMoveOutcome::MoveFailed;",
             "if (!r.preferredOk) return AutoProspectMoveOutcome::NoPreferredGrid;",
             "if (r.placeRan && !r.success && r.heldAfter == 1) return AutoProspectMoveOutcome::NotPlaced;",
             "if (r.success) {")]
@@ -476,6 +477,22 @@ class AutoProspectContractTests(unittest.TestCase):
         report = self.header[self.header.index("AutoProspectMoveOutcome OnMoveReport("):]
         report = report[:report.index("\n    }\n")]
         self.assertIn("if (r.route == AutoProspectMoveRoute::Place) m_MovedNew.fetch_add(1);", report)
+
+    def test_a_preferred_lookup_that_did_not_run_is_move_failed(self):
+        # Closing round: `no-preferred-grid` says "the game named no grid", so
+        # it is reached only when the lookup ran. A lookup that never ran (the
+        # name did not resolve, script_execute failed) is a call that did not
+        # run - `move-failed`, as on every other route.
+        classify = strip_comments(self.header[self.header.index("static AutoProspectMoveOutcome ClassifyMove("):])
+        classify = classify[:classify.index("\n    }\n")]
+        not_run = classify.index("if (!r.preferredRan) return AutoProspectMoveOutcome::MoveFailed;")
+        self.assertLess(classify.index("if (!r.canAdd) {"), not_run)
+        self.assertLess(not_run, classify.index("return AutoProspectMoveOutcome::NoPreferredGrid;"))
+        self.assertEqual(classify.count("return AutoProspectMoveOutcome::NoPreferredGrid;"), 1)
+        # The adapter reports whether the lookup ran separately from its shape.
+        move = self.body("static ForgePact::AutoProspectMoveReport ApMoveCell(")
+        self.assertIn("r.preferredRan = ApCallScript(kApPreferredName,", move)
+        self.assertIn("r.preferredOk = r.preferredRan && ApPreferredGrid(prefRes, placeGrid);", move)
 
     def test_new_type_clear_only_on_the_recorded_success_signal(self):
         # N-gridadd-return: the place returned `{tabNumber, x, y, tabType,

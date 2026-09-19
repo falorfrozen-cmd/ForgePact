@@ -1987,7 +1987,7 @@ materials-tab counts by eye.
 
 ## Stage C Phase 3 results
 
-phase3c-status: pending
+phase3c-status: complete
 
 **Round 0 live, 2026-09-19, research DLL built from e63eed5 - history, and the defect it
 found.** T0-T3 and T5 passed: `autoprospect 1` printed `hook installed -> ON` with `bag=on`
@@ -2005,19 +2005,31 @@ Round 1 moves only the recorded previous batch (§ Stage C ship design), and T7 
 ore; round 0's T5 (`moved` +2 across the toggle) is the behaviour round 1 removes on
 purpose, so T5 is re-run too.
 
+**The e63eed5 ore defect is fixed on c27cdad** (round 1: only the recorded batch moves). The
+c27cdad re-run (T0, T1 and T7 passed there) found the two issues Stage D answers; the rows
+below are filled from the re-run on the Stage D ship build, **2026-09-19, research DLL from
+ForgePact 20fc518**, then the player DLL (§ Stage D Phase 3 results has the full account).
+T0: `autoprospect 1` printed `hook installed -> ON` and `stat` showed `moved-new=0 … batch=0
+bag=on` with no `bag` command. T1/T2: `first move to bag` was logged at `prospected=1`, with
+`moved=1 passes=1 batch=1`. T3 and T5 passed by the human's check. The ore (T7, run as Stage
+D's T9 and T9b): `moved` rose by the batch only, and the ore was prospected, never moved back.
+T4 and T6 were skipped again. An item of item type 3 that the invoke left unchanged
+(`ran-no-effect=1`) is one the game will not prospect by hand either - the game's behaviour,
+not the mod's.
+
 A row that could not be checked says `not observed (<why>)`; no row is left empty once
 `phase3c-status` is `complete`.
 
 | Row | What fills it | Result |
 |---|---|---|
-| T-move-before-prospect | T2: the previous batch's tab counts rose before the new batch showed; `moved=` up, `invoked=` up by 1 | |
-| T-newest-batch-stays | T2: the new batch stays in the grid after the prospect | |
-| T-bag-off | T3: with `autoprospect bag 0`, the materials stay across a prospect | |
-| T-bag-full | T4 (optional): a full bag - the material stays, one reason line | not observed (human skipped, 2026-09-19, e63eed5) |
-| T-non-material | T5 (revised): after the toggle the next insert moves nothing and the item left behind is prospected; the insert after that moves only that prospect's batch | |
-| T-new-material-type | T6: a material type with no stack yet - moved, or `not-stackable` once | not observed (human skipped, 2026-09-19, e63eed5) |
-| T-ore-insert | T7: with `batch=N` shown, one ore inserted - `moved=` +N exactly, `prospected=` +1, `ran-no-effect=` unchanged; by eye the ore turns into materials that stay | |
-| T-player-dll | Player DLL with the panel sub-switch: one pass by eye and `autoprospect: first move to bag - …` in `out.txt` | |
+| T-move-before-prospect | T2: the previous batch's tab counts rose before the new batch showed; `moved=` up, `invoked=` up by 1 | PASS (20fc518 research DLL, 2026-09-19): `autoprospect: first move to bag` logged at `prospected=1`, with `moved=1 passes=1 batch=1` - the batch moved in the pass before the second prospect. |
+| T-newest-batch-stays | T2: the new batch stays in the grid after the prospect | PASS (same run): the second prospect's batch stayed in the grid (`batch=1` recorded for the next pass). |
+| T-bag-off | T3: with `autoprospect bag 0`, the materials stay across a prospect | PASS (same run, the human's check; no counters were copied into the Log for this step). |
+| T-bag-full | T4 (optional): a full bag - the material stays, one reason line | not observed (human skipped, 2026-09-19, on e63eed5 and again on 20fc518) |
+| T-non-material | T5 (revised): after the toggle the next insert moves nothing and the item left behind is prospected; the insert after that moves only that prospect's batch | PASS (same run, the human's check; no counters were copied into the Log for this step). |
+| T-new-material-type | T6: a material type with no stack yet - moved, or `not-stackable` once | not observed (human skipped, 2026-09-19, e63eed5; on 20fc518 it is Stage D's T8, also not run - see D-newtype-move) |
+| T-ore-insert | T7: with `batch=N` shown, one ore inserted - `moved=` +N exactly, `prospected=` +1, `ran-no-effect=` unchanged; by eye the ore turns into materials that stay | PASS (run as D-ore-mixed and D-ore-drag). Clicked in: `moved` 1→2 (the batch only), `prospected=3`, `ran-no-effect=0`, the ore used up for nothing by the game's chance and not moved back. Dragged in: the ore turned into three materials that stayed (`batch=3`), its `fate` `gone`, `in-bag=no`. |
+| T-player-dll | Player DLL with the panel sub-switch: one pass by eye and `autoprospect: first move to bag - …` in `out.txt` | PASS: `BloodPactPlugin_ship.dll` (sha256 00AD0B8E…ED974E92) logged `autoprospect: first move to bag - invoked=2 prospected=1 … moved=1 moved-new=0 passes=1 … batch=2 bag=on`, the pass seen by eye, and no research or `prospectprobe` line in the player log (D-player-dll). |
 
 ## Stage D: first-of-type materials, and the ore that came back
 
@@ -2238,8 +2250,11 @@ player build:
   re-read cell still holding the same fingerprint.
 - **The core's outcomes.** `AutoProspectMoveReport` gains `preferredRan`, `preferredOk`,
   `placeRan` and `route` (`Stack`/`Place`/`None`); `success` covers either route. `ClassifyMove`:
-  anything before the check failing is `move-failed`; a "no" with no grid of the recorded shape
-  is **`no-preferred-grid`**; a place that ran without success on an unchanged cell is
+  anything before the check failing is `move-failed`; a "no" whose preferred-grid lookup never
+  ran (the name did not resolve, or `script_execute` failed) is `move-failed` too - a call that
+  did not run, not the game's answer (closing round, after round 2's review; harness
+  `target/preferred_lookup_not_run_is_move_failed`, failing against 20fc518); a "no" whose lookup
+  ran and named no grid of the recorded shape is **`no-preferred-grid`**; a place that ran without success on an unchanged cell is
   **`not-placed`** (a full bag has this shape); otherwise the rules are the stack route's -
   success and the cell empty is `moved` (and **`moved-new`** when the place did it), success
   with the cell still holding it or unreadable is `cell-kept`, the cell emptied without success
@@ -2263,6 +2278,13 @@ player build:
   "no" from the check as their refusal now expect `no-preferred-grid`.
 - **Not measured:** a full bag (`not-placed`'s expected cause) and a `GetItemPreferredGrid` that
   names no grid; both are refusals that leave the material, logged once.
+- **Not observed: any other "no" from the has-a-stack check.** The place route runs on every
+  falsy answer from `InventoryGridCanAddToStack`, not only on a type with no stack yet. Stage D
+  measured the "no" only for a new type (N-control-newtype, N-stackmove-newtype). If the check
+  also says no for a stack that has reached its cap, or for a full materials tab, that material
+  takes the place route and lands in the main bag, as the same click would - with the same
+  success check and clear. Neither case was seen live, so the player-facing wording ("the first
+  of its kind") describes the measured case only.
 
 ## Stage D Phase 3 live procedure
 
@@ -2288,15 +2310,27 @@ run T0-T3, T5 and T7 from Stage C, then:
 
 ## Stage D Phase 3 results
 
-phase3d-status: pending
+phase3d-status: complete
+
+**Live, 2026-09-19, research DLL built from ForgePact 20fc518 (sha256 157380B4…68C327BD), then
+the player DLL.** The same re-run filled § Stage C Phase 3 results. With the research DLL: T0,
+T1/T2, T3, T5, then the ore by click (T9) and by drag (T9b), each passed. After T9b the human
+inserted a 2×3 item of item type 3: the move pass first moved the three batch materials (all of
+types that already had a stack; the has-a-stack check answered with a struct and the add with
+`success`), `moved` 2→5; then the invoke dispatched and the grid did not change
+(`ran-no-effect=1`, the item's research `fate` line `still`). The human checked by hand that the
+game will not prospect that item at all, with or without ForgePact - so this is the game's own
+behaviour, and the `ran-no-effect` line said exactly what happened. The human took the item back
+out. T8 (a first-of-type material through the ship move pass) could not be run: the human had no
+source of a material type missing from the materials tab.
 
 A row that could not be checked says `not observed (<why>)`; no row is left empty once
 `phase3d-status` is `complete`.
 
 | Row | What fills it | Result |
 |---|---|---|
-| D-newtype-move | T8: a first-of-type batch material leaves the grid for the main bag; `moved-new=` +1 | |
-| D-newtype-refusal | T8b (optional): a full bag - the material stays, `not-placed` (or `no-preferred-grid`) once | |
-| D-ore-mixed | T9: a clicked-in ore with leftovers in the grid is prospected (materials, or nothing by the game's chance), never moved back; the batch moves | |
-| D-ore-drag | T9b: the same with a drag-in | |
-| D-player-dll | Player DLL: one first-of-type pass by eye and `first move to bag` in `out.txt` | |
+| D-newtype-move | T8: a first-of-type batch material leaves the grid for the main bag; `moved-new=` +1 | not observed (T8 not run: the human had no source of a first-of-type material). Stand-in evidence: N-stackmove-newtype ran the same calls by the same names - the preferred grid, the place with `success:true`, the clear - and the material landed in the main bag; the ship route's decisions are pinned by the Stage D harness targets. `moved-new` stayed 0 in every pass of this re-run, because every batch material had an existing stack. |
+| D-newtype-refusal | T8b (optional): a full bag - the material stays, `not-placed` (or `no-preferred-grid`) once | not observed (optional, skipped; and it needs T8's first-of-type material too). |
+| D-ore-mixed | T9: a clicked-in ore with leftovers in the grid is prospected (materials, or nothing by the game's chance), never moved back; the batch moves | PASS. `moved` 1→2 - the batch only, not the ore -, `prospected=3`, `ran-no-effect=0`, the grid empty afterwards and `batch=0`. The ore was used up and gave nothing (the game's chance, N-ore-cause) and was not moved back to the bag. |
+| D-ore-drag | T9b: the same with a drag-in | PASS. The dragged-in ore was prospected into three materials: the research `invoke` line showed three fingerprints after the call and `batch=3`, and the ore's `fate` line said `gone`, `in-bag=no`. A drag landing is counted like a click. |
+| D-player-dll | Player DLL: one first-of-type pass by eye and `first move to bag` in `out.txt` | PASS for the pass; first-of-type part not observed (as D-newtype-move). Player DLL `BloodPactPlugin_ship.dll` (sha256 00AD0B8E…ED974E92), the panel started from this checkout, Auto-prospect turned on in the panel with the bag sub-switch on by default. `out.txt`: the version banner, `autoprospect: armed`, `HOOK INSTALLED on anon@15345@…`, `autoprospect: hook installed -> ON`, `autoprospect: first prospect - invoked=1 prospected=1 …`, then `autoprospect: first move to bag - invoked=2 prospected=1 … moved=1 moved-new=0 passes=1 … vanished=0 cell-kept=0 batch=2 bag=on`. No `autoprospect research:` and no `prospectprobe` line in the player log. By eye the batch moved and the second item was prospected. |
