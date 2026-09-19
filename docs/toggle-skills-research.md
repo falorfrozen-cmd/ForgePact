@@ -302,10 +302,12 @@ turn co-op rendering on, and run no `citrace` command, after `tgprobe hook`.
 | `tgprobe room` | The room key, whether it is readable, and the room name. |
 | `tgprobe spurn [log on\|off\|as foreign\|slots\|fields]` | Samples the production `ToggleIndicatorRead` on every `DrawHudBuffs` draw. Bare `spurn` prints the last sample (`n=`, `mine=`, `others=`, `unattributed=`, `capped=`, `state=`) plus running `samples=`/`on=`/`off=`/`unreadable=`/`maxN=`/`transitions=`/`lastTransitionFrame=` counters, the marker-required counters `markedOn=`/`markedOff=`/`markedUnreadable=`, and `firstAfterRoomChange=`. `spurn log on\|off` logs each instance's `playerNumber`/`isMyClient` on every state change (budgeted). `spurn as foreign` is the non-mutating negative control (P1b: there is no local player number left to override): the same enumeration and decision with every own instance re-interpreted as foreign, reported separately and never touching the real counters. `spurn slots` prints every `UI_Hud_Talent_obj` `row0`/`row1`/`playerSlot.bind_skill`/`global.mySkills` entry whose value is talent 240. `spurn fields` prints the latched per-appearance snapshot (`isMyClient`, `playerNumber`, `targetNumber`, `purgatory`, `purgatoryTimer`, `destroyTimer`) taken on the appearance's first draw and refreshed on every draw while it is present. |
 | `tgprobe mark <x> <y> <w> <h>\|off` | Draws (or clears) a static outline rectangle at GUI coordinates, at the active layer (`buffs` by default, or `hud` — set by `tgprobe sprite layer`, shared with `sprite`), to find which candidate slot rectangle sits on Soul Spurn's button; saves and restores `draw_get_colour`/`draw_get_alpha`. Prints `draws=`/`drawExc=` so "never drew" is separable from "drew in the wrong place", and `layer=` on every confirmation line. |
-| `tgprobe sprite <SpriteName> [talentId\|centre]\|off\|gold` | Resolves `<SpriteName>` by name with `asset_get_index` (prints `unresolved`, stores nothing, on a negative index) and draws it, scaled to a box with `draw_sprite_ext`, at the active layer (see `layer` below). `[talentId]` draws over that talent's hotbar slot (default Soul Spurn, 240); `centre` instead draws one large copy in the middle of the screen, away from the HUD. Prints `frames=`/`width=`/`height=`/`layer=` when it runs (`sprite_get_number`/`_width`/`_height`); a multi-frame sprite animates (a shared time base advances every draw, so several sprites drawn together — see `gallery` — animate in lockstep). `gold` draws today's shipped three-nested-rectangle look over the hotbar slot instead, so a candidate can be flipped against the current one without arming `toggleborder`. `off` stops drawing and prints `draws=`/`drawExc=`/`layer=`, saving/restoring `draw_get_colour`/`draw_get_alpha` exactly as the shipped draw does. |
-| `tgprobe sprite list` | Prints the round's candidate sprite names with each one's resolved index, or `unresolved`, so a wrong name is obvious before drawing: `Talent_Aura_Frame_spr`, `Talent_Frame_Indicator_spr`, `Ability_Indicator_Border_spr`, `Ability_Indicator_spr`, `Ability_Indicator_White_spr`, `Sub_Talent_Big_Border_spr`, `Skill_Frames_spr`. |
-| `tgprobe sprite gallery [cols]` | Draws every candidate from `sprite list`, plus one gold-rectangle cell as the positive control, at once — a grid in the middle of the screen (`cols` columns, default 4), each cell scaled to a 96 px box with its index and name drawn under it (`draw_text`, its own try so a text-draw failure cannot take the rest of the grid down); also prints the index→name mapping as text when the command runs, the fallback if a cell's label is hard to read. |
-| `tgprobe sprite layer hud\|buffs` | Which after-draw call site `sprite`/`mark` actually draw from; shared, default `buffs`. `buffs` is the original site (the end of `DrawHudBuffs`), measured (2026-09-20 live session) to sit *under* the hotbar button's own art, which paints later in the same frame. `hud` draws instead from the existing `DrawHud` candidate row's own detour (`TgProbeDetourBody`, after that row's trampoline call returns, i.e. after `DrawHud`'s whole body — including the nested `DrawHudBuffs` call — has run) — no new hook, the same one resolver (`TgProbeAttach`/`MmCreateHook`, called from exactly one place) every other candidate row already goes through. Setting `layer hud` does not attach that row itself; the tester runs `tgprobe hook` (or `tgprobe hook drawhud`) separately, same as any other row, and the confirmation line says whether it is attached yet. |
+| `tgprobe sprite <SpriteName> [talentId\|centre]\|off\|gold\|style <name>` | Resolves `<SpriteName>` by name with `asset_get_index` (prints `unresolved`, stores nothing, on a negative index) and draws it, scaled to a box with `draw_sprite_ext`, at the active layer (see `layer` below). `[talentId]` draws over that talent's hotbar slot (default Soul Spurn, 240), inflated by the active `scale` (see below) around the slot's centre; `centre` instead draws one large fixed-size copy in the middle of the screen, away from the HUD (not affected by `scale`). Prints `frames=`/`width=`/`height=`/`scale=`/`box=`/`layer=` when it runs (`sprite_get_number`/`_width`/`_height`; `box=` is the resulting pixel rectangle, or `box=slot not found`); a multi-frame sprite animates (a shared time base advances every draw, so several sprites drawn together — see `gallery` — animate in lockstep). `gold` draws today's shipped three-nested-rectangle look over the hotbar slot instead, at the same `scale`, so a candidate can be flipped against the current one without arming `toggleborder`. `style <name>` draws one of our own procedural looks instead of a sprite (see the `style` row below). `off` stops drawing and prints `draws=`/`drawExc=`/`layer=`, saving/restoring `draw_get_colour`/`draw_get_alpha` exactly as the shipped draw does. |
+| `tgprobe sprite scale [f]` | A multiplier (default `1.0`, clamped `0.25..4.0`) on the hotbar-slot box `sprite <Name>`/`sprite gold`/`sprite style <name>` draw into, keeping the drawn box centred on the slot's own centre — the "surround" route (round 5): since only a larger-than-the-icon draw (the gold outline's own `navBbox`, bigger than the icon) is confirmed visible at either layer, a candidate inflated the same way should read around the icon instead of under it. With no argument, reports the current value without changing it; never applied to `centre` or `gallery`, whose box sizes are their own fixed constants, and never to `tgprobe mark`, which already takes explicit geometry. |
+| `tgprobe sprite style soft\|halo\|gradient\|pulse` | Draws a procedural look ForgePact draws itself, not a game sprite, into the same scaled slot box `sprite <Name>`/`sprite gold` use (round 6, after the tester found the flat gold rectangle "crude" and asked for a soft alpha-fade look): `soft` is the shipped outline generalised to 10 alpha-ramped nested bands; `halo` is a radial glow (`draw_ellipse_colour`, the two-colour ellipse builtin); `gradient` is nested filled rectangles (`draw_rectangle_colour`, the four-corner-colour rectangle builtin) approximating a centre-outward fade; `pulse` is `soft` with every band's alpha additionally scaled by a slow sine on the frame counter (confirmation line prints `period=1.5s (90 frames)`). `draw_ellipse_colour`/`draw_rectangle_colour` are new to this probe this round — their reachability through the shared `CallBuiltin` path is unconfirmed until a live session runs `halo`/`gradient` and reports what drew. Names also listed by `sprite list`. |
+| `tgprobe sprite list` | Prints the round's candidate sprite names with each one's resolved index, or `unresolved`, so a wrong name is obvious before drawing: `Talent_Aura_Frame_spr`, `Talent_Frame_Indicator_spr`, `Ability_Indicator_Border_spr`, `Ability_Indicator_spr`, `Ability_Indicator_White_spr`, `Sub_Talent_Big_Border_spr`, `Skill_Frames_spr`; also lists the four `style` names. |
+| `tgprobe sprite gallery [cols]` | Draws every candidate from `sprite list`, plus one gold-rectangle cell as the positive control, at once — a fixed grid in the middle of the screen (`cols` columns, default 4), each cell scaled to a 96 px box. No per-cell label is drawn any more (round 6: a `draw_text` label displaced the icon in a live session, cause not diagnosed — see docs "Sprite look probe"); the index→name mapping goes to the log only (`TgProbeSpriteGalleryLegend`, printed once when the command runs). **Not a trustworthy comparison**: a candidate visible over the button has read blank here in the same session — treat `sprite <Name>` (optionally `scale <f>`) over the hotbar slot as the one comparison to trust. |
+| `tgprobe sprite layer hud\|buffs` | Which after-draw call site `sprite`/`mark` actually draw from; shared, default `buffs`. Both layers measured (2026-09-20 live session) to sit *under* the hotbar button's own art, which paints later in the same frame regardless of which one draws — `hud` (the existing `DrawHud` candidate row's own detour, `TgProbeDetourBody`, after that row's trampoline call returns — no new hook, the same one resolver `tgprobe hook` every other candidate row already goes through) does not clear it either; see docs "Sprite look probe" for the full finding and why (the talent slot's own `Draw_0`/`Draw_64` event, where the button paints, reports `not found` to this build's object-event hook path). Setting `layer hud` does not attach the `DrawHud` row itself; the tester runs `tgprobe hook` (or `tgprobe hook drawhud`) separately, same as any other row, and the confirmation line says whether it is attached yet. |
 | `tgprobe talents [substr\|tags]` | Session 6's C0. Walks `global.talentStructMap` (`ds_map_find_first`/`ds_map_find_next`, capped at 5000 keys) and prints, per talent id whose `abilityId` contains `substr` (none = all, at most 40 lines then `…(+N more)`): `abilityId`, `abilityAura`, `abilityDuration`, `abilityCooldown`, `abilityLength` and `abilityTags`, each read on its own (`absent` for a missing key, `unreadable` for a throw, never a default). `tags` instead prints each distinct tag id with its count. Last line `tgprobe talents: ids=N shown=M nonNumericKeys= notStruct= walkExc= truncated= tableRowsWithId=k/rows`. The walk also gives every `tgl` row whose `abilityId` it finds its talent id, which `tgl sub` and `tgl slots` use. |
 | `tgprobe tgl [on\|off\|add\|list\|clear\|slots\|fields\|sub\|timer]` | The runtime toggle-candidate table (cap 16), prefilled with the seven rows of `### Other toggle skills: the static candidate table`: row 0 is the measured Soul Spurn row (`White_Mage_Soul_Spurn_AOE_obj`, marker `purgatory`), rows 1–6 carry no marker, and every row's timer field is `destroyTimer` and its ownership field each instance's own `isMyClient`. **The sampler is off by default**: `tgl on` (or `1`) starts it, `tgl off` (or `0`) stops it and keeps the counters; while off, the draw hook returns before a single builtin call, so other research sessions using this DLL do not pay for it. `list` and bare `tgl` print `sampler=on\|off`. While on, every row is read on every `DrawHudBuffs` draw through the shipped read's shape with the object, marker, ownership and timer as parameters (a row with no marker counts every own instance as marked; a row with ownership `none` counts every instance as own), and row 0 is also read through the shipped `ToggleIndicatorRead` on the same draw: `agree=` rising with `disagree=0` is the proof that the two reads are the same read. Bare `tgl` prints `agree=`/`disagree=` and per row the last sample (`state= n= mine= others= unattributed= marked= timer=`) plus `samples=`/`on=`/`off=`/`unreadable=`/`markedOn=`/`transitions=`/`lastTransitionFrame=` and `firstAfterRoomChange: state= n=`. `add <abilityId> <ObjectName> [marker\|none] [timer\|none] [ownership\|none] [sNN]` resolves the object by name first and prints `unresolved` (storing nothing) on a negative index, else the row with `idx=` and `sdk=<enumerator>\|none`; `list` prints every row's settings; `clear` keeps row 0. `fields [row]` prints the scalar members (cap 64) of the first own instance the row's read scanned — the same instance its ownership, marker and timer reads used, not `instance_find(obj, 0)`, which can be a foreign or leftover one — as first seen in the current appearance and as last seen, kept after the instance is gone (how a row's marker field is found). `last` is retaken at most once every 30 draws while the instance is present. When the read found no own instance, nothing is read or stored and the line reads `fields: no own instance`. `slots` prints every `UI_Hud_Talent_obj` `row0` element's `talentId` and `navBbox*` rectangle, naming the row whose talent id it carries. `sub` prints `global.subTalentMap`'s `array_length`, then one line per array index per row: that index's `t<id>` keys and values, `absent`, or why not. `timer` prints per row, over the current appearance, `first= last= min= max= unreadable= atPredicted= draws=` of the row's timer field on the first own instance, where `atPredicted` counts draws at exactly `-1`; an unreadable draw prints `unreadable`, never `-1` or `0`. The timer is an instrument for finding an ON discriminator only, never a border input. |
 
@@ -393,16 +395,112 @@ the icon the way the outline does — cannot use the `buffs` layer**; it needs
 either the `hud` layer (below) or a different draw hook nearer the icon's own
 paint call, neither explored further than the `hud` layer this round.
 
-**The `hud` layer.** `tgprobe sprite layer hud` moves the draw to after the
+**The `hud` layer, live-tested (2026-09-20): does not reach above the button
+art either.** `tgprobe sprite layer hud` moves the draw to after the
 outermost `DrawHud` call returns (`TgProbeDetourBody`'s `kTg_DrawHud` branch,
 the same resolver every other candidate row already goes through — no new
-hook), which should sit on top of everything `DrawHud` draws, button art
-included. It requires the `DrawHud` candidate row to be attached
-(`tgprobe hook`, or `tgprobe hook drawhud`) separately, the same as any other
-row; `tgprobe sprite layer hud`'s own confirmation line says whether that row
-is attached yet. Not live-tested this round (the finding above is what
-motivated adding it, not a result of running it) — the live re-test of the
-inset-rectangle question at the `hud` layer is a next step, not done here.
+hook). Measured over Soul Spurn's button, at **both** layers: `tgprobe sprite
+gold` is visible, because it draws the slot's whole `navBbox`, which is
+larger than the icon, so its edges stick out past it (a size effect, not a
+draw-order win); `Skill_Frames_spr` (`frames=12 width=38 height=38`) was
+"partially hidden"; `Talent_Frame_Indicator_spr` (`frames=1 width=41
+height=41`) and `Talent_Aura_Frame_spr` (`frames=8 width=41 height=41`),
+scaled into the bbox, were invisible at the button. Tester, quoted: `'seems
+to be drawn under the button'`, `'last one is much bigger than button so its
+always visible when drawn'` (about the gold outline). **So the talent bar
+paints in the HUD object's own draw event, not reached from either draw site
+this build's probe can attach to** — `DrawHud`/`DrawHudBuffs` are both
+script-level hooks, and the object-event rows (`UI_Hud_Talent_obj Draw_0`/
+`Draw_64` among them) report `not found (st=14)` when `tgprobe hook` runs,
+i.e. this build's per-object-event hook path does not resolve them. That is
+**not reached from the draw sites available to this build**, never "cannot
+be done" — a hook on the talent slot's own `Draw_0`/`Draw_64` event, if this
+build's event-hook path is ever extended to reach it, is the one untried
+route that would draw at the right point without a size trick. The inset
+finding stands at both layers: no inset look is possible from either
+`buffs` or `hud` without such a hook.
+
+**Round 5's "surround" route: `tgprobe sprite scale <f>`.** Since only a
+larger-than-the-icon draw is confirmed to show at either layer (the gold
+outline's own working case), `scale` inflates the drawn box around the
+slot's centre (default `1.0`, clamped `0.25..4.0`) before `sprite <Name>`
+or `sprite gold` draws into it, so a candidate can be judged the same way
+the outline already reads: around the icon, not on top of it. Not a fix for
+the inset question — a different question this round answers instead
+("does a *surrounding* candidate read"), left for a live session to judge
+by eye; no result recorded here yet.
+
+**Gallery instrument finding, not yet explained.** `Skill_Frames_spr` read
+blank in the mid-screen `gallery` grid despite being (partially) visible
+over the button in the same session — the gallery is **not a trustworthy
+comparison for a candidate that *is* visible over the button**; treat only
+the over-the-button draw (`sprite <Name>`, or `sprite <Name> scale <f>`) as
+the trustworthy one, and `gallery` as a rough first pass at best until this
+is understood. The cause is not obvious from a static read of the draw
+path: `TgProbeSpriteDrawGallery` and `TgProbeSpriteDrawOne`'s hotbar-slot
+callers both draw through the identical `draw_sprite_ext` call and the same
+`draw_get_/draw_set_` save-restore pattern; the gallery's cell positions are
+built from `display_get_gui_width`/`display_get_gui_height`, and the
+working hotbar position comes from `UI_Hud_Talent_obj.row0[i]`'s own
+`navBboxX`/`navBboxY` — both read at the same `buffs`-layer draw call, and
+nothing in the code visibly mixes a room-space value into either. Left
+unfixed rather than guessed at; a live check of whether `gallery`'s cells
+land inside the actual GUI canvas (e.g. one cell's position compared
+against a `tgprobe mark` rectangle at the same coordinates) is the next
+step, not done here.
+
+**Round 6: gallery label removed (a second instrument finding, fixed this
+time).** The gallery used to draw each candidate's name under its cell with
+`draw_text`. In the live session the label pushed the icon itself off its
+cell origin — the tester's own read: `'icons drawn from the text's last
+letter'` — so `TgProbeSpriteDrawGallery` no longer draws any per-cell text
+at all; the index→name mapping is still printed to the log
+(`TgProbeSpriteGalleryLegend`, log-only, called once when `gallery` runs),
+and every icon now sits at its own cell origin with nothing else drawn near
+it. The mechanism was not diagnosed (why a `draw_text` call would move a
+*separate* `draw_sprite_ext` call's own explicit `x`/`y` arguments is not
+obvious from a static read — GameMaker's `draw_text` does not touch any
+shared drawing-position state that `draw_sprite_ext` reads), so this is
+recorded as a worked-around instrument defect, not an understood one. The
+gallery's other, still-open finding from before this fix stands unchanged:
+it is **not a trustworthy comparison for a candidate that is visible over
+the button** (`Skill_Frames_spr` read blank there despite being partially
+visible on the button) — `sprite <Name>` (optionally `scale <f>`) over the
+hotbar slot remains the one comparison to trust.
+
+**Round 6's procedural styles: `tgprobe sprite style soft|halo|gradient|pulse`.**
+The tester found the flat gold rectangle "crude" and asked for a soft
+look — alpha fading from the middle outward, no hard edge — to judge
+alongside a candidate sprite; these are drawn by ForgePact itself, not a
+game asset. All four draw into the same scaled slot box `sprite <Name>`/
+`sprite gold` use (so `scale` applies to them too) through the identical
+save/restore-colour/alpha and `drawExc`-counted path every other probe draw
+uses:
+- `soft` — the shipped 3-rectangle outline generalised to 10 nested outline
+  bands, alpha ramping down from the innermost band to the outermost
+  (`draw_rectangle`, one call per band).
+- `halo` — a radial glow: several two-colour ellipses (`draw_ellipse_colour`,
+  GameMaker's inner/outer-colour ellipse builtin), growing outward past the
+  scaled box with falling alpha, so it reads as a glow around the button
+  rather than a shape on top of it.
+- `gradient` — filled rectangles (`draw_rectangle_colour`, the four-corner-
+  colour rectangle builtin, all four corners the same colour per band,
+  `outline=false`) nested inward with rising alpha, approximating a
+  centre-outward fade (the builtin itself only interpolates linearly between
+  its four corners, not radially, so several nested bands stand in for a
+  true radial gradient).
+- `pulse` — `soft`'s bands with every band's alpha additionally scaled by a
+  slow sine on the frame counter (period 90 frames, printed as `period=1.5s
+  (90 frames)` in the confirmation line), so "on" reads as alive.
+
+`draw_ellipse_colour` and `draw_rectangle_colour` are called by name through
+the same generic `CallBuiltin` path every other `draw_*` call in this file
+already uses, but neither had been exercised by this probe before this
+round — **their reachability through that path is itself unconfirmed until
+a live session runs `tgprobe sprite style halo` / `style gradient`** and the
+tester reports what (if anything) drew, the same way `draw_sprite_ext`'s
+own reachability was confirmed only once a candidate sprite actually drew
+in an earlier round.
 
 ### tgprobe deep — the non-scalar read (session 2)
 

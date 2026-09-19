@@ -19388,23 +19388,32 @@ static void TgProbeMarkCommand(const std::string& rest)
     }
 }
 
-// `tgprobe sprite <SpriteName> [talentId|centre]|off|gold|list|gallery [cols]|layer hud|buffs`:
-// draws a named sprite - or today's shipped gold rectangles, or every
-// candidate at once, or one candidate centred - so the tester can judge a
-// look by eye next to the current one without arming `toggleborder` (R round
-// 3, issue #11: could the border reuse the game's own aura-slot visual).
-// R round 4 adds `gallery`, `centre` and `layer` after the live session found
-// two named-sprite candidates drew (draws=/drawExc=0 both said so) but were
-// not visible at the hotbar slot - occluded by the button's own art, not
-// empty sprites (docs "Sprite look probe" has the full finding). Read-only,
-// research build only; never a shipped draw input - S still ships the gold
-// rectangle (D-U9's "no shipped draw change" extends to this probe).
+// `tgprobe sprite <SpriteName> [talentId|centre]|off|gold|style <name>|list|gallery [cols]|layer hud|buffs|scale [f]`:
+// draws a named sprite - or today's shipped gold rectangles, or a procedural
+// style candidate we draw ourselves, or every candidate at once, or one
+// candidate centred - so the tester can judge a look by eye next to the
+// current one without arming `toggleborder` (R round 3, issue #11: could the
+// border reuse the game's own aura-slot visual). R round 4 added `gallery`,
+// `centre` and `layer` after the live session found two named-sprite
+// candidates drew (draws=/drawExc=0 both said so) but were not visible at
+// the hotbar slot. R round 5 found the cause at both layers: the button's
+// own art paints over anything drawn inside the icon's bounds - not empty
+// sprites, not a wrong layer (docs "Sprite look probe" has the full finding)
+// - so `scale` inflates the drawn box around the icon, centred on the slot,
+// the "surround" route the gold outline already uses (its navBbox is bigger
+// than the icon). R round 6 adds `style soft|halo|gradient|pulse` (a soft
+// glow drawn by us, not a game sprite, for the tester to judge alongside a
+// candidate) and drops the gallery's per-cell name label (it displaced the
+// icon; `gallery`'s own index->name mapping is printed to the log only now,
+// via TgProbeSpriteGalleryLegend). Read-only, research build only; never a
+// shipped draw input - S still ships the gold rectangle (D-U9's "no shipped
+// draw change" extends to this probe).
 static const char* const kTgSpriteCandidates[] = {
     "Talent_Aura_Frame_spr", "Talent_Frame_Indicator_spr", "Ability_Indicator_Border_spr",
     "Ability_Indicator_spr", "Ability_Indicator_White_spr", "Sub_Talent_Big_Border_spr",
     "Skill_Frames_spr",
 };
-enum class TgSpriteMode { Off, Named, Gold, Gallery, Centre };
+enum class TgSpriteMode { Off, Named, Gold, Gallery, Centre, Style };
 static TgSpriteMode g_TgSpriteMode = TgSpriteMode::Off;
 static double g_TgSpriteIdx = -1.0;
 static std::string g_TgSpriteName;
@@ -19457,6 +19466,36 @@ static bool TgProbeSpriteFindSlot(int talentId, double& outX, double& outY, doub
     } catch (...) { return false; }
 }
 
+// `tgprobe sprite scale <f>`: a multiplier on the hotbar-slot bbox `sprite
+// <Name>`/`sprite gold` draw into, keeping the drawn box centred on the
+// slot's own centre - the "surround" route (round 5, issue #11): the live
+// session found the button's own art paints over anything the probe draws
+// inside the icon's bounds, at both layers, so a candidate drawn *larger*
+// than the icon reads around it instead, the way the gold outline already
+// does (it draws the whole navBbox, which is bigger than the icon). Clamped
+// to 0.25..4.0 with the file's if-based idiom, not std::max/std::min
+// (test_no_bare_std_max_or_std_min; R round 4 found that macro collision the
+// expensive way). Never applied to `centre`/`gallery`, whose box sizes are
+// their own fixed constants, and never to `tgprobe mark`, which already
+// takes explicit geometry.
+static double g_TgSpriteScale = 1.0;
+
+// The slot's own bbox (TgProbeSpriteFindSlot), inflated by g_TgSpriteScale
+// around its centre. Shared by the draw path and by the command handlers'
+// confirmation-line `box=` readout, so both report the same box.
+static bool TgProbeSpriteScaledSlotBox(int talentId, double& outX, double& outY, double& outW, double& outH)
+{
+    double x = 0, y = 0, w = 0, h = 0;
+    if (!TgProbeSpriteFindSlot(talentId, x, y, w, h)) return false;
+    const double cx = x + w / 2.0, cy = y + h / 2.0;
+    const double sw = w * g_TgSpriteScale, sh = h * g_TgSpriteScale;
+    outX = cx - sw / 2.0;
+    outY = cy - sh / 2.0;
+    outW = sw;
+    outH = sh;
+    return true;
+}
+
 // GUI centre, used by `centre` and `gallery`; falls back to a common GUI size
 // if the read throws, which only shifts where the probe draws, never how.
 static void TgProbeSpriteGuiSize(double& outW, double& outH)
@@ -19497,29 +19536,23 @@ static void TgProbeSpriteDrawGoldRect(double x, double y, double w, double h)
     }
 }
 
-// A name label under a gallery cell. Its own try: `draw_text` failing must
-// not take the rest of the gallery down with it, and the command's own
-// printed index->name legend (TgProbeSpriteGalleryLegend) is the fallback if
-// it never draws at all.
-static void TgProbeSpriteDrawGalleryLabel(double x, double y, const std::string& text)
-{
-    try {
-        RValue white = g_Yytk->CallBuiltin("make_colour_rgb", { RValue(255.0), RValue(255.0), RValue(255.0) });
-        g_Yytk->CallBuiltin("draw_set_colour", { white });
-        g_Yytk->CallBuiltin("draw_set_alpha", { RValue(1.0) });
-        g_Yytk->CallBuiltin("draw_text", { RValue(x), RValue(y), RValue(text) });
-    } catch (...) {}
-}
-
 // Every candidate from `sprite list`, plus one gold cell as the positive
-// control, laid out in a grid in the middle of the screen (well away from
-// the HUD, so occlusion by hotbar art is not a question here).
+// control, laid out on a fixed grid in the middle of the screen (well away
+// from the HUD, so occlusion by hotbar art is not a question here). Round 6:
+// no per-cell name label any more - a drawn label pushed the icon in the
+// tester's session (its own cause not diagnosed; see docs "Sprite look
+// probe"), so each icon now sits at its own cell origin with nothing else
+// drawn near it. The index->name mapping is printed to the log only
+// (`TgProbeSpriteGalleryLegend`, called once from the command handler, not
+// from here). The gallery is not a trustworthy comparison regardless (a
+// separate, still-open finding: a candidate visible over the button has
+// read blank here) - the over-the-button draw is the one to trust.
 static void TgProbeSpriteDrawGallery()
 {
     double gw = 0, gh = 0;
     TgProbeSpriteGuiSize(gw, gh);
     const double cellBox = 96.0;
-    const double cellStep = cellBox + 52.0;   // room for the label under the cell
+    const double cellStep = cellBox + 24.0;
     const int cols = g_TgSpriteGalleryCols > 0 ? g_TgSpriteGalleryCols : 4;
     const int totalCells = (int)(sizeof(kTgSpriteCandidates) / sizeof(kTgSpriteCandidates[0])) + 1;
     const int rows = (totalCells + cols - 1) / cols;
@@ -19531,13 +19564,131 @@ static void TgProbeSpriteDrawGallery()
         const double cy = originY + (double)(i / cols) * cellStep;
         double idx = -1.0;
         if (TgProbeSpriteResolve(name, idx)) TgProbeSpriteDrawOne(idx, cx, cy, cellBox, cellBox);
-        TgProbeSpriteDrawGalleryLabel(cx, cy + cellBox + 4.0, std::to_string(i) + " " + name);
         ++i;
     }
     const double cx = originX + (double)(i % cols) * cellStep;
     const double cy = originY + (double)(i / cols) * cellStep;
     TgProbeSpriteDrawGoldRect(cx, cy, cellBox, cellBox);
-    TgProbeSpriteDrawGalleryLabel(cx, cy + cellBox + 4.0, std::to_string(i) + " gold");
+}
+
+// Procedural "style" candidates (round 6, issue #11): the tester found the
+// flat gold rectangle crude and asked for a soft look - alpha fading from
+// the middle outward, no hard edge - as an alternative worth judging beside
+// a game sprite. Each works at any `scale` (drawn into the same scaled slot
+// box a named sprite/gold uses) and saves/restores colour and alpha like
+// every other probe draw. `draw_ellipse_colour`/`draw_rectangle_colour`
+// (GameMaker's two-colour ellipse and four-corner-colour rectangle
+// builtins) are called by name through the same generic CallBuiltin path
+// every other draw_* call in this file already uses; neither has been
+// exercised by this probe before, so their availability through that path
+// is itself unconfirmed until a live session runs `tgprobe sprite style`.
+enum class TgSpriteStyleKind { Soft, Halo, Gradient, Pulse };
+static TgSpriteStyleKind g_TgSpriteStyleKind = TgSpriteStyleKind::Soft;
+
+static const char* TgProbeSpriteStyleName(TgSpriteStyleKind kind)
+{
+    switch (kind) {
+        case TgSpriteStyleKind::Soft: return "soft";
+        case TgSpriteStyleKind::Halo: return "halo";
+        case TgSpriteStyleKind::Gradient: return "gradient";
+        case TgSpriteStyleKind::Pulse: return "pulse";
+    }
+    return "soft";
+}
+
+static bool TgProbeSpriteStyleFromName(const std::string& lower, TgSpriteStyleKind& outKind)
+{
+    if (lower == "soft") { outKind = TgSpriteStyleKind::Soft; return true; }
+    if (lower == "halo") { outKind = TgSpriteStyleKind::Halo; return true; }
+    if (lower == "gradient") { outKind = TgSpriteStyleKind::Gradient; return true; }
+    if (lower == "pulse") { outKind = TgSpriteStyleKind::Pulse; return true; }
+    return false;
+}
+
+// `pulse`'s alpha multiplier: a slow sine on the frame counter, 0..1, period
+// kTgPulsePeriodFrames (~1.5s at 60 fps) - printed in the style's own
+// confirmation line so a tester without a stopwatch still knows what to
+// expect ("on" should read as alive, not flickering).
+static constexpr double kTgPulsePeriodFrames = 90.0;
+static double TgProbeSpritePulseFactor()
+{
+    const double phase = std::fmod((double)g_RuntimeFrame, kTgPulsePeriodFrames) / kTgPulsePeriodFrames;
+    return 0.5 + 0.5 * std::sin(phase * 2.0 * 3.14159265358979323846);
+}
+
+// `soft`: the shipped 3-rectangle outline generalised to N nested outline
+// bands, alpha ramping down outwards from the innermost band (closest to
+// the icon) to the outermost - the cheap soft-edge border. `alphaMul`
+// (default 1.0) is `pulse`'s hook: every band's alpha scaled by the same
+// time-varying factor so the whole border breathes together.
+static void TgProbeSpriteDrawSoft(double x, double y, double w, double h, double alphaMul = 1.0)
+{
+    RValue gold = g_Yytk->CallBuiltin("make_colour_rgb", { RValue(255.0), RValue(215.0), RValue(0.0) });
+    g_Yytk->CallBuiltin("draw_set_colour", { gold });
+    static constexpr int kBands = 10;
+    for (int i = 0; i < kBands; ++i) {
+        const double t = (double)i / (double)(kBands - 1);   // 0 innermost, 1 outermost
+        g_Yytk->CallBuiltin("draw_set_alpha", { RValue((1.0 - t) * alphaMul) });
+        g_Yytk->CallBuiltin("draw_rectangle", {
+            RValue(x - i), RValue(y - i), RValue(x + w + i), RValue(y + h + i), RValue(1.0) });
+    }
+}
+
+// `halo`: a radial glow around the icon, several concentric two-colour
+// ellipses (bright core colour at the centre, gold at the edge) growing
+// outward past the scaled box with alpha falling off, so it reads as a
+// glow around the button rather than a shape drawn on top of it.
+static void TgProbeSpriteDrawHalo(double x, double y, double w, double h)
+{
+    RValue core = g_Yytk->CallBuiltin("make_colour_rgb", { RValue(255.0), RValue(255.0), RValue(220.0) });
+    RValue gold = g_Yytk->CallBuiltin("make_colour_rgb", { RValue(255.0), RValue(215.0), RValue(0.0) });
+    const double cx = x + w / 2.0, cy = y + h / 2.0;
+    static constexpr int kBands = 8;
+    for (int i = kBands - 1; i >= 0; --i) {   // outermost first, brighter core drawn last (on top)
+        const double t = (double)i / (double)(kBands - 1);
+        const double rx = (w / 2.0) * (1.0 + t * 0.6);
+        const double ry = (h / 2.0) * (1.0 + t * 0.6);
+        g_Yytk->CallBuiltin("draw_set_alpha", { RValue((1.0 - t) * 0.6) });
+        g_Yytk->CallBuiltin("draw_ellipse_colour", {
+            RValue(cx - rx), RValue(cy - ry), RValue(cx + rx), RValue(cy + ry), RValue(core), RValue(gold), RValue(0.0) });
+    }
+}
+
+// `gradient`: filled rectangles (the four-corner-colour rectangle builtin,
+// all four corners the same colour per band, `outline=false`) nested
+// inward with rising alpha, so the fill reads as fading from the centre
+// outward rather than one flat block.
+static void TgProbeSpriteDrawGradient(double x, double y, double w, double h)
+{
+    RValue gold = g_Yytk->CallBuiltin("make_colour_rgb", { RValue(255.0), RValue(215.0), RValue(0.0) });
+    const double cx = x + w / 2.0, cy = y + h / 2.0;
+    static constexpr int kBands = 8;
+    for (int i = kBands - 1; i >= 0; --i) {
+        const double t = (double)i / (double)(kBands - 1);
+        const double bw = w * (0.35 + 0.65 * t);
+        const double bh = h * (0.35 + 0.65 * t);
+        g_Yytk->CallBuiltin("draw_set_alpha", { RValue((1.0 - t) * 0.5) });
+        g_Yytk->CallBuiltin("draw_rectangle_colour", {
+            RValue(cx - bw / 2.0), RValue(cy - bh / 2.0), RValue(cx + bw / 2.0), RValue(cy + bh / 2.0),
+            RValue(gold), RValue(gold), RValue(gold), RValue(gold), RValue(0.0) });
+    }
+}
+
+// `pulse`: `soft`'s bands with every alpha scaled by the slow sine factor,
+// so a candidate reads as alive rather than static.
+static void TgProbeSpriteDrawPulse(double x, double y, double w, double h)
+{
+    TgProbeSpriteDrawSoft(x, y, w, h, TgProbeSpritePulseFactor());
+}
+
+static void TgProbeSpriteDrawStyle(TgSpriteStyleKind kind, double x, double y, double w, double h)
+{
+    switch (kind) {
+        case TgSpriteStyleKind::Soft: TgProbeSpriteDrawSoft(x, y, w, h); return;
+        case TgSpriteStyleKind::Halo: TgProbeSpriteDrawHalo(x, y, w, h); return;
+        case TgSpriteStyleKind::Gradient: TgProbeSpriteDrawGradient(x, y, w, h); return;
+        case TgSpriteStyleKind::Pulse: TgProbeSpriteDrawPulse(x, y, w, h); return;
+    }
 }
 
 // Called from TgProbeSpurnAfterDraw (`fromHudLayer=false`, the original
@@ -19565,8 +19716,9 @@ static void TgProbeSpriteDraw(bool fromHudLayer)
             drew = true;
         } else {
             double x = 0, y = 0, w = 0, h = 0;
-            if (TgProbeSpriteFindSlot(g_TgSpriteTalentId, x, y, w, h)) {
+            if (TgProbeSpriteScaledSlotBox(g_TgSpriteTalentId, x, y, w, h)) {
                 if (g_TgSpriteMode == TgSpriteMode::Gold) TgProbeSpriteDrawGoldRect(x, y, w, h);
+                else if (g_TgSpriteMode == TgSpriteMode::Style) TgProbeSpriteDrawStyle(g_TgSpriteStyleKind, x, y, w, h);
                 else TgProbeSpriteDrawOne(g_TgSpriteIdx, x, y, w, h);
                 drew = true;
             }
@@ -19585,10 +19737,12 @@ static void TgProbeSpriteList()
         const bool resolved = TgProbeSpriteResolve(name, idx);
         Out(std::string("  ") + name + " idx=" + (resolved ? std::to_string((long long)idx) : std::string("unresolved")));
     }
+    Out("  styles: soft, halo, gradient, pulse (tgprobe sprite style <name>) - drawn by us, not a game sprite");
 }
 
-// The index->name mapping `gallery` prints when it runs - the fallback for
-// judging the grid if a cell's `draw_text` label is hard to read or absent.
+// The index->name mapping `gallery` prints when it runs, to the log only -
+// the gallery itself draws no per-cell label (round 6: a drawn label pushed
+// the icon in the tester's session; see TgProbeSpriteDrawGallery).
 static void TgProbeSpriteGalleryLegend()
 {
     int i = 0;
@@ -19618,7 +19772,7 @@ static void TgProbeSpriteCommand(const std::string& rest)
     const std::string lower = Lower(first);
     if (first.empty()) {
         Out("tgprobe sprite: usage -> tgprobe sprite <SpriteName> [talentId] | <SpriteName> centre"
-            " | off | gold | list | gallery [cols] | layer hud|buffs");
+            " | off | gold | style soft|halo|gradient|pulse | list | gallery [cols] | layer hud|buffs | scale [f]");
         return;
     }
     if (lower == "off") {
@@ -19648,12 +19802,60 @@ static void TgProbeSpriteCommand(const std::string& rest)
                 : ""));
         return;
     }
+    if (lower == "scale") {
+        std::string ignored;
+        const std::string v = FirstToken(subRest, ignored);
+        if (!v.empty()) {
+            double scale = 1.0;
+            try { scale = std::stod(v); } catch (...) { scale = 1.0; }
+            if (scale < 0.25) scale = 0.25;   // clamp by hand - see g_TgSpriteScale's comment
+            if (scale > 4.0) scale = 4.0;
+            g_TgSpriteScale = scale;
+        }
+        Out("tgprobe sprite scale -> " + std::to_string(g_TgSpriteScale)
+            + " (applies to the hotbar-slot box `sprite <Name>`/`sprite gold` draw into, centred on the slot; range 0.25..4.0, default 1.0)");
+        return;
+    }
     if (lower == "gold") {
         g_TgSpriteMode = TgSpriteMode::Gold;
         g_TgSpriteTalentId = kToggleIndicatorTalentId;
         InterlockedExchange(&g_TgSpriteDraws, 0);
         InterlockedExchange(&g_TgSpriteDrawExc, 0);
-        Out("tgprobe sprite -> gold talentId=" + std::to_string(g_TgSpriteTalentId) + " layer=" + TgProbeLayerName()
+        double bx = 0, by = 0, bw = 0, bh = 0;
+        const bool boxFound = TgProbeSpriteScaledSlotBox(g_TgSpriteTalentId, bx, by, bw, bh);
+        Out("tgprobe sprite -> gold talentId=" + std::to_string(g_TgSpriteTalentId)
+            + " scale=" + std::to_string(g_TgSpriteScale)
+            + (boxFound
+                ? " box=" + std::to_string(bw) + "x" + std::to_string(bh) + "@" + std::to_string(bx) + "," + std::to_string(by)
+                : " box=slot not found")
+            + " layer=" + TgProbeLayerName()
+            + " (watch `tgprobe sprite off` for draws=/drawExc=)");
+        return;
+    }
+    if (lower == "style") {
+        std::string ignored;
+        const std::string v = Lower(FirstToken(subRest, ignored));
+        TgSpriteStyleKind kind;
+        if (!TgProbeSpriteStyleFromName(v, kind)) {
+            Out("tgprobe sprite style: usage -> tgprobe sprite style soft|halo|gradient|pulse");
+            return;
+        }
+        g_TgSpriteStyleKind = kind;
+        g_TgSpriteMode = TgSpriteMode::Style;
+        g_TgSpriteTalentId = kToggleIndicatorTalentId;
+        InterlockedExchange(&g_TgSpriteDraws, 0);
+        InterlockedExchange(&g_TgSpriteDrawExc, 0);
+        double bx = 0, by = 0, bw = 0, bh = 0;
+        const bool boxFound = TgProbeSpriteScaledSlotBox(g_TgSpriteTalentId, bx, by, bw, bh);
+        Out("tgprobe sprite -> style " + std::string(TgProbeSpriteStyleName(kind))
+            + " talentId=" + std::to_string(g_TgSpriteTalentId) + " scale=" + std::to_string(g_TgSpriteScale)
+            + (boxFound
+                ? " box=" + std::to_string(bw) + "x" + std::to_string(bh) + "@" + std::to_string(bx) + "," + std::to_string(by)
+                : " box=slot not found")
+            + (kind == TgSpriteStyleKind::Pulse
+                ? " period=" + std::to_string(kTgPulsePeriodFrames / 60.0) + "s (" + std::to_string((long long)kTgPulsePeriodFrames) + " frames)"
+                : "")
+            + " layer=" + TgProbeLayerName()
             + " (watch `tgprobe sprite off` for draws=/drawExc=)");
         return;
     }
@@ -19698,9 +19900,17 @@ static void TgProbeSpriteCommand(const std::string& rest)
     InterlockedExchange(&g_TgSpriteDrawExc, 0);
     g_TgSpriteIdx = idx;
     g_TgSpriteMode = centre ? TgSpriteMode::Centre : TgSpriteMode::Named;
+    std::string boxText;
+    if (!centre) {
+        double bx = 0, by = 0, bw = 0, bh = 0;
+        boxText = TgProbeSpriteScaledSlotBox(talentId, bx, by, bw, bh)
+            ? " scale=" + std::to_string(g_TgSpriteScale) + " box=" + std::to_string(bw) + "x" + std::to_string(bh)
+                + "@" + std::to_string(bx) + "," + std::to_string(by)
+            : " scale=" + std::to_string(g_TgSpriteScale) + " box=slot not found";
+    }
     Out("tgprobe sprite -> " + first + (centre ? std::string(" centre") : (" talentId=" + std::to_string(talentId)))
         + " idx=" + std::to_string((long long)idx) + " frames=" + std::to_string((long long)frames)
-        + " width=" + std::to_string(sw) + " height=" + std::to_string(sh) + " layer=" + TgProbeLayerName()
+        + " width=" + std::to_string(sw) + " height=" + std::to_string(sh) + boxText + " layer=" + TgProbeLayerName()
         + " (watch `tgprobe sprite off` for draws=/drawExc=)");
 }
 
@@ -20736,7 +20946,8 @@ static void TgProbeCommand(const std::string& rest)
         " | vars <Obj|global> | snap <Obj|global> | diff | room"
         " | deep snap|diff|flip|find|get|census|selftest|drop ..."
         " | spurn [log on|off | as foreign | slots | fields] | mark <x> <y> <w> <h> | off"
-        " | sprite <SpriteName> [talentId|centre] | off | gold | list | gallery [cols] | layer hud|buffs"
+        " | sprite <SpriteName> [talentId|centre] | off | gold | style soft|halo|gradient|pulse | list"
+        " | gallery [cols] | layer hud|buffs | scale [f]"
         " | talents [substr|tags] | tgl [add|list|clear|slots|fields|sub|timer]");
 }
 #endif // FORGEPACT_RELEASE (tgprobe)

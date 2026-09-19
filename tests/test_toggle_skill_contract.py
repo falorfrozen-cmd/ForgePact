@@ -1329,7 +1329,7 @@ class ToggleTableProbeContractTests(unittest.TestCase):
     def test_sprite_research_only_names_do_not_survive_stripping(self):
         for name in ("TgProbeSpriteResolve", "TgProbeSpriteFindSlot", "TgProbeSpriteDraw",
                      "TgProbeSpriteDrawOne", "TgProbeSpriteDrawGoldRect", "TgProbeSpriteDrawGallery",
-                     "TgProbeSpriteDrawGalleryLabel", "TgProbeSpriteGalleryLegend", "TgProbeSpriteGuiSize",
+                     "TgProbeSpriteGalleryLegend", "TgProbeSpriteGuiSize",
                      "TgProbeSpriteHudRowAttached", "TgProbeSpriteList",
                      "TgProbeSpriteCommand", "TgSpriteMode", "g_TgSpriteMode", "kTgSpriteCandidates"):
             self.assertIn(name, self.block)
@@ -1358,10 +1358,15 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         self.assertIn("for (const char* name : kTgSpriteCandidates)", gallery)
         self.assertIn("TgProbeSpriteDrawOne(", gallery)
         self.assertIn("TgProbeSpriteDrawGoldRect(", gallery)
-        self.assertIn("TgProbeSpriteDrawGalleryLabel(", gallery)
+        # Round 6: no per-cell label draw any more - it displaced the icon in
+        # the tester's session (cause not diagnosed). No draw_text anywhere
+        # in the gallery's own draw path; the legend is log-only.
+        self.assertNotIn('"draw_text"', gallery)
+        self.assertNotIn("TgProbeSpriteDrawGalleryLabel", self.plugin)
         legend = function_body(self.plugin, "static void TgProbeSpriteGalleryLegend()")
         self.assertIn("for (const char* name : kTgSpriteCandidates)", legend)
         self.assertIn("gold (positive control)", legend)
+        self.assertNotIn('"draw_', legend)   # log-only: Out(), never a draw call
         sprite_gallery = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
         gallery_branch = sprite_gallery[sprite_gallery.index('lower == "gallery"'):sprite_gallery.index('lower == "gallery"') + 700]
         self.assertIn("TgProbeSpriteGalleryLegend()", gallery_branch)
@@ -1391,6 +1396,135 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         attached = function_body(self.plugin, "static bool TgProbeSpriteHudRowAttached()")
         self.assertIn("kTg_DrawHud", attached)
         self.assertIn("kTgNative", attached)
+
+    # ---- Sprite look probe round 5 (2026-09-20): scale ("surround") ----
+    # The live session found the button's own art paints over anything drawn
+    # inside the icon's bounds, at both layers; only the gold outline's own
+    # navBbox (bigger than the icon) reads. `scale` inflates a candidate the
+    # same way, centred on the slot.
+
+    def test_scale_dispatches_defaults_to_one_and_clamps_by_hand(self):
+        sprite = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
+        self.assertIn('lower == "scale"', sprite)
+        self.assertIn("static double g_TgSpriteScale = 1.0;", self.plugin)
+        scale_branch = sprite[sprite.index('lower == "scale"'):sprite.index('lower == "gold"')]
+        # Bare argument reports the current value without changing it.
+        self.assertIn("if (!v.empty())", scale_branch)
+        # Clamped by hand (if-based idiom), never std::max/std::min - the
+        # C2589 build break this same file guards against elsewhere
+        # (test_no_bare_std_max_or_std_min, tests/test_release_hook_contract.py).
+        self.assertIn("if (scale < 0.25) scale = 0.25;", scale_branch)
+        self.assertIn("if (scale > 4.0) scale = 4.0;", scale_branch)
+        self.assertNotRegex(scale_branch, r"\bstd::max\(")
+        self.assertNotRegex(scale_branch, r"\bstd::min\(")
+
+    def test_scale_reaches_the_draw_call_via_the_shared_scaled_box(self):
+        box = function_body(self.plugin, "static bool TgProbeSpriteScaledSlotBox(")
+        self.assertIn("TgProbeSpriteFindSlot(talentId, x, y, w, h)", box)
+        self.assertIn("w * g_TgSpriteScale", box)
+        self.assertIn("h * g_TgSpriteScale", box)
+        # Centred on the slot's own centre, not its top-left corner.
+        self.assertIn("cx - sw / 2.0", box)
+        self.assertIn("cy - sh / 2.0", box)
+        draw = function_body(self.plugin, "static void TgProbeSpriteDraw(bool fromHudLayer)")
+        self.assertIn("TgProbeSpriteScaledSlotBox(g_TgSpriteTalentId, x, y, w, h)", draw)
+        self.assertNotIn("TgProbeSpriteFindSlot(g_TgSpriteTalentId", draw)
+
+    def test_scale_applies_to_named_and_gold_not_centre_gallery_or_mark(self):
+        draw = function_body(self.plugin, "static void TgProbeSpriteDraw(bool fromHudLayer)")
+        # The Gold/Named branch is the only caller of the scaled box; Centre
+        # and Gallery keep their own fixed-size boxes untouched by scale.
+        else_branch = draw[draw.index("} else {"):]
+        self.assertIn("TgProbeSpriteScaledSlotBox(", else_branch)
+        centre_branch = draw[draw.index("TgSpriteMode::Centre"):draw.index("} else {")]
+        self.assertNotIn("g_TgSpriteScale", centre_branch)
+        gallery = function_body(self.plugin, "static void TgProbeSpriteDrawGallery()")
+        self.assertNotIn("g_TgSpriteScale", gallery)
+        # `tgprobe mark` already takes explicit geometry - untouched by scale.
+        mark = function_body(self.plugin, "static void TgProbeDrawMark(bool fromHudLayer)")
+        self.assertNotIn("g_TgSpriteScale", mark)
+        # gold's own command handler reports the scaled box in its
+        # confirmation line, same as a named sprite's.
+        sprite = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
+        gold_branch = sprite[sprite.index('lower == "gold"'):sprite.index('lower == "gallery"')]
+        self.assertIn("TgProbeSpriteScaledSlotBox(g_TgSpriteTalentId, bx, by, bw, bh)", gold_branch)
+        self.assertIn("scale=", gold_branch)
+        self.assertIn("box=", gold_branch)
+
+    def test_scale_names_do_not_survive_stripping(self):
+        for name in ("TgProbeSpriteScaledSlotBox", "g_TgSpriteScale"):
+            self.assertIn(name, self.block)
+            self.assertNotIn(name, self.stripped)
+
+    # ---- Sprite look probe round 6 (2026-09-20): procedural styles ----
+    # Drawn by us, not a game sprite - a soft alternative to the flat gold
+    # rectangle, requested after the tester found it crude. Every style
+    # draws into the same scaled slot box a named sprite/gold uses.
+
+    def test_style_dispatches_all_four_names_and_rejects_others(self):
+        sprite = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
+        self.assertIn('lower == "style"', sprite)
+        self.assertIn("TgProbeSpriteStyleFromName(v, kind)", sprite)
+        from_name = function_body(self.plugin, "static bool TgProbeSpriteStyleFromName(")
+        for name in ("soft", "halo", "gradient", "pulse"):
+            self.assertIn(f'lower == "{name}"', from_name)
+        style_name = function_body(self.plugin, "static const char* TgProbeSpriteStyleName(")
+        for name in ("soft", "halo", "gradient", "pulse"):
+            self.assertIn(f'return "{name}";', style_name)
+        # `style list` names are also surfaced from `sprite list`.
+        listing = function_body(self.plugin, "static void TgProbeSpriteList()")
+        for name in ("soft", "halo", "gradient", "pulse"):
+            self.assertIn(name, listing)
+
+    def test_style_draws_into_the_scaled_box_and_reports_scale(self):
+        style_branch_source = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
+        style_branch = style_branch_source[style_branch_source.index('lower == "style"'):
+                                            style_branch_source.index('lower == "gallery"')]
+        self.assertIn("TgProbeSpriteScaledSlotBox(g_TgSpriteTalentId, bx, by, bw, bh)", style_branch)
+        self.assertIn("scale=", style_branch)
+        self.assertIn("box=", style_branch)
+        self.assertIn("TgSpriteMode::Style", style_branch)
+        draw = function_body(self.plugin, "static void TgProbeSpriteDraw(bool fromHudLayer)")
+        else_branch = draw[draw.index("} else {"):]
+        self.assertIn("TgProbeSpriteDrawStyle(g_TgSpriteStyleKind, x, y, w, h)", else_branch)
+        # Style shares the Named/Gold branch's scaled box, not its own read.
+        self.assertEqual(else_branch.count("TgProbeSpriteScaledSlotBox("), 1)
+
+    def test_style_draw_functions_save_and_restore_and_count_exceptions(self):
+        # The four style draws themselves don't save/restore colour/alpha -
+        # TgProbeSpriteDraw does, once, around whichever branch actually
+        # drew (Named/Gold/Style/Gallery/Centre alike), and its own catch is
+        # what counts drawExc - same shape as every other mode already uses.
+        draw = function_body(self.plugin, "static void TgProbeSpriteDraw(bool fromHudLayer)")
+        self.assertIn('"draw_get_colour"', draw)
+        self.assertIn('"draw_get_alpha"', draw)
+        self.assertIn("catch (...) { InterlockedIncrement(&g_TgSpriteDrawExc); }", draw)
+        soft = function_body(self.plugin, "static void TgProbeSpriteDrawSoft(")
+        self.assertIn('"draw_rectangle"', soft)
+        self.assertIn("1.0 - t", soft)   # alpha ramps down outward from the innermost band
+        halo = function_body(self.plugin, "static void TgProbeSpriteDrawHalo(")
+        self.assertIn('"draw_ellipse_colour"', halo)
+        gradient = function_body(self.plugin, "static void TgProbeSpriteDrawGradient(")
+        self.assertIn('"draw_rectangle_colour"', gradient)
+        pulse = function_body(self.plugin, "static void TgProbeSpriteDrawPulse(")
+        self.assertIn("TgProbeSpriteDrawSoft(x, y, w, h, TgProbeSpritePulseFactor())", pulse)
+        pulse_factor = function_body(self.plugin, "static double TgProbeSpritePulseFactor()")
+        self.assertIn("std::sin(", pulse_factor)
+        self.assertIn("kTgPulsePeriodFrames", pulse_factor)
+        # The period is named in the pulse confirmation line, not left silent.
+        style_branch_source = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
+        style_branch = style_branch_source[style_branch_source.index('lower == "style"'):
+                                            style_branch_source.index('lower == "gallery"')]
+        self.assertIn("period=", style_branch)
+        self.assertIn("TgSpriteStyleKind::Pulse", style_branch)
+
+    def test_style_names_do_not_survive_stripping(self):
+        for name in ("TgSpriteStyleKind", "g_TgSpriteStyleKind", "TgProbeSpriteStyleName",
+                     "TgProbeSpriteStyleFromName", "TgProbeSpritePulseFactor", "TgProbeSpriteDrawSoft",
+                     "TgProbeSpriteDrawHalo", "TgProbeSpriteDrawGradient", "TgProbeSpriteDrawPulse",
+                     "TgProbeSpriteDrawStyle", "kTgPulsePeriodFrames"):
+            self.assertIn(name, self.block)
+            self.assertNotIn(name, self.stripped)
 
     def test_shipped_draw_functions_unchanged_from_round_base(self):
         # Round base for R round 3 (context "R Round 3 - sprite look probe"):
