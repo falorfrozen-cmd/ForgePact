@@ -87,6 +87,19 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
             declaration(cls.plugin, "static volatile long g_TgdRefused"),
             declaration(cls.plugin, "static std::atomic<long> g_ToggleGuardDcObjIdx"),
             implementation(cls.plugin, "static RValue& HookTalentUseClass("),
+            # R (issue #11 generalisation, research build only): the
+            # candidate table's generalised read, its row-0 comparison and
+            # the timer sampler - the pure parts of `tgprobe tgl`, spliced
+            # from inside the tgprobe block. A struct's definition ends at
+            # its closing brace, so its `;` is added back here.
+            implementation(cls.plugin, "struct TgTglReadResult {") + ";",
+            implementation(cls.plugin, "struct TgTglTimer {") + ";",
+            implementation(cls.plugin, "static bool TgProbeTglResolveObject("),
+            implementation(cls.plugin, "static ForgePact::ToggleIndicatorState TgProbeTglRead("),
+            implementation(cls.plugin, "static bool TgProbeTglSameDetail("),
+            implementation(cls.plugin, "static std::string TgProbeTglNumber("),
+            implementation(cls.plugin, "static void TgProbeTglTimerNote("),
+            implementation(cls.plugin, "static std::string TgProbeTglTimerLine("),
         ])
 
         out = ROOT / "build/toggle-skill-behavior"
@@ -358,6 +371,38 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
             self.assertScenario(label + "/selfUnreadable")
             self.assertScenario(label + "/refused")
             self.assertScenario(label)
+
+    # ---- R: the research table (`tgprobe tgl`, issue #11 generalisation) ----
+
+    def test_table_generalised_read_matches_shipped_read_on_row0(self):
+        # The live agree=/disagree= control, proven here first: row 0 through
+        # the generalised read decides what the shipped read decides, and the
+        # comparison itself can see a difference (negative control).
+        self.assertScenario("table/generalised_read_matches_shipped_read_on_row0/cases")
+        self.assertScenario("table/generalised_read_matches_shipped_read_on_row0")
+        self.assertScenario("table/generalised_read_matches_shipped_read_on_row0/control_detects_difference")
+
+    def test_table_marker_none_lights_on_any_own(self):
+        self.assertScenario("table/marker_none_lights_on_any_own/markedMine")
+        self.assertScenario("table/marker_none_lights_on_any_own")
+        self.assertScenario("table/marker_none_lights_on_any_own/foreign_stays_off")
+        self.assertScenario("table/ownership_none_counts_every_instance_own/unattributed")
+        self.assertScenario("table/ownership_none_counts_every_instance_own")
+
+    def test_table_entry_object_unresolved_is_unreadable(self):
+        self.assertScenario("table/entry_object_unresolved_is_unreadable/resolved")
+        self.assertScenario("table/entry_object_unresolved_is_unreadable/no_enumeration")
+        self.assertScenario("table/entry_object_unresolved_is_unreadable")
+
+    def test_table_timer_sample_reads_first_and_last(self):
+        # A discriminator instrument, not a border input (D-U9, D-P5).
+        for suffix in ("/first", "/last", "/min_max", "/unreadable_zero",
+                       "/held_at_predicted", "/foreign_not_read", ""):
+            self.assertScenario("table/timer_sample_reads_first_and_last" + suffix)
+
+    def test_table_timer_unreadable_is_reported_not_defaulted(self):
+        for suffix in ("/count", "/atPredicted", "/first", "/last", ""):
+            self.assertScenario("table/timer_unreadable_is_reported_not_defaulted" + suffix)
 
 
 if __name__ == "__main__":

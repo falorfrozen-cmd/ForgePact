@@ -96,6 +96,10 @@ struct AoeInst {
     bool isMyClientThrows = false;
     RValue purgatory;   // default VALUE_UNDEFINED: marker unreadable
     bool purgatoryThrows = false;
+    // R (the research table's timer sampler): default VALUE_UNDEFINED, the
+    // timer unreadable - never a number the sampler could mistake for one.
+    RValue destroyTimer;
+    bool destroyTimerThrows = false;
 };
 static AoeInst OwnMarked(double purgatoryValue = 0.09) {
     AoeInst a; a.isMyClient = MakeBool(true); a.purgatory = MakeReal(purgatoryValue); return a;
@@ -114,6 +118,9 @@ static AoeInst Foreign(double purgatoryValue = 0.0) {
 }
 static AoeInst Unattributed() {
     AoeInst a; a.isMyClient = RValue(); return a;   // undefined
+}
+static AoeInst WithTimer(AoeInst a, const RValue& timer) {
+    a.destroyTimer = timer; return a;
 }
 
 // P2 (the shipped indicator): UI_Hud_Talent_obj instance 0's own `row0`
@@ -209,6 +216,10 @@ struct FakeRunner {
             if (field == "purgatory") {
                 if (a.purgatoryThrows) throw std::runtime_error("purgatory EXCEPTION");
                 return a.purgatory;
+            }
+            if (field == "destroyTimer") {
+                if (a.destroyTimerThrows) throw std::runtime_error("destroyTimer EXCEPTION");
+                return a.destroyTimer;
             }
             return RValue();
         }
@@ -842,6 +853,179 @@ int main() {
             checkInt(label + "/refused", g_TgdRefused, 0);
             checkInt(label, c.tramp, 1);
         }
+    }
+
+    // ---- R (issue #11 generalisation): the research table's generalised read
+    // and timer sampler (`tgprobe tgl`, research build only). The pure pieces
+    // are spliced from the tgprobe block; none of them ships. -----------------
+
+    // 41. Row 0 through the generalised read (object index resolved by name,
+    //     marker "purgatory", the default ownership field, timer
+    //     "destroyTimer") decides exactly what the shipped read decides, on
+    //     every world the shipped read's own scenarios use - the live
+    //     agree=/disagree= control, proven here first. A negative control
+    //     shows the comparison can see a difference at all.
+    {
+        const std::vector<std::vector<AoeInst>> worlds = {
+            {}, { OwnMarked(0.09) }, { OwnUnmarked() }, { OwnMarkerUnreadable() }, { OwnByNumber(1.0) },
+            { Foreign(0.09) }, { Unattributed(), Unattributed() }, { OwnMarked(), Foreign() },
+            { OwnUnmarked(), OwnMarked(0.09) },
+        };
+        long cases = 0, mismatches = 0;
+        auto compare = [&]() {
+            ForgePact::ToggleIndicatorReadDetail shipped;
+            const ForgePact::ToggleIndicatorState shippedState = ToggleIndicatorRead(&shipped, false);
+            double idx = -1.0;
+            TgProbeTglResolveObject(std::string(HeroSiege::Objects::GetObjectName(
+                HeroSiege::Objects::GameObject::White_Mage_Soul_Spurn_AOE_obj)), idx);
+            TgTglReadResult r;
+            const ForgePact::ToggleIndicatorState state = TgProbeTglRead(idx, "purgatory", "", "destroyTimer", &r);
+            ++cases;
+            if (state != shippedState || !TgProbeTglSameDetail(shipped, r.d)) ++mismatches;
+        };
+        for (const std::vector<AoeInst>& w : worlds) { resetWorld(); world.instances = w; compare(); }
+        resetWorld(); world.instances = { OwnMarked() }; world.instanceNumberThrows = true; compare();
+        resetWorld(); world.instances = { OwnMarked() }; world.aoeObjectResolves = false; compare();
+        resetWorld();
+        for (int i = 0; i < kToggleIndicatorScanCap + 3; ++i) world.instances.push_back(OwnMarked());
+        compare();
+        checkInt("table/generalised_read_matches_shipped_read_on_row0/cases", cases, 12);
+        checkInt("table/generalised_read_matches_shipped_read_on_row0", mismatches, 0);
+
+        resetWorld();
+        world.instances = { OwnUnmarked() };
+        ForgePact::ToggleIndicatorReadDetail shipped;
+        ToggleIndicatorRead(&shipped, false);
+        TgTglReadResult noMarker;
+        TgProbeTglRead(kAoeObjIdx, nullptr, "", "destroyTimer", &noMarker);   // no marker: a different split
+        checkBool("table/generalised_read_matches_shipped_read_on_row0/control_detects_difference",
+                  TgProbeTglSameDetail(shipped, noMarker.d), false);
+    }
+
+    // 42. A row with no marker field: every own instance counts as marked, so
+    //     the marker-required decision is On for an own instance whose
+    //     `purgatory` reads 0 (what the shipped row would call a plain cast).
+    //     Negative control: a foreign instance still stays Off.
+    resetWorld();
+    world.instances = { OwnUnmarked() };
+    {
+        TgTglReadResult r;
+        TgProbeTglRead(kAoeObjIdx, nullptr, "", nullptr, &r);
+        checkInt("table/marker_none_lights_on_any_own/markedMine", r.d.markedMine, 1);
+        checkState("table/marker_none_lights_on_any_own",
+                   ForgePact::ToggleIndicatorModel::Decide(r.d, /*requireMarker=*/true), ForgePact::ToggleIndicatorState::On);
+    }
+    resetWorld();
+    world.instances = { Foreign(0.0) };
+    {
+        TgTglReadResult r;
+        TgProbeTglRead(kAoeObjIdx, nullptr, "", nullptr, &r);
+        checkState("table/marker_none_lights_on_any_own/foreign_stays_off",
+                   ForgePact::ToggleIndicatorModel::Decide(r.d, /*requireMarker=*/true), ForgePact::ToggleIndicatorState::Off);
+    }
+    // ... and a row with no ownership field (D-N3) counts every instance as
+    // own, including one whose isMyClient could not have been read.
+    resetWorld();
+    world.instances = { Unattributed() };
+    {
+        TgTglReadResult r;
+        TgProbeTglRead(kAoeObjIdx, nullptr, nullptr, nullptr, &r);
+        checkInt("table/ownership_none_counts_every_instance_own/unattributed", r.d.unattributed, 0);
+        checkInt("table/ownership_none_counts_every_instance_own", r.d.mine, 1);
+    }
+
+    // 43. A row whose object name does not resolve: Unreadable, and not one
+    //     enumeration call is made on the -1 index.
+    resetWorld();
+    world.aoeObjectResolves = false;
+    world.instances = { OwnMarked() };   // must not matter - the object never resolved
+    {
+        double idx = 7.0;
+        checkBool("table/entry_object_unresolved_is_unreadable/resolved",
+                  TgProbeTglResolveObject("Exo_Lunar_Orbit_obj", idx), false);
+        const long enumBefore = g_InstanceEnumCalls;
+        TgTglReadResult r;
+        const ForgePact::ToggleIndicatorState state = TgProbeTglRead(idx, nullptr, "", "destroyTimer", &r);
+        checkInt("table/entry_object_unresolved_is_unreadable/no_enumeration", g_InstanceEnumCalls - enumBefore, 0);
+        checkState("table/entry_object_unresolved_is_unreadable", state, ForgePact::ToggleIndicatorState::Unreadable);
+    }
+
+    // 44. The timer sampler: three draws of one appearance reading 144, 100
+    //     and 57 report the first and the last draw's value (session 4's
+    //     Soul Spurn shape without Purgatory), and a timer held at the
+    //     predicted infinite value -1 is counted by atPredicted=. Only an own
+    //     instance's timer is read: a foreign instance notes nothing.
+    {
+        TgTglTimer t;
+        for (double v : { 144.0, 100.0, 57.0 }) {
+            resetWorld();
+            world.instances = { WithTimer(OwnUnmarked(), MakeReal(v)) };
+            TgTglReadResult r;
+            TgProbeTglRead(kAoeObjIdx, nullptr, "", "destroyTimer", &r);
+            TgProbeTglTimerNote(t, r, -1.0);
+        }
+        const std::string line = TgProbeTglTimerLine(t);
+        checkBool("table/timer_sample_reads_first_and_last/first", line.find("first=144.000000") != std::string::npos, true);
+        checkBool("table/timer_sample_reads_first_and_last/last", line.find("last=57.000000") != std::string::npos, true);
+        checkBool("table/timer_sample_reads_first_and_last/min_max",
+                  line.find("min=57.000000") != std::string::npos && line.find("max=144.000000") != std::string::npos, true);
+        checkBool("table/timer_sample_reads_first_and_last/unreadable_zero", line.find("unreadable=0") != std::string::npos, true);
+
+        TgTglTimer held;
+        for (int i = 0; i < 3; ++i) {
+            resetWorld();
+            world.instances = { WithTimer(OwnMarked(0.09), MakeReal(-1.0)) };
+            TgTglReadResult r;
+            TgProbeTglRead(kAoeObjIdx, "purgatory", "", "destroyTimer", &r);
+            TgProbeTglTimerNote(held, r, -1.0);
+        }
+        checkBool("table/timer_sample_reads_first_and_last/held_at_predicted",
+                  TgProbeTglTimerLine(held).find("atPredicted=3") != std::string::npos, true);
+
+        TgTglTimer foreignOnly;
+        resetWorld();
+        world.instances = { WithTimer(Foreign(0.0), MakeReal(-1.0)) };
+        TgTglReadResult r;
+        TgProbeTglRead(kAoeObjIdx, nullptr, "", "destroyTimer", &r);
+        TgProbeTglTimerNote(foreignOnly, r, -1.0);
+        checkInt("table/timer_sample_reads_first_and_last/foreign_not_read", foreignOnly.draws, 0);
+        checkBool("table/timer_sample_reads_first_and_last",
+                  line.find("first=144.000000") != std::string::npos && line.find("last=57.000000") != std::string::npos, true);
+    }
+
+    // 45. An undefined, a throwing and a string timer field are each counted
+    //     unreadable and printed as `unreadable` - never defaulted to -1 or 0,
+    //     either of which would read as a real timer value.
+    {
+        TgTglTimer t;
+        resetWorld();
+        world.instances = { OwnUnmarked() };   // destroyTimer undefined
+        {
+            TgTglReadResult r;
+            TgProbeTglRead(kAoeObjIdx, nullptr, "", "destroyTimer", &r);
+            TgProbeTglTimerNote(t, r, -1.0);
+        }
+        world.instances[0].destroyTimerThrows = true;
+        {
+            TgTglReadResult r;
+            TgProbeTglRead(kAoeObjIdx, nullptr, "", "destroyTimer", &r);
+            TgProbeTglTimerNote(t, r, -1.0);
+        }
+        world.instances[0].destroyTimerThrows = false;
+        world.instances[0].destroyTimer = RValue("-1");
+        {
+            TgTglReadResult r;
+            TgProbeTglRead(kAoeObjIdx, nullptr, "", "destroyTimer", &r);
+            TgProbeTglTimerNote(t, r, -1.0);
+        }
+        const std::string line = TgProbeTglTimerLine(t);
+        checkInt("table/timer_unreadable_is_reported_not_defaulted/count", t.unreadable, 3);
+        checkInt("table/timer_unreadable_is_reported_not_defaulted/atPredicted", t.atPredicted, 0);
+        checkBool("table/timer_unreadable_is_reported_not_defaulted/first", line.find("first=unreadable") != std::string::npos, true);
+        checkBool("table/timer_unreadable_is_reported_not_defaulted/last", line.find("last=unreadable") != std::string::npos, true);
+        checkBool("table/timer_unreadable_is_reported_not_defaulted",
+                  line.find("=-1") == std::string::npos && line.find("=0.000000") == std::string::npos
+                  && line.find("first=unreadable") != std::string::npos, true);
     }
 
     // The read never makes a player-resolving call, in any scenario above -

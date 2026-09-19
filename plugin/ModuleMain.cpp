@@ -19356,6 +19356,738 @@ static void TgProbeMarkCommand(const std::string& rest)
     }
 }
 
+// ---- tgprobe talents / tgprobe tgl: every toggle-skill candidate (issue #11
+// generalisation, session 6) ------------------------------------------------
+// The static search (docs/toggle-skills-research.md, "### Other toggle
+// skills: the static candidate table") named seven candidate rows. Session 6
+// measures, per row, the ON object, its ownership field, how a toggle is
+// told from a plain cast (the ON discriminator: a marker field, or a timer
+// held at one value - D-P5), the sub-talent slot and the hotbar slot, with
+// the instruments below. Read-only and research build only. Nothing here is a
+// border input: the shipped outline stays one full border while a toggle is
+// ON, and there is no countdown or partial draw (D-U9).
+
+// One generalised read: T1's counted detail, plus the row's timer field as
+// read on the first own instance scanned (research output only).
+struct TgTglReadResult {
+    ForgePact::ToggleIndicatorReadDetail d;
+    bool timerAsked = false;      // the row names a timer field and an own instance was scanned
+    bool timerReadable = false;   // that read returned a number (real/int32/int64)
+    double timer = 0.0;
+};
+
+// One appearance's worth of a row's timer field. `first`/`last` hold the
+// first and the last draw's value, or `unreadable` for a draw whose read
+// did not return a number - never a default, since -1 and 0 are both real
+// timer values on these objects (session 4). `atPredicted` counts draws at
+// exactly the row's predicted "not scheduled to expire" value.
+struct TgTglTimer {
+    long draws = 0, unreadable = 0, atPredicted = 0;
+    std::string first, last;
+    bool haveNumber = false;
+    double min = 0.0, max = 0.0;
+};
+
+// asset_get_index by name; a throw or a negative index is "not resolved" and
+// leaves outObjIdx negative, so the read below makes no enumeration call.
+static bool TgProbeTglResolveObject(const std::string& objectName, double& outObjIdx)
+{
+    try {
+        outObjIdx = g_Yytk->CallBuiltin("asset_get_index", { RValue(objectName) }).ToDouble();
+    } catch (...) { outObjIdx = -1.0; }
+    return outObjIdx >= 0;
+}
+
+// ToggleIndicatorRead's shape with the object, marker, ownership and timer
+// as parameters, so any candidate row can be read the way the shipped row is.
+// `marker` nullptr: the row has no marker field, so every own instance counts
+// as marked. `ownership` nullptr: the row has no ownership field and every
+// instance counts as own (D-N3); an empty string is the shipped default,
+// each instance's own isMyClient. `timer` nullptr: no timer read. Only the
+// two-argument CallBuiltin, the shipped read's own shape, so that row 0
+// through this read is comparable with ToggleIndicatorRead itself
+// (`tgprobe tgl`'s agree=/disagree=).
+static ForgePact::ToggleIndicatorState TgProbeTglRead(double objIdx, const char* marker, const char* ownership,
+                                                       const char* timer, TgTglReadResult* out)
+{
+    TgTglReadResult r;
+    ForgePact::ToggleIndicatorReadDetail& d = r.d;
+    const char* ownField = (ownership && !*ownership) ? "isMyClient" : ownership;
+    d.objectResolved = objIdx >= 0;
+    if (d.objectResolved) {
+        try { d.n = (long)g_Yytk->CallBuiltin("instance_number", { RValue(objIdx) }).ToDouble(); }
+        catch (...) { d.n = 0; d.countReadFailed = true; }
+    }
+    if (d.objectResolved && !d.countReadFailed && d.n > 0) {
+        const long cap = kToggleIndicatorScanCap;
+        const long scanCount = d.n < cap ? d.n : cap;
+        d.capped = d.n > cap;
+        for (long i = 0; i < scanCount; ++i) {
+            try {
+                RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue(objIdx), RValue((double)i) });
+                bool isMine = true;
+                if (ownField) {
+                    RValue mc = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(ownField) });
+                    if (!ToggleIndicatorReadTruth(mc, isMine)) { ++d.unattributed; continue; }
+                }
+                if (!isMine) { ++d.others; continue; }
+                ++d.mine;
+                if (!marker) {
+                    ++d.markedMine;
+                } else {
+                    try {
+                        RValue mk = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(marker) });
+                        bool marked = false;
+                        if (!ToggleIndicatorReadTruth(mk, marked)) { ++d.markUnreadableMine; }
+                        else if (marked) { ++d.markedMine; }
+                        else { ++d.unmarkedMine; }
+                    } catch (...) { ++d.markUnreadableMine; }
+                }
+                if (timer && !r.timerAsked) {
+                    r.timerAsked = true;
+                    try {
+                        RValue tv = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(timer) });
+                        if (tv.m_Kind == VALUE_REAL || tv.m_Kind == VALUE_INT32 || tv.m_Kind == VALUE_INT64) {
+                            r.timer = tv.ToDouble();
+                            r.timerReadable = true;
+                        }
+                    } catch (...) {}   // stays unreadable, and is counted as such by the sampler
+                }
+            } catch (...) { ++d.unattributed; }
+        }
+    }
+    if (out) *out = r;
+    return ForgePact::ToggleIndicatorModel::Decide(d);
+}
+
+// Whether two reads counted the same evidence and reach the same decision,
+// with and without the marker. The agree=/disagree= comparison.
+static bool TgProbeTglSameDetail(const ForgePact::ToggleIndicatorReadDetail& a, const ForgePact::ToggleIndicatorReadDetail& b)
+{
+    return a.objectResolved == b.objectResolved && a.n == b.n && a.mine == b.mine && a.others == b.others
+        && a.unattributed == b.unattributed && a.markedMine == b.markedMine && a.unmarkedMine == b.unmarkedMine
+        && a.markUnreadableMine == b.markUnreadableMine && a.capped == b.capped && a.countReadFailed == b.countReadFailed
+        && ForgePact::ToggleIndicatorModel::Decide(a) == ForgePact::ToggleIndicatorModel::Decide(b)
+        && ForgePact::ToggleIndicatorModel::Decide(a, true) == ForgePact::ToggleIndicatorModel::Decide(b, true);
+}
+
+static std::string TgProbeTglNumber(double v)
+{
+    return std::to_string(v);
+}
+
+// Adds one draw's timer read to the appearance's record. A draw with no own
+// instance (or a row with no timer field) is not a timer sample at all.
+static void TgProbeTglTimerNote(TgTglTimer& t, const TgTglReadResult& r, double predicted)
+{
+    if (!r.timerAsked) return;
+    ++t.draws;
+    std::string text = "unreadable";
+    if (!r.timerReadable) {
+        ++t.unreadable;
+    } else {
+        text = TgProbeTglNumber(r.timer);
+        if (!t.haveNumber || r.timer < t.min) t.min = r.timer;
+        if (!t.haveNumber || r.timer > t.max) t.max = r.timer;
+        t.haveNumber = true;
+        if (r.timer == predicted) ++t.atPredicted;   // exact: D-P5 compares a held value by equality
+    }
+    if (t.draws == 1) t.first = text;
+    t.last = text;
+}
+
+static std::string TgProbeTglTimerLine(const TgTglTimer& t)
+{
+    const std::string none = "n/a";
+    return "first=" + (t.draws ? t.first : none) + " last=" + (t.draws ? t.last : none)
+        + " min=" + (t.haveNumber ? TgProbeTglNumber(t.min) : none)
+        + " max=" + (t.haveNumber ? TgProbeTglNumber(t.max) : none)
+        + " unreadable=" + std::to_string(t.unreadable) + " atPredicted=" + std::to_string(t.atPredicted)
+        + " draws=" + std::to_string(t.draws);
+}
+
+// The runtime candidate table. Capped at 16 rows; `tgprobe tgl clear` keeps
+// row 0, the measured Soul Spurn row, which is also the agreement control.
+static constexpr int kTgTglCap = 16;
+static constexpr int kTgTglFieldCap = 64;   // scalars kept per `tgl fields` snapshot
+// Soul Spurn's toggled form holds destroyTimer at -1 (session 4); the same
+// value is the prediction for every row until session 6 measures it.
+static constexpr double kTgTglPredictedInfinite = -1.0;
+
+struct TgTglFieldSample {
+    bool have = false;
+    long frame = -1;
+    std::string text;
+};
+
+struct TgTglRow {
+    std::string abilityId, objectName;
+    std::string marker;             // "" = no marker field
+    std::string timer;              // "" = no timer field
+    std::string ownership;          // "" = the default, isMyClient
+    bool ownershipNone = false;     // no ownership field: every instance counts as own (D-N3)
+    int subSlot = -1;               // predicted sub-talent position (s<NN>); -1 = none given
+    int talentId = -1;              // -1 until `tgprobe talents` maps this abilityId to an id
+    // Sampler state, refreshed on every DrawHudBuffs draw.
+    bool sampled = false;
+    TgTglReadResult last;
+    int lastState = -1;
+    long samples = 0, on = 0, off = 0, unreadable = 0, markedOn = 0, transitions = 0, lastTransitionFrame = -1;
+    int firstAfterRoomChangeState = -1;
+    long firstAfterRoomChangeN = -1;
+    bool present = false;
+    long appearances = 0;
+    TgTglTimer timerStats;
+    TgTglFieldSample fieldsFirst, fieldsLast;
+};
+
+// The seven rows of the static candidate table, one ON-object candidate each
+// (the damage-parent child; `tgl add` adds the controller candidates if C2's
+// `deep flip` names one). Row 0 is measured; every other object, sub-talent
+// position and talent id is a static prediction for session 6 to measure.
+struct TgTglSeed {
+    const char* abilityId;
+    HeroSiege::Objects::GameObject object;
+    int talentId;
+    const char* marker;
+    const char* timer;
+    int subSlot;
+};
+static const TgTglSeed kTgTglSeeds[] = {
+    { "soulSpurn", HeroSiege::Objects::GameObject::White_Mage_Soul_Spurn_AOE_obj, kToggleIndicatorTalentId, "purgatory", "destroyTimer", 12 },
+    { "lunarOrbit", HeroSiege::Objects::GameObject::Exo_Lunar_Orbit_obj, -1, nullptr, "destroyTimer", 11 },
+    { "crematus", HeroSiege::Objects::GameObject::Plague_Doctor_Crematus_obj, -1, nullptr, "destroyTimer", 13 },
+    { "counter", HeroSiege::Objects::GameObject::Shield_Lancer_Counter_World_obj, -1, nullptr, "destroyTimer", 13 },
+    { "submergedKnives", HeroSiege::Objects::GameObject::Butcher_Submerged_Knives_obj, -1, nullptr, "destroyTimer", 13 },
+    { "maelstromOfFrost", HeroSiege::Objects::GameObject::Prophet_Maelstrom_obj, -1, nullptr, "destroyTimer", 11 },
+    { "blender", HeroSiege::Objects::GameObject::Butcher_Blender_obj, -1, nullptr, "destroyTimer", 14 },
+};
+static std::vector<TgTglRow> g_TgTgl;
+static bool g_TgTglSeeded = false;
+static long g_TgTglAgree = 0, g_TgTglDisagree = 0;
+static bool g_TgTglRoomKeyKnown = false;
+static int64_t g_TgTglRoomKey = INT64_MIN;
+// abilityId -> talent id, as the last `tgprobe talents` walk found them.
+static std::map<std::string, int> g_TgTalentsIdByAbility;
+
+static void TgProbeTglSeed()
+{
+    if (g_TgTglSeeded) return;
+    g_TgTglSeeded = true;
+    for (const TgTglSeed& s : kTgTglSeeds) {
+        TgTglRow row;
+        row.abilityId = s.abilityId;
+        row.objectName = std::string(HeroSiege::Objects::GetObjectName(s.object));
+        row.marker = s.marker ? s.marker : "";
+        row.timer = s.timer ? s.timer : "";
+        row.subSlot = s.subSlot;
+        row.talentId = s.talentId;
+        g_TgTgl.push_back(row);
+    }
+}
+
+static std::string TgProbeTglRowConfig(const TgTglRow& row)
+{
+    return row.abilityId + " obj=" + row.objectName
+        + " marker=" + (row.marker.empty() ? std::string("none") : row.marker)
+        + " timer=" + (row.timer.empty() ? std::string("none") : row.timer)
+        + " ownership=" + (row.ownershipNone ? std::string("none") : (row.ownership.empty() ? std::string("isMyClient") : row.ownership))
+        + " sub=" + (row.subSlot >= 0 ? "s" + std::to_string(row.subSlot) : std::string("none"))
+        + " talentId=" + (row.talentId >= 0 ? std::to_string(row.talentId) : std::string("unknown"));
+}
+
+// The SDK enumerator carrying this object name, by scanning the enumerator
+// range with GetObjectName (the C++ SDK has no name -> enumerator lookup).
+static int TgProbeTglSdkIndex(const std::string& objectName)
+{
+    for (int32_t i = 0; i < HeroSiege::Objects::kObjectCount; ++i) {
+        if (HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject(i)) == objectName) return (int)i;
+    }
+    return -1;
+}
+
+// Instance 0's scalar members (real/int/bool/string), each read on its own,
+// capped at kTgTglFieldCap. Comparing a toggled appearance's snapshot with a
+// plain one is how a row's marker field is found, the way session 4 found
+// `purgatory`.
+static void TgProbeTglSnapshot(double objIdx, TgTglFieldSample& out)
+{
+    RValue inst;
+    try { inst = g_Yytk->CallBuiltin("instance_find", { RValue(objIdx), RValue(0.0) }); }
+    catch (...) { return; }
+    if (inst.m_Kind == VALUE_UNDEFINED) return;
+    std::string text;
+    long kept = 0, nonScalar = 0, unreadable = 0, overCap = 0;
+    try {
+        RValue names = g_Yytk->CallBuiltin("variable_instance_get_names", { inst });
+        const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+        for (int i = 0; i < n; ++i) {
+            std::string nm;
+            try { nm = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) }).ToString(); }
+            catch (...) { ++unreadable; continue; }
+            RValue v;
+            try { v = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(nm) }); }
+            catch (...) { ++unreadable; continue; }
+            const bool scalar = N1Numeric(v) || v.m_Kind == VALUE_BOOL || v.m_Kind == VALUE_STRING;
+            if (!scalar) { ++nonScalar; continue; }
+            if (kept >= kTgTglFieldCap) { ++overCap; continue; }
+            text += " " + nm + "=" + TgProbeDescribeShort(v, 40);
+            ++kept;
+        }
+    } catch (...) { text += " (names EXCEPTION)"; }
+    out.have = true;
+    out.frame = (long)g_RuntimeFrame;
+    out.text = text + " [scalars=" + std::to_string(kept) + " nonScalar=" + std::to_string(nonScalar)
+        + " unreadable=" + std::to_string(unreadable) + " overCap=" + std::to_string(overCap) + "]";
+}
+
+// Called once per DrawHudBuffs draw from TgProbeSpurnAfterDraw (research
+// build only). Every row is read through the generalised read, never cached
+// across draws. Row 0 is also read through the shipped ToggleIndicatorRead on
+// the same draw and compared: agree= rising with disagree=0 is the proof
+// that the generalised read is the shipped read (the instrument's positive
+// control, session 6's C1).
+static void TgProbeTglAfterDraw()
+{
+    TgProbeTglSeed();
+    const int64_t key = CurrentRoomKey();
+    const bool roomChanged = key != INT64_MIN && (!g_TgTglRoomKeyKnown || key != g_TgTglRoomKey);
+    if (roomChanged) {
+        g_TgTglRoomKeyKnown = true;
+        g_TgTglRoomKey = key;
+    }
+    for (size_t i = 0; i < g_TgTgl.size(); ++i) {
+        TgTglRow& row = g_TgTgl[i];
+        double objIdx = -1.0;
+        TgProbeTglResolveObject(row.objectName, objIdx);
+        TgTglReadResult r;
+        const ForgePact::ToggleIndicatorState state = TgProbeTglRead(objIdx,
+            row.marker.empty() ? nullptr : row.marker.c_str(),
+            row.ownershipNone ? nullptr : row.ownership.c_str(),
+            row.timer.empty() ? nullptr : row.timer.c_str(), &r);
+        if (i == 0) {
+            ForgePact::ToggleIndicatorReadDetail shipped;
+            const ForgePact::ToggleIndicatorState shippedState = ToggleIndicatorRead(&shipped, /*treatOwnAsForeign=*/false);
+            if (state == shippedState && TgProbeTglSameDetail(shipped, r.d)) ++g_TgTglAgree;
+            else ++g_TgTglDisagree;
+        }
+        ++row.samples;
+        if (state == ForgePact::ToggleIndicatorState::On) ++row.on;
+        else if (state == ForgePact::ToggleIndicatorState::Off) ++row.off;
+        else ++row.unreadable;
+        if (ForgePact::ToggleIndicatorModel::Decide(r.d, /*requireMarker=*/true) == ForgePact::ToggleIndicatorState::On) ++row.markedOn;
+        const int s = (int)state;
+        if (row.lastState >= 0 && s != row.lastState) {
+            ++row.transitions;
+            row.lastTransitionFrame = (long)g_RuntimeFrame;
+        }
+        row.lastState = s;
+        row.last = r;
+        row.sampled = true;
+        if (roomChanged) {
+            row.firstAfterRoomChangeState = s;
+            row.firstAfterRoomChangeN = r.d.n;
+        }
+        // An appearance starts on the first draw with n >= 1 after a draw
+        // with n = 0; the timer record and the first field snapshot restart
+        // there and survive the instance's removal until the next one, since
+        // a plain appearance is too short to catch with an IPC round trip.
+        const bool present = r.d.n >= 1;
+        if (present && !row.present) {
+            ++row.appearances;
+            row.timerStats = TgTglTimer{};
+            row.fieldsFirst = TgTglFieldSample{};
+            TgProbeTglSnapshot(objIdx, row.fieldsFirst);
+        }
+        if (present) {
+            TgProbeTglTimerNote(row.timerStats, r, kTgTglPredictedInfinite);
+            TgProbeTglSnapshot(objIdx, row.fieldsLast);
+        }
+        row.present = present;
+    }
+}
+
+// `tgprobe tgl add <abilityId> <ObjectName> [marker] [timer] [ownership] [subNN]`:
+// marker `none`/`-` or omitted = no marker; timer omitted or `-` =
+// destroyTimer, `none` = no timer; ownership omitted or `-` = isMyClient,
+// `none` = every instance own (D-N3); subNN as `s13` or `13`. The object is
+// resolved by name first, and an unresolved name stores nothing.
+static void TgProbeTglAdd(const std::string& rest)
+{
+    TgProbeTglSeed();
+    std::string r1, r2, r3, r4, r5, r6;
+    const std::string abilityId = FirstToken(rest, r1);
+    const std::string objectName = FirstToken(r1, r2);
+    const std::string marker = FirstToken(r2, r3);
+    const std::string timer = FirstToken(r3, r4);
+    const std::string ownership = FirstToken(r4, r5);
+    const std::string sub = FirstToken(r5, r6);
+    if (abilityId.empty() || objectName.empty()) {
+        Out("tgprobe tgl add: usage -> tgprobe tgl add <abilityId> <ObjectName> [marker|none] [timer|none] [ownership|none] [sNN]");
+        return;
+    }
+    if ((int)g_TgTgl.size() >= kTgTglCap) {
+        Out("tgprobe tgl add: table full (" + std::to_string(kTgTglCap) + " rows); `tgprobe tgl clear` keeps row 0");
+        return;
+    }
+    double objIdx = -1.0;
+    if (!TgProbeTglResolveObject(objectName, objIdx)) {
+        Out("tgprobe tgl add: " + objectName + " unresolved (asset_get_index=" + std::to_string((long long)objIdx)
+            + "); nothing stored");
+        return;
+    }
+    TgTglRow row;
+    row.abilityId = abilityId;
+    row.objectName = objectName;
+    const std::string lm = Lower(marker), lt = Lower(timer), lo = Lower(ownership);
+    row.marker = (lm.empty() || lm == "none" || lm == "-") ? "" : marker;
+    row.timer = (lt.empty() || lt == "-") ? "destroyTimer" : (lt == "none" ? "" : timer);
+    row.ownershipNone = lo == "none";
+    row.ownership = (lo.empty() || lo == "-" || lo == "none") ? "" : ownership;
+    std::string digits = (!sub.empty() && (sub[0] == 's' || sub[0] == 'S')) ? sub.substr(1) : sub;
+    try { row.subSlot = digits.empty() ? -1 : std::stoi(digits); } catch (...) { row.subSlot = -1; }
+    const auto known = g_TgTalentsIdByAbility.find(abilityId);
+    if (known != g_TgTalentsIdByAbility.end()) row.talentId = known->second;
+    g_TgTgl.push_back(row);
+    const int sdk = TgProbeTglSdkIndex(objectName);
+    Out("tgprobe tgl add: [" + std::to_string(g_TgTgl.size() - 1) + "] " + TgProbeTglRowConfig(row)
+        + " idx=" + std::to_string((long long)objIdx) + " sdk=" + (sdk >= 0 ? std::to_string(sdk) : std::string("none")));
+}
+
+static void TgProbeTglList()
+{
+    TgProbeTglSeed();
+    Out("tgprobe tgl list: rows=" + std::to_string(g_TgTgl.size()) + " cap=" + std::to_string(kTgTglCap));
+    for (size_t i = 0; i < g_TgTgl.size(); ++i) {
+        const TgTglRow& row = g_TgTgl[i];
+        double objIdx = -1.0;
+        const bool resolved = TgProbeTglResolveObject(row.objectName, objIdx);
+        const int sdk = TgProbeTglSdkIndex(row.objectName);
+        Out("  [" + std::to_string(i) + "] " + TgProbeTglRowConfig(row)
+            + " idx=" + (resolved ? std::to_string((long long)objIdx) : std::string("unresolved"))
+            + " sdk=" + (sdk >= 0 ? std::to_string(sdk) : std::string("none")));
+    }
+}
+
+static const char* TgProbeTglStateText(int s)
+{
+    return s < 0 ? "n/a" : ForgePact::ToggleIndicatorStateName((ForgePact::ToggleIndicatorState)s);
+}
+
+// Bare `tgprobe tgl`: the last sample per row and its running counters.
+static void TgProbeTglShow()
+{
+    TgProbeTglSeed();
+    Out("tgprobe tgl: frame=" + std::to_string((unsigned long long)g_RuntimeFrame)
+        + " room=" + (g_TgTglRoomKeyKnown ? std::to_string((long long)g_TgTglRoomKey) : std::string("unreadable"))
+        + " rows=" + std::to_string(g_TgTgl.size())
+        + " agree=" + std::to_string(g_TgTglAgree) + " disagree=" + std::to_string(g_TgTglDisagree));
+    for (size_t i = 0; i < g_TgTgl.size(); ++i) {
+        const TgTglRow& row = g_TgTgl[i];
+        const ForgePact::ToggleIndicatorReadDetail& d = row.last.d;
+        const std::string timer = !row.last.timerAsked ? std::string("n/a")
+            : (row.last.timerReadable ? TgProbeTglNumber(row.last.timer) : std::string("unreadable"));
+        Out("  [" + std::to_string(i) + "] " + row.abilityId + " state=" + TgProbeTglStateText(row.sampled ? row.lastState : -1)
+            + " n=" + std::to_string(d.n) + " mine=" + std::to_string(d.mine) + " others=" + std::to_string(d.others)
+            + " unattributed=" + std::to_string(d.unattributed)
+            + " marked=" + (row.sampled ? ForgePact::ToggleIndicatorStateName(ForgePact::ToggleIndicatorModel::Decide(d, true)) : "n/a")
+            + " timer=" + timer
+            + " samples=" + std::to_string(row.samples) + " on=" + std::to_string(row.on)
+            + " off=" + std::to_string(row.off) + " unreadable=" + std::to_string(row.unreadable)
+            + " markedOn=" + std::to_string(row.markedOn)
+            + " transitions=" + std::to_string(row.transitions)
+            + " lastTransitionFrame=" + std::to_string(row.lastTransitionFrame)
+            + " firstAfterRoomChange: state=" + TgProbeTglStateText(row.firstAfterRoomChangeState)
+            + " n=" + std::to_string(row.firstAfterRoomChangeN));
+    }
+}
+
+static void TgProbeTglFields(const std::string& rest)
+{
+    TgProbeTglSeed();
+    std::string ignored;
+    const std::string which = FirstToken(rest, ignored);
+    int only = -1;
+    if (!which.empty()) {
+        try { only = std::stoi(which); } catch (...) { Out("tgprobe tgl fields: usage -> tgprobe tgl fields [row]"); return; }
+    }
+    for (size_t i = 0; i < g_TgTgl.size(); ++i) {
+        if (only >= 0 && (size_t)only != i) continue;
+        const TgTglRow& row = g_TgTgl[i];
+        auto describe = [](const TgTglFieldSample& s) {
+            return s.have ? "frame=" + std::to_string(s.frame) + s.text : std::string("none");
+        };
+        Out("tgprobe tgl fields [" + std::to_string(i) + "] " + row.abilityId + " obj=" + row.objectName
+            + " appearance=" + std::to_string(row.appearances));
+        Out("  first: " + describe(row.fieldsFirst));
+        Out("  last:  " + describe(row.fieldsLast));
+    }
+}
+
+static void TgProbeTglTimer()
+{
+    TgProbeTglSeed();
+    for (size_t i = 0; i < g_TgTgl.size(); ++i) {
+        const TgTglRow& row = g_TgTgl[i];
+        Out("tgprobe tgl timer [" + std::to_string(i) + "] " + row.abilityId
+            + " field=" + (row.timer.empty() ? std::string("none") : row.timer)
+            + " predicted=" + TgProbeTglNumber(kTgTglPredictedInfinite)
+            + " appearance=" + std::to_string(row.appearances) + " " + TgProbeTglTimerLine(row.timerStats));
+    }
+}
+
+// `tgprobe tgl slots`: every UI_Hud_Talent_obj row0 element's talentId and
+// navBbox rectangle, each read on its own, naming the table row whose talent
+// id it carries - C7's cross-check before `tgprobe mark` at that rectangle.
+static void TgProbeTglSlots()
+{
+    TgProbeTglSeed();
+    const std::string objName(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::UI_Hud_Talent_obj));
+    const double obj = TgProbeObjectIndex(objName);
+    if (obj < 0) { Out("tgprobe tgl slots: " + objName + " not found by name"); return; }
+    RValue arr;
+    try {
+        RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue(obj), RValue(0.0) });
+        if (inst.m_Kind == VALUE_UNDEFINED) { Out("tgprobe tgl slots: no " + objName + " instance"); return; }
+        arr = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("row0") });
+    } catch (...) { Out("tgprobe tgl slots: row0 EXCEPTION"); return; }
+    if (arr.m_Kind != VALUE_ARRAY) { Out("tgprobe tgl slots: row0 is " + Describe(arr)); return; }
+    int len = 0;
+    try { len = (int)g_Yytk->CallBuiltin("array_length", { arr }).ToDouble(); }
+    catch (...) { Out("tgprobe tgl slots: array_length EXCEPTION"); return; }
+    Out("tgprobe tgl slots: row0 length=" + std::to_string(len));
+    for (int i = 0; i < len; ++i) {
+        RValue elem;
+        try { elem = g_Yytk->CallBuiltin("array_get", { arr, RValue((double)i) }); }
+        catch (...) { Out("  row0[" + std::to_string(i) + "] unreadable"); continue; }
+        if (elem.m_Kind != VALUE_OBJECT && elem.m_Kind != VALUE_REF) { Out("  row0[" + std::to_string(i) + "] is " + Describe(elem)); continue; }
+        std::string line = "  row0[" + std::to_string(i) + "]";
+        RValue tid;
+        for (const char* field : { "talentId", "navBboxX", "navBboxY", "navBboxWidth", "navBboxHeight" }) {
+            try {
+                RValue v = g_Yytk->CallBuiltin("variable_struct_get", { elem, RValue(field) });
+                if (std::string(field) == "talentId") tid = v;
+                line += std::string(" ") + field + "=" + TgProbeDescribeShort(v, 24);
+            } catch (...) { line += std::string(" ") + field + "=unreadable"; }
+        }
+        if (N1Numeric(tid)) {
+            for (const TgTglRow& row : g_TgTgl) {
+                if (row.talentId >= 0 && (int)tid.ToDouble() == row.talentId) line += " row=" + row.abilityId;
+            }
+        }
+        Out(line);
+    }
+}
+
+// `tgprobe tgl sub`: global.subTalentMap - its array_length, then for every
+// array index and every row with a known talent id, the keys and values of
+// that index's `t<id>` struct, each read on its own. Session 6's C6: the
+// index whose `t<id>` changes on a respec is `subidx:`, the key that changes
+// is the row's sub-talent slot, and what an unallocated slot reads (absent,
+// or 0) is `subzero:`.
+static void TgProbeTglSub()
+{
+    TgProbeTglSeed();
+    RValue arr;
+    try {
+        if (!g_Yytk->CallBuiltin("variable_global_exists", { RValue("subTalentMap") }).ToBoolean()) {
+            Out("tgprobe tgl sub: global.subTalentMap does not exist");
+            return;
+        }
+        arr = g_Yytk->CallBuiltin("variable_global_get", { RValue("subTalentMap") });
+    } catch (...) { Out("tgprobe tgl sub: global.subTalentMap EXCEPTION"); return; }
+    if (arr.m_Kind != VALUE_ARRAY) { Out("tgprobe tgl sub: global.subTalentMap is " + Describe(arr)); return; }
+    int len = 0;
+    try { len = (int)g_Yytk->CallBuiltin("array_length", { arr }).ToDouble(); }
+    catch (...) { Out("tgprobe tgl sub: array_length EXCEPTION"); return; }
+    Out("tgprobe tgl sub: global.subTalentMap array_length=" + std::to_string(len));
+    for (int i = 0; i < len && i < kTgTglCap; ++i) {
+        RValue elem;
+        bool elemOk = true;
+        try { elem = g_Yytk->CallBuiltin("array_get", { arr, RValue((double)i) }); } catch (...) { elemOk = false; }
+        for (const TgTglRow& row : g_TgTgl) {
+            std::string prefix = "  [" + std::to_string(i) + "] " + row.abilityId;
+            if (row.talentId < 0) { Out(prefix + " talentId=unknown (run `tgprobe talents` first)"); continue; }
+            const std::string key = "t" + std::to_string(row.talentId);
+            prefix += " " + key;
+            if (!elemOk) { Out(prefix + ": element unreadable"); continue; }
+            if (elem.m_Kind != VALUE_OBJECT && elem.m_Kind != VALUE_REF) { Out(prefix + ": element is " + Describe(elem)); continue; }
+            RValue st;
+            try {
+                if (!g_Yytk->CallBuiltin("variable_struct_exists", { elem, RValue(key) }).ToBoolean()) { Out(prefix + ": absent"); continue; }
+                st = g_Yytk->CallBuiltin("variable_struct_get", { elem, RValue(key) });
+            } catch (...) { Out(prefix + ": unreadable"); continue; }
+            if (st.m_Kind != VALUE_OBJECT && st.m_Kind != VALUE_REF) { Out(prefix + " is " + Describe(st)); continue; }
+            RValue names;
+            int n = 0;
+            try {
+                names = g_Yytk->CallBuiltin("variable_struct_get_names", { st });
+                n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+            } catch (...) { Out(prefix + ": key names unreadable"); continue; }
+            std::string line = prefix + ":";
+            for (int k = 0; k < n; ++k) {
+                std::string nm;
+                try { nm = g_Yytk->CallBuiltin("array_get", { names, RValue((double)k) }).ToString(); }
+                catch (...) { line += " <name unreadable>"; continue; }
+                try { line += " " + nm + "=" + TgProbeDescribeShort(g_Yytk->CallBuiltin("variable_struct_get", { st, RValue(nm) }), 24); }
+                catch (...) { line += " " + nm + "=unreadable"; }
+            }
+            Out(line + " (keys=" + std::to_string(n) + ")");
+        }
+    }
+}
+
+static void TgProbeTglCommand(const std::string& rest)
+{
+    std::string subRest;
+    const std::string sub = Lower(FirstToken(rest, subRest));
+    if (sub.empty()) { TgProbeTglShow(); return; }
+    if (sub == "add") { TgProbeTglAdd(subRest); return; }
+    if (sub == "list") { TgProbeTglList(); return; }
+    if (sub == "clear") {
+        TgProbeTglSeed();
+        if (g_TgTgl.size() > 1) g_TgTgl.resize(1);
+        Out("tgprobe tgl clear: rows=1 (row 0, " + g_TgTgl[0].abilityId + ", kept)");
+        return;
+    }
+    if (sub == "slots") { TgProbeTglSlots(); return; }
+    if (sub == "fields") { TgProbeTglFields(subRest); return; }
+    if (sub == "sub") { TgProbeTglSub(); return; }
+    if (sub == "timer") { TgProbeTglTimer(); return; }
+    Out("tgprobe tgl: usage -> tgprobe tgl | add <abilityId> <ObjectName> [marker] [timer] [ownership] [sNN]"
+        " | list | clear | slots | fields [row] | sub | timer");
+}
+
+// One struct field as text for `tgprobe talents`: `absent` when the struct
+// has no such key, `unreadable` when the read throws - never a default.
+static std::string TgProbeTalentsField(const RValue& talent, const char* field)
+{
+    auto number = [](double v) {
+        return N1NearlyEqual(v, std::floor(v)) ? std::to_string((long long)v) : std::to_string(v);
+    };
+    try {
+        if (!g_Yytk->CallBuiltin("variable_struct_exists", { talent, RValue(field) }).ToBoolean()) return "absent";
+        RValue v = g_Yytk->CallBuiltin("variable_struct_get", { talent, RValue(field) });
+        if (v.m_Kind == VALUE_STRING) return v.ToString();
+        if (v.m_Kind == VALUE_BOOL) return v.ToBoolean() ? "true" : "false";
+        if (N1Numeric(v)) return number(v.ToDouble());
+        if (v.m_Kind == VALUE_ARRAY) {
+            const int n = (int)g_Yytk->CallBuiltin("array_length", { v }).ToDouble();
+            std::string s = "[";
+            for (int i = 0; i < n && i < 32; ++i) {
+                if (i) s += ",";
+                try {
+                    RValue e = g_Yytk->CallBuiltin("array_get", { v, RValue((double)i) });
+                    s += N1Numeric(e) ? number(e.ToDouble()) : TgProbeDescribeShort(e, 16);
+                } catch (...) { s += "unreadable"; }
+            }
+            return s + (n > 32 ? ",...]" : "]");
+        }
+        return TgProbeDescribeShort(v, 40);
+    } catch (...) { return "unreadable"; }
+}
+
+// `tgprobe talents [substr|tags]`: every id in global.talentStructMap, with
+// the struct fields a toggle row could be told apart by, filtered by an
+// abilityId substring; `tags` counts each distinct abilityTags id instead.
+// The walk also maps every table row's abilityId to its talent id (C0), which
+// `tgl sub` and `tgl slots` then use. Command-time only; the walk is the
+// `tgprobe deep` ds_map walker's shape, capped.
+static void TgProbeTalentsCommand(const std::string& rest)
+{
+    static const char* const kFields[] = {
+        "abilityId", "abilityAura", "abilityDuration", "abilityCooldown", "abilityLength", "abilityTags" };
+    constexpr long kWalkCap = 5000, kShowCap = 40;
+    std::string ignored;
+    const std::string arg = FirstToken(rest, ignored);
+    const bool tagsMode = Lower(arg) == "tags";
+    const std::string filter = tagsMode ? std::string() : Lower(arg);
+
+    RValue map;
+    try {
+        if (!g_Yytk->CallBuiltin("variable_global_exists", { RValue("talentStructMap") }).ToBoolean()) {
+            Out("tgprobe talents: global.talentStructMap is not ready");
+            return;
+        }
+        map = g_Yytk->CallBuiltin("variable_global_get", { RValue("talentStructMap") });
+        if (!g_Yytk->CallBuiltin("ds_exists", { map, RValue(1.0) }).ToBoolean()) {   // ds_type_map
+            Out("tgprobe talents: global.talentStructMap is not a live ds_map");
+            return;
+        }
+    } catch (...) { Out("tgprobe talents: talentStructMap lookup EXCEPTION"); return; }
+
+    TgProbeTglSeed();
+    long ids = 0, shown = 0, hidden = 0, nonNumericKeys = 0, notStruct = 0, walkExc = 0;
+    bool truncated = false;
+    std::map<long, long> tagCounts;
+    RValue key;
+    try { key = g_Yytk->CallBuiltin("ds_map_find_first", { map }); }
+    catch (...) { Out("tgprobe talents: ds_map_find_first EXCEPTION"); return; }
+    while (key.m_Kind != VALUE_UNDEFINED) {
+        if (ids >= kWalkCap) { truncated = true; break; }
+        ++ids;
+        if (!N1Numeric(key)) {
+            ++nonNumericKeys;
+        } else {
+            const int id = (int)key.ToDouble();
+            RValue talent;
+            std::string why;
+            if (!N1GetTalentStruct(map, id, talent, why)) {
+                ++notStruct;
+            } else {
+                std::string values[6];
+                for (int k = 0; k < 6; ++k) values[k] = TgProbeTalentsField(talent, kFields[k]);
+                const std::string& abilityId = values[0];
+                if (abilityId != "absent" && abilityId != "unreadable") {
+                    g_TgTalentsIdByAbility[abilityId] = id;
+                    for (size_t r = 0; r < g_TgTgl.size(); ++r) {
+                        TgTglRow& row = g_TgTgl[r];
+                        if (row.abilityId != abilityId) continue;
+                        if (row.talentId < 0) row.talentId = id;
+                        else if (row.talentId != id)
+                            Out("  note: row [" + std::to_string(r) + "] " + row.abilityId + " has talentId="
+                                + std::to_string(row.talentId) + " but abilityId maps to id " + std::to_string(id));
+                    }
+                }
+                if (tagsMode) {
+                    try {
+                        RValue tags = g_Yytk->CallBuiltin("variable_struct_get", { talent, RValue("abilityTags") });
+                        if (tags.m_Kind == VALUE_ARRAY) {
+                            const int n = (int)g_Yytk->CallBuiltin("array_length", { tags }).ToDouble();
+                            for (int t = 0; t < n; ++t) {
+                                RValue e = g_Yytk->CallBuiltin("array_get", { tags, RValue((double)t) });
+                                if (N1Numeric(e)) ++tagCounts[(long)e.ToDouble()];
+                            }
+                        }
+                    } catch (...) {}
+                } else if (filter.empty() || Lower(abilityId).find(filter) != std::string::npos) {
+                    if (shown < kShowCap) {
+                        std::string line = "  talent " + std::to_string(id);
+                        for (int k = 0; k < 6; ++k) line += std::string(" ") + kFields[k] + "=" + values[k];
+                        Out(line);
+                        ++shown;
+                    } else {
+                        ++hidden;
+                    }
+                }
+            }
+        }
+        try { key = g_Yytk->CallBuiltin("ds_map_find_next", { map, key }); }
+        catch (...) { ++walkExc; break; }
+    }
+    if (hidden > 0) Out("  ...(+" + std::to_string(hidden) + " more)");
+    if (tagsMode) {
+        for (const auto& tc : tagCounts) Out("  tag " + std::to_string(tc.first) + " count=" + std::to_string(tc.second));
+        shown = (long)tagCounts.size();
+    }
+    long rowsWithId = 0;
+    for (const TgTglRow& row : g_TgTgl) if (row.talentId >= 0) ++rowsWithId;
+    Out("tgprobe talents: ids=" + std::to_string(ids) + " shown=" + std::to_string(shown)
+        + " nonNumericKeys=" + std::to_string(nonNumericKeys) + " notStruct=" + std::to_string(notStruct)
+        + " walkExc=" + std::to_string(walkExc) + " truncated=" + (truncated ? "1" : "0")
+        + " tableRowsWithId=" + std::to_string(rowsWithId) + "/" + std::to_string(g_TgTgl.size()));
+}
+
 // Running counters and last-sample state for `tgprobe spurn`. Sampled once
 // per DrawHudBuffs call (TgProbeSpurnAfterDraw), never cached across calls -
 // the same point-of-use rule as the guide's Known Limitations item 13.
@@ -19502,6 +20234,9 @@ static void TgProbeSpurnAfterDraw()
         }
     }
 
+    // Session 6: every candidate row, and row 0's agreement control, on the
+    // same draw (`tgprobe tgl`).
+    TgProbeTglAfterDraw();
     TgProbeDrawMark();
 }
 
@@ -19600,10 +20335,14 @@ static void TgProbeCommand(const std::string& rest)
     // Toggle-skill indicator research control (issue #11, Track B).
     if (sub == "spurn") { TgProbeSpurnCommand(subRest); return; }
     if (sub == "mark") { TgProbeMarkCommand(subRest); return; }
+    // Every toggle-skill candidate (issue #11 generalisation, session 6).
+    if (sub == "talents") { TgProbeTalentsCommand(subRest); return; }
+    if (sub == "tgl") { TgProbeTglCommand(subRest); return; }
     Out("tgprobe: usage -> tgprobe hook [substr...] | show | reset | verbose on|off | slots | buffs | abilities"
         " | vars <Obj|global> | snap <Obj|global> | diff | room"
         " | deep snap|diff|flip|find|get|census|selftest|drop ..."
-        " | spurn [log on|off | as foreign | slots | fields] | mark <x> <y> <w> <h> | off");
+        " | spurn [log on|off | as foreign | slots | fields] | mark <x> <y> <w> <h> | off"
+        " | talents [substr|tags] | tgl [add|list|clear|slots|fields|sub|timer]");
 }
 #endif // FORGEPACT_RELEASE (tgprobe)
 

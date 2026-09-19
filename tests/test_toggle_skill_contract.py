@@ -1011,5 +1011,193 @@ class ToggleGuardContractTests(unittest.TestCase):
         self.assertIn("f\"toggleguard {1 if cfg['mod_toggle_guard'] else 0}\"", self.panel)
 
 
+# The static candidate table (docs/toggle-skills-research.md, "### Other toggle
+# skills: the static candidate table"): abilityId -> (the SDK objects the
+# static search named as ON-object candidates, the predicted sub-talent slot).
+CANDIDATE_ROWS = {
+    "soulSpurn": ({"White_Mage_Soul_Spurn_AOE_obj"}, 12),
+    "lunarOrbit": ({"Exo_Lunar_Orbit_obj", "Exo_Lunar_Orbit_Crescent_Moon_obj"}, 11),
+    "crematus": ({"Plague_Doctor_Crematus_obj", "Plague_Doctor_Crematus_Controller_obj"}, 13),
+    "counter": ({"Shield_Lancer_Counter_World_obj"}, 13),
+    "submergedKnives": ({"Butcher_Submerged_Knives_obj", "Butcher_Submerged_Knives_Knifehoarder_obj"}, 13),
+    "maelstromOfFrost": ({"Prophet_Maelstrom_obj", "Prophet_Maelstrom_Storm_obj", "Prophet_Maelstrom_Meteor_obj"}, 11),
+    "blender": ({"Butcher_Blender_obj", "Butcher_Blender_Nanoblades_obj"}, 14),
+}
+SEED_ROW = re.compile(
+    r'\{\s*"(?P<ability>\w+)",\s*HeroSiege::Objects::GameObject::(?P<obj>\w+),\s*(?P<talent>[^,]+),'
+    r'\s*(?P<marker>[^,]+),\s*(?P<timer>[^,]+),\s*(?P<sub>\d+)\s*\}'
+)
+# The production bodies the research build must leave exactly as T1 shipped
+# them (62a67d2): nothing outside a research block changes in phase R.
+UNCHANGED_SINCE_T1 = (
+    "static ForgePact::ToggleIndicatorState ToggleIndicatorRead(",
+    "static bool ToggleIndicatorFindSlot(",
+    "static void ToggleIndicatorDraw(",
+    "static RValue& HookTalentUseClass(",
+    "static RValue& Hook_DrawHudBuffs(",
+    "void FrameCallback(",
+)
+
+
+class ToggleTableProbeContractTests(unittest.TestCase):
+    """The session-6 research instrument (issue #11 generalisation, phase R).
+
+    `tgprobe talents` enumerates every talent struct; `tgprobe tgl` is a
+    runtime table of toggle-skill candidates, prefilled with the seven rows the
+    static search found, each read every draw through a generalised form of
+    the shipped read, with row 0 compared against the shipped read itself
+    (agree=/disagree=). Companion to test_toggle_skill_behavior.py, whose
+    `table/` scenarios run the pure parts. Research build only; nothing here
+    is a border input, and there is no partial-draw control (D-U9).
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.plugin = PLUGIN_SRC.read_text(encoding="utf-8")
+        cls.stripped = strip_research_blocks(cls.plugin)
+        start = cls.plugin.index(BLOCK_START)
+        cls.block = cls.plugin[start:cls.plugin.index(BLOCK_END, start)]
+        seeds_start = cls.plugin.index("static const TgTglSeed kTgTglSeeds[] = {")
+        cls.seeds = cls.plugin[seeds_start:cls.plugin.index("};", seeds_start)]
+        cls.seed_rows = [m.groupdict() for m in SEED_ROW.finditer(cls.seeds)]
+
+    def test_tgprobe_dispatches_talents_and_tgl(self):
+        body = function_body(self.plugin, "static void TgProbeCommand(const std::string& rest)")
+        self.assertIn('sub == "talents"', body)
+        self.assertIn('sub == "tgl"', body)
+        self.assertIn("TgProbeTalentsCommand(subRest)", body)
+        self.assertIn("TgProbeTglCommand(subRest)", body)
+
+    def test_talents_walks_the_talent_map_and_prints_the_listed_fields(self):
+        body = function_body(self.plugin, "static void TgProbeTalentsCommand(")
+        for needle in ('"talentStructMap"', '"ds_map_find_first"', '"ds_map_find_next"', '"abilityId"',
+                       '"abilityAura"', '"abilityDuration"', '"abilityCooldown"', '"abilityLength"',
+                       '"abilityTags"', "ids=", "shown=", "N1GetTalentStruct("):
+            self.assertIn(needle, body)
+        # Every field read on its own: an unreadable read prints `unreadable`,
+        # a missing key `absent` - never a default value.
+        field = function_body(self.plugin, "static std::string TgProbeTalentsField(")
+        self.assertIn('return "unreadable";', field)
+        self.assertIn('return "absent";', field)
+
+    def test_tgl_dispatches_every_subcommand(self):
+        body = function_body(self.plugin, "static void TgProbeTglCommand(const std::string& rest)")
+        for sub in ("add", "list", "clear", "slots", "fields", "sub", "timer"):
+            self.assertIn(f'sub == "{sub}"', body)
+        # `clear` keeps row 0 (the measured row and the agreement control).
+        self.assertIn("g_TgTgl.resize(1)", body)
+
+    def test_tgl_add_resolves_by_name_and_stores_nothing_when_unresolved(self):
+        resolve = function_body(self.plugin, "static bool TgProbeTglResolveObject(")
+        self.assertIn('"asset_get_index"', resolve)
+        self.assertIn("return outObjIdx >= 0;", resolve)
+        add = function_body(self.plugin, "static void TgProbeTglAdd(")
+        self.assertIn("TgProbeTglResolveObject(objectName, objIdx)", add)
+        self.assertIn("unresolved", add)
+        self.assertIn("kTgTglCap", add)
+        unresolved = add.index("unresolved")
+        self.assertLess(unresolved, add.index("push_back"))
+        self.assertIn("return;", add[unresolved:add.index("push_back")])
+        # sdk=<index> by scanning the enumerator range, or sdk=none.
+        self.assertIn("TgProbeTglSdkIndex(objectName)", add)
+        self.assertIn("sdk=", add)
+        scan = function_body(self.plugin, "static int TgProbeTglSdkIndex(")
+        self.assertIn("HeroSiege::Objects::kObjectCount", scan)
+        self.assertIn("GetObjectName", scan)
+
+    def test_table_is_capped_at_16_and_prefilled_with_the_seven_candidate_rows(self):
+        self.assertIn("static constexpr int kTgTglCap = 16;", self.plugin)
+        self.assertEqual(len(self.seed_rows), 7, self.seeds)
+        self.assertEqual([r["ability"] for r in self.seed_rows], list(CANDIDATE_ROWS))
+        row0 = self.seed_rows[0]
+        self.assertEqual(row0["obj"], "White_Mage_Soul_Spurn_AOE_obj")
+        self.assertEqual(row0["talent"].strip(), "kToggleIndicatorTalentId")
+        self.assertEqual(row0["marker"].strip(), '"purgatory"')
+        self.assertEqual(row0["timer"].strip(), '"destroyTimer"')
+        objects_hpp = (SDK_INCLUDE / "objects.hpp").read_text(encoding="utf-8")
+        for row in self.seed_rows:
+            candidates, sub = CANDIDATE_ROWS[row["ability"]]
+            self.assertIn(row["obj"], candidates, row)
+            self.assertRegex(objects_hpp, rf"\b{row['obj']}\s*=\s*\d+,", row)
+            self.assertEqual(int(row["sub"]), sub, row)
+        for row in self.seed_rows[1:]:
+            # Every other row's talent id and marker are unknown statically.
+            self.assertEqual(row["talent"].strip(), "-1", row)
+            self.assertEqual(row["marker"].strip(), "nullptr", row)
+            self.assertEqual(row["timer"].strip(), '"destroyTimer"', row)
+        self.assertNotIn("5759", self.seeds)
+
+    def test_generalised_read_is_parameterised_and_uses_the_shipped_shape(self):
+        signature = "static ForgePact::ToggleIndicatorState TgProbeTglRead("
+        start = self.plugin.index(signature)
+        params = self.plugin[start:self.plugin.index(")", start)]
+        for param in ("double objIdx", "const char* marker", "const char* ownership", "const char* timer"):
+            self.assertIn(param, params)
+        body = function_body(self.plugin, signature)
+        for needle in ('"instance_number"', '"instance_find"', '"isMyClient"', "kToggleIndicatorScanCap",
+                       "ToggleIndicatorReadTruth("):
+            self.assertIn(needle, body)
+        for banned in ("CallBuiltinEx", "HhResolveLocalPlayer", '"playerNumber"', "GetMembers("):
+            self.assertNotIn(banned, body)
+
+    def test_sampler_compares_row0_with_the_shipped_read(self):
+        sampler = function_body(self.plugin, "static void TgProbeTglAfterDraw()")
+        self.assertIn("ToggleIndicatorRead(", sampler)
+        self.assertIn("TgProbeTglRead(", sampler)
+        self.assertIn("TgProbeTglSameDetail(", sampler)
+        self.assertIn("++g_TgTglAgree", sampler)
+        self.assertIn("++g_TgTglDisagree", sampler)
+        show = function_body(self.plugin, "static void TgProbeTglShow()")
+        for needle in ("agree=", "disagree=", "state=", "n=", "mine=", "others=", "unattributed=",
+                       "markedOn=", "timer=", "samples=", "transitions=", "lastTransitionFrame=",
+                       "firstAfterRoomChange"):
+            self.assertIn(needle, show)
+        # It hangs off the existing research call in Hook_DrawHudBuffs.
+        self.assertIn("TgProbeTglAfterDraw();", function_body(self.plugin, "static void TgProbeSpurnAfterDraw()"))
+
+    def test_tgl_sub_reads_the_sub_talent_array_per_index_and_row(self):
+        body = function_body(self.plugin, "static void TgProbeTglSub()")
+        self.assertIn('"subTalentMap"', body)
+        self.assertIn('"array_length"', body)
+        self.assertIn('"array_get"', body)
+        self.assertIn('"t" + std::to_string(row.talentId)', body)
+        self.assertIn("for (const TgTglRow& row : g_TgTgl)", body)
+
+    def test_tgl_timer_prints_the_discriminator_fields(self):
+        line = function_body(self.plugin, "static std::string TgProbeTglTimerLine(")
+        for needle in ("first=", "last=", "min=", "max=", "unreadable=", "atPredicted="):
+            self.assertIn(needle, line)
+        self.assertIn("TgProbeTglTimerLine(row.timerStats)", function_body(self.plugin, "static void TgProbeTglTimer()"))
+
+    def test_no_partial_draw_control(self):
+        # D-U9: no countdown and no partial border, so no `mark ring`; the
+        # table instruments draw nothing at all.
+        mark = function_body(self.plugin, "static void TgProbeMarkCommand(const std::string& rest)")
+        self.assertNotIn('"ring"', mark)
+        self.assertNotIn("mark ring", self.block)
+        table = self.plugin[self.plugin.index("struct TgTglReadResult {"):
+                            self.plugin.index("static void TgProbeTalentsCommand(")]
+        self.assertNotIn("draw_", table)
+
+    def test_research_only_names_do_not_survive_stripping(self):
+        for name in ("TgProbeTgl", "TgProbeTalents", "TgTgl", "kTgTgl", "g_TgTalentsIdByAbility"):
+            self.assertIn(name, self.block)
+            self.assertNotIn(name, self.stripped)
+
+    def test_production_bodies_unchanged_from_62a67d2(self):
+        old = git_show("62a67d2:plugin/ModuleMain.cpp")
+        if old is None:
+            self.skipTest("git cannot read 62a67d2")
+        for signature in UNCHANGED_SINCE_T1:
+            self.assertEqual(function_body(self.plugin, signature), function_body(old, signature), signature)
+
+    def test_kplayercommands_unchanged_from_62a67d2(self):
+        old = git_show("62a67d2:plugin/ModuleMain.cpp")
+        if old is None:
+            self.skipTest("git cannot read 62a67d2")
+        pattern = r"static const std::unordered_set<std::string> kPlayerCommands = \{(.*?)\};"
+        self.assertEqual(re.search(pattern, self.plugin, re.S).group(1), re.search(pattern, old, re.S).group(1))
+
+
 if __name__ == "__main__":
     unittest.main()
