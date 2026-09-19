@@ -265,6 +265,19 @@ class ReleaseHookContractTests(unittest.TestCase):
         cls.stats_header = STATS_HEADER_PATH.read_text(encoding="utf-8")
         cls.density_header = DENSITY_HEADER_PATH.read_text(encoding="utf-8")
 
+    def test_no_bare_std_max_or_std_min(self):
+        # Found the expensive way (issue #11, R round 4, commit 760a9c6): a
+        # bare `std::max(` in this translation unit collides with windows.h's
+        # `max()` macro (no NOMINMAX here, and this file does not reorder its
+        # own includes to dodge it) and fails with MSVC C2589 - a compile
+        # failure a source-text contract test cannot itself catch by running
+        # the compiler, so it must be caught as a pattern instead. Wrap a call
+        # as `(std::max)(...)` (parenthesising the name suppresses the macro),
+        # use an if/ternary, or clamp by hand - the house idiom already used
+        # elsewhere in this file (`if (v < 1) v = 1;`).
+        self.assertNotRegex(self.plugin, r"\bstd::max\(")
+        self.assertNotRegex(self.plugin, r"\bstd::min\(")
+
     def test_every_toggle_command_treats_zero_as_off(self):
         # `census 0` used to turn census ON: its handler only tested "off", so a
         # zero fell through to the enable branch and answered ACIK. Found the

@@ -19661,7 +19661,10 @@ static void TgProbeSpriteCommand(const std::string& rest)
         std::string ignored;
         const std::string colsStr = FirstToken(subRest, ignored);
         int cols = 4;
-        if (!colsStr.empty()) { try { cols = std::max(1, std::stoi(colsStr)); } catch (...) { cols = 4; } }
+        if (!colsStr.empty()) {
+            try { cols = std::stoi(colsStr); } catch (...) { cols = 4; }
+            if (cols < 1) cols = 1;   // windows.h's max() macro collides with std::max in this TU
+        }
         g_TgSpriteGalleryCols = cols;
         g_TgSpriteMode = TgSpriteMode::Gallery;
         InterlockedExchange(&g_TgSpriteDraws, 0);
