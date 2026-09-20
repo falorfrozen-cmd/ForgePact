@@ -2697,31 +2697,133 @@ live session decides between three candidates:
   half spent. Needs its own recorded decision, a `latched=`/`unlatched=`
   counter pair, and a Known Limitations entry if taken.
 
-**Decision rule, pre-committed so the session's own output selects a route
-rather than reopening the design:** take route C if a candidate field is
-present on at least two rows (with `overCap=0` on each) and reads a
-plausible constant while `destroyTimer` decays. Otherwise, before scoring
-route A, check `speed=` from step 1's `tgprobe talents` line: if it is
-unreadable, re-run `tgprobe talents` up to three times in the same session -
-a reading on any of those attempts is not a `blocked` result, it just means
-the rule proceeds to the ratio check below on that reading. Only if `speed=`
-is still unreadable after the third attempt is route A recorded as
-`blocked` - terminally, not "still retrying" - for every row, since the
-`predictedTotal=` column can never be computed, and it is only that
-terminal `blocked` that lets the rule fall through to route B. Once
-`speed=` has read, compute the `first= / abilityDuration` ratio for each row
-that has both. Route A is confirmed when that ratio is *consistent* (within
-one tick's worth) across at least two rows - a consistent ratio that differs
-from the printed `speed=` is route A holding with a scale factor (a
-different finding to record, per the Counter example above), **not** a
-falsification. Route A is `not observed` - and it is this outcome, not a
-still-retrying `speed=` read, that is the other case letting the rule fall
-through to route B - when the ratio is inconsistent row to row. Falling
-through to route B, whether from a terminal `blocked` (`speed=` never read)
-or from a `not observed` ratio, needs its own recorded decision and a Known
-Limitations entry. Record whichever routes lost, and why - a route that was
-never measured is
-`blocked`, not `not observed`.
+### Decision rule
+
+Definitions first, checked against every cell below. Tolerance is one tick
+throughout - `first=` prints in ticks, so "within one tick" means a
+difference of `1.0` or less.
+
+- **ratio** - a row's `first=` divided by its `abilityDuration=`.
+- **base** - the smallest ratio among the rows that reach the factor test
+  (the rows that pass `AR5`).
+- **factor** - a row's ratio divided by the base; the base row's own factor
+  is `1.0`.
+- **candidate field** (route C) - a scalar present in both the first-seen
+  and last-seen `tgl fields` snapshot of the same appearance, holding the
+  same value in both, that value within one tick of that appearance's
+  `first=`, while `destroyTimer` differs between the two snapshots. Route C
+  ships the field's name, so what counts is the name recurring across rows.
+
+Each of the five tables below is scored first-match-wins: read its rows in
+order and stop at the first one whose condition holds.
+
+**Table 1: route C, per row**
+
+| id | condition | status |
+|---|---|---|
+| CR1 | the row's `tgl fields` dump did not print, or printed with `overCap>0` | blocked |
+| CR2 | the dump printed with `overCap=0` and carries a candidate field | measured |
+| CR3 | the dump printed with `overCap=0` and carries no candidate field | not observed |
+
+CR1 covers a total-carrying field pushed past the 64-scalar cap by some
+other member: that is truncation, not a negative.
+
+**Table 2: route C status**
+
+| id | condition | status |
+|---|---|---|
+| CS1 | at least two rows are `measured`, and at least two of those measured rows name the same field | measured |
+| CS2 | at least one row is `measured`, no two measured rows name the same field, and no row is `blocked` | not observed |
+| CS3 | no row is `measured` and no row is `blocked` | not observed |
+| CS4 | CS1 does not hold and at least one row is `blocked` | blocked |
+
+CS2 is recorded, not discarded: every field a row named goes into a later
+session's shortlist.
+
+**Table 3: route A, per row**
+
+| id | condition | status |
+|---|---|---|
+| AR1 | `abilityDuration=` prints `absent`, `unreadable`, or non-numeric text | blocked |
+| AR2 | `abilityDuration=` prints numeric `0` | not observed |
+| AR3 | `abilityDuration > 0` and no appearance produced a numeric `first=` | blocked |
+| AR4 | `abilityDuration > 0`, a numeric `first=`, but fewer than two appearances recorded | blocked |
+| AR5 | two appearances whose `first=` values differ by more than one tick | not observed |
+| AR6 | two appearances within one tick of each other, factor `<= 1.5` | measured |
+| AR7 | two appearances within one tick of each other, factor `> 1.5` | not observed |
+
+AR1 is the talent-struct read failing outright - no evidence either way.
+AR2 is a real negative: the talent carries no base duration, so route A
+cannot cover that row. AR4 is what happens when the session skips the
+second cast the live procedure now requires. AR7's `1.5` bound is **D-T7**:
+a judgement, not a measurement, about how much of a timed skill's life may
+read as a full bar before the countdown is lying. The shipped fraction
+clamps at `1.0`, so a row with factor `f` shows a full bar for the first
+`1 - 1/f` of its life - a third at `f = 1.5`, a half at `f = 2.0`. `1.5` was
+confirmed by the author as the bound to ship; Counter's only measured
+factor so far, `1.2`, sits comfortably inside it.
+
+**Table 4: route A status**
+
+| id | condition | status |
+|---|---|---|
+| AS1 | at least two rows are `measured`, every one's factor `1.0` | measured |
+| AS2 | at least two rows are `measured`, at least one factor above `1.0` | measured |
+| AS3 | exactly one row is `measured` | measured |
+| AS4 | no row is `measured` and no row is `blocked` | not observed |
+| AS5 | no row is `measured` and at least one row is `blocked` | blocked |
+
+AS2 records each scaled row's factor as its own finding. AS3 covers that
+one confirmed row only, the way this document's own out-of-scope line
+already treats a single measured row as shippable and seven guessed rows as
+not: route A ships a *formula* whose per-row prediction (`abilityDuration`,
+from the talent map, an independent source) is confirmed against `first=`,
+so one confirmed row is real evidence, while route C ships a *field name*
+that the shipped read applies to rows the session never measured, and on a
+single instance "some scalar equals `first=`" cannot be told from
+coincidence among up to 64 scalars - which is why `CS2` stays
+`not observed` rather than `measured` on the same one-row evidence, and the
+two-row threshold for `CS1` is left alone.
+
+**Table 5: selection**
+
+| id | route C status | route A status | selected | what to record |
+|---|---|---|---|---|
+| S1 | measured | measured | route C | the candidate field's name and every row it was measured on |
+| S2 | measured | not observed | route C | the candidate field's name and every row it was measured on |
+| S3 | measured | blocked | route C | the candidate field's name, every row it was measured on, and route A's blocking cause |
+| S4 | not observed | measured | route A | which rows confirmed, and each one's factor |
+| S5 | blocked | measured | route A | which rows confirmed, each one's factor, and route C's blocking cause |
+| S6 | not observed | not observed | route B | its own recorded decision, a `latched=`/`unlatched=` counter pair, and a Known Limitations entry |
+| S7 | not observed | blocked | none - session repeats | which of Table 3 / Table 4's rows recorded `blocked`, and why |
+| S8 | blocked | not observed | none - session repeats | which of Table 1 / Table 2's rows recorded `blocked`, and why |
+| S9 | blocked | blocked | none - session repeats | both routes' blocking causes, so the whole session re-runs |
+
+Route B is selected only when routes C and A were both scored on complete
+evidence and both came back negative. A `blocked` route is an instrument
+failure, and an instrument failure never promotes route B - it ends the
+session with no route selected and names the step to re-run. The route B
+row keeps its existing obligations if taken: its own recorded decision per
+D-T2, a `latched=`/`unlatched=` counter pair, and a Known Limitations
+entry.
+
+Two vocabularies, kept apart: route statuses are `measured` /
+`not observed` / `blocked`; selections are `route C` / `route A` /
+`route B` / `none - session repeats`.
+
+`speed=` is not an input to any table above. The shipped route-A read
+calls `game_get_speed` itself at draw time - the same call the shipped
+Headhunter buff-duration path already makes - so nothing here needs to
+repeat that call to confirm the mechanism; only the `predictedTotal=`
+convenience column is gated on it. Record it on its own line as `measured`
+(with the value) or `blocked` - never `not observed`, since an unread
+builtin is an instrument failure, not an absence - with `fps=` as its
+control: `fps=` reads through `GetBuiltin` while `speed=` uses
+`CallBuiltin`, so `fps=` reading while `speed=` does not localises the
+failure to that one call shape in the probe. If both read unreadable, say
+so and note that the ratio tables still stand, because neither of their
+inputs uses that call. An unreadable `speed=` changes no cell in any table
+above.
 
 ### The look, judged live
 
@@ -2757,21 +2859,27 @@ arithmetic afterwards.
 Run from `plugin_build\build.bat dev`'s `BloodPactPlugin_rel.dll`, one
 session:
 
-1. `tgprobe talents` - paste the `speed=`/`fps=` line and, for each of the
-   seven candidate rows (`tgprobe tgl list` names them), its
+1. `tgprobe talents` - paste the `speed=`/`fps=` line as an instrument
+   reading, not a rule input (see the `speed=` note above), and, for each of
+   the seven candidate rows (`tgprobe tgl list` names them), its
    `abilityDuration=`/`predictedTotal=`.
-2. For each candidate row, cast its plain (non-toggle) form once and run
-   `tgprobe tgl timer` - paste `first=`/`last=`/`min=`/`max=`/`unreadable=`/
-   `atPredicted=`/`draws=`. `atPredicted=` counts draws where the timer read
-   exactly `-1` (the *toggle* rows' predicted-infinite value, existing since
-   session 4) - it is unrelated to step 1's new `predictedTotal=`
-   (`abilityDuration` times the printed `speed=`); do not conflate the two
-   when reading a pasted-back session log later.
-3. For each candidate row, `tgprobe tgl fields [row]` on the same cast -
+2. For each candidate row, cast its plain (non-toggle) form and run
+   `tgprobe tgl timer` - paste the line, with its `appearance=` and
+   `first=`/`last=`/`min=`/`max=`/`unreadable=`/`atPredicted=`/`draws=`.
+   Then cast the same row's plain form a **second** time and run
+   `tgprobe tgl timer` again, pasting that second line too - its
+   `appearance=` must read one higher than the first. The two lines' `first=`
+   values are the two independent measurements Table 3 checks for
+   repeatability (`AR4`/`AR5`). `atPredicted=` counts draws where the timer
+   read exactly `-1` (the *toggle* rows' predicted-infinite value, existing
+   since session 4) - it is unrelated to the ratio the tables compute; do
+   not conflate the two when reading a pasted-back session log later.
+3. For each candidate row, `tgprobe tgl fields [row]` on the second cast -
    paste the full scalar dump, both the first-seen and the last-seen
-   snapshot.
-4. Apply the decision rule above to the session's own output and say which
-   route it selects, and why.
+   snapshot, alongside the `overCap=` value each one carries.
+4. Apply Table 1, then Table 2, then Table 3, then Table 4, then Table 5
+   above, in that order, to the session's own output and say which route is
+   selected, and why.
 5. `tgprobe sprite frac 1.0`, then `tgprobe sprite style soft` over the
    candidate's own hotbar slot (`tgprobe sprite <SpriteName> <talentId>`
    selects the slot, or reuse `tgprobe sprite gold <talentId>` first to
@@ -2798,15 +2906,21 @@ Every cell below is filled from the session's own output, quoted verbatim,
 or one of `measured` / `not observed` / `blocked` - never inferred and never
 left as a guess.
 
-| abilityId | speed=/fps= | abilityDuration=/predictedTotal= | timer first= | first=/abilityDuration ratio | route C field | status |
-|---|---|---|---|---|---|---|
-| soulSpurn | | | | | | |
-| lunarOrbit | | | | | | |
-| crematus | | | | | | |
-| counter | | | | | | |
-| submergedKnives | | | | | | |
-| maelstromOfFrost | | | | | | |
-| blender | | | | | | |
+Three session-level lines, filled before the per-row table:
+
+- `speed=`/`fps=`:
+- route C status / route A status:
+- selected route:
+
+| abilityId | abilityDuration= | first= #1 | first= #2 | repeatable | ratio | factor | route A row status | overCap= | route C candidate field | route C row status |
+|---|---|---|---|---|---|---|---|---|---|---|
+| soulSpurn | | | | | | | | | | |
+| lunarOrbit | | | | | | | | | | |
+| crematus | | | | | | | | | | |
+| counter | | | | | | | | | | |
+| submergedKnives | | | | | | | | | | |
+| maelstromOfFrost | | | | | | | | | | |
+| blender | | | | | | | | | | |
 
 Look verdicts, one row per candidate:
 

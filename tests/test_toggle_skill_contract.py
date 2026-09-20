@@ -126,6 +126,48 @@ def macro_body(source: str, header: str) -> str:
     return "\n".join(lines[1:])
 
 
+def collapse(text: str) -> str:
+    """Whitespace-normalised text, for asserting a pinned sentence that this
+    hand-wrapped doc may split across lines."""
+    return " ".join(text.split())
+
+
+SEPARATOR_ROW = re.compile(r"^\|[\s:|-]+\|$")
+
+
+def parse_doc_table(doc: str, caption: str):
+    """Rows of the markdown table immediately under a `**caption**` line.
+
+    Each row is a list of trimmed cell strings, the id in `row[0]`. Raises
+    `ValueError` if the caption is not immediately followed by a header row
+    and a `|---|...|` separator row - a parser that instead scanned ahead
+    for the next line starting with `|` would keep "matching" a document
+    whose table structure had silently broken (AGENTS.md "Prove the
+    Instrument Before Trusting a Negative Result").
+    """
+    doc = doc.replace("\r\n", "\n")
+    marker = f"**{caption}**"
+    start = doc.index(marker) + len(marker)
+    lines = doc[start:].splitlines()
+    idx = 0
+    while idx < len(lines) and lines[idx].strip() == "":
+        idx += 1
+    if idx >= len(lines) or not lines[idx].strip().startswith("|"):
+        raise ValueError(f"no header row found after caption {caption!r}")
+    idx += 1
+    if idx >= len(lines) or not SEPARATOR_ROW.match(lines[idx].strip()):
+        raise ValueError(f"no separator row found after caption {caption!r}'s header")
+    idx += 1
+    rows = []
+    while idx < len(lines) and lines[idx].strip().startswith("|"):
+        cells = [c.strip() for c in lines[idx].strip().strip("|").split("|")]
+        rows.append(cells)
+        idx += 1
+    if not rows:
+        raise ValueError(f"no data rows found under caption {caption!r}")
+    return rows
+
+
 class ToggleProbeContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -2462,6 +2504,119 @@ class SkillTimerProbeContractTests(unittest.TestCase):
         # the rest of `tgprobe talents`, so it is covered by the same guard.
         self.assertIn("TgProbeTalentsCommand", self.block)
         self.assertNotIn("TgProbeTalentsCommand", self.stripped)
+
+    # ---- the route-A decision rule rewrite (exhaustive state tables) -------
+
+    def _decision_rule_section(self):
+        doc = self.research_doc
+        return doc[doc.index("### Decision rule"):doc.index("### The look, judged live")]
+
+    def test_table_parser_rejects_a_malformed_table(self):
+        # Negative control for parse_doc_table itself: a caption followed by
+        # a header-shaped line but no real `|---|` separator must not be
+        # silently accepted as a table.
+        synthetic = (
+            "**Table X: synthetic**\n\n"
+            "| id | condition | status |\n"
+            "| CR1 | bogus row with no separator above it | blocked |\n"
+        )
+        with self.assertRaises(ValueError):
+            parse_doc_table(synthetic, "Table X: synthetic")
+
+    def test_decision_rule_tables_carry_exactly_the_declared_ids_once_each(self):
+        # AC6: the five tables, located by caption, carry exactly CR1-CR3,
+        # CS1-CS4, AR1-AR7, AS1-AS5 and S1-S9, each id exactly once.
+        section = self._decision_rule_section()
+        expected = {
+            "Table 1: route C, per row": [f"CR{n}" for n in range(1, 4)],
+            "Table 2: route C status": [f"CS{n}" for n in range(1, 5)],
+            "Table 3: route A, per row": [f"AR{n}" for n in range(1, 8)],
+            "Table 4: route A status": [f"AS{n}" for n in range(1, 6)],
+            "Table 5: selection": [f"S{n}" for n in range(1, 10)],
+        }
+        all_ids = []
+        for caption, ids in expected.items():
+            rows = parse_doc_table(section, caption)
+            actual_ids = [row[0] for row in rows]
+            self.assertEqual(sorted(actual_ids), sorted(ids), caption)
+            self.assertEqual(len(actual_ids), len(set(actual_ids)), caption)
+            all_ids.extend(actual_ids)
+        self.assertEqual(len(all_ids), len(set(all_ids)), "an id is reused across tables")
+
+    def test_selection_table_covers_every_status_pair_exactly_once(self):
+        # AC7: the nine rows of Table 5 are the nine ordered pairs of
+        # {measured, not observed, blocked} x itself, each exactly once.
+        section = self._decision_rule_section()
+        rows = parse_doc_table(section, "Table 5: selection")
+        statuses = ("measured", "not observed", "blocked")
+        expected_pairs = sorted((c, a) for c in statuses for a in statuses)
+        actual_pairs = sorted((row[1], row[2]) for row in rows)
+        self.assertEqual(actual_pairs, expected_pairs)
+
+    def test_every_status_and_selection_cell_is_from_the_declared_vocabulary(self):
+        # AC8: every route-status cell is measured/not observed/blocked, and
+        # every selected-route cell is route C/route A/route B/none - session
+        # repeats.
+        section = self._decision_rule_section()
+        statuses = {"measured", "not observed", "blocked"}
+        selections = {"route C", "route A", "route B", "none - session repeats"}
+        for caption in ("Table 1: route C, per row", "Table 2: route C status",
+                        "Table 3: route A, per row", "Table 4: route A status"):
+            for row in parse_doc_table(section, caption):
+                self.assertIn(row[-1], statuses, (caption, row))
+        for row in parse_doc_table(section, "Table 5: selection"):
+            self.assertIn(row[1], statuses, row)
+            self.assertIn(row[2], statuses, row)
+            self.assertIn(row[3], selections, row)
+
+    def test_blocked_falls_through_to_none_and_route_b_is_the_double_not_observed_row(self):
+        # AC9: every row with a `blocked` status cell and no `measured`
+        # status cell selects `none - session repeats`; exactly one row
+        # selects `route B`, and it is the row where both status cells read
+        # `not observed`.
+        section = self._decision_rule_section()
+        rows = parse_doc_table(section, "Table 5: selection")
+        route_b_pairs = []
+        for row_id, c_status, a_status, selected, _record in rows:
+            if "blocked" in (c_status, a_status) and "measured" not in (c_status, a_status):
+                self.assertEqual(selected, "none - session repeats", row_id)
+            if selected == "route B":
+                route_b_pairs.append((c_status, a_status))
+        self.assertEqual(route_b_pairs, [("not observed", "not observed")])
+
+    def test_speed_is_pinned_as_a_non_input_and_absent_from_every_table_cell(self):
+        # AC10: the "An unreadable speed=..." sentence is pinned verbatim
+        # (whitespace-normalised, since this doc hand-wraps prose), and the
+        # `speed=` token appears in no cell of any of the five tables.
+        section = self._decision_rule_section()
+        self.assertIn(
+            "An unreadable `speed=` changes no cell in any table above.",
+            collapse(section),
+        )
+        for caption in ("Table 1: route C, per row", "Table 2: route C status",
+                        "Table 3: route A, per row", "Table 4: route A status",
+                        "Table 5: selection"):
+            for row in parse_doc_table(section, caption):
+                for cell in row:
+                    self.assertNotIn("speed=", cell, (caption, row))
+
+    def test_live_procedure_step_2_and_results_header_carry_the_new_inputs(self):
+        # AC11: step 2 names a second cast and the `appearance=` readout,
+        # and the Results per-row header names the new columns the rule
+        # consumes.
+        doc = self.research_doc
+        issue_section = doc[doc.index("## Issue #55"):]
+        procedure = issue_section[issue_section.index("### Live procedure"):issue_section.index("### Results")]
+        step2 = procedure[procedure.index("\n2."):procedure.index("\n3.")]
+        self.assertIn("second", step2)
+        self.assertIn("appearance=", step2)
+        results = issue_section[issue_section.index("### Results"):]
+        header_line = next(
+            line for line in results.splitlines() if line.strip().startswith("| abilityId")
+        )
+        for token in ("first= #1", "first= #2", "ratio", "factor", "overCap=",
+                      "route A row status", "route C row status"):
+            self.assertIn(token, header_line, token)
 
 
 if __name__ == "__main__":
