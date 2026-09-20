@@ -14,12 +14,18 @@ panel key `mod_toggle_indicator`. Co-op is inferred, not measured against a
 second real player, and not a shipping concern (ForgePact is offline-only;
 see the hub guide's Known Limitations).
 
-Status (2026-09-19): **Track A (re-cast guard) is built, off by default, and
-awaits its live session.** Q2 no longer blocks it: the guard refuses the
-double-cast proc's `TalentUseClass` re-cast of Soul Spurn by caller identity,
-without reading the toggle's state (`## Decision` → `### Track A design
-(D-N1)`). `toggleguard 1|0|stat`, panel key `mod_toggle_guard`. Session 5
-(`## Live procedure` → `### Session 5`) decides whether it ships.
+Status (2026-09-19, updated 2026-09-20): **Track A (re-cast guard) is built,
+off by default, and has had its live session.** Q2 no longer blocks it: the
+guard refuses the double-cast proc's `TalentUseClass` re-cast of Soul Spurn by
+caller identity, without reading the toggle's state (`## Decision` →
+`### Track A design (D-N1)`). `toggleguard 1|0|stat`, panel key
+`mod_toggle_guard`. Session 5's rerun measured it on a research build
+(`## Results` → `### Session 5 (rerun, 2026-09-20, White Mage only)`:
+`refused=9 procSeen=9 passed=61`, the refused call logged, the toggle always
+ending as pressed) and session 7 confirmed it in the ship build — for the
+Soul Spurn path. The four rows phase S added are covered by construction, by
+the same table and the same runtime-resolved ids, **not** by an observed
+refusal each.
 
 Status (2026-09-19, later): **the generalisation to every toggle skill is in
 research.** The static search found six more candidate toggle skills beside
@@ -1667,6 +1673,40 @@ exactly — the sampler control passes for this session.
 | S4 | measured | `tgprobe show`, taken after the OFF press (`.claude/workorders/forgepact-toggle-indicator-session4.log` 122-124, "S4: spurn + show after OFF press"), read: `TalentUse mode=native calls=2 lastFrame=13791 lastGap=4683`; `TalentsWhiteMage mode=native calls=2 lastFrame=13810 lastGap=4683`. `tgprobe spurn: frame=15840 ... n=0 mine=0 others=0 ... state=off samples=14306 on=4683 off=9623 unreadable=0 maxN=1 transitions=2 lastTransitionFrame=13810 markedOn=4683 markedOff=9623`. `offlag:` = `lastTransitionFrame` (`13810`) minus the `TalentUse` press `lastFrame` (`13791`) = **19 frames**; the `TalentsWhiteMage` frame (`13810`) sits beside it, equal to `lastTransitionFrame` itself (0 frames after the cast resolves). |
 | S5 | measured | Tester respecced Purgatory out, cast Soul Spurn once, waited ≥3 s. `tgprobe spurn: frame=21450 ... n=0 mine=0 others=0 ... state=off samples=19916 on=4829 off=15087 unreadable=0 maxN=1 transitions=4 lastTransitionFrame=19802 markedOn=4683 markedOff=15233`. `tgprobe spurn fields: appearance=2` first: `frame=19656 isMyClient=bool:true playerNumber=real:1.000000 targetNumber=real:1.000000 purgatory=real:0.000000 purgatoryTimer=real:14.400000 destroyTimer=real:144.000000`; last: `frame=19801 isMyClient=bool:true ... purgatory=real:0.000000 purgatoryTimer=real:14.400000 destroyTimer=real:-0.737424`. The new appearance's `purgatory` reads `0` (numeric, ≤ 0) in both "first" and "last"; `on=` rose `4683`→`4829` (+146) across this row while `markedOn=` stayed at `4683` — exactly the case the row's gate rule calls `flash: purgatory`. |
 
+### Session 5 (rerun, 2026-09-20, White Mage only)
+
+The re-cast guard's own live session, run on the research DLL at `a149030`:
+White Mage with Soul Spurn + Purgatory + Healing Zone on the hotbar and
+double-cast gear equipped, in town. The proc is chance-based, so "how many
+procs happened" is not something the session controls — every row below reads
+what the counters did, never what was arranged to happen. `toggleguard 1` was
+sent **before** `tgprobe hook`, per the ordering rule in `## Instrument`, and
+no `citrace` command was run. Full verbatim output:
+`.claude/workorders/forgepact-toggle-timer-border-session5b.log` (a hub
+workorder artefact, not part of this submodule and not in its history).
+
+| Row | Status | Evidence |
+|---|---|---|
+| V0 | measured | Instrument control first, before anything about the guard: `CheckPlayerInteraction(control) calls=4800` rose to `calls=89040` over the session, so the probe was counting throughout. Three Healing Zone casts took `TalentUseClass` from `0` to `6` through the guard hook's own entry note (`passed=6`, two calls per cast) — the hook is on the path the game actually uses for a cast, measured rather than assumed. |
+| V1 | measured | `HOOK INSTALLED on TalentUseClass`; `toggleguard stat` read `hook=installed` (the native detour, not the table-only fallback); `tgprobe show` read `TalentUseClass mode=via HookTalentUseClass (native)`, which is the probe counting through the guard's hook rather than installing a second one. |
+| V2 | blocked | The guard-off baseline cannot be measured this way, and the reason is structural: with `enabled=off` the hook takes its off fast path **before** the caller check, so no counter moves. Across 13 presses `passed` stayed at `6` and `procSeen` at `0`, while the log shows a real proc inside that same window (`NetworkSendClientTalentUse … self=Universal_Double_Cast_obj#5318 … a1=real:240`). The driver first read that pair as the hook being blind to procs; it is not, and the correction is kept here deliberately — a "0 calls" reading against an instrument that returns early measures the instrument, not the game (repo `AGENTS.md`, "Prove the Instrument Before Trusting a Negative Result"). |
+| V3 | measured | Guard on, 8 presses: `refused=2 passed=17 procSeen=2 selfUnreadable=0 objUnresolved=0`, with the refused call itself logged — `tgprobe TalentUseClass #2 frame=49876 self=Universal_Double_Cast_obj#5318@269227 … a0=real:240.000000`. Tester, by eye: the toggle always ended in the state they pressed, and no error appeared. **This is the positive control for D-N1's premise on this build**: the double-cast proc's re-cast really does arrive at `TalentUseClass` with the double-cast object as `self` and Soul Spurn's id as `a0`, which is the whole basis for refusing by caller instead of by state. |
+| V4 | not observed | No Healing Zone proc occurred during the session, so a proc of a non-guarded talent was never presented to the guard. Not observed, not "does not happen". |
+| V5 | measured | Three ON/OFF cycles: `refused` `2`→`9`, `procSeen` `2`→`9`, `passed` `17`→`59`; normal by eye throughout. The row's written expectation was "refused unchanged", which assumed no proc would fire during the cycles — seven did, so the expectation was wrong about the session rather than the guard being wrong. Recorded as measured with that caveat rather than silently re-scored. |
+| V6 | measured | After a zone change and one cast: `passed` `59`→`61`, `refused` unchanged at `9`. The guard survives a room change and does not start refusing the player's own casts on the other side of one. |
+| V7 | blocked | `lastProcRet=` read `n/a` throughout. It is recorded on the path a passed proc takes with the guard **off** — exactly the path V2 could not measure — so this row is blocked by the same off-fast-path property, not by anything failing. |
+| V8 | measured (session 6) | The Purgatory sub-talent slot and the map index were measured in session 6, not here: `s12` at `global.subTalentMap` index 1 (`## Decision` → `### After session 6`). |
+| V9 | measured (session 7) | The ship-build half belongs to the player binary and is recorded in `### Session 7 — ship-build confirmation (phase S, 2026-09-20)`. |
+
+**What this session establishes, and what it does not.** It establishes that
+the guard installs natively, sees the proc's `TalentUseClass` call, refuses it
+with the toggle ending as pressed, and does none of that to the player's own
+casts — on this build, for Soul Spurn, with the sub-talent allocated. It does
+not establish anything about the four rows phase S added (their refusals have
+never been observed live), about a proc of a non-guarded talent (V4), or about
+the guard-off baseline and the native proc's return value (V2 and V7, both
+blocked by the off fast path).
+
 ### Ship-build confirmation (2026-09-18)
 
 Follow-up from the indicator's reviews: the shipped player build
@@ -2598,4 +2638,12 @@ instance (the refusal alone does the job).
 (`guard_off/*`, `guard_on/*` in `run.log`); `ToggleGuardContractTests` in
 `tests/test_toggle_skill_contract.py` pins the command, the install gate, the
 hook's order and what it must never contain, the research row and the panel.
-Live proof is session 5 (`## Live procedure` → `### Session 5`).
+Live proof: session 5's rerun on a research build (`## Results` →
+`### Session 5 (rerun, 2026-09-20, White Mage only)`) and session 7 on the
+ship build, both for the Soul Spurn path — `refused=9 procSeen=9 passed=61`
+with the refused `TalentUseClass` call logged, the toggle always ending in the
+state pressed, and the tester's ship-build verdict "guard refused correctly".
+The other four rows are guarded by the same code and the same runtime-resolved
+ids, but no refusal has been observed live on any of them; V2 (guard-off
+baseline) and V7 (`lastProcRet`) stay blocked by the off fast path, and V4 (a
+non-guarded talent's proc) was not observed.
