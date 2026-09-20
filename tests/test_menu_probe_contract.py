@@ -1,0 +1,341 @@
+"""Contract tests for `menuprobe`, the character-select research instrument.
+
+Whether anything inside this process can drive the game's own main menu as
+far as a loaded character is unmeasured (docs/character-select-research.md,
+the live session pending). This stage ships nothing a player can reach: a
+research-build verb, and the document the session fills in.
+
+These tests pin the three properties that would otherwise rot quietly.
+
+1. **The verb never reaches a player build.** `menuprobe` performs game
+   events and calls game scripts with a hand-picked instance as self. That is
+   a research surface, and the mechanical proof it stays one is that the
+   literal disappears when the research blocks are stripped.
+2. **One call per command, behind a literal word, with state printed either
+   side of it.** A loop around `event_perform` or a second call shape is how
+   a probe stops being a measurement, and a call that prints only
+   success/failure flattens "refused", "ran and did nothing" and "faulted"
+   into one outcome - `AGENTS.md`, "Prove the Instrument Before Trusting a
+   Negative Result".
+3. **Names, never addresses.** Every instance is reached through
+   `asset_get_index`, `instance_find` and `HhResolveInstance`; nothing in the
+   new code may hook anything or compute a target.
+
+Modelled on test_prospect_window_contract.py, which pins the same three
+properties for `prospectprobe` - the precedent this verb follows down to the
+dispatch line, because RunCommand's else-if chain is at MSVC's nesting limit.
+"""
+import importlib.util
+import re
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+PLUGIN = ROOT / "plugin" / "ModuleMain.cpp"
+DOC = ROOT / "docs" / "character-select-research.md"
+PANEL = ROOT / "src" / "forgepact.py"
+
+# One definition of "what the player build compiles", shared with the release
+# contract rather than copied, so the two can never disagree about it.
+_spec = importlib.util.spec_from_file_location(
+    "_release_hook_contract", ROOT / "tests" / "test_release_hook_contract.py")
+_release = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_release)
+strip_research_blocks = _release.strip_research_blocks
+function_body = _release.function_body
+strip_comments = _release.strip_comments
+
+#: The three steps by which a name becomes an instance a call can take as
+#: self. Asserted as a set over the instrument's helpers rather than per
+#: function, because which helper does which step is an implementation
+#: detail and "one of them resolves an address instead" is not.
+RESOLUTION_STEPS = ("asset_get_index", "instance_find", "HhResolveInstance")
+
+#: Ways of reaching game code that this instrument must not contain. `Rva`
+#: and `GetModuleHandle` are the hand-resolved-address shape `AGENTS.md`
+#: forbids outright; the two hook installers are how a probe turns into a
+#: mod without anyone deciding to.
+FORBIDDEN = ("Rva", "GetModuleHandle", "MmCreateHook", "HookOneScript")
+
+#: Every heading the research document must carry, in the order a reader
+#: needs them: what was searched, what is being compared, what does the
+#: measuring, how, what came back, what was already known to be negative,
+#: and the two lines the shipping work reads.
+DOC_HEADINGS = (
+    "## Static search",
+    "## Candidates and controls",
+    "## Instrument",
+    "## Live procedure",
+    "## Results",
+    "## Negative results, sourced",
+    "## Decision",
+)
+
+#: Every name `hs-game-sdk` already has for this path. The document's static
+#: search has to name all of them, because the expensive mistake here is a
+#: later session re-deriving a list that was already written down.
+SDK_NAMES = (
+    "Main_Menu_rm", "Char_Select_rm", "Login_rm", "Game_Start_rm",
+    "Town_01_rm",
+    "UiAMainMenuLocal", "UiAMainMenuOnline", "UiAMainMenuOptions",
+    "UiAMainMenuExit", "UiAChooseSaveSlot", "UiAChooseSaveSlotPage",
+    "UiACharacterPlay", "UiACreateCharacter", "UiACharacterDelete",
+    "UiACharacterDeleteConfirm", "LoadSlot", "GameStart",
+    "Menu_Controller_obj", "Profile_Manager_obj", "Select_Parent_obj",
+    "Select_Random_obj", "Load_Inventory_Char_Select_obj",
+    "Save_Character_obj", "Save_Slot_Shop_obj", "UI_Button_obj",
+)
+
+#: The five existing verbs that read as though they might already do this.
+#: Each is something else, and the document says which - so the next reader
+#: does not spend a session finding that out again.
+REJECTED_VERBS = ("forceslot", "forcelogin", "puppetinput", "roomprobe",
+                  "coopstart")
+
+
+def section(doc, heading):
+    """From a line that is exactly `heading` to the next `## ` heading."""
+    doc = doc.replace("\r\n", "\n")
+    start = doc.index("\n" + heading + "\n") + 1
+    following = doc.find("\n## ", start + len(heading))
+    return doc[start:] if following < 0 else doc[start:following]
+
+
+class MenuProbeContractTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.plugin = PLUGIN.read_text(encoding="utf-8")
+        cls.doc = DOC.read_text(encoding="utf-8")
+        cls.handler = function_body(cls.plugin, "static bool HandleMenuProbeCommand(")
+        cls.command = function_body(cls.plugin, "static void MpCommand(")
+        cls.event = function_body(cls.plugin, "static void MpEvent(")
+        cls.script = function_body(cls.plugin, "static void MpScript(")
+        cls.listing = function_body(cls.plugin, "static void MpList(")
+        cls.resolve = function_body(cls.plugin, "static bool MpResolve(")
+
+    def helpers(self):
+        """Every function the instrument is made of, as one blob."""
+        return "\n".join([self.handler, self.command, self.event, self.script,
+                          self.listing, self.resolve,
+                          function_body(self.plugin, "static std::string MpWhere("),
+                          function_body(self.plugin, "static std::string MpVar("),
+                          function_body(self.plugin, "static std::string MpRoom("),
+                          function_body(self.plugin, "static RValue MpArg("),
+                          function_body(self.plugin, "static void MpUsage(")])
+
+    # ---- the instrument never reaches a player ------------------------------
+
+    def test_menuprobe_is_research_build_only(self):
+        shipped = strip_research_blocks(self.plugin)
+        self.assertIn("menuprobe", self.plugin)
+        self.assertNotIn("menuprobe", shipped)
+        self.assertNotIn("MpCommand(", shipped)
+        self.assertNotIn("MpEvent(", shipped)
+        self.assertNotIn("MpScript(", shipped)
+
+    def test_menuprobe_absent_from_player_commands(self):
+        start = self.plugin.index("kPlayerCommands = {")
+        block = self.plugin[start:self.plugin.index("};", start)]
+        self.assertNotIn("menuprobe", block)
+        self.assertNotIn("menu", block)
+
+    def test_nothing_player_visible_exists_yet(self):
+        # Research stage: no panel row, no toggle, no shipped command that
+        # selects a character. That belongs to the follow-on workorder.
+        panel = PANEL.read_text(encoding="utf-8")
+        self.assertNotIn("menuprobe", panel)
+        self.assertNotIn("charselect", panel)
+        self.assertNotIn("charselect", self.plugin)
+
+    def test_menuprobe_dispatched_from_handle_menu_probe_command(self):
+        # RunCommand's else-if chain is at MSVC's nesting limit (C1061), so
+        # the verb lives in its own handler called straight after the other
+        # two, and the literal appears exactly once in the whole file.
+        run = function_body(self.plugin, "static void RunCommand(const std::string& line)")
+        self.assertIn(
+            "if (HandleHeadhunterCommand(lc, rest)) return;\n"
+            "    if (HandleProspectCommand(lc, rest)) return;\n"
+            "    if (HandleMenuProbeCommand(lc, rest)) return;",
+            run.replace("\r\n", "\n"))
+        self.assertIn('lc == "menuprobe"', self.handler)
+        self.assertEqual(self.plugin.count('"menuprobe"'), 1)
+        self.assertNotIn('"menuprobe"', run)
+
+    def test_no_new_top_level_else_if_in_run_command(self):
+        """The chain's length is the thing C1061 is about.
+
+        Counted against the tree as it was before this change (`f5a3515`),
+        so adding a verb the wrong way fails here rather than at the
+        compiler, which reports the limit hundreds of lines from the cause.
+        """
+        run = strip_comments(function_body(
+            self.plugin, "static void RunCommand(const std::string& line)"))
+        self.assertEqual(len(re.findall(r"(?m)^\s{4}\}\s*else if \(", run)), 121)
+
+    def test_nothing_reaches_the_frame_callback(self):
+        frame = function_body(self.plugin, "void FrameCallback(FWFrame& FrameContext)")
+        self.assertNotIn("menuprobe", frame)
+        self.assertEqual(re.findall(r"\bMp[A-Z]\w*", frame), [],
+                         "a probe that runs every frame is a mod, not a probe")
+
+    # ---- one call per command, behind the literal word ----------------------
+
+    def test_event_and_script_check_confirm_before_any_call(self):
+        for name, body, call in (("MpEvent", self.event, "CallBuiltinEx("),
+                                 ("MpScript", self.script, "CallGameScriptEx(")):
+            with self.subTest(function=name):
+                stripped = strip_comments(body)
+                gate = stripped.index('Lower(token) != "confirm"')
+                self.assertLess(gate, stripped.index(call),
+                                f"{name} reaches the game before it checks confirm")
+                # The refusal has to be a usage line, not a bare return: a
+                # command that fires nothing and says nothing reads exactly
+                # like a command that fired and did nothing.
+                refusal = stripped[gate:stripped.index("}", gate)]
+                self.assertIn("Usage ->", refusal)
+                self.assertIn("return;", refusal)
+
+    def test_list_requires_no_token(self):
+        self.assertNotIn("confirm", strip_comments(self.listing))
+        self.assertIn('sub == "list"', self.command)
+        # ...and the read-only subcommand is dispatched without one.
+        branch = self.command[self.command.index('sub == "list"'):]
+        self.assertNotIn("confirm", branch[:branch.index("\n")])
+
+    def test_each_calling_function_makes_exactly_one_call_and_never_loops(self):
+        for name, body, call in (("MpEvent", self.event, "CallBuiltinEx("),
+                                 ("MpScript", self.script, "CallGameScriptEx(")):
+            with self.subTest(function=name):
+                stripped = strip_comments(body)
+                self.assertEqual(stripped.count(call), 1,
+                                 f"{name} must reach the game exactly once")
+                self.assertEqual(stripped.count("CallGameScript("), 0)
+                for keyword in ("for (", "while ("):
+                    self.assertNotIn(keyword, stripped,
+                                     f"{name} encloses its one call in a loop")
+
+    def test_the_before_and_after_lines_name_what_moved(self):
+        for name, body in (("MpEvent", self.event), ("MpScript", self.script)):
+            with self.subTest(function=name):
+                self.assertIn("before:", body)
+                self.assertIn("after:", body)
+                self.assertEqual(body.count("MpRoom()"), 2,
+                                 "the room index is printed before and after")
+                self.assertEqual(body.count("MpWhere("), 2)
+                self.assertIn("EXCEPTION", body,
+                              "a fault must print as a fault, not as silence")
+        where = function_body(self.plugin, "static std::string MpWhere(")
+        for field in ("nth=", '"id"', '"x"', '"y"'):
+            self.assertIn(field, where)
+        self.assertIn("objName", where, "the object is named on the line")
+        self.assertIn("Describe(res)", self.event)
+        self.assertIn("Describe(res)", self.script)
+
+    # ---- names, never addresses ---------------------------------------------
+
+    def test_instances_are_resolved_by_name_in_three_steps(self):
+        helpers = self.helpers()
+        for step in RESOLUTION_STEPS:
+            self.assertIn(step, helpers, f"{step} is how a name becomes an instance")
+        self.assertIn("HhResolveInstance", self.resolve,
+                      "the handle must be proven live before it is used as self")
+
+    def test_the_instrument_hooks_nothing_and_resolves_no_address(self):
+        helpers = self.helpers()
+        for token in FORBIDDEN:
+            self.assertNotIn(token, helpers,
+                             f"{token} has no business in a read-and-one-call probe")
+
+    # ---- the research document ----------------------------------------------
+
+    def test_the_document_carries_every_heading(self):
+        text = self.doc.replace("\r\n", "\n")
+        found = [heading for heading in DOC_HEADINGS
+                 if "\n" + heading + "\n" in text]
+        self.assertEqual(found, list(DOC_HEADINGS),
+                         "a missing or renamed heading; the shipping "
+                         "workorder reads this document by section")
+
+    def test_the_document_is_crlf_like_every_other_forgepact_doc(self):
+        raw = DOC.read_bytes()
+        self.assertGreater(raw.count(b"\r\n"), 0)
+        self.assertEqual(raw.count(b"\n") - raw.count(b"\r\n"), 0)
+
+    def test_the_static_search_names_every_sdk_symbol(self):
+        search = section(self.doc, "## Static search")
+        missing = [name for name in SDK_NAMES if name not in search]
+        self.assertEqual(missing, [],
+                         "the static search must name what the SDK already "
+                         "has, or the next session re-derives it")
+
+    def test_the_static_search_says_what_the_five_near_misses_actually_are(self):
+        search = section(self.doc, "## Static search")
+        for verb in REJECTED_VERBS:
+            self.assertIn(verb, search,
+                          f"{verb} reads as though it might already do this; "
+                          "the document has to say what it really is")
+
+    def test_the_decision_lines_exist_and_are_still_pending(self):
+        """Both lines are present and both say `pending`.
+
+        Present, because the follow-on workorder reads them from this file by
+        exact prefix. Still `pending`, because the live session has not run -
+        and this assertion is what has to be *changed*, deliberately, when it
+        does. An invented finding would otherwise be indistinguishable from a
+        measured one.
+        """
+        text = self.doc.replace("\r\n", "\n")
+        self.assertIn("\nfinding: pending\n", text)
+        self.assertIn("\nshipRoute: pending\n", text)
+        self.assertEqual(len(re.findall(r"(?m)^finding: ", text)), 1)
+        self.assertEqual(len(re.findall(r"(?m)^shipRoute: ", text)), 1)
+
+    def test_every_candidate_is_recorded_as_not_observed_until_measured(self):
+        decision = section(self.doc, "## Decision")
+        for candidate in ("a-sendinput", "a-postmessage", "bc-event",
+                          "bc-script"):
+            self.assertIn(candidate, decision)
+        bullets = [line for line in decision.split("\n")
+                   if line.startswith("* `") and "not observed" in line]
+        self.assertEqual(len(bullets), 5,
+                         "one line per candidate, and none of them may claim "
+                         "a mechanism 'does not work' before it was measured")
+        for overclaim in ("does not happen", "never fires", "impossible"):
+            self.assertNotIn(overclaim, self.doc,
+                             f"'{overclaim}' is a claim no unrun session "
+                             "supports; negatives are 'not observed'")
+
+    def test_the_results_table_has_a_row_per_live_step(self):
+        results = section(self.doc, "## Results")
+        for step in range(1, 23):
+            self.assertIn("| C-1.%d |" % step, results,
+                          "every step of the live procedure needs somewhere "
+                          "to put its reply, written before the session")
+
+    def test_the_document_states_the_enumeration_control(self):
+        """(b) and (c) can only be measured if the menu's instances enumerate.
+
+        Recording that as a control, in advance, is what stops an empty
+        `menuprobe list` being written up later as "the events do nothing".
+        """
+        instrument = section(self.doc, "## Instrument")
+        self.assertIn("enumeration control", instrument)
+        candidates = section(self.doc, "## Candidates and controls")
+        self.assertIn("positive control", candidates)
+        for candidate in ("a-sendinput", "a-postmessage", "bc-event",
+                          "bc-script"):
+            self.assertIn(candidate, candidates)
+
+    def test_the_document_sources_each_negative_it_relies_on(self):
+        negatives = section(self.doc, "## Negative results, sourced")
+        for source in ("pet-quest-collector-c-research.md",
+                       "pet-quest-collector-b4-research.md",
+                       "pet-quest-collector-plan.md"):
+            self.assertIn(source, negatives,
+                          "a negative without its source is read later as "
+                          "settled fact by whoever finds it")
+        self.assertIn("not observed", negatives)
+
+
+if __name__ == "__main__":
+    unittest.main()

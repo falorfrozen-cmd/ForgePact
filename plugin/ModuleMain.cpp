@@ -16423,6 +16423,267 @@ static bool HandleProspectCommand(const std::string& lc, const std::string& rest
     return false;
 }
 
+// ---- the character-select research instrument ----------------------------
+// Everything from here to the matching #endif is research-build only, this
+// comment included: the verb's own name must vanish from a player build, and
+// a header comment left outside the guard would keep it in the binary and in
+// anything that greps it.
+#ifndef FORGEPACT_RELEASE
+// Research instrument for docs/character-select-research.md, candidates (b)
+// and (c). `hs_launch` leaves the game at its main menu, and most gameplay
+// commands do nothing until a character is loaded, so today a human has to
+// click main menu -> Local -> save slot -> Play. Whether anything inside the
+// process can do that instead is unmeasured.
+//
+// Three subcommands, and the split is the whole design:
+//
+// * `list` only reads, so it is also the enumeration **control**. Menu-room
+//   instances have never been shown to be enumerable on this runner -
+//   Profile_Manager_obj was only ever read in-world - so a `list` that finds
+//   no buttons means (b) and (c) were never measured, not that they failed.
+// * `event` and `script` each make exactly **one** call, behind the literal
+//   word `confirm`, printing the instance's own position and the room index
+//   either side of it. That is what separates "the call was refused", "the
+//   call ran and changed nothing" and "the call faulted" - three outcomes a
+//   single success/failure line would flatten into one.
+//
+// Nothing here hooks, resolves an address, loops around a call, or runs from
+// FrameCallback. Every instance is reached by name through asset_get_index ->
+// instance_number -> instance_find -> HhResolveInstance, the same four steps
+// `citrace dumpobj` uses, and a failure prints which one it was.
+
+// The room, read the way `roomprobe` line [3] reads it - the one route
+// measured to work on this runner (2026-09-15). An unreadable room prints
+// FAILED rather than a number: a sentinel that compares equal to a real room
+// is the bug AGENTS.md names by name.
+static std::string MpRoom()
+{
+    RValue v;
+    if (!AurieSuccess(g_Yytk->GetBuiltin("room", nullptr, NULL_INDEX, v))) return "FAILED";
+    return Describe(v);
+}
+
+// One variable of one instance, as text, or "" when the instance does not
+// carry it. Read through the `instance_find` handle rather than the resolved
+// CInstance*, because `variable_instance_exists` is what answers "is this
+// name here at all", and it takes the handle.
+static std::string MpVar(const RValue& handle, const char* name)
+{
+    try {
+        if (!g_Yytk->CallBuiltin("variable_instance_exists", { handle, RValue(std::string(name)) }).ToBoolean())
+            return "";
+        return Describe(g_Yytk->CallBuiltin("variable_instance_get", { handle, RValue(std::string(name)) }));
+    } catch (...) { return "<read-failed>"; }
+}
+
+// Where an instance is, without the room - the callers print the room either
+// side of their one call, and an instance that the call destroyed still has
+// to produce a line rather than an exception.
+static std::string MpWhere(const std::string& objName, int nth, const RValue& handle)
+{
+    return objName + " nth=" + std::to_string(nth)
+        + " id=" + MpVar(handle, "id")
+        + " x=" + MpVar(handle, "x")
+        + " y=" + MpVar(handle, "y");
+}
+
+// asset_get_index -> instance_number -> instance_find -> HhResolveInstance.
+// `handle` comes back as whatever the runner returns (a VALUE_REF here, which
+// is why HhResolveInstance and not a kind check decides) and `inst` as the
+// CInstance* a call can take as self. Returns false having said which step
+// failed, because "no instance" and "that object does not exist" send a
+// reader to different places.
+static bool MpResolve(const std::string& what, const std::string& objName, int nth,
+                      RValue& handle, CInstance*& inst, int& total)
+{
+    inst = nullptr; total = 0;
+    int idx = -1;
+    try { idx = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(objName) }).ToDouble(); } catch (...) { idx = -1; }
+    if (idx < 0) { Out(what + ": object '" + objName + "' not found (asset_get_index)"); return false; }
+    try { total = (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)idx) }).ToDouble(); } catch (...) { total = 0; }
+    if (total <= 0) { Out(what + ": '" + objName + "' (#" + std::to_string(idx) + ") has no live instances in room " + MpRoom()); return false; }
+    if (nth < 0 || nth >= total) { Out(what + ": nth=" + std::to_string(nth) + " out of range (" + std::to_string(total) + " live instances)"); return false; }
+    try { handle = g_Yytk->CallBuiltin("instance_find", { RValue((double)idx), RValue((double)nth) }); }
+    catch (...) { Out(what + ": instance_find threw"); return false; }
+    if (handle.m_Kind == VALUE_UNDEFINED) { Out(what + ": instance_find returned undefined"); return false; }
+    inst = HhResolveInstance(handle);
+    if (!inst) { Out(what + ": HhResolveInstance could not turn that handle into a live instance"); return false; }
+    return true;
+}
+
+// Read-only, no token. The variables after the first six are printed only
+// when the instance actually carries them: which of them a menu button has is
+// exactly what this command exists to find out, so guessing a fixed set and
+// printing "undefined" for the rest would bury the answer.
+static void MpList(const std::string& objName)
+{
+    if (objName.empty()) { Out("menuprobe list: usage -> menuprobe list <ObjectName>"); return; }
+    int idx = -1;
+    try { idx = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(objName) }).ToDouble(); } catch (...) { idx = -1; }
+    if (idx < 0) { Out("menuprobe list: object '" + objName + "' not found (asset_get_index)"); return; }
+    int total = 0;
+    try { total = (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)idx) }).ToDouble(); } catch (...) { total = 0; }
+    Out("menuprobe list: '" + objName + "' (#" + std::to_string(idx) + ") in room " + MpRoom());
+
+    static const char* const kMaybe[] = { "text", "label", "action", "script", "selected" };
+    constexpr int kCap = 64;
+    for (int n = 0; n < total && n < kCap; ++n) {
+        RValue handle;
+        try { handle = g_Yytk->CallBuiltin("instance_find", { RValue((double)idx), RValue((double)n) }); }
+        catch (...) { Out("  nth=" + std::to_string(n) + " instance_find threw"); continue; }
+        if (handle.m_Kind == VALUE_UNDEFINED) { Out("  nth=" + std::to_string(n) + " instance_find returned undefined"); continue; }
+        std::string line = "  nth=" + std::to_string(n)
+            + " id=" + MpVar(handle, "id")
+            + " x=" + MpVar(handle, "x")
+            + " y=" + MpVar(handle, "y")
+            + " visible=" + MpVar(handle, "visible")
+            + " sprite_index=" + MpVar(handle, "sprite_index")
+            + " image_index=" + MpVar(handle, "image_index");
+        for (const char* name : kMaybe) {
+            const std::string value = MpVar(handle, name);
+            if (!value.empty()) line += std::string(" ") + name + "=" + value;
+        }
+        if (!HhResolveInstance(handle)) line += " (HhResolveInstance: NOT resolvable - this one cannot be a call's self)";
+        Out(line);
+    }
+    if (total > kCap) Out("  ...(" + std::to_string(total - kCap) + " more; capped at " + std::to_string(kCap) + ")");
+    Out("menuprobe list: " + std::to_string(total) + " live instance(s) of '" + objName + "'");
+}
+
+// One event_perform, or one event_perform_object when an <Obj2> is supplied.
+// The builtin's name and its arguments are chosen before the call rather than
+// by writing the call twice, so there is exactly one place in this function
+// where anything reaches the game.
+static void MpEvent(const std::string& objName, int nth, int type, int number,
+                    const std::string& obj2, const std::string& token)
+{
+    if (Lower(token) != "confirm") {
+        Out("menuprobe event: refused - this performs a game event. Usage -> menuprobe event <Obj> <nth> <type> <number> [Obj2] confirm");
+        return;
+    }
+    RValue handle; CInstance* inst = nullptr; int total = 0;
+    if (!MpResolve("menuprobe event", objName, nth, handle, inst, total)) return;
+
+    int obj2Idx = -1;
+    if (!obj2.empty()) {
+        try { obj2Idx = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(obj2) }).ToDouble(); } catch (...) { obj2Idx = -1; }
+        if (obj2Idx < 0) { Out("menuprobe event: object '" + obj2 + "' not found (asset_get_index)"); return; }
+    }
+
+    const char* builtin = obj2.empty() ? "event_perform" : "event_perform_object";
+    std::vector<RValue> args;
+    if (!obj2.empty()) args.push_back(RValue((double)obj2Idx));
+    args.push_back(RValue((double)type));
+    args.push_back(RValue((double)number));
+
+    Out("menuprobe event: " + std::string(builtin) + (obj2.empty() ? std::string() : (" " + obj2))
+        + " " + CiEventLabel(type, number) + ", self=other=that instance");
+    Out("  before: " + MpWhere(objName, nth, handle) + " room=" + MpRoom());
+    RValue res;
+    AurieStatus st = AURIE_SUCCESS;
+    try { st = g_Yytk->CallBuiltinEx(res, builtin, inst, inst, args); }
+    catch (...) { Out("  EXCEPTION calling " + std::string(builtin)); return; }
+    if (!AurieSuccess(st)) { Out("  NOT PERFORMED: st=" + std::to_string((int)st)); return; }
+    // A true here proves the builtin ran, never that the event did anything -
+    // the pet-quest work (C0.3) already paid for that distinction once.
+    Out("  performed -> " + Describe(res));
+    Out("  after:  " + MpWhere(objName, nth, handle) + " room=" + MpRoom());
+}
+
+// One CallGameScriptEx with the chosen instance as both self and other. Every
+// direct call shape measured in 2026-09-11's pet-quest work faulted, with the
+// process surviving each one; what was never tried is a UI script with a real
+// button as self, which is the only reason this exists.
+static void MpScript(const std::string& scriptName, const std::string& objName, int nth,
+                     const std::vector<RValue>& args, const std::string& token)
+{
+    if (Lower(token) != "confirm") {
+        Out("menuprobe script: refused - this calls a game script. Usage -> menuprobe script <Script> <Obj> <nth> [args...] confirm");
+        return;
+    }
+    RValue handle; CInstance* inst = nullptr; int total = 0;
+    if (!MpResolve("menuprobe script", objName, nth, handle, inst, total)) return;
+
+    const std::string full = "gml_Script_" + scriptName;
+    Out("menuprobe script: " + full + " with self=other=that instance, " + std::to_string(args.size()) + " argument(s)");
+    Out("  before: " + MpWhere(objName, nth, handle) + " room=" + MpRoom());
+    RValue res;
+    AurieStatus st = AURIE_SUCCESS;
+    try { st = g_Yytk->CallGameScriptEx(res, full, inst, inst, args); }
+    catch (...) { Out("  EXCEPTION calling " + full); return; }
+    if (!AurieSuccess(st)) { Out("  NOT CALLED: st=" + std::to_string((int)st)); return; }
+    Out("  returned -> " + Describe(res));
+    Out("  after:  " + MpWhere(objName, nth, handle) + " room=" + MpRoom());
+}
+
+// A script argument, typed the way `cb` types its own: a token that parses
+// whole as a number is a real, `true`/`false` is a bool, anything else is a
+// string.
+static RValue MpArg(const std::string& token)
+{
+    const std::string lower = Lower(token);
+    if (lower == "true") return RValue(true);
+    if (lower == "false") return RValue(false);
+    try { size_t used = 0; const double value = std::stod(token, &used); if (used == token.size()) return RValue(value); }
+    catch (...) {}
+    return RValue(token);
+}
+
+static void MpUsage()
+{
+    Out("menuprobe: research instrument for docs/character-select-research.md (research build only)");
+    Out("  menuprobe list <Obj>                                      - read-only; also the enumeration control for the two below");
+    Out("  menuprobe event <Obj> <nth> <type> <number> [Obj2] confirm - one event_perform on that instance");
+    Out("  menuprobe script <Script> <Obj> <nth> [args...] confirm    - one CallGameScriptEx with that instance as self and other");
+    Out("  `confirm` is a literal word and always last: a half-pasted cmd.txt then fails closed instead of firing.");
+}
+
+static void MpCommand(const std::string& rest)
+{
+    std::vector<std::string> tok;
+    { std::stringstream ss(rest); std::string w; while (ss >> w) tok.push_back(w); }
+    if (tok.empty()) { MpUsage(); return; }
+    const std::string sub = Lower(tok[0]);
+
+    if (sub == "list" && tok.size() == 2) { MpList(tok[1]); return; }
+
+    // <Obj2> is optional and sits between <number> and `confirm`, so the
+    // token count decides whether it was given and `confirm` is always last.
+    if (sub == "event" && (tok.size() == 6 || tok.size() == 7)) {
+        int nth = 0, type = 0, number = 0;
+        try { nth = std::stoi(tok[2]); type = std::stoi(tok[3]); number = std::stoi(tok[4]); }
+        catch (...) { Out("menuprobe event: nth, type and number must be whole numbers; nothing ran"); return; }
+        MpEvent(tok[1], nth, type, number, tok.size() == 7 ? tok[5] : std::string(), tok.back());
+        return;
+    }
+
+    if (sub == "script" && tok.size() >= 5) {
+        int nth = 0;
+        try { nth = std::stoi(tok[3]); }
+        catch (...) { Out("menuprobe script: nth must be a whole number; nothing ran"); return; }
+        std::vector<RValue> args;
+        for (size_t i = 4; i + 1 < tok.size(); ++i) args.push_back(MpArg(tok[i]));
+        MpScript(tok[1], tok[2], nth, args, tok.back());
+        return;
+    }
+
+    MpUsage();
+}
+#endif // FORGEPACT_RELEASE (menuprobe)
+
+// Dispatched from its own function for the same reason as the two above:
+// RunCommand's else-if chain is at MSVC's nesting limit (C1061). The function
+// itself exists in both builds and answers false in the player build, so the
+// call site in RunCommand compiles without a guard around it.
+static bool HandleMenuProbeCommand(const std::string& lc, const std::string& rest)
+{
+#ifndef FORGEPACT_RELEASE
+    if (lc == "menuprobe") { MpCommand(rest); return true; }
+#endif
+    (void)lc; (void)rest;
+    return false;
+}
+
 // Headhunter + player-context diagnostics live in their own function so the
 // main RunCommand else-if chain stays below the compiler nesting limit (C1061).
 static bool HandleHeadhunterCommand(const std::string& lc, const std::string& rest)
@@ -17162,6 +17423,7 @@ static void RunCommand(const std::string& line)
 
     if (HandleHeadhunterCommand(lc, rest)) return;
     if (HandleProspectCommand(lc, rest)) return;
+    if (HandleMenuProbeCommand(lc, rest)) return;
     if (lc == "relicfilter") {
         bool enable = (rest == "1" || rest == "true" || rest == "on");
         // Hooking DropRelic while character selection is still running stalls the
