@@ -502,6 +502,53 @@ tester reports what (if anything) drew, the same way `draw_sprite_ext`'s
 own reachability was confirmed only once a candidate sprite actually drew
 in an earlier round.
 
+**Round 7 (docs only): the tuning session's results.**
+
+- **Hero Siege draws on a whole-pixel grid.** Tester, quoted: fractional
+  positions like `12.5` or `75.1` do not occur, `'everything seems to be
+  drawn in a whole number position'`. The fractional values `tgprobe`'s own
+  reads hand back for a talent slot (`navBboxX=385.700006
+  navBboxY=1711.000000 navBboxWidth=124.700000 navBboxHeight=139.200000`)
+  are an artefact of the number type the runtime stores them as, not the
+  art's actual placement on screen: derive a position or size from them,
+  then round to a whole pixel before drawing. This is a standing rule for
+  any element ForgePact draws over the HUD, not only this probe — recorded
+  here as the session result, and in the hub guide (Known Limitations) as
+  the rule itself, since it outlives this research doc.
+- **Tuned toggle-marker geometry, accepted by eye this session:** a square
+  `125 x 125` at `385, 1712` for Soul Spurn's slot (talent 240) at this
+  tester's HUD scale — judged against `385.4, 1711.7` at sizes `125.3`,
+  `126` and `125`, with the whole-pixel square at `385, 1712` the one the
+  tester called perfect. **This is this-slot-this-scale evidence, not a
+  shipped constant**: at another resolution, or for another talent's slot,
+  the same rule applies to that slot's own `navBbox`, not these numbers —
+  a square keyed to the bbox's own height (not its width, since a
+  toggle-marker reads better square than the slot's own aspect), aligned to
+  the bbox's left/top corner, both rounded to the nearest whole pixel. A
+  future shipped implementation reads the slot's own `navBbox` live, the
+  same way `ToggleIndicatorFindSlot` already does, and applies this rule at
+  draw time — it does not hardcode `385, 1712, 125, 125`.
+- **Sprite candidates, decided.** `Talent_Aura_Frame_spr` (idx `27826`,
+  `frames=8 width=41 height=41`) **is visible over the button and reads as
+  an ON marker once drawn larger than the icon** — the tester preferred
+  `scale 1.4` (`box=174.58x194.88`); `scale 1.8` was judged too big.
+  `Skill_Frames_spr` (idx `20566`, `frames=12 width=38 height=38`) is also
+  visible at `scale 1.4` but the tester judged it **"ugly" — rejected**. The
+  other five candidates (`Talent_Frame_Indicator_spr`,
+  `Ability_Indicator_Border_spr`, `Ability_Indicator_spr`,
+  `Ability_Indicator_White_spr`, `Sub_Talent_Big_Border_spr`) stay
+  **not-visible-at-any-tested-layer** — the earlier occlusion finding (both
+  `buffs` and `hud` draw under the button's own art; `tgprobe sprite gold`
+  visible only because its `navBbox` is bigger than the icon, the positive
+  control) is still the explanation for why an un-scaled draw of any of
+  them showed nothing.
+- **Procedural styles: only partly judged, `not observed`, not a
+  negative.** `style soft` was shown at `scale 1.4`, `1.1`, `1.0` and `0.9`;
+  the tester moved on to the geometry-tuning above before giving it a
+  verdict. `style halo`, `style gradient` and `style pulse` were not shown
+  this session at all. None of the four has a recorded verdict; do not read
+  the absence of one as rejection.
+
 ### tgprobe deep — the non-scalar read (session 2)
 
 Session 1 left Q3 `not observed` at scalar depth only, and that negative is
