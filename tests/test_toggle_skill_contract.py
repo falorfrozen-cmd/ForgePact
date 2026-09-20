@@ -2007,7 +2007,10 @@ class ToggleTableProbeContractTests(unittest.TestCase):
     def test_style_dispatches_all_four_names_and_rejects_others(self):
         sprite = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
         self.assertIn('lower == "style"', sprite)
-        self.assertIn("TgProbeSpriteStyleFromName(v, kind)", sprite)
+        # Issue #55 follow-up: `style` gained an optional trailing
+        # [talentId], so the style token is now the first of two, parsed
+        # from `styleTok` rather than consuming the whole remainder as `v`.
+        self.assertIn("TgProbeSpriteStyleFromName(Lower(styleTok), kind)", sprite)
         from_name = function_body(self.plugin, "static bool TgProbeSpriteStyleFromName(")
         for name in ("soft", "halo", "gradient", "pulse"):
             self.assertIn(f'lower == "{name}"', from_name)
@@ -2497,13 +2500,114 @@ class SkillTimerProbeContractTests(unittest.TestCase):
         for name in ("TgProbeSpriteDrawArc", "TgProbeSpriteDrawBar", "TgProbeSpriteDrawNumber",
                      "TgProbeSpriteDrawFade", "TgProbeSpriteDrawRectOutlineFraction", "TgProbeSpriteFracText",
                      "g_TgSpriteFraction", "TgSpriteStyleKind::Arc", "TgSpriteStyleKind::Bar",
-                     "TgSpriteStyleKind::Number", "TgSpriteStyleKind::Fade"):
+                     "TgSpriteStyleKind::Number", "TgSpriteStyleKind::Fade",
+                     # issue #55 follow-up: text placement/style controls and font list
+                     "g_TgSpriteTextOffsetDx", "g_TgSpriteTextOffsetDy", "g_TgSpriteTextAlpha",
+                     "g_TgSpriteTextColourSet", "g_TgSpriteTextColourName", "g_TgSpriteFontName",
+                     "g_TgSpriteTextFontUnresolved", "g_TgSpriteTextDrawExc",
+                     "TgProbeSpriteTextColour", "TgProbeSpriteTextColourText", "TgProbeSpriteTextAlphaText",
+                     "TgProbeSpriteTextOffsetText", "TgProbeSpriteFontText", "TgProbeSpriteBuiltinExists",
+                     "TgProbeSpriteFontListCommand", "kTgSpriteFontFallbackNames", "kTgSpriteFontEnumCap"):
             self.assertIn(name, self.block, name)
             self.assertNotIn(name, self.stripped, name)
         # The tick-rate readout is inside the same research-only command as
         # the rest of `tgprobe talents`, so it is covered by the same guard.
         self.assertIn("TgProbeTalentsCommand", self.block)
         self.assertNotIn("TgProbeTalentsCommand", self.stripped)
+
+    # ---- issue #55 follow-up: text placement, style controls, four fixes ---
+    # (live-session capture .claude/workorders/issue-55-live-session-2026-09-20-capture.md)
+
+    def test_number_anchors_below_the_box_not_at_its_centre(self):
+        body = function_body(self.plugin, "static void TgProbeSpriteDrawNumber(")
+        self.assertNotIn("y + h / 2.0", body)
+        self.assertIn("y + h + g_TgSpriteTextOffsetDy", body)
+        self.assertIn("x + w / 2.0 + g_TgSpriteTextOffsetDx", body)
+
+    def test_number_saves_everything_before_its_own_inner_try_and_restores_each_alone(self):
+        body = function_body(self.plugin, "static void TgProbeSpriteDrawNumber(")
+        save_order = ['"draw_get_font"', '"draw_get_colour"', '"draw_get_alpha"', '"draw_get_halign"', '"draw_get_valign"']
+        positions = [body.index(name) for name in save_order]
+        self.assertEqual(positions, sorted(positions), "all five must be captured, in order, before anything is set")
+        inner_try = body.index("try {", positions[-1])
+        self.assertLess(positions[-1], inner_try, "every save must precede the inner try around the draw")
+        draw_text_index = body.index('"draw_text"')
+        self.assertGreater(draw_text_index, inner_try)
+        for restore in (
+            'try { g_Yytk->CallBuiltin("draw_set_valign", { prevValign }); } catch (...) {}',
+            'try { g_Yytk->CallBuiltin("draw_set_halign", { prevHalign }); } catch (...) {}',
+            'try { g_Yytk->CallBuiltin("draw_set_alpha", { prevAlpha }); } catch (...) {}',
+            'try { g_Yytk->CallBuiltin("draw_set_colour", { prevColour }); } catch (...) {}',
+            'try { g_Yytk->CallBuiltin("draw_set_font", { prevFont }); } catch (...) {}',
+        ):
+            self.assertIn(restore, body, restore)
+            self.assertGreater(body.index(restore), draw_text_index, restore)
+
+    def test_number_resolves_its_font_by_name_and_applies_it_only_when_nonnegative(self):
+        body = function_body(self.plugin, "static void TgProbeSpriteDrawNumber(")
+        self.assertIn('CallBuiltin("asset_get_index", { RValue(g_TgSpriteFontName) })', body)
+        self.assertIn("if (f.ToDouble() < 0) f = RValue(std::stod(g_TgSpriteFontName));", body)
+        self.assertIn('if (f.ToDouble() >= 0) g_Yytk->CallBuiltin("draw_set_font", { f });', body)
+        self.assertIn("g_TgSpriteTextFontUnresolved", body)
+
+    def test_font_list_checks_each_builtin_through_callbuiltinex_and_prints_the_positive_control(self):
+        body = function_body(self.plugin, "static void TgProbeSpriteFontListCommand()")
+        for name in ("draw_get_font", "font_exists", "font_get_name"):
+            self.assertIn(f'"{name}"', body, name)
+        self.assertIn("TgProbeSpriteBuiltinExists(", body)
+        exists_body = function_body(self.plugin, "static bool TgProbeSpriteBuiltinExists(")
+        self.assertIn("CallBuiltinEx(", exists_body)
+        self.assertIn("AurieSuccess(st)", exists_body)
+        # the positive control itself: the already-proven CallBuiltin path
+        # (HhDrawHeadLabels calls it every draw), and the default-font
+        # sentinel handled distinctly from a real index.
+        self.assertIn('CallBuiltin("draw_get_font", {})', body)
+        self.assertIn("active font:", body)
+        self.assertIn("default (draw_get_font=", body)
+        # an empty enumeration is told apart from a missing enumerator.
+        self.assertIn("enumeration not run: font_exists is not present", body)
+        self.assertIn("found", body)
+
+    def test_style_parses_an_optional_trailing_talentid(self):
+        body = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
+        style_branch = body[body.index('lower == "style"'):body.index('lower == "gallery"')]
+        self.assertIn("FirstToken(rest2, ignored)", style_branch)
+        self.assertIn("std::stoi(talentTok)", style_branch)
+        self.assertIn("int talentId = kToggleIndicatorTalentId;", style_branch)
+        self.assertIn("g_TgSpriteTalentId = talentId;", style_branch)
+        self.assertIn('" talentId=" + std::to_string(g_TgSpriteTalentId)', style_branch)
+
+    def test_bar_returns_without_drawing_below_one_pixel_of_width(self):
+        body = function_body(self.plugin, "static void TgProbeSpriteDrawBar(")
+        self.assertIn("const double barWidth = w * fraction;", body)
+        self.assertIn("if (barWidth < 1.0) return;", body)
+        # the guard is on the drawn WIDTH, never on a bare fraction==0.0
+        # equality check - a sub-pixel remainder must disappear too (D4).
+        self.assertNotIn("if (fraction == 0.0)", body)
+        self.assertNotIn("if (g_TgSpriteFraction == 0.0)", body)
+
+    def test_frac_refuses_a_partially_parsed_or_non_finite_token(self):
+        body = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
+        frac_branch = body[body.index('lower == "frac"'):body.index('lower == "textoffset"')]
+        self.assertIn("ParseFiniteNumber(v, f)", frac_branch)
+        self.assertNotIn("std::stod(v)", frac_branch)
+        # ParseFiniteNumber is the shared, already-shipped helper (the
+        # custom-forge selector parser) that requires the numeric prefix to
+        # cover the whole token and rejects a non-finite result.
+        parse_body = function_body(self.plugin, "static bool ParseFiniteNumber(")
+        self.assertIn("used == clean.size()", parse_body)
+        self.assertIn("std::isfinite(out)", parse_body)
+
+    def test_text_controls_do_not_change_any_other_candidates_draw(self):
+        # D3: textoffset/textalpha/textcolour/font only ever feed
+        # TgProbeSpriteDrawNumber - none of the other style bodies reference
+        # any of the four new state variables.
+        for fn in ("TgProbeSpriteDrawSoft(", "TgProbeSpriteDrawHalo(", "TgProbeSpriteDrawGradient(",
+                   "TgProbeSpriteDrawPulse(", "TgProbeSpriteDrawArc(", "TgProbeSpriteDrawBar(",
+                   "TgProbeSpriteDrawFade(", "TgProbeSpriteDrawGoldRect(", "TgProbeSpriteDrawOne("):
+            body = function_body(self.plugin, f"static void {fn}")
+            for name in ("g_TgSpriteTextOffsetDx", "g_TgSpriteTextAlpha", "g_TgSpriteTextColourSet", "g_TgSpriteFontName"):
+                self.assertNotIn(name, body, f"{fn} must not reference {name}")
 
     # ---- the route-A decision rule rewrite (exhaustive state tables) -------
 

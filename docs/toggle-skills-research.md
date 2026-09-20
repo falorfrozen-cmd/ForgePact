@@ -2867,6 +2867,83 @@ name, `game_get_speed`, the tick-rate route A needs) and, per talent row, a
 falsification runs on the same line the session pastes back, with no hand
 arithmetic afterwards.
 
+**Two measured session findings, both from the 2026-09-20 live capture
+(`.claude/workorders/issue-55-live-session-2026-09-20-capture.md`), that the
+follow-up round below closes:**
+
+- **`number` drew 16,890 times at `drawExc=0` and was never seen.**
+  `TgProbeSpriteDrawNumber` drew at the box's centre (`x + w/2, y + h/2`),
+  dead under the talent button's own art, which paints later in the same
+  frame. `drawExc=0` here is produced equally by "drew fine, covered up" and
+  "drew nothing, silently" - **`draw_text` reachability through the shared
+  `CallBuiltin` path at this draw site is untested, not negative.** `bar`
+  drew below the icon in the same session and WAS seen there, so anchoring
+  `number` to that same edge inherits proven-visible evidence instead of
+  guessing a second unoccluded position.
+- **`bar` left a visible stub at `frac 0.0`.** The rectangle degenerates to
+  zero width and the runtime still filled it, `drawExc=0`, seen by eye -
+  shipped as-is, every skill that ever reaches zero duration would show a
+  border implying non-zero time left.
+
+#### Follow-up: text placement, style, and the two fixes above
+
+A live session only gives a few seconds per look, so the follow-up round adds
+settable controls instead of guessing a fixed answer that would cost another
+rebuild-and-relaunch to correct (`AGENTS.md` § "Limit Rebuilds & Reruns"):
+
+- **`tgprobe sprite textoffset [dx] [dy]`** - `number`'s offset from the
+  box's BOTTOM edge, centred horizontally, default `(0, 2)` - `bar`'s own
+  proven-visible gap, so the first look out of the box is already known to
+  clear the icon. `TgProbeSpriteDrawNumber` no longer contains any
+  `y + h / 2.0` expression.
+- **`tgprobe sprite textalpha [a]`** - `number`'s own flat opacity (0..255
+  or 0..1), independent of the band-ramp `alpha [min] [max]` `soft`/
+  `gradient` fade between; default fully opaque.
+- **`tgprobe sprite textcolour [name|r g b|off]`** (alias `textcolor`) -
+  `number`'s own colour; unset (the default) follows the shared `colour`, so
+  `style number` looks exactly as it did before this round until a tester
+  asks otherwise.
+- **`tgprobe sprite font [name|index|off|list]`** - resolves a font by name
+  at draw time exactly the way the shipped `hhlabelfont`/`HhDrawHeadLabels`
+  pair does (`plugin/ModuleMain.cpp:5258-5263`): `asset_get_index`, a numeric
+  fallback, applied only when the resolved index is `>= 0`, the whole resolve
+  in its own `try`. No font asset name exists anywhere in this checkout
+  (`hs-game-sdk` has no font table), so **`font list` enumerates the
+  runtime's own fonts** rather than guessing first: it reports whether the
+  runtime has each font builtin it uses at all (through `CallBuiltinEx`'s
+  status, since `CallBuiltin` cannot tell "no fonts" from "no enumerator"),
+  prints the currently active font (`draw_get_font`, the same proven-reachable
+  call `HhDrawHeadLabels` already makes) as a positive control, enumerates
+  every font index the runtime confirms exists up to a printed cap, and only
+  then probes ten inferred `_fnt`-suffixed candidate names (the game's own
+  `Name_suffix` asset convention) - none of which is confirmed to exist.
+- **`TgProbeSpriteDrawNumber`'s save/restore was rewritten** to match
+  `ToggleIndicatorDraw`'s shape (`:4919-4935`): every previous state (font,
+  colour, alpha, halign, valign) is captured before the first `draw_set_*`,
+  the draw sits in its own inner `try`, and each of the five restores runs in
+  its own `try` regardless of whether the draw threw. The body previously
+  restored halign/valign only after the `draw_text` call that could throw,
+  and never saved the font at all.
+- **`tgprobe sprite style <name> [talentId]`** now takes an optional trailing
+  talent id, falling back to `kToggleIndicatorTalentId` (Soul Spurn) when
+  absent. The live session found `style` hard-set the talent to 240, so
+  judging a look needed a character carrying that exact talent - every other
+  candidate printed `slot not found` on a Butcher.
+- **`bar` no longer leaves a stub.** `TgProbeSpriteDrawBar` returns without
+  drawing when the drawn width is below one pixel - the guard is on the
+  WIDTH, not on `fraction == 0.0`, so a sub-pixel remainder (e.g. `frac
+  0.004` on a wide box) disappears too instead of rounding to the same
+  visible lie. `number` keeps printing a legible `0%` at zero deliberately -
+  that is the whole reason the candidate exists.
+- **`frac` now rejects a token whose numeric prefix does not cover the whole
+  token** (e.g. `frac 0.5x`, `frac 1abc` - `std::stod` converts the longest
+  valid prefix and silently ignores the rest) **and a non-finite result**
+  (`frac nan` - every comparison against NaN is false, so the hand-written
+  0..1 clamp let it through). Neither had been observed on this build; both
+  follow from the standard's own specification of `strtod`. The `frac 0.5x`
+  → "did not parse as a number" refusal itself already shipped in `6ba1555`
+  and is unchanged.
+
 ### Live procedure
 
 Run from `plugin_build\build.bat dev`'s `BloodPactPlugin_rel.dll`, one
@@ -2898,12 +2975,13 @@ session:
 4. Apply Table 1, then Table 2, then Table 3, then Table 4, then Table 5
    above, in that order, to the session's own output and say which route is
    selected, and why.
-5. `tgprobe sprite frac 1.0`, then `tgprobe sprite style soft` over the
-   candidate's own hotbar slot (`tgprobe sprite <SpriteName> <talentId>`
-   selects the slot, or reuse `tgprobe sprite gold <talentId>` first to
-   confirm the slot is right) - the shipped look, known visible, run FIRST
-   as a positive control, and note what `tgprobe sprite off` prints for
-   `draws=`/`drawExc=` afterward. Then `tgprobe sprite style arc` at the
+5. `tgprobe sprite frac 1.0`, then `tgprobe sprite style soft <talentId>`
+   over the candidate's own hotbar slot (`style <name> [talentId]` selects
+   the slot directly - no character-specific hardcoding since the follow-up
+   round; reuse `tgprobe sprite gold <talentId>` first to confirm the slot
+   is right) - the shipped look, known visible, run FIRST as a positive
+   control, and note what `tgprobe sprite off` prints for `draws=`/
+   `drawExc=` afterward. Then `tgprobe sprite style arc <talentId>` at the
    same `frac 1.0` and compare it against `soft`: at full fraction `arc`'s
    traced perimeter is the same outline `soft` already draws. If `arc@1.0`
    shows nothing while `soft` did, `draw_line` is unreachable and `arc` is
@@ -2913,10 +2991,13 @@ session:
    non-zero `drawExc=` alongside a rising `draws=` means the builtin threw,
    which is also `blocked`, never rejected. Repeat each surviving candidate
    at `frac 0.5` and `frac 0.0`, then for `bar`, `number` and `fade` at the
-   same three fractions, pasting `draws=`/`drawExc=` after each. Say which
-   look is preferred, or that none is yet, using this doc's own convention
-   below - never "rejected" for a look that was never shown or whose
-   builtin never actually fired.
+   same three fractions, pasting `draws=`/`drawExc=` after each. For
+   `number`, try `tgprobe sprite textoffset [dx] [dy]` if the default `(0,
+   2)` still sits under other HUD elements, and `tgprobe sprite font list`
+   once to see what the runtime's own fonts resolve to before picking one
+   with `tgprobe sprite font <name>`. Say which look is preferred, or that
+   none is yet, using this doc's own convention below - never "rejected" for
+   a look that was never shown or whose builtin never actually fired.
 
 ### Results
 

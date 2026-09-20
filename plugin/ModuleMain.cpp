@@ -22619,6 +22619,38 @@ static double g_TgSpriteAlphaMaxOverride = -1.0;
 // (test_no_bare_std_max_or_std_min).
 static double g_TgSpriteFraction = 1.0;
 
+// `tgprobe sprite textoffset [dx] [dy]` / `textalpha [a]` / `textcolour
+// [name|r g b|off]` (alias `textcolor`) / `font [name|index|off|list]`
+// (issue #55 follow-up, live-session capture
+// `.claude/workorders/issue-55-live-session-2026-09-20-capture.md`): the
+// `number` candidate drew dead centre of the slot (`x + w/2, y + h/2`) and
+// was never seen through 16,890 draws at `drawExc=0` - `draw_text`
+// reachability at this draw site is UNTESTED, not negative, because the
+// icon's own art paints over the centre either way. These four controls
+// let a tester move the text somewhere unoccluded and style it without
+// another build - text only, so `soft`/`gradient`/`arc`/`bar`/`fade`/
+// `gold`/a named sprite draw exactly as before (context: "### Why the text
+// controls are separate from `colour`/`alpha`").
+static double g_TgSpriteTextOffsetDx = 0.0, g_TgSpriteTextOffsetDy = 2.0;   // D1: `bar`'s own proven-visible gap
+static double g_TgSpriteTextAlpha = 1.0;                                    // fully opaque - today's look
+static bool g_TgSpriteTextColourSet = false;                                // unset -> follow the shared `colour`
+static double g_TgSpriteTextColourR = 255.0, g_TgSpriteTextColourG = 215.0, g_TgSpriteTextColourB = 0.0;
+static std::string g_TgSpriteTextColourName = "gold";
+static std::string g_TgSpriteFontName;   // empty -> the game's own default font, no draw_set_font call at all
+static volatile long g_TgSpriteTextFontUnresolved = 0;   // the stored font name/index failed to resolve at draw time
+static volatile long g_TgSpriteTextDrawExc = 0;           // the `number` candidate's own save/draw/restore threw
+
+// `textcolour`'s default is "follow the shared `colour`" rather than its
+// own stored value - `style number` looks exactly as it does today until a
+// tester asks otherwise, the same rule `quad`/`alpha`/`frac` each followed
+// when they were added.
+static RValue TgProbeSpriteTextColour()
+{
+    if (!g_TgSpriteTextColourSet) return TgProbeSpriteActiveColour();
+    return g_Yytk->CallBuiltin("make_colour_rgb",
+        { RValue(g_TgSpriteTextColourR), RValue(g_TgSpriteTextColourG), RValue(g_TgSpriteTextColourB) });
+}
+
 static bool TgProbeSpriteResolve(const std::string& name, double& outIdx)
 {
     try {
@@ -23077,8 +23109,18 @@ static void TgProbeSpriteDrawBar(double x, double y, double w, double h)
     RValue activeColour = TgProbeSpriteActiveColour();
     static constexpr double kBarGap = 2.0, kBarHeight = 6.0;
     const double fraction = g_TgSpriteFraction > 1.0 ? 1.0 : (g_TgSpriteFraction < 0.0 ? 0.0 : g_TgSpriteFraction);
+    const double barWidth = w * fraction;
+    // D4 (issue #55 follow-up): the live session found a visible stub left
+    // below the icon at `frac 0.0`, `drawExc=0` - the runtime still filled a
+    // degenerate rectangle. The guard is on the drawn WIDTH in pixels, not
+    // on `fraction == 0.0`: a fraction of 0.004 on a wide box rounds to the
+    // same stub and would lie about remaining time the same way. This makes
+    // `bar` consistent with `arc` (returns early on a non-positive fraction)
+    // and `fade` (vanishes by alpha) - `number` is the deliberate exception,
+    // since a legible `0%` is the whole point of that candidate.
+    if (barWidth < 1.0) return;
     const double bx0 = x, by0 = y + h + kBarGap;
-    const double bx1 = x + w * fraction, by1 = by0 + kBarHeight;
+    const double bx1 = x + barWidth, by1 = by0 + kBarHeight;
     g_Yytk->CallBuiltin("draw_set_alpha", { RValue(1.0) });
     g_Yytk->CallBuiltin("draw_rectangle_colour", {
         RValue(bx0), RValue(by0), RValue(bx1), RValue(by1),
@@ -23088,20 +23130,51 @@ static void TgProbeSpriteDrawBar(double x, double y, double w, double h)
 // `number`: the active fraction as a whole-number percentage, drawn with
 // `draw_text` - already used by HhDrawHeadLabels at this same draw point, so
 // its reachability is established, unlike the other three candidates' new
-// builtins. Saves/restores halign/valign the same way HhDrawHeadLabels does.
+// builtins. D1 (issue #55 follow-up): anchored to the box's BOTTOM edge,
+// centred horizontally, offset by `textoffset` (default (0, 2), `bar`'s own
+// proven-visible gap) - the live session found the centred draw
+// (`x + w/2, y + h/2`) sat under the talent icon's own art and was never
+// seen, so `draw_text` reachability here is untested, not negative
+// (context: "### Why below the box, and why settable"). Follows
+// HhDrawHeadLabels' own font-resolve pattern (`asset_get_index`, a numeric
+// fallback, `>= 0` before `draw_set_font`, its own `try`, around
+// `:5258-5263`) and ToggleIndicatorDraw's save/restore shape
+// (`:4919-4935`): every previous state is captured before the first
+// `draw_set_*`, the draw sits in its own inner `try` so a throw there
+// cannot skip the restores below it, and each restore gets its own `try` so
+// one failing restore cannot cost the others.
 static void TgProbeSpriteDrawNumber(double x, double y, double w, double h)
 {
-    RValue activeColour = TgProbeSpriteActiveColour();
-    g_Yytk->CallBuiltin("draw_set_colour", { activeColour });
-    g_Yytk->CallBuiltin("draw_set_alpha", { RValue(1.0) });
-    RValue prevHalign = g_Yytk->CallBuiltin("draw_get_halign", {});
-    RValue prevValign = g_Yytk->CallBuiltin("draw_get_valign", {});
-    g_Yytk->CallBuiltin("draw_set_halign", { RValue(1.0) });   // fhalign_center
-    g_Yytk->CallBuiltin("draw_set_valign", { RValue(1.0) });   // fvalign_middle
-    const long pct = (long)std::round(g_TgSpriteFraction * 100.0);
-    g_Yytk->CallBuiltin("draw_text", { RValue(x + w / 2.0), RValue(y + h / 2.0), RValue(std::to_string(pct) + "%") });
-    g_Yytk->CallBuiltin("draw_set_halign", { prevHalign });
-    g_Yytk->CallBuiltin("draw_set_valign", { prevValign });
+    try {
+        RValue prevFont = g_Yytk->CallBuiltin("draw_get_font", {});
+        RValue prevColour = g_Yytk->CallBuiltin("draw_get_colour", {});
+        RValue prevAlpha = g_Yytk->CallBuiltin("draw_get_alpha", {});
+        RValue prevHalign = g_Yytk->CallBuiltin("draw_get_halign", {});
+        RValue prevValign = g_Yytk->CallBuiltin("draw_get_valign", {});
+        try {
+            if (!g_TgSpriteFontName.empty()) {
+                try {
+                    RValue f = g_Yytk->CallBuiltin("asset_get_index", { RValue(g_TgSpriteFontName) });
+                    if (f.ToDouble() < 0) f = RValue(std::stod(g_TgSpriteFontName));
+                    if (f.ToDouble() >= 0) g_Yytk->CallBuiltin("draw_set_font", { f });
+                    else InterlockedIncrement(&g_TgSpriteTextFontUnresolved);
+                } catch (...) { InterlockedIncrement(&g_TgSpriteTextFontUnresolved); }
+            }
+            g_Yytk->CallBuiltin("draw_set_colour", { TgProbeSpriteTextColour() });
+            g_Yytk->CallBuiltin("draw_set_alpha", { RValue(g_TgSpriteTextAlpha) });
+            g_Yytk->CallBuiltin("draw_set_halign", { RValue(1.0) });   // fhalign_center
+            g_Yytk->CallBuiltin("draw_set_valign", { RValue(0.0) });   // fvalign_top: hang BELOW the anchor
+            const long pct = (long)std::round(g_TgSpriteFraction * 100.0);
+            const double tx = x + w / 2.0 + g_TgSpriteTextOffsetDx;
+            const double ty = y + h + g_TgSpriteTextOffsetDy;
+            g_Yytk->CallBuiltin("draw_text", { RValue(tx), RValue(ty), RValue(std::to_string(pct) + "%") });
+        } catch (...) { InterlockedIncrement(&g_TgSpriteTextDrawExc); }
+        try { g_Yytk->CallBuiltin("draw_set_valign", { prevValign }); } catch (...) {}
+        try { g_Yytk->CallBuiltin("draw_set_halign", { prevHalign }); } catch (...) {}
+        try { g_Yytk->CallBuiltin("draw_set_alpha", { prevAlpha }); } catch (...) {}
+        try { g_Yytk->CallBuiltin("draw_set_colour", { prevColour }); } catch (...) {}
+        try { g_Yytk->CallBuiltin("draw_set_font", { prevFont }); } catch (...) {}
+    } catch (...) { InterlockedIncrement(&g_TgSpriteTextDrawExc); }   // a save read itself failed: nothing was set, so there is nothing to put back
 }
 
 // `fade`: an alpha ramp over the shipped `soft` bands - reuses `soft`'s own
@@ -23189,6 +23262,11 @@ static void TgProbeSpriteList()
     Out("  tgprobe sprite quad on|off - the sprite's own quadrants mirrored outward in place (\"inside out\"), default off");
     Out("  tgprobe sprite alpha <min> [max] - the fade floor/ceiling `style soft`/`style gradient` use, default 0..style-own");
     Out("  tgprobe sprite frac [f] - the 0.0..1.0 countdown fraction `style arc|bar|number|fade` draw against, default 1.0");
+    Out("  tgprobe sprite style <name> [talentId] - selects the hotbar slot the style draws over, default Soul Spurn (240)");
+    Out("  tgprobe sprite textoffset [dx] [dy] - `number`'s offset from the box's bottom edge, default 0,2");
+    Out("  tgprobe sprite textalpha [a] - `number`'s own flat opacity (0..255 or 0..1), default fully opaque");
+    Out("  tgprobe sprite textcolour [name|r g b|off] (alias textcolor) - `number`'s own colour, default follows `colour`");
+    Out("  tgprobe sprite font [name|index|off|list] - `number`'s font, resolved by name at draw time; `list` enumerates the runtime's own fonts");
 }
 
 // The index->name mapping `gallery` prints when it runs, to the log only -
@@ -23267,6 +23345,135 @@ static std::string TgProbeSpriteFracText()
     return "frac=" + std::to_string(g_TgSpriteFraction);
 }
 
+// "textoffset=<dx>,<dy>" - the `number` candidate's offset from the box's
+// bottom edge, centred horizontally (issue #55 follow-up, D1).
+static std::string TgProbeSpriteTextOffsetText()
+{
+    return "textoffset=" + std::to_string(g_TgSpriteTextOffsetDx) + "," + std::to_string(g_TgSpriteTextOffsetDy);
+}
+
+// "textalpha=<n>/255" - the flat opacity `number`'s text draws at,
+// independent of `alpha`'s soft/gradient band-ramp floor/ceiling.
+static std::string TgProbeSpriteTextAlphaText()
+{
+    return "textalpha=" + std::to_string((long)std::round(g_TgSpriteTextAlpha * 255.0)) + "/255";
+}
+
+// "textcolour=follow(gold(255,215,0))" while unset, or the same
+// "name(r,g,b)" shape `colour` prints once a tester sets one.
+static std::string TgProbeSpriteTextColourText()
+{
+    if (!g_TgSpriteTextColourSet) return "textcolour=follow(" + TgProbeSpriteColourText() + ")";
+    return "textcolour=" + g_TgSpriteTextColourName + "(" + std::to_string((long long)g_TgSpriteTextColourR) + ","
+        + std::to_string((long long)g_TgSpriteTextColourG) + "," + std::to_string((long long)g_TgSpriteTextColourB) + ")";
+}
+
+// "font=off (game default) unresolved=0" or "font=<name> unresolved=<n>" -
+// `unresolved` is how many draws the stored name/index failed to resolve at,
+// so "the font was ignored" is never mistaken for "the font was applied".
+static std::string TgProbeSpriteFontText()
+{
+    return std::string("font=") + (g_TgSpriteFontName.empty() ? "off (game default)" : g_TgSpriteFontName)
+        + " unresolved=" + std::to_string(g_TgSpriteTextFontUnresolved);
+}
+
+// Whether the runtime has FunctionName at all, told apart from "it exists
+// but returned nothing useful for these arguments" (AGENTS.md "Prove the
+// Instrument"): CallBuiltin returns an unset RValue for a function that does
+// not exist, indistinguishable from a real call returning unset, while
+// CallBuiltinEx's AurieStatus reports AURIE_OBJECT_NOT_FOUND distinctly
+// (the established idiom at `:6670` and `:9257`).
+static bool TgProbeSpriteBuiltinExists(const char* functionName, CInstance* self, CInstance* other,
+                                        const std::vector<RValue>& args, RValue& outResult)
+{
+    AurieStatus st = AURIE_EXTERNAL_ERROR;
+    try { st = g_Yytk->CallBuiltinEx(outResult, functionName, self, other, args); }
+    catch (...) { st = AURIE_EXTERNAL_ERROR; }
+    return AurieSuccess(st);
+}
+
+// `tgprobe sprite font list` (D2, issue #55 follow-up): no font asset name
+// exists anywhere in this checkout (context: "### Fonts: no names exist in
+// this checkout, so the probe enumerates"), so this enumerates the
+// runtime's OWN fonts rather than guessing first. Read-only: sets no draw
+// state. (a) reports whether the runtime has each font builtin this command
+// itself uses; (b) the currently active font (`draw_get_font`, already
+// proven reachable by `HhDrawHeadLabels`) as a positive control, handling
+// the default-font sentinel (a negative index) distinctly from a real one;
+// (c) every font index the runtime confirms exists, from zero up to a
+// printed cap; (d) only then, the inferred `_fnt`-suffixed candidate names,
+// through the same `asset_get_index` path every other named-asset resolve
+// in this probe uses. A run that finds nothing is printed differently
+// depending on whether the enumerator itself was present, so "no fonts"
+// is never confused with "no enumerator".
+static constexpr int kTgSpriteFontEnumCap = 64;
+static const char* kTgSpriteFontFallbackNames[] = {
+    "Main_fnt", "Default_fnt", "Hud_fnt", "Text_fnt", "Small_fnt",
+    "Big_fnt", "Title_fnt", "Damage_fnt", "Tooltip_fnt", "Pixel_fnt",
+};
+
+static void TgProbeSpriteFontListCommand()
+{
+    Out("tgprobe sprite font list:");
+    CInstance* g = nullptr;
+    try { g_Yytk->GetGlobalInstance(&g); } catch (...) {}
+
+    RValue existsRes;
+    const bool hasDrawGetFont = TgProbeSpriteBuiltinExists("draw_get_font", g, g, {}, existsRes);
+    Out(std::string("  draw_get_font: ") + (hasDrawGetFont ? "present" : "not found (AURIE_OBJECT_NOT_FOUND)"));
+    const bool hasFontExists = TgProbeSpriteBuiltinExists("font_exists", g, g, { RValue(0.0) }, existsRes);
+    Out(std::string("  font_exists: ") + (hasFontExists ? "present" : "not found (AURIE_OBJECT_NOT_FOUND)"));
+    const bool hasFontGetName = TgProbeSpriteBuiltinExists("font_get_name", g, g, { RValue(0.0) }, existsRes);
+    Out(std::string("  font_get_name: ") + (hasFontGetName ? "present" : "not found (AURIE_OBJECT_NOT_FOUND)"));
+
+    auto nameOf = [&](double idx) -> std::string {
+        if (!hasFontGetName) return "(no name-lookup builtin)";
+        try {
+            RValue nm;
+            AurieStatus st = g_Yytk->CallBuiltinEx(nm, "font_get_name", g, g, { RValue(idx) });
+            return AurieSuccess(st) ? nm.ToString() : "(font_get_name failed)";
+        } catch (...) { return "(font_get_name threw)"; }
+    };
+
+    // (b) positive control: the font the game itself is using right now,
+    // through the already-proven CallBuiltin path (HhDrawHeadLabels calls
+    // it every draw).
+    try {
+        RValue active = g_Yytk->CallBuiltin("draw_get_font", {});
+        const double activeIdx = active.ToDouble();
+        if (activeIdx < 0.0) Out("  active font: default (draw_get_font=" + std::to_string(activeIdx) + ")");
+        else Out("  active font: idx=" + std::to_string((long long)activeIdx) + " name=" + nameOf(activeIdx));
+    } catch (...) { Out("  active font: draw_get_font threw"); }
+
+    // (c) the runtime's own font indices.
+    if (!hasFontExists) {
+        Out("  enumeration not run: font_exists is not present on this runtime");
+    } else {
+        int found = 0;
+        for (int i = 0; i < kTgSpriteFontEnumCap; ++i) {
+            RValue exists;
+            bool ok = false;
+            try { exists = g_Yytk->CallBuiltin("font_exists", { RValue((double)i) }); ok = true; } catch (...) {}
+            if (!ok || exists.ToDouble() == 0.0) continue;
+            Out("  [" + std::to_string(i) + "] " + nameOf((double)i));
+            ++found;
+        }
+        Out("  enumerated 0.." + std::to_string(kTgSpriteFontEnumCap - 1) + ": " + std::to_string(found) + " found");
+    }
+
+    // (d) the inferred fallback names, probed only after the enumeration -
+    // none of these is confirmed to exist.
+    int resolvedFallback = 0;
+    for (const char* name : kTgSpriteFontFallbackNames) {
+        double idx = -1.0;
+        const bool resolved = TgProbeSpriteResolve(name, idx);
+        Out(std::string("  candidate ") + name + ": " + (resolved ? ("resolved idx=" + std::to_string((long long)idx)) : "unresolved"));
+        if (resolved) ++resolvedFallback;
+    }
+    Out("  fallback candidates: " + std::to_string(resolvedFallback) + "/"
+        + std::to_string((int)(sizeof(kTgSpriteFontFallbackNames) / sizeof(kTgSpriteFontFallbackNames[0]))) + " resolved");
+}
+
 static void TgProbeSpriteCommand(const std::string& rest)
 {
     std::string subRest;
@@ -23274,9 +23481,10 @@ static void TgProbeSpriteCommand(const std::string& rest)
     const std::string lower = Lower(first);
     if (first.empty()) {
         Out("tgprobe sprite: usage -> tgprobe sprite <SpriteName> [talentId] | <SpriteName> centre"
-            " | off | gold | style soft|halo|gradient|pulse|arc|bar|number|fade | list | gallery [cols]"
+            " | off | gold | style soft|halo|gradient|pulse|arc|bar|number|fade [talentId] | list | gallery [cols]"
             " | layer hud|buffs | scale [f] | colour [name|r g b] | box tuned|bbox | quad on|off"
-            " | alpha [min] [max] | frac [f]");
+            " | alpha [min] [max] | frac [f] | textoffset [dx] [dy] | textalpha [a]"
+            " | textcolour [name|r g b|off] | font [name|index|off|list]");
         return;
     }
     if (lower == "off") {
@@ -23284,6 +23492,9 @@ static void TgProbeSpriteCommand(const std::string& rest)
         Out("tgprobe sprite -> off draws=" + std::to_string(g_TgSpriteDraws)
             + " drawExc=" + std::to_string(g_TgSpriteDrawExc) + " colour=" + TgProbeSpriteColourText()
             + " " + TgProbeSpriteQuadText() + " " + TgProbeSpriteAlphaText() + " " + TgProbeSpriteFracText()
+            + " " + TgProbeSpriteTextOffsetText() + " " + TgProbeSpriteTextAlphaText()
+            + " " + TgProbeSpriteTextColourText() + " " + TgProbeSpriteFontText()
+            + " textDrawExc=" + std::to_string(g_TgSpriteTextDrawExc)
             + " layer=" + TgProbeLayerName());
         return;
     }
@@ -23430,9 +23641,15 @@ static void TgProbeSpriteCommand(const std::string& rest)
         const std::string v = FirstToken(subRest, ignored);
         if (!v.empty()) {
             double f = 0.0;
-            try {
-                f = std::stod(v);
-            } catch (...) {
+            // ParseFiniteNumber (shared with the custom-forge selector
+            // parser) requires the numeric prefix to cover the WHOLE token
+            // and rejects a non-finite result - plain std::stod accepts
+            // "0.5x"/"1abc" (longest-valid-prefix conversion) and "nan"
+            // (every comparison against it is false, so the hand-written
+            // clamps below would silently pass it through). Neither has been
+            // observed on this build; both follow from strtod's own spec
+            // (context: "### `frac` already refuses the obvious case").
+            if (!ParseFiniteNumber(v, f)) {
                 Out("tgprobe sprite frac: usage -> tgprobe sprite frac [f] (0.0..1.0; \"" + v + "\" did not parse as a number)");
                 return;
             }
@@ -23442,6 +23659,102 @@ static void TgProbeSpriteCommand(const std::string& rest)
         }
         Out("tgprobe sprite " + TgProbeSpriteFracText()
             + " (the countdown fraction `style arc|bar|number|fade` draw against; range 0.0..1.0, default 1.0)");
+        return;
+    }
+    if (lower == "textoffset") {
+        std::string rest2;
+        const std::string dxStr = FirstToken(subRest, rest2);
+        if (dxStr.empty()) {
+            Out("tgprobe sprite " + TgProbeSpriteTextOffsetText()
+                + " (`number`'s offset from the box's bottom edge, centred horizontally; default 0,2 - `bar`'s own gap)");
+            return;
+        }
+        std::string ignored;
+        const std::string dyStr = FirstToken(rest2, ignored);
+        double dx = 0.0, dy = 0.0;
+        const bool parsed = !dyStr.empty() && ParseFiniteNumber(dxStr, dx) && ParseFiniteNumber(dyStr, dy);
+        if (!parsed) {
+            Out("tgprobe sprite textoffset: usage -> tgprobe sprite textoffset [dx] [dy] (both required to set; give neither to read)");
+            return;
+        }
+        g_TgSpriteTextOffsetDx = dx;
+        g_TgSpriteTextOffsetDy = dy;
+        Out("tgprobe sprite " + TgProbeSpriteTextOffsetText());
+        return;
+    }
+    if (lower == "textalpha") {
+        std::string ignored;
+        const std::string v = FirstToken(subRest, ignored);
+        if (v.empty()) {
+            Out("tgprobe sprite " + TgProbeSpriteTextAlphaText()
+                + " (`number`'s own flat opacity, independent of `alpha`'s soft/gradient floor/ceiling; accepts 0..255 or 0..1; default fully opaque)");
+            return;
+        }
+        double a = 0.0;
+        if (!TgProbeSpriteParseAlphaArg(v, a)) {
+            Out("tgprobe sprite textalpha: usage -> tgprobe sprite textalpha [a] (0..255 or 0..1)");
+            return;
+        }
+        g_TgSpriteTextAlpha = a;
+        Out("tgprobe sprite " + TgProbeSpriteTextAlphaText());
+        return;
+    }
+    if (lower == "textcolour" || lower == "textcolor") {
+        std::string rest2;
+        const std::string first2 = FirstToken(subRest, rest2);
+        if (first2.empty()) {
+            Out("tgprobe sprite " + TgProbeSpriteTextColourText());
+            return;
+        }
+        const std::string first2Lower = Lower(first2);
+        if (first2Lower == "off") {
+            g_TgSpriteTextColourSet = false;
+            Out("tgprobe sprite " + TgProbeSpriteTextColourText());
+            return;
+        }
+        double presetR = 0, presetG = 0, presetB = 0;
+        std::string presetName;
+        if (TgProbeSpriteColourFromPreset(first2Lower, presetR, presetG, presetB, presetName)) {
+            g_TgSpriteTextColourR = presetR; g_TgSpriteTextColourG = presetG; g_TgSpriteTextColourB = presetB;
+            g_TgSpriteTextColourName = presetName;
+            g_TgSpriteTextColourSet = true;
+            Out("tgprobe sprite " + TgProbeSpriteTextColourText());
+            return;
+        }
+        std::string t2, t3;
+        const std::string gStr = FirstToken(rest2, t2);
+        const std::string bStr = FirstToken(t2, t3);
+        double r = 0, g = 0, b = 0;
+        const bool parsed = !gStr.empty() && !bStr.empty()
+            && ParseFiniteNumber(first2, r) && ParseFiniteNumber(gStr, g) && ParseFiniteNumber(bStr, b);
+        if (!parsed) {
+            Out("tgprobe sprite textcolour: usage -> tgprobe sprite textcolour <name> | <r> <g> <b> (0..255 each) | off; names: gold, red, brightred, deepred");
+            return;
+        }
+        if (r < 0.0) r = 0.0;   // clamp by hand, not std::max/std::min (test_no_bare_std_max_or_std_min)
+        if (r > 255.0) r = 255.0;
+        if (g < 0.0) g = 0.0;
+        if (g > 255.0) g = 255.0;
+        if (b < 0.0) b = 0.0;
+        if (b > 255.0) b = 255.0;
+        g_TgSpriteTextColourR = r; g_TgSpriteTextColourG = g; g_TgSpriteTextColourB = b;
+        g_TgSpriteTextColourName = "custom";
+        g_TgSpriteTextColourSet = true;
+        Out("tgprobe sprite " + TgProbeSpriteTextColourText());
+        return;
+    }
+    if (lower == "font") {
+        std::string ignored;
+        const std::string v = FirstToken(subRest, ignored);
+        const std::string vLower = Lower(v);
+        if (vLower == "list") { TgProbeSpriteFontListCommand(); return; }
+        if (v.empty()) {
+            Out("tgprobe sprite " + TgProbeSpriteFontText()
+                + " (`number`'s font, resolved by name at draw time like `hhlabelfont`; `list` enumerates the runtime's own fonts)");
+            return;
+        }
+        g_TgSpriteFontName = (vLower == "off") ? std::string() : v;
+        Out("tgprobe sprite " + TgProbeSpriteFontText());
         return;
     }
     if (lower == "gold") {
@@ -23460,16 +23773,27 @@ static void TgProbeSpriteCommand(const std::string& rest)
         return;
     }
     if (lower == "style") {
-        std::string ignored;
-        const std::string v = Lower(FirstToken(subRest, ignored));
+        std::string rest2;
+        const std::string styleTok = FirstToken(subRest, rest2);
         TgSpriteStyleKind kind;
-        if (!TgProbeSpriteStyleFromName(v, kind)) {
-            Out("tgprobe sprite style: usage -> tgprobe sprite style soft|halo|gradient|pulse|arc|bar|number|fade");
+        if (!TgProbeSpriteStyleFromName(Lower(styleTok), kind)) {
+            Out("tgprobe sprite style: usage -> tgprobe sprite style soft|halo|gradient|pulse|arc|bar|number|fade [talentId]");
             return;
+        }
+        // [talentId] (issue #55 follow-up): the live session found `style`
+        // hard-set the talent to 240 (Soul Spurn), so judging a look needed
+        // a character carrying that exact talent - every other candidate
+        // printed `slot not found` on a Butcher. Absent, this is unchanged
+        // (falls back to kToggleIndicatorTalentId).
+        std::string ignored;
+        const std::string talentTok = FirstToken(rest2, ignored);
+        int talentId = kToggleIndicatorTalentId;
+        if (!talentTok.empty()) {
+            try { talentId = std::stoi(talentTok); } catch (...) { talentId = kToggleIndicatorTalentId; }
         }
         g_TgSpriteStyleKind = kind;
         g_TgSpriteMode = TgSpriteMode::Style;
-        g_TgSpriteTalentId = kToggleIndicatorTalentId;
+        g_TgSpriteTalentId = talentId;
         InterlockedExchange(&g_TgSpriteDraws, 0);
         InterlockedExchange(&g_TgSpriteDrawExc, 0);
         double bx = 0, by = 0, bw = 0, bh = 0;
@@ -23481,6 +23805,10 @@ static void TgProbeSpriteCommand(const std::string& rest)
                 ? " period=" + std::to_string(kTgPulsePeriodFrames / 60.0) + "s (" + std::to_string((long long)kTgPulsePeriodFrames) + " frames)"
                 : "")
             + " colour=" + TgProbeSpriteColourText() + " " + TgProbeSpriteAlphaText() + " " + TgProbeSpriteFracText()
+            + (kind == TgSpriteStyleKind::Number
+                ? " " + TgProbeSpriteTextOffsetText() + " " + TgProbeSpriteTextAlphaText()
+                  + " " + TgProbeSpriteTextColourText() + " " + TgProbeSpriteFontText()
+                : "")
             + " layer=" + TgProbeLayerName()
             + " (watch `tgprobe sprite off` for draws=/drawExc=)");
         return;
