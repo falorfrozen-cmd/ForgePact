@@ -4998,11 +4998,13 @@ static std::string g_TgdLastProcRet = "n/a";
 // 6's index 1 is tried first, because that is what was measured, and if its
 // entry carries no `t<talentId>` struct the other indices are tried in turn
 // and the first that does carry one answers. The struct's own presence is the
-// positive signal (the same one the research build's sub-talent walk uses;
-// ToggleSkillMod.hpp's kToggleSubTalentMapIndex) - an index is not identified
-// by being the index that was measured once. Which one answered is recorded
-// for `toggleguard stat`, so "the map moved" and "the sub-talent is off" are
-// never the same silent counter.
+// positive signal (ToggleSkillMod.hpp's kToggleSubTalentMapIndex) - an index
+// is not identified by being the index that was measured once. Like the
+// research build's own sub-talent walk, each index is judged on its own: the
+// entry's kind is checked before it is read, and each attempt carries its own
+// try, so an entry that is junk skips that index instead of ending the walk.
+// Which index answered is recorded for `toggleguard stat`, so "the map moved"
+// and "the sub-talent is off" are never the same silent counter.
 enum class ToggleSubTalentState { Allocated, NotAllocated, Unreadable };
 // The `global.subTalentMap` index whose `t<id>` struct last answered, or -1 if
 // none ever has. Diagnostic only; nothing branches on it.
@@ -5019,26 +5021,36 @@ static ToggleSubTalentState ToggleReadSubTalent(int talentId, int slot)
         const int cap = len < ForgePact::kToggleSubTalentScanCap ? len
                                                                  : ForgePact::kToggleSubTalentScanCap;
         // Attempt 0 is the measured index; the rest walk the array in order,
-        // skipping it because it has already been tried.
+        // skipping it because it has already been tried. Each attempt has its
+        // own try: one unusable entry costs ONE index, never the walk, or a
+        // junk slot in front of the real one would put the guard right back
+        // where the fixed index left it (inert, with subIndex=none the only
+        // symptom).
         for (int attempt = 0; attempt <= cap; ++attempt) {
             const int index = attempt == 0 ? ForgePact::kToggleSubTalentMapIndex : attempt - 1;
             if (index >= len) continue;
             if (attempt > 0 && index == ForgePact::kToggleSubTalentMapIndex) continue;
-            RValue entry = g_Yytk->CallBuiltin("array_get", { map, RValue((double)index) });
-            RValue perTalent = g_Yytk->CallBuiltin("variable_struct_get",
-                { entry, RValue("t" + std::to_string(talentId)) });
-            if (perTalent.m_Kind != VALUE_OBJECT && perTalent.m_Kind != VALUE_REF) continue;
-            // This index carries the talent, so it is the one that answers -
-            // recorded before the level is read, so a struct that is there but
-            // unreadable still names where it was found.
-            g_TgdSubIndex.store(index);
-            RValue level = g_Yytk->CallBuiltin("variable_struct_get",
-                { perTalent, RValue("s" + std::to_string(slot)) });
-            const bool isNumber = level.m_Kind == VALUE_REAL || level.m_Kind == VALUE_INT32
-                               || level.m_Kind == VALUE_INT64;
-            if (!isNumber) return ToggleSubTalentState::Unreadable;
-            return level.ToDouble() > 0.0 ? ToggleSubTalentState::Allocated
-                                          : ToggleSubTalentState::NotAllocated;
+            try {
+                RValue entry = g_Yytk->CallBuiltin("array_get", { map, RValue((double)index) });
+                // An entry that is not a struct is this index's problem, not
+                // the array's - and both kinds this runner hands a struct back
+                // as are accepted, the same pair `perTalent` accepts below.
+                if (entry.m_Kind != VALUE_OBJECT && entry.m_Kind != VALUE_REF) continue;
+                RValue perTalent = g_Yytk->CallBuiltin("variable_struct_get",
+                    { entry, RValue("t" + std::to_string(talentId)) });
+                if (perTalent.m_Kind != VALUE_OBJECT && perTalent.m_Kind != VALUE_REF) continue;
+                // This index carries the talent, so it is the one that answers -
+                // recorded before the level is read, so a struct that is there but
+                // unreadable still names where it was found.
+                g_TgdSubIndex.store(index);
+                RValue level = g_Yytk->CallBuiltin("variable_struct_get",
+                    { perTalent, RValue("s" + std::to_string(slot)) });
+                const bool isNumber = level.m_Kind == VALUE_REAL || level.m_Kind == VALUE_INT32
+                                   || level.m_Kind == VALUE_INT64;
+                if (!isNumber) return ToggleSubTalentState::Unreadable;
+                return level.ToDouble() > 0.0 ? ToggleSubTalentState::Allocated
+                                              : ToggleSubTalentState::NotAllocated;
+            } catch (...) { continue; }   // this index only
         }
         return ToggleSubTalentState::Unreadable;   // no index carries this talent at all
     } catch (...) { return ToggleSubTalentState::Unreadable; }
@@ -21769,8 +21781,12 @@ static void RunCommand(const std::string& line)
         } else {
             const bool hooked = g_OrigTalentUseClass != nullptr;
             ForgePact::ToggleGuardMod::Instance().SetEnabled(true, hooked);
+            // Same reason as `toggleborder` below: the guard covers every row
+            // of the shipped table, not Soul Spurn alone.
             Out(std::string("toggleguard -> ") + (hooked ? "ON" : "ON (armed, applies once you are in-game)")
-                + " (a double-cast proc no longer re-casts Soul Spurn)");
+                + " (a double-cast proc no longer switches one of the "
+                + std::to_string(ForgePact::kToggleSkillRowCount)
+                + " covered toggle skills back on - `toggleguard stat` lists them)");
         }
         return;
     }
@@ -21786,7 +21802,12 @@ static void RunCommand(const std::string& line)
             Out("toggleborder -> off " + ToggleBorderCountersLine());
         } else {
             g_ToggleBorderOn.store(true);
-            Out("toggleborder -> ON (outlines Soul Spurn's skill-bar slot while the Purgatory-toggled drain is active)");
+            // Names the covered count, not one skill: five rows have shipped
+            // since phase S, and a player on Exo or Prophet reading "Soul
+            // Spurn" here would take the whole feature for a White Mage one.
+            Out("toggleborder -> ON (marks the skill-bar slot of a toggle skill while it is switched on; covers "
+                + std::to_string(ForgePact::kToggleSkillRowCount)
+                + " toggle skills - `toggleborder stat` lists them with per-skill drawn=/on=)");
         }
         return;
     }

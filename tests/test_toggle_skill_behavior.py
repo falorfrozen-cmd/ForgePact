@@ -528,6 +528,14 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
             self.assertScenario(
                 "guard_on/subtalent_measured_index_struct_absent_falls_back" + suffix)
 
+    def test_guard_on_subtalent_bad_entry_costs_one_index(self):
+        # Re-review follow-up: a junk entry earlier in the array (a number
+        # where a struct should be, or an entry whose read throws) must cost
+        # one index, not the whole walk - otherwise the guard is inert again
+        # and `subIndex=none` is the only symptom.
+        for suffix in ("/refused", "/subUnreadable", "/index", ""):
+            self.assertScenario("guard_on/subtalent_bad_entry_costs_one_index" + suffix)
+
     def test_guard_on_subtalent_no_index_answers(self):
         # The negative control beside the two positives: nothing anywhere in
         # the array carries this talent, so the read is unreadable, the call

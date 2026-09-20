@@ -2230,10 +2230,12 @@ absent or non-numeric, or a throw anywhere all pass and count
 session 6 measured index 1 on one character on one build, so the read starts
 there and then walks the array (cap 16) for the index whose `t<talentId>`
 struct is really present — the same positive signal `tgprobe tgl sub` walks
-with. A fixed `[1]` that turned out to be a character or player slot on
-another save would have left the guard inert with nothing but a
-`subUnreadable` counter to show for it; `toggleguard stat` now reports
-`subIndex=<n|none>`. Fail-open is vanilla behaviour, and this is the
+with, and judged per index the same way: the entry's kind is checked before it
+is read and each attempt carries its own `try`, so a junk entry in front of
+the real one costs that index and not the walk. A fixed `[1]` that turned out
+to be a character or player slot on another save would have left the guard
+inert with nothing but a `subUnreadable` counter to show for it; `toggleguard
+stat` now reports `subIndex=<n|none>`. Fail-open is vanilla behaviour, and this is the
 point-of-use rule from the hub guide's Known Limitations item 13 — a
 permission read at a frame boundary would answer for the previous frame. It
 removes the cost D-U4 accepted as a Known Limitation: a plain cast of a

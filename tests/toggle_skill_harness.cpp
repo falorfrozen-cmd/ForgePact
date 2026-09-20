@@ -174,6 +174,13 @@ struct SubTalentWorld {
     // index -> talent id -> slot number -> value. A missing talent id answers
     // `t<id>` undefined; a missing slot answers `s<NN>` undefined.
     std::map<int, std::map<int, std::map<int, RValue>>> levels;
+    // One entry of the array being unusable is not the same as the whole read
+    // failing: `entryNotStruct` makes that index answer a number instead of a
+    // struct, and `entryThrows` makes reading `t<id>` off it throw. Both are
+    // per index, because `getThrows` above throws for the whole global and so
+    // cannot tell "this slot is junk" from "nothing is readable".
+    std::set<int> entryNotStruct;
+    std::set<int> entryThrows;
 };
 
 struct World {
@@ -352,6 +359,7 @@ struct FakeRunner {
             if (args[0].text == "subTalentMap") {
                 const int i = (int)args[1].ToDouble();
                 if (i < 0 || i >= world.sub.length) return RValue();   // out of range
+                if (world.sub.entryNotStruct.count(i)) return MakeReal(11.0);   // a number, not a struct
                 RValue r; r.m_Kind = VALUE_OBJECT; r.text = "submap:" + std::to_string(i);
                 return r;
             }
@@ -372,6 +380,7 @@ struct FakeRunner {
             }
             if (tag.rfind("submap:", 0) == 0) {
                 const int index = std::stoi(tag.substr(7));
+                if (world.sub.entryThrows.count(index)) throw std::runtime_error("subTalentMap entry EXCEPTION");
                 if (field.size() < 2 || field[0] != 't') return RValue();
                 const int talent = std::stoi(field.substr(1));
                 auto byIndex = world.sub.levels.find(index);
@@ -1377,7 +1386,27 @@ int main() {
         checkInt("guard_on/subtalent_no_index_answers", c.tramp, 1);
     }
 
-    // 40g. A talent that is not in the shipped table is never a member, so the
+    // 40g. One unusable entry costs ONE index, not the scan. A junk slot
+    //      earlier in the array - a number where a struct should be, or an
+    //      entry whose read throws - must not end the walk before the index
+    //      that really carries `t<talentId>`, or the guard is inert again with
+    //      `subIndex=none` and a climbing `subUnreadable=` as the only symptom
+    //      (the shape the index fix exists to remove). `read_throws` above
+    //      throws for the whole global and cannot tell these two apart.
+    resetGuard(true);
+    world.sub.levels.clear();
+    world.sub.entryNotStruct.insert(0);
+    world.sub.entryThrows.insert(2);
+    world.sub.levels[5][kToggleIndicatorTalentId][ForgePact::kToggleSkillRows[0].subTalentSlot] = MakeReal(3.0);
+    {
+        GuardCall c = CallGuard(&dcSelf, (double)kToggleIndicatorTalentId, false);
+        checkInt("guard_on/subtalent_bad_entry_costs_one_index/refused", g_TgdRefused, 1);
+        checkInt("guard_on/subtalent_bad_entry_costs_one_index/subUnreadable", g_TgdSubUnreadable, 0);
+        checkInt("guard_on/subtalent_bad_entry_costs_one_index/index", g_TgdSubIndex.load(), 5);
+        checkInt("guard_on/subtalent_bad_entry_costs_one_index", c.tramp, 0);
+    }
+
+    // 40h. A talent that is not in the shipped table is never a member, so the
     //      sub-talent is not even read.
     resetGuard(true);
     {
@@ -1389,7 +1418,7 @@ int main() {
         (void)before;
     }
 
-    // 40h. Every row unresolved: the guard covers nothing, and an unnamed
+    // 40i. Every row unresolved: the guard covers nothing, and an unnamed
     //      talent (a0 that is not a number, read back as -1) must not match an
     //      unresolved row's own -1.
     resetGuard(true);

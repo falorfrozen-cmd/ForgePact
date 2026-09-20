@@ -1139,6 +1139,22 @@ class ToggleSkillTableContractTests(unittest.TestCase):
         self.assertNotIn("CallBuiltin", skip)
         self.assertIn("unresolved=", function_body(self.stripped, "static std::string ToggleBorderCountersLine("))
 
+    def test_enable_messages_name_the_covered_count_not_one_skill(self):
+        # Re-review follow-up: both confirmations predate the table and named
+        # Soul Spurn, so a player on Exo or Prophet read the whole feature as
+        # a White Mage one. Each now says how many toggle skills are covered,
+        # taken from the table rather than restated, and points at the `stat`
+        # output for which.
+        border = self.stripped[self.stripped.index('Out("toggleborder -> ON'):]
+        border = border[:border.index(");")]
+        guard = self.stripped[self.stripped.index('Out(std::string("toggleguard -> ")'):]
+        guard = guard[:guard.index(");")]
+        for name, text in (("toggleborder", border), ("toggleguard", guard)):
+            self.assertIn("ForgePact::kToggleSkillRowCount", text, name)
+            self.assertIn("stat", text, name)
+            for skill in ("Soul Spurn", "Purgatory"):
+                self.assertNotIn(skill, text, name + "/" + skill)
+
     def test_border_stat_reports_per_row_counters(self):
         # Phase S review follow-up: every counter in ToggleBorderCountersLine
         # is a sum over the five rows, so on its own it cannot say which row
@@ -1368,6 +1384,24 @@ class ToggleGuardContractTests(unittest.TestCase):
         self.assertLess(select.index("g_TgdSubIndex.store(index)"),
                         select.index('"s" + std::to_string(slot)'))
         self.assertIn("static std::atomic<int> g_TgdSubIndex{ -1 };", self.plugin)
+
+    def test_one_bad_sub_talent_entry_costs_one_index_not_the_scan(self):
+        # Re-review follow-up: with only the function-level catch, a junk
+        # entry in front of the index that carries `t<talentId>` ended the
+        # walk and the guard went inert again - `subIndex=none`, every proc
+        # passed, `subUnreadable=` climbing. Each attempt is judged on its own.
+        read = function_body(self.plugin, "static ToggleSubTalentState ToggleReadSubTalent(")
+        attempt = read[read.index("for (int attempt"):]
+        # The entry's kind is checked before it is read, accepting both kinds
+        # this runner hands a struct back as (the recurring kind-gate bug).
+        self.assertIn("entry.m_Kind != VALUE_OBJECT && entry.m_Kind != VALUE_REF", attempt)
+        self.assertLess(attempt.index("entry.m_Kind != VALUE_OBJECT"),
+                        attempt.index('"t" + std::to_string(talentId)'))
+        # ...and the attempt's own catch continues the walk instead of ending
+        # it, which the function-level catch (still there, for the reads
+        # before the loop) cannot do.
+        self.assertIn("catch (...) { continue; }", attempt)
+        self.assertIn("catch (...) { return ToggleSubTalentState::Unreadable; }", read)
 
     def test_refusal_returns_the_result_without_the_original(self):
         # NARROWED in phase S: the Refuse decision is now taken in one place
