@@ -2358,5 +2358,111 @@ class ToggleTableProbeContractTests(unittest.TestCase):
                          old[start_old:old.index("};", start_old)].replace("\r\n", "\n"))
 
 
+class SkillTimerProbeContractTests(unittest.TestCase):
+    """Issue #55, phase A: the research-only tick-rate readout and the
+    fraction-driven countdown-look preview (`### What the probe round must
+    add, and why it is one build and one session`). No player command, no
+    new hook - only an extension of the existing `tgprobe talents`/
+    `tgprobe sprite style` instrument, so route A can be falsified and every
+    candidate look judged at rest, at any fill, with no live cast.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.plugin = PLUGIN_SRC.read_text(encoding="utf-8")
+        cls.stripped = strip_research_blocks(cls.plugin)
+        start = cls.plugin.index(BLOCK_START)
+        cls.block = cls.plugin[start:cls.plugin.index(BLOCK_END, start)]
+        cls.research_doc = (FORGEPACT_DIR / "docs" / "toggle-skills-research.md").read_text(encoding="utf-8")
+
+    def test_research_doc_names_the_three_routes_the_rule_and_the_procedure(self):
+        # A7: the issue-#55 section names the three candidate total sources,
+        # the pre-committed decision rule, the live procedure as numbered
+        # steps, and an empty results table with a status cell per probe row.
+        doc = self.research_doc
+        section = doc[doc.index("## Issue #55"):]
+        self.assertIn("Route A", section)
+        self.assertIn("Route C", section)
+        self.assertIn("Route B", section)
+        self.assertIn("Decision rule", section)
+        procedure = section[section.index("### Live procedure"):section.index("### Results")]
+        for n in ("1.", "2.", "3.", "4.", "5."):
+            self.assertIn(f"\n{n}", procedure)
+        results = section[section.index("### Results"):]
+        for ability in ("soulSpurn", "lunarOrbit", "crematus", "counter",
+                        "submergedKnives", "maelstromOfFrost", "blender"):
+            self.assertIn(ability, results)
+        for verdict in ("measured", "not observed", "blocked"):
+            self.assertIn(verdict, results)
+
+    def test_talents_reads_the_tick_rate_by_name_and_prints_it(self):
+        body = function_body(self.plugin, "static void TgProbeTalentsCommand(")
+        self.assertIn('"game_get_speed"', body)
+        self.assertIn('RValue(0.0)', body[body.index('"game_get_speed"'):])
+        self.assertIn("speed=", body)
+        self.assertIn("fps=", body)
+        # `fps` read the same way this file's own established positive
+        # control does (~line 20360): GetBuiltin, not CallBuiltin.
+        self.assertIn('GetBuiltin("fps", nullptr, NULL_INDEX, v)', body)
+        # predictedTotal (abilityDuration x speed) sits on the same printed
+        # line as abilityDuration, gated on the read succeeding.
+        self.assertIn("predictedTotal=", body)
+        self.assertIn("speedOk", body)
+
+    def test_talents_speed_read_matches_the_shipped_headhunter_shape(self):
+        # Same call and the same "non-positive means unreadable" floor
+        # ModuleMain.cpp's Headhunter buff-duration conversion already uses
+        # (game_get_speed(0.0) -> seconds-to-frames), so route A's session
+        # is testing the runtime's own unit relationship, not a guess.
+        body = function_body(self.plugin, "static void TgProbeTalentsCommand(")
+        speed_read = body[body.index('speed = g_Yytk->CallBuiltin("game_get_speed"'):]
+        self.assertIn("speedOk = speed > 0.0;", speed_read[:200])
+
+    def test_no_new_hook_is_installed_by_this_round(self):
+        # A3: this round adds no MmCreateHook/HookOneScript/
+        # HookOneScriptTable/InstallScriptHook call anywhere - it only reads
+        # existing builtins by name and extends the sprite-style draw probe.
+        for call in ("MmCreateHook(", "HookOneScript(", "HookOneScriptTable(", "InstallScriptHook("):
+            self.assertNotIn(call, function_body(self.plugin, "static void TgProbeTalentsCommand("))
+            self.assertNotIn(call, function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)"))
+        # The block's one resolver-installed detour count is unchanged.
+        self.assertEqual(self.block.count("MmCreateHook("), 1)
+
+    def test_countdown_styles_are_dispatched_and_use_the_fraction_knob(self):
+        sprite = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
+        self.assertIn('lower == "frac"', sprite)
+        from_name = function_body(self.plugin, "static bool TgProbeSpriteStyleFromName(")
+        for name in ("arc", "bar", "number", "fade"):
+            self.assertIn(f'lower == "{name}"', from_name)
+        style = function_body(self.plugin, "static void TgProbeSpriteDrawStyle(")
+        for kind in ("Arc", "Bar", "Number", "Fade"):
+            self.assertIn(f"TgSpriteStyleKind::{kind}", style)
+        for fn in ("TgProbeSpriteDrawArc", "TgProbeSpriteDrawBar", "TgProbeSpriteDrawNumber", "TgProbeSpriteDrawFade"):
+            self.assertIn("g_TgSpriteFraction", function_body(self.plugin, f"static void {fn}("))
+        # `fade` reuses the shipped-look-pinned soft draw rather than
+        # duplicating its bands (UNCHANGED_PROBE_BODIES stays meaningful).
+        self.assertIn("TgProbeSpriteDrawSoft(x, y, w, h, g_TgSpriteFraction)",
+                       function_body(self.plugin, "static void TgProbeSpriteDrawFade("))
+
+    def test_fraction_defaults_to_full_and_is_clamped(self):
+        self.assertIn("static double g_TgSpriteFraction = 1.0;", self.plugin)
+        frac_branch = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
+        frac_branch = frac_branch[frac_branch.index('lower == "frac"'):]
+        self.assertIn("if (f < 0.0) f = 0.0;", frac_branch)
+        self.assertIn("if (f > 1.0) f = 1.0;", frac_branch)
+
+    def test_new_symbols_are_research_only_names_do_not_survive_stripping(self):
+        for name in ("TgProbeSpriteDrawArc", "TgProbeSpriteDrawBar", "TgProbeSpriteDrawNumber",
+                     "TgProbeSpriteDrawFade", "TgProbeSpriteDrawRectOutlineFraction", "TgProbeSpriteFracText",
+                     "g_TgSpriteFraction", "TgSpriteStyleKind::Arc", "TgSpriteStyleKind::Bar",
+                     "TgSpriteStyleKind::Number", "TgSpriteStyleKind::Fade"):
+            self.assertIn(name, self.block, name)
+            self.assertNotIn(name, self.stripped, name)
+        # The tick-rate readout is inside the same research-only command as
+        # the rest of `tgprobe talents`, so it is covered by the same guard.
+        self.assertIn("TgProbeTalentsCommand", self.block)
+        self.assertNotIn("TgProbeTalentsCommand", self.stripped)
+
+
 if __name__ == "__main__":
     unittest.main()

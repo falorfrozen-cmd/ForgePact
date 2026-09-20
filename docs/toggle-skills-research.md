@@ -2647,3 +2647,137 @@ The other four rows are guarded by the same code and the same runtime-resolved
 ids, but no refusal has been observed live on any of them; V2 (guard-off
 baseline) and V7 (`lastProcRet`) stay blocked by the off fast path, and V4 (a
 non-guarded talent's proc) was not observed.
+
+## Issue #55: timed skill remaining-duration indicator
+
+Phase A (research instrument and docs) of a second, independent mod beside the
+shipped toggle marker (`toggleborder`): a countdown for a *timed* skill whose
+duration is the point, not an on/off toggle. This does not reopen D-U9 ("no
+countdown for a toggle skill's plain cast", `## Decision` → `### S design`) -
+that decision covers a *toggle* skill's own plain cast and still stands; this
+is a different skill class the shipped table does not cover at all.
+
+### Candidate total sources, and the order they are tried
+
+A fraction needs `remaining` and `total`. `remaining` is settled: each row's
+own `destroyTimer`, read per draw, counting down in ticks - the same field
+`tgprobe tgl timer` already reads. `total` is the open question this phase's
+live session decides between three candidates:
+
+- **Route A - `abilityDuration` times the runtime's tick rate.** Best
+  supported by what session 6 already measured (`## Results` → `### Toggle
+  skill table`): Maelstrom of Frost's `abilityDuration` reads 30 and its
+  plain cast's timer starts at 4320, a ratio of 144 - the same
+  seconds-to-frames conversion the shipped Headhunter buff-duration path
+  already performs through `game_get_speed`. Three of the five shipped rows
+  read `abilityDuration=0` while their objects still have a lifetime, so
+  route A alone cannot cover those.
+- **Route C - the instance carries its own total.** Untested, and the
+  cheapest of the three: `tgprobe tgl fields [row]` already enumerates every
+  scalar member of a row's own instance by name. If a dump shows a field
+  holding the starting value while `destroyTimer` decays, route C needs no
+  unit conversion, no per-appearance state, and covers every skill including
+  the `abilityDuration=0` ones.
+- **Route B - latch the starting `destroyTimer` on first sight.** The
+  issue's own suggestion; the last resort. Wrong on its own in a case a
+  player will hit: the mod is off by default and can be turned on
+  mid-session, so the first instance the latch ever sees may already be
+  part-spent, and it would call that value "full" for a skill that is really
+  half spent. Needs its own recorded decision, a `latched=`/`unlatched=`
+  counter pair, and a Known Limitations entry if taken.
+
+**Decision rule, pre-committed so the session's own output selects a route
+rather than reopening the design:** take route C if a candidate field is
+present on at least two rows and reads a plausible constant while
+`destroyTimer` decays; otherwise route A if the predicted total
+(`abilityDuration` times the printed `speed=`) matches the measured
+`tgprobe tgl timer ... first=` on at least two rows within one tick;
+otherwise route B, which needs its own recorded decision and a Known
+Limitations entry. Record whichever routes lost, and why - a route that was
+never measured is `blocked`, not `not observed`.
+
+### The look, judged live
+
+The issue asks for the look to be judged by eye against a real timed cast,
+but a real cast only gives a few seconds per candidate. `tgprobe sprite frac
+[f]` (added this phase) sets a settable 0.0..1.0 fraction every candidate
+below draws against, so each is judgeable at rest, at any fill, with no live
+cast - and it is the same input the shipped draw will take, so what the
+tester judges is what ships. Candidates, all through the existing
+save/restore-colour/alpha, `drawExc=`-counted `tgprobe sprite style <name>`
+draw path (`## Instrument` → `### Subcommands`):
+
+- `arc` - the banded outline drawn over a fraction of its own perimeter.
+- `bar` - a filled bar outside the icon's own bounds, its width scaled by
+  the fraction (D-T5: nothing drawn inside the icon's own bounds is visible
+  at either draw site - `## Instrument` → `### The draw site is
+  constrained`).
+- `number` - the fraction as a whole-number percentage, drawn with
+  `draw_text` (already reachable - `HhDrawHeadLabels` draws through the same
+  builtin at the same draw point, so this is the one candidate with no
+  unconfirmed builtin behind it).
+- `fade` - the shipped `soft` bands with the fraction as their alpha
+  multiplier, the same hook `pulse` already takes.
+
+`tgprobe talents` (this phase) now also prints `speed=`/`fps=` (read by
+name, `game_get_speed`, the tick-rate route A needs) and, per talent row, a
+`predictedTotal=` (`abilityDuration` times the printed speed) - so route A's
+falsification runs on the same line the session pastes back, with no hand
+arithmetic afterwards.
+
+### Live procedure
+
+Run from `plugin_build\build.bat dev`'s `BloodPactPlugin_rel.dll`, one
+session:
+
+1. `tgprobe talents` - paste the `speed=`/`fps=` line and, for each of the
+   seven candidate rows (`tgprobe tgl list` names them), its
+   `abilityDuration=`/`predictedTotal=`.
+2. For each candidate row, cast its plain (non-toggle) form once and run
+   `tgprobe tgl timer` - paste `first=`/`last=`/`min=`/`max=`/`unreadable=`/
+   `atPredicted=`/`draws=`.
+3. For each candidate row, `tgprobe tgl fields [row]` on the same cast -
+   paste the full scalar dump, both the first-seen and the last-seen
+   snapshot.
+4. Apply the decision rule above to the session's own output and say which
+   route it selects, and why.
+5. `tgprobe sprite frac 1.0`, then `tgprobe sprite style arc` over the
+   candidate's own hotbar slot (`tgprobe sprite <SpriteName> <talentId>`
+   selects the slot, or reuse `tgprobe sprite gold <talentId>` first to
+   confirm the slot is right) - describe what is seen. Repeat at `frac 0.5`
+   and `frac 0.0`, then for `bar`, `number` and `fade` at the same three
+   fractions. Say which look is preferred, or that none is yet, using this
+   doc's own convention below - never "rejected" for a look that was never
+   shown.
+
+### Results
+
+Every cell below is filled from the session's own output, quoted verbatim,
+or one of `measured` / `not observed` / `blocked` - never inferred and never
+left as a guess.
+
+| abilityId | speed=/fps= | abilityDuration=/predictedTotal= | timer first= | route C field | status |
+|---|---|---|---|---|---|
+| soulSpurn | | | | | |
+| lunarOrbit | | | | | |
+| crematus | | | | | |
+| counter | | | | | |
+| submergedKnives | | | | | |
+| maelstromOfFrost | | | | | |
+| blender | | | | | |
+
+Look verdicts, one row per candidate:
+
+| look | verdict |
+|---|---|
+| arc | |
+| bar | |
+| number | |
+| fade | |
+
+### Decision
+
+Not yet taken - gated on `phase0: complete` per the workorder's `## State`.
+Fill this subsection with the chosen total source, the chosen look, and the
+evidence for each once the live session above has run and the two tables
+above are filled in.

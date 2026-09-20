@@ -22609,6 +22609,16 @@ static bool g_TgSpriteQuad = false;
 static double g_TgSpriteAlphaMin = 0.0;
 static double g_TgSpriteAlphaMaxOverride = -1.0;
 
+// `tgprobe sprite frac <f>` (issue #55 probe round): a settable 0.0..1.0
+// knob the four countdown-look candidates below draw against, so a look is
+// judgeable at rest, at any fill, with no live timed cast - and it is the
+// same input the shipped countdown will take, so what the tester judges is
+// what ships (context: "### What the probe round must add, and why it is
+// one build and one session"). Defaults to 1.0 (full) so nothing existing
+// changes silently; clamped by hand, not std::max/std::min
+// (test_no_bare_std_max_or_std_min).
+static double g_TgSpriteFraction = 1.0;
+
 static bool TgProbeSpriteResolve(const std::string& name, double& outIdx)
 {
     try {
@@ -22879,7 +22889,13 @@ static void TgProbeSpriteDrawGallery()
 // every other draw_* call in this file already uses; neither has been
 // exercised by this probe before, so their availability through that path
 // is itself unconfirmed until a live session runs `tgprobe sprite style`.
-enum class TgSpriteStyleKind { Soft, Halo, Gradient, Pulse };
+// Arc/Bar/Number/Fade (issue #55 probe round) are the four countdown-look
+// candidates "### What the probe round must add" lists: a banded outline
+// drawn over a fraction of its own perimeter, a bar outside the icon's
+// bounds, a numeric counter, and an alpha ramp over the shipped `soft`
+// bands - each driven by `g_TgSpriteFraction`, none a border input (D-U9
+// still stands: no shipped draw changes here).
+enum class TgSpriteStyleKind { Soft, Halo, Gradient, Pulse, Arc, Bar, Number, Fade };
 static TgSpriteStyleKind g_TgSpriteStyleKind = TgSpriteStyleKind::Soft;
 
 static const char* TgProbeSpriteStyleName(TgSpriteStyleKind kind)
@@ -22889,6 +22905,10 @@ static const char* TgProbeSpriteStyleName(TgSpriteStyleKind kind)
         case TgSpriteStyleKind::Halo: return "halo";
         case TgSpriteStyleKind::Gradient: return "gradient";
         case TgSpriteStyleKind::Pulse: return "pulse";
+        case TgSpriteStyleKind::Arc: return "arc";
+        case TgSpriteStyleKind::Bar: return "bar";
+        case TgSpriteStyleKind::Number: return "number";
+        case TgSpriteStyleKind::Fade: return "fade";
     }
     return "soft";
 }
@@ -22899,6 +22919,10 @@ static bool TgProbeSpriteStyleFromName(const std::string& lower, TgSpriteStyleKi
     if (lower == "halo") { outKind = TgSpriteStyleKind::Halo; return true; }
     if (lower == "gradient") { outKind = TgSpriteStyleKind::Gradient; return true; }
     if (lower == "pulse") { outKind = TgSpriteStyleKind::Pulse; return true; }
+    if (lower == "arc") { outKind = TgSpriteStyleKind::Arc; return true; }
+    if (lower == "bar") { outKind = TgSpriteStyleKind::Bar; return true; }
+    if (lower == "number") { outKind = TgSpriteStyleKind::Number; return true; }
+    if (lower == "fade") { outKind = TgSpriteStyleKind::Fade; return true; }
     return false;
 }
 
@@ -22995,6 +23019,100 @@ static void TgProbeSpriteDrawPulse(double x, double y, double w, double h)
     TgProbeSpriteDrawSoft(x, y, w, h, TgProbeSpritePulseFactor());
 }
 
+// Walks a rectangle's perimeter clockwise from its top-left corner (top
+// edge L->R, right edge T->B, bottom edge R->L, left edge B->T) and draws
+// only the leading `fraction` (0..1) of the total perimeter length via
+// `draw_line` segments - so the traced edge always starts at the same
+// corner and grows clockwise as the fraction rises, the way a clock face
+// reads. `draw_line` is new to this probe (issue #55 round); its
+// reachability through the shared CallBuiltin path is unconfirmed until a
+// live session runs `tgprobe sprite style arc`, the same status every
+// other new builtin this file calls carried before its own first live run
+// (draw_sprite_ext, draw_ellipse_colour, draw_rectangle_colour,
+// draw_sprite_part_ext).
+static void TgProbeSpriteDrawRectOutlineFraction(double x0, double y0, double x1, double y1, double fraction)
+{
+    if (fraction <= 0.0) return;
+    const double w = x1 - x0, h = y1 - y0;
+    const double perimeter = 2.0 * (w + h);
+    double remaining = perimeter * (fraction > 1.0 ? 1.0 : fraction);
+    if (remaining <= 0.0) return;
+    const double ax[4] = { x0, x1, x1, x0 };
+    const double ay[4] = { y0, y0, y1, y1 };
+    const double bx[4] = { x1, x1, x0, x0 };
+    const double by[4] = { y0, y1, y1, y0 };
+    for (int i = 0; i < 4 && remaining > 0.0; ++i) {
+        const double dx = bx[i] - ax[i], dy = by[i] - ay[i];
+        const double len = std::sqrt(dx * dx + dy * dy);
+        if (len <= 0.0) continue;
+        const double take = remaining < len ? remaining : len;
+        const double t = take / len;
+        g_Yytk->CallBuiltin("draw_line", { RValue(ax[i]), RValue(ay[i]), RValue(ax[i] + dx * t), RValue(ay[i] + dy * t) });
+        remaining -= take;
+    }
+}
+
+// `arc`: the banded outline drawn over a fraction of its own perimeter -
+// `soft`'s same band count and alpha ramp, but each band traces only
+// `g_TgSpriteFraction` of its own perimeter instead of the whole rectangle.
+static void TgProbeSpriteDrawArc(double x, double y, double w, double h)
+{
+    RValue activeColour = TgProbeSpriteActiveColour();
+    g_Yytk->CallBuiltin("draw_set_colour", { activeColour });
+    static constexpr int kBands = 10;
+    for (int i = 0; i < kBands; ++i) {
+        const double t = (double)i / (double)(kBands - 1);
+        g_Yytk->CallBuiltin("draw_set_alpha", { RValue(TgProbeSpriteFadeAlpha(1.0, t)) });
+        TgProbeSpriteDrawRectOutlineFraction(x - i, y - i, x + w + i, y + h + i, g_TgSpriteFraction);
+    }
+}
+
+// `bar`: a filled bar drawn below the box, OUTSIDE the icon's own bounds
+// (D-T5 in the workorder context: nothing drawn inside the icon's bounds is
+// visible at either draw site - see docs "The draw site is constrained"),
+// its width scaled by `g_TgSpriteFraction` - the same shape a cooldown/
+// health bar reads as elsewhere in the game's own HUD.
+static void TgProbeSpriteDrawBar(double x, double y, double w, double h)
+{
+    RValue activeColour = TgProbeSpriteActiveColour();
+    static constexpr double kBarGap = 2.0, kBarHeight = 6.0;
+    const double fraction = g_TgSpriteFraction > 1.0 ? 1.0 : (g_TgSpriteFraction < 0.0 ? 0.0 : g_TgSpriteFraction);
+    const double bx0 = x, by0 = y + h + kBarGap;
+    const double bx1 = x + w * fraction, by1 = by0 + kBarHeight;
+    g_Yytk->CallBuiltin("draw_set_alpha", { RValue(1.0) });
+    g_Yytk->CallBuiltin("draw_rectangle_colour", {
+        RValue(bx0), RValue(by0), RValue(bx1), RValue(by1),
+        RValue(activeColour), RValue(activeColour), RValue(activeColour), RValue(activeColour), RValue(0.0) });
+}
+
+// `number`: the active fraction as a whole-number percentage, drawn with
+// `draw_text` - already used by HhDrawHeadLabels at this same draw point, so
+// its reachability is established, unlike the other three candidates' new
+// builtins. Saves/restores halign/valign the same way HhDrawHeadLabels does.
+static void TgProbeSpriteDrawNumber(double x, double y, double w, double h)
+{
+    RValue activeColour = TgProbeSpriteActiveColour();
+    g_Yytk->CallBuiltin("draw_set_colour", { activeColour });
+    g_Yytk->CallBuiltin("draw_set_alpha", { RValue(1.0) });
+    RValue prevHalign = g_Yytk->CallBuiltin("draw_get_halign", {});
+    RValue prevValign = g_Yytk->CallBuiltin("draw_get_valign", {});
+    g_Yytk->CallBuiltin("draw_set_halign", { RValue(1.0) });   // fhalign_center
+    g_Yytk->CallBuiltin("draw_set_valign", { RValue(1.0) });   // fvalign_middle
+    const long pct = (long)std::round(g_TgSpriteFraction * 100.0);
+    g_Yytk->CallBuiltin("draw_text", { RValue(x + w / 2.0), RValue(y + h / 2.0), RValue(std::to_string(pct) + "%") });
+    g_Yytk->CallBuiltin("draw_set_halign", { prevHalign });
+    g_Yytk->CallBuiltin("draw_set_valign", { prevValign });
+}
+
+// `fade`: an alpha ramp over the shipped `soft` bands - reuses `soft`'s own
+// draw with `g_TgSpriteFraction` as the alpha multiplier `pulse` already
+// takes, so the whole outline dims as the countdown runs out instead of
+// shrinking or retracing.
+static void TgProbeSpriteDrawFade(double x, double y, double w, double h)
+{
+    TgProbeSpriteDrawSoft(x, y, w, h, g_TgSpriteFraction);
+}
+
 static void TgProbeSpriteDrawStyle(TgSpriteStyleKind kind, double x, double y, double w, double h)
 {
     switch (kind) {
@@ -23002,6 +23120,10 @@ static void TgProbeSpriteDrawStyle(TgSpriteStyleKind kind, double x, double y, d
         case TgSpriteStyleKind::Halo: TgProbeSpriteDrawHalo(x, y, w, h); return;
         case TgSpriteStyleKind::Gradient: TgProbeSpriteDrawGradient(x, y, w, h); return;
         case TgSpriteStyleKind::Pulse: TgProbeSpriteDrawPulse(x, y, w, h); return;
+        case TgSpriteStyleKind::Arc: TgProbeSpriteDrawArc(x, y, w, h); return;
+        case TgSpriteStyleKind::Bar: TgProbeSpriteDrawBar(x, y, w, h); return;
+        case TgSpriteStyleKind::Number: TgProbeSpriteDrawNumber(x, y, w, h); return;
+        case TgSpriteStyleKind::Fade: TgProbeSpriteDrawFade(x, y, w, h); return;
     }
 }
 
@@ -23056,6 +23178,7 @@ static void TgProbeSpriteList()
         Out(std::string("  ") + name + " idx=" + (resolved ? std::to_string((long long)idx) : std::string("unresolved")));
     }
     Out("  styles: soft, halo, gradient, pulse (tgprobe sprite style <name>) - drawn by us, not a game sprite");
+    Out("  countdown styles (issue #55): arc, bar, number, fade - drawn against `tgprobe sprite frac`");
     Out("  colours (tgprobe sprite colour <name>, or <r> <g> <b> 0..255 each):");
     for (const TgColourPreset& p : kTgColourPresets) {
         Out("    " + std::string(p.name) + " (" + std::to_string((long long)p.r) + ","
@@ -23065,6 +23188,7 @@ static void TgProbeSpriteList()
     Out("  tgprobe sprite box tuned|bbox - D-U12's derived box (default) or the slot's raw navBbox");
     Out("  tgprobe sprite quad on|off - the sprite's own quadrants mirrored outward in place (\"inside out\"), default off");
     Out("  tgprobe sprite alpha <min> [max] - the fade floor/ceiling `style soft`/`style gradient` use, default 0..style-own");
+    Out("  tgprobe sprite frac [f] - the 0.0..1.0 countdown fraction `style arc|bar|number|fade` draw against, default 1.0");
 }
 
 // The index->name mapping `gallery` prints when it runs, to the log only -
@@ -23135,6 +23259,14 @@ static std::string TgProbeSpriteAlphaText()
     return "alpha=" + std::to_string(minByte) + "/255.." + maxPart;
 }
 
+// "frac=<0.0..1.0>" - printed beside colour=/alpha= in the style/off
+// confirmation lines, the countdown fraction `style arc|bar|number|fade`
+// (issue #55) draw against.
+static std::string TgProbeSpriteFracText()
+{
+    return "frac=" + std::to_string(g_TgSpriteFraction);
+}
+
 static void TgProbeSpriteCommand(const std::string& rest)
 {
     std::string subRest;
@@ -23142,15 +23274,16 @@ static void TgProbeSpriteCommand(const std::string& rest)
     const std::string lower = Lower(first);
     if (first.empty()) {
         Out("tgprobe sprite: usage -> tgprobe sprite <SpriteName> [talentId] | <SpriteName> centre"
-            " | off | gold | style soft|halo|gradient|pulse | list | gallery [cols] | layer hud|buffs"
-            " | scale [f] | colour [name|r g b] | box tuned|bbox | quad on|off | alpha [min] [max]");
+            " | off | gold | style soft|halo|gradient|pulse|arc|bar|number|fade | list | gallery [cols]"
+            " | layer hud|buffs | scale [f] | colour [name|r g b] | box tuned|bbox | quad on|off"
+            " | alpha [min] [max] | frac [f]");
         return;
     }
     if (lower == "off") {
         g_TgSpriteMode = TgSpriteMode::Off;
         Out("tgprobe sprite -> off draws=" + std::to_string(g_TgSpriteDraws)
             + " drawExc=" + std::to_string(g_TgSpriteDrawExc) + " colour=" + TgProbeSpriteColourText()
-            + " " + TgProbeSpriteQuadText() + " " + TgProbeSpriteAlphaText()
+            + " " + TgProbeSpriteQuadText() + " " + TgProbeSpriteAlphaText() + " " + TgProbeSpriteFracText()
             + " layer=" + TgProbeLayerName());
         return;
     }
@@ -23292,6 +23425,20 @@ static void TgProbeSpriteCommand(const std::string& rest)
         Out("tgprobe sprite " + TgProbeSpriteAlphaText());
         return;
     }
+    if (lower == "frac") {
+        std::string ignored;
+        const std::string v = FirstToken(subRest, ignored);
+        if (!v.empty()) {
+            double f = 1.0;
+            try { f = std::stod(v); } catch (...) { f = 1.0; }
+            if (f < 0.0) f = 0.0;   // clamp by hand (test_no_bare_std_max_or_std_min)
+            if (f > 1.0) f = 1.0;
+            g_TgSpriteFraction = f;
+        }
+        Out("tgprobe sprite " + TgProbeSpriteFracText()
+            + " (the countdown fraction `style arc|bar|number|fade` draw against; range 0.0..1.0, default 1.0)");
+        return;
+    }
     if (lower == "gold") {
         g_TgSpriteMode = TgSpriteMode::Gold;
         g_TgSpriteTalentId = kToggleIndicatorTalentId;
@@ -23312,7 +23459,7 @@ static void TgProbeSpriteCommand(const std::string& rest)
         const std::string v = Lower(FirstToken(subRest, ignored));
         TgSpriteStyleKind kind;
         if (!TgProbeSpriteStyleFromName(v, kind)) {
-            Out("tgprobe sprite style: usage -> tgprobe sprite style soft|halo|gradient|pulse");
+            Out("tgprobe sprite style: usage -> tgprobe sprite style soft|halo|gradient|pulse|arc|bar|number|fade");
             return;
         }
         g_TgSpriteStyleKind = kind;
@@ -23328,7 +23475,7 @@ static void TgProbeSpriteCommand(const std::string& rest)
             + (kind == TgSpriteStyleKind::Pulse
                 ? " period=" + std::to_string(kTgPulsePeriodFrames / 60.0) + "s (" + std::to_string((long long)kTgPulsePeriodFrames) + " frames)"
                 : "")
-            + " colour=" + TgProbeSpriteColourText() + " " + TgProbeSpriteAlphaText()
+            + " colour=" + TgProbeSpriteColourText() + " " + TgProbeSpriteAlphaText() + " " + TgProbeSpriteFracText()
             + " layer=" + TgProbeLayerName()
             + " (watch `tgprobe sprite off` for draws=/drawExc=)");
         return;
@@ -24078,6 +24225,33 @@ static void TgProbeTalentsCommand(const std::string& rest)
     const bool tagsMode = Lower(arg) == "tags";
     const std::string filter = tagsMode ? std::string() : Lower(arg);
 
+    // T2 (issue #55): route A (abilityDuration x the runtime's tick rate)
+    // cannot be falsified without a tick-rate readout, and nothing in
+    // tgprobe prints one today ("### What the probe round must add"). Read
+    // by name, the same call and unreadable-floor shape the shipped
+    // Headhunter buff-duration path already uses (~ModuleMain.cpp:8038:
+    // game_get_speed(0.0)), plus `fps` as this file's own established
+    // positive control (~ModuleMain.cpp:20360). Printed once, up front, so
+    // the per-row predictedTotal= below is falsifiable against a measured
+    // `tgprobe tgl timer ... first=` without hand arithmetic.
+    double speed = -1.0;
+    bool speedOk = false;
+    try {
+        speed = g_Yytk->CallBuiltin("game_get_speed", { RValue(0.0) }).ToDouble();
+        speedOk = speed > 0.0;
+    } catch (...) {}
+    double fpsVal = -1.0;
+    bool fpsOk = false;
+    try {
+        RValue v;
+        if (AurieSuccess(g_Yytk->GetBuiltin("fps", nullptr, NULL_INDEX, v)) && N1Numeric(v)) {
+            fpsVal = v.ToDouble();
+            fpsOk = true;
+        }
+    } catch (...) {}
+    Out("tgprobe talents: speed=" + (speedOk ? TgProbeTglNumber(speed) : std::string("unreadable"))
+        + " fps=" + (fpsOk ? TgProbeTglNumber(fpsVal) : std::string("unreadable")));
+
     RValue map;
     try {
         if (!g_Yytk->CallBuiltin("variable_global_exists", { RValue("talentStructMap") }).ToBoolean()) {
@@ -24139,6 +24313,16 @@ static void TgProbeTalentsCommand(const std::string& rest)
                     if (shown < kShowCap) {
                         std::string line = "  talent " + std::to_string(id);
                         for (int k = 0; k < 6; ++k) line += std::string(" ") + kFields[k] + "=" + values[k];
+                        // T2: route A's falsification, on the same line as
+                        // abilityDuration - predictedTotal = abilityDuration
+                        // x speed, `n/a` when speed is unreadable or
+                        // abilityDuration is not a plain number (absent,
+                        // unreadable, or non-numeric text like an array).
+                        std::string predicted = "n/a";
+                        if (speedOk) {
+                            try { predicted = TgProbeTglNumber(std::stod(values[2]) * speed); } catch (...) {}
+                        }
+                        line += " predictedTotal=" + predicted;
                         Out(line);
                         ++shown;
                     } else {
