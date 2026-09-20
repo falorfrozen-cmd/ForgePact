@@ -301,11 +301,12 @@ turn co-op rendering on, and run no `citrace` command, after `tgprobe hook`.
 | `tgprobe snap <Obj\|global>` / `tgprobe diff` | Snapshot those scalars, then print changed / added / removed keys (cap 200 lines). A change inside an array or struct is invisible here; that is what the walkers are for. |
 | `tgprobe room` | The room key, whether it is readable, and the room name. |
 | `tgprobe spurn [log on\|off\|as foreign\|slots\|fields]` | Samples the production `ToggleIndicatorRead` on every `DrawHudBuffs` draw. Bare `spurn` prints the last sample (`n=`, `mine=`, `others=`, `unattributed=`, `capped=`, `state=`) plus running `samples=`/`on=`/`off=`/`unreadable=`/`maxN=`/`transitions=`/`lastTransitionFrame=` counters, the marker-required counters `markedOn=`/`markedOff=`/`markedUnreadable=`, and `firstAfterRoomChange=`. `spurn log on\|off` logs each instance's `playerNumber`/`isMyClient` on every state change (budgeted). `spurn as foreign` is the non-mutating negative control (P1b: there is no local player number left to override): the same enumeration and decision with every own instance re-interpreted as foreign, reported separately and never touching the real counters. `spurn slots` prints every `UI_Hud_Talent_obj` `row0`/`row1`/`playerSlot.bind_skill`/`global.mySkills` entry whose value is talent 240. `spurn fields` prints the latched per-appearance snapshot (`isMyClient`, `playerNumber`, `targetNumber`, `purgatory`, `purgatoryTimer`, `destroyTimer`) taken on the appearance's first draw and refreshed on every draw while it is present. |
-| `tgprobe mark <x> <y> <w> <h>\|off` | Draws (or clears) a static outline rectangle at GUI coordinates, at the active layer (`buffs` by default, or `hud` — set by `tgprobe sprite layer`, shared with `sprite`), to find which candidate slot rectangle sits on Soul Spurn's button; saves and restores `draw_get_colour`/`draw_get_alpha`. Prints `draws=`/`drawExc=` so "never drew" is separable from "drew in the wrong place", and `layer=` on every confirmation line. |
-| `tgprobe sprite <SpriteName> [talentId\|centre]\|off\|gold\|style <name>` | Resolves `<SpriteName>` by name with `asset_get_index` (prints `unresolved`, stores nothing, on a negative index) and draws it, scaled to a box with `draw_sprite_ext`, at the active layer (see `layer` below). `[talentId]` draws over that talent's hotbar slot (default Soul Spurn, 240), inflated by the active `scale` (see below) around the slot's centre; `centre` instead draws one large fixed-size copy in the middle of the screen, away from the HUD (not affected by `scale`). Prints `frames=`/`width=`/`height=`/`scale=`/`box=`/`layer=` when it runs (`sprite_get_number`/`_width`/`_height`; `box=` is the resulting pixel rectangle, or `box=slot not found`); a multi-frame sprite animates (a shared time base advances every draw, so several sprites drawn together — see `gallery` — animate in lockstep). `gold` draws today's shipped three-nested-rectangle look over the hotbar slot instead, at the same `scale`, so a candidate can be flipped against the current one without arming `toggleborder`. `style <name>` draws one of our own procedural looks instead of a sprite (see the `style` row below). `off` stops drawing and prints `draws=`/`drawExc=`/`layer=`, saving/restoring `draw_get_colour`/`draw_get_alpha` exactly as the shipped draw does. |
+| `tgprobe mark <x> <y> <w> <h>\|off` | Draws (or clears) a static outline rectangle at GUI coordinates, at the active layer (`buffs` by default, or `hud` — set by `tgprobe sprite layer`, shared with `sprite`) and the active colour (round 8, shared with `sprite`; default gold), to find which candidate slot rectangle sits on Soul Spurn's button; saves and restores `draw_get_colour`/`draw_get_alpha`. Prints `draws=`/`drawExc=` so "never drew" is separable from "drew in the wrong place", and `colour=`/`layer=` on every confirmation line. |
+| `tgprobe sprite <SpriteName> [talentId\|centre]\|off\|gold\|style <name>` | Resolves `<SpriteName>` by name with `asset_get_index` (prints `unresolved`, stores nothing, on a negative index) and draws it, scaled to a box with `draw_sprite_ext`, at the active layer (see `layer` below). `[talentId]` draws over that talent's hotbar slot (default Soul Spurn, 240), inflated by the active `scale` (see below) around the slot's centre; `centre` instead draws one large fixed-size copy in the middle of the screen, away from the HUD (not affected by `scale`). Prints `frames=`/`width=`/`height=`/`scale=`/`box=`/`colour=`/`layer=` when it runs (`sprite_get_number`/`_width`/`_height`; `box=` is the resulting pixel rectangle, or `box=slot not found`; `colour=` is printed for reference even though a named sprite draws its own art, untinted); a multi-frame sprite animates (a shared time base advances every draw, so several sprites drawn together — see `gallery` — animate in lockstep). `gold` draws today's shipped three-nested-rectangle look over the hotbar slot instead, at the same `scale`, so a candidate can be flipped against the current one without arming `toggleborder`. `style <name>` draws one of our own procedural looks instead of a sprite (see the `style` row below). `off` stops drawing and prints `draws=`/`drawExc=`/`layer=`, saving/restoring `draw_get_colour`/`draw_get_alpha` exactly as the shipped draw does. |
 | `tgprobe sprite scale [f]` | A multiplier (default `1.0`, clamped `0.25..4.0`) on the hotbar-slot box `sprite <Name>`/`sprite gold`/`sprite style <name>` draw into, keeping the drawn box centred on the slot's own centre — the "surround" route (round 5): since only a larger-than-the-icon draw (the gold outline's own `navBbox`, bigger than the icon) is confirmed visible at either layer, a candidate inflated the same way should read around the icon instead of under it. With no argument, reports the current value without changing it; never applied to `centre` or `gallery`, whose box sizes are their own fixed constants, and never to `tgprobe mark`, which already takes explicit geometry. |
 | `tgprobe sprite style soft\|halo\|gradient\|pulse` | Draws a procedural look ForgePact draws itself, not a game sprite, into the same scaled slot box `sprite <Name>`/`sprite gold` use (round 6, after the tester found the flat gold rectangle "crude" and asked for a soft alpha-fade look): `soft` is the shipped outline generalised to 10 alpha-ramped nested bands; `halo` is a radial glow (`draw_ellipse_colour`, the two-colour ellipse builtin); `gradient` is nested filled rectangles (`draw_rectangle_colour`, the four-corner-colour rectangle builtin) approximating a centre-outward fade; `pulse` is `soft` with every band's alpha additionally scaled by a slow sine on the frame counter (confirmation line prints `period=1.5s (90 frames)`). `draw_ellipse_colour`/`draw_rectangle_colour` are new to this probe this round — their reachability through the shared `CallBuiltin` path is unconfirmed until a live session runs `halo`/`gradient` and reports what drew. Names also listed by `sprite list`. |
-| `tgprobe sprite list` | Prints the round's candidate sprite names with each one's resolved index, or `unresolved`, so a wrong name is obvious before drawing: `Talent_Aura_Frame_spr`, `Talent_Frame_Indicator_spr`, `Ability_Indicator_Border_spr`, `Ability_Indicator_spr`, `Ability_Indicator_White_spr`, `Sub_Talent_Big_Border_spr`, `Skill_Frames_spr`; also lists the four `style` names. |
+| `tgprobe sprite colour <name\|r g b>` | A shared colour (round 8) for every `style`, `sprite gold` and `tgprobe mark` — default `gold`, unchanged until a tester asks for red (D-U11: the shipped marker will be red). Presets: `gold`, `red` (a deep, warm crimson — not `255,0,0`; the author's steer was "a nicer shade, similar to what talent aura frame uses"), `brightred` and `deepred` (a brighter and a deeper neighbour of `red`); or a raw `<r> <g> <b>` triple (`0..255` each, clamped by hand). With no argument, reports the active colour without changing it. Confirmation line prints `colour=<name>(<r>,<g>,<b>)` — the full triple, not only the name, so a choice is quotable as a number. Never applied to a named sprite's own art (drawn with its own colours) or to `centre`/`gallery`'s fixed boxes. |
+| `tgprobe sprite list` | Prints the round's candidate sprite names with each one's resolved index, or `unresolved`, so a wrong name is obvious before drawing: `Talent_Aura_Frame_spr`, `Talent_Frame_Indicator_spr`, `Ability_Indicator_Border_spr`, `Ability_Indicator_spr`, `Ability_Indicator_White_spr`, `Sub_Talent_Big_Border_spr`, `Skill_Frames_spr`; also lists the four `style` names and every `colour` preset with its rgb triple. |
 | `tgprobe sprite gallery [cols]` | Draws every candidate from `sprite list`, plus one gold-rectangle cell as the positive control, at once — a fixed grid in the middle of the screen (`cols` columns, default 4), each cell scaled to a 96 px box. No per-cell label is drawn any more (round 6: a `draw_text` label displaced the icon in a live session, cause not diagnosed — see docs "Sprite look probe"); the index→name mapping goes to the log only (`TgProbeSpriteGalleryLegend`, printed once when the command runs). **Not a trustworthy comparison**: a candidate visible over the button has read blank here in the same session — treat `sprite <Name>` (optionally `scale <f>`) over the hotbar slot as the one comparison to trust. |
 | `tgprobe sprite layer hud\|buffs` | Which after-draw call site `sprite`/`mark` actually draw from; shared, default `buffs`. Both layers measured (2026-09-20 live session) to sit *under* the hotbar button's own art, which paints later in the same frame regardless of which one draws — `hud` (the existing `DrawHud` candidate row's own detour, `TgProbeDetourBody`, after that row's trampoline call returns — no new hook, the same one resolver `tgprobe hook` every other candidate row already goes through) does not clear it either; see docs "Sprite look probe" for the full finding and why (the talent slot's own `Draw_0`/`Draw_64` event, where the button paints, reports `not found` to this build's object-event hook path). Setting `layer hud` does not attach the `DrawHud` row itself; the tester runs `tgprobe hook` (or `tgprobe hook drawhud`) separately, same as any other row, and the confirmation line says whether it is attached yet. |
 | `tgprobe talents [substr\|tags]` | Session 6's C0. Walks `global.talentStructMap` (`ds_map_find_first`/`ds_map_find_next`, capped at 5000 keys) and prints, per talent id whose `abilityId` contains `substr` (none = all, at most 40 lines then `…(+N more)`): `abilityId`, `abilityAura`, `abilityDuration`, `abilityCooldown`, `abilityLength` and `abilityTags`, each read on its own (`absent` for a missing key, `unreadable` for a throw, never a default). `tags` instead prints each distinct tag id with its count. Last line `tgprobe talents: ids=N shown=M nonNumericKeys= notStruct= walkExc= truncated= tableRowsWithId=k/rows`. The walk also gives every `tgl` row whose `abilityId` it finds its talent id, which `tgl sub` and `tgl slots` use. |
@@ -548,6 +549,65 @@ in an earlier round.
   verdict. `style halo`, `style gradient` and `style pulse` were not shown
   this session at all. None of the four has a recorded verdict; do not read
   the absence of one as rejection.
+
+**Round 8: D-U11 (author decision, not a measurement) and the follow-up
+tuning session's results.**
+
+- **D-U11 — the shipped marker is red, by author decision.** Verbatim: the
+  toggle indicator is red, not gold, `'thats how aura is indicated as
+  working'` in the game's own HUD. This is a **design decision the author
+  made**, not something this probe measured — nothing in `tgprobe` reads
+  what colour the game's own aura indicator uses; the reasoning is the
+  author's own knowledge of the game's HUD conventions. It supersedes
+  D-U1's colour (gold, 3 px) for the shipped marker. **Live candidate list,
+  to be judged in red**: `soft` at `scale 1.0` (the slot bbox, no
+  inflation needed), `gradient` at `scale 1.6`, and the sprite
+  `Talent_Aura_Frame_spr` at `scale 1.4`. Rejected by the author, on looks:
+  `halo`, `pulse`, `Skill_Frames_spr`, and the flat rectangle look itself
+  ("crude").
+- **`gradient` needs the same "surround" treatment as a sprite.** At
+  `scale 1.0` it is **invisible**: its own alpha fades to `0` at the band's
+  edges, and the part that stays visible (the centre) lands under the
+  button's own art — the same occlusion rule the sprite candidates hit,
+  restated for a fading look rather than a hard-edged one. At `scale 1.6`
+  (`box=199.52x222.72`) it is visible and the tester likes it.
+- **`halo` draws — the two-colour ellipse builtin is reachable through
+  `CallBuiltin`, previously unconfirmed (see the round-6 entry above) — but
+  the tester rejected it on looks.** A drawing-path negative and a
+  looks-based rejection are different things: the builtin call itself
+  works; the result was not liked.
+- **`soft` at `scale 1.0` got its verdict: accepted, carried forward.** The
+  tester found it "more polished" than the flat rectangle and wants it
+  judged in red as a live candidate (see the list above) — no inflation
+  needed for `soft`, unlike the sprite candidates and `gradient`, since it
+  is drawn as an outline rather than a filled or bounded shape.
+- **`pulse` — rejected by the author, on looks, not a measurement
+  failure.** It draws correctly at `scale 1.0` (period `1.5 s` / `90`
+  frames, as designed) but the author found it "too distracting… looks like
+  a signal for user to click it". Record this as a design rejection: the
+  draw path worked exactly as built; the result was not wanted.
+
+**Round 8: `tgprobe sprite colour <name|r g b>`.** A shared colour setting
+for every style draw, `sprite gold`'s rectangle and `tgprobe mark`'s
+rectangle, so a look can be compared in red (D-U11) or gold without
+another build. **Not pure RGB red** — the author's own steer: "choose a
+nicer shade, similar to what talent aura frame uses"
+(`Talent_Aura_Frame_spr`'s own tint). This probe has no cheap way to read a
+sprite's own tint back (no pixel-sample builtin is used anywhere else in
+this file, and none was added blind for this); the presets below are the
+cheap, by-eye alternative instead. Presets: `gold` (the default — unchanged
+until a tester asks for red, so nothing existing changes silently), `red`
+(a deep, slightly warm crimson — the default red, not `255,0,0`),
+`brightred` and `deepred` (a brighter and a deeper neighbour either side of
+`red`, so a tester can pick a shade by name in one session) — or a raw
+`r g b` triple for an exact value, each clamped `0..255`. Printed as
+`colour=<name>(<r>,<g>,<b>)` beside `scale=`/`layer=` in every
+sprite/gold/style/mark confirmation line — the full triple, not only the
+preset name, so whatever a tester settles on is quotable straight into this
+doc, and later into phase S, as a number. `halo`'s bright core stays a
+fixed near-white regardless of the active colour — only its outer edge
+follows the setting — since a "hot centre" reads the same whether the
+glow's edge is gold or red.
 
 ### tgprobe deep — the non-scalar read (session 2)
 

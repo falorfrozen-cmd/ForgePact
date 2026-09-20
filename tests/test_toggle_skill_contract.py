@@ -1526,6 +1526,112 @@ class ToggleTableProbeContractTests(unittest.TestCase):
             self.assertIn(name, self.block)
             self.assertNotIn(name, self.stripped)
 
+    # ---- Sprite look probe round 8 (2026-09-20): colour control ----
+    # D-U11: the shipped marker will be red ("that's how aura is indicated
+    # as working" in the game's own HUD), superseding D-U1's gold. The
+    # shared setting still defaults to gold so nothing existing changes
+    # silently until a tester asks for red.
+
+    def test_colour_dispatches_name_and_triple_forms(self):
+        sprite = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
+        self.assertIn('lower == "colour" || lower == "color"', sprite)
+        colour_branch = sprite[sprite.index('lower == "colour"'):sprite.index('lower == "layer"')]
+        self.assertIn("TgProbeSpriteColourFromPreset(Lower(first2)", colour_branch)
+        self.assertIn("std::stod(first2)", colour_branch)
+        self.assertIn("std::stod(gStr)", colour_branch)
+        self.assertIn("std::stod(bStr)", colour_branch)
+        # Bare `colour` (no argument) reports without changing anything.
+        self.assertIn("if (first2.empty())", colour_branch)
+
+    def test_colour_presets_include_gold_and_a_family_of_reds(self):
+        presets = self.plugin[self.plugin.index("static const TgColourPreset kTgColourPresets[] = {"):
+                               self.plugin.index("};", self.plugin.index("static const TgColourPreset kTgColourPresets[] = {"))]
+        self.assertIn('"gold"', presets)
+        # A crimson family, not pure 255,0,0 (the author's own steer: "a
+        # nicer shade, similar to what talent aura frame uses") - a default
+        # red plus a brighter and a deeper neighbour either side of it.
+        self.assertIn('"red"', presets)
+        self.assertIn('"brightred"', presets)
+        self.assertIn('"deepred"', presets)
+        self.assertNotIn("255.0, 0.0, 0.0", presets)
+        # `sprite list` iterates the preset table itself (not a copy-pasted
+        # name list), so every preset it ever gains is listed automatically;
+        # it prints each one's rgb triple too, not only its name, so a
+        # tester's choice is recordable as a number.
+        listing = function_body(self.plugin, "static void TgProbeSpriteList()")
+        self.assertIn("for (const TgColourPreset& p : kTgColourPresets)", listing)
+        self.assertIn("p.name", listing)
+        self.assertIn("p.r", listing)
+        self.assertIn("p.g", listing)
+        self.assertIn("p.b", listing)
+
+    def test_colour_default_is_gold(self):
+        self.assertIn('static double g_TgSpriteColourR = 255.0, g_TgSpriteColourG = 215.0, g_TgSpriteColourB = 0.0;', self.plugin)
+        self.assertIn('static std::string g_TgSpriteColourName = "gold";', self.plugin)
+
+    def test_colour_clamps_and_rejects_unparseable_without_storing(self):
+        sprite = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
+        colour_branch = sprite[sprite.index('lower == "colour"'):sprite.index('lower == "layer"')]
+        # Clamp by hand (0..255), not std::max/std::min - this file's own
+        # C2589 lesson (test_no_bare_std_max_or_std_min).
+        for lo, hi in (("if (r < 0.0) r = 0.0;", "if (r > 255.0) r = 255.0;"),
+                       ("if (g < 0.0) g = 0.0;", "if (g > 255.0) g = 255.0;"),
+                       ("if (b < 0.0) b = 0.0;", "if (b > 255.0) b = 255.0;")):
+            self.assertIn(lo, colour_branch)
+            self.assertIn(hi, colour_branch)
+        self.assertNotRegex(colour_branch, r"\bstd::max\(")
+        self.assertNotRegex(colour_branch, r"\bstd::min\(")
+        # An unparseable triple takes the same "usage" path as an empty one
+        # and never reaches the g_TgSpriteColourR/G/B assignment.
+        self.assertIn("if (!parsed) {", colour_branch)
+        not_parsed = colour_branch.index("if (!parsed) {")
+        stored = colour_branch.index("g_TgSpriteColourR = r;")
+        self.assertLess(not_parsed, stored)
+        self.assertIn("return;", colour_branch[not_parsed:stored])
+
+    def test_colour_reaches_every_style_gold_and_mark(self):
+        for signature, needle in (
+            ("static void TgProbeSpriteDrawGoldRect(", "TgProbeSpriteActiveColour()"),
+            ("static void TgProbeSpriteDrawSoft(", "TgProbeSpriteActiveColour()"),
+            ("static void TgProbeSpriteDrawHalo(", "TgProbeSpriteActiveColour()"),
+            ("static void TgProbeSpriteDrawGradient(", "TgProbeSpriteActiveColour()"),
+            ("static void TgProbeDrawMark(bool fromHudLayer)", "TgProbeSpriteActiveColour()"),
+        ):
+            body = function_body(self.plugin, signature)
+            self.assertIn(needle, body, signature)
+        # None of the five hardcodes a gold/red literal triple any more -
+        # they all go through the one shared colour instead.
+        for signature in ("static void TgProbeSpriteDrawGoldRect(", "static void TgProbeSpriteDrawSoft(",
+                           "static void TgProbeSpriteDrawGradient(", "static void TgProbeDrawMark(bool fromHudLayer)"):
+            body = function_body(self.plugin, signature)
+            self.assertNotIn("RValue(215.0)", body, signature)
+        active = function_body(self.plugin, "static RValue TgProbeSpriteActiveColour()")
+        self.assertIn("g_TgSpriteColourR", active)
+        self.assertIn("g_TgSpriteColourG", active)
+        self.assertIn("g_TgSpriteColourB", active)
+        self.assertIn('"make_colour_rgb"', active)
+        # Printed beside scale=/layer= in gold's and style's confirmation
+        # lines, and in mark's - the full rgb triple (TgProbeSpriteColourText),
+        # not only the preset's name, so whatever the tester settles on is
+        # quotable straight into the doc even if it is a raw r g b value.
+        sprite = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
+        gold_branch = sprite[sprite.index('lower == "gold"'):sprite.index('lower == "style"')]
+        self.assertIn("colour=\" + TgProbeSpriteColourText()", gold_branch)
+        style_branch = sprite[sprite.index('lower == "style"'):sprite.index('lower == "gallery"')]
+        self.assertIn("colour=\" + TgProbeSpriteColourText()", style_branch)
+        mark_cmd = function_body(self.plugin, "static void TgProbeMarkCommand(const std::string& rest)")
+        self.assertIn("colour=\" + TgProbeSpriteColourText()", mark_cmd)
+        text = function_body(self.plugin, "static std::string TgProbeSpriteColourText()")
+        self.assertIn("g_TgSpriteColourName", text)
+        self.assertIn("g_TgSpriteColourR", text)
+
+    def test_colour_names_do_not_survive_stripping(self):
+        for name in ("TgColourPreset", "kTgColourPresets", "TgProbeSpriteColourFromPreset",
+                     "TgProbeSpriteActiveColour", "TgProbeSpriteColourText",
+                     "g_TgSpriteColourR", "g_TgSpriteColourName"):
+            self.assertIn(name, self.block)
+            self.assertNotIn(name, self.stripped)
+
     def test_shipped_draw_functions_unchanged_from_round_base(self):
         # Round base for R round 3 (context "R Round 3 - sprite look probe"):
         # hub eaaaf20, ForgePact 7169440. Stronger than the 62a67d2 pin above

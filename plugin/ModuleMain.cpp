@@ -19335,6 +19335,55 @@ static volatile long g_TgMarkDraws = 0, g_TgMarkDrawExc = 0;
 static bool g_TgProbeLayerHud = false;
 static const char* TgProbeLayerName() { return g_TgProbeLayerHud ? "hud" : "buffs"; }
 
+// `tgprobe sprite colour <name|r g b>` (R round 8, issue #11): the colour
+// every probe draw uses - soft/halo/gradient's fills, `sprite gold`'s
+// rectangle and `tgprobe mark`'s rectangle - so a look can be compared in
+// red or gold without another build. D-U11 (author, 2026-09-20): the
+// shipped marker is red, "that's how aura is indicated as working" in the
+// game's own HUD; this shared setting still **defaults to gold** so nothing
+// existing changes silently until a tester actually asks for red. The
+// author's follow-up steer: not pure RGB red - "choose a nicer shade,
+// similar to what talent aura frame uses" (`Talent_Aura_Frame_spr`) - so
+// `red` is a deep, slightly warm crimson rather than 255,0,0, with a
+// brighter and a deeper neighbour either side of it as named presets a
+// tester can pick by name in one session. This probe has no cheap way to
+// read the sprite's own tint back (no pixel-sample builtin is used
+// anywhere else in this file, and guessing at one blind was avoided per
+// instruction); the presets below are the cheap, by-eye alternative.
+static double g_TgSpriteColourR = 255.0, g_TgSpriteColourG = 215.0, g_TgSpriteColourB = 0.0;   // gold
+static std::string g_TgSpriteColourName = "gold";
+
+struct TgColourPreset { const char* name; double r, g, b; };
+static const TgColourPreset kTgColourPresets[] = {
+    { "gold", 255.0, 215.0, 0.0 },
+    { "red", 196.0, 42.0, 46.0 },        // deep, warm crimson (D-U11's default red)
+    { "brightred", 224.0, 68.0, 58.0 },  // a brighter neighbour of "red"
+    { "deepred", 140.0, 24.0, 28.0 },    // a deeper, darker neighbour of "red"
+};
+
+static bool TgProbeSpriteColourFromPreset(const std::string& lower, double& outR, double& outG, double& outB, std::string& outName)
+{
+    for (const TgColourPreset& p : kTgColourPresets) {
+        if (lower == p.name) { outR = p.r; outG = p.g; outB = p.b; outName = p.name; return true; }
+    }
+    return false;
+}
+
+static RValue TgProbeSpriteActiveColour()
+{
+    return g_Yytk->CallBuiltin("make_colour_rgb", { RValue(g_TgSpriteColourR), RValue(g_TgSpriteColourG), RValue(g_TgSpriteColourB) });
+}
+
+// "name(r,g,b)" - printed in every confirmation line beside scale=/layer=,
+// so whatever a tester settles on is quotable straight into the doc (and
+// later into phase S) as a number, not only a preset name that could later
+// change under them.
+static std::string TgProbeSpriteColourText()
+{
+    return g_TgSpriteColourName + "(" + std::to_string((long long)g_TgSpriteColourR) + ","
+        + std::to_string((long long)g_TgSpriteColourG) + "," + std::to_string((long long)g_TgSpriteColourB) + ")";
+}
+
 // `fromHudLayer` identifies which after-draw site is calling; the routine
 // only actually draws when that matches the active layer, so exactly one
 // site draws at a time and switching layers needs no new build.
@@ -19345,8 +19394,8 @@ static void TgProbeDrawMark(bool fromHudLayer)
     try {
         RValue prevColour = g_Yytk->CallBuiltin("draw_get_colour", {});
         RValue prevAlpha = g_Yytk->CallBuiltin("draw_get_alpha", {});
-        RValue red = g_Yytk->CallBuiltin("make_colour_rgb", { RValue(255.0), RValue(64.0), RValue(64.0) });
-        g_Yytk->CallBuiltin("draw_set_colour", { red });
+        RValue activeColour = TgProbeSpriteActiveColour();
+        g_Yytk->CallBuiltin("draw_set_colour", { activeColour });
         g_Yytk->CallBuiltin("draw_set_alpha", { RValue(1.0) });
         for (int t = 0; t < 3; ++t) {
             g_Yytk->CallBuiltin("draw_rectangle", {
@@ -19367,7 +19416,8 @@ static void TgProbeMarkCommand(const std::string& rest)
     if (first.empty() || first == "off") {
         g_TgMarkActive = false;
         Out("tgprobe mark -> off draws=" + std::to_string(g_TgMarkDraws)
-            + " drawExc=" + std::to_string(g_TgMarkDrawExc) + " layer=" + TgProbeLayerName());
+            + " drawExc=" + std::to_string(g_TgMarkDrawExc) + " colour=" + TgProbeSpriteColourText()
+            + " layer=" + TgProbeLayerName());
         return;
     }
     try {
@@ -19381,14 +19431,15 @@ static void TgProbeMarkCommand(const std::string& rest)
         InterlockedExchange(&g_TgMarkDraws, 0);
         InterlockedExchange(&g_TgMarkDrawExc, 0);
         Out("tgprobe mark -> x=" + std::to_string(x) + " y=" + std::to_string(y)
-            + " w=" + std::to_string(w) + " h=" + std::to_string(h) + " layer=" + TgProbeLayerName()
+            + " w=" + std::to_string(w) + " h=" + std::to_string(h) + " colour=" + TgProbeSpriteColourText()
+            + " layer=" + TgProbeLayerName()
             + " (watch `tgprobe spurn` or the next `tgprobe mark off` for draws=/drawExc=)");
     } catch (...) {
         Out("tgprobe mark: usage -> tgprobe mark <x> <y> <w> <h> | off");
     }
 }
 
-// `tgprobe sprite <SpriteName> [talentId|centre]|off|gold|style <name>|list|gallery [cols]|layer hud|buffs|scale [f]`:
+// `tgprobe sprite <SpriteName> [talentId|centre]|off|gold|style <name>|list|gallery [cols]|layer hud|buffs|scale [f]|colour [name|r g b]`:
 // draws a named sprite - or today's shipped gold rectangles, or a procedural
 // style candidate we draw ourselves, or every candidate at once, or one
 // candidate centred - so the tester can judge a look by eye next to the
@@ -19405,7 +19456,11 @@ static void TgProbeMarkCommand(const std::string& rest)
 // glow drawn by us, not a game sprite, for the tester to judge alongside a
 // candidate) and drops the gallery's per-cell name label (it displaced the
 // icon; `gallery`'s own index->name mapping is printed to the log only now,
-// via TgProbeSpriteGalleryLegend). Read-only, research build only; never a
+// via TgProbeSpriteGalleryLegend). R round 8 adds `colour <name|r g b>`
+// (default gold; D-U11, the author's decision, says the shipped marker will
+// be red) shared by every style, `sprite gold` and `tgprobe mark`, so a
+// look can be compared in red or gold without another build. Read-only,
+// research build only; never a
 // shipped draw input - S still ships the gold rectangle (D-U9's "no shipped
 // draw change" extends to this probe).
 static const char* const kTgSpriteCandidates[] = {
@@ -19527,10 +19582,10 @@ static void TgProbeSpriteDrawOne(double idx, double x, double y, double w, doubl
 // through this probe path as the gallery/single-candidate positive control.
 static void TgProbeSpriteDrawGoldRect(double x, double y, double w, double h)
 {
-    RValue gold = g_Yytk->CallBuiltin("make_colour_rgb", { RValue(255.0), RValue(215.0), RValue(0.0) });
-    g_Yytk->CallBuiltin("draw_set_colour", { gold });
+    RValue activeColour = TgProbeSpriteActiveColour();
+    g_Yytk->CallBuiltin("draw_set_colour", { activeColour });
     g_Yytk->CallBuiltin("draw_set_alpha", { RValue(1.0) });
-    for (int t = 0; t < 3; ++t) {   // 3 px outline, gold (product decision D-U1)
+    for (int t = 0; t < 3; ++t) {   // 3 px outline; colour follows `tgprobe sprite colour` (default gold, D-U1)
         g_Yytk->CallBuiltin("draw_rectangle", {
             RValue(x - t), RValue(y - t), RValue(x + w + t), RValue(y + h + t), RValue(1.0) });
     }
@@ -19623,8 +19678,8 @@ static double TgProbeSpritePulseFactor()
 // time-varying factor so the whole border breathes together.
 static void TgProbeSpriteDrawSoft(double x, double y, double w, double h, double alphaMul = 1.0)
 {
-    RValue gold = g_Yytk->CallBuiltin("make_colour_rgb", { RValue(255.0), RValue(215.0), RValue(0.0) });
-    g_Yytk->CallBuiltin("draw_set_colour", { gold });
+    RValue activeColour = TgProbeSpriteActiveColour();
+    g_Yytk->CallBuiltin("draw_set_colour", { activeColour });
     static constexpr int kBands = 10;
     for (int i = 0; i < kBands; ++i) {
         const double t = (double)i / (double)(kBands - 1);   // 0 innermost, 1 outermost
@@ -19635,13 +19690,16 @@ static void TgProbeSpriteDrawSoft(double x, double y, double w, double h, double
 }
 
 // `halo`: a radial glow around the icon, several concentric two-colour
-// ellipses (bright core colour at the centre, gold at the edge) growing
-// outward past the scaled box with alpha falling off, so it reads as a
-// glow around the button rather than a shape drawn on top of it.
+// ellipses (a fixed bright core colour at the centre, the active colour at
+// the edge) growing outward past the scaled box with alpha falling off, so
+// it reads as a glow around the button rather than a shape drawn on top of
+// it. The core stays a fixed near-white regardless of `tgprobe sprite
+// colour` - a "hot centre" reads the same whether the glow's edge is gold
+// or red; only the edge colour follows the active setting.
 static void TgProbeSpriteDrawHalo(double x, double y, double w, double h)
 {
     RValue core = g_Yytk->CallBuiltin("make_colour_rgb", { RValue(255.0), RValue(255.0), RValue(220.0) });
-    RValue gold = g_Yytk->CallBuiltin("make_colour_rgb", { RValue(255.0), RValue(215.0), RValue(0.0) });
+    RValue edge = TgProbeSpriteActiveColour();
     const double cx = x + w / 2.0, cy = y + h / 2.0;
     static constexpr int kBands = 8;
     for (int i = kBands - 1; i >= 0; --i) {   // outermost first, brighter core drawn last (on top)
@@ -19650,7 +19708,7 @@ static void TgProbeSpriteDrawHalo(double x, double y, double w, double h)
         const double ry = (h / 2.0) * (1.0 + t * 0.6);
         g_Yytk->CallBuiltin("draw_set_alpha", { RValue((1.0 - t) * 0.6) });
         g_Yytk->CallBuiltin("draw_ellipse_colour", {
-            RValue(cx - rx), RValue(cy - ry), RValue(cx + rx), RValue(cy + ry), RValue(core), RValue(gold), RValue(0.0) });
+            RValue(cx - rx), RValue(cy - ry), RValue(cx + rx), RValue(cy + ry), RValue(core), RValue(edge), RValue(0.0) });
     }
 }
 
@@ -19660,7 +19718,7 @@ static void TgProbeSpriteDrawHalo(double x, double y, double w, double h)
 // outward rather than one flat block.
 static void TgProbeSpriteDrawGradient(double x, double y, double w, double h)
 {
-    RValue gold = g_Yytk->CallBuiltin("make_colour_rgb", { RValue(255.0), RValue(215.0), RValue(0.0) });
+    RValue activeColour = TgProbeSpriteActiveColour();
     const double cx = x + w / 2.0, cy = y + h / 2.0;
     static constexpr int kBands = 8;
     for (int i = kBands - 1; i >= 0; --i) {
@@ -19670,7 +19728,7 @@ static void TgProbeSpriteDrawGradient(double x, double y, double w, double h)
         g_Yytk->CallBuiltin("draw_set_alpha", { RValue((1.0 - t) * 0.5) });
         g_Yytk->CallBuiltin("draw_rectangle_colour", {
             RValue(cx - bw / 2.0), RValue(cy - bh / 2.0), RValue(cx + bw / 2.0), RValue(cy + bh / 2.0),
-            RValue(gold), RValue(gold), RValue(gold), RValue(gold), RValue(0.0) });
+            RValue(activeColour), RValue(activeColour), RValue(activeColour), RValue(activeColour), RValue(0.0) });
     }
 }
 
@@ -19738,6 +19796,12 @@ static void TgProbeSpriteList()
         Out(std::string("  ") + name + " idx=" + (resolved ? std::to_string((long long)idx) : std::string("unresolved")));
     }
     Out("  styles: soft, halo, gradient, pulse (tgprobe sprite style <name>) - drawn by us, not a game sprite");
+    Out("  colours (tgprobe sprite colour <name>, or <r> <g> <b> 0..255 each):");
+    for (const TgColourPreset& p : kTgColourPresets) {
+        Out("    " + std::string(p.name) + " (" + std::to_string((long long)p.r) + ","
+            + std::to_string((long long)p.g) + "," + std::to_string((long long)p.b) + ")"
+            + (std::string(p.name) == "gold" ? " [default]" : ""));
+    }
 }
 
 // The index->name mapping `gallery` prints when it runs, to the log only -
@@ -19772,16 +19836,61 @@ static void TgProbeSpriteCommand(const std::string& rest)
     const std::string lower = Lower(first);
     if (first.empty()) {
         Out("tgprobe sprite: usage -> tgprobe sprite <SpriteName> [talentId] | <SpriteName> centre"
-            " | off | gold | style soft|halo|gradient|pulse | list | gallery [cols] | layer hud|buffs | scale [f]");
+            " | off | gold | style soft|halo|gradient|pulse | list | gallery [cols] | layer hud|buffs"
+            " | scale [f] | colour [name|r g b]");
         return;
     }
     if (lower == "off") {
         g_TgSpriteMode = TgSpriteMode::Off;
         Out("tgprobe sprite -> off draws=" + std::to_string(g_TgSpriteDraws)
-            + " drawExc=" + std::to_string(g_TgSpriteDrawExc) + " layer=" + TgProbeLayerName());
+            + " drawExc=" + std::to_string(g_TgSpriteDrawExc) + " colour=" + TgProbeSpriteColourText()
+            + " layer=" + TgProbeLayerName());
         return;
     }
     if (lower == "list") { TgProbeSpriteList(); return; }
+    if (lower == "colour" || lower == "color") {
+        std::string rest2;
+        const std::string first2 = FirstToken(subRest, rest2);
+        if (first2.empty()) {
+            Out("tgprobe sprite colour -> " + TgProbeSpriteColourText());
+            return;
+        }
+        double presetR = 0, presetG = 0, presetB = 0;
+        std::string presetName;
+        if (TgProbeSpriteColourFromPreset(Lower(first2), presetR, presetG, presetB, presetName)) {
+            g_TgSpriteColourR = presetR; g_TgSpriteColourG = presetG; g_TgSpriteColourB = presetB;
+            g_TgSpriteColourName = presetName;
+            Out("tgprobe sprite colour -> " + TgProbeSpriteColourText());
+            return;
+        }
+        std::string t2, t3;
+        const std::string gStr = FirstToken(rest2, t2);
+        const std::string bStr = FirstToken(t2, t3);
+        bool parsed = false;
+        double r = 0, g = 0, b = 0;
+        if (!gStr.empty() && !bStr.empty()) {
+            try {
+                r = std::stod(first2);
+                g = std::stod(gStr);
+                b = std::stod(bStr);
+                parsed = true;
+            } catch (...) { parsed = false; }
+        }
+        if (!parsed) {
+            Out("tgprobe sprite colour: usage -> tgprobe sprite colour <name> | <r> <g> <b> (0..255 each); names: gold, red, brightred, deepred");
+            return;
+        }
+        if (r < 0.0) r = 0.0;   // clamp by hand, not std::max/std::min (test_no_bare_std_max_or_std_min)
+        if (r > 255.0) r = 255.0;
+        if (g < 0.0) g = 0.0;
+        if (g > 255.0) g = 255.0;
+        if (b < 0.0) b = 0.0;
+        if (b > 255.0) b = 255.0;
+        g_TgSpriteColourR = r; g_TgSpriteColourG = g; g_TgSpriteColourB = b;
+        g_TgSpriteColourName = "custom";
+        Out("tgprobe sprite colour -> " + TgProbeSpriteColourText());
+        return;
+    }
     if (lower == "layer") {
         std::string ignored;
         const std::string v = Lower(FirstToken(subRest, ignored));
@@ -19828,7 +19937,7 @@ static void TgProbeSpriteCommand(const std::string& rest)
             + (boxFound
                 ? " box=" + std::to_string(bw) + "x" + std::to_string(bh) + "@" + std::to_string(bx) + "," + std::to_string(by)
                 : " box=slot not found")
-            + " layer=" + TgProbeLayerName()
+            + " colour=" + TgProbeSpriteColourText() + " layer=" + TgProbeLayerName()
             + " (watch `tgprobe sprite off` for draws=/drawExc=)");
         return;
     }
@@ -19855,7 +19964,7 @@ static void TgProbeSpriteCommand(const std::string& rest)
             + (kind == TgSpriteStyleKind::Pulse
                 ? " period=" + std::to_string(kTgPulsePeriodFrames / 60.0) + "s (" + std::to_string((long long)kTgPulsePeriodFrames) + " frames)"
                 : "")
-            + " layer=" + TgProbeLayerName()
+            + " colour=" + TgProbeSpriteColourText() + " layer=" + TgProbeLayerName()
             + " (watch `tgprobe sprite off` for draws=/drawExc=)");
         return;
     }
@@ -19910,7 +20019,9 @@ static void TgProbeSpriteCommand(const std::string& rest)
     }
     Out("tgprobe sprite -> " + first + (centre ? std::string(" centre") : (" talentId=" + std::to_string(talentId)))
         + " idx=" + std::to_string((long long)idx) + " frames=" + std::to_string((long long)frames)
-        + " width=" + std::to_string(sw) + " height=" + std::to_string(sh) + boxText + " layer=" + TgProbeLayerName()
+        + " width=" + std::to_string(sw) + " height=" + std::to_string(sh) + boxText
+        + " colour=" + TgProbeSpriteColourText() + " (a named sprite's own art, not tinted)"
+        + " layer=" + TgProbeLayerName()
         + " (watch `tgprobe sprite off` for draws=/drawExc=)");
 }
 
@@ -20947,7 +21058,7 @@ static void TgProbeCommand(const std::string& rest)
         " | deep snap|diff|flip|find|get|census|selftest|drop ..."
         " | spurn [log on|off | as foreign | slots | fields] | mark <x> <y> <w> <h> | off"
         " | sprite <SpriteName> [talentId|centre] | off | gold | style soft|halo|gradient|pulse | list"
-        " | gallery [cols] | layer hud|buffs | scale [f]"
+        " | gallery [cols] | layer hud|buffs | scale [f] | colour [name|r g b]"
         " | talents [substr|tags] | tgl [add|list|clear|slots|fields|sub|timer]");
 }
 #endif // FORGEPACT_RELEASE (tgprobe)
