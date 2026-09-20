@@ -1024,14 +1024,13 @@ class ClosureNameContractTests(unittest.TestCase):
 class PanelAllOffContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        # forgepact.py imports its sibling panel_icons.py by bare name;
-        # spec_from_file_location does not add the module's own directory to
-        # sys.path the way a normal package import would, so this exec would
-        # fail with a standalone run of this file (no other test module
-        # happened to insert src/ first) unless it is added here too.
-        src_dir = str(PANEL_PATH.parent)
-        if src_dir not in sys.path:
-            sys.path.insert(0, src_dir)
+        # The panel imports its sibling modules (panel_icons, ...). Under
+        # `discover` another test has already put src/ on the path; run on its
+        # own, this class must do it itself - `spec_from_file_location` does
+        # not add the module's own directory the way a package import would.
+        import sys
+        if str(PANEL_PATH.parent) not in sys.path:
+            sys.path.insert(0, str(PANEL_PATH.parent))
         spec = importlib.util.spec_from_file_location("forgepact_contract_module", PANEL_PATH)
         cls.panel = importlib.util.module_from_spec(spec)
         assert spec.loader is not None

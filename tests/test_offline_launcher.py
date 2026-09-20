@@ -42,7 +42,6 @@ class OfflineLaunchTests(unittest.TestCase):
         # Never run verify_launch's real delay or a native thread in launch tests.
         self.thread = Mock()
         self.enterContext(patch.object(launcher, "threading", SimpleNamespace(Thread=self.thread)))
-        self.prepare = self.enterContext(patch.object(forgepact, "ensure_ri_cache", return_value=False))
         self.enterContext(patch.object(launcher, "os", SimpleNamespace(name="nt", environ=dict(os.environ), pathsep=os.pathsep)))
         self.enterContext(patch.object(launcher, "_STATE", {"phase":"idle", "message":"Ready", "pid":0, "attempt":0}))
         self.enterContext(patch.object(launcher, "EXE_FACTS_CACHE", {}))
@@ -60,7 +59,6 @@ class OfflineLaunchTests(unittest.TestCase):
         self.assertEqual(kwargs["env"]["SteamAppId"], "269210")
         self.assertEqual(kwargs["env"]["SteamGameId"], "269210")
         self.assertNotIn("shell", kwargs)
-        self.prepare.assert_called_once_with(self.cfg)
         self.assertEqual(self.exe.read_bytes(), original)
         self.assertEqual(result["launch"]["phase"], "started")
 
@@ -76,7 +74,6 @@ class OfflineLaunchTests(unittest.TestCase):
         self.assertIn("Install Mod Plugin", self.launch()["err"])
         self.spawn.assert_not_called()
         self.steam.assert_not_called()
-        self.prepare.assert_not_called()
 
     def test_missing_runtime_and_invalid_executable_fail_without_spawning(self):
         self.runtime.unlink()
@@ -118,7 +115,6 @@ class OfflineLaunchTests(unittest.TestCase):
         self.processes.side_effect = [[], [(42, "EasyAntiCheat_EOS.exe")]]
         self.assertIn("EAC is currently active", self.launch()["err"])
         self.spawn.assert_not_called()
-        self.prepare.assert_not_called()
 
     def test_plugin_removed_during_steam_start_is_caught(self):
         def remove_plugin():
@@ -128,10 +124,12 @@ class OfflineLaunchTests(unittest.TestCase):
         self.assertIn("Install Mod Plugin", self.launch()["err"])
         self.spawn.assert_not_called()
 
-    def test_final_protection_check_runs_after_cache_preparation(self):
+    def test_final_protection_check_runs_immediately_before_spawn(self):
+        # launch_game rechecks protection a third time right before spawning
+        # (previously "after cache preparation"; that step is gone, the
+        # third recheck is not -- see offline_launcher.launch_game).
         self.processes.side_effect = [[], [], [(42, "EasyAntiCheat_EOS.exe")]]
         self.assertIn("EAC is currently active", self.launch()["err"])
-        self.prepare.assert_called_once()
         self.spawn.assert_not_called()
 
     def test_stale_validation_cache_is_not_used_for_launch(self):

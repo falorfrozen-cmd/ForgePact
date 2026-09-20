@@ -47,9 +47,12 @@ EXPECTED_PLAYER_COMMANDS = {
     "beaconfarstep", "tyrantchance", "tyrantaffix", "hhlabelfont",
     "hhlabeloffset", "hhlabelmax", "enemyspeed", "rarity", "sigdrop",
     "angelicdrop", "relicfilter", "orbpickup", "satmods", "petquest",
-    # The Soul Spurn/Purgatory outline (issue #11, Track B), added alongside.
+    # Added on purpose by ForgePact #9 Stage B (auto-prospect on insert, the
+    # panel's Auto-prospect switch); test_auto_prospect_contract.py pins it.
+    "autoprospect",
+    # The toggle-skill active indicator (issue #11, Track B), added alongside.
     "toggleborder",
-    # The Soul Spurn double-cast re-cast guard (issue #11, Track A).
+    # The toggle-skill double-cast re-cast guard (issue #11, Track A).
     "toggleguard",
 }
 

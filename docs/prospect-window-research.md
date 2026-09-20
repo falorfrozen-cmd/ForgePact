@@ -1,11 +1,54 @@
 # Bigger prospect window — research log
 
-phase0-status: pending
+phase0-status: complete
+phase1-status: complete
 
 Issue: [ForgePact #9](https://github.com/falorfrozen-cmd/ForgePact/issues/9),
 "[QoL] Bigger prospect window" — *"Currently prospect window is way too small
 for the amount of items players can hold in their inventory."* Opened
 2026-09-15, label `enhancement`.
+
+Status (2026-09-18): **Phase 0 complete; the gate is inconclusive, and the human chose
+auto-prospect on insert.** Phase 0c ran live (§ Results, Phase 0c column). A written
+save plus a relaunch destroyed everything left in the vanilla prospect grid (R7 = lost).
+idcheck could not see inside the instance the window's profile getter returns
+(`not observed (scan incomplete)`), so whether the grid is save data stays unknown.
+The human decided (2026-09-18) against enlarging the grid and for **auto-prospect on
+insert** (§ Decision gate, last paragraph). It needs no save-shape change, and R12
+measured its call shapes. Stage B is that mod. Before anything ships, the one
+unproven step, invoking the Prospect handler ourselves, still needs its own measured
+invoke with a control. The feature must be off by default, behind a panel toggle.
+
+Status (2026-09-18, later): **Stage B Phase 1 instrument built; live session pending**
+(`phase1-status`). `prospectprobe contents`, `button` and `press` (research build only)
+measure whether ForgePact can run the Prospect handler itself, beside a real press as the
+positive control (§ Stage B Phase 1 live procedure). The decision core
+(`plugin/include/ForgePact/AutoProspectMod.hpp`) and its baseline/target harness
+(`tests/test_auto_prospect_behavior.py`) exist; nothing player-visible does. Nothing ships
+unless a shape the player build can produce on its own is recorded in § Stage B results.
+
+Status (2026-09-18, Phase 1 live): **Phase 1 ran live (research DLL from commit
+`bbcdf53`); one short re-run remained**, and it has run (next paragraph). The positive control
+passed, and five `self=captured` invoke shapes each printed `prospected` with
+`invoked=yes` and `inner=yes` and were seen turning the item into materials
+(§ Stage B results). No `self=found` shape could run: the button finder chose by the
+window link and every small button is linked, so it printed `ambiguous (3)`. The finder
+now chooses by the handler variable; a re-run of `button` and one `self=found` shape
+completes Phase 1.
+
+Status (2026-09-18, Stage B built): **Phase 1 is complete (`phase1-status: complete`)
+and Stage B is built; its Phase 3 live check is recorded** (§ Stage B results, the `S-*`
+rows: drag-in, click-in, rearrangement, off, grid-full and the player DLL all passed by
+eye, with one unexplained `ran-no-effect=1` on the player DLL). The re-run (research DLL from
+commit `cf451b3`) chose the button by its handler variable (`chosen=@261471`, the only
+one of three with `activationFunc`), and `press exec-index button:activationArgs
+self=found confirm` printed `prospected` with `invoked=yes` and `inner=yes`, seen by eye
+(§ Stage B results, P-shapes). That is the one shape the ship rule accepts, and the only
+one the player build uses. The mod is `autoprospect 1|0` (a player command; the panel's
+**Auto-prospect** switch in Gameplay Mods, off by default): a both-route hook on
+`m_MoveItemToGrid` tells the decision core an insert happened, and `FrameCallback`
+re-finds the window, the grid and the button and invokes the handler once per landed
+insert (§ Stage B ship design). `autoprospect stat` is research-build only.
 
 Status (2026-09-17): **research stage.** Phase 0a and Phase 0b both ran
 2026-09-17 and both recorded H = not observed. Phase 0a was blind (stale SDK
@@ -1163,35 +1206,1134 @@ toggle.
 Three sessions. **Phase 0a** (2026-09-17, research build from ForgePact
 `cb77ad4`, Stage A instrument) is filled; every `not observed` in it is an
 instrument failure — the stale SDK closure names — and never a negative.
-**Phase 0b** (2026-09-17, build `ef8d54f`) is filled; its `not observed` fields name their reason. **Phase 0c** reads `unknown` until its live session (§ Phase 0c live procedure) fills it.
+**Phase 0b** (2026-09-17, build `ef8d54f`) is filled; its `not observed` fields name their reason. **Phase 0c** (2026-09-18, build `c091f65`, the second launch) is filled. Its gate branch is **inconclusive**, and `phase0-status` stays `pending` until the human decides.
+
+**Phase 0c, first launch (2026-09-18, build `723cc52`): the instrument was blind, so nothing below comes from it.** `prospectprobe hook` detoured 91/91 rows, and the controls were live (`CheckPlayerInteraction` 192,220 calls; the idcheck sentinel control passed). With the window open, `prospectprobe grid` read `w=9 h=6 rows=6 cols0=9`. But `backing dump` printed `open window=none` and kept **0** window returns for every getter, even though `m_SetInventoryLocalPlayer` (`anon@1065`) ran once and the getters ran about 285,000 times. idcheck then refused: `no open UI_Prospect_obj window with a readable id … no write made`. The cause was the probe, not the game. On this runner `id` and `object_index` come back as `VALUE_REF`, and `PpInstanceId` / `PpObjectName` / `PpDescribeSelf` accepted numbers only. So the window had no readable id, and every getter call's `self` was filed as `not the window`. They now read the index the way `N1ObjectIndex` does, and a refused `self` prints its `object_index`, so a real struct can be told apart from a ref (`test_probe_self_and_window_helpers_accept_value_ref`). **Not established by that launch:** whether the getters' `self` is the window. That is measured on the next launch. Load-time returns, recorded only as shapes: `GetProfileInventoryData` and `GetPlayerProfileObj` returned instance references, `GetInventoryArray` an 18-string array, `GetPlayerItemOwner` `int64 0`.
 
 | Field | Meaning | Phase 0a | Phase 0b | Phase 0c |
 |---|---|---|---|---|
-| R1 | object + nth of the instance carrying the grid size | `UI_Inventory_Grid_obj` instance nth **5 of 6** while the window is open — the one whose `uiNodeCallstack` reads `"ProspectGrid"` (`gridName` `"Prospectron RX9000"`, `masterUi`/`parent` = the `UI_Prospect_obj` instance). `UI_Prospect_obj.prospectGrid` references it. | unchanged: the `UI_Inventory_Grid_obj` whose `uiNodeCallstack` reads `"ProspectGrid"` (nth 5, `@265938`; `@261558` after the relaunch), found by `prospectprobe grid`'s resolver rather than by nth. | unknown |
-| R1-note | window resident while closed? | window **not** resident while closed: `UI_Prospect_obj` has no live instance until opened; closing destroys it and its grid nodes (`UI_Inventory_Grid_obj` count drops to 1, the HUD `"PotionGrid"`). | unchanged: `citrace dumpobj UI_Prospect_obj` with the window closed → no live instances (L2). | unknown |
-| R2 | size variables on R1 and their vanilla values | on the ProspectGrid node: `nodeGridWidth` = 9, `nodeGridHeight` = 6, `nodeGrid` = array[6] of arrays (rows × cols), `nodeWidth` = `nodeHeight` = 92.8, `navBboxWidth` = 835.2 (= 9 × 92.8), `navBboxHeight` = 556.8 (= 6 × 92.8), `gridBackground` = `Craft_Grid_Large_spr`, `gridScale` = 1. The window's own 100 variables were dumped but **not searched for 9/6** — Phase 0b step L2 does. | unchanged: `prospectprobe grid` = `w=9 h=6 rows=6 cols0=9 cell=92.8x92.8 bbox=835.2x556.8 scale=1`. **`nodeGrid` is not built from `nodeGridWidth`/`nodeGridHeight`** (R9, R10, R11); the Ghidra read below points at the player's profile inventory data instead — a lead, not established. | unknown |
-| R2-window | `UI_Prospect_obj` variables equal to 9 or 6 (L2) | not run (added in Phase 0b) | **empty** — the live `UI_Prospect_obj` has 100 variables, **0** equal to 9 or 6 (and 15 `m_*` methods). The window carries no variable the size could be written into before the node is built. | unknown |
-| R3 | vanilla input grid, columns × rows, by eye | 9 columns × 6 rows (by eye, and equal to R2). | 9 columns × 6 rows (unchanged). | unknown |
+| R1 | object + nth of the instance carrying the grid size | `UI_Inventory_Grid_obj` instance nth **5 of 6** while the window is open — the one whose `uiNodeCallstack` reads `"ProspectGrid"` (`gridName` `"Prospectron RX9000"`, `masterUi`/`parent` = the `UI_Prospect_obj` instance). `UI_Prospect_obj.prospectGrid` references it. | unchanged: the `UI_Inventory_Grid_obj` whose `uiNodeCallstack` reads `"ProspectGrid"` (nth 5, `@265938`; `@261558` after the relaunch), found by `prospectprobe grid`'s resolver rather than by nth. | not run (not in the Phase 0c procedure) |
+| R1-note | window resident while closed? | window **not** resident while closed: `UI_Prospect_obj` has no live instance until opened; closing destroys it and its grid nodes (`UI_Inventory_Grid_obj` count drops to 1, the HUD `"PotionGrid"`). | unchanged: `citrace dumpobj UI_Prospect_obj` with the window closed → no live instances (L2). | not run (not in the Phase 0c procedure) |
+| R2 | size variables on R1 and their vanilla values | on the ProspectGrid node: `nodeGridWidth` = 9, `nodeGridHeight` = 6, `nodeGrid` = array[6] of arrays (rows × cols), `nodeWidth` = `nodeHeight` = 92.8, `navBboxWidth` = 835.2 (= 9 × 92.8), `navBboxHeight` = 556.8 (= 6 × 92.8), `gridBackground` = `Craft_Grid_Large_spr`, `gridScale` = 1. The window's own 100 variables were dumped but **not searched for 9/6** — Phase 0b step L2 does. | unchanged: `prospectprobe grid` = `w=9 h=6 rows=6 cols0=9 cell=92.8x92.8 bbox=835.2x556.8 scale=1`. **`nodeGrid` is not built from `nodeGridWidth`/`nodeGridHeight`** (R9, R10, R11); the Ghidra read below points at the player's profile inventory data instead — a lead, not established. | not run (not in the Phase 0c procedure) |
+| R2-window | `UI_Prospect_obj` variables equal to 9 or 6 (L2) | not run (added in Phase 0b) | **empty** — the live `UI_Prospect_obj` has 100 variables, **0** equal to 9 or 6 (and 15 `m_*` methods). The window carries no variable the size could be written into before the node is built. | **empty**: 100 variables on `UI_Prospect_obj`, 0 equal to 9 or 6 (unchanged from Phase 0b) |
+| R3 | vanilla input grid, columns × rows, by eye | 9 columns × 6 rows (by eye, and equal to R2). | 9 columns × 6 rows (unchanged). | `w=9 h=6 rows=6 cols0=9` by `prospectprobe grid` on both launches; not re-read by eye |
 | R4 | detoured rows whose args carry R3 on a window open (Stage A table) | **not observed among detoured rows.** 41 rows detoured, 8 `not found st=14` (all eight object-Create closure rows: `UI_Prospect_obj anon@1038/2729/3551`, `Prospect_Cube_obj anon@320`, `UI_Button_Journal_Prospect_obj anon@324`, `UI_Journal_Prospecting_obj anon@1003`, `UI_Node_Parent_obj anon@1508/1909` — stale names). `arm budget=500`, one open, no row `UNLOGGED`. Fired: `UiCreate` 1 (`a0`=object `UI_Prospect_obj`, `a1`=1, `a2`=1), `UiCreateNode` 42 (#41 creates `UI_Inventory_Grid_obj` `"ProspectGrid"`: `a0`=0 `a1`=0 `a2`=object `UI_Inventory_Grid_obj` `a3`=script `UiAActivate` `a4`=`"ProspectGrid"` — no size), `UiSetGrid` 10 (`a0` = row index 0..5 / 0..3, `a1..a7` = instance refs, navigation links), `UiMoveNode` 131, `UiCreateContainer` 1, `UiSetRef` 2, `___struct___408/409/410` 1/42/1, `InventoryResetTabs` 1, `InventoryInitGrids` 1 (`a0`=true), `GetInventoryGridNode` 1, `UiResizeInventoryNodes` 2 (`a0`=2332 `a1`=1168.7), `PlayerMouseAction` 1. Zero: `UiAProspectButton` and its structs, `UiSetGridArray`, `UiResetGrid`, `UiContainerChange`, `UiChangeVisibility`, `UiSetNodeScale`, `UiRemoveNode`, `s_ItemGridInfo`, `s_InvNode`, `GridHasSpace`, `GridAddItem`, `ParseItemToGrid`, the rest. **No logged call carried 9 or 6 as a numeric argument.** | superseded by R4' | superseded by R4' |
-| R4' | detoured rows (regenerated table) whose logged args carry 9/6 on a window open, with identification (L5) | not observed (closure rows not detoured) | **not observed among detoured rows** — no logged call in either L5 pass (budgets 500 and 5000) carried a real 9 or 6 as an argument. `UiCreateNode #41` creates the node with `a4="ProspectGrid"` and no size. | unknown |
-| R5a | override on each R4/R4' row changes the drawn grid (L6) | not run (R4 empty). | not run (R4' empty). | unknown |
+| R4' | detoured rows (regenerated table) whose logged args carry 9/6 on a window open, with identification (L5) | not observed (closure rows not detoured) | **not observed among detoured rows** — no logged call in either L5 pass (budgets 500 and 5000) carried a real 9 or 6 as an argument. `UiCreateNode #41` creates the node with `a4="ProspectGrid"` and no size. | not run (not in the Phase 0c procedure) |
+| R5a | override on each R4/R4' row changes the drawn grid (L6) | not run (R4 empty). | not run (R4' empty). | not run (not in the Phase 0c procedure) |
 | R5b | bare `set` of a size variable changes the drawn grid and accepts an item | `nodeGridWidth` 9 → 18 on the open ProspectGrid node (`set`, readback ok): **fatal GML error within one frame, before any drag** — `crash.txt`: "ERROR in action number 1 of Draw Event for object UI_Inventory_Grid_obj: index out of bounds request 9 maximum size is 9", trace `gml_Object_UI_Inventory_Grid_obj_Draw_64` line 124, last UI node ProspectGrid; WER APPCRASH c0000005. The draw iterates `nodeGridWidth` over `nodeGrid` rows that were sized at build time. Save files were last written before the write; no save corruption. `nodeGridHeight` not tried (same class of crash expected: the array has 6 rows). | not re-run (R5b is the reason for `resize … via`) | not re-run |
-| R5c | an item dropped into a new cell after a positive R5a/R10/R11: accepted / refused / error | not run | not run (no accepted enlarged cell). | unknown |
-| R6 | items in new cells consumed by the prospect button | not observed (no accepted cell). | not observed (no accepted enlarged cell). | unknown |
-| R7 | items left in the grid on close: returned to inventory / kept in grid / lost | not observed. | **not observed (void attempt)** — a junk Molten Ring placed in the grid was back in the inventory after a crash and relaunch, but the last save (`herosiege13.hss` 16:40:00) predated placing it (crash 16:56:43), so that shows only that the crash lost an unsaved move, nothing about the grid. Phase 0c's C4 measures R7 across a written save. | unknown |
-| R8 | inventory grid, columns × rows | inventory grid (`"InventoryGrid"`, `UI_Inventory_Grid_obj` nth 2): 15 columns × 6 rows (`nodeGridWidth` 15, `nodeGridHeight` 6, `nodeGrid` array[6]). | 15 columns × 6 rows (unchanged). | unknown |
-| R9 | first logged call whose `grid-post` says `CHANGED`, with pre/post snapshots, and every later `CHANGED` (L5) | not run (no snapshot instrument) | the open is bracketed by `Prospect_Cube_obj anon@337`; inside `UiCreate(UI_Prospect_obj,1,1)`: `UiCreateNode #41` creates the node `w=0 h=0 rows=not-array`; **`nodeGridWidth`/`Height` become 9/6 before `UiCreateNode #42`, with no hooked call bracketing that write** (the window Create event's own body, which is not in the script table); **`nodeGrid` becomes a 6×9 array inside `m_SetInventoryLocalPlayer` (`anon@1065`) with no logged sub-call bracketing it**; `m_RefreshNode` (`anon@36159`) only sets `navBbox`. `anon@2143`/`anon@255` stayed `UNLOGGED` even at budget 5000 (they fire more than 17k times per open cycle) → `not observed (budget spent)` by design. | unknown |
-| R10 | `resize … via <method> [args]`: per method and probe (every shrink, then grow every method whose shrink `kept` or `reverted` with `invoked=yes` and an unchanged store; only a grow's `reverted` counts toward H3), `kept`/`reverted`/`rebuilt`/`destroyed`, the `probe=`, `invoked=` and `size=` values, `self=` and the args supplied, the self/args the detour logged as received, the snapshot, and any `restore unsafe` / `size exceeds store` (L9) | not run | every probed method — `m_RefreshNode`, `m_SetPosition`, `m_MouseInGrid`, `m_MouseInAnyGrid`, `window:m_Resize`, `window:m_UpdateInventoryGrid`, and (added) `window:m_SetInventoryLocalPlayer` — shrink (8×5) and grow (18×6) both **`reverted` with `invoked=yes`**, args none (argc=0, matching L5's game calls), store unchanged 6×9; only a grow's `reverted` counts toward H3, and every grow reverted. `m_RefreshNode`/`m_SetPosition`/`m_Resize`/`m_SetInventoryLocalPlayer` move only `navBbox`. Not probed (deviation: item-moving/buying methods, no known args): `m_MoveItemToGrid`, `m_StartInvDragging`, `m_DropItem`, `m_BuyItemConfirmed` → not observed. **No probed method resizes `nodeGrid` from `nodeGridWidth`/`Height`.** | unknown |
-| R11 | `setat` before the R9 builder: applied line, `grid-post`, drawn grid (L7/L8) | not run | `setat UI_Prospect_obj anon@1065 pre grid nodeGridWidth 18` **applied on the matching call** (`was=9 now=18`, self/other/argc matching L5) → game crash: `Step Event0` of `UI_Inventory_Grid_obj` line 75, `index out of bounds request 15 maximum size is 9`. The store built inside `anon@1065`'s extent **did not follow** the width written at its entry. Height not tried (the crash ended that launch). | unknown |
-| C | write, hook and enumeration controls | **C-write = no**: `set UI_Prospect_obj 0 x` 60/600/1500 and `image_alpha` 0.3 (readback ok / float MISMATCH) and `set UI_Inventory_Grid_obj 5 gridScale 0.5` all landed and read back, none changed anything visible. **C-hook passed** (`CheckPlayerInteraction` 10200 → 14400 in two seconds). **Enumeration control passed** (`oget UI_Inventory_Grid_obj nodeGridWidth` = 4 = nth 0's dumped value; `inames` total 124 = `dumpobj` count). **L6 = yes** (reopen: new instances, vanilla values). | C-hook (L4): **passed** — `CheckPlayerInteraction` 1500 → 5700, then 1800 → 6000 on the relaunch; `hook` 87 detoured / 0 failed, including the four live-read closures `UI_Prospect_obj anon@1065/2806/3657` and `UI_Inventory_Grid_obj anon@36159`. Phase 0a's stale-name blindness is closed. | unknown |
-| C-grid | `prospectprobe grid` agrees with `citrace dumpobj` on the ProspectGrid node (L2) | not run | **passed** — `prospectprobe grid` = `w=9 h=6 rows=6 cols0=9`; `citrace dumpobj` of the ProspectGrid node agreed; `inames` total 124 = `dumpobj` count. | unknown |
-| C-write2 | `nodeWidth` / `navBboxWidth` by-eye write control on the node (L3) | not run (R5b already proves the node route reaches the draw) | **`nodeWidth` changed live** (46.4: cells drawn half-width, same frame; restored 92.8). The background sprite `Craft_Grid_Large_spr` did **not** move (see Background sprite). Window `x` write: no visible change (as Phase 0a). | unknown |
-| Background sprite | `gridBackground` of the ProspectGrid node, and whether it follows the grid | `Craft_Grid_Large_spr` (R2) | `Craft_Grid_Large_spr` is a **fixed 9×6 image**: with cells drawn half-width (C-write2) it did not change, so a larger grid would draw cells beyond it and needs its own background handling (a Stage B note). | unknown |
-| Ghidra read (paraphrase) | local read of the open path on the current exe, paraphrased; nothing decompiled is in this repository | not run | `m_SetInventoryLocalPlayer` (`anon@1065`) begins by fetching the player's **profile inventory** data (`GetProfileInventoryData`) and the item owner (`GetPlayerItemOwner`), passing its own self/other and a profile reference, then wires the grid nodes from what those return; both getters take the window instance as their self. Resolving every numeric constant referenced by `anon@1065`, `InventoryInitGrids`, `GetProfileInventoryData`, `GetPlayerItemOwner`, `m_UpdateInventoryGrid`, `m_RefreshNode` and the cube's closure found no 9 or 6 (`m_Resize` references 18 once; layout, unverified). The window's Create event, where `nodeGridWidth`/`Height` are set, is not in the script table and was not read. **Reading, not live-confirmed:** `nodeGrid` is, or is copied from, per-profile inventory storage whose 9×6 shape is fixed where that data is created — consistent with R11 and R10. If it is the storage itself, "bigger" is a save-data change (§ Decision gate). Phase 0c tests it. | unknown |
-| Identity attempt (`callnum`) | calling a getter directly to compare its result with `nodeGrid` | not run | **instrument misuse, not a result**: `callnum GetProfileInventoryData` with no arguments, `0` and `1` — without the window as self, which the getter needs — threw twice and then crashed the game (`Controller_obj` Step: `array_get :: Index [-1] out of range [1]` in `EnemyStepHandleNew`). It establishes nothing about the store. Phase 0c never invokes a getter; it keeps what the game's own call returned (`prospectprobe backing`). | unknown |
-| R12 | auto-prospect: `UiAProspectButton` call shape (self/other/args/`object_index`; no positive control, so 0 after a press is `not observed`), which insert closure fired for the drag-in and for the click-in, `grid-post` snapshots, the window variable holding the handler's method value, whether items left the grid inside that call or later, and the leftover-material claims checked live (C2b, after C3) | not run | not run | unknown |
-| load-time capture | getters that fired at character load, each kept return's `self` and shape, and the `pp_backing_*.json` the C1 `backing dump` wrote (C1) | not run | not run (no `backing` instrument) | unknown |
-| backing structural | `backing dump`: the open window's `@id`, kept returns per getter and which came from the open window, their shapes, live `nodeGrid` shape, and any `nodeGrid`-shaped sub-array with `non-empty nodeGrid cells agreeing K/N` (taken with a junk item in the grid) and walk completeness (C2, C2b). A lead only; never picks a gate branch | not run | not run | unknown |
-| backing idcheck | `backing idcheck`, run before any item is moved: the control verdict first, any refusal, `kept returns from the open window` with its `window returns dropped` count, every walk with its `unwalked` count and reason, then `reference-identical (via …)` with the getter, `self` and call number it names — deciding only through two distinct calls of the same profile getter at a path through no UI-looking field, else a lead reached through a UI-looking field, else a `one call only` lead naming every profile getter that hit — / `copy` / `not observed`, the cell, both values, and `restored` (C3) | not run | not run | unknown |
-| gate branch | save-backed / not save-backed / inconclusive, per § Decision gate read in its order (C5); the human picks the branch | not run | not run | unknown |
-| H | H1 / H2' / H3 / not observed | **not observed (instrument blind: stale SDK closure names).** The live window's method values named its Create closures `m_SetInventoryLocalPlayer` = `anon@1065`, `m_Resize` = `anon@2806`, `m_UpdateInventoryGrid` = `anon@3657` (all `@gml_Object_UI_Prospect_obj_Create_0`), and the grid node's `m_RefreshNode` = `anon@36159@gml_Object_UI_Inventory_Grid_obj_Create_0`; the stale SDK tables carried `anon@1038/2729/3551` and no `36159`. | **not observed** — H1 unsupported (R4' empty); H2' no positive (R11 applied and matched but the store stayed 9 wide → crash; every R10 grow `reverted` with `invoked=yes`); H3 not concludable (R2-window is an empty field, two rows stayed `UNLOGGED`, four grid methods unprobed, and the Ghidra read above is not live-confirmed). | unknown |
+| R5c | an item dropped into a new cell after a positive R5a/R10/R11: accepted / refused / error | not run | not run (no accepted enlarged cell). | not run (not in the Phase 0c procedure) |
+| R6 | items in new cells consumed by the prospect button | not observed (no accepted cell). | not observed (no accepted enlarged cell). | not run (not in the Phase 0c procedure) |
+| R7 | items left in the grid on close: returned to inventory / kept in grid / lost | not observed. | **not observed (void attempt)** — a junk Molten Ring placed in the grid was back in the inventory after a crash and relaunch, but the last save (`herosiege13.hss` 16:40:00) predated placing it (crash 16:56:43), so that shows only that the crash lost an unsaved move, nothing about the grid. Phase 0c's C4 measures R7 across a written save. | **lost**. A Sash of the Magi plus 3 prospect materials were left in the grid, and the window was closed. A save to the main menu rewrote `herosiege13.hss` and `inventory_order_13.hss` at 20:38:15, after placement (the baseline was 20:25:29), and a full relaunch followed. Neither the sash nor the materials were in the grid, any inventory tab, or the stash. Nothing returned them. A vanilla prospect grid left holding items across a written save is emptied, not kept |
+| R8 | inventory grid, columns × rows | inventory grid (`"InventoryGrid"`, `UI_Inventory_Grid_obj` nth 2): 15 columns × 6 rows (`nodeGridWidth` 15, `nodeGridHeight` 6, `nodeGrid` array[6]). | 15 columns × 6 rows (unchanged). | not run (not in the Phase 0c procedure) |
+| R9 | first logged call whose `grid-post` says `CHANGED`, with pre/post snapshots, and every later `CHANGED` (L5) | not run (no snapshot instrument) | the open is bracketed by `Prospect_Cube_obj anon@337`; inside `UiCreate(UI_Prospect_obj,1,1)`: `UiCreateNode #41` creates the node `w=0 h=0 rows=not-array`; **`nodeGridWidth`/`Height` become 9/6 before `UiCreateNode #42`, with no hooked call bracketing that write** (the window Create event's own body, which is not in the script table); **`nodeGrid` becomes a 6×9 array inside `m_SetInventoryLocalPlayer` (`anon@1065`) with no logged sub-call bracketing it**; `m_RefreshNode` (`anon@36159`) only sets `navBbox`. `anon@2143`/`anon@255` stayed `UNLOGGED` even at budget 5000 (they fire more than 17k times per open cycle) → `not observed (budget spent)` by design. | not observed: every logged call's `grid-post` reads `same`, including drag-in, click-in and both Prospect presses. `grid-post` compares the grid's size, not its contents, so it cannot show when items entered or left |
+| R10 | `resize … via <method> [args]`: per method and probe (every shrink, then grow every method whose shrink `kept` or `reverted` with `invoked=yes` and an unchanged store; only a grow's `reverted` counts toward H3), `kept`/`reverted`/`rebuilt`/`destroyed`, the `probe=`, `invoked=` and `size=` values, `self=` and the args supplied, the self/args the detour logged as received, the snapshot, and any `restore unsafe` / `size exceeds store` (L9) | not run | every probed method — `m_RefreshNode`, `m_SetPosition`, `m_MouseInGrid`, `m_MouseInAnyGrid`, `window:m_Resize`, `window:m_UpdateInventoryGrid`, and (added) `window:m_SetInventoryLocalPlayer` — shrink (8×5) and grow (18×6) both **`reverted` with `invoked=yes`**, args none (argc=0, matching L5's game calls), store unchanged 6×9; only a grow's `reverted` counts toward H3, and every grow reverted. `m_RefreshNode`/`m_SetPosition`/`m_Resize`/`m_SetInventoryLocalPlayer` move only `navBbox`. Not probed (deviation: item-moving/buying methods, no known args): `m_MoveItemToGrid`, `m_StartInvDragging`, `m_DropItem`, `m_BuyItemConfirmed` → not observed. **No probed method resizes `nodeGrid` from `nodeGridWidth`/`Height`.** | not run (not in the Phase 0c procedure) |
+| R11 | `setat` before the R9 builder: applied line, `grid-post`, drawn grid (L7/L8) | not run | `setat UI_Prospect_obj anon@1065 pre grid nodeGridWidth 18` **applied on the matching call** (`was=9 now=18`, self/other/argc matching L5) → game crash: `Step Event0` of `UI_Inventory_Grid_obj` line 75, `index out of bounds request 15 maximum size is 9`. The store built inside `anon@1065`'s extent **did not follow** the width written at its entry. Height not tried (the crash ended that launch). | not run (not in the Phase 0c procedure) |
+| C | write, hook and enumeration controls | **C-write = no**: `set UI_Prospect_obj 0 x` 60/600/1500 and `image_alpha` 0.3 (readback ok / float MISMATCH) and `set UI_Inventory_Grid_obj 5 gridScale 0.5` all landed and read back, none changed anything visible. **C-hook passed** (`CheckPlayerInteraction` 10200 → 14400 in two seconds). **Enumeration control passed** (`oget UI_Inventory_Grid_obj nodeGridWidth` = 4 = nth 0's dumped value; `inames` total 124 = `dumpobj` count). **L6 = yes** (reopen: new instances, vanilla values). | C-hook (L4): **passed** — `CheckPlayerInteraction` 1500 → 5700, then 1800 → 6000 on the relaunch; `hook` 87 detoured / 0 failed, including the four live-read closures `UI_Prospect_obj anon@1065/2806/3657` and `UI_Inventory_Grid_obj anon@36159`. Phase 0a's stale-name blindness is closed. | **live**: 91/91 rows detoured, 0 failed, on both launches. `CheckPlayerInteraction` climbed (18,860 at load, 182,100 by the end). idcheck's sentinel control passed on both launches |
+| C-grid | `prospectprobe grid` agrees with `citrace dumpobj` on the ProspectGrid node (L2) | not run | **passed** — `prospectprobe grid` = `w=9 h=6 rows=6 cols0=9`; `citrace dumpobj` of the ProspectGrid node agreed; `inames` total 124 = `dumpobj` count. | **half**: `prospectprobe grid` = `w=9 h=6 rows=6 cols0=9`; the `citrace dumpobj` of the ProspectGrid node was not run |
+| C-write2 | `nodeWidth` / `navBboxWidth` by-eye write control on the node (L3) | not run (R5b already proves the node route reaches the draw) | **`nodeWidth` changed live** (46.4: cells drawn half-width, same frame; restored 92.8). The background sprite `Craft_Grid_Large_spr` did **not** move (see Background sprite). Window `x` write: no visible change (as Phase 0a). | not run (not in the Phase 0c procedure) |
+| Background sprite | `gridBackground` of the ProspectGrid node, and whether it follows the grid | `Craft_Grid_Large_spr` (R2) | `Craft_Grid_Large_spr` is a **fixed 9×6 image**: with cells drawn half-width (C-write2) it did not change, so a larger grid would draw cells beyond it and needs its own background handling (a Stage B note). | not run (not in the Phase 0c procedure) |
+| Ghidra read (paraphrase) | local read of the open path on the current exe, paraphrased; nothing decompiled is in this repository | not run | `m_SetInventoryLocalPlayer` (`anon@1065`) begins by fetching the player's **profile inventory** data (`GetProfileInventoryData`) and the item owner (`GetPlayerItemOwner`), passing its own self/other and a profile reference, then wires the grid nodes from what those return; both getters take the window instance as their self. Resolving every numeric constant referenced by `anon@1065`, `InventoryInitGrids`, `GetProfileInventoryData`, `GetPlayerItemOwner`, `m_UpdateInventoryGrid`, `m_RefreshNode` and the cube's closure found no 9 or 6 (`m_Resize` references 18 once; layout, unverified). The window's Create event, where `nodeGridWidth`/`Height` are set, is not in the script table and was not read. **Reading, not live-confirmed:** `nodeGrid` is, or is copied from, per-profile inventory storage whose 9×6 shape is fixed where that data is created — consistent with R11 and R10. If it is the storage itself, "bigger" is a save-data change (§ Decision gate). Phase 0c tests it. | not run. C7 is the fallback for the inconclusive gate below; not started |
+| Identity attempt (`callnum`) | calling a getter directly to compare its result with `nodeGrid` | not run | **instrument misuse, not a result**: `callnum GetProfileInventoryData` with no arguments, `0` and `1` — without the window as self, which the getter needs — threw twice and then crashed the game (`Controller_obj` Step: `array_get :: Index [-1] out of range [1]` in `EnemyStepHandleNew`). It establishes nothing about the store. Phase 0c never invokes a getter; it keeps what the game's own call returned (`prospectprobe backing`). | not run (not in the Phase 0c procedure) |
+| R12 | auto-prospect: `UiAProspectButton` call shape (self/other/args/`object_index`; no positive control, so 0 after a press is `not observed`), which insert closure fired for the drag-in and for the click-in, `grid-post` snapshots, the window variable holding the handler's method value, whether items left the grid inside that call or later, and the leftover-material claims checked live (C2b, after C3) | not run | not run | Drag-in and click-in both go through `m_MoveItemToGrid` (`anon@15345`); `m_DropItem` (`anon@8881`) never fired. Drag-in: `self` = `other` = the ProspectGrid node, 4 args `(undefined, 0, 0, 0)`. Click-in: `self` = the ProspectGrid node, `other` = the source inventory grid node, 0 args. Prospect: `UiAProspectButton` with `self` = the button (`UI_Button_Small_obj`) and `other` = the window, 1 arg (an array); the handler lives on the button, not among the window's `m_*` methods. Inside it, `___struct___123` ran with a real struct `self` (`object_index=undefined`) and args `(73|72, 0, 14)`; the one-item presses here gave one call each, which read as once per item, but Stage B Phase 1 corrected that (P-shapes / P-free-cells: 13 items in one press gave +3, one per material stack produced — measured, not proven). Claims checked by eye: the materials **stay** in the grid, a further item **can** still be inserted and prospected, and the materials were **not** taken as input — see Stage B's `P-materials-only`, where a press with only materials in the grid ran no inner call and changed nothing (the once-per-item reading of the inner count is withdrawn above). Materials stack down column 0 |
+| load-time capture | getters that fired at character load, each kept return's `self` and shape, and the `pp_backing_*.json` the C1 `backing dump` wrote (C1) | not run | not run (no `backing` instrument) | Launch 2 (launch 1 was blind; see the note above the table). All four getters fired at load: `GetProfileInventoryData` ~31,700 calls, latest from an `UI_Inventory_Grid_obj` node, returning an **instance** reference; `GetInventoryArray` ~12,900 calls, latest from `Player_obj`, returning an 18-string array; `GetPlayerItemOwner` ~1,800 calls, from `Flask_Controller_obj`, returning `int64 0`; `GetPlayerProfileObj` 13 calls, from `Achievement_Controller_obj`, returning an instance reference |
+| backing structural | `backing dump`: the open window's `@id`, kept returns per getter and which came from the open window, their shapes, live `nodeGrid` shape, and any `nodeGrid`-shaped sub-array with `non-empty nodeGrid cells agreeing K/N` (taken with a junk item in the grid) and walk completeness (C2, C2b). A lead only; never picks a gate branch | not run | not run | Open window `@261486`. At open, `UI_Prospect_obj` itself called `GetProfileInventoryData` once and `GetPlayerItemOwner` once, and never called `GetInventoryArray` or `GetPlayerProfileObj`. With an item in the grid, the window calls `GetProfileInventoryData` continuously (8 kept, 867 not kept). Every window return of it is the same **instance** reference that every other caller gets, and the walk does not enter instances (`unwalked=1 … references=1`), so the structural lead was **not observed**. Each `nodeGrid` cell with an item holds a node struct (`nodeStartX`, `nodeStartY`, `nodeLocked`, `nodeIsPermanent`, `nodeFingerprint` ending in `-14`); inventory fingerprints end in `-0` |
+| backing idcheck | `backing idcheck`, run before any item is moved: the control verdict first, any refusal, `kept returns from the open window` with its `window returns dropped` count, every walk with its `unwalked` count and reason, then `reference-identical (via …)` with the getter, `self` and call number it names — deciding only through two distinct calls of the same profile getter at a path through no UI-looking field, else a lead reached through a UI-looking field, else a `one call only` lead naming every profile getter that hit — / `copy` / `not observed`, the cell, both values, and `restored` (C3) | not run | not run | Control **passed**. The one write went to cell `[0][0]`: `was=undefined`, the sentinel read back, then `now=undefined (restored)`; no item was moved. Verdict: **not observed (scan incomplete: 3 of 6 walks; root VALUE_REF, an instance, nothing to walk)**. The window's `GetProfileInventoryData` return is an instance the walk cannot enter. Only one window call per getter was kept before any item moved, so a decided verdict was out of reach anyway |
+| gate branch | save-backed / not save-backed / inconclusive, per § Decision gate read in its order (C5); the human picks the branch | not run | not run | **inconclusive**. idcheck read `not observed (scan incomplete …)`, a getter returned an instance, and R7 = lost. Save-backed does not hold (no two-call identity; R7 is not kept), and not save-backed needs idcheck = `copy`. **Human decision (2026-09-18): auto-prospect on insert**, not a bigger grid |
+| H | H1 / H2' / H3 / not observed | **not observed (instrument blind: stale SDK closure names).** The live window's method values named its Create closures `m_SetInventoryLocalPlayer` = `anon@1065`, `m_Resize` = `anon@2806`, `m_UpdateInventoryGrid` = `anon@3657` (all `@gml_Object_UI_Prospect_obj_Create_0`), and the grid node's `m_RefreshNode` = `anon@36159@gml_Object_UI_Inventory_Grid_obj_Create_0`; the stale SDK tables carried `anon@1038/2729/3551` and no `36159`. | **not observed** — H1 unsupported (R4' empty); H2' no positive (R11 applied and matched but the store stayed 9 wide → crash; every R10 grow `reverted` with `invoked=yes`); H3 not concludable (R2-window is an empty field, two rows stayed `UNLOGGED`, four grid methods unprobed, and the Ghidra read above is not live-confirmed). | not observed |
+
+## Stage B Phase 1 live procedure
+
+The human chose auto-prospect on insert (§ Decision gate, last paragraph). One step of it
+has never been observed: the Prospect handler (`UiAProspectButton`) run by anything other
+than the game's own press. Phase 0c R12 measured that press — `self` = the
+`UI_Button_Small_obj` button, `other` = the `UI_Prospect_obj` window, one argument, an
+array — but not which button variable holds the handler, what the array holds, whether the
+insert closure (`m_MoveItemToGrid`, `UI_Inventory_Grid_obj anon@15345`) fires during a
+press or for every item at load, or what a press does with only materials in the grid.
+Phase 1 measures all of it in one research build, with a real press as the positive
+control in the same session. It follows the pet quest precedent (the guide's Known
+Limitations item 11): resolve by name only, record what was supplied beside every result,
+and say why every refusal happened. Nothing ships unless a shape is recorded here.
+
+### Instrument (research build only, under `prospectprobe`)
+
+- **`contents`** (hook-free): the ProspectGrid node, found the way `grid` finds it, as
+  `contents=@<id> filled=<K> empty=<E> uiNodeCallstack=<kind>`, then the filled column
+  indexes per row, then the distinct `nodeFingerprint` values of the filled cells. A cell
+  is empty when it is `undefined` or 0 (idcheck's rule). A read that fails says
+  `unreadable`, never an empty grid.
+- **`watch`**: a logged call's `grid-post=` line now ends in ` contents=<K>-><K'>`, the
+  filled count before and after the game's function. That shows whether an insert fills
+  the cells inside the call or later. `?` means not read.
+- **Press capture**: while `UiAProspectButton` is detoured, the game's own call keeps its
+  `self` and `other` ids and argument 0. The argument is rooted through the research
+  global `__pp_press_arg` and logged shallowly expanded before and after the call.
+  `press show` prints it, or `none captured`. ForgePact's own `press` never replaces it.
+- **`button`** (hook-free): every `UI_Button_Small_obj` with its `@id`, the variables whose
+  value is the open window's id, every variable that resolves to `UiAProspectButton` with
+  its kind, `index-match=` (the value against `asset_get_index`) and `method-index-match=`
+  (`method_get_index` of a method value against the same index), and its arrays, marked
+  when one is the captured argument or equal to it. A button **qualifies** when it is
+  linked to the open window **and** one of its variables is the handler itself — a method
+  value whose `method_get_index` is the handler's index, or one resolving to the handler's
+  row; a plain number equal to the index is printed as a lead and never counted. It ends
+  `chosen=@id` (exactly one button qualifies), `none` or `ambiguous (N)`, then
+  `captured-self=@id same` or `DIFFERENT` when a press was captured — the control on the
+  finder. The first build chose by the window link alone and printed `ambiguous (3)` live:
+  all three small buttons link to the window through `masterUi`/`parent`, and only the
+  Prospect button carries the handler (`activationFunc`). `press … self=found` uses the
+  same finder.
+- **`press <route> <argsrc> [self=found|captured] confirm`**: one invoke per command, by
+  name, `self` = the button and `other` = the window. Routes: `exec-index` hands
+  `script_execute` the handler's own asset index; `exec-var:<var>` hands it the button
+  variable's value; `scriptex` calls the script by its SDK name. Argument sources:
+  `captured` (the rooted array itself), `copy` (a new array with the same elements),
+  `button:<var>` (the button's own array variable), `empty` (a new empty array). Every
+  refusal prints `no call made` and comes before any call: no `confirm`, a pending
+  override or setat, no open window, no button or an ambiguous one, an unavailable
+  argument source, a grid with no filled cell, or a `UiAProspectButton` row that is not
+  detoured (run `prospectprobe hook` first — without it `invoked=` could not be proven,
+  so no verdict could tell "nothing ran" from "ran and did nothing"). The outcome line
+  carries `st=`, `(threw)`, `res=`, `invoked=` (the `UiAProspectButton` row's count
+  across the call), `inner=` (the `___struct___123@UiAProspectButton` row's), `self=`,
+  `other=`, `route=` and `args=`, then the contents after and a verdict decided by the
+  `invoked=` count, never by `st=` alone:
+  - `prospected (filled K->K', fingerprints changed)` — the grid changed **and** the
+    handler was entered (invoked delta ≥ 1);
+  - `grid changed but handler not entered (invoked=NO) - not a prospect by this call`;
+  - `handler entered, grid unchanged` — invoked delta ≥ 1, no grid change;
+  - `dispatched but handler not entered (invoked=NO)` — `script_execute` reported
+    success, but the handler's body never ran;
+  - `not dispatched` — the call failed or threw and the handler was not entered.
+
+### Shapes, in order
+
+1. `press exec-index captured confirm`
+2. `press exec-index button:<var> confirm`, if `button` marked a variable as the captured
+   argument
+3. `press exec-var:<var> captured confirm`, if `button` found a handler variable
+4. `press exec-index copy confirm` (does the array's content matter, or its identity?)
+5. `press exec-index empty confirm`
+6. `press scriptex captured confirm`
+7. `press exec-index captured self=captured confirm`, only if `captured-self=` printed
+   `DIFFERENT`
+
+To ship, a shape must print `prospected` **and** `invoked=yes` (delta ≥ 1) **and**
+`inner=yes` (delta ≥ 1) — the same two counters `P-control` needs, so a grid change that
+came from something other than the handler's body is never recorded as a prospect — with
+`self=found` and an argument source the player build can produce on its own —
+`button:<var>` or `empty` — and the item must be seen turning into materials. If only `captured` or `copy` worked, the recorded elements
+decide how a player build could construct the array, and that is a replan, not a ship.
+
+### Conflicts
+
+- `prospectprobe hook` detours `anon@15345` at the same address the Stage B hook will
+  patch. Phase 1 runs `prospectprobe hook` and has no Stage B hook; the later Phase 3 must
+  not run `prospectprobe hook`. Do not run `citrace nativetrace` in either session.
+- A faulting shape crashes the game: the build uses `/EHsc`, so `catch (...)` does not
+  catch an access violation. Relaunch the same build, record the crash in `P-shapes`, and
+  go on with the next shape.
+
+### Procedure
+
+- **P0.** Build dev (`plugin_build\build.bat dev`). With the game closed, copy
+  `plugin_build\BloodPactPlugin_rel.dll` over `<game>\bin\mods\aurie\BloodPactPlugin.dll`
+  (the player DLL stays backed up as `BloodPactPlugin.dll.ship-backup-20260918_201853`).
+  Back up `%LOCALAPPDATA%\Hero_Siege`. Use junk items only. Record the build's commit in
+  § Stage B results.
+- **P1.** Before loading a character, run `prospectprobe hook`. The rows
+  `UiAProspectButton`, `___struct___123@UiAProspectButton` and
+  `UI_Inventory_Grid_obj anon@15345` must print `detoured`; if one does not, stop — every
+  count below would be blind. Load the character, then run `prospectprobe show` and record
+  the `anon@15345` calls made at load (`P-load-calls`).
+- **P2.** Open the cube. Run `prospectprobe grid`, `prospectprobe contents`,
+  `prospectprobe button` and `prospectprobe watch on`.
+- **P3, the positive control.** Run
+  `prospectprobe arm budget=50 UiAProspectButton ___struct___123 anon@15345`. Click one
+  item in, then run `contents` (and note the logged `anon@15345` line's
+  `contents=K->K'`). Run `show`, press Prospect by hand, then run `contents`, `show`,
+  `press show` and `button`. `button`'s `captured-self=` goes to `P-button`; the
+  `anon@15345` `since=` across the press goes to `P-reentry`. Press Prospect again with
+  only materials in the grid, and record what `show` and `contents` print
+  (`P-materials-only`).
+- **P4.** For each shape in the order above: insert one item, run the `press … confirm`
+  command, then `show`, and note by eye whether the item became materials. Record the
+  verdict word as printed together with `invoked=` and `inner=`: only `prospected` with
+  `invoked=yes` and `inner=yes` counts toward shipping; `handler entered, grid unchanged`,
+  `dispatched but handler not entered (invoked=NO)` and `not dispatched` are three
+  different results and are never merged. A `refused: … is not detoured` means P1 was
+  skipped or failed — go back to P1. If the game crashes, relaunch the same build, record
+  the crash and go on (`P-shapes`).
+- **P5.** Keep inserting and prospecting (by hand, or with a working shape), running
+  `contents` after each prospect and recording `empty=`, until column 0 is full of
+  materials or the junk runs out (`P-free-cells`).
+- **P6.** Close the window with materials in it, before any save. Reopen it and record
+  whether they are back in the inventory, still in the grid, or gone (`P-close`).
+- **P7.** Fill the rows of § Stage B results and set `phase1-status: complete`.
+
+`P-control` passes only if the hand press shows `UiAProspectButton +1`,
+`___struct___123 +N` and a `contents` change. If it fails, every `P-shapes` verdict is
+`not observed`: an instrument that cannot see the game's own press has said nothing
+about ours.
+
+## Stage B results
+
+Phase 1 (research build, commit recorded at P0) fills the `P-*` rows; Phase 3 (after the
+Stage B adapter is built) fills the `S-*` rows. A row that could not be measured says
+`not observed (<why>)`; no row is left empty once its phase is complete.
+
+| Row | What fills it | Result |
+|---|---|---|
+| P-control | P3's hand press: `UiAProspectButton +1`, `___struct___123 +N`, and the `contents` change (filled and fingerprints), all three required; plus the click-in's `anon@15345` `contents=K->K'` | **PASS.** P1: `prospectprobe hook` detoured 91 rows, 0 failed, the three required rows among them (the install stalled frames for about 9 s in all). Hand press: `UiAProspectButton +1`, `___struct___123 +1`, `contents` 6->1 with the fingerprints changed, and the human saw materials appear. Click-in: the `anon@15345` line read `self=@261557` (the ProspectGrid node) `other=@261539 argc=0` and **`contents=6->6`** — the cells were already filled when `m_MoveItemToGrid` was entered (see the note under this table) |
+| P-button | P3's `button` after the press: `chosen=`, `captured-self=` (`same`/`DIFFERENT`), each handler variable with its kind, `index-match=` and `method-index-match=`, and any array marked as the captured argument | P2/P3 (grid @261557, 9×6): **`ambiguous (3)`** — all three `UI_Button_Small_obj` link to the window through `masterUi` and `parent`. Only @261558 carries a handler variable: `activationFunc`, a method value resolving to `UiAProspectButton`, `index-match=no method-index-match=yes`. `press show`: `self=@261558 other=@261511 argc=1`, and arg 0 is the same array as @261558's `activationArgs` (one element, an empty struct). `captured-self=@261558 DIFFERENT` only because nothing was chosen. The finder now keys on the handler variable (§ Instrument, `button`). Re-run (`cf451b3`, a new session, so new ids): 3 buttons, all linked to window @261424; only @261471 has a handler variable (`activationFunc`, `method-index-match=yes`) and it prints `qualifies`; verdict **`chosen=@261471`** |
+| P-shapes | P4, per shape in order: the outcome line (`st=`, `res=`, `invoked=`, `inner=`, `self=`, `other=`, `route=`, `args=`), the verdict, and the item by eye; or the crash | All with `self=captured` (@261558), `other` = the window, `st=0`, `invoked=yes`, `inner=yes`, verdict `prospected`, each seen by eye turning into materials: `exec-index button:activationArgs` (filled 5->2); `exec-index captured` (8->3); `exec-var:activationFunc captured` (7->4); `exec-index copy` (10->5); `exec-index empty` (7->6). `scriptex captured`: not observed (skipped by the tester; `exec-index` already qualifies). No crash. First session: `self=found` not observed (the finder printed `ambiguous (3)`). **Re-run (research DLL from `cf451b3`): `exec-index button:activationArgs self=found`** — `st=0`, `invoked=yes (+1)`, `inner=yes (+1)`, `self=@261471` (the found button), `other=@261424` (the window), `route=exec-index`, `args=(button:activationArgs=array[0]={})`, contents 8->1 with the fingerprints changed, verdict `prospected`, and the human saw the item become materials. It meets the ship rule: **`invoke-shape: exec-index button:activationArgs self=found`**. `exec-index empty self=found`: not observed (not run; the first shape already qualifies) |
+| P-reentry | P3: `anon@15345` calls during the hand press (`since=` across it), i.e. whether the handler moves materials in through the insert closure | not observed (one hand press): `anon@15345` stayed at 1 across it, so that press put no materials in through the insert closure. The ship adapter still ignores and counts any insert made inside its own call (`while-invoking=`) |
+| P-load-calls | P1: `anon@15345` calls at character load, before the cube was opened | 0 across the character load. Controls in the same `show`: `CheckPlayerInteraction` 9950, `anon@2143` 2985, `ParseItemToGrid` 33 — the instrument was counting |
+| P-materials-only | P3: a hand press with only materials in the grid — `UiAProspectButton` / `___struct___123` counts and the `contents` change | One materials-only press observed as a no-op: `UiAProspectButton +1`, `___struct___123 +0`, filled 1->1, fingerprints unchanged. One press with one set of materials, not every material |
+| P-close | P6: materials left in the grid when the window closes, before any save — back in the inventory, still in the grid, or gone | Still in the grid, not returned to the inventory. The reopened window has a new grid node (@263885) holding the same 9 fingerprints |
+| P-free-cells | P5: `empty=` after each prospect; the fewest free cells that still took an insert, which sets `kAutoProspectMinFreeCells` (6, one column, if not measured) | Materials were not observed to merge: each press added one single-cell stack per material type, filling column 0 rows 0–5, then column 1. The fewest free cells that still took an insert and prospected was 9 (45 of 54 filled); 6–8 free cells are not measured (not observed either way), so `kAutoProspectMinFreeCells` stays 6 and Phase 3's `S-grid-full` step measures 6–8. In that press (13 items, 6 material stacks already there) `___struct___123` ran +3 (args 73/72/61), all 13 items went, and 3 new stacks appeared with quantities that looked right to the tester — one inner call per material stack produced, not per item (measured, not proven) |
+| S-drag | Phase 3 (S2): a drag-in with `autoprospect 1` is prospected once; plus the drag-in's own `contents=K->K'`, bracketed in S1 (drag-in timing is not observed yet) | **PASS.** S1 (research DLL `3fc595c`, auto-prospect off, `prospectprobe hook` 91 detoured, 0 failed): the drag-in logged `anon@15345 #1` with `self` = `other` = the ProspectGrid node (@261415), `argc=4`, and **`contents=0->0`**; `contents` straight afterwards read `filled=6` (one 2×3 item). So a drag-in fills its cells *after* `m_MoveItemToGrid` returns, the opposite order to the click-in (`6->6`); the settled-count core handles both. S2 (a fresh launch, no `prospectprobe hook`, `autoprospect 1`): the drag-in was prospected with no press, materials seen by eye, and the player line read `autoprospect: first prospect - invoked=1 prospected=1 … inserts=1 not-landed=0` |
+| S-click | Phase 3 (S3): a click-in is prospected once | **PASS.** Prospected, seen by eye; `autoprospect stat` went to `invoked=2 prospected=2 inserts=2` - one invoke for the click-in |
+| S-rearrange | Phase 3 (S4): moving an item (a material) inside the grid invokes nothing | **PASS.** Moving a material from row 1 column 0 to column 5: `invoked=2` unchanged, `inserts=3`, `not-landed=1`. Also observed before `autoprospect 0`: one more insert and not-landed (`inserts=4`, `not-landed=2`) with `invoked` unchanged; what the player did to cause it was not observed, and it did not invoke |
+| S-off | Phase 3 (S6): after `autoprospect 0`, an insert stays in the grid | **PASS.** `autoprospect 0` printed `off - items put in the prospect grid stay there`. The grid was then filled to 48 of 54 cells with items and nothing was prospected: `while-off=24`, `invoked=2` unchanged. Reopening the window gave a new grid node (@263453) |
+| S-grid-full | Phase 3 (S5): filling the grid logs `grid-full` once and stops invoking; plus what an insert does with 6, 7 and 8 free cells (not measured in Phase 1) | **PASS.** `autoprospect 1` on its own invoked nothing. A 1-cell item into 5 free cells printed one line, `autoprospect: grid-full - holding back - 5 free cells, needs 6; …`, with `grid-full=1`, `invoked=2`, and the item stayed. A second insert into 4 free cells gave `grid-full=2` and no new line (once per reason holds). With items taken out to 16 free cells, one insert prospected everything in the grid at once (seen by eye): `invoked=3 prospected=3 elsewhere=4`, and the grid went to 2 material cells. 6, 7 and 8 free cells: not observed (the inserts fell at 5, 4 and 16), so `kAutoProspectMinFreeCells` stays 6. The grid was full of items, not materials, when the line first printed, so its advice now reads `empty some of the grid` instead of `take the materials out` |
+| S-player-dll | Phase 3 (S7): the player DLL with the panel toggle on prospects one insert (seen by eye), and `out.txt` shows a line naming work done, not armed state. `autoprospect stat` is research-only, so the player build logs `autoprospect: first prospect - invoked=<n≥1> prospected=<n≥1> …` (`StatLine()`'s fields) once, on the first prospect of a session; that line, after `autoprospect: hook installed -> ON`, is acceptance - a line saying only that the hook is installed or the mod is on is not | **PASS for both routes.** Player DLL `BloodPactPlugin_ship.dll` from `3fc595c` (sha256 `89B05DC2…DE61AB89`), the panel started from this checkout with Auto-prospect on: auto-apply sent `autoprospect 1`, which printed `armed`, then `HOOK INSTALLED on anon@15345@…` and `autoprospect: hook installed -> ON`. A click-in and a drag-in both became materials, seen by eye, and `out.txt` read `autoprospect: first prospect - invoked=2 prospected=1 ran-no-effect=1 … inserts=2 (… elsewhere=1 …) not-landed=0`. One invoke ran with no effect (`ran-no-effect=1`), which the research DLL did not show in S2/S3: observed, cause not observed, and harmless (nothing was lost). The player build logged no line of its own for it - it was visible only because the first-prospect line happened to carry the count - so it now logs `autoprospect: the Prospect ran but the grid did not change - …` once per session, and `… could not be read afterwards - …` for `unverified` (built after this run, not yet seen live) |
+
+**Insert timing — an input for the ship adapter.** A click-in's `watch` line read
+`contents=6->6`: the grid's filled count was the same before and after `m_MoveItemToGrid`
+(`anon@15345`), and the new item was already counted before the closure was entered. So
+for a click-in the cell is filled before the insert closure runs, not inside it (one
+click-in observed). Whether that fill can fall in an earlier frame than the hook is not
+measured, and a drag-in's timing is not observed at all (Phase 3 S1 brackets one).
+
+The ship core therefore never takes its baseline at hook time, and does not re-read it
+every frame either. It keeps a **settled** count: what the grid held when the core last
+accounted for all of it (first sight of the node, the grid re-read straight after an
+invoke, a refused insert whose item stays, or a pending insert that expired). Between
+those it only follows removals down. An insert invokes when the filled count is above the
+settled count, so a click-in filled before its hook - in the same frame or an earlier
+one - still prospects once, and moving something already settled (a material, a refused
+item) never does. The earlier core re-read the count every frame and kept the pre-invoke
+count after an invoke; against it, the harness recorded
+`FAIL target/click_in_filled_a_frame_before_the_hook_invokes_once invokes=0 notLanded=1`,
+and a rearrangement straight after an invoke fired the handler
+(`FAIL target/rearrangement_right_after_an_invoke_never_invokes invokes=2`). The measured
+same-frame click-in passed against both cores (`tests/auto_prospect_harness.cpp`).
+
+What is still unproven: an insert whose cell is filled and emptied again before any frame
+reads it, and a drag that empties the source cell while the item is held and fills it
+again on the drop (which would read as an insert, and prospect the dragged item). Phase 3
+S4 checked the second by moving a material, and it did not invoke (`S-rearrange`); one
+materials-only press was observed as a no-op (`P-materials-only`).
+
+## Stage B ship design
+
+- **Core:** `plugin/include/ForgePact/AutoProspectMod.hpp`, game-independent (it names no
+  runtime interface), pinned by `tests/test_auto_prospect_behavior.py` +
+  `tests/auto_prospect_harness.cpp` (baseline, target and `adapter/` scenarios, each
+  target's failing line recorded) and `tests/test_auto_prospect_contract.py`.
+- **Hook:** `HookOneScript` on `m_MoveItemToGrid` through the SDK constant, both routes,
+  installed once from `FrameCallback` after setup. A `TABLE-ONLY` or failed install turns
+  the mod off with a line saying so (a table swap never sees compiled GML's direct call).
+  The body runs the game's function first, and only while the mod is on checks that
+  `self` is the ProspectGrid node (`UI_Inventory_Grid_obj` by `object_index`, and a
+  `uiNodeCallstack` naming `"ProspectGrid"`). It never invokes.
+- **Invoke, at the point of use:** `AutoProspectTick`, from `FrameCallback` only while
+  the mod is on, re-finds the window, the grid and - only while an insert is pending -
+  the button (the `UI_Button_Small_obj` linked to the window through `masterUi`/`parent`
+  whose `activationFunc` is a method of `UiAProspectButton`, by `method_get_index`
+  against `asset_get_index`; exactly one must qualify), then runs the recorded shape once:
+  `script_execute` through `CallBuiltinEx`, the handler's asset index and the button's
+  own `activationArgs` array, `self` = the button, `other` = the window. It re-reads the
+  grid straight after the call and hands it to the core.
+- **Refusals**, each logged once per session in both builds: `no-window`, `no-grid`,
+  `unreadable`, `node-changed`, `no-button`, `no-args`, `grid-full` (fewer than
+  `kAutoProspectMinFreeCells` = 6 free cells: `holding back - N free cells, needs 6; empty
+  some of the grid`). A failed dispatch is logged once too. The player build also logs
+  `autoprospect: first prospect - …` once, and once each the first invoke that ran but
+  left the grid unchanged (`autoprospect: the Prospect ran but the grid did not change -
+  …`) and the first whose effect could not be read (`… could not be read afterwards - …`).
+- **Not built in Stage B:** returning materials to the inventory was a second game
+  operation nobody had measured, so Stage B left them in the grid and `grid-full` refused
+  instead. Stage C measured the move and built it (§ Stage C results, § Stage C ship
+  design). Clearing the grid wholesale and any bigger grid are still not built.
+
+## Stage B Phase 3 live procedure
+
+Research DLL first, then the player DLL. Back up `%LOCALAPPDATA%\Hero_Siege`, junk items
+only. `prospectprobe hook` detours the same address as the Stage B hook, so one of the two
+would go table-only: it runs only in S1's own launch, with auto-prospect off, and never in
+a launch that runs `autoprospect 1` (nor does `citrace nativetrace`).
+
+- **S1, drag-in timing (its own launch, auto-prospect off).** `build.bat dev`; with the
+  game closed, copy `plugin_build\BloodPactPlugin_rel.dll` over
+  `<game>\bin\mods\aurie\BloodPactPlugin.dll` (the panel's Auto-prospect switch off).
+  Before loading a character run `prospectprobe hook`; `UI_Inventory_Grid_obj anon@15345`
+  must print `detoured`. Open the cube, run `prospectprobe watch on` and
+  `prospectprobe arm budget=5 anon@15345`, drag one item in, and record the logged
+  `anon@15345` line's `contents=K->K'` in `S-drag` (`K` = `K'` means the cell was filled
+  before the closure ran, as for the click-in). Close the game.
+- **S0.** Relaunch the same research DLL; do **not** run `prospectprobe hook`. Load a
+  character, run `autoprospect 1`; `out.txt` must show `autoprospect: hook installed -> ON`.
+- **S2 / S3.** A drag-in, then a click-in: each prospected once (seen by eye; `autoprospect
+  stat` shows `invoked=` and `prospected=` up by one each).
+- **S4.** Move one material to another cell inside the grid: `invoked=` unchanged,
+  `not-landed=` up by one.
+- **S5.** Keep inserting until `autoprospect: grid-full - holding back …` is logged, once.
+  Record what the inserts at 8, 7 and 6 free cells did (prospected, or refused), then
+  confirm a further insert stays put and `invoked=` stops rising.
+- **S6.** `autoprospect 0`; an insert stays in the grid.
+- **S7, the player DLL.** `build.bat release`; copy `plugin_build\BloodPactPlugin_ship.dll`
+  over `mods\aurie\BloodPactPlugin.dll`; turn the panel's **Auto-prospect** switch on;
+  prospect one insert (by eye) and confirm `out.txt` shows `autoprospect: hook installed
+  -> ON` and then `autoprospect: first prospect - invoked=1 prospected=1 …`.
+- Fill the `S-*` rows. The human decides which DLL stays installed.
+
+## Stage C: materials to the bag
+
+stage-c-status: complete
+
+The human asked (2026-09-18) for each prospect to first move the previous prospect's
+materials from the grid to the player's inventory ("bag"). The newest batch then stays
+visible until the next insert, the 9×6 grid stops filling with one-cell material stacks
+(today `grid-full` holds back), and only one batch is exposed to the save-time loss (R7).
+Moving a material is a **second game operation** nobody has observed: which routine runs
+when a player moves a material from the ProspectGrid to the bag, with what `self`, `other`
+and arguments, whether it merges into an existing stack, and what a full bag does. Stage C
+records all of it in one research build, with the player's own hand move as the positive
+control, before anything is built. Nothing ships unless a by-name shape qualifies (the rule
+at the end of § Stage C live procedure), and a move that empties a grid cell without the bag
+gaining it is a loss, never a success.
+
+What is already measured (§ Stage B results): both insert routes go through
+`m_MoveItemToGrid` (`UI_Inventory_Grid_obj anon@15345`); a click-in's `other` was an
+unnamed source grid (`@261539`), so which grid node is the bag is **not recorded**;
+materials are single-cell stacks, one per material type per prospect, not observed to
+merge; closing the window leaves them in the grid; moving a material inside the grid fires
+`m_MoveItemToGrid` and was not observed to invoke (Stage B, S4 plus one unexplained case).
+
+### Stage C static search
+
+Done over `hs-game-sdk/cpp/include/hs_game_sdk/scripts.hpp` and `objects.hpp`: every
+script name containing move, transfer, stack, add, remove, space, quick, shift, take, loot,
+send, bag, inventory, grid, material or prospect (case-insensitive), then every Create-event
+closure of the bag window's object. 52 names not already rows were added to
+`prospectprobe`'s target table; each is the `HeroSiege::Scripts` constant's value, used
+as-is. Already rows, and not repeated: `InventoryGridAddItem`, `GridAddItem`,
+`GridHasSpace`, `InventoryGridHasSpace`, `GridClear`, `InvGridClearItemNode`,
+`GetStackOpLocationFromGridType`, `GetItemPreferredGrid`, `GetInventoryGridNode`,
+`ParseItemToGrid`, `s_ItemOperation`, `s_InvNode`, `s_ItemGridInfo`, every
+`UI_Inventory_Grid_obj`/`UI_Inventory_Parent_obj` closure, `PlayerMouseAction` and the
+`CheckPlayerInteraction` control. The hot rows (`ProcessInventoryGridInput` and its two
+structs, `UiDrawInventoryMaterialTab`) are ordinary rows: `arm`'s budget and label filters
+bound what they log. The table now has 143 rows, so `prospectprobe hook` stalls frames for
+longer than Phase 1's 91 rows did (about 9 s then).
+
+*Item operations the Stage A search left out:*
+
+| Probe label | Runtime name |
+|---|---|
+| `InventoryGridAddItemPos` | `gml_Script_InventoryGridAddItemPos` |
+| `InventoryGridRemoveItem` | `gml_Script_InventoryGridRemoveItem` |
+| `InventoryGridAddToStack` | `gml_Script_InventoryGridAddToStack` |
+| `InventoryGridCanAddToStack` | `gml_Script_InventoryGridCanAddToStack` |
+| `InventoryGridHasSpaceMulti` | `gml_Script_InventoryGridHasSpaceMulti` |
+| `InventoryGridAddItemToTab` | `gml_Script_InventoryGridAddItemToTab` |
+| `InventorySortTab` | `gml_Script_InventorySortTab` |
+| `___struct___187@InventorySortTab` | `gml_Script____struct___187@InventorySortTab@InventoryGrid` |
+| `ProcessInventoryGridInput` | `gml_Script_ProcessInventoryGridInput` (hot) |
+| `___struct___305@ProcessInventoryGridInput` | `gml_Script____struct___305@ProcessInventoryGridInput@ProcessInventoryGridInputFunc` (hot) |
+| `___struct___308@ProcessInventoryGridInput` | `gml_Script____struct___308@ProcessInventoryGridInput@ProcessInventoryGridInputFunc` (hot) |
+
+*Grid and stack primitives:*
+
+| Probe label | Runtime name |
+|---|---|
+| `GridAddToStack` | `gml_Script_GridAddToStack` |
+| `GridRemoveItem` | `gml_Script_GridRemoveItem` |
+| `GridSettle` | `gml_Script_GridSettle` |
+| `InventorySwapItemsNew` | `gml_Script_InventorySwapItemsNew` |
+| `InventoryStackHandler` | `gml_Script_InventoryStackHandler` |
+| `InventoryStackUpdateAndRemove` | `gml_Script_InventoryStackUpdateAndRemove` |
+| `___struct___161@InventoryStackUpdateAndRemove` | `gml_Script____struct___161@InventoryStackUpdateAndRemove@InventoryFuncs` |
+| `InventoryStackUpdateAndEdit` | `gml_Script_InventoryStackUpdateAndEdit` |
+| `InventorySplitOperation` | `gml_Script_InventorySplitOperation` |
+| `InventorySplitDrop` | `gml_Script_InventorySplitDrop` |
+| `UiASplitStack` | `gml_Script_UiASplitStack` |
+| `ItemsAreStackable` | `gml_Script_ItemsAreStackable` |
+| `IsStackable` | `gml_Script_IsStackable` |
+| `IsItemTypeStackable` | `gml_Script_IsItemTypeStackable` |
+| `GetMaxStack` | `gml_Script_GetMaxStack` |
+
+*Add-to-inventory family:*
+
+| Probe label | Runtime name |
+|---|---|
+| `AddToInventory` | `gml_Script_AddToInventory` |
+| `___struct___13@AddToInventory` | `gml_Script____struct___13@AddToInventory@AddToInventoryFunc` |
+| `___struct___16@OnlineAddToStack` | `gml_Script____struct___16@OnlineAddToStack@AddToInventoryFunc` |
+| `FindInventoryItemOperation` | `gml_Script_FindInventoryItemOperation` |
+| `___struct___152@FindInventoryItemOperation` | `gml_Script____struct___152@FindInventoryItemOperation@InventoryFuncs` |
+| `s_PendingStackOperation` | `gml_Script_s_PendingStackOperation` |
+| `s_InventoryDrag` | `gml_Script_s_InventoryDrag` (the held-item record's constructor) |
+| `GetItemOwnerFromStackOpLocation` | `gml_Script_GetItemOwnerFromStackOpLocation` |
+| `GetInventorySlotType` | `gml_Script_GetInventorySlotType` |
+| `GetItemFingerprint` | `gml_Script_GetItemFingerprint` |
+| `GetItemFromFingerprint` | `gml_Script_GetItemFromFingerprint` |
+| `InventoryUpdateExt` | `gml_Script_InventoryUpdateExt` |
+| `InventoryUpdateExtNoQue` | `gml_Script_InventoryUpdateExtNoQue` |
+| `InvGridEquipV2` | `gml_Script_InvGridEquipV2` |
+
+*Materials tab and command-arg pickup:*
+
+| Probe label | Runtime name |
+|---|---|
+| `UiAInventoryMaterialTabClick` | `gml_Script_UiAInventoryMaterialTabClick` |
+| `UiDrawInventoryMaterialTab` | `gml_Script_UiDrawInventoryMaterialTab` (hot) |
+| `CA_playerItemPickup` | `gml_Script_CA_playerItemPickup` |
+| `CA_playerItemPickupAccept` | `gml_Script_CA_playerItemPickupAccept` |
+| `CA_playerItemDrop` | `gml_Script_CA_playerItemDrop` |
+
+*The bag window's (`UI_Inventory_obj`) Create-event closures.* `UI_Inventory_obj` joined
+the object list of `test_target_table_covers_every_sdk_closure_of_the_ui_objects`, so the
+next SDK regeneration that renumbers these fails that test by name:
+
+| Probe label | Runtime name |
+|---|---|
+| `UI_Inventory_obj anon@495` | `gml_Script_anon@495@gml_Object_UI_Inventory_obj_Create_0` |
+| `UI_Inventory_obj anon@2261` | `gml_Script_anon@2261@gml_Object_UI_Inventory_obj_Create_0` |
+| `UI_Inventory_obj anon@2364` | `gml_Script_anon@2364@gml_Object_UI_Inventory_obj_Create_0` |
+| `UI_Inventory_obj anon@4391` | `gml_Script_anon@4391@gml_Object_UI_Inventory_obj_Create_0` |
+| `UI_Inventory_obj anon@5590` | `gml_Script_anon@5590@gml_Object_UI_Inventory_obj_Create_0` |
+| `UI_Inventory_obj anon@7874` | `gml_Script_anon@7874@gml_Object_UI_Inventory_obj_Create_0` |
+| `UI_Inventory_obj anon@14458` | `gml_Script_anon@14458@gml_Object_UI_Inventory_obj_Create_0` |
+
+**Negative results, sourced.** No script name in the SDK contains `Quick`, `ShiftClick`,
+`Transfer`, `TakeAll`, `LootAll`, `MoveAll`, `SendTo`, `ToInventory`, `ToBag` or
+`ToStash` (case-insensitive). `StashTakeItemOnline`/`StashAddItemOnline` exist but are the
+*online* stash routes and are not rows. `UI_Inventory_Drag_obj` has no Create-event closure
+in the SDK (grep of `scripts.hpp`); the held item is `s_InventoryDrag`. `hs-game-sdk` has
+no item-class constant in any binding (a grep of `hs-game-sdk/python/hs_game_sdk` and
+`player.hpp` for "material" finds sounds and sprites only). No ForgePact research doc has
+measured an inventory-add operation; the pet quest collector invoked `m_Questpickup` on a
+ground item, not an inventory move. These are "not found by name", not "does not exist":
+a quick-move the game offers under another name is what M3's right-click and shift-click
+test looks for.
+
+**Material identity, the expected signal.** The documented item-class table is
+`HSCraftSim/RESEARCH.md` § 2 ("Item types (= catalog `cls`)": 14 material, 15 socketable,
+16 relic, …), and the item instance struct carries an `itemType` field (same section). So a
+material is expected to be the cell's item instance with `itemType == 14`. Unverified:
+which member of a `nodeGrid` cell struct holds the item instance (only `nodeFingerprint`
+has been read) and that the field is spelled `itemType` there - `M-cell` and `M-identity`
+record both. The `-14` ending of a material's `nodeFingerprint` is a lead only, never the
+check: it is a field a material happens to carry, not what makes it a material.
+
+### Stage C hypotheses
+
+The positive control (M2/M3) decides between these, and `move` can express each:
+
+- **H-A** the bag grid node's own `m_MoveItemToGrid` (`anon@15345`) with `self` = the bag
+  node and `other` = the ProspectGrid, with the arguments the game passed. A click-in was
+  `argc=0`, so the item may come from the held-item state (`s_InventoryDrag`) rather than
+  an argument; if so, a by-name invoke with nothing held is recorded as it is, expected to
+  refuse or do nothing. Evidence: `anon@15345` logged on the bag node's `self` during the
+  hand move, with its `other` and `argc`.
+- **H-B** `m_DropItem` (`anon@8881`) on the bag node, the drop half of a drag. Evidence:
+  `anon@8881` logged on the bag node during M3's drag.
+- **H-C** a named inventory script those closures call, handed the item instance and a
+  destination (`InventoryGridAddItem`, `AddToInventory`, `InventoryGridAddToStack`,
+  `InventorySwapItemsNew`, or `GridRemoveItem` + `InvGridClearItemNode`) - the shape a
+  player build can produce from values read off the cell and the node. Evidence: which of
+  those rows fired during the hand move, and each logged argument's kind and value.
+- **H-D** a quick-move the game itself offers (a right-click or shift-click, keyed in
+  `ProcessInventoryGridInput`). If the human finds such a gesture, it is the preferred
+  control. Evidence: the gesture moves a material by eye, and which rows fired.
+
+Every hypothesis also needs: the ProspectGrid's `contents` before and after, the bag grid's
+filled count (or the stack count) before and after, and `CheckPlayerInteraction` non-zero
+with `anon@15345` counting in the same session - otherwise the instrument is not seeing
+calls and every row is `not observed`.
+
+### Stage C instrument (research build only, under `prospectprobe`)
+
+- **`grids`** (hook-free): every `UI_Inventory_Grid_obj` instance (object index by the SDK
+  name), as `bag:<k>` in `instance_find` order - its `@id`, its `uiNodeCallstack` printed
+  in full, `nodeGridWidth`/`nodeGridHeight`, `filled=`/`empty=` by `contents`'s rule, the
+  ids in `masterUi`/`parent`, and each `m_*` method with the closure it resolves to. The bag
+  grid is then named by its callstack, the way the ProspectGrid is by `"ProspectGrid"`.
+- **`cell <grid> <row> <col>`** (hook-free, read-only): `<grid>` is `prospect` or
+  `bag:<k|text>` (the k-th node `grids` listed, or the one node whose callstack contains
+  the text); row and col are indexed as `contents` prints them. It prints the cell's kind;
+  for a struct, every member with a shallow value, then each member that is itself a
+  struct one level down, so the item instance's type, fingerprint and stack count are
+  visible. `empty` and `unreadable, not empty` are never confused. Nothing is written.
+- **`move <self> <callable> [arg ...] [other=<sel>] [member=<name>] [bag=<k|text>]
+  confirm`**: one invoke per command, by name. `self`/`other` are `prospect`,
+  `bag:<k|text>` or `window` (`other` defaults to `self`). The callable is `m_<Method>` (a
+  method value read off `self`) or `script:<Name>` (its asset index); either goes to
+  `script_execute` through `CallBuiltinEx`, never an address. Arguments are `prospect`,
+  `bag:<k|text>`, `window`, `cell:<grid>,<r>,<c>` (the cell struct), `item:<grid>,<r>,<c>`
+  (the cell's `member=` member - M-cell's recorded item member; there is no default until
+  it is recorded), `n:<number>`, `undef` or `str:<text>`, each re-read at the command.
+  `bag=` names the bag grid (else the first `bag:` among self, other and the arguments).
+  Every refusal comes before any call and says `no call made`: no `confirm`; a callable
+  that is not `m_…`/`script:…`; no bag grid named; a pending `override`/`setat`; no open
+  window; no ProspectGrid; an unresolvable selector; a missing variable or one that is not
+  a method value; a script name with no asset index; the callable's row not detoured
+  (`invoked=` could not be proven - the rule `press` follows); an unreadable grid. The
+  outcome line carries `st=`, `(threw)`, `res=`, `invoked=` (the row's count across the
+  call), `self=`, `other=` and `args=` (each shallowly expanded); then the prospect
+  `contents K->K'` with its fingerprints and `prospect-changed-cells=`, the bag's
+  `filled B->B'`, `changed-cells=` and `new-fingerprints=`, and a verdict decided from those
+  deltas and `invoked=`, never from `st=` alone. Both grids are digested per cell before and
+  after the call: a material cell is a stack, so a shape that takes part of one leaves the
+  prospect grid's filled count and fingerprints unchanged and shows only as a changed cell.
+  Which member holds the stack count is not recorded until `M-cell`, so any change to a cell
+  that was filled counts as the prospect grid losing something:
+  - `the prospect grid lost a cell, a fingerprint or stack count but the bag did not gain
+    it - POSSIBLE LOSS` - and the bag gained no cell, no fingerprint and no changed cell.
+    Decided first, whatever else happened;
+  - `moved (…)` - the prospect grid lost it, the bag gained it, and the callable's body
+    ran. `moved (partial)` when no whole cell left the prospect grid and only a filled
+    cell's digest changed (part of a stack moved); it asks for that cell's stack count by
+    `cell`. When the bag gained no new cell or fingerprint, only a changed cell, the verdict
+    says so and asks for the stack's count by `cell` (a merge, or a POSSIBLE LOSS);
+  - `grids changed but handler not entered (invoked=NO) - not a move by this call`;
+  - `handler entered, nothing moved`;
+  - `dispatched but handler not entered (invoked=NO)`;
+  - `not dispatched`.
+
+  **`itemfp:<grid>,<r>,<c>`** (added for M7): the first live session found that a grid cell
+  is a small struct with no item instance and no stack count in it, only a
+  `nodeFingerprint`, so `item:` has no member to read and M7 was blocked by the instrument.
+  `itemfp:` reads the cell's `nodeFingerprint` and hands on what the game's own
+  `GetItemFromFingerprint(fp, 0)` returns for it - called by its SDK name through
+  `script_execute` with its `asset_get_index`, self = other = the grid node that holds the
+  cell. It is the one game call a selector makes, a lookup, made while the arguments are
+  resolved; a refusal after it means the callable was not called. An empty cell, a missing or
+  empty fingerprint, a lookup that did not dispatch, and a result that is not a plain struct
+  are refused. The outcome line's `args=` carries the fingerprint, the lookup's `st=` and
+  `invoked=`, the item's `itemType` compared with the SDK's `ItemType::Material` (14), and its
+  `itemDefinitionStruct` shallowly.
+- **`stackmove <row> <col> confirm`** (added for M7): the game's own click-move of one
+  material (M2/M4), as one command, on the ProspectGrid cell at row/col (found by its
+  `uiNodeCallstack`, as `grids` does), with self = other = that grid node. It gets the item
+  from the cell's fingerprint as `itemfp:` does, then calls `InventoryGridCanAddToStack(1,
+  undefined, item)`; only when that call's own body ran and returned true does it call
+  `InventoryGridAddToStack(1, item)`; only when the Add's own body ran (`invoked=yes`, not only
+  a dispatch) does it re-read the cell and, if it still holds the same fingerprint, call
+  `InvGridClearItemNode(cell, undefined)` on it. All four calls go by SDK name through
+  `script_execute` with the script's `asset_get_index` - the route the shipped Prospect invoke
+  uses - never `CallGameScriptEx` and never an address. Every refusal before the lookup says
+  `no call made`: no `confirm`; a pending `override`/`setat`; any of the three rows not
+  detoured; no open window; no ProspectGrid; an unreadable or empty cell; no fingerprint; a
+  script with no asset index; an unreadable grid. Later refusals name the calls not made. Each
+  call prints `st=`, `(threw)`, `res=` and `invoked=` (its row's count across the call); the
+  ProspectGrid's contents are printed before and after with the cell's fingerprint. The
+  verdict:
+  - `moved` - the cell emptied (or holds another fingerprint) and the Add was entered;
+  - `the cell emptied but ... was not entered - POSSIBLE LOSS`;
+  - `added-but-cell-kept` - the Add was entered and the cell still holds the material, a
+    possible duplicate the human checks by eye;
+  - `not dispatched` - CanAdd or Add did not dispatch or was not entered;
+  - `refused` - CanAdd returned false, and neither Add nor Clear was called.
+
+  The material lands in the bag's materials tab, which is not a grid node (M-grids), so no
+  read here sees it arrive: every verdict is followed by "check the materials-tab count by
+  eye", and that count is the evidence that the bag gained it.
+
+### Stage C live procedure
+
+Research DLL, auto-prospect OFF for the whole session (`prospectprobe hook` and
+`autoprospect 1` detour the same `anon@15345` address), junk materials only,
+`%LOCALAPPDATA%\Hero_Siege` backed up, driven through `tools/ipc.ps1`.
+
+- **M0** build dev, install `plugin_build\BloodPactPlugin_rel.dll`, back up the save.
+- **M1** before loading a character: `prospectprobe hook` (rows must print `detoured`; record
+  `N detoured, M failed` and any `refused`). Load, open the cube, `prospectprobe grids`
+  (→ `M-grids`: every grid, its callstack name, which one is the bag), `contents`,
+  `cell prospect <r> <c>` on a material cell, the item's cell and an empty cell (→ `M-cell`,
+  `M-identity`). Prospect one junk item by hand first if the grid holds no material. **No-op
+  control:** with nothing done in between, run `prospectprobe cell prospect <r> <c>` on the
+  material cell twice, `cell bag:<k> <r> <c>` on a filled bag cell twice, and `contents` twice.
+  `cell` prints exactly what `move`'s per-cell digest reads (the cell's members, and one level
+  into each plain-struct member), so each pair must match line for line. Record that in
+  `M-cell`. A pair that differs (a counter, a timer, a fresh reference) means `move`'s
+  `prospect-changed-cells` and `changed-cells` would count that cell with no move made: every M7
+  verdict resting on those counts is then not evidence, and M7 goes by the by-eye result and the
+  filled counts and fingerprints only.
+- **M2, control by click.** `watch on`; `arm budget=40` (all rows). Click a material in the
+  ProspectGrid, click it into the bag. `show`, `contents`, `grids`, then `cell bag:<k> <r> <c>`
+  on the landed cell (→ `M-control-click`: every row that fired with `self`/`other`/args, the
+  two grids' deltas; `CheckPlayerInteraction` and `anon@15345` must be non-zero or every row
+  is `not observed`). **If the hand move leaves every node `grids` lists unchanged while the
+  material is in the bag by eye, the bag's material container is not a grid node**: `M-grids`
+  records that (the materials tab - the `UiDrawInventoryMaterialTab` and
+  `UiAInventoryMaterialTabClick` rows - is the likely container, and whichever of them fired
+  in this control is the lead), and no M7 verdict about a loss or "nothing moved" is evidence,
+  and no shape is recorded as a negative, until an instrument can read that container. M7
+  then records outcome lines and by-eye results only.
+- **M3, control by drag.** `reset`, `arm budget=40`; drag a material to the bag; same
+  records (→ `M-control-drag`). Also try a right-click and a shift-click on a material and
+  record whether the game itself quick-moves it (H-D).
+- **M4, stacking.** With one stack of a material type already in the bag, move another of the
+  same type by hand: merged (stack count up, bag filled unchanged) or a new cell; which stack
+  rows fired (→ `M-stack`). This defines "the bag gained it" for the adapter.
+- **M5, bag full.** Fill the bag (junk), move a material by hand: refused, and where (which
+  has-space row returned what), material still in the grid (→ `M-bagfull`). A hand move that
+  *loses* the material stops the session: record it, nothing ships.
+- **M6, re-entry.** Across M2 and M3, `anon@15345` calls on the ProspectGrid `self`
+  (→ `M-reentry`).
+- **M7, shapes.** The click control (M2/M4) identified the route: CanAdd, Add, then Clear,
+  each with the ProspectGrid as self, the item coming from the cell's fingerprint. With
+  `prospectprobe hook` done and the materials-tab count of the material's type read by eye:
+  `prospectprobe contents`, then `prospectprobe stackmove <r> <c> confirm` on one material
+  cell. Record the lines (the lookup with `itemType`, each call's `st=`/`res=`/`invoked=`, the
+  contents before and after), the verdict, and the tab count after by eye (→ `M-shapes`;
+  the `itemType` value also goes to ForgePact#52 once the human says to post it). For a single
+  call of the route, use `move prospect script:<Name> ... itemfp:prospect,<r>,<c> ... bag=<k>
+  confirm` with every value from a selector (no captured value). Then, in the order the
+  controls suggest, any other shape the rows showed. Repeat the qualifying shape once with
+  the bag full (must refuse or leave the material in place).
+  A crash: relaunch the same build, record it, continue. If M2 found the bag's container is
+  not a grid node, a `POSSIBLE LOSS` or `nothing moved` here is the instrument's blindness,
+  not the shape's result: go by the by-eye check and leave the shape open. **If the material's
+  stack count is an instance (`VALUE_REF`) or deeper than one level in the cell struct**, the
+  per-cell digest cannot read it (only two levels: the cell's own members, and one level into
+  plain struct members), so a `nothing moved` verdict is the instrument's blindness: go by the
+  by-eye result and do not rule out the shape.
+- **M8** fill the rows, `stage-c-status: complete`.
+
+**Qualifying rule for `move-shape`:** the shape printed `moved` (or `moved (partial)` if the
+by-eye result confirms the material moved), with `invoked=yes` on the row the control identified,
+every value from a selector a player build can produce by name (instances found by what they are,
+cell/item structs read off the node, numbers, `undef`), the material seen in the bag by eye, and
+for a `moved (partial)` verdict the stack count on the moved cell confirmed by `cell` to have
+changed, and its bag-full repeat left the material in the grid without a `POSSIBLE LOSS`.
+Otherwise `move-shape: none`.
+
+Recorded (2026-09-19): **`move-shape: stackmove route (plus success check)`** - the M7 shape
+above, by name, with the cell cleared only when the Add call returned `success == true` and the
+cell still holds the same fingerprint (`stackmove` itself did not check `success`; the ship
+code does). The bag-full repeat was not run: the human chose to skip filling the bag, from the
+experience that a click-move always sends a material to the materials tab. The ship design
+compensates for the missing measurement by asking `InventoryGridCanAddToStack` first and
+clearing a cell only after a successful Add, so a refused or failed move leaves the material in
+the grid (§ Stage C ship design).
+
+If nothing qualifies, Stage C stops there (`move-shape: none`): the next step is a
+paraphrased local read of the routine the control identified, then a second batched
+research build - never a guessed shape in a player build.
+
+## Stage C results
+
+Filled by the Stage C live session (research build, commit recorded at M0). A row that
+could not be measured says `not observed (<why>)`; no row is left empty once
+`stage-c-status` is `complete`.
+
+| Row | What fills it | Result |
+|---|---|---|
+| M-grids | M1's `grids`: every `UI_Inventory_Grid_obj` with its callstack name and size, and which one is the bag (the name the ship adapter finds it by) - or, when M2's hand move changed no listed node while the material is in the bag by eye, that the bag's container is not a grid node | Research DLL `bb01fe1`; `prospectprobe hook` 143 detoured, 0 failed. `grids`: bag:0 and bag:1 `PotionGrid`; **bag:2 (@261715) `"InventoryGrid"`, 15×6**, 12 filled; bag:3 `InventoryCharmGrid`; bag:4 `InventoryVaultActiveGrid0` (unreadable, `nodeGrid` undefined); bag:5 (@261733) `ProspectGrid`, 2 materials. M2's hand move left `InventoryGrid` at 12 filled while the human saw the material in the **materials tab**: the materials container is not a grid node (`UiDrawInventoryMaterialTab` draws every frame), so nothing here can read the tab arriving |
+| M-cell | M1's `cell prospect` on a material cell: which cell-struct member holds the item instance, and that member's own fields (type, fingerprint, stack count) | A cell is a struct of five members - `nodeStartX`, `nodeStartY`, `nodeLocked`, `nodeIsPermanent`, `nodeFingerprint` - with **no item instance and no stack count**. The item has to be looked up through the fingerprint (`GetItemFromFingerprint(fp, 0)`, which the game itself calls every frame, about 57k calls in the session). The per-cell digest therefore cannot see a partial stack move. No-op control: `cell prospect 0 0`, `cell bag:2 0 0` and `contents`, each run twice with nothing done in between, matched line for line |
+| M-identity | M1/M2's `cell`: the item-type value on a material cell (expected 14), on the inserted item's cell (expected not 14), and on the bag cell the material landed in (expected 14) | The cell carries no item, so `cell` could not read it (M-cell). M7's `itemfp:` lookup read **`itemType=14`** on a material (a Mallet Fragment), matching the SDK's `HeroSiege::Items::ItemType::Material`; the existing stack that `InventoryGridCanAddToStack` returned also read `itemType=14`. The inserted item's value and the tab's own cell: not observed (not read; the tab is not a grid node) |
+| M-control-click | M2: every row that fired on a click-move of a material to the bag, with `self`/`other`/args, the two grids' deltas, and `CheckPlayerInteraction`/`anon@15345` non-zero | Click-move of a material from the ProspectGrid; the human saw it land in the materials tab. ProspectGrid 2→1 filled, `InventoryGrid` 12→12. Low-frequency rows, in order: `InventoryGridCanAddToStack` with self = other = the ProspectGrid, three arguments (1, undefined, the item struct); `GetItemPreferredGrid` (1, the item struct), then `s_ItemGridInfo`; **`InventoryGridAddToStack`** with self = other = the ProspectGrid, two arguments (1, the item struct), inside which `s_ItemOperation` ran; `anon@15345` (`m_MoveItemToGrid`) with self = `InventoryGrid`, other = the ProspectGrid, no arguments, contents 2→2 across it; **`InvGridClearItemNode`** with self = other = the ProspectGrid, arguments (the cell struct, undefined), contents **2→1** - the call that empties the cell. Not called: `AddToInventory`, `InventoryStackHandler`, `s_InventoryDrag`, `GridAddToStack`, `InventoryGridRemoveItem`, `CA_player*`. `CheckPlayerInteraction` and `anon@15345` were non-zero |
+| M-control-drag | M3: the same for a drag, plus whether a right-click or shift-click quick-moves a material (H-D) | A drag took the last material from the ProspectGrid into the main bag grid, where it stayed as a grid item - **not** in the materials tab. Fired: `m_StartInvDragging` (`anon@34555`, self = other = the ProspectGrid, a drag struct and the cell struct), then `anon@15345` with self = other = `InventoryGrid`, four arguments. No `InventoryGridAddToStack`, no `InvGridClearItemNode`. A drag moves the cell grid to grid through held-drag state and cannot be called by name. Right-click and shift-click: not observed (not tried) |
+| M-stack | M4: a second material of a type already in the bag - merged (stack count up, bag filled unchanged) or a new cell, and which stack rows fired; defines "the bag gained it" | A click-move of a material whose type was already stacked in the materials tab **merged** into that stack (by eye). The same rows as M2 in the same order (CanAdd, `GetItemPreferredGrid`, Add, `anon@15345` on `InventoryGrid`, Clear on the ProspectGrid); the ProspectGrid emptied. The tab cannot be read, so "the bag gained it" is the Add call's own `success` plus the tab count by eye |
+| M-bagfull | M5: a hand move into a full bag - refused or not, which has-space row returned what, and the material still in the grid | not observed (human experience: always goes to the materials tab). M5 was not run: the human chose not to fill the bag |
+| M-reentry | M6: `anon@15345` calls on the ProspectGrid `self` across M2 and M3 | In both M2 and M3 the `anon@15345` self was `InventoryGrid`, never the ProspectGrid. Only a click-in (bag → prospect grid, seen by the way) reached `anon@15345` on the ProspectGrid; it also cleared the source cell in the bag grid after the target accepted |
+| M-shapes | M7: per shape, the outcome line (`st=`, `res=`, `invoked=`, `self=`, `other=`, `args=`), the verdict, the by-eye result, or the crash; and the qualifying shape's bag-full repeat | First attempt (`bb01fe1`): `move ... item:prospect,0,0` refused (`needs member=<name>`, since a cell holds no item) and nothing was called. Research DLL `8c56ca7`, `hook` 143 detoured, 0 failed, a Mallet Fragment at ProspectGrid 0,0, materials-tab count 904 by eye. `stackmove 0 0 confirm`, route `script_execute` of `asset_get_index`, self = other = the ProspectGrid: `GetItemFromFingerprint` invoked, `itemType=14`; `InventoryGridCanAddToStack` invoked, returned the existing stack's item struct (truthy, not a bool); `InventoryGridAddToStack` invoked, returned `{tabNumber:0, x:14, y:4, tabType:-4, success:true}`; `InvGridClearItemNode` invoked, ProspectGrid 1→0. Verdict `moved`; **by eye the tab count went 904→905**. No crash. Bag-full repeat: not observed (skipped by the human's choice; see below) |
+
+## Stage C ship design
+
+What was built from `move-shape: stackmove route (plus success check)`. The human asked for
+it on 2026-09-18 and chose the sub-option's default (on, under the off-by-default parent).
+The risk acceptance for this second game operation - it writes the save-backed inventory -
+is recorded in the module guide's Known Limitations item 16.
+
+- **Where it runs.** Inside `AutoProspectTick`, on the frame a landed insert has passed the
+  window, grid, button and argument checks, with only the free-cell check left: the core
+  (`AutoProspectMod::Decide`) returns `MoveMaterials` naming the previous batch's material
+  cells (next bullet), the adapter
+  (`ApMovePass`) moves them one by one, re-finds and re-reads everything, and asks the core
+  again in the same frame; that second answer applies the free-cell rule and invokes or
+  refuses `grid-full` as in Stage B. So the previous prospect's batch leaves the grid just
+  before the next prospect, and the newest batch stays visible until the next insert. At most
+  one pass per landed insert, and none with the parent off, with `bag` off, without a landed
+  insert, on close, on a timer, or on `autoprospect 0`.
+- **The landed insert stays landed.** The read after a pass can be at or below the settled
+  count, because materials left. The core keeps the insert landed until it is invoked or
+  refused, so that read is never taken for `not-landed` or a rearrangement; the invoke's own
+  re-read still sets the settled count, as before.
+- **What moves: the previous batch, as recorded (round 1).** Round 0 moved every material
+  cell, and live on e63eed5 that moved an inserted ore - itself a material - back to the tab
+  before its own prospect (§ Stage C Phase 3 results). "Material" names a kind of item, and
+  an insert can be that kind; the batch is identified by what it is instead. The core
+  cannot tell which cell an insert filled (an insert is known only by count;
+  `P-materials-only` was a no-op), but it can tell what its own invoke produced: at the
+  invoke it keeps the invoking view's distinct fingerprints, and `OnInvoked` records the
+  batch as the fingerprints in the read straight after the call that were not in that list.
+  The two reads share one frame (P-shapes: the handler changes the grid inside the call),
+  and an insert inside our own call counts as `while-invoking`, so nothing the player
+  inserts can be in the batch. A dispatch failure or an unreadable `after` records an empty
+  batch. The adapter hands the core the fingerprints as a list, filled by the same reader
+  (`ApReadCells`) for both reads, never re-split from the joined text. At the pass a cell is
+  named only when its fingerprint is in the batch **and** the adapter flagged it as a
+  material, at most one cell per fingerprint, matched by fingerprint so a batch stack the
+  player moved inside the grid is taken from where it sits now. The pass consumes the batch
+  whatever the outcomes, so a cell a refusal left is not retried.
+- **What forgets the batch.** Anything the core cannot account for, since between prospects
+  it reads only a count: first sight of a node (a new node, the window or grid gone, the
+  count lost, or the parent toggled), the settled count following a removal down, and a
+  pending insert expiring `not-landed`. A forgotten batch moves nothing - the materials
+  stay, which is Stage B's behaviour - so the first prospect after any of these moves
+  nothing and does no item lookup. The batch is recorded with `bag` on or off, so `bag 1`
+  after a `bag 0` prospect moves only the newest batch. **Accepted corner, not observed:**
+  the player swaps an item onto a batch cell and drops that batch stack back in within
+  `kAutoProspectLandFrames`, before the swap expires; the stack is still in the batch and
+  goes to the tab rather than being prospected. Nothing is lost, and the tab is where it was
+  going; closing it would need fingerprints read on every quiet frame.
+- **What is a material.** The adapter looks up each filled cell's item through the game's
+  `GetItemFromFingerprint` (by name) and compares its `itemType` with the SDK's
+  `HeroSiege::Items::ItemType::Material` - the value M7 observed. Only on frames with a
+  pending insert, the pass on and a recorded batch (at most one lookup per cell). The core is
+  handed a per-cell flag and has no item-type value of its own; nothing reads the
+  fingerprint's text. The flag is a second guard: it keeps a non-material that is somehow in
+  the batch from moving.
+- **The move, per cell,** by name through `script_execute`, self = other = the ProspectGrid
+  node: the cell re-read and still holding the fingerprint the view saw; the item looked up
+  again and still a material; `InventoryGridCanAddToStack` must answer truthy (it returns
+  the existing stack); `InventoryGridAddToStack` must return a struct whose `success` is
+  true; and only then, on the cell as it reads then, still holding the same fingerprint,
+  `InvGridClearItemNode`. The cell is re-read at the end.
+- **Outcomes**, each counted, and each non-moved reason logged once per session in both
+  builds. In every case the prospect still runs, decided by the free-cell rule.
+  - `moved`: success, and the cell no longer holds the material.
+  - `not-stackable`: the has-a-stack check said no; the material stays.
+  - `not-added`: the add did not report success and the cell is unchanged; the material
+    stays.
+  - `move-failed`: a call did not dispatch or threw, the lookup was not an item, the cell was
+    unreadable, or it no longer held the viewed fingerprint before the first call; the
+    material stays.
+  - `vanished`: the cell lost the material without the add reporting success - a possible
+    loss. The pass turns itself **off for the session**, says so, and `autoprospect bag 1`
+    answers `unavailable this session`.
+  - `cell-kept`: the add reported success but the final read still holds the material, or
+    could not be made (round 1; round 0 called that `move-failed`) - the grid cannot show the
+    material gone, a possible duplicate, as wrong as a loss. Also off for the session, and
+    its line does not claim the material is still in the grid.
+- **Lines.** The player build logs `autoprospect: first move to bag - …` once, on the first
+  pass that moved something, and each reason's line once. The research build's
+  `autoprospect stat` adds `moved=`, `passes=`, the five reason counts, `batch=N` (the
+  recorded batch's size, so T7 is a count) and `bag=on|off|off-this-session`.
+- **The invoking flag** is held across the whole pass, so an `m_MoveItemToGrid` call the move
+  makes counts as `while-invoking`, never as an insert. Whether the add calls it is not
+  observed: M2 saw one (self = `InventoryGrid`), M7 moved without it.
+- **Sub-option.** `autoprospect bag 1|0`, panel key `mod_auto_prospect_bag`, nested under
+  `mod_auto_prospect` the way `map_reveal_packs` sits under `map_reveal`; `build_cmds`
+  sends `autoprospect bag 0` only when it is off, and turning the parent on restates it.
+  Turning the parent off or on leaves it alone.
+- **Rejected:** moving in the insert hook (step time, nothing measured there), prospecting
+  first and moving straight afterwards (hides the newest batch), moving on close (a moment
+  the game did not choose, with no insert to gate on), writing `nodeGrid`, matching the
+  fingerprint's suffix, a local item-type constant (the SDK enum), comparing `itemType` in
+  the core (its test has no SDK), the drag route (M3: held-drag state, not callable by name),
+  clearing on dispatch alone (can say `moved` when nothing moved), and a bag-side "gained"
+  check (the materials tab is not a grid node and cannot be read). Round 1, after the ore:
+  moving every material cell (round 0; the insert can be a material), excluding "the newest
+  cell" by position or count (a click-in fills before its hook, a drag-in after), excluding
+  ore by item type or subtype (a field the insert happens to carry, not what it is),
+  recording the batch at the next frame's effect check (an insert can land in that frame's
+  step, before the read), and reading fingerprints every frame to track the batch cell by
+  cell (a struct read per filled cell per frame, where forgetting is safe).
+- **Not measured:** a full bag (`M-bagfull`), so the refusal path is designed but not
+  observed; the has-a-stack check first and the success check before any clear are what
+  keep a refusal from losing anything.
+
+## Stage C Phase 3 live procedure
+
+Research DLL first (`plugin_build\BloodPactPlugin_rel.dll`), on a fresh launch, with no
+`prospectprobe hook` and no `citrace nativetrace` in that session (they detour the same
+insert closure). Back up `%LOCALAPPDATA%\Hero_Siege`, junk items only, and read the
+materials-tab counts by eye.
+
+- **T0.** `autoprospect 1` prints `autoprospect: hook installed -> ON`; `autoprospect stat`
+  shows `bag=on` without any `bag` command (on by default).
+- **T1.** Insert an item: it is prospected and its materials stay in the grid.
+- **T2.** Insert another item: the first batch's materials-tab counts rise before the new
+  batch shows, and the new batch stays in the grid. `stat`: `moved=` goes up and `invoked=`
+  goes up by 1 (`T-move-before-prospect`, `T-newest-batch-stays`).
+- **T3.** `autoprospect bag 0`, then insert: the materials stay across the prospect
+  (`T-bag-off`). `autoprospect bag 1` again.
+- **T4.** Optional: fill the bag, then insert (`T-bag-full`): a material stays in the grid
+  and one reason line is logged, or `not observed (…)`.
+- **T5 (revised for round 1).** Auto-prospect off, insert an item (it stays), then on again,
+  then insert: `moved=` does not rise on that insert, because the toggle forgets the batch,
+  and the item left behind is prospected, not moved. The next insert moves the batch that
+  prospect made (`T-non-material`). Round 0's T5 (`moved` +2 across the toggle) is the
+  behaviour round 1 removes on purpose.
+- **T6.** A material type with no stack in the tab yet is moved, or logs `not-stackable`
+  once (`T-new-material-type`).
+- **T7 (new in round 1, the ore defect).** With a previous batch in the grid (`stat` shows
+  `batch=N`, N ≥ 1), insert **one ore**. `stat`: `moved=` rises by exactly N, `prospected=`
+  rises by 1, and `ran-no-effect=` does not rise. By eye: the previous batch's tab counts
+  rise, and the ore turns into materials that stay in the grid (`T-ore-insert`).
+- **Player DLL.** Switch to `plugin_build\BloodPactPlugin_ship.dll` and the panel's
+  sub-switch; check one pass by eye and `autoprospect: first move to bag - …` in `out.txt`
+  (`T-player-dll`).
+- Fill the `T-*` rows and set `phase3c-status: complete`. The human decides which DLL stays
+  installed. The round-1 re-run fills T0-T3, T5, T7 and the player-DLL row against the
+  round-1 build; T4 and T6 were skipped on e63eed5 and are recorded as such.
+
+## Stage C Phase 3 results
+
+phase3c-status: complete
+
+**Round 0 live, 2026-09-19, research DLL built from e63eed5 - history, and the defect it
+found.** T0-T3 and T5 passed: `autoprospect 1` printed `hook installed -> ON` with `bag=on`
+by default; one item was prospected and its material stayed (`moved=0 passes=0`); the next
+insert logged `first move to bag` with `moved=1 passes=1` before the second prospect was
+counted, the materials-tab count rose 929→930 by eye and the new batch stayed; with
+`bag 0` `moved` stayed at 1; and across an off/on toggle the item left behind was
+prospected, not moved, while `moved` rose 1→3 (the two materials). T4 and T6 were skipped by
+the human. **Then, as an extra check the human asked for, one ore was inserted with two
+materials in the grid: `moved` rose 3→6 - the two materials and the inserted ore itself -
+followed by `the Prospect ran but the grid did not change` (`ran-no-effect=1`), and by eye
+the ore went straight back to the inventory, never prospected, its count unchanged.** Ore is
+a material (`itemType` 14, `ItemType::Material`), and round 0 moved every material cell.
+Round 1 moves only the recorded previous batch (§ Stage C ship design), and T7 re-checks the
+ore; round 0's T5 (`moved` +2 across the toggle) is the behaviour round 1 removes on
+purpose, so T5 is re-run too.
+
+**The e63eed5 ore defect is fixed on c27cdad** (round 1: only the recorded batch moves). The
+c27cdad re-run (T0, T1 and T7 passed there) found the two issues Stage D answers; the rows
+below are filled from the re-run on the Stage D ship build, **2026-09-19, research DLL from
+ForgePact 20fc518**, then the player DLL (§ Stage D Phase 3 results has the full account).
+T0: `autoprospect 1` printed `hook installed -> ON` and `stat` showed `moved-new=0 … batch=0
+bag=on` with no `bag` command. T1/T2: `first move to bag` was logged at `prospected=1`, with
+`moved=1 passes=1 batch=1`. T3 and T5 passed by the human's check. The ore (T7, run as Stage
+D's T9 and T9b): `moved` rose by the batch only, and the ore was prospected, never moved back.
+T4 and T6 were skipped again. One 2×3 item of item type 3 (fingerprint ending `211440-3`) that
+the invoke left unchanged (`ran-no-effect=1`) was confirmed by hand as not prospectable - the
+game's behaviour for that item, not the mod's. Observed once; it is not a finding about item
+type 3 as a class.
+
+A row that could not be checked says `not observed (<why>)`; no row is left empty once
+`phase3c-status` is `complete`.
+
+| Row | What fills it | Result |
+|---|---|---|
+| T-move-before-prospect | T2: the previous batch's tab counts rose before the new batch showed; `moved=` up, `invoked=` up by 1 | PASS (20fc518 research DLL, 2026-09-19): `autoprospect: first move to bag` logged at `prospected=1`, with `moved=1 passes=1 batch=1` - the batch moved in the pass before the second prospect. |
+| T-newest-batch-stays | T2: the new batch stays in the grid after the prospect | PASS (same run): the second prospect's batch stayed in the grid (`batch=1` recorded for the next pass). |
+| T-bag-off | T3: with `autoprospect bag 0`, the materials stay across a prospect | PASS (same run, the human's check; no counters were copied into the Log for this step). |
+| T-bag-full | T4 (optional): a full bag - the material stays, one reason line | not observed (human skipped, 2026-09-19, on e63eed5 and again on 20fc518) |
+| T-non-material | T5 (revised): after the toggle the next insert moves nothing and the item left behind is prospected; the insert after that moves only that prospect's batch | PASS (same run, the human's check; no counters were copied into the Log for this step). |
+| T-new-material-type | T6: a material type with no stack yet - moved, or `not-stackable` once | not observed (human skipped, 2026-09-19, e63eed5; on 20fc518 it is Stage D's T8, also not run - see D-newtype-move) |
+| T-ore-insert | T7: with `batch=N` shown, one ore inserted - `moved=` +N exactly, `prospected=` +1, `ran-no-effect=` unchanged; by eye the ore turns into materials that stay | PASS (run as D-ore-mixed and D-ore-drag). Clicked in: `moved` 1→2 (the batch only), `prospected=3`, `ran-no-effect=0`, the ore used up for nothing by the game's chance and not moved back. Dragged in: the ore turned into three materials that stayed (`batch=3`), its `fate` `gone`, `in-bag=no`. |
+| T-player-dll | Player DLL with the panel sub-switch: one pass by eye and `autoprospect: first move to bag - …` in `out.txt` | PASS: `BloodPactPlugin_ship.dll` (sha256 00AD0B8E…ED974E92) logged `autoprospect: first move to bag - invoked=2 prospected=1 … moved=1 moved-new=0 passes=1 … batch=2 bag=on`, the pass seen by eye, and no research or `prospectprobe` line in the player log (D-player-dll). |
+
+## Stage D: first-of-type materials, and the ore that came back
+
+The Stage C round-1 re-run on c27cdad (research DLL, 2026-09-19) passed T0, T1 and T7 and
+found two defects. Stage D is the research build that measures both before anything ships;
+nothing in it reaches the player build.
+
+- **A - a material whose type has no stack in the materials tab yet stays in the grid.**
+  `InventoryGridCanAddToStack` answers with the existing stack, so for a type the tab does not
+  hold yet it answers falsy, and the pass refused every such material (`not-stackable=4`: four
+  gold-ore outputs, one cell each, piled up). The human requires the mod to move these the
+  way a click does. The game's own click-move of one (same session, the new-type positive
+  control) did not call `InventoryGridAddToStack` at all: after CanAdd it ran
+  `GetItemPreferredGrid` with (1, the item) - which ran `s_ItemGridInfo` on an array, twice -
+  then `GridAddItem` with (an array, the item, 0, undefined), inside which `s_ItemOperation`
+  ran with the slot coordinates, then the same `InvGridClearItemNode` on the cell. Two things
+  that route needs were **not measured**: whether that array is `GetItemPreferredGrid`'s own
+  return, and what `GridAddItem` returns. The probe logged neither: `PpAfter` had the return
+  value and printed only the grid snapshot.
+- **B - an ore sometimes went back to the backpack instead of being prospected.** The human
+  saw it happen a few times during free ore play; in vanilla, ore can always be prospected,
+  even with leftover materials in the grid. `prospected` counts a changed grid plus an entered
+  handler, so an ore that left the grid for the bag counts exactly like one that was
+  prospected: the stat line cannot tell the two apart, and its cause is unknown.
+
+### Stage D static search
+
+Over `hs-game-sdk/cpp/include/hs_game_sdk/scripts.hpp` and `item_type.hpp`: the new-type route
+and every inventory-add routine the ore could come back through are already rows of
+`prospectprobe`'s 143-row target table, each the `HeroSiege::Scripts` constant's value -
+`GetItemPreferredGrid`, `GridAddItem`, `s_ItemGridInfo`, `s_ItemOperation`,
+`InventoryGridAddItem`, `InventoryGridAddItemToTab`, `GridAddToStack`, `GridHasSpace`,
+`InventoryGridHasSpace`, `InventoryGridHasSpaceMulti`, `InventoryGridRemoveItem`,
+`InvGridClearItemNode`, `GetItemFromFingerprint`, `AddToInventory`, `InventoryGridAddToStack`
+and `InventoryGridCanAddToStack`. `ItemType::Material` is 14 there. No row is added, so the
+table and its SDK-closure coverage test are unchanged.
+
+**Coexistence of `autoprospect` and `prospectprobe hook`, measured once.** Known Limitations
+16 said never to run them in one session, because both put an inline detour on
+`m_MoveItemToGrid` (`anon@15345`). The c27cdad session ran `autoprospect 1` (installed), later
+`autoprospect 0`, then `prospectprobe hook`, which printed **`142 detoured, 1 failed`**: the one
+failure was `anon@15345`, refused before any patching ("a table hook may hold this entry"), so
+the auto-prospect detour was left as it was. **Not verified:** that `autoprospect 1` afterwards
+still sees inserts. N0 is that control. If it passes, one session carries both, and the probe's
+rows show what the game does inside our own invoke - the instrument B needs. If it fails, the
+**two-session fallback** runs instead: session A with the probe only (N1-N4), session B with
+auto-prospect only (N5, research log lines but no probe rows), and the results say which ran.
+
+### Stage D hypotheses
+
+For A, the unknowns are two, and one hand move answers both (N1):
+
+- **H-A1** `GridAddItem`'s first argument is `GetItemPreferredGrid`'s return, handed on as it
+  is. Evidence: the `ret=` line of `GetItemPreferredGrid` and the `ids:` segment of the
+  `GridAddItem` line print the same `id=0x…`.
+- **H-A2** it is a member of that return, or an array `s_ItemGridInfo` builds from it.
+  Evidence: the identities differ; `ret=` then shows whether the return is a struct (whose
+  member `stackmove`'s `a0=` names) or something else.
+- **GridAddItem's return** is either `InventoryGridAddToStack`'s shape (a struct with
+  `success`), a plain boolean, or neither. Evidence: its `ret=` line.
+
+For B, each hypothesis names the line that decides it (the research log is § Stage D
+instrument):
+
+- **H-B1 the pass named the ore**: the batch record caught it (a click-in whose cell filled
+  before its hook, or a same-frame or queued insert). Evidence: the ore's fingerprint in a
+  `decide` line's `batch=`, or a `move` line naming it. A fix would be in the core (the record
+  moment) and harness-testable.
+- **H-B2 the game's own Prospect returned it.** Evidence: no `move` line names it; its `fate`
+  says `gone` and the bag grid gained it; with N0 passed, the probe rows logged inside our invoke
+  show `AddToInventory`, `InventoryGridAddItem` or `InventoryGridAddToStack` handed the ore,
+  and an `insert` line with `invoking=yes` and the bag as self. Sub-cases to record: a
+  same-type leftover in the grid, a stack of ore, held or drag state at the invoke, the free
+  cells. A precondition ForgePact controls would be a core fix; otherwise it is the game's
+  behaviour and no code fix.
+- **H-B3 the invoke did nothing** (`ran-no-effect`, `fate` says `still`) and a later hand action
+  returned the ore.
+- **H-B4 a stack of ore: one prospected, the rest returned** - vanilla behaviour. The `insert`
+  line's arguments and the `fate` lookup's print (a count member, if the item has one) show it.
+  No code fix.
+- **H-B5 the batch move touched the ore**: a batch fingerprint's lookup resolved the ore, or
+  CanAdd/Add had a side effect on it. Evidence: a `move` line whose `itemDefinitionStruct` is
+  the ore's, or a bag delta on a pass that refused. A fix would be in the adapter or the core.
+
+Instrument control: a plain non-ore prospect prints all five lines, its `fate` says `gone`
+with no bag delta. Fingerprints look per-instance and increasing (four same-type outputs that
+did not merge read …805012 < …809014 < …925022 < …933024) - inferred, not measured; N4
+records it.
+
+### Stage D instrument (research build only)
+
+- **`ret=` on every logged call.** For every call a row logs, whether or not `watch` is on,
+  `PpAfter` prints one more line, `prospectprobe <label> #n ret=<value>` - the value the
+  game's function returned, shallowly (a struct's members, an array's elements). An array
+  prints first as `array len=N id=0x…`, its length and the runtime's own array pointer as an
+  identity token. The call line itself gains an `ids:` segment naming each array argument
+  the same way, so a return and a later argument can be matched by identity. Budgeted
+  exactly like the call line: only a logged call prints either.
+- **`stackmove <row> <col> [a0=<member>] confirm`, the new-type route.** Everything before
+  CanAdd is unchanged, and all five rows it can call (`InventoryGridCanAddToStack`,
+  `InventoryGridAddToStack`, `InvGridClearItemNode`, `GetItemPreferredGrid`, `GridAddItem`)
+  must be detoured before anything is called; every refusal up to the item lookup still says
+  `no call made`. A truthy CanAdd takes the existing-stack route exactly as before. A falsy
+  one now takes the new-type route instead of refusing: `GetItemPreferredGrid` with (1, the
+  item), its return printed; an array return is handed on as it is, a struct return only as
+  the member `a0=` names - without `a0=` the command prints the members and stops (`no call
+  made to GridAddItem (give a0=<member>)`), so the human picks one in the same session -
+  and anything else stops too. Then `GridAddItem` with (a0, the item, 0, undefined), its
+  return printed. The **success signal** is a struct whose `success` is true, or a plain
+  `true`; only then does the cell get the existing re-read and clear. Without it nothing is
+  cleared and the verdict is **`placed-unconfirmed (ret=…) - the cell is kept; check the tab
+  by eye`**, naming the command below. Verdicts otherwise as in Stage C (`moved`, `POSSIBLE
+  LOSS`, `added-but-cell-kept`, `not dispatched`), decided first on a cell that emptied.
+- **`stackmove clear <row> <col> confirm`.** `InvGridClearItemNode` with (the cell, undefined)
+  on one ProspectGrid cell, by name, with the clear row detoured, and nothing else. It is for
+  one case: `placed-unconfirmed` and the materials tab gained the material by eye, so the cell
+  is now a duplicate the session must not carry. Every refusal comes before the call.
+- **The auto-prospect research log.** Five lines starting `autoprospect research:`, each from
+  a research-only function the adapter calls from one research-only line; the player build has
+  none of them. Each carries `frame=` (the frame counter `FrameCallback` keeps; an insert made
+  during a step prints the frame of the last callback before it):
+  - `insert`, from the insert hook after the core has counted it: whether the insert was into
+    the ProspectGrid, `invoking=yes|no` (an insert the game makes inside our own call),
+    `self`/`other`, the arguments' kinds, and the ProspectGrid's filled count and fingerprints
+    at hook time (a click-in has filled its cell by then, a drag-in has not);
+  - `decide`, on a move-pass decision: the pass number, the view's fingerprints, the recorded
+    batch as it stood before the decision consumed it (`BatchList()`, a copy), and the cells
+    named;
+  - `move`, per cell of a pass: the cell, its fingerprint, the looked-up item's `itemType` and
+    `itemDefinitionStruct`, what CanAdd and Add returned, whether the clear ran, the final
+    read and the outcome;
+  - `invoke`, after the core has recorded the invoke: whether it dispatched, the fingerprints
+    it was decided on, the read straight after it, the batch now recorded, the `inserted`
+    fingerprints (the view minus the previous invoke's after-read) and the bag grid's filled
+    count;
+  - `fate`, on the next tick - the frame the core's effect check reads: for each inserted
+    fingerprint, `gone` or `still` in the ProspectGrid, what `GetItemFromFingerprint` (fp, 0)
+    returns for it now (the one game call this log makes, a lookup, through the adapter's own
+    by-name helper), and whether the bag grid (`InventoryGrid`, M-grids) holds it; and the bag
+    grid's filled count and the fingerprints it gained and lost since the invoke. A returned
+    ore that merged into a bag stack loses its fingerprint: the count, the lists and the
+    lookup's print catch that.
+
+### Stage D live procedure
+
+Research DLL (`plugin_build\BloodPactPlugin_rel.dll`), `%LOCALAPPDATA%\Hero_Siege` backed up,
+junk materials only, driven through `tools/ipc.ps1`. A crash: relaunch the same build, record
+it, go on.
+
+- **N0, the coexistence control.** `autoprospect 1` prints `autoprospect: hook installed -> ON`;
+  then `prospectprobe hook` prints `142 detoured, 1 failed` (the one failure `anon@15345`);
+  insert one junk item; `autoprospect stat` shows `inserts` and `prospected` each up by 1 and
+  the research log prints its lines (→ `N-coexist`). If that fails, record it and switch to the
+  two-session fallback: N1-N4 with the probe only, then relaunch for N5 with auto-prospect only.
+- **N1, the new-type control by hand.** `prospectprobe arm budget=60` on the inventory and grid
+  rows, `watch on`; the human click-moves ONE material whose type has no stack in the tab (the
+  gold-ore outputs still in the grid qualify). `show`, then read the lines (→
+  `N-control-newtype`: the rows in order; `N-a0`: `GridAddItem`'s `ids:` against
+  `GetItemPreferredGrid`'s `ret=`; `N-gridadd-return`: `GridAddItem`'s `ret=`).
+- **N2.** `prospectprobe stackmove <r> <c> confirm` (with `a0=<member>` if N1 found a struct) on
+  another new-type material; the tab by eye; if the verdict is `placed-unconfirmed` and the tab
+  gained it, `prospectprobe stackmove clear <r> <c> confirm` (→ `N-stackmove-newtype`).
+- **N3.** `stackmove` on a material whose type is already in the tab: the control, expected
+  `moved` (→ `N-stackmove-existing`).
+- **N4.** `autoprospect bag 0`, then prospect two ore of one type; `prospectprobe contents` shows
+  two distinct fingerprints or one (→ `N-fingerprint-identity`).
+- **N5, free ore play.** `autoprospect bag 1`, `prospectprobe arm budget=400` on the inventory
+  rows. First the plain non-ore control (all five lines, `fate` says `gone`, no bag delta); then
+  play freely - several ore types, leftovers in the grid, click-in and drag-in, 10-20 inserts.
+  The human says "ore came back" the moment it happens and the driver pulls `-Tail` (→
+  `N-ore-play`: the lines around it; `N-ore-cause`: the hypothesis the lines pick out, with the
+  deciding line).
+- **N6.** Fill the rows, set `stage-d-status: complete`, and write the workorder's
+  `newtype-live` Log entry (the new-type shape, the ore cause, the fix design and the harness
+  scenarios it needs).
+
+## Stage D results
+
+stage-d-status: complete
+
+Filled by the Stage D live session (2026-09-19, research DLL built from 67d2d9e), driven
+through `tools/ipc.ps1` with the human in game. A row that could not be measured says `not
+observed (<why>)`; no row is left empty once `stage-d-status` is `complete`.
+
+| Row | What fills it | Result |
+|---|---|---|
+| N-coexist | N0: `autoprospect 1` then `prospectprobe hook` (`142 detoured, 1 failed`), one insert, `inserts` and `prospected` +1 - or which session of the two-session fallback ran | PASS, one session. `autoprospect 1` → `hook installed -> ON`; `prospectprobe hook` → `142 detoured, 1 failed` (`anon@15345`, the expected clash); one junk insert gave `inserts=1 prospected=1 batch=1` and the research log's `insert` (`into-prospect-grid=yes`), `invoke` and `fate` (the insert `gone`) lines. The two-session fallback was not needed. |
+| N-control-newtype | N1: every row that fired on the hand click-move of a first-of-type material, in order, with self/other/arguments | A hand click-move of one first-of-type material: `InventoryGridCanAddToStack` (1, undefined, item) returned undefined; `GetItemPreferredGrid` (1, item) returned a struct `{gridBits: 0, grid: <array 6×15>}`, running `s_ItemGridInfo` on that array inside; `GridAddItem` (that array, item, 0, undefined); `InvGridClearItemNode` (cell, undefined). By eye the material landed in the **main bag grid**, not the materials tab. |
+| N-a0 | N1: `GridAddItem`'s first-argument identity against `GetItemPreferredGrid`'s `ret=` identity - H-A1 (same array) or H-A2 (and which member or builder) | H-A2, the member: `GetItemPreferredGrid` returns a struct, and `GridAddItem`'s first argument is its `grid` member - in N1 the array handed to `s_ItemGridInfo` inside the lookup and `GridAddItem`'s first argument printed the same id (…32C0). The identity instrument was proven by N2's same-array control: `stackmove`'s own `GridAddItem` call, handed the `grid` member (`a0=grid`), printed that same id. |
+| N-gridadd-return | N1: `GridAddItem`'s `ret=` - a struct with `success`, a plain boolean, or neither | A struct with `success`, the add's shape: `{tabNumber: 0, x: 11, y: 3, tabType: 0, success: true}` (`tabType` 0 where the stack add's was -4). |
+| N-stackmove-newtype | N2: the verdict, each call's `ret=`, the tab count by eye, and whether `stackmove clear` ran | `stackmove 0 0 a0=grid confirm` on another new-type material: CanAdd undefined → `GetItemPreferredGrid` → `GridAddItem` (the `grid` member) returned `{x: 11, y: 4, tabType: 0, success: true}` → the clear. Verdict `moved`; by eye in the main bag. `stackmove clear` was not needed. |
+| N-stackmove-existing | N3: the existing-stack control's verdict (expected `moved`) and the tab by eye | not observed (N3 was not run as its own step): the stack route is M7's measurement, and it was seen again in this session's move pass - a batch fingerprint moved through `InventoryGridAddToStack` with `success: true`, `tabType` -4. |
+| N-fingerprint-identity | N4: two ore of one type prospected with `bag 0` - two distinct fingerprints or one | not observed as N4 (the `bag 0` step was not run); stand-in evidence from the same session: three ores of one type inserted in a row carried three distinct fingerprints, and every batch had its own. A fingerprint names one item instance, so the batch's fingerprint match is safe. |
+| N-ore-play | N5: the research-log lines (and probe rows) around each "ore came back" | With the bag pass not involved (the batch empty), three ore invokes each used the ore up and produced nothing: `after=[]`, `fate` `gone`, the main bag unchanged; `UiAProspectButton` ran 5 times since the probe was armed, `___struct___123` only twice. No `fate` line showed an ore returning to the bag. The N5 bag-read positive control was not run, because the vanilla control below settled B. |
+| N-ore-cause | N5: the hypothesis (H-B1..H-B5) the lines pick out, with the deciding line - or `not observed` | **The game's own chance, not a mod defect** - none of H-B1..H-B5. Vanilla control, auto-prospect off, hand presses on the same ore type: press 1 ran `___struct___123` and `GridAddItem` and produced materials; press 2, with the same self, other and argument array, ran no `___struct___123` and produced nothing. The human confirmed that prospecting ore only has a chance to give materials. The e63eed5 "ore moved back to the bag" defect was real and is fixed on c27cdad (round 1). No code fix for B. |
+
+**What Stage D decided.** A: ship the new-type route the game's click takes - `GridAddItem`
+with (`GetItemPreferredGrid`(1, item)`.grid`, item, 0, undefined), self and other the
+ProspectGrid node, success = the result's `success == true` - and note that it lands in the
+main bag grid, not the materials tab. B: no code change; the player notes say that an ore can
+be used up with nothing in its place, and that this is the game.
+
+## Stage D ship design
+
+What changed in the auto-prospect bag pass (ForgePact round 2 of Stage D), all of it in the
+player build:
+
+- **The new-type route, in `ApMoveCell`.** The cell re-read, the item lookup and the
+  has-a-stack check are unchanged, and a "yes" still takes the stack route (the add) exactly
+  as before. A "no" - which the check answers for every material whose type the tab holds no
+  stack of - now takes the route N-control-newtype recorded instead of stopping:
+  `GetItemPreferredGrid` with (1, the item), whose result must be a plain struct whose `grid`
+  member is an array (`ApPreferredGrid`, read by name with `variable_struct_get`), then
+  `GridAddItem` with (that array, the item, 0, undefined), both by SDK name through the same
+  `script_execute` site, self and other the ProspectGrid node (`kApPreferredName`,
+  `kApPlaceName`). The place's result is checked by the add's own `ApAddSucceeded` (N-gridadd-
+  return: the same `success` struct). The one clear site follows either route's success, on the
+  re-read cell still holding the same fingerprint.
+- **The core's outcomes.** `AutoProspectMoveReport` gains `preferredRan`, `preferredOk`,
+  `placeRan` and `route` (`Stack`/`Place`/`None`); `success` covers either route. `ClassifyMove`:
+  anything before the check failing is `move-failed`; a "no" whose preferred-grid lookup never
+  ran (the name did not resolve, or `script_execute` failed) is `move-failed` too - a call that
+  did not run, not the game's answer (closing round, after round 2's review; harness
+  `target/preferred_lookup_not_run_is_move_failed`, failing against 20fc518); a "no" whose lookup
+  ran and named no grid of the recorded shape is **`no-preferred-grid`**; a place that ran without success on an unchanged cell is
+  **`not-placed`** (a full bag has this shape); otherwise the rules are the stack route's -
+  success and the cell empty is `moved` (and **`moved-new`** when the place did it), success
+  with the cell still holding it or unreadable is `cell-kept`, the cell emptied without success
+  is `vanished`, and those two turn the pass off for the session. Each refusal is logged once
+  per session. Stage C's `not-stackable` is retired: the check's "no" is a route now, and an
+  outcome nothing can reach would print 0 forever.
+- **The stat line** gains `moved-new=`, `no-preferred-grid=` and `not-placed=` and loses
+  `not-stackable=`.
+- **Where it lands.** Measured by eye (N1, N2), the first-of-type material goes to the main bag
+  grid (`tabType` 0), the same place the game's own click puts it - not the materials tab.
+- **The ore (B).** No code change (§ Stage D results, N-ore-cause): the game's Prospect only
+  sometimes gives materials for an ore.
+- **Research build only:** the `move` research line prints `route=`, `preferred=` (the lookup's
+  return) and the place's return in its `add=` slot.
+- **Not changed:** the stack route's calls and arguments, the batch record, the insert and
+  settled-count rules, `kAutoProspectMinFreeCells`, the invoke shape and the
+  `m_MoveItemToGrid` hook.
+- **Tests.** The harness's Stage D scenarios (`baseline/existing_stack_route_is_unchanged` and
+  five targets) failed against the c27cdad core with the new names shimmed inert, and pass now;
+  the lines are recorded in `tests/auto_prospect_harness.cpp`. Two Stage C targets that used a
+  "no" from the check as their refusal now expect `no-preferred-grid`.
+- **Not measured:** a full bag (`not-placed`'s expected cause) and a `GetItemPreferredGrid` that
+  names no grid; both are refusals that leave the material, logged once.
+- **Not observed: any other "no" from the has-a-stack check.** The place route runs on every
+  falsy answer from `InventoryGridCanAddToStack`, not only on a type with no stack yet. Stage D
+  measured the "no" only for a new type (N-control-newtype, N-stackmove-newtype). If the check
+  also says no for a stack that has reached its cap, or for a full materials tab, that material
+  takes the place route and lands in the main bag, as the same click would - with the same
+  success check and clear. Neither case was seen live, so the player-facing wording ("the first
+  of its kind") describes the measured case only.
+
+## Stage D Phase 3 live procedure
+
+The same re-run that completes `phase3c` (§ Stage C Phase 3 live procedure): research DLL
+first, save backed up, junk items only, read the tabs and the bag by eye. With the research DLL,
+run T0-T3, T5 and T7 from Stage C, then:
+
+- **T8 (`D-newtype-move`).** With a previous batch holding a material whose type has no stack in
+  the materials tab, insert an item: that material leaves the grid and appears in the main bag;
+  `autoprospect stat` shows `moved-new=` up by 1 (and `moved=` by the batch's size).
+- **T8b (`D-newtype-refusal`, optional).** Fill the main bag, then the same: the material stays
+  in the grid and `autoprospect: not-placed - …` (or `no-preferred-grid - …`) is logged once -
+  or `not observed (…)`.
+- **T9 (`D-ore-mixed`).** Click one ore in with leftover materials in the grid (a previous batch
+  and some materials put in by hand): the batch moves, the ore is prospected - it turns into
+  materials, or is used up with nothing in its place, which is the game's own chance - and the
+  ore is never moved back to the bag.
+- **T9b (`D-ore-drag`).** The same with a drag-in.
+- **Player DLL (`D-player-dll`).** Switch to `plugin_build\BloodPactPlugin_ship.dll`: one pass
+  with a first-of-type material by eye, and `autoprospect: first move to bag - …` in
+  `out.txt` naming `moved-new=`.
+- Fill the `T-*` and `D-*` rows and set `phase3c-status` and `phase3d-status` to `complete`.
+
+## Stage D Phase 3 results
+
+phase3d-status: complete
+
+**Live, 2026-09-19, research DLL built from ForgePact 20fc518 (sha256 157380B4…68C327BD), then
+the player DLL.** The same re-run filled § Stage C Phase 3 results. With the research DLL: T0,
+T1/T2, T3, T5, then the ore by click (T9) and by drag (T9b), each passed. After T9b the human
+inserted a 2×3 item of item type 3 (fingerprint ending `211440-3`): the move pass first moved
+the three batch materials (all of types that already had a stack; the has-a-stack check
+answered with a struct and the add with `success`), `moved` 2→5; then the invoke dispatched and
+the grid did not change (`ran-no-effect=1`, the item's research `fate` line `still`). The human
+confirmed by hand that this one item is not prospectable, with or without ForgePact - so for
+that item it is the game's own behaviour, and the `ran-no-effect` line said exactly what
+happened. Observed once, on one item; whether other items of item type 3 behave the same was
+not tested. The human took the item back
+out. T8 (a first-of-type material through the ship move pass) could not be run: the human had no
+source of a material type missing from the materials tab.
+
+A row that could not be checked says `not observed (<why>)`; no row is left empty once
+`phase3d-status` is `complete`.
+
+| Row | What fills it | Result |
+|---|---|---|
+| D-newtype-move | T8: a first-of-type batch material leaves the grid for the main bag; `moved-new=` +1 | not observed (T8 not run: the human had no source of a first-of-type material). Stand-in evidence: N-stackmove-newtype ran the same calls by the same names - the preferred grid, the place with `success:true`, the clear - and the material landed in the main bag; the ship route's decisions are pinned by the Stage D harness targets. `moved-new` stayed 0 in every pass of this re-run, because every batch material had an existing stack. |
+| D-newtype-refusal | T8b (optional): a full bag - the material stays, `not-placed` (or `no-preferred-grid`) once | not observed (optional, skipped; and it needs T8's first-of-type material too). |
+| D-ore-mixed | T9: a clicked-in ore with leftovers in the grid is prospected (materials, or nothing by the game's chance), never moved back; the batch moves | PASS. `moved` 1→2 - the batch only, not the ore -, `prospected=3`, `ran-no-effect=0`, the grid empty afterwards and `batch=0`. The ore was used up and gave nothing (the game's chance, N-ore-cause) and was not moved back to the bag. |
+| D-ore-drag | T9b: the same with a drag-in | PASS. The dragged-in ore was prospected into three materials: the research `invoke` line showed three fingerprints after the call and `batch=3`, and the ore's `fate` line said `gone`, `in-bag=no`. A drag landing is counted like a click. |
+| D-player-dll | Player DLL: one first-of-type pass by eye and `first move to bag` in `out.txt` | PASS for the pass; first-of-type part not observed (as D-newtype-move). Player DLL `BloodPactPlugin_ship.dll` (sha256 00AD0B8E…ED974E92), the panel started from this checkout, Auto-prospect turned on in the panel with the bag sub-switch on by default. `out.txt`: the version banner, `autoprospect: armed`, `HOOK INSTALLED on anon@15345@…`, `autoprospect: hook installed -> ON`, `autoprospect: first prospect - invoked=1 prospected=1 …`, then `autoprospect: first move to bag - invoked=2 prospected=1 … moved=1 moved-new=0 passes=1 … vanished=0 cell-kept=0 batch=2 bag=on`. No `autoprospect research:` and no `prospectprobe` line in the player log. By eye the batch moved and the second item was prospected. |

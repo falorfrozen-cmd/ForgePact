@@ -728,7 +728,13 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
             "beaconrange", "beaconmode", "beaconwake", "beaconspawn", "beaconfarstep",
             "tyrantchance", "tyrantaffix", "hhlabelfont", "hhlabeloffset", "hhlabelmax",
             "enemyspeed", "rarity", "sigdrop", "angelicdrop", "relicfilter", "orbpickup",
-            "satmods", "petquest", "toggleborder",
+            "satmods", "petquest",
+            # ForgePact #9 Stage B, merged from main: auto-prospect's own
+            # player command (test_auto_prospect_contract.py pins it). Added
+            # here because this set is an exact match, so another feature
+            # landing in the same table has to be named rather than ignored.
+            "autoprospect",
+            "toggleborder",
             # T1 (issue #11, Track A): the re-cast guard (ToggleGuardContractTests).
             "toggleguard",
         }
@@ -1718,11 +1724,21 @@ class ToggleTableProbeContractTests(unittest.TestCase):
             self.assertEqual(function_body(self.plugin, signature), function_body(old, signature), signature)
 
     def test_kplayercommands_unchanged_from_62a67d2(self):
+        # NARROWED at the merge with main (2026-09-20): this phase still adds
+        # no player command, but main's auto-prospect (ForgePact #9) landed in
+        # the same table, so a byte-for-byte compare of the block now fails on
+        # somebody else's entry. The property worth keeping is "this branch
+        # added nothing here", so the compare is by SET with that one merged
+        # entry named explicitly - anything else appearing still fails.
         old = git_show("62a67d2:plugin/ModuleMain.cpp")
         if old is None:
             self.skipTest("git cannot read 62a67d2")
         pattern = r"static const std::unordered_set<std::string> kPlayerCommands = \{(.*?)\};"
-        self.assertEqual(re.search(pattern, self.plugin, re.S).group(1), re.search(pattern, old, re.S).group(1))
+        as_set = lambda text: {tok.strip().strip('"') for tok in text.split(",") if tok.strip()}
+        now = as_set(re.search(pattern, self.plugin, re.S).group(1))
+        before = as_set(re.search(pattern, old, re.S).group(1))
+        self.assertEqual(now - before, {"autoprospect"})
+        self.assertEqual(before - now, set())
 
     # ---- Sprite look probe (R round 3, issue #11): `tgprobe sprite ...` ----
     # A research-only probe that draws a *named* sprite, or today's shipped

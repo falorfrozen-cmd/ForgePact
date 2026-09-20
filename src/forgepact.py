@@ -14,7 +14,7 @@ Settings persist in %LOCALAPPDATA%/Hero_Siege/forgepact.json.
 # and works with no compiled DLL at all, so tools/cut_release.py reads the
 # current version from here. Do NOT hand-edit it - `py tools/cut_release.py
 # <version>` moves every site at once and `--check` fails if they disagree.
-__version__ = "1.4.3"
+__version__ = "1.4.4"
 
 import hashlib
 import json
@@ -196,14 +196,23 @@ DEFAULTS = {
     # ForgePact/docs/pet-quest-collector-plan.md). Off by default like the
     # other mod toggles.
     "mod_pet_quest_pickup": False,
-    # Outlines Soul Spurn's skill-bar slot while the Purgatory-toggled drain
-    # is active (issue #11, Track B). Off by default like the other mod
-    # toggles; offline only, no co-op claim (AGENTS.md "this is the rule of
-    # ForgePact").
+    # Auto-prospect (ForgePact #9): every item put into the Prospect Cube's
+    # grid is prospected at once by the game's own Prospect. Off by default:
+    # whatever is left in the grid when the game saves is lost.
+    "mod_auto_prospect": False,
+    # Its sub-option (Stage C): before each prospect, the previous prospect's
+    # materials go from the grid to the materials tab, so only the newest
+    # batch sits in the grid. On by default under the off-by-default parent;
+    # the plugin defaults it on too, so only "off" is ever sent.
+    "mod_auto_prospect_bag": True,
+    # Marks the skill-bar slot of a toggle skill while it is switched on
+    # (issue #11, Track B; five skills since phase S). Off by default like the
+    # other mod toggles; offline only, no co-op claim (AGENTS.md "this is the
+    # rule of ForgePact").
     "mod_toggle_indicator": False,
-    # Stops the double-cast proc from re-casting Soul Spurn on its own (issue
-    # #11, Track A), so a proc no longer flips the toggle straight back. Off
-    # by default; offline only, like every mod here.
+    # Stops the double-cast proc from re-casting a covered toggle skill on its
+    # own (issue #11, Track A), so a proc no longer flips the toggle straight
+    # back. Off by default; offline only, like every mod here.
     "mod_toggle_guard": False,
     # Monster Rarity: the share of normal monsters raised to Rare and to Ancient
     # (percent each, together at most 100; the rest stay normal).
@@ -269,34 +278,6 @@ def exe_path(cfg=None) -> Path:
 
 def ipc_dir(cfg=None) -> Path:
     return exe_path(cfg).parent / "bp_ipc"
-
-
-# YYTK RunnerInterface cache: pre-writing it skips the ~1 min first-launch disassembly.
-# Keyed by exe size; YYTK validates the size, so a stale cache (different exe build) is
-# safely ignored (it just falls back to a one-time scan + re-caches). Known patched build:
-KNOWN_RI_CACHE = {
-    282105856: "282105856 190392081 190393250\n",   # 7.0.90, AuriePatcher-ed (verified 2026-09-02)
-    303708672: "303708672 208216097 208217266\n",   # 7.0.30, AuriePatcher-ed (verified 2026-08-26)
-    303584768: "303584768 208133041 208134210\n",   # previous S10 build, AuriePatcher-ed
-    309551616: "309551616 207703889 207705042\n",   # older still
-}
-
-
-def ensure_ri_cache(cfg=None) -> bool:
-    """Use only a verified cache; remove unknown caches so YYTK must rescan."""
-    try:
-        exe = exe_path(cfg)
-        content = KNOWN_RI_CACHE.get(exe.stat().st_size)
-        cache = exe.with_name(exe.name + ".yytkcache")
-        if not content:
-            if cache.exists():
-                cache.unlink()
-            return False
-        if not cache.exists() or cache.read_text(errors="ignore").split()[:1] != content.split()[:1]:
-            cache.write_text(content, encoding="ascii")
-        return True
-    except Exception:
-        return False
 
 
 WEBVIEW_WINDOW = None  # set in main() when running as a native pywebview window
@@ -740,6 +721,14 @@ def build_cmds(cfg: dict) -> list:
         # Safe to send at launch: no hook is installed, so unlike relicfilter
         # there is no arm/defer lifecycle to worry about.
         out.append("petquest 1")
+    if cfg.get("mod_auto_prospect", False):
+        # Safe to send at launch: like relicfilter, the plugin only ARMS the mod
+        # here and installs its hook once the game has settled.
+        out.append("autoprospect 1")
+        # Only emitted to turn the move to the materials tab OFF: the plugin
+        # defaults it on (the map_reveal_packs rule).
+        if not cfg.get("mod_auto_prospect_bag", True):
+            out.append("autoprospect bag 0")
     if cfg.get("mod_toggle_indicator", False):
         # Safe to send at launch: DrawHudBuffs is already hooked at init;
         # this only flips an atomic read at the top of the existing draw.
@@ -1418,6 +1407,23 @@ def reset_boot_count_cache() -> None:
                            size=-1, mtime_ns=-1)
 
 
+def plugin_mod_state(cfg=None) -> dict:
+    r"""What the plugin says it is actually doing, from `bp_ipc\modstate.json`.
+
+    The panel stores what the player asked for; the plugin can refuse it for
+    the rest of a session (an insert hook that went in table-only, a move pass
+    that shut itself down after a material could not be accounted for). Review
+    of ForgePact #54: without this the switch kept showing ON and a refused
+    re-enable looked like it had worked. Missing or unreadable file means the
+    plugin has not said anything, which is not the same as a refusal."""
+    try:
+        raw = (ipc_dir(cfg) / "modstate.json").read_text(encoding="utf-8", errors="replace")
+        state = json.loads(raw)
+        return state if isinstance(state, dict) else {}
+    except Exception:
+        return {}
+
+
 def plugin_boot_count(cfg=None) -> int:
     """How many times the plugin has started, read from its own log.
 
@@ -1594,8 +1600,7 @@ def launch_modded_game(cfg: dict) -> dict:
             return "The mod plugin installation is incomplete. Close the game and click Install Mod Plugin first."
         return ""
 
-    return offline_launcher.launch_game(exe_path(cfg), validate_extra=validate_plugin,
-                                        prepare=lambda: ensure_ri_cache(cfg))
+    return offline_launcher.launch_game(exe_path(cfg), validate_extra=validate_plugin)
 
 
 class H(BaseHTTPRequestHandler):
@@ -1625,6 +1630,7 @@ class H(BaseHTTPRequestHandler):
             self._json({"cfg": cfg, "version": __version__,
                         "gameRunning": game_running(cfg),
                         "ipcOk": ipc_dir(cfg).exists(),
+                        "pluginMods": plugin_mod_state(cfg),
                         "eacStatus": eac_status(_exe) if _exe.exists() else "",
                         "chain": mod_chain(cfg),
                         "spawners": [[k, i, l, mx] for k, i, l, mx in SPAWNERS],
@@ -1726,7 +1732,7 @@ class H(BaseHTTPRequestHandler):
                     # moved wins and the other gives way
                     other = "rarity_ancient" if key == "rarity_rare" else "rarity_rare"
                     cfg[other] = min(_pct(cfg.get(other, 0)), 100 - cfg[key])
-                elif key in ("density_on", "auto_apply", "map_reveal", "map_reveal_packs", "headhunter", "tyrant", "beacon", "mod_filter_max_relics", "mod_orb_pickup_radius", "mod_pet_quest_pickup", "mod_toggle_indicator", "mod_toggle_guard"):
+                elif key in ("density_on", "auto_apply", "map_reveal", "map_reveal_packs", "headhunter", "tyrant", "beacon", "mod_filter_max_relics", "mod_orb_pickup_radius", "mod_pet_quest_pickup", "mod_auto_prospect", "mod_auto_prospect_bag", "mod_toggle_indicator", "mod_toggle_guard"):
                     cfg[key] = bool(val)
                 save_cfg(cfg)
                 live = ""
@@ -1775,6 +1781,16 @@ class H(BaseHTTPRequestHandler):
                         send_cmds([f"orbpickup {10 if cfg['mod_orb_pickup_radius'] else 0}"], cfg)
                     elif key == "mod_pet_quest_pickup":
                         send_cmds([f"petquest {1 if cfg['mod_pet_quest_pickup'] else 0}"], cfg)
+                    elif key == "mod_auto_prospect":
+                        cmds = [f"autoprospect {1 if cfg['mod_auto_prospect'] else 0}"]
+                        # Turning the parent on restates the child, as map
+                        # reveal does: `autoprospect 1` leaves the plugin's
+                        # bag flag as it was.
+                        if cfg["mod_auto_prospect"]:
+                            cmds.append(f"autoprospect bag {1 if cfg.get('mod_auto_prospect_bag', True) else 0}")
+                        send_cmds(cmds, cfg)
+                    elif key == "mod_auto_prospect_bag":
+                        send_cmds([f"autoprospect bag {1 if cfg['mod_auto_prospect_bag'] else 0}"], cfg)
                     elif key == "mod_toggle_indicator":
                         send_cmds([f"toggleborder {1 if cfg['mod_toggle_indicator'] else 0}"], cfg)
                     elif key == "mod_toggle_guard":
@@ -1947,7 +1963,7 @@ input[type=range]::-webkit-slider-thumb{appearance:none;width:17px;height:17px;b
 .hero-number{color:var(--ember2);font-size:35px;line-height:1.25;font-weight:700;margin:9px 0}.density-top{display:flex;align-items:center;justify-content:space-between}.density-top .row{border:0;padding:0;gap:8px}.density-top .lbl{width:auto;font-size:11px;color:var(--mut)}
 #densityCard>.row{border:0;padding:6px 0}#densityCard>.row>.lbl{display:none}.density-scale{display:flex;justify-content:space-between;font-size:11px;color:var(--mut);margin-top:5px}
 #rarityCard .row{border:0;display:flex;padding:12px 0}#rarityCard .lbl{display:block;width:62px;margin:0}#rarityCard .note{font-size:11px}
-.mods-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-items:start}.feature-card{padding:15px!important;background:#15110e;border:1px solid #45352a!important;border-radius:8px;margin:0!important;align-items:flex-start}.feature-card>.lbl{flex:1!important;width:auto!important;min-width:0}.feature-card .switch{margin-top:1px}.feature-card>.val{min-width:0;width:24px;font-size:11px;margin-top:2px}.feature-card:has(>.switch>input:checked),.feature-with-child:has(>.feature-card:first-child>.switch>input:checked){border-color:#85603a!important}.feature-with-child{border:1px solid #45352a;border-radius:8px;background:#15110e;overflow:hidden}.feature-with-child>.feature-card{border:0!important;border-radius:0}.feature-with-child>#map_reveal_packs_row{border:0!important;border-top:1px solid #45352a!important;margin:0!important;padding:14px!important;background:#1d1711;border-radius:0}
+.mods-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-items:start}.feature-card{padding:15px!important;background:#15110e;border:1px solid #45352a!important;border-radius:8px;margin:0!important;align-items:flex-start}.feature-card>.lbl{flex:1!important;width:auto!important;min-width:0}.feature-card .switch{margin-top:1px}.feature-card>.val{min-width:0;width:24px;font-size:11px;margin-top:2px}.feature-card:has(>.switch>input:checked),.feature-with-child:has(>.feature-card:first-child>.switch>input:checked){border-color:#85603a!important}.feature-with-child{border:1px solid #45352a;border-radius:8px;background:#15110e;overflow:hidden}.feature-with-child>.feature-card{border:0!important;border-radius:0}.feature-with-child>#map_reveal_packs_row,.feature-with-child>#mod_auto_prospect_bag_row{border:0!important;border-top:1px solid #45352a!important;margin:0!important;padding:14px!important;background:#1d1711;border-radius:0}
 .feature-card{display:grid;grid-template-columns:minmax(0,1fr) 42px 24px;gap:8px 12px;align-content:start}.feature-card>.lbl{font-weight:600}.feature-description{grid-column:1/-1;color:var(--mut)!important;line-height:1.65;font-size:12px!important;font-weight:normal}.switch input:disabled+.sl{opacity:.4;filter:grayscale(1)}
 @media(min-width:1700px){#wrap{padding-left:38px;padding-right:38px}}
 @media(max-width:1150px){#appShell{padding-left:190px}.sidebar{width:190px;padding:20px 10px}.brand svg{width:44px}.brand-name{font-size:17px}.brand-sub{font-size:8px}.page-heading{flex-wrap:wrap}.modifier-grid,.mods-grid{grid-template-columns:1fr}.settings-grid{grid-template-columns:1fr}.card.half{grid-column:1/-1}.row .lbl{width:180px}#wrap{padding:0 20px 40px}}
@@ -2241,6 +2257,16 @@ input[type=range]::-webkit-slider-thumb{appearance:none;width:17px;height:17px;b
         <span class="val" id="mpqpval">off</span>
     </div>
     <div class="row" style="border:none">
+        <span class="lbl" style="width:auto;flex:1">Auto-prospect items put in the Prospect Cube<br><span style="font-size:11px;color:#8f816e;font-weight:normal">Every item you drag or click into the Prospect Cube's grid is prospected straight away, as if you had pressed Prospect, so the grid never fills with items waiting their turn. Anything still in the prospect grid when the game saves is lost.</span></span>
+        <label class="switch"><input type="checkbox" id="mod_auto_prospect"><span class="sl"></span></label>
+        <span class="val" id="autoprospval">off</span>
+    </div>
+    <div class="row" id="mod_auto_prospect_bag_row" style="border:none;margin-left:22px;border-left:1px solid #33261c;padding-left:14px">
+        <span class="lbl" style="width:auto;flex:1">&#8627; Move the previous materials to your materials tab<br><span style="font-size:11px;color:#8f816e;font-weight:normal">When the next item is prospected, the materials from the prospect before it go from the grid to your materials tab first, the way clicking them does. The newest batch stays in the grid where you can see it. A material the game will not take stays in the grid.</span></span>
+        <label class="switch"><input type="checkbox" id="mod_auto_prospect_bag"><span class="sl"></span></label>
+        <span class="val" id="apbagval">on</span>
+    </div>
+    <div class="row" style="border:none">
         <span class="lbl" style="width:auto;flex:1">Mark a running toggle skill<br><span style="font-size:11px;color:#8f816e;font-weight:normal">For Soul Spurn (White Mage), Lunar Orbit (Exo), Crematus (Plague Doctor), Submerged Knives (Butcher) and Maelstrom of Frost (Prophet): draws a soft red outline around that skill's skill-bar slot while its toggle is running, so you can see at a glance that it is still active. The outline disappears when the toggle ends. A plain cast, made without the skill's toggle sub-talent, lights nothing.</span></span>
         <label class="switch"><input type="checkbox" id="mod_toggle_indicator"><span class="sl"></span></label>
         <span class="val" id="mtival">off</span>
@@ -2391,6 +2417,52 @@ function syncRevealPacks(parentOn,packsOn){
   row.title=parentOn?'':'Enable Reveal full map first.';
   val.textContent=parentOn?(packsOn?'on':'off'):'n/a';
   val.className='val '+(parentOn&&packsOn?'':'off');
+}
+// Likewise the move to the materials tab only does anything while
+// Auto-prospect is on.
+// The plugin can refuse a switch for the rest of a session: the insert hook
+// went in table-only, or the move pass shut itself down after a material it
+// could not account for. `pluginMods` is what the plugin says it is doing;
+// the switch keeps the saved preference, and the value beside it says what is
+// actually happening, with the reason on hover (review of #54).
+function applyPluginModState(pm){
+  const ap=(pm&&pm.autoprospect)||null;
+  const parentVal=document.getElementById("autoprospval");
+  const bagVal=document.getElementById("apbagval");
+  const bagRow=document.getElementById("mod_auto_prospect_bag_row");
+  if(!ap||!parentVal||!bagVal||!bagRow)return;
+  const reason=ap.reason||"";
+  const parentOn=document.getElementById("mod_auto_prospect").checked;
+  const wantsBag=document.getElementById("mod_auto_prospect_bag").checked;
+  if(ap.hookBlind){
+    parentVal.textContent="off (plugin)";
+    parentVal.className="val off";
+    parentVal.title=reason||"the plugin turned auto-prospect off for this session";
+  }else{
+    // Recovery matters as much as the failure: a new launch reports healthy
+    // state, and the label has to go back to the saved switch by itself -
+    // the toast promised it starts again next launch (review of #54).
+    parentVal.textContent=parentOn?"on":"off";
+    parentVal.className="val "+(parentOn?"":"off");
+    parentVal.title="";
+  }
+  if(wantsBag&&ap.bagPreference&&!ap.movePass&&!ap.hookBlind){
+    bagVal.textContent="off (plugin)";
+    bagVal.className="val off";
+    bagRow.title=(reason||"the plugin turned the move off for this session")+" - it starts again next launch.";
+  }else if(!ap.hookBlind){
+    syncProspectBag(parentOn,wantsBag);   // repaints the label and the disabled state
+  }
+}
+function syncProspectBag(parentOn,bagOn){
+  const row=document.getElementById('mod_auto_prospect_bag_row');
+  const box=document.getElementById('mod_auto_prospect_bag');
+  const val=document.getElementById('apbagval');
+  if(!row||!box||!val)return;
+  box.disabled=!parentOn;
+  row.title=parentOn?'':'Enable Auto-prospect first.';
+  val.textContent=parentOn?(bagOn?'on':'off'):'n/a';
+  val.className='val '+(parentOn&&bagOn?'':'off');
 }
 function sliderOff(sec,v){return sec==='percent_stats'?v<=0:v<=1}
 function sliderText(sec,v){return sliderOff(sec,v)?'off':(sec==='percent_stats'?'+'+v+'%':'x'+v)}
@@ -2547,6 +2619,13 @@ async function boot(){
     document.getElementById('mod_pet_quest_pickup').checked=mpqp;
     document.getElementById('mpqpval').textContent=mpqp?'on':'off';
     document.getElementById('mpqpval').className='val '+(mpqp?'':'off');
+    const maps=!!c.mod_auto_prospect;
+    document.getElementById('mod_auto_prospect').checked=maps;
+    document.getElementById('autoprospval').textContent=maps?'on':'off';
+    document.getElementById('autoprospval').className='val '+(maps?'':'off');
+    const apbag=c.mod_auto_prospect_bag!==false;
+    document.getElementById('mod_auto_prospect_bag').checked=apbag;
+    syncProspectBag(maps,apbag);
     const mti=!!c.mod_toggle_indicator;
     document.getElementById('mod_toggle_indicator').checked=mti;
     document.getElementById('mtival').textContent=mti?'on':'off';
@@ -2722,15 +2801,39 @@ function bind(){
         const v=document.getElementById('mpqpval');v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
         toast('Pet collects quest items '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
     };
+    document.getElementById('mod_auto_prospect').onchange=async(e)=>{
+        const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_auto_prospect',value:e.target.checked})});
+        const v=document.getElementById('autoprospval');v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
+        syncProspectBag(e.target.checked,document.getElementById('mod_auto_prospect_bag').checked);
+        const pmp=await pluginModsAfterSet();
+        if(e.target.checked&&pmp&&pmp.autoprospect&&pmp.autoprospect.hookBlind){
+          toast('The plugin has auto-prospect off this session: '+(pmp.autoprospect.reason||'it could not attach to the game'));
+        }else{
+        toast('Auto-prospect '+(e.target.checked?'ON - '+(document.getElementById('mod_auto_prospect_bag').checked?'the previous materials go to your materials tab':'materials stay in the grid'):'OFF')+' - '+(res.ok||res.err));
+        }
+    };
+    document.getElementById('mod_auto_prospect_bag').onchange=async(e)=>{
+        syncProspectBag(document.getElementById('mod_auto_prospect').checked,e.target.checked);
+        const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_auto_prospect_bag',value:e.target.checked})});
+        // The plugin may refuse this for the rest of the session; say what
+        // it is doing, not what was asked for (review of #54).
+        const pm=await pluginModsAfterSet();
+        const ap=pm&&pm.autoprospect;
+        if(e.target.checked&&ap&&ap.bagPreference&&!ap.movePass){
+          toast('The plugin is not moving materials this session: '+(ap.reason||'it turned the move off')+' - it starts again next launch');
+        }else{
+          toast('Materials to your materials tab '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
+        }
+    };
     document.getElementById('mod_toggle_indicator').onchange=async(e)=>{
         const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_toggle_indicator',value:e.target.checked})});
         const v=document.getElementById('mtival');v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
-        toast('Soul Spurn outline '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
+        toast('Toggle-skill outline '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
     };
     document.getElementById('mod_toggle_guard').onchange=async(e)=>{
         const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_toggle_guard',value:e.target.checked})});
         const v=document.getElementById('mtgval');v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
-        toast('Soul Spurn double cast guard '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
+        toast('Toggle-skill double cast guard '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
     };
   { const el=document.getElementById('angelic_items');
     el.oninput=angelicPaint;
@@ -2851,6 +2954,8 @@ function preparePanelUI(){
     if(id==='gameplayCard'){
       const parent=document.getElementById('map_reveal').closest('.row'),child=document.getElementById('map_reveal_packs_row');
       const group=document.createElement('div');group.className='feature-with-child';parent.before(group);group.append(parent,child);
+      const apParent=document.getElementById('mod_auto_prospect').closest('.row'),apChild=document.getElementById('mod_auto_prospect_bag_row');
+      const apGroup=document.createElement('div');apGroup.className='feature-with-child';apParent.before(apGroup);apGroup.append(apParent,apChild);
     }
   }
   document.querySelectorAll('input[type=range]').forEach((range,index)=>{
@@ -2929,15 +3034,17 @@ function refreshSavedControls(){
   });
   for(const [range] of painted)if(range.oninput)range.oninput();
   for(const [range,typed] of painted){if(typed===undefined)delete range.dataset.typed;else range.dataset.typed=typed}
-  const booleans={den_on:'density_on',autoapply:'auto_apply',enemyspeed_ct:'enemy_speed_ct',map_reveal:'map_reveal',map_reveal_packs:'map_reveal_packs',headhunter:'headhunter',tyrant:'tyrant',beacon:'beacon',mod_filter_max_relics:'mod_filter_max_relics',mod_orb_pickup_radius:'mod_orb_pickup_radius',mod_pet_quest_pickup:'mod_pet_quest_pickup',mod_toggle_indicator:'mod_toggle_indicator',mod_toggle_guard:'mod_toggle_guard'};
+  const booleans={den_on:'density_on',autoapply:'auto_apply',enemyspeed_ct:'enemy_speed_ct',map_reveal:'map_reveal',map_reveal_packs:'map_reveal_packs',headhunter:'headhunter',tyrant:'tyrant',beacon:'beacon',mod_filter_max_relics:'mod_filter_max_relics',mod_orb_pickup_radius:'mod_orb_pickup_radius',mod_pet_quest_pickup:'mod_pet_quest_pickup',mod_auto_prospect:'mod_auto_prospect',mod_auto_prospect_bag:'mod_auto_prospect_bag',mod_toggle_indicator:'mod_toggle_indicator',mod_toggle_guard:'mod_toggle_guard'};
   for(const [id,key] of Object.entries(booleans))document.getElementById(id).checked=!!c[key];
-  for(const [id,key] of Object.entries({hhval:'headhunter',tyval:'tyrant',beval:'beacon',mfmrval:'mod_filter_max_relics',morval:'mod_orb_pickup_radius',mpqpval:'mod_pet_quest_pickup',mtival:'mod_toggle_indicator',mtgval:'mod_toggle_guard',mapval:'map_reveal'})){
+  for(const [id,key] of Object.entries({hhval:'headhunter',tyval:'tyrant',beval:'beacon',mfmrval:'mod_filter_max_relics',morval:'mod_orb_pickup_radius',mpqpval:'mod_pet_quest_pickup',autoprospval:'mod_auto_prospect',mtival:'mod_toggle_indicator',mtgval:'mod_toggle_guard',mapval:'map_reveal'})){
     const value=document.getElementById(id);value.textContent=c[key]?'on':'off';value.className='val '+(c[key]?'':'off');
   }
   document.getElementById('enemyspeedctval').textContent=c.enemy_speed_ct?'CT only':'all zones';
   document.getElementById('denval').textContent=c.density_on?'x'+c.density:'off';
   document.getElementById('denval').className='val '+(c.density_on?'':'off');
   syncRevealPacks(!!c.map_reveal,!!c.map_reveal_packs);
+  syncProspectBag(!!c.mod_auto_prospect,!!c.mod_auto_prospect_bag);
+  applyPluginModState(ST.pluginMods);
   updateControlDecoration();decoratePanelIcons();
 }
 function filterControlRows(){
@@ -3096,13 +3203,20 @@ function schedulePoll(){
   pollTimer=setTimeout(pollOnce,delay);
 }
 function noteLocalAction(){pollLastChange=Date.now();schedulePoll()}
+// One re-read after a switch is sent, so the toast reports the plugin's own
+// answer. The plugin writes its state on its next frame batch, so give it a
+// moment; a panel with no game running just gets the empty state back.
+async function pluginModsAfterSet(){
+  await new Promise(r=>setTimeout(r,700));
+  try{const s=await j("/api/state");if(ST)ST.pluginMods=s.pluginMods;applyPluginModState(s.pluginMods);return s.pluginMods}catch(_){return null}
+}
 async function pollOnce(){
   pollTimer=null;
   try{
     const s=await j('/api/state');
     pollLastChange=pollNextChangeAt(pollPrev,s,false,Date.now(),pollLastChange);
     pollPrev=s;
-    if(ST){ST.gameRunning=s.gameRunning;ST.lastApplied=s.lastApplied;ST.queued=s.queued;ST.ipcOk=s.ipcOk;ST.chain=s.chain;ST.eacStatus=s.eacStatus;ST.launch=s.launch;status()}
+    if(ST){ST.gameRunning=s.gameRunning;ST.lastApplied=s.lastApplied;ST.queued=s.queued;ST.ipcOk=s.ipcOk;ST.chain=s.chain;ST.eacStatus=s.eacStatus;ST.launch=s.launch;ST.pluginMods=s.pluginMods;status();applyPluginModState(s.pluginMods)}
   }catch(e){}
   schedulePoll();
 }

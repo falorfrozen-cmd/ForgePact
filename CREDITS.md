@@ -16,9 +16,13 @@ shipping path and remains here for its research notes and tools.
 - Repository: https://github.com/AurieFramework/YYToolkit
 - License: AGPL-3.0
 - Used as: the GameMaker runtime interface our plugin links against. The
-  `YYToolkit.dll` shipped in the release is built from YYToolkit with **one modified
-  source file** (a startup-time disk cache for the runner-interface lookup). That
-  modification and build/upstream notes are in `yytoolkit-modified/`.
+  `YYToolkit.dll` shipped in the release is a modified build of YYToolkit,
+  built from a patch series maintained in the
+  [hero-siege-offline-toolkit](https://github.com/falorfrozen-cmd/hero-siege-offline-toolkit)
+  hub's `third_party/yytoolkit/`, not from a source file kept in this
+  repository. `yytoolkit-modified/NOTICE.md` is the pointer at that series
+  (upstream pin, patch filenames, the hub commit the binary was built from)
+  and `yytoolkit-modified/YYToolkit-BUILD-INFO.json` is the build record.
 
 ## This project (ForgePact + BloodPactPlugin)
 - The control panel (`src/forgepact.py`) and the mod plugin (`plugin/ModuleMain.cpp`)
