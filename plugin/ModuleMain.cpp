@@ -19439,7 +19439,7 @@ static void TgProbeMarkCommand(const std::string& rest)
     }
 }
 
-// `tgprobe sprite <SpriteName> [talentId|centre]|off|gold|style <name>|list|gallery [cols]|layer hud|buffs|scale [f]|colour [name|r g b]`:
+// `tgprobe sprite <SpriteName> [talentId|centre]|off|gold|style <name>|list|gallery [cols]|layer hud|buffs|scale [f]|colour [name|r g b]|quad on|off|alpha [min] [max]`:
 // draws a named sprite - or today's shipped gold rectangles, or a procedural
 // style candidate we draw ourselves, or every candidate at once, or one
 // candidate centred - so the tester can judge a look by eye next to the
@@ -19459,8 +19459,12 @@ static void TgProbeMarkCommand(const std::string& rest)
 // via TgProbeSpriteGalleryLegend). R round 8 adds `colour <name|r g b>`
 // (default gold; D-U11, the author's decision, says the shipped marker will
 // be red) shared by every style, `sprite gold` and `tgprobe mark`, so a
-// look can be compared in red or gold without another build. Read-only,
-// research build only; never a
+// look can be compared in red or gold without another build. R round 9 adds
+// `quad on|off` (a named sprite drawn as four mirrored copies, one per box
+// quadrant - "inside out", the author's own word, not a whole-sprite flip)
+// and `alpha <min> [max]` (the floor/ceiling `soft`/`gradient`'s fade
+// remaps between, replacing 0 as the floor the author found blended into
+// the background). Read-only, research build only; never a
 // shipped draw input - S still ships the gold rectangle (D-U9's "no shipped
 // draw change" extends to this probe).
 static const char* const kTgSpriteCandidates[] = {
@@ -19479,6 +19483,25 @@ static int g_TgSpriteGalleryCols = 4;
 // instead of compounding once per cell per draw.
 static double g_TgSpriteAnimTime = 0.0;
 static volatile long g_TgSpriteDraws = 0, g_TgSpriteDrawExc = 0;
+
+// `tgprobe sprite quad on|off` (R round 9, issue #11): "inside out", the
+// author's own word - not a whole-sprite flip. When on, a named sprite draws
+// as four tiles filling the same box, each a full mirrored copy of the
+// sprite scaled to one quadrant, so a glow that faces the sprite's own
+// centre reads as radiating outward from the box's centre instead. Off by
+// default so nothing existing changes silently.
+static bool g_TgSpriteQuad = false;
+
+// `tgprobe sprite alpha <min> [max]` (R round 9): the alpha floor/ceiling
+// `soft`/`gradient` fade between, replacing 0 as the floor - the author's
+// own complaint was `gradient` "blends too well with the background" at
+// alpha 0. `g_TgSpriteAlphaMin` defaults to 0.0 (today's floor, unchanged);
+// `g_TgSpriteAlphaMaxOverride` defaults to -1.0, meaning "use each style's
+// own existing centre alpha" (soft's implicit 1.0, gradient's implicit
+// 0.5) rather than a single shared ceiling that would silently change one
+// style's look to match the other's.
+static double g_TgSpriteAlphaMin = 0.0;
+static double g_TgSpriteAlphaMaxOverride = -1.0;
 
 static bool TgProbeSpriteResolve(const std::string& name, double& outIdx)
 {
@@ -19578,6 +19601,43 @@ static void TgProbeSpriteDrawOne(double idx, double x, double y, double w, doubl
         RValue(xscale), RValue(yscale), RValue(0.0), RValue(16777215.0), RValue(1.0) });
 }
 
+// `tgprobe sprite quad on` - "inside out" (the author's own word, explicitly
+// not a whole-sprite flip): four full copies of the sprite, each scaled to
+// one quadrant of the box and mirrored so the four meet symmetrically at
+// the box's own centre - negative x/y scale on draw_sprite_ext per tile,
+// the same call TgProbeSpriteDrawOne uses, anchored at each tile's outer
+// corner so the mirrored copy grows inward from there. Every tile's
+// geometry is whole pixels (D-U11): halves are rounded, and the right/
+// bottom tile absorbs whatever a pixel rounding left over so the two tiles
+// still sum to the box's own width/height exactly.
+static void TgProbeSpriteDrawQuad(double idx, double x, double y, double w, double h)
+{
+    double sw = 0, sh = 0, frames = 1.0;
+    try { sw = g_Yytk->CallBuiltin("sprite_get_width", { RValue(idx) }).ToDouble(); } catch (...) {}
+    try { sh = g_Yytk->CallBuiltin("sprite_get_height", { RValue(idx) }).ToDouble(); } catch (...) {}
+    try { frames = g_Yytk->CallBuiltin("sprite_get_number", { RValue(idx) }).ToDouble(); } catch (...) {}
+    const double imageIndex = frames > 1.0 ? std::fmod(g_TgSpriteAnimTime, frames) : 0.0;
+    const double leftW = std::round(w / 2.0);
+    const double rightW = w - leftW;
+    const double topH = std::round(h / 2.0);
+    const double bottomH = h - topH;
+    struct TgQuadTile { double originX, originY, tileW, tileH, signX, signY; };
+    const TgQuadTile tiles[4] = {
+        { x,     y,     leftW,  topH,     1.0,  1.0 },   // top-left: normal
+        { x + w, y,     rightW, topH,    -1.0,  1.0 },   // top-right: x-flipped
+        { x,     y + h, leftW,  bottomH,  1.0, -1.0 },   // bottom-left: y-flipped
+        { x + w, y + h, rightW, bottomH, -1.0, -1.0 },   // bottom-right: both flipped
+    };
+    g_Yytk->CallBuiltin("draw_set_alpha", { RValue(1.0) });
+    for (const TgQuadTile& t : tiles) {
+        const double xscale = (sw > 0 ? t.tileW / sw : 1.0) * t.signX;
+        const double yscale = (sh > 0 ? t.tileH / sh : 1.0) * t.signY;
+        g_Yytk->CallBuiltin("draw_sprite_ext", {
+            RValue(idx), RValue(imageIndex), RValue(t.originX), RValue(t.originY),
+            RValue(xscale), RValue(yscale), RValue(0.0), RValue(16777215.0), RValue(1.0) });
+    }
+}
+
 // Today's shipped look (ToggleIndicatorDraw's three nested outlines), drawn
 // through this probe path as the gallery/single-candidate positive control.
 static void TgProbeSpriteDrawGoldRect(double x, double y, double w, double h)
@@ -19671,6 +19731,20 @@ static double TgProbeSpritePulseFactor()
     return 0.5 + 0.5 * std::sin(phase * 2.0 * 3.14159265358979323846);
 }
 
+// `soft`/`gradient`'s per-band alpha, remapped between the floor
+// (`tgprobe sprite alpha`'s `min`, default 0.0 - today's floor, unchanged)
+// and a ceiling that defaults to each style's own historical centre alpha
+// (`styleDefaultMax`) unless the tester set an explicit `max`. `t` is the
+// style's own 0 (innermost/centre) .. 1 (outermost/edge) fade position, so
+// this always returns `styleDefaultMax`'s value at `t=0` and the floor at
+// `t=1`, with today's behaviour reproduced exactly when neither `min` nor
+// `max` has been set.
+static double TgProbeSpriteFadeAlpha(double styleDefaultMax, double t)
+{
+    const double maxAlpha = g_TgSpriteAlphaMaxOverride >= 0.0 ? g_TgSpriteAlphaMaxOverride : styleDefaultMax;
+    return g_TgSpriteAlphaMin + (maxAlpha - g_TgSpriteAlphaMin) * (1.0 - t);
+}
+
 // `soft`: the shipped 3-rectangle outline generalised to N nested outline
 // bands, alpha ramping down outwards from the innermost band (closest to
 // the icon) to the outermost - the cheap soft-edge border. `alphaMul`
@@ -19683,7 +19757,7 @@ static void TgProbeSpriteDrawSoft(double x, double y, double w, double h, double
     static constexpr int kBands = 10;
     for (int i = 0; i < kBands; ++i) {
         const double t = (double)i / (double)(kBands - 1);   // 0 innermost, 1 outermost
-        g_Yytk->CallBuiltin("draw_set_alpha", { RValue((1.0 - t) * alphaMul) });
+        g_Yytk->CallBuiltin("draw_set_alpha", { RValue(TgProbeSpriteFadeAlpha(1.0, t) * alphaMul) });
         g_Yytk->CallBuiltin("draw_rectangle", {
             RValue(x - i), RValue(y - i), RValue(x + w + i), RValue(y + h + i), RValue(1.0) });
     }
@@ -19725,7 +19799,7 @@ static void TgProbeSpriteDrawGradient(double x, double y, double w, double h)
         const double t = (double)i / (double)(kBands - 1);
         const double bw = w * (0.35 + 0.65 * t);
         const double bh = h * (0.35 + 0.65 * t);
-        g_Yytk->CallBuiltin("draw_set_alpha", { RValue((1.0 - t) * 0.5) });
+        g_Yytk->CallBuiltin("draw_set_alpha", { RValue(TgProbeSpriteFadeAlpha(0.5, t)) });
         g_Yytk->CallBuiltin("draw_rectangle_colour", {
             RValue(cx - bw / 2.0), RValue(cy - bh / 2.0), RValue(cx + bw / 2.0), RValue(cy + bh / 2.0),
             RValue(activeColour), RValue(activeColour), RValue(activeColour), RValue(activeColour), RValue(0.0) });
@@ -19770,13 +19844,17 @@ static void TgProbeSpriteDraw(bool fromHudLayer)
             double gw = 0, gh = 0;
             TgProbeSpriteGuiSize(gw, gh);
             const double box = 256.0;
-            TgProbeSpriteDrawOne(g_TgSpriteIdx, gw / 2.0 - box / 2.0, gh / 2.0 - box / 2.0, box, box);
+            const double bx = std::round(gw / 2.0 - box / 2.0);   // whole pixels (D-U11)
+            const double by = std::round(gh / 2.0 - box / 2.0);
+            if (g_TgSpriteQuad) TgProbeSpriteDrawQuad(g_TgSpriteIdx, bx, by, box, box);
+            else TgProbeSpriteDrawOne(g_TgSpriteIdx, bx, by, box, box);
             drew = true;
         } else {
             double x = 0, y = 0, w = 0, h = 0;
             if (TgProbeSpriteScaledSlotBox(g_TgSpriteTalentId, x, y, w, h)) {
                 if (g_TgSpriteMode == TgSpriteMode::Gold) TgProbeSpriteDrawGoldRect(x, y, w, h);
                 else if (g_TgSpriteMode == TgSpriteMode::Style) TgProbeSpriteDrawStyle(g_TgSpriteStyleKind, x, y, w, h);
+                else if (g_TgSpriteQuad) TgProbeSpriteDrawQuad(g_TgSpriteIdx, x, y, w, h);
                 else TgProbeSpriteDrawOne(g_TgSpriteIdx, x, y, w, h);
                 drew = true;
             }
@@ -19802,6 +19880,8 @@ static void TgProbeSpriteList()
             + std::to_string((long long)p.g) + "," + std::to_string((long long)p.b) + ")"
             + (std::string(p.name) == "gold" ? " [default]" : ""));
     }
+    Out("  tgprobe sprite quad on|off - a named sprite as four mirrored quadrant copies (\"inside out\"), default off");
+    Out("  tgprobe sprite alpha <min> [max] - the fade floor/ceiling `style soft`/`style gradient` use, default 0..style-own");
 }
 
 // The index->name mapping `gallery` prints when it runs, to the log only -
@@ -19829,6 +19909,37 @@ static bool TgProbeSpriteHudRowAttached()
     return mode == kTgNative || mode == kTgViaNative || mode == kTgViaTableOnly;
 }
 
+// "quad=on"/"quad=off" - printed beside colour=/scale=/layer= in every
+// sprite/gold/style confirmation line.
+static std::string TgProbeSpriteQuadText() { return g_TgSpriteQuad ? "quad=on" : "quad=off"; }
+
+// A value over 1.0 is treated as an 0..255 byte and divided down; a value
+// at or under 1.0 is already a 0..1 fraction - the cheap way to accept
+// both forms `tgprobe sprite alpha` asks for without a separate flag.
+// Clamped to 0..1 by hand (0..255 would need std::max/std::min otherwise -
+// the C2589 lesson, test_no_bare_std_max_or_std_min).
+static bool TgProbeSpriteParseAlphaArg(const std::string& s, double& outFraction)
+{
+    double v = 0.0;
+    try { v = std::stod(s); } catch (...) { return false; }
+    if (v > 1.0) v = v / 255.0;
+    if (v < 0.0) v = 0.0;
+    if (v > 1.0) v = 1.0;
+    outFraction = v;
+    return true;
+}
+
+// "min=<n>/255..max=<n>/255|style-default" - printed beside colour=/scale=/
+// layer= in the confirmation lines for the two styles it applies to.
+static std::string TgProbeSpriteAlphaText()
+{
+    const long minByte = (long)std::round(g_TgSpriteAlphaMin * 255.0);
+    const std::string maxPart = g_TgSpriteAlphaMaxOverride >= 0.0
+        ? std::to_string((long)std::round(g_TgSpriteAlphaMaxOverride * 255.0)) + "/255"
+        : "style-default";
+    return "alpha=" + std::to_string(minByte) + "/255.." + maxPart;
+}
+
 static void TgProbeSpriteCommand(const std::string& rest)
 {
     std::string subRest;
@@ -19837,13 +19948,14 @@ static void TgProbeSpriteCommand(const std::string& rest)
     if (first.empty()) {
         Out("tgprobe sprite: usage -> tgprobe sprite <SpriteName> [talentId] | <SpriteName> centre"
             " | off | gold | style soft|halo|gradient|pulse | list | gallery [cols] | layer hud|buffs"
-            " | scale [f] | colour [name|r g b]");
+            " | scale [f] | colour [name|r g b] | quad on|off | alpha [min] [max]");
         return;
     }
     if (lower == "off") {
         g_TgSpriteMode = TgSpriteMode::Off;
         Out("tgprobe sprite -> off draws=" + std::to_string(g_TgSpriteDraws)
             + " drawExc=" + std::to_string(g_TgSpriteDrawExc) + " colour=" + TgProbeSpriteColourText()
+            + " " + TgProbeSpriteQuadText() + " " + TgProbeSpriteAlphaText()
             + " layer=" + TgProbeLayerName());
         return;
     }
@@ -19925,6 +20037,48 @@ static void TgProbeSpriteCommand(const std::string& rest)
             + " (applies to the hotbar-slot box `sprite <Name>`/`sprite gold` draw into, centred on the slot; range 0.25..4.0, default 1.0)");
         return;
     }
+    if (lower == "quad") {
+        std::string ignored;
+        const std::string v = Lower(FirstToken(subRest, ignored));
+        if (v == "on" || v == "1") {
+            g_TgSpriteQuad = true;
+        } else if (v == "off" || v == "0" || v.empty()) {
+            g_TgSpriteQuad = false;
+        } else {
+            Out("tgprobe sprite quad: usage -> tgprobe sprite quad on|off (currently " + TgProbeSpriteQuadText() + ")");
+            return;
+        }
+        Out("tgprobe sprite " + TgProbeSpriteQuadText()
+            + " (\"inside out\": four mirrored copies of a named sprite, one per box quadrant, NOT a whole-sprite flip;"
+            " applies to `sprite <Name>` over a hotbar slot or `centre`, not to `gold`/`style`/`gallery`)");
+        return;
+    }
+    if (lower == "alpha") {
+        std::string rest2;
+        const std::string minStr = FirstToken(subRest, rest2);
+        if (minStr.empty()) {
+            Out("tgprobe sprite " + TgProbeSpriteAlphaText()
+                + " (applies to `style soft`/`style gradient`; min is the alpha the fade stops at instead of 0,"
+                " max is the centre alpha - default: each style's own existing centre alpha; accepts 0..255 or 0..1)");
+            return;
+        }
+        double minFraction = 0.0;
+        if (!TgProbeSpriteParseAlphaArg(minStr, minFraction)) {
+            Out("tgprobe sprite alpha: usage -> tgprobe sprite alpha <min> [max] (0..255 or 0..1 each)");
+            return;
+        }
+        std::string ignored;
+        const std::string maxStr = FirstToken(rest2, ignored);
+        double maxFraction = -1.0;
+        if (!maxStr.empty() && !TgProbeSpriteParseAlphaArg(maxStr, maxFraction)) {
+            Out("tgprobe sprite alpha: usage -> tgprobe sprite alpha <min> [max] (0..255 or 0..1 each)");
+            return;
+        }
+        g_TgSpriteAlphaMin = minFraction;
+        g_TgSpriteAlphaMaxOverride = maxStr.empty() ? -1.0 : maxFraction;
+        Out("tgprobe sprite " + TgProbeSpriteAlphaText());
+        return;
+    }
     if (lower == "gold") {
         g_TgSpriteMode = TgSpriteMode::Gold;
         g_TgSpriteTalentId = kToggleIndicatorTalentId;
@@ -19937,7 +20091,8 @@ static void TgProbeSpriteCommand(const std::string& rest)
             + (boxFound
                 ? " box=" + std::to_string(bw) + "x" + std::to_string(bh) + "@" + std::to_string(bx) + "," + std::to_string(by)
                 : " box=slot not found")
-            + " colour=" + TgProbeSpriteColourText() + " layer=" + TgProbeLayerName()
+            + " colour=" + TgProbeSpriteColourText() + " " + TgProbeSpriteQuadText()
+            + " layer=" + TgProbeLayerName()
             + " (watch `tgprobe sprite off` for draws=/drawExc=)");
         return;
     }
@@ -19964,7 +20119,8 @@ static void TgProbeSpriteCommand(const std::string& rest)
             + (kind == TgSpriteStyleKind::Pulse
                 ? " period=" + std::to_string(kTgPulsePeriodFrames / 60.0) + "s (" + std::to_string((long long)kTgPulsePeriodFrames) + " frames)"
                 : "")
-            + " colour=" + TgProbeSpriteColourText() + " layer=" + TgProbeLayerName()
+            + " colour=" + TgProbeSpriteColourText() + " " + TgProbeSpriteAlphaText()
+            + " layer=" + TgProbeLayerName()
             + " (watch `tgprobe sprite off` for draws=/drawExc=)");
         return;
     }
@@ -20021,6 +20177,7 @@ static void TgProbeSpriteCommand(const std::string& rest)
         + " idx=" + std::to_string((long long)idx) + " frames=" + std::to_string((long long)frames)
         + " width=" + std::to_string(sw) + " height=" + std::to_string(sh) + boxText
         + " colour=" + TgProbeSpriteColourText() + " (a named sprite's own art, not tinted)"
+        + " " + TgProbeSpriteQuadText()
         + " layer=" + TgProbeLayerName()
         + " (watch `tgprobe sprite off` for draws=/drawExc=)");
 }
@@ -21058,7 +21215,7 @@ static void TgProbeCommand(const std::string& rest)
         " | deep snap|diff|flip|find|get|census|selftest|drop ..."
         " | spurn [log on|off | as foreign | slots | fields] | mark <x> <y> <w> <h> | off"
         " | sprite <SpriteName> [talentId|centre] | off | gold | style soft|halo|gradient|pulse | list"
-        " | gallery [cols] | layer hud|buffs | scale [f] | colour [name|r g b]"
+        " | gallery [cols] | layer hud|buffs | scale [f] | colour [name|r g b] | quad on|off | alpha [min] [max]"
         " | talents [substr|tags] | tgl [add|list|clear|slots|fields|sub|timer]");
 }
 #endif // FORGEPACT_RELEASE (tgprobe)

@@ -1308,7 +1308,9 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         # counter compounding once per cell per draw.
         self.assertNotIn("g_TgSpriteAnimTime +=", one)
         self.assertIn("g_TgSpriteAnimTime += 1.0 / 15.0;", draw)
-        self.assertEqual(self.plugin.count('"draw_sprite_ext"'), 1)
+        # Two call sites: TgProbeSpriteDrawOne's whole-sprite draw and
+        # TgProbeSpriteDrawQuad's single looped tile draw (round 9).
+        self.assertEqual(self.plugin.count('"draw_sprite_ext"'), 2)
         # Hung off the existing research after-draw path (buffs) and the new
         # hud-layer hook - never Hook_DrawHudBuffs or FrameCallback directly,
         # both of which stay byte-identical (UNCHANGED_SINCE_T1).
@@ -1501,7 +1503,7 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         self.assertIn("catch (...) { InterlockedIncrement(&g_TgSpriteDrawExc); }", draw)
         soft = function_body(self.plugin, "static void TgProbeSpriteDrawSoft(")
         self.assertIn('"draw_rectangle"', soft)
-        self.assertIn("1.0 - t", soft)   # alpha ramps down outward from the innermost band
+        self.assertIn("TgProbeSpriteFadeAlpha(1.0, t)", soft)   # alpha ramps down outward (round 9: via the shared fade helper)
         halo = function_body(self.plugin, "static void TgProbeSpriteDrawHalo(")
         self.assertIn('"draw_ellipse_colour"', halo)
         gradient = function_body(self.plugin, "static void TgProbeSpriteDrawGradient(")
@@ -1629,6 +1631,103 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         for name in ("TgColourPreset", "kTgColourPresets", "TgProbeSpriteColourFromPreset",
                      "TgProbeSpriteActiveColour", "TgProbeSpriteColourText",
                      "g_TgSpriteColourR", "g_TgSpriteColourName"):
+            self.assertIn(name, self.block)
+            self.assertNotIn(name, self.stripped)
+
+    # ---- Sprite look probe round 9 (2026-09-20): quad mirroring, alpha ----
+    # `quad` is the author's own word "inside out" - four mirrored copies of
+    # a named sprite, not a whole-sprite flip. `alpha` is the floor/ceiling
+    # `soft`/`gradient` fade between, replacing 0 as the floor.
+
+    def test_quad_dispatches_on_off_and_defaults_off(self):
+        self.assertIn("static bool g_TgSpriteQuad = false;", self.plugin)
+        sprite = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
+        self.assertIn('lower == "quad"', sprite)
+        quad_branch = sprite[sprite.index('lower == "quad"'):sprite.index('lower == "alpha"')]
+        self.assertIn('v == "on" || v == "1"', quad_branch)
+        self.assertIn('v == "off" || v == "0" || v.empty()', quad_branch)
+
+    def test_quad_reaches_named_and_centre_not_gold_style_or_gallery(self):
+        draw = function_body(self.plugin, "static void TgProbeSpriteDraw(bool fromHudLayer)")
+        self.assertIn("if (g_TgSpriteQuad) TgProbeSpriteDrawQuad(g_TgSpriteIdx, bx, by, box, box);", draw)
+        self.assertIn("if (g_TgSpriteQuad) TgProbeSpriteDrawQuad(g_TgSpriteIdx, x, y, w, h);", draw)
+        gallery = function_body(self.plugin, "static void TgProbeSpriteDrawGallery()")
+        self.assertNotIn("g_TgSpriteQuad", gallery)
+        gold = function_body(self.plugin, "static void TgProbeSpriteDrawGoldRect(")
+        self.assertNotIn("g_TgSpriteQuad", gold)
+
+    def test_quad_draws_four_tiles_with_mirrored_scale_signs_on_whole_pixels(self):
+        quad = function_body(self.plugin, "static void TgProbeSpriteDrawQuad(")
+        self.assertEqual(quad.count('"draw_sprite_ext"'), 1)   # one call site, looped over 4 tiles
+        # The four sign combinations: top-left normal, top-right x-flipped,
+        # bottom-left y-flipped, bottom-right both flipped.
+        for signs in ("1.0,  1.0", "-1.0,  1.0", "1.0, -1.0", "-1.0, -1.0"):
+            self.assertIn(signs, quad)
+        self.assertIn("for (const TgQuadTile& t : tiles)", quad)
+        # Whole-pixel geometry (D-U11): halves rounded, not a bare divide.
+        self.assertIn("std::round(w / 2.0)", quad)
+        self.assertIn("std::round(h / 2.0)", quad)
+        # The two tiles on each axis still sum to the box's own width/height
+        # exactly, even when a pixel rounding leaves a remainder.
+        self.assertIn("const double rightW = w - leftW;", quad)
+        self.assertIn("const double bottomH = h - topH;", quad)
+
+    def test_quad_printed_in_gold_named_and_off_confirmation_lines(self):
+        sprite = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
+        off_branch = sprite[sprite.index('lower == "off"'):sprite.index('lower == "list"')]
+        self.assertIn("TgProbeSpriteQuadText()", off_branch)
+        gold_branch = sprite[sprite.index('lower == "gold"'):sprite.index('lower == "style"')]
+        self.assertIn("TgProbeSpriteQuadText()", gold_branch)
+        self.assertIn("TgProbeSpriteQuadText()", sprite[sprite.rindex("boxText"):])
+
+    def test_alpha_dispatches_min_and_optional_max(self):
+        sprite = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
+        self.assertIn('lower == "alpha"', sprite)
+        alpha_branch = sprite[sprite.index('lower == "alpha"'):sprite.index('lower == "gold"')]
+        self.assertIn("TgProbeSpriteParseAlphaArg(minStr, minFraction)", alpha_branch)
+        self.assertIn("TgProbeSpriteParseAlphaArg(maxStr, maxFraction)", alpha_branch)
+        # Bare `alpha` (no argument) reports without changing anything.
+        self.assertIn("if (minStr.empty())", alpha_branch)
+        # Omitting max resets the override back to "use the style's own
+        # default", rather than carrying a stale previous max forward.
+        self.assertIn("g_TgSpriteAlphaMaxOverride = maxStr.empty() ? -1.0 : maxFraction;", alpha_branch)
+
+    def test_alpha_accepts_0_255_or_0_1_and_clamps_by_hand(self):
+        parse = function_body(self.plugin, "static bool TgProbeSpriteParseAlphaArg(")
+        self.assertIn("if (v > 1.0) v = v / 255.0;", parse)
+        self.assertIn("if (v < 0.0) v = 0.0;", parse)
+        self.assertIn("if (v > 1.0) v = 1.0;", parse)
+        self.assertNotRegex(parse, r"\bstd::max\(")
+        self.assertNotRegex(parse, r"\bstd::min\(")
+        # An unparseable value is rejected and nothing is stored - the usage
+        # line comes before any assignment to the shared alpha state.
+        sprite = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
+        alpha_branch = sprite[sprite.index('lower == "alpha"'):sprite.index('lower == "gold"')]
+        usage = alpha_branch.index("tgprobe sprite alpha: usage")
+        stored = alpha_branch.index("g_TgSpriteAlphaMin = minFraction;")
+        self.assertLess(usage, stored)
+
+    def test_alpha_reaches_soft_and_gradient_defaults_reproduce_todays_look(self):
+        soft = function_body(self.plugin, "static void TgProbeSpriteDrawSoft(")
+        gradient = function_body(self.plugin, "static void TgProbeSpriteDrawGradient(")
+        self.assertIn("TgProbeSpriteFadeAlpha(1.0, t)", soft)
+        self.assertIn("TgProbeSpriteFadeAlpha(0.5, t)", gradient)
+        fade = function_body(self.plugin, "static double TgProbeSpriteFadeAlpha(")
+        self.assertIn("g_TgSpriteAlphaMin", fade)
+        self.assertIn("g_TgSpriteAlphaMaxOverride", fade)
+        # Defaults (min=0.0, override=-1.0) reproduce each style's own
+        # original ceiling exactly - the styleDefaultMax argument, unchanged.
+        self.assertIn("static double g_TgSpriteAlphaMin = 0.0;", self.plugin)
+        self.assertIn("static double g_TgSpriteAlphaMaxOverride = -1.0;", self.plugin)
+        # halo/pulse are untouched by the new floor/ceiling (pulse reuses
+        # soft's own fade, already covered above).
+        halo = function_body(self.plugin, "static void TgProbeSpriteDrawHalo(")
+        self.assertNotIn("TgProbeSpriteFadeAlpha", halo)
+
+    def test_quad_and_alpha_names_do_not_survive_stripping(self):
+        for name in ("g_TgSpriteQuad", "TgProbeSpriteDrawQuad", "TgQuadTile", "TgProbeSpriteQuadText",
+                     "g_TgSpriteAlphaMin", "g_TgSpriteAlphaMaxOverride", "TgProbeSpriteFadeAlpha",
+                     "TgProbeSpriteParseAlphaArg", "TgProbeSpriteAlphaText"):
             self.assertIn(name, self.block)
             self.assertNotIn(name, self.stripped)
 

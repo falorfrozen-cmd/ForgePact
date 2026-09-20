@@ -306,7 +306,9 @@ turn co-op rendering on, and run no `citrace` command, after `tgprobe hook`.
 | `tgprobe sprite scale [f]` | A multiplier (default `1.0`, clamped `0.25..4.0`) on the hotbar-slot box `sprite <Name>`/`sprite gold`/`sprite style <name>` draw into, keeping the drawn box centred on the slot's own centre — the "surround" route (round 5): since only a larger-than-the-icon draw (the gold outline's own `navBbox`, bigger than the icon) is confirmed visible at either layer, a candidate inflated the same way should read around the icon instead of under it. With no argument, reports the current value without changing it; never applied to `centre` or `gallery`, whose box sizes are their own fixed constants, and never to `tgprobe mark`, which already takes explicit geometry. |
 | `tgprobe sprite style soft\|halo\|gradient\|pulse` | Draws a procedural look ForgePact draws itself, not a game sprite, into the same scaled slot box `sprite <Name>`/`sprite gold` use (round 6, after the tester found the flat gold rectangle "crude" and asked for a soft alpha-fade look): `soft` is the shipped outline generalised to 10 alpha-ramped nested bands; `halo` is a radial glow (`draw_ellipse_colour`, the two-colour ellipse builtin); `gradient` is nested filled rectangles (`draw_rectangle_colour`, the four-corner-colour rectangle builtin) approximating a centre-outward fade; `pulse` is `soft` with every band's alpha additionally scaled by a slow sine on the frame counter (confirmation line prints `period=1.5s (90 frames)`). `draw_ellipse_colour`/`draw_rectangle_colour` are new to this probe this round — their reachability through the shared `CallBuiltin` path is unconfirmed until a live session runs `halo`/`gradient` and reports what drew. Names also listed by `sprite list`. |
 | `tgprobe sprite colour <name\|r g b>` | A shared colour (round 8) for every `style`, `sprite gold` and `tgprobe mark` — default `gold`, unchanged until a tester asks for red (D-U11: the shipped marker will be red). Presets: `gold`, `red` (a deep, warm crimson — not `255,0,0`; the author's steer was "a nicer shade, similar to what talent aura frame uses"), `brightred` and `deepred` (a brighter and a deeper neighbour of `red`); or a raw `<r> <g> <b>` triple (`0..255` each, clamped by hand). With no argument, reports the active colour without changing it. Confirmation line prints `colour=<name>(<r>,<g>,<b>)` — the full triple, not only the name, so a choice is quotable as a number. Never applied to a named sprite's own art (drawn with its own colours) or to `centre`/`gallery`'s fixed boxes. |
-| `tgprobe sprite list` | Prints the round's candidate sprite names with each one's resolved index, or `unresolved`, so a wrong name is obvious before drawing: `Talent_Aura_Frame_spr`, `Talent_Frame_Indicator_spr`, `Ability_Indicator_Border_spr`, `Ability_Indicator_spr`, `Ability_Indicator_White_spr`, `Sub_Talent_Big_Border_spr`, `Skill_Frames_spr`; also lists the four `style` names and every `colour` preset with its rgb triple. |
+| `tgprobe sprite quad on\|off` | (round 9) "Inside out" — the author's own word, not a whole-sprite flip. When on, `tgprobe sprite <Name>` draws four full copies of the sprite, each scaled to one quadrant of the target box and mirrored (`draw_sprite_ext`'s negative x/y scale per tile) so they meet symmetrically at the box's own centre — turns a glow that faces the sprite's own centre into one that radiates outward from the box instead. Every tile's geometry is whole pixels (D-U11); applies to `sprite <Name>` over a hotbar slot or at `centre`, not to `gold`/`style`/`gallery`. Default `off`. `quad=on`/`quad=off` printed in the sprite/gold/`off` confirmation lines. |
+| `tgprobe sprite alpha <min> [max]` | (round 9) The floor/ceiling `style soft`/`style gradient`'s per-band fade remaps between, replacing `0` as the floor — the author's own complaint was `gradient` "blends too well with the background" at `0`. `min` is the alpha the fade stops at; `max` is the centre alpha, defaulting to each style's own existing centre alpha (`soft`'s `1.0`, `gradient`'s `0.5`) unless set explicitly, so the *default* reproduces both styles' pre-round-9 look exactly. Accepts `0..255` or `0..1` per value (over `1.0` is treated as a byte and divided by `255`). With no argument, reports the active pair without changing it. Confirmation line prints `alpha=<min>/255..<max>/255\|style-default` in the `style`/`off` lines. Never applied to `halo` or to a named sprite's own art. |
+| `tgprobe sprite list` | Prints the round's candidate sprite names with each one's resolved index, or `unresolved`, so a wrong name is obvious before drawing: `Talent_Aura_Frame_spr`, `Talent_Frame_Indicator_spr`, `Ability_Indicator_Border_spr`, `Ability_Indicator_spr`, `Ability_Indicator_White_spr`, `Sub_Talent_Big_Border_spr`, `Skill_Frames_spr`; also lists the four `style` names, every `colour` preset with its rgb triple, and one-line reminders of `quad`/`alpha`. |
 | `tgprobe sprite gallery [cols]` | Draws every candidate from `sprite list`, plus one gold-rectangle cell as the positive control, at once — a fixed grid in the middle of the screen (`cols` columns, default 4), each cell scaled to a 96 px box. No per-cell label is drawn any more (round 6: a `draw_text` label displaced the icon in a live session, cause not diagnosed — see docs "Sprite look probe"); the index→name mapping goes to the log only (`TgProbeSpriteGalleryLegend`, printed once when the command runs). **Not a trustworthy comparison**: a candidate visible over the button has read blank here in the same session — treat `sprite <Name>` (optionally `scale <f>`) over the hotbar slot as the one comparison to trust. |
 | `tgprobe sprite layer hud\|buffs` | Which after-draw call site `sprite`/`mark` actually draw from; shared, default `buffs`. Both layers measured (2026-09-20 live session) to sit *under* the hotbar button's own art, which paints later in the same frame regardless of which one draws — `hud` (the existing `DrawHud` candidate row's own detour, `TgProbeDetourBody`, after that row's trampoline call returns — no new hook, the same one resolver `tgprobe hook` every other candidate row already goes through) does not clear it either; see docs "Sprite look probe" for the full finding and why (the talent slot's own `Draw_0`/`Draw_64` event, where the button paints, reports `not found` to this build's object-event hook path). Setting `layer hud` does not attach the `DrawHud` row itself; the tester runs `tgprobe hook` (or `tgprobe hook drawhud`) separately, same as any other row, and the confirmation line says whether it is attached yet. |
 | `tgprobe talents [substr\|tags]` | Session 6's C0. Walks `global.talentStructMap` (`ds_map_find_first`/`ds_map_find_next`, capped at 5000 keys) and prints, per talent id whose `abilityId` contains `substr` (none = all, at most 40 lines then `…(+N more)`): `abilityId`, `abilityAura`, `abilityDuration`, `abilityCooldown`, `abilityLength` and `abilityTags`, each read on its own (`absent` for a missing key, `unreadable` for a throw, never a default). `tags` instead prints each distinct tag id with its count. Last line `tgprobe talents: ids=N shown=M nonNumericKeys= notStruct= walkExc= truncated= tableRowsWithId=k/rows`. The walk also gives every `tgl` row whose `abilityId` it finds its talent id, which `tgl sub` and `tgl slots` use. |
@@ -516,12 +518,16 @@ in an earlier round.
   any element ForgePact draws over the HUD, not only this probe — recorded
   here as the session result, and in the hub guide (Known Limitations) as
   the rule itself, since it outlives this research doc.
-- **Tuned toggle-marker geometry, accepted by eye this session:** a square
-  `125 x 125` at `385, 1712` for Soul Spurn's slot (talent 240) at this
-  tester's HUD scale — judged against `385.4, 1711.7` at sizes `125.3`,
-  `126` and `125`, with the whole-pixel square at `385, 1712` the one the
-  tester called perfect. **This is this-slot-this-scale evidence, not a
-  shipped constant**: at another resolution, or for another talent's slot,
+- **Tuned toggle-marker geometry, accepted by eye this session — WITHDRAWN,
+  see round 9 (D-U12) below.** A square `125 x 125` at `385, 1712` for Soul
+  Spurn's slot (talent 240) at this tester's HUD scale — judged against
+  `385.4, 1711.7` at sizes `125.3`, `126` and `125`, with the whole-pixel
+  square at `385, 1712` the one the tester called perfect at the time.
+  **Superseded by `388, 1711, 120 x 126` (D-U12, round 9)**, tuned edge by
+  edge in a later session and called perfect there instead; kept here only
+  as the record of what changed and why. **This is this-slot-this-scale
+  evidence, not a shipped constant**: at another resolution, or for another
+  talent's slot,
   the same rule applies to that slot's own `navBbox`, not these numbers —
   a square keyed to the bbox's own height (not its width, since a
   toggle-marker reads better square than the slot's own aspect), aligned to
@@ -608,6 +614,67 @@ doc, and later into phase S, as a number. `halo`'s bright core stays a
 fixed near-white regardless of the active colour — only its outer edge
 follows the setting — since a "hot centre" reads the same whether the
 glow's edge is gold or red.
+
+**Round 9: D-U12 (author decision) — the accepted marker geometry.**
+**`388, 1711, 120 x 126`** (integer pixels), tuned edge by edge against the
+button art and called perfect by the author, **supersedes the earlier
+`385, 1712, 125 x 125` reading (the round-7 tuning session), which the
+author withdrew.** The slot's own `navBbox` at the same moment read
+`385.700006, 1711.000000, 124.700000 x 139.200000` — the shipped code must
+**derive** the drawn box from the bbox (`x + ~2.3`, `y` unchanged,
+`w - ~4.7`, `h - ~13.2`, each rounded to whole pixels per D-U11), never
+hardcode `388, 1711, 120, 126`, which are this-slot-this-scale evidence
+from one tuning session, not a shipped constant.
+
+**Round 9: colour verdicts from the same session.** The author prefers
+**`deepred (140,24,28)`** for both `gradient` and `soft`, having compared
+`red (196,42,46)` and `brightred (224,68,58)` against it on both. **`soft`
+in `deepred` is the current front-runner overall** — the author called
+`soft` "more polished" than the flat rectangle (round 8's entry).
+`gradient` still needs `scale` around `1.6` to read at all (at `1.0` its
+faded edge lands under the button art — the round-8 finding), and even at
+`1.6` "blends too well with the background" at alpha `0` — the reason for
+this round's alpha floor, below.
+
+**Round 9: `tgprobe sprite quad on|off`.** "Inside out" — the author's own
+word, and explicitly **not a whole-sprite flip**: when on, `tgprobe sprite
+<Name>` draws the sprite as four full copies, each scaled to one quadrant
+of the same target box and mirrored (`draw_sprite_ext`'s negative x/y scale
+per tile) so the four meet symmetrically at the box's own centre. The
+intent is to turn a sprite frame whose glow faces its own centre (inward)
+into one that radiates outward from the drawn box instead. Applies to a
+named sprite over a hotbar slot or at `centre`; not to `gold`, a `style`, or
+`gallery`'s cells. Every tile's geometry is whole pixels (D-U11): each half
+is rounded, and the right/bottom tile absorbs whatever a pixel's worth of
+rounding is left over, so the two tiles on each axis still sum to the box's
+own width/height exactly. `quad=on`/`quad=off` printed in the sprite/gold/
+`off` confirmation lines. Default off, so nothing existing changes silently.
+Not yet judged live — this round built it, a live session is the next step.
+
+**Round 9: `tgprobe sprite alpha <min> [max]`.** The floor/ceiling `style
+soft` and `style gradient`'s per-band alpha fade between, replacing `0` as
+the floor — directly answering the "blends too well with the background"
+finding above. `min` is the alpha the fade stops at instead of reaching
+`0`; `max` is the centre alpha, defaulting to **each style's own existing
+centre alpha** (`soft`'s implicit `1.0`, `gradient`'s implicit `0.5`) rather
+than a single shared ceiling that would silently change one style's look to
+match the other's — so the *default* (`alpha` never set) reproduces both
+styles' pre-round-9 look exactly. Accepts either `0..255` or `0..1` per
+value (a value over `1.0` is treated as a byte and divided by `255`); the
+author's own ask was "fade to about 25/255 instead of 0" for `gradient`.
+Printed as `alpha=<min>/255..<max>/255|style-default` beside `colour=`/
+`layer=` in the `style` and `off` confirmation lines. Not applied to
+`halo` (its own alpha shape, unrelated to this fade) or to any named
+sprite's own art.
+
+**Named sprites are their own art, not tinted.** Worth stating for a future
+reader: `tgprobe sprite colour` (round 8) applies only to the procedural
+styles, `sprite gold`'s rectangle and `tgprobe mark` — never to
+`Talent_Aura_Frame_spr` or any other named candidate, which always draws
+with its own sprite colours. The command's own confirmation line for a
+named sprite prints `colour=` for reference only, with the note "(a named
+sprite's own art, not tinted)"; do not expect a `colour red` setting to
+change what a sprite candidate looks like.
 
 ### tgprobe deep — the non-scalar read (session 2)
 
