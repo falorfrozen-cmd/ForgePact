@@ -1390,6 +1390,23 @@ def reset_boot_count_cache() -> None:
                            size=-1, mtime_ns=-1)
 
 
+def plugin_mod_state(cfg=None) -> dict:
+    r"""What the plugin says it is actually doing, from `bp_ipc\modstate.json`.
+
+    The panel stores what the player asked for; the plugin can refuse it for
+    the rest of a session (an insert hook that went in table-only, a move pass
+    that shut itself down after a material could not be accounted for). Review
+    of ForgePact #54: without this the switch kept showing ON and a refused
+    re-enable looked like it had worked. Missing or unreadable file means the
+    plugin has not said anything, which is not the same as a refusal."""
+    try:
+        raw = (ipc_dir(cfg) / "modstate.json").read_text(encoding="utf-8", errors="replace")
+        state = json.loads(raw)
+        return state if isinstance(state, dict) else {}
+    except Exception:
+        return {}
+
+
 def plugin_boot_count(cfg=None) -> int:
     """How many times the plugin has started, read from its own log.
 
@@ -1596,6 +1613,7 @@ class H(BaseHTTPRequestHandler):
             self._json({"cfg": cfg, "version": __version__,
                         "gameRunning": game_running(cfg),
                         "ipcOk": ipc_dir(cfg).exists(),
+                        "pluginMods": plugin_mod_state(cfg),
                         "eacStatus": eac_status(_exe) if _exe.exists() else "",
                         "chain": mod_chain(cfg),
                         "spawners": [[k, i, l, mx] for k, i, l, mx in SPAWNERS],
@@ -2371,6 +2389,34 @@ function syncRevealPacks(parentOn,packsOn){
 }
 // Likewise the move to the materials tab only does anything while
 // Auto-prospect is on.
+// The plugin can refuse a switch for the rest of a session: the insert hook
+// went in table-only, or the move pass shut itself down after a material it
+// could not account for. `pluginMods` is what the plugin says it is doing;
+// the switch keeps the saved preference, and the value beside it says what is
+// actually happening, with the reason on hover (review of #54).
+function applyPluginModState(pm){
+  const ap=(pm&&pm.autoprospect)||null;
+  const parentVal=document.getElementById("autoprospval");
+  const bagVal=document.getElementById("apbagval");
+  const bagRow=document.getElementById("mod_auto_prospect_bag_row");
+  if(!ap||!parentVal||!bagVal||!bagRow)return;
+  const reason=ap.reason||"";
+  if(ap.hookBlind){
+    parentVal.textContent="off (plugin)";
+    parentVal.className="val off";
+    parentVal.title=reason||"the plugin turned auto-prospect off for this session";
+  }else{
+    parentVal.title="";
+  }
+  const wantsBag=document.getElementById("mod_auto_prospect_bag").checked;
+  if(wantsBag&&ap.bagPreference&&!ap.movePass&&!ap.hookBlind){
+    bagVal.textContent="off (plugin)";
+    bagVal.className="val off";
+    bagRow.title=(reason||"the plugin turned the move off for this session")+" - it starts again next launch.";
+  }else if(!ap.hookBlind){
+    bagRow.title="";
+  }
+}
 function syncProspectBag(parentOn,bagOn){
   const row=document.getElementById('mod_auto_prospect_bag_row');
   const box=document.getElementById('mod_auto_prospect_bag');
@@ -2714,12 +2760,25 @@ function bind(){
         const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_auto_prospect',value:e.target.checked})});
         const v=document.getElementById('autoprospval');v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
         syncProspectBag(e.target.checked,document.getElementById('mod_auto_prospect_bag').checked);
+        const pmp=await pluginModsAfterSet();
+        if(e.target.checked&&pmp&&pmp.autoprospect&&pmp.autoprospect.hookBlind){
+          toast('The plugin has auto-prospect off this session: '+(pmp.autoprospect.reason||'it could not attach to the game'));
+        }else{
         toast('Auto-prospect '+(e.target.checked?'ON - '+(document.getElementById('mod_auto_prospect_bag').checked?'the previous materials go to your materials tab':'materials stay in the grid'):'OFF')+' - '+(res.ok||res.err));
+        }
     };
     document.getElementById('mod_auto_prospect_bag').onchange=async(e)=>{
         syncProspectBag(document.getElementById('mod_auto_prospect').checked,e.target.checked);
         const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_auto_prospect_bag',value:e.target.checked})});
-        toast('Materials to your materials tab '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
+        // The plugin may refuse this for the rest of the session; say what
+        // it is doing, not what was asked for (review of #54).
+        const pm=await pluginModsAfterSet();
+        const ap=pm&&pm.autoprospect;
+        if(e.target.checked&&ap&&ap.bagPreference&&!ap.movePass){
+          toast('The plugin is not moving materials this session: '+(ap.reason||'it turned the move off')+' - it starts again next launch');
+        }else{
+          toast('Materials to your materials tab '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
+        }
     };
   { const el=document.getElementById('angelic_items');
     el.oninput=angelicPaint;
@@ -2930,6 +2989,7 @@ function refreshSavedControls(){
   document.getElementById('denval').className='val '+(c.density_on?'':'off');
   syncRevealPacks(!!c.map_reveal,!!c.map_reveal_packs);
   syncProspectBag(!!c.mod_auto_prospect,!!c.mod_auto_prospect_bag);
+  applyPluginModState(ST.pluginMods);
   updateControlDecoration();decoratePanelIcons();
 }
 function filterControlRows(){
@@ -3088,13 +3148,20 @@ function schedulePoll(){
   pollTimer=setTimeout(pollOnce,delay);
 }
 function noteLocalAction(){pollLastChange=Date.now();schedulePoll()}
+// One re-read after a switch is sent, so the toast reports the plugin's own
+// answer. The plugin writes its state on its next frame batch, so give it a
+// moment; a panel with no game running just gets the empty state back.
+async function pluginModsAfterSet(){
+  await new Promise(r=>setTimeout(r,700));
+  try{const s=await j("/api/state");if(ST)ST.pluginMods=s.pluginMods;applyPluginModState(s.pluginMods);return s.pluginMods}catch(_){return null}
+}
 async function pollOnce(){
   pollTimer=null;
   try{
     const s=await j('/api/state');
     pollLastChange=pollNextChangeAt(pollPrev,s,false,Date.now(),pollLastChange);
     pollPrev=s;
-    if(ST){ST.gameRunning=s.gameRunning;ST.lastApplied=s.lastApplied;ST.queued=s.queued;ST.ipcOk=s.ipcOk;ST.chain=s.chain;ST.eacStatus=s.eacStatus;ST.launch=s.launch;status()}
+    if(ST){ST.gameRunning=s.gameRunning;ST.lastApplied=s.lastApplied;ST.queued=s.queued;ST.ipcOk=s.ipcOk;ST.chain=s.chain;ST.eacStatus=s.eacStatus;ST.launch=s.launch;ST.pluginMods=s.pluginMods;status();applyPluginModState(s.pluginMods)}
   }catch(e){}
   schedulePoll();
 }

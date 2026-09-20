@@ -17,7 +17,7 @@ panel; settings are applied live while the game runs and re-applied on every lau
 | **Full Map Reveal** | Clears fog of war in every zone, so waypoints, dungeon entrances, chests, shrines and mining nodes show immediately (toggleable; F5 in-game also toggles it). An optional sub-toggle also fills the map with monsters: most packs do not exist until you walk near them, so it has each new zone create its packs on arrival |
 | **Pet Collects Quest Items** | While your pet is out it walks to pick-up quest items on screen and collects them one at a time, crediting the objective through the game's own collect. Pick-up items only; activate/break/talk objectives are left alone |
 | **Satanic Zone Mods** | Pick which of the game's 25 positive / 26 negative World Section mods can roll onto a Satanic Zone; everything is on by default |
-| **Auto-prospect** | Off by default. Every item you drag or click into the Prospect Cube's grid is prospected at once by the game's own Prospect, so the 9×6 grid stops being the limit on a batch. Before each prospect the previous prospect's batch of materials goes to your materials tab (a sub-switch, on by default), so only the newest batch stays in the grid; the item you put in, ore included, is always prospected, never moved; anything left in it when the game saves is lost ([details](#auto-prospect)) |
+| **Auto-prospect** | Off by default. Every item you drag or click into the Prospect Cube's grid is prospected at once by the game's own Prospect, so the 9×6 grid stops being the limit on a batch. Before each prospect the previous prospect's batch of materials goes to your materials tab (a sub-switch, on by default), so only the newest batch stays in the grid; the item you put in, ore included, is prospected, not moved (one exception: a batch material swapped out and dropped straight back in still goes to the tab); anything left in it when the game saves is lost ([details](#auto-prospect)) |
 | **Remove Owned Relics** | Relics already at maximum level (10 out of 10) in your equipped slots, backpack or inventory stop dropping again, so a relic drop is one you can still use |
 | **Auto-apply** | Saved settings are re-sent every time the game starts |
 
@@ -378,8 +378,10 @@ away by the game's own Prospect, exactly as if you had pressed the button.
   tab - the game's own stack move, the one a click on a material makes - and then
   prospects, so only the newest batch stays in the grid. Only that batch moves: what
   moves is what ForgePact's own last prospect produced, and of that only materials,
-  identified by their item type. The item you put in is always prospected and never
-  moved, ore included, and a material you put in the grid yourself stays. After the
+  identified by their item type. The item you put in is prospected and not
+  moved, ore included, and a material you put in the grid yourself stays - with one
+  exception, not seen yet: a batch material you swap an item onto and drop straight
+  back in is still part of the batch, so it goes to the tab instead. After the
   cube is reopened, Auto-prospect is turned off and on, something is taken out of the
   grid, or the grid changes without an insert landing, ForgePact forgets the batch and
   the next prospect moves nothing. A material with no stack in the materials tab yet

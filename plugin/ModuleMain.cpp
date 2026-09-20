@@ -18183,6 +18183,49 @@ static void MBuffTick()
 static PFUNC_YYGMLScript g_Orig_AutoProspectInsert = nullptr;
 static bool g_AutoProspectInstallTried = false;   // the one install attempt has run
 static bool g_AutoProspectBlind = false;          // ...and came back without the inline detour
+// What the plugin actually does with a switch the player set, written for the
+// panel to read (review of #54: a move pass that turns itself off for the
+// session, or a hook that went in table-only, used to reach only out.txt while
+// the panel kept painting the saved preference as ON). Shipped in both builds:
+// this is the feature's own state, not a diagnostic. Written only when the
+// text changes, so a healthy session writes it once.
+static std::string ModStateEscape(const std::string& in)
+{
+    std::string out;
+    out.reserve(in.size() + 8);
+    for (char c : in) {
+        if (c == '"' || c == '\\') { out += '\\'; out += c; }
+        else if ((unsigned char)c < 0x20) out += ' ';
+        else out += c;
+    }
+    return out;
+}
+static std::string g_ModStateLast;
+static void FlushModState(uint32_t frame)
+{
+    if (frame % 30 != 0) return;
+    try {
+        auto& mod = ForgePact::AutoProspectMod::Instance();
+        std::string reason;
+        if (g_AutoProspectBlind)
+            reason = "the plugin could not attach to the game's insert step, so auto-prospect is off for this session";
+        else if (mod.BagOffThisSession())
+            reason = mod.BagOffReason();
+        std::string body = "{\"schemaVersion\":1,\"autoprospect\":{";
+        body += "\"enabled\":"; body += (mod.IsEnabled() ? "true" : "false");
+        body += ",\"hookBlind\":"; body += (g_AutoProspectBlind ? "true" : "false");
+        body += ",\"bagPreference\":"; body += (mod.BagEnabled() ? "true" : "false");
+        body += ",\"movePass\":"; body += (mod.MovePassOn() ? "true" : "false");
+        body += ",\"reason\":\""; body += ModStateEscape(reason); body += "\"}}";
+        if (body == g_ModStateLast) return;
+        g_ModStateLast = body;
+        const std::string path = IPC_DIR + "\\modstate.json", tmp = path + ".tmp";
+        { std::ofstream f(tmp, std::ios::binary | std::ios::trunc); f << body; }
+        std::error_code ec;
+        std::filesystem::rename(tmp, path, ec);
+        if (ec) { std::filesystem::copy_file(tmp, path, std::filesystem::copy_options::overwrite_existing, ec); std::filesystem::remove(tmp, ec); }
+    } catch (...) {}
+}
 static bool g_AutoProspectInvoking = false;       // inside ForgePact's own call of the handler
 static bool g_AutoProspectDispatchLogged = false; // the first failed dispatch has been logged
 static int g_ApGridObjIdx = -1, g_ApWindowObjIdx = -1, g_ApButtonObjIdx = -1;
@@ -20802,6 +20845,7 @@ void FrameCallback(FWFrame& FrameContext)
 #endif
     PERF_SCOPE(g_PerfFrame);
     FlushItemStats(fc);
+    FlushModState(fc);
     if (fc == 1) Trace("0-framecallback-running");
 
     // Special Content uses the game's eSt gates.  The helper is also safe in

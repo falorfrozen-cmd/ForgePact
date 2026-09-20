@@ -239,6 +239,8 @@ public:
     // `cell-kept` has turned the pass off for the session.
     bool BagEnabled() const { return m_BagEnabled.load(); }
     bool BagOffThisSession() const { return m_BagOffThisSession.load(); }
+    // Empty while the pass is healthy; the sentence the panel shows otherwise.
+    const char* BagOffReason() const { return m_BagOffReason.load(); }
     bool SetBagEnabled(bool on) {
         if (on && m_BagOffThisSession.load()) return false;
         m_BagEnabled.store(on);
@@ -480,8 +482,14 @@ public:
             if (m_Moved.fetch_add(1) == 0) m_FirstMoveDue = true;
             return o;
         }
-        if (o == AutoProspectMoveOutcome::Vanished || o == AutoProspectMoveOutcome::CellKept)
+        if (o == AutoProspectMoveOutcome::Vanished || o == AutoProspectMoveOutcome::CellKept) {
+            // Why the pass shut itself down, so the panel can say it rather
+            // than keep painting the saved preference (review of #54).
+            m_BagOffReason.store(o == AutoProspectMoveOutcome::Vanished
+                                 ? "a material left the grid without the game confirming it arrived"
+                                 : "a material was added but the grid kept it, so it may be a duplicate");
             m_BagOffThisSession.store(true);
+        }
         const unsigned bit = 1u << (int)o;
         if (!(m_MoveReportedMask & bit)) {
             m_MoveReportedMask |= bit;
@@ -750,6 +758,7 @@ private:
     std::atomic<bool> m_Enabled{ false };
     std::atomic<bool> m_BagEnabled{ true };          // the `bag` sub-option; on by default
     std::atomic<bool> m_BagOffThisSession{ false };  // a vanished or cell-kept turned the pass off
+    std::atomic<const char*> m_BagOffReason{ "" };   // why, for the panel
 
     bool        m_Pending = false;
     int64_t     m_PendingNode = -1;

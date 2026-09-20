@@ -272,6 +272,43 @@ class AutoProspectContractTests(unittest.TestCase):
 
     # ---- the panel, the notes, the docs ----------------------------------------
 
+    def test_plugin_refusal_reaches_the_panel_not_only_out_txt(self):
+        """Review of #54: the plugin can refuse a switch for the session (a
+        table-only insert hook, or a move pass that shut itself down), and the
+        panel used to keep painting the saved preference as ON. The plugin now
+        writes `bp_ipc\modstate.json` in BOTH builds - this is the feature's
+        own state, not a diagnostic - and the panel reads it."""
+        writer = self.body("static void FlushModState(")
+        for field in ('enabled', 'hookBlind', 'bagPreference', 'movePass', 'reason'):
+            self.assertIn('\\"%s\\"' % field, writer)   # written into the JSON body
+        self.assertIn("modstate.json", writer)
+        self.assertIn("BagOffReason()", writer)
+        # Written from the frame callback, and shipped: stripping the research
+        # blocks must leave the writer and its call site behind.
+        self.assertIn("FlushModState(fc);", self.shipped)
+        self.assertIn("static void FlushModState(", self.shipped)
+        # The core names the reason; the header stays game-independent.
+        self.assertIn("m_BagOffReason.store(", self.header)
+        self.assertIn("const char* BagOffReason() const", self.header)
+        # The panel: a reader, the state on /api/state, and a renderer that
+        # says what the plugin is doing beside the saved preference.
+        source = PANEL.read_text(encoding="utf-8")
+        self.assertIn("def plugin_mod_state(", source)
+        self.assertIn("modstate.json", source)
+        self.assertIn('"pluginMods": plugin_mod_state(cfg),', source)
+        self.assertIn("function applyPluginModState(", source)
+        self.assertIn("off (plugin)", source)
+        # A refused re-enable must not toast as if it worked.
+        self.assertIn("async function pluginModsAfterSet(", source)
+        handler = source[source.index("document.getElementById('mod_auto_prospect_bag').onchange"):]
+        handler = handler[:handler.index("};")]
+        self.assertIn("pluginModsAfterSet()", handler)
+        self.assertIn("!ap.movePass", handler)
+        # ...and the same for the parent when the hook went in table-only.
+        parent = source[source.index("document.getElementById('mod_auto_prospect').onchange"):]
+        parent = parent[:parent.index("};")]
+        self.assertIn("hookBlind", parent)
+
     def test_panel_toggle_defaults_off_and_emits_autoprospect(self):
         spec = importlib.util.spec_from_file_location("forgepact_ap_contract", PANEL)
         panel = importlib.util.module_from_spec(spec)

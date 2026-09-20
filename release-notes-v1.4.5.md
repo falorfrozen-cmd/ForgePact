@@ -22,9 +22,12 @@ no longer have to stop every 54 items to press Prospect and start again.
     - one with no stack of it yet in your materials tab - is moved too, the
     way a click on it moves it: the game puts it in your bag rather than the
     materials tab. Only that batch moves. The item you put
-    in is always prospected and never moved, even when it is itself a
-    material such as ore, and materials you put in the grid yourself stay
-    where they are. Prospecting an ore does not always give materials: the
+    in is prospected and not moved, even when it is itself a material such
+    as ore, and materials you put in the grid yourself stay where they are -
+    with one exception nobody has run into yet: if you swap an item onto one
+    of those batch materials and drop that material straight back in, it
+    still counts as part of the batch and goes to your tab instead of being
+    prospected. Prospecting an ore does not always give materials: the
     game's own Prospect only has a chance to, with or without ForgePact, so
     an ore that is used up with nothing in its place is the game, not the
     mod. After you reopen the cube, turn Auto-prospect off and on,
