@@ -481,6 +481,13 @@ static void resetWorld() {
     world = World{};
 }
 
+// S (the per-row border counters): zeroed field by field rather than by
+// assigning a fresh struct, because every member is volatile.
+static void resetTibRow(int r) {
+    g_TibRow[r].drawn = 0; g_TibRow[r].on = 0; g_TibRow[r].off = 0;
+    g_TibRow[r].unreadable = 0; g_TibRow[r].unresolved = 0; g_TibRow[r].noSlot = 0;
+}
+
 // T1: the TalentUseClass original, as the trampoline HookOneScript hands the
 // hook. It counts, and writes a return value the way a real call would, so a
 // refused call's untouched result is distinguishable; a refused call must
@@ -517,6 +524,7 @@ static void resetGuard(bool enabled) {
     ForgePact::ToggleGuardMod::Instance().SetEnabled(enabled, /*alreadyHooked=*/true);
     g_TgdRefused = 0; g_TgdPassed = 0; g_TgdProcSeen = 0; g_TgdSelfUnreadable = 0; g_TgdObjUnresolved = 0;
     g_TgdSubOff = 0; g_TgdSubUnreadable = 0;
+    g_TgdSubIndex.store(-1);
     g_ToggleGuardDcObjIdx.store(-1);
     for (int r = 0; r < ForgePact::kToggleSkillRowCount; ++r) g_ToggleTableIds.Set(r, -1);
     g_ToggleTableIds.Set(0, kToggleIndicatorTalentId);
@@ -1018,6 +1026,55 @@ int main() {
         checkInt("border/ownership_none_counts_every_instance_own", g_TibDrawn, 1);
     }
 
+    // 35b. Per-row counters (phase S review follow-up). The aggregate line
+    //      sums all five rows, so a player with nothing toggled reads `off=`
+    //      at five times the draw count, and neither "which row was ON" nor
+    //      "which row lost its slot" can be answered from it. One draw with
+    //      row 0 ON, row 1 resolved but absent and the rest unresolved must
+    //      land in three different rows' counters, and each row's own line
+    //      must name the row by its `abilityId`.
+    {
+        const int kLunarId = 358;
+        resetWorld(); resetDrawRecord();
+        g_ToggleBorderOn.store(true);
+        for (int r = 0; r < ForgePact::kToggleSkillRowCount; ++r) { g_ToggleTableIds.Set(r, -1); resetTibRow(r); }
+        g_ToggleTableIds.Set(0, kToggleIndicatorTalentId);
+        g_ToggleTableIds.Set(1, kLunarId);
+        world.objIndexByName[HeroSiege::Objects::GetObjectName(ForgePact::kToggleSkillRows[1].onObject)] = 500.0;
+        world.instancesByIndex[500.0] = {};            // row 1 resolves, nothing live: Off
+        world.instances = { OwnMarked(0.09) };         // row 0: ON
+        world.row0 = { { (double)kToggleIndicatorTalentId, 100.0, 200.0, 50.0, 60.0 } };
+        ToggleIndicatorDraw();
+        checkInt("border/per_row_counters_name_the_row/row0_on", g_TibRow[0].on, 1);
+        checkInt("border/per_row_counters_name_the_row/row0_drawn", g_TibRow[0].drawn, 1);
+        checkInt("border/per_row_counters_name_the_row/row0_off", g_TibRow[0].off, 0);
+        checkInt("border/per_row_counters_name_the_row/row1_off", g_TibRow[1].off, 1);
+        checkInt("border/per_row_counters_name_the_row/row1_on", g_TibRow[1].on, 0);
+        checkInt("border/per_row_counters_name_the_row/row2_unresolved", g_TibRow[2].unresolved, 1);
+        const std::string row0Line = ToggleBorderRowCountersLine(0);
+        const std::string row1Line = ToggleBorderRowCountersLine(1);
+        checkBool("border/per_row_counters_name_the_row/row0_named",
+                  row0Line.find(ForgePact::kToggleSkillRows[0].abilityId) != std::string::npos
+                  && row0Line.find("on=1") != std::string::npos, true);
+        checkBool("border/per_row_counters_name_the_row/row1_named",
+                  row1Line.find(ForgePact::kToggleSkillRows[1].abilityId) != std::string::npos
+                  && row1Line.find("off=1") != std::string::npos, true);
+
+        // The slot failure lands on the row that failed it, not in a shared
+        // total - the other half of what the aggregate line cannot say.
+        resetWorld(); resetDrawRecord();
+        g_ToggleBorderOn.store(true);
+        for (int r = 0; r < ForgePact::kToggleSkillRowCount; ++r) { g_ToggleTableIds.Set(r, -1); resetTibRow(r); }
+        g_ToggleTableIds.Set(0, kToggleIndicatorTalentId);
+        world.instances = { OwnMarked(0.09) };
+        world.row0 = { { 9999.0, 100.0, 200.0, 50.0, 60.0 } };   // no slot carries row 0's talent
+        ToggleIndicatorDraw();
+        checkInt("border/per_row_counters_name_the_row/row0_noSlot", g_TibRow[0].noSlot, 1);
+        checkInt("border/per_row_counters_name_the_row", g_TibRow[0].drawn, 0);
+        for (int r = 0; r < ForgePact::kToggleSkillRowCount; ++r) g_ToggleTableIds.Set(r, -1);
+        g_ToggleTableIds.Set(0, kToggleIndicatorTalentId);
+    }
+
     // 36. The timer discriminator (`maelstromOfFrost`): EXACT equality with
     //     the value session 6 measured the row held at while on. A counting
     //     timer, any other negative, and an unreadable read each draw nothing
@@ -1247,7 +1304,8 @@ int main() {
 
     // 40c. Every shape the read can fail in, one scenario each, so none of
     //      them is inferred from another: the global absent, the global not an
-    //      array, the measured index past the array's end, `t<id>` absent,
+    //      array, an array too short to hold the measured index (and no other
+    //      index carrying the talent either), `t<id>` absent everywhere,
     //      `s<NN>` non-numeric, and a throw. Each passes and counts once.
     {
         struct SubShape { const char* name; void (*apply)(); };
@@ -1274,7 +1332,52 @@ int main() {
                   sizeof(kShapes) / sizeof(kShapes[0]) == 6, true);
     }
 
-    // 40d. A talent that is not in the shipped table is never a member, so the
+    // 40d. The measured index is a starting point, not an assumption: when
+    //      `t<talentId>` lives at some other array index, the read finds it
+    //      there and the gate still works. Session 6 measured index 1 on one
+    //      character on one build; if that index is a character or player slot
+    //      elsewhere, a fixed index would leave the guard silently inert
+    //      (phase S review follow-up).
+    resetGuard(true);
+    world.sub.levels.clear();
+    world.sub.levels[3][kToggleIndicatorTalentId][ForgePact::kToggleSkillRows[0].subTalentSlot] = MakeReal(3.0);
+    {
+        GuardCall c = CallGuard(&dcSelf, (double)kToggleIndicatorTalentId, false);
+        checkInt("guard_on/subtalent_other_index_answers/refused", g_TgdRefused, 1);
+        checkInt("guard_on/subtalent_other_index_answers/subUnreadable", g_TgdSubUnreadable, 0);
+        checkInt("guard_on/subtalent_other_index_answers/index", g_TgdSubIndex.load(), 3);
+        checkInt("guard_on/subtalent_other_index_answers", c.tramp, 0);
+    }
+
+    // 40e. The same, unallocated: the index that answers is the one whose
+    //      `t<id>` struct exists, and its `s<NN>` decides - so a respecced-out
+    //      sub-talent at another index still passes and counts subOff, rather
+    //      than being reported as unreadable.
+    resetGuard(true);
+    world.sub.levels.clear();
+    world.sub.levels[4][kToggleIndicatorTalentId][ForgePact::kToggleSkillRows[0].subTalentSlot] = MakeReal(0.0);
+    {
+        GuardCall c = CallGuard(&dcSelf, (double)kToggleIndicatorTalentId, false);
+        checkInt("guard_on/subtalent_measured_index_struct_absent_falls_back/subOff", g_TgdSubOff, 1);
+        checkInt("guard_on/subtalent_measured_index_struct_absent_falls_back/refused", g_TgdRefused, 0);
+        checkInt("guard_on/subtalent_measured_index_struct_absent_falls_back/index", g_TgdSubIndex.load(), 4);
+        checkInt("guard_on/subtalent_measured_index_struct_absent_falls_back", c.tramp, 1);
+    }
+
+    // 40f. No index carries the talent's struct at all: the read is unreadable,
+    //      the call passes and is counted, and the stat line says plainly that
+    //      no index answered rather than naming one that did not.
+    resetGuard(true);
+    world.sub.levels.clear();
+    {
+        GuardCall c = CallGuard(&dcSelf, (double)kToggleIndicatorTalentId, false);
+        checkInt("guard_on/subtalent_no_index_answers/subUnreadable", g_TgdSubUnreadable, 1);
+        checkInt("guard_on/subtalent_no_index_answers/refused", g_TgdRefused, 0);
+        checkInt("guard_on/subtalent_no_index_answers/index", g_TgdSubIndex.load(), -1);
+        checkInt("guard_on/subtalent_no_index_answers", c.tramp, 1);
+    }
+
+    // 40g. A talent that is not in the shipped table is never a member, so the
     //      sub-talent is not even read.
     resetGuard(true);
     {
@@ -1286,7 +1389,7 @@ int main() {
         (void)before;
     }
 
-    // 40e. Every row unresolved: the guard covers nothing, and an unnamed
+    // 40h. Every row unresolved: the guard covers nothing, and an unnamed
     //      talent (a0 that is not a number, read back as -1) must not match an
     //      unresolved row's own -1.
     resetGuard(true);

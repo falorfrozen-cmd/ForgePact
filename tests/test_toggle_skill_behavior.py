@@ -103,6 +103,12 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
             # default, same as in the plugin.
             declaration(cls.plugin, "static std::atomic<bool> g_ToggleBorderOn"),
             declaration(cls.plugin, "static volatile long g_TibDrawn"),
+            # S (the review follow-up): the per-row counters and the line that
+            # names a row by its own `abilityId`, so a scenario can assert
+            # which row an outcome was charged to.
+            implementation(cls.plugin, "struct ToggleBorderRowCounters {") + ";",
+            declaration(cls.plugin, "static ToggleBorderRowCounters g_TibRow"),
+            implementation(cls.plugin, "static std::string ToggleBorderRowCountersLine("),
             implementation(cls.plugin, "static void ToggleIndicatorMarkerBox("),
             implementation(cls.plugin, "static bool ToggleIndicatorFindSlot("),
             implementation(cls.plugin, "static void ToggleIndicatorDrawMarker("),
@@ -119,6 +125,9 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
             # S (D-P3): the sub-talent read the refusal is gated on, verbatim,
             # so every fail-open shape is exercised against the real code.
             declaration(cls.plugin, "enum class ToggleSubTalentState"),
+            # Which `global.subTalentMap` index answered, so a scenario can
+            # assert the index was SELECTED rather than assumed.
+            declaration(cls.plugin, "static std::atomic<int> g_TgdSubIndex"),
             implementation(cls.plugin, "static ToggleSubTalentState ToggleReadSubTalent("),
             implementation(cls.plugin, "static RValue& HookTalentUseClass("),
             # R (issue #11 generalisation, research build only): the
@@ -473,6 +482,17 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
             self.assertScenario(label + "/refused")
             self.assertScenario(label)
 
+    # ---- S: the border's per-row counters ----------------------------------
+
+    def test_border_per_row_counters_name_the_row(self):
+        # Phase S review follow-up: the aggregate counters sum all five rows,
+        # so one draw with row 0 ON, row 1 resolved-but-absent and the rest
+        # unresolved has to land in three different rows' counters, and a
+        # row's line has to name it.
+        for suffix in ("/row0_on", "/row0_drawn", "/row0_off", "/row1_off", "/row1_on",
+                       "/row2_unresolved", "/row0_named", "/row1_named", "/row0_noSlot", ""):
+            self.assertScenario("border/per_row_counters_name_the_row" + suffix)
+
     # ---- S: the guard's sub-talent gate (D-P3) -----------------------------
 
     def test_guard_on_table_talent_with_subtalent_refused(self):
@@ -493,6 +513,27 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
             self.assertScenario(label + "/refused")
             self.assertScenario(label)
         self.assertScenario("guard_on/subtalent_unreadable_passes_and_counts")
+
+    def test_guard_on_subtalent_other_index_answers(self):
+        # Phase S review follow-up: session 6 measured the sub-talent map index
+        # on one character on one build, so the index is SELECTED (the one
+        # whose `t<talentId>` struct is really there), not assumed. A fixed
+        # index that turned out to be a character slot would leave the guard
+        # inert with nothing but a counter to show for it.
+        for suffix in ("/refused", "/subUnreadable", "/index", ""):
+            self.assertScenario("guard_on/subtalent_other_index_answers" + suffix)
+
+    def test_guard_on_subtalent_measured_index_struct_absent_falls_back(self):
+        for suffix in ("/subOff", "/refused", "/index", ""):
+            self.assertScenario(
+                "guard_on/subtalent_measured_index_struct_absent_falls_back" + suffix)
+
+    def test_guard_on_subtalent_no_index_answers(self):
+        # The negative control beside the two positives: nothing anywhere in
+        # the array carries this talent, so the read is unreadable, the call
+        # passes, and `subIndex=` reports none rather than a number.
+        for suffix in ("/subUnreadable", "/refused", "/index", ""):
+            self.assertScenario("guard_on/subtalent_no_index_answers" + suffix)
 
     def test_guard_on_non_table_talent_passes(self):
         for suffix in ("/refused", "/sub_not_read", ""):

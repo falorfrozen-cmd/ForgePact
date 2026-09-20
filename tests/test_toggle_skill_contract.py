@@ -560,10 +560,24 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
         cls.stripped = strip_research_blocks(cls.plugin)
 
     def test_production_read_sits_outside_every_research_block(self):
-        # If either function were inside a research-only block, it would not
-        # survive stripping to what a player build actually compiles.
-        self.assertIn("static bool ToggleIndicatorResolveAoeObject(", self.stripped)
-        self.assertIn("static ForgePact::ToggleIndicatorState ToggleIndicatorRead(", self.stripped)
+        # If the production read were inside a research-only block, it would
+        # not survive stripping to what a player build actually compiles.
+        # NARROWED after phase S's review: the production read is the
+        # ROW-taking one, which the shipped draw calls; row 0's two aliases
+        # (ToggleIndicatorResolveAoeObject/ToggleIndicatorRead) lost their last
+        # shipped caller when the draw started walking the table, so they are
+        # now research-only - carried in a player build they would be a
+        # function with no caller, not a production read.
+        self.assertIn("static bool ToggleIndicatorResolveRowObject(", self.stripped)
+        self.assertIn("static ForgePact::ToggleIndicatorState ToggleIndicatorReadRow(", self.stripped)
+        self.assertIn("static void ToggleIndicatorCountMark(", self.stripped)
+        self.assertIn("static void ToggleIndicatorDraw(", self.stripped)
+        self.assertNotIn("static bool ToggleIndicatorResolveAoeObject(", self.stripped)
+        self.assertNotIn("static ForgePact::ToggleIndicatorState ToggleIndicatorRead(", self.stripped)
+        # And nothing a player build compiles calls either alias - the reason
+        # they can be research-only at all.
+        for alias in ("ToggleIndicatorResolveAoeObject(", "ToggleIndicatorRead(&"):
+            self.assertNotIn(alias, self.stripped, alias)
 
     def test_production_read_uses_the_documented_shape(self):
         # NARROWED in phase S (issue #11, the five-row table): the runtime
@@ -1119,8 +1133,35 @@ class ToggleSkillTableContractTests(unittest.TestCase):
 
     def test_unresolved_rows_are_skipped_and_counted_in_the_draw(self):
         body = function_body(self.plugin, "static void ToggleIndicatorDraw(")
-        self.assertIn("if (talentId < 0) { InterlockedIncrement(&g_TibUnresolved); continue; }", body)
+        skip = body[body.index("if (talentId < 0) {"):body.index("ToggleIndicatorReadRow(")]
+        self.assertIn("InterlockedIncrement(&g_TibUnresolved);", skip)
+        self.assertIn("continue;", skip)
+        self.assertNotIn("CallBuiltin", skip)
         self.assertIn("unresolved=", function_body(self.stripped, "static std::string ToggleBorderCountersLine("))
+
+    def test_border_stat_reports_per_row_counters(self):
+        # Phase S review follow-up: every counter in ToggleBorderCountersLine
+        # is a sum over the five rows, so on its own it cannot say which row
+        # was ON, and a player with nothing toggled reads `off=` at five times
+        # the draw count. Each row gets its own line, named by its `abilityId`.
+        row_line = function_body(self.stripped, "static std::string ToggleBorderRowCountersLine(")
+        self.assertIn("ForgePact::kToggleSkillRows[row].abilityId", row_line)
+        for key in ("drawn=", "on=", "off=", "unreadable=", "unresolved=", "noSlot="):
+            self.assertIn(key, row_line, key)
+        stats = function_body(self.stripped, "static void ToggleBorderStats(")
+        self.assertIn("ToggleBorderRowCountersLine(r)", stats)
+        self.assertIn("r < ForgePact::kToggleSkillRowCount", stats)
+        # The summed line says so, rather than letting a reader take it for a
+        # per-draw total - in the shared counters line, so `toggleborder 0`
+        # carries it too.
+        self.assertIn("summed over", function_body(
+            self.stripped, "static std::string ToggleBorderCountersLine("))
+        # Every outcome the draw decides is charged to the row that produced
+        # it, including the slot lookup that failed.
+        draw = function_body(self.stripped, "static void ToggleIndicatorDraw(")
+        for counter in ("g_TibRow[r].unresolved", "g_TibRow[r].unreadable", "g_TibRow[r].off",
+                        "g_TibRow[r].on", "g_TibRow[r].noSlot", "g_TibRow[r].drawn"):
+            self.assertIn("InterlockedIncrement(&" + counter + ")", draw, counter)
 
 
 class ToggleGuardContractTests(unittest.TestCase):
@@ -1299,8 +1340,34 @@ class ToggleGuardContractTests(unittest.TestCase):
 
     def test_guard_stat_reports_the_new_counters(self):
         line = function_body(self.stripped, "static std::string ToggleGuardCountersLine(")
-        for key in ("subOff=", "subUnreadable="):
+        for key in ("subOff=", "subUnreadable=", "subIndex="):
             self.assertIn(key, line, key)
+        # `subIndex=` must be able to say "no index answered" rather than
+        # printing a number that never answered anything.
+        self.assertIn('std::string("none")', line)
+
+    def test_sub_talent_index_is_selected_not_assumed(self):
+        # Phase S review follow-up. Session 6 measured index 1 on one
+        # character on one build; the read starts there and then looks for the
+        # index whose `t<talentId>` struct is actually present, which is the
+        # positive signal the research probe walks the same array with. A
+        # fixed index that turned out to be a character slot would leave the
+        # guard inert with only a `subUnreadable=` counter as the symptom.
+        read = function_body(self.plugin, "static ToggleSubTalentState ToggleReadSubTalent(")
+        self.assertIn("ForgePact::kToggleSubTalentMapIndex", read)
+        # The measured index is attempt 0; every other index follows it.
+        self.assertIn("attempt == 0 ? ForgePact::kToggleSubTalentMapIndex : attempt - 1", read)
+        self.assertIn("ForgePact::kToggleSubTalentScanCap", read)
+        self.assertIn("inline constexpr int kToggleSubTalentScanCap = 16;", self.header)
+        # The struct's presence is what selects the index, and the index that
+        # answered is recorded for the stat line - before the level read, so a
+        # present-but-unreadable struct still names where it was found.
+        select = read[read.index("attempt == 0 ?"):]
+        self.assertLess(select.index('"t" + std::to_string(talentId)'),
+                        select.index("g_TgdSubIndex.store(index)"))
+        self.assertLess(select.index("g_TgdSubIndex.store(index)"),
+                        select.index('"s" + std::to_string(slot)'))
+        self.assertIn("static std::atomic<int> g_TgdSubIndex{ -1 };", self.plugin)
 
     def test_refusal_returns_the_result_without_the_original(self):
         # NARROWED in phase S: the Refuse decision is now taken in one place
@@ -2199,7 +2266,10 @@ class ToggleTableProbeContractTests(unittest.TestCase):
     def test_probe_bodies_unchanged_from_the_s_round_base(self):
         # The shipped marker's band count and colour are pinned EQUAL to the
         # sprite look probe's (S3/S4), so the probe drifting would silently
-        # move the shipped look. Phase S touches no research code at all.
+        # move the shipped look. What this pins is every sprite-probe and
+        # `tgl` BODY plus the `tgl` seeds table, byte for byte - not the
+        # research block as a whole, which phase S did move a declaration
+        # into (row 0's two aliases, whose only callers are in here).
         old = git_show("2f40223:plugin/ModuleMain.cpp")
         if old is None:
             self.skipTest("git cannot read 2f40223")

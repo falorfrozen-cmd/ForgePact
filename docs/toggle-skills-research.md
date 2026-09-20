@@ -38,7 +38,9 @@ Orbit**, Plague Doctor **Crematus**, Butcher **Submerged Knives** and Prophet
 `abilityId`, the marker is D-U13's `soft` banded outline in `deepred
 (140,24,28)` at D-U12's derived whole-pixel box, and the guard refuses a
 double-cast proc only when that row's toggle sub-talent is allocated, read at
-the call from `global.subTalentMap[1]`. `counter` and `blender` do not ship.
+the call from `global.subTalentMap` — index 1 first (what session 6 measured),
+then whichever index actually carries the talent's struct. `counter` and
+`blender` do not ship.
 Design and evidence: `## Decision` → `### S design (D-P1, D-P3, D-P5, D-U13)`.
 
 Status (2026-09-19, session 6 recorded): four rows beside Soul Spurn measured
@@ -2175,6 +2177,24 @@ stat` print `<abilityId>:talentId=<n|unresolved>` per row plus `resolveWalks=`
 and `unresolvedRows=`, so a live session can see what is actually covered
 instead of assuming.
 
+**The border's counters are per row as well as summed** (review follow-up).
+The draw visits every row once, so each counter in `toggleborder`'s first
+line is a sum over five rows — `off=` reads five times the draw count for a
+player with nothing toggled, which is correct and says nothing about which
+row was ON or which row lost its slot. `toggleborder stat` therefore also
+prints one line per row, named by its `abilityId`, with that row's own
+`drawn=`/`on=`/`off=`/`unreadable=`/`unresolved=`/`noSlot=`; the summed line
+labels itself `(summed over N rows)`.
+
+**Row 0's two aliases are research-only** (review follow-up).
+`ToggleIndicatorRead`/`ToggleIndicatorResolveAoeObject` are what session 4's
+`tgprobe spurn` sampler and session 6's `agree=`/`disagree=` control call, and
+their last shipped caller went away when the draw started walking the table.
+They now sit inside the research block, so a player build compiles neither;
+the production read is the row-taking `ToggleIndicatorReadRow`, which stays
+outside every research block and is still exactly what those two wrap — which
+is what keeps the `agree=`/`disagree=` control a control.
+
 **The discriminator (D-P5).** Each row's discriminator only decides which of
 T1's `markedMine` / `unmarkedMine` / `markUnreadableMine` an own instance
 counts into, so `ToggleIndicatorModel::Decide` is byte-identical to what it
@@ -2202,11 +2222,18 @@ look drifting from the one the author judged.
 **The guard's sub-talent gate (D-P3).** Membership is `a0` equalling a
 resolved row id. Only then, and only at the call, with the talent the call
 itself named, does the hook read
-`global.subTalentMap[1].t<talentId>.s<NN>`: numeric > 0 refuses; the measured
-unallocated form (`0.000000`, key present) passes and counts `subOff`; the
-global missing, not an array, the index out of range, `t<id>` absent, `s<NN>`
+`global.subTalentMap[<index>].t<talentId>.s<NN>`: numeric > 0 refuses; the
+measured unallocated form (`0.000000`, key present) passes and counts
+`subOff`; the global missing, not an array, no index carrying `t<id>`, `s<NN>`
 absent or non-numeric, or a throw anywhere all pass and count
-`subUnreadable`. Fail-open is vanilla behaviour, and this is the
+`subUnreadable`. **The index is selected, not assumed** (review follow-up):
+session 6 measured index 1 on one character on one build, so the read starts
+there and then walks the array (cap 16) for the index whose `t<talentId>`
+struct is really present — the same positive signal `tgprobe tgl sub` walks
+with. A fixed `[1]` that turned out to be a character or player slot on
+another save would have left the guard inert with nothing but a
+`subUnreadable` counter to show for it; `toggleguard stat` now reports
+`subIndex=<n|none>`. Fail-open is vanilla behaviour, and this is the
 point-of-use rule from the hub guide's Known Limitations item 13 — a
 permission read at a frame boundary would answer for the previous frame. It
 removes the cost D-U4 accepted as a Known Limitation: a plain cast of a
@@ -2217,9 +2244,13 @@ countdown) and D-P4 (a latched timer total) are **rejected by the author**
 (D-U9, verbatim: "No countdown for plain casts"). There is no fraction draw,
 no timer total, no latch and no partial border anywhere; a timer is read only
 as a row's ON discriminator, per draw, and never remembered between draws.
-`counter` does not ship — session 6 measured no persistent ON instance for it,
-its toggle state being player buff 104 on the generic `Draw_Player_Buff_obj`,
-and `Charge_Controller_obj` is not removed on OFF. `blender` does not ship —
+`counter` does not ship — session 6 observed no persistent ON instance for it
+over the one Counter ON/OFF cycle that pass measured (`### Toggle skill
+table`: `no persistent instance observed (deep flip census)`), its toggle
+state reading as player buff 104 on the generic `Draw_Player_Buff_obj`, and
+the one instance-shaped candidate that pass did see, `Charge_Controller_obj`,
+was not removed on OFF in that same cycle. Not observed in that pass, not
+proven absent. `blender` does not ship —
 its C2/C5/C6 steps were never run (`blocked`); the tester's "not a toggle
 skill" is an impression, recorded as one. Both are results, not omissions.
 

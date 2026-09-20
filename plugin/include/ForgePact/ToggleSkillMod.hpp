@@ -118,9 +118,11 @@ inline const char* ToggleIndicatorStateName(ToggleIndicatorState s)
 // offline-only, so that is the documented D-N3 behaviour, not a co-op risk.
 //
 // Shield Lancer's Counter and Butcher's Blender are deliberately absent:
-// session 6 measured no persistent ON instance for Counter (its toggle state
-// is a player buff, not a per-skill instance) and never ran Blender's ON/OFF
-// steps at all. Both are recorded results, not omissions.
+// session 6 observed no persistent ON instance for Counter over the one
+// ON/OFF cycle it measured (its toggle state read as a player buff, not a
+// per-skill instance) and never ran Blender's ON/OFF steps at all. Both are
+// recorded results, not omissions - and the Counter one is "not observed in
+// that pass", not "does not exist".
 //
 // There is no talent id column. Ids move with every game build, so each row's
 // id is resolved at runtime from `global.talentStructMap` by `abilityId`
@@ -171,7 +173,19 @@ inline constexpr bool ToggleRowRequiresMark(const ToggleSkillRow& row)
 // The toggle sub-talent's index inside `global.subTalentMap` (session 6:
 // every one of the five slots was measured at index 1, and an unallocated
 // slot reads 0.000000 with the key present, never absent).
+//
+// That is one character on one build, so it is where the read STARTS, not
+// what it assumes: the index that answers is the one whose `t<talentId>`
+// struct is actually there, which is the shape the research probe's own
+// `tgprobe tgl sub` walks. Were index 1 a character or player slot on
+// another save, a fixed index would leave the guard silently inert with
+// nothing but a `subUnreadable=` counter to show for it (phase S review
+// follow-up); the index that did answer is reported in `toggleguard stat`.
 inline constexpr int kToggleSubTalentMapIndex = 1;
+// How far past the measured index the fallback scan is willing to look. The
+// map is one entry per character slot, so this is a bound on a mistake, not
+// a real limit - `tgprobe tgl sub` uses the same cap on the same array.
+inline constexpr int kToggleSubTalentScanCap = 16;
 
 // Re-cast guard (issue #11, Track A; `toggleguard`). Session 1 measured the
 // double-cast proc re-casting a toggle skill as a `TalentUseClass` call whose
