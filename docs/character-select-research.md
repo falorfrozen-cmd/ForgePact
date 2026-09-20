@@ -109,6 +109,17 @@ at the start - `AGENTS.md`, "Check a Permission Where It Is Used". Click
 coordinates default to the client area, which is exactly what a
 `grab_window` screenshot pixel is.
 
+Each route reads its own delivery signal, and each has exactly one: the
+OS-level route reports how many records the system accepted, the posted-message
+route only whether the message was queued at all. The second matters here more
+than it looks, because nothing acknowledges a posted message afterwards and the
+human controls in this procedure - a hand on Shift, a hand on the mouse - never
+exercise that route's delivery path. A message the system refuses (an integrity
+mismatch against an elevated game, a window destroyed mid-sequence, a full
+queue) comes back as `complete: false` with the message name and the error code
+in `detail`, so a key read of false on that route separates "the message was
+never queued" from "the game did not react to it".
+
 **`menuprobe`, in this plugin** (research build only; the player build answers
 `command unavailable in player build`). Three subcommands:
 
@@ -169,8 +180,11 @@ reply in the `## Results` table under its step id. Keys used below:
    instrument is blind: record `control: fail` and do not measure (a) or (d).
 8. **(a) OS-level input, keyboard.** Press and hold Shift through `hs_input`,
    take both key reads, then release. Record both reads and the foreground
-   window before and after. Repeat over the posted-message route. Record a
-   line per route.
+   window before and after. Repeat over the posted-message route, recording
+   that route's `complete` flag and any `PostMessageW ... failed` detail with
+   it: a refused post is `control: fail` for the route - the message never
+   reached the window - and says nothing about whether the game reads posted
+   keys. Record a line per route.
 9. **Control for the screen oracle** (human). Click Local with the real
    mouse; take `roomprobe` line `[3]` and a `grab_window` screenshot; record
    the room and what the screen shows. Press Escape until the main menu is
@@ -180,8 +194,9 @@ reply in the `## Results` table under its step id. Keys used below:
     screenshot (a `grab_window` pixel is a client coordinate - measured
     2026-09-20, a 1920x1080 client captured as 1920x1080) and click it
     through `hs_input`; then `roomprobe` and a screenshot - the same change
-    as step 9? Escape back. Repeat over the posted-message route. Record
-    both.
+    as step 9? Escape back. Repeat over the posted-message route, again
+    recording its `complete` flag and any delivery error beside the result.
+    Record both.
 11. **(a) keyboard navigation.** At the main menu, send arrows and Enter
     through `hs_input`: does a highlight move, does Enter activate? Record
     `keyboard-nav: observed` or `not observed`. Escape back.
@@ -244,9 +259,9 @@ for the rest.
 | C-1.5 | research build confirmed, room, screenshot | | pass/fail | |
 | C-1.6 | instances per object, button count and positions, size ratio, client rectangle and DPI | | - | |
 | C-1.7 | both key reads while a human holds Shift, then released | | pass/fail | |
-| C-1.8 | `a-sendinput` and `a-postmessage`: both key reads, foreground before and after | | - | |
+| C-1.8 | `a-sendinput` and `a-postmessage`: both key reads, foreground before and after, and each route's `complete` flag with any delivery error | | - | |
 | C-1.9 | room and screen after a real mouse click on Local, and after Escape | | pass/fail | |
-| C-1.10 | `a-sendinput` and `a-postmessage`: room and screen after an injected click | | - | |
+| C-1.10 | `a-sendinput` and `a-postmessage`: room and screen after an injected click, and each route's `complete` flag with any delivery error | | - | |
 | C-1.11 | keyboard navigation observed or not observed | | - | |
 | C-1.12 | the three replies from the engine's own key builtins | | - | |
 | C-1.13 | `menuprobe list UI_Button_obj` at the menu, then each event performed and its result | | pass/fail | |
