@@ -94,6 +94,28 @@ SCRIPT_ROW = re.compile(
 EVENT_ROW = re.compile(r"X\((?P<obj>\w+),\s*(?P<ev>\w+),\s*(?P<flags>[^)]+)\)")
 
 
+def declaration_block(source: str, anchor: str) -> str:
+    """One whole class/struct/enum declaration: `anchor` up to its closing `};`.
+
+    Phase S pins the header's existing declarations against an older commit
+    while the file around them grows, so a whole-file compare no longer says
+    anything useful.
+    """
+    source = source.replace("\r\n", "\n")
+    start = source.index(anchor)
+    if not anchor.endswith("{"):
+        return source[start:source.index(";", start) + 1]
+    depth = 0
+    for index in range(source.index("{", start), len(source)):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start:index + 1]
+    raise AssertionError(f"unterminated declaration: {anchor}")
+
+
 def macro_body(source: str, header: str) -> str:
     start = source.index(header)
     lines = []
@@ -544,14 +566,33 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
         self.assertIn("static ForgePact::ToggleIndicatorState ToggleIndicatorRead(", self.stripped)
 
     def test_production_read_uses_the_documented_shape(self):
-        read_body = function_body(self.plugin, "static ForgePact::ToggleIndicatorState ToggleIndicatorRead(")
-        resolve_body = function_body(self.plugin, "static bool ToggleIndicatorResolveAoeObject(")
-        combined = resolve_body + read_body
-        self.assertIn("GameObject::White_Mage_Soul_Spurn_AOE_obj", combined)
+        # NARROWED in phase S (issue #11, the five-row table): the runtime
+        # names this read used to spell - the AOE object, `isMyClient`,
+        # `purgatory` - now live in ToggleSkillMod.hpp's table and reach the
+        # read as row fields, so they are pinned on row 0 of the table instead
+        # of inside the function. What is still pinned here is the SHAPE the
+        # research doc's ON=1 control proved, which has not changed.
+        read_body = function_body(self.plugin, "static ForgePact::ToggleIndicatorState ToggleIndicatorReadRow(")
+        mark_body = function_body(self.plugin, "static void ToggleIndicatorCountMark(")
+        resolve_body = function_body(self.plugin, "static bool ToggleIndicatorResolveRowObject(")
+        combined = resolve_body + read_body + mark_body
+        self.assertIn("GetObjectName(row.onObject)", resolve_body)
         self.assertIn('"instance_number"', combined)
         self.assertIn('"instance_find"', combined)
-        self.assertIn('"isMyClient"', combined)
-        self.assertIn('"purgatory"', combined)
+        self.assertIn("row.ownershipField", combined)
+        self.assertIn("row.markField", combined)
+        header = (FORGEPACT_DIR / "plugin" / "include" / "ForgePact" / "ToggleSkillMod.hpp").read_text(
+            encoding="utf-8")
+        row0 = header[header.index('{ "soulSpurn"'):header.index('{ "lunarOrbit"')]
+        self.assertIn("GameObject::White_Mage_Soul_Spurn_AOE_obj", row0)
+        self.assertIn('"isMyClient"', row0)
+        self.assertIn('"purgatory"', row0)
+        # Row 0's own aliases still exist and still go through the row read,
+        # so the frozen research sampler measures exactly the shipped read.
+        self.assertIn("ForgePact::kToggleSkillRows[0]",
+                      function_body(self.plugin, "static bool ToggleIndicatorResolveAoeObject("))
+        self.assertIn("ForgePact::kToggleSkillRows[0]",
+                      function_body(self.plugin, "static ForgePact::ToggleIndicatorState ToggleIndicatorRead("))
         # P1b (replan 1): session 3 measured that Player_obj has no
         # playerNumber at all, so ownership is decided from each scanned
         # instance's own isMyClient - no local-player read, no fallback key
@@ -791,24 +832,34 @@ class ToggleIndicatorShipContractTests(unittest.TestCase):
             self.assertIn(f'"{name}"', slot_routine, name)
 
     def test_draw_saves_and_restores_colour_and_alpha(self):
+        # NARROWED in phase S: the band draw itself moved into
+        # ToggleIndicatorDrawMarker, so the save/restore pair now brackets the
+        # CALL to it rather than a loop written inline. The property is the
+        # same one - nothing the marker sets outlives the draw.
         body = function_body(self.plugin, "static void ToggleIndicatorDraw(")
-        get_colour = body.index("draw_get_colour")
-        get_alpha = body.index("draw_get_alpha")
-        first_set = body.index("draw_set_")
-        self.assertLess(get_colour, first_set)
-        self.assertLess(get_alpha, first_set)
-        last_draw = body.rindex("draw_rectangle")
-        restore_alpha = body.rindex("draw_set_alpha")
-        restore_colour = body.rindex("draw_set_colour")
-        self.assertGreater(restore_alpha, last_draw)
-        self.assertGreater(restore_colour, last_draw)
+        marker = function_body(self.plugin, "static void ToggleIndicatorDrawMarker(")
+        call = body.index("ToggleIndicatorDrawMarker(")
+        self.assertLess(body.index("draw_get_colour"), call)
+        self.assertLess(body.index("draw_get_alpha"), call)
+        self.assertGreater(body.rindex("draw_set_alpha"), call)
+        self.assertGreater(body.rindex("draw_set_colour"), call)
+        # Everything that touches the draw state is inside the marker or the
+        # restore - the draw body itself sets nothing before the save.
+        self.assertGreater(body.index("draw_set_"), body.index("draw_get_alpha"))
+        self.assertIn("draw_rectangle", marker)
 
     def test_marker_required_flag_matches_state_flash_purgatory(self):
-        # `## State` (forgepact-toggle-indicator-plan.md) reads `flash:
-        # purgatory` (session 4, D-R2): the shipped draw must require the
-        # Purgatory marker, i.e. call Decide with requireMarker=true.
+        # RE-PINNED in phase S to the per-row rule. `## State` read `flash:
+        # purgatory` (session 4, D-R2) and Soul Spurn is still a marker row, so
+        # it still requires its marker; the draw now asks the table, which
+        # answers true for every marker or timer row and false only for a
+        # `none-needed` one (D-P5).
         body = function_body(self.plugin, "static void ToggleIndicatorDraw(")
-        self.assertIn("ToggleIndicatorModel::Decide(detail, /*requireMarker=*/true)", body)
+        self.assertIn("ToggleIndicatorModel::Decide(detail, ForgePact::ToggleRowRequiresMark(row))", body)
+        header = (FORGEPACT_DIR / "plugin" / "include" / "ForgePact" / "ToggleSkillMod.hpp").read_text(
+            encoding="utf-8")
+        self.assertIn("return row.mark != ToggleOnMark::None;",
+                      function_body(header, "inline constexpr bool ToggleRowRequiresMark("))
 
     # ---- the panel (mirrors every mod_pet_quest_pickup site) ---------------
 
@@ -835,6 +886,38 @@ class ToggleIndicatorShipContractTests(unittest.TestCase):
         )
 
 
+# The five rows session 6 measured, cell by cell, quoted from
+# docs/toggle-skills-research.md "## Results" -> "### Toggle skill table" and
+# "## Decision" -> "### After session 6". `counter` and `blender` are NOT here
+# and must not be: session 6 measured no persistent ON instance for Counter
+# (its toggle state is a player buff) and never ran Blender's ON/OFF steps.
+SHIPPED_TABLE_ROWS = [
+    ("soulSpurn", 12, "White_Mage_Soul_Spurn_AOE_obj", '"isMyClient"', "Marker", '"purgatory"'),
+    ("lunarOrbit", 11, "Exo_Lunar_Orbit_Crescent_Moon_obj", "nullptr", "None", "nullptr"),
+    ("crematus", 13, "Plague_Doctor_Crematus_Controller_obj", "nullptr", "Marker", '"skillContamination"'),
+    ("submergedKnives", 13, "Butcher_Submerged_Knives_Knifehoarder_obj", "nullptr", "None", "nullptr"),
+    ("maelstromOfFrost", 11, "Prophet_Maelstrom_obj", '"isMyClient"', "TimerHeld", '"destroyTimer"'),
+]
+TABLE_ROW = re.compile(
+    r'\{\s*"(?P<ability>\w+)",\s*(?P<sub>\d+),\s*HeroSiege::Objects::GameObject::(?P<obj>\w+),\s*'
+    r'(?P<own>nullptr|"\w+"),\s*ToggleOnMark::(?P<mark>\w+),\s*(?P<field>nullptr|"\w+"),\s*'
+    r'(?P<held>-?[\d.]+)\s*\}',
+    re.S,
+)
+# Names the shipped table now owns: a production function spelling one of
+# these again would be a second, drifting copy of the row set.
+TABLE_ONLY_NAMES = (
+    "White_Mage_Soul_Spurn_AOE_obj", '"purgatory"', '"skillContamination"', '"destroyTimer"',
+    '"soulSpurn"', "kToggleIndicatorTalentId",
+)
+# Nothing in the marker's draw path may reach for a partial or animated shape
+# (D-U9 rejected every countdown; D-U13 chose a static banded outline).
+BANNED_DRAW_NAMES = (
+    "Fraction", "TimerTotal", "timerTotal", "Denominator", "draw_line", "draw_arc",
+    "draw_primitive", "draw_sprite", "draw_ellipse", "draw_rectangle_colour",
+)
+
+
 def git_show(ref_path: str):
     """`git show <ref>:<path>` in ForgePact/, LF-normalised; None if unreadable."""
     try:
@@ -844,6 +927,200 @@ def git_show(ref_path: str):
         ).stdout.decode("utf-8").replace("\r\n", "\n")
     except (OSError, subprocess.CalledProcessError):
         return None
+
+
+class ToggleSkillTableContractTests(unittest.TestCase):
+    """The shipped five-row table, the D-U13 marker and the id resolver (S).
+
+    Companion to test_toggle_skill_behavior.py's `border/*` and `table/*`
+    scenarios, which run the decisions; this class pins what only a source
+    read can see: that the rows are exactly session 6's measured five, that
+    every runtime name lives in the header's table and nowhere else, that the
+    marker and its box are the ones the AUTHOR judged - pinned by equality
+    with the research probe's own constants rather than by a second copy of
+    the numbers - and that the talent ids are resolved at the frame boundary,
+    never in a draw or a hook.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.plugin = PLUGIN_SRC.read_text(encoding="utf-8")
+        cls.stripped = strip_research_blocks(cls.plugin)
+        cls.header = (FORGEPACT_DIR / "plugin" / "include" / "ForgePact" / "ToggleSkillMod.hpp").read_text(
+            encoding="utf-8")
+        start = cls.header.index("inline constexpr ToggleSkillRow kToggleSkillRows[] = {")
+        cls.table = cls.header[start:cls.header.index("\n};", start)]
+        cls.rows = [m.groupdict() for m in TABLE_ROW.finditer(cls.table)]
+        cls.draw_path = "".join(
+            function_body(cls.stripped, sig) for sig in (
+                "static void ToggleIndicatorDraw(",
+                "static void ToggleIndicatorDrawMarker(",
+                "static bool ToggleIndicatorFindSlot(",
+                "static void ToggleIndicatorMarkerBox(",
+            )
+        )
+
+    # ---- S1: the table is session 6's five rows, cell by cell ---------------
+
+    def test_header_includes_only_common(self):
+        includes = [line.strip() for line in self.header.splitlines() if line.strip().startswith("#include")]
+        self.assertEqual(includes, ['#include "Common.hpp"'])
+
+    def test_table_is_exactly_the_five_measured_rows(self):
+        self.assertEqual(len(self.rows), len(SHIPPED_TABLE_ROWS), self.table)
+        objects_hpp = (SDK_INCLUDE / "objects.hpp").read_text(encoding="utf-8")
+        for row, want in zip(self.rows, SHIPPED_TABLE_ROWS):
+            ability, sub, obj, own, mark, field = want
+            self.assertEqual(row["ability"], ability, row)
+            self.assertEqual(int(row["sub"]), sub, row)
+            self.assertEqual(row["obj"], obj, row)
+            self.assertEqual(row["own"].strip(), own, row)
+            self.assertEqual(row["mark"], mark, row)
+            self.assertEqual(row["field"].strip(), field, row)
+            self.assertRegex(objects_hpp, rf"\b{obj}\s*=\s*\d+,", row)
+        # The one row with a held value: session 6 measured Maelstrom's
+        # destroyTimer sitting at exactly -1.000000 while the toggle is on.
+        self.assertEqual(float(self.rows[-1]["held"]), -1.0)
+        for row in self.rows[:-1]:
+            self.assertEqual(float(row["held"]), 0.0, row)
+
+    def test_counter_and_blender_do_not_ship(self):
+        for name in ('"counter"', '"blender"', "Shield_Lancer_Counter_World_obj", "Butcher_Blender_obj"):
+            self.assertNotIn(name, self.header, name)
+            self.assertNotIn(name, self.stripped, name)
+
+    def test_table_carries_no_talent_id(self):
+        # D-P1: ids move with every game build, so the table stores none and
+        # the plugin spells none outside the research block.
+        self.assertNotIn("talentId", self.table)
+        self.assertIsNone(re.search(r"\b240\b", self.header))
+        self.assertNotIn("kToggleIndicatorTalentId", self.stripped)
+
+    # ---- S2: every runtime name lives in the table -------------------------
+
+    def test_row_names_appear_in_the_header_only(self):
+        for name in TABLE_ONLY_NAMES:
+            self.assertNotIn(name, self.stripped, name)
+        for name in ("White_Mage_Soul_Spurn_AOE_obj", '"purgatory"', '"skillContamination"',
+                     '"destroyTimer"', '"soulSpurn"'):
+            self.assertIn(name, self.header, name)
+
+    def test_no_partial_or_animated_draw_anywhere(self):
+        for name in BANNED_DRAW_NAMES:
+            self.assertNotIn(name, self.header, name)
+            self.assertNotIn(name, self.draw_path, name)
+
+    # ---- S3: the marker is the look the author judged ----------------------
+
+    def test_marker_band_count_equals_the_probes(self):
+        soft = function_body(self.plugin, "static void TgProbeSpriteDrawSoft(")
+        probe_bands = int(re.search(r"static constexpr int kBands = (\d+);", soft).group(1))
+        shipped = int(re.search(r"static constexpr int kToggleMarkerBands = (\d+);", self.plugin).group(1))
+        self.assertEqual(shipped, probe_bands)
+
+    def test_marker_colour_equals_the_probes_deepred_preset(self):
+        presets = self.plugin[self.plugin.index("static const TgColourPreset kTgColourPresets[] = {"):]
+        preset = re.search(r'\{\s*"deepred",\s*([\d.]+),\s*([\d.]+),\s*([\d.]+)\s*\}', presets)
+        self.assertIsNotNone(preset)
+        shipped = tuple(
+            re.search(rf"static constexpr double kToggleMarker{c} = ([\d.]+);", self.plugin).group(1)
+            for c in "RGB"
+        )
+        self.assertEqual(shipped, preset.groups())
+
+    def test_marker_draws_nested_bands_with_a_linear_alpha_ramp(self):
+        body = function_body(self.plugin, "static void ToggleIndicatorDrawMarker(")
+        self.assertEqual(body.count('"make_colour_rgb"'), 1)
+        self.assertIn("for (int i = 0; i < kToggleMarkerBands; ++i)", body)
+        self.assertIn("const double t = (double)i / (double)(kToggleMarkerBands - 1);", body)
+        self.assertIn('g_Yytk->CallBuiltin("draw_set_alpha", { RValue(1.0 - t) });', body)
+        self.assertIn("RValue(x - i), RValue(y - i), RValue(x + w + i), RValue(y + h + i)", body)
+        # No scale factor, no frame or time term, no alpha floor but 0.0.
+        for banned in ("g_RuntimeFrame", "sin(", "Scale", "scale", "alphaMin", "floor"):
+            self.assertNotIn(banned, body, banned)
+
+    def test_marker_never_calls_a_research_function(self):
+        for sig in ("static void ToggleIndicatorDrawMarker(", "static void ToggleIndicatorDraw(",
+                    "static void ToggleIndicatorMarkerBox(", "static bool ToggleIndicatorFindSlot("):
+            self.assertNotIn("TgProbe", function_body(self.plugin, sig), sig)
+
+    # ---- S4: the box is derived, never hardcoded ---------------------------
+
+    def test_box_offset_equals_the_probes_and_reproduces_du12(self):
+        pairs = (("kToggleMarkerBoxDX", "kTgTunedBoxDX"), ("kToggleMarkerBoxDY", "kTgTunedBoxDY"),
+                 ("kToggleMarkerBoxDW", "kTgTunedBoxDW"), ("kToggleMarkerBoxDH", "kTgTunedBoxDH"))
+        values = {}
+        for shipped_name, probe_name in pairs:
+            shipped = re.search(rf"static constexpr double {shipped_name} = (-?[\d.]+);", self.plugin)
+            probe = re.search(rf"static constexpr double {probe_name} = (-?[\d.]+);", self.plugin)
+            self.assertIsNotNone(shipped, shipped_name)
+            self.assertIsNotNone(probe, probe_name)
+            self.assertEqual(shipped.group(1), probe.group(1), shipped_name)
+            values[shipped_name] = float(shipped.group(1))
+        body = function_body(self.plugin, "static void ToggleIndicatorMarkerBox(")
+        self.assertIn("outX = std::round(bboxX + kToggleMarkerBoxDX);", body)
+        self.assertIn("outY = std::round(bboxY + kToggleMarkerBoxDY);", body)
+        self.assertIn("outW = std::round(bboxW + kToggleMarkerBoxDW);", body)
+        self.assertIn("outH = std::round(bboxH + kToggleMarkerBoxDH);", body)
+        # D-U12's worked example, in Python, as a check on the constants above
+        # rather than a duplicate of the C++.
+        derived = (
+            round(385.700006 + values["kToggleMarkerBoxDX"]),
+            round(1711.000000 + values["kToggleMarkerBoxDY"]),
+            round(124.700000 + values["kToggleMarkerBoxDW"]),
+            round(139.200000 + values["kToggleMarkerBoxDH"]),
+        )
+        self.assertEqual(derived, (388, 1711, 120, 126))
+        # ...and none of those four numbers is written down in the plugin's
+        # own slot or draw functions, which is the point of deriving them.
+        for literal in ("388", "1711", "120", "126"):
+            self.assertIsNone(re.search(rf"\b{literal}\b", self.draw_path), literal)
+
+    def test_slot_lookup_takes_the_row_id_and_returns_the_derived_box(self):
+        body = function_body(self.plugin, "static bool ToggleIndicatorFindSlot(")
+        self.assertIn("static bool ToggleIndicatorFindSlot(int talentId,", self.plugin)
+        self.assertIn("(int)tid.ToDouble() != talentId", body)
+        self.assertIn("ToggleIndicatorMarkerBox(bx, by, bw, bh, outX, outY, outW, outH);", body)
+
+    # ---- S6: the ids are resolved by name, at the frame boundary -----------
+
+    def test_resolver_walks_the_talent_map_by_ability_id(self):
+        body = function_body(self.plugin, "static bool ToggleTableResolveIds(")
+        for needle in ("N1GetTalentMap(", '"ds_map_find_first"', '"ds_map_find_next"', '"abilityId"',
+                       "ForgePact::kToggleSkillRows[r].abilityId", "g_ToggleTableIds.Set(r, id)"):
+            self.assertIn(needle, body, needle)
+        self.assertIn("if (id >= 0 && N1GetTalentStruct(", body)   # a negative key is never stored
+        self.assertIn("g_ToggleResolveWalks", body)
+
+    def test_resolver_runs_only_from_frame_callback_and_is_bounded(self):
+        frame = function_body(self.plugin, "void FrameCallback(")
+        self.assertIn("ToggleTableResolveIds()", frame)
+        gate = frame[frame.index("if (g_Setup && (fc % 60) == 0 && ToggleTableResolveDue())"):]
+        self.assertIn("ToggleTableResolveIds();", gate[:200])
+        self.assertIn("ToggleTableResolveIds()", self.stripped)
+        # Never in a draw or in the hook: a map walk there would be the
+        # frame-boundary/point-of-use mistake in reverse.
+        for sig in ("static void ToggleIndicatorDraw(", "static bool ToggleIndicatorFindSlot(",
+                    "static RValue& HookTalentUseClass("):
+            self.assertNotIn("ToggleTableResolveIds", function_body(self.plugin, sig), sig)
+        due = function_body(self.plugin, "static bool ToggleTableResolveDue(")
+        self.assertIn("if (ToggleTableUnresolvedRows() == 0) return false;", due)
+        self.assertIn("CurrentRoomKey()", due)
+        self.assertIn("INT64_MIN", due)          # an unreadable room is never stored
+        self.assertIn("g_ToggleResolveWalked = false;", due)
+        self.assertIn("return !g_ToggleResolveWalked;", due)
+
+    def test_both_stat_outputs_report_every_row(self):
+        line = function_body(self.stripped, "static std::string ToggleTableRowsLine(")
+        for needle in ("abilityId", ":talentId=", "unresolved", "resolveWalks=", "unresolvedRows="):
+            self.assertIn(needle, line, needle)
+        for sig in ("static void ToggleBorderStats(", "static void ToggleGuardStats("):
+            self.assertIn("ToggleTableRowsLine()", function_body(self.stripped, sig), sig)
+
+    def test_unresolved_rows_are_skipped_and_counted_in_the_draw(self):
+        body = function_body(self.plugin, "static void ToggleIndicatorDraw(")
+        self.assertIn("if (talentId < 0) { InterlockedIncrement(&g_TibUnresolved); continue; }", body)
+        self.assertIn("unresolved=", function_body(self.stripped, "static std::string ToggleBorderCountersLine("))
 
 
 class ToggleGuardContractTests(unittest.TestCase):
@@ -948,11 +1225,16 @@ class ToggleGuardContractTests(unittest.TestCase):
                           "return g_OrigTalentUseClass(S, O, R, argc, A);")
         object_index = body.index('"object_index"')
         obj = body.index("GameObject::Universal_Double_Cast_obj")
-        talent = body.index("kToggleIndicatorTalentId")
+        # NARROWED in phase S: the guarded talent is no longer a literal
+        # constant but the shipped table's membership test, which is what now
+        # follows the caller identification.
+        talent = body.index("ToggleTableRowForTalentId(")
         self.assertLess(endif, fast)
         self.assertLess(fast, object_index)
         self.assertLess(object_index, obj)
         self.assertLess(obj, talent)
+        # D-P3: the sub-talent is read only after membership is settled.
+        self.assertLess(talent, body.index("ToggleReadSubTalent("))
 
     def test_hook_reads_nothing_it_must_not(self):
         body = self.hook
@@ -973,12 +1255,63 @@ class ToggleGuardContractTests(unittest.TestCase):
         self.assertLess(body.index('"object_index"'), body.index("N1ObjectIndex("))
         self.assertNotIn(".m_Kind == VALUE_REAL || oi.", body)
         self.assertIsNone(re.search(r"\boi\.m_Kind\b", body))
-        self.assertIsNone(re.search(r"\.ToDouble\(\)", body[:body.index("ToggleGuardModel kGuard")]))
+        # NARROWED in phase S: the cut point was the kGuard construction,
+        # which now follows the talent read (a legitimate `.ToDouble()`). The
+        # region this test is about is the caller identification, which ends
+        # where procSeen is counted.
+        caller_region = body[:body.index("if (callerIsDoubleCast) InterlockedIncrement(&g_TgdProcSeen);")]
+        self.assertIsNone(re.search(r"\.ToDouble\(\)", caller_region))
+
+    def test_sub_talent_is_read_at_the_call_after_the_membership_test(self):
+        # D-P3, and AGENTS.md's "Check a Permission Where It Is Used": the
+        # permission is read HERE, with the talent the call named, after the
+        # caller check and after membership - never from anything cached at a
+        # frame boundary, which would answer for the previous frame.
+        body = self.hook
+        caller = body.index("GameObject::Universal_Double_Cast_obj")
+        member = body.index("ToggleTableRowForTalentId(")
+        sub = body.index("ToggleReadSubTalent(")
+        self.assertLess(caller, member)
+        self.assertLess(member, sub)
+        self.assertNotIn('"subTalentMap"', body[:member])
+        read = function_body(self.plugin, "static ToggleSubTalentState ToggleReadSubTalent(")
+        for needle in ('"variable_global_exists"', '"variable_global_get"', '"subTalentMap"',
+                       '"array_length"', '"array_get"', "ForgePact::kToggleSubTalentMapIndex",
+                       '"t" + std::to_string(talentId)', '"s" + std::to_string(slot)'):
+            self.assertIn(needle, read, needle)
+        self.assertIn("map.m_Kind != VALUE_ARRAY", read)
+        self.assertIn("return level.ToDouble() > 0.0 ? ToggleSubTalentState::Allocated", read)
+        # The measured index lives in the header as a named constant whose
+        # value is `## State`'s `subidx:`.
+        self.assertIn("inline constexpr int kToggleSubTalentMapIndex = 1;", self.header)
+
+    def test_refusal_is_gated_on_the_sub_talent_and_fails_open(self):
+        body = self.hook
+        refuse = body.index("if (refuseByCaller) {")
+        tail = body[refuse:]
+        self.assertIn("if (sub == ToggleSubTalentState::Allocated) {", tail)
+        self.assertLess(tail.index("ToggleSubTalentState::Allocated"), tail.index("g_TgdRefused"))
+        self.assertIn("if (sub == ToggleSubTalentState::NotAllocated) InterlockedIncrement(&g_TgdSubOff);", tail)
+        self.assertIn("else InterlockedIncrement(&g_TgdSubUnreadable);", tail)
+        # Nothing about the toggle's own state is consulted (D-N1 still).
+        for forbidden in ("instance_number", "instance_find", "ToggleIndicatorRead"):
+            self.assertNotIn(forbidden, function_body(self.plugin, "static ToggleSubTalentState ToggleReadSubTalent("))
+
+    def test_guard_stat_reports_the_new_counters(self):
+        line = function_body(self.stripped, "static std::string ToggleGuardCountersLine(")
+        for key in ("subOff=", "subUnreadable="):
+            self.assertIn(key, line, key)
 
     def test_refusal_returns_the_result_without_the_original(self):
+        # NARROWED in phase S: the Refuse decision is now taken in one place
+        # (the membership test) and acted on in another (after D-P3's
+        # sub-talent gate), so the branch that actually refuses is the one to
+        # pin - it must still return the untouched result, never the original.
         body = self.hook
-        refuse = body.index("ToggleGuardDecision::Refuse")
-        self.assertIn("return R;", body[refuse:body.index("}", refuse)])
+        refuse = body.index("if (sub == ToggleSubTalentState::Allocated) {")
+        branch = body[refuse:body.index("}", refuse)]
+        self.assertIn("return R;", branch)
+        self.assertNotIn("g_OrigTalentUseClass", branch)
 
     def test_talent_use_hook_is_unchanged_from_ab6fed5(self):
         old = git_show("ab6fed5:plugin/ModuleMain.cpp")
@@ -1037,15 +1370,38 @@ SEED_ROW = re.compile(
     r'\{\s*"(?P<ability>\w+)",\s*HeroSiege::Objects::GameObject::(?P<obj>\w+),\s*(?P<talent>[^,]+),'
     r'\s*(?P<marker>[^,]+),\s*(?P<timer>[^,]+),\s*(?P<sub>\d+)\s*\}'
 )
-# The production bodies the research build must leave exactly as T1 shipped
-# them (62a67d2): nothing outside a research block changes in phase R.
+# The production bodies the research build had to leave exactly as T1 shipped
+# them (62a67d2): nothing outside a research block changed in phase R.
+#
+# NARROWED in phase S (issue #11, the five-row table), not deleted: phase S
+# ships the table itself, so five of the six entries are now code it changes
+# on purpose, and pinning them to T1 would only assert that the phase did not
+# happen. Each dropped entry is covered by its own contract test instead:
+#   - ToggleIndicatorRead        -> row 0's alias, pinned to delegate to
+#                                   ToggleIndicatorReadRow (the read shape is
+#                                   pinned in ToggleIndicatorReadContractTests)
+#   - ToggleIndicatorFindSlot    -> takes the row's resolved talent id and
+#                                   returns D-U12's derived box (S4's test)
+#   - ToggleIndicatorDraw        -> loops the shipped rows and draws D-U13's
+#                                   marker (S3's and S5's tests)
+#   - HookTalentUseClass         -> membership on the table plus D-P3's
+#                                   sub-talent gate (ToggleGuardContractTests)
+#   - FrameCallback              -> gains the once-a-second id resolver (S6)
+# Hook_DrawHudBuffs is the one body phase S genuinely leaves alone, so it is
+# the one this tuple still holds.
 UNCHANGED_SINCE_T1 = (
-    "static ForgePact::ToggleIndicatorState ToggleIndicatorRead(",
-    "static bool ToggleIndicatorFindSlot(",
-    "static void ToggleIndicatorDraw(",
-    "static RValue& HookTalentUseClass(",
     "static RValue& Hook_DrawHudBuffs(",
-    "void FrameCallback(",
+)
+
+# The research block phase S must not touch at all: the sprite look probe the
+# author judged the marker against, and the whole `tgprobe tgl` instrument.
+# The shipped marker is pinned EQUAL to the probe's own constants rather than
+# calling into it, so these staying byte-identical is what makes that pin mean
+# something.
+UNCHANGED_PROBE_BODIES = (
+    "static void TgProbeSpriteDrawSoft(",
+    "static void TgProbeSpriteTunedBox(",
+    "static bool TgProbeSpriteBaseBox(",
 )
 
 
@@ -1831,7 +2187,36 @@ class ToggleTableProbeContractTests(unittest.TestCase):
             self.skipTest("git cannot read 7169440")
         new_hpp = (FORGEPACT_DIR / "plugin" / "include" / "ForgePact" / "ToggleSkillMod.hpp").read_text(
             encoding="utf-8").replace("\r\n", "\n")
-        self.assertEqual(new_hpp, old_hpp)
+        # NARROWED in phase S: the whole-file equality is replaced by
+        # per-declaration equality, because phase S adds the shipped table to
+        # this header - and the table is the ONLY addition. Every decision the
+        # header already made is still byte for byte what it was.
+        for anchor in ("enum class ToggleIndicatorState", "struct ToggleIndicatorReadDetail {",
+                       "class ToggleIndicatorModel {", "enum class ToggleGuardDecision",
+                       "class ToggleGuardModel {", "class ToggleGuardMod {"):
+            self.assertEqual(declaration_block(new_hpp, anchor), declaration_block(old_hpp, anchor), anchor)
+
+    def test_probe_bodies_unchanged_from_the_s_round_base(self):
+        # The shipped marker's band count and colour are pinned EQUAL to the
+        # sprite look probe's (S3/S4), so the probe drifting would silently
+        # move the shipped look. Phase S touches no research code at all.
+        old = git_show("2f40223:plugin/ModuleMain.cpp")
+        if old is None:
+            self.skipTest("git cannot read 2f40223")
+        signatures = list(UNCHANGED_PROBE_BODIES)
+        signatures += sorted({
+            m.group(0) for m in re.finditer(r"^static [\w:<>&* ]*?\bTgProbeTgl\w*\(", self.plugin, re.M)
+        })
+        self.assertGreater(len(signatures), len(UNCHANGED_PROBE_BODIES))
+        for signature in signatures:
+            self.assertEqual(function_body(self.plugin, signature), function_body(old, signature), signature)
+        # The `tgl` seed table itself, which carries every candidate row.
+        for source in (self.plugin, old):
+            self.assertIn("static const TgTglSeed kTgTglSeeds[] = {", source)
+        start_new = self.plugin.index("static const TgTglSeed kTgTglSeeds[] = {")
+        start_old = old.index("static const TgTglSeed kTgTglSeeds[] = {")
+        self.assertEqual(self.plugin[start_new:self.plugin.index("};", start_new)].replace("\r\n", "\n"),
+                         old[start_old:old.index("};", start_old)].replace("\r\n", "\n"))
 
 
 if __name__ == "__main__":

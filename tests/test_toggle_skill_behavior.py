@@ -63,11 +63,39 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
         constants = "\n".join([
             declaration(cls.plugin, "static constexpr int kToggleIndicatorScanCap"),
             declaration(cls.plugin, "static constexpr int kToggleIndicatorTalentId"),
+            # S (the shipped marker, D-U12/D-U13): the band count, the deepred
+            # triple and the derived-box offset, spliced rather than restated
+            # so a scenario asserts against the shipped numbers themselves.
+            # The ` =` keeps `kToggleMarkerB` from matching `kToggleMarkerBoxDX`,
+            # which is an earlier line with the same prefix.
+            declaration(cls.plugin, "static constexpr int kToggleMarkerBands ="),
+            declaration(cls.plugin, "static constexpr double kToggleMarkerR ="),
+            declaration(cls.plugin, "static constexpr double kToggleMarkerG ="),
+            declaration(cls.plugin, "static constexpr double kToggleMarkerB ="),
+            declaration(cls.plugin, "static constexpr double kToggleMarkerBoxDX ="),
+            declaration(cls.plugin, "static constexpr double kToggleMarkerBoxDY ="),
+            declaration(cls.plugin, "static constexpr double kToggleMarkerBoxDW ="),
+            declaration(cls.plugin, "static constexpr double kToggleMarkerBoxDH ="),
         ])
         production = "\n".join([
+            # S: the row-parameterised read and its row-0 aliases, in the
+            # order the plugin defines them (the discriminator helper leans on
+            # ToggleIndicatorReadTruth).
+            implementation(cls.plugin, "static bool ToggleIndicatorResolveRowObject("),
             implementation(cls.plugin, "static bool ToggleIndicatorResolveAoeObject("),
             implementation(cls.plugin, "static bool ToggleIndicatorReadTruth("),
+            implementation(cls.plugin, "static void ToggleIndicatorCountMark("),
+            implementation(cls.plugin, "static ForgePact::ToggleIndicatorState ToggleIndicatorReadRow("),
             implementation(cls.plugin, "static ForgePact::ToggleIndicatorState ToggleIndicatorRead("),
+            # S: the runtime-resolved talent ids the border and the guard key
+            # off. The walk itself is not spliced (it needs the talent-map
+            # helpers); test_toggle_skill_contract.py pins that.
+            implementation(cls.plugin, "struct ToggleTableIds {") + ";",
+            declaration(cls.plugin, "static ToggleTableIds g_ToggleTableIds"),
+            declaration(cls.plugin, "static volatile long g_ToggleResolveWalks"),
+            implementation(cls.plugin, "static int ToggleTableUnresolvedRows("),
+            implementation(cls.plugin, "static int ToggleTableRowForTalentId("),
+            implementation(cls.plugin, "static std::string ToggleTableRowsLine("),
             # P2 (the shipped indicator): the draw itself, and the slot
             # lookup it calls. `g_ToggleBorderOn`/the counters are plain
             # globals, spliced verbatim so a scenario can drive/inspect them
@@ -75,7 +103,9 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
             # default, same as in the plugin.
             declaration(cls.plugin, "static std::atomic<bool> g_ToggleBorderOn"),
             declaration(cls.plugin, "static volatile long g_TibDrawn"),
+            implementation(cls.plugin, "static void ToggleIndicatorMarkerBox("),
             implementation(cls.plugin, "static bool ToggleIndicatorFindSlot("),
+            implementation(cls.plugin, "static void ToggleIndicatorDrawMarker("),
             implementation(cls.plugin, "static void ToggleIndicatorDraw("),
             # T1 (issue #11, Track A): the re-cast guard's real hook, its
             # trampoline slot, counters and cached object index, verbatim,
@@ -86,6 +116,10 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
             declaration(cls.plugin, "static PFUNC_YYGMLScript g_OrigTalentUseClass"),
             declaration(cls.plugin, "static volatile long g_TgdRefused"),
             declaration(cls.plugin, "static std::atomic<long> g_ToggleGuardDcObjIdx"),
+            # S (D-P3): the sub-talent read the refusal is gated on, verbatim,
+            # so every fail-open shape is exercised against the real code.
+            declaration(cls.plugin, "enum class ToggleSubTalentState"),
+            implementation(cls.plugin, "static ToggleSubTalentState ToggleReadSubTalent("),
             implementation(cls.plugin, "static RValue& HookTalentUseClass("),
             # R (issue #11 generalisation, research build only): the
             # candidate table's generalised read, its row-0 comparison and
@@ -328,6 +362,51 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
         self.assertScenario("indicator_on/slot_failures_are_split/noTalent")
         self.assertScenario("indicator_on/slot_failures_are_split")
 
+    # ---- S: the D-U13 marker, the D-U12 box and the per-row discriminators --
+
+    def test_border_marker_colour_is_deepred(self):
+        for suffix in ("/r", "/g", "/b", ""):
+            self.assertScenario("border/marker_colour_is_deepred" + suffix)
+
+    def test_border_marker_alpha_ramps_outwards(self):
+        for suffix in ("/strictly_decreasing", "/innermost", "/outermost", ""):
+            self.assertScenario("border/marker_alpha_ramps_outwards" + suffix)
+
+    def test_border_marker_box_is_derived_and_whole_pixel(self):
+        # D-U12's worked example end to end: a fractional navBbox read becomes
+        # the accepted whole-pixel box, derived rather than hardcoded.
+        for suffix in ("/x1", "/y1", "/x2", "/y2", ""):
+            self.assertScenario("border/marker_box_is_derived_and_whole_pixel" + suffix)
+
+    def test_border_soul_spurn_marker_unchanged_semantics(self):
+        self.assertScenario("border/soul_spurn_marker_unchanged_semantics/drawn")
+        self.assertScenario("border/soul_spurn_marker_unchanged_semantics")
+
+    def test_border_two_rows_two_borders(self):
+        for suffix in ("/drawn", "/slot_lookups", ""):
+            self.assertScenario("border/two_rows_two_borders" + suffix)
+
+    def test_border_no_discriminator_row_lights_on_any_own(self):
+        self.assertScenario("border/no_discriminator_row_lights_on_any_own/requireMarker")
+        self.assertScenario("border/no_discriminator_row_lights_on_any_own")
+
+    def test_border_ownership_none_counts_every_instance_own(self):
+        # D-N3: the row names no ownership field, so the read never asks and a
+        # throwing `isMyClient` cannot turn the row Unreadable.
+        self.assertScenario("border/ownership_none_counts_every_instance_own")
+
+    def test_border_timer_discriminator(self):
+        self.assertScenario("border/timer_at_infinite_draws_full")
+        self.assertScenario("border/timer_counting_down_draws_nothing/off")
+        self.assertScenario("border/timer_counting_down_draws_nothing")
+        self.assertScenario("border/timer_other_negative_draws_nothing")
+        for suffix in ("/undefined", "/throws", ""):
+            self.assertScenario("border/timer_unreadable_draws_nothing_and_counts" + suffix)
+
+    def test_table_unresolved_row_skipped_and_counted(self):
+        for suffix in ("/drawn", "/no_enumeration", ""):
+            self.assertScenario("table/unresolved_row_skipped_and_counted" + suffix)
+
     # ---- T1: the re-cast guard, HookTalentUseClass (issue #11, Track A) ----
 
     def test_guard_off_proc_passes_and_no_runtime_call(self):
@@ -393,6 +472,35 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
             self.assertScenario(label + "/selfUnreadable")
             self.assertScenario(label + "/refused")
             self.assertScenario(label)
+
+    # ---- S: the guard's sub-talent gate (D-P3) -----------------------------
+
+    def test_guard_on_table_talent_with_subtalent_refused(self):
+        for suffix in ("/refused", "/subOff", ""):
+            self.assertScenario("guard_on/table_talent_with_subtalent_refused" + suffix)
+
+    def test_guard_on_table_talent_without_subtalent_passes(self):
+        # Session 6's measured unallocated form: `s12` reads 0.000000, the key
+        # present. The proc is then a plain cast and must not be eaten.
+        for suffix in ("/subOff", "/refused", ""):
+            self.assertScenario("guard_on/table_talent_without_subtalent_passes" + suffix)
+
+    def test_guard_on_subtalent_unreadable_passes_and_counts(self):
+        for shape in ("global_absent", "not_an_array", "index_out_of_range",
+                      "talent_key_absent", "slot_non_numeric", "read_throws"):
+            label = f"guard_on/subtalent_unreadable_passes_and_counts/{shape}"
+            self.assertScenario(label + "/subUnreadable")
+            self.assertScenario(label + "/refused")
+            self.assertScenario(label)
+        self.assertScenario("guard_on/subtalent_unreadable_passes_and_counts")
+
+    def test_guard_on_non_table_talent_passes(self):
+        for suffix in ("/refused", "/sub_not_read", ""):
+            self.assertScenario("guard_on/non_table_talent_passes" + suffix)
+
+    def test_guard_on_unresolved_row_passes(self):
+        for suffix in ("/refused", "", "/unnamed_talent_never_matches"):
+            self.assertScenario("guard_on/unresolved_row_passes" + suffix)
 
     # ---- R: the research table (`tgprobe tgl`, issue #11 generalisation) ----
 

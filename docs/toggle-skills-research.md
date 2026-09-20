@@ -30,6 +30,17 @@ procedure` → `### Session 6`), whose result is `## Results` → `### Toggle
 skill table`. Nothing a player runs changes yet: the outline and the guard
 still cover Soul Spurn only.
 
+Status (2026-09-20): **Tracks A and B generalised — five skills ship, off by
+default.** The outline and the re-cast guard both key off one table of the
+five toggle skills session 6 confirmed: White Mage **Soul Spurn**, Exo **Lunar
+Orbit**, Plague Doctor **Crematus**, Butcher **Submerged Knives** and Prophet
+**Maelstrom of Frost**. Talent ids are resolved at runtime from each row's
+`abilityId`, the marker is D-U13's `soft` banded outline in `deepred
+(140,24,28)` at D-U12's derived whole-pixel box, and the guard refuses a
+double-cast proc only when that row's toggle sub-talent is allocated, read at
+the call from `global.subTalentMap[1]`. `counter` and `blender` do not ship.
+Design and evidence: `## Decision` → `### S design (D-P1, D-P3, D-P5, D-U13)`.
+
 Status (2026-09-19, session 6 recorded): four rows beside Soul Spurn measured
 as persistent-instance toggles with a shippable ON discriminator
 (`lunarOrbit`, `crematus`, `submergedKnives`, `maelstromOfFrost`; `## Decision`
@@ -2122,6 +2133,105 @@ phase writes. `counter` and `blender` are results, not defects: neither
 measured as a persistent-instance toggle this session (`counter`'s toggle
 state lives on a player buff, and `blender` was judged by the tester not to
 be a toggle skill at all), so neither ships in this design.
+
+### S design (D-P1, D-P3, D-P5, D-U13)
+
+What phase S actually ships, and why each part is shaped the way it is.
+Everything below rests on `### After session 6` above and on the look sessions
+recorded in `## Instrument` → `### Sprite look probe` (rounds 7–10).
+
+**The table (D-P1).** One `constexpr` array in
+`plugin/include/ForgePact/ToggleSkillMod.hpp`, five rows, in this order:
+
+| `abilityId` | sub-talent slot | ON object | ownership | ON discriminator |
+|---|---|---|---|---|
+| `soulSpurn` | `s12` | `White_Mage_Soul_Spurn_AOE_obj` | `isMyClient` | marker `purgatory` |
+| `lunarOrbit` | `s11` | `Exo_Lunar_Orbit_Crescent_Moon_obj` | none | `none-needed` |
+| `crematus` | `s13` | `Plague_Doctor_Crematus_Controller_obj` | none | marker `skillContamination` |
+| `submergedKnives` | `s13` | `Butcher_Submerged_Knives_Knifehoarder_obj` | none | `none-needed` |
+| `maelstromOfFrost` | `s11` | `Prophet_Maelstrom_obj` | `isMyClient` | timer `destroyTimer == -1.000000` |
+
+Three of those are *controller* objects, not the damage objects the static
+search predicted: session 6 rejected `Exo_Lunar_Orbit_obj` (its timer passes
+through `-1` on a plain cast, `atPredicted=108`), `Plague_Doctor_Crematus_obj`
+(the projectile outlives the toggle by ~428 frames) and
+`Butcher_Submerged_Knives_obj` (flickers, and reacts to plain casts). Those
+three have no readable ownership field — a parallel probe row with
+`ownership=isMyClient` read `unreadable` on every sample (4212 and 2586) — so
+they carry no ownership field and every instance counts as own (D-N3, the
+offline-only rule), and an ownership read that throws can never turn such a
+row Unreadable, because the read never asks.
+
+**No talent ids are stored.** Session 6 read them (`soulSpurn` 240,
+`lunarOrbit` 358, `crematus` 283, `submergedKnives` 377, `maelstromOfFrost`
+430), but ids move with every game build, so the shipped code walks
+`global.talentStructMap` and matches each struct's own `abilityId` against the
+table's (repo `AGENTS.md`, "Never Call an Address You Resolved by Hand" →
+resolve by name). The walk runs from `FrameCallback` at the existing
+once-a-second cadence, never in a draw or a hook, stops being attempted once
+every row is resolved, and re-walks at most once per room. An unresolved row
+is skipped by both mods and counted; `toggleborder stat` and `toggleguard
+stat` print `<abilityId>:talentId=<n|unresolved>` per row plus `resolveWalks=`
+and `unresolvedRows=`, so a live session can see what is actually covered
+instead of assuming.
+
+**The discriminator (D-P5).** Each row's discriminator only decides which of
+T1's `markedMine` / `unmarkedMine` / `markUnreadableMine` an own instance
+counts into, so `ToggleIndicatorModel::Decide` is byte-identical to what it
+was: a `marker` field is numeric > 0 (today's `purgatory` rule); a `timer`
+field must read back a number *exactly* equal to the row's measured held
+value, with no "≤ 0 means infinite" shortcut, because a plain cast's timer
+passes through other negatives (`-0.737424` was measured); `none-needed` runs
+the decision with `requireMarker=false`, and is only used for a row whose
+plain form was measured to create no instance of that object at all. A read
+that is not a number fails as a unit and never lights anything.
+
+**The marker (D-U11, D-U12, D-U13).** The `soft` style in `deepred
+(140,24,28)`, scale 1.0, alpha floor 0: ten nested single-pixel
+`draw_rectangle` outline bands growing outwards, alpha falling linearly from
+full at the innermost band to zero at the outermost, inside the same
+colour/alpha save and restore T1 used. Drawn at a box *derived* from the
+slot's own live `navBbox` — `x + 2.3`, `y` unchanged, `w - 4.7`, `h - 13.2`,
+each rounded to whole pixels — never at the four numbers D-U12 accepted
+(`120 x 126 @388,1711`), which are evidence for that slot at that tester's HUD
+scale. The shipped code re-implements the probe's `soft` draw rather than
+calling it, and contract tests pin the band count, the colour triple and the
+box offset EQUAL to the probe's own constants, which is what stops the shipped
+look drifting from the one the author judged.
+
+**The guard's sub-talent gate (D-P3).** Membership is `a0` equalling a
+resolved row id. Only then, and only at the call, with the talent the call
+itself named, does the hook read
+`global.subTalentMap[1].t<talentId>.s<NN>`: numeric > 0 refuses; the measured
+unallocated form (`0.000000`, key present) passes and counts `subOff`; the
+global missing, not an array, the index out of range, `t<id>` absent, `s<NN>`
+absent or non-numeric, or a throw anywhere all pass and count
+`subUnreadable`. Fail-open is vanilla behaviour, and this is the
+point-of-use rule from the hub guide's Known Limitations item 13 — a
+permission read at a frame boundary would answer for the previous frame. It
+removes the cost D-U4 accepted as a Known Limitation: a plain cast of a
+covered skill keeps its double-cast re-cast.
+
+**What is not built, and who rejected it.** D-P2 (a plain cast drawing a
+countdown) and D-P4 (a latched timer total) are **rejected by the author**
+(D-U9, verbatim: "No countdown for plain casts"). There is no fraction draw,
+no timer total, no latch and no partial border anywhere; a timer is read only
+as a row's ON discriminator, per draw, and never remembered between draws.
+`counter` does not ship — session 6 measured no persistent ON instance for it,
+its toggle state being player buff 104 on the generic `Draw_Player_Buff_obj`,
+and `Charge_Controller_obj` is not removed on OFF. `blender` does not ship —
+its C2/C5/C6 steps were never run (`blocked`); the tester's "not a toggle
+skill" is an impression, recorded as one. Both are results, not omissions.
+
+**The one accepted risk.** `maelstromOfFrost`'s discriminator is per-draw
+exact equality with `-1.000000`. Its own plain cast read `atPredicted=0` over
+4288 draws, but that is *one* plain cast — "not observed at `-1`", never
+"proven never `-1`" — and Lunar Orbit's plain form did read exactly
+`-1.000000` on 108 of 1341 sampled draws on a different object. The
+alternative (requiring the held value across N draws) means remembering a
+timer value between draws, which the design forbids. The residual risk is in
+the hub guide's Known Limitations item 16 and is checked by eye in the
+ship-build confirmation.
 
 ### P1: the indicator's read, control and slot design
 

@@ -4,8 +4,11 @@
 
 namespace ForgePact {
 
-// Toggle-skill active indicator (issue #11, Track B): outlines Soul Spurn's
-// skill-bar slot while the Purgatory-toggled AOE is live. This header holds
+// Toggle-skill active indicator (issue #11, Track B): marks the skill-bar slot
+// of a toggle skill while its toggled-on instance is live - Soul Spurn's
+// Purgatory drain in T1, and every row of kToggleSkillRows below since phase
+// S. The decision is per row and identical in shape; only the row's
+// discriminator differs. This header holds
 // only the game-independent decision - no RValue, no CallBuiltin - so every
 // branch is unit-testable without a game process. The actual read (resolving
 // the AOE object, counting instances, reading each one's own `isMyClient`
@@ -97,6 +100,79 @@ inline const char* ToggleIndicatorStateName(ToggleIndicatorState s)
     }
 }
 
+// ---- the shipped toggle-skill table (issue #11, phase S) -------------------
+// Session 6 measured five toggle skills that keep a persistent instance alive
+// while the toggle is on, and, per row, how that instance tells a toggle from
+// a plain cast (docs/toggle-skills-research.md, "## Results" -> "### Toggle
+// skill table" and "## Decision" -> "### After session 6"). Every runtime
+// name the indicator and the guard need lives HERE and nowhere else in the
+// plugin: the object enumerator, the ownership field, the discriminator field
+// and the sub-talent slot.
+//
+// Three rows ship a CONTROLLER object rather than the damage object the static
+// search predicted, because session 6 rejected the predicted one in each case
+// (Lunar Orbit's passes through the held timer value on a plain cast, Crematus'
+// projectile outlives the toggle, Submerged Knives' flickers). Those three
+// controllers have no readable ownership field either, so they carry
+// `ownershipField = nullptr` and every instance counts as own - ForgePact is
+// offline-only, so that is the documented D-N3 behaviour, not a co-op risk.
+//
+// Shield Lancer's Counter and Butcher's Blender are deliberately absent:
+// session 6 measured no persistent ON instance for Counter (its toggle state
+// is a player buff, not a per-skill instance) and never ran Blender's ON/OFF
+// steps at all. Both are recorded results, not omissions.
+//
+// There is no talent id column. Ids move with every game build, so each row's
+// id is resolved at runtime from `global.talentStructMap` by `abilityId`
+// (D-P1; repo AGENTS.md, "Never Call an Address You Resolved by Hand" ->
+// resolve by name), and a row whose id is not resolved yet is skipped by both
+// mods and counted.
+enum class ToggleOnMark {
+    Marker,      // an own instance whose `markField` reads numeric > 0 is ON
+    TimerHeld,   // an own instance whose `markField` reads EXACTLY `heldValue` is ON
+    None,        // any own instance is ON - the plain form creates no instance at all
+};
+
+struct ToggleSkillRow {
+    const char* abilityId;                    // the talent struct's own `abilityId` string
+    int subTalentSlot;                        // the toggle sub-talent's `s<NN>` key
+    HeroSiege::Objects::GameObject onObject;  // the instance that exists while the toggle is on
+    const char* ownershipField;               // nullptr: no readable ownership field (D-N3)
+    ToggleOnMark mark;
+    const char* markField;                    // Marker/TimerHeld only; nullptr for None
+    double heldValue;                         // TimerHeld only: the measured held value
+};
+
+inline constexpr ToggleSkillRow kToggleSkillRows[] = {
+    { "soulSpurn", 12, HeroSiege::Objects::GameObject::White_Mage_Soul_Spurn_AOE_obj,
+      "isMyClient", ToggleOnMark::Marker, "purgatory", 0.0 },
+    { "lunarOrbit", 11, HeroSiege::Objects::GameObject::Exo_Lunar_Orbit_Crescent_Moon_obj,
+      nullptr, ToggleOnMark::None, nullptr, 0.0 },
+    { "crematus", 13, HeroSiege::Objects::GameObject::Plague_Doctor_Crematus_Controller_obj,
+      nullptr, ToggleOnMark::Marker, "skillContamination", 0.0 },
+    { "submergedKnives", 13, HeroSiege::Objects::GameObject::Butcher_Submerged_Knives_Knifehoarder_obj,
+      nullptr, ToggleOnMark::None, nullptr, 0.0 },
+    { "maelstromOfFrost", 11, HeroSiege::Objects::GameObject::Prophet_Maelstrom_obj,
+      "isMyClient", ToggleOnMark::TimerHeld, "destroyTimer", -1.0 },
+};
+inline constexpr int kToggleSkillRowCount =
+    (int)(sizeof(kToggleSkillRows) / sizeof(kToggleSkillRows[0]));
+
+// A `None` row lights on any own instance, so the shared decision runs with
+// requireMarker=false for it and true for every other row. Either way
+// ToggleIndicatorModel::Decide above is untouched - each row's discriminator
+// only decides which of markedMine/unmarkedMine/markUnreadableMine an own
+// instance is counted into (D-P5).
+inline constexpr bool ToggleRowRequiresMark(const ToggleSkillRow& row)
+{
+    return row.mark != ToggleOnMark::None;
+}
+
+// The toggle sub-talent's index inside `global.subTalentMap` (session 6:
+// every one of the five slots was measured at index 1, and an unallocated
+// slot reads 0.000000 with the key present, never absent).
+inline constexpr int kToggleSubTalentMapIndex = 1;
+
 // Re-cast guard (issue #11, Track A; `toggleguard`). Session 1 measured the
 // double-cast proc re-casting a toggle skill as a `TalentUseClass` call whose
 // `self` is `Universal_Double_Cast_obj`, with no `TalentUse` call in front of
@@ -104,16 +180,25 @@ inline const char* ToggleIndicatorStateName(ToggleIndicatorState s)
 // press. The guard refuses exactly that call: guard on, caller is the
 // double-cast object, talent is a guarded one. It never reads the toggle's
 // state (docs/toggle-skills-research.md, "## Decision" -> "### Track A design
-// (D-N1)": the state cannot tell "just turned off" from "never on"), so a
-// double-cast proc of a guarded talent is refused whether or not Purgatory
-// is allocated. Everything else - the player's own cast, the chained
-// follow-up casts, a proc of any other talent - passes.
+// (D-N1)": the state cannot tell "just turned off" from "never on").
+// Everything else - the player's own cast, the chained follow-up casts, a proc
+// of any other talent - passes.
+//
+// Phase S widens "a guarded one" from Soul Spurn alone to every row of
+// kToggleSkillRows whose talent id has been resolved at runtime, and gates the
+// refusal itself on that row's toggle sub-talent being allocated, read at the
+// call in HookTalentUseClass (D-P3). This model still decides only the part
+// that needs no game call; the sub-talent read, being a game read that can
+// fail, lives with the hook and fails open there.
 //
 // Game-independent like ToggleIndicatorModel above: who the caller is and
 // which talent it names are worked out in ModuleMain.cpp's HookTalentUseClass,
-// by name; this only decides. The guarded talent is a constructor argument so
-// the header needs no talent id of its own (ModuleMain.cpp's
-// kToggleIndicatorTalentId is the only one).
+// by name; this only decides, and its own text is unchanged by phase S. The
+// guarded talent is a constructor argument, so the header needs no talent id
+// of its own - and since phase S neither does the plugin, because every row's
+// id is resolved at runtime from its `abilityId`. Membership in the shipped
+// table is settled before this model is built, so the id it is handed is
+// always the matched row's own resolved id.
 enum class ToggleGuardDecision { Pass, Refuse };
 
 class ToggleGuardModel {

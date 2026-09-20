@@ -2241,12 +2241,12 @@ input[type=range]::-webkit-slider-thumb{appearance:none;width:17px;height:17px;b
         <span class="val" id="mpqpval">off</span>
     </div>
     <div class="row" style="border:none">
-        <span class="lbl" style="width:auto;flex:1">Outline Soul Spurn while draining<br><span style="font-size:11px;color:#8f816e;font-weight:normal">For the White Mage's Soul Spurn talent with the Purgatory sub-talent toggled on: draws a gold outline around Soul Spurn's skill-bar slot while the drain is active, so you can see at a glance that it is still running. The outline disappears when the toggle ends.</span></span>
+        <span class="lbl" style="width:auto;flex:1">Mark a running toggle skill<br><span style="font-size:11px;color:#8f816e;font-weight:normal">For Soul Spurn (White Mage), Lunar Orbit (Exo), Crematus (Plague Doctor), Submerged Knives (Butcher) and Maelstrom of Frost (Prophet): draws a soft red outline around that skill's skill-bar slot while its toggle is running, so you can see at a glance that it is still active. The outline disappears when the toggle ends. A plain cast, made without the skill's toggle sub-talent, lights nothing.</span></span>
         <label class="switch"><input type="checkbox" id="mod_toggle_indicator"><span class="sl"></span></label>
         <span class="val" id="mtival">off</span>
     </div>
     <div class="row" style="border:none">
-        <span class="lbl" style="width:auto;flex:1">Stop double cast re-casting Soul Spurn<br><span style="font-size:11px;color:#8f816e;font-weight:normal">For the White Mage's Soul Spurn: a double cast proc can cast Soul Spurn a second time on its own, which flips the Purgatory toggle straight back to where it was before your press. With this on, that extra cast is skipped, so the toggle stays the way you set it. Your own presses are never affected. Also skips the double cast's extra Soul Spurn when you have no Purgatory.</span></span>
+        <span class="lbl" style="width:auto;flex:1">Stop double cast re-casting a toggle skill<br><span style="font-size:11px;color:#8f816e;font-weight:normal">For Soul Spurn, Lunar Orbit, Crematus, Submerged Knives and Maelstrom of Frost: a double cast proc can cast one of them a second time on its own, which flips its toggle straight back to where it was before your press. With this on, that extra cast is skipped, so the toggle stays the way you set it. It only steps in when you actually have the skill's toggle sub-talent; your own presses are never affected.</span></span>
         <label class="switch"><input type="checkbox" id="mod_toggle_guard"><span class="sl"></span></label>
         <span class="val" id="mtgval">off</span>
     </div>

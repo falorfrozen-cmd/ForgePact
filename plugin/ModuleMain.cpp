@@ -4441,11 +4441,12 @@ static bool HhResolveLocalPlayer(RValue& out, std::string* how)
 }
 
 // ===== Toggle-skill active indicator (issue #11, Track B) ==================
-// The production read for whether the local player's Soul Spurn/Purgatory
-// drain is currently active. Lives outside every research block: in P1 it is
-// reachable only from the research sampler further down this file (itself
-// research-only), so a player build's behaviour does not change yet, but the
-// read itself is the one the shipped indicator will call.
+// The production read for whether one shipped table row's toggle is currently
+// active - Soul Spurn's Purgatory drain in T1, and since phase S every row of
+// ForgePact::kToggleSkillRows, each with the ON discriminator session 6
+// measured for it. Every runtime name a row needs (its object, its ownership
+// field, its discriminator field) comes from the table in ToggleSkillMod.hpp;
+// nothing below spells one.
 // docs/toggle-skills-research.md, "## Decision" -> "### P1: the indicator's
 // read, control and slot design" -> "The read, and exactly what has been
 // proven" and "Co-op / ownership after session 3: isMyClient" are the
@@ -4457,14 +4458,22 @@ static bool HhResolveLocalPlayer(RValue& out, std::string* how)
 // control (see the research doc's "Rejected alternatives").
 static constexpr int kToggleIndicatorScanCap = 64;   // mirrors the pet-quest collector's instance budget
 
-static bool ToggleIndicatorResolveAoeObject(double& outObjIdx)
+// A row's ON object, by name, through the SDK enumerator the row carries.
+static bool ToggleIndicatorResolveRowObject(const ForgePact::ToggleSkillRow& row, double& outObjIdx)
 {
     try {
         outObjIdx = g_Yytk->CallBuiltin("asset_get_index",
-            { RValue(std::string(HeroSiege::Objects::GetObjectName(
-                HeroSiege::Objects::GameObject::White_Mage_Soul_Spurn_AOE_obj))) }).ToDouble();
+            { RValue(std::string(HeroSiege::Objects::GetObjectName(row.onObject))) }).ToDouble();
         return outObjIdx >= 0;
     } catch (...) { return false; }
+}
+
+// Row 0's object. Kept as its own name because the research build's frozen
+// toggle-skill instrument still asks for exactly that one; shipped code always
+// goes through ToggleIndicatorResolveRowObject with the row it is reading.
+static bool ToggleIndicatorResolveAoeObject(double& outObjIdx)
+{
+    return ToggleIndicatorResolveRowObject(ForgePact::kToggleSkillRows[0], outObjIdx);
 }
 
 // A numeric-or-bool field read as a tri-state: attributed+true, attributed
@@ -4481,18 +4490,58 @@ static bool ToggleIndicatorReadTruth(const RValue& v, bool& outTrue)
     return false;
 }
 
+// The row's ON discriminator, applied to one instance already classified as
+// own: it decides only which of T1's markedMine / unmarkedMine /
+// markUnreadableMine that instance is counted into, which is why
+// ForgePact::ToggleIndicatorModel::Decide is untouched by the generalisation
+// (D-P5, docs/toggle-skills-research.md "### After session 6").
+static void ToggleIndicatorCountMark(const ForgePact::ToggleSkillRow& row, const RValue& inst,
+                                     ForgePact::ToggleIndicatorReadDetail& d)
+{
+    // `none-needed`: session 6 measured the row's plain form creating no
+    // instance of this object at all, so any own instance is the toggle.
+    if (row.mark == ForgePact::ToggleOnMark::None) { ++d.markedMine; return; }
+    try {
+        RValue v = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(row.markField) });
+        if (row.mark == ForgePact::ToggleOnMark::Marker) {
+            bool marked = false;
+            if (!ToggleIndicatorReadTruth(v, marked)) { ++d.markUnreadableMine; }
+            else if (marked) { ++d.markedMine; }
+            else { ++d.unmarkedMine; }
+            return;
+        }
+        // TimerHeld: EXACT equality with the value session 6 measured the row
+        // holding while its toggle is on. There is no "<= 0 means infinite"
+        // shortcut - a plain cast's timer passes through other negatives
+        // (-0.737424 was measured) - and a read that is not a number fails as
+        // a unit rather than being stored as a number that could compare
+        // equal to the held value (repo AGENTS.md: an "unknown" sentinel must
+        // never equal a real value).
+        const bool isNumber = v.m_Kind == VALUE_REAL || v.m_Kind == VALUE_INT32 || v.m_Kind == VALUE_INT64;
+        if (!isNumber) { ++d.markUnreadableMine; return; }
+        if (v.ToDouble() == row.heldValue) ++d.markedMine; else ++d.unmarkedMine;
+    } catch (...) { ++d.markUnreadableMine; }
+}
+
 // `treatOwnAsForeign` lets a research command run the identical enumeration
 // and decision with every own instance re-interpreted as foreign, without
 // writing anything to the game - the non-mutating negative control the
 // research doc's "Co-op / ownership after session 3: isMyClient" section
 // calls for. `detail` is optional and lets a caller (the research sampler,
 // or a test) see the counted evidence behind the decision.
-static ForgePact::ToggleIndicatorState ToggleIndicatorRead(ForgePact::ToggleIndicatorReadDetail* detail,
-                                                            bool treatOwnAsForeign)
+//
+// A row whose `ownershipField` is null has no readable ownership field at all
+// (session 6 read one as `unreadable` on every sample of 4212 and 2586), so
+// every instance counts as own - D-N3, ForgePact being offline-only - and no
+// ownership read is made, which is why such a row can never be turned
+// Unreadable by an ownership read that throws.
+static ForgePact::ToggleIndicatorState ToggleIndicatorReadRow(const ForgePact::ToggleSkillRow& row,
+                                                               ForgePact::ToggleIndicatorReadDetail* detail,
+                                                               bool treatOwnAsForeign)
 {
     ForgePact::ToggleIndicatorReadDetail d;
     double objIdx = -1.0;
-    d.objectResolved = ToggleIndicatorResolveAoeObject(objIdx);
+    d.objectResolved = ToggleIndicatorResolveRowObject(row, objIdx);
     if (!d.objectResolved) {
         if (detail) *detail = d;
         return ForgePact::ToggleIndicatorModel::Decide(d);
@@ -4514,34 +4563,156 @@ static ForgePact::ToggleIndicatorState ToggleIndicatorRead(ForgePact::ToggleIndi
         return ForgePact::ToggleIndicatorModel::Decide(d);
     }
 
-    // Every AOE instance's own isMyClient decides ownership; one whose own
-    // isMyClient cannot be read is unattributed and never lights the
-    // indicator. Only an instance classified as own has its own purgatory
-    // read, for the marker split (markedMine/unmarkedMine/markUnreadableMine).
+    // Each instance's own ownership field decides ownership; one whose own
+    // value cannot be read is unattributed and never lights the indicator.
+    // Only an instance classified as own has the row's discriminator read,
+    // for the marker split (markedMine/unmarkedMine/markUnreadableMine).
     const long cap = kToggleIndicatorScanCap;
     const long scanCount = d.n < cap ? d.n : cap;
     d.capped = d.n > cap;
     for (long i = 0; i < scanCount; ++i) {
         try {
             RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue(objIdx), RValue((double)i) });
-            RValue mc = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("isMyClient") });
-            bool isMine = false;
-            if (!ToggleIndicatorReadTruth(mc, isMine)) { ++d.unattributed; continue; }
+            bool isMine = true;
+            if (row.ownershipField) {
+                RValue mc = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(row.ownershipField) });
+                if (!ToggleIndicatorReadTruth(mc, isMine)) { ++d.unattributed; continue; }
+            }
             if (treatOwnAsForeign) isMine = false;
             if (!isMine) { ++d.others; continue; }
             ++d.mine;
-            try {
-                RValue pg = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("purgatory") });
-                bool marked = false;
-                if (!ToggleIndicatorReadTruth(pg, marked)) { ++d.markUnreadableMine; }
-                else if (marked) { ++d.markedMine; }
-                else { ++d.unmarkedMine; }
-            } catch (...) { ++d.markUnreadableMine; }
+            ToggleIndicatorCountMark(row, inst, d);
         } catch (...) { ++d.unattributed; }
     }
 
     if (detail) *detail = d;
     return ForgePact::ToggleIndicatorModel::Decide(d);
+}
+
+// Row 0's read. Kept as its own name because the research build's frozen
+// toggle-skill instrument calls exactly this, and its own agree=/disagree=
+// control compares a generalised read against it.
+static ForgePact::ToggleIndicatorState ToggleIndicatorRead(ForgePact::ToggleIndicatorReadDetail* detail,
+                                                            bool treatOwnAsForeign)
+{
+    return ToggleIndicatorReadRow(ForgePact::kToggleSkillRows[0], detail, treatOwnAsForeign);
+}
+
+// ===== The shipped table's talent ids, resolved at runtime (D-P1) ==========
+// Talent ids move with every game build, so the table stores none: each row's
+// id is found by walking `global.talentStructMap` and matching each talent
+// struct's own `abilityId` string against the row's (repo AGENTS.md, "Never
+// Call an Address You Resolved by Hand" -> resolve by name). A row whose id is
+// not resolved yet is skipped by the border and by the guard, and counted -
+// never guessed at.
+//
+// The walk is housekeeping, so it runs at the frame boundary and nowhere else
+// (AGENTS.md, "Frame-boundary work is for budgets and housekeeping"): a draw
+// and a script hook must never pay for a map walk. It is bounded three ways -
+// at most one attempt a second (FrameCallback's existing cadence), at most one
+// real walk per room, and it stops being attempted at all once every row is
+// resolved.
+struct ToggleTableIds {
+    std::atomic<int> id[ForgePact::kToggleSkillRowCount];
+    // Explicit, because "unresolved" is -1 and a value-initialised atomic
+    // would be 0 - which is a talent id shape, not an absence.
+    ToggleTableIds() { for (int r = 0; r < ForgePact::kToggleSkillRowCount; ++r) id[r].store(-1); }
+    int Get(int row) const { return id[row].load(); }
+    void Set(int row, int value) { id[row].store(value); }
+};
+static ToggleTableIds g_ToggleTableIds;
+static volatile long g_ToggleResolveWalks = 0;
+static bool g_ToggleResolveWalked = false;     // a walk has already run for the current room
+static bool g_ToggleResolveRoomKnown = false;
+static int64_t g_ToggleResolveRoomKey = 0;
+static constexpr long kToggleTableWalkCap = 5000;   // the bound the research walk of the same map uses
+
+static int ToggleTableUnresolvedRows()
+{
+    int n = 0;
+    for (int r = 0; r < ForgePact::kToggleSkillRowCount; ++r) {
+        if (g_ToggleTableIds.Get(r) < 0) ++n;
+    }
+    return n;
+}
+
+// Which table row a talent id belongs to, or -1. Membership for both mods.
+static int ToggleTableRowForTalentId(int talentId)
+{
+    if (talentId < 0) return -1;   // "not named" never matches "not resolved"
+    for (int r = 0; r < ForgePact::kToggleSkillRowCount; ++r) {
+        if (g_ToggleTableIds.Get(r) == talentId) return r;
+    }
+    return -1;
+}
+
+// Whether a walk is worth attempting this second: only while a row is still
+// unresolved, and only once per room. A room key that cannot be read is never
+// stored and never counts as a change (the INT64_MIN sentinel is not compared
+// against a real key).
+static bool ToggleTableResolveDue()
+{
+    if (ToggleTableUnresolvedRows() == 0) return false;
+    const int64_t key = CurrentRoomKey();
+    if (key != INT64_MIN && (!g_ToggleResolveRoomKnown || g_ToggleResolveRoomKey != key)) {
+        g_ToggleResolveRoomKnown = true;
+        g_ToggleResolveRoomKey = key;
+        g_ToggleResolveWalked = false;   // a new zone earns one more walk
+    }
+    return !g_ToggleResolveWalked;
+}
+
+// One walk. Stores a row's id only when the key is a real, non-negative id, so
+// a malformed key can never become a row's id.
+static bool ToggleTableResolveIds()
+{
+    RValue map;
+    std::string why;
+    if (!N1GetTalentMap(map, why)) return false;   // not ready yet: the attempt is not a walk
+    g_ToggleResolveWalked = true;
+    InterlockedIncrement(&g_ToggleResolveWalks);
+
+    RValue key;
+    try { key = g_Yytk->CallBuiltin("ds_map_find_first", { map }); }
+    catch (...) { return false; }
+    long visited = 0;
+    while (key.m_Kind != VALUE_UNDEFINED && visited < kToggleTableWalkCap) {
+        ++visited;
+        if (N1Numeric(key)) {
+            const int id = (int)key.ToDouble();
+            RValue talent;
+            std::string ignored;
+            if (id >= 0 && N1GetTalentStruct(map, id, talent, ignored)) {
+                try {
+                    RValue ability = g_Yytk->CallBuiltin("variable_struct_get", { talent, RValue("abilityId") });
+                    if (ability.m_Kind == VALUE_STRING) {
+                        const std::string name = ability.ToString();
+                        for (int r = 0; r < ForgePact::kToggleSkillRowCount; ++r) {
+                            if (name == ForgePact::kToggleSkillRows[r].abilityId) g_ToggleTableIds.Set(r, id);
+                        }
+                    }
+                } catch (...) {}
+            }
+        }
+        try { key = g_Yytk->CallBuiltin("ds_map_find_next", { map, key }); }
+        catch (...) { break; }
+    }
+    return ToggleTableUnresolvedRows() == 0;
+}
+
+// Printed by `toggleborder stat` and `toggleguard stat`: one entry per row, so
+// a live session can see which rows the mods actually cover right now rather
+// than trusting that they all resolved.
+static std::string ToggleTableRowsLine()
+{
+    std::string line;
+    for (int r = 0; r < ForgePact::kToggleSkillRowCount; ++r) {
+        const int id = g_ToggleTableIds.Get(r);
+        line += std::string(ForgePact::kToggleSkillRows[r].abilityId) + ":talentId="
+              + (id >= 0 ? std::to_string(id) : std::string("unresolved")) + " ";
+    }
+    return line + "resolveWalks=" + std::to_string(g_ToggleResolveWalks)
+         + " unresolvedRows=" + std::to_string(ToggleTableUnresolvedRows());
 }
 
 // ===== Toggle-skill active indicator: the shipped draw (issue #11, Track B;
@@ -4553,27 +4724,53 @@ static ForgePact::ToggleIndicatorState ToggleIndicatorRead(ForgePact::ToggleIndi
 // already hooked by InstallHeadLabelHook() at init.
 static std::atomic<bool> g_ToggleBorderOn{ false };
 // Printed by `toggleborder 0` and `toggleborder stat` (which also prints
-// enabled=on|off and touches nothing else): drawn=/on=/off=/unreadable=/
-// noHud=/noRow0=/noTalent=/foreign=/drawExc=. noHud/noRow0/noTalent replace
-// the old single noSlot= - see ToggleIndicatorFindSlot below for which of
-// its three meaningfully-different failures each one counts.
-static volatile long g_TibDrawn = 0, g_TibOn = 0, g_TibOff = 0, g_TibUnreadable = 0, g_TibNoHud = 0, g_TibNoRow0 = 0, g_TibNoTalent = 0, g_TibForeign = 0, g_TibDrawExc = 0;
+// enabled=on|off, the per-row talent ids and touches nothing else):
+// drawn=/on=/off=/unreadable=/noHud=/noRow0=/noTalent=/foreign=/drawExc=/
+// unresolved=. noHud/noRow0/noTalent replace the old single noSlot= - see
+// ToggleIndicatorFindSlot below for which of its three meaningfully-different
+// failures each one counts; `unresolved` counts a row skipped because its
+// talent id has not been resolved from its `abilityId` yet.
+static volatile long g_TibDrawn = 0, g_TibOn = 0, g_TibOff = 0, g_TibUnreadable = 0, g_TibNoHud = 0, g_TibNoRow0 = 0, g_TibNoTalent = 0, g_TibForeign = 0, g_TibDrawExc = 0, g_TibUnresolved = 0;
+
+// D-U12 (author, 2026-09-20): the marker is drawn at a box DERIVED from the
+// slot's own live `navBbox` by this constant offset and then rounded to whole
+// pixels (the whole-pixel-grid rule, hub guide Known Limitations item 18).
+// The author tuned it edge by edge against the button art and accepted
+// `388, 1711, 120 x 126` for Soul Spurn's slot, whose `navBbox` read
+// `385.700006, 1711.000000, 124.700000 x 139.200000` at the same moment -
+// so those four numbers are evidence for that slot at that HUD scale, and the
+// offset is what ships. The research build's sprite look probe derives its own
+// box with the same arithmetic, and a contract test pins the two sets of
+// constants equal so neither can drift.
+static constexpr double kToggleMarkerBoxDX = 2.3;
+static constexpr double kToggleMarkerBoxDY = 0.0;
+static constexpr double kToggleMarkerBoxDW = -4.7;
+static constexpr double kToggleMarkerBoxDH = -13.2;
+
+static void ToggleIndicatorMarkerBox(double bboxX, double bboxY, double bboxW, double bboxH,
+                                     double& outX, double& outY, double& outW, double& outH)
+{
+    outX = std::round(bboxX + kToggleMarkerBoxDX);
+    outY = std::round(bboxY + kToggleMarkerBoxDY);
+    outW = std::round(bboxW + kToggleMarkerBoxDW);
+    outH = std::round(bboxH + kToggleMarkerBoxDH);
+}
 
 // Session 3's R5 measured the array: UI_Hud_Talent_obj instance 0's own
 // `row0` array holds one element per hotbar slot, and the element whose own
-// `talentId` reads 240 (Soul Spurn) sits at its own navBboxX/navBboxY/
-// navBboxWidth/navBboxHeight - the rectangle that sat on the button by eye
-// (docs/toggle-skills-research.md, "## Decision" -> "### After session 3" ->
-// "Slot geometry fields"). No hs-game-sdk constant exists for talent id 240
-// (searched python/cpp/ts) - see the research doc's Q1.
-static constexpr int kToggleIndicatorTalentId = 240;   // Soul Spurn
+// `talentId` reads the row's runtime-resolved id sits at its own navBboxX/
+// navBboxY/navBboxWidth/navBboxHeight - the rectangle that sat on the button
+// by eye (docs/toggle-skills-research.md, "## Decision" -> "### After session
+// 3" -> "Slot geometry fields"). The talent id is a parameter since phase S:
+// each shipped row looks up its own slot, and no id is spelled here.
 // Returns false at three meaningfully different points (follow-up from the
 // indicator's reviews): the HUD talent object/instance-0 side (noHud, which
 // also covers the two catch-alls - a resolve/lookup exception tells us
 // nothing more specific than "the HUD side failed"), row0 not an array
-// (noRow0), and no element carrying talentId == kToggleIndicatorTalentId
-// (noTalent). Each caller-visible failure increments exactly one counter.
-static bool ToggleIndicatorFindSlot(double& outX, double& outY, double& outW, double& outH)
+// (noRow0), and no element carrying that talent id (noTalent). Each
+// caller-visible failure increments exactly one counter. What it hands back
+// is D-U12's derived, whole-pixel box, not the raw `navBbox`.
+static bool ToggleIndicatorFindSlot(int talentId, double& outX, double& outY, double& outW, double& outH)
 {
     try {
         double objIdx = -1.0;
@@ -4593,11 +4790,12 @@ static bool ToggleIndicatorFindSlot(double& outX, double& outY, double& outW, do
             if (elem.m_Kind != VALUE_OBJECT && elem.m_Kind != VALUE_REF) continue;
             RValue tid = g_Yytk->CallBuiltin("variable_struct_get", { elem, RValue("talentId") });
             const bool isNumber = tid.m_Kind == VALUE_REAL || tid.m_Kind == VALUE_INT32 || tid.m_Kind == VALUE_INT64;
-            if (!isNumber || (int)tid.ToDouble() != kToggleIndicatorTalentId) continue;
-            outX = g_Yytk->CallBuiltin("variable_struct_get", { elem, RValue("navBboxX") }).ToDouble();
-            outY = g_Yytk->CallBuiltin("variable_struct_get", { elem, RValue("navBboxY") }).ToDouble();
-            outW = g_Yytk->CallBuiltin("variable_struct_get", { elem, RValue("navBboxWidth") }).ToDouble();
-            outH = g_Yytk->CallBuiltin("variable_struct_get", { elem, RValue("navBboxHeight") }).ToDouble();
+            if (!isNumber || (int)tid.ToDouble() != talentId) continue;
+            const double bx = g_Yytk->CallBuiltin("variable_struct_get", { elem, RValue("navBboxX") }).ToDouble();
+            const double by = g_Yytk->CallBuiltin("variable_struct_get", { elem, RValue("navBboxY") }).ToDouble();
+            const double bw = g_Yytk->CallBuiltin("variable_struct_get", { elem, RValue("navBboxWidth") }).ToDouble();
+            const double bh = g_Yytk->CallBuiltin("variable_struct_get", { elem, RValue("navBboxHeight") }).ToDouble();
+            ToggleIndicatorMarkerBox(bx, by, bw, bh, outX, outY, outW, outH);
             return true;
         }
         InterlockedIncrement(&g_TibNoTalent);
@@ -4605,42 +4803,72 @@ static bool ToggleIndicatorFindSlot(double& outX, double& outY, double& outW, do
     } catch (...) { InterlockedIncrement(&g_TibNoHud); return false; }
 }
 
+// D-U13 (author, 2026-09-20, final): the marker is the `soft` look in
+// `deepred` - nested single-pixel outline bands growing outwards from the
+// drawn box, alpha ramping from full at the innermost band to zero at the
+// outermost, at scale 1.0. The reference implementation is the research
+// build's own sprite look probe, which is what the author actually judged;
+// shipped code re-implements it here rather than calling into a research
+// block, and contract tests pin the band count and the colour triple equal to
+// the probe's so the two cannot drift apart. There is no frame or time term
+// (the pulsing variant was rejected on looks) and no alpha floor other than 0.
+static constexpr int kToggleMarkerBands = 10;
+static constexpr double kToggleMarkerR = 140.0;   // deepred, the probe's own preset
+static constexpr double kToggleMarkerG = 24.0;
+static constexpr double kToggleMarkerB = 28.0;
+
+static void ToggleIndicatorDrawMarker(double x, double y, double w, double h)
+{
+    RValue colour = g_Yytk->CallBuiltin("make_colour_rgb",
+        { RValue(kToggleMarkerR), RValue(kToggleMarkerG), RValue(kToggleMarkerB) });
+    g_Yytk->CallBuiltin("draw_set_colour", { colour });
+    for (int i = 0; i < kToggleMarkerBands; ++i) {
+        const double t = (double)i / (double)(kToggleMarkerBands - 1);   // 0 innermost, 1 outermost
+        g_Yytk->CallBuiltin("draw_set_alpha", { RValue(1.0 - t) });
+        g_Yytk->CallBuiltin("draw_rectangle", {
+            RValue(x - i), RValue(y - i), RValue(x + w + i), RValue(y + h + i), RValue(1.0) });
+    }
+}
+
 // Called every draw, right after HhDrawHeadLabels() - the same point-of-use
 // rule as the guide's Known Limitations item 13: nothing about the state is
-// cached across draws (indicator_on/state_reread_every_draw). Session 4
-// measured the plain-cast flash (D-R2, docs/toggle-skills-research.md
-// "Plain-cast flash (R10) and the Purgatory marker" / "After session 4"),
-// so the Purgatory marker is required.
+// cached across draws (indicator_on/state_reread_every_draw), and no timer
+// value is ever remembered between draws. One marker per shipped row whose
+// own read says On, using that row's own ON discriminator; a row whose
+// discriminator says otherwise, or cannot be read, draws nothing at all
+// (D-U9: a plain cast never lights the marker, as session 4 first measured
+// for Soul Spurn's Purgatory flash).
 static void ToggleIndicatorDraw()
 {
     if (!g_ToggleBorderOn.load()) return;
 
-    ForgePact::ToggleIndicatorReadDetail detail;
-    ToggleIndicatorRead(&detail, /*treatOwnAsForeign=*/false);
-    const ForgePact::ToggleIndicatorState state = ForgePact::ToggleIndicatorModel::Decide(detail, /*requireMarker=*/true);
+    for (int r = 0; r < ForgePact::kToggleSkillRowCount; ++r) {
+        const ForgePact::ToggleSkillRow& row = ForgePact::kToggleSkillRows[r];
+        const int talentId = g_ToggleTableIds.Get(r);
+        if (talentId < 0) { InterlockedIncrement(&g_TibUnresolved); continue; }
 
-    if (detail.others > 0 && detail.mine == 0) InterlockedIncrement(&g_TibForeign);
-    if (state == ForgePact::ToggleIndicatorState::Unreadable) { InterlockedIncrement(&g_TibUnreadable); return; }
-    if (state == ForgePact::ToggleIndicatorState::Off) { InterlockedIncrement(&g_TibOff); return; }
-    InterlockedIncrement(&g_TibOn);
+        ForgePact::ToggleIndicatorReadDetail detail;
+        ToggleIndicatorReadRow(row, &detail, /*treatOwnAsForeign=*/false);
+        const ForgePact::ToggleIndicatorState state =
+            ForgePact::ToggleIndicatorModel::Decide(detail, ForgePact::ToggleRowRequiresMark(row));
 
-    double x = 0, y = 0, w = 0, h = 0;
-    if (!ToggleIndicatorFindSlot(x, y, w, h)) return;   // counted inside FindSlot: noHud/noRow0/noTalent
+        if (detail.others > 0 && detail.mine == 0) InterlockedIncrement(&g_TibForeign);
+        if (state == ForgePact::ToggleIndicatorState::Unreadable) { InterlockedIncrement(&g_TibUnreadable); continue; }
+        if (state == ForgePact::ToggleIndicatorState::Off) { InterlockedIncrement(&g_TibOff); continue; }
+        InterlockedIncrement(&g_TibOn);
 
-    try {
-        RValue prevColour = g_Yytk->CallBuiltin("draw_get_colour", {});
-        RValue prevAlpha = g_Yytk->CallBuiltin("draw_get_alpha", {});
-        RValue gold = g_Yytk->CallBuiltin("make_colour_rgb", { RValue(255.0), RValue(215.0), RValue(0.0) });
-        g_Yytk->CallBuiltin("draw_set_colour", { gold });
-        g_Yytk->CallBuiltin("draw_set_alpha", { RValue(1.0) });
-        for (int t = 0; t < 3; ++t) {   // 3 px outline, gold (product decision D-U1)
-            g_Yytk->CallBuiltin("draw_rectangle", {
-                RValue(x - t), RValue(y - t), RValue(x + w + t), RValue(y + h + t), RValue(1.0) });
-        }
-        g_Yytk->CallBuiltin("draw_set_alpha", { prevAlpha });
-        g_Yytk->CallBuiltin("draw_set_colour", { prevColour });
-        InterlockedIncrement(&g_TibDrawn);
-    } catch (...) { InterlockedIncrement(&g_TibDrawExc); }   // follow-up: count a swallowed draw exception
+        double x = 0, y = 0, w = 0, h = 0;
+        if (!ToggleIndicatorFindSlot(talentId, x, y, w, h)) continue;   // counted inside FindSlot: noHud/noRow0/noTalent
+
+        try {
+            RValue prevColour = g_Yytk->CallBuiltin("draw_get_colour", {});
+            RValue prevAlpha = g_Yytk->CallBuiltin("draw_get_alpha", {});
+            ToggleIndicatorDrawMarker(x, y, w, h);
+            g_Yytk->CallBuiltin("draw_set_alpha", { prevAlpha });
+            g_Yytk->CallBuiltin("draw_set_colour", { prevColour });
+            InterlockedIncrement(&g_TibDrawn);
+        } catch (...) { InterlockedIncrement(&g_TibDrawExc); }   // follow-up: count a swallowed draw exception
+    }
 }
 
 // Printed by `toggleborder 0`/`toggleborder stat` - shared so both outputs
@@ -4651,7 +4879,7 @@ static std::string ToggleBorderCountersLine()
         + " off=" + std::to_string(g_TibOff) + " unreadable=" + std::to_string(g_TibUnreadable)
         + " noHud=" + std::to_string(g_TibNoHud) + " noRow0=" + std::to_string(g_TibNoRow0)
         + " noTalent=" + std::to_string(g_TibNoTalent) + " foreign=" + std::to_string(g_TibForeign)
-        + " drawExc=" + std::to_string(g_TibDrawExc);
+        + " drawExc=" + std::to_string(g_TibDrawExc) + " unresolved=" + std::to_string(g_TibUnresolved);
 }
 // `toggleborder stat` is read-only: it stores nothing to g_ToggleBorderOn,
 // unlike `toggleborder 0`/`toggleborder 1`.
@@ -4659,24 +4887,29 @@ static void ToggleBorderStats()
 {
     Out("toggleborder stat: enabled=" + std::string(g_ToggleBorderOn.load() ? "on" : "off")
         + " " + ToggleBorderCountersLine());
+    Out("toggleborder stat: " + ToggleTableRowsLine());
 }
 
 // ===== Toggle-skill re-cast guard (issue #11, Track A; `toggleguard`) ========
 // Refuses one call the game is already making - a `TalentUseClass` call whose
-// `self` is the double-cast proc object and whose talent is Soul Spurn's - by
-// returning without calling the original, the same early return HookTalentUse
-// uses for the co-op puppet. It pauses, rewinds, writes or deactivates
-// nothing; every other call, and every call while the guard is off, goes
-// straight through (ForgePact::ToggleGuardModel, docs/toggle-skills-research.md
-// "### Track A design (D-N1)"). Off by default; installed only once armed
-// (FrameCallback, the relicfilter shape).
+// `self` is the double-cast proc object and whose talent belongs to a shipped
+// table row whose toggle sub-talent is actually allocated - by returning
+// without calling the original, the same early return HookTalentUse uses for
+// the co-op puppet. It pauses, rewinds, writes or deactivates nothing; every
+// other call, and every call while the guard is off, goes straight through
+// (ForgePact::ToggleGuardModel, docs/toggle-skills-research.md "### Track A
+// design (D-N1)"). Off by default; installed only once armed (FrameCallback,
+// the relicfilter shape).
 static PFUNC_YYGMLScript g_OrigTalentUseClass = nullptr;
 // refused: calls not passed on. passed: every call that reached the original
 // while the guard was on. procSeen: the caller was the double-cast object,
 // any talent. selfUnreadable: the caller's object_index could not be read (the
 // call passes - the guard fails open). objUnresolved: the double-cast object's
-// name did not resolve (the call passes).
-static volatile long g_TgdRefused = 0, g_TgdPassed = 0, g_TgdProcSeen = 0, g_TgdSelfUnreadable = 0, g_TgdObjUnresolved = 0;
+// name did not resolve (the call passes). subOff: the row matched but its
+// toggle sub-talent read back unallocated, so the call is the player's plain
+// cast and passes. subUnreadable: the sub-talent could not be read in any of
+// its shapes - the call passes, because fail-open is vanilla behaviour.
+static volatile long g_TgdRefused = 0, g_TgdPassed = 0, g_TgdProcSeen = 0, g_TgdSelfUnreadable = 0, g_TgdObjUnresolved = 0, g_TgdSubOff = 0, g_TgdSubUnreadable = 0;
 // The double-cast object's index, resolved by name and cached only once it is
 // a real (>= 0) index; a failed resolve is never cached, so the next call
 // tries again.
@@ -4688,6 +4921,42 @@ static std::atomic<bool> g_ToggleGuardInstallFailed{ false };
 static std::mutex g_TgdLastProcRetMtx;
 static std::string g_TgdLastProcRet = "n/a";
 #endif
+
+// D-P3: whether a row's toggle sub-talent is allocated right now, read AT THE
+// CALL with the talent being acted on - never from anything cached at a frame
+// boundary, which is the defect AGENTS.md's "Check a Permission Where It Is
+// Used" describes. Session 6 measured the shape:
+// `global.subTalentMap[1].t<talentId>.s<NN>`, a number that is the sub-talent
+// level, and exactly `0.000000` (key present, never absent) when it has been
+// respecced out. Every other outcome - the global missing, not an array, the
+// index out of range, `t<id>` absent, `s<NN>` absent or non-numeric, or a
+// throw anywhere - is Unreadable, and an Unreadable read never refuses.
+enum class ToggleSubTalentState { Allocated, NotAllocated, Unreadable };
+
+static ToggleSubTalentState ToggleReadSubTalent(int talentId, int slot)
+{
+    try {
+        if (!g_Yytk->CallBuiltin("variable_global_exists", { RValue("subTalentMap") }).ToBoolean())
+            return ToggleSubTalentState::Unreadable;
+        RValue map = g_Yytk->CallBuiltin("variable_global_get", { RValue("subTalentMap") });
+        if (map.m_Kind != VALUE_ARRAY) return ToggleSubTalentState::Unreadable;
+        const int len = (int)g_Yytk->CallBuiltin("array_length", { map }).ToDouble();
+        if (ForgePact::kToggleSubTalentMapIndex >= len) return ToggleSubTalentState::Unreadable;
+        RValue entry = g_Yytk->CallBuiltin("array_get",
+            { map, RValue((double)ForgePact::kToggleSubTalentMapIndex) });
+        RValue perTalent = g_Yytk->CallBuiltin("variable_struct_get",
+            { entry, RValue("t" + std::to_string(talentId)) });
+        if (perTalent.m_Kind != VALUE_OBJECT && perTalent.m_Kind != VALUE_REF)
+            return ToggleSubTalentState::Unreadable;
+        RValue level = g_Yytk->CallBuiltin("variable_struct_get",
+            { perTalent, RValue("s" + std::to_string(slot)) });
+        const bool isNumber = level.m_Kind == VALUE_REAL || level.m_Kind == VALUE_INT32
+                           || level.m_Kind == VALUE_INT64;
+        if (!isNumber) return ToggleSubTalentState::Unreadable;
+        return level.ToDouble() > 0.0 ? ToggleSubTalentState::Allocated
+                                      : ToggleSubTalentState::NotAllocated;
+    } catch (...) { return ToggleSubTalentState::Unreadable; }
+}
 
 static RValue& HookTalentUseClass(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
@@ -4732,17 +5001,43 @@ static RValue& HookTalentUseClass(CInstance* S, CInstance* O, RValue& R, int arg
     if (callerIsDoubleCast) InterlockedIncrement(&g_TgdProcSeen);
 
     // The talent is the first argument; anything that is not a number is
-    // never a guarded talent, so the call passes. T1 guards Soul Spurn only.
-    static constexpr ForgePact::ToggleGuardModel kGuard{ kToggleIndicatorTalentId };
+    // never a guarded talent, so the call passes.
     int talentId = -1;
     if (argc >= 1 && A && A[0]) {
         const RValue& a0 = *A[0];
         if (a0.m_Kind == VALUE_REAL || a0.m_Kind == VALUE_INT32 || a0.m_Kind == VALUE_INT64) talentId = (int)a0.ToDouble();
     }
 
-    if (kGuard.Decide(true, callerIsDoubleCast, talentId) == ForgePact::ToggleGuardDecision::Refuse) {
-        InterlockedIncrement(&g_TgdRefused);
-        return R;
+    // Membership, phase S: which shipped table row this talent belongs to, by
+    // the id resolved at runtime from that row's own `abilityId`. A row that
+    // is not resolved yet holds a negative id, and a call whose first argument
+    // named no talent reads back as -1 - ToggleTableRowForTalentId refuses a
+    // negative id before any comparison, so "unknown" never compares equal to
+    // "unknown" and the guard covers nothing it cannot name. The decision
+    // itself is still ForgePact::ToggleGuardModel's, built on the matched
+    // row's own id.
+    const int rowIndex = ToggleTableRowForTalentId(talentId);
+    bool refuseByCaller = false;
+    if (rowIndex >= 0) {
+        const ForgePact::ToggleGuardModel kGuard{ talentId };
+        refuseByCaller = kGuard.Decide(true, callerIsDoubleCast, talentId)
+                       == ForgePact::ToggleGuardDecision::Refuse;
+    }
+
+    if (refuseByCaller) {
+        // The row is a member, so its toggle sub-talent decides whether this
+        // proc could have flipped anything - read here, at the point of use,
+        // with the talent the call itself named (D-P3). Anything short of a
+        // numeric > 0 passes the call through and is counted, so the guard
+        // never costs a player a cast it cannot justify refusing.
+        const ToggleSubTalentState sub =
+            ToggleReadSubTalent(talentId, ForgePact::kToggleSkillRows[rowIndex].subTalentSlot);
+        if (sub == ToggleSubTalentState::Allocated) {
+            InterlockedIncrement(&g_TgdRefused);
+            return R;
+        }
+        if (sub == ToggleSubTalentState::NotAllocated) InterlockedIncrement(&g_TgdSubOff);
+        else InterlockedIncrement(&g_TgdSubUnreadable);
     }
     InterlockedIncrement(&g_TgdPassed);
 #ifndef FORGEPACT_RELEASE
@@ -4777,7 +5072,8 @@ static std::string ToggleGuardCountersLine()
 {
     std::string line = "refused=" + std::to_string(g_TgdRefused) + " passed=" + std::to_string(g_TgdPassed)
         + " procSeen=" + std::to_string(g_TgdProcSeen) + " selfUnreadable=" + std::to_string(g_TgdSelfUnreadable)
-        + " objUnresolved=" + std::to_string(g_TgdObjUnresolved) + " hook=" + ToggleGuardHookState();
+        + " objUnresolved=" + std::to_string(g_TgdObjUnresolved) + " subOff=" + std::to_string(g_TgdSubOff)
+        + " subUnreadable=" + std::to_string(g_TgdSubUnreadable) + " hook=" + ToggleGuardHookState();
 #ifndef FORGEPACT_RELEASE
     {
         std::lock_guard<std::mutex> lk(g_TgdLastProcRetMtx);
@@ -4791,6 +5087,7 @@ static void ToggleGuardStats()
 {
     Out("toggleguard stat: enabled=" + std::string(ForgePact::ToggleGuardMod::Instance().IsEnabled() ? "on" : "off")
         + " " + ToggleGuardCountersLine());
+    Out("toggleguard stat: " + ToggleTableRowsLine());
 }
 
 static long g_HhHudCalls = 0, g_HhLabelDraws = 0;
@@ -17554,6 +17851,13 @@ static bool HandleHeadhunterCommand(const std::string& lc, const std::string& re
 // blocked with calls=n/a - never as a 0, which would be the instrument talking.
 static constexpr long kTgLogBudget = 3;   // verbose lines per row between resets
 
+// Soul Spurn's talent id as session 3 measured it on this game build. Research
+// only since phase S: shipped code resolves every row's id at runtime from its
+// `abilityId`, because ids move with every build (D-P1), and this constant
+// survives purely as the default a `tgprobe` subcommand uses when a tester
+// gives it no id and as the `tgl` seed table's row-0 value.
+static constexpr int kToggleIndicatorTalentId = 240;   // Soul Spurn
+
 enum : uint32_t {
     kTgCount = 0,   // count only, never logged (hot rows)
     kTgArgs  = 1,   // verbose: self/other/argc/args, first kTgLogBudget calls
@@ -22474,6 +22778,16 @@ void FrameCallback(FWFrame& FrameContext)
             HookOneScript("DropRelic", "bp_drelic", (PVOID)Hook_DropRelic, &g_Orig_DropRelic);
             Out(std::string("relicfilter: hook installed -> ") + (g_Orig_DropRelic ? "ON" : "FAILED (DropRelic not found)"));
         }
+    }
+
+    // The shipped toggle table's talent ids (D-P1): resolved by `abilityId`
+    // from global.talentStructMap, here at the frame boundary and nowhere
+    // else, on the same once-a-second cadence as the two installs below.
+    // ToggleTableResolveDue() stops it walking once every row is resolved and
+    // allows at most one walk per room, so a row whose `abilityId` is absent
+    // costs one walk per zone rather than one a second forever.
+    if (g_Setup && (fc % 60) == 0 && ToggleTableResolveDue()) {
+        ToggleTableResolveIds();
     }
 
     // Re-cast guard, armed by `toggleguard 1`: the TalentUseClass hook goes in

@@ -28,6 +28,8 @@
 #include <cmath>
 #include <cstdint>
 #include <iostream>
+#include <map>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -77,11 +79,16 @@ static long InterlockedIncrement(volatile long* target) { return ++(*target); }
 // object named by the SDK constants to exist and resolve to a string, not
 // the whole SDK.
 // The six other candidate rows' objects exist so the research table's seed
-// rows (`tgprobe tgl`, spliced below) compile against their real enumerators.
+// rows (`tgprobe tgl`, spliced below) compile against their real enumerators,
+// and the three controller objects phase S's shipped table names (session 6
+// rejected the predicted damage objects for those rows) so the shipped table
+// compiles against theirs.
 namespace HeroSiege { namespace Objects {
 enum class GameObject { White_Mage_Soul_Spurn_AOE_obj, UI_Hud_Talent_obj, Universal_Double_Cast_obj,
                         Exo_Lunar_Orbit_obj, Plague_Doctor_Crematus_obj, Shield_Lancer_Counter_World_obj,
-                        Butcher_Submerged_Knives_obj, Prophet_Maelstrom_obj, Butcher_Blender_obj };
+                        Butcher_Submerged_Knives_obj, Prophet_Maelstrom_obj, Butcher_Blender_obj,
+                        Exo_Lunar_Orbit_Crescent_Moon_obj, Plague_Doctor_Crematus_Controller_obj,
+                        Butcher_Submerged_Knives_Knifehoarder_obj };
 inline const char* GetObjectName(GameObject g) {
     switch (g) {
     case GameObject::Universal_Double_Cast_obj: return "Universal_Double_Cast_obj";
@@ -92,6 +99,9 @@ inline const char* GetObjectName(GameObject g) {
     case GameObject::Butcher_Submerged_Knives_obj: return "Butcher_Submerged_Knives_obj";
     case GameObject::Prophet_Maelstrom_obj: return "Prophet_Maelstrom_obj";
     case GameObject::Butcher_Blender_obj: return "Butcher_Blender_obj";
+    case GameObject::Exo_Lunar_Orbit_Crescent_Moon_obj: return "Exo_Lunar_Orbit_Crescent_Moon_obj";
+    case GameObject::Plague_Doctor_Crematus_Controller_obj: return "Plague_Doctor_Crematus_Controller_obj";
+    case GameObject::Butcher_Submerged_Knives_Knifehoarder_obj: return "Butcher_Submerged_Knives_Knifehoarder_obj";
     default: return "White_Mage_Soul_Spurn_AOE_obj";
     }
 }
@@ -113,6 +123,12 @@ struct AoeInst {
     // timer unreadable - never a number the sampler could mistake for one.
     RValue destroyTimer;
     bool destroyTimerThrows = false;
+    // S (the shipped table): a row's discriminator names whatever field
+    // session 6 measured for it, e.g. `crematus`'s `skillContamination`, so
+    // an instance can carry any field by name rather than only the three the
+    // Soul Spurn row happens to use. A name listed in `throws` throws instead.
+    std::map<std::string, RValue> extra;
+    std::set<std::string> throws;
 };
 static AoeInst OwnMarked(double purgatoryValue = 0.09) {
     AoeInst a; a.isMyClient = MakeBool(true); a.purgatory = MakeReal(purgatoryValue); return a;
@@ -144,10 +160,32 @@ struct HudRow0Elem {
     double talentId = 0, navBboxX = 0, navBboxY = 0, navBboxWidth = 0, navBboxHeight = 0;
 };
 
+// S (the shipped guard's sub-talent gate): `global.subTalentMap` as session 6
+// measured it - an array whose index 1 holds one struct per talent, keyed
+// `t<talentId>`, whose `s<NN>` keys are the sub-talent levels (`0.000000`
+// with the key present when the sub-talent is respecced out, never absent).
+// Every failure shape the hook must fail open on is a flag here, so each one
+// gets its own scenario rather than being inferred from one of them.
+struct SubTalentWorld {
+    bool globalExists = true;
+    bool isArray = true;
+    bool getThrows = false;
+    int length = 6;
+    // index -> talent id -> slot number -> value. A missing talent id answers
+    // `t<id>` undefined; a missing slot answers `s<NN>` undefined.
+    std::map<int, std::map<int, std::map<int, RValue>>> levels;
+};
+
 struct World {
     bool aoeObjectResolves = true;
     std::vector<AoeInst> instances;
     bool instanceNumberThrows = false;   // instance_number itself throws
+    // S: a scenario that needs two table rows to see DIFFERENT instances gives
+    // an object name its own index here and its own instance list below. A
+    // name that is not listed keeps answering kAoeObjIdx and `instances`, so
+    // every scenario written before the table is untouched.
+    std::map<std::string, double> objIndexByName;
+    std::map<double, std::vector<AoeInst>> instancesByIndex;
     // P2 slot lookup:
     bool hudTalentObjectResolves = true;
     bool hudTalentInstanceExists = true;
@@ -158,6 +196,7 @@ struct World {
     bool drawRectangleThrows = false;
     // T1 guard: whether the double-cast object's name resolves.
     bool doubleCastObjectResolves = true;
+    SubTalentWorld sub;
 };
 static World world;
 static long g_DcResolveCalls = 0;      // asset_get_index("Universal_Double_Cast_obj") calls
@@ -171,6 +210,30 @@ static int g_RectangleDraws = 0;   // draw_rectangle calls this draw
 static double g_LastSetColour = -1, g_LastSetAlpha = -1;
 static const double kAoeObjIdx = 42.0, kHudObjIdx = 99.0;
 static const double kPrevColour = 555.0, kPrevAlpha = 0.66;   // what draw_get_colour/draw_get_alpha answer
+// S (D-U13's banded marker): what was actually drawn, not merely how many
+// calls were made - the band rectangles' own arguments in order, the alpha set
+// before each of them, and the colour triple the one make_colour_rgb call was
+// given. A scenario that only counted calls could not tell a 10-band ramp in
+// deepred from ten identical gold rectangles.
+struct DrawnRect { double x1 = 0, y1 = 0, x2 = 0, y2 = 0; };
+static std::vector<DrawnRect> g_DrawnRects;
+static std::vector<double> g_SetAlphas;
+static double g_ColourR = -1, g_ColourG = -1, g_ColourB = -1;
+static long g_MakeColourCalls = 0;
+static long g_SlotLookups = 0;     // ToggleIndicatorFindSlot reaching the row0 array
+static void resetDrawRecord() {
+    g_DrawnRects.clear(); g_SetAlphas.clear();
+    g_ColourR = g_ColourG = g_ColourB = -1; g_MakeColourCalls = 0; g_SlotLookups = 0;
+    g_RectangleDraws = 0;
+}
+
+// S: the instance list behind an object index. Every index a scenario did not
+// give its own list keeps answering `world.instances`, which is what every
+// scenario written before the shipped table drives.
+static std::vector<AoeInst>& instancesFor(double objIdx) {
+    auto it = world.instancesByIndex.find(objIdx);
+    return it == world.instancesByIndex.end() ? world.instances : it->second;
+}
 
 struct FakeRunner {
     RValue CallBuiltin(const char* name, std::vector<RValue> args) {
@@ -183,12 +246,15 @@ struct FakeRunner {
                 ++g_DcResolveCalls;
                 return RValue(world.doubleCastObjectResolves ? kDcObjIdx : -1.0);
             }
+            auto named = world.objIndexByName.find(want);
+            if (named != world.objIndexByName.end())
+                return RValue(world.aoeObjectResolves ? named->second : -1.0);
             return RValue(world.aoeObjectResolves ? kAoeObjIdx : -1.0);
         }
         if (fn == "instance_number") {
             ++g_InstanceEnumCalls;
             if (world.instanceNumberThrows) throw std::runtime_error("instance_number EXCEPTION");
-            return RValue((double)world.instances.size());
+            return RValue((double)instancesFor(args[0].ToDouble()).size());
         }
         if (fn == "instance_find") {
             ++g_InstanceEnumCalls;
@@ -199,8 +265,10 @@ struct FakeRunner {
                 RValue r; r.m_Kind = VALUE_REF; r.text = "hud:0";
                 return r;
             }
-            if (i < 0 || (size_t)i >= world.instances.size()) return RValue();   // VALUE_UNDEFINED
-            RValue r; r.m_Kind = VALUE_REF; r.text = "aoe:" + std::to_string(i);
+            if (i < 0 || (size_t)i >= instancesFor(obj).size()) return RValue();   // VALUE_UNDEFINED
+            RValue r; r.m_Kind = VALUE_REF;
+            r.text = "aoe:" + std::to_string((long long)obj) + ":" + std::to_string(i);
+            r.number = obj;
             return r;
         }
         if (fn == "variable_instance_get") {
@@ -216,13 +284,18 @@ struct FakeRunner {
             if (tag == "hud:0") {
                 if (field != "row0") return RValue();
                 if (!world.row0IsArray) return RValue();   // VALUE_UNDEFINED, not an array
+                ++g_SlotLookups;
                 RValue r; r.m_Kind = VALUE_ARRAY; r.text = "row0";
                 return r;
             }
             if (tag.rfind("aoe:", 0) != 0) return RValue();
-            const size_t i = (size_t)std::stoi(tag.substr(4));
-            if (i >= world.instances.size()) return RValue();
-            const AoeInst& a = world.instances[i];
+            const size_t sep = tag.find(':', 4);
+            const double obj = std::stod(tag.substr(4, sep - 4));
+            const size_t i = (size_t)std::stoi(tag.substr(sep + 1));
+            std::vector<AoeInst>& list = instancesFor(obj);
+            if (i >= list.size()) return RValue();
+            const AoeInst& a = list[i];
+            if (a.throws.count(field)) throw std::runtime_error("field EXCEPTION");
             if (field == "isMyClient") {
                 if (a.isMyClientThrows) throw std::runtime_error("isMyClient EXCEPTION");
                 return a.isMyClient;
@@ -235,7 +308,22 @@ struct FakeRunner {
                 if (a.destroyTimerThrows) throw std::runtime_error("destroyTimer EXCEPTION");
                 return a.destroyTimer;
             }
+            auto extra = a.extra.find(field);
+            if (extra != a.extra.end()) return extra->second;
             return RValue();
+        }
+        // S (the guard's sub-talent gate): global.subTalentMap, read the way
+        // the hook reads it - exists, get, array_get at the measured index,
+        // then `t<id>` and `s<NN>`.
+        if (fn == "variable_global_exists") {
+            return MakeBool(args[0].ToString() == "subTalentMap" && world.sub.globalExists);
+        }
+        if (fn == "variable_global_get") {
+            if (args[0].ToString() != "subTalentMap") return RValue();
+            if (world.sub.getThrows) throw std::runtime_error("subTalentMap EXCEPTION");
+            if (!world.sub.isArray) return MakeReal(7.0);   // a number, not an array
+            RValue r; r.m_Kind = VALUE_ARRAY; r.text = "subTalentMap";
+            return r;
         }
         // R (`tgl fields`): an AOE instance's member names, tagged with the
         // instance they came from, so a snapshot names which one it read.
@@ -246,6 +334,7 @@ struct FakeRunner {
         }
         if (fn == "array_length") {
             if (args[0].text == "row0") return RValue((double)world.row0.size());
+            if (args[0].text == "subTalentMap") return RValue((double)world.sub.length);
             if (args[0].text.rfind("names:", 0) == 0) return RValue(2.0);
             return RValue(0.0);
         }
@@ -258,6 +347,12 @@ struct FakeRunner {
                 const int i = (int)args[1].ToDouble();
                 if (i < 0 || (size_t)i >= world.row0.size()) return RValue();
                 RValue r; r.m_Kind = VALUE_OBJECT; r.text = "row0elem:" + std::to_string(i);
+                return r;
+            }
+            if (args[0].text == "subTalentMap") {
+                const int i = (int)args[1].ToDouble();
+                if (i < 0 || i >= world.sub.length) return RValue();   // out of range
+                RValue r; r.m_Kind = VALUE_OBJECT; r.text = "submap:" + std::to_string(i);
                 return r;
             }
             return RValue();
@@ -275,16 +370,51 @@ struct FakeRunner {
                 if (field == "navBboxWidth") return RValue(e.navBboxWidth);
                 if (field == "navBboxHeight") return RValue(e.navBboxHeight);
             }
+            if (tag.rfind("submap:", 0) == 0) {
+                const int index = std::stoi(tag.substr(7));
+                if (field.size() < 2 || field[0] != 't') return RValue();
+                const int talent = std::stoi(field.substr(1));
+                auto byIndex = world.sub.levels.find(index);
+                if (byIndex == world.sub.levels.end()) return RValue();
+                auto byTalent = byIndex->second.find(talent);
+                if (byTalent == byIndex->second.end()) return RValue();   // `t<id>` absent
+                RValue r; r.m_Kind = VALUE_OBJECT;
+                r.text = "subt:" + std::to_string(index) + ":" + std::to_string(talent);
+                return r;
+            }
+            if (tag.rfind("subt:", 0) == 0) {
+                const size_t sep = tag.find(':', 5);
+                const int index = std::stoi(tag.substr(5, sep - 5));
+                const int talent = std::stoi(tag.substr(sep + 1));
+                if (field.size() < 2 || field[0] != 's') return RValue();
+                const int slot = std::stoi(field.substr(1));
+                auto byIndex = world.sub.levels.find(index);
+                if (byIndex == world.sub.levels.end()) return RValue();
+                auto byTalent = byIndex->second.find(talent);
+                if (byTalent == byIndex->second.end()) return RValue();
+                auto value = byTalent->second.find(slot);
+                if (value == byTalent->second.end()) return RValue();   // `s<NN>` absent
+                return value->second;
+            }
             return RValue();
         }
         if (fn == "draw_get_colour") return RValue(kPrevColour);
         if (fn == "draw_get_alpha") return RValue(kPrevAlpha);
-        if (fn == "make_colour_rgb") return RValue(123456.0);
+        if (fn == "make_colour_rgb") {
+            ++g_MakeColourCalls;
+            g_ColourR = args[0].ToDouble(); g_ColourG = args[1].ToDouble(); g_ColourB = args[2].ToDouble();
+            return RValue(123456.0);
+        }
         if (fn == "draw_set_colour") { g_LastSetColour = args[0].ToDouble(); return RValue(); }
-        if (fn == "draw_set_alpha") { g_LastSetAlpha = args[0].ToDouble(); return RValue(); }
+        if (fn == "draw_set_alpha") {
+            g_LastSetAlpha = args[0].ToDouble(); g_SetAlphas.push_back(g_LastSetAlpha); return RValue();
+        }
         if (fn == "draw_rectangle") {
             if (world.drawRectangleThrows) throw std::runtime_error("draw_rectangle EXCEPTION");
-            ++g_RectangleDraws; return RValue();
+            ++g_RectangleDraws;
+            g_DrawnRects.push_back({ args[0].ToDouble(), args[1].ToDouble(),
+                                     args[2].ToDouble(), args[3].ToDouble() });
+            return RValue();
         }
         return RValue();
     }
@@ -371,12 +501,26 @@ static GuardCall CallGuard(CInstance* self, double talent, bool a4) {
     RValue& r = HookTalentUseClass(self, nullptr, result, 8, args);
     return { g_TrampCalls - before, &r == &result && r.number == -12345 };
 }
+// S: the guard's baseline world is "row 0 resolved, its toggle sub-talent
+// allocated" - the shape session 6 measured for an actual Purgatory toggle,
+// and the only shape in which a refusal is correct at all (D-P3). A scenario
+// that is about the gate changes exactly the one thing it is about; every
+// scenario written for T1 keeps its own expected values because this baseline
+// reproduces T1's unconditional refusal.
+static void resetGuardSubTalent(double level) {
+    world.sub.levels[ForgePact::kToggleSubTalentMapIndex][kToggleIndicatorTalentId]
+                    [ForgePact::kToggleSkillRows[0].subTalentSlot] = MakeReal(level);
+}
 static void resetGuard(bool enabled) {
     world = World{};
     g_OrigTalentUseClass = &FakeTalentUseClassOriginal;
     ForgePact::ToggleGuardMod::Instance().SetEnabled(enabled, /*alreadyHooked=*/true);
     g_TgdRefused = 0; g_TgdPassed = 0; g_TgdProcSeen = 0; g_TgdSelfUnreadable = 0; g_TgdObjUnresolved = 0;
+    g_TgdSubOff = 0; g_TgdSubUnreadable = 0;
     g_ToggleGuardDcObjIdx.store(-1);
+    for (int r = 0; r < ForgePact::kToggleSkillRowCount; ++r) g_ToggleTableIds.Set(r, -1);
+    g_ToggleTableIds.Set(0, kToggleIndicatorTalentId);
+    resetGuardSubTalent(3.0);   // session 6 read `s12=real:3.000000` when allocated
 }
 
 int main() {
@@ -584,6 +728,15 @@ int main() {
     // requireMarker is always true here - session 4 measured the plain-cast
     // flash (D-R2), matching the shipped call.
 
+    // S: the shipped table's talent ids are resolved at runtime from each
+    //    row's `abilityId`; the harness sets them directly instead. Every
+    //    `indicator_*` scenario below drives ROW 0 alone - the other four rows
+    //    stay unresolved, exactly as a live session looks before their
+    //    `abilityId` has been matched - so each counter keeps the single-row
+    //    expected value T1 measured.
+    for (int r = 0; r < ForgePact::kToggleSkillRowCount; ++r) g_ToggleTableIds.Set(r, -1);
+    g_ToggleTableIds.Set(0, kToggleIndicatorTalentId);
+
     // 19. OFF: the very first statement is an atomic load and return - no
     //     runtime call happens at all.
     resetWorld();
@@ -595,8 +748,8 @@ int main() {
         checkInt("indicator_off/no_runtime_calls", g_AnyCallCount - before, 0);
     }
 
-    // 20. ON, own+marked, slot found: outlines the slot exactly once (three
-    //     nested passes, for thickness).
+    // 20. ON, own+marked, slot found: marks the slot exactly once (one
+    //     kToggleMarkerBands-band pass, D-U13 - three gold passes before it).
     resetWorld();
     g_ToggleBorderOn.store(true);
     world.instances = { OwnMarked(0.09) };
@@ -604,7 +757,7 @@ int main() {
         g_TibDrawn = 0; g_RectangleDraws = 0;
         ToggleIndicatorDraw();
         checkInt("indicator_on/own_on_outlines_slot", g_TibDrawn, 1);
-        checkInt("indicator_on/own_on_outlines_slot/rectangles", g_RectangleDraws, 3);
+        checkInt("indicator_on/own_on_outlines_slot/rectangles", g_RectangleDraws, kToggleMarkerBands);
     }
 
     // 21. ON, no AOE at all: Off, draws nothing.
@@ -743,6 +896,177 @@ int main() {
         ToggleIndicatorDraw();
         checkInt("indicator_on/slot_failures_are_split/noTalent", g_TibNoTalent, 1);
         checkInt("indicator_on/slot_failures_are_split", g_TibNoHud + g_TibNoRow0, 0);
+    }
+
+    // ---- S: the D-U13 marker, the D-U12 box and the per-row discriminators --
+    // What was drawn, not how many calls were made: a scenario that only
+    // counted draw_rectangle calls could not tell a deepred alpha ramp from
+    // ten identical gold rectangles.
+
+    // 30. The colour is D-U13's `deepred`, from exactly one make_colour_rgb
+    //     call - the same triple the sprite probe's own preset carries, which
+    //     a contract test pins the two sides of.
+    resetWorld(); resetDrawRecord();
+    g_ToggleBorderOn.store(true);
+    world.instances = { OwnMarked(0.09) };
+    {
+        ToggleIndicatorDraw();
+        checkNear("border/marker_colour_is_deepred/r", g_ColourR, 140.0);
+        checkNear("border/marker_colour_is_deepred/g", g_ColourG, 24.0);
+        checkNear("border/marker_colour_is_deepred/b", g_ColourB, 28.0);
+        checkInt("border/marker_colour_is_deepred", g_MakeColourCalls, 1);
+    }
+
+    // 31. The bands' alpha falls strictly outwards, full at the innermost and
+    //     zero at the outermost, and the pre-draw alpha is restored after the
+    //     last band.
+    resetWorld(); resetDrawRecord();
+    g_ToggleBorderOn.store(true);
+    world.instances = { OwnMarked(0.09) };
+    {
+        ToggleIndicatorDraw();
+        bool decreasing = g_SetAlphas.size() == (size_t)kToggleMarkerBands + 1;
+        for (size_t i = 1; decreasing && i + 1 < g_SetAlphas.size(); ++i) {
+            if (!(g_SetAlphas[i] < g_SetAlphas[i - 1])) decreasing = false;
+        }
+        checkBool("border/marker_alpha_ramps_outwards/strictly_decreasing", decreasing, true);
+        checkNear("border/marker_alpha_ramps_outwards/innermost",
+                  g_SetAlphas.empty() ? -1.0 : g_SetAlphas.front(), 1.0);
+        checkNear("border/marker_alpha_ramps_outwards/outermost",
+                  g_SetAlphas.size() >= (size_t)kToggleMarkerBands ? g_SetAlphas[kToggleMarkerBands - 1] : -1.0, 0.0);
+        checkNear("border/marker_alpha_ramps_outwards", g_SetAlphas.empty() ? -1.0 : g_SetAlphas.back(), kPrevAlpha);
+    }
+
+    // 32. D-U12's worked example, end to end: the slot's own live navBbox
+    //     `385.700006, 1711.000000, 124.700000 x 139.200000` becomes the
+    //     accepted whole-pixel box `120 x 126 @388,1711`, so the innermost
+    //     band's rectangle is exactly 388, 1711, 508, 1837. Nothing hardcodes
+    //     those numbers in the plugin - they come out of the offset.
+    resetWorld(); resetDrawRecord();
+    g_ToggleBorderOn.store(true);
+    world.instances = { OwnMarked(0.09) };
+    world.row0 = { { (double)kToggleIndicatorTalentId, 385.700006, 1711.000000, 124.700000, 139.200000 } };
+    {
+        ToggleIndicatorDraw();
+        const DrawnRect first = g_DrawnRects.empty() ? DrawnRect{} : g_DrawnRects.front();
+        checkNear("border/marker_box_is_derived_and_whole_pixel/x1", first.x1, 388.0);
+        checkNear("border/marker_box_is_derived_and_whole_pixel/y1", first.y1, 1711.0);
+        checkNear("border/marker_box_is_derived_and_whole_pixel/x2", first.x2, 508.0);
+        checkNear("border/marker_box_is_derived_and_whole_pixel/y2", first.y2, 1837.0);
+        checkInt("border/marker_box_is_derived_and_whole_pixel", (long)g_DrawnRects.size(), kToggleMarkerBands);
+    }
+
+    // 33. Soul Spurn's own decision is unchanged by the generalisation: own +
+    //     purgatory 0.09 is still exactly one marker.
+    resetWorld(); resetDrawRecord();
+    g_ToggleBorderOn.store(true);
+    world.instances = { OwnMarked(0.09) };
+    {
+        g_TibDrawn = 0;
+        ToggleIndicatorDraw();
+        checkInt("border/soul_spurn_marker_unchanged_semantics/drawn", g_TibDrawn, 1);
+        checkInt("border/soul_spurn_marker_unchanged_semantics", (long)g_DrawnRects.size(), kToggleMarkerBands);
+    }
+
+    // 34. Two ON rows with different slots: two slot lookups and two markers.
+    //     Row 1 (`lunarOrbit`) has no ownership field and no discriminator,
+    //     so its controller instance lights it on its own.
+    resetWorld(); resetDrawRecord();
+    g_ToggleBorderOn.store(true);
+    {
+        const int kLunarId = 358;   // session 6's measured id, harness-side only
+        g_ToggleTableIds.Set(1, kLunarId);
+        world.objIndexByName[HeroSiege::Objects::GetObjectName(ForgePact::kToggleSkillRows[1].onObject)] = 500.0;
+        world.instancesByIndex[500.0] = { Unattributed() };
+        world.instances = { OwnMarked(0.09) };
+        world.row0 = { { (double)kToggleIndicatorTalentId, 100.0, 200.0, 50.0, 60.0 },
+                       { (double)kLunarId, 300.0, 400.0, 50.0, 60.0 } };
+        g_TibDrawn = 0;
+        ToggleIndicatorDraw();
+        checkInt("border/two_rows_two_borders/drawn", g_TibDrawn, 2);
+        checkInt("border/two_rows_two_borders/slot_lookups", g_SlotLookups, 2);
+        checkInt("border/two_rows_two_borders", (long)g_DrawnRects.size(), 2 * kToggleMarkerBands);
+        g_ToggleTableIds.Set(1, -1);
+    }
+
+    // 35. A `none-needed` row (D-P5): no discriminator is required, so any own
+    //     instance lights it, and an instance whose ownership read would have
+    //     thrown still counts as own because the row names no ownership field
+    //     at all (D-N3) - the read never asks.
+    {
+        const int kLunarId = 358;
+        auto lunarRow = [&](AoeInst inst) {
+            resetWorld(); resetDrawRecord();
+            g_ToggleBorderOn.store(true);
+            for (int r = 0; r < ForgePact::kToggleSkillRowCount; ++r) g_ToggleTableIds.Set(r, -1);
+            g_ToggleTableIds.Set(1, kLunarId);
+            world.objIndexByName[HeroSiege::Objects::GetObjectName(ForgePact::kToggleSkillRows[1].onObject)] = 500.0;
+            world.instancesByIndex[500.0] = { inst };
+            world.row0 = { { (double)kLunarId, 100.0, 200.0, 50.0, 60.0 } };
+            g_TibDrawn = 0;
+            ToggleIndicatorDraw();
+        };
+        checkBool("border/no_discriminator_row_lights_on_any_own/requireMarker",
+                  ForgePact::ToggleRowRequiresMark(ForgePact::kToggleSkillRows[1]), false);
+        lunarRow(OwnUnmarked());   // a readable-but-zero marker field is irrelevant here
+        checkInt("border/no_discriminator_row_lights_on_any_own", g_TibDrawn, 1);
+
+        AoeInst throwing;
+        throwing.isMyClient = RValue();
+        throwing.isMyClientThrows = true;
+        lunarRow(throwing);
+        checkInt("border/ownership_none_counts_every_instance_own", g_TibDrawn, 1);
+    }
+
+    // 36. The timer discriminator (`maelstromOfFrost`): EXACT equality with
+    //     the value session 6 measured the row held at while on. A counting
+    //     timer, any other negative, and an unreadable read each draw nothing
+    //     - the last of them counted rather than guessed either way.
+    {
+        const int kMaelstromId = 430;   // session 6's measured id, harness-side only
+        const int kRow = ForgePact::kToggleSkillRowCount - 1;
+        auto timerRow = [&](const RValue& timer, bool throwsRead) {
+            resetWorld(); resetDrawRecord();
+            g_ToggleBorderOn.store(true);
+            for (int r = 0; r < ForgePact::kToggleSkillRowCount; ++r) g_ToggleTableIds.Set(r, -1);
+            g_ToggleTableIds.Set(kRow, kMaelstromId);
+            world.objIndexByName[HeroSiege::Objects::GetObjectName(ForgePact::kToggleSkillRows[kRow].onObject)] = 600.0;
+            AoeInst inst = OwnMarked(0.0);   // own; this row's discriminator is the timer
+            inst.destroyTimer = timer;
+            inst.destroyTimerThrows = throwsRead;
+            world.instancesByIndex[600.0] = { inst };
+            world.row0 = { { (double)kMaelstromId, 100.0, 200.0, 50.0, 60.0 } };
+            g_TibDrawn = 0; g_TibOff = 0; g_TibUnreadable = 0;
+            ToggleIndicatorDraw();
+        };
+        timerRow(MakeReal(-1.0), false);
+        checkInt("border/timer_at_infinite_draws_full", g_TibDrawn, 1);
+        timerRow(MakeReal(57.0), false);
+        checkInt("border/timer_counting_down_draws_nothing/off", g_TibOff, 1);
+        checkInt("border/timer_counting_down_draws_nothing", g_TibDrawn, 0);
+        timerRow(MakeReal(-0.737424), false);
+        checkInt("border/timer_other_negative_draws_nothing", g_TibDrawn, 0);
+        timerRow(RValue(), false);   // undefined: never defaulted to a number
+        checkInt("border/timer_unreadable_draws_nothing_and_counts/undefined", g_TibUnreadable, 1);
+        timerRow(MakeReal(-1.0), true);   // a throwing read, with a value that WOULD have lit it
+        checkInt("border/timer_unreadable_draws_nothing_and_counts/throws", g_TibUnreadable, 1);
+        checkInt("border/timer_unreadable_draws_nothing_and_counts", g_TibDrawn, 0);
+    }
+
+    // 37. A row whose talent id has not been resolved from its `abilityId` yet
+    //     is skipped and counted - never read, never drawn, never guessed.
+    resetWorld(); resetDrawRecord();
+    g_ToggleBorderOn.store(true);
+    world.instances = { OwnMarked(0.09) };
+    {
+        for (int r = 0; r < ForgePact::kToggleSkillRowCount; ++r) g_ToggleTableIds.Set(r, -1);
+        g_TibDrawn = 0; g_TibUnresolved = 0;
+        const long enumBefore = g_InstanceEnumCalls;
+        ToggleIndicatorDraw();
+        checkInt("table/unresolved_row_skipped_and_counted/drawn", g_TibDrawn, 0);
+        checkInt("table/unresolved_row_skipped_and_counted/no_enumeration", g_InstanceEnumCalls - enumBefore, 0);
+        checkInt("table/unresolved_row_skipped_and_counted", g_TibUnresolved, ForgePact::kToggleSkillRowCount);
+        g_ToggleTableIds.Set(0, kToggleIndicatorTalentId);
     }
 
     // ---- T1: the re-cast guard, HookTalentUseClass ---------------------------
@@ -892,6 +1216,94 @@ int main() {
             checkInt(label + "/refused", g_TgdRefused, 0);
             checkInt(label, c.tramp, 1);
         }
+    }
+
+    // ---- S: the guard's sub-talent gate (D-P3) -------------------------------
+    // The refusal costs the player a cast, so it happens only when the toggle
+    // sub-talent is actually allocated - read at the call, with the talent the
+    // call named. Everything else passes and is counted, because fail-open is
+    // vanilla behaviour and a mod that silently eats casts is worse than one
+    // that occasionally does nothing.
+
+    // 40a. Allocated: the proc re-cast is refused, as T1 always did.
+    resetGuard(true);
+    {
+        GuardCall c = CallGuard(&dcSelf, (double)kToggleIndicatorTalentId, false);
+        checkInt("guard_on/table_talent_with_subtalent_refused/refused", g_TgdRefused, 1);
+        checkInt("guard_on/table_talent_with_subtalent_refused/subOff", g_TgdSubOff, 0);
+        checkInt("guard_on/table_talent_with_subtalent_refused", c.tramp, 0);
+    }
+
+    // 40b. Respecced out: session 6 measured `s12=real:0.000000`, key present.
+    //      The call is the player's own plain cast, so it goes through.
+    resetGuard(true);
+    resetGuardSubTalent(0.0);
+    {
+        GuardCall c = CallGuard(&dcSelf, (double)kToggleIndicatorTalentId, false);
+        checkInt("guard_on/table_talent_without_subtalent_passes/subOff", g_TgdSubOff, 1);
+        checkInt("guard_on/table_talent_without_subtalent_passes/refused", g_TgdRefused, 0);
+        checkInt("guard_on/table_talent_without_subtalent_passes", c.tramp, 1);
+    }
+
+    // 40c. Every shape the read can fail in, one scenario each, so none of
+    //      them is inferred from another: the global absent, the global not an
+    //      array, the measured index past the array's end, `t<id>` absent,
+    //      `s<NN>` non-numeric, and a throw. Each passes and counts once.
+    {
+        struct SubShape { const char* name; void (*apply)(); };
+        static const SubShape kShapes[] = {
+            { "global_absent", []() { world.sub.globalExists = false; } },
+            { "not_an_array",  []() { world.sub.isArray = false; } },
+            { "index_out_of_range", []() { world.sub.length = ForgePact::kToggleSubTalentMapIndex; } },
+            { "talent_key_absent", []() { world.sub.levels.clear(); } },
+            { "slot_non_numeric", []() {
+                  world.sub.levels[ForgePact::kToggleSubTalentMapIndex][kToggleIndicatorTalentId]
+                                  [ForgePact::kToggleSkillRows[0].subTalentSlot] = RValue("3"); } },
+            { "read_throws", []() { world.sub.getThrows = true; } },
+        };
+        for (const SubShape& s : kShapes) {
+            resetGuard(true);
+            s.apply();
+            GuardCall c = CallGuard(&dcSelf, (double)kToggleIndicatorTalentId, false);
+            const std::string label = std::string("guard_on/subtalent_unreadable_passes_and_counts/") + s.name;
+            checkInt(label + "/subUnreadable", g_TgdSubUnreadable, 1);
+            checkInt(label + "/refused", g_TgdRefused, 0);
+            checkInt(label, c.tramp, 1);
+        }
+        checkBool("guard_on/subtalent_unreadable_passes_and_counts",
+                  sizeof(kShapes) / sizeof(kShapes[0]) == 6, true);
+    }
+
+    // 40d. A talent that is not in the shipped table is never a member, so the
+    //      sub-talent is not even read.
+    resetGuard(true);
+    {
+        const long before = g_AnyCallCount;
+        GuardCall c = CallGuard(&dcSelf, 999.0, false);
+        checkInt("guard_on/non_table_talent_passes/refused", g_TgdRefused, 0);
+        checkInt("guard_on/non_table_talent_passes/sub_not_read", g_TgdSubOff + g_TgdSubUnreadable, 0);
+        checkInt("guard_on/non_table_talent_passes", c.tramp, 1);
+        (void)before;
+    }
+
+    // 40e. Every row unresolved: the guard covers nothing, and an unnamed
+    //      talent (a0 that is not a number, read back as -1) must not match an
+    //      unresolved row's own -1.
+    resetGuard(true);
+    for (int r = 0; r < ForgePact::kToggleSkillRowCount; ++r) g_ToggleTableIds.Set(r, -1);
+    {
+        GuardCall c = CallGuard(&dcSelf, (double)kToggleIndicatorTalentId, false);
+        checkInt("guard_on/unresolved_row_passes/refused", g_TgdRefused, 0);
+        checkInt("guard_on/unresolved_row_passes", c.tramp, 1);
+
+        RValue a0;   // VALUE_UNDEFINED: the call named no talent at all
+        RValue a1 = MakeReal(0);
+        RValue* args[2] = { &a0, &a1 };
+        RValue result = MakeReal(-12345);
+        const long trampBefore = g_TrampCalls;
+        HookTalentUseClass(&dcSelf, nullptr, result, 2, args);
+        checkInt("guard_on/unresolved_row_passes/unnamed_talent_never_matches",
+                 g_TrampCalls - trampBefore, 1);
     }
 
     // ---- R (issue #11 generalisation): the research table's generalised read
