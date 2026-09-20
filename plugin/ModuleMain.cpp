@@ -23429,8 +23429,13 @@ static void TgProbeSpriteCommand(const std::string& rest)
         std::string ignored;
         const std::string v = FirstToken(subRest, ignored);
         if (!v.empty()) {
-            double f = 1.0;
-            try { f = std::stod(v); } catch (...) { f = 1.0; }
+            double f = 0.0;
+            try {
+                f = std::stod(v);
+            } catch (...) {
+                Out("tgprobe sprite frac: usage -> tgprobe sprite frac [f] (0.0..1.0; \"" + v + "\" did not parse as a number)");
+                return;
+            }
             if (f < 0.0) f = 0.0;   // clamp by hand (test_no_bare_std_max_or_std_min)
             if (f > 1.0) f = 1.0;
             g_TgSpriteFraction = f;
@@ -24228,12 +24233,16 @@ static void TgProbeTalentsCommand(const std::string& rest)
     // T2 (issue #55): route A (abilityDuration x the runtime's tick rate)
     // cannot be falsified without a tick-rate readout, and nothing in
     // tgprobe prints one today ("### What the probe round must add"). Read
-    // by name, the same call and unreadable-floor shape the shipped
-    // Headhunter buff-duration path already uses (~ModuleMain.cpp:8038:
-    // game_get_speed(0.0)), plus `fps` as this file's own established
-    // positive control (~ModuleMain.cpp:20360). Printed once, up front, so
-    // the per-row predictedTotal= below is falsifiable against a measured
-    // `tgprobe tgl timer ... first=` without hand arithmetic.
+    // by the same call the shipped Headhunter buff-duration path already
+    // uses (~ModuleMain.cpp:8038: game_get_speed(0.0)), plus `fps` as this
+    // file's own established positive control (~ModuleMain.cpp:20360). The
+    // floor differs from that shipped path on purpose: Headhunter floors
+    // `spd < 1.0` to 60.0 and always applies a duration, while this probe
+    // only needs to know whether the read is usable at all, so anything
+    // `<= 0.0` is reported `unreadable` rather than silently substituted.
+    // Printed once, up front, so the per-row predictedTotal= below is
+    // falsifiable against a measured `tgprobe tgl timer ... first=` without
+    // hand arithmetic.
     double speed = -1.0;
     bool speedOk = false;
     try {

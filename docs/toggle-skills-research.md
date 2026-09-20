@@ -329,14 +329,15 @@ turn co-op rendering on, and run no `citrace` command, after `tgprobe hook`.
 | `tgprobe sprite <SpriteName> [talentId\|centre]\|off\|gold\|style <name>` | Resolves `<SpriteName>` by name with `asset_get_index` (prints `unresolved`, stores nothing, on a negative index) and draws it, scaled to a box with `draw_sprite_ext`, at the active layer (see `layer` below). `[talentId]` draws over that talent's hotbar slot (default Soul Spurn, 240) — the box is D-U12's derived box by default, or the raw `navBbox` with `box bbox` (see `box` below) — inflated by the active `scale` (see below) around its own centre; `centre` instead draws one large fixed-size copy in the middle of the screen, away from the HUD (not affected by `scale` or `box`). Prints `frames=`/`width=`/`height=`/`scale=`/`box=`/`colour=`/`layer=` when it runs (`sprite_get_number`/`_width`/`_height`; `box=` is the resulting pixel rectangle prefixed with the active kind, e.g. `box=tuned 120x126@388,1711`, or `box=tuned slot not found`; `colour=` is printed for reference even though a named sprite draws its own art, untinted); a multi-frame sprite animates (a shared time base advances every draw, so several sprites drawn together — see `gallery` — animate in lockstep). `gold` draws today's shipped three-nested-rectangle look over the hotbar slot instead, at the same `scale`/`box`, so a candidate can be flipped against the current one without arming `toggleborder`. `style <name>` draws one of our own procedural looks instead of a sprite (see the `style` row below). `off` stops drawing and prints `draws=`/`drawExc=`/`layer=`, saving/restoring `draw_get_colour`/`draw_get_alpha` exactly as the shipped draw does. |
 | `tgprobe sprite box tuned\|bbox` | (round 10) Which box `sprite <Name>`, `sprite gold` and every `style` draw into before `scale` is applied, and what their `box=` readout reports. `tuned` (the default) is D-U12's derived box — `x + 2.3`, `y` unchanged, `w - 4.7`, `h - 13.2` off the slot's own live `navBbox`, each rounded to whole pixels (D-U11) — what the author actually tuned the look against. `bbox` is the slot's raw `navBbox`, rounded the same way, kept so the two can still be compared side by side; round 9 shipped every style/gold draw against the raw bbox even though D-U12 had already superseded it for the marker geometry itself — this round wires the tuned box in as the default so what a tester judges is the real shape. With no argument, reports the active kind and the resulting integer box without changing it. |
 | `tgprobe sprite scale [f]` | A multiplier (default `1.0`, clamped `0.25..4.0`) on the active box (see `box` above; `sprite <Name>`/`sprite gold`/`sprite style <name>` all draw into it) — the "surround" route (round 5): since only a larger-than-the-icon draw (the gold outline's own box, bigger than the icon) is confirmed visible at either layer, a candidate inflated the same way should read around the icon instead of under it. With no argument, reports the current value without changing it; never applied to `centre` or `gallery`, whose box sizes are their own fixed constants, and never to `tgprobe mark`, which already takes explicit geometry. |
-| `tgprobe sprite style soft\|halo\|gradient\|pulse` | Draws a procedural look ForgePact draws itself, not a game sprite, into the same scaled slot box `sprite <Name>`/`sprite gold` use (round 6, after the tester found the flat gold rectangle "crude" and asked for a soft alpha-fade look): `soft` is the shipped outline generalised to 10 alpha-ramped nested bands; `halo` is a radial glow (`draw_ellipse_colour`, the two-colour ellipse builtin); `gradient` is nested filled rectangles (`draw_rectangle_colour`, the four-corner-colour rectangle builtin) approximating a centre-outward fade; `pulse` is `soft` with every band's alpha additionally scaled by a slow sine on the frame counter (confirmation line prints `period=1.5s (90 frames)`). `draw_ellipse_colour`/`draw_rectangle_colour` are new to this probe this round — their reachability through the shared `CallBuiltin` path is unconfirmed until a live session runs `halo`/`gradient` and reports what drew. Names also listed by `sprite list`. |
+| `tgprobe sprite style soft\|halo\|gradient\|pulse\|arc\|bar\|number\|fade` | Draws a procedural look ForgePact draws itself, not a game sprite, into the same scaled slot box `sprite <Name>`/`sprite gold` use (round 6, after the tester found the flat gold rectangle "crude" and asked for a soft alpha-fade look): `soft` is the shipped outline generalised to 10 alpha-ramped nested bands; `halo` is a radial glow (`draw_ellipse_colour`, the two-colour ellipse builtin); `gradient` is nested filled rectangles (`draw_rectangle_colour`, the four-corner-colour rectangle builtin) approximating a centre-outward fade; `pulse` is `soft` with every band's alpha additionally scaled by a slow sine on the frame counter (confirmation line prints `period=1.5s (90 frames)`). `draw_ellipse_colour`/`draw_rectangle_colour` are new to this probe this round — their reachability through the shared `CallBuiltin` path is unconfirmed until a live session runs `halo`/`gradient` and reports what drew. **`arc`/`bar`/`number`/`fade`** (issue #55) are the four timed-skill countdown-look candidates, each drawn against `sprite frac` below instead of a live cast — see `## Issue #55` for what each looks like and the live procedure that judges them; `arc` additionally depends on `draw_line`, unconfirmed the same way until a live session runs it. Names also listed by `sprite list`. |
+| `tgprobe sprite frac [f]` | (issue #55) A settable countdown fraction, `0.0..1.0`, clamped by hand, default `1.0`, that `style arc\|bar\|number\|fade` draw against — so each timed-skill look is judgeable at rest, at any fill, with no live cast, and is the same input the shipped countdown will take. An argument that does not parse as a number is refused with a usage message and the stored fraction is left unchanged. |
 | `tgprobe sprite colour <name\|r g b>` | A shared colour (round 8) for every `style`, `sprite gold` and `tgprobe mark` — default `gold`, unchanged until a tester asks for red (D-U11: the shipped marker will be red). Presets: `gold`, `red` (a deep, warm crimson — not `255,0,0`; the author's steer was "a nicer shade, similar to what talent aura frame uses"), `brightred` and `deepred` (a brighter and a deeper neighbour of `red`); or a raw `<r> <g> <b>` triple (`0..255` each, clamped by hand). With no argument, reports the active colour without changing it. Confirmation line prints `colour=<name>(<r>,<g>,<b>)` — the full triple, not only the name, so a choice is quotable as a number. Never applied to a named sprite's own art (drawn with its own colours) or to `centre`/`gallery`'s fixed boxes. |
 | `tgprobe sprite quad on\|off` | (round 9, corrected round 10) "Inside out" — the author's own word. Round 9's first build (four whole-sprite copies, one scaled into each box quadrant and mirrored) was rejected on sight as the wrong construction. The corrected version instead splits the SOURCE sprite itself into its own four quadrants (`draw_sprite_part_ext`, GameMaker's source-rectangle sprite draw) and rotates each quadrant 180 degrees about its own centre, drawn back into the matching destination quadrant — so content that sat at the sprite's own centre ends up at the box's outer corners and the assembled result stays a square, "the sprite's inner edges become its outer edges" (the author's second description, a diagonal split into four triangles each flipped once vertically and once horizontally, was the alternative not used — the source-rectangle route was preferred and attempted first). Every tile's geometry, on both the source sprite and the destination box, is whole pixels (D-U11). Applies to `sprite <Name>` over a hotbar slot or at `centre`, not to `gold`/`style`/`gallery`. Default `off`. `quad=on`/`quad=off` printed in the sprite/gold/`off` confirmation lines. `draw_sprite_part_ext` is new to this probe this round — its reachability through the shared `CallBuiltin` path is **unconfirmed until a live session runs `quad on`**, the same status `draw_sprite_ext`/`draw_ellipse_colour`/`draw_rectangle_colour` each carried before their own first live run. |
 | `tgprobe sprite alpha <min> [max]` | (round 9) The floor/ceiling `style soft`/`style gradient`'s per-band fade remaps between, replacing `0` as the floor — the author's own complaint was `gradient` "blends too well with the background" at `0`. `min` is the alpha the fade stops at; `max` is the centre alpha, defaulting to each style's own existing centre alpha (`soft`'s `1.0`, `gradient`'s `0.5`) unless set explicitly, so the *default* reproduces both styles' pre-round-9 look exactly. Accepts `0..255` or `0..1` per value (over `1.0` is treated as a byte and divided by `255`). With no argument, reports the active pair without changing it. Confirmation line prints `alpha=<min>/255..<max>/255\|style-default` in the `style`/`off` lines. Never applied to `halo` or to a named sprite's own art. |
-| `tgprobe sprite list` | Prints the round's candidate sprite names with each one's resolved index, or `unresolved`, so a wrong name is obvious before drawing: `Talent_Aura_Frame_spr`, `Talent_Frame_Indicator_spr`, `Ability_Indicator_Border_spr`, `Ability_Indicator_spr`, `Ability_Indicator_White_spr`, `Sub_Talent_Big_Border_spr`, `Skill_Frames_spr`; also lists the four `style` names, every `colour` preset with its rgb triple, and one-line reminders of `quad`/`alpha`. |
+| `tgprobe sprite list` | Prints the round's candidate sprite names with each one's resolved index, or `unresolved`, so a wrong name is obvious before drawing: `Talent_Aura_Frame_spr`, `Talent_Frame_Indicator_spr`, `Ability_Indicator_Border_spr`, `Ability_Indicator_spr`, `Ability_Indicator_White_spr`, `Sub_Talent_Big_Border_spr`, `Skill_Frames_spr`; also lists the eight `style` names (`soft`/`halo`/`gradient`/`pulse`, plus issue #55's `arc`/`bar`/`number`/`fade`), every `colour` preset with its rgb triple, and one-line reminders of `quad`/`alpha`/`frac`. |
 | `tgprobe sprite gallery [cols]` | Draws every candidate from `sprite list`, plus one gold-rectangle cell as the positive control, at once — a fixed grid in the middle of the screen (`cols` columns, default 4), each cell scaled to a 96 px box. No per-cell label is drawn any more (round 6: a `draw_text` label displaced the icon in a live session, cause not diagnosed — see docs "Sprite look probe"); the index→name mapping goes to the log only (`TgProbeSpriteGalleryLegend`, printed once when the command runs). **Not a trustworthy comparison**: a candidate visible over the button has read blank here in the same session — treat `sprite <Name>` (optionally `scale <f>`) over the hotbar slot as the one comparison to trust. |
 | `tgprobe sprite layer hud\|buffs` | Which after-draw call site `sprite`/`mark` actually draw from; shared, default `buffs`. Both layers measured (2026-09-20 live session) to sit *under* the hotbar button's own art, which paints later in the same frame regardless of which one draws — `hud` (the existing `DrawHud` candidate row's own detour, `TgProbeDetourBody`, after that row's trampoline call returns — no new hook, the same one resolver `tgprobe hook` every other candidate row already goes through) does not clear it either; see docs "Sprite look probe" for the full finding and why (the talent slot's own `Draw_0`/`Draw_64` event, where the button paints, reports `not found` to this build's object-event hook path). Setting `layer hud` does not attach the `DrawHud` row itself; the tester runs `tgprobe hook` (or `tgprobe hook drawhud`) separately, same as any other row, and the confirmation line says whether it is attached yet. |
-| `tgprobe talents [substr\|tags]` | Session 6's C0. Walks `global.talentStructMap` (`ds_map_find_first`/`ds_map_find_next`, capped at 5000 keys) and prints, per talent id whose `abilityId` contains `substr` (none = all, at most 40 lines then `…(+N more)`): `abilityId`, `abilityAura`, `abilityDuration`, `abilityCooldown`, `abilityLength` and `abilityTags`, each read on its own (`absent` for a missing key, `unreadable` for a throw, never a default). `tags` instead prints each distinct tag id with its count. Last line `tgprobe talents: ids=N shown=M nonNumericKeys= notStruct= walkExc= truncated= tableRowsWithId=k/rows`. The walk also gives every `tgl` row whose `abilityId` it finds its talent id, which `tgl sub` and `tgl slots` use. |
+| `tgprobe talents [substr\|tags]` | Session 6's C0. Prints one line first, `speed=`/`fps=` (issue #55: `game_get_speed(0.0)` and the `fps` builtin, each `unreadable` rather than a default) — the tick-rate route A's falsification needs. Then walks `global.talentStructMap` (`ds_map_find_first`/`ds_map_find_next`, capped at 5000 keys) and prints, per talent id whose `abilityId` contains `substr` (none = all, at most 40 lines then `…(+N more)`): `abilityId`, `abilityAura`, `abilityDuration`, `abilityCooldown`, `abilityLength`, `abilityTags` and `predictedTotal=` (issue #55: `abilityDuration` times the printed `speed=`, gated on `speed=` having read), each read on its own (`absent` for a missing key, `unreadable` for a throw, never a default). `tags` instead prints each distinct tag id with its count. Last line `tgprobe talents: ids=N shown=M nonNumericKeys= notStruct= walkExc= truncated= tableRowsWithId=k/rows`. The walk also gives every `tgl` row whose `abilityId` it finds its talent id, which `tgl sub` and `tgl slots` use. |
 | `tgprobe tgl [on\|off\|add\|list\|clear\|slots\|fields\|sub\|timer]` | The runtime toggle-candidate table (cap 16), prefilled with the seven rows of `### Other toggle skills: the static candidate table`: row 0 is the measured Soul Spurn row (`White_Mage_Soul_Spurn_AOE_obj`, marker `purgatory`), rows 1–6 carry no marker, and every row's timer field is `destroyTimer` and its ownership field each instance's own `isMyClient`. **The sampler is off by default**: `tgl on` (or `1`) starts it, `tgl off` (or `0`) stops it and keeps the counters; while off, the draw hook returns before a single builtin call, so other research sessions using this DLL do not pay for it. `list` and bare `tgl` print `sampler=on\|off`. While on, every row is read on every `DrawHudBuffs` draw through the shipped read's shape with the object, marker, ownership and timer as parameters (a row with no marker counts every own instance as marked; a row with ownership `none` counts every instance as own), and row 0 is also read through the shipped `ToggleIndicatorRead` on the same draw: `agree=` rising with `disagree=0` is the proof that the two reads are the same read. Bare `tgl` prints `agree=`/`disagree=` and per row the last sample (`state= n= mine= others= unattributed= marked= timer=`) plus `samples=`/`on=`/`off=`/`unreadable=`/`markedOn=`/`transitions=`/`lastTransitionFrame=` and `firstAfterRoomChange: state= n=`. `add <abilityId> <ObjectName> [marker\|none] [timer\|none] [ownership\|none] [sNN]` resolves the object by name first and prints `unresolved` (storing nothing) on a negative index, else the row with `idx=` and `sdk=<enumerator>\|none`; `list` prints every row's settings; `clear` keeps row 0. `fields [row]` prints the scalar members (cap 64) of the first own instance the row's read scanned — the same instance its ownership, marker and timer reads used, not `instance_find(obj, 0)`, which can be a foreign or leftover one — as first seen in the current appearance and as last seen, kept after the instance is gone (how a row's marker field is found). `last` is retaken at most once every 30 draws while the instance is present. When the read found no own instance, nothing is read or stored and the line reads `fields: no own instance`. `slots` prints every `UI_Hud_Talent_obj` `row0` element's `talentId` and `navBbox*` rectangle, naming the row whose talent id it carries. `sub` prints `global.subTalentMap`'s `array_length`, then one line per array index per row: that index's `t<id>` keys and values, `absent`, or why not. `timer` prints per row, over the current appearance, `first= last= min= max= unreadable= atPredicted= draws=` of the row's timer field on the first own instance, where `atPredicted` counts draws at exactly `-1`; an unreadable draw prints `unreadable`, never `-1` or `0`. The timer is an instrument for finding an ON discriminator only, never a border input. |
 
 `hudSinceRoomChange` counts `DrawHudBuffs` calls since the room key last
@@ -2671,13 +2672,23 @@ live session decides between three candidates:
   seconds-to-frames conversion the shipped Headhunter buff-duration path
   already performs through `game_get_speed`. Three of the five shipped rows
   read `abilityDuration=0` while their objects still have a lifetime, so
-  route A alone cannot cover those.
+  route A alone cannot cover those. Be ready for a *scaled* disagreement
+  rather than a random one: the same session measured Counter's buff
+  `destroyTimer 1036.800000` against `abilityDuration=6`
+  (1036.8 / 6 = 172.8 = 144 × 1.2), which looks like a +20% duration
+  modifier - gear and talents may scale the real lifetime past the base
+  value, so a row's `first= / abilityDuration` ratio can be a consistent
+  multiple of the printed `speed=` rather than equal to it, and that is
+  route A holding, not failing (see the decision rule below).
 - **Route C - the instance carries its own total.** Untested, and the
   cheapest of the three: `tgprobe tgl fields [row]` already enumerates every
   scalar member of a row's own instance by name. If a dump shows a field
   holding the starting value while `destroyTimer` decays, route C needs no
   unit conversion, no per-appearance state, and covers every skill including
-  the `abilityDuration=0` ones.
+  the `abilityDuration=0` ones. `tgl fields` caps its scan at
+  `kTgTglFieldCap = 64` scalars and prints `overCap=`; a row whose dump
+  reports `overCap>0` makes route C `blocked` for that row, not falsified -
+  a field past the cap could still be the total.
 - **Route B - latch the starting `destroyTimer` on first sight.** The
   issue's own suggestion; the last resort. Wrong on its own in a case a
   player will hit: the mod is off by default and can be turned on
@@ -2688,13 +2699,22 @@ live session decides between three candidates:
 
 **Decision rule, pre-committed so the session's own output selects a route
 rather than reopening the design:** take route C if a candidate field is
-present on at least two rows and reads a plausible constant while
-`destroyTimer` decays; otherwise route A if the predicted total
-(`abilityDuration` times the printed `speed=`) matches the measured
-`tgprobe tgl timer ... first=` on at least two rows within one tick;
-otherwise route B, which needs its own recorded decision and a Known
-Limitations entry. Record whichever routes lost, and why - a route that was
-never measured is `blocked`, not `not observed`.
+present on at least two rows (with `overCap=0` on each) and reads a
+plausible constant while `destroyTimer` decays. Otherwise, compute the
+`first= / abilityDuration` ratio for each row that has both. Route A is
+confirmed when that ratio is *consistent* (within one tick's worth) across
+at least two rows - a consistent ratio that differs from the printed
+`speed=` is route A holding with a scale factor (a different finding to
+record, per the Counter example above), **not** a falsification. Route A is
+`not observed` only when the ratio is inconsistent row to row. If `speed=`
+is unreadable, route A is `blocked` for every row, since the
+`predictedTotal=` column cannot be computed at all - the rule must not fall
+through to route B on that instrument failure; re-run `tgprobe talents`
+until `speed=` reads before scoring route A. Only when route A comes out
+`not observed` or `blocked` does the rule fall through to route B, which
+needs its own recorded decision and a Known Limitations entry. Record
+whichever routes lost, and why - a route that was never measured is
+`blocked`, not `not observed`.
 
 ### The look, judged live
 
@@ -2735,20 +2755,35 @@ session:
    `abilityDuration=`/`predictedTotal=`.
 2. For each candidate row, cast its plain (non-toggle) form once and run
    `tgprobe tgl timer` - paste `first=`/`last=`/`min=`/`max=`/`unreadable=`/
-   `atPredicted=`/`draws=`.
+   `atPredicted=`/`draws=`. `atPredicted=` counts draws where the timer read
+   exactly `-1` (the *toggle* rows' predicted-infinite value, existing since
+   session 4) - it is unrelated to step 1's new `predictedTotal=`
+   (`abilityDuration` times the printed `speed=`); do not conflate the two
+   when reading a pasted-back session log later.
 3. For each candidate row, `tgprobe tgl fields [row]` on the same cast -
    paste the full scalar dump, both the first-seen and the last-seen
    snapshot.
 4. Apply the decision rule above to the session's own output and say which
    route it selects, and why.
-5. `tgprobe sprite frac 1.0`, then `tgprobe sprite style arc` over the
+5. `tgprobe sprite frac 1.0`, then `tgprobe sprite style soft` over the
    candidate's own hotbar slot (`tgprobe sprite <SpriteName> <talentId>`
    selects the slot, or reuse `tgprobe sprite gold <talentId>` first to
-   confirm the slot is right) - describe what is seen. Repeat at `frac 0.5`
-   and `frac 0.0`, then for `bar`, `number` and `fade` at the same three
-   fractions. Say which look is preferred, or that none is yet, using this
-   doc's own convention below - never "rejected" for a look that was never
-   shown.
+   confirm the slot is right) - the shipped look, known visible, run FIRST
+   as a positive control, and note what `tgprobe sprite off` prints for
+   `draws=`/`drawExc=` afterward. Then `tgprobe sprite style arc` at the
+   same `frac 1.0` and compare it against `soft`: at full fraction `arc`'s
+   traced perimeter is the same outline `soft` already draws. If `arc@1.0`
+   shows nothing while `soft` did, `draw_line` is unreachable and `arc` is
+   `blocked`, not rejected - skip the rest of `arc`'s fractions. After
+   *every* candidate (`arc` included), run `tgprobe sprite off` and paste
+   the `draws=`/`drawExc=` line it prints before setting the next style; a
+   non-zero `drawExc=` alongside a rising `draws=` means the builtin threw,
+   which is also `blocked`, never rejected. Repeat each surviving candidate
+   at `frac 0.5` and `frac 0.0`, then for `bar`, `number` and `fade` at the
+   same three fractions, pasting `draws=`/`drawExc=` after each. Say which
+   look is preferred, or that none is yet, using this doc's own convention
+   below - never "rejected" for a look that was never shown or whose
+   builtin never actually fired.
 
 ### Results
 
@@ -2756,15 +2791,15 @@ Every cell below is filled from the session's own output, quoted verbatim,
 or one of `measured` / `not observed` / `blocked` - never inferred and never
 left as a guess.
 
-| abilityId | speed=/fps= | abilityDuration=/predictedTotal= | timer first= | route C field | status |
-|---|---|---|---|---|---|
-| soulSpurn | | | | | |
-| lunarOrbit | | | | | |
-| crematus | | | | | |
-| counter | | | | | |
-| submergedKnives | | | | | |
-| maelstromOfFrost | | | | | |
-| blender | | | | | |
+| abilityId | speed=/fps= | abilityDuration=/predictedTotal= | timer first= | first=/abilityDuration ratio | route C field | status |
+|---|---|---|---|---|---|---|
+| soulSpurn | | | | | | |
+| lunarOrbit | | | | | | |
+| crematus | | | | | | |
+| counter | | | | | | |
+| submergedKnives | | | | | | |
+| maelstromOfFrost | | | | | | |
+| blender | | | | | | |
 
 Look verdicts, one row per candidate:
 
