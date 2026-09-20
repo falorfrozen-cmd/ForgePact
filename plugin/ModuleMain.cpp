@@ -19439,7 +19439,7 @@ static void TgProbeMarkCommand(const std::string& rest)
     }
 }
 
-// `tgprobe sprite <SpriteName> [talentId|centre]|off|gold|style <name>|list|gallery [cols]|layer hud|buffs|scale [f]|colour [name|r g b]|quad on|off|alpha [min] [max]`:
+// `tgprobe sprite <SpriteName> [talentId|centre]|off|gold|style <name>|list|gallery [cols]|layer hud|buffs|scale [f]|colour [name|r g b]|box tuned|bbox|quad on|off|alpha [min] [max]`:
 // draws a named sprite - or today's shipped gold rectangles, or a procedural
 // style candidate we draw ourselves, or every candidate at once, or one
 // candidate centred - so the tester can judge a look by eye next to the
@@ -19459,12 +19459,18 @@ static void TgProbeMarkCommand(const std::string& rest)
 // via TgProbeSpriteGalleryLegend). R round 8 adds `colour <name|r g b>`
 // (default gold; D-U11, the author's decision, says the shipped marker will
 // be red) shared by every style, `sprite gold` and `tgprobe mark`, so a
-// look can be compared in red or gold without another build. R round 9 adds
-// `quad on|off` (a named sprite drawn as four mirrored copies, one per box
-// quadrant - "inside out", the author's own word, not a whole-sprite flip)
-// and `alpha <min> [max]` (the floor/ceiling `soft`/`gradient`'s fade
-// remaps between, replacing 0 as the floor the author found blended into
-// the background). Read-only, research build only; never a
+// look can be compared in red or gold without another build. R round 9 added
+// `quad on|off` and `alpha <min> [max]` (the floor/ceiling `soft`/`gradient`'s
+// fade remaps between, replacing 0 as the floor the author found blended
+// into the background) - round 9's own `quad` (four *whole-sprite* copies
+// scaled into the box's quadrants) was rejected on sight as the wrong
+// construction; R round 10 replaces it with the one the author actually
+// asked for (the sprite's own quadrants mirrored outward in place, still a
+// square - see TgProbeSpriteDrawQuad), and adds `box tuned|bbox` so
+// `sprite <Name>`/`sprite gold`/every `style` draw into D-U12's derived box
+// by default (`x + ~2.3, y unchanged, w - ~4.7, h - ~13.2` off the slot's
+// own navBbox, rounded to whole pixels) instead of the raw bbox round 9
+// still used. Read-only, research build only; never a
 // shipped draw input - S still ships the gold rectangle (D-U9's "no shipped
 // draw change" extends to this probe).
 static const char* const kTgSpriteCandidates[] = {
@@ -19558,19 +19564,72 @@ static bool TgProbeSpriteFindSlot(int talentId, double& outX, double& outY, doub
 // takes explicit geometry.
 static double g_TgSpriteScale = 1.0;
 
-// The slot's own bbox (TgProbeSpriteFindSlot), inflated by g_TgSpriteScale
-// around its centre. Shared by the draw path and by the command handlers'
-// confirmation-line `box=` readout, so both report the same box.
+// D-U12 (author, round 9): the accepted marker geometry for Soul Spurn's
+// slot at this HUD scale, `388, 1711, 120 x 126` (integer pixels), was
+// derived from that slot's own `navBbox` at the same moment
+// (`385.700006, 1711.000000, 124.700000 x 139.200000`) by this offset,
+// applied BEFORE rounding to whole pixels (D-U11): `x + ~2.3` (388.000006 ->
+// 388), `y` unchanged (1711 -> 1711), `w - ~4.7` (120.000000 -> 120),
+// `h - ~13.2` (126.000000 -> 126) - the worked example the research doc
+// keeps. This is a constant *offset*, not the box itself: applied to the
+// slot's own live-read navBbox every draw (TgProbeSpriteFindSlot), the same
+// way ToggleIndicatorFindSlot reads it, never a hardcoded 388/1711/120/126.
+static constexpr double kTgTunedBoxDX = 2.3;
+static constexpr double kTgTunedBoxDY = 0.0;
+static constexpr double kTgTunedBoxDW = -4.7;
+static constexpr double kTgTunedBoxDH = -13.2;
+
+static void TgProbeSpriteTunedBox(double bboxX, double bboxY, double bboxW, double bboxH,
+                                   double& outX, double& outY, double& outW, double& outH)
+{
+    outX = std::round(bboxX + kTgTunedBoxDX);
+    outY = std::round(bboxY + kTgTunedBoxDY);
+    outW = std::round(bboxW + kTgTunedBoxDW);
+    outH = std::round(bboxH + kTgTunedBoxDH);
+}
+
+// `tgprobe sprite box tuned|bbox` (round 10): which box a named sprite,
+// `sprite gold` and every `style` draw into before `scale` is applied.
+// `tuned` (the default) is D-U12's derived box - what the author actually
+// tuned the look against; `bbox` is the slot's raw `navBbox`, kept so the
+// two can still be compared side by side. Round 9 shipped styles/gold
+// drawing the raw bbox even though D-U12 had already superseded it for the
+// marker itself - this round wires the tuned box in as the default so what
+// a tester judges is the real shape.
+enum class TgSpriteBoxKind { Tuned, Bbox };
+static TgSpriteBoxKind g_TgSpriteBoxKind = TgSpriteBoxKind::Tuned;
+static const char* TgProbeSpriteBoxKindName() { return g_TgSpriteBoxKind == TgSpriteBoxKind::Tuned ? "tuned" : "bbox"; }
+
+// The slot's raw navBbox, or D-U12's derived box from it, per
+// `g_TgSpriteBoxKind` - both rounded to whole pixels (D-U11) before any
+// caller (TgProbeSpriteScaledSlotBox) applies `scale`.
+static bool TgProbeSpriteBaseBox(int talentId, double& outX, double& outY, double& outW, double& outH)
+{
+    double bx = 0, by = 0, bw = 0, bh = 0;
+    if (!TgProbeSpriteFindSlot(talentId, bx, by, bw, bh)) return false;
+    if (g_TgSpriteBoxKind == TgSpriteBoxKind::Bbox) {
+        outX = std::round(bx); outY = std::round(by); outW = std::round(bw); outH = std::round(bh);
+        return true;
+    }
+    TgProbeSpriteTunedBox(bx, by, bw, bh, outX, outY, outW, outH);
+    return true;
+}
+
+// The active base box (tuned or bbox, per `g_TgSpriteBoxKind`), inflated by
+// g_TgSpriteScale around its centre and rounded to whole pixels again (a
+// non-1.0 scale can reintroduce a fraction). Shared by the draw path and by
+// the command handlers' confirmation-line `box=` readout, so both report
+// the same box.
 static bool TgProbeSpriteScaledSlotBox(int talentId, double& outX, double& outY, double& outW, double& outH)
 {
     double x = 0, y = 0, w = 0, h = 0;
-    if (!TgProbeSpriteFindSlot(talentId, x, y, w, h)) return false;
+    if (!TgProbeSpriteBaseBox(talentId, x, y, w, h)) return false;
     const double cx = x + w / 2.0, cy = y + h / 2.0;
     const double sw = w * g_TgSpriteScale, sh = h * g_TgSpriteScale;
-    outX = cx - sw / 2.0;
-    outY = cy - sh / 2.0;
-    outW = sw;
-    outH = sh;
+    outX = std::round(cx - sw / 2.0);
+    outY = std::round(cy - sh / 2.0);
+    outW = std::round(sw);
+    outH = std::round(sh);
     return true;
 }
 
@@ -19601,40 +19660,63 @@ static void TgProbeSpriteDrawOne(double idx, double x, double y, double w, doubl
         RValue(xscale), RValue(yscale), RValue(0.0), RValue(16777215.0), RValue(1.0) });
 }
 
-// `tgprobe sprite quad on` - "inside out" (the author's own word, explicitly
-// not a whole-sprite flip): four full copies of the sprite, each scaled to
-// one quadrant of the box and mirrored so the four meet symmetrically at
-// the box's own centre - negative x/y scale on draw_sprite_ext per tile,
-// the same call TgProbeSpriteDrawOne uses, anchored at each tile's outer
-// corner so the mirrored copy grows inward from there. Every tile's
-// geometry is whole pixels (D-U11): halves are rounded, and the right/
-// bottom tile absorbs whatever a pixel rounding left over so the two tiles
-// still sum to the box's own width/height exactly.
+// `tgprobe sprite quad on` - "inside out" (the author's own word). Round 9's
+// first attempt (four *whole-sprite* copies, scaled into the four box
+// quadrants) was rejected on sight: wrong construction entirely. What the
+// author actually asked for: split the SOURCE sprite itself into its own
+// four quadrants and mirror each quadrant outward *in place*, so content
+// that sat near the sprite's own centre (each quadrant's inner corner) ends
+// up at the box's outer corners, and content that sat at the sprite's own
+// outer corner ends up at the box's centre - the whole assembled result
+// stays a square. That is a 180-degree rotation of each source quadrant
+// about its own centre, drawn into the *same* destination quadrant it came
+// from (top-left source quadrant -> top-left destination quadrant, etc.) -
+// uniform across all four tiles, unlike round 9's per-tile sign matrix.
+// Needs `draw_sprite_part_ext` (GameMaker's source-rectangle sprite draw)
+// to crop each source quadrant; called by name through the same generic
+// CallBuiltin path every other draw_* call in this file already uses, but
+// it is new to this probe and untested - its reachability is unconfirmed
+// until a live session runs `quad on`, the same status halo/gradient's
+// builtins carried before their first live run (round 6/8).
 static void TgProbeSpriteDrawQuad(double idx, double x, double y, double w, double h)
 {
     double sw = 0, sh = 0, frames = 1.0;
     try { sw = g_Yytk->CallBuiltin("sprite_get_width", { RValue(idx) }).ToDouble(); } catch (...) {}
     try { sh = g_Yytk->CallBuiltin("sprite_get_height", { RValue(idx) }).ToDouble(); } catch (...) {}
     try { frames = g_Yytk->CallBuiltin("sprite_get_number", { RValue(idx) }).ToDouble(); } catch (...) {}
-    const double imageIndex = frames > 1.0 ? std::fmod(g_TgSpriteAnimTime, frames) : 0.0;
-    const double leftW = std::round(w / 2.0);
-    const double rightW = w - leftW;
-    const double topH = std::round(h / 2.0);
-    const double bottomH = h - topH;
-    struct TgQuadTile { double originX, originY, tileW, tileH, signX, signY; };
+    // draw_sprite_part_ext's subimg is a frame index, not the fractional
+    // interpolation draw_sprite_ext accepts - floor it.
+    const double imageIndex = frames > 1.0 ? std::floor(std::fmod(g_TgSpriteAnimTime, frames)) : 0.0;
+    // Source quadrants of the sprite itself, whole pixels (sprite dimensions
+    // already are); the right/bottom source quadrant absorbs the remainder.
+    const double srcHalfW = std::round(sw / 2.0);
+    const double srcRightW = sw - srcHalfW;
+    const double srcHalfH = std::round(sh / 2.0);
+    const double srcBottomH = sh - srcHalfH;
+    // Destination quadrants of the drawn box, same whole-pixel rule (D-U11).
+    const double dstHalfW = std::round(w / 2.0);
+    const double dstRightW = w - dstHalfW;
+    const double dstHalfH = std::round(h / 2.0);
+    const double dstBottomH = h - dstHalfH;
+    struct TgQuadTile { double srcLeft, srcTop, srcW, srcH, dstX, dstY, dstW, dstH; };
     const TgQuadTile tiles[4] = {
-        { x,     y,     leftW,  topH,     1.0,  1.0 },   // top-left: normal
-        { x + w, y,     rightW, topH,    -1.0,  1.0 },   // top-right: x-flipped
-        { x,     y + h, leftW,  bottomH,  1.0, -1.0 },   // bottom-left: y-flipped
-        { x + w, y + h, rightW, bottomH, -1.0, -1.0 },   // bottom-right: both flipped
+        { 0,        0,        srcHalfW,  srcHalfH,   x,             y,             dstHalfW,  dstHalfH },   // top-left quadrant
+        { srcHalfW, 0,        srcRightW, srcHalfH,   x + dstHalfW,  y,             dstRightW, dstHalfH },   // top-right quadrant
+        { 0,        srcHalfH, srcHalfW,  srcBottomH, x,             y + dstHalfH,  dstHalfW,  dstBottomH }, // bottom-left quadrant
+        { srcHalfW, srcHalfH, srcRightW, srcBottomH, x + dstHalfW,  y + dstHalfH,  dstRightW, dstBottomH }, // bottom-right quadrant
     };
     g_Yytk->CallBuiltin("draw_set_alpha", { RValue(1.0) });
     for (const TgQuadTile& t : tiles) {
-        const double xscale = (sw > 0 ? t.tileW / sw : 1.0) * t.signX;
-        const double yscale = (sh > 0 ? t.tileH / sh : 1.0) * t.signY;
-        g_Yytk->CallBuiltin("draw_sprite_ext", {
-            RValue(idx), RValue(imageIndex), RValue(t.originX), RValue(t.originY),
-            RValue(xscale), RValue(yscale), RValue(0.0), RValue(16777215.0), RValue(1.0) });
+        // Anchor at the tile's own bottom-right corner with both scales
+        // negative: the image grows back up-left into the tile, 180-rotated
+        // about the tile's own centre - the same formula for all four tiles,
+        // since each source quadrant only needs to rotate in place.
+        const double xscale = t.srcW > 0 ? -(t.dstW / t.srcW) : -1.0;
+        const double yscale = t.srcH > 0 ? -(t.dstH / t.srcH) : -1.0;
+        g_Yytk->CallBuiltin("draw_sprite_part_ext", {
+            RValue(idx), RValue(imageIndex), RValue(t.srcLeft), RValue(t.srcTop), RValue(t.srcW), RValue(t.srcH),
+            RValue(t.dstX + t.dstW), RValue(t.dstY + t.dstH), RValue(xscale), RValue(yscale),
+            RValue(16777215.0), RValue(1.0) });
     }
 }
 
@@ -19880,7 +19962,8 @@ static void TgProbeSpriteList()
             + std::to_string((long long)p.g) + "," + std::to_string((long long)p.b) + ")"
             + (std::string(p.name) == "gold" ? " [default]" : ""));
     }
-    Out("  tgprobe sprite quad on|off - a named sprite as four mirrored quadrant copies (\"inside out\"), default off");
+    Out("  tgprobe sprite box tuned|bbox - D-U12's derived box (default) or the slot's raw navBbox");
+    Out("  tgprobe sprite quad on|off - the sprite's own quadrants mirrored outward in place (\"inside out\"), default off");
     Out("  tgprobe sprite alpha <min> [max] - the fade floor/ceiling `style soft`/`style gradient` use, default 0..style-own");
 }
 
@@ -19912,6 +19995,18 @@ static bool TgProbeSpriteHudRowAttached()
 // "quad=on"/"quad=off" - printed beside colour=/scale=/layer= in every
 // sprite/gold/style confirmation line.
 static std::string TgProbeSpriteQuadText() { return g_TgSpriteQuad ? "quad=on" : "quad=off"; }
+
+// "box=tuned 120x126@388,1711" (or "box=tuned slot not found") - shared by
+// gold/style/named's confirmation lines so all three report the same box
+// TgProbeSpriteScaledSlotBox actually drew into, including which kind
+// (`tuned`/`bbox`) is active (round 10).
+static std::string TgProbeSpriteBoxText(bool found, double bw, double bh, double bx, double by)
+{
+    if (!found) return std::string("box=") + TgProbeSpriteBoxKindName() + " slot not found";
+    return std::string("box=") + TgProbeSpriteBoxKindName() + " "
+        + std::to_string((long long)bw) + "x" + std::to_string((long long)bh)
+        + "@" + std::to_string((long long)bx) + "," + std::to_string((long long)by);
+}
 
 // A value over 1.0 is treated as an 0..255 byte and divided down; a value
 // at or under 1.0 is already a 0..1 fraction - the cheap way to accept
@@ -19948,7 +20043,7 @@ static void TgProbeSpriteCommand(const std::string& rest)
     if (first.empty()) {
         Out("tgprobe sprite: usage -> tgprobe sprite <SpriteName> [talentId] | <SpriteName> centre"
             " | off | gold | style soft|halo|gradient|pulse | list | gallery [cols] | layer hud|buffs"
-            " | scale [f] | colour [name|r g b] | quad on|off | alpha [min] [max]");
+            " | scale [f] | colour [name|r g b] | box tuned|bbox | quad on|off | alpha [min] [max]");
         return;
     }
     if (lower == "off") {
@@ -20037,6 +20132,24 @@ static void TgProbeSpriteCommand(const std::string& rest)
             + " (applies to the hotbar-slot box `sprite <Name>`/`sprite gold` draw into, centred on the slot; range 0.25..4.0, default 1.0)");
         return;
     }
+    if (lower == "box") {
+        std::string ignored;
+        const std::string v = Lower(FirstToken(subRest, ignored));
+        if (v == "tuned") {
+            g_TgSpriteBoxKind = TgSpriteBoxKind::Tuned;
+        } else if (v == "bbox") {
+            g_TgSpriteBoxKind = TgSpriteBoxKind::Bbox;
+        } else if (!v.empty()) {
+            Out(std::string("tgprobe sprite box: usage -> tgprobe sprite box tuned|bbox (currently ")
+                + TgProbeSpriteBoxKindName() + ")");
+            return;
+        }
+        double bx = 0, by = 0, bw = 0, bh = 0;
+        const bool boxFound = TgProbeSpriteScaledSlotBox(kToggleIndicatorTalentId, bx, by, bw, bh);
+        Out("tgprobe sprite " + TgProbeSpriteBoxText(boxFound, bw, bh, bx, by)
+            + " (D-U12's derived box by default; `bbox` draws the slot's raw navBbox instead, for comparison)");
+        return;
+    }
     if (lower == "quad") {
         std::string ignored;
         const std::string v = Lower(FirstToken(subRest, ignored));
@@ -20088,9 +20201,7 @@ static void TgProbeSpriteCommand(const std::string& rest)
         const bool boxFound = TgProbeSpriteScaledSlotBox(g_TgSpriteTalentId, bx, by, bw, bh);
         Out("tgprobe sprite -> gold talentId=" + std::to_string(g_TgSpriteTalentId)
             + " scale=" + std::to_string(g_TgSpriteScale)
-            + (boxFound
-                ? " box=" + std::to_string(bw) + "x" + std::to_string(bh) + "@" + std::to_string(bx) + "," + std::to_string(by)
-                : " box=slot not found")
+            + " " + TgProbeSpriteBoxText(boxFound, bw, bh, bx, by)
             + " colour=" + TgProbeSpriteColourText() + " " + TgProbeSpriteQuadText()
             + " layer=" + TgProbeLayerName()
             + " (watch `tgprobe sprite off` for draws=/drawExc=)");
@@ -20113,9 +20224,7 @@ static void TgProbeSpriteCommand(const std::string& rest)
         const bool boxFound = TgProbeSpriteScaledSlotBox(g_TgSpriteTalentId, bx, by, bw, bh);
         Out("tgprobe sprite -> style " + std::string(TgProbeSpriteStyleName(kind))
             + " talentId=" + std::to_string(g_TgSpriteTalentId) + " scale=" + std::to_string(g_TgSpriteScale)
-            + (boxFound
-                ? " box=" + std::to_string(bw) + "x" + std::to_string(bh) + "@" + std::to_string(bx) + "," + std::to_string(by)
-                : " box=slot not found")
+            + " " + TgProbeSpriteBoxText(boxFound, bw, bh, bx, by)
             + (kind == TgSpriteStyleKind::Pulse
                 ? " period=" + std::to_string(kTgPulsePeriodFrames / 60.0) + "s (" + std::to_string((long long)kTgPulsePeriodFrames) + " frames)"
                 : "")
@@ -20168,10 +20277,8 @@ static void TgProbeSpriteCommand(const std::string& rest)
     std::string boxText;
     if (!centre) {
         double bx = 0, by = 0, bw = 0, bh = 0;
-        boxText = TgProbeSpriteScaledSlotBox(talentId, bx, by, bw, bh)
-            ? " scale=" + std::to_string(g_TgSpriteScale) + " box=" + std::to_string(bw) + "x" + std::to_string(bh)
-                + "@" + std::to_string(bx) + "," + std::to_string(by)
-            : " scale=" + std::to_string(g_TgSpriteScale) + " box=slot not found";
+        const bool boxFound = TgProbeSpriteScaledSlotBox(talentId, bx, by, bw, bh);
+        boxText = " scale=" + std::to_string(g_TgSpriteScale) + " " + TgProbeSpriteBoxText(boxFound, bw, bh, bx, by);
     }
     Out("tgprobe sprite -> " + first + (centre ? std::string(" centre") : (" talentId=" + std::to_string(talentId)))
         + " idx=" + std::to_string((long long)idx) + " frames=" + std::to_string((long long)frames)
@@ -21215,7 +21322,8 @@ static void TgProbeCommand(const std::string& rest)
         " | deep snap|diff|flip|find|get|census|selftest|drop ..."
         " | spurn [log on|off | as foreign | slots | fields] | mark <x> <y> <w> <h> | off"
         " | sprite <SpriteName> [talentId|centre] | off | gold | style soft|halo|gradient|pulse | list"
-        " | gallery [cols] | layer hud|buffs | scale [f] | colour [name|r g b] | quad on|off | alpha [min] [max]"
+        " | gallery [cols] | layer hud|buffs | scale [f] | colour [name|r g b] | box tuned|bbox"
+        " | quad on|off | alpha [min] [max]"
         " | talents [substr|tags] | tgl [add|list|clear|slots|fields|sub|timer]");
 }
 #endif // FORGEPACT_RELEASE (tgprobe)

@@ -1308,9 +1308,11 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         # counter compounding once per cell per draw.
         self.assertNotIn("g_TgSpriteAnimTime +=", one)
         self.assertIn("g_TgSpriteAnimTime += 1.0 / 15.0;", draw)
-        # Two call sites: TgProbeSpriteDrawOne's whole-sprite draw and
-        # TgProbeSpriteDrawQuad's single looped tile draw (round 9).
-        self.assertEqual(self.plugin.count('"draw_sprite_ext"'), 2)
+        # One call site: TgProbeSpriteDrawOne's whole-sprite draw.
+        # TgProbeSpriteDrawQuad draws via draw_sprite_part_ext instead
+        # (round 10's corrected per-quadrant crop, not a whole-sprite copy).
+        self.assertEqual(self.plugin.count('"draw_sprite_ext"'), 1)
+        self.assertEqual(self.plugin.count('"draw_sprite_part_ext"'), 1)
         # Hung off the existing research after-draw path (buffs) and the new
         # hud-layer hook - never Hook_DrawHudBuffs or FrameCallback directly,
         # both of which stay byte-identical (UNCHANGED_SINCE_T1).
@@ -1422,7 +1424,10 @@ class ToggleTableProbeContractTests(unittest.TestCase):
 
     def test_scale_reaches_the_draw_call_via_the_shared_scaled_box(self):
         box = function_body(self.plugin, "static bool TgProbeSpriteScaledSlotBox(")
-        self.assertIn("TgProbeSpriteFindSlot(talentId, x, y, w, h)", box)
+        # Round 10: the box read now goes through TgProbeSpriteBaseBox (which
+        # itself reads TgProbeSpriteFindSlot and applies the tuned/bbox
+        # offset), not TgProbeSpriteFindSlot directly.
+        self.assertIn("TgProbeSpriteBaseBox(talentId, x, y, w, h)", box)
         self.assertIn("w * g_TgSpriteScale", box)
         self.assertIn("h * g_TgSpriteScale", box)
         # Centred on the slot's own centre, not its top-left corner.
@@ -1451,7 +1456,9 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         gold_branch = sprite[sprite.index('lower == "gold"'):sprite.index('lower == "gallery"')]
         self.assertIn("TgProbeSpriteScaledSlotBox(g_TgSpriteTalentId, bx, by, bw, bh)", gold_branch)
         self.assertIn("scale=", gold_branch)
-        self.assertIn("box=", gold_branch)
+        # box= itself is now formatted by the shared TgProbeSpriteBoxText
+        # helper (round 10), not inlined here.
+        self.assertIn("TgProbeSpriteBoxText(boxFound, bw, bh, bx, by)", gold_branch)
 
     def test_scale_names_do_not_survive_stripping(self):
         for name in ("TgProbeSpriteScaledSlotBox", "g_TgSpriteScale"):
@@ -1484,7 +1491,9 @@ class ToggleTableProbeContractTests(unittest.TestCase):
                                             style_branch_source.index('lower == "gallery"')]
         self.assertIn("TgProbeSpriteScaledSlotBox(g_TgSpriteTalentId, bx, by, bw, bh)", style_branch)
         self.assertIn("scale=", style_branch)
-        self.assertIn("box=", style_branch)
+        # box= itself is now formatted by the shared TgProbeSpriteBoxText
+        # helper (round 10), not inlined here.
+        self.assertIn("TgProbeSpriteBoxText(boxFound, bw, bh, bx, by)", style_branch)
         self.assertIn("TgSpriteMode::Style", style_branch)
         draw = function_body(self.plugin, "static void TgProbeSpriteDraw(bool fromHudLayer)")
         else_branch = draw[draw.index("} else {"):]
@@ -1656,21 +1665,39 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         gold = function_body(self.plugin, "static void TgProbeSpriteDrawGoldRect(")
         self.assertNotIn("g_TgSpriteQuad", gold)
 
-    def test_quad_draws_four_tiles_with_mirrored_scale_signs_on_whole_pixels(self):
+    def test_quad_draws_four_mirrored_source_quadrants_on_whole_pixels(self):
+        # Round 10: round 9's "four whole-sprite copies" construction was
+        # rejected on sight. The corrected version crops each of the
+        # SOURCE sprite's own four quadrants (draw_sprite_part_ext) and
+        # rotates each 180 degrees in place into the matching destination
+        # quadrant, so the sprite's inner edges become its outer edges and
+        # the assembled result stays a square.
         quad = function_body(self.plugin, "static void TgProbeSpriteDrawQuad(")
-        self.assertEqual(quad.count('"draw_sprite_ext"'), 1)   # one call site, looped over 4 tiles
-        # The four sign combinations: top-left normal, top-right x-flipped,
-        # bottom-left y-flipped, bottom-right both flipped.
-        for signs in ("1.0,  1.0", "-1.0,  1.0", "1.0, -1.0", "-1.0, -1.0"):
-            self.assertIn(signs, quad)
+        self.assertEqual(quad.count('"draw_sprite_part_ext"'), 1)   # one call site, looped over 4 tiles
+        self.assertNotIn('"draw_sprite_ext"', quad)
+        self.assertIn(
+            "struct TgQuadTile { double srcLeft, srcTop, srcW, srcH, dstX, dstY, dstW, dstH; };", quad)
         self.assertIn("for (const TgQuadTile& t : tiles)", quad)
-        # Whole-pixel geometry (D-U11): halves rounded, not a bare divide.
-        self.assertIn("std::round(w / 2.0)", quad)
-        self.assertIn("std::round(h / 2.0)", quad)
-        # The two tiles on each axis still sum to the box's own width/height
-        # exactly, even when a pixel rounding leaves a remainder.
-        self.assertIn("const double rightW = w - leftW;", quad)
-        self.assertIn("const double bottomH = h - topH;", quad)
+        # Whole-pixel geometry (D-U11): halves rounded on both the source
+        # sprite and destination box axes, not a bare divide.
+        self.assertIn("const double srcHalfW = std::round(sw / 2.0);", quad)
+        self.assertIn("const double srcHalfH = std::round(sh / 2.0);", quad)
+        self.assertIn("const double dstHalfW = std::round(w / 2.0);", quad)
+        self.assertIn("const double dstHalfH = std::round(h / 2.0);", quad)
+        # The two tiles on each axis still sum to the sprite's/box's own
+        # width/height exactly, even when a pixel rounding leaves a
+        # remainder - the right/bottom quadrant absorbs it.
+        self.assertIn("const double srcRightW = sw - srcHalfW;", quad)
+        self.assertIn("const double srcBottomH = sh - srcHalfH;", quad)
+        self.assertIn("const double dstRightW = w - dstHalfW;", quad)
+        self.assertIn("const double dstBottomH = h - dstHalfH;", quad)
+        # Uniform anchor-at-own-bottom-right, both scales negative, for all
+        # four tiles alike - a 180-degree rotation of each source quadrant
+        # in place, not round 9's four different per-tile sign combinations.
+        self.assertIn("const double xscale = t.srcW > 0 ? -(t.dstW / t.srcW) : -1.0;", quad)
+        self.assertIn("const double yscale = t.srcH > 0 ? -(t.dstH / t.srcH) : -1.0;", quad)
+        self.assertIn(
+            "RValue(t.dstX + t.dstW), RValue(t.dstY + t.dstH), RValue(xscale), RValue(yscale)", quad)
 
     def test_quad_printed_in_gold_named_and_off_confirmation_lines(self):
         sprite = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
@@ -1727,9 +1754,68 @@ class ToggleTableProbeContractTests(unittest.TestCase):
     def test_quad_and_alpha_names_do_not_survive_stripping(self):
         for name in ("g_TgSpriteQuad", "TgProbeSpriteDrawQuad", "TgQuadTile", "TgProbeSpriteQuadText",
                      "g_TgSpriteAlphaMin", "g_TgSpriteAlphaMaxOverride", "TgProbeSpriteFadeAlpha",
-                     "TgProbeSpriteParseAlphaArg", "TgProbeSpriteAlphaText"):
+                     "TgProbeSpriteParseAlphaArg", "TgProbeSpriteAlphaText",
+                     "TgProbeSpriteTunedBox", "TgProbeSpriteBaseBox", "TgSpriteBoxKind",
+                     "g_TgSpriteBoxKind", "TgProbeSpriteBoxKindName", "TgProbeSpriteBoxText",
+                     "kTgTunedBoxDX", "kTgTunedBoxDY", "kTgTunedBoxDW", "kTgTunedBoxDH"):
             self.assertIn(name, self.block)
             self.assertNotIn(name, self.stripped)
+
+    def test_tuned_box_derives_du12_geometry_from_bbox_and_rounds(self):
+        # D-U12's worked example (round 9, restated round 10): Soul Spurn's
+        # navBbox at the moment the author accepted the marker geometry was
+        # `385.700006, 1711.000000, 124.700000 x 139.200000`; the accepted
+        # box was `388, 1711, 120 x 126` (whole pixels). Pin the constant
+        # offset and the round-to-whole-pixels step that derive one from
+        # the other, rather than a hardcoded box.
+        self.assertIn("static constexpr double kTgTunedBoxDX = 2.3;", self.plugin)
+        self.assertIn("static constexpr double kTgTunedBoxDY = 0.0;", self.plugin)
+        self.assertIn("static constexpr double kTgTunedBoxDW = -4.7;", self.plugin)
+        self.assertIn("static constexpr double kTgTunedBoxDH = -13.2;", self.plugin)
+        tuned = function_body(self.plugin, "static void TgProbeSpriteTunedBox(")
+        self.assertIn("outX = std::round(bboxX + kTgTunedBoxDX);", tuned)
+        self.assertIn("outY = std::round(bboxY + kTgTunedBoxDY);", tuned)
+        self.assertIn("outW = std::round(bboxW + kTgTunedBoxDW);", tuned)
+        self.assertIn("outH = std::round(bboxH + kTgTunedBoxDH);", tuned)
+        # The worked example itself, in Python, as a check on the constants
+        # above rather than a duplicate of the C++: 385.700006 + 2.3 rounds
+        # to 388, not the offset landing short/long of the accepted box.
+        bbox_x, bbox_y, bbox_w, bbox_h = 385.700006, 1711.000000, 124.700000, 139.200000
+        out_x = round(bbox_x + 2.3)
+        out_y = round(bbox_y + 0.0)
+        out_w = round(bbox_w - 4.7)
+        out_h = round(bbox_h - 13.2)
+        self.assertEqual((out_x, out_y, out_w, out_h), (388, 1711, 120, 126))
+
+    def test_base_box_kind_defaults_tuned_and_bbox_skips_the_offset(self):
+        self.assertIn("static TgSpriteBoxKind g_TgSpriteBoxKind = TgSpriteBoxKind::Tuned;", self.plugin)
+        base = function_body(self.plugin, "static bool TgProbeSpriteBaseBox(")
+        self.assertIn("if (g_TgSpriteBoxKind == TgSpriteBoxKind::Bbox) {", base)
+        # Bbox kind rounds the raw navBbox directly, without the offset.
+        self.assertIn("outX = std::round(bx); outY = std::round(by); outW = std::round(bw); outH = std::round(bh);",
+                       base)
+        # Tuned kind (the default) runs the derived-box offset instead.
+        self.assertIn("TgProbeSpriteTunedBox(bx, by, bw, bh, outX, outY, outW, outH);", base)
+        scaled = function_body(self.plugin, "static bool TgProbeSpriteScaledSlotBox(")
+        self.assertIn("TgProbeSpriteBaseBox(talentId, x, y, w, h)", scaled)
+
+    def test_box_dispatches_tuned_and_bbox_and_reports_active_kind(self):
+        sprite = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
+        self.assertIn('lower == "box"', sprite)
+        box_branch = sprite[sprite.index('lower == "box"'):sprite.index('lower == "quad"')]
+        self.assertIn('v == "tuned"', box_branch)
+        self.assertIn("g_TgSpriteBoxKind = TgSpriteBoxKind::Tuned;", box_branch)
+        self.assertIn('v == "bbox"', box_branch)
+        self.assertIn("g_TgSpriteBoxKind = TgSpriteBoxKind::Bbox;", box_branch)
+        self.assertIn("TgProbeSpriteBoxText(boxFound, bw, bh, bx, by)", box_branch)
+        # Every draw path that goes through TgProbeSpriteScaledSlotBox
+        # reports via the same TgProbeSpriteBoxText helper, so gold/style/
+        # named all show the same kind and box as `box` itself.
+        gold_branch = sprite[sprite.index('lower == "gold"'):sprite.index('lower == "style"')]
+        self.assertIn("TgProbeSpriteBoxText(boxFound, bw, bh, bx, by)", gold_branch)
+        style_branch = sprite[sprite.index('lower == "style"'):sprite.index('lower == "gallery"')]
+        self.assertIn("TgProbeSpriteBoxText(boxFound, bw, bh, bx, by)", style_branch)
+        self.assertIn("TgProbeSpriteBoxText(boxFound, bw, bh, bx, by)", sprite[sprite.rindex("boxText = "):])
 
     def test_shipped_draw_functions_unchanged_from_round_base(self):
         # Round base for R round 3 (context "R Round 3 - sprite look probe"):
