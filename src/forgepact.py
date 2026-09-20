@@ -2401,20 +2401,26 @@ function applyPluginModState(pm){
   const bagRow=document.getElementById("mod_auto_prospect_bag_row");
   if(!ap||!parentVal||!bagVal||!bagRow)return;
   const reason=ap.reason||"";
+  const parentOn=document.getElementById("mod_auto_prospect").checked;
+  const wantsBag=document.getElementById("mod_auto_prospect_bag").checked;
   if(ap.hookBlind){
     parentVal.textContent="off (plugin)";
     parentVal.className="val off";
     parentVal.title=reason||"the plugin turned auto-prospect off for this session";
   }else{
+    // Recovery matters as much as the failure: a new launch reports healthy
+    // state, and the label has to go back to the saved switch by itself -
+    // the toast promised it starts again next launch (review of #54).
+    parentVal.textContent=parentOn?"on":"off";
+    parentVal.className="val "+(parentOn?"":"off");
     parentVal.title="";
   }
-  const wantsBag=document.getElementById("mod_auto_prospect_bag").checked;
   if(wantsBag&&ap.bagPreference&&!ap.movePass&&!ap.hookBlind){
     bagVal.textContent="off (plugin)";
     bagVal.className="val off";
     bagRow.title=(reason||"the plugin turned the move off for this session")+" - it starts again next launch.";
   }else if(!ap.hookBlind){
-    bagRow.title="";
+    syncProspectBag(parentOn,wantsBag);   // repaints the label and the disabled state
   }
 }
 function syncProspectBag(parentOn,bagOn){

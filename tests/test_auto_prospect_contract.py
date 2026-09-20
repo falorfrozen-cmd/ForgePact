@@ -63,6 +63,9 @@ ADAPTER = ("static bool ApIsProspectGrid(", "static RValue& Hook_AutoProspectIns
            "static bool ApPreferredGrid(")
 
 
+nl = "\n"
+
+
 def collapse(text):
     return " ".join(text.split())
 
@@ -298,6 +301,14 @@ class AutoProspectContractTests(unittest.TestCase):
         self.assertIn('"pluginMods": plugin_mod_state(cfg),', source)
         self.assertIn("function applyPluginModState(", source)
         self.assertIn("off (plugin)", source)
+        # Recovery: a healthy report repaints the labels from the saved
+        # switches, so a panel left open across a relaunch stops saying
+        # "off (plugin)" by itself (follow-up review of #54).
+        render = source[source.index("function applyPluginModState("):]
+        render = render[:render.index(nl + "function ") if (nl + "function ") in render else render.index("function syncProspectBag(")]
+        healthy = render[render.index("}else{"):]
+        self.assertIn('parentVal.textContent=parentOn?"on":"off"', healthy)
+        self.assertIn("syncProspectBag(parentOn,wantsBag)", render)
         # A refused re-enable must not toast as if it worked.
         self.assertIn("async function pluginModsAfterSet(", source)
         handler = source[source.index("document.getElementById('mod_auto_prospect_bag').onchange"):]
