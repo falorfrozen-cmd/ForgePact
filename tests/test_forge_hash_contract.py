@@ -50,6 +50,10 @@ EXPECTED_PLAYER_COMMANDS = {
     # Added on purpose by ForgePact #9 Stage B (auto-prospect on insert, the
     # panel's Auto-prospect switch); test_auto_prospect_contract.py pins it.
     "autoprospect",
+    # The toggle-skill active indicator (issue #11, Track B), added alongside.
+    "toggleborder",
+    # The toggle-skill double-cast re-cast guard (issue #11, Track A).
+    "toggleguard",
 }
 
 

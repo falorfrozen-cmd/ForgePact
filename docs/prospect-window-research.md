@@ -1849,7 +1849,8 @@ could not be measured says `not observed (<why>)`; no row is left empty once
 What was built from `move-shape: stackmove route (plus success check)`. The human asked for
 it on 2026-09-18 and chose the sub-option's default (on, under the off-by-default parent).
 The risk acceptance for this second game operation - it writes the save-backed inventory -
-is recorded in the module guide's Known Limitations item 16.
+is recorded in the module guide's Known Limitations item 19 (item 16 until the
+toggle-skill items merged in above it, 2026-09-20).
 
 - **Where it runs.** Inside `AutoProspectTick`, on the frame a landed insert has passed the
   window, grid, button and argument checks, with only the free-cell check left: the core

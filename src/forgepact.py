@@ -205,6 +205,15 @@ DEFAULTS = {
     # batch sits in the grid. On by default under the off-by-default parent;
     # the plugin defaults it on too, so only "off" is ever sent.
     "mod_auto_prospect_bag": True,
+    # Marks the skill-bar slot of a toggle skill while it is switched on
+    # (issue #11, Track B; five skills since phase S). Off by default like the
+    # other mod toggles; offline only, no co-op claim (AGENTS.md "this is the
+    # rule of ForgePact").
+    "mod_toggle_indicator": False,
+    # Stops the double-cast proc from re-casting a covered toggle skill on its
+    # own (issue #11, Track A), so a proc no longer flips the toggle straight
+    # back. Off by default; offline only, like every mod here.
+    "mod_toggle_guard": False,
     # Monster Rarity: the share of normal monsters raised to Rare and to Ancient
     # (percent each, together at most 100; the rest stay normal).
     "rarity_rare": 0,
@@ -720,6 +729,14 @@ def build_cmds(cfg: dict) -> list:
         # defaults it on (the map_reveal_packs rule).
         if not cfg.get("mod_auto_prospect_bag", True):
             out.append("autoprospect bag 0")
+    if cfg.get("mod_toggle_indicator", False):
+        # Safe to send at launch: DrawHudBuffs is already hooked at init;
+        # this only flips an atomic read at the top of the existing draw.
+        out.append("toggleborder 1")
+    if cfg.get("mod_toggle_guard", False):
+        # Safe to send at launch, like relicfilter: `toggleguard 1` only arms
+        # the guard, and the plugin installs its hook once a player exists.
+        out.append("toggleguard 1")
     rare, ancient = rarity_setting(cfg)
     if rare > 0 or ancient > 0:
         out.append(f"rarity {rare} {ancient}")
@@ -1715,7 +1732,7 @@ class H(BaseHTTPRequestHandler):
                     # moved wins and the other gives way
                     other = "rarity_ancient" if key == "rarity_rare" else "rarity_rare"
                     cfg[other] = min(_pct(cfg.get(other, 0)), 100 - cfg[key])
-                elif key in ("density_on", "auto_apply", "map_reveal", "map_reveal_packs", "headhunter", "tyrant", "beacon", "mod_filter_max_relics", "mod_orb_pickup_radius", "mod_pet_quest_pickup", "mod_auto_prospect", "mod_auto_prospect_bag"):
+                elif key in ("density_on", "auto_apply", "map_reveal", "map_reveal_packs", "headhunter", "tyrant", "beacon", "mod_filter_max_relics", "mod_orb_pickup_radius", "mod_pet_quest_pickup", "mod_auto_prospect", "mod_auto_prospect_bag", "mod_toggle_indicator", "mod_toggle_guard"):
                     cfg[key] = bool(val)
                 save_cfg(cfg)
                 live = ""
@@ -1774,6 +1791,10 @@ class H(BaseHTTPRequestHandler):
                         send_cmds(cmds, cfg)
                     elif key == "mod_auto_prospect_bag":
                         send_cmds([f"autoprospect bag {1 if cfg['mod_auto_prospect_bag'] else 0}"], cfg)
+                    elif key == "mod_toggle_indicator":
+                        send_cmds([f"toggleborder {1 if cfg['mod_toggle_indicator'] else 0}"], cfg)
+                    elif key == "mod_toggle_guard":
+                        send_cmds([f"toggleguard {1 if cfg['mod_toggle_guard'] else 0}"], cfg)
                     elif key in ("rarity_rare", "rarity_ancient"):
                         # Always explicit: "rarity off" returns a live hook to vanilla.
                         send_cmds([rarity_cmd(cfg)], cfg)
@@ -2245,6 +2266,16 @@ input[type=range]::-webkit-slider-thumb{appearance:none;width:17px;height:17px;b
         <label class="switch"><input type="checkbox" id="mod_auto_prospect_bag"><span class="sl"></span></label>
         <span class="val" id="apbagval">on</span>
     </div>
+    <div class="row" style="border:none">
+        <span class="lbl" style="width:auto;flex:1">Mark a running toggle skill<br><span style="font-size:11px;color:#8f816e;font-weight:normal">For Soul Spurn (White Mage), Lunar Orbit (Exo), Crematus (Plague Doctor), Submerged Knives (Butcher) and Maelstrom of Frost (Prophet): draws a soft red outline around that skill's skill-bar slot while its toggle is running, so you can see at a glance that it is still active. The outline disappears when the toggle ends. A plain cast, made without the skill's toggle sub-talent, lights nothing.</span></span>
+        <label class="switch"><input type="checkbox" id="mod_toggle_indicator"><span class="sl"></span></label>
+        <span class="val" id="mtival">off</span>
+    </div>
+    <div class="row" style="border:none">
+        <span class="lbl" style="width:auto;flex:1">Stop double cast re-casting a toggle skill<br><span style="font-size:11px;color:#8f816e;font-weight:normal">For Soul Spurn, Lunar Orbit, Crematus, Submerged Knives and Maelstrom of Frost: a double cast proc can cast one of them a second time on its own, which flips its toggle straight back to where it was before your press. With this on, that extra cast is skipped, so the toggle stays the way you set it. It only steps in when you actually have the skill's toggle sub-talent; your own presses are never affected.</span></span>
+        <label class="switch"><input type="checkbox" id="mod_toggle_guard"><span class="sl"></span></label>
+        <span class="val" id="mtgval">off</span>
+    </div>
 </div>
 
 <div class="card tab-card" data-tab="mods" id="itemsCard">
@@ -2595,6 +2626,14 @@ async function boot(){
     const apbag=c.mod_auto_prospect_bag!==false;
     document.getElementById('mod_auto_prospect_bag').checked=apbag;
     syncProspectBag(maps,apbag);
+    const mti=!!c.mod_toggle_indicator;
+    document.getElementById('mod_toggle_indicator').checked=mti;
+    document.getElementById('mtival').textContent=mti?'on':'off';
+    document.getElementById('mtival').className='val '+(mti?'':'off');
+    const mtg=!!c.mod_toggle_guard;
+    document.getElementById('mod_toggle_guard').checked=mtg;
+    document.getElementById('mtgval').textContent=mtg?'on':'off';
+    document.getElementById('mtgval').className='val '+(mtg?'':'off');
   rarityLoad(c);
   document.getElementById('hhval').className='val '+(hh?'':'off');
   document.getElementById('exepath').value=c.game_exe||'';
@@ -2785,6 +2824,16 @@ function bind(){
         }else{
           toast('Materials to your materials tab '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
         }
+    };
+    document.getElementById('mod_toggle_indicator').onchange=async(e)=>{
+        const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_toggle_indicator',value:e.target.checked})});
+        const v=document.getElementById('mtival');v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
+        toast('Toggle-skill outline '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
+    };
+    document.getElementById('mod_toggle_guard').onchange=async(e)=>{
+        const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_toggle_guard',value:e.target.checked})});
+        const v=document.getElementById('mtgval');v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
+        toast('Toggle-skill double cast guard '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
     };
   { const el=document.getElementById('angelic_items');
     el.oninput=angelicPaint;
@@ -2985,9 +3034,9 @@ function refreshSavedControls(){
   });
   for(const [range] of painted)if(range.oninput)range.oninput();
   for(const [range,typed] of painted){if(typed===undefined)delete range.dataset.typed;else range.dataset.typed=typed}
-  const booleans={den_on:'density_on',autoapply:'auto_apply',enemyspeed_ct:'enemy_speed_ct',map_reveal:'map_reveal',map_reveal_packs:'map_reveal_packs',headhunter:'headhunter',tyrant:'tyrant',beacon:'beacon',mod_filter_max_relics:'mod_filter_max_relics',mod_orb_pickup_radius:'mod_orb_pickup_radius',mod_pet_quest_pickup:'mod_pet_quest_pickup',mod_auto_prospect:'mod_auto_prospect',mod_auto_prospect_bag:'mod_auto_prospect_bag'};
+  const booleans={den_on:'density_on',autoapply:'auto_apply',enemyspeed_ct:'enemy_speed_ct',map_reveal:'map_reveal',map_reveal_packs:'map_reveal_packs',headhunter:'headhunter',tyrant:'tyrant',beacon:'beacon',mod_filter_max_relics:'mod_filter_max_relics',mod_orb_pickup_radius:'mod_orb_pickup_radius',mod_pet_quest_pickup:'mod_pet_quest_pickup',mod_auto_prospect:'mod_auto_prospect',mod_auto_prospect_bag:'mod_auto_prospect_bag',mod_toggle_indicator:'mod_toggle_indicator',mod_toggle_guard:'mod_toggle_guard'};
   for(const [id,key] of Object.entries(booleans))document.getElementById(id).checked=!!c[key];
-  for(const [id,key] of Object.entries({hhval:'headhunter',tyval:'tyrant',beval:'beacon',mfmrval:'mod_filter_max_relics',morval:'mod_orb_pickup_radius',mpqpval:'mod_pet_quest_pickup',autoprospval:'mod_auto_prospect',mapval:'map_reveal'})){
+  for(const [id,key] of Object.entries({hhval:'headhunter',tyval:'tyrant',beval:'beacon',mfmrval:'mod_filter_max_relics',morval:'mod_orb_pickup_radius',mpqpval:'mod_pet_quest_pickup',autoprospval:'mod_auto_prospect',mtival:'mod_toggle_indicator',mtgval:'mod_toggle_guard',mapval:'map_reveal'})){
     const value=document.getElementById(id);value.textContent=c[key]?'on':'off';value.className='val '+(c[key]?'':'off');
   }
   document.getElementById('enemyspeedctval').textContent=c.enemy_speed_ct?'CT only':'all zones';

@@ -1,6 +1,7 @@
 import copy
 import importlib.util
 import re
+import sys
 import unittest
 from collections import Counter
 from pathlib import Path
@@ -264,6 +265,19 @@ class ReleaseHookContractTests(unittest.TestCase):
         cls.stats_header = STATS_HEADER_PATH.read_text(encoding="utf-8")
         cls.density_header = DENSITY_HEADER_PATH.read_text(encoding="utf-8")
 
+    def test_no_bare_std_max_or_std_min(self):
+        # Found the expensive way (issue #11, R round 4, commit 760a9c6): a
+        # bare `std::max(` in this translation unit collides with windows.h's
+        # `max()` macro (no NOMINMAX here, and this file does not reorder its
+        # own includes to dodge it) and fails with MSVC C2589 - a compile
+        # failure a source-text contract test cannot itself catch by running
+        # the compiler, so it must be caught as a pattern instead. Wrap a call
+        # as `(std::max)(...)` (parenthesising the name suppresses the macro),
+        # use an if/ternary, or clamp by hand - the house idiom already used
+        # elsewhere in this file (`if (v < 1) v = 1;`).
+        self.assertNotRegex(self.plugin, r"\bstd::max\(")
+        self.assertNotRegex(self.plugin, r"\bstd::min\(")
+
     def test_every_toggle_command_treats_zero_as_off(self):
         # `census 0` used to turn census ON: its handler only tested "off", so a
         # zero fell through to the enable branch and answered ACIK. Found the
@@ -279,6 +293,13 @@ class ReleaseHookContractTests(unittest.TestCase):
             ("beaconspawn", 'v == "off" || v == "0"'),
         ):
             self.assertIn(marker, self.plugin,
+                          f"{verb} must accept 0 as off, like every other toggle")
+        # Checked inside each handler, not anywhere in the file: the census
+        # marker above would otherwise satisfy a handler that lacks it.
+        for verb in ("toggleborder", "toggleguard"):
+            start = self.plugin.index(f'if (lc == "{verb}")')
+            branch = self.plugin[start:self.plugin.index("return;\n    }", start)]
+            self.assertIn('v == "off" || v == "0"', branch,
                           f"{verb} must accept 0 as off, like every other toggle")
 
     def test_release_initialization_has_no_eager_gameplay_hook_group(self):
@@ -1005,7 +1026,8 @@ class PanelAllOffContractTests(unittest.TestCase):
     def setUpClass(cls):
         # The panel imports its sibling modules (panel_icons, ...). Under
         # `discover` another test has already put src/ on the path; run on its
-        # own, this class must do it itself.
+        # own, this class must do it itself - `spec_from_file_location` does
+        # not add the module's own directory the way a package import would.
         import sys
         if str(PANEL_PATH.parent) not in sys.path:
             sys.path.insert(0, str(PANEL_PATH.parent))
