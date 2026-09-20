@@ -2714,6 +2714,14 @@ difference of `1.0` or less.
   `first=`, while `destroyTimer` differs between the two snapshots. Route C
   ships the field's name, so what counts is the name recurring across rows.
 
+`ratio`, `base` and `factor` are defined only for rows whose
+`abilityDuration > 0` and whose `first=` read numeric and greater than `0`.
+The probe's documented sentinel for a timer that never started is `-1`
+(`atPredicted=` counts exactly this draw), and a `0` reads no differently -
+neither is a duration a ratio can be taken against. A row failing either
+bound does not reach the factor test; `AR2` and `AR3` below route it to a
+status instead of letting it compute one.
+
 Each of the five tables below is scored first-match-wins: read its rows in
 order and stop at the first one whose condition holds.
 
@@ -2745,17 +2753,22 @@ session's shortlist.
 | id | condition | status |
 |---|---|---|
 | AR1 | `abilityDuration=` prints `absent`, `unreadable`, or non-numeric text | blocked |
-| AR2 | `abilityDuration=` prints numeric `0` | not observed |
-| AR3 | `abilityDuration > 0` and no appearance produced a numeric `first=` | blocked |
-| AR4 | `abilityDuration > 0`, a numeric `first=`, but fewer than two appearances recorded | blocked |
+| AR2 | `abilityDuration=` prints numeric `0` or a negative value | not observed |
+| AR3 | `abilityDuration > 0` and no appearance produced a numeric `first=` greater than `0` | blocked |
+| AR4 | `abilityDuration > 0`, a numeric `first= > 0`, but fewer than two appearances recorded | blocked |
 | AR5 | two appearances whose `first=` values differ by more than one tick | not observed |
 | AR6 | two appearances within one tick of each other, factor `<= 1.5` | measured |
 | AR7 | two appearances within one tick of each other, factor `> 1.5` | not observed |
 
 AR1 is the talent-struct read failing outright - no evidence either way.
-AR2 is a real negative: the talent carries no base duration, so route A
-cannot cover that row. AR4 is what happens when the session skips the
-second cast the live procedure now requires. AR7's `1.5` bound is **D-T7**:
+AR2 is a real negative: the talent carries no base duration (or a
+nonsensical negative one), so route A cannot cover that row. AR3 also
+catches a row whose only recorded `first=` reads `0` or `-1` (the latter
+being the toggle-row predicted-infinite sentinel, not a live measurement of
+this row) - neither is a duration a ratio can be taken against, and the live
+procedure's step 2 now says to re-cast rather than paste a `-1` reading in.
+AR4 is what happens when the session skips the second cast the live
+procedure now requires. AR7's `1.5` bound is **D-T7**:
 a judgement, not a measurement, about how much of a timed skill's life may
 read as a full bar before the countdown is lying. The shipped fraction
 clamps at `1.0`, so a row with factor `f` shows a full bar for the first
@@ -2870,10 +2883,15 @@ session:
    `tgprobe tgl timer` again, pasting that second line too - its
    `appearance=` must read one higher than the first. The two lines' `first=`
    values are the two independent measurements Table 3 checks for
-   repeatability (`AR4`/`AR5`). `atPredicted=` counts draws where the timer
-   read exactly `-1` (the *toggle* rows' predicted-infinite value, existing
-   since session 4) - it is unrelated to the ratio the tables compute; do
-   not conflate the two when reading a pasted-back session log later.
+   repeatability (`AR4`/`AR5`). If either cast's `first=` reads exactly
+   `-1` (the *toggle* rows' predicted-infinite value, existing since
+   session 4 - the timer never started for this appearance) or `0`, that
+   draw is not data for this rule: re-cast the row and paste the recast
+   reading in its place rather than the `-1`/`0` line, so the Results table
+   never carries a `first=` a ratio cannot be taken against (see `AR2`/`AR3`
+   above). `atPredicted=` is what counts a `-1` draw on the probe's own
+   line; a nonzero count on a candidate row is exactly the signal to
+   re-cast, not a value the ratio tables interpret.
 3. For each candidate row, `tgprobe tgl fields [row]` on the second cast -
    paste the full scalar dump, both the first-seen and the last-seen
    snapshot, alongside the `overCap=` value each one carries.

@@ -2618,6 +2618,35 @@ class SkillTimerProbeContractTests(unittest.TestCase):
                       "route A row status", "route C row status"):
             self.assertIn(token, header_line, token)
 
+    def test_ar2_and_ar3_partition_abilityDuration_and_first_at_the_zero_bound(self):
+        # Regression for the instrument-blindness BLOCKING finding closed
+        # this round: a row whose first draw reads the probe's own -1/0
+        # sentinel (timer never started) must never enter the ratio/base/
+        # factor computation. AR2 must own the <= 0 side of
+        # `abilityDuration=` and AR3 the > 0 side of `first=`, so the two
+        # conditions partition the number line instead of leaving a state
+        # (e.g. `first=-1`, `abilityDuration>0`) that maps to no row.
+        section = self._decision_rule_section()
+        rows = {row[0]: row for row in parse_doc_table(section, "Table 3: route A, per row")}
+        ar2_condition = collapse(rows["AR2"][1])
+        self.assertIn("0", ar2_condition)
+        self.assertIn("negative", ar2_condition, "AR2 must also cover a negative abilityDuration=")
+        for row_id in ("AR3", "AR4"):
+            condition = collapse(rows[row_id][1])
+            self.assertIn(
+                "greater than `0`" if row_id == "AR3" else "> 0",
+                condition,
+                f"{row_id} must require a positive first=, not merely a numeric one",
+            )
+        # The definitions block states the same bound in prose, so a reader
+        # of the definitions and a reader of the table land on the same
+        # partition.
+        self.assertIn(
+            "defined only for rows whose `abilityDuration > 0` and whose "
+            "`first=` read numeric and greater than `0`",
+            collapse(section),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
