@@ -2700,20 +2700,27 @@ live session decides between three candidates:
 **Decision rule, pre-committed so the session's own output selects a route
 rather than reopening the design:** take route C if a candidate field is
 present on at least two rows (with `overCap=0` on each) and reads a
-plausible constant while `destroyTimer` decays. Otherwise, compute the
-`first= / abilityDuration` ratio for each row that has both. Route A is
-confirmed when that ratio is *consistent* (within one tick's worth) across
-at least two rows - a consistent ratio that differs from the printed
-`speed=` is route A holding with a scale factor (a different finding to
-record, per the Counter example above), **not** a falsification. Route A is
-`not observed` only when the ratio is inconsistent row to row. If `speed=`
-is unreadable, route A is `blocked` for every row, since the
-`predictedTotal=` column cannot be computed at all - the rule must not fall
-through to route B on that instrument failure; re-run `tgprobe talents`
-until `speed=` reads before scoring route A. Only when route A comes out
-`not observed` or `blocked` does the rule fall through to route B, which
-needs its own recorded decision and a Known Limitations entry. Record
-whichever routes lost, and why - a route that was never measured is
+plausible constant while `destroyTimer` decays. Otherwise, before scoring
+route A, check `speed=` from step 1's `tgprobe talents` line: if it is
+unreadable, re-run `tgprobe talents` up to three times in the same session -
+a reading on any of those attempts is not a `blocked` result, it just means
+the rule proceeds to the ratio check below on that reading. Only if `speed=`
+is still unreadable after the third attempt is route A recorded as
+`blocked` - terminally, not "still retrying" - for every row, since the
+`predictedTotal=` column can never be computed, and it is only that
+terminal `blocked` that lets the rule fall through to route B. Once
+`speed=` has read, compute the `first= / abilityDuration` ratio for each row
+that has both. Route A is confirmed when that ratio is *consistent* (within
+one tick's worth) across at least two rows - a consistent ratio that differs
+from the printed `speed=` is route A holding with a scale factor (a
+different finding to record, per the Counter example above), **not** a
+falsification. Route A is `not observed` - and it is this outcome, not a
+still-retrying `speed=` read, that is the other case letting the rule fall
+through to route B - when the ratio is inconsistent row to row. Falling
+through to route B, whether from a terminal `blocked` (`speed=` never read)
+or from a `not observed` ratio, needs its own recorded decision and a Known
+Limitations entry. Record whichever routes lost, and why - a route that was
+never measured is
 `blocked`, not `not observed`.
 
 ### The look, judged live
