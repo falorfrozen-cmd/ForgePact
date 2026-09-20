@@ -30,9 +30,14 @@ procedure` → `### Session 6`), whose result is `## Results` → `### Toggle
 skill table`. Nothing a player runs changes yet: the outline and the guard
 still cover Soul Spurn only.
 
-Status (2026-09-20): **Tracks A and B generalised — five skills ship, off by
-default.** The outline and the re-cast guard both key off one table of the
-five toggle skills session 6 confirmed: White Mage **Soul Spurn**, Exo **Lunar
+Status (2026-09-20, after session 7): **Tracks A and B generalised — five
+skills ship, off by default, confirmed in a ship build** (`## Results` →
+`### Session 7 — ship-build confirmation (phase S, 2026-09-20)`: both builds
+exited 0 at ForgePact `9d88156`, all five talent ids resolved in one walk,
+the tester's verdict "all five skills work, guard refused correctly, tgprobe
+unavailable", and a second plain Maelstrom cast in which the marker was not
+observed to light). The outline and the re-cast guard both key off one table
+of the five toggle skills session 6 confirmed: White Mage **Soul Spurn**, Exo **Lunar
 Orbit**, Plague Doctor **Crematus**, Butcher **Submerged Knives** and Prophet
 **Maelstrom of Frost**. Talent ids are resolved at runtime from each row's
 `abilityId`, the marker is D-U13's `soft` banded outline in `deepred
@@ -1706,6 +1711,91 @@ command is compiled out of this binary. `noSlot=0` is this build's pre-F
 field name (the follow-up above replaces it with `noHud=`/`noRow0=`/
 `noTalent=`) — quoted verbatim from the log, not rewritten to the new names.
 
+### Session 7 — ship-build confirmation (phase S, 2026-09-20)
+
+The five-row table's own live confirmation, at ForgePact `9d88156`. Two
+binaries were involved and the distinction matters for every number below:
+the **research build** (`BloodPactPlugin_rel.dll`) carries `tgprobe` and is
+where the timer control was measured, and the **ship build**
+(`BloodPactPlugin_ship.dll`) is the player binary, which carries neither.
+
+**Builds.** `plugin_build\build.bat dev` exited 0 and
+`plugin_build\build.bat release` exited 0. The staging check the module guide
+asks for,
+`fc.exe /b plugin_build\BloodPactPlugin_ship.dll modfiles_shipped\BloodPactPlugin.dll`,
+reported `no differences encountered`. **That comparison is automatic and is
+not independent evidence**: the release build copies the ship DLL into
+`modfiles_shipped/` itself, and that path is gitignored, so the two files are
+the same file by construction. It confirms the staging step ran, nothing more
+— a mismatch would mean the copy failed, not that the binary is wrong.
+
+**The shipped table resolved live, for the first time** (research build).
+`toggleborder stat` printed every row's id from one walk:
+
+```
+soulSpurn:talentId=240 lunarOrbit:talentId=358 crematus:talentId=283 submergedKnives:talentId=377 maelstromOfFrost:talentId=430 resolveWalks=1 unresolvedRows=0
+```
+
+`resolveWalks=1` with `unresolvedRows=0` is the D-P1 design working as
+designed: one walk of `global.talentStructMap`, every row matched by its own
+`abilityId`, nothing re-walked and no talent id stored in the binary. The
+per-row counters attributed every ON draw to the row that was actually
+toggled, which is the first live use of the per-row stat lines.
+
+**Maelstrom of Frost's timer discriminator, measured both ways** (research
+build). Toggled control — Endless Blizzard allocated, the toggle on:
+
+```
+maelstromOfFrost drawn=5796 on=5796          (every other row on=0)
+tgl timer: first=-1.000000 last=-1.000000 atPredicted=5796 draws=5796
+```
+
+Then one full plain cast with the sub-talent respecced out, same session:
+
+```
+tgl timer: first=4320.000000 last=-0.977760 min=-0.977760 atPredicted=0 draws=4290
+maelstromOfFrost drawn=5796 on=5796          (unchanged; off= climbed past 16700)
+```
+
+The plain form's timer runs down from 4320 and **passes `-1` without landing
+on a draw where it reads exactly `-1.000000`** — `atPredicted=0` over 4290
+draws, and the marker row's `drawn=`/`on=` did not move once while the plain
+cast was on screen. Together with session 6's plain cast (`atPredicted=0` over
+4288 draws) that is **two measured plain casts in which the marker was not
+observed to light**. It is not a proof that it cannot: the discriminator is
+per-draw exact equality with a decaying float, sampling only on draws, so a
+plain cast whose decay happens to sit at exactly `-1.000000` on a drawn frame
+would light the marker for those frames. The Known Limitation stays, with the
+sample count raised from one plain cast to two.
+
+**Ship build.** The player binary was installed from the panel and both mods
+armed from their Gameplay Mods entries. The tester's verdict, in their own
+words: "all five skills work, guard refused correctly, tgprobe unavailable".
+`tgprobe` printing `command unavailable` is the evidence that the research
+block compiled out of the player build — the same control the 2026-09-18 ship
+check used.
+
+| Skill | Marker ON by eye | Marker OFF by eye | After a zone change | Plain cast, sub-talent respecced out |
+|---|---|---|---|---|
+| `soulSpurn` | "all five skills work" | "all five skills work" | `### Ship-build confirmation (2026-09-18)`, step 4 | `### Ship-build confirmation (2026-09-18)`, step 6 |
+| `lunarOrbit` | "all five skills work" | "all five skills work" | `blocked` | `blocked` |
+| `crematus` | "all five skills work" | "all five skills work" | `blocked` | `blocked` |
+| `submergedKnives` | "all five skills work" | "all five skills work" | `blocked` | `blocked` |
+| `maelstromOfFrost` | "all five skills work" | "all five skills work" | `blocked` | `no marker seen` |
+
+The tester reported the five skills **collectively**, so every ON/OFF cell
+carries the same quoted line rather than five separate observations — that is
+what was said, not five findings written five times. Soul Spurn's zone-change
+and plain-cast cells cite the earlier ship check, which ran those steps on
+that row. `blocked` means the step was not run this session, never "run and
+saw nothing" (the doc's own convention); only Maelstrom's plain cast was run,
+and its cell is the `maelstromplain:` gate value.
+
+**What this session does not establish.** Per-skill ON/OFF by eye beyond the
+collective verdict; zone-change behaviour for the four rows added in phase S;
+plain casts of Lunar Orbit, Crematus and Submerged Knives; and anything about
+co-op, which ForgePact does not ship for.
+
 ### Toggle skill table
 
 Session 6 ran 2026-09-19 against the research DLL at `a149030`, one pass per
@@ -2235,7 +2325,10 @@ is read and each attempt carries its own `try`, so a junk entry in front of
 the real one costs that index and not the walk. A fixed `[1]` that turned out
 to be a character or player slot on another save would have left the guard
 inert with nothing but a `subUnreadable` counter to show for it; `toggleguard
-stat` now reports `subIndex=<n|none>`. Fail-open is vanilla behaviour, and this is the
+stat` now reports `subIndex=<n|none>`. Session 7 is the live confirmation:
+one walk resolved all five ids (`resolveWalks=1 unresolvedRows=0`) and the
+tester's ship-build verdict was "guard refused correctly". Fail-open is
+vanilla behaviour, and this is the
 point-of-use rule from the hub guide's Known Limitations item 13 — a
 permission read at a frame boundary would answer for the previous frame. It
 removes the cost D-U4 accepted as a Known Limitation: a plain cast of a
