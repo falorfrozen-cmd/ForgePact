@@ -16441,14 +16441,32 @@ static bool HandleProspectCommand(const std::string& lc, const std::string& rest
 //   instances have never been shown to be enumerable on this runner -
 //   Profile_Manager_obj was only ever read in-world - so a `list` that finds
 //   no buttons means (b) and (c) were never measured, not that they failed.
+//   The control has to be this same command over an object the session has
+//   just seen live, not `citrace dumpobj` over the same object: those are two
+//   different paths to an instance, and a negative is only worth anything
+//   against the instrument that produced it.
 // * `event` and `script` each make exactly **one** call, behind the literal
 //   word `confirm`, printing the instance's own position and the room index
 //   either side of it. That is what separates "the call was refused", "the
 //   call ran and changed nothing" and "the call faulted" - three outcomes a
 //   single success/failure line would flatten into one.
 //
-// Nothing here hooks, resolves an address, loops around a call, or runs from
-// FrameCallback. Every instance is reached by name through asset_get_index ->
+// Nothing here hooks, resolves an address or loops around a call.
+//
+// Where a command runs is worth stating exactly, because the sentence that
+// stood here said the opposite of the truth. Every ForgePact command executes
+// inside ForgePact::IpcServer::PollCommands(), and FrameCallback calls
+// PollCommands every 30 frames once g_Setup is set - so `menuprobe` already
+// runs *on* the frame thread, which is precisely what makes CallBuiltinEx and
+// CallGameScriptEx safe to call from it: the runtime is between frames and
+// owned by this thread. (The stall watchdog further down keeps Out() off its
+// own second thread for the opposite reason - that thread does not own the
+// YYTK interface. A reader who thinks commands run off the frame thread draws
+// exactly the wrong conclusion from that comment.) What stays true, and is
+// what the old wording was reaching for: nothing this instrument adds is
+// installed on the per-frame path, and nothing of it runs unasked.
+//
+// Every instance is reached by name through asset_get_index ->
 // instance_number -> instance_find -> HhResolveInstance, the same four steps
 // `citrace dumpobj` uses, and a failure prints which one it was.
 
@@ -16479,9 +16497,23 @@ static std::string MpVar(const RValue& handle, const char* name)
 // Where an instance is, without the room - the callers print the room either
 // side of their one call, and an instance that the call destroyed still has
 // to produce a line rather than an exception.
+//
+// The instance_exists question comes first, and it is not decoration. MpVar
+// answers "" both when the instance does not carry that variable and when the
+// instance is gone (variable_instance_exists is false either way), so a
+// destroyed handle would otherwise print the same empty `id= x= y=` as an
+// object that simply has no such variables - collapsing the one distinction
+// the before/after split exists to make. One `<destroyed>` marker instead of
+// three blanks keeps them apart, the way MpList already marks a handle
+// HhResolveInstance cannot turn into an instance.
 static std::string MpWhere(const std::string& objName, int nth, const RValue& handle)
 {
-    return objName + " nth=" + std::to_string(nth)
+    const std::string who = objName + " nth=" + std::to_string(nth);
+    bool alive = false;
+    try { alive = g_Yytk->CallBuiltin("instance_exists", { handle }).ToBoolean(); }
+    catch (...) { return who + " <instance_exists-read-failed>"; }
+    if (!alive) return who + " <destroyed>";
+    return who
         + " id=" + MpVar(handle, "id")
         + " x=" + MpVar(handle, "x")
         + " y=" + MpVar(handle, "y");

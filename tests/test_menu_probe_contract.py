@@ -101,6 +101,25 @@ def section(doc, heading):
     return doc[start:] if following < 0 else doc[start:following]
 
 
+def flowed(text):
+    """Markdown prose with its line wrapping taken out.
+
+    A sentence this test pins can sit across a line break, and re-wrapping a
+    paragraph is not a change in what it says - so the assertions read the
+    text the way a reader does, not the way the file stores it.
+    """
+    return re.sub(r"\s+", " ", text.replace("\r\n", "\n").replace("*", ""))
+
+
+def live_step(doc, number):
+    """One numbered step of `## Live procedure`, up to the next number."""
+    procedure = section(doc, "## Live procedure")
+    start = re.search(r"(?m)^%d\. " % number, procedure)
+    assert start, "the live procedure has no step %d" % number
+    following = re.search(r"(?m)^%d\. " % (number + 1), procedure)
+    return procedure[start.start():following.start() if following else len(procedure)]
+
+
 class MenuProbeContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -112,6 +131,13 @@ class MenuProbeContractTests(unittest.TestCase):
         cls.script = function_body(cls.plugin, "static void MpScript(")
         cls.listing = function_body(cls.plugin, "static void MpList(")
         cls.resolve = function_body(cls.plugin, "static bool MpResolve(")
+        cls.where = function_body(cls.plugin, "static std::string MpWhere(")
+        # Everything the research block contains, header comment included -
+        # the comment is as much part of the instrument as the code, because
+        # it is what the next reader believes about where this runs.
+        cls.block = cls.plugin[
+            cls.plugin.index("// Research instrument for docs/character-select-research.md"):
+            cls.plugin.index("#endif // FORGEPACT_RELEASE (menuprobe)")]
 
     def helpers(self):
         """Every function the instrument is made of, as one blob."""
@@ -178,6 +204,28 @@ class MenuProbeContractTests(unittest.TestCase):
         self.assertEqual(re.findall(r"\bMp[A-Z]\w*", frame), [],
                          "a probe that runs every frame is a mod, not a probe")
 
+    def test_the_comments_say_where_a_command_actually_runs(self):
+        """The safety argument is that this *does* run on the frame thread.
+
+        Both the header comment and the research document used to say
+        `menuprobe` does not run from `FrameCallback`. Every ForgePact command
+        runs inside `PollCommands()`, which `FrameCallback` calls every 30
+        frames - which is exactly what makes `CallBuiltinEx` and
+        `CallGameScriptEx` safe here. A reader who believes the old sentence
+        would look for a safety argument that does not exist, and could
+        conclude from the stall watchdog's comment that calling into the
+        runtime from a command is the same risk. The narrower true claim -
+        nothing is installed on the per-frame path - is the test above.
+        """
+        self.assertNotIn("or runs from", self.plugin,
+                         "the header comment claims the opposite of the truth")
+        self.assertIn("PollCommands", self.block,
+                      "the header comment has to name where its command runs")
+        doc = self.doc.replace("\r\n", "\n")
+        self.assertNotIn("nothing runs from the frame callback", doc)
+        self.assertIn("PollCommands", doc,
+                      "the document's Instrument section names it too")
+
     # ---- one call per command, behind the literal word ----------------------
 
     def test_event_and_script_check_confirm_before_any_call(self):
@@ -224,12 +272,28 @@ class MenuProbeContractTests(unittest.TestCase):
                 self.assertEqual(body.count("MpWhere("), 2)
                 self.assertIn("EXCEPTION", body,
                               "a fault must print as a fault, not as silence")
-        where = function_body(self.plugin, "static std::string MpWhere(")
+        where = self.where
         for field in ("nth=", '"id"', '"x"', '"y"'):
             self.assertIn(field, where)
         self.assertIn("objName", where, "the object is named on the line")
         self.assertIn("Describe(res)", self.event)
         self.assertIn("Describe(res)", self.script)
+
+    def test_a_destroyed_instance_does_not_print_like_a_missing_variable(self):
+        """`MpVar` answers "" for both, so the after line has to ask first.
+
+        `variable_instance_exists` is false whether the instance never
+        carried that variable or the call just destroyed it, so an after line
+        built only out of `MpVar` prints the same empty `id= x= y=` for both -
+        collapsing the one distinction the before/after split exists to make.
+        `MpList` already marks a handle it cannot resolve; this is the
+        equivalent for the handle a call may have killed.
+        """
+        self.assertIn("instance_exists", self.where,
+                      "the after line has to ask whether the instance is "
+                      "still there before it reads variables off it")
+        self.assertIn("<destroyed>", self.where,
+                      "one marker, not three empty fields")
 
     # ---- names, never addresses ---------------------------------------------
 
@@ -325,6 +389,53 @@ class MenuProbeContractTests(unittest.TestCase):
         for candidate in ("a-sendinput", "a-postmessage", "bc-event",
                           "bc-script"):
             self.assertIn(candidate, candidates)
+
+    def test_the_enumeration_control_is_the_same_instrument(self):
+        """`menuprobe list UI_Button_obj` cannot be its own control.
+
+        An empty listing is equally consistent with "the buttons are a
+        different object" and with "nothing in a menu room enumerates through
+        `instance_number`/`instance_find` at all", which has never been shown
+        either way on this runner. `citrace dumpobj` does not settle it: it
+        reaches an instance by a different path, and a negative is only worth
+        anything against the instrument that produced it. So the control is a
+        `menuprobe list` of an object the same step's `dumpobj` shows live,
+        read as a pair, and the document has to say which outcome pair is
+        which - `AGENTS.md`, "Prove the Instrument Before Trusting a Negative
+        Result".
+        """
+        doc = self.doc.replace("\r\n", "\n")
+        control = "menuprobe list Menu_Controller_obj"
+        self.assertGreaterEqual(
+            doc.count(control), 2,
+            "the control is read once with the other menu reads and again "
+            "beside the measurement it qualifies")
+        for number in (6, 13):
+            step = live_step(self.doc, number)
+            self.assertIn(control, step,
+                          "step %d reads the control" % number)
+        step13 = live_step(self.doc, 13)
+        self.assertIn("UI_Button_obj", step13)
+        self.assertIn("Profile_Manager_obj", step13,
+                      "the fallback control object, for a menu where the "
+                      "first one has no instances")
+        self.assertIn("both empty measures the instrument", flowed(step13),
+                      "the outcome pair that means (b) and (c) were never "
+                      "measured has to be written down before the session, "
+                      "not decided afterwards")
+        self.assertIn("control: fail", step13)
+
+        results = section(self.doc, "## Results")
+        row = [line for line in results.split("\n") if line.startswith("| C-1.13 |")]
+        self.assertEqual(len(row), 1)
+        self.assertIn("UI_Button_obj", row[0])
+        self.assertIn("Menu_Controller_obj", row[0],
+                      "the Results row records the control beside the "
+                      "reading it qualifies, or the pair is lost")
+
+        instrument = section(self.doc, "## Instrument")
+        self.assertIn("both empty measures the instrument", flowed(instrument))
+        self.assertIn(control, instrument)
 
     def test_the_document_sources_each_negative_it_relies_on(self):
         negatives = section(self.doc, "## Negative results, sourced")

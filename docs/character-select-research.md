@@ -87,7 +87,7 @@ them.
 | `a-sendinput` | OS-level input from the MCP process, game in the foreground | none in this plugin | `cb keyboard_check <vk>` and `cb keyboard_check_direct <vk>` in one command; `roomprobe` plus a screenshot for the screen | a human holds Shift and both reads must be true (C-1.7); a human clicks Local and the room or screen must change (C-1.9) |
 | `a-postmessage` | posted key and mouse messages to the window, no foreground | none | the same | the same |
 | `d` | the engine's own `keyboard_key_press` and `keyboard_key_release`, through `cb` | none (research build) | the same | the same; an exception from `cb` means the builtin is not exposed on this runner |
-| `bc-event` | perform a mouse or user event on a menu button instance, with that button as self | `menuprobe event` | `roomprobe` plus a screenshot | `menuprobe list` sees button instances at the menu |
+| `bc-event` | perform a mouse or user event on a menu button instance, with that button as self | `menuprobe event` | `roomprobe` plus a screenshot | `menuprobe list` sees button instances at the menu, read beside a `menuprobe list` of an object `citrace dumpobj` shows live there (C-1.6, C-1.13) - both empty measures the instrument, not the button |
 | `bc-script` | call a menu UI-action script with a real button as self and other | `menuprobe script` | the same | `menuprobe script GetQuestProgress <Obj> 0 confirm` returns a real |
 
 `keyboard_check_direct` reads the operating system's key state, which
@@ -129,6 +129,22 @@ never queued" from "the game did not react to it".
   This is also the **enumeration control**: menu-room instances have never
   been shown to be enumerable on this runner, so a `list` that finds nothing
   means (b) and (c) were not measured, not that they failed.
+
+  The control has to be the same instrument, not the same concept. An empty
+  `menuprobe list UI_Button_obj` is equally consistent with "the menu's
+  buttons are some other object" and with "nothing in a menu room enumerates
+  through `instance_number`/`instance_find` on this runner", and `citrace
+  dumpobj` resolving an object does not close that gap either - `dumpobj` and
+  `list` are two different paths to an instance, and a negative is only worth
+  anything against the instrument that produced it. So the control is
+  `menuprobe list Menu_Controller_obj` - a `list` of an object the *same*
+  step's `dumpobj` shows live, with `Profile_Manager_obj` as the fallback if
+  that one turns out to have no instances at the menu. Read the pair:
+  a non-empty control with an empty `UI_Button_obj` is a real negative about
+  the button object; **both empty measures the instrument**, so (b) and (c)
+  are `control: fail`, unmeasured. Which object is live at the menu is itself
+  unknown until step 6 runs, which is why a fallback is named rather than one
+  object asserted.
 * `menuprobe event <Obj> <nth> <type> <number> [Obj2] confirm` - exactly one
   event performed on that instance.
 * `menuprobe script <Script> <Obj> <nth> [args...] confirm` - exactly one
@@ -140,8 +156,19 @@ a fault are three distinguishable outcomes. `confirm` is a literal word and
 always last, so a half-written command file fails closed instead of firing -
 the same gate the `citrace` verbs use. Every instance is reached by name
 (`asset_get_index`, `instance_number`, `instance_find`, then
-`HhResolveInstance`); no address is resolved, nothing is hooked, no loop
-encloses a call, and nothing runs from the frame callback.
+`HhResolveInstance`); no address is resolved, nothing is hooked and no loop
+encloses a call.
+
+Where these commands run is worth saying precisely, because an earlier draft
+of this paragraph claimed the opposite. Every ForgePact command executes
+inside `PollCommands()`, which `FrameCallback` calls every 30 frames once the
+plugin's setup flag is set - so `menuprobe` already runs **on** the frame
+thread, and that is exactly what makes calling `CallBuiltinEx` and
+`CallGameScriptEx` from it safe: the runtime is between frames and owned by
+this thread. What is true and load-bearing is the narrower claim: nothing
+`menuprobe` adds is installed on the per-frame path, and nothing of it runs
+unasked - a contract test pins that `FrameCallback`'s own body mentions
+neither the verb nor any of its helpers.
 
 ## Live procedure
 
@@ -168,12 +195,20 @@ reply in the `## Results` table under its step id. Keys used below:
    whatever it is) and a `grab_window` screenshot.
 6. **Read-only reads at the menu**, all in one command so they are one frame:
    `citrace dumpobj Menu_Controller_obj 0`, `citrace dumpobj Profile_Manager_obj 0`,
+   `menuprobe list Menu_Controller_obj`, `menuprobe list Profile_Manager_obj`,
    `menuprobe list UI_Button_obj`, `menuprobe list Select_Parent_obj`, and
    `cb` reads of the window position and size, the interface size and the
    fullscreen flag. Record whether each object has instances here, how many
    buttons and where, the interface-to-window size ratio, and beside them the
    client rectangle, client size and DPI that a one-millisecond `hs_input`
    wait reports.
+
+   The two `menuprobe list` lines that mirror a `citrace dumpobj` are **step
+   13's enumeration control**, which is why they are read here, in the same
+   frame, before anything is performed. Record each one's count even when it
+   is zero, and note which object `dumpobj` showed live: that object's `list`
+   is what decides whether an empty `UI_Button_obj` is a fact about the button
+   object or a fact about the instrument.
 7. **Control for the key-read instrument** (human). Hold left Shift for three
    seconds while the agent takes both key reads; both must be true. Release
    and repeat; both must be false. If the first read is not true the
@@ -206,14 +241,22 @@ reply in the `## Results` table under its step id. Keys used below:
     the builtin is not exposed on this runner, and that is the result. If the
     engine read went true and step 11 showed keyboard navigation, repeat step
     11 through the same builtin and record whether the menu reacts.
-13. **(b) an event on a button - enumeration control first.**
-    `menuprobe list UI_Button_obj` must list instances with distinct
-    positions at the main menu. None means `control: fail` for (b) and (c);
-    skip to 15. Otherwise, one command at a time, on the instance whose
-    position matches Local: the mouse-pressed event, then mouse-enter, then
-    mouse over, then user events 10 to 15 in turn. After each, `roomprobe`
-    and a screenshot. Record what was performed, the result, the room before
-    and after and whether the screen changed. Escape back between reactions.
+13. **(b) an event on a button - enumeration control first.** Re-run the
+    control alongside this step's own reading, and record the pair:
+    `menuprobe list Menu_Controller_obj` - or `menuprobe list
+    Profile_Manager_obj` if step 6 found the first one empty and the second
+    one live - **and** `menuprobe list UI_Button_obj`. Three readings, three
+    different conclusions: control non-empty and `UI_Button_obj` listing
+    instances with distinct positions means the measurement is on; control
+    non-empty and `UI_Button_obj` empty is a real negative about the button
+    object (`control: pass`, (b) and (c) measured as not-this-object); **both
+    empty measures the instrument**, so (b) and (c) are `control: fail`,
+    unmeasured - skip to 15. Otherwise, one command at a time, on the instance
+    whose position matches Local: the mouse-pressed event, then mouse-enter,
+    then mouse over, then user events 10 to 15 in turn. After each,
+    `roomprobe` and a screenshot. Record what was performed, the result, the
+    room before and after and whether the screen changed. Escape back between
+    reactions.
 14. **(c) a warm script call.** Positive control first:
     `menuprobe script GetQuestProgress UI_Button_obj 0 confirm` must return a
     real. Then the same form against `UiAMainMenuLocal` on the matching
@@ -257,14 +300,14 @@ for the rest.
 | C-1.3 | installed plugin hash before the swap | | - | |
 | C-1.4 | launch phase, load banner, co-op line | | - | |
 | C-1.5 | research build confirmed, room, screenshot | | pass/fail | |
-| C-1.6 | instances per object, button count and positions, size ratio, client rectangle and DPI | | - | |
+| C-1.6 | instances per object - including the `menuprobe list` counts for `Menu_Controller_obj` and `Profile_Manager_obj`, step 13's control - button count and positions, size ratio, client rectangle and DPI | | - | |
 | C-1.7 | both key reads while a human holds Shift, then released | | pass/fail | |
 | C-1.8 | `a-sendinput` and `a-postmessage`: both key reads, foreground before and after, and each route's `complete` flag with any delivery error | | - | |
 | C-1.9 | room and screen after a real mouse click on Local, and after Escape | | pass/fail | |
 | C-1.10 | `a-sendinput` and `a-postmessage`: room and screen after an injected click, and each route's `complete` flag with any delivery error | | - | |
 | C-1.11 | keyboard navigation observed or not observed | | - | |
 | C-1.12 | the three replies from the engine's own key builtins | | - | |
-| C-1.13 | `menuprobe list UI_Button_obj` at the menu, then each event performed and its result | | pass/fail | |
+| C-1.13 | the control `menuprobe list Menu_Controller_obj` (or `Profile_Manager_obj`) beside `menuprobe list UI_Button_obj` at the menu, then each event performed and its result | | pass/fail | |
 | C-1.14 | script control result, then each UI-action call, status and result | | pass/fail | |
 | C-1.15 | the full path, per-screen client size and click fractions or key list | | - | |
 | C-1.16 | `player via ...`, room, screenshot, settle time | | - | |
