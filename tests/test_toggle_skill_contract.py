@@ -862,6 +862,25 @@ class ToggleIndicatorShipContractTests(unittest.TestCase):
         self.assertGreater(body.index("draw_set_"), body.index("draw_get_alpha"))
         self.assertIn("draw_rectangle", marker)
 
+    def test_draw_state_is_restored_even_when_the_marker_throws(self):
+        # Re-review finding (P2): with the restore inside the same try as the
+        # marker, a throwing band left deepred at that band's alpha active for
+        # everything drawn after us - counted, but not contained. The marker
+        # call has its own try, both restores sit AFTER it on every path, and
+        # each is best-effort so a failing restore neither skips the other nor
+        # escapes the loop.
+        body = function_body(self.plugin, "static void ToggleIndicatorDraw(")
+        marker_catch = body.index("} catch (...) { InterlockedIncrement(&g_TibDrawExc); }")
+        restore_alpha = body.index('try { g_Yytk->CallBuiltin("draw_set_alpha"')
+        restore_colour = body.index('try { g_Yytk->CallBuiltin("draw_set_colour"')
+        self.assertLess(marker_catch, restore_alpha)
+        self.assertLess(restore_alpha, restore_colour)
+        for restore in (body[restore_alpha:restore_colour], body[restore_colour:]):
+            self.assertIn("catch (...) {}", restore[:restore.index("\n") + 1])
+        # `drawn` counts a draw that actually finished, not one that threw.
+        self.assertIn("if (drew) {", body)
+        self.assertLess(restore_colour, body.index("if (drew) {"))
+
     def test_marker_required_flag_matches_state_flash_purgatory(self):
         # RE-PINNED in phase S to the per-row rule. `## State` read `flash:
         # purgatory` (session 4, D-R2) and Soul Spurn is still a marker row, so

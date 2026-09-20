@@ -1,4 +1,4 @@
-# ForgePact 1.4.4
+# ForgePact 1.4.5
 
 Two new, off-by-default Gameplay Mods for toggle skills: mark the skill-bar
 slot of a toggle you have running, so you can see at a glance that it is still

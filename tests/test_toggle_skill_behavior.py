@@ -484,6 +484,13 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
 
     # ---- S: the border's per-row counters ----------------------------------
 
+    def test_draw_exception_still_restores_colour_and_alpha(self):
+        # Re-review finding (P2): counting the exception is not isolating it.
+        # The marker's colour and alpha are already set when the rectangle
+        # throws, so a HUD that keeps drawing after us would inherit them.
+        for suffix in ("/drawn", "", "/colour_restored", "/alpha_restored"):
+            self.assertScenario("indicator_on/draw_exception_counts" + suffix)
+
     def test_border_per_row_counters_name_the_row(self):
         # Phase S review follow-up: the aggregate counters sum all five rows,
         # so one draw with row 0 ON, row 1 resolved-but-absent and the rest

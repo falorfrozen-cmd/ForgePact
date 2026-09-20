@@ -868,15 +868,22 @@ int main() {
     // 28. Follow-up: a throwing draw_rectangle stub. The catch after the
     //     outline loop must count the exception rather than swallow it
     //     uncounted, and drawn must stay 0 (the draw did not complete).
+    //     Counting is not isolation, though: the marker's colour and alpha
+    //     are set before the throw, so they must STILL be restored, or every
+    //     HUD draw after this one inherits the marker's deep red at the last
+    //     band's alpha (re-review finding, P2).
     resetWorld();
     g_ToggleBorderOn.store(true);
     world.instances = { OwnMarked(0.09) };
     world.drawRectangleThrows = true;
     {
         g_TibDrawn = 0; g_TibDrawExc = 0;
+        g_LastSetColour = -999; g_LastSetAlpha = -999;
         ToggleIndicatorDraw();
         checkInt("indicator_on/draw_exception_counts/drawn", g_TibDrawn, 0);
         checkInt("indicator_on/draw_exception_counts", g_TibDrawExc, 1);
+        checkNear("indicator_on/draw_exception_counts/colour_restored", g_LastSetColour, kPrevColour);
+        checkNear("indicator_on/draw_exception_counts/alpha_restored", g_LastSetAlpha, kPrevAlpha);
     }
 
     // 29. Follow-up: ToggleIndicatorFindSlot's noSlot split into three

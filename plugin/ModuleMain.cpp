@@ -4908,12 +4908,25 @@ static void ToggleIndicatorDraw()
         try {
             RValue prevColour = g_Yytk->CallBuiltin("draw_get_colour", {});
             RValue prevAlpha = g_Yytk->CallBuiltin("draw_get_alpha", {});
-            ToggleIndicatorDrawMarker(x, y, w, h);
-            g_Yytk->CallBuiltin("draw_set_alpha", { prevAlpha });
-            g_Yytk->CallBuiltin("draw_set_colour", { prevColour });
-            InterlockedIncrement(&g_TibDrawn);
-            InterlockedIncrement(&g_TibRow[r].drawn);
-        } catch (...) { InterlockedIncrement(&g_TibDrawExc); }   // follow-up: count a swallowed draw exception
+            // The marker's colour and alpha are already set by the time a band
+            // can throw, so counting the exception is not isolating it: the
+            // restore has to run on BOTH paths, or every HUD draw after this
+            // one inherits deepred at the last band's alpha (re-review
+            // finding). Each restore also gets its own try - a failed colour
+            // restore must not cost the alpha one, and a failing restore must
+            // not leave this loop by an exception either.
+            bool drew = false;
+            try {
+                ToggleIndicatorDrawMarker(x, y, w, h);
+                drew = true;
+            } catch (...) { InterlockedIncrement(&g_TibDrawExc); }   // follow-up: count a swallowed draw exception
+            try { g_Yytk->CallBuiltin("draw_set_alpha", { prevAlpha }); } catch (...) {}
+            try { g_Yytk->CallBuiltin("draw_set_colour", { prevColour }); } catch (...) {}
+            if (drew) {
+                InterlockedIncrement(&g_TibDrawn);
+                InterlockedIncrement(&g_TibRow[r].drawn);
+            }
+        } catch (...) { InterlockedIncrement(&g_TibDrawExc); }   // the state reads themselves failed: nothing was set, so there is nothing to put back
     }
 }
 
