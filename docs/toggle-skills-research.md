@@ -2381,6 +2381,50 @@ disagree=0`, last `tgprobe tgl frame=170790 agree=150948 disagree=0`.
   its HUD icon was not separately confirmed. Both are buff-carried, the shape
   D-B3's `PlayerBuff` kind would read; neither is a row here (D-B2).
 
+### Session 11 — ship-build confirmation (Meteor Storm / Bushido)
+
+Ship DLL `4135ABFB…` (ForgePact `6afea79`, 1,511,936 B, built 2026-09-21
+23:06), installed and checked in-game by the owner 2026-09-21 23:57 through
+2026-09-22. Full capture:
+`.claude/workorders/forgepact-toggle-rows-ship-session11-capture.md` (a hub
+workorder artefact, not part of this submodule, never staged); every quoted
+value below is from it.
+
+**Menu.** `toggleborder` → ON (now reads "covers 7 toggle skills");
+`toggleguard` → ON ("one of the 7 covered toggle skills"). Resolve, Shaman in
+town: `meteorStorm:talentId=224 bushido:talentId=134 resolveWalks=5
+unresolvedRows=0`; `toggleguard hook=installed`.
+
+**Meteor Storm.** ON (`s11` allocated): `toggleborder stat: meteorStorm
+drawn=1250 on=1250 off=4247 unreadable=0`; guard `passed=1 procSeen=0`. Owner:
+outline visible. OFF: `drawn=2854 on=2854 off=5943 unreadable=0`; guard
+`passed=2 procSeen=0`. Owner: outline gone. Plain cast (`s11` respecced out,
+owner cast once): `drawn=2854 on=2854 off=10353 unreadable=0` (`on=`
+unchanged from the OFF reading — no outline for the plain form); guard
+`passed=3 procSeen=0 subOff=0`.
+
+**Bushido.** ON: `toggleborder stat: bushido drawn=1170 on=1170 off=29472
+unreadable=0 noSlot=0`; `resolveWalks=7 unresolvedRows=0`; guard `passed=4
+procSeen=0 baseForm=0` (owner's press passed, no proc). Owner: outline visible
+while on. Zone change with Bushido on (owner: "visible, zoned"): after the
+change `bushido drawn=6202 on=6202 off=30973`; ~3s later `drawn=6202 on=6202
+off=32563` (`on=` frozen, `off=` rising — no outline in the new zone). Guard
+afterward: `refused=0 passed=4 procSeen=0 baseForm=0 hook=installed`;
+`toggleborder` totals `drawExc=0 unreadable=0 unresolved=0`. Meteor Storm's
+own zone-change stop was not repeated on the ship build this session (session
+9 measured it directly; the owner separately confirmed in-game that both
+toggles stop on a zone change).
+
+**Double-cast refusal: not observed live for these two rows.** `procSeen=0`
+for both Meteor Storm and Bushido across this session's Shaman/Samurai pass.
+Owner decision, verbatim: "we proved double cast works, we wont test it on
+every skill." The guard's refusal mechanism was proven live earlier (session
+5, Soul Spurn: `refused=9 procSeen=9`), and the new rows' own gate — the
+`s11` sub-talent read for Meteor Storm and the base-form branch (`baseForm=`)
+for Bushido — is covered by the harness and contract tests, not by a live
+proc here. This stays recorded as not observed live, per the owner's call,
+never as a live pass.
+
 ## Decision
 
 **Track A (re-cast guard): BLOCKED on Q2/Q3, redesign required.** Q1 and Q5
