@@ -22671,8 +22671,8 @@ static double g_TgSpriteBarOffsetDx = 0.0, g_TgSpriteBarOffsetDy = 0.0;
 // `tgprobe sprite barinset [px]` (same session): the tuned box is sized for
 // the outline styles that draw AROUND the icon, so a full bar overhung the
 // icon art equally on both sides. The bar is trimmed this many pixels in
-// from each side of the box. Default 4 is a starting guess, not a
-// measurement - tune it live.
+// from each side of the box. Default 4: started as a guess, confirmed by
+// the tester live as matching the Soul Spurn icon's width.
 static double g_TgSpriteBarInset = 4.0;
 static double g_TgSpriteTextAlpha = 1.0;                                    // fully opaque - today's look
 static bool g_TgSpriteTextColourSet = false;                                // unset -> follow the shared `colour`

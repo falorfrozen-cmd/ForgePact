@@ -3072,7 +3072,10 @@ Spurn's slot (talent 240, tuned box 77x78):
   tuned box is sized for the outline styles that draw around the icon, and
   the raw `box bbox`, 82 px against 77, is wider still), so the bar gained
   `tgprobe sprite barinset [px]`, trimming it that many pixels in from each
-  side, default 4 - a starting guess, not a measurement.
+  side, default 4. On the next launch the tester confirmed the 4 px inset
+  matches the icon's width, the bar sits right above the icon at
+  `baroffset 0,0`, and `number` at its new built-in `0,-101` default lands
+  exactly where it was nudged live.
 
 ### Live procedure
 
