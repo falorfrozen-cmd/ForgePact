@@ -330,7 +330,7 @@ turn co-op rendering on, and run no `citrace` command, after `tgprobe hook`.
 | `tgprobe sprite box tuned\|bbox` | (round 10) Which box `sprite <Name>`, `sprite gold` and every `style` draw into before `scale` is applied, and what their `box=` readout reports. `tuned` (the default) is D-U12's derived box — `x + 2.3`, `y` unchanged, `w - 4.7`, `h - 13.2` off the slot's own live `navBbox`, each rounded to whole pixels (D-U11) — what the author actually tuned the look against. `bbox` is the slot's raw `navBbox`, rounded the same way, kept so the two can still be compared side by side; round 9 shipped every style/gold draw against the raw bbox even though D-U12 had already superseded it for the marker geometry itself — this round wires the tuned box in as the default so what a tester judges is the real shape. With no argument, reports the active kind and the resulting integer box without changing it. |
 | `tgprobe sprite scale [f]` | A multiplier (default `1.0`, clamped `0.25..4.0`) on the active box (see `box` above; `sprite <Name>`/`sprite gold`/`sprite style <name>` all draw into it) — the "surround" route (round 5): since only a larger-than-the-icon draw (the gold outline's own box, bigger than the icon) is confirmed visible at either layer, a candidate inflated the same way should read around the icon instead of under it. With no argument, reports the current value without changing it; never applied to `centre` or `gallery`, whose box sizes are their own fixed constants, and never to `tgprobe mark`, which already takes explicit geometry. |
 | `tgprobe sprite style soft\|halo\|gradient\|pulse\|arc\|bar\|number\|fade` | Draws a procedural look ForgePact draws itself, not a game sprite, into the same scaled slot box `sprite <Name>`/`sprite gold` use (round 6, after the tester found the flat gold rectangle "crude" and asked for a soft alpha-fade look): `soft` is the shipped outline generalised to 10 alpha-ramped nested bands; `halo` is a radial glow (`draw_ellipse_colour`, the two-colour ellipse builtin); `gradient` is nested filled rectangles (`draw_rectangle_colour`, the four-corner-colour rectangle builtin) approximating a centre-outward fade; `pulse` is `soft` with every band's alpha additionally scaled by a slow sine on the frame counter (confirmation line prints `period=1.5s (90 frames)`). `draw_ellipse_colour`/`draw_rectangle_colour` are new to this probe this round — their reachability through the shared `CallBuiltin` path is unconfirmed until a live session runs `halo`/`gradient` and reports what drew. **`arc`/`bar`/`number`/`fade`** (issue #55) are the four timed-skill countdown-look candidates, each drawn against `sprite frac` below instead of a live cast — see `## Issue #55` for what each looks like and the live procedure that judges them; `arc` additionally depends on `draw_line`, unconfirmed the same way until a live session runs it. Names also listed by `sprite list`. |
-| `tgprobe sprite frac [f]` | (issue #55) A settable countdown fraction, `0.0..1.0`, clamped by hand, default `1.0`, that `style arc\|bar\|number\|fade` draw against — so each timed-skill look is judgeable at rest, at any fill, with no live cast, and is the same input the shipped countdown will take. An argument that does not parse as a number is refused with a usage message and the stored fraction is left unchanged. |
+| `tgprobe sprite frac [f]\|anim <seconds> [loop]` | (issue #55) A settable countdown fraction, `0.0..1.0`, clamped by hand, default `1.0`, that `style arc\|bar\|number\|fade` draw against — so each timed-skill look is judgeable at rest, at any fill, with no live cast, and is the same input the shipped countdown will take. An argument that does not parse as a number is refused with a usage message and the stored fraction is left unchanged. **`anim <seconds> [loop]`** (timer-countdown follow-up) instead has the probe recompute the fraction itself on every draw, `1 - elapsed/duration`, from `1.0` down to `0.0`, so all four candidates can be judged in smooth motion instead of stepped one `frac <f>` IPC call apart; `elapsed` is read every draw from a name-resolved game clock (`get_timer`, else `current_time` — never a draw or frame count, so a frame-rate dip cannot stretch the countdown), and a refused `anim` (bad arguments, or neither clock readable) leaves any running animation untouched. Without `loop` it holds at `0.0` once the duration elapses; with `loop` it wraps to `1.0` and restarts. A plain `frac <f>` that itself parses cancels a running or finished animation before storing `f`. The `off` line and the `frac` confirmation both report `anim=off\|running\|done`, the clock's name (`src=`), duration, loop/once, elapsed, ticks and `clockFail=` — the last two are the instrument's own self-check: ticks rising with elapsed stuck at `0` means the probe reports running but the clock is not advancing (AGENTS.md § "Prove the Instrument Before Trusting a Negative Result"). |
 | `tgprobe sprite colour <name\|r g b>` | A shared colour (round 8) for every `style`, `sprite gold` and `tgprobe mark` — default `gold`, unchanged until a tester asks for red (D-U11: the shipped marker will be red). Presets: `gold`, `red` (a deep, warm crimson — not `255,0,0`; the author's steer was "a nicer shade, similar to what talent aura frame uses"), `brightred` and `deepred` (a brighter and a deeper neighbour of `red`); or a raw `<r> <g> <b>` triple (`0..255` each, clamped by hand). With no argument, reports the active colour without changing it. Confirmation line prints `colour=<name>(<r>,<g>,<b>)` — the full triple, not only the name, so a choice is quotable as a number. Never applied to a named sprite's own art (drawn with its own colours) or to `centre`/`gallery`'s fixed boxes. |
 | `tgprobe sprite quad on\|off` | (round 9, corrected round 10) "Inside out" — the author's own word. Round 9's first build (four whole-sprite copies, one scaled into each box quadrant and mirrored) was rejected on sight as the wrong construction. The corrected version instead splits the SOURCE sprite itself into its own four quadrants (`draw_sprite_part_ext`, GameMaker's source-rectangle sprite draw) and rotates each quadrant 180 degrees about its own centre, drawn back into the matching destination quadrant — so content that sat at the sprite's own centre ends up at the box's outer corners and the assembled result stays a square, "the sprite's inner edges become its outer edges" (the author's second description, a diagonal split into four triangles each flipped once vertically and once horizontally, was the alternative not used — the source-rectangle route was preferred and attempted first). Every tile's geometry, on both the source sprite and the destination box, is whole pixels (D-U11). Applies to `sprite <Name>` over a hotbar slot or at `centre`, not to `gold`/`style`/`gallery`. Default `off`. `quad=on`/`quad=off` printed in the sprite/gold/`off` confirmation lines. `draw_sprite_part_ext` is new to this probe this round — its reachability through the shared `CallBuiltin` path is **unconfirmed until a live session runs `quad on`**, the same status `draw_sprite_ext`/`draw_ellipse_colour`/`draw_rectangle_colour` each carried before their own first live run. |
 | `tgprobe sprite alpha <min> [max]` | (round 9) The floor/ceiling `style soft`/`style gradient`'s per-band fade remaps between, replacing `0` as the floor — the author's own complaint was `gradient` "blends too well with the background" at `0`. `min` is the alpha the fade stops at; `max` is the centre alpha, defaulting to each style's own existing centre alpha (`soft`'s `1.0`, `gradient`'s `0.5`) unless set explicitly, so the *default* reproduces both styles' pre-round-9 look exactly. Accepts `0..255` or `0..1` per value (over `1.0` is treated as a byte and divided by `255`). With no argument, reports the active pair without changing it. Confirmation line prints `alpha=<min>/255..<max>/255\|style-default` in the `style`/`off` lines. Never applied to `halo` or to a named sprite's own art. |
@@ -2990,6 +2990,48 @@ open:**
   measured; with the gate, a missing builtin now falls through to the
   `font_exists`-confirmed index or "not probed", and the "active font:" line
   says the builtin is absent instead of claiming it threw.
+
+#### Third follow-up: `frac anim`, a clock-driven countdown
+
+Stepping `frac <f>` one IPC call apart shows each candidate at a handful of
+fixed fills; it does not show whether the look reads well while draining
+continuously. `tgprobe sprite frac anim <seconds> [loop]` closes that gap by
+having the probe recompute `g_TgSpriteFraction` itself on every draw, so the
+same one mechanism animates `arc`, `bar`, `number` and `fade` at once (all
+four already read that one variable):
+
+- **The clock is a name-resolved game builtin, not a draw or frame count.**
+  `g_TgSpriteAnimTime` (the sprite/gallery multi-frame time base) and
+  `pulse`'s `g_RuntimeFrame` both advance by a fixed amount per draw, which is
+  exactly the frame-rate coupling a countdown must not have: a dip would
+  stretch it. Instead, `TgProbeSpriteFracAnimClockRead` tries `get_timer` (a
+  GameMaker function, microseconds since the game started, read through the
+  same status-checked `CallBuiltinEx` idiom `font list` already uses so
+  "absent" and "returned nothing" cannot be confused) and falls back to
+  `current_time` (a built-in **variable**, not a function, read through
+  `GetBuiltin` the way `GetBuiltin("room", ...)`/`GetBuiltin("fps", ...)`
+  already prove on this runtime — never `CallBuiltin("current_time")`, which
+  would be the wrong call shape entirely). Whichever reads first becomes the
+  animation's only clock for its whole life; switching mid-run would mix
+  units and starting points and jump the fraction.
+- **A plain `frac <f>` that itself parses cancels a running or finished
+  animation** before the fraction is stored; a refused `anim` (bad
+  arguments, or neither clock readable) leaves any running animation exactly
+  as it was.
+- **The `off` line's `anim=` field** reports `off`/`running`/`done`, the
+  chosen clock (`src=`), duration, `loop`/`once`, the last elapsed reading
+  and `ticks=`/`clockFail=`. Ticks climbing while elapsed stays at `0` is the
+  instrument's own self-check for "reports running but the clock never
+  advanced" (AGENTS.md § "Prove the Instrument Before Trusting a Negative
+  Result") — the failure mode a table-only hook or a stubbed clock would
+  otherwise hide.
+- **Unproven until a live session:** the command-time read only shows a
+  clock *is* readable; nobody has confirmed either `get_timer` or
+  `current_time` *advances* at wall-clock speed on this runtime, or judged
+  whether any of the four looks reads as smooth in motion. The
+  ticks/elapsed readout compared against a stopwatch during that session is
+  the control for the first question; a person's eye is the only control for
+  the second.
 
 ### Live procedure
 

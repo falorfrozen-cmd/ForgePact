@@ -2864,6 +2864,104 @@ class SkillTimerProbeContractTests(unittest.TestCase):
             collapse(section),
         )
 
+    # ---- issue #55 timer-countdown follow-up: `frac anim` -----------------
+    # (workorder .claude/workorders/forgepact-tgprobe-frac-anim-plan.md)
+
+    def test_frac_anim_parses_its_arguments_and_refuses_bad_ones(self):
+        body = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
+        frac_branch = body[body.index('lower == "frac"'):body.index('lower == "textoffset"')]
+        self.assertIn("TgProbeSpriteFracAnimCommand(", frac_branch)
+        self.assertLess(
+            frac_branch.index("TgProbeSpriteFracAnimCommand("),
+            frac_branch.index("ParseFiniteNumber(v, f)"),
+            "the anim dispatch must be reached before frac's own numeric parse",
+        )
+        anim_body = function_body(self.plugin, "static void TgProbeSpriteFracAnimCommand(const std::string& rest)")
+        self.assertIn("ParseFiniteNumber(secStr, seconds)", anim_body)
+        self.assertIn("seconds <= 0.0", anim_body)
+        self.assertIn('loopTok == "loop"', anim_body)
+        self.assertIn("!loopTok.empty()", anim_body)
+
+    def test_frac_anim_clock_is_resolved_by_name_and_refuses_when_unreadable(self):
+        body = function_body(self.plugin, "static bool TgProbeSpriteFracAnimClockRead(")
+        self.assertIn('clockName == "get_timer"', body)
+        self.assertIn('TgProbeSpriteBuiltinExists("get_timer"', body)
+        self.assertNotIn('CallBuiltin("get_timer"', body)
+        self.assertIn('clockName == "current_time"', body)
+        self.assertIn('GetBuiltin("current_time", nullptr, NULL_INDEX, v)', body)
+        self.assertNotIn('CallBuiltin("current_time"', body)
+        self.assertEqual(body.count("N1Numeric("), 2)
+        self.assertNotIn("GetModuleHandle", body)
+        self.assertNotIn("Rva", body)
+        anim_body = function_body(self.plugin, "static void TgProbeSpriteFracAnimCommand(const std::string& rest)")
+        self.assertIn("frac anim refused", anim_body)
+        self.assertLess(
+            anim_body.index("frac anim refused"),
+            anim_body.index("g_TgSpriteFracAnimState = TgSpriteFracAnimState::Running;"),
+        )
+
+    def test_draw_derives_the_fraction_from_the_clock_not_from_draws(self):
+        draw = function_body(self.plugin, "static void TgProbeSpriteDraw(bool fromHudLayer)")
+        self.assertIn("TgProbeSpriteFracAnimTick();", draw)
+        self.assertLess(
+            draw.index("TgSpriteMode::Off) return;"),
+            draw.index("TgProbeSpriteFracAnimTick();"),
+        )
+        self.assertLess(
+            draw.index("TgProbeSpriteFracAnimTick();"),
+            draw.index("TgProbeSpriteDrawStyle("),
+        )
+        tick = function_body(self.plugin, "static void TgProbeSpriteFracAnimTick()")
+        self.assertTrue(
+            tick.strip().startswith("if (g_TgSpriteFracAnimState == TgSpriteFracAnimState::Off) return;"),
+            "the tick must return before any clock read when no animation is running",
+        )
+        self.assertIn("TgProbeSpriteFracAnimClockRead(", tick)
+        self.assertIn("g_TgSpriteFraction = fraction;", tick)
+        self.assertIn("g_TgSpriteFracAnimLoop", tick)
+        self.assertIn("g_TgSpriteFraction = 0.0;", tick)   # the hold-at-zero path
+        self.assertNotIn("g_TgSpriteAnimTime", tick)
+        self.assertNotIn("g_RuntimeFrame", tick)
+        self.assertNotIn("1.0 / 15.0", tick)
+
+    def test_plain_frac_cancels_the_animation_only_after_it_parsed(self):
+        body = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
+        frac_branch = body[body.index('lower == "frac"'):body.index('lower == "textoffset"')]
+        refusal_return = frac_branch.index("did not parse as a number")
+        refusal_return = frac_branch.index("return;", refusal_return)
+        cancel = frac_branch.index("g_TgSpriteFracAnimState = TgSpriteFracAnimState::Off;")
+        assign = frac_branch.index("g_TgSpriteFraction = f;")
+        self.assertLess(refusal_return, cancel)
+        self.assertLess(cancel, assign)
+
+    def test_off_and_frac_lines_report_the_animation_state(self):
+        body = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
+        off_branch = body[body.index('lower == "off"'):body.index('lower == "list"')]
+        self.assertIn("TgProbeSpriteFracAnimText()", off_branch)
+        frac_branch = body[body.index('lower == "frac"'):body.index('lower == "textoffset"')]
+        self.assertIn("TgProbeSpriteFracAnimText()", frac_branch)
+        text_body = function_body(self.plugin, "static std::string TgProbeSpriteFracAnimText()")
+        self.assertIn('"anim=off"', text_body)
+        self.assertIn("src=", text_body)
+        self.assertIn("clockFail=", text_body)
+        self.assertIn('"running"', text_body)
+        self.assertIn('"done"', text_body)
+
+    def test_frac_anim_symbols_are_research_only(self):
+        for name in ("TgProbeSpriteFracAnimCommand", "TgProbeSpriteFracAnimClockRead",
+                     "TgProbeSpriteFracAnimTick", "TgProbeSpriteFracAnimText",
+                     "g_TgSpriteFracAnimState", "g_TgSpriteFracAnimLoop", "g_TgSpriteFracAnimDuration",
+                     "g_TgSpriteFracAnimStart", "g_TgSpriteFracAnimClock", "g_TgSpriteFracAnimElapsed",
+                     "g_TgSpriteFracAnimTicks", "g_TgSpriteFracAnimClockFail"):
+            self.assertIn(name, self.block, name)
+            self.assertNotIn(name, self.stripped, name)
+
+    def test_research_doc_describes_frac_anim(self):
+        doc = self.research_doc
+        self.assertIn("frac anim", doc)
+        self.assertIn("get_timer", doc)
+        self.assertIn("current_time", doc)
+
 
 if __name__ == "__main__":
     unittest.main()
