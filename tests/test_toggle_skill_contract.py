@@ -737,6 +737,9 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
             "toggleborder",
             # T1 (issue #11, Track A): the re-cast guard (ToggleGuardContractTests).
             "toggleguard",
+            # Another feature in the same table, named rather than ignored:
+            # the read-only menu listing (test_menu_layout_contract.py).
+            "menulayout",
         }
         self.assertEqual(entries, expected)
 
@@ -1737,7 +1740,9 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         as_set = lambda text: {tok.strip().strip('"') for tok in text.split(",") if tok.strip()}
         now = as_set(re.search(pattern, self.plugin, re.S).group(1))
         before = as_set(re.search(pattern, old, re.S).group(1))
-        self.assertEqual(now - before, {"autoprospect"})
+        # `menulayout` is the read-only menu listing, another feature landing
+        # in the same table (test_menu_layout_contract.py pins it).
+        self.assertEqual(now - before, {"autoprospect", "menulayout"})
         self.assertEqual(before - now, set())
 
     # ---- Sprite look probe (R round 3, issue #11): `tgprobe sprite ...` ----

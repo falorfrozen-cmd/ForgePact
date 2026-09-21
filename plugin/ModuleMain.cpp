@@ -24428,6 +24428,255 @@ static void TgProbeCommand(const std::string& rest)
 }
 #endif // FORGEPACT_RELEASE (tgprobe)
 
+// ---------------------------------------------------------------------------
+// menulayout (player build, read-only): where the main-menu and
+// character-select buttons are, in window (client) coordinates, so a tool
+// that drives the game (the hub's hs-drive `hs_select_character`) clicks what
+// the game reports instead of a fixed screen fraction, or refuses.
+//
+// The plugin lists; it never identifies. Which row is `Play local`, which is
+// save slot N and which is PLAY is the hub's rule, pinned against a verbatim
+// listing (docs/menu-layout-research.md). Nothing here clicks, performs an
+// event, calls a script, creates, destroys or writes anything, and nothing of
+// it is on the per-frame path: it runs inside PollCommands() like every
+// command, which is what makes CallBuiltin safe. Every instance is reached by
+// name (asset_get_index, instance_number, instance_find) and read through the
+// handle instance_find returns, whatever kind that is - no address, no struct
+// offset. The output format is the hub's parse contract
+// (tests/test_menu_layout_contract.py pins it byte for byte).
+// ---------------------------------------------------------------------------
+
+// Every clickable UI node descends from UI_Node_Parent_obj; panels from
+// UI_Parent_obj; list items from UI_List_Item_Parent_obj. The leaves and the
+// unparented save/menu objects are listed as well and rows are deduplicated by
+// instance id, so the answer does not depend on whether listing a parent
+// includes its children on this runner.
+static const HeroSiege::Objects::GameObject kMenuLayoutObjects[] = {
+    HeroSiege::Objects::GameObject::UI_Node_Parent_obj,
+    HeroSiege::Objects::GameObject::UI_Parent_obj,
+    HeroSiege::Objects::GameObject::UI_List_Item_Parent_obj,
+    HeroSiege::Objects::GameObject::UI_Button_obj,
+    HeroSiege::Objects::GameObject::UI_Button_Small_obj,
+    HeroSiege::Objects::GameObject::UI_Character_obj,
+    HeroSiege::Objects::GameObject::UI_Create_Character_obj,
+    HeroSiege::Objects::GameObject::UI_Main_Menu_obj,
+    HeroSiege::Objects::GameObject::Save_Character_obj,
+    HeroSiege::Objects::GameObject::Save_Slot_Shop_obj,
+    HeroSiege::Objects::GameObject::Load_Inventory_Char_Select_obj,
+    HeroSiege::Objects::GameObject::Menu_Controller_obj,
+    HeroSiege::Objects::GameObject::Profile_Manager_obj,
+};
+static constexpr int kMenuLayoutMaxRows = 200;
+static const char* const kMenuLayoutReadFailed = "<read-failed>";
+
+// One decimal, never a bare %f on a runtime-read double (Known Limitations
+// item 10): a non-finite read prints <read-failed> instead.
+static std::string MenuLayoutDecimal(double v)
+{
+    if (!std::isfinite(v) || std::fabs(v) > 1e12) return kMenuLayoutReadFailed;
+    const double r = std::round(v * 10.0) / 10.0;
+    std::string s = std::to_string(r == 0.0 ? 0.0 : r);
+    const size_t dot = s.find('.');
+    if (dot != std::string::npos && dot + 2 <= s.size()) s.resize(dot + 2);
+    return s;
+}
+
+static std::string MenuLayoutInteger(double v)
+{
+    if (!std::isfinite(v) || std::fabs(v) > 1e12) return kMenuLayoutReadFailed;
+    return std::to_string((long long)std::llround(v));
+}
+
+// A builtin that takes no argument and answers a number; NaN when it threw,
+// so the caller prints <read-failed> rather than a plausible zero.
+static double MenuLayoutNumber(const char* builtin, const std::vector<RValue>& args = {})
+{
+    try { return g_Yytk->CallBuiltin(builtin, args).ToDouble(); }
+    catch (...) { return std::numeric_limits<double>::quiet_NaN(); }
+}
+
+static double MenuLayoutRead(const RValue& inst, const char* var)
+{
+    try { return g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(var) }).ToDouble(); }
+    catch (...) { return std::numeric_limits<double>::quiet_NaN(); }
+}
+
+// One row per line: a label that carries a line break must not start a row
+// of its own that the hub would try to parse.
+static std::string MenuLayoutOneLine(std::string s)
+{
+    for (char& c : s) if (c == '\r' || c == '\n') c = ' ';
+    return s;
+}
+
+static std::string MenuLayoutValueText(const RValue& v)
+{
+    try {
+        switch (v.m_Kind) {
+        case VALUE_STRING: return MenuLayoutOneLine(v.ToString());
+        case VALUE_BOOL:   return v.ToBoolean() ? "1" : "0";
+        case VALUE_REAL:
+        case VALUE_INT32:
+        case VALUE_INT64: {
+            const double d = v.ToDouble();
+            if (std::isfinite(d) && d == std::floor(d)) return MenuLayoutInteger(d);
+            return MenuLayoutDecimal(d);
+        }
+        case VALUE_UNDEFINED: return "undefined";
+        default: return MenuLayoutOneLine(v.ToString());
+        }
+    } catch (...) { return kMenuLayoutReadFailed; }
+}
+
+// A variable printed only when the instance carries it; `present` is false
+// when it does not (or the existence check itself threw).
+static std::string MenuLayoutOptional(const RValue& inst, const char* var, bool& present)
+{
+    present = false;
+    try {
+        if (!g_Yytk->CallBuiltin("variable_instance_exists", { inst, RValue(var) }).ToBoolean()) return "";
+        present = true;
+        return MenuLayoutValueText(g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(var) }));
+    } catch (...) { present = true; return kMenuLayoutReadFailed; }
+}
+
+static std::string MenuLayoutRoomName()
+{
+    try {
+        RValue v;
+        if (!AurieSuccess(g_Yytk->GetBuiltin("room", nullptr, NULL_INDEX, v))) return kMenuLayoutReadFailed;
+        return MenuLayoutOneLine(g_Yytk->CallBuiltin("room_get_name", { v }).ToString());
+    } catch (...) { return kMenuLayoutReadFailed; }
+}
+
+// The object's index by name, confirmed by the name round-tripping through
+// object_get_name: an asset of another kind (a sprite, a room) that shares
+// the name, or a name that does not resolve, is -1.
+static double MenuLayoutObjectIndex(const std::string& name)
+{
+    try {
+        const double idx = g_Yytk->CallBuiltin("asset_get_index", { RValue(name) }).ToDouble();
+        if (!std::isfinite(idx) || idx < 0) return -1.0;
+        if (!g_Yytk->CallBuiltin("object_exists", { RValue(idx) }).ToBoolean()) return -1.0;
+        if (g_Yytk->CallBuiltin("object_get_name", { RValue(idx) }).ToString() != name) return -1.0;
+        return idx;
+    } catch (...) { return -1.0; }
+}
+
+struct MenuLayoutScale { double gw, gh, ww, wh; };
+
+static std::string MenuLayoutRow(const RValue& inst, const MenuLayoutScale& sc)
+{
+    std::string objName = kMenuLayoutReadFailed;
+    try {
+        RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("object_index") });
+        objName = MenuLayoutOneLine(g_Yytk->CallBuiltin("object_get_name", { oi }).ToString());
+    } catch (...) {}
+    const double id = MenuLayoutRead(inst, "id");
+    const double x = MenuLayoutRead(inst, "x");
+    const double y = MenuLayoutRead(inst, "y");
+    // Window (client) point: the instance's GUI position scaled by the
+    // window size over the GUI size, both read from the game by name.
+    std::string winX = kMenuLayoutReadFailed, winY = kMenuLayoutReadFailed;
+    if (std::isfinite(sc.gw) && sc.gw > 0 && std::isfinite(sc.ww)) winX = MenuLayoutInteger(x * sc.ww / sc.gw);
+    if (std::isfinite(sc.gh) && sc.gh > 0 && std::isfinite(sc.wh)) winY = MenuLayoutInteger(y * sc.wh / sc.gh);
+    std::string visible = kMenuLayoutReadFailed;
+    try { visible = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("visible") }).ToBoolean() ? "1" : "0"; } catch (...) {}
+    std::string sprite = kMenuLayoutReadFailed;
+    try {
+        const double spr = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("sprite_index") }).ToDouble();
+        if (std::isfinite(spr)) {
+            sprite = spr < 0 ? std::string("none")
+                : MenuLayoutOneLine(g_Yytk->CallBuiltin("sprite_get_name", { RValue(spr) }).ToString());
+        }
+    } catch (...) {}
+
+    std::string row = "  obj=" + objName
+        + " id=" + MenuLayoutInteger(id)
+        + " gui=" + MenuLayoutDecimal(x) + "," + MenuLayoutDecimal(y)
+        + " win=" + winX + "," + winY
+        + " bbox=" + MenuLayoutDecimal(MenuLayoutRead(inst, "bbox_left")) + "," + MenuLayoutDecimal(MenuLayoutRead(inst, "bbox_top"))
+        + "," + MenuLayoutDecimal(MenuLayoutRead(inst, "bbox_right")) + "," + MenuLayoutDecimal(MenuLayoutRead(inst, "bbox_bottom"))
+        + " visible=" + visible
+        + " sprite=" + sprite;
+    static const char* const kOptional[] = { "label", "name", "slot", "index", "page", "selected" };
+    for (const char* var : kOptional) {
+        bool present = false;
+        const std::string v = MenuLayoutOptional(inst, var, present);
+        if (present) row += std::string(" ") + var + "=" + v;
+    }
+    // text= is always last and always present: a label may hold spaces,
+    // quotes and '=', so the hub takes it to the end of the line.
+    bool hasText = false;
+    const std::string text = MenuLayoutOptional(inst, "text", hasText);
+    row += " text=" + (hasText ? text : std::string());
+    return row;
+}
+
+static void MenuLayoutCommand(const std::string& rest)
+{
+    std::vector<std::string> names;
+    const std::string only = TrimCopy(rest);
+    if (!only.empty()) {
+        names.push_back(only);   // `menulayout <ObjectName>`: that one object, same format
+    } else {
+        for (HeroSiege::Objects::GameObject obj : kMenuLayoutObjects)
+            names.emplace_back(HeroSiege::Objects::GetObjectName(obj));
+    }
+
+    MenuLayoutScale sc{
+        MenuLayoutNumber("display_get_gui_width"), MenuLayoutNumber("display_get_gui_height"),
+        MenuLayoutNumber("window_get_width"), MenuLayoutNumber("window_get_height") };
+    std::string fullscreen = kMenuLayoutReadFailed;
+    try { fullscreen = g_Yytk->CallBuiltin("window_get_fullscreen", {}).ToBoolean() ? "1" : "0"; } catch (...) {}
+    std::string view = std::string(kMenuLayoutReadFailed) + "," + kMenuLayoutReadFailed + "," + kMenuLayoutReadFailed + "," + kMenuLayoutReadFailed;
+    try {
+        RValue cam = g_Yytk->CallBuiltin("view_get_camera", { RValue(0.0) });
+        view = MenuLayoutDecimal(MenuLayoutNumber("camera_get_view_x", { cam }))
+            + "," + MenuLayoutDecimal(MenuLayoutNumber("camera_get_view_y", { cam }))
+            + "," + MenuLayoutDecimal(MenuLayoutNumber("camera_get_view_width", { cam }))
+            + "," + MenuLayoutDecimal(MenuLayoutNumber("camera_get_view_height", { cam }));
+    } catch (...) {}
+    Out("menulayout: room=" + MenuLayoutRoomName()
+        + " gui=" + MenuLayoutInteger(sc.gw) + "x" + MenuLayoutInteger(sc.gh)
+        + " window=" + MenuLayoutInteger(sc.ww) + "x" + MenuLayoutInteger(sc.wh)
+        + " fullscreen=" + fullscreen
+        + " view=" + view);
+
+    std::unordered_set<long long> seen;
+    std::string absent;
+    int listed = 0;
+    bool capped = false;
+    for (const std::string& name : names) {
+        const double idx = MenuLayoutObjectIndex(name);
+        if (idx < 0) { absent += (absent.empty() ? "" : ",") + name; continue; }
+        const double count = MenuLayoutNumber("instance_number", { RValue(idx) });
+        if (!std::isfinite(count) || count <= 0) continue;
+        for (int i = 0; i < (int)count; ++i) {
+            if (listed >= kMenuLayoutMaxRows) { capped = true; break; }
+            RValue inst;
+            try { inst = g_Yytk->CallBuiltin("instance_find", { RValue(idx), RValue((double)i) }); }
+            catch (...) { continue; }
+            const double id = MenuLayoutRead(inst, "id");
+            if (std::isfinite(id) && !seen.insert((long long)std::llround(id)).second) continue;
+            Out(MenuLayoutRow(inst, sc));
+            ++listed;
+        }
+        if (capped) break;
+    }
+    Out("menulayout: listed=" + std::to_string(listed)
+        + " absent=" + (absent.empty() ? std::string("none") : absent)
+        + " capped=" + (capped ? "1" : "0"));
+}
+
+// Its own helper, called from RunCommand beside HandleProspectCommand, for
+// the same C1061 reason: the else-if chain is at MSVC's nesting limit.
+static bool HandleMenuLayoutCommand(const std::string& lc, const std::string& rest)
+{
+    if (lc == "menulayout") { MenuLayoutCommand(rest); return true; }
+    return false;
+}
+
 static void RunCommand(const std::string& line)
 {
     std::string rest;
@@ -24444,7 +24693,7 @@ static void RunCommand(const std::string& line)
         "stat", "statadd", "raredrop", "droprate", "dungeonkey",
         "headhunter", "hhdur", "hhmap", "hhdefault", "hhlabel", "tyrant", "beacon", "beaconrange", "beaconmode", "beaconwake", "beaconspawn", "beaconfarstep", "tyrantchance", "tyrantaffix", "hhlabelfont", "hhlabeloffset", "hhlabelmax",
         "enemyspeed", "rarity", "sigdrop", "angelicdrop", "relicfilter", "orbpickup", "satmods", "petquest",
-        "autoprospect", "toggleborder", "toggleguard"
+        "autoprospect", "toggleborder", "toggleguard", "menulayout"
     };
     if (kPlayerCommands.find(lc) == kPlayerCommands.end()) {
         Out("command unavailable in player build: " + cmd);
@@ -24454,6 +24703,7 @@ static void RunCommand(const std::string& line)
 
     if (HandleHeadhunterCommand(lc, rest)) return;
     if (HandleProspectCommand(lc, rest)) return;
+    if (HandleMenuLayoutCommand(lc, rest)) return;
 #ifndef FORGEPACT_RELEASE
     // Toggle-skill research (issue #11), docs/toggle-skills-research.md. A
     // standalone early return rather than one more `else if` below: that chain
