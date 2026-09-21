@@ -4661,6 +4661,13 @@ struct SkillTimerTableIds {
     void Set(int row, int value) { id[row].store(value); }
 };
 static SkillTimerTableIds g_SkillTimerTableIds;
+// Round 1 (issue #55 follow-up, D-S4): declared here, ahead of
+// ToggleTableResolveDue/ToggleTableResolveIds below, which read it to gate
+// the once-per-room walk on whether a look is selected. Off by default -
+// SkillTimerDraw() (further down, "Timed-skill countdown") is the only other
+// reader; the `skilltimer <style>` command handler is the only writer besides
+// the walk's own bookkeeping of which style a given room's walk ran under.
+static std::atomic<ForgePact::SkillTimerStyle> g_SkillTimerStyle{ ForgePact::SkillTimerStyle::Off };
 // ===== Rule-based coverage (issue #55 follow-up, D-S4) - the runtime-built
 // rule map ====================================================================
 // Filled by the same once-per-room walk as the two tables above (T2), keyed
@@ -4673,11 +4680,21 @@ static ForgePact::SkillTimerRuleEntry g_SkillTimerRuleEntries[ForgePact::kSkillT
 static volatile long g_SkillTimerRuleCount = 0;
 // Walk-time counters (accumulate across the whole session, the same shape
 // every other counter in this file uses - never reset except by a test).
-static volatile long g_SkillTimerRuleDenied = 0, g_SkillTimerRuleUnreadableFields = 0, g_SkillTimerRuleCapped = 0;
+// ruleNoName (round 1, review follow-up): a talent that passed the same
+// eligibility check as an entry (readable, positive duration, cooldown above
+// the floor, not denied, not an explicit row) but has no generated-table key
+// - counted so `skilltimer stat` can tell "my skill has no object by
+// convention" apart from "my skill was never walked", which an entry's own
+// absence alone cannot say.
+static volatile long g_SkillTimerRuleDenied = 0, g_SkillTimerRuleUnreadableFields = 0, g_SkillTimerRuleCapped = 0, g_SkillTimerRuleNoName = 0;
 // Draw-time counters, aggregate over every active rule entry.
 static volatile long g_RuleDrawn = 0, g_RuleNoInstance = 0, g_RuleUnreadable = 0, g_RuleExpired = 0, g_RuleToggleOn = 0, g_RuleNoObject = 0, g_RuleLatched = 0, g_RuleUnlatched = 0;
 static volatile long g_ToggleResolveWalks = 0;
 static bool g_ToggleResolveWalked = false;     // a walk has already run for the current room
+// Round 1: whether THAT walk ran while the countdown style was Off, so a
+// look selected mid-room after an Off walk re-arms one more walk this room
+// rather than waiting for the next zone (ToggleTableResolveDue below).
+static bool g_ToggleResolveWalkedRuleOff = false;
 static bool g_ToggleResolveRoomKnown = false;
 static int64_t g_ToggleResolveRoomKey = 0;
 static constexpr long kToggleTableWalkCap = 5000;   // the bound the research walk of the same map uses
@@ -4710,15 +4727,24 @@ static int ToggleTableRowForTalentId(int talentId)
     return -1;
 }
 
-// Whether a walk is worth attempting this second: only once per room. (Issue
-// #55 follow-up, D-S4: this used to also stop once every explicit row of both
-// tables had resolved - dropped, because the rule map (below) has no such
+// Whether a walk is worth attempting this second. Room-change detection runs
+// FIRST, whatever the style, so a room change while the countdown is off
+// still re-arms a walk for a later switch to a look. A room key that cannot
+// be read is never stored and never counts as a change (the INT64_MIN
+// sentinel is not compared against a real key).
+//
+// Issue #55 follow-up (D-S4) removed the "stop once every explicit row of
+// both tables has resolved" early-out, because the rule map has no such
 // stopping signal and needs rebuilding every room regardless of whether the
-// two explicit tables still have anything left to learn; the walk itself is
-// frame-boundary housekeeping, AGENTS.md "Check a Permission Where It Is
-// Used", so paying it once per room is cheap.) A room key that cannot be read
-// is never stored and never counts as a change (the INT64_MIN sentinel is not
-// compared against a real key).
+// two explicit tables still have anything left to learn. Round 1 restores
+// that early stop for style Off ONLY - the one case where the rule map is
+// never consulted anyway, so a player who never picks a look pays no walk
+// once toggleborder/toggleguard/skilltimer's own rows have nothing left to
+// learn, rather than one a second forever. With a look selected, the walk
+// stays due once per room, and again in the same room when the LAST walk in
+// it ran while Off (ToggleTableResolveIds records which one it was) - so
+// switching the countdown on mid-room builds the rule map within this
+// cadence tick instead of waiting for the next zone.
 static bool ToggleTableResolveDue()
 {
     const int64_t key = CurrentRoomKey();
@@ -4726,8 +4752,14 @@ static bool ToggleTableResolveDue()
         g_ToggleResolveRoomKnown = true;
         g_ToggleResolveRoomKey = key;
         g_ToggleResolveWalked = false;   // a new zone earns one more walk
+        g_ToggleResolveWalkedRuleOff = false;
     }
-    return !g_ToggleResolveWalked;
+    if (g_SkillTimerStyle.load() == ForgePact::SkillTimerStyle::Off) {
+        if (ToggleTableUnresolvedRows() + SkillTimerTableUnresolvedRows() == 0) return false;
+        return !g_ToggleResolveWalked;
+    }
+    if (!g_ToggleResolveWalked) return true;
+    return g_ToggleResolveWalkedRuleOff;
 }
 
 // One walk, for both tables: the toggle table's rows and the countdown's own
@@ -4741,11 +4773,18 @@ static bool ToggleTableResolveIds()
     std::string why;
     if (!N1GetTalentMap(map, why)) return false;   // not ready yet: the attempt is not a walk
     g_ToggleResolveWalked = true;
+    // Round 1: which style THIS walk ran under, so ToggleTableResolveDue can
+    // tell "walked, rule map built" apart from "walked while off, rule map
+    // still empty" and re-arm one more walk this room when a look is picked.
+    const bool ruleMapOff = (g_SkillTimerStyle.load() == ForgePact::SkillTimerStyle::Off);
+    g_ToggleResolveWalkedRuleOff = ruleMapOff;
     InterlockedIncrement(&g_ToggleResolveWalks);
 
     // Issue #55 follow-up (D-S4): the rule map is rebuilt wholesale on every
     // real walk, never appended to - a fresh SkillTimerRuleEntry{} per slot
     // drops any latch a talent that left the map (or moved slot) was holding.
+    // Cleared on every walk, style or no, so a look switched off mid-room
+    // never leaves a stale entry behind.
     g_SkillTimerRuleCount = 0;
     for (int i = 0; i < ForgePact::kSkillTimerRuleCap; ++i) {
         g_SkillTimerRuleEntries[i] = ForgePact::SkillTimerRuleEntry{};
@@ -4788,36 +4827,56 @@ static bool ToggleTableResolveIds()
                                 for (int i = 0; i < ForgePact::kSkillTimerNameCount; ++i) {
                                     if (lowerName == ForgePact::kSkillTimerNames[i].key) { nameIndex = i; break; }
                                 }
+                                // Round 1 (review follow-up): duration/cooldown
+                                // are read whether or not a name matched, so
+                                // an eligible talent with no object by name
+                                // convention is COUNTED (ruleNoName) rather
+                                // than silently dropped with nothing to tell
+                                // it apart from "never walked".
+                                double duration = 0.0, cooldown = 0.0;
+                                bool readableD = false, readableC = false;
+                                try {
+                                    RValue dv = g_Yytk->CallBuiltin("variable_struct_get",
+                                        { talent, RValue("abilityDuration") });
+                                    if (N1Numeric(dv)) { duration = dv.ToDouble(); readableD = true; }
+                                } catch (...) {}
+                                try {
+                                    RValue cv = g_Yytk->CallBuiltin("variable_struct_get",
+                                        { talent, RValue("abilityCooldown") });
+                                    if (N1Numeric(cv)) { cooldown = cv.ToDouble(); readableC = true; }
+                                } catch (...) {}
+                                const bool readable = readableD && readableC;
                                 if (nameIndex >= 0) {
-                                    double duration = 0.0, cooldown = 0.0;
-                                    bool readableD = false, readableC = false;
-                                    try {
-                                        RValue dv = g_Yytk->CallBuiltin("variable_struct_get",
-                                            { talent, RValue("abilityDuration") });
-                                        if (N1Numeric(dv)) { duration = dv.ToDouble(); readableD = true; }
-                                    } catch (...) {}
-                                    try {
-                                        RValue cv = g_Yytk->CallBuiltin("variable_struct_get",
-                                            { talent, RValue("abilityCooldown") });
-                                        if (N1Numeric(cv)) { cooldown = cv.ToDouble(); readableC = true; }
-                                    } catch (...) {}
-                                    const bool readable = readableD && readableC;
                                     if (!readable) {
                                         InterlockedIncrement(&g_SkillTimerRuleUnreadableFields);
                                     } else if (ForgePact::SkillTimerRuleModel::Eligible(
                                                    duration, cooldown, readable, /*denied=*/false, /*isExplicitRow=*/false)) {
-                                        const long slot = g_SkillTimerRuleCount;
-                                        if (slot < ForgePact::kSkillTimerRuleCap) {
-                                            ForgePact::SkillTimerRuleEntry entry;
-                                            entry.talentId = id;
-                                            entry.nameIndex = nameIndex;
-                                            entry.abilityId = name;
-                                            g_SkillTimerRuleEntries[slot] = entry;
-                                            g_SkillTimerRuleCount = slot + 1;
-                                        } else {
-                                            InterlockedIncrement(&g_SkillTimerRuleCapped);
+                                        // The rule map itself is only FILLED
+                                        // when a look is selected (round 1,
+                                        // D-S4): with the countdown off this
+                                        // walk still counts as attempted, but
+                                        // no entry is added - ToggleTableResolveDue's
+                                        // own Off-only early stop already means
+                                        // this only runs the handful of times a
+                                        // room's explicit rows are still
+                                        // unresolved.
+                                        if (!ruleMapOff) {
+                                            const long slot = g_SkillTimerRuleCount;
+                                            if (slot < ForgePact::kSkillTimerRuleCap) {
+                                                ForgePact::SkillTimerRuleEntry entry;
+                                                entry.talentId = id;
+                                                entry.nameIndex = nameIndex;
+                                                entry.abilityId = name;
+                                                g_SkillTimerRuleEntries[slot] = entry;
+                                                g_SkillTimerRuleCount = slot + 1;
+                                            } else {
+                                                InterlockedIncrement(&g_SkillTimerRuleCapped);
+                                            }
                                         }
                                     }
+                                } else if (readable && ForgePact::SkillTimerRuleModel::Eligible(
+                                               duration, cooldown, readable, /*denied=*/false, /*isExplicitRow=*/false)) {
+                                    InterlockedIncrement(&g_SkillTimerRuleNoName);
                                 }
                             }
                         }
@@ -5118,7 +5177,8 @@ static void ToggleBorderStats()
 // a look gets no runtime call from this mod at all
 // (skilltimer/off_makes_no_runtime_calls), the same shape as
 // ToggleIndicatorDraw above and indicator_off/no_runtime_calls before it.
-static std::atomic<ForgePact::SkillTimerStyle> g_SkillTimerStyle{ ForgePact::SkillTimerStyle::Off };
+// g_SkillTimerStyle itself is declared earlier now (round 1), next to
+// ToggleTableResolveDue, which reads it too.
 static ForgePact::SkillTimerRowState g_SkillTimerRowState[ForgePact::kSkillTimerRowCount];
 
 // Per-row: drawn (the style's draw call ran with no exception - not
@@ -5696,6 +5756,7 @@ static std::string SkillTimerRuleCountersLine()
         + " ruleDenied=" + std::to_string(g_SkillTimerRuleDenied)
         + " ruleUnreadableFields=" + std::to_string(g_SkillTimerRuleUnreadableFields)
         + " ruleCapped=" + std::to_string(g_SkillTimerRuleCapped)
+        + " ruleNoName=" + std::to_string(g_SkillTimerRuleNoName)
         + " ruleLatched=" + std::to_string(g_RuleLatched)
         + " ruleUnlatched=" + std::to_string(g_RuleUnlatched);
 }
@@ -27567,12 +27628,19 @@ void FrameCallback(FWFrame& FrameContext)
         }
     }
 
-    // The shipped toggle table's talent ids (D-P1): resolved by `abilityId`
-    // from global.talentStructMap, here at the frame boundary and nowhere
-    // else, on the same once-a-second cadence as the two installs below.
-    // ToggleTableResolveDue() stops it walking once every row is resolved and
-    // allows at most one walk per room, so a row whose `abilityId` is absent
-    // costs one walk per zone rather than one a second forever.
+    // The shipped toggle table's talent ids (D-P1), the countdown's own
+    // table's ids and (issue #55 follow-up, D-S4) the rule map - resolved by
+    // `abilityId` from global.talentStructMap, here at the frame boundary and
+    // nowhere else, on the same once-a-second cadence as the two installs
+    // below. ToggleTableResolveDue() allows at most one walk per room, and
+    // (round 1) for a player with the countdown off restores the pre-D-S4
+    // stop once toggleborder/toggleguard/skilltimer's own rows have nothing
+    // left to learn - so a row whose `abilityId` is absent costs one walk per
+    // zone rather than one a second forever, and a player who never picks a
+    // look pays no walk once those rows resolve. With a look selected the
+    // walk is due once per room regardless (the rule map has no "everything
+    // resolved" stopping signal of its own), and the room's walk repeats once
+    // more if the last one in it ran before the look was picked.
     if (g_Setup && (fc % 60) == 0 && ToggleTableResolveDue()) {
         ToggleTableResolveIds();
     }

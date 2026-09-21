@@ -1226,16 +1226,6 @@ class SkillTimerShipContractTests(unittest.TestCase):
     def countdown_rows(self):
         return [m.groupdict() for m in self.COUNTDOWN_ROW.finditer(self.countdown_table())]
 
-    def countdown_text_blocks(self):
-        # The countdown's own bullet, README row and panel help - the three
-        # places a player reads which skills it covers.
-        notes = self.release_notes[self.release_notes.index("**Timed skill countdown.**"):]
-        notes = notes[:notes.index("\n- **")] if "\n- **" in notes else notes
-        readme = [line for line in self.readme.splitlines()
-                  if line.startswith("| **Timed skill countdown**")][0]
-        panel = self.panel[self.panel.index("Timed skill countdown<br>"):][:1200]
-        return {"release notes": notes, "README": readme, "panel help": panel}
-
     def test_countdown_iterates_the_countdown_table_not_the_toggle_table(self):
         rows = self.countdown_rows()
         self.assertEqual(
@@ -1290,12 +1280,16 @@ class SkillTimerShipContractTests(unittest.TestCase):
                        "SkillTimerTableUnresolvedRows()"):
             self.assertIn(needle, walk, needle)
         due = function_body(self.plugin, "static bool ToggleTableResolveDue(")
-        # Issue #55 follow-up (D-S4): the "stop once every explicit row of
-        # both tables has resolved" early-out is GONE - the rule map has no
-        # such stopping signal and needs rebuilding every room regardless, so
-        # a walk is now due purely on the once-per-room gate.
-        self.assertNotIn("ToggleTableUnresolvedRows() + SkillTimerTableUnresolvedRows() == 0) return false;", due)
-        self.assertIn("return !g_ToggleResolveWalked;", due)
+        # Issue #55 follow-up (D-S4) removed the "stop once every explicit
+        # row of both tables has resolved" early-out - the rule map has no
+        # such stopping signal and needs rebuilding every room regardless.
+        # Round 1 restores that early-out for style Off ONLY (the one case
+        # where the rule map is never consulted anyway); a look selected
+        # stays due purely on the once-per-room gate, plus one more walk in
+        # the same room if the last one ran while Off.
+        self.assertIn("ToggleTableUnresolvedRows() + SkillTimerTableUnresolvedRows() == 0) return false;", due)
+        self.assertIn("g_SkillTimerStyle.load() == ForgePact::SkillTimerStyle::Off", due)
+        self.assertIn("return g_ToggleResolveWalkedRuleOff;", due)
         # No second walk anywhere: the countdown's ids come from this one.
         self.assertEqual(self.stripped.count('"ds_map_find_first", { map }'), 1)
         self.assertNotIn("ToggleTableResolveIds", function_body(self.plugin, "static void SkillTimerDraw("))
@@ -1307,18 +1301,6 @@ class SkillTimerShipContractTests(unittest.TestCase):
                 self.assertNotIn(banned, body, sig + "/" + banned)
         self.assertIn("ForgePact::kToggleSkillRowCount",
                       function_body(self.plugin, "static int ToggleTableRowForTalentId("))
-
-    def test_player_text_names_every_countdown_row_and_no_other_skill_as_covered(self):
-        names = [row["display"] for row in self.countdown_rows()]
-        self.assertEqual(len(names), len(self.SHIP_SET))
-        for where, text in self.countdown_text_blocks().items():
-            for name in names:
-                self.assertIn(name, text, where)
-            # Not countdown skills: Crematus fails the spanning-timer rule,
-            # Lunar Orbit and Submerged Knives create no timed instance on a
-            # plain cast. The toggle marker's own text still names them.
-            for gone in ("Crematus", "Lunar Orbit", "Submerged Knives"):
-                self.assertNotIn(gone, text, where + "/" + gone)
 
     def test_stat_prints_one_line_per_countdown_row(self):
         stats = function_body(self.stripped, "static void SkillTimerStats(")
@@ -1411,6 +1393,12 @@ class SkillTimerRuleContractTests(unittest.TestCase):
         cls.stripped = strip_research_blocks(cls.plugin)
         cls.header = (FORGEPACT_DIR / "plugin" / "include" / "ForgePact" / "SkillTimerMod.hpp").read_text(encoding="utf-8")
         cls.names_header = (FORGEPACT_DIR / "plugin" / "include" / "ForgePact" / "SkillTimerNames.hpp").read_text(encoding="utf-8")
+        # Round 1: the toggle table's own abilityIds are one of the four
+        # sources player-text forbidden names are derived from - read live so
+        # a row the Meteor Storm session adds to kToggleSkillRows is picked
+        # up with no test edit.
+        cls.toggle_header = (FORGEPACT_DIR / "plugin" / "include" / "ForgePact" / "ToggleSkillMod.hpp").read_text(
+            encoding="utf-8")
         cls.panel = (SRC_DIR / "forgepact.py").read_text(encoding="utf-8")
         cls.research_doc = (FORGEPACT_DIR / "docs" / "toggle-skills-research.md").read_text(encoding="utf-8")
         cls.release_notes = (FORGEPACT_DIR / "release-notes-v1.4.5.md").read_text(encoding="utf-8")
@@ -1506,7 +1494,12 @@ class SkillTimerRuleContractTests(unittest.TestCase):
 
     def test_rule_map_is_rebuilt_once_per_room_and_bounded(self):
         due = function_body(self.plugin, "static bool ToggleTableResolveDue(")
-        self.assertNotIn("ToggleTableUnresolvedRows() + SkillTimerTableUnresolvedRows() == 0) return false;", due)
+        # Round 1: the early-out is back for style Off (the rule map is never
+        # consulted while off), and the once-per-room gate for a look also
+        # re-arms one more walk in the same room when the last walk ran Off.
+        self.assertIn("ToggleTableUnresolvedRows() + SkillTimerTableUnresolvedRows() == 0) return false;", due)
+        self.assertIn("g_SkillTimerStyle.load() == ForgePact::SkillTimerStyle::Off", due)
+        self.assertIn("return g_ToggleResolveWalkedRuleOff;", due)
         walk = function_body(self.plugin, "static bool ToggleTableResolveIds(")
         self.assertIn("g_SkillTimerRuleCount = 0;", walk)
         self.assertIn("ForgePact::kSkillTimerRuleCap", walk)
@@ -1520,7 +1513,7 @@ class SkillTimerRuleContractTests(unittest.TestCase):
         counters = function_body(self.plugin, "static std::string SkillTimerRuleCountersLine(")
         for needle in ("ruleRows=", "ruleDrawn=", "ruleNoInstance=", "ruleUnreadable=", "ruleExpired=",
                        "ruleToggleOn=", "ruleNoObject=", "ruleDenied=", "ruleUnreadableFields=", "ruleCapped=",
-                       "ruleLatched=", "ruleUnlatched="):
+                       "ruleNoName=", "ruleLatched=", "ruleUnlatched="):
             self.assertIn(needle, counters, needle)
         entry_line = function_body(self.plugin, "static std::string SkillTimerRuleEntryLine(")
         self.assertIn(":talentId=", entry_line)
@@ -1555,21 +1548,97 @@ class SkillTimerRuleContractTests(unittest.TestCase):
         self.assertEqual(computed, doc_selected)
         self.assertEqual(len(doc_selected), 17)
 
-    def test_player_text_states_tested_rule_and_excluded(self):
+    # ---- round 1 (owner, 2026-09-21, "Yes, no skill names"): the countdown's
+    # own player text names no skill at all. Forbidden names are DERIVED,
+    # never a hard-coded list - a hard-coded one goes stale the moment a new
+    # row lands (the Meteor Storm session is adding rows to kToggleSkillRows).
+
+    def _forbidden_names(self):
+        # Four sources, each contributing at least one name so an emptied
+        # regex can never pass silently: the four explicit countdown rows'
+        # own display names, the toggle table's own abilityIds (read live,
+        # context "Name-free player text (round 1)"), the measured
+        # deny-list's abilityIds, and the research doc's rule-selected ids
+        # (AC4's 17).
+        names = set()
+        countdown_start = self.header.index("inline constexpr SkillTimerRow kSkillTimerRows[] = {")
+        countdown_table = self.header[countdown_start:self.header.index("\n};", countdown_start)]
+        for m in SkillTimerShipContractTests.COUNTDOWN_ROW.finditer(countdown_table):
+            names.add(m.group("display").split(" (")[0])
+
+        toggle_start = self.toggle_header.index("inline constexpr ToggleSkillRow kToggleSkillRows[] = {")
+        toggle_table = self.toggle_header[toggle_start:self.toggle_header.index("\n};", toggle_start)]
+        for m in TABLE_ROW.finditer(toggle_table):
+            names.add(m.group("ability"))
+
+        names |= set(self.DENY_LIST)
+
+        doc = self.research_doc
+        start = doc.index("#### Rule coverage expectation")
+        section = doc[start:]
+        cut = section.find("\n### ")
+        if cut >= 0:
+            section = section[:cut]
+        names |= set(re.findall(r"\| `([a-zA-Z]+)` \| selected", section))
+
+        return names
+
+    @staticmethod
+    def _words(name):
+        # A camelCase id or an already-spaced display name both split the
+        # same way: "maelstromOfFrost" -> ["maelstrom", "of", "frost"];
+        # "Healing Zone" -> ["healing", "zone"].
+        return [w.lower() for w in re.findall(r"[A-Z]?[a-z0-9]+", name)]
+
+    def _forbidden_pattern(self):
+        names = self._forbidden_names()
+        self.assertTrue(names)   # never an emptied regex
+        alternatives = []
+        for name in names:
+            words = self._words(name)
+            if not words:
+                continue
+            spaced = r"\s+".join(re.escape(w) for w in words)
+            joined = "".join(re.escape(w) for w in words)
+            alternatives.append(rf"(?:{spaced}|{joined})")
+        return re.compile(r"\b(?:" + "|".join(alternatives) + r")\b", re.IGNORECASE)
+
+    def _countdown_text_blocks(self):
         release = self.release_notes[self.release_notes.index("**Timed skill countdown.**"):]
         cut = release.find("\n- **")
         if cut >= 0:
             release = release[:cut]
         readme_row = next(line for line in self.readme.split("\n")
                            if line.startswith("| **Timed skill countdown**"))
-        panel = self.panel[self.panel.index("Timed skill countdown<br>"):][:1500]
-        for label, text in (("release notes", release), ("README", readme_row), ("panel", panel)):
+        panel = self.panel[self.panel.index("Timed skill countdown<br>"):]
+        panel = panel[:panel.index("</span></span>") + len("</span></span>")]
+        return {"release notes": release, "README": readme_row, "panel": panel}
+
+    def test_player_text_names_no_skill(self):
+        pattern = self._forbidden_pattern()
+        blocks = self._countdown_text_blocks()
+        for label, text in blocks.items():
+            stripped = text.replace("’", "").replace("'", "")   # apostrophes removed first
+            match = pattern.search(stripped)
+            self.assertIsNone(match, (label, match.group(0) if match else None))
+
+        # In-test controls: the matcher flags a synthetic string holding one
+        # derived name, and passes one holding none.
+        sample = sorted(self._forbidden_names())[0]
+        words = self._words(sample)
+        self.assertIsNotNone(pattern.search("This mentions " + " ".join(words) + " somewhere."))
+        self.assertIsNone(pattern.search("This mentions nothing at all."))
+
+    def test_player_text_states_behaviour_without_overclaim(self):
+        blocks = self._countdown_text_blocks()
+        overclaim_skill = re.compile(r"\bany\s+(other\s+)?skill", re.IGNORECASE)
+        overclaim_toggle = re.compile(r"\b(any|every|all)\s+(other\s+)?toggle\b", re.IGNORECASE)
+        for label, text in blocks.items():
             low = text.lower()
-            for word in ("healing zone", "blade barrier", "soul spurn", "maelstrom of frost",
-                         "untested", "companion"):
+            for word in ("untested", "companion", "buff", "measure", "most"):
                 self.assertIn(word, low, (label, word))
-            for bad in ("Crematus", "Lunar Orbit", "Submerged Knives"):
-                self.assertNotIn(bad, text, (label, bad))
+            self.assertIsNone(overclaim_skill.search(text), (label, text))
+            self.assertIsNone(overclaim_toggle.search(text), (label, text))
         self.assertEqual(subprocess.run(
             ["git", "tag", "--list", "v1.4.5"], cwd=FORGEPACT_DIR, capture_output=True, text=True
         ).stdout.strip(), "")
@@ -1750,15 +1819,17 @@ class ToggleSkillTableContractTests(unittest.TestCase):
                     "static RValue& HookTalentUseClass("):
             self.assertNotIn("ToggleTableResolveIds", function_body(self.plugin, sig), sig)
         due = function_body(self.plugin, "static bool ToggleTableResolveDue(")
-        # Issue #55 follow-up (D-S4): the walk is due purely on the
-        # once-per-room gate now - the rule map (built in the same walk) has
-        # no "every row resolved" stopping signal, so the old early-out on
-        # both tables' rows is gone (test_both_tables_resolve_in_one_walk).
-        self.assertNotIn("ToggleTableUnresolvedRows() + SkillTimerTableUnresolvedRows() == 0) return false;", due)
+        # Issue #55 follow-up (D-S4) made the walk due purely on the
+        # once-per-room gate for a look - the rule map (built in the same
+        # walk) has no "every row resolved" stopping signal of its own
+        # (test_both_tables_resolve_in_one_walk). Round 1 restores the old
+        # early-out for style Off only, since the rule map is never consulted
+        # while off.
+        self.assertIn("ToggleTableUnresolvedRows() + SkillTimerTableUnresolvedRows() == 0) return false;", due)
         self.assertIn("CurrentRoomKey()", due)
         self.assertIn("INT64_MIN", due)          # an unreadable room is never stored
         self.assertIn("g_ToggleResolveWalked = false;", due)
-        self.assertIn("return !g_ToggleResolveWalked;", due)
+        self.assertIn("g_SkillTimerStyle.load() == ForgePact::SkillTimerStyle::Off", due)
 
     def test_both_stat_outputs_report_every_row(self):
         line = function_body(self.stripped, "static std::string ToggleTableRowsLine(")

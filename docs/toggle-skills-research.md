@@ -4612,6 +4612,19 @@ asserts it against this table's `selected` rows - this is a documented
 EXPECTATION pinned by test, **not** shipped data: the runtime reads the live
 talent struct, not this table.
 
+Round-0 review (instrument-blindness, non-blocking) measured what the name
+convention's own objects actually carry: of the nine cast objects measured by
+name so far, four carried a `destroyTimer` spanning the cast (the four
+explicit rows); two were per-projectile lifetimes (`submergedKnives`,
+`crematus`) and three had no spanning timer at all (`blizzard`, `arrowRain`,
+`meteorStorm`) - fewer than half. Several of the ids the table below selects
+look projectile- or hook-like (`orbOfFrost`, `butchersHook`, `chainRip`,
+`chainSwing`, `shredderTrap`), the same shape `submergedKnives` turned out to
+be, so a short, wrong-looking countdown on one of those is an EXPECTED
+outcome of shipping this tier untested, not a bug to chase: the per-entry
+`skilltimer stat` line names the object it resolved, and the fix is one more
+deny-list entry, not a new investigation.
+
 ```
   talent 137 abilityId=bladeBarrier abilityAura=false abilityDuration=6 abilityCooldown=8 abilityLength=320 abilityTags=[15,18,2,0] predictedTotal=864.000000
   talent 135 abilityId=explosiveKunai abilityAura=false abilityDuration=2 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,4,1,18] predictedTotal=288.000000

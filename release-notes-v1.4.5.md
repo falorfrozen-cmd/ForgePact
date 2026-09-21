@@ -8,11 +8,9 @@ slot of a toggle you have running, stop a double cast proc from flipping a
 toggle straight back, and draw a countdown over a plain (non-toggled) cast so
 you can see how much time is left before it ends.
 
-Five skills are covered by the toggle marker and the double-cast guard: the
-White Mage's **Soul Spurn**, the Exo's **Lunar Orbit**, the Plague Doctor's
-**Crematus**, the Butcher's **Submerged Knives** and the Prophet's
-**Maelstrom of Frost**. The countdown is narrower - see below for which of
-those five it can actually draw on.
+A fixed set of toggle skills, each measured in-game, is covered by the toggle
+marker and the double-cast guard. The countdown below covers a different set
+of its own - see that bullet for what it draws on.
 
 ## New
 
@@ -79,13 +77,14 @@ those five it can actually draw on.
   effect. With this mod turned on (Mods tab, off by default), a soft red
   outline appears around that skill's slot on the skill bar the whole time it
   is running, and disappears the moment it stops - on a re-press, on a zone
-  change, or if the game cancels it. It covers Soul Spurn, Lunar Orbit,
-  Crematus, Submerged Knives and Maelstrom of Frost. A plain cast - one made
-  without the sub-talent that turns the skill into a toggle - does not light
-  the outline, and neither does a skill outside that list.
+  change, or if the game cancels it. It covers a fixed set of toggle skills,
+  each measured in-game. A plain cast - one made without the sub-talent that
+  turns the skill into a toggle - does not light the outline, and neither
+  does a skill outside that set.
 - **Stop double cast re-casting a toggle skill.** With a double cast effect
-  equipped, a double cast proc could cast one of these skills a second time on
-  its own, a moment after your press - which flipped the toggle straight back,
+  equipped, a double cast proc could cast one of that same fixed set of
+  toggle skills a second time on its own, a moment after your press - which
+  flipped the toggle straight back,
   so it ended off when you had just turned it on, or on when you had just
   turned it off. With this mod turned on (Mods tab, off by default), that
   extra cast is skipped and the toggle stays the way your press left it. It
@@ -95,17 +94,16 @@ those five it can actually draw on.
   skill, are not affected.
 - **Timed skill countdown.** A new **Timed skill countdown** dropdown in Mods
   (off by default) draws how much of a timed cast is left over that skill's
-  slot on the skill bar, and it disappears the moment the cast ends. Four
-  timed skills were measured in-game and are tested:
-  Healing Zone (White Mage), Blade Barrier (Samurai),
-  Soul Spurn (White Mage) and Maelstrom of Frost (Prophet).
-  Any other skill that has both a duration and a cooldown is also covered,
-  by rule, and is untested - companion skills (turrets, totems, hydra) and
-  skills whose duration is only a buff on you are not covered.
-  A toggled-on Soul Spurn or Maelstrom of Frost never gets a countdown.
-  In a fight, hits can add a little time to Blade Barrier (roughly 0.2 s each
-  in our test) and the countdown rises slightly to match; it ends when the
-  blades do. Pick one of four looks: **Arc** (a ring that empties clockwise),
+  slot on the skill bar, and it disappears the moment the cast ends. A small
+  set of timed skills were measured in-game and are tested; most other
+  skills with both a duration and a real cooldown are also covered, by rule,
+  and are untested. A few skills are left out where a measurement showed the
+  timer on the skill's own object is not the skill's duration, and companion
+  skills (turrets, totems, hydra) and skills whose duration is only a buff on
+  you are not covered. A skill switched on as a toggle never gets a
+  countdown. In a fight, hits can add a little time to some skills (roughly
+  0.2 s each in our test) and the countdown rises slightly to match. Pick
+  one of four looks: **Arc** (a ring that empties clockwise),
   **Bar** (a shrinking bar above the icon), **Number** (a shrinking
   percentage above the icon) or **Fade** (a soft outline that dims as time
   runs out). If you turn this on partway through a cast that is already

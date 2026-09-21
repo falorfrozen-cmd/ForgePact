@@ -163,6 +163,24 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
             declaration(cls.plugin, "static ForgePact::SkillTimerRuleEntry g_SkillTimerRuleEntries"),
             declaration(cls.plugin, "static volatile long g_SkillTimerRuleCount"),
             declaration(cls.plugin, "static volatile long g_RuleDrawn"),
+            # Round 1 (replan #1): the walk itself, spliced - Lower() (the
+            # key-match helper) and the talent-map helpers it and the walk
+            # share with the rest of the plugin, the walk's own room/style
+            # bookkeeping, and ToggleTableResolveDue/ToggleTableResolveIds
+            # themselves. rule/walk_* scenarios drive these against a harness
+            # stand-in talent map (below), a positive control the round-0
+            # rule/* scenarios above did not have.
+            implementation(cls.plugin, "static std::string Lower("),
+            implementation(cls.plugin, "static bool N1GetTalentStruct("),
+            implementation(cls.plugin, "static bool N1GetTalentMap("),
+            declaration(cls.plugin, "static bool g_ToggleResolveWalked"),
+            declaration(cls.plugin, "static bool g_ToggleResolveWalkedRuleOff"),
+            declaration(cls.plugin, "static bool g_ToggleResolveRoomKnown"),
+            declaration(cls.plugin, "static int64_t g_ToggleResolveRoomKey"),
+            declaration(cls.plugin, "static constexpr long kToggleTableWalkCap"),
+            declaration(cls.plugin, "static volatile long g_SkillTimerRuleDenied"),
+            implementation(cls.plugin, "static bool ToggleTableResolveDue("),
+            implementation(cls.plugin, "static bool ToggleTableResolveIds("),
             implementation(cls.plugin, "struct SkillTimerHotbarSlot {") + ";",
             implementation(cls.plugin, "static bool SkillTimerEnumerateHotbar("),
             implementation(cls.plugin, "static bool SkillTimerRuleResolveObject("),
@@ -868,6 +886,41 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
     def test_rule_entries_keep_separate_latches(self):
         for suffix in ("/first", "/second", ""):
             self.assertScenario("rule/entries_keep_separate_latches" + suffix)
+
+    # ---- round 1 (replan #1): the walk itself, spliced ---------------------
+
+    def test_rule_walk_denies_before_lookup(self):
+        for suffix in ("", "/denied_counted"):
+            self.assertScenario("rule/walk_denies_before_lookup" + suffix)
+
+    def test_rule_walk_matches_camelcase_id_to_lowercase_key(self):
+        for suffix in ("", "/right_index"):
+            self.assertScenario("rule/walk_matches_camelcase_id_to_lowercase_key" + suffix)
+
+    def test_rule_walk_counts_eligible_talent_with_no_key_as_rule_no_name(self):
+        for suffix in ("", "/no_entry"):
+            self.assertScenario("rule/walk_counts_eligible_talent_with_no_key_as_rule_no_name" + suffix)
+
+    def test_rule_walk_does_not_count_ineligible_talent_with_no_key(self):
+        self.assertScenario("rule/walk_does_not_count_ineligible_talent_with_no_key")
+
+    def test_rule_walk_counts_unreadable_field(self):
+        for suffix in ("", "/no_entry", "/not_rule_no_name"):
+            self.assertScenario("rule/walk_counts_unreadable_field" + suffix)
+
+    def test_rule_walk_never_enters_an_explicit_row(self):
+        for suffix in ("", "/row_resolved", "/nothing_else_counted"):
+            self.assertScenario("rule/walk_never_enters_an_explicit_row" + suffix)
+
+    def test_rule_walk_style_off_builds_no_rule_map(self):
+        self.assertScenario("rule/walk_style_off_builds_no_rule_map")
+
+    def test_rule_walk_due_again_when_style_turns_on(self):
+        for suffix in ("/first_due_while_off", "/walk_recorded_off", ""):
+            self.assertScenario("rule/walk_due_again_when_style_turns_on" + suffix)
+
+    def test_rule_walk_not_due_when_off_and_rows_resolved(self):
+        self.assertScenario("rule/walk_not_due_when_off_and_rows_resolved")
 
 
 if __name__ == "__main__":

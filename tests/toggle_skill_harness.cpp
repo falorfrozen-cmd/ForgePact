@@ -312,6 +312,28 @@ static std::vector<AoeInst>& instancesFor(double objIdx) {
     return it == world.instancesByIndex.end() ? world.instances : it->second;
 }
 
+// Round 1 (D-S4's walk, spliced): a stand-in for global.talentStructMap - a
+// harness-only id -> talent tag map, walked by ds_map_find_first/find_next
+// the same way the real ds-map is, with variable_struct_get answering
+// abilityId/abilityDuration/abilityCooldown per tag. An absent optional
+// field answers undefined (N1Numeric false), the same shape a talent struct
+// that never set the field would. Declared ahead of FakeRunner, which reads
+// it.
+struct TalentSpec {
+    std::string abilityId;
+    bool hasDuration = true;
+    double duration = 5.0;
+    bool hasCooldown = true;
+    double cooldown = 5.0;
+};
+struct TalentWorld {
+    bool mapReady = true;
+    bool mapIsLiveDsMap = true;
+    std::map<int, TalentSpec> talents;   // walked in ascending id order
+};
+static TalentWorld talentWorld;
+static void resetTalentWorld() { talentWorld = TalentWorld{}; }
+
 struct FakeRunner {
     RValue CallBuiltin(const char* name, std::vector<RValue> args) {
         ++g_AnyCallCount;
@@ -397,13 +419,49 @@ struct FakeRunner {
         // the hook reads it - exists, get, array_get at the measured index,
         // then `t<id>` and `s<NN>`.
         if (fn == "variable_global_exists") {
-            return MakeBool(args[0].ToString() == "subTalentMap" && world.sub.globalExists);
+            const std::string want = args[0].ToString();
+            if (want == "talentStructMap") return MakeBool(talentWorld.mapReady);
+            return MakeBool(want == "subTalentMap" && world.sub.globalExists);
         }
         if (fn == "variable_global_get") {
-            if (args[0].ToString() != "subTalentMap") return RValue();
+            const std::string want = args[0].ToString();
+            if (want == "talentStructMap") {
+                // N1GetTalentMap's own comment: a live ds-map handle can come
+                // back as VALUE_REF on current runners.
+                RValue r; r.m_Kind = VALUE_REF; r.text = "talentStructMap";
+                return r;
+            }
+            if (want != "subTalentMap") return RValue();
             if (world.sub.getThrows) throw std::runtime_error("subTalentMap EXCEPTION");
             if (!world.sub.isArray) return MakeReal(7.0);   // a number, not an array
             RValue r; r.m_Kind = VALUE_ARRAY; r.text = "subTalentMap";
+            return r;
+        }
+        // Round 1 (D-S4's walk, spliced): the talent map itself - a fixed
+        // ds-map id (1.0, GameMaker's own ds_type_map, per N1GetTalentMap's
+        // own comment), walked by find_first/find_next over talentWorld.
+        if (fn == "ds_exists") {
+            return MakeBool(args[0].text == "talentStructMap" && talentWorld.mapIsLiveDsMap);
+        }
+        if (fn == "ds_map_find_first") {
+            if (args[0].text != "talentStructMap" || talentWorld.talents.empty()) return RValue();
+            return RValue((double)talentWorld.talents.begin()->first);
+        }
+        if (fn == "ds_map_find_next") {
+            if (args[0].text != "talentStructMap") return RValue();
+            auto it = talentWorld.talents.upper_bound((int)args[1].ToDouble());
+            if (it == talentWorld.talents.end()) return RValue();
+            return RValue((double)it->first);
+        }
+        if (fn == "ds_map_exists") {
+            if (args[0].text != "talentStructMap") return MakeBool(false);
+            return MakeBool(talentWorld.talents.count((int)args[1].ToDouble()) > 0);
+        }
+        if (fn == "ds_map_find_value") {
+            if (args[0].text != "talentStructMap") return RValue();
+            const int id = (int)args[1].ToDouble();
+            if (!talentWorld.talents.count(id)) return RValue();
+            RValue r; r.m_Kind = VALUE_OBJECT; r.text = "talent:" + std::to_string(id);
             return r;
         }
         // R (`tgl fields`): an AOE instance's member names, tagged with the
@@ -442,6 +500,16 @@ struct FakeRunner {
         if (fn == "variable_struct_get") {
             const std::string tag = args[0].text;
             const std::string field = args[1].ToString();
+            if (tag.rfind("talent:", 0) == 0) {
+                const int id = std::stoi(tag.substr(7));
+                auto it = talentWorld.talents.find(id);
+                if (it == talentWorld.talents.end()) return RValue();
+                const TalentSpec& t = it->second;
+                if (field == "abilityId") return RValue(t.abilityId);
+                if (field == "abilityDuration") return t.hasDuration ? RValue(t.duration) : RValue();
+                if (field == "abilityCooldown") return t.hasCooldown ? RValue(t.cooldown) : RValue();
+                return RValue();
+            }
             if (tag.rfind("row0elem:", 0) == 0) {
                 const size_t i = (size_t)std::stoi(tag.substr(9));
                 if (i >= world.row0.size()) return RValue();
@@ -542,7 +610,11 @@ static bool HhResolveLocalPlayer(RValue& out) {
 // R (`tgprobe tgl`'s sampler): the frame counter and room key it reads. The
 // room key stands in for a builtin read, so it counts as a call.
 static uint64_t g_RuntimeFrame = 0;
-static int64_t CurrentRoomKey() { ++g_AnyCallCount; return 1; }
+// Round 1: settable, so a rule/walk_* scenario can simulate a room change
+// (default matches the fixed value every earlier scenario already relies on).
+static int64_t g_RoomKeyValue = 1;
+static int64_t CurrentRoomKey() { ++g_AnyCallCount; return g_RoomKeyValue; }
+
 // Describe()'s shape for the scalars the snapshot keeps, without the whole
 // describer.
 static std::string TgProbeDescribeShort(const RValue& v, size_t cap = 80) {
@@ -562,17 +634,22 @@ static std::string TgProbeDescribeShort(const RValue& v, size_t cap = 80) {
 // Issue #55 follow-up (D-S4): a small stand-in for the generated
 // SkillTimerNames.hpp table - this harness cannot carry the real 700+-entry
 // hs-game-sdk table (its own HeroSiege::Objects::GameObject enum above is
-// itself a small stand-in), so it hand-writes the two entries the rule/*
+// itself a small stand-in), so it hand-writes the entries the rule/*
 // scenarios below need. tools/gen_skill_timer_names.py and
 // SkillTimerRuleContractTests (test_toggle_skill_contract.py) are what pin
 // the REAL generated header against hs-game-sdk; this table is test data,
 // never spliced from production. Deliberately carries no "arrowturret"-style
 // companion key, so rule/companion_never_enters_the_table can assert the
 // same structural absence the real generator's companion exclusion produces.
+// Round 1: "submergedknives" is added for rule/walk_denies_before_lookup - a
+// REAL kSkillTimerRuleDeny abilityId (lower-cased) that also has a key here,
+// so the scenario proves the deny check runs BEFORE the name-table lookup
+// rather than merely never reaching a talent with no key at all.
 namespace ForgePact {
 inline constexpr SkillTimerNameEntry kSkillTimerNames[] = {
     { "rulealpha", HeroSiege::Objects::GameObject::Rule_Alpha_obj },
     { "rulebeta", HeroSiege::Objects::GameObject::Rule_Beta_obj },
+    { "submergedknives", HeroSiege::Objects::GameObject::Rule_Alpha_obj },
 };
 inline constexpr int kSkillTimerNameCount =
     (int)(sizeof(kSkillTimerNames) / sizeof(kSkillTimerNames[0]));
@@ -633,6 +710,29 @@ static void resetSkillTimer() {
     }
     g_StDrawExc = 0; g_StFontUnresolved = 0;
     g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Off);
+}
+
+// Round 1 (D-S4's walk, spliced): the walk's own room/style bookkeeping and
+// counters, plus the two explicit tables' resolved ids and the rule map
+// itself - everything a rule/walk_* scenario needs a clean slate on, none of
+// it touched by resetWorld()/resetSkillTimer() above (which predate the walk
+// being spliced at all).
+static void resetWalkState() {
+    g_ToggleResolveWalked = false;
+    g_ToggleResolveWalkedRuleOff = false;
+    g_ToggleResolveRoomKnown = false;
+    g_ToggleResolveRoomKey = 0;
+    g_ToggleResolveWalks = 0;
+    g_SkillTimerRuleDenied = 0;
+    g_SkillTimerRuleUnreadableFields = 0;
+    g_SkillTimerRuleCapped = 0;
+    g_SkillTimerRuleNoName = 0;
+    g_SkillTimerRuleCount = 0;
+    for (int i = 0; i < ForgePact::kSkillTimerRuleCap; ++i) g_SkillTimerRuleEntries[i] = ForgePact::SkillTimerRuleEntry{};
+    for (int r = 0; r < ForgePact::kToggleSkillRowCount; ++r) g_ToggleTableIds.Set(r, -1);
+    for (int r = 0; r < ForgePact::kSkillTimerRowCount; ++r) g_SkillTimerTableIds.Set(r, -1);
+    resetTalentWorld();
+    g_RoomKeyValue = 1;
 }
 
 // T1: the TalentUseClass original, as the trampoline HookOneScript hands the
@@ -2544,6 +2644,111 @@ int main() {
     checkBool("rule/entries_keep_separate_latches",
               std::fabs(g_SkillTimerRuleEntries[0].state.latch - 200.0) < 1e-6
               && std::fabs(g_SkillTimerRuleEntries[1].state.latch - 400.0) < 1e-6, true);
+
+    // ---- round 1 (replan #1): the walk itself, spliced - Lower(),
+    // N1GetTalentMap/N1GetTalentStruct, ToggleTableResolveDue and
+    // ToggleTableResolveIds, driven against the harness's own stand-in
+    // talent map (talentWorld) rather than through g_SkillTimerRuleEntries
+    // directly, the positive control the round-0 rule/* scenarios above
+    // lack (their comment: "the walk that BUILDS this map is not spliced
+    // here").
+
+    // W1. Deny-before-lookup: "submergedKnives" is on the REAL deny-list AND
+    // has a key in this harness's own name table (added above, deliberately,
+    // for this scenario) - proving the deny check runs before the
+    // generated-table lookup, not merely that a denied id happens to lack a
+    // key.
+    resetWalkState();
+    g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Bar);
+    talentWorld.talents[501] = { "submergedKnives", true, 5.0, true, 5.0 };
+    ToggleTableResolveIds();
+    checkInt("rule/walk_denies_before_lookup", (long long)g_SkillTimerRuleCount, 0);
+    checkInt("rule/walk_denies_before_lookup/denied_counted", g_SkillTimerRuleDenied, 1);
+
+    // W2. The key match runs through Lower(): "ruleAlpha" (camelCase, as a
+    // real abilityId reads) matches the name table's "rulealpha" key.
+    resetWalkState();
+    g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Bar);
+    talentWorld.talents[502] = { "ruleAlpha", true, 5.0, true, 5.0 };
+    ToggleTableResolveIds();
+    checkInt("rule/walk_matches_camelcase_id_to_lowercase_key", (long long)g_SkillTimerRuleCount, 1);
+    checkBool("rule/walk_matches_camelcase_id_to_lowercase_key/right_index",
+              g_SkillTimerRuleCount == 1 && g_SkillTimerRuleEntries[0].nameIndex == kRuleAlphaIndex, true);
+
+    // W3. An eligible talent with no key in the generated table is counted
+    // (ruleNoName), not silently dropped.
+    resetWalkState();
+    g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Bar);
+    talentWorld.talents[503] = { "ruleGamma", true, 5.0, true, 5.0 };   // eligible, no key anywhere
+    ToggleTableResolveIds();
+    checkInt("rule/walk_counts_eligible_talent_with_no_key_as_rule_no_name", g_SkillTimerRuleNoName, 1);
+    checkInt("rule/walk_counts_eligible_talent_with_no_key_as_rule_no_name/no_entry",
+             (long long)g_SkillTimerRuleCount, 0);
+
+    // W4. An INELIGIBLE talent (duration 0) with no key is not counted as
+    // ruleNoName - ruleNoName only ever names an eligible-but-unmapped talent.
+    resetWalkState();
+    g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Bar);
+    talentWorld.talents[504] = { "ruleDelta", true, 0.0, true, 5.0 };   // duration 0, no key
+    ToggleTableResolveIds();
+    checkInt("rule/walk_does_not_count_ineligible_talent_with_no_key", g_SkillTimerRuleNoName, 0);
+
+    // W5. "ruleBeta" HAS a key, but its abilityCooldown is absent (unreadable
+    // - a stand-in for an unset struct field) - counted ruleUnreadableFields,
+    // never ruleNoName (which only ever fires for a talent with NO key).
+    resetWalkState();
+    g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Bar);
+    talentWorld.talents[505] = { "ruleBeta", true, 5.0, /*hasCooldown=*/false, 0.0 };
+    ToggleTableResolveIds();
+    checkInt("rule/walk_counts_unreadable_field", g_SkillTimerRuleUnreadableFields, 1);
+    checkInt("rule/walk_counts_unreadable_field/no_entry", (long long)g_SkillTimerRuleCount, 0);
+    checkInt("rule/walk_counts_unreadable_field/not_rule_no_name", g_SkillTimerRuleNoName, 0);
+
+    // W6. "healingZone" is one of the four explicit rows (D-R1): the walk
+    // fills its own table row but never enters it into the rule map, and it
+    // is never denied/unreadable/no-name counted either - explicit rows are
+    // excluded before any of that runs.
+    resetWalkState();
+    g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Bar);
+    talentWorld.talents[506] = { "healingZone", true, 5.0, true, 5.0 };
+    ToggleTableResolveIds();
+    checkInt("rule/walk_never_enters_an_explicit_row", (long long)g_SkillTimerRuleCount, 0);
+    checkInt("rule/walk_never_enters_an_explicit_row/row_resolved", g_SkillTimerTableIds.Get(0), 506);
+    checkBool("rule/walk_never_enters_an_explicit_row/nothing_else_counted",
+              g_SkillTimerRuleDenied == 0 && g_SkillTimerRuleUnreadableFields == 0 && g_SkillTimerRuleNoName == 0,
+              true);
+
+    // W7. Style Off: the walk still clears/rebuilds its own bookkeeping, but
+    // fills no rule-map entry - even for a talent that would otherwise be
+    // eligible AND keyed.
+    resetWalkState();
+    g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Off);
+    talentWorld.talents[507] = { "ruleAlpha", true, 5.0, true, 5.0 };
+    ToggleTableResolveIds();
+    checkInt("rule/walk_style_off_builds_no_rule_map", (long long)g_SkillTimerRuleCount, 0);
+
+    // W8. ToggleTableResolveDue(): a look selected mid-room, after a walk
+    // that ran while Off, is due again in the SAME room (no room change) -
+    // so switching the countdown on builds the rule map within this cadence
+    // tick rather than waiting for the next zone.
+    resetWalkState();
+    g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Off);
+    checkBool("rule/walk_due_again_when_style_turns_on/first_due_while_off", ToggleTableResolveDue(), true);
+    ToggleTableResolveIds();
+    checkBool("rule/walk_due_again_when_style_turns_on/walk_recorded_off",
+              g_ToggleResolveWalkedRuleOff, true);
+    g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Bar);
+    checkBool("rule/walk_due_again_when_style_turns_on", ToggleTableResolveDue(), true);
+
+    // W9. Style Off, and the two explicit tables already have nothing left
+    // to learn (every row resolved): the pre-D-S4 early stop is back for
+    // Off, so no further walk is due at all.
+    resetWalkState();
+    g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Off);
+    for (int r = 0; r < ForgePact::kToggleSkillRowCount; ++r) g_ToggleTableIds.Set(r, 1000 + r);
+    for (int r = 0; r < ForgePact::kSkillTimerRowCount; ++r) g_SkillTimerTableIds.Set(r, 2000 + r);
+    checkBool("rule/walk_not_due_when_off_and_rows_resolved", ToggleTableResolveDue(), false);
+    resetWalkState();
 
     // The read never makes a player-resolving call, in any scenario above -
     // counted here, at the end, so it covers every one of them.
