@@ -100,9 +100,8 @@ and the Prophet's **Maelstrom of Frost**.
   on the game window. `hs-drive` now clicks the positions it lists for
   `Play local`, the save slot and `PLAY`, and stops with a reason instead of
   guessing when a button is not listed. In a test run, clicks at the listed
-  `Play local` and first-save-slot positions both worked; the `PLAY`
-  button's listed position is found but had not yet been clicked in a test
-  when these notes were written. Nothing in play changes, and there is no
+  `Play local`, first- and second-save-slot and `PLAY` positions all worked
+  and loaded the chosen character. Nothing in play changes, and there is no
   new switch in the panel.
 
 ## How to update
