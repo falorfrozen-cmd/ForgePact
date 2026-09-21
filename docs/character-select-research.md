@@ -343,7 +343,7 @@ C-1.8's posted-route result is scoped to a same-integrity caller.
 | C-1.13 | control `menuprobe list Menu_Controller_obj` -> 1 live instance (non-empty) beside `menuprobe list UI_Button_obj` -> 13, so the enumeration control **passed** and the ambiguous both-empty branch did not arise. Events on `nth=0` (`Play local`, instance 257029): `ev_mouse` 4, 0, 10 and 5, then user events 10, 11 and 12 -- each `performed -> bool:true`, the instance alive in the `after:` line every time, room and screenshot unchanged after all seven | pass | 2026-09-21 |
 | C-1.14 | control `menuprobe script GetQuestProgress UI_Button_obj 0 confirm` -> **`EXCEPTION calling gml_Script_GetQuestProgress`**, where `real:-1` was expected. The control failed, so no UI-action call was attempted and the route is **unmeasured** | fail | 2026-09-21 |
 | C-1.15 | windowed, GUI 2560x1368 / client 1920x1080: `Play local` at gui(448, 676.4) -> client(336, 534), fractions (0.175, 0.4944); character slot 1 (`Pal`) at client(243, 225); `PLAY` at client(583, 346). The full path main menu -> `Chose_rm` -> character panel -> `Town_01_rm` driven entirely by held `send_input` clicks | - | 2026-09-21 |
-| C-1.16 | room `Town_01_rm`; `menuprobe list Player_obj` -> **1 live instance** at (912, 822), with `Player_Parent_obj` -> `not found (asset_get_index)` as the negative control. **`orbpickup stat` did not prove it**: `player via (not tried)` -- but this session never sent `orbpickup 1`, and `g_OrbPlayerHow` is written only inside `FrameCallback`'s `orbpickup`-on branch, so this row measured the **off** state, not a general failure of the field. The on-state reading is `not observed` until the ship workorder's live gate arms `orbpickup` and reads it. Settle time under 3 s | - | 2026-09-21 |
+| C-1.16 | room `Town_01_rm`; `menuprobe list Player_obj` -> **1 live instance** at (912, 822), with `Player_Parent_obj` -> `not found (asset_get_index)` as the negative control. **`orbpickup stat` did not prove it**: `player via (not tried)` -- but this session never sent `orbpickup 1`, and `g_OrbPlayerHow` is written only inside `FrameCallback`'s `orbpickup`-on branch, so this row measured the **off** state, not a general failure of the field. The on-state reading, measured 2026-09-21 by the ship workorder's live gate (`hs_select_character`, player build `24020eac`, `orbpickup` armed by the tool): `player via none` at the main menu, after `Play local` and on the save-slot screen, then `player via GetMyPlayer` on the first read after `Play` -- so with the mod on, the field does prove a load, and `none` before it is the negative control. Settle time under 3 s | - | 2026-09-21 |
 | C-1.17 | fullscreen (`cb window_get_fullscreen -> real:1`), GUI 2560x1440 / client 2560x1440: the **same** button reports gui(448, **712**) -- its absolute GUI position moved -- yet the fractions are (0.175, 0.4944), identical to windowed. The same read-live-and-scale formula produced client(448, 712) and the click drove `Main_Menu_rm` -> `Chose_rm` again | pass | 2026-09-21 |
 | C-1.18 | `exited: true, forced: false` on both stops (pids 80640 and 66588), `WM_CLOSE` to 2 windows each time | - | 2026-09-21 |
 | C-1.19 | `changed: ["shop.ini"]`, `added: []`, `missing: []` -- no character save altered by loading a character and exiting from town | - | 2026-09-21 |
@@ -427,6 +427,11 @@ shipRoute: mcp-only
 
 ### What the shipping workorder still has to solve
 
+*Solved, 2026-09-21:* all three items below shipped in the hub's
+`hs_select_character`, and its live gate passed against the player build
+`24020eac` (C-1.16 has the on-state reading). The list is kept as the
+record of what had to be solved.
+
 `shipRoute: mcp-only` was the owner's choice on 2026-09-21, made knowing that
 two things this session leaned on came from **research-only** verbs and are
 therefore unavailable to `hs_select_character` on a player build.
@@ -447,10 +452,12 @@ therefore unavailable to `hs_select_character` on a player build.
    `FrameCallback`'s `orbpickup`-on branch, so that row measured the **off**
    state, not a general failure of the field. The ship workorder's decision
    D17 assumed the field answers regardless of `orbpickup`'s state, and this
-   session's off-state measurement falsified that assumption; the on-state
-   reading is `not observed` until a session arms `orbpickup` and reads it.
-   What did work was `menuprobe list Player_obj` -> 1 live instance, which is
-   research-only, so a player-build-answerable proof still has to be found.
+   session's off-state measurement falsified that assumption. The on-state
+   reading was measured afterwards, at the ship workorder's live gate
+   (2026-09-21): with `orbpickup` armed, `none` at the menu, after `Play
+   local` and on the slot screen, then `GetMyPlayer` right after `Play`
+   (C-1.16). That is the player-build-answerable proof `hs_select_character`
+   ships with; `menuprobe list Player_obj` stays the research-only check.
 3. **`hs_input`'s `click` needs a hold.** Its `key` action already takes
    `hold_ms` and defaults it to 60; the pointer path has no equivalent and
    emits down and up with nothing between them. Until that is fixed, the
