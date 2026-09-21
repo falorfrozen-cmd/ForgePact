@@ -206,9 +206,9 @@ DEFAULTS = {
     # the plugin defaults it on too, so only "off" is ever sent.
     "mod_auto_prospect_bag": True,
     # Marks the skill-bar slot of a toggle skill while it is switched on
-    # (issue #11, Track B; five skills since phase S). Off by default like the
-    # other mod toggles; offline only, no co-op claim (AGENTS.md "this is the
-    # rule of ForgePact").
+    # (issue #11, Track B; covers every row in kToggleSkillRows). Off by
+    # default like the other mod toggles; offline only, no co-op claim
+    # (AGENTS.md "this is the rule of ForgePact").
     "mod_toggle_indicator": False,
     # Stops the double-cast proc from re-casting a covered toggle skill on its
     # own (issue #11, Track A), so a proc no longer flips the toggle straight
