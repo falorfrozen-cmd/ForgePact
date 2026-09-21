@@ -59,9 +59,12 @@ instance id, so the answer does not depend on that expectation. Phase 0
 records whether the root listing alone would have caught the thirteen
 main-menu buttons.
 
-What the 2026-09-21 research session already established (PR #60's
-`character-select-research.md`, results C-1.6, C-1.13, C-1.15 and C-1.17, and
-the replies it left in the game's own `out.txt`):
+What the 2026-09-21 research session already established
+(`character-select-research.md`, results C-1.6, C-1.13, C-1.15 and C-1.17, and
+the replies it left in the game's own `out.txt`). That research was PR #60; it
+is folded into this feature's branch and pull request, so the document cited
+here ships beside this one; its `menuprobe` verb stays research-build only.
+What it found:
 
 - At `Main_Menu_rm`, `UI_Button_obj` has 13 live instances, each carrying a
   `text` string; `Play local` is one of them. **`text` is the identifier** for
