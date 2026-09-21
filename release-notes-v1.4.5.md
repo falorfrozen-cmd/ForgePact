@@ -90,6 +90,19 @@ and the Prophet's **Maelstrom of Frost**.
   toggle; without it, the double cast's extra cast goes through exactly as it
   does in the unmodded game. Your own presses, and double casts of every other
   skill, are not affected.
+- **A new read-only `menulayout` command lists where the menu buttons
+  are.** A tool that plays through the main menu for you - such as the
+  toolkit's `hs-drive` helper, which opens a save for testing - used to
+  click fixed spots on the screen, and a game patch or a different screen
+  layout could silently move a button out from under that spot. ForgePact
+  now answers `menulayout` with the live instances of a set of menu objects
+  it looks for, and the interface pieces under them, each with its position
+  on the game window. `hs-drive` now clicks the positions it lists for
+  `Play local`, the save slot and `PLAY`, and stops with a reason instead of
+  guessing when a button is not listed. In a test run, clicks at the listed
+  `Play local`, first- and second-save-slot and `PLAY` positions all worked
+  and loaded the chosen character. Nothing in play changes, and there is no
+  new switch in the panel.
 
 ## How to update
 

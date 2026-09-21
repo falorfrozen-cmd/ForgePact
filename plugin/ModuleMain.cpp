@@ -19903,6 +19903,305 @@ static bool HandleProspectCommand(const std::string& lc, const std::string& rest
     return false;
 }
 
+// ---- the character-select research instrument ----------------------------
+// Everything from here to the matching #endif is research-build only, this
+// comment included: the verb's own name must vanish from a player build, and
+// a header comment left outside the guard would keep it in the binary and in
+// anything that greps it.
+#ifndef FORGEPACT_RELEASE
+// Research instrument for docs/character-select-research.md, candidates (b)
+// and (c). `hs_launch` leaves the game at its main menu, and most gameplay
+// commands do nothing until a character is loaded, so today a human has to
+// click main menu -> Local -> save slot -> Play. Whether anything inside the
+// process can do that instead is unmeasured.
+//
+// Three subcommands, and the split is the whole design:
+//
+// * `list` only reads, so it is also the enumeration **control**. Menu-room
+//   instances have never been shown to be enumerable on this runner -
+//   Profile_Manager_obj was only ever read in-world - so a `list` that finds
+//   no buttons means (b) and (c) were never measured, not that they failed.
+//   The control has to be this same command over an object the session has
+//   just seen live, not `citrace dumpobj` over the same object - not because
+//   the two resolve an instance differently (they don't: both run
+//   asset_get_index -> instance_number -> instance_find -> HhResolveInstance,
+//   the same four calls, in the same order), but because they read it
+//   differently once resolved. `dumpobj` walks the raw CInstance* through
+//   CiSnapshotInstance; `list` and `var` go through
+//   variable_instance_exists/variable_instance_get instead, which is the read
+//   path a menu-room instance has never been shown to survive. A negative is
+//   only worth anything against the instrument that produced it.
+// * `event` and `script` each make exactly **one** call, behind the literal
+//   word `confirm`, printing the instance's own position and the room index
+//   either side of it. That is what separates "the call was refused", "the
+//   call ran and changed nothing" and "the call faulted" - three outcomes a
+//   single success/failure line would flatten into one.
+//
+// Nothing here hooks, resolves an address or loops around a call.
+//
+// Where a command runs is worth stating exactly, because the sentence that
+// stood here said the opposite of the truth. Every ForgePact command executes
+// inside ForgePact::IpcServer::PollCommands(), and FrameCallback calls
+// PollCommands every 30 frames once g_Setup is set - so `menuprobe` already
+// runs *on* the frame thread, which is precisely what makes CallBuiltinEx and
+// CallGameScriptEx safe to call from it: the runtime is between frames and
+// owned by this thread. (The stall watchdog further down keeps Out() off its
+// own second thread for the opposite reason - that thread does not own the
+// YYTK interface. A reader who thinks commands run off the frame thread draws
+// exactly the wrong conclusion from that comment.) What stays true, and is
+// what the old wording was reaching for: nothing this instrument adds is
+// installed on the per-frame path, and nothing of it runs unasked.
+//
+// Every instance is reached by name through asset_get_index ->
+// instance_number -> instance_find -> HhResolveInstance, the same four steps
+// `citrace dumpobj` uses, and a failure prints which one it was.
+
+// The room, read the way `roomprobe` line [3] reads it - the one route
+// measured to work on this runner (2026-09-15). An unreadable room prints
+// FAILED rather than a number: a sentinel that compares equal to a real room
+// is the bug AGENTS.md names by name.
+static std::string MpRoom()
+{
+    RValue v;
+    if (!AurieSuccess(g_Yytk->GetBuiltin("room", nullptr, NULL_INDEX, v))) return "FAILED";
+    return Describe(v);
+}
+
+// One variable of one instance, as text, or "" when the instance does not
+// carry it. Read through the `instance_find` handle rather than the resolved
+// CInstance*, because `variable_instance_exists` is what answers "is this
+// name here at all", and it takes the handle.
+static std::string MpVar(const RValue& handle, const char* name)
+{
+    try {
+        if (!g_Yytk->CallBuiltin("variable_instance_exists", { handle, RValue(std::string(name)) }).ToBoolean())
+            return "";
+        return Describe(g_Yytk->CallBuiltin("variable_instance_get", { handle, RValue(std::string(name)) }));
+    } catch (...) { return "<read-failed>"; }
+}
+
+// Where an instance is, without the room - the callers print the room either
+// side of their one call, and an instance that the call destroyed still has
+// to produce a line rather than an exception.
+//
+// The instance_exists question comes first, and it is not decoration. MpVar
+// answers "" both when the instance does not carry that variable and when the
+// instance is gone (variable_instance_exists is false either way), so a
+// destroyed handle would otherwise print the same empty `id= x= y=` as an
+// object that simply has no such variables - collapsing the one distinction
+// the before/after split exists to make. One `<destroyed>` marker instead of
+// three blanks keeps them apart, the way MpList already marks a handle
+// HhResolveInstance cannot turn into an instance.
+static std::string MpWhere(const std::string& objName, int nth, const RValue& handle)
+{
+    const std::string who = objName + " nth=" + std::to_string(nth);
+    bool alive = false;
+    try { alive = g_Yytk->CallBuiltin("instance_exists", { handle }).ToBoolean(); }
+    catch (...) { return who + " <instance_exists-read-failed>"; }
+    if (!alive) return who + " <destroyed>";
+    return who
+        + " id=" + MpVar(handle, "id")
+        + " x=" + MpVar(handle, "x")
+        + " y=" + MpVar(handle, "y");
+}
+
+// asset_get_index -> instance_number -> instance_find -> HhResolveInstance.
+// `handle` comes back as whatever the runner returns (a VALUE_REF here, which
+// is why HhResolveInstance and not a kind check decides) and `inst` as the
+// CInstance* a call can take as self. Returns false having said which step
+// failed, because "no instance" and "that object does not exist" send a
+// reader to different places.
+static bool MpResolve(const std::string& what, const std::string& objName, int nth,
+                      RValue& handle, CInstance*& inst, int& total)
+{
+    inst = nullptr; total = 0;
+    int idx = -1;
+    try { idx = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(objName) }).ToDouble(); } catch (...) { idx = -1; }
+    if (idx < 0) { Out(what + ": object '" + objName + "' not found (asset_get_index)"); return false; }
+    try { total = (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)idx) }).ToDouble(); } catch (...) { total = 0; }
+    if (total <= 0) { Out(what + ": '" + objName + "' (#" + std::to_string(idx) + ") has no live instances in room " + MpRoom()); return false; }
+    if (nth < 0 || nth >= total) { Out(what + ": nth=" + std::to_string(nth) + " out of range (" + std::to_string(total) + " live instances)"); return false; }
+    try { handle = g_Yytk->CallBuiltin("instance_find", { RValue((double)idx), RValue((double)nth) }); }
+    catch (...) { Out(what + ": instance_find threw"); return false; }
+    if (handle.m_Kind == VALUE_UNDEFINED) { Out(what + ": instance_find returned undefined"); return false; }
+    inst = HhResolveInstance(handle);
+    if (!inst) { Out(what + ": HhResolveInstance could not turn that handle into a live instance"); return false; }
+    return true;
+}
+
+// Read-only, no token. The variables after the first six are printed only
+// when the instance actually carries them: which of them a menu button has is
+// exactly what this command exists to find out, so guessing a fixed set and
+// printing "undefined" for the rest would bury the answer.
+static void MpList(const std::string& objName)
+{
+    if (objName.empty()) { Out("menuprobe list: usage -> menuprobe list <ObjectName>"); return; }
+    int idx = -1;
+    try { idx = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(objName) }).ToDouble(); } catch (...) { idx = -1; }
+    if (idx < 0) { Out("menuprobe list: object '" + objName + "' not found (asset_get_index)"); return; }
+    int total = 0;
+    try { total = (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)idx) }).ToDouble(); } catch (...) { total = 0; }
+    Out("menuprobe list: '" + objName + "' (#" + std::to_string(idx) + ") in room " + MpRoom());
+
+    static const char* const kMaybe[] = { "text", "label", "action", "script", "selected" };
+    constexpr int kCap = 64;
+    for (int n = 0; n < total && n < kCap; ++n) {
+        RValue handle;
+        try { handle = g_Yytk->CallBuiltin("instance_find", { RValue((double)idx), RValue((double)n) }); }
+        catch (...) { Out("  nth=" + std::to_string(n) + " instance_find threw"); continue; }
+        if (handle.m_Kind == VALUE_UNDEFINED) { Out("  nth=" + std::to_string(n) + " instance_find returned undefined"); continue; }
+        std::string line = "  nth=" + std::to_string(n)
+            + " id=" + MpVar(handle, "id")
+            + " x=" + MpVar(handle, "x")
+            + " y=" + MpVar(handle, "y")
+            + " visible=" + MpVar(handle, "visible")
+            + " sprite_index=" + MpVar(handle, "sprite_index")
+            + " image_index=" + MpVar(handle, "image_index");
+        for (const char* name : kMaybe) {
+            const std::string value = MpVar(handle, name);
+            if (!value.empty()) line += std::string(" ") + name + "=" + value;
+        }
+        if (!HhResolveInstance(handle)) line += " (HhResolveInstance: NOT resolvable - this one cannot be a call's self)";
+        Out(line);
+    }
+    if (total > kCap) Out("  ...(" + std::to_string(total - kCap) + " more; capped at " + std::to_string(kCap) + ")");
+    Out("menuprobe list: " + std::to_string(total) + " live instance(s) of '" + objName + "'");
+}
+
+// One event_perform, or one event_perform_object when an <Obj2> is supplied.
+// The builtin's name and its arguments are chosen before the call rather than
+// by writing the call twice, so there is exactly one place in this function
+// where anything reaches the game.
+static void MpEvent(const std::string& objName, int nth, int type, int number,
+                    const std::string& obj2, const std::string& token)
+{
+    if (Lower(token) != "confirm") {
+        Out("menuprobe event: refused - this performs a game event. Usage -> menuprobe event <Obj> <nth> <type> <number> [Obj2] confirm");
+        return;
+    }
+    RValue handle; CInstance* inst = nullptr; int total = 0;
+    if (!MpResolve("menuprobe event", objName, nth, handle, inst, total)) return;
+
+    int obj2Idx = -1;
+    if (!obj2.empty()) {
+        try { obj2Idx = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(obj2) }).ToDouble(); } catch (...) { obj2Idx = -1; }
+        if (obj2Idx < 0) { Out("menuprobe event: object '" + obj2 + "' not found (asset_get_index)"); return; }
+    }
+
+    const char* builtin = obj2.empty() ? "event_perform" : "event_perform_object";
+    std::vector<RValue> args;
+    if (!obj2.empty()) args.push_back(RValue((double)obj2Idx));
+    args.push_back(RValue((double)type));
+    args.push_back(RValue((double)number));
+
+    Out("menuprobe event: " + std::string(builtin) + (obj2.empty() ? std::string() : (" " + obj2))
+        + " " + CiEventLabel(type, number) + ", self=other=that instance");
+    Out("  before: " + MpWhere(objName, nth, handle) + " room=" + MpRoom());
+    RValue res;
+    AurieStatus st = AURIE_SUCCESS;
+    try { st = g_Yytk->CallBuiltinEx(res, builtin, inst, inst, args); }
+    catch (...) { Out("  EXCEPTION calling " + std::string(builtin)); return; }
+    if (!AurieSuccess(st)) { Out("  NOT PERFORMED: st=" + std::to_string((int)st)); return; }
+    // A true here proves the builtin ran, never that the event did anything -
+    // the pet-quest work (C0.3) already paid for that distinction once.
+    Out("  performed -> " + Describe(res));
+    Out("  after:  " + MpWhere(objName, nth, handle) + " room=" + MpRoom());
+}
+
+// One CallGameScriptEx with the chosen instance as both self and other. Every
+// direct call shape measured in 2026-09-11's pet-quest work faulted, with the
+// process surviving each one; what was never tried is a UI script with a real
+// button as self, which is the only reason this exists.
+static void MpScript(const std::string& scriptName, const std::string& objName, int nth,
+                     const std::vector<RValue>& args, const std::string& token)
+{
+    if (Lower(token) != "confirm") {
+        Out("menuprobe script: refused - this calls a game script. Usage -> menuprobe script <Script> <Obj> <nth> [args...] confirm");
+        return;
+    }
+    RValue handle; CInstance* inst = nullptr; int total = 0;
+    if (!MpResolve("menuprobe script", objName, nth, handle, inst, total)) return;
+
+    const std::string full = "gml_Script_" + scriptName;
+    Out("menuprobe script: " + full + " with self=other=that instance, " + std::to_string(args.size()) + " argument(s)");
+    Out("  before: " + MpWhere(objName, nth, handle) + " room=" + MpRoom());
+    RValue res;
+    AurieStatus st = AURIE_SUCCESS;
+    try { st = g_Yytk->CallGameScriptEx(res, full, inst, inst, args); }
+    catch (...) { Out("  EXCEPTION calling " + full); return; }
+    if (!AurieSuccess(st)) { Out("  NOT CALLED: st=" + std::to_string((int)st)); return; }
+    Out("  returned -> " + Describe(res));
+    Out("  after:  " + MpWhere(objName, nth, handle) + " room=" + MpRoom());
+}
+
+// A script argument, typed the way `cb` types its own: a token that parses
+// whole as a number is a real, `true`/`false` is a bool, anything else is a
+// string.
+static RValue MpArg(const std::string& token)
+{
+    const std::string lower = Lower(token);
+    if (lower == "true") return RValue(true);
+    if (lower == "false") return RValue(false);
+    try { size_t used = 0; const double value = std::stod(token, &used); if (used == token.size()) return RValue(value); }
+    catch (...) {}
+    return RValue(token);
+}
+
+static void MpUsage()
+{
+    Out("menuprobe: research instrument for docs/character-select-research.md (research build only)");
+    Out("  menuprobe list <Obj>                                      - read-only; also the enumeration control for the two below");
+    Out("  menuprobe event <Obj> <nth> <type> <number> [Obj2] confirm - one event_perform on that instance");
+    Out("  menuprobe script <Script> <Obj> <nth> [args...] confirm    - one CallGameScriptEx with that instance as self and other");
+    Out("  `confirm` is a literal word and always last: a half-pasted cmd.txt then fails closed instead of firing.");
+}
+
+static void MpCommand(const std::string& rest)
+{
+    std::vector<std::string> tok;
+    { std::stringstream ss(rest); std::string w; while (ss >> w) tok.push_back(w); }
+    if (tok.empty()) { MpUsage(); return; }
+    const std::string sub = Lower(tok[0]);
+
+    if (sub == "list" && tok.size() == 2) { MpList(tok[1]); return; }
+
+    // <Obj2> is optional and sits between <number> and `confirm`, so the
+    // token count decides whether it was given and `confirm` is always last.
+    if (sub == "event" && (tok.size() == 6 || tok.size() == 7)) {
+        int nth = 0, type = 0, number = 0;
+        try { nth = std::stoi(tok[2]); type = std::stoi(tok[3]); number = std::stoi(tok[4]); }
+        catch (...) { Out("menuprobe event: nth, type and number must be whole numbers; nothing ran"); return; }
+        MpEvent(tok[1], nth, type, number, tok.size() == 7 ? tok[5] : std::string(), tok.back());
+        return;
+    }
+
+    if (sub == "script" && tok.size() >= 5) {
+        int nth = 0;
+        try { nth = std::stoi(tok[3]); }
+        catch (...) { Out("menuprobe script: nth must be a whole number; nothing ran"); return; }
+        std::vector<RValue> args;
+        for (size_t i = 4; i + 1 < tok.size(); ++i) args.push_back(MpArg(tok[i]));
+        MpScript(tok[1], tok[2], nth, args, tok.back());
+        return;
+    }
+
+    MpUsage();
+}
+#endif // FORGEPACT_RELEASE (menuprobe)
+
+// Dispatched from its own function for the same reason as the two above:
+// RunCommand's else-if chain is at MSVC's nesting limit (C1061). The function
+// itself exists in both builds and answers false in the player build, so the
+// call site in RunCommand compiles without a guard around it.
+static bool HandleMenuProbeCommand(const std::string& lc, const std::string& rest)
+{
+#ifndef FORGEPACT_RELEASE
+    if (lc == "menuprobe") { MpCommand(rest); return true; }
+#endif
+    (void)lc; (void)rest;
+    return false;
+}
+
 // Headhunter + player-context diagnostics live in their own function so the
 // main RunCommand else-if chain stays below the compiler nesting limit (C1061).
 static bool HandleHeadhunterCommand(const std::string& lc, const std::string& rest)
@@ -24428,6 +24727,255 @@ static void TgProbeCommand(const std::string& rest)
 }
 #endif // FORGEPACT_RELEASE (tgprobe)
 
+// ---------------------------------------------------------------------------
+// menulayout (player build, read-only): where the main-menu and
+// character-select buttons are, in window (client) coordinates, so a tool
+// that drives the game (the hub's hs-drive `hs_select_character`) clicks what
+// the game reports instead of a fixed screen fraction, or refuses.
+//
+// The plugin lists; it never identifies. Which row is `Play local`, which is
+// save slot N and which is PLAY is the hub's rule, pinned against a verbatim
+// listing (docs/menu-layout-research.md). Nothing here clicks, performs an
+// event, calls a script, creates, destroys or writes anything, and nothing of
+// it is on the per-frame path: it runs inside PollCommands() like every
+// command, which is what makes CallBuiltin safe. Every instance is reached by
+// name (asset_get_index, instance_number, instance_find) and read through the
+// handle instance_find returns, whatever kind that is - no address, no struct
+// offset. The output format is the hub's parse contract
+// (tests/test_menu_layout_contract.py pins it byte for byte).
+// ---------------------------------------------------------------------------
+
+// Every clickable UI node descends from UI_Node_Parent_obj; panels from
+// UI_Parent_obj; list items from UI_List_Item_Parent_obj. The leaves and the
+// unparented save/menu objects are listed as well and rows are deduplicated by
+// instance id, so the answer does not depend on whether listing a parent
+// includes its children on this runner.
+static const HeroSiege::Objects::GameObject kMenuLayoutObjects[] = {
+    HeroSiege::Objects::GameObject::UI_Node_Parent_obj,
+    HeroSiege::Objects::GameObject::UI_Parent_obj,
+    HeroSiege::Objects::GameObject::UI_List_Item_Parent_obj,
+    HeroSiege::Objects::GameObject::UI_Button_obj,
+    HeroSiege::Objects::GameObject::UI_Button_Small_obj,
+    HeroSiege::Objects::GameObject::UI_Character_obj,
+    HeroSiege::Objects::GameObject::UI_Create_Character_obj,
+    HeroSiege::Objects::GameObject::UI_Main_Menu_obj,
+    HeroSiege::Objects::GameObject::Save_Character_obj,
+    HeroSiege::Objects::GameObject::Save_Slot_Shop_obj,
+    HeroSiege::Objects::GameObject::Load_Inventory_Char_Select_obj,
+    HeroSiege::Objects::GameObject::Menu_Controller_obj,
+    HeroSiege::Objects::GameObject::Profile_Manager_obj,
+};
+static constexpr int kMenuLayoutMaxRows = 200;
+static const char* const kMenuLayoutReadFailed = "<read-failed>";
+
+// One decimal, never a bare %f on a runtime-read double (Known Limitations
+// item 10): a non-finite read prints <read-failed> instead.
+static std::string MenuLayoutDecimal(double v)
+{
+    if (!std::isfinite(v) || std::fabs(v) > 1e12) return kMenuLayoutReadFailed;
+    const double r = std::round(v * 10.0) / 10.0;
+    std::string s = std::to_string(r == 0.0 ? 0.0 : r);
+    const size_t dot = s.find('.');
+    if (dot != std::string::npos && dot + 2 <= s.size()) s.resize(dot + 2);
+    return s;
+}
+
+static std::string MenuLayoutInteger(double v)
+{
+    if (!std::isfinite(v) || std::fabs(v) > 1e12) return kMenuLayoutReadFailed;
+    return std::to_string((long long)std::llround(v));
+}
+
+// A builtin that takes no argument and answers a number; NaN when it threw,
+// so the caller prints <read-failed> rather than a plausible zero.
+static double MenuLayoutNumber(const char* builtin, const std::vector<RValue>& args = {})
+{
+    try { return g_Yytk->CallBuiltin(builtin, args).ToDouble(); }
+    catch (...) { return std::numeric_limits<double>::quiet_NaN(); }
+}
+
+static double MenuLayoutRead(const RValue& inst, const char* var)
+{
+    try { return g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(var) }).ToDouble(); }
+    catch (...) { return std::numeric_limits<double>::quiet_NaN(); }
+}
+
+// One row per line: a label that carries a line break must not start a row
+// of its own that the hub would try to parse.
+static std::string MenuLayoutOneLine(std::string s)
+{
+    for (char& c : s) if (c == '\r' || c == '\n') c = ' ';
+    return s;
+}
+
+static std::string MenuLayoutValueText(const RValue& v)
+{
+    try {
+        switch (v.m_Kind) {
+        case VALUE_STRING: return MenuLayoutOneLine(v.ToString());
+        case VALUE_BOOL:   return v.ToBoolean() ? "1" : "0";
+        case VALUE_REAL:
+        case VALUE_INT32:
+        case VALUE_INT64: {
+            const double d = v.ToDouble();
+            if (std::isfinite(d) && d == std::floor(d)) return MenuLayoutInteger(d);
+            return MenuLayoutDecimal(d);
+        }
+        case VALUE_UNDEFINED: return "undefined";
+        default: return MenuLayoutOneLine(v.ToString());
+        }
+    } catch (...) { return kMenuLayoutReadFailed; }
+}
+
+// A variable printed only when the instance carries it; `present` is false
+// when it does not (or the existence check itself threw).
+static std::string MenuLayoutOptional(const RValue& inst, const char* var, bool& present)
+{
+    present = false;
+    try {
+        if (!g_Yytk->CallBuiltin("variable_instance_exists", { inst, RValue(var) }).ToBoolean()) return "";
+        present = true;
+        return MenuLayoutValueText(g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(var) }));
+    } catch (...) { present = true; return kMenuLayoutReadFailed; }
+}
+
+static std::string MenuLayoutRoomName()
+{
+    try {
+        RValue v;
+        if (!AurieSuccess(g_Yytk->GetBuiltin("room", nullptr, NULL_INDEX, v))) return kMenuLayoutReadFailed;
+        return MenuLayoutOneLine(g_Yytk->CallBuiltin("room_get_name", { v }).ToString());
+    } catch (...) { return kMenuLayoutReadFailed; }
+}
+
+// The object's index by name, confirmed by the name round-tripping through
+// object_get_name: an asset of another kind (a sprite, a room) that shares
+// the name, or a name that does not resolve, is -1.
+static double MenuLayoutObjectIndex(const std::string& name)
+{
+    try {
+        const double idx = g_Yytk->CallBuiltin("asset_get_index", { RValue(name) }).ToDouble();
+        if (!std::isfinite(idx) || idx < 0) return -1.0;
+        if (!g_Yytk->CallBuiltin("object_exists", { RValue(idx) }).ToBoolean()) return -1.0;
+        if (g_Yytk->CallBuiltin("object_get_name", { RValue(idx) }).ToString() != name) return -1.0;
+        return idx;
+    } catch (...) { return -1.0; }
+}
+
+struct MenuLayoutScale { double gw, gh, ww, wh; };
+
+static std::string MenuLayoutRow(const RValue& inst, const MenuLayoutScale& sc)
+{
+    std::string objName = kMenuLayoutReadFailed;
+    try {
+        RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("object_index") });
+        objName = MenuLayoutOneLine(g_Yytk->CallBuiltin("object_get_name", { oi }).ToString());
+    } catch (...) {}
+    const double id = MenuLayoutRead(inst, "id");
+    const double x = MenuLayoutRead(inst, "x");
+    const double y = MenuLayoutRead(inst, "y");
+    // Window (client) point: the instance's GUI position scaled by the
+    // window size over the GUI size, both read from the game by name.
+    std::string winX = kMenuLayoutReadFailed, winY = kMenuLayoutReadFailed;
+    if (std::isfinite(sc.gw) && sc.gw > 0 && std::isfinite(sc.ww)) winX = MenuLayoutInteger(x * sc.ww / sc.gw);
+    if (std::isfinite(sc.gh) && sc.gh > 0 && std::isfinite(sc.wh)) winY = MenuLayoutInteger(y * sc.wh / sc.gh);
+    std::string visible = kMenuLayoutReadFailed;
+    try { visible = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("visible") }).ToBoolean() ? "1" : "0"; } catch (...) {}
+    std::string sprite = kMenuLayoutReadFailed;
+    try {
+        const double spr = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("sprite_index") }).ToDouble();
+        if (std::isfinite(spr)) {
+            sprite = spr < 0 ? std::string("none")
+                : MenuLayoutOneLine(g_Yytk->CallBuiltin("sprite_get_name", { RValue(spr) }).ToString());
+        }
+    } catch (...) {}
+
+    std::string row = "  obj=" + objName
+        + " id=" + MenuLayoutInteger(id)
+        + " gui=" + MenuLayoutDecimal(x) + "," + MenuLayoutDecimal(y)
+        + " win=" + winX + "," + winY
+        + " bbox=" + MenuLayoutDecimal(MenuLayoutRead(inst, "bbox_left")) + "," + MenuLayoutDecimal(MenuLayoutRead(inst, "bbox_top"))
+        + "," + MenuLayoutDecimal(MenuLayoutRead(inst, "bbox_right")) + "," + MenuLayoutDecimal(MenuLayoutRead(inst, "bbox_bottom"))
+        + " visible=" + visible
+        + " sprite=" + sprite;
+    static const char* const kOptional[] = { "label", "name", "slot", "index", "page", "selected" };
+    for (const char* var : kOptional) {
+        bool present = false;
+        const std::string v = MenuLayoutOptional(inst, var, present);
+        if (present) row += std::string(" ") + var + "=" + v;
+    }
+    // text= is always last and always present: a label may hold spaces,
+    // quotes and '=', so the hub takes it to the end of the line.
+    bool hasText = false;
+    const std::string text = MenuLayoutOptional(inst, "text", hasText);
+    row += " text=" + (hasText ? text : std::string());
+    return row;
+}
+
+static void MenuLayoutCommand(const std::string& rest)
+{
+    std::vector<std::string> names;
+    const std::string only = TrimCopy(rest);
+    if (!only.empty()) {
+        names.push_back(only);   // `menulayout <ObjectName>`: that one object, same format
+    } else {
+        for (HeroSiege::Objects::GameObject obj : kMenuLayoutObjects)
+            names.emplace_back(HeroSiege::Objects::GetObjectName(obj));
+    }
+
+    MenuLayoutScale sc{
+        MenuLayoutNumber("display_get_gui_width"), MenuLayoutNumber("display_get_gui_height"),
+        MenuLayoutNumber("window_get_width"), MenuLayoutNumber("window_get_height") };
+    std::string fullscreen = kMenuLayoutReadFailed;
+    try { fullscreen = g_Yytk->CallBuiltin("window_get_fullscreen", {}).ToBoolean() ? "1" : "0"; } catch (...) {}
+    std::string view = std::string(kMenuLayoutReadFailed) + "," + kMenuLayoutReadFailed + "," + kMenuLayoutReadFailed + "," + kMenuLayoutReadFailed;
+    try {
+        RValue cam = g_Yytk->CallBuiltin("view_get_camera", { RValue(0.0) });
+        view = MenuLayoutDecimal(MenuLayoutNumber("camera_get_view_x", { cam }))
+            + "," + MenuLayoutDecimal(MenuLayoutNumber("camera_get_view_y", { cam }))
+            + "," + MenuLayoutDecimal(MenuLayoutNumber("camera_get_view_width", { cam }))
+            + "," + MenuLayoutDecimal(MenuLayoutNumber("camera_get_view_height", { cam }));
+    } catch (...) {}
+    Out("menulayout: room=" + MenuLayoutRoomName()
+        + " gui=" + MenuLayoutInteger(sc.gw) + "x" + MenuLayoutInteger(sc.gh)
+        + " window=" + MenuLayoutInteger(sc.ww) + "x" + MenuLayoutInteger(sc.wh)
+        + " fullscreen=" + fullscreen
+        + " view=" + view);
+
+    std::unordered_set<long long> seen;
+    std::string absent;
+    int listed = 0;
+    bool capped = false;
+    for (const std::string& name : names) {
+        const double idx = MenuLayoutObjectIndex(name);
+        if (idx < 0) { absent += (absent.empty() ? "" : ",") + name; continue; }
+        const double count = MenuLayoutNumber("instance_number", { RValue(idx) });
+        if (!std::isfinite(count) || count <= 0) continue;
+        for (int i = 0; i < (int)count; ++i) {
+            if (listed >= kMenuLayoutMaxRows) { capped = true; break; }
+            RValue inst;
+            try { inst = g_Yytk->CallBuiltin("instance_find", { RValue(idx), RValue((double)i) }); }
+            catch (...) { continue; }
+            const double id = MenuLayoutRead(inst, "id");
+            if (std::isfinite(id) && !seen.insert((long long)std::llround(id)).second) continue;
+            Out(MenuLayoutRow(inst, sc));
+            ++listed;
+        }
+        if (capped) break;
+    }
+    Out("menulayout: listed=" + std::to_string(listed)
+        + " absent=" + (absent.empty() ? std::string("none") : absent)
+        + " capped=" + (capped ? "1" : "0"));
+}
+
+// Its own helper, called from RunCommand beside HandleProspectCommand, for
+// the same C1061 reason: the else-if chain is at MSVC's nesting limit.
+static bool HandleMenuLayoutCommand(const std::string& lc, const std::string& rest)
+{
+    if (lc == "menulayout") { MenuLayoutCommand(rest); return true; }
+    return false;
+}
+
 static void RunCommand(const std::string& line)
 {
     std::string rest;
@@ -24444,7 +24992,7 @@ static void RunCommand(const std::string& line)
         "stat", "statadd", "raredrop", "droprate", "dungeonkey",
         "headhunter", "hhdur", "hhmap", "hhdefault", "hhlabel", "tyrant", "beacon", "beaconrange", "beaconmode", "beaconwake", "beaconspawn", "beaconfarstep", "tyrantchance", "tyrantaffix", "hhlabelfont", "hhlabeloffset", "hhlabelmax",
         "enemyspeed", "rarity", "sigdrop", "angelicdrop", "relicfilter", "orbpickup", "satmods", "petquest",
-        "autoprospect", "toggleborder", "toggleguard"
+        "autoprospect", "toggleborder", "toggleguard", "menulayout"
     };
     if (kPlayerCommands.find(lc) == kPlayerCommands.end()) {
         Out("command unavailable in player build: " + cmd);
@@ -24454,6 +25002,8 @@ static void RunCommand(const std::string& line)
 
     if (HandleHeadhunterCommand(lc, rest)) return;
     if (HandleProspectCommand(lc, rest)) return;
+    if (HandleMenuProbeCommand(lc, rest)) return;
+    if (HandleMenuLayoutCommand(lc, rest)) return;
 #ifndef FORGEPACT_RELEASE
     // Toggle-skill research (issue #11), docs/toggle-skills-research.md. A
     // standalone early return rather than one more `else if` below: that chain
