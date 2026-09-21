@@ -3031,7 +3031,10 @@ four already read that one variable):
   whether any of the four looks reads as smooth in motion. The
   ticks/elapsed readout compared against a stopwatch during that session is
   the control for the first question; a person's eye is the only control for
-  the second.
+  the second. Run the stopwatch check in `once` mode (`anim <seconds>`
+  without `loop`); in `loop` mode `elapsed=` reports the total time since
+  the animation started, with the wrapped fraction phase shown separately
+  as `phase=`.
 
 ### Live procedure
 

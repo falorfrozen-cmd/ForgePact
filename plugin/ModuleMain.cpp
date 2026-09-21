@@ -22626,20 +22626,22 @@ static double g_TgSpriteFraction = 1.0;
 // pulse's g_RuntimeFrame stay exactly as they are), so a researcher can
 // judge the four countdown looks in smooth motion instead of stepping
 // `frac <f>` one IPC call apart. The clock is chosen once, at `anim` time,
-// and kept for the animation's whole life (D1, context "### Decisions") -
-// switching units/epoch mid-run would jump the fraction. A refused `anim`
-// (bad arguments, neither clock readable) changes none of this state (D4).
+// and kept for the animation's whole life - switching clocks mid-run would
+// mix their units and starting points and make the fraction jump. A
+// refused `anim` (bad arguments, neither clock readable) changes none of
+// this state, including a running animation, which is left running.
 enum class TgSpriteFracAnimState { Off, Running, Done };
 static TgSpriteFracAnimState g_TgSpriteFracAnimState = TgSpriteFracAnimState::Off;
 static bool g_TgSpriteFracAnimLoop = false;
 static double g_TgSpriteFracAnimDuration = 0.0;    // seconds
 static double g_TgSpriteFracAnimStart = 0.0;       // the chosen clock's own reading (seconds) at `anim` time
 static std::string g_TgSpriteFracAnimClock;        // "get_timer" or "current_time" - fixed for the run's life
-static double g_TgSpriteFracAnimElapsed = 0.0;     // last measured elapsed, for the readout
+static double g_TgSpriteFracAnimElapsed = 0.0;     // total elapsed since `anim` started, unwrapped even in loop mode - compare this against a stopwatch
+static double g_TgSpriteFracAnimPhase = 0.0;       // loop mode only: elapsed wrapped into one period - what the fraction is actually derived from
 static long g_TgSpriteFracAnimTicks = 0;
 static long g_TgSpriteFracAnimClockFail = 0;
 // Forward-declared: TgProbeSpriteDraw (below) calls this before its own
-// definition, further down this file, past TgProbeSpriteCommand.
+// definition, further down this file, just above TgProbeSpriteCommand.
 static void TgProbeSpriteFracAnimTick();
 
 // `tgprobe sprite textoffset [dx] [dy]` / `textalpha [a]` / `textcolour
@@ -23621,10 +23623,11 @@ static bool TgProbeSpriteFracAnimClockRead(const std::string& clockName, double&
     return false;
 }
 
-// `tgprobe sprite frac anim <seconds> [loop]`. Tries `get_timer` then
-// `current_time` (D1); the first readable one is the animation's clock for
-// its whole life. A refused command - bad arguments or neither clock
-// readable - changes nothing, including a running animation (D4): the
+// `tgprobe sprite frac anim <seconds> [loop]`. Tries `get_timer` first,
+// then `current_time`; the first readable one is the animation's clock for
+// its whole life, so it never has to mix two clocks' units or starting
+// points mid-run. A refused command - bad arguments or neither clock
+// readable - changes nothing, including a running animation: the
 // literal `frac anim refused` below is printed, and returns, strictly
 // before the assignment that marks the animation running.
 static void TgProbeSpriteFracAnimCommand(const std::string& rest)
@@ -23664,6 +23667,7 @@ static void TgProbeSpriteFracAnimCommand(const std::string& rest)
     g_TgSpriteFracAnimStart = startSeconds;
     g_TgSpriteFracAnimClock = clockName;
     g_TgSpriteFracAnimElapsed = 0.0;
+    g_TgSpriteFracAnimPhase = 0.0;
     g_TgSpriteFracAnimTicks = 0;
     g_TgSpriteFracAnimClockFail = 0;
     g_TgSpriteFraction = 1.0;
@@ -23676,16 +23680,22 @@ static void TgProbeSpriteFracAnimCommand(const std::string& rest)
 
 // Called once per TgProbeSpriteDraw. Off: returns before any clock read, so
 // a session that never types `anim` behaves byte-for-byte as before this
-// round. Otherwise reads the animation's OWN clock (never a draw/frame
-// count - D2) and derives the fraction from elapsed time: `loop` wraps
-// within one period (std::fmod, already used in this file) rather than
-// resetting the start time each wrap, which would drift by one draw
-// interval per cycle; once, at or past the duration, holds at exactly 0.0,
-// marks the animation done, and stops reading the clock. A failed per-draw
-// read counts `clockFail` and leaves the fraction at its last value - this
-// function has its own try/catch so a clock failure can never land in
-// TgProbeSpriteDraw's `drawExc` catch (AGENTS.md "Prove the Instrument": a
-// clock failure here must never be misread as the draw builtin throwing).
+// round. Otherwise reads the animation's OWN clock (never the draw-count
+// time base above or pulse's frame counter, both of which are coupled to
+// frame rate and would stretch or squeeze the countdown on a frame-rate
+// dip) and derives the fraction from elapsed time: `loop` wraps within one
+// period (std::fmod, already used in this file) rather than resetting the
+// start time each wrap, which would drift by one draw interval per cycle;
+// once, at or past the duration, holds at exactly 0.0, marks the animation
+// done, and stops reading the clock. `g_TgSpriteFracAnimElapsed` always
+// holds the unwrapped total, so it reads the same as a stopwatch even in
+// loop mode - the wrapped value the fraction is actually derived from is
+// kept separately in `g_TgSpriteFracAnimPhase` and shown in the readout as
+// `phase=`. A failed per-draw read counts `clockFail` and leaves the
+// fraction at its last value - this function has its own try/catch so a
+// clock failure can never land in TgProbeSpriteDraw's `drawExc` catch
+// (AGENTS.md "Prove the Instrument": a clock failure here must never be
+// misread as the draw builtin throwing).
 static void TgProbeSpriteFracAnimTick()
 {
     if (g_TgSpriteFracAnimState == TgSpriteFracAnimState::Off) return;
@@ -23704,11 +23714,12 @@ static void TgProbeSpriteFracAnimTick()
         double elapsed = now - g_TgSpriteFracAnimStart;
         if (elapsed < 0.0) elapsed = 0.0;   // clamp by hand (test_no_bare_std_max_or_std_min)
         if (g_TgSpriteFracAnimLoop) {
-            elapsed = std::fmod(elapsed, g_TgSpriteFracAnimDuration);
-            double fraction = 1.0 - elapsed / g_TgSpriteFracAnimDuration;
+            const double phase = std::fmod(elapsed, g_TgSpriteFracAnimDuration);
+            double fraction = 1.0 - phase / g_TgSpriteFracAnimDuration;
             if (fraction < 0.0) fraction = 0.0;
             if (fraction > 1.0) fraction = 1.0;
             g_TgSpriteFraction = fraction;
+            g_TgSpriteFracAnimPhase = phase;
         } else if (elapsed >= g_TgSpriteFracAnimDuration) {
             g_TgSpriteFraction = 0.0;
             g_TgSpriteFracAnimState = TgSpriteFracAnimState::Done;
@@ -23718,7 +23729,7 @@ static void TgProbeSpriteFracAnimTick()
             if (fraction > 1.0) fraction = 1.0;
             g_TgSpriteFraction = fraction;
         }
-        g_TgSpriteFracAnimElapsed = elapsed;
+        g_TgSpriteFracAnimElapsed = elapsed;   // unwrapped total, even in loop mode
         ++g_TgSpriteFracAnimTicks;
     } catch (...) { ++g_TgSpriteFracAnimClockFail; }
 }
@@ -23726,19 +23737,29 @@ static void TgProbeSpriteFracAnimTick()
 // "anim=off" / "anim=running ..." / "anim=done ...", folded into both the
 // `off` line and the `frac` confirmation so either surface shows whether a
 // countdown is running and its own counters - never as a per-selection
-// count (D3: switching `style`/`gold`/sprite leaves a running animation
-// running, and its counters reset only when `anim` itself restarts).
+// count: switching `style`/`gold`/sprite leaves a running animation
+// running (so a tester can compare looks against one countdown), and its
+// counters reset only when `anim` itself restarts. In loop mode `elapsed=`
+// is the unwrapped total (compare it against a stopwatch) and `phase=` is
+// the wrapped value the fraction is actually derived from; when the
+// animation is running but has never ticked, a note is appended so
+// `frac=1.0 anim=running ticks=0` does not read as armed-and-moving.
 static std::string TgProbeSpriteFracAnimText()
 {
     if (g_TgSpriteFracAnimState == TgSpriteFracAnimState::Off) return "anim=off";
     const bool done = g_TgSpriteFracAnimState == TgSpriteFracAnimState::Done;
-    return std::string("anim=") + (done ? "done" : "running")
+    std::string text = std::string("anim=") + (done ? "done" : "running")
         + " dur=" + std::to_string(g_TgSpriteFracAnimDuration)
         + " " + (g_TgSpriteFracAnimLoop ? "loop" : "once")
         + " src=" + g_TgSpriteFracAnimClock
         + " elapsed=" + std::to_string(g_TgSpriteFracAnimElapsed)
+        + (g_TgSpriteFracAnimLoop ? (" phase=" + std::to_string(g_TgSpriteFracAnimPhase)) : "")
         + " ticks=" + std::to_string(g_TgSpriteFracAnimTicks)
         + " clockFail=" + std::to_string(g_TgSpriteFracAnimClockFail);
+    if (!done && g_TgSpriteFracAnimTicks == 0) {
+        text += " (advances only while a sprite style is drawing)";
+    }
+    return text;
 }
 
 static void TgProbeSpriteCommand(const std::string& rest)
@@ -23927,7 +23948,7 @@ static void TgProbeSpriteCommand(const std::string& rest)
             }
             if (f < 0.0) f = 0.0;   // clamp by hand (test_no_bare_std_max_or_std_min)
             if (f > 1.0) f = 1.0;
-            // D4 (issue #55 timer-countdown follow-up): a numeric token that
+            // issue #55 timer-countdown follow-up: a numeric token that
             // itself parsed cancels any running/done animation; a refused
             // token (above) leaves one running untouched.
             g_TgSpriteFracAnimState = TgSpriteFracAnimState::Off;

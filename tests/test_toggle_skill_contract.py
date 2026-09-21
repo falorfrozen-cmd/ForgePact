@@ -2947,6 +2947,24 @@ class SkillTimerProbeContractTests(unittest.TestCase):
         self.assertIn('"running"', text_body)
         self.assertIn('"done"', text_body)
 
+    def test_frac_anim_elapsed_readout_is_unwrapped_in_loop_mode(self):
+        # Follow-up fix: `g_TgSpriteFracAnimElapsed` must hold the total
+        # elapsed time since `anim` started, even in loop mode, so it reads
+        # the same as a stopwatch. Wrapping it (a sawtooth) made a short
+        # loop look like the "clock stuck at 0" failure signature. The
+        # wrapped value the fraction is actually derived from is kept apart
+        # in `g_TgSpriteFracAnimPhase` and shown in the readout as `phase=`.
+        tick = function_body(self.plugin, "static void TgProbeSpriteFracAnimTick()")
+        self.assertNotIn(
+            "elapsed = std::fmod(",
+            tick,
+            "elapsed itself must stay unwrapped; wrap a separate phase variable instead",
+        )
+        self.assertIn("g_TgSpriteFracAnimElapsed = elapsed;", tick)
+        self.assertIn("g_TgSpriteFracAnimPhase", tick)
+        text_body = function_body(self.plugin, "static std::string TgProbeSpriteFracAnimText()")
+        self.assertIn("phase=", text_body)
+
     def test_frac_anim_symbols_are_research_only(self):
         for name in ("TgProbeSpriteFracAnimCommand", "TgProbeSpriteFracAnimClockRead",
                      "TgProbeSpriteFracAnimTick", "TgProbeSpriteFracAnimText",
