@@ -24772,9 +24772,14 @@ static std::string TgProbeTglTimerLine(const TgTglTimer& t)
         + " draws=" + std::to_string(t.draws);
 }
 
-// The runtime candidate table. Capped at 16 rows; `tgprobe tgl clear` keeps
-// row 0, the measured Soul Spurn row, which is also the agreement control.
+// The runtime candidate table. Capped at kTgTglRowCap rows; `tgprobe tgl
+// clear` keeps row 0, the measured Soul Spurn row, which is also the
+// agreement control. kTgTglCap is the `tgl sub` array walk's own bound, which
+// mirrors the shipped guard's kToggleSubTalentScanCap; session 8 gave the row
+// table its own, larger cap so `tgl add` can hold every candidate a duration
+// session finds by name, without widening that walk.
 static constexpr int kTgTglCap = 16;
+static constexpr int kTgTglRowCap = 64;
 static constexpr int kTgTglFieldCap = 64;   // scalars kept per `tgl fields` snapshot
 // Soul Spurn's toggled form holds destroyTimer at -1 (session 4); the same
 // value is the prediction for every row until session 6 measures it.
@@ -25020,8 +25025,8 @@ static void TgProbeTglAdd(const std::string& rest)
         Out("tgprobe tgl add: usage -> tgprobe tgl add <abilityId> <ObjectName> [marker|none] [timer|none] [ownership|none] [sNN]");
         return;
     }
-    if ((int)g_TgTgl.size() >= kTgTglCap) {
-        Out("tgprobe tgl add: table full (" + std::to_string(kTgTglCap) + " rows); `tgprobe tgl clear` keeps row 0");
+    if ((int)g_TgTgl.size() >= kTgTglRowCap) {
+        Out("tgprobe tgl add: table full (" + std::to_string(kTgTglRowCap) + " rows); `tgprobe tgl clear` keeps row 0");
         return;
     }
     double objIdx = -1.0;
@@ -25051,7 +25056,7 @@ static void TgProbeTglAdd(const std::string& rest)
 static void TgProbeTglList()
 {
     TgProbeTglSeed();
-    Out("tgprobe tgl list: rows=" + std::to_string(g_TgTgl.size()) + " cap=" + std::to_string(kTgTglCap)
+    Out("tgprobe tgl list: rows=" + std::to_string(g_TgTgl.size()) + " cap=" + std::to_string(kTgTglRowCap)
         + " sampler=" + (g_TgTglSamplerOn ? "on" : "off"));
     for (size_t i = 0; i < g_TgTgl.size(); ++i) {
         const TgTglRow& row = g_TgTgl[i];
@@ -25262,6 +25267,276 @@ static void TgProbeTglCommand(const std::string& rest)
         " | list | clear | slots | fields [row] | sub | timer");
 }
 
+// ---- tgprobe sweep: every class's timed skill at once (issue #55, session 8)
+// The countdown ships only rows measured to carry a readable destroyTimer
+// that spans the cast (docs/toggle-skills-research.md, "### Duration sweep
+// (session 8)"). instance_number/instance_find on a parent enumerate every
+// descendant's instances, so six root scans cover every candidate object the
+// static search found - and any it missed - with no compiled seed table and
+// no object-to-skill guess up front: the live procedure attributes records to
+// a cast by `sweep clear` before it. Read-only and research build only.
+//
+// Scan order matters only for the `root=` a record reports: the damage
+// parent first, the ability parent last, so a sentry (itself an
+// ability-parent child) is attributed to the sentry root.
+static const HeroSiege::Objects::GameObject kTgSweepRoots[] = {
+    HeroSiege::Objects::GameObject::Player_Damage_Parent_obj,
+    HeroSiege::Objects::GameObject::Skill_Controller_obj,
+    HeroSiege::Objects::GameObject::Player_Buff_Parent_obj,
+    HeroSiege::Objects::GameObject::Player_Curse_Parent_obj,
+    HeroSiege::Objects::GameObject::Player_Sentry_Parent_obj,
+    HeroSiege::Objects::GameObject::Player_Ability_Parent_obj,
+};
+static constexpr int kTgSweepRootCount = (int)(sizeof(kTgSweepRoots) / sizeof(kTgSweepRoots[0]));
+static constexpr long kTgSweepScanCap = 256;        // instances scanned per root per draw
+static constexpr size_t kTgSweepRecordCap = 1024;   // distinct object_index records kept
+// `tgprobe sweep on|off`. Off by default: the sampler returns before any
+// builtin call, the `tgl` sampler's rule.
+static bool g_TgSweepOn = false;
+
+// One draw's evidence for one object_index, gathered across every root.
+// `inst` is the most instances any single root saw (the sentry parent's
+// children are the ability parent's children too, so a sum would double
+// them). `largest` is the largest numeric destroyTimer among the object's
+// instances not measured foreign - the shipped countdown's own rule, with an
+// unattributable instance counted as own (D-N3).
+struct TgSweepObs {
+    long inst = 0;
+    bool haveReading = false;
+    double largest = 0.0;
+    bool ownReadable = false;     // an instance's isMyClient kind-checked this draw
+    bool ownUnreadable = false;   // an instance's isMyClient did not (undefined, text, a throw)
+    int root = -1;                // the first root, in scan order, that saw it
+};
+
+// One object_index's record. `draws`, `timerUnreadable` and the four values
+// belong to the CURRENT appearance and restart on each rising edge; the rest
+// are kept from the first appearance since `sweep clear`. No value is ever a
+// default: `haveFirst` false prints `unreadable`.
+struct TgSweepRecord {
+    int root = -1;
+    bool present = false;
+    long app = 0, maxInst = 0, totalDraws = 0;
+    long firstFrame = -1, lastFrame = -1;
+    long ownReadableDraws = 0, ownUnreadableDraws = 0, ownMixedDraws = 0;
+    long draws = 0, timerUnreadable = 0;
+    bool haveFirst = false;
+    double first = 0.0, last = 0.0, min = 0.0, max = 0.0;
+};
+static std::map<int, TgSweepRecord> g_TgSweep;
+static long g_TgSweepDraws = 0, g_TgSweepIndexUnreadable = 0, g_TgSweepDropped = 0;
+static long g_TgSweepCappedDraws[kTgSweepRootCount] = {};     // draws on which a root held more than the scan cap
+static long g_TgSweepLastCount[kTgSweepRootCount] = {};       // the last draw's instance_number per root, -1 unread
+static double g_TgSweepLastIdx[kTgSweepRootCount] = {};       // the last draw's resolved root index, -1 unresolved
+static int g_TgSweepRootsResolved = 0;
+
+// One draw's update of one record. `obs` nullptr (or no instance) is an
+// absent draw: it only ends the appearance.
+static void TgProbeSweepNote(TgSweepRecord& rec, const TgSweepObs* obs, long frame)
+{
+    if (!obs || obs->inst < 1) { rec.present = false; return; }
+    if (!rec.present) {
+        ++rec.app;
+        rec.draws = 0;
+        rec.timerUnreadable = 0;
+        rec.haveFirst = false;
+        rec.first = rec.last = rec.min = rec.max = 0.0;
+    }
+    rec.present = true;
+    if (rec.root < 0) rec.root = obs->root;
+    if (rec.firstFrame < 0) rec.firstFrame = frame;
+    rec.lastFrame = frame;
+    ++rec.draws;
+    ++rec.totalDraws;
+    if (obs->inst > rec.maxInst) rec.maxInst = obs->inst;
+    if (obs->ownReadable && obs->ownUnreadable) ++rec.ownMixedDraws;
+    else if (obs->ownReadable) ++rec.ownReadableDraws;
+    else if (obs->ownUnreadable) ++rec.ownUnreadableDraws;
+    if (!obs->haveReading) { ++rec.timerUnreadable; return; }
+    const double v = obs->largest;
+    if (!rec.haveFirst) {
+        rec.haveFirst = true;
+        rec.first = rec.min = rec.max = v;
+    }
+    if (v < rec.min) rec.min = v;
+    if (v > rec.max) rec.max = v;
+    rec.last = v;
+}
+
+// `own=`: readable when every draw kind-checked every instance's isMyClient,
+// unreadable when no draw did, mixed when a draw or the draws disagree.
+static const char* TgProbeSweepOwnText(const TgSweepRecord& rec)
+{
+    if (rec.ownMixedDraws > 0 || (rec.ownReadableDraws > 0 && rec.ownUnreadableDraws > 0)) return "mixed";
+    if (rec.ownReadableDraws > 0) return "readable";
+    if (rec.ownUnreadableDraws > 0) return "unreadable";
+    return "n/a";
+}
+
+// Called once per DrawHudBuffs draw from TgProbeSpurnAfterDraw, right after
+// the `tgl` sampler, and does nothing until `tgprobe sweep on`. Every root is
+// resolved by the SDK constant's name every draw; every instance's
+// object_index goes through the VALUE_REF-aware index predicate, since this
+// runner hands object_index over as VALUE_REF.
+static void TgProbeSweepAfterDraw()
+{
+    if (!g_TgSweepOn) return;   // off: not one builtin call
+    ++g_TgSweepDraws;
+    std::map<int, TgSweepObs> seen;
+    int resolved = 0;
+    for (int r = 0; r < kTgSweepRootCount; ++r) {
+        g_TgSweepLastCount[r] = -1;
+        const std::string rootName(HeroSiege::Objects::GetObjectName(kTgSweepRoots[r]));
+        double rootIdx = -1.0;
+        const bool rootResolved = TgProbeTglResolveObject(rootName, rootIdx);
+        g_TgSweepLastIdx[r] = rootResolved ? rootIdx : -1.0;
+        if (!rootResolved) continue;
+        ++resolved;
+        long n = 0;
+        try { n = (long)g_Yytk->CallBuiltin("instance_number", { RValue(rootIdx) }).ToDouble(); }
+        catch (...) { continue; }   // last count stays -1: printed as unread
+        g_TgSweepLastCount[r] = n;
+        if (n > kTgSweepScanCap) ++g_TgSweepCappedDraws[r];
+        const long scan = n < kTgSweepScanCap ? n : kTgSweepScanCap;
+        std::map<int, long> perRoot;
+        for (long i = 0; i < scan; ++i) {
+            RValue inst;
+            int objIdx = -1;
+            try {
+                inst = g_Yytk->CallBuiltin("instance_find", { RValue(rootIdx), RValue((double)i) });
+                RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("object_index") });
+                if (!N1ObjectIndex(oi, objIdx)) { ++g_TgSweepIndexUnreadable; continue; }
+            } catch (...) { ++g_TgSweepIndexUnreadable; continue; }
+            ++perRoot[objIdx];
+            TgSweepObs& o = seen[objIdx];
+            if (o.root < 0) o.root = r;
+            bool own = true;   // unattributable counts as own (D-N3); only a measured foreign does not
+            try {
+                RValue mc = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("isMyClient") });
+                bool isMine = false;
+                if (ToggleIndicatorReadTruth(mc, isMine)) { o.ownReadable = true; own = isMine; }
+                else o.ownUnreadable = true;
+            } catch (...) { o.ownUnreadable = true; }
+            if (!own) continue;
+            try {
+                RValue tv = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(ForgePact::kSkillTimerField) });
+                if (N1Numeric(tv)) {
+                    const double v = tv.ToDouble();
+                    if (!o.haveReading || v > o.largest) o.largest = v;
+                    o.haveReading = true;
+                }
+            } catch (...) {}   // no reading from this instance; the draw counts timerUnreadable if none had one
+        }
+        for (const auto& pr : perRoot) {
+            TgSweepObs& o = seen[pr.first];
+            if (pr.second > o.inst) o.inst = pr.second;
+        }
+    }
+    g_TgSweepRootsResolved = resolved;
+    const long frame = (long)g_RuntimeFrame;
+    for (auto& rec : g_TgSweep) {
+        if (seen.find(rec.first) == seen.end()) TgProbeSweepNote(rec.second, nullptr, frame);
+    }
+    for (const auto& s : seen) {
+        auto it = g_TgSweep.find(s.first);
+        if (it == g_TgSweep.end()) {
+            if (g_TgSweep.size() >= kTgSweepRecordCap) { ++g_TgSweepDropped; continue; }
+            it = g_TgSweep.emplace(s.first, TgSweepRecord{}).first;
+        }
+        TgProbeSweepNote(it->second, &s.second, frame);
+    }
+}
+
+// `tgprobe sweep show [seen|all]`: a header, then one line per record sorted
+// by firstFrame, naming the object by the SDK's name for that index AND the
+// runtime's own object_get_name (NAME-MISMATCH when they differ: the SDK
+// table would be stale). `all` adds one line per root. Every record exists
+// only because its object appeared, so `seen` is every record since `clear`.
+static void TgProbeSweepShow(const std::string& mode)
+{
+    const bool all = mode == "all";
+    if (!mode.empty() && mode != "seen" && !all) { Out("tgprobe sweep show: usage -> tgprobe sweep show [seen|all]"); return; }
+    std::string unresolved, capped;
+    for (int r = 0; r < kTgSweepRootCount; ++r) {
+        const std::string rootName(HeroSiege::Objects::GetObjectName(kTgSweepRoots[r]));
+        if (g_TgSweepDraws > 0 && g_TgSweepLastIdx[r] < 0) unresolved += (unresolved.empty() ? "" : ",") + rootName;
+        if (g_TgSweepCappedDraws[r] > 0)
+            capped += (capped.empty() ? "" : ",") + rootName + ":" + std::to_string(g_TgSweepCappedDraws[r]);
+    }
+    Out("tgprobe sweep: sampler=" + std::string(g_TgSweepOn ? "on" : "off") + " draws=" + std::to_string(g_TgSweepDraws)
+        + " roots=" + std::to_string(g_TgSweepRootsResolved) + "/" + std::to_string(kTgSweepRootCount)
+        + " unresolved=" + (unresolved.empty() ? std::string("none") : unresolved)
+        + " capped=" + (capped.empty() ? std::string("none") : capped)
+        + " records=" + std::to_string(g_TgSweep.size()) + " dropped=" + std::to_string(g_TgSweepDropped)
+        + " indexUnreadable=" + std::to_string(g_TgSweepIndexUnreadable) + " scanCap=" + std::to_string(kTgSweepScanCap));
+    if (all) {
+        for (int r = 0; r < kTgSweepRootCount; ++r) {
+            Out("  root " + std::string(HeroSiege::Objects::GetObjectName(kTgSweepRoots[r]))
+                + " idx=" + (g_TgSweepLastIdx[r] >= 0 ? std::to_string((long long)g_TgSweepLastIdx[r]) : std::string("unresolved"))
+                + " lastCount=" + (g_TgSweepLastCount[r] >= 0 ? std::to_string(g_TgSweepLastCount[r]) : std::string("unread"))
+                + " cappedDraws=" + std::to_string(g_TgSweepCappedDraws[r]));
+        }
+    }
+    std::vector<std::pair<long, int>> order;
+    for (const auto& rec : g_TgSweep) order.push_back({ rec.second.firstFrame, rec.first });
+    std::sort(order.begin(), order.end());
+    for (const auto& entry : order) {
+        const int idx = entry.second;
+        const TgSweepRecord& rec = g_TgSweep[idx];
+        const std::string sdkName = (idx >= 0 && idx < (int)HeroSiege::Objects::kObjectCount)
+            ? std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject(idx)))
+            : std::string("none");
+        std::string runtimeName = "unreadable";
+        try { runtimeName = g_Yytk->CallBuiltin("object_get_name", { RValue((double)idx) }).ToString(); } catch (...) {}
+        const std::string rootName = rec.root >= 0 && rec.root < kTgSweepRootCount
+            ? std::string(HeroSiege::Objects::GetObjectName(kTgSweepRoots[rec.root])) : std::string("n/a");
+        Out("  " + sdkName + " idx=" + std::to_string(idx) + " runtime=" + runtimeName
+            + (runtimeName != sdkName ? " NAME-MISMATCH" : "")
+            + " root=" + rootName + " app=" + std::to_string(rec.app) + " present=" + (rec.present ? "1" : "0")
+            + " draws=" + std::to_string(rec.draws)
+            + " first=" + (rec.haveFirst ? TgProbeTglNumber(rec.first) : std::string("unreadable"))
+            + " last=" + (rec.haveFirst ? TgProbeTglNumber(rec.last) : std::string("unreadable"))
+            + " min=" + (rec.haveFirst ? TgProbeTglNumber(rec.min) : std::string("unreadable"))
+            + " max=" + (rec.haveFirst ? TgProbeTglNumber(rec.max) : std::string("unreadable"))
+            + " timerUnreadable=" + std::to_string(rec.timerUnreadable)
+            + " maxInst=" + std::to_string(rec.maxInst) + " own=" + TgProbeSweepOwnText(rec)
+            + " firstFrame=" + std::to_string(rec.firstFrame) + " lastFrame=" + std::to_string(rec.lastFrame)
+            + " totalDraws=" + std::to_string(rec.totalDraws));
+    }
+}
+
+static void TgProbeSweepCommand(const std::string& rest)
+{
+    std::string subRest;
+    const std::string sub = Lower(FirstToken(rest, subRest));
+    if (sub == "on" || sub == "1") {
+        g_TgSweepOn = true;
+        Out("tgprobe sweep -> sampler=on (" + std::to_string(kTgSweepRootCount) + " roots, up to "
+            + std::to_string(kTgSweepScanCap) + " instances each, read on every DrawHudBuffs draw)");
+        return;
+    }
+    if (sub == "off" || sub == "0") {
+        g_TgSweepOn = false;
+        Out("tgprobe sweep -> sampler=off (no reads; records kept)");
+        return;
+    }
+    if (sub == "clear") {
+        g_TgSweep.clear();
+        g_TgSweepDraws = 0;
+        g_TgSweepIndexUnreadable = 0;
+        g_TgSweepDropped = 0;
+        for (int r = 0; r < kTgSweepRootCount; ++r) g_TgSweepCappedDraws[r] = 0;
+        Out("tgprobe sweep clear: records=0");
+        return;
+    }
+    if (sub == "show" || sub.empty()) {
+        std::string ignored;
+        TgProbeSweepShow(Lower(FirstToken(subRest, ignored)));
+        return;
+    }
+    Out("tgprobe sweep: usage -> tgprobe sweep on|off|clear|show [seen|all]");
+}
+
 // One struct field as text for `tgprobe talents`: `absent` when the struct
 // has no such key, `unreadable` when the read throws - never a default.
 static std::string TgProbeTalentsField(const RValue& talent, const char* field)
@@ -25301,11 +25576,16 @@ static void TgProbeTalentsCommand(const std::string& rest)
 {
     static const char* const kFields[] = {
         "abilityId", "abilityAura", "abilityDuration", "abilityCooldown", "abilityLength", "abilityTags" };
-    constexpr long kWalkCap = 5000, kShowCap = 40;
+    // Session 8: `dur` lists every talent whose abilityDuration reads numeric
+    // and positive - the live floor of "duration skills" for the duration
+    // sweep's Results table - so it is not held to the 40-line display cap.
+    constexpr long kWalkCap = 5000, kShowCap = 40, kDurShowCap = 400;
     std::string ignored;
     const std::string arg = FirstToken(rest, ignored);
     const bool tagsMode = Lower(arg) == "tags";
-    const std::string filter = tagsMode ? std::string() : Lower(arg);
+    const bool durMode = Lower(arg) == "dur";
+    const std::string filter = (tagsMode || durMode) ? std::string() : Lower(arg);
+    const long showCap = durMode ? kDurShowCap : kShowCap;
 
     // T2 (issue #55): route A (abilityDuration x the runtime's tick rate)
     // cannot be falsified without a tick-rate readout, and nothing in
@@ -25384,6 +25664,16 @@ static void TgProbeTalentsCommand(const std::string& rest)
                                 + std::to_string(row.talentId) + " but abilityId maps to id " + std::to_string(id));
                     }
                 }
+                bool listed = filter.empty() || Lower(abilityId).find(filter) != std::string::npos;
+                if (durMode) {
+                    // Session 8: the duration read on its own, as a number -
+                    // never parsed back out of the printed field text.
+                    listed = false;
+                    try {
+                        RValue dv = g_Yytk->CallBuiltin("variable_struct_get", { talent, RValue(kFields[2]) });
+                        listed = N1Numeric(dv) && dv.ToDouble() > 0.0;
+                    } catch (...) {}
+                }
                 if (tagsMode) {
                     try {
                         RValue tags = g_Yytk->CallBuiltin("variable_struct_get", { talent, RValue("abilityTags") });
@@ -25395,8 +25685,8 @@ static void TgProbeTalentsCommand(const std::string& rest)
                             }
                         }
                     } catch (...) {}
-                } else if (filter.empty() || Lower(abilityId).find(filter) != std::string::npos) {
-                    if (shown < kShowCap) {
+                } else if (listed) {
+                    if (shown < showCap) {
                         std::string line = "  talent " + std::to_string(id);
                         for (int k = 0; k < 6; ++k) line += std::string(" ") + kFields[k] + "=" + values[k];
                         // T2: route A's falsification, on the same line as
@@ -25430,7 +25720,8 @@ static void TgProbeTalentsCommand(const std::string& rest)
     Out("tgprobe talents: ids=" + std::to_string(ids) + " shown=" + std::to_string(shown)
         + " nonNumericKeys=" + std::to_string(nonNumericKeys) + " notStruct=" + std::to_string(notStruct)
         + " walkExc=" + std::to_string(walkExc) + " truncated=" + (truncated ? "1" : "0")
-        + " tableRowsWithId=" + std::to_string(rowsWithId) + "/" + std::to_string(g_TgTgl.size()));
+        + " tableRowsWithId=" + std::to_string(rowsWithId) + "/" + std::to_string(g_TgTgl.size())
+        + (durMode ? " durCap=" + std::to_string(kDurShowCap) + " durTruncated=" + (hidden > 0 ? "1" : "0") : std::string()));
 }
 
 // Running counters and last-sample state for `tgprobe spurn`. Sampled once
@@ -25582,6 +25873,9 @@ static void TgProbeSpurnAfterDraw()
     // Session 6: every candidate row, and row 0's agreement control, on the
     // same draw (`tgprobe tgl`).
     TgProbeTglAfterDraw();
+    // Session 8: every descendant of the six candidate parents, one record
+    // per object_index (`tgprobe sweep`).
+    TgProbeSweepAfterDraw();
     TgProbeDrawMark(/*fromHudLayer=*/false);
     TgProbeSpriteDraw(/*fromHudLayer=*/false);
 }
@@ -25687,6 +25981,8 @@ static void TgProbeCommand(const std::string& rest)
     // Every toggle-skill candidate (issue #11 generalisation, session 6).
     if (sub == "talents") { TgProbeTalentsCommand(subRest); return; }
     if (sub == "tgl") { TgProbeTglCommand(subRest); return; }
+    // Every class's timed skill at once (issue #55, session 8).
+    if (sub == "sweep") { TgProbeSweepCommand(subRest); return; }
     Out("tgprobe: usage -> tgprobe hook [substr...] | show | reset | verbose on|off | slots | buffs | abilities"
         " | vars <Obj|global> | snap <Obj|global> | diff | room"
         " | deep snap|diff|flip|find|get|census|selftest|drop ..."
@@ -25694,7 +25990,8 @@ static void TgProbeCommand(const std::string& rest)
         " | sprite <SpriteName> [talentId|centre] | off | gold | style soft|halo|gradient|pulse | list"
         " | gallery [cols] | layer hud|buffs | scale [f] | colour [name|r g b] | box tuned|bbox"
         " | quad on|off | alpha [min] [max]"
-        " | talents [substr|tags] | tgl [add|list|clear|slots|fields|sub|timer]");
+        " | talents [substr|tags|dur] | tgl [add|list|clear|slots|fields|sub|timer]"
+        " | sweep on|off|clear|show [seen|all]");
 }
 #endif // FORGEPACT_RELEASE (tgprobe)
 

@@ -88,9 +88,20 @@ enum class GameObject { White_Mage_Soul_Spurn_AOE_obj, UI_Hud_Talent_obj, Univer
                         Exo_Lunar_Orbit_obj, Plague_Doctor_Crematus_obj, Shield_Lancer_Counter_World_obj,
                         Butcher_Submerged_Knives_obj, Prophet_Maelstrom_obj, Butcher_Blender_obj,
                         Exo_Lunar_Orbit_Crescent_Moon_obj, Plague_Doctor_Crematus_Controller_obj,
-                        Butcher_Submerged_Knives_Knifehoarder_obj };
+                        Butcher_Submerged_Knives_Knifehoarder_obj,
+                        // Session 8 (`tgprobe sweep`): the six parents the
+                        // sweep enumerates, so its root table compiles
+                        // against their real enumerators and resolves by name.
+                        Player_Damage_Parent_obj, Skill_Controller_obj, Player_Buff_Parent_obj,
+                        Player_Curse_Parent_obj, Player_Sentry_Parent_obj, Player_Ability_Parent_obj };
 inline const char* GetObjectName(GameObject g) {
     switch (g) {
+    case GameObject::Player_Damage_Parent_obj: return "Player_Damage_Parent_obj";
+    case GameObject::Skill_Controller_obj: return "Skill_Controller_obj";
+    case GameObject::Player_Buff_Parent_obj: return "Player_Buff_Parent_obj";
+    case GameObject::Player_Curse_Parent_obj: return "Player_Curse_Parent_obj";
+    case GameObject::Player_Sentry_Parent_obj: return "Player_Sentry_Parent_obj";
+    case GameObject::Player_Ability_Parent_obj: return "Player_Ability_Parent_obj";
     case GameObject::Universal_Double_Cast_obj: return "Universal_Double_Cast_obj";
     case GameObject::UI_Hud_Talent_obj: return "UI_Hud_Talent_obj";
     case GameObject::Exo_Lunar_Orbit_obj: return "Exo_Lunar_Orbit_obj";
@@ -150,6 +161,14 @@ static AoeInst Unattributed() {
 }
 static AoeInst WithTimer(AoeInst a, const RValue& timer) {
     a.destroyTimer = timer; return a;
+}
+// Session 8 (`tgprobe sweep`): an instance found under a parent carries its
+// own object_index, answered as VALUE_REF - what this runner returns for
+// object_index (see CInstance above) - so a sweep that only accepted plain
+// numbers would find nothing here, exactly as it would live.
+static RValue MakeRef(double n) { RValue r; r.m_Kind = VALUE_REF; r.number = n; return r; }
+static AoeInst OfObject(AoeInst a, double objectIndex) {
+    a.extra["object_index"] = MakeRef(objectIndex); return a;
 }
 
 // P2 (the shipped indicator): UI_Hud_Talent_obj instance 0's own `row0`
@@ -2075,6 +2094,162 @@ int main() {
     checkInt("skilltimer/draw_throw_restores_and_counts", g_StDrawExc, 1);
     checkNear("skilltimer/draw_throw_restores_and_counts/colour_restored", g_LastSetColour, kPrevColour);
     checkNear("skilltimer/draw_throw_restores_and_counts/alpha_restored", g_LastSetAlpha, kPrevAlpha);
+
+    // ---- session 8: `tgprobe sweep`, every class's timed skill at once ----
+    // Every root name the harness does not map answers kAoeObjIdx and
+    // `world.instances`, so each instance below is seen under all six roots
+    // - the same double-enumeration the live sentry/ability parents give -
+    // and a count that summed across roots would say so.
+    const double kSweepObjA = 3697.0, kSweepObjB = 5738.0;
+    auto resetSweep = [&]() { g_TgSweep.clear(); g_TgSweepOn = false; g_TgSweepDraws = 0; g_TgSweepIndexUnreadable = 0; };
+
+    // S1. Off by default, and off makes no builtin call at all; switched on
+    //     the same draw reads (positive control).
+    resetWorld(); resetSweep();
+    world.instances = { OfObject(WithTimer(OwnUnmarked(), MakeReal(100.0)), kSweepObjA) };
+    {
+        checkBool("sweep/off_makes_no_runtime_calls/default_off", g_TgSweepOn, false);
+        const long before = g_AnyCallCount;
+        TgProbeSweepAfterDraw();
+        checkBool("sweep/off_makes_no_runtime_calls", g_AnyCallCount - before == 0 && g_TgSweep.empty(), true);
+        g_TgSweepOn = true;
+        const long onBefore = g_AnyCallCount;
+        TgProbeSweepAfterDraw();
+        checkBool("sweep/off_makes_no_runtime_calls/control_on_reads",
+                  g_AnyCallCount - onBefore > 0 && g_TgSweep.count((int)kSweepObjA) == 1, true);
+    }
+
+    // S2. An appearance is a rising edge: present, present, absent, present
+    //     is two appearances; `draws` is the current appearance's, and the
+    //     instance counted under six roots is still one instance.
+    resetWorld(); resetSweep(); g_TgSweepOn = true;
+    {
+        const AoeInst a = OfObject(WithTimer(OwnUnmarked(), MakeReal(100.0)), kSweepObjA);
+        world.instances = { a, a };
+        ++g_RuntimeFrame; TgProbeSweepAfterDraw();
+        ++g_RuntimeFrame; TgProbeSweepAfterDraw();
+        world.instances.clear();
+        ++g_RuntimeFrame; TgProbeSweepAfterDraw();
+        const bool gone = !g_TgSweep[(int)kSweepObjA].present;
+        world.instances = { a };
+        ++g_RuntimeFrame; TgProbeSweepAfterDraw();
+        const TgSweepRecord& rec = g_TgSweep[(int)kSweepObjA];
+        checkInt("sweep/appearance_counts_rising_edge", rec.app, 2);
+        checkBool("sweep/appearance_counts_rising_edge/absent_draw_clears_present", gone, true);
+        checkInt("sweep/appearance_counts_rising_edge/draws_is_current_appearance", rec.draws, 1);
+        checkInt("sweep/appearance_counts_rising_edge/totalDraws", rec.totalDraws, 3);
+        checkInt("sweep/appearance_counts_rising_edge/maxInst_not_summed_across_roots", rec.maxInst, 2);
+    }
+
+    // S3. `first` is the first READABLE value of the appearance: an
+    //     unreadable first draw leaves it unset, the next numeric draw sets
+    //     it, a later draw moves only `last`; a new appearance restarts it.
+    resetWorld(); resetSweep(); g_TgSweepOn = true;
+    {
+        world.instances = { OfObject(OwnUnmarked(), kSweepObjA) };   // destroyTimer undefined
+        TgProbeSweepAfterDraw();
+        const bool unsetAfterUnreadable = !g_TgSweep[(int)kSweepObjA].haveFirst;
+        world.instances = { OfObject(WithTimer(OwnUnmarked(), MakeReal(50.0)), kSweepObjA) };
+        TgProbeSweepAfterDraw();
+        world.instances = { OfObject(WithTimer(OwnUnmarked(), MakeReal(40.0)), kSweepObjA) };
+        TgProbeSweepAfterDraw();
+        const TgSweepRecord& rec = g_TgSweep[(int)kSweepObjA];
+        checkBool("sweep/first_is_first_readable_of_appearance/unset_after_unreadable", unsetAfterUnreadable, true);
+        checkNear("sweep/first_is_first_readable_of_appearance", rec.first, 50.0);
+        checkNear("sweep/first_is_first_readable_of_appearance/last", rec.last, 40.0);
+        checkNear("sweep/first_is_first_readable_of_appearance/min", rec.min, 40.0);
+        checkNear("sweep/first_is_first_readable_of_appearance/max", rec.max, 50.0);
+        checkInt("sweep/first_is_first_readable_of_appearance/timerUnreadable", rec.timerUnreadable, 1);
+        world.instances.clear();
+        TgProbeSweepAfterDraw();
+        world.instances = { OfObject(WithTimer(OwnUnmarked(), MakeReal(70.0)), kSweepObjA) };
+        TgProbeSweepAfterDraw();
+        const TgSweepRecord& again = g_TgSweep[(int)kSweepObjA];
+        checkNear("sweep/first_is_first_readable_of_appearance/restarts", again.first, 70.0);
+        checkInt("sweep/first_is_first_readable_of_appearance/restarts_unreadable", again.timerUnreadable, 0);
+    }
+
+    // S4. An unreadable timer never becomes a number: undefined, a throw, a
+    //     string and a bool all count timerUnreadable and leave first/min/
+    //     max unset. Negative control beside it: an int64 reading counts.
+    resetWorld(); resetSweep(); g_TgSweepOn = true;
+    {
+        AoeInst undef = OfObject(OwnUnmarked(), kSweepObjA);
+        AoeInst threw = OfObject(OwnUnmarked(), kSweepObjA); threw.destroyTimerThrows = true;
+        RValue text("144"); RValue flag = MakeBool(true);
+        AoeInst str = OfObject(WithTimer(OwnUnmarked(), text), kSweepObjA);
+        AoeInst boo = OfObject(WithTimer(OwnUnmarked(), flag), kSweepObjA);
+        for (const AoeInst& a : { undef, threw, str, boo }) { world.instances = { a }; TgProbeSweepAfterDraw(); }
+        const TgSweepRecord& rec = g_TgSweep[(int)kSweepObjA];
+        checkBool("sweep/unreadable_never_defaults", !rec.haveFirst && rec.first == 0.0 && rec.min == 0.0 && rec.max == 0.0, true);
+        checkInt("sweep/unreadable_never_defaults/count", rec.timerUnreadable, 4);
+        checkInt("sweep/unreadable_never_defaults/draws", rec.draws, 4);
+        RValue i64; i64.m_Kind = VALUE_INT64; i64.number = 144.0;
+        world.instances = { OfObject(WithTimer(OwnUnmarked(), i64), kSweepObjA) };
+        TgProbeSweepAfterDraw();
+        checkBool("sweep/unreadable_never_defaults/control_int64_reads",
+                  g_TgSweep[(int)kSweepObjA].haveFirst && g_TgSweep[(int)kSweepObjA].first == 144.0, true);
+        // An object_index that is not an index (undefined) is counted and
+        // makes no record at all - never object 0.
+        world.instances = { WithTimer(OwnUnmarked(), MakeReal(9.0)) };
+        const long idxBefore = g_TgSweepIndexUnreadable;
+        TgProbeSweepAfterDraw();
+        checkBool("sweep/unreadable_never_defaults/index_unreadable_counted",
+                  g_TgSweepIndexUnreadable > idxBefore && g_TgSweep.count(0) == 0, true);
+    }
+
+    // S5. The draw's value is the largest reading among the object's
+    //     instances not measured foreign; a foreign instance's larger timer
+    //     is not taken, and two objects on one root keep separate records.
+    resetWorld(); resetSweep(); g_TgSweepOn = true;
+    {
+        world.instances = {
+            OfObject(WithTimer(OwnUnmarked(), MakeReal(100.0)), kSweepObjA),
+            OfObject(WithTimer(OwnUnmarked(), MakeReal(300.0)), kSweepObjA),
+            OfObject(WithTimer(Foreign(), MakeReal(999.0)), kSweepObjA),
+            OfObject(WithTimer(OwnUnmarked(), MakeReal(7.0)), kSweepObjB),
+        };
+        TgProbeSweepAfterDraw();
+        checkNear("sweep/largest_reading_of_draw_wins", g_TgSweep[(int)kSweepObjA].first, 300.0);
+        checkNear("sweep/largest_reading_of_draw_wins/foreign_not_taken", g_TgSweep[(int)kSweepObjA].max, 300.0);
+        checkNear("sweep/largest_reading_of_draw_wins/other_object_separate", g_TgSweep[(int)kSweepObjB].first, 7.0);
+        checkInt("sweep/largest_reading_of_draw_wins/maxInst", g_TgSweep[(int)kSweepObjA].maxInst, 3);
+        // Only foreign instances with a timer: present, but no own reading.
+        world.instances = { OfObject(WithTimer(Foreign(), MakeReal(999.0)), kSweepObjB) };
+        TgProbeSweepAfterDraw();
+        checkInt("sweep/largest_reading_of_draw_wins/foreign_only_is_unreadable",
+                 g_TgSweep[(int)kSweepObjB].timerUnreadable, 1);
+    }
+
+    // S6. Ownership readability is counted per draw: every isMyClient
+    //     kind-checked (readable), some (mixed), none (unreadable) - and the
+    //     record's own= says mixed once draws disagree.
+    resetWorld(); resetSweep(); g_TgSweepOn = true;
+    {
+        const AoeInst own = OfObject(WithTimer(OwnUnmarked(), MakeReal(10.0)), kSweepObjA);
+        const AoeInst unattr = OfObject(WithTimer(Unattributed(), MakeReal(10.0)), kSweepObjA);
+        world.instances = { own, own };       TgProbeSweepAfterDraw();
+        world.instances = { own, unattr };    TgProbeSweepAfterDraw();
+        world.instances = { unattr, unattr }; TgProbeSweepAfterDraw();
+        const TgSweepRecord& rec = g_TgSweep[(int)kSweepObjA];
+        checkInt("sweep/ownership_readability_counted_per_draw/readable", rec.ownReadableDraws, 1);
+        checkInt("sweep/ownership_readability_counted_per_draw/mixed", rec.ownMixedDraws, 1);
+        checkInt("sweep/ownership_readability_counted_per_draw/unreadable", rec.ownUnreadableDraws, 1);
+        checkBool("sweep/ownership_readability_counted_per_draw",
+                  std::string(TgProbeSweepOwnText(rec)) == "mixed", true);
+        // An unattributed instance still counts as own for the timer (D-N3):
+        // the third draw read its 10.
+        checkInt("sweep/ownership_readability_counted_per_draw/unattributed_timer_read", rec.timerUnreadable, 0);
+        resetSweep(); g_TgSweepOn = true;
+        world.instances = { own };    TgProbeSweepAfterDraw();
+        checkBool("sweep/ownership_readability_counted_per_draw/all_readable",
+                  std::string(TgProbeSweepOwnText(g_TgSweep[(int)kSweepObjA])) == "readable", true);
+        resetSweep(); g_TgSweepOn = true;
+        world.instances = { unattr }; TgProbeSweepAfterDraw();
+        checkBool("sweep/ownership_readability_counted_per_draw/all_unreadable",
+                  std::string(TgProbeSweepOwnText(g_TgSweep[(int)kSweepObjA])) == "unreadable", true);
+    }
+    resetSweep();
 
     // The read never makes a player-resolving call, in any scenario above -
     // counted here, at the end, so it covers every one of them.

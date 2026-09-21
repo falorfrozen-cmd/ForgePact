@@ -1870,7 +1870,7 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         add = function_body(self.plugin, "static void TgProbeTglAdd(")
         self.assertIn("TgProbeTglResolveObject(objectName, objIdx)", add)
         self.assertIn("unresolved", add)
-        self.assertIn("kTgTglCap", add)
+        self.assertIn("kTgTglRowCap", add)   # session 8: the row table's own cap
         unresolved = add.index("unresolved")
         self.assertLess(unresolved, add.index("push_back"))
         self.assertIn("return;", add[unresolved:add.index("push_back")])
@@ -2618,7 +2618,15 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         })
         self.assertGreater(len(signatures), len(UNCHANGED_PROBE_BODIES))
         for signature in signatures:
-            self.assertEqual(function_body(self.plugin, signature), function_body(old, signature), signature)
+            new_body = function_body(self.plugin, signature)
+            # NARROWED for session 8 (duration sweep), not deleted: `tgl add`
+            # and `tgl list` now bound the row table by its own kTgTglRowCap
+            # (DurationSweepProbeContractTests.test_tgl_row_cap_is_separate_
+            # from_the_sub_walk_cap) - that one renamed bound is the only
+            # change either body may carry.
+            if signature in ("static void TgProbeTglAdd(", "static void TgProbeTglList("):
+                new_body = new_body.replace("kTgTglRowCap", "kTgTglCap")
+            self.assertEqual(new_body, function_body(old, signature), signature)
         # The `tgl` seed table itself, which carries every candidate row.
         for source in (self.plugin, old):
             self.assertIn("static const TgTglSeed kTgTglSeeds[] = {", source)
@@ -2626,6 +2634,203 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         start_old = old.index("static const TgTglSeed kTgTglSeeds[] = {")
         self.assertEqual(self.plugin[start_new:self.plugin.index("};", start_new)].replace("\r\n", "\n"),
                          old[start_old:old.index("};", start_old)].replace("\r\n", "\n"))
+
+
+# The six parents session 8's sweep enumerates (context "The instrument: sweep
+# the parents, not a seed table"), in the order the sampler scans them: the
+# damage parent first, the ability parent last, so an object under the sentry
+# parent (itself an ability-parent child) is attributed to the sentry root.
+SWEEP_ROOTS = (
+    "Player_Damage_Parent_obj", "Skill_Controller_obj", "Player_Buff_Parent_obj",
+    "Player_Curse_Parent_obj", "Player_Sentry_Parent_obj", "Player_Ability_Parent_obj",
+)
+# The class prefixes and the five non-damage roots the static table is drawn
+# from (docs/toggle-skills-research.md, "#### Static candidates").
+SWEEP_CLASS_PREFIXES = (
+    "Amazon", "Bard", "Butcher", "Demon_Slayer", "Demonspawn", "Exo", "Illusionist", "Jotunn",
+    "Marauder", "Marksman", "Necromancer", "Nomad", "Paladin", "Pirate", "Plague_Doctor", "Prophet",
+    "Pyromancer", "Redneck", "Samurai", "Shaman", "Shield_Lancer", "Stormweaver", "Viking", "White_Mage",
+)
+SWEEP_STATIC_ROOTS = (
+    "Player_Ability_Parent_obj", "Skill_Controller_obj", "Player_Sentry_Parent_obj",
+    "Player_Buff_Parent_obj", "Player_Curse_Parent_obj",
+)
+
+
+class DurationSweepProbeContractTests(unittest.TestCase):
+    """Session 8's research instrument (duration skills, phase R).
+
+    `tgprobe sweep` reads `destroyTimer` on every descendant of six parents
+    at once, one record per `object_index`, so one live session can say which
+    class's timed skill carries a readable timer that spans its cast. Research
+    build only; the companion `sweep/` scenarios in
+    test_toggle_skill_behavior.py run its record update and sampler against a
+    controlled runtime. `tgprobe talents dur` and the `tgl` row cap are the
+    two companions the same build adds.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.plugin = PLUGIN_SRC.read_text(encoding="utf-8").replace("\r\n", "\n")
+        cls.stripped = strip_research_blocks(cls.plugin)
+        start = cls.plugin.index(BLOCK_START)
+        cls.block = cls.plugin[start:cls.plugin.index(BLOCK_END, start)]
+        cls.doc = (FORGEPACT_DIR / "docs" / "toggle-skills-research.md").read_text(
+            encoding="utf-8").replace("\r\n", "\n")
+        cls.sampler = function_body(cls.plugin, "static void TgProbeSweepAfterDraw()")
+        cls.note = function_body(cls.plugin, "static void TgProbeSweepNote(")
+
+    def section(self):
+        start = self.doc.index("### Duration sweep (session 8): every class's timed skill")
+        return self.doc[start:]
+
+    def test_tgprobe_dispatches_sweep(self):
+        body = function_body(self.plugin, "static void TgProbeCommand(const std::string& rest)")
+        self.assertIn('sub == "sweep"', body)
+        self.assertIn("TgProbeSweepCommand(subRest)", body)
+        self.assertIn("sweep on|off|clear|show [seen|all]", body)
+        command = function_body(self.plugin, "static void TgProbeSweepCommand(const std::string& rest)")
+        for sub in ("on", "off", "clear", "show"):
+            self.assertIn(f'sub == "{sub}"', command)
+        self.assertIn("g_TgSweep.clear();", command[command.index('sub == "clear"'):])
+        show = function_body(self.plugin, "static void TgProbeSweepShow(")
+        for mode in ('"seen"', '"all"'):
+            self.assertIn(mode, show)
+
+    def test_sweep_roots_are_sdk_constants(self):
+        start = self.plugin.index("static const HeroSiege::Objects::GameObject kTgSweepRoots[] = {")
+        table = self.plugin[start:self.plugin.index("};", start)]
+        roots = re.findall(r"HeroSiege::Objects::GameObject::(\w+)", table)
+        self.assertEqual(tuple(roots), SWEEP_ROOTS)
+        objects_hpp = (SDK_INCLUDE / "objects.hpp").read_text(encoding="utf-8")
+        for root in roots:
+            self.assertRegex(objects_hpp, rf"\b{root}\s*=\s*\d+,", root)
+        # Resolved by name every draw, from the SDK constant's own name - no
+        # literal object name and no index anywhere in the sampler.
+        self.assertIn("HeroSiege::Objects::GetObjectName(kTgSweepRoots[r])", self.sampler)
+        self.assertIn("TgProbeTglResolveObject(rootName, rootIdx)", self.sampler)
+        for root in SWEEP_ROOTS:
+            self.assertNotIn(f'"{root}"', self.block, root)
+        self.assertNotRegex(self.sampler, r"RValue\(\d{3,}")
+
+    def test_sweep_reads_object_index_timer_and_ownership_by_name(self):
+        for needle in ('"instance_number"', '"instance_find"', '"object_index"', '"isMyClient"',
+                       "ForgePact::kSkillTimerField", "N1ObjectIndex(oi, objIdx)",
+                       "ToggleIndicatorReadTruth(mc, isMine)", "N1Numeric(tv)", "kTgSweepScanCap"):
+            self.assertIn(needle, self.sampler, needle)
+        # The VALUE_REF-aware predicate, never a VALUE_REAL-only kind check.
+        self.assertNotIn("VALUE_REAL", self.sampler)
+        for banned in ("CallBuiltinEx", "HhResolveLocalPlayer", "GetMembers(", '"playerNumber"'):
+            self.assertNotIn(banned, self.sampler)
+        # Per-root counts, merged by max: the sentry parent's children are the
+        # ability parent's children too, so a sum would double them.
+        self.assertIn("if (pr.second > o.inst) o.inst = pr.second;", self.sampler)
+        self.assertIn("static constexpr long kTgSweepScanCap = 256;", self.plugin)
+        show = function_body(self.plugin, "static void TgProbeSweepShow(")
+        for needle in ('"object_get_name"', "HeroSiege::Objects::GetObjectName(", "NAME-MISMATCH",
+                       "firstFrame", "roots=", "unresolved=", "capped=", "records=", "dropped=",
+                       "indexUnreadable=", "app=", "draws=", "first=", "last=", "min=", "max=",
+                       "timerUnreadable=", "maxInst=", "own=", "root=", "totalDraws="):
+            self.assertIn(needle, show, needle)
+
+    def test_sweep_off_by_default_and_gates_every_read(self):
+        self.assertIn("static bool g_TgSweepOn = false;", self.plugin)
+        self.assertTrue(self.sampler.strip().startswith("if (!g_TgSweepOn) return;"), self.sampler[:80])
+        gate = self.sampler.index("if (!g_TgSweepOn) return;")
+        self.assertLess(gate, self.sampler.index("CallBuiltin"))
+        self.assertLess(gate, self.sampler.index("TgProbeTglResolveObject("))
+        command = function_body(self.plugin, "static void TgProbeSweepCommand(const std::string& rest)")
+        on = command[command.index('sub == "on"'):command.index('sub == "off"')]
+        self.assertIn("g_TgSweepOn = true;", on)
+        off = command[command.index('sub == "off"'):command.index('sub == "clear"')]
+        self.assertIn("g_TgSweepOn = false;", off)
+        # Hung off the existing research after-draw path, right after the
+        # `tgl` sampler - never Hook_DrawHudBuffs or FrameCallback directly.
+        after = function_body(self.plugin, "static void TgProbeSpurnAfterDraw()")
+        self.assertLess(after.index("TgProbeTglAfterDraw();"), after.index("TgProbeSweepAfterDraw();"))
+        self.assertNotIn("TgProbeSweep", function_body(self.plugin, "static RValue& Hook_DrawHudBuffs("))
+        self.assertNotIn("TgProbeSweep", function_body(self.plugin, "void FrameCallback("))
+
+    def test_sweep_unreadable_is_never_a_default(self):
+        # A draw with instances but no numeric reading counts timerUnreadable
+        # and returns before first/last/min/max are touched; `first` prints
+        # `unreadable` until an appearance produces a number.
+        unreadable = self.note.index("if (!obs->haveReading) { ++rec.timerUnreadable; return; }")
+        self.assertLess(unreadable, self.note.index("rec.haveFirst = true;"))
+        self.assertLess(unreadable, self.note.index("rec.last = v;"))
+        show = function_body(self.plugin, "static void TgProbeSweepShow(")
+        self.assertIn('rec.haveFirst ? TgProbeTglNumber(rec.first) : std::string("unreadable")', show)
+        # A throw on the object_index read is counted, never taken as index 0.
+        self.assertIn("++g_TgSweepIndexUnreadable", self.sampler)
+        # Only numeric kinds are a timer reading; a string or bool is not.
+        self.assertIn("if (N1Numeric(tv)) {", self.sampler)
+
+    def test_sweep_is_absent_from_the_player_build(self):
+        for name in ("TgProbeSweep", "TgSweep", "kTgSweep", "g_TgSweep", "sweep show"):
+            self.assertIn(name, self.block, name)
+            self.assertNotIn(name, self.stripped, name)
+        # No new hook: the sweep only reads, from the existing draw path.
+        for call in ("MmCreateHook(", "HookOneScript(", "HookOneScriptTable(", "InstallScriptHook("):
+            self.assertNotIn(call, self.sampler)
+            self.assertNotIn(call, self.note)
+        self.assertEqual(self.block.count("MmCreateHook("), 1)
+
+    def test_talents_dur_filter_prints_positive_durations_uncapped_at_40(self):
+        body = function_body(self.plugin, "static void TgProbeTalentsCommand(")
+        self.assertIn('const bool durMode = Lower(arg) == "dur";', body)
+        self.assertIn("kDurShowCap = 400", body)
+        self.assertIn("const long showCap = durMode ? kDurShowCap : kShowCap;", body)
+        self.assertIn("if (shown < showCap) {", body)
+        # The duration is read as a number on its own, never parsed out of a
+        # printed field, and only a positive one is shown.
+        dur = body[body.index("if (durMode) {"):]
+        self.assertIn('RValue(kFields[2])', dur[:600])
+        self.assertIn("N1Numeric(dv) && dv.ToDouble() > 0.0", dur[:600])
+        self.assertIn("durTruncated=", body)
+        self.assertIn("kShowCap = 40", body)
+
+    def test_tgl_row_cap_is_separate_from_the_sub_walk_cap(self):
+        self.assertIn("static constexpr int kTgTglCap = 16;", self.plugin)
+        self.assertIn("static constexpr int kTgTglRowCap = 64;", self.plugin)
+        add = function_body(self.plugin, "static void TgProbeTglAdd(")
+        self.assertIn("(int)g_TgTgl.size() >= kTgTglRowCap", add)
+        self.assertNotIn("kTgTglCap", add)
+        self.assertIn("kTgTglRowCap", function_body(self.plugin, "static void TgProbeTglList()"))
+        sub = function_body(self.plugin, "static void TgProbeTglSub()")
+        self.assertIn("i < len && i < kTgTglCap", sub)
+        self.assertNotIn("kTgTglRowCap", sub)
+
+    def test_static_candidates_section_matches_the_sdk(self):
+        from hs_game_sdk import GameObject, get_parent_index, NO_PARENT
+        names = {o.value: o.name for o in GameObject}
+
+        def ancestors(value):
+            chain = []
+            parent = get_parent_index(value)
+            while parent not in (None, NO_PARENT) and parent >= 0:
+                chain.append(names.get(parent, str(parent)))
+                parent = get_parent_index(parent)
+            return chain
+
+        expected = [
+            o for o in GameObject
+            if any(o.name.startswith(prefix + "_") for prefix in SWEEP_CLASS_PREFIXES)
+            and any(root in ancestors(o.value) for root in SWEEP_STATIC_ROOTS)
+        ]
+        section = self.section()
+        static = section[section.index("#### Static candidates"):section.index("#### Instrument")]
+        # Measured 2026-09-21 on this SDK; a regenerated SDK that moves the
+        # count means the doc table needs regenerating too.
+        self.assertEqual(len(expected), 207)
+        listed = re.findall(r"^\| `(\w+)` \| (\d+) \|", static, re.M)
+        self.assertEqual(sorted((n, int(i)) for n, i in listed),
+                         sorted((o.name, o.value) for o in expected))
+        self.assertIn("| `White_Mage_Healing_Zone_obj` | 5738 |", static)
+        for heading in ("#### Static candidates", "#### Instrument", "#### Live procedure", "#### Results"):
+            self.assertIn(heading, section)
+        # The doc sits under Issue #55, after its own ### Decision.
+        issue = self.doc.index("## Issue #55")
+        self.assertLess(issue, self.doc.index("### Duration sweep (session 8)"))
 
 
 class SkillTimerProbeContractTests(unittest.TestCase):

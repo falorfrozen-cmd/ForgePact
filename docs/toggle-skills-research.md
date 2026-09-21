@@ -3302,3 +3302,472 @@ stat`) prints the current style, the shared table's resolved talent ids, the
 aggregate counters (`drawn noInstance unreadable expired toggleOn
 toggleUnreadable unresolved noSlot latched unlatched drawExc
 fontUnresolved`) and one line per row named by `abilityId`.
+
+### Duration sweep (session 8): every class's timed skill
+
+The countdown above reads its rows from the toggle table, so it can only ever
+cover those five skills - and two of them (Lunar Orbit, Submerged Knives) can
+never draw one. This section is the research round for the owner's request of
+2026-09-21: extend the countdown to every class's timed skill, Healing Zone
+included, shipping only rows that were measured to carry a readable
+`destroyTimer`. One research build reads the timer on every candidate at once
+(`tgprobe sweep`), one live session measures a curated cast list with
+Maelstrom of Frost as the positive control, and the ship round then fills a
+countdown table of its own from this section's Results table below - never
+from this static list.
+
+#### Static candidates
+
+What `hs-game-sdk` says before any session: names, indices and parent chains
+only, from the SDK's own object hierarchy (`GameObject`, `get_parent_index`).
+The search covers the 761 objects whose name starts with a class prefix
+(`Amazon_ Bard_ Butcher_ Demon_Slayer_ Demonspawn_ Exo_ Illusionist_ Jotunn_
+Marauder_ Marksman_ Necromancer_ Nomad_ Paladin_ Pirate_ Plague_Doctor_
+Prophet_ Pyromancer_ Redneck_ Samurai_ Shaman_ Shield_Lancer_ Stormweaver_
+Viking_ White_Mage_`), grouped by the ancestor that makes each one a
+candidate:
+
+| ancestor | class-prefixed descendants | why it is a candidate root |
+|---|---|---|
+| `Player_Ability_Parent_obj` (3536) | 169 | the SDK carries `gml_Script_StepAbilityParentDestroyTimer` (index 3707), a per-step `destroyTimer` routine named for this parent; `White_Mage_Healing_Zone_obj` = 5738 is here, and session 1 saw a Healing Zone cast raise this parent's census (`+ census.Player_Ability_Parent_obj=1`, hz2/hz3) |
+| `Skill_Controller_obj` (4606) | 28 | the toggle table's three controller rows live here; a controller persists for a skill's duration |
+| `Player_Sentry_Parent_obj` (3557), itself under the ability parent, including `Shaman_Totem_Parent_obj` (4443) | 20 | turrets, totems, hydra, altars - placed objects with a lifetime |
+| `Player_Buff_Parent_obj` (3538) / `Player_Curse_Parent_obj` (3542) | 4 / 6 | instance-backed buffs and curses (Combat Orders, Defensive Shout, Toxic Flask Alchemy, the Necromancer and Stormweaver curses) |
+| `Player_Damage_Parent_obj` (3543) | 495 | both measured timer carriers are here (`White_Mage_Soul_Spurn_AOE_obj` 5759, `first=144`; `Prophet_Maelstrom_obj` 3697, `first=4320`), so `destroyTimer` is not confined to ability objects; swept live, not listed below - 495 rows would bury the table |
+
+The tables below are the 207 class-prefixed objects under the five
+non-damage roots, generated from the hub root with the SDK snippet recorded
+in the workorder (the same set `DurationSweepProbeContractTests.
+test_static_candidates_section_matches_the_sdk` recomputes and checks against
+this section). The sentry parent's descendants are also descendants of the
+ability parent; each object is listed once, under the first group it falls in.
+
+**Under `Skill_Controller_obj` (4606): 28 objects**
+
+| object | index | parent chain |
+|---|---|---|
+| `Amazon_Spearnage_Controller_obj` | 202 | Skill_Controller_obj |
+| `Bard_Flying_Fists_Controller_obj` | 542 | Skill_Controller_obj |
+| `Butcher_Blender_Nanoblades_obj` | 701 | Skill_Controller_obj |
+| `Butcher_Chain_Rip_Chainfueled_Hunting_obj` | 707 | Skill_Controller_obj |
+| `Butcher_Submerged_Knives_Knifehoarder_obj` | 729 | Skill_Controller_obj |
+| `Demon_Slayer_Absolute_Mayhem_Controller_obj` | 1152 | Skill_Controller_obj |
+| `Demon_Slayer_Bullet_Hell_Controller_obj` | 1156 | Skill_Controller_obj |
+| `Demonspawn_Blood_Bolts_Controller_obj` | 1184 | Skill_Controller_obj |
+| `Demonspawn_Bone_Barrage_Controller_obj` | 1192 | Skill_Controller_obj |
+| `Exo_Asteroid_Galactic_Cataclysm_obj` | 1463 | Skill_Controller_obj |
+| `Exo_Lunar_Orbit_Crescent_Moon_obj` | 1471 | Skill_Controller_obj |
+| `Exo_Supernova_Connected_obj` | 1484 | Skill_Controller_obj |
+| `Jotunn_Blizzard_Controller_obj` | 2295 | Skill_Controller_obj |
+| `Jotunn_Sweep_Freeze_Frost_Sunder_obj` | 2316 | Skill_Controller_obj |
+| `Marauder_Bombardment_Controller_obj` | 2601 | Skill_Controller_obj |
+| `Marksman_Arrow_Rampage_Controller_obj` | 2636 | Skill_Controller_obj |
+| `Nomad_Eye_of_Ra_Lightbringer_Controller_obj` | 3222 | Skill_Controller_obj |
+| `Nomad_Sand_Gush_Controller_obj` | 3228 | Skill_Controller_obj |
+| `Nomad_Scimitar_Charge_Phantom_Controller_obj` | 3233 | Skill_Controller_obj |
+| `Plague_Doctor_Crematus_Controller_obj` | 3502 | Skill_Controller_obj |
+| `Pyromancer_Armageddon_Controller_obj` | 3841 | Skill_Controller_obj |
+| `Pyromancer_Armageddon_Warped_Controller_obj` | 3844 | Skill_Controller_obj |
+| `Pyromancer_Blazing_Trail_Controller_obj` | 3847 | Skill_Controller_obj |
+| `Redneck_Chainsaw_Slash_Woodcutters_obj` | 4028 | Skill_Controller_obj |
+| `Samurai_Smoke_Bomb_Trail_Controller_obj` | 4249 | Skill_Controller_obj |
+| `Shaman_Meteor_Storm_Controller_obj` | 4422 | Skill_Controller_obj |
+| `White_Mage_Black_Mass_Controller_obj` | 5727 | Skill_Controller_obj |
+| `White_Mage_Heavenly_Fire_Controller_obj` | 5740 | Skill_Controller_obj |
+
+**Under `Player_Buff_Parent_obj` (3538): 4 objects**
+
+| object | index | parent chain |
+|---|---|---|
+| `Demonspawn_Blood_Bolt_Wave_Trail_obj` | 1183 | Player_Buff_Parent_obj |
+| `Plague_Doctor_Toxic_Flask_Alchemy_obj` | 3527 | Player_Buff_Parent_obj |
+| `Viking_Combat_Orders_obj` | 5619 | Player_Buff_Parent_obj |
+| `Viking_Defensive_Shout_obj` | 5620 | Player_Buff_Parent_obj |
+
+**Under `Player_Curse_Parent_obj` (3542): 6 objects**
+
+| object | index | parent chain |
+|---|---|---|
+| `Necromancer_Amplify_Damage_obj` | 3035 | Player_Curse_Parent_obj |
+| `Necromancer_Cursed_Ground_obj` | 3048 | Player_Curse_Parent_obj |
+| `Necromancer_Life_Tap_obj` | 3050 | Player_Curse_Parent_obj |
+| `Stormweaver_Static_Shock_obj` | 4722 | Player_Curse_Parent_obj |
+| `Stormweaver_Storm_Cloud_Aftershock_obj` | 4726 | Player_Curse_Parent_obj |
+| `White_Mage_Satans_Mark_obj` | 5752 | Player_Curse_Parent_obj |
+
+**Under `Player_Sentry_Parent_obj` (3557), including `Shaman_Totem_Parent_obj` (4443): 20 objects**
+
+| object | index | parent chain |
+|---|---|---|
+| `Amazon_Death_From_Above_Ancient_Device_obj` | 182 | Shaman_Totem_Parent_obj > Player_Sentry_Parent_obj > Player_Ability_Parent_obj |
+| `Amazon_Storm_Dash_Pillar_obj` | 210 | Shaman_Totem_Parent_obj > Player_Sentry_Parent_obj > Player_Ability_Parent_obj |
+| `Demonspawn_Bone_Altar_obj` | 1190 | Shaman_Totem_Parent_obj > Player_Sentry_Parent_obj > Player_Ability_Parent_obj |
+| `Illusionist_Age_Proliferation_Arcane_Echo_obj` | 2231 | Shaman_Totem_Parent_obj > Player_Sentry_Parent_obj > Player_Ability_Parent_obj |
+| `Marksman_Arrow_Turret_obj` | 2641 | Player_Sentry_Parent_obj > Player_Ability_Parent_obj |
+| `Marksman_Cannon_Turret_obj` | 2643 | Player_Sentry_Parent_obj > Player_Ability_Parent_obj |
+| `Marksman_Rocket_Turret_obj` | 2660 | Player_Sentry_Parent_obj > Player_Ability_Parent_obj |
+| `Necromancer_Necrotic_Ward_obj` | 3053 | Shaman_Totem_Parent_obj > Player_Sentry_Parent_obj > Player_Ability_Parent_obj |
+| `Paladin_Holy_Bolt_Illumination_obj` | 3354 | Shaman_Totem_Parent_obj > Player_Sentry_Parent_obj > Player_Ability_Parent_obj |
+| `Paladin_Vengeance_Electric_Pillar_obj` | 3370 | Shaman_Totem_Parent_obj > Player_Sentry_Parent_obj > Player_Ability_Parent_obj |
+| `Plague_Doctor_Crematus_Container_obj` | 3501 | Shaman_Totem_Parent_obj > Player_Sentry_Parent_obj > Player_Ability_Parent_obj |
+| `Plague_Doctor_Plague_of_Rats_Den_obj` | 3519 | Shaman_Totem_Parent_obj > Player_Sentry_Parent_obj > Player_Ability_Parent_obj |
+| `Prophet_Thorned_Roots_Poison_Ivy_obj` | 3717 | Shaman_Totem_Parent_obj > Player_Sentry_Parent_obj > Player_Ability_Parent_obj |
+| `Pyromancer_Hydra_obj` | 3864 | Player_Sentry_Parent_obj > Player_Ability_Parent_obj |
+| `Shaman_Totem_Chaos_obj` | 4432 | Shaman_Totem_Parent_obj > Player_Sentry_Parent_obj > Player_Ability_Parent_obj |
+| `Shaman_Totem_Earth_obj` | 4436 | Shaman_Totem_Parent_obj > Player_Sentry_Parent_obj > Player_Ability_Parent_obj |
+| `Shaman_Totem_Fire_obj` | 4441 | Shaman_Totem_Parent_obj > Player_Sentry_Parent_obj > Player_Ability_Parent_obj |
+| `Shaman_Totem_Parent_obj` | 4443 | Player_Sentry_Parent_obj > Player_Ability_Parent_obj |
+| `Shaman_Totem_Storm_obj` | 4447 | Shaman_Totem_Parent_obj > Player_Sentry_Parent_obj > Player_Ability_Parent_obj |
+| `White_Mage_Chain_of_Holy_Light_Altar_obj` | 5733 | Shaman_Totem_Parent_obj > Player_Sentry_Parent_obj > Player_Ability_Parent_obj |
+
+**Under `Player_Ability_Parent_obj` (3536), not under the sentry parent: 149 objects**
+
+| object | index | parent chain |
+|---|---|---|
+| `Amazon_Death_From_Above_obj` | 185 | Player_Ability_Parent_obj |
+| `Amazon_Envenom_obj` | 188 | Player_Ability_Parent_obj |
+| `Amazon_Envenom_Wave_obj` | 189 | Player_Ability_Parent_obj |
+| `Amazon_Raining_Spear_Dummy_obj` | 195 | Player_Ability_Parent_obj |
+| `Amazon_Raining_Spear_obj` | 196 | Player_Ability_Parent_obj |
+| `Amazon_Spearnage_Lightning_Ball_obj` | 203 | Player_Ability_Parent_obj |
+| `Bard_Crowd_Diver_Blinking_Fiststrike_Dummy_obj` | 537 | Player_Ability_Parent_obj |
+| `Bard_Crowd_Diver_iFist_Dummy_obj` | 539 | Player_Ability_Parent_obj |
+| `Bard_Hair_Tornado_obj` | 544 | Player_Ability_Parent_obj |
+| `Bard_Moshpit_Massacre_obj` | 548 | Player_Ability_Parent_obj |
+| `Bard_Progenies_Amplifier_obj` | 551 | Player_Ability_Parent_obj |
+| `Bard_Progenies_Amplifier_Osha_obj` | 552 | Player_Ability_Parent_obj |
+| `Bard_Progenies_Amplifier_Small_obj` | 553 | Player_Ability_Parent_obj |
+| `Bard_Sacrilegious_Symphony_Loader_obj` | 563 | Player_Ability_Parent_obj |
+| `Bard_Sacrilegious_Symphony_Note_obj` | 565 | Player_Ability_Parent_obj |
+| `Bard_Slaying_Riffs_Amplifier_obj` | 567 | Player_Ability_Parent_obj |
+| `Bard_Slaying_Riffs_Satanic_Note_obj` | 570 | Player_Ability_Parent_obj |
+| `Butcher_Furious_Strike_Cinder_obj` | 716 | Player_Ability_Parent_obj |
+| `Demon_Slayer_Absolute_Mayhem_Vacuum_obj` | 1154 | Player_Ability_Parent_obj |
+| `Demon_Slayer_Demons_Calling_Meteor_obj` | 1158 | Player_Ability_Parent_obj |
+| `Demon_Slayer_Demons_Heart_obj` | 1160 | Player_Ability_Parent_obj |
+| `Demon_Slayer_Floating_Blood_obj` | 1165 | Player_Ability_Parent_obj |
+| `Demon_Slayer_Shadow_Anomaly_obj` | 1170 | Player_Ability_Parent_obj |
+| `Demon_Slayer_Trigger_Finger_Raining_obj` | 1176 | Player_Ability_Parent_obj |
+| `Demonspawn_Blood_Bolt_Demon_obj` | 1179 | Player_Ability_Parent_obj |
+| `Demonspawn_Blood_Surge_Unlimited_Power_obj` | 1188 | Player_Ability_Parent_obj |
+| `Demonspawn_Bone_Barrage_Rain_obj` | 1194 | Player_Ability_Parent_obj |
+| `Demonspawn_Bone_Storm_Controller_obj` | 1197 | Player_Ability_Parent_obj |
+| `Exo_Asteroid_obj` | 1464 | Player_Ability_Parent_obj |
+| `Exo_Solar_Flare_Grand_Flare_obj` | 1480 | Player_Ability_Parent_obj |
+| `Exo_Solar_Flare_obj` | 1481 | Player_Ability_Parent_obj |
+| `Exo_Solar_Flare_Solar_Orb_obj` | 1482 | Player_Ability_Parent_obj |
+| `Exo_Tsunami_Waterspout_Burst_obj` | 1487 | Player_Ability_Parent_obj |
+| `Exo_Tsunami_Waterspout_obj` | 1488 | Player_Ability_Parent_obj |
+| `Illusionist_Age_Proliferation_obj` | 2234 | Player_Ability_Parent_obj |
+| `Illusionist_Gravitational_Slam_AOE_obj` | 2239 | Player_Explosion_Ability_Parent_obj > Player_Ability_Parent_obj |
+| `Illusionist_Gravitational_Slam_Soul_obj` | 2241 | Player_Ability_Parent_obj |
+| `Illusionist_Sand_Guardian_obj` | 2244 | Player_Ability_Parent_obj |
+| `Illusionist_Temporal_Arrow_Rain_obj` | 2248 | Player_Ability_Parent_obj |
+| `Illusionist_Temporal_Comet_obj` | 2249 | Player_Ability_Parent_obj |
+| `Illusionist_Temporal_Raining_Arrow_obj` | 2251 | Player_Ability_Parent_obj |
+| `Jotunn_Avalanche_Neverending_Winter_obj` | 2289 | Player_Ability_Parent_obj |
+| `Jotunn_Avalanche_Nordic_Stigma_obj` | 2290 | Player_Ability_Parent_obj |
+| `Jotunn_Avalanche_Snowshade_obj` | 2293 | Player_Ability_Parent_obj |
+| `Jotunn_Blizzard_obj` | 2296 | Player_Ability_Parent_obj |
+| `Jotunn_Blizzard_Snowmageddon_obj` | 2297 | Player_Ability_Parent_obj |
+| `Marauder_Bombardment_ICBM_obj` | 2603 | Player_Ability_Parent_obj |
+| `Marauder_Bouncing_Grenade_obj` | 2606 | Player_Ability_Parent_obj |
+| `Marauder_Chain_Trap_obj` | 2608 | Player_Ability_Parent_obj |
+| `Marauder_Chain_Trap_Spin_obj` | 2609 | Player_Ability_Parent_obj |
+| `Marauder_Retiarius_Net_obj` | 2624 | Player_Ability_Parent_obj |
+| `Marauder_The_Big_Boom_obj` | 2627 | Player_Ability_Parent_obj |
+| `Marauder_Unstable_Bomb_obj` | 2628 | Player_Ability_Parent_obj |
+| `Marksman_Arrow_Rain_Kill_Command_obj` | 2634 | Player_Ability_Parent_obj |
+| `Marksman_Arrow_Rain_obj` | 2635 | Player_Ability_Parent_obj |
+| `Marksman_Arrow_Rampage_Shrapnel_obj` | 2638 | Player_Ability_Parent_obj |
+| `Marksman_Arrow_Turret_Augment_obj` | 2639 | Player_Ability_Parent_obj |
+| `Marksman_Arrow_Turret_Explosive_Arrow_Head_obj` | 2640 | Player_Ability_Parent_obj |
+| `Marksman_Beacon_obj` | 2642 | Player_Ability_Parent_obj |
+| `Marksman_Frag_Grenade_Cluster_obj` | 2649 | Player_Ability_Parent_obj |
+| `Marksman_Frag_Grenade_obj` | 2651 | Player_Ability_Parent_obj |
+| `Marksman_Homing_Missile_obj` | 2654 | Player_Ability_Parent_obj |
+| `Marksman_Landmine_Air_Raid_Bomb_obj` | 2655 | Player_Ability_Parent_obj |
+| `Marksman_Landmine_Air_Raid_obj` | 2656 | Player_Ability_Parent_obj |
+| `Marksman_Landmine_obj` | 2657 | Player_Ability_Parent_obj |
+| `Marksman_Raining_Arrow_obj` | 2658 | Player_Ability_Parent_obj |
+| `Marksman_Turret_Cannonball_obj` | 2663 | Player_Ability_Parent_obj |
+| `Necromancer_Bone_Shred_Bomb_obj` | 3036 | Player_Ability_Parent_obj |
+| `Necromancer_Bone_Spirit_obj` | 3040 | Player_Ability_Parent_obj |
+| `Necromancer_Corpse_Explosion_Aura_obj` | 3043 | Player_Ability_Parent_obj |
+| `Necromancer_Meat_Bomb_Leftovers_obj` | 3051 | Player_Ability_Parent_obj |
+| `Necromancer_Meat_Bomb_obj` | 3052 | Player_Ability_Parent_obj |
+| `Paladin_Ball_Lightning_Phantom_obj` | 3345 | Player_Ability_Parent_obj |
+| `Paladin_Fist_of_Heavens_Augment_obj` | 3349 | Player_Ability_Parent_obj |
+| `Paladin_Fist_of_Heavens_obj` | 3351 | Player_Ability_Parent_obj |
+| `Paladin_Fist_of_Heavens_Warrior_obj` | 3353 | Player_Ability_Parent_obj |
+| `Paladin_Holy_Hammer_Thors_Revenge_obj` | 3360 | Player_Ability_Parent_obj |
+| `Pirate_Barrel_Bouncing_obj` | 3439 | Player_Ability_Parent_obj |
+| `Pirate_Barrel_obj` | 3440 | Player_Ability_Parent_obj |
+| `Pirate_Bomb_Barrage_Controller_obj` | 3443 | Player_Ability_Parent_obj |
+| `Pirate_Bomb_Barrage_Rain_obj` | 3444 | Player_Ability_Parent_obj |
+| `Pirate_Bomb_Rain_obj` | 3445 | Player_Ability_Parent_obj |
+| `Pirate_Exploding_Shot_obj` | 3451 | Player_Ability_Parent_obj |
+| `Pirate_Grenado_obj` | 3455 | Player_Ability_Parent_obj |
+| `Pirate_Land_Ahoy_obj` | 3457 | Player_Ability_Parent_obj |
+| `Pirate_Powder_Trail_obj` | 3462 | Player_Ability_Parent_obj |
+| `Pirate_Torrent_obj` | 3493 | Player_Ability_Parent_obj |
+| `Plague_Doctor_Jar_Leech_obj` | 3505 | Player_Ability_Parent_obj |
+| `Plague_Doctor_Miasma_Meteor_Fireball_obj` | 3509 | Player_Ability_Parent_obj |
+| `Plague_Doctor_Miasma_Meteor_obj` | 3510 | Player_Ability_Parent_obj |
+| `Plague_Doctor_Randy_Dummy_obj` | 3522 | Player_Ability_Parent_obj |
+| `Plague_Doctor_Toxic_Flask_obj` | 3530 | Player_Ability_Parent_obj |
+| `Prophet_Maelstrom_Meteor_obj` | 3696 | Player_Ability_Parent_obj |
+| `Prophet_Maelstrom_Storm_obj` | 3698 | Player_Ability_Parent_obj |
+| `Prophet_Spirit_Ent_Domino_Trunk_obj` | 3706 | Player_Ability_Parent_obj |
+| `Prophet_Thorned_Branch_Falling_Branch_obj` | 3714 | Player_Ability_Parent_obj |
+| `Prophet_Thorned_Branch_Growth_obj` | 3715 | Player_Ability_Parent_obj |
+| `Prophet_Worm_obj` | 3721 | Player_Ability_Parent_obj |
+| `Pyromancer_Armageddon_obj` | 3843 | Player_Ability_Parent_obj |
+| `Pyromancer_Blazing_Detonation_Field_obj` | 3846 | Player_Ability_Parent_obj |
+| `Pyromancer_Breath_Molten_Orb_obj` | 3850 | Player_Ability_Parent_obj |
+| `Pyromancer_Comet_Hydra_obj` | 3853 | Player_Ability_Parent_obj |
+| `Pyromancer_Comet_obj` | 3854 | Player_Ability_Parent_obj |
+| `Pyromancer_Fire_Ball_Fly_obj` | 3856 | Player_Ability_Parent_obj |
+| `Pyromancer_Fire_Ball_obj` | 3857 | Player_Ability_Parent_obj |
+| `Pyromancer_Hydra_Fire_Ball_obj` | 3863 | Player_Ability_Parent_obj |
+| `Pyromancer_Living_Bomb_obj` | 3865 | Player_Ability_Parent_obj |
+| `Pyromancer_Phoenix_Flight_Seed_obj` | 3868 | Player_Ability_Parent_obj |
+| `Pyromancer_Scorching_Harvester_obj` | 3871 | Player_Ability_Parent_obj |
+| `Pyromancer_Trail_of_Comets_obj` | 3874 | Player_Ability_Parent_obj |
+| `Pyromancer_Volcano_Fragment_obj` | 3875 | Player_Ability_Parent_obj |
+| `Redneck_Molotov_obj` | 4031 | Player_Ability_Parent_obj |
+| `Redneck_Molotov_Spill_obj` | 4032 | Player_Ability_Parent_obj |
+| `Redneck_Oil_Fly_Big_obj` | 4033 | Player_Ability_Parent_obj |
+| `Redneck_Oil_Fly_obj` | 4034 | Player_Ability_Parent_obj |
+| `Redneck_Oil_Ground_Big_obj` | 4035 | Player_Ability_Parent_obj |
+| `Redneck_Oil_Ground_obj` | 4036 | Player_Ability_Parent_obj |
+| `Redneck_Pipe_Bomb_obj` | 4040 | Player_Ability_Parent_obj |
+| `Redneck_Plane_Bomb_obj` | 4041 | Player_Ability_Parent_obj |
+| `Redneck_Tree_Trunk_Triumph_obj` | 4048 | Player_Ability_Parent_obj |
+| `Samurai_Battle_Glance_Blood_Harvest_obj` | 4220 | Player_Ability_Parent_obj |
+| `Samurai_Battle_Glance_Shadow_obj` | 4222 | Player_Ability_Parent_obj |
+| `Samurai_Exploding_Bolas_Cluster_Duck_obj` | 4229 | Player_Ability_Parent_obj |
+| `Samurai_Explosive_Bola_Attach_obj` | 4230 | Player_Ability_Parent_obj |
+| `Samurai_Omnislash_Shadow_Meteor_obj` | 4238 | Player_Ability_Parent_obj |
+| `Samurai_Shadow_Step_Clone_obj` | 4240 | Player_Ability_Parent_obj |
+| `Samurai_Shadow_Step_Daggerstorm_obj` | 4241 | Player_Ability_Parent_obj |
+| `Samurai_Shuriken_Creator_obj` | 4244 | Player_Ability_Parent_obj |
+| `Samurai_Smoke_Bomb_Projectile_obj` | 4248 | Player_Ability_Parent_obj |
+| `Shaman_Rock_Fragments_obj` | 4425 | Player_Ability_Parent_obj |
+| `Shaman_Totem_Chaos_Meteor_obj` | 4430 | Player_Ability_Parent_obj |
+| `Shaman_Totem_Earth_Projectile_obj` | 4437 | Player_Ability_Parent_obj |
+| `Shield_Lancer_Commending_Banner_obj` | 4473 | Player_Ability_Parent_obj |
+| `Shield_Lancer_Crushing_Lance_obj` | 4477 | Player_Ability_Parent_obj |
+| `Shield_Lancer_Honed_Defenses_Sky_Bulwark_obj` | 4482 | Player_Ability_Parent_obj |
+| `Shield_Lancer_Shield_Wall_Vortex_obj` | 4491 | Player_Ability_Parent_obj |
+| `Stormweaver_Storm_Bolt_Magnetize_obj` | 4724 | Player_Ability_Parent_obj |
+| `Viking_Charge_Mountain_Fall_obj` | 5616 | Player_Ability_Parent_obj |
+| `Viking_Meteorology_obj` | 5625 | Player_Ability_Parent_obj |
+| `Viking_Monster_Throw_obj` | 5626 | Player_Explosion_Ability_Parent_obj > Player_Ability_Parent_obj |
+| `Viking_Younger_Dryas_Comet_obj` | 5640 | Player_Ability_Parent_obj |
+| `White_Mage_Chain_of_Holy_Light_Grasp_obj` | 5735 | Player_Ability_Parent_obj |
+| `White_Mage_Healing_Zone_obj` | 5738 | Player_Ability_Parent_obj |
+| `White_Mage_Heavenly_Fire_Orb_obj` | 5742 | Player_Ability_Parent_obj |
+| `White_Mage_Malediction_Crow_obj` | 5743 | Player_Ability_Parent_obj |
+| `White_Mage_Mana_Orb_obj` | 5745 | Player_Ability_Parent_obj |
+| `White_Mage_Restless_Spirits_Master_obj` | 5749 | Player_Ability_Parent_obj |
+| `White_Mage_Satans_Mark_Soul_Combustion_obj` | 5753 | Player_Ability_Parent_obj |
+| `White_Mage_Soul_Spurn_obj` | 5761 | Player_Ability_Parent_obj |
+
+Notable entries, called out because the live procedure below turns on them:
+
+- **`White_Mage_Healing_Zone_obj` = 5738**, directly under the ability
+  parent - the owner-named outlier, and the ability parent's representative.
+- **Crematus has three objects in three groups**: the controller
+  `Plague_Doctor_Crematus_Controller_obj` = 3502 (what the toggle table
+  ships), the container `Plague_Doctor_Crematus_Container_obj` = 3501 (under
+  the totem parent), and the damage-parent `Plague_Doctor_Crematus_obj` =
+  3503 (not listed above; the seed object whose `destroyTimer` read `432`).
+  Only a measurement decides which, if any, spans the cast.
+- **Controller + effect pairs**: Jotunn's Blizzard
+  (`Jotunn_Blizzard_Controller_obj` 2295 + `Jotunn_Blizzard_obj` 2296, both
+  non-damage) and Shaman's Meteor Storm (`Shaman_Meteor_Storm_Controller_obj`
+  4422 + the damage-parent `Shaman_Meteor_Storm_obj` 4423) - the two shapes a
+  controller-backed skill takes.
+- **Maelstrom of Frost has objects on both sides**: the measured carrier
+  `Prophet_Maelstrom_obj` 3697 is a damage-parent child, while
+  `Prophet_Maelstrom_Meteor_obj` 3696 and `Prophet_Maelstrom_Storm_obj` 3698
+  are ability-parent children - so the control also shows the sweep keeps
+  sibling objects apart by `object_index`.
+- **Samurai's Blade Barrier** (`Samurai_Blade_Barrier_obj` = 4225,
+  `Orbit_Parent_obj` > damage parent, not listed) is the one candidate with a
+  known non-zero `abilityDuration` (6, `predictedTotal=864` in an earlier
+  `tgprobe talents` dump), so its `first=` can be compared against a
+  prediction.
+
+Labelled negatives - what the static search cannot answer, recorded so a
+later reader does not re-run it:
+
+- **abilityIds are not in the SDK.** Which talent a sweep object belongs to
+  is known only live (`global.talentStructMap`, through `tgprobe talents`) or
+  from the game's own `translationsTalent.csv` keys on the owner's machine
+  (721 `talent_name_*`, `healingZone` among them) - not in this repository.
+  The object-to-skill attribution therefore comes from the live procedure's
+  `sweep clear` before each cast, not from any name match.
+- **`abilityDuration` is a floor, not the set.** Soul Spurn, Lunar Orbit and
+  Crematus read `abilityDuration=0` while their objects measurably have a
+  lifetime, so `tgprobe talents dur` (every talent with a positive
+  `abilityDuration`) names skills to cast but cannot rule one out.
+- **Buff-carried durations have no cast object here.** A skill whose
+  duration lives on a player buff (Counter's buff 104, Berserk and the like)
+  shows up in `talents dur` with no sweep object; it is recorded
+  `buff-carried, not a cast object`, never read through the buff array in
+  this round.
+
+#### Instrument
+
+Research build only (`plugin_build\build.bat dev`, inside the `tgprobe`
+block; nothing below reaches `BloodPactPlugin_ship.dll`). Three additions:
+
+- **`tgprobe sweep on|off|clear|show [seen|all]`** - a parent-descendant
+  sweep. GameMaker's `instance_number`/`instance_find` on a parent enumerate
+  every descendant's instances (the same property `tgprobe abilities`
+  already relies on), so six root scans see every candidate above without a
+  compiled seed table. On every `DrawHudBuffs` draw, while `on`, the sampler
+  resolves each root by name (`asset_get_index` of the SDK constant's name:
+  `Player_Damage_Parent_obj`, `Skill_Controller_obj`,
+  `Player_Buff_Parent_obj`, `Player_Curse_Parent_obj`,
+  `Player_Sentry_Parent_obj`, `Player_Ability_Parent_obj`), scans up to 256
+  instances per root, and reads per instance its `object_index` (accepted
+  through the VALUE_REF-aware index predicate), `isMyClient` (kind-checked)
+  and `destroyTimer`. It keeps one record per `object_index`:
+  - `app` - appearances, counted on the rising edge (a draw with at least one
+    instance after a draw with none);
+  - `draws`, `first`, `last`, `min`, `max`, `timerUnreadable` - for the
+    CURRENT appearance, restarted on each rising edge. The draw's value is
+    the largest numeric `destroyTimer` among that object's instances not
+    measured foreign (the shipped countdown's own rule); `first` is the first
+    READABLE value of the appearance and prints `unreadable` when the
+    appearance never produced one; a draw with instances but no numeric
+    reading counts `timerUnreadable` and changes nothing else - never a
+    default value;
+  - `maxInst` - the most instances seen on one draw, taken per root rather
+    than summed, since the sentry parent's children are the ability parent's
+    children too;
+  - `own=readable|unreadable|mixed|n/a` - from each draw's `isMyClient`
+    reads: every instance kind-checked (`readable`), none (`unreadable`), or
+    both on one draw or across draws (`mixed`);
+  - `firstFrame`/`lastFrame`, `totalDraws`, `root` (the first root that saw
+    it), `present`.
+
+  `show` prints a header (`draws=`, `roots=<resolved>/6`, `unresolved=`,
+  `capped=` - draws on which a root held more than 256 instances -,
+  `records=`, `dropped=` past the 1024-record cap, `indexUnreadable=`) and
+  one line per record, sorted by `firstFrame`, naming the object twice: the
+  SDK name for that index and the runtime's `object_get_name`, with
+  `NAME-MISMATCH` when they differ (that would mean the SDK table is stale).
+  `show all` adds one line per root with its resolved index and last
+  instance count. `clear` drops every record. `off` by default, and while
+  off the sampler returns before any builtin call.
+- **`tgprobe talents dur`** - every talent whose `abilityDuration` reads
+  numeric and positive, not capped at the usual 40 lines (a 400-line cap,
+  reported as `durTruncated=` on the summary line). Before this build `dur`
+  was an ordinary abilityId substring filter.
+- **`tgl` row cap** - `tgprobe tgl add` now holds up to 64 rows
+  (`kTgTglRowCap`), so every candidate found mid-session can be added by
+  name for `tgl timer`/`tgl fields`; the `tgl sub` array walk keeps its own
+  16-index bound (`kTgTglCap`), which mirrors the shipped guard's scan cap.
+
+The harness (`tests/test_toggle_skill_behavior.py`, `sweep/` scenarios) runs
+the sampler and its record update against a controlled runtime: off makes no
+call, the rising edge counts appearances, `first` is the first readable
+value of an appearance, an unreadable timer never becomes a number, the
+largest reading of a draw wins, and ownership readability is counted per
+draw.
+
+#### Live procedure
+
+In town, research DLL installed, commands sent from the panel or
+`bp_ipc\cmd.txt`. The sweep stays broad - it records whatever appears under
+the six roots - but the casts are curated: the owner has every class and
+asked for representatives and outliers, not every skill. **Cast list, in this
+order (11 casts, 8 classes); Maelstrom of Frost is the positive control and
+is cast FIRST:**
+
+| # | class | skill | candidate object(s) (SDK name = index; root) | why it is on the list |
+|---|---|---|---|---|
+| 1 | Prophet | Maelstrom of Frost (plain, `s11` not allocated) | `Prophet_Maelstrom_obj` = 3697 (damage) | positive control, measured `first=4320` twice already (sessions 6/7); cast first |
+| 2 | White Mage | Healing Zone | `White_Mage_Healing_Zone_obj` = 5738 (ability) | owner-named outlier; ability-parent representative; session 1 saw its cast raise the ability census |
+| 3 | Jotunn | Blizzard | `Jotunn_Blizzard_obj` = 2296 (ability) + `Jotunn_Blizzard_Controller_obj` = 2295 (controller) | ability + controller pair: which of the two carries the spanning timer |
+| 4 | Marksman | Arrow Rain | `Marksman_Arrow_Rain_obj` = 2635 (ability) | ability-parent skill with no controller sibling |
+| 5 | Marksman | Arrow Turret | `Marksman_Arrow_Turret_obj` = 2641 (sentry) | `Player_Sentry_Parent_obj` representative (same class as 4: one hotbar) |
+| 6 | Plague Doctor | Crematus (plain, `s13` not allocated) | `Plague_Doctor_Crematus_Controller_obj` = 3502 (controller) vs `Plague_Doctor_Crematus_obj` = 3503 (damage) | outlier: the toggle table ships the controller, the timer was measured only on the damage object (`432`); decides the open ship finding |
+| 7 | Shaman | Meteor Storm | `Shaman_Meteor_Storm_Controller_obj` = 4422 (controller) + `Shaman_Meteor_Storm_obj` = 4423 (damage) | controller + damage-parent pair (the other pairing shape, against 3) |
+| 8 | Shaman | Fire Totem | `Shaman_Totem_Fire_obj` = 4441 (`Shaman_Totem_Parent_obj` > sentry) | totem representative (same class as 7) |
+| 9 | Viking | Defensive Shout | `Viking_Defensive_Shout_obj` = 5620 (`Player_Buff_Parent_obj`) | instance-backed buff representative |
+| 10 | Viking | Berserk | none by substring (no SDK object) | outlier for the `buff-carried, not a cast object` status: a duration `talents dur` names with no sweep object (same class as 9) |
+| 11 | Samurai | Blade Barrier | `Samurai_Blade_Barrier_obj` = 4225 (`Orbit_Parent_obj` > damage) | damage-parent representative with a known `abilityDuration=6` (`predictedTotal=864`), so `first=` can be compared against it |
+
+Every other skill stays `not observed (not cast)`; the table is additive
+across later sessions. Steps:
+
+1. `tgprobe talents dur` - paste every line (the coverage floor for the
+   Results table).
+2. `tgprobe tgl on`, `tgprobe sweep on`, `tgprobe sweep clear`.
+3. Positive control first (cast list #1): as the Prophet, a plain Maelstrom
+   of Frost; wait 30 s; `tgprobe sweep show`, then `tgprobe tgl timer` -
+   paste both. The sweep's `Prophet_Maelstrom_obj` line and the `tgl` row
+   `maelstromOfFrost` must both read `first=4320.000000`. The two
+   instruments reach the same instance by different routes (the `tgl` row
+   by the object itself, the sweep through its damage-parent scan), so the
+   agreement proves the sweep's enumeration, its object-index read and its
+   timer read at once. **Until that agreement is on record every other
+   sweep line is `blocked`, not a negative.**
+4. For cast list #2 to #11, in order: `tgprobe sweep clear`; cast once; wait
+   until the effect has visibly ended; `tgprobe sweep show` - paste (every
+   line shown is attributed to this cast, which is why `clear` comes first);
+   cast again; wait; `tgprobe sweep show` - paste (`app=2`, with a second
+   `first=`). For a skill with a toggle sub-talent, measure the plain form
+   (sub-talent not allocated). A cast whose `show` prints no record line is
+   pasted too - that is #10's expected shape.
+5. `tgprobe talents <abilityId>` for each skill cast, to record its
+   `abilityId` and `abilityDuration` beside the object.
+
+What a zero may and may not mean: a candidate object with `app=0` after its
+skill was cast is `not observed` - the cast may have created an object under
+no scanned root, or one hidden behind a root's 256-instance cap (`capped=`
+says whether that happened) - never "carries no destroyTimer". A candidate
+never cast is `not observed` with reason `not cast`.
+
+#### Results
+
+Filled from session 8's own output, pasted verbatim, and nothing else. A row
+is marked `ship` only when: (a) the object appeared in exactly one skill's
+clear-cast-show window; (b) `app >= 2` with the two `first=` values within
+1.0 of each other; (c) `first > 0`; (d) on at least one appearance `draws`
+is within 15 % of `first` (the timer spans the instance's life, so it is the
+cast's duration rather than, say, a projectile's own lifetime - Submerged
+Knives' object once read `first=32.4` against `draws=140`); (e) `own=readable`
+(ships with `isMyClient`) or `own=unreadable` (ships with no ownership field;
+every instance is the player's own offline) - `mixed` is not shipped this
+round. Otherwise the status is `not observed`, `blocked` (the positive
+control has not fired) or `buff-carried, not a cast object` (`talents dur`
+names it, no sweep object appeared, and the duration is visibly a self-buff).
+
+Session-level lines, filled before the table:
+
+- positive control (`tgprobe sweep show` line for `Prophet_Maelstrom_obj`):
+- positive control (`tgprobe tgl timer` row `maelstromOfFrost`):
+- `tgprobe talents dur` output:
+
+| skill (abilityId) | class | object (SDK name, index) | root | app | first #1 | first #2 | draws #1 | own | talents dur line | status | reason |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| Maelstrom of Frost | Prophet | `Prophet_Maelstrom_obj`, 3697 | damage | | | | | | | | |
+| Healing Zone | White Mage | `White_Mage_Healing_Zone_obj`, 5738 | ability | | | | | | | | |
+| Blizzard | Jotunn | `Jotunn_Blizzard_obj`, 2296 | ability | | | | | | | | |
+| Blizzard | Jotunn | `Jotunn_Blizzard_Controller_obj`, 2295 | controller | | | | | | | | |
+| Arrow Rain | Marksman | `Marksman_Arrow_Rain_obj`, 2635 | ability | | | | | | | | |
+| Arrow Turret | Marksman | `Marksman_Arrow_Turret_obj`, 2641 | sentry | | | | | | | | |
+| Crematus | Plague Doctor | `Plague_Doctor_Crematus_Controller_obj`, 3502 | controller | | | | | | | | |
+| Crematus | Plague Doctor | `Plague_Doctor_Crematus_obj`, 3503 | damage | | | | | | | | |
+| Meteor Storm | Shaman | `Shaman_Meteor_Storm_Controller_obj`, 4422 | controller | | | | | | | | |
+| Meteor Storm | Shaman | `Shaman_Meteor_Storm_obj`, 4423 | damage | | | | | | | | |
+| Fire Totem | Shaman | `Shaman_Totem_Fire_obj`, 4441 | sentry | | | | | | | | |
+| Defensive Shout | Viking | `Viking_Defensive_Shout_obj`, 5620 | buff | | | | | | | | |
+| Berserk | Viking | none | - | | | | | | | | |
+| Blade Barrier | Samurai | `Samurai_Blade_Barrier_obj`, 4225 | damage | | | | | | | | |

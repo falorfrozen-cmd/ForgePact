@@ -211,6 +211,26 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
             implementation(cls.plugin, "static void TgProbeTglSnapshot("),
             implementation(cls.plugin, "static std::string TgProbeTglFieldsText("),
             implementation(cls.plugin, "static void TgProbeTglAfterDraw("),
+            # Session 8 (duration sweep, research build only): the six-root
+            # sampler and its per-object record update, spliced from inside
+            # the tgprobe block the same way as the `tgl` sampler above.
+            # `show` is not spliced - it calls Out(); the contract test pins it.
+            implementation(cls.plugin, "static const HeroSiege::Objects::GameObject kTgSweepRoots[] = {") + ";",
+            declaration(cls.plugin, "static constexpr int kTgSweepRootCount"),
+            declaration(cls.plugin, "static constexpr long kTgSweepScanCap"),
+            declaration(cls.plugin, "static constexpr size_t kTgSweepRecordCap"),
+            declaration(cls.plugin, "static bool g_TgSweepOn"),
+            implementation(cls.plugin, "struct TgSweepObs {") + ";",
+            implementation(cls.plugin, "struct TgSweepRecord {") + ";",
+            declaration(cls.plugin, "static std::map<int, TgSweepRecord> g_TgSweep"),
+            declaration(cls.plugin, "static long g_TgSweepDraws"),
+            declaration(cls.plugin, "static long g_TgSweepCappedDraws"),
+            declaration(cls.plugin, "static long g_TgSweepLastCount"),
+            declaration(cls.plugin, "static double g_TgSweepLastIdx"),
+            declaration(cls.plugin, "static int g_TgSweepRootsResolved"),
+            implementation(cls.plugin, "static void TgProbeSweepNote("),
+            implementation(cls.plugin, "static const char* TgProbeSweepOwnText("),
+            implementation(cls.plugin, "static void TgProbeSweepAfterDraw("),
         ])
 
         out = ROOT / "build/toggle-skill-behavior"
@@ -650,6 +670,38 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
     def test_table_fields_snapshot_uses_own_instance(self):
         for suffix in ("/own_fields", "", "/no_own_reads_nothing", "/no_own_stores_nothing", "/no_own_line"):
             self.assertScenario("table/fields_snapshot_uses_own_instance" + suffix)
+
+    # ---- session 8: the duration sweep (`tgprobe sweep`, research only) ----
+
+    def test_sweep_off_makes_no_runtime_calls(self):
+        for suffix in ("/default_off", "", "/control_on_reads"):
+            self.assertScenario("sweep/off_makes_no_runtime_calls" + suffix)
+
+    def test_sweep_appearance_counts_rising_edge(self):
+        for suffix in ("", "/absent_draw_clears_present", "/draws_is_current_appearance",
+                       "/totalDraws", "/maxInst_not_summed_across_roots"):
+            self.assertScenario("sweep/appearance_counts_rising_edge" + suffix)
+
+    def test_sweep_first_is_first_readable_of_appearance(self):
+        for suffix in ("/unset_after_unreadable", "", "/last", "/min", "/max", "/timerUnreadable",
+                       "/restarts", "/restarts_unreadable"):
+            self.assertScenario("sweep/first_is_first_readable_of_appearance" + suffix)
+
+    def test_sweep_unreadable_never_defaults(self):
+        # The negative (undefined, throw, string, bool) beside its positive
+        # control (an int64 reading counts), plus an unreadable object_index.
+        for suffix in ("", "/count", "/draws", "/control_int64_reads", "/index_unreadable_counted"):
+            self.assertScenario("sweep/unreadable_never_defaults" + suffix)
+
+    def test_sweep_largest_reading_of_draw_wins(self):
+        for suffix in ("", "/foreign_not_taken", "/other_object_separate", "/maxInst",
+                       "/foreign_only_is_unreadable"):
+            self.assertScenario("sweep/largest_reading_of_draw_wins" + suffix)
+
+    def test_sweep_ownership_readability_counted_per_draw(self):
+        for suffix in ("/readable", "/mixed", "/unreadable", "", "/unattributed_timer_read",
+                       "/all_readable", "/all_unreadable"):
+            self.assertScenario("sweep/ownership_readability_counted_per_draw" + suffix)
 
     # ---- issue #55: the timed-skill countdown (`skilltimer`) --------------
 
