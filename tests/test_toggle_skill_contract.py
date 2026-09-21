@@ -2980,6 +2980,55 @@ class SkillTimerProbeContractTests(unittest.TestCase):
         self.assertIn("get_timer", doc)
         self.assertIn("current_time", doc)
 
+    # ---- 2026-09-21 live session: `bar` and `number` sit ABOVE the icon ----
+
+    def test_number_defaults_above_the_icon(self):
+        # The tester nudged `number` to textoffset (0, -101) on the tuned
+        # 77x78 Soul Spurn box; that is now the default. Still anchored to the
+        # bottom edge, so `textoffset 0 2` restores the old placement.
+        self.assertIn("static double g_TgSpriteTextOffsetDx = 0.0, g_TgSpriteTextOffsetDy = -101.0;", self.plugin)
+        body = function_body(self.plugin, "static void TgProbeSpriteDrawNumber(")
+        self.assertIn("y + h + g_TgSpriteTextOffsetDy", body)
+
+    def test_bar_draws_above_the_box_offset_by_baroffset(self):
+        self.assertIn("static double g_TgSpriteBarOffsetDx = 0.0, g_TgSpriteBarOffsetDy = 0.0;", self.plugin)
+        body = function_body(self.plugin, "static void TgProbeSpriteDrawBar(")
+        # anchored to the box's TOP edge, never below it
+        self.assertNotIn("y + h + kBarGap", body)
+        self.assertIn("by1 = y - kBarGap + g_TgSpriteBarOffsetDy", body)
+        self.assertIn("by0 = by1 - kBarHeight", body)
+        self.assertIn("bx0 = x + g_TgSpriteBarOffsetDx", body)
+        # the stub guard survives the move
+        self.assertIn("if (barWidth < 1.0) return;", body)
+
+    def test_baroffset_command_parses_both_values_or_changes_nothing(self):
+        body = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
+        branch = body[body.index('lower == "baroffset"'):body.index('lower == "textalpha"')]
+        self.assertIn("ParseFiniteNumber(dxStr, dx) && ParseFiniteNumber(dyStr, dy)", branch)
+        refusal = branch.index("tgprobe sprite baroffset: usage")
+        assign = branch.index("g_TgSpriteBarOffsetDx = dx;")
+        self.assertLess(refusal, assign, "a refused baroffset must return before storing anything")
+        self.assertIn("TgProbeSpriteBarOffsetText()", branch)
+        # reported on the `off` line and on `style bar`'s confirmation
+        off_branch = body[body.index('lower == "off"'):body.index('lower == "list"')]
+        self.assertIn("TgProbeSpriteBarOffsetText()", off_branch)
+        self.assertIn('kind == TgSpriteStyleKind::Bar ? " " + TgProbeSpriteBarOffsetText()', body)
+
+    def test_baroffset_feeds_bar_only(self):
+        for fn in ("TgProbeSpriteDrawSoft(", "TgProbeSpriteDrawHalo(", "TgProbeSpriteDrawGradient(",
+                   "TgProbeSpriteDrawPulse(", "TgProbeSpriteDrawArc(", "TgProbeSpriteDrawNumber(",
+                   "TgProbeSpriteDrawFade(", "TgProbeSpriteDrawGoldRect(", "TgProbeSpriteDrawOne("):
+            body = function_body(self.plugin, f"static void {fn}")
+            self.assertNotIn("g_TgSpriteBarOffset", body, f"{fn} must not reference the bar offset")
+        for name in ("g_TgSpriteBarOffsetDx", "g_TgSpriteBarOffsetDy", "TgProbeSpriteBarOffsetText"):
+            self.assertIn(name, self.block, name)
+            self.assertNotIn(name, self.stripped, name)
+
+    def test_research_doc_records_the_above_icon_placement(self):
+        doc = self.research_doc
+        self.assertIn("baroffset", doc)
+        self.assertIn("0,-101", doc)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2894,7 +2894,8 @@ rebuild-and-relaunch to correct (`AGENTS.md` § "Limit Rebuilds & Reruns"):
 - **`tgprobe sprite textoffset [dx] [dy]`** - `number`'s offset from the
   box's BOTTOM edge, centred horizontally, default `(0, 2)` - `bar`'s own
   proven-visible gap, so the first look out of the box is already known to
-  clear the icon. `TgProbeSpriteDrawNumber` no longer contains any
+  clear the icon. (Default moved to `(0, -101)`, above the icon, after the
+  2026-09-21 session - see "Fourth follow-up" below.) `TgProbeSpriteDrawNumber` no longer contains any
   `y + h / 2.0` expression.
 - **`tgprobe sprite textalpha [a]`** - `number`'s own flat opacity (0..255
   or 0..1), independent of the band-ramp `alpha [min] [max]` `soft`/
@@ -3036,6 +3037,39 @@ four already read that one variable):
   the animation started, with the wrapped fraction phase shown separately
   as `phase=`.
 
+#### Fourth follow-up: live session 2026-09-21 - `frac anim` measured, `bar`/`number` moved above the icon
+
+One session on the research build of ForgePact `d2b18b2`, White Mage, Soul
+Spurn's slot (talent 240, tuned box 77x78):
+
+- **Positive control first:** `style soft` at `frac 1.0` was visible over
+  the slot, so this draw site reaches the screen in this session.
+- **The clock advances in real time.** `frac anim 10` chose
+  `src=get_timer` and finished `anim=done elapsed=10.004 ticks=2670
+  clockFail=0`; a 20 s run finished at `elapsed=20.001`, and the fraction
+  read at each style switch (`0.688`, `0.365`, `0.052`) matched the
+  controlling script's own wall clock to within the IPC poll delay. The
+  tester reported the drain as "very smooth" in `arc`, `bar`, `number` and
+  `fade`. `current_time` was never needed and remains unread on this
+  runtime. The tester did not report a stopwatch figure, so the wall-clock
+  agreement rests on the script's timing, not a hand-held stopwatch.
+- **`loop` and cancel behave as specified.** `anim 5 loop` read
+  `elapsed=7.285 phase=2.285 frac=0.543` then `elapsed=14.784
+  phase=4.784 frac=0.043`; a plain `frac 0.5` read back `anim=off` and
+  stayed at 0.5. Over a 142 s loop the `off` line read `draws=20520
+  ticks=20520 drawExc=0 textDrawExc=0 clockFail=0` - one tick per draw.
+  The draw rate (~190-270 per second) is well above the frame rate, so
+  this draw path runs several times a frame; harmless here because the
+  fraction comes from the clock, not from counting draws.
+- **Placement: the tester wants `bar` and `number` above the icon.**
+  `number` was nudged live to `textoffset 0,-101` (text top 23 px above the
+  box's top edge), now its default. `bar` had no placement control, so it
+  now draws above the box by default (bottom edge 2 px above the box's top)
+  and gained `tgprobe sprite baroffset [dx] [dy]` - an offset from that
+  spot, default `0,0`, reported on the `off` line and on `style bar`'s
+  confirmation - so it can be tuned live the same way. The new `bar`
+  position is not yet seen in-game.
+
 ### Live procedure
 
 Run from `plugin_build\build.bat dev`'s `BloodPactPlugin_rel.dll`, one
@@ -3090,8 +3124,8 @@ session:
    candidate at `frac 0.5` and `frac 0.0`, then for `bar`, `number` and
    `fade` at the same three fractions, pasting `draws=`/`drawExc=` after
    each (`textDrawExc=`/`unresolved=` too, for `number`). For `number`, try
-   `tgprobe sprite textoffset [dx] [dy]` if the default `(0, 2)` still sits
-   under other HUD elements, and `tgprobe sprite font list` once to see what
+   `tgprobe sprite textoffset [dx] [dy]` (and `baroffset` for `bar`) if the
+   default above-the-icon placement still sits under other HUD elements, and `tgprobe sprite font list` once to see what
    the runtime's own fonts resolve to before picking one with `tgprobe
    sprite font <name>`. Say which look is preferred, or that none is yet,
    using this doc's own convention below - never "rejected" for a look that
