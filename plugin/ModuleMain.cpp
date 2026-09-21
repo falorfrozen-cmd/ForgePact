@@ -5212,7 +5212,9 @@ static void SkillTimerDrawBar(double x, double y, double w, double h, double fra
 // placement - `(0,-101)` from the box's bottom edge, hanging down, confirmed
 // with the inherited font - sat partly behind the icon in `__newfont6`, which
 // is taller; that placement depended on both the box's height and the font's.
-// The gap is the bar's own kSkillTimerBarGap, so `bar` and `number` sit alike.
+// The gap is 1 px, one less than the bar's kSkillTimerBarGap: at the bar's
+// 2 px the owner saw the percentage "too high" at the live-ship check
+// (2026-09-21, "this font should be 1 pixel lower").
 // At zero - including a fraction
 // that rounds to 0% - nothing is drawn at all (ship-only difference from the
 // probe, which keeps "0%" as its own liveness signal; decided 2026-09-21).
@@ -5223,7 +5225,7 @@ static void SkillTimerDrawBar(double x, double y, double w, double h, double fra
 // before the first draw_set_*, the draw in its own inner try so a throw
 // there cannot skip the restores, each restore in its own try, and the font
 // restored only if this call actually applied one.
-static constexpr double kSkillTimerTextOffsetDx = 0.0, kSkillTimerTextGap = 2.0;
+static constexpr double kSkillTimerTextOffsetDx = 0.0, kSkillTimerTextGap = 1.0;
 
 static void SkillTimerDrawNumber(double x, double y, double w, double h, double fraction)
 {

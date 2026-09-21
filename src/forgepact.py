@@ -215,14 +215,12 @@ DEFAULTS = {
     # back. Off by default; offline only, like every mod here.
     "mod_toggle_guard": False,
     # Timed-skill countdown (issue #55): one of off/arc/bar/number/fade drawn
-    # over each timed skill's hotbar slot. Only a plain cast of Soul Spurn or
-    # Maelstrom of Frost can be drawn on for certain, plus Crematus where the
-    # game exposes that cast's own timer. Lunar Orbit and Submerged Knives
-    # never show one: their plain cast creates no timed instance to read
-    # (only their toggled-on state does), and a toggled-on skill never gets a
-    # countdown either way. Off by default; a cast already running when you
-    # turn it on shows as full (route B's latch takes the first reading it
-    # sees).
+    # over each timed skill's hotbar slot. Covers the four rows of the
+    # plugin's kSkillTimerRows, each measured in-game (session 8): Healing
+    # Zone, Blade Barrier, and a plain cast of Soul Spurn or Maelstrom of
+    # Frost - a toggled-on skill never gets a countdown. Off by default; a
+    # cast already running when you turn it on shows as full (route B's latch
+    # takes the first reading it sees).
     "mod_skill_timer_style": "off",
     # Monster Rarity: the share of normal monsters raised to Rare and to Ancient
     # (percent each, together at most 100; the rest stay normal).
@@ -2316,7 +2314,7 @@ input[type=range]::-webkit-slider-thumb{appearance:none;width:17px;height:17px;b
         <span class="val" id="mtgval">off</span>
     </div>
     <div class="row" style="border:none">
-        <span class="lbl" style="width:auto;flex:1">Timed skill countdown<br><span style="font-size:11px;color:#8f816e;font-weight:normal">For Healing Zone (White Mage), Blade Barrier (Samurai), Soul Spurn (White Mage) and Maelstrom of Frost (Prophet) - the timed skills measured in-game so far: draws how much of a cast is left over that skill's skill-bar slot, in the look you pick below. In a fight, hits can keep Blade Barrier up a little longer; the countdown holds or refills to match and ends when the blades do. A toggled-on Soul Spurn or Maelstrom of Frost never gets a countdown. Off by default; if a cast is already running when you turn this on, it shows as full until it is cast again.</span></span>
+        <span class="lbl" style="width:auto;flex:1">Timed skill countdown<br><span style="font-size:11px;color:#8f816e;font-weight:normal">For Healing Zone (White Mage), Blade Barrier (Samurai), Soul Spurn (White Mage) and Maelstrom of Frost (Prophet) - the timed skills measured in-game so far: draws how much of a cast is left over that skill's skill-bar slot, in the look you pick below. In a fight, each hit adds a little time to Blade Barrier (about 0.2 s) and the countdown rises slightly to match; it ends when the blades do. A toggled-on Soul Spurn or Maelstrom of Frost never gets a countdown. Off by default; if a cast is already running when you turn this on, it shows as full until it is cast again.</span></span>
         <select class="style-select" id="mod_skill_timer_style">
             <option value="off">Off</option>
             <option value="arc">Arc</option>

@@ -1342,8 +1342,13 @@ class SkillTimerShipContractTests(unittest.TestCase):
         gap = re.findall(r"kSkillTimerTextGap = (-?[\d.]+)", self.plugin)
         self.assertEqual(len(gap), 1, gap)
         self.assertEqual(float(gap[0]), round(float(gap[0])))   # whole pixels (guide Known Limitations 18)
+        # live-ship check (owner, 2026-09-21): at the bar's own 2 px the
+        # percentage sat "too high" - "this font should be 1 pixel lower".
+        # So the number's gap is 1 px, one below the bar's, which stays 2.
+        self.assertEqual(float(gap[0]), 1.0)
         bar_gap = re.search(r"static constexpr double kSkillTimerBarGap = ([\d.]+),", self.plugin)
-        self.assertEqual(float(gap[0]), float(bar_gap.group(1)))   # `bar` and `number` sit alike
+        self.assertEqual(float(bar_gap.group(1)), 2.0)
+        self.assertEqual(float(gap[0]), float(bar_gap.group(1)) - 1.0)
 
 
 class ToggleSkillTableContractTests(unittest.TestCase):

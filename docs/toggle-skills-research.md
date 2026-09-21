@@ -3247,8 +3247,9 @@ the two sets of constants equal so they cannot drift):
   under 1px draws nothing (the D4 sub-pixel guard: a visible stub at
   `frac 0.0` was measured otherwise).
 - **number**: the fraction as a whole-number percentage, centred
-  horizontally, its bottom edge `kSkillTimerTextGap` (2 px, the bar's own
-  gap) above the box's TOP edge - anchored at `(w/2, -2)` from the box's
+  horizontally, its bottom edge `kSkillTimerTextGap` (1 px - one less than
+  the bar's 2 px, after the live-ship check below) above the box's TOP
+  edge, anchored at `(w/2, -1)` from the box's
   top-left with bottom vertical alignment, so the text grows upward and
   clears the icon whatever height the font has. Resolves `__newfont6` by
   name every draw; when it does not resolve, falls back to the inherited
@@ -3271,8 +3272,10 @@ The ship deliberately differs from the probe in two places:
   runtime call per draw for what the alignment gives for free, and guessing
   a new offset (`-106` was once measured, on a different box with an
   unrecorded font) would repeat the mistake. The probe keeps its own
-  bottom-anchored `textoffset` for research. The live check is folded into
-  the ship round's `live-ship: pass`.
+  bottom-anchored `textoffset` for research. At the live-ship check
+  (2026-09-21) the owner confirmed the text now clears the icon but found it
+  "Too high now" at the bar's 2 px gap - "this font should be 1 pixel
+  lower" - so the number's gap became 1 px while the bar keeps 2 px.
 - **fade**: the same 10 bands as `arc`, whole rectangle each (no perimeter
   fraction), alpha `(1 - i/9) * fraction`.
 
@@ -3298,8 +3301,9 @@ runs that toggle row's read first and is suppressed while it is On or
 Unreadable, as below; Healing Zone and Blade Barrier have no toggle twin and
 make no toggle read at all. Crematus, Lunar Orbit and Submerged Knives are
 no longer countdown rows: session 8 measured Crematus' timer as a
-per-projectile lifetime (79.2 against 290 draws), and the other two never
-create a timed instance on a plain cast. The paragraph below is the
+per-projectile lifetime (79.2 against 290 draws), and no timer spanning a
+plain cast was observed for the other two (Submerged Knives' object carries
+a per-object timer, 32.4 against 140 draws, which fails rule (d)). The paragraph below is the
 round-1 design this replaced, kept for its reasoning about toggle
 suppression, which still holds for the two twin rows.
 
@@ -4034,6 +4038,31 @@ the latch rule the countdown therefore holds, or partially refills (a
 reading below the latch just raises the fraction), and ends with the
 blades. Measured on the owner's character only; how large the extension can
 get with other passives is not observed.
+
+**Follow-up - where the refresh lands, and when (live-ship check,
+2026-09-21).** With the ship build installed the owner hit enemies under
+Blade Barrier and saw the number not visibly move (`skilltimer stat`:
+`bladeBarrier drawn=1340 latched=1 unlatched=1 expired=2`, 1340 draws
+against a 1296 latch, no re-latch). The research build was then put back
+(with the owner's yes) and the barrier added to the `tgl` table by name
+(`tgprobe tgl add bladeBarrier Samurai_Blade_Barrier_obj none destroyTimer
+none`, row 7), polling `tgl fields 7` and `tgl timer` about every 150
+draws. On a cast in combat: at draw 895 the timer read 427.27; at draw 1045
+it read 420.72, only 6.6 lower over 150 draws, where a free-running timer
+drops 150, so about 144 had been added in that window; over the next 150
+draws it fell 121.8 (about 28 added); the object ended at draw 1494 with
+the timer at -0.81, and `max` never exceeded the first reading, 1296. A
+cast with no hits ran clean: 1292 draws, about 1.0 per draw. Reading: each
+hit raises `destroyTimer` itself, at the moment of the hit, by a small step
+(consistent with about 28.8, i.e. 0.2 s, per hit; five hits make the ~144),
+and never above the cast's first reading. `tgl fields` showed no separate
+refresh variable among its first 64 scalar fields (`overCap=113`, so a field
+beyond the cap is not excluded, but none is needed: the change is on
+`destroyTimer`). So the shipped countdown already rises at each hit, by
+roughly two percentage points of a 1296 latch per hit - small enough to look
+still. The owner chose to keep that as it is. A second observation from the
+same check ("another timer spawned when previous ended") could not be
+reproduced and is recorded as not reproduced, with no change made.
 
 **Finding - the shipped `number` look sits too low in the player build's
 font** (owner, looking at the countdown with the Maelstrom control cast):

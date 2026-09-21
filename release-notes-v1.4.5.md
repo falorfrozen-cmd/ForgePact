@@ -99,8 +99,9 @@ those five it can actually draw on.
   covers the four timed skills measured in-game so far:
   Healing Zone (White Mage), Blade Barrier (Samurai),
   Soul Spurn (White Mage) and Maelstrom of Frost (Prophet).
-  A toggled-on Soul Spurn or Maelstrom of Frost never gets a countdown. In a fight, hits can keep Blade Barrier up a little longer; the
-  countdown holds or refills to match and ends when the blades do. Pick one
+  A toggled-on Soul Spurn or Maelstrom of Frost never gets a countdown.
+  In a fight, each hit adds a little time to Blade Barrier (about 0.2 s)
+  and the countdown rises slightly to match; it ends when the blades do. Pick one
   of four looks: **Arc** (a ring that empties clockwise), **Bar** (a
   shrinking bar above the icon), **Number** (a shrinking percentage above
   the icon) or **Fade** (a soft outline that dims as time runs out). If you
