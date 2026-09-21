@@ -22668,6 +22668,12 @@ static double g_TgSpriteTextOffsetDx = 0.0, g_TgSpriteTextOffsetDy = -101.0;
 // the box's top), and this offset moves it from there without a rebuild.
 // `bar` only - no other style reads these.
 static double g_TgSpriteBarOffsetDx = 0.0, g_TgSpriteBarOffsetDy = 0.0;
+// `tgprobe sprite barinset [px]` (same session): the tuned box is sized for
+// the outline styles that draw AROUND the icon, so a full bar overhung the
+// icon art equally on both sides. The bar is trimmed this many pixels in
+// from each side of the box. Default 4 is a starting guess, not a
+// measurement - tune it live.
+static double g_TgSpriteBarInset = 4.0;
 static double g_TgSpriteTextAlpha = 1.0;                                    // fully opaque - today's look
 static bool g_TgSpriteTextColourSet = false;                                // unset -> follow the shared `colour`
 static double g_TgSpriteTextColourR = 255.0, g_TgSpriteTextColourG = 215.0, g_TgSpriteTextColourB = 0.0;
@@ -23149,7 +23155,10 @@ static void TgProbeSpriteDrawBar(double x, double y, double w, double h)
     RValue activeColour = TgProbeSpriteActiveColour();
     static constexpr double kBarGap = 2.0, kBarHeight = 6.0;
     const double fraction = g_TgSpriteFraction > 1.0 ? 1.0 : (g_TgSpriteFraction < 0.0 ? 0.0 : g_TgSpriteFraction);
-    const double barWidth = w * fraction;
+    // `barinset` trims both sides equally; an inset that eats the whole box
+    // leaves no bar (caught by the width guard below).
+    const double usableWidth = w - 2.0 * g_TgSpriteBarInset;
+    const double barWidth = usableWidth * fraction;
     // D4 (issue #55 follow-up): the live session found a visible stub left
     // below the icon at `frac 0.0`, `drawExc=0` - the runtime still filled a
     // degenerate rectangle. The guard is on the drawn WIDTH in pixels, not
@@ -23161,7 +23170,7 @@ static void TgProbeSpriteDrawBar(double x, double y, double w, double h)
     if (barWidth < 1.0) return;
     // Above the box (2026-09-21 live session): bottom edge kBarGap above
     // the box's top, shifted by `baroffset`.
-    const double bx0 = x + g_TgSpriteBarOffsetDx, by1 = y - kBarGap + g_TgSpriteBarOffsetDy;
+    const double bx0 = x + g_TgSpriteBarInset + g_TgSpriteBarOffsetDx, by1 = y - kBarGap + g_TgSpriteBarOffsetDy;
     const double bx1 = bx0 + barWidth, by0 = by1 - kBarHeight;
     g_Yytk->CallBuiltin("draw_set_alpha", { RValue(1.0) });
     g_Yytk->CallBuiltin("draw_rectangle_colour", {
@@ -23326,6 +23335,7 @@ static void TgProbeSpriteList()
     Out("  tgprobe sprite style <name> [talentId] - selects the hotbar slot the style draws over, default Soul Spurn (240)");
     Out("  tgprobe sprite textoffset [dx] [dy] - `number`'s offset from the box's bottom edge, default 0,-101 (above the icon)");
     Out("  tgprobe sprite baroffset [dx] [dy] - `bar`'s offset from its default spot just above the box, default 0,0");
+    Out("  tgprobe sprite barinset [px] - trims `bar` this many pixels in from each side of the box, default 4");
     Out("  tgprobe sprite textalpha [a] - `number`'s own flat opacity (0..255 or 0..1), default fully opaque");
     Out("  tgprobe sprite textcolour [name|r g b|off] (alias textcolor) - `number`'s own colour, default follows `colour`");
     Out("  tgprobe sprite font [name|index|off|list] - `number`'s font, resolved by name at draw time; `list` enumerates the runtime's own fonts");
@@ -23423,7 +23433,8 @@ static std::string TgProbeSpriteTextOffsetText()
 // the box (2026-09-21 live session).
 static std::string TgProbeSpriteBarOffsetText()
 {
-    return "baroffset=" + std::to_string(g_TgSpriteBarOffsetDx) + "," + std::to_string(g_TgSpriteBarOffsetDy);
+    return "baroffset=" + std::to_string(g_TgSpriteBarOffsetDx) + "," + std::to_string(g_TgSpriteBarOffsetDy)
+        + " barinset=" + std::to_string(g_TgSpriteBarInset);
 }
 
 // "textalpha=<n>/255" - the flat opacity `number`'s text draws at,
@@ -23792,7 +23803,7 @@ static void TgProbeSpriteCommand(const std::string& rest)
         Out("tgprobe sprite: usage -> tgprobe sprite <SpriteName> [talentId] | <SpriteName> centre"
             " | off | gold | style soft|halo|gradient|pulse|arc|bar|number|fade [talentId] | list | gallery [cols]"
             " | layer hud|buffs | scale [f] | colour [name|r g b] | box tuned|bbox | quad on|off"
-            " | alpha [min] [max] | frac [f]|anim <seconds> [loop] | textoffset [dx] [dy] | baroffset [dx] [dy] | textalpha [a]"
+            " | alpha [min] [max] | frac [f]|anim <seconds> [loop] | textoffset [dx] [dy] | baroffset [dx] [dy] | barinset [px] | textalpha [a]"
             " | textcolour [name|r g b|off] | font [name|index|off|list]");
         return;
     }
@@ -24019,6 +24030,23 @@ static void TgProbeSpriteCommand(const std::string& rest)
         }
         g_TgSpriteBarOffsetDx = dx;
         g_TgSpriteBarOffsetDy = dy;
+        Out("tgprobe sprite " + TgProbeSpriteBarOffsetText());
+        return;
+    }
+    if (lower == "barinset") {
+        std::string ignored;
+        const std::string v = FirstToken(subRest, ignored);
+        if (v.empty()) {
+            Out("tgprobe sprite " + TgProbeSpriteBarOffsetText()
+                + " (`bar` trimmed barinset px in from each side of the box; default 4)");
+            return;
+        }
+        double px = 0.0;
+        if (!ParseFiniteNumber(v, px) || px < 0.0) {
+            Out("tgprobe sprite barinset: usage -> tgprobe sprite barinset [px] (px >= 0; give none to read)");
+            return;
+        }
+        g_TgSpriteBarInset = px;
         Out("tgprobe sprite " + TgProbeSpriteBarOffsetText());
         return;
     }

@@ -3067,8 +3067,12 @@ Spurn's slot (talent 240, tuned box 77x78):
   now draws above the box by default (bottom edge 2 px above the box's top)
   and gained `tgprobe sprite baroffset [dx] [dy]` - an offset from that
   spot, default `0,0`, reported on the `off` line and on `style bar`'s
-  confirmation - so it can be tuned live the same way. The new `bar`
-  position is not yet seen in-game.
+  confirmation - so it can be tuned live the same way. Seen in-game above
+  the icon, the full bar overhung the icon art equally on both sides (the
+  tuned box is sized for the outline styles that draw around the icon, and
+  the raw `box bbox`, 82 px against 77, is wider still), so the bar gained
+  `tgprobe sprite barinset [px]`, trimming it that many pixels in from each
+  side, default 4 - a starting guess, not a measurement.
 
 ### Live procedure
 

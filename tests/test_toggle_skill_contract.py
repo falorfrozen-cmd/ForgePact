@@ -2676,7 +2676,8 @@ class SkillTimerProbeContractTests(unittest.TestCase):
 
     def test_bar_returns_without_drawing_below_one_pixel_of_width(self):
         body = function_body(self.plugin, "static void TgProbeSpriteDrawBar(")
-        self.assertIn("const double barWidth = w * fraction;", body)
+        # width after `barinset` trims both sides (2026-09-21 live session)
+        self.assertIn("const double barWidth = usableWidth * fraction;", body)
         self.assertIn("if (barWidth < 1.0) return;", body)
         # the guard is on the drawn WIDTH, never on a bare fraction==0.0
         # equality check - a sub-pixel remainder must disappear too (D4).
@@ -2997,7 +2998,7 @@ class SkillTimerProbeContractTests(unittest.TestCase):
         self.assertNotIn("y + h + kBarGap", body)
         self.assertIn("by1 = y - kBarGap + g_TgSpriteBarOffsetDy", body)
         self.assertIn("by0 = by1 - kBarHeight", body)
-        self.assertIn("bx0 = x + g_TgSpriteBarOffsetDx", body)
+        self.assertIn("bx0 = x + g_TgSpriteBarInset + g_TgSpriteBarOffsetDx", body)
         # the stub guard survives the move
         self.assertIn("if (barWidth < 1.0) return;", body)
 
@@ -3023,6 +3024,26 @@ class SkillTimerProbeContractTests(unittest.TestCase):
         for name in ("g_TgSpriteBarOffsetDx", "g_TgSpriteBarOffsetDy", "TgProbeSpriteBarOffsetText"):
             self.assertIn(name, self.block, name)
             self.assertNotIn(name, self.stripped, name)
+
+    def test_bar_is_inset_equally_from_both_sides(self):
+        self.assertIn("static double g_TgSpriteBarInset = 4.0;", self.plugin)
+        body = function_body(self.plugin, "static void TgProbeSpriteDrawBar(")
+        self.assertIn("const double usableWidth = w - 2.0 * g_TgSpriteBarInset;", body)
+        self.assertIn("const double barWidth = usableWidth * fraction;", body)
+        self.assertNotIn("const double barWidth = w * fraction;", body)
+        self.assertIn("bx0 = x + g_TgSpriteBarInset + g_TgSpriteBarOffsetDx", body)
+        # the width guard comes after the inset, so an inset eating the box draws nothing
+        self.assertLess(body.index("usableWidth"), body.index("if (barWidth < 1.0) return;"))
+
+    def test_barinset_command_refuses_negative_or_unparsed_values(self):
+        body = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
+        branch = body[body.index('lower == "barinset"'):body.index('lower == "textalpha"')]
+        self.assertIn("!ParseFiniteNumber(v, px) || px < 0.0", branch)
+        self.assertLess(branch.index("tgprobe sprite barinset: usage"), branch.index("g_TgSpriteBarInset = px;"))
+        text = function_body(self.plugin, "static std::string TgProbeSpriteBarOffsetText()")
+        self.assertIn("barinset=", text)
+        self.assertIn("g_TgSpriteBarInset", self.block)
+        self.assertNotIn("g_TgSpriteBarInset", self.stripped)
 
     def test_research_doc_records_the_above_icon_placement(self):
         doc = self.research_doc
