@@ -286,15 +286,19 @@ window (the duration sweep's results under issue #55 below: toggle on,
 toggle off, one plain cast) read the controller as `app=2 draws=110 timerUnreadable=110
 maxInst=1 own=unreadable` and the meteors as `app=2 draws=158 first=-1 …
 max=-1 timerUnreadable=0 maxInst=10 own=readable`. So, before session 9:
-**both objects are also created by a plain cast** (two appearances over one
-toggle cycle plus one plain cast), which rules out `none-needed` for both;
-**a held timer is ruled out** (the controller's timer is unreadable, the
-meteors' is `-1` in both forms); the controller's `isMyClient` is unreadable,
-so its ownership is `none` (as for the other controller rows), while the
-meteors' is readable. The only shippable shape left is a **marker**: a scalar
-on one of the two objects that reads > 0 toggled and 0 plain, which `tgprobe
-tgl fields` toggled-versus-plain is built to find. Anything else is recorded
-as "no discriminator in this design".
+**both objects are also created by a plain cast** — *inferred* from `app=2`
+over one toggle cycle plus one plain cast (a toggle cycle that produced two
+appearances would read the same), which ruled out `none-needed` for both;
+session 9's plain-cast read confirms it (Results → `Toggle skill table`,
+Meteor Storm: the controller's second appearance, 110 draws, came from the
+plain cast); **a held `destroyTimer` is not observed** (the controller's is
+unreadable, the meteors' is `-1` in both forms) — other timer fields were
+left to session 9's `tgl fields` dump; the controller's `isMyClient` is
+unreadable, so its ownership is `none` (as for the other controller rows),
+while the meteors' is readable. The shippable shape expected was therefore a
+**marker**: a scalar on one of the two objects that reads > 0 toggled and 0
+plain, which `tgprobe tgl fields` toggled-versus-plain is built to find.
+Anything else is recorded as "no discriminator in this design".
 
 **Row 8, Bushido — a toggle in its base form.** `talent_name_bushido` and
 `talent_desc_bushido` exist and **no `sub*Bushido*` key of any kind does**, so
@@ -355,6 +359,12 @@ What the labels mean for this workorder:
 **Negative, labelled:** no further base-form toggle wording was found by
 these keywords in either file. That is not "no other base-form toggle
 exists"; a toggle described in other words would not be caught by this sweep.
+Session 9 showed exactly that limit: `tgprobe talents form` on the Butcher
+also listed `talent 513 abilityId=melonForm abilityDuration=0
+abilityCooldown=0.250000 abilityTags=[15,18]` — the same no-duration,
+quarter-second-cooldown shape as Holy Form and Unholy Form — and none of the
+keywords above surfaced it. It is an **unmeasured candidate**, recorded, not
+a row.
 
 ## Instrument
 
@@ -1485,7 +1495,7 @@ same-session controls C2 and C5 below lean on. **Controls, every pass:** `tgprob
 was run), and `tgprobe tgl`'s row-0 `agree=` rising with `disagree=0` (White
 Mage pass: across one Soul Spurn ON/OFF cycle; other classes: two minutes
 idle). A pass whose `disagree=` is not 0 is `blocked` in every row. C0–C7
-below are the rows Results → `### Toggle skill table` fills; each is
+below are the rows Results → `Toggle skill table` fills; each is
 `measured`, `not observed` or `blocked`, and a row not run is `blocked`, never
 `not observed`.
 
@@ -1614,10 +1624,11 @@ step 3's positive control fired in the same session.** Each result is
    (sub-talent respecced out): one cast, the tester confirms it landed (mana
    drop or meteors seen, quoted as seen) → `tgprobe tgl fields 7`, `tgprobe
    tgl fields 8` and `tgprobe tgl timer` again. The marker is a scalar that
-   reads > 0 toggled and 0 plain on the same object. Session 8 already rules
-   out `none-needed` (both objects appear on a plain cast) and a held timer
-   (controller unreadable, meteors `-1` in both forms), so a marker is the
-   only shippable outcome.
+   reads > 0 toggled and 0 plain on the same object. Session 8 already
+   points away from `none-needed` (both objects inferred to appear on a plain
+   cast; this step's plain cast confirms it) and did not observe a held
+   `destroyTimer` (controller unreadable, meteors `-1` in both forms), so a
+   marker is the expected shippable outcome.
 6. **C4** Toggle on, change zone → rows 7/8 `firstAfterRoomChange: state=off
    n=0`.
 7. **C7** `tgprobe tgl slots` → the `row0[i]` line naming `meteorStorm`.
@@ -1647,8 +1658,9 @@ step 3's positive control fired in the same session.** Each result is
    count one higher, or `[N]` gone), both cycles. Those four quotes plus the
    flip's `global.playerBuff[1][0][N]` line are the `Bushido buff:` identity —
    `index=` (the `N`), `buffType=` (the slot instance's own member, the
-   identity signal: session 2 measured Soul Spurn's drain as `[86]` with
-   `buffType=int64:86`), `object=` (the listing's `object=`; Counter's was
+   identity signal: the Martyr buff that follows Soul Spurn's life drain
+   reads `[86]` with `buffType=int64:86`), `object=` (the listing's
+   `object=`; Counter's was
    `Draw_Player_Buff_obj`), `on=` and `off=`; without all of them `Bushido
    carrier: buff` is `blocked`. C5 for Bushido is this step: the instance
    follows the toggle (`instance (no plain form)`), or it persists and a
@@ -1658,9 +1670,14 @@ step 3's positive control fired in the same session.** Each result is
    Purgatory allocated: `tgprobe buffs` off → toggle on → `tgprobe buffs` →
    quote the `[86] … buffType=int64:86` line → off → `tgprobe buffs` → `[86]`
    gone. This is `Buff read control:`; it proves the listing shows a known
-   toggle buff arriving and leaving before Bushido's `[N]` is believed. If the
-   control character is the Prophet (no known buff), the buff control is
-   `blocked`, and so is `Bushido carrier: buff`.
+   buff arriving and leaving with a toggle before Bushido's `[N]` is believed.
+   `[86]` is the White Mage's **Martyr** passive, which turns on while life
+   drains (owner, live in session 9), not Soul Spurn's own state: it follows
+   the toggle as a side effect. So a buff that flips with Bushido is a
+   candidate only; `Bushido carrier: buff` additionally needs the owner to
+   attribute that buff to Bushido itself. If the control character is the
+   Prophet (no known buff), the buff control is `blocked`, and so is
+   `Bushido carrier: buff`.
 10. **C4** Toggle on, change zone → rows 9/10 `firstAfterRoomChange:`, and
     `tgprobe buffs` in the new zone (does `[N]` survive the zone change?
     Quoted either way).
@@ -1676,7 +1693,7 @@ no character has them).**
     `activeBuffList` lines. Research only; never a row from this pass.
 
 **Recording, and what each outcome means.** Paste every quoted line into
-Results → `### Toggle skill table` (two new rows, every cell a quoted value
+Results → `Toggle skill table` (two new rows, every cell a quoted value
 or exactly `not observed`/`blocked`) and fill Decision → `### After session
 9`. The two `Ship:` lines are derived last, each on its own:
 
@@ -2131,6 +2148,8 @@ rejected.
 | Butcher | Submerged Knives (`submergedKnives`) | `377` | `subButcherSubmergedKnives13` → `s13` | `Butcher_Submerged_Knives_Knifehoarder_obj` (729) | `none` | `no` | `none-needed` | `row0[6]` | measured |
 | Prophet (second tier) | Maelstrom of Frost (`maelstromOfFrost`) | `430` | `subProphetMaelstromOfFrost11` → `s11` | `Prophet_Maelstrom_obj` (3697, prefilled object, unswapped) | `isMyClient` | `yes` | `timer destroyTimer=-1.000000` (`first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 unreadable=0 atPredicted=3903 draws=3903` toggled; plain `first=4320.000000 last=-0.659664 ... atPredicted=0 draws=4288`) | `row0[10]` | measured |
 | Butcher (second tier) | Blender (`blender`) | `379` | not observed (C6 not run) | not observed | not observed | not observed | blocked | `row0[5]` | blocked |
+| Shaman | Meteor Storm (`meteorStorm`) | `224` | `subShamanMeteorStorm11` → `s11` (`s11=real:0.000000` not allocated, `s11=real:3.000000` allocated, `s11=real:0.000000` respecced; no other key moved) | `Shaman_Meteor_Storm_Controller_obj` (4422) | `none` (`[7] meteorStorm state=on n=1 mine=1 others=0 unattributed=0`) | `yes` (controller `appearance=2`, `draws=110`, on the plain cast) | `marker skillAstroHeated` (`skillAstroHeated=bool:true` toggled, appearances 1 and 3; `skillAstroHeated=real:0.000000` plain, first and last draw) | `row0[3]` | measured |
+| Samurai | Bushido (`bushido`) | `134` | none (base form; `tgl sub` read: `global.subTalentMap array_length=6; [0]..[5] bushido t134: absent`) | `Samurai_Bushido_obj` (4226) | `isMyClient` (`[9] bushido state=on n=7 mine=7 others=0 unattributed=0`; the `none` row `[10]` read the same `n=7 mine=7`) | n/a — no plain form (base-form toggle) | `instance (no plain form)` (`census.Samurai_Bushido_obj: bbase=<absent> bon=7 boff=<absent>`) | `row0[5]` | measured |
 
 **Notes (rejected prefilled objects, and the blocked/no-instance rows).**
 
@@ -2251,6 +2270,107 @@ rejected.
   correctly-timed `deep snap on`) and C5/C6 were not run for this row
   (Context "Session 6": a row not run in a live session is `blocked`, never
   `not observed`).
+
+**Session 9 (2026-09-21): the Meteor Storm and Bushido rows.** One launch of
+the research DLL built from `157e751` (`BloodPactPlugin_rel.dll`, sha256
+`0624a182…fab5`), procedure Live procedure → `### Session 9`, White Mage
+first, then Shaman, Samurai and (optional) Butcher. Raw capture:
+`.claude/workorders/forgepact-meteor-storm-toggle-session9-capture.md` (a hub
+workorder artefact, not part of this submodule, never staged); every quoted
+value below is from it. `tgprobe tgl add` gave rows `[7] meteorStorm
+obj=Shaman_Meteor_Storm_Controller_obj ownership=none sub=s11 talentId=224
+idx=4422 sdk=4422`, `[8] meteorStorm obj=Shaman_Meteor_Storm_obj
+ownership=isMyClient sub=s11 talentId=224 idx=4423 sdk=4423`, `[9] bushido
+obj=Samurai_Bushido_obj ownership=isMyClient sub=none talentId=134 idx=4226
+sdk=4226` and `[10]` (the same with `ownership=none`). Row 0's agreement
+control held all session: first `tgprobe tgl: frame=13980 agree=1226
+disagree=0`, last `tgprobe tgl frame=170790 agree=150948 disagree=0`.
+
+- **Positive control (White Mage, same sampler, same session).** Soul Spurn
+  on: `[0] soulSpurn state=on n=1 mine=1 others=0 unattributed=0 marked=on
+  timer=-1.000000 samples=5366 on=1304 off=4062 transitions=1`; off: `[0]
+  soulSpurn state=off n=0 … transitions=2`. Its census control for every
+  `deep flip` below: `census.White_Mage_Soul_Spurn_AOE_obj: cbase=<absent>
+  con=1 coff=<absent>` (`tgprobe deep flip cbase con coff`). The buff-read
+  control from the same pass: `[86] kind=15 ref instance 262441
+  instance_exists=1 object=Draw_Player_Buff_obj buffType=int64:86
+  destroyTimer=real:445.001328` on, and `global.playerBuff[1][0][86]:
+  cbase=real:-4.000000 con=kind=15 str=ref instance 262441
+  coff=real:-4.000000`, `global.activeBuffList[1][0][3]: cbase=<absent>
+  con=int64:86 coff=<absent>` in the flip. The owner, live, attributed `[86]`
+  to the **Martyr** passive (it turns on while life drains), not to Soul
+  Spurn itself: a buff that follows the toggle, which is what this control
+  needs — the listing sees a buff arrive and leave — and a warning that a
+  buff flipping with a toggle is not by that alone the toggle's state.
+- **Meteor Storm.** Slot: `tgprobe tgl sub` read `[1] meteorStorm t224: s4=real:2
+  s1=real:2 s8=real:3 s2=real:5 s5=real:5 s11=real:0.000000 (keys=6)` with
+  the toggle sub-talent not allocated (owner confirmed), `s11=real:3.000000`
+  allocated, `s11=real:0.000000` respecced for the plain cast and
+  `s11=real:3.000000` re-allocated for C4 — only `s11` moved, so the static
+  prediction is now measured, at map index `1`. Toggled on: `[7] meteorStorm
+  state=on n=1 mine=1 … marked=on timer=unreadable` and `[8] meteorStorm
+  state=on n=4 mine=4 … timer=-1.000000`; the controller's `tgl fields`
+  first draw carried `skillAstroHeated=bool:true`. Off: both rows `state=off
+  n=0`, `transitions=2`. Plain cast (owner saw the meteors): the controller
+  appeared again (`tgprobe tgl timer [7] … appearance=2 … draws=110`) with
+  `skillAstroHeated=real:0.000000` on its first and last draw, and the
+  meteors again (`[8] … appearance=2 first=-1.000000 last=-1.000000 …
+  draws=158`). Third appearance, toggled, before C4: `skillAstroHeated=bool:true`
+  first and last again. **Rejected candidate:** `Shaman_Meteor_Storm_obj`
+  (4423), the meteors — `destroyTimer` `-1.000000` from first to last draw in
+  both forms (`atPredicted=1023 draws=1023` toggled, `atPredicted=158
+  draws=158` plain), no field was found to separate them, and up to ten
+  instances come and go under one controller; the controller carries the
+  marker. **The marker is a bool, not a real:** toggled reads `bool:true`,
+  plain `real:0.000000`, so the follow-up's marker read must accept a bool
+  kind as > 0 (the five shipped rows' markers and timers are all reals).
+  C4: toggled on, then a zone change → `[7]`/`[8] meteorStorm state=off n=0
+  … firstAfterRoomChange: state=off n=0` — the zone change ends the toggle.
+  `deep flip base on off` showed `Skill_Controller_obj#0.host: base=<absent>
+  on=kind=15 str=ref instance 272355 off=<absent>` alongside; the controller
+  row itself is the result.
+- **Bushido.** Talent: `talent 134 abilityId=bushido abilityAura=false
+  abilityDuration=0 abilityCooldown=0.250000 abilityLength=320
+  abilityTags=[15,12]`. `tgl sub`: `bushido t134` absent at every one of the
+  six map indices (`global.subTalentMap array_length=6`) — no slot, as the
+  static search said. On: `[9] bushido state=on n=7 mine=7 others=0
+  unattributed=0 marked=on timer=-1.000000` and `[10]` identical; `tgprobe
+  tgl timer [9] bushido … first=-1.000000 last=-1.000000 … atPredicted=1573
+  draws=1573`. Off: both rows `state=off n=0`, `transitions=2`; the flip
+  `tgprobe deep flip bbase bon boff: A(flipped and reverted)=7` caught
+  `census.Samurai_Bushido_obj: bbase=<absent> bon=7 boff=<absent>` (with its
+  parents `Orbit_Parent_obj` and `Player_Damage_Parent_obj` at the same
+  `<absent>/7/<absent>`). A second cycle read `state=on n=7 mine=7
+  transitions=3`, and C4 (on, then a zone change) `state=off n=0
+  transitions=4 … firstAfterRoomChange: state=off n=0` — the zone change ends
+  it. **The buff read found nothing:** `tgprobe buffs` printed `(420 empty
+  slots not listed)` off, on, off, on the second cycle and after the zone
+  change, and both filtered diffs read `tgprobe deep diff bbase bon:
+  changed=216 added=5 removed=27 truncated=0 filter=playerBuff matching=0`
+  and `… filter=activeBuffList matching=0` — against the same session's
+  `[86]` control, which that listing and those containers did show. So
+  Bushido's state is carried by its own instance, seven per activation,
+  present exactly while the toggle is on; no buff was observed.
+  `Light_Speck_obj` (`bbase=5 bon=12 boff=8`) changed without reverting — a
+  visual effect, not a carrier.
+- **Holy Form / Unholy Form (optional pass).** Butcher, `Town_04_rm`.
+  `tgprobe talents form`: `talent 364 abilityId=holyForm abilityDuration=0
+  abilityCooldown=0.250000 abilityTags=[15]` and `talent 365
+  abilityId=unholyForm abilityDuration=0 abilityCooldown=0.250000
+  abilityTags=[15]` (`demonForm`/`solarForm`/`lunarForm` read `dur 25`, timed;
+  `melonForm` talent 513, also dur 0 / cd 0.25, is an unmeasured candidate,
+  see the sweep). Holy Form on: `[140] ref instance 314047
+  object=Draw_Player_Buff_obj buffType=int64:140 destroyTimer=real:1.000000`,
+  gone off; the flip read `global.playerBuff[1][0][140] real:-4 / ref
+  instance 314047 / real:-4`, `global.activeBuffList[1][0][0] <absent> /
+  int64:140 / <absent>`, `census.Draw_Player_Buff_obj <absent>/1/<absent>`,
+  and no Butcher form object in bucket A. The owner saw the buff icon on the
+  HUD while it was on, which attributes buff 140 to Holy Form. Unholy Form:
+  `[141] ref instance 324053 object=Draw_Player_Buff_obj
+  buffType=int64:141 destroyTimer=real:1.000000` on, gone off (one earlier
+  on/off cycle went unobserved); attributed to Unholy Form by analogy only —
+  its HUD icon was not separately confirmed. Both are buff-carried, the shape
+  D-B3's `PlayerBuff` kind would read; neither is a row here (D-B2).
 
 ## Decision
 
@@ -2464,7 +2584,7 @@ button press to the read leaving `on`.
 
 ### After session 6
 
-Source: Results → `### Toggle skill table` and its Notes, quoted from
+Source: Results → `Toggle skill table` and its Notes, quoted from
 `.claude/workorders/forgepact-toggle-timer-border-session6.log`.
 
 - **Entries: 4** (`lunarOrbit`, `crematus`, `submergedKnives`,
@@ -2509,25 +2629,26 @@ be a toggle skill at all), so neither ships in this design.
 
 ### After session 9
 
-**Not yet run.** Every line below is filled from session 9's quoted output
-(Live procedure → `### Session 9`); until then each reads *pending*, which is
-neither a result nor a negative. The two `Ship:` lines are written last, by
-the rule at the end of that procedure. Labels stay unbolded, with the value
+Session 9 ran 2026-09-21 (Results → `Toggle skill table`, "Session 9"
+notes, for every quote in full). Every line below is filled from its quoted
+output; the two `Ship:` lines were written last, by the rule at the end of
+Live procedure → `### Session 9`. Labels stay unbolded, with the value
 directly after the colon or `=`, so each line can be checked mechanically.
 
-- Meteor Storm slot: *pending*
-- Sub index: *pending*
-- ON discriminator: meteorStorm= *pending*
-- Bushido talent: *pending*
-- Bushido sub-talent map: *pending*
-- Bushido buff read: *pending*
-- Bushido buff: *pending*
-- Buff read control: *pending*
-- ON discriminator: bushido= *pending*
-- Bushido carrier: *pending*
-- Positive control: *pending*
-- Ship: meteorStorm= *pending*
-- Ship: bushido= *pending*
+- Meteor Storm slot: s11 (`s11=real:0.000000` → `s11=real:3.000000` on allocate, `0.000000` on respec, `3.000000` on re-allocate; no other key moved)
+- Sub index: 1 (`[1] meteorStorm t224:`)
+- ON discriminator: meteorStorm=marker skillAstroHeated (on `Shaman_Meteor_Storm_Controller_obj` 4422, ownership `none`: `skillAstroHeated=bool:true` toggled on both toggled appearances (appearance 1's first draw, appearance 3's first and last), `real:0.000000` plain on the plain appearance's first and last draw; the meteors `Shaman_Meteor_Storm_obj` read `destroyTimer` `-1.000000` in both forms and are rejected)
+- Bushido talent: 134 abilityDuration=0 abilityCooldown=0.250000 (`talent 134 abilityId=bushido abilityAura=false abilityDuration=0 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,12]`)
+- Bushido sub-talent map: absent at all 6 indices (`global.subTalentMap array_length=6; [0]..[5] bushido t134: absent`)
+- Bushido buff read: matching=0 (`tgprobe deep diff bbase bon … filter=playerBuff matching=0` and `… filter=activeBuffList matching=0`; `tgprobe buffs` `(420 empty slots not listed)` off and on, over two cycles and after the zone change)
+- Bushido buff: none observed
+- Buff read control: martyr (White Mage, Soul Spurn toggled on, same session) `[86] kind=15 ref instance 262441 instance_exists=1 object=Draw_Player_Buff_obj buffType=int64:86 destroyTimer=real:445.001328` on, `global.playerBuff[1][0][86]` back to `real:-4.000000` off — owner-attributed to the Martyr passive, not Soul Spurn's own state
+- ON discriminator: bushido=instance (no plain form) (`census.Samurai_Bushido_obj: bbase=<absent> bon=7 boff=<absent>`; `[9] bushido state=on n=7 mine=7` / `state=off n=0`, `transitions=` 1 → 2 → 3 → 4 over two cycles)
+- Bushido carrier: instance (`Samurai_Bushido_obj` 4226, seven own instances per activation, ownership `isMyClient` readable — `mine=7 others=0 unattributed=0`; the `none` row agrees)
+- Positive control: soulSpurn `[0] soulSpurn state=on n=1 mine=1 others=0 unattributed=0 marked=on timer=-1.000000`, then `state=off n=0`; census `White_Mage_Soul_Spurn_AOE_obj: cbase=<absent> con=1 coff=<absent>`; `agree=150948 disagree=0` at the end of the session
+- Also measured: a zone change ends both toggles (`firstAfterRoomChange: state=off n=0` on rows 7/8 and 9/10); Holy Form is buff-carried (buff 140, owner saw its HUD icon), Unholy Form reads buff 141 (by analogy, icon not confirmed); `melonForm` talent 513 (dur 0, cd 0.25) is an unmeasured candidate.
+- Ship: meteorStorm=yes (discriminator `marker skillAstroHeated` AND slot `s11` measured; the follow-up's marker read must treat `bool:true` as on)
+- Ship: bushido=yes (carrier `instance` with `instance (no plain form)` AND a measured ownership cell, `isMyClient`; base-form row, D-B1)
 
 ### S design (D-P1, D-P3, D-P5, D-U13)
 
