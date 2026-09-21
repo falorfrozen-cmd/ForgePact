@@ -3171,7 +3171,134 @@ Look verdicts, one row per candidate:
 
 ### Decision
 
-Not yet taken - gated on `phase0: complete` per the workorder's `## State`.
-Fill this subsection with the chosen total source, the chosen look, and the
-evidence for each once the live session above has run and the two tables
-above are filled in.
+Route B, taken by the user on 2026-09-21 (the shipping workorder's Log ->
+Decisions): the countdown's fraction is the current `destroyTimer` divided by
+the FIRST `destroyTimer` latched when the instance first appeared, clamped to
+0..1.
+
+- **Route A** (the pre-committed decision-rule total, `abilityDuration` /
+  `game_get_speed`) lost: its rule selected the wrong row structurally
+  ("Finding - the decision rule selects the wrong row" above) - it does not
+  point at the field that actually holds a row's own remaining time.
+- **Route C** (an `overCap`-gated candidate field) lost: every dumped row came
+  back `blocked` by `overCap`, so no row ever produced a usable candidate.
+- **Route B** won by elimination: `destroyTimer` is the field the toggle
+  indicator (D-N3, "Rows, and why a toggled instance never gets a countdown")
+  already reads as its own ON discriminator on the Maelstrom row (the other
+  rows discriminate on `purgatory`, `skillContamination`, or nothing), so at
+  least one row needed no new discriminator field, only a place to remember
+  its FIRST value; the other rows are read for the same field on the chance
+  their controller carries it too (see "Rows, and toggle suppression" below
+  for which ones were actually measured to).
+
+**The latch rule**, per row, per draw, among the row's OWN instances only
+(`ToggleIndicatorReadRow`'s own ownership rule, `nullptr` = every instance
+own): `remaining` is the largest numeric `destroyTimer` among own instances
+(several can be running for a toggle skill's own object at once; the largest
+is the current cast). Then, in order:
+
+- zero own instances -> draw nothing, count `noInstance`; a latch held from
+  before is dropped and counted `unlatched`, so the NEXT instance re-latches
+  full rather than dividing by a stale value;
+- own instances present but none has a numeric `destroyTimer` -> draw
+  nothing, count `unreadable`, latch untouched;
+- `remaining <= 0` (a held negative, or a plain cast's trailing negative
+  tail) -> draw nothing, count `expired`, never latch on it;
+- no latch yet, or `remaining` greater than the latch -> take or update the
+  latch, count `latched`. A rise IS "an instance first appears" for a value
+  that only ever falls within one cast, so a rise is also the only signal
+  that re-syncs a latch taken mid-cast (see the limitation below);
+- fraction = `remaining / latch`, clamped to 0..1 by hand.
+
+**Mid-cast limitation, recorded here because the guide is not updated for
+this change** (the user asked that `docs/submodules/ForgePact/instructions.md`
+stay untouched - see the release notes and the panel's own help text for the
+other two copies of this note). If the countdown is switched on partway
+through an already-running cast, the first draw latches whatever `remaining`
+reads at that moment, not the cast's true starting value, so that one cast's
+countdown reads shorter than it actually is - full only from the point the
+style was turned on. The next cast on that row latches correctly, since it
+starts from a rise. This is the accepted cost of taking the latch from the
+first OWN reading rather than trying to infer whether an already-running
+instance is new or mid-cast.
+
+A second, narrower case of the same cost: the latch is dropped only when a
+row's own instance count reaches zero (`noInstance`), never on `Expired`
+alone. If a later cast on the same row is legitimately shorter than the
+latch still held from the previous one - a duration stat changed, or the new
+cast's own instance overlaps the tail end of the old one before it is gone -
+that cast starts below 100% and never corrects, because its `remaining` never
+rises above the stale latch (only a rise re-latches, per the rule above).
+`latched=`/`unlatched=` cannot surface this by themselves: nothing about it
+looks wrong on either counter. Pinned deliberately, not a bug to fix here -
+`skilltimer/non_positive_draws_nothing_and_never_latches` requires the latch
+to survive an `Expired` reading untouched.
+
+**The shipped looks**, all four ported as the ship's own constants from the
+research probe's own defaults - the exact values the author judged live -
+never by referencing a `g_TgSprite*` research global (a contract test pins
+the two sets of constants equal so they cannot drift):
+
+- **arc**: 10 nested bands growing outward from the slot box, alpha ramping
+  `1 - i/9`, each band tracing only the current fraction of its own
+  perimeter, clockwise from the top-left corner.
+- **bar**: filled, gold, above the icon - bottom edge 2px above the box's
+  top, inset 4px each side, 6px tall - width scaled by the fraction. A width
+  under 1px draws nothing (the D4 sub-pixel guard: a visible stub at
+  `frac 0.0` was measured otherwise).
+- **number**: the fraction as a whole-number percentage, centred
+  horizontally, hanging below its own anchor at `(w/2, h) + (0, -101)`
+  measured from the box's bottom edge - the live-confirmed placement.
+  Resolves `__newfont6` by name every draw; when it does not resolve, falls
+  back to the inherited font and counts `fontUnresolved` rather than failing
+  the draw (see "The number font" below). At zero - including a fraction
+  that rounds to 0% - nothing is drawn in any style, the one place the ship
+  deliberately differs from the probe (which keeps "0%" as its own liveness
+  signal).
+- **fade**: the same 10 bands as `arc`, whole rectangle each (no perimeter
+  fraction), alpha `(1 - i/9) * fraction`.
+
+All four use gold `(255,215,0)`, the probe's own default and the colour every
+look was judged in.
+
+**Rows, and toggle suppression.** The countdown covers all five rows of the
+shipped toggle table (`kToggleSkillRows`), reopening D-U9 for this table
+specifically at the user's request (2026-09-21: "All five rows" - toggled
+state suppressed). Every row's own instances are read for `destroyTimer`
+regardless of whether that field is the row's own ON discriminator - it is
+only Maelstrom's. `destroyTimer` was measured readable on the Soul Spurn
+(`144`, issue text) and Crematus (`432`, issue text) SEED objects; whether
+the SHIPPED Crematus controller (`Plague_Doctor_Crematus_obj` -> its
+`…_Controller_obj`) carries it too is not observed, so that row answering
+`unreadable` and drawing nothing there is the fail-safe working, not
+necessarily a bug. The two `ToggleOnMark::None` rows - Lunar Orbit
+(`Exo_Lunar_Orbit_Crescent_Moon_obj`) and Submerged Knives
+(`Butcher_Submerged_Knives_Knifehoarder_obj`) - are a different, MEASURED
+case, not an unobserved one: those objects have zero own instances during a
+plain cast (see "Rows, and why a toggled instance never gets a countdown"
+above's session-6 evidence), so their plain cast always answers `noInstance`
+and never draws, in every look, regardless of whether `destroyTimer` is
+readable on them at all; only their toggled-on state creates the instance,
+and that state is suppressed below before the timer is ever read. Before the
+timer's own read runs at all, each row first runs the SAME toggle read the
+border uses (`ToggleIndicatorReadRow` + `ToggleIndicatorModel::Decide`); On or
+Unreadable there draws no countdown (D-T4: toggle-on/toggle-unreadable
+suppresses the timer read, same as the border) - the issue's own
+out-of-scope line, "toggles stay on/off, with no countdown", still holds, and
+the countdown only ever appears on a plain, timed cast.
+
+**The number font (Needs-human-judgement 2, resolved 2026-09-21:
+"`__newfont6` by name").** The author's session-2 ship requirement was that
+shipped text sets its own font every draw (the inherited font shimmered);
+which font was actually active when `(0,-101)` was confirmed live is not
+recorded. The shipped code resolves `__newfont6` by name every draw
+(`asset_get_index`, never a hard-coded index) and falls back to the
+inherited font, counted `fontUnresolved`, rather than failing the draw - if
+the live check finds the text touching the icon, the fix is the offset
+constant, not a re-plan.
+
+**Diagnostics.** `skilltimer stat` (a player command, like `toggleborder
+stat`) prints the current style, the shared table's resolved talent ids, the
+aggregate counters (`drawn noInstance unreadable expired toggleOn
+toggleUnreadable unresolved noSlot latched unlatched drawExc
+fontUnresolved`) and one line per row named by `abilityId`.

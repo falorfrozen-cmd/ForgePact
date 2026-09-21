@@ -380,6 +380,7 @@ static consteval const char* SdkShortScriptName(std::string_view sdkConstant)
 #include <ForgePact/StatsManager.hpp>
 #include <ForgePact/RelicFilterMod.hpp>
 #include <ForgePact/ToggleSkillMod.hpp>
+#include <ForgePact/SkillTimerMod.hpp>
 #include <ForgePact/ProspectWindowMod.hpp>
 #include <ForgePact/AutoProspectMod.hpp>
 #include <ForgePact/PetQuestCollectorMod.hpp>
@@ -4807,20 +4808,33 @@ static void ToggleIndicatorMarkerBox(double bboxX, double bboxY, double bboxW, d
 // (noRow0), and no element carrying that talent id (noTalent). Each
 // caller-visible failure increments exactly one counter. What it hands back
 // is D-U12's derived, whole-pixel box, not the raw `navBbox`.
-static bool ToggleIndicatorFindSlot(int talentId, double& outX, double& outY, double& outW, double& outH)
+//
+// The three failures are reported to the CALLER (`outReason`, optional)
+// rather than counted here (issue #55 follow-up): `skilltimer` needs this
+// same lookup, and counting inside FindSlot would move toggleborder's own
+// noHud/noRow0/noTalent stat while toggleborder is off - a stat that would
+// lie about which feature actually ran. ToggleIndicatorDraw below still
+// charges its own g_TibNoHud/g_TibNoRow0/g_TibNoTalent exactly as before,
+// just from the returned reason instead of from inside this function; a
+// caller that passes nullptr (SkillTimerDraw) charges nothing here.
+enum class ToggleSlotFailReason { None, NoHud, NoRow0, NoTalent };
+
+static bool ToggleIndicatorFindSlot(int talentId, double& outX, double& outY, double& outW, double& outH,
+                                     ToggleSlotFailReason* outReason = nullptr)
 {
+    auto fail = [&](ToggleSlotFailReason reason) { if (outReason) *outReason = reason; return false; };
     try {
         double objIdx = -1.0;
         try {
             objIdx = g_Yytk->CallBuiltin("asset_get_index",
                 { RValue(std::string(HeroSiege::Objects::GetObjectName(
                     HeroSiege::Objects::GameObject::UI_Hud_Talent_obj))) }).ToDouble();
-        } catch (...) { InterlockedIncrement(&g_TibNoHud); return false; }
-        if (objIdx < 0) { InterlockedIncrement(&g_TibNoHud); return false; }
+        } catch (...) { return fail(ToggleSlotFailReason::NoHud); }
+        if (objIdx < 0) return fail(ToggleSlotFailReason::NoHud);
         RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue(objIdx), RValue(0.0) });
-        if (inst.m_Kind == VALUE_UNDEFINED) { InterlockedIncrement(&g_TibNoHud); return false; }
+        if (inst.m_Kind == VALUE_UNDEFINED) return fail(ToggleSlotFailReason::NoHud);
         RValue arr = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("row0") });
-        if (arr.m_Kind != VALUE_ARRAY) { InterlockedIncrement(&g_TibNoRow0); return false; }
+        if (arr.m_Kind != VALUE_ARRAY) return fail(ToggleSlotFailReason::NoRow0);
         const int len = (int)g_Yytk->CallBuiltin("array_length", { arr }).ToDouble();
         for (int i = 0; i < len; ++i) {
             RValue elem = g_Yytk->CallBuiltin("array_get", { arr, RValue((double)i) });
@@ -4833,11 +4847,11 @@ static bool ToggleIndicatorFindSlot(int talentId, double& outX, double& outY, do
             const double bw = g_Yytk->CallBuiltin("variable_struct_get", { elem, RValue("navBboxWidth") }).ToDouble();
             const double bh = g_Yytk->CallBuiltin("variable_struct_get", { elem, RValue("navBboxHeight") }).ToDouble();
             ToggleIndicatorMarkerBox(bx, by, bw, bh, outX, outY, outW, outH);
+            if (outReason) *outReason = ToggleSlotFailReason::None;
             return true;
         }
-        InterlockedIncrement(&g_TibNoTalent);
-        return false;
-    } catch (...) { InterlockedIncrement(&g_TibNoHud); return false; }
+        return fail(ToggleSlotFailReason::NoTalent);
+    } catch (...) { return fail(ToggleSlotFailReason::NoHud); }
 }
 
 // D-U13 (author, 2026-09-20, final): the marker is the `soft` look in
@@ -4908,9 +4922,17 @@ static void ToggleIndicatorDraw()
         InterlockedIncrement(&g_TibRow[r].on);
 
         double x = 0, y = 0, w = 0, h = 0;
-        if (!ToggleIndicatorFindSlot(talentId, x, y, w, h)) {
-            // Which of the three ways it failed is counted inside FindSlot
-            // (noHud/noRow0/noTalent); which ROW lost its slot is counted here.
+        ToggleSlotFailReason slotFail = ToggleSlotFailReason::None;
+        if (!ToggleIndicatorFindSlot(talentId, x, y, w, h, &slotFail)) {
+            // Which of the three ways it failed is charged here from the
+            // returned reason (noHud/noRow0/noTalent); which ROW lost its
+            // slot is counted right after.
+            switch (slotFail) {
+                case ToggleSlotFailReason::NoHud:    InterlockedIncrement(&g_TibNoHud);    break;
+                case ToggleSlotFailReason::NoRow0:   InterlockedIncrement(&g_TibNoRow0);   break;
+                case ToggleSlotFailReason::NoTalent: InterlockedIncrement(&g_TibNoTalent); break;
+                default: break;
+            }
             InterlockedIncrement(&g_TibRow[r].noSlot);
             continue;
         }
@@ -4973,6 +4995,343 @@ static void ToggleBorderStats()
     Out("toggleborder stat: " + ToggleTableRowsLine());
     for (int r = 0; r < ForgePact::kToggleSkillRowCount; ++r)
         Out("toggleborder stat: " + ToggleBorderRowCountersLine(r));
+}
+
+// ===== Timed-skill countdown (issue #55; `skilltimer`) ======================
+// Draws how much of a timed cast is left over the cast's own hotbar slot -
+// the same table, the same slot lookup and the same toggle suppression as
+// the border above, with its own read (largest own reading of
+// ForgePact::kSkillTimerField, route B's latch) and its own four looks. Off
+// by default - SkillTimerDraw's very
+// first statement returns when the style is off, so a player who never picks
+// a look gets no runtime call from this mod at all
+// (skilltimer/off_makes_no_runtime_calls), the same shape as
+// ToggleIndicatorDraw above and indicator_off/no_runtime_calls before it.
+static std::atomic<ForgePact::SkillTimerStyle> g_SkillTimerStyle{ ForgePact::SkillTimerStyle::Off };
+static ForgePact::SkillTimerRowState g_SkillTimerRowState[ForgePact::kToggleSkillRowCount];
+
+// Per-row: drawn (the style's draw call ran with no exception - not
+// necessarily visible, e.g. bar's sub-pixel guard or number's rounds-to-zero
+// guard), noInstance (no own instance - route B's latch dropped if it was
+// held), unreadable (an own instance exists but none has a numeric reading
+// of the shared timer field - latch untouched), expired (remaining <= 0 - never latches),
+// toggleOn/toggleUnreadable (D-T4: the row's own timer field is never even
+// read once the shipped toggle read decides On or Unreadable, the same
+// suppression the border applies to its own marker),
+// unresolved (the row's talent id has not resolved yet), noSlot (the shared
+// slot lookup failed - this mod's OWN count, never toggleborder's), latched/
+// unlatched (the latch was taken/updated, or dropped, THIS call). Aggregate
+// adds drawExc (a style's draw call threw) and fontUnresolved (`number`
+// could not resolve its font by name and fell back to the inherited one).
+struct SkillTimerRowCounters {
+    volatile long drawn, noInstance, unreadable, expired, toggleOn, toggleUnreadable,
+                  unresolved, noSlot, latched, unlatched;
+};
+static SkillTimerRowCounters g_StRow[ForgePact::kToggleSkillRowCount] = {};
+static volatile long g_StDrawExc = 0, g_StFontUnresolved = 0;
+
+// Scans the row's OWN instances - the exact ownership rule
+// ToggleIndicatorReadRow applies (row.ownershipField, nullptr = every
+// instance own; an unattributed instance is neither own nor foreign, and is
+// simply not counted) - for the LARGEST numeric reading of
+// ForgePact::kSkillTimerField among them (D-T6: several own instances can be
+// running for one row's object at once - a toggle skill's own object briefly
+// overlapping a plain cast, say - and the largest reading is treated as the
+// current cast). The object itself failing
+// to resolve is folded into "no own
+// instance": no row's talent id resolves without its object existing too,
+// and the context's two named outcomes (an object with zero instances, and
+// instances with no readable timer) do not distinguish "unresolved" as a
+// third case.
+static void SkillTimerReadRow(const ForgePact::ToggleSkillRow& row, bool& anyOwn, bool& anyReadable, double& remaining)
+{
+    anyOwn = false;
+    anyReadable = false;
+    remaining = 0.0;
+    double objIdx = -1.0;
+    if (!ToggleIndicatorResolveRowObject(row, objIdx)) return;
+
+    long n = 0;
+    try { n = (long)g_Yytk->CallBuiltin("instance_number", { RValue(objIdx) }).ToDouble(); }
+    catch (...) { return; }   // a failed count is treated as no own instance (fail-safe: draws nothing)
+    if (n <= 0) return;
+
+    const long cap = kToggleIndicatorScanCap;
+    const long scanCount = n < cap ? n : cap;
+    for (long i = 0; i < scanCount; ++i) {
+        try {
+            RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue(objIdx), RValue((double)i) });
+            bool isMine = true;
+            if (row.ownershipField) {
+                RValue mc = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(row.ownershipField) });
+                if (!ToggleIndicatorReadTruth(mc, isMine)) continue;   // unattributed: not own
+            }
+            if (!isMine) continue;   // foreign: never counted here (skilltimer/foreign_instance_not_counted)
+            anyOwn = true;
+            RValue timer = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(ForgePact::kSkillTimerField) });
+            if (N1Numeric(timer)) {
+                const double v = timer.ToDouble();
+                if (!anyReadable || v > remaining) remaining = v;
+                anyReadable = true;
+            }
+        } catch (...) { /* this instance's own read failed; the others still count */ }
+    }
+}
+
+static constexpr double kSkillTimerColourR = 255.0, kSkillTimerColourG = 215.0, kSkillTimerColourB = 0.0;   // gold - the colour every look was judged in (pinned equal to the research instrument's own default)
+static constexpr int kSkillTimerBands = 10;   // arc/fade band count (pinned equal to the research instrument's own default)
+
+static RValue SkillTimerColour()
+{
+    return g_Yytk->CallBuiltin("make_colour_rgb",
+        { RValue(kSkillTimerColourR), RValue(kSkillTimerColourG), RValue(kSkillTimerColourB) });
+}
+
+// The same arithmetic the research instrument measured this look with,
+// written as our own code rather than a call into the research block (a
+// contract test pins the shipped constants above equal to that instrument's
+// own defaults): walks a rectangle's perimeter clockwise from its top-left
+// corner, drawing only the leading `fraction` of the total length.
+static void SkillTimerDrawRectOutlineFraction(double x0, double y0, double x1, double y1, double fraction)
+{
+    if (fraction <= 0.0) return;
+    const double w = x1 - x0, h = y1 - y0;
+    const double perimeter = 2.0 * (w + h);
+    double remaining = perimeter * (fraction > 1.0 ? 1.0 : fraction);
+    if (remaining <= 0.0) return;
+    const double ax[4] = { x0, x1, x1, x0 };
+    const double ay[4] = { y0, y0, y1, y1 };
+    const double bx[4] = { x1, x1, x0, x0 };
+    const double by[4] = { y0, y1, y1, y0 };
+    for (int i = 0; i < 4 && remaining > 0.0; ++i) {
+        const double dx = bx[i] - ax[i], dy = by[i] - ay[i];
+        const double len = std::sqrt(dx * dx + dy * dy);
+        if (len <= 0.0) continue;
+        const double take = remaining < len ? remaining : len;
+        const double t = take / len;
+        g_Yytk->CallBuiltin("draw_line", { RValue(ax[i]), RValue(ay[i]), RValue(ax[i] + dx * t), RValue(ay[i] + dy * t) });
+        remaining -= take;
+    }
+}
+
+// `arc`: 10 nested bands growing outward from the box, alpha ramping
+// 1..1/9..0 outward, each band tracing only `fraction` of its own perimeter -
+// the look the author judged live in the research instrument, ported.
+static void SkillTimerDrawArc(double x, double y, double w, double h, double fraction)
+{
+    g_Yytk->CallBuiltin("draw_set_colour", { SkillTimerColour() });
+    for (int i = 0; i < kSkillTimerBands; ++i) {
+        const double t = (double)i / (double)(kSkillTimerBands - 1);
+        g_Yytk->CallBuiltin("draw_set_alpha", { RValue(1.0 - t) });
+        SkillTimerDrawRectOutlineFraction(x - i, y - i, x + w + i, y + h + i, fraction);
+    }
+}
+
+// `bar`: filled, above the icon (2026-09-21 live session) - bottom edge
+// kBarGap above the box's top, inset kBarInset each side, kBarHeight tall,
+// width scaled by `fraction`. A width under 1 px draws nothing (D4: the live
+// session found a visible stub at frac 0.0 otherwise) - the research
+// instrument's own inset/offset fixed at their live-confirmed defaults (no
+// tunable offset in the ship build).
+static constexpr double kSkillTimerBarGap = 2.0, kSkillTimerBarHeight = 6.0, kSkillTimerBarInset = 4.0;
+
+static void SkillTimerDrawBar(double x, double y, double w, double h, double fraction)
+{
+    const double usableWidth = w - 2.0 * kSkillTimerBarInset;
+    const double barWidth = usableWidth * fraction;
+    if (barWidth < 1.0) return;   // skilltimer/bar_subpixel_draws_nothing
+    const double bx0 = x + kSkillTimerBarInset, by1 = y - kSkillTimerBarGap;
+    const double bx1 = bx0 + barWidth, by0 = by1 - kSkillTimerBarHeight;
+    RValue colour = SkillTimerColour();
+    g_Yytk->CallBuiltin("draw_set_alpha", { RValue(1.0) });
+    g_Yytk->CallBuiltin("draw_rectangle_colour", {
+        RValue(bx0), RValue(by0), RValue(bx1), RValue(by1),
+        RValue(colour), RValue(colour), RValue(colour), RValue(colour), RValue(0.0) });
+}
+
+// `number`: the fraction as a whole-number percentage, above the icon at
+// `textoffset (0,-101)` measured from the box's BOTTOM edge (halign centre,
+// valign top) - the live-confirmed placement. At zero - including a fraction
+// that rounds to 0% - nothing is drawn at all (ship-only difference from the
+// probe, which keeps "0%" as its own liveness signal; decided 2026-09-21).
+// Resolves `__newfont6` by name every draw (Needs-human-judgement default):
+// unresolved falls back to the inherited font and counts fontUnresolved
+// rather than failing the draw. Save/restore follows the same shape the
+// research instrument's own number look used: every previous state captured
+// before the first draw_set_*, the draw in its own inner try so a throw
+// there cannot skip the restores, each restore in its own try, and the font
+// restored only if this call actually applied one.
+static constexpr double kSkillTimerTextOffsetDx = 0.0, kSkillTimerTextOffsetDy = -101.0;
+
+static void SkillTimerDrawNumber(double x, double y, double w, double h, double fraction)
+{
+    const long pct = (long)std::round(fraction * 100.0);
+    if (pct <= 0) return;   // skilltimer/number_zero_percent_draws_nothing
+    try {
+        RValue prevFont = g_Yytk->CallBuiltin("draw_get_font", {});
+        RValue prevColour = g_Yytk->CallBuiltin("draw_get_colour", {});
+        RValue prevAlpha = g_Yytk->CallBuiltin("draw_get_alpha", {});
+        RValue prevHalign = g_Yytk->CallBuiltin("draw_get_halign", {});
+        RValue prevValign = g_Yytk->CallBuiltin("draw_get_valign", {});
+        bool fontApplied = false;
+        try {
+            double f = -1.0;
+            try { f = g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string("__newfont6")) }).ToDouble(); }
+            catch (...) { f = -1.0; }
+            if (f >= 0) { fontApplied = true; g_Yytk->CallBuiltin("draw_set_font", { RValue(f) }); }
+            else InterlockedIncrement(&g_StFontUnresolved);
+            g_Yytk->CallBuiltin("draw_set_colour", { SkillTimerColour() });
+            g_Yytk->CallBuiltin("draw_set_alpha", { RValue(1.0) });
+            g_Yytk->CallBuiltin("draw_set_halign", { RValue(1.0) });   // fhalign_center
+            g_Yytk->CallBuiltin("draw_set_valign", { RValue(0.0) });   // fvalign_top: hang below the anchor
+            const double tx = x + w / 2.0 + kSkillTimerTextOffsetDx;
+            const double ty = y + h + kSkillTimerTextOffsetDy;
+            g_Yytk->CallBuiltin("draw_text", { RValue(tx), RValue(ty), RValue(std::to_string(pct) + "%") });
+        } catch (...) { InterlockedIncrement(&g_StDrawExc); }
+        try { g_Yytk->CallBuiltin("draw_set_valign", { prevValign }); } catch (...) {}
+        try { g_Yytk->CallBuiltin("draw_set_halign", { prevHalign }); } catch (...) {}
+        try { g_Yytk->CallBuiltin("draw_set_alpha", { prevAlpha }); } catch (...) {}
+        try { g_Yytk->CallBuiltin("draw_set_colour", { prevColour }); } catch (...) {}
+        if (fontApplied) { try { g_Yytk->CallBuiltin("draw_set_font", { prevFont }); } catch (...) {} }
+    } catch (...) { InterlockedIncrement(&g_StDrawExc); }   // a save read itself failed: nothing was set, so there is nothing to put back
+}
+
+// `fade`: the same 10 bands as `arc`, whole rectangle each (no perimeter
+// fraction), alpha `(1 - i/9) * fraction` - the research instrument's own
+// fade look (its soft-band draw with `fraction` as the alpha multiplier),
+// ported.
+static void SkillTimerDrawFade(double x, double y, double w, double h, double fraction)
+{
+    g_Yytk->CallBuiltin("draw_set_colour", { SkillTimerColour() });
+    for (int i = 0; i < kSkillTimerBands; ++i) {
+        const double t = (double)i / (double)(kSkillTimerBands - 1);
+        g_Yytk->CallBuiltin("draw_set_alpha", { RValue((1.0 - t) * fraction) });
+        g_Yytk->CallBuiltin("draw_rectangle", {
+            RValue(x - i), RValue(y - i), RValue(x + w + i), RValue(y + h + i), RValue(1.0) });
+    }
+}
+
+static void SkillTimerDrawStyle(ForgePact::SkillTimerStyle style, double x, double y, double w, double h, double fraction)
+{
+    switch (style) {
+        case ForgePact::SkillTimerStyle::Arc:    SkillTimerDrawArc(x, y, w, h, fraction);    return;
+        case ForgePact::SkillTimerStyle::Bar:    SkillTimerDrawBar(x, y, w, h, fraction);    return;
+        case ForgePact::SkillTimerStyle::Number: SkillTimerDrawNumber(x, y, w, h, fraction); return;
+        case ForgePact::SkillTimerStyle::Fade:   SkillTimerDrawFade(x, y, w, h, fraction);   return;
+        case ForgePact::SkillTimerStyle::Off:    return;
+    }
+}
+
+// Called from Hook_DrawHudBuffs, directly after ToggleIndicatorDraw() -
+// outside every research block, no new hook. Off is this function's very
+// first statement (skilltimer/off_makes_no_runtime_calls). One row at a time:
+// unresolved id -> skip; the shipped toggle read decides On/Unreadable
+// suppression (D-T4, skilltimer/toggle_on_suppresses) before the timer's own
+// read runs at all; then route B's latch decision; then the shared slot
+// lookup, charged to THIS mod's own noSlot, never toggleborder's
+// (skilltimer/slot_miss_not_charged_to_toggleborder); then the style's own
+// draw, colour/alpha saved and restored around it exactly as
+// ToggleIndicatorDraw does its marker, restored on the throw path too
+// (skilltimer/draw_throw_restores_and_counts).
+static void SkillTimerDraw()
+{
+    if (g_SkillTimerStyle.load() == ForgePact::SkillTimerStyle::Off) return;
+    const ForgePact::SkillTimerStyle style = g_SkillTimerStyle.load();
+
+    for (int r = 0; r < ForgePact::kToggleSkillRowCount; ++r) {
+        const ForgePact::ToggleSkillRow& row = ForgePact::kToggleSkillRows[r];
+        SkillTimerRowCounters& c = g_StRow[r];
+
+        const int talentId = g_ToggleTableIds.Get(r);
+        if (talentId < 0) { InterlockedIncrement(&c.unresolved); continue; }   // skilltimer/unresolved_row_skipped
+
+        ForgePact::ToggleIndicatorReadDetail toggleDetail;
+        ToggleIndicatorReadRow(row, &toggleDetail, /*treatOwnAsForeign=*/false);
+        const ForgePact::ToggleIndicatorState toggleState =
+            ForgePact::ToggleIndicatorModel::Decide(toggleDetail, ForgePact::ToggleRowRequiresMark(row));
+        if (toggleState == ForgePact::ToggleIndicatorState::On) { InterlockedIncrement(&c.toggleOn); continue; }
+        if (toggleState == ForgePact::ToggleIndicatorState::Unreadable) { InterlockedIncrement(&c.toggleUnreadable); continue; }
+
+        bool anyOwn = false, anyReadable = false;
+        double remaining = 0.0;
+        SkillTimerReadRow(row, anyOwn, anyReadable, remaining);
+
+        ForgePact::SkillTimerDecision decision =
+            ForgePact::SkillTimerModel::Decide(g_SkillTimerRowState[r], anyOwn, anyReadable, remaining);
+        if (decision.latchedThisCall) InterlockedIncrement(&c.latched);
+        if (decision.unlatchedThisCall) InterlockedIncrement(&c.unlatched);
+
+        switch (decision.outcome) {
+            case ForgePact::SkillTimerOutcome::NoInstance: InterlockedIncrement(&c.noInstance); continue;
+            case ForgePact::SkillTimerOutcome::Unreadable: InterlockedIncrement(&c.unreadable); continue;
+            case ForgePact::SkillTimerOutcome::Expired:    InterlockedIncrement(&c.expired);    continue;
+            case ForgePact::SkillTimerOutcome::Drawn:      break;
+        }
+
+        double x = 0, y = 0, w = 0, h = 0;
+        // No reason out-param: this mod charges only its own noSlot, never
+        // toggleborder's noHud/noRow0/noTalent.
+        if (!ToggleIndicatorFindSlot(talentId, x, y, w, h)) {
+            InterlockedIncrement(&c.noSlot);
+            continue;
+        }
+
+        try {
+            RValue prevColour = g_Yytk->CallBuiltin("draw_get_colour", {});
+            RValue prevAlpha = g_Yytk->CallBuiltin("draw_get_alpha", {});
+            bool drew = false;
+            try {
+                SkillTimerDrawStyle(style, x, y, w, h, decision.fraction);
+                drew = true;
+            } catch (...) { InterlockedIncrement(&g_StDrawExc); }
+            try { g_Yytk->CallBuiltin("draw_set_alpha", { prevAlpha }); } catch (...) {}
+            try { g_Yytk->CallBuiltin("draw_set_colour", { prevColour }); } catch (...) {}
+            if (drew) InterlockedIncrement(&c.drawn);
+        } catch (...) { InterlockedIncrement(&g_StDrawExc); }   // the state reads themselves failed: nothing was set, so there is nothing to put back
+    }
+}
+
+static std::string SkillTimerRowCountersLine(int row)
+{
+    const SkillTimerRowCounters& c = g_StRow[row];
+    return std::string(ForgePact::kToggleSkillRows[row].abilityId)
+        + " drawn=" + std::to_string(c.drawn) + " noInstance=" + std::to_string(c.noInstance)
+        + " unreadable=" + std::to_string(c.unreadable) + " expired=" + std::to_string(c.expired)
+        + " toggleOn=" + std::to_string(c.toggleOn) + " toggleUnreadable=" + std::to_string(c.toggleUnreadable)
+        + " unresolved=" + std::to_string(c.unresolved) + " noSlot=" + std::to_string(c.noSlot)
+        + " latched=" + std::to_string(c.latched) + " unlatched=" + std::to_string(c.unlatched);
+}
+
+// Every field above is a SUM over the five shipped rows, same reasoning as
+// ToggleBorderCountersLine - said out loud so it is not misread as a
+// per-draw total.
+static std::string SkillTimerAggregateCountersLine()
+{
+    long drawn = 0, noInstance = 0, unreadable = 0, expired = 0, toggleOn = 0, toggleUnreadable = 0,
+         unresolved = 0, noSlot = 0, latched = 0, unlatched = 0;
+    for (int r = 0; r < ForgePact::kToggleSkillRowCount; ++r) {
+        const SkillTimerRowCounters& c = g_StRow[r];
+        drawn += c.drawn; noInstance += c.noInstance; unreadable += c.unreadable; expired += c.expired;
+        toggleOn += c.toggleOn; toggleUnreadable += c.toggleUnreadable; unresolved += c.unresolved;
+        noSlot += c.noSlot; latched += c.latched; unlatched += c.unlatched;
+    }
+    return "drawn=" + std::to_string(drawn) + " noInstance=" + std::to_string(noInstance)
+        + " unreadable=" + std::to_string(unreadable) + " expired=" + std::to_string(expired)
+        + " toggleOn=" + std::to_string(toggleOn) + " toggleUnreadable=" + std::to_string(toggleUnreadable)
+        + " unresolved=" + std::to_string(unresolved) + " noSlot=" + std::to_string(noSlot)
+        + " latched=" + std::to_string(latched) + " unlatched=" + std::to_string(unlatched)
+        + " drawExc=" + std::to_string(g_StDrawExc) + " fontUnresolved=" + std::to_string(g_StFontUnresolved)
+        + " (summed over " + std::to_string(ForgePact::kToggleSkillRowCount) + " rows)";
+}
+
+// `skilltimer stat` is read-only: it stores nothing to g_SkillTimerStyle.
+static void SkillTimerStats()
+{
+    Out(std::string("skilltimer stat: style=") + ForgePact::SkillTimerStyleName(g_SkillTimerStyle.load())
+        + " " + SkillTimerAggregateCountersLine());
+    Out("skilltimer stat: " + ToggleTableRowsLine());
+    for (int r = 0; r < ForgePact::kToggleSkillRowCount; ++r)
+        Out("skilltimer stat: " + SkillTimerRowCountersLine(r));
 }
 
 // ===== Toggle-skill re-cast guard (issue #11, Track A; `toggleguard`) ========
@@ -5290,6 +5649,7 @@ static RValue& Hook_DrawHudBuffs(CInstance* S, CInstance* O, RValue& R, int argc
     ++g_HhHudCalls;
     HhDrawHeadLabels();
     ToggleIndicatorDraw();
+    SkillTimerDraw();
 #ifndef FORGEPACT_RELEASE
     TgProbeSpurnAfterDraw();
 #endif
@@ -25354,7 +25714,7 @@ static void RunCommand(const std::string& line)
         "stat", "statadd", "raredrop", "droprate", "dungeonkey",
         "headhunter", "hhdur", "hhmap", "hhdefault", "hhlabel", "tyrant", "beacon", "beaconrange", "beaconmode", "beaconwake", "beaconspawn", "beaconfarstep", "tyrantchance", "tyrantaffix", "hhlabelfont", "hhlabeloffset", "hhlabelmax",
         "enemyspeed", "rarity", "sigdrop", "angelicdrop", "relicfilter", "orbpickup", "satmods", "petquest",
-        "autoprospect", "toggleborder", "toggleguard"
+        "autoprospect", "toggleborder", "toggleguard", "skilltimer"
     };
     if (kPlayerCommands.find(lc) == kPlayerCommands.end()) {
         Out("command unavailable in player build: " + cmd);
@@ -25370,6 +25730,28 @@ static void RunCommand(const std::string& line)
     // is already at MSVC's block-nesting limit (C1061).
     if (lc == "tgprobe") { TgProbeCommand(rest); return; }
 #endif
+    // Timed-skill countdown (issue #55). A standalone early return, same
+    // MSVC C1061 reason as `toggleborder`/`toggleguard` below.
+    if (lc == "skilltimer") {
+        std::string v = Lower(TrimCopy(rest));
+        if (v == "stat") { SkillTimerStats(); return; }   // read-only: stores nothing
+        if (v == "off" || v == "0") {
+            g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Off);
+            Out("skilltimer -> off " + SkillTimerAggregateCountersLine());
+            return;
+        }
+        ForgePact::SkillTimerStyle style;
+        if (ForgePact::SkillTimerStyleFromName(v, style) && style != ForgePact::SkillTimerStyle::Off) {
+            g_SkillTimerStyle.store(style);
+            Out(std::string("skilltimer -> ") + ForgePact::SkillTimerStyleName(style)
+                + " (draws a countdown over each timed skill's hotbar slot; covers "
+                + std::to_string(ForgePact::kToggleSkillRowCount)
+                + " toggle-table rows - `skilltimer stat` lists them)");
+            return;
+        }
+        Out("usage: skilltimer off|arc|bar|number|fade|stat");
+        return;
+    }
     // Toggle-skill re-cast guard (issue #11, Track A). A standalone early
     // return for the same C1061 reason as `toggleborder` below. `1` only arms
     // it: FrameCallback installs the TalentUseClass hook once a player exists

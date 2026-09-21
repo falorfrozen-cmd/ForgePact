@@ -3,13 +3,16 @@
 The Prospect Cube can now prospect each item the moment you put it in, so you
 no longer have to stop every 54 items to press Prospect and start again.
 
-Two new, off-by-default Gameplay Mods for toggle skills: mark the skill-bar
-slot of a toggle you have running, so you can see at a glance that it is still
-active, and stop a double cast proc from flipping a toggle straight back.
+Three new, off-by-default Gameplay Mods for toggle skills: mark the skill-bar
+slot of a toggle you have running, stop a double cast proc from flipping a
+toggle straight back, and draw a countdown over a plain (non-toggled) cast so
+you can see how much time is left before it ends.
 
-Five skills are covered: the White Mage's **Soul Spurn**, the Exo's **Lunar
-Orbit**, the Plague Doctor's **Crematus**, the Butcher's **Submerged Knives**
-and the Prophet's **Maelstrom of Frost**.
+Five skills are covered by the toggle marker and the double-cast guard: the
+White Mage's **Soul Spurn**, the Exo's **Lunar Orbit**, the Plague Doctor's
+**Crematus**, the Butcher's **Submerged Knives** and the Prophet's
+**Maelstrom of Frost**. The countdown is narrower - see below for which of
+those five it can actually draw on.
 
 ## New
 
@@ -90,6 +93,21 @@ and the Prophet's **Maelstrom of Frost**.
   toggle; without it, the double cast's extra cast goes through exactly as it
   does in the unmodded game. Your own presses, and double casts of every other
   skill, are not affected.
+- **Timed skill countdown.** For a plain cast of Soul Spurn or Maelstrom of
+  Frost, and Crematus where the game exposes that cast's own timer - not the
+  toggled-on state, which never gets a countdown - a new **Timed skill
+  countdown** dropdown in Mods (off by default) draws how much of the cast is
+  left over that skill's slot on the skill bar, and it disappears the moment
+  the cast ends. Lunar Orbit and Submerged Knives never show a countdown
+  either way: their plain cast never creates the timed instance the mod
+  reads, only their toggled-on state does, and a toggled-on skill never gets
+  a countdown. Pick one of four looks: **Arc** (a ring that empties
+  clockwise), **Bar** (a shrinking bar above the icon), **Number** (a
+  shrinking percentage above the icon) or **Fade** (a soft outline that dims
+  as time runs out). If you turn this on partway through a cast that is
+  already running, that one cast shows as full from the moment you turned it
+  on rather than its true remaining time; the next cast on that skill reads
+  correctly.
 
 ## How to update
 

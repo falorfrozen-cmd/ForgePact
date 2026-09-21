@@ -51,12 +51,19 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
     def setUpClass(cls):
         cls.plugin = (ROOT / "plugin/ModuleMain.cpp").read_text(encoding="utf-8")
         header = (ROOT / "plugin/include/ForgePact/ToggleSkillMod.hpp").read_text(encoding="utf-8")
+        skilltimer_header = (ROOT / "plugin/include/ForgePact/SkillTimerMod.hpp").read_text(encoding="utf-8")
 
         # The real class/struct/enum, verbatim, minus the include of
         # Common.hpp (the harness supplies the stand-ins Common.hpp would
         # have pulled in) - same shape as test_relic_filter_behavior.py.
         klass = "\n".join(
             line for line in header.split("\n")
+            if not line.strip().startswith("#pragma once")
+            and '#include "Common.hpp"' not in line
+        )
+        # Issue #55: SkillTimerMod.hpp, spliced the same way.
+        skilltimer_klass = "\n".join(
+            line for line in skilltimer_header.split("\n")
             if not line.strip().startswith("#pragma once")
             and '#include "Common.hpp"' not in line
         )
@@ -76,6 +83,14 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
             declaration(cls.plugin, "static constexpr double kToggleMarkerBoxDY ="),
             declaration(cls.plugin, "static constexpr double kToggleMarkerBoxDW ="),
             declaration(cls.plugin, "static constexpr double kToggleMarkerBoxDH ="),
+            # Issue #55 (skilltimer): the four looks' own constants, pinned
+            # equal to the research instrument's defaults by
+            # test_toggle_skill_contract.py, spliced here the same way so a
+            # scenario asserts against the shipped numbers themselves.
+            declaration(cls.plugin, "static constexpr double kSkillTimerColourR ="),
+            declaration(cls.plugin, "static constexpr int kSkillTimerBands ="),
+            declaration(cls.plugin, "static constexpr double kSkillTimerBarGap ="),
+            declaration(cls.plugin, "static constexpr double kSkillTimerTextOffsetDx ="),
         ])
         production = "\n".join([
             # S: the row-parameterised read and its row-0 aliases, in the
@@ -110,9 +125,40 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
             declaration(cls.plugin, "static ToggleBorderRowCounters g_TibRow"),
             implementation(cls.plugin, "static std::string ToggleBorderRowCountersLine("),
             implementation(cls.plugin, "static void ToggleIndicatorMarkerBox("),
+            # The shared slot lookup's failure reason (issue #55 follow-up):
+            # reported to the caller rather than counted inside FindSlot
+            # itself, so toggleborder and skilltimer each charge their own
+            # counters from the same lookup.
+            declaration(cls.plugin, "enum class ToggleSlotFailReason"),
             implementation(cls.plugin, "static bool ToggleIndicatorFindSlot("),
             implementation(cls.plugin, "static void ToggleIndicatorDrawMarker("),
             implementation(cls.plugin, "static void ToggleIndicatorDraw("),
+            # Issue #55 (skilltimer): the countdown itself, spliced from
+            # right after ToggleBorderStats in the plugin (between the
+            # border and the guard sections). N1Numeric is spliced here,
+            # ahead of SkillTimerReadRow's own use of it, rather than at its
+            # later Round-2 splice point below.
+            implementation(cls.plugin, "static bool N1Numeric("),
+            declaration(cls.plugin, "static std::atomic<ForgePact::SkillTimerStyle> g_SkillTimerStyle"),
+            declaration(cls.plugin, "static ForgePact::SkillTimerRowState g_SkillTimerRowState"),
+            implementation(cls.plugin, "struct SkillTimerRowCounters {") + ";",
+            declaration(cls.plugin, "static SkillTimerRowCounters g_StRow"),
+            declaration(cls.plugin, "static volatile long g_StDrawExc"),
+            implementation(cls.plugin, "static void SkillTimerReadRow("),
+            implementation(cls.plugin, "static RValue SkillTimerColour("),
+            implementation(cls.plugin, "static void SkillTimerDrawRectOutlineFraction("),
+            implementation(cls.plugin, "static void SkillTimerDrawArc("),
+            implementation(cls.plugin, "static void SkillTimerDrawBar("),
+            implementation(cls.plugin, "static void SkillTimerDrawNumber("),
+            implementation(cls.plugin, "static void SkillTimerDrawFade("),
+            implementation(cls.plugin, "static void SkillTimerDrawStyle("),
+            implementation(cls.plugin, "static void SkillTimerDraw("),
+            implementation(cls.plugin, "static std::string SkillTimerRowCountersLine("),
+            implementation(cls.plugin, "static std::string SkillTimerAggregateCountersLine("),
+            # SkillTimerStats() is not spliced, same as ToggleBorderStats()/
+            # ToggleGuardStats() above it - it calls Out(), which this
+            # harness (like the rest of ModuleMain.cpp's IPC output) does
+            # not stand in for; test_toggle_skill_contract.py pins its body.
             # T1 (issue #11, Track A): the re-cast guard's real hook, its
             # trampoline slot, counters and cached object index, verbatim,
             # and the shared object-index predicate it reads the caller with
@@ -145,8 +191,8 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
             implementation(cls.plugin, "static std::string TgProbeTglTimerLine("),
             # Round 2: the sampler itself (its on/off gate and the field
             # snapshot's throttle) and the snapshot of the read's own
-            # instance, with the table they walk.
-            implementation(cls.plugin, "static bool N1Numeric("),
+            # instance, with the table they walk. (N1Numeric is spliced
+            # earlier now, ahead of SkillTimerReadRow's own use of it.)
             declaration(cls.plugin, "static constexpr int kTgTglCap"),
             declaration(cls.plugin, "static constexpr int kTgTglFieldCap"),
             declaration(cls.plugin, "static constexpr double kTgTglPredictedInfinite"),
@@ -172,6 +218,7 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
         code = (ROOT / "tests/toggle_skill_harness.cpp").read_text(encoding="utf-8")
         code = code.replace("// PRODUCTION_CONSTANTS", constants)
         code = code.replace("// PRODUCTION_TOGGLESKILL", klass)
+        code = code.replace("// PRODUCTION_SKILLTIMER", skilltimer_klass)
         code = code.replace("// PRODUCTION_FUNCTIONS", production)
         cpp = out / "toggleskill.cpp"
         cpp.write_text(code, encoding="utf-8")
@@ -603,6 +650,90 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
     def test_table_fields_snapshot_uses_own_instance(self):
         for suffix in ("/own_fields", "", "/no_own_reads_nothing", "/no_own_stores_nothing", "/no_own_line"):
             self.assertScenario("table/fields_snapshot_uses_own_instance" + suffix)
+
+    # ---- issue #55: the timed-skill countdown (`skilltimer`) --------------
+
+    def test_skilltimer_off_makes_no_runtime_calls(self):
+        self.assertScenario("skilltimer/off_makes_no_runtime_calls")
+
+    def test_skilltimer_no_instance_draws_nothing(self):
+        self.assertScenario("skilltimer/no_instance_draws_nothing")
+        self.assertScenario("skilltimer/no_instance_draws_nothing/rects")
+
+    def test_skilltimer_unreadable_timer_draws_nothing(self):
+        self.assertScenario("skilltimer/unreadable_timer_draws_nothing")
+        self.assertScenario("skilltimer/unreadable_timer_draws_nothing/rects")
+
+    def test_skilltimer_foreign_instance_not_counted(self):
+        self.assertScenario("skilltimer/foreign_instance_not_counted")
+        self.assertScenario("skilltimer/foreign_instance_not_counted/not_unreadable")
+
+    def test_skilltimer_toggle_on_suppresses(self):
+        self.assertScenario("skilltimer/toggle_on_suppresses")
+        self.assertScenario("skilltimer/toggle_on_suppresses/rects")
+
+    def test_skilltimer_unresolved_row_skipped(self):
+        self.assertScenario("skilltimer/unresolved_row_skipped")
+        self.assertScenario("skilltimer/unresolved_row_skipped/rects")
+
+    def test_skilltimer_slot_miss_not_charged_to_toggleborder(self):
+        self.assertScenario("skilltimer/slot_miss_not_charged_to_toggleborder")
+        self.assertScenario("skilltimer/slot_miss_not_charged_to_toggleborder/tibNoHud")
+        self.assertScenario("skilltimer/slot_miss_not_charged_to_toggleborder/tibRowNoSlot")
+
+    def test_skilltimer_first_sight_latches_full(self):
+        self.assertScenario("skilltimer/first_sight_latches_full/outcome")
+        self.assertScenario("skilltimer/first_sight_latches_full")
+        self.assertScenario("skilltimer/first_sight_latches_full/latched")
+
+    def test_skilltimer_fraction_is_remaining_over_latch(self):
+        self.assertScenario("skilltimer/fraction_is_remaining_over_latch")
+        self.assertScenario("skilltimer/fraction_is_remaining_over_latch/not_relatched")
+
+    def test_skilltimer_rise_relatches(self):
+        self.assertScenario("skilltimer/rise_relatches")
+        self.assertScenario("skilltimer/rise_relatches/latched")
+
+    def test_skilltimer_instance_gone_unlatches(self):
+        self.assertScenario("skilltimer/instance_gone_unlatches/outcome")
+        self.assertScenario("skilltimer/instance_gone_unlatches")
+        self.assertScenario("skilltimer/instance_gone_unlatches/state_cleared")
+
+    def test_skilltimer_non_positive_draws_nothing_and_never_latches(self):
+        self.assertScenario("skilltimer/non_positive_draws_nothing_and_never_latches/outcome")
+        self.assertScenario("skilltimer/non_positive_draws_nothing_and_never_latches")
+        self.assertScenario("skilltimer/non_positive_draws_nothing_and_never_latches/latch_untouched")
+
+    def test_skilltimer_bar_geometry(self):
+        for suffix in ("/count", "/x0", "/y0", "/x1", "", "/colour_r", "/colour_g", "/colour_b"):
+            self.assertScenario("skilltimer/bar_geometry" + suffix)
+
+    def test_skilltimer_bar_subpixel_draws_nothing(self):
+        self.assertScenario("skilltimer/bar_subpixel_draws_nothing")
+
+    def test_skilltimer_number_text_and_anchor(self):
+        for suffix in ("/count", "/x", "/y", ""):
+            self.assertScenario("skilltimer/number_text_and_anchor" + suffix)
+
+    def test_skilltimer_number_zero_percent_draws_nothing(self):
+        self.assertScenario("skilltimer/number_zero_percent_draws_nothing")
+        self.assertScenario("skilltimer/number_zero_percent_draws_nothing/no_font_set")
+
+    def test_skilltimer_number_restores_draw_state(self):
+        for suffix in ("/font", "/halign", "/valign", "/colour", ""):
+            self.assertScenario("skilltimer/number_restores_draw_state" + suffix)
+
+    def test_skilltimer_arc_traces_fraction_of_perimeter(self):
+        for suffix in ("/count", "/x0", "/y0", "/x1", ""):
+            self.assertScenario("skilltimer/arc_traces_fraction_of_perimeter" + suffix)
+
+    def test_skilltimer_fade_scales_band_alpha(self):
+        self.assertScenario("skilltimer/fade_scales_band_alpha")
+        self.assertScenario("skilltimer/fade_scales_band_alpha/rects")
+
+    def test_skilltimer_draw_throw_restores_and_counts(self):
+        for suffix in ("/drawn", "", "/colour_restored", "/alpha_restored"):
+            self.assertScenario("skilltimer/draw_throw_restores_and_counts" + suffix)
 
 
 if __name__ == "__main__":

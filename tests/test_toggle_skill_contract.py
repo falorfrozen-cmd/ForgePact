@@ -779,6 +779,8 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
             "toggleborder",
             # T1 (issue #11, Track A): the re-cast guard (ToggleGuardContractTests).
             "toggleguard",
+            # Issue #55: the timed-skill countdown (SkillTimerShipContractTests).
+            "skilltimer",
         }
         self.assertEqual(entries, expected)
 
@@ -1008,6 +1010,186 @@ def git_show(ref_path: str):
         ).stdout.decode("utf-8").replace("\r\n", "\n")
     except (OSError, subprocess.CalledProcessError):
         return None
+
+
+class SkillTimerShipContractTests(unittest.TestCase):
+    """The shipped timed-skill countdown (issue #55): `skilltimer`.
+
+    Companion to test_toggle_skill_behavior.py's `skilltimer/*` scenarios,
+    which run the read/latch/draw decisions end to end, and to
+    SkillTimerProbeContractTests, which pins the research instrument that
+    produced the looks and placements this class pins as the ship's own.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.plugin = PLUGIN_SRC.read_text(encoding="utf-8")
+        cls.stripped = strip_research_blocks(cls.plugin)
+        cls.header = (FORGEPACT_DIR / "plugin" / "include" / "ForgePact" / "SkillTimerMod.hpp").read_text(encoding="utf-8")
+        cls.panel = (SRC_DIR / "forgepact.py").read_text(encoding="utf-8")
+        cls.research_doc = (FORGEPACT_DIR / "docs" / "toggle-skills-research.md").read_text(encoding="utf-8")
+        cls.release_notes = (FORGEPACT_DIR / "release-notes-v1.4.5.md").read_text(encoding="utf-8")
+        cls.readme = (FORGEPACT_DIR / "README.md").read_text(encoding="utf-8")
+
+    def test_skilltimer_is_a_player_command(self):
+        match = re.search(
+            r"static const std::unordered_set<std::string> kPlayerCommands = \{(.*?)\};",
+            self.plugin, re.S)
+        self.assertIsNotNone(match)
+        entries = {tok.strip().strip('"') for tok in match.group(1).split(",") if tok.strip()}
+        self.assertIn("skilltimer", entries)
+        start = self.plugin.index('if (lc == "skilltimer")')
+        end = self.plugin.index('if (lc == "toggleguard")', start)
+        branch = self.plugin[start:end]
+        self.assertIn('v == "stat"', branch)
+        self.assertIn('v == "off" || v == "0"', branch)
+        self.assertNotIn("HookOneScript(", branch)
+        self.assertIn('if (lc == "skilltimer")', self.stripped)
+
+    def test_draw_is_called_after_toggle_indicator_outside_research(self):
+        body = function_body(self.plugin, "static RValue& Hook_DrawHudBuffs(")
+        self.assertIn("ToggleIndicatorDraw();", body)
+        self.assertIn("SkillTimerDraw();", body)
+        self.assertLess(body.index("ToggleIndicatorDraw();"), body.index("SkillTimerDraw();"))
+        stripped_body = function_body(self.stripped, "static RValue& Hook_DrawHudBuffs(")
+        self.assertIn("SkillTimerDraw();", stripped_body)
+
+    def test_off_is_the_first_statement(self):
+        body = function_body(self.plugin, "static void SkillTimerDraw(")
+        first_statement = body.strip().splitlines()[0].strip()
+        self.assertEqual(
+            first_statement,
+            "if (g_SkillTimerStyle.load() == ForgePact::SkillTimerStyle::Off) return;")
+
+    def test_ship_constants_equal_the_probe_defaults(self):
+        # D-U12/D-U13-style pin: every look constant the ship carries as its
+        # own is asserted equal to the probe's own default, so the two
+        # cannot drift apart.
+        ship_colour = re.search(
+            r"static constexpr double kSkillTimerColourR = ([\d.]+), kSkillTimerColourG = ([\d.]+), "
+            r"kSkillTimerColourB = ([\d.]+);", self.plugin)
+        probe_colour = re.search(
+            r"static double g_TgSpriteColourR = ([\d.]+), g_TgSpriteColourG = ([\d.]+), "
+            r"g_TgSpriteColourB = ([\d.]+);", self.plugin)
+        self.assertIsNotNone(ship_colour); self.assertIsNotNone(probe_colour)
+        self.assertEqual(ship_colour.groups(), probe_colour.groups())
+
+        ship_bands = re.search(r"static constexpr int kSkillTimerBands = (\d+);", self.plugin)
+        probe_bands = re.search(
+            r"static constexpr int kBands = (\d+);",
+            function_body(self.plugin, "static void TgProbeSpriteDrawSoft("))
+        self.assertIsNotNone(ship_bands); self.assertIsNotNone(probe_bands)
+        self.assertEqual(ship_bands.group(1), probe_bands.group(1))
+
+        ship_bar = re.search(
+            r"static constexpr double kSkillTimerBarGap = ([\d.]+), kSkillTimerBarHeight = ([\d.]+), "
+            r"kSkillTimerBarInset = ([\d.]+);", self.plugin)
+        self.assertIsNotNone(ship_bar)
+        probe_bar_body = function_body(self.plugin, "static void TgProbeSpriteDrawBar(")
+        probe_gap_height = re.search(
+            r"static constexpr double kBarGap = ([\d.]+), kBarHeight = ([\d.]+);", probe_bar_body)
+        self.assertIsNotNone(probe_gap_height)
+        probe_inset = re.search(r"static double g_TgSpriteBarInset = ([\d.]+);", self.plugin)
+        self.assertIsNotNone(probe_inset)
+        self.assertEqual(ship_bar.group(1), probe_gap_height.group(1))
+        self.assertEqual(ship_bar.group(2), probe_gap_height.group(2))
+        self.assertEqual(ship_bar.group(3), probe_inset.group(1))
+
+        ship_text = re.search(
+            r"static constexpr double kSkillTimerTextOffsetDx = (-?[\d.]+), "
+            r"kSkillTimerTextOffsetDy = (-?[\d.]+);", self.plugin)
+        probe_text = re.search(
+            r"static double g_TgSpriteTextOffsetDx = (-?[\d.]+), g_TgSpriteTextOffsetDy = (-?[\d.]+);",
+            self.plugin)
+        self.assertIsNotNone(ship_text); self.assertIsNotNone(probe_text)
+        self.assertEqual(ship_text.groups(), probe_text.groups())
+
+    def test_ship_draw_references_no_research_symbol(self):
+        for sig in ("static void SkillTimerDraw(", "static void SkillTimerDrawArc(",
+                    "static void SkillTimerDrawBar(", "static void SkillTimerDrawNumber(",
+                    "static void SkillTimerDrawFade(", "static void SkillTimerDrawStyle(",
+                    "static void SkillTimerReadRow(", "static RValue SkillTimerColour(",
+                    "static void SkillTimerDrawRectOutlineFraction(",
+                    "static void SkillTimerStats(", "static std::string SkillTimerRowCountersLine(",
+                    "static std::string SkillTimerAggregateCountersLine("):
+            body = function_body(self.plugin, sig)
+            self.assertNotIn("TgProbe", body, sig)
+            self.assertNotIn("g_TgSprite", body, sig)
+
+    def test_stat_is_read_only(self):
+        start = self.plugin.index('if (lc == "skilltimer")')
+        end = self.plugin.index('if (lc == "toggleguard")', start)
+        branch = self.plugin[start:end]
+        stat_start = branch.index('v == "stat"')
+        stat_end = branch.index('v == "off" || v == "0"', stat_start)
+        stat_branch = branch[stat_start:stat_end]
+        self.assertIn("SkillTimerStats()", stat_branch)
+        self.assertNotIn("g_SkillTimerStyle.store", stat_branch)
+
+    def test_panel_default_is_off_and_startup_list_unchanged(self):
+        self.assertIn("mod_skill_timer_style", forgepact.DEFAULTS)
+        self.assertEqual(forgepact.DEFAULTS["mod_skill_timer_style"], "off")
+        cmds = forgepact.build_cmds(dict(forgepact.DEFAULTS))
+        self.assertFalse([c for c in cmds if c.startswith("skilltimer")])
+
+    def test_build_cmds_emits_each_style(self):
+        for style in ("arc", "bar", "number", "fade"):
+            cfg = dict(forgepact.DEFAULTS)
+            cfg["mod_skill_timer_style"] = style
+            self.assertIn(f"skilltimer {style}", forgepact.build_cmds(cfg))
+        # A hand-edited invalid saved value emits nothing.
+        cfg = dict(forgepact.DEFAULTS)
+        cfg["mod_skill_timer_style"] = "not-a-style"
+        self.assertFalse([c for c in forgepact.build_cmds(cfg) if c.startswith("skilltimer")])
+
+    def test_invalid_style_is_rejected(self):
+        self.assertFalse(forgepact.skill_timer_style_valid("glow"))
+        self.assertFalse(forgepact.skill_timer_style_valid(""))
+        self.assertFalse(forgepact.skill_timer_style_valid(None))
+        self.assertTrue(forgepact.skill_timer_style_valid("  Arc  "))
+        self.assertTrue(forgepact.skill_timer_style_valid("OFF"))
+        # /api/set answers 400 and saves nothing on an invalid value.
+        self.assertIn('self._json({"err": "invalid skilltimer style"}, 400)', self.panel)
+
+    def test_html_has_one_select_with_five_styles_in_order(self):
+        self.assertEqual(forgepact.HTML.count("<select"), 1)
+        m = re.search(
+            r'<select class="style-select" id="mod_skill_timer_style">(.*?)</select>',
+            forgepact.HTML, re.S)
+        self.assertIsNotNone(m)
+        values = re.findall(r'<option value="(\w+)">', m.group(1))
+        self.assertEqual(values, ["off", "arc", "bar", "number", "fade"])
+
+    def test_panel_sends_the_live_command(self):
+        self.assertIn(
+            "send_cmds([f\"skilltimer {cfg['mod_skill_timer_style']}\"], cfg)",
+            self.panel,
+        )
+
+    def test_select_painted_in_both_render_paths(self):
+        self.assertEqual(
+            self.panel.count("document.getElementById('mod_skill_timer_style').value="), 2)
+        # Never in the boolean/on-off maps: those set .checked, not .value.
+        booleans_start = self.panel.index("const booleans={")
+        booleans_line = self.panel[booleans_start:self.panel.index("};", booleans_start)]
+        self.assertNotIn("mod_skill_timer_style", booleans_line)
+
+    def test_research_decision_records_route_b(self):
+        decision = self.research_doc[self.research_doc.index("### Decision", self.research_doc.index(
+            "## Issue #55")):]
+        self.assertIn("Route B, taken by the user on 2026-09-21", decision)
+        self.assertIn("latched", decision)
+        self.assertIn("unlatched", decision)
+        self.assertIn("Mid-cast limitation", decision)
+        self.assertNotIn("Not yet taken", decision)
+
+    def test_release_notes_and_readme_name_the_control(self):
+        # The contract: the panel's own visible label appears in both player-
+        # facing documents so a reader can match the control to the note.
+        label = "Timed skill countdown"
+        self.assertIn(f'<span class="lbl" style="width:auto;flex:1">{label}', self.panel)
+        self.assertIn(label, self.release_notes)
+        self.assertIn(label, self.readme)
 
 
 class ToggleSkillTableContractTests(unittest.TestCase):
@@ -1561,6 +1743,26 @@ UNCHANGED_SINCE_T1 = (
     "static RValue& Hook_DrawHudBuffs(",
 )
 
+# The one new line issue #55 (the timed-skill countdown) adds to
+# Hook_DrawHudBuffs - directly after ToggleIndicatorDraw(), outside every
+# research block, no new hook (context "Draw site, and the pins it moves").
+SKILL_TIMER_DRAW_CALL_LINE = "    SkillTimerDraw();"
+
+
+def assert_hook_draw_hud_buffs_unchanged_plus_skilltimer(testcase, new_body, old_body):
+    """NARROWED for issue #55, not deleted: `Hook_DrawHudBuffs` was the one
+    body UNCHANGED_SINCE_T1 still pinned byte-for-byte. It now carries exactly
+    one new statement - the countdown's own call, on its own line right after
+    `ToggleIndicatorDraw();` - so the pin is narrowed the same way the table
+    above narrows the other five: remove exactly that one line and assert
+    what is left is still byte-identical to the round base."""
+    lines = new_body.split("\n")
+    testcase.assertEqual(lines.count(SKILL_TIMER_DRAW_CALL_LINE), 1, new_body)
+    call_at = lines.index(SKILL_TIMER_DRAW_CALL_LINE)
+    testcase.assertEqual(lines[call_at - 1].strip(), "ToggleIndicatorDraw();", new_body)
+    del lines[call_at]
+    testcase.assertEqual("\n".join(lines), old_body)
+
 # The research block phase S must not touch at all: the sprite look probe the
 # author judged the marker against, and the whole `tgprobe tgl` instrument.
 # The shipped marker is pinned EQUAL to the probe's own constants rather than
@@ -1759,11 +1961,18 @@ class ToggleTableProbeContractTests(unittest.TestCase):
             self.assertNotIn(name, self.stripped)
 
     def test_production_bodies_unchanged_from_62a67d2(self):
+        # NARROWED for issue #55 (the timed-skill countdown), not deleted: see
+        # assert_hook_draw_hud_buffs_unchanged_plus_skilltimer above.
         old = git_show("62a67d2:plugin/ModuleMain.cpp")
         if old is None:
             self.skipTest("git cannot read 62a67d2")
         for signature in UNCHANGED_SINCE_T1:
-            self.assertEqual(function_body(self.plugin, signature), function_body(old, signature), signature)
+            new_body = function_body(self.plugin, signature)
+            old_body = function_body(old, signature)
+            if signature == "static RValue& Hook_DrawHudBuffs(":
+                assert_hook_draw_hud_buffs_unchanged_plus_skilltimer(self, new_body, old_body)
+            else:
+                self.assertEqual(new_body, old_body, signature)
 
     def test_kplayercommands_unchanged_from_62a67d2(self):
         # NARROWED at the merge with main (2026-09-20): this phase still adds
@@ -1779,7 +1988,7 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         as_set = lambda text: {tok.strip().strip('"') for tok in text.split(",") if tok.strip()}
         now = as_set(re.search(pattern, self.plugin, re.S).group(1))
         before = as_set(re.search(pattern, old, re.S).group(1))
-        self.assertEqual(now - before, {"autoprospect"})
+        self.assertEqual(now - before, {"autoprospect", "skilltimer"})
         self.assertEqual(before - now, set())
 
     # ---- Sprite look probe (R round 3, issue #11): `tgprobe sprite ...` ----
@@ -2371,7 +2580,14 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         if old is None:
             self.skipTest("git cannot read 7169440")
         for signature in UNCHANGED_SINCE_T1:
-            self.assertEqual(function_body(self.plugin, signature), function_body(old, signature), signature)
+            new_body = function_body(self.plugin, signature)
+            old_body = function_body(old, signature)
+            # NARROWED for issue #55, not deleted - same reasoning as
+            # test_production_bodies_unchanged_from_62a67d2 above.
+            if signature == "static RValue& Hook_DrawHudBuffs(":
+                assert_hook_draw_hud_buffs_unchanged_plus_skilltimer(self, new_body, old_body)
+            else:
+                self.assertEqual(new_body, old_body, signature)
         old_hpp = git_show("7169440:plugin/include/ForgePact/ToggleSkillMod.hpp")
         if old_hpp is None:
             self.skipTest("git cannot read 7169440")

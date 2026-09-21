@@ -204,6 +204,12 @@ struct World {
     // T1 guard: whether the double-cast object's name resolves.
     bool doubleCastObjectResolves = true;
     SubTalentWorld sub;
+    // Issue #55 (skilltimer): throwing stand-ins for the two draw calls that
+    // are not already covered by drawRectangleThrows above, and whether
+    // asset_get_index("__newfont6") resolves.
+    bool drawRectangleColourThrows = false;
+    bool drawLineThrows = false;
+    bool fontResolves = true;
 };
 static World world;
 static long g_DcResolveCalls = 0;      // asset_get_index("Universal_Double_Cast_obj") calls
@@ -234,6 +240,30 @@ static void resetDrawRecord() {
     g_RectangleDraws = 0;
 }
 
+// Issue #55 (skilltimer): the two draw calls no earlier feature used -
+// draw_rectangle_colour (`bar`) and draw_line (`arc`) - and draw_text
+// (`number`, already reachable through HhDrawHeadLabels, but not yet
+// recorded by this harness), each recording ARGUMENTS, not just a count, the
+// same discipline g_DrawnRects/g_SetAlphas already apply to draw_rectangle.
+struct ColourRectDraw { double x0 = 0, y0 = 0, x1 = 0, y1 = 0, colour = 0; };
+struct LineDraw { double x0 = 0, y0 = 0, x1 = 0, y1 = 0; };
+struct TextDraw { double x = 0, y = 0; std::string text; };
+static std::vector<ColourRectDraw> g_ColourRectDraws;
+static std::vector<LineDraw> g_LineDraws;
+static std::vector<TextDraw> g_TextDraws;
+// The font/halign/valign get/set pair, the same shape g_LastSetColour/
+// g_LastSetAlpha already give draw_get_colour/draw_get_alpha: draw_get_*
+// answers a fixed "whatever the game had before" sentinel, draw_set_*
+// records the last value written, so a scenario can assert BOTH that the
+// look applied its own value and that it was restored afterwards.
+static const double kPrevFont = 222.0, kPrevHalign = 9.0, kPrevValign = 8.0;
+static const double kFontIdx = 777.0;   // what asset_get_index("__newfont6") answers when it resolves
+static double g_LastSetFont = -1, g_LastSetHalign = -1, g_LastSetValign = -1;
+static void resetSkillTimerDrawRecord() {
+    g_ColourRectDraws.clear(); g_LineDraws.clear(); g_TextDraws.clear();
+    g_LastSetFont = g_LastSetHalign = g_LastSetValign = -1;
+}
+
 // S: the instance list behind an object index. Every index a scenario did not
 // give its own list keeps answering `world.instances`, which is what every
 // scenario written before the shipped table drives.
@@ -253,6 +283,9 @@ struct FakeRunner {
                 ++g_DcResolveCalls;
                 return RValue(world.doubleCastObjectResolves ? kDcObjIdx : -1.0);
             }
+            // Issue #55 (skilltimer's `number` look): resolved by name every
+            // draw, never a hard-coded index.
+            if (want == "__newfont6") return RValue(world.fontResolves ? kFontIdx : -1.0);
             auto named = world.objIndexByName.find(want);
             if (named != world.objIndexByName.end())
                 return RValue(world.aoeObjectResolves ? named->second : -1.0);
@@ -425,6 +458,30 @@ struct FakeRunner {
                                      args[2].ToDouble(), args[3].ToDouble() });
             return RValue();
         }
+        // Issue #55 (skilltimer): `bar`'s filled rectangle, `arc`'s perimeter
+        // segments, and `number`'s text and font/alignment state.
+        if (fn == "draw_rectangle_colour") {
+            if (world.drawRectangleColourThrows) throw std::runtime_error("draw_rectangle_colour EXCEPTION");
+            g_ColourRectDraws.push_back({ args[0].ToDouble(), args[1].ToDouble(),
+                                          args[2].ToDouble(), args[3].ToDouble(), args[4].ToDouble() });
+            return RValue();
+        }
+        if (fn == "draw_line") {
+            if (world.drawLineThrows) throw std::runtime_error("draw_line EXCEPTION");
+            g_LineDraws.push_back({ args[0].ToDouble(), args[1].ToDouble(),
+                                    args[2].ToDouble(), args[3].ToDouble() });
+            return RValue();
+        }
+        if (fn == "draw_text") {
+            g_TextDraws.push_back({ args[0].ToDouble(), args[1].ToDouble(), args[2].ToString() });
+            return RValue();
+        }
+        if (fn == "draw_get_font") return RValue(kPrevFont);
+        if (fn == "draw_set_font") { g_LastSetFont = args[0].ToDouble(); return RValue(); }
+        if (fn == "draw_get_halign") return RValue(kPrevHalign);
+        if (fn == "draw_set_halign") { g_LastSetHalign = args[0].ToDouble(); return RValue(); }
+        if (fn == "draw_get_valign") return RValue(kPrevValign);
+        if (fn == "draw_set_valign") { g_LastSetValign = args[0].ToDouble(); return RValue(); }
         return RValue();
     }
 };
@@ -458,6 +515,8 @@ static std::string TgProbeDescribeShort(const RValue& v, size_t cap = 80) {
 // PRODUCTION_CONSTANTS
 
 // PRODUCTION_TOGGLESKILL
+
+// PRODUCTION_SKILLTIMER
 
 // PRODUCTION_FUNCTIONS
 
@@ -495,6 +554,24 @@ static void resetWorld() {
 static void resetTibRow(int r) {
     g_TibRow[r].drawn = 0; g_TibRow[r].on = 0; g_TibRow[r].off = 0;
     g_TibRow[r].unreadable = 0; g_TibRow[r].unresolved = 0; g_TibRow[r].noSlot = 0;
+}
+
+// Issue #55 (skilltimer): the countdown's own per-row counters, zeroed field
+// by field for the same reason as resetTibRow above, plus its latch state
+// (a plain struct, no volatile members, so a fresh SkillTimerRowState{} is
+// fine there) and its aggregate counters.
+static void resetStRow(int r) {
+    g_StRow[r].drawn = 0; g_StRow[r].noInstance = 0; g_StRow[r].unreadable = 0;
+    g_StRow[r].expired = 0; g_StRow[r].toggleOn = 0; g_StRow[r].toggleUnreadable = 0;
+    g_StRow[r].unresolved = 0; g_StRow[r].noSlot = 0; g_StRow[r].latched = 0; g_StRow[r].unlatched = 0;
+}
+static void resetSkillTimer() {
+    for (int r = 0; r < ForgePact::kToggleSkillRowCount; ++r) {
+        g_SkillTimerRowState[r] = ForgePact::SkillTimerRowState{};
+        resetStRow(r);
+    }
+    g_StDrawExc = 0; g_StFontUnresolved = 0;
+    g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Off);
 }
 
 // T1: the TalentUseClass original, as the trampoline HookOneScript hands the
@@ -1687,6 +1764,317 @@ int main() {
         checkBool("table/fields_snapshot_uses_own_instance/no_own_line",
                   TgProbeTglFieldsText(s).find("fields: no own instance") != std::string::npos, true);
     }
+
+    // ---- issue #55: the timed-skill countdown (`skilltimer`) ---------------
+    // Row 0 (soulSpurn) resolved, the other four left unresolved - the same
+    // convention the indicator/guard scenarios above use. g_ToggleBorderOn is
+    // forced false throughout: several looks below share draw_rectangle/
+    // draw_set_alpha with the border's own marker, and a leftover `true` from
+    // an earlier block would draw a second, unrelated pass into the same
+    // recordings.
+    for (int r = 0; r < ForgePact::kToggleSkillRowCount; ++r) g_ToggleTableIds.Set(r, -1);
+    g_ToggleTableIds.Set(0, kToggleIndicatorTalentId);
+    g_ToggleBorderOn.store(false);
+
+    // Expected box for the default row0 fixture, through the shipped box
+    // arithmetic (never restated as literals) - every geometry check below
+    // is derived from this, not from a hand-computed pixel pair.
+    double stEx = 0, stEy = 0, stEw = 0, stEh = 0;
+    ToggleIndicatorMarkerBox(world.row0[0].navBboxX, world.row0[0].navBboxY,
+                             world.row0[0].navBboxWidth, world.row0[0].navBboxHeight,
+                             stEx, stEy, stEw, stEh);
+
+    // 1. Off is the first statement: no runtime call at all, even with a
+    //    readable own instance sitting there.
+    resetWorld(); resetSkillTimer(); resetSkillTimerDrawRecord();
+    world.instances = { WithTimer(OwnUnmarked(), MakeReal(50.0)) };
+    g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Off);
+    {
+        long before = g_AnyCallCount;
+        SkillTimerDraw();
+        checkInt("skilltimer/off_makes_no_runtime_calls", g_AnyCallCount - before, 0);
+    }
+
+    // 2. No own instance at all: draws nothing, counts noInstance.
+    resetWorld(); resetSkillTimer(); resetSkillTimerDrawRecord();
+    world.instances = {};
+    g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Bar);
+    {
+        SkillTimerDraw();
+        checkInt("skilltimer/no_instance_draws_nothing", (long long)g_StRow[0].noInstance, 1);
+        checkInt("skilltimer/no_instance_draws_nothing/rects", (long long)g_ColourRectDraws.size(), 0);
+    }
+
+    // 3. An own instance exists but its own timer field is unreadable
+    //    (undefined): draws nothing, counts unreadable, never noInstance.
+    resetWorld(); resetSkillTimer(); resetSkillTimerDrawRecord();
+    world.instances = { OwnUnmarked() };   // destroyTimer left undefined
+    g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Bar);
+    {
+        SkillTimerDraw();
+        checkInt("skilltimer/unreadable_timer_draws_nothing", (long long)g_StRow[0].unreadable, 1);
+        checkInt("skilltimer/unreadable_timer_draws_nothing/rects", (long long)g_ColourRectDraws.size(), 0);
+    }
+
+    // 4. A foreign instance, even with a readable timer, is never counted:
+    //    the row reads as having no OWN instance at all.
+    resetWorld(); resetSkillTimer(); resetSkillTimerDrawRecord();
+    world.instances = { WithTimer(Foreign(), MakeReal(50.0)) };
+    g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Bar);
+    {
+        SkillTimerDraw();
+        checkInt("skilltimer/foreign_instance_not_counted", (long long)g_StRow[0].noInstance, 1);
+        checkInt("skilltimer/foreign_instance_not_counted/not_unreadable", (long long)g_StRow[0].unreadable, 0);
+    }
+
+    // 5. A row whose toggle read says On never gets a countdown (D-T4) -
+    //    even though its own timer is readable.
+    resetWorld(); resetSkillTimer(); resetSkillTimerDrawRecord();
+    world.instances = { WithTimer(OwnMarked(0.09), MakeReal(50.0)) };
+    g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Bar);
+    {
+        SkillTimerDraw();
+        checkInt("skilltimer/toggle_on_suppresses", (long long)g_StRow[0].toggleOn, 1);
+        checkInt("skilltimer/toggle_on_suppresses/rects", (long long)g_ColourRectDraws.size(), 0);
+    }
+
+    // 6. An unresolved row's talent id is skipped and counted, the same
+    //    fail-safe the indicator applies.
+    resetWorld(); resetSkillTimer(); resetSkillTimerDrawRecord();
+    g_ToggleTableIds.Set(0, -1);
+    world.instances = { WithTimer(OwnUnmarked(), MakeReal(50.0)) };
+    g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Bar);
+    {
+        SkillTimerDraw();
+        checkInt("skilltimer/unresolved_row_skipped", (long long)g_StRow[0].unresolved, 1);
+        checkInt("skilltimer/unresolved_row_skipped/rects", (long long)g_ColourRectDraws.size(), 0);
+    }
+    g_ToggleTableIds.Set(0, kToggleIndicatorTalentId);   // restore for the rest of this block
+
+    // 7. A slot miss is charged to THIS mod's own noSlot, never to
+    //    toggleborder's noHud/noRow0/noTalent counters (the shared lookup's
+    //    failure-reason split moved to the caller for exactly this reason).
+    resetWorld(); resetSkillTimer(); resetSkillTimerDrawRecord();
+    world.instances = { WithTimer(OwnUnmarked(), MakeReal(50.0)) };
+    world.hudTalentObjectResolves = false;
+    g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Bar);
+    {
+        g_TibNoHud = 0; resetTibRow(0);
+        SkillTimerDraw();
+        checkInt("skilltimer/slot_miss_not_charged_to_toggleborder", (long long)g_StRow[0].noSlot, 1);
+        checkInt("skilltimer/slot_miss_not_charged_to_toggleborder/tibNoHud", g_TibNoHud, 0);
+        checkInt("skilltimer/slot_miss_not_charged_to_toggleborder/tibRowNoSlot", (long long)g_TibRow[0].noSlot, 0);
+    }
+
+    // ---- route B: the latch model itself (game-independent) ---------------
+
+    // 8. No latch yet: the first reading IS the total, fraction 1.0.
+    {
+        ForgePact::SkillTimerRowState state;
+        auto d = ForgePact::SkillTimerModel::Decide(state, true, true, 100.0);
+        checkBool("skilltimer/first_sight_latches_full/outcome",
+                  d.outcome == ForgePact::SkillTimerOutcome::Drawn, true);
+        checkNear("skilltimer/first_sight_latches_full", d.fraction, 1.0);
+        checkBool("skilltimer/first_sight_latches_full/latched", d.latchedThisCall, true);
+    }
+
+    // 9. A later, smaller reading (not a rise) divides by the held latch
+    //    rather than re-latching.
+    {
+        ForgePact::SkillTimerRowState state;
+        ForgePact::SkillTimerModel::Decide(state, true, true, 100.0);
+        auto d = ForgePact::SkillTimerModel::Decide(state, true, true, 40.0);
+        checkNear("skilltimer/fraction_is_remaining_over_latch", d.fraction, 0.4);
+        checkBool("skilltimer/fraction_is_remaining_over_latch/not_relatched", d.latchedThisCall, false);
+    }
+
+    // 10. A rise - a new cast - re-latches at the new, higher value.
+    {
+        ForgePact::SkillTimerRowState state;
+        ForgePact::SkillTimerModel::Decide(state, true, true, 100.0);
+        ForgePact::SkillTimerModel::Decide(state, true, true, 40.0);   // falling within the same cast
+        auto d = ForgePact::SkillTimerModel::Decide(state, true, true, 200.0);   // a rise: a new cast
+        checkNear("skilltimer/rise_relatches", d.fraction, 1.0);
+        checkBool("skilltimer/rise_relatches/latched", d.latchedThisCall, true);
+    }
+
+    // 11. The instance disappearing drops a held latch and counts it, so the
+    //     NEXT appearance re-latches full rather than dividing by a stale
+    //     value.
+    {
+        ForgePact::SkillTimerRowState state;
+        ForgePact::SkillTimerModel::Decide(state, true, true, 100.0);
+        auto d = ForgePact::SkillTimerModel::Decide(state, false, false, 0.0);
+        checkBool("skilltimer/instance_gone_unlatches/outcome",
+                  d.outcome == ForgePact::SkillTimerOutcome::NoInstance, true);
+        checkBool("skilltimer/instance_gone_unlatches", d.unlatchedThisCall, true);
+        checkBool("skilltimer/instance_gone_unlatches/state_cleared", state.latched, false);
+    }
+
+    // 12. A non-positive reading (a held negative, or a plain cast's trailing
+    //     tail) draws nothing and never latches - the held latch, if any,
+    //     stays exactly as it was.
+    {
+        ForgePact::SkillTimerRowState state;
+        ForgePact::SkillTimerModel::Decide(state, true, true, 100.0);
+        auto d = ForgePact::SkillTimerModel::Decide(state, true, true, -0.6);
+        checkBool("skilltimer/non_positive_draws_nothing_and_never_latches/outcome",
+                  d.outcome == ForgePact::SkillTimerOutcome::Expired, true);
+        checkBool("skilltimer/non_positive_draws_nothing_and_never_latches", d.latchedThisCall, false);
+        checkNear("skilltimer/non_positive_draws_nothing_and_never_latches/latch_untouched", state.latch, 100.0);
+    }
+
+    // ---- the four looks, drawn against a real fraction < 1.0 --------------
+    // Every scenario below latches full on a first draw (cleared from the
+    // recordings), then re-reads at a smaller, non-rising value so the SECOND
+    // draw is the one actually checked, at a known fraction.
+
+    // 13. `bar`: left edge inset, bottom edge above the box, width scaled by
+    //     the fraction - the live-confirmed placement.
+    resetWorld(); resetSkillTimer(); resetSkillTimerDrawRecord();
+    g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Bar);
+    world.instances = { WithTimer(OwnUnmarked(), MakeReal(100.0)) };
+    SkillTimerDraw();   // latches at 100, fraction 1.0 - not what this checks
+    resetDrawRecord(); resetSkillTimerDrawRecord();
+    world.instances = { WithTimer(OwnUnmarked(), MakeReal(40.0)) };   // fraction 0.4
+    SkillTimerDraw();
+    {
+        const double usableWidth = stEw - 2.0 * kSkillTimerBarInset;
+        const double barWidth = usableWidth * 0.4;
+        const double bx0 = stEx + kSkillTimerBarInset, by1 = stEy - kSkillTimerBarGap;
+        const double bx1 = bx0 + barWidth, by0 = by1 - kSkillTimerBarHeight;
+        checkInt("skilltimer/bar_geometry/count", (long long)g_ColourRectDraws.size(), 1);
+        if (!g_ColourRectDraws.empty()) {
+            const ColourRectDraw& r = g_ColourRectDraws.back();
+            checkNear("skilltimer/bar_geometry/x0", r.x0, bx0);
+            checkNear("skilltimer/bar_geometry/y0", r.y0, by0);
+            checkNear("skilltimer/bar_geometry/x1", r.x1, bx1);
+            checkNear("skilltimer/bar_geometry", r.y1, by1);
+        }
+        checkNear("skilltimer/bar_geometry/colour_r", g_ColourR, kSkillTimerColourR);
+        checkNear("skilltimer/bar_geometry/colour_g", g_ColourG, kSkillTimerColourG);
+        checkNear("skilltimer/bar_geometry/colour_b", g_ColourB, kSkillTimerColourB);
+    }
+
+    // 14. A bar under 1 px wide draws nothing at all (D4's sub-pixel guard).
+    resetWorld(); resetSkillTimer(); resetSkillTimerDrawRecord();
+    g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Bar);
+    world.instances = { WithTimer(OwnUnmarked(), MakeReal(1000.0)) };
+    SkillTimerDraw();
+    resetDrawRecord(); resetSkillTimerDrawRecord();
+    world.instances = { WithTimer(OwnUnmarked(), MakeReal(9.0)) };   // fraction 0.009
+    SkillTimerDraw();
+    checkInt("skilltimer/bar_subpixel_draws_nothing", (long long)g_ColourRectDraws.size(), 0);
+
+    // 15. `number`: the fraction as a whole percentage, centred and anchored
+    //     above the icon at the box's bottom edge plus the live-confirmed
+    //     text offset.
+    resetWorld(); resetSkillTimer(); resetSkillTimerDrawRecord();
+    g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Number);
+    world.instances = { WithTimer(OwnUnmarked(), MakeReal(100.0)) };
+    SkillTimerDraw();
+    resetSkillTimerDrawRecord();
+    world.instances = { WithTimer(OwnUnmarked(), MakeReal(42.0)) };   // fraction 0.42 -> 42%
+    SkillTimerDraw();
+    {
+        const double tx = stEx + stEw / 2.0 + kSkillTimerTextOffsetDx;
+        const double ty = stEy + stEh + kSkillTimerTextOffsetDy;
+        checkInt("skilltimer/number_text_and_anchor/count", (long long)g_TextDraws.size(), 1);
+        if (!g_TextDraws.empty()) {
+            checkNear("skilltimer/number_text_and_anchor/x", g_TextDraws.back().x, tx);
+            checkNear("skilltimer/number_text_and_anchor/y", g_TextDraws.back().y, ty);
+            checkBool("skilltimer/number_text_and_anchor", g_TextDraws.back().text == "42%", true);
+        }
+    }
+
+    // 16. A fraction that rounds to 0% draws nothing at all - the ship-only
+    //     difference from the research instrument, which keeps 0% as its own
+    //     liveness signal.
+    resetWorld(); resetSkillTimer(); resetSkillTimerDrawRecord();
+    g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Number);
+    world.instances = { WithTimer(OwnUnmarked(), MakeReal(1000.0)) };
+    SkillTimerDraw();
+    resetSkillTimerDrawRecord();
+    world.instances = { WithTimer(OwnUnmarked(), MakeReal(4.0)) };   // fraction 0.004 -> rounds to 0%
+    SkillTimerDraw();
+    checkInt("skilltimer/number_zero_percent_draws_nothing", (long long)g_TextDraws.size(), 0);
+    checkNear("skilltimer/number_zero_percent_draws_nothing/no_font_set", g_LastSetFont, -1.0);
+
+    // 17. Every draw state `number` touches - font, colour, alpha, halign,
+    //     valign - is restored to its pre-draw value afterwards.
+    resetWorld(); resetSkillTimer(); resetSkillTimerDrawRecord();
+    g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Number);
+    world.instances = { WithTimer(OwnUnmarked(), MakeReal(100.0)) };
+    SkillTimerDraw();
+    resetSkillTimerDrawRecord();
+    g_LastSetColour = -999; g_LastSetAlpha = -999;
+    world.instances = { WithTimer(OwnUnmarked(), MakeReal(42.0)) };
+    SkillTimerDraw();
+    checkNear("skilltimer/number_restores_draw_state/font", g_LastSetFont, kPrevFont);
+    checkNear("skilltimer/number_restores_draw_state/halign", g_LastSetHalign, kPrevHalign);
+    checkNear("skilltimer/number_restores_draw_state/valign", g_LastSetValign, kPrevValign);
+    checkNear("skilltimer/number_restores_draw_state/colour", g_LastSetColour, kPrevColour);
+    checkNear("skilltimer/number_restores_draw_state", g_LastSetAlpha, kPrevAlpha);
+
+    // 18. `arc`: each nested band traces only `fraction` of its own
+    //     perimeter, clockwise from the top-left corner - checked on the
+    //     innermost band, which (at this fraction) stays within the top edge.
+    resetWorld(); resetSkillTimer(); resetSkillTimerDrawRecord();
+    g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Arc);
+    world.instances = { WithTimer(OwnUnmarked(), MakeReal(1000.0)) };
+    SkillTimerDraw();
+    resetSkillTimerDrawRecord();
+    world.instances = { WithTimer(OwnUnmarked(), MakeReal(50.0)) };   // fraction 0.05
+    SkillTimerDraw();
+    {
+        const double perimeter0 = 2.0 * (stEw + stEh);
+        const double length0 = 0.05 * perimeter0;
+        checkInt("skilltimer/arc_traces_fraction_of_perimeter/count", (long long)g_LineDraws.size(), (long long)kSkillTimerBands);
+        if (!g_LineDraws.empty()) {
+            const LineDraw& first = g_LineDraws.front();
+            checkNear("skilltimer/arc_traces_fraction_of_perimeter/x0", first.x0, stEx);
+            checkNear("skilltimer/arc_traces_fraction_of_perimeter/y0", first.y0, stEy);
+            checkNear("skilltimer/arc_traces_fraction_of_perimeter/x1", first.x1, stEx + length0);
+            checkNear("skilltimer/arc_traces_fraction_of_perimeter", first.y1, stEy);
+        }
+    }
+
+    // 19. `fade`: the same 10 bands as `arc`, whole rectangle each, alpha
+    //     `(1 - i/9) * fraction`.
+    resetWorld(); resetSkillTimer(); resetSkillTimerDrawRecord();
+    g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Fade);
+    world.instances = { WithTimer(OwnUnmarked(), MakeReal(100.0)) };
+    SkillTimerDraw();
+    resetDrawRecord(); resetSkillTimerDrawRecord();
+    world.instances = { WithTimer(OwnUnmarked(), MakeReal(50.0)) };   // fraction 0.5
+    SkillTimerDraw();
+    {
+        // The 10 band alphas, plus one more call restoring the pre-draw
+        // alpha afterwards (SkillTimerDraw's own save/restore around the
+        // style call) - so only the leading kSkillTimerBands entries are
+        // this look's own bands.
+        bool alphasOk = g_SetAlphas.size() >= (size_t)kSkillTimerBands;
+        for (int i = 0; alphasOk && i < kSkillTimerBands; ++i) {
+            const double t = (double)i / (double)(kSkillTimerBands - 1);
+            if (std::fabs(g_SetAlphas[(size_t)i] - (1.0 - t) * 0.5) > 1e-6) alphasOk = false;
+        }
+        checkBool("skilltimer/fade_scales_band_alpha", alphasOk, true);
+        checkInt("skilltimer/fade_scales_band_alpha/rects", (long long)g_DrawnRects.size(), (long long)kSkillTimerBands);
+    }
+
+    // 20. A throwing style draw is counted and never leaves the marker's
+    //     colour/alpha set for the next HUD draw to inherit - the same
+    //     restore-on-the-throw-path discipline ToggleIndicatorDraw uses.
+    resetWorld(); resetSkillTimer(); resetSkillTimerDrawRecord();
+    g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Arc);
+    world.instances = { WithTimer(OwnUnmarked(), MakeReal(50.0)) };
+    world.drawLineThrows = true;
+    g_LastSetColour = -999; g_LastSetAlpha = -999;
+    SkillTimerDraw();
+    checkInt("skilltimer/draw_throw_restores_and_counts/drawn", (long long)g_StRow[0].drawn, 0);
+    checkInt("skilltimer/draw_throw_restores_and_counts", g_StDrawExc, 1);
+    checkNear("skilltimer/draw_throw_restores_and_counts/colour_restored", g_LastSetColour, kPrevColour);
+    checkNear("skilltimer/draw_throw_restores_and_counts/alpha_restored", g_LastSetAlpha, kPrevAlpha);
 
     // The read never makes a player-resolving call, in any scenario above -
     // counted here, at the end, so it covers every one of them.
