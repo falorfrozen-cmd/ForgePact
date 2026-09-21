@@ -2944,6 +2944,35 @@ rebuild-and-relaunch to correct (`AGENTS.md` § "Limit Rebuilds & Reruns"):
   → "did not parse as a number" refusal itself already shipped in `6ba1555`
   and is unchanged.
 
+**A same-day follow-up round closed seven review findings against the round
+above, before the reinstall-and-live-look session, so the session's own
+readings would not be corrupted by them:**
+
+- `number`'s font restore (`draw_set_font(prevFont)`) now runs only when
+  this draw actually applied a font - not unconditionally on the default
+  path, where `g_TgSpriteFontName` is empty and no font was ever set.
+- `g_TgSpriteTextDrawExc`/`g_TgSpriteTextFontUnresolved` are now zeroed
+  alongside `draws=`/`drawExc=` on every `gold`/`style`/`gallery`/sprite
+  selection, so a second `style number` run's `off` line reports only that
+  run, not a session-cumulative count next to a fresh per-run one.
+- `font list`'s `font_get_name` existence probe no longer calls that
+  lookup builtin against the unconfirmed literal index `0.0`; it uses the
+  active font (`draw_get_font`) when that is not the default sentinel, else
+  the first index `font_exists` itself confirms, and reports "not probed"
+  rather than guessing when neither is available.
+- `font list`'s ten inferred `_fnt`-suffixed candidates now print an
+  explicit line first, saying they are inferred from the game's own asset-
+  suffix convention and unconfirmed, so an all-`unresolved` run reads as
+  "the guess missed," not "the runtime has no fonts."
+- `style <name> [talentId]` now parses the optional talent id through the
+  shared `ParseFiniteNumber` and refuses (naming the token) rather than
+  silently falling back to `kToggleIndicatorTalentId` on a partial token
+  like `24o`, which the previous bare `std::stoi` accepted as `24`.
+- `textalpha` (and, as a side effect, the pre-existing `alpha [min] [max]`)
+  now parses through `ParseFiniteNumber` too, so a typo like `textalpha
+  0.5x` or `textalpha nan` is refused instead of silently reaching
+  `draw_set_alpha` with a garbage or non-finite value.
+
 ### Live procedure
 
 Run from `plugin_build\build.bat dev`'s `BloodPactPlugin_rel.dll`, one
@@ -2989,15 +3018,21 @@ session:
    *every* candidate (`arc` included), run `tgprobe sprite off` and paste
    the `draws=`/`drawExc=` line it prints before setting the next style; a
    non-zero `drawExc=` alongside a rising `draws=` means the builtin threw,
-   which is also `blocked`, never rejected. Repeat each surviving candidate
-   at `frac 0.5` and `frac 0.0`, then for `bar`, `number` and `fade` at the
-   same three fractions, pasting `draws=`/`drawExc=` after each. For
-   `number`, try `tgprobe sprite textoffset [dx] [dy]` if the default `(0,
-   2)` still sits under other HUD elements, and `tgprobe sprite font list`
-   once to see what the runtime's own fonts resolve to before picking one
-   with `tgprobe sprite font <name>`. Say which look is preferred, or that
-   none is yet, using this doc's own convention below - never "rejected" for
-   a look that was never shown or whose builtin never actually fired.
+   which is also `blocked`, never rejected. **For `number` specifically, the
+   throw signal is `textDrawExc=`, not `drawExc=`:** its own save/draw/
+   restore routes every exception into `textDrawExc=` (and a font that
+   failed to resolve into `unresolved=`), both printed on the same `off`
+   line, so `drawExc=0` there says nothing about whether `draw_text` threw -
+   read `textDrawExc=` for that candidate instead. Repeat each surviving
+   candidate at `frac 0.5` and `frac 0.0`, then for `bar`, `number` and
+   `fade` at the same three fractions, pasting `draws=`/`drawExc=` after
+   each (`textDrawExc=`/`unresolved=` too, for `number`). For `number`, try
+   `tgprobe sprite textoffset [dx] [dy]` if the default `(0, 2)` still sits
+   under other HUD elements, and `tgprobe sprite font list` once to see what
+   the runtime's own fonts resolve to before picking one with `tgprobe
+   sprite font <name>`. Say which look is preferred, or that none is yet,
+   using this doc's own convention below - never "rejected" for a look that
+   was never shown or whose builtin never actually fired.
 
 ### Results
 

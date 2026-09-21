@@ -1906,7 +1906,7 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         self.assertIn("gold (positive control)", legend)
         self.assertNotIn('"draw_', legend)   # log-only: Out(), never a draw call
         sprite_gallery = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
-        gallery_branch = sprite_gallery[sprite_gallery.index('lower == "gallery"'):sprite_gallery.index('lower == "gallery"') + 700]
+        gallery_branch = sprite_gallery[sprite_gallery.index('lower == "gallery"'):sprite_gallery.index('lower == "gallery"') + 850]
         self.assertIn("TgProbeSpriteGalleryLegend()", gallery_branch)
 
     def test_hud_layer_is_a_separate_draw_site_reusing_the_one_resolver(self):
@@ -2271,6 +2271,15 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         stored = alpha_branch.index("g_TgSpriteAlphaMin = minFraction;")
         self.assertLess(usage, stored)
 
+    def test_alpha_arg_refuses_a_partially_parsed_or_non_finite_token(self):
+        # F7, issue #55 follow-up: TgProbeSpriteParseAlphaArg fed both
+        # `alpha` and `textalpha`, so routing it through the shared
+        # ParseFiniteNumber fixes a typo like "0.5x" or "nan" reaching
+        # draw_set_alpha for both commands at once.
+        parse = function_body(self.plugin, "static bool TgProbeSpriteParseAlphaArg(")
+        self.assertIn("ParseFiniteNumber(s, v)", parse)
+        self.assertNotIn("std::stod(s)", parse)
+
     def test_alpha_reaches_soft_and_gradient_defaults_reproduce_todays_look(self):
         soft = function_body(self.plugin, "static void TgProbeSpriteDrawSoft(")
         gradient = function_body(self.plugin, "static void TgProbeSpriteDrawGradient(")
@@ -2547,8 +2556,21 @@ class SkillTimerProbeContractTests(unittest.TestCase):
         body = function_body(self.plugin, "static void TgProbeSpriteDrawNumber(")
         self.assertIn('CallBuiltin("asset_get_index", { RValue(g_TgSpriteFontName) })', body)
         self.assertIn("if (f.ToDouble() < 0) f = RValue(std::stod(g_TgSpriteFontName));", body)
-        self.assertIn('if (f.ToDouble() >= 0) g_Yytk->CallBuiltin("draw_set_font", { f });', body)
+        self.assertIn(
+            'if (f.ToDouble() >= 0) { g_Yytk->CallBuiltin("draw_set_font", { f }); fontApplied = true; }', body)
         self.assertIn("g_TgSpriteTextFontUnresolved", body)
+
+    def test_number_only_restores_the_font_when_it_actually_applied_one(self):
+        # F3, issue #55 follow-up: draw_set_font(prevFont) must not run
+        # unconditionally - the default path (empty g_TgSpriteFontName)
+        # never calls draw_set_font in the first place, so restoring
+        # whatever draw_get_font happened to return would push a value that
+        # was only ever read, never confirmed real, into the runtime's font
+        # state on every draw asking for no font change.
+        body = function_body(self.plugin, "static void TgProbeSpriteDrawNumber(")
+        self.assertIn("bool fontApplied = false;", body)
+        self.assertIn(
+            'if (fontApplied) { try { g_Yytk->CallBuiltin("draw_set_font", { prevFont }); } catch (...) {} }', body)
 
     def test_font_list_checks_each_builtin_through_callbuiltinex_and_prints_the_positive_control(self):
         body = function_body(self.plugin, "static void TgProbeSpriteFontListCommand()")
@@ -2568,14 +2590,54 @@ class SkillTimerProbeContractTests(unittest.TestCase):
         self.assertIn("enumeration not run: font_exists is not present", body)
         self.assertIn("found", body)
 
+    def test_font_list_probes_font_get_name_only_against_a_confirmed_index(self):
+        # F4, issue #55 follow-up: font_get_name (a lookup, unlike the
+        # exists-check font_exists) must never be probed with the
+        # unconfirmed literal 0.0 - only the active font when it is not the
+        # default sentinel, else the first font_exists-confirmed index, and
+        # "not probed" when neither is available.
+        body = function_body(self.plugin, "static void TgProbeSpriteFontListCommand()")
+        self.assertNotIn('TgProbeSpriteBuiltinExists("font_get_name", g, g, { RValue(0.0) }', body)
+        self.assertIn(
+            'TgProbeSpriteBuiltinExists("font_get_name", g, g, { RValue(probeIdx) }, existsRes);', body)
+        self.assertIn("not probed (no confirmed font index available)", body)
+        # the active font is read before font_get_name is probed at all.
+        get_font_idx = body.index('CallBuiltin("draw_get_font", {})')
+        probe_call = body.index('TgProbeSpriteBuiltinExists("font_get_name"')
+        self.assertLess(get_font_idx, probe_call)
+
+    def test_font_list_disclaims_the_fallback_candidates_as_unconfirmed(self):
+        # F5, issue #55 follow-up: a run where every _fnt-suffixed candidate
+        # prints "unresolved" must be readable as "the guess missed," never
+        # as a measured statement that the runtime has no fonts.
+        body = function_body(self.plugin, "static void TgProbeSpriteFontListCommand()")
+        disclaimer = body.index("none is confirmed to exist")
+        first_candidate = body.index('std::string("  candidate ") + name +')
+        self.assertLess(disclaimer, first_candidate)
+
     def test_style_parses_an_optional_trailing_talentid(self):
         body = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
         style_branch = body[body.index('lower == "style"'):body.index('lower == "gallery"')]
         self.assertIn("FirstToken(rest2, ignored)", style_branch)
-        self.assertIn("std::stoi(talentTok)", style_branch)
         self.assertIn("int talentId = kToggleIndicatorTalentId;", style_branch)
         self.assertIn("g_TgSpriteTalentId = talentId;", style_branch)
         self.assertIn('" talentId=" + std::to_string(g_TgSpriteTalentId)', style_branch)
+        # F6, issue #55 follow-up: parsed through the shared ParseFiniteNumber
+        # and refused by name, not a bare std::stoi that silently substituted
+        # kToggleIndicatorTalentId on any parse failure - including a partial
+        # token like "24o", which std::stoi itself would accept as 24.
+        self.assertIn("ParseFiniteNumber(talentTok, f)", style_branch)
+        self.assertNotIn("std::stoi(talentTok)", style_branch)
+        usage = style_branch.index("did not parse as a number")
+        stored = style_branch.index("g_TgSpriteTalentId = talentId;")
+        self.assertLess(usage, stored)
+
+    def test_style_refuses_an_unparseable_talentid_naming_the_token(self):
+        body = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
+        style_branch = body[body.index('lower == "style"'):body.index('lower == "gallery"')]
+        self.assertIn('talentTok + "\\" did not parse as a number)"', style_branch)
+        self.assertIn('[talentId] (\\""', style_branch)
+        self.assertIn("return;", style_branch[style_branch.index("did not parse as a number"):])
 
     def test_bar_returns_without_drawing_below_one_pixel_of_width(self):
         body = function_body(self.plugin, "static void TgProbeSpriteDrawBar(")
@@ -2608,6 +2670,22 @@ class SkillTimerProbeContractTests(unittest.TestCase):
             body = function_body(self.plugin, f"static void {fn}")
             for name in ("g_TgSpriteTextOffsetDx", "g_TgSpriteTextAlpha", "g_TgSpriteTextColourSet", "g_TgSpriteFontName"):
                 self.assertNotIn(name, body, f"{fn} must not reference {name}")
+
+    def test_every_selection_resets_the_text_counters_alongside_draws(self):
+        # F2, issue #55 follow-up: g_TgSpriteTextDrawExc/g_TgSpriteTextFontUnresolved
+        # must be zeroed everywhere g_TgSpriteDraws/g_TgSpriteDrawExc already
+        # are (gold/style/gallery/named-sprite selection) - otherwise a
+        # second `style number` run's `off` line reports a session-cumulative
+        # textDrawExc=/unresolved= next to a fresh per-run draws=/drawExc=.
+        body = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
+        draws_resets = body.count("InterlockedExchange(&g_TgSpriteDraws, 0);")
+        drawexc_resets = body.count("InterlockedExchange(&g_TgSpriteDrawExc, 0);")
+        text_drawexc_resets = body.count("InterlockedExchange(&g_TgSpriteTextDrawExc, 0);")
+        text_unresolved_resets = body.count("InterlockedExchange(&g_TgSpriteTextFontUnresolved, 0);")
+        self.assertGreaterEqual(draws_resets, 4)
+        self.assertEqual(draws_resets, drawexc_resets)
+        self.assertEqual(draws_resets, text_drawexc_resets)
+        self.assertEqual(draws_resets, text_unresolved_resets)
 
     # ---- the route-A decision rule rewrite (exhaustive state tables) -------
 

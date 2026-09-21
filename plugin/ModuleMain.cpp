@@ -22639,6 +22639,10 @@ static std::string g_TgSpriteTextColourName = "gold";
 static std::string g_TgSpriteFontName;   // empty -> the game's own default font, no draw_set_font call at all
 static volatile long g_TgSpriteTextFontUnresolved = 0;   // the stored font name/index failed to resolve at draw time
 static volatile long g_TgSpriteTextDrawExc = 0;           // the `number` candidate's own save/draw/restore threw
+// F2, issue #55 follow-up: both zeroed alongside g_TgSpriteDraws/g_TgSpriteDrawExc on every
+// gold/style/gallery/sprite selection, so an `off` line reports only the just-run session -
+// before this fix neither was ever reset, so a second `style number` -> `off` printed a
+// cumulative textDrawExc=/unresolved= next to a fresh per-run draws=/drawExc=.
 
 // `textcolour`'s default is "follow the shared `colour`" rather than its
 // own stored value - `style number` looks exactly as it does today until a
@@ -23151,12 +23155,21 @@ static void TgProbeSpriteDrawNumber(double x, double y, double w, double h)
         RValue prevAlpha = g_Yytk->CallBuiltin("draw_get_alpha", {});
         RValue prevHalign = g_Yytk->CallBuiltin("draw_get_halign", {});
         RValue prevValign = g_Yytk->CallBuiltin("draw_get_valign", {});
+        // F3, issue #55 follow-up: only restore draw_set_font when this
+        // body actually called it. draw_get_font's own return is taken on
+        // faith (CallBuiltin returns an unset RValue both for a real
+        // "no font" state and for a missing builtin - the exact ambiguity
+        // TgProbeSpriteBuiltinExists exists to resolve for `font list`); an
+        // unconditional restore would push that value into the runtime's
+        // font state ~15x/frame even on the default path, where
+        // g_TgSpriteFontName is empty and draw_set_font was never set.
+        bool fontApplied = false;
         try {
             if (!g_TgSpriteFontName.empty()) {
                 try {
                     RValue f = g_Yytk->CallBuiltin("asset_get_index", { RValue(g_TgSpriteFontName) });
                     if (f.ToDouble() < 0) f = RValue(std::stod(g_TgSpriteFontName));
-                    if (f.ToDouble() >= 0) g_Yytk->CallBuiltin("draw_set_font", { f });
+                    if (f.ToDouble() >= 0) { g_Yytk->CallBuiltin("draw_set_font", { f }); fontApplied = true; }
                     else InterlockedIncrement(&g_TgSpriteTextFontUnresolved);
                 } catch (...) { InterlockedIncrement(&g_TgSpriteTextFontUnresolved); }
             }
@@ -23173,7 +23186,7 @@ static void TgProbeSpriteDrawNumber(double x, double y, double w, double h)
         try { g_Yytk->CallBuiltin("draw_set_halign", { prevHalign }); } catch (...) {}
         try { g_Yytk->CallBuiltin("draw_set_alpha", { prevAlpha }); } catch (...) {}
         try { g_Yytk->CallBuiltin("draw_set_colour", { prevColour }); } catch (...) {}
-        try { g_Yytk->CallBuiltin("draw_set_font", { prevFont }); } catch (...) {}
+        if (fontApplied) { try { g_Yytk->CallBuiltin("draw_set_font", { prevFont }); } catch (...) {} }
     } catch (...) { InterlockedIncrement(&g_TgSpriteTextDrawExc); }   // a save read itself failed: nothing was set, so there is nothing to put back
 }
 
@@ -23314,11 +23327,16 @@ static std::string TgProbeSpriteBoxText(bool found, double bw, double bh, double
 // at or under 1.0 is already a 0..1 fraction - the cheap way to accept
 // both forms `tgprobe sprite alpha` asks for without a separate flag.
 // Clamped to 0..1 by hand (0..255 would need std::max/std::min otherwise -
-// the C2589 lesson, test_no_bare_std_max_or_std_min).
+// the C2589 lesson, test_no_bare_std_max_or_std_min). Parsed through the
+// shared ParseFiniteNumber (F7, issue #55 follow-up), not a bare
+// std::stod: the bare form accepted "0.5x" via longest-valid-prefix
+// conversion and let "nan" pass every hand-written clamp below unchanged,
+// reaching draw_set_alpha(nan) - the same "drew nothing, silently"
+// ambiguity `frac` was fixed against two branches over.
 static bool TgProbeSpriteParseAlphaArg(const std::string& s, double& outFraction)
 {
     double v = 0.0;
-    try { v = std::stod(s); } catch (...) { return false; }
+    if (!ParseFiniteNumber(s, v)) return false;
     if (v > 1.0) v = v / 255.0;
     if (v < 0.0) v = 0.0;
     if (v > 1.0) v = 1.0;
@@ -23423,8 +23441,50 @@ static void TgProbeSpriteFontListCommand()
     Out(std::string("  draw_get_font: ") + (hasDrawGetFont ? "present" : "not found (AURIE_OBJECT_NOT_FOUND)"));
     const bool hasFontExists = TgProbeSpriteBuiltinExists("font_exists", g, g, { RValue(0.0) }, existsRes);
     Out(std::string("  font_exists: ") + (hasFontExists ? "present" : "not found (AURIE_OBJECT_NOT_FOUND)"));
-    const bool hasFontGetName = TgProbeSpriteBuiltinExists("font_get_name", g, g, { RValue(0.0) }, existsRes);
-    Out(std::string("  font_get_name: ") + (hasFontGetName ? "present" : "not found (AURIE_OBJECT_NOT_FOUND)"));
+
+    // (b) positive control: the font the game itself is using right now,
+    // through the already-proven CallBuiltin path (HhDrawHeadLabels calls
+    // it every draw). Read BEFORE font_get_name is probed (F4, issue #55
+    // follow-up): unlike font_exists, font_get_name is a lookup rather than
+    // an exists-check, so it must only ever be called with an index already
+    // confirmed real, never the bare literal 0.0.
+    double activeIdx = 0.0;
+    bool activeIdxKnown = false;
+    try { activeIdx = g_Yytk->CallBuiltin("draw_get_font", {}).ToDouble(); activeIdxKnown = true; } catch (...) {}
+
+    // (c) the runtime's own font indices - font_exists IS the exists-check
+    // builtin, so probing it with an unconfirmed literal is its documented
+    // contract; collected here (before font_get_name is probed) so a
+    // font_exists-confirmed index is available as font_get_name's fallback
+    // when the active font is the default sentinel.
+    std::vector<int> confirmedIdx;
+    if (hasFontExists) {
+        for (int i = 0; i < kTgSpriteFontEnumCap; ++i) {
+            RValue exists;
+            bool ok = false;
+            try { exists = g_Yytk->CallBuiltin("font_exists", { RValue((double)i) }); ok = true; } catch (...) {}
+            if (ok && exists.ToDouble() != 0.0) confirmedIdx.push_back(i);
+        }
+    }
+
+    // font_get_name (F4, issue #55 follow-up): probed only against an
+    // index already confirmed real - the active font when it is not the
+    // default sentinel, else the first font_exists-confirmed index - never
+    // an unconfirmed literal. An asset-lookup builtin handed an index that
+    // is not of its asset type is exactly the unvalidated call this repo's
+    // rules single out, and a runtime-level fatal there is not something
+    // the surrounding try/AurieStatus can catch.
+    double probeIdx = 0.0;
+    bool haveProbeIdx = false;
+    if (activeIdxKnown && activeIdx >= 0.0) { probeIdx = activeIdx; haveProbeIdx = true; }
+    else if (!confirmedIdx.empty()) { probeIdx = (double)confirmedIdx.front(); haveProbeIdx = true; }
+    bool hasFontGetName = false;
+    if (haveProbeIdx) {
+        hasFontGetName = TgProbeSpriteBuiltinExists("font_get_name", g, g, { RValue(probeIdx) }, existsRes);
+        Out(std::string("  font_get_name: ") + (hasFontGetName ? "present" : "not found (AURIE_OBJECT_NOT_FOUND)"));
+    } else {
+        Out("  font_get_name: not probed (no confirmed font index available)");
+    }
 
     auto nameOf = [&](double idx) -> std::string {
         if (!hasFontGetName) return "(no name-lookup builtin)";
@@ -23435,34 +23495,24 @@ static void TgProbeSpriteFontListCommand()
         } catch (...) { return "(font_get_name threw)"; }
     };
 
-    // (b) positive control: the font the game itself is using right now,
-    // through the already-proven CallBuiltin path (HhDrawHeadLabels calls
-    // it every draw).
-    try {
-        RValue active = g_Yytk->CallBuiltin("draw_get_font", {});
-        const double activeIdx = active.ToDouble();
-        if (activeIdx < 0.0) Out("  active font: default (draw_get_font=" + std::to_string(activeIdx) + ")");
-        else Out("  active font: idx=" + std::to_string((long long)activeIdx) + " name=" + nameOf(activeIdx));
-    } catch (...) { Out("  active font: draw_get_font threw"); }
+    if (!activeIdxKnown) Out("  active font: draw_get_font threw");
+    else if (activeIdx < 0.0) Out("  active font: default (draw_get_font=" + std::to_string(activeIdx) + ")");
+    else Out("  active font: idx=" + std::to_string((long long)activeIdx) + " name=" + nameOf(activeIdx));
 
-    // (c) the runtime's own font indices.
     if (!hasFontExists) {
         Out("  enumeration not run: font_exists is not present on this runtime");
     } else {
-        int found = 0;
-        for (int i = 0; i < kTgSpriteFontEnumCap; ++i) {
-            RValue exists;
-            bool ok = false;
-            try { exists = g_Yytk->CallBuiltin("font_exists", { RValue((double)i) }); ok = true; } catch (...) {}
-            if (!ok || exists.ToDouble() == 0.0) continue;
-            Out("  [" + std::to_string(i) + "] " + nameOf((double)i));
-            ++found;
-        }
-        Out("  enumerated 0.." + std::to_string(kTgSpriteFontEnumCap - 1) + ": " + std::to_string(found) + " found");
+        for (int i : confirmedIdx) Out("  [" + std::to_string(i) + "] " + nameOf((double)i));
+        Out("  enumerated 0.." + std::to_string(kTgSpriteFontEnumCap - 1) + ": " + std::to_string((int)confirmedIdx.size()) + " found");
     }
 
     // (d) the inferred fallback names, probed only after the enumeration -
-    // none of these is confirmed to exist.
+    // none of these is confirmed to exist (F5, issue #55 follow-up): say so
+    // up front, so ten `unresolved` lines read as ten guesses that missed
+    // rather than as a measured statement that the runtime has no fonts.
+    Out("  candidates below are inferred from the game's own `_spr`/`_snd`/`_rm` asset-suffix"
+        " convention; none is confirmed to exist - all-unresolved means the guess missed, not"
+        " that the runtime has no fonts:");
     int resolvedFallback = 0;
     for (const char* name : kTgSpriteFontFallbackNames) {
         double idx = -1.0;
@@ -23762,6 +23812,8 @@ static void TgProbeSpriteCommand(const std::string& rest)
         g_TgSpriteTalentId = kToggleIndicatorTalentId;
         InterlockedExchange(&g_TgSpriteDraws, 0);
         InterlockedExchange(&g_TgSpriteDrawExc, 0);
+        InterlockedExchange(&g_TgSpriteTextDrawExc, 0);
+        InterlockedExchange(&g_TgSpriteTextFontUnresolved, 0);
         double bx = 0, by = 0, bw = 0, bh = 0;
         const bool boxFound = TgProbeSpriteScaledSlotBox(g_TgSpriteTalentId, bx, by, bw, bh);
         Out("tgprobe sprite -> gold talentId=" + std::to_string(g_TgSpriteTalentId)
@@ -23784,18 +23836,32 @@ static void TgProbeSpriteCommand(const std::string& rest)
         // hard-set the talent to 240 (Soul Spurn), so judging a look needed
         // a character carrying that exact talent - every other candidate
         // printed `slot not found` on a Butcher. Absent, this is unchanged
-        // (falls back to kToggleIndicatorTalentId).
+        // (falls back to kToggleIndicatorTalentId). Parsed through the
+        // shared ParseFiniteNumber (F6, issue #55 follow-up), not a bare
+        // std::stoi that silently substituted kToggleIndicatorTalentId on
+        // ANY parse failure, including a partial token like "24o" (which
+        // std::stoi accepts as 24) - a tester who believes they selected
+        // their own character's talent and reads past the echoed
+        // `talentId=` would otherwise spend the look on the wrong slot.
         std::string ignored;
         const std::string talentTok = FirstToken(rest2, ignored);
         int talentId = kToggleIndicatorTalentId;
         if (!talentTok.empty()) {
-            try { talentId = std::stoi(talentTok); } catch (...) { talentId = kToggleIndicatorTalentId; }
+            double f = 0.0;
+            if (!ParseFiniteNumber(talentTok, f)) {
+                Out("tgprobe sprite style: usage -> tgprobe sprite style " + styleTok
+                    + " [talentId] (\"" + talentTok + "\" did not parse as a number)");
+                return;
+            }
+            talentId = (int)f;
         }
         g_TgSpriteStyleKind = kind;
         g_TgSpriteMode = TgSpriteMode::Style;
         g_TgSpriteTalentId = talentId;
         InterlockedExchange(&g_TgSpriteDraws, 0);
         InterlockedExchange(&g_TgSpriteDrawExc, 0);
+        InterlockedExchange(&g_TgSpriteTextDrawExc, 0);
+        InterlockedExchange(&g_TgSpriteTextFontUnresolved, 0);
         double bx = 0, by = 0, bw = 0, bh = 0;
         const bool boxFound = TgProbeSpriteScaledSlotBox(g_TgSpriteTalentId, bx, by, bw, bh);
         Out("tgprobe sprite -> style " + std::string(TgProbeSpriteStyleName(kind))
@@ -23825,6 +23891,8 @@ static void TgProbeSpriteCommand(const std::string& rest)
         g_TgSpriteMode = TgSpriteMode::Gallery;
         InterlockedExchange(&g_TgSpriteDraws, 0);
         InterlockedExchange(&g_TgSpriteDrawExc, 0);
+        InterlockedExchange(&g_TgSpriteTextDrawExc, 0);
+        InterlockedExchange(&g_TgSpriteTextFontUnresolved, 0);
         Out("tgprobe sprite -> gallery cols=" + std::to_string(cols) + " layer=" + TgProbeLayerName() + ":");
         TgProbeSpriteGalleryLegend();
         Out("(watch `tgprobe sprite off` for draws=/drawExc=)");
@@ -23852,6 +23920,8 @@ static void TgProbeSpriteCommand(const std::string& rest)
     g_TgSpriteTalentId = talentId;
     InterlockedExchange(&g_TgSpriteDraws, 0);
     InterlockedExchange(&g_TgSpriteDrawExc, 0);
+    InterlockedExchange(&g_TgSpriteTextDrawExc, 0);
+    InterlockedExchange(&g_TgSpriteTextFontUnresolved, 0);
     g_TgSpriteIdx = idx;
     g_TgSpriteMode = centre ? TgSpriteMode::Centre : TgSpriteMode::Named;
     std::string boxText;
