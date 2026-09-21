@@ -171,11 +171,16 @@ no character load is needed, and that keeps the save untouched.
    hash it again; the hash must equal step 2's.
 9. Fill § Results, a dated row per step, and § Decision.
 
-If no candidate row encloses either expected point on either screen, the
-cards are drawn by a panel object rather than being instances of their own.
-That is a change of mechanism, not a detail: record the three listings and
-the dumps of `UI_Character_obj` and `UI_Main_Menu_obj`, and do not fall back
-to fractions.
+If no candidate row encloses either expected point on either screen, that
+shows only that the cards are not listed by the thirteen-name table, or are
+not in GUI space - the only space the `win` mapping is valid for. It is not
+evidence that a panel object draws the cards itself. Record the three
+listings and the dumps of `UI_Character_obj` and `UI_Main_Menu_obj`, then
+compare each row's `bbox` with the printed `view` rectangle (a room-space
+card would sit inside the view, not the GUI), and widen the search with a
+`menulayout <ObjectName>` sweep over every UI, select and save object the
+static search names before concluding anything about how the screen is
+built. Do not fall back to fractions.
 
 ## Results
 
