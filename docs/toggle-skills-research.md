@@ -3745,29 +3745,356 @@ cast's duration rather than, say, a projectile's own lifetime - Submerged
 Knives' object once read `first=32.4` against `draws=140`); (e) `own=readable`
 (ships with `isMyClient`) or `own=unreadable` (ships with no ownership field;
 every instance is the player's own offline) - `mixed` is not shipped this
-round. Otherwise the status is `not observed`, `blocked` (the positive
-control has not fired) or `buff-carried, not a cast object` (`talents dur`
-names it, no sweep object appeared, and the duration is visibly a self-buff).
+round; (f) the object is not under `Player_Sentry_Parent_obj` (turrets,
+totems, hydra, `Shaman_Totem_Parent_obj` included - owner decision
+2026-09-21: a companion skill can have several instances at once and would
+need one indicator each). Rule (b) is also met by one uncleared record with
+`app >= 2` whose first-appearance and current-appearance `first=` agree
+within 1.0, plus any cleared run (Blade Barrier's evidence below). Otherwise
+the status is `not observed` (with its reason), `blocked` (the positive
+control has not fired), `buff-carried, not a cast object` (`talents dur`
+names it, no sweep object appeared, and the duration is visibly a
+self-buff), `measured, excluded (companion, multi-instance - owner)` (rule
+(f)) or `not a timer (-1 constant)` (the object read `destroyTimer=-1` on
+every draw of its life).
+
+Session 8 ran on 2026-09-21, owner at the keyboard, research DLL
+`BloodPactPlugin_rel.dll` (sha256 `bea8cc00…ec64`) installed. Every sweep
+line below is quoted from `tgprobe sweep show`; each window was opened by
+`tgprobe sweep clear` except where the table says "uncleared".
 
 Session-level lines, filled before the table:
 
-- positive control (`tgprobe sweep show` line for `Prophet_Maelstrom_obj`):
-- positive control (`tgprobe tgl timer` row `maelstromOfFrost`):
-- `tgprobe talents dur` output:
+- positive control (`tgprobe sweep show` line for `Prophet_Maelstrom_obj`,
+  reached through the damage-parent root):
+  `Prophet_Maelstrom_obj idx=3697 runtime=Prophet_Maelstrom_obj root=Player_Damage_Parent_obj app=1 present=0 draws=4322 first=4320.000000 last=-0.154800 min=-0.154800 max=4320.000000 timerUnreadable=0 maxInst=1 own=readable firstFrame=27044 lastFrame=31365 totalDraws=4322`
+- positive control (`tgprobe tgl timer` row `maelstromOfFrost`, which reads
+  `Prophet_Maelstrom_obj` by the object itself):
+  `tgprobe tgl timer [5] maelstromOfFrost field=destroyTimer predicted=-1.000000 appearance=1 first=4320.000000 last=-0.154800 min=-0.154800 max=4320.000000 unreadable=0 atPredicted=0 draws=4322`.
+  The two instruments agree, so the control PASSED - for the
+  damage-parent root's enumeration, object-index read and timer read. It
+  says nothing about the other five roots; each of those is controlled only
+  by its own first readable timer, listed next.
+- per-root controls: `roots=6/6 unresolved=none capped=none` on every
+  `show`. Damage root: Maelstrom above. Ability root: Healing Zone
+  (`first=1152.000000`, below). Sentry root: Arrow Turret
+  (`first=1152.000000`, below). Controller, buff and curse roots: **no
+  positive control** - every record they produced read `timerUnreadable` on
+  every draw (three controllers, `Aura_Mask_obj`, `Viking_Defensive_Shout_obj`)
+  or nothing appeared, so a negative under those roots is `not observed`,
+  never "carries no timer".
+- `skilltimer stat` after the control, before any other cast (the build
+  still sourced countdown rows from the toggle table):
+  `skilltimer stat: style=number drawn=4320 noInstance=162318 unreadable=0 expired=2 toggleOn=0 toggleUnreadable=0 unresolved=0 noSlot=0 latched=1 unlatched=1 drawExc=0 fontUnresolved=0 (summed over 5 rows)`;
+  at session end: `skilltimer stat: style=bar drawn=4320 noInstance=1438435 unreadable=178 expired=2 toggleOn=0 toggleUnreadable=0 unresolved=0 noSlot=0 latched=1 unlatched=1 drawExc=0 fontUnresolved=0 (summed over 5 rows)`
+  (the 178 unreadable draws are the Crematus controller's, on the old
+  toggle-table row).
+- `tgprobe talents dur` output (the coverage floor; 146 talents with a
+  positive `abilityDuration`, `durTruncated=0`), verbatim:
+
+```
+tgprobe talents: speed=144.000000 fps=144.000000
+  talent 137 abilityId=bladeBarrier abilityAura=false abilityDuration=6 abilityCooldown=8 abilityLength=320 abilityTags=[15,18,2,0] predictedTotal=864.000000
+  talent 135 abilityId=explosiveKunai abilityAura=false abilityDuration=2 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,4,1,18] predictedTotal=288.000000
+  talent 277 abilityId=boosterShot abilityAura=false abilityDuration=8 abilityCooldown=0.250000 abilityLength=320 abilityTags=[12] predictedTotal=1152.000000
+  talent 147 abilityId=thunderShield abilityAura=false abilityDuration=30 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,12] predictedTotal=4320.000000
+  talent 317 abilityId=ageProliferation abilityAura=false abilityDuration=2.500000 abilityCooldown=0.250000 abilityLength=256 abilityTags=[15,18,3] predictedTotal=360.000000
+  talent 329 abilityId=orbOfFrost abilityAura=false abilityDuration=1.850000 abilityCooldown=1.750000 abilityLength=320 abilityTags=[15,18,4] predictedTotal=266.400000
+  talent 555 abilityId=warriorsPath abilityAura=false abilityDuration=10 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14] predictedTotal=1440.000000
+  talent 45 abilityId=agility abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 635 abilityId=bloodOfSpartan abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 53 abilityId=rocketTurret abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=240 abilityTags=[15,18,10,1] predictedTotal=720.000000
+  talent 199 abilityId=demonForm abilityAura=false abilityDuration=25 abilityCooldown=40 abilityLength=320 abilityTags=[15,25] predictedTotal=3600.000000
+  talent 221 abilityId=earthBind abilityAura=false abilityDuration=5 abilityCooldown=2 abilityLength=200 abilityTags=[15,18,3] predictedTotal=720.000000
+  talent 536 abilityId=soulBurn abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14] predictedTotal=720.000000
+  talent 645 abilityId=powerOfVoid abilityAura=false abilityDuration=15 abilityCooldown=40 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 298 abilityId=glory abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 322 abilityId=dimensionalDisplacement abilityAura=false abilityDuration=2 abilityCooldown=0.250000 abilityLength=240 abilityTags=[15,6,7] predictedTotal=288.000000
+  talent 350 abilityId=solarForm abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12,3,25] predictedTotal=3600.000000
+  talent 105 abilityId=revvedUp abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 386 abilityId=staticShock abilityAura=false abilityDuration=5 abilityCooldown=3 abilityLength=320 abilityTags=[15,18] predictedTotal=720.000000
+  talent 654 abilityId=coffeeMug abilityAura=false abilityDuration=12 abilityCooldown=20 abilityLength=320 abilityTags=[14] predictedTotal=1728.000000
+  talent 742 abilityId=relicManaDice abilityAura=false abilityDuration=4 abilityCooldown=20 abilityLength=320 abilityTags=[14,19] predictedTotal=576.000000
+  talent 100 abilityId=pickupRaid abilityAura=false abilityDuration=4 abilityCooldown=8 abilityLength=380 abilityTags=[15,18] predictedTotal=576.000000
+  talent 115 abilityId=cursedGround abilityAura=false abilityDuration=5 abilityCooldown=5 abilityLength=240 abilityTags=[15,18,3] predictedTotal=720.000000
+  talent 11 abilityId=charge abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,6,3,18,22] predictedTotal=720.000000
+  talent 158 abilityId=holyHammer abilityAura=false abilityDuration=4.500000 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,18,2] predictedTotal=648.000000
+  talent 170 abilityId=jungleCamouflage abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 359 abilityId=bloodMoon abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 379 abilityId=blender abilityAura=false abilityDuration=5 abilityCooldown=8 abilityLength=320 abilityTags=[15,16,2,0] predictedTotal=720.000000
+  talent 403 abilityId=satansMelody abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 636 abilityId=bottleOfRadogate abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 2009 abilityId=berserkersRage abilityAura=false abilityDuration=4 abilityCooldown=0.250000 abilityLength=320 abilityTags=[] predictedTotal=576.000000
+  talent 280 abilityId=defunctSurgeon abilityAura=false abilityDuration=25 abilityCooldown=65 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 649 abilityId=radBull abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 561 abilityId=shadeOfSobek abilityAura=false abilityDuration=8 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14,9] predictedTotal=1152.000000
+  talent 388 abilityId=symphonyOfThunder abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 642 abilityId=ghostlyPotion abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 143 abilityId=shadowStep abilityAura=false abilityDuration=2 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,18,6,7,3,0] predictedTotal=288.000000
+  talent 651 abilityId=surstromming abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 301 abilityId=counter abilityAura=false abilityDuration=6 abilityCooldown=15 abilityLength=320 abilityTags=[15,18,23,4] predictedTotal=864.000000
+  talent 305 abilityId=shieldWall abilityAura=false abilityDuration=25 abilityCooldown=5 abilityLength=320 abilityTags=[15,18,23,2] predictedTotal=3600.000000
+  talent 47 abilityId=arrowTurret abilityAura=false abilityDuration=8 abilityCooldown=0.250000 abilityLength=240 abilityTags=[15,18,10] predictedTotal=1152.000000
+  talent 325 abilityId=temporalHeroes abilityAura=false abilityDuration=25 abilityCooldown=40 abilityLength=96 abilityTags=[15,18,9] predictedTotal=3600.000000
+  talent 611 abilityId=sanguineLeech abilityAura=false abilityDuration=10 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14,9,18] predictedTotal=1440.000000
+  talent 181 abilityId=astropesBattleMaiden abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 369 abilityId=awakeningFury abilityAura=false abilityDuration=4 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14] predictedTotal=576.000000
+  talent 2023 abilityId=lethalTempo abilityAura=false abilityDuration=2 abilityCooldown=0.250000 abilityLength=320 abilityTags=[] predictedTotal=288.000000
+  talent 55 abilityId=gunnerDrone abilityAura=false abilityDuration=10 abilityCooldown=5 abilityLength=240 abilityTags=[15,18,10,5] predictedTotal=1440.000000
+  talent 640 abilityId=elixirOfUnworldlyCognition abilityAura=false abilityDuration=20 abilityCooldown=45 abilityLength=320 abilityTags=[14] predictedTotal=2880.000000
+  talent 50 abilityId=cannonTurret abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=240 abilityTags=[15,18,10,1] predictedTotal=720.000000
+  talent 64 abilityId=rapidFire abilityAura=false abilityDuration=25 abilityCooldown=60 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 90 abilityId=phantomBlade abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=280 abilityTags=[15,18,10,0] predictedTotal=720.000000
+  talent 422 abilityId=spiritOfForest abilityAura=false abilityDuration=120 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,18,9,24] predictedTotal=17280.000000
+  talent 7 abilityId=odinsFury abilityAura=false abilityDuration=2 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,3,18] predictedTotal=288.000000
+  talent 466 abilityId=mercenaryRangedBurstofAgility abilityAura=false abilityDuration=8 abilityCooldown=12 abilityLength=320 abilityTags=[] predictedTotal=1152.000000
+  talent 638 abilityId=caffeinatedCoffeeContainer abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 119 abilityId=amplifyDamage abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=240 abilityTags=[15,18] predictedTotal=720.000000
+  talent 140 abilityId=explodingBolas abilityAura=false abilityDuration=3 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,16,4,1,0] predictedTotal=432.000000
+  talent 647 abilityId=prismaticPotion abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 152 abilityId=ballLightning abilityAura=false abilityDuration=3 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,18,6,3,26] predictedTotal=432.000000
+  talent 299 abilityId=shieldSlam abilityAura=false abilityDuration=2 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,16,23,0] predictedTotal=288.000000
+  talent 311 abilityId=linkOfSand abilityAura=false abilityDuration=8 abilityCooldown=0.250000 abilityLength=280 abilityTags=[15,18,26] predictedTotal=1152.000000
+  talent 375 abilityId=butchersHook abilityAura=false abilityDuration=5 abilityCooldown=6.750000 abilityLength=320 abilityTags=[15,18,2] predictedTotal=720.000000
+  talent 204 abilityId=boneStorm abilityAura=false abilityDuration=8 abilityCooldown=6 abilityLength=320 abilityTags=[15,18,2] predictedTotal=1152.000000
+  talent 387 abilityId=stormCloud abilityAura=false abilityDuration=8 abilityCooldown=3 abilityLength=400 abilityTags=[15,18,3] predictedTotal=1152.000000
+  talent 652 abilityId=witchesPotion abilityAura=false abilityDuration=10 abilityCooldown=30 abilityLength=320 abilityTags=[14] predictedTotal=1440.000000
+  talent 732 abilityId=relicLargeBeer abilityAura=false abilityDuration=5 abilityCooldown=13 abilityLength=320 abilityTags=[15,18,19] predictedTotal=720.000000
+  talent 236 abilityId=satansMark abilityAura=false abilityDuration=5 abilityCooldown=3 abilityLength=280 abilityTags=[15,18,1] predictedTotal=720.000000
+  talent 26 abilityId=searingChains abilityAura=false abilityDuration=1 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,16,24,0] predictedTotal=144.000000
+  talent 36 abilityId=volcano abilityAura=false abilityDuration=4 abilityCooldown=4 abilityLength=380 abilityTags=[15,18,1] predictedTotal=576.000000
+  talent 643 abilityId=goldInlaidMysteriousPotion abilityAura=false abilityDuration=15 abilityCooldown=45 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 33 abilityId=hydra abilityAura=false abilityDuration=8 abilityCooldown=0.250000 abilityLength=240 abilityTags=[15,18,10,4,1] predictedTotal=1152.000000
+  talent 163 abilityId=theVeneratedOne abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 361 abilityId=blackHole abilityAura=false abilityDuration=4.500000 abilityCooldown=6 abilityLength=320 abilityTags=[15,18,3] predictedTotal=648.000000
+  talent 373 abilityId=fuelToFire abilityAura=false abilityDuration=12 abilityCooldown=50 abilityLength=330 abilityTags=[15,12] predictedTotal=1728.000000
+  talent 688 abilityId=relicLightCola abilityAura=false abilityDuration=10 abilityCooldown=25 abilityLength=320 abilityTags=[15,18,19] predictedTotal=1440.000000
+  talent 52 abilityId=landMine abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=240 abilityTags=[15,18,1] predictedTotal=720.000000
+  talent 413 abilityId=cravingForAnotherKilling abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 648 abilityId=proteinShake abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 227 abilityId=earthTotem abilityAura=false abilityDuration=15 abilityCooldown=0.250000 abilityLength=380 abilityTags=[15,18,10,1] predictedTotal=2160.000000
+  talent 520 abilityId=spiderlings abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=2000 abilityTags=[14] predictedTotal=720.000000
+  talent 249 abilityId=divineHealing abilityAura=false abilityDuration=3 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14] predictedTotal=432.000000
+  talent 600 abilityId=scarletSacrifice abilityAura=false abilityDuration=8 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14,18,9] predictedTotal=1152.000000
+  talent 661 abilityId=relicBookOfBelial abilityAura=false abilityDuration=5 abilityCooldown=25 abilityLength=320 abilityTags=[15,12,19] predictedTotal=720.000000
+  talent 81 abilityId=dissipatingTornado abilityAura=false abilityDuration=3 abilityCooldown=12 abilityLength=600 abilityTags=[15,18] predictedTotal=432.000000
+  talent 637 abilityId=bottleOfSake abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 108 abilityId=rogueChainsaw abilityAura=false abilityDuration=2.500000 abilityCooldown=0.250000 abilityLength=340 abilityTags=[15,18] predictedTotal=360.000000
+  talent 406 abilityId=progeniesOfTheGreatCataclysm abilityAura=false abilityDuration=20 abilityCooldown=40 abilityLength=320 abilityTags=[15,18,3] predictedTotal=2880.000000
+  talent 97 abilityId=hillbillyRage abilityAura=false abilityDuration=35 abilityCooldown=60 abilityLength=320 abilityTags=[15,12] predictedTotal=5040.000000
+  talent 550 abilityId=rimskinAssassin abilityAura=false abilityDuration=3 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14] predictedTotal=432.000000
+  talent 124 abilityId=summonFrenzy abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 590 abilityId=arcaneWrath abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14,12] predictedTotal=720.000000
+  talent 10 abilityId=seismicSlam abilityAura=false abilityDuration=2 abilityCooldown=0.250000 abilityLength=0 abilityTags=[15,3,16,0] predictedTotal=288.000000
+  talent 142 abilityId=forHonor abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 655 abilityId=corrosionDarkness abilityAura=false abilityDuration=10 abilityCooldown=30 abilityLength=320 abilityTags=[14] predictedTotal=1440.000000
+  talent 154 abilityId=thorsFury abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 307 abilityId=lastStand abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 735 abilityId=relicEsEnergy abilityAura=false abilityDuration=5 abilityCooldown=13 abilityLength=320 abilityTags=[15,18,19] predictedTotal=720.000000
+  talent 186 abilityId=shredderTrap abilityAura=false abilityDuration=4 abilityCooldown=1 abilityLength=240 abilityTags=[15,17,4] predictedTotal=576.000000
+  talent 367 abilityId=endingFate abilityAura=false abilityDuration=6 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14,1] predictedTotal=864.000000
+  talent 371 abilityId=chainRip abilityAura=false abilityDuration=2 abilityCooldown=1.250000 abilityLength=320 abilityTags=[15,16,0] predictedTotal=288.000000
+  talent 14 abilityId=ymirsChampion abilityAura=false abilityDuration=2 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,16,0] predictedTotal=288.000000
+  talent 644 abilityId=maggotEyeElixir abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 218 abilityId=tectonicBoulder abilityAura=false abilityDuration=2 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,18,4] predictedTotal=288.000000
+  talent 724 abilityId=relicRazerHeadSet abilityAura=false abilityDuration=5 abilityCooldown=9 abilityLength=320 abilityTags=[15,18,19] predictedTotal=720.000000
+  talent 572 abilityId=radiantPower abilityAura=false abilityDuration=15 abilityCooldown=30 abilityLength=320 abilityTags=[15,12] predictedTotal=2160.000000
+  talent 713 abilityId=relicDevilHorn abilityAura=false abilityDuration=5 abilityCooldown=25 abilityLength=320 abilityTags=[15,12,19] predictedTotal=720.000000
+  talent 336 abilityId=flashFreeze abilityAura=false abilityDuration=2 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,16,5,0] predictedTotal=288.000000
+  talent 376 abilityId=chainSwing abilityAura=false abilityDuration=2.500000 abilityCooldown=1 abilityLength=320 abilityTags=[15,18,6,0] predictedTotal=360.000000
+  talent 313 abilityId=spiritLink abilityAura=false abilityDuration=8 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14] predictedTotal=1152.000000
+  talent 2028 abilityId=wizardsWrath abilityAura=false abilityDuration=3 abilityCooldown=0.250000 abilityLength=320 abilityTags=[] predictedTotal=432.000000
+  talent 547 abilityId=zooooooom abilityAura=false abilityDuration=8 abilityCooldown=20 abilityLength=320 abilityTags=[15,12] predictedTotal=1152.000000
+  talent 357 abilityId=lunarForm abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12,25] predictedTotal=3600.000000
+  talent 377 abilityId=submergedKnives abilityAura=false abilityDuration=2.500000 abilityCooldown=1.500000 abilityLength=320 abilityTags=[15,16,3,0] predictedTotal=360.000000
+  talent 54 abilityId=masterMechanic abilityAura=false abilityDuration=25 abilityCooldown=40 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 656 abilityId=amunRasDemise abilityAura=false abilityDuration=10 abilityCooldown=30 abilityLength=320 abilityTags=[14] predictedTotal=1440.000000
+  talent 235 abilityId=chaosTotem abilityAura=false abilityDuration=10 abilityCooldown=30 abilityLength=380 abilityTags=[15,18,10,4,1] predictedTotal=1440.000000
+  talent 229 abilityId=stormTotem abilityAura=false abilityDuration=15 abilityCooldown=0.250000 abilityLength=380 abilityTags=[15,18,10,24] predictedTotal=2160.000000
+  talent 262 abilityId=forceOverwhelming abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 653 abilityId=wizardPotion abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 69 abilityId=setSail abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 370 abilityId=insatiableHunger abilityAura=false abilityDuration=25 abilityCooldown=50 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 646 abilityId=praetorianBlood abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 430 abilityId=maelstromOfFrost abilityAura=false abilityDuration=30 abilityCooldown=40 abilityLength=320 abilityTags=[15,16,3] predictedTotal=4320.000000
+  talent 2006 abilityId=fleetFeet abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=320 abilityTags=[] predictedTotal=720.000000
+  talent 136 abilityId=liveByTheSword abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 2036 abilityId=seedOfDestruction abilityAura=false abilityDuration=3 abilityCooldown=0.250000 abilityLength=2000 abilityTags=[] predictedTotal=432.000000
+  talent 343 abilityId=theEmbodimentOfAurgelmir abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,25] predictedTotal=3600.000000
+  talent 188 abilityId=demonsPresence abilityAura=false abilityDuration=25 abilityCooldown=60 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 639 abilityId=elixirOfDeath abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 395 abilityId=hyperCharged abilityAura=false abilityDuration=3 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14] predictedTotal=432.000000
+  talent 2018 abilityId=impetus abilityAura=false abilityDuration=2 abilityCooldown=0.250000 abilityLength=2000 abilityTags=[] predictedTotal=288.000000
+  talent 232 abilityId=fireTotem abilityAura=false abilityDuration=15 abilityCooldown=0.250000 abilityLength=380 abilityTags=[15,18,10,4] predictedTotal=2160.000000
+  talent 230 abilityId=spiritWolves abilityAura=false abilityDuration=120 abilityCooldown=0.250000 abilityLength=128 abilityTags=[15,18,9] predictedTotal=17280.000000
+  talent 252 abilityId=healingZone abilityAura=false abilityDuration=8 abilityCooldown=14 abilityLength=240 abilityTags=[15,18,3] predictedTotal=1152.000000
+  talent 483 abilityId=mercenarySpellWordofProtection abilityAura=false abilityDuration=7 abilityCooldown=24 abilityLength=320 abilityTags=[] predictedTotal=1008.000000
+  talent 20 abilityId=blazingTrail abilityAura=false abilityDuration=5 abilityCooldown=10 abilityLength=320 abilityTags=[15,3,18] predictedTotal=720.000000
+  talent 641 abilityId=emptyBottleOfVodka abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 745 abilityId=relicPickledBrain abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[15,18,19] predictedTotal=2160.000000
+  talent 308 abilityId=sandGuardian abilityAura=false abilityDuration=7 abilityCooldown=0.250000 abilityLength=280 abilityTags=[15,18,8] predictedTotal=1008.000000
+  talent 320 abilityId=sandsOfTime abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 2035 abilityId=gravesGrasp abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=2000 abilityTags=[] predictedTotal=720.000000
+  talent 28 abilityId=avatarOfFire abilityAura=false abilityDuration=40 abilityCooldown=60 abilityLength=320 abilityTags=[15,12] predictedTotal=5760.000000
+  talent 650 abilityId=sungLeesUnleashedRage abilityAura=false abilityDuration=10 abilityCooldown=30 abilityLength=320 abilityTags=[14] predictedTotal=1440.000000
+  talent 738 abilityId=relicWinnersDrug abilityAura=false abilityDuration=3 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14,19] predictedTotal=432.000000
+  talent 602 abilityId=ghostCrew abilityAura=false abilityDuration=4 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14,18,9] predictedTotal=576.000000
+  talent 2021 abilityId=awareness abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=320 abilityTags=[] predictedTotal=720.000000
+tgprobe talents: ids=817 shown=146 nonNumericKeys=0 notStruct=0 walkExc=0 truncated=0 tableRowsWithId=7/7 durCap=400 durTruncated=0
+```
 
 | skill (abilityId) | class | object (SDK name, index) | root | app | first #1 | first #2 | draws #1 | own | talents dur line | status | reason |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| Maelstrom of Frost | Prophet | `Prophet_Maelstrom_obj`, 3697 | damage | | | | | | | | |
-| Healing Zone | White Mage | `White_Mage_Healing_Zone_obj`, 5738 | ability | | | | | | | | |
-| Blizzard | Jotunn | `Jotunn_Blizzard_obj`, 2296 | ability | | | | | | | | |
-| Blizzard | Jotunn | `Jotunn_Blizzard_Controller_obj`, 2295 | controller | | | | | | | | |
-| Arrow Rain | Marksman | `Marksman_Arrow_Rain_obj`, 2635 | ability | | | | | | | | |
-| Arrow Turret | Marksman | `Marksman_Arrow_Turret_obj`, 2641 | sentry | | | | | | | | |
-| Crematus | Plague Doctor | `Plague_Doctor_Crematus_Controller_obj`, 3502 | controller | | | | | | | | |
-| Crematus | Plague Doctor | `Plague_Doctor_Crematus_obj`, 3503 | damage | | | | | | | | |
-| Meteor Storm | Shaman | `Shaman_Meteor_Storm_Controller_obj`, 4422 | controller | | | | | | | | |
-| Meteor Storm | Shaman | `Shaman_Meteor_Storm_obj`, 4423 | damage | | | | | | | | |
-| Fire Totem | Shaman | `Shaman_Totem_Fire_obj`, 4441 | sentry | | | | | | | | |
-| Defensive Shout | Viking | `Viking_Defensive_Shout_obj`, 5620 | buff | | | | | | | | |
-| Berserk | Viking | none | - | | | | | | | | |
-| Blade Barrier | Samurai | `Samurai_Blade_Barrier_obj`, 4225 | damage | | | | | | | | |
+| Maelstrom of Frost (`maelstromOfFrost`) | Prophet | `Prophet_Maelstrom_obj`, 3697 | damage | 1 | `first=4320.000000` | `first=4320.000000` (sessions 6/7, and the `tgl timer` row above on the same cast) | 4322 | readable | `talent 430 abilityId=maelstromOfFrost abilityAura=false abilityDuration=30 abilityCooldown=40 abilityLength=320 abilityTags=[15,16,3] predictedTotal=4320.000000` | ship | the positive control: both instruments read `first=4320.000000`; (b) with sessions 6/7's two readings; (d) 4322 draws against 4320; (e) `isMyClient` |
+| Soul Spurn (`soulSpurn`) | White Mage | `White_Mage_Soul_Spurn_AOE_obj`, 5759 | damage | 2 (sessions 2-4) | `destroyTimer=real:144.000000` (S2) | `destroyTimer=real:144.000000` (S5) | 145 (S5: first frame 19656, last 19801) | readable | not re-listed (not cast in session 8) | ship | measured in sessions 2-4 (Results -> Session 3, S2 and S5), not re-cast in session 8; (b) 144/144; (d) 145 against 144; (e) `isMyClient` |
+| Healing Zone (`healingZone`) | White Mage | `White_Mage_Healing_Zone_obj`, 5738 | ability | 2 | `first=1152.000000` | `first=1152.000000` | 1153 | unreadable | `talent 252 abilityId=healingZone abilityAura=false abilityDuration=8 abilityCooldown=14 abilityLength=240 abilityTags=[15,18,3] predictedTotal=1152.000000` | ship | (a) the only record new to its windows (the relic companions and `Aura_Mask_obj` below were present before the cast); (b) 1152/1152; (d) 1153 against 1152; (e) `own=unreadable` -> no ownership field. Also the ability root's own positive control |
+| Blizzard (`blizzard`) | Jotunn | `Jotunn_Blizzard_Controller_obj`, 2295 | controller | 1 | `first=unreadable` | - (second cast skipped) | 501 | unreadable | `talent 334 abilityId=blizzard abilityAura=false abilityDuration=0 abilityCooldown=2 abilityLength=240 abilityTags=[15,18,3,1] predictedTotal=0.000000` | not observed | `timerUnreadable=501` on every draw, `own=unreadable` (so not the foreign-only case); the controller root has no positive control. The second cast was skipped: it cannot turn a no-row result into a row |
+| Blizzard (`blizzard`) | Jotunn | `Jotunn_Blizzard_obj`, 2296 | ability | 1 | `first=-1.000000` | - (second cast skipped) | 600 | unreadable | (as above) | not observed | the shards (`maxInst=22`) read a constant `-1`; no instance carries a spanning timer. `abilityDuration=0`, and the owner reports no duration on the tooltip |
+| Arrow Rain (`arrowRain`) | Marksman | `Marksman_Arrow_Rain_obj`, 2635 | ability | 1 | `first=-1.000000` | - | 77 | unreadable | `talent 41 abilityId=arrowRain abilityAura=false abilityDuration=0 abilityCooldown=0.250000 abilityLength=300 abilityTags=[15,17,1,0] predictedTotal=0.000000` | not observed | constant `-1` for its 77 draws; no spanning timer, `abilityDuration=0` |
+| Arrow Rain (`arrowRain`) | Marksman | `Marksman_Raining_Arrow_obj`, 2658 | ability | 1 | `first=-1.000000` | - | 233 | unreadable | (as above) | not observed | the individual arrows (`maxInst=114`), constant `-1` |
+| Arrow Turret (`arrowTurret`) | Marksman | `Marksman_Arrow_Turret_obj`, 2641 | sentry | 1 | `first=1152.000000` | - | 1153 | unreadable | `talent 47 abilityId=arrowTurret abilityAura=false abilityDuration=8 abilityCooldown=0.250000 abilityLength=240 abilityTags=[15,18,10] predictedTotal=1152.000000` | measured, excluded (companion, multi-instance - owner) | a spanning timer (1153 draws against 1152), but a companion: the turret can have two instances by default and would need one indicator each (owner, rule (f)). Kept as the sentry root's positive control |
+| Crematus (`crematus`) | Plague Doctor | `Plague_Doctor_Crematus_Controller_obj`, 3502 | controller | 1 | `first=unreadable` | - (second cast skipped) | 178 | unreadable | `talent 283 abilityId=crematus abilityAura=false abilityDuration=0 abilityCooldown=5 abilityLength=320 abilityTags=[15,18,3] predictedTotal=0.000000` | not observed | `timerUnreadable=178` on every draw, `own=unreadable`; the controller root has no positive control. These are the 178 `unreadable` draws on the old toggle-table `crematus` countdown row |
+| Crematus (`crematus`) | Plague Doctor | `Plague_Doctor_Crematus_obj`, 3503 | damage | 1 | `first=79.200000` | - (second cast skipped) | 290 | readable | (as above) | not observed | fails rule (d): `first=79.200000` against 290 draws, `maxInst=8` - a per-projectile lifetime, not the cast's duration. `tgl timer [2] crematus first=79.200000 draws=290` agrees. Closes the ship round's open Crematus finding: Crematus is not a countdown skill |
+| Meteor Storm (`meteorStorm`) | Shaman | `Shaman_Meteor_Storm_Controller_obj`, 4422 | controller | 2 | `first=unreadable` | `first=unreadable` | 110 (current appearance; `totalDraws=1800`) | unreadable | `talent 224 abilityId=meteorStorm abilityAura=false abilityDuration=0 abilityCooldown=0.250000 abilityLength=240 abilityTags=[15,18,3,1] predictedTotal=0.000000` | not observed | `timerUnreadable=110` of 110 on the current appearance; controller root uncontrolled. The window held toggle-on, toggle-off and one plain cast (owner): the skill has a toggle upgrade |
+| Meteor Storm (`meteorStorm`) | Shaman | `Shaman_Meteor_Storm_obj`, 4423 | damage | 2 | `first=-1.000000` | `first=-1.000000` | 158 (current appearance; `totalDraws=1888`) | readable | (as above) | not observed | the meteors (`maxInst=10`) read a constant `-1`; no duration, no cooldown and "countless instances" at once (owner) |
+| Fire Totem (`fireTotem`) | Shaman | `Shaman_Totem_Fire_obj`, 4441 | sentry | - | - | - | - | - | `talent 232 abilityId=fireTotem abilityAura=false abilityDuration=15 abilityCooldown=0.250000 abilityLength=380 abilityTags=[15,18,10,4] predictedTotal=2160.000000` | not observed | not cast: dropped from the session after the owner excluded companion skills (rule (f)); it would be `measured, excluded (companion, multi-instance - owner)` whatever it read |
+| Defensive Shout (`defensiveShout`) | Viking | `Viking_Defensive_Shout_obj`, 5620 | buff | 1 (and 1 in a second cleared window) | `first=unreadable` | `first=unreadable` | 91 (second window: 88) | unreadable | `talent 6 abilityId=defensiveShout abilityAura=false abilityDuration=0 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,3,12] predictedTotal=0.000000` | buff-carried, not a cast object | the object lives ~0.6 s (the shout effect) with `timerUnreadable` on every draw; the owner reports the buff itself lasts over a minute, so the duration lives on the player's buff list. Buff root uncontrolled |
+| Berserk (`berserk`) | Viking | none | - | 0 | - | - | - | - | `talent 18 abilityId=berserk abilityAura=false abilityDuration=0 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,16,0] predictedTotal=0.000000` (`berserkersRage`, talent 2009, is a separate 4 s talent) | buff-carried, not a cast object | no record in either Viking window is attributable to it; the owner reports a melee attack whose buff stacks (8 stacks, ~5 s each) |
+| Blade Barrier (`bladeBarrier`) | Samurai | `Samurai_Blade_Barrier_obj`, 4225 | damage (`Orbit_Parent_obj`) | 3 (uncleared) + 1 (cleared refresh run) | `first=1296.000000` | `first=1296.000000` (the `app=3` record's third appearance, and again the cleared refresh run) | 1298 | readable | `talent 137 abilityId=bladeBarrier abilityAura=false abilityDuration=6 abilityCooldown=8 abilityLength=320 abilityTags=[15,18,2,0] predictedTotal=864.000000` | ship | (b) by the uncleared record: first and current appearance both `first=1296.000000`, plus the cleared run's `first=1296.000000`; (d) 1298 against 1296; (e) `isMyClient`. The live value is 9 s on the owner's character, not the talent's 6 s - the countdown latches the live value, never `predictedTotal` |
+| (relic companion) | any class | `Honey_Bee_obj`, 2218 | ability | 1 | `first=-1.000000` | - | 28980 | unreadable | - | not a timer (-1 constant) | a relic ability any class can carry; present before any cast, `-1` for its whole presence |
+| (relic companion) | any class | `Minisect_obj`, 2866 | ability | 1 | `first=-1.000000` | - | 28980 | unreadable | - | not a timer (-1 constant) | as `Honey_Bee_obj` |
+| (relic companion) | any class | `Karp_Head_obj`, 2365 | ability | 1 | `first=-1.000000` | - | 5519 | unreadable | - | not a timer (-1 constant) | as `Honey_Bee_obj`; seen in the Blizzard and Arrow Rain windows |
+| (relic companion) | any class | `Zeppelin_obj`, 6005 | ability | 1 | `first=-1.000000` | - | 5519 | unreadable | - | not a timer (-1 constant) | as `Karp_Head_obj` |
+| (item proc) | any class | `Explosion_Item_obj`, 1492 | damage | 1-2 per window | `first=-1.000000` | - | 550 | readable | - | not a timer (-1 constant) | an item's explosion proc, in four different skills' windows (fails rule (a) as well) |
+| (town) | any class | `Aura_Mask_obj`, 400 | buff | 115+ | `first=unreadable` | - | 14 | unreadable | - | not observed | town noise, many short appearances, unreadable on every draw; not a skill cast |
+| (Blade Barrier window) | Samurai | `Samurai_Blade_Barrier_Cursed_Blade_obj`, 4224 | damage | 3 | `first=-1.000000` | - | 359 | readable | - | not observed | a per-blade object in combat (`max=288.000000`); its own timer, not the barrier's |
+| (Blade Barrier window) | Samurai | `Samurai_Fan_Knives_obj`, 4234 | damage | 1 | `first=-1.000000` | - | 2381 | readable | - | not a timer (-1 constant) | combat object in the barrier's window |
+| (Blade Barrier window) | any class | `Universal_Player_Damage_obj`, 5356 | damage | 5 | `first=14.400000` | - | 17 | readable | - | not observed | a 0.1 s damage object in combat; not a cast |
+| (Blade Barrier window) | any class | `Mercenary_Knight_Stacked_Rage_obj`, 2685 | damage | 1 | `first=-1.000000` | - | 13 | readable | - | not a timer (-1 constant) | a mercenary's object in the refresh run's window |
+| (Meteor Storm window) | Marksman | `Marksman_Frag_Grenade_Shrapnel_obj`, 2652 | damage | 4 | `first=-1.000000` | - | 206 | readable | - | not a timer (-1 constant) | in the Meteor Storm window; not attributable to that cast |
+
+Every other skill in the `talents dur` list above stays `not observed (not
+cast)`; the table is additive across later sessions.
+
+**Finding - Blade Barrier's in-combat refresh acts on `destroyTimer`.**
+Cast in town, the barrier's record lived 1298 and 1297 draws; cast in
+combat, 1442 and 1425 (the cleared refresh run:
+`Samurai_Blade_Barrier_obj idx=4225 runtime=Samurai_Blade_Barrier_obj root=Player_Damage_Parent_obj app=1 present=0 draws=1425 first=1296.000000 last=-0.631152 min=-0.631152 max=1296.000000 timerUnreadable=0 maxInst=9 own=readable firstFrame=303132 lastFrame=304556 totalDraws=1425`).
+The owner has a skill-tree passive that refreshes the barrier on hitting an
+enemy. `max` never rose above the first reading, and `destroyTimer` still
+reached `<= 0` exactly as the object vanished, so the refresh extends or
+holds the timer by about a second rather than resetting it to full. Under
+the latch rule the countdown therefore holds, or partially refills (a
+reading below the latch just raises the fraction), and ends with the
+blades. Measured on the owner's character only; how large the extension can
+get with other passives is not observed.
+
+**Finding - the shipped `number` look sits too low in the player build's
+font** (owner, looking at the countdown with the Maelstrom control cast):
+"font is different so the number text was a little too low (hiding
+partially behind the icon)". The look hung its text down from a point
+measured up from the box's bottom edge, so its clearance depended on the
+font's height; `(0,-101)` had been confirmed with the inherited font, and
+the ship draws in `__newfont6`, which is taller. Fixed in the ship round -
+see `### Decision` above, "The shipped looks".
+
+**Follow-up, out of this round:** Meteor Storm has a toggle upgrade (the
+owner: "constantly" in its skill-tree text), so it is a sixth candidate for
+the toggle table (`toggleborder`/`toggleguard`), filed separately.
+Working heuristic from this session, not a rule: a skill whose tooltip
+shows a duration is one whose talent reads `abilityDuration > 0` (Blizzard,
+Arrow Rain, Crematus, Meteor Storm, Defensive Shout and Berserk all read
+`0`).
+
+Raw `tgprobe sweep show` output, one block per window, verbatim (the
+`tgprobe talents` lines are in the table's `talents dur line` column):
+
+```
+# control: Maelstrom of Frost (sweep cleared at setup)
+tgprobe sweep: sampler=on draws=28980 roots=6/6 unresolved=none capped=none records=3 dropped=0 indexUnreadable=0 scanCap=256
+  Honey_Bee_obj idx=2218 runtime=Honey_Bee_obj root=Player_Ability_Parent_obj app=1 present=1 draws=28980 first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 timerUnreadable=0 maxInst=1 own=unreadable firstFrame=13230 lastFrame=42209 totalDraws=28980
+  Minisect_obj idx=2866 runtime=Minisect_obj root=Player_Ability_Parent_obj app=1 present=1 draws=28980 first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 timerUnreadable=0 maxInst=1 own=unreadable firstFrame=13230 lastFrame=42209 totalDraws=28980
+  Prophet_Maelstrom_obj idx=3697 runtime=Prophet_Maelstrom_obj root=Player_Damage_Parent_obj app=1 present=0 draws=4322 first=4320.000000 last=-0.154800 min=-0.154800 max=4320.000000 timerUnreadable=0 maxInst=1 own=readable firstFrame=27044 lastFrame=31365 totalDraws=4322
+# Healing Zone, cast 1
+tgprobe sweep: sampler=on draws=13980 roots=6/6 unresolved=none capped=none records=4 dropped=0 indexUnreadable=0 scanCap=256
+  root Player_Damage_Parent_obj idx=3543 lastCount=0 cappedDraws=0
+  root Skill_Controller_obj idx=4606 lastCount=0 cappedDraws=0
+  root Player_Buff_Parent_obj idx=3538 lastCount=0 cappedDraws=0
+  root Player_Curse_Parent_obj idx=3542 lastCount=0 cappedDraws=0
+  root Player_Sentry_Parent_obj idx=3557 lastCount=0 cappedDraws=0
+  root Player_Ability_Parent_obj idx=3536 lastCount=0 cappedDraws=0
+  Honey_Bee_obj idx=2218 runtime=Honey_Bee_obj root=Player_Ability_Parent_obj app=1 present=0 draws=5585 first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 timerUnreadable=0 maxInst=1 own=unreadable firstFrame=45390 lastFrame=50974 totalDraws=5585
+  Minisect_obj idx=2866 runtime=Minisect_obj root=Player_Ability_Parent_obj app=1 present=0 draws=5585 first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 timerUnreadable=0 maxInst=1 own=unreadable firstFrame=45390 lastFrame=50974 totalDraws=5585
+  Aura_Mask_obj idx=400 runtime=Aura_Mask_obj root=Player_Buff_Parent_obj app=115 present=0 draws=14 first=unreadable last=unreadable min=unreadable max=unreadable timerUnreadable=14 maxInst=2 own=unreadable firstFrame=51785 lastFrame=60157 totalDraws=1608
+  White_Mage_Healing_Zone_obj idx=5738 runtime=White_Mage_Healing_Zone_obj root=Player_Ability_Parent_obj app=1 present=0 draws=1153 first=1152.000000 last=-0.314208 min=-0.314208 max=1152.000000 timerUnreadable=0 maxInst=1 own=unreadable firstFrame=54296 lastFrame=55448 totalDraws=1153
+# Healing Zone, cast 2 (same window)
+tgprobe sweep: sampler=on draws=35130 roots=6/6 unresolved=none capped=none records=4 dropped=0 indexUnreadable=0 scanCap=256
+  Honey_Bee_obj idx=2218 runtime=Honey_Bee_obj root=Player_Ability_Parent_obj app=1 present=0 draws=5585 first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 timerUnreadable=0 maxInst=1 own=unreadable firstFrame=45390 lastFrame=50974 totalDraws=5585
+  Minisect_obj idx=2866 runtime=Minisect_obj root=Player_Ability_Parent_obj app=1 present=0 draws=5585 first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 timerUnreadable=0 maxInst=1 own=unreadable firstFrame=45390 lastFrame=50974 totalDraws=5585
+  Aura_Mask_obj idx=400 runtime=Aura_Mask_obj root=Player_Buff_Parent_obj app=403 present=0 draws=14 first=unreadable last=unreadable min=unreadable max=unreadable timerUnreadable=14 maxInst=2 own=unreadable firstFrame=51785 lastFrame=81320 totalDraws=5640
+  White_Mage_Healing_Zone_obj idx=5738 runtime=White_Mage_Healing_Zone_obj root=Player_Ability_Parent_obj app=2 present=0 draws=1153 first=1152.000000 last=-0.034560 min=-0.034560 max=1152.000000 timerUnreadable=0 maxInst=1 own=unreadable firstFrame=54296 lastFrame=68087 totalDraws=2306
+# Blizzard, cast 1
+tgprobe sweep: sampler=on draws=17418 roots=6/6 unresolved=none capped=none records=6 dropped=0 indexUnreadable=0 scanCap=256
+  Aura_Mask_obj idx=400 runtime=Aura_Mask_obj root=Player_Buff_Parent_obj app=162 present=0 draws=14 first=unreadable last=unreadable min=unreadable max=unreadable timerUnreadable=14 maxInst=2 own=unreadable firstFrame=83954 lastFrame=95802 totalDraws=2268
+  Karp_Head_obj idx=2365 runtime=Karp_Head_obj root=Player_Ability_Parent_obj app=1 present=1 draws=5519 first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 timerUnreadable=0 maxInst=1 own=unreadable firstFrame=96781 lastFrame=102299 totalDraws=5519
+  Zeppelin_obj idx=6005 runtime=Zeppelin_obj root=Player_Ability_Parent_obj app=1 present=1 draws=5519 first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 timerUnreadable=0 maxInst=1 own=unreadable firstFrame=96781 lastFrame=102299 totalDraws=5519
+  Jotunn_Blizzard_Controller_obj idx=2295 runtime=Jotunn_Blizzard_Controller_obj root=Skill_Controller_obj app=1 present=0 draws=501 first=unreadable last=unreadable min=unreadable max=unreadable timerUnreadable=501 maxInst=2 own=unreadable firstFrame=99385 lastFrame=99885 totalDraws=501
+  Jotunn_Blizzard_obj idx=2296 runtime=Jotunn_Blizzard_obj root=Player_Ability_Parent_obj app=1 present=0 draws=600 first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 timerUnreadable=0 maxInst=22 own=unreadable firstFrame=99386 lastFrame=99985 totalDraws=600
+  Explosion_Item_obj idx=1492 runtime=Explosion_Item_obj root=Player_Damage_Parent_obj app=1 present=0 draws=550 first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 timerUnreadable=0 maxInst=12 own=readable firstFrame=99487 lastFrame=100036 totalDraws=550
+# Arrow Rain, cast 1
+tgprobe sweep: sampler=on draws=21329 roots=6/6 unresolved=none capped=none records=5 dropped=0 indexUnreadable=0 scanCap=256
+  Karp_Head_obj idx=2365 runtime=Karp_Head_obj root=Player_Ability_Parent_obj app=1 present=0 draws=9319 first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 timerUnreadable=0 maxInst=1 own=unreadable firstFrame=105210 lastFrame=114528 totalDraws=9319
+  Zeppelin_obj idx=6005 runtime=Zeppelin_obj root=Player_Ability_Parent_obj app=1 present=0 draws=9319 first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 timerUnreadable=0 maxInst=1 own=unreadable firstFrame=105210 lastFrame=114528 totalDraws=9319
+  Marksman_Arrow_Rain_obj idx=2635 runtime=Marksman_Arrow_Rain_obj root=Player_Ability_Parent_obj app=1 present=0 draws=77 first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 timerUnreadable=0 maxInst=1 own=unreadable firstFrame=124571 lastFrame=124647 totalDraws=77
+  Marksman_Raining_Arrow_obj idx=2658 runtime=Marksman_Raining_Arrow_obj root=Player_Ability_Parent_obj app=1 present=0 draws=233 first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 timerUnreadable=0 maxInst=114 own=unreadable firstFrame=124572 lastFrame=124804 totalDraws=233
+  Explosion_Item_obj idx=1492 runtime=Explosion_Item_obj root=Player_Damage_Parent_obj app=1 present=0 draws=155 first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 timerUnreadable=0 maxInst=63 own=readable firstFrame=124701 lastFrame=124855 totalDraws=155
+# Arrow Turret, cast 1
+tgprobe sweep: sampler=on draws=8880 roots=6/6 unresolved=none capped=none records=2 dropped=0 indexUnreadable=0 scanCap=256
+  root Player_Damage_Parent_obj idx=3543 lastCount=0 cappedDraws=0
+  root Skill_Controller_obj idx=4606 lastCount=0 cappedDraws=0
+  root Player_Buff_Parent_obj idx=3538 lastCount=0 cappedDraws=0
+  root Player_Curse_Parent_obj idx=3542 lastCount=0 cappedDraws=0
+  root Player_Sentry_Parent_obj idx=3557 lastCount=0 cappedDraws=0
+  root Player_Ability_Parent_obj idx=3536 lastCount=0 cappedDraws=0
+  Marksman_Arrow_Turret_obj idx=2641 runtime=Marksman_Arrow_Turret_obj root=Player_Sentry_Parent_obj app=1 present=0 draws=1153 first=1152.000000 last=-0.002880 min=-0.002880 max=1152.000000 timerUnreadable=0 maxInst=1 own=unreadable firstFrame=133512 lastFrame=134664 totalDraws=1153
+  Explosion_Item_obj idx=1492 runtime=Explosion_Item_obj root=Player_Damage_Parent_obj app=1 present=0 draws=58 first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 timerUnreadable=0 maxInst=1 own=readable firstFrame=134665 lastFrame=134722 totalDraws=58
+# Crematus (plain), cast 1
+tgprobe sweep: sampler=on draws=8537 roots=6/6 unresolved=none capped=none records=2 dropped=0 indexUnreadable=0 scanCap=256
+  Plague_Doctor_Crematus_Controller_obj idx=3502 runtime=Plague_Doctor_Crematus_Controller_obj root=Skill_Controller_obj app=1 present=0 draws=178 first=unreadable last=unreadable min=unreadable max=unreadable timerUnreadable=178 maxInst=1 own=unreadable firstFrame=165892 lastFrame=166069 totalDraws=178
+  Plague_Doctor_Crematus_obj idx=3503 runtime=Plague_Doctor_Crematus_obj root=Player_Damage_Parent_obj app=1 present=0 draws=290 first=79.200000 last=-1.000000 min=-1.000000 max=79.200000 timerUnreadable=0 maxInst=8 own=readable firstFrame=165893 lastFrame=166182 totalDraws=290
+tgprobe tgl timer [2] crematus field=destroyTimer predicted=-1.000000 appearance=1 first=79.200000 last=-1.000000 min=-1.000000 max=79.200000 unreadable=0 atPredicted=207 draws=290
+# Meteor Storm (toggle on, toggle off, one plain cast)
+tgprobe sweep: sampler=on draws=25530 roots=6/6 unresolved=none capped=none records=4 dropped=0 indexUnreadable=0 scanCap=256
+  Shaman_Meteor_Storm_Controller_obj idx=4422 runtime=Shaman_Meteor_Storm_Controller_obj root=Skill_Controller_obj app=2 present=0 draws=110 first=unreadable last=unreadable min=unreadable max=unreadable timerUnreadable=110 maxInst=1 own=unreadable firstFrame=176703 lastFrame=182081 totalDraws=1800
+  Shaman_Meteor_Storm_obj idx=4423 runtime=Shaman_Meteor_Storm_obj root=Player_Damage_Parent_obj app=2 present=0 draws=158 first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 timerUnreadable=0 maxInst=10 own=readable firstFrame=176704 lastFrame=182130 totalDraws=1888
+  Explosion_Item_obj idx=1492 runtime=Explosion_Item_obj root=Player_Damage_Parent_obj app=2 present=0 draws=166 first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 timerUnreadable=0 maxInst=10 own=readable firstFrame=176754 lastFrame=182188 totalDraws=1904
+  Marksman_Frag_Grenade_Shrapnel_obj idx=2652 runtime=Marksman_Frag_Grenade_Shrapnel_obj root=Player_Damage_Parent_obj app=4 present=0 draws=206 first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 timerUnreadable=0 maxInst=7 own=readable firstFrame=176814 lastFrame=182228 totalDraws=1850
+# Viking, window 1 (Defensive Shout)
+tgprobe sweep: sampler=on draws=31196 roots=6/6 unresolved=none capped=none records=1 dropped=0 indexUnreadable=0 scanCap=256
+  Viking_Defensive_Shout_obj idx=5620 runtime=Viking_Defensive_Shout_obj root=Player_Buff_Parent_obj app=1 present=0 draws=91 first=unreadable last=unreadable min=unreadable max=unreadable timerUnreadable=91 maxInst=1 own=unreadable firstFrame=215828 lastFrame=215918 totalDraws=91
+# Viking, window 2 (Defensive Shout, then Berserk)
+tgprobe sweep: sampler=on draws=18480 roots=6/6 unresolved=none capped=none records=1 dropped=0 indexUnreadable=0 scanCap=256
+  root Player_Damage_Parent_obj idx=3543 lastCount=0 cappedDraws=0
+  root Skill_Controller_obj idx=4606 lastCount=0 cappedDraws=0
+  root Player_Buff_Parent_obj idx=3538 lastCount=0 cappedDraws=0
+  root Player_Curse_Parent_obj idx=3542 lastCount=0 cappedDraws=0
+  root Player_Sentry_Parent_obj idx=3557 lastCount=0 cappedDraws=0
+  root Player_Ability_Parent_obj idx=3536 lastCount=0 cappedDraws=0
+  Viking_Defensive_Shout_obj idx=5620 runtime=Viking_Defensive_Shout_obj root=Player_Buff_Parent_obj app=1 present=0 draws=88 first=unreadable last=unreadable min=unreadable max=unreadable timerUnreadable=88 maxInst=1 own=unreadable firstFrame=254057 lastFrame=254144 totalDraws=88
+# Blade Barrier, cast 1 (town)
+tgprobe sweep: sampler=on draws=13699 roots=6/6 unresolved=none capped=none records=1 dropped=0 indexUnreadable=0 scanCap=256
+  Samurai_Blade_Barrier_obj idx=4225 runtime=Samurai_Blade_Barrier_obj root=Player_Damage_Parent_obj app=1 present=0 draws=1298 first=1296.000000 last=-0.002880 min=-0.002880 max=1296.000000 timerUnreadable=0 maxInst=9 own=readable firstFrame=262288 lastFrame=263585 totalDraws=1298
+# Blade Barrier, two more casts, window NOT cleared (the third in combat)
+tgprobe sweep: sampler=on draws=27289 roots=6/6 unresolved=none capped=none records=4 dropped=0 indexUnreadable=0 scanCap=256
+  Samurai_Blade_Barrier_obj idx=4225 runtime=Samurai_Blade_Barrier_obj root=Player_Damage_Parent_obj app=3 present=0 draws=1442 first=1296.000000 last=-0.246816 min=-0.246816 max=1296.000000 timerUnreadable=0 maxInst=9 own=readable firstFrame=262288 lastFrame=282938 totalDraws=4037
+  Samurai_Fan_Knives_obj idx=4234 runtime=Samurai_Fan_Knives_obj root=Player_Damage_Parent_obj app=1 present=0 draws=2381 first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 timerUnreadable=0 maxInst=37 own=readable firstFrame=281499 lastFrame=283879 totalDraws=2381
+  Samurai_Blade_Barrier_Cursed_Blade_obj idx=4224 runtime=Samurai_Blade_Barrier_Cursed_Blade_obj root=Player_Damage_Parent_obj app=3 present=0 draws=359 first=-1.000000 last=169.372080 min=-1.000000 max=288.000000 timerUnreadable=0 maxInst=7 own=readable firstFrame=281531 lastFrame=283002 totalDraws=1429
+  Universal_Player_Damage_obj idx=5356 runtime=Universal_Player_Damage_obj root=Player_Damage_Parent_obj app=5 present=0 draws=17 first=14.400000 last=-0.601056 min=-0.601056 max=14.400000 timerUnreadable=0 maxInst=1 own=readable firstFrame=282970 lastFrame=283564 totalDraws=84
+# Blade Barrier, refresh run in combat (cleared)
+tgprobe sweep: sampler=on draws=21930 roots=6/6 unresolved=none capped=none records=5 dropped=0 indexUnreadable=0 scanCap=256
+  Samurai_Blade_Barrier_obj idx=4225 runtime=Samurai_Blade_Barrier_obj root=Player_Damage_Parent_obj app=1 present=0 draws=1425 first=1296.000000 last=-0.631152 min=-0.631152 max=1296.000000 timerUnreadable=0 maxInst=9 own=readable firstFrame=303132 lastFrame=304556 totalDraws=1425
+  Samurai_Fan_Knives_obj idx=4234 runtime=Samurai_Fan_Knives_obj root=Player_Damage_Parent_obj app=1 present=0 draws=2421 first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 timerUnreadable=0 maxInst=34 own=readable firstFrame=303134 lastFrame=305554 totalDraws=2421
+  Samurai_Blade_Barrier_Cursed_Blade_obj idx=4224 runtime=Samurai_Blade_Barrier_Cursed_Blade_obj root=Player_Damage_Parent_obj app=2 present=0 draws=1232 first=-1.000000 last=171.999504 min=-1.000000 max=288.000000 timerUnreadable=0 maxInst=8 own=readable firstFrame=303184 lastFrame=304742 totalDraws=1550
+  Mercenary_Knight_Stacked_Rage_obj idx=2685 runtime=Mercenary_Knight_Stacked_Rage_obj root=Player_Damage_Parent_obj app=1 present=0 draws=13 first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 timerUnreadable=0 maxInst=1 own=readable firstFrame=303984 lastFrame=303996 totalDraws=13
+  Universal_Player_Damage_obj idx=5356 runtime=Universal_Player_Damage_obj root=Player_Damage_Parent_obj app=5 present=0 draws=17 first=14.400000 last=-0.605664 min=-0.605664 max=14.400000 timerUnreadable=0 maxInst=2 own=readable firstFrame=305172 lastFrame=305766 totalDraws=85
+```
