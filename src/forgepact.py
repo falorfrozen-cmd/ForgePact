@@ -215,12 +215,11 @@ DEFAULTS = {
     # back. Off by default; offline only, like every mod here.
     "mod_toggle_guard": False,
     # Timed-skill countdown (issue #55): one of off/arc/bar/number/fade drawn
-    # over each timed skill's hotbar slot. Covers the four rows of the
-    # plugin's kSkillTimerRows, each measured in-game (session 8): Healing
-    # Zone, Blade Barrier, and a plain cast of Soul Spurn or Maelstrom of
-    # Frost - a toggled-on skill never gets a countdown. Off by default; a
-    # cast already running when you turn it on shows as full (route B's latch
-    # takes the first reading it sees).
+    # over each timed skill's hotbar slot. Covers the explicit rows of the
+    # plugin's kSkillTimerRows, each measured in-game - a toggled-on skill
+    # never gets a countdown. Off by default; a cast already running when you
+    # turn it on shows as full (route B's latch takes the first reading it
+    # sees).
     "mod_skill_timer_style": "off",
     # Monster Rarity: the share of normal monsters raised to Rare and to Ancient
     # (percent each, together at most 100; the rest stay normal).

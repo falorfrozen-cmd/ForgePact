@@ -3691,11 +3691,14 @@ the owner using the research instrument itself:
 **Rows, since session 8: the countdown's own table.** The countdown now
 reads its rows from `kSkillTimerRows` (`plugin/include/ForgePact/SkillTimerMod.hpp`)
 and nothing else, filled from "Duration sweep (session 8)" -> "Results"
-below: exactly the four `ship` rows - Healing Zone (`healingZone`, no
-ownership field, measured 1152), Blade Barrier (`bladeBarrier`,
-`isMyClient`, 1296), Soul Spurn (`soulSpurn`, `isMyClient`, 144) and
-Maelstrom of Frost (`maelstromOfFrost`, `isMyClient`, 4320). Each row
-carries its recorded `measuredFirst` for the contract test that ties it to
+below plus "Session 10" (below "Results"): exactly the seven `ship` rows -
+Healing Zone (`healingZone`, no ownership field, measured 1152), Blade
+Barrier (`bladeBarrier`, `isMyClient`, 1296), Soul Spurn (`soulSpurn`,
+`isMyClient`, 144), Maelstrom of Frost (`maelstromOfFrost`, `isMyClient`,
+4320), Progenies of the Great Cataclysm (`progeniesOfTheGreatCataclysm`, no
+ownership field, measured 2880), Pickup Raid (`pickupRaid`, `isMyClient`,
+576) and Dissipating Tornado (`dissipatingTornado`, no ownership field,
+measured 432). Each row carries its recorded `measuredFirst` for the contract test that ties it to
 its Results line; the draw never divides by it (route B latches each cast's
 own first reading). The countdown table's talent ids resolve in the same
 `global.talentStructMap` walk as the toggle table's, kept in their own
@@ -4589,6 +4592,43 @@ tgprobe sweep: sampler=on draws=21930 roots=6/6 unresolved=none capped=none reco
   Universal_Player_Damage_obj idx=5356 runtime=Universal_Player_Damage_obj root=Player_Damage_Parent_obj app=5 present=0 draws=17 first=14.400000 last=-0.605664 min=-0.605664 max=14.400000 timerUnreadable=0 maxInst=2 own=readable firstFrame=305172 lastFrame=305766 totalDraws=85
 ```
 
+#### Session 10 (2026-09-21): three more measured rows
+
+Owner, 2026-09-21: "Measure, then add" - three skills the rule tier could
+never select (none has an object matching the generator's name convention)
+were measured directly against the same Results rules (a)-(f) above:
+Progenies of the Great Cataclysm (Bard), Pickup Raid (Redneck) and
+Dissipating Tornado (Nomad). Session 10 ran on 2026-09-21, owner at the
+keyboard, research DLL `BloodPactPlugin_rel.dll` (sha256 `a1fb05c8…`) built
+from `034bfc2`, installed. All six windows read `roots=6/6 unresolved=none
+capped=none`, each opened by `tgprobe sweep clear`. The three talents'
+`abilityId`/`abilityDuration`/`abilityCooldown` lines are already quoted in
+the 146-line `tgprobe talents dur` capture above (talent 406, 100, 81).
+
+| skill (abilityId) | class | object (SDK name, index) | root | app | first #1 | first #2 | draws #1 | own | talents dur line | status | reason |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| Progenies of the Great Cataclysm (`progeniesOfTheGreatCataclysm`) | Bard | `Bard_Progenies_Amplifier_obj`, 551 | ability | 1 (each of two cleared windows) | `first=2880.000000` (plain cast) | `first=2880.000000` (cast with Orbital Soundwaves) | 2877 | unreadable | `talent 406 abilityId=progeniesOfTheGreatCataclysm abilityAura=false abilityDuration=20 abilityCooldown=40 abilityLength=320 abilityTags=[15,18,3] predictedTotal=2880.000000` | ship | two cleared casts, equal `first` (b); `first > 0` (c); 2877 draws against 2880 (d); `own=unreadable` -> no ownership field (e); not under `Player_Sentry_Parent_obj` (f). The Orbital Soundwaves upgrade does not change this object's own timer - one row covers both forms |
+| Pickup Raid (`pickupRaid`) | Redneck | `Redneck_Pickup_Truck_obj`, 4039 | damage | 1 (each of two cleared windows) | `first=576.000000` | `first=576.000000` | 610 | readable | `talent 100 abilityId=pickupRaid abilityAura=false abilityDuration=4 abilityCooldown=8 abilityLength=380 abilityTags=[15,18] predictedTotal=576.000000` | ship | two cleared casts, equal `first` (b); `first > 0` (c); 610 draws against 576 (d); `isMyClient` (e); not under `Player_Sentry_Parent_obj` (f) |
+| Dissipating Tornado (`dissipatingTornado`) | Nomad | `Dissipating_Tornado_obj`, 1353 | ability | 1 (each of two cleared windows) | `first=432.000000` | `first=432.000000` | 483 | unreadable | `talent 81 abilityId=dissipatingTornado abilityAura=false abilityDuration=3 abilityCooldown=12 abilityLength=600 abilityTags=[15,18] predictedTotal=432.000000` | ship | two cleared casts, equal `first` (b); `first > 0` (c); 483 draws against 432 (d); `own=unreadable` -> no ownership field (e); not under `Player_Sentry_Parent_obj` (f) |
+| (Progenies window) | Bard | `Bard_Slaying_Riffs_obj`, 568 | damage | 2 (plain) / 6 (with Orbital Soundwaves) | `first=115.200000` | - | 52 (plain) / 89 (with upgrade) | readable | not re-listed | not observed | present in BOTH windows, more and overlapping instances (`maxInst` 1 -> 4) with the upgrade - the driver's note attributed it to the upgrade, but the plain capture contradicts that; source not established. Per-pulse lifetime, not the cast's own duration -> not a row |
+| (Pickup Raid window) | Redneck | `Redneck_Truck_Bullet_obj`, 4051 | damage | 1 | `first=-1.000000` | - | 611 (609 on the second appearance) | readable | not re-listed | not a timer (-1 constant) | `maxInst=10`; a per-projectile lifetime, not the cast's own duration -> not a row |
+| (relic companion / hit object) | any class | `Minisect_obj`, `Hitbox_obj` | ability/damage | - | `first=-1.000000` | - | - | unreadable | - | not a timer (-1 constant) | same label as session 8 - present, constant `-1`, noise |
+| Temporal Heroes (`temporalHeroes`) | Necromancer (summon) | `Temporal_{Demonspawn,Marksman,Pyromancer,Viking,White_Mage}_obj`, 4794-4798 | (under `Necro_Summon_Parent_obj`) | - | - | - | - | - | `talent 325 abilityId=temporalHeroes abilityAura=false abilityDuration=25 abilityCooldown=40 abilityLength=96 abilityTags=[15,18,9] predictedTotal=3600.000000` | not measured | several summons at once, under `Necro_Summon_Parent_obj` (owner's companion exclusion) - not one of the sweep's six roots, so the object itself was never reached; status is `not measured`, not "has no timer" |
+
+**Finding - the Orbital Soundwaves talent upgrade does not change Progenies'
+own timer.** Both the plain cast and the cast with the Orbital Soundwaves
+upgrade read the same `first=2880.000000` on one instance each, so a single
+countdown row covers the base skill and its upgraded form.
+
+**Finding - the truck and the tornado sit briefly at -1 after their timer
+completes.** Both objects' second appearance drew a handful more samples
+than their `first` reading (610 vs 576 for Pickup Raid, 483 vs 432 for
+Dissipating Tornado) because the draw treats a non-positive reading as
+`Expired`, so nothing shows for that trailing fraction of a second - the
+same shape Blade Barrier's trailing `-1` reading already ships with.
+
+With these three added, the countdown ships seven explicit rows.
+
 #### Rule coverage expectation
 
 D-S4 (owner, 2026-09-21, verbatim): "lets ship untested following a rule -
@@ -4599,7 +4639,7 @@ below (146 lines, this session's live capture - interoperability facts only:
 abilityId/duration/cooldown/tags/length, never a game script body). Eligible
 when `abilityDuration > 0` AND `abilityCooldown > 0.25` (the no-cooldown
 floor - Meteor Storm reads 0.25 and has none, per the owner), the talent is
-not one of the four explicit rows above (D-R1: those stay explicit and win),
+not one of the seven explicit rows above (D-R1: those stay explicit and win),
 it is not on the measured deny-list (`kSkillTimerRuleDeny`,
 `plugin/include/ForgePact/SkillTimerMod.hpp`), and its abilityId resolves to
 an object by the generator's own name convention
@@ -4607,7 +4647,7 @@ an object by the generator's own name convention
 `plugin/include/ForgePact/SkillTimerNames.hpp`).
 `test_rule_expectation_in_the_research_doc_matches_the_capture`
 (`tests/test_toggle_skill_contract.py`) recomputes this from the 146 lines
-below, the generated header, the deny-list and the four explicit rows, and
+below, the generated header, the deny-list and the seven explicit rows, and
 asserts it against this table's `selected` rows - this is a documented
 EXPECTATION pinned by test, **not** shipped data: the runtime reads the live
 talent struct, not this table.
@@ -4775,8 +4815,8 @@ deny-list entry, not a new investigation.
 ```
 
 Of the 146 talents captured with `abilityDuration > 0`: **17 are selected**
-by the rule, 3 are the four explicit rows (Soul Spurn was not re-cast in this
-session's capture, so only three of the four appear here), 3 are denied, 106
+by the rule, 6 are the seven explicit rows (Soul Spurn was not re-cast in this
+session's capture, so only six of the seven appear here), 3 are denied, 103
 have no object the generator's name convention resolves (potions, relic
 abilities, self-buffs such as `agility`, `demonForm`, `counter`, and any
 talent whose cast lives only as a player buff), and the remaining 17 fail the
@@ -4793,7 +4833,7 @@ companion.
 
 | abilityId | status | reason |
 |---|---|---|
-| `bladeBarrier` | explicit | one of the four explicit rows (D-R1); stays explicit |
+| `bladeBarrier` | explicit | one of the seven explicit rows (D-R1); stays explicit |
 | `explosiveKunai` | fails rule | cooldown at or below the floor (cd=0.25) |
 | `boosterShot` | no object | no object by the generator's name convention |
 | `thunderShield` | no object | no object by the generator's name convention |
@@ -4814,7 +4854,7 @@ companion.
 | `staticShock` | selected | dur=5 cd=3 |
 | `coffeeMug` | no object | no object by the generator's name convention |
 | `relicManaDice` | no object | no object by the generator's name convention |
-| `pickupRaid` | no object | no object by the generator's name convention |
+| `pickupRaid` | explicit | one of the seven explicit rows (D-R1); stays explicit |
 | `cursedGround` | selected | dur=5 cd=5 |
 | `charge` | fails rule | cooldown at or below the floor (cd=0.25) |
 | `holyHammer` | fails rule | cooldown at or below the floor (cd=0.25) |
@@ -4876,10 +4916,10 @@ companion.
 | `divineHealing` | no object | no object by the generator's name convention |
 | `scarletSacrifice` | no object | no object by the generator's name convention |
 | `relicBookOfBelial` | no object | no object by the generator's name convention |
-| `dissipatingTornado` | no object | no object by the generator's name convention |
+| `dissipatingTornado` | explicit | one of the seven explicit rows (D-R1); stays explicit |
 | `bottleOfSake` | no object | no object by the generator's name convention |
 | `rogueChainsaw` | fails rule | cooldown at or below the floor (cd=0.25) |
-| `progeniesOfTheGreatCataclysm` | no object | no object by the generator's name convention |
+| `progeniesOfTheGreatCataclysm` | explicit | one of the seven explicit rows (D-R1); stays explicit |
 | `hillbillyRage` | no object | no object by the generator's name convention |
 | `rimskinAssassin` | no object | no object by the generator's name convention |
 | `summonFrenzy` | no object | no object by the generator's name convention |
@@ -4915,7 +4955,7 @@ companion.
 | `setSail` | no object | no object by the generator's name convention |
 | `insatiableHunger` | no object | no object by the generator's name convention |
 | `praetorianBlood` | no object | no object by the generator's name convention |
-| `maelstromOfFrost` | explicit | one of the four explicit rows (D-R1); stays explicit |
+| `maelstromOfFrost` | explicit | one of the seven explicit rows (D-R1); stays explicit |
 | `fleetFeet` | no object | no object by the generator's name convention |
 | `liveByTheSword` | no object | no object by the generator's name convention |
 | `seedOfDestruction` | no object | no object by the generator's name convention |
@@ -4926,7 +4966,7 @@ companion.
 | `impetus` | no object | no object by the generator's name convention |
 | `fireTotem` | denied | on the measured deny-list (kSkillTimerRuleDeny) |
 | `spiritWolves` | no object | no object by the generator's name convention |
-| `healingZone` | explicit | one of the four explicit rows (D-R1); stays explicit |
+| `healingZone` | explicit | one of the seven explicit rows (D-R1); stays explicit |
 | `mercenarySpellWordofProtection` | no object | no object by the generator's name convention |
 | `blazingTrail` | selected | dur=5 cd=10 |
 | `emptyBottleOfVodka` | no object | no object by the generator's name convention |

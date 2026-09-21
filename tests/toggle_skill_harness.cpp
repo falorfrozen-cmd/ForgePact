@@ -98,6 +98,10 @@ enum class GameObject { White_Mage_Soul_Spurn_AOE_obj, UI_Hud_Talent_obj, Univer
                         // objects no toggle-table row names, so the
                         // countdown's own table compiles against them.
                         White_Mage_Healing_Zone_obj, Samurai_Blade_Barrier_obj,
+                        // Session 10's ship set: three more countdown rows
+                        // whose objects no toggle-table row names either.
+                        Bard_Progenies_Amplifier_obj, Redneck_Pickup_Truck_obj,
+                        Dissipating_Tornado_obj,
                         // Issue #55 follow-up (D-S4): two synthetic objects for
                         // the rule map's own stand-in generated table below -
                         // this harness does not carry the real 700+-entry
@@ -110,6 +114,9 @@ inline const char* GetObjectName(GameObject g) {
     case GameObject::Rule_Beta_obj: return "Rule_Beta_obj";
     case GameObject::White_Mage_Healing_Zone_obj: return "White_Mage_Healing_Zone_obj";
     case GameObject::Samurai_Blade_Barrier_obj: return "Samurai_Blade_Barrier_obj";
+    case GameObject::Bard_Progenies_Amplifier_obj: return "Bard_Progenies_Amplifier_obj";
+    case GameObject::Redneck_Pickup_Truck_obj: return "Redneck_Pickup_Truck_obj";
+    case GameObject::Dissipating_Tornado_obj: return "Dissipating_Tornado_obj";
     case GameObject::Player_Damage_Parent_obj: return "Player_Damage_Parent_obj";
     case GameObject::Skill_Controller_obj: return "Skill_Controller_obj";
     case GameObject::Player_Buff_Parent_obj: return "Player_Buff_Parent_obj";

@@ -1211,12 +1211,17 @@ class SkillTimerShipContractTests(unittest.TestCase):
     COUNTDOWN_ROW = re.compile(
         r'\{\s*"(?P<ability>[A-Za-z]+)",\s*HeroSiege::Objects::GameObject::(?P<obj>\w+),\s*'
         r'(?P<own>nullptr|"isMyClient"),\s*(?P<first>[\d.]+),\s*"(?P<display>[^"]+)"\s*\}')
-    # abilityId -> (object, ownership, measuredFirst): session 8's ship set.
+    # abilityId -> (object, ownership, measuredFirst): session 8's four rows
+    # plus session 10's three (Progenies, Pickup Raid, Dissipating Tornado) -
+    # seven explicit rows in total.
     SHIP_SET = {
         "healingZone": ("White_Mage_Healing_Zone_obj", "nullptr", 1152.0),
         "bladeBarrier": ("Samurai_Blade_Barrier_obj", '"isMyClient"', 1296.0),
         "soulSpurn": ("White_Mage_Soul_Spurn_AOE_obj", '"isMyClient"', 144.0),
         "maelstromOfFrost": ("Prophet_Maelstrom_obj", '"isMyClient"', 4320.0),
+        "progeniesOfTheGreatCataclysm": ("Bard_Progenies_Amplifier_obj", "nullptr", 2880.0),
+        "pickupRaid": ("Redneck_Pickup_Truck_obj", '"isMyClient"', 576.0),
+        "dissipatingTornado": ("Dissipating_Tornado_obj", "nullptr", 432.0),
     }
 
     def countdown_table(self):
@@ -1378,7 +1383,7 @@ class SkillTimerShipContractTests(unittest.TestCase):
 class SkillTimerRuleContractTests(unittest.TestCase):
     """Rule-based coverage of untested skills (issue #55 follow-up, D-S4).
 
-    Companion to SkillTimerShipContractTests (the four explicit rows) and
+    Companion to SkillTimerShipContractTests (the seven explicit rows) and
     test_toggle_skill_behavior.py's `rule/*` scenarios, which run the
     eligibility decision and the rule draw end to end against a controlled
     game API. This class pins the source text: the generated table matches
@@ -1409,7 +1414,10 @@ class SkillTimerRuleContractTests(unittest.TestCase):
         "defensiveShout", "berserk", "arrowTurret", "fireTotem",
         "bushido", "holyForm", "unholyForm", "melonForm",
     }
-    EXPLICIT_ROWS = {"healingZone", "bladeBarrier", "soulSpurn", "maelstromOfFrost"}
+    EXPLICIT_ROWS = {
+        "healingZone", "bladeBarrier", "soulSpurn", "maelstromOfFrost",
+        "progeniesOfTheGreatCataclysm", "pickupRaid", "dissipatingTornado",
+    }
 
     def test_generated_table_matches_the_sdk(self):
         import gen_skill_timer_names as gen
@@ -1454,7 +1462,7 @@ class SkillTimerRuleContractTests(unittest.TestCase):
         hotbar = function_body(player, "static bool SkillTimerEnumerateHotbar(")
         names = set(re.findall(r"GameObject::(\w+)", hotbar))
         self.assertEqual(names, {"UI_Hud_Talent_obj"})
-        # The only other literal enumerators anywhere are the four explicit
+        # The only other literal enumerators anywhere are the seven explicit
         # rows (SkillTimerMod.hpp) and the generated header's own table.
         rule_section = self.header[self.header.index("struct SkillTimerRuleEntry"):]
         self.assertNotIn("GameObject::", rule_section)
@@ -1481,6 +1489,13 @@ class SkillTimerRuleContractTests(unittest.TestCase):
         self.assertIn("SkillTimerRuleIsExplicitRow(name)", walk)
         fn = function_body(self.header, "inline bool SkillTimerRuleIsExplicitRow(")
         self.assertIn("kSkillTimerRows[i].abilityId", fn)
+        # EXPLICIT_ROWS names exactly the countdown table's own abilityIds -
+        # a row added to kSkillTimerRows without a matching EXPLICIT_ROWS
+        # entry (or vice versa) fails here rather than passing silently.
+        countdown_start = self.header.index("inline constexpr SkillTimerRow kSkillTimerRows[] = {")
+        countdown_table = self.header[countdown_start:self.header.index("\n};", countdown_start)]
+        header_ids = {m.group("ability") for m in SkillTimerShipContractTests.COUNTDOWN_ROW.finditer(countdown_table)}
+        self.assertEqual(self.EXPLICIT_ROWS, header_ids)
         eligible = function_body(self.header, "static bool Eligible(")
         self.assertIn("if (isExplicitRow) return false;", eligible)
 
@@ -1548,6 +1563,14 @@ class SkillTimerRuleContractTests(unittest.TestCase):
         self.assertEqual(computed, doc_selected)
         self.assertEqual(len(doc_selected), 17)
 
+        # The doc's own `explicit` rows are exactly EXPLICIT_ROWS intersected
+        # with the ids this capture actually saw - a row added to
+        # EXPLICIT_ROWS whose id the capture never names (or vice versa)
+        # fails here rather than passing silently.
+        capture_ids = {ability_id for ability_id, _, _ in entries}
+        doc_explicit = set(re.findall(r"\| `([a-zA-Z]+)` \| explicit", section))
+        self.assertEqual(doc_explicit, self.EXPLICIT_ROWS & capture_ids)
+
     # ---- round 1 (owner, 2026-09-21, "Yes, no skill names"): the countdown's
     # own player text names no skill at all. Forbidden names are DERIVED,
     # never a hard-coded list - a hard-coded one goes stale the moment a new
@@ -1555,7 +1578,7 @@ class SkillTimerRuleContractTests(unittest.TestCase):
 
     def _forbidden_names(self):
         # Four sources, each contributing at least one name so an emptied
-        # regex can never pass silently: the four explicit countdown rows'
+        # regex can never pass silently: the seven explicit countdown rows'
         # own display names, the toggle table's own abilityIds (read live,
         # context "Name-free player text (round 1)"), the measured
         # deny-list's abilityIds, and the research doc's rule-selected ids

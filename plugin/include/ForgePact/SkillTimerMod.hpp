@@ -169,6 +169,12 @@ inline constexpr SkillTimerRow kSkillTimerRows[] = {
       "isMyClient", 144.0, "Soul Spurn (White Mage)" },
     { "maelstromOfFrost", HeroSiege::Objects::GameObject::Prophet_Maelstrom_obj,
       "isMyClient", 4320.0, "Maelstrom of Frost (Prophet)" },
+    { "progeniesOfTheGreatCataclysm", HeroSiege::Objects::GameObject::Bard_Progenies_Amplifier_obj,
+      nullptr, 2880.0, "Progenies of the Great Cataclysm (Bard)" },
+    { "pickupRaid", HeroSiege::Objects::GameObject::Redneck_Pickup_Truck_obj,
+      "isMyClient", 576.0, "Pickup Raid (Redneck)" },
+    { "dissipatingTornado", HeroSiege::Objects::GameObject::Dissipating_Tornado_obj,
+      nullptr, 432.0, "Dissipating Tornado (Nomad)" },
 };
 inline constexpr int kSkillTimerRowCount =
     (int)(sizeof(kSkillTimerRows) / sizeof(kSkillTimerRows[0]));
@@ -183,7 +189,7 @@ inline constexpr int kSkillTimerRowCount =
 // structurally by the generator, never reaches this file), and a cast object
 // resolves by NAME CONVENTION from the abilityId (SkillTimerNames.hpp,
 // generated - never hand-typed, AGENTS.md "Never Call an Address You
-// Resolved by Hand"). A measured deny-list always wins. The four rows above
+// Resolved by Hand"). A measured deny-list always wins. The seven rows above
 // stay explicit and win over the rule (D-R1): Soul Spurn reads
 // `abilityDuration=0`, so the rule would not select it anyway.
 //
@@ -200,7 +206,7 @@ inline constexpr int kSkillTimerRuleCap = 64;
 // SkillTimerNames.hpp naming convention, see that file's own header comment)
 // and the object it names. No game API here - this struct, and the table
 // built from it, are read by ModuleMain.cpp's rule walk and rule draw, never
-// spelled as a literal `GameObject::` enumerator outside the four explicit
+// spelled as a literal `GameObject::` enumerator outside the seven explicit
 // rows above and the generated header itself
 // (test_no_hand_typed_object_name_reaches_the_rule_path).
 struct SkillTimerNameEntry {
@@ -264,7 +270,7 @@ inline bool SkillTimerRuleDenied(const std::string& abilityId)
     return false;
 }
 
-// D-R1: the four rows above stay explicit and win over the rule - a talent
+// D-R1: the seven rows above stay explicit and win over the rule - a talent
 // id matching one of them is never entered into the rule map at all.
 inline bool SkillTimerRuleIsExplicitRow(const std::string& abilityId)
 {
@@ -293,7 +299,7 @@ class SkillTimerRuleModel {
 public:
     // The pure decision (D-S4's rule, interpreted): both fields read as
     // numbers, a positive duration, a cooldown above the no-cooldown floor,
-    // not denied, not one of the four explicit rows. No game call and no
+    // not denied, not one of the seven explicit rows. No game call and no
     // object name here - resolving (or not) an object by name is the
     // caller's job, once eligibility is decided. Pinned truth-table points
     // (context, "Eligibility, read once per room"): cooldown == floor is
