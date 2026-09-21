@@ -108,9 +108,6 @@ those five it can actually draw on.
   already running, that one cast shows as full from the moment you turned it
   on rather than its true remaining time; the next cast on that skill reads
   correctly.
-
-## Changed
-
 - **Mods tab columns.** The Gameplay and Items mod lists are split into two
   columns, and the right column could end up longer than the left, leaving a
   gap under the left one. The left column is now always the longer one, and
