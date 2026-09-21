@@ -216,6 +216,20 @@ machine (2026-09-19). Each named sub-talent's description, paraphrased,
 turns its skill into an on/off toggle: the effect stays up, draining mana
 or life, until the skill is cast again or the resource runs out.
 
+**Key format, corrected 2026-09-21.** Sub-talent *names* are keyed
+`sub<Class><Skill><NN>` and their *descriptions* `subDesc<Class><Skill><NN>`
+(`NN` runs `01`..`14`; no `00` key exists); base talents are keyed
+`talent_name_<abilityId>` / `talent_desc_<abilityId>` in
+`translationsTalent.csv`. Rows 7 and 8 were added on 2026-09-21 by the same
+technique, with its own positive control: the owner's keyword for Meteor
+Storm's toggle upgrade ("constantly") appears in exactly four description
+keys game-wide — `subDescPlagueDoctorCrematus13`,
+`subDescPlagueDoctorPlagueOfRats12`, `subDescProphetEntColossus13` and
+`subDescShamanMeteorStorm11` — and Crematus `13` is session 6's *measured*
+slot, so the keyword search finds a known row. The other four measured slots'
+descriptions do not carry that keyword, so it is a sufficient signal, not a
+necessary one; the slot is still measured live (session 9).
+
 | # | Class | Skill (`abilityId`) | Toggle sub-talent key → name | Predicted slot | SDK objects to test as the ON object (index; parent) |
 |---|---|---|---|---|---|
 | 0 | White Mage | Soul Spurn (`soulSpurn`, talent 240, measured) | `subWhiteMageSoulSpurn12` → Purgatory | `s12` | `White_Mage_Soul_Spurn_AOE_obj` 5759 (measured, sessions 2–4) |
@@ -225,6 +239,8 @@ or life, until the skill is cast again or the resource runs out.
 | 4 | Butcher | Submerged Knives (`submergedKnives`) | `subButcherSubmergedKnives13` → Knifehoarder | `s13` | `Butcher_Submerged_Knives_obj` 730 (`Player_Damage_Parent_obj`); `Butcher_Submerged_Knives_Knifehoarder_obj` 729 (`Skill_Controller_obj`) |
 | 5 | Prophet (second tier) | Maelstrom of Frost (`maelstromOfFrost`) | `subProphetMaelstromOfFrost11` → Endless Blizzard | `s11` | `Prophet_Maelstrom_obj` 3697 (`Player_Damage_Parent_obj`); `Prophet_Maelstrom_Storm_obj` 3698; `Prophet_Maelstrom_Meteor_obj` 3696 |
 | 6 | Butcher (second tier) | Blender (`blender`) | `subButcherBlender14` (its description says it switches off when life runs out) | `s14` | `Butcher_Blender_obj` 702 (`Player_Damage_Parent_obj`); `Butcher_Blender_Nanoblades_obj` 701 |
+| 7 | Shaman | Meteor Storm (`meteorStorm`, talent 224, session 8) | `subShamanMeteorStorm11` → Astroheated Shower (description key `subDescShamanMeteorStorm11`, the only Shaman Meteor Storm key of the fourteen whose text carries the keyword) | `s11` | `Shaman_Meteor_Storm_Controller_obj` 4422 (`Skill_Controller_obj` 4606); `Shaman_Meteor_Storm_obj` 4423 (`Player_Damage_Parent_obj` 3543); neither has children |
+| 8 | Samurai | Bushido (`bushido`, base-form toggle) | none — no sub-talent key exists; the toggle is described on `talent_desc_bushido` itself | none (base form) | `Samurai_Bushido_obj` 4226 (`Orbit_Parent_obj` 3332 > `Player_Damage_Parent_obj`) — plus the player-buff read, since the base description is buff-shaped |
 
 Every prediction in rows 1–6 (the `s<NN>` slot, the object, and that the
 skill is an instance toggle at all) is **static, to be measured** in session
@@ -255,6 +271,90 @@ claim about the game):
 - Sub-talent *definitions* were not found in any `tgprobe deep` scope; only
   the per-player level map `global.subTalentMap` was.
 - `tgprobe deep find toggle` → `hits=0` (session 2): not observed at depth 3 (200 elements per container) over the seven `deep` scopes, never "the game has no such text".
+
+**Row 7, Meteor Storm — what session 8 already settles.** `talent_name_meteorStorm`
+exists; the talent id is not static, and session 8 read it as `talent 224
+abilityId=meteorStorm abilityAura=false abilityDuration=0
+abilityCooldown=0.250000 abilityLength=240 abilityTags=[15,18,3,1]`. Meteor
+Storm has fourteen sub-talent keys (`subShamanMeteorStorm01`..`14`); the
+prediction `s11` rests on the keyword search above and is measured in session
+9. Only two SDK objects carry the name; the `Shaman_Totem_Chaos_Meteor*`
+objects belong to Chaos Totem (a summon, "Not rows" above), and no
+`*Meteor*` script exists (the Shaman's talent bodies are in
+`gml_Script_TalentsShaman`, as for every class). Session 8's Meteor Storm
+window (the duration sweep's results under issue #55 below: toggle on,
+toggle off, one plain cast) read the controller as `app=2 draws=110 timerUnreadable=110
+maxInst=1 own=unreadable` and the meteors as `app=2 draws=158 first=-1 …
+max=-1 timerUnreadable=0 maxInst=10 own=readable`. So, before session 9:
+**both objects are also created by a plain cast** (two appearances over one
+toggle cycle plus one plain cast), which rules out `none-needed` for both;
+**a held timer is ruled out** (the controller's timer is unreadable, the
+meteors' is `-1` in both forms); the controller's `isMyClient` is unreadable,
+so its ownership is `none` (as for the other controller rows), while the
+meteors' is readable. The only shippable shape left is a **marker**: a scalar
+on one of the two objects that reads > 0 toggled and 0 plain, which `tgprobe
+tgl fields` toggled-versus-plain is built to find. Anything else is recorded
+as "no discriminator in this design".
+
+**Row 8, Bushido — a toggle in its base form.** `talent_name_bushido` and
+`talent_desc_bushido` exist and **no `sub*Bushido*` key of any kind does**, so
+Bushido has no `s<NN>` slot and nothing in `global.subTalentMap` can gate it;
+it was missed by every earlier toggle search because those read only
+`translationsSubTalent.csv`. Its base description is buff-shaped (paraphrase:
+activating it grants a damage bonus that grows with missing life), and the
+owner reports it shows no buff icon on the HUD. The talent id is not static
+(`tgprobe talents bushido`). `Samurai_Bushido_obj` 4226 is the only object or
+script with "Bushido" in its name (the talent bodies are in
+`gml_Script_TalentsSamurai`); its parent `Orbit_Parent_obj` has 25 children,
+among them `Samurai_Blade_Barrier_obj` 4225, which session 8 read with
+`own=readable` and a readable `destroyTimer` (`maxInst=9`) through the same
+read shape the `tgl` sampler uses — the sampler is proven on this parent
+family, and Bushido's own ownership is still measured (session 9 adds it with
+both `isMyClient` and `none`). Session 8's Samurai window shows no
+`Samurai_Bushido_obj` line; whether Bushido was cast in that window is not
+recorded, so this is "not observed", not "creates no instance". Two carriers
+are plausible and session 9 reads both: an own `Samurai_Bushido_obj`
+instance that exists exactly while the toggle is on (every shipped row's
+shape), or a `global.playerBuff[1][0][<n>]` entry with its
+`global.activeBuffList` slot (the shape session 6 measured for Counter's buff
+104). "No HUD icon" makes the second less likely but does not rule it out: a
+buff can exist without a drawn icon.
+
+### Base-form toggles: the labelled sweep of both translation files
+
+Added 2026-09-21, after Bushido was found to be a toggle that no earlier
+search had surfaced. Both files were swept by keyword, English column only
+— `translationsTalent.csv` (1608 lines; `talent_name_<abilityId>` /
+`talent_desc_<abilityId>`, 721 of each) and `translationsSubTalent.csv` (6218
+lines; `sub<Class><Skill><NN>` / `subDesc<Class><Skill><NN>`, 444 of each).
+This section records **keys only**: the text was read locally and each key
+carries a one-word label that is our own reading of it, never a quotation.
+
+| Keyword | `translationsTalent.csv` keys | `translationsSubTalent.csv` keys |
+|---|---|---|
+| `toggle` | none | `subDescWhiteMageSoulSpurn12` (already a row), `subDescExoLunarOrbit11` (already a row) |
+| `activat` / `deactivat` | `talent_desc_bushido` (toggle-shaped), `talent_desc_holyForm` (toggle-shaped), `talent_desc_unholyForm` (toggle-shaped), `talent_desc_eyeOfTarethiel` (duration, not a toggle), `talent_desc_collector` (one-shot), `talent_desc_slicingThrow` (recast mechanic), `talent_desc_masterTrapMaker` (passive) | the shipped and known rows' keys (already a row), `subDescNecromancerCorpseExplosion13` (aura (author exclusion)), `subDescMarauderChainTrap14` (recast mechanic; already "not a row"), `subDescBardSacrilegiousSymphony08` (channel) |
+| `constantly` | none | `subDescPlagueDoctorCrematus13` (already a row), `subDescPlagueDoctorPlagueOfRats12` (summon), `subDescProphetEntColossus13` (summon), `subDescShamanMeteorStorm11` (toggle-shaped; row 7) |
+| `recast` / `re-cast` | none | `subDescSamuraiShurikenThrow11` (recast mechanic), `subDescExoLunarOrbit11` (already a row) |
+| `while active` | `talent_desc_darkSideofTheMoon` (aura (author exclusion)) | `subDescExoLunarOrbit11` (already a row), `subDescButcherSubmergedKnives13` (already a row) |
+| `drain` | `talent_desc_moshpitMassacre` (summon) | 17 keys, every one a row or an existing "not a row" |
+| `again to`, `cast again`, `turn off` / `turned off`, `on/off`, `stays active` / `remains active` | none | none |
+
+What the labels mean for this workorder:
+
+- **Bushido** is toggle-shaped and has a candidate object, so it is row 8.
+- **Holy Form / Unholy Form** are toggle-shaped (activating a form; the two
+  are mutually exclusive stances), but **no SDK object carries either name**
+  — the Paladin's `Holy_*` objects belong to other skills — so if they are
+  toggles their state can only live on the player, Counter's shape. They are
+  recorded static findings with at most one optional buff read in session 9,
+  not rows.
+- **`subDescNecromancerCorpseExplosion13`** is an aura form of its skill and
+  falls under the author's aura exclusion, as Dark Side of the Moon did.
+
+**Negative, labelled:** no further base-form toggle wording was found by
+these keywords in either file. That is not "no other base-form toggle
+exists"; a toggle described in other words would not be caught by this sweep.
 
 ## Instrument
 
@@ -1457,6 +1557,146 @@ below are the rows Results → `### Toggle skill table` fills; each is
    ships in the outline but not in the guard's set; if C6 was done for no
    row, `Sub index:` is `blocked`. Stop the game; nothing else left running.
 
+### Session 9
+
+Rows 7 and 8 of the static candidate table: the Shaman's Meteor Storm (a
+toggle only with its toggle sub-talent, predicted `s11`) and the Samurai's
+Bushido (a toggle in its base form, no sub-talent). One research build — no
+new instrument: `tgprobe tgl add` puts any object into the per-draw sampler
+by name, and `tgprobe buffs` and `tgprobe deep snap`/`diff`/`flip` are in the
+same build — so every candidate is read at once, in one session, beside a
+positive control through the same sampler.
+
+**Setup.** Research DLL installed; `toggleguard` never armed; no co-op, no
+`cooprender`, no `citrace`. The tester needs a Shaman with Meteor Storm who
+can allocate and respec its sub-talent 11; a Samurai with Bushido; one
+character of a shipped row for the positive control (the White Mage
+preferred — row 0 is the doc's `agree=`/`disagree=0` control and its Soul
+Spurn is also the buff-read control of step 9b — else the Prophet, whose row
+`[5] maelstromOfFrost` reads `state=on … timer=-1.000000` toggled); and,
+optionally, a character with Holy Form / Unholy Form (its class is not known
+from the static files; the tester knows). **Every pass is `blocked` unless
+step 3's positive control fired in the same session.** Each result is
+`measured`, `not observed` or `blocked`; a step not run is `blocked`.
+
+1. `tgprobe tgl on`; `tgprobe tgl list` → `sampler=on`, `rows=7`.
+2. Add the candidates, all four in one go:
+   - `tgprobe tgl add meteorStorm Shaman_Meteor_Storm_Controller_obj none destroyTimer none s11`
+   - `tgprobe tgl add meteorStorm Shaman_Meteor_Storm_obj none destroyTimer isMyClient s11`
+   - `tgprobe tgl add bushido Samurai_Bushido_obj none destroyTimer isMyClient`
+   - `tgprobe tgl add bushido Samurai_Bushido_obj none destroyTimer none`
+
+   → four `idx=… sdk=4422/4423/4226/4226` lines, rows `[7]`–`[10]` (Bushido
+   twice: once per ownership reading; `sNN` omitted stores `-1`). Then
+   `tgprobe talents meteor` → the talent 224 line, and
+   `tgprobe talents bushido` → quote the whole line (`talent <id> abilityId=bushido …
+   abilityDuration=… abilityCooldown=…`; the countdown's rule tier needs the
+   last two). `tgprobe tgl list` shows rows 7/8 with `talentId=224` and 9/10
+   with Bushido's id.
+3. **Positive control (same session, same sampler).** With the control
+   character: toggle its skill on → its `tgl` row reads `state=on` (quote it);
+   off → `state=off`. `tgprobe tgl sub` shows its measured slot (`s12` for
+   `soulSpurn` at `[1]`, `s11` for `maelstromOfFrost`). `tgprobe deep snap
+   cbase` → on → `tgprobe deep snap con` → off → `tgprobe deep snap coff` →
+   `tgprobe deep flip cbase con coff` catches its object: the census control
+   every `deep flip` below is judged against.
+
+**Shaman pass (Meteor Storm).**
+
+4. **C6 first (the slot).** With sub-talent 11 allocated: `tgprobe tgl sub` →
+   quote the `[i] meteorStorm t224:` line; respec it out → again (the key that
+   went to `0.000000` is the slot); re-allocate → again.
+5. **C2/C3/C5 (object, ownership, marker).** `tgprobe deep snap base` →
+   toggle on → `tgprobe deep snap on` → `tgprobe tgl` (rows 7/8: `state=`,
+   `n=`, `mine=`, `capped=`), `tgprobe tgl fields 7`, `tgprobe tgl fields 8`,
+   `tgprobe tgl timer` → toggle off → `tgprobe deep snap off` →
+   `tgprobe deep flip base on off` (quote the `census.Shaman_*` rows). Then the plain form
+   (sub-talent respecced out): one cast, the tester confirms it landed (mana
+   drop or meteors seen, quoted as seen) → `tgprobe tgl fields 7`, `tgprobe
+   tgl fields 8` and `tgprobe tgl timer` again. The marker is a scalar that
+   reads > 0 toggled and 0 plain on the same object. Session 8 already rules
+   out `none-needed` (both objects appear on a plain cast) and a held timer
+   (controller unreadable, meteors `-1` in both forms), so a marker is the
+   only shippable outcome.
+6. **C4** Toggle on, change zone → rows 7/8 `firstAfterRoomChange: state=off
+   n=0`.
+7. **C7** `tgprobe tgl slots` → the `row0[i]` line naming `meteorStorm`.
+
+**Samurai pass (Bushido).**
+
+8. **Sub-talent negative (in place of C6).** `tgprobe tgl sub` → quote the
+   `[i] bushido t<id>:` line(s) — expected `absent` at every index, or a
+   struct with no `s<NN>` keys. Whatever prints is `Bushido sub-talent map:`.
+9. **C2/C3 with the buff read.** `tgprobe buffs` (baseline) → `tgprobe deep
+   snap bbase` → toggle Bushido on (the tester judges by eye and quotes what
+   shows it is on, e.g. the damage change or an orbiting effect) → `tgprobe
+   deep snap bon` → `tgprobe tgl` (rows 9/10: `state=`, `n=`, `mine=`,
+   `unattributed=` — if row 9 is all `unattributed` and row 10 reads
+   `state=on`, ownership is `none`), `tgprobe tgl fields 9`, `tgprobe tgl
+   fields 10`, `tgprobe tgl timer`, `tgprobe buffs` → toggle off → `tgprobe
+   deep snap boff` → `tgprobe deep flip bbase bon boff` (quote every
+   `census.Samurai_*`, `global.playerBuff[1][0][` and `global.activeBuffList`
+   line in bucket A; `matching=0` is itself the quote) → `tgprobe deep diff bbase bon playerBuff`
+   and `tgprobe deep diff bbase bon activeBuffList`
+   (filtered, so a line churned past the 300-line cap is still seen) →
+   `tgprobe buffs` again. Repeat on/off once more, watching rows 9/10's
+   `transitions=` rise by 2 per cycle (the row's own control that the sampler
+   catches this object when it is present) and, for the buff, quote `tgprobe
+   buffs` on (the `[N] kind=… value=… instance_exists=1 object=… vars: …
+   buffType=… destroyTimer=…` line) and off (the `(K empty slots not listed)`
+   count one higher, or `[N]` gone), both cycles. Those four quotes plus the
+   flip's `global.playerBuff[1][0][N]` line are the `Bushido buff:` identity —
+   `index=` (the `N`), `buffType=` (the slot instance's own member, the
+   identity signal: session 2 measured Soul Spurn's drain as `[86]` with
+   `buffType=int64:86`), `object=` (the listing's `object=`; Counter's was
+   `Draw_Player_Buff_obj`), `on=` and `off=`; without all of them `Bushido
+   carrier: buff` is `blocked`. C5 for Bushido is this step: the instance
+   follows the toggle (`instance (no plain form)`), or it persists and a
+   field separates on from off (`tgl fields 9/10` on versus off), or only the
+   buff flips (`buff-only`, carrier `buff`).
+9b. **Buff read control (same session, White Mage).** With Soul Spurn's
+   Purgatory allocated: `tgprobe buffs` off → toggle on → `tgprobe buffs` →
+   quote the `[86] … buffType=int64:86` line → off → `tgprobe buffs` → `[86]`
+   gone. This is `Buff read control:`; it proves the listing shows a known
+   toggle buff arriving and leaving before Bushido's `[N]` is believed. If the
+   control character is the Prophet (no known buff), the buff control is
+   `blocked`, and so is `Bushido carrier: buff`.
+10. **C4** Toggle on, change zone → rows 9/10 `firstAfterRoomChange:`, and
+    `tgprobe buffs` in the new zone (does `[N]` survive the zone change?
+    Quoted either way).
+11. **C7** `tgprobe tgl slots` → the `row0[i]` line naming `bushido`.
+
+**Optional forms pass (Holy Form / Unholy Form; skip and record `blocked` if
+no character has them).**
+
+12. `tgprobe talents form` (quote the `holyForm`/`unholyForm` lines), then
+    `tgprobe deep snap fbase` → activate one form → `tgprobe deep snap fon` →
+    deactivate or switch → `tgprobe deep snap foff` → `tgprobe deep flip fbase
+    fon foff` and `tgprobe buffs`; quote the `census.`, `playerBuff` and
+    `activeBuffList` lines. Research only; never a row from this pass.
+
+**Recording, and what each outcome means.** Paste every quoted line into
+Results → `### Toggle skill table` (two new rows, every cell a quoted value
+or exactly `not observed`/`blocked`) and fill Decision → `### After session
+9`. The two `Ship:` lines are derived last, each on its own:
+
+- **Meteor Storm.** A `marker <field>` on the controller ships as a row on
+  `Shaman_Meteor_Storm_Controller_obj` with no ownership field (every
+  instance own, as the Crematus row); a marker on the meteors ships on
+  `Shaman_Meteor_Storm_obj` with `isMyClient`. `none` or `blocked` → no row.
+  `Ship: meteorStorm=yes` only when the discriminator is `marker <field>` AND
+  `Meteor Storm slot: s<NN>` is measured; the static prediction `s11` is
+  never shipped without that measurement.
+- **Bushido.** Carrier `instance` (or `both`, where the instance row is used
+  and the buff recorded): `instance (no plain form)` ships as a base-form row
+  lit by any own instance, with the ownership field as measured; `marker
+  <field>` / `timer <field>=<value>` ship the same row with that mark.
+  Carrier `buff` (`buff-only`) ships as a row read from the player's buff
+  slot, and only on the full `Bushido buff:` identity plus the same-session
+  `Buff read control:`. `none` or `blocked` → no row. `Ship: bushido=yes` only
+  when one of those holds; else `no`.
+- A `no` is a result, not a defect. Stop the game; nothing else left running.
+
 ## Results
 
 ### Session 1
@@ -2266,6 +2506,28 @@ phase writes. `counter` and `blender` are results, not defects: neither
 measured as a persistent-instance toggle this session (`counter`'s toggle
 state lives on a player buff, and `blender` was judged by the tester not to
 be a toggle skill at all), so neither ships in this design.
+
+### After session 9
+
+**Not yet run.** Every line below is filled from session 9's quoted output
+(Live procedure → `### Session 9`); until then each reads *pending*, which is
+neither a result nor a negative. The two `Ship:` lines are written last, by
+the rule at the end of that procedure. Labels stay unbolded, with the value
+directly after the colon or `=`, so each line can be checked mechanically.
+
+- Meteor Storm slot: *pending*
+- Sub index: *pending*
+- ON discriminator: meteorStorm= *pending*
+- Bushido talent: *pending*
+- Bushido sub-talent map: *pending*
+- Bushido buff read: *pending*
+- Bushido buff: *pending*
+- Buff read control: *pending*
+- ON discriminator: bushido= *pending*
+- Bushido carrier: *pending*
+- Positive control: *pending*
+- Ship: meteorStorm= *pending*
+- Ship: bushido= *pending*
 
 ### S design (D-P1, D-P3, D-P5, D-U13)
 
