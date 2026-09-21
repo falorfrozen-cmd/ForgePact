@@ -2979,8 +2979,10 @@ open:**
 
 - `number`'s font-applied flag (`fontApplied`) is now set immediately before
   `draw_set_font` is called, not after. If the builtin applies the font and
-  then throws, the flag is already `true`, so the restore still runs and the
-  probe's font can no longer leak into the game for the rest of the session.
+  then throws, the flag is already `true`, so the restore is now attempted on
+  that path too. It is not a guarantee: the restore is itself a
+  `draw_set_font` call that can throw, and `prevFont` comes from an unguarded
+  `draw_get_font` read that may be unset on a runtime lacking that builtin.
 - `font list`'s `draw_get_font` read is now gated on `hasDrawGetFont` (the
   same existence probe the command already prints). `CallBuiltin` returns an
   unset RValue rather than throwing for a missing builtin, so the unguarded
