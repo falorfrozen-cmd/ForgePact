@@ -21,8 +21,11 @@ Game objects are named by their `hs-game-sdk` names and indices; no game
 script text appears, and the procedure is written as prose.
 
 **Status.** The instrument (`menulayout`) is built and ships in the player
-build. Phase 0, the live enumeration of the character-select screen, is
-**pending**; the four lines of § Decision stay `pending` until it has run.
+build. Phase 0, the live enumeration of the character-select screen, ran on
+2026-09-21 with the research build; its positive control passed and § Decision
+is filled from what it listed. The slot-card and `PLAY` click points are
+measured by the listing; `PLAY` itself was deliberately never clicked, so the
+end-to-end load through it is L-2's to show, not this document's.
 
 ## Static search
 
@@ -113,10 +116,12 @@ the client size: C-1.6 measured the window read equal to `hs_input`'s
 2560x1368 over a 1920x1080 client, `Play local` at GUI (448, 676.4) maps to
 (336, 534); fullscreen, GUI 2560x1440 over a 2560x1440 client, at GUI
 (448, 712) it maps to (448, 712). Both clicks changed the room. Whether the
-slot cards and `PLAY` live in GUI space too is not known until phase 0, so
+slot cards and `PLAY` live in GUI space too was not known before phase 0, so
 the header also prints view 0's camera rectangle: a room-space object is
 recognisable because its scaled point will not land near the point a
-screenshot measured.
+screenshot measured. Phase 0 showed both are in GUI space: `PLAY` maps to
+(584, 345) against C-1.15's screenshot point (583, 346), and a click at slot
+1's mapped point opened its panel (§ Results P0-5, P0-6).
 
 **Positive control, every session.** At the main menu on a 1920x1080
 windowed client, the row for `Play local` must read `win=336,534` under a
@@ -184,20 +189,23 @@ built. Do not fall back to fractions.
 
 ## Results
 
-Not yet run. One row per live-procedure step; the listing lines are runtime
-data and are recorded as the game printed them.
+Phase 0 ran on 2026-09-21, one launch, research build
+`plugin_build\BloodPactPlugin_rel.dll` (SHA-256 `ad17f0a5...`, built from this
+branch at `f9889a6`), windowed 1920x1080. The listing lines below are runtime
+data recorded as the game printed them; the three full framed replies are
+kept verbatim by the hub as its test fixtures.
 
 | Step | Observation | Control | Date |
 | --- | --- | --- | --- |
-| P0-1 | pending | - | - |
-| P0-2 | pending | - | - |
-| P0-3 | pending | - | - |
-| P0-4 | pending | pending | - |
-| P0-5 | pending | - | - |
-| P0-6 | pending | - | - |
-| P0-7 | pending | - | - |
-| P0-8 | pending | - | - |
-| P0-9 | pending | - | - |
+| P0-1 | robocopy of `hs2saves` to `C:\Users\stann\HeroSiege-manual-save-backup\hs2saves-20260921-pre-menulayout`: 137 files, 1,281,612 bytes, exit code 1 (files copied). `hs_saves_backup` id `20260921T124419Z_pre-menulayout-phase0`, 137 files, 1,281,612 bytes. | - | 2026-09-21 |
+| P0-2 | Installed `BloodPactPlugin.dll` SHA-256 `22371422eb0c0f5d104e36dc5b05775ecace31e042fd04983594448454fabc33` (1,454,080 bytes; not the `ae52529a...` noted at planning time), copied beside itself as `BloodPactPlugin.dll.pre-menulayout-22371422`; research build `ad17f0a564a181b2e2239297f5b1610f0ae63e38e084effbf6bc040e9b2838de` installed. | - | 2026-09-21 |
+| P0-3 | `hs_launch`: phase `plugin_ready` in 21.6 s; `ping` answered `pong (YYTK 4.0.1)`. | - | 2026-09-21 |
+| P0-4 | Main menu: header `menulayout: room=Main_Menu_rm gui=2560x1368 window=1920x1080 fullscreen=0 view=0.0,0.0,1280.0,720.0`; row `obj=UI_Button_obj id=257029 gui=448.0,676.4 win=336,534 bbox=240.0,604.2,658.0,750.5 visible=1 sprite=Menu_Button_Kaelith_spr text=Play local`; footer `listed=19 absent=none capped=0`. The 19 rows include `UI_Button_Close_obj`, `UI_Button_Menu_DLC_obj`, `UI_Button_Language_obj` and `UI_Container_obj`, none of which is in the thirteen-name table, so listing a root does reach child instances. | pass | 2026-09-21 |
+| P0-5 | One held click (120 ms, `send_input`) at `win=336,534` changed the room; the next `menulayout` read `room=Chose_rm`, `listed=56`. The save-slot cards are 48 `Choose_Parent_obj` instances (not in the table; reached through a root), each carrying a `slot` variable: `slot=1` to `24` are `visible=1`, sprite `Choosing_SSF_spr`, in three rows of eight; `slot=25` to `48` are `visible=0`, sprite `Choosing_spr`, at the same eight-by-three positions (the other page). Visible top row: slot 1 `win=177,174`, slot 2 `win=381,174`, then x `585`, `789`, `993`, `1197`, `1401`, `1605`, all on y `174`; slots 9 to 16 on y `429` from x `177`; slots 17 to 24 on y `684`. Slot 1's row is `obj=Choose_Parent_obj id=257048 gui=236.0,220.4 win=177,174 bbox=190.0,138.7,462.0,433.2 visible=1 sprite=Choosing_SSF_spr slot=1 text=`; its bbox encloses the expected GUI point (324, 285). `citrace dumpobj Choose_Parent_obj 0` on that instance: `slot = real:1.000000`, `slotClassName = string:"Paladin"`, `uiNodeCallstack = string:"ChooseHeroSlot"`, `clickActivate = bool:true`. Sorting the 24 visible rows by `win` y then x reproduces `slot=1` to `24` exactly. Screenshot `C:\Users\stann\AppData\Local\HSDriveMcp\screenshots\20260921T124546347276Z_p0-chose_rm.png` shows Pal (Paladin) top-left and Miss Fortune to its right. | - | 2026-09-21 |
+| P0-6 | One held click at slot 1's listed origin `win=177,174` opened the character panel for Pal; the room stayed `Chose_rm`, `listed=111`. New row `obj=UI_Button_obj id=257591 gui=778.0,437.0 win=584,345 bbox=604.0,397.1,954.0,478.8 visible=1 sprite=Menu_Button_spr text=Play` (the screen draws it as `PLAY`); it was not in the P0-5 listing at all, hidden or otherwise. The 24 card rows stay `visible=1` under the panel. No other row carries `text=Play`. `citrace dumpobj UI_Button_obj 5` on it: `text = string:"Play"`, `uiNodeCallstack = string:"CharacterPlay"`, `enabled = bool:true`, parent the panel's `UI_Character_obj` (id 257590). Screenshot `C:\Users\stann\AppData\Local\HSDriveMcp\screenshots\20260921T124616092325Z_p0-panel.png`. `PLAY` was not clicked. | - | 2026-09-21 |
+| P0-7 | `hs_stop_game`: `exited: true`, `forced: false`. `hs_saves_inspect` before restore: `changed`, `added` and `missing` all empty (not even `shop.ini` changed). Restored (pre-restore backup `20260921T124658Z_pre-restore`); inspect again: `changed: []`, `missing: []`. | - | 2026-09-21 |
+| P0-8 | Installed DLL restored from `BloodPactPlugin.dll.pre-menulayout-22371422`; SHA-256 again `22371422eb0c0f5d104e36dc5b05775ecace31e042fd04983594448454fabc33`, equal to P0-2. | pass | 2026-09-21 |
+| P0-9 | § Decision filled below. No optional variable had to be added: `slot` was already printed. | - | 2026-09-21 |
 
 ## Decision
 
@@ -205,10 +213,29 @@ Four lines, each `pending` until phase 0 has measured it. The hub's matchers
 for the slot card and `PLAY` are written against these lines and against the
 verbatim replies recorded above, not against expectations.
 
-slotObject: pending
-slotRule: pending
-playObject: pending
-playRule: pending
+slotObject: Choose_Parent_obj
+slotRule: order:y,x over the visible=1 Choose_Parent_obj rows (slot 2 is the card right of slot 1 on the same row); the game's slot variable agrees on all 24 page-1 cards; point:origin
+playObject: UI_Button_obj
+playRule: text=Play exactly (case-sensitive, not Play local) and visible=1; not listed until the slot click, so poll for it; point:origin
+
+What phase 0 measured behind each line (2026-09-21):
+
+- The cards are not in the thirteen-name table. They were listed because a
+  root reaches them, which is why the roots are in the table.
+- Page 1's 24 cards are `visible=1`; the other page's 24 sit at the same
+  positions with `visible=0`. A slot matcher that does not filter on
+  `visible=1` would match two cards per position.
+- The game's own `slot` variable numbers the visible cards 1 to 24 in exactly
+  the row-major order the owner stated. The hub may match by `slot=N` or by
+  sorting; its test must still show slot 2 is the card to the right of
+  slot 1.
+- `PLAY` is created by the slot click, not revealed. Its `text` is `Play`, so
+  matching the drawn caption `PLAY` would miss it. The card rows stay
+  `visible=1` while the panel is open, so the cards disappearing is not a
+  signal that the panel is up.
+- `point:origin` was measured for `Play local` and the slot card (both
+  clicks acted). It was not measured for `PLAY`, which was never clicked;
+  its origin sits at the centre of its bbox, the same shape as `Play local`.
 
 What each line records:
 

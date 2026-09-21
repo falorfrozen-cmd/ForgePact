@@ -231,9 +231,10 @@ class MenuLayoutResearchDoc(unittest.TestCase):
         for key in DECISION_KEYS:
             lines = re.findall(r"(?m)^" + key + r": (.+)$", decision)
             self.assertEqual(len(lines), 1, key)
-            # Phase 0 has not run: every line is still `pending`. F-4 flips
-            # this to "no line reads pending" when the measured values land.
-            self.assertEqual(lines[0].strip(), "pending", key)
+            # Phase 0 ran on 2026-09-21 (F-4): every line carries a measured
+            # value, and none is a recorded conflict awaiting the owner.
+            self.assertNotIn("pending", lines[0].lower(), key)
+            self.assertNotIn("CONFLICT", lines[0], key)
 
     def test_positive_control_is_written_down(self):
         instrument = doc_section(self.doc, "## Instrument")
