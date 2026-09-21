@@ -2002,10 +2002,10 @@ input[type=range]::-webkit-slider-thumb{appearance:none;width:17px;height:17px;b
 .hero-number{color:var(--ember2);font-size:35px;line-height:1.25;font-weight:700;margin:9px 0}.density-top{display:flex;align-items:center;justify-content:space-between}.density-top .row{border:0;padding:0;gap:8px}.density-top .lbl{width:auto;font-size:11px;color:var(--mut)}
 #densityCard>.row{border:0;padding:6px 0}#densityCard>.row>.lbl{display:none}.density-scale{display:flex;justify-content:space-between;font-size:11px;color:var(--mut);margin-top:5px}
 #rarityCard .row{border:0;display:flex;padding:12px 0}#rarityCard .lbl{display:block;width:62px;margin:0}#rarityCard .note{font-size:11px}
-.mods-grid{columns:2;column-gap:12px}.mods-grid>.feature-card,.mods-grid>.feature-with-child{break-inside:avoid;margin:0 0 12px!important}.feature-card{padding:15px!important;background:#15110e;border:1px solid #45352a!important;border-radius:8px;margin:0!important;align-items:flex-start}.feature-card>.lbl{flex:1!important;width:auto!important;min-width:0}.feature-card .switch{margin-top:1px}.feature-card>.val{min-width:0;width:24px;font-size:11px;margin-top:2px}.feature-card:has(>.switch>input:checked),.feature-with-child:has(>.feature-card:first-child>.switch>input:checked){border-color:#85603a!important}.feature-with-child{border:1px solid #45352a;border-radius:8px;background:#15110e;overflow:hidden}.feature-with-child>.feature-card{border:0!important;border-radius:0}.feature-with-child>#map_reveal_packs_row,.feature-with-child>#mod_auto_prospect_bag_row{border:0!important;border-top:1px solid #45352a!important;margin:0!important;padding:14px!important;background:#1d1711;border-radius:0}
+.mods-grid{display:flex;gap:12px;align-items:flex-start}.mods-col{flex:1 1 0;min-width:0}.mods-col>.feature-card,.mods-col>.feature-with-child{margin:0 0 12px!important}.feature-card{padding:15px!important;background:#15110e;border:1px solid #45352a!important;border-radius:8px;margin:0!important;align-items:flex-start}.feature-card>.lbl{flex:1!important;width:auto!important;min-width:0}.feature-card .switch{margin-top:1px}.feature-card>.val{min-width:0;width:24px;font-size:11px;margin-top:2px}.feature-card:has(>.switch>input:checked),.feature-with-child:has(>.feature-card:first-child>.switch>input:checked){border-color:#85603a!important}.feature-with-child{border:1px solid #45352a;border-radius:8px;background:#15110e;overflow:hidden}.feature-with-child>.feature-card{border:0!important;border-radius:0}.feature-with-child>#map_reveal_packs_row,.feature-with-child>#mod_auto_prospect_bag_row{border:0!important;border-top:1px solid #45352a!important;margin:0!important;padding:14px!important;background:#1d1711;border-radius:0}
 .feature-card{display:grid;grid-template-columns:minmax(0,1fr) 42px 24px;gap:8px 12px;align-content:start}.feature-card>.lbl{font-weight:600}.feature-description{grid-column:1/-1;color:var(--mut)!important;line-height:1.65;font-size:12px!important;font-weight:normal}.switch input:disabled+.sl{opacity:.4;filter:grayscale(1)}
 @media(min-width:1700px){#wrap{padding-left:38px;padding-right:38px}}
-@media(max-width:1150px){#appShell{padding-left:190px}.sidebar{width:190px;padding:20px 10px}.brand svg{width:44px}.brand-name{font-size:17px}.brand-sub{font-size:8px}.page-heading{flex-wrap:wrap}.modifier-grid{grid-template-columns:1fr}.mods-grid{columns:1}.settings-grid{grid-template-columns:1fr}.card.half{grid-column:1/-1}.row .lbl{width:180px}#wrap{padding:0 20px 40px}}
+@media(max-width:1150px){#appShell{padding-left:190px}.sidebar{width:190px;padding:20px 10px}.brand svg{width:44px}.brand-name{font-size:17px}.brand-sub{font-size:8px}.page-heading{flex-wrap:wrap}.modifier-grid{grid-template-columns:1fr}.mods-grid{flex-direction:column;align-items:stretch;gap:0}.settings-grid{grid-template-columns:1fr}.card.half{grid-column:1/-1}.row .lbl{width:180px}#wrap{padding:0 20px 40px}}
 @media(max-width:720px){#appShell{padding-left:0}.sidebar{position:static;width:auto;padding:12px 14px;border-right:0;border-bottom:1px solid var(--line);overflow:visible}.brand{margin:0 0 10px}.brand svg{width:39px;height:39px}.brand-name{font-size:18px}.brand-sub{display:none}.tabbar{flex-direction:row;gap:3px}.tabbtn{flex:1;justify-content:center;padding:10px 6px;gap:4px;font-size:11px}.tabbtn svg{width:15px;height:15px}.sidebar-foot{display:none}#wrap{padding:0 14px 35px}.control-dock{position:static}.page-heading h1{font-size:25px}.page-actions{width:100%;justify-content:space-between;flex-wrap:wrap}.row{flex-wrap:wrap}.row .lbl{width:100%;flex-shrink:1}.row:has(.range-control)>.range-control{flex-basis:100%}.range-control{gap:8px}.step-button{padding:5px 6px}.value-stepper>.val{min-width:44px;width:52px!important}.card{padding:16px}#workspace{gap:14px}.topline{gap:8px}#statusbar{gap:10px}#saveIndicator{min-width:0}#toast{left:50%}#controlToolbar{flex-wrap:wrap}.control-search{flex-basis:100%}.control-filters{width:100%}.control-filters button{flex:1}.feature-card{flex-wrap:nowrap}.density-top .row{flex-wrap:nowrap}.section-title{flex-wrap:wrap}}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
 #satanicMods{background:linear-gradient(145deg,#211a17,#161210 65%);border-color:#48362b;padding:24px}
@@ -3011,6 +3011,7 @@ function preparePanelUI(){
       const apParent=document.getElementById('mod_auto_prospect').closest('.row'),apChild=document.getElementById('mod_auto_prospect_bag_row');
       const apGroup=document.createElement('div');apGroup.className='feature-with-child';apParent.before(apGroup);apGroup.append(apParent,apChild);
     }
+    setupModsColumns(grid);
   }
   document.querySelectorAll('input[type=range]').forEach((range,index)=>{
     const row=range.closest('.row');if(!row)return;
@@ -3101,6 +3102,27 @@ function refreshSavedControls(){
   syncProspectBag(!!c.mod_auto_prospect,!!c.mod_auto_prospect_bag);
   applyPluginModState(ST.pluginMods);
   updateControlDecoration();decoratePanelIcons();
+}
+// Mods tab cards read top to bottom, left column first. The split is the
+// earliest one where the left column is at least as tall as the right, so the
+// left column is the taller one whenever the two differ.
+function setupModsColumns(grid){
+  const items=[...grid.children],left=document.createElement('div'),right=document.createElement('div');
+  left.className=right.className='mods-col';grid.append(left,right);left.append(...items);
+  let split=items.length;
+  // Both columns keep the same width wherever an item sits, so a move never
+  // resizes what is observed and the observer cannot loop.
+  const balance=()=>{
+    if(!grid.clientWidth)return;
+    const heights=items.map(item=>item.hidden||!item.offsetParent?0:item.getBoundingClientRect().height+12);
+    const total=heights.reduce((a,b)=>a+b,0);
+    let k=0,sum=0;
+    while(k<items.length&&sum<total-sum)sum+=heights[k++];
+    if(k===split)return;
+    split=k;left.append(...items.slice(0,k));right.append(...items.slice(k));
+  };
+  const observer=new ResizeObserver(balance);
+  observer.observe(grid);items.forEach(item=>observer.observe(item));
 }
 function filterControlRows(){
   if(!document.getElementById('controlSearch'))return;

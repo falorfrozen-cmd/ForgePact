@@ -109,6 +109,14 @@ those five it can actually draw on.
   on rather than its true remaining time; the next cast on that skill reads
   correctly.
 
+## Changed
+
+- **Mods tab columns.** The Gameplay and Items mod lists are split into two
+  columns, and the right column could end up longer than the left, leaving a
+  gap under the left one. The left column is now always the longer one, and
+  the cards still read top to bottom, left column first. On a narrow window
+  the lists are a single column, as before.
+
 ## How to update
 
 Download and extract the complete release, then reopen ForgePact. Your existing
