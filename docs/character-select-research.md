@@ -132,11 +132,16 @@ never queued" from "the game did not react to it".
 
   The control has to be the same instrument, not the same concept. An empty
   `menuprobe list UI_Button_obj` is equally consistent with "the menu's
-  buttons are some other object" and with "nothing in a menu room enumerates
-  through `instance_number`/`instance_find` on this runner", and `citrace
-  dumpobj` resolving an object does not close that gap either - `dumpobj` and
-  `list` are two different paths to an instance, and a negative is only worth
-  anything against the instrument that produced it. So the control is
+  buttons are some other object" and with "nothing in a menu room survives
+  the **read** path `list` uses", and `citrace dumpobj` resolving an object
+  does not close that gap: `dumpobj` and `list` resolve an instance
+  identically - both run `asset_get_index` -> `instance_number` ->
+  `instance_find` -> `HhResolveInstance`, the same four calls in the same
+  order - but they read it differently once resolved. `dumpobj` walks the raw
+  `CInstance*`; `list` and `var` go through
+  `variable_instance_exists`/`variable_instance_get` instead, and a menu-room
+  instance has never been shown to survive that read path. A negative is only
+  worth anything against the instrument that produced it. So the control is
   `menuprobe list Menu_Controller_obj` - a `list` of an object the *same*
   step's `dumpobj` shows live, with `Profile_Manager_obj` as the fallback if
   that one turns out to have no instances at the menu. Read the pair:
@@ -248,8 +253,13 @@ reply in the `## Results` table under its step id. Keys used below:
     one live - **and** `menuprobe list UI_Button_obj`. Three readings, three
     different conclusions: control non-empty and `UI_Button_obj` listing
     instances with distinct positions means the measurement is on; control
-    non-empty and `UI_Button_obj` empty is a real negative about the button
-    object (`control: pass`, (b) and (c) measured as not-this-object); **both
+    non-empty and `UI_Button_obj` empty is a real negative about
+    `UI_Button_obj` only (`control: pass`, (b) and (c) measured as
+    not-`UI_Button_obj`) - it is **not** a negative about the mechanism, and
+    not yet about any other object, so the next action is named rather than
+    left to improvise: re-run this step and step 14 against
+    `Select_Parent_obj` and whichever other objects step 6 found live at the
+    menu, before drawing any conclusion about (b) or (c) as a whole; **both
     empty measures the instrument**, so (b) and (c) are `control: fail`,
     unmeasured - skip to 15. Otherwise, one command at a time, on the instance
     whose position matches Local: the mouse-pressed event, then mouse-enter,
@@ -258,22 +268,34 @@ reply in the `## Results` table under its step id. Keys used below:
     room before and after and whether the screen changed. Escape back between
     reactions.
 14. **(c) a warm script call.** Positive control first:
-    `menuprobe script GetQuestProgress UI_Button_obj 0 confirm` must return a
-    real. Then the same form against `UiAMainMenuLocal` on the matching
-    button, then the existing `icall` route for comparison, and, if the
-    screen changed, `UiAChooseSaveSlot` and `UiACharacterPlay` on the later
-    screens. Record the status value, the result or the exception, and the
-    room and screen either side. Faults are expected - every cold call shape
-    measured in 2026-09-11's work faulted and the process survived each one.
-    If the game does die, launch again and continue from step 5.
+    `menuprobe script GetQuestProgress` on **the object that listed
+    instances in step 13** (not a hardcoded `UI_Button_obj 0` - if step 13
+    fell to `Select_Parent_obj` or another object, the control runs against
+    that object) must return a real. On 2026-09-21, run as
+    `GetQuestProgress UI_Button_obj 0 confirm`, that control raised
+    (`EXCEPTION calling gml_Script_GetQuestProgress`) instead of returning
+    (C-1.14): before this step's control can be trusted, a re-run needs a
+    control script already proven to return a known value at the main menu -
+    `GetQuestProgress` is not that script, on this object, at this screen.
+    Then the same form against `UiAMainMenuLocal` on the matching button,
+    then the existing `icall` route for comparison, and, if the screen
+    changed, `UiAChooseSaveSlot` and `UiACharacterPlay` on the later screens.
+    Record the status value, the result or the exception, and the room and
+    screen either side. Faults are expected - every cold call shape measured
+    in 2026-09-11's work faulted and the process survived each one. If the
+    game does die, launch again and continue from step 5.
 15. **Full path, best mechanism.** Using whichever of steps 8 to 14 moved the
     screen, drive main menu, Local, save slot, Play, with one `grab_window`
     screenshot per screen. Record the layout: for each click, the client size
     and the click point as fractions of client width and height; for keyboard
     navigation, the exact key list. The slot is **slot 1**.
-16. **Proof.** `orbpickup stat` - the reply's `player via ...` must not be
-    `none`. Record the room and a screenshot showing town. Note any settle
-    time needed.
+16. **Proof.** Arm first: `orbpickup 1`, then `orbpickup stat` at the main
+    menu, before walking step 15's path - the reply's `player via ...` must
+    read `none` (the negative control: `orbpickup 1` arms the resolver, but
+    no player exists yet to resolve). Only then walk step 15's path to town
+    and `orbpickup stat` again - the reply's `player via ...` must not be
+    `none`. Record the room and a screenshot showing town, and any settle
+    time needed. Restore with `orbpickup 0` once recorded.
 17. **Layout in a second display mode.** Switch windowed and borderless in
     the game's options (human), return to the main menu (human) and repeat
     step 15 in that mode; record whether step 15's fractions still hit.
@@ -321,7 +343,7 @@ C-1.8's posted-route result is scoped to a same-integrity caller.
 | C-1.13 | control `menuprobe list Menu_Controller_obj` -> 1 live instance (non-empty) beside `menuprobe list UI_Button_obj` -> 13, so the enumeration control **passed** and the ambiguous both-empty branch did not arise. Events on `nth=0` (`Play local`, instance 257029): `ev_mouse` 4, 0, 10 and 5, then user events 10, 11 and 12 -- each `performed -> bool:true`, the instance alive in the `after:` line every time, room and screenshot unchanged after all seven | pass | 2026-09-21 |
 | C-1.14 | control `menuprobe script GetQuestProgress UI_Button_obj 0 confirm` -> **`EXCEPTION calling gml_Script_GetQuestProgress`**, where `real:-1` was expected. The control failed, so no UI-action call was attempted and the route is **unmeasured** | fail | 2026-09-21 |
 | C-1.15 | windowed, GUI 2560x1368 / client 1920x1080: `Play local` at gui(448, 676.4) -> client(336, 534), fractions (0.175, 0.4944); character slot 1 (`Pal`) at client(243, 225); `PLAY` at client(583, 346). The full path main menu -> `Chose_rm` -> character panel -> `Town_01_rm` driven entirely by held `send_input` clicks | - | 2026-09-21 |
-| C-1.16 | room `Town_01_rm`; `menuprobe list Player_obj` -> **1 live instance** at (912, 822), with `Player_Parent_obj` -> `not found (asset_get_index)` as the negative control. **`orbpickup stat` did not prove it**: `player via (not tried)`, because `globe objs=0` means the resolution is never attempted in a town with no orbs. Settle time under 3 s | - | 2026-09-21 |
+| C-1.16 | room `Town_01_rm`; `menuprobe list Player_obj` -> **1 live instance** at (912, 822), with `Player_Parent_obj` -> `not found (asset_get_index)` as the negative control. **`orbpickup stat` did not prove it**: `player via (not tried)` -- but this session never sent `orbpickup 1`, and `g_OrbPlayerHow` is written only inside `FrameCallback`'s `orbpickup`-on branch, so this row measured the **off** state, not a general failure of the field. The on-state reading is `not observed` until the ship workorder's live gate arms `orbpickup` and reads it. Settle time under 3 s | - | 2026-09-21 |
 | C-1.17 | fullscreen (`cb window_get_fullscreen -> real:1`), GUI 2560x1440 / client 2560x1440: the **same** button reports gui(448, **712**) -- its absolute GUI position moved -- yet the fractions are (0.175, 0.4944), identical to windowed. The same read-live-and-scale formula produced client(448, 712) and the click drove `Main_Menu_rm` -> `Chose_rm` again | pass | 2026-09-21 |
 | C-1.18 | `exited: true, forced: false` on both stops (pids 80640 and 66588), `WM_CLOSE` to 2 windows each time | - | 2026-09-21 |
 | C-1.19 | `changed: ["shop.ini"]`, `added: []`, `missing: []` -- no character save altered by loading a character and exiting from town | - | 2026-09-21 |
@@ -418,13 +440,17 @@ therefore unavailable to `hs_select_character` on a player build.
    slot 1 at **(0.1266, 0.2083)** and `PLAY` at **(0.3036, 0.3204)**. They are
    layout constants, so a game patch can move them; whatever ships should fail
    loudly with `layout_not_measured` rather than clicking a guessed point.
-2. **Proving a character actually loaded.** `orbpickup stat` does **not** do
-   it: with no orbs nearby it reports `globe objs=0` and `player via (not
-   tried)`, because the player resolution is never attempted (C-1.16). The
-   ship workorder's decision D17 assumed that field answers on every build,
-   and this session measured otherwise. What did work was
-   `menuprobe list Player_obj` -> 1 live instance, which is research-only, so
-   a player-build-answerable proof still has to be found.
+2. **Proving a character actually loaded.** `orbpickup stat` alone does
+   **not** do it: with no orbs nearby and `orbpickup` off, it reports `globe
+   objs=0` and `player via (not tried)` (C-1.16) -- but this session never
+   armed the mod, and `g_OrbPlayerHow` is written only inside
+   `FrameCallback`'s `orbpickup`-on branch, so that row measured the **off**
+   state, not a general failure of the field. The ship workorder's decision
+   D17 assumed the field answers regardless of `orbpickup`'s state, and this
+   session's off-state measurement falsified that assumption; the on-state
+   reading is `not observed` until a session arms `orbpickup` and reads it.
+   What did work was `menuprobe list Player_obj` -> 1 live instance, which is
+   research-only, so a player-build-answerable proof still has to be found.
 3. **`hs_input`'s `click` needs a hold.** Its `key` action already takes
    `hold_ms` and defaults it to 60; the pointer path has no equivalent and
    emits down and up with nothing between them. Until that is fixed, the

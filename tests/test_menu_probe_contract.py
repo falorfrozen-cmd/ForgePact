@@ -229,13 +229,17 @@ class MenuProbeContractTests(unittest.TestCase):
         runtime from a command is the same risk. The narrower true claim -
         nothing is installed on the per-frame path - is the test above.
         """
-        self.assertNotIn("or runs from", self.plugin,
+        # Scoped to the comment block and the doc's own Instrument section,
+        # not the whole file/doc: the retracted claim lived there, and a
+        # file-wide ban would forbid the phrase anywhere else in either text
+        # for reasons that have nothing to do with this claim.
+        self.assertNotIn("nothing runs from the frame callback", self.block,
                          "the header comment claims the opposite of the truth")
         self.assertIn("PollCommands", self.block,
                       "the header comment has to name where its command runs")
-        doc = self.doc.replace("\r\n", "\n")
-        self.assertNotIn("nothing runs from the frame callback", doc)
-        self.assertIn("PollCommands", doc,
+        instrument = section(self.doc, "## Instrument")
+        self.assertNotIn("nothing runs from the frame callback", instrument)
+        self.assertIn("PollCommands", instrument,
                       "the document's Instrument section names it too")
 
     # ---- one call per command, behind the literal word ----------------------
@@ -457,11 +461,15 @@ class MenuProbeContractTests(unittest.TestCase):
         """`menuprobe list UI_Button_obj` cannot be its own control.
 
         An empty listing is equally consistent with "the buttons are a
-        different object" and with "nothing in a menu room enumerates through
-        `instance_number`/`instance_find` at all", which has never been shown
-        either way on this runner. `citrace dumpobj` does not settle it: it
-        reaches an instance by a different path, and a negative is only worth
-        anything against the instrument that produced it. So the control is a
+        different object" and with "nothing in a menu room survives the read
+        path `list` uses", which has never been shown either way on this
+        runner. `citrace dumpobj` does not settle it: it resolves an instance
+        identically to `menuprobe list` (both run `asset_get_index` ->
+        `instance_number` -> `instance_find` -> `HhResolveInstance`) but reads
+        it differently once resolved - `dumpobj` walks the raw `CInstance*`;
+        `list` goes through `variable_instance_exists`/`variable_instance_get`
+        instead - and a negative is only worth anything against the
+        instrument that produced it. So the control is a
         `menuprobe list` of an object the same step's `dumpobj` shows live,
         read as a pair, and the document has to say which outcome pair is
         which - `AGENTS.md`, "Prove the Instrument Before Trusting a Negative
@@ -499,6 +507,66 @@ class MenuProbeContractTests(unittest.TestCase):
         instrument = section(self.doc, "## Instrument")
         self.assertIn("both empty measures the instrument", flowed(instrument))
         self.assertIn(control, instrument)
+
+        # D25/F3: the control's justification changed - `dumpobj` and `list`
+        # resolve an instance identically, so the claim they take "two
+        # different paths to an instance" is false and must not reappear,
+        # in either text, scoped to where the claim actually lives (never
+        # over the whole plugin file or the whole document).
+        self.assertNotIn("different paths to an instance", self.block)
+        self.assertNotIn("different paths to an instance", instrument)
+        self.assertIn("variable_instance_get", instrument,
+                      "the corrected reason names the read path that "
+                      "actually differs")
+
+    def test_step_13s_middle_branch_names_a_next_action(self):
+        """F5: the middle branch used to leave the session to improvise.
+
+        Control non-empty, `UI_Button_obj` empty was recorded as
+        `control: pass` with no next action stated - and calling (c)
+        "measured" in that branch was itself an over-read, because step 14's
+        own positive control hardcoded the same object, so no script call
+        ran there either. The repair names a fall-to object (step 6 already
+        found `Select_Parent_obj` live) and makes step 14's control follow
+        whichever object step 13 actually used.
+        """
+        step13 = live_step(self.doc, 13)
+        step14 = live_step(self.doc, 14)
+        self.assertIn("Select_Parent_obj", step13,
+                      "step 13's middle branch has to name a fall-to object")
+        self.assertIn("re-run this step and step 14", flowed(step13))
+        self.assertNotIn("not-this-object", step13,
+                         "the over-read the middle branch is not allowed "
+                         "to make again")
+        self.assertIn("the object that listed instances in step 13",
+                      flowed(step14),
+                      "step 14's control must not hardcode the same object "
+                      "step 13's middle branch found empty")
+        self.assertIn("C-1.14", step14,
+                      "the doc records that the hardcoded control already "
+                      "raised, so a reader knows why a re-run needs a "
+                      "different control script")
+        self.assertIn("control script already proven to return a known "
+                      "value", flowed(step14))
+
+    def test_step_16_arms_orbpickup_and_reads_the_negative_control(self):
+        """F8: `orbpickup stat` only answers while `orbpickup` is armed.
+
+        The session that produced C-1.16 never sent `orbpickup 1`, and
+        `g_OrbPlayerHow` is written only inside `FrameCallback`'s
+        `orbpickup`-on branch - so that row measured the off state, not a
+        general failure of the field. A re-run has to arm the mod, read
+        `none` at the menu as the negative control, then read again in town.
+        """
+        step16 = live_step(self.doc, 16)
+        self.assertIn("orbpickup 1", step16)
+        self.assertIn("none", step16)
+        results = section(self.doc, "## Results")
+        row = [line for line in results.split("\n") if line.startswith("| C-1.16 |")]
+        self.assertEqual(len(row), 1)
+        self.assertNotIn("never attempted", row[0],
+                         "the row must not claim the field never answers, "
+                         "only that this session never armed it")
 
     def test_the_document_sources_each_negative_it_relies_on(self):
         negatives = section(self.doc, "## Negative results, sourced")

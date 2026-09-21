@@ -16442,9 +16442,15 @@ static bool HandleProspectCommand(const std::string& lc, const std::string& rest
 //   Profile_Manager_obj was only ever read in-world - so a `list` that finds
 //   no buttons means (b) and (c) were never measured, not that they failed.
 //   The control has to be this same command over an object the session has
-//   just seen live, not `citrace dumpobj` over the same object: those are two
-//   different paths to an instance, and a negative is only worth anything
-//   against the instrument that produced it.
+//   just seen live, not `citrace dumpobj` over the same object - not because
+//   the two resolve an instance differently (they don't: both run
+//   asset_get_index -> instance_number -> instance_find -> HhResolveInstance,
+//   the same four calls, in the same order), but because they read it
+//   differently once resolved. `dumpobj` walks the raw CInstance* through
+//   CiSnapshotInstance; `list` and `var` go through
+//   variable_instance_exists/variable_instance_get instead, which is the read
+//   path a menu-room instance has never been shown to survive. A negative is
+//   only worth anything against the instrument that produced it.
 // * `event` and `script` each make exactly **one** call, behind the literal
 //   word `confirm`, printing the instance's own position and the room index
 //   either side of it. That is what separates "the call was refused", "the
