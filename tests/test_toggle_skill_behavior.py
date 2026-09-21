@@ -523,6 +523,21 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
         for suffix in ("/drawn", "/no_enumeration", ""):
             self.assertScenario("table/unresolved_row_skipped_and_counted" + suffix)
 
+    # ---- session 9: Meteor Storm and Bushido (D-B1) -------------------------
+
+    def test_border_meteor_storm(self):
+        self.assertScenario("border/meteor_storm_bool_true_lights_slot")
+        self.assertScenario("border/meteor_storm_positive_number_lights_slot")
+        self.assertScenario("border/meteor_storm_plain_cast_real_zero_draws_nothing")
+        self.assertScenario("border/meteor_storm_bool_false_draws_nothing")
+        self.assertScenario("border/meteor_storm_unreadable_marker_draws_nothing_and_counts")
+        self.assertScenario("border/meteor_storm_every_instance_counts_own")
+
+    def test_border_bushido(self):
+        self.assertScenario("border/bushido_on_lights_slot")
+        self.assertScenario("border/bushido_foreign_only_draws_nothing")
+        self.assertScenario("border/bushido_no_instance_draws_nothing")
+
     # ---- T1: the re-cast guard, HookTalentUseClass (issue #11, Track A) ----
 
     def test_guard_off_proc_passes_and_no_runtime_call(self):
@@ -664,6 +679,23 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
     def test_guard_on_unresolved_row_passes(self):
         for suffix in ("/refused", "", "/unnamed_talent_never_matches"):
             self.assertScenario("guard_on/unresolved_row_passes" + suffix)
+
+    # ---- session 9: Meteor Storm's sub-talent gate and Bushido's D-B1 -------
+
+    def test_guard_on_meteor_storm_subtalent_gate(self):
+        self.assertScenario("guard_on/meteor_storm_proc_refused_when_subtalent_allocated")
+        self.assertScenario("guard_on/meteor_storm_proc_passes_without_subtalent")
+
+    def test_guard_on_base_form_row_refused_without_reading_the_map(self):
+        # D-B1: Bushido's base-form row is refused unconditionally and never
+        # reads global.subTalentMap at all - the control alongside it
+        # (subtalent_row_still_reads_the_map) shows the same counter DOES
+        # move for a row that has a real sub-talent to read.
+        for suffix in ("/baseForm", "/no_map_read", ""):
+            self.assertScenario("guard_on/base_form_row_proc_refused_without_subtalent_read" + suffix)
+        self.assertScenario("guard_on/base_form_row_player_cast_passes")
+        self.assertScenario("guard_off/base_form_row_proc_passes")
+        self.assertScenario("guard_on/subtalent_row_still_reads_the_map")
 
     # ---- R: the research table (`tgprobe tgl`, issue #11 generalisation) ----
 

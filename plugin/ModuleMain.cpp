@@ -4921,11 +4921,11 @@ static std::atomic<bool> g_ToggleBorderOn{ false };
 // failures each one counts; `unresolved` counts a row skipped because its
 // talent id has not been resolved from its `abilityId` yet.
 //
-// Every one of these is a SUM over the five shipped rows, since the draw
-// visits each row once: a player with nothing toggled reads `off=` at five
-// times the number of draws, which is correct and useless on its own. The
-// per-row counters below are what answer "which row was ON" and "which row
-// lost its slot" (phase S review follow-up).
+// Every one of these is a SUM over every shipped row, since the draw visits
+// each row once: a player with nothing toggled reads `off=` at
+// kToggleSkillRowCount times the number of draws, which is correct and
+// useless on its own. The per-row counters below are what answer "which row
+// was ON" and "which row lost its slot" (phase S review follow-up).
 static volatile long g_TibDrawn = 0, g_TibOn = 0, g_TibOff = 0, g_TibUnreadable = 0, g_TibNoHud = 0, g_TibNoRow0 = 0, g_TibNoTalent = 0, g_TibForeign = 0, g_TibDrawExc = 0, g_TibUnresolved = 0;
 
 // The same outcomes, attributed to the row that produced them and printed
@@ -5139,8 +5139,9 @@ static std::string ToggleBorderCountersLine()
         + " noHud=" + std::to_string(g_TibNoHud) + " noRow0=" + std::to_string(g_TibNoRow0)
         + " noTalent=" + std::to_string(g_TibNoTalent) + " foreign=" + std::to_string(g_TibForeign)
         + " drawExc=" + std::to_string(g_TibDrawExc) + " unresolved=" + std::to_string(g_TibUnresolved)
-        // Said out loud, because "off= is five times the draw count" is
-        // otherwise read as a fault rather than as one row per draw.
+        // Said out loud, because "off= is kToggleSkillRowCount times the
+        // draw count" is otherwise read as a fault rather than as one row
+        // per draw.
         + " (summed over " + std::to_string(ForgePact::kToggleSkillRowCount) + " rows)";
 }
 // One row's own counters, named by the row's `abilityId` - what the summed
@@ -5806,7 +5807,10 @@ static PFUNC_YYGMLScript g_OrigTalentUseClass = nullptr;
 // toggle sub-talent read back unallocated, so the call is the player's plain
 // cast and passes. subUnreadable: the sub-talent could not be read in any of
 // its shapes - the call passes, because fail-open is vanilla behaviour.
-static volatile long g_TgdRefused = 0, g_TgdPassed = 0, g_TgdProcSeen = 0, g_TgdSelfUnreadable = 0, g_TgdObjUnresolved = 0, g_TgdSubOff = 0, g_TgdSubUnreadable = 0;
+// baseForm: a matched row is a base-form toggle (D-B1, Bushido) - it is
+// refused unconditionally, without ever touching global.subTalentMap, and
+// every baseForm refusal is also counted in refused.
+static volatile long g_TgdRefused = 0, g_TgdPassed = 0, g_TgdProcSeen = 0, g_TgdSelfUnreadable = 0, g_TgdObjUnresolved = 0, g_TgdSubOff = 0, g_TgdSubUnreadable = 0, g_TgdBaseForm = 0;
 // The double-cast object's index, resolved by name and cached only once it is
 // a real (>= 0) index; a failed resolve is never cached, so the next call
 // tries again.
@@ -5958,13 +5962,25 @@ static RValue& HookTalentUseClass(CInstance* S, CInstance* O, RValue& R, int arg
     }
 
     if (refuseByCaller) {
-        // The row is a member, so its toggle sub-talent decides whether this
-        // proc could have flipped anything - read here, at the point of use,
-        // with the talent the call itself named (D-P3). Anything short of a
-        // numeric > 0 passes the call through and is counted, so the guard
-        // never costs a player a cast it cannot justify refusing.
-        const ToggleSubTalentState sub =
-            ToggleReadSubTalent(talentId, ForgePact::kToggleSkillRows[rowIndex].subTalentSlot);
+        // D-B1: a base-form toggle (Bushido - a toggle on its own, with no
+        // sub-talent at all) is refused unconditionally, without ever
+        // reading global.subTalentMap - feeding it kToggleNoSubTalent (0)
+        // would find no `t<id>` struct at that key and answer Unreadable,
+        // which passes the call through: a guard that reports armed and
+        // never actually refuses. Every other row's toggle sub-talent
+        // decides whether this proc could have flipped anything - read here,
+        // at the point of use, with the talent the call itself named (D-P3).
+        // Anything short of a numeric > 0 passes the call through and is
+        // counted, so the guard never costs a player a cast it cannot
+        // justify refusing.
+        const bool baseForm = ForgePact::ToggleRowIsBaseFormToggle(ForgePact::kToggleSkillRows[rowIndex]);
+        ToggleSubTalentState sub;
+        if (baseForm) {
+            InterlockedIncrement(&g_TgdBaseForm);
+            sub = ToggleSubTalentState::Allocated;
+        } else {
+            sub = ToggleReadSubTalent(talentId, ForgePact::kToggleSkillRows[rowIndex].subTalentSlot);
+        }
         if (sub == ToggleSubTalentState::Allocated) {
             InterlockedIncrement(&g_TgdRefused);
             return R;
@@ -6008,6 +6024,7 @@ static std::string ToggleGuardCountersLine()
         + " procSeen=" + std::to_string(g_TgdProcSeen) + " selfUnreadable=" + std::to_string(g_TgdSelfUnreadable)
         + " objUnresolved=" + std::to_string(g_TgdObjUnresolved) + " subOff=" + std::to_string(g_TgdSubOff)
         + " subUnreadable=" + std::to_string(g_TgdSubUnreadable)
+        + " baseForm=" + std::to_string(g_TgdBaseForm)
         // Which `global.subTalentMap` index actually answered, so a session
         // can tell a moved map from an unallocated sub-talent.
         + " subIndex=" + (subIndex >= 0 ? std::to_string(subIndex) : std::string("none"))
@@ -26536,9 +26553,10 @@ static void RunCommand(const std::string& line)
             Out("toggleborder -> off " + ToggleBorderCountersLine());
         } else {
             g_ToggleBorderOn.store(true);
-            // Names the covered count, not one skill: five rows have shipped
-            // since phase S, and a player on Exo or Prophet reading "Soul
-            // Spurn" here would take the whole feature for a White Mage one.
+            // Names the covered count, not one skill: several rows have
+            // shipped since phase S, and a player on Exo or Prophet reading
+            // "Soul Spurn" here would take the whole feature for a White
+            // Mage one.
             Out("toggleborder -> ON (marks the skill-bar slot of a toggle skill while it is switched on; covers "
                 + std::to_string(ForgePact::kToggleSkillRowCount)
                 + " toggle skills - `toggleborder stat` lists them with per-skill drawn=/on=)");

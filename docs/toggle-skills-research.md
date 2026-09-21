@@ -54,6 +54,15 @@ then whichever index actually carries the talent's struct. `counter` and
 `blender` do not ship.
 Design and evidence: `## Decision` → `### S design (D-P1, D-P3, D-P5, D-U13)`.
 
+Status (2026-09-21, after session 9's ship): **Tracks A and B cover seven
+skills.** Session 9 added two more rows to `kToggleSkillRows`: Shaman
+**Meteor Storm** (a toggle only with its `s11` sub-talent, marker
+`skillAstroHeated` - `bool:true` toggled, `real:0.0` plain) and Samurai
+**Bushido** (a toggle in its base form, no sub-talent at all, refused by the
+guard unconditionally and counted separately as `baseForm=`, D-B1). A zone
+change ends both, confirmed in-game by the owner. See `## Decision`, the
+session-9 write-up right after `### After session 6`.
+
 Status (2026-09-19, session 6 recorded): four rows beside Soul Spurn measured
 as persistent-instance toggles with a shippable ON discriminator
 (`lunarOrbit`, `crematus`, `submergedKnives`, `maelstromOfFrost`; `## Decision`
@@ -2646,9 +2655,12 @@ directly after the colon or `=`, so each line can be checked mechanically.
 - ON discriminator: bushido=instance (no plain form) (`census.Samurai_Bushido_obj: bbase=<absent> bon=7 boff=<absent>`; `[9] bushido state=on n=7 mine=7` / `state=off n=0`, `transitions=` 1 → 2 → 3 → 4 over two cycles)
 - Bushido carrier: instance (`Samurai_Bushido_obj` 4226, seven own instances per activation, ownership `isMyClient` readable — `mine=7 others=0 unattributed=0`; the `none` row agrees)
 - Positive control: soulSpurn `[0] soulSpurn state=on n=1 mine=1 others=0 unattributed=0 marked=on timer=-1.000000`, then `state=off n=0`; census `White_Mage_Soul_Spurn_AOE_obj: cbase=<absent> con=1 coff=<absent>`; `agree=150948 disagree=0` at the end of the session
-- Also measured: a zone change ends both toggles (`firstAfterRoomChange: state=off n=0` on rows 7/8 and 9/10); Holy Form is buff-carried (buff 140, owner saw its HUD icon), Unholy Form reads buff 141 (by analogy, icon not confirmed); `melonForm` talent 513 (dur 0, cd 0.25) is an unmeasured candidate.
+- Also measured: a zone change ends both toggles, confirmed in-game by the owner (`firstAfterRoomChange: state=off n=0` on rows 7/8 and 9/10); Holy Form is buff-carried (buff 140, owner saw its HUD icon), Unholy Form reads buff 141 (by analogy, icon not confirmed); `melonForm` talent 513 (dur 0, cd 0.25) is an unmeasured candidate.
 - Ship: meteorStorm=yes (discriminator `marker skillAstroHeated` AND slot `s11` measured; the follow-up's marker read must treat `bool:true` as on)
 - Ship: bushido=yes (carrier `instance` with `instance (no plain form)` AND a measured ownership cell, `isMyClient`; base-form row, D-B1)
+- Shipped: meteorStorm as row 5 of kToggleSkillRows, 2026-09-21 (`Shaman_Meteor_Storm_Controller_obj`, ownership `nullptr`, `Marker` on `skillAstroHeated`, sub-talent slot `s11`)
+- Shipped: bushido as row 6 of kToggleSkillRows, 2026-09-21 (`Samurai_Bushido_obj`, ownership `isMyClient`, `None` discriminator, `kToggleNoSubTalent` - a base-form toggle, D-B1)
+- D-B1: a base-form toggle skill (no sub-talent at all, like Bushido) is refused by the guard unconditionally, without ever reading `global.subTalentMap` - reading its named constant `kToggleNoSubTalent` (0) there would find no `t<id>` struct and answer Unreadable, passing the double-cast proc through in the exact "reports armed and does nothing" shape AGENTS.md warns about. The refusal is still counted in `refused=`, and separately in a new `baseForm=` counter.
 
 ### S design (D-P1, D-P3, D-P5, D-U13)
 

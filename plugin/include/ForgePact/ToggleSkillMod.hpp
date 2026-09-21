@@ -100,14 +100,15 @@ inline const char* ToggleIndicatorStateName(ToggleIndicatorState s)
     }
 }
 
-// ---- the shipped toggle-skill table (issue #11, phase S) -------------------
-// Session 6 measured five toggle skills that keep a persistent instance alive
-// while the toggle is on, and, per row, how that instance tells a toggle from
-// a plain cast (docs/toggle-skills-research.md, "## Results" -> "### Toggle
-// skill table" and "## Decision" -> "### After session 6"). Every runtime
-// name the indicator and the guard need lives HERE and nowhere else in the
-// plugin: the object enumerator, the ownership field, the discriminator field
-// and the sub-talent slot.
+// ---- the shipped toggle-skill table (issue #11, phase S; session 9 added
+// two more rows) --------------------------------------------------------
+// Sessions 6 and 9 measured toggle skills that keep a persistent instance
+// alive while the toggle is on, and, per row, how that instance tells a
+// toggle from a plain cast (docs/toggle-skills-research.md, "## Results" ->
+// "### Toggle skill table" and "## Decision" -> "### After session 6" /
+// "### After session 9"). Every runtime name the indicator and the guard
+// need lives HERE and nowhere else in the plugin: the object enumerator, the
+// ownership field, the discriminator field and the sub-talent slot.
 //
 // Three rows ship a CONTROLLER object rather than the damage object the static
 // search predicted, because session 6 rejected the predicted one in each case
@@ -116,6 +117,7 @@ inline const char* ToggleIndicatorStateName(ToggleIndicatorState s)
 // controllers have no readable ownership field either, so they carry
 // `ownershipField = nullptr` and every instance counts as own - ForgePact is
 // offline-only, so that is the documented D-N3 behaviour, not a co-op risk.
+// Session 9's Meteor Storm controller is the same shape, for the same reason.
 //
 // Shield Lancer's Counter and Butcher's Blender are deliberately absent:
 // session 6 observed no persistent ON instance for Counter over the one
@@ -130,20 +132,37 @@ inline const char* ToggleIndicatorStateName(ToggleIndicatorState s)
 // resolve by name), and a row whose id is not resolved yet is skipped by both
 // mods and counted.
 enum class ToggleOnMark {
-    Marker,      // an own instance whose `markField` reads numeric > 0 is ON
+    Marker,      // an own instance whose `markField` reads a VALUE_BOOL true,
+                 // or a numeric kind > 0, is ON
     TimerHeld,   // an own instance whose `markField` reads EXACTLY `heldValue` is ON
     None,        // any own instance is ON - the plain form creates no instance at all
 };
 
 struct ToggleSkillRow {
     const char* abilityId;                    // the talent struct's own `abilityId` string
-    int subTalentSlot;                        // the toggle sub-talent's `s<NN>` key
+    int subTalentSlot;                        // the toggle sub-talent's `s<NN>` key, or
+                                               // kToggleNoSubTalent for a base-form toggle (D-B1)
     HeroSiege::Objects::GameObject onObject;  // the instance that exists while the toggle is on
     const char* ownershipField;               // nullptr: no readable ownership field (D-N3)
     ToggleOnMark mark;
     const char* markField;                    // Marker/TimerHeld only; nullptr for None
     double heldValue;                         // TimerHeld only: the measured held value
 };
+
+// D-B1 (owner-confirmed, session 9): a base-form toggle skill - Samurai's
+// Bushido, a toggle on its own with no sub-talent at all - must never feed
+// its row into `global.subTalentMap` the way every other row does. Reading
+// index 0 there would find no `t<id>` struct (sub-talent keys are
+// `s01`..`s14`, never `s00`) and answer Unreadable -> pass, the exact
+// "reports armed and does nothing" shape AGENTS.md warns about
+// (docs/toggle-skills-research.md, "Bushido: D-B1"). `kToggleNoSubTalent`
+// (0) can never collide with a real slot's KEY; an unallocated slot's own
+// VALUE also reads 0, but that is a different axis entirely.
+inline constexpr int kToggleNoSubTalent = 0;
+inline constexpr bool ToggleRowIsBaseFormToggle(const ToggleSkillRow& row)
+{
+    return row.subTalentSlot == kToggleNoSubTalent;
+}
 
 inline constexpr ToggleSkillRow kToggleSkillRows[] = {
     { "soulSpurn", 12, HeroSiege::Objects::GameObject::White_Mage_Soul_Spurn_AOE_obj,
@@ -156,6 +175,10 @@ inline constexpr ToggleSkillRow kToggleSkillRows[] = {
       nullptr, ToggleOnMark::None, nullptr, 0.0 },
     { "maelstromOfFrost", 11, HeroSiege::Objects::GameObject::Prophet_Maelstrom_obj,
       "isMyClient", ToggleOnMark::TimerHeld, "destroyTimer", -1.0 },
+    { "meteorStorm", 11, HeroSiege::Objects::GameObject::Shaman_Meteor_Storm_Controller_obj,
+      nullptr, ToggleOnMark::Marker, "skillAstroHeated", 0.0 },
+    { "bushido", kToggleNoSubTalent, HeroSiege::Objects::GameObject::Samurai_Bushido_obj,
+      "isMyClient", ToggleOnMark::None, nullptr, 0.0 },
 };
 inline constexpr int kToggleSkillRowCount =
     (int)(sizeof(kToggleSkillRows) / sizeof(kToggleSkillRows[0]));
@@ -171,8 +194,10 @@ inline constexpr bool ToggleRowRequiresMark(const ToggleSkillRow& row)
 }
 
 // The toggle sub-talent's index inside `global.subTalentMap` (session 6:
-// every one of the five slots was measured at index 1, and an unallocated
-// slot reads 0.000000 with the key present, never absent).
+// every slot measured that session was at index 1, and an unallocated slot
+// reads 0.000000 with the key present, never absent). Session 9's Meteor
+// Storm slot (`s11`) agreed at the same index; Bushido has no sub-talent at
+// all and never reads this array (D-B1, `kToggleNoSubTalent`).
 //
 // That is one character on one build, so it is where the read STARTS, not
 // what it assumes: the index that answers is the one whose `t<talentId>`

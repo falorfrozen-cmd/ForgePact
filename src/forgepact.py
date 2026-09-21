@@ -2308,7 +2308,7 @@ input[type=range]::-webkit-slider-thumb{appearance:none;width:17px;height:17px;b
         <span class="val" id="mtival">off</span>
     </div>
     <div class="row" style="border:none">
-        <span class="lbl" style="width:auto;flex:1">Stop double cast re-casting a toggle skill<br><span style="font-size:11px;color:#8f816e;font-weight:normal">For that same fixed set of toggle skills: a double cast proc can cast one of them a second time on its own, which flips its toggle straight back to where it was before your press. With this on, that extra cast is skipped, so the toggle stays the way you set it. It only steps in when you actually have the skill's toggle sub-talent; your own presses are never affected.</span></span>
+        <span class="lbl" style="width:auto;flex:1">Stop double cast re-casting a toggle skill<br><span style="font-size:11px;color:#8f816e;font-weight:normal">For that same fixed set of toggle skills: a double cast proc can cast one of them a second time on its own, which flips its toggle straight back to where it was before your press. With this on, that extra cast is skipped, so the toggle stays the way you set it. It only steps in when you actually have the skill's toggle sub-talent, or the skill is a toggle on its own; your own presses are never affected.</span></span>
         <label class="switch"><input type="checkbox" id="mod_toggle_guard"><span class="sl"></span></label>
         <span class="val" id="mtgval">off</span>
     </div>

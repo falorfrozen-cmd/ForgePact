@@ -972,20 +972,24 @@ class ToggleIndicatorShipContractTests(unittest.TestCase):
         )
 
 
-# The five rows session 6 measured, cell by cell, quoted from
+# The rows sessions 6 and 9 measured, cell by cell, quoted from
 # docs/toggle-skills-research.md "## Results" -> "### Toggle skill table" and
-# "## Decision" -> "### After session 6". `counter` and `blender` are NOT here
-# and must not be: session 6 measured no persistent ON instance for Counter
-# (its toggle state is a player buff) and never ran Blender's ON/OFF steps.
+# "## Decision" -> "### After session 6" / "### After session 9". `counter`
+# and `blender` are NOT here and must not be: session 6 measured no
+# persistent ON instance for Counter (its toggle state is a player buff) and
+# never ran Blender's ON/OFF steps. `bushido`'s sub-talent cell is the named
+# constant, D-B1 - a base-form toggle, not a real `s<NN>` slot.
 SHIPPED_TABLE_ROWS = [
-    ("soulSpurn", 12, "White_Mage_Soul_Spurn_AOE_obj", '"isMyClient"', "Marker", '"purgatory"'),
-    ("lunarOrbit", 11, "Exo_Lunar_Orbit_Crescent_Moon_obj", "nullptr", "None", "nullptr"),
-    ("crematus", 13, "Plague_Doctor_Crematus_Controller_obj", "nullptr", "Marker", '"skillContamination"'),
-    ("submergedKnives", 13, "Butcher_Submerged_Knives_Knifehoarder_obj", "nullptr", "None", "nullptr"),
-    ("maelstromOfFrost", 11, "Prophet_Maelstrom_obj", '"isMyClient"', "TimerHeld", '"destroyTimer"'),
+    ("soulSpurn", 12, "White_Mage_Soul_Spurn_AOE_obj", '"isMyClient"', "Marker", '"purgatory"', 0.0),
+    ("lunarOrbit", 11, "Exo_Lunar_Orbit_Crescent_Moon_obj", "nullptr", "None", "nullptr", 0.0),
+    ("crematus", 13, "Plague_Doctor_Crematus_Controller_obj", "nullptr", "Marker", '"skillContamination"', 0.0),
+    ("submergedKnives", 13, "Butcher_Submerged_Knives_Knifehoarder_obj", "nullptr", "None", "nullptr", 0.0),
+    ("maelstromOfFrost", 11, "Prophet_Maelstrom_obj", '"isMyClient"', "TimerHeld", '"destroyTimer"', -1.0),
+    ("meteorStorm", 11, "Shaman_Meteor_Storm_Controller_obj", "nullptr", "Marker", '"skillAstroHeated"', 0.0),
+    ("bushido", "kToggleNoSubTalent", "Samurai_Bushido_obj", '"isMyClient"', "None", "nullptr", 0.0),
 ]
 TABLE_ROW = re.compile(
-    r'\{\s*"(?P<ability>\w+)",\s*(?P<sub>\d+),\s*HeroSiege::Objects::GameObject::(?P<obj>\w+),\s*'
+    r'\{\s*"(?P<ability>\w+)",\s*(?P<sub>\d+|kToggleNoSubTalent),\s*HeroSiege::Objects::GameObject::(?P<obj>\w+),\s*'
     r'(?P<own>nullptr|"\w+"),\s*ToggleOnMark::(?P<mark>\w+),\s*(?P<field>nullptr|"\w+"),\s*'
     r'(?P<held>-?[\d.]+)\s*\}',
     re.S,
@@ -995,6 +999,8 @@ TABLE_ROW = re.compile(
 TABLE_ONLY_NAMES = (
     "White_Mage_Soul_Spurn_AOE_obj", '"purgatory"', '"skillContamination"', '"destroyTimer"',
     '"soulSpurn"', "kToggleIndicatorTalentId",
+    "Shaman_Meteor_Storm_Controller_obj", "Samurai_Bushido_obj", '"skillAstroHeated"',
+    '"meteorStorm"', '"bushido"',
 )
 # Nothing in the marker's draw path may reach for a partial or animated shape
 # (D-U9 rejected every countdown; D-U13 chose a static banded outline).
@@ -1637,9 +1643,35 @@ class SkillTimerRuleContractTests(unittest.TestCase):
         panel = panel[:panel.index("</span></span>") + len("</span></span>")]
         return {"release notes": release, "README": readme_row, "panel": panel}
 
+    def _toggle_text_blocks(self):
+        # Round 1 (name-free player text): the toggle marker/guard blocks -
+        # the two README rows, the two panel spans, the two release-notes
+        # bullets, and the intro (everything before `## New`). D-T1's reworded
+        # sub-talent clause lives in four of these seven.
+        readme_marker = next(line for line in self.readme.split("\n")
+                              if line.startswith("| **Mark A Running Toggle Skill**"))
+        readme_guard = next(line for line in self.readme.split("\n")
+                             if line.startswith("| **Stop Double Cast Re-casting A Toggle Skill**"))
+        panel_marker = self.panel[self.panel.index("Mark a running toggle skill<br>"):]
+        panel_marker = panel_marker[:panel_marker.index("</span></span>") + len("</span></span>")]
+        panel_guard = self.panel[self.panel.index("Stop double cast re-casting a toggle skill<br>"):]
+        panel_guard = panel_guard[:panel_guard.index("</span></span>") + len("</span></span>")]
+        notes_marker = self.release_notes[self.release_notes.index("- **Mark a running toggle skill"):]
+        notes_marker = notes_marker[:notes_marker.index("\n- **", 5)]
+        notes_guard = self.release_notes[self.release_notes.index("- **Stop double cast re-casting"):]
+        notes_guard = notes_guard[:notes_guard.index("\n- **", 5)]
+        intro = self.release_notes[:self.release_notes.index("## New")]
+        return {
+            "README marker": readme_marker, "README guard": readme_guard,
+            "panel marker": panel_marker, "panel guard": panel_guard,
+            "release notes marker": notes_marker, "release notes guard": notes_guard,
+            "intro": intro,
+        }
+
     def test_player_text_names_no_skill(self):
         pattern = self._forbidden_pattern()
-        blocks = self._countdown_text_blocks()
+        blocks = dict(self._countdown_text_blocks())
+        blocks.update(self._toggle_text_blocks())
         for label, text in blocks.items():
             stripped = text.replace("’", "").replace("'", "")   # apostrophes removed first
             match = pattern.search(stripped)
@@ -1651,6 +1683,18 @@ class SkillTimerRuleContractTests(unittest.TestCase):
         words = self._words(sample)
         self.assertIsNotNone(pattern.search("This mentions " + " ".join(words) + " somewhere."))
         self.assertIsNone(pattern.search("This mentions nothing at all."))
+
+    def test_toggle_texts_cover_a_toggle_on_its_own(self):
+        # D-T1: the name-free clause the owner asked for, in exactly the four
+        # blocks it belongs in - not the marker's own plain-cast sentences,
+        # which stay true unreworded because Bushido has no plain cast.
+        blocks = self._toggle_text_blocks()
+        phrase = "toggle on its own"
+        for label in ("README marker", "README guard", "panel guard", "release notes guard"):
+            self.assertIn(phrase, " ".join(blocks[label].split()), label)
+        self.assertNotIn("each with its toggle sub-talent allocated", blocks["README marker"])
+        for label in ("panel marker", "release notes marker"):
+            self.assertNotIn(phrase, " ".join(blocks[label].split()), label)
 
     def test_player_text_states_behaviour_without_overclaim(self):
         blocks = self._countdown_text_blocks()
@@ -1686,6 +1730,7 @@ class ToggleSkillTableContractTests(unittest.TestCase):
         cls.stripped = strip_research_blocks(cls.plugin)
         cls.header = (FORGEPACT_DIR / "plugin" / "include" / "ForgePact" / "ToggleSkillMod.hpp").read_text(
             encoding="utf-8")
+        cls.research_doc = (FORGEPACT_DIR / "docs" / "toggle-skills-research.md").read_text(encoding="utf-8")
         start = cls.header.index("inline constexpr ToggleSkillRow kToggleSkillRows[] = {")
         cls.table = cls.header[start:cls.header.index("\n};", start)]
         cls.rows = [m.groupdict() for m in TABLE_ROW.finditer(cls.table)]
@@ -1704,23 +1749,26 @@ class ToggleSkillTableContractTests(unittest.TestCase):
         includes = [line.strip() for line in self.header.splitlines() if line.strip().startswith("#include")]
         self.assertEqual(includes, ['#include "Common.hpp"'])
 
-    def test_table_is_exactly_the_five_measured_rows(self):
+    def test_table_is_exactly_the_measured_rows(self):
         self.assertEqual(len(self.rows), len(SHIPPED_TABLE_ROWS), self.table)
         objects_hpp = (SDK_INCLUDE / "objects.hpp").read_text(encoding="utf-8")
         for row, want in zip(self.rows, SHIPPED_TABLE_ROWS):
-            ability, sub, obj, own, mark, field = want
+            ability, sub, obj, own, mark, field, held = want
             self.assertEqual(row["ability"], ability, row)
-            self.assertEqual(int(row["sub"]), sub, row)
+            self.assertEqual(row["sub"], str(sub), row)
             self.assertEqual(row["obj"], obj, row)
             self.assertEqual(row["own"].strip(), own, row)
             self.assertEqual(row["mark"], mark, row)
             self.assertEqual(row["field"].strip(), field, row)
+            self.assertEqual(float(row["held"]), held, row)
             self.assertRegex(objects_hpp, rf"\b{obj}\s*=\s*\d+,", row)
-        # The one row with a held value: session 6 measured Maelstrom's
-        # destroyTimer sitting at exactly -1.000000 while the toggle is on.
-        self.assertEqual(float(self.rows[-1]["held"]), -1.0)
-        for row in self.rows[:-1]:
-            self.assertEqual(float(row["held"]), 0.0, row)
+
+    def test_table_regex_parses_every_row(self):
+        # An unwidened TABLE_ROW would silently drop a row (e.g. Bushido's
+        # `kToggleNoSubTalent` sub-talent cell) from both self.rows and the
+        # name-free test's forbidden-name set - this is the count check that
+        # catches it.
+        self.assertEqual(self.table.count('{ "'), len(self.rows), self.table)
 
     def test_counter_and_blender_do_not_ship(self):
         for name in ('"counter"', '"blender"', "Shield_Lancer_Counter_World_obj", "Butcher_Blender_obj"):
@@ -1729,9 +1777,13 @@ class ToggleSkillTableContractTests(unittest.TestCase):
 
     def test_table_carries_no_talent_id(self):
         # D-P1: ids move with every game build, so the table stores none and
-        # the plugin spells none outside the research block.
+        # the plugin spells none outside the research block. 224 and 134 are
+        # session 9's measured ids (Meteor Storm, Bushido) - harness-only,
+        # never in the shipped header.
         self.assertNotIn("talentId", self.table)
         self.assertIsNone(re.search(r"\b240\b", self.header))
+        self.assertIsNone(re.search(r"\b224\b", self.header))
+        self.assertIsNone(re.search(r"\b134\b", self.header))
         self.assertNotIn("kToggleIndicatorTalentId", self.stripped)
 
     # ---- S2: every runtime name lives in the table -------------------------
@@ -1909,6 +1961,47 @@ class ToggleSkillTableContractTests(unittest.TestCase):
                         "g_TibRow[r].on", "g_TibRow[r].noSlot", "g_TibRow[r].drawn"):
             self.assertIn("InterlockedIncrement(&" + counter + ")", draw, counter)
 
+    # ---- session 9: Meteor Storm and Bushido -------------------------------
+
+    def test_every_toggle_row_is_measured_in_the_research_doc(self):
+        doc = self.research_doc
+        start = doc.index("### Toggle skill table")
+        section = doc[start:doc.index("\n### ", start + 5)]
+        lines = [line for line in section.splitlines() if line.startswith("|")]
+        for row in self.rows:
+            hits = [line for line in lines
+                    if f"`{row['ability']}`)" in line and line.rstrip().endswith("| measured |")]
+            self.assertTrue(hits, f"{row['ability']}: no `measured` Toggle skill table row")
+
+    def test_base_form_rows_use_the_named_constant_and_every_other_row_a_real_slot(self):
+        self.assertIn("inline constexpr int kToggleNoSubTalent = 0;", self.header)
+        base_form = [row["ability"] for row in self.rows if row["sub"] == "kToggleNoSubTalent"]
+        self.assertEqual(base_form, ["bushido"])
+        for row in self.rows:
+            if row["sub"] == "kToggleNoSubTalent":
+                continue
+            self.assertRegex(row["sub"], r"^(?:[1-9]|1[0-4])$", row)   # a real s01..s14 slot
+
+    def test_marker_read_accepts_bool_and_positive_number(self):
+        # Session 9's own claim ("the marker read already accepts bool"),
+        # pinned on the source, not only on the border/meteor_storm_* scenarios
+        # that run it end to end.
+        truth = function_body(self.plugin, "static bool ToggleIndicatorReadTruth(")
+        self.assertIn("VALUE_BOOL", truth)
+        self.assertIn("v.ToDouble() > 0.0", truth)
+        mark = function_body(self.plugin, "static void ToggleIndicatorCountMark(")
+        self.assertIn("ToggleIndicatorReadTruth(v, marked)", mark)
+
+    def test_toggle_count_in_player_output_follows_the_table(self):
+        border = self.stripped[self.stripped.index('Out("toggleborder -> ON'):]
+        border = border[:border.index(");")]
+        guard = self.stripped[self.stripped.index('Out(std::string("toggleguard -> ")'):]
+        guard = guard[:guard.index(");")]
+        for name, text in (("toggleborder", border), ("toggleguard", guard)):
+            self.assertIn("ForgePact::kToggleSkillRowCount", text, name)
+            self.assertIsNone(re.search(r"\d", text), (name, text))
+            self.assertNotIn("five", text.lower(), name)
+
 
 class ToggleGuardContractTests(unittest.TestCase):
     """The re-cast guard (T1, issue #11, Track A): `toggleguard`.
@@ -1975,7 +2068,7 @@ class ToggleGuardContractTests(unittest.TestCase):
         # `toggleguard 0` and `toggleguard stat` share the counters line, and
         # every key survives stripping.
         line = function_body(self.stripped, "static std::string ToggleGuardCountersLine(")
-        for key in ("refused=", "passed=", "procSeen=", "selfUnreadable=", "objUnresolved=", "hook="):
+        for key in ("refused=", "passed=", "procSeen=", "selfUnreadable=", "objUnresolved=", "baseForm=", "hook="):
             self.assertIn(key, line, key)
         self.assertNotIn("lastProcRet", line)   # research build only (session 5's V7)
         self.assertIn("lastProcRet=", function_body(self.plugin, "static std::string ToggleGuardCountersLine("))
@@ -2071,6 +2164,22 @@ class ToggleGuardContractTests(unittest.TestCase):
         # The measured index lives in the header as a named constant whose
         # value is `## State`'s `subidx:`.
         self.assertIn("inline constexpr int kToggleSubTalentMapIndex = 1;", self.header)
+
+    def test_guard_skips_the_sub_talent_read_for_a_base_form_row(self):
+        # D-B1: a base-form row (Bushido) is decided WITHOUT ever calling
+        # ToggleReadSubTalent - the base-form test runs first, inside the
+        # same `if (refuseByCaller)` block ToggleReadSubTalent's own call
+        # sits in, and short-circuits it.
+        body = self.hook
+        refuse = body.index("if (refuseByCaller) {")
+        tail = body[refuse:]
+        base = tail.index("ToggleRowIsBaseFormToggle(")
+        read = tail.index("ToggleReadSubTalent(")
+        self.assertLess(base, read)
+        self.assertIn("if (baseForm) {", tail)
+        self.assertLess(tail.index("if (baseForm) {"), read)
+        self.assertIn("InterlockedIncrement(&g_TgdBaseForm);", tail)
+        self.assertLess(tail.index("InterlockedIncrement(&g_TgdBaseForm);"), read)
 
     def test_refusal_is_gated_on_the_sub_talent_and_fails_open(self):
         body = self.hook

@@ -107,7 +107,12 @@ enum class GameObject { White_Mage_Soul_Spurn_AOE_obj, UI_Hud_Talent_obj, Univer
                         // this harness does not carry the real 700+-entry
                         // hs-game-sdk table, the same reason it does not carry
                         // the real HeroSiege::Objects::GameObject enum.
-                        Rule_Alpha_obj, Rule_Beta_obj };
+                        Rule_Alpha_obj, Rule_Beta_obj,
+                        // Session 9's ship set: Meteor Storm's controller (a
+                        // Marker row with no readable ownership field, the
+                        // same shape as Crematus) and Bushido (a base-form
+                        // row, D-B1).
+                        Shaman_Meteor_Storm_Controller_obj, Samurai_Bushido_obj };
 inline const char* GetObjectName(GameObject g) {
     switch (g) {
     case GameObject::Rule_Alpha_obj: return "Rule_Alpha_obj";
@@ -134,6 +139,8 @@ inline const char* GetObjectName(GameObject g) {
     case GameObject::Exo_Lunar_Orbit_Crescent_Moon_obj: return "Exo_Lunar_Orbit_Crescent_Moon_obj";
     case GameObject::Plague_Doctor_Crematus_Controller_obj: return "Plague_Doctor_Crematus_Controller_obj";
     case GameObject::Butcher_Submerged_Knives_Knifehoarder_obj: return "Butcher_Submerged_Knives_Knifehoarder_obj";
+    case GameObject::Shaman_Meteor_Storm_Controller_obj: return "Shaman_Meteor_Storm_Controller_obj";
+    case GameObject::Samurai_Bushido_obj: return "Samurai_Bushido_obj";
     default: return "White_Mage_Soul_Spurn_AOE_obj";
     }
 }
@@ -258,6 +265,13 @@ static long g_TrampCalls = 0;          // the TalentUseClass trampoline stand-in
 static const double kDcObjIdx = 5318.0, kPlayerObjIdx = 7.0;   // what the stand-in runner answers
 static long g_ResolveCalls = 0;    // HhResolveLocalPlayer calls - must stay 0 (read/no_player_lookup)
 static long g_AnyCallCount = 0;    // every CallBuiltin call, of any name - indicator_off/no_runtime_calls
+// D-B1: every `variable_global_exists`/`variable_global_get` call naming
+// "subTalentMap" - a base-form row's proc must move this counter by zero
+// (guard_on/base_form_row_proc_refused_without_subtalent_read/no_map_read),
+// while a real sub-talent row's still does (guard_on/subtalent_row_still_
+// reads_the_map). g_AnyCallCount also moves on the caller and object reads,
+// so it cannot answer this on its own.
+static long g_SubTalentMapAccessCount = 0;
 static long g_NamesCalls = 0;      // variable_instance_get_names calls - the `tgl fields` snapshot
 // Session 8: every asset_get_index call by the name it asked for, so a
 // scenario can tell WHICH objects a draw resolved - e.g. that a countdown row
@@ -428,6 +442,7 @@ struct FakeRunner {
         if (fn == "variable_global_exists") {
             const std::string want = args[0].ToString();
             if (want == "talentStructMap") return MakeBool(talentWorld.mapReady);
+            if (want == "subTalentMap") ++g_SubTalentMapAccessCount;
             return MakeBool(want == "subTalentMap" && world.sub.globalExists);
         }
         if (fn == "variable_global_get") {
@@ -439,6 +454,7 @@ struct FakeRunner {
                 return r;
             }
             if (want != "subTalentMap") return RValue();
+            ++g_SubTalentMapAccessCount;
             if (world.sub.getThrows) throw std::runtime_error("subTalentMap EXCEPTION");
             if (!world.sub.isArray) return MakeReal(7.0);   // a number, not an array
             RValue r; r.m_Kind = VALUE_ARRAY; r.text = "subTalentMap";
@@ -692,6 +708,15 @@ static void checkNear(const std::string& label, double got, double want) {
 
 static void resetWorld() {
     world = World{};
+}
+
+// D-M3: every scenario that needs a specific row's index looks it up by
+// abilityId rather than assuming a fixed position - session 9 appended two
+// rows after `maelstromOfFrost`, so no row's index is assumed any more.
+static int ToggleRowIndexForAbility(const char* abilityId) {
+    for (int r = 0; r < ForgePact::kToggleSkillRowCount; ++r)
+        if (std::string(ForgePact::kToggleSkillRows[r].abilityId) == abilityId) return r;
+    return -1;
 }
 
 // S (the per-row border counters): zeroed field by field rather than by
@@ -1342,7 +1367,7 @@ int main() {
     //     - the last of them counted rather than guessed either way.
     {
         const int kMaelstromId = 430;   // session 6's measured id, harness-side only
-        const int kRow = ForgePact::kToggleSkillRowCount - 1;
+        const int kRow = ToggleRowIndexForAbility("maelstromOfFrost");
         auto timerRow = [&](const RValue& timer, bool throwsRead) {
             resetWorld(); resetDrawRecord();
             g_ToggleBorderOn.store(true);
@@ -1369,6 +1394,72 @@ int main() {
         timerRow(MakeReal(-1.0), true);   // a throwing read, with a value that WOULD have lit it
         checkInt("border/timer_unreadable_draws_nothing_and_counts/throws", g_TibUnreadable, 1);
         checkInt("border/timer_unreadable_draws_nothing_and_counts", g_TibDrawn, 0);
+    }
+
+    // 36b. Session 9's Meteor Storm row (`meteorStorm`): a Marker row like
+    //      Crematus, with no readable ownership field (D-N3), whose marker
+    //      field session 9 measured as `bool:true` toggled and `real:0.0`
+    //      plain - "the marker read already accepts bool" is what this pins
+    //      end to end, on a real row rather than only on the source text.
+    {
+        const int kMeteorStormId = 224;   // session 9's measured id, harness-side only
+        const int kMeteorStormRow = ToggleRowIndexForAbility("meteorStorm");
+        auto meteorStormRow = [&](const RValue& marker, bool markerThrows, bool ownReadThrows) {
+            resetWorld(); resetDrawRecord();
+            g_ToggleBorderOn.store(true);
+            for (int r = 0; r < ForgePact::kToggleSkillRowCount; ++r) g_ToggleTableIds.Set(r, -1);
+            g_ToggleTableIds.Set(kMeteorStormRow, kMeteorStormId);
+            world.objIndexByName[HeroSiege::Objects::GetObjectName(
+                ForgePact::kToggleSkillRows[kMeteorStormRow].onObject)] = 700.0;
+            AoeInst inst;   // isMyClient is never read: the row names no ownership field
+            inst.isMyClientThrows = ownReadThrows;
+            inst.extra["skillAstroHeated"] = marker;
+            if (markerThrows) inst.throws.insert("skillAstroHeated");
+            world.instancesByIndex[700.0] = { inst };
+            world.row0 = { { (double)kMeteorStormId, 100.0, 200.0, 50.0, 60.0 } };
+            g_TibDrawn = 0; g_TibOff = 0; g_TibUnreadable = 0;
+            ToggleIndicatorDraw();
+        };
+        meteorStormRow(MakeBool(true), false, false);
+        checkInt("border/meteor_storm_bool_true_lights_slot", g_TibDrawn, 1);
+        meteorStormRow(MakeReal(1.0), false, false);
+        checkInt("border/meteor_storm_positive_number_lights_slot", g_TibDrawn, 1);
+        meteorStormRow(MakeReal(0.0), false, false);   // the measured plain-cast reading
+        checkInt("border/meteor_storm_plain_cast_real_zero_draws_nothing", g_TibDrawn, 0);
+        meteorStormRow(MakeBool(false), false, false);
+        checkInt("border/meteor_storm_bool_false_draws_nothing", g_TibDrawn, 0);
+        meteorStormRow(RValue(), false, false);   // undefined: never defaulted to a number
+        checkInt("border/meteor_storm_unreadable_marker_draws_nothing_and_counts", g_TibUnreadable, 1);
+        // D-N3: the row names no ownership field, so a throwing isMyClient is
+        // never even read - every instance counts as own regardless.
+        meteorStormRow(MakeBool(true), false, true);
+        checkInt("border/meteor_storm_every_instance_counts_own", g_TibDrawn, 1);
+    }
+
+    // 36c. Session 9's Bushido row (`bushido`): a base-form toggle (D-B1),
+    //      `None` discriminator like Lunar Orbit, but WITH a readable
+    //      ownership field (`isMyClient`, unlike Lunar Orbit's `none`).
+    {
+        const int kBushidoId = 134;   // session 9's measured id, harness-side only
+        const int kBushidoRow = ToggleRowIndexForAbility("bushido");
+        auto bushidoRow = [&](std::vector<AoeInst> instances) {
+            resetWorld(); resetDrawRecord();
+            g_ToggleBorderOn.store(true);
+            for (int r = 0; r < ForgePact::kToggleSkillRowCount; ++r) g_ToggleTableIds.Set(r, -1);
+            g_ToggleTableIds.Set(kBushidoRow, kBushidoId);
+            world.objIndexByName[HeroSiege::Objects::GetObjectName(
+                ForgePact::kToggleSkillRows[kBushidoRow].onObject)] = 800.0;
+            world.instancesByIndex[800.0] = instances;
+            world.row0 = { { (double)kBushidoId, 100.0, 200.0, 50.0, 60.0 } };
+            g_TibDrawn = 0;
+            ToggleIndicatorDraw();
+        };
+        bushidoRow({ AoeInst{} });   // default isMyClient = true: own
+        checkInt("border/bushido_on_lights_slot", g_TibDrawn, 1);
+        bushidoRow({ Foreign() });
+        checkInt("border/bushido_foreign_only_draws_nothing", g_TibDrawn, 0);
+        bushidoRow({});
+        checkInt("border/bushido_no_instance_draws_nothing", g_TibDrawn, 0);
     }
 
     // 37. A row whose talent id has not been resolved from its `abilityId` yet
@@ -1688,6 +1779,74 @@ int main() {
         HookTalentUseClass(&dcSelf, nullptr, result, 2, args);
         checkInt("guard_on/unresolved_row_passes/unnamed_talent_never_matches",
                  g_TrampCalls - trampBefore, 1);
+    }
+
+    // 40j. Session 9's Meteor Storm row (`meteorStorm`, `s11`): a real
+    //      sub-talent row like every one of T1/S's, gated the same way.
+    {
+        const int kMeteorStormId = 224;   // session 9's measured id, harness-side only
+        const int kMeteorStormRow = ToggleRowIndexForAbility("meteorStorm");
+        resetGuard(true);
+        g_ToggleTableIds.Set(kMeteorStormRow, kMeteorStormId);
+        world.sub.levels[ForgePact::kToggleSubTalentMapIndex][kMeteorStormId]
+                        [ForgePact::kToggleSkillRows[kMeteorStormRow].subTalentSlot] = MakeReal(3.0);
+        {
+            GuardCall c = CallGuard(&dcSelf, (double)kMeteorStormId, false);
+            checkInt("guard_on/meteor_storm_proc_refused_when_subtalent_allocated", g_TgdRefused, 1);
+        }
+        resetGuard(true);
+        g_ToggleTableIds.Set(kMeteorStormRow, kMeteorStormId);
+        world.sub.levels[ForgePact::kToggleSubTalentMapIndex][kMeteorStormId]
+                        [ForgePact::kToggleSkillRows[kMeteorStormRow].subTalentSlot] = MakeReal(0.0);
+        {
+            GuardCall c = CallGuard(&dcSelf, (double)kMeteorStormId, false);
+            checkInt("guard_on/meteor_storm_proc_passes_without_subtalent", c.tramp, 1);
+        }
+    }
+
+    // 40k. D-B1: Bushido's base-form row (`bushido`, `kToggleNoSubTalent`) is
+    //      refused unconditionally, WITHOUT ever reading
+    //      global.subTalentMap - the exact shape a guard that "reports armed
+    //      and does nothing" would take if it fed a real slot's key space a
+    //      key that can never be there. Row 0 (`soulSpurn`, a real
+    //      sub-talent row) is the control alongside it: the same counter DOES
+    //      move for a row that has a sub-talent to read.
+    {
+        const int kBushidoId = 134;   // session 9's measured id, harness-side only
+        const int kBushidoRow = ToggleRowIndexForAbility("bushido");
+
+        resetGuard(true);
+        g_ToggleTableIds.Set(kBushidoRow, kBushidoId);
+        {
+            const long mapBefore = g_SubTalentMapAccessCount;
+            GuardCall c = CallGuard(&dcSelf, (double)kBushidoId, false);
+            checkInt("guard_on/base_form_row_proc_refused_without_subtalent_read/baseForm", g_TgdBaseForm, 1);
+            checkInt("guard_on/base_form_row_proc_refused_without_subtalent_read/no_map_read",
+                     g_SubTalentMapAccessCount - mapBefore, 0);
+            checkInt("guard_on/base_form_row_proc_refused_without_subtalent_read", g_TgdRefused, 1);
+        }
+
+        resetGuard(true);
+        g_ToggleTableIds.Set(kBushidoRow, kBushidoId);
+        {
+            GuardCall c = CallGuard(&playerSelf, (double)kBushidoId, true);
+            checkInt("guard_on/base_form_row_player_cast_passes", c.tramp, 1);
+        }
+
+        resetGuard(false);
+        g_ToggleTableIds.Set(kBushidoRow, kBushidoId);
+        {
+            GuardCall c = CallGuard(&dcSelf, (double)kBushidoId, false);
+            checkInt("guard_off/base_form_row_proc_passes", c.tramp, 1);
+        }
+
+        resetGuard(true);
+        {
+            const long mapBefore = g_SubTalentMapAccessCount;
+            CallGuard(&dcSelf, (double)kToggleIndicatorTalentId, false);
+            checkBool("guard_on/subtalent_row_still_reads_the_map",
+                      g_SubTalentMapAccessCount > mapBefore, true);
+        }
     }
 
     // ---- R (issue #11 generalisation): the research table's generalised read

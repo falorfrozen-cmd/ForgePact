@@ -89,9 +89,9 @@ of its own - see that bullet for what it draws on.
   turned it off. With this mod turned on (Mods tab, off by default), that
   extra cast is skipped and the toggle stays the way your press left it. It
   only steps in when you actually have the sub-talent that makes the skill a
-  toggle; without it, the double cast's extra cast goes through exactly as it
-  does in the unmodded game. Your own presses, and double casts of every other
-  skill, are not affected.
+  toggle, or the skill is a toggle on its own; otherwise the double cast's
+  extra cast goes through exactly as it does in the unmodded game. Your own
+  presses, and double casts of every other skill, are not affected.
 - **Timed skill countdown.** A new **Timed skill countdown** dropdown in Mods
   (off by default) draws how much of a timed cast is left over that skill's
   slot on the skill bar, and it disappears the moment the cast ends. A small
