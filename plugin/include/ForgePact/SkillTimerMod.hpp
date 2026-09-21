@@ -131,4 +131,46 @@ public:
     }
 };
 
+// ---- the countdown's own table (session 8, D-S1) ---------------------------
+// The countdown reads THIS table and nothing else - not kToggleSkillRows,
+// whose rows are chosen for a different question (does the toggle's instance
+// exist) and two of which never create a timed instance on a plain cast. A
+// row is here only because the duration sweep measured it
+// (docs/toggle-skills-research.md, "Duration sweep (session 8)" -> "Results",
+// status `ship`): its object appeared for exactly one skill, carried a
+// positive `destroyTimer` that repeated across casts, and that timer spanned
+// the object's whole life, so it is the cast's duration and not, say, a
+// projectile's own lifetime. Companion skills (turrets, totems and the like)
+// are left out even when measured: they can have several instances at once
+// and would need one countdown each (owner, 2026-09-21).
+//
+// There is no talent id column, for the same reason kToggleSkillRows has
+// none: ids move with every game build, so each row's id is resolved at
+// runtime from `global.talentStructMap` by `abilityId`, in the same walk as
+// the toggle table's, and an unresolved row is skipped and counted.
+struct SkillTimerRow {
+    const char* abilityId;                    // the talent struct's own `abilityId` string
+    HeroSiege::Objects::GameObject object;    // the cast's own object, whose `destroyTimer` is read
+    const char* ownershipField;               // nullptr: measured `own=unreadable`, every instance own (D-N3)
+    double measuredFirst;                     // the sweep's recorded first reading - documentation, never a total
+    const char* displayName;                  // what the player text calls the skill
+};
+
+// measuredFirst is what the Results table recorded, kept beside the row so a
+// contract test can tie each row to its measurement. The draw never divides by
+// it: route B latches each cast's own first reading (Blade Barrier's live
+// 1296 is not its talent's predicted 864, and a stat change moves either).
+inline constexpr SkillTimerRow kSkillTimerRows[] = {
+    { "healingZone", HeroSiege::Objects::GameObject::White_Mage_Healing_Zone_obj,
+      nullptr, 1152.0, "Healing Zone (White Mage)" },
+    { "bladeBarrier", HeroSiege::Objects::GameObject::Samurai_Blade_Barrier_obj,
+      "isMyClient", 1296.0, "Blade Barrier (Samurai)" },
+    { "soulSpurn", HeroSiege::Objects::GameObject::White_Mage_Soul_Spurn_AOE_obj,
+      "isMyClient", 144.0, "Soul Spurn (White Mage)" },
+    { "maelstromOfFrost", HeroSiege::Objects::GameObject::Prophet_Maelstrom_obj,
+      "isMyClient", 4320.0, "Maelstrom of Frost (Prophet)" },
+};
+inline constexpr int kSkillTimerRowCount =
+    (int)(sizeof(kSkillTimerRows) / sizeof(kSkillTimerRows[0]));
+
 } // namespace ForgePact

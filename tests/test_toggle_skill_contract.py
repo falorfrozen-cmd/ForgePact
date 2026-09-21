@@ -1095,20 +1095,28 @@ class SkillTimerShipContractTests(unittest.TestCase):
         self.assertEqual(ship_bar.group(2), probe_gap_height.group(2))
         self.assertEqual(ship_bar.group(3), probe_inset.group(1))
 
-        ship_text = re.search(
-            r"static constexpr double kSkillTimerTextOffsetDx = (-?[\d.]+), "
-            r"kSkillTimerTextOffsetDy = (-?[\d.]+);", self.plugin)
+        # Only the horizontal text offset is still the probe's. The vertical
+        # one no longer is (session 8, owner: "the number text was a little
+        # too low (hiding partially behind the icon)" in the font the ship
+        # draws): the probe hangs its text below an anchor measured up from
+        # the box's BOTTOM, which moves with the font's height, while the
+        # ship anchors to the box's TOP with bottom alignment - see
+        # test_number_anchors_above_the_box_top_font_independent. The probe
+        # keeps its own `textoffset` for research.
+        ship_dx = re.search(r"static constexpr double kSkillTimerTextOffsetDx = (-?[\d.]+),", self.plugin)
         probe_text = re.search(
             r"static double g_TgSpriteTextOffsetDx = (-?[\d.]+), g_TgSpriteTextOffsetDy = (-?[\d.]+);",
             self.plugin)
-        self.assertIsNotNone(ship_text); self.assertIsNotNone(probe_text)
-        self.assertEqual(ship_text.groups(), probe_text.groups())
+        self.assertIsNotNone(ship_dx); self.assertIsNotNone(probe_text)
+        self.assertEqual(ship_dx.group(1), probe_text.group(1))
 
     def test_ship_draw_references_no_research_symbol(self):
         for sig in ("static void SkillTimerDraw(", "static void SkillTimerDrawArc(",
                     "static void SkillTimerDrawBar(", "static void SkillTimerDrawNumber(",
                     "static void SkillTimerDrawFade(", "static void SkillTimerDrawStyle(",
                     "static void SkillTimerReadRow(", "static RValue SkillTimerColour(",
+                    "static bool SkillTimerResolveRowObject(", "static int SkillTimerToggleTwin(",
+                    "static std::string SkillTimerTableRowsLine(",
                     "static void SkillTimerDrawRectOutlineFraction(",
                     "static void SkillTimerStats(", "static std::string SkillTimerRowCountersLine(",
                     "static std::string SkillTimerAggregateCountersLine("):
@@ -1190,6 +1198,152 @@ class SkillTimerShipContractTests(unittest.TestCase):
         self.assertIn(f'<span class="lbl" style="width:auto;flex:1">{label}', self.panel)
         self.assertIn(label, self.release_notes)
         self.assertIn(label, self.readme)
+
+    # ---- session 8: the countdown's own table (D-S1) ----------------------
+    # The countdown reads kSkillTimerRows and nothing else; each row is one
+    # the duration sweep measured (docs/toggle-skills-research.md, "Duration
+    # sweep (session 8)" -> "Results", status `ship`).
+
+    COUNTDOWN_ROW = re.compile(
+        r'\{\s*"(?P<ability>[A-Za-z]+)",\s*HeroSiege::Objects::GameObject::(?P<obj>\w+),\s*'
+        r'(?P<own>nullptr|"isMyClient"),\s*(?P<first>[\d.]+),\s*"(?P<display>[^"]+)"\s*\}')
+    # abilityId -> (object, ownership, measuredFirst): session 8's ship set.
+    SHIP_SET = {
+        "healingZone": ("White_Mage_Healing_Zone_obj", "nullptr", 1152.0),
+        "bladeBarrier": ("Samurai_Blade_Barrier_obj", '"isMyClient"', 1296.0),
+        "soulSpurn": ("White_Mage_Soul_Spurn_AOE_obj", '"isMyClient"', 144.0),
+        "maelstromOfFrost": ("Prophet_Maelstrom_obj", '"isMyClient"', 4320.0),
+    }
+
+    def countdown_table(self):
+        start = self.header.index("inline constexpr SkillTimerRow kSkillTimerRows[] = {")
+        return self.header[start:self.header.index("\n};", start)]
+
+    def countdown_rows(self):
+        return [m.groupdict() for m in self.COUNTDOWN_ROW.finditer(self.countdown_table())]
+
+    def countdown_text_blocks(self):
+        # The countdown's own bullet, README row and panel help - the three
+        # places a player reads which skills it covers.
+        notes = self.release_notes[self.release_notes.index("**Timed skill countdown.**"):]
+        notes = notes[:notes.index("\n- **")] if "\n- **" in notes else notes
+        readme = [line for line in self.readme.splitlines()
+                  if line.startswith("| **Timed skill countdown**")][0]
+        panel = self.panel[self.panel.index("Timed skill countdown<br>"):][:1200]
+        return {"release notes": notes, "README": readme, "panel help": panel}
+
+    def test_countdown_iterates_the_countdown_table_not_the_toggle_table(self):
+        rows = self.countdown_rows()
+        self.assertEqual(
+            {r["ability"]: (r["obj"], r["own"], float(r["first"])) for r in rows}, self.SHIP_SET)
+        self.assertEqual(len(rows), len(self.SHIP_SET), self.countdown_table())
+        self.assertIn("inline constexpr int kSkillTimerRowCount =", self.header)
+        draw = function_body(self.stripped, "static void SkillTimerDraw(")
+        for needle in ("r < ForgePact::kSkillTimerRowCount", "ForgePact::kSkillTimerRows[r]",
+                       "g_SkillTimerTableIds.Get(r)", "g_SkillTimerRowState[r]", "g_StRow[r]"):
+            self.assertIn(needle, draw, needle)
+        for banned in ("kToggleSkillRowCount", "g_ToggleTableIds"):
+            self.assertNotIn(banned, draw, banned)
+        for decl in ("static ForgePact::SkillTimerRowState g_SkillTimerRowState[ForgePact::kSkillTimerRowCount];",
+                     "static SkillTimerRowCounters g_StRow[ForgePact::kSkillTimerRowCount] = {};"):
+            self.assertIn(decl, self.stripped, decl)
+        self.assertIn("static void SkillTimerReadRow(const ForgePact::SkillTimerRow& row,", self.stripped)
+
+    def test_every_countdown_row_is_measured_in_the_research_doc(self):
+        doc = self.research_doc
+        sweep = doc.index("### Duration sweep (session 8)")
+        results = doc[doc.index("#### Results", sweep):]
+        table_lines = [line for line in results.splitlines() if line.startswith("|")]
+        for row in self.countdown_rows():
+            first = "%.6f" % float(row["first"])
+            hits = [line for line in table_lines
+                    if f"`{row['obj']}`" in line and first in line
+                    and len(line.split("|")) > 12 and line.split("|")[11].strip() == "ship"]
+            self.assertTrue(hits, f"{row['ability']}: no `ship` Results row naming {row['obj']} with {first}")
+
+    def test_countdown_rows_use_sdk_constants_and_no_talent_ids(self):
+        objects_hpp = (SDK_INCLUDE / "objects.hpp").read_text(encoding="utf-8")
+        struct = self.header[self.header.index("struct SkillTimerRow {"):]
+        struct = struct[:struct.index("};")]
+        self.assertNotIn("int ", struct)          # no talent id column: ids resolve at runtime (D-P1)
+        self.assertNotIn("talentId", self.countdown_table())
+        for row in self.countdown_rows():
+            self.assertRegex(objects_hpp, rf"\b{row['obj']}\s*=\s*\d+,", row)
+            # Every runtime name lives in the header's table, never again in
+            # the plugin's player build.
+            self.assertNotIn(f'"{row["ability"]}"', self.stripped, row)
+            self.assertNotIn(row["obj"], self.stripped, row)
+        # Companion skills are out (owner, 2026-09-21): no row sits under the
+        # sentry parent, whose members this table's objects would be named for.
+        for banned in ("Turret", "Totem", "Hydra"):
+            self.assertNotIn(banned, self.countdown_table(), banned)
+
+    def test_both_tables_resolve_in_one_walk(self):
+        walk = function_body(self.plugin, "static bool ToggleTableResolveIds(")
+        self.assertEqual(walk.count('"ds_map_find_first"'), 1)
+        for needle in ("ForgePact::kToggleSkillRows[r].abilityId", "g_ToggleTableIds.Set(r, id)",
+                       "ForgePact::kSkillTimerRows[r].abilityId", "g_SkillTimerTableIds.Set(r, id)",
+                       "SkillTimerTableUnresolvedRows()"):
+            self.assertIn(needle, walk, needle)
+        due = function_body(self.plugin, "static bool ToggleTableResolveDue(")
+        self.assertIn("if (ToggleTableUnresolvedRows() + SkillTimerTableUnresolvedRows() == 0) return false;", due)
+        # No second walk anywhere: the countdown's ids come from this one.
+        self.assertEqual(self.stripped.count('"ds_map_find_first", { map }'), 1)
+        self.assertNotIn("ToggleTableResolveIds", function_body(self.plugin, "static void SkillTimerDraw("))
+
+    def test_guard_membership_is_toggle_table_only(self):
+        for sig in ("static int ToggleTableRowForTalentId(", "static RValue& HookTalentUseClass("):
+            body = function_body(self.plugin, sig)
+            for banned in ("kSkillTimerRow", "g_SkillTimerTableIds", "SkillTimerRow"):
+                self.assertNotIn(banned, body, sig + "/" + banned)
+        self.assertIn("ForgePact::kToggleSkillRowCount",
+                      function_body(self.plugin, "static int ToggleTableRowForTalentId("))
+
+    def test_player_text_names_every_countdown_row_and_no_other_skill_as_covered(self):
+        names = [row["display"] for row in self.countdown_rows()]
+        self.assertEqual(len(names), len(self.SHIP_SET))
+        for where, text in self.countdown_text_blocks().items():
+            for name in names:
+                self.assertIn(name, text, where)
+            # Not countdown skills: Crematus fails the spanning-timer rule,
+            # Lunar Orbit and Submerged Knives create no timed instance on a
+            # plain cast. The toggle marker's own text still names them.
+            for gone in ("Crematus", "Lunar Orbit", "Submerged Knives"):
+                self.assertNotIn(gone, text, where + "/" + gone)
+
+    def test_stat_prints_one_line_per_countdown_row(self):
+        stats = function_body(self.stripped, "static void SkillTimerStats(")
+        self.assertIn("r < ForgePact::kSkillTimerRowCount", stats)
+        self.assertIn("SkillTimerRowCountersLine(r)", stats)
+        self.assertIn("SkillTimerTableRowsLine()", stats)
+        self.assertNotIn("ToggleTableRowsLine()", stats)
+        row_line = function_body(self.stripped, "static std::string SkillTimerRowCountersLine(")
+        self.assertIn("ForgePact::kSkillTimerRows[row].abilityId", row_line)
+        ids_line = function_body(self.stripped, "static std::string SkillTimerTableRowsLine(")
+        for needle in ("ForgePact::kSkillTimerRows[r].abilityId", ":talentId=", "unresolved",
+                       "resolveWalks=", "unresolvedRows=", "SkillTimerTableUnresolvedRows()"):
+            self.assertIn(needle, ids_line, needle)
+        aggregate = function_body(self.stripped, "static std::string SkillTimerAggregateCountersLine(")
+        self.assertIn("ForgePact::kSkillTimerRowCount", aggregate)
+        self.assertNotIn("kToggleSkillRowCount", aggregate)
+
+    def test_number_anchors_above_the_box_top_font_independent(self):
+        # Session 8's owner finding: anchored from the box's bottom edge and
+        # hanging down, the text's clearance above the icon depended on the
+        # font's height. Anchored to the TOP edge with bottom alignment, the
+        # text's bottom sits kSkillTimerTextGap whole pixels above the icon
+        # whatever the font.
+        body = function_body(self.plugin, "static void SkillTimerDrawNumber(")
+        self.assertIn('"draw_set_valign", { RValue(2.0) }', body)
+        self.assertIn("y - kSkillTimerTextGap", body)
+        self.assertNotIn("kSkillTimerTextOffsetDy", self.plugin)
+        self.assertNotIn("y + h", body)
+        self.assertNotIn("string_height", body)   # bottom alignment gives the height for free
+        gap = re.findall(r"kSkillTimerTextGap = (-?[\d.]+)", self.plugin)
+        self.assertEqual(len(gap), 1, gap)
+        self.assertEqual(float(gap[0]), round(float(gap[0])))   # whole pixels (guide Known Limitations 18)
+        bar_gap = re.search(r"static constexpr double kSkillTimerBarGap = ([\d.]+),", self.plugin)
+        self.assertEqual(float(gap[0]), float(bar_gap.group(1)))   # `bar` and `number` sit alike
 
 
 class ToggleSkillTableContractTests(unittest.TestCase):
@@ -1367,7 +1521,9 @@ class ToggleSkillTableContractTests(unittest.TestCase):
                     "static RValue& HookTalentUseClass("):
             self.assertNotIn("ToggleTableResolveIds", function_body(self.plugin, sig), sig)
         due = function_body(self.plugin, "static bool ToggleTableResolveDue(")
-        self.assertIn("if (ToggleTableUnresolvedRows() == 0) return false;", due)
+        # Both tables' rows keep the walk due (session 8: the countdown's own
+        # table resolves in this same walk - test_both_tables_resolve_in_one_walk).
+        self.assertIn("if (ToggleTableUnresolvedRows() + SkillTimerTableUnresolvedRows() == 0) return false;", due)
         self.assertIn("CurrentRoomKey()", due)
         self.assertIn("INT64_MIN", due)          # an unreadable room is never stored
         self.assertIn("g_ToggleResolveWalked = false;", due)

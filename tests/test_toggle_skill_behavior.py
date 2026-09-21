@@ -111,6 +111,12 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
             implementation(cls.plugin, "static int ToggleTableUnresolvedRows("),
             implementation(cls.plugin, "static int ToggleTableRowForTalentId("),
             implementation(cls.plugin, "static std::string ToggleTableRowsLine("),
+            # Session 8: the countdown's own table's ids, filled by the same
+            # walk (not spliced, as above), so a scenario can resolve a
+            # countdown row independently of the toggle table.
+            implementation(cls.plugin, "struct SkillTimerTableIds {") + ";",
+            declaration(cls.plugin, "static SkillTimerTableIds g_SkillTimerTableIds"),
+            implementation(cls.plugin, "static int SkillTimerTableUnresolvedRows("),
             # P2 (the shipped indicator): the draw itself, and the slot
             # lookup it calls. `g_ToggleBorderOn`/the counters are plain
             # globals, spliced verbatim so a scenario can drive/inspect them
@@ -144,6 +150,8 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
             implementation(cls.plugin, "struct SkillTimerRowCounters {") + ";",
             declaration(cls.plugin, "static SkillTimerRowCounters g_StRow"),
             declaration(cls.plugin, "static volatile long g_StDrawExc"),
+            implementation(cls.plugin, "static bool SkillTimerResolveRowObject("),
+            implementation(cls.plugin, "static int SkillTimerToggleTwin("),
             implementation(cls.plugin, "static void SkillTimerReadRow("),
             implementation(cls.plugin, "static RValue SkillTimerColour("),
             implementation(cls.plugin, "static void SkillTimerDrawRectOutlineFraction("),
@@ -764,7 +772,7 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
         self.assertScenario("skilltimer/bar_subpixel_draws_nothing")
 
     def test_skilltimer_number_text_and_anchor(self):
-        for suffix in ("/count", "/x", "/y", ""):
+        for suffix in ("/count", "/x", "/y", "/valign_bottom", ""):
             self.assertScenario("skilltimer/number_text_and_anchor" + suffix)
 
     def test_skilltimer_number_zero_percent_draws_nothing(self):
@@ -786,6 +794,24 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
     def test_skilltimer_draw_throw_restores_and_counts(self):
         for suffix in ("/drawn", "", "/colour_restored", "/alpha_restored"):
             self.assertScenario("skilltimer/draw_throw_restores_and_counts" + suffix)
+
+    # ---- session 8: the countdown's own table (kSkillTimerRows) -----------
+
+    def test_skilltimer_non_toggle_row_makes_no_toggle_read(self):
+        for suffix in ("/drawn", "", "/no_toggle_count"):
+            self.assertScenario("skilltimer/non_toggle_row_makes_no_toggle_read" + suffix)
+
+    def test_skilltimer_toggle_row_still_suppressed_when_on(self):
+        for suffix in ("", "/not_expired", "/rects", "/toggle_object_read"):
+            self.assertScenario("skilltimer/toggle_row_still_suppressed_when_on" + suffix)
+
+    def test_skilltimer_unresolved_countdown_row_skipped(self):
+        for suffix in ("", "/rects", "/no_instance_read"):
+            self.assertScenario("skilltimer/unresolved_countdown_row_skipped" + suffix)
+
+    def test_skilltimer_rows_keep_separate_latches(self):
+        for suffix in ("/first", "/second", "", "/fraction"):
+            self.assertScenario("skilltimer/rows_keep_separate_latches" + suffix)
 
 
 if __name__ == "__main__":

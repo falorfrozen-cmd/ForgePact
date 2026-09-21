@@ -93,9 +93,15 @@ enum class GameObject { White_Mage_Soul_Spurn_AOE_obj, UI_Hud_Talent_obj, Univer
                         // sweep enumerates, so its root table compiles
                         // against their real enumerators and resolves by name.
                         Player_Damage_Parent_obj, Skill_Controller_obj, Player_Buff_Parent_obj,
-                        Player_Curse_Parent_obj, Player_Sentry_Parent_obj, Player_Ability_Parent_obj };
+                        Player_Curse_Parent_obj, Player_Sentry_Parent_obj, Player_Ability_Parent_obj,
+                        // Session 8's ship set: the two countdown rows whose
+                        // objects no toggle-table row names, so the
+                        // countdown's own table compiles against them.
+                        White_Mage_Healing_Zone_obj, Samurai_Blade_Barrier_obj };
 inline const char* GetObjectName(GameObject g) {
     switch (g) {
+    case GameObject::White_Mage_Healing_Zone_obj: return "White_Mage_Healing_Zone_obj";
+    case GameObject::Samurai_Blade_Barrier_obj: return "Samurai_Blade_Barrier_obj";
     case GameObject::Player_Damage_Parent_obj: return "Player_Damage_Parent_obj";
     case GameObject::Skill_Controller_obj: return "Skill_Controller_obj";
     case GameObject::Player_Buff_Parent_obj: return "Player_Buff_Parent_obj";
@@ -238,6 +244,10 @@ static const double kDcObjIdx = 5318.0, kPlayerObjIdx = 7.0;   // what the stand
 static long g_ResolveCalls = 0;    // HhResolveLocalPlayer calls - must stay 0 (read/no_player_lookup)
 static long g_AnyCallCount = 0;    // every CallBuiltin call, of any name - indicator_off/no_runtime_calls
 static long g_NamesCalls = 0;      // variable_instance_get_names calls - the `tgl fields` snapshot
+// Session 8: every asset_get_index call by the name it asked for, so a
+// scenario can tell WHICH objects a draw resolved - e.g. that a countdown row
+// with no toggle twin never resolved a toggle-table row's object at all.
+static std::map<std::string, long> g_AssetLookups;
 static int g_RectangleDraws = 0;   // draw_rectangle calls this draw
 static double g_LastSetColour = -1, g_LastSetAlpha = -1;
 static const double kAoeObjIdx = 42.0, kHudObjIdx = 99.0;
@@ -266,7 +276,10 @@ static void resetDrawRecord() {
 // same discipline g_DrawnRects/g_SetAlphas already apply to draw_rectangle.
 struct ColourRectDraw { double x0 = 0, y0 = 0, x1 = 0, y1 = 0, colour = 0; };
 struct LineDraw { double x0 = 0, y0 = 0, x1 = 0, y1 = 0; };
-struct TextDraw { double x = 0, y = 0; std::string text; };
+// `valign` is the vertical alignment in force when the text was drawn (the
+// last draw_set_valign before it), so a scenario can assert the anchor's
+// meaning, not only its coordinates.
+struct TextDraw { double x = 0, y = 0; std::string text; double valign = -1; };
 static std::vector<ColourRectDraw> g_ColourRectDraws;
 static std::vector<LineDraw> g_LineDraws;
 static std::vector<TextDraw> g_TextDraws;
@@ -297,6 +310,7 @@ struct FakeRunner {
         const std::string fn = name;
         if (fn == "asset_get_index") {
             const std::string want = args[0].ToString();
+            ++g_AssetLookups[want];
             if (want == "UI_Hud_Talent_obj") return RValue(world.hudTalentObjectResolves ? kHudObjIdx : -1.0);
             if (want == "Universal_Double_Cast_obj") {
                 ++g_DcResolveCalls;
@@ -492,7 +506,7 @@ struct FakeRunner {
             return RValue();
         }
         if (fn == "draw_text") {
-            g_TextDraws.push_back({ args[0].ToDouble(), args[1].ToDouble(), args[2].ToString() });
+            g_TextDraws.push_back({ args[0].ToDouble(), args[1].ToDouble(), args[2].ToString(), g_LastSetValign });
             return RValue();
         }
         if (fn == "draw_get_font") return RValue(kPrevFont);
@@ -585,7 +599,7 @@ static void resetStRow(int r) {
     g_StRow[r].unresolved = 0; g_StRow[r].noSlot = 0; g_StRow[r].latched = 0; g_StRow[r].unlatched = 0;
 }
 static void resetSkillTimer() {
-    for (int r = 0; r < ForgePact::kToggleSkillRowCount; ++r) {
+    for (int r = 0; r < ForgePact::kSkillTimerRowCount; ++r) {
         g_SkillTimerRowState[r] = ForgePact::SkillTimerRowState{};
         resetStRow(r);
     }
@@ -1785,14 +1799,35 @@ int main() {
     }
 
     // ---- issue #55: the timed-skill countdown (`skilltimer`) ---------------
-    // Row 0 (soulSpurn) resolved, the other four left unresolved - the same
-    // convention the indicator/guard scenarios above use. g_ToggleBorderOn is
-    // forced false throughout: several looks below share draw_rectangle/
-    // draw_set_alpha with the border's own marker, and a leftover `true` from
-    // an earlier block would draw a second, unrelated pass into the same
-    // recordings.
+    // Session 8: the countdown reads its own table, kSkillTimerRows, and its
+    // ids come from g_SkillTimerTableIds, never the toggle table's. Every
+    // scenario written before that table drives the countdown's soulSpurn
+    // row - the row whose `isMyClient` ownership and toggle twin (toggle row
+    // soulSpurn, marker `purgatory`) the Soul Spurn fixture instances below
+    // were written for - resolved to the fixture slot's talent id, every
+    // other countdown row left unresolved. The toggle table keeps its own
+    // row 0 resolved, the same convention the indicator/guard scenarios above
+    // use. g_ToggleBorderOn is forced false throughout: several looks below
+    // share draw_rectangle/draw_set_alpha with the border's own marker, and a
+    // leftover `true` from an earlier block would draw a second, unrelated
+    // pass into the same recordings.
+    auto countdownRow = [](const char* abilityId) {
+        for (int r = 0; r < ForgePact::kSkillTimerRowCount; ++r)
+            if (std::string(ForgePact::kSkillTimerRows[r].abilityId) == abilityId) return r;
+        return -1;
+    };
+    const int kStSoul = countdownRow("soulSpurn");
+    const int kStHz = countdownRow("healingZone");
+    const int kStBb = countdownRow("bladeBarrier");
+    const int kStMf = countdownRow("maelstromOfFrost");
+    checkBool("skilltimer/fixture_rows_exist", kStSoul >= 0 && kStHz >= 0 && kStBb >= 0 && kStMf >= 0, true);
+    auto resolveOnlyCountdownRow = [](int row, int talentId) {
+        for (int r = 0; r < ForgePact::kSkillTimerRowCount; ++r) g_SkillTimerTableIds.Set(r, -1);
+        if (row >= 0) g_SkillTimerTableIds.Set(row, talentId);
+    };
     for (int r = 0; r < ForgePact::kToggleSkillRowCount; ++r) g_ToggleTableIds.Set(r, -1);
     g_ToggleTableIds.Set(0, kToggleIndicatorTalentId);
+    resolveOnlyCountdownRow(kStSoul, kToggleIndicatorTalentId);
     g_ToggleBorderOn.store(false);
 
     // Expected box for the default row0 fixture, through the shipped box
@@ -1820,7 +1855,7 @@ int main() {
     g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Bar);
     {
         SkillTimerDraw();
-        checkInt("skilltimer/no_instance_draws_nothing", (long long)g_StRow[0].noInstance, 1);
+        checkInt("skilltimer/no_instance_draws_nothing", (long long)g_StRow[kStSoul].noInstance, 1);
         checkInt("skilltimer/no_instance_draws_nothing/rects", (long long)g_ColourRectDraws.size(), 0);
     }
 
@@ -1831,7 +1866,7 @@ int main() {
     g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Bar);
     {
         SkillTimerDraw();
-        checkInt("skilltimer/unreadable_timer_draws_nothing", (long long)g_StRow[0].unreadable, 1);
+        checkInt("skilltimer/unreadable_timer_draws_nothing", (long long)g_StRow[kStSoul].unreadable, 1);
         checkInt("skilltimer/unreadable_timer_draws_nothing/rects", (long long)g_ColourRectDraws.size(), 0);
     }
 
@@ -1842,8 +1877,8 @@ int main() {
     g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Bar);
     {
         SkillTimerDraw();
-        checkInt("skilltimer/foreign_instance_not_counted", (long long)g_StRow[0].noInstance, 1);
-        checkInt("skilltimer/foreign_instance_not_counted/not_unreadable", (long long)g_StRow[0].unreadable, 0);
+        checkInt("skilltimer/foreign_instance_not_counted", (long long)g_StRow[kStSoul].noInstance, 1);
+        checkInt("skilltimer/foreign_instance_not_counted/not_unreadable", (long long)g_StRow[kStSoul].unreadable, 0);
     }
 
     // 5. A row whose toggle read says On never gets a countdown (D-T4) -
@@ -1853,22 +1888,22 @@ int main() {
     g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Bar);
     {
         SkillTimerDraw();
-        checkInt("skilltimer/toggle_on_suppresses", (long long)g_StRow[0].toggleOn, 1);
+        checkInt("skilltimer/toggle_on_suppresses", (long long)g_StRow[kStSoul].toggleOn, 1);
         checkInt("skilltimer/toggle_on_suppresses/rects", (long long)g_ColourRectDraws.size(), 0);
     }
 
     // 6. An unresolved row's talent id is skipped and counted, the same
     //    fail-safe the indicator applies.
     resetWorld(); resetSkillTimer(); resetSkillTimerDrawRecord();
-    g_ToggleTableIds.Set(0, -1);
+    g_SkillTimerTableIds.Set(kStSoul, -1);
     world.instances = { WithTimer(OwnUnmarked(), MakeReal(50.0)) };
     g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Bar);
     {
         SkillTimerDraw();
-        checkInt("skilltimer/unresolved_row_skipped", (long long)g_StRow[0].unresolved, 1);
+        checkInt("skilltimer/unresolved_row_skipped", (long long)g_StRow[kStSoul].unresolved, 1);
         checkInt("skilltimer/unresolved_row_skipped/rects", (long long)g_ColourRectDraws.size(), 0);
     }
-    g_ToggleTableIds.Set(0, kToggleIndicatorTalentId);   // restore for the rest of this block
+    g_SkillTimerTableIds.Set(kStSoul, kToggleIndicatorTalentId);   // restore for the rest of this block
 
     // 7. A slot miss is charged to THIS mod's own noSlot, never to
     //    toggleborder's noHud/noRow0/noTalent counters (the shared lookup's
@@ -1880,7 +1915,7 @@ int main() {
     {
         g_TibNoHud = 0; resetTibRow(0);
         SkillTimerDraw();
-        checkInt("skilltimer/slot_miss_not_charged_to_toggleborder", (long long)g_StRow[0].noSlot, 1);
+        checkInt("skilltimer/slot_miss_not_charged_to_toggleborder", (long long)g_StRow[kStSoul].noSlot, 1);
         checkInt("skilltimer/slot_miss_not_charged_to_toggleborder/tibNoHud", g_TibNoHud, 0);
         checkInt("skilltimer/slot_miss_not_charged_to_toggleborder/tibRowNoSlot", (long long)g_TibRow[0].noSlot, 0);
     }
@@ -1985,9 +2020,12 @@ int main() {
     SkillTimerDraw();
     checkInt("skilltimer/bar_subpixel_draws_nothing", (long long)g_ColourRectDraws.size(), 0);
 
-    // 15. `number`: the fraction as a whole percentage, centred and anchored
-    //     above the icon at the box's bottom edge plus the live-confirmed
-    //     text offset.
+    // 15. `number`: the fraction as a whole percentage, centred, with its
+    //     BOTTOM edge kSkillTimerTextGap above the box's TOP edge (session 8,
+    //     owner: anchored from the bottom edge and hanging down, the text sat
+    //     partly behind the icon in the ship's taller font). Bottom vertical
+    //     alignment is what makes the gap font-independent, so it is
+    //     asserted too.
     resetWorld(); resetSkillTimer(); resetSkillTimerDrawRecord();
     g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Number);
     world.instances = { WithTimer(OwnUnmarked(), MakeReal(100.0)) };
@@ -1997,11 +2035,12 @@ int main() {
     SkillTimerDraw();
     {
         const double tx = stEx + stEw / 2.0 + kSkillTimerTextOffsetDx;
-        const double ty = stEy + stEh + kSkillTimerTextOffsetDy;
+        const double ty = stEy - kSkillTimerTextGap;
         checkInt("skilltimer/number_text_and_anchor/count", (long long)g_TextDraws.size(), 1);
         if (!g_TextDraws.empty()) {
             checkNear("skilltimer/number_text_and_anchor/x", g_TextDraws.back().x, tx);
             checkNear("skilltimer/number_text_and_anchor/y", g_TextDraws.back().y, ty);
+            checkNear("skilltimer/number_text_and_anchor/valign_bottom", g_TextDraws.back().valign, 2.0);
             checkBool("skilltimer/number_text_and_anchor", g_TextDraws.back().text == "42%", true);
         }
     }
@@ -2090,10 +2129,101 @@ int main() {
     world.drawLineThrows = true;
     g_LastSetColour = -999; g_LastSetAlpha = -999;
     SkillTimerDraw();
-    checkInt("skilltimer/draw_throw_restores_and_counts/drawn", (long long)g_StRow[0].drawn, 0);
+    checkInt("skilltimer/draw_throw_restores_and_counts/drawn", (long long)g_StRow[kStSoul].drawn, 0);
     checkInt("skilltimer/draw_throw_restores_and_counts", g_StDrawExc, 1);
     checkNear("skilltimer/draw_throw_restores_and_counts/colour_restored", g_LastSetColour, kPrevColour);
     checkNear("skilltimer/draw_throw_restores_and_counts/alpha_restored", g_LastSetAlpha, kPrevAlpha);
+    world.drawLineThrows = false;
+
+    // ---- session 8: the countdown's own table (kSkillTimerRows) -----------
+
+    // 21. A countdown row with no toggle twin (healingZone) makes no toggle
+    //     read at all: no toggle-table row's object is even resolved. Its
+    //     instance's `isMyClient` is unreadable on purpose - the row ships
+    //     with no ownership field (session 8 measured `own=unreadable`), so
+    //     every instance is own, and a toggle read of any twin would have
+    //     answered Unreadable and suppressed it. Drawing proves neither ran.
+    resetWorld(); resetSkillTimer(); resetSkillTimerDrawRecord();
+    resolveOnlyCountdownRow(kStHz, kToggleIndicatorTalentId);
+    g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Bar);
+    world.instances = { WithTimer(Unattributed(), MakeReal(1152.0)) };
+    g_AssetLookups.clear();
+    SkillTimerDraw();
+    {
+        long toggleLookups = 0;
+        for (int t = 0; t < ForgePact::kToggleSkillRowCount; ++t)
+            toggleLookups += g_AssetLookups[HeroSiege::Objects::GetObjectName(ForgePact::kToggleSkillRows[t].onObject)];
+        checkInt("skilltimer/non_toggle_row_makes_no_toggle_read/drawn", (long long)g_StRow[kStHz].drawn, 1);
+        checkInt("skilltimer/non_toggle_row_makes_no_toggle_read", toggleLookups, 0);
+        checkInt("skilltimer/non_toggle_row_makes_no_toggle_read/no_toggle_count",
+                 (long long)(g_StRow[kStHz].toggleOn + g_StRow[kStHz].toggleUnreadable), 0);
+    }
+
+    // 22. A countdown row that IS a toggle row (maelstromOfFrost) still runs
+    //     that toggle row's read first and is suppressed while it is on: an
+    //     own instance holding destroyTimer at the measured -1 is the toggle,
+    //     charged to toggleOn - not to `expired`, which is what the timer
+    //     read alone would have made of a -1.
+    resetWorld(); resetSkillTimer(); resetSkillTimerDrawRecord();
+    resolveOnlyCountdownRow(kStMf, kToggleIndicatorTalentId);
+    g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Bar);
+    world.instances = { WithTimer(OwnUnmarked(), MakeReal(-1.0)) };
+    g_AssetLookups.clear();
+    SkillTimerDraw();
+    checkInt("skilltimer/toggle_row_still_suppressed_when_on", (long long)g_StRow[kStMf].toggleOn, 1);
+    checkInt("skilltimer/toggle_row_still_suppressed_when_on/not_expired", (long long)g_StRow[kStMf].expired, 0);
+    checkInt("skilltimer/toggle_row_still_suppressed_when_on/rects", (long long)g_ColourRectDraws.size(), 0);
+    checkBool("skilltimer/toggle_row_still_suppressed_when_on/toggle_object_read",
+              g_AssetLookups[HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Prophet_Maelstrom_obj)] >= 1, true);
+
+    // 23. Every toggle-table row resolved, every countdown row not: the
+    //     countdown takes its ids from its own table only, so every row is
+    //     skipped as unresolved and no instance is even counted.
+    resetWorld(); resetSkillTimer(); resetSkillTimerDrawRecord();
+    resolveOnlyCountdownRow(-1, 0);
+    for (int t = 0; t < ForgePact::kToggleSkillRowCount; ++t) g_ToggleTableIds.Set(t, kToggleIndicatorTalentId + t);
+    g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Bar);
+    world.instances = { WithTimer(OwnUnmarked(), MakeReal(50.0)) };
+    {
+        const long enumBefore = g_InstanceEnumCalls;
+        SkillTimerDraw();
+        long unresolved = 0;
+        for (int r = 0; r < ForgePact::kSkillTimerRowCount; ++r) unresolved += g_StRow[r].unresolved;
+        checkInt("skilltimer/unresolved_countdown_row_skipped", unresolved, ForgePact::kSkillTimerRowCount);
+        checkInt("skilltimer/unresolved_countdown_row_skipped/rects", (long long)g_ColourRectDraws.size(), 0);
+        checkInt("skilltimer/unresolved_countdown_row_skipped/no_instance_read", g_InstanceEnumCalls - enumBefore, 0);
+    }
+    for (int t = 0; t < ForgePact::kToggleSkillRowCount; ++t) g_ToggleTableIds.Set(t, -1);
+    g_ToggleTableIds.Set(0, kToggleIndicatorTalentId);
+
+    // 24. Two countdown rows on two slots keep their own latches: Healing
+    //     Zone latches at 1152 and Blade Barrier at 1296 (session 8's first
+    //     readings); Healing Zone falling to 576 reads 50% while Blade
+    //     Barrier, unchanged, still reads 100%.
+    resetWorld(); resetSkillTimer(); resetSkillTimerDrawRecord();
+    resolveOnlyCountdownRow(kStHz, 252);
+    g_SkillTimerTableIds.Set(kStBb, 137);
+    world.row0 = { { 252.0, 100.0, 200.0, 50.0, 60.0 }, { 137.0, 300.0, 200.0, 50.0, 60.0 } };
+    world.objIndexByName[HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::White_Mage_Healing_Zone_obj)] = 600.0;
+    world.objIndexByName[HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Samurai_Blade_Barrier_obj)] = 601.0;
+    world.instancesByIndex[600.0] = { WithTimer(Unattributed(), MakeReal(1152.0)) };
+    world.instancesByIndex[601.0] = { WithTimer(OwnUnmarked(), MakeReal(1296.0)) };
+    g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Number);
+    SkillTimerDraw();
+    checkNear("skilltimer/rows_keep_separate_latches/first", g_SkillTimerRowState[kStHz].latch, 1152.0);
+    checkNear("skilltimer/rows_keep_separate_latches/second", g_SkillTimerRowState[kStBb].latch, 1296.0);
+    resetSkillTimerDrawRecord();
+    world.instancesByIndex[600.0] = { WithTimer(Unattributed(), MakeReal(576.0)) };
+    SkillTimerDraw();
+    checkBool("skilltimer/rows_keep_separate_latches",
+              std::fabs(g_SkillTimerRowState[kStHz].latch - 1152.0) < 1e-6
+              && std::fabs(g_SkillTimerRowState[kStBb].latch - 1296.0) < 1e-6, true);
+    {
+        bool half = false, full = false;
+        for (const TextDraw& t : g_TextDraws) { if (t.text == "50%") half = true; if (t.text == "100%") full = true; }
+        checkBool("skilltimer/rows_keep_separate_latches/fraction", half && full && g_TextDraws.size() == 2, true);
+    }
+    resolveOnlyCountdownRow(kStSoul, kToggleIndicatorTalentId);
 
     // ---- session 8: `tgprobe sweep`, every class's timed skill at once ----
     // Every root name the harness does not map answers kAoeObjIdx and

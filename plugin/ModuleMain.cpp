@@ -4643,6 +4643,18 @@ struct ToggleTableIds {
     void Set(int row, int value) { id[row].store(value); }
 };
 static ToggleTableIds g_ToggleTableIds;
+// The countdown's own table (ForgePact::kSkillTimerRows, session 8) keeps its
+// ids apart from the toggle table's, filled by the same walk below: a
+// countdown row is never a toggle-table member, so neither the border nor the
+// guard can ever key off one (the guard's membership stays
+// ToggleTableRowForTalentId's, toggle table only).
+struct SkillTimerTableIds {
+    std::atomic<int> id[ForgePact::kSkillTimerRowCount];
+    SkillTimerTableIds() { for (int r = 0; r < ForgePact::kSkillTimerRowCount; ++r) id[r].store(-1); }
+    int Get(int row) const { return id[row].load(); }
+    void Set(int row, int value) { id[row].store(value); }
+};
+static SkillTimerTableIds g_SkillTimerTableIds;
 static volatile long g_ToggleResolveWalks = 0;
 static bool g_ToggleResolveWalked = false;     // a walk has already run for the current room
 static bool g_ToggleResolveRoomKnown = false;
@@ -4658,6 +4670,15 @@ static int ToggleTableUnresolvedRows()
     return n;
 }
 
+static int SkillTimerTableUnresolvedRows()
+{
+    int n = 0;
+    for (int r = 0; r < ForgePact::kSkillTimerRowCount; ++r) {
+        if (g_SkillTimerTableIds.Get(r) < 0) ++n;
+    }
+    return n;
+}
+
 // Which table row a talent id belongs to, or -1. Membership for both mods.
 static int ToggleTableRowForTalentId(int talentId)
 {
@@ -4668,13 +4689,13 @@ static int ToggleTableRowForTalentId(int talentId)
     return -1;
 }
 
-// Whether a walk is worth attempting this second: only while a row is still
-// unresolved, and only once per room. A room key that cannot be read is never
-// stored and never counts as a change (the INT64_MIN sentinel is not compared
-// against a real key).
+// Whether a walk is worth attempting this second: only while a row of either
+// table is still unresolved, and only once per room. A room key that cannot be
+// read is never stored and never counts as a change (the INT64_MIN sentinel is
+// not compared against a real key).
 static bool ToggleTableResolveDue()
 {
-    if (ToggleTableUnresolvedRows() == 0) return false;
+    if (ToggleTableUnresolvedRows() + SkillTimerTableUnresolvedRows() == 0) return false;
     const int64_t key = CurrentRoomKey();
     if (key != INT64_MIN && (!g_ToggleResolveRoomKnown || g_ToggleResolveRoomKey != key)) {
         g_ToggleResolveRoomKnown = true;
@@ -4684,8 +4705,11 @@ static bool ToggleTableResolveDue()
     return !g_ToggleResolveWalked;
 }
 
-// One walk. Stores a row's id only when the key is a real, non-negative id, so
-// a malformed key can never become a row's id.
+// One walk, for both tables: the toggle table's rows and the countdown's own
+// (ForgePact::kSkillTimerRows) are matched against the same talent structs in
+// the same pass, so a second table costs no second walk. Stores a row's id
+// only when the key is a real, non-negative id, so a malformed key can never
+// become a row's id.
 static bool ToggleTableResolveIds()
 {
     RValue map;
@@ -4712,6 +4736,9 @@ static bool ToggleTableResolveIds()
                         for (int r = 0; r < ForgePact::kToggleSkillRowCount; ++r) {
                             if (name == ForgePact::kToggleSkillRows[r].abilityId) g_ToggleTableIds.Set(r, id);
                         }
+                        for (int r = 0; r < ForgePact::kSkillTimerRowCount; ++r) {
+                            if (name == ForgePact::kSkillTimerRows[r].abilityId) g_SkillTimerTableIds.Set(r, id);
+                        }
                     }
                 } catch (...) {}
             }
@@ -4719,7 +4746,7 @@ static bool ToggleTableResolveIds()
         try { key = g_Yytk->CallBuiltin("ds_map_find_next", { map, key }); }
         catch (...) { break; }
     }
-    return ToggleTableUnresolvedRows() == 0;
+    return ToggleTableUnresolvedRows() + SkillTimerTableUnresolvedRows() == 0;
 }
 
 // Printed by `toggleborder stat` and `toggleguard stat`: one entry per row, so
@@ -4998,9 +5025,11 @@ static void ToggleBorderStats()
 }
 
 // ===== Timed-skill countdown (issue #55; `skilltimer`) ======================
-// Draws how much of a timed cast is left over the cast's own hotbar slot -
-// the same table, the same slot lookup and the same toggle suppression as
-// the border above, with its own read (largest own reading of
+// Draws how much of a timed cast is left over the cast's own hotbar slot.
+// Its rows are its own table, ForgePact::kSkillTimerRows (session 8's
+// measured ship set, D-S1), not the border's; it shares the border's slot
+// lookup, and a row that is also a toggle-table row gets that row's toggle
+// suppression. Its own read (largest own reading of
 // ForgePact::kSkillTimerField, route B's latch) and its own four looks. Off
 // by default - SkillTimerDraw's very
 // first statement returns when the style is off, so a player who never picks
@@ -5008,16 +5037,17 @@ static void ToggleBorderStats()
 // (skilltimer/off_makes_no_runtime_calls), the same shape as
 // ToggleIndicatorDraw above and indicator_off/no_runtime_calls before it.
 static std::atomic<ForgePact::SkillTimerStyle> g_SkillTimerStyle{ ForgePact::SkillTimerStyle::Off };
-static ForgePact::SkillTimerRowState g_SkillTimerRowState[ForgePact::kToggleSkillRowCount];
+static ForgePact::SkillTimerRowState g_SkillTimerRowState[ForgePact::kSkillTimerRowCount];
 
 // Per-row: drawn (the style's draw call ran with no exception - not
 // necessarily visible, e.g. bar's sub-pixel guard or number's rounds-to-zero
 // guard), noInstance (no own instance - route B's latch dropped if it was
 // held), unreadable (an own instance exists but none has a numeric reading
 // of the shared timer field - latch untouched), expired (remaining <= 0 - never latches),
-// toggleOn/toggleUnreadable (D-T4: the row's own timer field is never even
-// read once the shipped toggle read decides On or Unreadable, the same
-// suppression the border applies to its own marker),
+// toggleOn/toggleUnreadable (D-T4, only for a row that is also a toggle-table
+// row: the row's own timer field is never even read once that toggle row's
+// shipped read decides On or Unreadable, the same suppression the border
+// applies to its own marker),
 // unresolved (the row's talent id has not resolved yet), noSlot (the shared
 // slot lookup failed - this mod's OWN count, never toggleborder's), latched/
 // unlatched (the latch was taken/updated, or dropped, THIS call). Aggregate
@@ -5027,8 +5057,34 @@ struct SkillTimerRowCounters {
     volatile long drawn, noInstance, unreadable, expired, toggleOn, toggleUnreadable,
                   unresolved, noSlot, latched, unlatched;
 };
-static SkillTimerRowCounters g_StRow[ForgePact::kToggleSkillRowCount] = {};
+static SkillTimerRowCounters g_StRow[ForgePact::kSkillTimerRowCount] = {};
 static volatile long g_StDrawExc = 0, g_StFontUnresolved = 0;
+
+// A countdown row's own object, by name, through the SDK enumerator the row
+// carries - the same resolve ToggleIndicatorResolveRowObject does for a
+// toggle row.
+static bool SkillTimerResolveRowObject(const ForgePact::SkillTimerRow& row, double& outObjIdx)
+{
+    try {
+        outObjIdx = g_Yytk->CallBuiltin("asset_get_index",
+            { RValue(std::string(HeroSiege::Objects::GetObjectName(row.object))) }).ToDouble();
+        return outObjIdx >= 0;
+    } catch (...) { return false; }
+}
+
+// The toggle-table row with this countdown row's `abilityId`, or -1. Soul
+// Spurn and Maelstrom of Frost are in both tables: their toggled-on state
+// still suppresses the countdown (D-T4). Every other countdown row has no
+// twin and makes no toggle read at all
+// (skilltimer/non_toggle_row_makes_no_toggle_read).
+static int SkillTimerToggleTwin(int row)
+{
+    const std::string id = ForgePact::kSkillTimerRows[row].abilityId;
+    for (int t = 0; t < ForgePact::kToggleSkillRowCount; ++t) {
+        if (id == ForgePact::kToggleSkillRows[t].abilityId) return t;
+    }
+    return -1;
+}
 
 // Scans the row's OWN instances - the exact ownership rule
 // ToggleIndicatorReadRow applies (row.ownershipField, nullptr = every
@@ -5043,13 +5099,13 @@ static volatile long g_StDrawExc = 0, g_StFontUnresolved = 0;
 // and the context's two named outcomes (an object with zero instances, and
 // instances with no readable timer) do not distinguish "unresolved" as a
 // third case.
-static void SkillTimerReadRow(const ForgePact::ToggleSkillRow& row, bool& anyOwn, bool& anyReadable, double& remaining)
+static void SkillTimerReadRow(const ForgePact::SkillTimerRow& row, bool& anyOwn, bool& anyReadable, double& remaining)
 {
     anyOwn = false;
     anyReadable = false;
     remaining = 0.0;
     double objIdx = -1.0;
-    if (!ToggleIndicatorResolveRowObject(row, objIdx)) return;
+    if (!SkillTimerResolveRowObject(row, objIdx)) return;
 
     long n = 0;
     try { n = (long)g_Yytk->CallBuiltin("instance_number", { RValue(objIdx) }).ToDouble(); }
@@ -5149,9 +5205,15 @@ static void SkillTimerDrawBar(double x, double y, double w, double h, double fra
         RValue(colour), RValue(colour), RValue(colour), RValue(colour), RValue(0.0) });
 }
 
-// `number`: the fraction as a whole-number percentage, above the icon at
-// `textoffset (0,-101)` measured from the box's BOTTOM edge (halign centre,
-// valign top) - the live-confirmed placement. At zero - including a fraction
+// `number`: the fraction as a whole-number percentage, centred above the
+// icon, its BOTTOM edge kSkillTimerTextGap whole pixels above the box's TOP
+// edge (halign centre, valign bottom), so the text grows upward and clears the
+// icon whatever height the font has. Session 8 (owner, live): the earlier
+// placement - `(0,-101)` from the box's bottom edge, hanging down, confirmed
+// with the inherited font - sat partly behind the icon in `__newfont6`, which
+// is taller; that placement depended on both the box's height and the font's.
+// The gap is the bar's own kSkillTimerBarGap, so `bar` and `number` sit alike.
+// At zero - including a fraction
 // that rounds to 0% - nothing is drawn at all (ship-only difference from the
 // probe, which keeps "0%" as its own liveness signal; decided 2026-09-21).
 // Resolves `__newfont6` by name every draw (Needs-human-judgement default):
@@ -5161,7 +5223,7 @@ static void SkillTimerDrawBar(double x, double y, double w, double h, double fra
 // before the first draw_set_*, the draw in its own inner try so a throw
 // there cannot skip the restores, each restore in its own try, and the font
 // restored only if this call actually applied one.
-static constexpr double kSkillTimerTextOffsetDx = 0.0, kSkillTimerTextOffsetDy = -101.0;
+static constexpr double kSkillTimerTextOffsetDx = 0.0, kSkillTimerTextGap = 2.0;
 
 static void SkillTimerDrawNumber(double x, double y, double w, double h, double fraction)
 {
@@ -5183,9 +5245,9 @@ static void SkillTimerDrawNumber(double x, double y, double w, double h, double 
             g_Yytk->CallBuiltin("draw_set_colour", { SkillTimerColour() });
             g_Yytk->CallBuiltin("draw_set_alpha", { RValue(1.0) });
             g_Yytk->CallBuiltin("draw_set_halign", { RValue(1.0) });   // fhalign_center
-            g_Yytk->CallBuiltin("draw_set_valign", { RValue(0.0) });   // fvalign_top: hang below the anchor
+            g_Yytk->CallBuiltin("draw_set_valign", { RValue(2.0) });   // fvalign_bottom: grow upward from the anchor
             const double tx = x + w / 2.0 + kSkillTimerTextOffsetDx;
-            const double ty = y + h + kSkillTimerTextOffsetDy;
+            const double ty = y - kSkillTimerTextGap;
             g_Yytk->CallBuiltin("draw_text", { RValue(tx), RValue(ty), RValue(std::to_string(pct) + "%") });
         } catch (...) { InterlockedIncrement(&g_StDrawExc); }
         try { g_Yytk->CallBuiltin("draw_set_valign", { prevValign }); } catch (...) {}
@@ -5224,10 +5286,14 @@ static void SkillTimerDrawStyle(ForgePact::SkillTimerStyle style, double x, doub
 
 // Called from Hook_DrawHudBuffs, directly after ToggleIndicatorDraw() -
 // outside every research block, no new hook. Off is this function's very
-// first statement (skilltimer/off_makes_no_runtime_calls). One row at a time:
-// unresolved id -> skip; the shipped toggle read decides On/Unreadable
-// suppression (D-T4, skilltimer/toggle_on_suppresses) before the timer's own
-// read runs at all; then route B's latch decision; then the shared slot
+// first statement (skilltimer/off_makes_no_runtime_calls). One row of
+// ForgePact::kSkillTimerRows at a time: unresolved id (the countdown table's
+// own, skilltimer/unresolved_countdown_row_skipped) -> skip; for a row that is
+// also a toggle-table row, that toggle row's shipped read decides On/Unreadable
+// suppression (D-T4, skilltimer/toggle_row_still_suppressed_when_on) before
+// the timer's own read runs at all - a row with no toggle twin makes no toggle
+// read (skilltimer/non_toggle_row_makes_no_toggle_read); then route B's latch
+// decision, one latch per row (skilltimer/rows_keep_separate_latches); then the shared slot
 // lookup, charged to THIS mod's own noSlot, never toggleborder's
 // (skilltimer/slot_miss_not_charged_to_toggleborder); then the style's own
 // draw, colour/alpha saved and restored around it exactly as
@@ -5238,19 +5304,23 @@ static void SkillTimerDraw()
     if (g_SkillTimerStyle.load() == ForgePact::SkillTimerStyle::Off) return;
     const ForgePact::SkillTimerStyle style = g_SkillTimerStyle.load();
 
-    for (int r = 0; r < ForgePact::kToggleSkillRowCount; ++r) {
-        const ForgePact::ToggleSkillRow& row = ForgePact::kToggleSkillRows[r];
+    for (int r = 0; r < ForgePact::kSkillTimerRowCount; ++r) {
+        const ForgePact::SkillTimerRow& row = ForgePact::kSkillTimerRows[r];
         SkillTimerRowCounters& c = g_StRow[r];
 
-        const int talentId = g_ToggleTableIds.Get(r);
+        const int talentId = g_SkillTimerTableIds.Get(r);
         if (talentId < 0) { InterlockedIncrement(&c.unresolved); continue; }   // skilltimer/unresolved_row_skipped
 
-        ForgePact::ToggleIndicatorReadDetail toggleDetail;
-        ToggleIndicatorReadRow(row, &toggleDetail, /*treatOwnAsForeign=*/false);
-        const ForgePact::ToggleIndicatorState toggleState =
-            ForgePact::ToggleIndicatorModel::Decide(toggleDetail, ForgePact::ToggleRowRequiresMark(row));
-        if (toggleState == ForgePact::ToggleIndicatorState::On) { InterlockedIncrement(&c.toggleOn); continue; }
-        if (toggleState == ForgePact::ToggleIndicatorState::Unreadable) { InterlockedIncrement(&c.toggleUnreadable); continue; }
+        const int twin = SkillTimerToggleTwin(r);
+        if (twin >= 0) {
+            const ForgePact::ToggleSkillRow& toggleRow = ForgePact::kToggleSkillRows[twin];
+            ForgePact::ToggleIndicatorReadDetail toggleDetail;
+            ToggleIndicatorReadRow(toggleRow, &toggleDetail, /*treatOwnAsForeign=*/false);
+            const ForgePact::ToggleIndicatorState toggleState =
+                ForgePact::ToggleIndicatorModel::Decide(toggleDetail, ForgePact::ToggleRowRequiresMark(toggleRow));
+            if (toggleState == ForgePact::ToggleIndicatorState::On) { InterlockedIncrement(&c.toggleOn); continue; }
+            if (toggleState == ForgePact::ToggleIndicatorState::Unreadable) { InterlockedIncrement(&c.toggleUnreadable); continue; }
+        }
 
         bool anyOwn = false, anyReadable = false;
         double remaining = 0.0;
@@ -5294,7 +5364,7 @@ static void SkillTimerDraw()
 static std::string SkillTimerRowCountersLine(int row)
 {
     const SkillTimerRowCounters& c = g_StRow[row];
-    return std::string(ForgePact::kToggleSkillRows[row].abilityId)
+    return std::string(ForgePact::kSkillTimerRows[row].abilityId)
         + " drawn=" + std::to_string(c.drawn) + " noInstance=" + std::to_string(c.noInstance)
         + " unreadable=" + std::to_string(c.unreadable) + " expired=" + std::to_string(c.expired)
         + " toggleOn=" + std::to_string(c.toggleOn) + " toggleUnreadable=" + std::to_string(c.toggleUnreadable)
@@ -5302,14 +5372,14 @@ static std::string SkillTimerRowCountersLine(int row)
         + " latched=" + std::to_string(c.latched) + " unlatched=" + std::to_string(c.unlatched);
 }
 
-// Every field above is a SUM over the five shipped rows, same reasoning as
-// ToggleBorderCountersLine - said out loud so it is not misread as a
+// Every field above is a SUM over the countdown table's rows, same reasoning
+// as ToggleBorderCountersLine - said out loud so it is not misread as a
 // per-draw total.
 static std::string SkillTimerAggregateCountersLine()
 {
     long drawn = 0, noInstance = 0, unreadable = 0, expired = 0, toggleOn = 0, toggleUnreadable = 0,
          unresolved = 0, noSlot = 0, latched = 0, unlatched = 0;
-    for (int r = 0; r < ForgePact::kToggleSkillRowCount; ++r) {
+    for (int r = 0; r < ForgePact::kSkillTimerRowCount; ++r) {
         const SkillTimerRowCounters& c = g_StRow[r];
         drawn += c.drawn; noInstance += c.noInstance; unreadable += c.unreadable; expired += c.expired;
         toggleOn += c.toggleOn; toggleUnreadable += c.toggleUnreadable; unresolved += c.unresolved;
@@ -5321,7 +5391,23 @@ static std::string SkillTimerAggregateCountersLine()
         + " unresolved=" + std::to_string(unresolved) + " noSlot=" + std::to_string(noSlot)
         + " latched=" + std::to_string(latched) + " unlatched=" + std::to_string(unlatched)
         + " drawExc=" + std::to_string(g_StDrawExc) + " fontUnresolved=" + std::to_string(g_StFontUnresolved)
-        + " (summed over " + std::to_string(ForgePact::kToggleSkillRowCount) + " rows)";
+        + " (summed over " + std::to_string(ForgePact::kSkillTimerRowCount) + " rows)";
+}
+
+// The countdown table's resolved talent ids, one entry per row - the
+// ToggleTableRowsLine shape, for this table: which rows the countdown covers
+// right now, rather than trusting that they all resolved. `resolveWalks=` is
+// the one walk both tables share.
+static std::string SkillTimerTableRowsLine()
+{
+    std::string line;
+    for (int r = 0; r < ForgePact::kSkillTimerRowCount; ++r) {
+        const int id = g_SkillTimerTableIds.Get(r);
+        line += std::string(ForgePact::kSkillTimerRows[r].abilityId) + ":talentId="
+              + (id >= 0 ? std::to_string(id) : std::string("unresolved")) + " ";
+    }
+    return line + "resolveWalks=" + std::to_string(g_ToggleResolveWalks)
+         + " unresolvedRows=" + std::to_string(SkillTimerTableUnresolvedRows());
 }
 
 // `skilltimer stat` is read-only: it stores nothing to g_SkillTimerStyle.
@@ -5329,8 +5415,8 @@ static void SkillTimerStats()
 {
     Out(std::string("skilltimer stat: style=") + ForgePact::SkillTimerStyleName(g_SkillTimerStyle.load())
         + " " + SkillTimerAggregateCountersLine());
-    Out("skilltimer stat: " + ToggleTableRowsLine());
-    for (int r = 0; r < ForgePact::kToggleSkillRowCount; ++r)
+    Out("skilltimer stat: " + SkillTimerTableRowsLine());
+    for (int r = 0; r < ForgePact::kSkillTimerRowCount; ++r)
         Out("skilltimer stat: " + SkillTimerRowCountersLine(r));
 }
 
@@ -26042,8 +26128,8 @@ static void RunCommand(const std::string& line)
             g_SkillTimerStyle.store(style);
             Out(std::string("skilltimer -> ") + ForgePact::SkillTimerStyleName(style)
                 + " (draws a countdown over each timed skill's hotbar slot; covers "
-                + std::to_string(ForgePact::kToggleSkillRowCount)
-                + " toggle-table rows - `skilltimer stat` lists them)");
+                + std::to_string(ForgePact::kSkillTimerRowCount)
+                + " timed skills - `skilltimer stat` lists them)");
             return;
         }
         Out("usage: skilltimer off|arc|bar|number|fade|stat");

@@ -93,21 +93,20 @@ those five it can actually draw on.
   toggle; without it, the double cast's extra cast goes through exactly as it
   does in the unmodded game. Your own presses, and double casts of every other
   skill, are not affected.
-- **Timed skill countdown.** For a plain cast of Soul Spurn or Maelstrom of
-  Frost, and Crematus where the game exposes that cast's own timer - not the
-  toggled-on state, which never gets a countdown - a new **Timed skill
-  countdown** dropdown in Mods (off by default) draws how much of the cast is
-  left over that skill's slot on the skill bar, and it disappears the moment
-  the cast ends. Lunar Orbit and Submerged Knives never show a countdown
-  either way: their plain cast never creates the timed instance the mod
-  reads, only their toggled-on state does, and a toggled-on skill never gets
-  a countdown. Pick one of four looks: **Arc** (a ring that empties
-  clockwise), **Bar** (a shrinking bar above the icon), **Number** (a
-  shrinking percentage above the icon) or **Fade** (a soft outline that dims
-  as time runs out). If you turn this on partway through a cast that is
-  already running, that one cast shows as full from the moment you turned it
-  on rather than its true remaining time; the next cast on that skill reads
-  correctly.
+- **Timed skill countdown.** A new **Timed skill countdown** dropdown in Mods
+  (off by default) draws how much of a timed cast is left over that skill's
+  slot on the skill bar, and it disappears the moment the cast ends. It
+  covers the four timed skills measured in-game so far:
+  Healing Zone (White Mage), Blade Barrier (Samurai),
+  Soul Spurn (White Mage) and Maelstrom of Frost (Prophet).
+  A toggled-on Soul Spurn or Maelstrom of Frost never gets a countdown. In a fight, hits can keep Blade Barrier up a little longer; the
+  countdown holds or refills to match and ends when the blades do. Pick one
+  of four looks: **Arc** (a ring that empties clockwise), **Bar** (a
+  shrinking bar above the icon), **Number** (a shrinking percentage above
+  the icon) or **Fade** (a soft outline that dims as time runs out). If you
+  turn this on partway through a cast that is already running, that one cast
+  shows as full from the moment you turned it on rather than its true
+  remaining time; the next cast on that skill reads correctly.
 - **Mods tab columns.** The Gameplay and Items mod lists are split into two
   columns, and the right column could end up longer than the left, leaving a
   gap under the left one. The left column is now always the longer one, and

@@ -3247,21 +3247,63 @@ the two sets of constants equal so they cannot drift):
   under 1px draws nothing (the D4 sub-pixel guard: a visible stub at
   `frac 0.0` was measured otherwise).
 - **number**: the fraction as a whole-number percentage, centred
-  horizontally, hanging below its own anchor at `(w/2, h) + (0, -101)`
-  measured from the box's bottom edge - the live-confirmed placement.
-  Resolves `__newfont6` by name every draw; when it does not resolve, falls
-  back to the inherited font and counts `fontUnresolved` rather than failing
-  the draw (see "The number font" below). At zero - including a fraction
-  that rounds to 0% - nothing is drawn in any style, the one place the ship
-  deliberately differs from the probe (which keeps "0%" as its own liveness
-  signal).
+  horizontally, its bottom edge `kSkillTimerTextGap` (2 px, the bar's own
+  gap) above the box's TOP edge - anchored at `(w/2, -2)` from the box's
+  top-left with bottom vertical alignment, so the text grows upward and
+  clears the icon whatever height the font has. Resolves `__newfont6` by
+  name every draw; when it does not resolve, falls back to the inherited
+  font and counts `fontUnresolved` rather than failing the draw (see "The
+  number font" below).
+
+The ship deliberately differs from the probe in two places:
+
+- **Nothing is drawn at zero** - including a fraction that rounds to 0% -
+  in any style (the probe keeps "0%" as its own liveness signal).
+- **The `number` look's vertical placement** (session 8, owner finding,
+  2026-09-21: "font is different so the number text was a little too low
+  (hiding partially behind the icon)"). The first ship port hung the text
+  below an anchor at `(w/2, h) + (0, -101)` from the box's bottom edge, the
+  placement confirmed live with the probe's inherited font. That placement
+  depends on both the box's height and the font's, and `__newfont6`, which
+  the ship sets every draw, is taller: the text slid down behind the icon.
+  Anchoring to the top edge with bottom alignment removes both dependencies
+  by construction; `string_height` per draw would also work, at one more
+  runtime call per draw for what the alignment gives for free, and guessing
+  a new offset (`-106` was once measured, on a different box with an
+  unrecorded font) would repeat the mistake. The probe keeps its own
+  bottom-anchored `textoffset` for research. The live check is folded into
+  the ship round's `live-ship: pass`.
 - **fade**: the same 10 bands as `arc`, whole rectangle each (no perimeter
   fraction), alpha `(1 - i/9) * fraction`.
 
 All four use gold `(255,215,0)`, the probe's own default and the colour every
 look was judged in.
 
-**Rows, and toggle suppression.** The countdown covers all five rows of the
+**Rows, since session 8: the countdown's own table.** The countdown now
+reads its rows from `kSkillTimerRows` (`plugin/include/ForgePact/SkillTimerMod.hpp`)
+and nothing else, filled from "Duration sweep (session 8)" -> "Results"
+below: exactly the four `ship` rows - Healing Zone (`healingZone`, no
+ownership field, measured 1152), Blade Barrier (`bladeBarrier`,
+`isMyClient`, 1296), Soul Spurn (`soulSpurn`, `isMyClient`, 144) and
+Maelstrom of Frost (`maelstromOfFrost`, `isMyClient`, 4320). Each row
+carries its recorded `measuredFirst` for the contract test that ties it to
+its Results line; the draw never divides by it (route B latches each cast's
+own first reading). The countdown table's talent ids resolve in the same
+`global.talentStructMap` walk as the toggle table's, kept in their own
+array; `skilltimer stat` prints the countdown table's ids and one line per
+countdown row. Guard membership (`toggleguard`) and the border
+(`toggleborder`) still read only the toggle table. A countdown row whose
+`abilityId` is also a toggle-table row (Soul Spurn, Maelstrom of Frost)
+runs that toggle row's read first and is suppressed while it is On or
+Unreadable, as below; Healing Zone and Blade Barrier have no toggle twin and
+make no toggle read at all. Crematus, Lunar Orbit and Submerged Knives are
+no longer countdown rows: session 8 measured Crematus' timer as a
+per-projectile lifetime (79.2 against 290 draws), and the other two never
+create a timed instance on a plain cast. The paragraph below is the
+round-1 design this replaced, kept for its reasoning about toggle
+suppression, which still holds for the two twin rows.
+
+**Rows, and toggle suppression (round 1).** The countdown covered all five rows of the
 shipped toggle table (`kToggleSkillRows`), reopening D-U9 for this table
 specifically at the user's request (2026-09-21: "All five rows" - toggled
 state suppressed). Every row's own instances are read for `destroyTimer`
@@ -3293,21 +3335,25 @@ shipped text sets its own font every draw (the inherited font shimmered);
 which font was actually active when `(0,-101)` was confirmed live is not
 recorded. The shipped code resolves `__newfont6` by name every draw
 (`asset_get_index`, never a hard-coded index) and falls back to the
-inherited font, counted `fontUnresolved`, rather than failing the draw - if
-the live check finds the text touching the icon, the fix is the offset
-constant, not a re-plan.
+inherited font, counted `fontUnresolved`, rather than failing the draw.
+Session 8's live check did find the text behind the icon in that font; the
+fix turned out to be the anchor rather than the offset constant (see the
+second ship-only difference above), since no single offset from the box's
+bottom edge is right for every font height.
 
 **Diagnostics.** `skilltimer stat` (a player command, like `toggleborder
-stat`) prints the current style, the shared table's resolved talent ids, the
+stat`) prints the current style, the countdown table's resolved talent ids
+(`kSkillTimerRows` since session 8; the toggle table's before), the
 aggregate counters (`drawn noInstance unreadable expired toggleOn
 toggleUnreadable unresolved noSlot latched unlatched drawExc
 fontUnresolved`) and one line per row named by `abilityId`.
 
 ### Duration sweep (session 8): every class's timed skill
 
-The countdown above reads its rows from the toggle table, so it can only ever
+The countdown above read its rows from the toggle table, so it could only ever
 cover those five skills - and two of them (Lunar Orbit, Submerged Knives) can
-never draw one. This section is the research round for the owner's request of
+never draw one. (Since this section's Results it reads its own table,
+`kSkillTimerRows` - see `### Decision` above, "Rows, since session 8".) This section is the research round for the owner's request of
 2026-09-21: extend the countdown to every class's timed skill, Healing Zone
 included, shipping only rows that were measured to carry a readable
 `destroyTimer`. One research build reads the timer on every candidate at once
