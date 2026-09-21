@@ -3653,14 +3653,18 @@ formula** - only the probe's own research *default* for the vertical offset
 does. Two earlier ship ports both got this wrong and both were fixed live by
 the owner using the research instrument itself:
 
-- Session 8 (2026-09-14): the first ship port hung the text below an anchor
+- Session 8 (2026-09-21): the first ship port hung the text below an anchor
   at `(w/2, h) + (0, -101)` from the box's bottom edge, confirmed live with
   the probe's inherited font. `__newfont6`, which the ship actually sets
   every draw, is taller, and the text slid down behind the icon. The fix at
   the time was to anchor from the box's TOP edge with bottom alignment
-  instead (`(w/2, -1)`, gap 1 px) - which removed the font dependency by
-  construction, but not by using the probe's own formula, and the owner
-  still saw it "a little too high" at the next live-ship check.
+  instead, at the bar's own gap (`kSkillTimerTextGap` 2 px) - which removed
+  the font dependency by construction, but not by using the probe's own
+  formula. At the next live-ship check (still 2026-09-21) the owner found it
+  "Too high now" at that 2 px gap - "this font should be 1 pixel lower" - so
+  `kSkillTimerTextGap` became 1 px (`(w/2, -1)`) while the bar kept 2 px.
+  That was still not the end of it: the owner still saw the text "a little
+  too high" at the FOLLOWING live-ship check.
 - 2026-09-21: rather than deriving a third font-independent formula, the
   owner tuned the research instrument itself - `tgprobe sprite style
   number` - on this same D-U12 box, in the ship's own `__newfont6`, working
@@ -4443,7 +4447,12 @@ holds the timer by about a second rather than resetting it to full. Under
 the latch rule the countdown therefore holds, or partially refills (a
 reading below the latch just raises the fraction), and ends with the
 blades. Measured on the owner's character only; how large the extension can
-get with other passives is not observed.
+get with other passives is not observed. **Superseded below**: the
+"Follow-up - where the refresh lands, and when" finding a few paragraphs
+down pins the actual mechanism - each hit steps `destroyTimer` itself by a
+small amount, roughly 28.8 (0.2 s) per hit - which is more precise than
+"holds or partially refills" and is what the shipped countdown's rise
+per hit reflects.
 
 **Follow-up - where the refresh lands, and when (live-ship check,
 2026-09-21).** With the ship build installed the owner hit enemies under
@@ -4579,3 +4588,341 @@ tgprobe sweep: sampler=on draws=21930 roots=6/6 unresolved=none capped=none reco
   Mercenary_Knight_Stacked_Rage_obj idx=2685 runtime=Mercenary_Knight_Stacked_Rage_obj root=Player_Damage_Parent_obj app=1 present=0 draws=13 first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 timerUnreadable=0 maxInst=1 own=readable firstFrame=303984 lastFrame=303996 totalDraws=13
   Universal_Player_Damage_obj idx=5356 runtime=Universal_Player_Damage_obj root=Player_Damage_Parent_obj app=5 present=0 draws=17 first=14.400000 last=-0.605664 min=-0.605664 max=14.400000 timerUnreadable=0 maxInst=2 own=readable firstFrame=305172 lastFrame=305766 totalDraws=85
 ```
+
+#### Rule coverage expectation
+
+D-S4 (owner, 2026-09-21, verbatim): "lets ship untested following a rule -
+if it has a cooldown and a duration and if its not a companion type skill, it
+should support". This section pins the SELECTION a fresh read of that rule
+makes against session 8's own `tgprobe talents dur` capture, pasted verbatim
+below (146 lines, this session's live capture - interoperability facts only:
+abilityId/duration/cooldown/tags/length, never a game script body). Eligible
+when `abilityDuration > 0` AND `abilityCooldown > 0.25` (the no-cooldown
+floor - Meteor Storm reads 0.25 and has none, per the owner), the talent is
+not one of the four explicit rows above (D-R1: those stay explicit and win),
+it is not on the measured deny-list (`kSkillTimerRuleDeny`,
+`plugin/include/ForgePact/SkillTimerMod.hpp`), and its abilityId resolves to
+an object by the generator's own name convention
+(`tools/gen_skill_timer_names.py`,
+`plugin/include/ForgePact/SkillTimerNames.hpp`).
+`test_rule_expectation_in_the_research_doc_matches_the_capture`
+(`tests/test_toggle_skill_contract.py`) recomputes this from the 146 lines
+below, the generated header, the deny-list and the four explicit rows, and
+asserts it against this table's `selected` rows - this is a documented
+EXPECTATION pinned by test, **not** shipped data: the runtime reads the live
+talent struct, not this table.
+
+```
+  talent 137 abilityId=bladeBarrier abilityAura=false abilityDuration=6 abilityCooldown=8 abilityLength=320 abilityTags=[15,18,2,0] predictedTotal=864.000000
+  talent 135 abilityId=explosiveKunai abilityAura=false abilityDuration=2 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,4,1,18] predictedTotal=288.000000
+  talent 277 abilityId=boosterShot abilityAura=false abilityDuration=8 abilityCooldown=0.250000 abilityLength=320 abilityTags=[12] predictedTotal=1152.000000
+  talent 147 abilityId=thunderShield abilityAura=false abilityDuration=30 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,12] predictedTotal=4320.000000
+  talent 317 abilityId=ageProliferation abilityAura=false abilityDuration=2.500000 abilityCooldown=0.250000 abilityLength=256 abilityTags=[15,18,3] predictedTotal=360.000000
+  talent 329 abilityId=orbOfFrost abilityAura=false abilityDuration=1.850000 abilityCooldown=1.750000 abilityLength=320 abilityTags=[15,18,4] predictedTotal=266.400000
+  talent 555 abilityId=warriorsPath abilityAura=false abilityDuration=10 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14] predictedTotal=1440.000000
+  talent 45 abilityId=agility abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 635 abilityId=bloodOfSpartan abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 53 abilityId=rocketTurret abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=240 abilityTags=[15,18,10,1] predictedTotal=720.000000
+  talent 199 abilityId=demonForm abilityAura=false abilityDuration=25 abilityCooldown=40 abilityLength=320 abilityTags=[15,25] predictedTotal=3600.000000
+  talent 221 abilityId=earthBind abilityAura=false abilityDuration=5 abilityCooldown=2 abilityLength=200 abilityTags=[15,18,3] predictedTotal=720.000000
+  talent 536 abilityId=soulBurn abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14] predictedTotal=720.000000
+  talent 645 abilityId=powerOfVoid abilityAura=false abilityDuration=15 abilityCooldown=40 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 298 abilityId=glory abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 322 abilityId=dimensionalDisplacement abilityAura=false abilityDuration=2 abilityCooldown=0.250000 abilityLength=240 abilityTags=[15,6,7] predictedTotal=288.000000
+  talent 350 abilityId=solarForm abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12,3,25] predictedTotal=3600.000000
+  talent 105 abilityId=revvedUp abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 386 abilityId=staticShock abilityAura=false abilityDuration=5 abilityCooldown=3 abilityLength=320 abilityTags=[15,18] predictedTotal=720.000000
+  talent 654 abilityId=coffeeMug abilityAura=false abilityDuration=12 abilityCooldown=20 abilityLength=320 abilityTags=[14] predictedTotal=1728.000000
+  talent 742 abilityId=relicManaDice abilityAura=false abilityDuration=4 abilityCooldown=20 abilityLength=320 abilityTags=[14,19] predictedTotal=576.000000
+  talent 100 abilityId=pickupRaid abilityAura=false abilityDuration=4 abilityCooldown=8 abilityLength=380 abilityTags=[15,18] predictedTotal=576.000000
+  talent 115 abilityId=cursedGround abilityAura=false abilityDuration=5 abilityCooldown=5 abilityLength=240 abilityTags=[15,18,3] predictedTotal=720.000000
+  talent 11 abilityId=charge abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,6,3,18,22] predictedTotal=720.000000
+  talent 158 abilityId=holyHammer abilityAura=false abilityDuration=4.500000 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,18,2] predictedTotal=648.000000
+  talent 170 abilityId=jungleCamouflage abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 359 abilityId=bloodMoon abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 379 abilityId=blender abilityAura=false abilityDuration=5 abilityCooldown=8 abilityLength=320 abilityTags=[15,16,2,0] predictedTotal=720.000000
+  talent 403 abilityId=satansMelody abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 636 abilityId=bottleOfRadogate abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 2009 abilityId=berserkersRage abilityAura=false abilityDuration=4 abilityCooldown=0.250000 abilityLength=320 abilityTags=[] predictedTotal=576.000000
+  talent 280 abilityId=defunctSurgeon abilityAura=false abilityDuration=25 abilityCooldown=65 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 649 abilityId=radBull abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 561 abilityId=shadeOfSobek abilityAura=false abilityDuration=8 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14,9] predictedTotal=1152.000000
+  talent 388 abilityId=symphonyOfThunder abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 642 abilityId=ghostlyPotion abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 143 abilityId=shadowStep abilityAura=false abilityDuration=2 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,18,6,7,3,0] predictedTotal=288.000000
+  talent 651 abilityId=surstromming abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 301 abilityId=counter abilityAura=false abilityDuration=6 abilityCooldown=15 abilityLength=320 abilityTags=[15,18,23,4] predictedTotal=864.000000
+  talent 305 abilityId=shieldWall abilityAura=false abilityDuration=25 abilityCooldown=5 abilityLength=320 abilityTags=[15,18,23,2] predictedTotal=3600.000000
+  talent 47 abilityId=arrowTurret abilityAura=false abilityDuration=8 abilityCooldown=0.250000 abilityLength=240 abilityTags=[15,18,10] predictedTotal=1152.000000
+  talent 325 abilityId=temporalHeroes abilityAura=false abilityDuration=25 abilityCooldown=40 abilityLength=96 abilityTags=[15,18,9] predictedTotal=3600.000000
+  talent 611 abilityId=sanguineLeech abilityAura=false abilityDuration=10 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14,9,18] predictedTotal=1440.000000
+  talent 181 abilityId=astropesBattleMaiden abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 369 abilityId=awakeningFury abilityAura=false abilityDuration=4 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14] predictedTotal=576.000000
+  talent 2023 abilityId=lethalTempo abilityAura=false abilityDuration=2 abilityCooldown=0.250000 abilityLength=320 abilityTags=[] predictedTotal=288.000000
+  talent 55 abilityId=gunnerDrone abilityAura=false abilityDuration=10 abilityCooldown=5 abilityLength=240 abilityTags=[15,18,10,5] predictedTotal=1440.000000
+  talent 640 abilityId=elixirOfUnworldlyCognition abilityAura=false abilityDuration=20 abilityCooldown=45 abilityLength=320 abilityTags=[14] predictedTotal=2880.000000
+  talent 50 abilityId=cannonTurret abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=240 abilityTags=[15,18,10,1] predictedTotal=720.000000
+  talent 64 abilityId=rapidFire abilityAura=false abilityDuration=25 abilityCooldown=60 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 90 abilityId=phantomBlade abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=280 abilityTags=[15,18,10,0] predictedTotal=720.000000
+  talent 422 abilityId=spiritOfForest abilityAura=false abilityDuration=120 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,18,9,24] predictedTotal=17280.000000
+  talent 7 abilityId=odinsFury abilityAura=false abilityDuration=2 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,3,18] predictedTotal=288.000000
+  talent 466 abilityId=mercenaryRangedBurstofAgility abilityAura=false abilityDuration=8 abilityCooldown=12 abilityLength=320 abilityTags=[] predictedTotal=1152.000000
+  talent 638 abilityId=caffeinatedCoffeeContainer abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 119 abilityId=amplifyDamage abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=240 abilityTags=[15,18] predictedTotal=720.000000
+  talent 140 abilityId=explodingBolas abilityAura=false abilityDuration=3 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,16,4,1,0] predictedTotal=432.000000
+  talent 647 abilityId=prismaticPotion abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 152 abilityId=ballLightning abilityAura=false abilityDuration=3 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,18,6,3,26] predictedTotal=432.000000
+  talent 299 abilityId=shieldSlam abilityAura=false abilityDuration=2 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,16,23,0] predictedTotal=288.000000
+  talent 311 abilityId=linkOfSand abilityAura=false abilityDuration=8 abilityCooldown=0.250000 abilityLength=280 abilityTags=[15,18,26] predictedTotal=1152.000000
+  talent 375 abilityId=butchersHook abilityAura=false abilityDuration=5 abilityCooldown=6.750000 abilityLength=320 abilityTags=[15,18,2] predictedTotal=720.000000
+  talent 204 abilityId=boneStorm abilityAura=false abilityDuration=8 abilityCooldown=6 abilityLength=320 abilityTags=[15,18,2] predictedTotal=1152.000000
+  talent 387 abilityId=stormCloud abilityAura=false abilityDuration=8 abilityCooldown=3 abilityLength=400 abilityTags=[15,18,3] predictedTotal=1152.000000
+  talent 652 abilityId=witchesPotion abilityAura=false abilityDuration=10 abilityCooldown=30 abilityLength=320 abilityTags=[14] predictedTotal=1440.000000
+  talent 732 abilityId=relicLargeBeer abilityAura=false abilityDuration=5 abilityCooldown=13 abilityLength=320 abilityTags=[15,18,19] predictedTotal=720.000000
+  talent 236 abilityId=satansMark abilityAura=false abilityDuration=5 abilityCooldown=3 abilityLength=280 abilityTags=[15,18,1] predictedTotal=720.000000
+  talent 26 abilityId=searingChains abilityAura=false abilityDuration=1 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,16,24,0] predictedTotal=144.000000
+  talent 36 abilityId=volcano abilityAura=false abilityDuration=4 abilityCooldown=4 abilityLength=380 abilityTags=[15,18,1] predictedTotal=576.000000
+  talent 643 abilityId=goldInlaidMysteriousPotion abilityAura=false abilityDuration=15 abilityCooldown=45 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 33 abilityId=hydra abilityAura=false abilityDuration=8 abilityCooldown=0.250000 abilityLength=240 abilityTags=[15,18,10,4,1] predictedTotal=1152.000000
+  talent 163 abilityId=theVeneratedOne abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 361 abilityId=blackHole abilityAura=false abilityDuration=4.500000 abilityCooldown=6 abilityLength=320 abilityTags=[15,18,3] predictedTotal=648.000000
+  talent 373 abilityId=fuelToFire abilityAura=false abilityDuration=12 abilityCooldown=50 abilityLength=330 abilityTags=[15,12] predictedTotal=1728.000000
+  talent 688 abilityId=relicLightCola abilityAura=false abilityDuration=10 abilityCooldown=25 abilityLength=320 abilityTags=[15,18,19] predictedTotal=1440.000000
+  talent 52 abilityId=landMine abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=240 abilityTags=[15,18,1] predictedTotal=720.000000
+  talent 413 abilityId=cravingForAnotherKilling abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 648 abilityId=proteinShake abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 227 abilityId=earthTotem abilityAura=false abilityDuration=15 abilityCooldown=0.250000 abilityLength=380 abilityTags=[15,18,10,1] predictedTotal=2160.000000
+  talent 520 abilityId=spiderlings abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=2000 abilityTags=[14] predictedTotal=720.000000
+  talent 249 abilityId=divineHealing abilityAura=false abilityDuration=3 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14] predictedTotal=432.000000
+  talent 600 abilityId=scarletSacrifice abilityAura=false abilityDuration=8 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14,18,9] predictedTotal=1152.000000
+  talent 661 abilityId=relicBookOfBelial abilityAura=false abilityDuration=5 abilityCooldown=25 abilityLength=320 abilityTags=[15,12,19] predictedTotal=720.000000
+  talent 81 abilityId=dissipatingTornado abilityAura=false abilityDuration=3 abilityCooldown=12 abilityLength=600 abilityTags=[15,18] predictedTotal=432.000000
+  talent 637 abilityId=bottleOfSake abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 108 abilityId=rogueChainsaw abilityAura=false abilityDuration=2.500000 abilityCooldown=0.250000 abilityLength=340 abilityTags=[15,18] predictedTotal=360.000000
+  talent 406 abilityId=progeniesOfTheGreatCataclysm abilityAura=false abilityDuration=20 abilityCooldown=40 abilityLength=320 abilityTags=[15,18,3] predictedTotal=2880.000000
+  talent 97 abilityId=hillbillyRage abilityAura=false abilityDuration=35 abilityCooldown=60 abilityLength=320 abilityTags=[15,12] predictedTotal=5040.000000
+  talent 550 abilityId=rimskinAssassin abilityAura=false abilityDuration=3 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14] predictedTotal=432.000000
+  talent 124 abilityId=summonFrenzy abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 590 abilityId=arcaneWrath abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14,12] predictedTotal=720.000000
+  talent 10 abilityId=seismicSlam abilityAura=false abilityDuration=2 abilityCooldown=0.250000 abilityLength=0 abilityTags=[15,3,16,0] predictedTotal=288.000000
+  talent 142 abilityId=forHonor abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 655 abilityId=corrosionDarkness abilityAura=false abilityDuration=10 abilityCooldown=30 abilityLength=320 abilityTags=[14] predictedTotal=1440.000000
+  talent 154 abilityId=thorsFury abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 307 abilityId=lastStand abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 735 abilityId=relicEsEnergy abilityAura=false abilityDuration=5 abilityCooldown=13 abilityLength=320 abilityTags=[15,18,19] predictedTotal=720.000000
+  talent 186 abilityId=shredderTrap abilityAura=false abilityDuration=4 abilityCooldown=1 abilityLength=240 abilityTags=[15,17,4] predictedTotal=576.000000
+  talent 367 abilityId=endingFate abilityAura=false abilityDuration=6 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14,1] predictedTotal=864.000000
+  talent 371 abilityId=chainRip abilityAura=false abilityDuration=2 abilityCooldown=1.250000 abilityLength=320 abilityTags=[15,16,0] predictedTotal=288.000000
+  talent 14 abilityId=ymirsChampion abilityAura=false abilityDuration=2 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,16,0] predictedTotal=288.000000
+  talent 644 abilityId=maggotEyeElixir abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 218 abilityId=tectonicBoulder abilityAura=false abilityDuration=2 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,18,4] predictedTotal=288.000000
+  talent 724 abilityId=relicRazerHeadSet abilityAura=false abilityDuration=5 abilityCooldown=9 abilityLength=320 abilityTags=[15,18,19] predictedTotal=720.000000
+  talent 572 abilityId=radiantPower abilityAura=false abilityDuration=15 abilityCooldown=30 abilityLength=320 abilityTags=[15,12] predictedTotal=2160.000000
+  talent 713 abilityId=relicDevilHorn abilityAura=false abilityDuration=5 abilityCooldown=25 abilityLength=320 abilityTags=[15,12,19] predictedTotal=720.000000
+  talent 336 abilityId=flashFreeze abilityAura=false abilityDuration=2 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,16,5,0] predictedTotal=288.000000
+  talent 376 abilityId=chainSwing abilityAura=false abilityDuration=2.500000 abilityCooldown=1 abilityLength=320 abilityTags=[15,18,6,0] predictedTotal=360.000000
+  talent 313 abilityId=spiritLink abilityAura=false abilityDuration=8 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14] predictedTotal=1152.000000
+  talent 2028 abilityId=wizardsWrath abilityAura=false abilityDuration=3 abilityCooldown=0.250000 abilityLength=320 abilityTags=[] predictedTotal=432.000000
+  talent 547 abilityId=zooooooom abilityAura=false abilityDuration=8 abilityCooldown=20 abilityLength=320 abilityTags=[15,12] predictedTotal=1152.000000
+  talent 357 abilityId=lunarForm abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12,25] predictedTotal=3600.000000
+  talent 377 abilityId=submergedKnives abilityAura=false abilityDuration=2.500000 abilityCooldown=1.500000 abilityLength=320 abilityTags=[15,16,3,0] predictedTotal=360.000000
+  talent 54 abilityId=masterMechanic abilityAura=false abilityDuration=25 abilityCooldown=40 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 656 abilityId=amunRasDemise abilityAura=false abilityDuration=10 abilityCooldown=30 abilityLength=320 abilityTags=[14] predictedTotal=1440.000000
+  talent 235 abilityId=chaosTotem abilityAura=false abilityDuration=10 abilityCooldown=30 abilityLength=380 abilityTags=[15,18,10,4,1] predictedTotal=1440.000000
+  talent 229 abilityId=stormTotem abilityAura=false abilityDuration=15 abilityCooldown=0.250000 abilityLength=380 abilityTags=[15,18,10,24] predictedTotal=2160.000000
+  talent 262 abilityId=forceOverwhelming abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 653 abilityId=wizardPotion abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 69 abilityId=setSail abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 370 abilityId=insatiableHunger abilityAura=false abilityDuration=25 abilityCooldown=50 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 646 abilityId=praetorianBlood abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 430 abilityId=maelstromOfFrost abilityAura=false abilityDuration=30 abilityCooldown=40 abilityLength=320 abilityTags=[15,16,3] predictedTotal=4320.000000
+  talent 2006 abilityId=fleetFeet abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=320 abilityTags=[] predictedTotal=720.000000
+  talent 136 abilityId=liveByTheSword abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 2036 abilityId=seedOfDestruction abilityAura=false abilityDuration=3 abilityCooldown=0.250000 abilityLength=2000 abilityTags=[] predictedTotal=432.000000
+  talent 343 abilityId=theEmbodimentOfAurgelmir abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,25] predictedTotal=3600.000000
+  talent 188 abilityId=demonsPresence abilityAura=false abilityDuration=25 abilityCooldown=60 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 639 abilityId=elixirOfDeath abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 395 abilityId=hyperCharged abilityAura=false abilityDuration=3 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14] predictedTotal=432.000000
+  talent 2018 abilityId=impetus abilityAura=false abilityDuration=2 abilityCooldown=0.250000 abilityLength=2000 abilityTags=[] predictedTotal=288.000000
+  talent 232 abilityId=fireTotem abilityAura=false abilityDuration=15 abilityCooldown=0.250000 abilityLength=380 abilityTags=[15,18,10,4] predictedTotal=2160.000000
+  talent 230 abilityId=spiritWolves abilityAura=false abilityDuration=120 abilityCooldown=0.250000 abilityLength=128 abilityTags=[15,18,9] predictedTotal=17280.000000
+  talent 252 abilityId=healingZone abilityAura=false abilityDuration=8 abilityCooldown=14 abilityLength=240 abilityTags=[15,18,3] predictedTotal=1152.000000
+  talent 483 abilityId=mercenarySpellWordofProtection abilityAura=false abilityDuration=7 abilityCooldown=24 abilityLength=320 abilityTags=[] predictedTotal=1008.000000
+  talent 20 abilityId=blazingTrail abilityAura=false abilityDuration=5 abilityCooldown=10 abilityLength=320 abilityTags=[15,3,18] predictedTotal=720.000000
+  talent 641 abilityId=emptyBottleOfVodka abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 745 abilityId=relicPickledBrain abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[15,18,19] predictedTotal=2160.000000
+  talent 308 abilityId=sandGuardian abilityAura=false abilityDuration=7 abilityCooldown=0.250000 abilityLength=280 abilityTags=[15,18,8] predictedTotal=1008.000000
+  talent 320 abilityId=sandsOfTime abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 2035 abilityId=gravesGrasp abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=2000 abilityTags=[] predictedTotal=720.000000
+  talent 28 abilityId=avatarOfFire abilityAura=false abilityDuration=40 abilityCooldown=60 abilityLength=320 abilityTags=[15,12] predictedTotal=5760.000000
+  talent 650 abilityId=sungLeesUnleashedRage abilityAura=false abilityDuration=10 abilityCooldown=30 abilityLength=320 abilityTags=[14] predictedTotal=1440.000000
+  talent 738 abilityId=relicWinnersDrug abilityAura=false abilityDuration=3 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14,19] predictedTotal=432.000000
+  talent 602 abilityId=ghostCrew abilityAura=false abilityDuration=4 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14,18,9] predictedTotal=576.000000
+  talent 2021 abilityId=awareness abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=320 abilityTags=[] predictedTotal=720.000000
+```
+
+Of the 146 talents captured with `abilityDuration > 0`: **17 are selected**
+by the rule, 3 are the four explicit rows (Soul Spurn was not re-cast in this
+session's capture, so only three of the four appear here), 3 are denied, 106
+have no object the generator's name convention resolves (potions, relic
+abilities, self-buffs such as `agility`, `demonForm`, `counter`, and any
+talent whose cast lives only as a player buff), and the remaining 17 fail the
+rule outright (cooldown at or below the no-cooldown floor). Blender is
+selected from its PLAIN cast's fields (`abilityDuration=5`,
+`abilityCooldown=8`); its toggled form was never measured, and while toggled
+its shared timer reads `-1` -> `Expired` -> nothing drawn, which is the
+intended no-countdown-while-toggled behaviour by accident of the value -
+record it as such, do not rely on it. Volcano is included (owner,
+2026-09-21: "Placed spell, include") - `Pyromancer_Volcano_obj` sits under
+`Player_Sentry_Damage_Parent_obj` > `Player_Damage_Parent_obj`, NOT under
+`Player_Sentry_Parent_obj`, so the generator does not exclude it as a
+companion.
+
+| abilityId | status | reason |
+|---|---|---|
+| `bladeBarrier` | explicit | one of the four explicit rows (D-R1); stays explicit |
+| `explosiveKunai` | fails rule | cooldown at or below the floor (cd=0.25) |
+| `boosterShot` | no object | no object by the generator's name convention |
+| `thunderShield` | no object | no object by the generator's name convention |
+| `ageProliferation` | fails rule | cooldown at or below the floor (cd=0.25) |
+| `orbOfFrost` | selected | dur=1.85 cd=1.75 |
+| `warriorsPath` | no object | no object by the generator's name convention |
+| `agility` | no object | no object by the generator's name convention |
+| `bloodOfSpartan` | no object | no object by the generator's name convention |
+| `rocketTurret` | no object | no object by the generator's name convention |
+| `demonForm` | no object | no object by the generator's name convention |
+| `earthBind` | selected | dur=5 cd=2 |
+| `soulBurn` | no object | no object by the generator's name convention |
+| `powerOfVoid` | no object | no object by the generator's name convention |
+| `glory` | no object | no object by the generator's name convention |
+| `dimensionalDisplacement` | no object | no object by the generator's name convention |
+| `solarForm` | no object | no object by the generator's name convention |
+| `revvedUp` | no object | no object by the generator's name convention |
+| `staticShock` | selected | dur=5 cd=3 |
+| `coffeeMug` | no object | no object by the generator's name convention |
+| `relicManaDice` | no object | no object by the generator's name convention |
+| `pickupRaid` | no object | no object by the generator's name convention |
+| `cursedGround` | selected | dur=5 cd=5 |
+| `charge` | fails rule | cooldown at or below the floor (cd=0.25) |
+| `holyHammer` | fails rule | cooldown at or below the floor (cd=0.25) |
+| `jungleCamouflage` | no object | no object by the generator's name convention |
+| `bloodMoon` | no object | no object by the generator's name convention |
+| `blender` | selected | dur=5 cd=8 |
+| `satansMelody` | no object | no object by the generator's name convention |
+| `bottleOfRadogate` | no object | no object by the generator's name convention |
+| `berserkersRage` | no object | no object by the generator's name convention |
+| `defunctSurgeon` | no object | no object by the generator's name convention |
+| `radBull` | no object | no object by the generator's name convention |
+| `shadeOfSobek` | no object | no object by the generator's name convention |
+| `symphonyOfThunder` | no object | no object by the generator's name convention |
+| `ghostlyPotion` | no object | no object by the generator's name convention |
+| `shadowStep` | fails rule | cooldown at or below the floor (cd=0.25) |
+| `surstromming` | no object | no object by the generator's name convention |
+| `counter` | no object | no object by the generator's name convention |
+| `shieldWall` | selected | dur=25 cd=5 |
+| `arrowTurret` | denied | on the measured deny-list (kSkillTimerRuleDeny) |
+| `temporalHeroes` | no object | no object by the generator's name convention |
+| `sanguineLeech` | no object | no object by the generator's name convention |
+| `astropesBattleMaiden` | no object | no object by the generator's name convention |
+| `awakeningFury` | no object | no object by the generator's name convention |
+| `lethalTempo` | no object | no object by the generator's name convention |
+| `gunnerDrone` | no object | no object by the generator's name convention |
+| `elixirOfUnworldlyCognition` | no object | no object by the generator's name convention |
+| `cannonTurret` | no object | no object by the generator's name convention |
+| `rapidFire` | no object | no object by the generator's name convention |
+| `phantomBlade` | no object | no object by the generator's name convention |
+| `spiritOfForest` | no object | no object by the generator's name convention |
+| `odinsFury` | fails rule | cooldown at or below the floor (cd=0.25) |
+| `mercenaryRangedBurstofAgility` | no object | no object by the generator's name convention |
+| `caffeinatedCoffeeContainer` | no object | no object by the generator's name convention |
+| `amplifyDamage` | fails rule | cooldown at or below the floor (cd=0.25) |
+| `explodingBolas` | no object | no object by the generator's name convention |
+| `prismaticPotion` | no object | no object by the generator's name convention |
+| `ballLightning` | fails rule | cooldown at or below the floor (cd=0.25) |
+| `shieldSlam` | no object | no object by the generator's name convention |
+| `linkOfSand` | fails rule | cooldown at or below the floor (cd=0.25) |
+| `butchersHook` | selected | dur=5 cd=6.75 |
+| `boneStorm` | selected | dur=8 cd=6 |
+| `stormCloud` | selected | dur=8 cd=3 |
+| `witchesPotion` | no object | no object by the generator's name convention |
+| `relicLargeBeer` | no object | no object by the generator's name convention |
+| `satansMark` | selected | dur=5 cd=3 |
+| `searingChains` | fails rule | cooldown at or below the floor (cd=0.25) |
+| `volcano` | selected | dur=4 cd=4 |
+| `goldInlaidMysteriousPotion` | no object | no object by the generator's name convention |
+| `hydra` | no object | no object by the generator's name convention |
+| `theVeneratedOne` | no object | no object by the generator's name convention |
+| `blackHole` | selected | dur=4.5 cd=6 |
+| `fuelToFire` | no object | no object by the generator's name convention |
+| `relicLightCola` | no object | no object by the generator's name convention |
+| `landMine` | fails rule | cooldown at or below the floor (cd=0.25) |
+| `cravingForAnotherKilling` | no object | no object by the generator's name convention |
+| `proteinShake` | no object | no object by the generator's name convention |
+| `earthTotem` | no object | no object by the generator's name convention |
+| `spiderlings` | no object | no object by the generator's name convention |
+| `divineHealing` | no object | no object by the generator's name convention |
+| `scarletSacrifice` | no object | no object by the generator's name convention |
+| `relicBookOfBelial` | no object | no object by the generator's name convention |
+| `dissipatingTornado` | no object | no object by the generator's name convention |
+| `bottleOfSake` | no object | no object by the generator's name convention |
+| `rogueChainsaw` | fails rule | cooldown at or below the floor (cd=0.25) |
+| `progeniesOfTheGreatCataclysm` | no object | no object by the generator's name convention |
+| `hillbillyRage` | no object | no object by the generator's name convention |
+| `rimskinAssassin` | no object | no object by the generator's name convention |
+| `summonFrenzy` | no object | no object by the generator's name convention |
+| `arcaneWrath` | no object | no object by the generator's name convention |
+| `seismicSlam` | fails rule | cooldown at or below the floor (cd=0.25) |
+| `forHonor` | no object | no object by the generator's name convention |
+| `corrosionDarkness` | no object | no object by the generator's name convention |
+| `thorsFury` | no object | no object by the generator's name convention |
+| `lastStand` | no object | no object by the generator's name convention |
+| `relicEsEnergy` | no object | no object by the generator's name convention |
+| `shredderTrap` | selected | dur=4 cd=1 |
+| `endingFate` | fails rule | cooldown at or below the floor (cd=0.25) |
+| `chainRip` | selected | dur=2 cd=1.25 |
+| `ymirsChampion` | fails rule | cooldown at or below the floor (cd=0.25) |
+| `maggotEyeElixir` | no object | no object by the generator's name convention |
+| `tectonicBoulder` | no object | no object by the generator's name convention |
+| `relicRazerHeadSet` | no object | no object by the generator's name convention |
+| `radiantPower` | no object | no object by the generator's name convention |
+| `relicDevilHorn` | no object | no object by the generator's name convention |
+| `flashFreeze` | fails rule | cooldown at or below the floor (cd=0.25) |
+| `chainSwing` | selected | dur=2.5 cd=1 |
+| `spiritLink` | no object | no object by the generator's name convention |
+| `wizardsWrath` | no object | no object by the generator's name convention |
+| `zooooooom` | no object | no object by the generator's name convention |
+| `lunarForm` | no object | no object by the generator's name convention |
+| `submergedKnives` | denied | on the measured deny-list (kSkillTimerRuleDeny) |
+| `masterMechanic` | no object | no object by the generator's name convention |
+| `amunRasDemise` | no object | no object by the generator's name convention |
+| `chaosTotem` | no object | no object by the generator's name convention |
+| `stormTotem` | no object | no object by the generator's name convention |
+| `forceOverwhelming` | no object | no object by the generator's name convention |
+| `wizardPotion` | no object | no object by the generator's name convention |
+| `setSail` | no object | no object by the generator's name convention |
+| `insatiableHunger` | no object | no object by the generator's name convention |
+| `praetorianBlood` | no object | no object by the generator's name convention |
+| `maelstromOfFrost` | explicit | one of the four explicit rows (D-R1); stays explicit |
+| `fleetFeet` | no object | no object by the generator's name convention |
+| `liveByTheSword` | no object | no object by the generator's name convention |
+| `seedOfDestruction` | no object | no object by the generator's name convention |
+| `theEmbodimentOfAurgelmir` | no object | no object by the generator's name convention |
+| `demonsPresence` | no object | no object by the generator's name convention |
+| `elixirOfDeath` | no object | no object by the generator's name convention |
+| `hyperCharged` | no object | no object by the generator's name convention |
+| `impetus` | no object | no object by the generator's name convention |
+| `fireTotem` | denied | on the measured deny-list (kSkillTimerRuleDeny) |
+| `spiritWolves` | no object | no object by the generator's name convention |
+| `healingZone` | explicit | one of the four explicit rows (D-R1); stays explicit |
+| `mercenarySpellWordofProtection` | no object | no object by the generator's name convention |
+| `blazingTrail` | selected | dur=5 cd=10 |
+| `emptyBottleOfVodka` | no object | no object by the generator's name convention |
+| `relicPickledBrain` | no object | no object by the generator's name convention |
+| `sandGuardian` | fails rule | cooldown at or below the floor (cd=0.25) |
+| `sandsOfTime` | no object | no object by the generator's name convention |
+| `gravesGrasp` | no object | no object by the generator's name convention |
+| `avatarOfFire` | selected | dur=40 cd=60 |
+| `sungLeesUnleashedRage` | no object | no object by the generator's name convention |
+| `relicWinnersDrug` | no object | no object by the generator's name convention |
+| `ghostCrew` | no object | no object by the generator's name convention |
+| `awareness` | no object | no object by the generator's name convention |

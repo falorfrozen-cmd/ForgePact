@@ -97,9 +97,17 @@ enum class GameObject { White_Mage_Soul_Spurn_AOE_obj, UI_Hud_Talent_obj, Univer
                         // Session 8's ship set: the two countdown rows whose
                         // objects no toggle-table row names, so the
                         // countdown's own table compiles against them.
-                        White_Mage_Healing_Zone_obj, Samurai_Blade_Barrier_obj };
+                        White_Mage_Healing_Zone_obj, Samurai_Blade_Barrier_obj,
+                        // Issue #55 follow-up (D-S4): two synthetic objects for
+                        // the rule map's own stand-in generated table below -
+                        // this harness does not carry the real 700+-entry
+                        // hs-game-sdk table, the same reason it does not carry
+                        // the real HeroSiege::Objects::GameObject enum.
+                        Rule_Alpha_obj, Rule_Beta_obj };
 inline const char* GetObjectName(GameObject g) {
     switch (g) {
+    case GameObject::Rule_Alpha_obj: return "Rule_Alpha_obj";
+    case GameObject::Rule_Beta_obj: return "Rule_Beta_obj";
     case GameObject::White_Mage_Healing_Zone_obj: return "White_Mage_Healing_Zone_obj";
     case GameObject::Samurai_Blade_Barrier_obj: return "Samurai_Blade_Barrier_obj";
     case GameObject::Player_Damage_Parent_obj: return "Player_Damage_Parent_obj";
@@ -550,6 +558,26 @@ static std::string TgProbeDescribeShort(const RValue& v, size_t cap = 80) {
 // PRODUCTION_TOGGLESKILL
 
 // PRODUCTION_SKILLTIMER
+
+// Issue #55 follow-up (D-S4): a small stand-in for the generated
+// SkillTimerNames.hpp table - this harness cannot carry the real 700+-entry
+// hs-game-sdk table (its own HeroSiege::Objects::GameObject enum above is
+// itself a small stand-in), so it hand-writes the two entries the rule/*
+// scenarios below need. tools/gen_skill_timer_names.py and
+// SkillTimerRuleContractTests (test_toggle_skill_contract.py) are what pin
+// the REAL generated header against hs-game-sdk; this table is test data,
+// never spliced from production. Deliberately carries no "arrowturret"-style
+// companion key, so rule/companion_never_enters_the_table can assert the
+// same structural absence the real generator's companion exclusion produces.
+namespace ForgePact {
+inline constexpr SkillTimerNameEntry kSkillTimerNames[] = {
+    { "rulealpha", HeroSiege::Objects::GameObject::Rule_Alpha_obj },
+    { "rulebeta", HeroSiege::Objects::GameObject::Rule_Beta_obj },
+};
+inline constexpr int kSkillTimerNameCount =
+    (int)(sizeof(kSkillTimerNames) / sizeof(kSkillTimerNames[0]));
+}
+static constexpr int kRuleAlphaIndex = 0, kRuleBetaIndex = 1;
 
 // PRODUCTION_FUNCTIONS
 
@@ -2379,6 +2407,143 @@ int main() {
                   std::string(TgProbeSweepOwnText(g_TgSweep[(int)kSweepObjA])) == "unreadable", true);
     }
     resetSweep();
+
+    // ---- issue #55 follow-up (D-S4): rule-based coverage of untested skills
+
+    // R1-R6. SkillTimerRuleModel::Eligible is a pure, game-independent
+    // function (header-side, SkillTimerMod.hpp) - these need no game API
+    // stand-in at all. Pinned points from context, "Eligibility, read once
+    // per room": cooldown == the floor is ineligible, a hair above it is
+    // eligible; duration == 0 is ineligible regardless of cooldown.
+    checkBool("rule/eligible_duration_and_cooldown",
+              ForgePact::SkillTimerRuleModel::Eligible(5.0, 5.0, true, false, false), true);
+    checkBool("rule/cooldown_at_floor_is_ineligible",
+              ForgePact::SkillTimerRuleModel::Eligible(5.0, ForgePact::kSkillTimerCooldownFloor, true, false, false), false);
+    checkBool("rule/cooldown_just_above_floor_is_eligible",
+              ForgePact::SkillTimerRuleModel::Eligible(5.0, ForgePact::kSkillTimerCooldownFloor + 0.0000001, true, false, false), true);
+    checkBool("rule/duration_zero_is_ineligible",
+              ForgePact::SkillTimerRuleModel::Eligible(0.0, 5.0, true, false, false), false);
+    checkBool("rule/unreadable_field_is_ineligible_and_counted",
+              ForgePact::SkillTimerRuleModel::Eligible(5.0, 5.0, /*readable=*/false, false, false), false);
+    checkBool("rule/deny_list_wins_over_the_rule",
+              ForgePact::SkillTimerRuleModel::Eligible(5.0, 5.0, true, /*denied=*/true, false), false);
+    checkBool("rule/explicit_row_wins_over_the_rule",
+              ForgePact::SkillTimerRuleModel::Eligible(5.0, 5.0, true, false, /*isExplicitRow=*/true), false);
+
+    // R7. Structural exclusion is the GENERATOR's job (tools/gen_skill_timer_names.py),
+    // not this pure function - this harness's own stand-in table above
+    // deliberately carries no "arrowturret"-style companion key, the same
+    // absence the real generator's Player_Sentry_Parent_obj exclusion
+    // produces (pinned for the real table by
+    // test_generated_table_has_no_companion_and_no_ambiguous_entry).
+    {
+        bool found = false;
+        for (int i = 0; i < ForgePact::kSkillTimerNameCount; ++i)
+            if (std::string(ForgePact::kSkillTimerNames[i].key) == "arrowturret") found = true;
+        checkBool("rule/companion_never_enters_the_table", found, false);
+    }
+
+    // The runtime-built rule map itself, driven directly (the same shape
+    // skilltimer/* scenarios drive g_SkillTimerTableIds - the walk that
+    // BUILDS this map is not spliced here; test_toggle_skill_contract.py
+    // pins it against the plugin's own text).
+    auto resetRuleEntries = [](std::vector<std::pair<int, int>> entries) {
+        g_SkillTimerRuleCount = 0;
+        for (int i = 0; i < ForgePact::kSkillTimerRuleCap; ++i) g_SkillTimerRuleEntries[i] = ForgePact::SkillTimerRuleEntry{};
+        for (const std::pair<int, int>& p : entries) {
+            ForgePact::SkillTimerRuleEntry e;
+            e.talentId = p.first;
+            e.nameIndex = p.second;
+            e.abilityId = "ruleTest";
+            g_SkillTimerRuleEntries[g_SkillTimerRuleCount] = e;
+            g_SkillTimerRuleCount = g_SkillTimerRuleCount + 1;
+        }
+    };
+
+    // R8. A rule entry whose talent id is not on the hotbar costs nothing
+    // beyond the one shared row0 walk every active entry pays together: no
+    // toggle read, no object resolve, no instance scan.
+    resetWorld(); resetSkillTimer(); resetSkillTimerDrawRecord();
+    resolveOnlyCountdownRow(-1, 0);
+    for (int t = 0; t < ForgePact::kToggleSkillRowCount; ++t) g_ToggleTableIds.Set(t, -1);
+    resetRuleEntries({ { 999, kRuleAlphaIndex } });   // 999 is on no hotbar slot (default row0 only has 240)
+    g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Bar);
+    world.objIndexByName[HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Rule_Alpha_obj)] = 701.0;
+    world.instancesByIndex[701.0] = { WithTimer(OwnUnmarked(), MakeReal(50.0)) };
+    {
+        const long enumBefore = g_InstanceEnumCalls;
+        g_AssetLookups.clear();
+        SkillTimerDraw();
+        // The delta of 1 is the shared hotbar walk's own instance_find(hud, 0)
+        // - paid once regardless of how many entries are active - not a scan
+        // of this entry's own object, which is never even resolved by name.
+        checkInt("rule/slot_off_hotbar_costs_no_instance_scan", g_InstanceEnumCalls - enumBefore, 1);
+        checkInt("rule/slot_off_hotbar_costs_no_instance_scan/no_object_resolve",
+                 g_AssetLookups[HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Rule_Alpha_obj)], 0);
+        checkInt("rule/slot_off_hotbar_costs_no_instance_scan/no_outcome_counted",
+                 g_RuleDrawn + g_RuleNoInstance + g_RuleUnreadable + g_RuleExpired + g_RuleToggleOn + g_RuleNoObject, 0);
+    }
+
+    // R9. A talent whose object never resolves by name is counted
+    // (ruleNoObject) and draws nothing - the instance scan never runs.
+    resetWorld(); resetSkillTimer(); resetSkillTimerDrawRecord();
+    resolveOnlyCountdownRow(-1, 0);
+    for (int t = 0; t < ForgePact::kToggleSkillRowCount; ++t) g_ToggleTableIds.Set(t, -1);
+    resetRuleEntries({ { 903, kRuleAlphaIndex } });
+    world.row0 = { { 903.0, 100.0, 200.0, 50.0, 60.0 } };
+    world.aoeObjectResolves = false;   // Rule_Alpha_obj is never registered by name below
+    g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Bar);
+    {
+        const long enumBefore = g_InstanceEnumCalls;
+        SkillTimerDraw();
+        checkInt("rule/no_object_by_name_is_counted_not_drawn", g_RuleNoObject, 1);
+        checkInt("rule/no_object_by_name_is_counted_not_drawn/not_drawn", g_RuleDrawn, 0);
+        checkInt("rule/no_object_by_name_is_counted_not_drawn/no_instance_scan",
+                 g_InstanceEnumCalls - enumBefore, 1);   // the shared hotbar walk's own instance_find(hud, 0) only
+    }
+    world.aoeObjectResolves = true;
+
+    // R10. A rule entry that is ALSO a toggle-table row (its talent id
+    // matches a resolved toggle row) is suppressed while that row reads On -
+    // D-T4, the same suppression the explicit rows' own twin check applies.
+    // The entry's own object is never even resolved.
+    resetWorld(); resetSkillTimer(); resetSkillTimerDrawRecord();
+    resolveOnlyCountdownRow(-1, 0);
+    for (int t = 0; t < ForgePact::kToggleSkillRowCount; ++t) g_ToggleTableIds.Set(t, -1);
+    g_ToggleTableIds.Set(0, kToggleIndicatorTalentId);   // row 0 = soulSpurn, Marker "purgatory"
+    resetRuleEntries({ { kToggleIndicatorTalentId, kRuleAlphaIndex } });
+    world.row0 = { { (double)kToggleIndicatorTalentId, 100.0, 200.0, 50.0, 60.0 } };
+    world.instances = { OwnMarked() };   // row 0's own onObject (default index) - marked ON
+    world.objIndexByName[HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Rule_Alpha_obj)] = 702.0;
+    world.instancesByIndex[702.0] = { WithTimer(OwnUnmarked(), MakeReal(50.0)) };
+    g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Bar);
+    g_AssetLookups.clear();
+    SkillTimerDraw();
+    checkInt("rule/toggle_twin_is_suppressed_when_on", g_RuleToggleOn, 1);
+    checkInt("rule/toggle_twin_is_suppressed_when_on/not_drawn", g_RuleDrawn, 0);
+    checkInt("rule/toggle_twin_is_suppressed_when_on/object_never_resolved",
+             g_AssetLookups[HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Rule_Alpha_obj)], 0);
+    for (int t = 0; t < ForgePact::kToggleSkillRowCount; ++t) g_ToggleTableIds.Set(t, -1);
+
+    // R11. Two active rule entries keep separate latches - the same shape
+    // skilltimer/rows_keep_separate_latches pins for the four explicit rows.
+    resetWorld(); resetSkillTimer(); resetSkillTimerDrawRecord();
+    resolveOnlyCountdownRow(-1, 0);
+    resetRuleEntries({ { 910, kRuleAlphaIndex }, { 911, kRuleBetaIndex } });
+    world.row0 = { { 910.0, 100.0, 200.0, 50.0, 60.0 }, { 911.0, 300.0, 200.0, 50.0, 60.0 } };
+    world.objIndexByName[HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Rule_Alpha_obj)] = 703.0;
+    world.objIndexByName[HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Rule_Beta_obj)] = 704.0;
+    world.instancesByIndex[703.0] = { WithTimer(OwnUnmarked(), MakeReal(200.0)) };
+    world.instancesByIndex[704.0] = { WithTimer(OwnUnmarked(), MakeReal(400.0)) };
+    g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Number);
+    SkillTimerDraw();
+    checkNear("rule/entries_keep_separate_latches/first", g_SkillTimerRuleEntries[0].state.latch, 200.0);
+    checkNear("rule/entries_keep_separate_latches/second", g_SkillTimerRuleEntries[1].state.latch, 400.0);
+    world.instancesByIndex[703.0] = { WithTimer(OwnUnmarked(), MakeReal(100.0)) };
+    SkillTimerDraw();
+    checkBool("rule/entries_keep_separate_latches",
+              std::fabs(g_SkillTimerRuleEntries[0].state.latch - 200.0) < 1e-6
+              && std::fabs(g_SkillTimerRuleEntries[1].state.latch - 400.0) < 1e-6, true);
 
     // The read never makes a player-resolving call, in any scenario above -
     // counted here, at the end, so it covers every one of them.

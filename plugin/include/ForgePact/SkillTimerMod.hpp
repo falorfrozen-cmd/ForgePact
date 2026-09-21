@@ -134,7 +134,7 @@ public:
 // ---- the countdown's own table (session 8, D-S1) ---------------------------
 // The countdown reads THIS table and nothing else - not kToggleSkillRows,
 // whose rows are chosen for a different question (does the toggle's instance
-// exist) and two of which never create a timed instance on a plain cast. A
+// exist), and no timer spanning a plain cast was observed for two of them. A
 // row is here only because the duration sweep measured it
 // (docs/toggle-skills-research.md, "Duration sweep (session 8)" -> "Results",
 // status `ship`): its object appeared for exactly one skill, carried a
@@ -172,5 +172,142 @@ inline constexpr SkillTimerRow kSkillTimerRows[] = {
 };
 inline constexpr int kSkillTimerRowCount =
     (int)(sizeof(kSkillTimerRows) / sizeof(kSkillTimerRows[0]));
+
+// ---- rule-based coverage of untested skills (issue #55 follow-up, D-S4) ---
+// Owner, 2026-09-21, verbatim: "lets ship untested following a rule - if it
+// has a cooldown and a duration and if its not a companion type skill, it
+// should support". Interpreted (told to the owner, who asked for it):
+// eligible when the slot's talent reads `abilityDuration > 0` AND
+// `abilityCooldown` above the no-cooldown floor below (Meteor Storm reads
+// 0.25 and has none, per the owner), the object is not a companion (excluded
+// structurally by the generator, never reaches this file), and a cast object
+// resolves by NAME CONVENTION from the abilityId (SkillTimerNames.hpp,
+// generated - never hand-typed, AGENTS.md "Never Call an Address You
+// Resolved by Hand"). A measured deny-list always wins. The four rows above
+// stay explicit and win over the rule (D-R1): Soul Spurn reads
+// `abilityDuration=0`, so the rule would not select it anyway.
+//
+// This tier ships UNTESTED, by the owner's decision - nothing below is a
+// measurement claim.
+inline constexpr double kSkillTimerCooldownFloor = 0.25;
+// The runtime-built rule map's own bound (T2/T3): at most this many entries
+// at once, so a draw's per-slot lookup and the walk's own storage are both
+// bounded regardless of how many talents the sweep matches. Overflow counts
+// `ruleCapped` rather than growing without limit.
+inline constexpr int kSkillTimerRuleCap = 64;
+
+// One class-prefixed hs-game-sdk object's generated-table entry: key (the
+// SkillTimerNames.hpp naming convention, see that file's own header comment)
+// and the object it names. No game API here - this struct, and the table
+// built from it, are read by ModuleMain.cpp's rule walk and rule draw, never
+// spelled as a literal `GameObject::` enumerator outside the four explicit
+// rows above and the generated header itself
+// (test_no_hand_typed_object_name_reaches_the_rule_path).
+struct SkillTimerNameEntry {
+    const char* key;
+    HeroSiege::Objects::GameObject object;
+};
+
+// The measured deny-list (docs/toggle-skills-research.md, "Duration sweep
+// (session 8)" -> "Results", plus the Meteor Storm/Bushido toggle-upgrade
+// session (session 9) and the Shaman Meteor Storm toggle-upgrade driver
+// note): a talent the rule would otherwise select (or could select on a
+// future patch) that a live measurement, or a structural argument, ruled
+// out. Always wins over the rule (D-S4) - checked before the generated-table
+// lookup, so a denied talent counts `ruleDenied` even when it has no object
+// by name convention at all (the four toggle entries below).
+struct SkillTimerDenyEntry {
+    const char* abilityId;   // the talent struct's own `abilityId`, exact spelling
+    const char* reason;
+};
+inline constexpr SkillTimerDenyEntry kSkillTimerRuleDeny[] = {
+    { "submergedKnives",
+      "counter-example: dur 2.5, cd 1.5, but its object's own timer is a per-projectile "
+      "lifetime (first=32.4 against 140 draws), not the cast's duration" },
+    { "crematus",
+      "the damage object's own timer is a per-projectile lifetime (first=79.2 against 290 "
+      "draws, maxInst=8); the controller's own timer is unreadable" },
+    { "blizzard",
+      "no spanning timer: the controller's own timer is unreadable and the shards read a "
+      "constant -1" },
+    { "arrowRain",
+      "no spanning timer: both the ability and the individual arrows read a constant -1" },
+    { "meteorStorm",
+      "no spanning timer: the controller is unreadable and the meteors read a constant -1 "
+      "(owner: this skill has no cooldown, despite reading 0.25)" },
+    { "defensiveShout",
+      "buff-carried: the cast object lives about 0.6s while the buff itself lasts over a "
+      "minute on the player's own buff list" },
+    { "berserk",
+      "buff-carried: no cast object was attributable to it at all across the session" },
+    { "arrowTurret",
+      "companion (also excluded structurally; listed for the record)" },
+    { "fireTotem",
+      "companion (also excluded structurally; listed for the record)" },
+    { "bushido",
+      "base-form toggle; the countdown never draws a toggle" },
+    { "holyForm",
+      "toggle; the countdown never draws a toggle" },
+    { "unholyForm",
+      "toggle; the countdown never draws a toggle" },
+    { "melonForm",
+      "toggle; the countdown never draws a toggle" },
+};
+inline constexpr int kSkillTimerRuleDenyCount =
+    (int)(sizeof(kSkillTimerRuleDeny) / sizeof(kSkillTimerRuleDeny[0]));
+
+inline bool SkillTimerRuleDenied(const std::string& abilityId)
+{
+    for (int i = 0; i < kSkillTimerRuleDenyCount; ++i) {
+        if (abilityId == kSkillTimerRuleDeny[i].abilityId) return true;
+    }
+    return false;
+}
+
+// D-R1: the four rows above stay explicit and win over the rule - a talent
+// id matching one of them is never entered into the rule map at all.
+inline bool SkillTimerRuleIsExplicitRow(const std::string& abilityId)
+{
+    for (int i = 0; i < kSkillTimerRowCount; ++i) {
+        if (abilityId == kSkillTimerRows[i].abilityId) return true;
+    }
+    return false;
+}
+
+// One entry in the runtime-built rule map (T2): a talent id matched to a
+// generated name-table index, with its own latch (the same one-latch-per-row
+// shape kSkillTimerRows' explicit rows use, SkillTimerRowState) and a cached
+// resolved object index (game-side; negative = not yet resolved). The rule
+// walk rebuilds this table wholesale once per room (T2), so every entry's
+// latch resets along with it - the same "an instance disappearing drops the
+// latch" reasoning SkillTimerModel::Decide already applies within one room.
+struct SkillTimerRuleEntry {
+    int talentId = -1;
+    int nameIndex = -1;          // index into ForgePact::kSkillTimerNames
+    std::string abilityId;       // as read from the talent struct - for the stat line
+    SkillTimerRowState state;    // this entry's own latch
+    double objIdx = -1.0;        // resolved lazily, cached only once >= 0
+};
+
+class SkillTimerRuleModel {
+public:
+    // The pure decision (D-S4's rule, interpreted): both fields read as
+    // numbers, a positive duration, a cooldown above the no-cooldown floor,
+    // not denied, not one of the four explicit rows. No game call and no
+    // object name here - resolving (or not) an object by name is the
+    // caller's job, once eligibility is decided. Pinned truth-table points
+    // (context, "Eligibility, read once per room"): cooldown == floor is
+    // ineligible, floor + a hair above is eligible; duration == 0 is
+    // ineligible regardless of cooldown.
+    static bool Eligible(double duration, double cooldown, bool readable, bool denied, bool isExplicitRow)
+    {
+        if (isExplicitRow) return false;
+        if (denied) return false;
+        if (!readable) return false;
+        if (!(duration > 0.0)) return false;
+        if (!(cooldown > kSkillTimerCooldownFloor)) return false;
+        return true;
+    }
+};
 
 } // namespace ForgePact

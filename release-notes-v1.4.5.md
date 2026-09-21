@@ -95,19 +95,23 @@ those five it can actually draw on.
   skill, are not affected.
 - **Timed skill countdown.** A new **Timed skill countdown** dropdown in Mods
   (off by default) draws how much of a timed cast is left over that skill's
-  slot on the skill bar, and it disappears the moment the cast ends. It
-  covers the four timed skills measured in-game so far:
+  slot on the skill bar, and it disappears the moment the cast ends. Four
+  timed skills were measured in-game and are tested:
   Healing Zone (White Mage), Blade Barrier (Samurai),
   Soul Spurn (White Mage) and Maelstrom of Frost (Prophet).
+  Any other skill that has both a duration and a cooldown is also covered,
+  by rule, and is untested - companion skills (turrets, totems, hydra) and
+  skills whose duration is only a buff on you are not covered.
   A toggled-on Soul Spurn or Maelstrom of Frost never gets a countdown.
-  In a fight, each hit adds a little time to Blade Barrier (about 0.2 s)
-  and the countdown rises slightly to match; it ends when the blades do. Pick one
-  of four looks: **Arc** (a ring that empties clockwise), **Bar** (a
-  shrinking bar above the icon), **Number** (a shrinking percentage above
-  the icon) or **Fade** (a soft outline that dims as time runs out). If you
-  turn this on partway through a cast that is already running, that one cast
-  shows as full from the moment you turned it on rather than its true
-  remaining time; the next cast on that skill reads correctly.
+  In a fight, hits can add a little time to Blade Barrier (roughly 0.2 s each
+  in our test) and the countdown rises slightly to match; it ends when the
+  blades do. Pick one of four looks: **Arc** (a ring that empties clockwise),
+  **Bar** (a shrinking bar above the icon), **Number** (a shrinking
+  percentage above the icon) or **Fade** (a soft outline that dims as time
+  runs out). If you turn this on partway through a cast that is already
+  running, that one cast shows as full from the moment you turned it on
+  rather than its true remaining time; the next cast on that skill reads
+  correctly.
 - **Mods tab columns.** The Gameplay and Items mod lists are split into two
   columns, and the right column could end up longer than the left, leaving a
   gap under the left one. The left column is now always the longer one, and

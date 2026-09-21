@@ -381,6 +381,12 @@ static consteval const char* SdkShortScriptName(std::string_view sdkConstant)
 #include <ForgePact/RelicFilterMod.hpp>
 #include <ForgePact/ToggleSkillMod.hpp>
 #include <ForgePact/SkillTimerMod.hpp>
+// Issue #55 follow-up (D-S4): the generated rule table - kept as its own
+// include, never folded into SkillTimerMod.hpp, so that header (spliced
+// whole into tests/toggle_skill_harness.cpp's PRODUCTION_SKILLTIMER) stays
+// free of the full hs-game-sdk enumerator set the harness's own stand-in
+// GameObject enum does not carry.
+#include <ForgePact/SkillTimerNames.hpp>
 #include <ForgePact/ProspectWindowMod.hpp>
 #include <ForgePact/AutoProspectMod.hpp>
 #include <ForgePact/PetQuestCollectorMod.hpp>
@@ -4655,6 +4661,21 @@ struct SkillTimerTableIds {
     void Set(int row, int value) { id[row].store(value); }
 };
 static SkillTimerTableIds g_SkillTimerTableIds;
+// ===== Rule-based coverage (issue #55 follow-up, D-S4) - the runtime-built
+// rule map ====================================================================
+// Filled by the same once-per-room walk as the two tables above (T2), keyed
+// on talent id, one entry per eligible non-explicit talent up to
+// kSkillTimerRuleCap. Rebuilt wholesale on every walk (cleared, then refilled
+// - never appended to across walks), so an entry's own latch always starts
+// fresh for a talent that just (re-)entered the map. `g_SkillTimerRuleCount`
+// is the walk's own single-threaded write; the draw only ever reads it.
+static ForgePact::SkillTimerRuleEntry g_SkillTimerRuleEntries[ForgePact::kSkillTimerRuleCap];
+static volatile long g_SkillTimerRuleCount = 0;
+// Walk-time counters (accumulate across the whole session, the same shape
+// every other counter in this file uses - never reset except by a test).
+static volatile long g_SkillTimerRuleDenied = 0, g_SkillTimerRuleUnreadableFields = 0, g_SkillTimerRuleCapped = 0;
+// Draw-time counters, aggregate over every active rule entry.
+static volatile long g_RuleDrawn = 0, g_RuleNoInstance = 0, g_RuleUnreadable = 0, g_RuleExpired = 0, g_RuleToggleOn = 0, g_RuleNoObject = 0, g_RuleLatched = 0, g_RuleUnlatched = 0;
 static volatile long g_ToggleResolveWalks = 0;
 static bool g_ToggleResolveWalked = false;     // a walk has already run for the current room
 static bool g_ToggleResolveRoomKnown = false;
@@ -4689,13 +4710,17 @@ static int ToggleTableRowForTalentId(int talentId)
     return -1;
 }
 
-// Whether a walk is worth attempting this second: only while a row of either
-// table is still unresolved, and only once per room. A room key that cannot be
-// read is never stored and never counts as a change (the INT64_MIN sentinel is
-// not compared against a real key).
+// Whether a walk is worth attempting this second: only once per room. (Issue
+// #55 follow-up, D-S4: this used to also stop once every explicit row of both
+// tables had resolved - dropped, because the rule map (below) has no such
+// stopping signal and needs rebuilding every room regardless of whether the
+// two explicit tables still have anything left to learn; the walk itself is
+// frame-boundary housekeeping, AGENTS.md "Check a Permission Where It Is
+// Used", so paying it once per room is cheap.) A room key that cannot be read
+// is never stored and never counts as a change (the INT64_MIN sentinel is not
+// compared against a real key).
 static bool ToggleTableResolveDue()
 {
-    if (ToggleTableUnresolvedRows() + SkillTimerTableUnresolvedRows() == 0) return false;
     const int64_t key = CurrentRoomKey();
     if (key != INT64_MIN && (!g_ToggleResolveRoomKnown || g_ToggleResolveRoomKey != key)) {
         g_ToggleResolveRoomKnown = true;
@@ -4718,6 +4743,14 @@ static bool ToggleTableResolveIds()
     g_ToggleResolveWalked = true;
     InterlockedIncrement(&g_ToggleResolveWalks);
 
+    // Issue #55 follow-up (D-S4): the rule map is rebuilt wholesale on every
+    // real walk, never appended to - a fresh SkillTimerRuleEntry{} per slot
+    // drops any latch a talent that left the map (or moved slot) was holding.
+    g_SkillTimerRuleCount = 0;
+    for (int i = 0; i < ForgePact::kSkillTimerRuleCap; ++i) {
+        g_SkillTimerRuleEntries[i] = ForgePact::SkillTimerRuleEntry{};
+    }
+
     RValue key;
     try { key = g_Yytk->CallBuiltin("ds_map_find_first", { map }); }
     catch (...) { return false; }
@@ -4738,6 +4771,55 @@ static bool ToggleTableResolveIds()
                         }
                         for (int r = 0; r < ForgePact::kSkillTimerRowCount; ++r) {
                             if (name == ForgePact::kSkillTimerRows[r].abilityId) g_SkillTimerTableIds.Set(r, id);
+                        }
+                        // T2 (D-S4): the rule map. The deny-list is checked
+                        // BEFORE the generated-table lookup, so a denied
+                        // talent counts ruleDenied even when it has no object
+                        // by name convention at all (bushido/holyForm/
+                        // unholyForm/melonForm). D-R1: a talent id matching
+                        // one of the four explicit rows above is never
+                        // entered here.
+                        if (!ForgePact::SkillTimerRuleIsExplicitRow(name)) {
+                            if (ForgePact::SkillTimerRuleDenied(name)) {
+                                InterlockedIncrement(&g_SkillTimerRuleDenied);
+                            } else {
+                                const std::string lowerName = Lower(name);
+                                int nameIndex = -1;
+                                for (int i = 0; i < ForgePact::kSkillTimerNameCount; ++i) {
+                                    if (lowerName == ForgePact::kSkillTimerNames[i].key) { nameIndex = i; break; }
+                                }
+                                if (nameIndex >= 0) {
+                                    double duration = 0.0, cooldown = 0.0;
+                                    bool readableD = false, readableC = false;
+                                    try {
+                                        RValue dv = g_Yytk->CallBuiltin("variable_struct_get",
+                                            { talent, RValue("abilityDuration") });
+                                        if (N1Numeric(dv)) { duration = dv.ToDouble(); readableD = true; }
+                                    } catch (...) {}
+                                    try {
+                                        RValue cv = g_Yytk->CallBuiltin("variable_struct_get",
+                                            { talent, RValue("abilityCooldown") });
+                                        if (N1Numeric(cv)) { cooldown = cv.ToDouble(); readableC = true; }
+                                    } catch (...) {}
+                                    const bool readable = readableD && readableC;
+                                    if (!readable) {
+                                        InterlockedIncrement(&g_SkillTimerRuleUnreadableFields);
+                                    } else if (ForgePact::SkillTimerRuleModel::Eligible(
+                                                   duration, cooldown, readable, /*denied=*/false, /*isExplicitRow=*/false)) {
+                                        const long slot = g_SkillTimerRuleCount;
+                                        if (slot < ForgePact::kSkillTimerRuleCap) {
+                                            ForgePact::SkillTimerRuleEntry entry;
+                                            entry.talentId = id;
+                                            entry.nameIndex = nameIndex;
+                                            entry.abilityId = name;
+                                            g_SkillTimerRuleEntries[slot] = entry;
+                                            g_SkillTimerRuleCount = slot + 1;
+                                        } else {
+                                            InterlockedIncrement(&g_SkillTimerRuleCapped);
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 } catch (...) {}
@@ -5134,6 +5216,112 @@ static void SkillTimerReadRow(const ForgePact::SkillTimerRow& row, bool& anyOwn,
     }
 }
 
+// ===== Rule-based coverage's own draw path (issue #55 follow-up, D-S4; T3) =
+// One hotbar slot as the rule draw needs it: the box already derived by
+// ToggleIndicatorMarkerBox (D-U12), plus the slot's own talentId.
+struct SkillTimerHotbarSlot {
+    int talentId = -1;
+    double x = 0, y = 0, w = 0, h = 0;
+};
+
+// A deliberate duplication of ToggleIndicatorFindSlot's own row0 walk and box
+// derivation (via the shared ToggleIndicatorMarkerBox, not restated) - NOT a
+// call into that function, so its own counters and behaviour stay exactly as
+// pinned (the guide's "Two deliberate duplications, and why neither is a
+// shared component"). The rejected alternative (context, "The draw"):
+// looking up each of up to kSkillTimerRuleCap rule entries with
+// ToggleIndicatorFindSlot would cost that many hotbar walks per draw; this
+// pays the walk ONCE and returns every slot, so the caller can match against
+// however many rule entries are active with no further game call per talent
+// that turns out not to be on the hotbar at all
+// (rule/slot_off_hotbar_costs_no_instance_scan).
+static bool SkillTimerEnumerateHotbar(std::vector<SkillTimerHotbarSlot>& out)
+{
+    try {
+        double objIdx = -1.0;
+        try {
+            objIdx = g_Yytk->CallBuiltin("asset_get_index",
+                { RValue(std::string(HeroSiege::Objects::GetObjectName(
+                    HeroSiege::Objects::GameObject::UI_Hud_Talent_obj))) }).ToDouble();
+        } catch (...) { return false; }
+        if (objIdx < 0) return false;
+        RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue(objIdx), RValue(0.0) });
+        if (inst.m_Kind == VALUE_UNDEFINED) return false;
+        RValue arr = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("row0") });
+        if (arr.m_Kind != VALUE_ARRAY) return false;
+        const int len = (int)g_Yytk->CallBuiltin("array_length", { arr }).ToDouble();
+        for (int i = 0; i < len; ++i) {
+            RValue elem = g_Yytk->CallBuiltin("array_get", { arr, RValue((double)i) });
+            if (elem.m_Kind != VALUE_OBJECT && elem.m_Kind != VALUE_REF) continue;
+            RValue tid = g_Yytk->CallBuiltin("variable_struct_get", { elem, RValue("talentId") });
+            const bool isNumber = tid.m_Kind == VALUE_REAL || tid.m_Kind == VALUE_INT32 || tid.m_Kind == VALUE_INT64;
+            if (!isNumber) continue;
+            const double bx = g_Yytk->CallBuiltin("variable_struct_get", { elem, RValue("navBboxX") }).ToDouble();
+            const double by = g_Yytk->CallBuiltin("variable_struct_get", { elem, RValue("navBboxY") }).ToDouble();
+            const double bw = g_Yytk->CallBuiltin("variable_struct_get", { elem, RValue("navBboxWidth") }).ToDouble();
+            const double bh = g_Yytk->CallBuiltin("variable_struct_get", { elem, RValue("navBboxHeight") }).ToDouble();
+            SkillTimerHotbarSlot slot;
+            slot.talentId = (int)tid.ToDouble();
+            ToggleIndicatorMarkerBox(bx, by, bw, bh, slot.x, slot.y, slot.w, slot.h);
+            out.push_back(slot);
+        }
+        return true;
+    } catch (...) { return false; }
+}
+
+// A rule entry's own object index, resolved by name through the generated
+// table (ForgePact::kSkillTimerNames, never a literal enumerator here) and
+// cached on the entry only once resolved (>= 0) - context, "The draw": "cached
+// per entry after the first success". A failed resolve is never cached, so
+// the next draw tries again (the same shape g_ToggleGuardDcObjIdx already
+// uses for its own cached object index).
+static bool SkillTimerRuleResolveObject(ForgePact::SkillTimerRuleEntry& entry, double& outObjIdx)
+{
+    if (entry.objIdx >= 0.0) { outObjIdx = entry.objIdx; return true; }
+    try {
+        const double idx = g_Yytk->CallBuiltin("asset_get_index",
+            { RValue(std::string(HeroSiege::Objects::GetObjectName(
+                ForgePact::kSkillTimerNames[entry.nameIndex].object))) }).ToDouble();
+        if (idx >= 0.0) { entry.objIdx = idx; outObjIdx = idx; return true; }
+    } catch (...) {}
+    return false;
+}
+
+// The rule path's own instance scan: every instance own (D-N3, ForgePact is
+// offline-only - no ownership field is ever read here, unlike
+// SkillTimerReadRow's row.ownershipField branch), largest numeric
+// ForgePact::kSkillTimerField among them - otherwise the same shape as
+// SkillTimerReadRow, written separately rather than shared because that
+// function always resolves its object by name fresh (SkillTimerResolveRowObject,
+// no caching - fine for four explicit rows, wasteful for up to
+// kSkillTimerRuleCap rule entries), while this one is handed an
+// already-resolved, cached objIdx.
+static void SkillTimerRuleReadEntry(double objIdx, bool& anyOwn, bool& anyReadable, double& remaining)
+{
+    anyOwn = false;
+    anyReadable = false;
+    remaining = 0.0;
+    long n = 0;
+    try { n = (long)g_Yytk->CallBuiltin("instance_number", { RValue(objIdx) }).ToDouble(); }
+    catch (...) { return; }
+    if (n <= 0) return;
+
+    const long cap = kToggleIndicatorScanCap;
+    const long scanCount = n < cap ? n : cap;
+    for (long i = 0; i < scanCount; ++i) {
+        try {
+            RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue(objIdx), RValue((double)i) });
+            anyOwn = true;   // D-N3: no ownership field, every instance own
+            RValue timer = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(ForgePact::kSkillTimerField) });
+            if (N1Numeric(timer)) {
+                const double v = timer.ToDouble();
+                if (!anyReadable || v > remaining) remaining = v;
+                anyReadable = true;
+            }
+        } catch (...) { /* this instance's own read failed; the others still count */ }
+    }
+}
+
 static constexpr double kSkillTimerColourR = 255.0, kSkillTimerColourG = 215.0, kSkillTimerColourB = 0.0;   // gold - the colour every look was judged in (pinned equal to the research instrument's own default)
 static constexpr int kSkillTimerBands = 10;   // arc/fade band count (pinned equal to the research instrument's own default)
 
@@ -5365,6 +5553,82 @@ static void SkillTimerDraw()
             if (drew) InterlockedIncrement(&c.drawn);
         } catch (...) { InterlockedIncrement(&g_StDrawExc); }   // the state reads themselves failed: nothing was set, so there is nothing to put back
     }
+
+    // ---- rule-covered rows (T3, D-S4) --------------------------------------
+    // The hotbar walked ONCE for however many rule entries are active,
+    // instead of one ToggleIndicatorFindSlot call (and hotbar walk) per entry
+    // - the rejected alternative in context, "The draw". A talent not on the
+    // hotbar costs nothing beyond this one shared walk: no toggle read, no
+    // object resolve, no instance scan (rule/slot_off_hotbar_costs_no_instance_scan).
+    const long ruleCount = g_SkillTimerRuleCount;
+    if (ruleCount > 0) {
+        std::vector<SkillTimerHotbarSlot> hotbar;
+        if (SkillTimerEnumerateHotbar(hotbar)) {
+            for (long i = 0; i < ruleCount; ++i) {
+                ForgePact::SkillTimerRuleEntry& entry = g_SkillTimerRuleEntries[i];
+                const SkillTimerHotbarSlot* slot = nullptr;
+                for (const SkillTimerHotbarSlot& s : hotbar) {
+                    if (s.talentId == entry.talentId) { slot = &s; break; }
+                }
+                if (!slot) continue;   // rule/slot_off_hotbar_costs_no_instance_scan
+
+                // D-T4: a rule entry that is ALSO a toggle-table row is
+                // suppressed while that row's own shipped read says On or
+                // Unreadable, before the timer's own read runs at all - the
+                // same suppression the explicit rows' twin check applies
+                // above, keyed off the resolved talent id directly since a
+                // rule entry carries no abilityId comparison table of its own.
+                const int toggleRow = ToggleTableRowForTalentId(entry.talentId);
+                if (toggleRow >= 0) {
+                    const ForgePact::ToggleSkillRow& tr = ForgePact::kToggleSkillRows[toggleRow];
+                    ForgePact::ToggleIndicatorReadDetail toggleDetail;
+                    ToggleIndicatorReadRow(tr, &toggleDetail, /*treatOwnAsForeign=*/false);
+                    const ForgePact::ToggleIndicatorState toggleState =
+                        ForgePact::ToggleIndicatorModel::Decide(toggleDetail, ForgePact::ToggleRowRequiresMark(tr));
+                    if (toggleState == ForgePact::ToggleIndicatorState::On ||
+                        toggleState == ForgePact::ToggleIndicatorState::Unreadable) {
+                        InterlockedIncrement(&g_RuleToggleOn);
+                        continue;
+                    }
+                }
+
+                double objIdx = -1.0;
+                if (!SkillTimerRuleResolveObject(entry, objIdx)) {
+                    InterlockedIncrement(&g_RuleNoObject);
+                    continue;   // rule/no_object_by_name_is_counted_not_drawn
+                }
+
+                bool anyOwn = false, anyReadable = false;
+                double remaining = 0.0;
+                SkillTimerRuleReadEntry(objIdx, anyOwn, anyReadable, remaining);
+
+                ForgePact::SkillTimerDecision decision =
+                    ForgePact::SkillTimerModel::Decide(entry.state, anyOwn, anyReadable, remaining);
+                if (decision.latchedThisCall) InterlockedIncrement(&g_RuleLatched);
+                if (decision.unlatchedThisCall) InterlockedIncrement(&g_RuleUnlatched);
+
+                switch (decision.outcome) {
+                    case ForgePact::SkillTimerOutcome::NoInstance: InterlockedIncrement(&g_RuleNoInstance); continue;
+                    case ForgePact::SkillTimerOutcome::Unreadable: InterlockedIncrement(&g_RuleUnreadable); continue;
+                    case ForgePact::SkillTimerOutcome::Expired:    InterlockedIncrement(&g_RuleExpired);    continue;
+                    case ForgePact::SkillTimerOutcome::Drawn:      break;
+                }
+
+                try {
+                    RValue prevColour = g_Yytk->CallBuiltin("draw_get_colour", {});
+                    RValue prevAlpha = g_Yytk->CallBuiltin("draw_get_alpha", {});
+                    bool drew = false;
+                    try {
+                        SkillTimerDrawStyle(style, slot->x, slot->y, slot->w, slot->h, decision.fraction);
+                        drew = true;
+                    } catch (...) { InterlockedIncrement(&g_StDrawExc); }
+                    try { g_Yytk->CallBuiltin("draw_set_alpha", { prevAlpha }); } catch (...) {}
+                    try { g_Yytk->CallBuiltin("draw_set_colour", { prevColour }); } catch (...) {}
+                    if (drew) InterlockedIncrement(&g_RuleDrawn);
+                } catch (...) { InterlockedIncrement(&g_StDrawExc); }
+            }
+        }
+    }
 }
 
 static std::string SkillTimerRowCountersLine(int row)
@@ -5416,6 +5680,38 @@ static std::string SkillTimerTableRowsLine()
          + " unresolvedRows=" + std::to_string(SkillTimerTableUnresolvedRows());
 }
 
+// The rule map's own aggregate line (T3, D-S4): `ruleRows=` is a snapshot of
+// how many entries are active right now (not a running total, unlike every
+// other field here) - the walk rebuilds the map wholesale, so this is exactly
+// "how many talents are currently rule-eligible".
+static std::string SkillTimerRuleCountersLine()
+{
+    return "ruleRows=" + std::to_string(g_SkillTimerRuleCount)
+        + " ruleDrawn=" + std::to_string(g_RuleDrawn)
+        + " ruleNoInstance=" + std::to_string(g_RuleNoInstance)
+        + " ruleUnreadable=" + std::to_string(g_RuleUnreadable)
+        + " ruleExpired=" + std::to_string(g_RuleExpired)
+        + " ruleToggleOn=" + std::to_string(g_RuleToggleOn)
+        + " ruleNoObject=" + std::to_string(g_RuleNoObject)
+        + " ruleDenied=" + std::to_string(g_SkillTimerRuleDenied)
+        + " ruleUnreadableFields=" + std::to_string(g_SkillTimerRuleUnreadableFields)
+        + " ruleCapped=" + std::to_string(g_SkillTimerRuleCapped)
+        + " ruleLatched=" + std::to_string(g_RuleLatched)
+        + " ruleUnlatched=" + std::to_string(g_RuleUnlatched);
+}
+
+// One active rule entry's own line - the ToggleTableRowsLine/
+// SkillTimerTableRowsLine shape, naming the abilityId as read from the talent
+// struct (not the generated table's own lower-cased key) so it reads back
+// against the same spelling the talent's own struct carries.
+static std::string SkillTimerRuleEntryLine(int index)
+{
+    const ForgePact::SkillTimerRuleEntry& e = g_SkillTimerRuleEntries[index];
+    return e.abilityId + ":talentId=" + std::to_string(e.talentId)
+        + " object=" + std::string(HeroSiege::Objects::GetObjectName(ForgePact::kSkillTimerNames[e.nameIndex].object))
+        + " idx=" + (e.objIdx >= 0.0 ? std::to_string((long long)e.objIdx) : std::string("unresolved"));
+}
+
 // `skilltimer stat` is read-only: it stores nothing to g_SkillTimerStyle.
 static void SkillTimerStats()
 {
@@ -5424,6 +5720,10 @@ static void SkillTimerStats()
     Out("skilltimer stat: " + SkillTimerTableRowsLine());
     for (int r = 0; r < ForgePact::kSkillTimerRowCount; ++r)
         Out("skilltimer stat: " + SkillTimerRowCountersLine(r));
+    Out("skilltimer stat: " + SkillTimerRuleCountersLine());
+    const long ruleCount = g_SkillTimerRuleCount;
+    for (long i = 0; i < ruleCount; ++i)
+        Out("skilltimer stat: " + SkillTimerRuleEntryLine((int)i));
 }
 
 // ===== Toggle-skill re-cast guard (issue #11, Track A; `toggleguard`) ========

@@ -153,6 +153,20 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
             implementation(cls.plugin, "static bool SkillTimerResolveRowObject("),
             implementation(cls.plugin, "static int SkillTimerToggleTwin("),
             implementation(cls.plugin, "static void SkillTimerReadRow("),
+            # Issue #55 follow-up (D-S4): the rule map's own runtime state and
+            # draw-path helpers. The map-building walk itself is NOT spliced
+            # (same reason as ToggleTableResolveIds above - it needs the
+            # talent-map helpers; test_toggle_skill_contract.py pins that), so
+            # a rule/* scenario populates g_SkillTimerRuleEntries/
+            # g_SkillTimerRuleCount directly, the same way skilltimer/*
+            # scenarios drive g_SkillTimerTableIds.
+            declaration(cls.plugin, "static ForgePact::SkillTimerRuleEntry g_SkillTimerRuleEntries"),
+            declaration(cls.plugin, "static volatile long g_SkillTimerRuleCount"),
+            declaration(cls.plugin, "static volatile long g_RuleDrawn"),
+            implementation(cls.plugin, "struct SkillTimerHotbarSlot {") + ";",
+            implementation(cls.plugin, "static bool SkillTimerEnumerateHotbar("),
+            implementation(cls.plugin, "static bool SkillTimerRuleResolveObject("),
+            implementation(cls.plugin, "static void SkillTimerRuleReadEntry("),
             implementation(cls.plugin, "static RValue SkillTimerColour("),
             implementation(cls.plugin, "static void SkillTimerDrawRectOutlineFraction("),
             implementation(cls.plugin, "static void SkillTimerDrawArc("),
@@ -812,6 +826,48 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
     def test_skilltimer_rows_keep_separate_latches(self):
         for suffix in ("/first", "/second", "", "/fraction"):
             self.assertScenario("skilltimer/rows_keep_separate_latches" + suffix)
+
+    # ---- issue #55 follow-up (D-S4): rule-based coverage of untested skills
+
+    def test_rule_eligible_duration_and_cooldown(self):
+        self.assertScenario("rule/eligible_duration_and_cooldown")
+
+    def test_rule_cooldown_at_floor_is_ineligible(self):
+        self.assertScenario("rule/cooldown_at_floor_is_ineligible")
+
+    def test_rule_cooldown_just_above_floor_is_eligible(self):
+        self.assertScenario("rule/cooldown_just_above_floor_is_eligible")
+
+    def test_rule_duration_zero_is_ineligible(self):
+        self.assertScenario("rule/duration_zero_is_ineligible")
+
+    def test_rule_unreadable_field_is_ineligible_and_counted(self):
+        self.assertScenario("rule/unreadable_field_is_ineligible_and_counted")
+
+    def test_rule_deny_list_wins_over_the_rule(self):
+        self.assertScenario("rule/deny_list_wins_over_the_rule")
+
+    def test_rule_explicit_row_wins_over_the_rule(self):
+        self.assertScenario("rule/explicit_row_wins_over_the_rule")
+
+    def test_rule_companion_never_enters_the_table(self):
+        self.assertScenario("rule/companion_never_enters_the_table")
+
+    def test_rule_slot_off_hotbar_costs_no_instance_scan(self):
+        for suffix in ("", "/no_object_resolve", "/no_outcome_counted"):
+            self.assertScenario("rule/slot_off_hotbar_costs_no_instance_scan" + suffix)
+
+    def test_rule_no_object_by_name_is_counted_not_drawn(self):
+        for suffix in ("", "/not_drawn", "/no_instance_scan"):
+            self.assertScenario("rule/no_object_by_name_is_counted_not_drawn" + suffix)
+
+    def test_rule_toggle_twin_is_suppressed_when_on(self):
+        for suffix in ("", "/not_drawn", "/object_never_resolved"):
+            self.assertScenario("rule/toggle_twin_is_suppressed_when_on" + suffix)
+
+    def test_rule_entries_keep_separate_latches(self):
+        for suffix in ("/first", "/second", ""):
+            self.assertScenario("rule/entries_keep_separate_latches" + suffix)
 
 
 if __name__ == "__main__":

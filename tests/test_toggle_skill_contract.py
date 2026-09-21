@@ -31,6 +31,7 @@ PLUGIN_SRC = FORGEPACT_DIR / "plugin" / "ModuleMain.cpp"
 SDK_INCLUDE = REPO_ROOT / "hs-game-sdk" / "cpp" / "include" / "hs_game_sdk"
 SRC_DIR = FORGEPACT_DIR / "src"
 SDK_PY_PATH = REPO_ROOT / "hs-game-sdk" / "python"
+TOOLS_DIR = FORGEPACT_DIR / "tools"
 
 if str(TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(TESTS_DIR))
@@ -38,6 +39,8 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 if str(SDK_PY_PATH) not in sys.path:
     sys.path.insert(0, str(SDK_PY_PATH))
+if str(TOOLS_DIR) not in sys.path:
+    sys.path.insert(0, str(TOOLS_DIR))
 
 from test_release_hook_contract import function_body, strip_research_blocks  # noqa: E402
 
@@ -1287,7 +1290,12 @@ class SkillTimerShipContractTests(unittest.TestCase):
                        "SkillTimerTableUnresolvedRows()"):
             self.assertIn(needle, walk, needle)
         due = function_body(self.plugin, "static bool ToggleTableResolveDue(")
-        self.assertIn("if (ToggleTableUnresolvedRows() + SkillTimerTableUnresolvedRows() == 0) return false;", due)
+        # Issue #55 follow-up (D-S4): the "stop once every explicit row of
+        # both tables has resolved" early-out is GONE - the rule map has no
+        # such stopping signal and needs rebuilding every room regardless, so
+        # a walk is now due purely on the once-per-room gate.
+        self.assertNotIn("ToggleTableUnresolvedRows() + SkillTimerTableUnresolvedRows() == 0) return false;", due)
+        self.assertIn("return !g_ToggleResolveWalked;", due)
         # No second walk anywhere: the countdown's ids come from this one.
         self.assertEqual(self.stripped.count('"ds_map_find_first", { map }'), 1)
         self.assertNotIn("ToggleTableResolveIds", function_body(self.plugin, "static void SkillTimerDraw("))
@@ -1383,6 +1391,188 @@ class SkillTimerShipContractTests(unittest.TestCase):
         tx = bx + bw / 2.0 + dx
         ty = by + bh + dy
         self.assertEqual((tx, ty), (130.5, 1093.0))
+
+
+class SkillTimerRuleContractTests(unittest.TestCase):
+    """Rule-based coverage of untested skills (issue #55 follow-up, D-S4).
+
+    Companion to SkillTimerShipContractTests (the four explicit rows) and
+    test_toggle_skill_behavior.py's `rule/*` scenarios, which run the
+    eligibility decision and the rule draw end to end against a controlled
+    game API. This class pins the source text: the generated table matches
+    hs-game-sdk, no hand-typed object name reaches the rule path, the walk
+    reads the right fields by name, the deny-list names every measured
+    negative, and the player text states the tier honestly.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.plugin = PLUGIN_SRC.read_text(encoding="utf-8")
+        cls.stripped = strip_research_blocks(cls.plugin)
+        cls.header = (FORGEPACT_DIR / "plugin" / "include" / "ForgePact" / "SkillTimerMod.hpp").read_text(encoding="utf-8")
+        cls.names_header = (FORGEPACT_DIR / "plugin" / "include" / "ForgePact" / "SkillTimerNames.hpp").read_text(encoding="utf-8")
+        cls.panel = (SRC_DIR / "forgepact.py").read_text(encoding="utf-8")
+        cls.research_doc = (FORGEPACT_DIR / "docs" / "toggle-skills-research.md").read_text(encoding="utf-8")
+        cls.release_notes = (FORGEPACT_DIR / "release-notes-v1.4.5.md").read_text(encoding="utf-8")
+        cls.readme = (FORGEPACT_DIR / "README.md").read_text(encoding="utf-8")
+
+    DENY_LIST = {
+        "submergedKnives", "crematus", "blizzard", "arrowRain", "meteorStorm",
+        "defensiveShout", "berserk", "arrowTurret", "fireTotem",
+        "bushido", "holyForm", "unholyForm", "melonForm",
+    }
+    EXPLICIT_ROWS = {"healingZone", "bladeBarrier", "soulSpurn", "maelstromOfFrost"}
+
+    def test_generated_table_matches_the_sdk(self):
+        import gen_skill_timer_names as gen
+        rows, ambiguous = gen.build_table()
+        table = {key: member for key, member in rows}
+        # Hand-checked positive controls, not just trusting the generator's
+        # own output: real, independently-known object names.
+        self.assertEqual(table["orboffrost"].name, "Jotunn_Orb_of_Frost_obj")
+        self.assertEqual(table["volcano"].name, "Pyromancer_Volcano_obj")
+        self.assertEqual(table["healingzone"].name, "White_Mage_Healing_Zone_obj")
+        self.assertGreaterEqual(len(rows), 700)
+        # Regeneration is byte-identical to the checked-in header.
+        self.assertEqual(gen.render(rows), self.names_header)
+
+    def test_generated_table_has_no_companion_and_no_ambiguous_entry(self):
+        import gen_skill_timer_names as gen
+        from hs_game_sdk import GameObject, get_ancestor_indices
+        rows, ambiguous = gen.build_table()
+        for key, member in rows:
+            ancestors = {GameObject(a).name for a in get_ancestor_indices(member.value)}
+            self.assertNotIn("Player_Sentry_Parent_obj", ancestors, key)
+        # The prototype run's own measured ambiguous keys stay dropped.
+        for key in ("menulight", "icyground", "buckshot"):
+            self.assertIn(key, ambiguous, key)
+        keys = {key for key, _ in rows}
+        for key in ("menulight", "icyground", "buckshot"):
+            self.assertNotIn(key, keys, key)
+        # A companion object itself never has a key in the shipped table.
+        self.assertNotIn('"arrowturret"', self.names_header)
+        self.assertNotIn('"firetotem"', self.names_header)
+
+    def test_no_hand_typed_object_name_reaches_the_rule_path(self):
+        player = strip_research_blocks(self.plugin)
+        for sig in ("static bool ToggleTableResolveIds(", "static void SkillTimerDraw(",
+                    "static bool SkillTimerRuleResolveObject(", "static void SkillTimerRuleReadEntry("):
+            body = function_body(player, sig)
+            self.assertNotIn("GameObject::", body, sig)
+        # SkillTimerEnumerateHotbar's own hotbar lookup is the one legitimate
+        # exception - the same shared UI_Hud_Talent_obj ToggleIndicatorFindSlot
+        # already hand-names. Any OTHER enumerator here would be a hand-typed
+        # skill object reaching the rule path.
+        hotbar = function_body(player, "static bool SkillTimerEnumerateHotbar(")
+        names = set(re.findall(r"GameObject::(\w+)", hotbar))
+        self.assertEqual(names, {"UI_Hud_Talent_obj"})
+        # The only other literal enumerators anywhere are the four explicit
+        # rows (SkillTimerMod.hpp) and the generated header's own table.
+        rule_section = self.header[self.header.index("struct SkillTimerRuleEntry"):]
+        self.assertNotIn("GameObject::", rule_section)
+
+    def test_eligibility_reads_duration_and_cooldown_by_name_with_the_floor_constant(self):
+        walk = function_body(self.plugin, "static bool ToggleTableResolveIds(")
+        for needle in ('"abilityDuration"', '"abilityCooldown"', "SkillTimerRuleModel::Eligible("):
+            self.assertIn(needle, walk, needle)
+        eligible = function_body(self.header, "static bool Eligible(")
+        for needle in ("kSkillTimerCooldownFloor", "duration > 0.0", "isExplicitRow", "denied", "readable"):
+            self.assertIn(needle, eligible, needle)
+        self.assertIn("inline constexpr double kSkillTimerCooldownFloor = 0.25;", self.header)
+
+    def test_deny_list_names_every_measured_negative(self):
+        block = self.header[self.header.index("kSkillTimerRuleDeny[] = {"):]
+        block = block[:block.index("};")]
+        for name in self.DENY_LIST:
+            self.assertIn(f'"{name}"', block, name)
+        self.assertEqual(len(self.DENY_LIST), 13)
+        self.assertIn("inline constexpr int kSkillTimerRuleDenyCount =", self.header)
+
+    def test_explicit_rows_win_over_the_rule(self):
+        walk = function_body(self.plugin, "static bool ToggleTableResolveIds(")
+        self.assertIn("SkillTimerRuleIsExplicitRow(name)", walk)
+        fn = function_body(self.header, "inline bool SkillTimerRuleIsExplicitRow(")
+        self.assertIn("kSkillTimerRows[i].abilityId", fn)
+        eligible = function_body(self.header, "static bool Eligible(")
+        self.assertIn("if (isExplicitRow) return false;", eligible)
+
+    def test_rule_rows_are_own_by_default_and_guard_membership_is_unchanged(self):
+        read = function_body(self.plugin, "static void SkillTimerRuleReadEntry(")
+        self.assertNotIn("ownershipField", read)
+        self.assertIn("anyOwn = true;", read)   # D-N3: no ownership field, every instance own
+        guard = function_body(self.plugin, "static int ToggleTableRowForTalentId(")
+        self.assertIn("ForgePact::kToggleSkillRowCount", guard)
+        self.assertNotIn("Rule", guard)   # guard membership stays toggle-table only
+
+    def test_rule_map_is_rebuilt_once_per_room_and_bounded(self):
+        due = function_body(self.plugin, "static bool ToggleTableResolveDue(")
+        self.assertNotIn("ToggleTableUnresolvedRows() + SkillTimerTableUnresolvedRows() == 0) return false;", due)
+        walk = function_body(self.plugin, "static bool ToggleTableResolveIds(")
+        self.assertIn("g_SkillTimerRuleCount = 0;", walk)
+        self.assertIn("ForgePact::kSkillTimerRuleCap", walk)
+        self.assertIn("g_SkillTimerRuleCapped", walk)
+        self.assertIn("inline constexpr int kSkillTimerRuleCap = 64;", self.header)
+
+    def test_stat_prints_the_rule_counters(self):
+        stats = function_body(self.stripped, "static void SkillTimerStats(")
+        self.assertIn("SkillTimerRuleCountersLine()", stats)
+        self.assertIn("SkillTimerRuleEntryLine(", stats)
+        counters = function_body(self.plugin, "static std::string SkillTimerRuleCountersLine(")
+        for needle in ("ruleRows=", "ruleDrawn=", "ruleNoInstance=", "ruleUnreadable=", "ruleExpired=",
+                       "ruleToggleOn=", "ruleNoObject=", "ruleDenied=", "ruleUnreadableFields=", "ruleCapped=",
+                       "ruleLatched=", "ruleUnlatched="):
+            self.assertIn(needle, counters, needle)
+        entry_line = function_body(self.plugin, "static std::string SkillTimerRuleEntryLine(")
+        self.assertIn(":talentId=", entry_line)
+        self.assertIn("object=", entry_line)
+        self.assertIn("unresolved", entry_line)
+
+    def test_rule_expectation_in_the_research_doc_matches_the_capture(self):
+        doc = self.research_doc
+        start = doc.index("#### Rule coverage expectation")
+        section = doc[start:]
+        cut = section.find("\n### ")
+        if cut >= 0:
+            section = section[:cut]
+        entries = re.findall(
+            r"abilityId=(\w+) abilityAura=\w+ abilityDuration=([\d.]+) abilityCooldown=([\d.]+)", section)
+        self.assertGreaterEqual(len(entries), 146)
+
+        import gen_skill_timer_names as gen
+        rows, _ = gen.build_table()
+        table = {key for key, _ in rows}
+
+        computed = set()
+        for ability_id, duration, cooldown in entries:
+            if ability_id in self.EXPLICIT_ROWS or ability_id in self.DENY_LIST:
+                continue
+            if ability_id.lower() not in table:
+                continue
+            if float(duration) > 0.0 and float(cooldown) > 0.25:
+                computed.add(ability_id)
+
+        doc_selected = set(re.findall(r"\| `([a-zA-Z]+)` \| selected", section))
+        self.assertEqual(computed, doc_selected)
+        self.assertEqual(len(doc_selected), 17)
+
+    def test_player_text_states_tested_rule_and_excluded(self):
+        release = self.release_notes[self.release_notes.index("**Timed skill countdown.**"):]
+        cut = release.find("\n- **")
+        if cut >= 0:
+            release = release[:cut]
+        readme_row = next(line for line in self.readme.split("\n")
+                           if line.startswith("| **Timed skill countdown**"))
+        panel = self.panel[self.panel.index("Timed skill countdown<br>"):][:1500]
+        for label, text in (("release notes", release), ("README", readme_row), ("panel", panel)):
+            low = text.lower()
+            for word in ("healing zone", "blade barrier", "soul spurn", "maelstrom of frost",
+                         "untested", "companion"):
+                self.assertIn(word, low, (label, word))
+            for bad in ("Crematus", "Lunar Orbit", "Submerged Knives"):
+                self.assertNotIn(bad, text, (label, bad))
+        self.assertEqual(subprocess.run(
+            ["git", "tag", "--list", "v1.4.5"], cwd=FORGEPACT_DIR, capture_output=True, text=True
+        ).stdout.strip(), "")
 
 
 class ToggleSkillTableContractTests(unittest.TestCase):
@@ -1560,9 +1750,11 @@ class ToggleSkillTableContractTests(unittest.TestCase):
                     "static RValue& HookTalentUseClass("):
             self.assertNotIn("ToggleTableResolveIds", function_body(self.plugin, sig), sig)
         due = function_body(self.plugin, "static bool ToggleTableResolveDue(")
-        # Both tables' rows keep the walk due (session 8: the countdown's own
-        # table resolves in this same walk - test_both_tables_resolve_in_one_walk).
-        self.assertIn("if (ToggleTableUnresolvedRows() + SkillTimerTableUnresolvedRows() == 0) return false;", due)
+        # Issue #55 follow-up (D-S4): the walk is due purely on the
+        # once-per-room gate now - the rule map (built in the same walk) has
+        # no "every row resolved" stopping signal, so the old early-out on
+        # both tables' rows is gone (test_both_tables_resolve_in_one_walk).
+        self.assertNotIn("ToggleTableUnresolvedRows() + SkillTimerTableUnresolvedRows() == 0) return false;", due)
         self.assertIn("CurrentRoomKey()", due)
         self.assertIn("INT64_MIN", due)          # an unreadable room is never stored
         self.assertIn("g_ToggleResolveWalked = false;", due)
