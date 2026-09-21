@@ -92,6 +92,18 @@ SDK_NAMES = (
 REJECTED_VERBS = ("forceslot", "forcelogin", "puppetinput", "roomprobe",
                   "coopstart")
 
+#: The candidate ids the research document measures, and the only tokens the
+#: shipping workorder will accept in its `finding:` line. `bc` is deliberately
+#: absent: the event and script routes are measured separately because their
+#: controls are separate, and one can pass while the other fails - which is
+#: exactly what happened on 2026-09-21.
+CANDIDATES = ("a-sendinput", "a-postmessage", "d", "bc-event", "bc-script")
+
+#: How a candidate's `## Decision` line may open. `works` is a result,
+#: `not observed` is a result scoped to what was tried, and `unmeasured`
+#: means the route's own control failed and nothing it reported counts.
+VERDICTS = ("works", "not observed", "unmeasured")
+
 
 def section(doc, heading):
     """From a line that is exactly `heading` to the next `## ` heading."""
@@ -339,35 +351,86 @@ class MenuProbeContractTests(unittest.TestCase):
                           f"{verb} reads as though it might already do this; "
                           "the document has to say what it really is")
 
-    def test_the_decision_lines_exist_and_are_still_pending(self):
-        """Both lines are present and both say `pending`.
+    def test_the_decision_lines_are_present_and_answered(self):
+        """Both lines are present, answered, and answered from measurement.
 
-        Present, because the follow-on workorder reads them from this file by
-        exact prefix. Still `pending`, because the live session has not run -
-        and this assertion is what has to be *changed*, deliberately, when it
-        does. An invented finding would otherwise be indistinguishable from a
-        measured one.
+        These assertions replaced a pair that required the literal `pending`,
+        deliberately, when the live session ran on 2026-09-21 - that pair
+        existed so an invented finding could not be mistaken for a measured
+        one before there was anything to measure. The protection has to
+        survive the change rather than be dropped with it, so what is checked
+        now is the rule itself: a candidate may be named in `finding:` only if
+        this document also records that it *worked*. A candidate whose own
+        control failed is `unmeasured`, and `unmeasured` is not a result.
         """
         text = self.doc.replace("\r\n", "\n")
-        self.assertIn("\nfinding: pending\n", text)
-        self.assertIn("\nshipRoute: pending\n", text)
         self.assertEqual(len(re.findall(r"(?m)^finding: ", text)), 1)
         self.assertEqual(len(re.findall(r"(?m)^shipRoute: ", text)), 1)
+        finding = re.search(r"(?m)^finding: (.+)$", text).group(1).strip()
+        ship = re.search(r"(?m)^shipRoute: (.+)$", text).group(1).strip()
+        self.assertNotEqual(finding, "pending",
+                            "the session has run; `pending` is no longer an "
+                            "answer this document may give")
+        self.assertNotEqual(ship, "pending")
+        self.assertIn(ship, ("mcp-only", "forgepact-player", "research-dll",
+                             "none"),
+                      "the shipping workorder selects its branch from this "
+                      "token and stops on anything it does not know")
 
-    def test_every_candidate_is_recorded_as_not_observed_until_measured(self):
+        named = [] if finding == "none" else [t.strip()
+                                              for t in finding.split(",")]
+        self.assertTrue(named or finding == "none")
+        for token in named:
+            self.assertIn(token, CANDIDATES,
+                          f"{token!r} is not one of the candidates this "
+                          "document measured")
+            label = self._candidate_label(token)
+            self.assertTrue(label.startswith("works"),
+                            f"{token} is named in `finding:` but its own "
+                            f"line is labelled {label!r}; a candidate whose "
+                            "control did not pass has measured nothing "
+                            "(AGENTS.md, 'Prove the Instrument')")
+
+    def test_every_candidate_carries_exactly_one_labelled_line(self):
         decision = section(self.doc, "## Decision")
-        for candidate in ("a-sendinput", "a-postmessage", "bc-event",
-                          "bc-script"):
-            self.assertIn(candidate, decision)
         bullets = [line for line in decision.split("\n")
-                   if line.startswith("* `") and "not observed" in line]
-        self.assertEqual(len(bullets), 5,
-                         "one line per candidate, and none of them may claim "
-                         "a mechanism 'does not work' before it was measured")
-        for overclaim in ("does not happen", "never fires", "impossible"):
+                   if line.startswith("* `")]
+        self.assertEqual(len(bullets), len(CANDIDATES),
+                         "one line per candidate, no more and no fewer")
+        for candidate in CANDIDATES:
+            label = self._candidate_label(candidate)
+            self.assertTrue(
+                any(label.startswith(v) for v in VERDICTS),
+                f"{candidate}'s line is labelled {label!r}; the label has to "
+                f"open with one of {VERDICTS}, so a reader and this test see "
+                "the same verdict")
+        for overclaim in ("does not happen", "never fires", "impossible",
+                          "does not work", "cannot work"):
             self.assertNotIn(overclaim, self.doc,
-                             f"'{overclaim}' is a claim no unrun session "
-                             "supports; negatives are 'not observed'")
+                             f"'{overclaim}' is a claim measurement does not "
+                             "support; negatives here are 'not observed' and "
+                             "are scoped to what was actually tried")
+
+    def _candidate_label(self, candidate):
+        """The bolded verdict opening `candidate`'s `## Decision` line.
+
+        The verdict is a *position* - the `**...**` immediately after the
+        dash - not any phrase appearing somewhere in the bullet. A bullet
+        legitimately cites other steps' findings in its prose (`d`'s line
+        explains that keyboard navigation is not observed, which is C-1.11's
+        result and not `d`'s verdict), so matching a substring anywhere in
+        the paragraph reads a citation as a verdict.
+        """
+        decision = section(self.doc, "## Decision").replace("\r\n", "\n")
+        # DOTALL: a verdict that names what it is scoped to can be long
+        # enough to wrap, and a wrapped label is still a label.
+        match = re.search(r"(?ms)^\* `%s` - \*\*(.+?)\*\*"
+                          % re.escape(candidate), decision)
+        self.assertIsNotNone(
+            match,
+            f"{candidate} needs a `## Decision` line of the form "
+            "``* `<id>` - **<verdict>.**``")
+        return " ".join(match.group(1).split()).rstrip(".")
 
     def test_the_results_table_has_a_row_per_live_step(self):
         results = section(self.doc, "## Results")

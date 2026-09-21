@@ -289,34 +289,45 @@ reply in the `## Results` table under its step id. Keys used below:
 
 ## Results
 
-Empty by construction: the session above has not been run. One row per step
-id; `control` is `pass` or `fail` for every step that is a control, and `-`
-for the rest.
+Run 2026-09-21 against the real modded install: research build `1fadd1ec...`, game
+build 7.0.13.0, plugin v1.4.4, YYTK 4.0.1. One row per step id; `control` is
+`pass` or `fail` for every step that is a control, and `-` for the rest.
 
-| step | what to record | observed | control | date |
-| --- | --- | --- | --- | --- |
-| C-1.1 | six checks pass, healthy | | - | |
-| C-1.2 | backup id | | - | |
-| C-1.3 | installed plugin hash before the swap | | - | |
-| C-1.4 | launch phase, load banner, co-op line | | - | |
-| C-1.5 | research build confirmed, room, screenshot | | pass/fail | |
-| C-1.6 | instances per object - including the `menuprobe list` counts for `Menu_Controller_obj` and `Profile_Manager_obj`, step 13's control - button count and positions, size ratio, client rectangle and DPI | | - | |
-| C-1.7 | both key reads while a human holds Shift, then released | | pass/fail | |
-| C-1.8 | `a-sendinput` and `a-postmessage`: both key reads, foreground before and after, and each route's `complete` flag with any delivery error | | - | |
-| C-1.9 | room and screen after a real mouse click on Local, and after Escape | | pass/fail | |
-| C-1.10 | `a-sendinput` and `a-postmessage`: room and screen after an injected click, and each route's `complete` flag with any delivery error | | - | |
-| C-1.11 | keyboard navigation observed or not observed | | - | |
-| C-1.12 | the three replies from the engine's own key builtins | | - | |
-| C-1.13 | the control `menuprobe list Menu_Controller_obj` (or `Profile_Manager_obj`) beside `menuprobe list UI_Button_obj` at the menu, then each event performed and its result | | pass/fail | |
-| C-1.14 | script control result, then each UI-action call, status and result | | pass/fail | |
-| C-1.15 | the full path, per-screen client size and click fractions or key list | | - | |
-| C-1.16 | `player via ...`, room, screenshot, settle time | | - | |
-| C-1.17 | whether step 15's fractions hit in the second display mode | | - | |
-| C-1.18 | exited, forced | | - | |
-| C-1.19 | changed, added, missing | | - | |
-| C-1.20 | changed and missing after the restore | | - | |
-| C-1.21 | the hash after restoring the shipping plugin | | - | |
-| C-1.22 | the decision written below | | - | |
+**Transport caveat.** The `hs-drive` MCP server process connected to the
+session predates `hs_input`'s registration and exposed only twelve tools, so
+candidate (a) was driven by calling `tools.hs_drive_mcp.input.inject`
+directly -- the exact function the MCP tool body is a one-line pass-through
+to, and importable without the MCP SDK because of the release boundary the
+core workorder pins. The gate, the window resolution and the refusals are
+therefore the shipped ones. What differs is the **process**: these calls ran
+from a Bash-spawned interpreter rather than the server process, and process
+integrity level is one of the things that makes `PostMessageW` fail, so
+C-1.8's posted-route result is scoped to a same-integrity caller.
+
+| step | observed | control | date |
+| --- | --- | --- | --- |
+| C-1.1 | six checks pass, `healthy: true`; positive controls `process_snapshot`, `backup_roundtrip` and `screenshot_screen` all listed in `positive_controls_proven` | - | 2026-09-21 |
+| C-1.2 | `backup_id: 20260921T063610Z_pre-charselect`, 137 files, 1,281,604 bytes | - | 2026-09-21 |
+| C-1.3 | **the expectation was wrong.** The installed plugin was `282cbd1c...` (3,463,168 B, carrying `citrace`/`roomprobe`/`prospectprobe`, no player-build marker), not the expected `24020eac...`. The player build was beside it as `BloodPactPlugin.dll.preprobe-backup` (`24020eac...`, 970,240 B), left installed by an earlier session. Both preserved as `.found-282cbd1c` and `.ship-24020eac`; research `_rel` `1fadd1ec...` installed over the top | - | 2026-09-21 |
+| C-1.4 | `phase: plugin_ready`, `ready: true`, banner `==== BloodPact plugin loaded ==== v1.4.4`, reply `pong (YYTK 4.0.1)`; the line `coop: no coop.ini at ...bin/bp_ipc` present and no other `coop:` line | - | 2026-09-21 |
+| C-1.5 | `[6] GetBuiltin("fps", nullptr) -> real:144.000000` (positive control), `[5] variable_global_exists("room") -> bool:false` (negative control), and no `command unavailable in player build`. The room reads as `kind=15 str=ref room Main_Menu_rm` -- a room **reference**, not the `real:194` the plan predicted | pass | 2026-09-21 |
+| C-1.6 | `UI_Button_obj` **13** live instances; control `Menu_Controller_obj` **1**; `Select_Parent_obj` **0**; `Profile_Manager_obj` 1 via `citrace dumpobj`. GUI 2560x1368 against window 1920x1080. `hs_input` geometry: hwnd 1247526, `client_rect [320,191,2240,1271]`, `client_size [1920,1080]`, `dpi 96` | - | 2026-09-21 |
+| C-1.7 | held: **13/13** polls across 27 s read `keyboard_check 16 = real:1` and `keyboard_check_direct 16 = real:1`, game in foreground throughout. Released: **4/4** reads `real:0` on both | pass | 2026-09-21 |
+| C-1.8 | `a-sendinput`: `keyboard_check = real:1`, `keyboard_check_direct = real:1`. `a-postmessage`: `keyboard_check = real:1`, `keyboard_check_direct = real:0`. Both routes `complete: true`, `records_rejected: 0`, `foreground_before == foreground_after ==` the game hwnd. Both returned to `0`/`0` after key-up | - | 2026-09-21 |
+| C-1.9 | **not run.** The injected click at C-1.10 produced the state change, so the human-click oracle was not needed to interpret a negative | - | 2026-09-21 |
+| C-1.10 | zero-hold click (`hs_input`'s own `click` action): `complete: true`, 3 records sent, **room unchanged** -- but the screenshot shows the cursor moved onto the button and the button lit, so the *move* arrived and the *press* did not. Repeating with **120 ms between button-down and button-up**: `Main_Menu_rm` -> `Chose_rm`. The zero-hold failure measured the instrument, not the game | - | 2026-09-21 |
+| C-1.11 | arrows (vk 38/40) and Enter: no `image_index` change on any of the 13 buttons, no room change, and no visible highlight in the screenshot. Keys are proven to arrive (C-1.7, C-1.8), so this is a measured negative: **not observed**. Consistent with `menuNav = real:-1` and `gamepadCursorManager = real:-4` in the `Menu_Controller_obj` dump | - | 2026-09-21 |
+| C-1.12 | `cb keyboard_key_press 16 -> undefined`, then `keyboard_check = real:1` **and** `keyboard_check_direct = real:1`; `cb keyboard_key_release 16 -> undefined`, then `real:0` on both. Baseline before the press was `0`/`0` | - | 2026-09-21 |
+| C-1.13 | control `menuprobe list Menu_Controller_obj` -> 1 live instance (non-empty) beside `menuprobe list UI_Button_obj` -> 13, so the enumeration control **passed** and the ambiguous both-empty branch did not arise. Events on `nth=0` (`Play local`, instance 257029): `ev_mouse` 4, 0, 10 and 5, then user events 10, 11 and 12 -- each `performed -> bool:true`, the instance alive in the `after:` line every time, room and screenshot unchanged after all seven | pass | 2026-09-21 |
+| C-1.14 | control `menuprobe script GetQuestProgress UI_Button_obj 0 confirm` -> **`EXCEPTION calling gml_Script_GetQuestProgress`**, where `real:-1` was expected. The control failed, so no UI-action call was attempted and the route is **unmeasured** | fail | 2026-09-21 |
+| C-1.15 | windowed, GUI 2560x1368 / client 1920x1080: `Play local` at gui(448, 676.4) -> client(336, 534), fractions (0.175, 0.4944); character slot 1 (`Pal`) at client(243, 225); `PLAY` at client(583, 346). The full path main menu -> `Chose_rm` -> character panel -> `Town_01_rm` driven entirely by held `send_input` clicks | - | 2026-09-21 |
+| C-1.16 | room `Town_01_rm`; `menuprobe list Player_obj` -> **1 live instance** at (912, 822), with `Player_Parent_obj` -> `not found (asset_get_index)` as the negative control. **`orbpickup stat` did not prove it**: `player via (not tried)`, because `globe objs=0` means the resolution is never attempted in a town with no orbs. Settle time under 3 s | - | 2026-09-21 |
+| C-1.17 | fullscreen (`cb window_get_fullscreen -> real:1`), GUI 2560x1440 / client 2560x1440: the **same** button reports gui(448, **712**) -- its absolute GUI position moved -- yet the fractions are (0.175, 0.4944), identical to windowed. The same read-live-and-scale formula produced client(448, 712) and the click drove `Main_Menu_rm` -> `Chose_rm` again | pass | 2026-09-21 |
+| C-1.18 | `exited: true, forced: false` on both stops (pids 80640 and 66588), `WM_CLOSE` to 2 windows each time | - | 2026-09-21 |
+| C-1.19 | `changed: ["shop.ini"]`, `added: []`, `missing: []` -- no character save altered by loading a character and exiting from town | - | 2026-09-21 |
+| C-1.20 | after the restore: `changed: []`, `added: []`, `missing: []`, 137 files; pre-restore backup `20260921T064937Z_pre-restore` | - | 2026-09-21 |
+| C-1.21 | `24020eac387d90a0c1b385a4f855e504f3cee42352bae8cdf1bcdb0e15e7372a`, match `True`, player-build marker present, `menuprobe` and `citrace` absent. **A deliberate change of state, recorded as one:** the install arrived carrying the research build `282cbd1c...`, and the owner chose on 2026-09-21 to end with the shipping plugin instead; `282cbd1c...` is kept as `BloodPactPlugin.dll.found-282cbd1c` | - | 2026-09-21 |
+| C-1.22 | see the Decision below | - | 2026-09-21 |
 
 ## Negative results, sourced
 
@@ -353,21 +364,70 @@ work - only that, so far, it has not been seen to.
 
 ## Decision
 
-One sentence per candidate goes here after the session, then the two lines
-below. Until then every candidate is `not observed`, and the two lines are
-placeholders rather than an answer:
+Measured 2026-09-21 in one session against the real modded install. Every
+sentence below is backed by a row of the Results table, and no candidate is
+named in `finding:` whose control did not pass in that same session.
 
-* `a-sendinput` - not observed (session not run).
-* `a-postmessage` - not observed (session not run).
-* `d` - not observed (session not run).
-* `bc-event` - not observed (session not run).
-* `bc-script` - not observed (session not run).
+* `a-sendinput` - **works.** Keys reach both `keyboard_check` and
+  `keyboard_check_direct` (C-1.8), and a held mouse click drove the whole path
+  main menu -> `Chose_rm` -> character panel -> `Town_01_rm` (C-1.10, C-1.15,
+  C-1.16). **The hold is the mechanism.** A button-down and button-up emitted
+  back to back land inside one frame and are invisible to a 144 fps sample
+  loop; `hs_input`'s own `click` action emits them with no delay, so it moved
+  the cursor, lit the button under it, and activated nothing. The same click
+  with 120 ms between the two records changed the room every time.
+* `a-postmessage` - **works for `keyboard_check` only.** The posted route sets
+  the window-level key state but not the device state that
+  `keyboard_check_direct` reads (C-1.8), so anything the game gates on the
+  direct read is beyond it. Scoped to a same-integrity caller; see the
+  transport caveat above the Results table.
+* `d` - **works.** `keyboard_key_press` and `keyboard_key_release` set and
+  clear *both* key reads (C-1.12), and need no foreground. Keys only, though,
+  and keyboard navigation is not observed at this menu (C-1.11), so it cannot
+  drive the path by itself.
+* `bc-event` - **not observed, for `UI_Button_obj` and for the seven events
+  tried** (`ev_mouse` 0, 4, 5 and 10; user events 10, 11 and 12). Each
+  returned `performed -> bool:true` with the instance still alive in the
+  `after:` line and nothing changing on screen (C-1.13). The enumeration
+  control passed in the same session, so this is a real negative about *that
+  object and those events*. It is not a statement about the mechanism, and not
+  about any other object.
+* `bc-script` - **unmeasured.** This route's positive control,
+  `menuprobe script GetQuestProgress UI_Button_obj 0 confirm`, returned an
+  exception where `real:-1` was expected (C-1.14). Nothing the route reported
+  afterwards could be distinguished from a blind instrument, so no UI-action
+  call was attempted. Whether the control is simply unsuitable at the main
+  menu or the route is broken is itself undetermined, and saying which would
+  need a script already proven to return a known value there.
 
-finding: pending
-shipRoute: pending
+finding: a-sendinput, a-postmessage, d
+shipRoute: mcp-only
 
-`pending` is not a value the shipping work can act on. The follow-on
-workorder reads these two lines from this file and must refuse a `pending`
-on either of them; only the owner-run session above may replace them, and a
-candidate may be named in `finding:` only if its own control passed in the
-same session.
+### What the shipping workorder still has to solve
+
+`shipRoute: mcp-only` was the owner's choice on 2026-09-21, made knowing that
+two things this session leaned on came from **research-only** verbs and are
+therefore unavailable to `hs_select_character` on a player build.
+
+1. **Where the buttons are.** The coordinates here came from `menuprobe list`.
+   Without it, the fallback is the client fractions, which C-1.17 showed are
+   stable across display modes even though the absolute GUI coordinates are
+   not: `Play local` sits at **(0.175, 0.4944)** of the client rectangle in
+   both windowed and fullscreen. Two further fractions were measured **in
+   windowed mode only** and have not been checked in a second mode: character
+   slot 1 at **(0.1266, 0.2083)** and `PLAY` at **(0.3036, 0.3204)**. They are
+   layout constants, so a game patch can move them; whatever ships should fail
+   loudly with `layout_not_measured` rather than clicking a guessed point.
+2. **Proving a character actually loaded.** `orbpickup stat` does **not** do
+   it: with no orbs nearby it reports `globe objs=0` and `player via (not
+   tried)`, because the player resolution is never attempted (C-1.16). The
+   ship workorder's decision D17 assumed that field answers on every build,
+   and this session measured otherwise. What did work was
+   `menuprobe list Player_obj` -> 1 live instance, which is research-only, so
+   a player-build-answerable proof still has to be found.
+3. **`hs_input`'s `click` needs a hold.** Its `key` action already takes
+   `hold_ms` and defaults it to 60; the pointer path has no equivalent and
+   emits down and up with nothing between them. Until that is fixed, the
+   shipped tool cannot press a button even though the mechanism works. This is
+   a defect in an instrument this repository already shipped, found by
+   measurement rather than by review.
