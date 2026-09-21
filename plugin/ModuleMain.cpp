@@ -21698,6 +21698,18 @@ static bool TgProbeIsPiggyback(long mode)
     return mode == kTgViaNative || mode == kTgViaTableOnly;
 }
 
+// Session 12 (`tgprobe buffwatch`): the TalentUse/TalentUseClass nesting
+// depth, kept only around the native detour's own trampoline call below
+// (kTg_TalentUse and kTg_TalentUseClass); every other idx leaves these
+// untouched. useTalent's own value is stashed once, on the outermost
+// TalentUseClass call's own first argument. Defined here (ahead of the rest
+// of the buffwatch instrument, further down with the sweep sampler) because
+// TgProbeDetourBody below is the only place that ever writes them.
+static volatile long g_TgTalentUseDepth = 0;
+static volatile long g_TgTalentUseClassDepth = 0;
+static double g_TgTalentUseClassA0 = 0.0;
+static void TgProbeBuffWatchOnBuffAdd(int argc, RValue** A, bool talentUseNative, bool talentUseClassNative);
+
 // Entry bookkeeping shared by the native detours and the entry notes. The hot
 // path is two interlocked increments and a frame read; nothing allocates
 // unless verbose is on and this row still has log budget. Returns the call
@@ -21724,7 +21736,24 @@ static RValue& TgProbeDetourBody(int idx, CInstance* S, CInstance* O, RValue& R,
     TgProbeTarget& t = g_TgRows[idx];
     if (t.flags & kTgHud) TgProbeHudRoomTick(CurrentRoomKey());
     const long logged = TgProbeEnter(t, S, O, argc, A);
+    // Session 12 (`tgprobe buffwatch`): the nesting depth is trustworthy only
+    // around a NATIVE detour's own trampoline - a piggybacked row never runs
+    // this function at all, so its depth stays 0 for the whole session and
+    // the BuffAdd note prints n/a for it (the caller decides that from the
+    // row's own mode, not from these counters).
+    if (idx == kTg_TalentUse) {
+        InterlockedIncrement(&g_TgTalentUseDepth);
+    } else if (idx == kTg_TalentUseClass) {
+        if (InterlockedIncrement(&g_TgTalentUseClassDepth) == 1 && argc > 0 && A && A[0] && N1Numeric(*A[0]))
+            g_TgTalentUseClassA0 = A[0]->ToDouble();
+    }
     RValue& r = t.tramp ? t.tramp(S, O, R, argc, A) : R;
+    if (idx == kTg_TalentUse) InterlockedDecrement(&g_TgTalentUseDepth);
+    else if (idx == kTg_TalentUseClass) InterlockedDecrement(&g_TgTalentUseClassDepth);
+    if (idx == kTg_BuffAdd) {
+        TgProbeBuffWatchOnBuffAdd(argc, A, g_TgRows[kTg_TalentUse].mode == kTgNative,
+                                   g_TgRows[kTg_TalentUseClass].mode == kTgNative);
+    }
     if (logged && (t.flags & kTgRet)) {
         try { Out(std::string("tgprobe ") + t.label + " #" + std::to_string(logged) + " ret=" + Describe(r)); } catch (...) {}
     }
@@ -21778,6 +21807,12 @@ static void TgProbeNoteTalentUse(CInstance* S, CInstance* O, int argc, RValue** 
 
 static void TgProbeNoteBuffAdd(CInstance* S, CInstance* O, int argc, RValue** A)
 {
+    // Session 12 (`tgprobe buffwatch`): the via-hook attachment path - this
+    // note runs from inside the real HookBuffAdd, which only executes at all
+    // when kTg_BuffAdd is NOT native (a native detour supersedes it), so this
+    // and TgProbeDetourBody's kTg_BuffAdd branch never both fire for one call.
+    TgProbeBuffWatchOnBuffAdd(argc, A, g_TgRows[kTg_TalentUse].mode == kTgNative,
+                               g_TgRows[kTg_TalentUseClass].mode == kTgNative);
     if (!TgProbeIsPiggyback(g_TgRows[kTg_BuffAdd].mode)) return;
     TgProbeNote(kTg_BuffAdd, S, O, argc, A);
 }
@@ -26007,6 +26042,253 @@ static void TgProbeSweepCommand(const std::string& rest)
     Out("tgprobe sweep: usage -> tgprobe sweep on|off|clear|show [seen|all]");
 }
 
+// ---- `tgprobe buffwatch` (session 12): global.playerBuff[1][0][<buffId>], --
+// the array both HhBuffAlive and `tgprobe buffs` (TgProbeBuffs) already walk,
+// one record per slot index. Off by default: the sampler returns before any
+// builtin call, the sweep sampler's own rule. Attribution comes from a
+// `clear` before each cast, exactly like `sweep clear`.
+static bool g_TgBuffWatchOn = false;
+
+// A custom variable's name plus the last numeric value seen for it (never
+// destroyTimer, which has its own first/last/min/max below). Captured on the
+// first draw of an appearance, capped at 8 - a stack counter would show here.
+struct TgBuffWatchVar {
+    std::string name;
+    bool numeric = false;
+    double last = 0.0;
+};
+
+// One buffId's record. `app`/`present` restart on the rising edge, the same
+// shape TgSweepRecord uses. An identity mismatch (the instance's own
+// `buffType` != the slot it was found at) is counted and the record is left
+// untouched entirely - it is never taken as a reading of THIS buffId.
+struct TgBuffWatchRecord {
+    bool present = false;
+    long app = 0;
+    long draws = 0;
+    long firstFrame = -1, lastFrame = -1;
+    bool haveFirst = false;
+    double first = 0.0, last = 0.0, min = 0.0, max = 0.0;
+    long unreadable = 0;
+    long identityMismatch = 0;
+    bool haveHost = false;
+    double host = 0.0;
+    std::vector<TgBuffWatchVar> vars;
+    long adds = 0;
+    bool haveAdd = false;
+    double lastAddFrames = 0.0;
+    double lastAddPlayer = 0.0;
+    // -1: the owning row (TalentUse/TalentUseClass) never got a native
+    // detour this session, so the depth counter cannot be trusted - n/a, not
+    // a measured 0. -2 (useTalent only): native, but no TalentUseClass call
+    // was on the stack when this BuffAdd fired.
+    long inUse = -1;
+    long useTalent = -1;
+};
+static std::map<int, TgBuffWatchRecord> g_TgBuffWatch;
+static long g_TgBuffWatchDraws = 0, g_TgBuffWatchMismatches = 0;
+
+// Custom variable names/values on a present, identity-matched buff instance,
+// excluding kSkillTimerField itself (destroyTimer has its own columns).
+static void TgProbeBuffWatchCaptureVars(const RValue& inst, TgBuffWatchRecord& rec, bool firstSight)
+{
+    try {
+        RValue names = g_Yytk->CallBuiltin("variable_instance_get_names", { inst });
+        if (names.m_Kind != VALUE_ARRAY) return;
+        const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+        for (int i = 0; i < n; ++i) {
+            RValue nm = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) });
+            const std::string name = nm.ToString();
+            if (name == ForgePact::kSkillTimerField) continue;
+            RValue v;
+            try { v = g_Yytk->CallBuiltin("variable_instance_get", { inst, nm }); } catch (...) { continue; }
+            const bool numeric = N1Numeric(v);
+            if (firstSight) {
+                if (rec.vars.size() >= 8) continue;
+                rec.vars.push_back({ name, numeric, numeric ? v.ToDouble() : 0.0 });
+            } else if (numeric) {
+                for (auto& var : rec.vars) { if (var.name == name) { var.numeric = true; var.last = v.ToDouble(); break; } }
+            }
+        }
+    } catch (...) {}
+}
+
+// One draw's update of one record - the sweep sampler's own shape
+// (TgProbeSweepNote). `present` false only ends the appearance; an identity
+// mismatch is counted and the record is left untouched entirely.
+static void TgProbeBuffWatchNote(TgBuffWatchRecord& rec, bool present, bool identityMismatch,
+                                  bool haveTimer, double timer, bool haveHost, double host,
+                                  const RValue* inst, long frame)
+{
+    if (identityMismatch) { ++rec.identityMismatch; ++g_TgBuffWatchMismatches; return; }
+    if (!present) { rec.present = false; return; }
+    const bool firstSight = !rec.present;
+    if (firstSight) {
+        ++rec.app;
+        rec.draws = 0;
+        rec.haveFirst = false;
+        rec.first = rec.last = rec.min = rec.max = 0.0;
+        rec.vars.clear();
+    }
+    rec.present = true;
+    if (rec.firstFrame < 0) rec.firstFrame = frame;
+    rec.lastFrame = frame;
+    ++rec.draws;
+    if (haveHost) { rec.haveHost = true; rec.host = host; }
+    if (inst) TgProbeBuffWatchCaptureVars(*inst, rec, firstSight);
+    if (!haveTimer) { ++rec.unreadable; return; }
+    if (!rec.haveFirst) { rec.haveFirst = true; rec.first = rec.min = rec.max = timer; }
+    if (timer < rec.min) rec.min = timer;
+    if (timer > rec.max) rec.max = timer;
+    rec.last = timer;
+}
+
+// Called once per DrawHudBuffs draw from TgProbeSpurnAfterDraw, right after
+// the sweep sampler, and does nothing until `tgprobe buffwatch on`. The array
+// path is the one `tgprobe buffs` already walks: global.playerBuff[1][0]
+// [<slot>]. Identity is the instance's own `buffType` against the slot it
+// was found at - what keeps a renumbered build from drawing a stranger's
+// buff.
+static void TgProbeBuffWatchAfterDraw()
+{
+    if (!g_TgBuffWatchOn) return;
+    ++g_TgBuffWatchDraws;
+    const long frame = (long)g_RuntimeFrame;
+    std::set<int> seen;
+    try {
+        RValue pb = g_Yytk->CallBuiltin("variable_global_get", { RValue("playerBuff") });
+        if (pb.m_Kind == VALUE_ARRAY) {
+            RValue a1 = g_Yytk->CallBuiltin("array_get", { pb, RValue(1.0) });
+            if (a1.m_Kind == VALUE_ARRAY) {
+                RValue a0 = g_Yytk->CallBuiltin("array_get", { a1, RValue(0.0) });
+                if (a0.m_Kind == VALUE_ARRAY) {
+                    const int len = (int)g_Yytk->CallBuiltin("array_length", { a0 }).ToDouble();
+                    for (int i = 0; i < len; ++i) {
+                        RValue ref;
+                        try { ref = g_Yytk->CallBuiltin("array_get", { a0, RValue((double)i) }); }
+                        catch (...) { continue; }
+                        const bool number = ref.m_Kind == VALUE_REAL || ref.m_Kind == VALUE_INT32 || ref.m_Kind == VALUE_INT64;
+                        if (ref.m_Kind == VALUE_UNDEFINED || (number && ref.ToDouble() < 0)) continue;
+                        bool exists = false;
+                        try { exists = g_Yytk->CallBuiltin("instance_exists", { ref }).ToBoolean(); } catch (...) {}
+                        if (!exists) continue;
+                        seen.insert(i);
+                        bool identityMismatch = true;
+                        try {
+                            RValue bt = g_Yytk->CallBuiltin("variable_instance_get", { ref, RValue("buffType") });
+                            identityMismatch = !(N1Numeric(bt) && N1NearlyEqual(bt.ToDouble(), (double)i));
+                        } catch (...) {}
+                        bool haveTimer = false; double timer = 0.0;
+                        try {
+                            RValue tv = g_Yytk->CallBuiltin("variable_instance_get", { ref, RValue(ForgePact::kSkillTimerField) });
+                            if (N1Numeric(tv)) { timer = tv.ToDouble(); haveTimer = true; }
+                        } catch (...) {}
+                        bool haveHost = false; double host = 0.0;
+                        try {
+                            RValue hv = g_Yytk->CallBuiltin("variable_instance_get", { ref, RValue("host") });
+                            if (N1Numeric(hv)) { host = hv.ToDouble(); haveHost = true; }
+                        } catch (...) {}
+                        TgBuffWatchRecord& rec = g_TgBuffWatch[i];
+                        TgProbeBuffWatchNote(rec, true, identityMismatch, haveTimer, timer, haveHost, host, &ref, frame);
+                    }
+                }
+            }
+        }
+    } catch (...) {}
+    for (auto& kv : g_TgBuffWatch) {
+        if (seen.find(kv.first) == seen.end())
+            TgProbeBuffWatchNote(kv.second, false, false, false, 0.0, false, 0.0, nullptr, frame);
+    }
+}
+
+// The BuffAdd note: one function, called both from TgProbeNoteBuffAdd
+// (via-hook attachment) and from TgProbeDetourBody's kTg_BuffAdd branch
+// (native attachment) - whichever one actually saw this session's BuffAdd
+// call. `talentUseNative`/`talentUseClassNative` are resolved by the caller
+// (it already reads g_TgRows), so this function's own testable core never
+// needs the row table. BuffAdd's own args: (player, buffId, ..., frames).
+static void TgProbeBuffWatchOnBuffAdd(int argc, RValue** A, bool talentUseNative, bool talentUseClassNative)
+{
+    if (!g_TgBuffWatchOn) return;
+    if (argc < 2 || !A[1] || !N1Numeric(*A[1])) return;
+    const int buffId = (int)A[1]->ToDouble();
+    if (buffId < 0) return;
+    TgBuffWatchRecord& rec = g_TgBuffWatch[buffId];
+    ++rec.adds;
+    rec.haveAdd = true;
+    if (argc > 3 && A[3] && N1Numeric(*A[3])) rec.lastAddFrames = A[3]->ToDouble();
+    if (argc > 0 && A[0] && N1Numeric(*A[0])) rec.lastAddPlayer = A[0]->ToDouble();
+    rec.inUse = talentUseNative ? (g_TgTalentUseDepth > 0 ? 1 : 0) : -1;
+    rec.useTalent = talentUseClassNative ? (g_TgTalentUseClassDepth > 0 ? (long)g_TgTalentUseClassA0 : -2) : -1;
+}
+
+static std::string TgProbeBuffWatchVarsText(const TgBuffWatchRecord& rec)
+{
+    std::string s;
+    for (const auto& v : rec.vars)
+        s += (s.empty() ? "" : ",") + v.name + "=" + (v.numeric ? TgProbeTglNumber(v.last) : std::string("non-numeric"));
+    return s.empty() ? std::string("none") : s;
+}
+
+// `tgprobe buffwatch show`: one line per record with `app>0`, then the
+// footer the live procedure quotes.
+static void TgProbeBuffWatchShow()
+{
+    Out("tgprobe buffwatch: sampler=" + std::string(g_TgBuffWatchOn ? "on" : "off")
+        + " draws=" + std::to_string(g_TgBuffWatchDraws)
+        + " records=" + std::to_string(g_TgBuffWatch.size())
+        + " mismatches=" + std::to_string(g_TgBuffWatchMismatches));
+    std::vector<std::pair<long, int>> order;
+    for (const auto& rec : g_TgBuffWatch) order.push_back({ rec.second.firstFrame, rec.first });
+    std::sort(order.begin(), order.end());
+    for (const auto& entry : order) {
+        const int idx = entry.second;
+        const TgBuffWatchRecord& rec = g_TgBuffWatch[idx];
+        if (rec.app <= 0) continue;
+        Out("  [" + std::to_string(idx) + "] app=" + std::to_string(rec.app)
+            + " present=" + (rec.present ? "1" : "0") + " draws=" + std::to_string(rec.draws)
+            + " first=" + (rec.haveFirst ? TgProbeTglNumber(rec.first) : std::string("unreadable"))
+            + " last=" + (rec.haveFirst ? TgProbeTglNumber(rec.last) : std::string("unreadable"))
+            + " min=" + (rec.haveFirst ? TgProbeTglNumber(rec.min) : std::string("unreadable"))
+            + " max=" + (rec.haveFirst ? TgProbeTglNumber(rec.max) : std::string("unreadable"))
+            + " unreadable=" + std::to_string(rec.unreadable)
+            + " identityMismatch=" + std::to_string(rec.identityMismatch)
+            + " host=" + (rec.haveHost ? TgProbeTglNumber(rec.host) : std::string("unreadable"))
+            + " vars=" + TgProbeBuffWatchVarsText(rec)
+            + " adds=" + std::to_string(rec.adds)
+            + " lastAddFrames=" + (rec.haveAdd ? TgProbeTglNumber(rec.lastAddFrames) : std::string("n/a"))
+            + " lastAddPlayer=" + (rec.haveAdd ? TgProbeTglNumber(rec.lastAddPlayer) : std::string("n/a"))
+            + " inUse=" + (rec.inUse < 0 ? std::string("n/a") : std::to_string(rec.inUse))
+            + " useTalent=" + (rec.useTalent == -1 ? std::string("n/a") : rec.useTalent == -2 ? std::string("none") : std::to_string(rec.useTalent))
+            + " firstFrame=" + std::to_string(rec.firstFrame) + " lastFrame=" + std::to_string(rec.lastFrame));
+    }
+}
+
+static void TgProbeBuffWatchCommand(const std::string& rest)
+{
+    std::string subRest;
+    const std::string sub = Lower(FirstToken(rest, subRest));
+    if (sub == "on" || sub == "1") {
+        g_TgBuffWatchOn = true;
+        Out("tgprobe buffwatch -> sampler=on (playerBuff[1][0], read on every DrawHudBuffs draw)");
+        return;
+    }
+    if (sub == "off" || sub == "0") {
+        g_TgBuffWatchOn = false;
+        Out("tgprobe buffwatch -> sampler=off (no reads; records kept)");
+        return;
+    }
+    if (sub == "clear") {
+        g_TgBuffWatch.clear();
+        g_TgBuffWatchDraws = 0;
+        g_TgBuffWatchMismatches = 0;
+        Out("tgprobe buffwatch clear: records=0");
+        return;
+    }
+    if (sub == "show" || sub.empty()) { TgProbeBuffWatchShow(); return; }
+    Out("tgprobe buffwatch: usage -> tgprobe buffwatch on|off|clear|show");
+}
+
 // One struct field as text for `tgprobe talents`: `absent` when the struct
 // has no such key, `unreadable` when the read throws - never a default.
 static std::string TgProbeTalentsField(const RValue& talent, const char* field)
@@ -26346,6 +26628,8 @@ static void TgProbeSpurnAfterDraw()
     // Session 8: every descendant of the six candidate parents, one record
     // per object_index (`tgprobe sweep`).
     TgProbeSweepAfterDraw();
+    // Session 12: every slot of global.playerBuff[1][0] (`tgprobe buffwatch`).
+    TgProbeBuffWatchAfterDraw();
     TgProbeDrawMark(/*fromHudLayer=*/false);
     TgProbeSpriteDraw(/*fromHudLayer=*/false);
 }
@@ -26453,6 +26737,8 @@ static void TgProbeCommand(const std::string& rest)
     if (sub == "tgl") { TgProbeTglCommand(subRest); return; }
     // Every class's timed skill at once (issue #55, session 8).
     if (sub == "sweep") { TgProbeSweepCommand(subRest); return; }
+    // Buff-carried skills: global.playerBuff[1][0] (issue #55 follow-up, session 12).
+    if (sub == "buffwatch") { TgProbeBuffWatchCommand(subRest); return; }
     Out("tgprobe: usage -> tgprobe hook [substr...] | show | reset | verbose on|off | slots | buffs | abilities"
         " | vars <Obj|global> | snap <Obj|global> | diff | room"
         " | deep snap|diff|flip|find|get|census|selftest|drop ..."
@@ -26461,7 +26747,7 @@ static void TgProbeCommand(const std::string& rest)
         " | gallery [cols] | layer hud|buffs | scale [f] | colour [name|r g b] | box tuned|bbox"
         " | quad on|off | alpha [min] [max]"
         " | talents [substr|tags|dur] | tgl [add|list|clear|slots|fields|sub|timer]"
-        " | sweep on|off|clear|show [seen|all]");
+        " | sweep on|off|clear|show [seen|all] | buffwatch on|off|clear|show");
 }
 #endif // FORGEPACT_RELEASE (tgprobe)
 

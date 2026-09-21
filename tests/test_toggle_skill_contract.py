@@ -3423,6 +3423,107 @@ class DurationSweepProbeContractTests(unittest.TestCase):
         self.assertLess(issue, self.doc.index("### Duration sweep (session 8)"))
 
 
+class SkillTimerBuffProbeContractTests(unittest.TestCase):
+    """Session 12's research instrument (buff-carried skills, phase R).
+
+    `tgprobe buffwatch` walks global.playerBuff[1][0] the way `tgprobe buffs`
+    (TgProbeBuffs) already does, one record per slot index, so a live session
+    can measure which buff-carried skills draw a readable, own-attributed
+    countdown that spans their cast. Research build only; the companion
+    `buffwatch/` scenarios in test_toggle_skill_behavior.py run its record
+    update and BuffAdd note against a controlled runtime.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.plugin = PLUGIN_SRC.read_text(encoding="utf-8").replace("\r\n", "\n")
+        cls.stripped = strip_research_blocks(cls.plugin)
+        start = cls.plugin.index(BLOCK_START)
+        cls.block = cls.plugin[start:cls.plugin.index(BLOCK_END, start)]
+        cls.doc = (FORGEPACT_DIR / "docs" / "toggle-skills-research.md").read_text(
+            encoding="utf-8").replace("\r\n", "\n")
+
+    def section(self):
+        start = self.doc.index("### Buff-carried countdown (session 12)")
+        return self.doc[start:]
+
+    def test_tgprobe_dispatches_buffwatch(self):
+        body = function_body(self.plugin, "static void TgProbeCommand(const std::string& rest)")
+        self.assertIn('sub == "buffwatch"', body)
+        self.assertIn("TgProbeBuffWatchCommand(subRest)", body)
+        self.assertIn("buffwatch on|off|clear|show", body)
+        command = function_body(self.plugin, "static void TgProbeBuffWatchCommand(const std::string& rest)")
+        for sub in ("on", "off", "clear", "show"):
+            self.assertIn(f'sub == "{sub}"', command)
+        self.assertIn("g_TgBuffWatch.clear();", command[command.index('sub == "clear"'):])
+
+    def test_buffwatch_symbols_are_research_only(self):
+        for name in ("TgProbeBuffWatch", "TgBuffWatch", "g_TgBuffWatch", "buffwatch show",
+                     "g_TgTalentUseDepth", "g_TgTalentUseClassDepth"):
+            self.assertIn(name, self.block, name)
+            self.assertNotIn(name, self.stripped, name)
+        after_draw = function_body(self.plugin, "static void TgProbeBuffWatchAfterDraw()")
+        for call in ("MmCreateHook(", "HookOneScript(", "HookOneScriptTable(", "InstallScriptHook("):
+            self.assertNotIn(call, after_draw)
+        self.assertEqual(self.block.count("MmCreateHook("), 1)
+
+    def test_buffwatch_not_in_player_commands(self):
+        match = re.search(r"static const std::unordered_set<std::string> kPlayerCommands = \{(.*?)\};",
+                           self.plugin, re.S)
+        self.assertIsNotNone(match, "kPlayerCommands not found")
+        self.assertNotIn('"buffwatch"', match.group(1))
+        self.assertNotIn('"tgprobe"', match.group(1))
+
+    def test_sampler_called_next_to_sweep_no_new_hook(self):
+        after = function_body(self.plugin, "static void TgProbeSpurnAfterDraw()")
+        self.assertLess(after.index("TgProbeSweepAfterDraw();"), after.index("TgProbeBuffWatchAfterDraw();"))
+        self.assertNotIn("TgProbeBuffWatch", function_body(self.plugin, "static RValue& Hook_DrawHudBuffs("))
+        self.assertNotIn("TgProbeBuffWatch", function_body(self.plugin, "void FrameCallback("))
+
+    def test_record_carries_the_measured_fields(self):
+        rec = declaration_block(self.plugin, "struct TgBuffWatchRecord {")
+        for field in ("present", "app", "draws", "firstFrame", "lastFrame", "first", "last",
+                      "min", "max", "unreadable", "identityMismatch", "host", "vars",
+                      "adds", "lastAddFrames", "lastAddPlayer", "inUse", "useTalent"):
+            self.assertIn(field, rec, field)
+
+    def test_buffadd_note_called_from_both_attachment_paths(self):
+        note = function_body(
+            self.plugin, "static void TgProbeNoteBuffAdd(CInstance* S, CInstance* O, int argc, RValue** A)")
+        self.assertIn("TgProbeBuffWatchOnBuffAdd(argc, A,", note)
+        detour = function_body(
+            self.plugin,
+            "static RValue& TgProbeDetourBody(int idx, CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)")
+        self.assertIn("if (idx == kTg_BuffAdd) {", detour)
+        self.assertIn("TgProbeBuffWatchOnBuffAdd(argc, A,", detour[detour.index("if (idx == kTg_BuffAdd) {"):])
+
+    def test_talent_use_depth_kept_only_for_talentuse_and_talentuseclass(self):
+        detour = function_body(
+            self.plugin,
+            "static RValue& TgProbeDetourBody(int idx, CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)")
+        self.assertIn("if (idx == kTg_TalentUse) {", detour)
+        self.assertIn("else if (idx == kTg_TalentUseClass) {", detour)
+        # Every increment/decrement of the two depth counters appears exactly
+        # once, inside those two branches - no other idx ever touches them.
+        for stmt in ("InterlockedIncrement(&g_TgTalentUseDepth)", "InterlockedDecrement(&g_TgTalentUseDepth)",
+                     "InterlockedIncrement(&g_TgTalentUseClassDepth)", "InterlockedDecrement(&g_TgTalentUseClassDepth)"):
+            self.assertEqual(detour.count(stmt), 1, stmt)
+
+    def test_doc_section_exists_with_live_procedure(self):
+        section = self.section()
+        for heading in ("#### Static search", "#### Instrument", "#### Live procedure", "#### Results", "#### Decision"):
+            self.assertIn(heading, section)
+        procedure = section[section.index("#### Live procedure"):section.index("#### Results")]
+        for cmd in ("tgprobe hook TalentUse TalentUseClass BuffAdd BuffRemove DrawHudBuffs",
+                    "tgprobe buffwatch on", "tgprobe buffwatch clear", "tgprobe buffwatch show",
+                    "tgprobe deep find buff", "tgprobe deep get Player_obj.id"):
+            self.assertIn(cmd, procedure, cmd)
+
+    def test_buffwatch_command_usage_listed(self):
+        usage = function_body(self.plugin, "static void TgProbeCommand(const std::string& rest)")
+        self.assertIn("buffwatch on|off|clear|show", usage)
+
+
 class SkillTimerProbeContractTests(unittest.TestCase):
     """Issue #55, phase A: the research-only tick-rate readout and the
     fraction-driven countdown-look preview (`### What the probe round must

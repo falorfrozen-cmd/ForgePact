@@ -230,6 +230,20 @@ struct SubTalentWorld {
     std::set<int> entryThrows;
 };
 
+// Session 12 (`tgprobe buffwatch`): one slot of global.playerBuff[1][0]. A
+// slot absent from World::buffSlots below is an empty slot (undefined) -
+// matches the doc: an empty slot holds -4/undefined. A present slot always
+// carries the buff instance's own three custom variables (session 9's
+// capture): buffType, destroyTimer, host. A `*Throws` flag models that one
+// field being unreadable without making the whole instance disappear.
+struct BuffInst {
+    bool exists = true;
+    RValue buffType;
+    RValue destroyTimer;
+    RValue host;
+    bool buffTypeThrows = false, destroyTimerThrows = false, hostThrows = false;
+};
+
 struct World {
     bool aoeObjectResolves = true;
     std::vector<AoeInst> instances;
@@ -257,6 +271,11 @@ struct World {
     bool drawRectangleColourThrows = false;
     bool drawLineThrows = false;
     bool fontResolves = true;
+    // Session 12 (`tgprobe buffwatch`): global.playerBuff[1][0], slot ->
+    // instance. `playerBuffGlobalIsArray` false answers the whole-global
+    // read as non-array (the same shape row0IsArray gives the HUD row).
+    bool playerBuffGlobalIsArray = true;
+    std::map<int, BuffInst> buffSlots;
 };
 static World world;
 static long g_DcResolveCalls = 0;      // asset_get_index("Universal_Double_Cast_obj") calls
@@ -395,6 +414,14 @@ struct FakeRunner {
             r.number = obj;
             return r;
         }
+        if (fn == "instance_exists") {
+            if (args[0].text.rfind("buff:", 0) == 0) {
+                const int slot = std::stoi(args[0].text.substr(5));
+                auto it = world.buffSlots.find(slot);
+                return MakeBool(it != world.buffSlots.end() && it->second.exists);
+            }
+            return MakeBool(true);
+        }
         if (fn == "variable_instance_get") {
             if (args[0].inst) {   // a script's self, handed over as RValue(S)
                 const CInstance* self = args[0].inst;
@@ -411,6 +438,18 @@ struct FakeRunner {
                 ++g_SlotLookups;
                 RValue r; r.m_Kind = VALUE_ARRAY; r.text = "row0";
                 return r;
+            }
+            // Session 12 (`tgprobe buffwatch`): a playerBuff slot's own
+            // three custom variables.
+            if (tag.rfind("buff:", 0) == 0) {
+                const int slot = std::stoi(tag.substr(5));
+                auto it = world.buffSlots.find(slot);
+                if (it == world.buffSlots.end()) return RValue();
+                const BuffInst& b = it->second;
+                if (field == "buffType") { if (b.buffTypeThrows) throw std::runtime_error("buffType EXCEPTION"); return b.buffType; }
+                if (field == "destroyTimer") { if (b.destroyTimerThrows) throw std::runtime_error("destroyTimer EXCEPTION"); return b.destroyTimer; }
+                if (field == "host") { if (b.hostThrows) throw std::runtime_error("host EXCEPTION"); return b.host; }
+                return RValue();
             }
             if (tag.rfind("aoe:", 0) != 0) return RValue();
             const size_t sep = tag.find(':', 4);
@@ -452,6 +491,13 @@ struct FakeRunner {
                 // back as VALUE_REF on current runners.
                 RValue r; r.m_Kind = VALUE_REF; r.text = "talentStructMap";
                 return r;
+            }
+            // Session 12 (`tgprobe buffwatch`): global.playerBuff itself -
+            // the chain resolves [1][0] via array_get below, tagged "pb" ->
+            // "pb1" -> "pb0" the same way "hud:0"'s row0 is tagged.
+            if (want == "playerBuff") {
+                if (!world.playerBuffGlobalIsArray) return RValue();   // VALUE_UNDEFINED
+                RValue r; r.m_Kind = VALUE_ARRAY; r.text = "pb"; return r;
             }
             if (want != "subTalentMap") return RValue();
             ++g_SubTalentMapAccessCount;
@@ -498,12 +544,45 @@ struct FakeRunner {
             if (args[0].text == "row0") return RValue((double)world.row0.size());
             if (args[0].text == "subTalentMap") return RValue((double)world.sub.length);
             if (args[0].text.rfind("names:", 0) == 0) return RValue(2.0);
+            // Session 12: playerBuff[1][0]'s own length - one past the
+            // highest slot a scenario populated.
+            if (args[0].text == "pb0") {
+                int maxSlot = -1;
+                for (const auto& kv : world.buffSlots) if (kv.first > maxSlot) maxSlot = kv.first;
+                return RValue((double)(maxSlot + 1));
+            }
             return RValue(0.0);
         }
         if (fn == "array_get") {
             if (args[0].text.rfind("names:", 0) == 0) {
+                // Session 12: a buff instance's own two other custom
+                // variables (destroyTimer has its own columns and is
+                // deliberately excluded from `vars=`).
+                if (args[0].text.substr(6).rfind("buff:", 0) == 0) {
+                    const int i = (int)args[1].ToDouble();
+                    return i == 0 ? RValue("buffType") : (i == 1 ? RValue("host") : RValue());
+                }
                 const int i = (int)args[1].ToDouble();
                 return i == 0 ? RValue("isMyClient") : (i == 1 ? RValue("purgatory") : RValue());
+            }
+            // Session 12: global.playerBuff[1][0][<slot>] - "pb" -> "pb1" ->
+            // "pb0" -> a "buff:<slot>" ref, or undefined for an empty slot.
+            if (args[0].text == "pb") {
+                const int i = (int)args[1].ToDouble();
+                if (i != 1) return RValue();
+                RValue r; r.m_Kind = VALUE_ARRAY; r.text = "pb1"; return r;
+            }
+            if (args[0].text == "pb1") {
+                const int i = (int)args[1].ToDouble();
+                if (i != 0) return RValue();
+                RValue r; r.m_Kind = VALUE_ARRAY; r.text = "pb0"; return r;
+            }
+            if (args[0].text == "pb0") {
+                const int i = (int)args[1].ToDouble();
+                auto it = world.buffSlots.find(i);
+                if (it == world.buffSlots.end()) return RValue();   // empty slot: undefined
+                RValue r; r.m_Kind = VALUE_REF; r.text = "buff:" + std::to_string(i);
+                return r;
             }
             if (args[0].text == "row0") {
                 const int i = (int)args[1].ToDouble();
@@ -2673,6 +2752,97 @@ int main() {
                   std::string(TgProbeSweepOwnText(g_TgSweep[(int)kSweepObjA])) == "unreadable", true);
     }
     resetSweep();
+
+    // ---- session 12: `tgprobe buffwatch`, buff-carried skills -----------
+    auto resetBuffWatch = [&]() {
+        g_TgBuffWatch.clear(); g_TgBuffWatchOn = false; g_TgBuffWatchDraws = 0; g_TgBuffWatchMismatches = 0;
+        world.buffSlots.clear();
+        g_TgTalentUseDepth = 0; g_TgTalentUseClassDepth = 0; g_TgTalentUseClassA0 = 0.0;
+    };
+
+    // BW1. A correctly-attributed slot (buffType == its own slot index)
+    //      starts an appearance on first sight, exactly like `sweep`'s own
+    //      rising-edge rule.
+    resetWorld(); resetBuffWatch(); g_TgBuffWatchOn = true;
+    world.buffSlots[104] = BuffInst{ true, MakeReal(104.0), MakeReal(50.0), RValue() };
+    TgProbeBuffWatchAfterDraw();
+    {
+        const TgBuffWatchRecord& rec = g_TgBuffWatch[104];
+        checkInt("buffwatch/first_sight_starts_appearance/app", rec.app, 1);
+        checkBool("buffwatch/first_sight_starts_appearance/present", rec.present, true);
+        checkNear("buffwatch/first_sight_starts_appearance", rec.first, 50.0);
+        checkNear("buffwatch/first_sight_starts_appearance/max", rec.max, 50.0);
+    }
+
+    // BW2. An instance whose own `buffType` disagrees with the slot it was
+    //      found at is counted as a mismatch and the record for that slot is
+    //      left completely untouched - never taken as a reading of the wrong
+    //      buff (ctx: "counted, record not updated").
+    resetWorld(); resetBuffWatch(); g_TgBuffWatchOn = true;
+    world.buffSlots[104] = BuffInst{ true, MakeReal(999.0), MakeReal(50.0), RValue() };
+    TgProbeBuffWatchAfterDraw();
+    checkInt("buffwatch/identity_mismatch_counted_not_recorded/app", g_TgBuffWatch[104].app, 0);
+    checkInt("buffwatch/identity_mismatch_counted_not_recorded", g_TgBuffWatch[104].identityMismatch, 1);
+    checkInt("buffwatch/identity_mismatch_counted_not_recorded/global", g_TgBuffWatchMismatches, 1);
+
+    // BW3. A rising reading within the same appearance is kept as `max`
+    //      (never re-latched here - that is the ship read's job, not the
+    //      raw instrument's), and always becomes `last`.
+    resetWorld(); resetBuffWatch(); g_TgBuffWatchOn = true;
+    world.buffSlots[104] = BuffInst{ true, MakeReal(104.0), MakeReal(50.0), RValue() };
+    TgProbeBuffWatchAfterDraw();
+    world.buffSlots[104].destroyTimer = MakeReal(80.0);
+    TgProbeBuffWatchAfterDraw();
+    {
+        const TgBuffWatchRecord& rec = g_TgBuffWatch[104];
+        checkNear("buffwatch/refresh_rise_is_kept_as_max", rec.max, 80.0);
+        checkNear("buffwatch/refresh_rise_is_kept_as_max/last", rec.last, 80.0);
+        checkNear("buffwatch/refresh_rise_is_kept_as_max/first_unchanged", rec.first, 50.0);
+    }
+
+    // BW4. The buff instance ceasing to exist ends the appearance - `present`
+    //      drops, `app` itself is left as the count of appearances so far.
+    resetWorld(); resetBuffWatch(); g_TgBuffWatchOn = true;
+    world.buffSlots[104] = BuffInst{ true, MakeReal(104.0), MakeReal(50.0), RValue() };
+    TgProbeBuffWatchAfterDraw();
+    world.buffSlots[104].exists = false;
+    TgProbeBuffWatchAfterDraw();
+    {
+        const TgBuffWatchRecord& rec = g_TgBuffWatch[104];
+        checkBool("buffwatch/removal_ends_appearance", rec.present, false);
+        checkInt("buffwatch/removal_ends_appearance/app_unchanged", rec.app, 1);
+    }
+
+    // BW5. The BuffAdd note records the call's own 1st/4th arguments, and
+    //      the nesting state ONLY when the caller says the owning row is
+    //      native - a piggybacked row's depth is untrustworthy and must
+    //      print n/a (-1), never a measured 0.
+    resetBuffWatch(); g_TgBuffWatchOn = true;
+    {
+        RValue player = MakeReal(1.0), buffId = MakeReal(104.0), unused = MakeReal(0.0), frames = MakeReal(180.0);
+        RValue* args[] = { &player, &buffId, &unused, &frames };
+        g_TgTalentUseDepth = 1;
+        g_TgTalentUseClassDepth = 1;
+        g_TgTalentUseClassA0 = 301.0;
+        TgProbeBuffWatchOnBuffAdd(4, args, /*talentUseNative=*/true, /*talentUseClassNative=*/true);
+        const TgBuffWatchRecord& rec = g_TgBuffWatch[104];
+        checkInt("buffwatch/buffadd_note_records_frames_and_nesting/adds", rec.adds, 1);
+        checkNear("buffwatch/buffadd_note_records_frames_and_nesting", rec.lastAddFrames, 180.0);
+        checkNear("buffwatch/buffadd_note_records_frames_and_nesting/player", rec.lastAddPlayer, 1.0);
+        checkInt("buffwatch/buffadd_note_records_frames_and_nesting/inUse", rec.inUse, 1);
+        checkInt("buffwatch/buffadd_note_records_frames_and_nesting/useTalent", rec.useTalent, 301);
+    }
+    {
+        // Not native: n/a (-1), never a measured 0/false - the piggybacked
+        // row cannot see the other row's own exit.
+        RValue player = MakeReal(1.0), buffId = MakeReal(104.0), unused = MakeReal(0.0), frames = MakeReal(180.0);
+        RValue* args[] = { &player, &buffId, &unused, &frames };
+        TgProbeBuffWatchOnBuffAdd(4, args, /*talentUseNative=*/false, /*talentUseClassNative=*/false);
+        const TgBuffWatchRecord& rec = g_TgBuffWatch[104];
+        checkInt("buffwatch/buffadd_note_records_frames_and_nesting/inUse_not_native", rec.inUse, -1);
+        checkInt("buffwatch/buffadd_note_records_frames_and_nesting/useTalent_not_native", rec.useTalent, -1);
+    }
+    resetBuffWatch();
 
     // ---- issue #55 follow-up (D-S4): rule-based coverage of untested skills
 

@@ -271,6 +271,26 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
             implementation(cls.plugin, "static void TgProbeSweepNote("),
             implementation(cls.plugin, "static const char* TgProbeSweepOwnText("),
             implementation(cls.plugin, "static void TgProbeSweepAfterDraw("),
+            # Session 12 (`tgprobe buffwatch`, buff-carried skills): the
+            # nesting-depth globals TgProbeDetourBody writes (not spliced -
+            # it needs the whole g_TgRows/TGPROBE_SCRIPTS machinery; the
+            # contract test pins its two branches by source text instead),
+            # the record/note/sampler, and the BuffAdd note's own testable
+            # core - `talentUseNative`/`talentUseClassNative` are parameters
+            # precisely so this function never needs g_TgRows either. `show`
+            # is not spliced (it calls Out()); the contract test pins it.
+            declaration(cls.plugin, "static volatile long g_TgTalentUseDepth"),
+            declaration(cls.plugin, "static volatile long g_TgTalentUseClassDepth"),
+            declaration(cls.plugin, "static double g_TgTalentUseClassA0"),
+            declaration(cls.plugin, "static bool g_TgBuffWatchOn"),
+            implementation(cls.plugin, "struct TgBuffWatchVar {") + ";",
+            implementation(cls.plugin, "struct TgBuffWatchRecord {") + ";",
+            declaration(cls.plugin, "static std::map<int, TgBuffWatchRecord> g_TgBuffWatch"),
+            declaration(cls.plugin, "static long g_TgBuffWatchDraws"),
+            implementation(cls.plugin, "static void TgProbeBuffWatchCaptureVars("),
+            implementation(cls.plugin, "static void TgProbeBuffWatchNote("),
+            implementation(cls.plugin, "static void TgProbeBuffWatchAfterDraw("),
+            implementation(cls.plugin, "static void TgProbeBuffWatchOnBuffAdd("),
         ])
 
         out = ROOT / "build/toggle-skill-behavior"
@@ -774,6 +794,29 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
         for suffix in ("/readable", "/mixed", "/unreadable", "", "/unattributed_timer_read",
                        "/all_readable", "/all_unreadable"):
             self.assertScenario("sweep/ownership_readability_counted_per_draw" + suffix)
+
+    # ---- session 12: buff-carried skills (`tgprobe buffwatch`, research only) --
+
+    def test_buffwatch_first_sight_starts_appearance(self):
+        for suffix in ("/app", "/present", "", "/max"):
+            self.assertScenario("buffwatch/first_sight_starts_appearance" + suffix)
+
+    def test_buffwatch_identity_mismatch_counted_not_recorded(self):
+        for suffix in ("/app", "", "/global"):
+            self.assertScenario("buffwatch/identity_mismatch_counted_not_recorded" + suffix)
+
+    def test_buffwatch_refresh_rise_is_kept_as_max(self):
+        for suffix in ("", "/last", "/first_unchanged"):
+            self.assertScenario("buffwatch/refresh_rise_is_kept_as_max" + suffix)
+
+    def test_buffwatch_removal_ends_appearance(self):
+        for suffix in ("", "/app_unchanged"):
+            self.assertScenario("buffwatch/removal_ends_appearance" + suffix)
+
+    def test_buffwatch_buffadd_note_records_frames_and_nesting(self):
+        for suffix in ("/adds", "", "/player", "/inUse", "/useTalent",
+                       "/inUse_not_native", "/useTalent_not_native"):
+            self.assertScenario("buffwatch/buffadd_note_records_frames_and_nesting" + suffix)
 
     # ---- issue #55: the timed-skill countdown (`skilltimer`) --------------
 

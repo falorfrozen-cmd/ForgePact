@@ -5035,3 +5035,131 @@ companion.
 | `relicWinnersDrug` | no object | no object by the generator's name convention |
 | `ghostCrew` | no object | no object by the generator's name convention |
 | `awareness` | no object | no object by the generator's name convention |
+
+### Buff-carried countdown (session 12)
+
+The countdown above reads a cast object's own `destroyTimer` - the object
+rule and its seven explicit rows above. A skill whose duration lives only on
+the player's own buff (Defensive Shout, Berserk, the class self-buffs tagged
+12) has no cast object with a spanning timer at all, so it draws nothing and
+the player still has to read the buff bar for it. The owner asked for this
+verbatim, 2026-09-21: "for skills that produce a visible timed buff we should
+add a skill timer too. it should be an easy additiona and would make ux much
+better since player will have to look in one place instead of two." This
+section is the research round for that request: one build adds a new
+read-only instrument (`tgprobe buffwatch`), one live session (session 12)
+measures a curated cast list against it with Counter's buff `[104]` as the
+positive control, and the ship round then fills a table of its own from this
+section's Results below - never from this static section.
+
+#### Static search
+
+Nothing here is enumerable the way the duration sweep's candidate objects
+were: a buff-carried skill has no cast object at all (Berserk) or a cast
+object with no spanning timer (Defensive Shout, session 4's capture), so
+there is no parent chain to search under. What is already known without a
+session: the buff list itself is `global.playerBuff[1][0]`, a 420-slot array
+that `HhBuffAlive` (the shipped Headhunter reader) and `tgprobe buffs`
+(`TgProbeBuffs`, this project's own research reader) already walk; an empty
+slot holds `-4` or undefined, a filled one holds a handle to a
+`Draw_Player_Buff_obj` instance (SDK 1362) whose custom variables are exactly
+`buffType` (repeats the slot index on a correctly-attributed buff),
+`destroyTimer` and `host`. Session 9 already read one slot this way (`[86]`,
+Martyr, decaying 455 -> 445). Counter's `[104]` read `destroyTimer=1036.8`
+against a predicted 864 in an earlier session, which is why it is this
+round's positive control: same array, same read, already proven live once.
+No buff-id name table is known anywhere in `hs-game-sdk` - the buff scripts
+(`BuffAdd`, `BuffRemove`, `GetBuff`, `GetBuffStack`, `BuffSetStack`,
+`SetupBuffs`, `DrawBuff`) exist by name, but nothing maps a talent to the
+buff id it adds, so whether the runtime itself keeps such a table is a
+question for `tgprobe deep find buff` in the session below, not for this
+static search.
+
+A rule-shaped mechanism was considered and rejected for this round: learn the
+`abilityId -> buffId` mapping at runtime from "the `BuffAdd` call made while a
+`TalentUse`/`TalentUseClass` call for talent T is on the stack belongs to T".
+Three things make that a runtime-learned RULE rather than this round's
+explicit MEASUREMENT: neither talent-use script is hooked by default in the
+player build today (one only under the co-op puppet path, the other only
+once the re-cast guard is armed), so shipping the mapping would add a hook to
+the cast path itself - a change class that gets its own workorder; an on-hit
+buff like Berserk is never added inside a cast at all, so the "call on the
+stack" rule would simply miss it; and a wrong mapping draws the WRONG
+countdown, where the existing object rule's worst failure is drawing
+nothing. So this round ships nothing from a rule - it only measures explicit
+rows, and the instrument records the nesting data (`inUse`/`useTalent`) a
+rule would need, so that decision can be made later without another live
+session.
+
+#### Instrument
+
+`tgprobe buffwatch on|off|clear|show` (research build only, off by default -
+the sampler returns before any builtin call until armed). Per `DrawHudBuffs`
+draw, on the same call `tgprobe sweep`'s own sampler already piggybacks on
+(no new hook anywhere), it walks `playerBuff[1][0]` the same way `tgprobe
+buffs` does and keeps one record per slot index: `app` (appearances, an
+absent to present transition), `draws`, `firstFrame`/`lastFrame`,
+`first`/`last`/`min`/`max` of `destroyTimer` for the current appearance,
+`unreadable` (present but the timer did not read as a number),
+`identityMismatch` (the instance's own `buffType` disagreed with the slot it
+was found at - counted, and the record is left untouched for that draw,
+never taken as a reading of the wrong buff), `host` (the buff instance's own
+`host` field, last value), `vars=` (every other custom variable's name,
+captured on first sight, with the last numeric value of each - a stack
+counter would show up here), `adds`/`lastAddFrames`/`lastAddPlayer` (from the
+`BuffAdd` call itself: how many times, the 4th argument, the 1st argument)
+and `inUse`/`useTalent` (whether a `TalentUse`/`TalentUseClass` call was on
+the stack at the moment of that `BuffAdd`, from a depth counter kept only
+around those two rows' own native detour). The BuffAdd note is attached both
+ways `tgprobe hook` can attach any row: a native detour (the depth counter is
+then trustworthy) or piggybacked inside the existing `HookBuffAdd` (then
+`inUse`/`useTalent` print `n/a` - a row attached via hook cannot see the
+other row's own exit). `tgprobe buffwatch clear` resets every record, exactly
+like `tgprobe sweep clear`, so attribution comes from a clear immediately
+before each cast.
+
+#### Live procedure
+
+Research build installed (gate `buffwatch-dll: install-approved`).
+`toggleguard` stays OFF for the whole session so `TalentUseClass` can take a
+native detour.
+
+1. `tgprobe hook TalentUse TalentUseClass BuffAdd BuffRemove DrawHudBuffs`
+   then `tgprobe show` - quote the five rows' `mode=` lines (native expected
+   for the two talent-use rows; `via` is itself a result, recorded, and makes
+   `inUse=n/a`/`useTalent=n/a` expected for that row).
+2. `tgprobe deep snap g global` then `tgprobe deep find buff g` - quote the
+   output (cap 200 lines): does a buff-name table exist anywhere reachable
+   from `global`? `tgprobe deep get Player_obj.id` - quote: is `host` on an
+   own buff the local player's own id?
+3. Shield Lancer, town: `tgprobe buffwatch on`, `tgprobe buffwatch clear`,
+   cast Counter once (the cast form that shows the HUD buff icon), wait 3
+   seconds, `tgprobe buffwatch show` - the positive control: `[104] app=1
+   first=` greater than 0. Without this the session stops; the instrument is
+   blind. Wait for the buff to end, `tgprobe buffwatch show` again (record
+   `last`, `lastFrame`).
+4. Same character, the tag-12 self-buff on its own hotbar slot (if Shield
+   Lancer owns one): `tgprobe buffwatch clear`, cast, `tgprobe buffwatch
+   show` at 3 seconds and again after it ends.
+5. Viking: `tgprobe buffwatch clear`, Defensive Shout, `tgprobe buffwatch
+   show` at 3 seconds and after it ends. Then `tgprobe buffwatch clear`,
+   Berserk: attack until the stacks are visibly up, `tgprobe buffwatch
+   show`, keep attacking 10 more seconds, `show` again, stop, wait for it to
+   drop, `show` a third time.
+6. A fifth representative of the owner's choice from the tag-12 list (the
+   8-second skills are the odd shape against the common 25s/70s ones), same
+   clear/cast/show sequence.
+7. Optional negative shape, if a Butcher is at hand: Holy Form on, `tgprobe
+   buffwatch show` (expect `first=1.000000`, `min=max` - a toggle buff holds
+   a constant 1, it does not count down), then off.
+
+Paste everything under `## Log` -> `### Session 12 capture` in the workorder
+context file.
+
+#### Results
+
+pending session 12
+
+#### Decision
+
+pending session 12
