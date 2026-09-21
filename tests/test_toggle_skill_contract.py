@@ -1095,14 +1095,15 @@ class SkillTimerShipContractTests(unittest.TestCase):
         self.assertEqual(ship_bar.group(2), probe_gap_height.group(2))
         self.assertEqual(ship_bar.group(3), probe_inset.group(1))
 
-        # Only the horizontal text offset is still the probe's. The vertical
-        # one no longer is (session 8, owner: "the number text was a little
-        # too low (hiding partially behind the icon)" in the font the ship
-        # draws): the probe hangs its text below an anchor measured up from
-        # the box's BOTTOM, which moves with the font's height, while the
-        # ship anchors to the box's TOP with bottom alignment - see
-        # test_number_anchors_above_the_box_top_font_independent. The probe
-        # keeps its own `textoffset` for research.
+        # Only the horizontal text offset is still the probe's *default*. The
+        # vertical one is not the probe's default either (2026-09-21, owner,
+        # live: `tgprobe sprite style number` on the same box and font,
+        # `textoffset 0 -106` - "perfect") - it is what the owner accepted
+        # with the probe, which the ship now draws exactly (D-N1); see
+        # test_number_anchors_top_aligned_at_the_tuned_offset and
+        # test_ship_and_probe_number_formulas_agree. The probe's own default
+        # `g_TgSpriteTextOffsetDy` stays -101 for research (unchanged; see
+        # docs/toggle-skills-research.md).
         ship_dx = re.search(r"static constexpr double kSkillTimerTextOffsetDx = (-?[\d.]+),", self.plugin)
         probe_text = re.search(
             r"static double g_TgSpriteTextOffsetDx = (-?[\d.]+), g_TgSpriteTextOffsetDy = (-?[\d.]+);",
@@ -1327,28 +1328,61 @@ class SkillTimerShipContractTests(unittest.TestCase):
         self.assertIn("ForgePact::kSkillTimerRowCount", aggregate)
         self.assertNotIn("kToggleSkillRowCount", aggregate)
 
-    def test_number_anchors_above_the_box_top_font_independent(self):
-        # Session 8's owner finding: anchored from the box's bottom edge and
-        # hanging down, the text's clearance above the icon depended on the
-        # font's height. Anchored to the TOP edge with bottom alignment, the
-        # text's bottom sits kSkillTimerTextGap whole pixels above the icon
-        # whatever the font.
+    def test_number_anchors_top_aligned_at_the_tuned_offset(self):
+        # 2026-09-21 live tuning (owner, `tgprobe sprite style number` on the
+        # D-U12 box in `__newfont6`): `textoffset 0 -106` - "perfect". The
+        # ship now draws that same anchor (D-N1: what was judged is what
+        # ships) - top alignment from the box's BOTTOM edge, not bottom
+        # alignment from its TOP.
         body = function_body(self.plugin, "static void SkillTimerDrawNumber(")
-        self.assertIn('"draw_set_valign", { RValue(2.0) }', body)
-        self.assertIn("y - kSkillTimerTextGap", body)
-        self.assertNotIn("kSkillTimerTextOffsetDy", self.plugin)
-        self.assertNotIn("y + h", body)
-        self.assertNotIn("string_height", body)   # bottom alignment gives the height for free
-        gap = re.findall(r"kSkillTimerTextGap = (-?[\d.]+)", self.plugin)
-        self.assertEqual(len(gap), 1, gap)
-        self.assertEqual(float(gap[0]), round(float(gap[0])))   # whole pixels (guide Known Limitations 18)
-        # live-ship check (owner, 2026-09-21): at the bar's own 2 px the
-        # percentage sat "too high" - "this font should be 1 pixel lower".
-        # So the number's gap is 1 px, one below the bar's, which stays 2.
-        self.assertEqual(float(gap[0]), 1.0)
+        self.assertIn('"draw_set_valign", { RValue(0.0) }', body)
+        self.assertIn("y + h + kSkillTimerTextOffsetDy", body)
+        self.assertNotIn("kSkillTimerTextGap", self.plugin)
+        dy = re.findall(r"kSkillTimerTextOffsetDy = (-?[\d.]+)", self.plugin)
+        self.assertEqual(len(dy), 1, dy)
+        self.assertEqual(float(dy[0]), round(float(dy[0])))   # whole pixels (guide Known Limitations 18)
+        self.assertEqual(float(dy[0]), -106.0)
+        # __newfont6 is still resolved by name, unresolved counted rather
+        # than failing the draw - unchanged by the anchor move.
+        self.assertIn('CallBuiltin("asset_get_index", { RValue(std::string("__newfont6")) })', body)
+        # The bar's own gap is untouched by this change.
         bar_gap = re.search(r"static constexpr double kSkillTimerBarGap = ([\d.]+),", self.plugin)
         self.assertEqual(float(bar_gap.group(1)), 2.0)
-        self.assertEqual(float(gap[0]), float(bar_gap.group(1)) - 1.0)
+
+    def test_ship_and_probe_number_formulas_agree(self):
+        # D-N1: the ship draws the probe's exact formula, so what the owner
+        # judged live with the probe is what ships. Only the ship's dy is
+        # its own tuned value (-106); the probe's own default dy stays -101
+        # for research (context "Why the probe default stays -101").
+        ship_body = function_body(self.plugin, "static void SkillTimerDrawNumber(")
+        probe_body = function_body(self.plugin, "static void TgProbeSpriteDrawNumber(")
+        for body in (ship_body, probe_body):
+            self.assertIn('"draw_set_halign", { RValue(1.0) }', body)
+            self.assertIn('"draw_set_valign", { RValue(0.0) }', body)
+        self.assertIn("x + w / 2.0 + kSkillTimerTextOffsetDx", ship_body)
+        self.assertIn("y + h + kSkillTimerTextOffsetDy", ship_body)
+        self.assertIn("x + w / 2.0 + g_TgSpriteTextOffsetDx", probe_body)
+        self.assertIn("y + h + g_TgSpriteTextOffsetDy", probe_body)
+
+        ship_dx = re.search(r"static constexpr double kSkillTimerTextOffsetDx = (-?[\d.]+), "
+                             r"kSkillTimerTextOffsetDy = (-?[\d.]+);", self.plugin)
+        probe_text = re.search(
+            r"static double g_TgSpriteTextOffsetDx = (-?[\d.]+), g_TgSpriteTextOffsetDy = (-?[\d.]+);",
+            self.plugin)
+        self.assertIsNotNone(ship_dx); self.assertIsNotNone(probe_text)
+        self.assertEqual(ship_dx.group(1), probe_text.group(1))   # dx: still the probe's default
+        self.assertEqual(ship_dx.group(2), "-106.0")   # dy: the accepted value, not the probe's default
+
+        probe_scale = re.search(r"static double g_TgSpriteScale = ([\d.]+);", self.plugin)
+        self.assertIsNotNone(probe_scale)
+        self.assertEqual(float(probe_scale.group(1)), 1.0)
+
+        # The tuned Blade Barrier box (2026-09-21): 77x78 @ (92, 1121).
+        bw, bh, bx, by = 77.0, 78.0, 92.0, 1121.0
+        dx, dy = float(ship_dx.group(1)), float(ship_dx.group(2))
+        tx = bx + bw / 2.0 + dx
+        ty = by + bh + dy
+        self.assertEqual((tx, ty), (130.5, 1093.0))
 
 
 class ToggleSkillTableContractTests(unittest.TestCase):

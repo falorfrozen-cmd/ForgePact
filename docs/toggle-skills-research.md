@@ -3247,40 +3247,59 @@ the two sets of constants equal so they cannot drift):
   under 1px draws nothing (the D4 sub-pixel guard: a visible stub at
   `frac 0.0` was measured otherwise).
 - **number**: the fraction as a whole-number percentage, centred
-  horizontally, its bottom edge `kSkillTimerTextGap` (1 px - one less than
-  the bar's 2 px, after the live-ship check below) above the box's TOP
-  edge, anchored at `(w/2, -1)` from the box's
-  top-left with bottom vertical alignment, so the text grows upward and
-  clears the icon whatever height the font has. Resolves `__newfont6` by
-  name every draw; when it does not resolve, falls back to the inherited
+  horizontally, anchored top-aligned at `(w/2, h) + (0, -106)` from the
+  box's top-left - the same formula the research instrument draws its own
+  number look with, tuned live on this box (see "The `number` look's
+  vertical placement" below) rather than re-derived. Resolves `__newfont6`
+  by name every draw; when it does not resolve, falls back to the inherited
   font and counts `fontUnresolved` rather than failing the draw (see "The
   number font" below).
 
-The ship deliberately differs from the probe in two places:
+The ship deliberately differs from the probe in one place:
 
 - **Nothing is drawn at zero** - including a fraction that rounds to 0% -
   in any style (the probe keeps "0%" as its own liveness signal).
-- **The `number` look's vertical placement** (session 8, owner finding,
-  2026-09-21: "font is different so the number text was a little too low
-  (hiding partially behind the icon)"). The first ship port hung the text
-  below an anchor at `(w/2, h) + (0, -101)` from the box's bottom edge, the
-  placement confirmed live with the probe's inherited font. That placement
-  depends on both the box's height and the font's, and `__newfont6`, which
-  the ship sets every draw, is taller: the text slid down behind the icon.
-  Anchoring to the top edge with bottom alignment removes both dependencies
-  by construction; `string_height` per draw would also work, at one more
-  runtime call per draw for what the alignment gives for free, and guessing
-  a new offset (`-106` was once measured, on a different box with an
-  unrecorded font) would repeat the mistake. The probe keeps its own
-  bottom-anchored `textoffset` for research. At the live-ship check
-  (2026-09-21) the owner confirmed the text now clears the icon but found it
-  "Too high now" at the bar's 2 px gap - "this font should be 1 pixel
-  lower" - so the number's gap became 1 px while the bar keeps 2 px.
 - **fade**: the same 10 bands as `arc`, whole rectangle each (no perimeter
   fraction), alpha `(1 - i/9) * fraction`.
 
 All four use gold `(255,215,0)`, the probe's own default and the colour every
 look was judged in.
+
+**The `number` look's vertical placement no longer differs from the probe's
+formula** - only the probe's own research *default* for the vertical offset
+does. Two earlier ship ports both got this wrong and both were fixed live by
+the owner using the research instrument itself:
+
+- Session 8 (2026-09-14): the first ship port hung the text below an anchor
+  at `(w/2, h) + (0, -101)` from the box's bottom edge, confirmed live with
+  the probe's inherited font. `__newfont6`, which the ship actually sets
+  every draw, is taller, and the text slid down behind the icon. The fix at
+  the time was to anchor from the box's TOP edge with bottom alignment
+  instead (`(w/2, -1)`, gap 1 px) - which removed the font dependency by
+  construction, but not by using the probe's own formula, and the owner
+  still saw it "a little too high" at the next live-ship check.
+- 2026-09-21: rather than deriving a third font-independent formula, the
+  owner tuned the research instrument itself - `tgprobe sprite style
+  number` - on this same D-U12 box, in the ship's own `__newfont6`, working
+  `textoffset 0 -101` "too low now", `textoffset 0 -104`, `textoffset 0
+  -105`, `textoffset 0 -106` - "perfect". The ship now draws that exact
+  formula, `(w/2, h) + (0, -106)` - top
+  alignment from the box's BOTTOM edge, the same anchor the research
+  instrument's own number look uses - so what the owner judged live with
+  the instrument is what ships (decision D-N1). The probe's own default
+  vertical offset is left unchanged: it is a pinned research starting
+  point, not what a player sees, and changing it would touch research code
+  for no player effect.
+- **Known consequence**: the placement is correct for the HUD scale it was
+  tuned at. Since the text hangs `-106` px above the box's own bottom edge,
+  if a different HUD scale changes the slot box's height, the gap between
+  the text and the icon changes by the same amount - the earlier
+  font-independent argument (guessing a fixed offset from the box's bottom
+  edge "would repeat the mistake") was about exactly this box-height
+  dependency, and it is still true; it was decided live, once, on the D-U12
+  box at the HUD scale the game was running at, rather than solved in
+  general. A future HUD-scale change to this box is the trigger to re-tune
+  it the same way, not to guess a new constant.
 
 **Rows, since session 8: the countdown's own table.** The countdown now
 reads its rows from `kSkillTimerRows` (`plugin/include/ForgePact/SkillTimerMod.hpp`)
@@ -3341,9 +3360,13 @@ recorded. The shipped code resolves `__newfont6` by name every draw
 (`asset_get_index`, never a hard-coded index) and falls back to the
 inherited font, counted `fontUnresolved`, rather than failing the draw.
 Session 8's live check did find the text behind the icon in that font; the
-fix turned out to be the anchor rather than the offset constant (see the
-second ship-only difference above), since no single offset from the box's
-bottom edge is right for every font height.
+first fix moved the anchor to the box's top edge, since no single offset
+from the box's bottom edge measured in a different font was right for
+`__newfont6`'s height. The 2026-09-21 live check went back to a
+bottom-edge offset after all, but measured directly in `__newfont6` on this
+box rather than guessed (see "The `number` look's vertical placement"
+above) - so the fix that actually shipped was re-measuring the offset in
+the right font, not avoiding an offset in favour of an anchor.
 
 **Diagnostics.** `skilltimer stat` (a player command, like `toggleborder
 stat`) prints the current style, the countdown table's resolved talent ids

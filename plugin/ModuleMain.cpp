@@ -5206,15 +5206,19 @@ static void SkillTimerDrawBar(double x, double y, double w, double h, double fra
 }
 
 // `number`: the fraction as a whole-number percentage, centred above the
-// icon, its BOTTOM edge kSkillTimerTextGap whole pixels above the box's TOP
-// edge (halign centre, valign bottom), so the text grows upward and clears the
-// icon whatever height the font has. Session 8 (owner, live): the earlier
-// placement - `(0,-101)` from the box's bottom edge, hanging down, confirmed
-// with the inherited font - sat partly behind the icon in `__newfont6`, which
-// is taller; that placement depended on both the box's height and the font's.
-// The gap is 1 px, one less than the bar's kSkillTimerBarGap: at the bar's
-// 2 px the owner saw the percentage "too high" at the live-ship check
-// (2026-09-21, "this font should be 1 pixel lower").
+// icon, anchored top-aligned at the box's BOTTOM edge plus
+// kSkillTimerTextOffsetDy (halign centre, valign top) - the research
+// instrument's own number-look formula, drawn here with the ship's own
+// tuned offset. 2026-09-21, live: the owner tuned that instrument on this
+// same D-U12 box in `__newfont6`, working the offset from -101 down to
+// -106 step by step - "perfect" at -106. This function draws that exact
+// formula, dx and dy alike, so what was judged live is what ships; no
+// separate font-independent derivation. The earlier ship placement
+// (bottom-aligned, hanging up from a point 1 px above the box top) was
+// tuned without the ship's own font and still sat "a little too high" at
+// the live-ship check - this box-height dependency is now a known
+// consequence, recorded in the research doc, of hanging the text from the
+// box's own bottom edge.
 // At zero - including a fraction
 // that rounds to 0% - nothing is drawn at all (ship-only difference from the
 // probe, which keeps "0%" as its own liveness signal; decided 2026-09-21).
@@ -5225,7 +5229,7 @@ static void SkillTimerDrawBar(double x, double y, double w, double h, double fra
 // before the first draw_set_*, the draw in its own inner try so a throw
 // there cannot skip the restores, each restore in its own try, and the font
 // restored only if this call actually applied one.
-static constexpr double kSkillTimerTextOffsetDx = 0.0, kSkillTimerTextGap = 1.0;
+static constexpr double kSkillTimerTextOffsetDx = 0.0, kSkillTimerTextOffsetDy = -106.0;
 
 static void SkillTimerDrawNumber(double x, double y, double w, double h, double fraction)
 {
@@ -5247,9 +5251,9 @@ static void SkillTimerDrawNumber(double x, double y, double w, double h, double 
             g_Yytk->CallBuiltin("draw_set_colour", { SkillTimerColour() });
             g_Yytk->CallBuiltin("draw_set_alpha", { RValue(1.0) });
             g_Yytk->CallBuiltin("draw_set_halign", { RValue(1.0) });   // fhalign_center
-            g_Yytk->CallBuiltin("draw_set_valign", { RValue(2.0) });   // fvalign_bottom: grow upward from the anchor
+            g_Yytk->CallBuiltin("draw_set_valign", { RValue(0.0) });   // fvalign_top: hang below the anchor, same as the probe
             const double tx = x + w / 2.0 + kSkillTimerTextOffsetDx;
-            const double ty = y - kSkillTimerTextGap;
+            const double ty = y + h + kSkillTimerTextOffsetDy;
             g_Yytk->CallBuiltin("draw_text", { RValue(tx), RValue(ty), RValue(std::to_string(pct) + "%") });
         } catch (...) { InterlockedIncrement(&g_StDrawExc); }
         try { g_Yytk->CallBuiltin("draw_set_valign", { prevValign }); } catch (...) {}

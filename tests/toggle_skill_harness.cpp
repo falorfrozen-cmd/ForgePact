@@ -2020,12 +2020,11 @@ int main() {
     SkillTimerDraw();
     checkInt("skilltimer/bar_subpixel_draws_nothing", (long long)g_ColourRectDraws.size(), 0);
 
-    // 15. `number`: the fraction as a whole percentage, centred, with its
-    //     BOTTOM edge kSkillTimerTextGap above the box's TOP edge (session 8,
-    //     owner: anchored from the bottom edge and hanging down, the text sat
-    //     partly behind the icon in the ship's taller font). Bottom vertical
-    //     alignment is what makes the gap font-independent, so it is
-    //     asserted too.
+    // 15. `number`: the fraction as a whole percentage, centred, anchored
+    //     top-aligned at the box's BOTTOM edge plus kSkillTimerTextOffsetDy
+    //     (2026-09-21 live tuning: the owner's own probe, same box, same
+    //     font, `textoffset 0 -106` - "perfect"). Ship draws the probe's
+    //     exact formula so what was judged is what ships (D-N1).
     resetWorld(); resetSkillTimer(); resetSkillTimerDrawRecord();
     g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Number);
     world.instances = { WithTimer(OwnUnmarked(), MakeReal(100.0)) };
@@ -2035,12 +2034,12 @@ int main() {
     SkillTimerDraw();
     {
         const double tx = stEx + stEw / 2.0 + kSkillTimerTextOffsetDx;
-        const double ty = stEy - kSkillTimerTextGap;
+        const double ty = stEy + stEh + kSkillTimerTextOffsetDy;
         checkInt("skilltimer/number_text_and_anchor/count", (long long)g_TextDraws.size(), 1);
         if (!g_TextDraws.empty()) {
             checkNear("skilltimer/number_text_and_anchor/x", g_TextDraws.back().x, tx);
             checkNear("skilltimer/number_text_and_anchor/y", g_TextDraws.back().y, ty);
-            checkNear("skilltimer/number_text_and_anchor/valign_bottom", g_TextDraws.back().valign, 2.0);
+            checkNear("skilltimer/number_text_and_anchor/valign_top", g_TextDraws.back().valign, 0.0);
             checkBool("skilltimer/number_text_and_anchor", g_TextDraws.back().text == "42%", true);
         }
     }

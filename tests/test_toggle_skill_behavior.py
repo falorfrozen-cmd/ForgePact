@@ -772,7 +772,7 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
         self.assertScenario("skilltimer/bar_subpixel_draws_nothing")
 
     def test_skilltimer_number_text_and_anchor(self):
-        for suffix in ("/count", "/x", "/y", "/valign_bottom", ""):
+        for suffix in ("/count", "/x", "/y", "/valign_top", ""):
             self.assertScenario("skilltimer/number_text_and_anchor" + suffix)
 
     def test_skilltimer_number_zero_percent_draws_nothing(self):
