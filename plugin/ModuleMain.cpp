@@ -23163,13 +23163,20 @@ static void TgProbeSpriteDrawNumber(double x, double y, double w, double h)
         // unconditional restore would push that value into the runtime's
         // font state ~15x/frame even on the default path, where
         // g_TgSpriteFontName is empty and draw_set_font was never set.
+        // F3 follow-up round 2: fontApplied is set BEFORE draw_set_font is
+        // called, not after - if the builtin applies the font and then
+        // throws, control reaches the catch below with fontApplied already
+        // true, so the restore still runs and the probe's font cannot leak
+        // into the game for the rest of the session. Marking it first is a
+        // no-op on the opposite failure (the call throws before applying
+        // anything): the restore then just writes back prevFont.
         bool fontApplied = false;
         try {
             if (!g_TgSpriteFontName.empty()) {
                 try {
                     RValue f = g_Yytk->CallBuiltin("asset_get_index", { RValue(g_TgSpriteFontName) });
                     if (f.ToDouble() < 0) f = RValue(std::stod(g_TgSpriteFontName));
-                    if (f.ToDouble() >= 0) { g_Yytk->CallBuiltin("draw_set_font", { f }); fontApplied = true; }
+                    if (f.ToDouble() >= 0) { fontApplied = true; g_Yytk->CallBuiltin("draw_set_font", { f }); }
                     else InterlockedIncrement(&g_TgSpriteTextFontUnresolved);
                 } catch (...) { InterlockedIncrement(&g_TgSpriteTextFontUnresolved); }
             }
@@ -23448,9 +23455,16 @@ static void TgProbeSpriteFontListCommand()
     // follow-up): unlike font_exists, font_get_name is a lookup rather than
     // an exists-check, so it must only ever be called with an index already
     // confirmed real, never the bare literal 0.0.
+    // F4 follow-up round 2: the read itself is gated on hasDrawGetFont, not
+    // just reported by it above - CallBuiltin returns an unset RValue
+    // (ToDouble()==0.0) for a builtin the runtime lacks rather than
+    // throwing, so an unguarded read here would set activeIdxKnown=true
+    // with activeIdx=0.0 and fabricate a "measured" active font of index 0.
+    // With the gate, a missing builtin leaves activeIdxKnown false and the
+    // confirmedIdx/"not probed" fallbacks below run instead.
     double activeIdx = 0.0;
     bool activeIdxKnown = false;
-    try { activeIdx = g_Yytk->CallBuiltin("draw_get_font", {}).ToDouble(); activeIdxKnown = true; } catch (...) {}
+    if (hasDrawGetFont) { try { activeIdx = g_Yytk->CallBuiltin("draw_get_font", {}).ToDouble(); activeIdxKnown = true; } catch (...) {} }
 
     // (c) the runtime's own font indices - font_exists IS the exists-check
     // builtin, so probing it with an unconfirmed literal is its documented
@@ -23495,7 +23509,8 @@ static void TgProbeSpriteFontListCommand()
         } catch (...) { return "(font_get_name threw)"; }
     };
 
-    if (!activeIdxKnown) Out("  active font: draw_get_font threw");
+    if (!hasDrawGetFont) Out("  active font: draw_get_font not present");
+    else if (!activeIdxKnown) Out("  active font: draw_get_font threw");
     else if (activeIdx < 0.0) Out("  active font: default (draw_get_font=" + std::to_string(activeIdx) + ")");
     else Out("  active font: idx=" + std::to_string((long long)activeIdx) + " name=" + nameOf(activeIdx));
 

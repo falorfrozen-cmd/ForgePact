@@ -2557,7 +2557,7 @@ class SkillTimerProbeContractTests(unittest.TestCase):
         self.assertIn('CallBuiltin("asset_get_index", { RValue(g_TgSpriteFontName) })', body)
         self.assertIn("if (f.ToDouble() < 0) f = RValue(std::stod(g_TgSpriteFontName));", body)
         self.assertIn(
-            'if (f.ToDouble() >= 0) { g_Yytk->CallBuiltin("draw_set_font", { f }); fontApplied = true; }', body)
+            'if (f.ToDouble() >= 0) { fontApplied = true; g_Yytk->CallBuiltin("draw_set_font", { f }); }', body)
         self.assertIn("g_TgSpriteTextFontUnresolved", body)
 
     def test_number_only_restores_the_font_when_it_actually_applied_one(self):
@@ -2571,6 +2571,21 @@ class SkillTimerProbeContractTests(unittest.TestCase):
         self.assertIn("bool fontApplied = false;", body)
         self.assertIn(
             'if (fontApplied) { try { g_Yytk->CallBuiltin("draw_set_font", { prevFont }); } catch (...) {} }', body)
+
+    def test_number_marks_font_applied_before_calling_draw_set_font(self):
+        # F3, issue #55 follow-up round 2 (forgepact-tgprobe-font-instrument):
+        # if draw_set_font applies the font and then throws, fontApplied
+        # must already be true so the restore above still runs - otherwise
+        # the probe's font leaks into the game for the rest of the session.
+        # Setting the flag first costs nothing on the opposite failure path
+        # (the call throws before applying anything): the restore then
+        # writes prevFont, the game's own font read at the top of this
+        # body, which is a no-op write.
+        body = function_body(self.plugin, "static void TgProbeSpriteDrawNumber(")
+        self.assertIn(
+            'if (f.ToDouble() >= 0) { fontApplied = true; g_Yytk->CallBuiltin("draw_set_font", { f }); }', body)
+        self.assertNotIn(
+            'if (f.ToDouble() >= 0) { g_Yytk->CallBuiltin("draw_set_font", { f }); fontApplied = true; }', body)
 
     def test_font_list_checks_each_builtin_through_callbuiltinex_and_prints_the_positive_control(self):
         body = function_body(self.plugin, "static void TgProbeSpriteFontListCommand()")
@@ -2605,6 +2620,26 @@ class SkillTimerProbeContractTests(unittest.TestCase):
         get_font_idx = body.index('CallBuiltin("draw_get_font", {})')
         probe_call = body.index('TgProbeSpriteBuiltinExists("font_get_name"')
         self.assertLess(get_font_idx, probe_call)
+
+    def test_font_list_reads_the_active_font_only_when_draw_get_font_is_present(self):
+        # F4, issue #55 follow-up round 2 (forgepact-tgprobe-font-instrument):
+        # CallBuiltin returns an unset RValue (ToDouble()==0.0) for a
+        # missing builtin instead of throwing, so an unguarded read would
+        # fabricate activeIdx=0.0 as the font probe's own positive control.
+        # Gate the read itself on hasDrawGetFont so the confirmedIdx/
+        # "not probed" fallbacks run instead, and the "active font:" line
+        # must then say the builtin is absent rather than that it threw.
+        body = function_body(self.plugin, "static void TgProbeSpriteFontListCommand()")
+        self.assertIn(
+            'if (hasDrawGetFont) { try { activeIdx = g_Yytk->CallBuiltin("draw_get_font", {}).ToDouble();'
+            ' activeIdxKnown = true; } catch (...) {} }', body)
+        self.assertIn('if (!hasDrawGetFont) Out("  active font: draw_get_font not present");', body)
+        self.assertIn('else if (!activeIdxKnown) Out("  active font: draw_get_font threw");', body)
+        # the existence-check Out(...) line (the printed negative control)
+        # is not itself the guard - it prints unconditionally, before the
+        # real gate on the read.
+        self.assertLess(body.index('Out(std::string("  draw_get_font: ")'),
+                         body.index('if (hasDrawGetFont) { try {'))
 
     def test_font_list_disclaims_the_fallback_candidates_as_unconfirmed(self):
         # F5, issue #55 follow-up: a run where every _fnt-suffixed candidate

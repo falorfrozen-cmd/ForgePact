@@ -2973,6 +2973,22 @@ readings would not be corrupted by them:**
   0.5x` or `textalpha nan` is refused instead of silently reaching
   `draw_set_alpha` with a garbage or non-finite value.
 
+**A second follow-up round (`forgepact-tgprobe-font-instrument`) closed two
+more instrument-blindness findings the first round's own fixes still left
+open:**
+
+- `number`'s font-applied flag (`fontApplied`) is now set immediately before
+  `draw_set_font` is called, not after. If the builtin applies the font and
+  then throws, the flag is already `true`, so the restore still runs and the
+  probe's font can no longer leak into the game for the rest of the session.
+- `font list`'s `draw_get_font` read is now gated on `hasDrawGetFont` (the
+  same existence probe the command already prints). `CallBuiltin` returns an
+  unset RValue rather than throwing for a missing builtin, so the unguarded
+  read used to report a fabricated `active font: idx=0` as if it had been
+  measured; with the gate, a missing builtin now falls through to the
+  `font_exists`-confirmed index or "not probed", and the "active font:" line
+  says the builtin is absent instead of claiming it threw.
+
 ### Live procedure
 
 Run from `plugin_build\build.bat dev`'s `BloodPactPlugin_rel.dll`, one
