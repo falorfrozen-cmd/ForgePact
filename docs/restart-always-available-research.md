@@ -456,13 +456,17 @@ detoured the game's code without swapping the table, so the mod's install
 asks the hooking library to detour an address that is already patched;
 `docs/prospect-window-research.md` says the second hook on an address fails,
 measured only in the other order, so for this script that is unverified. If
+the second detour succeeds, the log reads `restartanytime: hook installed ->
+ON` and both the probe's row and the mod's write run on each call. If
 it does fail, the log reads `hook UiSetFocus: TABLE-ONLY (MmCreateHook st=…)`
 and then `restartanytime: hook TABLE-ONLY -> OFF`, and the mod stays off for
 the session. Players meet neither case: the probe is research-build only.
 Run the probe or the mod in a session, not both. `prospectprobe hook` also
 detours `UiCreate`, `UiCreateNode`, `UiSetRef` and
 `UiRemoveNode` at the same code, so whichever of the two instruments attaches
-second reports those four rows `blocked`: run one of them per session.
+second reports those four rows `blocked`: run one of them per session. The
+two-order live check (mod first, then probe first) remains outstanding — not
+scheduled in this workorder.
 
 Also available with no new code: `tgprobe deep snap` and `tgprobe deep diff`
 (`docs/toggle-skills-research.md`) snapshot every scalar on the player,
