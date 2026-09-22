@@ -32,7 +32,12 @@ stash counterpart of the bag's materials tab (`UiAInventoryMaterialTabClick`,
 `UiDrawInventoryMaterialTab`). Issue #9 measured the bag's materials tab to be a
 stack container, not a grid node (`prospect-window-research.md`, § Stage C
 results); the stash's material tab is expected to be the same kind of container,
-and where either one lives is a Phase 1 question.
+and where either one lives is a Phase 1 question. Issue #9 never read the bag's
+materials tab either: no reader it had found the container, so "the bag gained
+it" there rests on the game's own `success` answer plus the tab count by eye
+(`prospect-window-research.md`, rows `M-grids` and `M-stack`). No reader in this
+toolkit has yet been shown to find either tab, which is why `## Results` gives
+the readers here a positive control before a miss counts.
 
 **The goal.** With the switch on, a recipe whose inputs sit partly or wholly in
 the stash's material tab counts as craftable at the cube, and the craft consumes
@@ -231,7 +236,8 @@ stash.
   shortfall from the stash stack through the game's own stack routine by name.
   **Decided by:** those rows fire on a hand craft (`M-craft`) with argument
   shapes a hook can extend without reading a struct layout, and the stash tab's
-  container is readable with the stash window closed (`M-stash-closed`).
+  container is readable with the stash window closed (`M-stash-closed`, which
+  counts as a "no" only once its control has passed - see `## Results`).
 - **H-B - pull on demand.** At the craft press (or on recipe selection) the mod
   moves the shortfall from the stash tab to the bag's materials tab through the
   game's own click-move route, by name - whichever of the `StashAddToStack` /
@@ -305,7 +311,10 @@ craft. Research DLL only, a fresh launch, one instrument.
 3. **Hook-free readers first.** `craftprobe bag`, `craftprobe stash` (stash
    closed), open the stash, `craftprobe stash` again, open the cube and select a
    recipe, `craftprobe recipe`. Fill `M-bag`, `M-stash-open`, `M-stash-closed`,
-   `M-recipe`. Follow any promising variable with `craftprobe var ...`.
+   `M-recipe`. Follow any promising variable with `craftprobe var ...`. Before
+   either tab is written up as unreadable, note the tab counts by eye: a reader
+   has only found a tab when the container it names holds the counts the human
+   sees (the control for `M-bag` and `M-stash-closed`, below `## Results`).
 4. `craftprobe hook`; `craftprobe arm budget=200` (the draw row stays near the
    default: narrow `arm` with substrings if it floods). Walk past anything
    interactable, then `craftprobe show`: `C-control` needs a non-zero
@@ -335,9 +344,9 @@ toolchain `py tools/fetch_toolchain.py` placed. Not installed into the game's
 |---|---|---|---|
 | B0-vanilla | Unmodded: does a recipe whose only input is in the stash tab count as craftable and craft (stash closed; stash open)? | | |
 | C-control | `CheckPlayerInteraction` count in the same session as every row below (must be non-zero) | | |
-| M-bag | `craftprobe bag`: where the bag's materials tab lives, its kind and entries | | |
-| M-stash-open | `craftprobe stash` with the stash window open: where the stash's material tab lives | | |
-| M-stash-closed | `craftprobe stash` with the stash window closed: is the material tab readable closed? | | |
+| M-bag | `craftprobe bag`: where the bag's materials tab lives, its kind and entries. **Control:** the container named holds the counts seen in the bag's materials tab by eye; a miss also needs `M-backing`'s profile-getter returns checked for the tab (rule below) | | |
+| M-stash-open | `craftprobe stash` with the stash window open: where the stash's material tab lives, with a count matching the tab by eye (this is `M-stash-closed`'s control) | | |
+| M-stash-closed | `craftprobe stash` with the stash window closed: is the material tab readable closed? **Control:** `M-stash-open` found the tab's container with a count matching by eye, and `M-backing`'s profile and stash getter returns were checked for it (rule below) | | |
 | M-recipe | `craftprobe recipe`: the selected recipe's needs, reachable by name? | | |
 | M-craft | Hand craft from the bag: which rows fire, with what self/other/arguments/returns; bag count change | | |
 | M-move-stash-to-bag | Hand click-move stash tab -> bag: rows, `success` answer, counts by eye | | |
@@ -346,6 +355,29 @@ toolchain `py tools/fetch_toolchain.py` placed. Not installed into the game's
 | H-A | Availability and consume rows extendable by name, and the stash tab readable closed? | | |
 | H-B | A by-name stash -> bag move with a `success` answer, bag cap not hit? | | |
 | H-C | Availability extendable, consume not? | | |
+
+**A reader miss is not a negative until its control passes.** The hook-free
+readers look only where they are pointed: `craftprobe stash` lists the instance
+variables of `UI_Stash_obj` and `Town_Stash_obj` and the globals whose names
+contain `stash`, `mat` or `tab`, one level deep, and with the stash window closed
+`UI_Stash_obj` has no instance to read at all; `craftprobe bag` does the same for
+`UI_Inventory_obj` with `mat`, `stack`, `tab`, `inv`. A "nothing found" from
+either therefore measures where the reader looked, not where the game keeps the
+tab. So:
+
+- **(a)** `M-stash-closed` counts as a miss only after `M-stash-open` has located
+  the stash tab's container, with a count matching what the human sees in the
+  tab. If the reader cannot find the tab with the window open, it has no
+  known-good target, and a closed-window miss says nothing about the game.
+- **(b)** Before a miss counts - in `M-bag` or `M-stash-closed` - the `backing`
+  returns (`M-backing`: the four profile getters, `s_StashTabData`, `LoadStash`,
+  `GetStashMaxTabs`) are checked for that container too, since the game's own
+  getters may hand it out where no window variable or global holds it.
+- **(c)** Until both hold, the Result cell reads "not observed by `craftprobe
+  stash` (`UI_Stash_obj`/`Town_Stash_obj`/globals, filters `stash`/`mat`/`tab`,
+  one level)" - or the same for `craftprobe bag` with its object and filters -
+  and never "not readable". Only a miss whose control passed may be written as
+  "not readable closed".
 
 ## Decision gate
 
@@ -360,4 +392,9 @@ Phase 1 names which hypotheses the evidence allows, what each would cost the
 player (which game operation runs at a moment the game did not choose), and the
 recommended one. If no hypothesis has both a by-name shape with a positive control
 and a readable stash-tab container, the workorder is blocked and says so here
-rather than proposing a struct-layout read.
+rather than proposing a struct-layout read. That block may rest on "no readable
+stash-tab container" only when the miss passed its control (rules (a) and (b)
+under `## Results`); a miss recorded as "not observed by `craftprobe ...`" does
+not block - it sends the search to a wider reader (`var`, `backing`, other
+filters) - and neither does it, alone, move the owner to the "stash must be
+open" fallback.
