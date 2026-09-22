@@ -1721,7 +1721,12 @@ class SkillTimerRuleContractTests(unittest.TestCase):
         overclaim_toggle = re.compile(r"\b(any|every|all)\s+(other\s+)?toggle\b", re.IGNORECASE)
         for label, text in blocks.items():
             low = text.lower()
-            for word in ("untested", "companion", "buff", "measure", "most"):
+            # The owner (2026-09-22): the panel says what the mod does for a
+            # player, not how coverage was measured; the README and release
+            # notes keep the full coverage account.
+            words = ("most", "companion", "toggle") if label == "panel" else (
+                "untested", "companion", "buff", "measure", "most")
+            for word in words:
                 self.assertIn(word, low, (label, word))
             self.assertIsNone(overclaim_skill.search(text), (label, text))
             self.assertIsNone(overclaim_toggle.search(text), (label, text))
@@ -2559,6 +2564,11 @@ class SkillTimerBuffContractTests(unittest.TestCase):
         for label, text in self._countdown_text_blocks().items():
             normalised = " ".join(text.split())
             self.assertNotIn(old_clause, normalised, label)
+            if label == "panel":
+                # Short player-facing description (owner, 2026-09-22): no
+                # coverage account, so no buff clause either.
+                self.assertLessEqual(len(re.sub(r"<[^>]+>", "", text)), 300, text)
+                continue
             low = text.lower()
             self.assertIn("buff", low, label)
             self.assertIn("covered", low, label)

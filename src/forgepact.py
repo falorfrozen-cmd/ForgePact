@@ -2313,7 +2313,7 @@ input[type=range]::-webkit-slider-thumb{appearance:none;width:17px;height:17px;b
         <span class="val" id="mtgval">off</span>
     </div>
     <div class="row" style="border:none">
-        <span class="lbl" style="width:auto;flex:1">Timed skill countdown<br><span style="font-size:11px;color:#8f816e;font-weight:normal">A small set of timed skills are measured and tested in-game; most other skills with both a duration and a real cooldown are also covered, by rule, and are untested - a few are left out where a measurement showed the timer on the skill's own object is not the skill's duration, and companion skills (turrets, totems, hydra) are not covered; a few skills whose duration is a buff on you, measured in-game, are covered too, and other buff-only skills are not. Draws how much of a cast is left over that skill's skill-bar slot, in the look you pick below. In a fight, hits can add a little time to some skills (roughly 0.2 s each in our test) and the countdown rises slightly to match. A skill switched on as a toggle never gets a countdown. Off by default; if a cast is already running when you turn this on, it shows as full until it is cast again.</span></span>
+        <span class="lbl" style="width:auto;flex:1">Timed skill countdown<br><span style="font-size:11px;color:#8f816e;font-weight:normal">Shows how much time a timed skill has left, over that skill's slot on the skill bar, in the look you pick below. Works for most timed skills; toggles and companions (turrets, totems) don't get one. Off by default.</span></span>
         <select class="style-select" id="mod_skill_timer_style">
             <option value="off">Off</option>
             <option value="arc">Arc</option>
