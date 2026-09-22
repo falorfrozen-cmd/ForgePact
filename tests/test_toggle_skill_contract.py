@@ -398,7 +398,13 @@ class ToggleDeepReadContractTests(unittest.TestCase):
 
     def test_research_build_only(self):
         self.assertGreater(self.block.count("TgProbeDeep"), 0)
-        self.assertEqual(self.plugin.count("TgProbeDeep"), self.block.count("TgProbeDeep"))
+        # One other research instrument reuses the path reader, read-only:
+        # restartprobe's `path` scope (issue #8, round 2). Every use outside
+        # this block is inside that research block and names only the reader.
+        rp_start = self.plugin.index("// ---- restartprobe: pause-menu Restart gate research")
+        rp = self.plugin[rp_start:self.plugin.index("#endif // FORGEPACT_RELEASE (restartprobe)", rp_start)]
+        self.assertEqual(self.plugin.count("TgProbeDeep"), self.block.count("TgProbeDeep") + rp.count("TgProbeDeep"))
+        self.assertEqual(set(re.findall(r"\bTgProbeDeep\w*", rp)), {"TgProbeDeepGet"})
         self.assertNotIn("TgProbeDeep", strip_research_blocks(self.plugin))
 
     def test_walker_expands_every_container_kind_within_caps(self):
@@ -787,6 +793,9 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
             # Another feature in the same table, named rather than ignored:
             # the read-only menu listing (test_menu_layout_contract.py).
             "menulayout",
+            # And "Restart zone at any time" (issue #8,
+            # test_restart_anytime_contract.py).
+            "restartanytime",
             # Explicit new player command, covered by test_mining_ore_behavior.
             "miningore", "minerhelm",
             # Pack markers (map reveal's monster half since 1.4.5): marker
@@ -2874,10 +2883,11 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         now = as_set(re.search(pattern, self.plugin, re.S).group(1))
         before = as_set(re.search(pattern, old, re.S).group(1))
         # `menulayout` is the read-only menu listing, another feature landing
-        # in the same table (test_menu_layout_contract.py pins it).
+        # in the same table (test_menu_layout_contract.py pins it), and
+        # `restartanytime` is issue #8's (test_restart_anytime_contract.py).
         # `miningore`, `minerhelm` and `packmarks` are 1.4.5's mining slider,
         # Miner's Helmet and map pack markers (their own tests cover them).
-        self.assertEqual(now - before, {"autoprospect", "skilltimer", "menulayout",
+        self.assertEqual(now - before, {"autoprospect", "skilltimer", "menulayout", "restartanytime",
                                         "miningore", "minerhelm", "packmarks"})
         self.assertEqual(before - now, set())
 

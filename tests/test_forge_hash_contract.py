@@ -59,6 +59,9 @@ EXPECTED_PLAYER_COMMANDS = {
     # The read-only menu listing hs-drive clicks from
     # (test_menu_layout_contract.py pins it).
     "menulayout",
+    # Restart zone at any time (issue #8; test_restart_anytime_contract.py
+    # pins it).
+    "restartanytime",
     # Mining ore quantity is a player setting; research-only diagnostics stay out.
     "miningore", "minerhelm",
     # Pack markers (map reveal's monster half since 1.4.5): the look of the

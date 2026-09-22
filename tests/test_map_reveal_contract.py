@@ -307,7 +307,7 @@ class TestMapRevealContract(unittest.TestCase):
         )
 
     # ---- panel -------------------------------------------------------------
-    def test_both_controls_render_in_the_gameplay_mods_section(self):
+    def test_both_controls_render_in_the_panel(self):
         self.assertIn('id="map_reveal"', self.panel_code)
         self.assertIn('id="map_reveal_packs"', self.panel_code)
 

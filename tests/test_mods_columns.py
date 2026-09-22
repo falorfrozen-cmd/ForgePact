@@ -58,6 +58,8 @@ out.hiddenIgnored=layout([100,100,500,100,100],{hidden:[2]}).run();
 const hidden=layout([100,100,100,100],{width:0});out.invisible=hidden.run();
 const grow=layout([100,100,100,100]);grow.run();grow.items[3].height=500;out.grown=grow.run();
 grow.items[3].height=100;out.shrunk=grow.run();
+const unlaid=layout([100,100,100,100],{width:0});out.unlaidStays=unlaid.run();
+unlaid.grid.clientWidth=900;out.laidBalances=unlaid.run();
 console.log(JSON.stringify(out));
 """
 
@@ -90,6 +92,13 @@ class ModsColumnsTests(unittest.TestCase):
     def test_an_unlaid_grid_is_left_alone(self):
         # The Mods tab is display:none until opened; nothing can be measured yet.
         self.assertEqual(self.got["invisible"], [[0, 1, 2, 3], []])
+
+    def test_a_grid_hidden_at_setup_balances_when_shown(self):
+        # A Mods sub-tab card starts at width 0 (its sub-tab is not selected
+        # yet); once the sub-tab is opened and the grid gets a real width,
+        # the same ResizeObserver callback balances it.
+        self.assertEqual(self.got["unlaidStays"], [[0, 1, 2, 3], []])
+        self.assertEqual(self.got["laidBalances"], [[0, 1], [2, 3]])
 
     def test_a_card_that_grows_or_shrinks_rebalances(self):
         self.assertEqual(self.got["grown"], [[0, 1, 2, 3], []])

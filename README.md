@@ -41,6 +41,7 @@ none of these diagnostic hooks or the recorder. See
 | **Pet Collects Quest Items** | While your pet is out it walks to pick-up quest items on screen and collects them one at a time, crediting the objective through the game's own collect. Pick-up items only; activate/break/talk objectives are left alone |
 | **Mark A Running Toggle Skill** | For a fixed set of toggle skills measured in-game, each either with its toggle sub-talent allocated or a toggle on its own: a soft red outline appears around that skill's skill-bar slot the whole time the toggle is running, and disappears when it stops. A skill outside that set is not covered, and a plain cast lights nothing (off by default) |
 | **Stop Double Cast Re-casting A Toggle Skill** | A double cast proc can cast one of that same fixed set of toggle skills a second time on its own, flipping its toggle straight back; with this on, that extra cast is skipped and the toggle stays the way your press left it. It only steps in when you actually have the skill's toggle sub-talent, or the skill is a toggle on its own; your own presses and other skills' double casts are untouched (off by default) |
+| **Restart Zone At Any Time** | The pause menu's Restart works straight away, in combat too, instead of waiting until you have been out of combat for a few seconds. Use the mouse: Restart lights up once the cursor is on it (off by default) |
 | **Timed skill countdown** | For a small set of timed skills measured and tested in-game, plus most other skills with both a duration and a real cooldown, covered by rule and untested: draws how much of the cast is left over its skill-bar slot, in one of four looks (arc / bar / number / fade), disappearing at zero. A few skills are left out where a measurement showed the timer on the skill's own object is not the skill's duration. Companion skills (turrets, totems, hydra) are not covered. A few skills whose duration is a buff on you, measured in-game, are covered too, and other buff-only skills are not. In a fight, hits can add a little time to some skills (roughly 0.2 s each in our test) and the countdown rises slightly to match. A skill switched on as a toggle never gets a countdown. Off by default; a cast already running when you turn it on shows as full until the next cast |
 | **Satanic Zone Mods** | Pick which of the game's 25 positive / 26 negative World Section mods can roll onto a Satanic Zone; everything is on by default |
 | **Auto-prospect** | Off by default. Every item you drag or click into the Prospect Cube's grid is prospected at once by the game's own Prospect, so the 9×6 grid stops being the limit on a batch. Before each prospect the previous prospect's batch of materials goes to your materials tab (a sub-switch, on by default), so only the newest batch stays in the grid; the item you put in, ore included, is prospected, not moved (one exception: a batch material swapped out and dropped straight back in still goes to the tab); anything left in it when the game saves is lost ([details](#auto-prospect)) |
@@ -102,9 +103,18 @@ icons do not replace descriptions or selection checkmarks. All artwork is
 embedded locally and stays sharp at different display scales.
 
 **Mods** groups related switches in cards. The sidebar shows only the five
-main sections: Setup, Modifiers, World, Loot and Mods. Map population depends on Reveal full map;
-its switch is unavailable while the parent is off. All settings still use the
-existing local configuration and game plugin. The panel adds no UI dependencies.
+main sections: Setup, Modifiers, World, Loot and Mods. The Mods page itself
+has two sub-tabs at the top, showing one card at a time: **Quality of Life**,
+everything that is not tied to a specific forged item (the relic drop pool
+filter, orb pickup radius, map reveal, pet quest pickup, auto-prospect, the
+toggle marker/guard and the timed skill countdown), and **Items**, the custom
+forge mechanics tied to items made in the Item Editor (Headhunter, Tyrant's
+Crown, Beacon). Quality of Life opens first; clicking the other sub-tab (or
+using the arrow keys) switches which card you see, and the panel remembers
+the one you last had open until you close it. Map population depends on
+Reveal full map; its switch is unavailable while the parent is off. All
+settings still use the existing local configuration and game plugin. The
+panel adds no UI dependencies.
 
 The reusable icon pack lives in `src/panel_icons.py`, beside `forgepact.py`.
 Keep both files together when copying the Python source. To export the 69
@@ -332,7 +342,7 @@ and live findings are in
 
 ## Remove owned relics from drop pool
 
-Mods tab → Gameplay Mods. While it is on, a relic that is already at 10/10 in your
+Mods tab → Quality of Life. While it is on, a relic that is already at 10/10 in your
 equipped slots, backpack or inventory is withheld when the game rolls a relic drop,
 so what lands is one you can still level.
 
@@ -406,7 +416,7 @@ a reason we have not identified. Details and every ruled-out hypothesis are in
 
 ## Auto-prospect
 
-Mods tab → Gameplay Mods → **Auto-prospect items put in the Prospect Cube**. Off by
+Mods tab → Quality of Life → **Auto-prospect items put in the Prospect Cube**. Off by
 default. The cube's 9×6 prospect grid fills long before a full inventory is through
 it; with this on, every item you drag or click into the grid is prospected straight
 away by the game's own Prospect, exactly as if you had pressed the button.
@@ -465,6 +475,31 @@ How it works, and the research that proved ForgePact can run the Prospect itself
 [`docs/prospect-window-research.md`](docs/prospect-window-research.md) (§ Stage B; the
 move to the materials tab in § Stage C; first-of-its-kind materials and the ore finding
 in § Stage D).
+
+## Restart zone at any time
+
+Mods tab → Quality of Life → **Restart zone at any time**. Off by default.
+
+The pause menu's Restart normally refuses while the game counts you as in
+combat, and only works once you have been out of combat for a few seconds.
+With this on it works straight away. ForgePact does not restart anything
+itself: while the mouse is on Restart, it changes the one value the game
+uses to grey the button out, inside the game's own call for the button under
+the cursor, and the game's own Restart does the rest. The game sets that
+value again every frame, so in combat the button still looks greyed until
+the cursor is on it, and moving the mouse away puts the wait back.
+
+- **Mouse only.** Keyboard navigation does not reach the pause menu's
+  buttons, and a controller has not been tried.
+- **Enemies nearby.** A restart while enemies are alive and attacking is
+  accepted as the player's choice; the game's own Restart handles it.
+- `restartanytime stat` prints `written=` (frames the in-combat wait was lifted),
+  `passed=` (Restart was already allowed), `otherNode=` (another button had
+  the cursor), `unreadable=` (the button's value could not be read, so
+  nothing was written) and `hook=`.
+
+How the value was found, over three research rounds, is in
+[`docs/restart-always-available-research.md`](docs/restart-always-available-research.md).
 
 ## Menu layout (for tools that drive the menus)
 
