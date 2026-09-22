@@ -46,39 +46,16 @@ of its own - see that bullet for what it draws on.
   wake sleeping ones, but the game never puts monsters to sleep, so the walk
   only cost frame time. It now checks whether waking changed anything before
   walking, and walks only if it did.
-- **Local early-population candidate (failed performance testing; not release-ready).**
-  Filling dense maps could exhaust the game's fixed monster-stat storage and
-  crash during enemy creation. On the supported game library, ForgePact now
-  reserves additional storage and starts groups in short batches, preserving density.
-  The local follow-up spreads additional density copies across frames as well
-  as pack births and prioritizes nearby copies. The latest local adjustment
-  targets five seconds instead of slowing almost to a stop during ordinary
-  frame-time fluctuations. The panel reports when that target is exceeded;
-  this target is not evidence that every group spawned.
-  The latest 4x-density test missed that target and caused severe lag even after
-  the queue counters emptied. No crash was reported in that run; the performance
-  issue remains unresolved. It cannot interrupt a single expensive game call.
-  A subsequent capture found silent groups expiring from those counters without
-  admission. They now remain separately reported as unconfirmed, rather than
-  implying that the map finished populating. Unsupported storage or insufficient
-  reserve is reported beside the option. Real monsters still cost frame time;
-  this is not a promise of unchanged FPS. Standalone native and queue tests pass;
-  they do not override the failed live performance check.
-  A local follow-up also fixes abandoning maps whose creators load after the
-  minimap, and avoids redundant Tyrant/Beacon scans of already-active monsters.
-  Automated behavior checks pass; this follow-up still needs live verification.
-  Further local refinements reduce repeated monster-ID lookups, temporary memory
-  allocations and repeated waiting-list scans. Enemy density, hunting behavior
-  and enabled features are preserved. The cause of silent groups and the actual
-  FPS gain still require in-game verification.
-  The next local candidate reduces repeated searches when selecting nearby
-  density copies and avoids rewriting idle population status unnecessarily.
-  A waiting group that starts spawning naturally can now be recognized, instead
-  of remaining marked as unconfirmed. This does not guarantee every group member
-  has spawned; live completion and performance testing remain outstanding.
-  The latest local refinement removes a repeated creator lookup during enemy
-  births. It preserves density and existing features; reduced stutter has not
-  yet been established in-game.
+- **Monster Density no longer creates all of a spawner's extra monsters in
+  the same instant.** With Monster Density above x1, the extra copies each
+  spawner adds are now created over the next frames, nearest to you first,
+  instead of in the one frame the pack is born. Together with the pack markers
+  above, a dense zone no longer needs every monster in it alive at once. The
+  optional **Really spawn every pack on arrival (heavy)** sub-toggle still
+  creates the whole zone up front and still lags at high density; on the
+  supported game version it first reserves extra room in the game's
+  monster-stat storage, which a fully spawned dense map could run out of and
+  crash while creating enemies, and the panel says so when it cannot.
 
 - **Miner's Helmet.** A new signature helmet for miners: Great Helm base, SS
   tier, +1000 Defense, +500% Enhanced Defense, +20% Movement Speed, +20% All

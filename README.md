@@ -6,11 +6,14 @@ panel; settings are applied live while the game runs and re-applied on every lau
 
 ## ✨ Features
 
-Local early-population work remains **experimental, not release-ready**. It
-preserves density and real enemy births with a five-second scheduling target.
-The v3 player run at 4x recorded latest scheduled work at 7.694 seconds and a
-peak frame interval of 232.430ms. It missed the target; these counters do not
-prove every group finished spawning. Different maps are not an FPS benchmark.
+Dense zones are handled two ways by default: **Reveal full map** marks the
+packs that do not exist yet instead of creating them, and Monster Density's
+extra copies of a spawner are created over the following frames, nearest first.
+The optional **Really spawn every pack on arrival (heavy)** sub-toggle, which
+populates the whole zone early, still lags at high density: its v3 run at 4x
+recorded latest scheduled work at 7.694 seconds and a peak frame interval of
+232.430ms against a five-second target, and those counters do not prove every
+group finished spawning.
 
 The next local candidate shares caller classification within each existing
 creation hook. Its production-body fixture reduced 2000 caller-object reads to
