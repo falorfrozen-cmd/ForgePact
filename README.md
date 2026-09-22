@@ -29,7 +29,8 @@ none of these diagnostic hooks or the recorder. See
 | **Monster Density** | 1–5× more enemies in 0.5 steps (1, 1.5, 2 …), through the game's own `Enemy_Creator` spawners |
 | **Special Content** | Rift Portals, Battlefields, Cursed Orbs, Summon Portals, Chaos Pillars, Chaos Tower — up to 100× per zone |
 | **Drop Rates** | Gold, Dungeon Keys, Angelic Keys, Chaos + Crystal Keys, Bifröst Key and Relics — up to 100× |
-| **Mining Ore Amount (Experimental)** | Loot → Mining Ore Amount, 1–10×. Scales the stack quantity of ore awarded by mining; x1 is normal. In-game verification is still pending |
+| **Mining Ore Amount** | Loot → Mining Ore Amount, 1–10×. Scales the stack quantity of ore awarded by mining; x1 is normal. A worn Miner's Helmet replaces it with 4× instead of stacking |
+| **Miner's Helmet** | A signature helmet forged in the Item Editor. While worn: 4× ore from every mining node, and Vein Resonance - finishing a dig also digs the two nearest veins within 192 units that you could mine yourself (4× each, no chaining). Mods → Items shows whether it is worn ([details](#miners-helmet)) |
 | **Angelic / Unholy Drops (Experimental)** | ForgePact's own die per kill; on a hit it builds one of its 49 real Angelic / Unholy uniques, or (since 1.4.5) Tyrant's Crown or Headhunter. x2 = 1 in 7,500 kills, each step adds a die, typable |
 | **Combat Modifiers** | Total Damage, Attack Speed, Faster Cast Rate, Defense, Life/Mana Replenish, physical and spell Critical Chance/Damage |
 | **Character Stats** | Experience, Magic Find and Movement Speed use the character's current total value, including equipment bonuses |
@@ -60,13 +61,13 @@ on first touch, so moving the slider twice never compounds. `x1` restores vanill
 exactly.
 
 **Mining Ore Amount** is a separate quantity control, not a drop-chance multiplier.
-The experimental implementation changes the amount of Copper, Iron, Gold, Ruby,
-Jade or Tarethium ore in a normal mining reward. It preserves the chosen ore type
-and is scoped to the mining call; it does not change mining XP, gems, prospecting
-or monster loot. It installs its two native hooks only when raised above x1, and
-uses the original reward unchanged if it cannot validate the reward parameters.
-The panel, adapter tests and Release DLL build have passed; the complete mining
-and pickup path still needs an in-game check. See [research and test scope](docs/mining-ore-research.md).
+It changes the amount of Copper, Iron, Gold, Ruby, Jade or Tarethium ore in a
+normal mining reward. It preserves the chosen ore type and is scoped to the
+mining call; it does not change mining XP, gems, prospecting or monster loot. It
+installs its two native hooks only when raised above x1, and uses the original
+reward unchanged if it cannot validate the reward parameters. Checked in play on
+2026-09-23: at x10 a 6-ore reward dropped 60. A worn [Miner's Helmet](#miners-helmet)
+replaces it with 4×. See [research and test scope](docs/mining-ore-research.md).
 
 Dungeon Keys, Angelic Keys and Relics are also gated a second time: outside their home
 zone the game rolls their drop type at zero chance, so the item can never come up no
@@ -660,20 +661,30 @@ for where the modified YYToolkit's complete corresponding source is.
 ForgePact is an independent, fan-made project and is **not affiliated with or
 endorsed by** AurieFramework, Panic Art Studios, or Hero Siege.
 
-## Local Miner helmet prototype
+## Miner's Helmet
 
-Mining readiness and successful rewards are tracked separately. The latest local
-change removes an unnecessary instance-pointer conversion from the equipped
-bonus check and records why a reward was refused; real pickup and pulse
-verification is still pending.
+A high-defense signature helmet (Great Helm base, SS tier: +1000 Defense, +500%
+Enhanced Defense, +20% Movement Speed, +20% All Resistances, +5 Light Radius)
+with two mining mechanics that ForgePact runs while it is worn:
 
-This checkout includes a high-defense Miner's Helmet experiment: 4x ore only while worn, a golden mining pulse, and Vein Resonance, which lets a finished dig also finish the two nearest eligible veins within 192 px through the game's own dig (4x ore each, no chaining; `minerhelm veins 0|1`). Create a test copy from Mods → Items, or from the sibling Item Editor's Miner signature template. See [prototype status and live checks](docs/miner-helmet-prototype.md).
+- **4× ore.** Every mining node gives exactly four times its ore. The helmet
+  replaces the Mining Ore Amount slider rather than stacking with it; take it
+  off and the slider applies again. Mining time and XP are unchanged.
+- **Vein Resonance.** Finishing a dig also digs the two nearest veins within
+  192 units of that node that you could mine yourself, through the game's own
+  dig: 4× ore and normal mining XP each. Used-up veins, veins being dug and
+  veins above your mining level are skipped, and a vein dug this way never
+  starts another. `minerhelm veins 0|1` turns it off and on.
 
-The local regression harness now runs the complete helmet and ore adapters
-together: equip/unequip, another player's mining, malformed equipment, room
-changes, bounded visual effects, and failed native rewards. The experimental
-build still has an unresolved in-game crash report; automated checks do not
-clear it for release.
+Forge it with the Item Editor (Item Forge → Forge a signature item → Miner's
+Helmet). Mods → Items shows whether it is worn and how many veins Vein
+Resonance has dug. `minerhelm status` prints the equipment read and the last
+reward decision; `minerhelm probe [seconds]` logs the nearest node's dig state
+for troubleshooting. Both mechanics were verified in play on 2026-09-23. The
+golden pulse drawn at a finished dig is cosmetic and not yet confirmed on
+screen. An earlier crash report against an experimental build (2026-09-21) was
+not reproduced in those sessions; its cause was never identified. Design,
+evidence and tests: [docs/miner-helmet-prototype.md](docs/miner-helmet-prototype.md).
 
 
 ## AFK FARM independent reward compatibility (local, 2026-09-22)

@@ -206,8 +206,8 @@ static void MineAt(CInstance* s){RValue r;ForgePact::MiningOre::HookStep(s,s,r,0
 static void Reset(){
     namespace M=ForgePact::MinerHelmet;namespace O=ForgePact::MiningOre;
     M::pending=M::enabled=M::worn=M::equipmentReadable=M::hudNative=false;
-    M::waves.clear();M::recentNodes.clear();M::grantRequests.clear();M::grantRequest.clear();
-    M::rewards=M::wavesStarted=0;M::lastStatus=0;M::lastGrant=-10000;
+    M::waves.clear();M::recentNodes.clear();
+    M::rewards=M::wavesStarted=0;M::lastStatus=0;
     M::lastRewardReason="No mining ore reward observed";M::rewardRefusalsLogged=0;
     M::probeUntil=0;M::probeLines=M::probeFrames=M::probeRewardLines=0;M::probeLast.clear();
     assetLookups=nearestCalls=variableSets=0;nodeVars={{"stop",RValue(0.0)},{"range",RValue(12.0)},{"rangeMax",RValue(100.0)}};
@@ -291,10 +291,10 @@ int main(){
     Reset();M::pending=true;M::Tick();failNative=true;bool caught=false;try{Mine();}catch(...){caught=true;}
     check(caught&&nativeCalls==1&&M::waves.empty()&&!O::inReward&&!O::activeNode,"native failure/no retry or phantom success pulse");
     Reset();nativeAvailable=false;M::pending=true;M::Tick();Mine();check(!M::enabled&&receivedOre==5,"install failure/no bonus");
-    Reset();M::Command("grant aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");M::Command("grant aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-    check(grants==1,"create/replayed request grants only one helmet");
-    now+=10;M::Command("grant bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");check(grants==1,"create/rapid second request refused");
-    Reset();hasPlayer=false;M::Command("grant aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");check(grants==0&&installCalls==0,"create/no player does not queue future item");
+    // The test "Create" button's `grant` command was retired (2026-09-23): it creates nothing, installs nothing.
+    Reset();M::Command("grant aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    check(grants==0&&installCalls==0&&!M::enabled&&logs.size()==1&&logs[0].find("use `status`")!=std::string::npos,
+        "create/the retired grant command creates nothing and only prints usage");
     // Dig probe: nothing is looked up until armed; once armed it prints the nearest node only when its state changes, then stops on time.
     Reset();for(int i=0;i<120;++i){now+=17;M::Tick();}
     check(assetLookups==0&&nearestCalls==0&&logs.empty(),"probe/not armed reads nothing");

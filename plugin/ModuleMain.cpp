@@ -9603,10 +9603,10 @@ static int g_SigDropForce = -1;   // -1 off (default); 0 force Tyrant's Crown, 1
                                    // normal drop rate follows the Angelic/Unholy slider.
 static bool SpawnSignatureItem(int which, double x, double y, CInstance* ctx)
 {
-    const double seed = which == 2 ? ForgePact::MinerRules::Seed : which == 0 ? kSigCrownSeed : kSigBeltSeed;
-    const int type = which == 1 ? 8 : 0;
-    const int b = which == 1 ? 2 : 7;
-    const char* label = which == 2 ? "Miner's Helmet" : which == 0 ? "Tyrant's Crown" : "Headhunter";
+    const double seed = which == 0 ? kSigCrownSeed : kSigBeltSeed;
+    const int type = which == 0 ? 0 : 8;
+    const int b = which == 0 ? 7 : 2;
+    const char* label = which == 0 ? "Tyrant's Crown" : "Headhunter";
     const char* stage = "start";
     try {
         const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
@@ -9621,7 +9621,6 @@ static bool SpawnSignatureItem(int which, double x, double y, CInstance* ctx)
         stage = "InitItemFromJson";
         RValue item; AurieStatus st = g_Yytk->CallGameScriptEx(item, "gml_Script_InitItemFromJson", g, g, { parsed, RValue(key) });
         if (!AurieSuccess(st) || item.m_Kind != VALUE_OBJECT) {   // argument order not yet proven live: try the swap once
-            if (which == 2) { Out("minerhelm: item creation failed; no retry or ground drop"); return false; }
             RValue item2; AurieStatus st2 = g_Yytk->CallGameScriptEx(item2, "gml_Script_InitItemFromJson", g, g, { RValue(key), parsed });
             if (AurieSuccess(st2) && item2.m_Kind == VALUE_OBJECT) { item = item2; st = st2; }
             else { ++g_SigDropFails; Out(std::string("sigdrop: InitItemFromJson gave ") + Describe(item) + " st=" + std::to_string((int)st) + " / swapped " + Describe(item2) + " st=" + std::to_string((int)st2) + " for " + label); return false; }
@@ -20545,9 +20544,7 @@ static void FlushModState(uint32_t frame)
         body += ",\"bonusVeins\":" + std::to_string(ForgePact::MinerHelmet::bonusVeins);
         body += ",\"veinResonance\":"; body += ForgePact::MinerHelmet::veinResonance ? "true" : "false";
         body += ",\"lastRewardReason\":\"" + ModStateEscape(ForgePact::MinerHelmet::lastRewardReason) + "\"";
-        body += ",\"reason\":\"" + ModStateEscape(ForgePact::MinerHelmet::equipmentReason);
-        body += "\",\"request\":\"" + ModStateEscape(ForgePact::MinerHelmet::grantRequest);
-        body += "\",\"result\":\"" + ModStateEscape(ForgePact::MinerHelmet::grantResult) + "\"}";
+        body += ",\"reason\":\"" + ModStateEscape(ForgePact::MinerHelmet::equipmentReason) + "\"}";
         namespace pool = ForgePact::ProtectedPool::Runtime;
         auto& reveal = ForgePact::MapRevealManager::Instance();
         body += ",\"population\":{\"capacityReady\":"; body += pool::active.load() ? "true" : "false";

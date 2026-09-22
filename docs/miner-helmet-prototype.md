@@ -1,9 +1,12 @@
-# Miner's Helmet — local prototype
+# Miner's Helmet
 
-This experiment is not a published release. It adds a helmet built through the
-existing Custom Forge item constructor and a Miner template in the sibling Item
-Editor checkout. The normal signature-drop rotation still contains only the
-existing crown and belt.
+Status (2026-09-23): verified in play and no longer an experiment - see "Live
+checks" below. The helmet is built by the existing Custom Forge item
+constructor from the sibling Item Editor's Miner template (Item Forge → Forge a
+signature item → Miner's Helmet); ForgePact recognises it and runs its
+mechanics. It is in no drop pool: ForgePact's Angelic / Unholy die holds only
+the Tyrant's Crown and Headhunter. The file keeps its `prototype` name so
+existing links resolve.
 
 ## Item
 
@@ -11,7 +14,8 @@ existing crown and belt.
 - 1000 flat Defense (154), 500% Enhanced Defense (29), 20% Movement Speed (25),
   20% All Resistances (173), +5 Light Radius (281).
 - These are input stats. The final game tooltip defense still needs live testing.
-- Reserved test-item identity: type 0, seed 777003, base 7, c=0, j=0.
+- Reserved test-item identity: type 0, seed 777003, base 7, c=0, j=0 - what
+  the retired panel button created; ForgePact still registers and recognises it.
 - Custom Forge can use a different seed: its matching sidecar assigns the
   `miner` mechanic. Only a helmet in the local player's helmet slot qualifies.
 
@@ -31,7 +35,8 @@ is introduced.
 The equipment read follows `global.equippedItems[mplr][0][0]`, a fingerprint,
 through `GetOnlinePlayerItemOwner` and `GetItemFromFingerprint`. This layout and
 the resolver arguments were established by private static inspection of the
-game's equip/unequip paths. **Live confirmation is still required.** It does not
+game's equip/unequip paths and **confirmed live on 2026-09-23** (worn and
+removed helmets both recognised on the next reward). It does not
 use the permissive created-item registry used by some older mechanics. Missing
 equipment data fails to x1.
 
@@ -59,11 +64,12 @@ the game resolver, and definition identifiers must be finite nonnegative whole
 numbers. Returning to a menu clears both the equipped flag and its status text.
 
 Permission is checked afresh for every ore reward. A once-per-second read is
-only for the panel status. Hooks install lazily after a matching item loads or
-the explicit test-item request, not because a built-in template exists.
+only for the panel status. Hooks install lazily after a matching item loads,
+not because a built-in template exists.
 
-Vein Resonance currently draws a gold, expanding ring for 550 ms from a native
-reward position. It is a bounded visual list (six simultaneous rings) drawn by
+The golden pulse, a cosmetic extra, draws a gold expanding ring for 550 ms from
+a native reward position; it is not yet confirmed on screen, and its final look
+is deferred to a later change. It is a bounded visual list (six simultaneous rings) drawn by
 the existing HUD callback, with colour/alpha restored, room-change expiry and
 one pulse per node. It creates no combat effect object and deals no damage.
 Invalid camera dimensions skip drawing; clock rollback or room changes discard
@@ -89,42 +95,55 @@ not completed in time is released with its flag lowered. `minerhelm veins 0|1`
 switches the feature; `minerhelm status` counts queued, completed (`bonusVeins`)
 and released veins. An unreadable mining level queues nothing.
 
-## Creating and testing
+## Creating the helmet
 
-Either use **ForgePact → Mods → Items → Create test helmet**, or use the sibling
-Item Editor → Item Forge → Forge a signature item → Miner's Helmet. Editor saves
-use its existing backup/closed-game safeguards and need this prototype plugin.
-The editor route preserves its existing fresh-seed and sidecar workflow.
+Forge it with the sibling Item Editor → Item Forge → Forge a signature item →
+Miner's Helmet. Editor saves use its existing backup/closed-game safeguards. The
+editor route creates a fresh seed and a sidecar that assigns the `miner`
+mechanic, which ForgePact recognises.
 
-The panel queues one `minerhelm grant <32-hex-request-id>` and shows the plugin's
-result separately. The plugin deduplicates recent request IDs and debounces
-grants. No helmet is automatically granted on startup. `minerhelm status` prints
-the equipment read, observed reward/pulse counts and the last reward decision
-without changing gear. `minerhelm probe [seconds]` (default 20, at most 120)
-prints, every sixth frame and only on change, the slider state of the mining
-node nearest the player (`miningActive`, `miningPlayer`, `stop`, `range`,
-`rangeMax`, `dir`, `miningQue`, `hp`, `miningActivateDistance`, distance); the
-first eight ore rewards print the same line for their node. It is the live
-record of how the game drives a node from idle to reward, needed before any
-neighbouring-vein completion can be attempted; it reads and changes nothing.
+Until 2026-09-23 the panel also had a **Create test helmet** button (Mods →
+Items) that queued `minerhelm grant <32-hex-request-id>`, after which the plugin
+dropped a helmet with the reserved identity beside the character. The button,
+its endpoint and the `grant` command were removed once the helmet was verified
+in play; a helmet made that way keeps working. `minerhelm grant` now only prints
+the usage line.
 
-Live acceptance checks still outstanding:
+`minerhelm status` prints the equipment read, observed reward/pulse counts,
+Vein Resonance counters and the last reward decision without changing gear.
+`minerhelm probe [seconds]` (default 20, at most 120) prints, every sixth frame
+and only on change, the slider state of the mining node nearest the player
+(`miningActive`, `miningPlayer`, `stop`, `range`, `rangeMax`, `dir`,
+`miningQue`, `hp`, `miningActivateDistance`, distance); the first eight ore
+rewards print the same line for their node. It is the live record Vein
+Resonance was built on; it reads and changes nothing.
 
-1. Create/pick up the helmet and inspect its name, five stats and final defense.
-2. Mine once without it, once worn, once after removing it. Confirm actual ore
-   inventory increments and the native mining duration/XP, not just log counts.
-3. Observe the pulse, including camera scaling and crossing a room boundary.
-4. Save/reload a helmet from each creation path and repeat the equipped check.
+## Live checks
 
-The preceding global-slider experiment did produce a real `5 -> 20` native
-reward dispatch in the local log. That is not yet a live helmet/unequip test.
+Done in play on 2026-09-23 (details under "Ownership fix" below):
+
+1. A worn helmet was recognised after several game restarts, and taking it off
+   was recognised on the next reward.
+2. With it worn: `10 -> 40` and `13 -> 52` ore rewards, confirmed in the
+   inventory by the user. With it off and the slider at x10: `6 -> 60`.
+3. Vein Resonance: two veins 154 and 186 units from the dug node finished
+   through the game's own dig with 4x ore; `bonusVeins=2 queued=2 released=0`.
+
+Still open:
+
+1. The item tooltip: name, the five stats and the final defense were not
+   recorded.
+2. Native mining duration and XP were not measured (the code changes neither).
+3. The golden pulse on screen, including camera scaling and room changes.
+4. Save/reload per creation path (which path made the recognised helmet was not
+   noted).
 
 ## Automated checks
 
 `py -3 -m unittest discover -s tests -p 'test_miner_helmet*.py' -v` compiles the
 actual equipment-read code against mocked game arrays and fingerprints, checks
-reserved identities/nearest-two selection, and exercises the real HTTP endpoint
-against temporary settings. The mining adapter harness also verifies 4x without
+reserved identities/nearest-two selection, and checks over real HTTP (temporary
+settings) that the retired Create endpoint stays gone. The mining adapter harness also verifies 4x without
 stacking, immediate removal, missing equipment, callback exceptions and exactly
 one native dispatch.
 
@@ -138,7 +157,7 @@ repository. No placeholder research document was fabricated to satisfy it.
 not a second implementation of their logic. It exercises the equipped item
 through a native reward and draw callback, removal between rewards, Custom
 Forge's fresh-seed identity, another player's node, failed native dispatch,
-renderer restoration, room/clock changes, repeated grant requests and bounded
+renderer restoration, room/clock changes, the retired grant command and bounded
 effect storage. It also runs 1,000 idle frames in active and inactive states:
 the inactive state installs no mining hooks and reads no equipment; the active
 state throttles status reads and produces no ore/effects without mining.

@@ -130,7 +130,7 @@ KEYS = [
 
 DROPS = [
     ("gold", "Gold", ""),
-    ("mining_ore", "Mining Ore Amount", "Experimental"),
+    ("mining_ore", "Mining Ore Amount", ""),
 ]
 
 
@@ -1895,19 +1895,6 @@ class H(BaseHTTPRequestHandler):
                             "path": p, "ipcOk": ipc_dir(cfg).exists()})
             elif u.path == "/api/installmod":
                 self._json(op_install_mod(cfg))
-            elif u.path == "/api/miner-helmet":
-                request_id = body.get("request", "")
-                if (not isinstance(request_id, str) or len(request_id) != 32
-                        or any(c not in "0123456789abcdef" for c in request_id)):
-                    self._json({"err": "invalid helmet request"}, 400); return
-                if not game_running(cfg):
-                    self._json({"err": "Enter the game with your character first."}, 409); return
-                if not plugin_mod_state(cfg).get("minerHelmet", {}).get("available"):
-                    self._json({"err": "The Miner helmet test plugin is not connected yet."}, 409); return
-                sent = send_cmds([f"minerhelm grant {request_id}"], cfg)
-                if isinstance(sent, str) and sent.startswith("ERROR"):
-                    self._json({"err": sent}, 503); return
-                self._json({"queued": True, "request": request_id})
             elif u.path == "/api/removeplugin":
                 self._json(op_remove_mod(cfg))
             elif u.path == "/api/applyall":
@@ -2044,7 +2031,7 @@ input[type=range]::-webkit-slider-thumb{appearance:none;width:17px;height:17px;b
 #rarityCard .row{border:0;display:flex;padding:12px 0}#rarityCard .lbl{display:block;width:62px;margin:0}#rarityCard .note{font-size:11px}
 .mods-grid{display:flex;gap:12px;align-items:flex-start}.mods-col{flex:1 1 0;min-width:0}.mods-col>.feature-card,.mods-col>.feature-with-child{margin:0 0 12px!important}.feature-card{padding:15px!important;background:#15110e;border:1px solid #45352a!important;border-radius:8px;margin:0!important;align-items:flex-start}.feature-card>.lbl{flex:1!important;width:auto!important;min-width:0}.feature-card .switch{margin-top:1px}.feature-card>.val{min-width:0;width:24px;font-size:11px;margin-top:2px}.feature-card:has(>.switch>input:checked),.feature-with-child:has(>.feature-card:first-child>.switch>input:checked){border-color:#85603a!important}.feature-with-child{border:1px solid #45352a;border-radius:8px;background:#15110e;overflow:hidden}.feature-with-child>.feature-card{border:0!important;border-radius:0}.feature-with-child>#map_reveal_packs_row,.feature-with-child>#map_reveal_spawn_row,.feature-with-child>#mod_auto_prospect_bag_row{border:0!important;border-top:1px solid #45352a!important;margin:0!important;padding:14px!important;background:#1d1711;border-radius:0}
 .feature-card{display:grid;grid-template-columns:minmax(0,1fr) 42px 24px;gap:8px 12px;align-content:start}.feature-card>.lbl{font-weight:600}.feature-description{grid-column:1/-1;color:var(--mut)!important;line-height:1.65;font-size:12px!important;font-weight:normal}.switch input:disabled+.sl{opacity:.4;filter:grayscale(1)}
-#minerHelmetCard{display:block}#minerHelmetCard .tag{display:inline-block;margin-left:6px;padding:2px 6px;border:1px solid #755131;border-radius:4px;color:var(--ember2);font-size:10px;font-weight:400}#minerHelmetCard .hint{margin:10px 0}#minerHelmetCard button{margin-top:12px;max-width:100%;white-space:normal}#minerHelmetCard button:disabled{opacity:.5;cursor:not-allowed}#minerHelmetCard button:focus-visible{outline:2px solid var(--ember2);outline-offset:3px}
+#minerHelmetCard{display:block}#minerHelmetCard .hint{margin:10px 0}
 @media(min-width:1700px){#wrap{padding-left:38px;padding-right:38px}}
 @media(max-width:1150px){#appShell{padding-left:190px}.sidebar{width:190px;padding:20px 10px}.brand svg{width:44px}.brand-name{font-size:17px}.brand-sub{font-size:8px}.page-heading{flex-wrap:wrap}.modifier-grid{grid-template-columns:1fr}.mods-grid{flex-direction:column;align-items:stretch;gap:0}.settings-grid{grid-template-columns:1fr}.card.half{grid-column:1/-1}.row .lbl{width:180px}#wrap{padding:0 20px 40px}}
 @media(max-width:720px){#appShell{padding-left:0}.sidebar{position:static;width:auto;padding:12px 14px;border-right:0;border-bottom:1px solid var(--line);overflow:visible}.brand{margin:0 0 10px}.brand svg{width:39px;height:39px}.brand-name{font-size:18px}.brand-sub{display:none}.tabbar{flex-direction:row;gap:3px}.tabbtn{flex:1;justify-content:center;padding:10px 6px;gap:4px;font-size:11px}.tabbtn svg{width:15px;height:15px}.sidebar-foot{display:none}#wrap{padding:0 14px 35px}.control-dock{position:static}.page-heading h1{font-size:25px}.page-actions{width:100%;justify-content:space-between;flex-wrap:wrap}.row{flex-wrap:wrap}.row .lbl{width:100%;flex-shrink:1}.row:has(.range-control)>.range-control{flex-basis:100%}.range-control{gap:8px}.step-button{padding:5px 6px}.value-stepper>.val{min-width:44px;width:52px!important}.card{padding:16px}#workspace{gap:14px}.topline{gap:8px}#statusbar{gap:10px}#saveIndicator{min-width:0}#toast{left:50%}#controlToolbar{flex-wrap:wrap}.control-search{flex-basis:100%}.control-filters{width:100%}.control-filters button{flex:1}.feature-card{flex-wrap:nowrap}.density-top .row{flex-wrap:nowrap}.section-title{flex-wrap:wrap}}
@@ -2379,13 +2366,12 @@ input[type=range]::-webkit-slider-thumb{appearance:none;width:17px;height:17px;b
   <h2>Items</h2>
   <div class="row" id="minerHelmetCard">
     <div>
-      <strong>Miner's Helmet <span class="tag">Prototype</span></strong>
+      <strong>Miner's Helmet</strong>
       <p class="hint">+1000 Defense &middot; +500% Enhanced Defense<br>+20% Movement Speed &middot; +20% All Resistances &middot; +5 Light Radius</p>
-      <p class="hint">Equip it for exactly 4&times; mining ore, Vein Resonance (a finished dig also finishes the two nearest eligible veins within 192 px, each at 4&times;) and a golden pulse. While worn it replaces the Mining Ore Amount slider; with the helmet off, the slider applies as usual.</p>
-      <div id="minerHelmetStatus" role="status" aria-live="polite">Start the game to test the helmet.</div>
-      <div id="minerHelmetResult" class="hint" role="status" aria-live="polite"></div>
+      <p class="hint">While worn, every mining node gives exactly 4&times; its ore. This replaces the Mining Ore Amount slider instead of stacking with it; with the helmet off, the slider applies as usual. <strong>Vein Resonance:</strong> finishing a dig also digs the two nearest veins within 192 units that you could mine yourself, each at 4&times;, through the game's own dig. A vein dug this way never starts another.</p>
+      <p class="hint">Forge it in the Item Editor: Item Forge &rarr; Forge a signature item &rarr; Miner's Helmet.</p>
+      <div id="minerHelmetStatus" role="status" aria-live="polite">Start the game to check the helmet.</div>
     </div>
-    <button id="grantMinerHelmet" class="btn primary" type="button" disabled>Create test helmet</button>
   </div>
   <div class="hint">Custom forge mechanics tied to items made in the Item Editor. Settings apply immediately while the game is running.</div>
   <div class="row" style="border:none">
@@ -2412,7 +2398,6 @@ input[type=range]::-webkit-slider-thumb{appearance:none;width:17px;height:17px;b
 <script>
 """ + POLL_POLICY_JS + ICON_MAP_JS + r"""
 let ST=null, tmr=null;
-let minerHelmetBusy=false, minerHelmetRequest='';
 function iconMarkup(name){
   return name?`<svg class="setting-icon" data-icon="${name}" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><use href="#fp-icon-${name}"></use></svg>`:'';
 }
@@ -2565,18 +2550,11 @@ function applyPluginModState(pm){
       'Ready for the next zone.';
   }
   const helmet=pm?.minerHelmet;
-  const helmetButton=document.getElementById('grantMinerHelmet');
-  if(helmetButton)helmetButton.disabled=minerHelmetBusy||!ST?.gameRunning||!helmet?.available;
   const helmetStatus=document.getElementById('minerHelmetStatus');
-  if(helmetStatus)helmetStatus.textContent=!ST?.gameRunning?'Start the game to test the helmet.':
-    !helmet?.available?'Waiting for the Miner helmet test plugin.':
-    helmet.enabled?(helmet.reason||'Checking equipped helmet...'):'Ready to create a test helmet.';
-  const helmetResult=document.getElementById('minerHelmetResult');
-  if(helmetResult&&helmet?.request&&helmet.request===minerHelmetRequest){
-    helmetResult.textContent=helmet.result;
-    minerHelmetBusy=false;
-    if(helmetButton)helmetButton.disabled=!ST?.gameRunning;
-  }
+  if(helmetStatus)helmetStatus.textContent=!ST?.gameRunning?'Start the game to check the helmet.':
+    !helmet?.available?'Waiting for the ForgePact plugin to report the helmet.':
+    helmet.enabled?(helmet.reason||'Checking the equipped helmet...')+(helmet.bonusVeins>0?' \u00b7 Vein Resonance has dug '+helmet.bonusVeins+' extra veins this session.':''):
+    'No Miner\'s Helmet loaded yet.';
   const miningNote=document.querySelector('.note[data-note="mining_ore"]');
   if(miningNote){
     const requested=Number(ST?.cfg?.drops?.mining_ore||1), mining=pm?.miningOre;
@@ -2588,7 +2566,7 @@ function applyPluginModState(pm){
       else if(mining?.ready&&mining.multiplier===requested)status=' Plugin ready at x'+requested+'.';
       else status=' Waiting for the matching mining plugin to confirm the setting.';
     }
-    miningNote.textContent='Multiplies ore from mining. x1 is normal. Ore types, mining XP and other drops stay unchanged. In-game verification pending.'+status;
+    miningNote.textContent='Multiplies ore from mining. x1 is normal. Ore types, mining XP and other drops stay unchanged.'+status;
   }
   const ap=(pm&&pm.autoprospect)||null;
   const parentVal=document.getElementById("autoprospval");
@@ -2812,7 +2790,7 @@ async function boot(){
   }).join('');
   document.getElementById('drops').innerHTML=ST.drops.map(([k,l,h])=>
     row('drops',k,l,(c.drops&&c.drops[k])||1,h?` <span class="tag">${h}</span>`:'',k==='mining_ore'?10:100,
-      k==='mining_ore'?'Multiplies ore from mining. x1 is normal. Ore types, mining XP and other drops stay unchanged. In-game verification pending.':'')).join('');
+      k==='mining_ore'?'Multiplies ore from mining. x1 is normal. Ore types, mining XP and other drops stay unchanged.':'')).join('');
   document.getElementById('stats').innerHTML=(ST.stats||[]).map(([k,l,mx,step])=>{
     const v=(c.stats&&c.stats[k])||1;
     return row('stats',k,l,v,'',mx,statNote(k,v),step);
@@ -2946,27 +2924,6 @@ function bind(){
     document.getElementById('hhval').textContent=e.target.checked?'on':'off';
     document.getElementById('hhval').className='val '+(e.target.checked?'':'off');
     toast('headhunter '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
-  };
-  document.getElementById('grantMinerHelmet').onclick=async()=>{
-    if(minerHelmetBusy)return;
-    minerHelmetBusy=true;
-    minerHelmetRequest=crypto.randomUUID().replaceAll('-','');
-    applyPluginModState(ST?.pluginMods);
-    document.getElementById('minerHelmetResult').textContent='Waiting for the game to create the helmet...';
-    try{
-      const result=await j('/api/miner-helmet',{method:'POST',body:JSON.stringify({request:minerHelmetRequest})});
-      if(result.err){minerHelmetBusy=false;document.getElementById('minerHelmetResult').textContent=result.err;}
-      else{
-        for(let i=0;i<16&&minerHelmetBusy;i++){
-          await new Promise(resolve=>setTimeout(resolve,500));
-          const state=await j('/api/state');
-          if(ST){ST.gameRunning=state.gameRunning;ST.pluginMods=state.pluginMods;}
-          applyPluginModState(state.pluginMods);
-        }
-        if(minerHelmetBusy)document.getElementById('minerHelmetResult').textContent='No confirmation received yet. Check the game before requesting another helmet.';
-      }
-    }catch(_){document.getElementById('minerHelmetResult').textContent='Connection lost. Check the game before requesting another helmet.';}
-    finally{minerHelmetBusy=false;applyPluginModState(ST?.pluginMods);}
   };
   document.getElementById('tyrant').onchange=async(e)=>{
     const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'tyrant',value:e.target.checked})});

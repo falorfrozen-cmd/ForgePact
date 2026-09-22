@@ -1,10 +1,19 @@
-"""The item button uses real HTTP against isolated settings; no game or saves."""
+"""The Miner's Helmet card after the test button was retired (2026-09-23).
+
+The helmet is forged in the Item Editor (Item Forge -> Forge a signature item
+-> Miner's Helmet); the panel only reports whether it is worn. Real HTTP
+against isolated settings keeps the old test path from coming back: no Create
+button, no endpoint that can queue an item, no Prototype label. No game or
+saves are involved.
+"""
 import json
 import unittest
 from http.client import HTTPConnection
-from unittest.mock import patch
+from pathlib import Path
 from test_satanic_panel import PanelSandbox
 import forgepact
+
+PANEL = Path(forgepact.__file__)
 
 
 class MinerHelmetPanelTests(unittest.TestCase):
@@ -12,49 +21,37 @@ class MinerHelmetPanelTests(unittest.TestCase):
         self.sandbox = PanelSandbox().__enter__()
         self.addCleanup(self.sandbox.__exit__)
 
-    def request(self, token='a' * 32):
+    def test_create_endpoint_is_gone_and_queues_nothing(self):
+        before = self.sandbox.config.read_bytes()
+        self.sandbox.mocks[1].return_value = True   # the game is running
         connection = HTTPConnection('127.0.0.1', self.sandbox.port, timeout=5)
         try:
-            connection.request('POST', '/api/miner-helmet', json.dumps({'request': token}), {'Content-Type': 'application/json'})
+            connection.request('POST', '/api/miner-helmet', json.dumps({'request': 'a' * 32}),
+                               {'Content-Type': 'application/json'})
             response = connection.getresponse()
-            return response.status, json.loads(response.read())
+            response.read()
         finally:
             connection.close()
-
-    def test_closed_game_does_not_queue_a_future_item(self):
-        before = self.sandbox.config.read_bytes()
-        self.assertEqual(self.request()[0], 409)
-        self.sandbox.mocks[3].assert_not_called()
+        self.assertEqual(response.status, 404)
+        self.sandbox.mocks[3].assert_not_called()   # send_cmds: nothing reaches the game
         self.assertEqual(before, self.sandbox.config.read_bytes())
 
-    def test_wrong_plugin_refuses(self):
-        self.sandbox.mocks[1].return_value = True
-        with patch.object(forgepact, 'plugin_mod_state', return_value={}):
-            self.assertEqual(self.request()[0], 409)
-        self.sandbox.mocks[3].assert_not_called()
+    def test_card_describes_the_helmet_without_a_create_button(self):
+        source = PANEL.read_text(encoding='utf-8')
+        card = source[source.index('id="minerHelmetCard"'):source.index('id="minerHelmetStatus"')]
+        self.assertNotIn('<button', card)
+        self.assertNotIn('Prototype', card)
+        self.assertIn('Item Editor', card)
+        self.assertIn('Vein Resonance', card)
+        self.assertIn('Mining Ore Amount slider', card)
+        for gone in ('grantMinerHelmet', 'minerHelmetResult', 'minerHelmetBusy',
+                     '/api/miner-helmet', 'minerhelm grant', 'Create test helmet'):
+            self.assertNotIn(gone, source)
 
-    def test_valid_request_queues_exactly_one_command_without_touching_settings(self):
-        before = self.sandbox.config.read_bytes()
-        self.sandbox.mocks[1].return_value = True
-        with patch.object(forgepact, 'plugin_mod_state', return_value={'minerHelmet': {'available': True}}):
-            status, payload = self.request()
-        self.assertEqual(status, 200)
-        self.assertTrue(payload['queued'])
-        self.assertNotIn('ok', payload)  # A queue acknowledgement is not a successful item drop.
-        self.sandbox.mocks[3].assert_called_once()
-        self.assertEqual(self.sandbox.mocks[3].call_args.args[0], ['minerhelm grant ' + 'a' * 32])
-        self.assertEqual(before, self.sandbox.config.read_bytes())
+    def test_mining_slider_is_no_longer_marked_experimental(self):
+        self.assertIn(('mining_ore', 'Mining Ore Amount', ''), forgepact.DROPS)
+        self.assertNotIn('In-game verification pending', PANEL.read_text(encoding='utf-8'))
 
-    def test_invalid_token_never_reaches_ipc(self):
-        for token in (None, 5, 'abc', 'a' * 31 + '\n', 'a' * 33):
-            with self.subTest(token=token):
-                self.assertEqual(self.request(token)[0], 400)
-        self.sandbox.mocks[3].assert_not_called()
 
-    def test_ipc_failure_is_not_reported_as_queued(self):
-        self.sandbox.mocks[1].return_value = True
-        self.sandbox.mocks[3].return_value = 'ERROR: no IPC folder'
-        with patch.object(forgepact, 'plugin_mod_state', return_value={'minerHelmet': {'available': True}}):
-            status, payload = self.request()
-        self.assertEqual(status, 503)
-        self.assertIn('err', payload)
+if __name__ == '__main__':
+    unittest.main()

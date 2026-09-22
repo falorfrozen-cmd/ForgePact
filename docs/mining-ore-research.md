@@ -1,6 +1,7 @@
-# Mining ore quantity experiment — 2026-09-21
+# Mining Ore Amount — research, 2026-09-21
 
-Status: **static contract and adapter tested; real mining/pickup not yet verified**.
+Status: **verified in play on 2026-09-23** (see "Live verification" at the end);
+the adapter described below is unchanged since.
 Based on ForgePact `eed66427bda39fcd4ea66096934528f5efb9a2b5`. Nothing has been
 published, and no EXE version has been changed for this experiment.
 
@@ -99,3 +100,14 @@ quantity and the actual pickup, not only totals from different random nodes.
 Verify XP and non-ore rewards remain normal. With Auto-prospect enabled, also
 confirm manually prospecting the mined ore retains normal prospecting behavior.
 Do not report the feature as verified until these observations are recorded.
+
+## Live verification (2026-09-23)
+
+- Slider at x10 with the Miner's Helmet off: the helmet's check logged
+  `ore bonus skipped - Miner's Helmet is not equipped or unreadable (ore slider
+  x10 applies)` and the adapter then logged `miningore: first reward dispatched
+  6 -> 60 (one native drop call)`. The user confirmed the amounts in play.
+- Helmet worn (x4, replacing the slider): `10 -> 40` and `13 -> 52`.
+- Not measured: mining XP, non-ore rewards and manual prospecting of mined ore.
+  The adapter changes only the ore stack's `o`, so none of them is expected to
+  move.

@@ -8,8 +8,7 @@ struct Wave { double x, y, born; int64_t room; };
 inline std::vector<Wave> waves;
 inline std::vector<std::pair<int64_t, int64_t>> recentNodes;
 inline std::string equipmentReason = "No helmet loaded";
-inline double lastStatus = 0, lastGrant = -10000;
-inline std::vector<std::string> grantRequests;
+inline double lastStatus = 0;
 
 // Ownership helpers for RewardMultiplier (below). They sit above the equipment
 // reader because tests/test_miner_helmet_behavior.py compiles the reader alone
@@ -437,7 +436,7 @@ inline void Arm() {
     enabled = true;
     InstallHeadLabelHook();
     hudNative = g_Orig_DrawHudBuffs && !AddrIsExecutableInModule(GetModuleHandleA(nullptr), (const void*)g_Orig_DrawHudBuffs);
-    Out("minerhelm: armed; only a worn helmet grants 4x ore; the ore slider no longer stacks");
+    Out("minerhelm: armed; a worn helmet gives 4x ore in place of the ore slider");
 }
 
 inline void Tick() {
@@ -524,28 +523,9 @@ inline void Command(const std::string& args) {
         probeUntil = now + seconds * 1000.0; probeLines = 0; probeLast.clear();
         Out("minerhelm: probe armed for " + std::to_string(seconds) + " s - dig the nearest node now"); return;
     }
-    if (action != "grant" || request.size() != 32 || (input >> extra)
-        || request.find_first_not_of("0123456789abcdef") != std::string::npos) return;
-    if (std::find(grantRequests.begin(), grantRequests.end(), request) != grantRequests.end()) return;
-    if (grantRequests.size() >= 128) grantRequests.erase(grantRequests.begin());
-    grantRequests.push_back(request); grantRequest = request;
-    const double now = HhNowMs();
-    if (now - lastGrant < 2000) { grantResult = "Please wait before creating another helmet"; return; }
-    lastGrant = now;
-    RValue player;
-    if (!HhResolveLocalPlayer(player)) { grantResult = "Enter a map with your character first"; return; }
-    Arm();
-    if (!enabled) { grantResult = "Mining hooks unavailable; no helmet created"; return; }
-    CInstance* context = HhResolveInstance(player);
-    if (!context) { grantResult = "Player unavailable; no helmet created"; return; }
-    try {
-        const double x = g_Yytk->CallBuiltin("variable_instance_get", {player, RValue("x")}).ToDouble();
-        const double y = g_Yytk->CallBuiltin("variable_instance_get", {player, RValue("y")}).ToDouble();
-        if (!std::isfinite(x) || !std::isfinite(y)) { grantResult = "Player position unavailable"; return; }
-        grantResult = SpawnSignatureItem(2, x, y, context)
-            ? "Helmet dropped beside your character. Pick it up and equip it."
-            : "Helmet creation failed. See the plugin log.";
-    } catch (...) { grantResult = "Helmet creation failed; request was not retried"; }
-    Out("minerhelm: " + grantResult);
+    // The panel's test "Create" button and its `grant` command were retired on
+    // 2026-09-23: the helmet is forged in the Item Editor. A helmet made with
+    // the reserved test identity is still recognised (MinerRules::Matches).
+    Out("minerhelm: use `status`, `veins 0|1` or `probe [1-120 seconds]`");
 }
 }

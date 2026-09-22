@@ -27,17 +27,17 @@ of its own - see that bullet for what it draws on.
   exactly as without the mod, and its real minimap dots replace the marker at
   that moment. What a marker cannot show is the rarity roll of the monsters
   inside the pack, which the game only decides when the pack is born. Each pack
-  kind has its own icon: a white dot for a normal pack, a white ring for an
-  ambush, a magenta diamond for ancient, a cyan star for champion, a gold chest
-  for a colossal chest, an orange triangle for a legion and a red bullseye for a
-  mini boss. Packs that sit close together, such as the copies Monster Density
+  kind has its own icon, with its own shape and colour and a dark outline so it
+  stands out on the minimap: a skull for a normal pack, a hooded face for an
+  ambush, a horned mask for ancient, a helmet for champion, a chest for a
+  colossal chest, a group of skulls for a legion and a crowned skull for a mini
+  boss. Packs that sit close together, such as the copies Monster Density
   adds, show as one icon with a small count. The icons are plain PNG files in
   `bin\bp_ipc\packmarks\` next to your game; replace any of them with your own
   picture of the same name and it is used instead (`packmarks reload` in a
   running game, or the next launch). The `packmarks` plugin command changes
   size, grouping distance, the count badge and, for the fallback dots, colour
-  and outline, live. Confirmed in the map screen on 2026-09-22; the first build's icon-based
-  markers drew nothing visible, which is why the dots replaced them.
+  and outline, live. If an icon cannot be loaded, that kind falls back to a dot.
   The old behaviour is still available as a second, off-by-default
   sub-toggle, **Really spawn every pack on arrival (heavy)**, for comparison; it
   still lags at high density.
@@ -80,18 +80,29 @@ of its own - see that bullet for what it draws on.
   births. It preserves density and existing features; reduced stutter has not
   yet been established in-game.
 
-- **Local Miner's Helmet prototype (not release-ready).** The helmet grants
-  exactly four times the ore while equipped; removing it restores normal ore
-  rewards. The gold mining pulse is cosmetic. The local follow-up clears stale
-  equipped status when returning to menus, rejects malformed equipment before
-  the game's item lookup, and checks mining ownership before reading gear.
-  An in-game crash investigation remains open; these checks are not a crash fix.
+- **Miner's Helmet.** A new signature helmet for miners: Great Helm base, SS
+  tier, +1000 Defense, +500% Enhanced Defense, +20% Movement Speed, +20% All
+  Resistances and +5 Light Radius. While you wear it, every mining node gives
+  exactly four times its ore; take it off and mining is back to normal (or to
+  your Mining Ore Amount setting). With it on, **Vein Resonance** digs more for
+  you: when you finish a node, the two nearest veins within a short distance of
+  it (192 units) that you could mine yourself are dug too, through the game's
+  own dig, each with the same four times the ore and the usual mining
+  experience. Veins that are used up, already being dug or above your mining
+  level are skipped, and a vein dug this way does not set off another one.
+  Forge the helmet in the Item Editor (Item Forge → Forge a signature item →
+  Miner's Helmet); Mods → Items shows whether you are wearing it.
 
-- **Mining Ore Amount (experimental, not yet verified in-game).** A 1–10× slider
-  under Loot changes the quantity in a mining ore reward. x1 keeps normal mining.
-  The new adapter, panel persistence and native Release build have been checked;
-  the real game's mining and pickup behavior still needs verification. This is
-  independent of Gold/drop-rate controls and does not install hooks at its default.
+- **Mining Ore Amount.** A new 1–10× slider under Loot multiplies the ore each
+  mining node gives; x1 keeps normal mining. Ore types, mining experience and
+  every other drop stay the same, and nothing is installed while it is at x1.
+  While the Miner's Helmet is worn, its four times replaces this slider instead
+  of stacking with it.
+
+- **AFK FARM compatibility.** AFK FARM can now use its own reward settings
+  while ForgePact is loaded. Its MF, XP, Gold and loot bonuses apply once during
+  delivery. Your normal ForgePact settings still apply to active play and are
+  not overwritten.
 
 - **Auto-prospect items put in the Prospect Cube.** The cube's 9×6 prospect
   grid fills long before a full inventory is through it: you fill it, press
@@ -230,23 +241,3 @@ plugin and the panel, so pressing **Install Mod Plugin** matters - updating only
 the panel leaves the old plugin in place.
 
 Use ForgePact only with an offline / EAC-disabled copy of Hero Siege.
-
-### Local experiment — not yet release-verified
-
-- Miner's Helmet prototype: high defense, 4x mining ore while equipped, and a golden pulse. A test-item button and an Item Editor signature template are available in the experiment checkout. Equipment detection, the final tooltip and the pulse still require live confirmation. Nearby-vein harvesting remains disabled.
-- The Mining Ore Amount slider works again on a character that has loaded the helmet: a worn helmet replaces the slider with x4, and with the helmet off the slider applies. Before, arming the helmet mechanic forced x1 whenever the helmet was not worn.
-- Vein Resonance (helmet worn): a finished dig also finishes the two nearest eligible veins within 192 px by queuing them through the game's own dig, so they drop ore at 4x with normal mining XP; depleted, busy, over-level or out-of-reach veins are skipped, a finished vein never chains, and `minerhelm veins 0|1` switches it. Verified live on 2026-09-23: two veins 154 and 186 px from the dug node completed with 4x ore.
-- The helmet's ore bonus no longer depends on the node naming its miner: on the installed build an ordinary dig leaves the node's miner field at `noone`, which the old check refused. The reward now also accepts a dig whose node has no named miner when the local player stands beside it; a node that names another player is still refused. Refusal reasons include the distance and the raw miner value.
-- The experimental helmet no longer requires an extra pointer conversion to recognize the miner. Failed bonus checks now record a reason instead of remaining silent. Automated reward/pulse checks pass; the reported in-game no-bonus issue is not yet confirmed resolved.
-
-
-## AFK FARM compatibility
-
-AFK FARM can now use its own reward settings while ForgePact is loaded. Its MF,
-XP, Gold and loot bonuses apply once during delivery. Your normal ForgePact
-settings still apply to active play and are not overwritten.
-
-Pack markers now use distinct fantasy icons: skull, hood, horned mask, helmet,
-chest, skull group and crowned skull. Each kind has its own shape and colour,
-with dark outlines to help it stand out on the minimap. Existing custom PNGs
-are still preserved.
