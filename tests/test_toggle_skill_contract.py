@@ -353,7 +353,13 @@ class ToggleDeepReadContractTests(unittest.TestCase):
 
     def test_research_build_only(self):
         self.assertGreater(self.block.count("TgProbeDeep"), 0)
-        self.assertEqual(self.plugin.count("TgProbeDeep"), self.block.count("TgProbeDeep"))
+        # One other research instrument reuses the path reader, read-only:
+        # restartprobe's `path` scope (issue #8, round 2). Every use outside
+        # this block is inside that research block and names only the reader.
+        rp_start = self.plugin.index("// ---- restartprobe: pause-menu Restart gate research")
+        rp = self.plugin[rp_start:self.plugin.index("#endif // FORGEPACT_RELEASE (restartprobe)", rp_start)]
+        self.assertEqual(self.plugin.count("TgProbeDeep"), self.block.count("TgProbeDeep") + rp.count("TgProbeDeep"))
+        self.assertEqual(set(re.findall(r"\bTgProbeDeep\w*", rp)), {"TgProbeDeepGet"})
         self.assertNotIn("TgProbeDeep", strip_research_blocks(self.plugin))
 
     def test_walker_expands_every_container_kind_within_caps(self):

@@ -24995,7 +24995,24 @@ static bool HandleMenuLayoutCommand(const std::string& lc, const std::string& re
 // prove the target is executable code inside Hero_Siege.exe, then detour it -
 // never a table-only swap, which is blind to this build's direct calls. A row
 // that could not attach reports calls=n/a, never 0.
+//
+// Round 2 (round 1 showed a refused press never reaches UiAIngameRestart, so
+// the gate sits on the button/node side): the UI node API rows, `dump` of the
+// Restart button's own instance taken inside its draw call, `hold` - a write
+// made inside a hooked call before the game's own body runs, on every call,
+// so a value the game recomputes each step is in place when the next reader
+// could see it - `argset` for one argument of one row, and a `path` scope
+// resolved by the deep reader (TgProbeDeepGet). Every write and every
+// point-of-use read is inside a detour before the trampoline, or on the frame
+// that consumes cmd.txt.
 static constexpr long kRpLogBudget = 20;   // call lines kept per row between resets
+static constexpr uint64_t kRpHoldGapFrames = 3;     // a site call later than this after the last write: the menu closed and reopened
+static constexpr long kRpHoldMaxWrites = 20000;     // about 2.3 minutes of draws at 144 fps
+static constexpr long kRpArgsetMaxCalls = 20000;    // the largest calls=N `argset` accepts
+static constexpr size_t kRpDumpMaxNames = 512;      // instance variables read per dump
+static constexpr size_t kRpDumpMaxLabels = 8;       // dumps kept, oldest evicted
+static constexpr size_t kRpDumpDiffLines = 300;     // lines `dump diff` prints
+static constexpr size_t kRpSelfIdCap = 8;           // distinct draw-row self ids kept
 
 enum : uint32_t {
     kRpCount   = 0,   // count and log the call
@@ -25014,6 +25031,10 @@ enum : long {
 // The static search set of the research doc, every name an hs-game-sdk
 // constant. ZoneGenRestart is held table-only by `zonegenlog` when that is
 // on; its saved original is then the game body, and the row detours that.
+// The last thirteen are round 2's UI node API rows, count-only. UiCreate,
+// UiCreateNode, UiSetRef and UiRemoveNode are also `prospectprobe hook` rows:
+// run one of the two instruments per session, or the second attach reports
+// `blocked` for those four.
 #define RESTARTPROBE_SCRIPTS(X) \
     X(UiAIngameRestart, HeroSiege::Scripts::gml_Script_UiAIngameRestart, "UiAIngameRestart", kRpSample, nullptr, nullptr) \
     X(UiDrawIngameRestart, HeroSiege::Scripts::gml_Script_UiDrawIngameRestart, "UiDrawIngameRestart(control)", kRpSample | kRpControl, nullptr, nullptr) \
@@ -25023,7 +25044,20 @@ enum : long {
     X(PauseAnon1867, HeroSiege::Scripts::gml_Script_anon_1867_gml_Object_UI_Pause_obj_Create_0, "UI_Pause_obj.anon@1867", kRpCount, nullptr, nullptr) \
     X(PauseAnon2018, HeroSiege::Scripts::gml_Script_anon_2018_gml_Object_UI_Pause_obj_Create_0, "UI_Pause_obj.anon@2018", kRpCount, nullptr, nullptr) \
     X(PauseAnon2582, HeroSiege::Scripts::gml_Script_anon_2582_gml_Object_UI_Pause_obj_Create_0, "UI_Pause_obj.anon@2582", kRpCount, nullptr, nullptr) \
-    X(PauseAnon6013, HeroSiege::Scripts::gml_Script_anon_6013_gml_Object_UI_Pause_obj_Create_0, "UI_Pause_obj.anon@6013", kRpCount, nullptr, nullptr)
+    X(PauseAnon6013, HeroSiege::Scripts::gml_Script_anon_6013_gml_Object_UI_Pause_obj_Create_0, "UI_Pause_obj.anon@6013", kRpCount, nullptr, nullptr) \
+    X(UiSetRowEnabled, HeroSiege::Scripts::gml_Script_UiSetRowEnabled, "UiSetRowEnabled", kRpCount, nullptr, nullptr) \
+    X(SetGlobalUiEnable, HeroSiege::Scripts::gml_Script_SetGlobalUiEnable, "SetGlobalUiEnable", kRpCount, nullptr, nullptr) \
+    X(EnableNav, HeroSiege::Scripts::gml_Script_EnableNav, "EnableNav", kRpCount, nullptr, nullptr) \
+    X(UiSetActivationFunc, HeroSiege::Scripts::gml_Script_UiSetActivationFunc, "UiSetActivationFunc", kRpCount, nullptr, nullptr) \
+    X(UiSetUpdateFunc, HeroSiege::Scripts::gml_Script_UiSetUpdateFunc, "UiSetUpdateFunc", kRpCount, nullptr, nullptr) \
+    X(UiCreate, HeroSiege::Scripts::gml_Script_UiCreate, "UiCreate", kRpCount, nullptr, nullptr) \
+    X(UiCreateNode, HeroSiege::Scripts::gml_Script_UiCreateNode, "UiCreateNode", kRpCount, nullptr, nullptr) \
+    X(UiRemoveNode, HeroSiege::Scripts::gml_Script_UiRemoveNode, "UiRemoveNode", kRpCount, nullptr, nullptr) \
+    X(UiSetFocus, HeroSiege::Scripts::gml_Script_UiSetFocus, "UiSetFocus", kRpCount, nullptr, nullptr) \
+    X(UiSetRef, HeroSiege::Scripts::gml_Script_UiSetRef, "UiSetRef", kRpCount, nullptr, nullptr) \
+    X(UiDrawPauseButtonInfo, HeroSiege::Scripts::gml_Script_UiDrawPauseButtonInfo, "UiDrawPauseButtonInfo", kRpCount, nullptr, nullptr) \
+    X(UiDrawPauseButtonJournalInfo, HeroSiege::Scripts::gml_Script_UiDrawPauseButtonJournalInfo, "UiDrawPauseButtonJournalInfo", kRpCount, nullptr, nullptr) \
+    X(UiACloseButton, HeroSiege::Scripts::gml_Script_UiACloseButton, "UiACloseButton", kRpCount, nullptr, nullptr)
 
 enum RestartProbeRowId : int {
 #define RP_SCRIPT_ID(SAFE, NAME, LABEL, FLAGS, ORIG, HELD) kRp_##SAFE,
@@ -25132,6 +25166,149 @@ static bool RpIsNumeric(const RValue& v)
     return kind == VALUE_REAL || kind == VALUE_INT32 || kind == VALUE_INT64 || kind == VALUE_BOOL;
 }
 
+// A number in the kind `like` holds: a bool stays a bool, an int stays an
+// int, anything else is a real. Round 1's `set` wrote a real over the game's
+// bool; the hold and `argset` write the kind the game itself left there.
+static RValue RpNumberInKind(const RValue& like, double value)
+{
+    const auto kind = static_cast<uint32_t>(like.m_Kind) & 0x0FFFFFFFU;
+    if (kind == VALUE_BOOL) return RValue(value != 0.0);
+    if (kind == VALUE_INT64) return RValue(static_cast<int64_t>(value));
+    if (kind == VALUE_INT32) {
+        RValue r(static_cast<int64_t>(value));
+        r.m_Kind = VALUE_INT32;
+        r.m_i32 = static_cast<int32_t>(value);
+        return r;
+    }
+    return RValue(value);
+}
+
+static std::string RpNumberText(double value)
+{
+    char b[48];
+    sprintf_s(b, "%g", value);
+    return b;
+}
+
+// Paths sampled beside the names: round 1's fight snapshot showed
+// `global.tupm[1].in_combat=real:432` (3.0 s at 144 fps, the length of the
+// wait) and it was gone at the allowed press. A path, not a name, so it is
+// resolved by the deep reader - one resolver, no second grammar.
+static const char* const kRpVarPaths[] = {
+    "global.tupm[1].in_combat",
+};
+
+static std::string RpPathLine(const char* path)
+{
+    RValue v;
+    std::string err;
+    const bool ok = TgProbeDeepGet(path, v, err);
+    return std::string("path:") + path + "=" + (ok ? Describe(v) : std::string("unresolved: ") + err);
+}
+
+// Where `set` and `hold` put a number. A scope word gives a global or an
+// instance variable; scope `path` gives whatever holds the path's last
+// segment, and is read back through the full path again.
+struct RpTarget {
+    enum Kind { kGlobal, kInstance, kStruct, kArray };
+    Kind        kind = kGlobal;
+    RValue      holder;       // the instance, struct or array; unused for kGlobal
+    std::string name;         // variable or field name (every kind but kArray)
+    int         index = -1;   // element index (kArray)
+    std::string path;         // scope `path`: the full path; empty otherwise
+    std::string label;        // what the output lines call it
+};
+
+static RpTarget RpScopeTarget(const RpScope& s, const RValue& inst, const std::string& name)
+{
+    RpTarget t;
+    t.kind = s.isGlobal ? RpTarget::kGlobal : RpTarget::kInstance;
+    t.holder = inst;
+    t.name = name;
+    t.label = RpScopeLabel(s) + "." + name;
+    return t;
+}
+
+// Scope `path`: resolve the parent (the path minus its last segment) with the
+// deep reader, then pick the setter from what the parent is. Only a `.name`
+// or `[i]` last segment can be written; a ds_map key cannot.
+static bool RpPathTarget(const std::string& path, RpTarget& t, std::string& why)
+{
+    t = RpTarget();
+    t.path = path;
+    t.label = "path:" + path;
+    const size_t last = path.find_last_of(kTgDeepSegmentStarts);
+    if (last == std::string::npos || last == 0) { why = "a path needs a root and at least one segment"; return false; }
+    const std::string parent = path.substr(0, last);
+    if (path[last] == '.') {
+        t.name = path.substr(last + 1);
+        if (t.name.empty()) { why = "the last segment is empty"; return false; }
+        if (parent == "global") { t.kind = RpTarget::kGlobal; return true; }
+    } else if (path[last] == '[') {
+        const size_t close = path.find(']', last);
+        if (close != path.size() - 1) { why = "the last segment must be .name or [i]"; return false; }
+        try {
+            size_t used = 0;
+            const std::string text = path.substr(last + 1, close - last - 1);
+            t.index = std::stoi(text, &used);
+            if (used != text.size() || t.index < 0) throw std::invalid_argument("index");
+        } catch (...) { why = "bad index in the last segment"; return false; }
+    } else {
+        why = "the last segment must be .name or [i] (a ds_map key cannot be written)";
+        return false;
+    }
+    std::string err;
+    if (!TgProbeDeepGet(parent, t.holder, err)) { why = "parent " + parent + ": " + err; return false; }
+    try {
+        if (path[last] == '[') {
+            if (t.holder.m_Kind != VALUE_ARRAY) { why = "parent " + parent + " is " + Describe(t.holder) + ", not an array"; return false; }
+            t.kind = RpTarget::kArray;
+        } else if (t.holder.m_Kind == VALUE_OBJECT && g_Yytk->CallBuiltin("is_struct", { t.holder }).ToBoolean()) {
+            t.kind = RpTarget::kStruct;
+        } else {
+            t.kind = RpTarget::kInstance;
+        }
+    } catch (...) { why = "parent " + parent + ": is_struct threw"; return false; }
+    return true;
+}
+
+static RpReadResult RpReadTarget(const RpTarget& t, RValue& value, std::string* why = nullptr)
+{
+    if (!t.path.empty()) {
+        std::string err;
+        if (TgProbeDeepGet(t.path, value, err)) return RpReadResult::Ok;
+        if (why) *why = err;
+        return RpReadResult::Absent;
+    }
+    try {
+        const bool global = t.kind == RpTarget::kGlobal;
+        const bool exists = global
+            ? g_Yytk->CallBuiltin("variable_global_exists", { RValue(t.name) }).ToBoolean()
+            : g_Yytk->CallBuiltin("variable_instance_exists", { t.holder, RValue(t.name) }).ToBoolean();
+        if (!exists) return RpReadResult::Absent;
+        value = global
+            ? g_Yytk->CallBuiltin("variable_global_get", { RValue(t.name) })
+            : g_Yytk->CallBuiltin("variable_instance_get", { t.holder, RValue(t.name) });
+        return RpReadResult::Ok;
+    } catch (...) { return RpReadResult::Unreadable; }
+}
+
+// The one place the probe writes a variable. `set` and the hold's apply
+// function are its only callers; `argset` replaces an argument on the stack
+// and never comes here. False when the builtin threw.
+static bool RpWrite(const RpTarget& t, const RValue& v)
+{
+    try {
+        switch (t.kind) {
+        case RpTarget::kGlobal:   g_Yytk->CallBuiltin("variable_global_set", { RValue(t.name), v }); return true;
+        case RpTarget::kInstance: g_Yytk->CallBuiltin("variable_instance_set", { t.holder, RValue(t.name), v }); return true;
+        case RpTarget::kStruct:   g_Yytk->CallBuiltin("variable_struct_set", { t.holder, RValue(t.name), v }); return true;
+        case RpTarget::kArray:    g_Yytk->CallBuiltin("array_set", { t.holder, RValue((double)t.index), v }); return true;
+        }
+    } catch (...) {}
+    return false;
+}
+
 // Every candidate on one scope, as `<scope>.<name>=<kind:value>|absent|unreadable`.
 static std::string RpScopeLine(const RpScope& s)
 {
@@ -25151,6 +25328,7 @@ static void RestartProbeVars()
 {
     Out("restartprobe vars: frame=" + std::to_string((unsigned long long)g_RuntimeFrame));
     for (const RpScope& s : kRpScopes) Out("  " + RpScopeLine(s));
+    for (const char* p : kRpVarPaths) Out("  " + RpPathLine(p));
 }
 
 // The caller's object name, read through its object_index.
@@ -25165,14 +25343,399 @@ static std::string RpDescribeSelf(CInstance* S)
     } catch (...) { return "(unresolved)"; }
 }
 
+// A row by the name `hold ... at <row>` and `argset <row>` take: its label
+// without the "(control)" suffix, or its full SDK name.
+static int RpFindRow(const std::string& text)
+{
+    const std::string want = Lower(text);
+    for (int i = 0; i < kRpRowCount; ++i) {
+        if (want == Lower(std::string(g_RpRows[i].script))) return i;
+        std::string label = g_RpRows[i].label;
+        const size_t paren = label.find('(');
+        if (paren != std::string::npos) label = label.substr(0, paren);
+        if (want == Lower(label)) return i;
+    }
+    return -1;
+}
+
+static std::string RpRowName(int idx)
+{
+    if (idx < 0 || idx >= kRpRowCount) return "none";
+    std::string label = g_RpRows[idx].label;
+    const size_t paren = label.find('(');
+    return paren == std::string::npos ? label : label.substr(0, paren);
+}
+
+static void RpRowLog(int idx, std::string line)
+{
+    std::lock_guard<std::mutex> lock(g_RpLogMutex);
+    g_RpRows[idx].log.push_back(std::move(line));
+}
+
+// ---- selfIds: which UI_Button_obj instances reach the Restart draw ----
+// Round 1 printed the caller as UI_Button_obj#5003, which is the object
+// index. The distinct instance ids, read by name through the self the game
+// handed the draw, answer "one button or several" without assuming an nth.
+static std::vector<double> g_RpSelfIds;   // game thread only
+static bool g_RpSelfIdsMore = false;      // a further id arrived after the cap
+
+static void RpNoteSelfId(int idx, CInstance* S)
+{
+    if (idx != kRp_UiDrawIngameRestart || !S) return;
+    try {
+        const double id = g_Yytk->CallBuiltin("variable_instance_get", { S->ToRValue(), RValue("id") }).ToDouble();
+        for (double seen : g_RpSelfIds) if (seen == id) return;
+        if (g_RpSelfIds.size() < kRpSelfIdCap) g_RpSelfIds.push_back(id);
+        else g_RpSelfIdsMore = true;
+    } catch (...) {}
+}
+
+static std::string RpSelfIdsText()
+{
+    std::string ids;
+    for (double id : g_RpSelfIds) ids += (ids.empty() ? "" : ",") + RpNumberText(id);
+    return "selfIds=" + (ids.empty() ? std::string("none") : ids) + (g_RpSelfIdsMore ? ",more" : "");
+}
+
+// ---- dump: every member of the Restart button, or of the pause menu ----
+struct RpDump {
+    std::string label;
+    std::string kind;          // button | pause
+    std::string error;         // set when the capture could not read the instance
+    double      id = -1.0;
+    uint64_t    frame = 0;
+    bool        captured = false;
+    bool        truncated = false;
+    size_t      names = 0;     // instance variables read, after the builtins
+    std::vector<std::pair<std::string, std::string>> values;   // builtins first, then the variables
+};
+// Keyed by kind and label, so one label ("town", "fight") names a button dump
+// and a pause dump side by side, and `dump diff town fight` compares each kind
+// with itself. At most kRpDumpMaxLabels labels per kind; the oldest goes.
+static std::vector<RpDump> g_RpDumps;     // oldest first; game thread only
+static std::string g_RpDumpArmed;         // label of the pending `dump button` capture
+static const char* const kRpDumpKinds[] = { "button", "pause" };
+
+static RpDump* RpFindDump(const std::string& label, const std::string& kind)
+{
+    for (RpDump& d : g_RpDumps) if (d.label == label && d.kind == kind) return &d;
+    return nullptr;
+}
+
+static RpDump& RpStoreDump(const std::string& label, const char* kind)
+{
+    size_t sameKind = 0;
+    for (auto it = g_RpDumps.begin(); it != g_RpDumps.end();) {
+        if (it->kind == kind && it->label == label) { it = g_RpDumps.erase(it); continue; }
+        if (it->kind == kind) ++sameKind;
+        ++it;
+    }
+    if (sameKind >= kRpDumpMaxLabels) {
+        for (auto it = g_RpDumps.begin(); it != g_RpDumps.end(); ++it) {
+            if (it->kind != kind) continue;
+            Out("restartprobe dump: evicted the oldest " + std::string(kind) + " dump '" + it->label + "' (keeps "
+                + std::to_string(kRpDumpMaxLabels) + " per kind)");
+            g_RpDumps.erase(it);
+            break;
+        }
+    }
+    g_RpDumps.push_back(RpDump());
+    g_RpDumps.back().label = label;
+    g_RpDumps.back().kind = kind;
+    return g_RpDumps.back();
+}
+
+// Accepts the instance by reading through it (HhUsableInstance), never by the
+// kind of handle it arrived as, then reads a short fixed builtin list and
+// every instance variable the runtime names.
+static bool RpDumpCapture(const RValue& inst, RpDump& d)
+{
+    d.values.clear();
+    d.frame = g_RuntimeFrame;
+    d.captured = true;
+    if (!HhUsableInstance(inst)) { d.error = "not a usable instance (" + Describe(inst) + ")"; return false; }
+    static const char* const kBuiltins[] = {
+        "id", "object_index", "visible", "sprite_index", "image_index", "image_alpha", "depth", "x", "y",
+    };
+    for (const char* b : kBuiltins) {
+        try {
+            const RValue v = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(b) });
+            d.values.emplace_back(b, TgProbeDescribeShort(v, 120));
+            if (std::strcmp(b, "id") == 0) { try { d.id = v.ToDouble(); } catch (...) {} }
+        } catch (...) { d.values.emplace_back(b, "<unreadable>"); }
+    }
+    try {
+        const RValue names = g_Yytk->CallBuiltin("variable_instance_get_names", { inst });
+        const size_t n = (size_t)(std::max)(0.0, g_Yytk->CallBuiltin("array_length", { names }).ToDouble());
+        d.truncated = n > kRpDumpMaxNames;
+        for (size_t i = 0; i < n && i < kRpDumpMaxNames; ++i) {
+            std::string name = "?";
+            try {
+                const RValue nm = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) });
+                name = nm.ToString();
+                const RValue v = g_Yytk->CallBuiltin("variable_instance_get", { inst, nm });
+                d.values.emplace_back(name, TgProbeDescribeShort(v, 120));
+            } catch (...) { d.values.emplace_back(name, "<unreadable>"); }
+            ++d.names;
+        }
+    } catch (...) { d.error = "variable_instance_get_names threw"; }
+    return true;
+}
+
+// `dump button` runs here, inside the Restart draw's next call, on the self
+// the game handed that call.
+static void RpDumpFromDetour(int idx, CInstance* S)
+{
+    if (idx != kRp_UiDrawIngameRestart || g_RpDumpArmed.empty() || !S) return;
+    const std::string label = g_RpDumpArmed;
+    g_RpDumpArmed.clear();
+    RpDump* d = RpFindDump(label, "button");
+    if (!d) return;   // evicted while armed
+    const bool ok = RpDumpCapture(S->ToRValue(), *d);
+    Out("restartprobe dump button " + label + ": " + (ok ? "captured" : "capture failed: " + d->error)
+        + " frame=" + std::to_string((unsigned long long)d->frame) + " names=" + std::to_string(d->names));
+}
+
+static void RpDumpShow(const RpDump& d)
+{
+    if (!d.captured) { Out("restartprobe dump show " + d.label + " (" + d.kind + "): not captured yet"); return; }
+    Out(d.label + ": kind=" + d.kind + " id=" + RpNumberText(d.id)
+        + " frame=" + std::to_string((unsigned long long)d.frame) + " names=" + std::to_string(d.names)
+        + (d.truncated ? " (truncated at " + std::to_string(kRpDumpMaxNames) + ")" : "")
+        + (d.error.empty() ? "" : " error=" + d.error));
+    for (const auto& kv : d.values) Out("  " + kv.first + "=" + kv.second);
+}
+
+static void RpDumpDiff(const RpDump& da, const RpDump& db)
+{
+    const std::string& a = da.label;
+    const std::string& b = db.label;
+    if (!da.captured || !db.captured) { Out("restartprobe dump diff (" + da.kind + "): '" + (da.captured ? b : a) + "' not captured yet"); return; }
+    const std::map<std::string, std::string> ma(da.values.begin(), da.values.end());
+    const std::map<std::string, std::string> mb(db.values.begin(), db.values.end());
+    size_t changed = 0, added = 0, removed = 0, printed = 0;
+    Out("restartprobe dump diff " + da.kind + " " + a + " -> " + b + ":");
+    for (const auto& kv : mb) {
+        const auto it = ma.find(kv.first);
+        if (it == ma.end()) {
+            ++added;
+            if (printed++ < kRpDumpDiffLines) Out(std::string("  ") + "+ " + kv.first + "=" + kv.second);
+        } else if (it->second != kv.second) {
+            ++changed;
+            if (printed++ < kRpDumpDiffLines) Out(std::string("  ") + "~ " + kv.first + ": " + it->second + " -> " + kv.second);
+        }
+    }
+    for (const auto& kv : ma) {
+        if (mb.count(kv.first)) continue;
+        ++removed;
+        if (printed++ < kRpDumpDiffLines) Out(std::string("  ") + "- " + kv.first + " (was " + kv.second + ")");
+    }
+    Out("  changed=" + std::to_string(changed) + " added=" + std::to_string(added) + " removed=" + std::to_string(removed)
+        + (printed > kRpDumpDiffLines ? " (first " + std::to_string(kRpDumpDiffLines) + " lines shown)" : ""));
+}
+
+// ---- hold: a write inside a hooked call, before the game's own body ----
+// Round 1 wrote wasInCombat once at command time and the game had put it
+// back 14 frames later, before the press. The hold writes on every call of
+// its site row instead, and counts what it found there first: entryHeld (the
+// previous write survived to this call) against entryOther (something
+// rewrote it in between) is what decides whether a press during the hold
+// tests the value at all.
+struct RpHoldState {
+    bool        armed = false;
+    int         site = -1;
+    std::string scope;            // global|controller|player|pause|button|path
+    std::string name;
+    double      value = 0.0;
+    long        writes = 0, readbackOk = 0, entryHeld = 0, entryOther = 0, unreadable = 0, skipped = 0;
+    long        logged = 0;
+    uint64_t    lastWriteFrame = 0;
+};
+static RpHoldState g_RpHold;      // game thread only: the command and the detours both run there
+
+static std::string RpHoldStatLine()
+{
+    const RpHoldState& h = g_RpHold;
+    return std::string("hold: ") + "armed=" + (h.armed ? "yes" : "no")
+        + " site=" + RpRowName(h.site)
+        + " scope=" + (h.scope.empty() ? std::string("none") : h.scope)
+        + " name=" + (h.name.empty() ? std::string("none") : h.name)
+        + " value=" + RpNumberText(h.value)
+        + " writes=" + std::to_string(h.writes)
+        + " readbackOk=" + std::to_string(h.readbackOk)
+        + " entryHeld=" + std::to_string(h.entryHeld)
+        + " entryOther=" + std::to_string(h.entryOther)
+        + " unreadable=" + std::to_string(h.unreadable)
+        + " skipped=" + std::to_string(h.skipped)
+        + " lastWriteFrame=" + std::to_string((unsigned long long)h.lastWriteFrame);
+}
+
+static void RpHoldDisarm(const std::string& why)
+{
+    g_RpHold.armed = false;
+    Out("restartprobe " + why + "; " + RpHoldStatLine());
+}
+
+// Runs inside the site row's detour, before the trampoline. Both disarm rules
+// are decided here, where the calls arrive, and not in a command: the draw
+// is only called while the menu is open (control C3), so a call after a gap
+// means the menu was closed and reopened.
+static void RpHoldApply(int idx, CInstance* S)
+{
+    RpHoldState& h = g_RpHold;
+    if (!h.armed || idx != h.site) return;
+    if (h.writes > 0 && g_RuntimeFrame - h.lastWriteFrame > kRpHoldGapFrames) {
+        RpHoldDisarm("hold: disarmed (menu closed at frame " + std::to_string((unsigned long long)h.lastWriteFrame)
+            + "; writes=" + std::to_string(h.writes) + ")");
+        return;
+    }
+    if (h.writes >= kRpHoldMaxWrites) { RpHoldDisarm("hold: disarmed (cap)"); return; }
+
+    // The target, resolved at this call: `button` is this call's own self,
+    // accepted by reading through it rather than by its kind.
+    RpTarget target;
+    std::string why;
+    bool resolved = false;
+    if (h.scope == "button") {
+        const RValue self = S ? S->ToRValue() : RValue();
+        if (S && HhUsableInstance(self)) {
+            target.kind = RpTarget::kInstance;
+            target.holder = self;
+            target.name = h.name;
+            target.label = "button." + h.name;
+            resolved = true;
+        } else {
+            why = "the call's self is not a usable instance";
+        }
+    } else if (h.scope == "path") {
+        resolved = RpPathTarget(h.name, target, why);
+    } else if (const RpScope* s = RpFindScope(h.scope)) {
+        RValue inst;
+        resolved = s->isGlobal || RpScopeInstance(*s, inst);
+        if (resolved) target = RpScopeTarget(*s, inst, h.name);
+        else why = RpScopeLabel(*s) + " has no instance";
+    }
+    const bool log = h.logged < kRpLogBudget;
+    if (!resolved) {
+        ++h.unreadable;
+        if (log) { ++h.logged; RpRowLog(idx, "hold: frame=" + std::to_string((unsigned long long)g_RuntimeFrame) + " unreadable (" + why + ")"); }
+        return;
+    }
+
+    RValue entry;
+    const RpReadResult rr = RpReadTarget(target, entry, &why);
+    if (rr != RpReadResult::Ok || !RpIsNumeric(entry)) {
+        const std::string what = rr != RpReadResult::Ok
+            ? std::string(rr == RpReadResult::Absent ? "absent" : "unreadable") + (why.empty() ? "" : " (" + why + ")")
+            : Describe(entry) + ", not a number";
+        if (h.scope == "button") {
+            // The button's member could not be checked at arming time; the
+            // first call that finds it absent or not a number disarms.
+            ++h.skipped;
+            if (h.writes == 0) { RpHoldDisarm("hold: disarmed (" + target.label + " is " + what + " on the first call)"); return; }
+        } else {
+            ++h.unreadable;
+        }
+        if (log) { ++h.logged; RpRowLog(idx, "hold: frame=" + std::to_string((unsigned long long)g_RuntimeFrame) + " " + target.label + " is " + what + "; not written"); }
+        return;
+    }
+
+    const RValue held = RpNumberInKind(entry, h.value);
+    double heldNumber = h.value;
+    try { heldNumber = held.ToDouble(); } catch (...) {}
+    bool atHeld = false;
+    try { atHeld = entry.ToDouble() == heldNumber; } catch (...) {}
+    if (atHeld) ++h.entryHeld;
+    else ++h.entryOther;
+    const bool wrote = RpWrite(target, held);
+    RValue back;
+    bool backOk = false;
+    if (wrote && RpReadTarget(target, back) == RpReadResult::Ok && RpIsNumeric(back)) {
+        try { backOk = back.ToDouble() == heldNumber; } catch (...) {}
+    }
+    if (backOk) ++h.readbackOk;
+    ++h.writes;
+    h.lastWriteFrame = g_RuntimeFrame;
+    if (log) {
+        ++h.logged;
+        RpRowLog(idx, "hold: frame=" + std::to_string((unsigned long long)g_RuntimeFrame) + " " + target.label
+            + " entry=" + Describe(entry) + " wrote=" + (wrote ? Describe(held) : std::string("no (the write threw)"))
+            + " readback=" + (backOk ? std::string("ok") : "mismatch (" + Describe(back) + ")"));
+    }
+}
+
+// ---- argset: one numeric argument of one row, for the next N calls ----
+// It replaces the argument on the stack, in the argument's own kind, before
+// the game's own body reads it; it writes no variable.
+struct RpArgsetState {
+    bool     armed = false;
+    int      row = -1;
+    int      index = 0;
+    double   value = 0.0;
+    long     calls = 0;       // the budget it was armed with
+    long     remaining = 0;
+    long     applied = 0, skipped = 0, skippedArgc = 0, logged = 0;
+    uint64_t lastFrame = 0;
+};
+static RpArgsetState g_RpArgset;  // game thread only
+
+static std::string RpArgsetStatLine()
+{
+    const RpArgsetState& a = g_RpArgset;
+    return std::string("argset: ") + "armed=" + (a.armed ? "yes" : "no")
+        + " row=" + RpRowName(a.row) + " a" + std::to_string(a.index) + "=" + RpNumberText(a.value)
+        + " calls=" + std::to_string(a.calls) + " remaining=" + std::to_string(a.remaining)
+        + " applied=" + std::to_string(a.applied) + " skipped=" + std::to_string(a.skipped)
+        + " skippedArgc=" + std::to_string(a.skippedArgc)
+        + " lastFrame=" + std::to_string((unsigned long long)a.lastFrame);
+}
+
+static void RpArgsetApply(int idx, int argc, RValue** A)
+{
+    RpArgsetState& a = g_RpArgset;
+    if (!a.armed || idx != a.row) return;
+    if (a.applied + a.skipped + a.skippedArgc > 0 && g_RuntimeFrame - a.lastFrame > kRpHoldGapFrames) {
+        a.armed = false;
+        Out("restartprobe argset: cleared (no call since frame " + std::to_string((unsigned long long)a.lastFrame) + "); " + RpArgsetStatLine());
+        return;
+    }
+    a.lastFrame = g_RuntimeFrame;
+    const bool log = a.logged < kRpLogBudget;
+    if (!A || argc <= a.index || !A[a.index]) {
+        ++a.skippedArgc;
+    } else if (!RpIsNumeric(*A[a.index])) {
+        ++a.skipped;
+        if (log) { ++a.logged; RpRowLog(idx, "argset: frame=" + std::to_string((unsigned long long)g_RuntimeFrame) + " a" + std::to_string(a.index) + "=" + Describe(*A[a.index]) + " is not a number; skipped"); }
+    } else {
+        const std::string before = Describe(*A[a.index]);
+        *A[a.index] = RpNumberInKind(*A[a.index], a.value);
+        ++a.applied;
+        if (log) {
+            ++a.logged;
+            RpRowLog(idx, "argset: frame=" + std::to_string((unsigned long long)g_RuntimeFrame) + " a" + std::to_string(a.index)
+                + " before=" + before + " after=" + Describe(*A[a.index]));
+        }
+    }
+    if (--a.remaining <= 0) {
+        a.armed = false;
+        Out("restartprobe argset: done; " + RpArgsetStatLine());
+    }
+}
+
 // Counts every call; keeps the first kRpLogBudget calls' lines. A sampling
 // row reads the candidates before the original runs - the value the game's
-// own body is about to read.
+// own body is about to read. The round-2 steps (selfIds, a pending dump, the
+// hold, argset) run here too, in that order, all before the trampoline; the
+// sample is taken after them, so it shows what the game's body will see.
 static RValue& RpDetourBody(int idx, CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
     RestartProbeRow& t = g_RpRows[idx];
     const long n = InterlockedIncrement(&t.calls);
     const bool keep = t.logged < kRpLogBudget && InterlockedIncrement(&t.logged) <= kRpLogBudget;
+    RpNoteSelfId(idx, S);
+    RpDumpFromDetour(idx, S);
+    RpHoldApply(idx, S);
+    RpArgsetApply(idx, argc, A);
     std::string line;
     if (keep) {
         try {
@@ -25181,8 +25744,10 @@ static RValue& RpDetourBody(int idx, CInstance* S, CInstance* O, RValue& R, int 
                 + " self=" + RpDescribeSelf(S) + " argc=" + std::to_string(argc);
             for (int i = 0; i < argc && i < 3; ++i)
                 line += " a" + std::to_string(i) + "=" + (A && A[i] ? Describe(*A[i]) : std::string("?"));
-            if (t.flags & kRpSample)
+            if (t.flags & kRpSample) {
                 for (const RpScope& s : kRpScopes) line += " | " + RpScopeLine(s);
+                for (const char* p : kRpVarPaths) line += " | " + RpPathLine(p);
+            }
         } catch (...) { line += " <describe-failed>"; }
     }
     RValue& r = t.tramp ? t.tramp(S, O, R, argc, A) : R;
@@ -25282,7 +25847,10 @@ static void RestartProbeShow()
 {
     Out("restartprobe show: frame=" + std::to_string((unsigned long long)g_RuntimeFrame)
         + " control=" + RpCallsText(g_RpRows[kRp_UiDrawIngameRestart])
-        + " (UiDrawIngameRestart calls; must be > 0 with the pause menu open)");
+        + " (UiDrawIngameRestart calls; must be > 0 with the pause menu open, unchanged with it closed)");
+    Out("  " + RpSelfIdsText() + " (distinct UiDrawIngameRestart self ids)");
+    Out("  " + RpHoldStatLine());
+    Out("  " + RpArgsetStatLine());
     for (const RestartProbeRow& t : g_RpRows)
         Out(std::string("  ") + t.label + " mode=" + t.modeText + " calls=" + RpCallsText(t));
     std::lock_guard<std::mutex> lock(g_RpLogMutex);
@@ -25298,7 +25866,10 @@ static void RestartProbeReset()
         InterlockedExchange(&t.logged, 0);
         t.log.clear();
     }
-    Out("restartprobe reset: counters and call log cleared; attached rows stay attached");
+    g_RpSelfIds.clear();
+    g_RpSelfIdsMore = false;
+    Out("restartprobe reset: counters, call log and selfIds cleared; attached rows stay attached, dumps are kept,"
+        " a hold or argset stays armed (hold off / argset clear)");
 }
 
 // The one write. Every refusal comes before it, in a fixed order, and the
@@ -25311,18 +25882,27 @@ static void RestartProbeSet(const std::string& rest)
     const std::string numberText = FirstToken(r, r);
     const std::string confirm = Lower(FirstToken(r, r));
 
-    const RpScope* s = RpFindScope(scopeWord);
-    if (!s) { Out("restartprobe set: unknown scope '" + scopeWord + "' (global|controller|player|pause); nothing written"); return; }
-    RValue inst;
-    if (!s->isGlobal && !RpScopeInstance(*s, inst)) { Out("restartprobe set: " + RpScopeLabel(*s) + " has no instance; nothing written"); return; }
+    const bool isPath = scopeWord == "path";
+    const RpScope* s = isPath ? nullptr : RpFindScope(scopeWord);
+    if (!isPath && !s) { Out("restartprobe set: unknown scope '" + scopeWord + "' (global|controller|player|pause|path); nothing written"); return; }
+    RpTarget target;
+    if (s) {
+        RValue inst;
+        if (!s->isGlobal && !RpScopeInstance(*s, inst)) { Out("restartprobe set: " + RpScopeLabel(*s) + " has no instance; nothing written"); return; }
+        target = RpScopeTarget(*s, inst, name);
+    } else {
+        std::string why;
+        if (!RpPathTarget(name, target, why)) { Out("restartprobe set: path " + name + " is unresolved (" + why + "); nothing written"); return; }
+    }
     RValue before;
-    const RpReadResult rr = RpReadVar(*s, inst, name.c_str(), before);
+    std::string why;
+    const RpReadResult rr = RpReadTarget(target, before, &why);
     if (rr != RpReadResult::Ok) {
-        Out("restartprobe set: " + RpScopeLabel(*s) + "." + name + " is "
-            + (rr == RpReadResult::Absent ? "absent" : "unreadable") + "; nothing written");
+        Out("restartprobe set: " + target.label + " is "
+            + (rr == RpReadResult::Absent ? "absent" : "unreadable") + (why.empty() ? "" : " (" + why + ")") + "; nothing written");
         return;
     }
-    if (!RpIsNumeric(before)) { Out("restartprobe set: " + RpScopeLabel(*s) + "." + name + " is " + Describe(before) + ", not a number; nothing written"); return; }
+    if (!RpIsNumeric(before)) { Out("restartprobe set: " + target.label + " is " + Describe(before) + ", not a number; nothing written"); return; }
     if (confirm != "confirm") { Out("restartprobe set: add `confirm` to write; nothing written"); return; }
     double value = 0.0;
     try {
@@ -25331,13 +25911,10 @@ static void RestartProbeSet(const std::string& rest)
         if (used != numberText.size() || !std::isfinite(value)) throw std::invalid_argument("number");
     } catch (...) { Out("restartprobe set: '" + numberText + "' is not a number; nothing written"); return; }
 
-    bool threw = false;
-    try {
-        if (s->isGlobal) g_Yytk->CallBuiltin("variable_global_set", { RValue(name), RValue(value) });
-        else g_Yytk->CallBuiltin("variable_instance_set", { inst, RValue(name), RValue(value) });
-    } catch (...) { threw = true; }
+    // `set` writes a real, as in round 1 (the hold keeps the kind instead).
+    const bool threw = !RpWrite(target, RValue(value));
     RValue after;
-    const bool readBack = RpReadVar(*s, inst, name.c_str(), after) == RpReadResult::Ok;
+    const bool readBack = RpReadTarget(target, after) == RpReadResult::Ok;
     bool wrote = false;
     if (!threw && readBack && RpIsNumeric(after)) {
         try { wrote = after.ToDouble() == value; } catch (...) {}
@@ -25349,22 +25926,216 @@ static void RestartProbeSet(const std::string& rest)
     if (readBack && RpIsNumeric(after)) {
         try { changed = after.ToDouble() != before.ToDouble(); } catch (...) {}
     }
-    Out("restartprobe set: " + RpScopeLabel(*s) + "." + name + " wrote=" + (wrote ? "yes" : "no")
+    Out("restartprobe set: " + target.label + " wrote=" + (wrote ? "yes" : "no")
         + " changed=" + (changed ? "yes" : "no")
         + " before=" + Describe(before) + " after=" + (readBack ? Describe(after) : std::string("unreadable"))
         + (threw ? " (the write threw)" : ""));
+}
+
+// `hold <scope> <name> <number> [at <row>] confirm` arms the hold; it writes
+// nothing itself. Every refusal comes first, in a fixed order; the writes
+// start with the site row's next call (RpHoldApply).
+static void RestartProbeHold(const std::string& rest)
+{
+    std::string r = rest;
+    const std::string first = Lower(FirstToken(r, r));
+    if (first == "off") {
+        const bool was = g_RpHold.armed;
+        g_RpHold.armed = false;
+        Out(std::string("restartprobe hold: ") + (was ? "off" : "was not armed") + "; " + RpHoldStatLine());
+        return;
+    }
+    if (first == "stat") { Out("restartprobe " + RpHoldStatLine()); return; }
+    const std::string scopeWord = first;
+    const std::string name = FirstToken(r, r);
+    const std::string numberText = FirstToken(r, r);
+    std::string next = Lower(FirstToken(r, r));
+    std::string siteText = RpRowName(kRp_UiDrawIngameRestart);
+    if (next == "at") { siteText = FirstToken(r, r); next = Lower(FirstToken(r, r)); }
+    const std::string confirm = next;
+
+    const bool isButton = scopeWord == "button";
+    const bool isPath = scopeWord == "path";
+    const RpScope* s = (isButton || isPath) ? nullptr : RpFindScope(scopeWord);
+    if (!isButton && !isPath && !s) {
+        Out("restartprobe hold: unknown scope '" + scopeWord + "' (global|controller|player|pause|button|path); nothing armed");
+        return;
+    }
+    RpTarget target;
+    if (s) {
+        RValue inst;
+        if (!s->isGlobal && !RpScopeInstance(*s, inst)) { Out("restartprobe hold: " + RpScopeLabel(*s) + " has no instance; nothing armed"); return; }
+        target = RpScopeTarget(*s, inst, name);
+    } else if (isPath) {
+        std::string why;
+        if (!RpPathTarget(name, target, why)) { Out("restartprobe hold: path " + name + " is unresolved (" + why + "); nothing armed"); return; }
+    }
+    // `button` is the site call's own self, which does not exist at command
+    // time: its member is checked on the first call instead (RpHoldApply).
+    if (!isButton) {
+        RValue before;
+        std::string why;
+        const RpReadResult rr = RpReadTarget(target, before, &why);
+        if (rr != RpReadResult::Ok) {
+            Out("restartprobe hold: " + target.label + (rr == RpReadResult::Absent ? " is absent" : " is unreadable")
+                + (why.empty() ? "" : " (" + why + ")") + "; nothing armed");
+            return;
+        }
+        if (!RpIsNumeric(before)) { Out("restartprobe hold: " + target.label + " is " + Describe(before) + ", not a number; nothing armed"); return; }
+    }
+    // A hold on a row that cannot be called would be armed and doing nothing.
+    const int site = RpFindRow(siteText);
+    if (site < 0 || g_RpRows[site].mode != kRpNative) {
+        Out("restartprobe hold: '" + siteText + "' is not an attached native row (restartprobe hook first); nothing armed");
+        return;
+    }
+    if (confirm != "confirm") { Out("restartprobe hold: add `confirm` to arm; nothing armed"); return; }
+    double value = 0.0;
+    try {
+        size_t used = 0;
+        value = std::stod(numberText, &used);
+        if (used != numberText.size() || !std::isfinite(value)) throw std::invalid_argument("number");
+    } catch (...) { Out("restartprobe hold: '" + numberText + "' is not a number; nothing armed"); return; }
+
+    const bool replacing = g_RpHold.armed;
+    g_RpHold = RpHoldState();
+    g_RpHold.site = site;
+    g_RpHold.scope = scopeWord;
+    g_RpHold.name = name;
+    g_RpHold.value = value;
+    g_RpHold.armed = true;
+    Out("restartprobe hold armed: " + scopeWord + "." + name + "=" + RpNumberText(value) + " at " + RpRowName(site)
+        + "; writes start with the next call" + (replacing ? " (replaced the previous hold)" : ""));
+}
+
+// `argset <row> a<i> <number> [calls=N] confirm` / `argset clear` / `argset stat`.
+static void RestartProbeArgset(const std::string& rest)
+{
+    std::string r = rest;
+    const std::string rowText = FirstToken(r, r);
+    if (Lower(rowText) == "clear") {
+        const bool was = g_RpArgset.armed;
+        g_RpArgset.armed = false;
+        Out(std::string("restartprobe argset: ") + (was ? "cleared" : "was not armed") + "; " + RpArgsetStatLine());
+        return;
+    }
+    if (Lower(rowText) == "stat") { Out("restartprobe " + RpArgsetStatLine()); return; }
+    const std::string argText = Lower(FirstToken(r, r));
+    const std::string numberText = FirstToken(r, r);
+    std::string next = FirstToken(r, r);
+    std::string callsText;
+    if (Lower(next).rfind("calls=", 0) == 0) { callsText = next.substr(6); next = FirstToken(r, r); }
+    const std::string confirm = Lower(next);
+
+    const int row = RpFindRow(rowText);
+    if (row < 0 || g_RpRows[row].mode != kRpNative) {
+        Out("restartprobe argset: '" + rowText + "' is not an attached native row (restartprobe hook first); nothing armed");
+        return;
+    }
+    int index = -1;
+    try {
+        size_t used = 0;
+        if (argText.size() < 2 || argText[0] != 'a') throw std::invalid_argument("a<i>");
+        index = std::stoi(argText.substr(1), &used);
+        if (used != argText.size() - 1 || index < 0 || index > 15) throw std::invalid_argument("a<i>");
+    } catch (...) { Out("restartprobe argset: '" + argText + "' is not a<i> (a0..a15); nothing armed"); return; }
+    double value = 0.0;
+    try {
+        size_t used = 0;
+        value = std::stod(numberText, &used);
+        if (used != numberText.size() || !std::isfinite(value)) throw std::invalid_argument("number");
+    } catch (...) { Out("restartprobe argset: '" + numberText + "' is not a number; nothing armed"); return; }
+    long calls = 1;
+    if (!callsText.empty()) {
+        try {
+            size_t used = 0;
+            calls = std::stol(callsText, &used);
+            if (used != callsText.size() || calls < 1 || calls > kRpArgsetMaxCalls) throw std::invalid_argument("calls");
+        } catch (...) { Out("restartprobe argset: calls=" + callsText + " is not 1.." + std::to_string(kRpArgsetMaxCalls) + "; nothing armed"); return; }
+    }
+    if (confirm != "confirm") { Out("restartprobe argset: add `confirm` to arm; nothing armed"); return; }
+
+    g_RpArgset = RpArgsetState();
+    g_RpArgset.row = row;
+    g_RpArgset.index = index;
+    g_RpArgset.value = value;
+    g_RpArgset.calls = calls;
+    g_RpArgset.remaining = calls;
+    g_RpArgset.armed = true;
+    Out("restartprobe argset armed: " + RpRowName(row) + " a" + std::to_string(index) + "=" + RpNumberText(value)
+        + " for the next " + std::to_string(calls) + " call(s); numeric arguments only, in their own kind");
+}
+
+// `dump button <label>` / `dump pause <label>` / `dump show <label>` / `dump diff <a> <b>`.
+static void RestartProbeDump(const std::string& rest)
+{
+    std::string r = rest;
+    const std::string sub = Lower(FirstToken(r, r));
+    const std::string label = FirstToken(r, r);
+    if (sub == "button" && !label.empty()) {
+        if (g_RpRows[kRp_UiDrawIngameRestart].mode != kRpNative) {
+            Out("restartprobe dump button: the UiDrawIngameRestart row is not attached (restartprobe hook first); nothing armed");
+            return;
+        }
+        if (!g_RpDumpArmed.empty() && g_RpDumpArmed != label) {
+            RpDump* old = RpFindDump(g_RpDumpArmed, "button");
+            if (old && !old->captured) Out("restartprobe dump button: '" + g_RpDumpArmed + "' was still pending and is replaced");
+        }
+        RpStoreDump(label, "button");
+        g_RpDumpArmed = label;
+        Out("restartprobe dump button " + label + ": armed; open the pause menu, then: restartprobe dump show " + label);
+        return;
+    }
+    if (sub == "pause" && !label.empty()) {
+        const RpScope* s = RpFindScope("pause");
+        RValue inst;
+        if (!s || !RpScopeInstance(*s, inst)) { Out("restartprobe dump pause " + label + ": no instance (open the pause menu first)"); return; }
+        RpDump& d = RpStoreDump(label, "pause");
+        const bool ok = RpDumpCapture(inst, d);
+        Out("restartprobe dump pause " + label + ": " + (ok ? "captured" : "capture failed: " + d.error)
+            + " frame=" + std::to_string((unsigned long long)d.frame) + " names=" + std::to_string(d.names));
+        return;
+    }
+    // show and diff take every kind the label exists under, button first.
+    if (sub == "show" && !label.empty()) {
+        bool any = false;
+        for (const char* kind : kRpDumpKinds)
+            if (const RpDump* d = RpFindDump(label, kind)) { RpDumpShow(*d); any = true; }
+        if (!any) Out("restartprobe dump show: no dump named '" + label + "'");
+        return;
+    }
+    if (sub == "diff" && !label.empty()) {
+        const std::string other = FirstToken(r, r);
+        if (!other.empty()) {
+            bool any = false;
+            for (const char* kind : kRpDumpKinds) {
+                const RpDump* da = RpFindDump(label, kind);
+                const RpDump* db = RpFindDump(other, kind);
+                if (da && db) { RpDumpDiff(*da, *db); any = true; }
+            }
+            if (!any) Out("restartprobe dump diff: no kind has both '" + label + "' and '" + other + "'");
+            return;
+        }
+    }
+    Out("restartprobe dump: button <label> | pause <label> | show <label> | diff <a> <b>");
 }
 
 static void RestartProbeCommand(const std::string& rest)
 {
     std::string r = rest;
     const std::string sub = Lower(FirstToken(r, r));
-    if (sub == "vars")  { RestartProbeVars(); return; }
-    if (sub == "hook")  { RestartProbeHook(); return; }
-    if (sub == "show")  { RestartProbeShow(); return; }
-    if (sub == "reset") { RestartProbeReset(); return; }
-    if (sub == "set")   { RestartProbeSet(r); return; }
-    Out("restartprobe: vars | hook | show | reset | set <global|controller|player|pause> <name> <number> confirm");
+    if (sub == "vars")   { RestartProbeVars(); return; }
+    if (sub == "hook")   { RestartProbeHook(); return; }
+    if (sub == "show")   { RestartProbeShow(); return; }
+    if (sub == "reset")  { RestartProbeReset(); return; }
+    if (sub == "set")    { RestartProbeSet(r); return; }
+    if (sub == "dump")   { RestartProbeDump(r); return; }
+    if (sub == "hold")   { RestartProbeHold(r); return; }
+    if (sub == "argset") { RestartProbeArgset(r); return; }
+    Out("restartprobe: vars | hook | show | reset | set <global|controller|player|pause|path> <name> <number> confirm"
+        " | dump button|pause|show <label> | dump diff <a> <b>"
+        " | hold <global|controller|player|pause|button|path> <name> <number> [at <row>] confirm | hold off | hold stat"
+        " | argset <row> a<i> <number> [calls=N] confirm | argset clear | argset stat");
 }
 #endif // FORGEPACT_RELEASE (restartprobe)
 
