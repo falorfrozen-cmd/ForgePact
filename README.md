@@ -11,7 +11,7 @@ panel; settings are applied live while the game runs and re-applied on every lau
 | **Monster Density** | 1–5× more enemies in 0.5 steps (1, 1.5, 2 …), through the game's own `Enemy_Creator` spawners |
 | **Special Content** | Rift Portals, Battlefields, Cursed Orbs, Summon Portals, Chaos Pillars, Chaos Tower — up to 100× per zone |
 | **Drop Rates** | Gold, Dungeon Keys, Angelic Keys, Chaos + Crystal Keys, Bifröst Key and Relics — up to 100× |
-| **Angelic / Unholy Drops (Experimental)** | ForgePact's own die per kill; on a hit the game builds one of its 49 real Angelic / Unholy uniques. x2 = 1 in 7,500 kills, each step adds a die, typable |
+| **Angelic / Unholy Drops (Experimental)** | ForgePact's own die per kill; on a hit it builds one of its 49 real Angelic / Unholy uniques, or (since 1.4.5) Tyrant's Crown or Headhunter. x2 = 1 in 7,500 kills, each step adds a die, typable |
 | **Combat Modifiers** | Total Damage, Attack Speed, Faster Cast Rate, Defense, Life/Mana Replenish, physical and spell Critical Chance/Damage |
 | **Character Stats** | Experience, Magic Find and Movement Speed use the character's current total value, including equipment bonuses |
 | **Full Map Reveal** | Clears fog of war in every zone, so waypoints, dungeon entrances, chests, shrines and mining nodes show immediately (toggleable; F5 in-game also toggles it). An optional sub-toggle also fills the map with monsters: most packs do not exist until you walk near them, so it has each new zone create its packs on arrival |
@@ -113,11 +113,16 @@ touched. Command: `enemyspeed <multiplier> [ct|all]` (`enemyspeed 1.5 ct`), `ene
 prints the status with path-start and applied counters.
 
 ### Signature drops
-Tyrant's Crown (Great Helm) and Headhunter (Heavy Belt) drop from the game's own monsters at
-the Angelic/Unholy rate: 1 in 7500 per kill, any monster, no guarantee counter; the two take
-turns. They arrive as SS-tier Unholy items, fully set up,
-and the plugin recognises them on every load even without the Item Editor. Plugin commands:
-`sigdrop status`, `sigdrop <rare pct> [ancient pct] [pity kills]`, `sigdrop vanilla`, `sigdrop off`.
+Tyrant's Crown (Great Helm) and Headhunter (Heavy Belt) are two more items in the **Angelic /
+Unholy Drops** pool above: they drop from the very same die as every other item in it, such as
+**Liquor Holster**, at exactly the same rate - so they never drop while that slider is off (the
+default), and more often as it is raised, along with everything else in the pool. They are not
+part of the game's own Angelic roll (the Blood Pact / dungeon "Angelic item drop chance" effect) -
+only ForgePact's own die drops them. They arrive as SS-tier Unholy items, fully set up, and the
+plugin recognises them on every load even without the Item Editor. `sigdrop status`,
+`sigdrop crown`, `sigdrop belt` and `sigdrop off` are a test command that forces every kill
+to drop the named item (or turns that off); it does not change the normal drop rate, which
+always follows the Angelic / Unholy Drops slider.
 
 ### Tier (Custom Forge)
 A forged item can carry a Tier letter (`tier=1` C … `tier=5` SS in the runtime file; the Item

@@ -38,6 +38,8 @@ class HeadhunterDispatchTests(unittest.TestCase):
             # The kill drops, real: the kill hook below calls them.
             'static void SignatureDropOnKill(',
             'static void AngelicDropOnKill(',
+            # Headhunter/Tyrant's Crown joining the Angelic pool (#63) - absent pre-#63.
+            'static void AppendSignatureCandidates(',
             'static RValue& Hook_EnemyDestroyKillProc(',
             'static RValue& Hook_HhDeathEffects(',
             'static void EnableHeadhunter()',
@@ -45,6 +47,8 @@ class HeadhunterDispatchTests(unittest.TestCase):
         ))
         if 'static void EnableHeadhunter()' in source:
             functions = '#define HAS_ENABLE_HEADHUNTER\n' + functions
+        if 'static void AppendSignatureCandidates(std::vector<AngelicCandidate>& pool)' in source:
+            functions = '#define HAS_APPENDSIGNATURECANDIDATES\n' + functions
         output = ROOT / 'build/headhunter-native-tests'
         output.mkdir(parents=True, exist_ok=True)
         code = (ROOT / 'tests/headhunter_dispatch_harness.cpp').read_text(encoding='utf-8')
@@ -84,11 +88,31 @@ class HeadhunterDispatchTests(unittest.TestCase):
             'standalone_fallback_install', 'fallback_without_primary', 'no_trigger_available',
             'death_without_visual_effect', 'both_death_paths', 'death_script_only',
             'automatic_combat_log', 'disabled_combat_log',
-            # Kill drops. Baseline: off, non-monster, position.
+        ):
+            with self.subTest(scenario=scenario):
+                result = subprocess.run([str(self.binary), scenario], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_signature_drop_baseline(self):
+        # The kill-order pin: both drops read and spawn while the enemy is live, before the
+        # original kill proc, whether that spawn comes from the old standalone die (pre-#63
+        # source) or from a forced/pool pick (post-#63 source) - dropsCertain() drives both.
+        for scenario in (
             'drops_off_no_spawn', 'drop_skips_non_monster', 'drop_hit_at_enemy_position',
-            # Target: both drops read and spawn while the enemy is live, before the original.
             'angelic_spawns_before_cleanup', 'sigdrop_spawns_before_cleanup',
             'drops_read_nothing_after_original', 'drop_throw_still_calls_original',
+        ):
+            with self.subTest(scenario=scenario):
+                result = subprocess.run([str(self.binary), scenario], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_signature_drop_target(self):
+        # Headhunter and Tyrant's Crown join the Angelic/Unholy pool (#63) instead of rolling
+        # on their own die; every one of these fails against the pre-#63 source.
+        for scenario in (
+            'signature_pool_append', 'angelic_pick_crown_spawns_signature',
+            'angelic_pick_belt_spawns_signature', 'signature_equal_share',
+            'sigdrop_force_belt', 'sigdrop_force_no_alternation',
         ):
             with self.subTest(scenario=scenario):
                 result = subprocess.run([str(self.binary), scenario], capture_output=True, text=True)

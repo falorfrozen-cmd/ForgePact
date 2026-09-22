@@ -2129,7 +2129,9 @@ input[type=range]::-webkit-slider-thumb{appearance:none;width:17px;height:17px;b
   <div class="hint">The game only rolls for Angelic or Unholy items while an "Angelic item drop chance"
   effect (a Blood Pact or dungeon modifier) is active, so this is ForgePact's own die: on every monster
   kill it rolls, and on a hit the game itself builds one of its 49 real Angelic / Unholy uniques (no
-  developer or event pieces) and drops it where the monster died.<br>
+  developer or event pieces) and drops it where the monster died. Headhunter and Tyrant's Crown share
+  this same die and pool: they never drop while this is off (x1), and drop exactly as often as any
+  other item in it.<br>
   <b>x2</b> is one die per kill at the Angelic Key's own rate (1 in 7,500), every step above adds a die.
   Click the value to type an exact number. <b>x1</b> is off.</div>
   <div class="row">
