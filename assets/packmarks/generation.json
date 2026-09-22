@@ -1,0 +1,56 @@
+{
+  "mode": "Built-in image_gen",
+  "purpose": "Original fantasy minimap sprites",
+  "technicalExport": "Windows System.Drawing: HighQualityBicubic reduction of unchanged generated masters to 16x16 Format32bppArgb; SourceCopy compositing preserves transparency. The checked-in 16x16 sprites are the build inputs.",
+  "images": [
+    {
+      "name": "normal",
+      "prompt": "Create a single original pixel-art minimap icon for a dark fantasy action RPG, visually at home in Hero Siege. Use case: stylized-concept. This is a production tiny game sprite, NOT a concept painting. Square canvas with TRUE TRANSPARENT background, no background colour, no checkerboard drawn into image. Center ONE icon in frame, about 80% of canvas width/height. Design on an extremely coarse 16 by 16 logical pixel grid, enlarged crisply with hard square pixel edges, no antialiasing or glow blur. Chunky readable silhouette, near-black one-logical-pixel outer border, 4-6 opaque colours including bright highlights, few large details. It must read clearly at 16px. No text, no lettering, no frame, no UI, no shadow outside sprite, no extra objects. Subject: front-facing simple ivory bone skull, round dome, two large dark square eye holes, short squared jaw with two teeth. Ivory and warm bone highlights, dark brown shadows. Unadorned, easily readable common enemy emblem.",
+      "generatedPath": "C:\\Users\\falor\\.codex\\generated_images\\01a09ab9-888a-72f2-ac59-67f12e6d5c8b\\exec-2c102a1e-9148-42f0-9b26-7e0772168fdd.png",
+      "master": "masters/normal.png",
+      "output": "normal.png"
+    },
+    {
+      "name": "ambush",
+      "prompt": "Create a single original pixel-art minimap icon for a dark fantasy action RPG, visually at home in Hero Siege. Use case: stylized-concept. This is a production tiny game sprite, NOT a concept painting. Square canvas with TRUE TRANSPARENT background, no background colour, no checkerboard drawn into image. Center ONE icon in frame, about 80% of canvas width/height. Design on an extremely coarse 16 by 16 logical pixel grid, enlarged crisply with hard square pixel edges, no antialiasing or glow blur. Chunky readable silhouette, near-black one-logical-pixel outer border, 4-6 opaque colours including bright highlights, few large details. It must read clearly at 16px. No text, no lettering, no frame, no UI, no shadow outside sprite, no extra objects. Subject: front-facing sinister angular hooded head, dark charcoal triangular hood with silver/ivory lit rim, black face opening containing two bright pale yellow narrow eyes. Pointed hood silhouette clearly different from a round skull. No weapons.",
+      "generatedPath": "C:\\Users\\falor\\.codex\\generated_images\\01a09ab9-888a-72f2-ac59-67f12e6d5c8b\\exec-54e26899-de86-4eb3-b31a-5b321f8db742.png",
+      "master": "masters/ambush.png",
+      "output": "ambush.png"
+    },
+    {
+      "name": "ancient",
+      "prompt": "Create a single original pixel-art minimap icon for a dark fantasy action RPG, visually at home in Hero Siege. Use case: stylized-concept. This is a production tiny game sprite, NOT a concept painting. Square canvas with TRUE TRANSPARENT background, no background colour, no checkerboard drawn into image. Center ONE icon in frame, about 80% of canvas width/height. Design on an extremely coarse 16 by 16 logical pixel grid, enlarged crisply with hard square pixel edges, no antialiasing or glow blur. Chunky readable silhouette, near-black one-logical-pixel outer border, 4-6 opaque colours including bright highlights, few large details. It must read clearly at 16px. No text, no lettering, no frame, no UI, no shadow outside sprite, no extra objects. Subject: front-facing ancient demon idol mask, purple and vivid magenta stone, diamond-shaped chin and two short swept horns, glowing pale pink eye slits. Broad bold geometric silhouette, no complex engravings.",
+      "generatedPath": "C:\\Users\\falor\\.codex\\generated_images\\01a09ab9-888a-72f2-ac59-67f12e6d5c8b\\exec-6ebdbd46-ec51-4dcf-8ffa-600a45442b33.png",
+      "master": "masters/ancient.png",
+      "output": "ancient.png"
+    },
+    {
+      "name": "champion",
+      "prompt": "Create a single original pixel-art minimap icon for a dark fantasy action RPG, visually at home in Hero Siege. Use case: stylized-concept. This is a production tiny game sprite, NOT a concept painting. Square canvas with TRUE TRANSPARENT background, no background colour, no checkerboard drawn into image. Center ONE icon in frame, about 80% of canvas width/height. Design on an extremely coarse 16 by 16 logical pixel grid, enlarged crisply with hard square pixel edges, no antialiasing or glow blur. Chunky readable silhouette, near-black one-logical-pixel outer border, 4-6 opaque colours including bright highlights, few large details. It must read clearly at 16px. No text, no lettering, no frame, no UI, no shadow outside sprite, no extra objects. Subject: front-facing steel champion helmet with two short lateral spikes and a central raised crest, bright cyan blue metal with pale ice highlights, dark T-shaped visor. Strong angular helmet silhouette, no skull, no face details.",
+      "generatedPath": "C:\\Users\\falor\\.codex\\generated_images\\01a09ab9-888a-72f2-ac59-67f12e6d5c8b\\exec-15780473-7676-425a-a1a6-c1059d1d1147.png",
+      "master": "masters/champion.png",
+      "output": "champion.png"
+    },
+    {
+      "name": "colossal_chest",
+      "prompt": "Create a single original pixel-art minimap icon for a dark fantasy action RPG, visually at home in Hero Siege. Use case: stylized-concept. This is a production tiny game sprite, NOT a concept painting. Square canvas with TRUE TRANSPARENT background, no background colour, no checkerboard drawn into image. Center ONE icon in frame, about 80% of canvas width/height. Design on an extremely coarse 16 by 16 logical pixel grid, enlarged crisply with hard square pixel edges, no antialiasing or glow blur. Chunky readable silhouette, near-black one-logical-pixel outer border, 4-6 opaque colours including bright highlights, few large details. It must read clearly at 16px. No text, no lettering, no frame, no UI, no shadow outside sprite, no extra objects. Subject: closed stout gold treasure chest in simple front three-quarter view, orange-brown wooden body, bright gold lid and thick bands, dark central keyhole clasp. Clear arched lid and rectangular base, no coins outside chest.",
+      "generatedPath": "C:\\Users\\falor\\.codex\\generated_images\\01a09ab9-888a-72f2-ac59-67f12e6d5c8b\\exec-2c8f799f-3641-4b90-b681-e2ff4dae863b.png",
+      "master": "masters/colossal_chest.png",
+      "output": "colossal_chest.png"
+    },
+    {
+      "name": "legion",
+      "prompt": "Create a single original pixel-art minimap icon for a dark fantasy action RPG, visually at home in Hero Siege. Use case: stylized-concept. This is a production tiny game sprite, NOT a concept painting. Square canvas with TRUE TRANSPARENT background, no background colour, no checkerboard drawn into image. Center ONE icon in frame, about 80% of canvas width/height. Design on an extremely coarse 16 by 16 logical pixel grid, enlarged crisply with hard square pixel edges, no antialiasing or glow blur. Chunky readable silhouette, near-black one-logical-pixel outer border, 4-6 opaque colours including bright highlights, few large details. It must read clearly at 16px. No text, no lettering, no frame, no UI, no shadow outside sprite, no extra objects. Subject: three tightly grouped tiny fiery orange skull faces, one larger high center skull and two lower flanking skulls, unified broad three-lobed silhouette. Orange-red shadows and bright pale amber highlights, dark eye holes. Extremely simple small shapes.",
+      "generatedPath": "C:\\Users\\falor\\.codex\\generated_images\\01a09ab9-888a-72f2-ac59-67f12e6d5c8b\\exec-109de781-2335-47f7-97e1-e35ae8eded9d.png",
+      "master": "masters/legion.png",
+      "output": "legion.png"
+    },
+    {
+      "name": "miniboss",
+      "prompt": "Create a single original pixel-art minimap icon for a dark fantasy action RPG, visually at home in Hero Siege. Use case: stylized-concept. This is a production tiny game sprite, NOT a concept painting. Square canvas with TRUE TRANSPARENT background, no background colour, no checkerboard drawn into image. Center ONE icon in frame, about 80% of canvas width/height. Design on an extremely coarse 16 by 16 logical pixel grid, enlarged crisply with hard square pixel edges, no antialiasing or glow blur. Chunky readable silhouette, near-black one-logical-pixel outer border, 4-6 opaque colours including bright highlights, few large details. It must read clearly at 16px. No text, no lettering, no frame, no UI, no shadow outside sprite, no extra objects. Subject: front-facing crimson red demon skull wearing a bold three-point gold-red crown, pale hot ivory eye holes, two short ivory tusks. Strong crown silhouette above a broad square red skull jaw. Extremely chunky and readable.",
+      "generatedPath": "C:\\Users\\falor\\.codex\\generated_images\\01a09ab9-888a-72f2-ac59-67f12e6d5c8b\\exec-8f5b4598-d934-439f-a576-7c51aadfafe3.png",
+      "master": "masters/miniboss.png",
+      "output": "miniboss.png"
+    }
+  ]
+}

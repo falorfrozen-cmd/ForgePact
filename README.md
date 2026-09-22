@@ -6,15 +6,34 @@ panel; settings are applied live while the game runs and re-applied on every lau
 
 ## ✨ Features
 
+Local early-population work remains **experimental, not release-ready**. It
+preserves density and real enemy births with a five-second scheduling target.
+The v3 player run at 4x recorded latest scheduled work at 7.694 seconds and a
+peak frame interval of 232.430ms. It missed the target; these counters do not
+prove every group finished spawning. Different maps are not an FPS benchmark.
+
+The next local candidate shares caller classification within each existing
+creation hook. Its production-body fixture reduced 2000 caller-object reads to
+1000 per 1000 births, preserving nested enemy-chain behavior. This is a lookup
+reduction, not a measured live frame-time improvement. It does not defer native
+map objects, reduce density or add hooks to the player build.
+
+The separate `build.bat profile` candidate measures nine map-generation stages
+alongside AI/hunt/draw paths. Capture can start before preset-data generation;
+the summary retains work before the first frame report. Player builds contain
+none of these diagnostic hooks or the recorder. See
+[capacity behavior and test scope](docs/population-capacity.md).
+
 | Feature | What it does |
 | --- | --- |
 | **Monster Density** | 1–5× more enemies in 0.5 steps (1, 1.5, 2 …), through the game's own `Enemy_Creator` spawners |
 | **Special Content** | Rift Portals, Battlefields, Cursed Orbs, Summon Portals, Chaos Pillars, Chaos Tower — up to 100× per zone |
 | **Drop Rates** | Gold, Dungeon Keys, Angelic Keys, Chaos + Crystal Keys, Bifröst Key and Relics — up to 100× |
+| **Mining Ore Amount (Experimental)** | Loot → Mining Ore Amount, 1–10×. Scales the stack quantity of ore awarded by mining; x1 is normal. In-game verification is still pending |
 | **Angelic / Unholy Drops (Experimental)** | ForgePact's own die per kill; on a hit the game builds one of its 49 real Angelic / Unholy uniques. x2 = 1 in 7,500 kills, each step adds a die, typable |
 | **Combat Modifiers** | Total Damage, Attack Speed, Faster Cast Rate, Defense, Life/Mana Replenish, physical and spell Critical Chance/Damage |
 | **Character Stats** | Experience, Magic Find and Movement Speed use the character's current total value, including equipment bonuses |
-| **Full Map Reveal** | Clears fog of war in every zone, so waypoints, dungeon entrances, chests, shrines and mining nodes show immediately (toggleable; F5 in-game also toggles it). An optional sub-toggle also fills the map with monsters: most packs do not exist until you walk near them, so it has each new zone create its packs on arrival |
+| **Full Map Reveal** | Clears fog of war in every zone, so waypoints, dungeon entrances, chests, shrines and mining nodes show immediately (toggleable; F5 in-game also toggles it). Its sub-toggle marks every monster pack on the map: most packs do not exist until you walk near them, so the map shows one marker per pack, by pack kind, without creating a single monster; the pack is born by the game when you get close and its real dots replace the marker. A second, off-by-default sub-toggle keeps the old behaviour of really spawning every pack on arrival, which costs frame time for the whole zone at high density. Markers are small icons by pack kind (ivory skull normal, hooded face ambush, magenta horned mask ancient, cyan helmet champion, gold chest colossal chest, amber skull trio legion, crowned crimson skull mini boss); spawners closer than ~96 px to each other, such as density copies, share one icon with a count badge. The icons are written to `<game>\bin\bp_ipc\packmarks\<kind>.png` on first use and never overwritten, so you can replace any of them with your own PNG (any size, transparent background; `packmarks reload` picks it up in a running game). Plugin command `packmarks` (`stat`, `icons 0|1`, `iconscale <mult>`, `reload`, `cluster <world px|0>`, `badge 0|1`, `style <kind|all> <subimage> <r> <g> <b>`, `radius <kind|all> <px>`, `fill <kind|all> 0|1`, `outline 0|1 [px]`, `alpha`, `ring 0|1`, `scale`, `list`) adjusts the look live; dots by kind are the fallback when an icon cannot be loaded |
 | **Pet Collects Quest Items** | While your pet is out it walks to pick-up quest items on screen and collects them one at a time, crediting the objective through the game's own collect. Pick-up items only; activate/break/talk objectives are left alone |
 | **Mark A Running Toggle Skill** | For Soul Spurn (White Mage), Lunar Orbit (Exo), Crematus (Plague Doctor), Submerged Knives (Butcher) and Maelstrom of Frost (Prophet), each with its toggle sub-talent allocated: a soft red outline appears around that skill's skill-bar slot the whole time the toggle is running, and disappears when it stops. A plain cast, or a skill outside the list, lights nothing (off by default) |
 | **Stop Double Cast Re-casting A Toggle Skill** | A double cast proc can cast one of those five skills a second time on its own, flipping its toggle straight back; with this on, that extra cast is skipped and the toggle stays the way your press left it. It only steps in when you actually have the skill's toggle sub-talent; your own presses and other skills' double casts are untouched (off by default) |
@@ -38,6 +57,15 @@ Drops are **not forced**. Every multiplier feeds the game's own dice: an item's
 likely, still random, still capped by the game's own rules. The vanilla value is stored
 on first touch, so moving the slider twice never compounds. `x1` restores vanilla
 exactly.
+
+**Mining Ore Amount** is a separate quantity control, not a drop-chance multiplier.
+The experimental implementation changes the amount of Copper, Iron, Gold, Ruby,
+Jade or Tarethium ore in a normal mining reward. It preserves the chosen ore type
+and is scoped to the mining call; it does not change mining XP, gems, prospecting
+or monster loot. It installs its two native hooks only when raised above x1, and
+uses the original reward unchanged if it cannot validate the reward parameters.
+The panel, adapter tests and Release DLL build have passed; the complete mining
+and pickup path still needs an in-game check. See [research and test scope](docs/mining-ore-research.md).
 
 Dungeon Keys, Angelic Keys and Relics are also gated a second time: outside their home
 zone the game rolls their drop type at zero chance, so the item can never come up no
@@ -601,3 +629,34 @@ for where the modified YYToolkit's complete corresponding source is.
 
 ForgePact is an independent, fan-made project and is **not affiliated with or
 endorsed by** AurieFramework, Panic Art Studios, or Hero Siege.
+
+## Local Miner helmet prototype
+
+Mining readiness and successful rewards are tracked separately. The latest local
+change removes an unnecessary instance-pointer conversion from the equipped
+bonus check and records why a reward was refused; real pickup and pulse
+verification is still pending.
+
+This checkout includes a high-defense Miner's Helmet experiment: 4x ore only while worn, a golden mining pulse, and Vein Resonance, which lets a finished dig also finish the two nearest eligible veins within 192 px through the game's own dig (4x ore each, no chaining; `minerhelm veins 0|1`). Create a test copy from Mods → Items, or from the sibling Item Editor's Miner signature template. See [prototype status and live checks](docs/miner-helmet-prototype.md).
+
+The local regression harness now runs the complete helmet and ore adapters
+together: equip/unequip, another player's mining, malformed equipment, room
+changes, bounded visual effects, and failed native rewards. The experimental
+build still has an unresolved in-game crash report; automated checks do not
+clear it for release.
+
+
+## AFK FARM independent reward compatibility (local, 2026-09-22)
+
+AFK FARM 0.5.0 owns its MF, XP, Gold and loot settings. During its short native
+reward scope, ForgePact passes through reward stats, drop-repeat hooks, extra
+LoadDrops gates and the relic filter. Outside that scope its normal settings
+remain active. Combat/density modifiers are unchanged. Neither plugin rewrites
+ForgePact's configuration. ForgePact is not required to use AFK FARM.
+
+The shared `hs_game_sdk/reward_scope.hpp` publishes compatibility and original
+repository denominators through a process-local named mapping; no cross-plugin
+symbol calls are used. Both DLLs must be rebuilt against that header. Older
+ForgePact DLLs have no isolation protocol and AFK refuses independent rewards
+with an update message, rather than silently stacking multipliers.
+

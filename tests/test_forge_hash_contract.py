@@ -54,6 +54,11 @@ EXPECTED_PLAYER_COMMANDS = {
     "toggleborder",
     # The toggle-skill double-cast re-cast guard (issue #11, Track A).
     "toggleguard",
+    # Mining ore quantity is a player setting; research-only diagnostics stay out.
+    "miningore", "minerhelm",
+    # Pack markers (map reveal's monster half since 1.4.5): the look of the
+    # markers and their counters, nothing that changes gameplay.
+    "packmarks",
 }
 
 

@@ -54,7 +54,7 @@ class TestMapRevealContract(unittest.TestCase):
         cfg = dict(forgepact.DEFAULTS, map_reveal=True, map_reveal_packs=True)
         cmds = forgepact.build_cmds(cfg)
         self.assertIn("reveal 1", cmds)
-        # packs default on in the plugin, so nothing extra is needed
+        # the markers default on in the plugin, so nothing extra is needed
         self.assertNotIn("reveal packs 1", cmds)
 
     def test_build_cmds_turns_packs_off_explicitly(self):
@@ -67,8 +67,43 @@ class TestMapRevealContract(unittest.TestCase):
     def test_packs_never_emitted_while_parent_is_off(self):
         # The child is meaningless on its own; emitting it would turn the
         # plugin flag on for a mod the player has switched off.
-        cfg = dict(forgepact.DEFAULTS, map_reveal=False, map_reveal_packs=True)
+        cfg = dict(forgepact.DEFAULTS, map_reveal=False, map_reveal_packs=True, map_reveal_spawn=True)
         self.assertFalse([c for c in forgepact.build_cmds(cfg) if c.startswith("reveal")])
+
+    # ---- the spawn pass is opt-in since 1.4.5 ------------------------------
+    def test_spawn_pass_defaults_off_and_is_only_emitted_to_turn_on(self):
+        # MEASURED 2026-09-22 (docs/population-performance-analysis.md): the
+        # living monsters, not their birth, are what costs frame time, so the
+        # markers are the default monster half and the real spawn pass is an
+        # explicit second child that the plugin defaults off.
+        self.assertIn("map_reveal_spawn", forgepact.DEFAULTS)
+        self.assertFalse(forgepact.DEFAULTS["map_reveal_spawn"])
+        cfg = dict(forgepact.DEFAULTS, map_reveal=True)
+        self.assertNotIn("reveal spawn 0", forgepact.build_cmds(cfg))
+        self.assertNotIn("reveal spawn 1", forgepact.build_cmds(cfg))
+        cfg = dict(forgepact.DEFAULTS, map_reveal=True, map_reveal_spawn=True)
+        cmds = forgepact.build_cmds(cfg)
+        self.assertIn("reveal spawn 1", cmds)
+        self.assertLess(cmds.index("reveal 1"), cmds.index("reveal spawn 1"))
+
+    def test_plugin_defaults_spawn_off_and_markers_on(self):
+        self.assertIn("bool m_Packs{ false };", self.header)
+        self.assertIn("bool m_Marks{ true };", self.header)
+        self.assertIn('v.rfind("spawn", 0) == 0', self.plugin_code)
+        # `reveal packs` is the markers; the distance lie must only follow `reveal spawn`.
+        idx = self.plugin_code.index('v.rfind("packs", 0) == 0')
+        packs_branch = self.plugin_code[idx:self.plugin_code.index('v.rfind("spawn", 0) == 0')]
+        self.assertIn("SetMarks", packs_branch)
+        self.assertNotIn("InstallDistanceLieHook", packs_branch)
+
+    def test_markers_ride_the_games_minimap_layer_after_it_drew(self):
+        # The hook must let the game draw first and add markers only for the
+        # monster family call - never replace or skip the game's own layer.
+        idx = self.plugin_code.index("static RValue& Hook_DrawMinimapDynamic(")
+        body = self.plugin_code[idx:idx + 1200]
+        self.assertLess(body.index("g_Orig_DrawMinimapDynamic(S, O, R, argc, A)"), body.index("PackMarkerFamilyIsEnemy"))
+        self.assertIn("markers.Draw(", body)
+        self.assertIn('HookOneScript("DrawMinimapDynamic"', self.plugin_code)
 
     # ---- plugin surface ----------------------------------------------------
     def test_plugin_accepts_the_packs_subcommand(self):
@@ -119,9 +154,9 @@ class TestMapRevealContract(unittest.TestCase):
         self.assertIn("enemyCreatorTimer", self.header)
         self.assertIn("m_PacksPending", self.header)
         idx = self.header.index("void TryOpenSpawnWindow")
-        body = self.header[idx:idx + 1800]
+        body = self.header[idx:]
         # the window may only open after a real timer value is seen
-        self.assertIn("VALUE_REAL", body)
+        self.assertIn("CreatorIsReady(inst)", body)
         self.assertIn("if (!ready) return;", body)
         self.assertLess(body.index("if (!ready) return;"), body.index("m_SpawnWindow.store"))
 
@@ -160,7 +195,7 @@ class TestMapRevealContract(unittest.TestCase):
         # distance would be changed. Behaviour is covered by
         # test_map_reveal_behavior.py, which calls the real hook before the
         # next OnFrame; this pins the structure.
-        self.assertIn("bool MayPopulate(const RValue& creator) const", self.header)
+        self.assertIn("bool MayPopulate(const RValue& creator)", self.header)
         self.assertIn("static bool CreatorIsReady(const RValue& creator)", self.header)
         self.assertIn("enemyCreatorTimer", self.header[self.header.index("static bool CreatorIsReady"):][:600])
 
@@ -222,7 +257,8 @@ class TestMapRevealContract(unittest.TestCase):
         # zone the player was standing in never got armed - the checkbox said
         # it applied live and nothing happened until the next zone change or a
         # reveal off/on cycle.
-        setter = self.header[self.header.index("void SetPacks(bool on)"):][:900]
+        setter = self.header[self.header.index("void SetPacks(bool on)"):]
+        setter = setter[:setter.index("bool WantsPackSpawn()")]
         self.assertIn("m_PacksPending = true", setter)
         # It must ARM the readiness-gated pass, not open the window directly -
         # skipping the gate would reintroduce the inert-creator bug.
@@ -234,7 +270,9 @@ class TestMapRevealContract(unittest.TestCase):
     def test_zone_with_no_creators_is_left_alone(self):
         idx = self.header.index("void TryOpenSpawnWindow")
         body = self.header[idx:idx + 1800]
-        self.assertIn("nothing to populate here", body)
+        self.assertIn("if (n < 1) { m_ReadyProbeCursor = 0; return; }", body)
+        # Do not cancel a pending pass just because the map loaded first.
+        self.assertNotIn("if (n < 1) { m_PacksPending = false;", body)
 
     def test_pending_state_gives_up_rather_than_polling_forever(self):
         self.assertIn("kPendingGiveUpTicks", self.header)

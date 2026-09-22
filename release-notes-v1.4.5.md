@@ -13,6 +13,85 @@ and the Prophet's **Maelstrom of Frost**.
 
 ## New
 
+- **"Reveal full map" now marks every monster pack instead of spawning it.**
+  Before: the map's monster sub-toggle created every pack of the zone as you
+  arrived, so that distant monsters would show on the revealed map. Filling a
+  zone that way put a whole zone's monsters into the game at once, and at high
+  density the game stayed slow for the whole zone even after the spawning had
+  finished, because the game keeps working on every living monster every
+  frame. Now the sub-toggle (**Show every monster pack on the map**) draws one
+  marker per pack the moment you arrive, by pack kind (normal, champion,
+  ancient, legion, mini boss), including density copies, without creating a
+  single monster. Each pack is still born by the game when you walk near it,
+  exactly as without the mod, and its real minimap dots replace the marker at
+  that moment. What a marker cannot show is the rarity roll of the monsters
+  inside the pack, which the game only decides when the pack is born. Each pack
+  kind has its own icon: a white dot for a normal pack, a white ring for an
+  ambush, a magenta diamond for ancient, a cyan star for champion, a gold chest
+  for a colossal chest, an orange triangle for a legion and a red bullseye for a
+  mini boss. Packs that sit close together, such as the copies Monster Density
+  adds, show as one icon with a small count. The icons are plain PNG files in
+  `bin\bp_ipc\packmarks\` next to your game; replace any of them with your own
+  picture of the same name and it is used instead (`packmarks reload` in a
+  running game, or the next launch). The `packmarks` plugin command changes
+  size, grouping distance, the count badge and, for the fallback dots, colour
+  and outline, live. Confirmed in the map screen on 2026-09-22; the first build's icon-based
+  markers drew nothing visible, which is why the dots replaced them.
+  The old behaviour is still available as a second, off-by-default
+  sub-toggle, **Really spawn every pack on arrival (heavy)**, for comparison; it
+  still lags at high density.
+- **Tyrant's Crown and Beacon no longer scan every monster for nothing.** While
+  either was worn, ForgePact walked every living monster every sixth frame to
+  wake sleeping ones, but the game never puts monsters to sleep, so the walk
+  only cost frame time. It now checks whether waking changed anything before
+  walking, and walks only if it did.
+- **Local early-population candidate (failed performance testing; not release-ready).**
+  Filling dense maps could exhaust the game's fixed monster-stat storage and
+  crash during enemy creation. On the supported game library, ForgePact now
+  reserves additional storage and starts groups in short batches, preserving density.
+  The local follow-up spreads additional density copies across frames as well
+  as pack births and prioritizes nearby copies. The latest local adjustment
+  targets five seconds instead of slowing almost to a stop during ordinary
+  frame-time fluctuations. The panel reports when that target is exceeded;
+  this target is not evidence that every group spawned.
+  The latest 4x-density test missed that target and caused severe lag even after
+  the queue counters emptied. No crash was reported in that run; the performance
+  issue remains unresolved. It cannot interrupt a single expensive game call.
+  A subsequent capture found silent groups expiring from those counters without
+  admission. They now remain separately reported as unconfirmed, rather than
+  implying that the map finished populating. Unsupported storage or insufficient
+  reserve is reported beside the option. Real monsters still cost frame time;
+  this is not a promise of unchanged FPS. Standalone native and queue tests pass;
+  they do not override the failed live performance check.
+  A local follow-up also fixes abandoning maps whose creators load after the
+  minimap, and avoids redundant Tyrant/Beacon scans of already-active monsters.
+  Automated behavior checks pass; this follow-up still needs live verification.
+  Further local refinements reduce repeated monster-ID lookups, temporary memory
+  allocations and repeated waiting-list scans. Enemy density, hunting behavior
+  and enabled features are preserved. The cause of silent groups and the actual
+  FPS gain still require in-game verification.
+  The next local candidate reduces repeated searches when selecting nearby
+  density copies and avoids rewriting idle population status unnecessarily.
+  A waiting group that starts spawning naturally can now be recognized, instead
+  of remaining marked as unconfirmed. This does not guarantee every group member
+  has spawned; live completion and performance testing remain outstanding.
+  The latest local refinement removes a repeated creator lookup during enemy
+  births. It preserves density and existing features; reduced stutter has not
+  yet been established in-game.
+
+- **Local Miner's Helmet prototype (not release-ready).** The helmet grants
+  exactly four times the ore while equipped; removing it restores normal ore
+  rewards. The gold mining pulse is cosmetic. The local follow-up clears stale
+  equipped status when returning to menus, rejects malformed equipment before
+  the game's item lookup, and checks mining ownership before reading gear.
+  An in-game crash investigation remains open; these checks are not a crash fix.
+
+- **Mining Ore Amount (experimental, not yet verified in-game).** A 1–10× slider
+  under Loot changes the quantity in a mining ore reward. x1 keeps normal mining.
+  The new adapter, panel persistence and native Release build have been checked;
+  the real game's mining and pickup behavior still needs verification. This is
+  independent of Gold/drop-rate controls and does not install hooks at its default.
+
 - **Auto-prospect items put in the Prospect Cube.** The cube's 9×6 prospect
   grid fills long before a full inventory is through it: you fill it, press
   Prospect, and fill it again, over and over. With the new **Auto-prospect**
@@ -100,3 +179,23 @@ plugin and the panel, so pressing **Install Mod Plugin** matters - updating only
 the panel leaves the old plugin in place.
 
 Use ForgePact only with an offline / EAC-disabled copy of Hero Siege.
+
+### Local experiment — not yet release-verified
+
+- Miner's Helmet prototype: high defense, 4x mining ore while equipped, and a golden pulse. A test-item button and an Item Editor signature template are available in the experiment checkout. Equipment detection, the final tooltip and the pulse still require live confirmation. Nearby-vein harvesting remains disabled.
+- The Mining Ore Amount slider works again on a character that has loaded the helmet: a worn helmet replaces the slider with x4, and with the helmet off the slider applies. Before, arming the helmet mechanic forced x1 whenever the helmet was not worn.
+- Vein Resonance (helmet worn): a finished dig also finishes the two nearest eligible veins within 192 px by queuing them through the game's own dig, so they drop ore at 4x with normal mining XP; depleted, busy, over-level or out-of-reach veins are skipped, a finished vein never chains, and `minerhelm veins 0|1` switches it. Verified live on 2026-09-23: two veins 154 and 186 px from the dug node completed with 4x ore.
+- The helmet's ore bonus no longer depends on the node naming its miner: on the installed build an ordinary dig leaves the node's miner field at `noone`, which the old check refused. The reward now also accepts a dig whose node has no named miner when the local player stands beside it; a node that names another player is still refused. Refusal reasons include the distance and the raw miner value.
+- The experimental helmet no longer requires an extra pointer conversion to recognize the miner. Failed bonus checks now record a reason instead of remaining silent. Automated reward/pulse checks pass; the reported in-game no-bonus issue is not yet confirmed resolved.
+
+
+## AFK FARM compatibility
+
+AFK FARM can now use its own reward settings while ForgePact is loaded. Its MF,
+XP, Gold and loot bonuses apply once during delivery. Your normal ForgePact
+settings still apply to active play and are not overwritten.
+
+Pack markers now use distinct fantasy icons: skull, hood, horned mask, helmet,
+chest, skull group and crowned skull. Each kind has its own shape and colour,
+with dark outlines to help it stand out on the minimap. Existing custom PNGs
+are still preserved.

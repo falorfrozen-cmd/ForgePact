@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ForgePact — Pack markers</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#0d1112;color:#f1e9de;font:15px/1.6 system-ui,sans-serif}main{max-width:1420px;margin:auto;padding:40px 32px}header{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #3d3630;padding-bottom:24px;margin-bottom:30px}h1{font-size:32px;line-height:1.2;margin:8px 0}p{color:#aaa69e;margin:5px 0}.eyebrow{color:#d4a36b;letter-spacing:3px;font-size:11px;font-weight:700}.badge{border:1px solid #5c4a36;background:#221e18;border-radius:6px;padding:8px 14px;color:#e8bf8b;white-space:nowrap}.grid{display:grid;grid-template-columns:repeat(7,minmax(120px,1fr));gap:12px}.card{min-width:0;background:#161b1c;border:1px solid #343b3c;border-radius:10px;overflow:hidden}.hero{height:155px;display:grid;place-items:center;background:radial-gradient(ellipse,#34302a55,transparent 75%);border-bottom:1px solid #303638}.hero img{height:96px;width:96px}.card h2{font-size:14px;text-align:center;margin:14px 0 0}.kind{font-size:10px;text-align:center;color:#999f9f;letter-spacing:1px;margin:4px 0 16px;text-transform:uppercase}img{image-rendering:pixelated;object-fit:contain}.sizes{display:flex;justify-content:space-evenly;align-items:end;padding:10px 5px 16px;gap:4px}.sizes div{display:flex;flex-direction:column;align-items:center;justify-content:end;gap:10px;color:#a4aaa9;font-size:10px}.sizes img{display:block}.strip{margin-top:30px;background:#171c1c;border:1px solid #343b3c;border-radius:10px;padding:20px}.strip h2{margin:0 0 14px;font-size:16px}.surfaces{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px}.surface{display:flex;align-items:center;justify-content:space-evenly;min-height:85px;border:1px solid #565552;border-radius:6px}.surface img{width:24px;height:24px}.ash{background:#151a21}.stone{background:#6a6d71}.earth{background:#513627}footer{font-size:12px;color:#979e9d;margin-top:22px}code{color:#ddb98b}@media(max-width:1000px){.grid{grid-template-columns:repeat(4,minmax(120px,1fr))}.surfaces{grid-template-columns:1fr}}@media(max-width:600px){main{padding:20px 12px}header{display:block}.badge{display:inline-block;margin-top:14px}.grid{grid-template-columns:repeat(2,minmax(120px,1fr))}}
+</style>
+<main>
+<header><div><div class="eyebrow">FORGEPACT / MINIMAP</div><h1>Know what lies ahead.</h1><p>Seven silhouettes. One mark for each unspawned monster group.</p></div><span class="badge">7 types · 16 × 16 PNG</span></header>
+<section class="grid" aria-label="Pack icon gallery" id="gallery"></section>
+<section class="strip"><h2>Map contrast · 24 px display</h2><div class="surfaces"><div class="surface ash"></div><div class="surface earth"></div><div class="surface stone"></div></div></section>
+<footer>Artwork preview — not an in-game screenshot. Each card shows the same production sprite at 16, 24 and 32 px. <code>packmarks reload</code> refreshes installed PNGs while playing.</footer>
+</main>
+<script>
+const types=[['normal','Normal','Bone skull'],['ambush','Ambush','Hooded face'],['ancient','Ancient','Horned mask'],['champion','Champion','Crested helmet'],['colossal_chest','Colossal chest','Gold chest'],['legion','Legion','Skull trio'],['miniboss','Miniboss','Crowned skull']];
+const gallery=document.getElementById('gallery');
+for(const [file,label,kind] of types){const card=document.createElement('article');card.className='card';card.innerHTML=`<div class="hero"><img src="${file}.png" alt="${label} icon"></div><h2>${label}</h2><p class="kind">${kind}</p><div class="sizes">${[16,24,32].map(n=>`<div><img src="${file}.png" alt="" width="${n}" height="${n}"><span>${n} px</span></div>`).join('')}</div>`;gallery.append(card)}
+document.querySelectorAll('.surface').forEach(surface=>{for(const [file,label] of types){const image=document.createElement('img');image.src=file+'.png';image.alt=label;surface.append(image)}});
+</script>
+</html>

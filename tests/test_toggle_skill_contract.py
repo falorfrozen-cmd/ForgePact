@@ -710,7 +710,7 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
         self.assertNotIn("TgProbeMark", self.stripped)
         self.assertNotIn("TgProbeSpurnAfterDraw", self.stripped)
 
-    def test_kplayercommands_is_unchanged_from_7aa3c66_plus_toggleborder(self):
+    def test_kplayercommands_contains_only_documented_player_commands(self):
         # P2 (ToggleIndicatorShipContractTests below) adds `toggleborder` -
         # the one entry this set has ever gained since 7aa3c66 - so this
         # class's own P1b-era assertion (which held through session 4) is
@@ -737,6 +737,11 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
             "toggleborder",
             # T1 (issue #11, Track A): the re-cast guard (ToggleGuardContractTests).
             "toggleguard",
+            # Explicit new player command, covered by test_mining_ore_behavior.
+            "miningore", "minerhelm",
+            # Pack markers (map reveal's monster half since 1.4.5): marker
+            # look and counters only; test_map_reveal_contract.py covers it.
+            "packmarks",
         }
         self.assertEqual(entries, expected)
 

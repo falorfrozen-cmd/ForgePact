@@ -1,5 +1,30 @@
 # Map reveal — research log
 
+Current shape (2026-09-22): the monster half of the map is now **pack
+markers**, not a spawn pass. `reveal packs` / the panel's nested checkbox draw
+one icon per `Enemy_Creator_*` spawner that has not given birth, inside the
+game's own minimap layer (`ForgePact::PackMarkers`, hooking
+`DrawMinimapDynamic` for the monster family and reusing its placement
+arguments). The pass that really spawns every pack on arrival still exists as
+`reveal spawn` / `map_reveal_spawn`, off by default. Why: a zone's worth of
+living monsters is what the game cannot afford per frame at high density,
+however they were born - see
+[population-performance-analysis.md](population-performance-analysis.md). The
+sections below record how the spawn pass was built and are kept as history.
+
+Current local candidate (2026-09-21): the later storage-exhaustion investigation
+and paced real-population candidate are in
+[population-capacity.md](population-capacity.md). The first live run drained its
+448 admissions, but the player reported a 15-20 second wait. The local follow-up
+replaced the two-per-frame FIFO with a ready-caller guard. A later snapshot
+used overflow storage without reported errors, but entry still hitched. The
+next adaptive candidate took at least 56 seconds with 216 queued groups in a
+live snapshot. The current local adjustment uses a five-second throughput target
+across density copies, measured native construction and early admission, without
+the minimum-frame-time feedback that starved the earlier queue. Live timing and
+smoothness acceptance are pending;
+the historical conclusions below describe earlier experiments.
+
 Status (2026-09-11): **SOLVED AND SHIPPED.** Monsters now appear on the
 revealed map, and the reason they never did turns out to have nothing to do
 with visibility at all — see §10, which supersedes the 2026-09-10 conclusions
@@ -372,8 +397,13 @@ The fix does not guess a delay. Readiness is **asked about**: the window only
 opens once a live `Enemy_Creator_obj` reports a real `enemyCreatorTimer`, with
 `Player_obj` present. A zone whose creators never become ready never gets
 lied to, which is the right failure direction — vanilla behaviour, not damage.
-A zone with no creators at all (town: 0 creators, 8 enemies) is dropped
-immediately rather than polled.
+The original fix dropped a zone with no creators (town: 0 creators, 8 enemies)
+immediately. The local 2026-09-22 follow-up corrects that inference: a minimap
+can appear before its creators, so an empty observation now keeps the bounded
+pending poll alive. A rotating 32-candidate probe finds ready siblings without
+letting one unready first creator block them. Per-creator readiness is still
+checked at admission. See `population-capacity.md` for the regression evidence;
+the historical live measurements below describe the earlier build.
 
 ### Measured on the fixed build
 
