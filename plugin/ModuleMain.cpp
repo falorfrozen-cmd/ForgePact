@@ -27904,143 +27904,6 @@ static void PackMarksCommand(const std::string& rest)
         }
 }
 
-// The second half of RunCommand's command chain. One `if`/`else if` chain
-// compiles as nested blocks, and RunCommand's had reached MSVC's limit
-// (fatal error C1061) in the research build; splitting the chain here
-// changes nothing about which command runs. Keep adding new commands
-// as standalone early returns at the top of RunCommand instead.
-static void RunCommandTail(const std::string& lc, const std::string& rest, const std::string& cmd)
-{
-    if (lc == "multname") {
-        std::string nm, num; nm = FirstToken(rest, num);
-        while (!num.empty() && (num.back()=='\r'||num.back()=='\n'||num.back()==' ')) num.pop_back();
-        try {
-            int n = std::stoi(num);
-            RValue idx = g_Yytk->CallBuiltin("asset_get_index", { RValue(nm) });
-            int oi = (int)idx.ToDouble();
-            if (oi < 0) { Out("multname: '" + nm + "' bulunamadi"); }
-            else { SetObjectMultiplier(oi, n); Out("multname " + nm + " (idx " + std::to_string(oi) + ") -> " + num); }
-        } catch (...) { Out("multname: kullanim -> multname Spawn_Rift_obj 3"); }
-    } else if (lc == "multobj") {
-        std::string idx, num; idx = FirstToken(rest, num);
-        try { int oi = std::stoi(idx); int n = std::stoi(num); SetObjectMultiplier(oi, n); Out("multobj " + idx + " -> " + num); }
-        catch (...) { Out("multobj: bad args"); }
-    } else if (lc == "mult") {
-        std::string which, num; which = FirstToken(rest, num); which = Lower(which);
-        int n = 1; try { n = std::stoi(num); } catch (...) {}
-        if (which == "off") { g_MultFreePos = g_MultCreate = g_MultElite = 1; Out("mult -> all OFF"); }
-        else if (which == "freepos") { g_MultFreePos = n; Out("mult FreePos -> " + std::to_string(n)); }
-        else if (which == "create") { g_MultCreate = n; Out("mult Create -> " + std::to_string(n)); }
-        else if (which == "elite") { g_MultElite = n; Out("mult Elite -> " + std::to_string(n)); }
-        else if (which == "all") { g_MultFreePos = g_MultCreate = g_MultElite = n; Out("mult ALL -> " + std::to_string(n)); }
-        else Out("mult: use freepos|create|elite|all|off <n>");
-    } else if (lc == "probestruct") {
-        std::string v = Lower(rest);
-        g_ProbeStruct = (v.find("off") == std::string::npos);
-        Out(std::string("probestruct -> ") + (g_ProbeStruct ? "ON" : "OFF"));
-    } else if (lc == "forceslot") {
-        std::string v = rest;
-        while (!v.empty() && std::isspace((unsigned char)v.back())) v.pop_back();
-        if (Lower(v) == "off") { g_ForceSlot = NAN; Out("forceslot -> OFF"); }
-        else { try { g_ForceSlot = std::stod(v); Out("forceslot -> " + std::to_string(g_ForceSlot)); } catch (...) { Out("forceslot: bad value"); } }
-    } else if (lc == "steamid") {
-        SteamId();
-    } else if (lc == "netscripts") {
-        NetScripts();
-    } else if (lc == "netdump") {
-        NetDump();
-    } else if (lc == "netstate") {
-        NetState();
-    } else if (lc == "p2paccept") {
-        P2PAccept(rest);
-    } else if (lc == "p2psend") {
-        std::string v = rest; while (!v.empty() && (v.back()=='\r'||v.back()=='\n'||v.back()==' ')) v.pop_back();
-        P2PSend(v);
-    } else if (lc == "p2ppoll") {
-        P2PPoll(rest);
-    } else if (lc == "p2pstats") {
-        P2PStats();
-    } else if (lc == "callext") {
-        CallExt(rest);
-    } else if (lc == "forcelogin") {
-        std::string v = Lower(rest);
-        g_ForceLogin = (v.find("on") != std::string::npos || v.find("1") != std::string::npos);
-        Out(std::string("forcelogin -> ") + (g_ForceLogin ? "ON" : "OFF") + " (IsLoggedIn calls so far=" + std::to_string(g_LoginCalls) + ")");
-    } else if (lc == "coopstart") {
-        // coopstart            -> load coop.ini
-        // coopstart <myport> <peerip> <peerport>
-        std::string a, r2; a = FirstToken(rest, r2);
-        if (a.empty()) { LoadCoopConfigAndMaybeStart(); }
-        else {
-            std::string ip, ps; ip = FirstToken(r2, ps);
-            while (!ps.empty() && (ps.back()=='\r'||ps.back()=='\n'||ps.back()==' ')) ps.pop_back();
-            try { CoopStart(std::stoi(a), ip, std::stoi(ps)); }
-            catch (...) { Out("coopstart: usage: coopstart <myport> <peerip> <peerport>"); }
-        }
-    } else if (lc == "coopstop") {
-        CoopStop();
-    } else if (lc == "buffme") {
-        std::stringstream ss(rest); double id=0,v0=100,v1=100,dur=600; ss>>id; ss>>v0; ss>>v1; ss>>dur;
-        ApplyBuff((int64_t)id, v0, v1, dur);
-    } else if (lc == "mbuff") {
-        std::stringstream ss(rest); std::string on; ss>>on;
-        double id=0,v0=0,v1=0; if(ss>>id){} if(ss>>v0){} if(ss>>v1){}
-        if (id>0){ g_MBuffId=(int64_t)id; g_MBuffV0=v0; g_MBuffV1=v1; }
-        bool en = (Lower(on).find("on")!=std::string::npos || on=="1");
-        g_MBuff.store(en);
-        Out(std::string("mbuff -> ")+(en?"ON":"OFF")+" id="+std::to_string(g_MBuffId)+" ["+std::to_string(g_MBuffV0)+","+std::to_string(g_MBuffV1)+"]");
-    } else if (lc == "dsdump") {
-        std::string mid, flt; mid = FirstToken(rest, flt);
-        while (!flt.empty() && (flt.back()=='\r'||flt.back()=='\n'||flt.back()==' ')) flt.pop_back();
-        try { DsDump(std::stod(mid), flt); } catch (...) { Out("dsdump: usage dsdump <mapId> [filter]"); }
-    } else if (lc == "coopstats") {
-        CoopStats();
-    } else if (lc == "cooprender") {
-        std::string v = Lower(rest);
-        bool on = (v.find("on") != std::string::npos || v.find("1") != std::string::npos);
-        g_CoopRender.store(on);
-        if (!on) CoopClearPuppet();
-        Out(std::string("cooprender -> ") + (on ? "ON" : "OFF") + " (puppet obj=" + g_PuppetObjName + ")");
-    } else if (lc == "coopobj") {
-        std::string n = rest; while (!n.empty() && (n.back()=='\r'||n.back()=='\n'||n.back()==' ')) n.pop_back();
-        if (!n.empty()) { CoopClearPuppet(); g_PuppetObjName = n; g_PuppetObjIdx = -1; Out("coopobj -> " + n); }
-        else Out("coopobj: need an object name (e.g. coopobj Player_obj)");
-    } else if (lc == "coopclear") {
-        CoopClearPuppet(); Out("coop: puppet cleared");
-    } else if (lc == "comp") {
-        std::string v = Lower(rest);
-        bool on = (v.find("on") != std::string::npos || v.find("1") != std::string::npos);
-        g_CompActive.store(on); CompSetBuffs(on);
-        if (!on) CompDespawn();
-        Out(std::string("companion -> ") + (on ? "ON (body=" + g_CompObjName + ", +loot/gold/reveal)" : "OFF"));
-    } else if (lc == "compobj") {
-        std::string n = rest; while (!n.empty() && (n.back()=='\r'||n.back()=='\n'||n.back()==' ')) n.pop_back();
-        if (!n.empty()) { CompDespawn(); g_CompObjName = n; g_CompObjIdx = -1; Out("compobj -> " + n); }
-        else Out("compobj: need an object name");
-    } else if (lc == "puppetinput") {
-        std::string v = Lower(rest);
-        g_HookPuppetInput = (v.find("off") == std::string::npos) && (v.find("0") == std::string::npos);
-        Out(std::string("puppetinput(IsMyPlayer=false for puppet) -> ") + (g_HookPuppetInput ? "ON" : "OFF"));
-    } else if (lc == "niget") {
-        std::string obj, r2; obj = FirstToken(rest, r2);
-        std::string ns, var; ns = FirstToken(r2, var);
-        while (!var.empty() && (var.back()=='\r'||var.back()=='\n'||var.back()==' ')) var.pop_back();
-        try { NiGet(obj, std::stoi(ns), var); } catch (...) { Out("niget: usage niget <obj> <n> <var>"); }
-    } else if (lc == "niset") {
-        std::string obj, r2; obj = FirstToken(rest, r2);
-        std::string ns, r3; ns = FirstToken(r2, r3);
-        std::string var, val; var = FirstToken(r3, val);
-        try { NiSet(obj, std::stoi(ns), var, std::stod(val)); } catch (...) { Out("niset: usage niset <obj> <n> <var> <val>"); }
-    } else if (lc == "nicall") {
-        std::string scr, r2; scr = FirstToken(rest, r2);
-        std::string obj, ns; obj = FirstToken(r2, ns);
-        while (!ns.empty() && (ns.back()=='\r'||ns.back()=='\n'||ns.back()==' ')) ns.pop_back();
-        try { NiCall(scr, obj, std::stoi(ns)); } catch (...) { Out("nicall: usage nicall <Script> <obj> <n>"); }
-    } else {
-        Out("unknown command: " + cmd);
-    }
-}
-
 // ---------------------------------------------------------------------------
 // menulayout (player build, read-only): where the main-menu and
 // character-select buttons are, in window (client) coordinates, so a tool
@@ -28350,6 +28213,10 @@ static void RunCommand(const std::string& line)
     // so the player build accepts it; a standalone early return for the
     // C1061 reason above.
     if (lc == "packmarks") { PackMarksCommand(rest); return; }
+    // Mining ore amount and the Miner's Helmet: standalone early returns for
+    // the same reason, so the else-if chain below keeps main's length.
+    if (lc == "miningore") { ForgePact::MiningOre::Command(rest); return; }
+    if (lc == "minerhelm") { ForgePact::MinerHelmet::Command(rest); return; }
     // Toggle-skill re-cast guard (issue #11, Track A). A standalone early
     // return for the same C1061 reason as `toggleborder` below. `1` only arms
     // it: FrameCallback installs the TalentUseClass hook once a player exists
@@ -28848,10 +28715,6 @@ static void RunCommand(const std::string& line)
         ForgePact::DensityManager::Instance().HandleCommand(rest);
     } else if (lc == "dropstats") {
         DropStats();
-    } else if (lc == "miningore") {
-        ForgePact::MiningOre::Command(rest);
-    } else if (lc == "minerhelm") {
-        ForgePact::MinerHelmet::Command(rest);
     } else if (lc == "dropmult") {
         std::string nm, num; nm = FirstToken(rest, num);
         try { SetDropMult(nm, std::stoi(num)); } catch (...) { Out("dropmult: bad args (e.g. dropmult relic 5)"); }
@@ -29148,8 +29011,133 @@ static void RunCommand(const std::string& line)
         DropRateCmd(rest);
     } else if (lc == "dungeonkey") {
         DungeonKeyCmd(rest);
+    } else if (lc == "multname") {
+        std::string nm, num; nm = FirstToken(rest, num);
+        while (!num.empty() && (num.back()=='\r'||num.back()=='\n'||num.back()==' ')) num.pop_back();
+        try {
+            int n = std::stoi(num);
+            RValue idx = g_Yytk->CallBuiltin("asset_get_index", { RValue(nm) });
+            int oi = (int)idx.ToDouble();
+            if (oi < 0) { Out("multname: '" + nm + "' bulunamadi"); }
+            else { SetObjectMultiplier(oi, n); Out("multname " + nm + " (idx " + std::to_string(oi) + ") -> " + num); }
+        } catch (...) { Out("multname: kullanim -> multname Spawn_Rift_obj 3"); }
+    } else if (lc == "multobj") {
+        std::string idx, num; idx = FirstToken(rest, num);
+        try { int oi = std::stoi(idx); int n = std::stoi(num); SetObjectMultiplier(oi, n); Out("multobj " + idx + " -> " + num); }
+        catch (...) { Out("multobj: bad args"); }
+    } else if (lc == "mult") {
+        std::string which, num; which = FirstToken(rest, num); which = Lower(which);
+        int n = 1; try { n = std::stoi(num); } catch (...) {}
+        if (which == "off") { g_MultFreePos = g_MultCreate = g_MultElite = 1; Out("mult -> all OFF"); }
+        else if (which == "freepos") { g_MultFreePos = n; Out("mult FreePos -> " + std::to_string(n)); }
+        else if (which == "create") { g_MultCreate = n; Out("mult Create -> " + std::to_string(n)); }
+        else if (which == "elite") { g_MultElite = n; Out("mult Elite -> " + std::to_string(n)); }
+        else if (which == "all") { g_MultFreePos = g_MultCreate = g_MultElite = n; Out("mult ALL -> " + std::to_string(n)); }
+        else Out("mult: use freepos|create|elite|all|off <n>");
+    } else if (lc == "probestruct") {
+        std::string v = Lower(rest);
+        g_ProbeStruct = (v.find("off") == std::string::npos);
+        Out(std::string("probestruct -> ") + (g_ProbeStruct ? "ON" : "OFF"));
+    } else if (lc == "forceslot") {
+        std::string v = rest;
+        while (!v.empty() && std::isspace((unsigned char)v.back())) v.pop_back();
+        if (Lower(v) == "off") { g_ForceSlot = NAN; Out("forceslot -> OFF"); }
+        else { try { g_ForceSlot = std::stod(v); Out("forceslot -> " + std::to_string(g_ForceSlot)); } catch (...) { Out("forceslot: bad value"); } }
+    } else if (lc == "steamid") {
+        SteamId();
+    } else if (lc == "netscripts") {
+        NetScripts();
+    } else if (lc == "netdump") {
+        NetDump();
+    } else if (lc == "netstate") {
+        NetState();
+    } else if (lc == "p2paccept") {
+        P2PAccept(rest);
+    } else if (lc == "p2psend") {
+        std::string v = rest; while (!v.empty() && (v.back()=='\r'||v.back()=='\n'||v.back()==' ')) v.pop_back();
+        P2PSend(v);
+    } else if (lc == "p2ppoll") {
+        P2PPoll(rest);
+    } else if (lc == "p2pstats") {
+        P2PStats();
+    } else if (lc == "callext") {
+        CallExt(rest);
+    } else if (lc == "forcelogin") {
+        std::string v = Lower(rest);
+        g_ForceLogin = (v.find("on") != std::string::npos || v.find("1") != std::string::npos);
+        Out(std::string("forcelogin -> ") + (g_ForceLogin ? "ON" : "OFF") + " (IsLoggedIn calls so far=" + std::to_string(g_LoginCalls) + ")");
+    } else if (lc == "coopstart") {
+        // coopstart            -> load coop.ini
+        // coopstart <myport> <peerip> <peerport>
+        std::string a, r2; a = FirstToken(rest, r2);
+        if (a.empty()) { LoadCoopConfigAndMaybeStart(); }
+        else {
+            std::string ip, ps; ip = FirstToken(r2, ps);
+            while (!ps.empty() && (ps.back()=='\r'||ps.back()=='\n'||ps.back()==' ')) ps.pop_back();
+            try { CoopStart(std::stoi(a), ip, std::stoi(ps)); }
+            catch (...) { Out("coopstart: usage: coopstart <myport> <peerip> <peerport>"); }
+        }
+    } else if (lc == "coopstop") {
+        CoopStop();
+    } else if (lc == "buffme") {
+        std::stringstream ss(rest); double id=0,v0=100,v1=100,dur=600; ss>>id; ss>>v0; ss>>v1; ss>>dur;
+        ApplyBuff((int64_t)id, v0, v1, dur);
+    } else if (lc == "mbuff") {
+        std::stringstream ss(rest); std::string on; ss>>on;
+        double id=0,v0=0,v1=0; if(ss>>id){} if(ss>>v0){} if(ss>>v1){}
+        if (id>0){ g_MBuffId=(int64_t)id; g_MBuffV0=v0; g_MBuffV1=v1; }
+        bool en = (Lower(on).find("on")!=std::string::npos || on=="1");
+        g_MBuff.store(en);
+        Out(std::string("mbuff -> ")+(en?"ON":"OFF")+" id="+std::to_string(g_MBuffId)+" ["+std::to_string(g_MBuffV0)+","+std::to_string(g_MBuffV1)+"]");
+    } else if (lc == "dsdump") {
+        std::string mid, flt; mid = FirstToken(rest, flt);
+        while (!flt.empty() && (flt.back()=='\r'||flt.back()=='\n'||flt.back()==' ')) flt.pop_back();
+        try { DsDump(std::stod(mid), flt); } catch (...) { Out("dsdump: usage dsdump <mapId> [filter]"); }
+    } else if (lc == "coopstats") {
+        CoopStats();
+    } else if (lc == "cooprender") {
+        std::string v = Lower(rest);
+        bool on = (v.find("on") != std::string::npos || v.find("1") != std::string::npos);
+        g_CoopRender.store(on);
+        if (!on) CoopClearPuppet();
+        Out(std::string("cooprender -> ") + (on ? "ON" : "OFF") + " (puppet obj=" + g_PuppetObjName + ")");
+    } else if (lc == "coopobj") {
+        std::string n = rest; while (!n.empty() && (n.back()=='\r'||n.back()=='\n'||n.back()==' ')) n.pop_back();
+        if (!n.empty()) { CoopClearPuppet(); g_PuppetObjName = n; g_PuppetObjIdx = -1; Out("coopobj -> " + n); }
+        else Out("coopobj: need an object name (e.g. coopobj Player_obj)");
+    } else if (lc == "coopclear") {
+        CoopClearPuppet(); Out("coop: puppet cleared");
+    } else if (lc == "comp") {
+        std::string v = Lower(rest);
+        bool on = (v.find("on") != std::string::npos || v.find("1") != std::string::npos);
+        g_CompActive.store(on); CompSetBuffs(on);
+        if (!on) CompDespawn();
+        Out(std::string("companion -> ") + (on ? "ON (body=" + g_CompObjName + ", +loot/gold/reveal)" : "OFF"));
+    } else if (lc == "compobj") {
+        std::string n = rest; while (!n.empty() && (n.back()=='\r'||n.back()=='\n'||n.back()==' ')) n.pop_back();
+        if (!n.empty()) { CompDespawn(); g_CompObjName = n; g_CompObjIdx = -1; Out("compobj -> " + n); }
+        else Out("compobj: need an object name");
+    } else if (lc == "puppetinput") {
+        std::string v = Lower(rest);
+        g_HookPuppetInput = (v.find("off") == std::string::npos) && (v.find("0") == std::string::npos);
+        Out(std::string("puppetinput(IsMyPlayer=false for puppet) -> ") + (g_HookPuppetInput ? "ON" : "OFF"));
+    } else if (lc == "niget") {
+        std::string obj, r2; obj = FirstToken(rest, r2);
+        std::string ns, var; ns = FirstToken(r2, var);
+        while (!var.empty() && (var.back()=='\r'||var.back()=='\n'||var.back()==' ')) var.pop_back();
+        try { NiGet(obj, std::stoi(ns), var); } catch (...) { Out("niget: usage niget <obj> <n> <var>"); }
+    } else if (lc == "niset") {
+        std::string obj, r2; obj = FirstToken(rest, r2);
+        std::string ns, r3; ns = FirstToken(r2, r3);
+        std::string var, val; var = FirstToken(r3, val);
+        try { NiSet(obj, std::stoi(ns), var, std::stod(val)); } catch (...) { Out("niset: usage niset <obj> <n> <var> <val>"); }
+    } else if (lc == "nicall") {
+        std::string scr, r2; scr = FirstToken(rest, r2);
+        std::string obj, ns; obj = FirstToken(r2, ns);
+        while (!ns.empty() && (ns.back()=='\r'||ns.back()=='\n'||ns.back()==' ')) ns.pop_back();
+        try { NiCall(scr, obj, std::stoi(ns)); } catch (...) { Out("nicall: usage nicall <Script> <obj> <n>"); }
     } else {
-        RunCommandTail(lc, rest, cmd);
+        Out("unknown command: " + cmd);
     }
 }
 

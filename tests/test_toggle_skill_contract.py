@@ -2395,6 +2395,10 @@ UNCHANGED_SINCE_T1 = (
 # research block, no new hook (context "Draw site, and the pins it moves").
 SKILL_TIMER_DRAW_CALL_LINE = "    SkillTimerDraw();"
 
+# The Miner's Helmet (1.4.5) draws its cosmetic pulse from the same callback,
+# on the line straight after the countdown's; it is removed the same way.
+MINER_HELMET_DRAW_CALL_LINE = "    ForgePact::MinerHelmet::Draw();"
+
 
 def assert_hook_draw_hud_buffs_unchanged_plus_skilltimer(testcase, new_body, old_body):
     """NARROWED for issue #55, not deleted: `Hook_DrawHudBuffs` was the one
@@ -2407,7 +2411,9 @@ def assert_hook_draw_hud_buffs_unchanged_plus_skilltimer(testcase, new_body, old
     testcase.assertEqual(lines.count(SKILL_TIMER_DRAW_CALL_LINE), 1, new_body)
     call_at = lines.index(SKILL_TIMER_DRAW_CALL_LINE)
     testcase.assertEqual(lines[call_at - 1].strip(), "ToggleIndicatorDraw();", new_body)
-    del lines[call_at]
+    testcase.assertEqual(lines.count(MINER_HELMET_DRAW_CALL_LINE), 1, new_body)
+    testcase.assertEqual(lines[call_at + 1], MINER_HELMET_DRAW_CALL_LINE, new_body)
+    del lines[call_at:call_at + 2]
     testcase.assertEqual("\n".join(lines), old_body)
 
 # The research block phase S must not touch at all: the sprite look probe the
@@ -2869,7 +2875,10 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         before = as_set(re.search(pattern, old, re.S).group(1))
         # `menulayout` is the read-only menu listing, another feature landing
         # in the same table (test_menu_layout_contract.py pins it).
-        self.assertEqual(now - before, {"autoprospect", "skilltimer", "menulayout"})
+        # `miningore`, `minerhelm` and `packmarks` are 1.4.5's mining slider,
+        # Miner's Helmet and map pack markers (their own tests cover them).
+        self.assertEqual(now - before, {"autoprospect", "skilltimer", "menulayout",
+                                        "miningore", "minerhelm", "packmarks"})
         self.assertEqual(before - now, set())
 
     # ---- Sprite look probe (R round 3, issue #11): `tgprobe sprite ...` ----
