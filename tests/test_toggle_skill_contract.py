@@ -31,6 +31,7 @@ PLUGIN_SRC = FORGEPACT_DIR / "plugin" / "ModuleMain.cpp"
 SDK_INCLUDE = REPO_ROOT / "hs-game-sdk" / "cpp" / "include" / "hs_game_sdk"
 SRC_DIR = FORGEPACT_DIR / "src"
 SDK_PY_PATH = REPO_ROOT / "hs-game-sdk" / "python"
+TOOLS_DIR = FORGEPACT_DIR / "tools"
 
 if str(TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(TESTS_DIR))
@@ -38,6 +39,8 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 if str(SDK_PY_PATH) not in sys.path:
     sys.path.insert(0, str(SDK_PY_PATH))
+if str(TOOLS_DIR) not in sys.path:
+    sys.path.insert(0, str(TOOLS_DIR))
 
 from test_release_hook_contract import function_body, strip_research_blocks  # noqa: E402
 
@@ -124,6 +127,48 @@ def macro_body(source: str, header: str) -> str:
         if not line.rstrip().endswith("\\"):
             break
     return "\n".join(lines[1:])
+
+
+def collapse(text: str) -> str:
+    """Whitespace-normalised text, for asserting a pinned sentence that this
+    hand-wrapped doc may split across lines."""
+    return " ".join(text.split())
+
+
+SEPARATOR_ROW = re.compile(r"^\|[\s:|-]+\|$")
+
+
+def parse_doc_table(doc: str, caption: str):
+    """Rows of the markdown table immediately under a `**caption**` line.
+
+    Each row is a list of trimmed cell strings, the id in `row[0]`. Raises
+    `ValueError` if the caption is not immediately followed by a header row
+    and a `|---|...|` separator row - a parser that instead scanned ahead
+    for the next line starting with `|` would keep "matching" a document
+    whose table structure had silently broken (AGENTS.md "Prove the
+    Instrument Before Trusting a Negative Result").
+    """
+    doc = doc.replace("\r\n", "\n")
+    marker = f"**{caption}**"
+    start = doc.index(marker) + len(marker)
+    lines = doc[start:].splitlines()
+    idx = 0
+    while idx < len(lines) and lines[idx].strip() == "":
+        idx += 1
+    if idx >= len(lines) or not lines[idx].strip().startswith("|"):
+        raise ValueError(f"no header row found after caption {caption!r}")
+    idx += 1
+    if idx >= len(lines) or not SEPARATOR_ROW.match(lines[idx].strip()):
+        raise ValueError(f"no separator row found after caption {caption!r}'s header")
+    idx += 1
+    rows = []
+    while idx < len(lines) and lines[idx].strip().startswith("|"):
+        cells = [c.strip() for c in lines[idx].strip().strip("|").split("|")]
+        rows.append(cells)
+        idx += 1
+    if not rows:
+        raise ValueError(f"no data rows found under caption {caption!r}")
+    return rows
 
 
 class ToggleProbeContractTests(unittest.TestCase):
@@ -737,6 +782,8 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
             "toggleborder",
             # T1 (issue #11, Track A): the re-cast guard (ToggleGuardContractTests).
             "toggleguard",
+            # Issue #55: the timed-skill countdown (SkillTimerShipContractTests).
+            "skilltimer",
             # Another feature in the same table, named rather than ignored:
             # the read-only menu listing (test_menu_layout_contract.py).
             "menulayout",
@@ -928,29 +975,44 @@ class ToggleIndicatorShipContractTests(unittest.TestCase):
         )
 
 
-# The five rows session 6 measured, cell by cell, quoted from
+# The rows sessions 6 and 9 measured, cell by cell, quoted from
 # docs/toggle-skills-research.md "## Results" -> "### Toggle skill table" and
-# "## Decision" -> "### After session 6". `counter` and `blender` are NOT here
-# and must not be: session 6 measured no persistent ON instance for Counter
-# (its toggle state is a player buff) and never ran Blender's ON/OFF steps.
+# "## Decision" -> "### After session 6" / "### After session 9". `counter`
+# and `blender` are NOT here and must not be: session 6 measured no
+# persistent ON instance for Counter (its toggle state is a player buff) and
+# never ran Blender's ON/OFF steps. `bushido`'s sub-talent cell is the named
+# constant, D-B1 - a base-form toggle, not a real `s<NN>` slot.
 SHIPPED_TABLE_ROWS = [
-    ("soulSpurn", 12, "White_Mage_Soul_Spurn_AOE_obj", '"isMyClient"', "Marker", '"purgatory"'),
-    ("lunarOrbit", 11, "Exo_Lunar_Orbit_Crescent_Moon_obj", "nullptr", "None", "nullptr"),
-    ("crematus", 13, "Plague_Doctor_Crematus_Controller_obj", "nullptr", "Marker", '"skillContamination"'),
-    ("submergedKnives", 13, "Butcher_Submerged_Knives_Knifehoarder_obj", "nullptr", "None", "nullptr"),
-    ("maelstromOfFrost", 11, "Prophet_Maelstrom_obj", '"isMyClient"', "TimerHeld", '"destroyTimer"'),
+    ("soulSpurn", 12, "White_Mage_Soul_Spurn_AOE_obj", '"isMyClient"', "Marker", '"purgatory"', 0.0),
+    ("lunarOrbit", 11, "Exo_Lunar_Orbit_Crescent_Moon_obj", "nullptr", "None", "nullptr", 0.0),
+    ("crematus", 13, "Plague_Doctor_Crematus_Controller_obj", "nullptr", "Marker", '"skillContamination"', 0.0),
+    ("submergedKnives", 13, "Butcher_Submerged_Knives_Knifehoarder_obj", "nullptr", "None", "nullptr", 0.0),
+    ("maelstromOfFrost", 11, "Prophet_Maelstrom_obj", '"isMyClient"', "TimerHeld", '"destroyTimer"', -1.0),
+    ("meteorStorm", 11, "Shaman_Meteor_Storm_Controller_obj", "nullptr", "Marker", '"skillAstroHeated"', 0.0),
+    ("bushido", "kToggleNoSubTalent", "Samurai_Bushido_obj", '"isMyClient"', "None", "nullptr", 0.0),
+    # Session 12 (workorder forgepact-skilltimer-buff-countdown): Counter's
+    # Give No Quarter form - the one `PlayerBuff` row, never resolved by name.
+    ("counter", 13, "Draw_Player_Buff_obj", "nullptr", "PlayerBuff", '"buffType"', 104.0),
 ]
 TABLE_ROW = re.compile(
-    r'\{\s*"(?P<ability>\w+)",\s*(?P<sub>\d+),\s*HeroSiege::Objects::GameObject::(?P<obj>\w+),\s*'
+    r'\{\s*"(?P<ability>\w+)",\s*(?P<sub>\d+|kToggleNoSubTalent),\s*HeroSiege::Objects::GameObject::(?P<obj>\w+),\s*'
     r'(?P<own>nullptr|"\w+"),\s*ToggleOnMark::(?P<mark>\w+),\s*(?P<field>nullptr|"\w+"),\s*'
     r'(?P<held>-?[\d.]+)\s*\}',
     re.S,
 )
+# kSkillTimerBuffRows' own row shape (SkillTimerMod.hpp): { "id", buffId,
+# measuredFirst, "Name (Class)" } - the session-12 buff-carried table, kept
+# module-level (like TABLE_ROW above) so both SkillTimerRuleContractTests'
+# _forbidden_names and SkillTimerBuffContractTests below can read it without
+# a second copy of the pattern.
+BUFF_ROW = re.compile(r'\{\s*"(?P<ability>\w+)",\s*(?P<buffId>\d+),\s*(?P<first>[\d.]+),\s*"(?P<display>[^"]+)"\s*\}')
 # Names the shipped table now owns: a production function spelling one of
 # these again would be a second, drifting copy of the row set.
 TABLE_ONLY_NAMES = (
     "White_Mage_Soul_Spurn_AOE_obj", '"purgatory"', '"skillContamination"', '"destroyTimer"',
     '"soulSpurn"', "kToggleIndicatorTalentId",
+    "Shaman_Meteor_Storm_Controller_obj", "Samurai_Bushido_obj", '"skillAstroHeated"',
+    '"meteorStorm"', '"bushido"', '"counter"',
 )
 # Nothing in the marker's draw path may reach for a partial or animated shape
 # (D-U9 rejected every countdown; D-U13 chose a static banded outline).
@@ -969,6 +1031,708 @@ def git_show(ref_path: str):
         ).stdout.decode("utf-8").replace("\r\n", "\n")
     except (OSError, subprocess.CalledProcessError):
         return None
+
+
+class SkillTimerShipContractTests(unittest.TestCase):
+    """The shipped timed-skill countdown (issue #55): `skilltimer`.
+
+    Companion to test_toggle_skill_behavior.py's `skilltimer/*` scenarios,
+    which run the read/latch/draw decisions end to end, and to
+    SkillTimerProbeContractTests, which pins the research instrument that
+    produced the looks and placements this class pins as the ship's own.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.plugin = PLUGIN_SRC.read_text(encoding="utf-8")
+        cls.stripped = strip_research_blocks(cls.plugin)
+        cls.header = (FORGEPACT_DIR / "plugin" / "include" / "ForgePact" / "SkillTimerMod.hpp").read_text(encoding="utf-8")
+        cls.panel = (SRC_DIR / "forgepact.py").read_text(encoding="utf-8")
+        cls.research_doc = (FORGEPACT_DIR / "docs" / "toggle-skills-research.md").read_text(encoding="utf-8")
+        cls.release_notes = (FORGEPACT_DIR / "release-notes-v1.4.5.md").read_text(encoding="utf-8")
+        cls.readme = (FORGEPACT_DIR / "README.md").read_text(encoding="utf-8")
+
+    def test_skilltimer_is_a_player_command(self):
+        match = re.search(
+            r"static const std::unordered_set<std::string> kPlayerCommands = \{(.*?)\};",
+            self.plugin, re.S)
+        self.assertIsNotNone(match)
+        entries = {tok.strip().strip('"') for tok in match.group(1).split(",") if tok.strip()}
+        self.assertIn("skilltimer", entries)
+        start = self.plugin.index('if (lc == "skilltimer")')
+        end = self.plugin.index('if (lc == "toggleguard")', start)
+        branch = self.plugin[start:end]
+        self.assertIn('v == "stat"', branch)
+        self.assertIn('v == "off" || v == "0"', branch)
+        self.assertNotIn("HookOneScript(", branch)
+        self.assertIn('if (lc == "skilltimer")', self.stripped)
+
+    def test_draw_is_called_after_toggle_indicator_outside_research(self):
+        body = function_body(self.plugin, "static RValue& Hook_DrawHudBuffs(")
+        self.assertIn("ToggleIndicatorDraw();", body)
+        self.assertIn("SkillTimerDraw();", body)
+        self.assertLess(body.index("ToggleIndicatorDraw();"), body.index("SkillTimerDraw();"))
+        stripped_body = function_body(self.stripped, "static RValue& Hook_DrawHudBuffs(")
+        self.assertIn("SkillTimerDraw();", stripped_body)
+
+    def test_off_is_the_first_statement(self):
+        body = function_body(self.plugin, "static void SkillTimerDraw(")
+        first_statement = body.strip().splitlines()[0].strip()
+        self.assertEqual(
+            first_statement,
+            "if (g_SkillTimerStyle.load() == ForgePact::SkillTimerStyle::Off) return;")
+
+    def test_ship_constants_equal_the_probe_defaults(self):
+        # D-U12/D-U13-style pin: every look constant the ship carries as its
+        # own is asserted equal to the probe's own default, so the two
+        # cannot drift apart.
+        ship_colour = re.search(
+            r"static constexpr double kSkillTimerColourR = ([\d.]+), kSkillTimerColourG = ([\d.]+), "
+            r"kSkillTimerColourB = ([\d.]+);", self.plugin)
+        probe_colour = re.search(
+            r"static double g_TgSpriteColourR = ([\d.]+), g_TgSpriteColourG = ([\d.]+), "
+            r"g_TgSpriteColourB = ([\d.]+);", self.plugin)
+        self.assertIsNotNone(ship_colour); self.assertIsNotNone(probe_colour)
+        self.assertEqual(ship_colour.groups(), probe_colour.groups())
+
+        ship_bands = re.search(r"static constexpr int kSkillTimerBands = (\d+);", self.plugin)
+        probe_bands = re.search(
+            r"static constexpr int kBands = (\d+);",
+            function_body(self.plugin, "static void TgProbeSpriteDrawSoft("))
+        self.assertIsNotNone(ship_bands); self.assertIsNotNone(probe_bands)
+        self.assertEqual(ship_bands.group(1), probe_bands.group(1))
+
+        ship_bar = re.search(
+            r"static constexpr double kSkillTimerBarGap = ([\d.]+), kSkillTimerBarHeight = ([\d.]+), "
+            r"kSkillTimerBarInset = ([\d.]+);", self.plugin)
+        self.assertIsNotNone(ship_bar)
+        probe_bar_body = function_body(self.plugin, "static void TgProbeSpriteDrawBar(")
+        probe_gap_height = re.search(
+            r"static constexpr double kBarGap = ([\d.]+), kBarHeight = ([\d.]+);", probe_bar_body)
+        self.assertIsNotNone(probe_gap_height)
+        probe_inset = re.search(r"static double g_TgSpriteBarInset = ([\d.]+);", self.plugin)
+        self.assertIsNotNone(probe_inset)
+        self.assertEqual(ship_bar.group(1), probe_gap_height.group(1))
+        self.assertEqual(ship_bar.group(2), probe_gap_height.group(2))
+        self.assertEqual(ship_bar.group(3), probe_inset.group(1))
+
+        # Only the horizontal text offset is still the probe's *default*. The
+        # vertical one is not the probe's default either (2026-09-21, owner,
+        # live: `tgprobe sprite style number` on the same box and font,
+        # `textoffset 0 -106` - "perfect") - it is what the owner accepted
+        # with the probe, which the ship now draws exactly (D-N1); see
+        # test_number_anchors_top_aligned_at_the_tuned_offset and
+        # test_ship_and_probe_number_formulas_agree. The probe's own default
+        # `g_TgSpriteTextOffsetDy` stays -101 for research (unchanged; see
+        # docs/toggle-skills-research.md).
+        ship_dx = re.search(r"static constexpr double kSkillTimerTextOffsetDx = (-?[\d.]+),", self.plugin)
+        probe_text = re.search(
+            r"static double g_TgSpriteTextOffsetDx = (-?[\d.]+), g_TgSpriteTextOffsetDy = (-?[\d.]+);",
+            self.plugin)
+        self.assertIsNotNone(ship_dx); self.assertIsNotNone(probe_text)
+        self.assertEqual(ship_dx.group(1), probe_text.group(1))
+
+    def test_ship_draw_references_no_research_symbol(self):
+        for sig in ("static void SkillTimerDraw(", "static void SkillTimerDrawArc(",
+                    "static void SkillTimerDrawBar(", "static void SkillTimerDrawNumber(",
+                    "static void SkillTimerDrawFade(", "static void SkillTimerDrawStyle(",
+                    "static void SkillTimerReadRow(", "static RValue SkillTimerColour(",
+                    "static bool SkillTimerResolveRowObject(", "static int SkillTimerToggleTwin(",
+                    "static std::string SkillTimerTableRowsLine(",
+                    "static void SkillTimerDrawRectOutlineFraction(",
+                    "static void SkillTimerStats(", "static std::string SkillTimerRowCountersLine(",
+                    "static std::string SkillTimerAggregateCountersLine("):
+            body = function_body(self.plugin, sig)
+            self.assertNotIn("TgProbe", body, sig)
+            self.assertNotIn("g_TgSprite", body, sig)
+
+    def test_stat_is_read_only(self):
+        start = self.plugin.index('if (lc == "skilltimer")')
+        end = self.plugin.index('if (lc == "toggleguard")', start)
+        branch = self.plugin[start:end]
+        stat_start = branch.index('v == "stat"')
+        stat_end = branch.index('v == "off" || v == "0"', stat_start)
+        stat_branch = branch[stat_start:stat_end]
+        self.assertIn("SkillTimerStats()", stat_branch)
+        self.assertNotIn("g_SkillTimerStyle.store", stat_branch)
+
+    def test_panel_default_is_off_and_startup_list_unchanged(self):
+        self.assertIn("mod_skill_timer_style", forgepact.DEFAULTS)
+        self.assertEqual(forgepact.DEFAULTS["mod_skill_timer_style"], "off")
+        cmds = forgepact.build_cmds(dict(forgepact.DEFAULTS))
+        self.assertFalse([c for c in cmds if c.startswith("skilltimer")])
+
+    def test_build_cmds_emits_each_style(self):
+        for style in ("arc", "bar", "number", "fade"):
+            cfg = dict(forgepact.DEFAULTS)
+            cfg["mod_skill_timer_style"] = style
+            self.assertIn(f"skilltimer {style}", forgepact.build_cmds(cfg))
+        # A hand-edited invalid saved value emits nothing.
+        cfg = dict(forgepact.DEFAULTS)
+        cfg["mod_skill_timer_style"] = "not-a-style"
+        self.assertFalse([c for c in forgepact.build_cmds(cfg) if c.startswith("skilltimer")])
+
+    def test_invalid_style_is_rejected(self):
+        self.assertFalse(forgepact.skill_timer_style_valid("glow"))
+        self.assertFalse(forgepact.skill_timer_style_valid(""))
+        self.assertFalse(forgepact.skill_timer_style_valid(None))
+        self.assertTrue(forgepact.skill_timer_style_valid("  Arc  "))
+        self.assertTrue(forgepact.skill_timer_style_valid("OFF"))
+        # /api/set answers 400 and saves nothing on an invalid value.
+        self.assertIn('self._json({"err": "invalid skilltimer style"}, 400)', self.panel)
+
+    def test_html_has_one_select_with_five_styles_in_order(self):
+        self.assertEqual(forgepact.HTML.count("<select"), 1)
+        m = re.search(
+            r'<select class="style-select" id="mod_skill_timer_style">(.*?)</select>',
+            forgepact.HTML, re.S)
+        self.assertIsNotNone(m)
+        values = re.findall(r'<option value="(\w+)">', m.group(1))
+        self.assertEqual(values, ["off", "arc", "bar", "number", "fade"])
+
+    def test_panel_sends_the_live_command(self):
+        self.assertIn(
+            "send_cmds([f\"skilltimer {cfg['mod_skill_timer_style']}\"], cfg)",
+            self.panel,
+        )
+
+    def test_select_painted_in_both_render_paths(self):
+        self.assertEqual(
+            self.panel.count("document.getElementById('mod_skill_timer_style').value="), 2)
+        # Never in the boolean/on-off maps: those set .checked, not .value.
+        booleans_start = self.panel.index("const booleans={")
+        booleans_line = self.panel[booleans_start:self.panel.index("};", booleans_start)]
+        self.assertNotIn("mod_skill_timer_style", booleans_line)
+
+    def test_research_decision_records_route_b(self):
+        decision = self.research_doc[self.research_doc.index("### Decision", self.research_doc.index(
+            "## Issue #55")):]
+        self.assertIn("Route B, taken by the user on 2026-09-21", decision)
+        self.assertIn("latched", decision)
+        self.assertIn("unlatched", decision)
+        self.assertIn("Mid-cast limitation", decision)
+        self.assertNotIn("Not yet taken", decision)
+
+    def test_release_notes_and_readme_name_the_control(self):
+        # The contract: the panel's own visible label appears in both player-
+        # facing documents so a reader can match the control to the note.
+        label = "Timed skill countdown"
+        self.assertIn(f'<span class="lbl" style="width:auto;flex:1">{label}', self.panel)
+        self.assertIn(label, self.release_notes)
+        self.assertIn(label, self.readme)
+
+    # ---- session 8: the countdown's own table (D-S1) ----------------------
+    # The countdown reads kSkillTimerRows and nothing else; each row is one
+    # the duration sweep measured (docs/toggle-skills-research.md, "Duration
+    # sweep (session 8)" -> "Results", status `ship`).
+
+    COUNTDOWN_ROW = re.compile(
+        r'\{\s*"(?P<ability>[A-Za-z]+)",\s*HeroSiege::Objects::GameObject::(?P<obj>\w+),\s*'
+        r'(?P<own>nullptr|"isMyClient"),\s*(?P<first>[\d.]+),\s*"(?P<display>[^"]+)"\s*\}')
+    # abilityId -> (object, ownership, measuredFirst): session 8's four rows
+    # plus session 10's three (Progenies, Pickup Raid, Dissipating Tornado) -
+    # seven explicit rows in total.
+    SHIP_SET = {
+        "healingZone": ("White_Mage_Healing_Zone_obj", "nullptr", 1152.0),
+        "bladeBarrier": ("Samurai_Blade_Barrier_obj", '"isMyClient"', 1296.0),
+        "soulSpurn": ("White_Mage_Soul_Spurn_AOE_obj", '"isMyClient"', 144.0),
+        "maelstromOfFrost": ("Prophet_Maelstrom_obj", '"isMyClient"', 4320.0),
+        "progeniesOfTheGreatCataclysm": ("Bard_Progenies_Amplifier_obj", "nullptr", 2880.0),
+        "pickupRaid": ("Redneck_Pickup_Truck_obj", '"isMyClient"', 576.0),
+        "dissipatingTornado": ("Dissipating_Tornado_obj", "nullptr", 432.0),
+    }
+
+    def countdown_table(self):
+        start = self.header.index("inline constexpr SkillTimerRow kSkillTimerRows[] = {")
+        return self.header[start:self.header.index("\n};", start)]
+
+    def countdown_rows(self):
+        return [m.groupdict() for m in self.COUNTDOWN_ROW.finditer(self.countdown_table())]
+
+    def test_countdown_iterates_the_countdown_table_not_the_toggle_table(self):
+        rows = self.countdown_rows()
+        self.assertEqual(
+            {r["ability"]: (r["obj"], r["own"], float(r["first"])) for r in rows}, self.SHIP_SET)
+        self.assertEqual(len(rows), len(self.SHIP_SET), self.countdown_table())
+        self.assertIn("inline constexpr int kSkillTimerRowCount =", self.header)
+        draw = function_body(self.stripped, "static void SkillTimerDraw(")
+        for needle in ("r < ForgePact::kSkillTimerRowCount", "ForgePact::kSkillTimerRows[r]",
+                       "g_SkillTimerTableIds.Get(r)", "g_SkillTimerRowState[r]", "g_StRow[r]"):
+            self.assertIn(needle, draw, needle)
+        for banned in ("kToggleSkillRowCount", "g_ToggleTableIds"):
+            self.assertNotIn(banned, draw, banned)
+        for decl in ("static ForgePact::SkillTimerRowState g_SkillTimerRowState[ForgePact::kSkillTimerRowCount];",
+                     "static SkillTimerRowCounters g_StRow[ForgePact::kSkillTimerRowCount] = {};"):
+            self.assertIn(decl, self.stripped, decl)
+        self.assertIn("static void SkillTimerReadRow(const ForgePact::SkillTimerRow& row,", self.stripped)
+
+    def test_every_countdown_row_is_measured_in_the_research_doc(self):
+        doc = self.research_doc
+        sweep = doc.index("### Duration sweep (session 8)")
+        results = doc[doc.index("#### Results", sweep):]
+        table_lines = [line for line in results.splitlines() if line.startswith("|")]
+        for row in self.countdown_rows():
+            first = "%.6f" % float(row["first"])
+            hits = [line for line in table_lines
+                    if f"`{row['obj']}`" in line and first in line
+                    and len(line.split("|")) > 12 and line.split("|")[11].strip() == "ship"]
+            self.assertTrue(hits, f"{row['ability']}: no `ship` Results row naming {row['obj']} with {first}")
+
+    def test_countdown_rows_use_sdk_constants_and_no_talent_ids(self):
+        objects_hpp = (SDK_INCLUDE / "objects.hpp").read_text(encoding="utf-8")
+        struct = self.header[self.header.index("struct SkillTimerRow {"):]
+        struct = struct[:struct.index("};")]
+        self.assertNotIn("int ", struct)          # no talent id column: ids resolve at runtime (D-P1)
+        self.assertNotIn("talentId", self.countdown_table())
+        for row in self.countdown_rows():
+            self.assertRegex(objects_hpp, rf"\b{row['obj']}\s*=\s*\d+,", row)
+            # Every runtime name lives in the header's table, never again in
+            # the plugin's player build.
+            self.assertNotIn(f'"{row["ability"]}"', self.stripped, row)
+            self.assertNotIn(row["obj"], self.stripped, row)
+        # Companion skills are out (owner, 2026-09-21): no row sits under the
+        # sentry parent, whose members this table's objects would be named for.
+        for banned in ("Turret", "Totem", "Hydra"):
+            self.assertNotIn(banned, self.countdown_table(), banned)
+
+    def test_both_tables_resolve_in_one_walk(self):
+        walk = function_body(self.plugin, "static bool ToggleTableResolveIds(")
+        self.assertEqual(walk.count('"ds_map_find_first"'), 1)
+        for needle in ("ForgePact::kToggleSkillRows[r].abilityId", "g_ToggleTableIds.Set(r, id)",
+                       "ForgePact::kSkillTimerRows[r].abilityId", "g_SkillTimerTableIds.Set(r, id)",
+                       "SkillTimerTableUnresolvedRows()"):
+            self.assertIn(needle, walk, needle)
+        due = function_body(self.plugin, "static bool ToggleTableResolveDue(")
+        # Issue #55 follow-up (D-S4) removed the "stop once every explicit
+        # row of both tables has resolved" early-out - the rule map has no
+        # such stopping signal and needs rebuilding every room regardless.
+        # Round 1 restores that early-out for style Off ONLY (the one case
+        # where the rule map is never consulted anyway); a look selected
+        # stays due purely on the once-per-room gate, plus one more walk in
+        # the same room if the last one ran while Off.
+        self.assertIn("ToggleTableUnresolvedRows() + SkillTimerTableUnresolvedRows() == 0) return false;", due)
+        self.assertIn("g_SkillTimerStyle.load() == ForgePact::SkillTimerStyle::Off", due)
+        self.assertIn("return g_ToggleResolveWalkedRuleOff;", due)
+        # No second walk anywhere: the countdown's ids come from this one.
+        self.assertEqual(self.stripped.count('"ds_map_find_first", { map }'), 1)
+        self.assertNotIn("ToggleTableResolveIds", function_body(self.plugin, "static void SkillTimerDraw("))
+
+    def test_guard_membership_is_toggle_table_only(self):
+        for sig in ("static int ToggleTableRowForTalentId(", "static RValue& HookTalentUseClass("):
+            body = function_body(self.plugin, sig)
+            for banned in ("kSkillTimerRow", "g_SkillTimerTableIds", "SkillTimerRow"):
+                self.assertNotIn(banned, body, sig + "/" + banned)
+        self.assertIn("ForgePact::kToggleSkillRowCount",
+                      function_body(self.plugin, "static int ToggleTableRowForTalentId("))
+
+    def test_stat_prints_one_line_per_countdown_row(self):
+        stats = function_body(self.stripped, "static void SkillTimerStats(")
+        self.assertIn("r < ForgePact::kSkillTimerRowCount", stats)
+        self.assertIn("SkillTimerRowCountersLine(r)", stats)
+        self.assertIn("SkillTimerTableRowsLine()", stats)
+        self.assertNotIn("ToggleTableRowsLine()", stats)
+        row_line = function_body(self.stripped, "static std::string SkillTimerRowCountersLine(")
+        self.assertIn("ForgePact::kSkillTimerRows[row].abilityId", row_line)
+        ids_line = function_body(self.stripped, "static std::string SkillTimerTableRowsLine(")
+        for needle in ("ForgePact::kSkillTimerRows[r].abilityId", ":talentId=", "unresolved",
+                       "resolveWalks=", "unresolvedRows=", "SkillTimerTableUnresolvedRows()"):
+            self.assertIn(needle, ids_line, needle)
+        aggregate = function_body(self.stripped, "static std::string SkillTimerAggregateCountersLine(")
+        self.assertIn("ForgePact::kSkillTimerRowCount", aggregate)
+        self.assertNotIn("kToggleSkillRowCount", aggregate)
+
+    def test_number_anchors_top_aligned_at_the_tuned_offset(self):
+        # 2026-09-21 live tuning (owner, `tgprobe sprite style number` on the
+        # D-U12 box in `__newfont6`): `textoffset 0 -106` - "perfect". The
+        # ship now draws that same anchor (D-N1: what was judged is what
+        # ships) - top alignment from the box's BOTTOM edge, not bottom
+        # alignment from its TOP.
+        body = function_body(self.plugin, "static void SkillTimerDrawNumber(")
+        self.assertIn('"draw_set_valign", { RValue(0.0) }', body)
+        self.assertIn("y + h + kSkillTimerTextOffsetDy", body)
+        self.assertNotIn("kSkillTimerTextGap", self.plugin)
+        dy = re.findall(r"kSkillTimerTextOffsetDy = (-?[\d.]+)", self.plugin)
+        self.assertEqual(len(dy), 1, dy)
+        self.assertEqual(float(dy[0]), round(float(dy[0])))   # whole pixels (guide Known Limitations 18)
+        self.assertEqual(float(dy[0]), -106.0)
+        # __newfont6 is still resolved by name, unresolved counted rather
+        # than failing the draw - unchanged by the anchor move.
+        self.assertIn('CallBuiltin("asset_get_index", { RValue(std::string("__newfont6")) })', body)
+        # The bar's own gap is untouched by this change.
+        bar_gap = re.search(r"static constexpr double kSkillTimerBarGap = ([\d.]+),", self.plugin)
+        self.assertEqual(float(bar_gap.group(1)), 2.0)
+
+    def test_ship_and_probe_number_formulas_agree(self):
+        # D-N1: the ship draws the probe's exact formula, so what the owner
+        # judged live with the probe is what ships. Only the ship's dy is
+        # its own tuned value (-106); the probe's own default dy stays -101
+        # for research (context "Why the probe default stays -101").
+        ship_body = function_body(self.plugin, "static void SkillTimerDrawNumber(")
+        probe_body = function_body(self.plugin, "static void TgProbeSpriteDrawNumber(")
+        for body in (ship_body, probe_body):
+            self.assertIn('"draw_set_halign", { RValue(1.0) }', body)
+            self.assertIn('"draw_set_valign", { RValue(0.0) }', body)
+        self.assertIn("x + w / 2.0 + kSkillTimerTextOffsetDx", ship_body)
+        self.assertIn("y + h + kSkillTimerTextOffsetDy", ship_body)
+        self.assertIn("x + w / 2.0 + g_TgSpriteTextOffsetDx", probe_body)
+        self.assertIn("y + h + g_TgSpriteTextOffsetDy", probe_body)
+
+        ship_dx = re.search(r"static constexpr double kSkillTimerTextOffsetDx = (-?[\d.]+), "
+                             r"kSkillTimerTextOffsetDy = (-?[\d.]+);", self.plugin)
+        probe_text = re.search(
+            r"static double g_TgSpriteTextOffsetDx = (-?[\d.]+), g_TgSpriteTextOffsetDy = (-?[\d.]+);",
+            self.plugin)
+        self.assertIsNotNone(ship_dx); self.assertIsNotNone(probe_text)
+        self.assertEqual(ship_dx.group(1), probe_text.group(1))   # dx: still the probe's default
+        self.assertEqual(ship_dx.group(2), "-106.0")   # dy: the accepted value, not the probe's default
+
+        probe_scale = re.search(r"static double g_TgSpriteScale = ([\d.]+);", self.plugin)
+        self.assertIsNotNone(probe_scale)
+        self.assertEqual(float(probe_scale.group(1)), 1.0)
+
+        # The tuned Blade Barrier box (2026-09-21): 77x78 @ (92, 1121).
+        bw, bh, bx, by = 77.0, 78.0, 92.0, 1121.0
+        dx, dy = float(ship_dx.group(1)), float(ship_dx.group(2))
+        tx = bx + bw / 2.0 + dx
+        ty = by + bh + dy
+        self.assertEqual((tx, ty), (130.5, 1093.0))
+
+
+class SkillTimerRuleContractTests(unittest.TestCase):
+    """Rule-based coverage of untested skills (issue #55 follow-up, D-S4).
+
+    Companion to SkillTimerShipContractTests (the seven explicit rows) and
+    test_toggle_skill_behavior.py's `rule/*` scenarios, which run the
+    eligibility decision and the rule draw end to end against a controlled
+    game API. This class pins the source text: the generated table matches
+    hs-game-sdk, no hand-typed object name reaches the rule path, the walk
+    reads the right fields by name, the deny-list names every measured
+    negative, and the player text states the tier honestly.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.plugin = PLUGIN_SRC.read_text(encoding="utf-8")
+        cls.stripped = strip_research_blocks(cls.plugin)
+        cls.header = (FORGEPACT_DIR / "plugin" / "include" / "ForgePact" / "SkillTimerMod.hpp").read_text(encoding="utf-8")
+        cls.names_header = (FORGEPACT_DIR / "plugin" / "include" / "ForgePact" / "SkillTimerNames.hpp").read_text(encoding="utf-8")
+        # Round 1: the toggle table's own abilityIds are one of the four
+        # sources player-text forbidden names are derived from - read live so
+        # a row the Meteor Storm session adds to kToggleSkillRows is picked
+        # up with no test edit.
+        cls.toggle_header = (FORGEPACT_DIR / "plugin" / "include" / "ForgePact" / "ToggleSkillMod.hpp").read_text(
+            encoding="utf-8")
+        cls.panel = (SRC_DIR / "forgepact.py").read_text(encoding="utf-8")
+        cls.research_doc = (FORGEPACT_DIR / "docs" / "toggle-skills-research.md").read_text(encoding="utf-8")
+        cls.release_notes = (FORGEPACT_DIR / "release-notes-v1.4.5.md").read_text(encoding="utf-8")
+        cls.readme = (FORGEPACT_DIR / "README.md").read_text(encoding="utf-8")
+
+    DENY_LIST = {
+        "submergedKnives", "crematus", "blizzard", "arrowRain", "meteorStorm",
+        "defensiveShout", "berserk", "arrowTurret", "fireTotem",
+        "bushido", "holyForm", "unholyForm", "melonForm",
+    }
+    EXPLICIT_ROWS = {
+        "healingZone", "bladeBarrier", "soulSpurn", "maelstromOfFrost",
+        "progeniesOfTheGreatCataclysm", "pickupRaid", "dissipatingTornado",
+    }
+
+    def test_generated_table_matches_the_sdk(self):
+        import gen_skill_timer_names as gen
+        rows, ambiguous = gen.build_table()
+        table = {key: member for key, member in rows}
+        # Hand-checked positive controls, not just trusting the generator's
+        # own output: real, independently-known object names.
+        self.assertEqual(table["orboffrost"].name, "Jotunn_Orb_of_Frost_obj")
+        self.assertEqual(table["volcano"].name, "Pyromancer_Volcano_obj")
+        self.assertEqual(table["healingzone"].name, "White_Mage_Healing_Zone_obj")
+        self.assertGreaterEqual(len(rows), 700)
+        # Regeneration is byte-identical to the checked-in header.
+        self.assertEqual(gen.render(rows), self.names_header)
+
+    def test_generated_table_has_no_companion_and_no_ambiguous_entry(self):
+        import gen_skill_timer_names as gen
+        from hs_game_sdk import GameObject, get_ancestor_indices
+        rows, ambiguous = gen.build_table()
+        for key, member in rows:
+            ancestors = {GameObject(a).name for a in get_ancestor_indices(member.value)}
+            self.assertNotIn("Player_Sentry_Parent_obj", ancestors, key)
+        # The prototype run's own measured ambiguous keys stay dropped.
+        for key in ("menulight", "icyground", "buckshot"):
+            self.assertIn(key, ambiguous, key)
+        keys = {key for key, _ in rows}
+        for key in ("menulight", "icyground", "buckshot"):
+            self.assertNotIn(key, keys, key)
+        # A companion object itself never has a key in the shipped table.
+        self.assertNotIn('"arrowturret"', self.names_header)
+        self.assertNotIn('"firetotem"', self.names_header)
+
+    def test_no_hand_typed_object_name_reaches_the_rule_path(self):
+        player = strip_research_blocks(self.plugin)
+        for sig in ("static bool ToggleTableResolveIds(", "static void SkillTimerDraw(",
+                    "static bool SkillTimerRuleResolveObject(", "static void SkillTimerRuleReadEntry("):
+            body = function_body(player, sig)
+            self.assertNotIn("GameObject::", body, sig)
+        # SkillTimerEnumerateHotbar's own hotbar lookup is the one legitimate
+        # exception - the same shared UI_Hud_Talent_obj ToggleIndicatorFindSlot
+        # already hand-names. Any OTHER enumerator here would be a hand-typed
+        # skill object reaching the rule path.
+        hotbar = function_body(player, "static bool SkillTimerEnumerateHotbar(")
+        names = set(re.findall(r"GameObject::(\w+)", hotbar))
+        self.assertEqual(names, {"UI_Hud_Talent_obj"})
+        # The only other literal enumerators anywhere are the seven explicit
+        # rows (SkillTimerMod.hpp) and the generated header's own table.
+        rule_section = self.header[self.header.index("struct SkillTimerRuleEntry"):]
+        self.assertNotIn("GameObject::", rule_section)
+
+    def test_eligibility_reads_duration_and_cooldown_by_name_with_the_floor_constant(self):
+        walk = function_body(self.plugin, "static bool ToggleTableResolveIds(")
+        for needle in ('"abilityDuration"', '"abilityCooldown"', "SkillTimerRuleModel::Eligible("):
+            self.assertIn(needle, walk, needle)
+        eligible = function_body(self.header, "static bool Eligible(")
+        for needle in ("kSkillTimerCooldownFloor", "duration > 0.0", "isExplicitRow", "denied", "readable"):
+            self.assertIn(needle, eligible, needle)
+        self.assertIn("inline constexpr double kSkillTimerCooldownFloor = 0.25;", self.header)
+
+    def test_deny_list_names_every_measured_negative(self):
+        block = self.header[self.header.index("kSkillTimerRuleDeny[] = {"):]
+        block = block[:block.index("};")]
+        for name in self.DENY_LIST:
+            self.assertIn(f'"{name}"', block, name)
+        self.assertEqual(len(self.DENY_LIST), 13)
+        self.assertIn("inline constexpr int kSkillTimerRuleDenyCount =", self.header)
+
+    def test_explicit_rows_win_over_the_rule(self):
+        walk = function_body(self.plugin, "static bool ToggleTableResolveIds(")
+        self.assertIn("SkillTimerRuleIsExplicitRow(name)", walk)
+        fn = function_body(self.header, "inline bool SkillTimerRuleIsExplicitRow(")
+        self.assertIn("kSkillTimerRows[i].abilityId", fn)
+        # EXPLICIT_ROWS names exactly the countdown table's own abilityIds -
+        # a row added to kSkillTimerRows without a matching EXPLICIT_ROWS
+        # entry (or vice versa) fails here rather than passing silently.
+        countdown_start = self.header.index("inline constexpr SkillTimerRow kSkillTimerRows[] = {")
+        countdown_table = self.header[countdown_start:self.header.index("\n};", countdown_start)]
+        header_ids = {m.group("ability") for m in SkillTimerShipContractTests.COUNTDOWN_ROW.finditer(countdown_table)}
+        self.assertEqual(self.EXPLICIT_ROWS, header_ids)
+        eligible = function_body(self.header, "static bool Eligible(")
+        self.assertIn("if (isExplicitRow) return false;", eligible)
+
+    def test_rule_rows_are_own_by_default_and_guard_membership_is_unchanged(self):
+        read = function_body(self.plugin, "static void SkillTimerRuleReadEntry(")
+        self.assertNotIn("ownershipField", read)
+        self.assertIn("anyOwn = true;", read)   # D-N3: no ownership field, every instance own
+        guard = function_body(self.plugin, "static int ToggleTableRowForTalentId(")
+        self.assertIn("ForgePact::kToggleSkillRowCount", guard)
+        self.assertNotIn("Rule", guard)   # guard membership stays toggle-table only
+
+    def test_rule_map_is_rebuilt_once_per_room_and_bounded(self):
+        due = function_body(self.plugin, "static bool ToggleTableResolveDue(")
+        # Round 1: the early-out is back for style Off (the rule map is never
+        # consulted while off), and the once-per-room gate for a look also
+        # re-arms one more walk in the same room when the last walk ran Off.
+        self.assertIn("ToggleTableUnresolvedRows() + SkillTimerTableUnresolvedRows() == 0) return false;", due)
+        self.assertIn("g_SkillTimerStyle.load() == ForgePact::SkillTimerStyle::Off", due)
+        self.assertIn("return g_ToggleResolveWalkedRuleOff;", due)
+        walk = function_body(self.plugin, "static bool ToggleTableResolveIds(")
+        self.assertIn("g_SkillTimerRuleCount = 0;", walk)
+        self.assertIn("ForgePact::kSkillTimerRuleCap", walk)
+        self.assertIn("g_SkillTimerRuleCapped", walk)
+        self.assertIn("inline constexpr int kSkillTimerRuleCap = 64;", self.header)
+
+    def test_stat_prints_the_rule_counters(self):
+        stats = function_body(self.stripped, "static void SkillTimerStats(")
+        self.assertIn("SkillTimerRuleCountersLine()", stats)
+        self.assertIn("SkillTimerRuleEntryLine(", stats)
+        counters = function_body(self.plugin, "static std::string SkillTimerRuleCountersLine(")
+        for needle in ("ruleRows=", "ruleDrawn=", "ruleNoInstance=", "ruleUnreadable=", "ruleExpired=",
+                       "ruleToggleOn=", "ruleNoObject=", "ruleDenied=", "ruleUnreadableFields=", "ruleCapped=",
+                       "ruleNoName=", "ruleLatched=", "ruleUnlatched="):
+            self.assertIn(needle, counters, needle)
+        entry_line = function_body(self.plugin, "static std::string SkillTimerRuleEntryLine(")
+        self.assertIn(":talentId=", entry_line)
+        self.assertIn("object=", entry_line)
+        self.assertIn("unresolved", entry_line)
+
+    def test_rule_expectation_in_the_research_doc_matches_the_capture(self):
+        doc = self.research_doc
+        start = doc.index("#### Rule coverage expectation")
+        section = doc[start:]
+        cut = section.find("\n### ")
+        if cut >= 0:
+            section = section[:cut]
+        entries = re.findall(
+            r"abilityId=(\w+) abilityAura=\w+ abilityDuration=([\d.]+) abilityCooldown=([\d.]+)", section)
+        self.assertGreaterEqual(len(entries), 146)
+
+        import gen_skill_timer_names as gen
+        rows, _ = gen.build_table()
+        table = {key for key, _ in rows}
+
+        computed = set()
+        for ability_id, duration, cooldown in entries:
+            if ability_id in self.EXPLICIT_ROWS or ability_id in self.DENY_LIST:
+                continue
+            if ability_id.lower() not in table:
+                continue
+            if float(duration) > 0.0 and float(cooldown) > 0.25:
+                computed.add(ability_id)
+
+        doc_selected = set(re.findall(r"\| `([a-zA-Z]+)` \| selected", section))
+        self.assertEqual(computed, doc_selected)
+        self.assertEqual(len(doc_selected), 17)
+
+        # The doc's own `explicit` rows are exactly EXPLICIT_ROWS intersected
+        # with the ids this capture actually saw - a row added to
+        # EXPLICIT_ROWS whose id the capture never names (or vice versa)
+        # fails here rather than passing silently.
+        capture_ids = {ability_id for ability_id, _, _ in entries}
+        doc_explicit = set(re.findall(r"\| `([a-zA-Z]+)` \| explicit", section))
+        self.assertEqual(doc_explicit, self.EXPLICIT_ROWS & capture_ids)
+
+    # ---- round 1 (owner, 2026-09-21, "Yes, no skill names"): the countdown's
+    # own player text names no skill at all. Forbidden names are DERIVED,
+    # never a hard-coded list - a hard-coded one goes stale the moment a new
+    # row lands (the Meteor Storm session is adding rows to kToggleSkillRows).
+
+    def _forbidden_names(self):
+        # Five sources, each contributing at least one name so an emptied
+        # regex can never pass silently: the seven explicit countdown rows'
+        # own display names, the toggle table's own abilityIds (read live,
+        # context "Name-free player text (round 1)"), the measured
+        # deny-list's abilityIds, the research doc's rule-selected ids
+        # (AC4's 17), and (session 12) kSkillTimerBuffRows' own display names -
+        # Counter/Last Stand/Defensive Shout/Berserk were never derived from
+        # anything before this table existed.
+        names = set()
+        countdown_start = self.header.index("inline constexpr SkillTimerRow kSkillTimerRows[] = {")
+        countdown_table = self.header[countdown_start:self.header.index("\n};", countdown_start)]
+        for m in SkillTimerShipContractTests.COUNTDOWN_ROW.finditer(countdown_table):
+            names.add(m.group("display").split(" (")[0])
+
+        buff_start = self.header.index("inline constexpr SkillTimerBuffRow kSkillTimerBuffRows[] = {")
+        buff_table = self.header[buff_start:self.header.index("\n};", buff_start)]
+        for m in BUFF_ROW.finditer(buff_table):
+            names.add(m.group("display").split(" (")[0])
+
+        toggle_start = self.toggle_header.index("inline constexpr ToggleSkillRow kToggleSkillRows[] = {")
+        toggle_table = self.toggle_header[toggle_start:self.toggle_header.index("\n};", toggle_start)]
+        for m in TABLE_ROW.finditer(toggle_table):
+            names.add(m.group("ability"))
+
+        names |= set(self.DENY_LIST)
+
+        doc = self.research_doc
+        start = doc.index("#### Rule coverage expectation")
+        section = doc[start:]
+        cut = section.find("\n### ")
+        if cut >= 0:
+            section = section[:cut]
+        names |= set(re.findall(r"\| `([a-zA-Z]+)` \| selected", section))
+
+        return names
+
+    @staticmethod
+    def _words(name):
+        # A camelCase id or an already-spaced display name both split the
+        # same way: "maelstromOfFrost" -> ["maelstrom", "of", "frost"];
+        # "Healing Zone" -> ["healing", "zone"].
+        return [w.lower() for w in re.findall(r"[A-Z]?[a-z0-9]+", name)]
+
+    def _forbidden_pattern(self):
+        names = self._forbidden_names()
+        self.assertTrue(names)   # never an emptied regex
+        alternatives = []
+        for name in names:
+            words = self._words(name)
+            if not words:
+                continue
+            spaced = r"\s+".join(re.escape(w) for w in words)
+            joined = "".join(re.escape(w) for w in words)
+            alternatives.append(rf"(?:{spaced}|{joined})")
+        return re.compile(r"\b(?:" + "|".join(alternatives) + r")\b", re.IGNORECASE)
+
+    def _countdown_text_blocks(self):
+        release = self.release_notes[self.release_notes.index("**Timed skill countdown.**"):]
+        cut = release.find("\n- **")
+        if cut >= 0:
+            release = release[:cut]
+        readme_row = next(line for line in self.readme.split("\n")
+                           if line.startswith("| **Timed skill countdown**"))
+        panel = self.panel[self.panel.index("Timed skill countdown<br>"):]
+        panel = panel[:panel.index("</span></span>") + len("</span></span>")]
+        return {"release notes": release, "README": readme_row, "panel": panel}
+
+    def _toggle_text_blocks(self):
+        # Round 1 (name-free player text): the toggle marker/guard blocks -
+        # the two README rows, the two panel spans, the two release-notes
+        # bullets, and the intro (everything before `## New`). D-T1's reworded
+        # sub-talent clause lives in four of these seven.
+        readme_marker = next(line for line in self.readme.split("\n")
+                              if line.startswith("| **Mark A Running Toggle Skill**"))
+        readme_guard = next(line for line in self.readme.split("\n")
+                             if line.startswith("| **Stop Double Cast Re-casting A Toggle Skill**"))
+        panel_marker = self.panel[self.panel.index("Mark a running toggle skill<br>"):]
+        panel_marker = panel_marker[:panel_marker.index("</span></span>") + len("</span></span>")]
+        panel_guard = self.panel[self.panel.index("Stop double cast re-casting a toggle skill<br>"):]
+        panel_guard = panel_guard[:panel_guard.index("</span></span>") + len("</span></span>")]
+        notes_marker = self.release_notes[self.release_notes.index("- **Mark a running toggle skill"):]
+        notes_marker = notes_marker[:notes_marker.index("\n- **", 5)]
+        notes_guard = self.release_notes[self.release_notes.index("- **Stop double cast re-casting"):]
+        notes_guard = notes_guard[:notes_guard.index("\n- **", 5)]
+        intro = self.release_notes[:self.release_notes.index("## New")]
+        return {
+            "README marker": readme_marker, "README guard": readme_guard,
+            "panel marker": panel_marker, "panel guard": panel_guard,
+            "release notes marker": notes_marker, "release notes guard": notes_guard,
+            "intro": intro,
+        }
+
+    def test_player_text_names_no_skill(self):
+        pattern = self._forbidden_pattern()
+        blocks = dict(self._countdown_text_blocks())
+        blocks.update(self._toggle_text_blocks())
+        for label, text in blocks.items():
+            stripped = text.replace("’", "").replace("'", "")   # apostrophes removed first
+            match = pattern.search(stripped)
+            self.assertIsNone(match, (label, match.group(0) if match else None))
+
+        # In-test controls: the matcher flags a synthetic string holding one
+        # derived name, and passes one holding none.
+        sample = sorted(self._forbidden_names())[0]
+        words = self._words(sample)
+        self.assertIsNotNone(pattern.search("This mentions " + " ".join(words) + " somewhere."))
+        self.assertIsNone(pattern.search("This mentions nothing at all."))
+
+    def test_toggle_texts_cover_a_toggle_on_its_own(self):
+        # D-T1: the name-free clause the owner asked for, in exactly the four
+        # blocks it belongs in - not the marker's own plain-cast sentences,
+        # which stay true unreworded because Bushido has no plain cast.
+        blocks = self._toggle_text_blocks()
+        phrase = "toggle on its own"
+        for label in ("README marker", "README guard", "panel guard", "release notes guard"):
+            self.assertIn(phrase, " ".join(blocks[label].split()), label)
+        self.assertNotIn("each with its toggle sub-talent allocated", blocks["README marker"])
+        for label in ("panel marker", "release notes marker"):
+            self.assertNotIn(phrase, " ".join(blocks[label].split()), label)
+
+    def test_player_text_states_behaviour_without_overclaim(self):
+        blocks = self._countdown_text_blocks()
+        overclaim_skill = re.compile(r"\bany\s+(other\s+)?skill", re.IGNORECASE)
+        overclaim_toggle = re.compile(r"\b(any|every|all)\s+(other\s+)?toggle\b", re.IGNORECASE)
+        for label, text in blocks.items():
+            low = text.lower()
+            # The owner (2026-09-22): the panel says what the mod does for a
+            # player, not how coverage was measured; the README and release
+            # notes keep the full coverage account.
+            words = ("most", "companion", "toggle") if label == "panel" else (
+                "untested", "companion", "buff", "measure", "most")
+            for word in words:
+                self.assertIn(word, low, (label, word))
+            self.assertIsNone(overclaim_skill.search(text), (label, text))
+            self.assertIsNone(overclaim_toggle.search(text), (label, text))
+        self.assertEqual(subprocess.run(
+            ["git", "tag", "--list", "v1.4.5"], cwd=FORGEPACT_DIR, capture_output=True, text=True
+        ).stdout.strip(), "")
 
 
 class ToggleSkillTableContractTests(unittest.TestCase):
@@ -990,6 +1754,7 @@ class ToggleSkillTableContractTests(unittest.TestCase):
         cls.stripped = strip_research_blocks(cls.plugin)
         cls.header = (FORGEPACT_DIR / "plugin" / "include" / "ForgePact" / "ToggleSkillMod.hpp").read_text(
             encoding="utf-8")
+        cls.research_doc = (FORGEPACT_DIR / "docs" / "toggle-skills-research.md").read_text(encoding="utf-8")
         start = cls.header.index("inline constexpr ToggleSkillRow kToggleSkillRows[] = {")
         cls.table = cls.header[start:cls.header.index("\n};", start)]
         cls.rows = [m.groupdict() for m in TABLE_ROW.finditer(cls.table)]
@@ -1008,34 +1773,69 @@ class ToggleSkillTableContractTests(unittest.TestCase):
         includes = [line.strip() for line in self.header.splitlines() if line.strip().startswith("#include")]
         self.assertEqual(includes, ['#include "Common.hpp"'])
 
-    def test_table_is_exactly_the_five_measured_rows(self):
+    def test_table_is_exactly_the_measured_rows(self):
         self.assertEqual(len(self.rows), len(SHIPPED_TABLE_ROWS), self.table)
         objects_hpp = (SDK_INCLUDE / "objects.hpp").read_text(encoding="utf-8")
         for row, want in zip(self.rows, SHIPPED_TABLE_ROWS):
-            ability, sub, obj, own, mark, field = want
+            ability, sub, obj, own, mark, field, held = want
             self.assertEqual(row["ability"], ability, row)
-            self.assertEqual(int(row["sub"]), sub, row)
+            self.assertEqual(row["sub"], str(sub), row)
             self.assertEqual(row["obj"], obj, row)
             self.assertEqual(row["own"].strip(), own, row)
             self.assertEqual(row["mark"], mark, row)
             self.assertEqual(row["field"].strip(), field, row)
+            self.assertEqual(float(row["held"]), held, row)
             self.assertRegex(objects_hpp, rf"\b{obj}\s*=\s*\d+,", row)
-        # The one row with a held value: session 6 measured Maelstrom's
-        # destroyTimer sitting at exactly -1.000000 while the toggle is on.
-        self.assertEqual(float(self.rows[-1]["held"]), -1.0)
-        for row in self.rows[:-1]:
-            self.assertEqual(float(row["held"]), 0.0, row)
 
-    def test_counter_and_blender_do_not_ship(self):
-        for name in ('"counter"', '"blender"', "Shield_Lancer_Counter_World_obj", "Butcher_Blender_obj"):
+    def test_table_regex_parses_every_row(self):
+        # An unwidened TABLE_ROW would silently drop a row (e.g. Bushido's
+        # `kToggleNoSubTalent` sub-talent cell) from both self.rows and the
+        # name-free test's forbidden-name set - this is the count check that
+        # catches it.
+        self.assertEqual(self.table.count('{ "'), len(self.rows), self.table)
+
+    def test_blender_does_not_ship(self):
+        # Blender's ON/OFF steps were never run (session 6); it stays out.
+        for name in ('"blender"', "Butcher_Blender_obj"):
             self.assertNotIn(name, self.header, name)
             self.assertNotIn(name, self.stripped, name)
+        # Counter's ON object is the buff instance (Draw_Player_Buff_obj,
+        # session 12), never the session-6-rejected world object.
+        self.assertNotIn("Shield_Lancer_Counter_World_obj", self.header)
+        self.assertNotIn("Shield_Lancer_Counter_World_obj", self.stripped)
+
+    def test_counter_toggle_row_agrees_with_the_buff_row(self):
+        counter_toggle = next(r for r in self.rows if r["ability"] == "counter")
+        self.assertEqual(counter_toggle["mark"], "PlayerBuff")
+        self.assertIn(int(counter_toggle["sub"]), range(1, 15))
+
+        skill_header = (FORGEPACT_DIR / "plugin" / "include" / "ForgePact" / "SkillTimerMod.hpp").read_text(
+            encoding="utf-8")
+        identity_field = re.search(
+            r'inline constexpr const char\* kSkillTimerBuffIdentityField = "(\w+)";', skill_header)
+        self.assertIsNotNone(identity_field)
+        self.assertEqual(counter_toggle["field"].strip(), f'"{identity_field.group(1)}"')
+
+        start = skill_header.index("inline constexpr SkillTimerBuffRow kSkillTimerBuffRows[] = {")
+        buff_table = skill_header[start:skill_header.index("\n};", start)]
+        buff_rows = {m.group("ability"): m for m in BUFF_ROW.finditer(buff_table)}
+        self.assertIn("counter", buff_rows)
+        self.assertEqual(float(counter_toggle["held"]), float(buff_rows["counter"].group("buffId")))
+
+        # ToggleRowRequiresMark is unchanged - a PlayerBuff row requires its
+        # mark the same as every other row (AC13/AC23).
+        fn = function_body(self.header, "inline constexpr bool ToggleRowRequiresMark(")
+        self.assertEqual(fn.strip(), "return row.mark != ToggleOnMark::None;")
 
     def test_table_carries_no_talent_id(self):
         # D-P1: ids move with every game build, so the table stores none and
-        # the plugin spells none outside the research block.
+        # the plugin spells none outside the research block. 224 and 134 are
+        # session 9's measured ids (Meteor Storm, Bushido) - harness-only,
+        # never in the shipped header.
         self.assertNotIn("talentId", self.table)
         self.assertIsNone(re.search(r"\b240\b", self.header))
+        self.assertIsNone(re.search(r"\b224\b", self.header))
+        self.assertIsNone(re.search(r"\b134\b", self.header))
         self.assertNotIn("kToggleIndicatorTalentId", self.stripped)
 
     # ---- S2: every runtime name lives in the table -------------------------
@@ -1146,11 +1946,17 @@ class ToggleSkillTableContractTests(unittest.TestCase):
                     "static RValue& HookTalentUseClass("):
             self.assertNotIn("ToggleTableResolveIds", function_body(self.plugin, sig), sig)
         due = function_body(self.plugin, "static bool ToggleTableResolveDue(")
-        self.assertIn("if (ToggleTableUnresolvedRows() == 0) return false;", due)
+        # Issue #55 follow-up (D-S4) made the walk due purely on the
+        # once-per-room gate for a look - the rule map (built in the same
+        # walk) has no "every row resolved" stopping signal of its own
+        # (test_both_tables_resolve_in_one_walk). Round 1 restores the old
+        # early-out for style Off only, since the rule map is never consulted
+        # while off.
+        self.assertIn("ToggleTableUnresolvedRows() + SkillTimerTableUnresolvedRows() == 0) return false;", due)
         self.assertIn("CurrentRoomKey()", due)
         self.assertIn("INT64_MIN", due)          # an unreadable room is never stored
         self.assertIn("g_ToggleResolveWalked = false;", due)
-        self.assertIn("return !g_ToggleResolveWalked;", due)
+        self.assertIn("g_SkillTimerStyle.load() == ForgePact::SkillTimerStyle::Off", due)
 
     def test_both_stat_outputs_report_every_row(self):
         line = function_body(self.stripped, "static std::string ToggleTableRowsLine(")
@@ -1206,6 +2012,47 @@ class ToggleSkillTableContractTests(unittest.TestCase):
         for counter in ("g_TibRow[r].unresolved", "g_TibRow[r].unreadable", "g_TibRow[r].off",
                         "g_TibRow[r].on", "g_TibRow[r].noSlot", "g_TibRow[r].drawn"):
             self.assertIn("InterlockedIncrement(&" + counter + ")", draw, counter)
+
+    # ---- session 9: Meteor Storm and Bushido -------------------------------
+
+    def test_every_toggle_row_is_measured_in_the_research_doc(self):
+        doc = self.research_doc
+        start = doc.index("### Toggle skill table")
+        section = doc[start:doc.index("\n### ", start + 5)]
+        lines = [line for line in section.splitlines() if line.startswith("|")]
+        for row in self.rows:
+            hits = [line for line in lines
+                    if f"`{row['ability']}`)" in line and line.rstrip().endswith("| measured |")]
+            self.assertTrue(hits, f"{row['ability']}: no `measured` Toggle skill table row")
+
+    def test_base_form_rows_use_the_named_constant_and_every_other_row_a_real_slot(self):
+        self.assertIn("inline constexpr int kToggleNoSubTalent = 0;", self.header)
+        base_form = [row["ability"] for row in self.rows if row["sub"] == "kToggleNoSubTalent"]
+        self.assertEqual(base_form, ["bushido"])
+        for row in self.rows:
+            if row["sub"] == "kToggleNoSubTalent":
+                continue
+            self.assertRegex(row["sub"], r"^(?:[1-9]|1[0-4])$", row)   # a real s01..s14 slot
+
+    def test_marker_read_accepts_bool_and_positive_number(self):
+        # Session 9's own claim ("the marker read already accepts bool"),
+        # pinned on the source, not only on the border/meteor_storm_* scenarios
+        # that run it end to end.
+        truth = function_body(self.plugin, "static bool ToggleIndicatorReadTruth(")
+        self.assertIn("VALUE_BOOL", truth)
+        self.assertIn("v.ToDouble() > 0.0", truth)
+        mark = function_body(self.plugin, "static void ToggleIndicatorCountMark(")
+        self.assertIn("ToggleIndicatorReadTruth(v, marked)", mark)
+
+    def test_toggle_count_in_player_output_follows_the_table(self):
+        border = self.stripped[self.stripped.index('Out("toggleborder -> ON'):]
+        border = border[:border.index(");")]
+        guard = self.stripped[self.stripped.index('Out(std::string("toggleguard -> ")'):]
+        guard = guard[:guard.index(");")]
+        for name, text in (("toggleborder", border), ("toggleguard", guard)):
+            self.assertIn("ForgePact::kToggleSkillRowCount", text, name)
+            self.assertIsNone(re.search(r"\d", text), (name, text))
+            self.assertNotIn("five", text.lower(), name)
 
 
 class ToggleGuardContractTests(unittest.TestCase):
@@ -1273,7 +2120,7 @@ class ToggleGuardContractTests(unittest.TestCase):
         # `toggleguard 0` and `toggleguard stat` share the counters line, and
         # every key survives stripping.
         line = function_body(self.stripped, "static std::string ToggleGuardCountersLine(")
-        for key in ("refused=", "passed=", "procSeen=", "selfUnreadable=", "objUnresolved=", "hook="):
+        for key in ("refused=", "passed=", "procSeen=", "selfUnreadable=", "objUnresolved=", "baseForm=", "hook="):
             self.assertIn(key, line, key)
         self.assertNotIn("lastProcRet", line)   # research build only (session 5's V7)
         self.assertIn("lastProcRet=", function_body(self.plugin, "static std::string ToggleGuardCountersLine("))
@@ -1369,6 +2216,22 @@ class ToggleGuardContractTests(unittest.TestCase):
         # The measured index lives in the header as a named constant whose
         # value is `## State`'s `subidx:`.
         self.assertIn("inline constexpr int kToggleSubTalentMapIndex = 1;", self.header)
+
+    def test_guard_skips_the_sub_talent_read_for_a_base_form_row(self):
+        # D-B1: a base-form row (Bushido) is decided WITHOUT ever calling
+        # ToggleReadSubTalent - the base-form test runs first, inside the
+        # same `if (refuseByCaller)` block ToggleReadSubTalent's own call
+        # sits in, and short-circuits it.
+        body = self.hook
+        refuse = body.index("if (refuseByCaller) {")
+        tail = body[refuse:]
+        base = tail.index("ToggleRowIsBaseFormToggle(")
+        read = tail.index("ToggleReadSubTalent(")
+        self.assertLess(base, read)
+        self.assertIn("if (baseForm) {", tail)
+        self.assertLess(tail.index("if (baseForm) {"), read)
+        self.assertIn("InterlockedIncrement(&g_TgdBaseForm);", tail)
+        self.assertLess(tail.index("InterlockedIncrement(&g_TgdBaseForm);"), read)
 
     def test_refusal_is_gated_on_the_sub_talent_and_fails_open(self):
         body = self.hook
@@ -1522,6 +2385,26 @@ UNCHANGED_SINCE_T1 = (
     "static RValue& Hook_DrawHudBuffs(",
 )
 
+# The one new line issue #55 (the timed-skill countdown) adds to
+# Hook_DrawHudBuffs - directly after ToggleIndicatorDraw(), outside every
+# research block, no new hook (context "Draw site, and the pins it moves").
+SKILL_TIMER_DRAW_CALL_LINE = "    SkillTimerDraw();"
+
+
+def assert_hook_draw_hud_buffs_unchanged_plus_skilltimer(testcase, new_body, old_body):
+    """NARROWED for issue #55, not deleted: `Hook_DrawHudBuffs` was the one
+    body UNCHANGED_SINCE_T1 still pinned byte-for-byte. It now carries exactly
+    one new statement - the countdown's own call, on its own line right after
+    `ToggleIndicatorDraw();` - so the pin is narrowed the same way the table
+    above narrows the other five: remove exactly that one line and assert
+    what is left is still byte-identical to the round base."""
+    lines = new_body.split("\n")
+    testcase.assertEqual(lines.count(SKILL_TIMER_DRAW_CALL_LINE), 1, new_body)
+    call_at = lines.index(SKILL_TIMER_DRAW_CALL_LINE)
+    testcase.assertEqual(lines[call_at - 1].strip(), "ToggleIndicatorDraw();", new_body)
+    del lines[call_at]
+    testcase.assertEqual("\n".join(lines), old_body)
+
 # The research block phase S must not touch at all: the sprite look probe the
 # author judged the marker against, and the whole `tgprobe tgl` instrument.
 # The shipped marker is pinned EQUAL to the probe's own constants rather than
@@ -1532,6 +2415,238 @@ UNCHANGED_PROBE_BODIES = (
     "static void TgProbeSpriteTunedBox(",
     "static bool TgProbeSpriteBaseBox(",
 )
+
+
+class SkillTimerBuffContractTests(unittest.TestCase):
+    """Buff-carried skill countdowns (issue #55, session 12): `kSkillTimerBuffRows`.
+
+    Companion to test_toggle_skill_behavior.py's `buff/*` scenarios, which run
+    the read/latch/toggle-suppression decisions end to end, and to
+    ToggleSkillTableContractTests' `test_counter_toggle_row_agrees_with_the_buff_row`,
+    which ties the one row shared between the two tables together. This class
+    pins what only a source read can see: the buff table is disjoint from
+    every other table, its own reader spells no runtime name outside the
+    header, and Counter's Give No Quarter form is read at the point of use,
+    never cached.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.plugin = PLUGIN_SRC.read_text(encoding="utf-8")
+        cls.stripped = strip_research_blocks(cls.plugin)
+        cls.header = (FORGEPACT_DIR / "plugin" / "include" / "ForgePact" / "SkillTimerMod.hpp").read_text(
+            encoding="utf-8")
+        cls.toggle_header = (FORGEPACT_DIR / "plugin" / "include" / "ForgePact" / "ToggleSkillMod.hpp").read_text(
+            encoding="utf-8")
+        cls.research_doc = (FORGEPACT_DIR / "docs" / "toggle-skills-research.md").read_text(encoding="utf-8")
+        cls.release_notes = (FORGEPACT_DIR / "release-notes-v1.4.5.md").read_text(encoding="utf-8")
+        cls.readme = (FORGEPACT_DIR / "README.md").read_text(encoding="utf-8")
+        cls.panel = (SRC_DIR / "forgepact.py").read_text(encoding="utf-8")
+
+        start = cls.header.index("inline constexpr SkillTimerBuffRow kSkillTimerBuffRows[] = {")
+        cls.buff_table = cls.header[start:cls.header.index("\n};", start)]
+        cls.buff_rows = [m.groupdict() for m in BUFF_ROW.finditer(cls.buff_table)]
+
+        toggle_start = cls.toggle_header.index("inline constexpr ToggleSkillRow kToggleSkillRows[] = {")
+        toggle_table = cls.toggle_header[toggle_start:cls.toggle_header.index("\n};", toggle_start)]
+        cls.toggle_rows = [m.groupdict() for m in TABLE_ROW.finditer(toggle_table)]
+
+    def _countdown_text_blocks(self):
+        # Same three blocks SkillTimerRuleContractTests reads - duplicated
+        # rather than imported across classes, the way this file already
+        # duplicates small helpers (guide: match the file's own shape).
+        release = self.release_notes[self.release_notes.index("**Timed skill countdown.**"):]
+        cut = release.find("\n- **")
+        if cut >= 0:
+            release = release[:cut]
+        readme_row = next(line for line in self.readme.split("\n")
+                           if line.startswith("| **Timed skill countdown**"))
+        panel = self.panel[self.panel.index("Timed skill countdown<br>"):]
+        panel = panel[:panel.index("</span></span>") + len("</span></span>")]
+        return {"release notes": release, "README": readme_row, "panel": panel}
+
+    # ---- 1: every shipped row was measured (AC10) ---------------------------
+
+    def test_every_buff_row_is_measured_in_the_research_doc(self):
+        self.assertEqual(len(self.buff_rows), 4, self.buff_table)
+        doc = self.research_doc
+        section = doc[doc.index("### Buff-carried countdown (session 12)"):]
+        results = section[section.index("#### Results"):section.index("#### Decision")]
+        lines = [l for l in results.splitlines() if l.startswith("|")]
+        for row in self.buff_rows:
+            self.assertRegex(row["display"], r"^[^()]+\([^()]+\)$", row)
+            found = [
+                l for l in lines
+                if f'`{row["ability"]}`' in l and f'| {row["buffId"]} |' in l
+                and f'{float(row["first"]):.6f}' in l and "| ship |" in l
+            ]
+            self.assertEqual(len(found), 1, row)
+
+    # ---- 2: the one row shared with the toggle table (AC13) -----------------
+
+    def test_only_counter_is_in_both_tables_and_as_a_playerbuff_row(self):
+        buff_ids = {r["ability"] for r in self.buff_rows}
+        toggle_ids = {r["ability"] for r in self.toggle_rows}
+        self.assertEqual(buff_ids & toggle_ids, {"counter"})
+        playerbuff_rows = [r for r in self.toggle_rows if r["mark"] == "PlayerBuff"]
+        self.assertEqual([r["ability"] for r in playerbuff_rows], ["counter"])
+
+        deny_toggle_ids = {"bushido", "holyForm", "unholyForm", "melonForm"}
+        self.assertFalse(buff_ids & deny_toggle_ids, buff_ids)
+        self.assertNotIn("agility", buff_ids)
+        for name in ("Turret", "Totem", "Hydra", "GameObject::"):
+            self.assertNotIn(name, self.buff_table, name)
+
+    # ---- 3: disjoint from the object rows and the rule ------------------------
+
+    def test_buff_rows_disjoint_from_object_rows_and_never_enter_the_rule(self):
+        fn = function_body(self.header, "inline bool SkillTimerRuleIsExplicitRow(")
+        self.assertIn("kSkillTimerBuffRows[", fn)
+        walk = function_body(self.stripped, "static bool ToggleTableResolveIds(")
+        self.assertIn("SkillTimerRuleIsExplicitRow(name)", walk)
+        deny_index = walk.index("SkillTimerRuleDenied(name)")
+        explicit_index = walk.index("SkillTimerRuleIsExplicitRow(name)")
+        self.assertLess(explicit_index, deny_index)
+        buff_decl = self.header.index("inline constexpr SkillTimerBuffRow kSkillTimerBuffRows[] = {")
+        explicit_fn = self.header.index("inline bool SkillTimerRuleIsExplicitRow(")
+        self.assertLess(buff_decl, explicit_fn)
+
+        twin = function_body(self.stripped, "static int SkillTimerToggleTwin(")
+        row_for_talent = function_body(self.stripped, "static int ToggleTableRowForTalentId(")
+        for name in ("kSkillTimerBuffRows", "SkillTimerBuffReadRow", "buffId"):
+            self.assertNotIn(name, twin, name)
+            self.assertNotIn(name, row_for_talent, name)
+
+        countdown_start = self.header.index("inline constexpr SkillTimerRow kSkillTimerRows[] = {")
+        countdown_table = self.header[countdown_start:self.header.index("\n};", countdown_start)]
+        countdown_ids = {m.group("ability") for m in SkillTimerShipContractTests.COUNTDOWN_ROW.finditer(countdown_table)}
+        buff_ids = {r["ability"] for r in self.buff_rows}
+        self.assertFalse(countdown_ids & buff_ids, countdown_ids & buff_ids)
+
+    # ---- 4: the reader spells no runtime name outside the header ------------
+
+    def test_buff_read_uses_only_header_names_and_builtins(self):
+        read = function_body(self.stripped, "static void SkillTimerBuffReadRow(")
+        for literal in ('"playerBuff"', '"buffType"', '"destroyTimer"', '"host"'):
+            self.assertNotIn(literal, read, literal)
+        for name in ("kSkillTimerBuffArrayGlobal", "kSkillTimerBuffPlayerIndex", "kSkillTimerBuffSubIndex",
+                     "kSkillTimerBuffIdentityField", "kSkillTimerField"):
+            self.assertIn(name, read, name)
+        builtins = set(re.findall(r'CallBuiltin\("(\w+)"', read))
+        self.assertTrue(builtins)
+        self.assertTrue(builtins <= {"variable_global_get", "array_get", "array_length",
+                                      "instance_exists", "variable_instance_get"})
+        for banned in ("CallBuiltinEx", "HhBuffAlive", "TgProbe", "MmCreateHook", "HookOneScript"):
+            self.assertNotIn(banned, read, banned)
+        self.assertIn("catch (...)", read)
+
+    # ---- 5: the stat line (AC15) ---------------------------------------------
+
+    def test_stat_prints_one_line_per_buff_row(self):
+        stats = function_body(self.stripped, "static void SkillTimerStats(")
+        object_loop = stats.index("SkillTimerRowCountersLine(r)")
+        buff_lines = stats.index("SkillTimerBuffTableRowsLine()")
+        buff_loop = stats.index("SkillTimerBuffRowCountersLine(r)")
+        rule_line = stats.index("SkillTimerRuleCountersLine()")
+        self.assertLess(object_loop, buff_lines)
+        self.assertLess(buff_lines, buff_loop)
+        self.assertLess(buff_loop, rule_line)
+        counters = function_body(self.stripped, "static std::string SkillTimerBuffRowCountersLine(")
+        for needle in (" drawn=", " noBuff=", " unreadable=", " identityMismatch=", " expired=",
+                       " toggleOn=", " toggleUnreadable=", " unresolved=", " noSlot=", " latched=",
+                       " unlatched="):
+            self.assertIn(needle, counters, needle)
+
+    # ---- 6: player text names the tier, never a skill (AC14) ----------------
+
+    def test_player_text_says_measured_buff_skills_are_covered_without_names(self):
+        old_clause = "only a buff on you are not covered"
+        for label, text in self._countdown_text_blocks().items():
+            normalised = " ".join(text.split())
+            self.assertNotIn(old_clause, normalised, label)
+            if label == "panel":
+                # Short player-facing description (owner, 2026-09-22): no
+                # coverage account, so no buff clause either.
+                self.assertLessEqual(len(re.sub(r"<[^>]+>", "", text)), 300, text)
+                continue
+            low = text.lower()
+            self.assertIn("buff", low, label)
+            self.assertIn("covered", low, label)
+
+        rule_tests = SkillTimerRuleContractTests()
+        rule_tests.header = self.header
+        rule_tests.toggle_header = self.toggle_header
+        rule_tests.research_doc = self.research_doc
+        forbidden = rule_tests._forbidden_names()
+        for name in ("Counter", "Last Stand", "Defensive Shout", "Berserk"):
+            self.assertIn(name, forbidden, name)
+
+    # ---- 7: Counter's form is read at the point of use (D-P3/D-N-perm) ------
+
+    def test_counter_form_is_the_sub_talent_read_at_the_point_of_use(self):
+        # The not-falling guard replan 2 proposed is gone everywhere (AC23/
+        # AC25 grep the header and the stripped plugin for its own name); this
+        # test only pins what replaced it, never the dropped name itself.
+        draw = function_body(self.stripped, "static void SkillTimerBuffDraw(")
+        self.assertNotIn("frozen", draw.lower())
+        counters_line = function_body(self.stripped, "static std::string SkillTimerBuffRowCountersLine(")
+        self.assertNotIn("frozen", counters_line.lower())
+
+        self.assertLess(draw.index("SkillTimerBuffReadRow("), draw.index("SkillTimerBuffToggleTwin("))
+        colour_index = draw.index("draw_get_colour")
+        self.assertLess(draw.index("c.toggleOn"), colour_index)
+        self.assertLess(draw.index("c.toggleUnreadable"), colour_index)
+
+        form = function_body(self.stripped, "static void ToggleIndicatorReadPlayerBuffForm(")
+        self.assertEqual(form.count("ToggleReadSubTalent("), 1)
+        self.assertNotIn("ToggleIndicatorModel::Decide", form)
+
+        self.assertEqual(self.stripped.count("ToggleReadSubTalent("), 3)
+        walk = function_body(self.stripped, "static bool ToggleTableResolveIds(")
+        self.assertNotIn("ToggleReadSubTalent", walk)
+        frame_callback = function_body(self.stripped, "void FrameCallback(")
+        self.assertNotIn("ToggleReadSubTalent", frame_callback)
+
+        read_row = function_body(self.stripped, "static ForgePact::ToggleIndicatorState ToggleIndicatorReadRow(")
+        self.assertLess(read_row.index("ToggleOnMark::PlayerBuff"), read_row.index("ToggleIndicatorResolveRowObject("))
+
+    # ---- 8: the object rows' own model is untouched (AC23) -------------------
+
+    def test_object_row_model_is_unchanged_from_30a851c(self):
+        old = git_show("30a851c:plugin/include/ForgePact/SkillTimerMod.hpp")
+        if old is None:
+            self.skipTest("30a851c is not readable here")
+        sig = "class SkillTimerModel {"
+        old_body = old[old.index(sig):old.index("\n};", old.index(sig))]
+        new_body = self.header.replace("\r\n", "\n")
+        new_body = new_body[new_body.index(sig):new_body.index("\n};", new_body.index(sig))]
+        self.assertEqual(old_body, new_body)
+
+    # ---- 9: one walk, both tables (T2) ----------------------------------------
+
+    def test_buff_rows_resolve_in_the_same_walk_and_count_unresolved(self):
+        walk = function_body(self.stripped, "static bool ToggleTableResolveIds(")
+        self.assertIn("ForgePact::kSkillTimerBuffRows[r].abilityId", walk)
+        self.assertIn("g_SkillTimerBuffTableIds.Set(r, id)", walk)
+        self.assertEqual(walk.count('"ds_map_find_first"'), 1)
+        unresolved = function_body(self.stripped, "static int SkillTimerTableUnresolvedRows(")
+        self.assertIn("ForgePact::kSkillTimerBuffRowCount", unresolved)
+        due = function_body(self.stripped, "static bool ToggleTableResolveDue(")
+        self.assertIn("ToggleTableUnresolvedRows() + SkillTimerTableUnresolvedRows() == 0) return false;", due)
+        draw = function_body(self.stripped, "static void SkillTimerBuffDraw(")
+        self.assertIn("g_SkillTimerBuffTableIds.Get(", draw)
+        self.assertIn("c.unresolved", draw)
+        self.assertIn("< 0", draw)
+
+    # ---- 10: the enable message counts both tables ----------------------------
+
+    def test_enable_message_counts_both_tables(self):
+        start = self.plugin.index('if (lc == "skilltimer")')
+        end = self.plugin.index('if (lc == "toggleguard")', start)
+        branch = self.plugin[start:end]
+        self.assertIn("ForgePact::kSkillTimerRowCount + ForgePact::kSkillTimerBuffRowCount", branch)
+        self.assertIn("timed skills", branch)
+        self.assertNotRegex(branch, r"covers \d+ timed skills")
 
 
 class ToggleTableProbeContractTests(unittest.TestCase):
@@ -1629,7 +2744,7 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         add = function_body(self.plugin, "static void TgProbeTglAdd(")
         self.assertIn("TgProbeTglResolveObject(objectName, objIdx)", add)
         self.assertIn("unresolved", add)
-        self.assertIn("kTgTglCap", add)
+        self.assertIn("kTgTglRowCap", add)   # session 8: the row table's own cap
         unresolved = add.index("unresolved")
         self.assertLess(unresolved, add.index("push_back"))
         self.assertIn("return;", add[unresolved:add.index("push_back")])
@@ -1720,11 +2835,18 @@ class ToggleTableProbeContractTests(unittest.TestCase):
             self.assertNotIn(name, self.stripped)
 
     def test_production_bodies_unchanged_from_62a67d2(self):
+        # NARROWED for issue #55 (the timed-skill countdown), not deleted: see
+        # assert_hook_draw_hud_buffs_unchanged_plus_skilltimer above.
         old = git_show("62a67d2:plugin/ModuleMain.cpp")
         if old is None:
             self.skipTest("git cannot read 62a67d2")
         for signature in UNCHANGED_SINCE_T1:
-            self.assertEqual(function_body(self.plugin, signature), function_body(old, signature), signature)
+            new_body = function_body(self.plugin, signature)
+            old_body = function_body(old, signature)
+            if signature == "static RValue& Hook_DrawHudBuffs(":
+                assert_hook_draw_hud_buffs_unchanged_plus_skilltimer(self, new_body, old_body)
+            else:
+                self.assertEqual(new_body, old_body, signature)
 
     def test_kplayercommands_unchanged_from_62a67d2(self):
         # NARROWED at the merge with main (2026-09-20): this phase still adds
@@ -1742,7 +2864,7 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         before = as_set(re.search(pattern, old, re.S).group(1))
         # `menulayout` is the read-only menu listing, another feature landing
         # in the same table (test_menu_layout_contract.py pins it).
-        self.assertEqual(now - before, {"autoprospect", "menulayout"})
+        self.assertEqual(now - before, {"autoprospect", "skilltimer", "menulayout"})
         self.assertEqual(before - now, set())
 
     # ---- Sprite look probe (R round 3, issue #11): `tgprobe sprite ...` ----
@@ -1869,7 +2991,7 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         self.assertIn("gold (positive control)", legend)
         self.assertNotIn('"draw_', legend)   # log-only: Out(), never a draw call
         sprite_gallery = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
-        gallery_branch = sprite_gallery[sprite_gallery.index('lower == "gallery"'):sprite_gallery.index('lower == "gallery"') + 700]
+        gallery_branch = sprite_gallery[sprite_gallery.index('lower == "gallery"'):sprite_gallery.index('lower == "gallery"') + 850]
         self.assertIn("TgProbeSpriteGalleryLegend()", gallery_branch)
 
     def test_hud_layer_is_a_separate_draw_site_reusing_the_one_resolver(self):
@@ -1970,7 +3092,10 @@ class ToggleTableProbeContractTests(unittest.TestCase):
     def test_style_dispatches_all_four_names_and_rejects_others(self):
         sprite = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
         self.assertIn('lower == "style"', sprite)
-        self.assertIn("TgProbeSpriteStyleFromName(v, kind)", sprite)
+        # Issue #55 follow-up: `style` gained an optional trailing
+        # [talentId], so the style token is now the first of two, parsed
+        # from `styleTok` rather than consuming the whole remainder as `v`.
+        self.assertIn("TgProbeSpriteStyleFromName(Lower(styleTok), kind)", sprite)
         from_name = function_body(self.plugin, "static bool TgProbeSpriteStyleFromName(")
         for name in ("soft", "halo", "gradient", "pulse"):
             self.assertIn(f'lower == "{name}"', from_name)
@@ -2231,6 +3356,15 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         stored = alpha_branch.index("g_TgSpriteAlphaMin = minFraction;")
         self.assertLess(usage, stored)
 
+    def test_alpha_arg_refuses_a_partially_parsed_or_non_finite_token(self):
+        # F7, issue #55 follow-up: TgProbeSpriteParseAlphaArg fed both
+        # `alpha` and `textalpha`, so routing it through the shared
+        # ParseFiniteNumber fixes a typo like "0.5x" or "nan" reaching
+        # draw_set_alpha for both commands at once.
+        parse = function_body(self.plugin, "static bool TgProbeSpriteParseAlphaArg(")
+        self.assertIn("ParseFiniteNumber(s, v)", parse)
+        self.assertNotIn("std::stod(s)", parse)
+
     def test_alpha_reaches_soft_and_gradient_defaults_reproduce_todays_look(self):
         soft = function_body(self.plugin, "static void TgProbeSpriteDrawSoft(")
         gradient = function_body(self.plugin, "static void TgProbeSpriteDrawGradient(")
@@ -2322,7 +3456,14 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         if old is None:
             self.skipTest("git cannot read 7169440")
         for signature in UNCHANGED_SINCE_T1:
-            self.assertEqual(function_body(self.plugin, signature), function_body(old, signature), signature)
+            new_body = function_body(self.plugin, signature)
+            old_body = function_body(old, signature)
+            # NARROWED for issue #55, not deleted - same reasoning as
+            # test_production_bodies_unchanged_from_62a67d2 above.
+            if signature == "static RValue& Hook_DrawHudBuffs(":
+                assert_hook_draw_hud_buffs_unchanged_plus_skilltimer(self, new_body, old_body)
+            else:
+                self.assertEqual(new_body, old_body, signature)
         old_hpp = git_show("7169440:plugin/include/ForgePact/ToggleSkillMod.hpp")
         if old_hpp is None:
             self.skipTest("git cannot read 7169440")
@@ -2353,7 +3494,15 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         })
         self.assertGreater(len(signatures), len(UNCHANGED_PROBE_BODIES))
         for signature in signatures:
-            self.assertEqual(function_body(self.plugin, signature), function_body(old, signature), signature)
+            new_body = function_body(self.plugin, signature)
+            # NARROWED for session 8 (duration sweep), not deleted: `tgl add`
+            # and `tgl list` now bound the row table by its own kTgTglRowCap
+            # (DurationSweepProbeContractTests.test_tgl_row_cap_is_separate_
+            # from_the_sub_walk_cap) - that one renamed bound is the only
+            # change either body may carry.
+            if signature in ("static void TgProbeTglAdd(", "static void TgProbeTglList("):
+                new_body = new_body.replace("kTgTglRowCap", "kTgTglCap")
+            self.assertEqual(new_body, function_body(old, signature), signature)
         # The `tgl` seed table itself, which carries every candidate row.
         for source in (self.plugin, old):
             self.assertIn("static const TgTglSeed kTgTglSeeds[] = {", source)
@@ -2361,6 +3510,991 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         start_old = old.index("static const TgTglSeed kTgTglSeeds[] = {")
         self.assertEqual(self.plugin[start_new:self.plugin.index("};", start_new)].replace("\r\n", "\n"),
                          old[start_old:old.index("};", start_old)].replace("\r\n", "\n"))
+
+
+# The six parents session 8's sweep enumerates (context "The instrument: sweep
+# the parents, not a seed table"), in the order the sampler scans them: the
+# damage parent first, the ability parent last, so an object under the sentry
+# parent (itself an ability-parent child) is attributed to the sentry root.
+SWEEP_ROOTS = (
+    "Player_Damage_Parent_obj", "Skill_Controller_obj", "Player_Buff_Parent_obj",
+    "Player_Curse_Parent_obj", "Player_Sentry_Parent_obj", "Player_Ability_Parent_obj",
+)
+# The class prefixes and the five non-damage roots the static table is drawn
+# from (docs/toggle-skills-research.md, "#### Static candidates").
+SWEEP_CLASS_PREFIXES = (
+    "Amazon", "Bard", "Butcher", "Demon_Slayer", "Demonspawn", "Exo", "Illusionist", "Jotunn",
+    "Marauder", "Marksman", "Necromancer", "Nomad", "Paladin", "Pirate", "Plague_Doctor", "Prophet",
+    "Pyromancer", "Redneck", "Samurai", "Shaman", "Shield_Lancer", "Stormweaver", "Viking", "White_Mage",
+)
+SWEEP_STATIC_ROOTS = (
+    "Player_Ability_Parent_obj", "Skill_Controller_obj", "Player_Sentry_Parent_obj",
+    "Player_Buff_Parent_obj", "Player_Curse_Parent_obj",
+)
+
+
+class DurationSweepProbeContractTests(unittest.TestCase):
+    """Session 8's research instrument (duration skills, phase R).
+
+    `tgprobe sweep` reads `destroyTimer` on every descendant of six parents
+    at once, one record per `object_index`, so one live session can say which
+    class's timed skill carries a readable timer that spans its cast. Research
+    build only; the companion `sweep/` scenarios in
+    test_toggle_skill_behavior.py run its record update and sampler against a
+    controlled runtime. `tgprobe talents dur` and the `tgl` row cap are the
+    two companions the same build adds.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.plugin = PLUGIN_SRC.read_text(encoding="utf-8").replace("\r\n", "\n")
+        cls.stripped = strip_research_blocks(cls.plugin)
+        start = cls.plugin.index(BLOCK_START)
+        cls.block = cls.plugin[start:cls.plugin.index(BLOCK_END, start)]
+        cls.doc = (FORGEPACT_DIR / "docs" / "toggle-skills-research.md").read_text(
+            encoding="utf-8").replace("\r\n", "\n")
+        cls.sampler = function_body(cls.plugin, "static void TgProbeSweepAfterDraw()")
+        cls.note = function_body(cls.plugin, "static void TgProbeSweepNote(")
+
+    def section(self):
+        start = self.doc.index("### Duration sweep (session 8): every class's timed skill")
+        return self.doc[start:]
+
+    def test_tgprobe_dispatches_sweep(self):
+        body = function_body(self.plugin, "static void TgProbeCommand(const std::string& rest)")
+        self.assertIn('sub == "sweep"', body)
+        self.assertIn("TgProbeSweepCommand(subRest)", body)
+        self.assertIn("sweep on|off|clear|show [seen|all]", body)
+        command = function_body(self.plugin, "static void TgProbeSweepCommand(const std::string& rest)")
+        for sub in ("on", "off", "clear", "show"):
+            self.assertIn(f'sub == "{sub}"', command)
+        self.assertIn("g_TgSweep.clear();", command[command.index('sub == "clear"'):])
+        show = function_body(self.plugin, "static void TgProbeSweepShow(")
+        for mode in ('"seen"', '"all"'):
+            self.assertIn(mode, show)
+
+    def test_sweep_roots_are_sdk_constants(self):
+        start = self.plugin.index("static const HeroSiege::Objects::GameObject kTgSweepRoots[] = {")
+        table = self.plugin[start:self.plugin.index("};", start)]
+        roots = re.findall(r"HeroSiege::Objects::GameObject::(\w+)", table)
+        self.assertEqual(tuple(roots), SWEEP_ROOTS)
+        objects_hpp = (SDK_INCLUDE / "objects.hpp").read_text(encoding="utf-8")
+        for root in roots:
+            self.assertRegex(objects_hpp, rf"\b{root}\s*=\s*\d+,", root)
+        # Resolved by name every draw, from the SDK constant's own name - no
+        # literal object name and no index anywhere in the sampler.
+        self.assertIn("HeroSiege::Objects::GetObjectName(kTgSweepRoots[r])", self.sampler)
+        self.assertIn("TgProbeTglResolveObject(rootName, rootIdx)", self.sampler)
+        for root in SWEEP_ROOTS:
+            self.assertNotIn(f'"{root}"', self.block, root)
+        self.assertNotRegex(self.sampler, r"RValue\(\d{3,}")
+
+    def test_sweep_reads_object_index_timer_and_ownership_by_name(self):
+        for needle in ('"instance_number"', '"instance_find"', '"object_index"', '"isMyClient"',
+                       "ForgePact::kSkillTimerField", "N1ObjectIndex(oi, objIdx)",
+                       "ToggleIndicatorReadTruth(mc, isMine)", "N1Numeric(tv)", "kTgSweepScanCap"):
+            self.assertIn(needle, self.sampler, needle)
+        # The VALUE_REF-aware predicate, never a VALUE_REAL-only kind check.
+        self.assertNotIn("VALUE_REAL", self.sampler)
+        for banned in ("CallBuiltinEx", "HhResolveLocalPlayer", "GetMembers(", '"playerNumber"'):
+            self.assertNotIn(banned, self.sampler)
+        # Per-root counts, merged by max: the sentry parent's children are the
+        # ability parent's children too, so a sum would double them.
+        self.assertIn("if (pr.second > o.inst) o.inst = pr.second;", self.sampler)
+        self.assertIn("static constexpr long kTgSweepScanCap = 256;", self.plugin)
+        show = function_body(self.plugin, "static void TgProbeSweepShow(")
+        for needle in ('"object_get_name"', "HeroSiege::Objects::GetObjectName(", "NAME-MISMATCH",
+                       "firstFrame", "roots=", "unresolved=", "capped=", "records=", "dropped=",
+                       "indexUnreadable=", "app=", "draws=", "first=", "last=", "min=", "max=",
+                       "timerUnreadable=", "maxInst=", "own=", "root=", "totalDraws="):
+            self.assertIn(needle, show, needle)
+
+    def test_sweep_off_by_default_and_gates_every_read(self):
+        self.assertIn("static bool g_TgSweepOn = false;", self.plugin)
+        self.assertTrue(self.sampler.strip().startswith("if (!g_TgSweepOn) return;"), self.sampler[:80])
+        gate = self.sampler.index("if (!g_TgSweepOn) return;")
+        self.assertLess(gate, self.sampler.index("CallBuiltin"))
+        self.assertLess(gate, self.sampler.index("TgProbeTglResolveObject("))
+        command = function_body(self.plugin, "static void TgProbeSweepCommand(const std::string& rest)")
+        on = command[command.index('sub == "on"'):command.index('sub == "off"')]
+        self.assertIn("g_TgSweepOn = true;", on)
+        off = command[command.index('sub == "off"'):command.index('sub == "clear"')]
+        self.assertIn("g_TgSweepOn = false;", off)
+        # Hung off the existing research after-draw path, right after the
+        # `tgl` sampler - never Hook_DrawHudBuffs or FrameCallback directly.
+        after = function_body(self.plugin, "static void TgProbeSpurnAfterDraw()")
+        self.assertLess(after.index("TgProbeTglAfterDraw();"), after.index("TgProbeSweepAfterDraw();"))
+        self.assertNotIn("TgProbeSweep", function_body(self.plugin, "static RValue& Hook_DrawHudBuffs("))
+        self.assertNotIn("TgProbeSweep", function_body(self.plugin, "void FrameCallback("))
+
+    def test_sweep_unreadable_is_never_a_default(self):
+        # A draw with instances but no numeric reading counts timerUnreadable
+        # and returns before first/last/min/max are touched; `first` prints
+        # `unreadable` until an appearance produces a number.
+        unreadable = self.note.index("if (!obs->haveReading) { ++rec.timerUnreadable; return; }")
+        self.assertLess(unreadable, self.note.index("rec.haveFirst = true;"))
+        self.assertLess(unreadable, self.note.index("rec.last = v;"))
+        show = function_body(self.plugin, "static void TgProbeSweepShow(")
+        self.assertIn('rec.haveFirst ? TgProbeTglNumber(rec.first) : std::string("unreadable")', show)
+        # A throw on the object_index read is counted, never taken as index 0.
+        self.assertIn("++g_TgSweepIndexUnreadable", self.sampler)
+        # Only numeric kinds are a timer reading; a string or bool is not.
+        self.assertIn("if (N1Numeric(tv)) {", self.sampler)
+
+    def test_sweep_is_absent_from_the_player_build(self):
+        for name in ("TgProbeSweep", "TgSweep", "kTgSweep", "g_TgSweep", "sweep show"):
+            self.assertIn(name, self.block, name)
+            self.assertNotIn(name, self.stripped, name)
+        # No new hook: the sweep only reads, from the existing draw path.
+        for call in ("MmCreateHook(", "HookOneScript(", "HookOneScriptTable(", "InstallScriptHook("):
+            self.assertNotIn(call, self.sampler)
+            self.assertNotIn(call, self.note)
+        self.assertEqual(self.block.count("MmCreateHook("), 1)
+
+    def test_talents_dur_filter_prints_positive_durations_uncapped_at_40(self):
+        body = function_body(self.plugin, "static void TgProbeTalentsCommand(")
+        self.assertIn('const bool durMode = Lower(arg) == "dur";', body)
+        self.assertIn("kDurShowCap = 400", body)
+        self.assertIn("const long showCap = durMode ? kDurShowCap : kShowCap;", body)
+        self.assertIn("if (shown < showCap) {", body)
+        # The duration is read as a number on its own, never parsed out of a
+        # printed field, and only a positive one is shown.
+        dur = body[body.index("if (durMode) {"):]
+        self.assertIn('RValue(kFields[2])', dur[:600])
+        self.assertIn("N1Numeric(dv) && dv.ToDouble() > 0.0", dur[:600])
+        self.assertIn("durTruncated=", body)
+        self.assertIn("kShowCap = 40", body)
+
+    def test_tgl_row_cap_is_separate_from_the_sub_walk_cap(self):
+        self.assertIn("static constexpr int kTgTglCap = 16;", self.plugin)
+        self.assertIn("static constexpr int kTgTglRowCap = 64;", self.plugin)
+        add = function_body(self.plugin, "static void TgProbeTglAdd(")
+        self.assertIn("(int)g_TgTgl.size() >= kTgTglRowCap", add)
+        self.assertNotIn("kTgTglCap", add)
+        self.assertIn("kTgTglRowCap", function_body(self.plugin, "static void TgProbeTglList()"))
+        sub = function_body(self.plugin, "static void TgProbeTglSub()")
+        self.assertIn("i < len && i < kTgTglCap", sub)
+        self.assertNotIn("kTgTglRowCap", sub)
+
+    def test_static_candidates_section_matches_the_sdk(self):
+        from hs_game_sdk import GameObject, get_parent_index, NO_PARENT
+        names = {o.value: o.name for o in GameObject}
+
+        def ancestors(value):
+            chain = []
+            parent = get_parent_index(value)
+            while parent not in (None, NO_PARENT) and parent >= 0:
+                chain.append(names.get(parent, str(parent)))
+                parent = get_parent_index(parent)
+            return chain
+
+        expected = [
+            o for o in GameObject
+            if any(o.name.startswith(prefix + "_") for prefix in SWEEP_CLASS_PREFIXES)
+            and any(root in ancestors(o.value) for root in SWEEP_STATIC_ROOTS)
+        ]
+        section = self.section()
+        static = section[section.index("#### Static candidates"):section.index("#### Instrument")]
+        # Measured 2026-09-21 on this SDK; a regenerated SDK that moves the
+        # count means the doc table needs regenerating too.
+        self.assertEqual(len(expected), 207)
+        listed = re.findall(r"^\| `(\w+)` \| (\d+) \|", static, re.M)
+        self.assertEqual(sorted((n, int(i)) for n, i in listed),
+                         sorted((o.name, o.value) for o in expected))
+        self.assertIn("| `White_Mage_Healing_Zone_obj` | 5738 |", static)
+        for heading in ("#### Static candidates", "#### Instrument", "#### Live procedure", "#### Results"):
+            self.assertIn(heading, section)
+        # The doc sits under Issue #55, after its own ### Decision.
+        issue = self.doc.index("## Issue #55")
+        self.assertLess(issue, self.doc.index("### Duration sweep (session 8)"))
+
+
+class SkillTimerBuffProbeContractTests(unittest.TestCase):
+    """Session 12's research instrument (buff-carried skills, phase R).
+
+    `tgprobe buffwatch` walks global.playerBuff[1][0] the way `tgprobe buffs`
+    (TgProbeBuffs) already does, one record per slot index, so a live session
+    can measure which buff-carried skills draw a readable, own-attributed
+    countdown that spans their cast. Research build only; the companion
+    `buffwatch/` scenarios in test_toggle_skill_behavior.py run its record
+    update and BuffAdd note against a controlled runtime.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.plugin = PLUGIN_SRC.read_text(encoding="utf-8").replace("\r\n", "\n")
+        cls.stripped = strip_research_blocks(cls.plugin)
+        start = cls.plugin.index(BLOCK_START)
+        cls.block = cls.plugin[start:cls.plugin.index(BLOCK_END, start)]
+        cls.doc = (FORGEPACT_DIR / "docs" / "toggle-skills-research.md").read_text(
+            encoding="utf-8").replace("\r\n", "\n")
+
+    def section(self):
+        start = self.doc.index("### Buff-carried countdown (session 12)")
+        return self.doc[start:]
+
+    def test_tgprobe_dispatches_buffwatch(self):
+        body = function_body(self.plugin, "static void TgProbeCommand(const std::string& rest)")
+        self.assertIn('sub == "buffwatch"', body)
+        self.assertIn("TgProbeBuffWatchCommand(subRest)", body)
+        self.assertIn("buffwatch on|off|clear|show", body)
+        command = function_body(self.plugin, "static void TgProbeBuffWatchCommand(const std::string& rest)")
+        for sub in ("on", "off", "clear", "show"):
+            self.assertIn(f'sub == "{sub}"', command)
+        self.assertIn("g_TgBuffWatch.clear();", command[command.index('sub == "clear"'):])
+
+    def test_buffwatch_symbols_are_research_only(self):
+        for name in ("TgProbeBuffWatch", "TgBuffWatch", "g_TgBuffWatch", "buffwatch show",
+                     "g_TgTalentUseDepth", "g_TgTalentUseClassDepth",
+                     "TgProbeBuffWatchVisible", "TgProbeBuffWatchNoteText"):
+            self.assertIn(name, self.block, name)
+            self.assertNotIn(name, self.stripped, name)
+        after_draw = function_body(self.plugin, "static void TgProbeBuffWatchAfterDraw()")
+        for call in ("MmCreateHook(", "HookOneScript(", "HookOneScriptTable(", "InstallScriptHook("):
+            self.assertNotIn(call, after_draw)
+        self.assertEqual(self.block.count("MmCreateHook("), 1)
+
+    def test_buffwatch_not_in_player_commands(self):
+        match = re.search(r"static const std::unordered_set<std::string> kPlayerCommands = \{(.*?)\};",
+                           self.plugin, re.S)
+        self.assertIsNotNone(match, "kPlayerCommands not found")
+        self.assertNotIn('"buffwatch"', match.group(1))
+        self.assertNotIn('"tgprobe"', match.group(1))
+
+    def test_sampler_called_next_to_sweep_no_new_hook(self):
+        after = function_body(self.plugin, "static void TgProbeSpurnAfterDraw()")
+        self.assertLess(after.index("TgProbeSweepAfterDraw();"), after.index("TgProbeBuffWatchAfterDraw();"))
+        self.assertNotIn("TgProbeBuffWatch", function_body(self.plugin, "static RValue& Hook_DrawHudBuffs("))
+        self.assertNotIn("TgProbeBuffWatch", function_body(self.plugin, "void FrameCallback("))
+
+    def test_record_carries_the_measured_fields(self):
+        rec = declaration_block(self.plugin, "struct TgBuffWatchRecord {")
+        for field in ("present", "app", "draws", "firstFrame", "lastFrame", "first", "last",
+                      "min", "max", "unreadable", "identityMismatch", "host", "vars",
+                      "adds", "lastAddFrames", "lastAddPlayer", "inUse", "useTalent"):
+            self.assertIn(field, rec, field)
+
+    def test_buffadd_note_called_from_both_attachment_paths(self):
+        note = function_body(
+            self.plugin, "static void TgProbeNoteBuffAdd(CInstance* S, CInstance* O, int argc, RValue** A)")
+        self.assertIn("TgProbeBuffWatchOnBuffAdd(argc, A,", note)
+        detour = function_body(
+            self.plugin,
+            "static RValue& TgProbeDetourBody(int idx, CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)")
+        self.assertIn("if (idx == kTg_BuffAdd) {", detour)
+        self.assertIn("TgProbeBuffWatchOnBuffAdd(argc, A,", detour[detour.index("if (idx == kTg_BuffAdd) {"):])
+
+    def test_talent_use_depth_kept_only_for_talentuse_and_talentuseclass(self):
+        detour = function_body(
+            self.plugin,
+            "static RValue& TgProbeDetourBody(int idx, CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)")
+        self.assertIn("if (idx == kTg_TalentUse) {", detour)
+        self.assertIn("else if (idx == kTg_TalentUseClass) {", detour)
+        # Every increment/decrement of the two depth counters appears exactly
+        # once, inside those two branches - no other idx ever touches them.
+        for stmt in ("InterlockedIncrement(&g_TgTalentUseDepth)", "InterlockedDecrement(&g_TgTalentUseDepth)",
+                     "InterlockedIncrement(&g_TgTalentUseClassDepth)", "InterlockedDecrement(&g_TgTalentUseClassDepth)"):
+            self.assertEqual(detour.count(stmt), 1, stmt)
+
+    def test_doc_section_exists_with_live_procedure(self):
+        section = self.section()
+        for heading in ("#### Static search", "#### Instrument", "#### Live procedure", "#### Results", "#### Decision"):
+            self.assertIn(heading, section)
+        procedure = section[section.index("#### Live procedure"):section.index("#### Results")]
+        for cmd in ("tgprobe hook TalentUse TalentUseClass BuffAdd BuffRemove DrawHudBuffs",
+                    "tgprobe buffwatch on", "tgprobe buffwatch clear", "tgprobe buffwatch show",
+                    "tgprobe deep find buff", "tgprobe deep get Player_obj.id"):
+            self.assertIn(cmd, procedure, cmd)
+
+    def test_buffwatch_command_usage_listed(self):
+        usage = function_body(self.plugin, "static void TgProbeCommand(const std::string& rest)")
+        self.assertIn("buffwatch on|off|clear|show", usage)
+
+    # ---- Round 1 (owner-requested hardening, before the DLL is installed) --
+
+    def test_show_prints_every_visible_shape_not_only_seen_present(self):
+        # A slot whose buffType never matched its index (identityMismatch>0),
+        # or an id only BuffAdd touched (adds>0) - both app==0 - are exactly
+        # the shapes that would explain a failed `[104]` positive control,
+        # and `show` used to skip both with a bare `rec.app <= 0` filter.
+        show = function_body(self.plugin, "static void TgProbeBuffWatchShow()")
+        self.assertNotIn("rec.app <= 0", show)
+        self.assertIn("if (!TgProbeBuffWatchVisible(rec)) continue;", show)
+        visible = function_body(self.plugin, "static bool TgProbeBuffWatchVisible(const TgBuffWatchRecord& rec)")
+        self.assertIn("rec.app > 0", visible)
+        self.assertIn("rec.identityMismatch > 0", visible)
+        self.assertIn("rec.adds > 0", visible)
+        note = function_body(self.plugin, "static std::string TgProbeBuffWatchNoteText(const TgBuffWatchRecord& rec)")
+        self.assertIn("(mismatch-only)", note)
+        self.assertIn("(added, never seen at this slot)", note)
+        self.assertIn("TgProbeBuffWatchNoteText(rec)", show)
+
+    def test_buffadd_note_skips_native_to_avoid_double_count(self):
+        # TgProbeDetourBody's own kTg_BuffAdd branch already counts a native
+        # (or table-only-native-under-HookBuffAdd) call; TgProbeNoteBuffAdd
+        # runs unconditionally from inside the real, always-installed
+        # HookBuffAdd, so without this guard both would fire for one call.
+        note = function_body(
+            self.plugin, "static void TgProbeNoteBuffAdd(CInstance* S, CInstance* O, int argc, RValue** A)")
+        self.assertIn("if (g_TgRows[kTg_BuffAdd].mode != kTgNative) {", note)
+        self.assertLess(note.index("g_TgRows[kTg_BuffAdd].mode != kTgNative"),
+                         note.index("TgProbeBuffWatchOnBuffAdd(argc, A,"))
+        # The comment claiming they never both fire is gone.
+        self.assertNotIn("never both fire for one call", note)
+
+    def test_live_procedure_has_a_second_positive_control_before_the_cast(self):
+        procedure = self.section()
+        procedure = procedure[procedure.index("#### Live procedure"):procedure.index("#### Results")]
+        self.assertIn("tgprobe buffs", procedure)
+        self.assertIn("blind", procedure)
+        # The second control comes before the Counter cast control in the
+        # numbered steps, not after.
+        self.assertLess(procedure.index("tgprobe buffs"), procedure.index("cast Counter"))
+
+    def test_static_search_labels_berserk_nesting_as_not_yet_observed(self):
+        section = self.section()
+        static_search = section[section.index("#### Static search"):section.index("#### Instrument")]
+        self.assertNotIn("is never added inside a cast at all", static_search)
+        self.assertIn("not observed yet", static_search)
+
+
+class SkillTimerProbeContractTests(unittest.TestCase):
+    """Issue #55, phase A: the research-only tick-rate readout and the
+    fraction-driven countdown-look preview (`### What the probe round must
+    add, and why it is one build and one session`). No player command, no
+    new hook - only an extension of the existing `tgprobe talents`/
+    `tgprobe sprite style` instrument, so route A can be falsified and every
+    candidate look judged at rest, at any fill, with no live cast.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.plugin = PLUGIN_SRC.read_text(encoding="utf-8")
+        cls.stripped = strip_research_blocks(cls.plugin)
+        start = cls.plugin.index(BLOCK_START)
+        cls.block = cls.plugin[start:cls.plugin.index(BLOCK_END, start)]
+        cls.research_doc = (FORGEPACT_DIR / "docs" / "toggle-skills-research.md").read_text(encoding="utf-8")
+
+    def test_research_doc_names_the_three_routes_the_rule_and_the_procedure(self):
+        # A7: the issue-#55 section names the three candidate total sources,
+        # the pre-committed decision rule, the live procedure as numbered
+        # steps, and an empty results table with a status cell per probe row.
+        doc = self.research_doc
+        section = doc[doc.index("## Issue #55"):]
+        self.assertIn("Route A", section)
+        self.assertIn("Route C", section)
+        self.assertIn("Route B", section)
+        self.assertIn("Decision rule", section)
+        procedure = section[section.index("### Live procedure"):section.index("### Results")]
+        for n in ("1.", "2.", "3.", "4.", "5."):
+            self.assertIn(f"\n{n}", procedure)
+        results = section[section.index("### Results"):]
+        for ability in ("soulSpurn", "lunarOrbit", "crematus", "counter",
+                        "submergedKnives", "maelstromOfFrost", "blender"):
+            self.assertIn(ability, results)
+        for verdict in ("measured", "not observed", "blocked"):
+            self.assertIn(verdict, results)
+
+    def test_talents_reads_the_tick_rate_by_name_and_prints_it(self):
+        body = function_body(self.plugin, "static void TgProbeTalentsCommand(")
+        self.assertIn('"game_get_speed"', body)
+        self.assertIn('RValue(0.0)', body[body.index('"game_get_speed"'):])
+        self.assertIn("speed=", body)
+        self.assertIn("fps=", body)
+        # `fps` read the same way this file's own established positive
+        # control does (~line 20360): GetBuiltin, not CallBuiltin.
+        self.assertIn('GetBuiltin("fps", nullptr, NULL_INDEX, v)', body)
+        # predictedTotal (abilityDuration x speed) sits on the same printed
+        # line as abilityDuration, gated on the read succeeding.
+        self.assertIn("predictedTotal=", body)
+        self.assertIn("speedOk", body)
+
+    def test_talents_speed_read_matches_the_shipped_headhunter_shape(self):
+        # Same call and the same "non-positive means unreadable" floor
+        # ModuleMain.cpp's Headhunter buff-duration conversion already uses
+        # (game_get_speed(0.0) -> seconds-to-frames), so route A's session
+        # is testing the runtime's own unit relationship, not a guess.
+        body = function_body(self.plugin, "static void TgProbeTalentsCommand(")
+        speed_read = body[body.index('speed = g_Yytk->CallBuiltin("game_get_speed"'):]
+        self.assertIn("speedOk = speed > 0.0;", speed_read[:200])
+
+    def test_no_new_hook_is_installed_by_this_round(self):
+        # A3: this round adds no MmCreateHook/HookOneScript/
+        # HookOneScriptTable/InstallScriptHook call anywhere - it only reads
+        # existing builtins by name and extends the sprite-style draw probe.
+        for call in ("MmCreateHook(", "HookOneScript(", "HookOneScriptTable(", "InstallScriptHook("):
+            self.assertNotIn(call, function_body(self.plugin, "static void TgProbeTalentsCommand("))
+            self.assertNotIn(call, function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)"))
+        # The block's one resolver-installed detour count is unchanged.
+        self.assertEqual(self.block.count("MmCreateHook("), 1)
+
+    def test_countdown_styles_are_dispatched_and_use_the_fraction_knob(self):
+        sprite = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
+        self.assertIn('lower == "frac"', sprite)
+        from_name = function_body(self.plugin, "static bool TgProbeSpriteStyleFromName(")
+        for name in ("arc", "bar", "number", "fade"):
+            self.assertIn(f'lower == "{name}"', from_name)
+        style = function_body(self.plugin, "static void TgProbeSpriteDrawStyle(")
+        for kind in ("Arc", "Bar", "Number", "Fade"):
+            self.assertIn(f"TgSpriteStyleKind::{kind}", style)
+        for fn in ("TgProbeSpriteDrawArc", "TgProbeSpriteDrawBar", "TgProbeSpriteDrawNumber", "TgProbeSpriteDrawFade"):
+            self.assertIn("g_TgSpriteFraction", function_body(self.plugin, f"static void {fn}("))
+        # `fade` reuses the shipped-look-pinned soft draw rather than
+        # duplicating its bands (UNCHANGED_PROBE_BODIES stays meaningful).
+        self.assertIn("TgProbeSpriteDrawSoft(x, y, w, h, g_TgSpriteFraction)",
+                       function_body(self.plugin, "static void TgProbeSpriteDrawFade("))
+
+    def test_fraction_defaults_to_full_and_is_clamped(self):
+        self.assertIn("static double g_TgSpriteFraction = 1.0;", self.plugin)
+        frac_branch = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
+        frac_branch = frac_branch[frac_branch.index('lower == "frac"'):]
+        self.assertIn("if (f < 0.0) f = 0.0;", frac_branch)
+        self.assertIn("if (f > 1.0) f = 1.0;", frac_branch)
+
+    def test_new_symbols_are_research_only_names_do_not_survive_stripping(self):
+        for name in ("TgProbeSpriteDrawArc", "TgProbeSpriteDrawBar", "TgProbeSpriteDrawNumber",
+                     "TgProbeSpriteDrawFade", "TgProbeSpriteDrawRectOutlineFraction", "TgProbeSpriteFracText",
+                     "g_TgSpriteFraction", "TgSpriteStyleKind::Arc", "TgSpriteStyleKind::Bar",
+                     "TgSpriteStyleKind::Number", "TgSpriteStyleKind::Fade",
+                     # issue #55 follow-up: text placement/style controls and font list
+                     "g_TgSpriteTextOffsetDx", "g_TgSpriteTextOffsetDy", "g_TgSpriteTextAlpha",
+                     "g_TgSpriteTextColourSet", "g_TgSpriteTextColourName", "g_TgSpriteFontName",
+                     "g_TgSpriteTextFontUnresolved", "g_TgSpriteTextDrawExc",
+                     "TgProbeSpriteTextColour", "TgProbeSpriteTextColourText", "TgProbeSpriteTextAlphaText",
+                     "TgProbeSpriteTextOffsetText", "TgProbeSpriteFontText", "TgProbeSpriteBuiltinExists",
+                     "TgProbeSpriteFontListCommand", "kTgSpriteFontFallbackNames", "kTgSpriteFontEnumCap"):
+            self.assertIn(name, self.block, name)
+            self.assertNotIn(name, self.stripped, name)
+        # The tick-rate readout is inside the same research-only command as
+        # the rest of `tgprobe talents`, so it is covered by the same guard.
+        self.assertIn("TgProbeTalentsCommand", self.block)
+        self.assertNotIn("TgProbeTalentsCommand", self.stripped)
+
+    # ---- issue #55 follow-up: text placement, style controls, four fixes ---
+    # (live-session capture .claude/workorders/issue-55-live-session-2026-09-20-capture.md)
+
+    def test_number_anchors_below_the_box_not_at_its_centre(self):
+        body = function_body(self.plugin, "static void TgProbeSpriteDrawNumber(")
+        self.assertNotIn("y + h / 2.0", body)
+        self.assertIn("y + h + g_TgSpriteTextOffsetDy", body)
+        self.assertIn("x + w / 2.0 + g_TgSpriteTextOffsetDx", body)
+
+    def test_number_saves_everything_before_its_own_inner_try_and_restores_each_alone(self):
+        body = function_body(self.plugin, "static void TgProbeSpriteDrawNumber(")
+        save_order = ['"draw_get_font"', '"draw_get_colour"', '"draw_get_alpha"', '"draw_get_halign"', '"draw_get_valign"']
+        positions = [body.index(name) for name in save_order]
+        self.assertEqual(positions, sorted(positions), "all five must be captured, in order, before anything is set")
+        inner_try = body.index("try {", positions[-1])
+        self.assertLess(positions[-1], inner_try, "every save must precede the inner try around the draw")
+        draw_text_index = body.index('"draw_text"')
+        self.assertGreater(draw_text_index, inner_try)
+        for restore in (
+            'try { g_Yytk->CallBuiltin("draw_set_valign", { prevValign }); } catch (...) {}',
+            'try { g_Yytk->CallBuiltin("draw_set_halign", { prevHalign }); } catch (...) {}',
+            'try { g_Yytk->CallBuiltin("draw_set_alpha", { prevAlpha }); } catch (...) {}',
+            'try { g_Yytk->CallBuiltin("draw_set_colour", { prevColour }); } catch (...) {}',
+            'try { g_Yytk->CallBuiltin("draw_set_font", { prevFont }); } catch (...) {}',
+        ):
+            self.assertIn(restore, body, restore)
+            self.assertGreater(body.index(restore), draw_text_index, restore)
+
+    def test_number_resolves_its_font_by_name_and_applies_it_only_when_nonnegative(self):
+        body = function_body(self.plugin, "static void TgProbeSpriteDrawNumber(")
+        self.assertIn('CallBuiltin("asset_get_index", { RValue(g_TgSpriteFontName) })', body)
+        self.assertIn("if (f.ToDouble() < 0) f = RValue(std::stod(g_TgSpriteFontName));", body)
+        self.assertIn(
+            'if (f.ToDouble() >= 0) { fontApplied = true; g_Yytk->CallBuiltin("draw_set_font", { f }); }', body)
+        self.assertIn("g_TgSpriteTextFontUnresolved", body)
+
+    def test_number_only_restores_the_font_when_it_actually_applied_one(self):
+        # F3, issue #55 follow-up: draw_set_font(prevFont) must not run
+        # unconditionally - the default path (empty g_TgSpriteFontName)
+        # never calls draw_set_font in the first place, so restoring
+        # whatever draw_get_font happened to return would push a value that
+        # was only ever read, never confirmed real, into the runtime's font
+        # state on every draw asking for no font change.
+        body = function_body(self.plugin, "static void TgProbeSpriteDrawNumber(")
+        self.assertIn("bool fontApplied = false;", body)
+        self.assertIn(
+            'if (fontApplied) { try { g_Yytk->CallBuiltin("draw_set_font", { prevFont }); } catch (...) {} }', body)
+
+    def test_number_marks_font_applied_before_calling_draw_set_font(self):
+        # F3, issue #55 follow-up round 2 (forgepact-tgprobe-font-instrument):
+        # if draw_set_font applies the font and then throws, fontApplied
+        # must already be true so the restore above still runs - otherwise
+        # the probe's font leaks into the game for the rest of the session.
+        # Setting the flag first costs nothing on the opposite failure path
+        # (the call throws before applying anything): the restore then
+        # writes prevFont, the game's own font read at the top of this
+        # body, which is a no-op write.
+        body = function_body(self.plugin, "static void TgProbeSpriteDrawNumber(")
+        self.assertIn(
+            'if (f.ToDouble() >= 0) { fontApplied = true; g_Yytk->CallBuiltin("draw_set_font", { f }); }', body)
+        self.assertNotIn(
+            'if (f.ToDouble() >= 0) { g_Yytk->CallBuiltin("draw_set_font", { f }); fontApplied = true; }', body)
+
+    def test_font_list_checks_each_builtin_through_callbuiltinex_and_prints_the_positive_control(self):
+        body = function_body(self.plugin, "static void TgProbeSpriteFontListCommand()")
+        for name in ("draw_get_font", "font_exists", "font_get_name"):
+            self.assertIn(f'"{name}"', body, name)
+        self.assertIn("TgProbeSpriteBuiltinExists(", body)
+        exists_body = function_body(self.plugin, "static bool TgProbeSpriteBuiltinExists(")
+        self.assertIn("CallBuiltinEx(", exists_body)
+        self.assertIn("AurieSuccess(st)", exists_body)
+        # the positive control itself: the already-proven CallBuiltin path
+        # (HhDrawHeadLabels calls it every draw), and the default-font
+        # sentinel handled distinctly from a real index.
+        self.assertIn('CallBuiltin("draw_get_font", {})', body)
+        self.assertIn("active font:", body)
+        self.assertIn("default (draw_get_font=", body)
+        # an empty enumeration is told apart from a missing enumerator.
+        self.assertIn("enumeration not run: font_exists is not present", body)
+        self.assertIn("found", body)
+
+    def test_font_list_probes_font_get_name_only_against_a_confirmed_index(self):
+        # F4, issue #55 follow-up: font_get_name (a lookup, unlike the
+        # exists-check font_exists) must never be probed with the
+        # unconfirmed literal 0.0 - only the active font when it is not the
+        # default sentinel, else the first font_exists-confirmed index, and
+        # "not probed" when neither is available.
+        body = function_body(self.plugin, "static void TgProbeSpriteFontListCommand()")
+        self.assertNotIn('TgProbeSpriteBuiltinExists("font_get_name", g, g, { RValue(0.0) }', body)
+        self.assertIn(
+            'TgProbeSpriteBuiltinExists("font_get_name", g, g, { RValue(probeIdx) }, existsRes);', body)
+        self.assertIn("not probed (no confirmed font index available)", body)
+        # the active font is read before font_get_name is probed at all.
+        get_font_idx = body.index('CallBuiltin("draw_get_font", {})')
+        probe_call = body.index('TgProbeSpriteBuiltinExists("font_get_name"')
+        self.assertLess(get_font_idx, probe_call)
+
+    def test_font_list_reads_the_active_font_only_when_draw_get_font_is_present(self):
+        # F4, issue #55 follow-up round 2 (forgepact-tgprobe-font-instrument):
+        # CallBuiltin returns an unset RValue (ToDouble()==0.0) for a
+        # missing builtin instead of throwing, so an unguarded read would
+        # fabricate activeIdx=0.0 as the font probe's own positive control.
+        # Gate the read itself on hasDrawGetFont so the confirmedIdx/
+        # "not probed" fallbacks run instead, and the "active font:" line
+        # must then say the builtin is absent rather than that it threw.
+        body = function_body(self.plugin, "static void TgProbeSpriteFontListCommand()")
+        self.assertIn(
+            'if (hasDrawGetFont) { try { activeIdx = g_Yytk->CallBuiltin("draw_get_font", {}).ToDouble();'
+            ' activeIdxKnown = true; } catch (...) {} }', body)
+        self.assertIn('if (!hasDrawGetFont) Out("  active font: draw_get_font not present");', body)
+        self.assertIn('else if (!activeIdxKnown) Out("  active font: draw_get_font threw");', body)
+        # the existence-check Out(...) line (the printed negative control)
+        # is not itself the guard - it prints unconditionally, before the
+        # real gate on the read.
+        self.assertLess(body.index('Out(std::string("  draw_get_font: ")'),
+                         body.index('if (hasDrawGetFont) { try {'))
+
+    def test_font_list_disclaims_the_fallback_candidates_as_unconfirmed(self):
+        # F5, issue #55 follow-up: a run where every _fnt-suffixed candidate
+        # prints "unresolved" must be readable as "the guess missed," never
+        # as a measured statement that the runtime has no fonts.
+        body = function_body(self.plugin, "static void TgProbeSpriteFontListCommand()")
+        disclaimer = body.index("none is confirmed to exist")
+        first_candidate = body.index('std::string("  candidate ") + name +')
+        self.assertLess(disclaimer, first_candidate)
+
+    def test_style_parses_an_optional_trailing_talentid(self):
+        body = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
+        style_branch = body[body.index('lower == "style"'):body.index('lower == "gallery"')]
+        self.assertIn("FirstToken(rest2, ignored)", style_branch)
+        self.assertIn("int talentId = kToggleIndicatorTalentId;", style_branch)
+        self.assertIn("g_TgSpriteTalentId = talentId;", style_branch)
+        self.assertIn('" talentId=" + std::to_string(g_TgSpriteTalentId)', style_branch)
+        # F6, issue #55 follow-up: parsed through the shared ParseFiniteNumber
+        # and refused by name, not a bare std::stoi that silently substituted
+        # kToggleIndicatorTalentId on any parse failure - including a partial
+        # token like "24o", which std::stoi itself would accept as 24.
+        self.assertIn("ParseFiniteNumber(talentTok, f)", style_branch)
+        self.assertNotIn("std::stoi(talentTok)", style_branch)
+        usage = style_branch.index("did not parse as a number")
+        stored = style_branch.index("g_TgSpriteTalentId = talentId;")
+        self.assertLess(usage, stored)
+
+    def test_style_refuses_an_unparseable_talentid_naming_the_token(self):
+        body = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
+        style_branch = body[body.index('lower == "style"'):body.index('lower == "gallery"')]
+        self.assertIn('talentTok + "\\" did not parse as a number)"', style_branch)
+        self.assertIn('[talentId] (\\""', style_branch)
+        self.assertIn("return;", style_branch[style_branch.index("did not parse as a number"):])
+
+    def test_bar_returns_without_drawing_below_one_pixel_of_width(self):
+        body = function_body(self.plugin, "static void TgProbeSpriteDrawBar(")
+        # width after `barinset` trims both sides (2026-09-21 live session)
+        self.assertIn("const double barWidth = usableWidth * fraction;", body)
+        self.assertIn("if (barWidth < 1.0) return;", body)
+        # the guard is on the drawn WIDTH, never on a bare fraction==0.0
+        # equality check - a sub-pixel remainder must disappear too (D4).
+        self.assertNotIn("if (fraction == 0.0)", body)
+        self.assertNotIn("if (g_TgSpriteFraction == 0.0)", body)
+
+    def test_frac_refuses_a_partially_parsed_or_non_finite_token(self):
+        body = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
+        frac_branch = body[body.index('lower == "frac"'):body.index('lower == "textoffset"')]
+        self.assertIn("ParseFiniteNumber(v, f)", frac_branch)
+        self.assertNotIn("std::stod(v)", frac_branch)
+        # ParseFiniteNumber is the shared, already-shipped helper (the
+        # custom-forge selector parser) that requires the numeric prefix to
+        # cover the whole token and rejects a non-finite result.
+        parse_body = function_body(self.plugin, "static bool ParseFiniteNumber(")
+        self.assertIn("used == clean.size()", parse_body)
+        self.assertIn("std::isfinite(out)", parse_body)
+
+    def test_text_controls_do_not_change_any_other_candidates_draw(self):
+        # D3: textoffset/textalpha/textcolour/font only ever feed
+        # TgProbeSpriteDrawNumber - none of the other style bodies reference
+        # any of the four new state variables.
+        for fn in ("TgProbeSpriteDrawSoft(", "TgProbeSpriteDrawHalo(", "TgProbeSpriteDrawGradient(",
+                   "TgProbeSpriteDrawPulse(", "TgProbeSpriteDrawArc(", "TgProbeSpriteDrawBar(",
+                   "TgProbeSpriteDrawFade(", "TgProbeSpriteDrawGoldRect(", "TgProbeSpriteDrawOne("):
+            body = function_body(self.plugin, f"static void {fn}")
+            for name in ("g_TgSpriteTextOffsetDx", "g_TgSpriteTextAlpha", "g_TgSpriteTextColourSet", "g_TgSpriteFontName"):
+                self.assertNotIn(name, body, f"{fn} must not reference {name}")
+
+    def test_every_selection_resets_the_text_counters_alongside_draws(self):
+        # F2, issue #55 follow-up: g_TgSpriteTextDrawExc/g_TgSpriteTextFontUnresolved
+        # must be zeroed everywhere g_TgSpriteDraws/g_TgSpriteDrawExc already
+        # are (gold/style/gallery/named-sprite selection) - otherwise a
+        # second `style number` run's `off` line reports a session-cumulative
+        # textDrawExc=/unresolved= next to a fresh per-run draws=/drawExc=.
+        body = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
+        draws_resets = body.count("InterlockedExchange(&g_TgSpriteDraws, 0);")
+        drawexc_resets = body.count("InterlockedExchange(&g_TgSpriteDrawExc, 0);")
+        text_drawexc_resets = body.count("InterlockedExchange(&g_TgSpriteTextDrawExc, 0);")
+        text_unresolved_resets = body.count("InterlockedExchange(&g_TgSpriteTextFontUnresolved, 0);")
+        self.assertGreaterEqual(draws_resets, 4)
+        self.assertEqual(draws_resets, drawexc_resets)
+        self.assertEqual(draws_resets, text_drawexc_resets)
+        self.assertEqual(draws_resets, text_unresolved_resets)
+
+    # ---- the route-A decision rule rewrite (exhaustive state tables) -------
+
+    def _decision_rule_section(self):
+        doc = self.research_doc
+        return doc[doc.index("### Decision rule"):doc.index("### The look, judged live")]
+
+    def test_table_parser_rejects_a_malformed_table(self):
+        # Negative control for parse_doc_table itself: a caption followed by
+        # a header-shaped line but no real `|---|` separator must not be
+        # silently accepted as a table.
+        synthetic = (
+            "**Table X: synthetic**\n\n"
+            "| id | condition | status |\n"
+            "| CR1 | bogus row with no separator above it | blocked |\n"
+        )
+        with self.assertRaises(ValueError):
+            parse_doc_table(synthetic, "Table X: synthetic")
+
+    def test_decision_rule_tables_carry_exactly_the_declared_ids_once_each(self):
+        # AC6: the five tables, located by caption, carry exactly CR1-CR3,
+        # CS1-CS4, AR1-AR7, AS1-AS5 and S1-S9, each id exactly once.
+        section = self._decision_rule_section()
+        expected = {
+            "Table 1: route C, per row": [f"CR{n}" for n in range(1, 4)],
+            "Table 2: route C status": [f"CS{n}" for n in range(1, 5)],
+            "Table 3: route A, per row": [f"AR{n}" for n in range(1, 8)],
+            "Table 4: route A status": [f"AS{n}" for n in range(1, 6)],
+            "Table 5: selection": [f"S{n}" for n in range(1, 10)],
+        }
+        all_ids = []
+        for caption, ids in expected.items():
+            rows = parse_doc_table(section, caption)
+            actual_ids = [row[0] for row in rows]
+            self.assertEqual(sorted(actual_ids), sorted(ids), caption)
+            self.assertEqual(len(actual_ids), len(set(actual_ids)), caption)
+            all_ids.extend(actual_ids)
+        self.assertEqual(len(all_ids), len(set(all_ids)), "an id is reused across tables")
+
+    def test_selection_table_covers_every_status_pair_exactly_once(self):
+        # AC7: the nine rows of Table 5 are the nine ordered pairs of
+        # {measured, not observed, blocked} x itself, each exactly once.
+        section = self._decision_rule_section()
+        rows = parse_doc_table(section, "Table 5: selection")
+        statuses = ("measured", "not observed", "blocked")
+        expected_pairs = sorted((c, a) for c in statuses for a in statuses)
+        actual_pairs = sorted((row[1], row[2]) for row in rows)
+        self.assertEqual(actual_pairs, expected_pairs)
+
+    def test_every_status_and_selection_cell_is_from_the_declared_vocabulary(self):
+        # AC8: every route-status cell is measured/not observed/blocked, and
+        # every selected-route cell is route C/route A/route B/none - session
+        # repeats.
+        section = self._decision_rule_section()
+        statuses = {"measured", "not observed", "blocked"}
+        selections = {"route C", "route A", "route B", "none - session repeats"}
+        for caption in ("Table 1: route C, per row", "Table 2: route C status",
+                        "Table 3: route A, per row", "Table 4: route A status"):
+            for row in parse_doc_table(section, caption):
+                self.assertIn(row[-1], statuses, (caption, row))
+        for row in parse_doc_table(section, "Table 5: selection"):
+            self.assertIn(row[1], statuses, row)
+            self.assertIn(row[2], statuses, row)
+            self.assertIn(row[3], selections, row)
+
+    def test_blocked_falls_through_to_none_and_route_b_is_the_double_not_observed_row(self):
+        # AC9: every row with a `blocked` status cell and no `measured`
+        # status cell selects `none - session repeats`; exactly one row
+        # selects `route B`, and it is the row where both status cells read
+        # `not observed`.
+        section = self._decision_rule_section()
+        rows = parse_doc_table(section, "Table 5: selection")
+        route_b_pairs = []
+        for row_id, c_status, a_status, selected, _record in rows:
+            if "blocked" in (c_status, a_status) and "measured" not in (c_status, a_status):
+                self.assertEqual(selected, "none - session repeats", row_id)
+            if selected == "route B":
+                route_b_pairs.append((c_status, a_status))
+        self.assertEqual(route_b_pairs, [("not observed", "not observed")])
+
+    def test_speed_is_pinned_as_a_non_input_and_absent_from_every_table_cell(self):
+        # AC10: the "An unreadable speed=..." sentence is pinned verbatim
+        # (whitespace-normalised, since this doc hand-wraps prose), and the
+        # `speed=` token appears in no cell of any of the five tables.
+        section = self._decision_rule_section()
+        self.assertIn(
+            "An unreadable `speed=` changes no cell in any table above.",
+            collapse(section),
+        )
+        for caption in ("Table 1: route C, per row", "Table 2: route C status",
+                        "Table 3: route A, per row", "Table 4: route A status",
+                        "Table 5: selection"):
+            for row in parse_doc_table(section, caption):
+                for cell in row:
+                    self.assertNotIn("speed=", cell, (caption, row))
+
+    def test_live_procedure_step_2_and_results_header_carry_the_new_inputs(self):
+        # AC11: step 2 names a second cast and the `appearance=` readout,
+        # and the Results per-row header names the new columns the rule
+        # consumes.
+        doc = self.research_doc
+        issue_section = doc[doc.index("## Issue #55"):]
+        procedure = issue_section[issue_section.index("### Live procedure"):issue_section.index("### Results")]
+        step2 = procedure[procedure.index("\n2."):procedure.index("\n3.")]
+        self.assertIn("second", step2)
+        self.assertIn("appearance=", step2)
+        results = issue_section[issue_section.index("### Results"):]
+        header_line = next(
+            line for line in results.splitlines() if line.strip().startswith("| abilityId")
+        )
+        for token in ("first= #1", "first= #2", "ratio", "factor", "overCap=",
+                      "route A row status", "route C row status"):
+            self.assertIn(token, header_line, token)
+
+    def test_ar2_and_ar3_partition_abilityDuration_and_first_at_the_zero_bound(self):
+        # Regression for the instrument-blindness BLOCKING finding closed
+        # this round: a row whose first draw reads the probe's own -1/0
+        # sentinel (timer never started) must never enter the ratio/base/
+        # factor computation. AR2 must own the <= 0 side of
+        # `abilityDuration=` and AR3 the > 0 side of `first=`, so the two
+        # conditions partition the number line instead of leaving a state
+        # (e.g. `first=-1`, `abilityDuration>0`) that maps to no row.
+        section = self._decision_rule_section()
+        rows = {row[0]: row for row in parse_doc_table(section, "Table 3: route A, per row")}
+        ar2_condition = collapse(rows["AR2"][1])
+        self.assertIn("0", ar2_condition)
+        self.assertIn("negative", ar2_condition, "AR2 must also cover a negative abilityDuration=")
+        for row_id in ("AR3", "AR4"):
+            condition = collapse(rows[row_id][1])
+            self.assertIn(
+                "greater than `0`" if row_id == "AR3" else "> 0",
+                condition,
+                f"{row_id} must require a positive first=, not merely a numeric one",
+            )
+        # The definitions block states the same bound in prose, so a reader
+        # of the definitions and a reader of the table land on the same
+        # partition.
+        self.assertIn(
+            "defined only for rows whose `abilityDuration > 0` and whose "
+            "`first=` read numeric and greater than `0`",
+            collapse(section),
+        )
+
+    # ---- issue #55 timer-countdown follow-up: `frac anim` -----------------
+    # (workorder .claude/workorders/forgepact-tgprobe-frac-anim-plan.md)
+
+    def test_frac_anim_parses_its_arguments_and_refuses_bad_ones(self):
+        body = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
+        frac_branch = body[body.index('lower == "frac"'):body.index('lower == "textoffset"')]
+        self.assertIn("TgProbeSpriteFracAnimCommand(", frac_branch)
+        self.assertLess(
+            frac_branch.index("TgProbeSpriteFracAnimCommand("),
+            frac_branch.index("ParseFiniteNumber(v, f)"),
+            "the anim dispatch must be reached before frac's own numeric parse",
+        )
+        anim_body = function_body(self.plugin, "static void TgProbeSpriteFracAnimCommand(const std::string& rest)")
+        self.assertIn("ParseFiniteNumber(secStr, seconds)", anim_body)
+        self.assertIn("seconds <= 0.0", anim_body)
+        self.assertIn('loopTok == "loop"', anim_body)
+        self.assertIn("!loopTok.empty()", anim_body)
+
+    def test_frac_anim_clock_is_resolved_by_name_and_refuses_when_unreadable(self):
+        body = function_body(self.plugin, "static bool TgProbeSpriteFracAnimClockRead(")
+        self.assertIn('clockName == "get_timer"', body)
+        self.assertIn('TgProbeSpriteBuiltinExists("get_timer"', body)
+        self.assertNotIn('CallBuiltin("get_timer"', body)
+        self.assertIn('clockName == "current_time"', body)
+        self.assertIn('GetBuiltin("current_time", nullptr, NULL_INDEX, v)', body)
+        self.assertNotIn('CallBuiltin("current_time"', body)
+        self.assertEqual(body.count("N1Numeric("), 2)
+        self.assertNotIn("GetModuleHandle", body)
+        self.assertNotIn("Rva", body)
+        anim_body = function_body(self.plugin, "static void TgProbeSpriteFracAnimCommand(const std::string& rest)")
+        self.assertIn("frac anim refused", anim_body)
+        self.assertLess(
+            anim_body.index("frac anim refused"),
+            anim_body.index("g_TgSpriteFracAnimState = TgSpriteFracAnimState::Running;"),
+        )
+
+    def test_draw_derives_the_fraction_from_the_clock_not_from_draws(self):
+        draw = function_body(self.plugin, "static void TgProbeSpriteDraw(bool fromHudLayer)")
+        self.assertIn("TgProbeSpriteFracAnimTick();", draw)
+        self.assertLess(
+            draw.index("TgSpriteMode::Off) return;"),
+            draw.index("TgProbeSpriteFracAnimTick();"),
+        )
+        self.assertLess(
+            draw.index("TgProbeSpriteFracAnimTick();"),
+            draw.index("TgProbeSpriteDrawStyle("),
+        )
+        tick = function_body(self.plugin, "static void TgProbeSpriteFracAnimTick()")
+        self.assertTrue(
+            tick.strip().startswith("if (g_TgSpriteFracAnimState == TgSpriteFracAnimState::Off) return;"),
+            "the tick must return before any clock read when no animation is running",
+        )
+        self.assertIn("TgProbeSpriteFracAnimClockRead(", tick)
+        self.assertIn("g_TgSpriteFraction = fraction;", tick)
+        self.assertIn("g_TgSpriteFracAnimLoop", tick)
+        self.assertIn("g_TgSpriteFraction = 0.0;", tick)   # the hold-at-zero path
+        self.assertNotIn("g_TgSpriteAnimTime", tick)
+        self.assertNotIn("g_RuntimeFrame", tick)
+        self.assertNotIn("1.0 / 15.0", tick)
+
+    def test_plain_frac_cancels_the_animation_only_after_it_parsed(self):
+        body = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
+        frac_branch = body[body.index('lower == "frac"'):body.index('lower == "textoffset"')]
+        refusal_return = frac_branch.index("did not parse as a number")
+        refusal_return = frac_branch.index("return;", refusal_return)
+        cancel = frac_branch.index("g_TgSpriteFracAnimState = TgSpriteFracAnimState::Off;")
+        assign = frac_branch.index("g_TgSpriteFraction = f;")
+        self.assertLess(refusal_return, cancel)
+        self.assertLess(cancel, assign)
+
+    def test_off_and_frac_lines_report_the_animation_state(self):
+        body = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
+        off_branch = body[body.index('lower == "off"'):body.index('lower == "list"')]
+        self.assertIn("TgProbeSpriteFracAnimText()", off_branch)
+        frac_branch = body[body.index('lower == "frac"'):body.index('lower == "textoffset"')]
+        self.assertIn("TgProbeSpriteFracAnimText()", frac_branch)
+        text_body = function_body(self.plugin, "static std::string TgProbeSpriteFracAnimText()")
+        self.assertIn('"anim=off"', text_body)
+        self.assertIn("src=", text_body)
+        self.assertIn("clockFail=", text_body)
+        self.assertIn('"running"', text_body)
+        self.assertIn('"done"', text_body)
+
+    def test_frac_anim_elapsed_readout_is_unwrapped_in_loop_mode(self):
+        # Follow-up fix: `g_TgSpriteFracAnimElapsed` must hold the total
+        # elapsed time since `anim` started, even in loop mode, so it reads
+        # the same as a stopwatch. Wrapping it (a sawtooth) made a short
+        # loop look like the "clock stuck at 0" failure signature. The
+        # wrapped value the fraction is actually derived from is kept apart
+        # in `g_TgSpriteFracAnimPhase` and shown in the readout as `phase=`.
+        tick = function_body(self.plugin, "static void TgProbeSpriteFracAnimTick()")
+        self.assertNotIn(
+            "elapsed = std::fmod(",
+            tick,
+            "elapsed itself must stay unwrapped; wrap a separate phase variable instead",
+        )
+        self.assertIn("g_TgSpriteFracAnimElapsed = elapsed;", tick)
+        self.assertIn("g_TgSpriteFracAnimPhase", tick)
+        text_body = function_body(self.plugin, "static std::string TgProbeSpriteFracAnimText()")
+        self.assertIn("phase=", text_body)
+
+    def test_frac_anim_symbols_are_research_only(self):
+        for name in ("TgProbeSpriteFracAnimCommand", "TgProbeSpriteFracAnimClockRead",
+                     "TgProbeSpriteFracAnimTick", "TgProbeSpriteFracAnimText",
+                     "g_TgSpriteFracAnimState", "g_TgSpriteFracAnimLoop", "g_TgSpriteFracAnimDuration",
+                     "g_TgSpriteFracAnimStart", "g_TgSpriteFracAnimClock", "g_TgSpriteFracAnimElapsed",
+                     "g_TgSpriteFracAnimTicks", "g_TgSpriteFracAnimClockFail"):
+            self.assertIn(name, self.block, name)
+            self.assertNotIn(name, self.stripped, name)
+
+    def test_research_doc_describes_frac_anim(self):
+        doc = self.research_doc
+        self.assertIn("frac anim", doc)
+        self.assertIn("get_timer", doc)
+        self.assertIn("current_time", doc)
+
+    # ---- 2026-09-21 live session: `bar` and `number` sit ABOVE the icon ----
+
+    def test_number_defaults_above_the_icon(self):
+        # The tester nudged `number` to textoffset (0, -101) on the tuned
+        # 77x78 Soul Spurn box; that is now the default. Still anchored to the
+        # bottom edge, so `textoffset 0 2` restores the old placement.
+        self.assertIn("static double g_TgSpriteTextOffsetDx = 0.0, g_TgSpriteTextOffsetDy = -101.0;", self.plugin)
+        body = function_body(self.plugin, "static void TgProbeSpriteDrawNumber(")
+        self.assertIn("y + h + g_TgSpriteTextOffsetDy", body)
+
+    def test_bar_draws_above_the_box_offset_by_baroffset(self):
+        self.assertIn("static double g_TgSpriteBarOffsetDx = 0.0, g_TgSpriteBarOffsetDy = 0.0;", self.plugin)
+        body = function_body(self.plugin, "static void TgProbeSpriteDrawBar(")
+        # anchored to the box's TOP edge, never below it
+        self.assertNotIn("y + h + kBarGap", body)
+        self.assertIn("by1 = y - kBarGap + g_TgSpriteBarOffsetDy", body)
+        self.assertIn("by0 = by1 - kBarHeight", body)
+        self.assertIn("bx0 = x + g_TgSpriteBarInset + g_TgSpriteBarOffsetDx", body)
+        # the stub guard survives the move
+        self.assertIn("if (barWidth < 1.0) return;", body)
+
+    def test_baroffset_command_parses_both_values_or_changes_nothing(self):
+        body = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
+        branch = body[body.index('lower == "baroffset"'):body.index('lower == "textalpha"')]
+        self.assertIn("ParseFiniteNumber(dxStr, dx) && ParseFiniteNumber(dyStr, dy)", branch)
+        refusal = branch.index("tgprobe sprite baroffset: usage")
+        assign = branch.index("g_TgSpriteBarOffsetDx = dx;")
+        self.assertLess(refusal, assign, "a refused baroffset must return before storing anything")
+        self.assertIn("TgProbeSpriteBarOffsetText()", branch)
+        # reported on the `off` line and on `style bar`'s confirmation
+        off_branch = body[body.index('lower == "off"'):body.index('lower == "list"')]
+        self.assertIn("TgProbeSpriteBarOffsetText()", off_branch)
+        self.assertIn('kind == TgSpriteStyleKind::Bar ? " " + TgProbeSpriteBarOffsetText()', body)
+
+    def test_baroffset_feeds_bar_only(self):
+        for fn in ("TgProbeSpriteDrawSoft(", "TgProbeSpriteDrawHalo(", "TgProbeSpriteDrawGradient(",
+                   "TgProbeSpriteDrawPulse(", "TgProbeSpriteDrawArc(", "TgProbeSpriteDrawNumber(",
+                   "TgProbeSpriteDrawFade(", "TgProbeSpriteDrawGoldRect(", "TgProbeSpriteDrawOne("):
+            body = function_body(self.plugin, f"static void {fn}")
+            self.assertNotIn("g_TgSpriteBarOffset", body, f"{fn} must not reference the bar offset")
+        for name in ("g_TgSpriteBarOffsetDx", "g_TgSpriteBarOffsetDy", "TgProbeSpriteBarOffsetText"):
+            self.assertIn(name, self.block, name)
+            self.assertNotIn(name, self.stripped, name)
+
+    def test_bar_is_inset_equally_from_both_sides(self):
+        self.assertIn("static double g_TgSpriteBarInset = 4.0;", self.plugin)
+        body = function_body(self.plugin, "static void TgProbeSpriteDrawBar(")
+        self.assertIn("const double usableWidth = w - 2.0 * g_TgSpriteBarInset;", body)
+        self.assertIn("const double barWidth = usableWidth * fraction;", body)
+        self.assertNotIn("const double barWidth = w * fraction;", body)
+        self.assertIn("bx0 = x + g_TgSpriteBarInset + g_TgSpriteBarOffsetDx", body)
+        # the width guard comes after the inset, so an inset eating the box draws nothing
+        self.assertLess(body.index("usableWidth"), body.index("if (barWidth < 1.0) return;"))
+
+    def test_barinset_command_refuses_negative_or_unparsed_values(self):
+        body = function_body(self.plugin, "static void TgProbeSpriteCommand(const std::string& rest)")
+        branch = body[body.index('lower == "barinset"'):body.index('lower == "textalpha"')]
+        self.assertIn("!ParseFiniteNumber(v, px) || px < 0.0", branch)
+        self.assertLess(branch.index("tgprobe sprite barinset: usage"), branch.index("g_TgSpriteBarInset = px;"))
+        text = function_body(self.plugin, "static std::string TgProbeSpriteBarOffsetText()")
+        self.assertIn("barinset=", text)
+        self.assertIn("g_TgSpriteBarInset", self.block)
+        self.assertNotIn("g_TgSpriteBarInset", self.stripped)
+
+    def test_research_doc_records_the_above_icon_placement(self):
+        doc = self.research_doc
+        self.assertIn("baroffset", doc)
+        self.assertIn("0,-101", doc)
 
 
 if __name__ == "__main__":

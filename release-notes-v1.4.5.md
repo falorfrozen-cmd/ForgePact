@@ -3,13 +3,14 @@
 The Prospect Cube can now prospect each item the moment you put it in, so you
 no longer have to stop every 54 items to press Prospect and start again.
 
-Two new, off-by-default Gameplay Mods for toggle skills: mark the skill-bar
-slot of a toggle you have running, so you can see at a glance that it is still
-active, and stop a double cast proc from flipping a toggle straight back.
+Three new, off-by-default Gameplay Mods for toggle skills: mark the skill-bar
+slot of a toggle you have running, stop a double cast proc from flipping a
+toggle straight back, and draw a countdown over a plain (non-toggled) cast so
+you can see how much time is left before it ends.
 
-Five skills are covered: the White Mage's **Soul Spurn**, the Exo's **Lunar
-Orbit**, the Plague Doctor's **Crematus**, the Butcher's **Submerged Knives**
-and the Prophet's **Maelstrom of Frost**.
+A fixed set of toggle skills, each measured in-game, is covered by the toggle
+marker and the double-cast guard. The countdown below covers a different set
+of its own - see that bullet for what it draws on.
 
 ## New
 
@@ -76,20 +77,45 @@ and the Prophet's **Maelstrom of Frost**.
   effect. With this mod turned on (Mods tab, off by default), a soft red
   outline appears around that skill's slot on the skill bar the whole time it
   is running, and disappears the moment it stops - on a re-press, on a zone
-  change, or if the game cancels it. It covers Soul Spurn, Lunar Orbit,
-  Crematus, Submerged Knives and Maelstrom of Frost. A plain cast - one made
-  without the sub-talent that turns the skill into a toggle - does not light
-  the outline, and neither does a skill outside that list.
+  change, or if the game cancels it. It covers a fixed set of toggle skills,
+  each measured in-game. A plain cast - one made without the sub-talent that
+  turns the skill into a toggle - does not light the outline, and neither
+  does a skill outside that set.
 - **Stop double cast re-casting a toggle skill.** With a double cast effect
-  equipped, a double cast proc could cast one of these skills a second time on
-  its own, a moment after your press - which flipped the toggle straight back,
+  equipped, a double cast proc could cast one of that same fixed set of
+  toggle skills a second time on its own, a moment after your press - which
+  flipped the toggle straight back,
   so it ended off when you had just turned it on, or on when you had just
   turned it off. With this mod turned on (Mods tab, off by default), that
   extra cast is skipped and the toggle stays the way your press left it. It
   only steps in when you actually have the sub-talent that makes the skill a
-  toggle; without it, the double cast's extra cast goes through exactly as it
-  does in the unmodded game. Your own presses, and double casts of every other
-  skill, are not affected.
+  toggle, or the skill is a toggle on its own; otherwise the double cast's
+  extra cast goes through exactly as it does in the unmodded game. Your own
+  presses, and double casts of every other skill, are not affected.
+- **Timed skill countdown.** A new **Timed skill countdown** dropdown in Mods
+  (off by default) draws how much of a timed cast is left over that skill's
+  slot on the skill bar, and it disappears the moment the cast ends. A small
+  set of timed skills were measured in-game and are tested; most other
+  skills with both a duration and a real cooldown are also covered, by rule,
+  and are untested. A few skills are left out where a measurement showed the
+  timer on the skill's own object is not the skill's duration, and companion
+  skills (turrets, totems, hydra) are not covered. A few skills whose
+  duration is a buff on you, measured in-game, are covered too, and other
+  buff-only skills are not. A skill switched on as a toggle never gets a
+  countdown. In a fight, hits can add a little time to some skills (roughly
+  0.2 s each in our test) and the countdown rises slightly to match. Pick
+  one of four looks: **Arc** (a ring that empties clockwise),
+  **Bar** (a shrinking bar above the icon), **Number** (a shrinking
+  percentage above the icon) or **Fade** (a soft outline that dims as time
+  runs out). If you turn this on partway through a cast that is already
+  running, that one cast shows as full from the moment you turned it on
+  rather than its true remaining time; the next cast on that skill reads
+  correctly.
+- **Mods tab columns.** The Gameplay and Items mod lists are split into two
+  columns, and the right column could end up longer than the left, leaving a
+  gap under the left one. The left column is now always the longer one, and
+  the cards still read top to bottom, left column first. On a narrow window
+  the lists are a single column, as before.
 - **A new read-only `menulayout` command lists where the menu buttons
   are.** A tool that plays through the main menu for you - such as the
   toolkit's `hs-drive` helper, which opens a save for testing - used to

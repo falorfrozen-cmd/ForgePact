@@ -380,6 +380,13 @@ static consteval const char* SdkShortScriptName(std::string_view sdkConstant)
 #include <ForgePact/StatsManager.hpp>
 #include <ForgePact/RelicFilterMod.hpp>
 #include <ForgePact/ToggleSkillMod.hpp>
+#include <ForgePact/SkillTimerMod.hpp>
+// Issue #55 follow-up (D-S4): the generated rule table - kept as its own
+// include, never folded into SkillTimerMod.hpp, so that header (spliced
+// whole into tests/toggle_skill_harness.cpp's PRODUCTION_SKILLTIMER) stays
+// free of the full hs-game-sdk enumerator set the harness's own stand-in
+// GameObject enum does not carry.
+#include <ForgePact/SkillTimerNames.hpp>
 #include <ForgePact/ProspectWindowMod.hpp>
 #include <ForgePact/AutoProspectMod.hpp>
 #include <ForgePact/PetQuestCollectorMod.hpp>
@@ -4550,10 +4557,48 @@ static void ToggleIndicatorCountMark(const ForgePact::ToggleSkillRow& row, const
 // every instance counts as own - D-N3, ForgePact being offline-only - and no
 // ownership read is made, which is why such a row can never be turned
 // Unreadable by an ownership read that throws.
+//
+// Forward declarations: session 12's buff-slot reader and the one buff-form
+// function (both defined later, next to SkillTimerReadRow, since that is
+// where the rest of the countdown's own reading lives) - ToggleIndicatorReadRow
+// below is defined earlier in the file and needs both for its `PlayerBuff`
+// dispatch.
+static void SkillTimerBuffReadRow(int buffId, bool& anyOwn, bool& anyReadable,
+                                   bool& identityMismatch, double& remaining);
+static void ToggleIndicatorReadPlayerBuffForm(int talentId, int subTalentSlot,
+                                               bool anyOwn, bool anyReadable,
+                                               ForgePact::ToggleIndicatorReadDetail& out);
+
 static ForgePact::ToggleIndicatorState ToggleIndicatorReadRow(const ForgePact::ToggleSkillRow& row,
+                                                               int talentId,
                                                                ForgePact::ToggleIndicatorReadDetail* detail,
                                                                bool treatOwnAsForeign)
 {
+    // Session 12 (Counter's Give No Quarter form): a `PlayerBuff` row reads a
+    // player-buff slot, never an object - dispatched here, before the object
+    // resolve below, so this path never calls asset_get_index at all. The
+    // slot read is the ONE shared reader (SkillTimerBuffReadRow) the
+    // countdown's own buff loop also calls; only the sub-talent read
+    // (ToggleReadSubTalent, via the buff-form function) is specific to this
+    // path, and is made only when the slot is actually present.
+    if (row.mark == ForgePact::ToggleOnMark::PlayerBuff) {
+        ForgePact::ToggleIndicatorReadDetail d;
+        bool anyOwn = false, anyReadable = false, identityMismatch = false;
+        double remaining = 0.0;
+        SkillTimerBuffReadRow((int)row.heldValue, anyOwn, anyReadable, identityMismatch, remaining);
+        (void)remaining; (void)identityMismatch;
+        ToggleIndicatorReadPlayerBuffForm(talentId, row.subTalentSlot, anyOwn, anyReadable, d);
+        if (treatOwnAsForeign) {
+            // Research-only shape: never exercised on the shipped path
+            // (nothing calls this with treatOwnAsForeign=true for a
+            // PlayerBuff row), kept only so the parameter's meaning does not
+            // silently change for this mark.
+            d.others = d.mine; d.mine = 0; d.markedMine = 0; d.unmarkedMine = 0; d.markUnreadableMine = 0;
+        }
+        if (detail) *detail = d;
+        return ForgePact::ToggleIndicatorModel::Decide(d, ForgePact::ToggleRowRequiresMark(row));
+    }
+
     ForgePact::ToggleIndicatorReadDetail d;
     double objIdx = -1.0;
     d.objectResolved = ToggleIndicatorResolveRowObject(row, objIdx);
@@ -4615,7 +4660,11 @@ static ForgePact::ToggleIndicatorState ToggleIndicatorReadRow(const ForgePact::T
 static ForgePact::ToggleIndicatorState ToggleIndicatorRead(ForgePact::ToggleIndicatorReadDetail* detail,
                                                             bool treatOwnAsForeign)
 {
-    return ToggleIndicatorReadRow(ForgePact::kToggleSkillRows[0], detail, treatOwnAsForeign);
+    // Row 0 (soulSpurn) is never the `PlayerBuff` row, so its resolved talent
+    // id is never read on this path - -1 (never resolved) is passed rather
+    // than reaching for g_ToggleTableIds, which this research-only alias is
+    // declared ahead of.
+    return ToggleIndicatorReadRow(ForgePact::kToggleSkillRows[0], -1, detail, treatOwnAsForeign);
 }
 #endif
 
@@ -4642,8 +4691,62 @@ struct ToggleTableIds {
     void Set(int row, int value) { id[row].store(value); }
 };
 static ToggleTableIds g_ToggleTableIds;
+// The countdown's own table (ForgePact::kSkillTimerRows, session 8) keeps its
+// ids apart from the toggle table's, filled by the same walk below: a
+// countdown row is never a toggle-table member, so neither the border nor the
+// guard can ever key off one (the guard's membership stays
+// ToggleTableRowForTalentId's, toggle table only).
+struct SkillTimerTableIds {
+    std::atomic<int> id[ForgePact::kSkillTimerRowCount];
+    SkillTimerTableIds() { for (int r = 0; r < ForgePact::kSkillTimerRowCount; ++r) id[r].store(-1); }
+    int Get(int row) const { return id[row].load(); }
+    void Set(int row, int value) { id[row].store(value); }
+};
+static SkillTimerTableIds g_SkillTimerTableIds;
+// Session 12: the buff-carried rows' own ids, resolved by the same walk as
+// the two tables above, by `abilityId`, into their own storage - a buff row
+// is never a member of either table above (test_buff_rows_disjoint_from_object_rows_and_never_enter_the_rule).
+struct SkillTimerBuffTableIds {
+    std::atomic<int> id[ForgePact::kSkillTimerBuffRowCount];
+    SkillTimerBuffTableIds() { for (int r = 0; r < ForgePact::kSkillTimerBuffRowCount; ++r) id[r].store(-1); }
+    int Get(int row) const { return id[row].load(); }
+    void Set(int row, int value) { id[row].store(value); }
+};
+static SkillTimerBuffTableIds g_SkillTimerBuffTableIds;
+// Round 1 (issue #55 follow-up, D-S4): declared here, ahead of
+// ToggleTableResolveDue/ToggleTableResolveIds below, which read it to gate
+// the once-per-room walk on whether a look is selected. Off by default -
+// SkillTimerDraw() (further down, "Timed-skill countdown") is the only other
+// reader; the `skilltimer <style>` command handler is the only writer besides
+// the walk's own bookkeeping of which style a given room's walk ran under.
+static std::atomic<ForgePact::SkillTimerStyle> g_SkillTimerStyle{ ForgePact::SkillTimerStyle::Off };
+// ===== Rule-based coverage (issue #55 follow-up, D-S4) - the runtime-built
+// rule map ====================================================================
+// Filled by the same once-per-room walk as the two tables above (T2), keyed
+// on talent id, one entry per eligible non-explicit talent up to
+// kSkillTimerRuleCap. Rebuilt wholesale on every walk (cleared, then refilled
+// - never appended to across walks), so an entry's own latch always starts
+// fresh for a talent that just (re-)entered the map. `g_SkillTimerRuleCount`
+// is the walk's own single-threaded write; the draw only ever reads it.
+static ForgePact::SkillTimerRuleEntry g_SkillTimerRuleEntries[ForgePact::kSkillTimerRuleCap];
+static volatile long g_SkillTimerRuleCount = 0;
+// Walk-time counters (accumulate across the whole session, the same shape
+// every other counter in this file uses - never reset except by a test).
+// ruleNoName (round 1, review follow-up): a talent that passed the same
+// eligibility check as an entry (readable, positive duration, cooldown above
+// the floor, not denied, not an explicit row) but has no generated-table key
+// - counted so `skilltimer stat` can tell "my skill has no object by
+// convention" apart from "my skill was never walked", which an entry's own
+// absence alone cannot say.
+static volatile long g_SkillTimerRuleDenied = 0, g_SkillTimerRuleUnreadableFields = 0, g_SkillTimerRuleCapped = 0, g_SkillTimerRuleNoName = 0;
+// Draw-time counters, aggregate over every active rule entry.
+static volatile long g_RuleDrawn = 0, g_RuleNoInstance = 0, g_RuleUnreadable = 0, g_RuleExpired = 0, g_RuleToggleOn = 0, g_RuleNoObject = 0, g_RuleLatched = 0, g_RuleUnlatched = 0;
 static volatile long g_ToggleResolveWalks = 0;
 static bool g_ToggleResolveWalked = false;     // a walk has already run for the current room
+// Round 1: whether THAT walk ran while the countdown style was Off, so a
+// look selected mid-room after an Off walk re-arms one more walk this room
+// rather than waiting for the next zone (ToggleTableResolveDue below).
+static bool g_ToggleResolveWalkedRuleOff = false;
 static bool g_ToggleResolveRoomKnown = false;
 static int64_t g_ToggleResolveRoomKey = 0;
 static constexpr long kToggleTableWalkCap = 5000;   // the bound the research walk of the same map uses
@@ -4653,6 +4756,21 @@ static int ToggleTableUnresolvedRows()
     int n = 0;
     for (int r = 0; r < ForgePact::kToggleSkillRowCount; ++r) {
         if (g_ToggleTableIds.Get(r) < 0) ++n;
+    }
+    return n;
+}
+
+static int SkillTimerTableUnresolvedRows()
+{
+    int n = 0;
+    for (int r = 0; r < ForgePact::kSkillTimerRowCount; ++r) {
+        if (g_SkillTimerTableIds.Get(r) < 0) ++n;
+    }
+    // Session 12: the buff-carried rows count here too, so
+    // ToggleTableResolveDue's existing "both tables resolved" early-out
+    // covers them without its own text changing.
+    for (int r = 0; r < ForgePact::kSkillTimerBuffRowCount; ++r) {
+        if (g_SkillTimerBuffTableIds.Get(r) < 0) ++n;
     }
     return n;
 }
@@ -4667,31 +4785,68 @@ static int ToggleTableRowForTalentId(int talentId)
     return -1;
 }
 
-// Whether a walk is worth attempting this second: only while a row is still
-// unresolved, and only once per room. A room key that cannot be read is never
-// stored and never counts as a change (the INT64_MIN sentinel is not compared
-// against a real key).
+// Whether a walk is worth attempting this second. Room-change detection runs
+// FIRST, whatever the style, so a room change while the countdown is off
+// still re-arms a walk for a later switch to a look. A room key that cannot
+// be read is never stored and never counts as a change (the INT64_MIN
+// sentinel is not compared against a real key).
+//
+// Issue #55 follow-up (D-S4) removed the "stop once every explicit row of
+// both tables has resolved" early-out, because the rule map has no such
+// stopping signal and needs rebuilding every room regardless of whether the
+// two explicit tables still have anything left to learn. Round 1 restores
+// that early stop for style Off ONLY - the one case where the rule map is
+// never consulted anyway, so a player who never picks a look pays no walk
+// once toggleborder/toggleguard/skilltimer's own rows have nothing left to
+// learn, rather than one a second forever. With a look selected, the walk
+// stays due once per room, and again in the same room when the LAST walk in
+// it ran while Off (ToggleTableResolveIds records which one it was) - so
+// switching the countdown on mid-room builds the rule map within this
+// cadence tick instead of waiting for the next zone.
 static bool ToggleTableResolveDue()
 {
-    if (ToggleTableUnresolvedRows() == 0) return false;
     const int64_t key = CurrentRoomKey();
     if (key != INT64_MIN && (!g_ToggleResolveRoomKnown || g_ToggleResolveRoomKey != key)) {
         g_ToggleResolveRoomKnown = true;
         g_ToggleResolveRoomKey = key;
         g_ToggleResolveWalked = false;   // a new zone earns one more walk
+        g_ToggleResolveWalkedRuleOff = false;
     }
-    return !g_ToggleResolveWalked;
+    if (g_SkillTimerStyle.load() == ForgePact::SkillTimerStyle::Off) {
+        if (ToggleTableUnresolvedRows() + SkillTimerTableUnresolvedRows() == 0) return false;
+        return !g_ToggleResolveWalked;
+    }
+    if (!g_ToggleResolveWalked) return true;
+    return g_ToggleResolveWalkedRuleOff;
 }
 
-// One walk. Stores a row's id only when the key is a real, non-negative id, so
-// a malformed key can never become a row's id.
+// One walk, for both tables: the toggle table's rows and the countdown's own
+// (ForgePact::kSkillTimerRows) are matched against the same talent structs in
+// the same pass, so a second table costs no second walk. Stores a row's id
+// only when the key is a real, non-negative id, so a malformed key can never
+// become a row's id.
 static bool ToggleTableResolveIds()
 {
     RValue map;
     std::string why;
     if (!N1GetTalentMap(map, why)) return false;   // not ready yet: the attempt is not a walk
     g_ToggleResolveWalked = true;
+    // Round 1: which style THIS walk ran under, so ToggleTableResolveDue can
+    // tell "walked, rule map built" apart from "walked while off, rule map
+    // still empty" and re-arm one more walk this room when a look is picked.
+    const bool ruleMapOff = (g_SkillTimerStyle.load() == ForgePact::SkillTimerStyle::Off);
+    g_ToggleResolveWalkedRuleOff = ruleMapOff;
     InterlockedIncrement(&g_ToggleResolveWalks);
+
+    // Issue #55 follow-up (D-S4): the rule map is rebuilt wholesale on every
+    // real walk, never appended to - a fresh SkillTimerRuleEntry{} per slot
+    // drops any latch a talent that left the map (or moved slot) was holding.
+    // Cleared on every walk, style or no, so a look switched off mid-room
+    // never leaves a stale entry behind.
+    g_SkillTimerRuleCount = 0;
+    for (int i = 0; i < ForgePact::kSkillTimerRuleCap; ++i) {
+        g_SkillTimerRuleEntries[i] = ForgePact::SkillTimerRuleEntry{};
+    }
 
     RValue key;
     try { key = g_Yytk->CallBuiltin("ds_map_find_first", { map }); }
@@ -4711,6 +4866,82 @@ static bool ToggleTableResolveIds()
                         for (int r = 0; r < ForgePact::kToggleSkillRowCount; ++r) {
                             if (name == ForgePact::kToggleSkillRows[r].abilityId) g_ToggleTableIds.Set(r, id);
                         }
+                        for (int r = 0; r < ForgePact::kSkillTimerRowCount; ++r) {
+                            if (name == ForgePact::kSkillTimerRows[r].abilityId) g_SkillTimerTableIds.Set(r, id);
+                        }
+                        // Session 12: the buff-carried rows, same walk, own storage.
+                        for (int r = 0; r < ForgePact::kSkillTimerBuffRowCount; ++r) {
+                            if (name == ForgePact::kSkillTimerBuffRows[r].abilityId) g_SkillTimerBuffTableIds.Set(r, id);
+                        }
+                        // T2 (D-S4): the rule map. The deny-list is checked
+                        // BEFORE the generated-table lookup, so a denied
+                        // talent counts ruleDenied even when it has no object
+                        // by name convention at all (bushido/holyForm/
+                        // unholyForm/melonForm). D-R1: a talent id matching
+                        // one of the seven explicit rows above is never
+                        // entered here.
+                        if (!ForgePact::SkillTimerRuleIsExplicitRow(name)) {
+                            if (ForgePact::SkillTimerRuleDenied(name)) {
+                                InterlockedIncrement(&g_SkillTimerRuleDenied);
+                            } else {
+                                const std::string lowerName = Lower(name);
+                                int nameIndex = -1;
+                                for (int i = 0; i < ForgePact::kSkillTimerNameCount; ++i) {
+                                    if (lowerName == ForgePact::kSkillTimerNames[i].key) { nameIndex = i; break; }
+                                }
+                                // Round 1 (review follow-up): duration/cooldown
+                                // are read whether or not a name matched, so
+                                // an eligible talent with no object by name
+                                // convention is COUNTED (ruleNoName) rather
+                                // than silently dropped with nothing to tell
+                                // it apart from "never walked".
+                                double duration = 0.0, cooldown = 0.0;
+                                bool readableD = false, readableC = false;
+                                try {
+                                    RValue dv = g_Yytk->CallBuiltin("variable_struct_get",
+                                        { talent, RValue("abilityDuration") });
+                                    if (N1Numeric(dv)) { duration = dv.ToDouble(); readableD = true; }
+                                } catch (...) {}
+                                try {
+                                    RValue cv = g_Yytk->CallBuiltin("variable_struct_get",
+                                        { talent, RValue("abilityCooldown") });
+                                    if (N1Numeric(cv)) { cooldown = cv.ToDouble(); readableC = true; }
+                                } catch (...) {}
+                                const bool readable = readableD && readableC;
+                                if (nameIndex >= 0) {
+                                    if (!readable) {
+                                        InterlockedIncrement(&g_SkillTimerRuleUnreadableFields);
+                                    } else if (ForgePact::SkillTimerRuleModel::Eligible(
+                                                   duration, cooldown, readable, /*denied=*/false, /*isExplicitRow=*/false)) {
+                                        // The rule map itself is only FILLED
+                                        // when a look is selected (round 1,
+                                        // D-S4): with the countdown off this
+                                        // walk still counts as attempted, but
+                                        // no entry is added - ToggleTableResolveDue's
+                                        // own Off-only early stop already means
+                                        // this only runs the handful of times a
+                                        // room's explicit rows are still
+                                        // unresolved.
+                                        if (!ruleMapOff) {
+                                            const long slot = g_SkillTimerRuleCount;
+                                            if (slot < ForgePact::kSkillTimerRuleCap) {
+                                                ForgePact::SkillTimerRuleEntry entry;
+                                                entry.talentId = id;
+                                                entry.nameIndex = nameIndex;
+                                                entry.abilityId = name;
+                                                g_SkillTimerRuleEntries[slot] = entry;
+                                                g_SkillTimerRuleCount = slot + 1;
+                                            } else {
+                                                InterlockedIncrement(&g_SkillTimerRuleCapped);
+                                            }
+                                        }
+                                    }
+                                } else if (readable && ForgePact::SkillTimerRuleModel::Eligible(
+                                               duration, cooldown, readable, /*denied=*/false, /*isExplicitRow=*/false)) {
+                                    InterlockedIncrement(&g_SkillTimerRuleNoName);
+                                }
+                            }
+                        }
                     }
                 } catch (...) {}
             }
@@ -4718,7 +4949,7 @@ static bool ToggleTableResolveIds()
         try { key = g_Yytk->CallBuiltin("ds_map_find_next", { map, key }); }
         catch (...) { break; }
     }
-    return ToggleTableUnresolvedRows() == 0;
+    return ToggleTableUnresolvedRows() + SkillTimerTableUnresolvedRows() == 0;
 }
 
 // Printed by `toggleborder stat` and `toggleguard stat`: one entry per row, so
@@ -4752,20 +4983,22 @@ static std::atomic<bool> g_ToggleBorderOn{ false };
 // failures each one counts; `unresolved` counts a row skipped because its
 // talent id has not been resolved from its `abilityId` yet.
 //
-// Every one of these is a SUM over the five shipped rows, since the draw
-// visits each row once: a player with nothing toggled reads `off=` at five
-// times the number of draws, which is correct and useless on its own. The
-// per-row counters below are what answer "which row was ON" and "which row
-// lost its slot" (phase S review follow-up).
+// Every one of these is a SUM over every shipped row, since the draw visits
+// each row once: a player with nothing toggled reads `off=` at
+// kToggleSkillRowCount times the number of draws, which is correct and
+// useless on its own. The per-row counters below are what answer "which row
+// was ON" and "which row lost its slot" (phase S review follow-up).
 static volatile long g_TibDrawn = 0, g_TibOn = 0, g_TibOff = 0, g_TibUnreadable = 0, g_TibNoHud = 0, g_TibNoRow0 = 0, g_TibNoTalent = 0, g_TibForeign = 0, g_TibDrawExc = 0, g_TibUnresolved = 0;
 
 // The same outcomes, attributed to the row that produced them and printed
 // against that row's own `abilityId`. `noSlot` is the row-level view of
 // ToggleIndicatorFindSlot's three failures: the aggregate line still splits
 // them into noHud/noRow0/noTalent, which are properties of the HUD read
-// rather than of the row.
+// rather than of the row. `subOff`/`subUnreadable` (session 12) apply only
+// to a `PlayerBuff` row: why its Off/Unreadable was decided by the
+// sub-talent read rather than by the buff slot itself.
 struct ToggleBorderRowCounters {
-    volatile long drawn, on, off, unreadable, unresolved, noSlot;
+    volatile long drawn, on, off, unreadable, unresolved, noSlot, subOff, subUnreadable;
 };
 static ToggleBorderRowCounters g_TibRow[ForgePact::kToggleSkillRowCount] = {};
 
@@ -4807,20 +5040,33 @@ static void ToggleIndicatorMarkerBox(double bboxX, double bboxY, double bboxW, d
 // (noRow0), and no element carrying that talent id (noTalent). Each
 // caller-visible failure increments exactly one counter. What it hands back
 // is D-U12's derived, whole-pixel box, not the raw `navBbox`.
-static bool ToggleIndicatorFindSlot(int talentId, double& outX, double& outY, double& outW, double& outH)
+//
+// The three failures are reported to the CALLER (`outReason`, optional)
+// rather than counted here (issue #55 follow-up): `skilltimer` needs this
+// same lookup, and counting inside FindSlot would move toggleborder's own
+// noHud/noRow0/noTalent stat while toggleborder is off - a stat that would
+// lie about which feature actually ran. ToggleIndicatorDraw below still
+// charges its own g_TibNoHud/g_TibNoRow0/g_TibNoTalent exactly as before,
+// just from the returned reason instead of from inside this function; a
+// caller that passes nullptr (SkillTimerDraw) charges nothing here.
+enum class ToggleSlotFailReason { None, NoHud, NoRow0, NoTalent };
+
+static bool ToggleIndicatorFindSlot(int talentId, double& outX, double& outY, double& outW, double& outH,
+                                     ToggleSlotFailReason* outReason = nullptr)
 {
+    auto fail = [&](ToggleSlotFailReason reason) { if (outReason) *outReason = reason; return false; };
     try {
         double objIdx = -1.0;
         try {
             objIdx = g_Yytk->CallBuiltin("asset_get_index",
                 { RValue(std::string(HeroSiege::Objects::GetObjectName(
                     HeroSiege::Objects::GameObject::UI_Hud_Talent_obj))) }).ToDouble();
-        } catch (...) { InterlockedIncrement(&g_TibNoHud); return false; }
-        if (objIdx < 0) { InterlockedIncrement(&g_TibNoHud); return false; }
+        } catch (...) { return fail(ToggleSlotFailReason::NoHud); }
+        if (objIdx < 0) return fail(ToggleSlotFailReason::NoHud);
         RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue(objIdx), RValue(0.0) });
-        if (inst.m_Kind == VALUE_UNDEFINED) { InterlockedIncrement(&g_TibNoHud); return false; }
+        if (inst.m_Kind == VALUE_UNDEFINED) return fail(ToggleSlotFailReason::NoHud);
         RValue arr = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("row0") });
-        if (arr.m_Kind != VALUE_ARRAY) { InterlockedIncrement(&g_TibNoRow0); return false; }
+        if (arr.m_Kind != VALUE_ARRAY) return fail(ToggleSlotFailReason::NoRow0);
         const int len = (int)g_Yytk->CallBuiltin("array_length", { arr }).ToDouble();
         for (int i = 0; i < len; ++i) {
             RValue elem = g_Yytk->CallBuiltin("array_get", { arr, RValue((double)i) });
@@ -4833,11 +5079,11 @@ static bool ToggleIndicatorFindSlot(int talentId, double& outX, double& outY, do
             const double bw = g_Yytk->CallBuiltin("variable_struct_get", { elem, RValue("navBboxWidth") }).ToDouble();
             const double bh = g_Yytk->CallBuiltin("variable_struct_get", { elem, RValue("navBboxHeight") }).ToDouble();
             ToggleIndicatorMarkerBox(bx, by, bw, bh, outX, outY, outW, outH);
+            if (outReason) *outReason = ToggleSlotFailReason::None;
             return true;
         }
-        InterlockedIncrement(&g_TibNoTalent);
-        return false;
-    } catch (...) { InterlockedIncrement(&g_TibNoHud); return false; }
+        return fail(ToggleSlotFailReason::NoTalent);
+    } catch (...) { return fail(ToggleSlotFailReason::NoHud); }
 }
 
 // D-U13 (author, 2026-09-20, final): the marker is the `soft` look in
@@ -4889,7 +5135,7 @@ static void ToggleIndicatorDraw()
         }
 
         ForgePact::ToggleIndicatorReadDetail detail;
-        ToggleIndicatorReadRow(row, &detail, /*treatOwnAsForeign=*/false);
+        ToggleIndicatorReadRow(row, talentId, &detail, /*treatOwnAsForeign=*/false);
         const ForgePact::ToggleIndicatorState state =
             ForgePact::ToggleIndicatorModel::Decide(detail, ForgePact::ToggleRowRequiresMark(row));
 
@@ -4897,20 +5143,39 @@ static void ToggleIndicatorDraw()
         if (state == ForgePact::ToggleIndicatorState::Unreadable) {
             InterlockedIncrement(&g_TibUnreadable);
             InterlockedIncrement(&g_TibRow[r].unreadable);
+            // Session 12: a PlayerBuff row's Unreadable can be its own buff
+            // read failing (identityMismatch, countReadFailed) or its
+            // sub-talent read failing (markUnreadableMine) - only the latter
+            // is subUnreadable, so the two never collide in the row's own line.
+            if (row.mark == ForgePact::ToggleOnMark::PlayerBuff && detail.markUnreadableMine > 0)
+                InterlockedIncrement(&g_TibRow[r].subUnreadable);
             continue;
         }
         if (state == ForgePact::ToggleIndicatorState::Off) {
             InterlockedIncrement(&g_TibOff);
             InterlockedIncrement(&g_TibRow[r].off);
+            // Session 12: Off because the buff is present but the sub-talent
+            // read NotAllocated (unmarkedMine>0) - "the plain, timed form" -
+            // as opposed to Off because no buff is present at all.
+            if (row.mark == ForgePact::ToggleOnMark::PlayerBuff && detail.unmarkedMine > 0)
+                InterlockedIncrement(&g_TibRow[r].subOff);
             continue;
         }
         InterlockedIncrement(&g_TibOn);
         InterlockedIncrement(&g_TibRow[r].on);
 
         double x = 0, y = 0, w = 0, h = 0;
-        if (!ToggleIndicatorFindSlot(talentId, x, y, w, h)) {
-            // Which of the three ways it failed is counted inside FindSlot
-            // (noHud/noRow0/noTalent); which ROW lost its slot is counted here.
+        ToggleSlotFailReason slotFail = ToggleSlotFailReason::None;
+        if (!ToggleIndicatorFindSlot(talentId, x, y, w, h, &slotFail)) {
+            // Which of the three ways it failed is charged here from the
+            // returned reason (noHud/noRow0/noTalent); which ROW lost its
+            // slot is counted right after.
+            switch (slotFail) {
+                case ToggleSlotFailReason::NoHud:    InterlockedIncrement(&g_TibNoHud);    break;
+                case ToggleSlotFailReason::NoRow0:   InterlockedIncrement(&g_TibNoRow0);   break;
+                case ToggleSlotFailReason::NoTalent: InterlockedIncrement(&g_TibNoTalent); break;
+                default: break;
+            }
             InterlockedIncrement(&g_TibRow[r].noSlot);
             continue;
         }
@@ -4949,8 +5214,9 @@ static std::string ToggleBorderCountersLine()
         + " noHud=" + std::to_string(g_TibNoHud) + " noRow0=" + std::to_string(g_TibNoRow0)
         + " noTalent=" + std::to_string(g_TibNoTalent) + " foreign=" + std::to_string(g_TibForeign)
         + " drawExc=" + std::to_string(g_TibDrawExc) + " unresolved=" + std::to_string(g_TibUnresolved)
-        // Said out loud, because "off= is five times the draw count" is
-        // otherwise read as a fault rather than as one row per draw.
+        // Said out loud, because "off= is kToggleSkillRowCount times the
+        // draw count" is otherwise read as a fault rather than as one row
+        // per draw.
         + " (summed over " + std::to_string(ForgePact::kToggleSkillRowCount) + " rows)";
 }
 // One row's own counters, named by the row's `abilityId` - what the summed
@@ -4961,7 +5227,8 @@ static std::string ToggleBorderRowCountersLine(int row)
     return std::string(ForgePact::kToggleSkillRows[row].abilityId)
         + " drawn=" + std::to_string(c.drawn) + " on=" + std::to_string(c.on)
         + " off=" + std::to_string(c.off) + " unreadable=" + std::to_string(c.unreadable)
-        + " unresolved=" + std::to_string(c.unresolved) + " noSlot=" + std::to_string(c.noSlot);
+        + " unresolved=" + std::to_string(c.unresolved) + " noSlot=" + std::to_string(c.noSlot)
+        + " subOff=" + std::to_string(c.subOff) + " subUnreadable=" + std::to_string(c.subUnreadable);
 }
 
 // `toggleborder stat` is read-only: it stores nothing to g_ToggleBorderOn,
@@ -4973,6 +5240,826 @@ static void ToggleBorderStats()
     Out("toggleborder stat: " + ToggleTableRowsLine());
     for (int r = 0; r < ForgePact::kToggleSkillRowCount; ++r)
         Out("toggleborder stat: " + ToggleBorderRowCountersLine(r));
+}
+
+// ===== Timed-skill countdown (issue #55; `skilltimer`) ======================
+// Draws how much of a timed cast is left over the cast's own hotbar slot.
+// Its rows are its own table, ForgePact::kSkillTimerRows (session 8's
+// measured ship set, D-S1), not the border's; it shares the border's slot
+// lookup, and a row that is also a toggle-table row gets that row's toggle
+// suppression. Its own read (largest own reading of
+// ForgePact::kSkillTimerField, route B's latch) and its own four looks. Off
+// by default - SkillTimerDraw's very
+// first statement returns when the style is off, so a player who never picks
+// a look gets no runtime call from this mod at all
+// (skilltimer/off_makes_no_runtime_calls), the same shape as
+// ToggleIndicatorDraw above and indicator_off/no_runtime_calls before it.
+// g_SkillTimerStyle itself is declared earlier now (round 1), next to
+// ToggleTableResolveDue, which reads it too.
+static ForgePact::SkillTimerRowState g_SkillTimerRowState[ForgePact::kSkillTimerRowCount];
+
+// Per-row: drawn (the style's draw call ran with no exception - not
+// necessarily visible, e.g. bar's sub-pixel guard or number's rounds-to-zero
+// guard), noInstance (no own instance - route B's latch dropped if it was
+// held), unreadable (an own instance exists but none has a numeric reading
+// of the shared timer field - latch untouched), expired (remaining <= 0 - never latches),
+// toggleOn/toggleUnreadable (D-T4, only for a row that is also a toggle-table
+// row: the row's own timer field is never even read once that toggle row's
+// shipped read decides On or Unreadable, the same suppression the border
+// applies to its own marker),
+// unresolved (the row's talent id has not resolved yet), noSlot (the shared
+// slot lookup failed - this mod's OWN count, never toggleborder's), latched/
+// unlatched (the latch was taken/updated, or dropped, THIS call). Aggregate
+// adds drawExc (a style's draw call threw) and fontUnresolved (`number`
+// could not resolve its font by name and fell back to the inherited one).
+struct SkillTimerRowCounters {
+    volatile long drawn, noInstance, unreadable, expired, toggleOn, toggleUnreadable,
+                  unresolved, noSlot, latched, unlatched;
+};
+static SkillTimerRowCounters g_StRow[ForgePact::kSkillTimerRowCount] = {};
+static volatile long g_StDrawExc = 0, g_StFontUnresolved = 0;
+
+// A countdown row's own object, by name, through the SDK enumerator the row
+// carries - the same resolve ToggleIndicatorResolveRowObject does for a
+// toggle row.
+static bool SkillTimerResolveRowObject(const ForgePact::SkillTimerRow& row, double& outObjIdx)
+{
+    try {
+        outObjIdx = g_Yytk->CallBuiltin("asset_get_index",
+            { RValue(std::string(HeroSiege::Objects::GetObjectName(row.object))) }).ToDouble();
+        return outObjIdx >= 0;
+    } catch (...) { return false; }
+}
+
+// The toggle-table row with this countdown row's `abilityId`, or -1. Soul
+// Spurn and Maelstrom of Frost are in both tables: their toggled-on state
+// still suppresses the countdown (D-T4). Every other countdown row has no
+// twin and makes no toggle read at all
+// (skilltimer/non_toggle_row_makes_no_toggle_read).
+static int SkillTimerToggleTwin(int row)
+{
+    const std::string id = ForgePact::kSkillTimerRows[row].abilityId;
+    for (int t = 0; t < ForgePact::kToggleSkillRowCount; ++t) {
+        if (id == ForgePact::kToggleSkillRows[t].abilityId) return t;
+    }
+    return -1;
+}
+
+// Scans the row's OWN instances - the exact ownership rule
+// ToggleIndicatorReadRow applies (row.ownershipField, nullptr = every
+// instance own; an unattributed instance is neither own nor foreign, and is
+// simply not counted) - for the LARGEST numeric reading of
+// ForgePact::kSkillTimerField among them (D-T6: several own instances can be
+// running for one row's object at once - a toggle skill's own object briefly
+// overlapping a plain cast, say - and the largest reading is treated as the
+// current cast). The object itself failing
+// to resolve is folded into "no own
+// instance": no row's talent id resolves without its object existing too,
+// and the context's two named outcomes (an object with zero instances, and
+// instances with no readable timer) do not distinguish "unresolved" as a
+// third case.
+static void SkillTimerReadRow(const ForgePact::SkillTimerRow& row, bool& anyOwn, bool& anyReadable, double& remaining)
+{
+    anyOwn = false;
+    anyReadable = false;
+    remaining = 0.0;
+    double objIdx = -1.0;
+    if (!SkillTimerResolveRowObject(row, objIdx)) return;
+
+    long n = 0;
+    try { n = (long)g_Yytk->CallBuiltin("instance_number", { RValue(objIdx) }).ToDouble(); }
+    catch (...) { return; }   // a failed count is treated as no own instance (fail-safe: draws nothing)
+    if (n <= 0) return;
+
+    const long cap = kToggleIndicatorScanCap;
+    const long scanCount = n < cap ? n : cap;
+    for (long i = 0; i < scanCount; ++i) {
+        try {
+            RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue(objIdx), RValue((double)i) });
+            bool isMine = true;
+            if (row.ownershipField) {
+                RValue mc = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(row.ownershipField) });
+                if (!ToggleIndicatorReadTruth(mc, isMine)) continue;   // unattributed: not own
+            }
+            if (!isMine) continue;   // foreign: never counted here (skilltimer/foreign_instance_not_counted)
+            anyOwn = true;
+            RValue timer = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(ForgePact::kSkillTimerField) });
+            if (N1Numeric(timer)) {
+                const double v = timer.ToDouble();
+                if (!anyReadable || v > remaining) remaining = v;
+                anyReadable = true;
+            }
+        } catch (...) { /* this instance's own read failed; the others still count */ }
+    }
+}
+
+// ===== Buff-carried skills (issue #55, session 12) ==========================
+// A row here has no cast object: its duration lives on the player's own
+// buff list (ctx "### The ship read" of the workorder that shipped this).
+// Per-row counters, the same shape SkillTimerRowCounters uses for the
+// object rows, plus `noBuff` (this table's own "no own instance" - an
+// empty slot) and `identityMismatch` (the slot's own `buffType` did not
+// match this row's `buffId` - the row is Unreadable, and this counter says
+// why, the same way toggleborder's own subUnreadable/subOff say why a
+// PlayerBuff row read Off/Unreadable).
+struct SkillTimerBuffRowCounters {
+    volatile long drawn, noBuff, unreadable, identityMismatch, expired, toggleOn, toggleUnreadable,
+                  unresolved, noSlot, latched, unlatched;
+};
+static SkillTimerBuffRowCounters g_StBuffRow[ForgePact::kSkillTimerBuffRowCount] = {};
+static ForgePact::SkillTimerRowState g_SkillTimerBuffRowState[ForgePact::kSkillTimerBuffRowCount];
+
+// The toggle-table row with this buff row's `abilityId`, or -1 - the same
+// shape SkillTimerToggleTwin gives the object rows, kept separate
+// (test_buff_rows_disjoint_from_object_rows_and_never_enter_the_rule: neither
+// function may mention the other table).
+static int SkillTimerBuffToggleTwin(int row)
+{
+    const std::string id = ForgePact::kSkillTimerBuffRows[row].abilityId;
+    for (int t = 0; t < ForgePact::kToggleSkillRowCount; ++t) {
+        if (id == ForgePact::kToggleSkillRows[t].abilityId) return t;
+    }
+    return -1;
+}
+
+// The ONE walk of `global.playerBuff[1][0][<buffId>]` in ship code besides
+// HhBuffAlive's own (AC25) - called by both the countdown's buff loop below
+// and, through ToggleIndicatorReadRow's `PlayerBuff` dispatch, the border's
+// own read, so there is exactly one place this chain is spelled. Every
+// runtime name is the header's constant, never a literal (contract test
+// "buff read uses only header names and builtins"). `identityMismatch` is
+// its own out-param, not folded into `anyReadable`, because the caller needs
+// to tell "the buff isn't there" from "it's there but not this build's
+// numbering" apart, the same way session 12's instrument did.
+static void SkillTimerBuffReadRow(int buffId, bool& anyOwn, bool& anyReadable,
+                                   bool& identityMismatch, double& remaining)
+{
+    anyOwn = false;
+    anyReadable = false;
+    identityMismatch = false;
+    remaining = 0.0;
+    try {
+        RValue global = g_Yytk->CallBuiltin("variable_global_get", { RValue(ForgePact::kSkillTimerBuffArrayGlobal) });
+        if (global.m_Kind != VALUE_ARRAY) return;
+        RValue byPlayer = g_Yytk->CallBuiltin("array_get", { global, RValue((double)ForgePact::kSkillTimerBuffPlayerIndex) });
+        if (byPlayer.m_Kind != VALUE_ARRAY) return;
+        RValue bySub = g_Yytk->CallBuiltin("array_get", { byPlayer, RValue((double)ForgePact::kSkillTimerBuffSubIndex) });
+        if (bySub.m_Kind != VALUE_ARRAY) return;
+        const int len = (int)g_Yytk->CallBuiltin("array_length", { bySub }).ToDouble();
+        if (buffId < 0 || buffId >= len) return;
+        RValue slot = g_Yytk->CallBuiltin("array_get", { bySub, RValue((double)buffId) });
+        // Undefined, or a number (the live empty value is -4; any other
+        // number is not a real instance shape either): no own instance - the
+        // latch drops, exactly as for an object row.
+        if (slot.m_Kind == VALUE_UNDEFINED) return;
+        if (slot.m_Kind == VALUE_REAL || slot.m_Kind == VALUE_INT32 || slot.m_Kind == VALUE_INT64) return;
+        bool exists = false;
+        try { exists = g_Yytk->CallBuiltin("instance_exists", { slot }).ToBoolean(); } catch (...) { return; }
+        if (!exists) return;
+        anyOwn = true;
+        RValue type;
+        try { type = g_Yytk->CallBuiltin("variable_instance_get", { slot, RValue(ForgePact::kSkillTimerBuffIdentityField) }); }
+        catch (...) { return; }   // own instance exists, identity unreadable: Unreadable, not counted as a mismatch
+        if (!N1Numeric(type) || (int)type.ToDouble() != buffId) { identityMismatch = true; return; }
+        RValue timer;
+        try { timer = g_Yytk->CallBuiltin("variable_instance_get", { slot, RValue(ForgePact::kSkillTimerField) }); }
+        catch (...) { return; }
+        if (!N1Numeric(timer)) return;
+        remaining = timer.ToDouble();
+        anyReadable = true;
+    } catch (...) { /* fail-safe: draws nothing */ }
+}
+
+// The ONE buff-form function (session 12, Counter) is defined later in this
+// file, right after ToggleReadSubTalent's own definition (which it calls) -
+// see "The Give No Quarter form split" near HookTalentUseClass. Only its
+// forward declaration lives up near ToggleIndicatorReadRow, which is the one
+// caller that needs it ahead of that point. SkillTimerBuffDraw itself
+// (below, called from SkillTimerDraw) is defined after SkillTimerDrawStyle
+// and the four looks, since it calls SkillTimerDrawStyle directly - see that
+// definition, right before SkillTimerDraw's own.
+
+static std::string SkillTimerBuffRowCountersLine(int row)
+{
+    const SkillTimerBuffRowCounters& c = g_StBuffRow[row];
+    return std::string(ForgePact::kSkillTimerBuffRows[row].abilityId)
+        + " drawn=" + std::to_string(c.drawn) + " noBuff=" + std::to_string(c.noBuff)
+        + " unreadable=" + std::to_string(c.unreadable) + " identityMismatch=" + std::to_string(c.identityMismatch)
+        + " expired=" + std::to_string(c.expired)
+        + " toggleOn=" + std::to_string(c.toggleOn) + " toggleUnreadable=" + std::to_string(c.toggleUnreadable)
+        + " unresolved=" + std::to_string(c.unresolved) + " noSlot=" + std::to_string(c.noSlot)
+        + " latched=" + std::to_string(c.latched) + " unlatched=" + std::to_string(c.unlatched);
+}
+
+static std::string SkillTimerBuffTableRowsLine()
+{
+    std::string line;
+    for (int r = 0; r < ForgePact::kSkillTimerBuffRowCount; ++r) {
+        const int id = g_SkillTimerBuffTableIds.Get(r);
+        line += std::string(ForgePact::kSkillTimerBuffRows[r].abilityId) + ":talentId="
+              + (id >= 0 ? std::to_string(id) : std::string("unresolved")) + " ";
+    }
+    return line + "resolveWalks=" + std::to_string(g_ToggleResolveWalks);
+}
+
+// ===== Rule-based coverage's own draw path (issue #55 follow-up, D-S4; T3) =
+// One hotbar slot as the rule draw needs it: the box already derived by
+// ToggleIndicatorMarkerBox (D-U12), plus the slot's own talentId.
+struct SkillTimerHotbarSlot {
+    int talentId = -1;
+    double x = 0, y = 0, w = 0, h = 0;
+};
+
+// A deliberate duplication of ToggleIndicatorFindSlot's own row0 walk and box
+// derivation (via the shared ToggleIndicatorMarkerBox, not restated) - NOT a
+// call into that function, so its own counters and behaviour stay exactly as
+// pinned (the guide's "Two deliberate duplications, and why neither is a
+// shared component"). The rejected alternative (context, "The draw"):
+// looking up each of up to kSkillTimerRuleCap rule entries with
+// ToggleIndicatorFindSlot would cost that many hotbar walks per draw; this
+// pays the walk ONCE and returns every slot, so the caller can match against
+// however many rule entries are active with no further game call per talent
+// that turns out not to be on the hotbar at all
+// (rule/slot_off_hotbar_costs_no_instance_scan).
+static bool SkillTimerEnumerateHotbar(std::vector<SkillTimerHotbarSlot>& out)
+{
+    try {
+        double objIdx = -1.0;
+        try {
+            objIdx = g_Yytk->CallBuiltin("asset_get_index",
+                { RValue(std::string(HeroSiege::Objects::GetObjectName(
+                    HeroSiege::Objects::GameObject::UI_Hud_Talent_obj))) }).ToDouble();
+        } catch (...) { return false; }
+        if (objIdx < 0) return false;
+        RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue(objIdx), RValue(0.0) });
+        if (inst.m_Kind == VALUE_UNDEFINED) return false;
+        RValue arr = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("row0") });
+        if (arr.m_Kind != VALUE_ARRAY) return false;
+        const int len = (int)g_Yytk->CallBuiltin("array_length", { arr }).ToDouble();
+        for (int i = 0; i < len; ++i) {
+            RValue elem = g_Yytk->CallBuiltin("array_get", { arr, RValue((double)i) });
+            if (elem.m_Kind != VALUE_OBJECT && elem.m_Kind != VALUE_REF) continue;
+            RValue tid = g_Yytk->CallBuiltin("variable_struct_get", { elem, RValue("talentId") });
+            const bool isNumber = tid.m_Kind == VALUE_REAL || tid.m_Kind == VALUE_INT32 || tid.m_Kind == VALUE_INT64;
+            if (!isNumber) continue;
+            const double bx = g_Yytk->CallBuiltin("variable_struct_get", { elem, RValue("navBboxX") }).ToDouble();
+            const double by = g_Yytk->CallBuiltin("variable_struct_get", { elem, RValue("navBboxY") }).ToDouble();
+            const double bw = g_Yytk->CallBuiltin("variable_struct_get", { elem, RValue("navBboxWidth") }).ToDouble();
+            const double bh = g_Yytk->CallBuiltin("variable_struct_get", { elem, RValue("navBboxHeight") }).ToDouble();
+            SkillTimerHotbarSlot slot;
+            slot.talentId = (int)tid.ToDouble();
+            ToggleIndicatorMarkerBox(bx, by, bw, bh, slot.x, slot.y, slot.w, slot.h);
+            out.push_back(slot);
+        }
+        return true;
+    } catch (...) { return false; }
+}
+
+// A rule entry's own object index, resolved by name through the generated
+// table (ForgePact::kSkillTimerNames, never a literal enumerator here) and
+// cached on the entry only once resolved (>= 0) - context, "The draw": "cached
+// per entry after the first success". A failed resolve is never cached, so
+// the next draw tries again (the same shape g_ToggleGuardDcObjIdx already
+// uses for its own cached object index).
+static bool SkillTimerRuleResolveObject(ForgePact::SkillTimerRuleEntry& entry, double& outObjIdx)
+{
+    if (entry.objIdx >= 0.0) { outObjIdx = entry.objIdx; return true; }
+    try {
+        const double idx = g_Yytk->CallBuiltin("asset_get_index",
+            { RValue(std::string(HeroSiege::Objects::GetObjectName(
+                ForgePact::kSkillTimerNames[entry.nameIndex].object))) }).ToDouble();
+        if (idx >= 0.0) { entry.objIdx = idx; outObjIdx = idx; return true; }
+    } catch (...) {}
+    return false;
+}
+
+// The rule path's own instance scan: every instance own (D-N3, ForgePact is
+// offline-only - no ownership field is ever read here, unlike
+// SkillTimerReadRow's row.ownershipField branch), largest numeric
+// ForgePact::kSkillTimerField among them - otherwise the same shape as
+// SkillTimerReadRow, written separately rather than shared because that
+// function always resolves its object by name fresh (SkillTimerResolveRowObject,
+// no caching - fine for seven explicit rows, wasteful for up to
+// kSkillTimerRuleCap rule entries), while this one is handed an
+// already-resolved, cached objIdx.
+static void SkillTimerRuleReadEntry(double objIdx, bool& anyOwn, bool& anyReadable, double& remaining)
+{
+    anyOwn = false;
+    anyReadable = false;
+    remaining = 0.0;
+    long n = 0;
+    try { n = (long)g_Yytk->CallBuiltin("instance_number", { RValue(objIdx) }).ToDouble(); }
+    catch (...) { return; }
+    if (n <= 0) return;
+
+    const long cap = kToggleIndicatorScanCap;
+    const long scanCount = n < cap ? n : cap;
+    for (long i = 0; i < scanCount; ++i) {
+        try {
+            RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue(objIdx), RValue((double)i) });
+            anyOwn = true;   // D-N3: no ownership field, every instance own
+            RValue timer = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(ForgePact::kSkillTimerField) });
+            if (N1Numeric(timer)) {
+                const double v = timer.ToDouble();
+                if (!anyReadable || v > remaining) remaining = v;
+                anyReadable = true;
+            }
+        } catch (...) { /* this instance's own read failed; the others still count */ }
+    }
+}
+
+static constexpr double kSkillTimerColourR = 255.0, kSkillTimerColourG = 215.0, kSkillTimerColourB = 0.0;   // gold - the colour every look was judged in (pinned equal to the research instrument's own default)
+static constexpr int kSkillTimerBands = 10;   // arc/fade band count (pinned equal to the research instrument's own default)
+
+static RValue SkillTimerColour()
+{
+    return g_Yytk->CallBuiltin("make_colour_rgb",
+        { RValue(kSkillTimerColourR), RValue(kSkillTimerColourG), RValue(kSkillTimerColourB) });
+}
+
+// The same arithmetic the research instrument measured this look with,
+// written as our own code rather than a call into the research block (a
+// contract test pins the shipped constants above equal to that instrument's
+// own defaults): walks a rectangle's perimeter clockwise from its top-left
+// corner, drawing only the leading `fraction` of the total length.
+static void SkillTimerDrawRectOutlineFraction(double x0, double y0, double x1, double y1, double fraction)
+{
+    if (fraction <= 0.0) return;
+    const double w = x1 - x0, h = y1 - y0;
+    const double perimeter = 2.0 * (w + h);
+    double remaining = perimeter * (fraction > 1.0 ? 1.0 : fraction);
+    if (remaining <= 0.0) return;
+    const double ax[4] = { x0, x1, x1, x0 };
+    const double ay[4] = { y0, y0, y1, y1 };
+    const double bx[4] = { x1, x1, x0, x0 };
+    const double by[4] = { y0, y1, y1, y0 };
+    for (int i = 0; i < 4 && remaining > 0.0; ++i) {
+        const double dx = bx[i] - ax[i], dy = by[i] - ay[i];
+        const double len = std::sqrt(dx * dx + dy * dy);
+        if (len <= 0.0) continue;
+        const double take = remaining < len ? remaining : len;
+        const double t = take / len;
+        g_Yytk->CallBuiltin("draw_line", { RValue(ax[i]), RValue(ay[i]), RValue(ax[i] + dx * t), RValue(ay[i] + dy * t) });
+        remaining -= take;
+    }
+}
+
+// `arc`: 10 nested bands growing outward from the box, alpha ramping
+// 1..1/9..0 outward, each band tracing only `fraction` of its own perimeter -
+// the look the author judged live in the research instrument, ported.
+static void SkillTimerDrawArc(double x, double y, double w, double h, double fraction)
+{
+    g_Yytk->CallBuiltin("draw_set_colour", { SkillTimerColour() });
+    for (int i = 0; i < kSkillTimerBands; ++i) {
+        const double t = (double)i / (double)(kSkillTimerBands - 1);
+        g_Yytk->CallBuiltin("draw_set_alpha", { RValue(1.0 - t) });
+        SkillTimerDrawRectOutlineFraction(x - i, y - i, x + w + i, y + h + i, fraction);
+    }
+}
+
+// `bar`: filled, above the icon (2026-09-21 live session) - bottom edge
+// kBarGap above the box's top, inset kBarInset each side, kBarHeight tall,
+// width scaled by `fraction`. A width under 1 px draws nothing (D4: the live
+// session found a visible stub at frac 0.0 otherwise) - the research
+// instrument's own inset/offset fixed at their live-confirmed defaults (no
+// tunable offset in the ship build).
+static constexpr double kSkillTimerBarGap = 2.0, kSkillTimerBarHeight = 6.0, kSkillTimerBarInset = 4.0;
+
+static void SkillTimerDrawBar(double x, double y, double w, double h, double fraction)
+{
+    const double usableWidth = w - 2.0 * kSkillTimerBarInset;
+    const double barWidth = usableWidth * fraction;
+    if (barWidth < 1.0) return;   // skilltimer/bar_subpixel_draws_nothing
+    const double bx0 = x + kSkillTimerBarInset, by1 = y - kSkillTimerBarGap;
+    const double bx1 = bx0 + barWidth, by0 = by1 - kSkillTimerBarHeight;
+    RValue colour = SkillTimerColour();
+    g_Yytk->CallBuiltin("draw_set_alpha", { RValue(1.0) });
+    g_Yytk->CallBuiltin("draw_rectangle_colour", {
+        RValue(bx0), RValue(by0), RValue(bx1), RValue(by1),
+        RValue(colour), RValue(colour), RValue(colour), RValue(colour), RValue(0.0) });
+}
+
+// `number`: the fraction as a whole-number percentage, centred above the
+// icon, anchored top-aligned at the box's BOTTOM edge plus
+// kSkillTimerTextOffsetDy (halign centre, valign top) - the research
+// instrument's own number-look formula, drawn here with the ship's own
+// tuned offset. 2026-09-21, live: the owner tuned that instrument on this
+// same D-U12 box in `__newfont6`, working the offset from -101 down to
+// -106 step by step - "perfect" at -106. This function draws that exact
+// formula, dx and dy alike, so what was judged live is what ships; no
+// separate font-independent derivation. The earlier ship placement
+// (bottom-aligned, hanging up from a point 1 px above the box top) was
+// tuned without the ship's own font and still sat "a little too high" at
+// the live-ship check - this box-height dependency is now a known
+// consequence, recorded in the research doc, of hanging the text from the
+// box's own bottom edge.
+// At zero - including a fraction
+// that rounds to 0% - nothing is drawn at all (ship-only difference from the
+// probe, which keeps "0%" as its own liveness signal; decided 2026-09-21).
+// Resolves `__newfont6` by name every draw (Needs-human-judgement default):
+// unresolved falls back to the inherited font and counts fontUnresolved
+// rather than failing the draw. Save/restore follows the same shape the
+// research instrument's own number look used: every previous state captured
+// before the first draw_set_*, the draw in its own inner try so a throw
+// there cannot skip the restores, each restore in its own try, and the font
+// restored only if this call actually applied one. A failed draw is not
+// counted here: once the restores have run it is rethrown, so the caller's
+// catch counts drawExc exactly once and never counts it as drawn - the
+// same accounting as the other three looks (PR #62 review).
+static constexpr double kSkillTimerTextOffsetDx = 0.0, kSkillTimerTextOffsetDy = -106.0;
+
+static void SkillTimerDrawNumber(double x, double y, double w, double h, double fraction)
+{
+    const long pct = (long)std::round(fraction * 100.0);
+    if (pct <= 0) return;   // skilltimer/number_zero_percent_draws_nothing
+    try {
+        RValue prevFont = g_Yytk->CallBuiltin("draw_get_font", {});
+        RValue prevColour = g_Yytk->CallBuiltin("draw_get_colour", {});
+        RValue prevAlpha = g_Yytk->CallBuiltin("draw_get_alpha", {});
+        RValue prevHalign = g_Yytk->CallBuiltin("draw_get_halign", {});
+        RValue prevValign = g_Yytk->CallBuiltin("draw_get_valign", {});
+        bool fontApplied = false, drawFailed = false;
+        try {
+            double f = -1.0;
+            try { f = g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string("__newfont6")) }).ToDouble(); }
+            catch (...) { f = -1.0; }
+            if (f >= 0) { fontApplied = true; g_Yytk->CallBuiltin("draw_set_font", { RValue(f) }); }
+            else InterlockedIncrement(&g_StFontUnresolved);
+            g_Yytk->CallBuiltin("draw_set_colour", { SkillTimerColour() });
+            g_Yytk->CallBuiltin("draw_set_alpha", { RValue(1.0) });
+            g_Yytk->CallBuiltin("draw_set_halign", { RValue(1.0) });   // fhalign_center
+            g_Yytk->CallBuiltin("draw_set_valign", { RValue(0.0) });   // fvalign_top: hang below the anchor, same as the probe
+            const double tx = x + w / 2.0 + kSkillTimerTextOffsetDx;
+            const double ty = y + h + kSkillTimerTextOffsetDy;
+            g_Yytk->CallBuiltin("draw_text", { RValue(tx), RValue(ty), RValue(std::to_string(pct) + "%") });
+        } catch (...) { drawFailed = true; }
+        try { g_Yytk->CallBuiltin("draw_set_valign", { prevValign }); } catch (...) {}
+        try { g_Yytk->CallBuiltin("draw_set_halign", { prevHalign }); } catch (...) {}
+        try { g_Yytk->CallBuiltin("draw_set_alpha", { prevAlpha }); } catch (...) {}
+        try { g_Yytk->CallBuiltin("draw_set_colour", { prevColour }); } catch (...) {}
+        if (fontApplied) { try { g_Yytk->CallBuiltin("draw_set_font", { prevFont }); } catch (...) {} }
+        if (drawFailed) throw std::runtime_error("skilltimer number draw failed");
+    } catch (...) { throw; }   // a save read failed (nothing was set, nothing to put back) or the draw did: the caller counts it
+}
+
+// `fade`: the same 10 bands as `arc`, whole rectangle each (no perimeter
+// fraction), alpha `(1 - i/9) * fraction` - the research instrument's own
+// fade look (its soft-band draw with `fraction` as the alpha multiplier),
+// ported.
+static void SkillTimerDrawFade(double x, double y, double w, double h, double fraction)
+{
+    g_Yytk->CallBuiltin("draw_set_colour", { SkillTimerColour() });
+    for (int i = 0; i < kSkillTimerBands; ++i) {
+        const double t = (double)i / (double)(kSkillTimerBands - 1);
+        g_Yytk->CallBuiltin("draw_set_alpha", { RValue((1.0 - t) * fraction) });
+        g_Yytk->CallBuiltin("draw_rectangle", {
+            RValue(x - i), RValue(y - i), RValue(x + w + i), RValue(y + h + i), RValue(1.0) });
+    }
+}
+
+static void SkillTimerDrawStyle(ForgePact::SkillTimerStyle style, double x, double y, double w, double h, double fraction)
+{
+    switch (style) {
+        case ForgePact::SkillTimerStyle::Arc:    SkillTimerDrawArc(x, y, w, h, fraction);    return;
+        case ForgePact::SkillTimerStyle::Bar:    SkillTimerDrawBar(x, y, w, h, fraction);    return;
+        case ForgePact::SkillTimerStyle::Number: SkillTimerDrawNumber(x, y, w, h, fraction); return;
+        case ForgePact::SkillTimerStyle::Fade:   SkillTimerDrawFade(x, y, w, h, fraction);   return;
+        case ForgePact::SkillTimerStyle::Off:    return;
+    }
+}
+
+// Called from SkillTimerDraw() below, after the explicit object rows' loop
+// and before the rule loop. Off is decided by the caller (SkillTimerDraw's
+// own first statement); this function is never called at all when the style
+// is Off. Per row: unresolved id -> skip and count; otherwise the slot is
+// read ONCE (SkillTimerBuffReadRow); a readable slot on a row WITH a toggle
+// twin consults that twin through the buff-form function above before the
+// timer decision runs at all - toggleOn/toggleUnreadable are charged and
+// drawing stops there, exactly as the object rows' own twin suppression
+// does (D-T4); a row with no twin, or an unreadable/empty slot, never makes
+// a sub-talent read at all. Then the same latch decision
+// (ForgePact::SkillTimerModel::Decide, unchanged), the same shared slot
+// lookup charged to this table's OWN noSlot, and the same style draw with
+// colour/alpha saved and restored around it. Defined here, after
+// SkillTimerDrawStyle and the four looks (which it calls), rather than up
+// beside SkillTimerBuffReadRow.
+static void SkillTimerBuffDraw(ForgePact::SkillTimerStyle style)
+{
+    for (int r = 0; r < ForgePact::kSkillTimerBuffRowCount; ++r) {
+        const ForgePact::SkillTimerBuffRow& row = ForgePact::kSkillTimerBuffRows[r];
+        SkillTimerBuffRowCounters& c = g_StBuffRow[r];
+
+        const int talentId = g_SkillTimerBuffTableIds.Get(r);
+        if (talentId < 0) { InterlockedIncrement(&c.unresolved); continue; }
+
+        bool anyOwn = false, anyReadable = false, identityMismatch = false;
+        double remaining = 0.0;
+        SkillTimerBuffReadRow(row.buffId, anyOwn, anyReadable, identityMismatch, remaining);
+        if (identityMismatch) InterlockedIncrement(&c.identityMismatch);
+
+        if (anyOwn && anyReadable) {
+            const int twin = SkillTimerBuffToggleTwin(r);
+            if (twin >= 0) {
+                ForgePact::ToggleIndicatorReadDetail toggleDetail;
+                ToggleIndicatorReadPlayerBuffForm(talentId, ForgePact::kToggleSkillRows[twin].subTalentSlot,
+                                                   anyOwn, anyReadable, toggleDetail);
+                const ForgePact::ToggleIndicatorState toggleState =
+                    ForgePact::ToggleIndicatorModel::Decide(toggleDetail, /*requireMarker=*/true);
+                if (toggleState == ForgePact::ToggleIndicatorState::On) { InterlockedIncrement(&c.toggleOn); continue; }
+                if (toggleState == ForgePact::ToggleIndicatorState::Unreadable) { InterlockedIncrement(&c.toggleUnreadable); continue; }
+                // NotAllocated (Off): falls through to the ordinary latch decision below.
+            }
+        }
+
+        ForgePact::SkillTimerDecision decision =
+            ForgePact::SkillTimerModel::Decide(g_SkillTimerBuffRowState[r], anyOwn, anyReadable, remaining);
+        if (decision.latchedThisCall) InterlockedIncrement(&c.latched);
+        if (decision.unlatchedThisCall) InterlockedIncrement(&c.unlatched);
+
+        switch (decision.outcome) {
+            case ForgePact::SkillTimerOutcome::NoInstance: InterlockedIncrement(&c.noBuff);     continue;
+            case ForgePact::SkillTimerOutcome::Unreadable: InterlockedIncrement(&c.unreadable); continue;
+            case ForgePact::SkillTimerOutcome::Expired:    InterlockedIncrement(&c.expired);    continue;
+            case ForgePact::SkillTimerOutcome::Drawn:      break;
+        }
+
+        double x = 0, y = 0, w = 0, h = 0;
+        if (!ToggleIndicatorFindSlot(talentId, x, y, w, h)) {
+            InterlockedIncrement(&c.noSlot);
+            continue;
+        }
+
+        try {
+            RValue prevColour = g_Yytk->CallBuiltin("draw_get_colour", {});
+            RValue prevAlpha = g_Yytk->CallBuiltin("draw_get_alpha", {});
+            bool drew = false;
+            try {
+                SkillTimerDrawStyle(style, x, y, w, h, decision.fraction);
+                drew = true;
+            } catch (...) { InterlockedIncrement(&g_StDrawExc); }
+            try { g_Yytk->CallBuiltin("draw_set_alpha", { prevAlpha }); } catch (...) {}
+            try { g_Yytk->CallBuiltin("draw_set_colour", { prevColour }); } catch (...) {}
+            if (drew) InterlockedIncrement(&c.drawn);
+        } catch (...) { InterlockedIncrement(&g_StDrawExc); }
+    }
+}
+
+// Called from Hook_DrawHudBuffs, directly after ToggleIndicatorDraw() -
+// outside every research block, no new hook. Off is this function's very
+// first statement (skilltimer/off_makes_no_runtime_calls). One row of
+// ForgePact::kSkillTimerRows at a time: unresolved id (the countdown table's
+// own, skilltimer/unresolved_countdown_row_skipped) -> skip; for a row that is
+// also a toggle-table row, that toggle row's shipped read decides On/Unreadable
+// suppression (D-T4, skilltimer/toggle_row_still_suppressed_when_on) before
+// the timer's own read runs at all - a row with no toggle twin makes no toggle
+// read (skilltimer/non_toggle_row_makes_no_toggle_read); then route B's latch
+// decision, one latch per row (skilltimer/rows_keep_separate_latches); then the shared slot
+// lookup, charged to THIS mod's own noSlot, never toggleborder's
+// (skilltimer/slot_miss_not_charged_to_toggleborder); then the style's own
+// draw, colour/alpha saved and restored around it exactly as
+// ToggleIndicatorDraw does its marker, restored on the throw path too
+// (skilltimer/draw_throw_restores_and_counts).
+static void SkillTimerDraw()
+{
+    if (g_SkillTimerStyle.load() == ForgePact::SkillTimerStyle::Off) return;
+    const ForgePact::SkillTimerStyle style = g_SkillTimerStyle.load();
+
+    for (int r = 0; r < ForgePact::kSkillTimerRowCount; ++r) {
+        const ForgePact::SkillTimerRow& row = ForgePact::kSkillTimerRows[r];
+        SkillTimerRowCounters& c = g_StRow[r];
+
+        const int talentId = g_SkillTimerTableIds.Get(r);
+        if (talentId < 0) { InterlockedIncrement(&c.unresolved); continue; }   // skilltimer/unresolved_row_skipped
+
+        const int twin = SkillTimerToggleTwin(r);
+        if (twin >= 0) {
+            const ForgePact::ToggleSkillRow& toggleRow = ForgePact::kToggleSkillRows[twin];
+            ForgePact::ToggleIndicatorReadDetail toggleDetail;
+            ToggleIndicatorReadRow(toggleRow, talentId, &toggleDetail, /*treatOwnAsForeign=*/false);
+            const ForgePact::ToggleIndicatorState toggleState =
+                ForgePact::ToggleIndicatorModel::Decide(toggleDetail, ForgePact::ToggleRowRequiresMark(toggleRow));
+            if (toggleState == ForgePact::ToggleIndicatorState::On) { InterlockedIncrement(&c.toggleOn); continue; }
+            if (toggleState == ForgePact::ToggleIndicatorState::Unreadable) { InterlockedIncrement(&c.toggleUnreadable); continue; }
+        }
+
+        bool anyOwn = false, anyReadable = false;
+        double remaining = 0.0;
+        SkillTimerReadRow(row, anyOwn, anyReadable, remaining);
+
+        ForgePact::SkillTimerDecision decision =
+            ForgePact::SkillTimerModel::Decide(g_SkillTimerRowState[r], anyOwn, anyReadable, remaining);
+        if (decision.latchedThisCall) InterlockedIncrement(&c.latched);
+        if (decision.unlatchedThisCall) InterlockedIncrement(&c.unlatched);
+
+        switch (decision.outcome) {
+            case ForgePact::SkillTimerOutcome::NoInstance: InterlockedIncrement(&c.noInstance); continue;
+            case ForgePact::SkillTimerOutcome::Unreadable: InterlockedIncrement(&c.unreadable); continue;
+            case ForgePact::SkillTimerOutcome::Expired:    InterlockedIncrement(&c.expired);    continue;
+            case ForgePact::SkillTimerOutcome::Drawn:      break;
+        }
+
+        double x = 0, y = 0, w = 0, h = 0;
+        // No reason out-param: this mod charges only its own noSlot, never
+        // toggleborder's noHud/noRow0/noTalent.
+        if (!ToggleIndicatorFindSlot(talentId, x, y, w, h)) {
+            InterlockedIncrement(&c.noSlot);
+            continue;
+        }
+
+        try {
+            RValue prevColour = g_Yytk->CallBuiltin("draw_get_colour", {});
+            RValue prevAlpha = g_Yytk->CallBuiltin("draw_get_alpha", {});
+            bool drew = false;
+            try {
+                SkillTimerDrawStyle(style, x, y, w, h, decision.fraction);
+                drew = true;
+            } catch (...) { InterlockedIncrement(&g_StDrawExc); }
+            try { g_Yytk->CallBuiltin("draw_set_alpha", { prevAlpha }); } catch (...) {}
+            try { g_Yytk->CallBuiltin("draw_set_colour", { prevColour }); } catch (...) {}
+            if (drew) InterlockedIncrement(&c.drawn);
+        } catch (...) { InterlockedIncrement(&g_StDrawExc); }   // the state reads themselves failed: nothing was set, so there is nothing to put back
+    }
+
+    // ---- buff-carried rows (session 12) ------------------------------------
+    // After the explicit object rows' loop and before the rule loop (ctx
+    // "The ship read"): a skill whose duration lives on the player's own
+    // buff list, never a cast object.
+    SkillTimerBuffDraw(style);
+
+    // ---- rule-covered rows (T3, D-S4) --------------------------------------
+    // The hotbar walked ONCE for however many rule entries are active,
+    // instead of one ToggleIndicatorFindSlot call (and hotbar walk) per entry
+    // - the rejected alternative in context, "The draw". A talent not on the
+    // hotbar costs nothing beyond this one shared walk: no toggle read, no
+    // object resolve, no instance scan (rule/slot_off_hotbar_costs_no_instance_scan).
+    const long ruleCount = g_SkillTimerRuleCount;
+    if (ruleCount > 0) {
+        std::vector<SkillTimerHotbarSlot> hotbar;
+        if (SkillTimerEnumerateHotbar(hotbar)) {
+            for (long i = 0; i < ruleCount; ++i) {
+                ForgePact::SkillTimerRuleEntry& entry = g_SkillTimerRuleEntries[i];
+                const SkillTimerHotbarSlot* slot = nullptr;
+                for (const SkillTimerHotbarSlot& s : hotbar) {
+                    if (s.talentId == entry.talentId) { slot = &s; break; }
+                }
+                if (!slot) continue;   // rule/slot_off_hotbar_costs_no_instance_scan
+
+                // D-T4: a rule entry that is ALSO a toggle-table row is
+                // suppressed while that row's own shipped read says On or
+                // Unreadable, before the timer's own read runs at all - the
+                // same suppression the explicit rows' twin check applies
+                // above, keyed off the resolved talent id directly since a
+                // rule entry carries no abilityId comparison table of its own.
+                const int toggleRow = ToggleTableRowForTalentId(entry.talentId);
+                if (toggleRow >= 0) {
+                    const ForgePact::ToggleSkillRow& tr = ForgePact::kToggleSkillRows[toggleRow];
+                    ForgePact::ToggleIndicatorReadDetail toggleDetail;
+                    ToggleIndicatorReadRow(tr, entry.talentId, &toggleDetail, /*treatOwnAsForeign=*/false);
+                    const ForgePact::ToggleIndicatorState toggleState =
+                        ForgePact::ToggleIndicatorModel::Decide(toggleDetail, ForgePact::ToggleRowRequiresMark(tr));
+                    if (toggleState == ForgePact::ToggleIndicatorState::On ||
+                        toggleState == ForgePact::ToggleIndicatorState::Unreadable) {
+                        InterlockedIncrement(&g_RuleToggleOn);
+                        continue;
+                    }
+                }
+
+                double objIdx = -1.0;
+                if (!SkillTimerRuleResolveObject(entry, objIdx)) {
+                    InterlockedIncrement(&g_RuleNoObject);
+                    continue;   // rule/no_object_by_name_is_counted_not_drawn
+                }
+
+                bool anyOwn = false, anyReadable = false;
+                double remaining = 0.0;
+                SkillTimerRuleReadEntry(objIdx, anyOwn, anyReadable, remaining);
+
+                ForgePact::SkillTimerDecision decision =
+                    ForgePact::SkillTimerModel::Decide(entry.state, anyOwn, anyReadable, remaining);
+                if (decision.latchedThisCall) InterlockedIncrement(&g_RuleLatched);
+                if (decision.unlatchedThisCall) InterlockedIncrement(&g_RuleUnlatched);
+
+                switch (decision.outcome) {
+                    case ForgePact::SkillTimerOutcome::NoInstance: InterlockedIncrement(&g_RuleNoInstance); continue;
+                    case ForgePact::SkillTimerOutcome::Unreadable: InterlockedIncrement(&g_RuleUnreadable); continue;
+                    case ForgePact::SkillTimerOutcome::Expired:    InterlockedIncrement(&g_RuleExpired);    continue;
+                    case ForgePact::SkillTimerOutcome::Drawn:      break;
+                }
+
+                try {
+                    RValue prevColour = g_Yytk->CallBuiltin("draw_get_colour", {});
+                    RValue prevAlpha = g_Yytk->CallBuiltin("draw_get_alpha", {});
+                    bool drew = false;
+                    try {
+                        SkillTimerDrawStyle(style, slot->x, slot->y, slot->w, slot->h, decision.fraction);
+                        drew = true;
+                    } catch (...) { InterlockedIncrement(&g_StDrawExc); }
+                    try { g_Yytk->CallBuiltin("draw_set_alpha", { prevAlpha }); } catch (...) {}
+                    try { g_Yytk->CallBuiltin("draw_set_colour", { prevColour }); } catch (...) {}
+                    if (drew) InterlockedIncrement(&g_RuleDrawn);
+                } catch (...) { InterlockedIncrement(&g_StDrawExc); }
+            }
+        }
+    }
+}
+
+static std::string SkillTimerRowCountersLine(int row)
+{
+    const SkillTimerRowCounters& c = g_StRow[row];
+    return std::string(ForgePact::kSkillTimerRows[row].abilityId)
+        + " drawn=" + std::to_string(c.drawn) + " noInstance=" + std::to_string(c.noInstance)
+        + " unreadable=" + std::to_string(c.unreadable) + " expired=" + std::to_string(c.expired)
+        + " toggleOn=" + std::to_string(c.toggleOn) + " toggleUnreadable=" + std::to_string(c.toggleUnreadable)
+        + " unresolved=" + std::to_string(c.unresolved) + " noSlot=" + std::to_string(c.noSlot)
+        + " latched=" + std::to_string(c.latched) + " unlatched=" + std::to_string(c.unlatched);
+}
+
+// Every field above is a SUM over the countdown table's rows, same reasoning
+// as ToggleBorderCountersLine - said out loud so it is not misread as a
+// per-draw total.
+static std::string SkillTimerAggregateCountersLine()
+{
+    long drawn = 0, noInstance = 0, unreadable = 0, expired = 0, toggleOn = 0, toggleUnreadable = 0,
+         unresolved = 0, noSlot = 0, latched = 0, unlatched = 0;
+    for (int r = 0; r < ForgePact::kSkillTimerRowCount; ++r) {
+        const SkillTimerRowCounters& c = g_StRow[r];
+        drawn += c.drawn; noInstance += c.noInstance; unreadable += c.unreadable; expired += c.expired;
+        toggleOn += c.toggleOn; toggleUnreadable += c.toggleUnreadable; unresolved += c.unresolved;
+        noSlot += c.noSlot; latched += c.latched; unlatched += c.unlatched;
+    }
+    return "drawn=" + std::to_string(drawn) + " noInstance=" + std::to_string(noInstance)
+        + " unreadable=" + std::to_string(unreadable) + " expired=" + std::to_string(expired)
+        + " toggleOn=" + std::to_string(toggleOn) + " toggleUnreadable=" + std::to_string(toggleUnreadable)
+        + " unresolved=" + std::to_string(unresolved) + " noSlot=" + std::to_string(noSlot)
+        + " latched=" + std::to_string(latched) + " unlatched=" + std::to_string(unlatched)
+        + " drawExc=" + std::to_string(g_StDrawExc) + " fontUnresolved=" + std::to_string(g_StFontUnresolved)
+        + " (summed over " + std::to_string(ForgePact::kSkillTimerRowCount) + " rows)";
+}
+
+// The countdown table's resolved talent ids, one entry per row - the
+// ToggleTableRowsLine shape, for this table: which rows the countdown covers
+// right now, rather than trusting that they all resolved. `resolveWalks=` is
+// the one walk both tables share.
+static std::string SkillTimerTableRowsLine()
+{
+    std::string line;
+    for (int r = 0; r < ForgePact::kSkillTimerRowCount; ++r) {
+        const int id = g_SkillTimerTableIds.Get(r);
+        line += std::string(ForgePact::kSkillTimerRows[r].abilityId) + ":talentId="
+              + (id >= 0 ? std::to_string(id) : std::string("unresolved")) + " ";
+    }
+    return line + "resolveWalks=" + std::to_string(g_ToggleResolveWalks)
+         + " unresolvedRows=" + std::to_string(SkillTimerTableUnresolvedRows());
+}
+
+// The rule map's own aggregate line (T3, D-S4): `ruleRows=` is a snapshot of
+// how many entries are active right now (not a running total, unlike every
+// other field here) - the walk rebuilds the map wholesale, so this is exactly
+// "how many talents are currently rule-eligible".
+static std::string SkillTimerRuleCountersLine()
+{
+    return "ruleRows=" + std::to_string(g_SkillTimerRuleCount)
+        + " ruleDrawn=" + std::to_string(g_RuleDrawn)
+        + " ruleNoInstance=" + std::to_string(g_RuleNoInstance)
+        + " ruleUnreadable=" + std::to_string(g_RuleUnreadable)
+        + " ruleExpired=" + std::to_string(g_RuleExpired)
+        + " ruleToggleOn=" + std::to_string(g_RuleToggleOn)
+        + " ruleNoObject=" + std::to_string(g_RuleNoObject)
+        + " ruleDenied=" + std::to_string(g_SkillTimerRuleDenied)
+        + " ruleUnreadableFields=" + std::to_string(g_SkillTimerRuleUnreadableFields)
+        + " ruleCapped=" + std::to_string(g_SkillTimerRuleCapped)
+        + " ruleNoName=" + std::to_string(g_SkillTimerRuleNoName)
+        + " ruleLatched=" + std::to_string(g_RuleLatched)
+        + " ruleUnlatched=" + std::to_string(g_RuleUnlatched);
+}
+
+// One active rule entry's own line - the ToggleTableRowsLine/
+// SkillTimerTableRowsLine shape, naming the abilityId as read from the talent
+// struct (not the generated table's own lower-cased key) so it reads back
+// against the same spelling the talent's own struct carries.
+static std::string SkillTimerRuleEntryLine(int index)
+{
+    const ForgePact::SkillTimerRuleEntry& e = g_SkillTimerRuleEntries[index];
+    return e.abilityId + ":talentId=" + std::to_string(e.talentId)
+        + " object=" + std::string(HeroSiege::Objects::GetObjectName(ForgePact::kSkillTimerNames[e.nameIndex].object))
+        + " idx=" + (e.objIdx >= 0.0 ? std::to_string((long long)e.objIdx) : std::string("unresolved"));
+}
+
+// `skilltimer stat` is read-only: it stores nothing to g_SkillTimerStyle.
+static void SkillTimerStats()
+{
+    Out(std::string("skilltimer stat: style=") + ForgePact::SkillTimerStyleName(g_SkillTimerStyle.load())
+        + " " + SkillTimerAggregateCountersLine());
+    Out("skilltimer stat: " + SkillTimerTableRowsLine());
+    for (int r = 0; r < ForgePact::kSkillTimerRowCount; ++r)
+        Out("skilltimer stat: " + SkillTimerRowCountersLine(r));
+    Out("skilltimer stat: " + SkillTimerBuffTableRowsLine());
+    for (int r = 0; r < ForgePact::kSkillTimerBuffRowCount; ++r)
+        Out("skilltimer stat: " + SkillTimerBuffRowCountersLine(r));
+    Out("skilltimer stat: " + SkillTimerRuleCountersLine());
+    const long ruleCount = g_SkillTimerRuleCount;
+    for (long i = 0; i < ruleCount; ++i)
+        Out("skilltimer stat: " + SkillTimerRuleEntryLine((int)i));
 }
 
 // ===== Toggle-skill re-cast guard (issue #11, Track A; `toggleguard`) ========
@@ -4994,7 +6081,10 @@ static PFUNC_YYGMLScript g_OrigTalentUseClass = nullptr;
 // toggle sub-talent read back unallocated, so the call is the player's plain
 // cast and passes. subUnreadable: the sub-talent could not be read in any of
 // its shapes - the call passes, because fail-open is vanilla behaviour.
-static volatile long g_TgdRefused = 0, g_TgdPassed = 0, g_TgdProcSeen = 0, g_TgdSelfUnreadable = 0, g_TgdObjUnresolved = 0, g_TgdSubOff = 0, g_TgdSubUnreadable = 0;
+// baseForm: a matched row is a base-form toggle (D-B1, Bushido) - it is
+// refused unconditionally, without ever touching global.subTalentMap, and
+// every baseForm refusal is also counted in refused.
+static volatile long g_TgdRefused = 0, g_TgdPassed = 0, g_TgdProcSeen = 0, g_TgdSelfUnreadable = 0, g_TgdObjUnresolved = 0, g_TgdSubOff = 0, g_TgdSubUnreadable = 0, g_TgdBaseForm = 0;
 // The double-cast object's index, resolved by name and cached only once it is
 // a real (>= 0) index; a failed resolve is never cached, so the next call
 // tries again.
@@ -5079,6 +6169,38 @@ static ToggleSubTalentState ToggleReadSubTalent(int talentId, int slot)
     } catch (...) { return ToggleSubTalentState::Unreadable; }
 }
 
+// The ONE buff-form function (session 12, Counter, ctx "The Give No Quarter
+// form split"): takes the toggle row's resolved talent id, its own
+// `subTalentSlot`, and an ALREADY-read buff slot state (no second walk of
+// the array - both callers, ToggleIndicatorReadRow's `PlayerBuff` dispatch
+// and the countdown's own buff loop, already have it), and produces the
+// same ToggleIndicatorReadDetail shape every other row's read produces, so
+// ForgePact::ToggleIndicatorModel::Decide (untouched) gives the answer:
+// empty slot -> objectResolved=true, n=0 (Off); a present-but-unreadable
+// slot -> countReadFailed=true (Unreadable); present and readable -> n=1,
+// mine=1, then the sub-talent read decides which of markedMine/unmarkedMine/
+// markUnreadableMine the instance is counted into (Allocated/NotAllocated/
+// Unreadable). Calls ToggleReadSubTalent exactly once, and only when the
+// slot is actually present and readable - AGENTS.md "Check a Permission
+// Where It Is Used": the read is made at the point of use, never cached.
+// ToggleIndicatorModel::Decide is deliberately NOT called in here - the
+// caller decides, with its own requireMarker.
+static void ToggleIndicatorReadPlayerBuffForm(int talentId, int subTalentSlot,
+                                               bool anyOwn, bool anyReadable,
+                                               ForgePact::ToggleIndicatorReadDetail& out)
+{
+    out = ForgePact::ToggleIndicatorReadDetail{};
+    out.objectResolved = true;
+    if (!anyOwn) { out.n = 0; return; }
+    out.n = 1;
+    if (!anyReadable) { out.countReadFailed = true; return; }
+    out.mine = 1;
+    const ToggleSubTalentState sub = ToggleReadSubTalent(talentId, subTalentSlot);
+    if (sub == ToggleSubTalentState::Allocated) { ++out.markedMine; return; }
+    if (sub == ToggleSubTalentState::NotAllocated) { ++out.unmarkedMine; return; }
+    ++out.markUnreadableMine;
+}
+
 static RValue& HookTalentUseClass(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
 #ifndef FORGEPACT_RELEASE
@@ -5146,13 +6268,25 @@ static RValue& HookTalentUseClass(CInstance* S, CInstance* O, RValue& R, int arg
     }
 
     if (refuseByCaller) {
-        // The row is a member, so its toggle sub-talent decides whether this
-        // proc could have flipped anything - read here, at the point of use,
-        // with the talent the call itself named (D-P3). Anything short of a
-        // numeric > 0 passes the call through and is counted, so the guard
-        // never costs a player a cast it cannot justify refusing.
-        const ToggleSubTalentState sub =
-            ToggleReadSubTalent(talentId, ForgePact::kToggleSkillRows[rowIndex].subTalentSlot);
+        // D-B1: a base-form toggle (Bushido - a toggle on its own, with no
+        // sub-talent at all) is refused unconditionally, without ever
+        // reading global.subTalentMap - feeding it kToggleNoSubTalent (0)
+        // would find no `t<id>` struct at that key and answer Unreadable,
+        // which passes the call through: a guard that reports armed and
+        // never actually refuses. Every other row's toggle sub-talent
+        // decides whether this proc could have flipped anything - read here,
+        // at the point of use, with the talent the call itself named (D-P3).
+        // Anything short of a numeric > 0 passes the call through and is
+        // counted, so the guard never costs a player a cast it cannot
+        // justify refusing.
+        const bool baseForm = ForgePact::ToggleRowIsBaseFormToggle(ForgePact::kToggleSkillRows[rowIndex]);
+        ToggleSubTalentState sub;
+        if (baseForm) {
+            InterlockedIncrement(&g_TgdBaseForm);
+            sub = ToggleSubTalentState::Allocated;
+        } else {
+            sub = ToggleReadSubTalent(talentId, ForgePact::kToggleSkillRows[rowIndex].subTalentSlot);
+        }
         if (sub == ToggleSubTalentState::Allocated) {
             InterlockedIncrement(&g_TgdRefused);
             return R;
@@ -5196,6 +6330,7 @@ static std::string ToggleGuardCountersLine()
         + " procSeen=" + std::to_string(g_TgdProcSeen) + " selfUnreadable=" + std::to_string(g_TgdSelfUnreadable)
         + " objUnresolved=" + std::to_string(g_TgdObjUnresolved) + " subOff=" + std::to_string(g_TgdSubOff)
         + " subUnreadable=" + std::to_string(g_TgdSubUnreadable)
+        + " baseForm=" + std::to_string(g_TgdBaseForm)
         // Which `global.subTalentMap` index actually answered, so a session
         // can tell a moved map from an unallocated sub-talent.
         + " subIndex=" + (subIndex >= 0 ? std::to_string(subIndex) : std::string("none"))
@@ -5290,6 +6425,7 @@ static RValue& Hook_DrawHudBuffs(CInstance* S, CInstance* O, RValue& R, int argc
     ++g_HhHudCalls;
     HhDrawHeadLabels();
     ToggleIndicatorDraw();
+    SkillTimerDraw();
 #ifndef FORGEPACT_RELEASE
     TgProbeSpurnAfterDraw();
 #endif
@@ -21167,6 +22303,18 @@ static bool TgProbeIsPiggyback(long mode)
     return mode == kTgViaNative || mode == kTgViaTableOnly;
 }
 
+// Session 12 (`tgprobe buffwatch`): the TalentUse/TalentUseClass nesting
+// depth, kept only around the native detour's own trampoline call below
+// (kTg_TalentUse and kTg_TalentUseClass); every other idx leaves these
+// untouched. useTalent's own value is stashed once, on the outermost
+// TalentUseClass call's own first argument. Defined here (ahead of the rest
+// of the buffwatch instrument, further down with the sweep sampler) because
+// TgProbeDetourBody below is the only place that ever writes them.
+static volatile long g_TgTalentUseDepth = 0;
+static volatile long g_TgTalentUseClassDepth = 0;
+static double g_TgTalentUseClassA0 = 0.0;
+static void TgProbeBuffWatchOnBuffAdd(int argc, RValue** A, bool talentUseNative, bool talentUseClassNative);
+
 // Entry bookkeeping shared by the native detours and the entry notes. The hot
 // path is two interlocked increments and a frame read; nothing allocates
 // unless verbose is on and this row still has log budget. Returns the call
@@ -21193,7 +22341,24 @@ static RValue& TgProbeDetourBody(int idx, CInstance* S, CInstance* O, RValue& R,
     TgProbeTarget& t = g_TgRows[idx];
     if (t.flags & kTgHud) TgProbeHudRoomTick(CurrentRoomKey());
     const long logged = TgProbeEnter(t, S, O, argc, A);
+    // Session 12 (`tgprobe buffwatch`): the nesting depth is trustworthy only
+    // around a NATIVE detour's own trampoline - a piggybacked row never runs
+    // this function at all, so its depth stays 0 for the whole session and
+    // the BuffAdd note prints n/a for it (the caller decides that from the
+    // row's own mode, not from these counters).
+    if (idx == kTg_TalentUse) {
+        InterlockedIncrement(&g_TgTalentUseDepth);
+    } else if (idx == kTg_TalentUseClass) {
+        if (InterlockedIncrement(&g_TgTalentUseClassDepth) == 1 && argc > 0 && A && A[0] && N1Numeric(*A[0]))
+            g_TgTalentUseClassA0 = A[0]->ToDouble();
+    }
     RValue& r = t.tramp ? t.tramp(S, O, R, argc, A) : R;
+    if (idx == kTg_TalentUse) InterlockedDecrement(&g_TgTalentUseDepth);
+    else if (idx == kTg_TalentUseClass) InterlockedDecrement(&g_TgTalentUseClassDepth);
+    if (idx == kTg_BuffAdd) {
+        TgProbeBuffWatchOnBuffAdd(argc, A, g_TgRows[kTg_TalentUse].mode == kTgNative,
+                                   g_TgRows[kTg_TalentUseClass].mode == kTgNative);
+    }
     if (logged && (t.flags & kTgRet)) {
         try { Out(std::string("tgprobe ") + t.label + " #" + std::to_string(logged) + " ret=" + Describe(r)); } catch (...) {}
     }
@@ -21247,6 +22412,20 @@ static void TgProbeNoteTalentUse(CInstance* S, CInstance* O, int argc, RValue** 
 
 static void TgProbeNoteBuffAdd(CInstance* S, CInstance* O, int argc, RValue** A)
 {
+    // Session 12 (`tgprobe buffwatch`): the via-hook attachment path - this
+    // note runs from inside the real HookBuffAdd, which fires for every real
+    // BuffAdd call regardless of kTg_BuffAdd's own mode (HookBuffAdd is a
+    // shipped hook, installed independently of tgprobe). When kTg_BuffAdd is
+    // kTgNative - a true native detour, OR "native (under table-only
+    // HookBuffAdd)" (TgProbeAttach detoured the original this very hook still
+    // calls into) - TgProbeDetourBody's kTg_BuffAdd branch already calls
+    // TgProbeBuffWatchOnBuffAdd for this same call, so calling it again here
+    // would double-count `adds`. Only when kTg_BuffAdd attached table-only
+    // (piggybacked, never detoured) does this note need to call it itself.
+    if (g_TgRows[kTg_BuffAdd].mode != kTgNative) {
+        TgProbeBuffWatchOnBuffAdd(argc, A, g_TgRows[kTg_TalentUse].mode == kTgNative,
+                                   g_TgRows[kTg_TalentUseClass].mode == kTgNative);
+    }
     if (!TgProbeIsPiggyback(g_TgRows[kTg_BuffAdd].mode)) return;
     TgProbeNote(kTg_BuffAdd, S, O, argc, A);
 }
@@ -22908,6 +24087,94 @@ static bool g_TgSpriteQuad = false;
 static double g_TgSpriteAlphaMin = 0.0;
 static double g_TgSpriteAlphaMaxOverride = -1.0;
 
+// `tgprobe sprite frac <f>` (issue #55 probe round): a settable 0.0..1.0
+// knob the four countdown-look candidates below draw against, so a look is
+// judgeable at rest, at any fill, with no live timed cast - and it is the
+// same input the shipped countdown will take, so what the tester judges is
+// what ships (context: "### What the probe round must add, and why it is
+// one build and one session"). Defaults to 1.0 (full) so nothing existing
+// changes silently; clamped by hand, not std::max/std::min
+// (test_no_bare_std_max_or_std_min).
+static double g_TgSpriteFraction = 1.0;
+
+// `tgprobe sprite frac anim <seconds> [loop]` (issue #55 timer-countdown
+// follow-up): while running, `g_TgSpriteFraction` is recomputed every draw
+// by TgProbeSpriteFracAnimTick as 1 - elapsed/duration from a name-resolved
+// game clock (never a draw or frame count - g_TgSpriteAnimTime above and
+// pulse's g_RuntimeFrame stay exactly as they are), so a researcher can
+// judge the four countdown looks in smooth motion instead of stepping
+// `frac <f>` one IPC call apart. The clock is chosen once, at `anim` time,
+// and kept for the animation's whole life - switching clocks mid-run would
+// mix their units and starting points and make the fraction jump. A
+// refused `anim` (bad arguments, neither clock readable) changes none of
+// this state, including a running animation, which is left running.
+enum class TgSpriteFracAnimState { Off, Running, Done };
+static TgSpriteFracAnimState g_TgSpriteFracAnimState = TgSpriteFracAnimState::Off;
+static bool g_TgSpriteFracAnimLoop = false;
+static double g_TgSpriteFracAnimDuration = 0.0;    // seconds
+static double g_TgSpriteFracAnimStart = 0.0;       // the chosen clock's own reading (seconds) at `anim` time
+static std::string g_TgSpriteFracAnimClock;        // "get_timer" or "current_time" - fixed for the run's life
+static double g_TgSpriteFracAnimElapsed = 0.0;     // total elapsed since `anim` started, unwrapped even in loop mode - compare this against a stopwatch
+static double g_TgSpriteFracAnimPhase = 0.0;       // loop mode only: elapsed wrapped into one period - what the fraction is actually derived from
+static long g_TgSpriteFracAnimTicks = 0;
+static long g_TgSpriteFracAnimClockFail = 0;
+// Forward-declared: TgProbeSpriteDraw (below) calls this before its own
+// definition, further down this file, just above TgProbeSpriteCommand.
+static void TgProbeSpriteFracAnimTick();
+
+// `tgprobe sprite textoffset [dx] [dy]` / `textalpha [a]` / `textcolour
+// [name|r g b|off]` (alias `textcolor`) / `font [name|index|off|list]`
+// (issue #55 follow-up, live-session capture
+// `.claude/workorders/issue-55-live-session-2026-09-20-capture.md`): the
+// `number` candidate drew dead centre of the slot (`x + w/2, y + h/2`) and
+// was never seen through 16,890 draws at `drawExc=0` - `draw_text`
+// reachability at this draw site is UNTESTED, not negative, because the
+// icon's own art paints over the centre either way. These four controls
+// let a tester move the text somewhere unoccluded and style it without
+// another build - text only, so `soft`/`gradient`/`arc`/`bar`/`fade`/
+// `gold`/a named sprite draw exactly as before (context: "### Why the text
+// controls are separate from `colour`/`alpha`").
+// Default (0, -101): the live session of 2026-09-21 placed `number` ABOVE
+// the icon, nudged 1-2 px at a time on the tuned 77x78 Soul Spurn box -
+// the text's top edge 101 px above the box's bottom edge, i.e. 23 px
+// above its top. Still measured from the bottom edge, so an old
+// `textoffset 0 2` reproduces the earlier below-the-icon placement.
+static double g_TgSpriteTextOffsetDx = 0.0, g_TgSpriteTextOffsetDy = -101.0;
+// `tgprobe sprite baroffset [dx] [dy]` (2026-09-21 live session): `bar`
+// drew below the icon and the tester wanted it above, like `number`. The
+// bar now sits just above the box by default (its bottom edge 2 px above
+// the box's top), and this offset moves it from there without a rebuild.
+// `bar` only - no other style reads these.
+static double g_TgSpriteBarOffsetDx = 0.0, g_TgSpriteBarOffsetDy = 0.0;
+// `tgprobe sprite barinset [px]` (same session): the tuned box is sized for
+// the outline styles that draw AROUND the icon, so a full bar overhung the
+// icon art equally on both sides. The bar is trimmed this many pixels in
+// from each side of the box. Default 4: started as a guess, confirmed by
+// the tester live as matching the Soul Spurn icon's width.
+static double g_TgSpriteBarInset = 4.0;
+static double g_TgSpriteTextAlpha = 1.0;                                    // fully opaque - today's look
+static bool g_TgSpriteTextColourSet = false;                                // unset -> follow the shared `colour`
+static double g_TgSpriteTextColourR = 255.0, g_TgSpriteTextColourG = 215.0, g_TgSpriteTextColourB = 0.0;
+static std::string g_TgSpriteTextColourName = "gold";
+static std::string g_TgSpriteFontName;   // empty -> the game's own default font, no draw_set_font call at all
+static volatile long g_TgSpriteTextFontUnresolved = 0;   // the stored font name/index failed to resolve at draw time
+static volatile long g_TgSpriteTextDrawExc = 0;           // the `number` candidate's own save/draw/restore threw
+// F2, issue #55 follow-up: both zeroed alongside g_TgSpriteDraws/g_TgSpriteDrawExc on every
+// gold/style/gallery/sprite selection, so an `off` line reports only the just-run session -
+// before this fix neither was ever reset, so a second `style number` -> `off` printed a
+// cumulative textDrawExc=/unresolved= next to a fresh per-run draws=/drawExc=.
+
+// `textcolour`'s default is "follow the shared `colour`" rather than its
+// own stored value - `style number` looks exactly as it does today until a
+// tester asks otherwise, the same rule `quad`/`alpha`/`frac` each followed
+// when they were added.
+static RValue TgProbeSpriteTextColour()
+{
+    if (!g_TgSpriteTextColourSet) return TgProbeSpriteActiveColour();
+    return g_Yytk->CallBuiltin("make_colour_rgb",
+        { RValue(g_TgSpriteTextColourR), RValue(g_TgSpriteTextColourG), RValue(g_TgSpriteTextColourB) });
+}
+
 static bool TgProbeSpriteResolve(const std::string& name, double& outIdx)
 {
     try {
@@ -23178,7 +24445,13 @@ static void TgProbeSpriteDrawGallery()
 // every other draw_* call in this file already uses; neither has been
 // exercised by this probe before, so their availability through that path
 // is itself unconfirmed until a live session runs `tgprobe sprite style`.
-enum class TgSpriteStyleKind { Soft, Halo, Gradient, Pulse };
+// Arc/Bar/Number/Fade (issue #55 probe round) are the four countdown-look
+// candidates "### What the probe round must add" lists: a banded outline
+// drawn over a fraction of its own perimeter, a bar outside the icon's
+// bounds, a numeric counter, and an alpha ramp over the shipped `soft`
+// bands - each driven by `g_TgSpriteFraction`, none a border input (D-U9
+// still stands: no shipped draw changes here).
+enum class TgSpriteStyleKind { Soft, Halo, Gradient, Pulse, Arc, Bar, Number, Fade };
 static TgSpriteStyleKind g_TgSpriteStyleKind = TgSpriteStyleKind::Soft;
 
 static const char* TgProbeSpriteStyleName(TgSpriteStyleKind kind)
@@ -23188,6 +24461,10 @@ static const char* TgProbeSpriteStyleName(TgSpriteStyleKind kind)
         case TgSpriteStyleKind::Halo: return "halo";
         case TgSpriteStyleKind::Gradient: return "gradient";
         case TgSpriteStyleKind::Pulse: return "pulse";
+        case TgSpriteStyleKind::Arc: return "arc";
+        case TgSpriteStyleKind::Bar: return "bar";
+        case TgSpriteStyleKind::Number: return "number";
+        case TgSpriteStyleKind::Fade: return "fade";
     }
     return "soft";
 }
@@ -23198,6 +24475,10 @@ static bool TgProbeSpriteStyleFromName(const std::string& lower, TgSpriteStyleKi
     if (lower == "halo") { outKind = TgSpriteStyleKind::Halo; return true; }
     if (lower == "gradient") { outKind = TgSpriteStyleKind::Gradient; return true; }
     if (lower == "pulse") { outKind = TgSpriteStyleKind::Pulse; return true; }
+    if (lower == "arc") { outKind = TgSpriteStyleKind::Arc; return true; }
+    if (lower == "bar") { outKind = TgSpriteStyleKind::Bar; return true; }
+    if (lower == "number") { outKind = TgSpriteStyleKind::Number; return true; }
+    if (lower == "fade") { outKind = TgSpriteStyleKind::Fade; return true; }
     return false;
 }
 
@@ -23294,6 +24575,162 @@ static void TgProbeSpriteDrawPulse(double x, double y, double w, double h)
     TgProbeSpriteDrawSoft(x, y, w, h, TgProbeSpritePulseFactor());
 }
 
+// Walks a rectangle's perimeter clockwise from its top-left corner (top
+// edge L->R, right edge T->B, bottom edge R->L, left edge B->T) and draws
+// only the leading `fraction` (0..1) of the total perimeter length via
+// `draw_line` segments - so the traced edge always starts at the same
+// corner and grows clockwise as the fraction rises, the way a clock face
+// reads. `draw_line` is new to this probe (issue #55 round); its
+// reachability through the shared CallBuiltin path is unconfirmed until a
+// live session runs `tgprobe sprite style arc`, the same status every
+// other new builtin this file calls carried before its own first live run
+// (draw_sprite_ext, draw_ellipse_colour, draw_rectangle_colour,
+// draw_sprite_part_ext).
+static void TgProbeSpriteDrawRectOutlineFraction(double x0, double y0, double x1, double y1, double fraction)
+{
+    if (fraction <= 0.0) return;
+    const double w = x1 - x0, h = y1 - y0;
+    const double perimeter = 2.0 * (w + h);
+    double remaining = perimeter * (fraction > 1.0 ? 1.0 : fraction);
+    if (remaining <= 0.0) return;
+    const double ax[4] = { x0, x1, x1, x0 };
+    const double ay[4] = { y0, y0, y1, y1 };
+    const double bx[4] = { x1, x1, x0, x0 };
+    const double by[4] = { y0, y1, y1, y0 };
+    for (int i = 0; i < 4 && remaining > 0.0; ++i) {
+        const double dx = bx[i] - ax[i], dy = by[i] - ay[i];
+        const double len = std::sqrt(dx * dx + dy * dy);
+        if (len <= 0.0) continue;
+        const double take = remaining < len ? remaining : len;
+        const double t = take / len;
+        g_Yytk->CallBuiltin("draw_line", { RValue(ax[i]), RValue(ay[i]), RValue(ax[i] + dx * t), RValue(ay[i] + dy * t) });
+        remaining -= take;
+    }
+}
+
+// `arc`: the banded outline drawn over a fraction of its own perimeter -
+// `soft`'s same band count and alpha ramp, but each band traces only
+// `g_TgSpriteFraction` of its own perimeter instead of the whole rectangle.
+static void TgProbeSpriteDrawArc(double x, double y, double w, double h)
+{
+    RValue activeColour = TgProbeSpriteActiveColour();
+    g_Yytk->CallBuiltin("draw_set_colour", { activeColour });
+    static constexpr int kBands = 10;
+    for (int i = 0; i < kBands; ++i) {
+        const double t = (double)i / (double)(kBands - 1);
+        g_Yytk->CallBuiltin("draw_set_alpha", { RValue(TgProbeSpriteFadeAlpha(1.0, t)) });
+        TgProbeSpriteDrawRectOutlineFraction(x - i, y - i, x + w + i, y + h + i, g_TgSpriteFraction);
+    }
+}
+
+// `bar`: a filled bar drawn below the box, OUTSIDE the icon's own bounds
+// (D-T5 in the workorder context: nothing drawn inside the icon's bounds is
+// visible at either draw site - see docs "The draw site is constrained"),
+// its width scaled by `g_TgSpriteFraction` - the same shape a cooldown/
+// health bar reads as elsewhere in the game's own HUD.
+static void TgProbeSpriteDrawBar(double x, double y, double w, double h)
+{
+    RValue activeColour = TgProbeSpriteActiveColour();
+    static constexpr double kBarGap = 2.0, kBarHeight = 6.0;
+    const double fraction = g_TgSpriteFraction > 1.0 ? 1.0 : (g_TgSpriteFraction < 0.0 ? 0.0 : g_TgSpriteFraction);
+    // `barinset` trims both sides equally; an inset that eats the whole box
+    // leaves no bar (caught by the width guard below).
+    const double usableWidth = w - 2.0 * g_TgSpriteBarInset;
+    const double barWidth = usableWidth * fraction;
+    // D4 (issue #55 follow-up): the live session found a visible stub left
+    // below the icon at `frac 0.0`, `drawExc=0` - the runtime still filled a
+    // degenerate rectangle. The guard is on the drawn WIDTH in pixels, not
+    // on `fraction == 0.0`: a fraction of 0.004 on a wide box rounds to the
+    // same stub and would lie about remaining time the same way. This makes
+    // `bar` consistent with `arc` (returns early on a non-positive fraction)
+    // and `fade` (vanishes by alpha) - `number` is the deliberate exception,
+    // since a legible `0%` is the whole point of that candidate.
+    if (barWidth < 1.0) return;
+    // Above the box (2026-09-21 live session): bottom edge kBarGap above
+    // the box's top, shifted by `baroffset`.
+    const double bx0 = x + g_TgSpriteBarInset + g_TgSpriteBarOffsetDx, by1 = y - kBarGap + g_TgSpriteBarOffsetDy;
+    const double bx1 = bx0 + barWidth, by0 = by1 - kBarHeight;
+    g_Yytk->CallBuiltin("draw_set_alpha", { RValue(1.0) });
+    g_Yytk->CallBuiltin("draw_rectangle_colour", {
+        RValue(bx0), RValue(by0), RValue(bx1), RValue(by1),
+        RValue(activeColour), RValue(activeColour), RValue(activeColour), RValue(activeColour), RValue(0.0) });
+}
+
+// `number`: the active fraction as a whole-number percentage, drawn with
+// `draw_text` - already used by HhDrawHeadLabels at this same draw point, so
+// its reachability is established, unlike the other three candidates' new
+// builtins. D1 (issue #55 follow-up): anchored to the box's BOTTOM edge,
+// centred horizontally, offset by `textoffset` (default (0, -101) since the
+// 2026-09-21 session put it above the icon; (0, 2) before) - the live session found the centred draw
+// (`x + w/2, y + h/2`) sat under the talent icon's own art and was never
+// seen, so `draw_text` reachability here is untested, not negative
+// (context: "### Why below the box, and why settable"). Follows
+// HhDrawHeadLabels' own font-resolve pattern (`asset_get_index`, a numeric
+// fallback, `>= 0` before `draw_set_font`, its own `try`, around
+// `:5258-5263`) and ToggleIndicatorDraw's save/restore shape
+// (`:4919-4935`): every previous state is captured before the first
+// `draw_set_*`, the draw sits in its own inner `try` so a throw there
+// cannot skip the restores below it, and each restore gets its own `try` so
+// one failing restore cannot cost the others.
+static void TgProbeSpriteDrawNumber(double x, double y, double w, double h)
+{
+    try {
+        RValue prevFont = g_Yytk->CallBuiltin("draw_get_font", {});
+        RValue prevColour = g_Yytk->CallBuiltin("draw_get_colour", {});
+        RValue prevAlpha = g_Yytk->CallBuiltin("draw_get_alpha", {});
+        RValue prevHalign = g_Yytk->CallBuiltin("draw_get_halign", {});
+        RValue prevValign = g_Yytk->CallBuiltin("draw_get_valign", {});
+        // F3, issue #55 follow-up: only restore draw_set_font when this
+        // body actually called it. draw_get_font's own return is taken on
+        // faith (CallBuiltin returns an unset RValue both for a real
+        // "no font" state and for a missing builtin - the exact ambiguity
+        // TgProbeSpriteBuiltinExists exists to resolve for `font list`); an
+        // unconditional restore would push that value into the runtime's
+        // font state ~15x/frame even on the default path, where
+        // g_TgSpriteFontName is empty and draw_set_font was never set.
+        // F3 follow-up round 2: fontApplied is set BEFORE draw_set_font is
+        // called, not after - if the builtin applies the font and then
+        // throws, control reaches the catch below with fontApplied already
+        // true, so the restore still runs and the probe's font cannot leak
+        // into the game for the rest of the session. Marking it first is a
+        // no-op on the opposite failure (the call throws before applying
+        // anything): the restore then just writes back prevFont.
+        bool fontApplied = false;
+        try {
+            if (!g_TgSpriteFontName.empty()) {
+                try {
+                    RValue f = g_Yytk->CallBuiltin("asset_get_index", { RValue(g_TgSpriteFontName) });
+                    if (f.ToDouble() < 0) f = RValue(std::stod(g_TgSpriteFontName));
+                    if (f.ToDouble() >= 0) { fontApplied = true; g_Yytk->CallBuiltin("draw_set_font", { f }); }
+                    else InterlockedIncrement(&g_TgSpriteTextFontUnresolved);
+                } catch (...) { InterlockedIncrement(&g_TgSpriteTextFontUnresolved); }
+            }
+            g_Yytk->CallBuiltin("draw_set_colour", { TgProbeSpriteTextColour() });
+            g_Yytk->CallBuiltin("draw_set_alpha", { RValue(g_TgSpriteTextAlpha) });
+            g_Yytk->CallBuiltin("draw_set_halign", { RValue(1.0) });   // fhalign_center
+            g_Yytk->CallBuiltin("draw_set_valign", { RValue(0.0) });   // fvalign_top: hang BELOW the anchor
+            const long pct = (long)std::round(g_TgSpriteFraction * 100.0);
+            const double tx = x + w / 2.0 + g_TgSpriteTextOffsetDx;
+            const double ty = y + h + g_TgSpriteTextOffsetDy;
+            g_Yytk->CallBuiltin("draw_text", { RValue(tx), RValue(ty), RValue(std::to_string(pct) + "%") });
+        } catch (...) { InterlockedIncrement(&g_TgSpriteTextDrawExc); }
+        try { g_Yytk->CallBuiltin("draw_set_valign", { prevValign }); } catch (...) {}
+        try { g_Yytk->CallBuiltin("draw_set_halign", { prevHalign }); } catch (...) {}
+        try { g_Yytk->CallBuiltin("draw_set_alpha", { prevAlpha }); } catch (...) {}
+        try { g_Yytk->CallBuiltin("draw_set_colour", { prevColour }); } catch (...) {}
+        if (fontApplied) { try { g_Yytk->CallBuiltin("draw_set_font", { prevFont }); } catch (...) {} }
+    } catch (...) { InterlockedIncrement(&g_TgSpriteTextDrawExc); }   // a save read itself failed: nothing was set, so there is nothing to put back
+}
+
+// `fade`: an alpha ramp over the shipped `soft` bands - reuses `soft`'s own
+// draw with `g_TgSpriteFraction` as the alpha multiplier `pulse` already
+// takes, so the whole outline dims as the countdown runs out instead of
+// shrinking or retracing.
+static void TgProbeSpriteDrawFade(double x, double y, double w, double h)
+{
+    TgProbeSpriteDrawSoft(x, y, w, h, g_TgSpriteFraction);
+}
+
 static void TgProbeSpriteDrawStyle(TgSpriteStyleKind kind, double x, double y, double w, double h)
 {
     switch (kind) {
@@ -23301,6 +24738,10 @@ static void TgProbeSpriteDrawStyle(TgSpriteStyleKind kind, double x, double y, d
         case TgSpriteStyleKind::Halo: TgProbeSpriteDrawHalo(x, y, w, h); return;
         case TgSpriteStyleKind::Gradient: TgProbeSpriteDrawGradient(x, y, w, h); return;
         case TgSpriteStyleKind::Pulse: TgProbeSpriteDrawPulse(x, y, w, h); return;
+        case TgSpriteStyleKind::Arc: TgProbeSpriteDrawArc(x, y, w, h); return;
+        case TgSpriteStyleKind::Bar: TgProbeSpriteDrawBar(x, y, w, h); return;
+        case TgSpriteStyleKind::Number: TgProbeSpriteDrawNumber(x, y, w, h); return;
+        case TgSpriteStyleKind::Fade: TgProbeSpriteDrawFade(x, y, w, h); return;
     }
 }
 
@@ -23313,6 +24754,7 @@ static void TgProbeSpriteDraw(bool fromHudLayer)
 {
     if (g_TgSpriteMode == TgSpriteMode::Off) return;
     if (fromHudLayer != g_TgProbeLayerHud) return;
+    TgProbeSpriteFracAnimTick();
     try {
         RValue prevColour = g_Yytk->CallBuiltin("draw_get_colour", {});
         RValue prevAlpha = g_Yytk->CallBuiltin("draw_get_alpha", {});
@@ -23355,6 +24797,7 @@ static void TgProbeSpriteList()
         Out(std::string("  ") + name + " idx=" + (resolved ? std::to_string((long long)idx) : std::string("unresolved")));
     }
     Out("  styles: soft, halo, gradient, pulse (tgprobe sprite style <name>) - drawn by us, not a game sprite");
+    Out("  countdown styles (issue #55): arc, bar, number, fade - drawn against `tgprobe sprite frac`");
     Out("  colours (tgprobe sprite colour <name>, or <r> <g> <b> 0..255 each):");
     for (const TgColourPreset& p : kTgColourPresets) {
         Out("    " + std::string(p.name) + " (" + std::to_string((long long)p.r) + ","
@@ -23364,6 +24807,16 @@ static void TgProbeSpriteList()
     Out("  tgprobe sprite box tuned|bbox - D-U12's derived box (default) or the slot's raw navBbox");
     Out("  tgprobe sprite quad on|off - the sprite's own quadrants mirrored outward in place (\"inside out\"), default off");
     Out("  tgprobe sprite alpha <min> [max] - the fade floor/ceiling `style soft`/`style gradient` use, default 0..style-own");
+    Out("  tgprobe sprite frac [f] - the 0.0..1.0 countdown fraction `style arc|bar|number|fade` draw against, default 1.0");
+    Out("  tgprobe sprite frac anim <seconds> [loop] - animates frac itself from a name-resolved game clock"
+        " (get_timer, else current_time), 1.0 down to 0.0, holding or looping; a plain `frac <f>` cancels it");
+    Out("  tgprobe sprite style <name> [talentId] - selects the hotbar slot the style draws over, default Soul Spurn (240)");
+    Out("  tgprobe sprite textoffset [dx] [dy] - `number`'s offset from the box's bottom edge, default 0,-101 (above the icon)");
+    Out("  tgprobe sprite baroffset [dx] [dy] - `bar`'s offset from its default spot just above the box, default 0,0");
+    Out("  tgprobe sprite barinset [px] - trims `bar` this many pixels in from each side of the box, default 4");
+    Out("  tgprobe sprite textalpha [a] - `number`'s own flat opacity (0..255 or 0..1), default fully opaque");
+    Out("  tgprobe sprite textcolour [name|r g b|off] (alias textcolor) - `number`'s own colour, default follows `colour`");
+    Out("  tgprobe sprite font [name|index|off|list] - `number`'s font, resolved by name at draw time; `list` enumerates the runtime's own fonts");
 }
 
 // The index->name mapping `gallery` prints when it runs, to the log only -
@@ -23411,11 +24864,16 @@ static std::string TgProbeSpriteBoxText(bool found, double bw, double bh, double
 // at or under 1.0 is already a 0..1 fraction - the cheap way to accept
 // both forms `tgprobe sprite alpha` asks for without a separate flag.
 // Clamped to 0..1 by hand (0..255 would need std::max/std::min otherwise -
-// the C2589 lesson, test_no_bare_std_max_or_std_min).
+// the C2589 lesson, test_no_bare_std_max_or_std_min). Parsed through the
+// shared ParseFiniteNumber (F7, issue #55 follow-up), not a bare
+// std::stod: the bare form accepted "0.5x" via longest-valid-prefix
+// conversion and let "nan" pass every hand-written clamp below unchanged,
+// reaching draw_set_alpha(nan) - the same "drew nothing, silently"
+// ambiguity `frac` was fixed against two branches over.
 static bool TgProbeSpriteParseAlphaArg(const std::string& s, double& outFraction)
 {
     double v = 0.0;
-    try { v = std::stod(s); } catch (...) { return false; }
+    if (!ParseFiniteNumber(s, v)) return false;
     if (v > 1.0) v = v / 255.0;
     if (v < 0.0) v = 0.0;
     if (v > 1.0) v = 1.0;
@@ -23434,6 +24892,386 @@ static std::string TgProbeSpriteAlphaText()
     return "alpha=" + std::to_string(minByte) + "/255.." + maxPart;
 }
 
+// "frac=<0.0..1.0>" - printed beside colour=/alpha= in the style/off
+// confirmation lines, the countdown fraction `style arc|bar|number|fade`
+// (issue #55) draw against.
+static std::string TgProbeSpriteFracText()
+{
+    return "frac=" + std::to_string(g_TgSpriteFraction);
+}
+
+// "textoffset=<dx>,<dy>" - the `number` candidate's offset from the box's
+// bottom edge, centred horizontally (issue #55 follow-up, D1).
+static std::string TgProbeSpriteTextOffsetText()
+{
+    return "textoffset=" + std::to_string(g_TgSpriteTextOffsetDx) + "," + std::to_string(g_TgSpriteTextOffsetDy);
+}
+
+// "baroffset=<dx>,<dy>" - `bar`'s offset from its default spot just above
+// the box (2026-09-21 live session).
+static std::string TgProbeSpriteBarOffsetText()
+{
+    return "baroffset=" + std::to_string(g_TgSpriteBarOffsetDx) + "," + std::to_string(g_TgSpriteBarOffsetDy)
+        + " barinset=" + std::to_string(g_TgSpriteBarInset);
+}
+
+// "textalpha=<n>/255" - the flat opacity `number`'s text draws at,
+// independent of `alpha`'s soft/gradient band-ramp floor/ceiling.
+static std::string TgProbeSpriteTextAlphaText()
+{
+    return "textalpha=" + std::to_string((long)std::round(g_TgSpriteTextAlpha * 255.0)) + "/255";
+}
+
+// "textcolour=follow(gold(255,215,0))" while unset, or the same
+// "name(r,g,b)" shape `colour` prints once a tester sets one.
+static std::string TgProbeSpriteTextColourText()
+{
+    if (!g_TgSpriteTextColourSet) return "textcolour=follow(" + TgProbeSpriteColourText() + ")";
+    return "textcolour=" + g_TgSpriteTextColourName + "(" + std::to_string((long long)g_TgSpriteTextColourR) + ","
+        + std::to_string((long long)g_TgSpriteTextColourG) + "," + std::to_string((long long)g_TgSpriteTextColourB) + ")";
+}
+
+// "font=off (game default) unresolved=0" or "font=<name> unresolved=<n>" -
+// `unresolved` is how many draws the stored name/index failed to resolve at,
+// so "the font was ignored" is never mistaken for "the font was applied".
+static std::string TgProbeSpriteFontText()
+{
+    return std::string("font=") + (g_TgSpriteFontName.empty() ? "off (game default)" : g_TgSpriteFontName)
+        + " unresolved=" + std::to_string(g_TgSpriteTextFontUnresolved);
+}
+
+// Whether the runtime has FunctionName at all, told apart from "it exists
+// but returned nothing useful for these arguments" (AGENTS.md "Prove the
+// Instrument"): CallBuiltin returns an unset RValue for a function that does
+// not exist, indistinguishable from a real call returning unset, while
+// CallBuiltinEx's AurieStatus reports AURIE_OBJECT_NOT_FOUND distinctly
+// (the established idiom at `:6670` and `:9257`).
+static bool TgProbeSpriteBuiltinExists(const char* functionName, CInstance* self, CInstance* other,
+                                        const std::vector<RValue>& args, RValue& outResult)
+{
+    AurieStatus st = AURIE_EXTERNAL_ERROR;
+    try { st = g_Yytk->CallBuiltinEx(outResult, functionName, self, other, args); }
+    catch (...) { st = AURIE_EXTERNAL_ERROR; }
+    return AurieSuccess(st);
+}
+
+// `tgprobe sprite font list` (D2, issue #55 follow-up): no font asset name
+// exists anywhere in this checkout (context: "### Fonts: no names exist in
+// this checkout, so the probe enumerates"), so this enumerates the
+// runtime's OWN fonts rather than guessing first. Read-only: sets no draw
+// state. (a) reports whether the runtime has each font builtin this command
+// itself uses; (b) the currently active font (`draw_get_font`, already
+// proven reachable by `HhDrawHeadLabels`) as a positive control, handling
+// the default-font sentinel (a negative index) distinctly from a real one;
+// (c) every font index the runtime confirms exists, from zero up to a
+// printed cap; (d) only then, the inferred `_fnt`-suffixed candidate names,
+// through the same `asset_get_index` path every other named-asset resolve
+// in this probe uses. A run that finds nothing is printed differently
+// depending on whether the enumerator itself was present, so "no fonts"
+// is never confused with "no enumerator".
+static constexpr int kTgSpriteFontEnumCap = 64;
+static const char* kTgSpriteFontFallbackNames[] = {
+    "Main_fnt", "Default_fnt", "Hud_fnt", "Text_fnt", "Small_fnt",
+    "Big_fnt", "Title_fnt", "Damage_fnt", "Tooltip_fnt", "Pixel_fnt",
+};
+
+static void TgProbeSpriteFontListCommand()
+{
+    Out("tgprobe sprite font list:");
+    CInstance* g = nullptr;
+    try { g_Yytk->GetGlobalInstance(&g); } catch (...) {}
+
+    RValue existsRes;
+    const bool hasDrawGetFont = TgProbeSpriteBuiltinExists("draw_get_font", g, g, {}, existsRes);
+    Out(std::string("  draw_get_font: ") + (hasDrawGetFont ? "present" : "not found (AURIE_OBJECT_NOT_FOUND)"));
+    const bool hasFontExists = TgProbeSpriteBuiltinExists("font_exists", g, g, { RValue(0.0) }, existsRes);
+    Out(std::string("  font_exists: ") + (hasFontExists ? "present" : "not found (AURIE_OBJECT_NOT_FOUND)"));
+
+    // (b) positive control: the font the game itself is using right now,
+    // through the already-proven CallBuiltin path (HhDrawHeadLabels calls
+    // it every draw). Read BEFORE font_get_name is probed (F4, issue #55
+    // follow-up): unlike font_exists, font_get_name is a lookup rather than
+    // an exists-check, so it must only ever be called with an index already
+    // confirmed real, never the bare literal 0.0.
+    // F4 follow-up round 2: the read itself is gated on hasDrawGetFont, not
+    // just reported by it above - CallBuiltin returns an unset RValue
+    // (ToDouble()==0.0) for a builtin the runtime lacks rather than
+    // throwing, so an unguarded read here would set activeIdxKnown=true
+    // with activeIdx=0.0 and fabricate a "measured" active font of index 0.
+    // With the gate, a missing builtin leaves activeIdxKnown false and the
+    // confirmedIdx/"not probed" fallbacks below run instead.
+    double activeIdx = 0.0;
+    bool activeIdxKnown = false;
+    if (hasDrawGetFont) { try { activeIdx = g_Yytk->CallBuiltin("draw_get_font", {}).ToDouble(); activeIdxKnown = true; } catch (...) {} }
+
+    // (c) the runtime's own font indices - font_exists IS the exists-check
+    // builtin, so probing it with an unconfirmed literal is its documented
+    // contract; collected here (before font_get_name is probed) so a
+    // font_exists-confirmed index is available as font_get_name's fallback
+    // when the active font is the default sentinel.
+    std::vector<int> confirmedIdx;
+    if (hasFontExists) {
+        for (int i = 0; i < kTgSpriteFontEnumCap; ++i) {
+            RValue exists;
+            bool ok = false;
+            try { exists = g_Yytk->CallBuiltin("font_exists", { RValue((double)i) }); ok = true; } catch (...) {}
+            if (ok && exists.ToDouble() != 0.0) confirmedIdx.push_back(i);
+        }
+    }
+
+    // font_get_name (F4, issue #55 follow-up): probed only against an
+    // index already confirmed real - the active font when it is not the
+    // default sentinel, else the first font_exists-confirmed index - never
+    // an unconfirmed literal. An asset-lookup builtin handed an index that
+    // is not of its asset type is exactly the unvalidated call this repo's
+    // rules single out, and a runtime-level fatal there is not something
+    // the surrounding try/AurieStatus can catch.
+    double probeIdx = 0.0;
+    bool haveProbeIdx = false;
+    if (activeIdxKnown && activeIdx >= 0.0) { probeIdx = activeIdx; haveProbeIdx = true; }
+    else if (!confirmedIdx.empty()) { probeIdx = (double)confirmedIdx.front(); haveProbeIdx = true; }
+    bool hasFontGetName = false;
+    if (haveProbeIdx) {
+        hasFontGetName = TgProbeSpriteBuiltinExists("font_get_name", g, g, { RValue(probeIdx) }, existsRes);
+        Out(std::string("  font_get_name: ") + (hasFontGetName ? "present" : "not found (AURIE_OBJECT_NOT_FOUND)"));
+    } else {
+        Out("  font_get_name: not probed (no confirmed font index available)");
+    }
+
+    auto nameOf = [&](double idx) -> std::string {
+        if (!hasFontGetName) return "(no name-lookup builtin)";
+        try {
+            RValue nm;
+            AurieStatus st = g_Yytk->CallBuiltinEx(nm, "font_get_name", g, g, { RValue(idx) });
+            return AurieSuccess(st) ? nm.ToString() : "(font_get_name failed)";
+        } catch (...) { return "(font_get_name threw)"; }
+    };
+
+    if (!hasDrawGetFont) Out("  active font: draw_get_font not present");
+    else if (!activeIdxKnown) Out("  active font: draw_get_font threw");
+    else if (activeIdx < 0.0) Out("  active font: default (draw_get_font=" + std::to_string(activeIdx) + ")");
+    else Out("  active font: idx=" + std::to_string((long long)activeIdx) + " name=" + nameOf(activeIdx));
+
+    if (!hasFontExists) {
+        Out("  enumeration not run: font_exists is not present on this runtime");
+    } else {
+        for (int i : confirmedIdx) Out("  [" + std::to_string(i) + "] " + nameOf((double)i));
+        Out("  enumerated 0.." + std::to_string(kTgSpriteFontEnumCap - 1) + ": " + std::to_string((int)confirmedIdx.size()) + " found");
+    }
+
+    // (d) the inferred fallback names, probed only after the enumeration -
+    // none of these is confirmed to exist (F5, issue #55 follow-up): say so
+    // up front, so ten `unresolved` lines read as ten guesses that missed
+    // rather than as a measured statement that the runtime has no fonts.
+    Out("  candidates below are inferred from the game's own `_spr`/`_snd`/`_rm` asset-suffix"
+        " convention; none is confirmed to exist - all-unresolved means the guess missed, not"
+        " that the runtime has no fonts:");
+    int resolvedFallback = 0;
+    for (const char* name : kTgSpriteFontFallbackNames) {
+        double idx = -1.0;
+        const bool resolved = TgProbeSpriteResolve(name, idx);
+        Out(std::string("  candidate ") + name + ": " + (resolved ? ("resolved idx=" + std::to_string((long long)idx)) : "unresolved"));
+        if (resolved) ++resolvedFallback;
+    }
+    Out("  fallback candidates: " + std::to_string(resolvedFallback) + "/"
+        + std::to_string((int)(sizeof(kTgSpriteFontFallbackNames) / sizeof(kTgSpriteFontFallbackNames[0]))) + " resolved");
+}
+
+// Reads ONE named game clock, in seconds. `get_timer` is a function
+// (microseconds since the game started) - reached through the same
+// status-checked CallBuiltinEx idiom as `font list`'s own builtin-exists
+// probes (TgProbeSpriteBuiltinExists, above), because a bare CallBuiltin
+// cannot tell "the function does not exist" from "it exists and returned
+// nothing" (the draw_get_font trap this file already fixed once).
+// `current_time` is a built-in VARIABLE, not a function, so it is read
+// through GetBuiltin - the same route `GetBuiltin("room", nullptr, ...)`
+// and the roomprobe's `GetBuiltin("fps", ...)` positive control already
+// prove on this runtime, never CallBuiltin("current_time"). Only a numeric
+// result (N1Numeric: VALUE_REAL/VALUE_INT32/VALUE_INT64) counts as read;
+// anything else - absent, wrong kind, non-finite, or a throw - is
+// unreadable, and `outReason` says which. No hand-resolved address
+// anywhere in this function (AGENTS.md "Never Call an Address You
+// Resolved by Hand").
+static bool TgProbeSpriteFracAnimClockRead(const std::string& clockName, double& outSeconds, std::string& outReason)
+{
+    try {
+        if (clockName == "get_timer") {
+            CInstance* g = nullptr;
+            try { g_Yytk->GetGlobalInstance(&g); } catch (...) {}
+            RValue result;
+            if (!TgProbeSpriteBuiltinExists("get_timer", g, g, {}, result)) {
+                outReason = "get_timer not found (AURIE_OBJECT_NOT_FOUND)";
+                return false;
+            }
+            if (!N1Numeric(result)) {
+                outReason = "get_timer returned non-numeric kind=" + std::to_string((int)result.m_Kind);
+                return false;
+            }
+            const double micros = result.ToDouble();
+            if (!std::isfinite(micros)) { outReason = "get_timer returned non-finite"; return false; }
+            outSeconds = micros / 1000000.0;   // microseconds -> seconds
+            return true;
+        }
+        if (clockName == "current_time") {
+            RValue v;
+            const AurieStatus st = g_Yytk->GetBuiltin("current_time", nullptr, NULL_INDEX, v);
+            if (!AurieSuccess(st)) {
+                outReason = "current_time unreadable st=" + std::to_string((int)st);
+                return false;
+            }
+            if (!N1Numeric(v)) {
+                outReason = "current_time returned non-numeric kind=" + std::to_string((int)v.m_Kind);
+                return false;
+            }
+            const double millis = v.ToDouble();
+            if (!std::isfinite(millis)) { outReason = "current_time returned non-finite"; return false; }
+            outSeconds = millis / 1000.0;   // milliseconds -> seconds
+            return true;
+        }
+    } catch (...) { outReason = clockName + " threw"; return false; }
+    outReason = clockName + " is not a recognised clock";
+    return false;
+}
+
+// `tgprobe sprite frac anim <seconds> [loop]`. Tries `get_timer` first,
+// then `current_time`; the first readable one is the animation's clock for
+// its whole life, so it never has to mix two clocks' units or starting
+// points mid-run. A refused command - bad arguments or neither clock
+// readable - changes nothing, including a running animation: the
+// literal `frac anim refused` below is printed, and returns, strictly
+// before the assignment that marks the animation running.
+static void TgProbeSpriteFracAnimCommand(const std::string& rest)
+{
+    std::string afterSeconds;
+    const std::string secStr = FirstToken(rest, afterSeconds);
+    double seconds = 0.0;
+    if (secStr.empty() || !ParseFiniteNumber(secStr, seconds) || seconds <= 0.0) {
+        Out("tgprobe sprite frac anim: usage -> tgprobe sprite frac anim <seconds> [loop]"
+            " (seconds must be a finite number > 0; \"" + secStr + "\" did not qualify)");
+        return;
+    }
+    std::string afterLoop;
+    const std::string loopTok = Lower(FirstToken(afterSeconds, afterLoop));
+    bool loop = false;
+    if (loopTok == "loop") {
+        loop = true;
+    } else if (!loopTok.empty()) {
+        Out("tgprobe sprite frac anim: usage -> tgprobe sprite frac anim <seconds> [loop]"
+            " (unexpected trailing token \"" + loopTok + "\")");
+        return;
+    }
+
+    double startSeconds = 0.0;
+    std::string clockName, reason, getTimerReason;
+    if (TgProbeSpriteFracAnimClockRead("get_timer", startSeconds, getTimerReason)) {
+        clockName = "get_timer";
+    } else if (TgProbeSpriteFracAnimClockRead("current_time", startSeconds, reason)) {
+        clockName = "current_time";
+    } else {
+        Out("tgprobe sprite frac anim refused: get_timer(" + getTimerReason + ") current_time(" + reason + ")");
+        return;
+    }
+
+    g_TgSpriteFracAnimDuration = seconds;
+    g_TgSpriteFracAnimLoop = loop;
+    g_TgSpriteFracAnimStart = startSeconds;
+    g_TgSpriteFracAnimClock = clockName;
+    g_TgSpriteFracAnimElapsed = 0.0;
+    g_TgSpriteFracAnimPhase = 0.0;
+    g_TgSpriteFracAnimTicks = 0;
+    g_TgSpriteFracAnimClockFail = 0;
+    g_TgSpriteFraction = 1.0;
+    g_TgSpriteFracAnimState = TgSpriteFracAnimState::Running;
+
+    Out("tgprobe sprite frac anim -> started dur=" + std::to_string(seconds)
+        + " " + (loop ? "loop" : "once") + " src=" + clockName
+        + " start=" + std::to_string(startSeconds));
+}
+
+// Called once per TgProbeSpriteDraw. Off: returns before any clock read, so
+// a session that never types `anim` behaves byte-for-byte as before this
+// round. Otherwise reads the animation's OWN clock (never the draw-count
+// time base above or pulse's frame counter, both of which are coupled to
+// frame rate and would stretch or squeeze the countdown on a frame-rate
+// dip) and derives the fraction from elapsed time: `loop` wraps within one
+// period (std::fmod, already used in this file) rather than resetting the
+// start time each wrap, which would drift by one draw interval per cycle;
+// once, at or past the duration, holds at exactly 0.0, marks the animation
+// done, and stops reading the clock. `g_TgSpriteFracAnimElapsed` always
+// holds the unwrapped total, so it reads the same as a stopwatch even in
+// loop mode - the wrapped value the fraction is actually derived from is
+// kept separately in `g_TgSpriteFracAnimPhase` and shown in the readout as
+// `phase=`. A failed per-draw read counts `clockFail` and leaves the
+// fraction at its last value - this function has its own try/catch so a
+// clock failure can never land in TgProbeSpriteDraw's `drawExc` catch
+// (AGENTS.md "Prove the Instrument": a clock failure here must never be
+// misread as the draw builtin throwing).
+static void TgProbeSpriteFracAnimTick()
+{
+    if (g_TgSpriteFracAnimState == TgSpriteFracAnimState::Off) return;
+    try {
+        if (g_TgSpriteFracAnimState == TgSpriteFracAnimState::Done) {
+            ++g_TgSpriteFracAnimTicks;
+            return;
+        }
+        double now = 0.0;
+        std::string reason;
+        if (!TgProbeSpriteFracAnimClockRead(g_TgSpriteFracAnimClock, now, reason)) {
+            ++g_TgSpriteFracAnimClockFail;
+            ++g_TgSpriteFracAnimTicks;
+            return;
+        }
+        double elapsed = now - g_TgSpriteFracAnimStart;
+        if (elapsed < 0.0) elapsed = 0.0;   // clamp by hand (test_no_bare_std_max_or_std_min)
+        if (g_TgSpriteFracAnimLoop) {
+            const double phase = std::fmod(elapsed, g_TgSpriteFracAnimDuration);
+            double fraction = 1.0 - phase / g_TgSpriteFracAnimDuration;
+            if (fraction < 0.0) fraction = 0.0;
+            if (fraction > 1.0) fraction = 1.0;
+            g_TgSpriteFraction = fraction;
+            g_TgSpriteFracAnimPhase = phase;
+        } else if (elapsed >= g_TgSpriteFracAnimDuration) {
+            g_TgSpriteFraction = 0.0;
+            g_TgSpriteFracAnimState = TgSpriteFracAnimState::Done;
+        } else {
+            double fraction = 1.0 - elapsed / g_TgSpriteFracAnimDuration;
+            if (fraction < 0.0) fraction = 0.0;
+            if (fraction > 1.0) fraction = 1.0;
+            g_TgSpriteFraction = fraction;
+        }
+        g_TgSpriteFracAnimElapsed = elapsed;   // unwrapped total, even in loop mode
+        ++g_TgSpriteFracAnimTicks;
+    } catch (...) { ++g_TgSpriteFracAnimClockFail; }
+}
+
+// "anim=off" / "anim=running ..." / "anim=done ...", folded into both the
+// `off` line and the `frac` confirmation so either surface shows whether a
+// countdown is running and its own counters - never as a per-selection
+// count: switching `style`/`gold`/sprite leaves a running animation
+// running (so a tester can compare looks against one countdown), and its
+// counters reset only when `anim` itself restarts. In loop mode `elapsed=`
+// is the unwrapped total (compare it against a stopwatch) and `phase=` is
+// the wrapped value the fraction is actually derived from; when the
+// animation is running but has never ticked, a note is appended so
+// `frac=1.0 anim=running ticks=0` does not read as armed-and-moving.
+static std::string TgProbeSpriteFracAnimText()
+{
+    if (g_TgSpriteFracAnimState == TgSpriteFracAnimState::Off) return "anim=off";
+    const bool done = g_TgSpriteFracAnimState == TgSpriteFracAnimState::Done;
+    std::string text = std::string("anim=") + (done ? "done" : "running")
+        + " dur=" + std::to_string(g_TgSpriteFracAnimDuration)
+        + " " + (g_TgSpriteFracAnimLoop ? "loop" : "once")
+        + " src=" + g_TgSpriteFracAnimClock
+        + " elapsed=" + std::to_string(g_TgSpriteFracAnimElapsed)
+        + (g_TgSpriteFracAnimLoop ? (" phase=" + std::to_string(g_TgSpriteFracAnimPhase)) : "")
+        + " ticks=" + std::to_string(g_TgSpriteFracAnimTicks)
+        + " clockFail=" + std::to_string(g_TgSpriteFracAnimClockFail);
+    if (!done && g_TgSpriteFracAnimTicks == 0) {
+        text += " (advances only while a sprite style is drawing)";
+    }
+    return text;
+}
+
 static void TgProbeSpriteCommand(const std::string& rest)
 {
     std::string subRest;
@@ -23441,15 +25279,21 @@ static void TgProbeSpriteCommand(const std::string& rest)
     const std::string lower = Lower(first);
     if (first.empty()) {
         Out("tgprobe sprite: usage -> tgprobe sprite <SpriteName> [talentId] | <SpriteName> centre"
-            " | off | gold | style soft|halo|gradient|pulse | list | gallery [cols] | layer hud|buffs"
-            " | scale [f] | colour [name|r g b] | box tuned|bbox | quad on|off | alpha [min] [max]");
+            " | off | gold | style soft|halo|gradient|pulse|arc|bar|number|fade [talentId] | list | gallery [cols]"
+            " | layer hud|buffs | scale [f] | colour [name|r g b] | box tuned|bbox | quad on|off"
+            " | alpha [min] [max] | frac [f]|anim <seconds> [loop] | textoffset [dx] [dy] | baroffset [dx] [dy] | barinset [px] | textalpha [a]"
+            " | textcolour [name|r g b|off] | font [name|index|off|list]");
         return;
     }
     if (lower == "off") {
         g_TgSpriteMode = TgSpriteMode::Off;
         Out("tgprobe sprite -> off draws=" + std::to_string(g_TgSpriteDraws)
             + " drawExc=" + std::to_string(g_TgSpriteDrawExc) + " colour=" + TgProbeSpriteColourText()
-            + " " + TgProbeSpriteQuadText() + " " + TgProbeSpriteAlphaText()
+            + " " + TgProbeSpriteQuadText() + " " + TgProbeSpriteAlphaText() + " " + TgProbeSpriteFracText()
+            + " " + TgProbeSpriteFracAnimText() + " " + TgProbeSpriteBarOffsetText()
+            + " " + TgProbeSpriteTextOffsetText() + " " + TgProbeSpriteTextAlphaText()
+            + " " + TgProbeSpriteTextColourText() + " " + TgProbeSpriteFontText()
+            + " textDrawExc=" + std::to_string(g_TgSpriteTextDrawExc)
             + " layer=" + TgProbeLayerName());
         return;
     }
@@ -23591,11 +25435,181 @@ static void TgProbeSpriteCommand(const std::string& rest)
         Out("tgprobe sprite " + TgProbeSpriteAlphaText());
         return;
     }
+    if (lower == "frac") {
+        std::string afterFirst;
+        const std::string v = FirstToken(subRest, afterFirst);
+        if (Lower(v) == "anim") {
+            TgProbeSpriteFracAnimCommand(afterFirst);
+            return;
+        }
+        if (!v.empty()) {
+            double f = 0.0;
+            // ParseFiniteNumber (shared with the custom-forge selector
+            // parser) requires the numeric prefix to cover the WHOLE token
+            // and rejects a non-finite result - plain std::stod accepts
+            // "0.5x"/"1abc" (longest-valid-prefix conversion) and "nan"
+            // (every comparison against it is false, so the hand-written
+            // clamps below would silently pass it through). Neither has been
+            // observed on this build; both follow from strtod's own spec
+            // (context: "### `frac` already refuses the obvious case").
+            if (!ParseFiniteNumber(v, f)) {
+                Out("tgprobe sprite frac: usage -> tgprobe sprite frac [f]|anim <seconds> [loop] (0.0..1.0; \"" + v + "\" did not parse as a number)");
+                return;
+            }
+            if (f < 0.0) f = 0.0;   // clamp by hand (test_no_bare_std_max_or_std_min)
+            if (f > 1.0) f = 1.0;
+            // issue #55 timer-countdown follow-up: a numeric token that
+            // itself parsed cancels any running/done animation; a refused
+            // token (above) leaves one running untouched.
+            g_TgSpriteFracAnimState = TgSpriteFracAnimState::Off;
+            g_TgSpriteFraction = f;
+        }
+        Out("tgprobe sprite " + TgProbeSpriteFracText() + " " + TgProbeSpriteFracAnimText()
+            + " (the countdown fraction `style arc|bar|number|fade` draw against; range 0.0..1.0, default 1.0;"
+            " `anim <seconds> [loop]` animates it from the game's own clock, holding at 0 or looping)");
+        return;
+    }
+    if (lower == "textoffset") {
+        std::string rest2;
+        const std::string dxStr = FirstToken(subRest, rest2);
+        if (dxStr.empty()) {
+            Out("tgprobe sprite " + TgProbeSpriteTextOffsetText()
+                + " (`number`'s offset from the box's bottom edge, centred horizontally; default 0,-101 - above the icon)");
+            return;
+        }
+        std::string ignored;
+        const std::string dyStr = FirstToken(rest2, ignored);
+        double dx = 0.0, dy = 0.0;
+        const bool parsed = !dyStr.empty() && ParseFiniteNumber(dxStr, dx) && ParseFiniteNumber(dyStr, dy);
+        if (!parsed) {
+            Out("tgprobe sprite textoffset: usage -> tgprobe sprite textoffset [dx] [dy] (both required to set; give neither to read)");
+            return;
+        }
+        g_TgSpriteTextOffsetDx = dx;
+        g_TgSpriteTextOffsetDy = dy;
+        Out("tgprobe sprite " + TgProbeSpriteTextOffsetText());
+        return;
+    }
+    if (lower == "baroffset") {
+        std::string rest2;
+        const std::string dxStr = FirstToken(subRest, rest2);
+        if (dxStr.empty()) {
+            Out("tgprobe sprite " + TgProbeSpriteBarOffsetText()
+                + " (`bar`'s offset from its default spot just above the box; default 0,0)");
+            return;
+        }
+        std::string ignored;
+        const std::string dyStr = FirstToken(rest2, ignored);
+        double dx = 0.0, dy = 0.0;
+        const bool parsed = !dyStr.empty() && ParseFiniteNumber(dxStr, dx) && ParseFiniteNumber(dyStr, dy);
+        if (!parsed) {
+            Out("tgprobe sprite baroffset: usage -> tgprobe sprite baroffset [dx] [dy] (both required to set; give neither to read)");
+            return;
+        }
+        g_TgSpriteBarOffsetDx = dx;
+        g_TgSpriteBarOffsetDy = dy;
+        Out("tgprobe sprite " + TgProbeSpriteBarOffsetText());
+        return;
+    }
+    if (lower == "barinset") {
+        std::string ignored;
+        const std::string v = FirstToken(subRest, ignored);
+        if (v.empty()) {
+            Out("tgprobe sprite " + TgProbeSpriteBarOffsetText()
+                + " (`bar` trimmed barinset px in from each side of the box; default 4)");
+            return;
+        }
+        double px = 0.0;
+        if (!ParseFiniteNumber(v, px) || px < 0.0) {
+            Out("tgprobe sprite barinset: usage -> tgprobe sprite barinset [px] (px >= 0; give none to read)");
+            return;
+        }
+        g_TgSpriteBarInset = px;
+        Out("tgprobe sprite " + TgProbeSpriteBarOffsetText());
+        return;
+    }
+    if (lower == "textalpha") {
+        std::string ignored;
+        const std::string v = FirstToken(subRest, ignored);
+        if (v.empty()) {
+            Out("tgprobe sprite " + TgProbeSpriteTextAlphaText()
+                + " (`number`'s own flat opacity, independent of `alpha`'s soft/gradient floor/ceiling; accepts 0..255 or 0..1; default fully opaque)");
+            return;
+        }
+        double a = 0.0;
+        if (!TgProbeSpriteParseAlphaArg(v, a)) {
+            Out("tgprobe sprite textalpha: usage -> tgprobe sprite textalpha [a] (0..255 or 0..1)");
+            return;
+        }
+        g_TgSpriteTextAlpha = a;
+        Out("tgprobe sprite " + TgProbeSpriteTextAlphaText());
+        return;
+    }
+    if (lower == "textcolour" || lower == "textcolor") {
+        std::string rest2;
+        const std::string first2 = FirstToken(subRest, rest2);
+        if (first2.empty()) {
+            Out("tgprobe sprite " + TgProbeSpriteTextColourText());
+            return;
+        }
+        const std::string first2Lower = Lower(first2);
+        if (first2Lower == "off") {
+            g_TgSpriteTextColourSet = false;
+            Out("tgprobe sprite " + TgProbeSpriteTextColourText());
+            return;
+        }
+        double presetR = 0, presetG = 0, presetB = 0;
+        std::string presetName;
+        if (TgProbeSpriteColourFromPreset(first2Lower, presetR, presetG, presetB, presetName)) {
+            g_TgSpriteTextColourR = presetR; g_TgSpriteTextColourG = presetG; g_TgSpriteTextColourB = presetB;
+            g_TgSpriteTextColourName = presetName;
+            g_TgSpriteTextColourSet = true;
+            Out("tgprobe sprite " + TgProbeSpriteTextColourText());
+            return;
+        }
+        std::string t2, t3;
+        const std::string gStr = FirstToken(rest2, t2);
+        const std::string bStr = FirstToken(t2, t3);
+        double r = 0, g = 0, b = 0;
+        const bool parsed = !gStr.empty() && !bStr.empty()
+            && ParseFiniteNumber(first2, r) && ParseFiniteNumber(gStr, g) && ParseFiniteNumber(bStr, b);
+        if (!parsed) {
+            Out("tgprobe sprite textcolour: usage -> tgprobe sprite textcolour <name> | <r> <g> <b> (0..255 each) | off; names: gold, red, brightred, deepred");
+            return;
+        }
+        if (r < 0.0) r = 0.0;   // clamp by hand, not std::max/std::min (test_no_bare_std_max_or_std_min)
+        if (r > 255.0) r = 255.0;
+        if (g < 0.0) g = 0.0;
+        if (g > 255.0) g = 255.0;
+        if (b < 0.0) b = 0.0;
+        if (b > 255.0) b = 255.0;
+        g_TgSpriteTextColourR = r; g_TgSpriteTextColourG = g; g_TgSpriteTextColourB = b;
+        g_TgSpriteTextColourName = "custom";
+        g_TgSpriteTextColourSet = true;
+        Out("tgprobe sprite " + TgProbeSpriteTextColourText());
+        return;
+    }
+    if (lower == "font") {
+        std::string ignored;
+        const std::string v = FirstToken(subRest, ignored);
+        const std::string vLower = Lower(v);
+        if (vLower == "list") { TgProbeSpriteFontListCommand(); return; }
+        if (v.empty()) {
+            Out("tgprobe sprite " + TgProbeSpriteFontText()
+                + " (`number`'s font, resolved by name at draw time like `hhlabelfont`; `list` enumerates the runtime's own fonts)");
+            return;
+        }
+        g_TgSpriteFontName = (vLower == "off") ? std::string() : v;
+        Out("tgprobe sprite " + TgProbeSpriteFontText());
+        return;
+    }
     if (lower == "gold") {
         g_TgSpriteMode = TgSpriteMode::Gold;
         g_TgSpriteTalentId = kToggleIndicatorTalentId;
         InterlockedExchange(&g_TgSpriteDraws, 0);
         InterlockedExchange(&g_TgSpriteDrawExc, 0);
+        InterlockedExchange(&g_TgSpriteTextDrawExc, 0);
+        InterlockedExchange(&g_TgSpriteTextFontUnresolved, 0);
         double bx = 0, by = 0, bw = 0, bh = 0;
         const bool boxFound = TgProbeSpriteScaledSlotBox(g_TgSpriteTalentId, bx, by, bw, bh);
         Out("tgprobe sprite -> gold talentId=" + std::to_string(g_TgSpriteTalentId)
@@ -23607,18 +25621,43 @@ static void TgProbeSpriteCommand(const std::string& rest)
         return;
     }
     if (lower == "style") {
-        std::string ignored;
-        const std::string v = Lower(FirstToken(subRest, ignored));
+        std::string rest2;
+        const std::string styleTok = FirstToken(subRest, rest2);
         TgSpriteStyleKind kind;
-        if (!TgProbeSpriteStyleFromName(v, kind)) {
-            Out("tgprobe sprite style: usage -> tgprobe sprite style soft|halo|gradient|pulse");
+        if (!TgProbeSpriteStyleFromName(Lower(styleTok), kind)) {
+            Out("tgprobe sprite style: usage -> tgprobe sprite style soft|halo|gradient|pulse|arc|bar|number|fade [talentId]");
             return;
+        }
+        // [talentId] (issue #55 follow-up): the live session found `style`
+        // hard-set the talent to 240 (Soul Spurn), so judging a look needed
+        // a character carrying that exact talent - every other candidate
+        // printed `slot not found` on a Butcher. Absent, this is unchanged
+        // (falls back to kToggleIndicatorTalentId). Parsed through the
+        // shared ParseFiniteNumber (F6, issue #55 follow-up), not a bare
+        // std::stoi that silently substituted kToggleIndicatorTalentId on
+        // ANY parse failure, including a partial token like "24o" (which
+        // std::stoi accepts as 24) - a tester who believes they selected
+        // their own character's talent and reads past the echoed
+        // `talentId=` would otherwise spend the look on the wrong slot.
+        std::string ignored;
+        const std::string talentTok = FirstToken(rest2, ignored);
+        int talentId = kToggleIndicatorTalentId;
+        if (!talentTok.empty()) {
+            double f = 0.0;
+            if (!ParseFiniteNumber(talentTok, f)) {
+                Out("tgprobe sprite style: usage -> tgprobe sprite style " + styleTok
+                    + " [talentId] (\"" + talentTok + "\" did not parse as a number)");
+                return;
+            }
+            talentId = (int)f;
         }
         g_TgSpriteStyleKind = kind;
         g_TgSpriteMode = TgSpriteMode::Style;
-        g_TgSpriteTalentId = kToggleIndicatorTalentId;
+        g_TgSpriteTalentId = talentId;
         InterlockedExchange(&g_TgSpriteDraws, 0);
         InterlockedExchange(&g_TgSpriteDrawExc, 0);
+        InterlockedExchange(&g_TgSpriteTextDrawExc, 0);
+        InterlockedExchange(&g_TgSpriteTextFontUnresolved, 0);
         double bx = 0, by = 0, bw = 0, bh = 0;
         const bool boxFound = TgProbeSpriteScaledSlotBox(g_TgSpriteTalentId, bx, by, bw, bh);
         Out("tgprobe sprite -> style " + std::string(TgProbeSpriteStyleName(kind))
@@ -23627,7 +25666,12 @@ static void TgProbeSpriteCommand(const std::string& rest)
             + (kind == TgSpriteStyleKind::Pulse
                 ? " period=" + std::to_string(kTgPulsePeriodFrames / 60.0) + "s (" + std::to_string((long long)kTgPulsePeriodFrames) + " frames)"
                 : "")
-            + " colour=" + TgProbeSpriteColourText() + " " + TgProbeSpriteAlphaText()
+            + " colour=" + TgProbeSpriteColourText() + " " + TgProbeSpriteAlphaText() + " " + TgProbeSpriteFracText()
+            + (kind == TgSpriteStyleKind::Number
+                ? " " + TgProbeSpriteTextOffsetText() + " " + TgProbeSpriteTextAlphaText()
+                  + " " + TgProbeSpriteTextColourText() + " " + TgProbeSpriteFontText()
+                : "")
+            + (kind == TgSpriteStyleKind::Bar ? " " + TgProbeSpriteBarOffsetText() : "")
             + " layer=" + TgProbeLayerName()
             + " (watch `tgprobe sprite off` for draws=/drawExc=)");
         return;
@@ -23644,6 +25688,8 @@ static void TgProbeSpriteCommand(const std::string& rest)
         g_TgSpriteMode = TgSpriteMode::Gallery;
         InterlockedExchange(&g_TgSpriteDraws, 0);
         InterlockedExchange(&g_TgSpriteDrawExc, 0);
+        InterlockedExchange(&g_TgSpriteTextDrawExc, 0);
+        InterlockedExchange(&g_TgSpriteTextFontUnresolved, 0);
         Out("tgprobe sprite -> gallery cols=" + std::to_string(cols) + " layer=" + TgProbeLayerName() + ":");
         TgProbeSpriteGalleryLegend();
         Out("(watch `tgprobe sprite off` for draws=/drawExc=)");
@@ -23671,6 +25717,8 @@ static void TgProbeSpriteCommand(const std::string& rest)
     g_TgSpriteTalentId = talentId;
     InterlockedExchange(&g_TgSpriteDraws, 0);
     InterlockedExchange(&g_TgSpriteDrawExc, 0);
+    InterlockedExchange(&g_TgSpriteTextDrawExc, 0);
+    InterlockedExchange(&g_TgSpriteTextFontUnresolved, 0);
     g_TgSpriteIdx = idx;
     g_TgSpriteMode = centre ? TgSpriteMode::Centre : TgSpriteMode::Named;
     std::string boxText;
@@ -23842,9 +25890,14 @@ static std::string TgProbeTglTimerLine(const TgTglTimer& t)
         + " draws=" + std::to_string(t.draws);
 }
 
-// The runtime candidate table. Capped at 16 rows; `tgprobe tgl clear` keeps
-// row 0, the measured Soul Spurn row, which is also the agreement control.
+// The runtime candidate table. Capped at kTgTglRowCap rows; `tgprobe tgl
+// clear` keeps row 0, the measured Soul Spurn row, which is also the
+// agreement control. kTgTglCap is the `tgl sub` array walk's own bound, which
+// mirrors the shipped guard's kToggleSubTalentScanCap; session 8 gave the row
+// table its own, larger cap so `tgl add` can hold every candidate a duration
+// session finds by name, without widening that walk.
 static constexpr int kTgTglCap = 16;
+static constexpr int kTgTglRowCap = 64;
 static constexpr int kTgTglFieldCap = 64;   // scalars kept per `tgl fields` snapshot
 // Soul Spurn's toggled form holds destroyTimer at -1 (session 4); the same
 // value is the prediction for every row until session 6 measures it.
@@ -24090,8 +26143,8 @@ static void TgProbeTglAdd(const std::string& rest)
         Out("tgprobe tgl add: usage -> tgprobe tgl add <abilityId> <ObjectName> [marker|none] [timer|none] [ownership|none] [sNN]");
         return;
     }
-    if ((int)g_TgTgl.size() >= kTgTglCap) {
-        Out("tgprobe tgl add: table full (" + std::to_string(kTgTglCap) + " rows); `tgprobe tgl clear` keeps row 0");
+    if ((int)g_TgTgl.size() >= kTgTglRowCap) {
+        Out("tgprobe tgl add: table full (" + std::to_string(kTgTglRowCap) + " rows); `tgprobe tgl clear` keeps row 0");
         return;
     }
     double objIdx = -1.0;
@@ -24121,7 +26174,7 @@ static void TgProbeTglAdd(const std::string& rest)
 static void TgProbeTglList()
 {
     TgProbeTglSeed();
-    Out("tgprobe tgl list: rows=" + std::to_string(g_TgTgl.size()) + " cap=" + std::to_string(kTgTglCap)
+    Out("tgprobe tgl list: rows=" + std::to_string(g_TgTgl.size()) + " cap=" + std::to_string(kTgTglRowCap)
         + " sampler=" + (g_TgTglSamplerOn ? "on" : "off"));
     for (size_t i = 0; i < g_TgTgl.size(); ++i) {
         const TgTglRow& row = g_TgTgl[i];
@@ -24332,6 +26385,549 @@ static void TgProbeTglCommand(const std::string& rest)
         " | list | clear | slots | fields [row] | sub | timer");
 }
 
+// ---- tgprobe sweep: every class's timed skill at once (issue #55, session 8)
+// The countdown ships only rows measured to carry a readable destroyTimer
+// that spans the cast (docs/toggle-skills-research.md, "### Duration sweep
+// (session 8)"). instance_number/instance_find on a parent enumerate every
+// descendant's instances, so six root scans cover every candidate object the
+// static search found - and any it missed - with no compiled seed table and
+// no object-to-skill guess up front: the live procedure attributes records to
+// a cast by `sweep clear` before it. Read-only and research build only.
+//
+// Scan order matters only for the `root=` a record reports: the damage
+// parent first, the ability parent last, so a sentry (itself an
+// ability-parent child) is attributed to the sentry root.
+static const HeroSiege::Objects::GameObject kTgSweepRoots[] = {
+    HeroSiege::Objects::GameObject::Player_Damage_Parent_obj,
+    HeroSiege::Objects::GameObject::Skill_Controller_obj,
+    HeroSiege::Objects::GameObject::Player_Buff_Parent_obj,
+    HeroSiege::Objects::GameObject::Player_Curse_Parent_obj,
+    HeroSiege::Objects::GameObject::Player_Sentry_Parent_obj,
+    HeroSiege::Objects::GameObject::Player_Ability_Parent_obj,
+};
+static constexpr int kTgSweepRootCount = (int)(sizeof(kTgSweepRoots) / sizeof(kTgSweepRoots[0]));
+static constexpr long kTgSweepScanCap = 256;        // instances scanned per root per draw
+static constexpr size_t kTgSweepRecordCap = 1024;   // distinct object_index records kept
+// `tgprobe sweep on|off`. Off by default: the sampler returns before any
+// builtin call, the `tgl` sampler's rule.
+static bool g_TgSweepOn = false;
+
+// One draw's evidence for one object_index, gathered across every root.
+// `inst` is the most instances any single root saw (the sentry parent's
+// children are the ability parent's children too, so a sum would double
+// them). `largest` is the largest numeric destroyTimer among the object's
+// instances not measured foreign - the shipped countdown's own rule, with an
+// unattributable instance counted as own (D-N3).
+struct TgSweepObs {
+    long inst = 0;
+    bool haveReading = false;
+    double largest = 0.0;
+    bool ownReadable = false;     // an instance's isMyClient kind-checked this draw
+    bool ownUnreadable = false;   // an instance's isMyClient did not (undefined, text, a throw)
+    int root = -1;                // the first root, in scan order, that saw it
+};
+
+// One object_index's record. `draws`, `timerUnreadable` and the four values
+// belong to the CURRENT appearance and restart on each rising edge; the rest
+// are kept from the first appearance since `sweep clear`. No value is ever a
+// default: `haveFirst` false prints `unreadable`.
+struct TgSweepRecord {
+    int root = -1;
+    bool present = false;
+    long app = 0, maxInst = 0, totalDraws = 0;
+    long firstFrame = -1, lastFrame = -1;
+    long ownReadableDraws = 0, ownUnreadableDraws = 0, ownMixedDraws = 0;
+    long draws = 0, timerUnreadable = 0;
+    bool haveFirst = false;
+    double first = 0.0, last = 0.0, min = 0.0, max = 0.0;
+};
+static std::map<int, TgSweepRecord> g_TgSweep;
+static long g_TgSweepDraws = 0, g_TgSweepIndexUnreadable = 0, g_TgSweepDropped = 0;
+static long g_TgSweepCappedDraws[kTgSweepRootCount] = {};     // draws on which a root held more than the scan cap
+static long g_TgSweepLastCount[kTgSweepRootCount] = {};       // the last draw's instance_number per root, -1 unread
+static double g_TgSweepLastIdx[kTgSweepRootCount] = {};       // the last draw's resolved root index, -1 unresolved
+static int g_TgSweepRootsResolved = 0;
+
+// One draw's update of one record. `obs` nullptr (or no instance) is an
+// absent draw: it only ends the appearance.
+static void TgProbeSweepNote(TgSweepRecord& rec, const TgSweepObs* obs, long frame)
+{
+    if (!obs || obs->inst < 1) { rec.present = false; return; }
+    if (!rec.present) {
+        ++rec.app;
+        rec.draws = 0;
+        rec.timerUnreadable = 0;
+        rec.haveFirst = false;
+        rec.first = rec.last = rec.min = rec.max = 0.0;
+    }
+    rec.present = true;
+    if (rec.root < 0) rec.root = obs->root;
+    if (rec.firstFrame < 0) rec.firstFrame = frame;
+    rec.lastFrame = frame;
+    ++rec.draws;
+    ++rec.totalDraws;
+    if (obs->inst > rec.maxInst) rec.maxInst = obs->inst;
+    if (obs->ownReadable && obs->ownUnreadable) ++rec.ownMixedDraws;
+    else if (obs->ownReadable) ++rec.ownReadableDraws;
+    else if (obs->ownUnreadable) ++rec.ownUnreadableDraws;
+    if (!obs->haveReading) { ++rec.timerUnreadable; return; }
+    const double v = obs->largest;
+    if (!rec.haveFirst) {
+        rec.haveFirst = true;
+        rec.first = rec.min = rec.max = v;
+    }
+    if (v < rec.min) rec.min = v;
+    if (v > rec.max) rec.max = v;
+    rec.last = v;
+}
+
+// `own=`: readable when every draw kind-checked every instance's isMyClient,
+// unreadable when no draw did, mixed when a draw or the draws disagree.
+static const char* TgProbeSweepOwnText(const TgSweepRecord& rec)
+{
+    if (rec.ownMixedDraws > 0 || (rec.ownReadableDraws > 0 && rec.ownUnreadableDraws > 0)) return "mixed";
+    if (rec.ownReadableDraws > 0) return "readable";
+    if (rec.ownUnreadableDraws > 0) return "unreadable";
+    return "n/a";
+}
+
+// Called once per DrawHudBuffs draw from TgProbeSpurnAfterDraw, right after
+// the `tgl` sampler, and does nothing until `tgprobe sweep on`. Every root is
+// resolved by the SDK constant's name every draw; every instance's
+// object_index goes through the VALUE_REF-aware index predicate, since this
+// runner hands object_index over as VALUE_REF.
+static void TgProbeSweepAfterDraw()
+{
+    if (!g_TgSweepOn) return;   // off: not one builtin call
+    ++g_TgSweepDraws;
+    std::map<int, TgSweepObs> seen;
+    int resolved = 0;
+    for (int r = 0; r < kTgSweepRootCount; ++r) {
+        g_TgSweepLastCount[r] = -1;
+        const std::string rootName(HeroSiege::Objects::GetObjectName(kTgSweepRoots[r]));
+        double rootIdx = -1.0;
+        const bool rootResolved = TgProbeTglResolveObject(rootName, rootIdx);
+        g_TgSweepLastIdx[r] = rootResolved ? rootIdx : -1.0;
+        if (!rootResolved) continue;
+        ++resolved;
+        long n = 0;
+        try { n = (long)g_Yytk->CallBuiltin("instance_number", { RValue(rootIdx) }).ToDouble(); }
+        catch (...) { continue; }   // last count stays -1: printed as unread
+        g_TgSweepLastCount[r] = n;
+        if (n > kTgSweepScanCap) ++g_TgSweepCappedDraws[r];
+        const long scan = n < kTgSweepScanCap ? n : kTgSweepScanCap;
+        std::map<int, long> perRoot;
+        for (long i = 0; i < scan; ++i) {
+            RValue inst;
+            int objIdx = -1;
+            try {
+                inst = g_Yytk->CallBuiltin("instance_find", { RValue(rootIdx), RValue((double)i) });
+                RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("object_index") });
+                if (!N1ObjectIndex(oi, objIdx)) { ++g_TgSweepIndexUnreadable; continue; }
+            } catch (...) { ++g_TgSweepIndexUnreadable; continue; }
+            ++perRoot[objIdx];
+            TgSweepObs& o = seen[objIdx];
+            if (o.root < 0) o.root = r;
+            bool own = true;   // unattributable counts as own (D-N3); only a measured foreign does not
+            try {
+                RValue mc = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("isMyClient") });
+                bool isMine = false;
+                if (ToggleIndicatorReadTruth(mc, isMine)) { o.ownReadable = true; own = isMine; }
+                else o.ownUnreadable = true;
+            } catch (...) { o.ownUnreadable = true; }
+            if (!own) continue;
+            try {
+                RValue tv = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(ForgePact::kSkillTimerField) });
+                if (N1Numeric(tv)) {
+                    const double v = tv.ToDouble();
+                    if (!o.haveReading || v > o.largest) o.largest = v;
+                    o.haveReading = true;
+                }
+            } catch (...) {}   // no reading from this instance; the draw counts timerUnreadable if none had one
+        }
+        for (const auto& pr : perRoot) {
+            TgSweepObs& o = seen[pr.first];
+            if (pr.second > o.inst) o.inst = pr.second;
+        }
+    }
+    g_TgSweepRootsResolved = resolved;
+    const long frame = (long)g_RuntimeFrame;
+    for (auto& rec : g_TgSweep) {
+        if (seen.find(rec.first) == seen.end()) TgProbeSweepNote(rec.second, nullptr, frame);
+    }
+    for (const auto& s : seen) {
+        auto it = g_TgSweep.find(s.first);
+        if (it == g_TgSweep.end()) {
+            if (g_TgSweep.size() >= kTgSweepRecordCap) { ++g_TgSweepDropped; continue; }
+            it = g_TgSweep.emplace(s.first, TgSweepRecord{}).first;
+        }
+        TgProbeSweepNote(it->second, &s.second, frame);
+    }
+}
+
+// `tgprobe sweep show [seen|all]`: a header, then one line per record sorted
+// by firstFrame, naming the object by the SDK's name for that index AND the
+// runtime's own object_get_name (NAME-MISMATCH when they differ: the SDK
+// table would be stale). `all` adds one line per root. Every record exists
+// only because its object appeared, so `seen` is every record since `clear`.
+static void TgProbeSweepShow(const std::string& mode)
+{
+    const bool all = mode == "all";
+    if (!mode.empty() && mode != "seen" && !all) { Out("tgprobe sweep show: usage -> tgprobe sweep show [seen|all]"); return; }
+    std::string unresolved, capped;
+    for (int r = 0; r < kTgSweepRootCount; ++r) {
+        const std::string rootName(HeroSiege::Objects::GetObjectName(kTgSweepRoots[r]));
+        if (g_TgSweepDraws > 0 && g_TgSweepLastIdx[r] < 0) unresolved += (unresolved.empty() ? "" : ",") + rootName;
+        if (g_TgSweepCappedDraws[r] > 0)
+            capped += (capped.empty() ? "" : ",") + rootName + ":" + std::to_string(g_TgSweepCappedDraws[r]);
+    }
+    Out("tgprobe sweep: sampler=" + std::string(g_TgSweepOn ? "on" : "off") + " draws=" + std::to_string(g_TgSweepDraws)
+        + " roots=" + std::to_string(g_TgSweepRootsResolved) + "/" + std::to_string(kTgSweepRootCount)
+        + " unresolved=" + (unresolved.empty() ? std::string("none") : unresolved)
+        + " capped=" + (capped.empty() ? std::string("none") : capped)
+        + " records=" + std::to_string(g_TgSweep.size()) + " dropped=" + std::to_string(g_TgSweepDropped)
+        + " indexUnreadable=" + std::to_string(g_TgSweepIndexUnreadable) + " scanCap=" + std::to_string(kTgSweepScanCap));
+    if (all) {
+        // The per-root arrays start zeroed, and 0 is a real index/count, so
+        // before the first sweep draw they are unread, not zero (PR #62 review).
+        const bool swept = g_TgSweepDraws > 0;
+        for (int r = 0; r < kTgSweepRootCount; ++r) {
+            Out("  root " + std::string(HeroSiege::Objects::GetObjectName(kTgSweepRoots[r]))
+                + " idx=" + (swept && g_TgSweepLastIdx[r] >= 0 ? std::to_string((long long)g_TgSweepLastIdx[r]) : std::string("unresolved"))
+                + " lastCount=" + (swept && g_TgSweepLastCount[r] >= 0 ? std::to_string(g_TgSweepLastCount[r]) : std::string("unread"))
+                + " cappedDraws=" + std::to_string(g_TgSweepCappedDraws[r]));
+        }
+    }
+    std::vector<std::pair<long, int>> order;
+    for (const auto& rec : g_TgSweep) order.push_back({ rec.second.firstFrame, rec.first });
+    std::sort(order.begin(), order.end());
+    for (const auto& entry : order) {
+        const int idx = entry.second;
+        const TgSweepRecord& rec = g_TgSweep[idx];
+        const std::string sdkName = (idx >= 0 && idx < (int)HeroSiege::Objects::kObjectCount)
+            ? std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject(idx)))
+            : std::string("none");
+        std::string runtimeName = "unreadable";
+        try { runtimeName = g_Yytk->CallBuiltin("object_get_name", { RValue((double)idx) }).ToString(); } catch (...) {}
+        const std::string rootName = rec.root >= 0 && rec.root < kTgSweepRootCount
+            ? std::string(HeroSiege::Objects::GetObjectName(kTgSweepRoots[rec.root])) : std::string("n/a");
+        Out("  " + sdkName + " idx=" + std::to_string(idx) + " runtime=" + runtimeName
+            + (runtimeName != sdkName ? " NAME-MISMATCH" : "")
+            + " root=" + rootName + " app=" + std::to_string(rec.app) + " present=" + (rec.present ? "1" : "0")
+            + " draws=" + std::to_string(rec.draws)
+            + " first=" + (rec.haveFirst ? TgProbeTglNumber(rec.first) : std::string("unreadable"))
+            + " last=" + (rec.haveFirst ? TgProbeTglNumber(rec.last) : std::string("unreadable"))
+            + " min=" + (rec.haveFirst ? TgProbeTglNumber(rec.min) : std::string("unreadable"))
+            + " max=" + (rec.haveFirst ? TgProbeTglNumber(rec.max) : std::string("unreadable"))
+            + " timerUnreadable=" + std::to_string(rec.timerUnreadable)
+            + " maxInst=" + std::to_string(rec.maxInst) + " own=" + TgProbeSweepOwnText(rec)
+            + " firstFrame=" + std::to_string(rec.firstFrame) + " lastFrame=" + std::to_string(rec.lastFrame)
+            + " totalDraws=" + std::to_string(rec.totalDraws));
+    }
+}
+
+static void TgProbeSweepCommand(const std::string& rest)
+{
+    std::string subRest;
+    const std::string sub = Lower(FirstToken(rest, subRest));
+    if (sub == "on" || sub == "1") {
+        g_TgSweepOn = true;
+        Out("tgprobe sweep -> sampler=on (" + std::to_string(kTgSweepRootCount) + " roots, up to "
+            + std::to_string(kTgSweepScanCap) + " instances each, read on every DrawHudBuffs draw)");
+        return;
+    }
+    if (sub == "off" || sub == "0") {
+        g_TgSweepOn = false;
+        Out("tgprobe sweep -> sampler=off (no reads; records kept)");
+        return;
+    }
+    if (sub == "clear") {
+        g_TgSweep.clear();
+        g_TgSweepDraws = 0;
+        g_TgSweepIndexUnreadable = 0;
+        g_TgSweepDropped = 0;
+        for (int r = 0; r < kTgSweepRootCount; ++r) {
+            g_TgSweepCappedDraws[r] = 0; g_TgSweepLastCount[r] = -1; g_TgSweepLastIdx[r] = -1.0;
+        }
+        Out("tgprobe sweep clear: records=0");
+        return;
+    }
+    if (sub == "show" || sub.empty()) {
+        std::string ignored;
+        TgProbeSweepShow(Lower(FirstToken(subRest, ignored)));
+        return;
+    }
+    Out("tgprobe sweep: usage -> tgprobe sweep on|off|clear|show [seen|all]");
+}
+
+// ---- `tgprobe buffwatch` (session 12): global.playerBuff[1][0][<buffId>], --
+// the array both HhBuffAlive and `tgprobe buffs` (TgProbeBuffs) already walk,
+// one record per slot index. Off by default: the sampler returns before any
+// builtin call, the sweep sampler's own rule. Attribution comes from a
+// `clear` before each cast, exactly like `sweep clear`.
+static bool g_TgBuffWatchOn = false;
+
+// A custom variable's name plus the last numeric value seen for it (never
+// destroyTimer, which has its own first/last/min/max below). Captured on the
+// first draw of an appearance, capped at 8 - a stack counter would show here.
+struct TgBuffWatchVar {
+    std::string name;
+    bool numeric = false;
+    double last = 0.0;
+};
+
+// One buffId's record. `app`/`present` restart on the rising edge, the same
+// shape TgSweepRecord uses. An identity mismatch (the instance's own
+// `buffType` != the slot it was found at) is counted and the record is left
+// untouched entirely - it is never taken as a reading of THIS buffId.
+struct TgBuffWatchRecord {
+    bool present = false;
+    long app = 0;
+    long draws = 0;
+    long firstFrame = -1, lastFrame = -1;
+    bool haveFirst = false;
+    double first = 0.0, last = 0.0, min = 0.0, max = 0.0;
+    long unreadable = 0;
+    long identityMismatch = 0;
+    bool haveHost = false;
+    double host = 0.0;
+    std::vector<TgBuffWatchVar> vars;
+    long adds = 0;
+    bool haveAdd = false;
+    double lastAddFrames = 0.0;
+    double lastAddPlayer = 0.0;
+    // -1: the owning row (TalentUse/TalentUseClass) never got a native
+    // detour this session, so the depth counter cannot be trusted - n/a, not
+    // a measured 0. -2 (useTalent only): native, but no TalentUseClass call
+    // was on the stack when this BuffAdd fired.
+    long inUse = -1;
+    long useTalent = -1;
+};
+static std::map<int, TgBuffWatchRecord> g_TgBuffWatch;
+static long g_TgBuffWatchDraws = 0, g_TgBuffWatchMismatches = 0;
+
+// Custom variable names/values on a present, identity-matched buff instance,
+// excluding kSkillTimerField itself (destroyTimer has its own columns).
+static void TgProbeBuffWatchCaptureVars(const RValue& inst, TgBuffWatchRecord& rec, bool firstSight)
+{
+    try {
+        RValue names = g_Yytk->CallBuiltin("variable_instance_get_names", { inst });
+        if (names.m_Kind != VALUE_ARRAY) return;
+        const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+        for (int i = 0; i < n; ++i) {
+            RValue nm = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) });
+            const std::string name = nm.ToString();
+            if (name == ForgePact::kSkillTimerField) continue;
+            RValue v;
+            try { v = g_Yytk->CallBuiltin("variable_instance_get", { inst, nm }); } catch (...) { continue; }
+            const bool numeric = N1Numeric(v);
+            if (firstSight) {
+                if (rec.vars.size() >= 8) continue;
+                rec.vars.push_back({ name, numeric, numeric ? v.ToDouble() : 0.0 });
+            } else if (numeric) {
+                for (auto& var : rec.vars) { if (var.name == name) { var.numeric = true; var.last = v.ToDouble(); break; } }
+            }
+        }
+    } catch (...) {}
+}
+
+// One draw's update of one record - the sweep sampler's own shape
+// (TgProbeSweepNote). `present` false only ends the appearance; an identity
+// mismatch is counted and the record is left untouched entirely.
+static void TgProbeBuffWatchNote(TgBuffWatchRecord& rec, bool present, bool identityMismatch,
+                                  bool haveTimer, double timer, bool haveHost, double host,
+                                  const RValue* inst, long frame)
+{
+    if (identityMismatch) { ++rec.identityMismatch; ++g_TgBuffWatchMismatches; return; }
+    if (!present) { rec.present = false; return; }
+    const bool firstSight = !rec.present;
+    if (firstSight) {
+        ++rec.app;
+        rec.draws = 0;
+        rec.haveFirst = false;
+        rec.first = rec.last = rec.min = rec.max = 0.0;
+        rec.vars.clear();
+    }
+    rec.present = true;
+    if (rec.firstFrame < 0) rec.firstFrame = frame;
+    rec.lastFrame = frame;
+    ++rec.draws;
+    if (haveHost) { rec.haveHost = true; rec.host = host; }
+    if (inst) TgProbeBuffWatchCaptureVars(*inst, rec, firstSight);
+    if (!haveTimer) { ++rec.unreadable; return; }
+    if (!rec.haveFirst) { rec.haveFirst = true; rec.first = rec.min = rec.max = timer; }
+    if (timer < rec.min) rec.min = timer;
+    if (timer > rec.max) rec.max = timer;
+    rec.last = timer;
+}
+
+// Called once per DrawHudBuffs draw from TgProbeSpurnAfterDraw, right after
+// the sweep sampler, and does nothing until `tgprobe buffwatch on`. The array
+// path is the one `tgprobe buffs` already walks: global.playerBuff[1][0]
+// [<slot>]. Identity is the instance's own `buffType` against the slot it
+// was found at - what keeps a renumbered build from drawing a stranger's
+// buff.
+static void TgProbeBuffWatchAfterDraw()
+{
+    if (!g_TgBuffWatchOn) return;
+    ++g_TgBuffWatchDraws;
+    const long frame = (long)g_RuntimeFrame;
+    std::set<int> seen;
+    try {
+        RValue pb = g_Yytk->CallBuiltin("variable_global_get", { RValue("playerBuff") });
+        if (pb.m_Kind == VALUE_ARRAY) {
+            RValue a1 = g_Yytk->CallBuiltin("array_get", { pb, RValue(1.0) });
+            if (a1.m_Kind == VALUE_ARRAY) {
+                RValue a0 = g_Yytk->CallBuiltin("array_get", { a1, RValue(0.0) });
+                if (a0.m_Kind == VALUE_ARRAY) {
+                    const int len = (int)g_Yytk->CallBuiltin("array_length", { a0 }).ToDouble();
+                    for (int i = 0; i < len; ++i) {
+                        RValue ref;
+                        try { ref = g_Yytk->CallBuiltin("array_get", { a0, RValue((double)i) }); }
+                        catch (...) { continue; }
+                        const bool number = ref.m_Kind == VALUE_REAL || ref.m_Kind == VALUE_INT32 || ref.m_Kind == VALUE_INT64;
+                        if (ref.m_Kind == VALUE_UNDEFINED || (number && ref.ToDouble() < 0)) continue;
+                        bool exists = false;
+                        try { exists = g_Yytk->CallBuiltin("instance_exists", { ref }).ToBoolean(); } catch (...) {}
+                        if (!exists) continue;
+                        seen.insert(i);
+                        bool identityMismatch = true;
+                        try {
+                            RValue bt = g_Yytk->CallBuiltin("variable_instance_get", { ref, RValue("buffType") });
+                            identityMismatch = !(N1Numeric(bt) && N1NearlyEqual(bt.ToDouble(), (double)i));
+                        } catch (...) {}
+                        bool haveTimer = false; double timer = 0.0;
+                        try {
+                            RValue tv = g_Yytk->CallBuiltin("variable_instance_get", { ref, RValue(ForgePact::kSkillTimerField) });
+                            if (N1Numeric(tv)) { timer = tv.ToDouble(); haveTimer = true; }
+                        } catch (...) {}
+                        bool haveHost = false; double host = 0.0;
+                        try {
+                            RValue hv = g_Yytk->CallBuiltin("variable_instance_get", { ref, RValue("host") });
+                            if (N1Numeric(hv)) { host = hv.ToDouble(); haveHost = true; }
+                        } catch (...) {}
+                        TgBuffWatchRecord& rec = g_TgBuffWatch[i];
+                        TgProbeBuffWatchNote(rec, true, identityMismatch, haveTimer, timer, haveHost, host, &ref, frame);
+                    }
+                }
+            }
+        }
+    } catch (...) {}
+    for (auto& kv : g_TgBuffWatch) {
+        if (seen.find(kv.first) == seen.end())
+            TgProbeBuffWatchNote(kv.second, false, false, false, 0.0, false, 0.0, nullptr, frame);
+    }
+}
+
+// The BuffAdd note: one function, called both from TgProbeNoteBuffAdd
+// (via-hook attachment) and from TgProbeDetourBody's kTg_BuffAdd branch
+// (native attachment) - whichever one actually saw this session's BuffAdd
+// call. `talentUseNative`/`talentUseClassNative` are resolved by the caller
+// (it already reads g_TgRows), so this function's own testable core never
+// needs the row table. BuffAdd's own args: (player, buffId, ..., frames).
+static void TgProbeBuffWatchOnBuffAdd(int argc, RValue** A, bool talentUseNative, bool talentUseClassNative)
+{
+    if (!g_TgBuffWatchOn) return;
+    if (argc < 2 || !A || !A[1] || !N1Numeric(*A[1])) return;
+    const int buffId = (int)A[1]->ToDouble();
+    if (buffId < 0) return;
+    TgBuffWatchRecord& rec = g_TgBuffWatch[buffId];
+    ++rec.adds;
+    rec.haveAdd = true;
+    if (argc > 3 && A[3] && N1Numeric(*A[3])) rec.lastAddFrames = A[3]->ToDouble();
+    if (argc > 0 && A[0] && N1Numeric(*A[0])) rec.lastAddPlayer = A[0]->ToDouble();
+    rec.inUse = talentUseNative ? (g_TgTalentUseDepth > 0 ? 1 : 0) : -1;
+    rec.useTalent = talentUseClassNative ? (g_TgTalentUseClassDepth > 0 ? (long)g_TgTalentUseClassA0 : -2) : -1;
+}
+
+static std::string TgProbeBuffWatchVarsText(const TgBuffWatchRecord& rec)
+{
+    std::string s;
+    for (const auto& v : rec.vars)
+        s += (s.empty() ? "" : ",") + v.name + "=" + (v.numeric ? TgProbeTglNumber(v.last) : std::string("non-numeric"));
+    return s.empty() ? std::string("none") : s;
+}
+
+// A record that was never seen present (app==0) still explains a failed
+// positive control when it was touched some other way: an identity mismatch
+// (wrong buffType at this slot) or a BuffAdd this slot's own draw never
+// confirmed (added, but never read back at this index - so which shape
+// `[104]` missed is visible instead of nothing at all). Pure (no Out()), so
+// this pair is the testable core; TgProbeBuffWatchShow only calls them.
+static bool TgProbeBuffWatchVisible(const TgBuffWatchRecord& rec)
+{
+    return rec.app > 0 || rec.identityMismatch > 0 || rec.adds > 0;
+}
+
+static std::string TgProbeBuffWatchNoteText(const TgBuffWatchRecord& rec)
+{
+    if (rec.app > 0) return "";
+    if (rec.identityMismatch > 0) return "(mismatch-only)";
+    if (rec.adds > 0) return "(added, never seen at this slot)";
+    return "";
+}
+
+// `tgprobe buffwatch show`: one line per visible record (app>0, or one of
+// the two blind shapes TgProbeBuffWatchVisible/NoteText name), then the
+// footer the live procedure quotes.
+static void TgProbeBuffWatchShow()
+{
+    Out("tgprobe buffwatch: sampler=" + std::string(g_TgBuffWatchOn ? "on" : "off")
+        + " draws=" + std::to_string(g_TgBuffWatchDraws)
+        + " records=" + std::to_string(g_TgBuffWatch.size())
+        + " mismatches=" + std::to_string(g_TgBuffWatchMismatches));
+    std::vector<std::pair<long, int>> order;
+    for (const auto& rec : g_TgBuffWatch) order.push_back({ rec.second.firstFrame, rec.first });
+    std::sort(order.begin(), order.end());
+    for (const auto& entry : order) {
+        const int idx = entry.second;
+        const TgBuffWatchRecord& rec = g_TgBuffWatch[idx];
+        if (!TgProbeBuffWatchVisible(rec)) continue;
+        const std::string note = TgProbeBuffWatchNoteText(rec);
+        Out("  [" + std::to_string(idx) + "] app=" + std::to_string(rec.app) + (note.empty() ? "" : " " + note)
+            + " present=" + (rec.present ? "1" : "0") + " draws=" + std::to_string(rec.draws)
+            + " first=" + (rec.haveFirst ? TgProbeTglNumber(rec.first) : std::string("unreadable"))
+            + " last=" + (rec.haveFirst ? TgProbeTglNumber(rec.last) : std::string("unreadable"))
+            + " min=" + (rec.haveFirst ? TgProbeTglNumber(rec.min) : std::string("unreadable"))
+            + " max=" + (rec.haveFirst ? TgProbeTglNumber(rec.max) : std::string("unreadable"))
+            + " unreadable=" + std::to_string(rec.unreadable)
+            + " identityMismatch=" + std::to_string(rec.identityMismatch)
+            + " host=" + (rec.haveHost ? TgProbeTglNumber(rec.host) : std::string("unreadable"))
+            + " vars=" + TgProbeBuffWatchVarsText(rec)
+            + " adds=" + std::to_string(rec.adds)
+            + " lastAddFrames=" + (rec.haveAdd ? TgProbeTglNumber(rec.lastAddFrames) : std::string("n/a"))
+            + " lastAddPlayer=" + (rec.haveAdd ? TgProbeTglNumber(rec.lastAddPlayer) : std::string("n/a"))
+            + " inUse=" + (rec.inUse < 0 ? std::string("n/a") : std::to_string(rec.inUse))
+            + " useTalent=" + (rec.useTalent == -1 ? std::string("n/a") : rec.useTalent == -2 ? std::string("none") : std::to_string(rec.useTalent))
+            + " firstFrame=" + std::to_string(rec.firstFrame) + " lastFrame=" + std::to_string(rec.lastFrame));
+    }
+}
+
+static void TgProbeBuffWatchCommand(const std::string& rest)
+{
+    std::string subRest;
+    const std::string sub = Lower(FirstToken(rest, subRest));
+    if (sub == "on" || sub == "1") {
+        g_TgBuffWatchOn = true;
+        Out("tgprobe buffwatch -> sampler=on (playerBuff[1][0], read on every DrawHudBuffs draw)");
+        return;
+    }
+    if (sub == "off" || sub == "0") {
+        g_TgBuffWatchOn = false;
+        Out("tgprobe buffwatch -> sampler=off (no reads; records kept)");
+        return;
+    }
+    if (sub == "clear") {
+        g_TgBuffWatch.clear();
+        g_TgBuffWatchDraws = 0;
+        g_TgBuffWatchMismatches = 0;
+        Out("tgprobe buffwatch clear: records=0");
+        return;
+    }
+    if (sub == "show" || sub.empty()) { TgProbeBuffWatchShow(); return; }
+    Out("tgprobe buffwatch: usage -> tgprobe buffwatch on|off|clear|show");
+}
+
 // One struct field as text for `tgprobe talents`: `absent` when the struct
 // has no such key, `unreadable` when the read throws - never a default.
 static std::string TgProbeTalentsField(const RValue& talent, const char* field)
@@ -24371,11 +26967,47 @@ static void TgProbeTalentsCommand(const std::string& rest)
 {
     static const char* const kFields[] = {
         "abilityId", "abilityAura", "abilityDuration", "abilityCooldown", "abilityLength", "abilityTags" };
-    constexpr long kWalkCap = 5000, kShowCap = 40;
+    // Session 8: `dur` lists every talent whose abilityDuration reads numeric
+    // and positive - the live floor of "duration skills" for the duration
+    // sweep's Results table - so it is not held to the 40-line display cap.
+    constexpr long kWalkCap = 5000, kShowCap = 40, kDurShowCap = 400;
     std::string ignored;
     const std::string arg = FirstToken(rest, ignored);
     const bool tagsMode = Lower(arg) == "tags";
-    const std::string filter = tagsMode ? std::string() : Lower(arg);
+    const bool durMode = Lower(arg) == "dur";
+    const std::string filter = (tagsMode || durMode) ? std::string() : Lower(arg);
+    const long showCap = durMode ? kDurShowCap : kShowCap;
+
+    // T2 (issue #55): route A (abilityDuration x the runtime's tick rate)
+    // cannot be falsified without a tick-rate readout, and nothing in
+    // tgprobe prints one today ("### What the probe round must add"). Read
+    // by the same call the shipped Headhunter buff-duration path already
+    // uses (~ModuleMain.cpp:8038: game_get_speed(0.0)), plus `fps` as this
+    // file's own established positive control (~ModuleMain.cpp:20360). The
+    // floor differs from that shipped path on purpose: Headhunter floors
+    // `spd < 1.0` to 60.0 and always applies a duration, while this probe
+    // only needs to know whether the read is usable at all, so anything
+    // `<= 0.0` is reported `unreadable` rather than silently substituted.
+    // Printed once, up front, so the per-row predictedTotal= below is
+    // falsifiable against a measured `tgprobe tgl timer ... first=` without
+    // hand arithmetic.
+    double speed = -1.0;
+    bool speedOk = false;
+    try {
+        speed = g_Yytk->CallBuiltin("game_get_speed", { RValue(0.0) }).ToDouble();
+        speedOk = speed > 0.0;
+    } catch (...) {}
+    double fpsVal = -1.0;
+    bool fpsOk = false;
+    try {
+        RValue v;
+        if (AurieSuccess(g_Yytk->GetBuiltin("fps", nullptr, NULL_INDEX, v)) && N1Numeric(v)) {
+            fpsVal = v.ToDouble();
+            fpsOk = true;
+        }
+    } catch (...) {}
+    Out("tgprobe talents: speed=" + (speedOk ? TgProbeTglNumber(speed) : std::string("unreadable"))
+        + " fps=" + (fpsOk ? TgProbeTglNumber(fpsVal) : std::string("unreadable")));
 
     RValue map;
     try {
@@ -24423,6 +27055,16 @@ static void TgProbeTalentsCommand(const std::string& rest)
                                 + std::to_string(row.talentId) + " but abilityId maps to id " + std::to_string(id));
                     }
                 }
+                bool listed = filter.empty() || Lower(abilityId).find(filter) != std::string::npos;
+                if (durMode) {
+                    // Session 8: the duration read on its own, as a number -
+                    // never parsed back out of the printed field text.
+                    listed = false;
+                    try {
+                        RValue dv = g_Yytk->CallBuiltin("variable_struct_get", { talent, RValue(kFields[2]) });
+                        listed = N1Numeric(dv) && dv.ToDouble() > 0.0;
+                    } catch (...) {}
+                }
                 if (tagsMode) {
                     try {
                         RValue tags = g_Yytk->CallBuiltin("variable_struct_get", { talent, RValue("abilityTags") });
@@ -24434,10 +27076,20 @@ static void TgProbeTalentsCommand(const std::string& rest)
                             }
                         }
                     } catch (...) {}
-                } else if (filter.empty() || Lower(abilityId).find(filter) != std::string::npos) {
-                    if (shown < kShowCap) {
+                } else if (listed) {
+                    if (shown < showCap) {
                         std::string line = "  talent " + std::to_string(id);
                         for (int k = 0; k < 6; ++k) line += std::string(" ") + kFields[k] + "=" + values[k];
+                        // T2: route A's falsification, on the same line as
+                        // abilityDuration - predictedTotal = abilityDuration
+                        // x speed, `n/a` when speed is unreadable or
+                        // abilityDuration is not a plain number (absent,
+                        // unreadable, or non-numeric text like an array).
+                        std::string predicted = "n/a";
+                        if (speedOk) {
+                            try { predicted = TgProbeTglNumber(std::stod(values[2]) * speed); } catch (...) {}
+                        }
+                        line += " predictedTotal=" + predicted;
                         Out(line);
                         ++shown;
                     } else {
@@ -24459,7 +27111,8 @@ static void TgProbeTalentsCommand(const std::string& rest)
     Out("tgprobe talents: ids=" + std::to_string(ids) + " shown=" + std::to_string(shown)
         + " nonNumericKeys=" + std::to_string(nonNumericKeys) + " notStruct=" + std::to_string(notStruct)
         + " walkExc=" + std::to_string(walkExc) + " truncated=" + (truncated ? "1" : "0")
-        + " tableRowsWithId=" + std::to_string(rowsWithId) + "/" + std::to_string(g_TgTgl.size()));
+        + " tableRowsWithId=" + std::to_string(rowsWithId) + "/" + std::to_string(g_TgTgl.size())
+        + (durMode ? " durCap=" + std::to_string(kDurShowCap) + " durTruncated=" + (hidden > 0 ? "1" : "0") : std::string()));
 }
 
 // Running counters and last-sample state for `tgprobe spurn`. Sampled once
@@ -24611,6 +27264,11 @@ static void TgProbeSpurnAfterDraw()
     // Session 6: every candidate row, and row 0's agreement control, on the
     // same draw (`tgprobe tgl`).
     TgProbeTglAfterDraw();
+    // Session 8: every descendant of the six candidate parents, one record
+    // per object_index (`tgprobe sweep`).
+    TgProbeSweepAfterDraw();
+    // Session 12: every slot of global.playerBuff[1][0] (`tgprobe buffwatch`).
+    TgProbeBuffWatchAfterDraw();
     TgProbeDrawMark(/*fromHudLayer=*/false);
     TgProbeSpriteDraw(/*fromHudLayer=*/false);
 }
@@ -24716,6 +27374,10 @@ static void TgProbeCommand(const std::string& rest)
     // Every toggle-skill candidate (issue #11 generalisation, session 6).
     if (sub == "talents") { TgProbeTalentsCommand(subRest); return; }
     if (sub == "tgl") { TgProbeTglCommand(subRest); return; }
+    // Every class's timed skill at once (issue #55, session 8).
+    if (sub == "sweep") { TgProbeSweepCommand(subRest); return; }
+    // Buff-carried skills: global.playerBuff[1][0] (issue #55 follow-up, session 12).
+    if (sub == "buffwatch") { TgProbeBuffWatchCommand(subRest); return; }
     Out("tgprobe: usage -> tgprobe hook [substr...] | show | reset | verbose on|off | slots | buffs | abilities"
         " | vars <Obj|global> | snap <Obj|global> | diff | room"
         " | deep snap|diff|flip|find|get|census|selftest|drop ..."
@@ -24723,7 +27385,8 @@ static void TgProbeCommand(const std::string& rest)
         " | sprite <SpriteName> [talentId|centre] | off | gold | style soft|halo|gradient|pulse | list"
         " | gallery [cols] | layer hud|buffs | scale [f] | colour [name|r g b] | box tuned|bbox"
         " | quad on|off | alpha [min] [max]"
-        " | talents [substr|tags] | tgl [add|list|clear|slots|fields|sub|timer]");
+        " | talents [substr|tags|dur] | tgl [add|list|clear|slots|fields|sub|timer]"
+        " | sweep on|off|clear|show [seen|all] | buffwatch on|off|clear|show");
 }
 #endif // FORGEPACT_RELEASE (tgprobe)
 
@@ -24992,7 +27655,7 @@ static void RunCommand(const std::string& line)
         "stat", "statadd", "raredrop", "droprate", "dungeonkey",
         "headhunter", "hhdur", "hhmap", "hhdefault", "hhlabel", "tyrant", "beacon", "beaconrange", "beaconmode", "beaconwake", "beaconspawn", "beaconfarstep", "tyrantchance", "tyrantaffix", "hhlabelfont", "hhlabeloffset", "hhlabelmax",
         "enemyspeed", "rarity", "sigdrop", "angelicdrop", "relicfilter", "orbpickup", "satmods", "petquest",
-        "autoprospect", "toggleborder", "toggleguard", "menulayout"
+        "autoprospect", "toggleborder", "toggleguard", "skilltimer", "menulayout"
     };
     if (kPlayerCommands.find(lc) == kPlayerCommands.end()) {
         Out("command unavailable in player build: " + cmd);
@@ -25010,6 +27673,28 @@ static void RunCommand(const std::string& line)
     // is already at MSVC's block-nesting limit (C1061).
     if (lc == "tgprobe") { TgProbeCommand(rest); return; }
 #endif
+    // Timed-skill countdown (issue #55). A standalone early return, same
+    // MSVC C1061 reason as `toggleborder`/`toggleguard` below.
+    if (lc == "skilltimer") {
+        std::string v = Lower(TrimCopy(rest));
+        if (v == "stat") { SkillTimerStats(); return; }   // read-only: stores nothing
+        if (v == "off" || v == "0") {
+            g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Off);
+            Out("skilltimer -> off " + SkillTimerAggregateCountersLine());
+            return;
+        }
+        ForgePact::SkillTimerStyle style;
+        if (ForgePact::SkillTimerStyleFromName(v, style) && style != ForgePact::SkillTimerStyle::Off) {
+            g_SkillTimerStyle.store(style);
+            Out(std::string("skilltimer -> ") + ForgePact::SkillTimerStyleName(style)
+                + " (draws a countdown over each timed skill's hotbar slot; covers "
+                + std::to_string(ForgePact::kSkillTimerRowCount + ForgePact::kSkillTimerBuffRowCount)
+                + " timed skills - `skilltimer stat` lists them)");
+            return;
+        }
+        Out("usage: skilltimer off|arc|bar|number|fade|stat");
+        return;
+    }
     // Toggle-skill re-cast guard (issue #11, Track A). A standalone early
     // return for the same C1061 reason as `toggleborder` below. `1` only arms
     // it: FrameCallback installs the TalentUseClass hook once a player exists
@@ -25044,9 +27729,10 @@ static void RunCommand(const std::string& line)
             Out("toggleborder -> off " + ToggleBorderCountersLine());
         } else {
             g_ToggleBorderOn.store(true);
-            // Names the covered count, not one skill: five rows have shipped
-            // since phase S, and a player on Exo or Prophet reading "Soul
-            // Spurn" here would take the whole feature for a White Mage one.
+            // Names the covered count, not one skill: several rows have
+            // shipped since phase S, and a player on Exo or Prophet reading
+            // "Soul Spurn" here would take the whole feature for a White
+            // Mage one.
             Out("toggleborder -> ON (marks the skill-bar slot of a toggle skill while it is switched on; covers "
                 + std::to_string(ForgePact::kToggleSkillRowCount)
                 + " toggle skills - `toggleborder stat` lists them with per-skill drawn=/on=)");
@@ -26136,12 +28822,19 @@ void FrameCallback(FWFrame& FrameContext)
         }
     }
 
-    // The shipped toggle table's talent ids (D-P1): resolved by `abilityId`
-    // from global.talentStructMap, here at the frame boundary and nowhere
-    // else, on the same once-a-second cadence as the two installs below.
-    // ToggleTableResolveDue() stops it walking once every row is resolved and
-    // allows at most one walk per room, so a row whose `abilityId` is absent
-    // costs one walk per zone rather than one a second forever.
+    // The shipped toggle table's talent ids (D-P1), the countdown's own
+    // table's ids and (issue #55 follow-up, D-S4) the rule map - resolved by
+    // `abilityId` from global.talentStructMap, here at the frame boundary and
+    // nowhere else, on the same once-a-second cadence as the two installs
+    // below. ToggleTableResolveDue() allows at most one walk per room, and
+    // (round 1) for a player with the countdown off restores the pre-D-S4
+    // stop once toggleborder/toggleguard/skilltimer's own rows have nothing
+    // left to learn - so a row whose `abilityId` is absent costs one walk per
+    // zone rather than one a second forever, and a player who never picks a
+    // look pays no walk once those rows resolve. With a look selected the
+    // walk is due once per room regardless (the rule map has no "everything
+    // resolved" stopping signal of its own), and the room's walk repeats once
+    // more if the last one in it ran before the look was picked.
     if (g_Setup && (fc % 60) == 0 && ToggleTableResolveDue()) {
         ToggleTableResolveIds();
     }

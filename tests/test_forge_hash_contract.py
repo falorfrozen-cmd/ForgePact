@@ -54,6 +54,8 @@ EXPECTED_PLAYER_COMMANDS = {
     "toggleborder",
     # The toggle-skill double-cast re-cast guard (issue #11, Track A).
     "toggleguard",
+    # The timed-skill countdown (issue #55).
+    "skilltimer",
     # The read-only menu listing hs-drive clicks from
     # (test_menu_layout_contract.py pins it).
     "menulayout",

@@ -206,14 +206,21 @@ DEFAULTS = {
     # the plugin defaults it on too, so only "off" is ever sent.
     "mod_auto_prospect_bag": True,
     # Marks the skill-bar slot of a toggle skill while it is switched on
-    # (issue #11, Track B; five skills since phase S). Off by default like the
-    # other mod toggles; offline only, no co-op claim (AGENTS.md "this is the
-    # rule of ForgePact").
+    # (issue #11, Track B; covers every row in kToggleSkillRows). Off by
+    # default like the other mod toggles; offline only, no co-op claim
+    # (AGENTS.md "this is the rule of ForgePact").
     "mod_toggle_indicator": False,
     # Stops the double-cast proc from re-casting a covered toggle skill on its
     # own (issue #11, Track A), so a proc no longer flips the toggle straight
     # back. Off by default; offline only, like every mod here.
     "mod_toggle_guard": False,
+    # Timed-skill countdown (issue #55): one of off/arc/bar/number/fade drawn
+    # over each timed skill's hotbar slot. Covers the explicit rows of the
+    # plugin's kSkillTimerRows, each measured in-game - a toggled-on skill
+    # never gets a countdown. Off by default; a cast already running when you
+    # turn it on shows as full (route B's latch takes the first reading it
+    # sees).
+    "mod_skill_timer_style": "off",
     # Monster Rarity: the share of normal monsters raised to Rare and to Ancient
     # (percent each, together at most 100; the rest stay normal).
     "rarity_rare": 0,
@@ -681,6 +688,17 @@ def enemy_speed_cmd(cfg: dict) -> str:
     return f"enemyspeed {1.0 + pct / 100.0:g} {scope}"
 
 
+# Timed-skill countdown (issue #55): the four shipped looks plus off, the
+# panel's own set - kept as its own tuple so build_cmds and /api/set share
+# one validator rather than restating the list.
+SKILL_TIMER_STYLES = ("off", "arc", "bar", "number", "fade")
+
+
+def skill_timer_style_valid(value) -> bool:
+    """Valid = exactly one of off|arc|bar|number|fade after trim+lower."""
+    return isinstance(value, str) and value.strip().lower() in SKILL_TIMER_STYLES
+
+
 def build_cmds(cfg: dict) -> list:
     d = min(5.0, float(cfg.get("density", 1))) if cfg.get("density_on") else 1.0
     # A new game process already starts at vanilla values.  Sending x1/Off
@@ -737,6 +755,13 @@ def build_cmds(cfg: dict) -> list:
         # Safe to send at launch, like relicfilter: `toggleguard 1` only arms
         # the guard, and the plugin installs its hook once a player exists.
         out.append("toggleguard 1")
+    skill_timer_style = str(cfg.get("mod_skill_timer_style", "off")).strip().lower()
+    if skill_timer_style_valid(skill_timer_style) and skill_timer_style != "off":
+        # Safe to send at launch, like toggleborder: the draw call already
+        # runs in Hook_DrawHudBuffs; this only sets which style it uses. A
+        # hand-edited invalid saved value falls through and emits nothing,
+        # so the all-off startup list stays unchanged.
+        out.append(f"skilltimer {skill_timer_style}")
     rare, ancient = rarity_setting(cfg)
     if rare > 0 or ancient > 0:
         out.append(f"rarity {rare} {ancient}")
@@ -1734,6 +1759,12 @@ class H(BaseHTTPRequestHandler):
                     cfg[other] = min(_pct(cfg.get(other, 0)), 100 - cfg[key])
                 elif key in ("density_on", "auto_apply", "map_reveal", "map_reveal_packs", "headhunter", "tyrant", "beacon", "mod_filter_max_relics", "mod_orb_pickup_radius", "mod_pet_quest_pickup", "mod_auto_prospect", "mod_auto_prospect_bag", "mod_toggle_indicator", "mod_toggle_guard"):
                     cfg[key] = bool(val)
+                elif key == "mod_skill_timer_style":
+                    style = str(val).strip().lower()
+                    if not skill_timer_style_valid(style):
+                        self._json({"err": "invalid skilltimer style"}, 400)
+                        return
+                    cfg[key] = style
                 save_cfg(cfg)
                 live = ""
                 if game_running(cfg):
@@ -1795,6 +1826,10 @@ class H(BaseHTTPRequestHandler):
                         send_cmds([f"toggleborder {1 if cfg['mod_toggle_indicator'] else 0}"], cfg)
                     elif key == "mod_toggle_guard":
                         send_cmds([f"toggleguard {1 if cfg['mod_toggle_guard'] else 0}"], cfg)
+                    elif key == "mod_skill_timer_style":
+                        # Always explicit, including off: a style change (or
+                        # turning it off) needs the plugin told either way.
+                        send_cmds([f"skilltimer {cfg['mod_skill_timer_style']}"], cfg)
                     elif key in ("rarity_rare", "rarity_ancient"):
                         # Always explicit: "rarity off" returns a live hook to vanilla.
                         send_cmds([rarity_cmd(cfg)], cfg)
@@ -1950,6 +1985,7 @@ input[type=range]::-webkit-slider-thumb{appearance:none;width:17px;height:17px;b
 .switch{position:relative;width:42px;height:23px;flex:none;display:inline-block}.switch input{position:absolute;inset:0;opacity:0;width:100%;height:100%;margin:0;z-index:1;cursor:pointer}.switch input:disabled{cursor:not-allowed}.switch:focus-within{outline:2px solid var(--ember2);outline-offset:4px;border-radius:20px}
 .sl{position:absolute;inset:0;border-radius:23px;background:#413529;border:1px solid #67513a;pointer-events:none}.sl:before{content:"";position:absolute;width:17px;height:17px;left:2px;top:2px;background:#b2a38f;border-radius:50%;transition:transform .12s}
 .switch input:checked+.sl{background:#ad6b2e;border-color:#efb46a}.switch input:checked+.sl:before{transform:translateX(19px);background:#ffe2b4}
+.feature-card:has(>.style-select){grid-template-columns:minmax(0,1fr) auto}.style-select{min-width:96px;grid-column:2/-1;background:#2a1e15;color:#fff0db;border:1px solid #62472e;border-radius:6px;padding:6px 8px;font-size:13px;cursor:pointer}.style-select:focus{outline:2px solid var(--ember2);outline-offset:2px}
 #exepath{min-width:180px;flex:1;background:#100e0c;color:var(--tx);border:1px solid #65513d;border-radius:7px;padding:11px 12px;font-size:13px}.setup-path-row{flex-wrap:wrap}.setup-path-row #exepath{flex-basis:100%}.setup-launch{flex-wrap:wrap}
 #toast{position:fixed;bottom:22px;left:calc(50% + 90px);transform:translateX(-50%);max-width:min(600px,calc(100vw - 36px));z-index:100;background:#292018;color:#ffe3be;border:1px solid #996a3e;border-radius:8px;padding:11px 18px;opacity:0;transition:opacity .15s;pointer-events:none;box-shadow:0 5px 25px #0005;font-size:12px}#toast.show{opacity:1}
 .section-title{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}.live-badge{font-size:10px;padding:4px 8px;white-space:nowrap;border:1px solid #3e6650;border-radius:20px;background:#18281f;color:var(--ok)}
@@ -1963,10 +1999,10 @@ input[type=range]::-webkit-slider-thumb{appearance:none;width:17px;height:17px;b
 .hero-number{color:var(--ember2);font-size:35px;line-height:1.25;font-weight:700;margin:9px 0}.density-top{display:flex;align-items:center;justify-content:space-between}.density-top .row{border:0;padding:0;gap:8px}.density-top .lbl{width:auto;font-size:11px;color:var(--mut)}
 #densityCard>.row{border:0;padding:6px 0}#densityCard>.row>.lbl{display:none}.density-scale{display:flex;justify-content:space-between;font-size:11px;color:var(--mut);margin-top:5px}
 #rarityCard .row{border:0;display:flex;padding:12px 0}#rarityCard .lbl{display:block;width:62px;margin:0}#rarityCard .note{font-size:11px}
-.mods-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-items:start}.feature-card{padding:15px!important;background:#15110e;border:1px solid #45352a!important;border-radius:8px;margin:0!important;align-items:flex-start}.feature-card>.lbl{flex:1!important;width:auto!important;min-width:0}.feature-card .switch{margin-top:1px}.feature-card>.val{min-width:0;width:24px;font-size:11px;margin-top:2px}.feature-card:has(>.switch>input:checked),.feature-with-child:has(>.feature-card:first-child>.switch>input:checked){border-color:#85603a!important}.feature-with-child{border:1px solid #45352a;border-radius:8px;background:#15110e;overflow:hidden}.feature-with-child>.feature-card{border:0!important;border-radius:0}.feature-with-child>#map_reveal_packs_row,.feature-with-child>#mod_auto_prospect_bag_row{border:0!important;border-top:1px solid #45352a!important;margin:0!important;padding:14px!important;background:#1d1711;border-radius:0}
+.mods-grid{display:flex;gap:12px;align-items:flex-start}.mods-col{flex:1 1 0;min-width:0}.mods-col>.feature-card,.mods-col>.feature-with-child{margin:0 0 12px!important}.feature-card{padding:15px!important;background:#15110e;border:1px solid #45352a!important;border-radius:8px;margin:0!important;align-items:flex-start}.feature-card>.lbl{flex:1!important;width:auto!important;min-width:0}.feature-card .switch{margin-top:1px}.feature-card>.val{min-width:0;width:24px;font-size:11px;margin-top:2px}.feature-card:has(>.switch>input:checked),.feature-with-child:has(>.feature-card:first-child>.switch>input:checked){border-color:#85603a!important}.feature-with-child{border:1px solid #45352a;border-radius:8px;background:#15110e;overflow:hidden}.feature-with-child>.feature-card{border:0!important;border-radius:0}.feature-with-child>#map_reveal_packs_row,.feature-with-child>#mod_auto_prospect_bag_row{border:0!important;border-top:1px solid #45352a!important;margin:0!important;padding:14px!important;background:#1d1711;border-radius:0}
 .feature-card{display:grid;grid-template-columns:minmax(0,1fr) 42px 24px;gap:8px 12px;align-content:start}.feature-card>.lbl{font-weight:600}.feature-description{grid-column:1/-1;color:var(--mut)!important;line-height:1.65;font-size:12px!important;font-weight:normal}.switch input:disabled+.sl{opacity:.4;filter:grayscale(1)}
 @media(min-width:1700px){#wrap{padding-left:38px;padding-right:38px}}
-@media(max-width:1150px){#appShell{padding-left:190px}.sidebar{width:190px;padding:20px 10px}.brand svg{width:44px}.brand-name{font-size:17px}.brand-sub{font-size:8px}.page-heading{flex-wrap:wrap}.modifier-grid,.mods-grid{grid-template-columns:1fr}.settings-grid{grid-template-columns:1fr}.card.half{grid-column:1/-1}.row .lbl{width:180px}#wrap{padding:0 20px 40px}}
+@media(max-width:1150px){#appShell{padding-left:190px}.sidebar{width:190px;padding:20px 10px}.brand svg{width:44px}.brand-name{font-size:17px}.brand-sub{font-size:8px}.page-heading{flex-wrap:wrap}.modifier-grid{grid-template-columns:1fr}.mods-grid{flex-direction:column;align-items:stretch;gap:0}.settings-grid{grid-template-columns:1fr}.card.half{grid-column:1/-1}.row .lbl{width:180px}#wrap{padding:0 20px 40px}}
 @media(max-width:720px){#appShell{padding-left:0}.sidebar{position:static;width:auto;padding:12px 14px;border-right:0;border-bottom:1px solid var(--line);overflow:visible}.brand{margin:0 0 10px}.brand svg{width:39px;height:39px}.brand-name{font-size:18px}.brand-sub{display:none}.tabbar{flex-direction:row;gap:3px}.tabbtn{flex:1;justify-content:center;padding:10px 6px;gap:4px;font-size:11px}.tabbtn svg{width:15px;height:15px}.sidebar-foot{display:none}#wrap{padding:0 14px 35px}.control-dock{position:static}.page-heading h1{font-size:25px}.page-actions{width:100%;justify-content:space-between;flex-wrap:wrap}.row{flex-wrap:wrap}.row .lbl{width:100%;flex-shrink:1}.row:has(.range-control)>.range-control{flex-basis:100%}.range-control{gap:8px}.step-button{padding:5px 6px}.value-stepper>.val{min-width:44px;width:52px!important}.card{padding:16px}#workspace{gap:14px}.topline{gap:8px}#statusbar{gap:10px}#saveIndicator{min-width:0}#toast{left:50%}#controlToolbar{flex-wrap:wrap}.control-search{flex-basis:100%}.control-filters{width:100%}.control-filters button{flex:1}.feature-card{flex-wrap:nowrap}.density-top .row{flex-wrap:nowrap}.section-title{flex-wrap:wrap}}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
 #satanicMods{background:linear-gradient(145deg,#211a17,#161210 65%);border-color:#48362b;padding:24px}
@@ -2267,14 +2303,24 @@ input[type=range]::-webkit-slider-thumb{appearance:none;width:17px;height:17px;b
         <span class="val" id="apbagval">on</span>
     </div>
     <div class="row" style="border:none">
-        <span class="lbl" style="width:auto;flex:1">Mark a running toggle skill<br><span style="font-size:11px;color:#8f816e;font-weight:normal">For Soul Spurn (White Mage), Lunar Orbit (Exo), Crematus (Plague Doctor), Submerged Knives (Butcher) and Maelstrom of Frost (Prophet): draws a soft red outline around that skill's skill-bar slot while its toggle is running, so you can see at a glance that it is still active. The outline disappears when the toggle ends. A plain cast, made without the skill's toggle sub-talent, lights nothing.</span></span>
+        <span class="lbl" style="width:auto;flex:1">Mark a running toggle skill<br><span style="font-size:11px;color:#8f816e;font-weight:normal">For a fixed set of toggle skills, each measured in-game: draws a soft red outline around that skill's skill-bar slot while its toggle is running, so you can see at a glance that it is still active. The outline disappears when the toggle ends. A plain cast, made without the skill's toggle sub-talent, lights nothing.</span></span>
         <label class="switch"><input type="checkbox" id="mod_toggle_indicator"><span class="sl"></span></label>
         <span class="val" id="mtival">off</span>
     </div>
     <div class="row" style="border:none">
-        <span class="lbl" style="width:auto;flex:1">Stop double cast re-casting a toggle skill<br><span style="font-size:11px;color:#8f816e;font-weight:normal">For Soul Spurn, Lunar Orbit, Crematus, Submerged Knives and Maelstrom of Frost: a double cast proc can cast one of them a second time on its own, which flips its toggle straight back to where it was before your press. With this on, that extra cast is skipped, so the toggle stays the way you set it. It only steps in when you actually have the skill's toggle sub-talent; your own presses are never affected.</span></span>
+        <span class="lbl" style="width:auto;flex:1">Stop double cast re-casting a toggle skill<br><span style="font-size:11px;color:#8f816e;font-weight:normal">For that same fixed set of toggle skills: a double cast proc can cast one of them a second time on its own, which flips its toggle straight back to where it was before your press. With this on, that extra cast is skipped, so the toggle stays the way you set it. It only steps in when you actually have the skill's toggle sub-talent, or the skill is a toggle on its own; your own presses are never affected.</span></span>
         <label class="switch"><input type="checkbox" id="mod_toggle_guard"><span class="sl"></span></label>
         <span class="val" id="mtgval">off</span>
+    </div>
+    <div class="row" style="border:none">
+        <span class="lbl" style="width:auto;flex:1">Timed skill countdown<br><span style="font-size:11px;color:#8f816e;font-weight:normal">Shows how much time a timed skill has left, over that skill's slot on the skill bar, in the look you pick below. Works for most timed skills; toggles and companions (turrets, totems) don't get one. Off by default.</span></span>
+        <select class="style-select" id="mod_skill_timer_style">
+            <option value="off">Off</option>
+            <option value="arc">Arc</option>
+            <option value="bar">Bar</option>
+            <option value="number">Number</option>
+            <option value="fade">Fade</option>
+        </select>
     </div>
 </div>
 
@@ -2634,6 +2680,7 @@ async function boot(){
     document.getElementById('mod_toggle_guard').checked=mtg;
     document.getElementById('mtgval').textContent=mtg?'on':'off';
     document.getElementById('mtgval').className='val '+(mtg?'':'off');
+    document.getElementById('mod_skill_timer_style').value=c.mod_skill_timer_style||'off';
   rarityLoad(c);
   document.getElementById('hhval').className='val '+(hh?'':'off');
   document.getElementById('exepath').value=c.game_exe||'';
@@ -2835,6 +2882,10 @@ function bind(){
         const v=document.getElementById('mtgval');v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
         toast('Toggle-skill double cast guard '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
     };
+    document.getElementById('mod_skill_timer_style').onchange=async(e)=>{
+        const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_skill_timer_style',value:e.target.value})});
+        toast('Timed skill countdown: '+e.target.value+' - '+(res.ok||res.err));
+    };
   { const el=document.getElementById('angelic_items');
     el.oninput=angelicPaint;
     el.onchange=async()=>{ const v=sliderVal(el); const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'angelic_items',value:v})}); angelicPaint(); toast('angelic drops '+(v>1?'x'+v:'off')+' - '+(res.ok||res.err)); };
@@ -2957,6 +3008,7 @@ function preparePanelUI(){
       const apParent=document.getElementById('mod_auto_prospect').closest('.row'),apChild=document.getElementById('mod_auto_prospect_bag_row');
       const apGroup=document.createElement('div');apGroup.className='feature-with-child';apParent.before(apGroup);apGroup.append(apParent,apChild);
     }
+    setupModsColumns(grid);
   }
   document.querySelectorAll('input[type=range]').forEach((range,index)=>{
     const row=range.closest('.row');if(!row)return;
@@ -3036,6 +3088,7 @@ function refreshSavedControls(){
   for(const [range,typed] of painted){if(typed===undefined)delete range.dataset.typed;else range.dataset.typed=typed}
   const booleans={den_on:'density_on',autoapply:'auto_apply',enemyspeed_ct:'enemy_speed_ct',map_reveal:'map_reveal',map_reveal_packs:'map_reveal_packs',headhunter:'headhunter',tyrant:'tyrant',beacon:'beacon',mod_filter_max_relics:'mod_filter_max_relics',mod_orb_pickup_radius:'mod_orb_pickup_radius',mod_pet_quest_pickup:'mod_pet_quest_pickup',mod_auto_prospect:'mod_auto_prospect',mod_auto_prospect_bag:'mod_auto_prospect_bag',mod_toggle_indicator:'mod_toggle_indicator',mod_toggle_guard:'mod_toggle_guard'};
   for(const [id,key] of Object.entries(booleans))document.getElementById(id).checked=!!c[key];
+  document.getElementById('mod_skill_timer_style').value=c.mod_skill_timer_style||'off';
   for(const [id,key] of Object.entries({hhval:'headhunter',tyval:'tyrant',beval:'beacon',mfmrval:'mod_filter_max_relics',morval:'mod_orb_pickup_radius',mpqpval:'mod_pet_quest_pickup',autoprospval:'mod_auto_prospect',mtival:'mod_toggle_indicator',mtgval:'mod_toggle_guard',mapval:'map_reveal'})){
     const value=document.getElementById(id);value.textContent=c[key]?'on':'off';value.className='val '+(c[key]?'':'off');
   }
@@ -3046,6 +3099,27 @@ function refreshSavedControls(){
   syncProspectBag(!!c.mod_auto_prospect,!!c.mod_auto_prospect_bag);
   applyPluginModState(ST.pluginMods);
   updateControlDecoration();decoratePanelIcons();
+}
+// Mods tab cards read top to bottom, left column first. The split is the
+// earliest one where the left column is at least as tall as the right, so the
+// left column is the taller one whenever the two differ.
+function setupModsColumns(grid){
+  const items=[...grid.children],left=document.createElement('div'),right=document.createElement('div');
+  left.className=right.className='mods-col';grid.append(left,right);left.append(...items);
+  let split=items.length;
+  // Both columns keep the same width wherever an item sits, so a move never
+  // resizes what is observed and the observer cannot loop.
+  const balance=()=>{
+    if(!grid.clientWidth)return;
+    const heights=items.map(item=>item.hidden||!item.offsetParent?0:item.getBoundingClientRect().height+12);
+    const total=heights.reduce((a,b)=>a+b,0);
+    let k=0,sum=0;
+    while(k<items.length&&sum<total-sum)sum+=heights[k++];
+    if(k===split)return;
+    split=k;left.append(...items.slice(0,k));right.append(...items.slice(k));
+  };
+  const observer=new ResizeObserver(balance);
+  observer.observe(grid);items.forEach(item=>observer.observe(item));
 }
 function filterControlRows(){
   if(!document.getElementById('controlSearch'))return;
