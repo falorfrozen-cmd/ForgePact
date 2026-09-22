@@ -389,6 +389,7 @@ static consteval const char* SdkShortScriptName(std::string_view sdkConstant)
 #include <ForgePact/SkillTimerNames.hpp>
 #include <ForgePact/ProspectWindowMod.hpp>
 #include <ForgePact/AutoProspectMod.hpp>
+#include <ForgePact/CraftMatsMod.hpp>
 #include <ForgePact/PetQuestCollectorMod.hpp>
 #include <ForgePact/DensityManager.hpp>
 #include <ForgePact/DropManager.hpp>
@@ -21354,6 +21355,800 @@ static bool HandleMenuProbeCommand(const std::string& lc, const std::string& res
     return false;
 }
 
+#ifndef FORGEPACT_RELEASE
+// ---- craftprobe: the crafting-materials Phase 0 instrument (issue #14) ------
+// docs/crafting-materials-research.md holds the static search, the vanilla
+// baseline B0, the hypotheses and the live procedure this instrument serves.
+// Research build only, never in kPlayerCommands, dispatched from
+// HandleCraftCommand; this comment sits inside the guard so the verb's name
+// vanishes from a player build.
+//
+// How the game counts and consumes a recipe's materials, and where the stash's
+// material tab lives, are unmeasured. Every candidate the static search found
+// is native-detoured in ONE build (agents.md: batch every candidate before
+// asking for a relaunch), with MmCreateHook at the function's own address -
+// the attach route `prospectprobe` and `citrace nativetrace` use, because a
+// table-only hook is blind to this build's direct `call rel32` sites.
+// CheckPlayerInteraction rides in the same table as the positive control: a 0
+// there voids every other row's count.
+//
+// It reuses prospectprobe's read-only helpers (PpDescribeSelf, AggroArgs,
+// PpArgIdentities, PpRetText, PpBackingShape, PpShallow, PpBackingJsonFile)
+// and menuprobe's instance resolution (MpResolve, MpWhere, MpArg), with its
+// own table, counters and budgets. Several rows share an address with
+// prospectprobe's table; a second MmCreateHook on an address already hooked
+// fails for that row, so run one instrument per session - `hook` says so when
+// prospectprobe already holds rows.
+//
+// The only write is `call ... confirm`: exactly one by-name call of one table
+// row (asset_get_index + script_execute, through ApCallScript), refused before
+// that call on any missing precondition. `backing` keeps what the game's OWN
+// calls returned; nothing here ever invokes a profile getter (a blind
+// GetProfileInventoryData call crashed the game - prospect research, Phase 0b).
+static constexpr long kCpDefaultLogBudget = 6;     // logged calls per row per `arm` unless budget=N
+static constexpr long kCpMaxLogBudget = 5000;      // out.txt stays readable
+static constexpr int kCpReaderMaxInstances = 4;    // live instances of one object a reader lists
+static constexpr int kCpReaderMaxLines = 80;       // variables a reader prints per instance
+static constexpr int kCpReaderArrayPreview = 3;    // leading entries of an array a reader prints
+static constexpr int kCpVarArrayPreview = 20;      // leading entries `var` prints
+static constexpr size_t kCpLineMax = 1500;         // one variable's text, before it is cut
+
+static std::atomic<bool> g_CpArmed{ false };
+static volatile long g_CpLogBudget = kCpDefaultLogBudget;
+static std::atomic<bool> g_CpBacking{ false };
+static bool g_CpInCapture = false;                 // game thread only; a capture never nests
+
+// One row's kept return while `backing` is on: the latest call's value. An
+// RValue copy does not root a struct, so the value is also assigned to a
+// research global (`__cp_backing_<row>`) the collector does see - the same
+// arrangement as PpBackingKept.
+struct CpKept {
+    RValue*     value = nullptr;   // heap-held and never deleted: a global RValue's destructor would run after the runtime is gone
+    long        call = 0;          // the row's call number; 0 = nothing kept
+    long        seen = 0;          // returns captured since the first `backing on`
+    std::string self;
+    std::string root;
+};
+
+// Before the trampoline: one budgeted line naming self, other and every
+// argument. Returns whether it was logged, so the `ret=` line follows exactly
+// the calls that were.
+static bool CpObserve(const char* label, long n, volatile long* logged, volatile long* logOn,
+                      CInstance* S, CInstance* O, int argc, RValue** A)
+{
+    if (!g_CpArmed.load() || !*logOn) return false;
+    const long budget = g_CpLogBudget;
+    if (*logged >= budget || InterlockedIncrement(logged) > budget) return false;
+    try {
+        Out(std::string("craftprobe ") + label + " #" + std::to_string(n)
+            + " self=" + PpDescribeSelf(S) + " other=" + PpDescribeSelf(O)
+            + " argc=" + std::to_string(argc) + AggroArgs(argc, A) + PpArgIdentities(argc, A));
+    } catch (...) {}
+    return true;
+}
+
+// After the trampoline, on a row `backing` selected: keep what the game's own
+// call returned. The research global is set first, and the slot only after it
+// succeeded, so the slot never holds an unrooted value.
+static void CpCapture(const char* safe, const char* label, long n, CpKept& kept, CInstance* S, const RValue& result)
+{
+    if (g_CpInCapture) return;
+    g_CpInCapture = true;
+    try {
+        const std::string root = std::string("__cp_backing_") + safe;
+        g_Yytk->CallBuiltin("variable_global_set", { RValue(root), result });
+        if (!kept.value) kept.value = new RValue();
+        *kept.value = result;
+        kept.root = root;
+        kept.call = n;
+        kept.self = PpDescribeSelf(S);
+        if (++kept.seen == 1)
+            Out(std::string("craftprobe backing ") + label + " #" + std::to_string(n) + " self=" + kept.self
+                + " kept " + PpBackingShape(result) + " (the latest return is kept; `backing dump` writes it)");
+    } catch (...) {}
+    g_CpInCapture = false;
+}
+
+static void CpAfter(const char* safe, const char* label, long n, bool logged, bool capture, CpKept& kept,
+                    CInstance* S, const RValue& result)
+{
+    if (logged) {
+        try { Out(std::string("craftprobe ") + label + " #" + std::to_string(n) + " ret=" + PpRetText(result)); }
+        catch (...) { Out(std::string("craftprobe ") + label + " #" + std::to_string(n) + " ret=<read failed>"); }
+    }
+    if (capture && g_CpBacking.load()) CpCapture(safe, label, n, kept, S, result);
+}
+
+#define CRAFTPROBE_DETOUR(SAFE, LABEL) \
+    static PFUNC_YYGMLScript g_CpOrig_##SAFE = nullptr; \
+    static volatile long g_CpCalls_##SAFE = 0; \
+    static volatile long g_CpLogged_##SAFE = 0; \
+    static volatile long g_CpLogOn_##SAFE = 0; \
+    static volatile long g_CpCapture_##SAFE = 0; \
+    static CpKept g_CpKept_##SAFE; \
+    static RValue& CpDetour_##SAFE(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) { \
+        const long n = InterlockedIncrement(&g_CpCalls_##SAFE); \
+        const bool logged = CpObserve(LABEL, n, &g_CpLogged_##SAFE, &g_CpLogOn_##SAFE, S, O, argc, A); \
+        RValue& r = g_CpOrig_##SAFE ? g_CpOrig_##SAFE(S, O, R, argc, A) : R; \
+        CpAfter(#SAFE, LABEL, n, logged, g_CpCapture_##SAFE != 0, g_CpKept_##SAFE, S, r); \
+        return r; \
+    }
+
+// One row per candidate in docs/crafting-materials-research.md § Static
+// search. SAFE, label, SDK constant. The runtime name is always the
+// hs-game-sdk constant's own value - never retyped here - so a row that prints
+// `not found` is a finding about the runtime, not a typo, and a game patch
+// that renumbers a closure fails the compile once the SDK is regenerated.
+#define CRAFTPROBE_TARGETS(X) \
+    /* crafting (the cube window's scripts and their struct methods) */ \
+    X(GetCraftItemsAvailable, "GetCraftItemsAvailable", gml_Script_GetCraftItemsAvailable) \
+    X(CraftFindRecipeItems, "CraftFindRecipeItems", gml_Script_CraftFindRecipeItems) \
+    X(Struct68, "___struct___68@CraftFindRecipeItems", gml_Script____struct___68_CraftFindRecipeItems_DefineCraftingFuncs) \
+    X(DoCraftResult, "DoCraftResult", gml_Script_DoCraftResult) \
+    X(Struct86, "___struct___86@DoCraftResult", gml_Script____struct___86_DoCraftResult_DefineCraftingFuncs) \
+    X(CraftEditGrid, "CraftEditGrid", gml_Script_CraftEditGrid) \
+    X(Struct87, "___struct___87@CraftEditGrid", gml_Script____struct___87_CraftEditGrid_DefineCraftingFuncs) \
+    X(CraftEditPlayerInventory, "CraftEditPlayerInventory", gml_Script_CraftEditPlayerInventory) \
+    X(Struct88, "___struct___88@CraftEditPlayerInventory", gml_Script____struct___88_CraftEditPlayerInventory_DefineCraftingFuncs) \
+    X(UiACraftButton, "UiACraftButton", gml_Script_UiACraftButton) \
+    X(UiACraftMultiAmountConfirm, "UiACraftMultiAmountConfirm", gml_Script_UiACraftMultiAmountConfirm) \
+    X(GetCraftRecipeName, "GetCraftRecipeName", gml_Script_GetCraftRecipeName) \
+    X(SCraftData, "s_CraftData", gml_Script_s_CraftData) \
+    X(SCraftItem, "s_CraftItem", gml_Script_s_CraftItem) \
+    /* count / find / consume in the inventory */ \
+    X(CountInventoryItem, "CountInventoryItem", gml_Script_CountInventoryItem) \
+    X(FindInventoryItem, "FindInventoryItem", gml_Script_FindInventoryItem) \
+    X(FindInventoryItemData, "FindInventoryItemData", gml_Script_FindInventoryItemData) \
+    X(FindInventoryItemOperation, "FindInventoryItemOperation", gml_Script_FindInventoryItemOperation) \
+    X(Struct152, "___struct___152@FindInventoryItemOperation", gml_Script____struct___152_FindInventoryItemOperation_InventoryFuncs) \
+    X(InventoryStackHandler, "InventoryStackHandler", gml_Script_InventoryStackHandler) \
+    X(InventoryStackUpdateAndRemove, "InventoryStackUpdateAndRemove", gml_Script_InventoryStackUpdateAndRemove) \
+    X(Struct161, "___struct___161@InventoryStackUpdateAndRemove", gml_Script____struct___161_InventoryStackUpdateAndRemove_InventoryFuncs) \
+    X(InventoryStackUpdateAndEdit, "InventoryStackUpdateAndEdit", gml_Script_InventoryStackUpdateAndEdit) \
+    X(Struct172, "___struct___172@InventoryStackUpdateAndEdit", gml_Script____struct___172_InventoryStackUpdateAndEdit_InventoryFuncs) \
+    X(SPendingStackOperation, "s_PendingStackOperation", gml_Script_s_PendingStackOperation) \
+    X(GetStackOpLocationFromGridType, "GetStackOpLocationFromGridType", gml_Script_GetStackOpLocationFromGridType) \
+    X(GetItemOwnerFromStackOpLocation, "GetItemOwnerFromStackOpLocation", gml_Script_GetItemOwnerFromStackOpLocation) \
+    X(GetItemOwnerStr, "GetItemOwnerStr", gml_Script_GetItemOwnerStr) \
+    X(ChangeItemOwner, "ChangeItemOwner", gml_Script_ChangeItemOwner) \
+    X(GetMaxStack, "GetMaxStack", gml_Script_GetMaxStack) \
+    X(IsItemTypeStackable, "IsItemTypeStackable", gml_Script_IsItemTypeStackable) \
+    X(UiAInventoryConsumeItemConfirm, "UiAInventoryConsumeItemConfirm", gml_Script_UiAInventoryConsumeItemConfirm) \
+    X(GetItemFromFingerprint, "GetItemFromFingerprint", gml_Script_GetItemFromFingerprint) \
+    X(ReturnItemTypeFromFingerPrint, "ReturnItemTypeFromFingerPrint", gml_Script_ReturnItemTypeFromFingerPrint) \
+    /* stash */ \
+    X(StashAddToStack, "StashAddToStack", gml_Script_StashAddToStack) \
+    X(StashGridAddItem, "StashGridAddItem", gml_Script_StashGridAddItem) \
+    X(SStashTabData, "s_StashTabData", gml_Script_s_StashTabData) \
+    X(GetStashMaxTabs, "GetStashMaxTabs", gml_Script_GetStashMaxTabs) \
+    X(LoadStash, "LoadStash", gml_Script_LoadStash) \
+    X(SaveStash, "SaveStash", gml_Script_SaveStash) \
+    X(Struct357, "___struct___357@SaveStash", gml_Script____struct___357_SaveStash_SaveStashFunc) \
+    X(Struct359, "___struct___359@SaveStash", gml_Script____struct___359_SaveStash_SaveStashFunc) \
+    X(Struct361, "___struct___361@SaveStash", gml_Script____struct___361_SaveStash_SaveStashFunc) \
+    X(Struct363, "___struct___363@SaveStash", gml_Script____struct___363_SaveStash_SaveStashFunc) \
+    X(Struct364, "___struct___364@SaveStash", gml_Script____struct___364_SaveStash_SaveStashFunc) \
+    X(GetStashMapPos, "GetStashMapPos", gml_Script_GetStashMapPos) \
+    X(UiAStashTabClick, "UiAStashTabClick", gml_Script_UiAStashTabClick) \
+    X(UiAStashMaterialTabClick, "UiAStashMaterialTabClick", gml_Script_UiAStashMaterialTabClick) \
+    X(UiAStashTabMaterialBuy, "UiAStashTabMaterialBuy", gml_Script_UiAStashTabMaterialBuy) \
+    X(UiAStashListBtnActivate, "UiAStashListBtnActivate", gml_Script_UiAStashListBtnActivate) \
+    X(StashListBtn1820, "UiAStashListBtnActivate anon@1820", gml_Script_anon_1820_UiAStashListBtnActivate_UiActivateFuncs) \
+    X(UiDrawStashTabBuy, "UiDrawStashTabBuy", gml_Script_UiDrawStashTabBuy) \
+    /* the bag's materials tab and the click-move route issue #9 measured */ \
+    X(UiAInventoryMaterialTabClick, "UiAInventoryMaterialTabClick", gml_Script_UiAInventoryMaterialTabClick) \
+    X(UiDrawInventoryMaterialTab, "UiDrawInventoryMaterialTab", gml_Script_UiDrawInventoryMaterialTab) \
+    X(InventoryGridAddToStack, "InventoryGridAddToStack", gml_Script_InventoryGridAddToStack) \
+    X(InventoryGridCanAddToStack, "InventoryGridCanAddToStack", gml_Script_InventoryGridCanAddToStack) \
+    X(InvGridClearItemNode, "InvGridClearItemNode", gml_Script_InvGridClearItemNode) \
+    X(GetItemPreferredGrid, "GetItemPreferredGrid", gml_Script_GetItemPreferredGrid) \
+    X(GridAddItem, "GridAddItem", gml_Script_GridAddItem) \
+    X(GetInventoryGridNode, "GetInventoryGridNode", gml_Script_GetInventoryGridNode) \
+    X(InventoryGridRemoveItem, "InventoryGridRemoveItem", gml_Script_InventoryGridRemoveItem) \
+    X(GridRemoveItem, "GridRemoveItem", gml_Script_GridRemoveItem) \
+    /* profile getters: capture only (`backing on`), never invoked by us */ \
+    X(GetProfileInv, "GetProfileInventoryData", gml_Script_GetProfileInventoryData) \
+    X(GetItemOwner, "GetPlayerItemOwner", gml_Script_GetPlayerItemOwner) \
+    X(GetInvArray, "GetInventoryArray", gml_Script_GetInventoryArray) \
+    X(GetProfileObj, "GetPlayerProfileObj", gml_Script_GetPlayerProfileObj) \
+    /* Create-event closures of the cube and stash objects. Derived from the  */ \
+    /* SDK: every constant whose value names one of these eight objects'      */ \
+    /* Create_0, which test_craftprobe_table_covers_every_sdk_closure_of_its_ */ \
+    /* objects enforces.                                                      */ \
+    /* UI_Craft_obj (the cube window) */ \
+    X(Craft1834, "UI_Craft_obj anon@1834", gml_Script_anon_1834_gml_Object_UI_Craft_obj_Create_0) \
+    X(Craft4988, "UI_Craft_obj anon@4988", gml_Script_anon_4988_gml_Object_UI_Craft_obj_Create_0) \
+    X(Craft6782, "UI_Craft_obj anon@6782", gml_Script_anon_6782_gml_Object_UI_Craft_obj_Create_0) \
+    X(Craft7914, "UI_Craft_obj anon@7914", gml_Script_anon_7914_gml_Object_UI_Craft_obj_Create_0) \
+    /* UI_Journal_Crafting_obj, UI_Craft_Recipe_List_Item_obj, Craft_Cube_obj, UI_Button_Journal_Craft_obj */ \
+    X(JournalCrafting1154, "UI_Journal_Crafting_obj anon@1154", gml_Script_anon_1154_gml_Object_UI_Journal_Crafting_obj_Create_0) \
+    X(RecipeItem840, "UI_Craft_Recipe_List_Item_obj anon@840", gml_Script_anon_840_gml_Object_UI_Craft_Recipe_List_Item_obj_Create_0) \
+    X(CraftCube436, "Craft_Cube_obj anon@436", gml_Script_anon_436_gml_Object_Craft_Cube_obj_Create_0) \
+    X(JournalCraftButton525, "UI_Button_Journal_Craft_obj anon@525", gml_Script_anon_525_gml_Object_UI_Button_Journal_Craft_obj_Create_0) \
+    /* UI_Stash_obj (the stash window) */ \
+    X(Stash1649, "UI_Stash_obj anon@1649", gml_Script_anon_1649_gml_Object_UI_Stash_obj_Create_0) \
+    X(Stash2245, "UI_Stash_obj anon@2245", gml_Script_anon_2245_gml_Object_UI_Stash_obj_Create_0) \
+    X(Stash2483, "UI_Stash_obj anon@2483", gml_Script_anon_2483_gml_Object_UI_Stash_obj_Create_0) \
+    X(Stash3835, "UI_Stash_obj anon@3835", gml_Script_anon_3835_gml_Object_UI_Stash_obj_Create_0) \
+    X(Stash4195, "UI_Stash_obj anon@4195", gml_Script_anon_4195_gml_Object_UI_Stash_obj_Create_0) \
+    X(Stash4348, "UI_Stash_obj anon@4348", gml_Script_anon_4348_gml_Object_UI_Stash_obj_Create_0) \
+    X(Stash5662, "UI_Stash_obj anon@5662", gml_Script_anon_5662_gml_Object_UI_Stash_obj_Create_0) \
+    X(Stash6631, "UI_Stash_obj anon@6631", gml_Script_anon_6631_gml_Object_UI_Stash_obj_Create_0) \
+    X(Stash7091, "UI_Stash_obj anon@7091", gml_Script_anon_7091_gml_Object_UI_Stash_obj_Create_0) \
+    X(Stash7525, "UI_Stash_obj anon@7525", gml_Script_anon_7525_gml_Object_UI_Stash_obj_Create_0) \
+    X(Stash8329, "UI_Stash_obj anon@8329", gml_Script_anon_8329_gml_Object_UI_Stash_obj_Create_0) \
+    X(Stash8574, "UI_Stash_obj anon@8574", gml_Script_anon_8574_gml_Object_UI_Stash_obj_Create_0) \
+    /* UI_Stash_Tab_Bar_Container_obj (the stash's tab bar) */ \
+    X(TabBar125, "UI_Stash_Tab_Bar_Container_obj anon@125", gml_Script_anon_125_gml_Object_UI_Stash_Tab_Bar_Container_obj_Create_0) \
+    X(TabBar1018, "UI_Stash_Tab_Bar_Container_obj anon@1018", gml_Script_anon_1018_gml_Object_UI_Stash_Tab_Bar_Container_obj_Create_0) \
+    X(TabBar5497, "UI_Stash_Tab_Bar_Container_obj anon@5497", gml_Script_anon_5497_gml_Object_UI_Stash_Tab_Bar_Container_obj_Create_0) \
+    X(TabBar5778, "UI_Stash_Tab_Bar_Container_obj anon@5778", gml_Script_anon_5778_gml_Object_UI_Stash_Tab_Bar_Container_obj_Create_0) \
+    X(TabBar6037, "UI_Stash_Tab_Bar_Container_obj anon@6037", gml_Script_anon_6037_gml_Object_UI_Stash_Tab_Bar_Container_obj_Create_0) \
+    X(TabBar8477, "UI_Stash_Tab_Bar_Container_obj anon@8477", gml_Script_anon_8477_gml_Object_UI_Stash_Tab_Bar_Container_obj_Create_0) \
+    X(TabBar9733, "UI_Stash_Tab_Bar_Container_obj anon@9733", gml_Script_anon_9733_gml_Object_UI_Stash_Tab_Bar_Container_obj_Create_0) \
+    X(TabBarSort, "UI_Stash_Tab_Bar_Container_obj sortXAscending", gml_Script_sortXAscending_gml_Object_UI_Stash_Tab_Bar_Container_obj_Create_0) \
+    /* Town_Stash_obj (the world object) */ \
+    X(TownStash663, "Town_Stash_obj anon@663", gml_Script_anon_663_gml_Object_Town_Stash_obj_Create_0) \
+    /* UI_Button_Stash_Tab_obj has no Create closure; its one Step closure */ \
+    X(StashTabButton503, "UI_Button_Stash_Tab_obj anon@503 (Step)", gml_Script_anon_503_gml_Object_UI_Button_Stash_Tab_obj_Step_0) \
+    /* positive control: fires from every interactable's Step event */ \
+    X(CheckPlayerInteraction, "CheckPlayerInteraction", gml_Script_CheckPlayerInteraction)
+
+#define CP_DEFINE_DETOUR(SAFE, LABEL, CONSTANT) CRAFTPROBE_DETOUR(SAFE, LABEL)
+CRAFTPROBE_TARGETS(CP_DEFINE_DETOUR)
+#undef CP_DEFINE_DETOUR
+#undef CRAFTPROBE_DETOUR
+
+struct CpTarget {
+    const char*        label;
+    const char*        safe;          // the row's identifier, for file and global names
+    const char*        runtimeName;   // the SDK constant's value, used as-is
+    const char*        hookId;
+    PVOID              detour;
+    PFUNC_YYGMLScript* origSlot;
+    volatile long*     calls;
+    volatile long*     logged;
+    volatile long*     logOn;         // selected for logging by the last `arm`
+    volatile long*     capture;       // selected for capture by the last `backing on`
+    CpKept*            kept;
+    std::atomic<bool>  installed;
+    long               lastShown;     // calls at the previous `show`
+};
+
+#define CP_ENTRY(SAFE, LABEL, CONSTANT) \
+    { LABEL, #SAFE, HeroSiege::Scripts::CONSTANT.data(), "fp_cp_" #SAFE, (PVOID)CpDetour_##SAFE, &g_CpOrig_##SAFE, \
+      &g_CpCalls_##SAFE, &g_CpLogged_##SAFE, &g_CpLogOn_##SAFE, &g_CpCapture_##SAFE, &g_CpKept_##SAFE, false, 0 },
+static CpTarget g_CpTargets[] = {
+    CRAFTPROBE_TARGETS(CP_ENTRY)
+};
+#undef CP_ENTRY
+#undef CRAFTPROBE_TARGETS
+
+static constexpr int kCpTargetCount = (int)(sizeof(g_CpTargets) / sizeof(g_CpTargets[0]));
+
+// A row by its label or its identifier, either case.
+static CpTarget* CpFindRow(const std::string& text)
+{
+    const std::string l = Lower(text);
+    for (CpTarget& t : g_CpTargets) if (Lower(t.label) == l || Lower(t.safe) == l) return &t;
+    return nullptr;
+}
+
+static bool CpLabelMatches(const CpTarget& t, const std::vector<std::string>& filters)
+{
+    const std::string ll = Lower(t.label);
+    for (const std::string& f : filters) if (ll.find(Lower(f)) != std::string::npos) return true;
+    return false;
+}
+
+// The four profile getters are capture-only: `call` refuses them.
+static bool CpIsProfileGetter(const CpTarget& t)
+{
+    const std::string_view name(t.runtimeName);
+    return name == HeroSiege::Scripts::gml_Script_GetProfileInventoryData
+        || name == HeroSiege::Scripts::gml_Script_GetPlayerItemOwner
+        || name == HeroSiege::Scripts::gml_Script_GetInventoryArray
+        || name == HeroSiege::Scripts::gml_Script_GetPlayerProfileObj;
+}
+
+// Same resolution as PpResolve: name -> CScript -> the compiled function. The
+// address is refused unless it is committed, executable code inside
+// Hero_Siege.exe's own image - which also refuses an entry some table hook
+// already swapped for a plugin detour. The check comes before MmCreateHook,
+// never after.
+static PVOID CpResolve(const CpTarget& t, std::string& why)
+{
+    PVOID p = nullptr;
+    AurieStatus st = g_Yytk->GetNamedRoutinePointer(t.runtimeName, &p);
+    if (!AurieSuccess(st) || !p) { why = "not found st=" + std::to_string((int)st); return nullptr; }
+    CScript* sc = reinterpret_cast<CScript*>(p);
+    if (!ReadablePtr(sc, sizeof(CScript)) || !ReadablePtr(sc->m_Functions, sizeof(*sc->m_Functions))) {
+        why = "refused (name resolved, but not to a readable script record)";
+        return nullptr;
+    }
+    PVOID fn = (PVOID)sc->m_Functions->m_ScriptFunction;
+    if (!fn) { why = "refused (script record carries no function)"; return nullptr; }
+    if (!AddrIsExecutableInModule(GetModuleHandleA(nullptr), fn)) {
+        why = "refused (function address is not executable code inside Hero_Siege.exe - a table hook may hold this entry)";
+        return nullptr;
+    }
+    return fn;
+}
+
+static void CpInstall(const std::vector<std::string>& filters)
+{
+    int ppHeld = 0;
+    for (const PpTarget& p : g_PpTargets) if (p.installed.load()) ++ppHeld;
+    if (ppHeld > 0)
+        Out("craftprobe hook: prospectprobe already holds " + std::to_string(ppHeld) + " detour(s) this session; rows sharing"
+            " an address with it will fail below - one instrument per session");
+    HMODULE mainMod = GetModuleHandleA(nullptr);
+    int ok = 0, failed = 0, skipped = 0;
+    for (CpTarget& t : g_CpTargets) {
+        if (!filters.empty() && !CpLabelMatches(t, filters)) { ++skipped; continue; }
+        if (t.installed.load()) { Out(std::string("craftprobe hook: ") + t.label + " already detoured"); ++ok; continue; }
+        std::string why;
+        PVOID src = CpResolve(t, why);
+        if (!src) { Out(std::string("craftprobe hook: ") + t.label + " " + why); ++failed; continue; }
+        PVOID tramp = nullptr;
+        AurieStatus hs = MmCreateHook(g_ArSelfModule, t.hookId, src, t.detour, &tramp);
+        if (!AurieSuccess(hs) || !tramp) {
+            Out(std::string("craftprobe hook: ") + t.label + " MmCreateHook failed st=" + std::to_string((int)hs));
+            ++failed;
+            continue;
+        }
+        *t.origSlot = reinterpret_cast<PFUNC_YYGMLScript>(tramp);
+        t.installed.store(true);
+        char b[320];
+        sprintf_s(b, "craftprobe hook: detoured %s at exe+0x%llX", t.label,
+                  (unsigned long long)((char*)src - (char*)mainMod));
+        Out(b);
+        ++ok;
+    }
+    Out("craftprobe hook: " + std::to_string(ok) + " detoured, " + std::to_string(failed) + " failed"
+        + (skipped ? ", " + std::to_string(skipped) + " not selected" : std::string()) + ".");
+    Out("  Next: `craftprobe arm budget=N`, then `craftprobe show` - CheckPlayerInteraction must already be climbing, or nothing here counts.");
+}
+
+static void CpZeroCounters()
+{
+    for (CpTarget& t : g_CpTargets) {
+        InterlockedExchange(t.calls, 0);
+        InterlockedExchange(t.logged, 0);
+        t.lastShown = 0;
+    }
+}
+
+// `arm [budget=N] [substr ...]`: with no substrings every row except the
+// CheckPlayerInteraction control logs (it fires every frame from every
+// interactable; its count is the measurement, and naming it logs it too).
+static void CpArm(const std::vector<std::string>& args)
+{
+    long budget = kCpDefaultLogBudget;
+    std::vector<std::string> filters;
+    for (const std::string& a : args) {
+        const std::string la = Lower(a);
+        if (la.rfind("budget=", 0) == 0) {
+            try { budget = std::stol(la.substr(7)); }
+            catch (...) { Out("craftprobe arm: budget=N needs a whole number; not armed"); return; }
+            if (budget < 1 || budget > kCpMaxLogBudget) {
+                Out("craftprobe arm: budget must be 1.." + std::to_string(kCpMaxLogBudget) + "; not armed");
+                return;
+            }
+        } else filters.push_back(la);
+    }
+    CpZeroCounters();
+    int selected = 0;
+    for (CpTarget& t : g_CpTargets) {
+        const bool on = filters.empty() ? Lower(t.label) != "checkplayerinteraction" : CpLabelMatches(t, filters);
+        InterlockedExchange(t.logOn, on ? 1 : 0);
+        if (on && t.installed.load()) ++selected;
+    }
+    InterlockedExchange(&g_CpLogBudget, budget);
+    g_CpArmed.store(true);
+    Out("craftprobe arm: counters reset; the next " + std::to_string(budget) + " calls of each of "
+        + std::to_string(selected) + " selected detoured row(s) are logged"
+        + (filters.empty() ? " (all but the CheckPlayerInteraction control)" : " (label filters)")
+        + ". Then `craftprobe show` - a row reporting unlogged calls is `not observed (budget spent)`.");
+}
+
+// Every detoured row that was called since `arm`, with how many of its calls
+// were NOT logged, and the control's count first. `show all` adds the rows
+// with no calls and the rows that are not detoured (`calls=n/a`, never 0).
+static void CpShow(bool all)
+{
+    int installed = 0;
+    for (const CpTarget& t : g_CpTargets) if (t.installed.load()) ++installed;
+    Out("craftprobe show: " + std::to_string(installed) + "/" + std::to_string(kCpTargetCount) + " rows detoured, "
+        + (g_CpArmed.load() ? "armed" : "not armed") + ", budget=" + std::to_string(g_CpLogBudget)
+        + ", backing " + (g_CpBacking.load() ? "on" : "off"));
+    const CpTarget* control = CpFindRow("CheckPlayerInteraction");
+    if (control)
+        Out(std::string("  control CheckPlayerInteraction calls=")
+            + (control->installed.load() ? std::to_string(*control->calls) : std::string("n/a (not detoured)"))
+            + " - a 0 here voids every count below");
+    int silent = 0;
+    for (CpTarget& t : g_CpTargets) {
+        if (!t.installed.load()) { if (all) Out(std::string("  ") + t.label + " calls=n/a (not detoured)"); continue; }
+        const long calls = *t.calls;
+        if (calls == 0) { ++silent; if (all) Out(std::string("  ") + t.label + " calls=0"); continue; }
+        const long logged = *t.logOn ? (std::min)((long)*t.logged, (long)g_CpLogBudget) : 0;
+        Out(std::string("  ") + t.label + " calls=" + std::to_string(calls) + " (+" + std::to_string(calls - t.lastShown)
+            + " since last show) logged=" + std::to_string(logged) + " unlogged=" + std::to_string(calls - logged)
+            + (*t.logOn ? std::string() : std::string(" (not selected)"))
+            + (t.kept && t.kept->call > 0 ? " kept=#" + std::to_string(t.kept->call) : std::string()));
+        t.lastShown = calls;
+    }
+    Out("craftprobe show: " + std::to_string(silent) + " detoured row(s) with no calls since `arm`"
+        + (all ? std::string() : std::string(" (`show all` lists them)")));
+}
+
+// ---- hook-free readers: bag, stash, recipe, var ------------------------------
+// Builtins only: asset_get_index / instance_number / instance_find, then
+// variable_instance_get_names and variable_instance_get on each live
+// instance, printed shallowly. Nothing is written, nothing is invoked, no hook
+// is needed - so these are the checks a session runs first, and "no live
+// instance" is printed as that, never as an empty container.
+
+// One variable for a reader line: its shape, then for an array its leading
+// entries (a stack's own members - itemType, a count - show there when the
+// entries are item structs), for a struct its members. Reads only.
+static std::string CpValueText(const RValue& v, int preview)
+{
+    std::string s;
+    try {
+        s = PpBackingShape(v);
+        if (v.m_Kind == VALUE_ARRAY) {
+            const int n = (int)g_Yytk->CallBuiltin("array_length", { v }).ToDouble();
+            for (int i = 0; i < n && i < preview; ++i)
+                s += " [" + std::to_string(i) + "]=" + PpShallow(g_Yytk->CallBuiltin("array_get", { v, RValue((double)i) }));
+        } else if (v.m_Kind == VALUE_OBJECT) {
+            s += " " + PpShallow(v);
+        }
+    } catch (...) { s += " <read failed>"; }
+    if (s.size() > kCpLineMax) s = s.substr(0, kCpLineMax) + "...(cut)";
+    return s;
+}
+
+static bool CpNameMatches(const std::string& name, const std::vector<std::string>& filters)
+{
+    const std::string l = Lower(name);
+    for (const std::string& f : filters) if (f == "*" || l.find(Lower(f)) != std::string::npos) return true;
+    return false;
+}
+
+// Every matching variable of the first kCpReaderMaxInstances live instances of
+// one SDK-named object.
+static void CpListObjectVars(const std::string& tag, HeroSiege::Objects::GameObject obj, const std::vector<std::string>& filters)
+{
+    const std::string objName(HeroSiege::Objects::GetObjectName(obj));
+    int idx = -1;
+    try { idx = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(objName) }).ToDouble(); } catch (...) { idx = -1; }
+    if (idx < 0) { Out(tag + ": " + objName + " not found (asset_get_index)"); return; }
+    int total = 0;
+    try { total = (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)idx) }).ToDouble(); } catch (...) { total = 0; }
+    if (total <= 0) { Out(tag + ": " + objName + " has no live instance (not open / not in this room) - nothing read"); return; }
+    for (int nth = 0; nth < total && nth < kCpReaderMaxInstances; ++nth) {
+        try {
+            const RValue h = g_Yytk->CallBuiltin("instance_find", { RValue((double)idx), RValue((double)nth) });
+            if (h.m_Kind == VALUE_UNDEFINED) { Out(tag + ": " + objName + " nth=" + std::to_string(nth) + " instance_find returned undefined"); continue; }
+            const RValue names = g_Yytk->CallBuiltin("variable_instance_get_names", { h });
+            const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+            Out(tag + ": " + objName + " nth=" + std::to_string(nth) + " " + PpDescribeSelf(HhResolveInstance(h))
+                + " vars=" + std::to_string(n));
+            int shown = 0;
+            for (int i = 0; i < n; ++i) {
+                const std::string name = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) }).ToString();
+                if (!CpNameMatches(name, filters)) continue;
+                if (++shown > kCpReaderMaxLines) { Out("  ...(capped at " + std::to_string(kCpReaderMaxLines) + "; narrow the filter)"); break; }
+                Out("  " + name + "=" + CpValueText(g_Yytk->CallBuiltin("variable_instance_get", { h, RValue(name) }), kCpReaderArrayPreview));
+            }
+            Out(tag + ": " + std::to_string((std::min)(shown, kCpReaderMaxLines)) + " of " + std::to_string(n) + " variables matched");
+        } catch (...) { Out(tag + ": " + objName + " nth=" + std::to_string(nth) + " read failed"); }
+    }
+    if (total > kCpReaderMaxInstances)
+        Out(tag + ": " + std::to_string(total - kCpReaderMaxInstances) + " more instance(s) of " + objName + " not listed");
+}
+
+// Every matching global (the global scope is the pseudo-instance -5, which
+// variable_instance_get_names accepts - `gnames` reads it the same way).
+static void CpListGlobals(const std::string& tag, const std::vector<std::string>& filters)
+{
+    try {
+        const RValue names = g_Yytk->CallBuiltin("variable_instance_get_names", { RValue(-5.0) });
+        const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+        int shown = 0;
+        for (int i = 0; i < n; ++i) {
+            const std::string name = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) }).ToString();
+            if (!CpNameMatches(name, filters)) continue;
+            if (++shown > kCpReaderMaxLines) { Out("  ...(capped at " + std::to_string(kCpReaderMaxLines) + "; narrow the filter)"); break; }
+            Out("  global." + name + "=" + CpValueText(g_Yytk->CallBuiltin("variable_global_get", { RValue(name) }), kCpReaderArrayPreview));
+        }
+        Out(tag + ": " + std::to_string((std::min)(shown, kCpReaderMaxLines)) + " of " + std::to_string(n) + " globals matched");
+    } catch (...) { Out(tag + ": globals could not be read"); }
+}
+
+// `bag|stash|recipe [substr ...]`: the filters replace the defaults; `*` lists
+// every variable (capped).
+static void CpReader(const std::string& sub, const std::vector<std::string>& given)
+{
+    const std::string tag = "craftprobe " + sub;
+    if (sub == "bag") {
+        const std::vector<std::string> f = given.empty() ? std::vector<std::string>{ "mat", "stack", "tab", "inv" } : given;
+        CpListObjectVars(tag, HeroSiege::Objects::GameObject::UI_Inventory_obj, f);
+    } else if (sub == "stash") {
+        // Read with the stash window open AND closed: whether the material tab
+        // is readable while closed is what the owner's "stash open not
+        // required" rests on (research doc, Decisions).
+        const std::vector<std::string> f = given.empty() ? std::vector<std::string>{ "stash", "mat", "tab" } : given;
+        CpListObjectVars(tag, HeroSiege::Objects::GameObject::UI_Stash_obj, f);
+        CpListObjectVars(tag, HeroSiege::Objects::GameObject::Town_Stash_obj, f);
+        CpListGlobals(tag, f);
+    } else {
+        const std::vector<std::string> f = given.empty() ? std::vector<std::string>{ "recipe", "craft", "select", "need", "mat" } : given;
+        CpListObjectVars(tag, HeroSiege::Objects::GameObject::UI_Craft_obj, f);
+    }
+}
+
+// `var <Obj|global> <nth> <name> [json]`: one variable, deeper - an array's
+// first kCpVarArrayPreview entries - and with `json` the whole value written to
+// bp_ipc\cp_var_<name>.json when a depth-capped walk finds no cycle. Reads only.
+static void CpVar(const std::vector<std::string>& tok)
+{
+    if (tok.size() != 4 && !(tok.size() == 5 && Lower(tok[4]) == "json")) {
+        Out("craftprobe var: usage -> var <Obj|global> <nth> <name> [json]; nothing read");
+        return;
+    }
+    const std::string tag = "craftprobe var " + tok[1] + " " + tok[2] + " " + tok[3];
+    RValue v;
+    std::string where;
+    try {
+        if (Lower(tok[1]) == "global") {
+            if (!g_Yytk->CallBuiltin("variable_global_exists", { RValue(tok[3]) }).ToBoolean()) { Out(tag + ": no such global; nothing read"); return; }
+            v = g_Yytk->CallBuiltin("variable_global_get", { RValue(tok[3]) });
+            where = "global";
+        } else {
+            int nth = 0;
+            try { nth = std::stoi(tok[2]); } catch (...) { Out(tag + ": nth must be a whole number; nothing read"); return; }
+            RValue handle; CInstance* inst = nullptr; int total = 0;
+            if (!MpResolve(tag, tok[1], nth, handle, inst, total)) return;
+            if (!g_Yytk->CallBuiltin("variable_instance_exists", { handle, RValue(tok[3]) }).ToBoolean()) { Out(tag + ": the instance has no such variable; nothing read"); return; }
+            v = g_Yytk->CallBuiltin("variable_instance_get", { handle, RValue(tok[3]) });
+            where = PpDescribeSelf(inst);
+        }
+        Out(tag + " (" + where + "): " + CpValueText(v, kCpVarArrayPreview));
+        if (tok.size() == 5) Out(tag + " -> " + PpBackingJsonFile("cp_var_" + tok[3] + ".json", tok[3], 0, where, v));
+    } catch (...) { Out(tag + ": read failed"); }
+}
+
+// ---- backing: keep what the game's own calls returned ------------------------
+// Default rows: the four profile getters, the stash getters and the crafting
+// availability/count rows - the returns that may hold the materials tabs.
+static bool CpDefaultBackingRow(const CpTarget& t)
+{
+    const std::string_view name(t.runtimeName);
+    return CpIsProfileGetter(t)
+        || name == HeroSiege::Scripts::gml_Script_s_StashTabData
+        || name == HeroSiege::Scripts::gml_Script_LoadStash
+        || name == HeroSiege::Scripts::gml_Script_GetStashMaxTabs
+        || name == HeroSiege::Scripts::gml_Script_GetCraftItemsAvailable
+        || name == HeroSiege::Scripts::gml_Script_CraftFindRecipeItems
+        || name == HeroSiege::Scripts::gml_Script_CountInventoryItem
+        || name == HeroSiege::Scripts::gml_Script_FindInventoryItemData;
+}
+
+static void CpBackingDump()
+{
+    int written = 0;
+    for (const CpTarget& t : g_CpTargets) {
+        if (!t.kept || !t.kept->value || t.kept->call <= 0) continue;
+        try {
+            Out(std::string("craftprobe backing dump ") + t.label + " #" + std::to_string(t.kept->call) + " self=" + t.kept->self
+                + " shape=" + PpBackingShape(*t.kept->value) + " -> "
+                + PpBackingJsonFile(std::string("cp_backing_") + t.safe + ".json", t.label, t.kept->call, t.kept->self, *t.kept->value));
+            ++written;
+        } catch (...) { Out(std::string("craftprobe backing dump ") + t.label + ": read failed"); }
+    }
+    Out("craftprobe backing dump: " + std::to_string(written) + " kept return(s)"
+        + (written ? std::string() : std::string(" - `backing on`, then open the windows so the game makes its own calls")));
+}
+
+static void CpBackingCommand(const std::vector<std::string>& tok)
+{
+    const std::string what = tok.size() > 1 ? Lower(tok[1]) : std::string();
+    if (what == "on") {
+        const std::vector<std::string> filters(tok.begin() + 2, tok.end());
+        int selected = 0, notDetoured = 0;
+        for (CpTarget& t : g_CpTargets) {
+            const bool on = filters.empty() ? CpDefaultBackingRow(t) : CpLabelMatches(t, filters);
+            InterlockedExchange(t.capture, on ? 1 : 0);
+            if (on) { ++selected; if (!t.installed.load()) ++notDetoured; }
+        }
+        g_CpBacking.store(true);
+        Out("craftprobe backing: on - the latest return of " + std::to_string(selected) + " row(s) is kept"
+            + (notDetoured ? " (" + std::to_string(notDetoured) + " of them not detoured: `hook` first)" : std::string())
+            + ". Nothing is invoked; `backing dump` writes the json files.");
+    } else if (what == "off") {
+        g_CpBacking.store(false);
+        Out("craftprobe backing: off - kept values stay for `backing dump`; `backing clear` releases them.");
+    } else if (what == "dump") {
+        CpBackingDump();
+    } else if (what == "clear") {
+        int cleared = 0;
+        for (CpTarget& t : g_CpTargets) {
+            if (!t.kept || t.kept->call <= 0) continue;
+            try { if (!t.kept->root.empty()) g_Yytk->CallBuiltin("variable_global_set", { RValue(t.kept->root), RValue() }); } catch (...) {}
+            if (t.kept->value) *t.kept->value = RValue();
+            t.kept->call = 0;
+            ++cleared;
+        }
+        Out("craftprobe backing clear: released " + std::to_string(cleared) + " kept value(s)");
+    } else {
+        Out("craftprobe backing on [substr ...] | off | dump | clear");
+    }
+}
+
+// `dump`: every row's counters to bp_ipc\craftprobe_rows.json, then `backing dump`.
+static void CpDump()
+{
+    std::string text = "{\"armed\":" + std::string(g_CpArmed.load() ? "true" : "false")
+        + ",\"budget\":" + std::to_string(g_CpLogBudget) + ",\"rows\":[";
+    for (int i = 0; i < kCpTargetCount; ++i) {
+        const CpTarget& t = g_CpTargets[i];
+        text += std::string(i ? "," : "") + "{\"label\":\"" + PpBackingEscape(t.label) + "\",\"name\":\"" + PpBackingEscape(t.runtimeName)
+            + "\",\"detoured\":" + (t.installed.load() ? "true" : "false")
+            + ",\"calls\":" + (t.installed.load() ? std::to_string(*t.calls) : std::string("null"))
+            + ",\"logged\":" + std::to_string(*t.logged) + ",\"selected\":" + (*t.logOn ? "true" : "false")
+            + ",\"kept\":" + std::to_string(t.kept ? t.kept->call : 0) + "}";
+    }
+    text += "]}";
+    try {
+        std::ofstream f(IPC_DIR + "\\craftprobe_rows.json", std::ios::binary);
+        f << text;
+        Out("craftprobe dump: craftprobe_rows.json (" + std::to_string(text.size()) + " bytes, " + std::to_string(kCpTargetCount) + " rows)");
+    } catch (...) { Out("craftprobe dump: craftprobe_rows.json could not be written"); }
+    CpBackingDump();
+}
+
+// ---- the one write: call <Row> <Obj> <nth> [args ...] confirm ----------------
+// One by-name call of one plain-script table row, self = other = that
+// instance, through ApCallScript (asset_get_index + script_execute). Each
+// argument is typed like menuprobe's (number, true/false, text), or
+// `fp:<fingerprint>` - the item the game's own GetItemFromFingerprint returns
+// for it, which must be a struct - or `kept:<row>` - that row's kept return.
+// Every precondition is checked, and every argument resolved, before the one
+// call; a failure refuses with nothing called. Prints what was supplied, the
+// instance either side and what came back: `dispatched` proves the call ran,
+// never that it did what was hoped.
+static void CpCall(const std::vector<std::string>& tok)
+{
+    const char* usage = "craftprobe call: usage -> call <Row> <Obj> <nth> [args ...] confirm "
+                        "(arg: number | true | false | text | fp:<fingerprint> | kept:<row>)";
+    if (tok.size() < 5 || Lower(tok.back()) != "confirm") {
+        Out(std::string("craftprobe call: refused - this calls a game script; nothing was called. ") + usage);
+        return;
+    }
+    const CpTarget* t = CpFindRow(tok[1]);
+    if (!t) { Out("craftprobe call: refused - '" + tok[1] + "' is not a craftprobe row; nothing was called"); return; }
+    const std::string runtime(t->runtimeName);
+    if (runtime.rfind("gml_Script_", 0) != 0 || runtime.find('@') != std::string::npos) {
+        Out(std::string("craftprobe call: refused - ") + t->label + " is a closure or struct method, not a script this route calls by name; nothing was called");
+        return;
+    }
+    if (CpIsProfileGetter(*t)) {
+        Out(std::string("craftprobe call: refused - ") + t->label + " is a profile getter: capture it with `backing on`, never invoke it (a blind call crashed the game); nothing was called");
+        return;
+    }
+    int nth = 0;
+    try { nth = std::stoi(tok[3]); } catch (...) { Out("craftprobe call: refused - nth must be a whole number; nothing was called"); return; }
+    RValue handle; CInstance* inst = nullptr; int total = 0;
+    if (!MpResolve("craftprobe call (refused, nothing was called)", tok[2], nth, handle, inst, total)) return;
+
+    std::vector<RValue> args;
+    std::string supplied;
+    for (size_t i = 4; i + 1 < tok.size(); ++i) {
+        const std::string& a = tok[i];
+        RValue v;
+        if (Lower(a).rfind("fp:", 0) == 0) {
+            if (!ApItemFromFingerprint(inst, RValue(a.substr(3)), v)) {
+                Out("craftprobe call: refused - " + a + " is not an item the game's own lookup returns; nothing was called");
+                return;
+            }
+        } else if (Lower(a).rfind("kept:", 0) == 0) {
+            const CpTarget* k = CpFindRow(a.substr(5));
+            if (!k || !k->kept || !k->kept->value || k->kept->call <= 0) {
+                Out("craftprobe call: refused - " + a + " names no kept return (`backing on` first); nothing was called");
+                return;
+            }
+            v = *k->kept->value;
+        } else {
+            v = MpArg(a);
+        }
+        supplied += " a" + std::to_string(i - 4) + "=" + a + "(" + PpBackingShape(v) + ")";
+        args.push_back(v);
+    }
+    const std::string name = runtime.substr(std::string("gml_Script_").size());
+    Out("craftprobe call: " + name + " self=other=" + PpDescribeSelf(inst) + " argc=" + std::to_string(args.size()) + supplied);
+    Out("  before: " + MpWhere(tok[2], nth, handle));
+    RValue res;
+    const bool ran = ApCallScript(name.c_str(), inst, args, res);
+    if (!ran) Out("  NOT dispatched (asset_get_index found no script, or script_execute failed)");
+    else {
+        std::string ret;
+        try { ret = PpRetText(res); } catch (...) { ret = "<read failed>"; }
+        Out("  dispatched -> ret=" + ret);
+    }
+    Out("  after:  " + MpWhere(tok[2], nth, handle));
+}
+
+static void CpUsage()
+{
+    Out("craftprobe: research instrument for docs/crafting-materials-research.md (research build only)");
+    Out("  hook [substr ...]                 native-detour every row (or the matching ones); one instrument per session");
+    Out("  arm [budget=N] [substr ...]       reset counters; log the next N calls of each selected row (default: all but the control)");
+    Out("  show [all]                        calls since `arm`, logged vs unlogged per row; CheckPlayerInteraction is the control");
+    Out("  reset                             zero every counter");
+    Out("  bag|stash|recipe [substr ...]     hook-free: the bag window, stash window + world stash + globals, cube window");
+    Out("  var <Obj|global> <nth> <name> [json]   hook-free: one variable, deeper (json -> bp_ipc\\cp_var_<name>.json)");
+    Out("  backing on [substr ...]|off|dump|clear  keep the game's own returns (default: profile, stash and count rows)");
+    Out("  dump                              craftprobe_rows.json + backing dump");
+    Out("  call <Row> <Obj> <nth> [args ...] confirm   ONE by-name call of one row; refuses before it on any missing precondition");
+}
+
+static void CpCommand(const std::string& rest)
+{
+    std::vector<std::string> tok;
+    { std::stringstream ss(rest); std::string w; while (ss >> w) tok.push_back(w); }
+    if (tok.empty()) { CpUsage(); return; }
+    const std::string sub = Lower(tok[0]);
+    const std::vector<std::string> tail(tok.begin() + 1, tok.end());
+    if (sub == "hook") { CpInstall(tail); return; }
+    if (sub == "arm") { CpArm(tail); return; }
+    if (sub == "show") { CpShow(!tail.empty() && Lower(tail[0]) == "all"); return; }
+    if (sub == "reset") { CpZeroCounters(); Out("craftprobe reset: counters zeroed (detours, selection and kept values unchanged)"); return; }
+    if (sub == "bag" || sub == "stash" || sub == "recipe") { CpReader(sub, tail); return; }
+    if (sub == "var") { CpVar(tok); return; }
+    if (sub == "backing") { CpBackingCommand(tok); return; }
+    if (sub == "dump") { CpDump(); return; }
+    if (sub == "call") { CpCall(tok); return; }
+    CpUsage();
+}
+#endif // FORGEPACT_RELEASE (craftprobe)
+
+// Crafting from the stash's material tab (issue #14). `craftmats 1|0` sets the
+// core's switch (ForgePact::CraftMatsMod, game-independent); `stat` is research
+// build only. Phase 0: the game's crafting routines are not measured yet, so
+// nothing is wired to them - no hook, no call, nothing on the frame path - and
+// the reply says so rather than reporting the mod as working.
+static void CraftMatsCommand(const std::string& rest)
+{
+    ForgePact::CraftMatsMod& mod = ForgePact::CraftMatsMod::Instance();
+    const std::string v = Lower(TrimCopy(rest));
+#ifndef FORGEPACT_RELEASE
+    if (v == "stat") { Out(mod.StatLine()); return; }
+#endif
+    if (v == "1" || v == "on") {
+        if (!mod.SetEnabled(true)) { Out("craftmats: stays off for this session - " + mod.StatLine()); return; }
+        Out("craftmats: switch on, but nothing is wired to crafting yet (issue #14: the game's crafting is still being"
+            " measured) - crafting is unchanged");
+        return;
+    }
+    if (v == "0" || v == "off") { mod.SetEnabled(false); Out("craftmats: off - crafting is unchanged"); return; }
+    Out("craftmats 1|0");
+}
+
+// Its own helper, called from RunCommand beside the other Handle*Command
+// helpers, for the same C1061 reason: the else-if chain is at MSVC's nesting
+// limit.
+static bool HandleCraftCommand(const std::string& lc, const std::string& rest)
+{
+    if (lc == "craftmats") { CraftMatsCommand(rest); return true; }
+#ifndef FORGEPACT_RELEASE
+    if (lc == "craftprobe") { CpCommand(rest); return true; }
+#endif
+    return false;
+}
+
 // Headhunter + player-context diagnostics live in their own function so the
 // main RunCommand else-if chain stays below the compiler nesting limit (C1061).
 static bool HandleHeadhunterCommand(const std::string& lc, const std::string& rest)
@@ -27675,6 +28470,7 @@ static void RunCommand(const std::string& line)
     if (HandleProspectCommand(lc, rest)) return;
     if (HandleMenuProbeCommand(lc, rest)) return;
     if (HandleMenuLayoutCommand(lc, rest)) return;
+    if (HandleCraftCommand(lc, rest)) return;
 #ifndef FORGEPACT_RELEASE
     // Toggle-skill research (issue #11), docs/toggle-skills-research.md. A
     // standalone early return rather than one more `else if` below: that chain
