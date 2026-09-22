@@ -30,13 +30,14 @@ none of these diagnostic hooks or the recorder. See
 | **Special Content** | Rift Portals, Battlefields, Cursed Orbs, Summon Portals, Chaos Pillars, Chaos Tower — up to 100× per zone |
 | **Drop Rates** | Gold, Dungeon Keys, Angelic Keys, Chaos + Crystal Keys, Bifröst Key and Relics — up to 100× |
 | **Mining Ore Amount (Experimental)** | Loot → Mining Ore Amount, 1–10×. Scales the stack quantity of ore awarded by mining; x1 is normal. In-game verification is still pending |
-| **Angelic / Unholy Drops (Experimental)** | ForgePact's own die per kill; on a hit the game builds one of its 49 real Angelic / Unholy uniques. x2 = 1 in 7,500 kills, each step adds a die, typable |
+| **Angelic / Unholy Drops (Experimental)** | ForgePact's own die per kill; on a hit it builds one of its 49 real Angelic / Unholy uniques, or (since 1.4.5) Tyrant's Crown or Headhunter. x2 = 1 in 7,500 kills, each step adds a die, typable |
 | **Combat Modifiers** | Total Damage, Attack Speed, Faster Cast Rate, Defense, Life/Mana Replenish, physical and spell Critical Chance/Damage |
 | **Character Stats** | Experience, Magic Find and Movement Speed use the character's current total value, including equipment bonuses |
 | **Full Map Reveal** | Clears fog of war in every zone, so waypoints, dungeon entrances, chests, shrines and mining nodes show immediately (toggleable; F5 in-game also toggles it). Its sub-toggle marks every monster pack on the map: most packs do not exist until you walk near them, so the map shows one marker per pack, by pack kind, without creating a single monster; the pack is born by the game when you get close and its real dots replace the marker. A second, off-by-default sub-toggle keeps the old behaviour of really spawning every pack on arrival, which costs frame time for the whole zone at high density. Markers are small icons by pack kind (ivory skull normal, hooded face ambush, magenta horned mask ancient, cyan helmet champion, gold chest colossal chest, amber skull trio legion, crowned crimson skull mini boss); spawners closer than ~96 px to each other, such as density copies, share one icon with a count badge. The icons are written to `<game>\bin\bp_ipc\packmarks\<kind>.png` on first use and never overwritten, so you can replace any of them with your own PNG (any size, transparent background; `packmarks reload` picks it up in a running game). Plugin command `packmarks` (`stat`, `icons 0|1`, `iconscale <mult>`, `reload`, `cluster <world px|0>`, `badge 0|1`, `style <kind|all> <subimage> <r> <g> <b>`, `radius <kind|all> <px>`, `fill <kind|all> 0|1`, `outline 0|1 [px]`, `alpha`, `ring 0|1`, `scale`, `list`) adjusts the look live; dots by kind are the fallback when an icon cannot be loaded |
 | **Pet Collects Quest Items** | While your pet is out it walks to pick-up quest items on screen and collects them one at a time, crediting the objective through the game's own collect. Pick-up items only; activate/break/talk objectives are left alone |
-| **Mark A Running Toggle Skill** | For Soul Spurn (White Mage), Lunar Orbit (Exo), Crematus (Plague Doctor), Submerged Knives (Butcher) and Maelstrom of Frost (Prophet), each with its toggle sub-talent allocated: a soft red outline appears around that skill's skill-bar slot the whole time the toggle is running, and disappears when it stops. A plain cast, or a skill outside the list, lights nothing (off by default) |
-| **Stop Double Cast Re-casting A Toggle Skill** | A double cast proc can cast one of those five skills a second time on its own, flipping its toggle straight back; with this on, that extra cast is skipped and the toggle stays the way your press left it. It only steps in when you actually have the skill's toggle sub-talent; your own presses and other skills' double casts are untouched (off by default) |
+| **Mark A Running Toggle Skill** | For a fixed set of toggle skills measured in-game, each either with its toggle sub-talent allocated or a toggle on its own: a soft red outline appears around that skill's skill-bar slot the whole time the toggle is running, and disappears when it stops. A skill outside that set is not covered, and a plain cast lights nothing (off by default) |
+| **Stop Double Cast Re-casting A Toggle Skill** | A double cast proc can cast one of that same fixed set of toggle skills a second time on its own, flipping its toggle straight back; with this on, that extra cast is skipped and the toggle stays the way your press left it. It only steps in when you actually have the skill's toggle sub-talent, or the skill is a toggle on its own; your own presses and other skills' double casts are untouched (off by default) |
+| **Timed skill countdown** | For a small set of timed skills measured and tested in-game, plus most other skills with both a duration and a real cooldown, covered by rule and untested: draws how much of the cast is left over its skill-bar slot, in one of four looks (arc / bar / number / fade), disappearing at zero. A few skills are left out where a measurement showed the timer on the skill's own object is not the skill's duration. Companion skills (turrets, totems, hydra) are not covered. A few skills whose duration is a buff on you, measured in-game, are covered too, and other buff-only skills are not. In a fight, hits can add a little time to some skills (roughly 0.2 s each in our test) and the countdown rises slightly to match. A skill switched on as a toggle never gets a countdown. Off by default; a cast already running when you turn it on shows as full until the next cast |
 | **Satanic Zone Mods** | Pick which of the game's 25 positive / 26 negative World Section mods can roll onto a Satanic Zone; everything is on by default |
 | **Auto-prospect** | Off by default. Every item you drag or click into the Prospect Cube's grid is prospected at once by the game's own Prospect, so the 9×6 grid stops being the limit on a batch. Before each prospect the previous prospect's batch of materials goes to your materials tab (a sub-switch, on by default), so only the newest batch stays in the grid; the item you put in, ore included, is prospected, not moved (one exception: a batch material swapped out and dropped straight back in still goes to the tab); anything left in it when the game saves is lost ([details](#auto-prospect)) |
 | **Remove Owned Relics** | Relics already at maximum level (10 out of 10) in your equipped slots, backpack or inventory stop dropping again, so a relic drop is one you can still use |
@@ -141,11 +142,16 @@ touched. Command: `enemyspeed <multiplier> [ct|all]` (`enemyspeed 1.5 ct`), `ene
 prints the status with path-start and applied counters.
 
 ### Signature drops
-Tyrant's Crown (Great Helm) and Headhunter (Heavy Belt) drop from the game's own monsters at
-the Angelic/Unholy rate: 1 in 7500 per kill, any monster, no guarantee counter; the two take
-turns. They arrive as SS-tier Unholy items, fully set up,
-and the plugin recognises them on every load even without the Item Editor. Plugin commands:
-`sigdrop status`, `sigdrop <rare pct> [ancient pct] [pity kills]`, `sigdrop vanilla`, `sigdrop off`.
+Tyrant's Crown (Great Helm) and Headhunter (Heavy Belt) are two more items in the **Angelic /
+Unholy Drops** pool above: they drop from the very same die as every other item in it, such as
+**Liquor Holster**, at exactly the same rate - so they never drop while that slider is off (the
+default), and more often as it is raised, along with everything else in the pool. They are not
+part of the game's own Angelic roll (the Blood Pact / dungeon "Angelic item drop chance" effect) -
+only ForgePact's own die drops them. They arrive as SS-tier Unholy items, fully set up, and the
+plugin recognises them on every load even without the Item Editor. `sigdrop status`,
+`sigdrop crown`, `sigdrop belt` and `sigdrop off` are a test command that forces every kill
+to drop the named item (or turns that off); it does not change the normal drop rate, which
+always follows the Angelic / Unholy Drops slider.
 
 ### Tier (Custom Forge)
 A forged item can carry a Tier letter (`tier=1` C … `tier=5` SS in the runtime file; the Item
@@ -455,6 +461,30 @@ How it works, and the research that proved ForgePact can run the Prospect itself
 [`docs/prospect-window-research.md`](docs/prospect-window-research.md) (§ Stage B; the
 move to the materials tab in § Stage C; first-of-its-kind materials and the ore finding
 in § Stage D).
+
+## Menu layout (for tools that drive the menus)
+
+`menulayout` is a read-only command for tools that play through the main menu
+and character select for you, such as the toolkit's `hs-drive` helper. It
+lists the live instances of a fixed set of menu objects, and the interface
+pieces under them, each with its position on the game window, so such a tool
+clicks where the game says a button is instead of at a fixed spot. It changes
+nothing in the game and has no switch in the panel.
+
+The reply is a header, one row per instance and a footer:
+
+```
+menulayout: room=<RoomName> gui=<W>x<H> window=<W>x<H> fullscreen=<0|1> view=<x>,<y>,<w>,<h>
+  obj=<ObjectName> id=<id> gui=<x>,<y> win=<cx>,<cy> bbox=<l>,<t>,<r>,<b> visible=<0|1> sprite=<SpriteName|none> ... text=<label>
+menulayout: listed=<n> absent=<names or none> capped=<0|1>
+```
+
+`win` is the point on the window's client area, computed from the game's own
+GUI and window sizes. `menulayout <ObjectName>` lists that one object the
+same way. An older ForgePact answers `command unavailable in player build:
+menulayout`. How the positions were measured, and which objects are the save
+cards and `PLAY`, is in
+[`docs/menu-layout-research.md`](docs/menu-layout-research.md).
 
 ## 🔧 How to use
 

@@ -147,18 +147,24 @@ static bool TyRoll(double pct) { return pct >= 100.0; }   // deterministic: 100 
 static volatile long g_KillsSeen = 0;
 static double g_AngelicDropOneIn = 0.0;
 static volatile long g_AngelicDropRolls = 0, g_AngelicDropHits = 0, g_AngelicDropFails = 0;
+// Old (pre-#63) signature-drop globals, kept so the old source's extracted SignatureDropOnKill
+// still has something to read; new (#63) global alongside it - the union the test design calls
+// for, so a baseline scenario's dropsCertain() can drive either compiled body.
 static double g_SigDropPct = 0.0, g_SigDropAncientPct = 0.0;
 static long g_SigDropPity = 0, g_SigDropSinceLast = 0;
 static long g_SigDropRolls = 0, g_SigDropHits = 0, g_SigDropFails = 0;
 static int g_SigDropNext = 0;
-struct AngelicCandidate { int type, sub, b; std::string name; bool angelic; };
+static int g_SigDropForce = -1;   // #63: -1 off (default), 0 force Tyrant's Crown, 1 force Headhunter
+// signature: -1 = an ordinary unique; 0/1 = Tyrant's Crown / Headhunter (#63). Default member
+// initializer so the existing {3,1,15,"test unique",true} initializers still compile.
+struct AngelicCandidate { int type, sub, b; std::string name; bool angelic; int signature = -1; };
 static std::vector<AngelicCandidate> g_AngelicPool;
 static void BuildAngelicPool(bool) { if (g_AngelicPool.empty()) g_AngelicPool.push_back({ 3, 1, 15, "test unique", true }); }
-struct SpawnRecord { CInstance* self; bool selfAlive; int originalCallsBefore; double x, y; };
+struct SpawnRecord { CInstance* self; bool selfAlive; int originalCallsBefore; double x, y; int which = -1; };
 static std::vector<SpawnRecord> angelicSpawns, sigSpawns;
 static bool spawnThrows = false;
-static bool SpawnSignatureItem(int, double x, double y, CInstance* ctx) {
-    sigSpawns.push_back({ ctx, ctx && ctx->alive, originalCalls, x, y });
+static bool SpawnSignatureItem(int which, double x, double y, CInstance* ctx) {
+    sigSpawns.push_back({ ctx, ctx && ctx->alive, originalCalls, x, y, which });
     return true;
 }
 static bool SpawnAngelicItem(const AngelicCandidate&, double x, double y, CInstance* ctx) {
@@ -201,11 +207,12 @@ static void reset() {
     outLines = 0; outThrows = false; readsAfterOriginal = 0; spawnThrows = false;
     g_KillsSeen = 0; g_AngelicDropOneIn = 0.0; g_AngelicDropRolls = 0; g_AngelicDropHits = 0; g_AngelicDropFails = 0;
     g_SigDropPct = 0.0; g_SigDropAncientPct = 0.0; g_SigDropPity = 0; g_SigDropSinceLast = 0;
-    g_SigDropRolls = 0; g_SigDropHits = 0; g_SigDropFails = 0; g_SigDropNext = 0;
+    g_SigDropRolls = 0; g_SigDropHits = 0; g_SigDropFails = 0; g_SigDropNext = 0; g_SigDropForce = -1;
     g_AngelicPool.clear(); angelicSpawns.clear(); sigSpawns.clear();
 }
-// Both kill drops on at a certain hit: 1-in-1 angelic, 100 pct signature.
-static void dropsCertain() { g_AngelicDropOneIn = 1.0; g_SigDropPct = 100.0; g_SigDropAncientPct = 100.0; }
+// Both kill drops on at a certain hit: 1-in-1 angelic, 100 pct signature (old source) or forced
+// every kill (#63 source) - drives whichever body got compiled in.
+static void dropsCertain() { g_AngelicDropOneIn = 1.0; g_SigDropPct = 100.0; g_SigDropAncientPct = 100.0; g_SigDropForce = 0; }
 static void killEnemy(CInstance& enemy, CInstance& player) {
     RValue result, killer(&player); RValue* arguments[] = {nullptr,nullptr,&killer};
     Hook_EnemyDestroyKillProc(&enemy,nullptr,result,3,arguments);
@@ -372,7 +379,7 @@ int main(int argc, char** argv) {
             requireSpawnedLive(angelicSpawns, &enemy, "angelic");
             require(originalCalls == 1 && !enemy.alive, "original kill proc not called exactly once");
         } else if (test == "sigdrop_spawns_before_cleanup") {
-            originalRemovesEnemy = true; g_SigDropPct = 100.0; g_SigDropAncientPct = 100.0; enemy.enemyRarity = 4;
+            originalRemovesEnemy = true; g_SigDropPct = 100.0; g_SigDropAncientPct = 100.0; g_SigDropForce = 0; enemy.enemyRarity = 4;
             killEnemy(enemy, player);
             requireSpawnedLive(sigSpawns, &enemy, "sigdrop");
             require(originalCalls == 1 && !enemy.alive, "original kill proc not called exactly once");
@@ -387,6 +394,60 @@ int main(int argc, char** argv) {
             try { killEnemy(enemy, player); } catch (...) { escaped = true; }
             require(!escaped, "an exception from a kill drop escaped the kill hook");
             require(originalCalls == 1, "a throwing kill drop skipped or repeated the original kill proc");
+#ifdef HAS_APPENDSIGNATURECANDIDATES
+        } else if (test == "signature_pool_append") {
+            std::vector<AngelicCandidate> empty;
+            AppendSignatureCandidates(empty);
+            require(empty.empty(), "signature candidates were appended to an empty pool");
+            std::vector<AngelicCandidate> pool{ {3,1,15,"test unique",true} };
+            AppendSignatureCandidates(pool);
+            require(pool.size() == 3, "signature candidates were not appended to a non-empty pool");
+            int crowns = 0, belts = 0;
+            for (const auto& c : pool) { if (c.signature == 0) ++crowns; else if (c.signature == 1) ++belts; }
+            require(crowns == 1 && belts == 1, "expected exactly one crown and one belt signature entry");
+#endif
+        } else if (test == "angelic_pick_crown_spawns_signature") {
+            g_AngelicDropOneIn = 1.0; enemy.enemyRarity = 1;
+            g_AngelicPool.push_back({ 0, 0, 0, "Tyrant's Crown", true, 0 });
+            killEnemy(enemy, player);
+            require(sigSpawns.size() == 1 && sigSpawns[0].which == 0, "picking the crown signature entry did not spawn Tyrant's Crown");
+            require(angelicSpawns.empty(), "a signature-only pool also spawned through SpawnAngelicItem");
+            require(sigSpawns[0].self == &enemy && sigSpawns[0].originalCallsBefore == 0 && sigSpawns[0].selfAlive,
+                "signature pick spawned after the original, or with the wrong self, or a cleaned-up enemy");
+            require(g_AngelicDropHits == 1, "the Angelic hit counter was not credited for a signature pick");
+            require(originalCalls == 1, "original kill proc not called exactly once");
+        } else if (test == "angelic_pick_belt_spawns_signature") {
+            g_AngelicDropOneIn = 1.0; enemy.enemyRarity = 1;
+            g_AngelicPool.push_back({ 0, 0, 0, "Headhunter", true, 1 });
+            killEnemy(enemy, player);
+            require(sigSpawns.size() == 1 && sigSpawns[0].which == 1, "picking the belt signature entry did not spawn Headhunter");
+            require(angelicSpawns.empty(), "a signature-only pool also spawned through SpawnAngelicItem");
+            require(sigSpawns[0].self == &enemy && sigSpawns[0].originalCallsBefore == 0 && sigSpawns[0].selfAlive,
+                "signature pick spawned after the original, or with the wrong self, or a cleaned-up enemy");
+            require(g_AngelicDropHits == 1, "the Angelic hit counter was not credited for a signature pick");
+            require(originalCalls == 1, "original kill proc not called exactly once");
+        } else if (test == "signature_equal_share") {
+            g_AngelicDropOneIn = 1.0; enemy.enemyRarity = 1;
+            g_AngelicPool.push_back({ 3, 1, 15, "test unique", true });
+            g_AngelicPool.push_back({ 0, 0, 0, "Tyrant's Crown", true, 0 });
+            g_AngelicPool.push_back({ 0, 0, 0, "Headhunter", true, 1 });
+            for (int i = 0; i < 3000; ++i) killEnemy(enemy, player);
+            int crowns = 0, belts = 0;
+            for (const auto& s : sigSpawns) { if (s.which == 0) ++crowns; else if (s.which == 1) ++belts; }
+            require(angelicSpawns.size() >= 800 && angelicSpawns.size() <= 1200, "the ordinary unique did not get its equal share of the pool");
+            require(crowns >= 800 && crowns <= 1200, "Tyrant's Crown did not get its equal share of the pool");
+            require(belts >= 800 && belts <= 1200, "Headhunter did not get its equal share of the pool");
+            require(angelicSpawns.size() + (size_t)crowns + (size_t)belts == 3000, "some kills spawned nothing, or spawned more than once");
+        } else if (test == "sigdrop_force_belt") {
+            enemy.enemyRarity = 1; g_SigDropForce = 1;
+            SignatureDropOnKill(&enemy);
+            require(sigSpawns.size() == 1 && sigSpawns[0].which == 1, "sigdrop belt did not force a Headhunter spawn on the kill");
+        } else if (test == "sigdrop_force_no_alternation") {
+            enemy.enemyRarity = 1; g_SigDropForce = 0;
+            SignatureDropOnKill(&enemy);
+            SignatureDropOnKill(&enemy);
+            require(sigSpawns.size() == 2 && sigSpawns[0].which == 0 && sigSpawns[1].which == 0,
+                "sigdrop crown alternated to the belt instead of forcing the same item on every kill");
 #ifdef HAS_ENABLE_HEADHUNTER
         } else if (test == "standalone_fallback_install") {
             EnableHeadhunter();

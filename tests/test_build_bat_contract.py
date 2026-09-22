@@ -38,9 +38,11 @@ class TheCompileLineIsUnchanged(unittest.TestCase):
     """Baseline: this line and the block around it are the compile contract."""
 
     EXPECTED_CL_LINE = (
-        # /bigobj since 2026-09-22: the research build's single translation unit
-        # passed the COFF section limit (fatal error C1128); harmless for the ship build.
-        'cl /nologo /std:c++20 /EHsc /MD /LD /O2 /bigobj /DNDEBUG /DYYTK_DEFINE_INTERNAL=1 '
+        # /bigobj (2026-09-22): the dev build's ModuleMain.cpp passed the
+        # default COFF section limit (C1128) once the skill-timer and
+        # menulayout research code met on main; it changes the object format
+        # only, not the code generated.
+        'cl /nologo /std:c++20 /EHsc /bigobj /MD /LD /O2 /DNDEBUG /DYYTK_DEFINE_INTERNAL=1 '
         '%FLAGS% /I "include" /I "%~dp0..\\plugin\\include" '
         '/I "%~dp0..\\..\\hs-game-sdk\\cpp\\include" "%SOURCE%" '
         '"include\\YYToolkit\\YYTK_Shared_Types.cpp" /Fe:%OUTPUT% /Fo:%OBJDIR%\\ '
