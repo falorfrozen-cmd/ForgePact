@@ -90,6 +90,9 @@ STRICT_DOCS = (
     "S10-special-content-notes.md",
     "dungeon-key-research.md",
     "angelic-drop-research.md",
+    # Written to this standard from the start (issue #64): the route and
+    # attribution of each probe row in words, no offsets from the log lines.
+    "angelic-roll-hook-research.md",
 )
 
 # One known-bad sample per category, built in pieces.

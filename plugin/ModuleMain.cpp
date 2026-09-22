@@ -77,6 +77,20 @@ static void LogDrop(const char* fn, RValue& res, int argc, RValue** A);
   #define BP_LOGDROP(a,b,c,d) LogDrop(a,b,c,d)
 #endif
 
+// The Angelic roll research probe's note from inside ForgePact::DropManager's
+// hook bodies (docs/angelic-roll-hook-research.md), placed here beside
+// BP_LOGDROP for the same reason. The player build compiles it to nothing, so
+// those hook bodies compile exactly as they did before it existed.
+#ifdef FORGEPACT_RELEASE
+  #define BP_ANGELIC_PROBE_SCOPE(name, s, argc, a) ((void)0)
+#else
+  // A scope object: it counts the call for the matching probe row (only when
+  // that row is attached `via` the hook) and, for DropItem, keeps the probe's
+  // drop-item depth raised until the hook body returns. Declared with the
+  // tgprobe forward declarations below, before DropManager.hpp is included.
+  #define BP_ANGELIC_PROBE_SCOPE(name, s, argc, a) ApRollDropScope _apRollScope(name, s, argc, a)
+#endif
+
 // ===== Hook state =====
 static std::unordered_map<std::string, double> g_Config;   // modifier key -> value
 static PFUNC_YYGMLScript g_OrigGetInfo = nullptr;           // trampoline to original GetBloodPactInfo
@@ -352,6 +366,28 @@ static void TgProbeSpurnAfterDraw();
 // (`tgprobe sprite layer hud|buffs`) actually draws.
 static void TgProbeDrawMark(bool fromHudLayer);
 static void TgProbeSpriteDraw(bool fromHudLayer);
+// angelicprobe (docs/angelic-roll-hook-research.md, issue #64), defined with
+// the rest of the probe just after HookAngelicChance. The two depths are
+// written only by the probe's own detour bodies, by the scope object below
+// (DropManager's hook bodies, through BP_ANGELIC_PROBE_SCOPE) and by research
+// blocks inside HookAngelicChance; every other probe row reads them to count
+// the calls it saw inside DropItem / inside DropItemAngelicChance.
+static thread_local int g_ApRollDropItemDepth = 0;
+static thread_local int g_ApRollChanceDepth = 0;
+static bool ApRollDropScopeEnter(const char* hookName, CInstance* S, int argc, RValue** A);
+static void ApRollNoteChance(CInstance* S, int argc, RValue** A);
+static void ApRollNoteChanceReturn(const RValue& result);
+struct ApRollDropScope {
+    bool raised;
+    ApRollDropScope(const char* hookName, CInstance* S, int argc, RValue** A)
+        : raised(ApRollDropScopeEnter(hookName, S, argc, A)) {}
+    ~ApRollDropScope() { if (raised) --g_ApRollDropItemDepth; }
+    ApRollDropScope(const ApRollDropScope&) = delete;
+    ApRollDropScope& operator=(const ApRollDropScope&) = delete;
+};
+// The research build finds the Angelic gate once at startup, before its own
+// DropManager hooks replace DropItem's script-table entry (InstallHook).
+static unsigned char* FindAngelicGate();
 #endif
 
 // HookOneScript/HookOneScriptTable prepend "gml_Script_" themselves, so a
@@ -16771,6 +16807,13 @@ static void InstallHook()
 #else
     // Development builds install the complete research surface eagerly.
     InstallCreateHooks();
+    // Find the Angelic gate now, while DropItem's script-table entry is still
+    // the game's own function: FindAngelicGate reads code through that entry,
+    // and from the next line on it is DropManager's Hook_DropItem, so a later
+    // `raredrop angelic` would scan ForgePact's code instead. The finder
+    // caches what it found and patches nothing; OpenAngelicGate reuses it.
+    // (docs/angelic-roll-hook-research.md, "Instrument".)
+    FindAngelicGate();
     InstallDropMultHooks();
     InstallNecroBalanceHooks();
 
@@ -17460,10 +17503,21 @@ static RValue& HookAngelicChance(CInstance* S, CInstance* O, RValue& R, int argc
         } catch (...) {}
     }
 #endif
+#ifndef FORGEPACT_RELEASE
+    // angelicprobe: count this call for the angelic-chance row (while the probe
+    // is attached), then hold the angelic-chance depth over every original
+    // call below, extra rolls included, so the rows those calls reach are
+    // counted as inside it.
+    ApRollNoteChance(S, argc, A);
+    ++g_ApRollChanceDepth;
+#endif
     // Multiplying the chance argument in place broke the game's own check (x99 -> zero
     // drops, 2026-09-05).  Since 1.3.13 the multiplier is a number of ROLLS: every extra roll
     // is the game's own function with the game's own chance, so x2 really is two 1-in-N dice.
     RValue& r = g_OrigAngChance ? g_OrigAngChance(S, O, R, argc, A) : R;
+#ifndef FORGEPACT_RELEASE
+    ApRollNoteChanceReturn(r);   // the game's own roll's result: kind, and value if numeric
+#endif
     const int extra = (int)std::lround(g_AngelicRateMult) - 1;   // rate x1 = the game's roll only
     if (!g_InAngelicExtra && extra > 0 && g_OrigAngChance) {
         g_InAngelicExtra = true;
@@ -17471,7 +17525,558 @@ static RValue& HookAngelicChance(CInstance* S, CInstance* O, RValue& R, int argc
         g_InAngelicExtra = false;
         InterlockedIncrement(&g_AngRateHits);
     }
+#ifndef FORGEPACT_RELEASE
+    --g_ApRollChanceDepth;
+#endif
     return r;
+}
+
+#ifndef FORGEPACT_RELEASE
+// Research instrument for docs/angelic-roll-hook-research.md (issue #64):
+// `angelicprobe on|show|reset|list`. Where the game's own Angelic roll picks a
+// unique is known from a static reading (docs/angelic-drop-research.md) but was
+// never measured on this build, so this observes every plausible named step of
+// the roll in one build - counted, the first three calls of each row logged,
+// and each call attributed to "inside DropItem" / "inside
+// DropItemAngelicChance" through the two thread-local depths declared with the
+// tgprobe forward declarations near the top of the file.
+//
+// Seventeen rows, one per candidate script, each attached by the first rule
+// that applies (the tgprobe order, TgProbeAttach):
+//   1. `detoured` - the script-table entry is code inside Hero_Siege.exe, so
+//      nothing here holds it: the probe's own inline detour on that function.
+//      The angelic-chance row instead reuses `raredrop angelic`'s own hook
+//      (HookAngelicChance, g_OrigAngChance, id fp_angch) and reports the
+//      route HookOneScript's nativeOut gives it.
+//   2. `detoured (under table-only <hook>)` - a ForgePact table-only hook holds
+//      the entry and its saved original is the game's function: detour that
+//      saved original, so a direct call and the table hook's own call both
+//      pass through the probe exactly once (LootGroundCreate and
+//      LootGroundCreateFromItem, table-hooked by InstallItemInspectHooks).
+//   3. `via <hook> (native)` - a native ForgePact hook holds it (its saved
+//      original is a trampoline), so the hook body's own note counts the call:
+//      the five DropManager rows, noted by BP_ANGELIC_PROBE_SCOPE.
+// Anything else is `TABLE-ONLY (...)`, `blocked: ...` or `not found (...)`,
+// and `show` prints that row as calls=n/a - a row the probe cannot see never
+// reports a count, least of all 0 (AGENTS.md, "Prove the Instrument").
+//
+// Every detour target is a named table entry or a saved original a named
+// install captured, checked to be code inside the game before it is patched;
+// the hooking library is reached from one place (ApRollAttach). The probe
+// never calls a candidate - DropItemAngelic in particular loops forever on an
+// empty zone list - and nothing of it is on the per-frame path: the command
+// runs inside PollCommands() like every other command, and after that only
+// the hooked calls themselves run probe code.
+enum ApRollRoute : long {
+    kApRollUnattached = 0,
+    kApRollDetoured,
+    kApRollDetouredUnder,
+    kApRollVia,
+    kApRollTableOnly,
+    kApRollBlocked,
+    kApRollNotFound,
+};
+
+// Marks a row whose script DropManager::InstallHooks holds from startup; its
+// saved original is read through DropManager's research-only accessor.
+static constexpr bool kApRollHeldByDropManager = true;
+static constexpr long kApRollLogCalls = 3;
+enum : int { kApRowDropItem = 0, kApRowAngelicChance = 1 };
+
+struct ApRollRow {
+    const char*        id;
+    const char*        script;              // short name, from the SDK constant
+    bool               heldByDropManager;
+    PFUNC_YYGMLScript* existingOrig;        // a ForgePact table hook's saved original
+    const char*        holder;              // the ForgePact hook that holds the entry
+    const char*        hookId;              // the probe's own detour id
+    PVOID              detour;
+    PFUNC_YYGMLScript  tramp = nullptr;
+    volatile long      route = kApRollUnattached;
+    std::string        routeText = "not attached (send `angelicprobe on`)";
+    volatile long      calls = 0;
+    volatile long      insideDropItem = 0;
+    volatile long      insideChance = 0;
+};
+
+static RValue& ApRollDetourBody(int idx, CInstance* S, CInstance* O, RValue& R, int argc, RValue** A);
+#define APROLL_DETOUR(N) \
+    static RValue& ApRollDetour##N(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) \
+    { return ApRollDetourBody(N, S, O, R, argc, A); }
+APROLL_DETOUR(0)  APROLL_DETOUR(2)  APROLL_DETOUR(3)  APROLL_DETOUR(4)
+APROLL_DETOUR(5)  APROLL_DETOUR(6)  APROLL_DETOUR(7)  APROLL_DETOUR(8)
+APROLL_DETOUR(9)  APROLL_DETOUR(10) APROLL_DETOUR(11) APROLL_DETOUR(12)
+APROLL_DETOUR(13) APROLL_DETOUR(14) APROLL_DETOUR(15) APROLL_DETOUR(16)
+#undef APROLL_DETOUR
+
+// Index N of this table is ApRollDetourN's row; kApRowDropItem and
+// kApRowAngelicChance name the first two. Row 1 has no detour of its own.
+static ApRollRow g_ApRollRows[] = {
+    { "drop-item",        SdkShortScriptName(HeroSiege::Scripts::gml_Script_DropItem),                 kApRollHeldByDropManager, nullptr, "Hook_DropItem",         "fp_ap_ditem",   (PVOID)ApRollDetour0 },
+    { "angelic-chance",   SdkShortScriptName(HeroSiege::Scripts::gml_Script_DropItemAngelicChance),    false, nullptr, nullptr, nullptr, nullptr },
+    { "angelic-forced",   SdkShortScriptName(HeroSiege::Scripts::gml_Script_DropItemAngelic),          kApRollHeldByDropManager, nullptr, "Hook_DropItemAngelic",  "fp_ap_dangit",  (PVOID)ApRollDetour2 },
+    { "drop-boss",        SdkShortScriptName(HeroSiege::Scripts::gml_Script_DropItemBoss),             kApRollHeldByDropManager, nullptr, "Hook_DropItemBoss",     "fp_ap_dibos",   (PVOID)ApRollDetour3 },
+    { "drop-heroic",      SdkShortScriptName(HeroSiege::Scripts::gml_Script_DropItemHeroic),           false, nullptr, nullptr, "fp_ap_dihero",  (PVOID)ApRollDetour4 },
+    { "drop-debug",       SdkShortScriptName(HeroSiege::Scripts::gml_Script_DropItemDebug),            false, nullptr, nullptr, "fp_ap_didebug", (PVOID)ApRollDetour5 },
+    { "drop-unique",      SdkShortScriptName(HeroSiege::Scripts::gml_Script_DropUniqueItems),          false, nullptr, nullptr, "fp_ap_duniq",   (PVOID)ApRollDetour6 },
+    { "unique-random-id", SdkShortScriptName(HeroSiege::Scripts::gml_Script_GetUniqueRandomItemID),    false, nullptr, nullptr, "fp_ap_urand",   (PVOID)ApRollDetour7 },
+    { "unique-repo",      SdkShortScriptName(HeroSiege::Scripts::gml_Script_GetUniqueRepoStruct),      false, nullptr, nullptr, "fp_ap_urepo",   (PVOID)ApRollDetour8 },
+    { "unique-charm",     SdkShortScriptName(HeroSiege::Scripts::gml_Script_GetUniqueCharm),           false, nullptr, nullptr, "fp_ap_ucharm",  (PVOID)ApRollDetour9 },
+    { "angelic-charm",    SdkShortScriptName(HeroSiege::Scripts::gml_Script_DropAngelicCharm),         kApRollHeldByDropManager, nullptr, "Hook_DropAngelicCharm", "fp_ap_dangchm", (PVOID)ApRollDetour10 },
+    { "angelic-key",      SdkShortScriptName(HeroSiege::Scripts::gml_Script_DropAngelicKey),           kApRollHeldByDropManager, nullptr, "Hook_DropAngelicKey",   "fp_ap_dangkey", (PVOID)ApRollDetour11 },
+    { "default-params",   SdkShortScriptName(HeroSiege::Scripts::gml_Script_CreateDefaultParams),      false, nullptr, nullptr, "fp_ap_cdparams",(PVOID)ApRollDetour12 },
+    { "loot-create",      SdkShortScriptName(HeroSiege::Scripts::gml_Script_LootGroundCreate),         false, &g_Orig_LootGroundCreate,         "Hook_LootGroundCreate",         "fp_ap_lgc",   (PVOID)ApRollDetour13 },
+    { "loot-create-item", SdkShortScriptName(HeroSiege::Scripts::gml_Script_LootGroundCreateFromItem), false, &g_Orig_LootGroundCreateFromItem, "Hook_LootGroundCreateFromItem", "fp_ap_lgcfi", (PVOID)ApRollDetour14 },
+    { "loot-drop",        SdkShortScriptName(HeroSiege::Scripts::gml_Script_LootGroundDrop),           false, nullptr, nullptr, "fp_ap_lgdrop",  (PVOID)ApRollDetour15 },
+    { "rare-announce",    SdkShortScriptName(HeroSiege::Scripts::gml_Script_GetRareDropAnnouncement),  false, nullptr, nullptr, "fp_ap_rareann", (PVOID)ApRollDetour16 },
+};
+static_assert(sizeof(g_ApRollRows) / sizeof(g_ApRollRows[0]) == 17, "one row per candidate, ApRollDetour0..16");
+
+static std::atomic<bool> g_ApRollAttached{ false };
+// Baselines, so `reset` zeroes what `show` prints without touching the
+// counters angelicwatch and `raredrop list` read.
+static long g_ApRollKillsBase = 0;
+static long g_ApRollChanceCallsBase = 0;
+static long g_ApRollExtraBase = 0;
+// The game's own DropItemAngelicChance result, captured after its first
+// original call: the last one, and how many came back zero / nonzero /
+// non-numeric, so a hit is still visible after the misses that follow it.
+static int    g_ApRollLastRetKind = -1;
+static double g_ApRollLastRetValue = 0.0;
+static bool   g_ApRollLastRetNumeric = false;
+static int    g_ApRollNonZeroKind = -1;
+static double g_ApRollNonZeroValue = 0.0;
+static volatile long g_ApRollRetZero = 0;
+static volatile long g_ApRollRetNonZero = 0;
+static volatile long g_ApRollRetOther = 0;
+
+// Bounded: %g of a finite double, never %f (Known Limitations item 10).
+static std::string ApRollNum(double v)
+{
+    if (!std::isfinite(v)) return "non-finite";
+    char b[48];
+    sprintf_s(b, "%g", v);
+    return b;
+}
+
+static std::string ApRollKindName(int kind)
+{
+    switch (kind) {
+    case VALUE_REAL:      return "real";
+    case VALUE_INT32:     return "int32";
+    case VALUE_INT64:     return "int64";
+    case VALUE_BOOL:      return "bool";
+    case VALUE_STRING:    return "string";
+    case VALUE_OBJECT:    return "struct";
+    case VALUE_ARRAY:     return "array";
+    case VALUE_PTR:       return "ptr";
+    case VALUE_UNDEFINED: return "undefined";
+    case VALUE_NULL:      return "null";
+    case VALUE_REF:       return "ref";
+    default:              return "kind" + std::to_string(kind);
+    }
+}
+
+static bool ApRollNumeric(const RValue& v, double& out)
+{
+    if (v.m_Kind != VALUE_REAL && v.m_Kind != VALUE_INT32 && v.m_Kind != VALUE_INT64 && v.m_Kind != VALUE_BOOL)
+        return false;
+    try { out = v.ToDouble(); } catch (...) { return false; }
+    return std::isfinite(out);
+}
+
+static std::string ApRollArgs(int argc, RValue** A)
+{
+    std::string out;
+    for (int i = 0; i < argc && i < 6; ++i) {
+        const RValue* a = A ? A[i] : nullptr;
+        if (!a) { out += " a" + std::to_string(i) + "=null"; continue; }
+        double v = 0.0;
+        out += " a" + std::to_string(i) + "=" + ApRollKindName((int)a->m_Kind);
+        if (ApRollNumeric(*a, v)) out += ":" + ApRollNum(v);
+    }
+    if (argc > 6) out += " ...";
+    return out;
+}
+
+// Entry bookkeeping shared by the detours and the notes. The hot path is up
+// to three interlocked increments; a row logs its first three calls only.
+static void ApRollCount(ApRollRow& r, CInstance* S, int argc, RValue** A)
+{
+    const long n = InterlockedIncrement(&r.calls);
+    const bool inDrop = g_ApRollDropItemDepth > 0;
+    const bool inChance = g_ApRollChanceDepth > 0;
+    if (inDrop) InterlockedIncrement(&r.insideDropItem);
+    if (inChance) InterlockedIncrement(&r.insideChance);
+    if (n > kApRollLogCalls) return;
+    try {
+        std::string who = "none";
+        if (S) who = TyInstName(S->ToRValue());
+        Out(std::string("angelicprobe ") + r.id + " #" + std::to_string(n)
+            + " argc=" + std::to_string(argc) + ApRollArgs(argc, A)
+            + " self=" + who.substr(0, 60)
+            + " insideDropItem=" + (inDrop ? "1" : "0")
+            + " insideAngelicChance=" + (inChance ? "1" : "0"));
+    } catch (...) {}
+}
+
+static RValue& ApRollDetourBody(int idx, CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    ApRollRow& r = g_ApRollRows[idx];
+    ApRollCount(r, S, argc, A);
+    // Only reached for DropItem when DropManager's own hook fell back to
+    // table-only (route 2): then this detour, not the note, holds the depth.
+    const bool holdsDropItem = (idx == kApRowDropItem);
+    if (holdsDropItem) ++g_ApRollDropItemDepth;
+    RValue& res = r.tramp ? r.tramp(S, O, R, argc, A) : R;
+    if (holdsDropItem) --g_ApRollDropItemDepth;
+    return res;
+}
+
+// BP_ANGELIC_PROBE_SCOPE's entry, from the top of every DropManager hook body.
+// Counts the call only for a row attached `via` that hook, so a row that got a
+// detour of its own is never counted twice; for DropItem it also raises the
+// drop-item depth, and ApRollDropScope's destructor lowers it again when the
+// hook body returns.
+static bool ApRollDropScopeEnter(const char* hookName, CInstance* S, int argc, RValue** A)
+{
+    if (!hookName || !g_ApRollAttached.load(std::memory_order_relaxed)) return false;
+    for (int i = 0; i < (int)(sizeof(g_ApRollRows) / sizeof(g_ApRollRows[0])); ++i) {
+        ApRollRow& r = g_ApRollRows[i];
+        if (!r.heldByDropManager || std::string_view(r.script) != hookName) continue;
+        if (r.route == kApRollVia) ApRollCount(r, S, argc, A);
+        if (i != kApRowDropItem) return false;
+        ++g_ApRollDropItemDepth;
+        return true;
+    }
+    return false;
+}
+
+// From HookAngelicChance, before its first original call.
+static void ApRollNoteChance(CInstance* S, int argc, RValue** A)
+{
+    if (!g_ApRollAttached.load(std::memory_order_relaxed)) return;
+    ApRollRow& r = g_ApRollRows[kApRowAngelicChance];
+    if (r.route == kApRollDetoured) ApRollCount(r, S, argc, A);
+}
+
+// From HookAngelicChance, right after the game's own roll returned.
+static void ApRollNoteChanceReturn(const RValue& result)
+{
+    if (!g_ApRollAttached.load(std::memory_order_relaxed)) return;
+    double v = 0.0;
+    const bool numeric = ApRollNumeric(result, v);
+    g_ApRollLastRetKind = (int)result.m_Kind;
+    g_ApRollLastRetNumeric = numeric;
+    g_ApRollLastRetValue = numeric ? v : 0.0;
+    if (!numeric) {
+        InterlockedIncrement(&g_ApRollRetOther);
+    } else if (v == 0.0) {
+        InterlockedIncrement(&g_ApRollRetZero);
+    } else {
+        InterlockedIncrement(&g_ApRollRetNonZero);
+        g_ApRollNonZeroKind = (int)result.m_Kind;
+        g_ApRollNonZeroValue = v;
+    }
+}
+
+static void ApRollSetRoute(ApRollRow& r, long route, const std::string& text)
+{
+    r.routeText = text;
+    InterlockedExchange(&r.route, route);
+}
+
+// The route rule above, in order; tgprobe's TgProbeAttach is the precedent.
+static void ApRollAttach(ApRollRow& r)
+{
+    const std::string full = "gml_Script_" + std::string(r.script);
+    PVOID p = nullptr;
+    const AurieStatus st = g_Yytk->GetNamedRoutinePointer(full.c_str(), &p);
+    CScript* sc = (AurieSuccess(st) && p) ? reinterpret_cast<CScript*>(p) : nullptr;
+    if (!sc || !sc->m_Functions || !sc->m_Functions->m_ScriptFunction) {
+        ApRollSetRoute(r, kApRollNotFound, "not found (" + full + " st=" + std::to_string((int)st) + ")");
+        return;
+    }
+    const PVOID tableEntry = (PVOID)sc->m_Functions->m_ScriptFunction;
+
+    // The one place the probe reaches the hooking library, and only on a
+    // pointer just checked to be code inside Hero_Siege.exe.
+    auto detourAt = [&](PVOID src, std::string& why) -> bool {
+        if (AddrIsExecutableInModule(GetModuleHandleA(nullptr), (const void*)src)) {
+            PVOID tramp = nullptr;
+            const AurieStatus hs = MmCreateHook(g_ArSelfModule, r.hookId, src, r.detour, &tramp);
+            if (AurieSuccess(hs) && tramp) {
+                r.tramp = reinterpret_cast<PFUNC_YYGMLScript>(tramp);
+                return true;
+            }
+            why = "MmCreateHook st=" + std::to_string((int)hs);
+            return false;
+        }
+        why = "target is not code inside Hero_Siege.exe";
+        return false;
+    };
+
+    std::string why;
+    // Rule 1: nothing in this module holds the entry.
+    if (AddrIsExecutableInModule(GetModuleHandleA(nullptr), (const void*)tableEntry)) {
+        if (!r.detour) ApRollSetRoute(r, kApRollBlocked, "blocked: this row has no detour of its own");
+        else if (detourAt(tableEntry, why)) ApRollSetRoute(r, kApRollDetoured, "detoured");
+        else ApRollSetRoute(r, kApRollBlocked, "blocked: " + why);
+        return;
+    }
+    PFUNC_YYGMLScript* heldSlot = r.heldByDropManager
+        ? ForgePact::DropManager::Instance().ResearchHeldOriginal(r.script)
+        : r.existingOrig;
+    const PVOID held = (heldSlot && *heldSlot) ? (PVOID)*heldSlot : nullptr;
+    const std::string holder = r.holder ? r.holder : "an unnamed ForgePact hook";
+    // Rule 2: a ForgePact hook holds the entry table-only; its saved original
+    // is still the game's own function.
+    if (held && AddrIsExecutableInModule(GetModuleHandleA(nullptr), (const void*)held)) {
+        if (r.detour && detourAt(held, why))
+            ApRollSetRoute(r, kApRollDetouredUnder, "detoured (under table-only " + holder + ")");
+        else
+            ApRollSetRoute(r, kApRollTableOnly, "TABLE-ONLY (" + holder + " is table-only and the detour under it failed: "
+                + (why.empty() ? std::string("no detour") : why) + ")");
+        return;
+    }
+    // Rule 3: a native ForgePact hook holds it, and its body carries the note.
+    if (held && r.heldByDropManager) {
+        ApRollSetRoute(r, kApRollVia, "via " + holder + " (native)");
+        return;
+    }
+    ApRollSetRoute(r, kApRollBlocked, held
+        ? "blocked: " + holder + " holds a trampoline and carries no note"
+        : std::string("blocked: table entry is not code inside Hero_Siege.exe and no hook's saved original is known"));
+}
+
+// The angelic-chance row: the existing hook, never a second one on that name.
+static void ApRollAttachChance(ApRollRow& r)
+{
+    const std::string full = "gml_Script_" + std::string(r.script);
+    PVOID p = nullptr;
+    const AurieStatus st = g_Yytk->GetNamedRoutinePointer(full.c_str(), &p);
+    CScript* sc = (AurieSuccess(st) && p) ? reinterpret_cast<CScript*>(p) : nullptr;
+    if (!sc || !sc->m_Functions || !sc->m_Functions->m_ScriptFunction) {
+        ApRollSetRoute(r, kApRollNotFound, "not found (" + full + " st=" + std::to_string((int)st) + ")");
+        return;
+    }
+    if (g_OrigAngChance) {
+        // `raredrop angelic` or `angelicwatch` installed it earlier this session.
+        if (AddrIsExecutableInModule(GetModuleHandleA(nullptr), (const void*)g_OrigAngChance))
+            ApRollSetRoute(r, kApRollTableOnly, "TABLE-ONLY (HookAngelicChance, installed earlier this session, holds the game's own function)");
+        else
+            ApRollSetRoute(r, kApRollDetoured, "detoured (HookAngelicChance, installed earlier this session)");
+        return;
+    }
+    const bool gameCode = AddrIsExecutableInModule(GetModuleHandleA(nullptr),
+                                                   (const void*)sc->m_Functions->m_ScriptFunction);
+    bool native = false;
+    if (!HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_DropItemAngelicChance), "fp_angch",
+                       (PVOID)HookAngelicChance, &g_OrigAngChance, &native)) {
+        ApRollSetRoute(r, kApRollBlocked, "blocked: HookOneScript refused (see its line above)");
+        return;
+    }
+    if (native) ApRollSetRoute(r, kApRollDetoured, "detoured (HookAngelicChance)");
+    else ApRollSetRoute(r, kApRollTableOnly, std::string("TABLE-ONLY (")
+        + (gameCode ? "HookOneScript's inline detour failed; see its line above" : "table entry is not code inside Hero_Siege.exe") + ")");
+}
+
+// The kill control (EnemyDestroyKillProc) by the same test as every row.
+static std::string ApRollKillControlRoute()
+{
+    if (!g_HhHookInstalled || !g_Orig_EnemyDestroyKillProc) return "not installed - kills= does not count";
+    if (AddrIsExecutableInModule(GetModuleHandleA(nullptr), (const void*)g_Orig_EnemyDestroyKillProc))
+        return "TABLE-ONLY (Hook_EnemyDestroyKillProc holds the game's own function)";
+    return "native (Hook_EnemyDestroyKillProc holds a trampoline)";
+}
+
+static bool ApRollCounted(const ApRollRow& r)
+{
+    return r.route == kApRollDetoured || r.route == kApRollDetouredUnder || r.route == kApRollVia;
+}
+
+static void ApRollReset()
+{
+    for (ApRollRow& r : g_ApRollRows) {
+        InterlockedExchange(&r.calls, 0);
+        InterlockedExchange(&r.insideDropItem, 0);
+        InterlockedExchange(&r.insideChance, 0);
+    }
+    g_ApRollKillsBase = g_KillsSeen;
+    g_ApRollChanceCallsBase = g_AngChanceCalls;
+    g_ApRollExtraBase = g_AngRateHits;
+    g_ApRollLastRetKind = -1;
+    g_ApRollLastRetNumeric = false;
+    g_ApRollLastRetValue = 0.0;
+    g_ApRollNonZeroKind = -1;
+    g_ApRollNonZeroValue = 0.0;
+    InterlockedExchange(&g_ApRollRetZero, 0);
+    InterlockedExchange(&g_ApRollRetNonZero, 0);
+    InterlockedExchange(&g_ApRollRetOther, 0);
+}
+
+static void ApRollOn()
+{
+    InstallHeadhunterHook();   // the kill control: kills= counts through its hook
+    const bool first = !g_ApRollAttached.load();
+    int counted = 0, notCounted = 0;
+    for (int i = 0; i < (int)(sizeof(g_ApRollRows) / sizeof(g_ApRollRows[0])); ++i) {
+        ApRollRow& r = g_ApRollRows[i];
+        if (r.route == kApRollUnattached) {
+            if (i == kApRowAngelicChance) ApRollAttachChance(r);
+            else ApRollAttach(r);
+        }
+        if (ApRollCounted(r)) ++counted; else ++notCounted;
+    }
+    if (first) ApRollReset();
+    g_ApRollAttached.store(true);
+    Out("angelicprobe on: " + std::to_string(counted) + " row(s) counted, "
+        + std::to_string(notCounted) + " not (calls=n/a)");
+    for (const ApRollRow& r : g_ApRollRows)
+        Out(std::string("  ") + r.id + " (" + r.script + "): " + r.routeText);
+    Out("  kill control EnemyDestroyKillProc: " + ApRollKillControlRoute());
+}
+
+static void ApRollShow()
+{
+    Out(std::string("angelicprobe show: ") + (g_ApRollAttached.load() ? "attached" : "not attached - send `angelicprobe on` first"));
+    for (const ApRollRow& r : g_ApRollRows) {
+        std::string line = std::string("  ") + r.id + " (" + r.script + "): " + r.routeText;
+        if (ApRollCounted(r)) {
+            line += " calls=" + std::to_string(r.calls)
+                + " insideDropItem=" + std::to_string(r.insideDropItem)
+                + " insideAngelicChance=" + std::to_string(r.insideChance);
+        } else {
+            line += " calls=n/a";
+        }
+        Out(line);
+    }
+    Out("  kills=" + std::to_string(g_KillsSeen - g_ApRollKillsBase)
+        + " (kill control: " + ApRollKillControlRoute() + ")");
+    std::string lastReturn = "none";
+    if (g_ApRollLastRetKind >= 0)
+        lastReturn = ApRollKindName(g_ApRollLastRetKind) + ":" + (g_ApRollLastRetNumeric ? ApRollNum(g_ApRollLastRetValue) : std::string("-"));
+    std::string nonZero = "none";
+    if (g_ApRollNonZeroKind >= 0)
+        nonZero = ApRollKindName(g_ApRollNonZeroKind) + ":" + ApRollNum(g_ApRollNonZeroValue);
+    Out("  DropItemAngelicChance: hookCalls=" + std::to_string(g_AngChanceCalls - g_ApRollChanceCallsBase)
+        + " extraRollBatches=" + std::to_string(g_AngRateHits - g_ApRollExtraBase)
+        + " lastChance=" + (g_AngLastChance >= 0.0 ? ApRollNum(g_AngLastChance) : std::string("none"))
+        + " lastReturn=" + lastReturn
+        + " returns: zero=" + std::to_string(g_ApRollRetZero)
+        + " nonzero=" + std::to_string(g_ApRollRetNonZero)
+        + " nonNumeric=" + std::to_string(g_ApRollRetOther)
+        + " lastNonZero=" + nonZero);
+}
+
+// One value's shape: its kind, an array's length and first elements, a
+// struct's key names. Read-only builtins only.
+static std::string ApRollShape(const RValue& v)
+{
+    double d = 0.0;
+    try {
+        if (ApRollNumeric(v, d)) return ApRollKindName((int)v.m_Kind) + ":" + ApRollNum(d);
+        if (v.m_Kind == VALUE_STRING) return "string:\"" + v.ToString().substr(0, 60) + "\"";
+        if (v.m_Kind == VALUE_ARRAY) {
+            const int len = (int)g_Yytk->CallBuiltin("array_length", { v }).ToDouble();
+            std::string s = "array len=" + std::to_string(len) + " [";
+            for (int i = 0; i < len && i < 8; ++i) {
+                const RValue e = g_Yytk->CallBuiltin("array_get", { v, RValue((double)i) });
+                double ed = 0.0;
+                s += (i ? ", " : "") + (ApRollNumeric(e, ed) ? ApRollNum(ed) : ApRollKindName((int)e.m_Kind));
+            }
+            return s + (len > 8 ? ", ...]" : "]");
+        }
+        if (v.m_Kind == VALUE_OBJECT) {
+            const RValue names = g_Yytk->CallBuiltin("variable_struct_get_names", { v });
+            const int len = names.m_Kind == VALUE_ARRAY ? (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble() : -1;
+            if (len < 0) return "struct (variable_struct_get_names returned " + ApRollKindName((int)names.m_Kind) + ")";
+            std::string s = "struct keys=" + std::to_string(len) + " {";
+            for (int i = 0; i < len && i < 12; ++i)
+                s += (i ? ", " : "") + g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) }).ToString().substr(0, 60);
+            return s + (len > 12 ? ", ...}" : "}");
+        }
+    } catch (...) { return ApRollKindName((int)v.m_Kind) + " <read-failed>"; }
+    return ApRollKindName((int)v.m_Kind);
+}
+
+// `angelicprobe list`: the game's own unique loot list, read by name and
+// read-only. A missing object, instance or variable prints one refusal line.
+static void ApRollList()
+{
+    const std::string objName(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Loot_Manager_obj));
+    double idx = -1.0;
+    try { idx = g_Yytk->CallBuiltin("asset_get_index", { RValue(objName) }).ToDouble(); } catch (...) { idx = -1.0; }
+    if (idx < 0.0) { Out("angelicprobe list: " + objName + " not found (asset_get_index) - nothing read"); return; }
+    int total = 0;
+    try { total = (int)g_Yytk->CallBuiltin("instance_number", { RValue(idx) }).ToDouble(); } catch (...) { total = 0; }
+    if (total < 1) { Out("angelicprobe list: no live " + objName + " instance (instance_number=" + std::to_string(total) + ") - nothing read"); return; }
+    RValue handle;
+    try { handle = g_Yytk->CallBuiltin("instance_find", { RValue(idx), RValue(0.0) }); }
+    catch (...) { Out("angelicprobe list: instance_find threw for " + objName + " - nothing read"); return; }
+    if (!HhResolveInstance(handle)) { Out("angelicprobe list: " + objName + " instance 0 is not a live instance (HhResolveInstance) - nothing read"); return; }
+    bool has = false;
+    try { has = g_Yytk->CallBuiltin("variable_instance_exists", { handle, RValue("lootListUnique") }).ToBoolean(); } catch (...) { has = false; }
+    if (!has) { Out("angelicprobe list: " + objName + " carries no lootListUnique (variable_instance_exists false) - nothing read"); return; }
+    RValue list;
+    try { list = g_Yytk->CallBuiltin("variable_instance_get", { handle, RValue("lootListUnique") }); }
+    catch (...) { Out("angelicprobe list: reading lootListUnique threw - nothing read"); return; }
+
+    Out("angelicprobe list: " + objName + " (" + std::to_string(total) + " instance(s)) lootListUnique kind="
+        + ApRollKindName((int)list.m_Kind));
+    try {
+        if (list.m_Kind == VALUE_ARRAY) {
+            const int len = (int)g_Yytk->CallBuiltin("array_length", { list }).ToDouble();
+            for (int i = 0; i < len && i < 8; ++i)
+                Out("  [" + std::to_string(i) + "] " + ApRollShape(g_Yytk->CallBuiltin("array_get", { list, RValue((double)i) })));
+            Out("angelicprobe list: array_length=" + std::to_string(len) + " (" + std::to_string(len < 8 ? len : 8) + " shown)");
+            return;
+        }
+        double id = 0.0;
+        // ds_type_list is 2. A number here may be a ds_list id; ask before reading.
+        if (ApRollNumeric(list, id) && g_Yytk->CallBuiltin("ds_exists", { RValue(id), RValue(2.0) }).ToBoolean()) {
+            const int len = (int)g_Yytk->CallBuiltin("ds_list_size", { RValue(id) }).ToDouble();
+            for (int i = 0; i < len && i < 8; ++i)
+                Out("  [" + std::to_string(i) + "] " + ApRollShape(g_Yytk->CallBuiltin("ds_list_find_value", { RValue(id), RValue((double)i) })));
+            Out("angelicprobe list: ds_list " + ApRollNum(id) + " ds_list_size=" + std::to_string(len) + " (" + std::to_string(len < 8 ? len : 8) + " shown)");
+            return;
+        }
+        Out("  " + ApRollShape(list));
+        Out("angelicprobe list: not an array or a ds_list - shape above, no entries read");
+    } catch (...) { Out("angelicprobe list: EXCEPTION while reading the entries"); }
+}
+
+static void ApRollUsage()
+{
+    Out("angelicprobe: research instrument for docs/angelic-roll-hook-research.md (research build only)");
+    Out("  angelicprobe on    - attach every candidate row once (and the kill control), print each row's route");
+    Out("  angelicprobe show  - per row: route, calls=, insideDropItem=, insideAngelicChance= (calls=n/a when the row has no route)");
+    Out("  angelicprobe reset - zero the counters; routes stay attached");
+    Out("  angelicprobe list  - read-only: Loot_Manager_obj's lootListUnique, kind, length and the first eight entries' shape");
+}
+
+static void ApRollCommand(const std::string& rest)
+{
+    const std::string sub = Lower(TrimCopy(rest));
+    if (sub == "on") ApRollOn();
+    else if (sub == "show") ApRollShow();
+    else if (sub == "reset") { ApRollReset(); Out("angelicprobe reset: counters zeroed, routes kept"); }
+    else if (sub == "list") ApRollList();
+    else ApRollUsage();
+}
+#endif // FORGEPACT_RELEASE (angelicprobe)
+
+// Dispatched from its own function, like HandleMenuProbeCommand: RunCommand's
+// else-if chain is at MSVC's nesting limit (C1061). The function exists in
+// both builds and answers false in the player build, so its call site in
+// RunCommand compiles without a guard around it.
+static bool HandleAngelicProbeCommand(const std::string& lc, const std::string& rest)
+{
+#ifndef FORGEPACT_RELEASE
+    if (lc == "angelicprobe") { ApRollCommand(rest); return true; }
+#endif
+    (void)lc; (void)rest;
+    return false;
 }
 
 // raredrop heroic|ceiling|satanic|angelic <multiplier>   |   raredrop list
@@ -27674,6 +28279,7 @@ static void RunCommand(const std::string& line)
     if (HandleHeadhunterCommand(lc, rest)) return;
     if (HandleProspectCommand(lc, rest)) return;
     if (HandleMenuProbeCommand(lc, rest)) return;
+    if (HandleAngelicProbeCommand(lc, rest)) return;
     if (HandleMenuLayoutCommand(lc, rest)) return;
 #ifndef FORGEPACT_RELEASE
     // Toggle-skill research (issue #11), docs/toggle-skills-research.md. A
