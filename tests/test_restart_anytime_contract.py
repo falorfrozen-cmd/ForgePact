@@ -76,14 +76,15 @@ PLANNED_PATHS = ("global.tupm[1].in_combat",)
 # The four write builtins; each appears once in the block, inside RpWrite.
 WRITE_BUILTINS = ('"variable_instance_set"', '"variable_global_set"', '"variable_struct_set"', '"array_set"')
 
-# Round 1's six Decision lines, pinned literally until phase 1 of round 2 has run.
-ROUND1_DECISION = (
-    "owner: Player_obj (candidate after round 1 - tracks the gate, not shown to be it)",
-    "variable: wasInCombat (candidate after round 1 - true while Restart is refused, false when allowed)",
-    "readyValue: false (bool; round 1)",
-    "gate: upstream (round 1: the refused press never calls UiAIngameRestart; button/node side, not identified)",
-    "override: unmeasured (overwritten before use)",
-    "shipRoute: pending (round 2)",
+# Round 2's six Decision lines, pinned literally until round 3's live session
+# has run (they replaced round 1's, which the doc no longer carries).
+ROUND2_DECISION = (
+    "owner: UI_Button_obj (the Restart button's own instance; round 2 - its members flip with combat, not shown to be what the press reads)",
+    "variable: enabled and manualDisable (round 2 - enabled true to false and manualDisable false to true when in combat)",
+    "readyValue: enabled=true, manualDisable=false (bool; round 2 town dump)",
+    "gate: upstream (not identified; round 2 - the button's own enabled/manualDisable are rewritten every frame in combat, not by UiSetRowEnabled; wasInCombat held false at the draw did not unlock it)",
+    "override: unmeasured (overwritten before use, draw site; round 2 - button enabled=1: entryHeld=0 entryOther=5010; button manualDisable=0: entryHeld=0 entryOther=10380; player wasInCombat=0 at the draw: not observed, entryHeld=7179 entryOther=51)",
+    "shipRoute: pending (round 3 - a step-time write inside UiSetFocus)",
 )
 
 # The identifier names read from the executable's string table.
@@ -126,6 +127,11 @@ def doc_section(doc, heading):
     start = doc.index("\n" + heading + "\n") + 1
     following = doc.find("\n## ", start + len(heading))
     return doc[start:] if following < 0 else doc[start:following]
+
+
+def result_row(results, step):
+    """One plain `| <step> |` result row, Printed and Reading columns together."""
+    return re.search(r"(?m)^\| " + re.escape(step) + r" \|(.*)$", results).group(1)
 
 
 class RestartProbeContractTests(unittest.TestCase):
@@ -356,7 +362,8 @@ class RestartProbeContractTests(unittest.TestCase):
     def test_restartprobe_hold_writes_only_inside_a_hooked_call(self):
         detour = self.detour
         tramp = detour.index("t.tramp ? t.tramp(")
-        self.assertLess(detour.index("RpHoldApply(idx, S)"), tramp)
+        # Round 3: the apply takes the call's arguments too (scope `arg0`).
+        self.assertLess(detour.index("RpHoldApply(idx, S, argc, A)"), tramp)
         self.assertLess(detour.index("RpArgsetApply(idx, argc, A)"), tramp)
         apply = self.hold_apply
         # Entry read, then the write in the kind read at entry, then the
@@ -388,13 +395,17 @@ class RestartProbeContractTests(unittest.TestCase):
             cmd.index("is absent"),
             cmd.index("if (!RpIsNumeric(before))"),
             cmd.index("is not an attached native row"),
+            # Round 3: a site other than the draw needs the draw attached,
+            # because the draw row's calls are what disarm that hold.
+            cmd.index("needs the Restart draw attached"),
             cmd.index('confirm != "confirm"'),
             cmd.index("std::stod(numberText"),
+            cmd.index("two holds armed"),
         ]
         self.assertEqual(refusals, sorted(refusals))
         armed = cmd.index('"restartprobe hold armed: "')
         self.assertLess(max(refusals), armed)
-        self.assertGreaterEqual(cmd.count("nothing armed"), 7)
+        self.assertGreaterEqual(cmd.count("nothing armed"), 9)
         for word in ('"off"', '"stat"', '"at"'):
             self.assertIn(word, cmd, word)
         # The two disarm rules are constants compared inside the detour.
@@ -415,7 +426,7 @@ class RestartProbeContractTests(unittest.TestCase):
             self.assertIn(f'" {counter}="', stat, counter)
         for field in ('"armed="', '" site="', '" scope="', '" name="', '" value="', '" lastWriteFrame="'):
             self.assertIn(field, stat, field)
-        self.assertLess(self.show.index('" control="'), self.show.index("RpHoldStatLine()"))
+        self.assertLess(self.show.index('" control="'), self.show.index("RpHoldStatLine("))
         # The first calls after arming are logged into the site row's log.
         self.assertIn("kRpLogBudget", apply)
         self.assertIn('" entry="', apply)
@@ -486,6 +497,115 @@ class RestartProbeContractTests(unittest.TestCase):
         self.assertIn("RpPathTarget(", self.set_body)
         self.assertIn("RpPathTarget(", self.hold_apply)
 
+    def test_restartprobe_hold_arg0_targets_the_call_argument_at_point_of_use(self):
+        # Round 3: scope `arg0` is the site call's own argument 0 - the Restart
+        # button, when the site is UiSetFocus - resolved on every call. The
+        # call must carry the argument, the argument must read as an instance
+        # (never a kind check: this runner hands out VALUE_REF), then the
+        # member is read by name, then written in the kind read at entry.
+        self.assertEqual(self.plugin.count("static void RpHoldApply(int idx, CInstance* S, int argc, RValue** A)"), 1)
+        self.assertIn("RpHoldApply(idx, S, argc, A)", self.detour)
+        apply = self.hold_apply
+        arg0 = apply[apply.index('h.scope == "arg0"'):]
+        usable = arg0.index("HhUsableInstance(*A[0])")
+        self.assertLess(arg0.index("argc > 0"), usable)
+        self.assertLess(arg0.index("A[0]"), usable)
+        read = arg0.index("RpReadTarget(target, entry")
+        write = arg0.index("RpWrite(")
+        self.assertLess(usable, read)
+        self.assertLess(read, write)
+        self.assertLess(arg0.index("RpNumberInKind(entry, "), write)
+        self.assertNotIn("m_Kind", apply)
+        # The command accepts the scope, the apply resolves it; like `button`,
+        # its member cannot be checked at arming time, so the first call that
+        # finds it absent or not a number disarms.
+        self.assertIn('"arg0"', self.hold_cmd)
+        self.assertIn('"arg0"', apply)
+        self.assertRegex(apply, r'h\.scope == "button" \|\| h\.scope == "arg0"')
+        # Every instance target is labelled from the instance it resolved to,
+        # `<object name>#<id>.<member>` - at a non-draw site the self is not
+        # the button, so a `button.` literal would misattribute the write.
+        self.assertNotIn('"button." + ', self.block)
+        label = function_body(self.plugin, "static std::string RpInstanceLabel(")
+        for piece in ('"object_index"', '"object_get_name"', '"id"', '"#"'):
+            self.assertIn(piece, label, piece)
+        self.assertEqual(apply.count("RpInstanceLabel("), 2)   # button and arg0
+
+    def test_restartprobe_hold_disarm_is_keyed_to_the_menu_not_a_hover_gap(self):
+        # Every row records the frame of its last call, in the detour, before
+        # the hold runs.
+        row = self.plugin[self.plugin.index("struct RestartProbeRow {"):]
+        row = row[:row.index("};")]
+        self.assertIn("lastCallFrame", row)
+        detour = self.detour
+        stamp = detour.index("t.lastCallFrame = g_RuntimeFrame;")
+        self.assertLess(stamp, detour.index("RpHoldApply(idx, S, argc, A)"))
+        apply = self.hold_apply
+        write = apply.index("RpWrite(")
+        # The site's own 3-frame gap applies only in a branch on the draw row
+        # (C3: the draw stops with the menu closed) ...
+        branch = apply.index("h.site == kRp_UiDrawIngameRestart")
+        own_gap = apply.index("g_RuntimeFrame - h.lastWriteFrame > kRpHoldGapFrames")
+        self.assertLess(branch, own_gap)
+        self.assertEqual(apply.count("g_RuntimeFrame - h.lastWriteFrame"), 1)
+        # ... and any other site compares the draw row's lastCallFrame, so a
+        # hover gap on UiSetFocus disarms nothing while the menu is drawn.
+        other = apply[own_gap:write]
+        self.assertIn("g_RpRows[kRp_UiDrawIngameRestart]", other)
+        self.assertIn("draw.lastCallFrame > kRpHoldGapFrames", other)
+        self.assertIn("draw.gapTo > h.lastWriteFrame", other)
+        self.assertIn("hold: disarmed (menu not drawing since frame ", other)
+        self.assertIn("h.writes > 0", other)
+        # The draw row's own gap (closed, then reopened) is recorded in the
+        # detour, so a reopen between two site calls is seen too.
+        self.assertIn("t.gapTo = g_RuntimeFrame;", detour)
+        self.assertLess(detour.index("t.gapTo = g_RuntimeFrame;"), stamp)
+        # Arming a site other than the draw refuses while the draw row is not
+        # attached: that hold would have no menu oracle.
+        cmd = self.hold_cmd
+        refuse = cmd.index("needs the Restart draw attached")
+        self.assertIn("g_RpRows[kRp_UiDrawIngameRestart].mode != kRpNative", cmd)
+        self.assertLess(cmd.index("is not an attached native row"), refuse)
+        self.assertLess(refuse, cmd.index('confirm != "confirm"'))
+
+    def test_restartprobe_hold_has_two_slots_and_a_run_length_entry_ring(self):
+        self.assertRegex(self.block, r"kRpHoldSlots = 2;")
+        self.assertRegex(self.block, r"kRpHoldRing = 1024;")
+        self.assertRegex(self.block, r"kRpHoldRingLines = 32;")
+        self.assertIn("g_RpHold[kRpHoldSlots]", self.block)
+        cmd = self.hold_cmd
+        # A third hold is refused - never a silent replacement.
+        self.assertIn("two holds armed; hold off first", cmd)
+        self.assertNotIn("replaced the previous hold", self.block)
+        self.assertLess(cmd.index("two holds armed"), cmd.index('"restartprobe hold armed: "'))
+        # Arming starts from a fresh state, which clears that slot's ring.
+        self.assertIn("RpHoldState()", cmd)
+        # `hold off` disarms every slot.
+        off = cmd[cmd.index('first == "off"'):cmd.index('first == "stat"')]
+        self.assertIn("kRpHoldSlots", off)
+        self.assertIn(".armed = false", off)
+        # `hold stat` prints each slot's stat line, then that slot's ring.
+        stat = cmd[cmd.index('first == "stat"'):]
+        stat = stat[:stat.index("return;")]
+        self.assertIn("kRpHoldSlots", stat)
+        self.assertLess(stat.index("RpHoldStatLine("), stat.index("RpHoldRingLines("))
+        self.assertIn('"hold["', function_body(self.plugin, "static std::string RpHoldStatLine("))
+        ring = function_body(self.plugin, "static std::vector<std::string> RpHoldRingLines(")
+        self.assertIn('"] ring: frames "', ring)
+        self.assertIn("kRpHoldRingLines", ring)
+        for field in ('" entry="', '" held="', '" wrote="', '" readback="', '" x"'):
+            self.assertIn(field, ring, field)
+        # The ring is filled inside the apply, once per write, after the read-back.
+        apply = self.hold_apply
+        self.assertIn("for (int slot = 0; slot < kRpHoldSlots; ++slot)", apply)
+        self.assertEqual(apply.count("RpHoldRingPush("), 1)
+        self.assertLess(apply.index("RpWrite("), apply.index("RpHoldRingPush("))
+        push = function_body(self.plugin, "static void RpHoldRingPush(")
+        self.assertIn("kRpHoldRing", push)
+        # `show` prints the per-slot stat lines only, not the rings.
+        self.assertIn("kRpHoldSlots", self.show)
+        self.assertNotIn("RpHoldRingLines(", self.show)
+
 
 class RestartResearchDocTests(unittest.TestCase):
     @classmethod
@@ -516,10 +636,10 @@ class RestartResearchDocTests(unittest.TestCase):
         for key in DECISION_KEYS:
             lines = re.findall(r"(?m)^" + key + r": (.+)$", decision)
             self.assertEqual(len(lines), 1, key)
-        # Round 1 ran and did not identify the gate: its six lines stand,
-        # literally, until round 2's live session has run - and no other
-        # `key:` line may creep in beside them.
-        for line in ROUND1_DECISION:
+        # Rounds 1 and 2 ran and did not identify the gate: round 2's six
+        # lines stand, literally, until round 3's live session has run - and
+        # no other `key:` line may creep in beside them.
+        for line in ROUND2_DECISION:
             self.assertIn("\n" + line + "\n", decision + "\n", line)
         keyed = re.findall(r"(?m)^(\w+): ", decision)
         self.assertEqual(keyed, list(DECISION_KEYS))
@@ -559,24 +679,81 @@ class RestartResearchDocTests(unittest.TestCase):
         self.assertEqual(len(re.findall(r"(?m)^- \*\*C[34]", self.doc)), 2)
         self.assertEqual(len(re.findall(r"(?m)^- \*\*C[34]", controls)), 2)
         self.assertIn("readbackOk", controls)
-        # The round-2 procedure, S1-S7, under its own heading.
+        # The round-2 procedure, S1-S7, under its own heading, its step names
+        # in bold now that the plain rows are round 2's results.
         live = doc_section(self.doc, "## Live procedure")
         self.assertIn("\n### Round 2\n", live)
         round2 = live[live.index("\n### Round 2\n"):]
-        self.assertEqual(sorted(re.findall(r"(?m)^\| (S[1-7]) \|", round2)),
+        self.assertEqual(sorted(re.findall(r"(?m)^\| \*\*(S[1-7])\*\* \|", round2)),
                          ["S1", "S2", "S3", "S4", "S5", "S6", "S7"])
-        self.assertEqual(len(re.findall(r"(?m)^\| S[1-7] \|", self.doc)), 7)
+        self.assertEqual(re.findall(r"(?m)^\| S[1-7] \|", round2), [])
         for step in ("C3", "C4"):
-            self.assertRegex(round2, r"(?m)^\| " + step + r"\b", step)
+            self.assertRegex(round2, r"(?m)^\| \*\*" + step + r"\*\* \|", step)
         # The instrument section documents every round-2 verb.
         instrument = doc_section(self.doc, "## Instrument")
         for verb in ("restartprobe dump", "restartprobe hold", "restartprobe argset", "`path`", "selfIds="):
             self.assertIn(verb, instrument, verb)
-        # Status names round 1's result and says round 2 is pending.
+        # Status names round 1's result and round 2's.
         status = self.doc[self.doc.index("**Status.**"):self.doc.index("\n## The question")]
         self.assertIn("round 1", status.lower())
         self.assertIn("round 2", status.lower())
         self.assertNotIn(EXIT_ACTIVATION, self.doc)
+
+    def test_research_doc_round2_results_and_round3_procedure(self):
+        results = doc_section(self.doc, "## Results")
+        rows = re.findall(r"(?m)^\| (S[1-7]|C[34]) \|(.*)$", results)
+        self.assertEqual(sorted(r[0] for r in rows),
+                         sorted(["C3", "C4", "S1", "S2", "S3", "S4", "S5", "S6", "S7"]))
+        # Plain rows are results; the procedure tables bold their step names.
+        self.assertEqual(len(re.findall(r"(?m)^\| (?:S[1-7]|C[34]) \|", self.doc)), 9)
+        self.assertEqual(len(re.findall(r"(?m)^\| \*\*(?:S[1-7]|C[34])\*\* \|", self.doc)), 9)
+        by_step = {step: text for step, text in rows}
+        # Printed fragments from the round-2 session, quoted.
+        self.assertIn("control=0", by_step["C3"])
+        self.assertIn("selfIds=262247", by_step["S1"])
+        self.assertIn("enabled=bool:true", by_step["S1"])
+        self.assertIn("manualDisable=bool:false", by_step["S1"])
+        self.assertIn("enabled: true -> false", by_step["S2"])
+        self.assertIn("UiACloseButton calls=1", by_step["S3"])
+        self.assertIn("UiAIngameRestart calls=0", by_step["S3"])
+        self.assertIn("readbackOk=1260", by_step["C4"])
+        self.assertIn("entryHeld=7179 entryOther=51", by_step["S4"])
+        self.assertIn("entryHeld=0 entryOther=5010", by_step["S5"])
+        self.assertIn("entryHeld=0 entryOther=10380", by_step["S5"])
+        # Never a value the session did not print.
+        self.assertIn("not recorded", by_step["S6"])
+        self.assertIn("not recorded", by_step["S7"])
+        # Round 1's rows are untouched in count.
+        self.assertEqual(len(re.findall(r"(?m)^\| (?:R[1-8]|C[12]) \|", self.doc)), 10)
+        # The round-2 review's wording fixes: a zero on a row with no positive
+        # control is "not observed", and the step order is an assumption.
+        self.assertNotIn("does not go through", self.doc)
+        self.assertIn("no positive control on that row", result_row(results, "R4"))
+        self.assertEqual(self.doc.count("the assumption is that instances step in creation order"), 1)
+        # C5 is named before the procedure.
+        controls = doc_section(self.doc, "## Candidates and controls")
+        self.assertEqual(len(re.findall(r"(?m)^- \*\*C5", self.doc)), 1)
+        self.assertEqual(len(re.findall(r"(?m)^- \*\*C5", controls)), 1)
+        # The round-3 procedure, after round 2's, with bolded step names.
+        live = doc_section(self.doc, "## Live procedure")
+        self.assertLess(live.index("\n### Round 2\n"), live.index("\n### Round 3\n"))
+        round3 = live[live.index("\n### Round 3\n"):]
+        self.assertEqual(sorted(re.findall(r"(?m)^\| \*\*(C5|T[1-6])\*\* \|", round3)),
+                         ["C5", "T1", "T2", "T3", "T4", "T5", "T6"])
+        self.assertIn("setfocus-write", round3)
+        # The instrument documents the arg0 scope, the two slots, the ring and
+        # the draw-keyed disarm.
+        instrument = doc_section(self.doc, "## Instrument")
+        self.assertGreaterEqual(instrument.count("arg0"), 3)
+        self.assertIn("menu not drawing", instrument)
+        self.assertGreaterEqual(instrument.count("ring"), 2)
+        self.assertIn("two holds armed", instrument)
+        # Status: round 2 ran, round 3 is pending.
+        status = self.doc[self.doc.index("**Status.**"):self.doc.index("\n## The question")]
+        self.assertIn("round 3", status.lower())
+        self.assertNotIn("round 2's live session is pending", self.doc)
+        decision = doc_section(self.doc, "## Decision")
+        self.assertEqual(len(re.findall(r"(?m)^shipRoute: pending \(round 3", decision)), 1)
 
 
 if __name__ == "__main__":

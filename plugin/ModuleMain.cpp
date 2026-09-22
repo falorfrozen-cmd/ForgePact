@@ -25005,9 +25005,20 @@ static bool HandleMenuLayoutCommand(const std::string& lc, const std::string& re
 // resolved by the deep reader (TgProbeDeepGet). Every write and every
 // point-of-use read is inside a detour before the trampoline, or on the frame
 // that consumes cmd.txt.
+//
+// Round 3 (round 2 showed the Restart button's own enabled/manualDisable flip
+// with combat, and a draw-time hold of either was rewritten before the next
+// call): the hold gains scope `arg0` - the site call's argument 0, which at
+// UiSetFocus is the Restart button, at step time - a label read off the
+// instance it resolved to, two slots, a per-slot entry ring printed
+// run-length collapsed, and a disarm keyed to the Restart draw's own calls
+// rather than to the site's, so a hover gap on UiSetFocus disarms nothing.
 static constexpr long kRpLogBudget = 20;   // call lines kept per row between resets
-static constexpr uint64_t kRpHoldGapFrames = 3;     // a site call later than this after the last write: the menu closed and reopened
+static constexpr uint64_t kRpHoldGapFrames = 3;     // a draw call later than this after the previous one: the menu closed and reopened
 static constexpr long kRpHoldMaxWrites = 20000;     // about 2.3 minutes of draws at 144 fps
+static constexpr int kRpHoldSlots = 2;              // holds armed at once (enabled and manualDisable, say)
+static constexpr size_t kRpHoldRing = 1024;         // entries kept per slot, about 7 s at 144 fps
+static constexpr size_t kRpHoldRingLines = 32;      // run-length lines `hold stat` prints per slot, newest last
 static constexpr long kRpArgsetMaxCalls = 20000;    // the largest calls=N `argset` accepts
 static constexpr size_t kRpDumpMaxNames = 512;      // instance variables read per dump
 static constexpr size_t kRpDumpMaxLabels = 8;       // dumps kept, oldest evicted
@@ -25085,6 +25096,12 @@ struct RestartProbeRow {
     volatile long             calls;
     volatile long             logged;
     std::vector<std::string>  log;
+    // Game thread only, stamped by the detour on every call. The Restart
+    // draw row's pair is the hold's menu oracle (C3: the draw stops with the
+    // menu closed): lastCallFrame is its latest call, gapFrom..gapTo its
+    // latest pause longer than kRpHoldGapFrames (the menu closed, reopened).
+    uint64_t                  lastCallFrame = 0;
+    uint64_t                  gapFrom = 0, gapTo = 0;
 };
 
 static RestartProbeRow g_RpRows[kRpRowCount] = {
@@ -25343,6 +25360,26 @@ static std::string RpDescribeSelf(CInstance* S)
     } catch (...) { return "(unresolved)"; }
 }
 
+// What a hold's output calls an instance target: `<object name>#<id>.<member>`,
+// both read by name off the instance the call resolved, so a write is
+// attributed to what it reached - at a site other than the draw, the call's
+// self is the pause menu, not the button.
+static std::string RpInstanceLabel(const RValue& inst, const std::string& member)
+{
+    std::string object = "(unresolved)";
+    std::string id = "?";
+    try {
+        RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("object_index") });
+        int idx = -1;
+        object = N1ObjectIndex(oi, idx)
+            ? g_Yytk->CallBuiltin("object_get_name", { RValue((double)idx) }).ToString()
+            : "(no object_index: " + Describe(oi) + ")";
+    } catch (...) {}
+    // Whole digits: %g would print an id above 999999 as 1e+06.
+    try { id = std::to_string((long long)g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("id") }).ToDouble()); } catch (...) {}
+    return object + "#" + id + "." + member;
+}
+
 // A row by the name `hold ... at <row>` and `argset <row>` take: its label
 // without the "(control)" suffix, or its full SDK name.
 static int RpFindRow(const std::string& text)
@@ -25541,22 +25578,37 @@ static void RpDumpDiff(const RpDump& da, const RpDump& db)
 // previous write survived to this call) against entryOther (something
 // rewrote it in between) is what decides whether a press during the hold
 // tests the value at all.
+//
+// Round 3: two slots, so enabled and manualDisable can be held together, each
+// with its own counters and an entry ring - one entry per write: the frame,
+// the target, the value found at entry, whether that already was the held
+// value, what was written and the read-back. A human cannot run `hold stat`
+// within a tenth of a second of a refused press; seven seconds of entries,
+// collapsed into runs, still show what the game did to the value on the
+// frames around it.
+struct RpHoldEntry {
+    uint64_t    frame = 0;
+    std::string label, entry, wrote;
+    bool        held = false, readbackOk = false;
+};
 struct RpHoldState {
     bool        armed = false;
     int         site = -1;
-    std::string scope;            // global|controller|player|pause|button|path
+    std::string scope;            // global|controller|player|pause|button|arg0|path
     std::string name;
     double      value = 0.0;
     long        writes = 0, readbackOk = 0, entryHeld = 0, entryOther = 0, unreadable = 0, skipped = 0;
     long        logged = 0;
     uint64_t    lastWriteFrame = 0;
+    std::vector<RpHoldEntry> ring;   // at most kRpHoldRing entries; the oldest is overwritten
+    size_t      ringPushed = 0;      // entries pushed since arming
 };
-static RpHoldState g_RpHold;      // game thread only: the command and the detours both run there
+static RpHoldState g_RpHold[kRpHoldSlots];   // game thread only: the command and the detours both run there
 
-static std::string RpHoldStatLine()
+static std::string RpHoldStatLine(int slot)
 {
-    const RpHoldState& h = g_RpHold;
-    return std::string("hold: ") + "armed=" + (h.armed ? "yes" : "no")
+    const RpHoldState& h = g_RpHold[slot];
+    return std::string("hold[") + std::to_string(slot) + "]: " + "armed=" + (h.armed ? "yes" : "no")
         + " site=" + RpRowName(h.site)
         + " scope=" + (h.scope.empty() ? std::string("none") : h.scope)
         + " name=" + (h.name.empty() ? std::string("none") : h.name)
@@ -25570,97 +25622,183 @@ static std::string RpHoldStatLine()
         + " lastWriteFrame=" + std::to_string((unsigned long long)h.lastWriteFrame);
 }
 
-static void RpHoldDisarm(const std::string& why)
+static void RpHoldDisarm(int slot, const std::string& why)
 {
-    g_RpHold.armed = false;
-    Out("restartprobe " + why + "; " + RpHoldStatLine());
+    g_RpHold[slot].armed = false;
+    Out("restartprobe " + why + "; " + RpHoldStatLine(slot));
 }
 
-// Runs inside the site row's detour, before the trampoline. Both disarm rules
-// are decided here, where the calls arrive, and not in a command: the draw
-// is only called while the menu is open (control C3), so a call after a gap
-// means the menu was closed and reopened.
-static void RpHoldApply(int idx, CInstance* S)
+static void RpHoldRingPush(RpHoldState& h, RpHoldEntry e)
 {
-    RpHoldState& h = g_RpHold;
-    if (!h.armed || idx != h.site) return;
-    if (h.writes > 0 && g_RuntimeFrame - h.lastWriteFrame > kRpHoldGapFrames) {
-        RpHoldDisarm("hold: disarmed (menu closed at frame " + std::to_string((unsigned long long)h.lastWriteFrame)
-            + "; writes=" + std::to_string(h.writes) + ")");
-        return;
-    }
-    if (h.writes >= kRpHoldMaxWrites) { RpHoldDisarm("hold: disarmed (cap)"); return; }
+    if (h.ring.size() < kRpHoldRing) h.ring.push_back(std::move(e));
+    else h.ring[h.ringPushed % kRpHoldRing] = std::move(e);
+    ++h.ringPushed;
+}
 
-    // The target, resolved at this call: `button` is this call's own self,
-    // accepted by reading through it rather than by its kind.
-    RpTarget target;
-    std::string why;
-    bool resolved = false;
-    if (h.scope == "button") {
-        const RValue self = S ? S->ToRValue() : RValue();
-        if (S && HhUsableInstance(self)) {
-            target.kind = RpTarget::kInstance;
-            target.holder = self;
-            target.name = h.name;
-            target.label = "button." + h.name;
-            resolved = true;
-        } else {
-            why = "the call's self is not a usable instance";
+// `hold stat`'s ring lines for one slot, oldest first: consecutive entries
+// that differ only in their frame are one run, and only the newest
+// kRpHoldRingLines runs are printed. One unbroken `held=no` run is "the game
+// rewrote it between every two writes"; a change of run near the press frame
+// is what the press saw.
+static std::vector<std::string> RpHoldRingLines(int slot)
+{
+    const RpHoldState& h = g_RpHold[slot];
+    const std::string prefix = "hold[" + std::to_string(slot) + "]";
+    std::vector<std::string> lines;
+    const size_t n = h.ring.size();
+    if (n == 0) { lines.push_back(prefix + " ring: empty (no write since arming)"); return lines; }
+    const size_t start = n < kRpHoldRing ? 0 : h.ringPushed % kRpHoldRing;
+    struct Run { const RpHoldEntry* e; uint64_t first; uint64_t last; size_t count; };
+    std::vector<Run> runs;
+    for (size_t i = 0; i < n; ++i) {
+        const RpHoldEntry& e = h.ring[(start + i) % n];
+        if (!runs.empty()) {
+            const RpHoldEntry& p = *runs.back().e;
+            if (p.label == e.label && p.entry == e.entry && p.held == e.held && p.wrote == e.wrote && p.readbackOk == e.readbackOk) {
+                runs.back().last = e.frame;
+                ++runs.back().count;
+                continue;
+            }
         }
-    } else if (h.scope == "path") {
-        resolved = RpPathTarget(h.name, target, why);
-    } else if (const RpScope* s = RpFindScope(h.scope)) {
-        RValue inst;
-        resolved = s->isGlobal || RpScopeInstance(*s, inst);
-        if (resolved) target = RpScopeTarget(*s, inst, h.name);
-        else why = RpScopeLabel(*s) + " has no instance";
+        runs.push_back({ &e, e.frame, e.frame, 1 });
     }
-    const bool log = h.logged < kRpLogBudget;
-    if (!resolved) {
-        ++h.unreadable;
-        if (log) { ++h.logged; RpRowLog(idx, "hold: frame=" + std::to_string((unsigned long long)g_RuntimeFrame) + " unreadable (" + why + ")"); }
-        return;
+    const size_t from = runs.size() > kRpHoldRingLines ? runs.size() - kRpHoldRingLines : 0;
+    if (from > 0) lines.push_back(prefix + " ring: " + std::to_string(from) + " older run(s) not shown");
+    for (size_t i = from; i < runs.size(); ++i) {
+        const Run& r = runs[i];
+        lines.push_back("hold[" + std::to_string(slot) + "] ring: frames " + std::to_string((unsigned long long)r.first)
+            + ".." + std::to_string((unsigned long long)r.last) + " x" + std::to_string(r.count) + " " + r.e->label
+            + " entry=" + r.e->entry + " held=" + (r.e->held ? "yes" : "no") + " wrote=" + r.e->wrote
+            + " readback=" + (r.e->readbackOk ? "ok" : "mismatch"));
     }
+    return lines;
+}
 
-    RValue entry;
-    const RpReadResult rr = RpReadTarget(target, entry, &why);
-    if (rr != RpReadResult::Ok || !RpIsNumeric(entry)) {
-        const std::string what = rr != RpReadResult::Ok
-            ? std::string(rr == RpReadResult::Absent ? "absent" : "unreadable") + (why.empty() ? "" : " (" + why + ")")
-            : Describe(entry) + ", not a number";
+// Runs inside the site row's detour, before the trampoline, for every armed
+// slot on this row, in slot order. The disarm rules are decided here, where
+// the calls arrive, and not in a command. At the draw site, a draw after a
+// gap means the menu was closed and reopened (control C3). Any other site -
+// UiSetFocus is only called while the cursor hovers a button - says nothing
+// about the menu by its own gaps, so the draw row's calls decide: no draw for
+// longer than the gap, or a draw gap since this slot's last write, is the
+// menu closed.
+static void RpHoldApply(int idx, CInstance* S, int argc, RValue** A)
+{
+    for (int slot = 0; slot < kRpHoldSlots; ++slot) {
+        RpHoldState& h = g_RpHold[slot];
+        if (!h.armed || idx != h.site) continue;
+        if (h.site == kRp_UiDrawIngameRestart) {
+            if (h.writes > 0 && g_RuntimeFrame - h.lastWriteFrame > kRpHoldGapFrames) {
+                RpHoldDisarm(slot, "hold: disarmed (menu closed at frame " + std::to_string((unsigned long long)h.lastWriteFrame)
+                    + "; writes=" + std::to_string(h.writes) + ")");
+                continue;
+            }
+        } else if (h.writes > 0) {
+            const RestartProbeRow& draw = g_RpRows[kRp_UiDrawIngameRestart];
+            const bool stale = g_RuntimeFrame - draw.lastCallFrame > kRpHoldGapFrames;
+            const bool reopened = draw.gapTo > h.lastWriteFrame;
+            if (stale || reopened) {
+                RpHoldDisarm(slot, "hold: disarmed (menu not drawing since frame "
+                    + std::to_string((unsigned long long)(stale ? draw.lastCallFrame : draw.gapFrom))
+                    + "; writes=" + std::to_string(h.writes) + ")");
+                continue;
+            }
+        }
+        if (h.writes >= kRpHoldMaxWrites) { RpHoldDisarm(slot, "hold: disarmed (cap)"); continue; }
+
+        // The target, resolved at this call: `button` is this call's own
+        // self, `arg0` its first argument, each accepted by reading through
+        // it rather than by its kind, and labelled from what it resolved to.
+        RpTarget target;
+        std::string why;
+        bool resolved = false;
         if (h.scope == "button") {
-            // The button's member could not be checked at arming time; the
-            // first call that finds it absent or not a number disarms.
-            ++h.skipped;
-            if (h.writes == 0) { RpHoldDisarm("hold: disarmed (" + target.label + " is " + what + " on the first call)"); return; }
-        } else {
-            ++h.unreadable;
+            const RValue self = S ? S->ToRValue() : RValue();
+            if (S && HhUsableInstance(self)) {
+                target.kind = RpTarget::kInstance;
+                target.holder = self;
+                target.name = h.name;
+                target.label = RpInstanceLabel(self, h.name);
+                resolved = true;
+            } else {
+                why = "the call's self is not a usable instance";
+            }
+        } else if (h.scope == "arg0") {
+            // At UiSetFocus this is the Restart button, handed over at step
+            // time; this runner passes it as VALUE_REF.
+            if (argc > 0 && A && A[0] && HhUsableInstance(*A[0])) {
+                target.kind = RpTarget::kInstance;
+                target.holder = *A[0];
+                target.name = h.name;
+                target.label = RpInstanceLabel(*A[0], h.name);
+                resolved = true;
+            } else {
+                why = (argc > 0 && A && A[0]) ? "argument 0 is not a usable instance (" + Describe(*A[0]) + ")"
+                                              : std::string("the call has no argument 0");
+            }
+        } else if (h.scope == "path") {
+            resolved = RpPathTarget(h.name, target, why);
+        } else if (const RpScope* s = RpFindScope(h.scope)) {
+            RValue inst;
+            resolved = s->isGlobal || RpScopeInstance(*s, inst);
+            if (resolved) target = RpScopeTarget(*s, inst, h.name);
+            else why = RpScopeLabel(*s) + " has no instance";
         }
-        if (log) { ++h.logged; RpRowLog(idx, "hold: frame=" + std::to_string((unsigned long long)g_RuntimeFrame) + " " + target.label + " is " + what + "; not written"); }
-        return;
-    }
+        const std::string tag = "hold[" + std::to_string(slot) + "]: frame=" + std::to_string((unsigned long long)g_RuntimeFrame);
+        const bool log = h.logged < kRpLogBudget;
+        if (!resolved) {
+            ++h.unreadable;
+            if (log) { ++h.logged; RpRowLog(idx, tag + " unreadable (" + why + ")"); }
+            continue;
+        }
 
-    const RValue held = RpNumberInKind(entry, h.value);
-    double heldNumber = h.value;
-    try { heldNumber = held.ToDouble(); } catch (...) {}
-    bool atHeld = false;
-    try { atHeld = entry.ToDouble() == heldNumber; } catch (...) {}
-    if (atHeld) ++h.entryHeld;
-    else ++h.entryOther;
-    const bool wrote = RpWrite(target, held);
-    RValue back;
-    bool backOk = false;
-    if (wrote && RpReadTarget(target, back) == RpReadResult::Ok && RpIsNumeric(back)) {
-        try { backOk = back.ToDouble() == heldNumber; } catch (...) {}
-    }
-    if (backOk) ++h.readbackOk;
-    ++h.writes;
-    h.lastWriteFrame = g_RuntimeFrame;
-    if (log) {
-        ++h.logged;
-        RpRowLog(idx, "hold: frame=" + std::to_string((unsigned long long)g_RuntimeFrame) + " " + target.label
-            + " entry=" + Describe(entry) + " wrote=" + (wrote ? Describe(held) : std::string("no (the write threw)"))
-            + " readback=" + (backOk ? std::string("ok") : "mismatch (" + Describe(back) + ")"));
+        RValue entry;
+        const RpReadResult rr = RpReadTarget(target, entry, &why);
+        if (rr != RpReadResult::Ok || !RpIsNumeric(entry)) {
+            const std::string what = rr != RpReadResult::Ok
+                ? std::string(rr == RpReadResult::Absent ? "absent" : "unreadable") + (why.empty() ? "" : " (" + why + ")")
+                : Describe(entry) + ", not a number";
+            if (h.scope == "button" || h.scope == "arg0") {
+                // The member could not be checked at arming time; the first
+                // call that finds it absent or not a number disarms.
+                ++h.skipped;
+                if (h.writes == 0) { RpHoldDisarm(slot, "hold: disarmed (" + target.label + " is " + what + " on the first call)"); continue; }
+            } else {
+                ++h.unreadable;
+            }
+            if (log) { ++h.logged; RpRowLog(idx, tag + " " + target.label + " is " + what + "; not written"); }
+            continue;
+        }
+
+        const RValue held = RpNumberInKind(entry, h.value);
+        double heldNumber = h.value;
+        try { heldNumber = held.ToDouble(); } catch (...) {}
+        bool atHeld = false;
+        try { atHeld = entry.ToDouble() == heldNumber; } catch (...) {}
+        if (atHeld) ++h.entryHeld;
+        else ++h.entryOther;
+        const bool wrote = RpWrite(target, held);
+        RValue back;
+        bool backOk = false;
+        if (wrote && RpReadTarget(target, back) == RpReadResult::Ok && RpIsNumeric(back)) {
+            try { backOk = back.ToDouble() == heldNumber; } catch (...) {}
+        }
+        if (backOk) ++h.readbackOk;
+        ++h.writes;
+        h.lastWriteFrame = g_RuntimeFrame;
+        RpHoldEntry e;
+        e.frame = g_RuntimeFrame;
+        e.label = target.label;
+        e.entry = Describe(entry);
+        e.held = atHeld;
+        e.wrote = wrote ? Describe(held) : std::string("no (the write threw)");
+        e.readbackOk = backOk;
+        if (log) {
+            ++h.logged;
+            RpRowLog(idx, tag + " " + target.label + " entry=" + e.entry + " wrote=" + e.wrote
+                + " readback=" + (backOk ? std::string("ok") : "mismatch (" + Describe(back) + ")"));
+        }
+        RpHoldRingPush(h, std::move(e));
     }
 }
 
@@ -25727,14 +25865,21 @@ static void RpArgsetApply(int idx, int argc, RValue** A)
 // own body is about to read. The round-2 steps (selfIds, a pending dump, the
 // hold, argset) run here too, in that order, all before the trampoline; the
 // sample is taken after them, so it shows what the game's body will see.
+// Every row stamps its call frame first, and its latest gap; the draw row's
+// pair is what a hold at any other site reads as "the menu is open".
 static RValue& RpDetourBody(int idx, CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
     RestartProbeRow& t = g_RpRows[idx];
     const long n = InterlockedIncrement(&t.calls);
     const bool keep = t.logged < kRpLogBudget && InterlockedIncrement(&t.logged) <= kRpLogBudget;
+    if (t.lastCallFrame != 0 && g_RuntimeFrame - t.lastCallFrame > kRpHoldGapFrames) {
+        t.gapFrom = t.lastCallFrame;
+        t.gapTo = g_RuntimeFrame;
+    }
+    t.lastCallFrame = g_RuntimeFrame;
     RpNoteSelfId(idx, S);
     RpDumpFromDetour(idx, S);
-    RpHoldApply(idx, S);
+    RpHoldApply(idx, S, argc, A);
     RpArgsetApply(idx, argc, A);
     std::string line;
     if (keep) {
@@ -25849,7 +25994,7 @@ static void RestartProbeShow()
         + " control=" + RpCallsText(g_RpRows[kRp_UiDrawIngameRestart])
         + " (UiDrawIngameRestart calls; must be > 0 with the pause menu open, unchanged with it closed)");
     Out("  " + RpSelfIdsText() + " (distinct UiDrawIngameRestart self ids)");
-    Out("  " + RpHoldStatLine());
+    for (int slot = 0; slot < kRpHoldSlots; ++slot) Out("  " + RpHoldStatLine(slot));
     Out("  " + RpArgsetStatLine());
     for (const RestartProbeRow& t : g_RpRows)
         Out(std::string("  ") + t.label + " mode=" + t.modeText + " calls=" + RpCallsText(t));
@@ -25932,20 +26077,28 @@ static void RestartProbeSet(const std::string& rest)
         + (threw ? " (the write threw)" : ""));
 }
 
-// `hold <scope> <name> <number> [at <row>] confirm` arms the hold; it writes
-// nothing itself. Every refusal comes first, in a fixed order; the writes
-// start with the site row's next call (RpHoldApply).
+// `hold <scope> <name> <number> [at <row>] confirm` arms the first free slot;
+// it writes nothing itself. Every refusal comes first, in a fixed order; the
+// writes start with the site row's next call (RpHoldApply).
 static void RestartProbeHold(const std::string& rest)
 {
     std::string r = rest;
     const std::string first = Lower(FirstToken(r, r));
     if (first == "off") {
-        const bool was = g_RpHold.armed;
-        g_RpHold.armed = false;
-        Out(std::string("restartprobe hold: ") + (was ? "off" : "was not armed") + "; " + RpHoldStatLine());
+        for (int slot = 0; slot < kRpHoldSlots; ++slot) {
+            const bool was = g_RpHold[slot].armed;
+            g_RpHold[slot].armed = false;
+            Out(std::string("restartprobe hold: ") + (was ? "off" : "was not armed") + "; " + RpHoldStatLine(slot));
+        }
         return;
     }
-    if (first == "stat") { Out("restartprobe " + RpHoldStatLine()); return; }
+    if (first == "stat") {
+        for (int slot = 0; slot < kRpHoldSlots; ++slot) {
+            Out("restartprobe " + RpHoldStatLine(slot));
+            for (const std::string& line : RpHoldRingLines(slot)) Out("  " + line);
+        }
+        return;
+    }
     const std::string scopeWord = first;
     const std::string name = FirstToken(r, r);
     const std::string numberText = FirstToken(r, r);
@@ -25954,11 +26107,13 @@ static void RestartProbeHold(const std::string& rest)
     if (next == "at") { siteText = FirstToken(r, r); next = Lower(FirstToken(r, r)); }
     const std::string confirm = next;
 
-    const bool isButton = scopeWord == "button";
+    // `button` (the call's self) and `arg0` (its first argument) exist only
+    // inside a site call, so both are resolved there, not here.
+    const bool isButton = scopeWord == "button" || scopeWord == "arg0";
     const bool isPath = scopeWord == "path";
     const RpScope* s = (isButton || isPath) ? nullptr : RpFindScope(scopeWord);
     if (!isButton && !isPath && !s) {
-        Out("restartprobe hold: unknown scope '" + scopeWord + "' (global|controller|player|pause|button|path); nothing armed");
+        Out("restartprobe hold: unknown scope '" + scopeWord + "' (global|controller|player|pause|button|arg0|path); nothing armed");
         return;
     }
     RpTarget target;
@@ -25970,8 +26125,8 @@ static void RestartProbeHold(const std::string& rest)
         std::string why;
         if (!RpPathTarget(name, target, why)) { Out("restartprobe hold: path " + name + " is unresolved (" + why + "); nothing armed"); return; }
     }
-    // `button` is the site call's own self, which does not exist at command
-    // time: its member is checked on the first call instead (RpHoldApply).
+    // `button` and `arg0` do not exist at command time: their member is
+    // checked on the first call instead (RpHoldApply).
     if (!isButton) {
         RValue before;
         std::string why;
@@ -25989,6 +26144,13 @@ static void RestartProbeHold(const std::string& rest)
         Out("restartprobe hold: '" + siteText + "' is not an attached native row (restartprobe hook first); nothing armed");
         return;
     }
+    // A hold at any other site disarms on the Restart draw's calls, so it
+    // needs that row attached; without it the hold could never tell the
+    // menu closed.
+    if (site != kRp_UiDrawIngameRestart && g_RpRows[kRp_UiDrawIngameRestart].mode != kRpNative) {
+        Out("restartprobe hold: needs the Restart draw attached (restartprobe hook first); nothing armed");
+        return;
+    }
     if (confirm != "confirm") { Out("restartprobe hold: add `confirm` to arm; nothing armed"); return; }
     double value = 0.0;
     try {
@@ -25996,16 +26158,19 @@ static void RestartProbeHold(const std::string& rest)
         value = std::stod(numberText, &used);
         if (used != numberText.size() || !std::isfinite(value)) throw std::invalid_argument("number");
     } catch (...) { Out("restartprobe hold: '" + numberText + "' is not a number; nothing armed"); return; }
+    int slot = -1;
+    for (int i = 0; i < kRpHoldSlots && slot < 0; ++i) if (!g_RpHold[i].armed) slot = i;
+    if (slot < 0) { Out("restartprobe hold: two holds armed; hold off first; nothing armed"); return; }
 
-    const bool replacing = g_RpHold.armed;
-    g_RpHold = RpHoldState();
-    g_RpHold.site = site;
-    g_RpHold.scope = scopeWord;
-    g_RpHold.name = name;
-    g_RpHold.value = value;
-    g_RpHold.armed = true;
+    // A fresh state: counters, log budget and ring all start at zero.
+    g_RpHold[slot] = RpHoldState();
+    g_RpHold[slot].site = site;
+    g_RpHold[slot].scope = scopeWord;
+    g_RpHold[slot].name = name;
+    g_RpHold[slot].value = value;
+    g_RpHold[slot].armed = true;
     Out("restartprobe hold armed: " + scopeWord + "." + name + "=" + RpNumberText(value) + " at " + RpRowName(site)
-        + "; writes start with the next call" + (replacing ? " (replaced the previous hold)" : ""));
+        + " in hold[" + std::to_string(slot) + "]; writes start with the next call");
 }
 
 // `argset <row> a<i> <number> [calls=N] confirm` / `argset clear` / `argset stat`.
@@ -26134,7 +26299,7 @@ static void RestartProbeCommand(const std::string& rest)
     if (sub == "argset") { RestartProbeArgset(r); return; }
     Out("restartprobe: vars | hook | show | reset | set <global|controller|player|pause|path> <name> <number> confirm"
         " | dump button|pause|show <label> | dump diff <a> <b>"
-        " | hold <global|controller|player|pause|button|path> <name> <number> [at <row>] confirm | hold off | hold stat"
+        " | hold <global|controller|player|pause|button|arg0|path> <name> <number> [at <row>] confirm | hold off | hold stat"
         " | argset <row> a<i> <number> [calls=N] confirm | argset clear | argset stat");
 }
 #endif // FORGEPACT_RELEASE (restartprobe)
