@@ -3,7 +3,7 @@
 The Prospect Cube can now prospect each item the moment you put it in, so you
 no longer have to stop every 54 items to press Prospect and start again.
 
-Three new, off-by-default Gameplay Mods for toggle skills: mark the skill-bar
+Three new, off-by-default Quality of Life mods for toggle skills: mark the skill-bar
 slot of a toggle you have running, stop a double cast proc from flipping a
 toggle straight back, and draw a countdown over a plain (non-toggled) cast so
 you can see how much time is left before it ends.
@@ -17,7 +17,7 @@ of its own - see that bullet for what it draws on.
 - **Auto-prospect items put in the Prospect Cube.** The cube's 9×6 prospect
   grid fills long before a full inventory is through it: you fill it, press
   Prospect, and fill it again, over and over. With the new **Auto-prospect**
-  switch in Gameplay Mods, every item you drag or click into the grid is
+  switch in Quality of Life, every item you drag or click into the grid is
   prospected straight away by the game's own Prospect, exactly as if you had
   pressed the button, so the grid never fills with items waiting their turn.
   It is **off by default**.
@@ -121,7 +121,7 @@ of its own - see that bullet for what it draws on.
   running, that one cast shows as full from the moment you turned it on
   rather than its true remaining time; the next cast on that skill reads
   correctly.
-- **Mods tab columns.** The Gameplay and Items mod lists are split into two
+- **Mods tab columns.** The Quality of Life and Items mod lists are split into two
   columns, and the right column could end up longer than the left, leaving a
   gap under the left one. The left column is now always the longer one, and
   the cards still read top to bottom, left column first. On a narrow window
@@ -142,6 +142,13 @@ of its own - see that bullet for what it draws on.
 
 ## Changed
 
+- **The Mods tab's Gameplay Mods card is now called Quality of Life, and Mods
+  now shows Quality of Life and Items as two sub-tabs, one list at a time.**
+  Same switches, same order, nothing to reconfigure - it is a rename, not a
+  move. Click **Quality of Life** or **Items** at the top of the Mods page to
+  switch between them (arrow keys work too); the panel remembers the one you
+  last had open until you close it. The **Items** card, for Headhunter,
+  Tyrant's Crown and Beacon, is unchanged.
 - **Headhunter and Tyrant's Crown now drop like an Angelic / Unholy item.** They used to drop
   on their own, in every session, about once every 15,000 kills each - far more often than any
   Angelic / Unholy item such as **Liquor Holster** - with no panel control for it. They
