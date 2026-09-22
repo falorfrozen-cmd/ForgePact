@@ -325,7 +325,11 @@ craft. Research DLL only, a fresh launch, one instrument.
 
 ## Results
 
-Research DLL: not built yet (recorded here with its commit once built).
+Research DLL: `plugin_build\BloodPactPlugin_rel.dll`, built 2026-09-22 with
+`plugin_build\build.bat dev` from ForgePact `aa0c72a` (SHA-256
+`6c901f742384337785d98d337f69229e4308d7439e8c55896e102e6affa56dad`), against the
+toolchain `py tools/fetch_toolchain.py` placed. Not installed into the game's
+`mods` folder - that, and the session, are the owner's call.
 
 | Row | What is measured | Result | Evidence (out.txt lines / by eye) |
 |---|---|---|---|
