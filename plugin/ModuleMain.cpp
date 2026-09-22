@@ -24976,6 +24976,402 @@ static bool HandleMenuLayoutCommand(const std::string& lc, const std::string& re
     return false;
 }
 
+#ifndef FORGEPACT_RELEASE
+// ---- restartprobe: pause-menu Restart gate research (ForgePact issue #8) ---
+// docs/restart-always-available-research.md. The pause menu's Restart refuses
+// while the game counts the player as in combat; which value it reads, on
+// which owner, and what "ready" looks like are all unmeasured. This is the
+// one batched instrument for that: a hook-free read of every candidate
+// variable on every candidate scope, a native detour on every candidate
+// script in one command, and one confirm-gated write so the leading
+// hypothesis is decided by an experiment instead of inferred from a draw.
+//
+// Nothing here runs from FrameCallback. `vars` and `set` run on the frame
+// that consumes cmd.txt; the hook rows sample the candidates inside the
+// hooked call itself, because a frame-boundary read answers for the previous
+// frame (guide Known Limitations item 13).
+//
+// Rows attach the way `tgprobe` rows do (TgProbeAttach): resolve by SDK name,
+// prove the target is executable code inside Hero_Siege.exe, then detour it -
+// never a table-only swap, which is blind to this build's direct calls. A row
+// that could not attach reports calls=n/a, never 0.
+static constexpr long kRpLogBudget = 20;   // call lines kept per row between resets
+
+enum : uint32_t {
+    kRpCount   = 0,   // count and log the call
+    kRpSample  = 1,   // also read every candidate variable at the call
+    kRpControl = 2,   // the positive control `show` prints first
+};
+
+enum : long {
+    kRpUnhooked = 0,
+    kRpNative,
+    kRpBlocked,
+    kRpNotFound,
+};
+
+// Script rows: X(SAFE, SDK CONSTANT, LABEL, FLAGS, EXISTING ORIGINAL, HELD BY).
+// The static search set of the research doc, every name an hs-game-sdk
+// constant. ZoneGenRestart is held table-only by `zonegenlog` when that is
+// on; its saved original is then the game body, and the row detours that.
+#define RESTARTPROBE_SCRIPTS(X) \
+    X(UiAIngameRestart, HeroSiege::Scripts::gml_Script_UiAIngameRestart, "UiAIngameRestart", kRpSample, nullptr, nullptr) \
+    X(UiDrawIngameRestart, HeroSiege::Scripts::gml_Script_UiDrawIngameRestart, "UiDrawIngameRestart(control)", kRpSample | kRpControl, nullptr, nullptr) \
+    X(ZoneGenRestart, HeroSiege::Scripts::gml_Script_ZoneGenRestart, "ZoneGenRestart", kRpCount, &g_OrigZg_ZoneGenRestart, "zonegenlog") \
+    X(PauseAnon1402, HeroSiege::Scripts::gml_Script_anon_1402_gml_Object_UI_Pause_obj_Create_0, "UI_Pause_obj.anon@1402", kRpCount, nullptr, nullptr) \
+    X(PauseAnon1714, HeroSiege::Scripts::gml_Script_anon_1714_gml_Object_UI_Pause_obj_Create_0, "UI_Pause_obj.anon@1714", kRpCount, nullptr, nullptr) \
+    X(PauseAnon1867, HeroSiege::Scripts::gml_Script_anon_1867_gml_Object_UI_Pause_obj_Create_0, "UI_Pause_obj.anon@1867", kRpCount, nullptr, nullptr) \
+    X(PauseAnon2018, HeroSiege::Scripts::gml_Script_anon_2018_gml_Object_UI_Pause_obj_Create_0, "UI_Pause_obj.anon@2018", kRpCount, nullptr, nullptr) \
+    X(PauseAnon2582, HeroSiege::Scripts::gml_Script_anon_2582_gml_Object_UI_Pause_obj_Create_0, "UI_Pause_obj.anon@2582", kRpCount, nullptr, nullptr) \
+    X(PauseAnon6013, HeroSiege::Scripts::gml_Script_anon_6013_gml_Object_UI_Pause_obj_Create_0, "UI_Pause_obj.anon@6013", kRpCount, nullptr, nullptr)
+
+enum RestartProbeRowId : int {
+#define RP_SCRIPT_ID(SAFE, NAME, LABEL, FLAGS, ORIG, HELD) kRp_##SAFE,
+    RESTARTPROBE_SCRIPTS(RP_SCRIPT_ID)
+#undef RP_SCRIPT_ID
+    kRpRowCount
+};
+
+#define RP_SCRIPT_DECL(SAFE, NAME, LABEL, FLAGS, ORIG, HELD) \
+    static RValue& RpNat_##SAFE(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A);
+RESTARTPROBE_SCRIPTS(RP_SCRIPT_DECL)
+#undef RP_SCRIPT_DECL
+
+struct RestartProbeRow {
+    const char*               label;
+    std::string_view          script;         // SDK constant
+    uint32_t                  flags;
+    PFUNC_YYGMLScript*        existingOrig;   // a ForgePact hook that may already hold this entry
+    const char*               heldBy;         // that hook's command, for the attach line
+    const char*               hookId;
+    PVOID                     detour;
+    PFUNC_YYGMLScript         tramp;
+    volatile long             mode;
+    std::string               modeText;
+    volatile long             calls;
+    volatile long             logged;
+    std::vector<std::string>  log;
+};
+
+static RestartProbeRow g_RpRows[kRpRowCount] = {
+#define RP_SCRIPT_ROW(SAFE, NAME, LABEL, FLAGS, ORIG, HELD) \
+    { LABEL, NAME, FLAGS, ORIG, HELD, "fp_rp_" #SAFE, (PVOID)RpNat_##SAFE, nullptr, kRpUnhooked, "unhooked", 0, 0, {} },
+    RESTARTPROBE_SCRIPTS(RP_SCRIPT_ROW)
+#undef RP_SCRIPT_ROW
+};
+
+static std::mutex g_RpLogMutex;
+
+// The candidate variable names: identifier names from the executable's
+// string table (research doc, § Static search). Case matters - `in_combat`
+// and `isCombat` are distinct candidates.
+static const char* const kRpVarNames[] = {
+    "in_combat", "isCombat", "wasInCombat", "lastHit", "combatRefresh", "aggroTimer", "dpsMeterResetCombat",
+};
+
+// Scopes, by the word `set` takes. Every object is an SDK name; `global` is
+// read with the global builtins rather than through an instance.
+struct RpScope {
+    const char* word;
+    bool isGlobal;
+    HeroSiege::Objects::GameObject object;
+};
+static const RpScope kRpScopes[] = {
+    { "global",     true,  HeroSiege::Objects::GameObject(0) },
+    { "controller", false, HeroSiege::Objects::GameObject::Controller_obj },
+    { "player",     false, HeroSiege::Objects::GameObject::Player_obj },
+    { "pause",      false, HeroSiege::Objects::GameObject::UI_Pause_obj },
+};
+
+static const RpScope* RpFindScope(const std::string& word)
+{
+    for (const RpScope& s : kRpScopes) if (word == s.word) return &s;
+    return nullptr;
+}
+
+// The first instance of the scope's object, found by name and accepted by
+// reading a variable through it (HhUsableInstance) - instance_find hands out
+// VALUE_REF on this runner, so no kind check decides anything here.
+static bool RpScopeInstance(const RpScope& s, RValue& out)
+{
+    try {
+        const double idx = g_Yytk->CallBuiltin("asset_get_index",
+            { RValue(std::string(HeroSiege::Objects::GetObjectName(s.object))) }).ToDouble();
+        if (idx < 0) return false;
+        const double count = g_Yytk->CallBuiltin("instance_number", { RValue(idx) }).ToDouble();
+        if (!std::isfinite(count) || count < 1) return false;
+        out = g_Yytk->CallBuiltin("instance_find", { RValue(idx), RValue(0.0) });
+        return HhUsableInstance(out);
+    } catch (...) { return false; }
+}
+
+static std::string RpScopeLabel(const RpScope& s)
+{
+    return s.isGlobal ? std::string("global") : std::string(HeroSiege::Objects::GetObjectName(s.object));
+}
+
+enum class RpReadResult { Ok, Absent, Unreadable };
+
+static RpReadResult RpReadVar(const RpScope& s, const RValue& inst, const char* name, RValue& value)
+{
+    try {
+        const bool exists = s.isGlobal
+            ? g_Yytk->CallBuiltin("variable_global_exists", { RValue(name) }).ToBoolean()
+            : g_Yytk->CallBuiltin("variable_instance_exists", { inst, RValue(name) }).ToBoolean();
+        if (!exists) return RpReadResult::Absent;
+        value = s.isGlobal
+            ? g_Yytk->CallBuiltin("variable_global_get", { RValue(name) })
+            : g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(name) });
+        return RpReadResult::Ok;
+    } catch (...) { return RpReadResult::Unreadable; }
+}
+
+static bool RpIsNumeric(const RValue& v)
+{
+    const auto kind = static_cast<uint32_t>(v.m_Kind) & 0x0FFFFFFFU;
+    return kind == VALUE_REAL || kind == VALUE_INT32 || kind == VALUE_INT64 || kind == VALUE_BOOL;
+}
+
+// Every candidate on one scope, as `<scope>.<name>=<kind:value>|absent|unreadable`.
+static std::string RpScopeLine(const RpScope& s)
+{
+    RValue inst;
+    if (!s.isGlobal && !RpScopeInstance(s, inst)) return RpScopeLabel(s) + ": no instance";
+    std::string line;
+    for (const char* name : kRpVarNames) {
+        RValue v;
+        const RpReadResult rr = RpReadVar(s, inst, name, v);
+        line += (line.empty() ? "" : " ") + RpScopeLabel(s) + "." + name + "="
+            + (rr == RpReadResult::Ok ? Describe(v) : rr == RpReadResult::Absent ? std::string("absent") : std::string("unreadable"));
+    }
+    return line;
+}
+
+static void RestartProbeVars()
+{
+    Out("restartprobe vars: frame=" + std::to_string((unsigned long long)g_RuntimeFrame));
+    for (const RpScope& s : kRpScopes) Out("  " + RpScopeLine(s));
+}
+
+// The caller's object name, read through its object_index.
+static std::string RpDescribeSelf(CInstance* S)
+{
+    if (!S) return "(null)";
+    try {
+        RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { S->ToRValue(), RValue("object_index") });
+        int idx = -1;
+        if (!N1ObjectIndex(oi, idx)) return "(no object_index: " + Describe(oi) + ")";
+        return g_Yytk->CallBuiltin("object_get_name", { RValue((double)idx) }).ToString() + "#" + std::to_string(idx);
+    } catch (...) { return "(unresolved)"; }
+}
+
+// Counts every call; keeps the first kRpLogBudget calls' lines. A sampling
+// row reads the candidates before the original runs - the value the game's
+// own body is about to read.
+static RValue& RpDetourBody(int idx, CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    RestartProbeRow& t = g_RpRows[idx];
+    const long n = InterlockedIncrement(&t.calls);
+    const bool keep = t.logged < kRpLogBudget && InterlockedIncrement(&t.logged) <= kRpLogBudget;
+    std::string line;
+    if (keep) {
+        try {
+            line = std::string(t.label) + " #" + std::to_string(n)
+                + " frame=" + std::to_string((unsigned long long)g_RuntimeFrame)
+                + " self=" + RpDescribeSelf(S) + " argc=" + std::to_string(argc);
+            for (int i = 0; i < argc && i < 3; ++i)
+                line += " a" + std::to_string(i) + "=" + (A && A[i] ? Describe(*A[i]) : std::string("?"));
+            if (t.flags & kRpSample)
+                for (const RpScope& s : kRpScopes) line += " | " + RpScopeLine(s);
+        } catch (...) { line += " <describe-failed>"; }
+    }
+    RValue& r = t.tramp ? t.tramp(S, O, R, argc, A) : R;
+    if (keep) {
+        try { line += " ret=" + Describe(r); } catch (...) {}
+        std::lock_guard<std::mutex> lock(g_RpLogMutex);
+        t.log.push_back(std::move(line));
+    }
+    return r;
+}
+
+#define RP_SCRIPT_DETOUR(SAFE, NAME, LABEL, FLAGS, ORIG, HELD) \
+    static RValue& RpNat_##SAFE(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) \
+    { return RpDetourBody(kRp_##SAFE, S, O, R, argc, A); }
+RESTARTPROBE_SCRIPTS(RP_SCRIPT_DETOUR)
+#undef RP_SCRIPT_DETOUR
+
+static void RpSetMode(RestartProbeRow& t, long mode, const std::string& text)
+{
+    t.modeText = text;
+    InterlockedExchange(&t.mode, mode);
+}
+
+// TgProbeAttach's decision order without its entry-note cases:
+//   (a) resolve by SDK name; nothing there -> not found
+//   (b) the table entry is game code -> native detour on it
+//   (c) a ForgePact hook holds the table and its saved original is game
+//       code -> native detour on that original, "under" the hook
+//   (d) anything else -> blocked, with the reason
+// Every pointer handed to the hooking library has just been checked to be
+// executable code inside Hero_Siege.exe, and the hooking library is called
+// from exactly one place: the lambda below.
+static void RestartProbeAttach(RestartProbeRow& t)
+{
+    const std::string runtimeName(t.script);
+    PVOID p = nullptr;
+    AurieStatus st = g_Yytk->GetNamedRoutinePointer(runtimeName.c_str(), &p);
+    CScript* sc = (AurieSuccess(st) && p) ? reinterpret_cast<CScript*>(p) : nullptr;
+    if (!sc || !sc->m_Functions || !sc->m_Functions->m_ScriptFunction) {
+        RpSetMode(t, kRpNotFound, "not found (" + runtimeName + " st=" + std::to_string((int)st) + ")");
+        return;
+    }
+    const PVOID tableEntry = (PVOID)sc->m_Functions->m_ScriptFunction;
+
+    auto detourAt = [&](PVOID src, std::string& why) -> bool {
+        if (!AddrIsExecutableInModule(GetModuleHandleA(nullptr), (const void*)src)) {
+            why = "target is not code inside Hero_Siege.exe";
+            return false;
+        }
+        PVOID tramp = nullptr;
+        AurieStatus hs = MmCreateHook(g_ArSelfModule, t.hookId, src, t.detour, &tramp);
+        if (!AurieSuccess(hs) || !tramp) {
+            why = "MmCreateHook st=" + std::to_string((int)hs);
+            return false;
+        }
+        t.tramp = reinterpret_cast<PFUNC_YYGMLScript>(tramp);
+        return true;
+    };
+
+    std::string why;
+    if (AddrIsExecutableInModule(GetModuleHandleA(nullptr), (const void*)tableEntry)) {
+        if (detourAt(tableEntry, why)) RpSetMode(t, kRpNative, "native");
+        else RpSetMode(t, kRpBlocked, "blocked: " + why);
+        return;
+    }
+    const PVOID held = (t.existingOrig && *t.existingOrig) ? (PVOID)*t.existingOrig : nullptr;
+    if (held && AddrIsExecutableInModule(GetModuleHandleA(nullptr), (const void*)held)) {
+        if (detourAt(held, why)) RpSetMode(t, kRpNative, "native (under table-only " + std::string(t.heldBy ? t.heldBy : "hook") + ")");
+        else RpSetMode(t, kRpBlocked, "blocked: " + why);
+        return;
+    }
+    RpSetMode(t, kRpBlocked, "blocked: table entry is not code inside Hero_Siege.exe");
+}
+
+static void RestartProbeHook()
+{
+    int native = 0, blocked = 0, notFound = 0;
+    for (RestartProbeRow& t : g_RpRows) {
+        if (t.mode == kRpUnhooked) RestartProbeAttach(t);
+        if (t.mode == kRpNative) ++native;
+        else if (t.mode == kRpBlocked) ++blocked;
+        else if (t.mode == kRpNotFound) ++notFound;
+    }
+    Out("restartprobe hook: " + std::to_string(native) + " native, " + std::to_string(blocked) + " blocked, "
+        + std::to_string(notFound) + " not found");
+    for (const RestartProbeRow& t : g_RpRows) Out(std::string("  ") + t.label + ": " + t.modeText);
+    Out("  control: UiDrawIngameRestart must count while the pause menu is open (C1); if it does not, every row is unmeasured.");
+}
+
+static std::string RpCallsText(const RestartProbeRow& t)
+{
+    // Not attached: there is no count, and printing 0 would be a claim about the game.
+    return t.mode == kRpNative ? std::to_string(t.calls) : std::string("n/a");
+}
+
+static void RestartProbeShow()
+{
+    Out("restartprobe show: frame=" + std::to_string((unsigned long long)g_RuntimeFrame)
+        + " control=" + RpCallsText(g_RpRows[kRp_UiDrawIngameRestart])
+        + " (UiDrawIngameRestart calls; must be > 0 with the pause menu open)");
+    for (const RestartProbeRow& t : g_RpRows)
+        Out(std::string("  ") + t.label + " mode=" + t.modeText + " calls=" + RpCallsText(t));
+    std::lock_guard<std::mutex> lock(g_RpLogMutex);
+    for (const RestartProbeRow& t : g_RpRows)
+        for (const std::string& l : t.log) Out("  " + l);
+}
+
+static void RestartProbeReset()
+{
+    std::lock_guard<std::mutex> lock(g_RpLogMutex);
+    for (RestartProbeRow& t : g_RpRows) {
+        InterlockedExchange(&t.calls, 0);
+        InterlockedExchange(&t.logged, 0);
+        t.log.clear();
+    }
+    Out("restartprobe reset: counters and call log cleared; attached rows stay attached");
+}
+
+// The one write. Every refusal comes before it, in a fixed order, and the
+// value is read back afterwards so `wrote=` is a measurement, not an echo.
+static void RestartProbeSet(const std::string& rest)
+{
+    std::string r = rest;
+    const std::string scopeWord = Lower(FirstToken(r, r));
+    const std::string name = FirstToken(r, r);
+    const std::string numberText = FirstToken(r, r);
+    const std::string confirm = Lower(FirstToken(r, r));
+
+    const RpScope* s = RpFindScope(scopeWord);
+    if (!s) { Out("restartprobe set: unknown scope '" + scopeWord + "' (global|controller|player|pause); nothing written"); return; }
+    RValue inst;
+    if (!s->isGlobal && !RpScopeInstance(*s, inst)) { Out("restartprobe set: " + RpScopeLabel(*s) + " has no instance; nothing written"); return; }
+    RValue before;
+    const RpReadResult rr = RpReadVar(*s, inst, name.c_str(), before);
+    if (rr != RpReadResult::Ok) {
+        Out("restartprobe set: " + RpScopeLabel(*s) + "." + name + " is "
+            + (rr == RpReadResult::Absent ? "absent" : "unreadable") + "; nothing written");
+        return;
+    }
+    if (!RpIsNumeric(before)) { Out("restartprobe set: " + RpScopeLabel(*s) + "." + name + " is " + Describe(before) + ", not a number; nothing written"); return; }
+    if (confirm != "confirm") { Out("restartprobe set: add `confirm` to write; nothing written"); return; }
+    double value = 0.0;
+    try {
+        size_t used = 0;
+        value = std::stod(numberText, &used);
+        if (used != numberText.size() || !std::isfinite(value)) throw std::invalid_argument("number");
+    } catch (...) { Out("restartprobe set: '" + numberText + "' is not a number; nothing written"); return; }
+
+    bool threw = false;
+    try {
+        if (s->isGlobal) g_Yytk->CallBuiltin("variable_global_set", { RValue(name), RValue(value) });
+        else g_Yytk->CallBuiltin("variable_instance_set", { inst, RValue(name), RValue(value) });
+    } catch (...) { threw = true; }
+    RValue after;
+    const bool readBack = RpReadVar(*s, inst, name.c_str(), after) == RpReadResult::Ok;
+    bool wrote = false;
+    if (!threw && readBack && RpIsNumeric(after)) {
+        try { wrote = after.ToDouble() == value; } catch (...) {}
+    }
+    Out("restartprobe set: " + RpScopeLabel(*s) + "." + name + " wrote=" + (wrote ? "yes" : "no")
+        + " before=" + Describe(before) + " after=" + (readBack ? Describe(after) : std::string("unreadable"))
+        + (threw ? " (the write threw)" : ""));
+}
+
+static void RestartProbeCommand(const std::string& rest)
+{
+    std::string r = rest;
+    const std::string sub = Lower(FirstToken(r, r));
+    if (sub == "vars")  { RestartProbeVars(); return; }
+    if (sub == "hook")  { RestartProbeHook(); return; }
+    if (sub == "show")  { RestartProbeShow(); return; }
+    if (sub == "reset") { RestartProbeReset(); return; }
+    if (sub == "set")   { RestartProbeSet(r); return; }
+    Out("restartprobe: vars | hook | show | reset | set <global|controller|player|pause> <name> <number> confirm");
+}
+#endif // FORGEPACT_RELEASE (restartprobe)
+
+// Dispatched from its own function for the same C1061 reason as
+// HandleMenuLayoutCommand. It exists in both builds and answers false in the
+// player build, so the call site in RunCommand needs no guard around it.
+static bool HandleRestartProbeCommand(const std::string& lc, const std::string& rest)
+{
+#ifndef FORGEPACT_RELEASE
+    if (lc == "restartprobe") { RestartProbeCommand(rest); return true; }
+#endif
+    (void)lc; (void)rest;
+    return false;
+}
+
 static void RunCommand(const std::string& line)
 {
     std::string rest;
@@ -25004,6 +25400,7 @@ static void RunCommand(const std::string& line)
     if (HandleProspectCommand(lc, rest)) return;
     if (HandleMenuProbeCommand(lc, rest)) return;
     if (HandleMenuLayoutCommand(lc, rest)) return;
+    if (HandleRestartProbeCommand(lc, rest)) return;
 #ifndef FORGEPACT_RELEASE
     // Toggle-skill research (issue #11), docs/toggle-skills-research.md. A
     // standalone early return rather than one more `else if` below: that chain

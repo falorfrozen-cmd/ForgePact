@@ -90,6 +90,7 @@ STRICT_DOCS = (
     "S10-special-content-notes.md",
     "dungeon-key-research.md",
     "angelic-drop-research.md",
+    "restart-always-available-research.md",
 )
 
 # One known-bad sample per category, built in pieces.
