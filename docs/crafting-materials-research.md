@@ -636,10 +636,13 @@ These bind every hypothesis, whichever the owner picks.
 
 ### Phase 1b results
 
-Research DLL: `plugin_build\BloodPactPlugin_rel.dll`, built with
-`plugin_build\build.bat dev` from ForgePact `<commit - filled when built>`
-(SHA-256 `<filled when built>`). `### Live procedure 1b`'s `dll-hash` check
-compares the installed plugin against this hash before anything else counts.
+Research DLL: `plugin_build\BloodPactPlugin_rel.dll`, built 2026-09-22 with
+`plugin_build\build.bat dev` from ForgePact `a64cdbf` (SHA-256
+`774b2df50b2d0ade1fcfa688baa49b015d209847cd74385ec33dfd557cdfc563`). The player
+build (`build.bat release`) from the same commit carries no `phase1b` string.
+Not installed into the game's `mods` folder: that, and the session, are the
+owner's call. `### Live procedure 1b`'s `dll-hash` check compares the installed
+plugin against this hash before anything else counts.
 
 Filled from the Live 2 capture, one row per check it carries (the check names
 and their `## Checks` line format are fixed by `### Live procedure 1b`). A
