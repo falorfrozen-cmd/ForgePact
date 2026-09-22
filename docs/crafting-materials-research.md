@@ -639,9 +639,11 @@ These bind every hypothesis, whichever the owner picks.
 ### Phase 1b results
 
 Research DLL: `plugin_build\BloodPactPlugin_rel.dll`, built 2026-09-22 with
-`plugin_build\build.bat dev` from ForgePact `a64cdbf` (SHA-256
-`774b2df50b2d0ade1fcfa688baa49b015d209847cd74385ec33dfd557cdfc563`). The player
-build (`build.bat release`) from the same commit carries no `phase1b` string.
+`plugin_build\build.bat dev` from ForgePact `8d89622` (SHA-256
+`d38586443197d2b0747d85c634aefcf2e03bf11dff4cfefaba659a895060d957`). It replaces
+the `a64cdbf` build (`774b2df5...`), whose `node` reader could not see the `o`
+stack member; a plugin with that older hash fails `dll-hash`. The player build
+(`build.bat release`) from the same commit carries no `phase1b` string.
 Not installed into the game's `mods` folder: that, and the session, are the
 owner's call. `### Live procedure 1b`'s `dll-hash` check compares the installed
 plugin against this hash before anything else counts.
