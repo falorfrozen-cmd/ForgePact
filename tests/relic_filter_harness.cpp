@@ -60,6 +60,7 @@ struct World {
     long baseSuppressions = 0;          // droprate.base <- 1e18
     long baseRestores = 0;              // droprate.base <- original
     long origCalls = 0;                 // the game's own DropRelic
+    bool rewardScopeActive = false;     // inside AFK FARM's reward delivery
     std::vector<std::string> log;
 };
 static World world;
@@ -159,6 +160,12 @@ inline std::unordered_set<int> GetMaxedRelicIds(FakeRunner*, const RValue&) {
     if (world.scanThrows) throw std::runtime_error("read failed");
     return world.maxed;
 }
+}}
+
+// The one hs_game_sdk/reward_scope.hpp query the hook makes: during AFK FARM's
+// own reward delivery the relic filter steps aside and the game's drop runs.
+namespace HeroSiege { namespace RewardScope {
+inline bool Active() { return world.rewardScopeActive; }
 }}
 
 #define BP_DIAG_INCREMENT(counter) ((void)0)
@@ -262,6 +269,14 @@ int main() {
     world.failWriteForRelic = 12;
     runHook();
     report("partial_write");
+
+    // 9. Inside AFK FARM's reward scope: the game's own drop runs untouched,
+    //    even with the filter on and a maxed relic to hold back.
+    reset();
+    world.maxed = { 42 };
+    world.rewardScopeActive = true;
+    runHook();
+    report("reward_scope_passthrough");
 
     std::cout << "HARNESS DONE\n";
     return 0;

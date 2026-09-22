@@ -166,6 +166,12 @@ class RelicFilterBehaviorTests(unittest.TestCase):
         self.assertIn("found 2 maxed relic(s) but held back none", logged)
         self.assertIn("drop table write failed", logged)
 
+    def test_afk_farm_reward_scope_passes_the_game_drop_through(self):
+        counts = self.counts("reward_scope_passthrough")
+        self.assertEqual(counts["suppressed"], 0, self.output)
+        self.assertEqual(counts["restored"], 0, self.output)
+        self.assertEqual(counts["origcalls"], 1, self.output)
+
     def test_a_partial_write_reports_the_confirmed_count_and_names_the_shortfall(self):
         counts = self.counts("partial_write")
         self.assertEqual(counts["suppressed"], 1, self.output)
