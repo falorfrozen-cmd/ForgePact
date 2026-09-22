@@ -96,7 +96,7 @@ of its own - see that bullet for what it draws on.
   game counts you as in combat, and only works once you have been out of
   combat for a few seconds - so a fight you want to start over is the one
   time you cannot. With the new **Restart zone at any time** switch in
-  Gameplay Mods, Restart works straight away, in combat too. Use the mouse:
+  Quality of Life, Restart works straight away, in combat too. Use the mouse:
   in combat the button still looks greyed until the cursor is on it, then it
   lights up and a click restarts the zone the way it always does. Keyboard
   navigation does not reach the pause menu's buttons, and a controller has

@@ -446,7 +446,7 @@ in § Stage D).
 
 ## Restart zone at any time
 
-Mods tab → Gameplay Mods → **Restart zone at any time**. Off by default.
+Mods tab → Quality of Life → **Restart zone at any time**. Off by default.
 
 The pause menu's Restart normally refuses while the game counts you as in
 combat, and only works once you have been out of combat for a few seconds.
