@@ -21398,6 +21398,21 @@ static volatile long g_CpLogBudget = kCpDefaultLogBudget;
 static std::atomic<bool> g_CpBacking{ false };
 static bool g_CpInCapture = false;                 // game thread only; a capture never nests
 
+// Phase 1b: in Phase 1 GetInventoryArray(1) returned the bag's main tab, and
+// whether the game ever asks it - or CountInventoryItem - about a special tab
+// (-2, -4) is unknown. Those two rows (CpKeepsPerArgument) therefore also keep
+// the latest return per distinct first argument, up to this many signatures;
+// `backing dump` writes one file per signature.
+static constexpr int kCpBackingMaxArgs = 8;
+
+struct CpArgKept {
+    std::string sig;               // the first argument as text (`1`, `-2`, `undefined`, ...)
+    RValue*     value = nullptr;   // heap-held and never deleted, as CpKept::value
+    long        call = 0;          // the row's call number of the kept return
+    std::string self;
+    std::string root;
+};
+
 // One row's kept return while `backing` is on: the latest call's value. An
 // RValue copy does not root a struct, so the value is also assigned to a
 // research global (`__cp_backing_<row>`) the collector does see - the same
@@ -21408,7 +21423,25 @@ struct CpKept {
     long        seen = 0;          // returns captured since the first `backing on`
     std::string self;
     std::string root;
+    bool        perArg = false;    // set by `backing on` for the rows CpKeepsPerArgument names
+    std::vector<CpArgKept> perArgs;
+    long        perArgFull = 0;    // returns whose first argument found no free signature slot
 };
+
+// A first argument as the text `backing` keys on: a whole number without its
+// decimals, anything else as Describe prints it, cut short.
+static std::string CpArgSignature(const RValue& a)
+{
+    try {
+        if (PpIsNumber(a)) {
+            const double d = a.ToDouble();
+            if (std::isfinite(d) && d == std::floor(d) && std::fabs(d) < 1e15) return std::to_string((long long)d);
+        }
+        std::string s = Describe(a);
+        if (s.size() > 48) s = s.substr(0, 48) + "...";
+        return s;
+    } catch (...) { return "<unreadable>"; }
+}
 
 // Before the trampoline: one budgeted line naming self, other and every
 // argument. Returns whether it was logged, so the `ret=` line follows exactly
@@ -21429,8 +21462,10 @@ static bool CpObserve(const char* label, long n, volatile long* logged, volatile
 
 // After the trampoline, on a row `backing` selected: keep what the game's own
 // call returned. The research global is set first, and the slot only after it
-// succeeded, so the slot never holds an unrooted value.
-static void CpCapture(const char* safe, const char* label, long n, CpKept& kept, CInstance* S, const RValue& result)
+// succeeded, so the slot never holds an unrooted value. A per-argument row
+// also keeps it under its first argument's signature, the same way.
+static void CpCapture(const char* safe, const char* label, long n, CpKept& kept, CInstance* S, int argc, RValue** A,
+                      const RValue& result)
 {
     if (g_CpInCapture) return;
     g_CpInCapture = true;
@@ -21445,18 +21480,39 @@ static void CpCapture(const char* safe, const char* label, long n, CpKept& kept,
         if (++kept.seen == 1)
             Out(std::string("craftprobe backing ") + label + " #" + std::to_string(n) + " self=" + kept.self
                 + " kept " + PpBackingShape(result) + " (the latest return is kept; `backing dump` writes it)");
+        if (kept.perArg) {
+            const std::string sig = (argc > 0 && A && A[0]) ? CpArgSignature(*A[0]) : std::string("(no argument)");
+            CpArgKept* slot = nullptr;
+            for (CpArgKept& k : kept.perArgs) if (k.sig == sig) { slot = &k; break; }
+            if (!slot && (int)kept.perArgs.size() < kCpBackingMaxArgs) {
+                kept.perArgs.push_back(CpArgKept());
+                slot = &kept.perArgs.back();
+                slot->sig = sig;
+                slot->root = root + "_arg" + std::to_string(kept.perArgs.size() - 1);
+                Out(std::string("craftprobe backing ") + label + " #" + std::to_string(n) + " new first argument a0=" + sig
+                    + " (" + std::to_string(kept.perArgs.size()) + "/" + std::to_string(kCpBackingMaxArgs) + " signatures kept)");
+            }
+            if (!slot) ++kept.perArgFull;
+            else {
+                g_Yytk->CallBuiltin("variable_global_set", { RValue(slot->root), result });
+                if (!slot->value) slot->value = new RValue();
+                *slot->value = result;
+                slot->call = n;
+                slot->self = kept.self;
+            }
+        }
     } catch (...) {}
     g_CpInCapture = false;
 }
 
 static void CpAfter(const char* safe, const char* label, long n, bool logged, bool capture, CpKept& kept,
-                    CInstance* S, const RValue& result)
+                    CInstance* S, int argc, RValue** A, const RValue& result)
 {
     if (logged) {
         try { Out(std::string("craftprobe ") + label + " #" + std::to_string(n) + " ret=" + PpRetText(result)); }
         catch (...) { Out(std::string("craftprobe ") + label + " #" + std::to_string(n) + " ret=<read failed>"); }
     }
-    if (capture && g_CpBacking.load()) CpCapture(safe, label, n, kept, S, result);
+    if (capture && g_CpBacking.load()) CpCapture(safe, label, n, kept, S, argc, A, result);
 }
 
 #define CRAFTPROBE_DETOUR(SAFE, LABEL) \
@@ -21470,7 +21526,7 @@ static void CpAfter(const char* safe, const char* label, long n, bool logged, bo
         const long n = InterlockedIncrement(&g_CpCalls_##SAFE); \
         const bool logged = CpObserve(LABEL, n, &g_CpLogged_##SAFE, &g_CpLogOn_##SAFE, S, O, argc, A); \
         RValue& r = g_CpOrig_##SAFE ? g_CpOrig_##SAFE(S, O, R, argc, A) : R; \
-        CpAfter(#SAFE, LABEL, n, logged, g_CpCapture_##SAFE != 0, g_CpKept_##SAFE, S, r); \
+        CpAfter(#SAFE, LABEL, n, logged, g_CpCapture_##SAFE != 0, g_CpKept_##SAFE, S, argc, A, r); \
         return r; \
     }
 
@@ -21591,6 +21647,129 @@ static void CpAfter(const char* safe, const char* label, long n, bool logged, bo
     X(TownStash663, "Town_Stash_obj anon@663", gml_Script_anon_663_gml_Object_Town_Stash_obj_Create_0) \
     /* UI_Button_Stash_Tab_obj has no Create closure; its one Step closure */ \
     X(StashTabButton503, "UI_Button_Stash_Tab_obj anon@503 (Step)", gml_Script_anon_503_gml_Object_UI_Button_Stash_Tab_obj_Step_0) \
+    /* Phase 1b (research doc, Static search, "Phase 1b additions"): Phase 1's */ \
+    /* hand move between the Socketable tab and the bag fired none of the rows */ \
+    /* above while the control climbed, so every candidate of the widened     */ \
+    /* search rides the same one `hook`. The closures are every SDK constant  */ \
+    /* on the Create event of the nine objects below (the coverage test).     */ \
+    /* Phase 1b: grid input and drag */ \
+    X(ProcessInventoryGridInput, "ProcessInventoryGridInput", gml_Script_ProcessInventoryGridInput) \
+    X(Struct305, "___struct___305@ProcessInventoryGridInput", gml_Script____struct___305_ProcessInventoryGridInput_ProcessInventoryGridInputFunc) \
+    X(Struct308, "___struct___308@ProcessInventoryGridInput", gml_Script____struct___308_ProcessInventoryGridInput_ProcessInventoryGridInputFunc) \
+    X(InvStartDragging, "InvStartDragging", gml_Script_InvStartDragging) \
+    X(InvCopyItemDragData, "InvCopyItemDragData", gml_Script_InvCopyItemDragData) \
+    X(InvCopyItemToInvDragData, "InvCopyItemToInvDragData", gml_Script_InvCopyItemToInvDragData) \
+    X(SInventoryDrag, "s_InventoryDrag", gml_Script_s_InventoryDrag) \
+    X(ResetDragState, "ResetDragState@s_InventoryDrag", gml_Script_ResetDragState_anon_47432_s_InventoryDrag_DefineStructs) \
+    X(InventorySwapItemsNew, "InventorySwapItemsNew", gml_Script_InventorySwapItemsNew) \
+    X(InvGridEquipV2, "InvGridEquipV2", gml_Script_InvGridEquipV2) \
+    X(InvGridEquipGamepad, "InvGridEquipGamepad", gml_Script_InvGridEquipGamepad) \
+    /* Phase 1b: adds and stacks */ \
+    X(InventoryGridAddItem, "InventoryGridAddItem", gml_Script_InventoryGridAddItem) \
+    X(InventoryGridAddItemPos, "InventoryGridAddItemPos", gml_Script_InventoryGridAddItemPos) \
+    X(InventoryGridAddItemToTab, "InventoryGridAddItemToTab", gml_Script_InventoryGridAddItemToTab) \
+    X(InventoryGridHasSpace, "InventoryGridHasSpace", gml_Script_InventoryGridHasSpace) \
+    X(InventoryGridHasSpaceMulti, "InventoryGridHasSpaceMulti", gml_Script_InventoryGridHasSpaceMulti) \
+    X(GridAddToStack, "GridAddToStack", gml_Script_GridAddToStack) \
+    X(AddToInventory, "AddToInventory", gml_Script_AddToInventory) \
+    X(Struct13, "___struct___13@AddToInventory", gml_Script____struct___13_AddToInventory_AddToInventoryFunc) \
+    X(IsStackable, "IsStackable", gml_Script_IsStackable) \
+    X(ItemsAreStackable, "ItemsAreStackable", gml_Script_ItemsAreStackable) \
+    X(UiASplitStack, "UiASplitStack", gml_Script_UiASplitStack) \
+    X(UiAInventoryMobileStackSplit, "UiAInventoryMobileStackSplit", gml_Script_UiAInventoryMobileStackSplit) \
+    X(GetItemFingerprint, "GetItemFingerprint", gml_Script_GetItemFingerprint) \
+    /* Phase 1b: socket family (the Socketable tab's bag counterpart; the draw row runs every frame) */ \
+    X(InventorySocketItem, "InventorySocketItem", gml_Script_InventorySocketItem) \
+    X(InventorySocketUpdateAndRemove, "InventorySocketUpdateAndRemove", gml_Script_InventorySocketUpdateAndRemove) \
+    X(InventorySocketUpdateAndSubtract, "InventorySocketUpdateAndSubtract", gml_Script_InventorySocketUpdateAndSubtract) \
+    X(Struct169, "___struct___169@InventorySocketUpdateAndSubtract", gml_Script____struct___169_InventorySocketUpdateAndSubtract_InventoryFuncs) \
+    X(UiAInventorySocketTabClick, "UiAInventorySocketTabClick", gml_Script_UiAInventorySocketTabClick) \
+    X(UiDrawInventorySocketTab, "UiDrawInventorySocketTab", gml_Script_UiDrawInventorySocketTab) \
+    X(SSocketData, "s_SocketData", gml_Script_s_SocketData) \
+    X(GetItemSocketDataStruct, "GetItemSocketDataStruct", gml_Script_GetItemSocketDataStruct) \
+    /* Phase 1b: stash tab buys and types */ \
+    X(UiAStashTabSocketableBuy, "UiAStashTabSocketableBuy", gml_Script_UiAStashTabSocketableBuy) \
+    X(UiAStashTabUniqueBuy, "UiAStashTabUniqueBuy", gml_Script_UiAStashTabUniqueBuy) \
+    X(UiAStashTabBuy, "UiAStashTabBuy", gml_Script_UiAStashTabBuy) \
+    X(UiAStashUniqueItemType, "UiAStashUniqueItemType", gml_Script_UiAStashUniqueItemType) \
+    /* Phase 1b: node and tab plumbing */ \
+    X(UiCreateNode, "UiCreateNode", gml_Script_UiCreateNode) \
+    X(Struct409, "___struct___409@UiCreateNode", gml_Script____struct___409_UiCreateNode_UiFuncs) \
+    X(UiRemoveNode, "UiRemoveNode", gml_Script_UiRemoveNode) \
+    X(UiMoveNode, "UiMoveNode", gml_Script_UiMoveNode) \
+    X(ValidateInventoryNode, "ValidateInventoryNode", gml_Script_ValidateInventoryNode) \
+    X(DetectInventoryDuplicateNode, "DetectInventoryDuplicateNode", gml_Script_DetectInventoryDuplicateNode) \
+    X(SInvNode, "s_InvNode", gml_Script_s_InvNode) \
+    X(UiResizeInventoryNodes, "UiResizeInventoryNodes", gml_Script_UiResizeInventoryNodes) \
+    X(GetInventoryMaxTabs, "GetInventoryMaxTabs", gml_Script_GetInventoryMaxTabs) \
+    X(InventoryResetTabs, "InventoryResetTabs", gml_Script_InventoryResetTabs) \
+    X(InventorySortTab, "InventorySortTab", gml_Script_InventorySortTab) \
+    X(Struct187, "___struct___187@InventorySortTab", gml_Script____struct___187_InventorySortTab_InventoryGrid) \
+    X(UiAInventoryTabClick, "UiAInventoryTabClick", gml_Script_UiAInventoryTabClick) \
+    X(InventoryLogAddItem, "InventoryLogAddItem", gml_Script_InventoryLogAddItem) \
+    X(InventoryUpdateExtAddItemStats, "InventoryUpdateExtAddItemStats", gml_Script_InventoryUpdateExtAddItemStats) \
+    X(InvTabButton403, "UI_Button_Inventory_Tab_obj anon@403 (Step)", gml_Script_anon_403_gml_Object_UI_Button_Inventory_Tab_obj_Step_0) \
+    X(LoadInventory448, "Load_Inventory_obj ___struct___448 (Other_62)", gml_Script____struct___448_gml_Object_Load_Inventory_obj_Other_62) \
+    /* Phase 1b: closures of UI_Inventory_Grid_obj (anon@15345 also sits in autoprospect's table) */ \
+    X(InvGrid2143, "UI_Inventory_Grid_obj anon@2143", gml_Script_anon_2143_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGrid2971, "UI_Inventory_Grid_obj anon@2971", gml_Script_anon_2971_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGrid4064, "UI_Inventory_Grid_obj anon@4064", gml_Script_anon_4064_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS517, "UI_Inventory_Grid_obj ___struct___517@anon@8881", gml_Script____struct___517_anon_8881_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS519, "UI_Inventory_Grid_obj ___struct___519@anon@8881", gml_Script____struct___519_anon_8881_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGrid8881, "UI_Inventory_Grid_obj anon@8881", gml_Script_anon_8881_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS522, "UI_Inventory_Grid_obj ___struct___522@anon@15345", gml_Script____struct___522_anon_15345_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS529, "UI_Inventory_Grid_obj ___struct___529@anon@15345", gml_Script____struct___529_anon_15345_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS532, "UI_Inventory_Grid_obj ___struct___532@anon@15345", gml_Script____struct___532_anon_15345_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS536, "UI_Inventory_Grid_obj ___struct___536@anon@15345", gml_Script____struct___536_anon_15345_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS538, "UI_Inventory_Grid_obj ___struct___538@anon@15345", gml_Script____struct___538_anon_15345_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS541, "UI_Inventory_Grid_obj ___struct___541@anon@15345", gml_Script____struct___541_anon_15345_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGrid15345, "UI_Inventory_Grid_obj anon@15345", gml_Script_anon_15345_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGrid34555, "UI_Inventory_Grid_obj anon@34555", gml_Script_anon_34555_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGrid36159, "UI_Inventory_Grid_obj anon@36159", gml_Script_anon_36159_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    /* Phase 1b: closures of UI_Grid_obj */ \
+    X(Grid933, "UI_Grid_obj anon@933", gml_Script_anon_933_gml_Object_UI_Grid_obj_Create_0) \
+    X(Grid1307, "UI_Grid_obj anon@1307", gml_Script_anon_1307_gml_Object_UI_Grid_obj_Create_0) \
+    X(Grid1577, "UI_Grid_obj anon@1577", gml_Script_anon_1577_gml_Object_UI_Grid_obj_Create_0) \
+    X(Grid2086, "UI_Grid_obj anon@2086", gml_Script_anon_2086_gml_Object_UI_Grid_obj_Create_0) \
+    X(Grid2244, "UI_Grid_obj anon@2244", gml_Script_anon_2244_gml_Object_UI_Grid_obj_Create_0) \
+    X(Grid2416, "UI_Grid_obj anon@2416", gml_Script_anon_2416_gml_Object_UI_Grid_obj_Create_0) \
+    /* Phase 1b: closures of UI_Node_Parent_obj */ \
+    X(NodeParent1577, "UI_Node_Parent_obj anon@1577", gml_Script_anon_1577_gml_Object_UI_Node_Parent_obj_Create_0) \
+    X(NodeParent1997, "UI_Node_Parent_obj anon@1997", gml_Script_anon_1997_gml_Object_UI_Node_Parent_obj_Create_0) \
+    /* Phase 1b: closures of UI_Inventory_obj (the bag window) */ \
+    X(Inv495, "UI_Inventory_obj anon@495", gml_Script_anon_495_gml_Object_UI_Inventory_obj_Create_0) \
+    X(Inv2261, "UI_Inventory_obj anon@2261", gml_Script_anon_2261_gml_Object_UI_Inventory_obj_Create_0) \
+    X(Inv2364, "UI_Inventory_obj anon@2364", gml_Script_anon_2364_gml_Object_UI_Inventory_obj_Create_0) \
+    X(Inv4391, "UI_Inventory_obj anon@4391", gml_Script_anon_4391_gml_Object_UI_Inventory_obj_Create_0) \
+    X(Inv5590, "UI_Inventory_obj anon@5590", gml_Script_anon_5590_gml_Object_UI_Inventory_obj_Create_0) \
+    X(Inv7874, "UI_Inventory_obj anon@7874", gml_Script_anon_7874_gml_Object_UI_Inventory_obj_Create_0) \
+    X(Inv14458, "UI_Inventory_obj anon@14458", gml_Script_anon_14458_gml_Object_UI_Inventory_obj_Create_0) \
+    /* Phase 1b: closures of UI_Inventory_Parent_obj */ \
+    X(InvParent1621, "UI_Inventory_Parent_obj anon@1621", gml_Script_anon_1621_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent4028, "UI_Inventory_Parent_obj anon@4028", gml_Script_anon_4028_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent6164, "UI_Inventory_Parent_obj anon@6164", gml_Script_anon_6164_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent6272, "UI_Inventory_Parent_obj anon@6272", gml_Script_anon_6272_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent6754, "UI_Inventory_Parent_obj anon@6754", gml_Script_anon_6754_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent7597, "UI_Inventory_Parent_obj anon@7597", gml_Script_anon_7597_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent8615, "UI_Inventory_Parent_obj anon@8615", gml_Script_anon_8615_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent11250, "UI_Inventory_Parent_obj anon@11250", gml_Script_anon_11250_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent19615, "UI_Inventory_Parent_obj anon@19615", gml_Script_anon_19615_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent22055, "UI_Inventory_Parent_obj anon@22055", gml_Script_anon_22055_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    /* Phase 1b: the Socketable stash tab's window */ \
+    X(StashSocket1305, "UI_Stash_Socket_New_obj anon@1305", gml_Script_anon_1305_gml_Object_UI_Stash_Socket_New_obj_Create_0) \
+    /* Phase 1b: the Unique stash tab's window - candidates for a shared special-tab path only, never acted on */ \
+    X(StashUnique1081, "UI_Stash_Unique_Items_obj anon@1081", gml_Script_anon_1081_gml_Object_UI_Stash_Unique_Items_obj_Create_0) \
+    X(StashUnique3176, "UI_Stash_Unique_Items_obj anon@3176", gml_Script_anon_3176_gml_Object_UI_Stash_Unique_Items_obj_Create_0) \
+    X(StashUnique4465, "UI_Stash_Unique_Items_obj anon@4465", gml_Script_anon_4465_gml_Object_UI_Stash_Unique_Items_obj_Create_0) \
+    X(StashUnique4743, "UI_Stash_Unique_Items_obj anon@4743", gml_Script_anon_4743_gml_Object_UI_Stash_Unique_Items_obj_Create_0) \
+    X(StashUnique5014, "UI_Stash_Unique_Items_obj anon@5014", gml_Script_anon_5014_gml_Object_UI_Stash_Unique_Items_obj_Create_0) \
+    X(StashUnique5993, "UI_Stash_Unique_Items_obj anon@5993", gml_Script_anon_5993_gml_Object_UI_Stash_Unique_Items_obj_Create_0) \
+    X(StashUnique11861, "UI_Stash_Unique_Items_obj anon@11861", gml_Script_anon_11861_gml_Object_UI_Stash_Unique_Items_obj_Create_0) \
+    X(StashUnique15868, "UI_Stash_Unique_Items_obj anon@15868", gml_Script_anon_15868_gml_Object_UI_Stash_Unique_Items_obj_Create_0) \
+    /* Phase 1b: closures of Load_Inventory_obj and UI_Split_Stack_obj */ \
+    X(LoadInv752, "Load_Inventory_obj anon@752", gml_Script_anon_752_gml_Object_Load_Inventory_obj_Create_0) \
+    X(LoadInv877, "Load_Inventory_obj anon@877", gml_Script_anon_877_gml_Object_Load_Inventory_obj_Create_0) \
+    X(SplitStack1285, "UI_Split_Stack_obj anon@1285", gml_Script_anon_1285_gml_Object_UI_Split_Stack_obj_Create_0) \
     /* positive control: fires from every interactable's Step event */ \
     X(CheckPlayerInteraction, "CheckPlayerInteraction", gml_Script_CheckPlayerInteraction)
 
@@ -21797,6 +21976,10 @@ static std::string CpValueText(const RValue& v, int preview)
 {
     std::string s;
     try {
+        // A method value is also VALUE_OBJECT: named with the closure it
+        // resolves to (method_get_index + script_get_name), never called.
+        if (v.m_Kind == VALUE_OBJECT && g_Yytk->CallBuiltin("is_method", { v }).ToBoolean())
+            return "method (described, never called)" + CiTryResolveMethod(v);
         s = PpBackingShape(v);
         if (v.m_Kind == VALUE_ARRAY) {
             const int n = (int)g_Yytk->CallBuiltin("array_length", { v }).ToDouble();
@@ -21890,35 +22073,457 @@ static void CpReader(const std::string& sub, const std::vector<std::string>& giv
     }
 }
 
-// `var <Obj|global> <nth> <name> [json]`: one variable, deeper - an array's
-// first kCpVarArrayPreview entries - and with `json` the whole value written to
-// bp_ipc\cp_var_<name>.json when a depth-capped walk finds no cycle. Reads only.
-static void CpVar(const std::vector<std::string>& tok)
+// ---- Phase 1b: follow references by name ----------------------------------
+// Phase 1's `var` printed `ref instance N` and stopped, so the stash window's
+// stashGrid / uiStashContainer / invMaterialTab were never opened (research
+// doc, M-stash-open). A reference is recognised from the runtime's own text
+// for it (`ref instance N`, `ref ds_grid N`, ...), never from its bytes. An
+// instance is read only after instance_exists answers true for it, and a data
+// structure only after ds_exists answers true for its type: a ds_grid_* call
+// on the wrong kind is a fatal GML error, and one frame of it is enough to
+// crash (prospect-window-research.md, R5b). A method value is described,
+// never called. Nothing here writes.
+static constexpr int kCpRefMaxDepth = 2;           // instance levels followed below the root
+static constexpr int kCpRefMaxInstances = 12;      // distinct instances one `var` prints
+static constexpr int kCpDsPreview = 12;            // entries (grid cells) one data structure prints
+// GameMaker's ds_type_* values, as ds_exists takes them (N1GetTalentMap passes map = 1).
+static constexpr double kCpDsTypeMap = 1.0;
+static constexpr double kCpDsTypeList = 2.0;
+static constexpr double kCpDsTypeGrid = 5.0;
+
+enum class CpRefKind { NotRef, Instance, DsGrid, DsList, DsMap, OtherRef };
+struct CpRef {
+    CpRefKind   kind = CpRefKind::NotRef;
+    long long   id = -1;           // the number the runtime's text names; -1 = none
+    std::string text;
+};
+
+static CpRef CpClassifyRef(const RValue& v)
 {
-    if (tok.size() != 4 && !(tok.size() == 5 && Lower(tok[4]) == "json")) {
-        Out("craftprobe var: usage -> var <Obj|global> <nth> <name> [json]; nothing read");
+    CpRef r;
+    if (v.m_Kind != VALUE_REF) return r;
+    r.kind = CpRefKind::OtherRef;
+    try { r.text = v.ToString(); } catch (...) { return r; }
+    struct Prefix { const char* text; CpRefKind kind; };
+    static const Prefix kPrefixes[] = {
+        { "ref instance ", CpRefKind::Instance }, { "ref ds_grid ", CpRefKind::DsGrid },
+        { "ref ds_list ", CpRefKind::DsList },    { "ref ds_map ", CpRefKind::DsMap },
+    };
+    for (const Prefix& p : kPrefixes) {
+        const size_t len = std::strlen(p.text);
+        if (r.text.compare(0, len, p.text) != 0) continue;
+        try { r.id = std::stoll(r.text.substr(len)); } catch (...) { return r; }   // unparsable: stays OtherRef
+        r.kind = p.kind;
+        return r;
+    }
+    return r;
+}
+
+// A data-structure reference, read after ds_exists confirms its type: the
+// size and the first kCpDsPreview entries, each shallowly. Reads only.
+static std::string CpDsText(const RValue& v, const CpRef& r)
+{
+    const double type = r.kind == CpRefKind::DsGrid ? kCpDsTypeGrid : r.kind == CpRefKind::DsList ? kCpDsTypeList : kCpDsTypeMap;
+    const char* typeName = r.kind == CpRefKind::DsGrid ? "ds_type_grid" : r.kind == CpRefKind::DsList ? "ds_type_list" : "ds_type_map";
+    try {
+        if (!g_Yytk->CallBuiltin("ds_exists", { v, RValue(type) }).ToBoolean())
+            return std::string(" (ds_exists(") + typeName + ") is false - not read)";
+        std::string s;
+        if (r.kind == CpRefKind::DsGrid) {
+            const int w = (int)g_Yytk->CallBuiltin("ds_grid_width", { v }).ToDouble();
+            const int h = (int)g_Yytk->CallBuiltin("ds_grid_height", { v }).ToDouble();
+            s = " grid " + std::to_string(w) + "x" + std::to_string(h) + ":";
+            int shown = 0;
+            for (int y = 0; y < h && shown < kCpDsPreview; ++y)
+                for (int x = 0; x < w && shown < kCpDsPreview; ++x, ++shown)
+                    s += " [" + std::to_string(x) + "," + std::to_string(y) + "]="
+                        + PpShallow(g_Yytk->CallBuiltin("ds_grid_get", { v, RValue((double)x), RValue((double)y) }));
+            if ((long long)w * h > kCpDsPreview) s += " ...";
+        } else if (r.kind == CpRefKind::DsList) {
+            const int n = (int)g_Yytk->CallBuiltin("ds_list_size", { v }).ToDouble();
+            s = " list size=" + std::to_string(n) + ":";
+            for (int i = 0; i < n && i < kCpDsPreview; ++i)
+                s += " [" + std::to_string(i) + "]=" + PpShallow(g_Yytk->CallBuiltin("ds_list_find_value", { v, RValue((double)i) }));
+            if (n > kCpDsPreview) s += " ...";
+        } else {
+            const int n = (int)g_Yytk->CallBuiltin("ds_map_size", { v }).ToDouble();
+            s = " map size=" + std::to_string(n) + ":";
+            RValue key = g_Yytk->CallBuiltin("ds_map_find_first", { v });
+            for (int i = 0; i < n && i < kCpDsPreview && key.m_Kind != VALUE_UNDEFINED; ++i) {
+                s += " " + (key.m_Kind == VALUE_STRING ? key.ToString() : Describe(key)) + "="
+                    + PpShallow(g_Yytk->CallBuiltin("ds_map_find_value", { v, key }));
+                key = g_Yytk->CallBuiltin("ds_map_find_next", { v, key });
+            }
+            if (n > kCpDsPreview) s += " ...";
+        }
+        if (s.size() > kCpLineMax) s = s.substr(0, kCpLineMax) + "...(cut)";
+        return s;
+    } catch (...) { return " <ds read failed>"; }
+}
+
+// One instance, by name: instance_exists first, then its object's name
+// (object_get_name of its object_index), its id and every variable matching
+// `filters` (`*` = all, capped). A variable that is itself a live instance
+// reference is followed the same way one level down, to kCpRefMaxDepth; an
+// instance already printed (one grid hung off three variables in Phase 1) is
+// named, not read again.
+static void CpFollowInstance(const std::string& indent, const RValue& inst, long long id,
+                             const std::vector<std::string>& filters, int depth, std::set<long long>& visited)
+{
+    const std::string who = "instance " + std::to_string(id);
+    bool alive = false;
+    try { alive = g_Yytk->CallBuiltin("instance_exists", { inst }).ToBoolean(); } catch (...) { alive = false; }
+    if (!alive) { Out(indent + who + ": instance_exists is false - not read"); return; }
+    if (visited.count(id)) { Out(indent + who + ": already printed above"); return; }
+    if ((int)visited.size() >= kCpRefMaxInstances) {
+        Out(indent + who + ": not read (" + std::to_string(kCpRefMaxInstances) + " instances already printed; `var id:"
+            + std::to_string(id) + " *` reads it)");
         return;
     }
-    const std::string tag = "craftprobe var " + tok[1] + " " + tok[2] + " " + tok[3];
-    RValue v;
-    std::string where;
+    visited.insert(id);
+    std::string objName = "?";
     try {
-        if (Lower(tok[1]) == "global") {
-            if (!g_Yytk->CallBuiltin("variable_global_exists", { RValue(tok[3]) }).ToBoolean()) { Out(tag + ": no such global; nothing read"); return; }
-            v = g_Yytk->CallBuiltin("variable_global_get", { RValue(tok[3]) });
-            where = "global";
-        } else {
+        const RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("object_index") });
+        int objIdx = -1;
+        if (N1ObjectIndex(oi, objIdx)) objName = g_Yytk->CallBuiltin("object_get_name", { RValue((double)objIdx) }).ToString();
+        else objName = "(object_index " + Describe(oi) + ")";
+    } catch (...) { objName = "(object_index unreadable)"; }
+    RValue names;
+    int n = 0;
+    try {
+        names = g_Yytk->CallBuiltin("variable_instance_get_names", { inst });
+        n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+    } catch (...) { Out(indent + objName + " id=" + std::to_string(id) + ": variable names could not be read"); return; }
+    Out(indent + objName + " id=" + std::to_string(id) + " vars=" + std::to_string(n)
+        + (depth > 0 ? " (followed, depth " + std::to_string(depth) + ")" : std::string()));
+    std::vector<std::pair<std::string, RValue>> refs;   // live-instance refs, followed after this instance's lines
+    int shown = 0;
+    for (int i = 0; i < n; ++i) {
+        std::string name;
+        try { name = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) }).ToString(); } catch (...) { continue; }
+        if (!CpNameMatches(name, filters)) continue;
+        if (++shown > kCpReaderMaxLines) { Out(indent + "  ...(capped at " + std::to_string(kCpReaderMaxLines) + "; narrow the filter)"); break; }
+        try {
+            const RValue v = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(name) });
+            const CpRef r = CpClassifyRef(v);
+            std::string text = CpValueText(v, kCpReaderArrayPreview);
+            if (r.kind == CpRefKind::DsGrid || r.kind == CpRefKind::DsList || r.kind == CpRefKind::DsMap) text += CpDsText(v, r);
+            Out(indent + "  " + name + "=" + text);
+            if (r.kind == CpRefKind::Instance) refs.push_back({ name, v });
+        } catch (...) { Out(indent + "  " + name + "=<read failed>"); }
+    }
+    for (const auto& ref : refs) {
+        const CpRef r = CpClassifyRef(ref.second);
+        if (depth + 1 > kCpRefMaxDepth) {
+            Out(indent + "  " + ref.first + " -> instance " + std::to_string(r.id) + " not followed (depth cap "
+                + std::to_string(kCpRefMaxDepth) + "; `var id:" + std::to_string(r.id) + " *` reads it)");
+            continue;
+        }
+        Out(indent + "  " + ref.first + " ->");
+        CpFollowInstance(indent + "    ", ref.second, r.id, filters, depth + 1, visited);
+    }
+}
+
+// `var <Obj|global> <nth> <path|*> [json]` or `var id:<n> <path|*> [json]`:
+// one variable, deeper - an array's first kCpVarArrayPreview entries, a data
+// structure's first kCpDsPreview - where <path> is a name or a dotted path
+// (`stashGrid.nodeGrid`) whose every step but the last lands on a live
+// instance or a plain struct. A value that is a live instance reference is
+// followed (CpFollowInstance, every variable); `*` lists every variable of
+// the root instance and follows its references. `id:<n>` is a bare instance
+// number, which instance_exists and variable_instance_get accept. With `json`
+// the value is written to bp_ipc\cp_var_<last name>.json when a depth-capped
+// walk finds no cycle. Reads only.
+static void CpVar(const std::vector<std::string>& tok)
+{
+    const char* usage = "craftprobe var: usage -> var <Obj|global> <nth> <name|a.b.c|*> [json] | var id:<n> <name|a.b.c|*> [json]; nothing read";
+    const bool byId = tok.size() >= 2 && Lower(tok[1]).rfind("id:", 0) == 0;
+    const size_t pathAt = byId ? 2 : 3;
+    if (tok.size() != pathAt + 1 && !(tok.size() == pathAt + 2 && Lower(tok[pathAt + 1]) == "json")) { Out(usage); return; }
+    const bool json = tok.size() == pathAt + 2;
+    const bool global = !byId && Lower(tok[1]) == "global";
+    std::string tag = "craftprobe var";
+    for (size_t i = 1; i <= pathAt; ++i) tag += " " + tok[i];
+
+    std::vector<std::string> path;
+    {
+        std::string seg;
+        for (char c : tok[pathAt]) {
+            if (c == '.') { path.push_back(seg); seg.clear(); } else seg += c;
+        }
+        path.push_back(seg);
+    }
+    for (const std::string& seg : path) if (seg.empty()) { Out(tag + ": an empty name in the path; nothing read"); return; }
+    const bool all = path.size() == 1 && path[0] == "*";
+    if (all && global) { Out(tag + ": `*` needs an instance root (`var <Obj> <nth> *` or `var id:<n> *`); nothing read"); return; }
+
+    try {
+        RValue cur;
+        long long rootId = -1;
+        std::string where;
+        if (byId) {
+            try { rootId = std::stoll(tok[1].substr(3)); } catch (...) { Out(tag + ": id:<n> needs a whole number; nothing read"); return; }
+            cur = RValue((double)rootId);
+            if (!g_Yytk->CallBuiltin("instance_exists", { cur }).ToBoolean()) { Out(tag + ": instance_exists(" + std::to_string(rootId) + ") is false; nothing read"); return; }
+            where = "id:" + std::to_string(rootId);
+        } else if (!global) {
             int nth = 0;
             try { nth = std::stoi(tok[2]); } catch (...) { Out(tag + ": nth must be a whole number; nothing read"); return; }
-            RValue handle; CInstance* inst = nullptr; int total = 0;
-            if (!MpResolve(tag, tok[1], nth, handle, inst, total)) return;
-            if (!g_Yytk->CallBuiltin("variable_instance_exists", { handle, RValue(tok[3]) }).ToBoolean()) { Out(tag + ": the instance has no such variable; nothing read"); return; }
-            v = g_Yytk->CallBuiltin("variable_instance_get", { handle, RValue(tok[3]) });
+            CInstance* inst = nullptr; int total = 0;
+            if (!MpResolve(tag, tok[1], nth, cur, inst, total)) return;
+            double id = -1;
+            PpInstanceId(cur, id);
+            rootId = (long long)id;
             where = PpDescribeSelf(inst);
+        } else {
+            where = "global";
         }
-        Out(tag + " (" + where + "): " + CpValueText(v, kCpVarArrayPreview));
-        if (tok.size() == 5) Out(tag + " -> " + PpBackingJsonFile("cp_var_" + tok[3] + ".json", tok[3], 0, where, v));
+        std::set<long long> visited;
+        if (all) { CpFollowInstance("  ", cur, rootId, { "*" }, 0, visited); return; }
+
+        bool atInstance = !global;
+        std::string walked;
+        for (size_t i = 0; i < path.size(); ++i) {
+            const std::string& seg = path[i];
+            walked += (i ? "." : "") + seg;
+            RValue next;
+            if (global && i == 0) {
+                if (!g_Yytk->CallBuiltin("variable_global_exists", { RValue(seg) }).ToBoolean()) { Out(tag + ": no such global; nothing read"); return; }
+                next = g_Yytk->CallBuiltin("variable_global_get", { RValue(seg) });
+            } else if (atInstance) {
+                if (!g_Yytk->CallBuiltin("instance_exists", { cur }).ToBoolean()) { Out(tag + ": at " + walked + " the instance is gone (instance_exists is false); stopped"); return; }
+                if (!g_Yytk->CallBuiltin("variable_instance_exists", { cur, RValue(seg) }).ToBoolean()) { Out(tag + ": the instance has no variable " + walked + "; nothing read"); return; }
+                next = g_Yytk->CallBuiltin("variable_instance_get", { cur, RValue(seg) });
+            } else if (ApIsPlainStruct(cur)) {
+                if (!g_Yytk->CallBuiltin("variable_struct_exists", { cur, RValue(seg) }).ToBoolean()) { Out(tag + ": the struct has no member " + walked + "; nothing read"); return; }
+                next = g_Yytk->CallBuiltin("variable_struct_get", { cur, RValue(seg) });
+            } else {
+                Out(tag + ": before " + walked + " the value is " + Describe(cur) + " - neither a live instance nor a plain struct; stopped");
+                return;
+            }
+            cur = next;
+            atInstance = CpClassifyRef(cur).kind == CpRefKind::Instance;
+        }
+        const CpRef r = CpClassifyRef(cur);
+        std::string text = CpValueText(cur, kCpVarArrayPreview);
+        if (r.kind == CpRefKind::DsGrid || r.kind == CpRefKind::DsList || r.kind == CpRefKind::DsMap) text += CpDsText(cur, r);
+        Out(tag + " (" + where + "): " + text);
+        if (r.kind == CpRefKind::Instance) {
+            if (rootId > 0) visited.insert(rootId);   // a ref back to the root is named, not re-read
+            CpFollowInstance("  ", cur, r.id, { "*" }, 1, visited);
+        }
+        if (json) Out(tag + " -> " + PpBackingJsonFile("cp_var_" + path.back() + ".json", walked, 0, where, cur));
     } catch (...) { Out(tag + ": read failed"); }
+}
+
+// ---- Phase 1b: `node` - a container's contents, summed per (class, b) -------
+// `prospectprobe grids`/`contents` read nodeGridWidth/nodeGridHeight and each
+// nodeGrid cell's nodeFingerprint on UI_Inventory_Grid_obj nodes; this reads
+// the same shape on any instance. A cell holds only a fingerprint (issue #9,
+// Stage C), so per distinct fingerprint it makes ONE by-name call - the game's
+// own GetItemFromFingerprint(fp, 0) through ApItemFromFingerprint, the route
+// `call`'s fp: argument uses - capped per run, and prints the item's
+// itemType, its definition struct's `b` (docs/RUNTIME_DATA_MODELS.md § 2),
+// the fingerprint's class suffix and every numeric member whose name looks
+// like a stack count. Which member holds the stack is unknown on this runtime,
+// so all candidates are listed and summed per (class, b); the live session
+// says which one matched by eye, and tools/stash_tab_counts.py (hub) is the
+// save-side count it is compared with. An instance without nodeGrid prints its
+// variable names, never nothing. Nothing is written.
+static constexpr int kCpNodeMaxLookups = 64;         // GetItemFromFingerprint calls one `node` makes
+static constexpr int kCpNodeMaxInstances = 12;       // instances one `node stash|bag` reads
+static constexpr int kCpNodeFingerprintsShown = 40;  // fingerprint lines one instance prints
+
+static void CpNodeRead(const std::string& label, const RValue& inst, int& lookups)
+{
+    const std::string tag = "craftprobe node " + label;
+    try {
+        if (!g_Yytk->CallBuiltin("instance_exists", { inst }).ToBoolean()) { Out(tag + ": instance_exists is false - nothing read"); return; }
+        double id = -1;
+        PpInstanceId(inst, id);
+        CInstance* self = HhResolveInstance(inst);
+        const std::string who = PpDescribeSelf(self) + " id=" + PpIdText(id);
+        if (!g_Yytk->CallBuiltin("variable_instance_exists", { inst, RValue("nodeGrid") }).ToBoolean()) {
+            const RValue names = g_Yytk->CallBuiltin("variable_instance_get_names", { inst });
+            const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+            std::string list;
+            for (int i = 0; i < n && i < kCpReaderMaxLines; ++i)
+                list += (i ? ", " : "") + g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) }).ToString();
+            if (n > kCpReaderMaxLines) list += ", ...";
+            Out(tag + ": " + who + " has no nodeGrid - its " + std::to_string(n) + " variables: " + list);
+            return;
+        }
+        const RValue grid = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("nodeGrid") });
+        if (grid.m_Kind != VALUE_ARRAY) { Out(tag + ": " + who + " nodeGrid is " + Describe(grid) + " - not an array, not read"); return; }
+
+        // Cells: filled/empty by ApIsEmptyCell's rule, distinct fingerprints
+        // first seen first, with how many cells carry each and the first cell.
+        struct Fp { RValue value; std::string text; int cells = 0; RValue firstCell; };
+        std::vector<Fp> fps;
+        int filled = 0, empty = 0, noFp = 0;
+        const int rows = (int)g_Yytk->CallBuiltin("array_length", { grid }).ToDouble();
+        for (int i = 0; i < rows; ++i) {
+            const RValue row = g_Yytk->CallBuiltin("array_get", { grid, RValue((double)i) });
+            if (row.m_Kind != VALUE_ARRAY) { Out(tag + ": " + who + " nodeGrid row " + std::to_string(i) + " is " + Describe(row) + " - not read"); return; }
+            const int cols = (int)g_Yytk->CallBuiltin("array_length", { row }).ToDouble();
+            for (int j = 0; j < cols; ++j) {
+                const RValue cell = g_Yytk->CallBuiltin("array_get", { row, RValue((double)j) });
+                if (ApIsEmptyCell(cell)) { ++empty; continue; }
+                ++filled;
+                if (!ApIsPlainStruct(cell) || !g_Yytk->CallBuiltin("variable_struct_exists", { cell, RValue("nodeFingerprint") }).ToBoolean()) { ++noFp; continue; }
+                const RValue f = g_Yytk->CallBuiltin("variable_struct_get", { cell, RValue("nodeFingerprint") });
+                const std::string text = f.m_Kind == VALUE_STRING ? f.ToString() : Describe(f);
+                if (f.m_Kind == VALUE_UNDEFINED || text.empty()) { ++noFp; continue; }
+                Fp* hit = nullptr;
+                for (Fp& e : fps) if (e.text == text) { hit = &e; break; }
+                if (!hit) { fps.push_back(Fp()); hit = &fps.back(); hit->value = f; hit->text = text; hit->firstCell = cell; }
+                ++hit->cells;
+            }
+        }
+        Out(tag + ": " + who + " w=" + PpSnapVar(inst, "nodeGridWidth") + " h=" + PpSnapVar(inst, "nodeGridHeight")
+            + " filled=" + std::to_string(filled) + " empty=" + std::to_string(empty) + " distinct fingerprints="
+            + std::to_string(fps.size()) + (noFp ? " (" + std::to_string(noFp) + " filled without one)" : std::string()));
+
+        // Numeric members named like a stack count, of one struct, prefixed.
+        static const char* const kStackWords[] = { "stack", "amount", "count", "qty" };
+        auto stackMembers = [&](const RValue& s, const std::string& prefix, std::vector<std::pair<std::string, double>>& out) {
+            if (!ApIsPlainStruct(s)) return;
+            const RValue names = g_Yytk->CallBuiltin("variable_struct_get_names", { s });
+            const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+            for (int i = 0; i < n; ++i) {
+                const std::string name = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) }).ToString();
+                const std::string ln = Lower(name);
+                bool match = false;
+                for (const char* w : kStackWords) if (ln.find(w) != std::string::npos) match = true;
+                if (!match) continue;
+                const RValue m = g_Yytk->CallBuiltin("variable_struct_get", { s, RValue(name) });
+                if (PpIsNumber(m)) out.push_back({ prefix + name, m.ToDouble() });
+            }
+        };
+
+        // Per (class, b): fingerprints, cells, and each candidate member's sum.
+        struct Sum { int fingerprints = 0; int cells = 0; std::map<std::string, double> members; };
+        std::map<std::string, Sum> sums;
+        int shown = 0, notLooked = 0;
+        for (const Fp& e : fps) {
+            const size_t dash = e.text.rfind('-');
+            const std::string cls = dash == std::string::npos ? std::string("?") : e.text.substr(dash + 1);
+            std::string line = "  fp=" + e.text + " class=" + cls + " cells=" + std::to_string(e.cells);
+            std::string b = "?";
+            std::vector<std::pair<std::string, double>> cand;
+            stackMembers(e.firstCell, "cell.", cand);
+            if (lookups >= kCpNodeMaxLookups || !self) {
+                ++notLooked;
+                line += self ? " (lookup not made: " + std::to_string(kCpNodeMaxLookups) + " per run)" : std::string(" (lookup not made: no instance for self)");
+            } else {
+                ++lookups;
+                RValue item;
+                if (!ApItemFromFingerprint(self, e.value, item)) line += " GetItemFromFingerprint(fp, 0) returned no struct";
+                else {
+                    const RValue type = g_Yytk->CallBuiltin("variable_struct_exists", { item, RValue("itemType") }).ToBoolean()
+                        ? g_Yytk->CallBuiltin("variable_struct_get", { item, RValue("itemType") }) : RValue();
+                    line += " itemType=" + Describe(type);
+                    if (g_Yytk->CallBuiltin("variable_struct_exists", { item, RValue("itemDefinitionStruct") }).ToBoolean()) {
+                        const RValue def = g_Yytk->CallBuiltin("variable_struct_get", { item, RValue("itemDefinitionStruct") });
+                        if (ApIsPlainStruct(def) && g_Yytk->CallBuiltin("variable_struct_exists", { def, RValue("b") }).ToBoolean()) {
+                            const RValue bv = g_Yytk->CallBuiltin("variable_struct_get", { def, RValue("b") });
+                            b = PpIsNumber(bv) ? CpArgSignature(bv) : Describe(bv);
+                        }
+                        stackMembers(def, "def.", cand);
+                    }
+                    stackMembers(item, "item.", cand);
+                }
+            }
+            line += " b=" + b;
+            for (const auto& c : cand) line += " " + c.first + "=" + CpArgSignature(RValue(c.second));
+            if (cand.empty()) line += " (no numeric stack/amount/count/qty member)";
+            if (++shown <= kCpNodeFingerprintsShown) Out(line);
+            Sum& s = sums["class=" + cls + " b=" + b];
+            ++s.fingerprints;
+            s.cells += e.cells;
+            for (const auto& c : cand) s.members[c.first] += c.second;
+        }
+        if (shown > kCpNodeFingerprintsShown)
+            Out("  ... " + std::to_string(shown - kCpNodeFingerprintsShown) + " more fingerprint line(s) not printed (the sums below count them)");
+        for (const auto& kv : sums) {
+            std::string line = "  sum " + kv.first + ": fingerprints=" + std::to_string(kv.second.fingerprints)
+                + " cells=" + std::to_string(kv.second.cells);
+            for (const auto& m : kv.second.members) line += " " + m.first + "=" + CpArgSignature(RValue(m.second));
+            Out(line);
+        }
+        if (notLooked) Out("  " + std::to_string(notLooked) + " fingerprint(s) summed with b=? (no lookup made for them)");
+    } catch (...) { Out(tag + ": EXCEPTION while reading - unreadable, not empty"); }
+}
+
+// `node <id:<n> | <Obj> <nth> | stash | bag>`. `stash`: every variable of the
+// open stash window that is a live instance reference (stashGrid,
+// uiStashContainer, invMaterialTab, ...), each read as above. `bag`: every
+// UI_Inventory_Grid_obj instance with its uiNodeCallstack - the known-good
+// grid read a special-tab miss is judged against.
+static void CpNodeCommand(const std::vector<std::string>& tok)
+{
+    if (tok.size() < 2 || tok.size() > 3) { Out("craftprobe node: usage -> node id:<n> | node <Obj> <nth> | node stash | node bag; nothing read"); return; }
+    const std::string sel = Lower(tok[1]);
+    int lookups = 0;
+    auto objectIndex = [](HeroSiege::Objects::GameObject obj) {
+        try { return (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(HeroSiege::Objects::GetObjectName(obj))) }).ToDouble(); }
+        catch (...) { return -1; }
+    };
+    try {
+        if (tok.size() == 2 && sel.rfind("id:", 0) == 0) {
+            long long id = -1;
+            try { id = std::stoll(tok[1].substr(3)); } catch (...) { Out("craftprobe node: id:<n> needs a whole number; nothing read"); return; }
+            CpNodeRead("id:" + std::to_string(id), RValue((double)id), lookups);
+        } else if (tok.size() == 2 && sel == "stash") {
+            const int idx = objectIndex(HeroSiege::Objects::GameObject::UI_Stash_obj);
+            const int total = idx < 0 ? 0 : (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)idx) }).ToDouble();
+            if (total <= 0) { Out("craftprobe node stash: UI_Stash_obj has no live instance (the stash is closed) - nothing read; `node id:<n>` reads a container by id"); return; }
+            const RValue window = g_Yytk->CallBuiltin("instance_find", { RValue((double)idx), RValue(0.0) });
+            Out("craftprobe node stash: " + PpDescribeSelf(HhResolveInstance(window)) + " stashTabSelected=" + PpSnapVar(window, "stashTabSelected")
+                + " tabSelected=" + PpSnapVar(window, "tabSelected"));
+            const RValue names = g_Yytk->CallBuiltin("variable_instance_get_names", { window });
+            const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+            std::set<long long> read;
+            for (int i = 0; i < n; ++i) {
+                const std::string name = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) }).ToString();
+                const RValue v = g_Yytk->CallBuiltin("variable_instance_get", { window, RValue(name) });
+                const CpRef r = CpClassifyRef(v);
+                if (r.kind != CpRefKind::Instance) continue;
+                if (read.count(r.id)) { Out("craftprobe node UI_Stash_obj." + name + ": instance " + std::to_string(r.id) + " already read above"); continue; }
+                if ((int)read.size() >= kCpNodeMaxInstances) { Out("craftprobe node stash: " + std::to_string(kCpNodeMaxInstances) + " instances read; the rest not (`node id:<n>`)"); break; }
+                read.insert(r.id);
+                CpNodeRead("UI_Stash_obj." + name, v, lookups);
+            }
+            if (read.empty()) Out("craftprobe node stash: the window holds no live instance reference");
+        } else if (tok.size() == 2 && sel == "bag") {
+            const int idx = objectIndex(HeroSiege::Objects::GameObject::UI_Inventory_Grid_obj);
+            const int total = idx < 0 ? 0 : (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)idx) }).ToDouble();
+            Out("craftprobe node bag: " + std::to_string(total) + " UI_Inventory_Grid_obj instance(s)");
+            for (int k = 0; k < total && k < kCpNodeMaxInstances; ++k) {
+                const RValue node = g_Yytk->CallBuiltin("instance_find", { RValue((double)idx), RValue((double)k) });
+                if (node.m_Kind == VALUE_UNDEFINED) { Out("craftprobe node bag:" + std::to_string(k) + ": instance_find returned undefined"); continue; }
+                std::string stack = "missing";
+                if (g_Yytk->CallBuiltin("variable_instance_exists", { node, RValue("uiNodeCallstack") }).ToBoolean()) {
+                    const RValue s = g_Yytk->CallBuiltin("variable_instance_get", { node, RValue("uiNodeCallstack") });
+                    stack = s.m_Kind == VALUE_ARRAY ? CiExpandContainer(s) : Describe(s);
+                    if (stack.size() > 160) stack = stack.substr(0, 160) + "...";
+                }
+                CpNodeRead("bag:" + std::to_string(k) + " uiNodeCallstack=" + stack, node, lookups);
+            }
+            if (total > kCpNodeMaxInstances) Out("craftprobe node bag: " + std::to_string(total - kCpNodeMaxInstances) + " more not read (`node id:<n>`)");
+        } else if (tok.size() == 3) {
+            int nth = 0;
+            try { nth = std::stoi(tok[2]); } catch (...) { Out("craftprobe node: nth must be a whole number; nothing read"); return; }
+            RValue handle; CInstance* inst = nullptr; int total = 0;
+            if (!MpResolve("craftprobe node " + tok[1] + " " + tok[2], tok[1], nth, handle, inst, total)) return;
+            CpNodeRead(tok[1] + " " + tok[2], handle, lookups);
+        } else {
+            Out("craftprobe node: usage -> node id:<n> | node <Obj> <nth> | node stash | node bag; nothing read");
+            return;
+        }
+    } catch (...) { Out("craftprobe node: EXCEPTION while reading - unreadable, not empty"); }
+    Out("craftprobe node: " + std::to_string(lookups) + " GetItemFromFingerprint lookup(s) this run (cap "
+        + std::to_string(kCpNodeMaxLookups) + "); nothing written");
 }
 
 // ---- backing: keep what the game's own calls returned ------------------------
@@ -21937,6 +22542,14 @@ static bool CpDefaultBackingRow(const CpTarget& t)
         || name == HeroSiege::Scripts::gml_Script_FindInventoryItemData;
 }
 
+// Phase 1b: the two rows whose returns are also kept per first argument.
+static bool CpKeepsPerArgument(const CpTarget& t)
+{
+    const std::string_view name(t.runtimeName);
+    return name == HeroSiege::Scripts::gml_Script_GetInventoryArray
+        || name == HeroSiege::Scripts::gml_Script_CountInventoryItem;
+}
+
 static void CpBackingDump()
 {
     int written = 0;
@@ -21948,6 +22561,24 @@ static void CpBackingDump()
                 + PpBackingJsonFile(std::string("cp_backing_") + t.safe + ".json", t.label, t.kept->call, t.kept->self, *t.kept->value));
             ++written;
         } catch (...) { Out(std::string("craftprobe backing dump ") + t.label + ": read failed"); }
+        // One file per first-argument signature: `_arg<k>` in the order first seen.
+        if (!t.kept->perArg && t.kept->perArgs.empty()) continue;
+        int sigs = 0;
+        for (size_t k = 0; k < t.kept->perArgs.size(); ++k) {
+            const CpArgKept& a = t.kept->perArgs[k];
+            if (!a.value || a.call <= 0) continue;
+            try {
+                Out(std::string("craftprobe backing dump ") + t.label + " a0=" + a.sig + " #" + std::to_string(a.call)
+                    + " self=" + a.self + " shape=" + PpBackingShape(*a.value) + " -> "
+                    + PpBackingJsonFile(std::string("cp_backing_") + t.safe + "_arg" + std::to_string(k) + ".json",
+                                        std::string(t.label) + " a0=" + a.sig, a.call, a.self, *a.value));
+                ++sigs;
+                ++written;
+            } catch (...) { Out(std::string("craftprobe backing dump ") + t.label + " a0=" + a.sig + ": read failed"); }
+        }
+        Out(std::string("craftprobe backing dump ") + t.label + ": " + std::to_string(sigs) + " first-argument signature(s)"
+            + (t.kept->perArgFull ? " (" + std::to_string(t.kept->perArgFull) + " return(s) found every one of the "
+                                    + std::to_string(kCpBackingMaxArgs) + " slots taken)" : std::string()));
     }
     Out("craftprobe backing dump: " + std::to_string(written) + " kept return(s)"
         + (written ? std::string() : std::string(" - `backing on`, then open the windows so the game makes its own calls")));
@@ -21959,14 +22590,18 @@ static void CpBackingCommand(const std::vector<std::string>& tok)
     if (what == "on") {
         const std::vector<std::string> filters(tok.begin() + 2, tok.end());
         int selected = 0, notDetoured = 0;
+        int perArg = 0;
         for (CpTarget& t : g_CpTargets) {
             const bool on = filters.empty() ? CpDefaultBackingRow(t) : CpLabelMatches(t, filters);
             InterlockedExchange(t.capture, on ? 1 : 0);
-            if (on) { ++selected; if (!t.installed.load()) ++notDetoured; }
+            if (t.kept) t.kept->perArg = on && CpKeepsPerArgument(t);
+            if (on) { ++selected; if (!t.installed.load()) ++notDetoured; if (CpKeepsPerArgument(t)) ++perArg; }
         }
         g_CpBacking.store(true);
         Out("craftprobe backing: on - the latest return of " + std::to_string(selected) + " row(s) is kept"
             + (notDetoured ? " (" + std::to_string(notDetoured) + " of them not detoured: `hook` first)" : std::string())
+            + (perArg ? ", " + std::to_string(perArg) + " of them also per first argument (up to "
+                        + std::to_string(kCpBackingMaxArgs) + " each)" : std::string())
             + ". Nothing is invoked; `backing dump` writes the json files.");
     } else if (what == "off") {
         g_CpBacking.store(false);
@@ -21980,6 +22615,14 @@ static void CpBackingCommand(const std::vector<std::string>& tok)
             try { if (!t.kept->root.empty()) g_Yytk->CallBuiltin("variable_global_set", { RValue(t.kept->root), RValue() }); } catch (...) {}
             if (t.kept->value) *t.kept->value = RValue();
             t.kept->call = 0;
+            // Per-argument slots: released the same way; the heap RValues are
+            // left undefined, never deleted (CpKept::value's rule).
+            for (CpArgKept& a : t.kept->perArgs) {
+                try { if (!a.root.empty()) g_Yytk->CallBuiltin("variable_global_set", { RValue(a.root), RValue() }); } catch (...) {}
+                if (a.value) *a.value = RValue();
+            }
+            t.kept->perArgs.clear();
+            t.kept->perArgFull = 0;
             ++cleared;
         }
         Out("craftprobe backing clear: released " + std::to_string(cleared) + " kept value(s)");
@@ -22081,16 +22724,20 @@ static void CpCall(const std::vector<std::string>& tok)
     Out("  after:  " + MpWhere(tok[2], nth, handle));
 }
 
+// The first line is the build's marker: a live session tells this build
+// (Phase 1b, 202 rows) from aa0c72a's (97 rows) in one bare `craftprobe`.
 static void CpUsage()
 {
-    Out("craftprobe: research instrument for docs/crafting-materials-research.md (research build only)");
+    Out("craftprobe: phase1b rows=" + std::to_string(kCpTargetCount) + " - research instrument for docs/crafting-materials-research.md (research build only)");
     Out("  hook [substr ...]                 native-detour every row (or the matching ones); one instrument per session");
     Out("  arm [budget=N] [substr ...]       reset counters; log the next N calls of each selected row (default: all but the control)");
     Out("  show [all]                        calls since `arm`, logged vs unlogged per row; CheckPlayerInteraction is the control");
     Out("  reset                             zero every counter");
     Out("  bag|stash|recipe [substr ...]     hook-free: the bag window, stash window + world stash + globals, cube window");
-    Out("  var <Obj|global> <nth> <name> [json]   hook-free: one variable, deeper (json -> bp_ipc\\cp_var_<name>.json)");
-    Out("  backing on [substr ...]|off|dump|clear  keep the game's own returns (default: profile, stash and count rows)");
+    Out("  var <Obj|global> <nth> <name|a.b.c|*> [json]   hook-free: one variable, deeper; a live `ref instance` is followed by name");
+    Out("  var id:<n> <name|a.b.c|*> [json]  the same from an instance id (json -> bp_ipc\\cp_var_<name>.json)");
+    Out("  node id:<n>|<Obj> <nth>|stash|bag  hook-free: a container's cells, one GetItemFromFingerprint per fingerprint (capped), sums per (class, b)");
+    Out("  backing on [substr ...]|off|dump|clear  keep the game's own returns (default: profile, stash and count rows; GetInventoryArray and CountInventoryItem also per first argument)");
     Out("  dump                              craftprobe_rows.json + backing dump");
     Out("  call <Row> <Obj> <nth> [args ...] confirm   ONE by-name call of one row; refuses before it on any missing precondition");
 }
@@ -22108,6 +22755,7 @@ static void CpCommand(const std::string& rest)
     if (sub == "reset") { CpZeroCounters(); Out("craftprobe reset: counters zeroed (detours, selection and kept values unchanged)"); return; }
     if (sub == "bag" || sub == "stash" || sub == "recipe") { CpReader(sub, tail); return; }
     if (sub == "var") { CpVar(tok); return; }
+    if (sub == "node") { CpNodeCommand(tok); return; }
     if (sub == "backing") { CpBackingCommand(tok); return; }
     if (sub == "dump") { CpDump(); return; }
     if (sub == "call") { CpCall(tok); return; }
