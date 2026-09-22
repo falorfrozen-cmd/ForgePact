@@ -291,6 +291,13 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
             implementation(cls.plugin, "static void TgProbeBuffWatchNote("),
             implementation(cls.plugin, "static void TgProbeBuffWatchAfterDraw("),
             implementation(cls.plugin, "static void TgProbeBuffWatchOnBuffAdd("),
+            # Round 1 (owner-requested hardening): the visibility/note-text
+            # pair `show` uses to stop hiding the mismatch-only and
+            # added-only shapes - pure (no Out()), so this pair is spliced
+            # and testable the same way TgProbeSweepOwnText is; `show` itself
+            # stays unspliced (it calls Out()), pinned by the contract test.
+            implementation(cls.plugin, "static bool TgProbeBuffWatchVisible("),
+            implementation(cls.plugin, "static std::string TgProbeBuffWatchNoteText("),
         ])
 
         out = ROOT / "build/toggle-skill-behavior"
@@ -817,6 +824,26 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
         for suffix in ("/adds", "", "/player", "/inUse", "/useTalent",
                        "/inUse_not_native", "/useTalent_not_native"):
             self.assertScenario("buffwatch/buffadd_note_records_frames_and_nesting" + suffix)
+
+    # ---- Round 1 (owner-requested hardening): `show`'s visibility/note ----
+
+    def test_buffwatch_seen_present_is_shown(self):
+        self.assertScenario("buffwatch/seen_present_is_shown/visible")
+        self.assertScenario("buffwatch/seen_present_is_shown/no_note")
+
+    def test_buffwatch_mismatch_only_is_shown(self):
+        for suffix in ("/app", "/visible", "/note"):
+            self.assertScenario("buffwatch/mismatch_only_is_shown" + suffix)
+
+    def test_buffwatch_added_only_is_shown(self):
+        for suffix in ("/app", "/visible", "/note"):
+            self.assertScenario("buffwatch/added_only_is_shown" + suffix)
+
+    def test_buffwatch_neither_is_hidden(self):
+        self.assertScenario("buffwatch/neither_is_hidden")
+
+    def test_buffwatch_playerbuff_not_array(self):
+        self.assertScenario("buffwatch/playerbuff_not_array/no_new_records")
 
     # ---- issue #55: the timed-skill countdown (`skilltimer`) --------------
 

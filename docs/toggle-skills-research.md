@@ -5083,8 +5083,10 @@ explicit MEASUREMENT: neither talent-use script is hooked by default in the
 player build today (one only under the co-op puppet path, the other only
 once the re-cast guard is armed), so shipping the mapping would add a hook to
 the cast path itself - a change class that gets its own workorder; an on-hit
-buff like Berserk is never added inside a cast at all, so the "call on the
-stack" rule would simply miss it; and a wrong mapping draws the WRONG
+buff like Berserk is expected not to be added inside a cast at all (owner
+description; not observed yet - Session 12 measures `inUse`/`useTalent` for
+it), which would make the "call on the stack" rule simply miss it; and a
+wrong mapping draws the WRONG
 countdown, where the existing object rule's worst failure is drawing
 nothing. So this round ships nothing from a rule - it only measures explicit
 rows, and the instrument records the nesting data (`inUse`/`useTalent`) a
@@ -5132,24 +5134,29 @@ native detour.
    output (cap 200 lines): does a buff-name table exist anywhere reachable
    from `global`? `tgprobe deep get Player_obj.id` - quote: is `host` on an
    own buff the local player's own id?
-3. Shield Lancer, town: `tgprobe buffwatch on`, `tgprobe buffwatch clear`,
-   cast Counter once (the cast form that shows the HUD buff icon), wait 3
-   seconds, `tgprobe buffwatch show` - the positive control: `[104] app=1
-   first=` greater than 0. Without this the session stops; the instrument is
-   blind. Wait for the buff to end, `tgprobe buffwatch show` again (record
-   `last`, `lastFrame`).
-4. Same character, the tag-12 self-buff on its own hotbar slot (if Shield
+3. Second positive control, cheaper than a cast: `tgprobe buffs` - quote the
+   non-empty slots it lists. `tgprobe buffwatch on` then `tgprobe buffwatch
+   show` - each of those slots must show a record before any cast is made in
+   this session (an already-present town buff, Martyr, or the like, read
+   through the same `playerBuff[1][0]` path `tgprobe buffs` just read). A
+   listed slot missing from `show` means the instrument is blind; stop.
+4. Shield Lancer, town: `tgprobe buffwatch clear`, cast Counter once (the
+   cast form that shows the HUD buff icon), wait 3 seconds, `tgprobe
+   buffwatch show` - the positive control: `[104] app=1 first=` greater than
+   0. Without this the session stops; the instrument is blind. Wait for the
+   buff to end, `tgprobe buffwatch show` again (record `last`, `lastFrame`).
+5. Same character, the tag-12 self-buff on its own hotbar slot (if Shield
    Lancer owns one): `tgprobe buffwatch clear`, cast, `tgprobe buffwatch
    show` at 3 seconds and again after it ends.
-5. Viking: `tgprobe buffwatch clear`, Defensive Shout, `tgprobe buffwatch
+6. Viking: `tgprobe buffwatch clear`, Defensive Shout, `tgprobe buffwatch
    show` at 3 seconds and after it ends. Then `tgprobe buffwatch clear`,
    Berserk: attack until the stacks are visibly up, `tgprobe buffwatch
    show`, keep attacking 10 more seconds, `show` again, stop, wait for it to
    drop, `show` a third time.
-6. A fifth representative of the owner's choice from the tag-12 list (the
+7. A fifth representative of the owner's choice from the tag-12 list (the
    8-second skills are the odd shape against the common 25s/70s ones), same
    clear/cast/show sequence.
-7. Optional negative shape, if a Butcher is at hand: Holy Form on, `tgprobe
+8. Optional negative shape, if a Butcher is at hand: Holy Form on, `tgprobe
    buffwatch show` (expect `first=1.000000`, `min=max` - a toggle buff holds
    a constant 1, it does not count down), then off.
 

@@ -3459,7 +3459,8 @@ class SkillTimerBuffProbeContractTests(unittest.TestCase):
 
     def test_buffwatch_symbols_are_research_only(self):
         for name in ("TgProbeBuffWatch", "TgBuffWatch", "g_TgBuffWatch", "buffwatch show",
-                     "g_TgTalentUseDepth", "g_TgTalentUseClassDepth"):
+                     "g_TgTalentUseDepth", "g_TgTalentUseClassDepth",
+                     "TgProbeBuffWatchVisible", "TgProbeBuffWatchNoteText"):
             self.assertIn(name, self.block, name)
             self.assertNotIn(name, self.stripped, name)
         after_draw = function_body(self.plugin, "static void TgProbeBuffWatchAfterDraw()")
@@ -3522,6 +3523,53 @@ class SkillTimerBuffProbeContractTests(unittest.TestCase):
     def test_buffwatch_command_usage_listed(self):
         usage = function_body(self.plugin, "static void TgProbeCommand(const std::string& rest)")
         self.assertIn("buffwatch on|off|clear|show", usage)
+
+    # ---- Round 1 (owner-requested hardening, before the DLL is installed) --
+
+    def test_show_prints_every_visible_shape_not_only_seen_present(self):
+        # A slot whose buffType never matched its index (identityMismatch>0),
+        # or an id only BuffAdd touched (adds>0) - both app==0 - are exactly
+        # the shapes that would explain a failed `[104]` positive control,
+        # and `show` used to skip both with a bare `rec.app <= 0` filter.
+        show = function_body(self.plugin, "static void TgProbeBuffWatchShow()")
+        self.assertNotIn("rec.app <= 0", show)
+        self.assertIn("if (!TgProbeBuffWatchVisible(rec)) continue;", show)
+        visible = function_body(self.plugin, "static bool TgProbeBuffWatchVisible(const TgBuffWatchRecord& rec)")
+        self.assertIn("rec.app > 0", visible)
+        self.assertIn("rec.identityMismatch > 0", visible)
+        self.assertIn("rec.adds > 0", visible)
+        note = function_body(self.plugin, "static std::string TgProbeBuffWatchNoteText(const TgBuffWatchRecord& rec)")
+        self.assertIn("(mismatch-only)", note)
+        self.assertIn("(added, never seen at this slot)", note)
+        self.assertIn("TgProbeBuffWatchNoteText(rec)", show)
+
+    def test_buffadd_note_skips_native_to_avoid_double_count(self):
+        # TgProbeDetourBody's own kTg_BuffAdd branch already counts a native
+        # (or table-only-native-under-HookBuffAdd) call; TgProbeNoteBuffAdd
+        # runs unconditionally from inside the real, always-installed
+        # HookBuffAdd, so without this guard both would fire for one call.
+        note = function_body(
+            self.plugin, "static void TgProbeNoteBuffAdd(CInstance* S, CInstance* O, int argc, RValue** A)")
+        self.assertIn("if (g_TgRows[kTg_BuffAdd].mode != kTgNative) {", note)
+        self.assertLess(note.index("g_TgRows[kTg_BuffAdd].mode != kTgNative"),
+                         note.index("TgProbeBuffWatchOnBuffAdd(argc, A,"))
+        # The comment claiming they never both fire is gone.
+        self.assertNotIn("never both fire for one call", note)
+
+    def test_live_procedure_has_a_second_positive_control_before_the_cast(self):
+        procedure = self.section()
+        procedure = procedure[procedure.index("#### Live procedure"):procedure.index("#### Results")]
+        self.assertIn("tgprobe buffs", procedure)
+        self.assertIn("blind", procedure)
+        # The second control comes before the Counter cast control in the
+        # numbered steps, not after.
+        self.assertLess(procedure.index("tgprobe buffs"), procedure.index("cast Counter"))
+
+    def test_static_search_labels_berserk_nesting_as_not_yet_observed(self):
+        section = self.section()
+        static_search = section[section.index("#### Static search"):section.index("#### Instrument")]
+        self.assertNotIn("is never added inside a cast at all", static_search)
+        self.assertIn("not observed yet", static_search)
 
 
 class SkillTimerProbeContractTests(unittest.TestCase):

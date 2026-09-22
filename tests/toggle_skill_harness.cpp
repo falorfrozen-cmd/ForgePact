@@ -2844,6 +2844,74 @@ int main() {
     }
     resetBuffWatch();
 
+    // Round 1 (owner-requested hardening): `show`'s visibility/note-text
+    // pair, one scenario per shape a failed `[104]` control could actually
+    // be - the two that were silently dropped before this round, plus the
+    // seen-present and neither-touched shapes as the positive/negative
+    // controls either side of them.
+
+    // BW6. Seen present (app>0): visible, no note - unchanged from before
+    // this round.
+    resetWorld(); resetBuffWatch(); g_TgBuffWatchOn = true;
+    world.buffSlots[104] = BuffInst{ true, MakeReal(104.0), MakeReal(50.0), RValue() };
+    TgProbeBuffWatchAfterDraw();
+    {
+        const TgBuffWatchRecord& rec = g_TgBuffWatch[104];
+        checkBool("buffwatch/seen_present_is_shown/visible", TgProbeBuffWatchVisible(rec), true);
+        checkBool("buffwatch/seen_present_is_shown/no_note", TgProbeBuffWatchNoteText(rec).empty(), true);
+    }
+
+    // BW7. Mismatch-only (app==0, identityMismatch>0): the shape `show` used
+    // to hide entirely - the slot's own buffType never matched its index, so
+    // a `[104]` control that failed this way used to print nothing at all.
+    resetWorld(); resetBuffWatch(); g_TgBuffWatchOn = true;
+    world.buffSlots[104] = BuffInst{ true, MakeReal(999.0), MakeReal(50.0), RValue() };
+    TgProbeBuffWatchAfterDraw();
+    {
+        const TgBuffWatchRecord& rec = g_TgBuffWatch[104];
+        checkInt("buffwatch/mismatch_only_is_shown/app", rec.app, 0);
+        checkBool("buffwatch/mismatch_only_is_shown/visible", TgProbeBuffWatchVisible(rec), true);
+        checkBool("buffwatch/mismatch_only_is_shown/note",
+                  TgProbeBuffWatchNoteText(rec) == "(mismatch-only)", true);
+    }
+
+    // BW8. Added-only (app==0, adds>0): BuffAdd fired for this id but its own
+    // draw never confirmed it at this slot - the other shape `show` used to
+    // hide, telling "wrong cast form" apart from "instrument blind" is
+    // exactly what a failed positive control needs.
+    resetBuffWatch(); g_TgBuffWatchOn = true;
+    {
+        RValue player = MakeReal(1.0), buffId = MakeReal(104.0), unused = MakeReal(0.0), frames = MakeReal(180.0);
+        RValue* args[] = { &player, &buffId, &unused, &frames };
+        TgProbeBuffWatchOnBuffAdd(4, args, /*talentUseNative=*/false, /*talentUseClassNative=*/false);
+        const TgBuffWatchRecord& rec = g_TgBuffWatch[104];
+        checkInt("buffwatch/added_only_is_shown/app", rec.app, 0);
+        checkBool("buffwatch/added_only_is_shown/visible", TgProbeBuffWatchVisible(rec), true);
+        checkBool("buffwatch/added_only_is_shown/note",
+                  TgProbeBuffWatchNoteText(rec) == "(added, never seen at this slot)", true);
+    }
+    resetBuffWatch();
+
+    // BW9. Neither touched (app==0, identityMismatch==0, adds==0): a fresh
+    // default record is still hidden - the negative control beside BW7/BW8,
+    // so widening what `show` prints did not quietly become printing
+    // everything.
+    {
+        TgBuffWatchRecord rec;
+        checkBool("buffwatch/neither_is_hidden", TgProbeBuffWatchVisible(rec), false);
+    }
+
+    // BW10. global.playerBuff itself not an array (the same shape
+    // row0IsArray models for the HUD row): the sampler reads nothing and
+    // throws nothing - no new record for any slot, even one that carries a
+    // live buff in World::buffSlots.
+    resetWorld(); resetBuffWatch(); g_TgBuffWatchOn = true;
+    world.playerBuffGlobalIsArray = false;
+    world.buffSlots[104] = BuffInst{ true, MakeReal(104.0), MakeReal(50.0), RValue() };
+    TgProbeBuffWatchAfterDraw();
+    checkInt("buffwatch/playerbuff_not_array/no_new_records", (long long)g_TgBuffWatch.size(), 0);
+    resetBuffWatch();
+
     // ---- issue #55 follow-up (D-S4): rule-based coverage of untested skills
 
     // R1-R6. SkillTimerRuleModel::Eligible is a pure, game-independent

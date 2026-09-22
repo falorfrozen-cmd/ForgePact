@@ -21808,11 +21808,19 @@ static void TgProbeNoteTalentUse(CInstance* S, CInstance* O, int argc, RValue** 
 static void TgProbeNoteBuffAdd(CInstance* S, CInstance* O, int argc, RValue** A)
 {
     // Session 12 (`tgprobe buffwatch`): the via-hook attachment path - this
-    // note runs from inside the real HookBuffAdd, which only executes at all
-    // when kTg_BuffAdd is NOT native (a native detour supersedes it), so this
-    // and TgProbeDetourBody's kTg_BuffAdd branch never both fire for one call.
-    TgProbeBuffWatchOnBuffAdd(argc, A, g_TgRows[kTg_TalentUse].mode == kTgNative,
-                               g_TgRows[kTg_TalentUseClass].mode == kTgNative);
+    // note runs from inside the real HookBuffAdd, which fires for every real
+    // BuffAdd call regardless of kTg_BuffAdd's own mode (HookBuffAdd is a
+    // shipped hook, installed independently of tgprobe). When kTg_BuffAdd is
+    // kTgNative - a true native detour, OR "native (under table-only
+    // HookBuffAdd)" (TgProbeAttach detoured the original this very hook still
+    // calls into) - TgProbeDetourBody's kTg_BuffAdd branch already calls
+    // TgProbeBuffWatchOnBuffAdd for this same call, so calling it again here
+    // would double-count `adds`. Only when kTg_BuffAdd attached table-only
+    // (piggybacked, never detoured) does this note need to call it itself.
+    if (g_TgRows[kTg_BuffAdd].mode != kTgNative) {
+        TgProbeBuffWatchOnBuffAdd(argc, A, g_TgRows[kTg_TalentUse].mode == kTgNative,
+                                   g_TgRows[kTg_TalentUseClass].mode == kTgNative);
+    }
     if (!TgProbeIsPiggyback(g_TgRows[kTg_BuffAdd].mode)) return;
     TgProbeNote(kTg_BuffAdd, S, O, argc, A);
 }
@@ -26230,7 +26238,27 @@ static std::string TgProbeBuffWatchVarsText(const TgBuffWatchRecord& rec)
     return s.empty() ? std::string("none") : s;
 }
 
-// `tgprobe buffwatch show`: one line per record with `app>0`, then the
+// A record that was never seen present (app==0) still explains a failed
+// positive control when it was touched some other way: an identity mismatch
+// (wrong buffType at this slot) or a BuffAdd this slot's own draw never
+// confirmed (added, but never read back at this index - so which shape
+// `[104]` missed is visible instead of nothing at all). Pure (no Out()), so
+// this pair is the testable core; TgProbeBuffWatchShow only calls them.
+static bool TgProbeBuffWatchVisible(const TgBuffWatchRecord& rec)
+{
+    return rec.app > 0 || rec.identityMismatch > 0 || rec.adds > 0;
+}
+
+static std::string TgProbeBuffWatchNoteText(const TgBuffWatchRecord& rec)
+{
+    if (rec.app > 0) return "";
+    if (rec.identityMismatch > 0) return "(mismatch-only)";
+    if (rec.adds > 0) return "(added, never seen at this slot)";
+    return "";
+}
+
+// `tgprobe buffwatch show`: one line per visible record (app>0, or one of
+// the two blind shapes TgProbeBuffWatchVisible/NoteText name), then the
 // footer the live procedure quotes.
 static void TgProbeBuffWatchShow()
 {
@@ -26244,8 +26272,9 @@ static void TgProbeBuffWatchShow()
     for (const auto& entry : order) {
         const int idx = entry.second;
         const TgBuffWatchRecord& rec = g_TgBuffWatch[idx];
-        if (rec.app <= 0) continue;
-        Out("  [" + std::to_string(idx) + "] app=" + std::to_string(rec.app)
+        if (!TgProbeBuffWatchVisible(rec)) continue;
+        const std::string note = TgProbeBuffWatchNoteText(rec);
+        Out("  [" + std::to_string(idx) + "] app=" + std::to_string(rec.app) + (note.empty() ? "" : " " + note)
             + " present=" + (rec.present ? "1" : "0") + " draws=" + std::to_string(rec.draws)
             + " first=" + (rec.haveFirst ? TgProbeTglNumber(rec.first) : std::string("unreadable"))
             + " last=" + (rec.haveFirst ? TgProbeTglNumber(rec.last) : std::string("unreadable"))
