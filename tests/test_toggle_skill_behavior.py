@@ -1005,6 +1005,12 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
         for suffix in ("/drawn", "", "/colour_restored", "/alpha_restored"):
             self.assertScenario("skilltimer/draw_throw_restores_and_counts" + suffix)
 
+    def test_skilltimer_number_draw_throw_counts_once(self):
+        # PR #62 review: `number` catches its own draw failure to run the
+        # restores, then rethrows so the caller counts drawExc once, not drawn.
+        for suffix in ("/drawn", "", "/font_restored", "/colour_restored"):
+            self.assertScenario("skilltimer/number_draw_throw_counts_once" + suffix)
+
     # ---- session 8: the countdown's own table (kSkillTimerRows) -----------
 
     def test_skilltimer_non_toggle_row_makes_no_toggle_read(self):

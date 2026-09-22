@@ -277,6 +277,7 @@ struct World {
     // asset_get_index("__newfont6") resolves.
     bool drawRectangleColourThrows = false;
     bool drawLineThrows = false;
+    bool drawTextThrows = false;   // PR #62 review: the number look's own draw call
     bool fontResolves = true;
     // Session 12 (`tgprobe buffwatch`): global.playerBuff[1][0], slot ->
     // instance. `playerBuffGlobalIsArray` false answers the whole-global
@@ -704,6 +705,7 @@ struct FakeRunner {
             return RValue();
         }
         if (fn == "draw_text") {
+            if (world.drawTextThrows) throw std::runtime_error("draw_text EXCEPTION");
             g_TextDraws.push_back({ args[0].ToDouble(), args[1].ToDouble(), args[2].ToString(), g_LastSetValign });
             return RValue();
         }
@@ -2687,6 +2689,25 @@ int main() {
     checkNear("skilltimer/draw_throw_restores_and_counts/colour_restored", g_LastSetColour, kPrevColour);
     checkNear("skilltimer/draw_throw_restores_and_counts/alpha_restored", g_LastSetAlpha, kPrevAlpha);
     world.drawLineThrows = false;
+
+    // 20b. `number` counts a throwing draw once, as drawExc and never as
+    //      drawn, like the other three looks (PR #62 review), and still
+    //      restores every draw state it touched.
+    resetWorld(); resetSkillTimer(); resetSkillTimerDrawRecord();
+    g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Number);
+    world.instances = { WithTimer(OwnUnmarked(), MakeReal(100.0)) };
+    SkillTimerDraw();
+    resetSkillTimerDrawRecord();
+    g_StRow[kStSoul].drawn = 0;
+    world.drawTextThrows = true;
+    g_LastSetColour = -999; g_LastSetAlpha = -999;
+    world.instances = { WithTimer(OwnUnmarked(), MakeReal(42.0)) };
+    SkillTimerDraw();
+    checkInt("skilltimer/number_draw_throw_counts_once/drawn", (long long)g_StRow[kStSoul].drawn, 0);
+    checkInt("skilltimer/number_draw_throw_counts_once", g_StDrawExc, 1);
+    checkNear("skilltimer/number_draw_throw_counts_once/font_restored", g_LastSetFont, kPrevFont);
+    checkNear("skilltimer/number_draw_throw_counts_once/colour_restored", g_LastSetColour, kPrevColour);
+    world.drawTextThrows = false;
 
     // ---- session 8: the countdown's own table (kSkillTimerRows) -----------
 

@@ -5147,7 +5147,8 @@ static void ToggleIndicatorDraw()
             // read failing (identityMismatch, countReadFailed) or its
             // sub-talent read failing (markUnreadableMine) - only the latter
             // is subUnreadable, so the two never collide in the row's own line.
-            if (detail.markUnreadableMine > 0) InterlockedIncrement(&g_TibRow[r].subUnreadable);
+            if (row.mark == ForgePact::ToggleOnMark::PlayerBuff && detail.markUnreadableMine > 0)
+                InterlockedIncrement(&g_TibRow[r].subUnreadable);
             continue;
         }
         if (state == ForgePact::ToggleIndicatorState::Off) {
@@ -5156,7 +5157,8 @@ static void ToggleIndicatorDraw()
             // Session 12: Off because the buff is present but the sub-talent
             // read NotAllocated (unmarkedMine>0) - "the plain, timed form" -
             // as opposed to Off because no buff is present at all.
-            if (detail.unmarkedMine > 0) InterlockedIncrement(&g_TibRow[r].subOff);
+            if (row.mark == ForgePact::ToggleOnMark::PlayerBuff && detail.unmarkedMine > 0)
+                InterlockedIncrement(&g_TibRow[r].subOff);
             continue;
         }
         InterlockedIncrement(&g_TibOn);
@@ -5660,7 +5662,10 @@ static void SkillTimerDrawBar(double x, double y, double w, double h, double fra
 // research instrument's own number look used: every previous state captured
 // before the first draw_set_*, the draw in its own inner try so a throw
 // there cannot skip the restores, each restore in its own try, and the font
-// restored only if this call actually applied one.
+// restored only if this call actually applied one. A failed draw is not
+// counted here: once the restores have run it is rethrown, so the caller's
+// catch counts drawExc exactly once and never counts it as drawn - the
+// same accounting as the other three looks (PR #62 review).
 static constexpr double kSkillTimerTextOffsetDx = 0.0, kSkillTimerTextOffsetDy = -106.0;
 
 static void SkillTimerDrawNumber(double x, double y, double w, double h, double fraction)
@@ -5673,7 +5678,7 @@ static void SkillTimerDrawNumber(double x, double y, double w, double h, double 
         RValue prevAlpha = g_Yytk->CallBuiltin("draw_get_alpha", {});
         RValue prevHalign = g_Yytk->CallBuiltin("draw_get_halign", {});
         RValue prevValign = g_Yytk->CallBuiltin("draw_get_valign", {});
-        bool fontApplied = false;
+        bool fontApplied = false, drawFailed = false;
         try {
             double f = -1.0;
             try { f = g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string("__newfont6")) }).ToDouble(); }
@@ -5687,13 +5692,14 @@ static void SkillTimerDrawNumber(double x, double y, double w, double h, double 
             const double tx = x + w / 2.0 + kSkillTimerTextOffsetDx;
             const double ty = y + h + kSkillTimerTextOffsetDy;
             g_Yytk->CallBuiltin("draw_text", { RValue(tx), RValue(ty), RValue(std::to_string(pct) + "%") });
-        } catch (...) { InterlockedIncrement(&g_StDrawExc); }
+        } catch (...) { drawFailed = true; }
         try { g_Yytk->CallBuiltin("draw_set_valign", { prevValign }); } catch (...) {}
         try { g_Yytk->CallBuiltin("draw_set_halign", { prevHalign }); } catch (...) {}
         try { g_Yytk->CallBuiltin("draw_set_alpha", { prevAlpha }); } catch (...) {}
         try { g_Yytk->CallBuiltin("draw_set_colour", { prevColour }); } catch (...) {}
         if (fontApplied) { try { g_Yytk->CallBuiltin("draw_set_font", { prevFont }); } catch (...) {} }
-    } catch (...) { InterlockedIncrement(&g_StDrawExc); }   // a save read itself failed: nothing was set, so there is nothing to put back
+        if (drawFailed) throw std::runtime_error("skilltimer number draw failed");
+    } catch (...) { throw; }   // a save read failed (nothing was set, nothing to put back) or the draw did: the caller counts it
 }
 
 // `fade`: the same 10 bands as `arc`, whole rectangle each (no perimeter
@@ -26582,10 +26588,13 @@ static void TgProbeSweepShow(const std::string& mode)
         + " records=" + std::to_string(g_TgSweep.size()) + " dropped=" + std::to_string(g_TgSweepDropped)
         + " indexUnreadable=" + std::to_string(g_TgSweepIndexUnreadable) + " scanCap=" + std::to_string(kTgSweepScanCap));
     if (all) {
+        // The per-root arrays start zeroed, and 0 is a real index/count, so
+        // before the first sweep draw they are unread, not zero (PR #62 review).
+        const bool swept = g_TgSweepDraws > 0;
         for (int r = 0; r < kTgSweepRootCount; ++r) {
             Out("  root " + std::string(HeroSiege::Objects::GetObjectName(kTgSweepRoots[r]))
-                + " idx=" + (g_TgSweepLastIdx[r] >= 0 ? std::to_string((long long)g_TgSweepLastIdx[r]) : std::string("unresolved"))
-                + " lastCount=" + (g_TgSweepLastCount[r] >= 0 ? std::to_string(g_TgSweepLastCount[r]) : std::string("unread"))
+                + " idx=" + (swept && g_TgSweepLastIdx[r] >= 0 ? std::to_string((long long)g_TgSweepLastIdx[r]) : std::string("unresolved"))
+                + " lastCount=" + (swept && g_TgSweepLastCount[r] >= 0 ? std::to_string(g_TgSweepLastCount[r]) : std::string("unread"))
                 + " cappedDraws=" + std::to_string(g_TgSweepCappedDraws[r]));
         }
     }
@@ -26637,7 +26646,9 @@ static void TgProbeSweepCommand(const std::string& rest)
         g_TgSweepDraws = 0;
         g_TgSweepIndexUnreadable = 0;
         g_TgSweepDropped = 0;
-        for (int r = 0; r < kTgSweepRootCount; ++r) g_TgSweepCappedDraws[r] = 0;
+        for (int r = 0; r < kTgSweepRootCount; ++r) {
+            g_TgSweepCappedDraws[r] = 0; g_TgSweepLastCount[r] = -1; g_TgSweepLastIdx[r] = -1.0;
+        }
         Out("tgprobe sweep clear: records=0");
         return;
     }
@@ -26817,7 +26828,7 @@ static void TgProbeBuffWatchAfterDraw()
 static void TgProbeBuffWatchOnBuffAdd(int argc, RValue** A, bool talentUseNative, bool talentUseClassNative)
 {
     if (!g_TgBuffWatchOn) return;
-    if (argc < 2 || !A[1] || !N1Numeric(*A[1])) return;
+    if (argc < 2 || !A || !A[1] || !N1Numeric(*A[1])) return;
     const int buffId = (int)A[1]->ToDouble();
     if (buffId < 0) return;
     TgBuffWatchRecord& rec = g_TgBuffWatch[buffId];
