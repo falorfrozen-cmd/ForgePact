@@ -348,7 +348,7 @@ class AutoProspectContractTests(unittest.TestCase):
     def test_release_notes_and_docs_record_the_feature(self):
         notes = NOTES.read_text(encoding="utf-8")
         headings = [l for l in notes.split("\n") if l.startswith("## ")]
-        self.assertEqual(headings, ["## New", "## How to update"])
+        self.assertEqual(headings, ["## New", "## Changed", "## How to update"])
         self.assertIn("off by default", notes.lower())
         self.assertIn("lost", notes.lower())
         self.assertIn("9×6", notes)

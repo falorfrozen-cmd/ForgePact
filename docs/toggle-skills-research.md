@@ -54,6 +54,15 @@ then whichever index actually carries the talent's struct. `counter` and
 `blender` do not ship.
 Design and evidence: `## Decision` → `### S design (D-P1, D-P3, D-P5, D-U13)`.
 
+Status (2026-09-21, after session 9's ship): **Tracks A and B cover seven
+skills.** Session 9 added two more rows to `kToggleSkillRows`: Shaman
+**Meteor Storm** (a toggle only with its `s11` sub-talent, marker
+`skillAstroHeated` - `bool:true` toggled, `real:0.0` plain) and Samurai
+**Bushido** (a toggle in its base form, no sub-talent at all, refused by the
+guard unconditionally and counted separately as `baseForm=`, D-B1). A zone
+change ends both, confirmed in-game by the owner. See `## Decision`, the
+session-9 write-up right after `### After session 6`.
+
 Status (2026-09-19, session 6 recorded): four rows beside Soul Spurn measured
 as persistent-instance toggles with a shippable ON discriminator
 (`lunarOrbit`, `crematus`, `submergedKnives`, `maelstromOfFrost`; `## Decision`
@@ -216,6 +225,20 @@ machine (2026-09-19). Each named sub-talent's description, paraphrased,
 turns its skill into an on/off toggle: the effect stays up, draining mana
 or life, until the skill is cast again or the resource runs out.
 
+**Key format, corrected 2026-09-21.** Sub-talent *names* are keyed
+`sub<Class><Skill><NN>` and their *descriptions* `subDesc<Class><Skill><NN>`
+(`NN` runs `01`..`14`; no `00` key exists); base talents are keyed
+`talent_name_<abilityId>` / `talent_desc_<abilityId>` in
+`translationsTalent.csv`. Rows 7 and 8 were added on 2026-09-21 by the same
+technique, with its own positive control: the owner's keyword for Meteor
+Storm's toggle upgrade ("constantly") appears in exactly four description
+keys game-wide — `subDescPlagueDoctorCrematus13`,
+`subDescPlagueDoctorPlagueOfRats12`, `subDescProphetEntColossus13` and
+`subDescShamanMeteorStorm11` — and Crematus `13` is session 6's *measured*
+slot, so the keyword search finds a known row. The other four measured slots'
+descriptions do not carry that keyword, so it is a sufficient signal, not a
+necessary one; the slot is still measured live (session 9).
+
 | # | Class | Skill (`abilityId`) | Toggle sub-talent key → name | Predicted slot | SDK objects to test as the ON object (index; parent) |
 |---|---|---|---|---|---|
 | 0 | White Mage | Soul Spurn (`soulSpurn`, talent 240, measured) | `subWhiteMageSoulSpurn12` → Purgatory | `s12` | `White_Mage_Soul_Spurn_AOE_obj` 5759 (measured, sessions 2–4) |
@@ -225,6 +248,8 @@ or life, until the skill is cast again or the resource runs out.
 | 4 | Butcher | Submerged Knives (`submergedKnives`) | `subButcherSubmergedKnives13` → Knifehoarder | `s13` | `Butcher_Submerged_Knives_obj` 730 (`Player_Damage_Parent_obj`); `Butcher_Submerged_Knives_Knifehoarder_obj` 729 (`Skill_Controller_obj`) |
 | 5 | Prophet (second tier) | Maelstrom of Frost (`maelstromOfFrost`) | `subProphetMaelstromOfFrost11` → Endless Blizzard | `s11` | `Prophet_Maelstrom_obj` 3697 (`Player_Damage_Parent_obj`); `Prophet_Maelstrom_Storm_obj` 3698; `Prophet_Maelstrom_Meteor_obj` 3696 |
 | 6 | Butcher (second tier) | Blender (`blender`) | `subButcherBlender14` (its description says it switches off when life runs out) | `s14` | `Butcher_Blender_obj` 702 (`Player_Damage_Parent_obj`); `Butcher_Blender_Nanoblades_obj` 701 |
+| 7 | Shaman | Meteor Storm (`meteorStorm`, talent 224, session 8) | `subShamanMeteorStorm11` → Astroheated Shower (description key `subDescShamanMeteorStorm11`, the only Shaman Meteor Storm key of the fourteen whose text carries the keyword) | `s11` | `Shaman_Meteor_Storm_Controller_obj` 4422 (`Skill_Controller_obj` 4606); `Shaman_Meteor_Storm_obj` 4423 (`Player_Damage_Parent_obj` 3543); neither has children |
+| 8 | Samurai | Bushido (`bushido`, base-form toggle) | none — no sub-talent key exists; the toggle is described on `talent_desc_bushido` itself | none (base form) | `Samurai_Bushido_obj` 4226 (`Orbit_Parent_obj` 3332 > `Player_Damage_Parent_obj`) — plus the player-buff read, since the base description is buff-shaped |
 
 Every prediction in rows 1–6 (the `s<NN>` slot, the object, and that the
 skill is an instance toggle at all) is **static, to be measured** in session
@@ -255,6 +280,100 @@ claim about the game):
 - Sub-talent *definitions* were not found in any `tgprobe deep` scope; only
   the per-player level map `global.subTalentMap` was.
 - `tgprobe deep find toggle` → `hits=0` (session 2): not observed at depth 3 (200 elements per container) over the seven `deep` scopes, never "the game has no such text".
+
+**Row 7, Meteor Storm — what session 8 already settles.** `talent_name_meteorStorm`
+exists; the talent id is not static, and session 8 read it as `talent 224
+abilityId=meteorStorm abilityAura=false abilityDuration=0
+abilityCooldown=0.250000 abilityLength=240 abilityTags=[15,18,3,1]`. Meteor
+Storm has fourteen sub-talent keys (`subShamanMeteorStorm01`..`14`); the
+prediction `s11` rests on the keyword search above and is measured in session
+9. Only two SDK objects carry the name; the `Shaman_Totem_Chaos_Meteor*`
+objects belong to Chaos Totem (a summon, "Not rows" above), and no
+`*Meteor*` script exists (the Shaman's talent bodies are in
+`gml_Script_TalentsShaman`, as for every class). Session 8's Meteor Storm
+window (the duration sweep's results under issue #55 below: toggle on,
+toggle off, one plain cast) read the controller as `app=2 draws=110 timerUnreadable=110
+maxInst=1 own=unreadable` and the meteors as `app=2 draws=158 first=-1 …
+max=-1 timerUnreadable=0 maxInst=10 own=readable`. So, before session 9:
+**both objects are also created by a plain cast** — *inferred* from `app=2`
+over one toggle cycle plus one plain cast (a toggle cycle that produced two
+appearances would read the same), which ruled out `none-needed` for both;
+session 9's plain-cast read confirms it (Results → `Toggle skill table`,
+Meteor Storm: the controller's second appearance, 110 draws, came from the
+plain cast); **a held `destroyTimer` is not observed** (the controller's is
+unreadable, the meteors' is `-1` in both forms) — other timer fields were
+left to session 9's `tgl fields` dump; the controller's `isMyClient` is
+unreadable, so its ownership is `none` (as for the other controller rows),
+while the meteors' is readable. The shippable shape expected was therefore a
+**marker**: a scalar on one of the two objects that reads > 0 toggled and 0
+plain, which `tgprobe tgl fields` toggled-versus-plain is built to find.
+Anything else is recorded as "no discriminator in this design".
+
+**Row 8, Bushido — a toggle in its base form.** `talent_name_bushido` and
+`talent_desc_bushido` exist and **no `sub*Bushido*` key of any kind does**, so
+Bushido has no `s<NN>` slot and nothing in `global.subTalentMap` can gate it;
+it was missed by every earlier toggle search because those read only
+`translationsSubTalent.csv`. Its base description is buff-shaped (paraphrase:
+activating it grants a damage bonus that grows with missing life), and the
+owner reports it shows no buff icon on the HUD. The talent id is not static
+(`tgprobe talents bushido`). `Samurai_Bushido_obj` 4226 is the only object or
+script with "Bushido" in its name (the talent bodies are in
+`gml_Script_TalentsSamurai`); its parent `Orbit_Parent_obj` has 25 children,
+among them `Samurai_Blade_Barrier_obj` 4225, which session 8 read with
+`own=readable` and a readable `destroyTimer` (`maxInst=9`) through the same
+read shape the `tgl` sampler uses — the sampler is proven on this parent
+family, and Bushido's own ownership is still measured (session 9 adds it with
+both `isMyClient` and `none`). Session 8's Samurai window shows no
+`Samurai_Bushido_obj` line; whether Bushido was cast in that window is not
+recorded, so this is "not observed", not "creates no instance". Two carriers
+are plausible and session 9 reads both: an own `Samurai_Bushido_obj`
+instance that exists exactly while the toggle is on (every shipped row's
+shape), or a `global.playerBuff[1][0][<n>]` entry with its
+`global.activeBuffList` slot (the shape session 6 measured for Counter's buff
+104). "No HUD icon" makes the second less likely but does not rule it out: a
+buff can exist without a drawn icon.
+
+### Base-form toggles: the labelled sweep of both translation files
+
+Added 2026-09-21, after Bushido was found to be a toggle that no earlier
+search had surfaced. Both files were swept by keyword, English column only
+— `translationsTalent.csv` (1608 lines; `talent_name_<abilityId>` /
+`talent_desc_<abilityId>`, 721 of each) and `translationsSubTalent.csv` (6218
+lines; `sub<Class><Skill><NN>` / `subDesc<Class><Skill><NN>`, 444 of each).
+This section records **keys only**: the text was read locally and each key
+carries a one-word label that is our own reading of it, never a quotation.
+
+| Keyword | `translationsTalent.csv` keys | `translationsSubTalent.csv` keys |
+|---|---|---|
+| `toggle` | none | `subDescWhiteMageSoulSpurn12` (already a row), `subDescExoLunarOrbit11` (already a row) |
+| `activat` / `deactivat` | `talent_desc_bushido` (toggle-shaped), `talent_desc_holyForm` (toggle-shaped), `talent_desc_unholyForm` (toggle-shaped), `talent_desc_eyeOfTarethiel` (duration, not a toggle), `talent_desc_collector` (one-shot), `talent_desc_slicingThrow` (recast mechanic), `talent_desc_masterTrapMaker` (passive) | the shipped and known rows' keys (already a row), `subDescNecromancerCorpseExplosion13` (aura (author exclusion)), `subDescMarauderChainTrap14` (recast mechanic; already "not a row"), `subDescBardSacrilegiousSymphony08` (channel) |
+| `constantly` | none | `subDescPlagueDoctorCrematus13` (already a row), `subDescPlagueDoctorPlagueOfRats12` (summon), `subDescProphetEntColossus13` (summon), `subDescShamanMeteorStorm11` (toggle-shaped; row 7) |
+| `recast` / `re-cast` | none | `subDescSamuraiShurikenThrow11` (recast mechanic), `subDescExoLunarOrbit11` (already a row) |
+| `while active` | `talent_desc_darkSideofTheMoon` (aura (author exclusion)) | `subDescExoLunarOrbit11` (already a row), `subDescButcherSubmergedKnives13` (already a row) |
+| `drain` | `talent_desc_moshpitMassacre` (summon) | 17 keys, every one a row or an existing "not a row" |
+| `again to`, `cast again`, `turn off` / `turned off`, `on/off`, `stays active` / `remains active` | none | none |
+
+What the labels mean for this workorder:
+
+- **Bushido** is toggle-shaped and has a candidate object, so it is row 8.
+- **Holy Form / Unholy Form** are toggle-shaped (activating a form; the two
+  are mutually exclusive stances), but **no SDK object carries either name**
+  — the Paladin's `Holy_*` objects belong to other skills — so if they are
+  toggles their state can only live on the player, Counter's shape. They are
+  recorded static findings with at most one optional buff read in session 9,
+  not rows.
+- **`subDescNecromancerCorpseExplosion13`** is an aura form of its skill and
+  falls under the author's aura exclusion, as Dark Side of the Moon did.
+
+**Negative, labelled:** no further base-form toggle wording was found by
+these keywords in either file. That is not "no other base-form toggle
+exists"; a toggle described in other words would not be caught by this sweep.
+Session 9 showed exactly that limit: `tgprobe talents form` on the Butcher
+also listed `talent 513 abilityId=melonForm abilityDuration=0
+abilityCooldown=0.250000 abilityTags=[15,18]` — the same no-duration,
+quarter-second-cooldown shape as Holy Form and Unholy Form — and none of the
+keywords above surfaced it. It is an **unmeasured candidate**, recorded, not
+a row.
 
 ## Instrument
 
@@ -329,14 +448,15 @@ turn co-op rendering on, and run no `citrace` command, after `tgprobe hook`.
 | `tgprobe sprite <SpriteName> [talentId\|centre]\|off\|gold\|style <name>` | Resolves `<SpriteName>` by name with `asset_get_index` (prints `unresolved`, stores nothing, on a negative index) and draws it, scaled to a box with `draw_sprite_ext`, at the active layer (see `layer` below). `[talentId]` draws over that talent's hotbar slot (default Soul Spurn, 240) — the box is D-U12's derived box by default, or the raw `navBbox` with `box bbox` (see `box` below) — inflated by the active `scale` (see below) around its own centre; `centre` instead draws one large fixed-size copy in the middle of the screen, away from the HUD (not affected by `scale` or `box`). Prints `frames=`/`width=`/`height=`/`scale=`/`box=`/`colour=`/`layer=` when it runs (`sprite_get_number`/`_width`/`_height`; `box=` is the resulting pixel rectangle prefixed with the active kind, e.g. `box=tuned 120x126@388,1711`, or `box=tuned slot not found`; `colour=` is printed for reference even though a named sprite draws its own art, untinted); a multi-frame sprite animates (a shared time base advances every draw, so several sprites drawn together — see `gallery` — animate in lockstep). `gold` draws today's shipped three-nested-rectangle look over the hotbar slot instead, at the same `scale`/`box`, so a candidate can be flipped against the current one without arming `toggleborder`. `style <name>` draws one of our own procedural looks instead of a sprite (see the `style` row below). `off` stops drawing and prints `draws=`/`drawExc=`/`layer=`, saving/restoring `draw_get_colour`/`draw_get_alpha` exactly as the shipped draw does. |
 | `tgprobe sprite box tuned\|bbox` | (round 10) Which box `sprite <Name>`, `sprite gold` and every `style` draw into before `scale` is applied, and what their `box=` readout reports. `tuned` (the default) is D-U12's derived box — `x + 2.3`, `y` unchanged, `w - 4.7`, `h - 13.2` off the slot's own live `navBbox`, each rounded to whole pixels (D-U11) — what the author actually tuned the look against. `bbox` is the slot's raw `navBbox`, rounded the same way, kept so the two can still be compared side by side; round 9 shipped every style/gold draw against the raw bbox even though D-U12 had already superseded it for the marker geometry itself — this round wires the tuned box in as the default so what a tester judges is the real shape. With no argument, reports the active kind and the resulting integer box without changing it. |
 | `tgprobe sprite scale [f]` | A multiplier (default `1.0`, clamped `0.25..4.0`) on the active box (see `box` above; `sprite <Name>`/`sprite gold`/`sprite style <name>` all draw into it) — the "surround" route (round 5): since only a larger-than-the-icon draw (the gold outline's own box, bigger than the icon) is confirmed visible at either layer, a candidate inflated the same way should read around the icon instead of under it. With no argument, reports the current value without changing it; never applied to `centre` or `gallery`, whose box sizes are their own fixed constants, and never to `tgprobe mark`, which already takes explicit geometry. |
-| `tgprobe sprite style soft\|halo\|gradient\|pulse` | Draws a procedural look ForgePact draws itself, not a game sprite, into the same scaled slot box `sprite <Name>`/`sprite gold` use (round 6, after the tester found the flat gold rectangle "crude" and asked for a soft alpha-fade look): `soft` is the shipped outline generalised to 10 alpha-ramped nested bands; `halo` is a radial glow (`draw_ellipse_colour`, the two-colour ellipse builtin); `gradient` is nested filled rectangles (`draw_rectangle_colour`, the four-corner-colour rectangle builtin) approximating a centre-outward fade; `pulse` is `soft` with every band's alpha additionally scaled by a slow sine on the frame counter (confirmation line prints `period=1.5s (90 frames)`). `draw_ellipse_colour`/`draw_rectangle_colour` are new to this probe this round — their reachability through the shared `CallBuiltin` path is unconfirmed until a live session runs `halo`/`gradient` and reports what drew. Names also listed by `sprite list`. |
+| `tgprobe sprite style soft\|halo\|gradient\|pulse\|arc\|bar\|number\|fade` | Draws a procedural look ForgePact draws itself, not a game sprite, into the same scaled slot box `sprite <Name>`/`sprite gold` use (round 6, after the tester found the flat gold rectangle "crude" and asked for a soft alpha-fade look): `soft` is the shipped outline generalised to 10 alpha-ramped nested bands; `halo` is a radial glow (`draw_ellipse_colour`, the two-colour ellipse builtin); `gradient` is nested filled rectangles (`draw_rectangle_colour`, the four-corner-colour rectangle builtin) approximating a centre-outward fade; `pulse` is `soft` with every band's alpha additionally scaled by a slow sine on the frame counter (confirmation line prints `period=1.5s (90 frames)`). `draw_ellipse_colour`/`draw_rectangle_colour` are new to this probe this round — their reachability through the shared `CallBuiltin` path is unconfirmed until a live session runs `halo`/`gradient` and reports what drew. **`arc`/`bar`/`number`/`fade`** (issue #55) are the four timed-skill countdown-look candidates, each drawn against `sprite frac` below instead of a live cast — see `## Issue #55` for what each looks like and the live procedure that judges them; `arc` additionally depends on `draw_line`, unconfirmed the same way until a live session runs it. Names also listed by `sprite list`. |
+| `tgprobe sprite frac [f]\|anim <seconds> [loop]` | (issue #55) A settable countdown fraction, `0.0..1.0`, clamped by hand, default `1.0`, that `style arc\|bar\|number\|fade` draw against — so each timed-skill look is judgeable at rest, at any fill, with no live cast, and is the same input the shipped countdown will take. An argument that does not parse as a number is refused with a usage message and the stored fraction is left unchanged. **`anim <seconds> [loop]`** (timer-countdown follow-up) instead has the probe recompute the fraction itself on every draw, `1 - elapsed/duration`, from `1.0` down to `0.0`, so all four candidates can be judged in smooth motion instead of stepped one `frac <f>` IPC call apart; `elapsed` is read every draw from a name-resolved game clock (`get_timer`, else `current_time` — never a draw or frame count, so a frame-rate dip cannot stretch the countdown), and a refused `anim` (bad arguments, or neither clock readable) leaves any running animation untouched. Without `loop` it holds at `0.0` once the duration elapses; with `loop` it wraps to `1.0` and restarts. A plain `frac <f>` that itself parses cancels a running or finished animation before storing `f`. The `off` line and the `frac` confirmation both report `anim=off\|running\|done`, the clock's name (`src=`), duration, loop/once, elapsed, ticks and `clockFail=` — the last two are the instrument's own self-check: ticks rising with elapsed stuck at `0` means the probe reports running but the clock is not advancing (AGENTS.md § "Prove the Instrument Before Trusting a Negative Result"). |
 | `tgprobe sprite colour <name\|r g b>` | A shared colour (round 8) for every `style`, `sprite gold` and `tgprobe mark` — default `gold`, unchanged until a tester asks for red (D-U11: the shipped marker will be red). Presets: `gold`, `red` (a deep, warm crimson — not `255,0,0`; the author's steer was "a nicer shade, similar to what talent aura frame uses"), `brightred` and `deepred` (a brighter and a deeper neighbour of `red`); or a raw `<r> <g> <b>` triple (`0..255` each, clamped by hand). With no argument, reports the active colour without changing it. Confirmation line prints `colour=<name>(<r>,<g>,<b>)` — the full triple, not only the name, so a choice is quotable as a number. Never applied to a named sprite's own art (drawn with its own colours) or to `centre`/`gallery`'s fixed boxes. |
 | `tgprobe sprite quad on\|off` | (round 9, corrected round 10) "Inside out" — the author's own word. Round 9's first build (four whole-sprite copies, one scaled into each box quadrant and mirrored) was rejected on sight as the wrong construction. The corrected version instead splits the SOURCE sprite itself into its own four quadrants (`draw_sprite_part_ext`, GameMaker's source-rectangle sprite draw) and rotates each quadrant 180 degrees about its own centre, drawn back into the matching destination quadrant — so content that sat at the sprite's own centre ends up at the box's outer corners and the assembled result stays a square, "the sprite's inner edges become its outer edges" (the author's second description, a diagonal split into four triangles each flipped once vertically and once horizontally, was the alternative not used — the source-rectangle route was preferred and attempted first). Every tile's geometry, on both the source sprite and the destination box, is whole pixels (D-U11). Applies to `sprite <Name>` over a hotbar slot or at `centre`, not to `gold`/`style`/`gallery`. Default `off`. `quad=on`/`quad=off` printed in the sprite/gold/`off` confirmation lines. `draw_sprite_part_ext` is new to this probe this round — its reachability through the shared `CallBuiltin` path is **unconfirmed until a live session runs `quad on`**, the same status `draw_sprite_ext`/`draw_ellipse_colour`/`draw_rectangle_colour` each carried before their own first live run. |
 | `tgprobe sprite alpha <min> [max]` | (round 9) The floor/ceiling `style soft`/`style gradient`'s per-band fade remaps between, replacing `0` as the floor — the author's own complaint was `gradient` "blends too well with the background" at `0`. `min` is the alpha the fade stops at; `max` is the centre alpha, defaulting to each style's own existing centre alpha (`soft`'s `1.0`, `gradient`'s `0.5`) unless set explicitly, so the *default* reproduces both styles' pre-round-9 look exactly. Accepts `0..255` or `0..1` per value (over `1.0` is treated as a byte and divided by `255`). With no argument, reports the active pair without changing it. Confirmation line prints `alpha=<min>/255..<max>/255\|style-default` in the `style`/`off` lines. Never applied to `halo` or to a named sprite's own art. |
-| `tgprobe sprite list` | Prints the round's candidate sprite names with each one's resolved index, or `unresolved`, so a wrong name is obvious before drawing: `Talent_Aura_Frame_spr`, `Talent_Frame_Indicator_spr`, `Ability_Indicator_Border_spr`, `Ability_Indicator_spr`, `Ability_Indicator_White_spr`, `Sub_Talent_Big_Border_spr`, `Skill_Frames_spr`; also lists the four `style` names, every `colour` preset with its rgb triple, and one-line reminders of `quad`/`alpha`. |
+| `tgprobe sprite list` | Prints the round's candidate sprite names with each one's resolved index, or `unresolved`, so a wrong name is obvious before drawing: `Talent_Aura_Frame_spr`, `Talent_Frame_Indicator_spr`, `Ability_Indicator_Border_spr`, `Ability_Indicator_spr`, `Ability_Indicator_White_spr`, `Sub_Talent_Big_Border_spr`, `Skill_Frames_spr`; also lists the eight `style` names (`soft`/`halo`/`gradient`/`pulse`, plus issue #55's `arc`/`bar`/`number`/`fade`), every `colour` preset with its rgb triple, and one-line reminders of `quad`/`alpha`/`frac`. |
 | `tgprobe sprite gallery [cols]` | Draws every candidate from `sprite list`, plus one gold-rectangle cell as the positive control, at once — a fixed grid in the middle of the screen (`cols` columns, default 4), each cell scaled to a 96 px box. No per-cell label is drawn any more (round 6: a `draw_text` label displaced the icon in a live session, cause not diagnosed — see docs "Sprite look probe"); the index→name mapping goes to the log only (`TgProbeSpriteGalleryLegend`, printed once when the command runs). **Not a trustworthy comparison**: a candidate visible over the button has read blank here in the same session — treat `sprite <Name>` (optionally `scale <f>`) over the hotbar slot as the one comparison to trust. |
 | `tgprobe sprite layer hud\|buffs` | Which after-draw call site `sprite`/`mark` actually draw from; shared, default `buffs`. Both layers measured (2026-09-20 live session) to sit *under* the hotbar button's own art, which paints later in the same frame regardless of which one draws — `hud` (the existing `DrawHud` candidate row's own detour, `TgProbeDetourBody`, after that row's trampoline call returns — no new hook, the same one resolver `tgprobe hook` every other candidate row already goes through) does not clear it either; see docs "Sprite look probe" for the full finding and why (the talent slot's own `Draw_0`/`Draw_64` event, where the button paints, reports `not found` to this build's object-event hook path). Setting `layer hud` does not attach the `DrawHud` row itself; the tester runs `tgprobe hook` (or `tgprobe hook drawhud`) separately, same as any other row, and the confirmation line says whether it is attached yet. |
-| `tgprobe talents [substr\|tags]` | Session 6's C0. Walks `global.talentStructMap` (`ds_map_find_first`/`ds_map_find_next`, capped at 5000 keys) and prints, per talent id whose `abilityId` contains `substr` (none = all, at most 40 lines then `…(+N more)`): `abilityId`, `abilityAura`, `abilityDuration`, `abilityCooldown`, `abilityLength` and `abilityTags`, each read on its own (`absent` for a missing key, `unreadable` for a throw, never a default). `tags` instead prints each distinct tag id with its count. Last line `tgprobe talents: ids=N shown=M nonNumericKeys= notStruct= walkExc= truncated= tableRowsWithId=k/rows`. The walk also gives every `tgl` row whose `abilityId` it finds its talent id, which `tgl sub` and `tgl slots` use. |
+| `tgprobe talents [substr\|tags]` | Session 6's C0. Prints one line first, `speed=`/`fps=` (issue #55: `game_get_speed(0.0)` and the `fps` builtin, each `unreadable` rather than a default) — the tick-rate route A's falsification needs. Then walks `global.talentStructMap` (`ds_map_find_first`/`ds_map_find_next`, capped at 5000 keys) and prints, per talent id whose `abilityId` contains `substr` (none = all, at most 40 lines then `…(+N more)`): `abilityId`, `abilityAura`, `abilityDuration`, `abilityCooldown`, `abilityLength`, `abilityTags` and `predictedTotal=` (issue #55: `abilityDuration` times the printed `speed=`, gated on `speed=` having read), each read on its own (`absent` for a missing key, `unreadable` for a throw, never a default). `tags` instead prints each distinct tag id with its count. Last line `tgprobe talents: ids=N shown=M nonNumericKeys= notStruct= walkExc= truncated= tableRowsWithId=k/rows`. The walk also gives every `tgl` row whose `abilityId` it finds its talent id, which `tgl sub` and `tgl slots` use. |
 | `tgprobe tgl [on\|off\|add\|list\|clear\|slots\|fields\|sub\|timer]` | The runtime toggle-candidate table (cap 16), prefilled with the seven rows of `### Other toggle skills: the static candidate table`: row 0 is the measured Soul Spurn row (`White_Mage_Soul_Spurn_AOE_obj`, marker `purgatory`), rows 1–6 carry no marker, and every row's timer field is `destroyTimer` and its ownership field each instance's own `isMyClient`. **The sampler is off by default**: `tgl on` (or `1`) starts it, `tgl off` (or `0`) stops it and keeps the counters; while off, the draw hook returns before a single builtin call, so other research sessions using this DLL do not pay for it. `list` and bare `tgl` print `sampler=on\|off`. While on, every row is read on every `DrawHudBuffs` draw through the shipped read's shape with the object, marker, ownership and timer as parameters (a row with no marker counts every own instance as marked; a row with ownership `none` counts every instance as own), and row 0 is also read through the shipped `ToggleIndicatorRead` on the same draw: `agree=` rising with `disagree=0` is the proof that the two reads are the same read. Bare `tgl` prints `agree=`/`disagree=` and per row the last sample (`state= n= mine= others= unattributed= marked= timer=`) plus `samples=`/`on=`/`off=`/`unreadable=`/`markedOn=`/`transitions=`/`lastTransitionFrame=` and `firstAfterRoomChange: state= n=`. `add <abilityId> <ObjectName> [marker\|none] [timer\|none] [ownership\|none] [sNN]` resolves the object by name first and prints `unresolved` (storing nothing) on a negative index, else the row with `idx=` and `sdk=<enumerator>\|none`; `list` prints every row's settings; `clear` keeps row 0. `fields [row]` prints the scalar members (cap 64) of the first own instance the row's read scanned — the same instance its ownership, marker and timer reads used, not `instance_find(obj, 0)`, which can be a foreign or leftover one — as first seen in the current appearance and as last seen, kept after the instance is gone (how a row's marker field is found). `last` is retaken at most once every 30 draws while the instance is present. When the read found no own instance, nothing is read or stored and the line reads `fields: no own instance`. `slots` prints every `UI_Hud_Talent_obj` `row0` element's `talentId` and `navBbox*` rectangle, naming the row whose talent id it carries. `sub` prints `global.subTalentMap`'s `array_length`, then one line per array index per row: that index's `t<id>` keys and values, `absent`, or why not. `timer` prints per row, over the current appearance, `first= last= min= max= unreadable= atPredicted= draws=` of the row's timer field on the first own instance, where `atPredicted` counts draws at exactly `-1`; an unreadable draw prints `unreadable`, never `-1` or `0`. The timer is an instrument for finding an ON discriminator only, never a border input. |
 
 `hudSinceRoomChange` counts `DrawHudBuffs` calls since the room key last
@@ -1384,7 +1504,7 @@ same-session controls C2 and C5 below lean on. **Controls, every pass:** `tgprob
 was run), and `tgprobe tgl`'s row-0 `agree=` rising with `disagree=0` (White
 Mage pass: across one Soul Spurn ON/OFF cycle; other classes: two minutes
 idle). A pass whose `disagree=` is not 0 is `blocked` in every row. C0–C7
-below are the rows Results → `### Toggle skill table` fills; each is
+below are the rows Results → `Toggle skill table` fills; each is
 `measured`, `not observed` or `blocked`, and a row not run is `blocked`, never
 `not observed`.
 
@@ -1455,6 +1575,153 @@ below are the rows Results → `### Toggle skill table` fills; each is
    `no discriminator`, a result, not a defect. A row whose C6 was not done
    ships in the outline but not in the guard's set; if C6 was done for no
    row, `Sub index:` is `blocked`. Stop the game; nothing else left running.
+
+### Session 9
+
+Rows 7 and 8 of the static candidate table: the Shaman's Meteor Storm (a
+toggle only with its toggle sub-talent, predicted `s11`) and the Samurai's
+Bushido (a toggle in its base form, no sub-talent). One research build — no
+new instrument: `tgprobe tgl add` puts any object into the per-draw sampler
+by name, and `tgprobe buffs` and `tgprobe deep snap`/`diff`/`flip` are in the
+same build — so every candidate is read at once, in one session, beside a
+positive control through the same sampler.
+
+**Setup.** Research DLL installed; `toggleguard` never armed; no co-op, no
+`cooprender`, no `citrace`. The tester needs a Shaman with Meteor Storm who
+can allocate and respec its sub-talent 11; a Samurai with Bushido; one
+character of a shipped row for the positive control (the White Mage
+preferred — row 0 is the doc's `agree=`/`disagree=0` control and its Soul
+Spurn is also the buff-read control of step 9b — else the Prophet, whose row
+`[5] maelstromOfFrost` reads `state=on … timer=-1.000000` toggled); and,
+optionally, a character with Holy Form / Unholy Form (its class is not known
+from the static files; the tester knows). **Every pass is `blocked` unless
+step 3's positive control fired in the same session.** Each result is
+`measured`, `not observed` or `blocked`; a step not run is `blocked`.
+
+1. `tgprobe tgl on`; `tgprobe tgl list` → `sampler=on`, `rows=7`.
+2. Add the candidates, all four in one go:
+   - `tgprobe tgl add meteorStorm Shaman_Meteor_Storm_Controller_obj none destroyTimer none s11`
+   - `tgprobe tgl add meteorStorm Shaman_Meteor_Storm_obj none destroyTimer isMyClient s11`
+   - `tgprobe tgl add bushido Samurai_Bushido_obj none destroyTimer isMyClient`
+   - `tgprobe tgl add bushido Samurai_Bushido_obj none destroyTimer none`
+
+   → four `idx=… sdk=4422/4423/4226/4226` lines, rows `[7]`–`[10]` (Bushido
+   twice: once per ownership reading; `sNN` omitted stores `-1`). Then
+   `tgprobe talents meteor` → the talent 224 line, and
+   `tgprobe talents bushido` → quote the whole line (`talent <id> abilityId=bushido …
+   abilityDuration=… abilityCooldown=…`; the countdown's rule tier needs the
+   last two). `tgprobe tgl list` shows rows 7/8 with `talentId=224` and 9/10
+   with Bushido's id.
+3. **Positive control (same session, same sampler).** With the control
+   character: toggle its skill on → its `tgl` row reads `state=on` (quote it);
+   off → `state=off`. `tgprobe tgl sub` shows its measured slot (`s12` for
+   `soulSpurn` at `[1]`, `s11` for `maelstromOfFrost`). `tgprobe deep snap
+   cbase` → on → `tgprobe deep snap con` → off → `tgprobe deep snap coff` →
+   `tgprobe deep flip cbase con coff` catches its object: the census control
+   every `deep flip` below is judged against.
+
+**Shaman pass (Meteor Storm).**
+
+4. **C6 first (the slot).** With sub-talent 11 allocated: `tgprobe tgl sub` →
+   quote the `[i] meteorStorm t224:` line; respec it out → again (the key that
+   went to `0.000000` is the slot); re-allocate → again.
+5. **C2/C3/C5 (object, ownership, marker).** `tgprobe deep snap base` →
+   toggle on → `tgprobe deep snap on` → `tgprobe tgl` (rows 7/8: `state=`,
+   `n=`, `mine=`, `capped=`), `tgprobe tgl fields 7`, `tgprobe tgl fields 8`,
+   `tgprobe tgl timer` → toggle off → `tgprobe deep snap off` →
+   `tgprobe deep flip base on off` (quote the `census.Shaman_*` rows). Then the plain form
+   (sub-talent respecced out): one cast, the tester confirms it landed (mana
+   drop or meteors seen, quoted as seen) → `tgprobe tgl fields 7`, `tgprobe
+   tgl fields 8` and `tgprobe tgl timer` again. The marker is a scalar that
+   reads > 0 toggled and 0 plain on the same object. Session 8 already
+   points away from `none-needed` (both objects inferred to appear on a plain
+   cast; this step's plain cast confirms it) and did not observe a held
+   `destroyTimer` (controller unreadable, meteors `-1` in both forms), so a
+   marker is the expected shippable outcome.
+6. **C4** Toggle on, change zone → rows 7/8 `firstAfterRoomChange: state=off
+   n=0`.
+7. **C7** `tgprobe tgl slots` → the `row0[i]` line naming `meteorStorm`.
+
+**Samurai pass (Bushido).**
+
+8. **Sub-talent negative (in place of C6).** `tgprobe tgl sub` → quote the
+   `[i] bushido t<id>:` line(s) — expected `absent` at every index, or a
+   struct with no `s<NN>` keys. Whatever prints is `Bushido sub-talent map:`.
+9. **C2/C3 with the buff read.** `tgprobe buffs` (baseline) → `tgprobe deep
+   snap bbase` → toggle Bushido on (the tester judges by eye and quotes what
+   shows it is on, e.g. the damage change or an orbiting effect) → `tgprobe
+   deep snap bon` → `tgprobe tgl` (rows 9/10: `state=`, `n=`, `mine=`,
+   `unattributed=` — if row 9 is all `unattributed` and row 10 reads
+   `state=on`, ownership is `none`), `tgprobe tgl fields 9`, `tgprobe tgl
+   fields 10`, `tgprobe tgl timer`, `tgprobe buffs` → toggle off → `tgprobe
+   deep snap boff` → `tgprobe deep flip bbase bon boff` (quote every
+   `census.Samurai_*`, `global.playerBuff[1][0][` and `global.activeBuffList`
+   line in bucket A; `matching=0` is itself the quote) → `tgprobe deep diff bbase bon playerBuff`
+   and `tgprobe deep diff bbase bon activeBuffList`
+   (filtered, so a line churned past the 300-line cap is still seen) →
+   `tgprobe buffs` again. Repeat on/off once more, watching rows 9/10's
+   `transitions=` rise by 2 per cycle (the row's own control that the sampler
+   catches this object when it is present) and, for the buff, quote `tgprobe
+   buffs` on (the `[N] kind=… value=… instance_exists=1 object=… vars: …
+   buffType=… destroyTimer=…` line) and off (the `(K empty slots not listed)`
+   count one higher, or `[N]` gone), both cycles. Those four quotes plus the
+   flip's `global.playerBuff[1][0][N]` line are the `Bushido buff:` identity —
+   `index=` (the `N`), `buffType=` (the slot instance's own member, the
+   identity signal: the Martyr buff that follows Soul Spurn's life drain
+   reads `[86]` with `buffType=int64:86`), `object=` (the listing's
+   `object=`; Counter's was
+   `Draw_Player_Buff_obj`), `on=` and `off=`; without all of them `Bushido
+   carrier: buff` is `blocked`. C5 for Bushido is this step: the instance
+   follows the toggle (`instance (no plain form)`), or it persists and a
+   field separates on from off (`tgl fields 9/10` on versus off), or only the
+   buff flips (`buff-only`, carrier `buff`).
+9b. **Buff read control (same session, White Mage).** With Soul Spurn's
+   Purgatory allocated: `tgprobe buffs` off → toggle on → `tgprobe buffs` →
+   quote the `[86] … buffType=int64:86` line → off → `tgprobe buffs` → `[86]`
+   gone. This is `Buff read control:`; it proves the listing shows a known
+   buff arriving and leaving with a toggle before Bushido's `[N]` is believed.
+   `[86]` is the White Mage's **Martyr** passive, which turns on while life
+   drains (owner, live in session 9), not Soul Spurn's own state: it follows
+   the toggle as a side effect. So a buff that flips with Bushido is a
+   candidate only; `Bushido carrier: buff` additionally needs the owner to
+   attribute that buff to Bushido itself. If the control character is the
+   Prophet (no known buff), the buff control is `blocked`, and so is
+   `Bushido carrier: buff`.
+10. **C4** Toggle on, change zone → rows 9/10 `firstAfterRoomChange:`, and
+    `tgprobe buffs` in the new zone (does `[N]` survive the zone change?
+    Quoted either way).
+11. **C7** `tgprobe tgl slots` → the `row0[i]` line naming `bushido`.
+
+**Optional forms pass (Holy Form / Unholy Form; skip and record `blocked` if
+no character has them).**
+
+12. `tgprobe talents form` (quote the `holyForm`/`unholyForm` lines), then
+    `tgprobe deep snap fbase` → activate one form → `tgprobe deep snap fon` →
+    deactivate or switch → `tgprobe deep snap foff` → `tgprobe deep flip fbase
+    fon foff` and `tgprobe buffs`; quote the `census.`, `playerBuff` and
+    `activeBuffList` lines. Research only; never a row from this pass.
+
+**Recording, and what each outcome means.** Paste every quoted line into
+Results → `Toggle skill table` (two new rows, every cell a quoted value
+or exactly `not observed`/`blocked`) and fill Decision → `### After session
+9`. The two `Ship:` lines are derived last, each on its own:
+
+- **Meteor Storm.** A `marker <field>` on the controller ships as a row on
+  `Shaman_Meteor_Storm_Controller_obj` with no ownership field (every
+  instance own, as the Crematus row); a marker on the meteors ships on
+  `Shaman_Meteor_Storm_obj` with `isMyClient`. `none` or `blocked` → no row.
+  `Ship: meteorStorm=yes` only when the discriminator is `marker <field>` AND
+  `Meteor Storm slot: s<NN>` is measured; the static prediction `s11` is
+  never shipped without that measurement.
+- **Bushido.** Carrier `instance` (or `both`, where the instance row is used
+  and the buff recorded): `instance (no plain form)` ships as a base-form row
+  lit by any own instance, with the ownership field as measured; `marker
+  <field>` / `timer <field>=<value>` ship the same row with that mark.
+  Carrier `buff` (`buff-only`) ships as a row read from the player's buff
+  slot, and only on the full `Bushido buff:` identity plus the same-session
+  `Buff read control:`. `none` or `blocked` → no row. `Ship: bushido=yes` only
+  when one of those holds; else `no`.
+- A `no` is a result, not a defect. Stop the game; nothing else left running.
 
 ## Results
 
@@ -1890,6 +2157,9 @@ rejected.
 | Butcher | Submerged Knives (`submergedKnives`) | `377` | `subButcherSubmergedKnives13` → `s13` | `Butcher_Submerged_Knives_Knifehoarder_obj` (729) | `none` | `no` | `none-needed` | `row0[6]` | measured |
 | Prophet (second tier) | Maelstrom of Frost (`maelstromOfFrost`) | `430` | `subProphetMaelstromOfFrost11` → `s11` | `Prophet_Maelstrom_obj` (3697, prefilled object, unswapped) | `isMyClient` | `yes` | `timer destroyTimer=-1.000000` (`first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 unreadable=0 atPredicted=3903 draws=3903` toggled; plain `first=4320.000000 last=-0.659664 ... atPredicted=0 draws=4288`) | `row0[10]` | measured |
 | Butcher (second tier) | Blender (`blender`) | `379` | not observed (C6 not run) | not observed | not observed | not observed | blocked | `row0[5]` | blocked |
+| Shaman | Meteor Storm (`meteorStorm`) | `224` | `subShamanMeteorStorm11` → `s11` (`s11=real:0.000000` not allocated, `s11=real:3.000000` allocated, `s11=real:0.000000` respecced; no other key moved) | `Shaman_Meteor_Storm_Controller_obj` (4422) | `none` (`[7] meteorStorm state=on n=1 mine=1 others=0 unattributed=0`) | `yes` (controller `appearance=2`, `draws=110`, on the plain cast) | `marker skillAstroHeated` (`skillAstroHeated=bool:true` toggled, appearances 1 and 3; `skillAstroHeated=real:0.000000` plain, first and last draw) | `row0[3]` | measured |
+| Samurai | Bushido (`bushido`) | `134` | none (base form; `tgl sub` read: `global.subTalentMap array_length=6; [0]..[5] bushido t134: absent`) | `Samurai_Bushido_obj` (4226) | `isMyClient` (`[9] bushido state=on n=7 mine=7 others=0 unattributed=0`; the `none` row `[10]` read the same `n=7 mine=7`) | n/a — no plain form (base-form toggle) | `instance (no plain form)` (`census.Samurai_Bushido_obj: bbase=<absent> bon=7 boff=<absent>`) | `row0[5]` | measured |
+| Shield Lancer | Counter (`counter`) | `301` | `subShieldLancerCounter13` → `s13` (session 6 C6 respec: `s13=real:0.000000` at `global.subTalentMap[1].t301`, index 1; session 12 `tgprobe tgl sub`: `s13=real:1.000000` with Give No Quarter allocated, `s13=real:0.000000` after removal, the only key that changed) | `Draw_Player_Buff_obj` (1362), reached through `global.playerBuff[1][0][104]`, not resolved by name (session 12) | `none` (every record's own `host` measured `Player_obj.id`) | `yes` (the timed cast adds `[104]`) | `PlayerBuff`: `ToggleReadSubTalent(301, 13)` reads Allocated while `[104]`'s own `destroyTimer` holds a constant `1036.8`; the plain, timed form falls from the same `1036.8` instead (session 12) | `row0[4]` | measured |
 
 **Notes (rejected prefilled objects, and the blocked/no-instance rows).**
 
@@ -2010,6 +2280,165 @@ rejected.
   correctly-timed `deep snap on`) and C5/C6 were not run for this row
   (Context "Session 6": a row not run in a live session is `blocked`, never
   `not observed`).
+- **Counter (session 12).** The session-6 row above stays exactly as it
+  is: no *instance* was found for Counter over the one ON/OFF cycle that
+  pass measured, and that stays a recorded negative for that question - an
+  object that flips and reverts with the toggle - not "Counter has no
+  toggle form" (that row's own note was about an instance-shaped candidate,
+  never about the skill as a whole). Session 12 answers a different
+  question: with the Give No Quarter sub-talent allocated, the plain
+  cast's own buff, `playerBuff[1][0][104]`, is held at a constant value
+  instead of falling - the toggle state IS a player buff, read the same
+  way the countdown's own buff rows are, gated on the sub-talent rather
+  than on any instance. That is the new row added below,
+  `Draw_Player_Buff_obj` reached through the buff slot, never through
+  `Shield_Lancer_Counter_World_obj` or `Charge_Controller_obj` (the two
+  instance-shaped candidates session 6 already rejected).
+
+**Session 9 (2026-09-21): the Meteor Storm and Bushido rows.** One launch of
+the research DLL built from `157e751` (`BloodPactPlugin_rel.dll`, sha256
+`0624a182…fab5`), procedure Live procedure → `### Session 9`, White Mage
+first, then Shaman, Samurai and (optional) Butcher. Raw capture:
+`.claude/workorders/forgepact-meteor-storm-toggle-session9-capture.md` (a hub
+workorder artefact, not part of this submodule, never staged); every quoted
+value below is from it. `tgprobe tgl add` gave rows `[7] meteorStorm
+obj=Shaman_Meteor_Storm_Controller_obj ownership=none sub=s11 talentId=224
+idx=4422 sdk=4422`, `[8] meteorStorm obj=Shaman_Meteor_Storm_obj
+ownership=isMyClient sub=s11 talentId=224 idx=4423 sdk=4423`, `[9] bushido
+obj=Samurai_Bushido_obj ownership=isMyClient sub=none talentId=134 idx=4226
+sdk=4226` and `[10]` (the same with `ownership=none`). Row 0's agreement
+control held all session: first `tgprobe tgl: frame=13980 agree=1226
+disagree=0`, last `tgprobe tgl frame=170790 agree=150948 disagree=0`.
+
+- **Positive control (White Mage, same sampler, same session).** Soul Spurn
+  on: `[0] soulSpurn state=on n=1 mine=1 others=0 unattributed=0 marked=on
+  timer=-1.000000 samples=5366 on=1304 off=4062 transitions=1`; off: `[0]
+  soulSpurn state=off n=0 … transitions=2`. Its census control for every
+  `deep flip` below: `census.White_Mage_Soul_Spurn_AOE_obj: cbase=<absent>
+  con=1 coff=<absent>` (`tgprobe deep flip cbase con coff`). The buff-read
+  control from the same pass: `[86] kind=15 ref instance 262441
+  instance_exists=1 object=Draw_Player_Buff_obj buffType=int64:86
+  destroyTimer=real:445.001328` on, and `global.playerBuff[1][0][86]:
+  cbase=real:-4.000000 con=kind=15 str=ref instance 262441
+  coff=real:-4.000000`, `global.activeBuffList[1][0][3]: cbase=<absent>
+  con=int64:86 coff=<absent>` in the flip. The owner, live, attributed `[86]`
+  to the **Martyr** passive (it turns on while life drains), not to Soul
+  Spurn itself: a buff that follows the toggle, which is what this control
+  needs — the listing sees a buff arrive and leave — and a warning that a
+  buff flipping with a toggle is not by that alone the toggle's state.
+- **Meteor Storm.** Slot: `tgprobe tgl sub` read `[1] meteorStorm t224: s4=real:2
+  s1=real:2 s8=real:3 s2=real:5 s5=real:5 s11=real:0.000000 (keys=6)` with
+  the toggle sub-talent not allocated (owner confirmed), `s11=real:3.000000`
+  allocated, `s11=real:0.000000` respecced for the plain cast and
+  `s11=real:3.000000` re-allocated for C4 — only `s11` moved, so the static
+  prediction is now measured, at map index `1`. Toggled on: `[7] meteorStorm
+  state=on n=1 mine=1 … marked=on timer=unreadable` and `[8] meteorStorm
+  state=on n=4 mine=4 … timer=-1.000000`; the controller's `tgl fields`
+  first draw carried `skillAstroHeated=bool:true`. Off: both rows `state=off
+  n=0`, `transitions=2`. Plain cast (owner saw the meteors): the controller
+  appeared again (`tgprobe tgl timer [7] … appearance=2 … draws=110`) with
+  `skillAstroHeated=real:0.000000` on its first and last draw, and the
+  meteors again (`[8] … appearance=2 first=-1.000000 last=-1.000000 …
+  draws=158`). Third appearance, toggled, before C4: `skillAstroHeated=bool:true`
+  first and last again. **Rejected candidate:** `Shaman_Meteor_Storm_obj`
+  (4423), the meteors — `destroyTimer` `-1.000000` from first to last draw in
+  both forms (`atPredicted=1023 draws=1023` toggled, `atPredicted=158
+  draws=158` plain), no field was found to separate them, and up to ten
+  instances come and go under one controller; the controller carries the
+  marker. **The marker is a bool, not a real:** toggled reads `bool:true`,
+  plain `real:0.000000`, so the follow-up's marker read must accept a bool
+  kind as > 0 (the five shipped rows' markers and timers are all reals).
+  C4: toggled on, then a zone change → `[7]`/`[8] meteorStorm state=off n=0
+  … firstAfterRoomChange: state=off n=0` — the zone change ends the toggle.
+  `deep flip base on off` showed `Skill_Controller_obj#0.host: base=<absent>
+  on=kind=15 str=ref instance 272355 off=<absent>` alongside; the controller
+  row itself is the result.
+- **Bushido.** Talent: `talent 134 abilityId=bushido abilityAura=false
+  abilityDuration=0 abilityCooldown=0.250000 abilityLength=320
+  abilityTags=[15,12]`. `tgl sub`: `bushido t134` absent at every one of the
+  six map indices (`global.subTalentMap array_length=6`) — no slot, as the
+  static search said. On: `[9] bushido state=on n=7 mine=7 others=0
+  unattributed=0 marked=on timer=-1.000000` and `[10]` identical; `tgprobe
+  tgl timer [9] bushido … first=-1.000000 last=-1.000000 … atPredicted=1573
+  draws=1573`. Off: both rows `state=off n=0`, `transitions=2`; the flip
+  `tgprobe deep flip bbase bon boff: A(flipped and reverted)=7` caught
+  `census.Samurai_Bushido_obj: bbase=<absent> bon=7 boff=<absent>` (with its
+  parents `Orbit_Parent_obj` and `Player_Damage_Parent_obj` at the same
+  `<absent>/7/<absent>`). A second cycle read `state=on n=7 mine=7
+  transitions=3`, and C4 (on, then a zone change) `state=off n=0
+  transitions=4 … firstAfterRoomChange: state=off n=0` — the zone change ends
+  it. **The buff read found nothing:** `tgprobe buffs` printed `(420 empty
+  slots not listed)` off, on, off, on the second cycle and after the zone
+  change, and both filtered diffs read `tgprobe deep diff bbase bon:
+  changed=216 added=5 removed=27 truncated=0 filter=playerBuff matching=0`
+  and `… filter=activeBuffList matching=0` — against the same session's
+  `[86]` control, which that listing and those containers did show. So
+  Bushido's state is carried by its own instance, seven per activation,
+  present exactly while the toggle is on; no buff was observed.
+  `Light_Speck_obj` (`bbase=5 bon=12 boff=8`) changed without reverting — a
+  visual effect, not a carrier.
+- **Holy Form / Unholy Form (optional pass).** Butcher, `Town_04_rm`.
+  `tgprobe talents form`: `talent 364 abilityId=holyForm abilityDuration=0
+  abilityCooldown=0.250000 abilityTags=[15]` and `talent 365
+  abilityId=unholyForm abilityDuration=0 abilityCooldown=0.250000
+  abilityTags=[15]` (`demonForm`/`solarForm`/`lunarForm` read `dur 25`, timed;
+  `melonForm` talent 513, also dur 0 / cd 0.25, is an unmeasured candidate,
+  see the sweep). Holy Form on: `[140] ref instance 314047
+  object=Draw_Player_Buff_obj buffType=int64:140 destroyTimer=real:1.000000`,
+  gone off; the flip read `global.playerBuff[1][0][140] real:-4 / ref
+  instance 314047 / real:-4`, `global.activeBuffList[1][0][0] <absent> /
+  int64:140 / <absent>`, `census.Draw_Player_Buff_obj <absent>/1/<absent>`,
+  and no Butcher form object in bucket A. The owner saw the buff icon on the
+  HUD while it was on, which attributes buff 140 to Holy Form. Unholy Form:
+  `[141] ref instance 324053 object=Draw_Player_Buff_obj
+  buffType=int64:141 destroyTimer=real:1.000000` on, gone off (one earlier
+  on/off cycle went unobserved); attributed to Unholy Form by analogy only —
+  its HUD icon was not separately confirmed. Both are buff-carried, the shape
+  D-B3's `PlayerBuff` kind would read; neither is a row here (D-B2).
+
+### Session 11 — ship-build confirmation (Meteor Storm / Bushido)
+
+Ship DLL `4135ABFB…` (ForgePact `6afea79`, 1,511,936 B, built 2026-09-21
+23:06), installed and checked in-game by the owner 2026-09-21 23:57 through
+2026-09-22. Full capture:
+`.claude/workorders/forgepact-toggle-rows-ship-session11-capture.md` (a hub
+workorder artefact, not part of this submodule, never staged); every quoted
+value below is from it.
+
+**Menu.** `toggleborder` → ON (now reads "covers 7 toggle skills");
+`toggleguard` → ON ("one of the 7 covered toggle skills"). Resolve, Shaman in
+town: `meteorStorm:talentId=224 bushido:talentId=134 resolveWalks=5
+unresolvedRows=0`; `toggleguard hook=installed`.
+
+**Meteor Storm.** ON (`s11` allocated): `toggleborder stat: meteorStorm
+drawn=1250 on=1250 off=4247 unreadable=0`; guard `passed=1 procSeen=0`. Owner:
+outline visible. OFF: `drawn=2854 on=2854 off=5943 unreadable=0`; guard
+`passed=2 procSeen=0`. Owner: outline gone. Plain cast (`s11` respecced out,
+owner cast once): `drawn=2854 on=2854 off=10353 unreadable=0` (`on=`
+unchanged from the OFF reading — no outline for the plain form); guard
+`passed=3 procSeen=0 subOff=0`.
+
+**Bushido.** ON: `toggleborder stat: bushido drawn=1170 on=1170 off=29472
+unreadable=0 noSlot=0`; `resolveWalks=7 unresolvedRows=0`; guard `passed=4
+procSeen=0 baseForm=0` (owner's press passed, no proc). Owner: outline visible
+while on. Zone change with Bushido on (owner: "visible, zoned"): after the
+change `bushido drawn=6202 on=6202 off=30973`; ~3s later `drawn=6202 on=6202
+off=32563` (`on=` frozen, `off=` rising — no outline in the new zone). Guard
+afterward: `refused=0 passed=4 procSeen=0 baseForm=0 hook=installed`;
+`toggleborder` totals `drawExc=0 unreadable=0 unresolved=0`. Meteor Storm's
+own zone-change stop was not repeated on the ship build this session (session
+9 measured it directly; the owner separately confirmed in-game that both
+toggles stop on a zone change).
+
+**Double-cast refusal: not observed live for these two rows.** `procSeen=0`
+for both Meteor Storm and Bushido across this session's Shaman/Samurai pass.
+Owner decision, verbatim: "we proved double cast works, we wont test it on
+every skill." The guard's refusal mechanism was proven live earlier (session
+5, Soul Spurn: `refused=9 procSeen=9`), and the new rows' own gate — the
+`s11` sub-talent read for Meteor Storm and the base-form branch (`baseForm=`)
+for Bushido — is covered by the harness and contract tests, not by a live
+proc here. This stays recorded as not observed live, per the owner's call,
+never as a live pass.
 
 ## Decision
 
@@ -2223,7 +2652,7 @@ button press to the read leaving `on`.
 
 ### After session 6
 
-Source: Results → `### Toggle skill table` and its Notes, quoted from
+Source: Results → `Toggle skill table` and its Notes, quoted from
 `.claude/workorders/forgepact-toggle-timer-border-session6.log`.
 
 - **Entries: 4** (`lunarOrbit`, `crematus`, `submergedKnives`,
@@ -2264,7 +2693,76 @@ guard's set too, subject to the `## Decision` → `### S design` the next
 phase writes. `counter` and `blender` are results, not defects: neither
 measured as a persistent-instance toggle this session (`counter`'s toggle
 state lives on a player buff, and `blender` was judged by the tester not to
-be a toggle skill at all), so neither ships in this design.
+be a toggle skill at all), so neither ships in this design. (Superseded for
+`counter`, see `### After session 12`: it ships as a row after all, read as
+a player buff rather than as an instance.)
+
+### After session 9
+
+Session 9 ran 2026-09-21 (Results → `Toggle skill table`, "Session 9"
+notes, for every quote in full). Every line below is filled from its quoted
+output; the two `Ship:` lines were written last, by the rule at the end of
+Live procedure → `### Session 9`. Labels stay unbolded, with the value
+directly after the colon or `=`, so each line can be checked mechanically.
+
+- Meteor Storm slot: s11 (`s11=real:0.000000` → `s11=real:3.000000` on allocate, `0.000000` on respec, `3.000000` on re-allocate; no other key moved)
+- Sub index: 1 (`[1] meteorStorm t224:`)
+- ON discriminator: meteorStorm=marker skillAstroHeated (on `Shaman_Meteor_Storm_Controller_obj` 4422, ownership `none`: `skillAstroHeated=bool:true` toggled on both toggled appearances (appearance 1's first draw, appearance 3's first and last), `real:0.000000` plain on the plain appearance's first and last draw; the meteors `Shaman_Meteor_Storm_obj` read `destroyTimer` `-1.000000` in both forms and are rejected)
+- Bushido talent: 134 abilityDuration=0 abilityCooldown=0.250000 (`talent 134 abilityId=bushido abilityAura=false abilityDuration=0 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,12]`)
+- Bushido sub-talent map: absent at all 6 indices (`global.subTalentMap array_length=6; [0]..[5] bushido t134: absent`)
+- Bushido buff read: matching=0 (`tgprobe deep diff bbase bon … filter=playerBuff matching=0` and `… filter=activeBuffList matching=0`; `tgprobe buffs` `(420 empty slots not listed)` off and on, over two cycles and after the zone change)
+- Bushido buff: none observed
+- Buff read control: martyr (White Mage, Soul Spurn toggled on, same session) `[86] kind=15 ref instance 262441 instance_exists=1 object=Draw_Player_Buff_obj buffType=int64:86 destroyTimer=real:445.001328` on, `global.playerBuff[1][0][86]` back to `real:-4.000000` off — owner-attributed to the Martyr passive, not Soul Spurn's own state
+- ON discriminator: bushido=instance (no plain form) (`census.Samurai_Bushido_obj: bbase=<absent> bon=7 boff=<absent>`; `[9] bushido state=on n=7 mine=7` / `state=off n=0`, `transitions=` 1 → 2 → 3 → 4 over two cycles)
+- Bushido carrier: instance (`Samurai_Bushido_obj` 4226, seven own instances per activation, ownership `isMyClient` readable — `mine=7 others=0 unattributed=0`; the `none` row agrees)
+- Positive control: soulSpurn `[0] soulSpurn state=on n=1 mine=1 others=0 unattributed=0 marked=on timer=-1.000000`, then `state=off n=0`; census `White_Mage_Soul_Spurn_AOE_obj: cbase=<absent> con=1 coff=<absent>`; `agree=150948 disagree=0` at the end of the session
+- Also measured: a zone change ends both toggles, confirmed in-game by the owner (`firstAfterRoomChange: state=off n=0` on rows 7/8 and 9/10); Holy Form is buff-carried (buff 140, owner saw its HUD icon), Unholy Form reads buff 141 (by analogy, icon not confirmed); `melonForm` talent 513 (dur 0, cd 0.25) is an unmeasured candidate.
+- Ship: meteorStorm=yes (discriminator `marker skillAstroHeated` AND slot `s11` measured; the follow-up's marker read must treat `bool:true` as on)
+- Ship: bushido=yes (carrier `instance` with `instance (no plain form)` AND a measured ownership cell, `isMyClient`; base-form row, D-B1)
+- Shipped: meteorStorm as row 5 of kToggleSkillRows, 2026-09-21 (`Shaman_Meteor_Storm_Controller_obj`, ownership `nullptr`, `Marker` on `skillAstroHeated`, sub-talent slot `s11`)
+- Shipped: bushido as row 6 of kToggleSkillRows, 2026-09-21 (`Samurai_Bushido_obj`, ownership `isMyClient`, `None` discriminator, `kToggleNoSubTalent` - a base-form toggle, D-B1)
+- D-B1: a base-form toggle skill (no sub-talent at all, like Bushido) is refused by the guard unconditionally, without ever reading `global.subTalentMap` - reading its named constant `kToggleNoSubTalent` (0) there would find no `t<id>` struct and answer Unreadable, passing the double-cast proc through in the exact "reports armed and does nothing" shape AGENTS.md warns about. The refusal is still counted in `refused=`, and separately in a new `baseForm=` counter.
+
+### After session 12
+
+**Give No Quarter read (session 12, research build `30a851c`, Shield Lancer).** `tgprobe tgl sub` printed `[1] counter t301: ... s13=real:1.000000 ...` with
+Give No Quarter allocated and `s13=real:0.000000` once it was removed (turning
+the skill off is not enough: the node must be unallocated); the other nine keys
+(`s1`,`s2`,`s4`-`s10`) did not move. Ship smoke (`997f12f`): `skilltimer stat`
+`counter drawn=1037 ... toggleOn=838 ... noSlot=0`, `toggleborder stat`
+`counter drawn=838 on=838 ... subOff=1037`; `defensiveShout drawn=1125 ...
+noSlot=0`; `lastStand`/`berserk` not cast (not observed live on the ship build).
+
+`### After session 6`'s line that `counter` "does not ship" in this design
+is superseded: Counter ships after all, not as an instance-shaped row like
+the other six, but as the one `PlayerBuff` row (`kToggleSkillRows`, Results
+→ `Toggle skill table`'s new Counter row above), gated on the
+Give No Quarter sub-talent (`s13`, measured at `global.subTalentMap[1].t301`
+in session 6's C6 respec cycle) rather than on any persistent instance.
+
+- The object session 12 measured on every ON reading, `Draw_Player_Buff_obj`
+  (1362), is the same one Headhunter's own reader already walks
+  (`HhBuffAlive`) - it is documentation on the row, not resolved by name on
+  this path: identity is `buffType == 104`, read at
+  `global.playerBuff[1][0][104]`, the same check the countdown's own buff
+  rows make.
+- Ownership: every record's own `host` read `Player_obj.id` (session 12,
+  three characters); the row makes no ownership check of its own, the same
+  as the countdown's buff rows.
+- The discriminator is not a marker or a held timer value read off an
+  instance - it is `ToggleReadSubTalent(301, 13)`, the guard's own
+  sub-talent reader, called with the buff slot already known present:
+  Allocated -> the toggle is on; NotAllocated -> the buff is present but
+  it is the plain, timed form (the countdown draws instead); Unreadable ->
+  neither the outline nor the countdown draws.
+- `HookTalentUseClass` and `ToggleReadSubTalent` are unchanged: row
+  membership plus slot `s13` is what makes the existing guard cover Counter
+  - the same mechanism that already gates Meteor Storm and every other
+    sub-talent row.
+- The not-falling-value guard an earlier plan round proposed (a threshold of
+  consecutive equal `destroyTimer` readings) is NOT what ships: the owner
+  asked instead for the sub-talent read directly ("can we just check if gnq
+  is present"), which is exact rather than inferred from a value's shape.
 
 ### S design (D-P1, D-P3, D-P5, D-U13)
 
@@ -2647,3 +3145,2172 @@ The other four rows are guarded by the same code and the same runtime-resolved
 ids, but no refusal has been observed live on any of them; V2 (guard-off
 baseline) and V7 (`lastProcRet`) stay blocked by the off fast path, and V4 (a
 non-guarded talent's proc) was not observed.
+
+## Issue #55: timed skill remaining-duration indicator
+
+Phase A (research instrument and docs) of a second, independent mod beside the
+shipped toggle marker (`toggleborder`): a countdown for a *timed* skill whose
+duration is the point, not an on/off toggle. This does not reopen D-U9 ("no
+countdown for a toggle skill's plain cast", `## Decision` → `### S design`) -
+that decision covers a *toggle* skill's own plain cast and still stands; this
+is a different skill class the shipped table does not cover at all.
+
+### Candidate total sources, and the order they are tried
+
+A fraction needs `remaining` and `total`. `remaining` is settled: each row's
+own `destroyTimer`, read per draw, counting down in ticks - the same field
+`tgprobe tgl timer` already reads. `total` is the open question this phase's
+live session decides between three candidates:
+
+- **Route A - `abilityDuration` times the runtime's tick rate.** Best
+  supported by what session 6 already measured (`## Results` → `### Toggle
+  skill table`): Maelstrom of Frost's `abilityDuration` reads 30 and its
+  plain cast's timer starts at 4320, a ratio of 144 - the same
+  seconds-to-frames conversion the shipped Headhunter buff-duration path
+  already performs through `game_get_speed`. Three of the five shipped rows
+  read `abilityDuration=0` while their objects still have a lifetime, so
+  route A alone cannot cover those. Be ready for a *scaled* disagreement
+  rather than a random one: the same session measured Counter's buff
+  `destroyTimer 1036.800000` against `abilityDuration=6`
+  (1036.8 / 6 = 172.8 = 144 × 1.2), which looks like a +20% duration
+  modifier - gear and talents may scale the real lifetime past the base
+  value, so a row's `first= / abilityDuration` ratio can be a consistent
+  multiple of the printed `speed=` rather than equal to it, and that is
+  route A holding, not failing (see the decision rule below).
+- **Route C - the instance carries its own total.** Untested, and the
+  cheapest of the three: `tgprobe tgl fields [row]` already enumerates every
+  scalar member of a row's own instance by name. If a dump shows a field
+  holding the starting value while `destroyTimer` decays, route C needs no
+  unit conversion, no per-appearance state, and covers every skill including
+  the `abilityDuration=0` ones. `tgl fields` caps its scan at
+  `kTgTglFieldCap = 64` scalars and prints `overCap=`; a row whose dump
+  reports `overCap>0` makes route C `blocked` for that row, not falsified -
+  a field past the cap could still be the total.
+- **Route B - latch the starting `destroyTimer` on first sight.** The
+  issue's own suggestion; the last resort. Wrong on its own in a case a
+  player will hit: the mod is off by default and can be turned on
+  mid-session, so the first instance the latch ever sees may already be
+  part-spent, and it would call that value "full" for a skill that is really
+  half spent. Needs its own recorded decision, a `latched=`/`unlatched=`
+  counter pair, and a Known Limitations entry if taken.
+
+### Decision rule
+
+Definitions first, checked against every cell below. Tolerance is one tick
+throughout - `first=` prints in ticks, so "within one tick" means a
+difference of `1.0` or less.
+
+- **ratio** - a row's `first=` divided by its `abilityDuration=`.
+- **base** - the smallest ratio among the rows that reach the factor test
+  (the rows that pass `AR5`).
+- **factor** - a row's ratio divided by the base; the base row's own factor
+  is `1.0`.
+- **candidate field** (route C) - a scalar present in both the first-seen
+  and last-seen `tgl fields` snapshot of the same appearance, holding the
+  same value in both, that value within one tick of that appearance's
+  `first=`, while `destroyTimer` differs between the two snapshots. Route C
+  ships the field's name, so what counts is the name recurring across rows.
+
+`ratio`, `base` and `factor` are defined only for rows whose
+`abilityDuration > 0` and whose `first=` read numeric and greater than `0`.
+The probe's documented sentinel for a timer that never started is `-1`
+(`atPredicted=` counts exactly this draw), and a `0` reads no differently -
+neither is a duration a ratio can be taken against. A row failing either
+bound does not reach the factor test; `AR2` and `AR3` below route it to a
+status instead of letting it compute one.
+
+Each of the five tables below is scored first-match-wins: read its rows in
+order and stop at the first one whose condition holds.
+
+**Table 1: route C, per row**
+
+| id | condition | status |
+|---|---|---|
+| CR1 | the row's `tgl fields` dump did not print, or printed with `overCap>0` | blocked |
+| CR2 | the dump printed with `overCap=0` and carries a candidate field | measured |
+| CR3 | the dump printed with `overCap=0` and carries no candidate field | not observed |
+
+CR1 covers a total-carrying field pushed past the 64-scalar cap by some
+other member: that is truncation, not a negative.
+
+**Table 2: route C status**
+
+| id | condition | status |
+|---|---|---|
+| CS1 | at least two rows are `measured`, and at least two of those measured rows name the same field | measured |
+| CS2 | at least one row is `measured`, no two measured rows name the same field, and no row is `blocked` | not observed |
+| CS3 | no row is `measured` and no row is `blocked` | not observed |
+| CS4 | CS1 does not hold and at least one row is `blocked` | blocked |
+
+CS2 is recorded, not discarded: every field a row named goes into a later
+session's shortlist.
+
+**Table 3: route A, per row**
+
+| id | condition | status |
+|---|---|---|
+| AR1 | `abilityDuration=` prints `absent`, `unreadable`, or non-numeric text | blocked |
+| AR2 | `abilityDuration=` prints numeric `0` or a negative value | not observed |
+| AR3 | `abilityDuration > 0` and no appearance produced a numeric `first=` greater than `0` | blocked |
+| AR4 | `abilityDuration > 0`, a numeric `first= > 0`, but fewer than two appearances recorded | blocked |
+| AR5 | two appearances whose `first=` values differ by more than one tick | not observed |
+| AR6 | two appearances within one tick of each other, factor `<= 1.5` | measured |
+| AR7 | two appearances within one tick of each other, factor `> 1.5` | not observed |
+
+AR1 is the talent-struct read failing outright - no evidence either way.
+AR2 is a real negative: the talent carries no base duration (or a
+nonsensical negative one), so route A cannot cover that row. AR3 also
+catches a row whose only recorded `first=` reads `0` or `-1` (the latter
+being the toggle-row predicted-infinite sentinel, not a live measurement of
+this row) - neither is a duration a ratio can be taken against, and the live
+procedure's step 2 now says to re-cast rather than paste a `-1` reading in.
+AR4 is what happens when the session skips the second cast the live
+procedure now requires. AR7's `1.5` bound is **D-T7**:
+a judgement, not a measurement, about how much of a timed skill's life may
+read as a full bar before the countdown is lying. The shipped fraction
+clamps at `1.0`, so a row with factor `f` shows a full bar for the first
+`1 - 1/f` of its life - a third at `f = 1.5`, a half at `f = 2.0`. `1.5` was
+confirmed by the author as the bound to ship; Counter's only measured
+factor so far, `1.2`, sits comfortably inside it.
+
+**Table 4: route A status**
+
+| id | condition | status |
+|---|---|---|
+| AS1 | at least two rows are `measured`, every one's factor `1.0` | measured |
+| AS2 | at least two rows are `measured`, at least one factor above `1.0` | measured |
+| AS3 | exactly one row is `measured` | measured |
+| AS4 | no row is `measured` and no row is `blocked` | not observed |
+| AS5 | no row is `measured` and at least one row is `blocked` | blocked |
+
+AS2 records each scaled row's factor as its own finding. AS3 covers that
+one confirmed row only, the way this document's own out-of-scope line
+already treats a single measured row as shippable and seven guessed rows as
+not: route A ships a *formula* whose per-row prediction (`abilityDuration`,
+from the talent map, an independent source) is confirmed against `first=`,
+so one confirmed row is real evidence, while route C ships a *field name*
+that the shipped read applies to rows the session never measured, and on a
+single instance "some scalar equals `first=`" cannot be told from
+coincidence among up to 64 scalars - which is why `CS2` stays
+`not observed` rather than `measured` on the same one-row evidence, and the
+two-row threshold for `CS1` is left alone.
+
+**Table 5: selection**
+
+| id | route C status | route A status | selected | what to record |
+|---|---|---|---|---|
+| S1 | measured | measured | route C | the candidate field's name and every row it was measured on |
+| S2 | measured | not observed | route C | the candidate field's name and every row it was measured on |
+| S3 | measured | blocked | route C | the candidate field's name, every row it was measured on, and route A's blocking cause |
+| S4 | not observed | measured | route A | which rows confirmed, and each one's factor |
+| S5 | blocked | measured | route A | which rows confirmed, each one's factor, and route C's blocking cause |
+| S6 | not observed | not observed | route B | its own recorded decision, a `latched=`/`unlatched=` counter pair, and a Known Limitations entry |
+| S7 | not observed | blocked | none - session repeats | which of Table 3 / Table 4's rows recorded `blocked`, and why |
+| S8 | blocked | not observed | none - session repeats | which of Table 1 / Table 2's rows recorded `blocked`, and why |
+| S9 | blocked | blocked | none - session repeats | both routes' blocking causes, so the whole session re-runs |
+
+Route B is selected only when routes C and A were both scored on complete
+evidence and both came back negative. A `blocked` route is an instrument
+failure, and an instrument failure never promotes route B - it ends the
+session with no route selected and names the step to re-run. The route B
+row keeps its existing obligations if taken: its own recorded decision per
+D-T2, a `latched=`/`unlatched=` counter pair, and a Known Limitations
+entry.
+
+Two vocabularies, kept apart: route statuses are `measured` /
+`not observed` / `blocked`; selections are `route C` / `route A` /
+`route B` / `none - session repeats`.
+
+`speed=` is not an input to any table above. The shipped route-A read
+calls `game_get_speed` itself at draw time - the same call the shipped
+Headhunter buff-duration path already makes - so nothing here needs to
+repeat that call to confirm the mechanism; only the `predictedTotal=`
+convenience column is gated on it. Record it on its own line as `measured`
+(with the value) or `blocked` - never `not observed`, since an unread
+builtin is an instrument failure, not an absence - with `fps=` as its
+control: `fps=` reads through `GetBuiltin` while `speed=` uses
+`CallBuiltin`, so `fps=` reading while `speed=` does not localises the
+failure to that one call shape in the probe. If both read unreadable, say
+so and note that the ratio tables still stand, because neither of their
+inputs uses that call. An unreadable `speed=` changes no cell in any table
+above.
+
+### The look, judged live
+
+The issue asks for the look to be judged by eye against a real timed cast,
+but a real cast only gives a few seconds per candidate. `tgprobe sprite frac
+[f]` (added this phase) sets a settable 0.0..1.0 fraction every candidate
+below draws against, so each is judgeable at rest, at any fill, with no live
+cast - and it is the same input the shipped draw will take, so what the
+tester judges is what ships. Candidates, all through the existing
+save/restore-colour/alpha, `drawExc=`-counted `tgprobe sprite style <name>`
+draw path (`## Instrument` → `### Subcommands`):
+
+- `arc` - the banded outline drawn over a fraction of its own perimeter.
+- `bar` - a filled bar outside the icon's own bounds, its width scaled by
+  the fraction (D-T5: nothing drawn inside the icon's own bounds is visible
+  at either draw site - `## Instrument` → `### The draw site is
+  constrained`).
+- `number` - the fraction as a whole-number percentage, drawn with
+  `draw_text` (already reachable - `HhDrawHeadLabels` draws through the same
+  builtin at the same draw point, so this is the one candidate with no
+  unconfirmed builtin behind it).
+- `fade` - the shipped `soft` bands with the fraction as their alpha
+  multiplier, the same hook `pulse` already takes.
+
+`tgprobe talents` (this phase) now also prints `speed=`/`fps=` (read by
+name, `game_get_speed`, the tick-rate route A needs) and, per talent row, a
+`predictedTotal=` (`abilityDuration` times the printed speed) - so route A's
+falsification runs on the same line the session pastes back, with no hand
+arithmetic afterwards.
+
+**Two measured session findings, both from the 2026-09-20 live capture
+(`.claude/workorders/issue-55-live-session-2026-09-20-capture.md`), that the
+follow-up round below closes:**
+
+- **`number` drew 16,890 times at `drawExc=0` and was never seen.**
+  `TgProbeSpriteDrawNumber` drew at the box's centre (`x + w/2, y + h/2`),
+  dead under the talent button's own art, which paints later in the same
+  frame. `drawExc=0` here is produced equally by "drew fine, covered up" and
+  "drew nothing, silently" - **`draw_text` reachability through the shared
+  `CallBuiltin` path at this draw site is untested, not negative.** `bar`
+  drew below the icon in the same session and WAS seen there, so anchoring
+  `number` to that same edge inherits proven-visible evidence instead of
+  guessing a second unoccluded position.
+- **`bar` left a visible stub at `frac 0.0`.** The rectangle degenerates to
+  zero width and the runtime still filled it, `drawExc=0`, seen by eye -
+  shipped as-is, every skill that ever reaches zero duration would show a
+  border implying non-zero time left.
+
+#### Follow-up: text placement, style, and the two fixes above
+
+A live session only gives a few seconds per look, so the follow-up round adds
+settable controls instead of guessing a fixed answer that would cost another
+rebuild-and-relaunch to correct (`AGENTS.md` § "Limit Rebuilds & Reruns"):
+
+- **`tgprobe sprite textoffset [dx] [dy]`** - `number`'s offset from the
+  box's BOTTOM edge, centred horizontally, default `(0, 2)` - `bar`'s own
+  proven-visible gap, so the first look out of the box is already known to
+  clear the icon. (Default moved to `(0, -101)`, above the icon, after the
+  2026-09-21 session - see "Fourth follow-up" below.) `TgProbeSpriteDrawNumber` no longer contains any
+  `y + h / 2.0` expression.
+- **`tgprobe sprite textalpha [a]`** - `number`'s own flat opacity (0..255
+  or 0..1), independent of the band-ramp `alpha [min] [max]` `soft`/
+  `gradient` fade between; default fully opaque.
+- **`tgprobe sprite textcolour [name|r g b|off]`** (alias `textcolor`) -
+  `number`'s own colour; unset (the default) follows the shared `colour`, so
+  `style number` looks exactly as it did before this round until a tester
+  asks otherwise.
+- **`tgprobe sprite font [name|index|off|list]`** - resolves a font by name
+  at draw time exactly the way the shipped `hhlabelfont`/`HhDrawHeadLabels`
+  pair does (`plugin/ModuleMain.cpp:5258-5263`): `asset_get_index`, a numeric
+  fallback, applied only when the resolved index is `>= 0`, the whole resolve
+  in its own `try`. No font asset name exists anywhere in this checkout
+  (`hs-game-sdk` has no font table), so **`font list` enumerates the
+  runtime's own fonts** rather than guessing first: it reports whether the
+  runtime has each font builtin it uses at all (through `CallBuiltinEx`'s
+  status, since `CallBuiltin` cannot tell "no fonts" from "no enumerator"),
+  prints the currently active font (`draw_get_font`, the same proven-reachable
+  call `HhDrawHeadLabels` already makes) as a positive control, enumerates
+  every font index the runtime confirms exists up to a printed cap, and only
+  then probes ten inferred `_fnt`-suffixed candidate names (the game's own
+  `Name_suffix` asset convention) - none of which is confirmed to exist.
+- **`TgProbeSpriteDrawNumber`'s save/restore was rewritten** to match
+  `ToggleIndicatorDraw`'s shape (`:4919-4935`): every previous state (font,
+  colour, alpha, halign, valign) is captured before the first `draw_set_*`,
+  the draw sits in its own inner `try`, and each of the five restores runs in
+  its own `try` regardless of whether the draw threw. The body previously
+  restored halign/valign only after the `draw_text` call that could throw,
+  and never saved the font at all.
+- **`tgprobe sprite style <name> [talentId]`** now takes an optional trailing
+  talent id, falling back to `kToggleIndicatorTalentId` (Soul Spurn) when
+  absent. The live session found `style` hard-set the talent to 240, so
+  judging a look needed a character carrying that exact talent - every other
+  candidate printed `slot not found` on a Butcher.
+- **`bar` no longer leaves a stub.** `TgProbeSpriteDrawBar` returns without
+  drawing when the drawn width is below one pixel - the guard is on the
+  WIDTH, not on `fraction == 0.0`, so a sub-pixel remainder (e.g. `frac
+  0.004` on a wide box) disappears too instead of rounding to the same
+  visible lie. `number` keeps printing a legible `0%` at zero deliberately -
+  that is the whole reason the candidate exists.
+- **`frac` now rejects a token whose numeric prefix does not cover the whole
+  token** (e.g. `frac 0.5x`, `frac 1abc` - `std::stod` converts the longest
+  valid prefix and silently ignores the rest) **and a non-finite result**
+  (`frac nan` - every comparison against NaN is false, so the hand-written
+  0..1 clamp let it through). Neither had been observed on this build; both
+  follow from the standard's own specification of `strtod`. The `frac 0.5x`
+  → "did not parse as a number" refusal itself already shipped in `6ba1555`
+  and is unchanged.
+
+**A same-day follow-up round closed seven review findings against the round
+above, before the reinstall-and-live-look session, so the session's own
+readings would not be corrupted by them:**
+
+- `number`'s font restore (`draw_set_font(prevFont)`) now runs only when
+  this draw actually applied a font - not unconditionally on the default
+  path, where `g_TgSpriteFontName` is empty and no font was ever set.
+- `g_TgSpriteTextDrawExc`/`g_TgSpriteTextFontUnresolved` are now zeroed
+  alongside `draws=`/`drawExc=` on every `gold`/`style`/`gallery`/sprite
+  selection, so a second `style number` run's `off` line reports only that
+  run, not a session-cumulative count next to a fresh per-run one.
+- `font list`'s `font_get_name` existence probe no longer calls that
+  lookup builtin against the unconfirmed literal index `0.0`; it uses the
+  active font (`draw_get_font`) when that is not the default sentinel, else
+  the first index `font_exists` itself confirms, and reports "not probed"
+  rather than guessing when neither is available.
+- `font list`'s ten inferred `_fnt`-suffixed candidates now print an
+  explicit line first, saying they are inferred from the game's own asset-
+  suffix convention and unconfirmed, so an all-`unresolved` run reads as
+  "the guess missed," not "the runtime has no fonts."
+- `style <name> [talentId]` now parses the optional talent id through the
+  shared `ParseFiniteNumber` and refuses (naming the token) rather than
+  silently falling back to `kToggleIndicatorTalentId` on a partial token
+  like `24o`, which the previous bare `std::stoi` accepted as `24`.
+- `textalpha` (and, as a side effect, the pre-existing `alpha [min] [max]`)
+  now parses through `ParseFiniteNumber` too, so a typo like `textalpha
+  0.5x` or `textalpha nan` is refused instead of silently reaching
+  `draw_set_alpha` with a garbage or non-finite value.
+
+**A second follow-up round (`forgepact-tgprobe-font-instrument`) closed two
+more instrument-blindness findings the first round's own fixes still left
+open:**
+
+- `number`'s font-applied flag (`fontApplied`) is now set immediately before
+  `draw_set_font` is called, not after. If the builtin applies the font and
+  then throws, the flag is already `true`, so the restore is now attempted on
+  that path too. It is not a guarantee: the restore is itself a
+  `draw_set_font` call that can throw, and `prevFont` comes from an unguarded
+  `draw_get_font` read that may be unset on a runtime lacking that builtin.
+- `font list`'s `draw_get_font` read is now gated on `hasDrawGetFont` (the
+  same existence probe the command already prints). `CallBuiltin` returns an
+  unset RValue rather than throwing for a missing builtin, so the unguarded
+  read used to report a fabricated `active font: idx=0` as if it had been
+  measured; with the gate, a missing builtin now falls through to the
+  `font_exists`-confirmed index or "not probed", and the "active font:" line
+  says the builtin is absent instead of claiming it threw.
+
+#### Third follow-up: `frac anim`, a clock-driven countdown
+
+Stepping `frac <f>` one IPC call apart shows each candidate at a handful of
+fixed fills; it does not show whether the look reads well while draining
+continuously. `tgprobe sprite frac anim <seconds> [loop]` closes that gap by
+having the probe recompute `g_TgSpriteFraction` itself on every draw, so the
+same one mechanism animates `arc`, `bar`, `number` and `fade` at once (all
+four already read that one variable):
+
+- **The clock is a name-resolved game builtin, not a draw or frame count.**
+  `g_TgSpriteAnimTime` (the sprite/gallery multi-frame time base) and
+  `pulse`'s `g_RuntimeFrame` both advance by a fixed amount per draw, which is
+  exactly the frame-rate coupling a countdown must not have: a dip would
+  stretch it. Instead, `TgProbeSpriteFracAnimClockRead` tries `get_timer` (a
+  GameMaker function, microseconds since the game started, read through the
+  same status-checked `CallBuiltinEx` idiom `font list` already uses so
+  "absent" and "returned nothing" cannot be confused) and falls back to
+  `current_time` (a built-in **variable**, not a function, read through
+  `GetBuiltin` the way `GetBuiltin("room", ...)`/`GetBuiltin("fps", ...)`
+  already prove on this runtime — never `CallBuiltin("current_time")`, which
+  would be the wrong call shape entirely). Whichever reads first becomes the
+  animation's only clock for its whole life; switching mid-run would mix
+  units and starting points and jump the fraction.
+- **A plain `frac <f>` that itself parses cancels a running or finished
+  animation** before the fraction is stored; a refused `anim` (bad
+  arguments, or neither clock readable) leaves any running animation exactly
+  as it was.
+- **The `off` line's `anim=` field** reports `off`/`running`/`done`, the
+  chosen clock (`src=`), duration, `loop`/`once`, the last elapsed reading
+  and `ticks=`/`clockFail=`. Ticks climbing while elapsed stays at `0` is the
+  instrument's own self-check for "reports running but the clock never
+  advanced" (AGENTS.md § "Prove the Instrument Before Trusting a Negative
+  Result") — the failure mode a table-only hook or a stubbed clock would
+  otherwise hide.
+- **Unproven until a live session:** the command-time read only shows a
+  clock *is* readable; nobody has confirmed either `get_timer` or
+  `current_time` *advances* at wall-clock speed on this runtime, or judged
+  whether any of the four looks reads as smooth in motion. The
+  ticks/elapsed readout compared against a stopwatch during that session is
+  the control for the first question; a person's eye is the only control for
+  the second. Run the stopwatch check in `once` mode (`anim <seconds>`
+  without `loop`); in `loop` mode `elapsed=` reports the total time since
+  the animation started, with the wrapped fraction phase shown separately
+  as `phase=`.
+
+#### Fourth follow-up: live session 2026-09-21 - `frac anim` measured, `bar`/`number` moved above the icon
+
+One session on the research build of ForgePact `d2b18b2`, White Mage, Soul
+Spurn's slot (talent 240, tuned box 77x78):
+
+- **Positive control first:** `style soft` at `frac 1.0` was visible over
+  the slot, so this draw site reaches the screen in this session.
+- **The clock advances in real time.** `frac anim 10` chose
+  `src=get_timer` and finished `anim=done elapsed=10.004 ticks=2670
+  clockFail=0`; a 20 s run finished at `elapsed=20.001`, and the fraction
+  read at each style switch (`0.688`, `0.365`, `0.052`) matched the
+  controlling script's own wall clock to within the IPC poll delay. The
+  tester reported the drain as "very smooth" in `arc`, `bar`, `number` and
+  `fade`. `current_time` was never needed and remains unread on this
+  runtime. The tester did not report a stopwatch figure, so the wall-clock
+  agreement rests on the script's timing, not a hand-held stopwatch.
+- **`loop` and cancel behave as specified.** `anim 5 loop` read
+  `elapsed=7.285 phase=2.285 frac=0.543` then `elapsed=14.784
+  phase=4.784 frac=0.043`; a plain `frac 0.5` read back `anim=off` and
+  stayed at 0.5. Over a 142 s loop the `off` line read `draws=20520
+  ticks=20520 drawExc=0 textDrawExc=0 clockFail=0` - one tick per draw.
+  The draw rate (~190-270 per second) is well above the frame rate, so
+  this draw path runs several times a frame; harmless here because the
+  fraction comes from the clock, not from counting draws.
+- **Placement: the tester wants `bar` and `number` above the icon.**
+  `number` was nudged live to `textoffset 0,-101` (text top 23 px above the
+  box's top edge), now its default. `bar` had no placement control, so it
+  now draws above the box by default (bottom edge 2 px above the box's top)
+  and gained `tgprobe sprite baroffset [dx] [dy]` - an offset from that
+  spot, default `0,0`, reported on the `off` line and on `style bar`'s
+  confirmation - so it can be tuned live the same way. Seen in-game above
+  the icon, the full bar overhung the icon art equally on both sides (the
+  tuned box is sized for the outline styles that draw around the icon, and
+  the raw `box bbox`, 82 px against 77, is wider still), so the bar gained
+  `tgprobe sprite barinset [px]`, trimming it that many pixels in from each
+  side, default 4. On the next launch the tester confirmed the 4 px inset
+  matches the icon's width, the bar sits right above the icon at
+  `baroffset 0,0`, and `number` at its new built-in `0,-101` default lands
+  exactly where it was nudged live.
+
+### Live procedure
+
+Run from `plugin_build\build.bat dev`'s `BloodPactPlugin_rel.dll`, one
+session:
+
+1. `tgprobe talents` - paste the `speed=`/`fps=` line as an instrument
+   reading, not a rule input (see the `speed=` note above), and, for each of
+   the seven candidate rows (`tgprobe tgl list` names them), its
+   `abilityDuration=`/`predictedTotal=`.
+2. For each candidate row, cast its plain (non-toggle) form and run
+   `tgprobe tgl timer` - paste the line, with its `appearance=` and
+   `first=`/`last=`/`min=`/`max=`/`unreadable=`/`atPredicted=`/`draws=`.
+   Then cast the same row's plain form a **second** time and run
+   `tgprobe tgl timer` again, pasting that second line too - its
+   `appearance=` must read one higher than the first. The two lines' `first=`
+   values are the two independent measurements Table 3 checks for
+   repeatability (`AR4`/`AR5`). If either cast's `first=` reads exactly
+   `-1` (the *toggle* rows' predicted-infinite value, existing since
+   session 4 - the timer never started for this appearance) or `0`, that
+   draw is not data for this rule: re-cast the row and paste the recast
+   reading in its place rather than the `-1`/`0` line, so the Results table
+   never carries a `first=` a ratio cannot be taken against (see `AR2`/`AR3`
+   above). `atPredicted=` is what counts a `-1` draw on the probe's own
+   line; a nonzero count on a candidate row is exactly the signal to
+   re-cast, not a value the ratio tables interpret.
+3. For each candidate row, `tgprobe tgl fields [row]` on the second cast -
+   paste the full scalar dump, both the first-seen and the last-seen
+   snapshot, alongside the `overCap=` value each one carries.
+4. Apply Table 1, then Table 2, then Table 3, then Table 4, then Table 5
+   above, in that order, to the session's own output and say which route is
+   selected, and why.
+5. `tgprobe sprite frac 1.0`, then `tgprobe sprite style soft <talentId>`
+   over the candidate's own hotbar slot (`style <name> [talentId]` selects
+   the slot directly - no character-specific hardcoding since the follow-up
+   round; reuse `tgprobe sprite gold <talentId>` first to confirm the slot
+   is right) - the shipped look, known visible, run FIRST as a positive
+   control, and note what `tgprobe sprite off` prints for `draws=`/
+   `drawExc=` afterward. Then `tgprobe sprite style arc <talentId>` at the
+   same `frac 1.0` and compare it against `soft`: at full fraction `arc`'s
+   traced perimeter is the same outline `soft` already draws. If `arc@1.0`
+   shows nothing while `soft` did, `draw_line` is unreachable and `arc` is
+   `blocked`, not rejected - skip the rest of `arc`'s fractions. After
+   *every* candidate (`arc` included), run `tgprobe sprite off` and paste
+   the `draws=`/`drawExc=` line it prints before setting the next style; a
+   non-zero `drawExc=` alongside a rising `draws=` means the builtin threw,
+   which is also `blocked`, never rejected. **For `number` specifically, the
+   throw signal is `textDrawExc=`, not `drawExc=`:** its own save/draw/
+   restore routes every exception into `textDrawExc=` (and a font that
+   failed to resolve into `unresolved=`), both printed on the same `off`
+   line, so `drawExc=0` there says nothing about whether `draw_text` threw -
+   read `textDrawExc=` for that candidate instead. Repeat each surviving
+   candidate at `frac 0.5` and `frac 0.0`, then for `bar`, `number` and
+   `fade` at the same three fractions, pasting `draws=`/`drawExc=` after
+   each (`textDrawExc=`/`unresolved=` too, for `number`). For `number`, try
+   `tgprobe sprite textoffset [dx] [dy]` (and `baroffset` for `bar`) if the
+   default above-the-icon placement still sits under other HUD elements, and `tgprobe sprite font list` once to see what
+   the runtime's own fonts resolve to before picking one with `tgprobe
+   sprite font <name>`. Say which look is preferred, or that none is yet,
+   using this doc's own convention below - never "rejected" for a look that
+   was never shown or whose builtin never actually fired.
+
+### Results
+
+Every cell below is filled from the session's own output, quoted verbatim,
+or one of `measured` / `not observed` / `blocked` - never inferred and never
+left as a guess.
+
+Three session-level lines, filled before the per-row table:
+
+- `speed=`/`fps=`:
+- route C status / route A status:
+- selected route:
+
+| abilityId | abilityDuration= | first= #1 | first= #2 | repeatable | ratio | factor | route A row status | overCap= | route C candidate field | route C row status |
+|---|---|---|---|---|---|---|---|---|---|---|
+| soulSpurn | | | | | | | | | | |
+| lunarOrbit | | | | | | | | | | |
+| crematus | | | | | | | | | | |
+| counter | | | | | | | | | | |
+| submergedKnives | | | | | | | | | | |
+| maelstromOfFrost | | | | | | | | | | |
+| blender | | | | | | | | | | |
+
+Look verdicts, one row per candidate:
+
+| look | verdict |
+|---|---|
+| arc | |
+| bar | |
+| number | |
+| fade | |
+
+### Decision
+
+Route B, taken by the user on 2026-09-21 (the shipping workorder's Log ->
+Decisions): the countdown's fraction is the current `destroyTimer` divided by
+the FIRST `destroyTimer` latched when the instance first appeared, clamped to
+0..1.
+
+- **Route A** (the pre-committed decision-rule total, `abilityDuration` /
+  `game_get_speed`) lost: its rule selected the wrong row structurally
+  ("Finding - the decision rule selects the wrong row" above) - it does not
+  point at the field that actually holds a row's own remaining time.
+- **Route C** (an `overCap`-gated candidate field) lost: every dumped row came
+  back `blocked` by `overCap`, so no row ever produced a usable candidate.
+- **Route B** won by elimination: `destroyTimer` is the field the toggle
+  indicator (D-N3, "Rows, and why a toggled instance never gets a countdown")
+  already reads as its own ON discriminator on the Maelstrom row (the other
+  rows discriminate on `purgatory`, `skillContamination`, or nothing), so at
+  least one row needed no new discriminator field, only a place to remember
+  its FIRST value; the other rows are read for the same field on the chance
+  their controller carries it too (see "Rows, and toggle suppression" below
+  for which ones were actually measured to).
+
+**The latch rule**, per row, per draw, among the row's OWN instances only
+(`ToggleIndicatorReadRow`'s own ownership rule, `nullptr` = every instance
+own): `remaining` is the largest numeric `destroyTimer` among own instances
+(several can be running for a toggle skill's own object at once; the largest
+is the current cast). Then, in order:
+
+- zero own instances -> draw nothing, count `noInstance`; a latch held from
+  before is dropped and counted `unlatched`, so the NEXT instance re-latches
+  full rather than dividing by a stale value;
+- own instances present but none has a numeric `destroyTimer` -> draw
+  nothing, count `unreadable`, latch untouched;
+- `remaining <= 0` (a held negative, or a plain cast's trailing negative
+  tail) -> draw nothing, count `expired`, never latch on it;
+- no latch yet, or `remaining` greater than the latch -> take or update the
+  latch, count `latched`. A rise IS "an instance first appears" for a value
+  that only ever falls within one cast, so a rise is also the only signal
+  that re-syncs a latch taken mid-cast (see the limitation below);
+- fraction = `remaining / latch`, clamped to 0..1 by hand.
+
+**Mid-cast limitation, recorded here because the guide is not updated for
+this change** (the user asked that `docs/submodules/ForgePact/instructions.md`
+stay untouched - see the release notes and the panel's own help text for the
+other two copies of this note). If the countdown is switched on partway
+through an already-running cast, the first draw latches whatever `remaining`
+reads at that moment, not the cast's true starting value, so that one cast's
+countdown reads shorter than it actually is - full only from the point the
+style was turned on. The next cast on that row latches correctly, since it
+starts from a rise. This is the accepted cost of taking the latch from the
+first OWN reading rather than trying to infer whether an already-running
+instance is new or mid-cast.
+
+A second, narrower case of the same cost: the latch is dropped only when a
+row's own instance count reaches zero (`noInstance`), never on `Expired`
+alone. If a later cast on the same row is legitimately shorter than the
+latch still held from the previous one - a duration stat changed, or the new
+cast's own instance overlaps the tail end of the old one before it is gone -
+that cast starts below 100% and never corrects, because its `remaining` never
+rises above the stale latch (only a rise re-latches, per the rule above).
+`latched=`/`unlatched=` cannot surface this by themselves: nothing about it
+looks wrong on either counter. Pinned deliberately, not a bug to fix here -
+`skilltimer/non_positive_draws_nothing_and_never_latches` requires the latch
+to survive an `Expired` reading untouched.
+
+**The shipped looks**, all four ported as the ship's own constants from the
+research probe's own defaults - the exact values the author judged live -
+never by referencing a `g_TgSprite*` research global (a contract test pins
+the two sets of constants equal so they cannot drift):
+
+- **arc**: 10 nested bands growing outward from the slot box, alpha ramping
+  `1 - i/9`, each band tracing only the current fraction of its own
+  perimeter, clockwise from the top-left corner.
+- **bar**: filled, gold, above the icon - bottom edge 2px above the box's
+  top, inset 4px each side, 6px tall - width scaled by the fraction. A width
+  under 1px draws nothing (the D4 sub-pixel guard: a visible stub at
+  `frac 0.0` was measured otherwise).
+- **number**: the fraction as a whole-number percentage, centred
+  horizontally, anchored top-aligned at `(w/2, h) + (0, -106)` from the
+  box's top-left - the same formula the research instrument draws its own
+  number look with, tuned live on this box (see "The `number` look's
+  vertical placement" below) rather than re-derived. Resolves `__newfont6`
+  by name every draw; when it does not resolve, falls back to the inherited
+  font and counts `fontUnresolved` rather than failing the draw (see "The
+  number font" below).
+
+The ship deliberately differs from the probe in one place:
+
+- **Nothing is drawn at zero** - including a fraction that rounds to 0% -
+  in any style (the probe keeps "0%" as its own liveness signal).
+- **fade**: the same 10 bands as `arc`, whole rectangle each (no perimeter
+  fraction), alpha `(1 - i/9) * fraction`.
+
+All four use gold `(255,215,0)`, the probe's own default and the colour every
+look was judged in.
+
+**The `number` look's vertical placement no longer differs from the probe's
+formula** - only the probe's own research *default* for the vertical offset
+does. Two earlier ship ports both got this wrong and both were fixed live by
+the owner using the research instrument itself:
+
+- Session 8 (2026-09-21): the first ship port hung the text below an anchor
+  at `(w/2, h) + (0, -101)` from the box's bottom edge, confirmed live with
+  the probe's inherited font. `__newfont6`, which the ship actually sets
+  every draw, is taller, and the text slid down behind the icon. The fix at
+  the time was to anchor from the box's TOP edge with bottom alignment
+  instead, at the bar's own gap (`kSkillTimerTextGap` 2 px) - which removed
+  the font dependency by construction, but not by using the probe's own
+  formula. At the next live-ship check (still 2026-09-21) the owner found it
+  "Too high now" at that 2 px gap - "this font should be 1 pixel lower" - so
+  `kSkillTimerTextGap` became 1 px (`(w/2, -1)`) while the bar kept 2 px.
+  That was still not the end of it: the owner still saw the text "a little
+  too high" at the FOLLOWING live-ship check.
+- 2026-09-21: rather than deriving a third font-independent formula, the
+  owner tuned the research instrument itself - `tgprobe sprite style
+  number` - on this same D-U12 box, in the ship's own `__newfont6`, working
+  `textoffset 0 -101` "too low now", `textoffset 0 -104`, `textoffset 0
+  -105`, `textoffset 0 -106` - "perfect". The ship now draws that exact
+  formula, `(w/2, h) + (0, -106)` - top
+  alignment from the box's BOTTOM edge, the same anchor the research
+  instrument's own number look uses - so what the owner judged live with
+  the instrument is what ships (decision D-N1). The probe's own default
+  vertical offset is left unchanged: it is a pinned research starting
+  point, not what a player sees, and changing it would touch research code
+  for no player effect.
+- **Known consequence**: the placement is correct for the HUD scale it was
+  tuned at. Since the text hangs `-106` px above the box's own bottom edge,
+  if a different HUD scale changes the slot box's height, the gap between
+  the text and the icon changes by the same amount - the earlier
+  font-independent argument (guessing a fixed offset from the box's bottom
+  edge "would repeat the mistake") was about exactly this box-height
+  dependency, and it is still true; it was decided live, once, on the D-U12
+  box at the HUD scale the game was running at, rather than solved in
+  general. A future HUD-scale change to this box is the trigger to re-tune
+  it the same way, not to guess a new constant.
+
+**Rows, since session 8: the countdown's own table.** The countdown now
+reads its rows from `kSkillTimerRows` (`plugin/include/ForgePact/SkillTimerMod.hpp`)
+and nothing else, filled from "Duration sweep (session 8)" -> "Results"
+below plus "Session 10" (below "Results"): exactly the seven `ship` rows -
+Healing Zone (`healingZone`, no ownership field, measured 1152), Blade
+Barrier (`bladeBarrier`, `isMyClient`, 1296), Soul Spurn (`soulSpurn`,
+`isMyClient`, 144), Maelstrom of Frost (`maelstromOfFrost`, `isMyClient`,
+4320), Progenies of the Great Cataclysm (`progeniesOfTheGreatCataclysm`, no
+ownership field, measured 2880), Pickup Raid (`pickupRaid`, `isMyClient`,
+576) and Dissipating Tornado (`dissipatingTornado`, no ownership field,
+measured 432). Each row carries its recorded `measuredFirst` for the contract test that ties it to
+its Results line; the draw never divides by it (route B latches each cast's
+own first reading). The countdown table's talent ids resolve in the same
+`global.talentStructMap` walk as the toggle table's, kept in their own
+array; `skilltimer stat` prints the countdown table's ids and one line per
+countdown row. Guard membership (`toggleguard`) and the border
+(`toggleborder`) still read only the toggle table. A countdown row whose
+`abilityId` is also a toggle-table row (Soul Spurn, Maelstrom of Frost)
+runs that toggle row's read first and is suppressed while it is On or
+Unreadable, as below; Healing Zone and Blade Barrier have no toggle twin and
+make no toggle read at all. Crematus, Lunar Orbit and Submerged Knives are
+no longer countdown rows: session 8 measured Crematus' timer as a
+per-projectile lifetime (79.2 against 290 draws), and no timer spanning a
+plain cast was observed for the other two (Submerged Knives' object carries
+a per-object timer, 32.4 against 140 draws, which fails rule (d)). The paragraph below is the
+round-1 design this replaced, kept for its reasoning about toggle
+suppression, which still holds for the two twin rows.
+
+**Rows, and toggle suppression (round 1).** The countdown covered all five rows of the
+shipped toggle table (`kToggleSkillRows`), reopening D-U9 for this table
+specifically at the user's request (2026-09-21: "All five rows" - toggled
+state suppressed). Every row's own instances are read for `destroyTimer`
+regardless of whether that field is the row's own ON discriminator - it is
+only Maelstrom's. `destroyTimer` was measured readable on the Soul Spurn
+(`144`, issue text) and Crematus (`432`, issue text) SEED objects; whether
+the SHIPPED Crematus controller (`Plague_Doctor_Crematus_obj` -> its
+`…_Controller_obj`) carries it too is not observed, so that row answering
+`unreadable` and drawing nothing there is the fail-safe working, not
+necessarily a bug. The two `ToggleOnMark::None` rows - Lunar Orbit
+(`Exo_Lunar_Orbit_Crescent_Moon_obj`) and Submerged Knives
+(`Butcher_Submerged_Knives_Knifehoarder_obj`) - are a different, MEASURED
+case, not an unobserved one: those objects have zero own instances during a
+plain cast (see "Rows, and why a toggled instance never gets a countdown"
+above's session-6 evidence), so their plain cast always answers `noInstance`
+and never draws, in every look, regardless of whether `destroyTimer` is
+readable on them at all; only their toggled-on state creates the instance,
+and that state is suppressed below before the timer is ever read. Before the
+timer's own read runs at all, each row first runs the SAME toggle read the
+border uses (`ToggleIndicatorReadRow` + `ToggleIndicatorModel::Decide`); On or
+Unreadable there draws no countdown (D-T4: toggle-on/toggle-unreadable
+suppresses the timer read, same as the border) - the issue's own
+out-of-scope line, "toggles stay on/off, with no countdown", still holds, and
+the countdown only ever appears on a plain, timed cast.
+
+**The number font (Needs-human-judgement 2, resolved 2026-09-21:
+"`__newfont6` by name").** The author's session-2 ship requirement was that
+shipped text sets its own font every draw (the inherited font shimmered);
+which font was actually active when `(0,-101)` was confirmed live is not
+recorded. The shipped code resolves `__newfont6` by name every draw
+(`asset_get_index`, never a hard-coded index) and falls back to the
+inherited font, counted `fontUnresolved`, rather than failing the draw.
+Session 8's live check did find the text behind the icon in that font; the
+first fix moved the anchor to the box's top edge, since no single offset
+from the box's bottom edge measured in a different font was right for
+`__newfont6`'s height. The 2026-09-21 live check went back to a
+bottom-edge offset after all, but measured directly in `__newfont6` on this
+box rather than guessed (see "The `number` look's vertical placement"
+above) - so the fix that actually shipped was re-measuring the offset in
+the right font, not avoiding an offset in favour of an anchor.
+
+**Diagnostics.** `skilltimer stat` (a player command, like `toggleborder
+stat`) prints the current style, the countdown table's resolved talent ids
+(`kSkillTimerRows` since session 8; the toggle table's before), the
+aggregate counters (`drawn noInstance unreadable expired toggleOn
+toggleUnreadable unresolved noSlot latched unlatched drawExc
+fontUnresolved`) and one line per row named by `abilityId`.
+
+### Duration sweep (session 8): every class's timed skill
+
+The countdown above read its rows from the toggle table, so it could only ever
+cover those five skills - and two of them (Lunar Orbit, Submerged Knives) can
+never draw one. (Since this section's Results it reads its own table,
+`kSkillTimerRows` - see `### Decision` above, "Rows, since session 8".) This section is the research round for the owner's request of
+2026-09-21: extend the countdown to every class's timed skill, Healing Zone
+included, shipping only rows that were measured to carry a readable
+`destroyTimer`. One research build reads the timer on every candidate at once
+(`tgprobe sweep`), one live session measures a curated cast list with
+Maelstrom of Frost as the positive control, and the ship round then fills a
+countdown table of its own from this section's Results table below - never
+from this static list.
+
+#### Static candidates
+
+What `hs-game-sdk` says before any session: names, indices and parent chains
+only, from the SDK's own object hierarchy (`GameObject`, `get_parent_index`).
+The search covers the 761 objects whose name starts with a class prefix
+(`Amazon_ Bard_ Butcher_ Demon_Slayer_ Demonspawn_ Exo_ Illusionist_ Jotunn_
+Marauder_ Marksman_ Necromancer_ Nomad_ Paladin_ Pirate_ Plague_Doctor_
+Prophet_ Pyromancer_ Redneck_ Samurai_ Shaman_ Shield_Lancer_ Stormweaver_
+Viking_ White_Mage_`), grouped by the ancestor that makes each one a
+candidate:
+
+| ancestor | class-prefixed descendants | why it is a candidate root |
+|---|---|---|
+| `Player_Ability_Parent_obj` (3536) | 169 | the SDK carries `gml_Script_StepAbilityParentDestroyTimer` (index 3707), a per-step `destroyTimer` routine named for this parent; `White_Mage_Healing_Zone_obj` = 5738 is here, and session 1 saw a Healing Zone cast raise this parent's census (`+ census.Player_Ability_Parent_obj=1`, hz2/hz3) |
+| `Skill_Controller_obj` (4606) | 28 | the toggle table's three controller rows live here; a controller persists for a skill's duration |
+| `Player_Sentry_Parent_obj` (3557), itself under the ability parent, including `Shaman_Totem_Parent_obj` (4443) | 20 | turrets, totems, hydra, altars - placed objects with a lifetime |
+| `Player_Buff_Parent_obj` (3538) / `Player_Curse_Parent_obj` (3542) | 4 / 6 | instance-backed buffs and curses (Combat Orders, Defensive Shout, Toxic Flask Alchemy, the Necromancer and Stormweaver curses) |
+| `Player_Damage_Parent_obj` (3543) | 495 | both measured timer carriers are here (`White_Mage_Soul_Spurn_AOE_obj` 5759, `first=144`; `Prophet_Maelstrom_obj` 3697, `first=4320`), so `destroyTimer` is not confined to ability objects; swept live, not listed below - 495 rows would bury the table |
+
+The tables below are the 207 class-prefixed objects under the five
+non-damage roots, generated from the hub root with the SDK snippet recorded
+in the workorder (the same set `DurationSweepProbeContractTests.
+test_static_candidates_section_matches_the_sdk` recomputes and checks against
+this section). The sentry parent's descendants are also descendants of the
+ability parent; each object is listed once, under the first group it falls in.
+
+**Under `Skill_Controller_obj` (4606): 28 objects**
+
+| object | index | parent chain |
+|---|---|---|
+| `Amazon_Spearnage_Controller_obj` | 202 | Skill_Controller_obj |
+| `Bard_Flying_Fists_Controller_obj` | 542 | Skill_Controller_obj |
+| `Butcher_Blender_Nanoblades_obj` | 701 | Skill_Controller_obj |
+| `Butcher_Chain_Rip_Chainfueled_Hunting_obj` | 707 | Skill_Controller_obj |
+| `Butcher_Submerged_Knives_Knifehoarder_obj` | 729 | Skill_Controller_obj |
+| `Demon_Slayer_Absolute_Mayhem_Controller_obj` | 1152 | Skill_Controller_obj |
+| `Demon_Slayer_Bullet_Hell_Controller_obj` | 1156 | Skill_Controller_obj |
+| `Demonspawn_Blood_Bolts_Controller_obj` | 1184 | Skill_Controller_obj |
+| `Demonspawn_Bone_Barrage_Controller_obj` | 1192 | Skill_Controller_obj |
+| `Exo_Asteroid_Galactic_Cataclysm_obj` | 1463 | Skill_Controller_obj |
+| `Exo_Lunar_Orbit_Crescent_Moon_obj` | 1471 | Skill_Controller_obj |
+| `Exo_Supernova_Connected_obj` | 1484 | Skill_Controller_obj |
+| `Jotunn_Blizzard_Controller_obj` | 2295 | Skill_Controller_obj |
+| `Jotunn_Sweep_Freeze_Frost_Sunder_obj` | 2316 | Skill_Controller_obj |
+| `Marauder_Bombardment_Controller_obj` | 2601 | Skill_Controller_obj |
+| `Marksman_Arrow_Rampage_Controller_obj` | 2636 | Skill_Controller_obj |
+| `Nomad_Eye_of_Ra_Lightbringer_Controller_obj` | 3222 | Skill_Controller_obj |
+| `Nomad_Sand_Gush_Controller_obj` | 3228 | Skill_Controller_obj |
+| `Nomad_Scimitar_Charge_Phantom_Controller_obj` | 3233 | Skill_Controller_obj |
+| `Plague_Doctor_Crematus_Controller_obj` | 3502 | Skill_Controller_obj |
+| `Pyromancer_Armageddon_Controller_obj` | 3841 | Skill_Controller_obj |
+| `Pyromancer_Armageddon_Warped_Controller_obj` | 3844 | Skill_Controller_obj |
+| `Pyromancer_Blazing_Trail_Controller_obj` | 3847 | Skill_Controller_obj |
+| `Redneck_Chainsaw_Slash_Woodcutters_obj` | 4028 | Skill_Controller_obj |
+| `Samurai_Smoke_Bomb_Trail_Controller_obj` | 4249 | Skill_Controller_obj |
+| `Shaman_Meteor_Storm_Controller_obj` | 4422 | Skill_Controller_obj |
+| `White_Mage_Black_Mass_Controller_obj` | 5727 | Skill_Controller_obj |
+| `White_Mage_Heavenly_Fire_Controller_obj` | 5740 | Skill_Controller_obj |
+
+**Under `Player_Buff_Parent_obj` (3538): 4 objects**
+
+| object | index | parent chain |
+|---|---|---|
+| `Demonspawn_Blood_Bolt_Wave_Trail_obj` | 1183 | Player_Buff_Parent_obj |
+| `Plague_Doctor_Toxic_Flask_Alchemy_obj` | 3527 | Player_Buff_Parent_obj |
+| `Viking_Combat_Orders_obj` | 5619 | Player_Buff_Parent_obj |
+| `Viking_Defensive_Shout_obj` | 5620 | Player_Buff_Parent_obj |
+
+**Under `Player_Curse_Parent_obj` (3542): 6 objects**
+
+| object | index | parent chain |
+|---|---|---|
+| `Necromancer_Amplify_Damage_obj` | 3035 | Player_Curse_Parent_obj |
+| `Necromancer_Cursed_Ground_obj` | 3048 | Player_Curse_Parent_obj |
+| `Necromancer_Life_Tap_obj` | 3050 | Player_Curse_Parent_obj |
+| `Stormweaver_Static_Shock_obj` | 4722 | Player_Curse_Parent_obj |
+| `Stormweaver_Storm_Cloud_Aftershock_obj` | 4726 | Player_Curse_Parent_obj |
+| `White_Mage_Satans_Mark_obj` | 5752 | Player_Curse_Parent_obj |
+
+**Under `Player_Sentry_Parent_obj` (3557), including `Shaman_Totem_Parent_obj` (4443): 20 objects**
+
+| object | index | parent chain |
+|---|---|---|
+| `Amazon_Death_From_Above_Ancient_Device_obj` | 182 | Shaman_Totem_Parent_obj > Player_Sentry_Parent_obj > Player_Ability_Parent_obj |
+| `Amazon_Storm_Dash_Pillar_obj` | 210 | Shaman_Totem_Parent_obj > Player_Sentry_Parent_obj > Player_Ability_Parent_obj |
+| `Demonspawn_Bone_Altar_obj` | 1190 | Shaman_Totem_Parent_obj > Player_Sentry_Parent_obj > Player_Ability_Parent_obj |
+| `Illusionist_Age_Proliferation_Arcane_Echo_obj` | 2231 | Shaman_Totem_Parent_obj > Player_Sentry_Parent_obj > Player_Ability_Parent_obj |
+| `Marksman_Arrow_Turret_obj` | 2641 | Player_Sentry_Parent_obj > Player_Ability_Parent_obj |
+| `Marksman_Cannon_Turret_obj` | 2643 | Player_Sentry_Parent_obj > Player_Ability_Parent_obj |
+| `Marksman_Rocket_Turret_obj` | 2660 | Player_Sentry_Parent_obj > Player_Ability_Parent_obj |
+| `Necromancer_Necrotic_Ward_obj` | 3053 | Shaman_Totem_Parent_obj > Player_Sentry_Parent_obj > Player_Ability_Parent_obj |
+| `Paladin_Holy_Bolt_Illumination_obj` | 3354 | Shaman_Totem_Parent_obj > Player_Sentry_Parent_obj > Player_Ability_Parent_obj |
+| `Paladin_Vengeance_Electric_Pillar_obj` | 3370 | Shaman_Totem_Parent_obj > Player_Sentry_Parent_obj > Player_Ability_Parent_obj |
+| `Plague_Doctor_Crematus_Container_obj` | 3501 | Shaman_Totem_Parent_obj > Player_Sentry_Parent_obj > Player_Ability_Parent_obj |
+| `Plague_Doctor_Plague_of_Rats_Den_obj` | 3519 | Shaman_Totem_Parent_obj > Player_Sentry_Parent_obj > Player_Ability_Parent_obj |
+| `Prophet_Thorned_Roots_Poison_Ivy_obj` | 3717 | Shaman_Totem_Parent_obj > Player_Sentry_Parent_obj > Player_Ability_Parent_obj |
+| `Pyromancer_Hydra_obj` | 3864 | Player_Sentry_Parent_obj > Player_Ability_Parent_obj |
+| `Shaman_Totem_Chaos_obj` | 4432 | Shaman_Totem_Parent_obj > Player_Sentry_Parent_obj > Player_Ability_Parent_obj |
+| `Shaman_Totem_Earth_obj` | 4436 | Shaman_Totem_Parent_obj > Player_Sentry_Parent_obj > Player_Ability_Parent_obj |
+| `Shaman_Totem_Fire_obj` | 4441 | Shaman_Totem_Parent_obj > Player_Sentry_Parent_obj > Player_Ability_Parent_obj |
+| `Shaman_Totem_Parent_obj` | 4443 | Player_Sentry_Parent_obj > Player_Ability_Parent_obj |
+| `Shaman_Totem_Storm_obj` | 4447 | Shaman_Totem_Parent_obj > Player_Sentry_Parent_obj > Player_Ability_Parent_obj |
+| `White_Mage_Chain_of_Holy_Light_Altar_obj` | 5733 | Shaman_Totem_Parent_obj > Player_Sentry_Parent_obj > Player_Ability_Parent_obj |
+
+**Under `Player_Ability_Parent_obj` (3536), not under the sentry parent: 149 objects**
+
+| object | index | parent chain |
+|---|---|---|
+| `Amazon_Death_From_Above_obj` | 185 | Player_Ability_Parent_obj |
+| `Amazon_Envenom_obj` | 188 | Player_Ability_Parent_obj |
+| `Amazon_Envenom_Wave_obj` | 189 | Player_Ability_Parent_obj |
+| `Amazon_Raining_Spear_Dummy_obj` | 195 | Player_Ability_Parent_obj |
+| `Amazon_Raining_Spear_obj` | 196 | Player_Ability_Parent_obj |
+| `Amazon_Spearnage_Lightning_Ball_obj` | 203 | Player_Ability_Parent_obj |
+| `Bard_Crowd_Diver_Blinking_Fiststrike_Dummy_obj` | 537 | Player_Ability_Parent_obj |
+| `Bard_Crowd_Diver_iFist_Dummy_obj` | 539 | Player_Ability_Parent_obj |
+| `Bard_Hair_Tornado_obj` | 544 | Player_Ability_Parent_obj |
+| `Bard_Moshpit_Massacre_obj` | 548 | Player_Ability_Parent_obj |
+| `Bard_Progenies_Amplifier_obj` | 551 | Player_Ability_Parent_obj |
+| `Bard_Progenies_Amplifier_Osha_obj` | 552 | Player_Ability_Parent_obj |
+| `Bard_Progenies_Amplifier_Small_obj` | 553 | Player_Ability_Parent_obj |
+| `Bard_Sacrilegious_Symphony_Loader_obj` | 563 | Player_Ability_Parent_obj |
+| `Bard_Sacrilegious_Symphony_Note_obj` | 565 | Player_Ability_Parent_obj |
+| `Bard_Slaying_Riffs_Amplifier_obj` | 567 | Player_Ability_Parent_obj |
+| `Bard_Slaying_Riffs_Satanic_Note_obj` | 570 | Player_Ability_Parent_obj |
+| `Butcher_Furious_Strike_Cinder_obj` | 716 | Player_Ability_Parent_obj |
+| `Demon_Slayer_Absolute_Mayhem_Vacuum_obj` | 1154 | Player_Ability_Parent_obj |
+| `Demon_Slayer_Demons_Calling_Meteor_obj` | 1158 | Player_Ability_Parent_obj |
+| `Demon_Slayer_Demons_Heart_obj` | 1160 | Player_Ability_Parent_obj |
+| `Demon_Slayer_Floating_Blood_obj` | 1165 | Player_Ability_Parent_obj |
+| `Demon_Slayer_Shadow_Anomaly_obj` | 1170 | Player_Ability_Parent_obj |
+| `Demon_Slayer_Trigger_Finger_Raining_obj` | 1176 | Player_Ability_Parent_obj |
+| `Demonspawn_Blood_Bolt_Demon_obj` | 1179 | Player_Ability_Parent_obj |
+| `Demonspawn_Blood_Surge_Unlimited_Power_obj` | 1188 | Player_Ability_Parent_obj |
+| `Demonspawn_Bone_Barrage_Rain_obj` | 1194 | Player_Ability_Parent_obj |
+| `Demonspawn_Bone_Storm_Controller_obj` | 1197 | Player_Ability_Parent_obj |
+| `Exo_Asteroid_obj` | 1464 | Player_Ability_Parent_obj |
+| `Exo_Solar_Flare_Grand_Flare_obj` | 1480 | Player_Ability_Parent_obj |
+| `Exo_Solar_Flare_obj` | 1481 | Player_Ability_Parent_obj |
+| `Exo_Solar_Flare_Solar_Orb_obj` | 1482 | Player_Ability_Parent_obj |
+| `Exo_Tsunami_Waterspout_Burst_obj` | 1487 | Player_Ability_Parent_obj |
+| `Exo_Tsunami_Waterspout_obj` | 1488 | Player_Ability_Parent_obj |
+| `Illusionist_Age_Proliferation_obj` | 2234 | Player_Ability_Parent_obj |
+| `Illusionist_Gravitational_Slam_AOE_obj` | 2239 | Player_Explosion_Ability_Parent_obj > Player_Ability_Parent_obj |
+| `Illusionist_Gravitational_Slam_Soul_obj` | 2241 | Player_Ability_Parent_obj |
+| `Illusionist_Sand_Guardian_obj` | 2244 | Player_Ability_Parent_obj |
+| `Illusionist_Temporal_Arrow_Rain_obj` | 2248 | Player_Ability_Parent_obj |
+| `Illusionist_Temporal_Comet_obj` | 2249 | Player_Ability_Parent_obj |
+| `Illusionist_Temporal_Raining_Arrow_obj` | 2251 | Player_Ability_Parent_obj |
+| `Jotunn_Avalanche_Neverending_Winter_obj` | 2289 | Player_Ability_Parent_obj |
+| `Jotunn_Avalanche_Nordic_Stigma_obj` | 2290 | Player_Ability_Parent_obj |
+| `Jotunn_Avalanche_Snowshade_obj` | 2293 | Player_Ability_Parent_obj |
+| `Jotunn_Blizzard_obj` | 2296 | Player_Ability_Parent_obj |
+| `Jotunn_Blizzard_Snowmageddon_obj` | 2297 | Player_Ability_Parent_obj |
+| `Marauder_Bombardment_ICBM_obj` | 2603 | Player_Ability_Parent_obj |
+| `Marauder_Bouncing_Grenade_obj` | 2606 | Player_Ability_Parent_obj |
+| `Marauder_Chain_Trap_obj` | 2608 | Player_Ability_Parent_obj |
+| `Marauder_Chain_Trap_Spin_obj` | 2609 | Player_Ability_Parent_obj |
+| `Marauder_Retiarius_Net_obj` | 2624 | Player_Ability_Parent_obj |
+| `Marauder_The_Big_Boom_obj` | 2627 | Player_Ability_Parent_obj |
+| `Marauder_Unstable_Bomb_obj` | 2628 | Player_Ability_Parent_obj |
+| `Marksman_Arrow_Rain_Kill_Command_obj` | 2634 | Player_Ability_Parent_obj |
+| `Marksman_Arrow_Rain_obj` | 2635 | Player_Ability_Parent_obj |
+| `Marksman_Arrow_Rampage_Shrapnel_obj` | 2638 | Player_Ability_Parent_obj |
+| `Marksman_Arrow_Turret_Augment_obj` | 2639 | Player_Ability_Parent_obj |
+| `Marksman_Arrow_Turret_Explosive_Arrow_Head_obj` | 2640 | Player_Ability_Parent_obj |
+| `Marksman_Beacon_obj` | 2642 | Player_Ability_Parent_obj |
+| `Marksman_Frag_Grenade_Cluster_obj` | 2649 | Player_Ability_Parent_obj |
+| `Marksman_Frag_Grenade_obj` | 2651 | Player_Ability_Parent_obj |
+| `Marksman_Homing_Missile_obj` | 2654 | Player_Ability_Parent_obj |
+| `Marksman_Landmine_Air_Raid_Bomb_obj` | 2655 | Player_Ability_Parent_obj |
+| `Marksman_Landmine_Air_Raid_obj` | 2656 | Player_Ability_Parent_obj |
+| `Marksman_Landmine_obj` | 2657 | Player_Ability_Parent_obj |
+| `Marksman_Raining_Arrow_obj` | 2658 | Player_Ability_Parent_obj |
+| `Marksman_Turret_Cannonball_obj` | 2663 | Player_Ability_Parent_obj |
+| `Necromancer_Bone_Shred_Bomb_obj` | 3036 | Player_Ability_Parent_obj |
+| `Necromancer_Bone_Spirit_obj` | 3040 | Player_Ability_Parent_obj |
+| `Necromancer_Corpse_Explosion_Aura_obj` | 3043 | Player_Ability_Parent_obj |
+| `Necromancer_Meat_Bomb_Leftovers_obj` | 3051 | Player_Ability_Parent_obj |
+| `Necromancer_Meat_Bomb_obj` | 3052 | Player_Ability_Parent_obj |
+| `Paladin_Ball_Lightning_Phantom_obj` | 3345 | Player_Ability_Parent_obj |
+| `Paladin_Fist_of_Heavens_Augment_obj` | 3349 | Player_Ability_Parent_obj |
+| `Paladin_Fist_of_Heavens_obj` | 3351 | Player_Ability_Parent_obj |
+| `Paladin_Fist_of_Heavens_Warrior_obj` | 3353 | Player_Ability_Parent_obj |
+| `Paladin_Holy_Hammer_Thors_Revenge_obj` | 3360 | Player_Ability_Parent_obj |
+| `Pirate_Barrel_Bouncing_obj` | 3439 | Player_Ability_Parent_obj |
+| `Pirate_Barrel_obj` | 3440 | Player_Ability_Parent_obj |
+| `Pirate_Bomb_Barrage_Controller_obj` | 3443 | Player_Ability_Parent_obj |
+| `Pirate_Bomb_Barrage_Rain_obj` | 3444 | Player_Ability_Parent_obj |
+| `Pirate_Bomb_Rain_obj` | 3445 | Player_Ability_Parent_obj |
+| `Pirate_Exploding_Shot_obj` | 3451 | Player_Ability_Parent_obj |
+| `Pirate_Grenado_obj` | 3455 | Player_Ability_Parent_obj |
+| `Pirate_Land_Ahoy_obj` | 3457 | Player_Ability_Parent_obj |
+| `Pirate_Powder_Trail_obj` | 3462 | Player_Ability_Parent_obj |
+| `Pirate_Torrent_obj` | 3493 | Player_Ability_Parent_obj |
+| `Plague_Doctor_Jar_Leech_obj` | 3505 | Player_Ability_Parent_obj |
+| `Plague_Doctor_Miasma_Meteor_Fireball_obj` | 3509 | Player_Ability_Parent_obj |
+| `Plague_Doctor_Miasma_Meteor_obj` | 3510 | Player_Ability_Parent_obj |
+| `Plague_Doctor_Randy_Dummy_obj` | 3522 | Player_Ability_Parent_obj |
+| `Plague_Doctor_Toxic_Flask_obj` | 3530 | Player_Ability_Parent_obj |
+| `Prophet_Maelstrom_Meteor_obj` | 3696 | Player_Ability_Parent_obj |
+| `Prophet_Maelstrom_Storm_obj` | 3698 | Player_Ability_Parent_obj |
+| `Prophet_Spirit_Ent_Domino_Trunk_obj` | 3706 | Player_Ability_Parent_obj |
+| `Prophet_Thorned_Branch_Falling_Branch_obj` | 3714 | Player_Ability_Parent_obj |
+| `Prophet_Thorned_Branch_Growth_obj` | 3715 | Player_Ability_Parent_obj |
+| `Prophet_Worm_obj` | 3721 | Player_Ability_Parent_obj |
+| `Pyromancer_Armageddon_obj` | 3843 | Player_Ability_Parent_obj |
+| `Pyromancer_Blazing_Detonation_Field_obj` | 3846 | Player_Ability_Parent_obj |
+| `Pyromancer_Breath_Molten_Orb_obj` | 3850 | Player_Ability_Parent_obj |
+| `Pyromancer_Comet_Hydra_obj` | 3853 | Player_Ability_Parent_obj |
+| `Pyromancer_Comet_obj` | 3854 | Player_Ability_Parent_obj |
+| `Pyromancer_Fire_Ball_Fly_obj` | 3856 | Player_Ability_Parent_obj |
+| `Pyromancer_Fire_Ball_obj` | 3857 | Player_Ability_Parent_obj |
+| `Pyromancer_Hydra_Fire_Ball_obj` | 3863 | Player_Ability_Parent_obj |
+| `Pyromancer_Living_Bomb_obj` | 3865 | Player_Ability_Parent_obj |
+| `Pyromancer_Phoenix_Flight_Seed_obj` | 3868 | Player_Ability_Parent_obj |
+| `Pyromancer_Scorching_Harvester_obj` | 3871 | Player_Ability_Parent_obj |
+| `Pyromancer_Trail_of_Comets_obj` | 3874 | Player_Ability_Parent_obj |
+| `Pyromancer_Volcano_Fragment_obj` | 3875 | Player_Ability_Parent_obj |
+| `Redneck_Molotov_obj` | 4031 | Player_Ability_Parent_obj |
+| `Redneck_Molotov_Spill_obj` | 4032 | Player_Ability_Parent_obj |
+| `Redneck_Oil_Fly_Big_obj` | 4033 | Player_Ability_Parent_obj |
+| `Redneck_Oil_Fly_obj` | 4034 | Player_Ability_Parent_obj |
+| `Redneck_Oil_Ground_Big_obj` | 4035 | Player_Ability_Parent_obj |
+| `Redneck_Oil_Ground_obj` | 4036 | Player_Ability_Parent_obj |
+| `Redneck_Pipe_Bomb_obj` | 4040 | Player_Ability_Parent_obj |
+| `Redneck_Plane_Bomb_obj` | 4041 | Player_Ability_Parent_obj |
+| `Redneck_Tree_Trunk_Triumph_obj` | 4048 | Player_Ability_Parent_obj |
+| `Samurai_Battle_Glance_Blood_Harvest_obj` | 4220 | Player_Ability_Parent_obj |
+| `Samurai_Battle_Glance_Shadow_obj` | 4222 | Player_Ability_Parent_obj |
+| `Samurai_Exploding_Bolas_Cluster_Duck_obj` | 4229 | Player_Ability_Parent_obj |
+| `Samurai_Explosive_Bola_Attach_obj` | 4230 | Player_Ability_Parent_obj |
+| `Samurai_Omnislash_Shadow_Meteor_obj` | 4238 | Player_Ability_Parent_obj |
+| `Samurai_Shadow_Step_Clone_obj` | 4240 | Player_Ability_Parent_obj |
+| `Samurai_Shadow_Step_Daggerstorm_obj` | 4241 | Player_Ability_Parent_obj |
+| `Samurai_Shuriken_Creator_obj` | 4244 | Player_Ability_Parent_obj |
+| `Samurai_Smoke_Bomb_Projectile_obj` | 4248 | Player_Ability_Parent_obj |
+| `Shaman_Rock_Fragments_obj` | 4425 | Player_Ability_Parent_obj |
+| `Shaman_Totem_Chaos_Meteor_obj` | 4430 | Player_Ability_Parent_obj |
+| `Shaman_Totem_Earth_Projectile_obj` | 4437 | Player_Ability_Parent_obj |
+| `Shield_Lancer_Commending_Banner_obj` | 4473 | Player_Ability_Parent_obj |
+| `Shield_Lancer_Crushing_Lance_obj` | 4477 | Player_Ability_Parent_obj |
+| `Shield_Lancer_Honed_Defenses_Sky_Bulwark_obj` | 4482 | Player_Ability_Parent_obj |
+| `Shield_Lancer_Shield_Wall_Vortex_obj` | 4491 | Player_Ability_Parent_obj |
+| `Stormweaver_Storm_Bolt_Magnetize_obj` | 4724 | Player_Ability_Parent_obj |
+| `Viking_Charge_Mountain_Fall_obj` | 5616 | Player_Ability_Parent_obj |
+| `Viking_Meteorology_obj` | 5625 | Player_Ability_Parent_obj |
+| `Viking_Monster_Throw_obj` | 5626 | Player_Explosion_Ability_Parent_obj > Player_Ability_Parent_obj |
+| `Viking_Younger_Dryas_Comet_obj` | 5640 | Player_Ability_Parent_obj |
+| `White_Mage_Chain_of_Holy_Light_Grasp_obj` | 5735 | Player_Ability_Parent_obj |
+| `White_Mage_Healing_Zone_obj` | 5738 | Player_Ability_Parent_obj |
+| `White_Mage_Heavenly_Fire_Orb_obj` | 5742 | Player_Ability_Parent_obj |
+| `White_Mage_Malediction_Crow_obj` | 5743 | Player_Ability_Parent_obj |
+| `White_Mage_Mana_Orb_obj` | 5745 | Player_Ability_Parent_obj |
+| `White_Mage_Restless_Spirits_Master_obj` | 5749 | Player_Ability_Parent_obj |
+| `White_Mage_Satans_Mark_Soul_Combustion_obj` | 5753 | Player_Ability_Parent_obj |
+| `White_Mage_Soul_Spurn_obj` | 5761 | Player_Ability_Parent_obj |
+
+Notable entries, called out because the live procedure below turns on them:
+
+- **`White_Mage_Healing_Zone_obj` = 5738**, directly under the ability
+  parent - the owner-named outlier, and the ability parent's representative.
+- **Crematus has three objects in three groups**: the controller
+  `Plague_Doctor_Crematus_Controller_obj` = 3502 (what the toggle table
+  ships), the container `Plague_Doctor_Crematus_Container_obj` = 3501 (under
+  the totem parent), and the damage-parent `Plague_Doctor_Crematus_obj` =
+  3503 (not listed above; the seed object whose `destroyTimer` read `432`).
+  Only a measurement decides which, if any, spans the cast.
+- **Controller + effect pairs**: Jotunn's Blizzard
+  (`Jotunn_Blizzard_Controller_obj` 2295 + `Jotunn_Blizzard_obj` 2296, both
+  non-damage) and Shaman's Meteor Storm (`Shaman_Meteor_Storm_Controller_obj`
+  4422 + the damage-parent `Shaman_Meteor_Storm_obj` 4423) - the two shapes a
+  controller-backed skill takes.
+- **Maelstrom of Frost has objects on both sides**: the measured carrier
+  `Prophet_Maelstrom_obj` 3697 is a damage-parent child, while
+  `Prophet_Maelstrom_Meteor_obj` 3696 and `Prophet_Maelstrom_Storm_obj` 3698
+  are ability-parent children - so the control also shows the sweep keeps
+  sibling objects apart by `object_index`.
+- **Samurai's Blade Barrier** (`Samurai_Blade_Barrier_obj` = 4225,
+  `Orbit_Parent_obj` > damage parent, not listed) is the one candidate with a
+  known non-zero `abilityDuration` (6, `predictedTotal=864` in an earlier
+  `tgprobe talents` dump), so its `first=` can be compared against a
+  prediction.
+
+Labelled negatives - what the static search cannot answer, recorded so a
+later reader does not re-run it:
+
+- **abilityIds are not in the SDK.** Which talent a sweep object belongs to
+  is known only live (`global.talentStructMap`, through `tgprobe talents`) or
+  from the game's own `translationsTalent.csv` keys on the owner's machine
+  (721 `talent_name_*`, `healingZone` among them) - not in this repository.
+  The object-to-skill attribution therefore comes from the live procedure's
+  `sweep clear` before each cast, not from any name match.
+- **`abilityDuration` is a floor, not the set.** Soul Spurn, Lunar Orbit and
+  Crematus read `abilityDuration=0` while their objects measurably have a
+  lifetime, so `tgprobe talents dur` (every talent with a positive
+  `abilityDuration`) names skills to cast but cannot rule one out.
+- **Buff-carried durations have no cast object here.** A skill whose
+  duration lives on a player buff (Counter's buff 104, Berserk and the like)
+  shows up in `talents dur` with no sweep object; it is recorded
+  `buff-carried, not a cast object`, never read through the buff array in
+  this round.
+
+#### Instrument
+
+Research build only (`plugin_build\build.bat dev`, inside the `tgprobe`
+block; nothing below reaches `BloodPactPlugin_ship.dll`). Three additions:
+
+- **`tgprobe sweep on|off|clear|show [seen|all]`** - a parent-descendant
+  sweep. GameMaker's `instance_number`/`instance_find` on a parent enumerate
+  every descendant's instances (the same property `tgprobe abilities`
+  already relies on), so six root scans see every candidate above without a
+  compiled seed table. On every `DrawHudBuffs` draw, while `on`, the sampler
+  resolves each root by name (`asset_get_index` of the SDK constant's name:
+  `Player_Damage_Parent_obj`, `Skill_Controller_obj`,
+  `Player_Buff_Parent_obj`, `Player_Curse_Parent_obj`,
+  `Player_Sentry_Parent_obj`, `Player_Ability_Parent_obj`), scans up to 256
+  instances per root, and reads per instance its `object_index` (accepted
+  through the VALUE_REF-aware index predicate), `isMyClient` (kind-checked)
+  and `destroyTimer`. It keeps one record per `object_index`:
+  - `app` - appearances, counted on the rising edge (a draw with at least one
+    instance after a draw with none);
+  - `draws`, `first`, `last`, `min`, `max`, `timerUnreadable` - for the
+    CURRENT appearance, restarted on each rising edge. The draw's value is
+    the largest numeric `destroyTimer` among that object's instances not
+    measured foreign (the shipped countdown's own rule); `first` is the first
+    READABLE value of the appearance and prints `unreadable` when the
+    appearance never produced one; a draw with instances but no numeric
+    reading counts `timerUnreadable` and changes nothing else - never a
+    default value;
+  - `maxInst` - the most instances seen on one draw, taken per root rather
+    than summed, since the sentry parent's children are the ability parent's
+    children too;
+  - `own=readable|unreadable|mixed|n/a` - from each draw's `isMyClient`
+    reads: every instance kind-checked (`readable`), none (`unreadable`), or
+    both on one draw or across draws (`mixed`);
+  - `firstFrame`/`lastFrame`, `totalDraws`, `root` (the first root that saw
+    it), `present`.
+
+  `show` prints a header (`draws=`, `roots=<resolved>/6`, `unresolved=`,
+  `capped=` - draws on which a root held more than 256 instances -,
+  `records=`, `dropped=` past the 1024-record cap, `indexUnreadable=`) and
+  one line per record, sorted by `firstFrame`, naming the object twice: the
+  SDK name for that index and the runtime's `object_get_name`, with
+  `NAME-MISMATCH` when they differ (that would mean the SDK table is stale).
+  `show all` adds one line per root with its resolved index and last
+  instance count. `clear` drops every record. `off` by default, and while
+  off the sampler returns before any builtin call.
+- **`tgprobe talents dur`** - every talent whose `abilityDuration` reads
+  numeric and positive, not capped at the usual 40 lines (a 400-line cap,
+  reported as `durTruncated=` on the summary line). Before this build `dur`
+  was an ordinary abilityId substring filter.
+- **`tgl` row cap** - `tgprobe tgl add` now holds up to 64 rows
+  (`kTgTglRowCap`), so every candidate found mid-session can be added by
+  name for `tgl timer`/`tgl fields`; the `tgl sub` array walk keeps its own
+  16-index bound (`kTgTglCap`), which mirrors the shipped guard's scan cap.
+
+The harness (`tests/test_toggle_skill_behavior.py`, `sweep/` scenarios) runs
+the sampler and its record update against a controlled runtime: off makes no
+call, the rising edge counts appearances, `first` is the first readable
+value of an appearance, an unreadable timer never becomes a number, the
+largest reading of a draw wins, and ownership readability is counted per
+draw.
+
+#### Live procedure
+
+In town, research DLL installed, commands sent from the panel or
+`bp_ipc\cmd.txt`. The sweep stays broad - it records whatever appears under
+the six roots - but the casts are curated: the owner has every class and
+asked for representatives and outliers, not every skill. **Cast list, in this
+order (11 casts, 8 classes); Maelstrom of Frost is the positive control and
+is cast FIRST:**
+
+| # | class | skill | candidate object(s) (SDK name = index; root) | why it is on the list |
+|---|---|---|---|---|
+| 1 | Prophet | Maelstrom of Frost (plain, `s11` not allocated) | `Prophet_Maelstrom_obj` = 3697 (damage) | positive control, measured `first=4320` twice already (sessions 6/7); cast first |
+| 2 | White Mage | Healing Zone | `White_Mage_Healing_Zone_obj` = 5738 (ability) | owner-named outlier; ability-parent representative; session 1 saw its cast raise the ability census |
+| 3 | Jotunn | Blizzard | `Jotunn_Blizzard_obj` = 2296 (ability) + `Jotunn_Blizzard_Controller_obj` = 2295 (controller) | ability + controller pair: which of the two carries the spanning timer |
+| 4 | Marksman | Arrow Rain | `Marksman_Arrow_Rain_obj` = 2635 (ability) | ability-parent skill with no controller sibling |
+| 5 | Marksman | Arrow Turret | `Marksman_Arrow_Turret_obj` = 2641 (sentry) | `Player_Sentry_Parent_obj` representative (same class as 4: one hotbar) |
+| 6 | Plague Doctor | Crematus (plain, `s13` not allocated) | `Plague_Doctor_Crematus_Controller_obj` = 3502 (controller) vs `Plague_Doctor_Crematus_obj` = 3503 (damage) | outlier: the toggle table ships the controller, the timer was measured only on the damage object (`432`); decides the open ship finding |
+| 7 | Shaman | Meteor Storm | `Shaman_Meteor_Storm_Controller_obj` = 4422 (controller) + `Shaman_Meteor_Storm_obj` = 4423 (damage) | controller + damage-parent pair (the other pairing shape, against 3) |
+| 8 | Shaman | Fire Totem | `Shaman_Totem_Fire_obj` = 4441 (`Shaman_Totem_Parent_obj` > sentry) | totem representative (same class as 7) |
+| 9 | Viking | Defensive Shout | `Viking_Defensive_Shout_obj` = 5620 (`Player_Buff_Parent_obj`) | instance-backed buff representative |
+| 10 | Viking | Berserk | none by substring (no SDK object) | outlier for the `buff-carried, not a cast object` status: a duration `talents dur` names with no sweep object (same class as 9) |
+| 11 | Samurai | Blade Barrier | `Samurai_Blade_Barrier_obj` = 4225 (`Orbit_Parent_obj` > damage) | damage-parent representative with a known `abilityDuration=6` (`predictedTotal=864`), so `first=` can be compared against it |
+
+Every other skill stays `not observed (not cast)`; the table is additive
+across later sessions. Steps:
+
+1. `tgprobe talents dur` - paste every line (the coverage floor for the
+   Results table).
+2. `tgprobe tgl on`, `tgprobe sweep on`, `tgprobe sweep clear`.
+3. Positive control first (cast list #1): as the Prophet, a plain Maelstrom
+   of Frost; wait 30 s; `tgprobe sweep show`, then `tgprobe tgl timer` -
+   paste both. The sweep's `Prophet_Maelstrom_obj` line and the `tgl` row
+   `maelstromOfFrost` must both read `first=4320.000000`. The two
+   instruments reach the same instance by different routes (the `tgl` row
+   by the object itself, the sweep through its damage-parent scan), so the
+   agreement proves the sweep's enumeration, its object-index read and its
+   timer read at once. **Until that agreement is on record every other
+   sweep line is `blocked`, not a negative.**
+4. For cast list #2 to #11, in order: `tgprobe sweep clear`; cast once; wait
+   until the effect has visibly ended; `tgprobe sweep show` - paste (every
+   line shown is attributed to this cast, which is why `clear` comes first);
+   cast again; wait; `tgprobe sweep show` - paste (`app=2`, with a second
+   `first=`). For a skill with a toggle sub-talent, measure the plain form
+   (sub-talent not allocated). A cast whose `show` prints no record line is
+   pasted too - that is #10's expected shape.
+5. `tgprobe talents <abilityId>` for each skill cast, to record its
+   `abilityId` and `abilityDuration` beside the object.
+
+What a zero may and may not mean: a candidate object with `app=0` after its
+skill was cast is `not observed` - the cast may have created an object under
+no scanned root, or one hidden behind a root's 256-instance cap (`capped=`
+says whether that happened) - never "carries no destroyTimer". A candidate
+never cast is `not observed` with reason `not cast`.
+
+#### Results
+
+Filled from session 8's own output, pasted verbatim, and nothing else. A row
+is marked `ship` only when: (a) the object appeared in exactly one skill's
+clear-cast-show window; (b) `app >= 2` with the two `first=` values within
+1.0 of each other; (c) `first > 0`; (d) on at least one appearance `draws`
+is within 15 % of `first` (the timer spans the instance's life, so it is the
+cast's duration rather than, say, a projectile's own lifetime - Submerged
+Knives' object once read `first=32.4` against `draws=140`); (e) `own=readable`
+(ships with `isMyClient`) or `own=unreadable` (ships with no ownership field;
+every instance is the player's own offline) - `mixed` is not shipped this
+round; (f) the object is not under `Player_Sentry_Parent_obj` (turrets,
+totems, hydra, `Shaman_Totem_Parent_obj` included - owner decision
+2026-09-21: a companion skill can have several instances at once and would
+need one indicator each). Rule (b) is also met by one uncleared record with
+`app >= 2` whose first-appearance and current-appearance `first=` agree
+within 1.0, plus any cleared run (Blade Barrier's evidence below). Otherwise
+the status is `not observed` (with its reason), `blocked` (the positive
+control has not fired), `buff-carried, not a cast object` (`talents dur`
+names it, no sweep object appeared, and the duration is visibly a
+self-buff), `measured, excluded (companion, multi-instance - owner)` (rule
+(f)) or `not a timer (-1 constant)` (the object read `destroyTimer=-1` on
+every draw of its life).
+
+Session 8 ran on 2026-09-21, owner at the keyboard, research DLL
+`BloodPactPlugin_rel.dll` (sha256 `bea8cc00…ec64`) installed. Every sweep
+line below is quoted from `tgprobe sweep show`; each window was opened by
+`tgprobe sweep clear` except where the table says "uncleared".
+
+Session-level lines, filled before the table:
+
+- positive control (`tgprobe sweep show` line for `Prophet_Maelstrom_obj`,
+  reached through the damage-parent root):
+  `Prophet_Maelstrom_obj idx=3697 runtime=Prophet_Maelstrom_obj root=Player_Damage_Parent_obj app=1 present=0 draws=4322 first=4320.000000 last=-0.154800 min=-0.154800 max=4320.000000 timerUnreadable=0 maxInst=1 own=readable firstFrame=27044 lastFrame=31365 totalDraws=4322`
+- positive control (`tgprobe tgl timer` row `maelstromOfFrost`, which reads
+  `Prophet_Maelstrom_obj` by the object itself):
+  `tgprobe tgl timer [5] maelstromOfFrost field=destroyTimer predicted=-1.000000 appearance=1 first=4320.000000 last=-0.154800 min=-0.154800 max=4320.000000 unreadable=0 atPredicted=0 draws=4322`.
+  The two instruments agree, so the control PASSED - for the
+  damage-parent root's enumeration, object-index read and timer read. It
+  says nothing about the other five roots; each of those is controlled only
+  by its own first readable timer, listed next.
+- per-root controls: `roots=6/6 unresolved=none capped=none` on every
+  `show`. Damage root: Maelstrom above. Ability root: Healing Zone
+  (`first=1152.000000`, below). Sentry root: Arrow Turret
+  (`first=1152.000000`, below). Controller, buff and curse roots: **no
+  positive control** - every record they produced read `timerUnreadable` on
+  every draw (three controllers, `Aura_Mask_obj`, `Viking_Defensive_Shout_obj`)
+  or nothing appeared, so a negative under those roots is `not observed`,
+  never "carries no timer".
+- `skilltimer stat` after the control, before any other cast (the build
+  still sourced countdown rows from the toggle table):
+  `skilltimer stat: style=number drawn=4320 noInstance=162318 unreadable=0 expired=2 toggleOn=0 toggleUnreadable=0 unresolved=0 noSlot=0 latched=1 unlatched=1 drawExc=0 fontUnresolved=0 (summed over 5 rows)`;
+  at session end: `skilltimer stat: style=bar drawn=4320 noInstance=1438435 unreadable=178 expired=2 toggleOn=0 toggleUnreadable=0 unresolved=0 noSlot=0 latched=1 unlatched=1 drawExc=0 fontUnresolved=0 (summed over 5 rows)`
+  (the 178 unreadable draws are the Crematus controller's, on the old
+  toggle-table row).
+- `tgprobe talents dur` output (the coverage floor; 146 talents with a
+  positive `abilityDuration`, `durTruncated=0`), verbatim:
+
+```
+tgprobe talents: speed=144.000000 fps=144.000000
+  talent 137 abilityId=bladeBarrier abilityAura=false abilityDuration=6 abilityCooldown=8 abilityLength=320 abilityTags=[15,18,2,0] predictedTotal=864.000000
+  talent 135 abilityId=explosiveKunai abilityAura=false abilityDuration=2 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,4,1,18] predictedTotal=288.000000
+  talent 277 abilityId=boosterShot abilityAura=false abilityDuration=8 abilityCooldown=0.250000 abilityLength=320 abilityTags=[12] predictedTotal=1152.000000
+  talent 147 abilityId=thunderShield abilityAura=false abilityDuration=30 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,12] predictedTotal=4320.000000
+  talent 317 abilityId=ageProliferation abilityAura=false abilityDuration=2.500000 abilityCooldown=0.250000 abilityLength=256 abilityTags=[15,18,3] predictedTotal=360.000000
+  talent 329 abilityId=orbOfFrost abilityAura=false abilityDuration=1.850000 abilityCooldown=1.750000 abilityLength=320 abilityTags=[15,18,4] predictedTotal=266.400000
+  talent 555 abilityId=warriorsPath abilityAura=false abilityDuration=10 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14] predictedTotal=1440.000000
+  talent 45 abilityId=agility abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 635 abilityId=bloodOfSpartan abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 53 abilityId=rocketTurret abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=240 abilityTags=[15,18,10,1] predictedTotal=720.000000
+  talent 199 abilityId=demonForm abilityAura=false abilityDuration=25 abilityCooldown=40 abilityLength=320 abilityTags=[15,25] predictedTotal=3600.000000
+  talent 221 abilityId=earthBind abilityAura=false abilityDuration=5 abilityCooldown=2 abilityLength=200 abilityTags=[15,18,3] predictedTotal=720.000000
+  talent 536 abilityId=soulBurn abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14] predictedTotal=720.000000
+  talent 645 abilityId=powerOfVoid abilityAura=false abilityDuration=15 abilityCooldown=40 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 298 abilityId=glory abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 322 abilityId=dimensionalDisplacement abilityAura=false abilityDuration=2 abilityCooldown=0.250000 abilityLength=240 abilityTags=[15,6,7] predictedTotal=288.000000
+  talent 350 abilityId=solarForm abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12,3,25] predictedTotal=3600.000000
+  talent 105 abilityId=revvedUp abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 386 abilityId=staticShock abilityAura=false abilityDuration=5 abilityCooldown=3 abilityLength=320 abilityTags=[15,18] predictedTotal=720.000000
+  talent 654 abilityId=coffeeMug abilityAura=false abilityDuration=12 abilityCooldown=20 abilityLength=320 abilityTags=[14] predictedTotal=1728.000000
+  talent 742 abilityId=relicManaDice abilityAura=false abilityDuration=4 abilityCooldown=20 abilityLength=320 abilityTags=[14,19] predictedTotal=576.000000
+  talent 100 abilityId=pickupRaid abilityAura=false abilityDuration=4 abilityCooldown=8 abilityLength=380 abilityTags=[15,18] predictedTotal=576.000000
+  talent 115 abilityId=cursedGround abilityAura=false abilityDuration=5 abilityCooldown=5 abilityLength=240 abilityTags=[15,18,3] predictedTotal=720.000000
+  talent 11 abilityId=charge abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,6,3,18,22] predictedTotal=720.000000
+  talent 158 abilityId=holyHammer abilityAura=false abilityDuration=4.500000 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,18,2] predictedTotal=648.000000
+  talent 170 abilityId=jungleCamouflage abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 359 abilityId=bloodMoon abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 379 abilityId=blender abilityAura=false abilityDuration=5 abilityCooldown=8 abilityLength=320 abilityTags=[15,16,2,0] predictedTotal=720.000000
+  talent 403 abilityId=satansMelody abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 636 abilityId=bottleOfRadogate abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 2009 abilityId=berserkersRage abilityAura=false abilityDuration=4 abilityCooldown=0.250000 abilityLength=320 abilityTags=[] predictedTotal=576.000000
+  talent 280 abilityId=defunctSurgeon abilityAura=false abilityDuration=25 abilityCooldown=65 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 649 abilityId=radBull abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 561 abilityId=shadeOfSobek abilityAura=false abilityDuration=8 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14,9] predictedTotal=1152.000000
+  talent 388 abilityId=symphonyOfThunder abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 642 abilityId=ghostlyPotion abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 143 abilityId=shadowStep abilityAura=false abilityDuration=2 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,18,6,7,3,0] predictedTotal=288.000000
+  talent 651 abilityId=surstromming abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 301 abilityId=counter abilityAura=false abilityDuration=6 abilityCooldown=15 abilityLength=320 abilityTags=[15,18,23,4] predictedTotal=864.000000
+  talent 305 abilityId=shieldWall abilityAura=false abilityDuration=25 abilityCooldown=5 abilityLength=320 abilityTags=[15,18,23,2] predictedTotal=3600.000000
+  talent 47 abilityId=arrowTurret abilityAura=false abilityDuration=8 abilityCooldown=0.250000 abilityLength=240 abilityTags=[15,18,10] predictedTotal=1152.000000
+  talent 325 abilityId=temporalHeroes abilityAura=false abilityDuration=25 abilityCooldown=40 abilityLength=96 abilityTags=[15,18,9] predictedTotal=3600.000000
+  talent 611 abilityId=sanguineLeech abilityAura=false abilityDuration=10 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14,9,18] predictedTotal=1440.000000
+  talent 181 abilityId=astropesBattleMaiden abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 369 abilityId=awakeningFury abilityAura=false abilityDuration=4 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14] predictedTotal=576.000000
+  talent 2023 abilityId=lethalTempo abilityAura=false abilityDuration=2 abilityCooldown=0.250000 abilityLength=320 abilityTags=[] predictedTotal=288.000000
+  talent 55 abilityId=gunnerDrone abilityAura=false abilityDuration=10 abilityCooldown=5 abilityLength=240 abilityTags=[15,18,10,5] predictedTotal=1440.000000
+  talent 640 abilityId=elixirOfUnworldlyCognition abilityAura=false abilityDuration=20 abilityCooldown=45 abilityLength=320 abilityTags=[14] predictedTotal=2880.000000
+  talent 50 abilityId=cannonTurret abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=240 abilityTags=[15,18,10,1] predictedTotal=720.000000
+  talent 64 abilityId=rapidFire abilityAura=false abilityDuration=25 abilityCooldown=60 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 90 abilityId=phantomBlade abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=280 abilityTags=[15,18,10,0] predictedTotal=720.000000
+  talent 422 abilityId=spiritOfForest abilityAura=false abilityDuration=120 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,18,9,24] predictedTotal=17280.000000
+  talent 7 abilityId=odinsFury abilityAura=false abilityDuration=2 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,3,18] predictedTotal=288.000000
+  talent 466 abilityId=mercenaryRangedBurstofAgility abilityAura=false abilityDuration=8 abilityCooldown=12 abilityLength=320 abilityTags=[] predictedTotal=1152.000000
+  talent 638 abilityId=caffeinatedCoffeeContainer abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 119 abilityId=amplifyDamage abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=240 abilityTags=[15,18] predictedTotal=720.000000
+  talent 140 abilityId=explodingBolas abilityAura=false abilityDuration=3 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,16,4,1,0] predictedTotal=432.000000
+  talent 647 abilityId=prismaticPotion abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 152 abilityId=ballLightning abilityAura=false abilityDuration=3 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,18,6,3,26] predictedTotal=432.000000
+  talent 299 abilityId=shieldSlam abilityAura=false abilityDuration=2 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,16,23,0] predictedTotal=288.000000
+  talent 311 abilityId=linkOfSand abilityAura=false abilityDuration=8 abilityCooldown=0.250000 abilityLength=280 abilityTags=[15,18,26] predictedTotal=1152.000000
+  talent 375 abilityId=butchersHook abilityAura=false abilityDuration=5 abilityCooldown=6.750000 abilityLength=320 abilityTags=[15,18,2] predictedTotal=720.000000
+  talent 204 abilityId=boneStorm abilityAura=false abilityDuration=8 abilityCooldown=6 abilityLength=320 abilityTags=[15,18,2] predictedTotal=1152.000000
+  talent 387 abilityId=stormCloud abilityAura=false abilityDuration=8 abilityCooldown=3 abilityLength=400 abilityTags=[15,18,3] predictedTotal=1152.000000
+  talent 652 abilityId=witchesPotion abilityAura=false abilityDuration=10 abilityCooldown=30 abilityLength=320 abilityTags=[14] predictedTotal=1440.000000
+  talent 732 abilityId=relicLargeBeer abilityAura=false abilityDuration=5 abilityCooldown=13 abilityLength=320 abilityTags=[15,18,19] predictedTotal=720.000000
+  talent 236 abilityId=satansMark abilityAura=false abilityDuration=5 abilityCooldown=3 abilityLength=280 abilityTags=[15,18,1] predictedTotal=720.000000
+  talent 26 abilityId=searingChains abilityAura=false abilityDuration=1 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,16,24,0] predictedTotal=144.000000
+  talent 36 abilityId=volcano abilityAura=false abilityDuration=4 abilityCooldown=4 abilityLength=380 abilityTags=[15,18,1] predictedTotal=576.000000
+  talent 643 abilityId=goldInlaidMysteriousPotion abilityAura=false abilityDuration=15 abilityCooldown=45 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 33 abilityId=hydra abilityAura=false abilityDuration=8 abilityCooldown=0.250000 abilityLength=240 abilityTags=[15,18,10,4,1] predictedTotal=1152.000000
+  talent 163 abilityId=theVeneratedOne abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 361 abilityId=blackHole abilityAura=false abilityDuration=4.500000 abilityCooldown=6 abilityLength=320 abilityTags=[15,18,3] predictedTotal=648.000000
+  talent 373 abilityId=fuelToFire abilityAura=false abilityDuration=12 abilityCooldown=50 abilityLength=330 abilityTags=[15,12] predictedTotal=1728.000000
+  talent 688 abilityId=relicLightCola abilityAura=false abilityDuration=10 abilityCooldown=25 abilityLength=320 abilityTags=[15,18,19] predictedTotal=1440.000000
+  talent 52 abilityId=landMine abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=240 abilityTags=[15,18,1] predictedTotal=720.000000
+  talent 413 abilityId=cravingForAnotherKilling abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 648 abilityId=proteinShake abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 227 abilityId=earthTotem abilityAura=false abilityDuration=15 abilityCooldown=0.250000 abilityLength=380 abilityTags=[15,18,10,1] predictedTotal=2160.000000
+  talent 520 abilityId=spiderlings abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=2000 abilityTags=[14] predictedTotal=720.000000
+  talent 249 abilityId=divineHealing abilityAura=false abilityDuration=3 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14] predictedTotal=432.000000
+  talent 600 abilityId=scarletSacrifice abilityAura=false abilityDuration=8 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14,18,9] predictedTotal=1152.000000
+  talent 661 abilityId=relicBookOfBelial abilityAura=false abilityDuration=5 abilityCooldown=25 abilityLength=320 abilityTags=[15,12,19] predictedTotal=720.000000
+  talent 81 abilityId=dissipatingTornado abilityAura=false abilityDuration=3 abilityCooldown=12 abilityLength=600 abilityTags=[15,18] predictedTotal=432.000000
+  talent 637 abilityId=bottleOfSake abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 108 abilityId=rogueChainsaw abilityAura=false abilityDuration=2.500000 abilityCooldown=0.250000 abilityLength=340 abilityTags=[15,18] predictedTotal=360.000000
+  talent 406 abilityId=progeniesOfTheGreatCataclysm abilityAura=false abilityDuration=20 abilityCooldown=40 abilityLength=320 abilityTags=[15,18,3] predictedTotal=2880.000000
+  talent 97 abilityId=hillbillyRage abilityAura=false abilityDuration=35 abilityCooldown=60 abilityLength=320 abilityTags=[15,12] predictedTotal=5040.000000
+  talent 550 abilityId=rimskinAssassin abilityAura=false abilityDuration=3 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14] predictedTotal=432.000000
+  talent 124 abilityId=summonFrenzy abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 590 abilityId=arcaneWrath abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14,12] predictedTotal=720.000000
+  talent 10 abilityId=seismicSlam abilityAura=false abilityDuration=2 abilityCooldown=0.250000 abilityLength=0 abilityTags=[15,3,16,0] predictedTotal=288.000000
+  talent 142 abilityId=forHonor abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 655 abilityId=corrosionDarkness abilityAura=false abilityDuration=10 abilityCooldown=30 abilityLength=320 abilityTags=[14] predictedTotal=1440.000000
+  talent 154 abilityId=thorsFury abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 307 abilityId=lastStand abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 735 abilityId=relicEsEnergy abilityAura=false abilityDuration=5 abilityCooldown=13 abilityLength=320 abilityTags=[15,18,19] predictedTotal=720.000000
+  talent 186 abilityId=shredderTrap abilityAura=false abilityDuration=4 abilityCooldown=1 abilityLength=240 abilityTags=[15,17,4] predictedTotal=576.000000
+  talent 367 abilityId=endingFate abilityAura=false abilityDuration=6 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14,1] predictedTotal=864.000000
+  talent 371 abilityId=chainRip abilityAura=false abilityDuration=2 abilityCooldown=1.250000 abilityLength=320 abilityTags=[15,16,0] predictedTotal=288.000000
+  talent 14 abilityId=ymirsChampion abilityAura=false abilityDuration=2 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,16,0] predictedTotal=288.000000
+  talent 644 abilityId=maggotEyeElixir abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 218 abilityId=tectonicBoulder abilityAura=false abilityDuration=2 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,18,4] predictedTotal=288.000000
+  talent 724 abilityId=relicRazerHeadSet abilityAura=false abilityDuration=5 abilityCooldown=9 abilityLength=320 abilityTags=[15,18,19] predictedTotal=720.000000
+  talent 572 abilityId=radiantPower abilityAura=false abilityDuration=15 abilityCooldown=30 abilityLength=320 abilityTags=[15,12] predictedTotal=2160.000000
+  talent 713 abilityId=relicDevilHorn abilityAura=false abilityDuration=5 abilityCooldown=25 abilityLength=320 abilityTags=[15,12,19] predictedTotal=720.000000
+  talent 336 abilityId=flashFreeze abilityAura=false abilityDuration=2 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,16,5,0] predictedTotal=288.000000
+  talent 376 abilityId=chainSwing abilityAura=false abilityDuration=2.500000 abilityCooldown=1 abilityLength=320 abilityTags=[15,18,6,0] predictedTotal=360.000000
+  talent 313 abilityId=spiritLink abilityAura=false abilityDuration=8 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14] predictedTotal=1152.000000
+  talent 2028 abilityId=wizardsWrath abilityAura=false abilityDuration=3 abilityCooldown=0.250000 abilityLength=320 abilityTags=[] predictedTotal=432.000000
+  talent 547 abilityId=zooooooom abilityAura=false abilityDuration=8 abilityCooldown=20 abilityLength=320 abilityTags=[15,12] predictedTotal=1152.000000
+  talent 357 abilityId=lunarForm abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12,25] predictedTotal=3600.000000
+  talent 377 abilityId=submergedKnives abilityAura=false abilityDuration=2.500000 abilityCooldown=1.500000 abilityLength=320 abilityTags=[15,16,3,0] predictedTotal=360.000000
+  talent 54 abilityId=masterMechanic abilityAura=false abilityDuration=25 abilityCooldown=40 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 656 abilityId=amunRasDemise abilityAura=false abilityDuration=10 abilityCooldown=30 abilityLength=320 abilityTags=[14] predictedTotal=1440.000000
+  talent 235 abilityId=chaosTotem abilityAura=false abilityDuration=10 abilityCooldown=30 abilityLength=380 abilityTags=[15,18,10,4,1] predictedTotal=1440.000000
+  talent 229 abilityId=stormTotem abilityAura=false abilityDuration=15 abilityCooldown=0.250000 abilityLength=380 abilityTags=[15,18,10,24] predictedTotal=2160.000000
+  talent 262 abilityId=forceOverwhelming abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 653 abilityId=wizardPotion abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 69 abilityId=setSail abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 370 abilityId=insatiableHunger abilityAura=false abilityDuration=25 abilityCooldown=50 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 646 abilityId=praetorianBlood abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 430 abilityId=maelstromOfFrost abilityAura=false abilityDuration=30 abilityCooldown=40 abilityLength=320 abilityTags=[15,16,3] predictedTotal=4320.000000
+  talent 2006 abilityId=fleetFeet abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=320 abilityTags=[] predictedTotal=720.000000
+  talent 136 abilityId=liveByTheSword abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 2036 abilityId=seedOfDestruction abilityAura=false abilityDuration=3 abilityCooldown=0.250000 abilityLength=2000 abilityTags=[] predictedTotal=432.000000
+  talent 343 abilityId=theEmbodimentOfAurgelmir abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,25] predictedTotal=3600.000000
+  talent 188 abilityId=demonsPresence abilityAura=false abilityDuration=25 abilityCooldown=60 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 639 abilityId=elixirOfDeath abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 395 abilityId=hyperCharged abilityAura=false abilityDuration=3 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14] predictedTotal=432.000000
+  talent 2018 abilityId=impetus abilityAura=false abilityDuration=2 abilityCooldown=0.250000 abilityLength=2000 abilityTags=[] predictedTotal=288.000000
+  talent 232 abilityId=fireTotem abilityAura=false abilityDuration=15 abilityCooldown=0.250000 abilityLength=380 abilityTags=[15,18,10,4] predictedTotal=2160.000000
+  talent 230 abilityId=spiritWolves abilityAura=false abilityDuration=120 abilityCooldown=0.250000 abilityLength=128 abilityTags=[15,18,9] predictedTotal=17280.000000
+  talent 252 abilityId=healingZone abilityAura=false abilityDuration=8 abilityCooldown=14 abilityLength=240 abilityTags=[15,18,3] predictedTotal=1152.000000
+  talent 483 abilityId=mercenarySpellWordofProtection abilityAura=false abilityDuration=7 abilityCooldown=24 abilityLength=320 abilityTags=[] predictedTotal=1008.000000
+  talent 20 abilityId=blazingTrail abilityAura=false abilityDuration=5 abilityCooldown=10 abilityLength=320 abilityTags=[15,3,18] predictedTotal=720.000000
+  talent 641 abilityId=emptyBottleOfVodka abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 745 abilityId=relicPickledBrain abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[15,18,19] predictedTotal=2160.000000
+  talent 308 abilityId=sandGuardian abilityAura=false abilityDuration=7 abilityCooldown=0.250000 abilityLength=280 abilityTags=[15,18,8] predictedTotal=1008.000000
+  talent 320 abilityId=sandsOfTime abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 2035 abilityId=gravesGrasp abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=2000 abilityTags=[] predictedTotal=720.000000
+  talent 28 abilityId=avatarOfFire abilityAura=false abilityDuration=40 abilityCooldown=60 abilityLength=320 abilityTags=[15,12] predictedTotal=5760.000000
+  talent 650 abilityId=sungLeesUnleashedRage abilityAura=false abilityDuration=10 abilityCooldown=30 abilityLength=320 abilityTags=[14] predictedTotal=1440.000000
+  talent 738 abilityId=relicWinnersDrug abilityAura=false abilityDuration=3 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14,19] predictedTotal=432.000000
+  talent 602 abilityId=ghostCrew abilityAura=false abilityDuration=4 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14,18,9] predictedTotal=576.000000
+  talent 2021 abilityId=awareness abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=320 abilityTags=[] predictedTotal=720.000000
+tgprobe talents: ids=817 shown=146 nonNumericKeys=0 notStruct=0 walkExc=0 truncated=0 tableRowsWithId=7/7 durCap=400 durTruncated=0
+```
+
+| skill (abilityId) | class | object (SDK name, index) | root | app | first #1 | first #2 | draws #1 | own | talents dur line | status | reason |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| Maelstrom of Frost (`maelstromOfFrost`) | Prophet | `Prophet_Maelstrom_obj`, 3697 | damage | 1 | `first=4320.000000` | `first=4320.000000` (sessions 6/7, and the `tgl timer` row above on the same cast) | 4322 | readable | `talent 430 abilityId=maelstromOfFrost abilityAura=false abilityDuration=30 abilityCooldown=40 abilityLength=320 abilityTags=[15,16,3] predictedTotal=4320.000000` | ship | the positive control: both instruments read `first=4320.000000`; (b) with sessions 6/7's two readings; (d) 4322 draws against 4320; (e) `isMyClient` |
+| Soul Spurn (`soulSpurn`) | White Mage | `White_Mage_Soul_Spurn_AOE_obj`, 5759 | damage | 2 (sessions 2-4) | `destroyTimer=real:144.000000` (S2) | `destroyTimer=real:144.000000` (S5) | 145 (S5: first frame 19656, last 19801) | readable | not re-listed (not cast in session 8) | ship | measured in sessions 2-4 (Results -> Session 3, S2 and S5), not re-cast in session 8; (b) 144/144; (d) 145 against 144; (e) `isMyClient` |
+| Healing Zone (`healingZone`) | White Mage | `White_Mage_Healing_Zone_obj`, 5738 | ability | 2 | `first=1152.000000` | `first=1152.000000` | 1153 | unreadable | `talent 252 abilityId=healingZone abilityAura=false abilityDuration=8 abilityCooldown=14 abilityLength=240 abilityTags=[15,18,3] predictedTotal=1152.000000` | ship | (a) the only record new to its windows (the relic companions and `Aura_Mask_obj` below were present before the cast); (b) 1152/1152; (d) 1153 against 1152; (e) `own=unreadable` -> no ownership field. Also the ability root's own positive control |
+| Blizzard (`blizzard`) | Jotunn | `Jotunn_Blizzard_Controller_obj`, 2295 | controller | 1 | `first=unreadable` | - (second cast skipped) | 501 | unreadable | `talent 334 abilityId=blizzard abilityAura=false abilityDuration=0 abilityCooldown=2 abilityLength=240 abilityTags=[15,18,3,1] predictedTotal=0.000000` | not observed | `timerUnreadable=501` on every draw, `own=unreadable` (so not the foreign-only case); the controller root has no positive control. The second cast was skipped: it cannot turn a no-row result into a row |
+| Blizzard (`blizzard`) | Jotunn | `Jotunn_Blizzard_obj`, 2296 | ability | 1 | `first=-1.000000` | - (second cast skipped) | 600 | unreadable | (as above) | not observed | the shards (`maxInst=22`) read a constant `-1`; no instance carries a spanning timer. `abilityDuration=0`, and the owner reports no duration on the tooltip |
+| Arrow Rain (`arrowRain`) | Marksman | `Marksman_Arrow_Rain_obj`, 2635 | ability | 1 | `first=-1.000000` | - | 77 | unreadable | `talent 41 abilityId=arrowRain abilityAura=false abilityDuration=0 abilityCooldown=0.250000 abilityLength=300 abilityTags=[15,17,1,0] predictedTotal=0.000000` | not observed | constant `-1` for its 77 draws; no spanning timer, `abilityDuration=0` |
+| Arrow Rain (`arrowRain`) | Marksman | `Marksman_Raining_Arrow_obj`, 2658 | ability | 1 | `first=-1.000000` | - | 233 | unreadable | (as above) | not observed | the individual arrows (`maxInst=114`), constant `-1` |
+| Arrow Turret (`arrowTurret`) | Marksman | `Marksman_Arrow_Turret_obj`, 2641 | sentry | 1 | `first=1152.000000` | - | 1153 | unreadable | `talent 47 abilityId=arrowTurret abilityAura=false abilityDuration=8 abilityCooldown=0.250000 abilityLength=240 abilityTags=[15,18,10] predictedTotal=1152.000000` | measured, excluded (companion, multi-instance - owner) | a spanning timer (1153 draws against 1152), but a companion: the turret can have two instances by default and would need one indicator each (owner, rule (f)). Kept as the sentry root's positive control |
+| Crematus (`crematus`) | Plague Doctor | `Plague_Doctor_Crematus_Controller_obj`, 3502 | controller | 1 | `first=unreadable` | - (second cast skipped) | 178 | unreadable | `talent 283 abilityId=crematus abilityAura=false abilityDuration=0 abilityCooldown=5 abilityLength=320 abilityTags=[15,18,3] predictedTotal=0.000000` | not observed | `timerUnreadable=178` on every draw, `own=unreadable`; the controller root has no positive control. These are the 178 `unreadable` draws on the old toggle-table `crematus` countdown row |
+| Crematus (`crematus`) | Plague Doctor | `Plague_Doctor_Crematus_obj`, 3503 | damage | 1 | `first=79.200000` | - (second cast skipped) | 290 | readable | (as above) | not observed | fails rule (d): `first=79.200000` against 290 draws, `maxInst=8` - a per-projectile lifetime, not the cast's duration. `tgl timer [2] crematus first=79.200000 draws=290` agrees. Closes the ship round's open Crematus finding: Crematus is not a countdown skill |
+| Meteor Storm (`meteorStorm`) | Shaman | `Shaman_Meteor_Storm_Controller_obj`, 4422 | controller | 2 | `first=unreadable` | `first=unreadable` | 110 (current appearance; `totalDraws=1800`) | unreadable | `talent 224 abilityId=meteorStorm abilityAura=false abilityDuration=0 abilityCooldown=0.250000 abilityLength=240 abilityTags=[15,18,3,1] predictedTotal=0.000000` | not observed | `timerUnreadable=110` of 110 on the current appearance; controller root uncontrolled. The window held toggle-on, toggle-off and one plain cast (owner): the skill has a toggle upgrade |
+| Meteor Storm (`meteorStorm`) | Shaman | `Shaman_Meteor_Storm_obj`, 4423 | damage | 2 | `first=-1.000000` | `first=-1.000000` | 158 (current appearance; `totalDraws=1888`) | readable | (as above) | not observed | the meteors (`maxInst=10`) read a constant `-1`; no duration, no cooldown and "countless instances" at once (owner) |
+| Fire Totem (`fireTotem`) | Shaman | `Shaman_Totem_Fire_obj`, 4441 | sentry | - | - | - | - | - | `talent 232 abilityId=fireTotem abilityAura=false abilityDuration=15 abilityCooldown=0.250000 abilityLength=380 abilityTags=[15,18,10,4] predictedTotal=2160.000000` | not observed | not cast: dropped from the session after the owner excluded companion skills (rule (f)); it would be `measured, excluded (companion, multi-instance - owner)` whatever it read |
+| Defensive Shout (`defensiveShout`) | Viking | `Viking_Defensive_Shout_obj`, 5620 | buff | 1 (and 1 in a second cleared window) | `first=unreadable` | `first=unreadable` | 91 (second window: 88) | unreadable | `talent 6 abilityId=defensiveShout abilityAura=false abilityDuration=0 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,3,12] predictedTotal=0.000000` | buff-carried, not a cast object | the object lives ~0.6 s (the shout effect) with `timerUnreadable` on every draw; the owner reports the buff itself lasts over a minute, so the duration lives on the player's buff list. Buff root uncontrolled |
+| Berserk (`berserk`) | Viking | none | - | 0 | - | - | - | - | `talent 18 abilityId=berserk abilityAura=false abilityDuration=0 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,16,0] predictedTotal=0.000000` (`berserkersRage`, talent 2009, is a separate 4 s talent) | buff-carried, not a cast object | no record in either Viking window is attributable to it; the owner reports a melee attack whose buff stacks (8 stacks, ~5 s each) |
+| Blade Barrier (`bladeBarrier`) | Samurai | `Samurai_Blade_Barrier_obj`, 4225 | damage (`Orbit_Parent_obj`) | 3 (uncleared) + 1 (cleared refresh run) | `first=1296.000000` | `first=1296.000000` (the `app=3` record's third appearance, and again the cleared refresh run) | 1298 | readable | `talent 137 abilityId=bladeBarrier abilityAura=false abilityDuration=6 abilityCooldown=8 abilityLength=320 abilityTags=[15,18,2,0] predictedTotal=864.000000` | ship | (b) by the uncleared record: first and current appearance both `first=1296.000000`, plus the cleared run's `first=1296.000000`; (d) 1298 against 1296; (e) `isMyClient`. The live value is 9 s on the owner's character, not the talent's 6 s - the countdown latches the live value, never `predictedTotal` |
+| (relic companion) | any class | `Honey_Bee_obj`, 2218 | ability | 1 | `first=-1.000000` | - | 28980 | unreadable | - | not a timer (-1 constant) | a relic ability any class can carry; present before any cast, `-1` for its whole presence |
+| (relic companion) | any class | `Minisect_obj`, 2866 | ability | 1 | `first=-1.000000` | - | 28980 | unreadable | - | not a timer (-1 constant) | as `Honey_Bee_obj` |
+| (relic companion) | any class | `Karp_Head_obj`, 2365 | ability | 1 | `first=-1.000000` | - | 5519 | unreadable | - | not a timer (-1 constant) | as `Honey_Bee_obj`; seen in the Blizzard and Arrow Rain windows |
+| (relic companion) | any class | `Zeppelin_obj`, 6005 | ability | 1 | `first=-1.000000` | - | 5519 | unreadable | - | not a timer (-1 constant) | as `Karp_Head_obj` |
+| (item proc) | any class | `Explosion_Item_obj`, 1492 | damage | 1-2 per window | `first=-1.000000` | - | 550 | readable | - | not a timer (-1 constant) | an item's explosion proc, in four different skills' windows (fails rule (a) as well) |
+| (town) | any class | `Aura_Mask_obj`, 400 | buff | 115+ | `first=unreadable` | - | 14 | unreadable | - | not observed | town noise, many short appearances, unreadable on every draw; not a skill cast |
+| (Blade Barrier window) | Samurai | `Samurai_Blade_Barrier_Cursed_Blade_obj`, 4224 | damage | 3 | `first=-1.000000` | - | 359 | readable | - | not observed | a per-blade object in combat (`max=288.000000`); its own timer, not the barrier's |
+| (Blade Barrier window) | Samurai | `Samurai_Fan_Knives_obj`, 4234 | damage | 1 | `first=-1.000000` | - | 2381 | readable | - | not a timer (-1 constant) | combat object in the barrier's window |
+| (Blade Barrier window) | any class | `Universal_Player_Damage_obj`, 5356 | damage | 5 | `first=14.400000` | - | 17 | readable | - | not observed | a 0.1 s damage object in combat; not a cast |
+| (Blade Barrier window) | any class | `Mercenary_Knight_Stacked_Rage_obj`, 2685 | damage | 1 | `first=-1.000000` | - | 13 | readable | - | not a timer (-1 constant) | a mercenary's object in the refresh run's window |
+| (Meteor Storm window) | Marksman | `Marksman_Frag_Grenade_Shrapnel_obj`, 2652 | damage | 4 | `first=-1.000000` | - | 206 | readable | - | not a timer (-1 constant) | in the Meteor Storm window; not attributable to that cast |
+
+Every other skill in the `talents dur` list above stays `not observed (not
+cast)`; the table is additive across later sessions.
+
+**Finding - Blade Barrier's in-combat refresh acts on `destroyTimer`.**
+Cast in town, the barrier's record lived 1298 and 1297 draws; cast in
+combat, 1442 and 1425 (the cleared refresh run:
+`Samurai_Blade_Barrier_obj idx=4225 runtime=Samurai_Blade_Barrier_obj root=Player_Damage_Parent_obj app=1 present=0 draws=1425 first=1296.000000 last=-0.631152 min=-0.631152 max=1296.000000 timerUnreadable=0 maxInst=9 own=readable firstFrame=303132 lastFrame=304556 totalDraws=1425`).
+The owner has a skill-tree passive that refreshes the barrier on hitting an
+enemy. `max` never rose above the first reading, and `destroyTimer` still
+reached `<= 0` exactly as the object vanished, so the refresh extends or
+holds the timer by about a second rather than resetting it to full. Under
+the latch rule the countdown therefore holds, or partially refills (a
+reading below the latch just raises the fraction), and ends with the
+blades. Measured on the owner's character only; how large the extension can
+get with other passives is not observed. **Superseded below**: the
+"Follow-up - where the refresh lands, and when" finding a few paragraphs
+down pins the actual mechanism - each hit steps `destroyTimer` itself by a
+small amount, roughly 28.8 (0.2 s) per hit - which is more precise than
+"holds or partially refills" and is what the shipped countdown's rise
+per hit reflects.
+
+**Follow-up - where the refresh lands, and when (live-ship check,
+2026-09-21).** With the ship build installed the owner hit enemies under
+Blade Barrier and saw the number not visibly move (`skilltimer stat`:
+`bladeBarrier drawn=1340 latched=1 unlatched=1 expired=2`, 1340 draws
+against a 1296 latch, no re-latch). The research build was then put back
+(with the owner's yes) and the barrier added to the `tgl` table by name
+(`tgprobe tgl add bladeBarrier Samurai_Blade_Barrier_obj none destroyTimer
+none`, row 7), polling `tgl fields 7` and `tgl timer` about every 150
+draws. On a cast in combat: at draw 895 the timer read 427.27; at draw 1045
+it read 420.72, only 6.6 lower over 150 draws, where a free-running timer
+drops 150, so about 144 had been added in that window; over the next 150
+draws it fell 121.8 (about 28 added); the object ended at draw 1494 with
+the timer at -0.81, and `max` never exceeded the first reading, 1296. A
+cast with no hits ran clean: 1292 draws, about 1.0 per draw. Reading: each
+hit raises `destroyTimer` itself, at the moment of the hit, by a small step
+(consistent with about 28.8, i.e. 0.2 s, per hit; five hits make the ~144),
+and never above the cast's first reading. `tgl fields` showed no separate
+refresh variable among its first 64 scalar fields (`overCap=113`, so a field
+beyond the cap is not excluded, but none is needed: the change is on
+`destroyTimer`). So the shipped countdown already rises at each hit, by
+roughly two percentage points of a 1296 latch per hit - small enough to look
+still. The owner chose to keep that as it is. A second observation from the
+same check ("another timer spawned when previous ended") could not be
+reproduced and is recorded as not reproduced, with no change made.
+
+**Finding - the shipped `number` look sits too low in the player build's
+font** (owner, looking at the countdown with the Maelstrom control cast):
+"font is different so the number text was a little too low (hiding
+partially behind the icon)". The look hung its text down from a point
+measured up from the box's bottom edge, so its clearance depended on the
+font's height; `(0,-101)` had been confirmed with the inherited font, and
+the ship draws in `__newfont6`, which is taller. Fixed in the ship round -
+see `### Decision` above, "The shipped looks".
+
+**Follow-up, out of this round:** Meteor Storm has a toggle upgrade (the
+owner: "constantly" in its skill-tree text), so it is a sixth candidate for
+the toggle table (`toggleborder`/`toggleguard`), filed separately.
+Working heuristic from this session, not a rule: a skill whose tooltip
+shows a duration is one whose talent reads `abilityDuration > 0` (Blizzard,
+Arrow Rain, Crematus, Meteor Storm, Defensive Shout and Berserk all read
+`0`).
+
+Raw `tgprobe sweep show` output, one block per window, verbatim (the
+`tgprobe talents` lines are in the table's `talents dur line` column):
+
+```
+# control: Maelstrom of Frost (sweep cleared at setup)
+tgprobe sweep: sampler=on draws=28980 roots=6/6 unresolved=none capped=none records=3 dropped=0 indexUnreadable=0 scanCap=256
+  Honey_Bee_obj idx=2218 runtime=Honey_Bee_obj root=Player_Ability_Parent_obj app=1 present=1 draws=28980 first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 timerUnreadable=0 maxInst=1 own=unreadable firstFrame=13230 lastFrame=42209 totalDraws=28980
+  Minisect_obj idx=2866 runtime=Minisect_obj root=Player_Ability_Parent_obj app=1 present=1 draws=28980 first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 timerUnreadable=0 maxInst=1 own=unreadable firstFrame=13230 lastFrame=42209 totalDraws=28980
+  Prophet_Maelstrom_obj idx=3697 runtime=Prophet_Maelstrom_obj root=Player_Damage_Parent_obj app=1 present=0 draws=4322 first=4320.000000 last=-0.154800 min=-0.154800 max=4320.000000 timerUnreadable=0 maxInst=1 own=readable firstFrame=27044 lastFrame=31365 totalDraws=4322
+# Healing Zone, cast 1
+tgprobe sweep: sampler=on draws=13980 roots=6/6 unresolved=none capped=none records=4 dropped=0 indexUnreadable=0 scanCap=256
+  root Player_Damage_Parent_obj idx=3543 lastCount=0 cappedDraws=0
+  root Skill_Controller_obj idx=4606 lastCount=0 cappedDraws=0
+  root Player_Buff_Parent_obj idx=3538 lastCount=0 cappedDraws=0
+  root Player_Curse_Parent_obj idx=3542 lastCount=0 cappedDraws=0
+  root Player_Sentry_Parent_obj idx=3557 lastCount=0 cappedDraws=0
+  root Player_Ability_Parent_obj idx=3536 lastCount=0 cappedDraws=0
+  Honey_Bee_obj idx=2218 runtime=Honey_Bee_obj root=Player_Ability_Parent_obj app=1 present=0 draws=5585 first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 timerUnreadable=0 maxInst=1 own=unreadable firstFrame=45390 lastFrame=50974 totalDraws=5585
+  Minisect_obj idx=2866 runtime=Minisect_obj root=Player_Ability_Parent_obj app=1 present=0 draws=5585 first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 timerUnreadable=0 maxInst=1 own=unreadable firstFrame=45390 lastFrame=50974 totalDraws=5585
+  Aura_Mask_obj idx=400 runtime=Aura_Mask_obj root=Player_Buff_Parent_obj app=115 present=0 draws=14 first=unreadable last=unreadable min=unreadable max=unreadable timerUnreadable=14 maxInst=2 own=unreadable firstFrame=51785 lastFrame=60157 totalDraws=1608
+  White_Mage_Healing_Zone_obj idx=5738 runtime=White_Mage_Healing_Zone_obj root=Player_Ability_Parent_obj app=1 present=0 draws=1153 first=1152.000000 last=-0.314208 min=-0.314208 max=1152.000000 timerUnreadable=0 maxInst=1 own=unreadable firstFrame=54296 lastFrame=55448 totalDraws=1153
+# Healing Zone, cast 2 (same window)
+tgprobe sweep: sampler=on draws=35130 roots=6/6 unresolved=none capped=none records=4 dropped=0 indexUnreadable=0 scanCap=256
+  Honey_Bee_obj idx=2218 runtime=Honey_Bee_obj root=Player_Ability_Parent_obj app=1 present=0 draws=5585 first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 timerUnreadable=0 maxInst=1 own=unreadable firstFrame=45390 lastFrame=50974 totalDraws=5585
+  Minisect_obj idx=2866 runtime=Minisect_obj root=Player_Ability_Parent_obj app=1 present=0 draws=5585 first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 timerUnreadable=0 maxInst=1 own=unreadable firstFrame=45390 lastFrame=50974 totalDraws=5585
+  Aura_Mask_obj idx=400 runtime=Aura_Mask_obj root=Player_Buff_Parent_obj app=403 present=0 draws=14 first=unreadable last=unreadable min=unreadable max=unreadable timerUnreadable=14 maxInst=2 own=unreadable firstFrame=51785 lastFrame=81320 totalDraws=5640
+  White_Mage_Healing_Zone_obj idx=5738 runtime=White_Mage_Healing_Zone_obj root=Player_Ability_Parent_obj app=2 present=0 draws=1153 first=1152.000000 last=-0.034560 min=-0.034560 max=1152.000000 timerUnreadable=0 maxInst=1 own=unreadable firstFrame=54296 lastFrame=68087 totalDraws=2306
+# Blizzard, cast 1
+tgprobe sweep: sampler=on draws=17418 roots=6/6 unresolved=none capped=none records=6 dropped=0 indexUnreadable=0 scanCap=256
+  Aura_Mask_obj idx=400 runtime=Aura_Mask_obj root=Player_Buff_Parent_obj app=162 present=0 draws=14 first=unreadable last=unreadable min=unreadable max=unreadable timerUnreadable=14 maxInst=2 own=unreadable firstFrame=83954 lastFrame=95802 totalDraws=2268
+  Karp_Head_obj idx=2365 runtime=Karp_Head_obj root=Player_Ability_Parent_obj app=1 present=1 draws=5519 first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 timerUnreadable=0 maxInst=1 own=unreadable firstFrame=96781 lastFrame=102299 totalDraws=5519
+  Zeppelin_obj idx=6005 runtime=Zeppelin_obj root=Player_Ability_Parent_obj app=1 present=1 draws=5519 first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 timerUnreadable=0 maxInst=1 own=unreadable firstFrame=96781 lastFrame=102299 totalDraws=5519
+  Jotunn_Blizzard_Controller_obj idx=2295 runtime=Jotunn_Blizzard_Controller_obj root=Skill_Controller_obj app=1 present=0 draws=501 first=unreadable last=unreadable min=unreadable max=unreadable timerUnreadable=501 maxInst=2 own=unreadable firstFrame=99385 lastFrame=99885 totalDraws=501
+  Jotunn_Blizzard_obj idx=2296 runtime=Jotunn_Blizzard_obj root=Player_Ability_Parent_obj app=1 present=0 draws=600 first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 timerUnreadable=0 maxInst=22 own=unreadable firstFrame=99386 lastFrame=99985 totalDraws=600
+  Explosion_Item_obj idx=1492 runtime=Explosion_Item_obj root=Player_Damage_Parent_obj app=1 present=0 draws=550 first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 timerUnreadable=0 maxInst=12 own=readable firstFrame=99487 lastFrame=100036 totalDraws=550
+# Arrow Rain, cast 1
+tgprobe sweep: sampler=on draws=21329 roots=6/6 unresolved=none capped=none records=5 dropped=0 indexUnreadable=0 scanCap=256
+  Karp_Head_obj idx=2365 runtime=Karp_Head_obj root=Player_Ability_Parent_obj app=1 present=0 draws=9319 first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 timerUnreadable=0 maxInst=1 own=unreadable firstFrame=105210 lastFrame=114528 totalDraws=9319
+  Zeppelin_obj idx=6005 runtime=Zeppelin_obj root=Player_Ability_Parent_obj app=1 present=0 draws=9319 first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 timerUnreadable=0 maxInst=1 own=unreadable firstFrame=105210 lastFrame=114528 totalDraws=9319
+  Marksman_Arrow_Rain_obj idx=2635 runtime=Marksman_Arrow_Rain_obj root=Player_Ability_Parent_obj app=1 present=0 draws=77 first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 timerUnreadable=0 maxInst=1 own=unreadable firstFrame=124571 lastFrame=124647 totalDraws=77
+  Marksman_Raining_Arrow_obj idx=2658 runtime=Marksman_Raining_Arrow_obj root=Player_Ability_Parent_obj app=1 present=0 draws=233 first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 timerUnreadable=0 maxInst=114 own=unreadable firstFrame=124572 lastFrame=124804 totalDraws=233
+  Explosion_Item_obj idx=1492 runtime=Explosion_Item_obj root=Player_Damage_Parent_obj app=1 present=0 draws=155 first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 timerUnreadable=0 maxInst=63 own=readable firstFrame=124701 lastFrame=124855 totalDraws=155
+# Arrow Turret, cast 1
+tgprobe sweep: sampler=on draws=8880 roots=6/6 unresolved=none capped=none records=2 dropped=0 indexUnreadable=0 scanCap=256
+  root Player_Damage_Parent_obj idx=3543 lastCount=0 cappedDraws=0
+  root Skill_Controller_obj idx=4606 lastCount=0 cappedDraws=0
+  root Player_Buff_Parent_obj idx=3538 lastCount=0 cappedDraws=0
+  root Player_Curse_Parent_obj idx=3542 lastCount=0 cappedDraws=0
+  root Player_Sentry_Parent_obj idx=3557 lastCount=0 cappedDraws=0
+  root Player_Ability_Parent_obj idx=3536 lastCount=0 cappedDraws=0
+  Marksman_Arrow_Turret_obj idx=2641 runtime=Marksman_Arrow_Turret_obj root=Player_Sentry_Parent_obj app=1 present=0 draws=1153 first=1152.000000 last=-0.002880 min=-0.002880 max=1152.000000 timerUnreadable=0 maxInst=1 own=unreadable firstFrame=133512 lastFrame=134664 totalDraws=1153
+  Explosion_Item_obj idx=1492 runtime=Explosion_Item_obj root=Player_Damage_Parent_obj app=1 present=0 draws=58 first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 timerUnreadable=0 maxInst=1 own=readable firstFrame=134665 lastFrame=134722 totalDraws=58
+# Crematus (plain), cast 1
+tgprobe sweep: sampler=on draws=8537 roots=6/6 unresolved=none capped=none records=2 dropped=0 indexUnreadable=0 scanCap=256
+  Plague_Doctor_Crematus_Controller_obj idx=3502 runtime=Plague_Doctor_Crematus_Controller_obj root=Skill_Controller_obj app=1 present=0 draws=178 first=unreadable last=unreadable min=unreadable max=unreadable timerUnreadable=178 maxInst=1 own=unreadable firstFrame=165892 lastFrame=166069 totalDraws=178
+  Plague_Doctor_Crematus_obj idx=3503 runtime=Plague_Doctor_Crematus_obj root=Player_Damage_Parent_obj app=1 present=0 draws=290 first=79.200000 last=-1.000000 min=-1.000000 max=79.200000 timerUnreadable=0 maxInst=8 own=readable firstFrame=165893 lastFrame=166182 totalDraws=290
+tgprobe tgl timer [2] crematus field=destroyTimer predicted=-1.000000 appearance=1 first=79.200000 last=-1.000000 min=-1.000000 max=79.200000 unreadable=0 atPredicted=207 draws=290
+# Meteor Storm (toggle on, toggle off, one plain cast)
+tgprobe sweep: sampler=on draws=25530 roots=6/6 unresolved=none capped=none records=4 dropped=0 indexUnreadable=0 scanCap=256
+  Shaman_Meteor_Storm_Controller_obj idx=4422 runtime=Shaman_Meteor_Storm_Controller_obj root=Skill_Controller_obj app=2 present=0 draws=110 first=unreadable last=unreadable min=unreadable max=unreadable timerUnreadable=110 maxInst=1 own=unreadable firstFrame=176703 lastFrame=182081 totalDraws=1800
+  Shaman_Meteor_Storm_obj idx=4423 runtime=Shaman_Meteor_Storm_obj root=Player_Damage_Parent_obj app=2 present=0 draws=158 first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 timerUnreadable=0 maxInst=10 own=readable firstFrame=176704 lastFrame=182130 totalDraws=1888
+  Explosion_Item_obj idx=1492 runtime=Explosion_Item_obj root=Player_Damage_Parent_obj app=2 present=0 draws=166 first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 timerUnreadable=0 maxInst=10 own=readable firstFrame=176754 lastFrame=182188 totalDraws=1904
+  Marksman_Frag_Grenade_Shrapnel_obj idx=2652 runtime=Marksman_Frag_Grenade_Shrapnel_obj root=Player_Damage_Parent_obj app=4 present=0 draws=206 first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 timerUnreadable=0 maxInst=7 own=readable firstFrame=176814 lastFrame=182228 totalDraws=1850
+# Viking, window 1 (Defensive Shout)
+tgprobe sweep: sampler=on draws=31196 roots=6/6 unresolved=none capped=none records=1 dropped=0 indexUnreadable=0 scanCap=256
+  Viking_Defensive_Shout_obj idx=5620 runtime=Viking_Defensive_Shout_obj root=Player_Buff_Parent_obj app=1 present=0 draws=91 first=unreadable last=unreadable min=unreadable max=unreadable timerUnreadable=91 maxInst=1 own=unreadable firstFrame=215828 lastFrame=215918 totalDraws=91
+# Viking, window 2 (Defensive Shout, then Berserk)
+tgprobe sweep: sampler=on draws=18480 roots=6/6 unresolved=none capped=none records=1 dropped=0 indexUnreadable=0 scanCap=256
+  root Player_Damage_Parent_obj idx=3543 lastCount=0 cappedDraws=0
+  root Skill_Controller_obj idx=4606 lastCount=0 cappedDraws=0
+  root Player_Buff_Parent_obj idx=3538 lastCount=0 cappedDraws=0
+  root Player_Curse_Parent_obj idx=3542 lastCount=0 cappedDraws=0
+  root Player_Sentry_Parent_obj idx=3557 lastCount=0 cappedDraws=0
+  root Player_Ability_Parent_obj idx=3536 lastCount=0 cappedDraws=0
+  Viking_Defensive_Shout_obj idx=5620 runtime=Viking_Defensive_Shout_obj root=Player_Buff_Parent_obj app=1 present=0 draws=88 first=unreadable last=unreadable min=unreadable max=unreadable timerUnreadable=88 maxInst=1 own=unreadable firstFrame=254057 lastFrame=254144 totalDraws=88
+# Blade Barrier, cast 1 (town)
+tgprobe sweep: sampler=on draws=13699 roots=6/6 unresolved=none capped=none records=1 dropped=0 indexUnreadable=0 scanCap=256
+  Samurai_Blade_Barrier_obj idx=4225 runtime=Samurai_Blade_Barrier_obj root=Player_Damage_Parent_obj app=1 present=0 draws=1298 first=1296.000000 last=-0.002880 min=-0.002880 max=1296.000000 timerUnreadable=0 maxInst=9 own=readable firstFrame=262288 lastFrame=263585 totalDraws=1298
+# Blade Barrier, two more casts, window NOT cleared (the third in combat)
+tgprobe sweep: sampler=on draws=27289 roots=6/6 unresolved=none capped=none records=4 dropped=0 indexUnreadable=0 scanCap=256
+  Samurai_Blade_Barrier_obj idx=4225 runtime=Samurai_Blade_Barrier_obj root=Player_Damage_Parent_obj app=3 present=0 draws=1442 first=1296.000000 last=-0.246816 min=-0.246816 max=1296.000000 timerUnreadable=0 maxInst=9 own=readable firstFrame=262288 lastFrame=282938 totalDraws=4037
+  Samurai_Fan_Knives_obj idx=4234 runtime=Samurai_Fan_Knives_obj root=Player_Damage_Parent_obj app=1 present=0 draws=2381 first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 timerUnreadable=0 maxInst=37 own=readable firstFrame=281499 lastFrame=283879 totalDraws=2381
+  Samurai_Blade_Barrier_Cursed_Blade_obj idx=4224 runtime=Samurai_Blade_Barrier_Cursed_Blade_obj root=Player_Damage_Parent_obj app=3 present=0 draws=359 first=-1.000000 last=169.372080 min=-1.000000 max=288.000000 timerUnreadable=0 maxInst=7 own=readable firstFrame=281531 lastFrame=283002 totalDraws=1429
+  Universal_Player_Damage_obj idx=5356 runtime=Universal_Player_Damage_obj root=Player_Damage_Parent_obj app=5 present=0 draws=17 first=14.400000 last=-0.601056 min=-0.601056 max=14.400000 timerUnreadable=0 maxInst=1 own=readable firstFrame=282970 lastFrame=283564 totalDraws=84
+# Blade Barrier, refresh run in combat (cleared)
+tgprobe sweep: sampler=on draws=21930 roots=6/6 unresolved=none capped=none records=5 dropped=0 indexUnreadable=0 scanCap=256
+  Samurai_Blade_Barrier_obj idx=4225 runtime=Samurai_Blade_Barrier_obj root=Player_Damage_Parent_obj app=1 present=0 draws=1425 first=1296.000000 last=-0.631152 min=-0.631152 max=1296.000000 timerUnreadable=0 maxInst=9 own=readable firstFrame=303132 lastFrame=304556 totalDraws=1425
+  Samurai_Fan_Knives_obj idx=4234 runtime=Samurai_Fan_Knives_obj root=Player_Damage_Parent_obj app=1 present=0 draws=2421 first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 timerUnreadable=0 maxInst=34 own=readable firstFrame=303134 lastFrame=305554 totalDraws=2421
+  Samurai_Blade_Barrier_Cursed_Blade_obj idx=4224 runtime=Samurai_Blade_Barrier_Cursed_Blade_obj root=Player_Damage_Parent_obj app=2 present=0 draws=1232 first=-1.000000 last=171.999504 min=-1.000000 max=288.000000 timerUnreadable=0 maxInst=8 own=readable firstFrame=303184 lastFrame=304742 totalDraws=1550
+  Mercenary_Knight_Stacked_Rage_obj idx=2685 runtime=Mercenary_Knight_Stacked_Rage_obj root=Player_Damage_Parent_obj app=1 present=0 draws=13 first=-1.000000 last=-1.000000 min=-1.000000 max=-1.000000 timerUnreadable=0 maxInst=1 own=readable firstFrame=303984 lastFrame=303996 totalDraws=13
+  Universal_Player_Damage_obj idx=5356 runtime=Universal_Player_Damage_obj root=Player_Damage_Parent_obj app=5 present=0 draws=17 first=14.400000 last=-0.605664 min=-0.605664 max=14.400000 timerUnreadable=0 maxInst=2 own=readable firstFrame=305172 lastFrame=305766 totalDraws=85
+```
+
+#### Session 10 (2026-09-21): three more measured rows
+
+Owner, 2026-09-21: "Measure, then add" - three skills the rule tier could
+never select (none has an object matching the generator's name convention)
+were measured directly against the same Results rules (a)-(f) above:
+Progenies of the Great Cataclysm (Bard), Pickup Raid (Redneck) and
+Dissipating Tornado (Nomad). Session 10 ran on 2026-09-21, owner at the
+keyboard, research DLL `BloodPactPlugin_rel.dll` (sha256 `a1fb05c8…`) built
+from `034bfc2`, installed. All six windows read `roots=6/6 unresolved=none
+capped=none`, each opened by `tgprobe sweep clear`. The three talents'
+`abilityId`/`abilityDuration`/`abilityCooldown` lines are already quoted in
+the 146-line `tgprobe talents dur` capture above (talent 406, 100, 81).
+
+| skill (abilityId) | class | object (SDK name, index) | root | app | first #1 | first #2 | draws #1 | own | talents dur line | status | reason |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| Progenies of the Great Cataclysm (`progeniesOfTheGreatCataclysm`) | Bard | `Bard_Progenies_Amplifier_obj`, 551 | ability | 1 (each of two cleared windows) | `first=2880.000000` (plain cast) | `first=2880.000000` (cast with Orbital Soundwaves) | 2877 | unreadable | `talent 406 abilityId=progeniesOfTheGreatCataclysm abilityAura=false abilityDuration=20 abilityCooldown=40 abilityLength=320 abilityTags=[15,18,3] predictedTotal=2880.000000` | ship | two cleared casts, equal `first` (b); `first > 0` (c); 2877 draws against 2880 (d); `own=unreadable` -> no ownership field (e); not under `Player_Sentry_Parent_obj` (f). The Orbital Soundwaves upgrade does not change this object's own timer - one row covers both forms |
+| Pickup Raid (`pickupRaid`) | Redneck | `Redneck_Pickup_Truck_obj`, 4039 | damage | 1 (each of two cleared windows) | `first=576.000000` | `first=576.000000` | 610 | readable | `talent 100 abilityId=pickupRaid abilityAura=false abilityDuration=4 abilityCooldown=8 abilityLength=380 abilityTags=[15,18] predictedTotal=576.000000` | ship | two cleared casts, equal `first` (b); `first > 0` (c); 610 draws against 576 (d); `isMyClient` (e); not under `Player_Sentry_Parent_obj` (f) |
+| Dissipating Tornado (`dissipatingTornado`) | Nomad | `Dissipating_Tornado_obj`, 1353 | ability | 1 (each of two cleared windows) | `first=432.000000` | `first=432.000000` | 483 | unreadable | `talent 81 abilityId=dissipatingTornado abilityAura=false abilityDuration=3 abilityCooldown=12 abilityLength=600 abilityTags=[15,18] predictedTotal=432.000000` | ship | two cleared casts, equal `first` (b); `first > 0` (c); 483 draws against 432 (d); `own=unreadable` -> no ownership field (e); not under `Player_Sentry_Parent_obj` (f) |
+| (Progenies window) | Bard | `Bard_Slaying_Riffs_obj`, 568 | damage | 2 (plain) / 6 (with Orbital Soundwaves) | `first=115.200000` | - | 52 (plain) / 89 (with upgrade) | readable | not re-listed | not observed | present in BOTH windows, more and overlapping instances (`maxInst` 1 -> 4) with the upgrade - the driver's note attributed it to the upgrade, but the plain capture contradicts that; source not established. Per-pulse lifetime, not the cast's own duration -> not a row |
+| (Pickup Raid window) | Redneck | `Redneck_Truck_Bullet_obj`, 4051 | damage | 1 | `first=-1.000000` | - | 611 (609 on the second appearance) | readable | not re-listed | not a timer (-1 constant) | `maxInst=10`; a per-projectile lifetime, not the cast's own duration -> not a row |
+| (relic companion / hit object) | any class | `Minisect_obj`, `Hitbox_obj` | ability/damage | - | `first=-1.000000` | - | - | unreadable | - | not a timer (-1 constant) | same label as session 8 - present, constant `-1`, noise |
+| Temporal Heroes (`temporalHeroes`) | Necromancer (summon) | `Temporal_{Demonspawn,Marksman,Pyromancer,Viking,White_Mage}_obj`, 4794-4798 | (under `Necro_Summon_Parent_obj`) | - | - | - | - | - | `talent 325 abilityId=temporalHeroes abilityAura=false abilityDuration=25 abilityCooldown=40 abilityLength=96 abilityTags=[15,18,9] predictedTotal=3600.000000` | not measured | several summons at once, under `Necro_Summon_Parent_obj` (owner's companion exclusion) - not one of the sweep's six roots, so the object itself was never reached; status is `not measured`, not "has no timer" |
+
+**Finding - the Orbital Soundwaves talent upgrade does not change Progenies'
+own timer.** Both the plain cast and the cast with the Orbital Soundwaves
+upgrade read the same `first=2880.000000` on one instance each, so a single
+countdown row covers the base skill and its upgraded form.
+
+**Finding - the truck and the tornado sit briefly at -1 after their timer
+completes.** Both objects' second appearance drew a handful more samples
+than their `first` reading (610 vs 576 for Pickup Raid, 483 vs 432 for
+Dissipating Tornado) because the draw treats a non-positive reading as
+`Expired`, so nothing shows for that trailing fraction of a second - the
+same shape Blade Barrier's trailing `-1` reading already ships with.
+
+With these three added, the countdown ships seven explicit rows.
+
+#### Rule coverage expectation
+
+D-S4 (owner, 2026-09-21, verbatim): "lets ship untested following a rule -
+if it has a cooldown and a duration and if its not a companion type skill, it
+should support". This section pins the SELECTION a fresh read of that rule
+makes against session 8's own `tgprobe talents dur` capture, pasted verbatim
+below (146 lines, this session's live capture - interoperability facts only:
+abilityId/duration/cooldown/tags/length, never a game script body). Eligible
+when `abilityDuration > 0` AND `abilityCooldown > 0.25` (the no-cooldown
+floor - Meteor Storm reads 0.25 and has none, per the owner), the talent is
+not one of the seven explicit rows above (D-R1: those stay explicit and win),
+it is not on the measured deny-list (`kSkillTimerRuleDeny`,
+`plugin/include/ForgePact/SkillTimerMod.hpp`), and its abilityId resolves to
+an object by the generator's own name convention
+(`tools/gen_skill_timer_names.py`,
+`plugin/include/ForgePact/SkillTimerNames.hpp`).
+`test_rule_expectation_in_the_research_doc_matches_the_capture`
+(`tests/test_toggle_skill_contract.py`) recomputes this from the 146 lines
+below, the generated header, the deny-list and the seven explicit rows, and
+asserts it against this table's `selected` rows - this is a documented
+EXPECTATION pinned by test, **not** shipped data: the runtime reads the live
+talent struct, not this table.
+
+Round-0 review (instrument-blindness, non-blocking) measured what the name
+convention's own objects actually carry: of the nine cast objects measured by
+name so far, four carried a `destroyTimer` spanning the cast (the four
+explicit rows); two were per-projectile lifetimes (`submergedKnives`,
+`crematus`) and three had no spanning timer at all (`blizzard`, `arrowRain`,
+`meteorStorm`) - fewer than half. Several of the ids the table below selects
+look projectile- or hook-like (`orbOfFrost`, `butchersHook`, `chainRip`,
+`chainSwing`, `shredderTrap`), the same shape `submergedKnives` turned out to
+be, so a short, wrong-looking countdown on one of those is an EXPECTED
+outcome of shipping this tier untested, not a bug to chase: the per-entry
+`skilltimer stat` line names the object it resolved, and the fix is one more
+deny-list entry, not a new investigation.
+
+```
+  talent 137 abilityId=bladeBarrier abilityAura=false abilityDuration=6 abilityCooldown=8 abilityLength=320 abilityTags=[15,18,2,0] predictedTotal=864.000000
+  talent 135 abilityId=explosiveKunai abilityAura=false abilityDuration=2 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,4,1,18] predictedTotal=288.000000
+  talent 277 abilityId=boosterShot abilityAura=false abilityDuration=8 abilityCooldown=0.250000 abilityLength=320 abilityTags=[12] predictedTotal=1152.000000
+  talent 147 abilityId=thunderShield abilityAura=false abilityDuration=30 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,12] predictedTotal=4320.000000
+  talent 317 abilityId=ageProliferation abilityAura=false abilityDuration=2.500000 abilityCooldown=0.250000 abilityLength=256 abilityTags=[15,18,3] predictedTotal=360.000000
+  talent 329 abilityId=orbOfFrost abilityAura=false abilityDuration=1.850000 abilityCooldown=1.750000 abilityLength=320 abilityTags=[15,18,4] predictedTotal=266.400000
+  talent 555 abilityId=warriorsPath abilityAura=false abilityDuration=10 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14] predictedTotal=1440.000000
+  talent 45 abilityId=agility abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 635 abilityId=bloodOfSpartan abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 53 abilityId=rocketTurret abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=240 abilityTags=[15,18,10,1] predictedTotal=720.000000
+  talent 199 abilityId=demonForm abilityAura=false abilityDuration=25 abilityCooldown=40 abilityLength=320 abilityTags=[15,25] predictedTotal=3600.000000
+  talent 221 abilityId=earthBind abilityAura=false abilityDuration=5 abilityCooldown=2 abilityLength=200 abilityTags=[15,18,3] predictedTotal=720.000000
+  talent 536 abilityId=soulBurn abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14] predictedTotal=720.000000
+  talent 645 abilityId=powerOfVoid abilityAura=false abilityDuration=15 abilityCooldown=40 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 298 abilityId=glory abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 322 abilityId=dimensionalDisplacement abilityAura=false abilityDuration=2 abilityCooldown=0.250000 abilityLength=240 abilityTags=[15,6,7] predictedTotal=288.000000
+  talent 350 abilityId=solarForm abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12,3,25] predictedTotal=3600.000000
+  talent 105 abilityId=revvedUp abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 386 abilityId=staticShock abilityAura=false abilityDuration=5 abilityCooldown=3 abilityLength=320 abilityTags=[15,18] predictedTotal=720.000000
+  talent 654 abilityId=coffeeMug abilityAura=false abilityDuration=12 abilityCooldown=20 abilityLength=320 abilityTags=[14] predictedTotal=1728.000000
+  talent 742 abilityId=relicManaDice abilityAura=false abilityDuration=4 abilityCooldown=20 abilityLength=320 abilityTags=[14,19] predictedTotal=576.000000
+  talent 100 abilityId=pickupRaid abilityAura=false abilityDuration=4 abilityCooldown=8 abilityLength=380 abilityTags=[15,18] predictedTotal=576.000000
+  talent 115 abilityId=cursedGround abilityAura=false abilityDuration=5 abilityCooldown=5 abilityLength=240 abilityTags=[15,18,3] predictedTotal=720.000000
+  talent 11 abilityId=charge abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,6,3,18,22] predictedTotal=720.000000
+  talent 158 abilityId=holyHammer abilityAura=false abilityDuration=4.500000 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,18,2] predictedTotal=648.000000
+  talent 170 abilityId=jungleCamouflage abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 359 abilityId=bloodMoon abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 379 abilityId=blender abilityAura=false abilityDuration=5 abilityCooldown=8 abilityLength=320 abilityTags=[15,16,2,0] predictedTotal=720.000000
+  talent 403 abilityId=satansMelody abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 636 abilityId=bottleOfRadogate abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 2009 abilityId=berserkersRage abilityAura=false abilityDuration=4 abilityCooldown=0.250000 abilityLength=320 abilityTags=[] predictedTotal=576.000000
+  talent 280 abilityId=defunctSurgeon abilityAura=false abilityDuration=25 abilityCooldown=65 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 649 abilityId=radBull abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 561 abilityId=shadeOfSobek abilityAura=false abilityDuration=8 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14,9] predictedTotal=1152.000000
+  talent 388 abilityId=symphonyOfThunder abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 642 abilityId=ghostlyPotion abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 143 abilityId=shadowStep abilityAura=false abilityDuration=2 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,18,6,7,3,0] predictedTotal=288.000000
+  talent 651 abilityId=surstromming abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 301 abilityId=counter abilityAura=false abilityDuration=6 abilityCooldown=15 abilityLength=320 abilityTags=[15,18,23,4] predictedTotal=864.000000
+  talent 305 abilityId=shieldWall abilityAura=false abilityDuration=25 abilityCooldown=5 abilityLength=320 abilityTags=[15,18,23,2] predictedTotal=3600.000000
+  talent 47 abilityId=arrowTurret abilityAura=false abilityDuration=8 abilityCooldown=0.250000 abilityLength=240 abilityTags=[15,18,10] predictedTotal=1152.000000
+  talent 325 abilityId=temporalHeroes abilityAura=false abilityDuration=25 abilityCooldown=40 abilityLength=96 abilityTags=[15,18,9] predictedTotal=3600.000000
+  talent 611 abilityId=sanguineLeech abilityAura=false abilityDuration=10 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14,9,18] predictedTotal=1440.000000
+  talent 181 abilityId=astropesBattleMaiden abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 369 abilityId=awakeningFury abilityAura=false abilityDuration=4 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14] predictedTotal=576.000000
+  talent 2023 abilityId=lethalTempo abilityAura=false abilityDuration=2 abilityCooldown=0.250000 abilityLength=320 abilityTags=[] predictedTotal=288.000000
+  talent 55 abilityId=gunnerDrone abilityAura=false abilityDuration=10 abilityCooldown=5 abilityLength=240 abilityTags=[15,18,10,5] predictedTotal=1440.000000
+  talent 640 abilityId=elixirOfUnworldlyCognition abilityAura=false abilityDuration=20 abilityCooldown=45 abilityLength=320 abilityTags=[14] predictedTotal=2880.000000
+  talent 50 abilityId=cannonTurret abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=240 abilityTags=[15,18,10,1] predictedTotal=720.000000
+  talent 64 abilityId=rapidFire abilityAura=false abilityDuration=25 abilityCooldown=60 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 90 abilityId=phantomBlade abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=280 abilityTags=[15,18,10,0] predictedTotal=720.000000
+  talent 422 abilityId=spiritOfForest abilityAura=false abilityDuration=120 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,18,9,24] predictedTotal=17280.000000
+  talent 7 abilityId=odinsFury abilityAura=false abilityDuration=2 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,3,18] predictedTotal=288.000000
+  talent 466 abilityId=mercenaryRangedBurstofAgility abilityAura=false abilityDuration=8 abilityCooldown=12 abilityLength=320 abilityTags=[] predictedTotal=1152.000000
+  talent 638 abilityId=caffeinatedCoffeeContainer abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 119 abilityId=amplifyDamage abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=240 abilityTags=[15,18] predictedTotal=720.000000
+  talent 140 abilityId=explodingBolas abilityAura=false abilityDuration=3 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,16,4,1,0] predictedTotal=432.000000
+  talent 647 abilityId=prismaticPotion abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 152 abilityId=ballLightning abilityAura=false abilityDuration=3 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,18,6,3,26] predictedTotal=432.000000
+  talent 299 abilityId=shieldSlam abilityAura=false abilityDuration=2 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,16,23,0] predictedTotal=288.000000
+  talent 311 abilityId=linkOfSand abilityAura=false abilityDuration=8 abilityCooldown=0.250000 abilityLength=280 abilityTags=[15,18,26] predictedTotal=1152.000000
+  talent 375 abilityId=butchersHook abilityAura=false abilityDuration=5 abilityCooldown=6.750000 abilityLength=320 abilityTags=[15,18,2] predictedTotal=720.000000
+  talent 204 abilityId=boneStorm abilityAura=false abilityDuration=8 abilityCooldown=6 abilityLength=320 abilityTags=[15,18,2] predictedTotal=1152.000000
+  talent 387 abilityId=stormCloud abilityAura=false abilityDuration=8 abilityCooldown=3 abilityLength=400 abilityTags=[15,18,3] predictedTotal=1152.000000
+  talent 652 abilityId=witchesPotion abilityAura=false abilityDuration=10 abilityCooldown=30 abilityLength=320 abilityTags=[14] predictedTotal=1440.000000
+  talent 732 abilityId=relicLargeBeer abilityAura=false abilityDuration=5 abilityCooldown=13 abilityLength=320 abilityTags=[15,18,19] predictedTotal=720.000000
+  talent 236 abilityId=satansMark abilityAura=false abilityDuration=5 abilityCooldown=3 abilityLength=280 abilityTags=[15,18,1] predictedTotal=720.000000
+  talent 26 abilityId=searingChains abilityAura=false abilityDuration=1 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,16,24,0] predictedTotal=144.000000
+  talent 36 abilityId=volcano abilityAura=false abilityDuration=4 abilityCooldown=4 abilityLength=380 abilityTags=[15,18,1] predictedTotal=576.000000
+  talent 643 abilityId=goldInlaidMysteriousPotion abilityAura=false abilityDuration=15 abilityCooldown=45 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 33 abilityId=hydra abilityAura=false abilityDuration=8 abilityCooldown=0.250000 abilityLength=240 abilityTags=[15,18,10,4,1] predictedTotal=1152.000000
+  talent 163 abilityId=theVeneratedOne abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 361 abilityId=blackHole abilityAura=false abilityDuration=4.500000 abilityCooldown=6 abilityLength=320 abilityTags=[15,18,3] predictedTotal=648.000000
+  talent 373 abilityId=fuelToFire abilityAura=false abilityDuration=12 abilityCooldown=50 abilityLength=330 abilityTags=[15,12] predictedTotal=1728.000000
+  talent 688 abilityId=relicLightCola abilityAura=false abilityDuration=10 abilityCooldown=25 abilityLength=320 abilityTags=[15,18,19] predictedTotal=1440.000000
+  talent 52 abilityId=landMine abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=240 abilityTags=[15,18,1] predictedTotal=720.000000
+  talent 413 abilityId=cravingForAnotherKilling abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 648 abilityId=proteinShake abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 227 abilityId=earthTotem abilityAura=false abilityDuration=15 abilityCooldown=0.250000 abilityLength=380 abilityTags=[15,18,10,1] predictedTotal=2160.000000
+  talent 520 abilityId=spiderlings abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=2000 abilityTags=[14] predictedTotal=720.000000
+  talent 249 abilityId=divineHealing abilityAura=false abilityDuration=3 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14] predictedTotal=432.000000
+  talent 600 abilityId=scarletSacrifice abilityAura=false abilityDuration=8 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14,18,9] predictedTotal=1152.000000
+  talent 661 abilityId=relicBookOfBelial abilityAura=false abilityDuration=5 abilityCooldown=25 abilityLength=320 abilityTags=[15,12,19] predictedTotal=720.000000
+  talent 81 abilityId=dissipatingTornado abilityAura=false abilityDuration=3 abilityCooldown=12 abilityLength=600 abilityTags=[15,18] predictedTotal=432.000000
+  talent 637 abilityId=bottleOfSake abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 108 abilityId=rogueChainsaw abilityAura=false abilityDuration=2.500000 abilityCooldown=0.250000 abilityLength=340 abilityTags=[15,18] predictedTotal=360.000000
+  talent 406 abilityId=progeniesOfTheGreatCataclysm abilityAura=false abilityDuration=20 abilityCooldown=40 abilityLength=320 abilityTags=[15,18,3] predictedTotal=2880.000000
+  talent 97 abilityId=hillbillyRage abilityAura=false abilityDuration=35 abilityCooldown=60 abilityLength=320 abilityTags=[15,12] predictedTotal=5040.000000
+  talent 550 abilityId=rimskinAssassin abilityAura=false abilityDuration=3 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14] predictedTotal=432.000000
+  talent 124 abilityId=summonFrenzy abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 590 abilityId=arcaneWrath abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14,12] predictedTotal=720.000000
+  talent 10 abilityId=seismicSlam abilityAura=false abilityDuration=2 abilityCooldown=0.250000 abilityLength=0 abilityTags=[15,3,16,0] predictedTotal=288.000000
+  talent 142 abilityId=forHonor abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 655 abilityId=corrosionDarkness abilityAura=false abilityDuration=10 abilityCooldown=30 abilityLength=320 abilityTags=[14] predictedTotal=1440.000000
+  talent 154 abilityId=thorsFury abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 307 abilityId=lastStand abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 735 abilityId=relicEsEnergy abilityAura=false abilityDuration=5 abilityCooldown=13 abilityLength=320 abilityTags=[15,18,19] predictedTotal=720.000000
+  talent 186 abilityId=shredderTrap abilityAura=false abilityDuration=4 abilityCooldown=1 abilityLength=240 abilityTags=[15,17,4] predictedTotal=576.000000
+  talent 367 abilityId=endingFate abilityAura=false abilityDuration=6 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14,1] predictedTotal=864.000000
+  talent 371 abilityId=chainRip abilityAura=false abilityDuration=2 abilityCooldown=1.250000 abilityLength=320 abilityTags=[15,16,0] predictedTotal=288.000000
+  talent 14 abilityId=ymirsChampion abilityAura=false abilityDuration=2 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,16,0] predictedTotal=288.000000
+  talent 644 abilityId=maggotEyeElixir abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 218 abilityId=tectonicBoulder abilityAura=false abilityDuration=2 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,18,4] predictedTotal=288.000000
+  talent 724 abilityId=relicRazerHeadSet abilityAura=false abilityDuration=5 abilityCooldown=9 abilityLength=320 abilityTags=[15,18,19] predictedTotal=720.000000
+  talent 572 abilityId=radiantPower abilityAura=false abilityDuration=15 abilityCooldown=30 abilityLength=320 abilityTags=[15,12] predictedTotal=2160.000000
+  talent 713 abilityId=relicDevilHorn abilityAura=false abilityDuration=5 abilityCooldown=25 abilityLength=320 abilityTags=[15,12,19] predictedTotal=720.000000
+  talent 336 abilityId=flashFreeze abilityAura=false abilityDuration=2 abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,16,5,0] predictedTotal=288.000000
+  talent 376 abilityId=chainSwing abilityAura=false abilityDuration=2.500000 abilityCooldown=1 abilityLength=320 abilityTags=[15,18,6,0] predictedTotal=360.000000
+  talent 313 abilityId=spiritLink abilityAura=false abilityDuration=8 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14] predictedTotal=1152.000000
+  talent 2028 abilityId=wizardsWrath abilityAura=false abilityDuration=3 abilityCooldown=0.250000 abilityLength=320 abilityTags=[] predictedTotal=432.000000
+  talent 547 abilityId=zooooooom abilityAura=false abilityDuration=8 abilityCooldown=20 abilityLength=320 abilityTags=[15,12] predictedTotal=1152.000000
+  talent 357 abilityId=lunarForm abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12,25] predictedTotal=3600.000000
+  talent 377 abilityId=submergedKnives abilityAura=false abilityDuration=2.500000 abilityCooldown=1.500000 abilityLength=320 abilityTags=[15,16,3,0] predictedTotal=360.000000
+  talent 54 abilityId=masterMechanic abilityAura=false abilityDuration=25 abilityCooldown=40 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 656 abilityId=amunRasDemise abilityAura=false abilityDuration=10 abilityCooldown=30 abilityLength=320 abilityTags=[14] predictedTotal=1440.000000
+  talent 235 abilityId=chaosTotem abilityAura=false abilityDuration=10 abilityCooldown=30 abilityLength=380 abilityTags=[15,18,10,4,1] predictedTotal=1440.000000
+  talent 229 abilityId=stormTotem abilityAura=false abilityDuration=15 abilityCooldown=0.250000 abilityLength=380 abilityTags=[15,18,10,24] predictedTotal=2160.000000
+  talent 262 abilityId=forceOverwhelming abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 653 abilityId=wizardPotion abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 69 abilityId=setSail abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 370 abilityId=insatiableHunger abilityAura=false abilityDuration=25 abilityCooldown=50 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 646 abilityId=praetorianBlood abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 430 abilityId=maelstromOfFrost abilityAura=false abilityDuration=30 abilityCooldown=40 abilityLength=320 abilityTags=[15,16,3] predictedTotal=4320.000000
+  talent 2006 abilityId=fleetFeet abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=320 abilityTags=[] predictedTotal=720.000000
+  talent 136 abilityId=liveByTheSword abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 2036 abilityId=seedOfDestruction abilityAura=false abilityDuration=3 abilityCooldown=0.250000 abilityLength=2000 abilityTags=[] predictedTotal=432.000000
+  talent 343 abilityId=theEmbodimentOfAurgelmir abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,25] predictedTotal=3600.000000
+  talent 188 abilityId=demonsPresence abilityAura=false abilityDuration=25 abilityCooldown=60 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 639 abilityId=elixirOfDeath abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 395 abilityId=hyperCharged abilityAura=false abilityDuration=3 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14] predictedTotal=432.000000
+  talent 2018 abilityId=impetus abilityAura=false abilityDuration=2 abilityCooldown=0.250000 abilityLength=2000 abilityTags=[] predictedTotal=288.000000
+  talent 232 abilityId=fireTotem abilityAura=false abilityDuration=15 abilityCooldown=0.250000 abilityLength=380 abilityTags=[15,18,10,4] predictedTotal=2160.000000
+  talent 230 abilityId=spiritWolves abilityAura=false abilityDuration=120 abilityCooldown=0.250000 abilityLength=128 abilityTags=[15,18,9] predictedTotal=17280.000000
+  talent 252 abilityId=healingZone abilityAura=false abilityDuration=8 abilityCooldown=14 abilityLength=240 abilityTags=[15,18,3] predictedTotal=1152.000000
+  talent 483 abilityId=mercenarySpellWordofProtection abilityAura=false abilityDuration=7 abilityCooldown=24 abilityLength=320 abilityTags=[] predictedTotal=1008.000000
+  talent 20 abilityId=blazingTrail abilityAura=false abilityDuration=5 abilityCooldown=10 abilityLength=320 abilityTags=[15,3,18] predictedTotal=720.000000
+  talent 641 abilityId=emptyBottleOfVodka abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[14] predictedTotal=2160.000000
+  talent 745 abilityId=relicPickledBrain abilityAura=false abilityDuration=15 abilityCooldown=35 abilityLength=320 abilityTags=[15,18,19] predictedTotal=2160.000000
+  talent 308 abilityId=sandGuardian abilityAura=false abilityDuration=7 abilityCooldown=0.250000 abilityLength=280 abilityTags=[15,18,8] predictedTotal=1008.000000
+  talent 320 abilityId=sandsOfTime abilityAura=false abilityDuration=25 abilityCooldown=70 abilityLength=320 abilityTags=[15,12] predictedTotal=3600.000000
+  talent 2035 abilityId=gravesGrasp abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=2000 abilityTags=[] predictedTotal=720.000000
+  talent 28 abilityId=avatarOfFire abilityAura=false abilityDuration=40 abilityCooldown=60 abilityLength=320 abilityTags=[15,12] predictedTotal=5760.000000
+  talent 650 abilityId=sungLeesUnleashedRage abilityAura=false abilityDuration=10 abilityCooldown=30 abilityLength=320 abilityTags=[14] predictedTotal=1440.000000
+  talent 738 abilityId=relicWinnersDrug abilityAura=false abilityDuration=3 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14,19] predictedTotal=432.000000
+  talent 602 abilityId=ghostCrew abilityAura=false abilityDuration=4 abilityCooldown=0.250000 abilityLength=320 abilityTags=[14,18,9] predictedTotal=576.000000
+  talent 2021 abilityId=awareness abilityAura=false abilityDuration=5 abilityCooldown=0.250000 abilityLength=320 abilityTags=[] predictedTotal=720.000000
+```
+
+Of the 146 talents captured with `abilityDuration > 0`: **17 are selected**
+by the rule, 6 are the seven explicit rows (Soul Spurn was not re-cast in this
+session's capture, so only six of the seven appear here), 3 are denied, 103
+have no object the generator's name convention resolves (potions, relic
+abilities, self-buffs such as `agility`, `demonForm`, `counter`, and any
+talent whose cast lives only as a player buff), and the remaining 17 fail the
+rule outright (cooldown at or below the no-cooldown floor). Blender is
+selected from its PLAIN cast's fields (`abilityDuration=5`,
+`abilityCooldown=8`); its toggled form was never measured, and while toggled
+its shared timer reads `-1` -> `Expired` -> nothing drawn, which is the
+intended no-countdown-while-toggled behaviour by accident of the value -
+record it as such, do not rely on it. Volcano is included (owner,
+2026-09-21: "Placed spell, include") - `Pyromancer_Volcano_obj` sits under
+`Player_Sentry_Damage_Parent_obj` > `Player_Damage_Parent_obj`, NOT under
+`Player_Sentry_Parent_obj`, so the generator does not exclude it as a
+companion.
+
+The buff-carried skills (`counter`, `lastStand`, and the denied
+`defensiveShout`/`berserk`) are covered by the session-12 buff rows
+(`kSkillTimerBuffRows`) instead, and are excluded from the rule by
+`SkillTimerRuleIsExplicitRow` before it ever runs - they are never selected
+by it, and their rows below stay `no object`/`denied` unchanged.
+
+| abilityId | status | reason |
+|---|---|---|
+| `bladeBarrier` | explicit | one of the seven explicit rows (D-R1); stays explicit |
+| `explosiveKunai` | fails rule | cooldown at or below the floor (cd=0.25) |
+| `boosterShot` | no object | no object by the generator's name convention |
+| `thunderShield` | no object | no object by the generator's name convention |
+| `ageProliferation` | fails rule | cooldown at or below the floor (cd=0.25) |
+| `orbOfFrost` | selected | dur=1.85 cd=1.75 |
+| `warriorsPath` | no object | no object by the generator's name convention |
+| `agility` | no object | no object by the generator's name convention |
+| `bloodOfSpartan` | no object | no object by the generator's name convention |
+| `rocketTurret` | no object | no object by the generator's name convention |
+| `demonForm` | no object | no object by the generator's name convention |
+| `earthBind` | selected | dur=5 cd=2 |
+| `soulBurn` | no object | no object by the generator's name convention |
+| `powerOfVoid` | no object | no object by the generator's name convention |
+| `glory` | no object | no object by the generator's name convention |
+| `dimensionalDisplacement` | no object | no object by the generator's name convention |
+| `solarForm` | no object | no object by the generator's name convention |
+| `revvedUp` | no object | no object by the generator's name convention |
+| `staticShock` | selected | dur=5 cd=3 |
+| `coffeeMug` | no object | no object by the generator's name convention |
+| `relicManaDice` | no object | no object by the generator's name convention |
+| `pickupRaid` | explicit | one of the seven explicit rows (D-R1); stays explicit |
+| `cursedGround` | selected | dur=5 cd=5 |
+| `charge` | fails rule | cooldown at or below the floor (cd=0.25) |
+| `holyHammer` | fails rule | cooldown at or below the floor (cd=0.25) |
+| `jungleCamouflage` | no object | no object by the generator's name convention |
+| `bloodMoon` | no object | no object by the generator's name convention |
+| `blender` | selected | dur=5 cd=8 |
+| `satansMelody` | no object | no object by the generator's name convention |
+| `bottleOfRadogate` | no object | no object by the generator's name convention |
+| `berserkersRage` | no object | no object by the generator's name convention |
+| `defunctSurgeon` | no object | no object by the generator's name convention |
+| `radBull` | no object | no object by the generator's name convention |
+| `shadeOfSobek` | no object | no object by the generator's name convention |
+| `symphonyOfThunder` | no object | no object by the generator's name convention |
+| `ghostlyPotion` | no object | no object by the generator's name convention |
+| `shadowStep` | fails rule | cooldown at or below the floor (cd=0.25) |
+| `surstromming` | no object | no object by the generator's name convention |
+| `counter` | no object | no object by the generator's name convention |
+| `shieldWall` | selected | dur=25 cd=5 |
+| `arrowTurret` | denied | on the measured deny-list (kSkillTimerRuleDeny) |
+| `temporalHeroes` | no object | no object by the generator's name convention |
+| `sanguineLeech` | no object | no object by the generator's name convention |
+| `astropesBattleMaiden` | no object | no object by the generator's name convention |
+| `awakeningFury` | no object | no object by the generator's name convention |
+| `lethalTempo` | no object | no object by the generator's name convention |
+| `gunnerDrone` | no object | no object by the generator's name convention |
+| `elixirOfUnworldlyCognition` | no object | no object by the generator's name convention |
+| `cannonTurret` | no object | no object by the generator's name convention |
+| `rapidFire` | no object | no object by the generator's name convention |
+| `phantomBlade` | no object | no object by the generator's name convention |
+| `spiritOfForest` | no object | no object by the generator's name convention |
+| `odinsFury` | fails rule | cooldown at or below the floor (cd=0.25) |
+| `mercenaryRangedBurstofAgility` | no object | no object by the generator's name convention |
+| `caffeinatedCoffeeContainer` | no object | no object by the generator's name convention |
+| `amplifyDamage` | fails rule | cooldown at or below the floor (cd=0.25) |
+| `explodingBolas` | no object | no object by the generator's name convention |
+| `prismaticPotion` | no object | no object by the generator's name convention |
+| `ballLightning` | fails rule | cooldown at or below the floor (cd=0.25) |
+| `shieldSlam` | no object | no object by the generator's name convention |
+| `linkOfSand` | fails rule | cooldown at or below the floor (cd=0.25) |
+| `butchersHook` | selected | dur=5 cd=6.75 |
+| `boneStorm` | selected | dur=8 cd=6 |
+| `stormCloud` | selected | dur=8 cd=3 |
+| `witchesPotion` | no object | no object by the generator's name convention |
+| `relicLargeBeer` | no object | no object by the generator's name convention |
+| `satansMark` | selected | dur=5 cd=3 |
+| `searingChains` | fails rule | cooldown at or below the floor (cd=0.25) |
+| `volcano` | selected | dur=4 cd=4 |
+| `goldInlaidMysteriousPotion` | no object | no object by the generator's name convention |
+| `hydra` | no object | no object by the generator's name convention |
+| `theVeneratedOne` | no object | no object by the generator's name convention |
+| `blackHole` | selected | dur=4.5 cd=6 |
+| `fuelToFire` | no object | no object by the generator's name convention |
+| `relicLightCola` | no object | no object by the generator's name convention |
+| `landMine` | fails rule | cooldown at or below the floor (cd=0.25) |
+| `cravingForAnotherKilling` | no object | no object by the generator's name convention |
+| `proteinShake` | no object | no object by the generator's name convention |
+| `earthTotem` | no object | no object by the generator's name convention |
+| `spiderlings` | no object | no object by the generator's name convention |
+| `divineHealing` | no object | no object by the generator's name convention |
+| `scarletSacrifice` | no object | no object by the generator's name convention |
+| `relicBookOfBelial` | no object | no object by the generator's name convention |
+| `dissipatingTornado` | explicit | one of the seven explicit rows (D-R1); stays explicit |
+| `bottleOfSake` | no object | no object by the generator's name convention |
+| `rogueChainsaw` | fails rule | cooldown at or below the floor (cd=0.25) |
+| `progeniesOfTheGreatCataclysm` | explicit | one of the seven explicit rows (D-R1); stays explicit |
+| `hillbillyRage` | no object | no object by the generator's name convention |
+| `rimskinAssassin` | no object | no object by the generator's name convention |
+| `summonFrenzy` | no object | no object by the generator's name convention |
+| `arcaneWrath` | no object | no object by the generator's name convention |
+| `seismicSlam` | fails rule | cooldown at or below the floor (cd=0.25) |
+| `forHonor` | no object | no object by the generator's name convention |
+| `corrosionDarkness` | no object | no object by the generator's name convention |
+| `thorsFury` | no object | no object by the generator's name convention |
+| `lastStand` | no object | no object by the generator's name convention |
+| `relicEsEnergy` | no object | no object by the generator's name convention |
+| `shredderTrap` | selected | dur=4 cd=1 |
+| `endingFate` | fails rule | cooldown at or below the floor (cd=0.25) |
+| `chainRip` | selected | dur=2 cd=1.25 |
+| `ymirsChampion` | fails rule | cooldown at or below the floor (cd=0.25) |
+| `maggotEyeElixir` | no object | no object by the generator's name convention |
+| `tectonicBoulder` | no object | no object by the generator's name convention |
+| `relicRazerHeadSet` | no object | no object by the generator's name convention |
+| `radiantPower` | no object | no object by the generator's name convention |
+| `relicDevilHorn` | no object | no object by the generator's name convention |
+| `flashFreeze` | fails rule | cooldown at or below the floor (cd=0.25) |
+| `chainSwing` | selected | dur=2.5 cd=1 |
+| `spiritLink` | no object | no object by the generator's name convention |
+| `wizardsWrath` | no object | no object by the generator's name convention |
+| `zooooooom` | no object | no object by the generator's name convention |
+| `lunarForm` | no object | no object by the generator's name convention |
+| `submergedKnives` | denied | on the measured deny-list (kSkillTimerRuleDeny) |
+| `masterMechanic` | no object | no object by the generator's name convention |
+| `amunRasDemise` | no object | no object by the generator's name convention |
+| `chaosTotem` | no object | no object by the generator's name convention |
+| `stormTotem` | no object | no object by the generator's name convention |
+| `forceOverwhelming` | no object | no object by the generator's name convention |
+| `wizardPotion` | no object | no object by the generator's name convention |
+| `setSail` | no object | no object by the generator's name convention |
+| `insatiableHunger` | no object | no object by the generator's name convention |
+| `praetorianBlood` | no object | no object by the generator's name convention |
+| `maelstromOfFrost` | explicit | one of the seven explicit rows (D-R1); stays explicit |
+| `fleetFeet` | no object | no object by the generator's name convention |
+| `liveByTheSword` | no object | no object by the generator's name convention |
+| `seedOfDestruction` | no object | no object by the generator's name convention |
+| `theEmbodimentOfAurgelmir` | no object | no object by the generator's name convention |
+| `demonsPresence` | no object | no object by the generator's name convention |
+| `elixirOfDeath` | no object | no object by the generator's name convention |
+| `hyperCharged` | no object | no object by the generator's name convention |
+| `impetus` | no object | no object by the generator's name convention |
+| `fireTotem` | denied | on the measured deny-list (kSkillTimerRuleDeny) |
+| `spiritWolves` | no object | no object by the generator's name convention |
+| `healingZone` | explicit | one of the seven explicit rows (D-R1); stays explicit |
+| `mercenarySpellWordofProtection` | no object | no object by the generator's name convention |
+| `blazingTrail` | selected | dur=5 cd=10 |
+| `emptyBottleOfVodka` | no object | no object by the generator's name convention |
+| `relicPickledBrain` | no object | no object by the generator's name convention |
+| `sandGuardian` | fails rule | cooldown at or below the floor (cd=0.25) |
+| `sandsOfTime` | no object | no object by the generator's name convention |
+| `gravesGrasp` | no object | no object by the generator's name convention |
+| `avatarOfFire` | selected | dur=40 cd=60 |
+| `sungLeesUnleashedRage` | no object | no object by the generator's name convention |
+| `relicWinnersDrug` | no object | no object by the generator's name convention |
+| `ghostCrew` | no object | no object by the generator's name convention |
+| `awareness` | no object | no object by the generator's name convention |
+
+### Buff-carried countdown (session 12)
+
+The countdown above reads a cast object's own `destroyTimer` - the object
+rule and its seven explicit rows above. A skill whose duration lives only on
+the player's own buff (Defensive Shout, Berserk, the class self-buffs tagged
+12) has no cast object with a spanning timer at all, so it draws nothing and
+the player still has to read the buff bar for it. The owner asked for this
+verbatim, 2026-09-21: "for skills that produce a visible timed buff we should
+add a skill timer too. it should be an easy additiona and would make ux much
+better since player will have to look in one place instead of two." This
+section is the research round for that request: one build adds a new
+read-only instrument (`tgprobe buffwatch`), one live session (session 12)
+measures a curated cast list against it with Counter's buff `[104]` as the
+positive control, and the ship round then fills a table of its own from this
+section's Results below - never from this static section.
+
+#### Static search
+
+Nothing here is enumerable the way the duration sweep's candidate objects
+were: a buff-carried skill has no cast object at all (Berserk) or a cast
+object with no spanning timer (Defensive Shout, session 4's capture), so
+there is no parent chain to search under. What is already known without a
+session: the buff list itself is `global.playerBuff[1][0]`, a 420-slot array
+that `HhBuffAlive` (the shipped Headhunter reader) and `tgprobe buffs`
+(`TgProbeBuffs`, this project's own research reader) already walk; an empty
+slot holds `-4` or undefined, a filled one holds a handle to a
+`Draw_Player_Buff_obj` instance (SDK 1362) whose custom variables are exactly
+`buffType` (repeats the slot index on a correctly-attributed buff),
+`destroyTimer` and `host`. Session 9 already read one slot this way (`[86]`,
+Martyr, decaying 455 -> 445). Counter's `[104]` read `destroyTimer=1036.8`
+against a predicted 864 in an earlier session, which is why it is this
+round's positive control: same array, same read, already proven live once.
+No buff-id name table is known anywhere in `hs-game-sdk` - the buff scripts
+(`BuffAdd`, `BuffRemove`, `GetBuff`, `GetBuffStack`, `BuffSetStack`,
+`SetupBuffs`, `DrawBuff`) exist by name, but nothing maps a talent to the
+buff id it adds, so whether the runtime itself keeps such a table is a
+question for `tgprobe deep find buff` in the session below, not for this
+static search.
+
+Session 12 measured that BOTH forms of Counter's own cast add `[104]` - the
+timed form (Give No Quarter not allocated) and the Give No Quarter stance
+alike - which is now measured, not the open question an earlier pass left it
+as.
+
+A rule-shaped mechanism was considered and rejected for this round: learn the
+`abilityId -> buffId` mapping at runtime from "the `BuffAdd` call made while a
+`TalentUse`/`TalentUseClass` call for talent T is on the stack belongs to T".
+Three things make that a runtime-learned RULE rather than this round's
+explicit MEASUREMENT: neither talent-use script is hooked by default in the
+player build today (one only under the co-op puppet path, the other only
+once the re-cast guard is armed), so shipping the mapping would add a hook to
+the cast path itself - a change class that gets its own workorder; an on-hit
+buff like Berserk is expected not to be added inside a cast at all (owner
+description; not observed yet - Session 12 measures `inUse`/`useTalent` for
+it), which would make the "call on the stack" rule simply miss it; and a
+wrong mapping draws the WRONG
+countdown, where the existing object rule's worst failure is drawing
+nothing. So this round ships nothing from a rule - it only measures explicit
+rows, and the instrument records the nesting data (`inUse`/`useTalent`) a
+rule would need, so that decision can be made later without another live
+session.
+
+#### Instrument
+
+`tgprobe buffwatch on|off|clear|show` (research build only, off by default -
+the sampler returns before any builtin call until armed). Per `DrawHudBuffs`
+draw, on the same call `tgprobe sweep`'s own sampler already piggybacks on
+(no new hook anywhere), it walks `playerBuff[1][0]` the same way `tgprobe
+buffs` does and keeps one record per slot index: `app` (appearances, an
+absent to present transition), `draws`, `firstFrame`/`lastFrame`,
+`first`/`last`/`min`/`max` of `destroyTimer` for the current appearance,
+`unreadable` (present but the timer did not read as a number),
+`identityMismatch` (the instance's own `buffType` disagreed with the slot it
+was found at - counted, and the record is left untouched for that draw,
+never taken as a reading of the wrong buff), `host` (the buff instance's own
+`host` field, last value), `vars=` (every other custom variable's name,
+captured on first sight, with the last numeric value of each - a stack
+counter would show up here), `adds`/`lastAddFrames`/`lastAddPlayer` (from the
+`BuffAdd` call itself: how many times, the 4th argument, the 1st argument)
+and `inUse`/`useTalent` (whether a `TalentUse`/`TalentUseClass` call was on
+the stack at the moment of that `BuffAdd`, from a depth counter kept only
+around those two rows' own native detour). The BuffAdd note is attached both
+ways `tgprobe hook` can attach any row: a native detour (the depth counter is
+then trustworthy) or piggybacked inside the existing `HookBuffAdd` (then
+`inUse`/`useTalent` print `n/a` - a row attached via hook cannot see the
+other row's own exit). `tgprobe buffwatch clear` resets every record, exactly
+like `tgprobe sweep clear`, so attribution comes from a clear immediately
+before each cast.
+
+#### Live procedure
+
+Research build installed (gate `buffwatch-dll: install-approved`).
+`toggleguard` stays OFF for the whole session so `TalentUseClass` can take a
+native detour.
+
+1. `tgprobe hook TalentUse TalentUseClass BuffAdd BuffRemove DrawHudBuffs`
+   then `tgprobe show` - quote the five rows' `mode=` lines (native expected
+   for the two talent-use rows; `via` is itself a result, recorded, and makes
+   `inUse=n/a`/`useTalent=n/a` expected for that row).
+2. `tgprobe deep snap g global` then `tgprobe deep find buff g` - quote the
+   output (cap 200 lines): does a buff-name table exist anywhere reachable
+   from `global`? `tgprobe deep get Player_obj.id` - quote: is `host` on an
+   own buff the local player's own id?
+3. Second positive control, cheaper than a cast: `tgprobe buffs` - quote the
+   non-empty slots it lists. `tgprobe buffwatch on` then `tgprobe buffwatch
+   show` - each of those slots must show a record before any cast is made in
+   this session (an already-present town buff, Martyr, or the like, read
+   through the same `playerBuff[1][0]` path `tgprobe buffs` just read). A
+   listed slot missing from `show` means the instrument is blind; stop.
+4. Shield Lancer, town: `tgprobe buffwatch clear`, cast Counter once (the
+   cast form that shows the HUD buff icon), wait 3 seconds, `tgprobe
+   buffwatch show` - the positive control: `[104] app=1 first=` greater than
+   0. Without this the session stops; the instrument is blind. Wait for the
+   buff to end, `tgprobe buffwatch show` again (record `last`, `lastFrame`).
+5. Same character, the tag-12 self-buff on its own hotbar slot (if Shield
+   Lancer owns one): `tgprobe buffwatch clear`, cast, `tgprobe buffwatch
+   show` at 3 seconds and again after it ends.
+6. Viking: `tgprobe buffwatch clear`, Defensive Shout, `tgprobe buffwatch
+   show` at 3 seconds and after it ends. Then `tgprobe buffwatch clear`,
+   Berserk: attack until the stacks are visibly up, `tgprobe buffwatch
+   show`, keep attacking 10 more seconds, `show` again, stop, wait for it to
+   drop, `show` a third time.
+7. A fifth representative of the owner's choice from the tag-12 list (the
+   8-second skills are the odd shape against the common 25s/70s ones), same
+   clear/cast/show sequence.
+8. Optional negative shape, if a Butcher is at hand: Holy Form on, `tgprobe
+   buffwatch show` (expect `first=1.000000`, `min=max` - a toggle buff holds
+   a constant 1, it does not count down), then off.
+
+Paste everything under `## Log` -> `### Session 12 capture` in the workorder
+context file.
+
+#### Results
+
+| skill | class | buffId | first | last | min | max | draws | lastAddFrames | inUse/useTalent | vars | status | note |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `counter` | Shield Lancer | 104 | 1036.800000 | 43.058304 | 43.058304 | 1036.800000 | 994 | 1036.800000 | 0 / 301 | buffStack=0, buffTimer (an icon clock, non-monotonic), buffPermanent, playerNumber=1 | ship | timed form (Give No Quarter not allocated), clean window after a clear: falls 1.0 per draw; an earlier mid-flight window drained 36.260064 -> 0.015552 and read `present=0`; talent 301 (`useTalent=301` matches `talent 301 abilityId=counter`). With Give No Quarter allocated the same `[104]` held 1036.800000 constant for 1263+ draws (min=max, frames 12657..>38490): a toggle form; while that sub-talent (`s13`) reads Allocated the countdown row draws nothing and the `kToggleSkillRows` Counter row takes over (`toggleborder` + `toggleguard`). |
+| `lastStand` | Shield Lancer | 107 | 3600.000000 | 1849.778352 | 1849.778352 | 3600.000000 | 1750 | 3600.000000 | 0 / 307 | buffTimer=0 | ship | `useTalent=307` matches `talent 307 abilityId=lastStand`; after a further clear (no cast) the same buff drained 408.143952 -> 0.036576 and read `present=0` at frame 93288; BuffAdd calls 3 -> 4 for the cast. |
+| `defensiveShout` | Viking | 9 | 14400.000000 | 13081.518720 | 13081.518720 | 14400.000000 | 1408 | 14400.000000 | 0 / none | buffTimer=0 | ship | 180 BuffAdd calls over frames 103532..103621 (~89 frames, none inside a talent-use call: `useTalent=none`), each re-adding the full 14400; then falls 1.0 per draw; ran to 0.462960 and was gone after frame 118012 (10283 draws) with BuffRemove not called. |
+| `berserk` | Viking | 1 | 720.000000 | 0.186624 | 0.186624 | 720.000000 | 4815 | 720.000000 | 0 / none | buffStack=8, buffStackHash, blendingColor=8 | ship | refreshed to 720 on every add (56 adds while attacking), falls 1.0 per draw between hits; expired and reappeared as a NEW instance twice (`app=3`, instance 272952 then 274995); after the owner stopped it fell to 0.186624 and was gone after frame 129140, BuffRemove not called. |
+| `honedDefenses` | Shield Lancer | - | - | - | - | - | - | - | - | - | no (no player buff) | cast at ~frame 89970 (TalentUse 5 -> 7 together with Last Stand) produced no record and no BuffAdd (calls stayed at 4). abilityId is inferred from `Shield_Lancer_Honed_Defenses_obj` (SDK 4481) - it appears in no talent capture in the repo, so this is UNVERIFIED; it is not a ship row either way. |
+| `shieldWall` | Shield Lancer | - | - | - | - | - | - | - | - | - | not cast | first attempt read no new buff (`records=1`, only `[104]`, `adds=0`); owner: "wrong, wait". Talent 305 per the doc's earlier capture. |
+| `agility` | Viking | 22 | 3600.000000 | 0.758880 | 0.758880 | 3600.000000 | 7476 | 3600.000000 | 0 / 45 | buffStack=0 | no (passive, no hotbar slot) | owner, verbatim: "agility is a passive skill, not represented by any skill on hud which makes adding a counter impossible. we can record it but not add a counter." Measured shape is a ship row's (added inside talent use 45, re-added to 3600, `app=2`) - recorded, not shipped. |
+| (fifth representative, tag-12 pick) | - | - | - | - | - | - | - | - | - | - | not cast | owner: "i will not open a different class with a buff". |
+| `holyForm` | Butcher | 140 | 1.000000 | 1.000000 | 1.000000 | 1.000000 | 6193 | 1.000000 | 0 / 364 | - | no (toggle; constant 1) | the negative shape, as predicted (`useTalent=364` matches `talent 364 abilityId=holyForm`); toggling off went through BuffRemove (calls 4 -> 6 at frame 145225) and the slot emptied. |
+
+#### Decision
+
+**Ownership.** `host` equalled `Player_obj.id` on every record of all three
+characters measured this session - 261722 (Shield Lancer), 271275 (Viking),
+280952 (Butcher) - so `playerBuff[1][0]` is the local player's own
+sub-array (`playerBuff[0][0]` read all `-4`), and the ship read makes no
+ownership/`host` check at all.
+
+**Identity.** `buffType` equalled the slot index on every record, footer
+`mismatches=0` on every `show` this session - the identity check
+(`buffType == buffId`) stays as the guard against a renumbered build, even
+though it never fired in this session.
+
+**Stacking.** Berserk carries `buffStack=8` (and `blendingColor=8`) beside a
+`destroyTimer` that is refreshed to 720 on each add and falls between adds;
+the instance is replaced on each re-appearance (`app=3`). One countdown per
+slot from `destroyTimer`, re-latched on each refresh (route B), shows time
+to the end of the latest stack - the owner's decision from the September 21
+session, applied here without change.
+
+**The Give No Quarter form split.** Owner, 2026-09-22, verbatim: "can we
+just check if gnq is present and decide if we give toggle border or
+countdown? gnq removes duration from skill". Counter's Give No Quarter
+sub-talent lives at slot `s13` of `global.subTalentMap` index 1 (session 6's
+respec reading), read per draw through the same `ToggleReadSubTalent` the
+guard already calls, never cached. When it reads Allocated, Counter is a row
+of `kToggleSkillRows` (mark `PlayerBuff`): `toggleborder` lights the slot
+while `[104]` is present, `toggleguard` refuses a double-cast proc, and the
+countdown row draws nothing at all. When it reads NotAllocated, the
+countdown row draws and no toggle row lights. The not-falling-value guard an
+earlier plan round designed (a threshold of consecutive equal readings) was
+dropped in favour of this: it read the value's shape instead of the thing
+that actually decides the form, and never shipped.
+
+**Expiry.** BuffRemove was NOT called on natural expiry (its own counter
+held at 4 across `[9]`'s expiry and three of `[1]`'s) and WAS called on Holy
+Form's toggle-off (4 -> 6 at frame 145225) - the ship read relies on the
+slot emptying, never on BuffRemove.
+
+**The name table.** `tgprobe deep find buff` found a per-buff-id name table
+at `global.__timer_list[2].instance.buffNameText` (n=419, with `buffSprite`,
+`buffDrawTime`, `buffHide`, `buffDebuff` beside it) - it exists, and the
+ship read does not use it (identity is `buffType`, never a name).
+
+**Nesting, per row.** Counter `inUse=0 useTalent=301`, Last Stand `0/307`,
+Agility `0/45`, Holy Form `0/364` (all four added inside the class's own
+`TalentUseClass` call); Defensive Shout and Berserk `useTalent=none` (added
+outside any talent-use call) - a runtime-learned rule would therefore map
+the four class casts and miss both Viking examples, which is one more reason
+this round ships explicit rows, not a rule.
+
+**The toggle-form caveat.** Counter's timed form ships as a countdown; with
+Give No Quarter allocated the same buff id is read as a toggle instead.
+
+**Known Limitations.** Every shipped `buffId` is a measured id on this
+game build (`[104]`, 107, 9, 1; first readings 1036.8, 3600, 14400, 720),
+kept honest by the identity check (a renumbered id draws nothing rather than
+a stranger's buff); hotbar-slot presence was not measured by the instrument,
+and the ship smoke observed it for `counter` and `defensiveShout` only
+(`noSlot=0`) - `lastStand` and `berserk` are not observed live on the ship
+build; the Give No Quarter slot was read both ways on the research build
+(`s13` 1 allocated, 0 removed, the only one of Counter's ten sub-talent keys
+that changed) and through the ship read by the smoke (`subOff=` on the
+timed form, `toggleOn=` on the stance, never both); an unreadable sub-talent draws neither
+the outline nor the countdown for Counter, and counts
+`subUnreadable`/`toggleUnreadable` rather than guessing; a countdown
+switched on mid-buff latches at the current value, the same mid-cast
+limitation the object rows already carry.
