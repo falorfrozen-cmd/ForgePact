@@ -28,17 +28,23 @@ the player tracks the refusal, but a command-time write of it was put back by
 the game before the press, so whether it *is* the gate stays unmeasured.
 Round 2's live session ran the same evening and did **not** identify the gate
 either, but moved it: the Restart button's own `enabled` and `manualDisable`
-flip with combat (`true` to `false` and `false` to `true`), none of the UI
-node-API setters is called to do it, and a hold of either member written
+flip with combat (`true` to `false` and `false` to `true`), none of the four
+attached UI node-API setters was observed to be called, and a hold of either member written
 inside the Restart draw was rewritten before every next call (`entryHeld=0`),
 so the draw site could not test them; a draw-time hold of the player's
 `wasInCombat` stayed in place and did not unlock the press. The one call that
 runs at step time, every frame while the cursor hovers Restart, with the
-button as its first argument, is `UiSetFocus`. Both rounds' rows are in §
-Results and § Decision carries round 2's lines. The owner funded a third
-round, a step-time write of the button's own members inside `UiSetFocus`: its
-instrument (§ Instrument, Round 3) and its procedure (§ Live procedure, Round
-3) are written, and round 3's live session is pending.
+button as its first argument, is `UiSetFocus`. The owner funded a third
+round, a step-time write of the button's own members inside `UiSetFocus`
+(§ Instrument, Round 3; § Live procedure, Round 3). Round 3's live session
+ran late the same evening and **identified** the gate: with the player still
+in combat, writing the Restart button's own `manualDisable` back to `false`
+inside `UiSetFocus`, on the button that call is handed, let the press reach
+`UiAIngameRestart` and restart the zone; `enabled` alone did not. The game
+puts `manualDisable` back every frame, so the write only holds while the
+cursor is on Restart, and keyboard navigation did not reach the pause menu's
+buttons at all. All three rounds' rows are in § Results, § Decision carries
+round 3's lines, and the shipped mod (`restartanytime`) is that write.
 
 ## The question
 
@@ -433,14 +439,28 @@ self and the Restart button as its first argument. So:
 
 Coexistence: `zonegenlog` table-hooks `ZoneGenRestart`. If it is on, the probe
 detours the game code under it and says
-`native (under table-only zonegenlog)`. That is the only row that knows
-about another ForgePact hook: the two `*IngameRestart` rows carry no
-existing-hook pointer today, so if a hook of ours already held either script
-they would print `blocked` rather than attach. No such hook exists yet. When
-the shipped mod adds one, those two rows have to be bound to its original
-pointer first (the same arrangement `ZoneGenRestart` uses with
-`zonegenlog`); until that change lands, do not install both in one session.
-`prospectprobe hook` also detours `UiCreate`, `UiCreateNode`, `UiSetRef` and
+`native (under table-only zonegenlog)`. That works only because
+`zonegenlog` installs table-only, so the original it saved is the game's own
+code, which the probe can detour. The shipped mod, `restartanytime`, hooks
+`UiSetFocus` through both of `HookOneScript`'s routes instead: the original
+it saves is the hooking library's trampoline and the table entry is our own
+hook, and neither is code inside `Hero_Siege.exe`. So the probe's
+`UiSetFocus` row stays unbound (binding it to the mod's original would not
+make it attach), and the two install orders go as follows. This is a static
+reading of the two installers, not run live: neither order has been tried
+in a session. With the mod's
+hook in first, a later `restartprobe hook` prints `blocked` for the
+`UiSetFocus` row (table entry not code inside the game) and attaches the
+other 21 rows as usual. With `restartprobe hook` first, the probe has
+detoured the game's code without swapping the table, so the mod's install
+asks the hooking library to detour an address that is already patched;
+`docs/prospect-window-research.md` says the second hook on an address fails,
+measured only in the other order, so for this script that is unverified. If
+it does fail, the log reads `hook UiSetFocus: TABLE-ONLY (MmCreateHook st=…)`
+and then `restartanytime: hook TABLE-ONLY -> OFF`, and the mod stays off for
+the session. Players meet neither case: the probe is research-build only.
+Run the probe or the mod in a session, not both. `prospectprobe hook` also
+detours `UiCreate`, `UiCreateNode`, `UiSetRef` and
 `UiRemoveNode` at the same code, so whichever of the two instruments attaches
 second reports those four rows `blocked`: run one of them per session.
 
@@ -568,7 +588,7 @@ Reading the round-3 results into § Decision:
   `held=yes`: the value was in place when the game could have read it.
 - `override: unmeasured (overwritten before use, UiSetFocus site; ring:
   held=no throughout)` - the ring shows the game rewrote the members between
-  our step-time writes, so the press tested nothing.
+  our step-time writes, so whether the press saw our value is not known.
 - `gate:` - `button-member (enabled)`, `(manualDisable)` or `(both)` from T3
   when `works`; otherwise `upstream (not identified; …)` with the closest
   finding. `owner: UI_Button_obj`; `variable:` and `readyValue:` name the
@@ -583,7 +603,8 @@ Reading the round-3 results into § Decision:
 Round 1's session ran on 2026-09-22 with the research DLL whose sha256 starts
 `44c78114`, after a saves backup (`20260922T143603Z_pre-restartprobe`); the
 owner pressed the buttons. Each row quotes what the session printed, and
-nothing else. Round 2's rows follow round 1's.
+nothing else. Round 2's rows follow round 1's, and round 3's follow round
+2's.
 
 | Step | Printed | Reading |
 | --- | --- | --- |
@@ -609,18 +630,43 @@ a valid in-combat state; no `Act_*` room was used.
 | C3 | `hook`: 22 native / 0 blocked / 0 not found. Menu closed: `control=0` at frame 2610 and again at frame 3960. | Pass: the Restart draw does not run with the menu closed. |
 | S1 | In town, menu open: `control=450`; `selfIds=262247`, the id of the `menuprobe list UI_Button_obj` line whose `text="Restart"`; the draw's `a0=bool:false` in town too; button dump `names=85` with `enabled=bool:true`, `manualDisable=bool:false`, `buttonDrawFunc=UiDrawIngameRestart`, `uiNodeCallstack="PauseRestart"`, `updateFunc=undefined`; pause dump `names=64`; `path:global.tupm[1].in_combat` unresolved in town. | C1 pass. One Restart button reaches the draw, instance 262247. The draw's `a0` is false with Restart allowed, so it is not the gate. The button carries its own `enabled` and `manualDisable`. |
 | S2 | In combat, menu open: button diff town to fight `~ enabled: true -> false` and `~ manualDisable: false -> true`, plus instance, `masterUi` and parent ids (the menu is rebuilt on open); pause diff: only instance ids and `image_index`; `wasInCombat=true`; `global.tupm[1]` is an unrelated instance (a summon) with no `in_combat`. | The button's own two members flip with combat. The pause instance carries nothing combat-shaped. `global.tupm[1].in_combat` is not a candidate. |
-| S3 | Refused press: `UiAIngameRestart calls=0`; `UiSetRowEnabled`, `SetGlobalUiEnable`, `EnableNav` and `UiSetUpdateFunc` `calls=0`; `UiSetFocus` counts every frame while the cursor hovers Restart, with `self=UI_Pause_obj`, `a0` the Restart button and `a1` the pause instance. Resume press: `UiACloseButton calls=1` (`self=UI_Button_obj`, `a0=array`). Reopen: `anon@6013` once, `UiCreateNode` ×10 with `a2=UI_Button_obj`. | Press-path control pass: a sibling press does reach its activation in combat, so a refused Restart press is refused on the button's side. None of the node-API setters is what disables it. `UiSetFocus` is the one per-frame, step-time call handed the button - round 3's site. |
+| S3 | Refused press: `UiAIngameRestart calls=0`; `UiSetRowEnabled`, `SetGlobalUiEnable`, `EnableNav` and `UiSetUpdateFunc` `calls=0`; `UiSetFocus` counts every frame while the cursor hovers Restart, with `self=UI_Pause_obj`, `a0` the Restart button and `a1` the pause instance. Resume press: `UiACloseButton calls=1` (`self=UI_Button_obj`, `a0=array`). Reopen: `anon@6013` once, `UiCreateNode` ×10 with `a2=UI_Button_obj`. | Press-path control pass: a sibling press does reach its activation in combat, so a refused Restart press is refused on the button's side. None of the four attached node-API setters was observed to be called (native rows, with `UiSetFocus` counting in the same window as the control). `UiSetFocus` is the one per-frame, step-time call handed the button - round 3's site. |
 | C4 | `hold player wasInCombat 0` at the draw: `writes=1260 readbackOk=1260 entryHeld=1250 entryOther=10`. | Pass: the draw-time hold reaches the value, and the value stays in place between draws. |
 | S4 | Press with that hold still armed (final `writes=7230 entryHeld=7179 entryOther=51`): refused, `UiAIngameRestart calls=0`, the button still greyed. | `not observed (draw site, player, wasInCombat, false; entryHeld=7179 entryOther=51)` - held in place, and the press still refused. |
 | S5 | (b) `hold button enabled 1` at the draw: `writes=5010 readbackOk=5010 entryHeld=0 entryOther=5010`, press refused. (b) `hold button manualDisable 0` at the draw: `writes=10380 readbackOk=10380 entryHeld=0 entryOther=10380`, press refused. (a), (c) and (d) not run. | Both `unmeasured (overwritten before use, draw site)`: every write read back, and every next call found the game's value again, so the press never tested ours. (a) and (c) and (d) not run: no node-API row is called every frame in combat except `UiSetFocus`, on hover only, whose self is the pause menu - so scope `button` there would have written `UI_Pause_obj` - and no `path` root reaches the button. |
 | S6 | not recorded - the session record carries no output for this step. | - |
 | S7 | not recorded - the session's `hs_saves_inspect` / `hs_saves_restore` output is not in the record. | - |
 
+Round 3's session ran late on the evening of 2026-09-22 with the research
+DLL whose sha256 starts `d40a4f25` (built from ForgePact `dab08ce`), after a
+saves backup (`20260922T203033Z_pre-restartprobe-r3`); the owner pressed the
+buttons. Combat was against the training dummies in `Town_01_rm` again, a
+valid in-combat state. C1 passed first: `hook` 22 native / 0 blocked / 0 not
+found, and `control=450` with the menu open in town.
+
+| Step | Printed | Reading |
+| --- | --- | --- |
+| T1 | Hovering Restart: `UiSetFocus calls=450` in the same 450 frames; its `a0` instance 262264, the `menuprobe list UI_Button_obj` line whose `text="Restart"` (262264); `self=UI_Pause_obj`, `a1` the pause instance 262261; `selfIds=262264`. | The site's positive control: `UiSetFocus` is handed the Restart button itself, every frame it is hovered. |
+| C5 | In combat (`wasInCombat=bool:true`), cursor moved straight onto Restart, both holds armed (`arg0 enabled 1` and `arg0 manualDisable 0` at `UiSetFocus`): after about a second `writes=450 readbackOk=450` on each slot; ring labels `UI_Button_obj#264101` only, the draw's `selfIds` for that open of the menu; entry `enabled=bool:false` and `manualDisable=bool:true` on every frame (`held=no`); written as bool, the kind found. `hs_screenshot`: Restart drawn lit under the cursor, not greyed. | Pass: every write read back, on the Restart button and nothing else. The game puts both members back every frame, so the ring alone cannot say whether a press sees our value - T2 decides that. |
+| T2 | Press with both holds armed: `UiAIngameRestart calls=1` at frame 27419, the slots' `lastWriteFrame`; sampled at that call `Player_obj.wasInCombat=bool:true` and `combatRefresh=bool:true`. At the press `hold[0]` (enabled) and `hold[1]` (manualDisable) each `writes=4560 readbackOk=4560 entryHeld=0 entryOther=4560`, each ring one run `ring: frames 26396..27419 x1024` on `UI_Button_obj#264101`, no other instance written. Afterwards `UI_Pause_obj` gone, room `Town_01_rm`, and the owner saw the zone restart. | `override: works` at the `UiSetFocus` site: the press reached the Restart activation and the zone restarted while the game still counted the player in combat. The fight was in town, so the unchanged room name is not the oracle here; the activation call, the menu closing and the owner's observation are. |
+| T3 | (a) `arg0 enabled 1` alone, `wasInCombat=bool:true`: `writes=5130 readbackOk=5130` on `UI_Button_obj#273868` only, entry `false` on every frame; press refused, `UiAIngameRestart calls=0`, Restart still drawn greyed. (b) `arg0 manualDisable 0` alone, `wasInCombat=bool:true`: `writes=3976 readbackOk=3976` on `#273868` only, ring frames 48402 to 49425; Restart drawn lit under the cursor; press gave `UiAIngameRestart calls=1` at frame 49425, the `lastWriteFrame`, with `wasInCombat=bool:true` at the call; `UI_Pause_obj` gone and the owner saw the zone restart. | `gate: button-member (manualDisable)`. `enabled` alone: not observed (UiSetFocus site, arg0, enabled=true; ring `held=no`, put back every frame) - the same write pattern that works for `manualDisable`, so `enabled` need not be touched. |
+| T4 | Keyboard navigation does not reach the pause menu's buttons (the owner: "Keyboard doesn't work"); no controller was available. With the mouse off the menu, `UiSetFocus calls=0`. | not run - this setup has no keyboard or controller path to Restart. The mod works while the mouse hovers Restart; that is recorded as a known limitation. |
+| T5 | One `arg0 manualDisable` hold at `UiSetFocus`, menu closed and reopened: `hold: disarmed (menu not drawing since frame 93865; writes=784)`, and `writes=784` unchanged after the reopen. The ring also shows `manualDisable=false` written onto other buttons the cursor crossed, `#288234` and `#288243`, whose own value was already false (`held=yes`). | Pass: the draw-keyed disarm stops the hold when the menu closes. `arg0` writes whatever `UiSetFocus` is handed, so the shipped mod must identify the Restart button by its own signal before it writes (§ Decision, `owner`). |
+| T6 | `hs_saves_inspect 20260922T203033Z_pre-restartprobe-r3`: changed `herosiege13.hss`, `inventory_order_13.hss` and `shop.ini`; added none; missing none. | The changes are the owner's own play; the saves were not restored. |
+
+One more check, at the owner's request: both members held at the Restart
+draw instead (`button enabled 1` and `button manualDisable 0`,
+`writes=6360 readbackOk=6360` each on `UI_Button_obj#288236`), with the
+cursor off Restart. The owner reported Restart still drawn greyed. So the
+greyed look follows the value the game sets at step time, not a write at the
+draw: with the mod, Restart stays greyed in combat until the cursor is on
+it, lights up under the cursor, and works when clicked.
+
 ## Decision
 
-owner: UI_Button_obj (the Restart button's own instance; round 2 - its members flip with combat, not shown to be what the press reads)
-variable: enabled and manualDisable (round 2 - enabled true to false and manualDisable false to true when in combat)
-readyValue: enabled=true, manualDisable=false (bool; round 2 town dump)
-gate: upstream (not identified; round 2 - the button's own enabled/manualDisable are rewritten every frame in combat, not by UiSetRowEnabled; wasInCombat held false at the draw did not unlock it)
-override: unmeasured (overwritten before use, draw site; round 2 - button enabled=1: entryHeld=0 entryOther=5010; button manualDisable=0: entryHeld=0 entryOther=10380; player wasInCombat=0 at the draw: not observed, entryHeld=7179 entryOther=51)
-shipRoute: pending (round 3 - a step-time write inside UiSetFocus)
+owner: UI_Button_obj (the pause menu's Restart node, told apart from every other node by its own uiNodeCallstack "PauseRestart"; round 3)
+variable: manualDisable (round 3 T3 - manualDisable alone unlocks the press; enabled alone did not)
+readyValue: manualDisable=false (bool; round 3 - written in the kind read at entry)
+gate: button-member (manualDisable)
+override: works (UiSetFocus site, arg0, enabled=true and manualDisable=false, bool; round 3 T2 - UiAIngameRestart calls=1 at frame 27419 with wasInCombat=bool:true; manualDisable alone the same at frame 49425)
+shipRoute: setfocus-write

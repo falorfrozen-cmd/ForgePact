@@ -16,6 +16,11 @@ its draw call, a hold that writes only inside a hooked call before the game's
 own body runs, a one-argument override, and a path scope resolved by the
 existing deep reader. The tests below pin where each of those reads and
 writes happens, because "where" is what round 1's overwritten write got wrong.
+
+Round 3 identified the gate (the Restart button's own `manualDisable`, written
+false inside `UiSetFocus`), and phase 2 ships it as `restartanytime`:
+RestartAnytimeContractTests pins what a source read can about the shipped
+mod, beside test_restart_anytime_behavior.py, which runs the hook end to end.
 """
 import re
 import sys
@@ -29,9 +34,16 @@ PLUGIN_SRC = FORGEPACT_DIR / "plugin" / "ModuleMain.cpp"
 SDK_SCRIPTS_HPP = REPO_ROOT / "hs-game-sdk" / "cpp" / "include" / "hs_game_sdk" / "scripts.hpp"
 SDK_OBJECTS_HPP = REPO_ROOT / "hs-game-sdk" / "cpp" / "include" / "hs_game_sdk" / "objects.hpp"
 DOC = FORGEPACT_DIR / "docs" / "restart-always-available-research.md"
+HEADER = FORGEPACT_DIR / "plugin" / "include" / "ForgePact" / "RestartAnytimeMod.hpp"
+SRC_DIR = FORGEPACT_DIR / "src"
+NOTES = FORGEPACT_DIR / "release-notes-v1.4.5.md"
+README = FORGEPACT_DIR / "README.md"
+GUIDE = REPO_ROOT / "docs" / "submodules" / "ForgePact" / "instructions.md"
 
 if str(TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(TESTS_DIR))
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
 
 from test_release_hook_contract import function_body, strip_research_blocks  # noqa: E402
 
@@ -76,15 +88,15 @@ PLANNED_PATHS = ("global.tupm[1].in_combat",)
 # The four write builtins; each appears once in the block, inside RpWrite.
 WRITE_BUILTINS = ('"variable_instance_set"', '"variable_global_set"', '"variable_struct_set"', '"array_set"')
 
-# Round 2's six Decision lines, pinned literally until round 3's live session
-# has run (they replaced round 1's, which the doc no longer carries).
-ROUND2_DECISION = (
-    "owner: UI_Button_obj (the Restart button's own instance; round 2 - its members flip with combat, not shown to be what the press reads)",
-    "variable: enabled and manualDisable (round 2 - enabled true to false and manualDisable false to true when in combat)",
-    "readyValue: enabled=true, manualDisable=false (bool; round 2 town dump)",
-    "gate: upstream (not identified; round 2 - the button's own enabled/manualDisable are rewritten every frame in combat, not by UiSetRowEnabled; wasInCombat held false at the draw did not unlock it)",
-    "override: unmeasured (overwritten before use, draw site; round 2 - button enabled=1: entryHeld=0 entryOther=5010; button manualDisable=0: entryHeld=0 entryOther=10380; player wasInCombat=0 at the draw: not observed, entryHeld=7179 entryOther=51)",
-    "shipRoute: pending (round 3 - a step-time write inside UiSetFocus)",
+# Round 3's six Decision lines, pinned literally (they replaced round 2's,
+# which replaced round 1's; the doc carries only the latest set).
+ROUND3_DECISION = (
+    "owner: UI_Button_obj (the pause menu's Restart node, told apart from every other node by its own uiNodeCallstack \"PauseRestart\"; round 3)",
+    "variable: manualDisable (round 3 T3 - manualDisable alone unlocks the press; enabled alone did not)",
+    "readyValue: manualDisable=false (bool; round 3 - written in the kind read at entry)",
+    "gate: button-member (manualDisable)",
+    "override: works (UiSetFocus site, arg0, enabled=true and manualDisable=false, bool; round 3 T2 - UiAIngameRestart calls=1 at frame 27419 with wasInCombat=bool:true; manualDisable alone the same at frame 49425)",
+    "shipRoute: setfocus-write",
 )
 
 # The identifier names read from the executable's string table.
@@ -636,13 +648,13 @@ class RestartResearchDocTests(unittest.TestCase):
         for key in DECISION_KEYS:
             lines = re.findall(r"(?m)^" + key + r": (.+)$", decision)
             self.assertEqual(len(lines), 1, key)
-        # Rounds 1 and 2 ran and did not identify the gate: round 2's six
-        # lines stand, literally, until round 3's live session has run - and
-        # no other `key:` line may creep in beside them.
-        for line in ROUND2_DECISION:
+        # Round 3 identified the gate: its six lines stand, literally, and no
+        # other `key:` line may creep in beside them.
+        for line in ROUND3_DECISION:
             self.assertIn("\n" + line + "\n", decision + "\n", line)
         keyed = re.findall(r"(?m)^(\w+): ", decision)
         self.assertEqual(keyed, list(DECISION_KEYS))
+        self.assertNotIn("pending", decision)
 
     def test_research_doc_round1_results_and_round2_procedure(self):
         results = doc_section(self.doc, "## Results")
@@ -748,12 +760,248 @@ class RestartResearchDocTests(unittest.TestCase):
         self.assertIn("menu not drawing", instrument)
         self.assertGreaterEqual(instrument.count("ring"), 2)
         self.assertIn("two holds armed", instrument)
-        # Status: round 2 ran, round 3 is pending.
+        # Status names round 3.
         status = self.doc[self.doc.index("**Status.**"):self.doc.index("\n## The question")]
         self.assertIn("round 3", status.lower())
         self.assertNotIn("round 2's live session is pending", self.doc)
+
+    def test_research_doc_round3_results_and_decision(self):
+        results = doc_section(self.doc, "## Results")
+        rows = re.findall(r"(?m)^\| (C5|T[1-6]) \|(.*)$", results)
+        self.assertEqual(sorted(r[0] for r in rows), ["C5", "T1", "T2", "T3", "T4", "T5", "T6"])
+        self.assertEqual(len(re.findall(r"(?m)^\| (?:C5|T[1-6]) \|", self.doc)), 7)
+        by_step = {step: text for step, text in rows}
+        # Printed fragments from the round-3 session, quoted.
+        self.assertIn("UiSetFocus calls=450", by_step["T1"])
+        self.assertIn("selfIds=262264", by_step["T1"])
+        self.assertIn("writes=450 readbackOk=450", by_step["C5"])
+        self.assertIn("UI_Button_obj#264101", by_step["C5"])
+        # T2 quotes both slots' stat lines and the ring.
+        self.assertIn("UiAIngameRestart calls=1", by_step["T2"])
+        self.assertIn("wasInCombat=bool:true", by_step["T2"])
+        for slot in ("`hold[0]`", "`hold[1]`"):
+            self.assertIn(slot, by_step["T2"], slot)
+        self.assertIn("writes=4560 readbackOk=4560 entryHeld=0 entryOther=4560", by_step["T2"])
+        self.assertIn("ring: frames 26396..27419 x1024", by_step["T2"])
+        self.assertIn("UiAIngameRestart calls=0", by_step["T3"])
+        self.assertIn("frame 49425", by_step["T3"])
+        self.assertIn("not run", by_step["T4"])
+        self.assertIn("menu not drawing since frame 93865", by_step["T5"])
+        self.assertIn("20260922T203033Z_pre-restartprobe-r3", by_step["T6"])
+        # The round-3 rule: `override: works` stands only on C1 and C5 passing
+        # in the same session, with the press reaching the activation.
         decision = doc_section(self.doc, "## Decision")
-        self.assertEqual(len(re.findall(r"(?m)^shipRoute: pending \(round 3", decision)), 1)
+        override = re.search(r"(?m)^override: (.+)$", decision).group(1)
+        if override.startswith("works"):
+            round3 = results[results.index("Round 3's session"):]
+            self.assertIn("C1 passed", round3[:round3.index("| Step |")])
+            self.assertRegex(round3[:round3.index("| Step |")], r"control=[1-9]\d*")
+            self.assertIn("Pass", by_step["C5"].split("|")[-2])
+            self.assertIn("override: works", by_step["T2"])
+        else:
+            self.assertRegex(override, r"^(not observed|unmeasured) \(")
+        self.assertIn(re.search(r"(?m)^shipRoute: (.+)$", decision).group(1), ("setfocus-write", "none"))
+        # Exit is never researched, here either.
+        self.assertNotIn(EXIT_ACTIVATION, self.doc)
+
+
+class RestartAnytimeContractTests(unittest.TestCase):
+    """The shipped mod, `restartanytime` (phase 2, `shipRoute: setfocus-write`).
+
+    Companion to test_restart_anytime_behavior.py, which runs the real hook
+    body end to end. This pins what a source read can: a real player command
+    that installs nothing itself; one `UiSetFocus` install, in FrameCallback,
+    behind the toggleguard gate, through both routes, turning the mod off when
+    the inline detour did not go in; the off fast path first; the button
+    identified by its own member at the call; every counter printed; the
+    panel; and the docs.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.plugin = PLUGIN_SRC.read_text(encoding="utf-8").replace("\r\n", "\n")
+        cls.player = strip_research_blocks(cls.plugin)
+        cls.header = HEADER.read_text(encoding="utf-8").replace("\r\n", "\n")
+        cls.hook = function_body(cls.plugin, "static RValue& HookRestartAnytimeSetFocus(")
+        cls.install = function_body(cls.plugin, "static void RestartAnytimeInstall(")
+        cls.frame = function_body(cls.plugin, "void FrameCallback(")
+        start = cls.plugin.index('if (lc == "restartanytime")')
+        cls.branch = cls.plugin[start:cls.plugin.index('if (lc == "toggleborder")', start)]
+
+    def test_restartanytime_is_a_player_command(self):
+        match = re.search(r"kPlayerCommands = \{(.*?)\};", self.plugin, re.S)
+        self.assertIsNotNone(match)
+        self.assertIn('"restartanytime"', match.group(1))
+        # The allowlist entry and the dispatcher, both in the player build.
+        self.assertGreaterEqual(self.player.count('"restartanytime"'), 2)
+        self.assertIn('if (lc == "restartanytime")', function_body(self.player, "static void RunCommand("))
+        # A standalone early return (C1061), not part of the research dispatcher.
+        self.assertNotIn("restartanytime", function_body(self.plugin, "static bool HandleRestartProbeCommand("))
+        self.assertIn("return;\n    }", self.branch)
+        # The decision core is its own header, game-independent.
+        includes = [line.strip() for line in self.header.splitlines() if line.strip().startswith("#include")]
+        self.assertEqual(includes, ['#include "Common.hpp"'])
+        for forbidden in ("g_Yytk", "CallBuiltin", "RValue", "CInstance"):
+            self.assertNotIn(forbidden, self.header, forbidden)
+        self.assertIn("#include <ForgePact/RestartAnytimeMod.hpp>", self.plugin)
+
+    def test_hook_installs_lazily_from_framecallback_with_both_routes(self):
+        needle = "RestartAnytimeInstall();"
+        self.assertEqual(self.plugin.count(needle), 1)
+        self.assertIn(needle, self.frame)
+        call = self.frame.index(needle)
+        gate = self.frame.rindex("if (ForgePact::RestartAnytimeMod::Instance().IsPending()", 0, call)
+        enclosing = self.frame[gate:call]
+        for name in ("g_Setup", "HhResolveLocalPlayer", "(fc % 60) == 0", "ClearPending()"):
+            self.assertIn(name, enclosing, name)
+        self.assertIn(needle, function_body(self.player, "void FrameCallback("))
+        # One install on the site, by its SDK name, through HookOneScript
+        # (table swap plus inline detour) with the detour's outcome read back.
+        self.assertIn("inline constexpr std::string_view kRestartAnytimeSiteScript = "
+                      "HeroSiege::Scripts::gml_Script_UiSetFocus;", self.header)
+        self.assertEqual(self.plugin.count("HookOneScript(SdkShortScriptName(ForgePact::kRestartAnytimeSiteScript)"), 1)
+        self.assertIn("HookOneScript(SdkShortScriptName(ForgePact::kRestartAnytimeSiteScript)", self.install)
+        self.assertIn("&g_OrigUiSetFocus, &native)", self.install)
+        self.assertNotIn("HookOneScriptTable(", self.install)
+        # The command arms; it never installs.
+        self.assertNotIn("HookOneScript", self.branch)
+        self.assertNotIn("RestartAnytimeInstall", self.branch)
+
+    def test_table_only_install_turns_the_mod_off_and_says_so(self):
+        body = self.install
+        on = body.index('if (ok && native) { Out("restartanytime: hook installed -> ON"); return; }')
+        blind = body.index("MarkBlind();")
+        self.assertLess(on, blind)
+        self.assertIn('"TABLE-ONLY"', body[blind:])
+        self.assertIn("-> OFF", body[blind:])
+        # Blind stays off: MarkBlind clears the flag and SetEnabled refuses
+        # to turn a blind session back on.
+        mark = function_body(self.header, "void MarkBlind(")
+        self.assertIn("m_Enabled.store(false);", mark)
+        set_enabled = function_body(self.header, "void SetEnabled(bool enabled, bool alreadyHooked)")
+        self.assertIn("if (enabled && m_Blind.load())", set_enabled)
+        self.assertIn("IsBlind()", self.branch)
+        state = function_body(self.player, "static std::string RestartAnytimeHookState(")
+        for literal in ('"not installed"', '"installed"', '"TABLE-ONLY"'):
+            self.assertIn(literal, state)
+        self.assertIn("AddrIsExecutableInModule(GetModuleHandleA(nullptr), (const void*)g_OrigUiSetFocus)", state)
+
+    def test_off_fast_path_reads_nothing(self):
+        body = self.hook
+        fast = body.index("if (!mod.IsEnabled()) return g_OrigUiSetFocus(S, O, R, argc, A);")
+        # Nothing but fetching the mod comes before it.
+        self.assertEqual(body[:fast].strip(),
+                         "ForgePact::RestartAnytimeMod& mod = ForgePact::RestartAnytimeMod::Instance();")
+        for read in ("g_Yytk", "HhUsableInstance(", "RestartAnytimeReadGate("):
+            self.assertLess(fast, body.index(read), read)
+        self.assertNotIn("#ifndef FORGEPACT_RELEASE", body)
+        # The original is called on every path, once each.
+        self.assertEqual(body.count("return g_OrigUiSetFocus(S, O, R, argc, A);"), 2)
+        self.assertNotIn("return R;", body)
+
+    def test_hook_body_identifies_the_button_by_its_own_member_never_by_position(self):
+        body = self.hook
+        arg = body.index("argc > 0 && A && A[0] && HhUsableInstance(*A[0])")
+        key = body.index("ForgePact::kRestartButtonIdMember")
+        gate = body.index("RestartAnytimeReadGate(*A[0], entry)")
+        decide = body.index("ForgePact::RestartAnytimeModel::Decide(")
+        write = body.index('"variable_instance_set"')
+        self.assertLess(arg, key)
+        self.assertLess(key, gate)
+        self.assertLess(gate, decide)
+        self.assertLess(decide, write)
+        self.assertIn("kind == VALUE_STRING && key.ToString() == ForgePact::kRestartButtonIdValue", body)
+        # The gate is read only once the button is known to be Restart.
+        self.assertLess(body.index("if (isRestartButton) {"), gate)
+        # Never by position, instance id, the call's self or the probe's ids.
+        for forbidden in ("selfIds", "g_RpSelfIds", "A[1]", "S->", "RValue(S)", "ToRValue", "instance_find",
+                          "\"id\"", "262264", "264101", "\"enabled\""):
+            self.assertNotIn(forbidden, body, forbidden)
+        # The write goes to the member the decision names, on a0, in the kind read.
+        self.assertIn("{ *A[0], RValue(ForgePact::kRestartGateMember), ready }", body)
+        self.assertIn("kind == VALUE_BOOL ? RValue(ForgePact::kRestartGateReadyValue)", body)
+        for constant in ('kRestartButtonIdMember = "uiNodeCallstack";', 'kRestartButtonIdValue = "PauseRestart";',
+                         'kRestartGateMember = "manualDisable";', "kRestartGateReadyValue = false;"):
+            self.assertIn(constant, self.header, constant)
+        self.assertIn("enum class RestartAnytimeDecision { Pass, Write };", self.header)
+
+    def test_stat_and_zero_print_every_counter(self):
+        line = function_body(self.player, "static std::string RestartAnytimeCountersLine(")
+        for key in ("written=", "passed=", "otherNode=", "unreadable=", "hook="):
+            self.assertIn(key, line, key)
+        self.assertIn('v == "stat"', self.branch)
+        self.assertIn('v == "off" || v == "0"', self.branch)
+        stat = self.branch[self.branch.index('v == "stat"'):self.branch.index('v == "off" || v == "0"')]
+        self.assertIn("RestartAnytimeCountersLine()", stat)
+        self.assertNotIn("SetEnabled", stat)
+        off = self.branch[self.branch.index('v == "off" || v == "0"'):]
+        self.assertIn('"restartanytime -> off " + RestartAnytimeCountersLine()', off)
+        self.assertIn('"ON (armed, applies once you are in-game)"', self.branch)
+        self.assertIn('restartanytime: first write - ', self.hook)
+
+    def test_panel_toggle_mirrors_every_mod_toggle_guard_site(self):
+        import forgepact  # noqa: E402 - the panel, imported only here
+        panel = (SRC_DIR / "forgepact.py").read_text(encoding="utf-8-sig")
+        self.assertEqual(panel.count("mod_restart_anytime"), panel.count("mod_toggle_guard"))
+        self.assertIs(forgepact.DEFAULTS["mod_restart_anytime"], False)
+        self.assertFalse([c for c in forgepact.build_cmds(dict(forgepact.DEFAULTS)) if "restartanytime" in c])
+        cfg = dict(forgepact.DEFAULTS)
+        cfg["mod_restart_anytime"] = True
+        self.assertIn("restartanytime 1", forgepact.build_cmds(cfg))
+        self.assertIn("f\"restartanytime {1 if cfg['mod_restart_anytime'] else 0}\"", panel)
+        self.assertIn('id="mod_restart_anytime"', forgepact.HTML)
+        self.assertIn('id="mraval"', forgepact.HTML)
+        self.assertIn("Restart zone at any time", forgepact.HTML)
+
+    def test_release_notes_readme_and_guide_record_the_mod(self):
+        notes = NOTES.read_text(encoding="utf-8").replace("\r\n", "\n")
+        new = notes[notes.index("\n## New\n"):notes.index("\n## ", notes.index("\n## New\n") + 1)]
+        bullets = re.split(r"(?m)^- ", new)[1:]
+        self.assertTrue([b for b in bullets if "Restart" in b and "off by default" in b])
+        readme = README.read_text(encoding="utf-8").replace("\r\n", "\n")
+        rows = [line for line in readme.splitlines() if line.startswith("| **")]
+        self.assertTrue([r for r in rows if "Restart" in r and "off by default" in r])
+        self.assertIn("docs/restart-always-available-research.md", readme)
+        if not GUIDE.is_file():
+            self.skipTest("the hub guide is not beside this checkout")
+        guide = GUIDE.read_text(encoding="utf-8").replace("\r\n", "\n")
+        self.assertGreaterEqual(guide.count("restartanytime"), 3)
+        self.assertIn("test_restart_anytime_behavior.py", guide)
+        item = re.search(r"(?ms)^\d+\. \*\*\"Restart zone at any time\".*?(?=^\d+\. \*\*|^---)", guide)
+        self.assertIsNotNone(item)
+        text = item.group(0)
+        self.assertIn("risk accepted", text)
+        self.assertIn("2026-09-22", text)
+        self.assertIn("T4 was not run", text)
+
+    def test_probe_and_mod_install_order_is_documented_and_the_row_stays_unbound(self):
+        # The probe's UiSetFocus row carries no existing-hook pointer (D14).
+        # Binding it to g_OrigUiSetFocus would not attach it: restartanytime
+        # installs through both of HookOneScript's routes, so that pointer is
+        # a trampoline and the table entry is our hook, neither inside
+        # Hero_Siege.exe, and RestartProbeAttach ends at `blocked` either way.
+        rows = {r["sdk"]: r for r in macro_rows(self.plugin, "#define RESTARTPROBE_SCRIPTS(X)")}
+        self.assertEqual(rows["gml_Script_UiSetFocus"]["orig"], "nullptr")
+        self.assertEqual(rows["gml_Script_UiSetFocus"]["held"], "nullptr")
+        self.assertNotIn("g_OrigUiSetFocus", function_body(self.plugin, "static void RestartProbeAttach("))
+        # The research doc says what each install order does instead, and
+        # that it is a static reading.
+        doc = DOC.read_text(encoding="utf-8").replace("\r\n", "\n")
+        instrument = doc_section(doc, "## Instrument")
+        para = re.search(r"(?ms)^Coexistence: .*?(?=\n\n|\Z)", instrument)
+        self.assertIsNotNone(para)
+        for phrase in ("restartanytime", "restartprobe hook", "blocked", "TABLE-ONLY", "not run live"):
+            self.assertIn(phrase, para.group(0), phrase)
+        self.assertNotIn("No such hook exists yet", doc)
+        if not GUIDE.is_file():
+            self.skipTest("the hub guide is not beside this checkout")
+        guide = GUIDE.read_text(encoding="utf-8").replace("\r\n", "\n")
+        item = re.search(r"(?ms)^\d+\. \*\*\"Restart zone at any time\".*?(?=^\d+\. \*\*|^---)", guide)
+        self.assertIsNotNone(item)
+        text = item.group(0)
+        for phrase in ("Research probe and mod in one session", "restartprobe hook", "blocked", "TABLE-ONLY",
+                       "not run live", "player build"):
+            self.assertIn(phrase, text, phrase)
 
 
 if __name__ == "__main__":

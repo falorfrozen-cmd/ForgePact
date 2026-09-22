@@ -793,6 +793,9 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
             # Another feature in the same table, named rather than ignored:
             # the read-only menu listing (test_menu_layout_contract.py).
             "menulayout",
+            # And "Restart zone at any time" (issue #8,
+            # test_restart_anytime_contract.py).
+            "restartanytime",
         }
         self.assertEqual(entries, expected)
 
@@ -2869,8 +2872,9 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         now = as_set(re.search(pattern, self.plugin, re.S).group(1))
         before = as_set(re.search(pattern, old, re.S).group(1))
         # `menulayout` is the read-only menu listing, another feature landing
-        # in the same table (test_menu_layout_contract.py pins it).
-        self.assertEqual(now - before, {"autoprospect", "skilltimer", "menulayout"})
+        # in the same table (test_menu_layout_contract.py pins it), and
+        # `restartanytime` is issue #8's (test_restart_anytime_contract.py).
+        self.assertEqual(now - before, {"autoprospect", "skilltimer", "menulayout", "restartanytime"})
         self.assertEqual(before - now, set())
 
     # ---- Sprite look probe (R round 3, issue #11): `tgprobe sprite ...` ----

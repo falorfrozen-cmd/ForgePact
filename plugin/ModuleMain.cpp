@@ -380,6 +380,7 @@ static consteval const char* SdkShortScriptName(std::string_view sdkConstant)
 #include <ForgePact/StatsManager.hpp>
 #include <ForgePact/RelicFilterMod.hpp>
 #include <ForgePact/ToggleSkillMod.hpp>
+#include <ForgePact/RestartAnytimeMod.hpp>
 #include <ForgePact/SkillTimerMod.hpp>
 // Issue #55 follow-up (D-S4): the generated rule table - kept as its own
 // include, never folded into SkillTimerMod.hpp, so that header (spliced
@@ -6349,6 +6350,132 @@ static void ToggleGuardStats()
     Out("toggleguard stat: enabled=" + std::string(ForgePact::ToggleGuardMod::Instance().IsEnabled() ? "on" : "off")
         + " " + ToggleGuardCountersLine());
     Out("toggleguard stat: " + ToggleTableRowsLine());
+}
+
+// ===== Restart zone at any time (issue #8; `restartanytime`) ===================
+// Changes one value inside a call the game is already making: while the
+// pause menu's Restart button is the node the game's own `UiSetFocus` call is
+// handed, its `manualDisable` is written back to false before the game's body
+// runs, so a press in combat reaches the Restart activation instead of being
+// refused (docs/restart-always-available-research.md, round 3, T2/T3). It
+// restarts nothing itself and restores nothing: the game recomputes the
+// member every frame (ForgePact::RestartAnytimeModel, RestartAnytimeMod.hpp).
+// Off by default; installed only once armed (FrameCallback, the toggleguard
+// shape), through both of HookOneScript's routes - a TABLE-ONLY install
+// turns the mod off for the session and says so.
+static PFUNC_YYGMLScript g_OrigUiSetFocus = nullptr;
+static std::atomic<bool> g_RestartAnytimeInstallFailed{ false };
+
+// The Restart button's gate member, read at the call from the button the call
+// was handed. Only the kinds a gate can be written back in are accepted: the
+// bool the game was measured to hold, or a real. Anything else - absent,
+// undefined, a string, an integer kind nobody measured, a throw - is not
+// readable, and an unreadable gate is never written.
+static bool RestartAnytimeReadGate(const RValue& button, RValue& entry)
+{
+    try {
+        entry = g_Yytk->CallBuiltin("variable_instance_get", { button, RValue(ForgePact::kRestartGateMember) });
+    } catch (...) { return false; }
+    const auto kind = static_cast<uint32_t>(entry.m_Kind) & 0x0FFFFFFFU;
+    return kind == VALUE_BOOL || kind == VALUE_REAL;
+}
+
+static RValue& HookRestartAnytimeSetFocus(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    ForgePact::RestartAnytimeMod& mod = ForgePact::RestartAnytimeMod::Instance();
+    if (!mod.IsEnabled()) return g_OrigUiSetFocus(S, O, R, argc, A);
+
+    // Which node has focus is the call's own first argument (round 3, T1:
+    // the Restart button itself, handed over as VALUE_REF). It is accepted by
+    // reading through it, not by its kind, and identified by what it is - its
+    // own `uiNodeCallstack` - never by position, instance id or `self`: the
+    // menu is rebuilt on every open, and `self` is the pause menu.
+    bool isRestartButton = false;
+    if (argc > 0 && A && A[0] && HhUsableInstance(*A[0])) {
+        try {
+            RValue key = g_Yytk->CallBuiltin("variable_instance_get", { *A[0], RValue(ForgePact::kRestartButtonIdMember) });
+            const auto kind = static_cast<uint32_t>(key.m_Kind) & 0x0FFFFFFFU;
+            isRestartButton = kind == VALUE_STRING && key.ToString() == ForgePact::kRestartButtonIdValue;
+        } catch (...) {}
+    }
+    // The gate, read here at the point of use from the button being acted on,
+    // and only once that button is known to be Restart.
+    RValue entry;
+    bool memberReadOk = false, alreadyReady = false;
+    if (isRestartButton) {
+        memberReadOk = RestartAnytimeReadGate(*A[0], entry);
+        if (memberReadOk) {
+            const auto kind = static_cast<uint32_t>(entry.m_Kind) & 0x0FFFFFFFU;
+            alreadyReady = kind == VALUE_BOOL ? entry.ToBoolean() == ForgePact::kRestartGateReadyValue
+                                              : (entry.ToDouble() != 0.0) == ForgePact::kRestartGateReadyValue;
+        }
+    }
+
+    // `enabled` is true here: the off fast path above has already returned.
+    if (ForgePact::RestartAnytimeModel::Decide(true, isRestartButton, memberReadOk, alreadyReady)
+            == ForgePact::RestartAnytimeDecision::Write) {
+        // In the kind read at entry: the game's own bool stays a bool.
+        const auto kind = static_cast<uint32_t>(entry.m_Kind) & 0x0FFFFFFFU;
+        const RValue ready = kind == VALUE_BOOL ? RValue(ForgePact::kRestartGateReadyValue)
+                                                : RValue(ForgePact::kRestartGateReadyValue ? 1.0 : 0.0);
+        bool wrote = false;
+        try {
+            g_Yytk->CallBuiltin("variable_instance_set", { *A[0], RValue(ForgePact::kRestartGateMember), ready });
+            wrote = true;
+        } catch (...) {}
+        if (wrote) {
+            mod.NoteWritten();
+            if (mod.TakeFirstWrite())
+                Out(std::string("restartanytime: first write - the pause menu's Restart button had ")
+                    + ForgePact::kRestartGateMember + "=" + Describe(entry)
+                    + " (the game's in-combat wait); written open, so a press now goes through");
+        } else {
+            mod.NoteUnreadable();   // the write threw: nothing was changed
+        }
+    } else if (!isRestartButton) {
+        mod.NoteOtherNode();
+    } else if (!memberReadOk) {
+        mod.NoteUnreadable();
+    } else {
+        mod.NotePassed();           // the gate was already open
+    }
+    return g_OrigUiSetFocus(S, O, R, argc, A);
+}
+
+// hook=not installed|installed|TABLE-ONLY|FAILED, the toggleguard shape.
+// HookOneScript leaves the trampoline in g_OrigUiSetFocus when its native
+// detour went in, and the game's own function (code inside Hero_Siege.exe)
+// when it fell back to the table swap alone.
+static std::string RestartAnytimeHookState()
+{
+    if (g_RestartAnytimeInstallFailed.load()) return "FAILED (UiSetFocus not found)";
+    if (!g_OrigUiSetFocus) return "not installed";
+    if (AddrIsExecutableInModule(GetModuleHandleA(nullptr), (const void*)g_OrigUiSetFocus)) return "TABLE-ONLY";
+    return "installed";
+}
+
+// Printed by `restartanytime 0` and `restartanytime stat`.
+static std::string RestartAnytimeCountersLine()
+{
+    const ForgePact::RestartAnytimeMod& mod = ForgePact::RestartAnytimeMod::Instance();
+    return "written=" + std::to_string(mod.Written()) + " passed=" + std::to_string(mod.Passed())
+        + " otherNode=" + std::to_string(mod.OtherNode()) + " unreadable=" + std::to_string(mod.Unreadable())
+        + " hook=" + RestartAnytimeHookState();
+}
+
+// The one install attempt, from FrameCallback once the mod is armed, setup
+// has run and a player exists. Both routes or nothing: `UiSetFocus` is called
+// by compiled GML directly, which the table swap alone never sees.
+static void RestartAnytimeInstall()
+{
+    bool native = false;
+    const bool ok = HookOneScript(SdkShortScriptName(ForgePact::kRestartAnytimeSiteScript), "bp_restartanytime",
+                                  (PVOID)HookRestartAnytimeSetFocus, &g_OrigUiSetFocus, &native);
+    g_RestartAnytimeInstallFailed.store(!ok);
+    if (ok && native) { Out("restartanytime: hook installed -> ON"); return; }
+    ForgePact::RestartAnytimeMod::Instance().MarkBlind();
+    Out(std::string("restartanytime: hook ") + (ok ? "TABLE-ONLY" : "not installed (UiSetFocus not found)")
+        + " -> OFF: the game's own calls would never reach it, so Restart keeps its in-combat wait this session");
 }
 
 static long g_HhHudCalls = 0, g_HhLabelDraws = 0;
@@ -29003,7 +29130,7 @@ static void RunCommand(const std::string& line)
         "stat", "statadd", "raredrop", "droprate", "dungeonkey",
         "headhunter", "hhdur", "hhmap", "hhdefault", "hhlabel", "tyrant", "beacon", "beaconrange", "beaconmode", "beaconwake", "beaconspawn", "beaconfarstep", "tyrantchance", "tyrantaffix", "hhlabelfont", "hhlabeloffset", "hhlabelmax",
         "enemyspeed", "rarity", "sigdrop", "angelicdrop", "relicfilter", "orbpickup", "satmods", "petquest",
-        "autoprospect", "toggleborder", "toggleguard", "skilltimer", "menulayout"
+        "autoprospect", "toggleborder", "toggleguard", "skilltimer", "menulayout", "restartanytime"
     };
     if (kPlayerCommands.find(lc) == kPlayerCommands.end()) {
         Out("command unavailable in player build: " + cmd);
@@ -29063,6 +29190,31 @@ static void RunCommand(const std::string& line)
                 + " (a double-cast proc no longer switches one of the "
                 + std::to_string(ForgePact::kToggleSkillRowCount)
                 + " covered toggle skills back on - `toggleguard stat` lists them)");
+        }
+        return;
+    }
+    // Restart zone at any time (issue #8). A standalone early return for the
+    // same C1061 reason as `toggleguard` above. `1` only arms it: FrameCallback
+    // installs the UiSetFocus hook once a player exists (guide Known
+    // Limitations item 8), so the panel can send it at launch.
+    if (lc == "restartanytime") {
+        std::string v = Lower(TrimCopy(rest));
+        if (v == "stat") {   // read-only: stores nothing
+            Out(std::string("restartanytime stat: enabled=")
+                + (ForgePact::RestartAnytimeMod::Instance().IsEnabled() ? "on" : "off") + " " + RestartAnytimeCountersLine());
+            return;
+        }
+        if (v == "off" || v == "0") {
+            ForgePact::RestartAnytimeMod::Instance().SetEnabled(false, g_OrigUiSetFocus != nullptr);
+            Out("restartanytime -> off " + RestartAnytimeCountersLine());
+        } else if (ForgePact::RestartAnytimeMod::Instance().IsBlind()) {
+            Out("restartanytime -> OFF: the UiSetFocus hook went in without its inline detour this session, so it "
+                "could not see the game's own calls " + RestartAnytimeCountersLine());
+        } else {
+            const bool hooked = g_OrigUiSetFocus != nullptr;
+            ForgePact::RestartAnytimeMod::Instance().SetEnabled(true, hooked);
+            Out(std::string("restartanytime -> ") + (hooked ? "ON" : "ON (armed, applies once you are in-game)")
+                + " (the pause menu's Restart works in combat while the mouse is on it)");
         }
         return;
     }
@@ -30198,6 +30350,17 @@ void FrameCallback(FWFrame& FrameContext)
             const bool ok = HookOneScript("TalentUseClass", "bp_tuclass", (PVOID)HookTalentUseClass, &g_OrigTalentUseClass);
             g_ToggleGuardInstallFailed.store(!ok);
             Out("toggleguard: hook=" + ToggleGuardHookState());
+        }
+    }
+
+    // Restart zone at any time, armed by `restartanytime 1`: the UiSetFocus
+    // hook goes in on the same terms as the re-cast guard's just above -
+    // runner settled, a real player exists, checked once a second at most.
+    if (ForgePact::RestartAnytimeMod::Instance().IsPending() && g_Setup && (fc % 60) == 0) {
+        RValue player;
+        if (HhResolveLocalPlayer(player)) {
+            ForgePact::RestartAnytimeMod::Instance().ClearPending();
+            RestartAnytimeInstall();
         }
     }
 
