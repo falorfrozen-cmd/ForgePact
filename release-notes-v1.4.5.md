@@ -130,6 +130,18 @@ of its own - see that bullet for what it draws on.
   and loaded the chosen character. Nothing in play changes, and there is no
   new switch in the panel.
 
+## Changed
+
+- **Headhunter and Tyrant's Crown now drop like an Angelic / Unholy item.** They used to drop
+  on their own, in every session, about once every 15,000 kills each - far more often than any
+  Angelic / Unholy item such as **Liquor Holster** - with no panel control for it. They
+  are now two more items in the Angelic / Unholy Drops pool, so they drop exactly as often as
+  Liquor Holster does from that slider: never while it is off (the default), more often as it is raised,
+  on the very same roll as every other item in the pool. With two more items sharing each hit,
+  every other Angelic / Unholy item is very slightly rarer. The game's own Angelic drops (from a
+  Blood Pact or dungeon "Angelic item drop chance" modifier) still do not include either item -
+  only ForgePact's own die does.
+
 ## How to update
 
 Download and extract the complete release, then reopen ForgePact. Your existing

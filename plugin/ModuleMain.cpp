@@ -9256,19 +9256,17 @@ static void InstallEquipTraceHooks()
 // self = the DYING ENEMY and argument 2 = the killing Player_obj (the earlier reading had
 // the roles swapped, which is why no kill ever showed enemy data).
 // ---- signature drops ----------------------------------------------------------------------
-// On every monster kill roll g_SigDropPct (Angelic's own 1-in-7500, no pity); on a hit build the next signature item
-// through the game's own loader (InitItemFromJson(json, "region-account-timestamp-type")) and
-// drop it where the monster died (LootGroundCreateFromItem).  The forge hooks fire inside
+// Headhunter and Tyrant's Crown now roll in the Angelic/Unholy pool itself (#63): they are
+// appended to it by AppendSignatureCandidates below, so every setting that changes Liquor
+// Holster's chance (kAngelicBases row belts_liquor_holster) changes theirs identically, by
+// construction - no fixed rate, no separate pity/alternation.  SpawnSignatureItem builds the
+// item through the game's own loader (InitItemFromJson(json, "region-account-timestamp-type"))
+// and drops it where the monster died (LootGroundCreateFromItem).  The forge hooks fire inside
 // InitItemFromJson -> CreateItemNew, so the built-in entry above dresses the item.
-// Vanilla rates (agreed 2026-09-06): rare/champion 0.05 pct, ancient 0.5 pct, and a pity
-// counter that guarantees a drop after 1500 rare-tier kills without one.  `sigdrop` tunes them.
-static const double kSigDropAngelicPct = 100.0 / 7500.0;   // the game's Angelic/Unholy base (1 in 7500)
-static double g_SigDropPct = kSigDropAngelicPct;           // normal, rare and champion kills
-static double g_SigDropAncientPct = kSigDropAngelicPct;    // ancient (4) kills
-static long g_SigDropPity = 0;                             // 0 = no pity (default)
-static long g_SigDropSinceLast = 0;
 static long g_SigDropRolls = 0, g_SigDropHits = 0, g_SigDropFails = 0;
-static int g_SigDropNext = 0;           // 0 = crown, 1 = belt (they alternate)
+static int g_SigDropForce = -1;   // -1 off (default); 0 force Tyrant's Crown, 1 force Headhunter
+                                   // every monster kill - test command only (`sigdrop`); the
+                                   // normal drop rate follows the Angelic/Unholy slider.
 static bool SpawnSignatureItem(int which, double x, double y, CInstance* ctx)
 {
     const double seed = which == 0 ? kSigCrownSeed : kSigBeltSeed;
@@ -9380,11 +9378,24 @@ static const AngelicBase kAngelicBases[] = {
     { 18, 0, 5, "consumable_elixir_of_unworldly_cognition", "Elixir of Unworldly Cognition", false },
     { 18, 0, 8, "consumable_gold_inlaid_mysterious_potion", "Gold Inlaid Mysterious Potion", true },
 };
-struct AngelicCandidate { int type, sub, b; std::string name; bool angelic; };
+// signature: -1 = an ordinary validated unique (SpawnAngelicItem); 0/1 = a signature entry
+// (Tyrant's Crown / Headhunter, spawned through SpawnSignatureItem instead) appended by
+// AppendSignatureCandidates below (#63).  Default member initializer so existing
+// {type, sub, b, "name", angelic} initializers still compile unchanged.
+struct AngelicCandidate { int type, sub, b; std::string name; bool angelic; int signature = -1; };
 static std::vector<AngelicCandidate> g_AngelicPool;
 static bool g_AngelicPoolBuilt = false;
 static double g_AngelicDropOneIn = 0.0;   // 0 = off; N = one angelic drop per N kills on average
 static volatile long g_AngelicDropRolls = 0, g_AngelicDropHits = 0, g_AngelicDropFails = 0;
+// Headhunter and Tyrant's Crown join the pool only once it holds at least one validated
+// unique - an empty pool stays empty, so `angelicdrop` still turns itself off rather than
+// making a signature item a 1-in-2 drop when every unique fails validation (#63).
+static void AppendSignatureCandidates(std::vector<AngelicCandidate>& pool)
+{
+    if (pool.empty()) return;
+    pool.push_back({ 0, 0, 0, "Tyrant's Crown", true, 0 });
+    pool.push_back({ 0, 0, 0, "Headhunter", true, 1 });
+}
 static std::string StructKey(const RValue& st, const char* field)
 {
     try { RValue v = g_Yytk->CallBuiltin("variable_struct_get", { st, RValue(field) }); if (v.m_Kind == VALUE_STRING) return v.ToString(); } catch (...) {}
@@ -9428,6 +9439,10 @@ static void BuildAngelicPool(bool verbose)
         else ++rejected;
         if (verbose) Out(std::string("angeliclist: ") + base.name + " (" + std::to_string(base.type) + "/" + std::to_string(base.sub) + "/" + std::to_string(base.b) + ") -> " + (why.empty() ? "ok" : why));
     }
+    const size_t beforeSignature = g_AngelicPool.size();
+    AppendSignatureCandidates(g_AngelicPool);
+    if (verbose) for (size_t i = beforeSignature; i < g_AngelicPool.size(); ++i)
+        Out(std::string("angeliclist: ") + g_AngelicPool[i].name + " (signature) -> ok");
     Out("angelic pool: " + std::to_string(g_AngelicPool.size()) + " candidates, " + std::to_string(rejected) + " rejected");
 }
 static bool SpawnAngelicItem(const AngelicCandidate& c, double x, double y, CInstance* ctx)
@@ -9469,8 +9484,10 @@ static void AngelicDropOnKill(CInstance* S)
         BuildAngelicPool(false);
         if (g_AngelicPool.empty()) { InterlockedIncrement(&g_AngelicDropFails); return; }
         const size_t pick = (size_t)std::uniform_int_distribution<int>(0, (int)g_AngelicPool.size() - 1)(TyRng());
+        const AngelicCandidate& c = g_AngelicPool[pick];
         const double x = HhReadNumber(enemy, "x", 0.0), y = HhReadNumber(enemy, "y", 0.0);
-        if (SpawnAngelicItem(g_AngelicPool[pick], x, y, S)) InterlockedIncrement(&g_AngelicDropHits); else InterlockedIncrement(&g_AngelicDropFails);
+        const bool ok = c.signature >= 0 ? SpawnSignatureItem(c.signature, x, y, S) : SpawnAngelicItem(c, x, y, S);
+        if (ok) InterlockedIncrement(&g_AngelicDropHits); else InterlockedIncrement(&g_AngelicDropFails);
     } catch (...) { InterlockedIncrement(&g_AngelicDropFails); Out("angelicdrop: EXCEPTION"); }
 }
 static void AngelicDropStatus()
@@ -9480,27 +9497,26 @@ static void AngelicDropStatus()
         + " | pool " + (g_AngelicPoolBuilt ? std::to_string(g_AngelicPool.size()) + " candidates" : std::string("not built yet")));
 }
 
+// Test command only (#63) - forces Tyrant's Crown or Headhunter on every monster kill, for
+// live verification without waiting on the Angelic/Unholy die.  The normal drop rate no
+// longer lives here at all; it follows `angelicdrop` like every other item in the pool.
 static void SignatureDropOnKill(CInstance* S)
 {
-    if (g_SigDropPct <= 0.0 || !S) return;
+    if (g_SigDropForce < 0 || !S) return;
     try {
         RValue enemy = S->ToRValue();
         const double rarity = HhReadNumber(enemy, "enemyRarity", -1.0);
         if (rarity < 1.0) return;   // not a monster (no enemyRarity)
-        ++g_SigDropRolls; ++g_SigDropSinceLast;
-        const double pct = rarity >= 4.0 ? g_SigDropAncientPct : g_SigDropPct;
-        const bool pity = g_SigDropPity > 0 && g_SigDropSinceLast >= g_SigDropPity;
-        if (!pity && !TyRoll(pct)) return;
+        ++g_SigDropRolls;
         const double x = HhReadNumber(enemy, "x", 0.0), y = HhReadNumber(enemy, "y", 0.0);
-        if (SpawnSignatureItem(g_SigDropNext, x, y, S)) { g_SigDropNext = 1 - g_SigDropNext; g_SigDropSinceLast = 0; }
+        SpawnSignatureItem(g_SigDropForce, x, y, S);
     } catch (...) {}
 }
-static std::string SigPct(double p) { char b[32]; sprintf_s(b, "%.3g", p); std::string s(b); return s + " pct"; }
 static void SigDropStatus()
 {
-    Out("sigdrop: every kill " + (g_SigDropPct > 0.0 ? SigPct(g_SigDropPct) : std::string("off")) + ", ancient " + SigPct(g_SigDropAncientPct)
-        + ", pity " + std::to_string(g_SigDropPity) + " (since last " + std::to_string(g_SigDropSinceLast) + ") | rolls=" + std::to_string(g_SigDropRolls)
-        + " drops=" + std::to_string(g_SigDropHits) + " fails=" + std::to_string(g_SigDropFails) + " next=" + (g_SigDropNext == 0 ? "crown" : "belt"));
+    const std::string force = g_SigDropForce < 0 ? std::string("off") : (g_SigDropForce == 0 ? std::string("crown") : std::string("belt"));
+    Out("sigdrop: force " + force + " | rolls=" + std::to_string(g_SigDropRolls) + " drops=" + std::to_string(g_SigDropHits)
+        + " fails=" + std::to_string(g_SigDropFails) + " | the normal rate follows angelicdrop");
 }
 
 // Resolve through the runner rather than YYTK 4's version-dependent room layout.
@@ -16744,7 +16760,7 @@ static void InstallHook()
     HeadhunterAutoArm();
     TyrantAutoArm();
     BeaconAutoArm();
-    if (g_SigDropPct > 0.0 || g_AngelicDropOneIn > 0.0) InstallHeadhunterHook();   // kill hook carries the signature and angelic drops
+    if (g_AngelicDropOneIn > 0.0) InstallHeadhunterHook();   // kill hook carries the angelic drops (Headhunter/Tyrant's Crown included, #63)
 
 #ifdef FORGEPACT_RELEASE
     // Yayin derlemesi: arastirma kancasi ve teshis gunlugu yok.
@@ -21839,18 +21855,10 @@ static bool HandleHeadhunterCommand(const std::string& lc, const std::string& re
     } else if (lc == "sigdrop") {
         std::string v = Lower(TrimCopy(rest));
         if (v.empty() || v == "status") SigDropStatus();
-        else if (v == "off" || v == "0") { g_SigDropPct = 0.0; g_SigDropAncientPct = 0.0; g_SigDropPity = 0; SigDropStatus(); }
-        else if (v == "vanilla" || v == "default") { g_SigDropPct = kSigDropAngelicPct; g_SigDropAncientPct = kSigDropAngelicPct; g_SigDropPity = 0; InstallHeadhunterHook(); SigDropStatus(); }
-        else {
-            // sigdrop <rare pct> [ancient pct] [pity kills]
-            try {
-                std::string a, restb; a = FirstToken(v, restb); std::string b2, restc; b2 = FirstToken(restb, restc);
-                double p = std::stod(a); if (p < 0.0) p = 0.0; if (p > 100.0) p = 100.0; g_SigDropPct = p;
-                if (!b2.empty()) { double q = std::stod(b2); if (q < 0.0) q = 0.0; if (q > 100.0) q = 100.0; g_SigDropAncientPct = q; }
-                std::string c2 = TrimCopy(restc); if (!c2.empty()) { long n = std::stol(c2); if (n < 0) n = 0; g_SigDropPity = n; }
-                InstallHeadhunterHook(); SigDropStatus();
-            } catch (...) { Out("sigdrop: usage -> sigdrop <rare pct> [ancient pct] [pity kills] | vanilla | off | status"); }
-        }
+        else if (v == "off" || v == "0") { g_SigDropForce = -1; SigDropStatus(); }
+        else if (v == "crown") { g_SigDropForce = 0; InstallHeadhunterHook(); SigDropStatus(); }
+        else if (v == "belt") { g_SigDropForce = 1; InstallHeadhunterHook(); SigDropStatus(); }
+        else Out("sigdrop: usage -> sigdrop crown | belt | off | status - the normal rate follows the Angelic / Unholy slider (angelicdrop)");
     } else if (lc == "hhlabelmax") {
         try { long v = std::stol(TrimCopy(rest)); if (v >= 1 && v <= 40) g_HhLabelMax = (size_t)v; } catch (...) {}
         while (g_HhStolen.size() > g_HhLabelMax) g_HhStolen.erase(g_HhStolen.begin());
