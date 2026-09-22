@@ -56,6 +56,9 @@ EXPECTED_PLAYER_COMMANDS = {
     "toggleguard",
     # The timed-skill countdown (issue #55).
     "skilltimer",
+    # The read-only menu listing hs-drive clicks from
+    # (test_menu_layout_contract.py pins it).
+    "menulayout",
 }
 
 

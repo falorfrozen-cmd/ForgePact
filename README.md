@@ -429,6 +429,30 @@ How it works, and the research that proved ForgePact can run the Prospect itself
 move to the materials tab in § Stage C; first-of-its-kind materials and the ore finding
 in § Stage D).
 
+## Menu layout (for tools that drive the menus)
+
+`menulayout` is a read-only command for tools that play through the main menu
+and character select for you, such as the toolkit's `hs-drive` helper. It
+lists the live instances of a fixed set of menu objects, and the interface
+pieces under them, each with its position on the game window, so such a tool
+clicks where the game says a button is instead of at a fixed spot. It changes
+nothing in the game and has no switch in the panel.
+
+The reply is a header, one row per instance and a footer:
+
+```
+menulayout: room=<RoomName> gui=<W>x<H> window=<W>x<H> fullscreen=<0|1> view=<x>,<y>,<w>,<h>
+  obj=<ObjectName> id=<id> gui=<x>,<y> win=<cx>,<cy> bbox=<l>,<t>,<r>,<b> visible=<0|1> sprite=<SpriteName|none> ... text=<label>
+menulayout: listed=<n> absent=<names or none> capped=<0|1>
+```
+
+`win` is the point on the window's client area, computed from the game's own
+GUI and window sizes. `menulayout <ObjectName>` lists that one object the
+same way. An older ForgePact answers `command unavailable in player build:
+menulayout`. How the positions were measured, and which objects are the save
+cards and `PLAY`, is in
+[`docs/menu-layout-research.md`](docs/menu-layout-research.md).
+
 ## 🔧 How to use
 
 **Running from source:** Python opens the control panel, but the game also needs
