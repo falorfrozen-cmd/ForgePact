@@ -249,34 +249,37 @@ class TestRelicFilterContract(unittest.TestCase):
             self.assertNotEqual(tab, must_not_be, f"{control_id_attr} still in the {tab!r} tab")
             self.assertEqual(tab, "mods", f"{control_id_attr} landed in {tab!r}, expected 'mods'")
 
-    def test_map_reveal_joins_the_gameplay_mods_section(self):
+    def test_map_reveal_joins_the_quality_of_life_section(self):
         # Map Reveal has no dedicated card of its own any more; it is a row in
-        # the same "Gameplay Mods" card as the relic filter and orb pickup.
+        # the "Quality of Life" card (formerly "Gameplay Mods") alongside the
+        # relic filter and orb pickup. `test_mods_categories.py` covers the
+        # card boundaries and assignment rule in full; this just keeps the
+        # one fact this module already depended on.
         html = forgepact.HTML
-        gm_start = html.index("Gameplay Mods")
-        gm_end = html.index('id="itemsCard"', gm_start + 1)
-        self.assertIn('id="map_reveal"', html[gm_start:gm_end])
+        qol_start = html.index('id="qolCard"')
+        qol_end = html.index('id="itemsCard"', qol_start + 1)
+        self.assertIn('id="map_reveal"', html[qol_start:qol_end])
 
     def test_headhunter_tyrant_beacon_are_in_an_items_section(self):
         # ...and Headhunter/Tyrant's Crown/Beacon get their own "Items" card,
-        # distinct from "Gameplay Mods" (they are mechanics tied to items
+        # distinct from "Quality of Life" (they are mechanics tied to items
         # forged in the Item Editor, not standalone plugin toggles).
         html = forgepact.HTML
         items_start = html.index("Items</h2>")
-        gm_start = html.index("Gameplay Mods")
-        self.assertGreater(items_start, gm_start, "Items section should follow Gameplay Mods")
+        qol_start = html.index('id="qolCard"')
+        self.assertGreater(items_start, qol_start, "Items section should follow Quality of Life")
         items_section = html[items_start:]
         for control_id_attr in ('id="headhunter"', 'id="tyrant"', 'id="beacon"'):
             self.assertIn(control_id_attr, items_section[:items_section.index("</script>")])
-        # And NOT inside the Gameplay Mods card itself.
-        gm_end = html.index('id="itemsCard"', gm_start + 1)
+        # And NOT inside the Quality of Life card itself.
+        qol_end = html.index('id="itemsCard"', qol_start + 1)
         for control_id_attr in ('id="headhunter"', 'id="tyrant"', 'id="beacon"'):
-            self.assertNotIn(control_id_attr, html[gm_start:gm_end])
+            self.assertNotIn(control_id_attr, html[qol_start:qol_end])
 
     def test_world_tab_no_longer_references_relocated_controls(self):
         # The four dedicated cards that used to hold these controls in the
         # World tab are gone outright: none of them kept a standalone <h2> of
-        # their own - they became row labels inside the Items/Gameplay Mods
+        # their own - they became row labels inside the Items/Quality of Life
         # cards instead. (The plain mechanic names, e.g. "Tyrant's Crown", can
         # still appear in OTHER cards' prose - Monster Rarity cross-references
         # it - so this checks the specific old/new headings, not bare names.)
@@ -288,7 +291,7 @@ class TestRelicFilterContract(unittest.TestCase):
             "<h2>&#128293; Beacon</h2>",
         ):
             self.assertNotIn(old_heading, html)
-        mods_first_card = html.index('id="gameplayCard"')
+        mods_first_card = html.index('id="qolCard"')
         for row_label in ("Headhunter buffs on rare kills",
                           "Tyrant's Crown: more rares, richer rares",
                           "Beacon: every monster hunts you"):

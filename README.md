@@ -70,7 +70,12 @@ icons do not replace descriptions or selection checkmarks. All artwork is
 embedded locally and stays sharp at different display scales.
 
 **Mods** groups related switches in cards. The sidebar shows only the five
-main sections: Setup, Modifiers, World, Loot and Mods. Map population depends on Reveal full map;
+main sections: Setup, Modifiers, World, Loot and Mods. The Mods tab itself has
+two cards: **Quality of Life**, everything that is not tied to a specific
+forged item (the relic drop pool filter, orb pickup radius, map reveal, pet
+quest pickup, auto-prospect, the toggle marker/guard and the timed skill
+countdown), and **Items**, the custom forge mechanics tied to items made in
+the Item Editor (Headhunter, Tyrant's Crown, Beacon). Map population depends on Reveal full map;
 its switch is unavailable while the parent is off. All settings still use the
 existing local configuration and game plugin. The panel adds no UI dependencies.
 
@@ -300,7 +305,7 @@ and live findings are in
 
 ## Remove owned relics from drop pool
 
-Mods tab → Gameplay Mods. While it is on, a relic that is already at 10/10 in your
+Mods tab → Quality of Life. While it is on, a relic that is already at 10/10 in your
 equipped slots, backpack or inventory is withheld when the game rolls a relic drop,
 so what lands is one you can still level.
 
@@ -374,7 +379,7 @@ a reason we have not identified. Details and every ruled-out hypothesis are in
 
 ## Auto-prospect
 
-Mods tab → Gameplay Mods → **Auto-prospect items put in the Prospect Cube**. Off by
+Mods tab → Quality of Life → **Auto-prospect items put in the Prospect Cube**. Off by
 default. The cube's 9×6 prospect grid fills long before a full inventory is through
 it; with this on, every item you drag or click into the grid is prospected straight
 away by the game's own Prospect, exactly as if you had pressed the button.

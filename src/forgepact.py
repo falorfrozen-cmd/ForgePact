@@ -2266,9 +2266,9 @@ input[type=range]::-webkit-slider-thumb{appearance:none;width:17px;height:17px;b
   </div>
 </section>
 
-<div class="card tab-card" data-tab="mods" id="gameplayCard">
-  <h2>Gameplay Mods</h2>
-  <div class="hint">Toggle custom game modifications, drop pool adjustments, and quality-of-life tweaks. Settings apply immediately while the game is running.</div>
+<div class="card tab-card" data-tab="mods" id="qolCard">
+  <h2>Quality of Life</h2>
+  <div class="hint">Toggle drop pool adjustments and quality-of-life tweaks for your offline session. Settings apply immediately while the game is running.</div>
   <div class="row" style="border:none">
     <span class="lbl" style="width:auto;flex:1">Remove owned relics from drop pool<br><span style="font-size:11px;color:#8f816e;font-weight:normal">When a relic is dropped, prevents relics already at maximum level (10 out of 10) in your equipped slots, backpack, or inventory from dropping.</span></span>
     <label class="switch"><input type="checkbox" id="mod_filter_max_relics"><span class="sl"></span></label>
@@ -2418,7 +2418,7 @@ const PAGE_INFO={
   modifiers:['Character modifiers','Tune your character and combat bonuses.'],
   world:['World settings','Shape your zones. Keep every choice in sight.'],
   loot:['Loot settings','Adjust drop rates and see exactly what each multiplier changes.'],
-  mods:['Gameplay mods','Choose the features you want for your offline adventure.']
+  mods:['Mods','Choose the features you want for your offline adventure.']
 };
 let activeTab='modifiers',controlFilter='all';
 function openTab(name,remember=true){
@@ -2993,7 +2993,7 @@ function preparePanelUI(){
     card.append(details);
   }
   for(const id of ['spawners','dropSettings'])document.getElementById(id).classList.add('settings-grid');
-  for(const id of ['gameplayCard','itemsCard']){
+  for(const id of ['qolCard','itemsCard']){
     const card=document.getElementById(id);
     if(card.querySelector('.mods-grid'))continue;
     const grid=document.createElement('div');grid.className='mods-grid';
@@ -3004,7 +3004,7 @@ function preparePanelUI(){
       grid.append(row);
     });
     card.append(grid);
-    if(id==='gameplayCard'){
+    if(id==='qolCard'){
       const parent=document.getElementById('map_reveal').closest('.row'),child=document.getElementById('map_reveal_packs_row');
       const group=document.createElement('div');group.className='feature-with-child';parent.before(group);group.append(parent,child);
       const apParent=document.getElementById('mod_auto_prospect').closest('.row'),apChild=document.getElementById('mod_auto_prospect_bag_row');
