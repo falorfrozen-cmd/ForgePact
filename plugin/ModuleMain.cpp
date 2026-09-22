@@ -22324,15 +22324,20 @@ static void CpVar(const std::vector<std::string>& tok)
 // own GetItemFromFingerprint(fp, 0) through ApItemFromFingerprint, the route
 // `call`'s fp: argument uses - capped per run, and prints the item's
 // itemType, its definition struct's `b` (docs/RUNTIME_DATA_MODELS.md § 2),
-// the fingerprint's class suffix and every numeric member whose name looks
-// like a stack count. Which member holds the stack is unknown on this runtime,
-// so all candidates are listed and summed per (class, b); the live session
-// says which one matched by eye, and tools/stash_tab_counts.py (hub) is the
-// save-side count it is compared with. An instance without nodeGrid prints its
-// variable names, never nothing. Nothing is written.
+// the fingerprint's class suffix and every numeric member that may be the
+// stack count: the exact name `o` (the save's stack key, which the item struct
+// shares with `b`; the hub's stash_tab_counts.py sums data.o) and any name
+// containing a stack-like word. Which member holds the stack is not measured
+// on this runtime yet, so all candidates are listed and summed per (class, b);
+// when the definition struct has none, all its numeric members are printed
+// (capped) so an unexpected name shows up instead of silence. The live session
+// says which one matched a count seen by eye, and tools/stash_tab_counts.py
+// is the save-side count it is compared with. An instance without nodeGrid
+// prints its variable names, never nothing. Nothing is written.
 static constexpr int kCpNodeMaxLookups = 64;         // GetItemFromFingerprint calls one `node` makes
 static constexpr int kCpNodeMaxInstances = 12;       // instances one `node stash|bag` reads
 static constexpr int kCpNodeFingerprintsShown = 40;  // fingerprint lines one instance prints
+static constexpr int kCpNodeDefMembersShown = 24;    // numeric definition members listed when none is stack-named
 
 static void CpNodeRead(const std::string& label, const RValue& inst, int& lookups)
 {
@@ -22384,7 +22389,9 @@ static void CpNodeRead(const std::string& label, const RValue& inst, int& lookup
             + " filled=" + std::to_string(filled) + " empty=" + std::to_string(empty) + " distinct fingerprints="
             + std::to_string(fps.size()) + (noFp ? " (" + std::to_string(noFp) + " filled without one)" : std::string()));
 
-        // Numeric members named like a stack count, of one struct, prefixed.
+        // Numeric members that may be the stack count, of one struct, prefixed:
+        // the exact name `o` (exact only - as a substring it would take color,
+        // bonus, ...) or a name containing a stack-like word.
         static const char* const kStackWords[] = { "stack", "amount", "count", "qty" };
         auto stackMembers = [&](const RValue& s, const std::string& prefix, std::vector<std::pair<std::string, double>>& out) {
             if (!ApIsPlainStruct(s)) return;
@@ -22393,12 +22400,30 @@ static void CpNodeRead(const std::string& label, const RValue& inst, int& lookup
             for (int i = 0; i < n; ++i) {
                 const std::string name = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) }).ToString();
                 const std::string ln = Lower(name);
-                bool match = false;
+                bool match = name == "o";
                 for (const char* w : kStackWords) if (ln.find(w) != std::string::npos) match = true;
                 if (!match) continue;
                 const RValue m = g_Yytk->CallBuiltin("variable_struct_get", { s, RValue(name) });
                 if (PpIsNumber(m)) out.push_back({ prefix + name, m.ToDouble() });
             }
+        };
+        // Every numeric member of one struct, capped - printed for a definition
+        // struct with no candidate above, so the stack's real name is visible.
+        auto numericMembers = [&](const RValue& s) {
+            std::string list;
+            if (!ApIsPlainStruct(s)) return list;
+            const RValue names = g_Yytk->CallBuiltin("variable_struct_get_names", { s });
+            const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+            int listed = 0, more = 0;
+            for (int i = 0; i < n; ++i) {
+                const std::string name = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) }).ToString();
+                const RValue m = g_Yytk->CallBuiltin("variable_struct_get", { s, RValue(name) });
+                if (!PpIsNumber(m)) continue;
+                if (listed >= kCpNodeDefMembersShown) { ++more; continue; }
+                list += (listed++ ? " " : "") + name + "=" + CpArgSignature(m);
+            }
+            if (more) list += " ... " + std::to_string(more) + " more";
+            return list.empty() ? std::string("none") : list;
         };
 
         // Per (class, b): fingerprints, cells, and each candidate member's sum.
@@ -22410,6 +22435,7 @@ static void CpNodeRead(const std::string& label, const RValue& inst, int& lookup
             const std::string cls = dash == std::string::npos ? std::string("?") : e.text.substr(dash + 1);
             std::string line = "  fp=" + e.text + " class=" + cls + " cells=" + std::to_string(e.cells);
             std::string b = "?";
+            std::string defNumeric;  // set only when the definition struct has no candidate
             std::vector<std::pair<std::string, double>> cand;
             stackMembers(e.firstCell, "cell.", cand);
             if (lookups >= kCpNodeMaxLookups || !self) {
@@ -22418,7 +22444,10 @@ static void CpNodeRead(const std::string& label, const RValue& inst, int& lookup
             } else {
                 ++lookups;
                 RValue item;
-                if (!ApItemFromFingerprint(self, e.value, item)) line += " GetItemFromFingerprint(fp, 0) returned no struct";
+                // What was supplied goes on the miss line: a miss is "not
+                // resolved with this self and a1=0", never "not resolvable".
+                if (!ApItemFromFingerprint(self, e.value, item))
+                    line += " GetItemFromFingerprint(fp, 0) returned no struct (self=" + PpDescribeSelf(self) + " id=" + PpIdText(id) + ", a1=0)";
                 else {
                     const RValue type = g_Yytk->CallBuiltin("variable_struct_exists", { item, RValue("itemType") }).ToBoolean()
                         ? g_Yytk->CallBuiltin("variable_struct_get", { item, RValue("itemType") }) : RValue();
@@ -22429,14 +22458,17 @@ static void CpNodeRead(const std::string& label, const RValue& inst, int& lookup
                             const RValue bv = g_Yytk->CallBuiltin("variable_struct_get", { def, RValue("b") });
                             b = PpIsNumber(bv) ? CpArgSignature(bv) : Describe(bv);
                         }
+                        const size_t before = cand.size();
                         stackMembers(def, "def.", cand);
+                        if (cand.size() == before) defNumeric = numericMembers(def);
                     }
                     stackMembers(item, "item.", cand);
                 }
             }
             line += " b=" + b;
             for (const auto& c : cand) line += " " + c.first + "=" + CpArgSignature(RValue(c.second));
-            if (cand.empty()) line += " (no numeric stack/amount/count/qty member)";
+            if (cand.empty()) line += " (no numeric o/stack/amount/count/qty member)";
+            if (!defNumeric.empty()) line += " | def numeric members (none stack-named): " + defNumeric;
             if (++shown <= kCpNodeFingerprintsShown) Out(line);
             Sum& s = sums["class=" + cls + " b=" + b];
             ++s.fingerprints;

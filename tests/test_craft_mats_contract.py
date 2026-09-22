@@ -358,6 +358,34 @@ class CraftMatsContractTests(unittest.TestCase):
         self.assertIn("HeroSiege::Objects::GameObject::UI_Inventory_Grid_obj", command)
         self.assertIn('if (sub == "node") { CpNodeCommand(tok); return; }', self.body("static void CpCommand("))
 
+    def test_craftprobe_node_reader_counts_the_items_o_member(self):
+        # The item struct carries the save's short keys (its definition's `b`
+        # is the save's data.b), and the save's stack count is `o`
+        # (docs/RUNTIME_DATA_MODELS.md § 2; the hub's stash_tab_counts.py sums
+        # data.o). A filter of stack-like words alone can never match that
+        # one-letter name, so a right container would read as no count at all.
+        node = self.body("static void CpNodeRead(")
+        self.assertRegex(node, r'name\s*==\s*"o"')
+        # Exact match only: `o` as a substring would take color, bonus, ...
+        self.assertNotRegex(node, r'find\("o"\)')
+        words = re.search(r"kStackWords\[\]\s*=\s*\{([^}]*)\}", node)
+        self.assertIsNotNone(words)
+        self.assertNotIn('"o"', words.group(1))
+        # With no stack-named member on the definition, every numeric member of
+        # it is printed, capped, so an unexpected name shows up instead of silence.
+        self.assertRegex(self.block, r"static constexpr int kCpNodeDefMembersShown = \d+;")
+        self.assertIn("kCpNodeDefMembersShown", node)
+        self.assertIn("numeric members", node)
+        # A lookup miss names what was supplied, so it reads "not resolved with
+        # self=<obj>, a1=0" and never "not resolvable".
+        self.assertIn("returned no struct (self=", node)
+        self.assertIn("a1=0", node)
+        # The bag control proves the count half too: it passes only on a
+        # per-(class, b) sum equal to a bag stack the owner can see.
+        row = next(l for l in self.doc.splitlines() if l.startswith("| node-bag-control |"))
+        self.assertIn("equal", row)
+        self.assertIn("by eye", row)
+
     def test_craftprobe_backing_keeps_getter_returns_per_first_argument(self):
         per = self.body("static bool CpKeepsPerArgument(")
         self.assertIn("HeroSiege::Scripts::gml_Script_GetInventoryArray", per)
