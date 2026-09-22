@@ -175,7 +175,7 @@ STATIC_ICONS = {
 SECTION_ICONS = {
     'setupCard':'settings','densityCard':'density','speedCard':'boots',
     'spawnsCard':'rift','dropsCard':'chest','angelicCard':'angelic',
-    'rarityCard':'rare','satanicMods':'cursed-orb','gameplayCard':'settings','itemsCard':'relic',
+    'rarityCard':'rare','satanicMods':'cursed-orb','qolCard':'settings','itemsCard':'relic',
 }
 ACTION_ICONS = {'exebrowse':'folder','exesave':'save','installmod':'install',
                 'removeplugin':'remove','launchgame':'play','applyall':'auto-apply'}

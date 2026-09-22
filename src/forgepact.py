@@ -1969,6 +1969,10 @@ button:focus-visible,input:focus-visible,summary:focus-visible,[role=button]:foc
 #workspace{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:18px;align-items:start}
 .card{min-width:0;background:linear-gradient(145deg,#211b16,#171310);border:1px solid var(--line);border-radius:10px;padding:21px;margin:0;grid-column:1/-1}
 .tab-card{display:none}.tab-card.active{display:block}.card.half{grid-column:auto;align-self:stretch}
+.subtabbar{display:flex;gap:8px;grid-column:1/-1;margin:0 0 4px}
+.subtabbtn{background:transparent;border:1px solid var(--line);border-radius:8px;color:var(--mut);padding:9px 16px;cursor:pointer;font-size:13px}
+.subtabbtn:hover{background:#261e17;color:var(--ember2)}
+.subtabbtn.active{color:var(--ember2);background:#3b2a1b;border-color:#6a482a}
 .card h2{margin:0 0 6px;font-size:18px;letter-spacing:.1px;color:#f5e7d4;display:flex;align-items:center;gap:10px}
 .card .hint{color:var(--mut);font-size:12px;line-height:1.65;margin-bottom:16px}
 .note{font-size:12px;color:var(--mut);margin:8px 0;line-height:1.6}.note:empty{display:none}
@@ -2003,7 +2007,7 @@ input[type=range]::-webkit-slider-thumb{appearance:none;width:17px;height:17px;b
 .feature-card{display:grid;grid-template-columns:minmax(0,1fr) 42px 24px;gap:8px 12px;align-content:start}.feature-card>.lbl{font-weight:600}.feature-description{grid-column:1/-1;color:var(--mut)!important;line-height:1.65;font-size:12px!important;font-weight:normal}.switch input:disabled+.sl{opacity:.4;filter:grayscale(1)}
 @media(min-width:1700px){#wrap{padding-left:38px;padding-right:38px}}
 @media(max-width:1150px){#appShell{padding-left:190px}.sidebar{width:190px;padding:20px 10px}.brand svg{width:44px}.brand-name{font-size:17px}.brand-sub{font-size:8px}.page-heading{flex-wrap:wrap}.modifier-grid{grid-template-columns:1fr}.mods-grid{flex-direction:column;align-items:stretch;gap:0}.settings-grid{grid-template-columns:1fr}.card.half{grid-column:1/-1}.row .lbl{width:180px}#wrap{padding:0 20px 40px}}
-@media(max-width:720px){#appShell{padding-left:0}.sidebar{position:static;width:auto;padding:12px 14px;border-right:0;border-bottom:1px solid var(--line);overflow:visible}.brand{margin:0 0 10px}.brand svg{width:39px;height:39px}.brand-name{font-size:18px}.brand-sub{display:none}.tabbar{flex-direction:row;gap:3px}.tabbtn{flex:1;justify-content:center;padding:10px 6px;gap:4px;font-size:11px}.tabbtn svg{width:15px;height:15px}.sidebar-foot{display:none}#wrap{padding:0 14px 35px}.control-dock{position:static}.page-heading h1{font-size:25px}.page-actions{width:100%;justify-content:space-between;flex-wrap:wrap}.row{flex-wrap:wrap}.row .lbl{width:100%;flex-shrink:1}.row:has(.range-control)>.range-control{flex-basis:100%}.range-control{gap:8px}.step-button{padding:5px 6px}.value-stepper>.val{min-width:44px;width:52px!important}.card{padding:16px}#workspace{gap:14px}.topline{gap:8px}#statusbar{gap:10px}#saveIndicator{min-width:0}#toast{left:50%}#controlToolbar{flex-wrap:wrap}.control-search{flex-basis:100%}.control-filters{width:100%}.control-filters button{flex:1}.feature-card{flex-wrap:nowrap}.density-top .row{flex-wrap:nowrap}.section-title{flex-wrap:wrap}}
+@media(max-width:720px){#appShell{padding-left:0}.sidebar{position:static;width:auto;padding:12px 14px;border-right:0;border-bottom:1px solid var(--line);overflow:visible}.brand{margin:0 0 10px}.brand svg{width:39px;height:39px}.brand-name{font-size:18px}.brand-sub{display:none}.tabbar{flex-direction:row;gap:3px}.tabbtn{flex:1;justify-content:center;padding:10px 6px;gap:4px;font-size:11px}.tabbtn svg{width:15px;height:15px}.sidebar-foot{display:none}#wrap{padding:0 14px 35px}.control-dock{position:static}.page-heading h1{font-size:25px}.page-actions{width:100%;justify-content:space-between;flex-wrap:wrap}.row{flex-wrap:wrap}.row .lbl{width:100%;flex-shrink:1}.row:has(.range-control)>.range-control{flex-basis:100%}.range-control{gap:8px}.step-button{padding:5px 6px}.value-stepper>.val{min-width:44px;width:52px!important}.card{padding:16px}#workspace{gap:14px}.topline{gap:8px}#statusbar{gap:10px}#saveIndicator{min-width:0}#toast{left:50%}#controlToolbar{flex-wrap:wrap}.control-search{flex-basis:100%}.control-filters{width:100%}.control-filters button{flex:1}.feature-card{flex-wrap:nowrap}.density-top .row{flex-wrap:nowrap}.section-title{flex-wrap:wrap}.subtabbtn{flex:1;justify-content:center;padding:9px 6px;font-size:12px}}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
 #satanicMods{background:linear-gradient(145deg,#211a17,#161210 65%);border-color:#48362b;padding:24px}
 .sat-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:18px}
@@ -2092,6 +2096,7 @@ input[type=range]::-webkit-slider-thumb{appearance:none;width:17px;height:17px;b
   </div>
   <div id="controlToolbar" hidden><input type="search" id="controlSearch" class="control-search" placeholder="Search settings by name or effect..." aria-label="Search settings in this section"><div class="control-filters" role="group" aria-label="Filter settings"><button data-control-filter="all" aria-pressed="true">All settings</button><button data-control-filter="modified" aria-pressed="false">Modified</button></div></div>
   <div id="workspace" role="tabpanel" aria-labelledby="nav-modifiers">
+<div id="modsSubtabs" class="subtabbar" role="tablist" aria-label="Mods categories" hidden><button type="button" class="subtabbtn" role="tab" id="subtab-qol" aria-controls="qolCard" aria-selected="true" tabindex="0">Quality of Life</button><button type="button" class="subtabbtn" role="tab" id="subtab-items" aria-controls="itemsCard" aria-selected="false" tabindex="-1">Items</button></div>
 <div class="card tab-card" data-tab="setup" id="setupCard">
   <h2>Game Location</h2>
   <div class="hint">ForgePact talks to the mod plugin sitting next to this exe. Change it if your game lives somewhere else.</div>
@@ -2266,9 +2271,9 @@ input[type=range]::-webkit-slider-thumb{appearance:none;width:17px;height:17px;b
   </div>
 </section>
 
-<div class="card tab-card" data-tab="mods" id="gameplayCard">
-  <h2>Gameplay Mods</h2>
-  <div class="hint">Toggle custom game modifications, drop pool adjustments, and quality-of-life tweaks. Settings apply immediately while the game is running.</div>
+<div class="card tab-card" data-tab="mods" id="qolCard" role="tabpanel" aria-labelledby="subtab-qol">
+  <h2>Quality of Life</h2>
+  <div class="hint">Toggle drop pool adjustments and quality-of-life tweaks for your offline session. Settings apply immediately while the game is running.</div>
   <div class="row" style="border:none">
     <span class="lbl" style="width:auto;flex:1">Remove owned relics from drop pool<br><span style="font-size:11px;color:#8f816e;font-weight:normal">When a relic is dropped, prevents relics already at maximum level (10 out of 10) in your equipped slots, backpack, or inventory from dropping.</span></span>
     <label class="switch"><input type="checkbox" id="mod_filter_max_relics"><span class="sl"></span></label>
@@ -2326,7 +2331,7 @@ input[type=range]::-webkit-slider-thumb{appearance:none;width:17px;height:17px;b
     </div>
 </div>
 
-<div class="card tab-card" data-tab="mods" id="itemsCard">
+<div class="card tab-card" data-tab="mods" id="itemsCard" role="tabpanel" aria-labelledby="subtab-items">
   <h2>Items</h2>
   <div class="hint">Custom forge mechanics tied to items made in the Item Editor. Settings apply immediately while the game is running.</div>
   <div class="row" style="border:none">
@@ -2418,14 +2423,16 @@ const PAGE_INFO={
   modifiers:['Character modifiers','Tune your character and combat bonuses.'],
   world:['World settings','Shape your zones. Keep every choice in sight.'],
   loot:['Loot settings','Adjust drop rates and see exactly what each multiplier changes.'],
-  mods:['Gameplay mods','Choose the features you want for your offline adventure.']
+  mods:['Mods','Choose the features you want for your offline adventure.']
 };
-let activeTab='modifiers',controlFilter='all';
+let activeTab='modifiers',controlFilter='all',modsSubtab='qolCard';
 function openTab(name,remember=true){
   if(!document.querySelector(`.tabbtn[data-tab="${name}"]`))name='modifiers';
   activeTab=name;
   document.querySelectorAll('.tabbtn').forEach(b=>{const on=b.dataset.tab===name;b.classList.toggle('active',on);b.setAttribute('aria-selected',on?'true':'false');b.tabIndex=on?0:-1});
   document.querySelectorAll('.tab-card').forEach(c=>{c.hidden=false;c.classList.toggle('active',c.dataset.tab===name)});
+  document.getElementById('modsSubtabs').hidden=name!=='mods';
+  if(name==='mods')openModsSubtab(modsSubtab,false);
   document.getElementById('workspace').setAttribute('aria-labelledby','nav-'+name);
   document.getElementById('pageTitle').textContent=PAGE_INFO[name][0];
   document.getElementById('pageDescription').textContent=PAGE_INFO[name][1];
@@ -2434,6 +2441,26 @@ function openTab(name,remember=true){
   document.getElementById('controlSearch').value='';controlFilter='all';filterControlRows();
   if(remember){try{sessionStorage.setItem('forgepact_tab',name)}catch(e){}}
   window.scrollTo({top:0,behavior:'instant'});
+}
+function openModsSubtab(id,remember=true){
+  const buttons=[...document.querySelectorAll('.subtabbtn')];
+  const target=buttons.some(b=>b.getAttribute('aria-controls')===id)?id:buttons[0].getAttribute('aria-controls');
+  modsSubtab=target;
+  buttons.forEach(b=>{
+    const on=b.getAttribute('aria-controls')===target;
+    b.classList.toggle('active',on);b.setAttribute('aria-selected',on?'true':'false');b.tabIndex=on?0:-1;
+    if(activeTab==='mods')document.getElementById(b.getAttribute('aria-controls')).classList.toggle('active',on);
+  });
+  if(remember){try{sessionStorage.setItem('forgepact_mods_subtab',target)}catch(e){}}
+}
+function bindModsSubtabs(){
+  document.querySelectorAll('.subtabbtn').forEach(button=>button.onclick=()=>openModsSubtab(button.getAttribute('aria-controls')));
+  document.querySelectorAll('.subtabbtn').forEach((button,index,buttons)=>button.onkeydown=e=>{
+    const direction=e.key==='ArrowRight'?1:e.key==='ArrowLeft'?-1:0;
+    if(!direction&&!['Home','End'].includes(e.key))return;
+    e.preventDefault();const next=e.key==='Home'?0:e.key==='End'?buttons.length-1:(index+direction+buttons.length)%buttons.length;
+    buttons[next].click();buttons[next].focus();
+  });
 }
 function angelicPaint(){
   const el=document.getElementById('angelic_items'); const v=sliderVal(el);
@@ -2625,6 +2652,7 @@ async function boot(){
   document.querySelectorAll('.tabbtn').forEach(b=>b.onclick=()=>openTab(b.dataset.tab));
   let initial=c.game_exe?'modifiers':'setup';
   try{initial=sessionStorage.getItem('forgepact_tab')||initial}catch(e){}
+  try{modsSubtab=sessionStorage.getItem('forgepact_mods_subtab')||modsSubtab}catch(e){}
   openTab(initial,false);
   document.getElementById('autoapply').checked=!!c.auto_apply;
   document.getElementById('den_on').checked=!!c.density_on;
@@ -2993,7 +3021,7 @@ function preparePanelUI(){
     card.append(details);
   }
   for(const id of ['spawners','dropSettings'])document.getElementById(id).classList.add('settings-grid');
-  for(const id of ['gameplayCard','itemsCard']){
+  for(const id of ['qolCard','itemsCard']){
     const card=document.getElementById(id);
     if(card.querySelector('.mods-grid'))continue;
     const grid=document.createElement('div');grid.className='mods-grid';
@@ -3004,7 +3032,7 @@ function preparePanelUI(){
       grid.append(row);
     });
     card.append(grid);
-    if(id==='gameplayCard'){
+    if(id==='qolCard'){
       const parent=document.getElementById('map_reveal').closest('.row'),child=document.getElementById('map_reveal_packs_row');
       const group=document.createElement('div');group.className='feature-with-child';parent.before(group);group.append(parent,child);
       const apParent=document.getElementById('mod_auto_prospect').closest('.row'),apChild=document.getElementById('mod_auto_prospect_bag_row');
@@ -3057,6 +3085,7 @@ function preparePanelUI(){
     e.preventDefault();const next=e.key==='Home'?0:e.key==='End'?buttons.length-1:(index+direction+buttons.length)%buttons.length;
     buttons[next].click();buttons[next].focus();
   });
+  bindModsSubtabs();
   updateControlDecoration();filterControlRows();decoratePanelIcons();
 }
 function updateControlDecoration(){
