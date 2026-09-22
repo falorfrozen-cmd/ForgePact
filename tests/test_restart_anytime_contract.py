@@ -201,6 +201,10 @@ class RestartProbeContractTests(unittest.TestCase):
         self.assertLess(max(writes), readback)
         self.assertLess(readback, body.index('" wrote="'))
         self.assertIn("after.ToDouble() == value", body)
+        # changed= compares the read-back with the value before the write, so
+        # a control that writes the value already held cannot pass as a write.
+        self.assertIn("after.ToDouble() != before.ToDouble()", body)
+        self.assertLess(body.index('" wrote="'), body.index('" changed="'))
         # set is the only mutating verb.
         others = self.block.replace(body, "")
         for word in ('"variable_instance_set"', '"variable_global_set"', '"instance_create', '"instance_destroy"',
@@ -250,6 +254,12 @@ class RestartResearchDocTests(unittest.TestCase):
         controls = doc_section(self.doc, "## Candidates and controls")
         self.assertIn("C1", controls)
         self.assertIn("C2", controls)
+        # C2 must be able to fail: it needs a changed value, not just a read-back.
+        self.assertIn("wrote=yes changed=yes", controls)
+        # A failed R5 is read against the at-press sample, and a negative is
+        # labelled with what was supplied (a command-time write).
+        self.assertIn("at the press", controls)
+        self.assertIn("command-time write", controls)
         decision = doc_section(self.doc, "## Decision")
         for key in DECISION_KEYS:
             lines = re.findall(r"(?m)^" + key + r": (.+)$", decision)

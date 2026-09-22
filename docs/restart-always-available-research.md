@@ -115,15 +115,28 @@ and explained away afterwards. A row whose control failed is `unmeasured`, and
   function of an open menu runs every frame. If it is 0 or `n/a`, every hook
   row is `unmeasured` and R3 to R5 are void.
 - **C2 - the write route works on this owner.** In town, where the candidate
-  already holds its ready value,
-  `restartprobe set <owner> <variable> <readyValue> confirm` must print
-  `wrote=yes` with `after=` equal to the value written. That proves the write reaches the owner before R5 uses the
-  same write as evidence.
+  holds its ready value, write a value it does *not* hold - the in-combat
+  value R3 sampled - with
+  `restartprobe set <owner> <variable> <R3 value> confirm`; it must print
+  `wrote=yes changed=yes`. Then write the ready value back the same way and
+  require `wrote=yes changed=yes` again. Writing the value the variable
+  already holds proves nothing: a dropped write reads back the same number,
+  which is why `set` prints `changed=` beside `wrote=` and why C2 needs both.
+  That proves the write reaches the owner before R5 uses the same write as
+  evidence.
 
-`override: works` needs C1 greater than 0, C2 `wrote=yes`, and R5 restarting
-the zone while the HUD in-combat icon is on. `not observed` with both controls
-passed is a real negative for the names sampled; with a failed control it is
-`unmeasured`.
+`override: works` needs C1 greater than 0, C2 `wrote=yes changed=yes` both
+ways, and R5 restarting the zone while the HUD in-combat icon is on. R5 writes
+when the command is read, and the press comes up to a second later, so a
+step event could put the value back before the Restart activation reads it.
+A failed R5 is therefore only read once `restartprobe show` has been checked
+for the value the `UiAIngameRestart` row sampled *at the press*: if that
+sample is not `readyValue`, the write was overwritten before use and R5 is
+`unmeasured` for that name, not a negative. `not observed` means: both
+controls passed, the at-press sample held `readyValue`, and the zone still did
+not restart - and even then it is recorded as "not observed with a
+command-time write" for the names sampled, never as "does not work". With a
+failed control it is `unmeasured`.
 
 ## Instrument
 
@@ -155,16 +168,22 @@ inside the hooked call itself.
   refuses, in this order and before writing anything: an unknown scope, a
   scope with no instance, a variable that is absent, a current value that is
   not a number, a missing `confirm`. Then it writes once, reads the value back
-  and prints `wrote=yes|no before=... after=...`. It exists so H-var is
+  and prints `wrote=yes|no changed=yes|no before=... after=...`: `wrote`
+  compares the read-back with the value written, `changed` with the value
+  read before, so a write of the value already held shows `changed=no`. It exists so H-var is
   decided by an experiment rather than inferred from a draw.
 - `restartprobe reset` - clears the counters and the log; attached rows stay
   attached.
 
 Coexistence: `zonegenlog` table-hooks `ZoneGenRestart`. If it is on, the probe
 detours the game code under it and says
-`native (under table-only zonegenlog)`. Once the shipped mod exists, `restartanytime 1` must be
-installed before `restartprobe hook`, and the probe's two `*IngameRestart`
-rows attach under the mod's hook the same way.
+`native (under table-only zonegenlog)`. That is the only row that knows
+about another ForgePact hook: the two `*IngameRestart` rows carry no
+existing-hook pointer today, so if a hook of ours already held either script
+they would print `blocked` rather than attach. No such hook exists yet. When
+the shipped mod adds one, those two rows have to be bound to its original
+pointer first (the same arrangement `ZoneGenRestart` uses with
+`zonegenlog`); until that change lands, do not install both in one session.
 
 Also available with no new code: `tgprobe deep snap` and `tgprobe deep diff`
 (`docs/toggle-skills-research.md`) snapshot every scalar on the player,
@@ -185,18 +204,19 @@ oracle for "the pause menu shows the wait" and for the HUD in-combat icon.
 | R1 | In town, no enemies: `restartprobe vars`; `tgprobe deep snap town controller player global`. | Every `<scope>.<name>` line. |
 | R2 | Walk to enemies, get hit, HUD icon visible: `restartprobe vars`; `tgprobe deep snap fight controller player global`; `tgprobe deep diff town fight` filtered by `ombat`, then by `Combat`, then by `lastHit`, then unfiltered. | The changed paths. |
 | C1 | `restartprobe hook`; open the pause menu with Esc, wait two seconds; `restartprobe show`. | `control=` must be greater than 0. If not, every hook row is `unmeasured` and R3 to R5 are void. |
-| R3 | Menu open, in combat: press Restart once (the game is expected to refuse); `restartprobe show`. | `UiAIngameRestart calls=`, its sampled variables and return; `ZoneGenRestart calls=` (expected 0). |
-| R4 | Wait out of combat until the game allows it; press Restart; `restartprobe show`. | The same lines at the moment it worked. The values that differ from R3 decide `variable` and `readyValue`. |
-| C2 | In town: `restartprobe set <owner> <variable> <readyValue> confirm`, with the value already at ready. | `wrote=yes` with `after=` equal. |
-| R5 | In combat, menu open, wait shown: `restartprobe set <owner> <variable> <readyValue> confirm`; press Restart within one second. | `wrote=yes`; whether the zone restarted (screenshot, `ZoneGenRestart calls=`). This is `override`. |
+| R3 | Menu open, in combat: `restartprobe reset` (the draw row's 20-line log fills within a second of C1), then press Restart once (the game is expected to refuse); `restartprobe show`. | `UiAIngameRestart calls=`, its sampled variables and return; the draw row's samples; `ZoneGenRestart calls=` (expected 0). |
+| R4 | Wait out of combat until the game allows it; `restartprobe reset`; press Restart; `restartprobe show`. | The same lines at the moment it worked. The values that differ from R3 decide `variable` and `readyValue`. |
+| C2 | In town, variable at its ready value: `restartprobe set <owner> <variable> <R3 value> confirm`, then `restartprobe set <owner> <variable> <readyValue> confirm`. | Both print `wrote=yes changed=yes`. |
+| R5 | In combat, menu open, wait shown: `restartprobe reset`; `restartprobe set <owner> <variable> <readyValue> confirm`; press Restart within one second; `restartprobe show`. | `wrote=yes changed=yes`; the variable as `UiAIngameRestart` sampled it at the press; whether the zone restarted (screenshot, `ZoneGenRestart calls=`). This is `override`. |
 | R6 | Repeat R5 with the other candidate names if R5 did not restart. | Per name. |
 | R7 | The six `UI_Pause_obj` closure rows: which counted during R3 and R4? | For H-node. |
 | R8 | `hs_stop_game`, `hs_saves_inspect`, `hs_saves_restore`. | `changed` / `missing`. |
 
 The pause menu's Exit is not a step and is never pressed for measurement.
 
-If `override` is `not observed` with both controls passed, H-var is falsified
-for the names sampled. The next reads are R2's diff unfiltered and the
+If `override` is `not observed` (both controls passed and the at-press sample
+held `readyValue`), H-var is recorded as not observed with a command-time
+write, for the names sampled - not as falsified. The next reads are R2's diff unfiltered and the
 `UI_Pause_obj` instance's own members; after that the work stops and the
 owner decides whether another round is funded. A node state (H-node) is
 recorded as `gate: ui-node`.

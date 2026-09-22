@@ -25342,7 +25342,15 @@ static void RestartProbeSet(const std::string& rest)
     if (!threw && readBack && RpIsNumeric(after)) {
         try { wrote = after.ToDouble() == value; } catch (...) {}
     }
+    // wrote=yes alone cannot tell a write from a no-op when the variable
+    // already held the value, so changed= compares the read-back with the
+    // value read before. Only wrote=yes changed=yes proves the write route.
+    bool changed = false;
+    if (readBack && RpIsNumeric(after)) {
+        try { changed = after.ToDouble() != before.ToDouble(); } catch (...) {}
+    }
     Out("restartprobe set: " + RpScopeLabel(*s) + "." + name + " wrote=" + (wrote ? "yes" : "no")
+        + " changed=" + (changed ? "yes" : "no")
         + " before=" + Describe(before) + " after=" + (readBack ? Describe(after) : std::string("unreadable"))
         + (threw ? " (the write threw)" : ""));
 }
