@@ -2159,7 +2159,7 @@ rejected.
 | Butcher (second tier) | Blender (`blender`) | `379` | not observed (C6 not run) | not observed | not observed | not observed | blocked | `row0[5]` | blocked |
 | Shaman | Meteor Storm (`meteorStorm`) | `224` | `subShamanMeteorStorm11` → `s11` (`s11=real:0.000000` not allocated, `s11=real:3.000000` allocated, `s11=real:0.000000` respecced; no other key moved) | `Shaman_Meteor_Storm_Controller_obj` (4422) | `none` (`[7] meteorStorm state=on n=1 mine=1 others=0 unattributed=0`) | `yes` (controller `appearance=2`, `draws=110`, on the plain cast) | `marker skillAstroHeated` (`skillAstroHeated=bool:true` toggled, appearances 1 and 3; `skillAstroHeated=real:0.000000` plain, first and last draw) | `row0[3]` | measured |
 | Samurai | Bushido (`bushido`) | `134` | none (base form; `tgl sub` read: `global.subTalentMap array_length=6; [0]..[5] bushido t134: absent`) | `Samurai_Bushido_obj` (4226) | `isMyClient` (`[9] bushido state=on n=7 mine=7 others=0 unattributed=0`; the `none` row `[10]` read the same `n=7 mine=7`) | n/a — no plain form (base-form toggle) | `instance (no plain form)` (`census.Samurai_Bushido_obj: bbase=<absent> bon=7 boff=<absent>`) | `row0[5]` | measured |
-| Shield Lancer | Counter (`counter`) | `301` | `subShieldLancerCounter13` → `s13` (session 6 C6 respec: `s13=real:0.000000` at `global.subTalentMap[1].t301`, index 1) | `Draw_Player_Buff_obj` (1362), reached through `global.playerBuff[1][0][104]`, not resolved by name (session 12) | `none` (every record's own `host` measured `Player_obj.id`) | `yes` (the timed cast adds `[104]`) | `PlayerBuff`: `ToggleReadSubTalent(301, 13)` reads Allocated while `[104]`'s own `destroyTimer` holds a constant `1036.8`; the plain, timed form falls from the same `1036.8` instead (session 12) | `row0[4]` | measured |
+| Shield Lancer | Counter (`counter`) | `301` | `subShieldLancerCounter13` → `s13` (session 6 C6 respec: `s13=real:0.000000` at `global.subTalentMap[1].t301`, index 1; session 12 `tgprobe tgl sub`: `s13=real:1.000000` with Give No Quarter allocated, `s13=real:0.000000` after removal, the only key that changed) | `Draw_Player_Buff_obj` (1362), reached through `global.playerBuff[1][0][104]`, not resolved by name (session 12) | `none` (every record's own `host` measured `Player_obj.id`) | `yes` (the timed cast adds `[104]`) | `PlayerBuff`: `ToggleReadSubTalent(301, 13)` reads Allocated while `[104]`'s own `destroyTimer` holds a constant `1036.8`; the plain, timed form falls from the same `1036.8` instead (session 12) | `row0[4]` | measured |
 
 **Notes (rejected prefilled objects, and the blocked/no-instance rows).**
 
@@ -2724,6 +2724,14 @@ directly after the colon or `=`, so each line can be checked mechanically.
 - D-B1: a base-form toggle skill (no sub-talent at all, like Bushido) is refused by the guard unconditionally, without ever reading `global.subTalentMap` - reading its named constant `kToggleNoSubTalent` (0) there would find no `t<id>` struct and answer Unreadable, passing the double-cast proc through in the exact "reports armed and does nothing" shape AGENTS.md warns about. The refusal is still counted in `refused=`, and separately in a new `baseForm=` counter.
 
 ### After session 12
+
+**Give No Quarter read (session 12, research build `30a851c`, Shield Lancer).** `tgprobe tgl sub` printed `[1] counter t301: ... s13=real:1.000000 ...` with
+Give No Quarter allocated and `s13=real:0.000000` once it was removed (turning
+the skill off is not enough: the node must be unallocated); the other nine keys
+(`s1`,`s2`,`s4`-`s10`) did not move. Ship smoke (`997f12f`): `skilltimer stat`
+`counter drawn=1037 ... toggleOn=838 ... noSlot=0`, `toggleborder stat`
+`counter drawn=838 on=838 ... subOff=1037`; `defensiveShout drawn=1125 ...
+noSlot=0`; `lastStand`/`berserk` not cast (not observed live on the ship build).
 
 `### After session 6`'s line that `counter` "does not ship" in this design
 is superseded: Counter ships after all, not as an instance-shaped row like
@@ -5295,11 +5303,13 @@ Give No Quarter allocated the same buff id is read as a toggle instead.
 **Known Limitations.** Every shipped `buffId` is a measured id on this
 game build (`[104]`, 107, 9, 1; first readings 1036.8, 3600, 14400, 720),
 kept honest by the identity check (a renumbered id draws nothing rather than
-a stranger's buff); hotbar-slot presence was not measured by the instrument
-for any row (`noSlot=` in `skilltimer stat` is where a missing slot shows);
-the Give No Quarter sub-talent's ALLOCATED value was not read through the
-ship read in session 12 itself (session 6 measured the slot; the ship
-smoke, when run, confirms it live); an unreadable sub-talent draws neither
+a stranger's buff); hotbar-slot presence was not measured by the instrument,
+and the ship smoke observed it for `counter` and `defensiveShout` only
+(`noSlot=0`) - `lastStand` and `berserk` are not observed live on the ship
+build; the Give No Quarter slot was read both ways on the research build
+(`s13` 1 allocated, 0 removed, the only one of Counter's ten sub-talent keys
+that changed) and through the ship read by the smoke (`subOff=` on the
+timed form, `toggleOn=` on the stance, never both); an unreadable sub-talent draws neither
 the outline nor the countdown for Counter, and counts
 `subUnreadable`/`toggleUnreadable` rather than guessing; a countdown
 switched on mid-buff latches at the current value, the same mid-cast
