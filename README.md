@@ -70,14 +70,18 @@ icons do not replace descriptions or selection checkmarks. All artwork is
 embedded locally and stays sharp at different display scales.
 
 **Mods** groups related switches in cards. The sidebar shows only the five
-main sections: Setup, Modifiers, World, Loot and Mods. The Mods tab itself has
-two cards: **Quality of Life**, everything that is not tied to a specific
-forged item (the relic drop pool filter, orb pickup radius, map reveal, pet
-quest pickup, auto-prospect, the toggle marker/guard and the timed skill
-countdown), and **Items**, the custom forge mechanics tied to items made in
-the Item Editor (Headhunter, Tyrant's Crown, Beacon). Map population depends on Reveal full map;
-its switch is unavailable while the parent is off. All settings still use the
-existing local configuration and game plugin. The panel adds no UI dependencies.
+main sections: Setup, Modifiers, World, Loot and Mods. The Mods page itself
+has two sub-tabs at the top, showing one card at a time: **Quality of Life**,
+everything that is not tied to a specific forged item (the relic drop pool
+filter, orb pickup radius, map reveal, pet quest pickup, auto-prospect, the
+toggle marker/guard and the timed skill countdown), and **Items**, the custom
+forge mechanics tied to items made in the Item Editor (Headhunter, Tyrant's
+Crown, Beacon). Quality of Life opens first; clicking the other sub-tab (or
+using the arrow keys) switches which card you see, and the panel remembers
+the one you last had open until you close it. Map population depends on
+Reveal full map; its switch is unavailable while the parent is off. All
+settings still use the existing local configuration and game plugin. The
+panel adds no UI dependencies.
 
 The reusable icon pack lives in `src/panel_icons.py`, beside `forgepact.py`.
 Keep both files together when copying the Python source. To export the 69

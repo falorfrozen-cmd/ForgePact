@@ -97,6 +97,7 @@
     passed.push('Character and Loot search/Modified filters, empty results, no value mutation');
 
     tab('mods');
+    assert(!el('#modsSubtabs').hidden&&el('#qolCard').classList.contains('active')&&!el('#itemsCard').classList.contains('active'),'Mods opens on Quality of Life');
     if(!el('#map_reveal').checked)await tap('#map_reveal');
     assert(!el('#map_reveal_packs').disabled,'Parent did not enable child');
     await tap('#map_reveal');
@@ -105,6 +106,14 @@
     el('#nav-world').focus();el('#nav-world').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}));
     assert(document.activeElement===el('#nav-loot')&&activeTab==='loot','Keyboard navigation');
     passed.push('Dependent switches, readable disabled text and arrow-key tabs');
+
+    tab('mods');
+    el('#subtab-items').click();
+    assert(el('#itemsCard').classList.contains('active')&&!el('#qolCard').classList.contains('active'),'Items sub-tab click');
+    el('#subtab-items').focus();el('#subtab-items').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowLeft',bubbles:true}));
+    assert(document.activeElement===el('#subtab-qol')&&el('#qolCard').classList.contains('active'),'Sub-tab arrow key returns to Quality of Life');
+    el('#subtab-items').click();
+    passed.push('Mods sub-tabs: default, click, arrow-key wrap and focus');
 
     tab('mods');delay=100;
     const hhBefore=el('#headhunter').checked,tyBefore=el('#tyrant').checked;

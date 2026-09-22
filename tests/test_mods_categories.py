@@ -23,10 +23,27 @@ assertions pass on the pre-change panel and on the result.
 holding exactly the ten Quality of Life controls in the assignment table's
 order, and no remaining "gameplay" wording or `gameplayCard` id anywhere in
 either source file.
+
+`ModsSubtabMarkupTests` and `ModsSubtabBehaviourTests` (round 1, the same
+issue's follow-up) pin the Quality of Life | Items sub-tab strip added on top
+of the split above: the strip's and buttons' markup, each card's `role`/
+`aria-labelledby`, the `.subtabbar`/`.subtabbtn` CSS, and that `boot`/
+`preparePanelUI` wire the sub-tabs up. `ModsSubtabBehaviourTests` runs the
+page's real `openTab`, `openModsSubtab`, `bindModsSubtabs`, `PAGE_INFO` and
+state declaration through `node` against a small stub DOM built in this file
+(never by importing `forgepact`, which would pull `hs_game_sdk` onto the path
+and defeat running against an older fixture copy) - the same "prove the
+instrument" precedent as `test_mods_columns.py`'s `setupModsColumns` harness,
+with its own local `node` runner so this module still imports nothing that
+imports `forgepact`.
 """
+import json
 import os
 import pathlib
 import re
+import shutil
+import subprocess
+import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -61,7 +78,9 @@ FORGED_MECHANIC_TEXT = "forged with Mechanic:"
 HINT_SUFFIX = "Settings apply immediately while the game is running."
 
 _CARD_OPEN_RE = re.compile(r'<div class="card')
-_MODS_CARD_RE = re.compile(r'<div class="card tab-card" data-tab="mods" id="([^"]+)">')
+# Extra attributes (round 1: role/aria-labelledby for the sub-tab strip) may
+# follow the id before the tag closes.
+_MODS_CARD_RE = re.compile(r'<div class="card tab-card" data-tab="mods" id="([^"]+)"[^>]*>')
 
 
 def _mods_cards(html):
@@ -255,6 +274,19 @@ class ModsCategoryBaselineTests(unittest.TestCase):
                 f"{cid}'s hint does not end with the standard sentence",
             )
 
+    def test_data_tab_mods_occurs_exactly_three_times(self):
+        # The sidebar button plus the two Mods-tab cards - never a third.
+        self.assertEqual(HTML.count('data-tab="mods"'), 3)
+
+    def test_open_tab_toolbar_list_is_loot_and_modifiers(self):
+        match = re.search(r"controlToolbar'\)\.hidden=!\[([^\]]*)\]\.includes\(name\)", HTML)
+        self.assertIsNotNone(match, "openTab's toolbar visibility list not found")
+        names = re.findall(r"'([^']+)'", match.group(1))
+        self.assertEqual(names, ["loot", "modifiers"])
+
+    def test_open_tab_writes_forgepact_tab(self):
+        self.assertIn("sessionStorage.setItem('forgepact_tab',name)", HTML)
+
 
 class ModsCategorySplitTests(unittest.TestCase):
     """Pins the result of the split."""
@@ -291,6 +323,417 @@ class ModsCategorySplitTests(unittest.TestCase):
     def test_gameplay_card_id_is_gone(self):
         self.assertNotIn("gameplayCard", HTML)
         self.assertNotIn("gameplayCard", ICONS_SOURCE)
+
+
+def _brace_block(html, start_marker):
+    """The text from `start_marker` (which must itself end with `{`) to its
+    own balanced closing `}`.
+
+    Raises AssertionError - a test failure, not a setUp/collection error -
+    rather than KeyError/IndexError when the marker is missing, so a piece
+    that does not exist yet on the pre-change panel shows up as
+    `FAILED (failures=`, never `errors=`.
+    """
+    start = html.find(start_marker)
+    if start < 0:
+        raise AssertionError(f"{start_marker!r} not found in the panel page")
+    brace = start + len(start_marker) - 1
+    if html[brace] != "{":
+        raise AssertionError(f"{start_marker!r} does not end with its own opening brace")
+    depth = 0
+    for index in range(brace, len(html)):
+        if html[index] == "{":
+            depth += 1
+        elif html[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return html[start:index + 1]
+    raise AssertionError(f"no matching closing brace for {start_marker!r}")
+
+
+def _page_info_source(html):
+    start = html.find("const PAGE_INFO={")
+    if start < 0:
+        raise AssertionError("PAGE_INFO not found in the panel page")
+    end = html.find("};", start)
+    if end < 0:
+        raise AssertionError("PAGE_INFO has no closing '};'")
+    return html[start:end + 2]
+
+
+def _mods_state_declaration_source(html):
+    match = re.search(r"let activeTab=[^;]*;", html)
+    if not match:
+        raise AssertionError("the activeTab/controlFilter/modsSubtab state declaration was not found")
+    return match.group(0)
+
+
+def _run_node(policy_js, driver_js):
+    """Execute the extracted panel code through a real JS runtime, or skip.
+
+    A local copy of `test_panel_performance.run_node` rather than an import
+    of it: that module imports `forgepact`, which this file must not do, so
+    it keeps running against an older fixture copy with no `hs_game_sdk` on
+    the path.
+    """
+    node = shutil.which("node")
+    if not node:
+        raise unittest.SkipTest(
+            "node is not on PATH; the sub-tab behaviour classes need a "
+            "JavaScript runtime to execute")
+    with tempfile.TemporaryDirectory() as tmp:
+        script = pathlib.Path(tmp) / "policy.js"
+        script.write_text(policy_js + "\n" + driver_js, encoding="utf-8")
+        result = subprocess.run([node, str(script)], capture_output=True, text=True)
+        if result.returncode:
+            raise AssertionError(result.stdout + result.stderr)
+        return json.loads(result.stdout.strip().splitlines()[-1])
+
+
+_SUBTAB_STRIP_RE = re.compile(
+    r'<div id="modsSubtabs" class="subtabbar" role="tablist" '
+    r'aria-label="Mods categories" hidden>(.*?)</div>',
+    re.S,
+)
+_SUBTAB_BUTTON_RE = re.compile(
+    r'<button type="button" class="subtabbtn" role="tab"([^>]*)>([^<]*)</button>'
+)
+
+
+class ModsSubtabMarkupTests(unittest.TestCase):
+    """Pins the Quality of Life | Items sub-tab strip's markup (round 1)."""
+
+    def test_strip_is_first_child_of_workspace_before_any_card(self):
+        workspace_start = HTML.index('<div id="workspace"')
+        strip_match = _SUBTAB_STRIP_RE.search(HTML)
+        self.assertIsNotNone(strip_match, "#modsSubtabs strip not found")
+        first_card_start = HTML.index('<div class="card tab-card" data-tab="setup" id="setupCard">')
+        self.assertGreater(strip_match.start(), workspace_start)
+        self.assertLess(strip_match.start(), first_card_start)
+
+    def test_strip_has_no_data_tab_and_is_not_a_tab_card(self):
+        strip_match = _SUBTAB_STRIP_RE.search(HTML)
+        self.assertIsNotNone(strip_match, "#modsSubtabs strip not found")
+        opening_tag = HTML[strip_match.start():HTML.index(">", strip_match.start()) + 1]
+        self.assertNotIn("data-tab", opening_tag)
+        self.assertNotIn("tab-card", opening_tag)
+
+    def test_subtab_buttons_order_ids_controls_labels_and_initial_state(self):
+        buttons = _SUBTAB_BUTTON_RE.findall(HTML)
+        self.assertEqual(len(buttons), 2, "expected exactly two sub-tab buttons")
+        (qol_attrs, qol_label), (items_attrs, items_label) = buttons
+        self.assertIn('id="subtab-qol"', qol_attrs)
+        self.assertIn('aria-controls="qolCard"', qol_attrs)
+        self.assertIn('aria-selected="true"', qol_attrs)
+        self.assertIn('tabindex="0"', qol_attrs)
+        self.assertEqual(qol_label, "Quality of Life")
+        self.assertNotIn("tabbtn", qol_attrs)
+        self.assertIn('id="subtab-items"', items_attrs)
+        self.assertIn('aria-controls="itemsCard"', items_attrs)
+        self.assertIn('aria-selected="false"', items_attrs)
+        self.assertIn('tabindex="-1"', items_attrs)
+        self.assertEqual(items_label, "Items")
+        self.assertNotIn("tabbtn", items_attrs)
+
+    def test_subtab_aria_controls_equals_the_mods_card_ids(self):
+        controls = set(re.findall(r'class="subtabbtn"[^>]*aria-controls="([^"]+)"', HTML))
+        card_ids = {cid for cid, _ in _mods_cards(HTML)}
+        self.assertEqual(controls, card_ids)
+
+    def test_mods_cards_have_role_tabpanel_and_aria_labelledby(self):
+        self.assertIn('id="qolCard" role="tabpanel" aria-labelledby="subtab-qol"', HTML)
+        self.assertIn('id="itemsCard" role="tabpanel" aria-labelledby="subtab-items"', HTML)
+
+    def test_subtabbar_css_spans_the_grid(self):
+        match = re.search(r"\.subtabbar\{([^}]*)\}", HTML)
+        self.assertIsNotNone(match, ".subtabbar CSS rule not found")
+        self.assertIn("grid-column:1/-1", match.group(1))
+
+    def test_subtabbtn_shares_the_row_under_720px(self):
+        block = _brace_block(HTML, "@media(max-width:720px){")
+        subtab_match = re.search(r"\.subtabbtn\{([^}]*)\}", block)
+        self.assertIsNotNone(subtab_match, ".subtabbtn has no rule inside the 720px block")
+        self.assertIn("flex:1", subtab_match.group(1))
+
+    def test_boot_reads_mods_subtab_storage_before_open_tab(self):
+        boot_src = _brace_block(HTML, "async function boot(){")
+        storage_pos = boot_src.find("forgepact_mods_subtab")
+        open_tab_pos = boot_src.find("openTab(initial,false)")
+        self.assertGreater(storage_pos, -1, "boot does not read forgepact_mods_subtab")
+        self.assertGreater(open_tab_pos, -1, "boot does not call openTab(initial,false)")
+        self.assertLess(storage_pos, open_tab_pos)
+
+    def test_prepare_panel_ui_calls_bind_mods_subtabs(self):
+        prepare_src = _brace_block(HTML, "function preparePanelUI(){")
+        self.assertIn("bindModsSubtabs()", prepare_src)
+
+
+# A stub DOM just capable enough to run openTab/openModsSubtab/bindModsSubtabs:
+# elements with class/id/dataset/attributes, getElementById and a small
+# selector engine (classes and [attr="value"]) for the compound selectors
+# those functions use, sessionStorage and a no-op window.scrollTo.
+_STUB_DOM = r"""
+function makeElement(attrs){
+  const el={
+    className:attrs.class||'',
+    id:attrs.id||'',
+    hidden:!!attrs.hidden,
+    tabIndex:0,
+    value:'',
+    textContent:'',
+    dataset:{},
+    _attrs:{},
+    onclick:null,onkeydown:null,
+    get classList(){
+      const self=this;
+      const asSet=()=>new Set((self.className||'').split(/\s+/).filter(Boolean));
+      return {
+        contains:c=>asSet().has(c),
+        add:c=>{const s=asSet();s.add(c);self.className=[...s].join(' ')},
+        remove:c=>{const s=asSet();s.delete(c);self.className=[...s].join(' ')},
+        toggle:(c,on)=>{const s=asSet();on=on===undefined?!s.has(c):on;if(on)s.add(c);else s.delete(c);self.className=[...s].join(' ');return on}
+      };
+    },
+    getAttribute(n){return Object.prototype.hasOwnProperty.call(this._attrs,n)?this._attrs[n]:null},
+    setAttribute(n,v){this._attrs[n]=String(v)},
+    hasAttribute(n){return Object.prototype.hasOwnProperty.call(this._attrs,n)},
+    click(){if(this.onclick)this.onclick()},
+    focus(){document.activeElement=this}
+  };
+  for(const [k,v] of Object.entries(attrs)){
+    if(k==='class'||k==='id'||k==='hidden')continue;
+    if(k.startsWith('data-')){
+      const camel=k.slice(5).replace(/-([a-z])/g,(_,c)=>c.toUpperCase());
+      el.dataset[camel]=v;
+    }
+    el.setAttribute(k,v);
+  }
+  ALL.push(el);
+  return el;
+}
+function selectorMatches(el,sel){
+  const tokens=sel.match(/\.[\w-]+|\[[^\]]+\]|#[\w-]+/g)||[];
+  return tokens.every(tok=>{
+    if(tok[0]==='.')return el.classList.contains(tok.slice(1));
+    if(tok[0]==='#')return el.id===tok.slice(1);
+    const inner=tok.slice(1,-1);
+    const eq=inner.match(/^([\w-]+)=["']?([^"'\]]*)["']?$/);
+    if(eq)return el.getAttribute(eq[1])===eq[2];
+    return el.hasAttribute(inner);
+  });
+}
+const ALL=[];
+const document={
+  activeElement:null,
+  getElementById(id){return ALL.find(e=>e.id===id)||null},
+  querySelector(sel){return ALL.find(e=>selectorMatches(e,sel))||null},
+  querySelectorAll(sel){return ALL.filter(e=>selectorMatches(e,sel))}
+};
+const sessionStorage={_s:{},getItem(k){return Object.prototype.hasOwnProperty.call(this._s,k)?this._s[k]:null},setItem(k,v){this._s[k]=v}};
+const window={scrollTo(){}};
+function filterControlRows(){}
+makeElement({class:'tabbtn',id:'nav-setup','data-tab':'setup'});
+makeElement({class:'tabbtn',id:'nav-modifiers','data-tab':'modifiers'});
+makeElement({class:'tabbtn',id:'nav-world','data-tab':'world'});
+makeElement({class:'tabbtn',id:'nav-loot','data-tab':'loot'});
+makeElement({class:'tabbtn',id:'nav-mods','data-tab':'mods'});
+makeElement({class:'tab-card',id:'setupCard','data-tab':'setup'});
+makeElement({class:'tab-card',id:'densityCard','data-tab':'world'});
+makeElement({class:'tab-card',id:'dropsCard','data-tab':'loot'});
+makeElement({class:'tab-card',id:'modifierCard','data-tab':'modifiers'});
+makeElement({class:'tab-card',id:'qolCard','data-tab':'mods'});
+makeElement({class:'tab-card',id:'itemsCard','data-tab':'mods'});
+makeElement({id:'workspace'});
+makeElement({id:'pageTitle'});
+makeElement({id:'pageDescription'});
+makeElement({id:'breadcrumbPage'});
+makeElement({id:'controlToolbar'});
+makeElement({id:'controlSearch'});
+makeElement({id:'modsSubtabs',class:'subtabbar',hidden:true});
+makeElement({class:'subtabbtn',id:'subtab-qol','aria-controls':'qolCard'});
+makeElement({class:'subtabbtn',id:'subtab-items','aria-controls':'itemsCard'});
+"""
+
+# (a)-(h) from context "Round 1: tests". Each step's DOM/state snapshot is
+# captured before the next step runs, in one script, so the sequence exactly
+# matches how a real session would call these functions.
+_SUBTAB_DRIVER = r"""
+const out={};
+
+openTab('mods');
+out.a={
+  stripHidden: document.getElementById('modsSubtabs').hidden,
+  qolActive: document.getElementById('qolCard').classList.contains('active'),
+  itemsActive: document.getElementById('itemsCard').classList.contains('active'),
+  qolSelected: document.getElementById('subtab-qol').getAttribute('aria-selected'),
+  itemsSelected: document.getElementById('subtab-items').getAttribute('aria-selected'),
+  qolTabIndex: document.getElementById('subtab-qol').tabIndex,
+  itemsTabIndex: document.getElementById('subtab-items').tabIndex,
+  toolbarHidden: document.getElementById('controlToolbar').hidden,
+  title: document.getElementById('pageTitle').textContent
+};
+
+openModsSubtab('itemsCard');
+out.b={
+  qolActive: document.getElementById('qolCard').classList.contains('active'),
+  itemsActive: document.getElementById('itemsCard').classList.contains('active'),
+  qolSelected: document.getElementById('subtab-qol').getAttribute('aria-selected'),
+  itemsSelected: document.getElementById('subtab-items').getAttribute('aria-selected'),
+  stored: sessionStorage.getItem('forgepact_mods_subtab')
+};
+
+openTab('loot');
+out.c={
+  stripHidden: document.getElementById('modsSubtabs').hidden,
+  qolActive: document.getElementById('qolCard').classList.contains('active'),
+  itemsActive: document.getElementById('itemsCard').classList.contains('active')
+};
+
+openTab('mods');
+out.d={
+  qolActive: document.getElementById('qolCard').classList.contains('active'),
+  itemsActive: document.getElementById('itemsCard').classList.contains('active')
+};
+
+openModsSubtab('doesNotExist');
+out.e={
+  qolActive: document.getElementById('qolCard').classList.contains('active'),
+  itemsActive: document.getElementById('itemsCard').classList.contains('active'),
+  stored: sessionStorage.getItem('forgepact_mods_subtab')
+};
+
+sessionStorage.setItem('forgepact_mods_subtab','sentinel');
+openModsSubtab('itemsCard',false);
+out.f={stored: sessionStorage.getItem('forgepact_mods_subtab')};
+
+openTab('loot');
+openModsSubtab('itemsCard');
+out.g={
+  qolActive: document.getElementById('qolCard').classList.contains('active'),
+  itemsActive: document.getElementById('itemsCard').classList.contains('active')
+};
+
+openTab('mods');
+bindModsSubtabs();
+document.getElementById('subtab-items').click();
+out.hClick={itemsActive: document.getElementById('itemsCard').classList.contains('active')};
+
+let prevented=false;
+document.getElementById('subtab-items').onkeydown({key:'ArrowRight',preventDefault(){prevented=true}});
+out.hArrowRight={activeButton: document.activeElement.id, prevented};
+
+prevented=false;
+document.getElementById('subtab-qol').onkeydown({key:'ArrowLeft',preventDefault(){prevented=true}});
+out.hArrowLeft={activeButton: document.activeElement.id, prevented};
+
+prevented=false;
+document.getElementById('subtab-qol').onkeydown({key:'End',preventDefault(){prevented=true}});
+out.hEnd={activeButton: document.activeElement.id, prevented};
+
+prevented=false;
+document.getElementById('subtab-items').onkeydown({key:'Home',preventDefault(){prevented=true}});
+out.hHome={activeButton: document.activeElement.id, prevented};
+
+prevented=false;
+document.getElementById('subtab-qol').onkeydown({key:'ArrowDown',preventDefault(){prevented=true}});
+out.hUnrelated={prevented};
+
+console.log(JSON.stringify(out));
+"""
+
+
+class ModsSubtabBehaviourTests(unittest.TestCase):
+    """Runs the real openTab/openModsSubtab/bindModsSubtabs through node.
+
+    The node harness is only ever invoked from inside a test method (lazily
+    cached on the class), never from setUpClass: a piece missing on the
+    pre-change panel must show up as a test failure, not a setUp error.
+    """
+
+    _cache = None
+
+    @classmethod
+    def _results(cls):
+        if cls._cache is None:
+            policy_js = "\n".join([
+                _STUB_DOM,
+                _mods_state_declaration_source(HTML),
+                _page_info_source(HTML),
+                _brace_block(HTML, "function openTab(name,remember=true){"),
+                _brace_block(HTML, "function openModsSubtab(id,remember=true){"),
+                _brace_block(HTML, "function bindModsSubtabs(){"),
+            ])
+            cls._cache = _run_node(policy_js, _SUBTAB_DRIVER)
+        return cls._cache
+
+    def test_a_open_tab_mods_fresh_shows_only_quality_of_life(self):
+        a = self._results()["a"]
+        self.assertFalse(a["stripHidden"])
+        self.assertTrue(a["qolActive"])
+        self.assertFalse(a["itemsActive"])
+        self.assertEqual(a["qolSelected"], "true")
+        self.assertEqual(a["itemsSelected"], "false")
+        self.assertEqual(a["qolTabIndex"], 0)
+        self.assertEqual(a["itemsTabIndex"], -1)
+        self.assertTrue(a["toolbarHidden"])
+        self.assertEqual(a["title"], "Mods")
+
+    def test_b_open_mods_subtab_items_flips_cards_and_buttons_and_stores(self):
+        b = self._results()["b"]
+        self.assertFalse(b["qolActive"])
+        self.assertTrue(b["itemsActive"])
+        self.assertEqual(b["qolSelected"], "false")
+        self.assertEqual(b["itemsSelected"], "true")
+        self.assertEqual(b["stored"], "itemsCard")
+
+    def test_c_open_tab_loot_hides_strip_and_no_mods_card_active(self):
+        c = self._results()["c"]
+        self.assertTrue(c["stripHidden"])
+        self.assertFalse(c["qolActive"])
+        self.assertFalse(c["itemsActive"])
+
+    def test_d_open_tab_mods_again_restores_items(self):
+        d = self._results()["d"]
+        self.assertFalse(d["qolActive"])
+        self.assertTrue(d["itemsActive"])
+
+    def test_e_unknown_subtab_id_falls_back_to_quality_of_life(self):
+        e = self._results()["e"]
+        self.assertTrue(e["qolActive"])
+        self.assertFalse(e["itemsActive"])
+        self.assertEqual(e["stored"], "qolCard")
+
+    def test_f_remember_false_writes_nothing(self):
+        self.assertEqual(self._results()["f"]["stored"], "sentinel")
+
+    def test_g_no_mods_card_activates_while_active_tab_is_not_mods(self):
+        g = self._results()["g"]
+        self.assertFalse(g["qolActive"])
+        self.assertFalse(g["itemsActive"])
+
+    def test_h_click_selects_its_card(self):
+        self.assertTrue(self._results()["hClick"]["itemsActive"])
+
+    def test_h_arrow_right_wraps_and_focuses(self):
+        result = self._results()["hArrowRight"]
+        self.assertEqual(result["activeButton"], "subtab-qol")
+        self.assertTrue(result["prevented"])
+
+    def test_h_arrow_left_wraps_and_focuses(self):
+        result = self._results()["hArrowLeft"]
+        self.assertEqual(result["activeButton"], "subtab-items")
+        self.assertTrue(result["prevented"])
+
+    def test_h_home_and_end_jump(self):
+        end_result = self._results()["hEnd"]
+        self.assertEqual(end_result["activeButton"], "subtab-items")
+        self.assertTrue(end_result["prevented"])
+        home_result = self._results()["hHome"]
+        self.assertEqual(home_result["activeButton"], "subtab-qol")
+        self.assertTrue(home_result["prevented"])
+
+    def test_h_unrelated_key_does_not_prevent_default(self):
+        self.assertFalse(self._results()["hUnrelated"]["prevented"])
 
 
 if __name__ == "__main__":

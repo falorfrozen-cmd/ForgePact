@@ -132,9 +132,13 @@ of its own - see that bullet for what it draws on.
 
 ## Changed
 
-- **The Mods tab's Gameplay Mods card is now called Quality of Life.** Same
-  switches, same order, nothing to reconfigure - it is a rename, not a move.
-  The **Items** card, for Headhunter, Tyrant's Crown and Beacon, is unchanged.
+- **The Mods tab's Gameplay Mods card is now called Quality of Life, and Mods
+  now shows Quality of Life and Items as two sub-tabs, one list at a time.**
+  Same switches, same order, nothing to reconfigure - it is a rename, not a
+  move. Click **Quality of Life** or **Items** at the top of the Mods page to
+  switch between them (arrow keys work too); the panel remembers the one you
+  last had open until you close it. The **Items** card, for Headhunter,
+  Tyrant's Crown and Beacon, is unchanged.
 - **Headhunter and Tyrant's Crown now drop like an Angelic / Unholy item.** They used to drop
   on their own, in every session, about once every 15,000 kills each - far more often than any
   Angelic / Unholy item such as **Liquor Holster** - with no panel control for it. They
