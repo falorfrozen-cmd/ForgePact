@@ -987,6 +987,9 @@ SHIPPED_TABLE_ROWS = [
     ("maelstromOfFrost", 11, "Prophet_Maelstrom_obj", '"isMyClient"', "TimerHeld", '"destroyTimer"', -1.0),
     ("meteorStorm", 11, "Shaman_Meteor_Storm_Controller_obj", "nullptr", "Marker", '"skillAstroHeated"', 0.0),
     ("bushido", "kToggleNoSubTalent", "Samurai_Bushido_obj", '"isMyClient"', "None", "nullptr", 0.0),
+    # Session 12 (workorder forgepact-skilltimer-buff-countdown): Counter's
+    # Give No Quarter form - the one `PlayerBuff` row, never resolved by name.
+    ("counter", 13, "Draw_Player_Buff_obj", "nullptr", "PlayerBuff", '"buffType"', 104.0),
 ]
 TABLE_ROW = re.compile(
     r'\{\s*"(?P<ability>\w+)",\s*(?P<sub>\d+|kToggleNoSubTalent),\s*HeroSiege::Objects::GameObject::(?P<obj>\w+),\s*'
@@ -994,13 +997,19 @@ TABLE_ROW = re.compile(
     r'(?P<held>-?[\d.]+)\s*\}',
     re.S,
 )
+# kSkillTimerBuffRows' own row shape (SkillTimerMod.hpp): { "id", buffId,
+# measuredFirst, "Name (Class)" } - the session-12 buff-carried table, kept
+# module-level (like TABLE_ROW above) so both SkillTimerRuleContractTests'
+# _forbidden_names and SkillTimerBuffContractTests below can read it without
+# a second copy of the pattern.
+BUFF_ROW = re.compile(r'\{\s*"(?P<ability>\w+)",\s*(?P<buffId>\d+),\s*(?P<first>[\d.]+),\s*"(?P<display>[^"]+)"\s*\}')
 # Names the shipped table now owns: a production function spelling one of
 # these again would be a second, drifting copy of the row set.
 TABLE_ONLY_NAMES = (
     "White_Mage_Soul_Spurn_AOE_obj", '"purgatory"', '"skillContamination"', '"destroyTimer"',
     '"soulSpurn"', "kToggleIndicatorTalentId",
     "Shaman_Meteor_Storm_Controller_obj", "Samurai_Bushido_obj", '"skillAstroHeated"',
-    '"meteorStorm"', '"bushido"',
+    '"meteorStorm"', '"bushido"', '"counter"',
 )
 # Nothing in the marker's draw path may reach for a partial or animated shape
 # (D-U9 rejected every countdown; D-U13 chose a static banded outline).
@@ -1583,16 +1592,23 @@ class SkillTimerRuleContractTests(unittest.TestCase):
     # row lands (the Meteor Storm session is adding rows to kToggleSkillRows).
 
     def _forbidden_names(self):
-        # Four sources, each contributing at least one name so an emptied
+        # Five sources, each contributing at least one name so an emptied
         # regex can never pass silently: the seven explicit countdown rows'
         # own display names, the toggle table's own abilityIds (read live,
         # context "Name-free player text (round 1)"), the measured
-        # deny-list's abilityIds, and the research doc's rule-selected ids
-        # (AC4's 17).
+        # deny-list's abilityIds, the research doc's rule-selected ids
+        # (AC4's 17), and (session 12) kSkillTimerBuffRows' own display names -
+        # Counter/Last Stand/Defensive Shout/Berserk were never derived from
+        # anything before this table existed.
         names = set()
         countdown_start = self.header.index("inline constexpr SkillTimerRow kSkillTimerRows[] = {")
         countdown_table = self.header[countdown_start:self.header.index("\n};", countdown_start)]
         for m in SkillTimerShipContractTests.COUNTDOWN_ROW.finditer(countdown_table):
+            names.add(m.group("display").split(" (")[0])
+
+        buff_start = self.header.index("inline constexpr SkillTimerBuffRow kSkillTimerBuffRows[] = {")
+        buff_table = self.header[buff_start:self.header.index("\n};", buff_start)]
+        for m in BUFF_ROW.finditer(buff_table):
             names.add(m.group("display").split(" (")[0])
 
         toggle_start = self.toggle_header.index("inline constexpr ToggleSkillRow kToggleSkillRows[] = {")
@@ -1770,10 +1786,38 @@ class ToggleSkillTableContractTests(unittest.TestCase):
         # catches it.
         self.assertEqual(self.table.count('{ "'), len(self.rows), self.table)
 
-    def test_counter_and_blender_do_not_ship(self):
-        for name in ('"counter"', '"blender"', "Shield_Lancer_Counter_World_obj", "Butcher_Blender_obj"):
+    def test_blender_does_not_ship(self):
+        # Blender's ON/OFF steps were never run (session 6); it stays out.
+        for name in ('"blender"', "Butcher_Blender_obj"):
             self.assertNotIn(name, self.header, name)
             self.assertNotIn(name, self.stripped, name)
+        # Counter's ON object is the buff instance (Draw_Player_Buff_obj,
+        # session 12), never the session-6-rejected world object.
+        self.assertNotIn("Shield_Lancer_Counter_World_obj", self.header)
+        self.assertNotIn("Shield_Lancer_Counter_World_obj", self.stripped)
+
+    def test_counter_toggle_row_agrees_with_the_buff_row(self):
+        counter_toggle = next(r for r in self.rows if r["ability"] == "counter")
+        self.assertEqual(counter_toggle["mark"], "PlayerBuff")
+        self.assertIn(int(counter_toggle["sub"]), range(1, 15))
+
+        skill_header = (FORGEPACT_DIR / "plugin" / "include" / "ForgePact" / "SkillTimerMod.hpp").read_text(
+            encoding="utf-8")
+        identity_field = re.search(
+            r'inline constexpr const char\* kSkillTimerBuffIdentityField = "(\w+)";', skill_header)
+        self.assertIsNotNone(identity_field)
+        self.assertEqual(counter_toggle["field"].strip(), f'"{identity_field.group(1)}"')
+
+        start = skill_header.index("inline constexpr SkillTimerBuffRow kSkillTimerBuffRows[] = {")
+        buff_table = skill_header[start:skill_header.index("\n};", start)]
+        buff_rows = {m.group("ability"): m for m in BUFF_ROW.finditer(buff_table)}
+        self.assertIn("counter", buff_rows)
+        self.assertEqual(float(counter_toggle["held"]), float(buff_rows["counter"].group("buffId")))
+
+        # ToggleRowRequiresMark is unchanged - a PlayerBuff row requires its
+        # mark the same as every other row (AC13/AC23).
+        fn = function_body(self.header, "inline constexpr bool ToggleRowRequiresMark(")
+        self.assertEqual(fn.strip(), "return row.mark != ToggleOnMark::None;")
 
     def test_table_carries_no_talent_id(self):
         # D-P1: ids move with every game build, so the table stores none and
@@ -2363,6 +2407,233 @@ UNCHANGED_PROBE_BODIES = (
     "static void TgProbeSpriteTunedBox(",
     "static bool TgProbeSpriteBaseBox(",
 )
+
+
+class SkillTimerBuffContractTests(unittest.TestCase):
+    """Buff-carried skill countdowns (issue #55, session 12): `kSkillTimerBuffRows`.
+
+    Companion to test_toggle_skill_behavior.py's `buff/*` scenarios, which run
+    the read/latch/toggle-suppression decisions end to end, and to
+    ToggleSkillTableContractTests' `test_counter_toggle_row_agrees_with_the_buff_row`,
+    which ties the one row shared between the two tables together. This class
+    pins what only a source read can see: the buff table is disjoint from
+    every other table, its own reader spells no runtime name outside the
+    header, and Counter's Give No Quarter form is read at the point of use,
+    never cached.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.plugin = PLUGIN_SRC.read_text(encoding="utf-8")
+        cls.stripped = strip_research_blocks(cls.plugin)
+        cls.header = (FORGEPACT_DIR / "plugin" / "include" / "ForgePact" / "SkillTimerMod.hpp").read_text(
+            encoding="utf-8")
+        cls.toggle_header = (FORGEPACT_DIR / "plugin" / "include" / "ForgePact" / "ToggleSkillMod.hpp").read_text(
+            encoding="utf-8")
+        cls.research_doc = (FORGEPACT_DIR / "docs" / "toggle-skills-research.md").read_text(encoding="utf-8")
+        cls.release_notes = (FORGEPACT_DIR / "release-notes-v1.4.5.md").read_text(encoding="utf-8")
+        cls.readme = (FORGEPACT_DIR / "README.md").read_text(encoding="utf-8")
+        cls.panel = (SRC_DIR / "forgepact.py").read_text(encoding="utf-8")
+
+        start = cls.header.index("inline constexpr SkillTimerBuffRow kSkillTimerBuffRows[] = {")
+        cls.buff_table = cls.header[start:cls.header.index("\n};", start)]
+        cls.buff_rows = [m.groupdict() for m in BUFF_ROW.finditer(cls.buff_table)]
+
+        toggle_start = cls.toggle_header.index("inline constexpr ToggleSkillRow kToggleSkillRows[] = {")
+        toggle_table = cls.toggle_header[toggle_start:cls.toggle_header.index("\n};", toggle_start)]
+        cls.toggle_rows = [m.groupdict() for m in TABLE_ROW.finditer(toggle_table)]
+
+    def _countdown_text_blocks(self):
+        # Same three blocks SkillTimerRuleContractTests reads - duplicated
+        # rather than imported across classes, the way this file already
+        # duplicates small helpers (guide: match the file's own shape).
+        release = self.release_notes[self.release_notes.index("**Timed skill countdown.**"):]
+        cut = release.find("\n- **")
+        if cut >= 0:
+            release = release[:cut]
+        readme_row = next(line for line in self.readme.split("\n")
+                           if line.startswith("| **Timed skill countdown**"))
+        panel = self.panel[self.panel.index("Timed skill countdown<br>"):]
+        panel = panel[:panel.index("</span></span>") + len("</span></span>")]
+        return {"release notes": release, "README": readme_row, "panel": panel}
+
+    # ---- 1: every shipped row was measured (AC10) ---------------------------
+
+    def test_every_buff_row_is_measured_in_the_research_doc(self):
+        self.assertEqual(len(self.buff_rows), 4, self.buff_table)
+        doc = self.research_doc
+        section = doc[doc.index("### Buff-carried countdown (session 12)"):]
+        results = section[section.index("#### Results"):section.index("#### Decision")]
+        lines = [l for l in results.splitlines() if l.startswith("|")]
+        for row in self.buff_rows:
+            self.assertRegex(row["display"], r"^[^()]+\([^()]+\)$", row)
+            found = [
+                l for l in lines
+                if f'`{row["ability"]}`' in l and f'| {row["buffId"]} |' in l
+                and f'{float(row["first"]):.6f}' in l and "| ship |" in l
+            ]
+            self.assertEqual(len(found), 1, row)
+
+    # ---- 2: the one row shared with the toggle table (AC13) -----------------
+
+    def test_only_counter_is_in_both_tables_and_as_a_playerbuff_row(self):
+        buff_ids = {r["ability"] for r in self.buff_rows}
+        toggle_ids = {r["ability"] for r in self.toggle_rows}
+        self.assertEqual(buff_ids & toggle_ids, {"counter"})
+        playerbuff_rows = [r for r in self.toggle_rows if r["mark"] == "PlayerBuff"]
+        self.assertEqual([r["ability"] for r in playerbuff_rows], ["counter"])
+
+        deny_toggle_ids = {"bushido", "holyForm", "unholyForm", "melonForm"}
+        self.assertFalse(buff_ids & deny_toggle_ids, buff_ids)
+        self.assertNotIn("agility", buff_ids)
+        for name in ("Turret", "Totem", "Hydra", "GameObject::"):
+            self.assertNotIn(name, self.buff_table, name)
+
+    # ---- 3: disjoint from the object rows and the rule ------------------------
+
+    def test_buff_rows_disjoint_from_object_rows_and_never_enter_the_rule(self):
+        fn = function_body(self.header, "inline bool SkillTimerRuleIsExplicitRow(")
+        self.assertIn("kSkillTimerBuffRows[", fn)
+        walk = function_body(self.stripped, "static bool ToggleTableResolveIds(")
+        self.assertIn("SkillTimerRuleIsExplicitRow(name)", walk)
+        deny_index = walk.index("SkillTimerRuleDenied(name)")
+        explicit_index = walk.index("SkillTimerRuleIsExplicitRow(name)")
+        self.assertLess(explicit_index, deny_index)
+        buff_decl = self.header.index("inline constexpr SkillTimerBuffRow kSkillTimerBuffRows[] = {")
+        explicit_fn = self.header.index("inline bool SkillTimerRuleIsExplicitRow(")
+        self.assertLess(buff_decl, explicit_fn)
+
+        twin = function_body(self.stripped, "static int SkillTimerToggleTwin(")
+        row_for_talent = function_body(self.stripped, "static int ToggleTableRowForTalentId(")
+        for name in ("kSkillTimerBuffRows", "SkillTimerBuffReadRow", "buffId"):
+            self.assertNotIn(name, twin, name)
+            self.assertNotIn(name, row_for_talent, name)
+
+        countdown_start = self.header.index("inline constexpr SkillTimerRow kSkillTimerRows[] = {")
+        countdown_table = self.header[countdown_start:self.header.index("\n};", countdown_start)]
+        countdown_ids = {m.group("ability") for m in SkillTimerShipContractTests.COUNTDOWN_ROW.finditer(countdown_table)}
+        buff_ids = {r["ability"] for r in self.buff_rows}
+        self.assertFalse(countdown_ids & buff_ids, countdown_ids & buff_ids)
+
+    # ---- 4: the reader spells no runtime name outside the header ------------
+
+    def test_buff_read_uses_only_header_names_and_builtins(self):
+        read = function_body(self.stripped, "static void SkillTimerBuffReadRow(")
+        for literal in ('"playerBuff"', '"buffType"', '"destroyTimer"', '"host"'):
+            self.assertNotIn(literal, read, literal)
+        for name in ("kSkillTimerBuffArrayGlobal", "kSkillTimerBuffPlayerIndex", "kSkillTimerBuffSubIndex",
+                     "kSkillTimerBuffIdentityField", "kSkillTimerField"):
+            self.assertIn(name, read, name)
+        builtins = set(re.findall(r'CallBuiltin\("(\w+)"', read))
+        self.assertTrue(builtins)
+        self.assertTrue(builtins <= {"variable_global_get", "array_get", "array_length",
+                                      "instance_exists", "variable_instance_get"})
+        for banned in ("CallBuiltinEx", "HhBuffAlive", "TgProbe", "MmCreateHook", "HookOneScript"):
+            self.assertNotIn(banned, read, banned)
+        self.assertIn("catch (...)", read)
+
+    # ---- 5: the stat line (AC15) ---------------------------------------------
+
+    def test_stat_prints_one_line_per_buff_row(self):
+        stats = function_body(self.stripped, "static void SkillTimerStats(")
+        object_loop = stats.index("SkillTimerRowCountersLine(r)")
+        buff_lines = stats.index("SkillTimerBuffTableRowsLine()")
+        buff_loop = stats.index("SkillTimerBuffRowCountersLine(r)")
+        rule_line = stats.index("SkillTimerRuleCountersLine()")
+        self.assertLess(object_loop, buff_lines)
+        self.assertLess(buff_lines, buff_loop)
+        self.assertLess(buff_loop, rule_line)
+        counters = function_body(self.stripped, "static std::string SkillTimerBuffRowCountersLine(")
+        for needle in (" drawn=", " noBuff=", " unreadable=", " identityMismatch=", " expired=",
+                       " toggleOn=", " toggleUnreadable=", " unresolved=", " noSlot=", " latched=",
+                       " unlatched="):
+            self.assertIn(needle, counters, needle)
+
+    # ---- 6: player text names the tier, never a skill (AC14) ----------------
+
+    def test_player_text_says_measured_buff_skills_are_covered_without_names(self):
+        old_clause = "only a buff on you are not covered"
+        for label, text in self._countdown_text_blocks().items():
+            normalised = " ".join(text.split())
+            self.assertNotIn(old_clause, normalised, label)
+            low = text.lower()
+            self.assertIn("buff", low, label)
+            self.assertIn("covered", low, label)
+
+        rule_tests = SkillTimerRuleContractTests()
+        rule_tests.header = self.header
+        rule_tests.toggle_header = self.toggle_header
+        rule_tests.research_doc = self.research_doc
+        forbidden = rule_tests._forbidden_names()
+        for name in ("Counter", "Last Stand", "Defensive Shout", "Berserk"):
+            self.assertIn(name, forbidden, name)
+
+    # ---- 7: Counter's form is read at the point of use (D-P3/D-N-perm) ------
+
+    def test_counter_form_is_the_sub_talent_read_at_the_point_of_use(self):
+        # The not-falling guard replan 2 proposed is gone everywhere (AC23/
+        # AC25 grep the header and the stripped plugin for its own name); this
+        # test only pins what replaced it, never the dropped name itself.
+        draw = function_body(self.stripped, "static void SkillTimerBuffDraw(")
+        self.assertNotIn("frozen", draw.lower())
+        counters_line = function_body(self.stripped, "static std::string SkillTimerBuffRowCountersLine(")
+        self.assertNotIn("frozen", counters_line.lower())
+
+        self.assertLess(draw.index("SkillTimerBuffReadRow("), draw.index("SkillTimerBuffToggleTwin("))
+        colour_index = draw.index("draw_get_colour")
+        self.assertLess(draw.index("c.toggleOn"), colour_index)
+        self.assertLess(draw.index("c.toggleUnreadable"), colour_index)
+
+        form = function_body(self.stripped, "static void ToggleIndicatorReadPlayerBuffForm(")
+        self.assertEqual(form.count("ToggleReadSubTalent("), 1)
+        self.assertNotIn("ToggleIndicatorModel::Decide", form)
+
+        self.assertEqual(self.stripped.count("ToggleReadSubTalent("), 3)
+        walk = function_body(self.stripped, "static bool ToggleTableResolveIds(")
+        self.assertNotIn("ToggleReadSubTalent", walk)
+        frame_callback = function_body(self.stripped, "void FrameCallback(")
+        self.assertNotIn("ToggleReadSubTalent", frame_callback)
+
+        read_row = function_body(self.stripped, "static ForgePact::ToggleIndicatorState ToggleIndicatorReadRow(")
+        self.assertLess(read_row.index("ToggleOnMark::PlayerBuff"), read_row.index("ToggleIndicatorResolveRowObject("))
+
+    # ---- 8: the object rows' own model is untouched (AC23) -------------------
+
+    def test_object_row_model_is_unchanged_from_30a851c(self):
+        old = git_show("30a851c:plugin/include/ForgePact/SkillTimerMod.hpp")
+        if old is None:
+            self.skipTest("30a851c is not readable here")
+        sig = "class SkillTimerModel {"
+        old_body = old[old.index(sig):old.index("\n};", old.index(sig))]
+        new_body = self.header.replace("\r\n", "\n")
+        new_body = new_body[new_body.index(sig):new_body.index("\n};", new_body.index(sig))]
+        self.assertEqual(old_body, new_body)
+
+    # ---- 9: one walk, both tables (T2) ----------------------------------------
+
+    def test_buff_rows_resolve_in_the_same_walk_and_count_unresolved(self):
+        walk = function_body(self.stripped, "static bool ToggleTableResolveIds(")
+        self.assertIn("ForgePact::kSkillTimerBuffRows[r].abilityId", walk)
+        self.assertIn("g_SkillTimerBuffTableIds.Set(r, id)", walk)
+        self.assertEqual(walk.count('"ds_map_find_first"'), 1)
+        unresolved = function_body(self.stripped, "static int SkillTimerTableUnresolvedRows(")
+        self.assertIn("ForgePact::kSkillTimerBuffRowCount", unresolved)
+        due = function_body(self.stripped, "static bool ToggleTableResolveDue(")
+        self.assertIn("ToggleTableUnresolvedRows() + SkillTimerTableUnresolvedRows() == 0) return false;", due)
+        draw = function_body(self.stripped, "static void SkillTimerBuffDraw(")
+        self.assertIn("g_SkillTimerBuffTableIds.Get(", draw)
+        self.assertIn("c.unresolved", draw)
+        self.assertIn("< 0", draw)
+
+    # ---- 10: the enable message counts both tables ----------------------------
+
+    def test_enable_message_counts_both_tables(self):
+        start = self.plugin.index('if (lc == "skilltimer")')
+        end = self.plugin.index('if (lc == "toggleguard")', start)
+        branch = self.plugin[start:end]
+        self.assertIn("ForgePact::kSkillTimerRowCount + ForgePact::kSkillTimerBuffRowCount", branch)
+        self.assertIn("timed skills", branch)
+        self.assertNotRegex(branch, r"covers \d+ timed skills")
 
 
 class ToggleTableProbeContractTests(unittest.TestCase):

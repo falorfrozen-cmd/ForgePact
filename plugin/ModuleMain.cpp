@@ -4557,10 +4557,48 @@ static void ToggleIndicatorCountMark(const ForgePact::ToggleSkillRow& row, const
 // every instance counts as own - D-N3, ForgePact being offline-only - and no
 // ownership read is made, which is why such a row can never be turned
 // Unreadable by an ownership read that throws.
+//
+// Forward declarations: session 12's buff-slot reader and the one buff-form
+// function (both defined later, next to SkillTimerReadRow, since that is
+// where the rest of the countdown's own reading lives) - ToggleIndicatorReadRow
+// below is defined earlier in the file and needs both for its `PlayerBuff`
+// dispatch.
+static void SkillTimerBuffReadRow(int buffId, bool& anyOwn, bool& anyReadable,
+                                   bool& identityMismatch, double& remaining);
+static void ToggleIndicatorReadPlayerBuffForm(int talentId, int subTalentSlot,
+                                               bool anyOwn, bool anyReadable,
+                                               ForgePact::ToggleIndicatorReadDetail& out);
+
 static ForgePact::ToggleIndicatorState ToggleIndicatorReadRow(const ForgePact::ToggleSkillRow& row,
+                                                               int talentId,
                                                                ForgePact::ToggleIndicatorReadDetail* detail,
                                                                bool treatOwnAsForeign)
 {
+    // Session 12 (Counter's Give No Quarter form): a `PlayerBuff` row reads a
+    // player-buff slot, never an object - dispatched here, before the object
+    // resolve below, so this path never calls asset_get_index at all. The
+    // slot read is the ONE shared reader (SkillTimerBuffReadRow) the
+    // countdown's own buff loop also calls; only the sub-talent read
+    // (ToggleReadSubTalent, via the buff-form function) is specific to this
+    // path, and is made only when the slot is actually present.
+    if (row.mark == ForgePact::ToggleOnMark::PlayerBuff) {
+        ForgePact::ToggleIndicatorReadDetail d;
+        bool anyOwn = false, anyReadable = false, identityMismatch = false;
+        double remaining = 0.0;
+        SkillTimerBuffReadRow((int)row.heldValue, anyOwn, anyReadable, identityMismatch, remaining);
+        (void)remaining; (void)identityMismatch;
+        ToggleIndicatorReadPlayerBuffForm(talentId, row.subTalentSlot, anyOwn, anyReadable, d);
+        if (treatOwnAsForeign) {
+            // Research-only shape: never exercised on the shipped path
+            // (nothing calls this with treatOwnAsForeign=true for a
+            // PlayerBuff row), kept only so the parameter's meaning does not
+            // silently change for this mark.
+            d.others = d.mine; d.mine = 0; d.markedMine = 0; d.unmarkedMine = 0; d.markUnreadableMine = 0;
+        }
+        if (detail) *detail = d;
+        return ForgePact::ToggleIndicatorModel::Decide(d, ForgePact::ToggleRowRequiresMark(row));
+    }
+
     ForgePact::ToggleIndicatorReadDetail d;
     double objIdx = -1.0;
     d.objectResolved = ToggleIndicatorResolveRowObject(row, objIdx);
@@ -4622,7 +4660,11 @@ static ForgePact::ToggleIndicatorState ToggleIndicatorReadRow(const ForgePact::T
 static ForgePact::ToggleIndicatorState ToggleIndicatorRead(ForgePact::ToggleIndicatorReadDetail* detail,
                                                             bool treatOwnAsForeign)
 {
-    return ToggleIndicatorReadRow(ForgePact::kToggleSkillRows[0], detail, treatOwnAsForeign);
+    // Row 0 (soulSpurn) is never the `PlayerBuff` row, so its resolved talent
+    // id is never read on this path - -1 (never resolved) is passed rather
+    // than reaching for g_ToggleTableIds, which this research-only alias is
+    // declared ahead of.
+    return ToggleIndicatorReadRow(ForgePact::kToggleSkillRows[0], -1, detail, treatOwnAsForeign);
 }
 #endif
 
@@ -4661,6 +4703,16 @@ struct SkillTimerTableIds {
     void Set(int row, int value) { id[row].store(value); }
 };
 static SkillTimerTableIds g_SkillTimerTableIds;
+// Session 12: the buff-carried rows' own ids, resolved by the same walk as
+// the two tables above, by `abilityId`, into their own storage - a buff row
+// is never a member of either table above (test_buff_rows_disjoint_from_object_rows_and_never_enter_the_rule).
+struct SkillTimerBuffTableIds {
+    std::atomic<int> id[ForgePact::kSkillTimerBuffRowCount];
+    SkillTimerBuffTableIds() { for (int r = 0; r < ForgePact::kSkillTimerBuffRowCount; ++r) id[r].store(-1); }
+    int Get(int row) const { return id[row].load(); }
+    void Set(int row, int value) { id[row].store(value); }
+};
+static SkillTimerBuffTableIds g_SkillTimerBuffTableIds;
 // Round 1 (issue #55 follow-up, D-S4): declared here, ahead of
 // ToggleTableResolveDue/ToggleTableResolveIds below, which read it to gate
 // the once-per-room walk on whether a look is selected. Off by default -
@@ -4713,6 +4765,12 @@ static int SkillTimerTableUnresolvedRows()
     int n = 0;
     for (int r = 0; r < ForgePact::kSkillTimerRowCount; ++r) {
         if (g_SkillTimerTableIds.Get(r) < 0) ++n;
+    }
+    // Session 12: the buff-carried rows count here too, so
+    // ToggleTableResolveDue's existing "both tables resolved" early-out
+    // covers them without its own text changing.
+    for (int r = 0; r < ForgePact::kSkillTimerBuffRowCount; ++r) {
+        if (g_SkillTimerBuffTableIds.Get(r) < 0) ++n;
     }
     return n;
 }
@@ -4810,6 +4868,10 @@ static bool ToggleTableResolveIds()
                         }
                         for (int r = 0; r < ForgePact::kSkillTimerRowCount; ++r) {
                             if (name == ForgePact::kSkillTimerRows[r].abilityId) g_SkillTimerTableIds.Set(r, id);
+                        }
+                        // Session 12: the buff-carried rows, same walk, own storage.
+                        for (int r = 0; r < ForgePact::kSkillTimerBuffRowCount; ++r) {
+                            if (name == ForgePact::kSkillTimerBuffRows[r].abilityId) g_SkillTimerBuffTableIds.Set(r, id);
                         }
                         // T2 (D-S4): the rule map. The deny-list is checked
                         // BEFORE the generated-table lookup, so a denied
@@ -4932,9 +4994,11 @@ static volatile long g_TibDrawn = 0, g_TibOn = 0, g_TibOff = 0, g_TibUnreadable 
 // against that row's own `abilityId`. `noSlot` is the row-level view of
 // ToggleIndicatorFindSlot's three failures: the aggregate line still splits
 // them into noHud/noRow0/noTalent, which are properties of the HUD read
-// rather than of the row.
+// rather than of the row. `subOff`/`subUnreadable` (session 12) apply only
+// to a `PlayerBuff` row: why its Off/Unreadable was decided by the
+// sub-talent read rather than by the buff slot itself.
 struct ToggleBorderRowCounters {
-    volatile long drawn, on, off, unreadable, unresolved, noSlot;
+    volatile long drawn, on, off, unreadable, unresolved, noSlot, subOff, subUnreadable;
 };
 static ToggleBorderRowCounters g_TibRow[ForgePact::kToggleSkillRowCount] = {};
 
@@ -5071,7 +5135,7 @@ static void ToggleIndicatorDraw()
         }
 
         ForgePact::ToggleIndicatorReadDetail detail;
-        ToggleIndicatorReadRow(row, &detail, /*treatOwnAsForeign=*/false);
+        ToggleIndicatorReadRow(row, talentId, &detail, /*treatOwnAsForeign=*/false);
         const ForgePact::ToggleIndicatorState state =
             ForgePact::ToggleIndicatorModel::Decide(detail, ForgePact::ToggleRowRequiresMark(row));
 
@@ -5079,11 +5143,20 @@ static void ToggleIndicatorDraw()
         if (state == ForgePact::ToggleIndicatorState::Unreadable) {
             InterlockedIncrement(&g_TibUnreadable);
             InterlockedIncrement(&g_TibRow[r].unreadable);
+            // Session 12: a PlayerBuff row's Unreadable can be its own buff
+            // read failing (identityMismatch, countReadFailed) or its
+            // sub-talent read failing (markUnreadableMine) - only the latter
+            // is subUnreadable, so the two never collide in the row's own line.
+            if (detail.markUnreadableMine > 0) InterlockedIncrement(&g_TibRow[r].subUnreadable);
             continue;
         }
         if (state == ForgePact::ToggleIndicatorState::Off) {
             InterlockedIncrement(&g_TibOff);
             InterlockedIncrement(&g_TibRow[r].off);
+            // Session 12: Off because the buff is present but the sub-talent
+            // read NotAllocated (unmarkedMine>0) - "the plain, timed form" -
+            // as opposed to Off because no buff is present at all.
+            if (detail.unmarkedMine > 0) InterlockedIncrement(&g_TibRow[r].subOff);
             continue;
         }
         InterlockedIncrement(&g_TibOn);
@@ -5152,7 +5225,8 @@ static std::string ToggleBorderRowCountersLine(int row)
     return std::string(ForgePact::kToggleSkillRows[row].abilityId)
         + " drawn=" + std::to_string(c.drawn) + " on=" + std::to_string(c.on)
         + " off=" + std::to_string(c.off) + " unreadable=" + std::to_string(c.unreadable)
-        + " unresolved=" + std::to_string(c.unresolved) + " noSlot=" + std::to_string(c.noSlot);
+        + " unresolved=" + std::to_string(c.unresolved) + " noSlot=" + std::to_string(c.noSlot)
+        + " subOff=" + std::to_string(c.subOff) + " subUnreadable=" + std::to_string(c.subUnreadable);
 }
 
 // `toggleborder stat` is read-only: it stores nothing to g_ToggleBorderOn,
@@ -5275,6 +5349,115 @@ static void SkillTimerReadRow(const ForgePact::SkillTimerRow& row, bool& anyOwn,
             }
         } catch (...) { /* this instance's own read failed; the others still count */ }
     }
+}
+
+// ===== Buff-carried skills (issue #55, session 12) ==========================
+// A row here has no cast object: its duration lives on the player's own
+// buff list (ctx "### The ship read" of the workorder that shipped this).
+// Per-row counters, the same shape SkillTimerRowCounters uses for the
+// object rows, plus `noBuff` (this table's own "no own instance" - an
+// empty slot) and `identityMismatch` (the slot's own `buffType` did not
+// match this row's `buffId` - the row is Unreadable, and this counter says
+// why, the same way toggleborder's own subUnreadable/subOff say why a
+// PlayerBuff row read Off/Unreadable).
+struct SkillTimerBuffRowCounters {
+    volatile long drawn, noBuff, unreadable, identityMismatch, expired, toggleOn, toggleUnreadable,
+                  unresolved, noSlot, latched, unlatched;
+};
+static SkillTimerBuffRowCounters g_StBuffRow[ForgePact::kSkillTimerBuffRowCount] = {};
+static ForgePact::SkillTimerRowState g_SkillTimerBuffRowState[ForgePact::kSkillTimerBuffRowCount];
+
+// The toggle-table row with this buff row's `abilityId`, or -1 - the same
+// shape SkillTimerToggleTwin gives the object rows, kept separate
+// (test_buff_rows_disjoint_from_object_rows_and_never_enter_the_rule: neither
+// function may mention the other table).
+static int SkillTimerBuffToggleTwin(int row)
+{
+    const std::string id = ForgePact::kSkillTimerBuffRows[row].abilityId;
+    for (int t = 0; t < ForgePact::kToggleSkillRowCount; ++t) {
+        if (id == ForgePact::kToggleSkillRows[t].abilityId) return t;
+    }
+    return -1;
+}
+
+// The ONE walk of `global.playerBuff[1][0][<buffId>]` in ship code besides
+// HhBuffAlive's own (AC25) - called by both the countdown's buff loop below
+// and, through ToggleIndicatorReadRow's `PlayerBuff` dispatch, the border's
+// own read, so there is exactly one place this chain is spelled. Every
+// runtime name is the header's constant, never a literal (contract test
+// "buff read uses only header names and builtins"). `identityMismatch` is
+// its own out-param, not folded into `anyReadable`, because the caller needs
+// to tell "the buff isn't there" from "it's there but not this build's
+// numbering" apart, the same way session 12's instrument did.
+static void SkillTimerBuffReadRow(int buffId, bool& anyOwn, bool& anyReadable,
+                                   bool& identityMismatch, double& remaining)
+{
+    anyOwn = false;
+    anyReadable = false;
+    identityMismatch = false;
+    remaining = 0.0;
+    try {
+        RValue global = g_Yytk->CallBuiltin("variable_global_get", { RValue(ForgePact::kSkillTimerBuffArrayGlobal) });
+        if (global.m_Kind != VALUE_ARRAY) return;
+        RValue byPlayer = g_Yytk->CallBuiltin("array_get", { global, RValue((double)ForgePact::kSkillTimerBuffPlayerIndex) });
+        if (byPlayer.m_Kind != VALUE_ARRAY) return;
+        RValue bySub = g_Yytk->CallBuiltin("array_get", { byPlayer, RValue((double)ForgePact::kSkillTimerBuffSubIndex) });
+        if (bySub.m_Kind != VALUE_ARRAY) return;
+        const int len = (int)g_Yytk->CallBuiltin("array_length", { bySub }).ToDouble();
+        if (buffId < 0 || buffId >= len) return;
+        RValue slot = g_Yytk->CallBuiltin("array_get", { bySub, RValue((double)buffId) });
+        // Undefined, or a number (the live empty value is -4; any other
+        // number is not a real instance shape either): no own instance - the
+        // latch drops, exactly as for an object row.
+        if (slot.m_Kind == VALUE_UNDEFINED) return;
+        if (slot.m_Kind == VALUE_REAL || slot.m_Kind == VALUE_INT32 || slot.m_Kind == VALUE_INT64) return;
+        bool exists = false;
+        try { exists = g_Yytk->CallBuiltin("instance_exists", { slot }).ToBoolean(); } catch (...) { return; }
+        if (!exists) return;
+        anyOwn = true;
+        RValue type;
+        try { type = g_Yytk->CallBuiltin("variable_instance_get", { slot, RValue(ForgePact::kSkillTimerBuffIdentityField) }); }
+        catch (...) { return; }   // own instance exists, identity unreadable: Unreadable, not counted as a mismatch
+        if (!N1Numeric(type) || (int)type.ToDouble() != buffId) { identityMismatch = true; return; }
+        RValue timer;
+        try { timer = g_Yytk->CallBuiltin("variable_instance_get", { slot, RValue(ForgePact::kSkillTimerField) }); }
+        catch (...) { return; }
+        if (!N1Numeric(timer)) return;
+        remaining = timer.ToDouble();
+        anyReadable = true;
+    } catch (...) { /* fail-safe: draws nothing */ }
+}
+
+// The ONE buff-form function (session 12, Counter) is defined later in this
+// file, right after ToggleReadSubTalent's own definition (which it calls) -
+// see "The Give No Quarter form split" near HookTalentUseClass. Only its
+// forward declaration lives up near ToggleIndicatorReadRow, which is the one
+// caller that needs it ahead of that point. SkillTimerBuffDraw itself
+// (below, called from SkillTimerDraw) is defined after SkillTimerDrawStyle
+// and the four looks, since it calls SkillTimerDrawStyle directly - see that
+// definition, right before SkillTimerDraw's own.
+
+static std::string SkillTimerBuffRowCountersLine(int row)
+{
+    const SkillTimerBuffRowCounters& c = g_StBuffRow[row];
+    return std::string(ForgePact::kSkillTimerBuffRows[row].abilityId)
+        + " drawn=" + std::to_string(c.drawn) + " noBuff=" + std::to_string(c.noBuff)
+        + " unreadable=" + std::to_string(c.unreadable) + " identityMismatch=" + std::to_string(c.identityMismatch)
+        + " expired=" + std::to_string(c.expired)
+        + " toggleOn=" + std::to_string(c.toggleOn) + " toggleUnreadable=" + std::to_string(c.toggleUnreadable)
+        + " unresolved=" + std::to_string(c.unresolved) + " noSlot=" + std::to_string(c.noSlot)
+        + " latched=" + std::to_string(c.latched) + " unlatched=" + std::to_string(c.unlatched);
+}
+
+static std::string SkillTimerBuffTableRowsLine()
+{
+    std::string line;
+    for (int r = 0; r < ForgePact::kSkillTimerBuffRowCount; ++r) {
+        const int id = g_SkillTimerBuffTableIds.Get(r);
+        line += std::string(ForgePact::kSkillTimerBuffRows[r].abilityId) + ":talentId="
+              + (id >= 0 ? std::to_string(id) : std::string("unresolved")) + " ";
+    }
+    return line + "resolveWalks=" + std::to_string(g_ToggleResolveWalks);
 }
 
 // ===== Rule-based coverage's own draw path (issue #55 follow-up, D-S4; T3) =
@@ -5539,6 +5722,82 @@ static void SkillTimerDrawStyle(ForgePact::SkillTimerStyle style, double x, doub
     }
 }
 
+// Called from SkillTimerDraw() below, after the explicit object rows' loop
+// and before the rule loop. Off is decided by the caller (SkillTimerDraw's
+// own first statement); this function is never called at all when the style
+// is Off. Per row: unresolved id -> skip and count; otherwise the slot is
+// read ONCE (SkillTimerBuffReadRow); a readable slot on a row WITH a toggle
+// twin consults that twin through the buff-form function above before the
+// timer decision runs at all - toggleOn/toggleUnreadable are charged and
+// drawing stops there, exactly as the object rows' own twin suppression
+// does (D-T4); a row with no twin, or an unreadable/empty slot, never makes
+// a sub-talent read at all. Then the same latch decision
+// (ForgePact::SkillTimerModel::Decide, unchanged), the same shared slot
+// lookup charged to this table's OWN noSlot, and the same style draw with
+// colour/alpha saved and restored around it. Defined here, after
+// SkillTimerDrawStyle and the four looks (which it calls), rather than up
+// beside SkillTimerBuffReadRow.
+static void SkillTimerBuffDraw(ForgePact::SkillTimerStyle style)
+{
+    for (int r = 0; r < ForgePact::kSkillTimerBuffRowCount; ++r) {
+        const ForgePact::SkillTimerBuffRow& row = ForgePact::kSkillTimerBuffRows[r];
+        SkillTimerBuffRowCounters& c = g_StBuffRow[r];
+
+        const int talentId = g_SkillTimerBuffTableIds.Get(r);
+        if (talentId < 0) { InterlockedIncrement(&c.unresolved); continue; }
+
+        bool anyOwn = false, anyReadable = false, identityMismatch = false;
+        double remaining = 0.0;
+        SkillTimerBuffReadRow(row.buffId, anyOwn, anyReadable, identityMismatch, remaining);
+        if (identityMismatch) InterlockedIncrement(&c.identityMismatch);
+
+        if (anyOwn && anyReadable) {
+            const int twin = SkillTimerBuffToggleTwin(r);
+            if (twin >= 0) {
+                ForgePact::ToggleIndicatorReadDetail toggleDetail;
+                ToggleIndicatorReadPlayerBuffForm(talentId, ForgePact::kToggleSkillRows[twin].subTalentSlot,
+                                                   anyOwn, anyReadable, toggleDetail);
+                const ForgePact::ToggleIndicatorState toggleState =
+                    ForgePact::ToggleIndicatorModel::Decide(toggleDetail, /*requireMarker=*/true);
+                if (toggleState == ForgePact::ToggleIndicatorState::On) { InterlockedIncrement(&c.toggleOn); continue; }
+                if (toggleState == ForgePact::ToggleIndicatorState::Unreadable) { InterlockedIncrement(&c.toggleUnreadable); continue; }
+                // NotAllocated (Off): falls through to the ordinary latch decision below.
+            }
+        }
+
+        ForgePact::SkillTimerDecision decision =
+            ForgePact::SkillTimerModel::Decide(g_SkillTimerBuffRowState[r], anyOwn, anyReadable, remaining);
+        if (decision.latchedThisCall) InterlockedIncrement(&c.latched);
+        if (decision.unlatchedThisCall) InterlockedIncrement(&c.unlatched);
+
+        switch (decision.outcome) {
+            case ForgePact::SkillTimerOutcome::NoInstance: InterlockedIncrement(&c.noBuff);     continue;
+            case ForgePact::SkillTimerOutcome::Unreadable: InterlockedIncrement(&c.unreadable); continue;
+            case ForgePact::SkillTimerOutcome::Expired:    InterlockedIncrement(&c.expired);    continue;
+            case ForgePact::SkillTimerOutcome::Drawn:      break;
+        }
+
+        double x = 0, y = 0, w = 0, h = 0;
+        if (!ToggleIndicatorFindSlot(talentId, x, y, w, h)) {
+            InterlockedIncrement(&c.noSlot);
+            continue;
+        }
+
+        try {
+            RValue prevColour = g_Yytk->CallBuiltin("draw_get_colour", {});
+            RValue prevAlpha = g_Yytk->CallBuiltin("draw_get_alpha", {});
+            bool drew = false;
+            try {
+                SkillTimerDrawStyle(style, x, y, w, h, decision.fraction);
+                drew = true;
+            } catch (...) { InterlockedIncrement(&g_StDrawExc); }
+            try { g_Yytk->CallBuiltin("draw_set_alpha", { prevAlpha }); } catch (...) {}
+            try { g_Yytk->CallBuiltin("draw_set_colour", { prevColour }); } catch (...) {}
+            if (drew) InterlockedIncrement(&c.drawn);
+        } catch (...) { InterlockedIncrement(&g_StDrawExc); }
+    }
+}
+
 // Called from Hook_DrawHudBuffs, directly after ToggleIndicatorDraw() -
 // outside every research block, no new hook. Off is this function's very
 // first statement (skilltimer/off_makes_no_runtime_calls). One row of
@@ -5570,7 +5829,7 @@ static void SkillTimerDraw()
         if (twin >= 0) {
             const ForgePact::ToggleSkillRow& toggleRow = ForgePact::kToggleSkillRows[twin];
             ForgePact::ToggleIndicatorReadDetail toggleDetail;
-            ToggleIndicatorReadRow(toggleRow, &toggleDetail, /*treatOwnAsForeign=*/false);
+            ToggleIndicatorReadRow(toggleRow, talentId, &toggleDetail, /*treatOwnAsForeign=*/false);
             const ForgePact::ToggleIndicatorState toggleState =
                 ForgePact::ToggleIndicatorModel::Decide(toggleDetail, ForgePact::ToggleRowRequiresMark(toggleRow));
             if (toggleState == ForgePact::ToggleIndicatorState::On) { InterlockedIncrement(&c.toggleOn); continue; }
@@ -5615,6 +5874,12 @@ static void SkillTimerDraw()
         } catch (...) { InterlockedIncrement(&g_StDrawExc); }   // the state reads themselves failed: nothing was set, so there is nothing to put back
     }
 
+    // ---- buff-carried rows (session 12) ------------------------------------
+    // After the explicit object rows' loop and before the rule loop (ctx
+    // "The ship read"): a skill whose duration lives on the player's own
+    // buff list, never a cast object.
+    SkillTimerBuffDraw(style);
+
     // ---- rule-covered rows (T3, D-S4) --------------------------------------
     // The hotbar walked ONCE for however many rule entries are active,
     // instead of one ToggleIndicatorFindSlot call (and hotbar walk) per entry
@@ -5643,7 +5908,7 @@ static void SkillTimerDraw()
                 if (toggleRow >= 0) {
                     const ForgePact::ToggleSkillRow& tr = ForgePact::kToggleSkillRows[toggleRow];
                     ForgePact::ToggleIndicatorReadDetail toggleDetail;
-                    ToggleIndicatorReadRow(tr, &toggleDetail, /*treatOwnAsForeign=*/false);
+                    ToggleIndicatorReadRow(tr, entry.talentId, &toggleDetail, /*treatOwnAsForeign=*/false);
                     const ForgePact::ToggleIndicatorState toggleState =
                         ForgePact::ToggleIndicatorModel::Decide(toggleDetail, ForgePact::ToggleRowRequiresMark(tr));
                     if (toggleState == ForgePact::ToggleIndicatorState::On ||
@@ -5782,6 +6047,9 @@ static void SkillTimerStats()
     Out("skilltimer stat: " + SkillTimerTableRowsLine());
     for (int r = 0; r < ForgePact::kSkillTimerRowCount; ++r)
         Out("skilltimer stat: " + SkillTimerRowCountersLine(r));
+    Out("skilltimer stat: " + SkillTimerBuffTableRowsLine());
+    for (int r = 0; r < ForgePact::kSkillTimerBuffRowCount; ++r)
+        Out("skilltimer stat: " + SkillTimerBuffRowCountersLine(r));
     Out("skilltimer stat: " + SkillTimerRuleCountersLine());
     const long ruleCount = g_SkillTimerRuleCount;
     for (long i = 0; i < ruleCount; ++i)
@@ -5893,6 +6161,38 @@ static ToggleSubTalentState ToggleReadSubTalent(int talentId, int slot)
         }
         return ToggleSubTalentState::Unreadable;   // no index carries this talent at all
     } catch (...) { return ToggleSubTalentState::Unreadable; }
+}
+
+// The ONE buff-form function (session 12, Counter, ctx "The Give No Quarter
+// form split"): takes the toggle row's resolved talent id, its own
+// `subTalentSlot`, and an ALREADY-read buff slot state (no second walk of
+// the array - both callers, ToggleIndicatorReadRow's `PlayerBuff` dispatch
+// and the countdown's own buff loop, already have it), and produces the
+// same ToggleIndicatorReadDetail shape every other row's read produces, so
+// ForgePact::ToggleIndicatorModel::Decide (untouched) gives the answer:
+// empty slot -> objectResolved=true, n=0 (Off); a present-but-unreadable
+// slot -> countReadFailed=true (Unreadable); present and readable -> n=1,
+// mine=1, then the sub-talent read decides which of markedMine/unmarkedMine/
+// markUnreadableMine the instance is counted into (Allocated/NotAllocated/
+// Unreadable). Calls ToggleReadSubTalent exactly once, and only when the
+// slot is actually present and readable - AGENTS.md "Check a Permission
+// Where It Is Used": the read is made at the point of use, never cached.
+// ToggleIndicatorModel::Decide is deliberately NOT called in here - the
+// caller decides, with its own requireMarker.
+static void ToggleIndicatorReadPlayerBuffForm(int talentId, int subTalentSlot,
+                                               bool anyOwn, bool anyReadable,
+                                               ForgePact::ToggleIndicatorReadDetail& out)
+{
+    out = ForgePact::ToggleIndicatorReadDetail{};
+    out.objectResolved = true;
+    if (!anyOwn) { out.n = 0; return; }
+    out.n = 1;
+    if (!anyReadable) { out.countReadFailed = true; return; }
+    out.mine = 1;
+    const ToggleSubTalentState sub = ToggleReadSubTalent(talentId, subTalentSlot);
+    if (sub == ToggleSubTalentState::Allocated) { ++out.markedMine; return; }
+    if (sub == ToggleSubTalentState::NotAllocated) { ++out.unmarkedMine; return; }
+    ++out.markUnreadableMine;
 }
 
 static RValue& HookTalentUseClass(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
@@ -26827,7 +27127,7 @@ static void RunCommand(const std::string& line)
             g_SkillTimerStyle.store(style);
             Out(std::string("skilltimer -> ") + ForgePact::SkillTimerStyleName(style)
                 + " (draws a countdown over each timed skill's hotbar slot; covers "
-                + std::to_string(ForgePact::kSkillTimerRowCount)
+                + std::to_string(ForgePact::kSkillTimerRowCount + ForgePact::kSkillTimerBuffRowCount)
                 + " timed skills - `skilltimer stat` lists them)");
             return;
         }

@@ -2159,6 +2159,7 @@ rejected.
 | Butcher (second tier) | Blender (`blender`) | `379` | not observed (C6 not run) | not observed | not observed | not observed | blocked | `row0[5]` | blocked |
 | Shaman | Meteor Storm (`meteorStorm`) | `224` | `subShamanMeteorStorm11` → `s11` (`s11=real:0.000000` not allocated, `s11=real:3.000000` allocated, `s11=real:0.000000` respecced; no other key moved) | `Shaman_Meteor_Storm_Controller_obj` (4422) | `none` (`[7] meteorStorm state=on n=1 mine=1 others=0 unattributed=0`) | `yes` (controller `appearance=2`, `draws=110`, on the plain cast) | `marker skillAstroHeated` (`skillAstroHeated=bool:true` toggled, appearances 1 and 3; `skillAstroHeated=real:0.000000` plain, first and last draw) | `row0[3]` | measured |
 | Samurai | Bushido (`bushido`) | `134` | none (base form; `tgl sub` read: `global.subTalentMap array_length=6; [0]..[5] bushido t134: absent`) | `Samurai_Bushido_obj` (4226) | `isMyClient` (`[9] bushido state=on n=7 mine=7 others=0 unattributed=0`; the `none` row `[10]` read the same `n=7 mine=7`) | n/a — no plain form (base-form toggle) | `instance (no plain form)` (`census.Samurai_Bushido_obj: bbase=<absent> bon=7 boff=<absent>`) | `row0[5]` | measured |
+| Shield Lancer | Counter (`counter`) | `301` | `subShieldLancerCounter13` → `s13` (session 6 C6 respec: `s13=real:0.000000` at `global.subTalentMap[1].t301`, index 1) | `Draw_Player_Buff_obj` (1362), reached through `global.playerBuff[1][0][104]`, not resolved by name (session 12) | `none` (every record's own `host` measured `Player_obj.id`) | `yes` (the timed cast adds `[104]`) | `PlayerBuff`: `ToggleReadSubTalent(301, 13)` reads Allocated while `[104]`'s own `destroyTimer` holds a constant `1036.8`; the plain, timed form falls from the same `1036.8` instead (session 12) | `row0[4]` | measured |
 
 **Notes (rejected prefilled objects, and the blocked/no-instance rows).**
 
@@ -2279,6 +2280,20 @@ rejected.
   correctly-timed `deep snap on`) and C5/C6 were not run for this row
   (Context "Session 6": a row not run in a live session is `blocked`, never
   `not observed`).
+- **Counter (session 12).** The session-6 row above stays exactly as it
+  is: no *instance* was found for Counter over the one ON/OFF cycle that
+  pass measured, and that stays a recorded negative for that question - an
+  object that flips and reverts with the toggle - not "Counter has no
+  toggle form" (that row's own note was about an instance-shaped candidate,
+  never about the skill as a whole). Session 12 answers a different
+  question: with the Give No Quarter sub-talent allocated, the plain
+  cast's own buff, `playerBuff[1][0][104]`, is held at a constant value
+  instead of falling - the toggle state IS a player buff, read the same
+  way the countdown's own buff rows are, gated on the sub-talent rather
+  than on any instance. That is the new row added below,
+  `Draw_Player_Buff_obj` reached through the buff slot, never through
+  `Shield_Lancer_Counter_World_obj` or `Charge_Controller_obj` (the two
+  instance-shaped candidates session 6 already rejected).
 
 **Session 9 (2026-09-21): the Meteor Storm and Bushido rows.** One launch of
 the research DLL built from `157e751` (`BloodPactPlugin_rel.dll`, sha256
@@ -2678,7 +2693,9 @@ guard's set too, subject to the `## Decision` → `### S design` the next
 phase writes. `counter` and `blender` are results, not defects: neither
 measured as a persistent-instance toggle this session (`counter`'s toggle
 state lives on a player buff, and `blender` was judged by the tester not to
-be a toggle skill at all), so neither ships in this design.
+be a toggle skill at all), so neither ships in this design. (Superseded for
+`counter`, see `### After session 12`: it ships as a row after all, read as
+a player buff rather than as an instance.)
 
 ### After session 9
 
@@ -2705,6 +2722,39 @@ directly after the colon or `=`, so each line can be checked mechanically.
 - Shipped: meteorStorm as row 5 of kToggleSkillRows, 2026-09-21 (`Shaman_Meteor_Storm_Controller_obj`, ownership `nullptr`, `Marker` on `skillAstroHeated`, sub-talent slot `s11`)
 - Shipped: bushido as row 6 of kToggleSkillRows, 2026-09-21 (`Samurai_Bushido_obj`, ownership `isMyClient`, `None` discriminator, `kToggleNoSubTalent` - a base-form toggle, D-B1)
 - D-B1: a base-form toggle skill (no sub-talent at all, like Bushido) is refused by the guard unconditionally, without ever reading `global.subTalentMap` - reading its named constant `kToggleNoSubTalent` (0) there would find no `t<id>` struct and answer Unreadable, passing the double-cast proc through in the exact "reports armed and does nothing" shape AGENTS.md warns about. The refusal is still counted in `refused=`, and separately in a new `baseForm=` counter.
+
+### After session 12
+
+`### After session 6`'s line that `counter` "does not ship" in this design
+is superseded: Counter ships after all, not as an instance-shaped row like
+the other six, but as the one `PlayerBuff` row (`kToggleSkillRows`, Results
+→ `Toggle skill table`'s new Counter row above), gated on the
+Give No Quarter sub-talent (`s13`, measured at `global.subTalentMap[1].t301`
+in session 6's C6 respec cycle) rather than on any persistent instance.
+
+- The object session 12 measured on every ON reading, `Draw_Player_Buff_obj`
+  (1362), is the same one Headhunter's own reader already walks
+  (`HhBuffAlive`) - it is documentation on the row, not resolved by name on
+  this path: identity is `buffType == 104`, read at
+  `global.playerBuff[1][0][104]`, the same check the countdown's own buff
+  rows make.
+- Ownership: every record's own `host` read `Player_obj.id` (session 12,
+  three characters); the row makes no ownership check of its own, the same
+  as the countdown's buff rows.
+- The discriminator is not a marker or a held timer value read off an
+  instance - it is `ToggleReadSubTalent(301, 13)`, the guard's own
+  sub-talent reader, called with the buff slot already known present:
+  Allocated -> the toggle is on; NotAllocated -> the buff is present but
+  it is the plain, timed form (the countdown draws instead); Unreadable ->
+  neither the outline nor the countdown draws.
+- `HookTalentUseClass` and `ToggleReadSubTalent` are unchanged: row
+  membership plus slot `s13` is what makes the existing guard cover Counter
+  - the same mechanism that already gates Meteor Storm and every other
+    sub-talent row.
+- The not-falling-value guard an earlier plan round proposed (a threshold of
+  consecutive equal `destroyTimer` readings) is NOT what ships: the owner
+  asked instead for the sub-talent read directly ("can we just check if gnq
+  is present"), which is exact rather than inferred from a value's shape.
 
 ### S design (D-P1, D-P3, D-P5, D-U13)
 
@@ -4887,6 +4937,12 @@ record it as such, do not rely on it. Volcano is included (owner,
 `Player_Sentry_Parent_obj`, so the generator does not exclude it as a
 companion.
 
+The buff-carried skills (`counter`, `lastStand`, and the denied
+`defensiveShout`/`berserk`) are covered by the session-12 buff rows
+(`kSkillTimerBuffRows`) instead, and are excluded from the rule by
+`SkillTimerRuleIsExplicitRow` before it ever runs - they are never selected
+by it, and their rows below stay `no object`/`denied` unchanged.
+
 | abilityId | status | reason |
 |---|---|---|
 | `bladeBarrier` | explicit | one of the seven explicit rows (D-R1); stays explicit |
@@ -5075,6 +5131,11 @@ buff id it adds, so whether the runtime itself keeps such a table is a
 question for `tgprobe deep find buff` in the session below, not for this
 static search.
 
+Session 12 measured that BOTH forms of Counter's own cast add `[104]` - the
+timed form (Give No Quarter not allocated) and the Give No Quarter stance
+alike - which is now measured, not the open question an earlier pass left it
+as.
+
 A rule-shaped mechanism was considered and rejected for this round: learn the
 `abilityId -> buffId` mapping at runtime from "the `BuffAdd` call made while a
 `TalentUse`/`TalentUseClass` call for talent T is on the stack belongs to T".
@@ -5165,8 +5226,81 @@ context file.
 
 #### Results
 
-pending session 12
+| skill | class | buffId | first | last | min | max | draws | lastAddFrames | inUse/useTalent | vars | status | note |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `counter` | Shield Lancer | 104 | 1036.800000 | 43.058304 | 43.058304 | 1036.800000 | 994 | 1036.800000 | 0 / 301 | buffStack=0, buffTimer (an icon clock, non-monotonic), buffPermanent, playerNumber=1 | ship | timed form (Give No Quarter not allocated), clean window after a clear: falls 1.0 per draw; an earlier mid-flight window drained 36.260064 -> 0.015552 and read `present=0`; talent 301 (`useTalent=301` matches `talent 301 abilityId=counter`). With Give No Quarter allocated the same `[104]` held 1036.800000 constant for 1263+ draws (min=max, frames 12657..>38490): a toggle form; while that sub-talent (`s13`) reads Allocated the countdown row draws nothing and the `kToggleSkillRows` Counter row takes over (`toggleborder` + `toggleguard`). |
+| `lastStand` | Shield Lancer | 107 | 3600.000000 | 1849.778352 | 1849.778352 | 3600.000000 | 1750 | 3600.000000 | 0 / 307 | buffTimer=0 | ship | `useTalent=307` matches `talent 307 abilityId=lastStand`; after a further clear (no cast) the same buff drained 408.143952 -> 0.036576 and read `present=0` at frame 93288; BuffAdd calls 3 -> 4 for the cast. |
+| `defensiveShout` | Viking | 9 | 14400.000000 | 13081.518720 | 13081.518720 | 14400.000000 | 1408 | 14400.000000 | 0 / none | buffTimer=0 | ship | 180 BuffAdd calls over frames 103532..103621 (~89 frames, none inside a talent-use call: `useTalent=none`), each re-adding the full 14400; then falls 1.0 per draw; ran to 0.462960 and was gone after frame 118012 (10283 draws) with BuffRemove not called. |
+| `berserk` | Viking | 1 | 720.000000 | 0.186624 | 0.186624 | 720.000000 | 4815 | 720.000000 | 0 / none | buffStack=8, buffStackHash, blendingColor=8 | ship | refreshed to 720 on every add (56 adds while attacking), falls 1.0 per draw between hits; expired and reappeared as a NEW instance twice (`app=3`, instance 272952 then 274995); after the owner stopped it fell to 0.186624 and was gone after frame 129140, BuffRemove not called. |
+| `honedDefenses` | Shield Lancer | - | - | - | - | - | - | - | - | - | no (no player buff) | cast at ~frame 89970 (TalentUse 5 -> 7 together with Last Stand) produced no record and no BuffAdd (calls stayed at 4). abilityId is inferred from `Shield_Lancer_Honed_Defenses_obj` (SDK 4481) - it appears in no talent capture in the repo, so this is UNVERIFIED; it is not a ship row either way. |
+| `shieldWall` | Shield Lancer | - | - | - | - | - | - | - | - | - | not cast | first attempt read no new buff (`records=1`, only `[104]`, `adds=0`); owner: "wrong, wait". Talent 305 per the doc's earlier capture. |
+| `agility` | Viking | 22 | 3600.000000 | 0.758880 | 0.758880 | 3600.000000 | 7476 | 3600.000000 | 0 / 45 | buffStack=0 | no (passive, no hotbar slot) | owner, verbatim: "agility is a passive skill, not represented by any skill on hud which makes adding a counter impossible. we can record it but not add a counter." Measured shape is a ship row's (added inside talent use 45, re-added to 3600, `app=2`) - recorded, not shipped. |
+| (fifth representative, tag-12 pick) | - | - | - | - | - | - | - | - | - | - | not cast | owner: "i will not open a different class with a buff". |
+| `holyForm` | Butcher | 140 | 1.000000 | 1.000000 | 1.000000 | 1.000000 | 6193 | 1.000000 | 0 / 364 | - | no (toggle; constant 1) | the negative shape, as predicted (`useTalent=364` matches `talent 364 abilityId=holyForm`); toggling off went through BuffRemove (calls 4 -> 6 at frame 145225) and the slot emptied. |
 
 #### Decision
 
-pending session 12
+**Ownership.** `host` equalled `Player_obj.id` on every record of all three
+characters measured this session - 261722 (Shield Lancer), 271275 (Viking),
+280952 (Butcher) - so `playerBuff[1][0]` is the local player's own
+sub-array (`playerBuff[0][0]` read all `-4`), and the ship read makes no
+ownership/`host` check at all.
+
+**Identity.** `buffType` equalled the slot index on every record, footer
+`mismatches=0` on every `show` this session - the identity check
+(`buffType == buffId`) stays as the guard against a renumbered build, even
+though it never fired in this session.
+
+**Stacking.** Berserk carries `buffStack=8` (and `blendingColor=8`) beside a
+`destroyTimer` that is refreshed to 720 on each add and falls between adds;
+the instance is replaced on each re-appearance (`app=3`). One countdown per
+slot from `destroyTimer`, re-latched on each refresh (route B), shows time
+to the end of the latest stack - the owner's decision from the September 21
+session, applied here without change.
+
+**The Give No Quarter form split.** Owner, 2026-09-22, verbatim: "can we
+just check if gnq is present and decide if we give toggle border or
+countdown? gnq removes duration from skill". Counter's Give No Quarter
+sub-talent lives at slot `s13` of `global.subTalentMap` index 1 (session 6's
+respec reading), read per draw through the same `ToggleReadSubTalent` the
+guard already calls, never cached. When it reads Allocated, Counter is a row
+of `kToggleSkillRows` (mark `PlayerBuff`): `toggleborder` lights the slot
+while `[104]` is present, `toggleguard` refuses a double-cast proc, and the
+countdown row draws nothing at all. When it reads NotAllocated, the
+countdown row draws and no toggle row lights. The not-falling-value guard an
+earlier plan round designed (a threshold of consecutive equal readings) was
+dropped in favour of this: it read the value's shape instead of the thing
+that actually decides the form, and never shipped.
+
+**Expiry.** BuffRemove was NOT called on natural expiry (its own counter
+held at 4 across `[9]`'s expiry and three of `[1]`'s) and WAS called on Holy
+Form's toggle-off (4 -> 6 at frame 145225) - the ship read relies on the
+slot emptying, never on BuffRemove.
+
+**The name table.** `tgprobe deep find buff` found a per-buff-id name table
+at `global.__timer_list[2].instance.buffNameText` (n=419, with `buffSprite`,
+`buffDrawTime`, `buffHide`, `buffDebuff` beside it) - it exists, and the
+ship read does not use it (identity is `buffType`, never a name).
+
+**Nesting, per row.** Counter `inUse=0 useTalent=301`, Last Stand `0/307`,
+Agility `0/45`, Holy Form `0/364` (all four added inside the class's own
+`TalentUseClass` call); Defensive Shout and Berserk `useTalent=none` (added
+outside any talent-use call) - a runtime-learned rule would therefore map
+the four class casts and miss both Viking examples, which is one more reason
+this round ships explicit rows, not a rule.
+
+**The toggle-form caveat.** Counter's timed form ships as a countdown; with
+Give No Quarter allocated the same buff id is read as a toggle instead.
+
+**Known Limitations.** Every shipped `buffId` is a measured id on this
+game build (`[104]`, 107, 9, 1; first readings 1036.8, 3600, 14400, 720),
+kept honest by the identity check (a renumbered id draws nothing rather than
+a stranger's buff); hotbar-slot presence was not measured by the instrument
+for any row (`noSlot=` in `skilltimer stat` is where a missing slot shows);
+the Give No Quarter sub-talent's ALLOCATED value was not read through the
+ship read in session 12 itself (session 6 measured the slot; the ship
+smoke, when run, confirms it live); an unreadable sub-talent draws neither
+the outline nor the countdown for Counter, and counts
+`subUnreadable`/`toggleUnreadable` rather than guessing; a countdown
+switched on mid-buff latches at the current value, the same mid-cast
+limitation the object rows already carry.

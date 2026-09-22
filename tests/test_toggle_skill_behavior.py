@@ -46,6 +46,17 @@ def declaration(source, prefix):
     raise AssertionError(f"not found: {prefix}")
 
 
+def forward_declaration(source, signature):
+    """A forward-declared prototype's own text, up to its terminating `;` - the
+    FIRST occurrence, since the plugin forward-declares a function ahead of an
+    earlier caller and defines it later (session 12: SkillTimerBuffReadRow and
+    ToggleIndicatorReadPlayerBuffForm, both needed by ToggleIndicatorReadRow's
+    own `PlayerBuff` dispatch before either is defined)."""
+    start = source.index(signature)
+    end = source.index(";", start)
+    return source[start:end + 1]
+
+
 class ToggleSkillBehaviorTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -100,6 +111,13 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
             implementation(cls.plugin, "static bool ToggleIndicatorResolveAoeObject("),
             implementation(cls.plugin, "static bool ToggleIndicatorReadTruth("),
             implementation(cls.plugin, "static void ToggleIndicatorCountMark("),
+            # Session 12 (Counter's Give No Quarter form): ToggleIndicatorReadRow's
+            # own `PlayerBuff` dispatch calls both of these ahead of their real
+            # definitions (which sit later, next to the rest of the buff-carried
+            # reading and the sub-talent read respectively) - forward-declared
+            # here the same way the plugin itself forward-declares them.
+            forward_declaration(cls.plugin, "static void SkillTimerBuffReadRow(int buffId,"),
+            forward_declaration(cls.plugin, "static void ToggleIndicatorReadPlayerBuffForm(int talentId,"),
             implementation(cls.plugin, "static ForgePact::ToggleIndicatorState ToggleIndicatorReadRow("),
             implementation(cls.plugin, "static ForgePact::ToggleIndicatorState ToggleIndicatorRead("),
             # S: the runtime-resolved talent ids the border and the guard key
@@ -116,6 +134,10 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
             # countdown row independently of the toggle table.
             implementation(cls.plugin, "struct SkillTimerTableIds {") + ";",
             declaration(cls.plugin, "static SkillTimerTableIds g_SkillTimerTableIds"),
+            # Session 12: the buff-carried rows' own ids, filled by the same
+            # walk, so SkillTimerTableUnresolvedRows below can count them too.
+            implementation(cls.plugin, "struct SkillTimerBuffTableIds {") + ";",
+            declaration(cls.plugin, "static SkillTimerBuffTableIds g_SkillTimerBuffTableIds"),
             implementation(cls.plugin, "static int SkillTimerTableUnresolvedRows("),
             # P2 (the shipped indicator): the draw itself, and the slot
             # lookup it calls. `g_ToggleBorderOn`/the counters are plain
@@ -153,6 +175,17 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
             implementation(cls.plugin, "static bool SkillTimerResolveRowObject("),
             implementation(cls.plugin, "static int SkillTimerToggleTwin("),
             implementation(cls.plugin, "static void SkillTimerReadRow("),
+            # Session 12 (buff-carried skills): per-row counters and latch
+            # state (the same shape SkillTimerRowCounters/g_StRow give the
+            # object rows above), the buff table's own twin lookup, and the
+            # ONE shared player-buff slot reader (also what
+            # ToggleIndicatorReadRow's `PlayerBuff` dispatch, forward-declared
+            # above, calls through the same name).
+            implementation(cls.plugin, "struct SkillTimerBuffRowCounters {") + ";",
+            declaration(cls.plugin, "static SkillTimerBuffRowCounters g_StBuffRow"),
+            declaration(cls.plugin, "static ForgePact::SkillTimerRowState g_SkillTimerBuffRowState"),
+            implementation(cls.plugin, "static int SkillTimerBuffToggleTwin("),
+            implementation(cls.plugin, "static void SkillTimerBuffReadRow("),
             # Issue #55 follow-up (D-S4): the rule map's own runtime state and
             # draw-path helpers. The map-building walk itself is NOT spliced
             # (same reason as ToggleTableResolveIds above - it needs the
@@ -192,9 +225,14 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
             implementation(cls.plugin, "static void SkillTimerDrawNumber("),
             implementation(cls.plugin, "static void SkillTimerDrawFade("),
             implementation(cls.plugin, "static void SkillTimerDrawStyle("),
+            # Session 12: the buff loop itself, called from SkillTimerDraw
+            # below after the explicit object rows' own loop.
+            implementation(cls.plugin, "static void SkillTimerBuffDraw("),
             implementation(cls.plugin, "static void SkillTimerDraw("),
             implementation(cls.plugin, "static std::string SkillTimerRowCountersLine("),
             implementation(cls.plugin, "static std::string SkillTimerAggregateCountersLine("),
+            implementation(cls.plugin, "static std::string SkillTimerBuffRowCountersLine("),
+            implementation(cls.plugin, "static std::string SkillTimerBuffTableRowsLine("),
             # SkillTimerStats() is not spliced, same as ToggleBorderStats()/
             # ToggleGuardStats() above it - it calls Out(), which this
             # harness (like the rest of ModuleMain.cpp's IPC output) does
@@ -215,6 +253,10 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
             # assert the index was SELECTED rather than assumed.
             declaration(cls.plugin, "static std::atomic<int> g_TgdSubIndex"),
             implementation(cls.plugin, "static ToggleSubTalentState ToggleReadSubTalent("),
+            # Session 12: the ONE buff-form function, defined right after
+            # ToggleReadSubTalent in the plugin (which it calls) - the real
+            # definition, replacing the forward declaration spliced above.
+            implementation(cls.plugin, "static void ToggleIndicatorReadPlayerBuffForm("),
             implementation(cls.plugin, "static RValue& HookTalentUseClass("),
             # R (issue #11 generalisation, research build only): the
             # candidate table's generalised read, its row-0 comparison and
@@ -565,6 +607,29 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
         self.assertScenario("border/bushido_foreign_only_draws_nothing")
         self.assertScenario("border/bushido_no_instance_draws_nothing")
 
+    # ---- session 12 (workorder forgepact-skilltimer-buff-countdown):
+    # Counter's Give No Quarter form, the one `PlayerBuff` row -----------
+
+    def test_border_counter_buff_present_with_gnq_lights_slot(self):
+        for suffix in ("/on", "", "/no_asset_lookup", "/sub_talent_access"):
+            self.assertScenario("border/counter_buff_present_with_gnq_lights_slot" + suffix)
+
+    def test_border_counter_buff_present_without_gnq_draws_nothing_and_counts_suboff(self):
+        for suffix in ("/off", "", "/no_marker"):
+            self.assertScenario("border/counter_buff_present_without_gnq_draws_nothing_and_counts_suboff" + suffix)
+
+    def test_border_counter_no_buff_draws_nothing_and_makes_no_sub_talent_read(self):
+        for suffix in ("/off", "/subOff", ""):
+            self.assertScenario("border/counter_no_buff_draws_nothing_and_makes_no_sub_talent_read" + suffix)
+
+    def test_border_counter_sub_talent_unreadable_draws_nothing_and_counts(self):
+        for suffix in ("/unreadable", "", "/no_marker"):
+            self.assertScenario("border/counter_sub_talent_unreadable_draws_nothing_and_counts" + suffix)
+
+    def test_border_counter_identity_mismatch_is_unreadable(self):
+        for suffix in ("/unreadable", "/subUnreadable", ""):
+            self.assertScenario("border/counter_identity_mismatch_is_unreadable" + suffix)
+
     # ---- T1: the re-cast guard, HookTalentUseClass (issue #11, Track A) ----
 
     def test_guard_off_proc_passes_and_no_runtime_call(self):
@@ -712,6 +777,17 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
     def test_guard_on_meteor_storm_subtalent_gate(self):
         self.assertScenario("guard_on/meteor_storm_proc_refused_when_subtalent_allocated")
         self.assertScenario("guard_on/meteor_storm_proc_passes_without_subtalent")
+
+    # ---- session 12 (workorder forgepact-skilltimer-buff-countdown):
+    # Counter's Give No Quarter form, gated the same way as Meteor Storm ----
+
+    def test_guard_on_counter_proc_refused_with_gnq(self):
+        for suffix in ("/refused", "/result_untouched", ""):
+            self.assertScenario("guard_on/counter_proc_refused_with_gnq" + suffix)
+
+    def test_guard_on_counter_proc_passes_without_gnq_as_suboff(self):
+        for suffix in ("/passed", "/subOff", ""):
+            self.assertScenario("guard_on/counter_proc_passes_without_gnq_as_suboff" + suffix)
 
     def test_guard_on_base_form_row_refused_without_reading_the_map(self):
         # D-B1: Bushido's base-form row is refused unconditionally and never
@@ -946,6 +1022,72 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
     def test_skilltimer_rows_keep_separate_latches(self):
         for suffix in ("/first", "/second", "", "/fraction"):
             self.assertScenario("skilltimer/rows_keep_separate_latches" + suffix)
+
+    # ---- session 12 (workorder forgepact-skilltimer-buff-countdown): the
+    # shipped buff-carried rows (`buff/*`) --------------------------------
+
+    def test_buff_off_makes_no_runtime_calls(self):
+        self.assertScenario("buff/off_makes_no_runtime_calls")
+
+    def test_buff_empty_slot_draws_nothing_and_unlatches(self):
+        for suffix in ("/latched_first", "", "/unlatched", "/rects"):
+            self.assertScenario("buff/empty_slot_draws_nothing_and_unlatches" + suffix)
+
+    def test_buff_negative_slot_is_no_buff(self):
+        for suffix in ("", "/no_instance_exists_call", "/rects"):
+            self.assertScenario("buff/negative_slot_is_no_buff" + suffix)
+
+    def test_buff_identity_mismatch_is_unreadable_and_counted(self):
+        for suffix in ("", "/identityMismatch", "/rects", "/not_latched"):
+            self.assertScenario("buff/identity_mismatch_is_unreadable_and_counted" + suffix)
+
+    def test_buff_first_sight_latches_full(self):
+        for suffix in ("/count", "", "/latched", "/drawn"):
+            self.assertScenario("buff/first_sight_latches_full" + suffix)
+
+    def test_buff_refresh_rise_relatches(self):
+        self.assertScenario("buff/refresh_rise_relatches/latched")
+        self.assertScenario("buff/refresh_rise_relatches")
+
+    def test_buff_expired_draws_nothing(self):
+        for suffix in ("", "/rects", "/not_latched"):
+            self.assertScenario("buff/expired_draws_nothing" + suffix)
+
+    def test_buff_slot_miss_charged_to_own_counter(self):
+        for suffix in ("", "/tibNoHud", "/object_rows_untouched"):
+            self.assertScenario("buff/slot_miss_charged_to_own_counter" + suffix)
+
+    def test_buff_rows_keep_separate_latches(self):
+        for suffix in ("/count", "/each_latched", ""):
+            self.assertScenario("buff/rows_keep_separate_latches" + suffix)
+
+    def test_buff_playerbuff_not_array_draws_nothing(self):
+        self.assertScenario("buff/playerbuff_not_array_draws_nothing")
+        self.assertScenario("buff/playerbuff_not_array_draws_nothing/rects")
+
+    def test_buff_equal_reads_keep_drawing(self):
+        for suffix in ("", "/latched", "/toggleOn"):
+            self.assertScenario("buff/equal_reads_keep_drawing" + suffix)
+
+    def test_buff_counter_gnq_allocated_is_suppressed_as_toggle_on(self):
+        for suffix in ("", "/drawn", "/rects", "/latch_untouched", "/sub_talent_access"):
+            self.assertScenario("buff/counter_gnq_allocated_is_suppressed_as_toggle_on" + suffix)
+
+    def test_buff_counter_gnq_not_allocated_draws_countdown(self):
+        for suffix in ("/drawn", "/latched", "/toggleOn", ""):
+            self.assertScenario("buff/counter_gnq_not_allocated_draws_countdown" + suffix)
+
+    def test_buff_counter_sub_talent_unreadable_draws_nothing_and_counts(self):
+        for suffix in ("", "/drawn", "/rects"):
+            self.assertScenario("buff/counter_sub_talent_unreadable_draws_nothing_and_counts" + suffix)
+
+    def test_buff_counter_absent_makes_no_sub_talent_read(self):
+        self.assertScenario("buff/counter_absent_makes_no_sub_talent_read")
+        self.assertScenario("buff/counter_absent_makes_no_sub_talent_read/sub_talent_access")
+
+    def test_buff_row_without_toggle_twin_makes_no_sub_talent_read(self):
+        self.assertScenario("buff/row_without_toggle_twin_makes_no_sub_talent_read/drawn")
+        self.assertScenario("buff/row_without_toggle_twin_makes_no_sub_talent_read")
 
     # ---- issue #55 follow-up (D-S4): rule-based coverage of untested skills
 

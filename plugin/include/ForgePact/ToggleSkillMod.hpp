@@ -136,6 +136,17 @@ enum class ToggleOnMark {
                  // or a numeric kind > 0, is ON
     TimerHeld,   // an own instance whose `markField` reads EXACTLY `heldValue` is ON
     None,        // any own instance is ON - the plain form creates no instance at all
+    PlayerBuff,  // (session 12, Counter) ON when the local player's OWN buff
+                 // slot `heldValue` (an int, not a real instance count) holds
+                 // a live instance whose own `markField` reads exactly
+                 // `heldValue` AND this row's `subTalentSlot` reads Allocated
+                 // through ToggleReadSubTalent - read only while the buff is
+                 // present, never cached (AGENTS.md "Check a Permission
+                 // Where It Is Used"). `onObject` documents the measured
+                 // instance object (Draw_Player_Buff_obj) but this mark never
+                 // resolves it by name: identity is the buff slot's own
+                 // `buffType == heldValue` check, the same one
+                 // kSkillTimerBuffRows' reader makes.
 };
 
 struct ToggleSkillRow {
@@ -179,6 +190,19 @@ inline constexpr ToggleSkillRow kToggleSkillRows[] = {
       nullptr, ToggleOnMark::Marker, "skillAstroHeated", 0.0 },
     { "bushido", kToggleNoSubTalent, HeroSiege::Objects::GameObject::Samurai_Bushido_obj,
       "isMyClient", ToggleOnMark::None, nullptr, 0.0 },
+    // Session 12 (workorder forgepact-skilltimer-buff-countdown): Counter's
+    // Give No Quarter form. `subTalentSlot` 13 is `s13` (established from the
+    // repo: the static key `subShieldLancerCounter13` and session 6's C6
+    // respec reading at global.subTalentMap[1].t301.s13 - docs/toggle-skills-
+    // research.md, "### Give No Quarter: the sub-talent slot"). `onObject`
+    // documents the measured instance (Draw_Player_Buff_obj, session 6 and
+    // 12) but is never resolved by this mark. `markField`/`heldValue` are the
+    // buff row's own identity field and measured buff id, duplicated here on
+    // purpose so `TABLE_ROW` can parse this row the same shape as every
+    // other, and pinned equal to the buff row by
+    // test_counter_toggle_row_agrees_with_the_buff_row.
+    { "counter", 13, HeroSiege::Objects::GameObject::Draw_Player_Buff_obj,
+      nullptr, ToggleOnMark::PlayerBuff, "buffType", 104.0 },
 };
 inline constexpr int kToggleSkillRowCount =
     (int)(sizeof(kToggleSkillRows) / sizeof(kToggleSkillRows[0]));

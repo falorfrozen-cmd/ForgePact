@@ -179,6 +179,46 @@ inline constexpr SkillTimerRow kSkillTimerRows[] = {
 inline constexpr int kSkillTimerRowCount =
     (int)(sizeof(kSkillTimerRows) / sizeof(kSkillTimerRows[0]));
 
+// ---- buff-carried skills (issue #55, session 12) --------------------------
+// A row here has no cast object at all: its duration lives on the player's
+// own buff list, `global.playerBuff[1][0][<buffId>]`, read by
+// ModuleMain.cpp's SkillTimerBuffReadRow (outside every research block) -
+// the same chain HhBuffAlive already walks for Headhunter, and the chain
+// session 12's `tgprobe buffwatch` instrument measured live
+// (docs/toggle-skills-research.md, "### Buff-carried countdown (session
+// 12)"). `buffId` is game data measured on this build, not an address: the
+// per-draw `buffType == buffId` identity check (AGENTS.md "Identify a thing
+// by what it is") is what keeps a renumbered build from drawing a
+// stranger's buff. Every runtime name the reader needs lives here, the same
+// rule kSkillTimerRows above and kToggleSkillRows follow.
+inline constexpr const char* kSkillTimerBuffArrayGlobal = "playerBuff";
+inline constexpr int kSkillTimerBuffPlayerIndex = 1;
+inline constexpr int kSkillTimerBuffSubIndex = 0;
+inline constexpr const char* kSkillTimerBuffIdentityField = "buffType";
+
+struct SkillTimerBuffRow {
+    const char* abilityId;     // the talent struct's own `abilityId` string
+    int buffId;                 // the measured slot index into playerBuff[1][0]
+    double measuredFirst;       // session 12's recorded first reading - documentation only
+    const char* displayName;    // "Name (Class)" - the no-name text test derives forbidden names from this
+};
+
+// Session 12's four `ship` rows (docs/toggle-skills-research.md,
+// "### Buff-carried countdown (session 12)" -> "#### Results"), in that
+// order. `counter` is the only row with a toggle twin (kToggleSkillRows'
+// `PlayerBuff` row below): while Counter's Give No Quarter sub-talent reads
+// Allocated, that twin's own read decides the toggle is ON and this row
+// draws nothing instead (ctx "The Give No Quarter form split" of the
+// workorder that shipped this).
+inline constexpr SkillTimerBuffRow kSkillTimerBuffRows[] = {
+    { "counter", 104, 1036.800000, "Counter (Shield Lancer)" },
+    { "lastStand", 107, 3600.000000, "Last Stand (Shield Lancer)" },
+    { "defensiveShout", 9, 14400.000000, "Defensive Shout (Viking)" },
+    { "berserk", 1, 720.000000, "Berserk (Viking)" },
+};
+inline constexpr int kSkillTimerBuffRowCount =
+    (int)(sizeof(kSkillTimerBuffRows) / sizeof(kSkillTimerBuffRows[0]));
+
 // ---- rule-based coverage of untested skills (issue #55 follow-up, D-S4) ---
 // Owner, 2026-09-21, verbatim: "lets ship untested following a rule - if it
 // has a cooldown and a duration and if its not a companion type skill, it
@@ -242,10 +282,9 @@ inline constexpr SkillTimerDenyEntry kSkillTimerRuleDeny[] = {
       "no spanning timer: the controller is unreadable and the meteors read a constant -1 "
       "(owner: this skill has no cooldown, despite reading 0.25)" },
     { "defensiveShout",
-      "buff-carried: the cast object lives about 0.6s while the buff itself lasts over a "
-      "minute on the player's own buff list" },
+      "buff-carried: covered by kSkillTimerBuffRows instead (session 12), never by this rule" },
     { "berserk",
-      "buff-carried: no cast object was attributable to it at all across the session" },
+      "buff-carried: covered by kSkillTimerBuffRows instead (session 12), never by this rule" },
     { "arrowTurret",
       "companion (also excluded structurally; listed for the record)" },
     { "fireTotem",
@@ -270,12 +309,21 @@ inline bool SkillTimerRuleDenied(const std::string& abilityId)
     return false;
 }
 
-// D-R1: the seven rows above stay explicit and win over the rule - a talent
-// id matching one of them is never entered into the rule map at all.
+// D-R1: the seven object rows above stay explicit and win over the rule - a
+// talent id matching one of them is never entered into the rule map at all.
+// Session 12 adds the buff-carried rows to the same exclusion: a buff row
+// has no object at all, so the rule (which only ever resolves an object by
+// name convention) could never select it anyway, but excluding it here
+// means it is never even attempted, and defensiveShout/berserk's presence on
+// kSkillTimerRuleDeny stays a documented belt-and-braces, not the only
+// thing keeping them out.
 inline bool SkillTimerRuleIsExplicitRow(const std::string& abilityId)
 {
     for (int i = 0; i < kSkillTimerRowCount; ++i) {
         if (abilityId == kSkillTimerRows[i].abilityId) return true;
+    }
+    for (int i = 0; i < kSkillTimerBuffRowCount; ++i) {
+        if (abilityId == kSkillTimerBuffRows[i].abilityId) return true;
     }
     return false;
 }

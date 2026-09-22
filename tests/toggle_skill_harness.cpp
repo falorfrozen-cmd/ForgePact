@@ -112,7 +112,13 @@ enum class GameObject { White_Mage_Soul_Spurn_AOE_obj, UI_Hud_Talent_obj, Univer
                         // Marker row with no readable ownership field, the
                         // same shape as Crematus) and Bushido (a base-form
                         // row, D-B1).
-                        Shaman_Meteor_Storm_Controller_obj, Samurai_Bushido_obj };
+                        Shaman_Meteor_Storm_Controller_obj, Samurai_Bushido_obj,
+                        // Session 12 (workorder forgepact-skilltimer-buff-countdown):
+                        // Counter's ON object, documentation on the row only -
+                        // never resolved by name on the PlayerBuff path - but
+                        // the shipped toggle table still names it, so it must
+                        // exist here for the table to compile.
+                        Draw_Player_Buff_obj };
 inline const char* GetObjectName(GameObject g) {
     switch (g) {
     case GameObject::Rule_Alpha_obj: return "Rule_Alpha_obj";
@@ -141,6 +147,7 @@ inline const char* GetObjectName(GameObject g) {
     case GameObject::Butcher_Submerged_Knives_Knifehoarder_obj: return "Butcher_Submerged_Knives_Knifehoarder_obj";
     case GameObject::Shaman_Meteor_Storm_Controller_obj: return "Shaman_Meteor_Storm_Controller_obj";
     case GameObject::Samurai_Bushido_obj: return "Samurai_Bushido_obj";
+    case GameObject::Draw_Player_Buff_obj: return "Draw_Player_Buff_obj";
     default: return "White_Mage_Soul_Spurn_AOE_obj";
     }
 }
@@ -276,6 +283,11 @@ struct World {
     // read as non-array (the same shape row0IsArray gives the HUD row).
     bool playerBuffGlobalIsArray = true;
     std::map<int, BuffInst> buffSlots;
+    // Session 12 follow-up (buff/negative_slot_is_no_buff): a slot that
+    // answers a NUMBER instead of undefined or a real instance - the live
+    // empty value is -4.000000 (docs/toggle-skills-research.md, "Session 12
+    // capture"), never a buff instance shape either.
+    std::map<int, double> buffSlotsNumeric;
 };
 static World world;
 static long g_DcResolveCalls = 0;      // asset_get_index("Universal_Double_Cast_obj") calls
@@ -292,6 +304,10 @@ static long g_AnyCallCount = 0;    // every CallBuiltin call, of any name - indi
 // so it cannot answer this on its own.
 static long g_SubTalentMapAccessCount = 0;
 static long g_NamesCalls = 0;      // variable_instance_get_names calls - the `tgl fields` snapshot
+// Session 12 (buff-carried skills): instance_exists calls of any kind - a
+// slot that answers a plain number must never reach this call at all
+// (buff/negative_slot_is_no_buff).
+static long g_InstanceExistsCalls = 0;
 // Session 8: every asset_get_index call by the name it asked for, so a
 // scenario can tell WHICH objects a draw resolved - e.g. that a countdown row
 // with no toggle twin never resolved a toggle-table row's object at all.
@@ -415,6 +431,7 @@ struct FakeRunner {
             return r;
         }
         if (fn == "instance_exists") {
+            ++g_InstanceExistsCalls;
             if (args[0].text.rfind("buff:", 0) == 0) {
                 const int slot = std::stoi(args[0].text.substr(5));
                 auto it = world.buffSlots.find(slot);
@@ -549,6 +566,7 @@ struct FakeRunner {
             if (args[0].text == "pb0") {
                 int maxSlot = -1;
                 for (const auto& kv : world.buffSlots) if (kv.first > maxSlot) maxSlot = kv.first;
+                for (const auto& kv : world.buffSlotsNumeric) if (kv.first > maxSlot) maxSlot = kv.first;
                 return RValue((double)(maxSlot + 1));
             }
             return RValue(0.0);
@@ -579,6 +597,8 @@ struct FakeRunner {
             }
             if (args[0].text == "pb0") {
                 const int i = (int)args[1].ToDouble();
+                auto numeric = world.buffSlotsNumeric.find(i);
+                if (numeric != world.buffSlotsNumeric.end()) return RValue(numeric->second);
                 auto it = world.buffSlots.find(i);
                 if (it == world.buffSlots.end()) return RValue();   // empty slot: undefined
                 RValue r; r.m_Kind = VALUE_REF; r.text = "buff:" + std::to_string(i);
@@ -803,6 +823,9 @@ static int ToggleRowIndexForAbility(const char* abilityId) {
 static void resetTibRow(int r) {
     g_TibRow[r].drawn = 0; g_TibRow[r].on = 0; g_TibRow[r].off = 0;
     g_TibRow[r].unreadable = 0; g_TibRow[r].unresolved = 0; g_TibRow[r].noSlot = 0;
+    // Session 12: the border's own per-row reason a PlayerBuff row read
+    // Off/Unreadable.
+    g_TibRow[r].subOff = 0; g_TibRow[r].subUnreadable = 0;
 }
 
 // Issue #55 (skilltimer): the countdown's own per-row counters, zeroed field
@@ -821,6 +844,28 @@ static void resetSkillTimer() {
     }
     g_StDrawExc = 0; g_StFontUnresolved = 0;
     g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Off);
+}
+
+// Session 12 (buff-carried skills): the buff table's own per-row counters,
+// zeroed field by field, the same shape resetStRow gives the object rows -
+// plus identityMismatch, this table's own extra field.
+static void resetStBuffRow(int r) {
+    g_StBuffRow[r].drawn = 0; g_StBuffRow[r].noBuff = 0; g_StBuffRow[r].unreadable = 0;
+    g_StBuffRow[r].identityMismatch = 0; g_StBuffRow[r].expired = 0;
+    g_StBuffRow[r].toggleOn = 0; g_StBuffRow[r].toggleUnreadable = 0;
+    g_StBuffRow[r].unresolved = 0; g_StBuffRow[r].noSlot = 0;
+    g_StBuffRow[r].latched = 0; g_StBuffRow[r].unlatched = 0;
+}
+static void resetSkillTimerBuff() {
+    for (int r = 0; r < ForgePact::kSkillTimerBuffRowCount; ++r) {
+        g_SkillTimerBuffRowState[r] = ForgePact::SkillTimerRowState{};
+        resetStBuffRow(r);
+    }
+}
+static int BuffRowIndexForAbility(const char* abilityId) {
+    for (int r = 0; r < ForgePact::kSkillTimerBuffRowCount; ++r)
+        if (std::string(ForgePact::kSkillTimerBuffRows[r].abilityId) == abilityId) return r;
+    return -1;
 }
 
 // Round 1 (D-S4's walk, spliced): the walk's own room/style bookkeeping and
@@ -842,6 +887,9 @@ static void resetWalkState() {
     for (int i = 0; i < ForgePact::kSkillTimerRuleCap; ++i) g_SkillTimerRuleEntries[i] = ForgePact::SkillTimerRuleEntry{};
     for (int r = 0; r < ForgePact::kToggleSkillRowCount; ++r) g_ToggleTableIds.Set(r, -1);
     for (int r = 0; r < ForgePact::kSkillTimerRowCount; ++r) g_SkillTimerTableIds.Set(r, -1);
+    // Session 12: the buff-carried rows resolve in the same walk, so they
+    // reset alongside the other two tables.
+    for (int r = 0; r < ForgePact::kSkillTimerBuffRowCount; ++r) g_SkillTimerBuffTableIds.Set(r, -1);
     resetTalentWorld();
     g_RoomKeyValue = 1;
 }
@@ -1541,6 +1589,107 @@ int main() {
         checkInt("border/bushido_no_instance_draws_nothing", g_TibDrawn, 0);
     }
 
+    // 36d (session 12, workorder forgepact-skilltimer-buff-countdown):
+    // Counter's Give No Quarter form - the one `PlayerBuff` row. Its read is
+    // the SAME shared player-buff slot reader the countdown's own buff loop
+    // calls (ctx "The ship read": one reader, two callers), so this block
+    // proves the border's own half of that sharing end to end.
+    {
+        const int kCounterRow2 = ToggleRowIndexForAbility("counter");
+        const int kCounterSlot2 = ForgePact::kToggleSkillRows[kCounterRow2].subTalentSlot;
+        auto resetCounterBorder = [&]() {
+            resetWorld(); resetDrawRecord();
+            g_ToggleBorderOn.store(true);
+            for (int r = 0; r < ForgePact::kToggleSkillRowCount; ++r) { g_ToggleTableIds.Set(r, -1); resetTibRow(r); }
+            g_ToggleTableIds.Set(kCounterRow2, kToggleIndicatorTalentId);
+            world.row0 = { { (double)kToggleIndicatorTalentId, 100.0, 200.0, 50.0, 60.0 } };
+            g_SubTalentMapAccessCount = 0;
+            g_AssetLookups.clear();
+        };
+
+        // Present and Give No Quarter allocated: one marker draw.
+        resetCounterBorder();
+        world.buffSlots[104] = BuffInst{ true, MakeReal(104.0), MakeReal(1036.8), MakeReal(1.0) };
+        world.sub.levels[ForgePact::kToggleSubTalentMapIndex][kToggleIndicatorTalentId][kCounterSlot2]
+            = MakeReal(3.0);
+        {
+            ToggleIndicatorDraw();
+            checkInt("border/counter_buff_present_with_gnq_lights_slot/on", g_TibRow[kCounterRow2].on, 1);
+            checkInt("border/counter_buff_present_with_gnq_lights_slot", g_TibRow[kCounterRow2].drawn, 1);
+            // The identity read never resolves Draw_Player_Buff_obj by name -
+            // only the shared slot lookup's own UI_Hud_Talent_obj call is
+            // paid, the same cost every other ON row pays to find its marker
+            // a place to draw.
+            checkInt("border/counter_buff_present_with_gnq_lights_slot/no_asset_lookup",
+                      g_AssetLookups[HeroSiege::Objects::GetObjectName(
+                          HeroSiege::Objects::GameObject::Draw_Player_Buff_obj)], 0);
+            // One ToggleReadSubTalent call: the global read twice (exists,
+            // then get) before indexing into it.
+            checkInt("border/counter_buff_present_with_gnq_lights_slot/sub_talent_access",
+                      g_SubTalentMapAccessCount, 2);
+        }
+
+        // Present, Give No Quarter NOT allocated: no marker - the plain,
+        // timed form, charged to this row's own subOff.
+        resetCounterBorder();
+        world.buffSlots[104] = BuffInst{ true, MakeReal(104.0), MakeReal(1036.8), MakeReal(1.0) };
+        world.sub.levels[ForgePact::kToggleSubTalentMapIndex][kToggleIndicatorTalentId][kCounterSlot2]
+            = MakeReal(0.0);
+        ToggleIndicatorDraw();
+        checkInt("border/counter_buff_present_without_gnq_draws_nothing_and_counts_suboff/off",
+                  g_TibRow[kCounterRow2].off, 1);
+        checkInt("border/counter_buff_present_without_gnq_draws_nothing_and_counts_suboff",
+                  g_TibRow[kCounterRow2].subOff, 1);
+        checkInt("border/counter_buff_present_without_gnq_draws_nothing_and_counts_suboff/no_marker",
+                  g_TibRow[kCounterRow2].drawn, 0);
+
+        // No buff at all: draws nothing, and never even reaches for the
+        // sub-talent (the same "no buff, no read" shape the buff loop's own
+        // read gives).
+        resetCounterBorder();
+        {
+            const long subBefore = g_SubTalentMapAccessCount;
+            ToggleIndicatorDraw();
+            checkInt("border/counter_no_buff_draws_nothing_and_makes_no_sub_talent_read/off",
+                      g_TibRow[kCounterRow2].off, 1);
+            checkInt("border/counter_no_buff_draws_nothing_and_makes_no_sub_talent_read/subOff",
+                      g_TibRow[kCounterRow2].subOff, 0);
+            checkInt("border/counter_no_buff_draws_nothing_and_makes_no_sub_talent_read",
+                      g_SubTalentMapAccessCount - subBefore, 0);
+        }
+
+        // The sub-talent read itself fails: unreadable, never a marker.
+        resetCounterBorder();
+        world.buffSlots[104] = BuffInst{ true, MakeReal(104.0), MakeReal(1036.8), MakeReal(1.0) };
+        world.sub.globalExists = false;
+        ToggleIndicatorDraw();
+        checkInt("border/counter_sub_talent_unreadable_draws_nothing_and_counts/unreadable",
+                  g_TibRow[kCounterRow2].unreadable, 1);
+        checkInt("border/counter_sub_talent_unreadable_draws_nothing_and_counts",
+                  g_TibRow[kCounterRow2].subUnreadable, 1);
+        checkInt("border/counter_sub_talent_unreadable_draws_nothing_and_counts/no_marker",
+                  g_TibRow[kCounterRow2].drawn, 0);
+
+        // A present slot whose own buffType does not match 104 is
+        // Unreadable, never the sub-talent gate's own subUnreadable - the
+        // identity check runs first and the sub-talent is never even read.
+        resetCounterBorder();
+        world.buffSlots[104] = BuffInst{ true, MakeReal(999.0), MakeReal(1036.8), MakeReal(1.0) };
+        {
+            const long subBefore = g_SubTalentMapAccessCount;
+            ToggleIndicatorDraw();
+            checkInt("border/counter_identity_mismatch_is_unreadable/unreadable",
+                      g_TibRow[kCounterRow2].unreadable, 1);
+            checkInt("border/counter_identity_mismatch_is_unreadable/subUnreadable",
+                      g_TibRow[kCounterRow2].subUnreadable, 0);
+            checkInt("border/counter_identity_mismatch_is_unreadable",
+                      g_SubTalentMapAccessCount - subBefore, 0);
+        }
+
+        for (int r = 0; r < ForgePact::kToggleSkillRowCount; ++r) { g_ToggleTableIds.Set(r, -1); resetTibRow(r); }
+        g_ToggleTableIds.Set(0, kToggleIndicatorTalentId);
+    }
+
     // 37. A row whose talent id has not been resolved from its `abilityId` yet
     //     is skipped and counted - never read, never drawn, never guessed.
     resetWorld(); resetDrawRecord();
@@ -1881,6 +2030,38 @@ int main() {
             GuardCall c = CallGuard(&dcSelf, (double)kMeteorStormId, false);
             checkInt("guard_on/meteor_storm_proc_passes_without_subtalent", c.tramp, 1);
         }
+    }
+
+    // 40j-2 (session 12, workorder forgepact-skilltimer-buff-countdown):
+    // Counter's Give No Quarter form (`counter`, `s13`) - membership in the
+    // shipped table plus its own slot is the whole mechanism, the same as
+    // meteorStorm above; HookTalentUseClass and ToggleReadSubTalent are not
+    // edited for this (AC25). The buff slot itself never matters here - the
+    // guard never reads global.playerBuff at all.
+    {
+        const int kGuardCounterId = 301;   // harness-only, never 240/224/134
+        const int kGuardCounterRow = ToggleRowIndexForAbility("counter");
+        resetGuard(true);
+        g_ToggleTableIds.Set(kGuardCounterRow, kGuardCounterId);
+        world.sub.levels[ForgePact::kToggleSubTalentMapIndex][kGuardCounterId]
+                        [ForgePact::kToggleSkillRows[kGuardCounterRow].subTalentSlot] = MakeReal(3.0);
+        {
+            GuardCall c = CallGuard(&dcSelf, (double)kGuardCounterId, false);
+            checkInt("guard_on/counter_proc_refused_with_gnq/refused", g_TgdRefused, 1);
+            checkBool("guard_on/counter_proc_refused_with_gnq/result_untouched", c.returnedResult, true);
+            checkInt("guard_on/counter_proc_refused_with_gnq", c.tramp, 0);
+        }
+        resetGuard(true);
+        g_ToggleTableIds.Set(kGuardCounterRow, kGuardCounterId);
+        world.sub.levels[ForgePact::kToggleSubTalentMapIndex][kGuardCounterId]
+                        [ForgePact::kToggleSkillRows[kGuardCounterRow].subTalentSlot] = MakeReal(0.0);
+        {
+            GuardCall c = CallGuard(&dcSelf, (double)kGuardCounterId, false);
+            checkInt("guard_on/counter_proc_passes_without_gnq_as_suboff/passed", g_TgdPassed, 1);
+            checkInt("guard_on/counter_proc_passes_without_gnq_as_suboff/subOff", g_TgdSubOff, 1);
+            checkInt("guard_on/counter_proc_passes_without_gnq_as_suboff", c.tramp, 1);
+        }
+        g_ToggleTableIds.Set(kGuardCounterRow, -1);
     }
 
     // 40k. D-B1: Bushido's base-form row (`bushido`, `kToggleNoSubTalent`) is
@@ -2912,6 +3093,328 @@ int main() {
     checkInt("buffwatch/playerbuff_not_array/no_new_records", (long long)g_TgBuffWatch.size(), 0);
     resetBuffWatch();
 
+    // ---- session 12 (workorder forgepact-skilltimer-buff-countdown): the
+    // shipped buff-carried rows (`buff/*`), driving the real SkillTimerDraw()
+    // through kSkillTimerBuffRows. Setup mirrors the `skilltimer/` block
+    // above: every object row unresolved, toggle row 0 resolved, the buff
+    // row under test resolved to kToggleIndicatorTalentId (240) so the
+    // default row0 fixture yields its slot, toggleborder off, style Bar.
+    // Slot 104 is `counter`, 107 is `lastStand` (session 12's own measured
+    // ids); every id restored to -1 at the end so the rule/ block after this
+    // one is untouched.
+    auto buffRow = [](const char* abilityId) {
+        for (int r = 0; r < ForgePact::kSkillTimerBuffRowCount; ++r)
+            if (std::string(ForgePact::kSkillTimerBuffRows[r].abilityId) == abilityId) return r;
+        return -1;
+    };
+    const int kBuffCounter = buffRow("counter");
+    const int kBuffLastStand = buffRow("lastStand");
+    checkBool("buff/fixture_rows_exist", kBuffCounter >= 0 && kBuffLastStand >= 0, true);
+    const int kCounterRow = ToggleRowIndexForAbility("counter");
+    const int kCounterSlot = ForgePact::kToggleSkillRows[kCounterRow].subTalentSlot;
+    auto resolveOnlyBuffRow = [](int row, int talentId) {
+        for (int r = 0; r < ForgePact::kSkillTimerBuffRowCount; ++r) g_SkillTimerBuffTableIds.Set(r, -1);
+        if (row >= 0) g_SkillTimerBuffTableIds.Set(row, talentId);
+    };
+    auto resetBuff = [&]() {
+        world.buffSlots.clear();
+        world.buffSlotsNumeric.clear();
+        world.sub = SubTalentWorld{};
+        resetSkillTimerBuff();
+        g_SubTalentMapAccessCount = 0;
+    };
+    auto setupBuff = [&](int row) {
+        resetWorld(); resetSkillTimer(); resetSkillTimerDrawRecord(); resetBuff();
+        for (int r = 0; r < ForgePact::kToggleSkillRowCount; ++r) g_ToggleTableIds.Set(r, -1);
+        g_ToggleTableIds.Set(0, kToggleIndicatorTalentId);
+        resolveOnlyCountdownRow(-1, 0);
+        resolveOnlyBuffRow(row, kToggleIndicatorTalentId);
+        g_ToggleBorderOn.store(false);
+        g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Bar);
+        // Counter's twin consult always runs - SkillTimerBuffToggleTwin is a
+        // static table lookup, not gated on any runtime resolution - so a
+        // scenario using the counter row that is not itself about the Give
+        // No Quarter form needs a default reading: the plain, timed form
+        // (sub-talent NOT allocated). The GNQ-specific scenarios below
+        // override this entry.
+        if (row == kBuffCounter) {
+            world.sub.levels[ForgePact::kToggleSubTalentMapIndex][kToggleIndicatorTalentId][kCounterSlot]
+                = MakeReal(0.0);
+        }
+    };
+
+    // BUFF1. Off is the first statement: no runtime call at all, even with a
+    //        present slot.
+    setupBuff(kBuffCounter);
+    world.buffSlots[104] = BuffInst{ true, MakeReal(104.0), MakeReal(1036.0), MakeReal(1.0) };
+    g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Off);
+    {
+        const long before = g_AnyCallCount;
+        SkillTimerDraw();
+        checkInt("buff/off_makes_no_runtime_calls", g_AnyCallCount - before, 0);
+    }
+
+    // BUFF2. A present slot latches full; the slot disappearing draws
+    //        nothing and drops the latch (the NEXT appearance re-latches
+    //        rather than dividing by a stale value).
+    setupBuff(kBuffCounter);
+    world.buffSlots[104] = BuffInst{ true, MakeReal(104.0), MakeReal(1036.0), MakeReal(1.0) };
+    SkillTimerDraw();
+    checkBool("buff/empty_slot_draws_nothing_and_unlatches/latched_first",
+              g_SkillTimerBuffRowState[kBuffCounter].latched, true);
+    resetSkillTimerDrawRecord();
+    world.buffSlots.erase(104);
+    SkillTimerDraw();
+    checkInt("buff/empty_slot_draws_nothing_and_unlatches",
+             (long long)g_StBuffRow[kBuffCounter].noBuff, 1);
+    checkInt("buff/empty_slot_draws_nothing_and_unlatches/unlatched",
+             (long long)g_StBuffRow[kBuffCounter].unlatched, 1);
+    checkInt("buff/empty_slot_draws_nothing_and_unlatches/rects",
+             (long long)g_ColourRectDraws.size(), 0);
+
+    // BUFF3. A slot that answers a plain number (the live empty value,
+    //        -4.000000) is no buff either - no instance_exists call at all.
+    setupBuff(kBuffCounter);
+    world.buffSlotsNumeric[104] = -4.0;
+    {
+        const long existsBefore = g_InstanceExistsCalls;
+        SkillTimerDraw();
+        checkInt("buff/negative_slot_is_no_buff", (long long)g_StBuffRow[kBuffCounter].noBuff, 1);
+        checkInt("buff/negative_slot_is_no_buff/no_instance_exists_call",
+                 g_InstanceExistsCalls - existsBefore, 0);
+        checkInt("buff/negative_slot_is_no_buff/rects", (long long)g_ColourRectDraws.size(), 0);
+    }
+
+    // BUFF4. A present slot whose own buffType does not match this row's
+    //        buffId is Unreadable, not a measured zero - the identity check
+    //        AGENTS.md "Identify a thing by what it is" asks for.
+    setupBuff(kBuffCounter);
+    world.buffSlots[104] = BuffInst{ true, MakeReal(999.0), MakeReal(1036.0), MakeReal(1.0) };
+    SkillTimerDraw();
+    checkInt("buff/identity_mismatch_is_unreadable_and_counted",
+             (long long)g_StBuffRow[kBuffCounter].unreadable, 1);
+    checkInt("buff/identity_mismatch_is_unreadable_and_counted/identityMismatch",
+             (long long)g_StBuffRow[kBuffCounter].identityMismatch, 1);
+    checkInt("buff/identity_mismatch_is_unreadable_and_counted/rects",
+             (long long)g_ColourRectDraws.size(), 0);
+    checkBool("buff/identity_mismatch_is_unreadable_and_counted/not_latched",
+              g_SkillTimerBuffRowState[kBuffCounter].latched, false);
+
+    // BUFF5. First sight latches full - one rect, full width, against the
+    //        same bar arithmetic skilltimer/bar_geometry derives (never a
+    //        literal).
+    setupBuff(kBuffCounter);
+    world.buffSlots[104] = BuffInst{ true, MakeReal(104.0), MakeReal(1036.0), MakeReal(1.0) };
+    SkillTimerDraw();
+    {
+        const double usableWidth = stEw - 2.0 * kSkillTimerBarInset;
+        const double bx0 = stEx + kSkillTimerBarInset, by1 = stEy - kSkillTimerBarGap;
+        const double bx1 = bx0 + usableWidth, by0 = by1 - kSkillTimerBarHeight;
+        checkInt("buff/first_sight_latches_full/count", (long long)g_ColourRectDraws.size(), 1);
+        if (!g_ColourRectDraws.empty()) {
+            const ColourRectDraw& r = g_ColourRectDraws.back();
+            checkBool("buff/first_sight_latches_full",
+                      std::fabs(r.x0 - bx0) < 1e-6 && std::fabs(r.y0 - by0) < 1e-6
+                      && std::fabs(r.x1 - bx1) < 1e-6 && std::fabs(r.y1 - by1) < 1e-6, true);
+        }
+    }
+    checkBool("buff/first_sight_latches_full/latched", g_SkillTimerBuffRowState[kBuffCounter].latched, true);
+    checkInt("buff/first_sight_latches_full/drawn", (long long)g_StBuffRow[kBuffCounter].drawn, 1);
+
+    // BUFF6. A refresh (a rise) re-latches at the new, higher value - the
+    //        third draw's rect equals the first draw's.
+    setupBuff(kBuffCounter);
+    world.buffSlots[104] = BuffInst{ true, MakeReal(104.0), MakeReal(1000.0), MakeReal(1.0) };
+    SkillTimerDraw();
+    ColourRectDraw firstRect = g_ColourRectDraws.back();
+    resetSkillTimerDrawRecord();
+    world.buffSlots[104] = BuffInst{ true, MakeReal(104.0), MakeReal(500.0), MakeReal(1.0) };
+    SkillTimerDraw();   // falling within the same cast - not what this checks
+    resetSkillTimerDrawRecord();
+    world.buffSlots[104] = BuffInst{ true, MakeReal(104.0), MakeReal(1000.0), MakeReal(1.0) };
+    SkillTimerDraw();
+    checkBool("buff/refresh_rise_relatches/latched", g_SkillTimerBuffRowState[kBuffCounter].latched, true);
+    checkBool("buff/refresh_rise_relatches",
+              !g_ColourRectDraws.empty()
+              && std::fabs(g_ColourRectDraws.back().x0 - firstRect.x0) < 1e-6
+              && std::fabs(g_ColourRectDraws.back().x1 - firstRect.x1) < 1e-6, true);
+
+    // BUFF7. A non-positive reading draws nothing and never latches.
+    setupBuff(kBuffCounter);
+    world.buffSlots[104] = BuffInst{ true, MakeReal(104.0), MakeReal(0.0), MakeReal(1.0) };
+    SkillTimerDraw();
+    checkInt("buff/expired_draws_nothing", (long long)g_StBuffRow[kBuffCounter].expired, 1);
+    checkInt("buff/expired_draws_nothing/rects", (long long)g_ColourRectDraws.size(), 0);
+    checkBool("buff/expired_draws_nothing/not_latched", g_SkillTimerBuffRowState[kBuffCounter].latched, false);
+
+    // BUFF8. A slot lookup miss is charged to this table's own noSlot, never
+    //        toggleborder's noHud, and touches no object row's counters.
+    setupBuff(kBuffCounter);
+    world.buffSlots[104] = BuffInst{ true, MakeReal(104.0), MakeReal(1036.0), MakeReal(1.0) };
+    world.hudTalentObjectResolves = false;
+    SkillTimerDraw();
+    checkInt("buff/slot_miss_charged_to_own_counter", (long long)g_StBuffRow[kBuffCounter].noSlot, 1);
+    checkInt("buff/slot_miss_charged_to_own_counter/tibNoHud", g_TibNoHud, 0);
+    {
+        long objectDrawn = 0;
+        for (int r = 0; r < ForgePact::kSkillTimerRowCount; ++r) objectDrawn += g_StRow[r].drawn;
+        checkInt("buff/slot_miss_charged_to_own_counter/object_rows_untouched", objectDrawn, 0);
+    }
+
+    // BUFF9. Two buff rows keep separate latches: counter (104) at 1036,
+    //        lastStand (107) at 3600, then counter falls to 518 (half) while
+    //        lastStand stays put - two rects, the counter one half the
+    //        lastStand one's width.
+    resetWorld(); resetSkillTimer(); resetSkillTimerDrawRecord(); resetBuff();
+    for (int r = 0; r < ForgePact::kToggleSkillRowCount; ++r) g_ToggleTableIds.Set(r, -1);
+    g_ToggleTableIds.Set(0, kToggleIndicatorTalentId);
+    resolveOnlyCountdownRow(-1, 0);
+    for (int r = 0; r < ForgePact::kSkillTimerBuffRowCount; ++r) g_SkillTimerBuffTableIds.Set(r, -1);
+    g_SkillTimerBuffTableIds.Set(kBuffCounter, kToggleIndicatorTalentId);
+    g_SkillTimerBuffTableIds.Set(kBuffLastStand, 909);
+    world.row0 = { { (double)kToggleIndicatorTalentId, 100.0, 200.0, 50.0, 60.0 },
+                    { 909.0, 300.0, 200.0, 50.0, 60.0 } };
+    g_ToggleBorderOn.store(false);
+    g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Bar);
+    // Counter's twin consult always runs - default to the plain, timed form
+    // (see setupBuff's own comment).
+    world.sub.levels[ForgePact::kToggleSubTalentMapIndex][kToggleIndicatorTalentId][kCounterSlot] = MakeReal(0.0);
+    world.buffSlots[104] = BuffInst{ true, MakeReal(104.0), MakeReal(1036.0), MakeReal(1.0) };
+    world.buffSlots[107] = BuffInst{ true, MakeReal(107.0), MakeReal(3600.0), MakeReal(1.0) };
+    SkillTimerDraw();
+    resetSkillTimerDrawRecord();
+    world.buffSlots[104] = BuffInst{ true, MakeReal(104.0), MakeReal(518.0), MakeReal(1.0) };
+    SkillTimerDraw();
+    checkInt("buff/rows_keep_separate_latches/count", (long long)g_ColourRectDraws.size(), 2);
+    checkBool("buff/rows_keep_separate_latches/each_latched",
+              g_SkillTimerBuffRowState[kBuffCounter].latched && g_SkillTimerBuffRowState[kBuffLastStand].latched,
+              true);
+    if (g_ColourRectDraws.size() == 2) {
+        const double counterWidth = g_ColourRectDraws[0].x1 - g_ColourRectDraws[0].x0;
+        const double lastStandWidth = g_ColourRectDraws[1].x1 - g_ColourRectDraws[1].x0;
+        checkNear("buff/rows_keep_separate_latches", counterWidth, lastStandWidth / 2.0);
+    }
+    for (int r = 0; r < ForgePact::kSkillTimerBuffRowCount; ++r) g_SkillTimerBuffTableIds.Set(r, -1);
+
+    // BUFF10. global.playerBuff itself not an array: reads nothing, throws
+    //         nothing, even for a slot that carries a live buff.
+    setupBuff(kBuffCounter);
+    world.playerBuffGlobalIsArray = false;
+    world.buffSlots[104] = BuffInst{ true, MakeReal(104.0), MakeReal(1036.0), MakeReal(1.0) };
+    SkillTimerDraw();
+    checkInt("buff/playerbuff_not_array_draws_nothing", (long long)g_StBuffRow[kBuffCounter].noBuff, 1);
+    checkInt("buff/playerbuff_not_array_draws_nothing/rects", (long long)g_ColourRectDraws.size(), 0);
+
+    // BUFF11. Equal readings, well past the 89-draw re-add burst Defensive
+    //         Shout measured, keep drawing every time - pins that no
+    //         value-shape guard exists (the owner dropped the not-falling
+    //         guard an earlier plan round proposed).
+    setupBuff(kBuffLastStand);
+    for (int i = 0; i < 100; ++i) {
+        world.buffSlots[107] = BuffInst{ true, MakeReal(107.0), MakeReal(14400.0), MakeReal(1.0) };
+        SkillTimerDraw();
+    }
+    world.buffSlots[107] = BuffInst{ true, MakeReal(107.0), MakeReal(14399.0), MakeReal(1.0) };
+    SkillTimerDraw();
+    checkInt("buff/equal_reads_keep_drawing", (long long)g_StBuffRow[kBuffLastStand].drawn, 101);
+    checkInt("buff/equal_reads_keep_drawing/latched", (long long)g_StBuffRow[kBuffLastStand].latched, 1);
+    checkInt("buff/equal_reads_keep_drawing/toggleOn", (long long)g_StBuffRow[kBuffLastStand].toggleOn, 0);
+
+    // BUFF12-16: Counter, the one row with a toggle twin. The buff loop's own
+    // talentId (g_SkillTimerBuffTableIds' resolved id for this row, always
+    // kToggleIndicatorTalentId in this block) is what the sub-talent read
+    // uses - `ForgePact::kToggleSkillRows[kCounterRow].subTalentSlot` names
+    // the slot, never a literal 13.
+    checkBool("buff/counter_has_a_toggle_twin", kCounterRow >= 0, true);
+
+    // BUFF12. Give No Quarter allocated: the twin says On, so the countdown
+    //         draws nothing at all - the latch stays untouched, the same way
+    //         an object row with an ON twin never reaches its own read.
+    setupBuff(kBuffCounter);
+    g_ToggleTableIds.Set(kCounterRow, kToggleIndicatorTalentId);
+    world.buffSlots[104] = BuffInst{ true, MakeReal(104.0), MakeReal(1036.0), MakeReal(1.0) };
+    world.sub.levels[ForgePact::kToggleSubTalentMapIndex][kToggleIndicatorTalentId][kCounterSlot] = MakeReal(3.0);
+    {
+        const long subBefore = g_SubTalentMapAccessCount;
+        SkillTimerDraw();
+        checkInt("buff/counter_gnq_allocated_is_suppressed_as_toggle_on",
+                 (long long)g_StBuffRow[kBuffCounter].toggleOn, 1);
+        checkInt("buff/counter_gnq_allocated_is_suppressed_as_toggle_on/drawn",
+                 (long long)g_StBuffRow[kBuffCounter].drawn, 0);
+        checkInt("buff/counter_gnq_allocated_is_suppressed_as_toggle_on/rects",
+                 (long long)g_ColourRectDraws.size(), 0);
+        checkBool("buff/counter_gnq_allocated_is_suppressed_as_toggle_on/latch_untouched",
+                  g_SkillTimerBuffRowState[kBuffCounter].latched, false);
+        // One ToggleReadSubTalent call reads the global twice (exists, then
+        // get) before indexing into it - delta 2 for exactly one call.
+        checkInt("buff/counter_gnq_allocated_is_suppressed_as_toggle_on/sub_talent_access",
+                 g_SubTalentMapAccessCount - subBefore, 2);
+    }
+
+    // BUFF13. Give No Quarter NOT allocated: the plain, timed form - the
+    //         countdown draws its own countdown.
+    setupBuff(kBuffCounter);
+    g_ToggleTableIds.Set(kCounterRow, kToggleIndicatorTalentId);
+    world.buffSlots[104] = BuffInst{ true, MakeReal(104.0), MakeReal(1036.0), MakeReal(1.0) };
+    world.sub.levels[ForgePact::kToggleSubTalentMapIndex][kToggleIndicatorTalentId][kCounterSlot] = MakeReal(0.0);
+    SkillTimerDraw();
+    checkInt("buff/counter_gnq_not_allocated_draws_countdown/drawn", (long long)g_StBuffRow[kBuffCounter].drawn, 1);
+    checkBool("buff/counter_gnq_not_allocated_draws_countdown/latched",
+              g_SkillTimerBuffRowState[kBuffCounter].latched, true);
+    checkInt("buff/counter_gnq_not_allocated_draws_countdown/toggleOn",
+             (long long)g_StBuffRow[kBuffCounter].toggleOn, 0);
+    checkInt("buff/counter_gnq_not_allocated_draws_countdown", (long long)g_ColourRectDraws.size(), 1);
+
+    // BUFF14. The sub-talent read itself fails: neither the outline nor the
+    //         countdown draws.
+    setupBuff(kBuffCounter);
+    g_ToggleTableIds.Set(kCounterRow, kToggleIndicatorTalentId);
+    world.buffSlots[104] = BuffInst{ true, MakeReal(104.0), MakeReal(1036.0), MakeReal(1.0) };
+    world.sub.globalExists = false;
+    SkillTimerDraw();
+    checkInt("buff/counter_sub_talent_unreadable_draws_nothing_and_counts",
+             (long long)g_StBuffRow[kBuffCounter].toggleUnreadable, 1);
+    checkInt("buff/counter_sub_talent_unreadable_draws_nothing_and_counts/drawn",
+             (long long)g_StBuffRow[kBuffCounter].drawn, 0);
+    checkInt("buff/counter_sub_talent_unreadable_draws_nothing_and_counts/rects",
+             (long long)g_ColourRectDraws.size(), 0);
+
+    // BUFF15. No buff present at all: never even reaches for the sub-talent -
+    //         a row with no ON twin candidate makes no read a plain no-buff
+    //         row does not already make.
+    setupBuff(kBuffCounter);
+    g_ToggleTableIds.Set(kCounterRow, kToggleIndicatorTalentId);
+    {
+        const long subBefore = g_SubTalentMapAccessCount;
+        SkillTimerDraw();
+        checkInt("buff/counter_absent_makes_no_sub_talent_read",
+                 (long long)g_StBuffRow[kBuffCounter].noBuff, 1);
+        checkInt("buff/counter_absent_makes_no_sub_talent_read/sub_talent_access",
+                 g_SubTalentMapAccessCount - subBefore, 0);
+    }
+    g_ToggleTableIds.Set(kCounterRow, -1);
+
+    // BUFF16. A buff row with no toggle twin (lastStand) never reads the
+    //         sub-talent at all, present or not.
+    setupBuff(kBuffLastStand);
+    world.buffSlots[107] = BuffInst{ true, MakeReal(107.0), MakeReal(3600.0), MakeReal(1.0) };
+    {
+        const long subBefore = g_SubTalentMapAccessCount;
+        SkillTimerDraw();
+        checkInt("buff/row_without_toggle_twin_makes_no_sub_talent_read/drawn",
+                 (long long)g_StBuffRow[kBuffLastStand].drawn, 1);
+        checkInt("buff/row_without_toggle_twin_makes_no_sub_talent_read",
+                 g_SubTalentMapAccessCount - subBefore, 0);
+    }
+
+    // Restore: every buff id and the Counter toggle row's id back to -1, so
+    // the rule/ block after this one starts clean.
+    for (int r = 0; r < ForgePact::kSkillTimerBuffRowCount; ++r) g_SkillTimerBuffTableIds.Set(r, -1);
+    g_ToggleTableIds.Set(kCounterRow, -1);
+    resolveOnlyCountdownRow(kStSoul, kToggleIndicatorTalentId);
+    for (int r = 0; r < ForgePact::kToggleSkillRowCount; ++r) g_ToggleTableIds.Set(r, -1);
+    g_ToggleTableIds.Set(0, kToggleIndicatorTalentId);
+
     // ---- issue #55 follow-up (D-S4): rule-based coverage of untested skills
 
     // R1-R6. SkillTimerRuleModel::Eligible is a pure, game-independent
@@ -3151,6 +3654,9 @@ int main() {
     g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Off);
     for (int r = 0; r < ForgePact::kToggleSkillRowCount; ++r) g_ToggleTableIds.Set(r, 1000 + r);
     for (int r = 0; r < ForgePact::kSkillTimerRowCount; ++r) g_SkillTimerTableIds.Set(r, 2000 + r);
+    // Session 12: the third table must also have nothing left to learn, or
+    // SkillTimerTableUnresolvedRows() alone keeps the walk due.
+    for (int r = 0; r < ForgePact::kSkillTimerBuffRowCount; ++r) g_SkillTimerBuffTableIds.Set(r, 3000 + r);
     checkBool("rule/walk_not_due_when_off_and_rows_resolved", ToggleTableResolveDue(), false);
     resetWalkState();
 

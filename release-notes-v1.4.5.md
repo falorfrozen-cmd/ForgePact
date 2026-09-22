@@ -99,8 +99,9 @@ of its own - see that bullet for what it draws on.
   skills with both a duration and a real cooldown are also covered, by rule,
   and are untested. A few skills are left out where a measurement showed the
   timer on the skill's own object is not the skill's duration, and companion
-  skills (turrets, totems, hydra) and skills whose duration is only a buff on
-  you are not covered. A skill switched on as a toggle never gets a
+  skills (turrets, totems, hydra) are not covered. A few skills whose
+  duration is a buff on you, measured in-game, are covered too, and other
+  buff-only skills are not. A skill switched on as a toggle never gets a
   countdown. In a fight, hits can add a little time to some skills (roughly
   0.2 s each in our test) and the countdown rises slightly to match. Pick
   one of four looks: **Arc** (a ring that empties clockwise),
