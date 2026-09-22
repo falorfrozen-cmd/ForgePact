@@ -92,6 +92,16 @@ of its own - see that bullet for what it draws on.
   toggle, or the skill is a toggle on its own; otherwise the double cast's
   extra cast goes through exactly as it does in the unmodded game. Your own
   presses, and double casts of every other skill, are not affected.
+- **Restart zone at any time.** The pause menu's **Restart** refuses while the
+  game counts you as in combat, and only works once you have been out of
+  combat for a few seconds - so a fight you want to start over is the one
+  time you cannot. With the new **Restart zone at any time** switch in
+  Quality of Life, Restart works straight away, in combat too. Use the mouse:
+  in combat the button still looks greyed until the cursor is on it, then it
+  lights up and a click restarts the zone the way it always does. Keyboard
+  navigation does not reach the pause menu's buttons, and a controller has
+  not been tried. It is **off by default**, and like every ForgePact mod it
+  is for offline play.
 - **Timed skill countdown.** A new **Timed skill countdown** dropdown in Mods
   (off by default) draws how much of a timed cast is left over that skill's
   slot on the skill bar, and it disappears the moment the cast ends. A small

@@ -214,6 +214,10 @@ DEFAULTS = {
     # own (issue #11, Track A), so a proc no longer flips the toggle straight
     # back. Off by default; offline only, like every mod here.
     "mod_toggle_guard": False,
+    # Lets the pause menu's Restart work in combat (issue #8) instead of
+    # waiting until the game has counted the player out of combat. Off by
+    # default; offline only, like every mod here.
+    "mod_restart_anytime": False,
     # Timed-skill countdown (issue #55): one of off/arc/bar/number/fade drawn
     # over each timed skill's hotbar slot. Covers the explicit rows of the
     # plugin's kSkillTimerRows, each measured in-game - a toggled-on skill
@@ -755,6 +759,10 @@ def build_cmds(cfg: dict) -> list:
         # Safe to send at launch, like relicfilter: `toggleguard 1` only arms
         # the guard, and the plugin installs its hook once a player exists.
         out.append("toggleguard 1")
+    if cfg.get("mod_restart_anytime", False):
+        # Safe to send at launch, like toggleguard: `restartanytime 1` only
+        # arms it, and the plugin installs its hook once a player exists.
+        out.append("restartanytime 1")
     skill_timer_style = str(cfg.get("mod_skill_timer_style", "off")).strip().lower()
     if skill_timer_style_valid(skill_timer_style) and skill_timer_style != "off":
         # Safe to send at launch, like toggleborder: the draw call already
@@ -1757,7 +1765,7 @@ class H(BaseHTTPRequestHandler):
                     # moved wins and the other gives way
                     other = "rarity_ancient" if key == "rarity_rare" else "rarity_rare"
                     cfg[other] = min(_pct(cfg.get(other, 0)), 100 - cfg[key])
-                elif key in ("density_on", "auto_apply", "map_reveal", "map_reveal_packs", "headhunter", "tyrant", "beacon", "mod_filter_max_relics", "mod_orb_pickup_radius", "mod_pet_quest_pickup", "mod_auto_prospect", "mod_auto_prospect_bag", "mod_toggle_indicator", "mod_toggle_guard"):
+                elif key in ("density_on", "auto_apply", "map_reveal", "map_reveal_packs", "headhunter", "tyrant", "beacon", "mod_filter_max_relics", "mod_orb_pickup_radius", "mod_pet_quest_pickup", "mod_auto_prospect", "mod_auto_prospect_bag", "mod_toggle_indicator", "mod_toggle_guard", "mod_restart_anytime"):
                     cfg[key] = bool(val)
                 elif key == "mod_skill_timer_style":
                     style = str(val).strip().lower()
@@ -1826,6 +1834,8 @@ class H(BaseHTTPRequestHandler):
                         send_cmds([f"toggleborder {1 if cfg['mod_toggle_indicator'] else 0}"], cfg)
                     elif key == "mod_toggle_guard":
                         send_cmds([f"toggleguard {1 if cfg['mod_toggle_guard'] else 0}"], cfg)
+                    elif key == "mod_restart_anytime":
+                        send_cmds([f"restartanytime {1 if cfg['mod_restart_anytime'] else 0}"], cfg)
                     elif key == "mod_skill_timer_style":
                         # Always explicit, including off: a style change (or
                         # turning it off) needs the plugin told either way.
@@ -2320,6 +2330,11 @@ input[type=range]::-webkit-slider-thumb{appearance:none;width:17px;height:17px;b
         <span class="val" id="mtgval">off</span>
     </div>
     <div class="row" style="border:none">
+        <span class="lbl" style="width:auto;flex:1">Restart zone at any time<br><span style="font-size:11px;color:#8f816e;font-weight:normal">The pause menu's Restart normally waits until you have been out of combat for a few seconds; with this on it works straight away. Use the mouse: in combat Restart still looks greyed until the cursor is on it, then lights up and works when clicked.</span></span>
+        <label class="switch"><input type="checkbox" id="mod_restart_anytime"><span class="sl"></span></label>
+        <span class="val" id="mraval">off</span>
+    </div>
+    <div class="row" style="border:none">
         <span class="lbl" style="width:auto;flex:1">Timed skill countdown<br><span style="font-size:11px;color:#8f816e;font-weight:normal">Shows how much time a timed skill has left, over that skill's slot on the skill bar, in the look you pick below. Works for most timed skills; toggles and companions (turrets, totems) don't get one. Off by default.</span></span>
         <select class="style-select" id="mod_skill_timer_style">
             <option value="off">Off</option>
@@ -2710,6 +2725,10 @@ async function boot(){
     document.getElementById('mod_toggle_guard').checked=mtg;
     document.getElementById('mtgval').textContent=mtg?'on':'off';
     document.getElementById('mtgval').className='val '+(mtg?'':'off');
+    const mra=!!c.mod_restart_anytime;
+    document.getElementById('mod_restart_anytime').checked=mra;
+    document.getElementById('mraval').textContent=mra?'on':'off';
+    document.getElementById('mraval').className='val '+(mra?'':'off');
     document.getElementById('mod_skill_timer_style').value=c.mod_skill_timer_style||'off';
   rarityLoad(c);
   document.getElementById('hhval').className='val '+(hh?'':'off');
@@ -2911,6 +2930,11 @@ function bind(){
         const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_toggle_guard',value:e.target.checked})});
         const v=document.getElementById('mtgval');v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
         toast('Toggle-skill double cast guard '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
+    };
+    document.getElementById('mod_restart_anytime').onchange=async(e)=>{
+        const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_restart_anytime',value:e.target.checked})});
+        const v=document.getElementById('mraval');v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
+        toast('Restart zone at any time '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
     };
     document.getElementById('mod_skill_timer_style').onchange=async(e)=>{
         const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_skill_timer_style',value:e.target.value})});
@@ -3117,10 +3141,10 @@ function refreshSavedControls(){
   });
   for(const [range] of painted)if(range.oninput)range.oninput();
   for(const [range,typed] of painted){if(typed===undefined)delete range.dataset.typed;else range.dataset.typed=typed}
-  const booleans={den_on:'density_on',autoapply:'auto_apply',enemyspeed_ct:'enemy_speed_ct',map_reveal:'map_reveal',map_reveal_packs:'map_reveal_packs',headhunter:'headhunter',tyrant:'tyrant',beacon:'beacon',mod_filter_max_relics:'mod_filter_max_relics',mod_orb_pickup_radius:'mod_orb_pickup_radius',mod_pet_quest_pickup:'mod_pet_quest_pickup',mod_auto_prospect:'mod_auto_prospect',mod_auto_prospect_bag:'mod_auto_prospect_bag',mod_toggle_indicator:'mod_toggle_indicator',mod_toggle_guard:'mod_toggle_guard'};
+  const booleans={den_on:'density_on',autoapply:'auto_apply',enemyspeed_ct:'enemy_speed_ct',map_reveal:'map_reveal',map_reveal_packs:'map_reveal_packs',headhunter:'headhunter',tyrant:'tyrant',beacon:'beacon',mod_filter_max_relics:'mod_filter_max_relics',mod_orb_pickup_radius:'mod_orb_pickup_radius',mod_pet_quest_pickup:'mod_pet_quest_pickup',mod_auto_prospect:'mod_auto_prospect',mod_auto_prospect_bag:'mod_auto_prospect_bag',mod_toggle_indicator:'mod_toggle_indicator',mod_toggle_guard:'mod_toggle_guard',mod_restart_anytime:'mod_restart_anytime'};
   for(const [id,key] of Object.entries(booleans))document.getElementById(id).checked=!!c[key];
   document.getElementById('mod_skill_timer_style').value=c.mod_skill_timer_style||'off';
-  for(const [id,key] of Object.entries({hhval:'headhunter',tyval:'tyrant',beval:'beacon',mfmrval:'mod_filter_max_relics',morval:'mod_orb_pickup_radius',mpqpval:'mod_pet_quest_pickup',autoprospval:'mod_auto_prospect',mtival:'mod_toggle_indicator',mtgval:'mod_toggle_guard',mapval:'map_reveal'})){
+  for(const [id,key] of Object.entries({hhval:'headhunter',tyval:'tyrant',beval:'beacon',mfmrval:'mod_filter_max_relics',morval:'mod_orb_pickup_radius',mpqpval:'mod_pet_quest_pickup',autoprospval:'mod_auto_prospect',mtival:'mod_toggle_indicator',mtgval:'mod_toggle_guard',mraval:'mod_restart_anytime',mapval:'map_reveal'})){
     const value=document.getElementById(id);value.textContent=c[key]?'on':'off';value.className='val '+(c[key]?'':'off');
   }
   document.getElementById('enemyspeedctval').textContent=c.enemy_speed_ct?'CT only':'all zones';
