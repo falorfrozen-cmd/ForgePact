@@ -20,8 +20,11 @@ closed (destroyed or deactivated; not distinguished) (`### Phase 1b results`).
 Phase 1c read both special tabs' counts with the stash window open - the game's
 own fingerprint lookup resolves a stash cell with `9` as its second argument,
 not `0` - but no reader reproduced a special-tab count with the window closed
-(`### Phase 1c results`); no hypothesis
-is eligible yet (`## Decision gate`). Nothing player-visible changes yet: the
+(`### Phase 1c results`). Phase 1d, a reader round on the Phase 1c build with
+no rebuild, is prepared but its session has not run (`### Live procedure 1d`,
+`### Phase 1d results`): it asks whether the kept `GetItemMap(9)` map or
+`New_Inventory_Data_obj`'s special-tab arrays still hold the counts with the
+window closed. No hypothesis is eligible yet (`## Decision gate`). Nothing player-visible changes yet: the
 `craftmats` switch exists but nothing is wired to crafting, and the player
 build refuses it. A result is only ever recorded as a negative with its
 positive control from the same session (repo-root `AGENTS.md`, "Prove the
@@ -776,8 +779,15 @@ fixes is its shape:
   fingerprint entries with lookups, `fp-array-control` - `node var` over
   `New_Inventory_Data_obj.inventorySocketGrid` with the bag grid as self and
   `a1=0` gives the same sums as `node bag` (it replaces Live 1c's failed
-  `node-var-control`, whose array held the equipped items). A miss whose control
-  did not pass is recorded "not observed (uncontrolled path)". A closed read that
+  `node-var-control`, whose array held the equipped items). `fp-array-control`
+  vouches only for the shape it supplies - the bag grid as self and `a1=0`. A
+  lookup with a stash cell as self and `a1=9` (the shape `map-open-socket` and
+  `map-open-material` take if the kept map holds fingerprints) rests instead on
+  the same session's `node socket a1=9` / `node id:<stashGrid> a1=9` read
+  matching the count by eye, which is why those two rows require equality with
+  it; with that read missing or unmatched, an `a1=9` miss is uncontrolled. A
+  miss whose control did not pass is recorded "not observed (uncontrolled
+  path)". A closed read that
   makes no lookup is recorded by what it lists (distinct fingerprints, classes,
   cells) against the open read of the same container, and a kept map that
   `ds_exists` no longer finds is "the kept reference is gone closed", which says
@@ -1070,9 +1080,11 @@ different map from the bag's, and Phase 1c never summed it. Readings, not
 established: `0` is the player's item-owner value and `9` the stash's (the
 second argument of the stash's own `GetItemFromFingerprint` calls and of Phase
 1b's `StashAddToStack`), so `GetItemMap(<owner>)` would be that owner's map from
-fingerprint to item struct, `localItemMap` being owner 0's; since `ds_map`
-indices are handed out in creation order, map 1050 was made before map 1056,
-plausibly at character load rather than when a window opened; and id 266430 is
+fingerprint to item struct, `localItemMap` being owner 0's; the lower index
+suggests map 1050 was made before map 1056, plausibly at character load rather
+than when a window opened, but GameMaker reuses a destroyed map's index, so the
+order of creation is not established (the before-any-window read in `### Live
+procedure 1d` is what would show it); and id 266430 is
 a cell of the Socketable container made at Live 1c's reopen, so at least the
 reopen made that call - whether the first open or the load did is not on
 record. `map0-identity` settles the `0`/`localItemMap` identity at one moment.
