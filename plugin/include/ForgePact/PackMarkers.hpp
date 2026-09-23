@@ -190,10 +190,10 @@ public:
             // leave the badge colour and a guessed alpha behind.)
             struct DrawStateGuard {
                 double alpha = 1.0, colour = 16777215.0;
-                bool fontSaved = false;
-                RValue font;
+                bool fontApplied = false;   // set only once draw_set_font really ran
+                RValue font;                // draw_get_font's answer, put back as is (a real or a reference)
                 ~DrawStateGuard() {
-                    try { if (fontSaved && IsNumber(font)) g_Yytk->CallBuiltin("draw_set_font", { font }); } catch (...) {}
+                    try { if (fontApplied) g_Yytk->CallBuiltin("draw_set_font", { font }); } catch (...) {}
                     try { g_Yytk->CallBuiltin("draw_set_colour", { RValue(colour) }); } catch (...) {}
                     try { g_Yytk->CallBuiltin("draw_set_alpha", { RValue(alpha) }); } catch (...) {}
                 }
@@ -243,9 +243,12 @@ public:
                     if (!fontSet) {
                         try {
                             saved.font = g_Yytk->CallBuiltin("draw_get_font", {});
-                            saved.fontSaved = true;
                             RValue smallFont = g_Yytk->CallBuiltin("variable_global_get", { RValue("font_smallest") });
-                            if (IsNumber(smallFont) && smallFont.ToDouble() >= 0) g_Yytk->CallBuiltin("draw_set_font", { smallFont });
+                            // Fonts, like sprites, can come back as asset references on this runner.
+                            if ((IsNumber(smallFont) || smallFont.m_Kind == VALUE_REF) && smallFont.ToDouble() >= 0) {
+                                g_Yytk->CallBuiltin("draw_set_font", { smallFont });
+                                saved.fontApplied = true;
+                            }
                         } catch (...) {}
                         if (!primitives) g_Yytk->CallBuiltin("draw_set_alpha", { RValue(m_Style.alpha) });
                         fontSet = true;

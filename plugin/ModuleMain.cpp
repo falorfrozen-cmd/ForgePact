@@ -28009,7 +28009,8 @@ static void PackMarksCommand(const std::string& rest)
             const size_t n = (size_t)std::clamp((int)number(a2, 20), 1, 200);
             size_t shown = 0;
             for (const auto& m : pm.Markers()) {
-                if (shown++ >= n) break;
+                if (shown >= n) break;
+                ++shown;
                 Out("  marker id=" + std::to_string(m.id) + " kind=" + std::to_string(m.kind) + " x=" + std::to_string((long long)m.x) + " y=" + std::to_string((long long)m.y) + (m.armed ? " armed" : " unarmed") + " seen=" + std::to_string(m.firstSeen));
             }
             Out("packmarks list: " + std::to_string(shown) + " of " + std::to_string(pm.Count()));

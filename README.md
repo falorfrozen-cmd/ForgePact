@@ -67,8 +67,9 @@ exactly.
 **Mining Ore Amount** is a separate quantity control, not a drop-chance multiplier.
 It changes the amount of Copper, Iron, Gold, Ruby, Jade or Tarethium ore in a
 normal mining reward. It preserves the chosen ore type and is scoped to the
-mining call; it does not change mining XP, gems, prospecting or monster loot. It
-installs its two native hooks only when raised above x1, and uses the original
+mining call. By design it rewrites only the ore stack's quantity, so mining XP,
+gems, prospecting and monster loot are left to the game. It installs its two
+native hooks only when raised above x1, and uses the original
 reward unchanged if it cannot validate the reward parameters. Checked in play on
 2026-09-23: at x10 a 6-ore reward dropped 60. A worn [Miner's Helmet](#miners-helmet)
 replaces it with 4×. See [research and test scope](docs/mining-ore-research.md).
@@ -707,10 +708,11 @@ with two mining mechanics that ForgePact runs while it is worn:
 
 - **4× ore.** Every mining node gives exactly four times its ore. The helmet
   replaces the Mining Ore Amount slider rather than stacking with it; take it
-  off and the slider applies again. Mining time and XP are unchanged.
+  off and the slider applies again. By design it rewrites only ore amounts, so
+  mining time and XP are left to the game (not measured separately).
 - **Vein Resonance.** Finishing a dig also digs the two nearest veins within
   192 units of that node that you could mine yourself, through the game's own
-  dig: 4× ore and normal mining XP each. Used-up veins, veins being dug and
+  dig, with 4× ore each. Used-up veins, veins being dug and
   veins above your mining level are skipped, and a vein dug this way never
   starts another. `minerhelm veins 0|1` turns it off and on.
 

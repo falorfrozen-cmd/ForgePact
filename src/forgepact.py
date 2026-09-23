@@ -2608,7 +2608,7 @@ function applyPluginModState(pm){
       else if(mining?.ready&&mining.multiplier===requested)status=' Plugin ready at x'+requested+'.';
       else status=' Waiting for the matching mining plugin to confirm the setting.';
     }
-    miningNote.textContent='Multiplies ore from mining. x1 is normal. Ore types, mining XP and other drops stay unchanged.'+status;
+    miningNote.textContent='Multiplies ore from mining. x1 is normal. Only the ore amount is rewritten; ore types, mining XP and other drops are left to the game.'+status;
   }
   const ap=(pm&&pm.autoprospect)||null;
   const parentVal=document.getElementById("autoprospval");
@@ -2837,7 +2837,7 @@ async function boot(){
   }).join('');
   document.getElementById('drops').innerHTML=ST.drops.map(([k,l,h])=>
     row('drops',k,l,(c.drops&&c.drops[k])||1,h?` <span class="tag">${h}</span>`:'',k==='mining_ore'?10:100,
-      k==='mining_ore'?'Multiplies ore from mining. x1 is normal. Ore types, mining XP and other drops stay unchanged.':'')).join('');
+      k==='mining_ore'?'Multiplies ore from mining. x1 is normal. Only the ore amount is rewritten; ore types, mining XP and other drops are left to the game.':'')).join('');
   document.getElementById('stats').innerHTML=(ST.stats||[]).map(([k,l,mx,step])=>{
     const v=(c.stats&&c.stats[k])||1;
     return row('stats',k,l,v,'',mx,statNote(k,v),step);

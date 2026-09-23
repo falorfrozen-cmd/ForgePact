@@ -120,6 +120,8 @@ class PackMarkersBehaviorTests(unittest.TestCase):
         # guessed alpha behind.
         self.assertScenario("draw/state_restored_on_sprite_path")
         self.assertScenario("draw/state_restored_on_primitive_path")
+        # Second review: draw_get_font can answer with an asset reference.
+        self.assertScenario("draw/font_restored_when_the_runner_answers_a_reference")
 
 
 if __name__ == "__main__":

@@ -64,17 +64,18 @@ of its own - see that bullet for what it draws on.
   your Mining Ore Amount setting). With it on, **Vein Resonance** digs more for
   you: when you finish a node, the two nearest veins within a short distance of
   it (192 units) that you could mine yourself are dug too, through the game's
-  own dig, each with the same four times the ore and the usual mining
-  experience. Veins that are used up, already being dug or above your mining
-  level are skipped, and a vein dug this way does not set off another one.
+  own dig, each with the same four times the ore. Veins that are used up,
+  already being dug or above your mining level are skipped, and a vein dug this
+  way does not set off another one. Like the slider below, the helmet rewrites
+  only ore amounts and leaves mining experience to the game.
   Forge the helmet in the Item Editor (Item Forge → Forge a signature item →
   Miner's Helmet); Mods → Items shows whether you are wearing it.
 
 - **Mining Ore Amount.** A new 1–10× slider under Loot multiplies the ore each
-  mining node gives; x1 keeps normal mining. Ore types, mining experience and
-  every other drop stay the same, and nothing is installed while it is at x1.
-  While the Miner's Helmet is worn, its four times replaces this slider instead
-  of stacking with it.
+  mining node gives; x1 keeps normal mining. It rewrites only the ore amount:
+  ore types, mining experience and every other drop are left to the game, and
+  nothing is installed while it is at x1. While the Miner's Helmet is worn, its
+  four times replaces this slider instead of stacking with it.
 
 - **AFK FARM compatibility.** AFK FARM can now use its own reward settings
   while ForgePact is loaded. Its MF, XP, Gold and loot bonuses apply once during

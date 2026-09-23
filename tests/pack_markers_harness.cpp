@@ -40,6 +40,7 @@ struct World {
     std::vector<std::string> addedPaths;
     std::vector<std::string> drawn;       // "subimg,x,y,scale,colour,alpha" per sprite draw
     double drawAlpha = 1.0, drawColour = 16777215.0, drawFont = 0.0;   // the runner's global draw state
+    bool fontIsRef = false;               // draw_get_font answers with an asset reference, as sprites do here
 };
 static World world;
 static int familyIndex(const std::string& name) { auto it = world.objects.find(name); return it == world.objects.end() ? -1 : it->second; }
@@ -84,7 +85,7 @@ struct Runner {
         if (name == "draw_set_colour") { world.drawColour = args[0].number; return RValue(); }
         if (name == "draw_get_alpha") return RValue(world.drawAlpha);
         if (name == "draw_get_colour") return RValue(world.drawColour);
-        if (name == "draw_get_font") return RValue(world.drawFont);
+        if (name == "draw_get_font") { RValue f(world.drawFont); if (world.fontIsRef) f.m_Kind = VALUE_REF; return f; }
         if (name == "draw_set_font") { world.drawFont = args[0].number; return RValue(); }
         if (name == "draw_text") { ++world.texts; return RValue(); }
         if (name == "sprite_add") {
@@ -295,6 +296,9 @@ int main() {
     drawStateKept("draw/state_restored_on_sprite_path");
     pm().StyleRef().ring = true;
     drawStateKept("draw/state_restored_on_primitive_path");
+    world.fontIsRef = true;
+    drawStateKept("draw/font_restored_when_the_runner_answers_a_reference");
+    world.fontIsRef = false;
     pm().StyleRef().ring = false;
     pm().StyleRef().ring = true; world.rings = 0;   // outline still off from above
     pm().Draw(sx, sy, RValue(), sprite);
