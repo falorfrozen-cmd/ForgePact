@@ -1,12 +1,12 @@
 # The game's own Angelic roll: which step picks the unique (issue #64)
 
-**Status: instrument built, live session not yet run.** Nothing player-visible
-changes in this round. Every `## Results` row and every `## Decision` line
-reads `pending` until the owner-run session under `## Live procedure` fills
-them in, and no reader should treat a `pending` row as a negative. A candidate
-is only ever named in `finding:` if its own route's positive control passed in
-the same session (`AGENTS.md`, "Prove the Instrument Before Trusting a
-Negative Result").
+**Status: measured in live session 1 (2026-09-23), research build only.**
+Nothing player-visible changes in this round. `## Results` records what that
+session printed, both positive controls (C1 and C2) passed, and
+`## Decision` labels every candidate. A candidate is only ever named in
+`finding:` if its own route's positive control passed in the same session
+(`AGENTS.md`, "Prove the Instrument Before Trusting a Negative Result"), and
+every zero is written down as `not observed`, with the control that backs it.
 
 This document carries names, indices, measured behaviour and our own commands
 only - no decompiled script text. The game's code was read locally to know
@@ -26,18 +26,17 @@ Limitations item 21, "the vanilla-roll gap").
 Closing that gap needs a hook on the step of the game's own roll that picks
 the item, so a follow-up can substitute a signature item at Liquor Holster's
 share. `docs/angelic-drop-research.md` already describes that roll from a
-static reading: `DropItem` asks whether the player carries buff 332
-(`buff_angelic_chance`) and, only then, hands the summed buff value and the
-kill position to `DropItemAngelicChance`, which picks from `lootListUnique` on
-`Loot_Manager_obj`, reads the definition through `GetUniqueRepoStruct`, skips
-the development-only entries, rolls against that definition's base drop rate
-and, on a hit, builds the item and places it on the ground.
+static reading. In short: the roll only runs for a player carrying buff 332
+(`buff_angelic_chance`); `DropItemAngelicChance` is where the roll and the
+pick happen; the pick draws on the game's unique list (`lootListUnique`, on
+`Loot_Manager_obj`) and on definitions read through `GetUniqueRepoStruct`;
+and a hit ends with an item on the ground.
 
-None of the steps after the buff check has been *measured* on the current
-build: whether a hook on `DropItemAngelicChance` sees the game's own call,
-what it returns, whether one call considers one candidate or walks the whole
-list, and which named script places the item. This round measures those, in
-one build and one session.
+Before this round none of that past the buff check had been *measured* on the
+current build: whether a hook on `DropItemAngelicChance` sees the game's own
+call, what it returns, whether one call considers one candidate or several,
+and which named script places the item. This round measured those, in one
+build and one session.
 
 ## Static search
 
@@ -105,37 +104,45 @@ this probe for the session, not removed.
 | id | script | expected route | positive control |
 | --- | --- | --- | --- |
 | `drop-item` | `DropItem` | via `Hook_DropItem` (native) | C1 (L-1.7): calls at least 1 with the gate open |
-| `angelic-chance` | `DropItemAngelicChance` | detoured | C1 (L-1.7): calls at least 1 and a finite `lastChance=` |
-| `angelic-forced` | `DropItemAngelic` | via `Hook_DropItemAngelic` (native) | C1 (the via route) |
-| `drop-boss` | `DropItemBoss` | via `Hook_DropItemBoss` (native) | C1 (the via route) |
-| `drop-heroic` | `DropItemHeroic` | detoured | C1 (own detours) |
-| `drop-debug` | `DropItemDebug` | detoured | C1 (own detours) |
-| `drop-unique` | `DropUniqueItems` | detoured | C1 (own detours) |
-| `unique-random-id` | `GetUniqueRandomItemID` | detoured | C1 (own detours) |
-| `unique-repo` | `GetUniqueRepoStruct` | detoured | C1 (own detours) |
-| `unique-charm` | `GetUniqueCharm` | detoured | C1 (own detours) |
-| `angelic-charm` | `DropAngelicCharm` | via `Hook_DropAngelicCharm` (native) | C1 (the via route) |
-| `angelic-key` | `DropAngelicKey` | via `Hook_DropAngelicKey` (native) | C1 (the via route) |
-| `default-params` | `CreateDefaultParams` | detoured | C1 (own detours) |
+| `angelic-chance` | `DropItemAngelicChance` | detoured | C1 (L-1.7): calls at least 1 |
+| `angelic-forced` | `DropItemAngelic` | via `Hook_DropItemAngelic` (native) | C1 (the via route, witnessed by `drop-item`) |
+| `drop-boss` | `DropItemBoss` | via `Hook_DropItemBoss` (native) | C1 (the via route, witnessed by `drop-item`) |
+| `drop-heroic` | `DropItemHeroic` | detoured | C1 and C2 (own detours) |
+| `drop-debug` | `DropItemDebug` | detoured | C1 and C2 (own detours) |
+| `drop-unique` | `DropUniqueItems` | detoured | C1 and C2 (own detours) |
+| `unique-random-id` | `GetUniqueRandomItemID` | detoured | C1 and C2 (own detours) |
+| `unique-repo` | `GetUniqueRepoStruct` | detoured | C1 and C2 (own detours) |
+| `unique-charm` | `GetUniqueCharm` | detoured | C1 and C2 (own detours) |
+| `angelic-charm` | `DropAngelicCharm` | via `Hook_DropAngelicCharm` (native) | C1 (the via route, witnessed by `drop-item`) |
+| `angelic-key` | `DropAngelicKey` | via `Hook_DropAngelicKey` (native) | C1 (the via route, witnessed by `drop-item`) |
+| `default-params` | `CreateDefaultParams` | detoured | C1 and C2 (own detours) |
 | `loot-create` | `LootGroundCreate` | detoured (under table-only `Hook_LootGroundCreate`) | C2 (L-1.12) |
 | `loot-create-item` | `LootGroundCreateFromItem` | detoured (under table-only `Hook_LootGroundCreateFromItem`) | C2 (L-1.12): calls at least the drops `angelicdrop status` reports |
-| `loot-drop` | `LootGroundDrop` | detoured | C1 (own detours) |
-| `rare-announce` | `GetRareDropAnnouncement` | detoured | C1 (own detours) |
+| `loot-drop` | `LootGroundDrop` | detoured | C1 and C2 (own detours) |
+| `rare-announce` | `GetRareDropAnnouncement` | detoured | C1 and C2 (own detours) |
 
 One positive control per route, in the same session:
 
 - **C1, own detours and the via route (L-1.7).** With the gate opened by
   `raredrop angelic 2` and at least 30 ordinary kills: `kills=` at least 30
   with the kill control native, the `angelic-chance` row (own detour, through
-  `HookAngelicChance`) at least one call with a finite chance, and the
-  `drop-item` row (via DropManager's native hook) at least one call. Zero on
-  either with kills counted means that route was blind this session, and
-  every row on it is `unmeasured`.
+  `HookAngelicChance`) at least one call, and the `drop-item` row (via
+  DropManager's native hook) at least one call. The chance the
+  `angelic-chance` row logs is a result, not a pass condition: the hook only
+  keeps it when it arrives as a real number, so a missing value would say
+  something about the argument's kind, not about whether the hook fired. Zero
+  calls on either with kills counted means that route was blind this session,
+  and every row on it is `unmeasured`.
 - **C2, the route under a table-only hook (L-1.12).** ForgePact's own
   `angelicdrop` places each item by calling `LootGroundCreateFromItem` by
   name, so the `loot-create-item` row has to count at least as many calls as
   `angelicdrop status` reports drops. Those calls sit outside both depths,
-  which is how they stay distinguishable from the game's.
+  which is how they stay distinguishable from the game's. C2 is also the only
+  control that passes through the probe's own detour-counting code (the
+  `angelic-chance` row counts from inside `HookAngelicChance` instead), so a
+  row on its own detour needs C1 and C2 both: C1 shows a direct call from
+  compiled GML reaches an inline detour on this build, C2 shows the probe's
+  own detour counts what reaches it.
 - The kill control is ForgePact's hook on `EnemyDestroyKillProc`, reported by
   the same route test as every row.
 
@@ -227,7 +234,8 @@ reading, not observed live; the September runs that opened the gate predate
 the table swap. The research build therefore looks the gate up once during
 startup, just before DropManager's hooks go in, and keeps what it found;
 opening the gate later reuses it. The lookup changes no byte. Its log line
-(`angelic: gate found ...` or the reason it was not) is read at L-1.2. The
+(`angelic: gate found ...` or the reason it was not) is read at L-1.2; in
+session 1 it reported the gate found inside the game's own `DropItem`. The
 player build has the same exposure after any `dropmult` and is tracked
 separately as ForgePact issue #69.
 
@@ -241,19 +249,32 @@ hooked calls themselves.
 ### What the follow-up needs
 
 The follow-up workorder (the substitution itself) reads these from
-`## Results`:
+`## Results`; session 1's answer follows each one.
 
 1. Whether `angelic-chance` saw calls on route `detoured`, and every other
-   row's route.
-2. The argument count, and which argument is the chance.
+   row's route. Yes: 181 calls in case A and 193 in case B, on its own
+   detour; every row took the route it was expected to (L-1.4).
+2. The argument count, and which argument is the chance. Four arguments: the
+   first two real numbers that read like a map position, the third the
+   chance (only 1195 and 1526 were seen), the fourth undefined; the calling
+   instance is the dying monster.
 3. The roll's return kind and value on a miss and, if one is seen, on a hit.
+   Undefined on every call (374 of 374); no hit was seen, so a hit's return
+   is not observed.
 4. The `unique-repo` inside count per `angelic-chance` call: one means a
-   single pick per roll; many means the list is walked.
+   single pick per roll; many means the list is walked. Many: about eight
+   per roll on average (1409 over 181 rolls, then 1407 over 193).
 5. Which of `loot-create`, `loot-create-item`, `loot-drop` and
-   `default-params` has a nonzero inside count.
-6. `lootListUnique`'s length and entry shape.
+   `default-params` has a nonzero inside count. Inside the roll, none (no hit
+   happened). Inside `DropItem`, `default-params` and `loot-create` both do,
+   on ordinary drops.
+6. `lootListUnique`'s length and entry shape. Not read:
+   `Loot_Manager_obj` carries no instance variable of that name, so where the
+   game keeps the list is not established.
 7. Whether case B (the real buff) reached the same rows as case A (the opened
-   gate), and the logged chance under `buffme 332`.
+   gate), and the logged chance under `buffme 332`. The same rows, in about
+   the same proportions; the logged chance stayed 1195 or 1526 and never read
+   the 3000 that `buffme` supplied.
 
 ## Live procedure
 
@@ -267,7 +288,8 @@ The follow-up workorder (the substitution itself) reads these from
   player build`, which ends the session at L-1.3.
 - **Hygiene:** a fresh session, and no `citrace nativetrace`, `raredrop
   ceiling`, `scount` or `zonegenlog` in it - each installs table hooks of its
-  own.
+  own. No `angelicwatch` either: its reset zeroes the kill and roll counters
+  the probe measures from.
 
 Every reply is recorded verbatim in the session record. Offsets that a log
 line prints are recorded there, never copied here.
@@ -292,9 +314,9 @@ line prints are recorded there, never copied here.
   kills at least 30 ordinary monsters.
 - **L-1.7 (C1)** `angelicprobe show`. Pass when `kills=` is at least 30 with
   the kill control native, `angelic-chance` is `detoured` with at least one
-  call and a finite `lastChance=`, and `drop-item` is `via Hook_DropItem
-  (native)` with at least one call. The `drop-item` count against `kills=` is
-  a result, not a pass condition. Also read the last 60 log lines for the
+  call, and `drop-item` is `via Hook_DropItem (native)` with at least one
+  call. `lastChance=` and the `drop-item` count against `kills=` are results,
+  not pass conditions. Also read the last 60 log lines for the
   `angelic: roll` lines.
 - **L-1.8** From the same reply: the `unique-repo` inside-angelic-chance
   count, and every placement row's inside counts (expected zero on misses).
@@ -302,10 +324,13 @@ line prints are recorded there, never copied here.
   original bytes restored`; then `angelicprobe reset`.
 - **L-1.10 (case B)** `buffme 332 3000 3000 18000`; the owner kills at least
   30 ordinary monsters within five minutes; then `angelicprobe show`.
-  `angelic-chance` with at least one call and the gate closed means the real
-  branch ran; record `lastChance=` (3000 means the buff value arrives as
-  passed). Zero here after C1 passed is a real negative for `buffme`'s value
-  shape, not for the hook.
+  Record `buffme`'s own reply verbatim. `angelic-chance` with at least one
+  call and the gate closed means the real branch ran, which by the static
+  reading also means the buff was on the player (its presence, not its
+  value, decides whether the branch runs). Record `lastChance=`: 3000 would
+  mean the buff value arrives as the chance. Any zero here is labelled with
+  what was supplied (id, both values, duration) and whether the buff's
+  presence was confirmed, not closed as a fact about the hook or the buff.
 - **L-1.11 (outlier, optional)** One boss or rare kill if one is at hand, then
   `angelicprobe show`: whether the `drop-boss` or `drop-heroic` rows carry an
   inside count. Skipped means `not observed`.
@@ -318,73 +343,147 @@ line prints are recorded there, never copied here.
 - **L-1.13** Stop the game normally and compare the saves against the backup;
   record what changed.
 
-A game-roll hit is not expected in one session (a chance around 3000 against
-base rates in the millions), so a hit's placement rows stay `not observed`
-unless one happens.
+A game-roll hit is not expected in one session (a chance in the low
+thousands against base rates in the millions), so a hit's placement rows stay
+`not observed` unless one happens. None happened in session 1.
 
 ## Results
 
+Session 1, 2026-09-23: the research build at ForgePact commit 18d2800
+(plugin v1.4.4), save slot 14 (Sorak, White Mage), driven through the drive
+tool with the owner doing the killing. The replies are quoted without the
+offsets some log lines carry; the session record keeps those.
+
 | step | reply |
 | --- | --- |
-| L-1.1 | pending |
-| L-1.2 | pending |
-| L-1.3 | pending |
-| L-1.4 | pending |
-| L-1.5 | pending |
-| L-1.6 | pending |
-| L-1.7 | pending |
-| L-1.8 | pending |
-| L-1.9 | pending |
-| L-1.10 | pending |
-| L-1.11 | pending |
-| L-1.12 | pending |
-| L-1.13 | pending |
+| L-1.1 | The drive tool's self-check passed all six checks, its three positive controls proven. The 104 save files were copied by hand and compared by hash (identical), then backed up by the tool. |
+| L-1.2 | Launched to plugin-ready and loaded slot 14. The startup gate lookup printed `angelic: gate found at DropItem+...` - the gate found inside the game's own `DropItem` - so case A could run. The banner then listed the startup hooks, `LootGroundCreate` and `LootGroundCreateFromItem` among them. |
+| L-1.3 | `angelicdrop: off \| rolls=0 drops=0 fails=0 \| pool not built yet` - the control line; the command channel was alive and the build was the research build. |
+| L-1.4 | `angelicprobe on: 17 row(s) counted, 0 not (calls=n/a)`. Every row took its expected route: `detoured` for the ten own-detour rows (`angelic-chance` through `HookAngelicChance`), `detoured (under table-only Hook_LootGroundCreate)` and the same for `Hook_LootGroundCreateFromItem` on the two loot-creation rows, `via Hook_<Name> (native)` on the five DropManager rows, and the kill control `native (Hook_EnemyDestroyKillProc holds a trampoline)`. |
+| L-1.5 | `angelicprobe list: Loot_Manager_obj carries no lootListUnique (variable_instance_exists false) - nothing read`. The object's instance was found; the variable was not on it. |
+| L-1.6 | `angelicprobe reset: counters zeroed, routes kept`, then `angelic: gate OPEN (the game now rolls for angelic drops)` and `raredrop angelic: x2.00 -> gate open, 1 roll(s) per kill at the game's own chance`. The owner killed about 50 ordinary monsters. |
+| L-1.7 | **C1 passed.** `kills=145` with the kill control native; `drop-item` via its native hook `calls=181`; `angelic-chance` detoured `calls=181 insideDropItem=181`; the hook's totals `hookCalls=181 extraRollBatches=0 lastChance=1526 lastReturn=undefined:-` with returns `zero=0 nonzero=0 nonNumeric=181`. The log's `angelic: roll` lines ran past number 100, with chances 1195 and 1526, each naming the dying instance - one of them a breakable hay prop rather than a monster, which would explain `DropItem` (and the roll) running more often than the kill hook counts kills. |
+| L-1.8 | From the same reply: `unique-repo` `calls=1708 insideDropItem=1708 insideAngelicChance=1409`. Placement rows inside the roll were all zero; `default-params` and `loot-create` each read `calls=14 insideDropItem=14 insideAngelicChance=0`; `loot-create-item`, `loot-drop` and `rare-announce` read zero calls. |
+| L-1.9 | `angelic: gate closed, original bytes restored`, `raredrop angelic: off (vanilla)`, `angelicprobe reset: counters zeroed, routes kept`. |
+| L-1.10 | Case B. `buffme` replied `buffme id=332 [3000.000000,3000.000000] st=0`. After 30 or more kills with the gate closed: `kills=166`; `drop-item` `calls=193`; `angelic-chance` `calls=193 insideDropItem=193`; `lastChance=1526 lastReturn=undefined:-`, `nonNumeric=193`; `unique-repo` `calls=3061 insideDropItem=3061 insideAngelicChance=1407`; `default-params` and `loot-create` `calls=49 insideDropItem=49 insideAngelicChance=0`; every other row zero. The first logged rolls carried four arguments - two real numbers (for instance 13239.6 and 5192.55), then a real chance of 1195 or 1526, then undefined - with a dying monster as the calling instance. The chance never read 3000. |
+| L-1.11 | Not run: no boss or rare monster was at hand. `drop-boss` and `drop-heroic` stay not observed for boss and rare kills. |
+| L-1.12 | **C2 passed.** Setup printed `angelic pool: 49 candidates, 11 rejected` and `angelicdrop: 1 in 1 kills \| rolls=0 drops=0 fails=0 \| pool 49 candidates`. After the kills, `angelicdrop: 1 in 1 kills \| rolls=9 drops=9 fails=0`, and `loot-create-item` (under its table-only hook) `calls=9 insideDropItem=0 insideAngelicChance=0` - nine calls for nine drops, outside both depths. `kills=9` (the owner reported three; the kill hook counted nine). `drop-item` `calls=12`, `angelic-chance` `calls=0`; `unique-repo` `calls=129 insideDropItem=19`, its first three calls logged with no calling instance just before ForgePact's own pool was built (where the other outside calls came from was not traced). `angelicdrop off` then replied `angelicdrop: off \| rolls=9 drops=9 fails=0 \| pool 49 candidates`. |
+| L-1.13 | The game closed normally (not forced). Against the backup, only slot 14's two save files and `shop.ini` changed; nothing was added or missing. |
 
 ## Negative results, sourced
+
+Earlier negatives, re-labelled:
 
 - **`LootGroundCreate` "was never called at runtime (measured: 0)"** - a
   comment beside the research build's `LootGroundCreate` hook. That zero came
   from the table-only installer, which cannot see the game's direct calls
-  (`AGENTS.md`, "Prove the Instrument"). It is **not observed through a table
-  hook**, not a fact about the game; the `loot-create` row re-measures it on a
-  route that can see direct calls, with C2 as its control.
-- **No buff, no roll** - `docs/angelic-drop-research.md`: 984 kills without
-  buff 332 produced 0 calls to `DropItemAngelicChance`. Measured through the
-  hook of that date, which was a direct detour; kept as the reason case A
-  opens the gate.
+  (`AGENTS.md`, "Prove the Instrument"): it was **not observed through a table
+  hook**, never a fact about the game. Session 1 contradicts it: the
+  `loot-create` row, on a detour under that same table-only hook with C2
+  passing on the same route, counted 14 game calls in case A and 49 in case
+  B, every one inside `DropItem`. The game does call `LootGroundCreate`
+  directly, for ordinary drops.
+- **Not observed without buff 332 (984 kills)** - `docs/angelic-drop-research.md`:
+  984 kills without the buff produced no call to `DropItemAngelicChance`,
+  measured through the hook of that date, which was a direct detour. That
+  same hook logged rolls with the gate opened on 2026-09-05/07; whether a
+  positive control ran in the same session as the 984 kills is not recorded.
+  Session 1 has one window consistent with it - L-1.12, gate closed, no
+  `angelic-chance` call over 12 `DropItem` calls - but whether `buffme`'s buff
+  had run out by then was not read, so it is not counted as a control.
 - **The gate cannot be found after startup in the research build** - code
-  reading only (see `## Instrument`), **not observed live**. L-1.2 records what
-  the startup lookup actually printed.
+  reading only (see `## Instrument`), **not observed live**. L-1.2 shows the
+  startup lookup found it; no later lookup was tried.
 
-Each zero this session produces is added here after the session, labelled
-`not observed` with the control that backs it (C1 for the own-detour and via
-rows, C2 for the two loot-creation rows); a row whose route was `TABLE-ONLY`,
-`blocked` or `not found` is `unmeasured`.
+Zeros from session 1. A row on its own detour is backed by C1 and C2, a row
+on the via route by C1, a loot-creation row by C2; all three passed, and no
+row came up `TABLE-ONLY`, `blocked` or `not found`, so none is `unmeasured`.
+
+- **Via rows, no call in any window** (cases A and B, and L-1.12):
+  `angelic-forced`, `drop-boss`, `angelic-charm`, `angelic-key` - not
+  observed, backed by C1 (`drop-item` counted 181 on the same route).
+- **Own-detour rows, no call in any window:** `drop-heroic`, `drop-debug`,
+  `drop-unique`, `unique-random-id`, `unique-charm`, `loot-drop`,
+  `rare-announce` - not observed, backed by C1 and C2; the same detour code
+  counted `unique-repo` and `default-params` in the same windows.
+- **No game call to `LootGroundCreateFromItem`** in cases A and B - not
+  observed, backed by C2; all nine calls in L-1.12 were ForgePact's own.
+- **No placement inside the roll** - every placement row read
+  `insideAngelicChance=0` over 374 game rolls (181 plus 193). No roll hit:
+  every return was undefined and `rare-announce` stayed at zero. Which script
+  places an item on a hit is therefore not observed; it needs a hit.
+- **The supplied buff value as the chance** - not observed with
+  `buffme 332 3000 3000 18000` (supplied: buff 332, both values 3000, 18000
+  frames; `buffme` replied `st=0`). The buff's presence was confirmed only
+  indirectly, by the real branch running 193 times with the gate closed. The
+  chance argument read 1195 or 1526, the same values as case A, so what the
+  chance is made of was not established.
+- **`lootListUnique` on `Loot_Manager_obj`** - not observed: the instance
+  exists, the variable does not. The list's length and entry shape are
+  unmeasured.
+- **Boss and rare kills** (L-1.11) - not run, so `drop-boss` and
+  `drop-heroic` are not observed for them. That is a limit of the session's
+  schedule, not evidence that a boss's drop skips either script.
 
 ## Decision
 
-Pending the live session. Each candidate's line opens with `works`, `not
-observed` or `unmeasured` once it has run, and `finding:` names only
-candidates labelled `works` - the step (or steps) the follow-up hooks to
-substitute Headhunter or Tyrant's Crown at Liquor Holster's share - or reads
-`none`, with the reason sourced above.
+Each candidate's line opens with its label. `works`: the row counted the
+game's own calls on a route whose positive control passed. `not observed`:
+no game call on such a route (sourced above). `unmeasured`: no route, or a
+failed control - none this session. `finding:` names only candidates
+labelled `works` that are the step the follow-up hooks to substitute
+Headhunter or Tyrant's Crown at Liquor Holster's share.
 
-* `drop-item` - **pending.**
-* `angelic-chance` - **pending.**
-* `angelic-forced` - **pending.**
-* `drop-boss` - **pending.**
-* `drop-heroic` - **pending.**
-* `drop-debug` - **pending.**
-* `drop-unique` - **pending.**
-* `unique-random-id` - **pending.**
-* `unique-repo` - **pending.**
-* `unique-charm` - **pending.**
-* `angelic-charm` - **pending.**
-* `angelic-key` - **pending.**
-* `default-params` - **pending.**
-* `loot-create` - **pending.**
-* `loot-create-item` - **pending.**
-* `loot-drop` - **pending.**
-* `rare-announce` - **pending.**
+* `drop-item` - **works.** 181 calls for 145 counted kills in case A and 193
+  for 166 in case B, through DropManager's native hook; every game roll
+  happened inside it. It is the caller that owns the buff check, not the
+  pick, and it runs for every drop, so it is not where a substitution
+  belongs.
+* `angelic-chance` - **works.** One call per game roll on its own detour
+  through `HookAngelicChance`: 181 with the gate open and 193 under the real
+  buff with the gate closed, always inside `DropItem`. Four arguments, the
+  third the chance, the dying monster as the calling instance, undefined
+  returned on every one of 374 misses. The definition reads that make up the
+  pick happen inside this call. This is the step the follow-up hooks.
+* `angelic-forced` - **not observed.** No call on the via route in any
+  window (C1). It is counted only, never called.
+* `drop-boss` - **not observed.** No call on the via route (C1), on
+  ordinary kills only; L-1.11 did not run.
+* `drop-heroic` - **not observed.** No call on its own detour (C1 and C2),
+  on ordinary kills only; L-1.11 did not run.
+* `drop-debug` - **not observed.** No call on its own detour (C1 and C2).
+* `drop-unique` - **not observed.** No call on its own detour (C1 and C2).
+* `unique-random-id` - **not observed.** No call on its own detour (C1 and
+  C2), inside the roll or anywhere else, so it is not what picks the unique
+  on these kills.
+* `unique-repo` - **works.** 1409 of its 1708 calls in case A and 1407 of
+  3061 in case B came from inside the roll - about eight definition reads
+  per roll on average, so a roll considers several entries rather than one.
+  Its many calls outside the roll, inside `DropItem`, make it a noisy place
+  to substitute; it tells the follow-up what the roll reads, not where to
+  hook.
+* `unique-charm` - **not observed.** No call on its own detour (C1 and C2).
+* `angelic-charm` - **not observed.** No call on the via route (C1).
+* `angelic-key` - **not observed.** No call on the via route (C1).
+* `default-params` - **works.** 14 game calls in case A and 49 in case B,
+  all inside `DropItem`, none inside the roll: it builds ordinary drops. Its
+  part in an Angelic hit is not observed, because no hit happened.
+* `loot-create` - **works.** The same counts as `default-params`, on the
+  detour under the table-only hook with C2 passing: the game calls
+  `LootGroundCreate` directly for ordinary drops. Its part in an Angelic hit
+  is not observed.
+* `loot-create-item` - **not observed.** No game call in case A or B (C2);
+  its nine calls in L-1.12 were ForgePact's own placements.
+* `loot-drop` - **not observed.** No call on its own detour (C1 and C2).
+* `rare-announce` - **not observed.** No call on its own detour (C1 and C2),
+  consistent with no roll hitting.
 
-finding: pending
+finding: angelic-chance
+
+`DropItemAngelicChance` is the one measured step that runs exactly once per
+game roll, on both ways of making the game roll, on a route that sees the
+game's direct call, with the pick inside it. Three things the follow-up still
+has to plan around, each sourced above: a hit was never seen, so neither a
+hit's return value nor the script that places a hit's item is known; the
+game's unique list was not found where the static reading put it; and the
+chance the game passes did not follow the value `buffme` supplied.
