@@ -6,6 +6,7 @@ phase1b-status: complete
 phase1c-status: complete
 phase1d-status: complete
 phase1e-status: complete
+phase1f-status: pending
 
 **Status: Phase 0 done (static search, instrument, decision core); Phase 1 (the
 first live session, 2026-09-22) done; Phase 1b (a widened instrument and a
@@ -50,6 +51,14 @@ the cell and the saved stash no longer held the unit, but the kept map still
 carried it, so no take the kept map confirms is on record. Closing the stash
 fired `SaveStash` once each time; a save after a mod take and the map before
 the stash's first open were not tried.
+Phase 1f, a research round on the installed Phase 1e build with no rebuild and
+no code change, asks the three things H-A still lacks: what the kept map does
+when the game's own hand move takes a whole stack out of each special tab (the
+control Live 1e's stale entry after `GridRemoveItem` had none of), a by-name
+take of one unit that the kept map and the next stash save both show, and the
+owner's Cube bracket - `SaveStash` by name in the shape the stash close uses,
+and `GetItemMap(9)` by name before the stash is opened in a launch
+(`### Live procedure 1f`, `### Phase 1f results`).
 Nothing player-visible changes yet: the
 `craftmats` switch exists but nothing is wired to crafting, and the player
 build refuses it. A result is only ever recorded as a negative with its
@@ -1014,6 +1023,120 @@ take? What this document fixes is its shape:
   is a finding, recorded under `### Phase 1e results`; no live outcome is an
   acceptance criterion.
 
+### Live procedure 1f
+
+Live 1f runs the Phase 1e research build again - already installed, with no
+rebuild, no code change and nothing copied (`### Phase 1f results` records the
+hash it reuses) - under `live-operator`; the step-by-step procedure is `### Live
+procedure 1` in the workorder's context file,
+`.claude/workorders/forgepact-issue-14-phase1f-context.md`, which stays on the
+owner's machine. It asks three questions: (1) when the game's own hand move
+takes a stack's last unit out of a special tab, does the kept `GetItemMap(9)`
+map drop the key, or keep a stale one as it did after Live 1e's by-name
+`GridRemoveItem`? (2) is there a by-name take of exactly one unit that the kept
+map, the game's own lookup, the grid and the next stash save all agree on, and
+what argument shapes do the game's own stack decrements use on a hand split and
+on a craft? (3) the owner's Cube bracket: does `SaveStash` by name, in the
+shape the stash close uses, write `stash.hss` with the stash open and with it
+closed, and does `GetItemMap(9)` by name, with a self the game itself uses,
+return the stash map before the stash is opened in a launch? What this document
+fixes is its shape:
+
+- **The Phase 1e build, two launches.** The installed plugin's SHA-256 is
+  checked first; a different hash stops the session, and reinstalling is the
+  owner's call. Character slot 14 ("Sorak"). Auto-prospect off. Launch A runs
+  the hand moves, the take, the save trials and one craft; launch B runs only
+  the `GetItemMap(9)` trial, last, so a crash there costs nothing already
+  captured. The saves are backed up once before launch A and restored once
+  after launch B, never between: launch B compares the map it obtains against
+  the file launch A left. `tools/stash_tab_counts.py` reads both tabs before
+  launch A and after it, and the file's `LastWriteTimeUtc` is read at every
+  save, the game's own and ours.
+- **`mapkeep on` before `craftprobe hook`**, both before the character loads,
+  in each launch.
+- **The whole-entry control, by hand, the owner stating every count by eye**:
+  one unit of a bag material the owner names (X, from a stack of two or more
+  not held in the stash's Materials tab) moved into the stash's Materials tab,
+  then - its only unit - back to the bag; and the whole class-15 `b=51` stack
+  (10) on the Socketable tab dragged into the bag and back (Ol is never moved).
+  Each with `craftprobe arm budget=8` before and `show` after, `mapkeep find`
+  before and after, and the game's own lookup `craftprobe call
+  GetItemFromFingerprint id:<grid> <fingerprint> 9 confirm` before the removal
+  (its control: X's struct) and after it.
+- **The save's shape, recorded before it is replayed**: the rows are armed
+  before the stash's first close, so `SaveStash`'s logged line - its self, its
+  `argc` and every argument - is quoted with the `s_SaveStashConstants` lines
+  and the first line of each of its closures. That is the shape the save
+  trials use.
+- **The stack decrements, recorded and not called**: a hand split of one
+  Unstable Dust out of the Materials tab, and one craft with bag inputs (one
+  press; amount 2 only if the owner wants `CraftEditPlayerInventory`'s `a0`
+  decoded), every non-draw row quoted with its arguments and `ret=`, and
+  `craftprobe store map`'s `localItemMap` index set beside
+  `CraftEditPlayerInventory`'s `a1` and the kept map's index - index equality
+  only, never identity.
+- **The trials, by name, under `confirm`, one unit, the Materials tab only**:
+  `GridRemoveItem` exactly as Live 1e's T1, on X back in the tab as a 1-stack;
+  then the named removal row the hand move of X logged, only if it logged one
+  whose arguments `craftprobe call` can supply (a number, a string, an item
+  struct as `fp9:`, a `ref ds_map` as `map9`). `SaveStash` in its logged shape
+  with the stash open, and again with it closed only if the logged self has a
+  live instance then. A stack row replayed with the count `1`, only if one
+  fired on the hand split. In launch B, with neither the stash nor the bag
+  opened, `GetItemMap` with self `Console_Save_obj` (the self of the game's
+  own `a0=9` call with the stash closed in Live 1d) and the one argument `9`;
+  then the stash is opened, to see whether the game's own call returns the
+  index obtained by name. After each trial: the kept map, the lookup, the
+  grid, the owner's eye, and for a save the file. A refusal is quoted with
+  what was supplied; a shape not run is "not observed (<why>)".
+  `CraftEditPlayerInventory` and `CraftEditGrid` with the stash as owner are
+  not called: their `a2` is a struct the game creates fresh, which `call`
+  cannot build, and `a0` is undecoded.
+- **What would make a trial unsafe, and the mitigation.** `SaveStash` by name
+  writes the player's real `stash.hss` from whatever structure the game
+  serialises (not established), a wrong self or argument is a GML error inside
+  `script_execute` that ends the launch, and a save from a structure a mod take
+  left stale would write the duplicate the owner reported. `GetItemMap(9)` by
+  name is a getter call of the class Phase 0b's `GetProfileInventoryData` crash
+  warns against: its self was measured with the stash closed after an earlier
+  open, not before any open, and if the script reads window state it may
+  error. Mitigation: the shapes the game itself used (the save's replayed
+  after the game's own close used it in the same session), one unit,
+  `confirm`, saves backed up and restored, the result read from the file
+  rather than assumed, and the getter last in its own launch. A crash during a
+  trial is that trial's result, recorded with the shape supplied; the rest of
+  that launch's checks read `not-observed (launch ended at <check>)`.
+- **Unverified going in, stated as such**: that `GetItemMap`'s arity is 1 for
+  the `a0=9` call (measured for `a0=0` on the same script in Live 1c; the
+  keeper does not print `argc`); that `SaveStash`'s logged arguments are kinds
+  `craftprobe call` can supply (if not, both save checks read not-observed
+  with the shape quoted); that the whole `b=51` stack moves without a split
+  dialog (either path is recorded).
+- **Cases**: the Materials tab (the outlier: a plain grid object, the only
+  container a `GridRemoveItem` is recorded on; the hand control and every
+  trial) and the Socketable tab (the ordinary case: an array of grid
+  instances; the hand control only).
+- **The capture** is `.claude/workorders/forgepact-issue-14-phase1f-live-1.md`,
+  ending with a `## Checks` section of one line per check, exactly
+  `- <name> | expected: <text> | observed: <quoted, short> | pass|fail|not-observed`,
+  for these sixteen checks in this order: `dll-hash`, `marker`,
+  `counts-tool-before`, `hook`, `control`, `last-unit-material`,
+  `last-unit-socket`, `save-shape`, `stack-shapes`, `take-1stack`,
+  `save-by-name`, `save-by-name-closed`, `take-stack`, `counts-tool-after`,
+  `map-by-name` and `map-by-name-vs-game`.
+- **Which control vouches for which read.** The armed row lines rest on
+  `dll-hash`, `marker` and `control` (`CheckPlayerInteraction` non-zero after
+  the load). `mapkeep find` and `mapkeep stat` reads rest on `hook` (`mapkeep
+  on` printing `both-routes` for both hooks) and on `control`'s `a0=0 calls=`
+  being non-zero, plus the same-session `find` that read X's key at `o=1`
+  before the removal. A lookup after a removal rests on the same call
+  returning X's struct before it, in the same step. The file reads rest on
+  `counts-tool-before` (the tool runs) and on the file's `LastWriteTimeUtc`
+  moving at the game's own close in the same session. A row that did not fire
+  while its control climbed is "not observed", never "does not fire". A `fail`
+  or `not-observed` is a finding, recorded under `### Phase 1f results`; no
+  live outcome is an acceptance criterion.
+
 ## Results
 
 Research DLL: `plugin_build\BloodPactPlugin_rel.dll`, built 2026-09-22 with
@@ -1472,11 +1595,15 @@ and sometimes corrupted. Live 1e counted the save rows around both closes
 open, `SaveStash` and its five closures stood at 0; each close raised `SaveStash`
 by 1, its closures by several hundred calls between them, and
 `s_SaveStashConstants` by 2. `LoadStash` stayed at 2, its value after the
-character load, through both closes and both reopens. So in this build the
-stash is saved when its window closes, and not reloaded when it opens again.
-The crash report itself is the owner's, not measured here: a take from the
-stash is on disk only after the next stash save, and a crash before it leaves
-the two save files out of step.
+character load, through both closes and both reopens. So what was measured is
+`SaveStash` observed once at each close, and `LoadStash` - installed through
+both routes, its two load-time calls the control - not observed at either
+reopen. No other writer of `stash.hss` was ruled out: the exit rewrote
+`stash.hss` as well (`hs_saves_inspect`, `counts-tool-after`), and nothing
+watched the file between the closes. The crash report itself is the owner's,
+not measured here: a take from the stash was seen reaching the file only
+through a save the game made (a close's `SaveStash`, or the exit), and a crash
+before such a save would leave the two save files out of step.
 
 **Question 1: the map in the player-build shape.** `HookOneScript`, the
 installer every shipped gameplay hook uses, reported `both-routes` on
@@ -1521,20 +1648,28 @@ established; in this one trial the grid's state was saved.
   currency rule `CraftMatsKeptMap` encodes held across a room change and a
   reopen. Before the stash's first open in a launch there was no return to keep. The instrument's control for `a0=9` is the
   install line plus a non-zero `a0=0` in the same session, both of which held.
-- **The kept map follows the game's own hand moves, and not a by-name
-  `GridRemoveItem`.** After the two hand takes and the move in, the map's
-  entries changed with no new keep; after T1 it kept X's entry, and the game's
-  next `GetItemMap(9)` return still carried it. A mod that counted from this map
+- **The kept map followed every game move Live 1e made; after the one by-name
+  `GridRemoveItem` it kept the removed entry.** The moves it followed lowered a
+  stack's `o` (the two hand takes) or added a key (the move of X in), each with
+  no new keep. T1 was the only removal of a whole entry, and it was by name:
+  after it the map kept X's entry, and the game's next `GetItemMap(9)` return
+  still carried it. What the map does when the game's own route removes a whole
+  entry is not observed (Live 1e made no such move), so this does not show
+  whether the stale entry is `GridRemoveItem`'s doing or the map's behaviour on
+  any removal - Phase 1f's first question. A mod that counted from this map
   after such a take would count a unit that is gone - the duplication risk the
   decision core's confirming re-read exists to catch, and why that re-read
   cannot be this map after this call.
-- **The stash is saved on its close.** Each close fired `SaveStash` once; no
-  reopen fired `LoadStash`. The saved file matched the grid after T1. Not
+- **`SaveStash` was observed at each close.** Each close fired `SaveStash`
+  once; `LoadStash` was not observed at either reopen, with its two load-time
+  calls as the control. The saved file matched the grid after T1. No other
+  writer of `stash.hss` was ruled out (the exit rewrote it too). Not
   established: what `SaveStash` reads, or that it would match the grid for any
   other take.
-- **The owner's crash report is a design constraint.** A stash-side take is
-  persisted only by the next stash save, and a crash before it can leave the
-  item in both save files. A take made at the cube with the stash window closed
+- **The owner's crash report is a design constraint.** A stash-side take was
+  seen reaching `stash.hss` only through a save the game made (a close's
+  `SaveStash`, or the exit), and a crash before such a save can leave the item
+  in both save files. A take made at the cube with the stash window closed
   would widen that window, so a design has to say when the stash is saved after
   a mod take.
 - **The owner's design proposal is the leading persistence candidate.** Bracket
@@ -1544,6 +1679,42 @@ established; in this one trial the grid's state was saved.
   normally makes itself - `GetItemMap(9)` with a self the game uses, and
   `SaveStash` with the argument shape the stash close uses - and each is a
   getter or write call not yet trialled.
+
+### Phase 1f results
+
+Research DLL: the Phase 1e research build, reused unchanged -
+`plugin_build\BloodPactPlugin_rel.dll`, built with `plugin_build\build.bat dev`
+from ForgePact `ba3046d` (SHA-256
+`806d2562689db855de776f79e6df88d19f9ea4783cf56d24546d69398262291c`), the file
+`### Phase 1e results` records. Phase 1f added no row, no command and no
+marker, and nothing was rebuilt or installed, so the build control is
+`dll-hash` against this hash plus the `phase1e rows=252` marker.
+`### Live procedure 1f` gives the session's shape.
+
+Not yet run. The Observed and Verdict columns are filled from the capture,
+`.claude/workorders/forgepact-issue-14-phase1f-live-1.md`, once Live 1f has
+run, one row per check in the procedure's order. A `fail` or `not-observed` is
+a finding; a rejected or refused call shape is recorded with what was
+supplied, and a shape not run is "not observed (<why>)".
+
+| Check | What it measures | Observed | Verdict |
+|---|---|---|---|
+| dll-hash | The installed plugin's SHA-256, read with the game closed, equals the hash above | | |
+| marker | A bare `craftprobe` answers `phase1e rows=252` (this build) | | |
+| counts-tool-before | `tools/stash_tab_counts.py` before launch A: exit 0, the Socketable tab's `b=1` (Ol) and `b=51` lines and the Materials tab's `b=50` (Unstable Dust) line; no `class=14 b=51` line | | |
+| hook | `mapkeep on` prints `GetItemMap` and `LoadStash` `both-routes` (a `TABLE-ONLY` is quoted as the finding), then `craftprobe hook` reads `0 failed` with two rows held by mapkeep | | |
+| control | After the load: `CheckPlayerInteraction calls=` and `mapkeep stat`'s `a0=0 calls=` both non-zero; `a0=9 calls=` and `first9:` quoted as launch A's baseline | | |
+| last-unit-material | X, its only unit, moved by hand from the Materials tab to the bag: the kept map `dropped:` or `kept:` X's key, the game's own lookup after it, and the named rows that fired, in call order, with `ret=` | | |
+| last-unit-socket | The whole class-15 `b=51` stack dragged by hand from the Socketable tab to the bag: the same reads | | |
+| save-shape | The stash's close logs `SaveStash` with its self, `argc` and every argument's kind - the shape the save trials replay | | |
+| stack-shapes | The rows and arguments of a hand split of one Unstable Dust and of one craft with bag inputs; `CraftEditPlayerInventory`'s `a0`, and its `a1` index against `localItemMap`'s and the kept map's | | |
+| take-1stack | `GridRemoveItem` by name on X back in the Materials tab as a 1-stack, then the hand move's removal row if one was logged in a shape `call` can supply: `ret=`, the cell, the kept map, the lookup | | |
+| save-by-name | `SaveStash` by name in the logged shape with the stash open: dispatched, the file's write time moved, and the file against the grid and against the kept map | | |
+| save-by-name-closed | The same with the stash closed, only if the logged self has a live instance then | | |
+| take-stack | A stack row replayed by name with the count `1` on the Unstable Dust stack, only if one fired on the hand split | | |
+| counts-tool-after | `tools/stash_tab_counts.py` after launch A: each line against the owner's last count and the trials' results | | |
+| map-by-name | Launch B, no window opened: `GetItemMap` by name with self `Console_Save_obj` and the argument `9` - dispatched, kept current by `mapkeep`, and its Ol and Unstable Dust counts against the file launch A left | | |
+| map-by-name-vs-game | Launch B, then the stash opened: the game's own `GetItemMap(9)` call leaves the index obtained by name as the latest keep (`same-index:`), or makes a new keep (`new-keep:`, its self and index) | | |
 
 ## Decision gate
 
@@ -1586,16 +1757,20 @@ What it still lacks, none of it measured:
   (`map-follows-trial`: fail). The decision core turns the mod off on a success
   its re-read cannot confirm, so this take cannot drive it as it stands. No
   `RemoveItemFromMap` or stack-row shape was recorded to try instead (T2 and
-  T3 not observed).
+  T3 not observed). The moves the map did follow lowered a stack's `o` or
+  added a key; T1 was the only removal of a whole entry, and it was by name, so
+  the map's behaviour when the game's own route removes a whole entry is not
+  observed (Live 1e) - Phase 1f's first question.
 - *The save's source.* The kept map is a view the game keeps up to date on its
   own moves, not shown to be what `SaveStash` serializes: which structure the
   stash save writes from is not established; the grid's state was saved in this
   one trial.
-- *A save after a mod take.* The stash is saved when its window closes (Live
-  1e counted `SaveStash` once per close). A take made at the cube with the
-  stash closed would be on disk only at the next stash save, and the owner's
-  report of a crash duplicating or corrupting an item moved out of an open
-  stash makes that window a design constraint. The owner's proposal - bracket
+- *A save after a mod take.* Live 1e observed `SaveStash` once at each stash
+  close, and the exit rewrote `stash.hss` too; no other writer was ruled out.
+  A take made at the cube with the stash closed has no save observed after it
+  until the next stash close or the exit, and the owner's report of a crash
+  duplicating or corrupting an item moved out of an open stash makes that
+  window a design constraint. The owner's proposal - bracket
   the cube like the stash window, obtaining the map when the cube opens and
   having the game save the stash when it closes or right after a mod take - is
   the leading persistence candidate. Both halves are by-name calls the game

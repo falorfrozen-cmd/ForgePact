@@ -770,20 +770,22 @@ class CraftMatsContractTests(unittest.TestCase):
     # ---- the research document -------------------------------------------------
 
     def test_research_doc_has_its_sections_and_status(self):
-        head = "\n".join(self.doc.split("\n")[:8])
+        head = "\n".join(self.doc.split("\n")[:9])
         self.assertIn("phase0-status: complete", head)
         self.assertRegex(head, r"phase1-status: (pending|complete)")
         self.assertRegex(head, r"phase1b-status: (pending|complete)")
         self.assertRegex(head, r"phase1c-status: (pending|complete)")
         self.assertRegex(head, r"phase1d-status: (pending|complete)")
         self.assertRegex(head, r"(?m)^phase1e-status: (pending|complete)$")
+        self.assertRegex(head, r"(?m)^phase1f-status: (pending|complete)$")
         for heading in ("## Interpretation", "## Static search", "### Negative results, sourced",
                         "## Baseline (vanilla) to measure", "## Hypotheses", "## Instrument", "## Live procedure",
                         "## Results", "### Constraints from Phase 1", "### Live procedure 1b",
                         "### Phase 1b results", "### Phase 1c rows", "### Phase 1c readers",
                         "### Live procedure 1c", "### Phase 1c results", "### Live procedure 1d",
                         "### Phase 1d results", "### Phase 1e rows", "### Phase 1e instrument",
-                        "### Live procedure 1e", "### Phase 1e results", "## Decision gate"):
+                        "### Live procedure 1e", "### Phase 1e results", "### Live procedure 1f",
+                        "### Phase 1f results", "## Decision gate"):
             self.assertIn("\n" + heading + "\n", self.doc, heading)
         # Phase 1e's four sections sit beside their Phase 1c/1d counterparts.
         at = lambda heading: self.doc.index("\n" + heading + "\n")
@@ -795,14 +797,35 @@ class CraftMatsContractTests(unittest.TestCase):
         self.assertLess(at("### Live procedure 1e"), at("## Results"))
         self.assertLess(at("### Phase 1d results"), at("### Phase 1e results"))
         self.assertLess(at("### Phase 1e results"), at("## Decision gate"))
+        # Phase 1f adds no rows and no instrument (it reuses the Phase 1e build),
+        # only a procedure and a results table, each after its Phase 1e one.
+        self.assertLess(at("### Live procedure 1e"), at("### Live procedure 1f"))
+        self.assertLess(at("### Live procedure 1f"), at("## Results"))
+        self.assertLess(at("### Phase 1e results"), at("### Phase 1f results"))
+        self.assertLess(at("### Phase 1f results"), at("## Decision gate"))
         # Phase 1e's results name the research DLL they were measured with, and
         # its procedure names the 22 checks the capture carries.
-        results = self.doc[at("### Phase 1e results"):at("## Decision gate")]
+        results = self.doc[at("### Phase 1e results"):at("### Phase 1f results")]
         self.assertRegex(results, r"[0-9a-f]{64}")
-        procedure = self.doc[at("### Live procedure 1e"):at("## Results")]
+        procedure = self.doc[at("### Live procedure 1e"):at("### Live procedure 1f")]
         self.assertIn("twenty-two checks", procedure)
         for check in ("keeper-install", "keeper-control", "map-first-call", "map-whole", "take-trial-grid",
                       "take-trial-map", "take-trial-stack", "map-follows-trial", "room-invalidate", "map-refresh"):
+            self.assertIn("`" + check + "`", procedure, check)
+            self.assertIn("| " + check + " |", results, check)
+        # Phase 1f's results name the one build they reuse (the Phase 1e DLL's
+        # hash, and no other), and its procedure names the sixteen checks the
+        # capture carries, each with a row in the results table.
+        results = self.doc[at("### Phase 1f results"):at("## Decision gate")]
+        self.assertEqual(re.findall(r"\b[0-9a-f]{64}\b", results),
+                         ["806d2562689db855de776f79e6df88d19f9ea4783cf56d24546d69398262291c"])
+        procedure = self.doc[at("### Live procedure 1f"):at("## Results")]
+        self.assertIn("sixteen checks", procedure)
+        self.assertIn("forgepact-issue-14-phase1f-context.md", procedure)
+        for check in ("dll-hash", "marker", "counts-tool-before", "hook", "control", "last-unit-material",
+                      "last-unit-socket", "save-shape", "stack-shapes", "take-1stack", "save-by-name",
+                      "save-by-name-closed", "take-stack", "counts-tool-after", "map-by-name",
+                      "map-by-name-vs-game"):
             self.assertIn("`" + check + "`", procedure, check)
             self.assertIn("| " + check + " |", results, check)
         results = self.doc[self.doc.index("\n## Results\n"):self.doc.index("\n## Decision gate\n")]
