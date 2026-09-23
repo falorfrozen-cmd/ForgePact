@@ -4,12 +4,13 @@ phase0-status: complete
 phase1-status: complete
 phase1b-status: complete
 phase1c-status: complete
-phase1d-status: pending
+phase1d-status: complete
 
 **Status: Phase 0 done (static search, instrument, decision core); Phase 1 (the
 first live session, 2026-09-22) done; Phase 1b (a widened instrument and a
 second session, 2026-09-22/23) done; Phase 1c (a reader round, 2026-09-23)
-done; the mechanism is not decided.** Phase 1
+done; Phase 1d (a closed-window reader round, 2026-09-23) done; the mechanism
+is not decided.** Phase 1
 measured the vanilla baseline, the cube's craft route and a vanilla duplication,
 but its instrument reached neither the stash's special-tab container nor the
 route a hand move between a special tab and the bag takes (`## Results`).
@@ -21,10 +22,16 @@ Phase 1c read both special tabs' counts with the stash window open - the game's
 own fingerprint lookup resolves a stash cell with `9` as its second argument,
 not `0` - but no reader reproduced a special-tab count with the window closed
 (`### Phase 1c results`). Phase 1d, a reader round on the Phase 1c build with
-no rebuild, is prepared but its session has not run (`### Live procedure 1d`,
-`### Phase 1d results`): it asks whether the kept `GetItemMap(9)` map or
-`New_Inventory_Data_obj`'s special-tab arrays still hold the counts with the
-window closed. No hypothesis is eligible yet (`## Decision gate`). Nothing player-visible changes yet: the
+no rebuild, read both counts with the window closed: the map the game's own
+`GetItemMap(9)` call returned, kept by the instrument's detour, still gave Ol
+216 and Unstable Dust 13 after the stash closed, through the same reference,
+with the item-struct path's control passed; `New_Inventory_Data_obj`'s
+`inventorySocketGrid` and `inventoryMaterialGrid` turned out to hold the bag's
+special tabs, not the stash's (`### Phase 1d results`). Not observed: that map
+before the stash's first open in the launch (the game made no `GetItemMap(9)`
+call before it), and whether the map follows a change to a tab (nothing was
+moved). That makes H-A eligible, with what a player build would still need
+listed under `## Decision gate`. Nothing player-visible changes yet: the
 `craftmats` switch exists but nothing is wired to crafting, and the player
 build refuses it. A result is only ever recorded as a negative with its
 positive control from the same session (repo-root `AGENTS.md`, "Prove the
@@ -1083,38 +1090,96 @@ second argument of the stash's own `GetItemFromFingerprint` calls and of Phase
 fingerprint to item struct, `localItemMap` being owner 0's; the lower index
 suggests map 1050 was made before map 1056, plausibly at character load rather
 than when a window opened, but GameMaker reuses a destroyed map's index, so the
-order of creation is not established (the before-any-window read in `### Live
-procedure 1d` is what would show it); and id 266430 is
-a cell of the Socketable container made at Live 1c's reopen, so at least the
-reopen made that call - whether the first open or the load did is not on
-record. `map0-identity` settles the `0`/`localItemMap` identity at one moment.
+order of creation is not established; Live 1d's dump before any window (below)
+shows no `GetItemMap(9)` call at all before the stash first opened, which does
+not support the made-at-load reading either. Id 266430 is a cell of the
+Socketable container made at Live 1c's reopen, so at least the reopen made that
+call; in Live 1d the first open made one too (`map-open-socket`).
+`map0-identity` settles the `0`/`localItemMap` identity at one moment.
 
-Filled from that capture once the session has run (until then the Observed and
-Verdict cells are empty), one row per check (the names and the `## Checks` line
-format are fixed by `### Live procedure 1d`). A `fail` or `not-observed` is a
-finding, written as "not observed by <reader> (<what it printed>)"; a reader
+**Live 1d, 2026-09-23.** One launch, character slot 14 ("Sorak"),
+`live-operator` on the command channel (`hs-drive`) and the owner at the
+keyboard only to open and close the bag and the stash and to click tabs - no
+item was moved and no craft was pressed. The saves were backed up first (an
+independent copy and an `hs-drive` backup) and restored in full afterwards, the
+live directory hash-identical to the independent copy; no ForgePact mod was
+toggled; the plugin was the build above, not reinstalled. The owner's counts by
+eye: Tor 183 and a leftover Ol 1 on the bag's Socketable tab, Ol 216 on the
+stash's Socketable tab, Unstable Dust 13 on its Materials tab. `backing on` ran
+before the character loaded and `backing clear` never ran. Three things the
+capture records beyond the procedure: `node var` over
+`New_Inventory_Data_obj`'s two arrays with no `self=` made lookups anyway (on an
+instance path the reader's default self is the holder, here
+`New_Inventory_Data_obj`, with `a1=0` - a lookup shape outside the two the
+procedure allowed; 21 and 48 lookups, no fault); the `arm budget=20` on
+`GetItemMap` was spent on `a0=0` calls; and the capture calls
+`stashPersonalGrid` a new candidate, which it is not - Live 1c's
+`store-candidates` and `store-closed` read it.
+
+Filled from the capture `.claude/workorders/forgepact-issue-14-phase1d-live-1.md`,
+cited by its step headings, one row per check (the names and the `## Checks`
+line format are fixed by `### Live procedure 1d`). A `fail` or `not-observed` is
+a finding, written as "not observed by <reader> (<what it printed>)"; a reader
 miss counts only once the control for the path it took passed (`### Live
-procedure 1d`).
+procedure 1d`). Every `ds_map` index below is this launch's (1049 and 1055
+here, 1050 and 1056 in Live 1c): an index is not carried across launches. The
+`node var` reads of the kept stash map stopped at the reader's 1000-entry cap
+of its 1626 entries, so a sum below covers those 1000; the two stacks checked
+were among them.
 
 | Check | What it measures | Observed | Verdict |
 |---|---|---|---|
-| dll-hash | The installed plugin's SHA-256 equals the Phase 1c hash above | | |
-| marker | A bare `craftprobe` answers `phase1c rows=` (the Phase 1c build) | | |
-| control | `CheckPlayerInteraction` non-zero after the character loads | | |
-| counts-tool-before | `tools/stash_tab_counts.py` before launch: exit 0, a `socket_tab` and a `material_tab` line | | |
-| node-bag-control | `node bag class=15` on the bag's Socketable tab prints a `sum class=15 b=<b>` line whose `def.o` equals the Tor count the owner states | | |
-| item-struct-control | `node var` over `localItemMap` with `class=15`, bag open on its Socketable tab, gives the same `b` pairs and `def.o` as `node bag` (the control for item-struct reads) | | |
-| fp-array-control | `node var` over `inventorySocketGrid` with the bag grid as self and `a1=0` gives the same sums as `node bag` (the control for fingerprint reads) | | |
-| map0-identity | With no window open, `localItemMap`'s `ds_map` index equals the kept `GetItemMap(0)` return's | | |
-| map-open-socket | The kept `GetItemMap(9)` map, stash open on the Socketable tab, gives `sum class=15 b=1` with `def.o` equal to the Ol count and to `node socket a1=9`'s | | |
-| map-open-material | The same map, stash open on the Materials tab, gives `sum class=14 b=50` with `def.o` equal to the Unstable Dust count and to `node id:<stashGrid> a1=9`'s | | |
-| invgrid-open | `inventorySocketGrid` / `inventoryMaterialGrid` with a window open: a sum equal to a count by eye, and which window's tabs the arrays hold | | |
-| map-closed | The kept `GetItemMap(9)` map read through the same reference with the stash closed (and before any window, if kept then): the same two sums as the open reads | | |
-| invgrid-closed | The two arrays read with the stash closed (and before any window): the same entries and sums or fingerprints as the open read that matched a count | | |
-| map-live-closed | The `GetItemMap a0=9` per-signature `calls=` across two dumps with the stash closed, any armed `a0=int64:9` call and its returned map index | | |
-| store-names-globals | The six `store names` runs and two `store` runs over the globals with the stash closed: the names found, and which variable (if any) holds the kept map | | |
-| map-reopen | At the stash's reopen: the `a0=9` map index and `calls=` against the closed reads | | |
-| counts-tool-after | `tools/stash_tab_counts.py` after the game exits: the socket and material lines equal the counts the owner stated (nothing was moved) | | |
+| dll-hash | The installed plugin's SHA-256 equals the Phase 1c hash above | `E9D32EC3...71712E6429` from `Get-FileHash` on the installed plugin with the game closed, equal to the hash above (capture, Step 0) | pass |
+| marker | A bare `craftprobe` answers `phase1c rows=` (the Phase 1c build) | `craftprobe: phase1c rows=223 - research instrument ...` before the character loaded; `hook` answered `223 detoured, 0 failed` and `backing on` kept 13 rows, 4 of them per argument (capture, Step 1) | pass |
+| control | `CheckPlayerInteraction` non-zero after the character loads | `CheckPlayerInteraction calls=15932` at the first `show` after the load; 82320 at the closed-window `show` (capture, Steps 2 and 6) | pass |
+| counts-tool-before | `tools/stash_tab_counts.py` before launch: exit 0, a `socket_tab` and a `material_tab` line | Exit 0: `socket_tab: entries=90` with `class=15 b=1 stack=216` (Ol) and `material_tab: entries=1` with `class=14 b=50 stack=13` (Unstable Dust), the Live 1c counts (capture, Step 0) | pass |
+| node-bag-control | `node bag class=15` on the bag's Socketable tab prints a `sum class=15 b=<b>` line whose `def.o` equals the Tor count the owner states | The owner saw Tor 183 and a leftover Ol 1. `node bag class=15` on the bag's `InventoryGrid` (`UI_Inventory_Grid_obj` id 262975, 15x6, 21 filled) printed `sum class=15 b=3: fingerprints=1 cells=1 def.o=183` and `b=1 ... def.o=1`, equal to both counts (capture, Step 3) | pass |
+| item-struct-control | `node var` over `localItemMap` with `class=15`, bag open on its Socketable tab, gives the same `b` pairs and `def.o` as `node bag` (the control for item-struct reads) | `localItemMap is ref ds_map 1055 size=340`, `entries read=340 fingerprints=0 ... items=340`, no lookup made; `sum class=15 b=1: ... items=1 def.o=1` and `b=3: ... items=1 def.o=183`, the same pairs as `node bag`. Its other class-15 sums (`b=33`, `b=39`, `b=78`) are socketables not on that grid page (capture, Step 3) | pass |
+| fp-array-control | `node var` over `inventorySocketGrid` with the bag grid as self and `a1=0` gives the same sums as `node bag` (the control for fingerprint reads) | `self=id:262975`: the head line named `GetItemFromFingerprint(fp, 0) with self=UI_Inventory_Grid_obj ... id=262975`; `inventorySocketGrid is array len=6`, `entries read=90 fingerprints=21`, and `b=1 def.o=1`, `b=3 def.o=183` plus the same unnamed `b=109`/`110`/`111`/`136` sums as `node bag`, no miss line (capture, Step 3) | pass |
+| map0-identity | With no window open, `localItemMap`'s `ds_map` index equals the kept `GetItemMap(0)` return's | Before any window this launch: `localItemMap` `ref ds_map 1055 map size=340` and `__cp_backing_GetItemMap_arg0` `ref ds_map 1055 map size=340`, read with nothing in between. That dump had one signature, `a0=0` (`calls=28715`), and no `a0=9` (capture, Step 2) | pass |
+| map-open-socket | The kept `GetItemMap(9)` map, stash open on the Socketable tab, gives `sum class=15 b=1` with `def.o` equal to the Ol count and to `node socket a1=9`'s | The first stash open of the launch; the owner saw Ol 216. The dump now had a second signature, `GetItemMap a0=9 ... calls=260273 ... selves=UI_Inventory_Grid_obj,UI_Stash_obj ... ref ds_map 1049 -> cp_backing_GetItemMap_arg1.json`. `node socket a1=9` (`UI_Stash_Socket_New_obj` id 263747, 90 filled) gave `sum class=15 b=1 ... def.o=216`. `node var global 0 __cp_backing_GetItemMap_arg1 class=15`: `ref ds_map 1049 size=1626`, `entries read=1000 (cap 1000) fingerprints=0 ... items=1000`, no lookup (item structs), `sum class=15 b=1: ... items=1 def.o=216`, equal to both (capture, Step 4) | pass |
+| map-open-material | The same map, stash open on the Materials tab, gives `sum class=14 b=50` with `def.o` equal to the Unstable Dust count and to `node id:<stashGrid> a1=9`'s | The owner saw Unstable Dust 13. `node id:263706 a1=9` (the tab's `stashGrid`, 17x18, 1 filled) gave `sum class=14 b=50 ... def.o=13`. The `a0=9` signature still returned `ref ds_map 1049` (`calls=2546743`, latest self that grid), and `node var` over the same kept global with `class=14` (item structs, 1000 of 1626 read) gave `sum class=14 b=50: ... items=1 def.o=13`, equal to both (capture, Step 5) | pass |
+| invgrid-open | `inventorySocketGrid` / `inventoryMaterialGrid` with a window open: a sum equal to a count by eye, and which window's tabs the arrays hold | Not observed by `node var` for the stash's tabs: with the stash open on each tab, both arrays read exactly as before any window - `inventorySocketGrid` the bag's Tor (`b=3 def.o=183`) and leftover Ol (`b=1 def.o=1`), never the stash's 216; `inventoryMaterialGrid` 73 fingerprints over 42 class-14 base ids, one of them `b=2 def.o=13` on fingerprint `0-0-209490505056-14`, not the stash's Unstable Dust (`b=50`, fingerprint `0-0-201019147376-14`). The arrays hold the bag's two special tabs, as `fp-array-control` showed for the Socketable one (capture, Steps 4 and 5) | not-observed |
+| map-closed | The kept `GetItemMap(9)` map read through the same reference with the stash closed (and before any window, if kept then): the same two sums as the open reads | Before any window: nothing to read, no `a0=9` signature had been kept (see `map0-identity`). After the close (`UI_Stash_obj has no live instance`): `var global 0 __cp_backing_GetItemMap_arg1` still `ref ds_map 1049 map size=1626`; `node var` with `class=15` and then `class=14`, item structs with no lookup (1000 of 1626 read), gave `sum class=15 b=1: ... items=1 def.o=216` and `sum class=14 b=50: ... items=1 def.o=13`, equal to the open reads and the counts by eye; `item-struct-control` passed for this path (capture, Step 6) | pass |
+| invgrid-closed | The two arrays read with the stash closed (and before any window): the same entries and sums or fingerprints as the open read that matched a count | Not observed by `node var` for the stash's tabs: before any window and after the close, both arrays read the same as with the stash open (the bag's `b=3 def.o=183` and `b=1 def.o=1`; the same 73 material fingerprints), and no open read of them ever matched a stash count. They resolved the bag's counts with every window closed, through the holder-as-self lookup the capture notes above (capture, Steps 2 and 6) | not-observed |
+| map-live-closed | The `GetItemMap a0=9` per-signature `calls=` across two dumps with the stash closed, any armed `a0=int64:9` call and its returned map index | The first closed dump read `calls=2573302`, 26559 more than the last open read, latest self `Console_Save_obj` (those calls came between the Materials-tab read and that dump; which of them came after the close is not on record). The second closed dump, after the `store` runs: `calls=2573302`, a difference of 0, same `ref ds_map 1049` - no `GetItemMap(9)` call was counted in between, by the same counter that grew before the close and at the reopen. Armed line: not observed (budget spent) - all 20 logged `GetItemMap` calls were `a0=0` (`logged=20 unlogged=47253`); the whole-log search for `a0=int64:9` found none, but an armed `UI_Inventory_Grid_obj` call logged its first argument as `real:0.000000`, so that search would miss a `real` 9 (capture, Steps 6 and 7) | pass |
+| store-names-globals | The six `store names` runs and two `store` runs over the globals with the stash closed: the names found, and which variable (if any) holds the kept map | All eight printed their own `global: 3582 globals` line. Matches: `stash` 32, `socket` 41, `material` 6, `map` 99, `inv` 144, `tab` 51. On `New_Inventory_Data_obj`: `stashPersonalGrid` (`array len=18 len0=17`, its first rows all `undefined`), the two special-tab arrays, `localItemMap`, `localIncarnationSocketItemArray`, `inventoryTab` and the other bag grids. `store stash` printed `stashSocketRowMap` (`ref ds_map 36`, 106 entries) and `stashTabDataStruct` (a struct of 8); `store map` printed 80 of its 99. No printed value is `ref ds_map 1049`. Listed by `store names` and never printed by a `store`: 19 of the `map` matches and the `socket`, `material`, `inv` and `tab` globals, which the capture does not name one by one (capture, Step 7) | pass |
+| map-reopen | At the stash's reopen: the `a0=9` map index and `calls=` against the closed reads | Reopened on the Socketable tab: `GetItemMap a0=9 ... calls=2707773 ... self=UI_Inventory_Grid_obj ... ref ds_map 1049`, and the kept global `ref ds_map 1049 map size=1626` - the same map as before the close; `calls=` grew from 2573302. The final dump, the stash still open, read `calls=2849013`, still 1049 (capture, Steps 8 and 9) | pass |
+| counts-tool-after | `tools/stash_tab_counts.py` after the game exits: the socket and material lines equal the counts the owner stated (nothing was moved) | After a graceful exit: `class=15 b=1 stack=216` and `class=14 b=50 stack=13`, equal to the owner's counts - nothing moved. The exit save rewrote `herosiege13.hss`, `inventory_order_13.hss`, `shop.ini` and `stash.hss` (`hs_saves_inspect`); the saves were restored from the session's backup afterwards (capture, Step 9) | pass |
+
+**What Phase 1d settles, and what it leaves open.**
+
+- **A special-tab count is readable with the stash window closed, by name.**
+  The one reader that reproduced both counts closed is `node var` over the map
+  the game's own `GetItemMap(9)` call returned, kept by the instrument's detour
+  on `gml_Script_GetItemMap` (`__cp_backing_GetItemMap_arg1`, `ds_map` 1049 this
+  launch): a map of item structs, read directly with no lookup, which gave Ol
+  216 and Unstable Dust 13 open and again closed through the same reference,
+  with `item-struct-control` passed in the same session. Nothing called
+  `GetItemMap` but the game. `New_Inventory_Data_obj`'s `inventorySocketGrid`
+  and `inventoryMaterialGrid` hold the bag's special tabs, not the stash's.
+- **The map outlives the window.** Its index stayed 1049 through the close and
+  the reopen, and the game's calls at the reopen returned it again, where Live
+  1c's close and reopen left new window instances. Readings, not established:
+  that the map is the game's store for owner `9`, the stash, which the window
+  reads rather than owns; and that it reflects a change to a tab - no item was
+  moved this session, so whether a take shows up in it is not observed.
+- **The map was not observed before the stash's first open.** With `backing on`
+  from before the character loaded, the dump before any window held only
+  `GetItemMap(0)`; `GetItemMap(9)` first appeared once the stash had opened for
+  the first time that launch (selves `UI_Inventory_Grid_obj` and `UI_Stash_obj`).
+  So the first open calls it, which answers the procedure's open question (Live
+  1c had it only from the reopen); whether the map exists before the game first
+  asks for it is not observed, since nothing asked.
+- **While closed and idle, no `GetItemMap(9)` call was counted.** Between the
+  two closed dumps its `calls=` stayed at 2573302, a counter that grew before
+  the close and at the reopen; the calls just before included one from
+  `Console_Save_obj`, the latest self at the first closed dump. The armed per-call log saw no `a0=9` line, but its budget was spent on
+  `a0=0` calls, so that half is not observed (budget spent).
+- **No global holds the map, as far as printed.** None of the printed `store`
+  values is `ref ds_map 1049`; 19 `map` matches and the `socket`, `material`,
+  `inv` and `tab` matches were listed by name only. The map was reached only as
+  the return of the game's call.
 
 ## Decision gate
 
@@ -1136,76 +1201,88 @@ not block - it sends the search to a wider reader (`var`, `backing`, other
 filters) - and neither does it, alone, move the owner to the "stash must be
 open" fallback.
 
-**After Phase 1c (2026-09-23): still no hypothesis is eligible, and this is
-still not a block.** This replaces the reading written after Phase 1b (the Phase
-1b rows it cites stand in `### Phase 1b results`). The one thing Phase 1c was
-for - a special-tab count read with the stash window closed - is still not
-observed. Per hypothesis, the rows it rests on and where they stand:
+**After Phase 1d (2026-09-23): H-A is eligible; H-B is not, H-C is not
+recommended on its own, and nothing is decided.** This replaces the reading
+written after Phase 1c (the Phase 1c rows it cited stand in `### Phase 1c
+results`). The one thing Phase 1c could not show - a special-tab count read
+with the stash window closed - Phase 1d's `map-closed` shows: the map the
+game's own `GetItemMap(9)` call returned, kept through a by-name detour, gave
+both counts with the window closed, the path's control (`item-struct-control`)
+passed in the same session, and `control` was non-zero. That meets the rule's
+third condition - the stash tab's container readable where the mechanism needs
+to read it - for a count, on both tabs. Per hypothesis:
 
-- **H-A (count and consume through a hook)** rests on `M-craft` (Phase 1: the
-  availability and consume rows fire by name, with recorded shapes); on the
-  tab's count where the craft runs - with the stash window closed, since the
-  cube cannot be open beside it - which is Phase 1c's `store-closed` and
-  `store-closed-after`, both not observed; and on a stash-side take with a
-  success answer (Phase 1b's `move-socket-to-bag`, which answers none, and
-  `move-material-to-bag`'s Materials-to-bag leg, not observed). Phase 1c's
-  `stash-open-socket` and `stash-open-material` pass: the count is readable by
-  name, `GetItemFromFingerprint(<fingerprint>, 9)`, but only with the window
-  open, which is not where the craft runs. Cost to the player: the stash tab
-  changes at the craft press, a moment the game chose for the bag only.
-- **H-B (pull on demand)** rests on a by-name stash-to-bag move that answers
-  success (Phase 1b's `move-socket-to-bag`: seen by name, no success answer;
-  the Materials-to-bag leg: not observed) and on the tab being reachable at the
-  press with the window closed (Phase 1c's `store-closed` and
-  `store-closed-after`, not observed). Phase 1c's `reopen-id` and
-  `stash-open-material` sharpen that gap: every observed move ran on the
-  window's grid instances, and each open or tab switch makes new ones, the old
-  ones no longer found. Cost: a stash-to-bag move at the craft press, a moment
-  the game did not choose, which also changes the bag the player sees.
-- **H-C (count only)** rests on the same closed-window count (Phase 1c's
-  `store-closed` and `store-closed-after`) and `M-craft`, and has H-A's reading
-  gap without needing its take. Cost: a recipe the cube shows as craftable
-  fails at the press unless the materials are also pulled.
+- **H-A (count and consume through a hook)** is eligible under its own
+  "Decided by": `M-craft` (Phase 1: the availability and consume rows fire by
+  name, with recorded shapes) and a container readable with the window closed,
+  which Phase 1d's `map-open-socket`, `map-open-material` and `map-closed` now
+  give. It is the one the evidence leaned towards after Phase 1c, because every
+  stash-side move seen so far ran on window instances that do not exist while
+  the cube is open, and the kept map does not depend on them (Phase 1d's
+  `map-reopen`: the same map before the close and after the reopen). Cost to
+  the player: the stash tab changes at the craft press, a moment the game chose
+  for the bag only. What a player build would still need, none of it measured
+  yet:
+  - *The map, by name, without a blind call.* The route Phase 1d measured is a
+    detour on `GetItemMap` keeping the return of a call the game itself makes
+    with first argument `9` - installed by name through both routes of the
+    shared installer, never calling the script. Its gap: that call was not
+    observed before the stash's first open in a launch (`map0-identity`, and
+    `map-closed`'s before-any-window read), so until the player opens the stash
+    once, the mod has no map and refuses the press (the decision core's
+    "an unreadable count refuses the whole press"). Calling `GetItemMap(9)`
+    ourselves would close that gap, but it is a getter call of the kind Phase
+    0b's `GetProfileInventoryData` crash warns against; it would need its own
+    research-build trial, supplying the self the game used
+    (`UI_Inventory_Grid_obj`, `UI_Stash_obj` or `Console_Save_obj`), before a
+    player build could consider it. Either way the map's index changes from
+    launch to launch (1050 in Live 1c, 1049 in Live 1d), so a kept reference is
+    checked with `ds_exists` at each press, never carried as a number.
+  - *A consume route that answers success.* Phase 1b saw the move out of the
+    Socketable tab by name with no success answer (`move-socket-to-bag`:
+    `undefined`, and a `false` on a unit that arrived) and did not observe the
+    move out of the Materials tab; only the move into the stash,
+    `StashAddToStack`, answered `true`. So no stash-side take with a success
+    answer is on record, and the decision core turns the mod off for the
+    session on a tab change without one. Also not observed: whether the kept
+    map shows a take at all - nothing was moved in Phase 1d - which the core's
+    re-read would need in order to confirm one.
+  - *The duplication constraint* (`### Constraints from Phase 1`): the count
+    comes from the kept map only, never from the cube's `a`, and a stash stack
+    must never supply an input the mod has not both counted there and seen
+    removed; with no confirmed take, the press refuses rather than letting the
+    cube's own count carry it.
+  - *The whole map.* Phase 1d's reads stopped at 1000 of the map's 1626
+    entries; a player build walks all of it, and reads `o` as a stack only on
+    an item already identified as a stackable.
+- **H-B (pull on demand)** is not eligible. It rests on a by-name stash-to-bag
+  move that answers success (Phase 1b: out of the Socketable tab, no success
+  answer; out of the Materials tab, not observed), made with the window closed,
+  while every observed move ran on the window's own grid instances, which each
+  open or tab switch replaces (Phase 1c's `reopen-id`). Phase 1d's map gives
+  H-B a count to size the shortfall, not a move. Cost: a stash-to-bag move at
+  the craft press, a moment the game did not choose, which also changes the
+  bag the player sees.
+- **H-C (count only)** meets the rule on its count (Phase 1d's `map-closed`,
+  with `M-craft`), but it runs into the duplication constraint: with consume
+  left vanilla, a recipe counted from the stash either fails at the press or,
+  as the vanilla duplication did, produces its result without the stash's
+  inputs being removed. Phase 1d changes nothing about that, so H-C is not
+  recommended on its own - only as the counting half of H-A.
 
-One reading Phase 1c makes possible that none of the three is: count the
-special tabs while the stash is open - the one moment Phase 1c read them, by
-name - and keep that answer for the cube, as `### Constraints from Phase 1`
-allows ("read it at some earlier moment when the stash was open and keep that
-answer"). It supplies a count only, never a take, and costs the player a count
-that is only as fresh as the last time the stash was opened in the session.
+Phase 1c's open-stash reading - count while the stash is open and keep the
+answer - is no longer the only way to count: the kept map is that count,
+still readable after the close. It still supplies no take.
 
-Why this is not a block: no closed-window miss passed its control.
-`store-closed` and `store-closed-after` went through `localItemMap` (item
-structs: no declared control, so not observed (uncontrolled path), although
-that map reproduced the bag's own counts) and `stashPersonalGrid` (fingerprints:
-`node-var-control` failed, because the kept `GetInventoryArray(1)` array holds
-the equipped items rather than the tab on show). The premise that the game keeps
-the tabs' contents in memory while the window is closed is itself untested:
-what was observed is that `LoadStash`, a detoured row, ran at character load
-and did not fire when the window opened (Phase 1b's `load-capture`); a store
-held in memory is one reading, and a route outside the rows at window open (a
-file or buffer read, say) is not ruled out.
-
-Recommended (the owner decides): no mechanism yet. If the owner wants one more
-reader round first, in the order the evidence points, and with no struct-layout
-read: (1) `GetItemMap(9)`'s kept return - kept by `backing` in Live 1c with a
-stash grid as self, never read - with `var`/`node var`, first with the stash
-open on each special tab as its control (the sums must equal
-`stash-open-socket`'s and `stash-open-material`'s), then with the window closed
-through the same reference, since `GetItemMap(0)`'s map has the same `ds_map`
-index as `localItemMap`, the bag's, and `9` is the stash's lookup value;
-(1b) `New_Inventory_Data_obj`'s `inventorySocketGrid` and
-`inventoryMaterialGrid` with `node var`, under the same open-then-closed
-control, and a `store names` pass over the globals (542 matched in Live 1c,
-only 80 printed) - unread leads, so the candidate space is not yet covered; (2) the item-struct path's control
-declared before it is used - `node var` over `localItemMap` equal to `node bag`
-on the same tab, which Live 1c met without having declared it; (3) a
-fingerprint-path control on an array that holds the tab on show, in place of
-`GetInventoryArray(1)`; (4) `LoadStash` and the stash-load rows counted across a
-stash open, to recheck Phase 1b's observation that the window was not observed
-to reload.
-If a store is found readable closed, H-A is the one this evidence leans
-towards, because every stash-side move seen so far ran on window instances that
-do not exist while the cube is open, which H-B's pull would need. If none is,
-the open-stash count above is what remains, and whether a count-only mechanism
-is worth having is the owner's call.
+Recommended (the owner decides): H-A, but not yet as player code. Before any,
+one more research round on a research build, still with no struct-layout read:
+(1) a hand move into and out of each special tab (bag to stash and back, the
+Materials leg included), with the kept map read before and after each move,
+with the stash open and closed - does the map follow a take, and does any move
+out of a tab answer success; (2) whether the map can be reached before the
+stash's first open (the load and the first open counted by `backing`), and only
+if not, a controlled by-name trial of the game's own `GetItemMap(9)` shape in
+the research build; (3) the whole map read past the reader's 1000-entry cap, to
+show each stack is one entry. If (1) finds no take with a success answer, what
+remains is a count with no take, which the duplication constraint rules out on
+its own, and whether anything short of H-A is worth having is the owner's call.
