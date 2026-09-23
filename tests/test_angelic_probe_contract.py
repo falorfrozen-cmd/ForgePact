@@ -399,11 +399,12 @@ class PlayerBuildUnchangedTests(unittest.TestCase):
         self.assertEqual(player(self.dm), player(self.base_dm))
 
     def test_player_build_bodies_are_unchanged(self):
+        # FindAngelicGate and InstallHook left this list with #69, which
+        # changed both on purpose in the player build (the startup record of
+        # DropItem's own code); test_angelic_gate_behavior covers them now.
         for signature in ("static RValue& HookAngelicChance(",
-                          "static unsigned char* FindAngelicGate()",
                           "static bool OpenAngelicGate()",
                           "static void CloseAngelicGate()",
-                          "static void InstallHook()",
                           "static RValue& Hook_EnemyDestroyKillProc("):
             with self.subTest(function=signature):
                 now = function_body(strip_research_blocks(self.plugin), signature)

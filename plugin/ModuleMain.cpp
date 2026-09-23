@@ -412,6 +412,10 @@ struct ApRollChanceDepthScope {
 // DropManager hooks replace DropItem's script-table entry (InstallHook).
 static unsigned char* FindAngelicGate();
 #endif
+// #69: InstallHook records DropItem's and DropItemAngelicChance's own code in
+// both builds, before any hook swaps their script-table entries; the Angelic
+// gate finder scans that record. Defined with FindAngelicGate.
+static void CaptureAngelicScriptCode();
 
 // HookOneScript/HookOneScriptTable prepend "gml_Script_" themselves, so a
 // closure hooked by an hs-game-sdk constant needs the prefix peeled back off.
@@ -17284,6 +17288,13 @@ static void InstallHook()
     }
     g_Base = (uintptr_t)GetModuleHandleA(nullptr);
 
+    // #69: record DropItem's and DropItemAngelicChance's own code before any
+    // hook swaps their script-table entries for ForgePact's functions -
+    // InstallDropMultHooks below in the research build, `dropmult` or
+    // `angelicwatch` later in either build. FindAngelicGate scans this
+    // record. Reads two table entries; patches nothing.
+    CaptureAngelicScriptCode();
+
     // Load the editor-authored sidecar before choosing the release hook set.
     // This remains inert when the user has not forged any custom items.
     // Runs in every build - a release build with no forged items just finds
@@ -17306,11 +17317,12 @@ static void InstallHook()
 #else
     // Development builds install the complete research surface eagerly.
     InstallCreateHooks();
-    // Find the Angelic gate now, while DropItem's script-table entry is still
-    // the game's own function: FindAngelicGate reads code through that entry,
-    // and from the next line on it is DropManager's Hook_DropItem, so a later
-    // `raredrop angelic` would scan ForgePact's code instead. The finder
-    // caches what it found and patches nothing; OpenAngelicGate reuses it.
+    // Find the Angelic gate now, before the next line hands DropItem's
+    // script-table entry to DropManager's Hook_DropItem. Since #69 the finder
+    // scans the code CaptureAngelicScriptCode recorded at the top of
+    // InstallHook, so the order no longer decides whether it works; finding
+    // it here keeps the probe's startup log line. The finder caches what it
+    // found and patches nothing; OpenAngelicGate reuses it.
     // (docs/angelic-roll-hook-research.md, "Instrument".)
     FindAngelicGate();
     InstallDropMultHooks();
@@ -17916,18 +17928,57 @@ static unsigned char* ScriptCode(const char* fullName)
     catch (...) { return nullptr; }
 }
 
+// #69: the game's own code for the two scripts FindAngelicGate reads. It used
+// to read them through ScriptCode, the live script-table entry. HookOneScript
+// swaps that entry for ForgePact's own function: once `dropmult` has hooked
+// DropItem (or `angelicwatch` DropItemAngelicChance), the finder scanned
+// ForgePact's code and answered "call site not found". InstallHook now
+// records both before any hook runs. Only an address inside Hero_Siege.exe's
+// executable image is recorded - an entry that points anywhere else is some
+// hook's, not the game's - and a refusal is not recorded, so a later call can
+// still record an entry that reads as game code then.
+static unsigned char* g_DropItemCode = nullptr;
+static unsigned char* g_AngelicChanceCode = nullptr;
+
+static unsigned char* GameScriptCode(const char* fullName, unsigned char*& recorded)
+{
+    if (!recorded) {
+        unsigned char* code = ScriptCode(fullName);
+        if (code && AddrIsExecutableInModule(GetModuleHandleA(nullptr), code)) recorded = code;
+    }
+    return recorded;
+}
+
+static bool AngelicScriptCodeReady()
+{
+    const bool drop = GameScriptCode("gml_Script_DropItem", g_DropItemCode) != nullptr;
+    const bool chance = GameScriptCode("gml_Script_DropItemAngelicChance", g_AngelicChanceCode) != nullptr;
+    return drop && chance;
+}
+
+// First thing in InstallHook, in both builds.
+static void CaptureAngelicScriptCode()
+{
+    AngelicScriptCodeReady();
+}
+
 // Locate the branch that skips the DropItemAngelicChance call.  Found by
 // meaning, not by a fixed address, so it survives game updates:
 //   1. find the real `call gml_Script_DropItemAngelicChance` inside DropItem
 //   2. look back for a `test al,al` + `je rel32` whose target lands just after
 //      that call
 //   3. accept only if exactly ONE candidate matches
+// It scans the code recorded at startup (#69), never the live table entry.
 static unsigned char* FindAngelicGate()
 {
     if (g_AngelicGate) return g_AngelicGate;
-    unsigned char* drop   = ScriptCode("gml_Script_DropItem");
-    unsigned char* chance = ScriptCode("gml_Script_DropItemAngelicChance");
-    if (!drop || !chance) { Out("angelic: DropItem/DropItemAngelicChance not found"); return nullptr; }
+    if (!AngelicScriptCodeReady()) {
+        Out("angelic: DropItem/DropItemAngelicChance not found as the game's own code "
+            "(missing, or already hooked when ForgePact started) - nothing patched");
+        return nullptr;
+    }
+    unsigned char* drop = g_DropItemCode;
+    unsigned char* chance = g_AngelicChanceCode;
 
     const size_t kScan = 0x30000;          // DropItem is about 0x24A50 bytes
     unsigned char* call = nullptr;
