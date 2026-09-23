@@ -17,6 +17,7 @@
 // tests/test_release_hook_contract.py is what pins it out of the player build.
 #define FORGEPACT_RELEASE 1
 #include <atomic>
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <iostream>
@@ -106,7 +107,10 @@ struct FakeRunner {
         if (key == "instance_find") {
             const double which = args[0].ToDouble();
             if (which == 9000.0) return RValue(world.minimapInstance);
-            if (which == 9200.0) return world.creators.empty() ? RValue(-4.0) : RValue((double)world.creators[0].id);
+            if (which == 9200.0) {
+                const int i=static_cast<int>(args[1].ToDouble());
+                return i<0 || i>=static_cast<int>(world.creators.size()) ? RValue(-4.0) : RValue((double)world.creators[i].id);
+            }
             return RValue(-4.0);
         }
         if (key == "instance_number") {
@@ -127,6 +131,10 @@ struct FakeRunner {
                 ++counts.objectIndexReads;
                 if (args[0].m_Kind == VALUE_OBJECT && args[0].instance) return RValue((double)args[0].instance->object);
                 return RValue(-1.0);
+            }
+            if (v == "id") {
+                if (args[0].m_Kind == VALUE_OBJECT && args[0].instance) return RValue((double)args[0].instance->id);
+                return RValue();
             }
             if (v == "enemyCreatorTimer") {
                 ++counts.timerReads;
@@ -173,6 +181,11 @@ static FakeRunner* g_Yytk = &runnerStorage;
 
 static std::vector<std::string> outLog;
 static void Out(const std::string& s) { outLog.push_back(s); }
+static bool capacityReady = true;
+static size_t DeferredDensityPending(){return 0;}
+static bool reserveAvailable = true;
+static bool PreparePopulationCapacity() { return capacityReady; }
+static bool PopulationCapacityAvailable() { return capacityReady && reserveAvailable; }
 
 // ---- what the injected production code leans on ---------------------------
 static bool g_BeSpawnNear = false;
@@ -217,6 +230,8 @@ static double distanceFor(int creatorId) {
 }
 
 static ForgePact::MapRevealManager& mgr() { return ForgePact::MapRevealManager::Instance(); }
+static uint64_t populationNow=0;
+static uint64_t populationClock(){return populationNow;}
 
 int main() {
     g_OrigDistanceToObject = &OrigDistance;
@@ -237,9 +252,9 @@ int main() {
     // Finding 8's first threshold condition, printed as a number rather than
     // argued in a comment: what one lied-to creator costs the runner, and how
     // much of that is the object_index read a struct read would remove.
-    checkInt("liedto/callbuiltins", counts.total, 2);
+    checkInt("liedto/callbuiltins", counts.total, 3);
     checkInt("liedto/object_index_share_pct",
-             counts.total ? (100 * counts.objectIndexReads) / counts.total : 0, 50);
+             counts.total ? (100 * counts.objectIndexReads) / counts.total : 0, 33);
 
     // --- 2. THE REGRESSION: a new zone, consumed before the next Present ----
     // The room, minimap instance and grid all change and the new zone's
@@ -365,6 +380,134 @@ int main() {
     checkInt("beacon_and_window/timer_reads", counts.timerReads, 2);
     g_BeSpawnNear = false;
     g_BeaconActive = false;
+
+    // Capacity failures never force early creation; fog and natural distance stay usable.
+    world = World{}; world.creators = {{60,true}};
+    mgr().SetEnabled(false); capacityReady = false; mgr().SetEnabled(true); mgr().OnFrame(320);
+    checkInt("capacity/unavailable_window",mgr().SpawnWindowLeft(),0);
+    check("capacity/unavailable_distance",distanceFor(60),kRealDistance);
+    checkInt("capacity/fog_still_revealed",world.gridClears,1);
+    capacityReady = true; mgr().OnFrame(340);
+    check("capacity/recovered",distanceFor(60),0);
+    reserveAvailable = false;
+    check("capacity/exhausted_reserve",distanceFor(60),kRealDistance);
+    reserveAvailable = true;
+
+    // Full production manager + real hook: a capacity pause exceeds the old
+    // 900-frame window. After recovery the tail must still run exactly once.
+    world = World{}; for(int id=1;id<=2100;++id)world.creators.push_back({id,true});
+    mgr().SetEnabled(false); mgr().SetEnabled(true);mgr().OnFrame(360);
+    reserveAvailable=false;
+    std::vector<bool> completed(2101,false);int served=0,maxPerFrame=0;
+    for(int frame=361;frame<3000 && served<2100;++frame) {
+        if(frame==1262)reserveAvailable=true;
+        int thisFrame=0;
+        for(int id=1;id<=2100;++id)if(!completed[id] && distanceFor(id)==0) {
+            completed[id]=true;++served;++thisFrame;
+        }
+        maxPerFrame=(std::max)(maxPerFrame,thisFrame);
+        mgr().OnFrame(frame);
+        if(frame==1261)checkInt("queue/tail_survives_timeout",mgr().WantsPackSpawn(),1);
+    }
+    checkInt("queue/all_groups",served,2100);
+    checkInt("queue/per_frame_limit",maxPerFrame>0 && maxPerFrame<=32,1);
+    checkInt("queue/no_tail",mgr().QueuedPacks(),0);
+    for(int f=3000;f<=3900;++f)mgr().OnFrame(f);
+    checkInt("queue/closes_when_done",mgr().SpawnWindowLeft(),0);
+    mgr().SetEnabled(false);checkInt("queue/disabled_clears",mgr().QueuedPacks(),0);
+
+    // The live report had 448 admitted groups. Exercise the default production
+    // adaptive policy through the real hook, with staggered native polls.
+    world=World{};for(int id=1;id<=448;++id)world.creators.push_back({id,true});
+    mgr().SetEnabled(true);mgr().OnFrame(3920);
+    std::vector<bool> fastDone(449,false);int fastServed=0;
+    for(int frame=3921;frame<=4420;++frame) {
+        for(int id=1;id<=448;++id) {
+            if(!fastDone[id] && (frame+id)%15==0 && distanceFor(id)==0) {
+                fastDone[id]=true;++fastServed;
+            }
+        }
+        mgr().OnFrame(frame);
+    }
+    checkInt("queue/staggered_448_eventually_complete",fastServed,448);
+    mgr().SetEnabled(false);
+
+    // The actual manager and distance hook, with 50fps frame cadence,
+    // staggered native polls and measured construction work, must also meet
+    // the deadline. No game/room-readiness or capacity gate is bypassed.
+    auto& budget=ForgePact::AdaptivePopulationBudget::Instance();
+    budget=ForgePact::AdaptivePopulationBudget(&populationClock);
+    world=World{};for(int id=1;id<=1536;++id)world.creators.push_back({id,true});
+    mgr().SetEnabled(true);mgr().OnFrame(10000);
+    std::vector<bool> timedDone(1537,false);int timedServed=0;
+    for(int frame=1;frame<=250 && timedServed<1536;++frame){
+        populationNow=static_cast<uint64_t>(frame)*20000;
+        for(int id=1;id<=1536;++id)if(!timedDone[id] && (frame+id)%80==0 && distanceFor(id)==0){
+            timedDone[id]=true;++timedServed;populationNow+=150;budget.RecordNative(150);
+        }
+        mgr().OnFrame(10000+frame);
+    }
+    checkInt("deadline/production_groups",timedServed,1536);
+    checkInt("deadline/production_under_five_seconds",populationNow<=5000000,1);
+    checkInt("deadline/production_not_reported_late",budget.TargetExceeded(),0);
+    checkInt("deadline/production_no_tail",mgr().QueuedPacks(),0);
+    mgr().SetEnabled(false);
+
+    // Real live failure shape: some ready callers stop polling after denial.
+    // The grace window can end, but that must not erase their unconfirmed
+    // identities or inflate the admitted count. A zone/toggle reset clears it.
+    world=World{};for(int id=1;id<=64;++id)world.creators.push_back({id,true});
+    mgr().SetEnabled(true);mgr().OnFrame(10600);
+    for(int id=1;id<=64;++id)distanceFor(id);
+    const auto admittedBeforeSilence=mgr().AdmittedPacks();
+    const auto waitingBeforeSilence=mgr().QueuedPacks();
+    checkInt("silent/positive_control_denied",waitingBeforeSilence>0,1);
+    for(int frame=10601;frame<=11900;++frame)mgr().OnFrame(frame);
+    checkInt("silent/not_reported_as_admitted",mgr().AdmittedPacks(),admittedBeforeSilence);
+    checkInt("silent/unconfirmed_retained",mgr().UnconfirmedPacks(),waitingBeforeSilence);
+    checkInt("silent/bounded_window",mgr().SpawnWindowLeft(),0);
+    const auto closedPassElapsed=budget.PassElapsedMs();
+    populationNow+=1000000;
+    checkInt("silent/closed_pass_clock_stops",budget.PassElapsedMs(),closedPassElapsed);
+    mgr().ObserveNativeBirth(64);
+    checkInt("silent/observed_birth_resolves_one",mgr().UnconfirmedPacks(),waitingBeforeSilence-1);
+    checkInt("silent/native_birth_not_admission",mgr().AdmittedPacks(),admittedBeforeSilence);
+    checkInt("silent/native_birth_count",mgr().NativeBirthPacks(),1);
+    mgr().ObserveNativeBirth(64);
+    checkInt("silent/native_birth_deduplicated",mgr().NativeBirthPacks(),1);
+    world.minimapInstance+=1;mgr().ObserveNativeBirth(63);
+    checkInt("silent/new_map_cannot_resolve_old_identity",mgr().NativeBirthPacks(),1);
+    mgr().SetEnabled(false);
+    checkInt("silent/reset_clears_unconfirmed",mgr().UnconfirmedPacks(),0);
+
+    // A readable minimap can precede its creators. An empty first poll is
+    // not proof that this zone will remain empty.
+    world=World{};
+    mgr().SetEnabled(true);mgr().OnFrame(11000);
+    checkInt("late_creators/still_pending",mgr().PacksPending(),1);
+    checkInt("late_creators/no_early_window",mgr().SpawnWindowLeft(),0);
+    world.creators={{1,false}};mgr().OnFrame(11020);
+    check("late_creators/unready_untouched",distanceFor(1),kRealDistance);
+    world.creators[0].timerDefined=true;mgr().OnFrame(11040);
+    check("late_creators/eventually_admitted",distanceFor(1),0);
+    mgr().SetEnabled(false);
+
+    // One uninitialised creator must not block all ready siblings. Checking
+    // candidates is bounded, so a room full of unready creators cannot hitch.
+    world=World{};
+    for(int id=1;id<=40;++id)world.creators.push_back({id,id==40});
+    mgr().SetEnabled(true);resetCounts();mgr().OnFrame(11100);
+    checkInt("ready_sibling/bounded_probe",counts.timerReads<=32,1);
+    mgr().OnFrame(11120);
+    check("ready_sibling/admitted",distanceFor(40),0);
+    check("ready_sibling/unready_untouched",distanceFor(1),kRealDistance);
+    mgr().SetEnabled(false);
+
+    world=World{};mgr().SetEnabled(true);
+    for(int tick=0;tick<1802;++tick)mgr().OnFrame(12000+tick*20);
+    checkInt("empty_zone/eventually_stops_polling",mgr().PacksPending(),0);
+    checkInt("empty_zone/no_spawn_window",mgr().SpawnWindowLeft(),0);
+    mgr().SetEnabled(false);
 
     std::cout << (failures ? "RESULT FAIL" : "RESULT OK") << "\n";
     return failures ? 1 : 0;

@@ -130,7 +130,22 @@ KEYS = [
 
 DROPS = [
     ("gold", "Gold", ""),
+    ("mining_ore", "Mining Ore Amount", ""),
 ]
+
+
+def drop_multiplier(key, value) -> int:
+    if key not in {k for k, *_ in DROPS}:
+        raise ValueError("unknown drop setting")
+    try:
+        return max(1, min(10 if key == "mining_ore" else 100, int(float(value))))
+    except (TypeError, ValueError, OverflowError):
+        return 1
+
+
+def drop_command(key, value) -> str:
+    amount = drop_multiplier(key, value)
+    return f"miningore {amount}" if key == "mining_ore" else f"dropmult {key} {amount}"
 
 # Satanic Zone buff/debuff pool.  Names/ids/descriptions come from
 # hs-game-sdk (hand-verified game knowledge, not mechanically extracted --
@@ -181,10 +196,16 @@ DEFAULTS = {
     "density_on": False,
     "auto_apply": True,
     "map_reveal": False,
-    # Sub-toggle of map_reveal.  Only meaningful while map_reveal is on, and
-    # separate from it because it is the half that costs frame time: revealing
-    # the fog is free, populating the map is not.
+    # Sub-toggle of map_reveal.  Only meaningful while map_reveal is on. Since
+    # 1.4.5 it marks every pack's spot on the map (one icon per unspawned
+    # spawner, no monster created); on by default because that is what
+    # revealing a map is expected to show.
     "map_reveal_packs": True,
+    # Second sub-toggle of map_reveal: the old "fill the map" pass that really
+    # spawns every pack on arrival. Off by default - the living monsters are
+    # what costs the game frame time at high density
+    # (docs/population-performance-analysis.md).
+    "map_reveal_spawn": False,
     "headhunter": False,
     "tyrant": False,
     "beacon": False,
@@ -716,11 +737,15 @@ def build_cmds(cfg: dict) -> list:
         out.append(f"density {d:g}")
     if cfg.get("map_reveal", False):
         out.append("reveal 1")
-        # Only emitted to turn the pack pass OFF: the plugin defaults it on, so
-        # the common case sends nothing extra (same rule as the rest of this
-        # function - emit only what is actually needed).
+        # Only emitted to turn the pack markers OFF: the plugin defaults them
+        # on, so the common case sends nothing extra (same rule as the rest of
+        # this function - emit only what is actually needed).
         if not cfg.get("map_reveal_packs", True):
             out.append("reveal packs 0")
+        # The old "fill the map" pass is opt-in since 1.4.5: the plugin
+        # defaults it off, so it is only ever emitted to turn it ON.
+        if cfg.get("map_reveal_spawn", False):
+            out.append("reveal spawn 1")
     if cfg.get("headhunter", False):
         # Custom Forge Headhunter item: rare kills grant the monster's affixes as buffs.
         # "force" also covers the not-yet-finished equipped-belt check (see plugin notes).
@@ -783,9 +808,9 @@ def build_cmds(cfg: dict) -> list:
         if value > 1:
             out.append(f"specialrate {key} {value}")
     for key, *_ in DROPS:
-        value = int(cfg['drops'].get(key, 1))
+        value = drop_multiplier(key, cfg['drops'].get(key, 1))
         if value > 1:
-            out.append(f"dropmult {key} {value}")
+            out.append(drop_command(key, value))
     for key, _label, ceiling, step in STATS:
         value = max(1.0, min(float(ceiling), float(cfg.get("stats", {}).get(key, 1))))
         value = round(value / step) * step
@@ -1705,7 +1730,9 @@ class H(BaseHTTPRequestHandler):
                     value = round(max(0.0, min(float(ceiling), float(val))), 2)
                     cfg.setdefault("percent_stats", {})[key] = int(value) if value.is_integer() else value
                 elif sec == "drops":
-                    cfg[sec][key] = max(1, min(100, int(val)))
+                    if key not in {k for k, *_ in DROPS}:
+                        self._json({"err": "unknown drop setting"}, 400); return
+                    cfg[sec][key] = drop_multiplier(key, val)
                 elif sec == "spawners":
                     allowed = {k for k, _i, _l, _mx in SPAWNERS}
                     if key not in allowed:
@@ -1765,7 +1792,7 @@ class H(BaseHTTPRequestHandler):
                     # moved wins and the other gives way
                     other = "rarity_ancient" if key == "rarity_rare" else "rarity_rare"
                     cfg[other] = min(_pct(cfg.get(other, 0)), 100 - cfg[key])
-                elif key in ("density_on", "auto_apply", "map_reveal", "map_reveal_packs", "headhunter", "tyrant", "beacon", "mod_filter_max_relics", "mod_orb_pickup_radius", "mod_pet_quest_pickup", "mod_auto_prospect", "mod_auto_prospect_bag", "mod_toggle_indicator", "mod_toggle_guard", "mod_restart_anytime"):
+                elif key in ("density_on", "auto_apply", "map_reveal", "map_reveal_packs", "map_reveal_spawn", "headhunter", "tyrant", "beacon", "mod_filter_max_relics", "mod_orb_pickup_radius", "mod_pet_quest_pickup", "mod_auto_prospect", "mod_auto_prospect_bag", "mod_toggle_indicator", "mod_toggle_guard", "mod_restart_anytime"):
                     cfg[key] = bool(val)
                 elif key == "mod_skill_timer_style":
                     style = str(val).strip().lower()
@@ -1781,7 +1808,7 @@ class H(BaseHTTPRequestHandler):
                         # x1; startup's sparse command list deliberately cannot.
                         send_cmds(build_key_cmds(cfg.get("keys", {}), include_resets=True), cfg)
                     elif sec == "drops":
-                        send_cmds([f"dropmult {key} {int(val)}"], cfg)
+                        send_cmds([drop_command(key, cfg[sec][key])], cfg)
                     elif sec == "stats":
                         send_cmds([f"stat {key} {float(cfg['stats'][key]):g}"], cfg)
                     elif sec == "percent_stats":
@@ -1805,9 +1832,12 @@ class H(BaseHTTPRequestHandler):
                         # the parent, and came back would silently get them on.
                         if cfg["map_reveal"]:
                             cmds.append(f"reveal packs {1 if cfg.get('map_reveal_packs', True) else 0}")
+                            cmds.append(f"reveal spawn {1 if cfg.get('map_reveal_spawn', False) else 0}")
                         send_cmds(cmds, cfg)
                     elif key == "map_reveal_packs":
                         send_cmds([f"reveal packs {1 if cfg['map_reveal_packs'] else 0}"], cfg)
+                    elif key == "map_reveal_spawn":
+                        send_cmds([f"reveal spawn {1 if cfg['map_reveal_spawn'] else 0}"], cfg)
                     elif key == "headhunter":
                         send_cmds(["headhunter force" if cfg["headhunter"] else "headhunter off"], cfg)
                     elif key == "tyrant":
@@ -2013,8 +2043,9 @@ input[type=range]::-webkit-slider-thumb{appearance:none;width:17px;height:17px;b
 .hero-number{color:var(--ember2);font-size:35px;line-height:1.25;font-weight:700;margin:9px 0}.density-top{display:flex;align-items:center;justify-content:space-between}.density-top .row{border:0;padding:0;gap:8px}.density-top .lbl{width:auto;font-size:11px;color:var(--mut)}
 #densityCard>.row{border:0;padding:6px 0}#densityCard>.row>.lbl{display:none}.density-scale{display:flex;justify-content:space-between;font-size:11px;color:var(--mut);margin-top:5px}
 #rarityCard .row{border:0;display:flex;padding:12px 0}#rarityCard .lbl{display:block;width:62px;margin:0}#rarityCard .note{font-size:11px}
-.mods-grid{display:flex;gap:12px;align-items:flex-start}.mods-col{flex:1 1 0;min-width:0}.mods-col>.feature-card,.mods-col>.feature-with-child{margin:0 0 12px!important}.feature-card{padding:15px!important;background:#15110e;border:1px solid #45352a!important;border-radius:8px;margin:0!important;align-items:flex-start}.feature-card>.lbl{flex:1!important;width:auto!important;min-width:0}.feature-card .switch{margin-top:1px}.feature-card>.val{min-width:0;width:24px;font-size:11px;margin-top:2px}.feature-card:has(>.switch>input:checked),.feature-with-child:has(>.feature-card:first-child>.switch>input:checked){border-color:#85603a!important}.feature-with-child{border:1px solid #45352a;border-radius:8px;background:#15110e;overflow:hidden}.feature-with-child>.feature-card{border:0!important;border-radius:0}.feature-with-child>#map_reveal_packs_row,.feature-with-child>#mod_auto_prospect_bag_row{border:0!important;border-top:1px solid #45352a!important;margin:0!important;padding:14px!important;background:#1d1711;border-radius:0}
+.mods-grid{display:flex;gap:12px;align-items:flex-start}.mods-col{flex:1 1 0;min-width:0}.mods-col>.feature-card,.mods-col>.feature-with-child{margin:0 0 12px!important}.feature-card{padding:15px!important;background:#15110e;border:1px solid #45352a!important;border-radius:8px;margin:0!important;align-items:flex-start}.feature-card>.lbl{flex:1!important;width:auto!important;min-width:0}.feature-card .switch{margin-top:1px}.feature-card>.val{min-width:0;width:24px;font-size:11px;margin-top:2px}.feature-card:has(>.switch>input:checked),.feature-with-child:has(>.feature-card:first-child>.switch>input:checked){border-color:#85603a!important}.feature-with-child{border:1px solid #45352a;border-radius:8px;background:#15110e;overflow:hidden}.feature-with-child>.feature-card{border:0!important;border-radius:0}.feature-with-child>#map_reveal_packs_row,.feature-with-child>#map_reveal_spawn_row,.feature-with-child>#mod_auto_prospect_bag_row{border:0!important;border-top:1px solid #45352a!important;margin:0!important;padding:14px!important;background:#1d1711;border-radius:0}
 .feature-card{display:grid;grid-template-columns:minmax(0,1fr) 42px 24px;gap:8px 12px;align-content:start}.feature-card>.lbl{font-weight:600}.feature-description{grid-column:1/-1;color:var(--mut)!important;line-height:1.65;font-size:12px!important;font-weight:normal}.switch input:disabled+.sl{opacity:.4;filter:grayscale(1)}
+#minerHelmetCard{display:block}#minerHelmetCard .hint{margin:10px 0}
 @media(min-width:1700px){#wrap{padding-left:38px;padding-right:38px}}
 @media(max-width:1150px){#appShell{padding-left:190px}.sidebar{width:190px;padding:20px 10px}.brand svg{width:44px}.brand-name{font-size:17px}.brand-sub{font-size:8px}.page-heading{flex-wrap:wrap}.modifier-grid{grid-template-columns:1fr}.mods-grid{flex-direction:column;align-items:stretch;gap:0}.settings-grid{grid-template-columns:1fr}.card.half{grid-column:1/-1}.row .lbl{width:180px}#wrap{padding:0 20px 40px}}
 @media(max-width:720px){#appShell{padding-left:0}.sidebar{position:static;width:auto;padding:12px 14px;border-right:0;border-bottom:1px solid var(--line);overflow:visible}.brand{margin:0 0 10px}.brand svg{width:39px;height:39px}.brand-name{font-size:18px}.brand-sub{display:none}.tabbar{flex-direction:row;gap:3px}.tabbtn{flex:1;justify-content:center;padding:10px 6px;gap:4px;font-size:11px}.tabbtn svg{width:15px;height:15px}.sidebar-foot{display:none}#wrap{padding:0 14px 35px}.control-dock{position:static}.page-heading h1{font-size:25px}.page-actions{width:100%;justify-content:space-between;flex-wrap:wrap}.row{flex-wrap:wrap}.row .lbl{width:100%;flex-shrink:1}.row:has(.range-control)>.range-control{flex-basis:100%}.range-control{gap:8px}.step-button{padding:5px 6px}.value-stepper>.val{min-width:44px;width:52px!important}.card{padding:16px}#workspace{gap:14px}.topline{gap:8px}#statusbar{gap:10px}#saveIndicator{min-width:0}#toast{left:50%}#controlToolbar{flex-wrap:wrap}.control-search{flex-basis:100%}.control-filters{width:100%}.control-filters button{flex:1}.feature-card{flex-wrap:nowrap}.density-top .row{flex-wrap:nowrap}.section-title{flex-wrap:wrap}.subtabbtn{flex:1;justify-content:center;padding:9px 6px;font-size:12px}}
@@ -2300,9 +2331,14 @@ input[type=range]::-webkit-slider-thumb{appearance:none;width:17px;height:17px;b
         <span class="val" id="mapval">on</span>
     </div>
     <div class="row" id="map_reveal_packs_row" style="border:none;margin-left:22px;border-left:1px solid #33261c;padding-left:14px">
-        <span class="lbl" style="width:auto;flex:1">&#8627; Also fill the map with monsters<br><span style="font-size:11px;color:#8f816e;font-weight:normal">Most mob packs do not exist until you walk near them, so a revealed map still shows no monsters. This makes each new zone create its packs on arrival, so they appear on the minimap right away. It is the only part of this mod that adds work for the game - turn it off if a zone feels heavy.</span></span>
+        <span class="lbl" style="width:auto;flex:1">&#8627; Show every monster pack on the map<br><span style="font-size:11px;color:#8f816e;font-weight:normal">Most mob packs do not exist until you walk near them, so the revealed map used to show only the packs you had already met. This marks every pack's spot and kind (normal, champion, ancient, legion, mini boss) on the minimap the moment you arrive, including density copies, without creating a single monster: the pack is still born by the game when you walk near it, and its real dots replace the marker. Costs nothing per frame beyond the markers themselves.</span><span id="packMarkerStatus" class="hint" role="status" hidden></span></span>
         <label class="switch"><input type="checkbox" id="map_reveal_packs"><span class="sl"></span></label>
         <span class="val" id="mrpval">on</span>
+    </div>
+    <div class="row" id="map_reveal_spawn_row" style="border:none;margin-left:22px;border-left:1px solid #33261c;padding-left:14px">
+        <span class="lbl" style="width:auto;flex:1">&#8627; Really spawn every pack on arrival (heavy)<br><span style="font-size:11px;color:#8f816e;font-weight:normal">The old way: each new zone creates all of its packs, including density copies, as you arrive. Every living monster costs the game frame time on top of the markers, so at high density this lags for the whole zone. Off by default; only for comparing against the markers.</span><span id="populationStatus" class="hint" role="status" hidden></span></span>
+        <label class="switch"><input type="checkbox" id="map_reveal_spawn"><span class="sl"></span></label>
+        <span class="val" id="mrsval">off</span>
     </div>
     <div class="row" style="border:none">
         <span class="lbl" style="width:auto;flex:1">Pet collects quest items<br><span style="font-size:11px;color:#8f816e;font-weight:normal">While your pet is out, it walks to quest items on screen and picks them up for you - one at a time, crediting the quest objective exactly as collecting it by hand does. Only applies to pick-up quest items; things you activate, break or talk to are left alone.</span></span>
@@ -2348,6 +2384,15 @@ input[type=range]::-webkit-slider-thumb{appearance:none;width:17px;height:17px;b
 
 <div class="card tab-card" data-tab="mods" id="itemsCard" role="tabpanel" aria-labelledby="subtab-items">
   <h2>Items</h2>
+  <div class="row" id="minerHelmetCard">
+    <div>
+      <strong>Miner's Helmet</strong>
+      <p class="hint">+1000 Defense &middot; +500% Enhanced Defense<br>+20% Movement Speed &middot; +20% All Resistances &middot; +5 Light Radius</p>
+      <p class="hint">While worn, every mining node gives exactly 4&times; its ore. This replaces the Mining Ore Amount slider instead of stacking with it; with the helmet off, the slider applies as usual. <strong>Vein Resonance:</strong> finishing a dig also digs the two nearest veins within 192 units that you could mine yourself, each at 4&times;, through the game's own dig. A vein dug this way never starts another.</p>
+      <p class="hint">Forge it in the Item Editor: Item Forge &rarr; Forge a signature item &rarr; Miner's Helmet.</p>
+      <div id="minerHelmetStatus" role="status" aria-live="polite">Start the game to check the helmet.</div>
+    </div>
+  </div>
   <div class="hint">Custom forge mechanics tied to items made in the Item Editor. Settings apply immediately while the game is running.</div>
   <div class="row" style="border:none">
     <span class="lbl" style="width:auto;flex:1">Headhunter buffs on rare kills<br><span style="font-size:11px;color:#8f816e;font-weight:normal">For an item forged with Mechanic: Headhunter. While on, killing a rare or champion monster grants its affixes to you as 20-second buffs (Extra Fast &rarr; movement speed, Berserker/Raging/Enraged &rarr; attack speed, Vampiric &rarr; life replenish, elemental Enchanted &rarr; cast rate, others &rarr; movement speed for now). The equipped-belt check is still in progress, so the effect is active whenever this switch is on and the forged item exists.</span></span>
@@ -2498,7 +2543,7 @@ function rarityLoad(c){
 }
 // The monster half only does anything while the parent reveal is on, so the
 // control is disabled and reads "n/a" rather than silently claiming to be on.
-function syncRevealPacks(parentOn,packsOn){
+function syncRevealPacks(parentOn,packsOn,spawnOn){
   const row=document.getElementById('map_reveal_packs_row');
   const box=document.getElementById('map_reveal_packs');
   const val=document.getElementById('mrpval');
@@ -2507,6 +2552,15 @@ function syncRevealPacks(parentOn,packsOn){
   row.title=parentOn?'':'Enable Reveal full map first.';
   val.textContent=parentOn?(packsOn?'on':'off'):'n/a';
   val.className='val '+(parentOn&&packsOn?'':'off');
+  // The heavy spawn pass is a second child of the same parent.
+  const srow=document.getElementById('map_reveal_spawn_row');
+  const sbox=document.getElementById('map_reveal_spawn');
+  const sval=document.getElementById('mrsval');
+  if(!srow||!sbox||!sval)return;
+  sbox.disabled=!parentOn;
+  srow.title=parentOn?'':'Enable Reveal full map first.';
+  sval.textContent=parentOn?(spawnOn?'on':'off'):'n/a';
+  sval.className='val '+(parentOn&&spawnOn?'':'off');
 }
 // Likewise the move to the materials tab only does anything while
 // Auto-prospect is on.
@@ -2516,6 +2570,46 @@ function syncRevealPacks(parentOn,packsOn){
 // the switch keeps the saved preference, and the value beside it says what is
 // actually happening, with the reason on hover (review of #54).
 function applyPluginModState(pm){
+  const packMarkerStatus=document.getElementById('packMarkerStatus'), packMarkers=pm?.packMarkers;
+  if(packMarkerStatus){
+    packMarkerStatus.hidden=!(ST?.gameRunning&&ST?.cfg?.map_reveal&&ST?.cfg?.map_reveal_packs&&packMarkers);
+    packMarkerStatus.textContent=!packMarkers?'':
+      packMarkers.hook==='failed'?'Pack markers unavailable: the minimap layer could not be hooked on this game version.':
+      packMarkers.hook==='table'?'Pack markers may not draw on this game version (minimap hook attached table-only).':
+      packMarkers.hook==='pending'?'Pack markers start once the game has settled.':
+      packMarkers.marked>0?packMarkers.marked+' packs marked in this zone'+(packMarkers.spawned?' · '+packMarkers.spawned+' born so far':'')+'.':
+      'No unspawned packs marked in this zone.';
+  }
+  const populationStatus=document.getElementById('populationStatus'), population=pm?.population;
+  if(populationStatus){
+    populationStatus.hidden=!(ST?.gameRunning&&ST?.cfg?.map_reveal&&ST?.cfg?.map_reveal_spawn&&population);
+    populationStatus.textContent=!population?'':!population.capacityReady?'Early population unavailable: '+population.reason:
+      !population.canPopulate?'Early population paused: '+population.reason:
+      population.densityCopyReason?'Population waiting: '+population.densityCopyReason:
+      population.unconfirmedPacks>0?'Map population is unverified: '+population.unconfirmedPacks+' groups could not be confirmed.':
+      population.targetExceeded?'This zone exceeded the 5 s target.'+(population.queuedPacks?' '+population.queuedPacks+' groups waiting.':'')+(population.queuedDensityCopies?' '+population.queuedDensityCopies+' density copies waiting.':''):
+      population.windowFrames>0||population.queuedDensityCopies>0?'Populating the map · 5 s target'+(population.queuedPacks?' · '+population.queuedPacks+' groups waiting':'')+(population.queuedDensityCopies?' · '+population.queuedDensityCopies+' density copies waiting':'')+'.':
+      'Ready for the next zone.';
+  }
+  const helmet=pm?.minerHelmet;
+  const helmetStatus=document.getElementById('minerHelmetStatus');
+  if(helmetStatus)helmetStatus.textContent=!ST?.gameRunning?'Start the game to check the helmet.':
+    !helmet?.available?'Waiting for the ForgePact plugin to report the helmet.':
+    helmet.enabled?(helmet.reason||'Checking the equipped helmet...')+(helmet.bonusVeins>0?' \u00b7 Vein Resonance has dug '+helmet.bonusVeins+' extra veins this session.':''):
+    'No Miner\'s Helmet loaded yet.';
+  const miningNote=document.querySelector('.note[data-note="mining_ore"]');
+  if(miningNote){
+    const requested=Number(ST?.cfg?.drops?.mining_ore||1), mining=pm?.miningOre;
+    let status='';
+    if(ST?.gameRunning&&helmet?.enabled){
+      status=' Miner\'s Helmet: x4 replaces this slider while the helmet is worn; with the helmet off, this slider applies.';
+    }else if(ST?.gameRunning&&requested>1){
+      if(mining?.unavailable)status=' Plugin could not enable this feature; mining remains at x1.';
+      else if(mining?.ready&&mining.multiplier===requested)status=' Plugin ready at x'+requested+'.';
+      else status=' Waiting for the matching mining plugin to confirm the setting.';
+    }
+    miningNote.textContent='Multiplies ore from mining. x1 is normal. Only the ore amount is rewritten; ore types, mining XP and other drops are left to the game.'+status;
+  }
   const ap=(pm&&pm.autoprospect)||null;
   const parentVal=document.getElementById("autoprospval");
   const bagVal=document.getElementById("apbagval");
@@ -2686,7 +2780,9 @@ async function boot(){
   document.getElementById('mapval').className='val '+(mr?'':'off');
   const mrp=c.map_reveal_packs!==false;
   document.getElementById('map_reveal_packs').checked=mrp;
-  syncRevealPacks(mr,mrp);
+  const mrs=!!c.map_reveal_spawn;
+  document.getElementById('map_reveal_spawn').checked=mrs;
+  syncRevealPacks(mr,mrp,mrs);
   const hh=!!c.headhunter;
   document.getElementById('headhunter').checked=hh;
   document.getElementById('hhval').textContent=hh?'on':'off';
@@ -2740,7 +2836,8 @@ async function boot(){
     return row('keys',k,l,v,'',100,keyNote(k,t,v));
   }).join('');
   document.getElementById('drops').innerHTML=ST.drops.map(([k,l,h])=>
-    row('drops',k,l,(c.drops&&c.drops[k])||1,h?` <span class="tag">${h}</span>`:'')).join('');
+    row('drops',k,l,(c.drops&&c.drops[k])||1,h?` <span class="tag">${h}</span>`:'',k==='mining_ore'?10:100,
+      k==='mining_ore'?'Multiplies ore from mining. x1 is normal. Only the ore amount is rewritten; ore types, mining XP and other drops are left to the game.':'')).join('');
   document.getElementById('stats').innerHTML=(ST.stats||[]).map(([k,l,mx,step])=>{
     const v=(c.stats&&c.stats[k])||1;
     return row('stats',k,l,v,'',mx,statNote(k,v),step);
@@ -2855,14 +2952,19 @@ function bind(){
     // parent, inviting a click that could do nothing.
     document.getElementById('mapval').textContent=e.target.checked?'on':'off';
     document.getElementById('mapval').className='val '+(e.target.checked?'':'off');
-    syncRevealPacks(e.target.checked,document.getElementById('map_reveal_packs').checked);
+    syncRevealPacks(e.target.checked,document.getElementById('map_reveal_packs').checked,document.getElementById('map_reveal_spawn').checked);
     const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'map_reveal',value:e.target.checked})});
     toast('map reveal '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
   };
   document.getElementById('map_reveal_packs').onchange=async(e)=>{
-    syncRevealPacks(document.getElementById('map_reveal').checked,e.target.checked);
+    syncRevealPacks(document.getElementById('map_reveal').checked,e.target.checked,document.getElementById('map_reveal_spawn').checked);
     const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'map_reveal_packs',value:e.target.checked})});
-    toast('map monsters '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
+    toast('pack markers '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
+  };
+  document.getElementById('map_reveal_spawn').onchange=async(e)=>{
+    syncRevealPacks(document.getElementById('map_reveal').checked,document.getElementById('map_reveal_packs').checked,e.target.checked);
+    const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'map_reveal_spawn',value:e.target.checked})});
+    toast('spawn every pack '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
   };
   document.getElementById('headhunter').onchange=async(e)=>{
     const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'headhunter',value:e.target.checked})});
@@ -3057,8 +3159,8 @@ function preparePanelUI(){
     });
     card.append(grid);
     if(id==='qolCard'){
-      const parent=document.getElementById('map_reveal').closest('.row'),child=document.getElementById('map_reveal_packs_row');
-      const group=document.createElement('div');group.className='feature-with-child';parent.before(group);group.append(parent,child);
+      const parent=document.getElementById('map_reveal').closest('.row'),child=document.getElementById('map_reveal_packs_row'),spawnChild=document.getElementById('map_reveal_spawn_row');
+      const group=document.createElement('div');group.className='feature-with-child';parent.before(group);group.append(parent,child,spawnChild);
       const apParent=document.getElementById('mod_auto_prospect').closest('.row'),apChild=document.getElementById('mod_auto_prospect_bag_row');
       const apGroup=document.createElement('div');apGroup.className='feature-with-child';apParent.before(apGroup);apGroup.append(apParent,apChild);
     }
@@ -3141,7 +3243,7 @@ function refreshSavedControls(){
   });
   for(const [range] of painted)if(range.oninput)range.oninput();
   for(const [range,typed] of painted){if(typed===undefined)delete range.dataset.typed;else range.dataset.typed=typed}
-  const booleans={den_on:'density_on',autoapply:'auto_apply',enemyspeed_ct:'enemy_speed_ct',map_reveal:'map_reveal',map_reveal_packs:'map_reveal_packs',headhunter:'headhunter',tyrant:'tyrant',beacon:'beacon',mod_filter_max_relics:'mod_filter_max_relics',mod_orb_pickup_radius:'mod_orb_pickup_radius',mod_pet_quest_pickup:'mod_pet_quest_pickup',mod_auto_prospect:'mod_auto_prospect',mod_auto_prospect_bag:'mod_auto_prospect_bag',mod_toggle_indicator:'mod_toggle_indicator',mod_toggle_guard:'mod_toggle_guard',mod_restart_anytime:'mod_restart_anytime'};
+  const booleans={den_on:'density_on',autoapply:'auto_apply',enemyspeed_ct:'enemy_speed_ct',map_reveal:'map_reveal',map_reveal_packs:'map_reveal_packs',map_reveal_spawn:'map_reveal_spawn',headhunter:'headhunter',tyrant:'tyrant',beacon:'beacon',mod_filter_max_relics:'mod_filter_max_relics',mod_orb_pickup_radius:'mod_orb_pickup_radius',mod_pet_quest_pickup:'mod_pet_quest_pickup',mod_auto_prospect:'mod_auto_prospect',mod_auto_prospect_bag:'mod_auto_prospect_bag',mod_toggle_indicator:'mod_toggle_indicator',mod_toggle_guard:'mod_toggle_guard',mod_restart_anytime:'mod_restart_anytime'};
   for(const [id,key] of Object.entries(booleans))document.getElementById(id).checked=!!c[key];
   document.getElementById('mod_skill_timer_style').value=c.mod_skill_timer_style||'off';
   for(const [id,key] of Object.entries({hhval:'headhunter',tyval:'tyrant',beval:'beacon',mfmrval:'mod_filter_max_relics',morval:'mod_orb_pickup_radius',mpqpval:'mod_pet_quest_pickup',autoprospval:'mod_auto_prospect',mtival:'mod_toggle_indicator',mtgval:'mod_toggle_guard',mraval:'mod_restart_anytime',mapval:'map_reveal'})){
@@ -3150,7 +3252,7 @@ function refreshSavedControls(){
   document.getElementById('enemyspeedctval').textContent=c.enemy_speed_ct?'CT only':'all zones';
   document.getElementById('denval').textContent=c.density_on?'x'+c.density:'off';
   document.getElementById('denval').className='val '+(c.density_on?'':'off');
-  syncRevealPacks(!!c.map_reveal,!!c.map_reveal_packs);
+  syncRevealPacks(!!c.map_reveal,!!c.map_reveal_packs,!!c.map_reveal_spawn);
   syncProspectBag(!!c.mod_auto_prospect,!!c.mod_auto_prospect_bag);
   applyPluginModState(ST.pluginMods);
   updateControlDecoration();decoratePanelIcons();

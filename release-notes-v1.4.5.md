@@ -14,6 +14,74 @@ of its own - see that bullet for what it draws on.
 
 ## New
 
+- **"Reveal full map" now marks every monster pack instead of spawning it.**
+  Before: the map's monster sub-toggle created every pack of the zone as you
+  arrived, so that distant monsters would show on the revealed map. Filling a
+  zone that way put a whole zone's monsters into the game at once, and at high
+  density the game stayed slow for the whole zone even after the spawning had
+  finished, because the game keeps working on every living monster every
+  frame. Now the sub-toggle (**Show every monster pack on the map**) draws one
+  marker per pack the moment you arrive, by pack kind (normal, champion,
+  ancient, legion, mini boss), including density copies, without creating a
+  single monster. Each pack is still born by the game when you walk near it,
+  exactly as without the mod, and its real minimap dots replace the marker at
+  that moment. What a marker cannot show is the rarity roll of the monsters
+  inside the pack, which the game only decides when the pack is born. Each pack
+  kind has its own icon, with its own shape and colour and a dark outline so it
+  stands out on the minimap: a skull for a normal pack, a hooded face for an
+  ambush, a horned mask for ancient, a helmet for champion, a chest for a
+  colossal chest, a group of skulls for a legion and a crowned skull for a mini
+  boss. Packs that sit close together, such as the copies Monster Density
+  adds, show as one icon with a small count. The icons are plain PNG files in
+  `bin\bp_ipc\packmarks\` next to your game; replace any of them with your own
+  picture of the same name and it is used instead (`packmarks reload` in a
+  running game, or the next launch). The `packmarks` plugin command changes
+  size, grouping distance, the count badge and, for the fallback dots, colour
+  and outline, live. If an icon cannot be loaded, that kind falls back to a dot.
+  The old behaviour is still available as a second, off-by-default
+  sub-toggle, **Really spawn every pack on arrival (heavy)**, for comparison; it
+  still lags at high density.
+- **Tyrant's Crown and Beacon no longer scan every monster for nothing.** While
+  either was worn, ForgePact walked every living monster every sixth frame to
+  wake sleeping ones, but the game never puts monsters to sleep, so the walk
+  only cost frame time. It now checks whether waking changed anything before
+  walking, and walks only if it did.
+- **Monster Density no longer creates all of a spawner's extra monsters in
+  the same instant.** With Monster Density above x1, the extra copies each
+  spawner adds are now created over the next frames, nearest to you first,
+  instead of in the one frame the pack is born. Together with the pack markers
+  above, a dense zone no longer needs every monster in it alive at once. The
+  optional **Really spawn every pack on arrival (heavy)** sub-toggle still
+  creates the whole zone up front and still lags at high density; on the
+  supported game version it first reserves extra room in the game's
+  monster-stat storage, which a fully spawned dense map could run out of and
+  crash while creating enemies, and the panel says so when it cannot.
+
+- **Miner's Helmet.** A new signature helmet for miners: Great Helm base, SS
+  tier, +1000 Defense, +500% Enhanced Defense, +20% Movement Speed, +20% All
+  Resistances and +5 Light Radius. While you wear it, every mining node gives
+  exactly four times its ore; take it off and mining is back to normal (or to
+  your Mining Ore Amount setting). With it on, **Vein Resonance** digs more for
+  you: when you finish a node, the two nearest veins within a short distance of
+  it (192 units) that you could mine yourself are dug too, through the game's
+  own dig, each with the same four times the ore. Veins that are used up,
+  already being dug or above your mining level are skipped, and a vein dug this
+  way does not set off another one. Like the slider below, the helmet rewrites
+  only ore amounts and leaves mining experience to the game.
+  Forge the helmet in the Item Editor (Item Forge → Forge a signature item →
+  Miner's Helmet); Mods → Items shows whether you are wearing it.
+
+- **Mining Ore Amount.** A new 1–10× slider under Loot multiplies the ore each
+  mining node gives; x1 keeps normal mining. It rewrites only the ore amount:
+  ore types, mining experience and every other drop are left to the game, and
+  nothing is installed while it is at x1. While the Miner's Helmet is worn, its
+  four times replaces this slider instead of stacking with it.
+
+- **AFK FARM compatibility.** AFK FARM can now use its own reward settings
+  while ForgePact is loaded. Its MF, XP, Gold and loot bonuses apply once during
+  delivery. Your normal ForgePact settings still apply to active play and are
+  not overwritten.
+
 - **Auto-prospect items put in the Prospect Cube.** The cube's 9×6 prospect
   grid fills long before a full inventory is through it: you fill it, press
   Prospect, and fill it again, over and over. With the new **Auto-prospect**

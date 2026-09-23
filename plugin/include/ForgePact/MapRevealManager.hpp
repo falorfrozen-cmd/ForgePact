@@ -1,6 +1,8 @@
 #pragma once
 
 #include "Common.hpp"
+#include <ForgePact/PackAdmissionQueue.hpp>
+#include <ForgePact/AdaptivePopulationBudget.hpp>
 
 namespace ForgePact {
 
@@ -27,13 +29,11 @@ namespace ForgePact {
 //    were told the player was adjacent.  So "reveal the whole map" needs the
 //    zone populated, not a visibility flag flipped.
 //
-//    This opens a short window on each new zone during which ModuleMain's
-//    `Hook_distance_to_object` answers 0 for creator instances (the Beacon's
-//    proven `beaconspawn` trick, reused rather than reinvented).  The window
-//    is bounded so the builtin returns to a single relaxed atomic read for
-//    the rest of the zone, and the spawn is one-shot: the packs persist
-//    afterwards, including across re-entry (measured), so nothing has to be
-//    re-applied per frame.
+//    A temporary pass lets ready creators see distance zero with a five-second
+//    throughput target, 32-group ceiling and 4-8ms work budget. Storage is reserved
+//    before admission. Ready callers never wait for an absent queue head. The pass
+//    extends while work is deferred, then returns to a relaxed atomic check.
+//    Native events still create the packs and all density copies normally.
 class MapRevealManager {
 public:
     static MapRevealManager& Instance() {
@@ -42,23 +42,41 @@ public:
     }
 
     bool IsEnabled() const { return m_Enabled; }
+    bool HasReadableMap() const {
+        int64_t room=INT64_MIN,instance=INT64_MIN,grid=INT64_MIN;
+        return ReadIdentity(room,instance,grid);
+    }
     void SetEnabled(bool enabled) {
         m_Enabled = enabled;
         if (!m_Enabled) { CloseSpawnWindow(); }
         else ResetIdentity();   // re-arm: the current zone gets a pass too
+        if (m_Enabled && m_Packs) PreparePopulationCapacity();
         Out(std::string("reveal: ") + (m_Enabled ? "ACIK" : "KAPALI"));
     }
     void Toggle() { SetEnabled(!m_Enabled); }
 
-    // `reveal packs 0|1` - the pack half only.  Its own control because it is
-    // the half that costs frame time: clearing fog is free, populating a zone
-    // is not, and a player who only wants the map drawn should not have to
-    // pay for monsters they did not ask for.  Panel: the nested
-    // `map_reveal_packs` checkbox under "Reveal full map".
+    // `reveal packs 0|1` - the monster half of the map, drawn as one marker
+    // per unspawned spawner (ForgePact::PackMarkers) and costing no monsters.
+    // Since 2026-09-22 this is what the panel's nested `map_reveal_packs`
+    // checkbox means; the marker state itself lives in PackMarkers, which
+    // reads this flag together with IsEnabled().
+    bool MarksEnabled() const { return m_Marks; }
+    void SetMarks(bool on) { m_Marks = on; Out(std::string("reveal packs (markers): ") + (m_Marks ? "ACIK" : "KAPALI")); }
+
+    // Zone identity changes, counted: PackMarkers clears its list when this
+    // moves, without either class including the other.
+    uint64_t ZoneGeneration() const { return m_ZoneGeneration; }
+
+    // `reveal spawn 0|1` - the old "fill the map" pass: every spawner is told
+    // the player is adjacent, so the whole zone's packs really exist. Off by
+    // default since 2026-09-22 because a zone's worth of living monsters is
+    // what the game cannot afford per frame (docs/population-performance-
+    // analysis.md); kept as an explicit opt-in (panel: `map_reveal_spawn`).
     bool PacksEnabled() const { return m_Packs; }
     void SetPacks(bool on) {
         const bool was = m_Packs;
         m_Packs = on;
+        if (m_Packs && m_Enabled) PreparePopulationCapacity();
         if (!m_Packs) { CloseSpawnWindow(); }
         // REPORTED 2026-09-12 (PR #2 issue 3): turning packs on used to set
         // this flag and nothing else. Tick() returns early while the zone
@@ -71,7 +89,7 @@ public:
         // pass is safe, and skipping it here would reintroduce the inert-
         // creator bug by a new route.
         if (m_Packs && !was && m_Enabled) { m_PacksPending = true; m_PendingTicks = 0; }
-        Out(std::string("reveal packs: ") + (m_Packs ? "ACIK" : "KAPALI"));
+        Out(std::string("reveal spawn (fill the map): ") + (m_Packs ? "ACIK" : "KAPALI"));
     }
 
     // Cheap pre-filter for Hook_distance_to_object: one relaxed atomic load,
@@ -101,16 +119,23 @@ public:
     // and lying to it is safe no matter how stale the window is or which zone
     // it was opened for.
     //
-    // Cost: one variable_instance_get, paid only while a window is open and
-    // only for instances the hook has already confirmed are creators. The
-    // hook does the same kind of read for object_index one line earlier.
-    bool MayPopulate(const RValue& creator) const {
+    // Readiness and stable identity are read only during the population pass.
+    // Queue identities, never retained instances or deferred native calls.
+    bool MayPopulate(const RValue& creator) {
         if (m_SpawnWindow.load(std::memory_order_relaxed) <= 0) return false;
-        return CreatorIsReady(creator);
+        if (!PopulationCapacityAvailable()) { m_CapacityWaiting = true; return false; }
+        if (!CreatorIsReady(creator)) return false;
+        try {
+            RValue id = g_Yytk->CallBuiltin("variable_instance_get", { creator, RValue("id") });
+            if (id.m_Kind != VALUE_REAL && id.m_Kind != VALUE_INT32 && id.m_Kind != VALUE_INT64 && id.m_Kind != VALUE_REF) return false;
+            const double n = id.ToDouble();
+            if (!std::isfinite(n) || n < 0 || n > 9007199254740991.0 || std::floor(n) != n) return false;
+            return m_Admission.Request(static_cast<int64_t>(n),[]{return AdaptivePopulationBudget::Instance().ReservePack();});
+        } catch (...) { return false; }
     }
 
     // Whether one creator instance has finished initialising. The window's
-    // opening gate asks this of the zone's first creator; MayPopulate asks it
+    // opening gate looks for a ready creator; MayPopulate asks it
     // of the creator actually being answered.
     static bool CreatorIsReady(const RValue& creator) {
         try {
@@ -124,6 +149,23 @@ public:
     int  SpawnWindowLeft() const { return m_SpawnWindow.load(std::memory_order_relaxed); }
     bool PacksPending() const { return m_PacksPending; }
     int  PendingTicks() const { return m_PendingTicks; }
+    size_t QueuedPacks() const { return m_Admission.Pending(); }
+    size_t UnconfirmedPacks() const { return m_Admission.Unconfirmed(); }
+    bool NeedsBirthObservation() const { return m_Enabled && m_Packs && (QueuedPacks() || UnconfirmedPacks()); }
+    bool TracksCreator(int64_t id) const { return m_Admission.Tracks(id); }
+    uint64_t NativeBirthPacks() const { return m_Admission.NativeBirths(); }
+    uint64_t PopulationGeneration() const { return m_PopulationGeneration; }
+    void ObserveNativeBirth(int64_t id) {
+        // Denial never blocks vanilla near-player spawning. A successful
+        // enemy creation by this waiting creator is evidence of a birth,
+        // even if its distance polling stopped. It is not a full-pack census.
+        if (NeedsBirthObservation() && m_Admission.Tracks(id) && WindowIdentityValid())
+            m_Admission.ObserveNativeBirth(id);
+    }
+    uint64_t AdmittedPacks() const { return m_Admission.Granted(); }
+    unsigned PeakPacksPerFrame() const { return m_Admission.PeakPerFrame(); }
+    uint64_t PopulationBudgetFrames() const { return m_Admission.BudgetLimitedFrames(); }
+    uint64_t LastPackAdmissionMs() const { return m_Admission.LastAdmissionMs(); }
 
     // Called every frame from the frame callback.  The zone-identity work is
     // throttled to once per ~20 frames so each new map clears quickly without
@@ -131,6 +173,8 @@ public:
     // count down every frame, so it is handled before that throttle.
     void OnFrame(uint64_t frameCount) {
         if (!m_Enabled) return;
+        AdaptivePopulationBudget::Instance().ObserveBacklog(m_Admission.Pending(),DeferredDensityPending());
+        AdaptivePopulationBudget::Instance().BeginFrame(frameCount,WantsPackSpawn() || m_PacksPending || DeferredDensityPending()>0);
         int w = m_SpawnWindow.load(std::memory_order_relaxed);
         if (w > 0) {
             // REPORTED 2026-09-12 (PR #2 issue 2): the identity work below is
@@ -150,8 +194,16 @@ public:
             // or missing minimap with an unchanged room key is a zone change
             // too - reported 2026-09-12 as a second reproduction.
             if (!WindowIdentityValid()) { CloseSpawnWindow(); return; }
+            // The old fixed timeout must not discard a dense zone's queue tail.
+            if (m_Admission.HasDeferredWork() || m_CapacityWaiting || DeferredDensityPending()>0) w = (std::max)(w, 240);
             m_SpawnWindow.store(w - 1, std::memory_order_relaxed);
+            // Freeze the elapsed diagnostic when scheduling ends. Otherwise
+            // idle frames keep changing modstate and forcing disk rewrites.
+            // Retain the identity and unresolved groups for later native births.
+            if(w==1)AdaptivePopulationBudget::Instance().StopPass();
         }
+        m_CapacityWaiting = false;
+        m_Admission.OnFrame(frameCount);
         if ((frameCount % 20) != 0) return;
         try { Tick(); } catch (...) {}
         // Separate from Tick() on purpose: Tick() returns early once the zone
@@ -163,14 +215,15 @@ public:
 private:
     MapRevealManager() = default;
     bool m_Enabled{ false };
-    bool m_Packs{ true };
+    bool m_Packs{ false };   // the spawn pass: opt-in (`reveal spawn 1`)
+    bool m_Marks{ true };    // the markers: what `reveal packs` means now
+    uint64_t m_ZoneGeneration{ 0 };
     int64_t m_LastInstance{ INT64_MIN };
     int64_t m_LastGrid{ INT64_MIN };
     int64_t m_LastRoom{ INT64_MIN };
-    // Long enough to cover the creators' own polling timer (observed
-    // enemyCreatorTimer ~116, and a full zone populated in under 5 s), short
-    // enough that the builtin is back to a bare atomic read well before the
-    // player can cross the map.
+    // Native polling/readiness may outlive the five-second throughput target.
+    // Keep a grace window and preserve deferred work rather than silently
+    // throwing away groups to make a deadline counter look successful.
     static constexpr int kSpawnWindowFrames = 900;   // ~15 s at 60 fps
     // Tick() runs every 20 frames, so this is ~10 minutes of asking before the
     // zone is written off as one whose creators never initialise.
@@ -183,16 +236,25 @@ private:
     int64_t m_WindowGrid{ INT64_MIN };
     bool m_PacksPending{ false };
     int  m_PendingTicks{ 0 };
+    int  m_ReadyProbeCursor{ 0 };
     long m_ZonesPopulated{ 0 };
+    PackAdmissionQueue m_Admission;
+    uint64_t m_PopulationGeneration=0;
+    bool m_CapacityWaiting{ false };
 
     // Shutting the window is always safe - the pack pass re-arms on the next
     // identity change - so everything that means "the zone we opened this for
     // is gone or unverifiable" routes through here rather than each caller
     // remembering two fields.
     void CloseSpawnWindow() {
+        ++m_PopulationGeneration;
+        AdaptivePopulationBudget::Instance().StopPass();
         m_SpawnWindow.store(0, std::memory_order_relaxed);
+        m_Admission.Reset();
+        m_CapacityWaiting = false;
         m_PacksPending = false;
         m_PendingTicks = 0;
+        m_ReadyProbeCursor = 0;
         m_WindowRoom = INT64_MIN;
         m_WindowInstance = INT64_MIN;
         m_WindowGrid = INT64_MIN;
@@ -208,6 +270,7 @@ private:
         m_LastInstance = INT64_MIN;
         m_LastGrid = INT64_MIN;
         m_LastRoom = INT64_MIN;
+        ++m_ZoneGeneration;
         CloseSpawnWindow();
     }
 
@@ -302,6 +365,7 @@ private:
         m_LastInstance = instanceKey;
         m_LastGrid = gridKey;
         m_LastRoom = roomKey;
+        ++m_ZoneGeneration;
 
         // New zone: arm the pack pass, but do NOT start lying yet - see
         // TryOpenSpawnWindow.  The zone-identity change fires while the new
@@ -311,7 +375,10 @@ private:
         // first (PR #2 issue 2) - the new zone gets one only once its own
         // creators pass the readiness gate.
         CloseSpawnWindow();
-        if (m_Packs) { m_PacksPending = true; m_PendingTicks = 0; }
+        if (m_Packs) {
+            m_PacksPending = true; m_PendingTicks = 0;
+            AdaptivePopulationBudget::Instance().BeginPass();
+        }
     }
 
     // MEASURED 2026-09-11, the hard way: opening the window straight from the
@@ -330,20 +397,28 @@ private:
     // some zone never become ready, the window simply never opens and vanilla
     // behaviour is untouched, which is the right failure direction.
     void TryOpenSpawnWindow() {
-        if (++m_PendingTicks > kPendingGiveUpTicks) { m_PacksPending = false; return; }
+        if (++m_PendingTicks > kPendingGiveUpTicks) { m_PacksPending = false; AdaptivePopulationBudget::Instance().StopPass(); return; }
+        if (!PreparePopulationCapacity() || !PopulationCapacityAvailable()) return;
 
         RValue po = g_Yytk->CallBuiltin("asset_get_index", { RValue("Player_obj") });
         if (po.ToDouble() < 0) return;
         if (g_Yytk->CallBuiltin("instance_number", { po }).ToDouble() < 1.0) return;   // still loading
 
         RValue co = g_Yytk->CallBuiltin("asset_get_index", { RValue("Enemy_Creator_obj") });
-        if (co.ToDouble() < 0) { m_PacksPending = false; return; }
+        if (co.ToDouble() < 0) { m_PacksPending = false; AdaptivePopulationBudget::Instance().StopPass(); return; }
         const int n = (int)g_Yytk->CallBuiltin("instance_number", { co }).ToDouble();
-        if (n < 1) { m_PacksPending = false; return; }   // nothing to populate here
+        // Minimap readiness can precede creator creation. Keep the bounded
+        // pending poll alive; an empty first observation is not a completed zone.
+        if (n < 1) { m_ReadyProbeCursor = 0; return; }
 
-        RValue inst = g_Yytk->CallBuiltin("instance_find", { co, RValue(0.0) });
-        RValue t = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("enemyCreatorTimer") });
-        const bool ready = (t.m_Kind == VALUE_REAL || t.m_Kind == VALUE_INT32 || t.m_Kind == VALUE_INT64);
+        bool ready = false;
+        // A single unready first creator must not hold every ready sibling.
+        // Rotate a bounded probe rather than scanning an entire dense room.
+        for (int checked = 0; checked < (std::min)(n, 32); ++checked) {
+            m_ReadyProbeCursor %= n;
+            RValue inst = g_Yytk->CallBuiltin("instance_find", { co, RValue(static_cast<double>(m_ReadyProbeCursor++)) });
+            if (inst.ToDouble() >= 0 && CreatorIsReady(inst)) { ready = true; break; }
+        }
         if (!ready) return;   // creators still initialising - check again next tick
 
         // Never open a window against an identity we could not read. An
@@ -354,9 +429,12 @@ private:
         if (!ReadIdentity(room, minimap, grid)) return;
 
         m_WindowRoom = room;
+        AdaptivePopulationBudget::Instance().PlanPacks(static_cast<uint64_t>(n)+DeferredDensityPending());
+        m_Admission.Reset();
         m_WindowInstance = minimap;
         m_WindowGrid = grid;
         m_SpawnWindow.store(kSpawnWindowFrames, std::memory_order_relaxed);
+        FP_POP_BEGIN();
         m_PacksPending = false;
         m_PendingTicks = 0;
         ++m_ZonesPopulated;

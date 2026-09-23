@@ -2,7 +2,9 @@
 REM ForgePact plugin compiler.  Source and build environment live in the same
 REM folder tree; no dependency on Downloads.
 REM   build.bat release  -> BloodPactPlugin_ship.dll (the one players get)
-REM   build.bat          -> BloodPactPlugin_rel.dll  (research, all commands)
+REM   build.bat          -> BloodPactPlugin_ship.dll (player default)
+REM   build.bat dev      -> BloodPactPlugin_rel.dll  (research, all commands)
+REM   build.bat profile  -> BloodPactPlugin_profile.dll (bounded local CPU timings)
 setlocal
 REM Compiler discovery, in order:
 REM   1. Already-initialised MSVC environment (a caller that already ran
@@ -59,6 +61,11 @@ if /I "%~1"=="dev" (
     set "OUTPUT=BloodPactPlugin_ship.dll"
     set "OBJDIR=obj_ship"
 )
+if /I "%~1"=="profile" (
+    set "FLAGS=/DFORGEPACT_RELEASE /DFORGEPACT_POPULATION_PROFILE"
+    set "OUTPUT=BloodPactPlugin_profile.dll"
+    set "OBJDIR=obj_profile"
+)
 if not exist "%OBJDIR%" mkdir "%OBJDIR%"
 REM YYTK_DEFINE_INTERNAL exposes YYToolkit's real struct bodies (CScriptRef,
 REM YYObjectBase, CInstance) instead of the opaque stand-ins.  InvokeMethodValue
@@ -69,7 +76,7 @@ REM is a separate translation unit and the two must agree on the layouts, or
 REM they disagree about sizeof(CInstance) and the link is quietly wrong.
 cl /nologo /std:c++20 /EHsc /bigobj /MD /LD /O2 /DNDEBUG /DYYTK_DEFINE_INTERNAL=1 %FLAGS% /I "include" /I "%~dp0..\plugin\include" /I "%~dp0..\..\hs-game-sdk\cpp\include" "%SOURCE%" "include\YYToolkit\YYTK_Shared_Types.cpp" /Fe:%OUTPUT% /Fo:%OBJDIR%\ /link /DLL user32.lib
 if errorlevel 1 ( echo BUILD FAILED & exit /b 1 )
-if not "%OUTPUT%"=="BloodPactPlugin_rel.dll" (
+if "%OUTPUT%"=="BloodPactPlugin_ship.dll" (
     copy /y "%OUTPUT%" "..\modfiles_shipped\BloodPactPlugin.dll"
     if errorlevel 1 ( echo ERROR: could not stage BloodPactPlugin.dll & exit /b 1 )
     if exist "..\dist\ForgePact\modfiles" (

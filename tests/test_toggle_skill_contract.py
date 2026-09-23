@@ -761,7 +761,7 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
         self.assertNotIn("TgProbeMark", self.stripped)
         self.assertNotIn("TgProbeSpurnAfterDraw", self.stripped)
 
-    def test_kplayercommands_is_unchanged_from_7aa3c66_plus_toggleborder(self):
+    def test_kplayercommands_contains_only_documented_player_commands(self):
         # P2 (ToggleIndicatorShipContractTests below) adds `toggleborder` -
         # the one entry this set has ever gained since 7aa3c66 - so this
         # class's own P1b-era assertion (which held through session 4) is
@@ -796,6 +796,11 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
             # And "Restart zone at any time" (issue #8,
             # test_restart_anytime_contract.py).
             "restartanytime",
+            # Explicit new player command, covered by test_mining_ore_behavior.
+            "miningore", "minerhelm",
+            # Pack markers (map reveal's monster half since 1.4.5): marker
+            # look and counters only; test_map_reveal_contract.py covers it.
+            "packmarks",
         }
         self.assertEqual(entries, expected)
 
@@ -2399,6 +2404,10 @@ UNCHANGED_SINCE_T1 = (
 # research block, no new hook (context "Draw site, and the pins it moves").
 SKILL_TIMER_DRAW_CALL_LINE = "    SkillTimerDraw();"
 
+# The Miner's Helmet (1.4.5) draws its cosmetic pulse from the same callback,
+# on the line straight after the countdown's; it is removed the same way.
+MINER_HELMET_DRAW_CALL_LINE = "    ForgePact::MinerHelmet::Draw();"
+
 
 def assert_hook_draw_hud_buffs_unchanged_plus_skilltimer(testcase, new_body, old_body):
     """NARROWED for issue #55, not deleted: `Hook_DrawHudBuffs` was the one
@@ -2411,7 +2420,9 @@ def assert_hook_draw_hud_buffs_unchanged_plus_skilltimer(testcase, new_body, old
     testcase.assertEqual(lines.count(SKILL_TIMER_DRAW_CALL_LINE), 1, new_body)
     call_at = lines.index(SKILL_TIMER_DRAW_CALL_LINE)
     testcase.assertEqual(lines[call_at - 1].strip(), "ToggleIndicatorDraw();", new_body)
-    del lines[call_at]
+    testcase.assertEqual(lines.count(MINER_HELMET_DRAW_CALL_LINE), 1, new_body)
+    testcase.assertEqual(lines[call_at + 1], MINER_HELMET_DRAW_CALL_LINE, new_body)
+    del lines[call_at:call_at + 2]
     testcase.assertEqual("\n".join(lines), old_body)
 
 # The research block phase S must not touch at all: the sprite look probe the
@@ -2874,7 +2885,10 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         # `menulayout` is the read-only menu listing, another feature landing
         # in the same table (test_menu_layout_contract.py pins it), and
         # `restartanytime` is issue #8's (test_restart_anytime_contract.py).
-        self.assertEqual(now - before, {"autoprospect", "skilltimer", "menulayout", "restartanytime"})
+        # `miningore`, `minerhelm` and `packmarks` are 1.4.5's mining slider,
+        # Miner's Helmet and map pack markers (their own tests cover them).
+        self.assertEqual(now - before, {"autoprospect", "skilltimer", "menulayout", "restartanytime",
+                                        "miningore", "minerhelm", "packmarks"})
         self.assertEqual(before - now, set())
 
     # ---- Sprite look probe (R round 3, issue #11): `tgprobe sprite ...` ----

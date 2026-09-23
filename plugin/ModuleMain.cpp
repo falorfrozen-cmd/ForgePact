@@ -23,6 +23,8 @@
 #include <YYToolkit/YYTK_Shared.hpp>
 #include <hs_game_sdk/hs_game_sdk.hpp>
 #include <ForgePact/Version.hpp>
+#include <ForgePact/AdaptivePopulationBudget.hpp>
+#include <ForgePact/DeferredDensityCopies.hpp>
 #include <windows.h>
 #include <algorithm>
 #include <fstream>
@@ -328,6 +330,9 @@ static bool HookOneScript(const char* shortName, const char* id, PVOID dest, PFU
                           bool* nativeOut = nullptr);
 static bool AddrIsExecutableInModule(HMODULE mod, const void* addr);   // defined with the pet-quest collect call
 static bool HhResolveLocalPlayer(RValue& out, std::string* how = nullptr);
+static CInstance* HhResolveInstance(const RValue& value);
+static void ResetDeferredDensity(bool all);
+static size_t DeferredDensityPending();
 static void InstallCreateHooks();
 static void InstallDensityLifecycleHooks();
 static void OpenDensityWindow();
@@ -376,7 +381,12 @@ static consteval const char* SdkShortScriptName(std::string_view sdkConstant)
 }
 
 #include <ForgePact/Common.hpp>
+#include <ForgePact/ProtectedPoolRuntime.hpp>
+static bool PreparePopulationCapacity();
+static bool PopulationCapacityAvailable() { return ForgePact::ProtectedPool::Runtime::CanPopulate(); }
 #include <ForgePact/MapRevealManager.hpp>
+#include <ForgePact/PackMarkers.hpp>
+#include <ForgePact/PackMarkerIcons.hpp>
 #include <ForgePact/StatsManager.hpp>
 #include <ForgePact/RelicFilterMod.hpp>
 #include <ForgePact/ToggleSkillMod.hpp>
@@ -1081,6 +1091,7 @@ static bool RememberDensityPlacement(const DensityPlacementKey& key)
 
 static void ForgetDensityPlacements()
 {
+    ResetDeferredDensity(true);
     std::lock_guard<std::mutex> lock(g_DensityPlacementMutex);
     g_DensityKnownPlacements.clear();
     ForgePact::DensityManager::Instance().Frac = 0.0;
@@ -1201,6 +1212,95 @@ struct GecikmeliYaratim { bool katman; double x, y; RValue yuva; RValue nesne; u
 static std::deque<GecikmeliYaratim> g_Kuyruk;
 static int  g_KareBasina = 3;          // 0 = kapali (aninda yarat)
 static bool g_KuyruktanYaratim = false; // yeniden girisi engeller
+
+struct DensityContext { int kind=0; int64_t id=-1; }; // null, global, live instance id
+struct DensityRecipe {
+    bool layer=false;double x=0,y=0;
+    RValue plane,object; // validated scalar asset/layer values only, never instances/structs
+    DensityContext self,other;
+};
+static ForgePact::DeferredDensityCopies<DensityPlacementKey,DensityRecipe,DensityPlacementHash> g_DensityCopies;
+static int64_t g_DensityCopyRoom=INT64_MIN;
+static uint64_t g_DensityCopyCompleted=0,g_DensityCopyRefused=0,g_DensityCopyFailures=0;
+static std::string g_DensityCopyReason;
+static size_t DeferredDensityPending(){return g_DensityCopies.Pending();}
+static void ResetDeferredDensity(bool all){
+    if(all)g_DensityCopies.Reset();else g_DensityCopies.NewZone();
+    g_DensityCopyRoom=INT64_MIN;g_DensityCopyReason.clear();
+}
+static bool ObserveDensityRoom(){
+    const auto room=CurrentRoomKey();
+    if(room==INT64_MIN)return false;
+    if(g_DensityCopyRoom!=INT64_MIN && room!=g_DensityCopyRoom)g_DensityCopies.NewZone();
+    g_DensityCopyRoom=room;return true;
+}
+static bool CaptureDensityContext(CInstance* ptr,DensityContext& context){
+    if(!ptr){context={};return true;}
+    CInstance* global=nullptr;g_Yytk->GetGlobalInstance(&global);
+    if(ptr==global){context={1,-1};return true;}
+    try{
+        RValue id=g_Yytk->CallBuiltin("variable_instance_get",{ptr->ToRValue(),RValue("id")});
+        if(id.m_Kind!=VALUE_REAL && id.m_Kind!=VALUE_INT32 && id.m_Kind!=VALUE_INT64 && id.m_Kind!=VALUE_REF)return false;
+        const double n=id.ToDouble();
+        if(!std::isfinite(n) || n<0 || n>INT32_MAX || std::floor(n)!=n)return false;
+        context={2,static_cast<int64_t>(n)};return true;
+    }catch(...){return false;}
+}
+static bool ResolveDensityContext(const DensityContext& context,CInstance*& ptr){
+    ptr=nullptr;
+    if(context.kind==0)return true;
+    if(context.kind==1)return AurieSuccess(g_Yytk->GetGlobalInstance(&ptr)) && ptr;
+    ptr=HhResolveInstance(RValue(static_cast<double>(context.id)));return ptr!=nullptr;
+}
+static bool QueueDensityCopies(const DensityPlacementKey& key,bool layer,CInstance* self,CInstance* other,int argc,RValue* args,unsigned extras){
+    // Optional initialization structs may be mutated by their caller. Keep that
+    // unknown call shape synchronous rather than retaining a game-owned object.
+    if(argc!=4 || !args || extras>4 || !ObserveDensityRoom())return false;
+    auto scalar=[](const RValue& v){return v.m_Kind==VALUE_REAL || v.m_Kind==VALUE_INT32 || v.m_Kind==VALUE_INT64 || v.m_Kind==VALUE_REF;};
+    if(!scalar(args[0]) || !scalar(args[1]) || !scalar(args[3]) || (!scalar(args[2]) && args[2].m_Kind!=VALUE_STRING))return false;
+    DensityRecipe recipe;recipe.layer=layer;recipe.x=args[0].ToDouble();recipe.y=args[1].ToDouble();
+    if(!std::isfinite(recipe.x) || !std::isfinite(recipe.y))return false;
+    recipe.plane=args[2];recipe.object=args[3];
+    if(!CaptureDensityContext(self,recipe.self) || !CaptureDensityContext(other,recipe.other))return false;
+    if(!g_DensityCopies.Schedule(key,recipe,extras))return false;
+    ForgePact::AdaptivePopulationBudget::Instance().Activate();return true;
+}
+
+static void DensityCopiesTick(){
+    if(!g_DensityCopies.Pending() || !g_Yytk || !ObserveDensityRoom())return;
+    if(!ForgePact::MapRevealManager::Instance().HasReadableMap())return;
+    RValue player;if(!HhResolveLocalPlayer(player))return;
+    double x=0,y=0;
+    try{x=g_Yytk->CallBuiltin("variable_instance_get",{player,RValue("x")}).ToDouble();
+        y=g_Yytk->CallBuiltin("variable_instance_get",{player,RValue("y")}).ToDouble();}catch(...){return;}
+    auto& budget=ForgePact::AdaptivePopulationBudget::Instance();
+    for(unsigned attempts=0;attempts<ForgePact::AdaptivePopulationBudget::kMaxCopies && budget.CanCopy(ForgePact::MapRevealManager::Instance().WantsPackSpawn());++attempts){
+        if(!ObserveDensityRoom())break;
+        if(ForgePact::MapRevealManager::Instance().IsEnabled() && ForgePact::MapRevealManager::Instance().PacksEnabled() && !PopulationCapacityAvailable())break;
+        auto job=g_DensityCopies.TakeNearest(x,y,g_RuntimeFrame);if(!job)break;
+        CInstance* self=nullptr;CInstance* other=nullptr;
+        if(!ResolveDensityContext(job->recipe.self,self) || !ResolveDensityContext(job->recipe.other,other)){
+            g_DensityCopyReason="Waiting for native creation context";
+            g_DensityCopies.Retry(*job,g_RuntimeFrame+60);continue;
+        }
+        const int n=static_cast<int>(job->ordinal);
+        RValue args[4]={RValue(job->recipe.x+((n%5)-2)*28.0),RValue(job->recipe.y+((n/5)-2)*28.0),job->recipe.plane,job->recipe.object};
+        TRoutine orig=job->recipe.layer?g_OrigICL:g_OrigICD;
+        if(!orig){g_DensityCopies.Retry(*job,g_RuntimeFrame+60);continue;}
+        budget.CopyStarted();
+        // Mark before native code can serialize the copy. Never retain a raw
+        // caller across frames, and never replay a call after an uncertain fault.
+        RememberDensityPlacement(MakeDensityPlacementKey(static_cast<int>(args[3].ToDouble()),args,4));
+        const bool prior=g_KuyruktanYaratim;g_KuyruktanYaratim=true;
+        try{
+            ForgePact::PopulationNativeScope measured(true);
+            measured.SetObject(args[3].ToDouble());
+            RValue result;orig(result,self,other,4,args);
+            ++g_DensityCopyCompleted;BP_DIAG_INCREMENT(g_ExtraCreators);g_DensityCopyReason.clear();
+        }catch(...){++g_DensityCopyFailures;g_DensityCopyReason="Native density copy failed; not retried";}
+        g_KuyruktanYaratim=prior;g_DensityCopies.Complete(*job);
+    }
+}
 static uint64_t g_KuyrukToplam = 0;
 
 static int g_OrnekButce = 14000;  // 0 = sinirsiz
@@ -1303,6 +1403,12 @@ static void DoMultiCreate(TRoutine orig, RValue& Result, CInstance* S, CInstance
         }
     }
     if (isCreator && !specialChild) NoteDensityCreator();
+    // Restoring a partly populated zone resumes only its remaining copies.
+    // It does not advance the fractional multiplier or repeat completed work.
+    if(isCreator && densityAlreadyApplied && !specialChild && !g_KuyruktanYaratim && !g_CallerIsEnemy){
+        const auto key=MakeDensityPlacementKey(objIdx,Args,argc);
+        if(g_DensityCopies.HasPlan(key))QueueDensityCopies(key,katman,S,O,argc,Args,g_DensityCopies.Target(key));
+    }
     // density: multiply all Enemy_Creator* spawners (produces fully-configured enemies)
     if (g_CallerIsEnemy && isCreator) InterlockedIncrement(&g_DensitySkippedEnemyBorn);
 #ifndef FORGEPACT_RELEASE
@@ -1332,7 +1438,12 @@ static void DoMultiCreate(TRoutine orig, RValue& Result, CInstance* S, CInstance
     // (optional) direct enemy-descendant multiplier — off by default, creators are the right layer
     else if (g_EnemyMultAll > 1 && IsEnemyObject(objIdx) && g_EnemyMultAll > mult)
         mult = g_EnemyMultAll;
-    if (mult > 1 && argc >= 4 && orig && !g_KuyruktanYaratim) {
+    bool densityQueued=false;
+    if(mult>1 && isCreator && !ozelIcerik && !specialChild && !g_CallerIsEnemy && !g_KuyruktanYaratim){
+        densityQueued=QueueDensityCopies(MakeDensityPlacementKey(objIdx,Args,argc),katman,S,O,argc,Args,static_cast<unsigned>(mult-1));
+        if(!densityQueued)++g_DensityCopyRefused;
+    }
+    if (mult > 1 && argc >= 4 && orig && !g_KuyruktanYaratim && !densityQueued) {
         for (int i = 1; i < mult; i++) {
             try {
                 // Ozel icerik marker'i: kuyruga al, karelere yay.
@@ -1536,6 +1647,66 @@ static double InstanceIdOf(const RValue& inst)
 {
     try { RValue v = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("id") }); return v.ToDouble(); } catch (...) { return -1.0; }
 }
+// Shared only by guards in one create-hook invocation, before native code runs.
+// Never cache an instance pointer or classification across native calls/frames.
+struct CreationCallerInfo {
+    CInstance* self;
+    int object=-1;
+    bool read=false;
+    explicit CreationCallerInfo(CInstance* value):self(value){}
+    int ObjectIndex(){
+        if(!read){read=true;object=CallerObjectIndex(self);}
+        return object;
+    }
+};
+// Pack markers: a spawner that creates a monster has given birth, so its map
+// marker goes now instead of when the rotating check reaches it. One
+// object_index read of the caller (shared through CreationCallerInfo) and,
+// only for a known spawner creating a monster, one id read. Nothing runs
+// while the markers are off.
+static void PackMarkerBirth(CInstance* S, int argc, RValue* Args, CreationCallerInfo& caller)
+{
+    if (!S || argc < 4 || !Args || !ForgePact::PackMarkers::Instance().Enabled()) return;
+    try {
+        if (!IsEnemyObject((int)Args[3].ToDouble())) return;
+        if (!IsCachedCreatorObject(caller.ObjectIndex())) return;
+        const double id = InstanceIdOf(S->ToRValue());
+        if (std::isfinite(id) && id >= 0 && id <= 9007199254740991.0)
+            ForgePact::PackMarkers::Instance().MarkSpawned(static_cast<int64_t>(id));
+    } catch (...) {}
+}
+// Observe native success through the already-installed creation hooks. Store
+// only the caller identity before the call: native creation may remove self.
+// No event is replayed and no instance pointer survives the native call.
+struct PopulationBirthScope {
+    RValue& result;
+    int64_t creator=-1;
+    uint64_t generation=0;
+    bool completed=false;
+    PopulationBirthScope(RValue& r,CInstance* self,int argc,RValue* args,CreationCallerInfo& caller):result(r){
+        auto& reveal=ForgePact::MapRevealManager::Instance();
+        if(!self || argc<4 || !args || !reveal.NeedsBirthObservation())return;
+        generation=reveal.PopulationGeneration();
+        try {
+            const int object=static_cast<int>(args[3].ToDouble());
+            if(!IsEnemyObject(object) || !IsCachedCreatorObject(caller.ObjectIndex()))return;
+            const double id=InstanceIdOf(self->ToRValue());
+            if(std::isfinite(id) && id>=0 && id<=9007199254740991.0 && std::floor(id)==id
+               && reveal.TracksCreator(static_cast<int64_t>(id)))creator=static_cast<int64_t>(id);
+        }catch(...){}
+    }
+    void Completed(){completed=true;}
+    ~PopulationBirthScope(){
+        if(creator<0 || !completed)return;
+        try {
+            if(generation!=ForgePact::MapRevealManager::Instance().PopulationGeneration())return;
+            if(result.m_Kind!=VALUE_REAL && result.m_Kind!=VALUE_INT32 && result.m_Kind!=VALUE_INT64 && result.m_Kind!=VALUE_REF)return;
+            const double id=result.ToDouble();
+            if(std::isfinite(id) && id>=0 && id<=9007199254740991.0 && std::floor(id)==id)
+                ForgePact::MapRevealManager::Instance().ObserveNativeBirth(creator);
+        }catch(...){}
+    }
+};
 // A spawner created by a monster OR by another spawner is a runtime chain link, not part of
 // the zone's layout: density leaves it alone, otherwise every generation multiplies again.
 static bool CallerIsEnemyOrCreator(CInstance* S)
@@ -1552,12 +1723,12 @@ static bool CallerIsEnemyOrCreator(CInstance* S)
 struct EnemyBornScope
 {
     RValue& result; int objIdx = -1; bool active = false; bool prevCreating = false, prevCaller = false;
-    EnemyBornScope(RValue& r, CInstance* S, int argc, RValue* Args) : result(r)
+    EnemyBornScope(RValue& r, CInstance* S, int argc, RValue* Args, CreationCallerInfo& caller) : result(r)
     {
         try { if (argc >= 4) objIdx = (int)Args[3].ToDouble(); } catch (...) {}
         if (!(RarityFloorActive() || TyrantActive() || ForgePact::DensityManager::Instance().Mult > 1.0)) return;
         if (!(IsEnemyObject(objIdx) || IsCachedCreatorObject(objIdx))) return;
-        if (!CallerIsEnemyInstance(S)) return;   // only a real monster starts a chain
+        if (!IsEnemyObject(caller.ObjectIndex())) return;   // only a real monster starts a chain
         active = true; prevCreating = g_CreatingFromEnemy; prevCaller = g_CallerIsEnemy;
         g_CreatingFromEnemy = g_CreatingFromEnemy || IsEnemyObject(objIdx);
         g_CallerIsEnemy = true;
@@ -1579,15 +1750,20 @@ static void HhDeathEffectTrigger(CInstance* S, int objIdx);   // defined with th
 static bool HeadhunterRunning();                              // same
 static void HookICD(RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)
 {
+    ForgePact::PopulationNativeScope populationWork;
+    try { if(populationWork.Measuring() && argc>=4 && Args)populationWork.SetObject(Args[3].ToDouble()); } catch(...) {}
+    CreationCallerInfo callerInfo(S);
+    PopulationBirthScope populationBirth(Result,S,argc,Args,callerInfo);
     PERF_SCOPE(g_PerfICD);
-    EnemyBornScope _born(Result, S, argc, Args);
+    EnemyBornScope _born(Result, S, argc, Args, callerInfo);
+    PackMarkerBirth(S, argc, Args, callerInfo);
     if (argc >= 4 && HeadhunterRunning()) { try { HhDeathEffectTrigger(S, (int)Args[3].ToDouble()); } catch (...) {} }
 #ifdef FORGEPACT_RELEASE
     // A hook installed earlier in this process cannot be removed safely while
     // the game is running.  With every related feature Off, take a true native
     // pass-through path: no object lookup, cache access or post-create work.
     if (ForgePact::DensityManager::Instance().Mult <= 1.0 && g_EnemyMultAll <= 1 && g_ObjMult.empty()) {
-        if (g_OrigICD) g_OrigICD(Result, S, O, argc, Args);
+        if (g_OrigICD) { g_OrigICD(Result, S, O, argc, Args); populationBirth.Completed(); }
         return;
     }
 #endif
@@ -1604,23 +1780,28 @@ static void HookICD(RValue& Result, CInstance* S, CInstance* O, int argc, RValue
         && (DensityWindowActive() || IsCachedCreatorObject(objIdx));
     if (!densityCreate && g_EnemyMultAll <= 1 && g_SpecialCreateDepth == 0
         && ObjectMultiplier(objIdx) <= 1) {
-        if (g_OrigICD) g_OrigICD(Result, S, O, argc, Args);
+        if (g_OrigICD) { g_OrigICD(Result, S, O, argc, Args); populationBirth.Completed(); }
         return;
     }
 #endif
 #ifndef FORGEPACT_RELEASE
     WatchLog(ret, objIdx);
 #endif
-    if (g_OrigICD) DoMultiCreate(g_OrigICD, Result, S, O, argc, Args, objIdx, false);
+    if (g_OrigICD) { DoMultiCreate(g_OrigICD, Result, S, O, argc, Args, objIdx, false); populationBirth.Completed(); }
 }
 static void HookICL(RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)
 {
+    ForgePact::PopulationNativeScope populationWork;
+    try { if(populationWork.Measuring() && argc>=4 && Args)populationWork.SetObject(Args[3].ToDouble()); } catch(...) {}
+    CreationCallerInfo callerInfo(S);
+    PopulationBirthScope populationBirth(Result,S,argc,Args,callerInfo);
     PERF_SCOPE(g_PerfICD);
-    EnemyBornScope _born(Result, S, argc, Args);
+    EnemyBornScope _born(Result, S, argc, Args, callerInfo);
+    PackMarkerBirth(S, argc, Args, callerInfo);
     if (argc >= 4 && HeadhunterRunning()) { try { HhDeathEffectTrigger(S, (int)Args[3].ToDouble()); } catch (...) {} }
 #ifdef FORGEPACT_RELEASE
     if (ForgePact::DensityManager::Instance().Mult <= 1.0 && g_EnemyMultAll <= 1 && g_ObjMult.empty()) {
-        if (g_OrigICL) g_OrigICL(Result, S, O, argc, Args);
+        if (g_OrigICL) { g_OrigICL(Result, S, O, argc, Args); populationBirth.Completed(); }
         return;
     }
 #endif
@@ -1634,14 +1815,14 @@ static void HookICL(RValue& Result, CInstance* S, CInstance* O, int argc, RValue
         && (DensityWindowActive() || IsCachedCreatorObject(objIdx));
     if (!densityCreate && g_EnemyMultAll <= 1 && g_SpecialCreateDepth == 0
         && ObjectMultiplier(objIdx) <= 1) {
-        if (g_OrigICL) g_OrigICL(Result, S, O, argc, Args);
+        if (g_OrigICL) { g_OrigICL(Result, S, O, argc, Args); populationBirth.Completed(); }
         return;
     }
 #endif
 #ifndef FORGEPACT_RELEASE
     WatchLog(ret, objIdx);
 #endif
-    if (g_OrigICL) DoMultiCreate(g_OrigICL, Result, S, O, argc, Args, objIdx, true);
+    if (g_OrigICL) { DoMultiCreate(g_OrigICL, Result, S, O, argc, Args, objIdx, true); populationBirth.Completed(); }
 }
 
 static bool HookBuiltin(const char* name, const char* id, PVOID dest, TRoutine* origOut)
@@ -1844,6 +2025,9 @@ static bool HookOneScript(const char* shortName, const char* id, PVOID dest, PFU
     return true;
 }
 
+#include <ForgePact/MiningOreMod.hpp>
+#include <ForgePact/MinerHelmetState.hpp>
+
 // MEASURED 2026-09-10, session 7: every hook this file installs goes through
 // HookOneScript above, which always prepends "gml_Script_" - correct for
 // script assets and the anonymous closures GameMaker nests inside an
@@ -1892,6 +2076,7 @@ static RValue& HookZoneStateResetSingleDensityWindow(
 {
     // A single-zone reset marks a transition. It must never clear the stable
     // placement set: doing that is what caused density to multiply on revisit.
+    ResetDeferredDensity(false);
     OpenDensityWindow();
     return g_OrigZoneStateResetSingleDensityWindow
         ? g_OrigZoneStateResetSingleDensityWindow(S, O, R, argc, A) : R;
@@ -3373,6 +3558,17 @@ static bool HasCustomForgeSelector(double t, double a, double b)
 }
 static void AddBuiltInSignatureEntries()
 {
+    if (!HasCustomForgeSelector(0.0, ForgePact::MinerRules::Seed, 7.0)) {
+        CustomForgeEntry helmet;
+        helmet.selector = {{"t", 0}, {"a", ForgePact::MinerRules::Seed}, {"b", 7}, {"c", 0}, {"j", 0}};
+        helmet.stats = {{154, 1000}, {29, 500}, {25, 20}, {173, 20}, {281, 5}};
+        helmet.keepNative = false; helmet.rarity = 10; helmet.tier = 5;
+        helmet.mechanic = "miner"; helmet.name = "Miner's Helmet";
+        helmet.affix = "4x mining ore while equipped\nVein Resonance: a golden pulse when a vein yields ore";
+        helmet.lore = "Below the mountain, every glimmer is a promise.";
+        helmet.builtin = true;
+        g_CustomForgeEntries.push_back(std::move(helmet));
+    }
     if (!HasCustomForgeSelector(0.0, kSigCrownSeed, 7.0)) {
         CustomForgeEntry crown;
         crown.selector = { {"t", 0.0}, {"a", kSigCrownSeed}, {"b", 7.0}, {"c", 0.0}, {"j", 0.0} };
@@ -3692,6 +3888,7 @@ static double VanilyaBase(int kategori, int indeks, RValue& st, RValue& drOut)
         double v = simdi.ToDouble();
         if (!std::isfinite(v)) v = -1.0;
         g_DropRateVanilya[anahtar] = v;
+        HeroSiege::RewardScope::PublishBase(kategori, indeks, v);
         return v;
     }
     return it->second;
@@ -3949,6 +4146,7 @@ static bool TryApplyCustomForge(RValue* candidate, bool finalPass = false)
                 InterlockedIncrement(&g_CustomForgeMechanicTags);
                 if (entry.mechanic == "tyrant") g_TyItemTagged = true;
                 if (entry.mechanic == "beacon") g_BeItemTagged = true;
+                if (entry.mechanic == "miner") ForgePact::MinerHelmet::pending = true;
             }
             if (finalPass) {
                 size_t rk = 0, sk = 0;
@@ -6553,6 +6751,7 @@ static RValue& Hook_DrawHudBuffs(CInstance* S, CInstance* O, RValue& R, int argc
     HhDrawHeadLabels();
     ToggleIndicatorDraw();
     SkillTimerDraw();
+    ForgePact::MinerHelmet::Draw();
 #ifndef FORGEPACT_RELEASE
     TgProbeSpurnAfterDraw();
 #endif
@@ -6910,6 +7109,7 @@ static bool HuntWants(const RValue& inst, int policy)
 static long g_BeScanNear = 0, g_BeScanMid = 0, g_BeScanFar = 0;   // scanning monsters by distance to the player
 static RValue& Hook_PathFindScanTick(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
+    FP_POP_SCOPE(HuntScan);
     ++g_BeScans;
 #ifndef FORGEPACT_RELEASE
     // research telemetry: distance histogram of scans
@@ -6969,6 +7169,7 @@ static RValue& Hook_PathFindScanTick(CInstance* S, CInstance* O, RValue& R, int 
 }
 static RValue& Hook_PathFindLeashCheck(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
+    FP_POP_SCOPE(HuntLeash);
     if (S) {
         const int policy = HuntPolicy();
         if (policy != 0 && HuntWants(S->ToRValue(), policy)) { ++g_BeLeashSkips; return R; }   // no leash: they never turn back
@@ -6995,23 +7196,78 @@ static const char* const kBeCreatorObjects[] = {
 // sleep.  radius < 0 keeps them all awake.  Returns the number left awake.
 // policy: 2 = wake every instance of obj inside the radius, 1 = only enemyRarity >= 2.
 // Instances the game itself left active are never touched.
+//
+// MEASURED 2026-09-22 (creator census, plus the game's own monster pass read
+// from a local decompilation - docs/population-performance-analysis.md): the
+// game never deactivates monsters. Far ones are merely left out of the
+// 30-frame player-box list. So instance_activate_object never changes the
+// count in vanilla, and the identity snapshot taken before it - two runtime
+// calls per monster, every sixth frame, ~10k calls a pass at 4x - was pure
+// cost. The snapshot is now taken only once a count change has proved that
+// something in this session does deactivate monsters.
+//
+// The call that discovers it has no snapshot, so it cannot tell the instances
+// it just woke from the ones the game left active, and it leaves all of them
+// awake. The always-snapshot walk would have sent the unwanted ones back to
+// sleep in that same call; this one call does not. Waking too many is the only
+// safe direction: if an instance the game left active were put to sleep here,
+// it would count as asleep from then on, and under the rares-only policy later
+// passes would keep an ordinary monster asleep even beside the player.
+// What that one call woke stays awake until whatever put it to sleep does so
+// again; from then on every pass takes the snapshot and filters exactly.
+static bool g_BeWakeSnapshot = false;   // a count change was seen: keep the full snapshot walk from now on
 static long BeWakeObject(const RValue& obj, double px, double py, double radius, int policy)
 {
-    std::unordered_set<int> gameActive;
+    FP_POP_SCOPE(HuntWakeObject);
+    // The unlimited all-enemy policy never filters anything. Enumerating
+    // both the old and new active sets cannot change its answer.
+    if (policy == 2 && radius < 0.0) {
+        g_Yytk->CallBuiltin("instance_activate_object", { obj });
+        return static_cast<long>(g_Yytk->CallBuiltin("instance_number", { obj }).ToDouble());
+    }
+    if (!g_BeWakeSnapshot) {
+        const int before = (int)g_Yytk->CallBuiltin("instance_number", { obj }).ToDouble();
+        g_Yytk->CallBuiltin("instance_activate_object", { obj });
+        const int after = (int)g_Yytk->CallBuiltin("instance_number", { obj }).ToDouble();
+        if (after == before) return after;   // nothing was asleep: the vanilla case, no walk at all
+        g_BeWakeSnapshot = true;
+        return after;
+    }
+    // instance_find already returns an identity on this runner (including
+    // VALUE_REF). Asking variable_instance_get("id") for every identity
+    // repeats the lookup. Object-valued handles retain the original route.
+    const auto identity = [](const RValue& inst) -> int64_t {
+        const bool direct = inst.m_Kind == VALUE_REAL || inst.m_Kind == VALUE_INT32
+            || inst.m_Kind == VALUE_INT64 || inst.m_Kind == VALUE_REF;
+        const double value = direct ? inst.ToDouble()
+            : g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("id") }).ToDouble();
+        if (!std::isfinite(value) || value < 0 || value > 9007199254740991.0 || std::floor(value) != value)
+            throw std::runtime_error("Unreadable hunt instance identity");
+        return static_cast<int64_t>(value);
+    };
+    // One contiguous allocation replaces a hash-node allocation per enemy on
+    // every wake pass. This snapshot lives only for this synchronous call.
+    std::vector<int64_t> gameActive;
+    const int n0 = (int)g_Yytk->CallBuiltin("instance_number", { obj }).ToDouble();
+    gameActive.reserve((std::max)(0, n0));
     {
-        const int n0 = (int)g_Yytk->CallBuiltin("instance_number", { obj }).ToDouble();
         for (int i = 0; i < n0; ++i) {
             RValue inst = g_Yytk->CallBuiltin("instance_find", { obj, RValue((double)i) });
-            gameActive.insert((int)g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("id") }).ToDouble());
+            gameActive.push_back(identity(inst));
         }
     }
     g_Yytk->CallBuiltin("instance_activate_object", { obj });
     const int n = (int)g_Yytk->CallBuiltin("instance_number", { obj }).ToDouble();
+    // Activation is synchronous and only adds active instances. If it added
+    // none, every instance is native-active and the filter must preserve it.
+    // Avoid the identical second full lookup walk in this common case.
+    if (n == n0) return n;
+    std::sort(gameActive.begin(), gameActive.end());
     long awake = 0;
     for (int i = n - 1; i >= 0; --i) {
         RValue inst = g_Yytk->CallBuiltin("instance_find", { obj, RValue((double)i) });
-        const int id = (int)g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("id") }).ToDouble();
-        if (gameActive.count(id)) { ++awake; continue; }
+        const int64_t id = identity(inst);
+        if (std::binary_search(gameActive.begin(), gameActive.end(), id)) { ++awake; continue; }
         bool keep = HuntWants(inst, policy);
         if (keep && radius >= 0.0) {
             const double ex = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("x") }).ToDouble();
@@ -7027,6 +7283,7 @@ static PFUNC_YYGMLScript g_Orig_ActivateDeactivateProps = nullptr;
 static PFUNC_YYGMLScript g_Orig_LocalActivateDeactivateProps = nullptr;
 static void BeaconWakeEnemies()
 {
+    FP_POP_SCOPE(HuntWake);
     const int policy = HuntPolicy();
     if (policy == 0 || g_BeWakeRadius == 0.0) return;
     try {
@@ -7099,6 +7356,7 @@ static void BeaconStepFarHunters()
 }
 static RValue& Hook_ActivateDeactivateProps(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
+    FP_POP_SCOPE(ActivateProps);
     BeaconStepFarHunters();
     if (!BeaconFreezeGate()) return R;
     RValue& r = g_Orig_ActivateDeactivateProps ? g_Orig_ActivateDeactivateProps(S, O, R, argc, A) : R;
@@ -7107,6 +7365,7 @@ static RValue& Hook_ActivateDeactivateProps(CInstance* S, CInstance* O, RValue& 
 }
 static RValue& Hook_LocalActivateDeactivateProps(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
+    FP_POP_SCOPE(ActivateProps);
     BeaconStepFarHunters();
     if (!BeaconFreezeGate()) return R;
     RValue& r = g_Orig_LocalActivateDeactivateProps ? g_Orig_LocalActivateDeactivateProps(S, O, R, argc, A) : R;
@@ -7282,7 +7541,8 @@ static void ObjIdxProbeReset()
 
 static void Hook_distance_to_object(RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)
 {
-    if (g_OrigDistanceToObject) g_OrigDistanceToObject(Result, S, O, argc, Args);
+    if (g_OrigDistanceToObject) { FP_POP_SCOPE(DistanceNative); g_OrigDistanceToObject(Result, S, O, argc, Args); }
+    FP_POP_SCOPE(DistanceExtra);
 
     // Two independent callers want the same lie, for different reasons:
     //   - the Beacon, continuously, so awake spawners inside the wake radius
@@ -7371,6 +7631,87 @@ static void InstallBeaconHook()
     HookOneScript("ActivateDeactivateProps",      "fp_beacon_wake",  (PVOID)Hook_ActivateDeactivateProps,      &g_Orig_ActivateDeactivateProps);
     HookOneScript("LocalActivateDeactivateProps", "fp_beacon_wakel", (PVOID)Hook_LocalActivateDeactivateProps, &g_Orig_LocalActivateDeactivateProps);
     g_BeHookInstalled = a && b;
+}
+
+// ===== Pack markers: map reveal's monster half since 1.4.5 =====================
+// One icon per unspawned Enemy_Creator_* on the game's own minimap layer,
+// instead of creating the zone's monsters (docs/population-performance-
+// analysis.md: a zone's worth of living monsters is what costs 30-80 ms a
+// frame at 4x, whichever way they were born).
+//
+// DrawMinimap calls DrawMinimapDynamic once per icon family, with the family's
+// object index as the first argument and the layer transform in the rest
+// (measured 2026-09-22 from the game's own placement: x' = 32 + x*args[2],
+// y' = 32 + (y+args[7])*args[3], icon sprite args[4]). The hook lets the game
+// draw its monsters, then draws the markers for the same family with the same
+// arguments, so they land in the same surface the HUD minimap and the map
+// screen are composited from. Other families draw nothing extra, and nothing
+// at all runs while the feature is off or the zone has no markers.
+static PFUNC_YYGMLScript g_Orig_DrawMinimapDynamic = nullptr;
+static bool g_PackMarkerHookAttempted = false, g_PackMarkerHookNative = false;
+static volatile long g_PackMarkerFamilyCalls = 0;
+static bool PackMarkerFamilyIsEnemy(const RValue& family)
+{
+    if (g_EnemyParentIdx < 0) return false;
+    if (family.m_Kind == VALUE_REAL || family.m_Kind == VALUE_INT32 || family.m_Kind == VALUE_INT64)
+        return static_cast<int>(family.ToDouble()) == g_EnemyParentIdx;
+    if (family.m_Kind == VALUE_REF) {
+        // An asset reference carries the index in its low 32 bits; the runner's
+        // own conversion is asked first, the raw field is the fallback.
+        try { if (static_cast<int>(family.ToDouble()) == g_EnemyParentIdx) return true; } catch (...) {}
+        return static_cast<int>(family.m_i64 & 0xffffffff) == g_EnemyParentIdx;
+    }
+    return false;
+}
+static RValue& Hook_DrawMinimapDynamic(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    RValue& r = g_Orig_DrawMinimapDynamic ? g_Orig_DrawMinimapDynamic(S, O, R, argc, A) : R;
+    auto& markers = ForgePact::PackMarkers::Instance();
+    if (!markers.Enabled() || markers.Count() == 0 || argc < 5 || !A || !A[0] || !A[2] || !A[3] || !A[4]) return r;
+    try {
+        if (!PackMarkerFamilyIsEnemy(*A[0])) return r;
+        InterlockedIncrement(&g_PackMarkerFamilyCalls);
+        static const RValue kUndefined;
+        markers.Draw(*A[2], *A[3], (argc > 7 && A[7]) ? *A[7] : kUndefined, *A[4]);
+    } catch (...) {}
+    return r;
+}
+// The icon for one pack kind, as a path GameMaker can open. The embedded
+// default PNG (tools/make_packmark_icons.py) is written to bp_ipc\packmarks\
+// only when no file of that name is there, so a player's own design of the
+// same name is kept and used. GameMaker's file sandbox reads relative paths
+// from its working directory, which is the game's bin folder - where bp_ipc
+// lives - so the path handed back is relative to that.
+static volatile long g_PackMarkerIconWrites = 0, g_PackMarkerIconWriteErrors = 0;
+static bool PackMarkerIconPath(int kind, std::string& gmlPath, std::string& absolutePath)
+{
+    if (kind < 0 || kind >= static_cast<int>(ForgePact::PackMarkerIcons::kIconCount)) return false;
+    const auto& icon = ForgePact::PackMarkerIcons::kIcons[kind];
+    const std::string dir = IPC_DIR + "\\packmarks";
+    const std::string file = dir + "\\" + icon.name + ".png";
+    try {
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+        if (!std::filesystem::exists(file, ec)) {
+            std::ofstream f(file, std::ios::binary | std::ios::trunc);
+            if (!f) { InterlockedIncrement(&g_PackMarkerIconWriteErrors); return false; }
+            f.write(reinterpret_cast<const char*>(icon.data), static_cast<std::streamsize>(icon.size));
+            if (!f) { InterlockedIncrement(&g_PackMarkerIconWriteErrors); return false; }
+            InterlockedIncrement(&g_PackMarkerIconWrites);
+        }
+    } catch (...) { InterlockedIncrement(&g_PackMarkerIconWriteErrors); return false; }
+    gmlPath = std::string("bp_ipc\\packmarks\\") + icon.name + ".png";
+    absolutePath = file;
+    return true;
+}
+static void InstallPackMarkerHook()
+{
+    if (g_PackMarkerHookAttempted) return;
+    g_PackMarkerHookAttempted = true;
+    ForgePact::PackMarkers::Instance().SetIconProvider(&PackMarkerIconPath);
+    InstallCreateHooks();   // births reach PackMarkerBirth through the existing create hooks
+    HookOneScript("DrawMinimapDynamic", "fp_packmarks_draw", (PVOID)Hook_DrawMinimapDynamic, &g_Orig_DrawMinimapDynamic, &g_PackMarkerHookNative);
+    Out(std::string("packmarks: minimap hook ") + (g_Orig_DrawMinimapDynamic ? (g_PackMarkerHookNative ? "native" : "TABLE-ONLY (the game calls this layer directly; markers may not draw)") : "FAILED (DrawMinimapDynamic not found)"));
 }
 
 // ---- orb (globe) pickup radius --------------------------------------------
@@ -9671,6 +10012,8 @@ static CInstance* HhResolveInstance(const RValue& value)
     } catch (...) {}
     return nullptr;
 }
+
+#include <ForgePact/MinerHelmetMod.hpp>
 
 // Bodies for the snapshot/diff research commands forward-declared near
 // CiDiffSnapshot above - defined here because they need HhResolveInstance,
@@ -15766,6 +16109,7 @@ static bool InChaosTowerCached()
 
 static RValue& Hook_PathFindStartPath(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
+    FP_POP_SCOPE(HuntStartPath);
     // Real counters even in player builds: a path start is a per-enemy,
     // per-second event, not a per-frame hot path, and the status line is the
     // only way a player can prove the hook is doing something.
@@ -15832,6 +16176,7 @@ static int g_mult_DropRelic = 1;
 // than migrated into ForgePact::RelicFilterMod.)
 
 static RValue& Hook_DropRelic(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) {
+    if (HeroSiege::RewardScope::Active()) return g_Orig_DropRelic ? g_Orig_DropRelic(S,O,R,argc,A) : R;
     BP_DIAG_INCREMENT(g_cnt_DropRelic);
 
     std::unordered_set<int> maxedRelics;
@@ -17348,7 +17693,10 @@ static std::mutex g_ProbeLock;
 
 static double __cdecl HookProtGet(double key)
 {
-    double v = g_OrigProtGet ? g_OrigProtGet(key) : 0.0;
+    FP_POP_SCOPE(PoolGet);
+    double v = ForgePact::ProtectedPool::Runtime::active.load(std::memory_order_acquire)
+        ? ForgePact::ProtectedPool::Runtime::Get(key)
+        : (g_OrigProtGet ? g_OrigProtGet(key) : 0.0);
 #ifndef FORGEPACT_RELEASE
     InterlockedIncrement(&g_ProtGetCalls);
     if (key == 175.0) InterlockedIncrement(&g_Seen175);
@@ -17394,6 +17742,23 @@ static bool EnsureProtGetHook()
     g_OrigProtGet = reinterpret_cast<AcGetVariableFn>(tramp);
     Out("HOOK INSTALLED on ac_dll_gm!GetVariable (native store)");
     return true;
+}
+
+static bool PreparePopulationCapacity()
+{
+    // Reuse the existing drop-rate getter hook; never put two independent
+    // detours on the same export. Its trampoline remains the bank-zero getter.
+    return ForgePact::ProtectedPool::Runtime::Install(GetModuleHandleW(L"ac_dll_gm.dll"),
+        fs::path(IPC_DIR) / "population-cache",
+        [](const char* name, void* target, void* replacement, void** original) {
+            if (std::strcmp(name, "GetVariable") == 0) {
+                if (!EnsureProtGetHook()) return false;
+                *original = reinterpret_cast<void*>(g_OrigProtGet);
+                return true;
+            }
+            const std::string id = std::string("fp_population_") + name;
+            return AurieSuccess(MmCreateHook(g_ArSelfModule, id.c_str(), target, replacement, original));
+        }, [](const std::string& line) { Out(line); });
 }
 
 static RValue& HookGpvRate(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
@@ -19823,6 +20188,7 @@ static void OranlariGeriAl(const std::vector<std::pair<int, int>>& dokunulan)
 
 static RValue& Hook_LoadDrops(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
+    if (HeroSiege::RewardScope::Active()) return g_OrigLoadDrops ? g_OrigLoadDrops(S,O,R,argc,A) : R;
     // 1) Once VANILYA davranis, hicbir sey degistirmeden.
     RValue& res = g_OrigLoadDrops ? g_OrigLoadDrops(S, O, R, argc, A) : R;
 #ifdef FORGEPACT_RELEASE
@@ -20296,7 +20662,71 @@ static void FlushModState(uint32_t frame)
         body += ",\"hookBlind\":"; body += (g_AutoProspectBlind ? "true" : "false");
         body += ",\"bagPreference\":"; body += (mod.BagEnabled() ? "true" : "false");
         body += ",\"movePass\":"; body += (mod.MovePassOn() ? "true" : "false");
-        body += ",\"reason\":\""; body += ModStateEscape(reason); body += "\"}}";
+        body += ",\"reason\":\""; body += ModStateEscape(reason); body += "\"}";
+        body += ",\"miningOre\":{\"multiplier\":" + std::to_string(ForgePact::MiningOre::multiplier);
+        body += ",\"ready\":"; body += ForgePact::MiningOre::ready ? "true" : "false";
+        body += ",\"unavailable\":"; body += ForgePact::MiningOre::unavailable ? "true" : "false";
+        body += ",\"stepObserved\":"; body += ForgePact::MiningOre::stepObserved ? "true" : "false";
+        body += ",\"oreObserved\":"; body += ForgePact::MiningOre::oreObserved ? "true" : "false";
+        body += "},\"minerHelmet\":{\"available\":true,\"enabled\":";
+        body += ForgePact::MinerHelmet::enabled ? "true" : "false";
+        body += ",\"worn\":"; body += ForgePact::MinerHelmet::worn ? "true" : "false";
+        body += ",\"equipmentReadable\":"; body += ForgePact::MinerHelmet::equipmentReadable ? "true" : "false";
+        body += ",\"hudReady\":"; body += ForgePact::MinerHelmet::hudNative ? "true" : "false";
+        body += ",\"rewards\":" + std::to_string(ForgePact::MinerHelmet::rewards);
+        body += ",\"pulses\":" + std::to_string(ForgePact::MinerHelmet::wavesStarted);
+        body += ",\"bonusVeins\":" + std::to_string(ForgePact::MinerHelmet::bonusVeins);
+        body += ",\"veinResonance\":"; body += ForgePact::MinerHelmet::veinResonance ? "true" : "false";
+        body += ",\"lastRewardReason\":\"" + ModStateEscape(ForgePact::MinerHelmet::lastRewardReason) + "\"";
+        body += ",\"reason\":\"" + ModStateEscape(ForgePact::MinerHelmet::equipmentReason) + "\"}";
+        namespace pool = ForgePact::ProtectedPool::Runtime;
+        auto& reveal = ForgePact::MapRevealManager::Instance();
+        body += ",\"population\":{\"capacityReady\":"; body += pool::active.load() ? "true" : "false";
+        body += ",\"canPopulate\":"; body += pool::CanPopulate() ? "true" : "false";
+        body += ",\"banks\":" + std::to_string(pool::router.BankCount());
+        body += ",\"overflowLive\":" + std::to_string(pool::router.OverflowLive());
+        body += ",\"reserveSlots\":" + std::to_string(pool::router.Headroom());
+        body += ",\"allocationFailures\":" + std::to_string(pool::router.Failures());
+        body += ",\"invalidHandles\":" + std::to_string(pool::router.InvalidHandles());
+        body += ",\"queuedPacks\":" + std::to_string(reveal.QueuedPacks());
+        auto& budget=ForgePact::AdaptivePopulationBudget::Instance();
+        body += ",\"queuedDensityCopies\":" + std::to_string(DeferredDensityPending());
+        body += ",\"observedNativeBirthPacks\":" + std::to_string(reveal.NativeBirthPacks());
+        body += ",\"completedDensityCopies\":" + std::to_string(g_DensityCopyCompleted);
+        body += ",\"synchronousDensityFallbacks\":" + std::to_string(g_DensityCopyRefused);
+        body += ",\"densityCopyFailures\":" + std::to_string(g_DensityCopyFailures);
+        body += ",\"densityCopyReason\":\"" + ModStateEscape(g_DensityCopyReason) + "\"";
+        body += ",\"workBudgetUs\":" + std::to_string(budget.BudgetUs());
+        body += ",\"targetMs\":" + std::to_string(budget.kTargetUs/1000);
+        body += ",\"passElapsedMs\":" + std::to_string(budget.PassElapsedMs());
+        body += ",\"lastProgressMs\":" + std::to_string(budget.LastProgressMs());
+        body += ",\"targetExceeded\":"; body += budget.TargetExceeded()?"true":"false";
+        body += ",\"lastFrameUs\":" + std::to_string(budget.LastFrameUs());
+        body += ",\"peakFrameUs\":" + std::to_string(budget.PeakFrameUs());
+        body += ",\"peakNativeCreateUs\":" + std::to_string(budget.PeakNativeUs());
+        body += ",\"peakNativeCreateObject\":" + std::to_string(budget.PeakNativeObject());
+        body += ",\"peakNativeWasDensityCopy\":"; body += budget.PeakWasDensityCopy()?"true":"false";
+        body += ",\"measuredNativeCalls\":" + std::to_string(budget.MeasuredCalls());
+        body += ",\"slowFrames\":" + std::to_string(budget.SlowFrames());
+        body += ",\"peakPacksPerFrame\":" + std::to_string(reveal.PeakPacksPerFrame());
+        body += ",\"budgetLimitedFrames\":" + std::to_string(reveal.PopulationBudgetFrames());
+        body += ",\"lastAdmissionMs\":" + std::to_string(reveal.LastPackAdmissionMs());
+        body += ",\"admittedPacks\":" + std::to_string(reveal.AdmittedPacks());
+        body += ",\"unconfirmedPacks\":" + std::to_string(reveal.UnconfirmedPacks());
+        body += ",\"windowFrames\":" + std::to_string(reveal.SpawnWindowLeft());
+        body += ",\"spawnPass\":"; body += reveal.PacksEnabled() ? "true" : "false";
+        body += ",\"reason\":\"" + ModStateEscape(pool::reason) + "\"}";
+        // Pack markers: counts that move only as packs are born or zones
+        // change, never per-frame counters, so idle frames do not rewrite
+        // this file.
+        auto& marks = ForgePact::PackMarkers::Instance();
+        body += ",\"packMarkers\":{\"enabled\":"; body += marks.Enabled() ? "true" : "false";
+        body += ",\"hook\":\""; body += g_Orig_DrawMinimapDynamic ? (g_PackMarkerHookNative ? "native" : "table") : (g_PackMarkerHookAttempted ? "failed" : "pending"); body += "\"";
+        body += ",\"marked\":" + std::to_string(marks.Count());
+        body += ",\"spawned\":" + std::to_string(marks.Spawned());
+        body += ",\"enumerations\":" + std::to_string(marks.Enumerations());
+        body += ",\"iconsLoaded\":" + std::to_string(marks.IconsLoaded());
+        body += ",\"drawErrors\":" + std::to_string(marks.DrawErrors()) + "}}";
         if (body == g_ModStateLast) return;
         g_ModStateLast = body;
         const std::string path = IPC_DIR + "\\modstate.json", tmp = path + ".tmp";
@@ -27525,6 +27955,87 @@ static void TgProbeCommand(const std::string& rest)
 }
 #endif // FORGEPACT_RELEASE (tgprobe)
 
+// Player command: tune the pack-marker look live until the defaults are
+// confirmed by eye, and read the marker accounting. A standalone early
+// return from RunCommand rather than one more `else if` in its chain,
+// which is at MSVC's block-nesting limit (C1061) - the same reason
+// `toggleborder` and `toggleguard` are.
+static void PackMarksCommand(const std::string& rest)
+{
+        // Research: tune the pack-marker look live until the defaults are
+        // confirmed by eye, and read the marker accounting.
+        //   packmarks stat
+        //   packmarks style <kind|all> <subimage> <r> <g> <b>   kind 0..6 = normal, ambush, ancient, champion, colossal chest, legion, miniboss
+        //   packmarks alpha <0..1> | scale <mult> | ring 0|1
+        //   packmarks radius <kind|all> <px> | fill <kind|all> 0|1   (primitive look: dot size and filled/outline per kind)
+        //   packmarks outline 0|1 [extra px]                          (the dark disc under every dot)
+        //   packmarks icons 0|1 | iconscale <mult> | reload           (the PNG icons; reload after replacing a file)
+        //   packmarks cluster <world px|0> | badge 0|1                (nearby spawners drawn as one marker, with a count)
+        //   packmarks list [n]   - the first n markers (id, kind, x, y, armed)
+        auto& pm = ForgePact::PackMarkers::Instance();
+        auto& st = pm.StyleRef();
+        std::string a2; const std::string a1 = Lower(FirstToken(rest, a2));
+        auto number = [](const std::string& s, double fallback) { try { return std::stod(s); } catch (...) { return fallback; } };
+        if (a1 == "style") {
+            std::string k, r; k = Lower(FirstToken(a2, r));
+            std::string sub, r2; sub = FirstToken(r, r2);
+            std::string cr, r3; cr = FirstToken(r2, r3);
+            std::string cg, r4; cg = FirstToken(r3, r4);
+            std::string cb, r5; cb = FirstToken(r4, r5);
+            const double subimage = number(sub, 0.0);
+            const uint32_t colour = (uint32_t)std::clamp((int)number(cr, 255), 0, 255) | ((uint32_t)std::clamp((int)number(cg, 255), 0, 255) << 8) | ((uint32_t)std::clamp((int)number(cb, 255), 0, 255) << 16);
+            const int from = (k == "all") ? 0 : std::clamp((int)number(k, 0), 0, (int)ForgePact::PackMarkers::KindCount - 1);
+            const int to = (k == "all") ? (int)ForgePact::PackMarkers::KindCount - 1 : from;
+            for (int i = from; i <= to; ++i) { st.subimage[i] = subimage; st.colour[i] = colour; }
+            Out("packmarks style: kinds " + std::to_string(from) + ".." + std::to_string(to) + " subimage=" + std::to_string(subimage) + " colour(bgr)=" + std::to_string(colour));
+        } else if (a1 == "alpha") { st.alpha = std::clamp(number(a2, st.alpha), 0.0, 1.0); Out("packmarks alpha -> " + std::to_string(st.alpha)); }
+        else if (a1 == "scale") { st.scale = std::clamp(number(a2, st.scale), 0.05, 10.0); Out("packmarks scale -> " + std::to_string(st.scale)); }
+        else if (a1 == "ring") { const std::string v = Lower(TrimCopy(a2)); st.ring = !(v == "0" || v == "off" || v == "false"); Out(std::string("packmarks ring -> ") + (st.ring ? "on" : "off")); }
+        else if (a1 == "icons") { const std::string v = Lower(TrimCopy(a2)); st.icons = !(v == "0" || v == "off" || v == "false"); pm.StyleChanged(); Out(std::string("packmarks icons -> ") + (st.icons ? "on" : "off")); }
+        else if (a1 == "iconscale") { st.iconScale = std::clamp(number(a2, st.iconScale), 0.1, 8.0); Out("packmarks iconscale -> " + std::to_string(st.iconScale)); }
+        else if (a1 == "reload") { pm.ReloadIcons(); Out("packmarks: icons will reload on the next map draw"); }
+        else if (a1 == "cluster") { st.clusterPx = std::clamp(number(a2, st.clusterPx), 0.0, 2048.0); pm.StyleChanged(); Out("packmarks cluster -> " + std::to_string(st.clusterPx) + " px"); }
+        else if (a1 == "badge") { const std::string v = Lower(TrimCopy(a2)); st.badge = !(v == "0" || v == "off" || v == "false"); Out(std::string("packmarks badge -> ") + (st.badge ? "on" : "off")); }
+        else if (a1 == "outline") {
+            std::string v, extra; v = Lower(FirstToken(a2, extra)); extra = TrimCopy(extra);
+            st.outline = !(v == "0" || v == "off" || v == "false");
+            if (!extra.empty()) st.outlineExtra = std::clamp(number(extra, st.outlineExtra), 0.0, 16.0);
+            Out(std::string("packmarks outline -> ") + (st.outline ? "on" : "off") + " extra=" + std::to_string(st.outlineExtra));
+        }
+        else if (a1 == "radius" || a1 == "fill") {
+            std::string k, v; k = Lower(FirstToken(a2, v)); v = Lower(TrimCopy(v));
+            const int from = (k == "all") ? 0 : std::clamp((int)number(k, 0), 0, (int)ForgePact::PackMarkers::KindCount - 1);
+            const int to = (k == "all") ? (int)ForgePact::PackMarkers::KindCount - 1 : from;
+            for (int i = from; i <= to; ++i) {
+                if (a1 == "radius") st.radius[i] = std::clamp(number(v, st.radius[i]), 0.5, 64.0);
+                else st.filled[i] = !(v == "0" || v == "off" || v == "false");
+            }
+            Out("packmarks " + a1 + ": kinds " + std::to_string(from) + ".." + std::to_string(to) + " -> " + v);
+        }
+        else if (a1 == "list") {
+            const size_t n = (size_t)std::clamp((int)number(a2, 20), 1, 200);
+            size_t shown = 0;
+            for (const auto& m : pm.Markers()) {
+                if (shown >= n) break;
+                ++shown;
+                Out("  marker id=" + std::to_string(m.id) + " kind=" + std::to_string(m.kind) + " x=" + std::to_string((long long)m.x) + " y=" + std::to_string((long long)m.y) + (m.armed ? " armed" : " unarmed") + " seen=" + std::to_string(m.firstSeen));
+            }
+            Out("packmarks list: " + std::to_string(shown) + " of " + std::to_string(pm.Count()));
+        } else {
+            Out(std::string("packmarks: ") + (pm.Enabled() ? "ON" : "off")
+                + " hook=" + (g_Orig_DrawMinimapDynamic ? (g_PackMarkerHookNative ? "native" : "table-only") : (g_PackMarkerHookAttempted ? "failed" : "pending"))
+                + " marked=" + std::to_string(pm.Count()) + " spawned=" + std::to_string(pm.Spawned()) + " removed=" + std::to_string(pm.Removed())
+                + " enumerations=" + std::to_string(pm.Enumerations()) + " familyCalls=" + std::to_string(g_PackMarkerFamilyCalls)
+                + " draws=" + std::to_string(pm.Draws()) + " iconDraws=" + std::to_string(pm.IconDraws()) + " badgeDraws=" + std::to_string(pm.BadgeDraws()) + " drawErrors=" + std::to_string(pm.DrawErrors())
+                + " clusters=" + std::to_string(pm.Clusters()) + " clusterPx=" + std::to_string(st.clusterPx)
+                + " icons=" + (st.icons ? "on" : "off") + " loaded=" + std::to_string(pm.IconsLoaded()) + "/" + std::to_string((int)ForgePact::PackMarkers::KindCount)
+                + (pm.IconsTried() ? "" : " (not loaded yet)") + " viaAbsolute=" + std::to_string(pm.IconsViaAbsolute())
+                + " lastAddKind=" + std::to_string(pm.IconLastKind()) + " lastAddValue=" + std::to_string(pm.IconLastValue()) + " addThrows=" + std::to_string(pm.IconLoadThrows())
+                + " iconWrites=" + std::to_string(g_PackMarkerIconWrites) + " iconWriteErrors=" + std::to_string(g_PackMarkerIconWriteErrors)
+                + " alpha=" + std::to_string(st.alpha) + " iconscale=" + std::to_string(st.iconScale) + " ring=" + (st.ring ? "on" : "off") + " outline=" + (st.outline ? "on" : "off"));
+        }
+}
+
 // ---------------------------------------------------------------------------
 // menulayout (player build, read-only): where the main-menu and
 // character-select buttons are, in window (client) coordinates, so a tool
@@ -29130,7 +29641,7 @@ static void RunCommand(const std::string& line)
         "stat", "statadd", "raredrop", "droprate", "dungeonkey",
         "headhunter", "hhdur", "hhmap", "hhdefault", "hhlabel", "tyrant", "beacon", "beaconrange", "beaconmode", "beaconwake", "beaconspawn", "beaconfarstep", "tyrantchance", "tyrantaffix", "hhlabelfont", "hhlabeloffset", "hhlabelmax",
         "enemyspeed", "rarity", "sigdrop", "angelicdrop", "relicfilter", "orbpickup", "satmods", "petquest",
-        "autoprospect", "toggleborder", "toggleguard", "skilltimer", "menulayout", "restartanytime"
+        "autoprospect", "toggleborder", "toggleguard", "skilltimer", "menulayout", "restartanytime", "miningore", "minerhelm", "packmarks"
     };
     if (kPlayerCommands.find(lc) == kPlayerCommands.end()) {
         Out("command unavailable in player build: " + cmd);
@@ -29171,6 +29682,14 @@ static void RunCommand(const std::string& line)
         Out("usage: skilltimer off|arc|bar|number|fade|stat");
         return;
     }
+    // Pack markers (map reveal's monster half): cosmetics and counters only,
+    // so the player build accepts it; a standalone early return for the
+    // C1061 reason above.
+    if (lc == "packmarks") { PackMarksCommand(rest); return; }
+    // Mining ore amount and the Miner's Helmet: standalone early returns for
+    // the same reason, so the else-if chain below keeps main's length.
+    if (lc == "miningore") { ForgePact::MiningOre::Command(rest); return; }
+    if (lc == "minerhelm") { ForgePact::MinerHelmet::Command(rest); return; }
     // Toggle-skill re-cast guard (issue #11, Track A). A standalone early
     // return for the same C1061 reason as `toggleborder` below. `1` only arms
     // it: FrameCallback installs the TalentUseClass hook once a player exists
@@ -29864,10 +30383,19 @@ static void RunCommand(const std::string& line)
         while (!v.empty() && (v.back()=='\r'||v.back()=='\n'||v.back()==' ')) v.pop_back();
         auto& mr = ForgePact::MapRevealManager::Instance();
         if (v.rfind("packs", 0) == 0) {
-            // `reveal packs 0|1` - the monster half on its own.  The panel
-            // has a nested checkbox for it under "Reveal full map", and
-            // build_cmds only emits this line to turn it OFF (the plugin
-            // defaults it on).
+            // `reveal packs 0|1` - the monster half of the map: one marker per
+            // unspawned pack, no monster created (PackMarkers).  The panel has
+            // a nested checkbox for it under "Reveal full map", and build_cmds
+            // only emits this line to turn it OFF (the plugin defaults it on).
+            std::string p = Lower(TrimCopy(v.substr(5)));
+            mr.SetMarks(!(p == "0" || p == "off" || p == "false"));
+            return;
+        }
+        if (v.rfind("spawn", 0) == 0) {
+            // `reveal spawn 0|1` - the old "fill the map" pass: every spawner
+            // really gives birth on arrival.  Opt-in since 1.4.5 (panel:
+            // `map_reveal_spawn`), because the living monsters are what the
+            // game cannot afford per frame at high density.
             std::string p = Lower(TrimCopy(v.substr(5)));
             mr.SetPacks(!(p == "0" || p == "off" || p == "false"));
             if (mr.PacksEnabled()) InstallDistanceLieHook();
@@ -29875,8 +30403,18 @@ static void RunCommand(const std::string& line)
         }
 #ifndef FORGEPACT_RELEASE
         if (v == "stat" || v == "status") {
+            const auto& pm = ForgePact::PackMarkers::Instance();
             Out(std::string("reveal: ") + (mr.IsEnabled() ? "ON" : "off")
-                + " | packs=" + (mr.PacksEnabled() ? "on" : "off")
+                + " | markers=" + (mr.MarksEnabled() ? "on" : "off")
+                + " marked=" + std::to_string(pm.Count())
+                + " markSpawned=" + std::to_string(pm.Spawned())
+                + " markRemoved=" + std::to_string(pm.Removed())
+                + " enumerations=" + std::to_string(pm.Enumerations())
+                + " familyCalls=" + std::to_string(g_PackMarkerFamilyCalls)
+                + " draws=" + std::to_string(pm.Draws())
+                + " drawErrors=" + std::to_string(pm.DrawErrors())
+                + " hook=" + (g_Orig_DrawMinimapDynamic ? (g_PackMarkerHookNative ? "native" : "table-only") : (g_PackMarkerHookAttempted ? "failed" : "pending"))
+                + " | spawn=" + (mr.PacksEnabled() ? "on" : "off")
                 + " zonesPopulated=" + std::to_string(mr.PacksZones())
                 + " spawnWindowLeft=" + std::to_string(mr.SpawnWindowLeft()) + " frames"
                 + " pending=" + (mr.PacksPending() ? ("yes(" + std::to_string(mr.PendingTicks()) + " ticks)") : "no")
@@ -30226,11 +30764,81 @@ static void StartStallWatchdog()
 }
 #endif // FORGEPACT_RELEASE (stall watchdog)
 
+#include <ForgePact/PopulationScriptProfile.hpp>
+
+#ifdef FORGEPACT_POPULATION_PROFILE
+// Local-only, bounded measurement on the existing callback. Metrics overlap:
+// nested native/protected work is included in caller timing, never sum them.
+static int64_t PopulationCpuMicros(bool process)
+{
+    FILETIME born{}, exited{}, kernel{}, user{};
+    const BOOL ok = process ? GetProcessTimes(GetCurrentProcess(), &born, &exited, &kernel, &user)
+                            : GetThreadTimes(GetCurrentThread(), &born, &exited, &kernel, &user);
+    if (!ok) return -1;
+    ULARGE_INTEGER k{}, u{};
+    k.LowPart=kernel.dwLowDateTime;k.HighPart=kernel.dwHighDateTime;
+    u.LowPart=user.dwLowDateTime;u.HighPart=user.dwHighDateTime;
+    return static_cast<int64_t>((k.QuadPart+u.QuadPart)/10);
+}
+static void PopulationProfileTick()
+{
+    namespace pp=ForgePact::PopulationProfile;
+    auto& profile=pp::Instance();
+    if(!profile.Active())return;
+    profile.Frame();
+    const bool final=profile.Expire();
+    const auto elapsed=profile.ElapsedUs();
+    static uint64_t nextReport=0;
+    if(!final && elapsed<nextReport)return;
+    nextReport=elapsed+1000000;
+    try {
+        auto& reveal=ForgePact::MapRevealManager::Instance();
+        namespace pool=ForgePact::ProtectedPool::Runtime;
+        std::ostringstream line;
+        line << "{\"elapsedUs\":" << elapsed << ",\"final\":" << (final?"true":"false")
+             << ",\"captureStart\":\"" << profile.StartedAt() << '\"'
+             << ",\"frames\":" << profile.FrameCount() << ",\"lastFrameUs\":" << profile.LastFrameUs()
+             << ",\"peakFrameUs\":" << profile.PeakFrameUs()
+             << ",\"queuedPacks\":" << reveal.QueuedPacks() << ",\"queuedCopies\":" << DeferredDensityPending()
+             << ",\"unconfirmedPacks\":" << reveal.UnconfirmedPacks()
+             << ",\"observedNativeBirthPacks\":" << reveal.NativeBirthPacks()
+             << ",\"admitted\":" << reveal.AdmittedPacks() << ",\"windowFrames\":" << reveal.SpawnWindowLeft()
+             << ",\"overflowLive\":" << pool::router.OverflowLive()
+             << ",\"room\":" << CurrentRoomKey()
+             << ",\"frameThread\":" << GetCurrentThreadId()
+             << ",\"frameThreadCpuUs\":" << PopulationCpuMicros(false)
+             << ",\"processCpuUs\":" << PopulationCpuMicros(true) << ",\"metrics\":{";
+        for(unsigned i=0;i<unsigned(pp::Metric::Count);++i){
+            const auto v=profile.Read(static_cast<pp::Metric>(i));
+            if(i)line << ',';
+            line << '\"' << pp::Names[i] << "\":{\"calls\":" << v.calls << ",\"samples\":" << v.samples
+                 << ",\"sampledUs\":" << v.sampledUs << ",\"sampleEvery\":" << v.period << '}';
+        }
+        line << "},\"scriptCoverage\":";
+        pp::WriteScriptCoverage(line);
+        line << "}\n";
+        static bool first=true;
+        std::ofstream out(IPC_DIR+"\\population-profile.jsonl",std::ios::binary|(first?std::ios::trunc:std::ios::app));
+        if(out){out << line.str();first=false;}
+        if(final)Out("population profile: bounded capture finished; bp_ipc/population-profile.jsonl");
+    }catch(...){}
+}
+#endif
+
 void FrameCallback(FWFrame& FrameContext)
 {
     UNREFERENCED_PARAMETER(FrameContext);
+#ifdef FORGEPACT_POPULATION_PROFILE
+    PopulationProfileTick();
+#endif
+    FP_POP_SCOPE(FrameCallback);
     static uint32_t fc = 0;
     g_RuntimeFrame = fc;
+    auto& populationBudget=ForgePact::AdaptivePopulationBudget::Instance();
+    auto& populationReveal=ForgePact::MapRevealManager::Instance();
+    populationBudget.ObserveBacklog(populationReveal.QueuedPacks(),DeferredDensityPending());
+    populationBudget.BeginFrame(fc,DeferredDensityPending()>0 || populationReveal.WantsPackSpawn() || populationReveal.PacksPending());
+    { FP_POP_SCOPE(DensityTick); DensityCopiesTick(); }
 
 #ifndef FORGEPACT_RELEASE
     // Watchdog heartbeat.  One tick read + one atomic store per frame.
@@ -30244,6 +30852,7 @@ void FrameCallback(FWFrame& FrameContext)
     PERF_SCOPE(g_PerfFrame);
     FlushItemStats(fc);
     FlushModState(fc);
+    if (g_Setup) { FP_POP_SCOPE(MinerTick); ForgePact::MinerHelmet::Tick(); }
     if (fc == 1) Trace("0-framecallback-running");
 
     // Special Content uses the game's eSt gates.  The helper is also safe in
@@ -30266,6 +30875,9 @@ void FrameCallback(FWFrame& FrameContext)
         Trace("1-setup-start");
         try { LoadConfig(); Trace("2-loadconfig-ok"); InstallHook(); Trace("3-installhook-ok"); }
         catch (...) { Out("setup EXCEPTION"); Trace("X-setup-cppexception"); }
+#ifdef FORGEPACT_POPULATION_PROFILE
+        ForgePact::PopulationProfile::InstallScriptTimings();
+#endif
 #ifndef FORGEPACT_RELEASE
         try { LoadCoopConfigAndMaybeStart(); Trace("4-coop-ok"); }
         catch (...) { Out("coop auto-start EXCEPTION"); Trace("X-coop-cppexception"); }
@@ -30423,7 +31035,23 @@ void FrameCallback(FWFrame& FrameContext)
 
 #endif
     // auto map reveal (throttled internally to every ~20 frames)
-    ForgePact::MapRevealManager::Instance().OnFrame(g_RuntimeFrame);
+    {
+        FP_POP_SCOPE(MapTick);
+        ForgePact::ProtectedPool::Runtime::Maintain(g_RuntimeFrame);
+        ForgePact::MapRevealManager::Instance().OnFrame(g_RuntimeFrame);
+        // Pack markers follow reveal + `reveal packs`. The minimap hook goes in
+        // once, after setup, on the same once-a-second cadence as the other
+        // lazy installs; until it is in, nothing is enumerated either.
+        auto& reveal = ForgePact::MapRevealManager::Instance();
+        auto& marks = ForgePact::PackMarkers::Instance();
+        const bool wantMarks = reveal.IsEnabled() && reveal.MarksEnabled();
+        if (wantMarks != marks.Enabled()) marks.SetEnabled(wantMarks);
+        if (wantMarks) {
+            if (!g_PackMarkerHookAttempted && g_Setup && (g_RuntimeFrame % 60) == 0) InstallPackMarkerHook();
+            if (g_Orig_DrawMinimapDynamic)
+                marks.OnFrame(g_RuntimeFrame, reveal.ZoneGeneration(), [&reveal] { return reveal.HasReadableMap(); });
+        }
+    }
 
 #ifndef FORGEPACT_RELEASE
     static bool f5p = false;
@@ -30540,6 +31168,7 @@ EXPORTED AurieStatus ModuleInitialize(
     // class split) - see the header's own comment for why ModuleInitialize
     // itself stays here.
     ForgePact::ModManager::Instance().Initialize();
+    HeroSiege::RewardScope::RegisterForgePact();
     LoadStartup();   // oyun kodu calismadan once uygulanmasi gereken ayarlar
 #ifdef FORGEPACT_RELEASE
     KonsoluGizle();

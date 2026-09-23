@@ -71,7 +71,9 @@ class HeadhunterDispatchTests(unittest.TestCase):
             if not compiler:
                 raise unittest.SkipTest('A C++20 compiler is required for native dispatch tests')
             command = [compiler, '-std=c++20', '-O2', str(cpp), '-o', str(cls.binary)]
-        result = subprocess.run(command, cwd=output, capture_output=True, text=True)
+        # The compiler speaks the machine's locale (/W4 notes included); decode
+        # leniently so a localized line cannot crash the test itself.
+        result = subprocess.run(command, cwd=output, capture_output=True, text=True, encoding='utf-8', errors='replace')
         (output / 'compile.log').write_text(result.stdout + result.stderr, encoding='utf-8')
         if result.returncode:
             raise AssertionError(result.stdout + result.stderr)

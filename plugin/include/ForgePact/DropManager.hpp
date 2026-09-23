@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Common.hpp"
+#include <hs_game_sdk/reward_scope.hpp>
 
 namespace ForgePact {
 
@@ -134,7 +135,7 @@ private:
     static RValue& Hook_##NAME(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) { \
         auto& mgr = Instance(); \
         BP_DIAG_INCREMENT(mgr.m_Cnt_##NAME); \
-        for (int i = 1; i < mgr.m_Mult_##NAME; i++) { RValue t; if (mgr.m_Orig_##NAME) mgr.m_Orig_##NAME(S, O, t, argc, A); } \
+        for (int i = 1, n = HeroSiege::RewardScope::Active() ? 1 : mgr.m_Mult_##NAME; i < n; i++) { RValue t; if (mgr.m_Orig_##NAME) mgr.m_Orig_##NAME(S, O, t, argc, A); } \
         RValue& _res = mgr.m_Orig_##NAME ? mgr.m_Orig_##NAME(S, O, R, argc, A) : R; \
         BP_LOGDROP(#NAME, _res, argc, A); \
         return _res; \
@@ -171,7 +172,7 @@ private:
     static RValue& Hook_DropKeys(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) {
         auto& mgr = Instance();
         BP_DIAG_INCREMENT(mgr.m_Cnt_DropKeys);
-        for (int i = 1; i < mgr.m_Mult_DropKeys; i++) { RValue t; if (mgr.m_Orig_DropKeys) mgr.m_Orig_DropKeys(S, O, t, argc, A); }
+        for (int i = 1, n = HeroSiege::RewardScope::Active() ? 1 : mgr.m_Mult_DropKeys; i < n; i++) { RValue t; if (mgr.m_Orig_DropKeys) mgr.m_Orig_DropKeys(S, O, t, argc, A); }
         RValue& _res = mgr.m_Orig_DropKeys ? mgr.m_Orig_DropKeys(S, O, R, argc, A) : R;
         BP_LOGDROP("DropKeys", _res, argc, A);
 #ifndef FORGEPACT_RELEASE
