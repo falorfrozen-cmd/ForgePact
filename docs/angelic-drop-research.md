@@ -77,3 +77,7 @@ Kaydırıcı oyuncuya buff 332 versin (plugin'de `BuffAdd` yolu var, Headhunter 
 oyun kendi zarını, kendi bölge listesini ve ağırlıklarını kullanır. x2 = Blood Pact
 modifier'ının en düşük kademesinin X değeri (oyundan okunacak; `GetBloodPactInfo` kancası
 var). Kısa canlı test gerekir: buff süresi, coop'ta toplanma, X'in ölçeği.
+
+Güncelleme (#64, 2026-09-23): oyunun kendi Angelic zarı `angelicprobe` ile canlı ölçüldü -
+hangi adımın kancalanacağı, `buffme 332` ile verilen değerin şansa yansımayışı ve ölçülemeyenler
+`angelic-roll-hook-research.md` dosyasının `## Decision` bölümünde.
