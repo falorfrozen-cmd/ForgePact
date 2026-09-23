@@ -708,7 +708,22 @@ is not). The plugin asks that rule at the point of use - `mapkeep stat`,
 `mapkeep find` and `craftprobe call`'s `map9` forms - after reading the room
 again, then checks `ds_exists` with `ds_type_map`. The frame callback only
 notices a room change every 30 frames, as housekeeping (repo-root `AGENTS.md`,
-"Check a Permission Where It Is Used").
+"Check a Permission Where It Is Used"). The keep path reads the room too,
+before it decides that a return is already current: if the game returns
+`GetItemMap(9)` in a new room before the next frame poll, the change is noticed
+at that moment (`room-changes=` grows), the return is kept as the refresh after
+it, and its keep line reads `(was room-changed, ...)` - rather than the return
+being dropped as current and the map invalidated by the poll a few frames
+later, which would read as "nothing refreshed after the room change" when the
+game had.
+
+**The `a0=9` control.** Once `mapkeep` holds `GetItemMap`, craftprobe's own
+detour does not attach to that row (it reports `held by mapkeep`), so the one
+instrument that has seen `a0=9` calls (Live 1d) is absent from this session;
+and because `HookOneScript` gives its table swap and its inline detour one dest,
+the hook body cannot tell which route delivered a call - so an `a0=9` count of
+zero reads "not observed", never "the player shape cannot see the map", unless
+the install line reads `both-routes` and `a0=0` is non-zero in the same session.
 
 | Addition | What it prints | Cap | Control |
 |---|---|---|---|
@@ -949,9 +964,20 @@ take? What this document fixes is its shape:
   from a stash tab this session, replayed with its logged arguments and the
   Ol's item. A refusal is quoted with what was supplied; a shape not run is
   "not observed (<why>)".
-- **One room change and back**, then a reopen: the kept map must read not
-  current after the zone change and current again once the stash's own call
-  returns a map.
+- **One room change and back**, then a reopen. Before the zone change, with the
+  stash closed, `mapkeep stat`'s `refreshed=`, `room-changes=` and
+  `latest-keep:` are noted; after it, `room-invalidate` quotes `current=`,
+  `reason=`, `room-changes=` and `latest-keep:`. It passes when `room-changes=`
+  grew and the map reads `current=no reason=room-changed` ("invalidated"), and
+  also when `room-changes=` grew and the map is current again because
+  `latest-keep:` names a later call - "invalidated, then refreshed by <that
+  call's self>", a finding about when the game refreshes the map, not a failure
+  of the rule. It fails when `room-changes=` did not grow although a zone was
+  entered (the keeper missed the change), or when it grew and the map reads
+  current with `latest-keep:` unchanged - the rule allows no such state.
+  `map-refresh` then reopens the stash and expects `current=yes` with
+  `refreshed=` grown against the stat taken before the zone change (a refresh in
+  the new room may already have made the map current before the reopen).
 - **Cases**: the Socketable tab (the ordinary case: a hand take, T3 if a shape
   appears) and the Materials tab (the outlier: a plain grid object, its hand
   take never observed before; T1 and T2).
@@ -1364,14 +1390,16 @@ were among them.
 ### Phase 1e results
 
 Research DLL: `plugin_build\BloodPactPlugin_rel.dll`, built 2026-09-23 with
-`plugin_build\build.bat dev` from ForgePact `5aaeaa2` (SHA-256
-`687b90f6f57bb8d0ffdfca178ecda433851539d4543e0cfdec4b54db36d9adb2`). The
+`plugin_build\build.bat dev` from ForgePact `ba3046d` (SHA-256
+`806d2562689db855de776f79e6df88d19f9ea4783cf56d24546d69398262291c`). The
 player build (`build.bat release`) from the same commit carries no `phase1e`,
 `mapkeep` or `craftprobe` string. The owner installs it as
 `mods\aurie\BloodPactPlugin.dll` before Live 1e; `### Live procedure 1e`'s
 `dll-hash` check compares the installed plugin against this hash before
 anything else counts, so the Phase 1c build still installed from Live 1c/1d
-(`e9d32ec3...`) fails it on purpose.
+(`e9d32ec3...`) fails it on purpose, as does the first Phase 1e build (from
+`5aaeaa2`, before the keeper read the room on its keep path), which this one
+supersedes.
 
 The session has not run (`phase1e-status: pending` at the top). The table below
 has one row per check, in the procedure's order; the Observed and Verdict cells
@@ -1401,8 +1429,8 @@ is "not observed (<why>)".
 | take-trial-map | T2: `craftprobe call RemoveItemFromMap` with the logged shape, only when this session logged one | | |
 | take-trial-stack | T3: a stack routine replayed with its logged arguments and the Ol's item, only when one fired on a hand take from a stash tab | | |
 | map-follows-trial | After a take that answered `true` and emptied X's cell, X's key is no longer in the kept map | | |
-| room-invalidate | After a zone change and back, `mapkeep stat` reads `current=no reason=room-changed` | | |
-| map-refresh | After the stash reopens, `mapkeep stat` reads current again with `refreshed=` grown; the index recorded as an index, never as identity | | |
+| room-invalidate | After a zone change and back, `mapkeep stat`'s `room-changes=` has grown against the stat before the change, and the map reads `current=no reason=room-changed` ("invalidated") or current again with `latest-keep:` naming a later call ("invalidated, then refreshed by <self>"); current with `latest-keep:` unchanged is a broken rule | | |
+| map-refresh | After the stash reopens, `mapkeep stat` reads current with `refreshed=` grown against the stat before the zone change; the index recorded as an index, never as identity | | |
 | counts-tool-after | `tools/stash_tab_counts.py` after the game exits: the Ol and Unstable Dust stacks equal the last counts stated, and X's line absent or present as the trial left it | | |
 
 ## Decision gate
