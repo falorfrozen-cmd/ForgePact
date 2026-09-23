@@ -248,3 +248,7 @@ Real ore pickup and on-screen pulse confirmation remain outstanding.
   Visual details (the neighbours' hit effects, any level text) are the user's
   observation, not something the log proves.
 - The pulse (gold ring) has still not been confirmed visually.
+- PR #67 review (2026-09-23): the "reward from node" lines above are now
+  printed only while `minerhelm probe` is armed, at most eight per arming.
+  Before, the first eight helmet rewards of every session printed them
+  unprompted, and arming the probe later did not restore that budget.

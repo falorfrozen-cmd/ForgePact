@@ -307,8 +307,13 @@ int main(){
     check(probeLines()==2&&logs.back().find("range=40")!=std::string::npos,"probe/state change adds a line");
     now+=2100;M::Tick();check(M::probeUntil==0&&logs.back().find("probe finished")!=std::string::npos,"probe/stops when the time is up");
     const size_t before=logs.size();for(int i=0;i<60;++i){now+=17;M::Tick();}check(logs.size()==before,"probe/silent after finishing");
-    Reset();M::pending=true;M::Tick();Mine();
-    check(std::count_if(logs.begin(),logs.end(),[](const std::string& l){return l.rfind("minerhelm probe: reward from node",0)==0;})==1,"probe/first rewards describe their node");
+    // Reward lines belong to the probe: none unless it is armed, and arming it again restores their budget.
+    Reset();M::pending=true;M::Tick();
+    auto rewardLines=[&]{return (size_t)std::count_if(logs.begin(),logs.end(),[](const std::string& l){return l.rfind("minerhelm probe: reward from node",0)==0;});};
+    Mine();check(receivedOre==20&&rewardLines()==0,"probe/an unarmed probe describes no rewards");
+    M::Command("probe 10");Mine();check(rewardLines()==1,"probe/an armed probe describes the rewarded node");
+    for(int i=0;i<12;++i)Mine();check(rewardLines()==M::kProbeRewardMaxLines,"probe/reward lines stop at their budget");
+    M::Command("probe 10");Mine();check(rewardLines()==M::kProbeRewardMaxLines+1,"probe/arming again restores the reward line budget");
     // Vein resonance. The dug node sits at (50,50); the zone holds candidate veins around it.
     auto veinsSetup=[&]{
         Reset();M::pending=true;M::Tick();

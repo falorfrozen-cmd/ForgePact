@@ -46,7 +46,8 @@ inline bool Position(const RValue& instance, double& x, double& y) {
 // Timed dig probe (`minerhelm probe [seconds]`): while armed, every sixth frame
 // it prints the state of the mining node nearest the player, only when that
 // state changed, so one real dig records how the game drives a node from
-// idle to reward. Bounded by time and by line count; touches nothing.
+// idle to reward. While armed it also describes the node behind each ore
+// reward, up to eight per arming. Bounded by time and by line count; touches nothing.
 inline double probeUntil = 0;
 inline unsigned probeLines = 0, probeFrames = 0, probeRewardLines = 0;
 inline std::string probeLast;
@@ -357,7 +358,8 @@ inline int RewardMultiplier(CInstance* node) {
         if (!g_Yytk->CallBuiltin("variable_instance_exists", {self, RValue("miningPlayer")}).ToBoolean())
             return refuse("Mining node has no miningPlayer field");
         RValue miner = g_Yytk->CallBuiltin("variable_instance_get", {self, RValue("miningPlayer")});
-        if (probeRewardLines < kProbeRewardMaxLines) {
+        // Only while `minerhelm probe` is armed, and at most kProbeRewardMaxLines per arming.
+        if (probeUntil > 0 && probeRewardLines < kProbeRewardMaxLines) {
             ++probeRewardLines;
             try { Out("minerhelm probe: reward from node " + DescribeNode(self, player)); } catch (...) {}
         }
@@ -520,7 +522,7 @@ inline void Command(const std::string& args) {
         if (seconds < 1 || seconds > 120 || (input >> extra)) { Out("minerhelm: use `probe [1-120 seconds]`"); return; }
         const double now = HhNowMs();
         if (!std::isfinite(now)) return;
-        probeUntil = now + seconds * 1000.0; probeLines = 0; probeLast.clear();
+        probeUntil = now + seconds * 1000.0; probeLines = 0; probeRewardLines = 0; probeLast.clear();
         Out("minerhelm: probe armed for " + std::to_string(seconds) + " s - dig the nearest node now"); return;
     }
     // The panel's test "Create" button and its `grant` command were retired on
