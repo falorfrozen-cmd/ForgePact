@@ -2495,9 +2495,12 @@ Filled from the capture, `.claude/workorders/forgepact-issue-14-phase1h-live-1.m
 cited by its step headings, one row per check, in the procedure's order. A
 `fail` or `not-observed` is a finding; a refused or failed call shape is
 recorded with what was supplied, and a shape not run is "not observed
-(<why>)". The capture's `## Checks` block also carries a `TABLE-ONLY` line
-(folded into `hook` below) and has no line for `save-after-socket`, which its
-`Steps 11-12` heading covers. `ds_map` 1049 is this session's stash map index
+(<why>)". The capture's `## Checks` block was normalized to the eighteen
+check names after the session, with no observation changed (a note under that
+block says so): the operator's separate `TABLE-ONLY` line is folded into
+`hook`, `take-material (dropped)` reads `take-material`, and
+`save-after-socket`, which the operator left out, is `not-observed` because
+the launch ended at `close-after-take` (its `Steps 11-12` heading). `ds_map` 1049 is this session's stash map index
 and is compared as an index only. A `call` reply's `#<n>` is read against the
 row's own entry line: a row `mapkeep` holds or one `hook` did not detour
 prints none, so its number has nothing to match.
@@ -2514,7 +2517,7 @@ prints none, so its number has nothing to match.
 | holders | `Controller_obj`'s stash map, `<M>` (the Materials two-level array holding `K_X`) and `<S>` (the Socketable array of rows, `K_S` at row `k`), named by shape from `craftprobe var Controller_obj 0 *` | Supplied: `var Controller_obj 0 *`. `Controller_obj id=257721 vars=221`, the reply `...(capped at 80; narrow the filter)`; `var` takes `*` or one exact name (`var Controller_obj 0 stash`: no such variable), and `craftprobe store` does not list `Controller_obj`. None of the 80 listed was a `ref ds_map` 1049 or a tab-shaped array (HUD, quest and view state). Not observed (the listing's 80-variable cap; 141 variables never listed) (capture, Step 5) | not-observed |
 | lookup-closed | `GetItemFromFingerprint(<K_X>, 9)` with the stash closed returns X's struct | Supplied: self `Console_Save_obj` 0, `a0` the string `0-0-212364006000-14`, `a1` `9`. `dispatched #3451335 -> ret=struct{itemDataHash=..., itemType=real:14.000000, itemInfoStruct=struct members=20}` (capture, Step 6) | pass |
 | take-material | On X, the stacked case, stash closed, Cube open, self `Console_Save_obj` 0: the bag's add, then `RemoveItemFromMap` on map 9, the kept map dropping X on the same index | Supplied, after `arm budget=8`: `InventoryGridCanAddToStack 1 undefined fp9:<K_X>` -> an item struct, `itemType=14`; `InventoryGridAddToStack 1 fp9:<K_X>` -> `struct{tabNumber=0, x=7, y=0, tabType=-4, success=true}`; `RemoveItemFromMap map9 <K_X>` -> `ret=undefined`. After: `find 14 51` `matched=0`, `size=1626` (was 1627), index 1049 unchanged - `dropped` (capture, Step 7) | pass |
-| error-baseline | Before X's stash cell is cleared, `SaveStash` by name reproduces Live 1g's fault inside the instrument's catch: `entered #<n>, script_execute threw` (or `returned <status>`), the `SaveStash #<n>` entry, Dust's `___struct___359`, a `CreateItemSaveStruct` line with `a0=undefined`, no `SaveStash #<n> ret=`, no write | Supplied: `arm budget=12 SaveStash CreateItemSaveStruct ___struct___359`, then `call SaveStash Console_Save_obj 0 confirm` (no argument). `SaveStash #1 self=Console_Save_obj ... argc=0` (the row's own entry line, matching the reply's `#1`); `CreateItemSaveStruct #1` to `#12`, every one `a0=struct{...}`; `___struct___357@SaveStash #1` to `#12`; one `___struct___359@SaveStash #1`, Dust (`o=13`, `b=50`), `ret=undefined`; then `entered #1, script_execute threw` and no `SaveStash #1 ret=`. No `___struct___359` entry for X. T3 equal T2 (`21:00:10.8049402Z`): no write; `hs_status` running, same pid. The `a0=undefined` line was not observable: the row's budget of 12 was spent on the ordinary tabs' items first (capture, Step 8) | pass |
+| error-baseline | Before X's stash cell is cleared, `SaveStash` by name reproduces Live 1g's fault inside the instrument's catch: `entered #<n>, script_execute threw` (or `returned <status>`), the `SaveStash #<n>` entry, Dust's `___struct___359`, a `CreateItemSaveStruct` line with `a0=undefined`, no `SaveStash #<n> ret=`, no write | Supplied: `arm budget=12 SaveStash CreateItemSaveStruct ___struct___359`, then `call SaveStash Console_Save_obj 0 confirm` (no argument). `SaveStash #1 self=Console_Save_obj ... argc=0` (the row's own entry line, matching the reply's `#1`); `CreateItemSaveStruct #1` to `#12`, every one `a0=struct{...}`; `___struct___357@SaveStash #1` to `#12`; one `___struct___359@SaveStash #1`, Dust (`o=13`, `b=50`), `ret=undefined`; then `entered #1, script_execute threw` and no `SaveStash #1 ret=`. No `___struct___359` entry for X. T3 equal T2 (`21:00:10.8049402Z`): no write; `hs_status` running, same pid. The `a0=undefined` line was not observable: the row's budget of 12 was spent on the ordinary tabs' items first (capture, Step 8). The verdict is the capture's; the procedure's own criterion (the `a0=undefined` line quoted) was not met, so this passes on the throw, no write and the game running only | pass |
 | save-after-take | `GridRemoveItem(path:Controller_obj.<M>, <K_X>)`, then the by-name `SaveStash` returns and writes, the file without X | Not run as written: `<M>` was not named (`holders`), so X's stash cell was not cleared. Supplied instead, the same `arm` and `call SaveStash Console_Save_obj 0 confirm` as `error-baseline`, on the same state: the identical lines, ending `entered #1, script_execute threw`, no `SaveStash #1 ret=`; T5 equal T4, no write. Not observed (the cell clear never ran) (capture, Step 9) | not-observed |
 | close-after-take | The owner's stash open on the Materials tab and close: the game running after it, the close's `SaveStash #<n> ... ret=` line, the file without X | The owner: "materials shows 13 dust", then the game ended at the stash close. The log's last lines are the close's own `s_SaveStashConstants` pair, `SaveStash #2 self=Console_Save_obj ... argc=0` (the game's call - no `dispatched`/`before`/`after` lines around it), one `___struct___359@SaveStash #2` for Dust (`o=13`, `b=50`) and its `ret=undefined`; then no `SaveStash #2 ret=`, no `___struct___359` for X, no crash text, and the next line is a fresh plugin banner. The launch's pid 89248 was gone; the pid then running, 81172, was the owner's own relaunch (capture, Step 10, Establishing the crash) | fail |
 | take-socket | On S, the no-stack case: `GridAddItem` into the bag's `inventorySocketGrid`, `ChangeItemOwner(9, 0, <K_S>)`, the map dropping S, then the stash cell clear on `<S>.<k>` | Not run: the launch ended at `close-after-take`, and `<S>` and `k` were not named (`holders`). Not observed (capture, Steps 11-12) | not-observed |
@@ -2676,13 +2679,17 @@ What it still lacks, as far as observed:
 
 What the next research build needs, from this session's gaps: a
 `craftprobe var` listing that reaches past 80 variables (paged, or filtered by
-name or by the kind of value), so `holders` can name the containers; a larger
-`CreateItemSaveStruct` budget, or one armed to start at the Materials tab, so
-a faulting save's per-item line prints; and a way to tie a `PilipaliDecrypt`
-call to the selected recipe row (the row as self or argument, or a read of the
-selected row's entries), so the decoded amount can be compared with the
-recipe's stated one. Phase 1h's procedure can then run again on the same two
-cases.
+name or by the kind of value), so `holders` can name the containers - and a
+cap message that names that route, since today's "narrow the filter" points at
+a filter `var` does not take; and a way to tie a `PilipaliDecrypt` call to the
+selected recipe row (the row as self or argument, or a read of the selected
+row's entries), so the decoded amount can be compared with the recipe's stated
+one. The missing `a0=undefined` line needs no build change: `arm` takes a
+budget of up to 5000 at run time, so the next procedure arms
+`CreateItemSaveStruct` with a budget above the ordinary tabs' item count plus
+the Materials tab's, and reads `craftprobe show`'s `CreateItemSaveStruct
+calls=` before and after each save. Phase 1h's procedure can then run again on
+the same two cases.
 
 **After Phase 1g (2026-09-23): H-A stays the decision, and the owner's
 design now has a hook point, a lookup self and a by-name move with the stash
