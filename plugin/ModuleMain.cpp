@@ -1383,12 +1383,21 @@ static int ToplamOrnek()
 
 
 #ifdef FORGEPACT_RELEASE
-// YYToolkit'in "YYToolkit Log" konsolu oyuncuya gorunmesin.
-// (sinif ConsoleWindowClass, oyunun kendi surecinde AllocConsole ile aciliyor)
-static void KonsoluGizle()
+// The player build detaches the game from YYToolkit's "YYToolkit Log"
+// console instead of hiding its window (#58). YYToolkit opens that console
+// inside the game's own process (AllocConsole), which makes it the game's
+// standard output, so GameMaker writes every runtime warning to it
+// synchronously - hidden or not. Underground Garden's zone generation
+// (entered from Misty Swamp) emits thousands of "tilemap_get() - couldn't find
+// specified tilemap" warnings, and writing them to the console froze the load
+// for 30-70 seconds. MEASURED 2026-09-23 with an external stack sampler: the
+// main thread sat in WriteFile, called from the game's own code, for the whole
+// freeze, and the console buffer held nothing but that warning. The unmodded
+// game has no console, so there those writes fail at once; detaching restores
+// that. Players never saw this console, and the research build keeps it.
+static void DetachConsole()
 {
-    HWND h = GetConsoleWindow();
-    if (h && IsWindowVisible(h)) ShowWindow(h, SW_HIDE);
+    if (GetConsoleWindow()) FreeConsole();
 }
 #endif
 
@@ -31789,7 +31798,7 @@ EXPORTED AurieStatus ModuleInitialize(
     HeroSiege::RewardScope::RegisterForgePact();
     LoadStartup();   // oyun kodu calismadan once uygulanmasi gereken ayarlar
 #ifdef FORGEPACT_RELEASE
-    KonsoluGizle();
+    DetachConsole();
 #endif
 
     AurieStatus st = g_Yytk->CreateCallback(Module, EVENT_FRAME, (PVOID)FrameCallback, 0);
