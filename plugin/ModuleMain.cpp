@@ -7204,10 +7204,17 @@ static const char* const kBeCreatorObjects[] = {
 // count in vanilla, and the identity snapshot taken before it - two runtime
 // calls per monster, every sixth frame, ~10k calls a pass at 4x - was pure
 // cost. The snapshot is now taken only once a count change has proved that
-// something in this session does deactivate monsters. On the call that
-// discovers it, the newly woken instances stay awake: the conservative
-// direction, and what the old walk would have done for them on its next pass
-// anyway, since by then they are part of the active set it preserves.
+// something in this session does deactivate monsters.
+//
+// The call that discovers it has no snapshot, so it cannot tell the instances
+// it just woke from the ones the game left active, and it leaves all of them
+// awake. The always-snapshot walk would have sent the unwanted ones back to
+// sleep in that same call; this one call does not. Waking too many is the only
+// safe direction: if an instance the game left active were put to sleep here,
+// it would count as asleep from then on, and under the rares-only policy later
+// passes would keep an ordinary monster asleep even beside the player.
+// What that one call woke stays awake until whatever put it to sleep does so
+// again; from then on every pass takes the snapshot and filters exactly.
 static bool g_BeWakeSnapshot = false;   // a count change was seen: keep the full snapshot walk from now on
 static long BeWakeObject(const RValue& obj, double px, double py, double radius, int policy)
 {

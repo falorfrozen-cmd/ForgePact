@@ -69,6 +69,12 @@ int main(){
     for(const auto& e:enemies)assert(e.active);
     assert(finds==0 && reads==0 && activations==1 && g_BeWakeSnapshot);
     std::cout<<"first count change: left awake, snapshot armed PASS\n";
+    // What that call woke stays awake only until whatever put it to sleep does
+    // so again; the next pass has the snapshot and filters exactly.
+    for(int id:{2,3,4})byId(id).active=false;
+    assert(BeWakeObject(RValue(12),0,0,4000,1)==2);   // native 1, plus hunter 3 inside the radius
+    assert(byId(1).active && !byId(2).active && byId(3).active && !byId(4).active);
+    std::cout<<"after the discovery: a repeated deactivation is filtered exactly PASS\n";
     // From here on the snapshot walk runs. Baseline and target behavior:
     // preserve every native-active instance; add only hunters within the
     // radius, including its exact boundary.

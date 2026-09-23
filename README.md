@@ -613,9 +613,13 @@ load there anyway.
 - `modfiles_shipped/` — the binaries copied into the game folder.
 - `plugin_build/build.bat` — builds the plugin. `build.bat release` produces the shipping
   build (features only); `build.bat dev` produces the development build, which additionally
-  carries the diagnostic commands used to investigate the game. The literal `dev` argument
-  is required: `dev` is the only special-cased value, so a bare `build.bat` with no
-  argument produces the *shipping* build, not the development one.
+  carries the diagnostic commands used to investigate the game; `build.bat profile`
+  produces `BloodPactPlugin_profile.dll`, a local measuring build: the shipping features
+  plus a bounded CPU-timing recorder (see
+  [population-capacity.md](docs/population-capacity.md)), never copied into
+  `modfiles_shipped` or `dist`. The literal `dev` or `profile` argument is required: those
+  are the only special-cased values, so a bare `build.bat` with no argument produces the
+  *shipping* build, not a development or profile one.
 - `build_release.py` — packages `dist/ForgePact/` (the release zip contents).
 - `tools/` — developer helpers, not shipped to players: `ipc.ps1` sends one command to
   the running plugin and prints only its reply, and `ghidra/ImportSymbols.java` names the
