@@ -1364,8 +1364,8 @@ were among them.
 ### Phase 1e results
 
 Research DLL: `plugin_build\BloodPactPlugin_rel.dll`, built 2026-09-23 with
-`plugin_build\build.bat dev` from ForgePact `c12dca0` (SHA-256
-`7c0cc7c5743f5c1f2243b7db1933a92143930527f1c19fb090e837ce90785232`). The
+`plugin_build\build.bat dev` from ForgePact `5aaeaa2` (SHA-256
+`687b90f6f57bb8d0ffdfca178ecda433851539d4543e0cfdec4b54db36d9adb2`). The
 player build (`build.bat release`) from the same commit carries no `phase1e`,
 `mapkeep` or `craftprobe` string. The owner installs it as
 `mods\aurie\BloodPactPlugin.dll` before Live 1e; `### Live procedure 1e`'s
