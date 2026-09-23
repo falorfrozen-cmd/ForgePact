@@ -346,13 +346,14 @@ class AutoProspectContractTests(unittest.TestCase):
         self.assertNotIn("take the materials out", source)
 
     def test_release_notes_and_docs_record_the_feature(self):
-        notes = NOTES.read_text(encoding="utf-8")
-        headings = [l for l in notes.split("\n") if l.startswith("## ")]
-        self.assertEqual(headings, ["## New", "## Changed", "## How to update"])
-        self.assertIn("off by default", notes.lower())
-        self.assertIn("lost", notes.lower())
-        self.assertIn("9×6", notes)
-        self.assertNotIn("prospectprobe", notes)   # player language, no research commands
+        if NOTES.is_file():   # published notes leave main (forgepact-notes-cleanup.yml)
+            notes = NOTES.read_text(encoding="utf-8")
+            headings = [l for l in notes.split("\n") if l.startswith("## ")]
+            self.assertEqual(headings, ["## New", "## Changed", "## How to update"])
+            self.assertIn("off by default", notes.lower())
+            self.assertIn("lost", notes.lower())
+            self.assertIn("9×6", notes)
+            self.assertNotIn("prospectprobe", notes)   # player language, no research commands
         readme = README.read_text(encoding="utf-8")
         self.assertIn("Auto-prospect", readme)
         self.assertIn("lost", readme[readme.index("Auto-prospect"):])
@@ -658,13 +659,14 @@ class AutoProspectContractTests(unittest.TestCase):
             self.assertIn(field, self.header)
 
     def test_release_notes_and_docs_record_the_bag_move(self):
-        notes = NOTES.read_text(encoding="utf-8")
-        self.assertIn("materials tab", notes.lower())
-        self.assertIn("are gone when you load again", notes)
-        self.assertNotIn("were gone when we loaded", notes)
-        self.assertIn("could not check", notes)
-        self.assertNotIn("take them out", notes.lower())
-        self.assertNotIn("stackmove", notes)
+        if NOTES.is_file():   # published notes leave main (forgepact-notes-cleanup.yml)
+            notes = NOTES.read_text(encoding="utf-8")
+            self.assertIn("materials tab", notes.lower())
+            self.assertIn("are gone when you load again", notes)
+            self.assertNotIn("were gone when we loaded", notes)
+            self.assertIn("could not check", notes)
+            self.assertNotIn("take them out", notes.lower())
+            self.assertNotIn("stackmove", notes)
         readme = README.read_text(encoding="utf-8")
         section = readme[readme.index("## Auto-prospect"):readme.index("## 🔧")]
         self.assertIn("materials tab", section.lower())
@@ -679,12 +681,13 @@ class AutoProspectContractTests(unittest.TestCase):
         self.assertNotIn("Not built, on purpose:** returning materials", doc)
         # Stage D: the first-of-its-kind route and the ore finding, in player
         # words, with no retired outcome name and no claim of a fix for the ore.
-        self.assertIn("first of its kind", notes)
-        self.assertIn("in your bag rather than the materials tab", collapse(notes))
-        self.assertIn("is the game, not the mod", collapse(notes))
-        self.assertNotIn("not-stackable", notes)
-        self.assertNotIn("we have not seen that happen yet", notes)
-        self.assertNotIn("## Fixed", notes)   # no fix is claimed for the ore
+        if NOTES.is_file():   # published notes leave main (forgepact-notes-cleanup.yml)
+            self.assertIn("first of its kind", notes)
+            self.assertIn("in your bag rather than the materials tab", collapse(notes))
+            self.assertIn("is the game, not the mod", collapse(notes))
+            self.assertNotIn("not-stackable", notes)
+            self.assertNotIn("we have not seen that happen yet", notes)
+            self.assertNotIn("## Fixed", notes)   # no fix is claimed for the ore
         for name in ("no-preferred-grid", "not-placed", "not-added", "move-failed"):
             self.assertIn(name, section)
         self.assertNotIn("not-stackable", section)
