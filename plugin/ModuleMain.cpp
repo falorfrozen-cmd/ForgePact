@@ -21900,10 +21900,62 @@ static std::string CpArgSignature(const RValue& a, size_t cut = 48)
     } catch (...) { return "<unreadable>"; }
 }
 
+// Phase 1g: where the consume runs relative to the result's production. A
+// later player build can refuse a craft only by not calling the trampoline of
+// a row that encloses BOTH, and Live 1e logged the craft route's call order,
+// not its nesting. So the detours of these rows bracket their trampoline with
+// a depth per row (CpRouteFrame), and each one's armed line says which of them
+// was already on the game thread's stack when it was entered: `within=<row>`,
+// the outermost (entered first), or `within=none`. Game thread only, like
+// g_CpInCapture; tracked whether or not the row is armed, so arming mid-craft
+// cannot misreport the nesting.
+static const char* const kCpCraftRouteRows[] = {
+    "CraftFindRecipeItems", "DoCraftResult", "CraftEditGrid", "CraftEditPlayerInventory",
+    "s_CraftItem", "GridAddItem", "GridAddToStack", "s_ItemOperation", "GetInventoryGridNode",
+};
+static constexpr int kCpCraftRouteCount = (int)(sizeof(kCpCraftRouteRows) / sizeof(kCpCraftRouteRows[0]));
+static long g_CpRouteDepth[kCpCraftRouteCount] = {};    // frames of that row now on the stack
+static long g_CpRouteEntered[kCpCraftRouteCount] = {};  // entry order of its outermost frame
+static long g_CpRouteSeq = 0;
+
+// The row's slot in kCpCraftRouteRows, or -1 for a row that is not on the route.
+static int CpCraftRouteSlot(const char* label)
+{
+    for (int i = 0; i < kCpCraftRouteCount; ++i)
+        if (std::strcmp(label, kCpCraftRouteRows[i]) == 0) return i;
+    return -1;
+}
+
+// The outermost craft-route row on the stack now, or "none".
+static std::string CpWithin()
+{
+    int outer = -1;
+    for (int i = 0; i < kCpCraftRouteCount; ++i)
+        if (g_CpRouteDepth[i] > 0 && (outer < 0 || g_CpRouteEntered[i] < g_CpRouteEntered[outer])) outer = i;
+    return outer < 0 ? std::string("none") : std::string(kCpCraftRouteRows[outer]);
+}
+
+// Entered before the trampoline, left after it - on unwinding too, so a game
+// error inside the call cannot leave a row counted as still on the stack.
+struct CpRouteFrame {
+    int slot;
+    explicit CpRouteFrame(int s) : slot(s)
+    {
+        if (slot >= 0 && ++g_CpRouteDepth[slot] == 1) g_CpRouteEntered[slot] = ++g_CpRouteSeq;
+    }
+    ~CpRouteFrame()
+    {
+        if (slot >= 0 && g_CpRouteDepth[slot] > 0) --g_CpRouteDepth[slot];
+    }
+    CpRouteFrame(const CpRouteFrame&) = delete;
+    CpRouteFrame& operator=(const CpRouteFrame&) = delete;
+};
+
 // Before the trampoline: one budgeted line naming self, other and every
-// argument. Returns whether it was logged, so the `ret=` line follows exactly
-// the calls that were.
-static bool CpObserve(const char* label, long n, volatile long* logged, volatile long* logOn,
+// argument - and, on a craft-route row (route >= 0), `within=`, read before
+// this call's own frame is entered. Returns whether it was logged, so the
+// `ret=` line follows exactly the calls that were.
+static bool CpObserve(const char* label, long n, volatile long* logged, volatile long* logOn, int route,
                       CInstance* S, CInstance* O, int argc, RValue** A)
 {
     if (g_CpOwnLookup || !g_CpArmed.load() || !*logOn) return false;
@@ -21911,6 +21963,7 @@ static bool CpObserve(const char* label, long n, volatile long* logged, volatile
     if (*logged >= budget || InterlockedIncrement(logged) > budget) return false;
     try {
         Out(std::string("craftprobe ") + label + " #" + std::to_string(n)
+            + (route >= 0 ? std::string(" within=") + CpWithin() : std::string())
             + " self=" + PpDescribeSelf(S) + " other=" + PpDescribeSelf(O)
             + " argc=" + std::to_string(argc) + AggroArgs(argc, A) + PpArgIdentities(argc, A));
     } catch (...) {}
@@ -21991,9 +22044,13 @@ static void CpAfter(const char* safe, const char* label, long n, bool logged, bo
     static volatile long g_CpCapture_##SAFE = 0; \
     static CpKept g_CpKept_##SAFE; \
     static RValue& CpDetour_##SAFE(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) { \
+        static const int route = CpCraftRouteSlot(LABEL); \
         const long n = InterlockedIncrement(&g_CpCalls_##SAFE); \
-        const bool logged = CpObserve(LABEL, n, &g_CpLogged_##SAFE, &g_CpLogOn_##SAFE, S, O, argc, A); \
-        RValue& r = g_CpOrig_##SAFE ? g_CpOrig_##SAFE(S, O, R, argc, A) : R; \
+        const bool logged = CpObserve(LABEL, n, &g_CpLogged_##SAFE, &g_CpLogOn_##SAFE, route, S, O, argc, A); \
+        RValue& r = [&]() -> RValue& { \
+            CpRouteFrame frame(route); \
+            return g_CpOrig_##SAFE ? g_CpOrig_##SAFE(S, O, R, argc, A) : R; \
+        }(); \
         CpAfter(#SAFE, LABEL, n, logged, g_CpCapture_##SAFE != 0, g_CpKept_##SAFE, S, argc, A, r); \
         return r; \
     }
@@ -23832,6 +23889,10 @@ static void CpDump()
 // entry of it, both only while `mapkeep` calls that map current; and
 // `path:<Obj|global|id:n>.<a.b.c>` - the value `var`'s walk reaches. Each one
 // that cannot resolve refuses before the call, naming what was supplied.
+//
+// Phase 1g adds the literal `undefined`: a value of kind undefined, the second
+// argument auto-prospect's proven move passes to InventoryGridCanAddToStack and
+// InvGridClearItemNode (research doc, `### Phase 1g instrument`).
 
 // `path:<root>.<a.b.c>`: the root as `var` takes it (`<Obj>` is its first
 // instance, nth 0), walked the same way. The walk prints its own reason.
@@ -23868,7 +23929,7 @@ static std::string CpWhereId(const std::string& sel, const RValue& handle)
 static void CpCall(const std::vector<std::string>& tok)
 {
     const char* usage = "craftprobe call: usage -> call <Row> <Obj> <nth> [args ...] confirm | call <Row> id:<n> [args ...] confirm "
-                        "(arg: number | true | false | text | fp:<fingerprint> | fp9:<fingerprint> | kept:<row> | map9 | map9:<key>"
+                        "(arg: number | true | false | undefined | text | fp:<fingerprint> | fp9:<fingerprint> | kept:<row> | map9 | map9:<key>"
                         " | path:<Obj|global|id:n>.<a.b.c>)";
     if (tok.size() < 4 || Lower(tok.back()) != "confirm") {
         Out(std::string("craftprobe call: refused - this calls a game script; nothing was called. ") + usage);
@@ -23940,6 +24001,8 @@ static void CpCall(const std::vector<std::string>& tok)
                 return;
             }
             v = *k->kept->value;
+        } else if (la == "undefined") {
+            v = RValue();   // Phase 1g: kind undefined, as auto-prospect's add and clear pass it (not MpArg's text)
         } else {
             v = MpArg(a);
         }
@@ -23961,12 +24024,14 @@ static void CpCall(const std::vector<std::string>& tok)
 }
 
 // The first line is the build's marker: a live session tells this build
-// (Phase 1e, 252 rows, with `mapkeep`) from Phase 1c's (223 rows, marker
-// `phase1c`, also the build Phase 1d ran), Phase 1b's (202 rows, marker
-// `phase1b`) and aa0c72a's (97 rows, no marker) in one bare `craftprobe`.
+// (Phase 1g, 252 rows, with `mapkeep`, `within=` and the `undefined`
+// argument) from Phase 1e's (the same 252 rows, marker `phase1e`, also the
+// build Phase 1f ran), Phase 1c's (223 rows, marker `phase1c`, also the build
+// Phase 1d ran), Phase 1b's (202 rows, marker `phase1b`) and aa0c72a's (97
+// rows, no marker) in one bare `craftprobe`.
 static void CpUsage()
 {
-    Out("craftprobe: phase1e rows=" + std::to_string(kCpTargetCount) + " - research instrument for docs/crafting-materials-research.md (research build only)");
+    Out("craftprobe: phase1g rows=" + std::to_string(kCpTargetCount) + " - research instrument for docs/crafting-materials-research.md (research build only)");
     Out("  hook [substr ...]                 native-detour every row (or the matching ones); one instrument per session");
     Out("  arm [budget=N] [substr ...]       reset counters; log the next N calls of each selected row (default: all but the control)");
     Out("  show [all]                        calls since `arm`, logged vs unlogged per row; CheckPlayerInteraction is the control");
@@ -23984,9 +24049,11 @@ static void CpUsage()
         " per argument signature: GetItemFromFingerprint on a1, GetItemMap, GetInventoryArray, CountInventoryItem on a0)");
     Out("  dump                              craftprobe_rows.json + backing dump");
     Out("  call <Row> <Obj> <nth>|id:<n> [args ...] confirm   ONE by-name call of one row; refuses before it on any missing precondition");
-    Out("    args: number | true | false | text | fp:<fp> | fp9:<fp> (lookup with a1=9) | kept:<row> | map9 | map9:<key> (the kept"
-        " stash map, only while `mapkeep stat` says current) | path:<Obj|global|id:n>.<a.b.c> (what `var` reaches)");
+    Out("    args: number | true | false | undefined (kind undefined, not text) | text | fp:<fp> | fp9:<fp> (lookup with a1=9)"
+        " | kept:<row> | map9 | map9:<key> (the kept stash map, only while `mapkeep stat` says current)"
+        " | path:<Obj|global|id:n>.<a.b.c> (what `var` reaches)");
     Out("  hook reports a row `mapkeep on` installed as `held by mapkeep` - neither detoured nor failed; run `mapkeep on` first");
+    Out("  a craft-route row's logged line carries within=<row|none>: the outermost craft-route row on the stack when it was entered");
 }
 
 static void CpCommand(const std::string& rest)

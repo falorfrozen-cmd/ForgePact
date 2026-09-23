@@ -340,9 +340,12 @@ class CraftMatsContractTests(unittest.TestCase):
         usage = self.body("static void CpUsage(")
         first = usage[usage.index("Out("):]
         first = first[:first.index(";")]
-        self.assertIn("phase1e rows=", first)
+        # Phase 1g (the Phase A research build) keeps Phase 1e's 252 rows and
+        # changes only the marker, the `undefined` argument and `within=`.
+        self.assertIn("phase1g rows=", first)
         self.assertIn("kCpTargetCount", first)
-        self.assertEqual(self.plugin.count("phase1e rows="), 1)
+        self.assertEqual(self.plugin.count("phase1g rows="), 1)
+        self.assertEqual(self.plugin.count("phase1e rows="), 0)
         self.assertEqual(self.plugin.count("phase1c rows="), 0)
         self.assertEqual(self.plugin.count("phase1b rows="), 0)
 
@@ -731,6 +734,65 @@ class CraftMatsContractTests(unittest.TestCase):
         self.assertIn("CpVarWalk(", path)
         entry = self.body("static bool MkMapEntry(")
         self.assertLess(entry.index('"ds_map_exists"'), entry.index('"ds_map_find_value"'))
+
+    # ---- Phase 1g: the `undefined` argument and `within=` --------------------
+
+    def test_craftprobe_call_takes_the_literal_undefined(self):
+        # The auto-prospect route's InventoryGridCanAddToStack(1, undefined, item)
+        # and InvGridClearItemNode(cell, undefined) each pass a value of kind
+        # undefined, and MpArg would make the token the string "undefined". It is resolved like
+        # every other form: after the confirm gate, before the one call, and
+        # ahead of MpArg's fallback so the text never reaches the game.
+        call = self.body("static void CpCall(")
+        gate = call.index('Lower(tok.back()) != "confirm"')
+        form = call.index('la == "undefined"')
+        self.assertLess(gate, form)
+        self.assertLess(form, call.index("ApCallScript("))
+        self.assertLess(form, call.index("v = MpArg(a);"))
+        self.assertRegex(call[form:form + 200], r'la == "undefined"\)\s*\{?\s*v = RValue\(\);')
+        # The usage names it, both CpCall's and the bare `craftprobe`'s.
+        self.assertIn("| undefined", call)
+        self.assertIn("undefined", self.body("static void CpUsage("))
+        self.assertNotIn('la == "undefined"', strip_research_blocks(self.plugin))
+
+    CRAFT_ROUTE_ROWS = ("CraftFindRecipeItems", "DoCraftResult", "CraftEditGrid", "CraftEditPlayerInventory",
+                        "s_CraftItem", "GridAddItem", "GridAddToStack", "s_ItemOperation", "GetInventoryGridNode")
+
+    def test_craftprobe_craft_route_rows_log_what_encloses_them(self):
+        # `within=` answers where the consume runs relative to the result's
+        # production: the detours themselves bracket the trampoline with a depth
+        # per craft-route row, and a row's armed line names the outermost
+        # craft-route row still on the stack when it was entered.
+        table = self.plugin[self.plugin.index("static const char* const kCpCraftRouteRows[] = {"):]
+        table = re.findall(r'"([^"]+)"', table[:table.index("};")])
+        self.assertEqual(tuple(table), self.CRAFT_ROUTE_ROWS)
+        labels = {label for _, label, _ in self.rows}
+        for row in self.CRAFT_ROUTE_ROWS:
+            self.assertIn(row, labels, row + " is not a craftprobe row")
+        # The row count is Phase 1e's: no row was added for Phase 1g.
+        self.assertEqual(len(self.rows), 252)
+        detour = self.plugin[self.plugin.index("#define CRAFTPROBE_DETOUR(SAFE, LABEL)"):]
+        detour = detour[:detour.index("#define CRAFTPROBE_TARGETS(X)")]
+        # The enclosing row is read before this call's own frame is entered, the
+        # frame is entered before the trampoline, and left (RAII) after it.
+        observe = detour.index("CpObserve(")
+        frame = detour.index("CpRouteFrame frame(")
+        trampoline = detour.index("g_CpOrig_##SAFE(S, O, R, argc, A)")
+        self.assertLess(detour.index("CpCraftRouteSlot(LABEL)"), observe)
+        self.assertLess(observe, frame)
+        self.assertLess(frame, trampoline)
+        guard = self.body("struct CpRouteFrame")
+        self.assertIn("++g_CpRouteDepth[", guard)
+        self.assertIn("--g_CpRouteDepth[", guard)
+        # The field is on the armed line of craft-route rows only.
+        line = self.body("static bool CpObserve(")
+        self.assertIn('" within="', line)
+        self.assertRegex(line, r'route >= 0 \? .*" within="\)? \+ CpWithin\(\)')
+        self.assertIn('"none"', self.body("static std::string CpWithin("))
+        # Research build only: nothing of it reaches a player.
+        shipped = strip_research_blocks(self.plugin)
+        for symbol in ("within=", "CpRouteFrame", "kCpCraftRouteRows", "g_CpRouteDepth"):
+            self.assertNotIn(symbol, shipped, symbol)
 
     # ---- the switch ----------------------------------------------------------
 
