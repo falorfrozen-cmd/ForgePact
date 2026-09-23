@@ -1013,11 +1013,11 @@ class CraftMatsContractTests(unittest.TestCase):
         self.assertLess(at("### Live procedure 1g"), at("## Results"))
         self.assertLess(at("### Phase 1f results"), at("### Phase 1g results"))
         self.assertLess(at("### Phase 1g results"), at("## Decision gate"))
-        results = self.doc[at("### Phase 1g results"):at("## Decision gate")]
+        results = self.doc[at("### Phase 1g results"):at("### Phase 1h results")]
         hashes = re.findall(r"\b[0-9a-f]{64}\b", results)
         self.assertEqual(len(hashes), 1, hashes)
         self.assertNotEqual(hashes[0], "806d2562689db855de776f79e6df88d19f9ea4783cf56d24546d69398262291c")
-        procedure = self.doc[at("### Live procedure 1g"):at("## Results")]
+        procedure = self.doc[at("### Live procedure 1g"):at("### Live procedure 1h")]
         self.assertIn("fifteen checks", procedure)
         self.assertIn("forgepact-issue-14-phaseA-context.md", procedure)
         self.assertIn("phase1g rows=", procedure)
@@ -1030,6 +1030,50 @@ class CraftMatsContractTests(unittest.TestCase):
         for check in checks:
             self.assertIn("`" + check + "`", procedure, check)
             self.assertIn("| " + check + " |", results, check)
+        # Phase 1h (the Ghidra-read take, its save and the recipe's shape) adds
+        # rows, an instrument, a procedure and a results section, each after
+        # its Phase 1e/1g counterpart. The results name the Phase 1h research
+        # DLL (one hash, not the Phase 1g one); the procedure names the
+        # eighteen checks in the capture's order, points at the workorder's
+        # step-by-step file, and names the marker. Each check gets a results
+        # row once the status is complete.
+        status = re.search(r"(?m)^phase1h-status: (pending|complete)$", "\n".join(self.doc.split("\n")[:12]))
+        self.assertIsNotNone(status, "phase1h-status missing from the frontmatter")
+        for heading in ("### Phase 1h rows", "### Phase 1h instrument", "### Live procedure 1h", "### Phase 1h results"):
+            self.assertIn("\n" + heading + "\n", self.doc, heading)
+        self.assertLess(at("### Phase 1e rows"), at("### Phase 1h rows"))
+        self.assertLess(at("### Phase 1h rows"), at("### Negative results, sourced"))
+        self.assertLess(at("### Phase 1g instrument"), at("### Phase 1h instrument"))
+        self.assertLess(at("### Phase 1h instrument"), at("## Live procedure"))
+        self.assertLess(at("### Live procedure 1g"), at("### Live procedure 1h"))
+        self.assertLess(at("### Live procedure 1h"), at("## Results"))
+        self.assertLess(at("### Phase 1g results"), at("### Phase 1h results"))
+        self.assertLess(at("### Phase 1h results"), at("## Decision gate"))
+        results = self.doc[at("### Phase 1h results"):at("## Decision gate")]
+        hashes = re.findall(r"\b[0-9a-f]{64}\b", results)
+        self.assertEqual(len(hashes), 1, hashes)
+        self.assertNotEqual(hashes[0], "81a033498d63c736a07f758bd23c7d248986372266bee6ae40577421978ebf4a")
+        instrument = self.doc[at("### Phase 1h instrument"):at("## Live procedure")]
+        self.assertIn("phase1h rows=", instrument)
+        # The reading names where it came from, so the next phase re-reads it.
+        for place in ("ghidra_projects", "hs-decomp", "DecompileTo.java", "Controller_obj"):
+            self.assertIn(place, instrument, place)
+        self.assertIn("SaveStashFunc", self.doc[at("### Phase 1h rows"):at("### Negative results, sourced")])
+        procedure = self.doc[at("### Live procedure 1h"):at("## Results")]
+        self.assertIn("eighteen checks", procedure)
+        self.assertIn("forgepact-issue-14-phase1h-context.md", procedure)
+        self.assertIn("### Live procedure 1", procedure)
+        self.assertIn("phase1h rows=", procedure)
+        checks = ("dll-hash", "marker", "counts-tool-before", "hook", "control", "save-control", "map-at-cube",
+                  "holders", "lookup-closed", "take-material", "error-baseline", "save-after-take",
+                  "close-after-take", "take-socket", "save-after-socket", "close-after-socket", "recipe-shape",
+                  "counts-tool-after")
+        order = procedure[procedure.index("eighteen checks"):]
+        at_check = [order.index("`" + check + "`") for check in checks]
+        self.assertEqual(at_check, sorted(at_check), "the eighteen checks are named in the capture's order")
+        if status.group(1) == "complete":
+            for check in checks:
+                self.assertIn("| " + check + " |", results, check)
         results = self.doc[self.doc.index("\n## Results\n"):self.doc.index("\n## Decision gate\n")]
         for row in ("| B0-vanilla |", "| C-control |", "| H-A |", "| H-B |", "| H-C |"):
             self.assertIn(row, results)
