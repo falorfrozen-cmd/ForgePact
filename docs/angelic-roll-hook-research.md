@@ -239,6 +239,18 @@ session 1 it reported the gate found inside the game's own `DropItem`. The
 player build has the same exposure after any `dropmult` and is tracked
 separately as ForgePact issue #69.
 
+**Since #69 (2026-09-23), both builds.** `InstallHook` now records `DropItem`'s
+and `DropItemAngelicChance`'s own code first thing, before any hook, and
+keeps an entry only when `AddrIsExecutableInModule` places it inside the
+game; the finder scans that record and never the live table entry. The
+research build's startup lookup above stays for its log line, but the order
+no longer decides whether the gate is found. The player-build exposure was
+observed live on v1.4.5 (`dropmult gold 2`, then `raredrop angelic 2`
+answered `angelic: call site not found - game build changed`), and the fix
+was checked live the same way: the gate was found inside the game's own
+`DropItem`, then `gate OPEN`; `raredrop angelic 1` closed it and restored
+the bytes.
+
 ### Where it runs
 
 `angelicprobe` is dispatched like every other command, inside
