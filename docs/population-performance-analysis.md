@@ -45,8 +45,8 @@ names are the game's; the numbers are constants it uses.
 - Every `Enemy_Creator_*` spawner exists from zone generation, awake. Each one
   registers a periodic check with the game's timer system
   (`timer_system_update`, handle stored in `enemyCreatorTimer`, observed ~116
-  frames). The check calls `distance_to_object(Player_obj)`; below **1050 px**
-  it takes the spawn branch (`spawnPack`, `alarm[2]`) and then destroys its own
+  frames). The check measures the creator's distance to `Player_obj`
+  (`distance_to_object`); below **1050 px** it takes the spawn branch (`spawnPack`, `alarm[2]`) and then destroys its own
   timer. A creator spawns once; afterwards it never polls again. This is why
   answering 0 to an uninitialised creator leaves it inert forever (Known
   Limitation 13), and why the "creator lie" is the only birth trigger there is.
@@ -61,11 +61,11 @@ names are the game's; the numbers are constants it uses.
   walks **every active `Enemy_Child_Basic_obj`**, compares its position with a
   box around the players (`playerBoxL/R/T/B`), and rebuilds
   `monsterHandleArray` / `monsterHandleArrayCount` with the ones inside. A
-  monster that leaves the box gets `wasActive = false`, `isMoving = false`, its
-  target cleared (`SocketSetTarget(-4)`) and its path ended.
-- `EnemyStepHandleNew` steps only the handles in that array (`with (handle)
-  m_EnemyStep(...)`); a handle to a destroyed or deactivated instance simply
-  iterates nothing. So AI, pathfinding, `EnemyParentBeginStepMain` (which alone
+  monster that leaves the box has its `wasActive` and `isMoving` flags
+  cleared, its target dropped through `SocketSetTarget` and its path ended.
+- `EnemyStepHandleNew` steps only the handles in that array, one
+  `m_EnemyStep` call per handle; a handle to a destroyed or deactivated
+  instance simply gets no step. So AI, pathfinding, `EnemyParentBeginStepMain` (which alone
   does ~14 protected-variable reads, health-bar and shadow updates per monster
   per frame) and the effect timers run **only for monsters inside the player
   box**. Far monsters do not step in vanilla either - the Beacon's "zero scans
@@ -202,7 +202,7 @@ thousands of monsters alive:
   `DrawMinimapDynamic` were decompiled separately and show the same shape:
   the 30-frame `updateEnemyTimer`, the `playerBox` test over
   `Enemy_Child_Basic_obj`, the `monsterHandleArray` rebuild and `wasActive`
-  cleanup, `with (handle) m_EnemyStep(...)` stepping, and the minimap walk over
+  cleanup, one `m_EnemyStep` call per handle in that array, and the minimap walk over
   `Enemy_Parent_obj`. The mechanism did not change between the two builds.
 - Functions read: `EnemyStepHandleNew`, `ActivateDeactivateProps`,
   `LocalActivateDeactivateProps`, `DrawMinimapDynamic`, `DrawEnemyHealthBars`,
