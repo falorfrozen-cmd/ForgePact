@@ -21490,7 +21490,7 @@ static void MkRoomPoll()
     const int64_t key = CurrentRoomKey();
     if (key == INT64_MIN) return;
     if (g_MkRoomKey != INT64_MIN && key != g_MkRoomKey) {
-        g_MkCore.Invalidate(ForgePact::CraftMatsKeptMapReason::RoomChanged);
+        g_MkCore.Invalidate(ForgePact::CraftMatsMapReason::RoomChanged);
         ++g_MkRoomChanges;
     }
     g_MkRoomKey = key;
@@ -21567,7 +21567,7 @@ static RValue& MkHookLoadStash(CInstance* S, CInstance* O, RValue& R, int argc, 
     const long n = InterlockedIncrement(&g_MkLoadStashCalls);
     // Before the game's own call: a GetItemMap(9) return during or after the
     // load is the refresh that makes the map current again.
-    g_MkCore.Invalidate(ForgePact::CraftMatsKeptMapReason::CharacterLoaded);
+    g_MkCore.Invalidate(ForgePact::CraftMatsMapReason::CharacterLoaded);
     RValue& r = g_MkOrigLoadStash ? g_MkOrigLoadStash(S, O, R, argc, A) : R;
     if (++g_MkLoadStashLogged <= kMkLoadStashLines) {
         try {
@@ -21585,8 +21585,8 @@ static bool MkCurrentMap(RValue& map, std::string& reason)
 {
     MkRoomPoll();
     if (!g_MkCore.IsCurrent() || !g_MkKept) {
-        reason = ForgePact::CraftMatsKeptMap::ReasonName(g_MkCore.IsCurrent() ? ForgePact::CraftMatsKeptMapReason::NotKept
-                                                                               : g_MkCore.Reason());
+        reason = ForgePact::CraftMatsKeptMap::ReasonName(
+            g_MkCore.IsCurrent() ? ForgePact::CraftMatsMapReason::NotKept : g_MkCore.Reason());
         return false;
     }
     try {

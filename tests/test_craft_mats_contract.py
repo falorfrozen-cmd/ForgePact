@@ -654,7 +654,7 @@ class CraftMatsContractTests(unittest.TestCase):
         self.assertNotIn("m_Kind == VALUE_INT64", getmap)
         load = self.body("static RValue& MkHookLoadStash(")
         self.assertIn("g_MkOrigLoadStash(S, O, R, argc, A)", load)
-        self.assertLess(load.index("Invalidate(ForgePact::CraftMatsKeptMapReason::CharacterLoaded)"),
+        self.assertLess(load.index("Invalidate(ForgePact::CraftMatsMapReason::CharacterLoaded)"),
                         load.index("g_MkOrigLoadStash(S, O, R, argc, A)"))
         # The kept value is rooted in a research global the collector sees.
         keep = self.body("static void MkKeep(")
@@ -683,7 +683,7 @@ class CraftMatsContractTests(unittest.TestCase):
         self.assertNotIn("MkRoomTick", strip_research_blocks(frame))
         poll = self.body("static void MkRoomPoll(")
         # An unreadable room is skipped, never compared.
-        self.assertLess(poll.index("key == INT64_MIN"), poll.index("Invalidate(ForgePact::CraftMatsKeptMapReason::RoomChanged)"))
+        self.assertLess(poll.index("key == INT64_MIN"), poll.index("Invalidate(ForgePact::CraftMatsMapReason::RoomChanged)"))
         # What `stat` prints.
         stat = self.body("static void MkStat(")
         for token in ('" a0=9 calls="', '"a0=0 calls="', '" LoadStash calls="', '" current="', '" reason="',

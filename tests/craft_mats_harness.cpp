@@ -39,7 +39,7 @@ using ForgePact::CraftMatsRefusal;
 using ForgePact::CraftMatsSource;
 using ForgePact::CraftMatsTakeReport;
 using ForgePact::CraftMatsKeptMap;
-using ForgePact::CraftMatsKeptMapReason;
+using ForgePact::CraftMatsMapReason;
 
 static int g_Failures = 0;
 
@@ -316,12 +316,12 @@ static std::string Describe(const CraftMatsKeptMap& m)
 static void BaselineKeptMapNothingKeptIsNotCurrent()
 {
     CraftMatsKeptMap fresh;
-    const bool freshOk = !fresh.IsCurrent() && !fresh.IsKept() && fresh.Reason() == CraftMatsKeptMapReason::NotKept;
+    const bool freshOk = !fresh.IsCurrent() && !fresh.IsKept() && fresh.Reason() == CraftMatsMapReason::NotKept;
     // An invalidation with nothing kept does not make anything current either,
     // and "not kept" stays the reason.
     CraftMatsKeptMap loaded;
-    loaded.Invalidate(CraftMatsKeptMapReason::CharacterLoaded);
-    const bool loadedOk = !loaded.IsCurrent() && !loaded.IsKept() && loaded.Reason() == CraftMatsKeptMapReason::NotKept;
+    loaded.Invalidate(CraftMatsMapReason::CharacterLoaded);
+    const bool loadedOk = !loaded.IsCurrent() && !loaded.IsKept() && loaded.Reason() == CraftMatsMapReason::NotKept;
     Check("baseline/kept_map_nothing_kept_is_not_current", freshOk && loadedOk,
           Describe(fresh) + " | " + Describe(loaded));
 }
@@ -333,16 +333,16 @@ static void BaselineKeptMapReusedIndexIsNotCurrentAfterAnInvalidation()
     // load or the room change, so it is not current.
     CraftMatsKeptMap loaded;
     loaded.Refreshed(1049);
-    loaded.Invalidate(CraftMatsKeptMapReason::CharacterLoaded);
+    loaded.Invalidate(CraftMatsMapReason::CharacterLoaded);
     CraftMatsKeptMap moved;
     moved.Refreshed(1049);
-    moved.Invalidate(CraftMatsKeptMapReason::RoomChanged);
+    moved.Invalidate(CraftMatsMapReason::RoomChanged);
     // A second invalidation keeps it stale; asking again changes nothing.
-    moved.Invalidate(CraftMatsKeptMapReason::RoomChanged);
+    moved.Invalidate(CraftMatsMapReason::RoomChanged);
     const bool ok = !loaded.IsCurrent() && loaded.IsKept() && loaded.Index() == 1049
-        && loaded.Reason() == CraftMatsKeptMapReason::CharacterLoaded
+        && loaded.Reason() == CraftMatsMapReason::CharacterLoaded
         && !moved.IsCurrent() && moved.IsKept() && moved.Index() == 1049
-        && moved.Reason() == CraftMatsKeptMapReason::RoomChanged && !moved.IsCurrent();
+        && moved.Reason() == CraftMatsMapReason::RoomChanged && !moved.IsCurrent();
     Check("baseline/kept_map_reused_index_is_not_current_after_an_invalidation", ok,
           Describe(loaded) + " | " + Describe(moved));
 }
@@ -352,7 +352,7 @@ static void TargetKeptMapRefreshMakesItCurrent()
     CraftMatsKeptMap m;
     m.Refreshed(1049);
     Check("target/kept_map_refresh_makes_it_current",
-          m.IsCurrent() && m.IsKept() && m.Index() == 1049 && m.Reason() == CraftMatsKeptMapReason::None
+          m.IsCurrent() && m.IsKept() && m.Index() == 1049 && m.Reason() == CraftMatsMapReason::None
               && m.Refreshes() == 1 && std::string(CraftMatsKeptMap::ReasonName(m.Reason())) == "none",
           Describe(m));
 }
@@ -362,15 +362,15 @@ static void TargetKeptMapRefreshAfterAnInvalidationIsCurrentAgain()
     // The same index returned again by the game's own call after the room change.
     CraftMatsKeptMap same;
     same.Refreshed(1049);
-    same.Invalidate(CraftMatsKeptMapReason::RoomChanged);
+    same.Invalidate(CraftMatsMapReason::RoomChanged);
     same.Refreshed(1049);
     // A new index after a character load: current, with the new one.
     CraftMatsKeptMap renewed;
     renewed.Refreshed(1049);
-    renewed.Invalidate(CraftMatsKeptMapReason::CharacterLoaded);
+    renewed.Invalidate(CraftMatsMapReason::CharacterLoaded);
     renewed.Refreshed(1050);
     const bool ok = same.IsCurrent() && same.Index() == 1049 && same.Refreshes() == 2
-        && renewed.IsCurrent() && renewed.Index() == 1050 && renewed.Reason() == CraftMatsKeptMapReason::None;
+        && renewed.IsCurrent() && renewed.Index() == 1050 && renewed.Reason() == CraftMatsMapReason::None;
     Check("target/kept_map_refresh_after_an_invalidation_is_current_again", ok,
           Describe(same) + " | " + Describe(renewed));
 }
@@ -381,7 +381,7 @@ static void TargetKeptMapClearIsNotCurrent()
     m.Refreshed(1049);
     m.Clear();
     const std::string cleared = Describe(m);
-    const bool clearedOk = !m.IsCurrent() && !m.IsKept() && m.Reason() == CraftMatsKeptMapReason::NotKept
+    const bool clearedOk = !m.IsCurrent() && !m.IsKept() && m.Reason() == CraftMatsMapReason::NotKept
         && std::string(CraftMatsKeptMap::ReasonName(m.Reason())) == "not-kept";
     // Keeping starts again from the game's next call.
     m.Refreshed(1051);
@@ -391,10 +391,10 @@ static void TargetKeptMapClearIsNotCurrent()
 
 static void TargetKeptMapReasonNamesAreTheStatTokens()
 {
-    const bool ok = std::string(CraftMatsKeptMap::ReasonName(CraftMatsKeptMapReason::None)) == "none"
-        && std::string(CraftMatsKeptMap::ReasonName(CraftMatsKeptMapReason::NotKept)) == "not-kept"
-        && std::string(CraftMatsKeptMap::ReasonName(CraftMatsKeptMapReason::CharacterLoaded)) == "character-loaded"
-        && std::string(CraftMatsKeptMap::ReasonName(CraftMatsKeptMapReason::RoomChanged)) == "room-changed";
+    const bool ok = std::string(CraftMatsKeptMap::ReasonName(CraftMatsMapReason::None)) == "none"
+        && std::string(CraftMatsKeptMap::ReasonName(CraftMatsMapReason::NotKept)) == "not-kept"
+        && std::string(CraftMatsKeptMap::ReasonName(CraftMatsMapReason::CharacterLoaded)) == "character-loaded"
+        && std::string(CraftMatsKeptMap::ReasonName(CraftMatsMapReason::RoomChanged)) == "room-changed";
     Check("target/kept_map_reason_names_are_the_stat_tokens", ok, "");
 }
 
