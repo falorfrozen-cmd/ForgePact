@@ -14,7 +14,11 @@ first live session, 2026-09-22) done; Phase 1b (a widened instrument and a
 second session, 2026-09-22/23) done; Phase 1c (a reader round, 2026-09-23)
 done; Phase 1d (a closed-window reader round, 2026-09-23) done; the owner chose
 H-A on 2026-09-23 (`## Decision gate`); Phase 1e, the consume-research round
-asked for before any player build, done (2026-09-23).** Phase 1
+asked for before any player build, done (2026-09-23); Phase 1f, the owner's
+build-design round on the installed Phase 1e build, done (2026-09-23); and
+Phase 1g, the closed-stash move, save and craft-route measurement, done
+(2026-09-23), leave a player build blocked on a stash save after the move and
+the recipe's readable shape.** Phase 1
 measured the vanilla baseline, the cube's craft route and a vanilla duplication,
 but its instrument reached neither the stash's special-tab container nor the
 route a hand move between a special tab and the bag takes (`## Results`).
@@ -2059,7 +2063,9 @@ gone when the operator next looked (`hs_status`: not running). `stash.hss`
 kept its T1 write time. So `counts-tool-after` was read after a crash, not a
 graceful exit. What caused the crash is not established: the capture gives the
 order of events (the take, the two by-name `SaveStash` calls, the close's own
-save) and nothing that singles one of them out.
+save), and the leading unconfirmed lead is the take's after-state, which
+`SaveStash` does not finish - not the by-name call route, which Live 1f's own
+control already showed can dispatch and return.
 
 Filled from the capture, `.claude/workorders/forgepact-issue-14-phaseA-live-1.md`,
 cited by its step headings, one row per check, in the procedure's order. A
@@ -2082,7 +2088,7 @@ the craft rows received) and are compared as indices only, never as identity.
 | take-material | On X (one Greater Unstable Dust in the Materials tab): the add's answer, `ChangeItemOwner`'s `ret=`, and the kept map on the same index (`dropped`, `kept` or `re-kept`); `RemoveItemFromMap` only if kept; the bag by eye | Before: X in the Materials tab after the hand move and the owner's close (T1 `2026-09-23T18:01:01.1362495Z`, later than T0), `mapkeep find 14 51` `o=1 matched=1`, `size=1627`, index 1049 with `refreshed=1`. Supplied, each with self `Console_Save_obj` 0, the stash closed and the Cube open: `InventoryGridCanAddToStack 1 undefined fp9:<X>` -> an item struct with another fingerprint, `itemType=14` (a bag stack to join); `InventoryGridAddToStack 1 fp9:<X>` -> `struct{tabNumber=0, x=7, y=0, tabType=-4, success=true}`; `ChangeItemOwner 9 0 <X>` -> `ret=undefined`. After: `size=1626`, `mapkeep find 14 51` `matched=0`, index 1049 and `refreshed=1` unchanged - `dropped` on the same map, so `RemoveItemFromMap` was not run. Rows that fired: `InventoryGridCanAddToStack`, `InventoryGridAddToStack`, `ChangeItemOwner`, `GetItemPreferredGrid`, `GetInventoryMaxTabs`, `s_ItemOperation` and `s_ItemGridInfo`, one call each. The owner counted 150 Greater Unstable Dust in the bag afterwards; the capture has no count by eye from before the add (capture, Step 5; Step 7, both headings) | pass |
 | take-socket | The sequence `take-material` confirmed, on the Socketable entry (the `b=51` stack of 10 or the owner's one-unit socketable): the same reads, and whether the add carried `o` | The class-15 `b=51` stack, `mapkeep find 15 51` `o=10`. Supplied, self `Console_Save_obj` 0: `InventoryGridCanAddToStack 1 undefined fp9:<S>` -> `undefined` (no bag stack to join); then `GetItemPreferredGrid 1 fp9:<S>` -> `struct{gridBits=0, grid=array len=6}`, a numeric array with no instance or container a `path:` argument can reach, so the procedure stopped this item there: `GridAddItem` and `ChangeItemOwner` were not run (not in `craftprobe show`) and nothing moved. The owner saw no Pristine Ruby in the bag, and the stash still showed the 10 at step 11. A move of an entry the bag has no stack for, and whether an add carries a stack's `o`, are not observed (capture, Step 8, both headings) | not-observed |
 | take-partial | The argument shapes `s_ItemOperation` and any stack-family row logged at the craft; nothing replayed | Recording only, from the craft's armed log: `s_ItemOperation #1` (`argc=1`, `a0=false`) and `#2` (`argc=5`, `a0=true`, `a1` to `a4` `0`), each with no instance as self and the recipe row as other, both `ret=undefined` and both `within=DoCraftResult#1`; the stack-family row `GridAddToStack #1` (`a0=1`, `a1` an array, `a2` the result item's struct) answered `success=false` before `GridAddItem` placed the result. No decrement shape was replayed (capture, Step 9) | not-observed |
-| save-closed | `SaveStash` by name with the stash closed after a confirmed move: T2 -> T3, T3b a few seconds later, and `tools/stash_tab_counts.py` without the moved entry; the positive control, the same call with the stash open: T4 -> T5 | After `take-material`'s drop, the stash closed: T2 `2026-09-23T18:01:01.1362495Z`, equal to T1. Supplied: `SaveStash`, self `Console_Save_obj` 0, no argument, under `confirm`. The call printed `NOT dispatched (asset_get_index found no script, or script_execute failed)`, while the same command's output logged a `SaveStash #1` entry (self `Console_Save_obj`) and its closures (`___struct___357@SaveStash` eight times, `___struct___359@SaveStash` once). T3, and T3b about five seconds later, equal T2; `tools/stash_tab_counts.py` still listed `class=14 b=51 stack=1`. The positive control, the same call with the stash open: T4 equal T2, `NOT dispatched` again beside a `SaveStash #2` entry and one `___struct___359@SaveStash` closure, T5 equal T4. No write was seen in either state, so this says nothing about the window. Which of the two causes the message names applied - no script found, or `script_execute` failing after the function was entered - is not established from the capture; in Live 1f the same supplied shape printed `dispatched -> ret=undefined` (`save-by-name-closed`) (capture, Step 10; Step 11, save-closed positive control) | not-observed |
+| save-closed | `SaveStash` by name with the stash closed after a confirmed move: T2 -> T3, T3b a few seconds later, and `tools/stash_tab_counts.py` without the moved entry; the positive control, the same call with the stash open: T4 -> T5 | After `take-material`'s drop, the stash closed: T2 `2026-09-23T18:01:01.1362495Z`, equal to T1. Supplied: `SaveStash`, self `Console_Save_obj` 0, no argument, under `confirm`. The call printed `NOT dispatched (asset_get_index found no script, or script_execute failed)`, while the same command's output logged a `SaveStash #1` entry (self `Console_Save_obj`) and its closures (`___struct___357@SaveStash` eight times, `___struct___359@SaveStash` once). T3, and T3b about five seconds later, equal T2; `tools/stash_tab_counts.py` still listed `class=14 b=51 stack=1`. The window control, the same call with the stash open: T4 equal T2, `NOT dispatched` again beside a `SaveStash #2` entry and one `___struct___359@SaveStash` closure, T5 equal T4. No write was seen in either state: a window control only, since both sides ran on the same post-take state - it says nothing about the route. Which of the two causes the message names applied - no script found, or `script_execute` failing after the function was entered - is not established from the capture; in Live 1f the same supplied shape printed `dispatched -> ret=undefined` (`save-by-name-closed`) (capture, Step 10; Step 11, save-closed window control) | not-observed |
 | stash-window-after | The stash window after the by-name `GetItemMap(9)` and the move: both special tabs drawn, their counts by eye against the map's last reads; `mapkeep stat`'s `a0=9 calls=` and `latest-keep:` | The owner opened the stash: the Materials tab showed Unstable Dust 13 and no X, the Socketable tab the Pristine Ruby stack of 10, equal to the map's last reads (`find 14 51` `matched=0`, `find 15 51` `o=10`); the screenshot of the Materials tab shows the one stack of 13. `mapkeep stat`: `a0=9 calls=58646` (1 after the by-name call, 17434 after the step-5 open: the game's own opens called `GetItemMap(9)` this time), `kept=ref ds_map 1049 size=1626 current=yes refreshed=1`, `latest-keep: #1 self=Console_Save_obj` - the index obtained by name stayed the latest keep. The step-5 open, before the take, also drew and took the hand move (capture, Step 5; Step 11, the owner's confirmation) | pass |
 | counts-tool-after | `tools/stash_tab_counts.py` after the graceful exit, against the owner's last counts | No graceful exit: the game ended at the owner's stash close after step 11. The plugin's log stops inside that close's own `SaveStash #3` (self `Console_Save_obj`, `argc=0`) after one `___struct___359@SaveStash` closure returned, with no `ret=` for the call, no crash-handler text and no closing line; `hs_status` then read not running, and `hs_stop_game` was never called. `stash.hss` kept T1's write time. `tools/stash_tab_counts.py`: exit 0, `class=14 b=50 stack=13` and `class=14 b=51 stack=1` on the Materials tab, `class=15 b=51 stack=10` - X still in the file, against the owner's last count (Dust 13, no X). `hs_saves_inspect` against the backup: `herosiege13.hss`, `inventory_order_13.hss`, `shop.ini` and `stash.hss` changed; whether the character's save holds the unit the add put in the bag was not read (capture, Step 11, the owner's reply; Step 12) | fail |
 
@@ -2135,21 +2141,30 @@ that ran answered with a failure.
 
 **Question 4: the save.** Not proven. The by-name `SaveStash` (self
 `Console_Save_obj` 0, no argument), called after the confirmed take with the
-stash closed and again with it open, printed `NOT dispatched` both times, and
-`stash.hss`'s write time stayed at T1 through T2, T3, T3b, T4 and T5; the file
-still listed X (`save-closed`: not observed). The positive control on the same
-route saw no write either, so the result is about the by-name route in this
-session, not about the window. The same command's output logged a `SaveStash`
-entry with its closures each time, so whether the call reached the function
-and then failed, or never resolved it, is not established; Live 1f's call in
-the same supplied shape had printed `dispatched`. The owner's next stash close
-then ran the game's own `SaveStash`, and the game ended inside it, after one
-closure, with the file unwritten (`counts-tool-after`: fail). The crash
-followed the by-name take and both by-name `SaveStash` calls; its cause is not
-established. In Live 1e and 1f the stash's saves after a by-name
-`GridRemoveItem` wrote the file (`take-trial-grid`, `take-1stack`); this was
-the first stash close on record after a by-name add and owner change, and it
-happened once.
+stash closed (`SaveStash #1`) and again with it open (`SaveStash #2`),
+printed `NOT dispatched` both times, and `stash.hss`'s write time stayed at
+T1 through T2, T3, T3b, T4 and T5; the file still listed X (`save-closed`:
+not observed). The open-stash call is a window control: it ran on the same
+post-take state as the closed-stash call, so both failing controls for the
+window, not for the route. The route's own control is Live 1f's by-name
+`SaveStash` in the same supplied shape (self `Console_Save_obj` 0, no
+argument), run before any by-name take or owner change: it dispatched and
+returned, `dispatched -> ret=undefined` (`save-by-name-closed`), and its
+`___struct___359@SaveStash` closure logged the Materials tab. So the route
+itself does dispatch and return on this runtime; the two `NOT dispatched`
+results here do not fault it. The owner's next stash close then ran the
+game's own `SaveStash #3`, and the game ended inside it after one
+`___struct___359@SaveStash` closure returned, with no `ret=` for the call, no
+crash-handler text and no closing line (`counts-tool-after`: fail). All three
+`SaveStash` calls after the take were entered, and none of the three logged a
+`ret=` for the call itself; `#2` and `#3` each stopped right after one
+`___struct___359@SaveStash` closure. The leading lead, unconfirmed, is that
+the take's after-state (`InventoryGridAddToStack` plus `ChangeItemOwner`)
+leaves the stash in a state `SaveStash` does not finish; it is one occurrence
+with no control that isolates it, and its cause is not established. In Live
+1e and 1f the stash's saves after a by-name `GridRemoveItem` wrote the file
+(`take-trial-grid`, `take-1stack`); this was the first stash close on record
+after a by-name add and owner change, and it happened once.
 
 **Question 5: the stash window after a by-name `GetItemMap(9)`.** It drew and
 behaved as usual: the stash opened twice after the by-name call (step 5, when
@@ -2197,7 +2212,10 @@ control non-zero (`### Phase 1g results`), for a later player build:
   the game's own `GetItemFromFingerprint(<fingerprint>, 9)` return.
   `RemoveItemFromMap` was not needed. For an entry the bag has no stack for
   (the Socketable stack of 10), the route stopped at its first step and
-  nothing moved (`take-socket`: not observed).
+  nothing moved (`take-socket`: not observed). Every `SaveStash` call after
+  this take stopped without a `ret=` for the call, and the next stash close
+  crashed the game inside its own `SaveStash`; R1 is not ruled out as the
+  crash's cause and is not yet safe to ship.
 - *The lookup self: `Console_Save_obj` 0.* It resolved
   `GetItemFromFingerprint(<X>, 9)` with the stash closed on the first try; no
   bag grid instance existed with the Cube open (`lookup-closed`,
@@ -2209,14 +2227,21 @@ control non-zero (`### Phase 1g results`), for a later player build:
 What it still lacks, as far as observed:
 
 - *A stash save after a by-name move.* The save is not proven. The by-name
-  `SaveStash` printed `NOT dispatched` with the stash closed and with it open,
-  and the file's write time did not move in either state (`save-closed`: not
-  observed) - a result about the by-name route in this session, since the
-  positive control on it wrote nothing either. The owner's next stash close
-  ran the game's own `SaveStash`, and the game ended inside it with the file
-  unwritten, still listing X (`counts-tool-after`: fail). Its cause is not
-  established, it happened once, and whether the character's save then held
-  the unit the add had put in the bag was not read - so whether a crash there
+  `SaveStash` (`SaveStash #1`, stash closed) printed `NOT dispatched`, and so
+  did the same call with the stash open (`SaveStash #2`); the file's write
+  time did not move in either state (`save-closed`: not observed). The open
+  call is a window control only - it ran on the same post-take state as the
+  closed call, not a different route - the route's own control is Live 1f's
+  by-name `SaveStash` in the same supplied shape before any take, which
+  printed `dispatched -> ret=undefined`. Neither `SaveStash #1` nor
+  `SaveStash #2` logged a `ret=` for the call itself. The owner's next stash
+  close then ran the game's own `SaveStash #3`, and the game ended inside it
+  after one closure, with no `ret=` for that call either, the file unwritten
+  and still listing X (`counts-tool-after`: fail). The leading lead,
+  unconfirmed, is that the take's after-state leaves the stash in a state
+  `SaveStash` does not finish; it happened once, no control isolates it, and
+  its cause is not established. Whether the character's save then held the
+  unit the add had put in the bag was not read - so whether a crash there
   leaves one item in both the stash file and the bag is not observed. The
   design's step 4 rests on it, and so does any design that leaves the write
   to the next close or exit.
