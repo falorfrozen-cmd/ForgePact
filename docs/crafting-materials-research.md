@@ -530,6 +530,31 @@ the table already carries, `GetItemMap` and `LoadStash`, are installed in
 Phase 1e by `mapkeep` instead (`### Phase 1e instrument`), and `craftprobe
 hook` reports them as held.
 
+### Phase 1h rows
+
+Phase 1g left two things unmeasured that a row can make readable
+(`## Decision gate`, "After Phase 1g"): the recipe's amount, which no plain
+member of the recipe entry carried, and what a `SaveStash` does per item, which
+Live 1g could only read from the file's timestamp and the game ending. The
+local Ghidra reading (`### Phase 1h instrument`) named the one function behind
+each. Two rows, 254 in all, each named by its SDK constant like every other row
+and hooked by the same one `craftprobe hook`; no object's closures were added,
+so the closure-coverage test is unchanged.
+
+| Row label | Group | Runtime name (the SDK constant's value) |
+|---|---|---|
+| PilipaliDecrypt | script (crafting group: the decoder a recipe input's stored amount goes through at count time; its armed line gives the argument shapes and `ret=` the decoded amount) | `gml_Script_PilipaliDecrypt` |
+| CreateItemSaveStruct | script (stash group: the per-item step of `SaveStash`; a healthy save logs one entry per saved item with a struct `a0`, and the fault Live 1g ended on reads as an entry with `a0=undefined` and no `SaveStash ret=` after it) | `gml_Script_CreateItemSaveStruct` |
+
+**An SDK gap, recorded rather than used.** The runtime's script table also
+holds `SaveStashFunc` and `LoadStashFunc` - the wrappers the game itself calls
+around `SaveStash` and `LoadStash` (the `@SaveStashFunc` suffix of the
+`___struct___357..364@SaveStash` methods names the first) - and `hs-game-sdk`
+has no constant for either. Neither is a row or a call target here: a name the
+SDK does not carry would have to be retyped, which this table never does
+(`AGENTS.md` § "HS Game SDK Usage"). If a later build needs them, the route is
+an SDK regeneration (`tools/extract_and_generate_sdk.py`), not a literal.
+
 ### Negative results, sourced
 
 These are "not found by name" in the SDK tables above, not "does not exist":

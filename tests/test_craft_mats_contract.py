@@ -276,14 +276,20 @@ class CraftMatsContractTests(unittest.TestCase):
         # the fingerprint lookup that resolves its argument; nothing else in the
         # instrument writes an instance, a struct or an array.
         for forbidden in ('"variable_instance_set"', '"variable_struct_set"', '"array_set"', "CallGameScriptEx",
-                          '"event_perform', '"script_execute"', "HookOneScript("):
+                          '"event_perform', "HookOneScript("):
             self.assertNotIn(forbidden, code)
-        self.assertEqual(code.count("ApCallScript("), 1)
+        # Phase 1h: `call` dispatches through CpDispatchScript, ApCallScript's
+        # dispatch with its three failures kept apart - the instrument's one
+        # script_execute, called from `call` alone.
+        self.assertEqual(code.count("ApCallScript("), 0)
+        self.assertEqual(code.count('"script_execute"'), 1)
+        self.assertIn('"script_execute"', self.body("static CpCallOutcome CpDispatchScript("))
+        self.assertEqual(code.count("CpDispatchScript("), 2)
         call = self.body("static void CpCall(")
         gate = call.index('Lower(tok.back()) != "confirm"')
         # Every precondition, and every argument's resolution, comes after the
         # confirm gate and before the one call.
-        write = call.index("ApCallScript(")
+        write = call.index("CpDispatchScript(")
         # Phase 1e's forms too: the `id:<n>` self, `fp9:`, `map9`/`map9:<key>`
         # (only while mapkeep calls the kept map current) and `path:`.
         for step in ("CpFindRow(tok[1])", "runtime.find('@')", "CpIsProfileGetter(*t)", "MpResolve(",
@@ -305,7 +311,7 @@ class CraftMatsContractTests(unittest.TestCase):
         self.assertLess(call.index('"  before: "'), write)
         self.assertGreater(call.index('"  after:  "'), write)
         self.assertIn("NOT dispatched", call)
-        self.assertIn("dispatched -> ret=", call)
+        self.assertIn('" -> ret="', call)
         # `backing` keeps the game's own returns and never invokes a getter.
         for fn in ("static void CpCapture(", "static void CpBackingCommand(", "static void CpBackingDump("):
             body = self.body(fn)
@@ -340,11 +346,13 @@ class CraftMatsContractTests(unittest.TestCase):
         usage = self.body("static void CpUsage(")
         first = usage[usage.index("Out("):]
         first = first[:first.index(";")]
-        # Phase 1g (the Phase A research build) keeps Phase 1e's 252 rows and
-        # changes only the marker, the `undefined` argument and `within=`.
-        self.assertIn("phase1g rows=", first)
+        # Phase 1h adds two rows (254), the `call` reply split and the numeric
+        # path segment; Phase 1g (the Phase A research build) kept Phase 1e's
+        # 252 rows and changed only the marker, `undefined` and `within=`.
+        self.assertIn("phase1h rows=", first)
         self.assertIn("kCpTargetCount", first)
-        self.assertEqual(self.plugin.count("phase1g rows="), 1)
+        self.assertEqual(self.plugin.count("phase1h rows="), 1)
+        self.assertEqual(self.plugin.count("phase1g rows="), 0)
         self.assertEqual(self.plugin.count("phase1e rows="), 0)
         self.assertEqual(self.plugin.count("phase1c rows="), 0)
         self.assertEqual(self.plugin.count("phase1b rows="), 0)
@@ -376,8 +384,11 @@ class CraftMatsContractTests(unittest.TestCase):
         self.assertIn("kCpDsPreview", ds)
         # A method value is described, never invoked; nothing is written.
         code = strip_comments(self.block)
-        for forbidden in ("m_Pointer", "m_Object", '"method_call"', '"script_execute"', '"variable_instance_set"'):
+        for forbidden in ("m_Pointer", "m_Object", '"method_call"', '"variable_instance_set"'):
             self.assertNotIn(forbidden, code)
+        # The block's one script_execute is `call`'s dispatcher (Phase 1h), never a reader's.
+        self.assertEqual(code.count('"script_execute"'), 1)
+        self.assertIn('"script_execute"', self.body("static CpCallOutcome CpDispatchScript("))
         self.assertIn('"is_method"', follow + self.body("static std::string CpValueText("))
         var = self.body("static void CpVar(")
         # `id:<n>` and a dotted path are both roots the command takes.
@@ -747,7 +758,7 @@ class CraftMatsContractTests(unittest.TestCase):
         gate = call.index('Lower(tok.back()) != "confirm"')
         form = call.index('la == "undefined"')
         self.assertLess(gate, form)
-        self.assertLess(form, call.index("ApCallScript("))
+        self.assertLess(form, call.index("CpDispatchScript("))
         self.assertLess(form, call.index("v = MpArg(a);"))
         self.assertRegex(call[form:form + 200], r'la == "undefined"\)\s*\{?\s*v = RValue\(\);')
         # The usage names it, both CpCall's and the bare `craftprobe`'s.
@@ -769,8 +780,8 @@ class CraftMatsContractTests(unittest.TestCase):
         labels = {label for _, label, _ in self.rows}
         for row in self.CRAFT_ROUTE_ROWS:
             self.assertIn(row, labels, row + " is not a craftprobe row")
-        # The row count is Phase 1e's: no row was added for Phase 1g.
-        self.assertEqual(len(self.rows), 252)
+        # Phase 1e's 252 rows (none added for Phase 1g) plus Phase 1h's two.
+        self.assertEqual(len(self.rows), 254)
         detour = self.plugin[self.plugin.index("#define CRAFTPROBE_DETOUR(SAFE, LABEL)"):]
         detour = detour[:detour.index("#define CRAFTPROBE_TARGETS(X)")]
         # The enclosing row is read before this call's own frame is entered, the
@@ -801,6 +812,98 @@ class CraftMatsContractTests(unittest.TestCase):
         shipped = strip_research_blocks(self.plugin)
         for symbol in ("within=", "CpRouteFrame", "kCpCraftRouteRows", "g_CpRouteDepth", "g_CpRouteCall"):
             self.assertNotIn(symbol, shipped, symbol)
+
+    # ---- Phase 1h: two rows, the `call` reply split, the numeric segment ------
+
+    def test_craftprobe_phase1h_rows_are_sdk_declared_and_research_only(self):
+        # PilipaliDecrypt (the recipe amount's decoder, in the crafting group)
+        # and CreateItemSaveStruct (the save's per-item step, in the stash
+        # group) are rows like every other: their SDK constants, never a
+        # retyped runtime name, and nothing of them in the player build.
+        rows = {label: (safe, constant) for safe, label, constant in self.rows}
+        for name in ("PilipaliDecrypt", "CreateItemSaveStruct"):
+            self.assertIn(name, rows, name + " is not a craftprobe row")
+            safe, constant = rows[name]
+            self.assertEqual(constant, "gml_Script_" + name)
+            self.assertEqual(self.runtime_name(constant), "gml_Script_" + name)
+            self.assertEqual(self.plugin.count(f'X({safe}, "{name}", gml_Script_{name})'), 1)
+        labels = [label for _, label, _ in self.rows]
+        # Each sits in its group: the decoder after the crafting group's last
+        # row, the save step after SaveStash's last struct method.
+        self.assertEqual(labels.index("PilipaliDecrypt"), labels.index("s_CraftItem") + 1)
+        self.assertEqual(labels.index("CreateItemSaveStruct"), labels.index("___struct___364@SaveStash") + 1)
+        shipped = strip_research_blocks(self.plugin)
+        # Negative control: the strip keeps player code, so an absence below
+        # is the strip working, not an empty string.
+        self.assertIn("kPlayerCommands", shipped)
+        for symbol in ("PilipaliDecrypt", "CreateItemSaveStruct"):
+            self.assertIn(symbol, self.plugin)
+            self.assertNotIn(symbol, shipped, symbol + " reaches the player build")
+
+    def test_craftprobe_call_reply_splits_three_outcomes_with_call_number(self):
+        # Live 1g read a by-name SaveStash that faulted inside the game as the
+        # same `NOT dispatched` a name that never resolved prints. The reply is
+        # now four distinct lines, each naming the row's call number - the #n
+        # the row's own detour prints for this call - so the call's lines are
+        # never read as the game's concurrent call of the same row.
+        self.assertNotIn("NOT dispatched (asset_get_index found no script, or script_execute failed)", self.plugin)
+        dispatch = self.body("static CpCallOutcome CpDispatchScript(")
+        self.assertIn('CallBuiltin("asset_get_index"', dispatch)
+        # No script found is decided before any script_execute.
+        self.assertLess(dispatch.index("return CpCallOutcome::NoScript;"), dispatch.index('"script_execute"'))
+        self.assertRegex(dispatch, r'catch \(\.\.\.\) \{ return CpCallOutcome::Threw; \}')
+        self.assertIn("AurieSuccess(st) ? CpCallOutcome::Ran : CpCallOutcome::Failed", dispatch)
+        call = self.body("static void CpCall(")
+        number = call.index("const long callNo = *t->calls + 1;")
+        self.assertLess(number, call.index("CpDispatchScript("))
+        replies = ('"  NOT dispatched " + no + ": asset_get_index found no script"',
+                   '"  entered " + no + ", script_execute threw"',
+                   '"  entered " + no + ", script_execute returned st="',
+                   '"  dispatched " + no + " -> ret="')
+        for reply in replies:
+            self.assertEqual(call.count(reply), 1, reply)
+        self.assertIn('const std::string no = "#" + std::to_string(callNo);', call)
+        for outcome in ("NoScript", "Threw", "Failed"):
+            self.assertIn("outcome == CpCallOutcome::" + outcome, call)
+        # The research build only.
+        shipped = strip_research_blocks(self.plugin)
+        for symbol in ("CpDispatchScript", "CpCallOutcome", "script_execute threw"):
+            self.assertNotIn(symbol, shipped, symbol)
+
+    def test_craftprobe_var_walk_takes_an_index_only_on_an_array(self):
+        # A Socketable tab row (`<S>.<k>.0.0`) sits inside arrays, which the
+        # walk used to stop at. A whole-number segment now reads that element,
+        # but only on a value the runtime calls an array and only inside its
+        # length; anything else stops the walk, naming the segment.
+        walk = self.body("static bool CpVarWalk(")
+        index = self.body("static bool CpIndexSegment(")
+        self.assertIn("c < '0' || c > '9'", index)
+        self.assertIn("CpIndexSegment(seg, index)", walk)
+        at_array = walk.index('"is_array", { cur }')
+        at_length = walk.index('"array_length", { cur }')
+        at_get = walk.index('"array_get", { cur, RValue((double)index) }')
+        self.assertLess(walk.index("CpIndexSegment(seg, index)"), at_array)
+        self.assertLess(at_array, at_length)
+        self.assertLess(at_length, at_get)
+        self.assertIn("index >= len", walk[at_length:at_get])
+        # Each refusal names the segment and stops.
+        for refusal in ('" - not an array, so the index " + seg', '" is out of range; stopped"'):
+            self.assertIn(refusal, walk)
+        # A global's name is never taken as an index.
+        self.assertIn("!(global && i == 0) && CpIndexSegment(seg, index)", walk)
+        # Still a reader: `var` and `path:` share it, and it never writes.
+        self.assertIn("CpVarWalk(", self.body("static void CpVar("))
+        self.assertIn("CpVarWalk(", self.body("static bool CpCallPathArg("))
+        for forbidden in ('"array_set"', '"variable_instance_set"', '"variable_struct_set"', "script_execute"):
+            self.assertNotIn(forbidden, walk)
+
+    def test_craftprobe_craft_route_labels_unchanged_by_phase1h(self):
+        # kCpCraftRouteRows keeps its nine labels, as literals, exactly: moving
+        # them to SDK-derived names is its own change, not Phase 1h's.
+        block = self.plugin[self.plugin.index("static const char* const kCpCraftRouteRows[] = {"):]
+        block = block[:block.index("};")]
+        self.assertEqual(re.findall(r'"([^"]+)"', block), list(self.CRAFT_ROUTE_ROWS))
+        self.assertNotIn("SdkShortScriptName", block)
 
     # ---- the switch ----------------------------------------------------------
 

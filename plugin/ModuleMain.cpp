@@ -22086,6 +22086,8 @@ static void CpAfter(const char* safe, const char* label, long n, bool logged, bo
     X(GetCraftRecipeName, "GetCraftRecipeName", gml_Script_GetCraftRecipeName) \
     X(SCraftData, "s_CraftData", gml_Script_s_CraftData) \
     X(SCraftItem, "s_CraftItem", gml_Script_s_CraftItem) \
+    /* Phase 1h ("Phase 1h rows"): the decoder of a recipe input's stored amount */ \
+    X(PilipaliDecrypt, "PilipaliDecrypt", gml_Script_PilipaliDecrypt) \
     /* count / find / consume in the inventory */ \
     X(CountInventoryItem, "CountInventoryItem", gml_Script_CountInventoryItem) \
     X(FindInventoryItem, "FindInventoryItem", gml_Script_FindInventoryItem) \
@@ -22119,6 +22121,8 @@ static void CpAfter(const char* safe, const char* label, long n, bool logged, bo
     X(Struct361, "___struct___361@SaveStash", gml_Script____struct___361_SaveStash_SaveStashFunc) \
     X(Struct363, "___struct___363@SaveStash", gml_Script____struct___363_SaveStash_SaveStashFunc) \
     X(Struct364, "___struct___364@SaveStash", gml_Script____struct___364_SaveStash_SaveStashFunc) \
+    /* Phase 1h: the save's per-item step - one entry per item SaveStash writes */ \
+    X(CreateItemSaveStruct, "CreateItemSaveStruct", gml_Script_CreateItemSaveStruct) \
     X(GetStashMapPos, "GetStashMapPos", gml_Script_GetStashMapPos) \
     X(UiAStashTabClick, "UiAStashTabClick", gml_Script_UiAStashTabClick) \
     X(UiAStashMaterialTabClick, "UiAStashMaterialTabClick", gml_Script_UiAStashMaterialTabClick) \
@@ -22883,11 +22887,27 @@ static bool CpVarRoot(const std::string& tag, const std::vector<std::string>& to
     return true;
 }
 
+// Phase 1h: a path segment that is a whole number (digits only, no sign) is an
+// array index, not a name - no GML variable name starts with a digit.
+static bool CpIndexSegment(const std::string& seg, long long& index)
+{
+    if (seg.empty() || seg.size() > 9) return false;
+    for (char c : seg) if (c < '0' || c > '9') return false;
+    index = std::stoll(seg);
+    return true;
+}
+
 // Walks `path` from the root: every step but the last must land on a live
 // instance (instance_exists at each step) or a plain struct. `cur` ends on the
 // value reached, `holder` on the last live instance a name was read from
 // (unset for a global path that never reached one). Prints why and returns
 // false when a step fails.
+//
+// Phase 1h: a whole-number segment reads that element of an array (is_array,
+// then inside array_length), so `<S>.<k>.0.0` reaches a row of the Socketable
+// structure, whose rows are arrays of 1x1 cell arrays. On anything that is not
+// an array, or past its end, the walk stops naming the segment, as it does for
+// a missing member.
 static bool CpVarWalk(const std::string& tag, bool global, const std::vector<std::string>& path, RValue& cur,
                       RValue& holder, bool& haveHolder, std::string& walked)
 {
@@ -22898,7 +22918,19 @@ static bool CpVarWalk(const std::string& tag, bool global, const std::vector<std
         const std::string& seg = path[i];
         walked += (i ? "." : "") + seg;
         RValue next;
-        if (global && i == 0) {
+        long long index = -1;
+        if (!(global && i == 0) && CpIndexSegment(seg, index)) {
+            if (!g_Yytk->CallBuiltin("is_array", { cur }).ToBoolean()) {
+                Out(tag + ": before " + walked + " the value is " + Describe(cur) + " - not an array, so the index " + seg + " reads nothing; stopped");
+                return false;
+            }
+            const long long len = (long long)g_Yytk->CallBuiltin("array_length", { cur }).ToDouble();
+            if (index >= len) {
+                Out(tag + ": at " + walked + " the array has " + std::to_string(len) + " entries, so the index " + seg + " is out of range; stopped");
+                return false;
+            }
+            next = g_Yytk->CallBuiltin("array_get", { cur, RValue((double)index) });
+        } else if (global && i == 0) {
             if (!g_Yytk->CallBuiltin("variable_global_exists", { RValue(seg) }).ToBoolean()) { Out(tag + ": no such global; nothing read"); return false; }
             next = g_Yytk->CallBuiltin("variable_global_get", { RValue(seg) });
         } else if (atInstance) {
@@ -23883,7 +23915,7 @@ static void CpDump()
 
 // ---- the one write: call <Row> <Obj> <nth> [args ...] confirm ----------------
 // One by-name call of one plain-script table row, self = other = that
-// instance, through ApCallScript (asset_get_index + script_execute). Each
+// instance, through CpDispatchScript (asset_get_index + script_execute). Each
 // argument is typed like menuprobe's (number, true/false, text), or
 // `fp:<fingerprint>` - the item the game's own GetItemFromFingerprint returns
 // for it, which must be a struct - or `kept:<row>` - that row's kept return.
@@ -23903,6 +23935,31 @@ static void CpDump()
 // Phase 1g adds the literal `undefined`: a value of kind undefined, the second
 // argument auto-prospect's proven move passes to InventoryGridCanAddToStack and
 // InvGridClearItemNode (research doc, `### Phase 1g instrument`).
+//
+// Phase 1h splits the reply (research doc, `### Phase 1h instrument`). Live 1g
+// read a by-name SaveStash that faulted inside the game as the same `NOT
+// dispatched` a name that never resolved prints, because ApCallScript answers
+// one bool. CpDispatchScript is that dispatch - asset_get_index, then
+// script_execute with self = other = the instance - with its failures kept
+// apart: no script found (before any script_execute), script_execute threw (a
+// GML runtime error unwinds as a C++ exception, which the catch takes), or it
+// returned a failure status. Every reply names the row's call number.
+
+enum class CpCallOutcome { NoScript, Threw, Failed, Ran };
+
+static CpCallOutcome CpDispatchScript(const std::string& name, CInstance* self, const std::vector<RValue>& args,
+                                      RValue& res, AurieStatus& st)
+{
+    double idx = -1;
+    const RValue index = g_Yytk->CallBuiltin("asset_get_index", { RValue(name) });
+    if (!ApNumber(index, idx) || idx < 0) return CpCallOutcome::NoScript;
+    std::vector<RValue> callArgs{ index };
+    for (const RValue& a : args) callArgs.push_back(a);
+    st = AURIE_EXTERNAL_ERROR;
+    try { st = g_Yytk->CallBuiltinEx(res, "script_execute", self, self, callArgs); }
+    catch (...) { return CpCallOutcome::Threw; }
+    return AurieSuccess(st) ? CpCallOutcome::Ran : CpCallOutcome::Failed;
+}
 
 // `path:<root>.<a.b.c>`: the root as `var` takes it (`<Obj>` is its first
 // instance, nth 0), walked the same way. The walk prints its own reason.
@@ -24022,26 +24079,36 @@ static void CpCall(const std::vector<std::string>& tok)
     const std::string name = runtime.substr(std::string("gml_Script_").size());
     Out("craftprobe call: " + name + " self=other=" + PpDescribeSelf(inst) + " argc=" + std::to_string(args.size()) + supplied);
     Out("  before: " + where());
+    // The number the row's own detour gives this call on its `<Row> #<n>`
+    // entry line: its next count, read here on the game thread that runs the
+    // detour, so the call's own lines are never mistaken for the game's.
+    const long callNo = *t->calls + 1;
+    const std::string no = "#" + std::to_string(callNo);
     RValue res;
-    const bool ran = ApCallScript(name.c_str(), inst, args, res);
-    if (!ran) Out("  NOT dispatched (asset_get_index found no script, or script_execute failed)");
+    AurieStatus st = AURIE_SUCCESS;
+    const CpCallOutcome outcome = CpDispatchScript(name, inst, args, res, st);
+    if (outcome == CpCallOutcome::NoScript) Out("  NOT dispatched " + no + ": asset_get_index found no script");
+    else if (outcome == CpCallOutcome::Threw) Out("  entered " + no + ", script_execute threw");
+    else if (outcome == CpCallOutcome::Failed) Out("  entered " + no + ", script_execute returned st=" + std::to_string((int)st));
     else {
         std::string ret;
         try { ret = PpRetText(res); } catch (...) { ret = "<read failed>"; }
-        Out("  dispatched -> ret=" + ret);
+        Out("  dispatched " + no + " -> ret=" + ret);
     }
     Out("  after:  " + where());
 }
 
 // The first line is the build's marker: a live session tells this build
-// (Phase 1g, 252 rows, with `mapkeep`, `within=` and the `undefined`
-// argument) from Phase 1e's (the same 252 rows, marker `phase1e`, also the
-// build Phase 1f ran), Phase 1c's (223 rows, marker `phase1c`, also the build
-// Phase 1d ran), Phase 1b's (202 rows, marker `phase1b`) and aa0c72a's (97
-// rows, no marker) in one bare `craftprobe`.
+// (Phase 1h, 254 rows: PilipaliDecrypt and CreateItemSaveStruct added, the
+// `call` reply split and numeric path segments) from Phase 1g's (252 rows,
+// marker `phase1g`, with `mapkeep`, `within=` and the `undefined` argument),
+// Phase 1e's (the same 252 rows, marker `phase1e`, also the build Phase 1f
+// ran), Phase 1c's (223 rows, marker `phase1c`, also the build Phase 1d ran),
+// Phase 1b's (202 rows, marker `phase1b`) and aa0c72a's (97 rows, no marker)
+// in one bare `craftprobe`.
 static void CpUsage()
 {
-    Out("craftprobe: phase1g rows=" + std::to_string(kCpTargetCount) + " - research instrument for docs/crafting-materials-research.md (research build only)");
+    Out("craftprobe: phase1h rows=" + std::to_string(kCpTargetCount) + " - research instrument for docs/crafting-materials-research.md (research build only)");
     Out("  hook [substr ...]                 native-detour every row (or the matching ones); one instrument per session");
     Out("  arm [budget=N] [substr ...]       reset counters; log the next N calls of each selected row (default: all but the control)");
     Out("  show [all]                        calls since `arm`, logged vs unlogged per row; CheckPlayerInteraction is the control");
@@ -24049,6 +24116,7 @@ static void CpUsage()
     Out("  bag|stash|recipe [substr ...]     hook-free: the bag window, stash window + world stash + globals, cube window");
     Out("  var <Obj|global> <nth> <name|a.b.c|*> [json]   hook-free: one variable, deeper; a live `ref instance` is followed by name");
     Out("  var id:<n> <name|a.b.c|*> [json]  the same from an instance id (json -> bp_ipc\\cp_var_<name>.json)");
+    Out("    a whole-number segment (a.3.0) reads that element of an array, inside its length; `path:` walks the same way");
     Out("  node id:<n>|<Obj> <nth>|stash|bag  hook-free: a container's cells, one GetItemFromFingerprint per fingerprint (capped), sums per (class, b)");
     Out("  node socket [id:<n>]              the Socketable tab: every cell instance of its window's `grid`, one sum table");
     Out("  node var <Obj|global> <nth> <a.b.c> | node var id:<n> <a.b.c>   sums what `var` reaches: a nodeGrid, fingerprints or item structs");
@@ -24062,6 +24130,8 @@ static void CpUsage()
     Out("    args: number | true | false | undefined (kind undefined, not text) | text | fp:<fp> | fp9:<fp> (lookup with a1=9)"
         " | kept:<row> | map9 | map9:<key> (the kept stash map, only while `mapkeep stat` says current)"
         " | path:<Obj|global|id:n>.<a.b.c> (what `var` reaches)");
+    Out("    reply, with the row's call number #<n> (its detour's entry line): NOT dispatched #<n>: asset_get_index found no script"
+        " | entered #<n>, script_execute threw | entered #<n>, script_execute returned st=<s> | dispatched #<n> -> ret=");
     Out("  hook reports a row `mapkeep on` installed as `held by mapkeep` - neither detoured nor failed; run `mapkeep on` first");
     Out("  a craft-route row's logged line carries within=<row>#<n>|none: the outermost craft-route row on the stack when it was entered,"
         " and which call of it (the #n of its own entry and ret= lines)");
