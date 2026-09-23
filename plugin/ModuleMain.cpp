@@ -21355,6 +21355,432 @@ static void MpCommand(const std::string& rest)
 }
 #endif // FORGEPACT_RELEASE (menuprobe)
 
+#ifndef FORGEPACT_RELEASE
+// ---- mapkeep: the stash map kept through the player-build installer (issue #14, Phase 1e) ----
+// docs/crafting-materials-research.md, `### Phase 1e instrument`. Research
+// build only, never in kPlayerCommands, dispatched from HandleCraftCommand;
+// this comment sits inside the guard so the verb's name vanishes from a player
+// build.
+//
+// Phase 1d read both special stash tabs with the window closed from the map
+// the game's own GetItemMap(9) call returned - kept by craftprobe's research
+// detour, which is not the shape a player build has. This keeper asks the
+// player-build question: installed through HookOneScript (both routes: the
+// table swap and the inline detour at the function's own address, the
+// installer every shipped gameplay hook uses), does the hook see the game's
+// calls, and can the a0=9 return be kept? `on` prints the installer's answer
+// per hook - both-routes or TABLE-ONLY - and that line is the finding either
+// way.
+//
+// Nothing here calls a game script: the hook bodies count, forward through the
+// trampoline and keep what the game's own call returned. Currency is the
+// game-independent core's rule (ForgePact::CraftMatsKeptMap): a kept map is
+// current only when the game's own GetItemMap(9) return refreshed it after the
+// latest character load (LoadStash) or room change. GameMaker reuses a
+// destroyed map's index, so ds_exists alone never restores currency; it is
+// checked as well, at the point of use (`stat`, `find`, craftprobe's `map9`).
+// The frame poll only notices a room change (housekeeping); the point of use
+// polls the room again before answering.
+//
+// Run `mapkeep on` BEFORE `craftprobe hook`: craftprobe's detour on the same
+// function would leave the game's address patched with the table entry
+// unchanged, so the installer would try a second inline detour, fail, and
+// report a false TABLE-ONLY. `on` therefore refuses when craftprobe holds
+// either row, and `craftprobe hook` reports the rows this keeper holds as held.
+static bool CpHoldsRow(std::string_view runtimeName);    // craftprobe, below
+
+static constexpr int kMkKeepLines = 8;             // keep/refresh lines logged per session; later ones are counted
+static constexpr int kMkLoadStashLines = 4;        // LoadStash lines logged per session
+static constexpr int kMkRoomPollFrames = 30;       // frames between two room reads (housekeeping)
+static constexpr int kMkFindMaxEntries = 4000;     // entries one `find` walks (Live 1d's map held 1626)
+static constexpr int kMkFindShown = 40;            // matching key lines one `find` prints
+static constexpr double kMkDsTypeMap = 1.0;        // ds_type_map, as ds_exists takes it
+static constexpr const char* kMkGlobal = "__cp_mapkeep_9";   // research global: roots the kept value for the collector
+
+enum class MkInstall { NotTried, BothRoutes, TableOnly, Failed };
+static const char* MkInstallText(MkInstall s)
+{
+    switch (s) {
+    case MkInstall::BothRoutes: return "both-routes";
+    case MkInstall::TableOnly:  return "TABLE-ONLY";
+    case MkInstall::Failed:     return "NOT-INSTALLED";
+    default:                    return "not-tried";
+    }
+}
+
+// Game thread only (hook bodies, the frame poll, the IPC poll), as the core.
+static PFUNC_YYGMLScript g_MkOrigGetItemMap = nullptr;
+static PFUNC_YYGMLScript g_MkOrigLoadStash = nullptr;
+static MkInstall g_MkGetItemMapInstall = MkInstall::NotTried;
+static MkInstall g_MkLoadStashInstall = MkInstall::NotTried;
+static bool g_MkKeeping = false;                   // `on` keeps a0=9 returns; `off` stops keeping, the hooks stay
+static volatile long g_MkCalls0 = 0;               // GetItemMap calls whose first argument is the number 0
+static volatile long g_MkCalls9 = 0;               // ... the number 9 (int64:9 or real:9.0 - compared numerically)
+static volatile long g_MkCallsOther = 0;           // ... anything else, or no argument
+static volatile long g_MkLoadStashCalls = 0;
+static long g_MkNotAMap = 0;                       // a0=9 returns that were not a `ref ds_map`: counted, never kept
+static long g_MkKeepLogged = 0;
+static long g_MkLoadStashLogged = 0;
+static ForgePact::CraftMatsKeptMap g_MkCore;
+static RValue* g_MkKept = nullptr;                 // heap-held and never deleted, as CpKept::value
+struct MkMoment { long call = 0; std::string self; std::string room; };
+static MkMoment g_MkFirst9;                        // the first a0=9 call since `on`
+static MkMoment g_MkLatestKeep;                    // the latest call that (re)kept the map
+static int64_t g_MkRoomKey = INT64_MIN;            // the last room read; INT64_MIN = none read yet (never compared)
+static long g_MkRoomChanges = 0;
+static long g_MkFrames = 0;
+
+static bool MkInstalled()
+{
+    return g_MkGetItemMapInstall == MkInstall::BothRoutes || g_MkGetItemMapInstall == MkInstall::TableOnly
+        || g_MkLoadStashInstall == MkInstall::BothRoutes || g_MkLoadStashInstall == MkInstall::TableOnly;
+}
+
+// Whether this keeper's install owns the named function's table entry, for
+// `craftprobe hook` (which reports such a row as held, not failed).
+static bool MkHolds(std::string_view runtimeName)
+{
+    const bool map = g_MkGetItemMapInstall == MkInstall::BothRoutes || g_MkGetItemMapInstall == MkInstall::TableOnly;
+    const bool load = g_MkLoadStashInstall == MkInstall::BothRoutes || g_MkLoadStashInstall == MkInstall::TableOnly;
+    return (map && runtimeName == HeroSiege::Scripts::gml_Script_GetItemMap)
+        || (load && runtimeName == HeroSiege::Scripts::gml_Script_LoadStash);
+}
+
+// The room's name, the way the plugin already reads it by name (`room`
+// builtin, then room_get_name).
+static std::string MkRoomName()
+{
+    try {
+        RValue v;
+        if (!AurieSuccess(g_Yytk->GetBuiltin("room", nullptr, NULL_INDEX, v))) return "(unreadable)";
+        return g_Yytk->CallBuiltin("room_get_name", { v }).ToString();
+    } catch (...) { return "(unreadable)"; }
+}
+
+// A whole number without its decimals, anything else as Describe prints it.
+static std::string MkNumText(const RValue& v)
+{
+    try {
+        if (PpIsNumber(v)) {
+            const double d = v.ToDouble();
+            if (std::isfinite(d) && d == std::floor(d) && std::fabs(d) < 1e15) return std::to_string((long long)d);
+        }
+        return Describe(v);
+    } catch (...) { return "<unreadable>"; }
+}
+
+// The index a `ref ds_map N` names, from the runtime's own text for it -
+// never from its bytes. False for anything else.
+static bool MkMapIndex(const RValue& v, long long& index)
+{
+    if (v.m_Kind != VALUE_REF) return false;
+    std::string text;
+    try { text = v.ToString(); } catch (...) { return false; }
+    static const std::string kPrefix = "ref ds_map ";
+    if (text.compare(0, kPrefix.size(), kPrefix) != 0) return false;
+    try { index = std::stoll(text.substr(kPrefix.size())); } catch (...) { return false; }
+    return index >= 0;
+}
+
+// A room change since the last read invalidates the kept map. Unreadable
+// reads are skipped, never compared (a sentinel must not match a sentinel).
+static void MkRoomPoll()
+{
+    if (!MkInstalled()) return;
+    const int64_t key = CurrentRoomKey();
+    if (key == INT64_MIN) return;
+    if (g_MkRoomKey != INT64_MIN && key != g_MkRoomKey) {
+        g_MkCore.Invalidate(ForgePact::CraftMatsKeptMapReason::RoomChanged);
+        ++g_MkRoomChanges;
+    }
+    g_MkRoomKey = key;
+}
+
+// Housekeeping on the frame path: notice a room change every
+// kMkRoomPollFrames frames. Nothing here answers whether the map is current;
+// the point of use does (MkCurrentMap).
+static void MkRoomTick()
+{
+    if (!MkInstalled()) return;
+    if (++g_MkFrames % kMkRoomPollFrames) return;
+    MkRoomPoll();
+}
+
+// A game a0=9 return: kept when it is a `ref ds_map` and it is new - the first,
+// a different index, or the same index after an invalidation. Rooted in a
+// research global first, so the value the core calls current is one the
+// collector sees.
+static void MkKeep(long n, CInstance* S, const RValue& result)
+{
+    try {
+        long long index = -1;
+        if (!MkMapIndex(result, index)) { ++g_MkNotAMap; return; }
+        if (g_MkCore.IsCurrent() && g_MkCore.Index() == index) return;
+        g_Yytk->CallBuiltin("variable_global_set", { RValue(std::string(kMkGlobal)), result });
+        if (!g_MkKept) g_MkKept = new RValue();
+        *g_MkKept = result;
+        const char* was = ForgePact::CraftMatsKeptMap::ReasonName(g_MkCore.Reason());
+        g_MkCore.Refreshed(index);
+        g_MkLatestKeep.call = n;
+        g_MkLatestKeep.self = PpObjectName(S);
+        g_MkLatestKeep.room = MkRoomName();
+        if (++g_MkKeepLogged <= kMkKeepLines)
+            Out("mapkeep: kept GetItemMap a0=9 #" + std::to_string(n) + " -> ref ds_map " + std::to_string(index)
+                + " self=" + g_MkLatestKeep.self + " room=" + g_MkLatestKeep.room + " (was " + was
+                + ", refreshed=" + std::to_string(g_MkCore.Refreshes()) + ")");
+    } catch (...) {}
+}
+
+static RValue& MkHookGetItemMap(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    int which = -1;   // 0, 9, or -1 for anything else
+    try {
+        if (argc > 0 && A && A[0] && PpIsNumber(*A[0])) {
+            const double d = A[0]->ToDouble();
+            if (d == 9.0) which = 9;
+            else if (d == 0.0) which = 0;
+        }
+    } catch (...) {}
+    long n = 0;
+    if (which == 9) n = InterlockedIncrement(&g_MkCalls9);
+    else if (which == 0) InterlockedIncrement(&g_MkCalls0);
+    else InterlockedIncrement(&g_MkCallsOther);
+    RValue& r = g_MkOrigGetItemMap ? g_MkOrigGetItemMap(S, O, R, argc, A) : R;
+    if (which == 9) {
+        if (g_MkFirst9.call == 0) {
+            try {
+                g_MkFirst9.call = n;
+                g_MkFirst9.self = PpObjectName(S);
+                g_MkFirst9.room = MkRoomName();
+                Out("mapkeep: first GetItemMap a0=9 call #" + std::to_string(n) + " self=" + g_MkFirst9.self
+                    + " room=" + g_MkFirst9.room + " a0=" + Describe(*A[0]) + " (a0=0 calls so far="
+                    + std::to_string(g_MkCalls0) + ")");
+            } catch (...) {}
+        }
+        if (g_MkKeeping) MkKeep(n, S, r);
+    }
+    return r;
+}
+
+static RValue& MkHookLoadStash(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    const long n = InterlockedIncrement(&g_MkLoadStashCalls);
+    // Before the game's own call: a GetItemMap(9) return during or after the
+    // load is the refresh that makes the map current again.
+    g_MkCore.Invalidate(ForgePact::CraftMatsKeptMapReason::CharacterLoaded);
+    RValue& r = g_MkOrigLoadStash ? g_MkOrigLoadStash(S, O, R, argc, A) : R;
+    if (++g_MkLoadStashLogged <= kMkLoadStashLines) {
+        try {
+            Out("mapkeep: LoadStash #" + std::to_string(n) + " self=" + PpObjectName(S) + " ret=" + Describe(r)
+                + " - the kept map is not current until the game's own GetItemMap(9) returns one");
+        } catch (...) {}
+    }
+    return r;
+}
+
+// The point-of-use answer `stat`, `find` and craftprobe's `map9` share: the
+// room is read again now, the core must call the kept map current, and
+// ds_exists must answer true for it as a map. Otherwise `reason` names why.
+static bool MkCurrentMap(RValue& map, std::string& reason)
+{
+    MkRoomPoll();
+    if (!g_MkCore.IsCurrent() || !g_MkKept) {
+        reason = ForgePact::CraftMatsKeptMap::ReasonName(g_MkCore.IsCurrent() ? ForgePact::CraftMatsKeptMapReason::NotKept
+                                                                               : g_MkCore.Reason());
+        return false;
+    }
+    try {
+        if (!g_Yytk->CallBuiltin("ds_exists", { *g_MkKept, RValue(kMkDsTypeMap) }).ToBoolean()) { reason = "ds-gone"; return false; }
+    } catch (...) { reason = "ds-gone"; return false; }
+    map = *g_MkKept;
+    reason = "none";
+    return true;
+}
+
+// One entry of the kept map by its key, by name: ds_map_exists first. The key
+// is tried as text, then - when the text is a whole number - as that number,
+// since whether the game keys this map by fingerprint text is not established.
+static bool MkMapEntry(const RValue& map, const std::string& key, RValue& value, std::string& form)
+{
+    try {
+        if (g_Yytk->CallBuiltin("ds_map_exists", { map, RValue(key) }).ToBoolean()) {
+            value = g_Yytk->CallBuiltin("ds_map_find_value", { map, RValue(key) });
+            form = "text";
+            return true;
+        }
+        size_t used = 0;
+        const double d = std::stod(key, &used);
+        if (used == key.size() && g_Yytk->CallBuiltin("ds_map_exists", { map, RValue(d) }).ToBoolean()) {
+            value = g_Yytk->CallBuiltin("ds_map_find_value", { map, RValue(d) });
+            form = "number";
+            return true;
+        }
+    } catch (...) {}
+    return false;
+}
+
+static constexpr const char* kMkGetItemMapName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_GetItemMap);
+static constexpr const char* kMkLoadStashName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_LoadStash);
+
+// One line per hook, the installer's answer. TABLE-ONLY is a finding, not a
+// failure: the installer prints its own reason on the line just before.
+static void MkReportInstall(const char* label, const char* shortName, bool ok, bool native, MkInstall& state)
+{
+    state = !ok ? MkInstall::Failed : native ? MkInstall::BothRoutes : MkInstall::TableOnly;
+    if (!ok)
+        Out(std::string("mapkeep on: ") + label + " NOT-INSTALLED (the installer's `hook " + shortName + ": ...` line above names why)");
+    else if (native)
+        Out(std::string("mapkeep on: ") + label + " both-routes (table swap and inline detour at the function's own address)");
+    else
+        Out(std::string("mapkeep on: ") + label + " TABLE-ONLY (the installer's reason is on its `hook " + shortName
+            + ": TABLE-ONLY (...)` line above) - direct compiled-GML calls bypass this hook");
+}
+
+static void MkOn()
+{
+    if (MkInstalled()) {
+        if (g_MkKeeping) { Out("mapkeep on: already on (GetItemMap " + std::string(MkInstallText(g_MkGetItemMapInstall)) + ", LoadStash "
+                               + MkInstallText(g_MkLoadStashInstall) + ")"); return; }
+        g_MkKeeping = true;
+        Out("mapkeep on: keeping again (the hooks were already installed and stay installed)");
+        return;
+    }
+    if (g_MkGetItemMapInstall == MkInstall::Failed || g_MkLoadStashInstall == MkInstall::Failed) {
+        Out("mapkeep on: refused - an earlier `on` could not install; a second attempt would not be a first install. Nothing installed");
+        return;
+    }
+    const bool cpMap = CpHoldsRow(HeroSiege::Scripts::gml_Script_GetItemMap);
+    const bool cpLoad = CpHoldsRow(HeroSiege::Scripts::gml_Script_LoadStash);
+    if (cpMap || cpLoad) {
+        Out(std::string("mapkeep on: refused - craftprobe already detoured ") + (cpMap ? "GetItemMap" : "") + (cpMap && cpLoad ? " and " : "")
+            + (cpLoad ? "LoadStash" : "") + " this session, so the installer would report a false TABLE-ONLY; relaunch and run"
+            " `mapkeep on` before `craftprobe hook`. Nothing installed");
+        return;
+    }
+    // One install each, with the installer's native flag: that flag is the
+    // answer to whether the player-build shape reaches the game's direct calls.
+    bool mapNative = false;
+    const bool mapOk = HookOneScript(kMkGetItemMapName, "fp_mk_getitemmap", (PVOID)MkHookGetItemMap, &g_MkOrigGetItemMap, &mapNative);
+    MkReportInstall("GetItemMap", kMkGetItemMapName, mapOk, mapNative, g_MkGetItemMapInstall);
+    bool loadNative = false;
+    const bool loadOk = HookOneScript(kMkLoadStashName, "fp_mk_loadstash", (PVOID)MkHookLoadStash, &g_MkOrigLoadStash, &loadNative);
+    MkReportInstall("LoadStash", kMkLoadStashName, loadOk, loadNative, g_MkLoadStashInstall);
+    g_MkKeeping = MkInstalled();
+    g_MkRoomKey = CurrentRoomKey();
+    Out(std::string("mapkeep on: ") + (g_MkKeeping ? "keeping the game's own GetItemMap(9) returns" : "nothing installed, nothing kept")
+        + "; `mapkeep stat` - its a0=0 count is this keeper's control");
+}
+
+static void MkStat()
+{
+    RValue map;
+    std::string reason;
+    const bool current = MkCurrentMap(map, reason);
+    std::string kept = "none";
+    if (g_MkCore.IsKept()) {
+        kept = "ref ds_map " + std::to_string(g_MkCore.Index());
+        if (current) {
+            try { kept += " size=" + MkNumText(g_Yytk->CallBuiltin("ds_map_size", { map })); } catch (...) {}
+        }
+    }
+    std::string first9 = "none";
+    if (g_MkFirst9.call > 0)
+        first9 = "#" + std::to_string(g_MkFirst9.call) + " self=" + g_MkFirst9.self + " room=" + g_MkFirst9.room;
+    std::string latest = "none";
+    if (g_MkLatestKeep.call > 0)
+        latest = "#" + std::to_string(g_MkLatestKeep.call) + " self=" + g_MkLatestKeep.self + " room=" + g_MkLatestKeep.room;
+    Out(std::string("mapkeep stat: GetItemMap=") + MkInstallText(g_MkGetItemMapInstall) + " LoadStash=" + MkInstallText(g_MkLoadStashInstall)
+        + " keeping=" + (g_MkKeeping ? "on" : "off")
+        + " | a0=0 calls=" + std::to_string(g_MkCalls0) + " a0=9 calls=" + std::to_string(g_MkCalls9)
+        + " other calls=" + std::to_string(g_MkCallsOther) + " LoadStash calls=" + std::to_string(g_MkLoadStashCalls)
+        + " | kept=" + kept + " current=" + (current ? "yes" : "no") + " reason=" + reason
+        + " refreshed=" + std::to_string(g_MkCore.Refreshes()) + " room-changes=" + std::to_string(g_MkRoomChanges)
+        + " not-a-map=" + std::to_string(g_MkNotAMap)
+        + " | first9: " + first9 + " | latest-keep: " + latest);
+}
+
+// `find <class> <b>`: hook-free. Walks the kept map by name, only when it is
+// current, and prints every entry whose itemType (or key class suffix) and
+// definition `b` match, with its `o` - how the trial names an item by its key,
+// and how a stack shows up as one entry. Reads only; capped.
+static void MkFind(const std::vector<std::string>& tok)
+{
+    if (tok.size() != 3) { Out("mapkeep find: usage -> mapkeep find <class> <b>; nothing read"); return; }
+    const std::string cls = tok[1], b = tok[2];
+    RValue map;
+    std::string reason;
+    if (!MkCurrentMap(map, reason)) { Out("mapkeep find: the kept map is not current (reason=" + reason + ") - nothing read"); return; }
+    try {
+        const int size = (int)g_Yytk->CallBuiltin("ds_map_size", { map }).ToDouble();
+        int walked = 0, matched = 0, items = 0;
+        RValue key = g_Yytk->CallBuiltin("ds_map_find_first", { map });
+        for (; walked < size && walked < kMkFindMaxEntries && key.m_Kind != VALUE_UNDEFINED; ++walked) {
+            const std::string keyText = key.m_Kind == VALUE_STRING ? key.ToString() : Describe(key);
+            const RValue item = g_Yytk->CallBuiltin("ds_map_find_value", { map, key });
+            key = g_Yytk->CallBuiltin("ds_map_find_next", { map, key });
+            if (!ApIsPlainStruct(item)) continue;
+            ++items;
+            const RValue type = g_Yytk->CallBuiltin("variable_struct_exists", { item, RValue("itemType") }).ToBoolean()
+                ? g_Yytk->CallBuiltin("variable_struct_get", { item, RValue("itemType") }) : RValue();
+            const size_t dash = keyText.rfind('-');
+            const std::string keyCls = dash == std::string::npos ? std::string() : keyText.substr(dash + 1);
+            if (MkNumText(type) != cls && keyCls != cls) continue;
+            if (!g_Yytk->CallBuiltin("variable_struct_exists", { item, RValue("itemDefinitionStruct") }).ToBoolean()) continue;
+            const RValue def = g_Yytk->CallBuiltin("variable_struct_get", { item, RValue("itemDefinitionStruct") });
+            if (!ApIsPlainStruct(def) || !g_Yytk->CallBuiltin("variable_struct_exists", { def, RValue("b") }).ToBoolean()) continue;
+            if (MkNumText(g_Yytk->CallBuiltin("variable_struct_get", { def, RValue("b") })) != b) continue;
+            const std::string o = g_Yytk->CallBuiltin("variable_struct_exists", { def, RValue("o") }).ToBoolean()
+                ? MkNumText(g_Yytk->CallBuiltin("variable_struct_get", { def, RValue("o") })) : std::string("?");
+            if (++matched <= kMkFindShown)
+                Out("mapkeep find: key=" + keyText + " itemType=" + Describe(type) + " b=" + b + " o=" + o);
+        }
+        Out("mapkeep find: entries walked=" + std::to_string(walked) + " matched=" + std::to_string(matched)
+            + " (size=" + std::to_string(size) + " items=" + std::to_string(items)
+            + (walked >= kMkFindMaxEntries ? ", cap " + std::to_string(kMkFindMaxEntries) : std::string()) + ")"
+            + (matched > kMkFindShown ? " - " + std::to_string(matched - kMkFindShown) + " matching keys not printed" : std::string()));
+    } catch (...) { Out("mapkeep find: EXCEPTION while reading - unreadable, not empty"); }
+}
+
+// `clear` releases the kept value and resets the core; the hooks stay.
+static void MkClear()
+{
+    try { g_Yytk->CallBuiltin("variable_global_set", { RValue(std::string(kMkGlobal)), RValue() }); } catch (...) {}
+    if (g_MkKept) *g_MkKept = RValue();
+    g_MkCore.Clear();
+    Out("mapkeep clear: the kept map is released; keeping starts again from the game's next GetItemMap(9) return"
+        + std::string(g_MkKeeping ? "" : " once `mapkeep on`"));
+}
+
+static void MkUsage()
+{
+    Out("mapkeep: research instrument for docs/crafting-materials-research.md, Phase 1e (research build only)");
+    Out("  on              install hooks on GetItemMap and LoadStash through HookOneScript, the player-build installer;"
+        " prints both-routes or TABLE-ONLY per hook. Run it BEFORE `craftprobe hook`");
+    Out("  off             stop keeping (the hooks stay: HookOneScript cannot be undone)");
+    Out("  stat            installs, a0=0 / a0=9 / other and LoadStash counts, kept=, current= and reason=, refreshed=, first9:");
+    Out("  find <class> <b> walk the kept map (only when current) for entries of that class and definition b, with o");
+    Out("  clear           release the kept map and reset its currency");
+}
+
+static void MkCommand(const std::string& rest)
+{
+    std::vector<std::string> tok;
+    { std::stringstream ss(rest); std::string w; while (ss >> w) tok.push_back(w); }
+    if (tok.empty()) { MkUsage(); return; }
+    const std::string sub = Lower(tok[0]);
+    if (sub == "on") { MkOn(); return; }
+    if (sub == "off") {
+        g_MkKeeping = false;
+        Out(std::string("mapkeep off: not keeping") + (MkInstalled() ? " (the hooks stay installed and keep counting)" : ""));
+        return;
+    }
+    if (sub == "stat") { MkStat(); return; }
+    if (sub == "find") { MkFind(tok); return; }
+    if (sub == "clear") { MkClear(); return; }
+    MkUsage();
+}
+#endif // FORGEPACT_RELEASE (mapkeep)
+
 // Dispatched from its own function for the same reason as the two above:
 // RunCommand's else-if chain is at MSVC's nesting limit (C1061). The function
 // itself exists in both builds and answers false in the player build, so the
@@ -21833,6 +22259,45 @@ static void CpAfter(const char* safe, const char* label, long n, bool logged, bo
     X(ProfileManager6879, "Profile_Manager_obj anon@6879", gml_Script_anon_6879_gml_Object_Profile_Manager_obj_Create_0) \
     X(ProfileManager8168, "Profile_Manager_obj anon@8168", gml_Script_anon_8168_gml_Object_Profile_Manager_obj_Create_0) \
     X(ProfileManager9994, "Profile_Manager_obj anon@9994", gml_Script_anon_9994_gml_Object_Profile_Manager_obj_Create_0) \
+    /* Phase 1e (research doc, Static search, "Phase 1e rows"): every name that */ \
+    /* takes, removes, splits, validates or converts inventory or stash items   */ \
+    /* the table did not carry. The online-suffixed stash Take family first -   */ \
+    /* whether it runs offline is what the session measures.                    */ \
+    X(StashTakeItemOnline, "StashTakeItemOnline", gml_Script_StashTakeItemOnline) \
+    X(Struct224, "___struct___224@StashTakeItemOnline", gml_Script____struct___224_StashTakeItemOnline_InventoryStashFuncs) \
+    X(Struct225, "___struct___225@StashTakeItemOnline", gml_Script____struct___225_StashTakeItemOnline_InventoryStashFuncs) \
+    X(Struct227, "___struct___227@StashTakeItemOnline", gml_Script____struct___227_StashTakeItemOnline_InventoryStashFuncs) \
+    X(StashUniqueTakeItemOnline, "StashUniqueTakeItemOnline", gml_Script_StashUniqueTakeItemOnline) \
+    X(Struct229, "___struct___229@StashUniqueTakeItemOnline", gml_Script____struct___229_StashUniqueTakeItemOnline_InventoryStashFuncs) \
+    X(Struct230, "___struct___230@StashUniqueTakeItemOnline", gml_Script____struct___230_StashUniqueTakeItemOnline_InventoryStashFuncs) \
+    X(StashGuildTakeItemOnline, "StashGuildTakeItemOnline", gml_Script_StashGuildTakeItemOnline) \
+    X(StashBloodPactTakeItemOnline, "StashBloodPactTakeItemOnline", gml_Script_StashBloodPactTakeItemOnline) \
+    /* Phase 1e: the add counterparts, for the return shape */ \
+    X(StashAddItemOnline, "StashAddItemOnline", gml_Script_StashAddItemOnline) \
+    X(Struct237, "___struct___237@StashAddItemOnline", gml_Script____struct___237_StashAddItemOnline_InventoryStashFuncs) \
+    X(StashUniqueAddItemOnline, "StashUniqueAddItemOnline", gml_Script_StashUniqueAddItemOnline) \
+    /* Phase 1e: the map's own removal and the remove/operation checks */ \
+    X(RemoveItemFromMap, "RemoveItemFromMap", gml_Script_RemoveItemFromMap) \
+    X(OnlineRemoveItem, "OnlineRemoveItem", gml_Script_OnlineRemoveItem) \
+    X(CheckInventoryOperation, "CheckInventoryOperation", gml_Script_CheckInventoryOperation) \
+    /* Phase 1e: the validators a take at a moment the game did not choose may trip */ \
+    X(ValidateInventory, "ValidateInventory", gml_Script_ValidateInventory) \
+    X(DetectInventoryDuplicates, "DetectInventoryDuplicates", gml_Script_DetectInventoryDuplicates) \
+    X(DetectInventoryModifications, "DetectInventoryModifications", gml_Script_DetectInventoryModifications) \
+    /* Phase 1e: the stash to and from its online form */ \
+    X(ConvertOnlineStash, "ConvertOnlineStash", gml_Script_ConvertOnlineStash) \
+    X(ConvertOnlineStashMap, "ConvertOnlineStashMap", gml_Script_ConvertOnlineStashMap) \
+    /* Phase 1e: the stack and split family not yet in this table */ \
+    X(OnlineAddToStack, "OnlineAddToStack", gml_Script_OnlineAddToStack) \
+    X(Struct16, "___struct___16@OnlineAddToStack", gml_Script____struct___16_OnlineAddToStack_AddToInventoryFunc) \
+    X(InventorySplitOperation, "InventorySplitOperation", gml_Script_InventorySplitOperation) \
+    X(Struct158, "___struct___158@InventorySplitOperation", gml_Script____struct___158_InventorySplitOperation_InventoryFuncs) \
+    X(InventorySplitDrop, "InventorySplitDrop", gml_Script_InventorySplitDrop) \
+    X(Struct155, "___struct___155@InventorySplitDrop", gml_Script____struct___155_InventorySplitDrop_InventoryFuncs) \
+    X(SItemOperation, "s_ItemOperation", gml_Script_s_ItemOperation) \
+    X(SItemGridInfo, "s_ItemGridInfo", gml_Script_s_ItemGridInfo) \
+    /* Phase 1e: the online owner lookup beside GetPlayerItemOwner */ \
+    X(GetOnlinePlayerItemOwner, "GetOnlinePlayerItemOwner", gml_Script_GetOnlinePlayerItemOwner) \
     /* positive control: fires from every interactable's Step event */ \
     X(CheckPlayerInteraction, "CheckPlayerInteraction", gml_Script_CheckPlayerInteraction)
 
@@ -21867,6 +22332,14 @@ static CpTarget g_CpTargets[] = {
 #undef CRAFTPROBE_TARGETS
 
 static constexpr int kCpTargetCount = (int)(sizeof(g_CpTargets) / sizeof(g_CpTargets[0]));
+
+// Whether a row naming this function is detoured this session - `mapkeep on`
+// refuses then (declared with the keeper, above).
+static bool CpHoldsRow(std::string_view runtimeName)
+{
+    for (const CpTarget& t : g_CpTargets) if (t.installed.load() && runtimeName == t.runtimeName) return true;
+    return false;
+}
 
 // A row by its label or its identifier, either case.
 static CpTarget* CpFindRow(const std::string& text)
@@ -21925,10 +22398,19 @@ static void CpInstall(const std::vector<std::string>& filters)
         Out("craftprobe hook: prospectprobe already holds " + std::to_string(ppHeld) + " detour(s) this session; rows sharing"
             " an address with it will fail below - one instrument per session");
     HMODULE mainMod = GetModuleHandleA(nullptr);
-    int ok = 0, failed = 0, skipped = 0;
+    int ok = 0, failed = 0, skipped = 0, held = 0;
     for (CpTarget& t : g_CpTargets) {
         if (!filters.empty() && !CpLabelMatches(t, filters)) { ++skipped; continue; }
         if (t.installed.load()) { Out(std::string("craftprobe hook: ") + t.label + " already detoured"); ++ok; continue; }
+        // Phase 1e: `mapkeep on` owns this function's table entry (and, when
+        // it reported both-routes, its address). CpResolve would refuse the
+        // entry as not the game's code, which is not a failure of this row.
+        if (MkHolds(t.runtimeName)) {
+            Out(std::string("craftprobe hook: ") + t.label + " held by mapkeep (its install owns this function; counted by"
+                " `mapkeep stat`, neither detoured nor failed here)");
+            ++held;
+            continue;
+        }
         std::string why;
         PVOID src = CpResolve(t, why);
         if (!src) { Out(std::string("craftprobe hook: ") + t.label + " " + why); ++failed; continue; }
@@ -21948,6 +22430,7 @@ static void CpInstall(const std::vector<std::string>& filters)
         ++ok;
     }
     Out("craftprobe hook: " + std::to_string(ok) + " detoured, " + std::to_string(failed) + " failed"
+        + (held ? ", " + std::to_string(held) + " held by mapkeep" : std::string())
         + (skipped ? ", " + std::to_string(skipped) + " not selected" : std::string()) + ".");
     Out("  Next: `craftprobe arm budget=N`, then `craftprobe show` - CheckPlayerInteraction must already be climbing, or nothing here counts.");
 }
@@ -22445,7 +22928,7 @@ static constexpr int kCpNodeMaxInstances = 12;       // instances one `node stas
 static constexpr int kCpNodeFingerprintsShown = 40;  // fingerprint (and item) lines one run prints
 static constexpr int kCpNodeDefMembersShown = 24;    // numeric definition members listed when none is stack-named
 static constexpr int kCpNodeMaxCells = 400;          // cell instances one `node socket` reads
-static constexpr int kCpNodeMaxEntries = 1000;       // entries one `node var` reads from an array, list, map or struct
+static constexpr int kCpNodeMaxEntries = 2000;       // entries one `node var` reads from an array, list, map or struct (Phase 1e: the whole 1626-entry stash map)
 
 // How one `node` makes its lookups: the options after its selector.
 struct CpNodeOpts {
@@ -23335,11 +23818,53 @@ static void CpDump()
 // call; a failure refuses with nothing called. Prints what was supplied, the
 // instance either side and what came back: `dispatched` proves the call ran,
 // never that it did what was hoped.
+//
+// Phase 1e adds, for the take trial (research doc, `### Live procedure 1e`):
+// `id:<n>` in place of `<Obj> <nth>` as the self; `fp9:<fingerprint>` - the
+// item the game's own lookup returns with 9, the stash's owner value, as its
+// second argument; `map9` - the kept stash map itself - and `map9:<key>` - one
+// entry of it, both only while `mapkeep` calls that map current; and
+// `path:<Obj|global|id:n>.<a.b.c>` - the value `var`'s walk reaches. Each one
+// that cannot resolve refuses before the call, naming what was supplied.
+
+// `path:<root>.<a.b.c>`: the root as `var` takes it (`<Obj>` is its first
+// instance, nth 0), walked the same way. The walk prints its own reason.
+static bool CpCallPathArg(const std::string& spec, RValue& out)
+{
+    const size_t dot = spec.find('.');
+    if (dot == std::string::npos || dot == 0 || dot + 1 >= spec.size()) return false;
+    const std::string root = spec.substr(0, dot);
+    const bool byId = Lower(root).rfind("id:", 0) == 0;
+    const bool global = !byId && Lower(root) == "global";
+    const std::vector<std::string> rootTok = byId ? std::vector<std::string>{ "path", root }
+                                                  : std::vector<std::string>{ "path", root, "0" };
+    const std::string tag = "craftprobe call path:" + spec;
+    RValue cur, holder;
+    long long rootId = -1;
+    bool haveHolder = false;
+    std::string where, walked;
+    if (!CpVarRoot(tag, rootTok, byId, global, cur, rootId, where)) return false;
+    if (!CpVarWalk(tag, global, CpSplitPath(spec.substr(dot + 1)), cur, holder, haveHolder, walked)) return false;
+    out = cur;
+    return true;
+}
+
+// `id:<n>`'s before/after line: whether it is alive, and its id and position.
+static std::string CpWhereId(const std::string& sel, const RValue& handle)
+{
+    bool alive = false;
+    try { alive = g_Yytk->CallBuiltin("instance_exists", { handle }).ToBoolean(); }
+    catch (...) { return sel + " <instance_exists-read-failed>"; }
+    if (!alive) return sel + " <destroyed>";
+    return sel + " " + PpObjectName(HhResolveInstance(handle)) + " x=" + MpVar(handle, "x") + " y=" + MpVar(handle, "y");
+}
+
 static void CpCall(const std::vector<std::string>& tok)
 {
-    const char* usage = "craftprobe call: usage -> call <Row> <Obj> <nth> [args ...] confirm "
-                        "(arg: number | true | false | text | fp:<fingerprint> | kept:<row>)";
-    if (tok.size() < 5 || Lower(tok.back()) != "confirm") {
+    const char* usage = "craftprobe call: usage -> call <Row> <Obj> <nth> [args ...] confirm | call <Row> id:<n> [args ...] confirm "
+                        "(arg: number | true | false | text | fp:<fingerprint> | fp9:<fingerprint> | kept:<row> | map9 | map9:<key>"
+                        " | path:<Obj|global|id:n>.<a.b.c>)";
+    if (tok.size() < 4 || Lower(tok.back()) != "confirm") {
         Out(std::string("craftprobe call: refused - this calls a game script; nothing was called. ") + usage);
         return;
     }
@@ -23354,22 +23879,55 @@ static void CpCall(const std::vector<std::string>& tok)
         Out(std::string("craftprobe call: refused - ") + t->label + " is a profile getter: capture it with `backing on`, never invoke it (a blind call crashed the game); nothing was called");
         return;
     }
+    // The self: `id:<n>` (after instance_exists, resolved by name) or `<Obj> <nth>`.
+    const bool byId = Lower(tok[2]).rfind("id:", 0) == 0;
+    const size_t argsAt = byId ? 3 : 4;
+    if (tok.size() < argsAt + 1) { Out(std::string("craftprobe call: refused - no self given; nothing was called. ") + usage); return; }
     int nth = 0;
-    try { nth = std::stoi(tok[3]); } catch (...) { Out("craftprobe call: refused - nth must be a whole number; nothing was called"); return; }
     RValue handle; CInstance* inst = nullptr; int total = 0;
-    if (!MpResolve("craftprobe call (refused, nothing was called)", tok[2], nth, handle, inst, total)) return;
+    if (byId) {
+        long long id = -1;
+        try { id = std::stoll(tok[2].substr(3)); } catch (...) { Out("craftprobe call: refused - id:<n> needs a whole number; nothing was called"); return; }
+        handle = RValue((double)id);
+        if (!g_Yytk->CallBuiltin("instance_exists", { handle }).ToBoolean()) { Out("craftprobe call: refused - " + tok[2] + ": instance_exists is false; nothing was called"); return; }
+        inst = HhResolveInstance(handle);
+        if (!inst) { Out("craftprobe call: refused - " + tok[2] + " exists but did not resolve to an instance; nothing was called"); return; }
+    } else {
+        try { nth = std::stoi(tok[3]); } catch (...) { Out("craftprobe call: refused - nth must be a whole number; nothing was called"); return; }
+        if (!MpResolve("craftprobe call (refused, nothing was called)", tok[2], nth, handle, inst, total)) return;
+    }
+    auto where = [&]() { return byId ? CpWhereId(tok[2], handle) : MpWhere(tok[2], nth, handle); };
 
     std::vector<RValue> args;
     std::string supplied;
-    for (size_t i = 4; i + 1 < tok.size(); ++i) {
+    for (size_t i = argsAt; i + 1 < tok.size(); ++i) {
         const std::string& a = tok[i];
+        const std::string la = Lower(a);
         RValue v;
-        if (Lower(a).rfind("fp:", 0) == 0) {
+        if (la.rfind("fp:", 0) == 0) {
             if (!ApItemFromFingerprint(inst, RValue(a.substr(3)), v)) {
                 Out("craftprobe call: refused - " + a + " is not an item the game's own lookup returns; nothing was called");
                 return;
             }
-        } else if (Lower(a).rfind("kept:", 0) == 0) {
+        } else if (la.rfind("fp9:", 0) == 0) {
+            if (!ApItemFromFingerprintAs(inst, RValue(a.substr(4)), RValue(9.0), v)) {
+                Out("craftprobe call: refused - " + a + " (lookup self=" + PpDescribeSelf(inst) + ", a1=9) returned no item struct; nothing was called");
+                return;
+            }
+        } else if (la == "map9" || la.rfind("map9:", 0) == 0) {
+            RValue map;
+            std::string why;
+            if (!MkCurrentMap(map, why)) { Out("craftprobe call: refused - " + a + ": the kept map is not current (reason=" + why + ", see `mapkeep stat`); nothing was called"); return; }
+            if (la == "map9") v = map;
+            else {
+                const std::string key = a.substr(5);
+                std::string form;
+                if (key.empty()) { Out("craftprobe call: refused - map9: needs a key (`mapkeep find` prints them); nothing was called"); return; }
+                if (!MkMapEntry(map, key, v, form)) { Out("craftprobe call: refused - " + a + ": the kept map has no such key (as text or number); nothing was called"); return; }
+            }
+        } else if (la.rfind("path:", 0) == 0) {
+            if (!CpCallPathArg(a.substr(5), v)) { Out("craftprobe call: refused - " + a + " did not resolve (path:<Obj|global|id:n>.<a.b.c>; the walk's line above says where); nothing was called"); return; }
+        } else if (la.rfind("kept:", 0) == 0) {
             const CpTarget* k = CpFindRow(a.substr(5));
             if (!k || !k->kept || !k->kept->value || k->kept->call <= 0) {
                 Out("craftprobe call: refused - " + a + " names no kept return (`backing on` first); nothing was called");
@@ -23379,12 +23937,12 @@ static void CpCall(const std::vector<std::string>& tok)
         } else {
             v = MpArg(a);
         }
-        supplied += " a" + std::to_string(i - 4) + "=" + a + "(" + PpBackingShape(v) + ")";
+        supplied += " a" + std::to_string(i - argsAt) + "=" + a + "(" + PpBackingShape(v) + ")";
         args.push_back(v);
     }
     const std::string name = runtime.substr(std::string("gml_Script_").size());
     Out("craftprobe call: " + name + " self=other=" + PpDescribeSelf(inst) + " argc=" + std::to_string(args.size()) + supplied);
-    Out("  before: " + MpWhere(tok[2], nth, handle));
+    Out("  before: " + where());
     RValue res;
     const bool ran = ApCallScript(name.c_str(), inst, args, res);
     if (!ran) Out("  NOT dispatched (asset_get_index found no script, or script_execute failed)");
@@ -23393,15 +23951,16 @@ static void CpCall(const std::vector<std::string>& tok)
         try { ret = PpRetText(res); } catch (...) { ret = "<read failed>"; }
         Out("  dispatched -> ret=" + ret);
     }
-    Out("  after:  " + MpWhere(tok[2], nth, handle));
+    Out("  after:  " + where());
 }
 
 // The first line is the build's marker: a live session tells this build
-// (Phase 1c, 223 rows) from Phase 1b's (202 rows, marker `phase1b`) and
-// aa0c72a's (97 rows, no marker) in one bare `craftprobe`.
+// (Phase 1e, 252 rows, with `mapkeep`) from Phase 1c's (223 rows, marker
+// `phase1c`, also the build Phase 1d ran), Phase 1b's (202 rows, marker
+// `phase1b`) and aa0c72a's (97 rows, no marker) in one bare `craftprobe`.
 static void CpUsage()
 {
-    Out("craftprobe: phase1c rows=" + std::to_string(kCpTargetCount) + " - research instrument for docs/crafting-materials-research.md (research build only)");
+    Out("craftprobe: phase1e rows=" + std::to_string(kCpTargetCount) + " - research instrument for docs/crafting-materials-research.md (research build only)");
     Out("  hook [substr ...]                 native-detour every row (or the matching ones); one instrument per session");
     Out("  arm [budget=N] [substr ...]       reset counters; log the next N calls of each selected row (default: all but the control)");
     Out("  show [all]                        calls since `arm`, logged vs unlogged per row; CheckPlayerInteraction is the control");
@@ -23418,7 +23977,10 @@ static void CpUsage()
     Out("  backing on [substr ...]|off|dump|clear  keep the game's own returns (default: profile, stash, count, fingerprint-lookup and GetItemMap rows;"
         " per argument signature: GetItemFromFingerprint on a1, GetItemMap, GetInventoryArray, CountInventoryItem on a0)");
     Out("  dump                              craftprobe_rows.json + backing dump");
-    Out("  call <Row> <Obj> <nth> [args ...] confirm   ONE by-name call of one row; refuses before it on any missing precondition");
+    Out("  call <Row> <Obj> <nth>|id:<n> [args ...] confirm   ONE by-name call of one row; refuses before it on any missing precondition");
+    Out("    args: number | true | false | text | fp:<fp> | fp9:<fp> (lookup with a1=9) | kept:<row> | map9 | map9:<key> (the kept"
+        " stash map, only while `mapkeep stat` says current) | path:<Obj|global|id:n>.<a.b.c> (what `var` reaches)");
+    Out("  hook reports a row `mapkeep on` installed as `held by mapkeep` - neither detoured nor failed; run `mapkeep on` first");
 }
 
 static void CpCommand(const std::string& rest)
@@ -23473,6 +24035,7 @@ static bool HandleCraftCommand(const std::string& lc, const std::string& rest)
     if (lc == "craftmats") { CraftMatsCommand(rest); return true; }
 #ifndef FORGEPACT_RELEASE
     if (lc == "craftprobe") { CpCommand(rest); return true; }
+    if (lc == "mapkeep") { MkCommand(rest); return true; }
 #endif
     return false;
 }
@@ -30938,6 +31501,10 @@ void FrameCallback(FWFrame& FrameContext)
     // land regardless of whether `citrace <on|off>` tracing itself is armed -
     // see docs/pet-quest-collector-plan-b4-input-simulation.md §3a.
     CiPokeKeyTick();
+    // #14 Phase 1e research: `mapkeep` notices a room change here, as
+    // housekeeping only - whether its kept map is current is answered where
+    // it is used (docs/crafting-materials-research.md, Phase 1e instrument).
+    MkRoomTick();
 #endif
 
     // Relic filter, armed by `relicfilter 1`: the DropRelic hook goes in only

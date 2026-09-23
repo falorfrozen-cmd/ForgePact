@@ -422,6 +422,64 @@ and its five structs, `s_StashTabData`, and `Town_Stash_obj anon@663`. The
 contract test's closure scan now covers nineteen objects and finds at least 97
 constants.
 
+### Phase 1e rows
+
+Phase 1e asks for a stash-side take that answers success (`## Decision gate`).
+The one remove shape on record that answers is the cube's own
+`GridRemoveItem(<grid array>, <fingerprint>)` -> `true` (Phase 1 `M-craft`);
+the hand move out of the Socketable tab gave no success answer and the move out
+of the Materials tab was never observed (Phase 1b), and no stack routine has
+ever been seen firing. So the static search (2026-09-23, `hs-game-sdk`'s
+`scripts.hpp`) took every script and struct method that takes, removes,
+subtracts, splits, validates or converts inventory or stash items and that the
+table did not carry - 29 rows, 252 in all, each named by its SDK constant and
+hooked by the same one `craftprobe hook`. No new object's closures were added,
+so the closure-coverage test is unchanged.
+
+| Row label | Group | Runtime name (the SDK constant's value) |
+|---|---|---|
+| StashTakeItemOnline | script (the stash's own Take; online-suffixed - whether it runs offline is what the session measures) | `gml_Script_StashTakeItemOnline` |
+| ___struct___224@StashTakeItemOnline | struct method (StashTakeItemOnline's) | `gml_Script____struct___224@StashTakeItemOnline@InventoryStashFuncs` |
+| ___struct___225@StashTakeItemOnline | struct method (StashTakeItemOnline's) | `gml_Script____struct___225@StashTakeItemOnline@InventoryStashFuncs` |
+| ___struct___227@StashTakeItemOnline | struct method (StashTakeItemOnline's) | `gml_Script____struct___227@StashTakeItemOnline@InventoryStashFuncs` |
+| StashUniqueTakeItemOnline | script (the Unique tab's Take - a special tab's own take, for the shape) | `gml_Script_StashUniqueTakeItemOnline` |
+| ___struct___229@StashUniqueTakeItemOnline | struct method (StashUniqueTakeItemOnline's) | `gml_Script____struct___229@StashUniqueTakeItemOnline@InventoryStashFuncs` |
+| ___struct___230@StashUniqueTakeItemOnline | struct method (StashUniqueTakeItemOnline's) | `gml_Script____struct___230@StashUniqueTakeItemOnline@InventoryStashFuncs` |
+| StashGuildTakeItemOnline | script (the guild stash's Take - whether the Take family shares one path) | `gml_Script_StashGuildTakeItemOnline` |
+| StashBloodPactTakeItemOnline | script (another stash's Take, the same question) | `gml_Script_StashBloodPactTakeItemOnline` |
+| StashAddItemOnline | script (the Take family's add counterpart, for the return shape) | `gml_Script_StashAddItemOnline` |
+| ___struct___237@StashAddItemOnline | struct method (StashAddItemOnline's) | `gml_Script____struct___237@StashAddItemOnline@InventoryStashFuncs` |
+| StashUniqueAddItemOnline | script (the Unique tab's add counterpart) | `gml_Script_StashUniqueAddItemOnline` |
+| RemoveItemFromMap | script (the item map's own removal - the cube's consume was never watched for it, because it was not a row) | `gml_Script_RemoveItemFromMap` |
+| OnlineRemoveItem | script (an item removal by name) | `gml_Script_OnlineRemoveItem` |
+| CheckInventoryOperation | script (a check an inventory operation may pass through) | `gml_Script_CheckInventoryOperation` |
+| ValidateInventory | script (a validator a take at a moment the game did not choose may trip; `ValidateInventoryNode` is a row already) | `gml_Script_ValidateInventory` |
+| DetectInventoryDuplicates | script (validator; `DetectInventoryDuplicateNode` is a row already) | `gml_Script_DetectInventoryDuplicates` |
+| DetectInventoryModifications | script (validator) | `gml_Script_DetectInventoryModifications` |
+| ConvertOnlineStash | script (the stash to or from its online form) | `gml_Script_ConvertOnlineStash` |
+| ConvertOnlineStashMap | script (the stash map to or from its online form) | `gml_Script_ConvertOnlineStashMap` |
+| OnlineAddToStack | script (the stack family not yet in this table) | `gml_Script_OnlineAddToStack` |
+| ___struct___16@OnlineAddToStack | struct method (OnlineAddToStack's) | `gml_Script____struct___16@OnlineAddToStack@AddToInventoryFunc` |
+| InventorySplitOperation | script (a stack split - a take of N units, not a whole entry) | `gml_Script_InventorySplitOperation` |
+| ___struct___158@InventorySplitOperation | struct method (InventorySplitOperation's) | `gml_Script____struct___158@InventorySplitOperation@InventoryFuncs` |
+| InventorySplitDrop | script (a split's drop) | `gml_Script_InventorySplitDrop` |
+| ___struct___155@InventorySplitDrop | struct method (InventorySplitDrop's) | `gml_Script____struct___155@InventorySplitDrop@InventoryFuncs` |
+| s_ItemOperation | struct constructor (ran inside `InventoryGridAddToStack` in issue #9's Stage C) | `gml_Script_s_ItemOperation` |
+| s_ItemGridInfo | struct constructor (an item's grid position, beside `s_ItemOperation`) | `gml_Script_s_ItemGridInfo` |
+| GetOnlinePlayerItemOwner | script (the online owner lookup beside the existing `GetPlayerItemOwner` row) | `gml_Script_GetOnlinePlayerItemOwner` |
+
+Already rows, and armed again rather than added: `InventoryStackUpdateAndRemove`
+and `InventoryStackUpdateAndEdit` (with their structs), `InventoryStackHandler`,
+`InventorySocketUpdateAndRemove`, `InventorySocketUpdateAndSubtract` (with its
+struct), `s_PendingStackOperation`, `GetStackOpLocationFromGridType`,
+`GetItemOwnerFromStackOpLocation`, `ChangeItemOwner`, `GridRemoveItem`,
+`InventoryGridRemoveItem`, `CraftEditPlayerInventory` (with its struct),
+`StashAddToStack`, `s_InvNode`, `InventorySwapItemsNew`, `InventorySocketItem`,
+`UiASplitStack`, `SaveInventoryMap` and `SaveStash` (with its structs). Two rows
+the table already carries, `GetItemMap` and `LoadStash`, are installed in
+Phase 1e by `mapkeep` instead (`### Phase 1e instrument`), and `craftprobe
+hook` reports them as held.
+
 ### Negative results, sourced
 
 These are "not found by name" in the SDK tables above, not "does not exist":

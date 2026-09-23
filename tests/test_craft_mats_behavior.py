@@ -139,6 +139,29 @@ class CraftMatsBehaviorTests(unittest.TestCase):
         self.assertScenario("target/confirmed_take_counts_and_is_reported_once")
         self.assertScenario("target/statline_names_what_it_did")
 
+    # ---- Phase 1e: the kept stash map's currency rule ------------------------
+    #
+    # A kept GetItemMap(9) return is current only when the game's own call
+    # refreshed it after the latest character load or room change. GameMaker
+    # reuses a destroyed map's index, so an index that still exists is not
+    # evidence of currency (research doc, § Decision gate).
+
+    def test_kept_map_baseline_nothing_kept_is_not_current(self):
+        self.assertScenario("baseline/kept_map_nothing_kept_is_not_current")
+
+    def test_kept_map_baseline_reused_index_is_not_current_after_an_invalidation(self):
+        self.assertScenario("baseline/kept_map_reused_index_is_not_current_after_an_invalidation")
+
+    def test_kept_map_target_refresh_makes_it_current(self):
+        self.assertScenario("target/kept_map_refresh_makes_it_current")
+        self.assertScenario("target/kept_map_reason_names_are_the_stat_tokens")
+
+    def test_kept_map_target_refresh_after_an_invalidation_is_current_again(self):
+        self.assertScenario("target/kept_map_refresh_after_an_invalidation_is_current_again")
+
+    def test_kept_map_target_clear_is_not_current(self):
+        self.assertScenario("target/kept_map_clear_is_not_current")
+
 
 if __name__ == "__main__":
     unittest.main()

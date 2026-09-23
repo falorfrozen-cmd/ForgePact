@@ -291,4 +291,75 @@ private:
     std::atomic<long>      m_Refused[(int)CraftMatsRefusal::Count]{};
 };
 
+// ---- the kept stash map (Phase 1e) ---------------------------------------------
+//
+// The stash's item map is reached only as the return of a call the game itself
+// makes, GetItemMap with first argument 9 (research doc, Phase 1d); the research
+// build's `mapkeep` keeps that return. GameMaker reuses a destroyed map's index,
+// so an index that still exists (ds_exists) says nothing about whether it is
+// still the stash's map. The rule this type encodes: the kept map is current
+// only when the game's own call refreshed it after the latest invalidation - a
+// character load or a room change - or since construction. The adapter checks
+// ds_exists at the point of use as well, but that is its half: nothing here ever
+// takes a ds_exists answer as "current".
+//
+// Why a kept map is not current, as `mapkeep stat` prints it; None while it is.
+// (`ds-gone` is the adapter's own token: the index no longer exists at the read.)
+enum class CraftMatsKeptMapReason : int { None = 0, NotKept, CharacterLoaded, RoomChanged };
+
+// Threading: fed from hook bodies inside the game's own calls and from the frame
+// callback, and asked from the IPC poll - all on the game thread - so nothing is
+// locked.
+class CraftMatsKeptMap {
+public:
+    // The game's own GetItemMap(9) call returned the map at this index.
+    void Refreshed(long long index) {
+        m_Index = index;
+        m_Kept = true;
+        m_Reason = CraftMatsKeptMapReason::None;
+        ++m_Refreshes;
+    }
+
+    // A character load or a room change: whatever is kept is no longer current
+    // until the game's own call returns a map again. With nothing kept, "not
+    // kept" stays the reason.
+    void Invalidate(CraftMatsKeptMapReason why) {
+        ++m_Invalidations;
+        if (!m_Kept) return;
+        m_Reason = why == CraftMatsKeptMapReason::None ? CraftMatsKeptMapReason::NotKept : why;
+    }
+
+    // Release what is kept; keeping starts again from the game's next call.
+    void Clear() {
+        m_Kept = false;
+        m_Index = -1;
+        m_Reason = CraftMatsKeptMapReason::NotKept;
+    }
+
+    bool IsCurrent() const { return m_Kept && m_Reason == CraftMatsKeptMapReason::None; }
+    bool IsKept() const { return m_Kept; }
+    // The last index kept, current or not; meaningful only while IsKept().
+    long long Index() const { return m_Index; }
+    CraftMatsKeptMapReason Reason() const { return m_Reason; }
+    long Refreshes() const { return m_Refreshes; }
+    long Invalidations() const { return m_Invalidations; }
+
+    static const char* ReasonName(CraftMatsKeptMapReason r) {
+        switch (r) {
+        case CraftMatsKeptMapReason::None:            return "none";
+        case CraftMatsKeptMapReason::NotKept:         return "not-kept";
+        case CraftMatsKeptMapReason::CharacterLoaded: return "character-loaded";
+        case CraftMatsKeptMapReason::RoomChanged:     return "room-changed";
+        }
+        return "none";
+    }
+
+private:
+    bool                   m_Kept = false;
+    long long              m_Index = -1;
+    CraftMatsKeptMapReason m_Reason = CraftMatsKeptMapReason::NotKept;
+    long                   m_Refreshes = 0;
+    long                   m_Invalidations = 0;
+};
+
 } // namespace ForgePact

@@ -17,6 +17,12 @@
 // that covers the need plans nothing. Target: the deficit and only the deficit
 // comes from the stash tab, never more than it holds, refusals and losses are
 // named once, and the lines name what the mod did.
+//
+// Phase 1e adds the kept stash map's currency rule (CraftMatsKeptMap). Baseline:
+// nothing kept is not current, and an index still held after a character load
+// or a room change is not current either. Target: the game's own refresh makes
+// it current, again after an invalidation (same index or a new one), and a
+// clear is not current.
 #include <atomic>
 #include <cstdint>
 #include <iostream>
@@ -32,6 +38,8 @@ using ForgePact::CraftMatsPlan;
 using ForgePact::CraftMatsRefusal;
 using ForgePact::CraftMatsSource;
 using ForgePact::CraftMatsTakeReport;
+using ForgePact::CraftMatsKeptMap;
+using ForgePact::CraftMatsKeptMapReason;
 
 static int g_Failures = 0;
 
@@ -290,6 +298,106 @@ static void TargetStatLineNamesWhatItDid()
     Check("target/statline_names_what_it_did", ok, "on=\"" + on + "\" off=\"" + off + "\"");
 }
 
+// ---- the kept stash map's currency rule (Phase 1e) ------------------------------
+//
+// The research build keeps the ds_map the game's own GetItemMap(9) call returned.
+// GameMaker reuses a destroyed map's index, so "the index still exists" says
+// nothing about whether it is still the stash's map: the kept map is current
+// only when a refresh (the game's own call returned it) came after the latest
+// invalidation (a character load or a room change). ds_exists is the plugin's
+// half and is never an input here.
+
+static std::string Describe(const CraftMatsKeptMap& m)
+{
+    return "current=" + N(m.IsCurrent()) + " kept=" + N(m.IsKept()) + " index=" + N(m.Index())
+        + " reason=" + CraftMatsKeptMap::ReasonName(m.Reason()) + " refreshed=" + N(m.Refreshes());
+}
+
+static void BaselineKeptMapNothingKeptIsNotCurrent()
+{
+    CraftMatsKeptMap fresh;
+    const bool freshOk = !fresh.IsCurrent() && !fresh.IsKept() && fresh.Reason() == CraftMatsKeptMapReason::NotKept;
+    // An invalidation with nothing kept does not make anything current either,
+    // and "not kept" stays the reason.
+    CraftMatsKeptMap loaded;
+    loaded.Invalidate(CraftMatsKeptMapReason::CharacterLoaded);
+    const bool loadedOk = !loaded.IsCurrent() && !loaded.IsKept() && loaded.Reason() == CraftMatsKeptMapReason::NotKept;
+    Check("baseline/kept_map_nothing_kept_is_not_current", freshOk && loadedOk,
+          Describe(fresh) + " | " + Describe(loaded));
+}
+
+static void BaselineKeptMapReusedIndexIsNotCurrentAfterAnInvalidation()
+{
+    // The reused-index case: the index is still held (and ds_exists would still
+    // answer true for it), but nothing has refreshed it since the character
+    // load or the room change, so it is not current.
+    CraftMatsKeptMap loaded;
+    loaded.Refreshed(1049);
+    loaded.Invalidate(CraftMatsKeptMapReason::CharacterLoaded);
+    CraftMatsKeptMap moved;
+    moved.Refreshed(1049);
+    moved.Invalidate(CraftMatsKeptMapReason::RoomChanged);
+    // A second invalidation keeps it stale; asking again changes nothing.
+    moved.Invalidate(CraftMatsKeptMapReason::RoomChanged);
+    const bool ok = !loaded.IsCurrent() && loaded.IsKept() && loaded.Index() == 1049
+        && loaded.Reason() == CraftMatsKeptMapReason::CharacterLoaded
+        && !moved.IsCurrent() && moved.IsKept() && moved.Index() == 1049
+        && moved.Reason() == CraftMatsKeptMapReason::RoomChanged && !moved.IsCurrent();
+    Check("baseline/kept_map_reused_index_is_not_current_after_an_invalidation", ok,
+          Describe(loaded) + " | " + Describe(moved));
+}
+
+static void TargetKeptMapRefreshMakesItCurrent()
+{
+    CraftMatsKeptMap m;
+    m.Refreshed(1049);
+    Check("target/kept_map_refresh_makes_it_current",
+          m.IsCurrent() && m.IsKept() && m.Index() == 1049 && m.Reason() == CraftMatsKeptMapReason::None
+              && m.Refreshes() == 1 && std::string(CraftMatsKeptMap::ReasonName(m.Reason())) == "none",
+          Describe(m));
+}
+
+static void TargetKeptMapRefreshAfterAnInvalidationIsCurrentAgain()
+{
+    // The same index returned again by the game's own call after the room change.
+    CraftMatsKeptMap same;
+    same.Refreshed(1049);
+    same.Invalidate(CraftMatsKeptMapReason::RoomChanged);
+    same.Refreshed(1049);
+    // A new index after a character load: current, with the new one.
+    CraftMatsKeptMap renewed;
+    renewed.Refreshed(1049);
+    renewed.Invalidate(CraftMatsKeptMapReason::CharacterLoaded);
+    renewed.Refreshed(1050);
+    const bool ok = same.IsCurrent() && same.Index() == 1049 && same.Refreshes() == 2
+        && renewed.IsCurrent() && renewed.Index() == 1050 && renewed.Reason() == CraftMatsKeptMapReason::None;
+    Check("target/kept_map_refresh_after_an_invalidation_is_current_again", ok,
+          Describe(same) + " | " + Describe(renewed));
+}
+
+static void TargetKeptMapClearIsNotCurrent()
+{
+    CraftMatsKeptMap m;
+    m.Refreshed(1049);
+    m.Clear();
+    const std::string cleared = Describe(m);
+    const bool clearedOk = !m.IsCurrent() && !m.IsKept() && m.Reason() == CraftMatsKeptMapReason::NotKept
+        && std::string(CraftMatsKeptMap::ReasonName(m.Reason())) == "not-kept";
+    // Keeping starts again from the game's next call.
+    m.Refreshed(1051);
+    Check("target/kept_map_clear_is_not_current", clearedOk && m.IsCurrent() && m.Index() == 1051,
+          cleared + " | " + Describe(m));
+}
+
+static void TargetKeptMapReasonNamesAreTheStatTokens()
+{
+    const bool ok = std::string(CraftMatsKeptMap::ReasonName(CraftMatsKeptMapReason::None)) == "none"
+        && std::string(CraftMatsKeptMap::ReasonName(CraftMatsKeptMapReason::NotKept)) == "not-kept"
+        && std::string(CraftMatsKeptMap::ReasonName(CraftMatsKeptMapReason::CharacterLoaded)) == "character-loaded"
+        && std::string(CraftMatsKeptMap::ReasonName(CraftMatsKeptMapReason::RoomChanged)) == "room-changed";
+    Check("target/kept_map_reason_names_are_the_stat_tokens", ok, "");
+}
+
 int main()
 {
     BaselineOffByDefault();
@@ -305,6 +413,12 @@ int main()
     TargetLossSignalTurnsTheModOffForTheSession();
     TargetReportWhileOffIsIgnored();
     TargetStatLineNamesWhatItDid();
+    BaselineKeptMapNothingKeptIsNotCurrent();
+    BaselineKeptMapReusedIndexIsNotCurrentAfterAnInvalidation();
+    TargetKeptMapRefreshMakesItCurrent();
+    TargetKeptMapRefreshAfterAnInvalidationIsCurrentAgain();
+    TargetKeptMapClearIsNotCurrent();
+    TargetKeptMapReasonNamesAreTheStatTokens();
     std::cout << (g_Failures ? "RESULT FAIL " + std::to_string(g_Failures) : std::string("RESULT OK")) << "\n";
     return g_Failures ? 1 : 0;
 }

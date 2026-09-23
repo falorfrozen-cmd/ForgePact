@@ -124,8 +124,9 @@ class CraftMatsContractTests(unittest.TestCase):
     def test_craftprobe_table_names_every_candidate(self):
         # 97 Phase 0 rows + 105 from Phase 1b's widened search (research doc,
         # § Static search, "Phase 1b additions") + 21 from Phase 1c's search for
-        # the closed-window store ("Phase 1c rows").
-        self.assertGreaterEqual(len(self.rows), 223)
+        # the closed-window store ("Phase 1c rows") + 29 from Phase 1e's search
+        # for a stash-side take ("Phase 1e rows") = 252.
+        self.assertGreaterEqual(len(self.rows), 252)
         labels = [label for _, label, _ in self.rows]
         self.assertEqual(len(labels), len(set(labels)), "duplicate probe label")
         safes = [safe for safe, _, _ in self.rows]
@@ -190,6 +191,22 @@ class CraftMatsContractTests(unittest.TestCase):
             "___struct___448@gml_Object_Load_Inventory_obj_Other_62",
             # Phase 1c: where LoadStash may put the stash while its window is closed
             "GetItemMap", "GetInventoryMapPos", "SaveInventoryMap", "LoadInventoryOrderNew", "s_SaveStashConstants",
+            # Phase 1e: every name that takes, removes, splits, validates or
+            # converts inventory or stash items - the online stash Take family
+            # and its add counterparts, the map's own removal, the validators,
+            # the online conversions and the stack/split family
+            "StashTakeItemOnline", "___struct___224@StashTakeItemOnline@InventoryStashFuncs",
+            "___struct___225@StashTakeItemOnline@InventoryStashFuncs",
+            "___struct___227@StashTakeItemOnline@InventoryStashFuncs", "StashUniqueTakeItemOnline",
+            "___struct___229@StashUniqueTakeItemOnline@InventoryStashFuncs",
+            "___struct___230@StashUniqueTakeItemOnline@InventoryStashFuncs", "StashGuildTakeItemOnline",
+            "StashBloodPactTakeItemOnline", "StashAddItemOnline", "___struct___237@StashAddItemOnline@InventoryStashFuncs",
+            "StashUniqueAddItemOnline", "RemoveItemFromMap", "OnlineRemoveItem", "CheckInventoryOperation",
+            "ValidateInventory", "DetectInventoryDuplicates", "DetectInventoryModifications", "ConvertOnlineStash",
+            "ConvertOnlineStashMap", "OnlineAddToStack", "___struct___16@OnlineAddToStack@AddToInventoryFunc",
+            "InventorySplitOperation", "___struct___158@InventorySplitOperation@InventoryFuncs", "InventorySplitDrop",
+            "___struct___155@InventorySplitDrop@InventoryFuncs", "GetOnlinePlayerItemOwner", "s_ItemOperation",
+            "s_ItemGridInfo",
         ):
             self.assertIn("gml_Script_" + anchor, names)
         # Every row's runtime name is written down where the live session reads it.
@@ -264,14 +281,19 @@ class CraftMatsContractTests(unittest.TestCase):
         # Every precondition, and every argument's resolution, comes after the
         # confirm gate and before the one call.
         write = call.index("ApCallScript(")
+        # Phase 1e's forms too: the `id:<n>` self, `fp9:`, `map9`/`map9:<key>`
+        # (only while mapkeep calls the kept map current) and `path:`.
         for step in ("CpFindRow(tok[1])", "runtime.find('@')", "CpIsProfileGetter(*t)", "MpResolve(",
-                     "ApItemFromFingerprint(", "k->kept->call <= 0", "MpArg(a)"):
+                     "ApItemFromFingerprint(", "k->kept->call <= 0", "MpArg(a)",
+                     '"instance_exists", { handle }', "HhResolveInstance(handle)",
+                     "ApItemFromFingerprintAs(inst, RValue(a.substr(4)), RValue(9.0), v)", "MkCurrentMap(map, why)",
+                     "MkMapEntry(map, key, v, form)", "CpCallPathArg(a.substr(5), v)"):
             self.assertLess(gate, call.index(step), step)
             self.assertLess(call.index(step), write, step)
         # Each refusal says nothing was called and returns.
         lines = call.split("\n")
         refusals = [i for i, l in enumerate(lines) if "refused" in l]
-        self.assertGreaterEqual(len(refusals), 7)
+        self.assertGreaterEqual(len(refusals), 15)
         for i in refusals:
             self.assertIn("nothing was called", lines[i])
             self.assertIn("return", lines[i] + lines[i + 1] + lines[i + 2], lines[i])
@@ -315,9 +337,10 @@ class CraftMatsContractTests(unittest.TestCase):
         usage = self.body("static void CpUsage(")
         first = usage[usage.index("Out("):]
         first = first[:first.index(";")]
-        self.assertIn("phase1c rows=", first)
+        self.assertIn("phase1e rows=", first)
         self.assertIn("kCpTargetCount", first)
-        self.assertEqual(self.plugin.count("phase1c rows="), 1)
+        self.assertEqual(self.plugin.count("phase1e rows="), 1)
+        self.assertEqual(self.plugin.count("phase1c rows="), 0)
         self.assertEqual(self.plugin.count("phase1b rows="), 0)
 
     def test_craftprobe_var_follows_instance_refs_by_name_only(self):
@@ -571,6 +594,130 @@ class CraftMatsContractTests(unittest.TestCase):
             self.assertIn("CpNodePrintSums(", body, fn)
         self.assertIn("CpNodeLookupAndSum(", var)
         self.assertIn("CpNodeLookupAndSum(", self.body("static void CpNodeRead("))
+
+    # ---- Phase 1e: mapkeep, the held rows, the whole map ---------------------
+
+    MAPKEEP_START = "// ---- mapkeep:"
+    MAPKEEP_END = "#endif // FORGEPACT_RELEASE (mapkeep)"
+
+    def mapkeep_block(self):
+        return self.plugin[self.plugin.index(self.MAPKEEP_START):self.plugin.index(self.MAPKEEP_END)]
+
+    def test_mapkeep_is_research_build_only_and_dispatched_from_handle_craft_command(self):
+        shipped = strip_research_blocks(self.plugin)
+        self.assertIn("mapkeep", self.plugin)
+        self.assertNotIn("mapkeep", shipped)
+        for symbol in ("MkCommand", "MkHookGetItemMap", "MkHookLoadStash", "MkRoomTick", "MkCurrentMap", "g_MkCore"):
+            self.assertIsNone(re.search(r"\b" + symbol, shipped), symbol + " reaches the player build")
+        self.assertNotIn("mapkeep", self.player_commands())
+        self.assertEqual(self.plugin.count('"mapkeep"'), 1)
+        handler = function_body(self.plugin, "static bool HandleCraftCommand(")
+        self.assertIn('if (lc == "mapkeep") { MkCommand(rest); return true; }', handler)
+        self.assertNotIn("mapkeep", strip_research_blocks(handler))
+        # It sits before craftprobe's block, so craftprobe's own pins (no
+        # HookOneScript( in its block) stand and craftprobe can ask it.
+        self.assertLess(self.plugin.index(self.MAPKEEP_START), self.plugin.index(BLOCK_START))
+        self.assertLess(self.plugin.index(self.MAPKEEP_END), self.plugin.index(BLOCK_START))
+
+    def test_mapkeep_installs_through_the_player_build_installer_and_never_calls_the_game(self):
+        block = self.mapkeep_block()
+        # The player-build shape: HookOneScript, both hooks, each with its native
+        # flag - and every name through the SDK, never a retyped literal.
+        on = self.body("static void MkOn(")
+        self.assertEqual(on.count("HookOneScript("), 2)
+        self.assertIn("HookOneScript(kMkGetItemMapName, \"fp_mk_getitemmap\", (PVOID)MkHookGetItemMap, &g_MkOrigGetItemMap, &mapNative)", on)
+        self.assertIn("HookOneScript(kMkLoadStashName, \"fp_mk_loadstash\", (PVOID)MkHookLoadStash, &g_MkOrigLoadStash, &loadNative)", on)
+        self.assertIn("SdkShortScriptName(HeroSiege::Scripts::gml_Script_GetItemMap)", block)
+        self.assertIn("SdkShortScriptName(HeroSiege::Scripts::gml_Script_LoadStash)", block)
+        # The install line names the installer's answer either way.
+        report = self.body("static void MkReportInstall(")
+        for word in ("both-routes", "TABLE-ONLY", "NOT-INSTALLED"):
+            self.assertIn(word, report)
+        # It refuses when craftprobe already holds either row: a second inline
+        # detour would fail and the installer would report a false TABLE-ONLY.
+        self.assertLess(on.index("CpHoldsRow(HeroSiege::Scripts::gml_Script_GetItemMap)"), on.index("HookOneScript("))
+        self.assertLess(on.index("CpHoldsRow(HeroSiege::Scripts::gml_Script_LoadStash)"), on.index("HookOneScript("))
+        self.assertIn("already on", on)
+        # Nothing here calls a game script or patches an address itself.
+        for forbidden in ("script_execute", "ApCallScript", "MmCreateHook", "CallGameScriptEx", '"variable_instance_set"',
+                          '"variable_struct_set"', '"array_set"', "m_Pointer"):
+            self.assertNotIn(forbidden, block)
+        # The hook bodies forward through the trampoline; GetItemMap compares
+        # its first argument numerically (int64:9 and real:9.0 alike).
+        getmap = self.body("static RValue& MkHookGetItemMap(")
+        self.assertIn("g_MkOrigGetItemMap(S, O, R, argc, A)", getmap)
+        self.assertIn("PpIsNumber(*A[0])", getmap)
+        self.assertIn("d == 9.0", getmap)
+        self.assertNotIn("m_Kind == VALUE_INT64", getmap)
+        load = self.body("static RValue& MkHookLoadStash(")
+        self.assertIn("g_MkOrigLoadStash(S, O, R, argc, A)", load)
+        self.assertLess(load.index("Invalidate(ForgePact::CraftMatsKeptMapReason::CharacterLoaded)"),
+                        load.index("g_MkOrigLoadStash(S, O, R, argc, A)"))
+        # The kept value is rooted in a research global the collector sees.
+        keep = self.body("static void MkKeep(")
+        self.assertLess(keep.index('"variable_global_set"'), keep.index("g_MkCore.Refreshed(index)"))
+        self.assertIn('"__cp_mapkeep_9"', block)
+        self.assertIn("kMkKeepLines", keep)
+
+    def test_mapkeep_answers_currency_at_the_point_of_use(self):
+        block = self.mapkeep_block()
+        self.assertIn("ForgePact::CraftMatsKeptMap g_MkCore", block)
+        # The shared point-of-use answer: the room read again now, the core's
+        # rule, then ds_exists as a map - ds_exists never makes it current.
+        current = self.body("static bool MkCurrentMap(")
+        self.assertLess(current.index("MkRoomPoll()"), current.index("g_MkCore.IsCurrent()"))
+        self.assertLess(current.index("g_MkCore.IsCurrent()"), current.index('"ds_exists"'))
+        self.assertIn('"ds-gone"', current)
+        for fn in ("static void MkStat(", "static void MkFind("):
+            self.assertIn("MkCurrentMap(map, reason)", self.body(fn), fn)
+        self.assertIn("MkCurrentMap(map, why)", self.body("static void CpCall("))
+        # The frame path is housekeeping only: it notices a room change.
+        tick = self.body("static void MkRoomTick(")
+        self.assertIn("kMkRoomPollFrames", tick)
+        self.assertIn("MkRoomPoll()", tick)
+        frame = function_body(self.plugin, "void FrameCallback(FWFrame& FrameContext)")
+        self.assertIn("MkRoomTick();", frame)
+        self.assertNotIn("MkRoomTick", strip_research_blocks(frame))
+        poll = self.body("static void MkRoomPoll(")
+        # An unreadable room is skipped, never compared.
+        self.assertLess(poll.index("key == INT64_MIN"), poll.index("Invalidate(ForgePact::CraftMatsKeptMapReason::RoomChanged)"))
+        # What `stat` prints.
+        stat = self.body("static void MkStat(")
+        for token in ('" a0=9 calls="', '"a0=0 calls="', '" LoadStash calls="', '" current="', '" reason="',
+                      '" refreshed="', '" | first9: "', '" | kept="'):
+            self.assertIn(token.strip('"'), stat.replace('"', ""), token)
+        # `find` walks by name, only after the currency check, capped.
+        find = self.body("static void MkFind(")
+        self.assertLess(find.index("MkCurrentMap("), find.index('"ds_map_find_first"'))
+        self.assertIn("kMkFindMaxEntries", find)
+        self.assertRegex(self.plugin, r"static constexpr int kMkFindMaxEntries = 4000;")
+        self.assertIn("entries walked=", find)
+
+    def test_craftprobe_hook_reports_rows_mapkeep_holds_as_held_not_failed(self):
+        install = self.body("static void CpInstall(")
+        self.assertIn("held by mapkeep", install)
+        held = install.index("MkHolds(t.runtimeName)")
+        self.assertLess(held, install.index("CpResolve(t, why)"))
+        self.assertIn("++held", install)
+        holds = self.body("static bool MkHolds(")
+        self.assertIn("HeroSiege::Scripts::gml_Script_GetItemMap", holds)
+        self.assertIn("HeroSiege::Scripts::gml_Script_LoadStash", holds)
+        self.assertIn("t.installed.load()", self.body("static bool CpHoldsRow("))
+
+    def test_craftprobe_node_var_reads_the_whole_stash_map(self):
+        # Live 1d's reads stopped at 1000 of the stash map's 1626 entries.
+        self.assertRegex(self.block, r"static constexpr int kCpNodeMaxEntries = 2000;")
+
+    def test_craftprobe_call_takes_the_phase1e_argument_forms(self):
+        call = self.body("static void CpCall(")
+        for form in ('"id:"', '"fp9:"', '"map9"', '"map9:"', '"path:"'):
+            self.assertIn(form, call, form)
+        # `path:` resolves the way `var` does; `map9:` reads the kept map by name.
+        path = self.body("static bool CpCallPathArg(")
+        self.assertIn("CpVarRoot(", path)
+        self.assertIn("CpVarWalk(", path)
+        entry = self.body("static bool MkMapEntry(")
+        self.assertLess(entry.index('"ds_map_exists"'), entry.index('"ds_map_find_value"'))
 
     # ---- the switch ----------------------------------------------------------
 
