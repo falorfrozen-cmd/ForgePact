@@ -800,7 +800,7 @@ a number, a bool or a string, so the word `undefined` reached the game as text.
 |---|---|---|---|
 | The marker | a bare `craftprobe` answers `craftprobe: phase1g rows=252 - ...` | - | the build's control: without `phase1g` the installed plugin is not this build (the Phase 1e build, which Phase 1f also ran, prints `phase1e` with the same 252 rows), and nothing from the session counts |
 | `craftprobe call` argument `undefined` | the literal token `undefined` (any case) is a value of kind undefined, where it was the string `undefined`; the call line shows it as `a<i>=undefined(undefined)`. Resolved with the other forms, after the `confirm` gate and before the one call | still exactly one by-name call per command, behind `confirm` | `test_craftprobe_call_takes_the_literal_undefined`; live, the argument's kind is the one the call line prints |
-| `within=<row\|none>` on the craft-route rows | the armed line of `CraftFindRecipeItems`, `DoCraftResult`, `CraftEditGrid`, `CraftEditPlayerInventory`, `s_CraftItem`, `GridAddItem`, `GridAddToStack`, `s_ItemOperation` and `GetInventoryGridNode` names, after the call number, the outermost of those nine rows that was already on the game thread's stack when this call was entered, or `none`. The detours track it themselves: each of the nine rows keeps a depth, raised just before its trampoline and lowered just after it returns (also when it unwinds), and the entry order of its outermost frame. The field is read before the call's own frame is entered, so a row never names itself unless it is recursing. The other 243 rows' lines are unchanged | the rows' own `arm` budgets; tracking runs on every call of the nine rows whether or not they are armed, so arming during a craft cannot misreport the nesting | only rows `craftprobe hook` detoured take part: a row that did not detour cannot appear as `within=`, so a `within=none` is read beside `hook`'s `0 failed` and the enclosing row's own `calls=` in `show all`. Live 1e's call order on a bag-stack craft (`CraftFindRecipeItems`, `DoCraftResult`, `CraftEditGrid`, `CraftEditPlayerInventory`, `s_CraftItem`, `GridAddItem`/`GridAddToStack`) is the comparison: a line whose row logged before `DoCraftResult` in that order reading `within=DoCraftResult` would be the instrument's error |
+| `within=<row>#<n>\|none` on the craft-route rows | the armed line of `CraftFindRecipeItems`, `DoCraftResult`, `CraftEditGrid`, `CraftEditPlayerInventory`, `s_CraftItem`, `GridAddItem`, `GridAddToStack`, `s_ItemOperation` and `GetInventoryGridNode` names, after the call number, the outermost of those nine rows that was already on the game thread's stack when this call was entered, and which call of it (`#n`, the number on that row's own entry and `ret=` lines), or `none`. The detours track it themselves: each of the nine rows keeps a depth, raised just before its trampoline and lowered just after it returns (also when it unwinds), and the entry order and call number of its outermost frame. The field is read before the call's own frame is entered, so a row never names itself unless it is recursing. The other 243 rows' lines are unchanged | the rows' own `arm` budgets; tracking runs on every call of the nine rows whether or not they are armed, so arming during a craft cannot misreport the nesting | only rows `craftprobe hook` detoured take part: a row that did not detour cannot appear as `within=`, so a `within=none` is read beside `hook`'s `0 failed` and the enclosing row's own `calls=` in `show all`. Live 1e's call order on a bag-stack craft (`CraftFindRecipeItems`, `DoCraftResult`, `CraftEditGrid`, `CraftEditPlayerInventory`, `s_CraftItem`, `GridAddItem`/`GridAddToStack`) is the comparison: a line whose row logged before `DoCraftResult` in that order reading `within=DoCraftResult#<n>` would be the instrument's error. "One row encloses both the consume and the production" is read only when the consume line and the production line name the same `<row>#<n>` **and** that row's own `#n` entry line and its `#n` `ret=` line are both in the log, one before and one after them. At amount 2 the two may sit in two calls of the same row (one per unit), which differs only in `#n`; an outer row such as `CraftFindRecipeItems` enclosing the whole craft names itself on every line and hides whether `DoCraftResult` alone encloses both, which the `DoCraftResult` entry and `ret=` lines around the two lines then settle. A bracket line lost to the budget leaves the reading not observed |
 
 ## Live procedure
 
@@ -1224,7 +1224,9 @@ document fixes is its shape:
   and the `hs-drive` backup) and restored after it. `tools/stash_tab_counts.py`
   reads both tabs before the launch and after it, and the file's
   `LastWriteTimeUtc` is read before the launch (T0), at the stash's close (T1),
-  and directly before (T2) and after (T3) the by-name save.
+  directly before (T2) and after (T3) the by-name save with the stash closed,
+  again a few seconds after T3 (T3b), and directly before (T4) and after (T5)
+  the same by-name save with the stash open.
 - **`mapkeep on` before `craftprobe hook`**, both before the character loads.
 - **The map at the Cube**: with the Cube open and the stash not yet opened in
   the launch, `GetItemMap` by name with self `Console_Save_obj` and the one
@@ -1236,7 +1238,15 @@ document fixes is its shape:
 - **One craft, at amount 2**, of the Greater Unstable Dust recipe from bag
   inputs, with the rows armed: each craft-route row's `within=` and
   `CraftEditPlayerInventory`'s `a0` are quoted. `a0` still `1.0` at amount 2
-  reads as an owner value, `2.0` as the amount.
+  reads as an owner value, `2.0` as the amount. A row encloses both the
+  consume and the production only when both lines name the same `<row>#<n>`
+  and that row's `#n` entry and `ret=` lines bracket them (`### Phase 1g
+  instrument`). `craftprobe show all` is read directly before the craft and
+  after it, and each craft-route row's `logged=` against `calls=` is quoted: a
+  row that had already logged its whole budget before the craft (the Cube's
+  own frame or UI work can call a row, as `GetInventoryGridNode` fired three
+  times on one stash tab click in Phase 1) reads `not observed (budget spent
+  before the craft)`, never absent.
 - **The move, by name, under `confirm`, one Materials entry and then one
   Socketable entry.** The lookup with the stash closed comes first
   (`GetItemFromFingerprint(<key>, 9)` with self `Console_Save_obj`, else a bag
@@ -1254,7 +1264,17 @@ document fixes is its shape:
   shapes the craft logged.
 - **The save, by name, only after a confirmed move**: `SaveStash` with self
   `Console_Save_obj` and no argument (Live 1f's `save-shape`), judged on T2 ->
-  T3 and on `tools/stash_tab_counts.py` no longer listing the moved entry.
+  T3, on T3b (a write that lands a few seconds late is not "no write"), and
+  on `tools/stash_tab_counts.py` no longer listing the moved entry. Its
+  positive control is the same call on the same route with the stash window
+  open, run only when the closed-window save ran: when the owner opens the
+  stash afterwards, and before they close it, T4, the same `SaveStash` call,
+  T5. The only by-name `SaveStash` run so far
+  (Live 1f, stash closed) saw no write, and its stash-open trial was skipped,
+  so this route has never been seen to write at all; without T4 -> T5 a
+  closed-window T3 = T2 could not tell "does not write while closed" from
+  "never writes when called by name". The results go in `save-closed`'s
+  observed text; the fifteen check names stay as they are.
 - **What would make a trial unsafe, and the mitigation.** A wrong self or
   argument is a GML error inside `script_execute` that ends the launch; a
   by-name move the map does not follow, once saved, could write a duplicate or
@@ -1289,7 +1309,12 @@ document fixes is its shape:
   rests on Live 1f's grid-self lookup having returned the struct; a lookup
   that returns `undefined` is not-observed, with the self supplied. The
   by-name save's write rests on T2, read directly before the call, and on the
-  game's own close moving T0 -> T1 in the same session. A row that did not
+  game's own close moving T0 -> T1 in the same session; a closed-window
+  no-write (T3 and T3b equal to T2) counts as a finding about the window only
+  beside T4 -> T5 moving on the same by-name route with the window open, and
+  with T5 = T4 as well it is a finding about the route, not the window.
+  `craft-order`'s `within=` readings rest on each craft-route row's
+  `logged=`/`calls=` before and after the craft. A row that did not
   fire while its control climbed is "not observed", never "does not fire". A
   `fail` or `not-observed` is a finding, recorded under `### Phase 1g
   results`; no live outcome is an acceptance criterion.
@@ -1988,11 +2013,13 @@ index is not observed, and no second map was seen (`map-by-name-vs-game`).
 ### Phase 1g results
 
 Research DLL: `plugin_build\BloodPactPlugin_rel.dll`, built with
-`plugin_build\build.bat dev` from ForgePact `38ab6ca` (SHA-256
-`8af07609090db69b0f59d393b6be83b3845010c65ee5a34f5261dcab2a07ff2d`), the
+`plugin_build\build.bat dev` from ForgePact `24a4441` (SHA-256
+`81a033498d63c736a07f758bd23c7d248986372266bee6ae40577421978ebf4a`), the
 Phase 1g research build (`### Phase 1g instrument`): the Phase 1e build's 252
 rows with the `phase1g` marker, `craftprobe call`'s `undefined` argument and
-`within=` on the craft-route rows. `plugin_build\build.bat release` from the
+`within=<row>#<n>` on the craft-route rows. It replaces the first Phase 1g
+build (`38ab6ca`), which printed the enclosing row without its call number
+and was never installed. `plugin_build\build.bat release` from the
 same commit produced a ship DLL with no `craftprobe`, `mapkeep` or `phase1g`
 string. The build control is `dll-hash` against this hash plus the
 `phase1g rows=252` marker. `### Live procedure 1g` gives the session's shape.
@@ -2012,12 +2039,12 @@ what was supplied, and a shape not run is "not observed (<why>)".
 | control | After the load: `CheckPlayerInteraction calls=` and `mapkeep stat`'s `a0=0 calls=` both non-zero; `a0=9 calls=0`, `kept=none`, `first9: none` as the baseline | | |
 | map-at-cube | With the Cube open and the stash not yet opened: `GetItemMap` by name (self `Console_Save_obj`, argument `9`) dispatched, kept current, and `mapkeep find` reading Ol 216 and Unstable Dust 13, equal to the file | | |
 | recipe-shape | The members of the recipe array's entry and of `UI_Craft_Recipe_List_Item_obj` that name the selected recipe's input type/base and amount, read by name, or the member names listed when none does | | |
-| craft-order | One craft at amount 2: every craft-route row's `within=`, and `CraftEditPlayerInventory`'s `a0` (owner value or amount) | | |
+| craft-order | One craft at amount 2: every craft-route row's `within=<row>#<n>` (one row encloses both only when the same `#n` entry and `ret=` lines bracket the consume and the production line), each row's `logged=`/`calls=` from `show all` before and after the craft (a budget spent before the craft is `not observed (budget spent before the craft)`), and `CraftEditPlayerInventory`'s `a0` (owner value or amount) | | |
 | lookup-closed | `GetItemFromFingerprint(<X>, 9)` with the stash closed returns X's struct, with self `Console_Save_obj` or a bag grid instance; the self that resolved it | | |
 | take-material | On X (one Greater Unstable Dust in the Materials tab): the add's answer, `ChangeItemOwner`'s `ret=`, and the kept map on the same index (`dropped`, `kept` or `re-kept`); `RemoveItemFromMap` only if kept; the bag by eye | | |
 | take-socket | The sequence `take-material` confirmed, on the Socketable entry (the `b=51` stack of 10 or the owner's one-unit socketable): the same reads, and whether the add carried `o` | | |
 | take-partial | The argument shapes `s_ItemOperation` and any stack-family row logged at the craft; nothing replayed | | |
-| save-closed | `SaveStash` by name with the stash closed after a confirmed move: T2 -> T3 and `tools/stash_tab_counts.py` without the moved entry | | |
+| save-closed | `SaveStash` by name with the stash closed after a confirmed move: T2 -> T3, T3b a few seconds later, and `tools/stash_tab_counts.py` without the moved entry; the positive control, the same call with the stash open: T4 -> T5 | | |
 | stash-window-after | The stash window after the by-name `GetItemMap(9)` and the move: both special tabs drawn, their counts by eye against the map's last reads; `mapkeep stat`'s `a0=9 calls=` and `latest-keep:` | | |
 | counts-tool-after | `tools/stash_tab_counts.py` after the graceful exit, against the owner's last counts | | |
 
