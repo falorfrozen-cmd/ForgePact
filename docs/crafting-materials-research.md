@@ -23,7 +23,7 @@ Phase 1g, the closed-stash move, save and craft-route measurement, done
 shape, done (2026-09-23); and Phase 1i, reaching `Controller_obj`, the
 complete take and the recipe tie, done (2026-09-24), leave the complete
 by-name take, a stash close after it and the selected recipe's amount
-measured once each, with the stash file written only by the game's own save
+measured once each, with the stash file's write left to the game's own save
 at the next stash close.** Phase 1
 measured the vanilla baseline, the cube's craft route and a vanilla duplication,
 but its instrument reached neither the stash's special-tab container nor the
@@ -120,11 +120,13 @@ one session (`### Live procedure 1i`, `### Phase 1i results`). Its session
 `stashInventoryMap`), ran the complete by-name take - bag side, map side and
 stash-cell clear - on one Materials entry and one Socketable stack, and read
 the selected recipe's required amount, 5, at the craft press. Each by-name
-save after a take returned with one item fewer and no fault, but no by-name
-save wrote the file, the one before any take included; the owner's stash
-close after both takes kept the game running and wrote a file holding
-neither. The "After Phase 1i" paragraph records what a player build now has
-and still lacks.
+`SaveStash` (self `Console_Save_obj`, no argument, stash closed, Cube open)
+after a take returned with one item fewer and no fault, but wrote no file in
+this one launch, the one before any take included, making 1627
+`CreateItemSaveStruct` calls against the 1993 the owner's stash close made
+afterward - a gap not yet explained; that close, after both takes, kept the
+game running and wrote a file holding neither. The "After Phase 1i" paragraph
+records what a player build now has and still lacks.
 Nothing player-visible changes yet: the
 `craftmats` switch exists but nothing is wired to crafting, and the player
 build refuses it. A result is only ever recorded as a negative with its
@@ -581,14 +583,21 @@ so the closure-coverage test is unchanged.
 | PilipaliDecrypt | script (crafting group: the decoder a recipe input's stored amount goes through at count time; its armed line gives the argument shapes and `ret=` the decoded amount) | `gml_Script_PilipaliDecrypt` |
 | CreateItemSaveStruct | script (stash group: the per-item step of `SaveStash`; a healthy save logs one entry per saved item with a struct `a0`, and the fault Live 1g ended on reads as an entry with `a0=undefined` and no `SaveStash ret=` after it) | `gml_Script_CreateItemSaveStruct` |
 
-**An SDK gap, recorded rather than used.** The runtime's script table also
+**An SDK finding, recorded rather than used.** The runtime's script table also
 holds `SaveStashFunc` and `LoadStashFunc` - the wrappers the game itself calls
 around `SaveStash` and `LoadStash` (the `@SaveStashFunc` suffix of the
-`___struct___357..364@SaveStash` methods names the first) - and `hs-game-sdk`
-has no constant for either. Neither is a row or a call target here: a name the
-SDK does not carry would have to be retyped, which this table never does
-(`AGENTS.md` § "HS Game SDK Usage"). If a later build needs them, the route is
-an SDK regeneration (`tools/extract_and_generate_sdk.py`), not a literal.
+`___struct___357..364@SaveStash` methods names the first). `hs-game-sdk`
+already carries both, bare rather than `gml_Script_`-prefixed: C++
+`HeroSiege::Scripts::SaveStashFunc_Index` = 3536 and
+`HeroSiege::Scripts::LoadStashFunc_Index` = 2300
+(`hs-game-sdk/cpp/include/hs_game_sdk/scripts.hpp`); Python
+`GameScript.SaveStashFunc` = 3536 and `GameScript.LoadStashFunc` = 2300
+(`hs-game-sdk/python`); TypeScript `GameScripts.SaveStashFunc` and
+`GameScripts.LoadStashFunc` (names only, no indices, `hs-game-sdk/ts`). This
+search's earlier pass looked only for `gml_Script_`-prefixed constants, which
+is why it missed both names. Neither is a row or a call target here: a name
+the SDK already carries needs no regeneration, only a citation
+(`AGENTS.md` § "HS Game SDK Usage").
 
 ### Negative results, sourced
 
@@ -604,7 +613,9 @@ These are "not found by name" in the SDK tables above, not "does not exist":
   hierarchy is not known statically.
 - No research document under `ForgePact/docs/` has measured a craft or a stash
   read (a search of every doc); `docs/RUNTIME_DATA_MODELS.md` lists no material
-  or stash container; the HSSaveEditor and hero-siege-item-editor guides mention
+  or stash container - true when searched (2026-09-22), before this issue's
+  own findings were folded into the hub's `## 5. Stash Special Tabs & the
+  Crafting Route` - the HSSaveEditor and hero-siege-item-editor guides mention
   `stash.hss` but no material-tab layout (both submodules are not checked out in
   the worktree this was written in).
 - **Object events by their raw name: no name tried has resolved** - which is
@@ -1003,9 +1014,10 @@ next phase re-reads them there; nothing below quotes them.
   `HeroSiege::Scripts::gml_Script_<name>` constant (`PilipaliDecrypt` at index
   85, `CreateItemSaveStruct` at 693), and every object named is in
   `objects.hpp` (`Controller_obj` 984, `Console_Save_obj` 980,
-  `New_Inventory_Data_obj` 3067). The two the runtime table has and the SDK
-  lacks, `SaveStashFunc` and `LoadStashFunc`, are a finding (`### Phase 1h
-  rows`), never a route.
+  `New_Inventory_Data_obj` 3067). `SaveStashFunc` and `LoadStashFunc` are also
+  in every binding, bare rather than `gml_Script_`-prefixed (`### Phase 1h
+  rows`), which is why this search's `gml_Script_`-only pattern missed them
+  the first time; neither is a row or a call target here.
 
 **Unverified going in, stated as such:** that `Controller_obj` has a live
 instance `craftprobe var` resolves (the game reads its variables through an
@@ -2979,9 +2991,12 @@ bag stacks and one Socketable stack it does not, and the owner's stash close
 after both kept the game running and wrote a stash file holding neither; the
 selected recipe's required amount is readable by name at the craft press.
 What the design's save step rests on is now the game's own save: a by-name
-`SaveStash` returns cleanly after a complete take but writes no file, so the
-stash file is written at the game's next own save - measured here at the
-next stash close.** Whether and how a player build follows is the owner's
+`SaveStash` (self `Console_Save_obj` 0, no argument, stash closed, Cube open)
+returned cleanly but wrote no file in this one launch, making 1627
+`CreateItemSaveStruct` calls against the 1993 the owner's own stash close made
+afterward - that gap is the lead to follow before this route is treated as
+closed - so the stash file is written at the game's next own save - measured
+here at the next stash close.** Whether and how a player build follows is the owner's
 decision (the next workorder). This replaces the "After Phase 1h" list of
 what the design lacked, kept below as it stood then. By measurement in Live
 1i - one launch, the representative cases only - with `control`, the keeper's
@@ -3012,7 +3027,7 @@ player build:
   <fingerprint>)` (`true`) (`take-socket`, and the owner's count at
   `close-after-takes`). That `inventorySocketGrid` is the grid
   `GetItemPreferredGrid` answers is a match on shape only.
-- *A save after a complete take does not fault.* Each by-name `SaveStash`
+- *A save after a complete take did not fault (Live 1i).* Each by-name `SaveStash`
   after a take returned, one `CreateItemSaveStruct` call fewer each time and
   no `a0=undefined` entry (`save-after-take`, `save-after-socket`, read
   against `save-by-name-control`), and the owner's stash close after both
@@ -3031,7 +3046,10 @@ player build:
 
 What it still lacks, as far as observed:
 
-- *A by-name stash save that writes.* No by-name `SaveStash` wrote
+- *A by-name stash save that writes.* The lead to follow before this route is
+  treated as closed: a by-name save made 1627 `CreateItemSaveStruct` calls
+  against the 1993 the owner's own stash close made in the same window, and
+  what that gap consists of is not measured. No by-name `SaveStash` wrote
   `stash.hss` in this session, the one before any take included, though each
   used the close's own shape (self `Console_Save_obj`, no argument); Live 1f
   saw the same with the stash closed. Only the game's own save at the stash
