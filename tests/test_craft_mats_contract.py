@@ -11,8 +11,11 @@ quietly reach the player build, go blind, or write where it should refuse, and
 so the switch cannot start doing work on the frame path before a mechanism is
 chosen. Phase 1b widened the table to 202 rows and taught the readers to follow
 instance references by name; Phase 1c added 21 rows, a selectable lookup shape,
-the Socketable tab's per-cell walk, `node var` and the `store` reader. The tests
-for each are marked below.
+the Socketable tab's per-cell walk, `node var` and the `store` reader. Phase 1e
+(owner's decision H-A) adds 29 rows (252), `mapkeep` - the stash map kept
+through HookOneScript, the player-build installer, with the currency rule of
+CraftMatsKeptMap - and the take trial's `call` forms. The tests for each are
+marked below.
 """
 import importlib.util
 import re
@@ -769,8 +772,29 @@ class CraftMatsContractTests(unittest.TestCase):
                         "## Results", "### Constraints from Phase 1", "### Live procedure 1b",
                         "### Phase 1b results", "### Phase 1c rows", "### Phase 1c readers",
                         "### Live procedure 1c", "### Phase 1c results", "### Live procedure 1d",
-                        "### Phase 1d results", "## Decision gate"):
+                        "### Phase 1d results", "### Phase 1e rows", "### Phase 1e instrument",
+                        "### Live procedure 1e", "### Phase 1e results", "## Decision gate"):
             self.assertIn("\n" + heading + "\n", self.doc, heading)
+        # Phase 1e's four sections sit beside their Phase 1c/1d counterparts.
+        at = lambda heading: self.doc.index("\n" + heading + "\n")
+        self.assertLess(at("### Phase 1c rows"), at("### Phase 1e rows"))
+        self.assertLess(at("### Phase 1e rows"), at("### Negative results, sourced"))
+        self.assertLess(at("### Phase 1c readers"), at("### Phase 1e instrument"))
+        self.assertLess(at("### Phase 1e instrument"), at("## Live procedure"))
+        self.assertLess(at("### Live procedure 1d"), at("### Live procedure 1e"))
+        self.assertLess(at("### Live procedure 1e"), at("## Results"))
+        self.assertLess(at("### Phase 1d results"), at("### Phase 1e results"))
+        self.assertLess(at("### Phase 1e results"), at("## Decision gate"))
+        # Phase 1e's results name the research DLL they were measured with, and
+        # its procedure names the 22 checks the capture carries.
+        results = self.doc[at("### Phase 1e results"):at("## Decision gate")]
+        self.assertRegex(results, r"[0-9a-f]{64}")
+        procedure = self.doc[at("### Live procedure 1e"):at("## Results")]
+        self.assertIn("twenty-two checks", procedure)
+        for check in ("keeper-install", "keeper-control", "map-first-call", "map-whole", "take-trial-grid",
+                      "take-trial-map", "take-trial-stack", "map-follows-trial", "room-invalidate", "map-refresh"):
+            self.assertIn("`" + check + "`", procedure, check)
+            self.assertIn("| " + check + " |", results, check)
         results = self.doc[self.doc.index("\n## Results\n"):self.doc.index("\n## Decision gate\n")]
         for row in ("| B0-vanilla |", "| C-control |", "| H-A |", "| H-B |", "| H-C |"):
             self.assertIn(row, results)

@@ -20,6 +20,13 @@ that a take the game declined leaves the mod on and is named once; that a loss
 signal (a tab that shrank without the game's success answer, or a success the
 re-read cannot confirm) turns the mod off for the session; and that the stat
 and first-take lines name what the mod did.
+
+Phase 1e (the owner chose H-A) adds the kept stash map's currency rule,
+CraftMatsKeptMap: the kept_map_baseline scenarios pin that nothing kept is not
+current and that an index still held after a character load or a room change
+is not current (GameMaker reuses map indices, so ds_exists alone proves
+nothing); the kept_map_target scenarios pin that the game's own refresh makes
+it current, again after an invalidation, and that a clear is not current.
 """
 import os
 import shutil

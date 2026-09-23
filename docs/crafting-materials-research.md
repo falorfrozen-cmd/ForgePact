@@ -678,6 +678,51 @@ closed-window store as the thing to find, since a deactivated window is not
 readable by the plugin without activating it, which would be a write into the
 game's loop and is not planned.
 
+### Phase 1e instrument
+
+Phase 1d kept the stash map through `craftprobe`'s own detour - an
+`MmCreateHook` at `GetItemMap`'s address, research-only - which is not the
+shape a player build has. Every shipped gameplay hook installs through
+ForgePact's `HookOneScript`: a table swap plus an inline detour at the
+function's own address, reporting whether the detour went in (repo-root
+`AGENTS.md`, "Prove the Instrument"). So Phase 1e adds a second research-only
+verb, `mapkeep`, that keeps the same return through that installer, and
+teaches `craftprobe call` the argument shapes the take trial needs. Everything
+below is in the research build only (`#ifndef FORGEPACT_RELEASE`; the player
+build answers `command unavailable`), nothing calls `GetItemMap`,
+`GetProfileInventoryData` or any other getter, and nothing reads a struct
+layout. Every subcommand, cap and refusal in the tables above stays as it was.
+
+**The currency rule.** A kept map is *current* only when the game's own
+`GetItemMap(9)` call has returned it since the latest character load
+(`LoadStash`) or room change - or since the keeper started. GameMaker reuses a
+destroyed map's index, so an index that still exists (`ds_exists`) says nothing
+about whether it is still the stash's map; `ds_exists` is checked as well, at
+the point of use, but never makes a map current on its own. The rule is the
+game-independent `CraftMatsKeptMap` in `plugin/include/ForgePact/CraftMatsMod.hpp`,
+pinned by `tests/craft_mats_harness.cpp`'s `kept_map` baseline scenarios
+(nothing kept is not current; an index still held after a character load or a
+room change is not current) and target scenarios (the game's refresh makes it
+current, again after an invalidation with the same index or a new one; a clear
+is not). The plugin asks that rule at the point of use - `mapkeep stat`,
+`mapkeep find` and `craftprobe call`'s `map9` forms - after reading the room
+again, then checks `ds_exists` with `ds_type_map`. The frame callback only
+notices a room change every 30 frames, as housekeeping (repo-root `AGENTS.md`,
+"Check a Permission Where It Is Used").
+
+| Addition | What it prints | Cap | Control |
+|---|---|---|---|
+| `mapkeep on` | installs hooks on `GetItemMap` and `LoadStash` through `HookOneScript`, named through `HeroSiege::Scripts` constants, and prints one line per hook: `mapkeep on: GetItemMap both-routes (...)` when the installer's native flag came back true, `TABLE-ONLY (...)` when only the table swap went in (the installer's own `hook GetItemMap: TABLE-ONLY (<reason>)` line, printed just before, carries the reason), or `NOT-INSTALLED`. That line is the answer to whether the player-build shape reaches the map, either way. A second `on` answers `already on`; after `off`, `on` resumes keeping | one install per hook per launch: `HookOneScript` cannot be undone, and only its first install attempts the inline detour | refuses, with nothing installed, when `craftprobe hook` already detoured either row this session - the game's address would be patched with the table entry unchanged, so the installer would attempt a second inline detour, fail, and report a false `TABLE-ONLY`. Run `mapkeep on` **before** `craftprobe hook` |
+| `GetItemMap` hook body | counts calls by first argument, compared as a number (`int64:9` and `real:9.000000` alike): `a0=0`, `a0=9`, other. Forwards through the trampoline; never calls the script. Keeps an `a0=9` return that is a `ref ds_map` when it is new (the first, a different index, or the same index after an invalidation), rooted in the research global `__cp_mapkeep_9`, and feeds the core's refresh. One line for the first `a0=9` call (`mapkeep: first GetItemMap a0=9 call #<n> self=<object> room=<name> a0=<value>`), one per keep (`mapkeep: kept GetItemMap a0=9 #<n> -> ref ds_map <N> self=... room=... (was <reason>, refreshed=<k>)`) | 8 keep lines per launch, later keeps counted; no per-call line otherwise (Live 1d's `arm` budget was spent on `a0=0` calls) | its `a0=0` count is its own control: Live 1d's detour counted 28715 `a0=0` calls before any window, so a hook that sees calls at all shows a non-zero `a0=0` after the character loads |
+| `LoadStash` hook body | counts, and invalidates the kept map (`character-loaded`) before the game's own call runs; one line per call, `mapkeep: LoadStash #<n> self=<object> ret=<value> ...` | 4 lines per launch | Live 1b saw two calls per character load, self `Console_Save_obj`, returning `true`; a `LoadStash calls=0` with `TABLE-ONLY` on this hook is a table-blind finding, not a pass |
+| `mapkeep stat` | one line: each hook's install (`both-routes`, `TABLE-ONLY`, `NOT-INSTALLED`, `not-tried`), `keeping=on` or `off`, `a0=0 calls=<n> a0=9 calls=<n> other calls=<n> LoadStash calls=<n>`, `kept=ref ds_map <N>` (with `size=` when current) or `kept=none`, `current=yes` or `no` with `reason=` one of `none`, `not-kept`, `character-loaded`, `room-changed`, `ds-gone`, `refreshed=<k>` (keeps so far), `room-changes=`, `not-a-map=`, `first9: #<call> self=<object> room=<name>` or `none`, and `latest-keep:` the same for the latest keep | - | reads the room again and asks the currency rule, then `ds_exists`, at the moment of the command |
+| `mapkeep find <class> <b>` | hook-free: walks the kept map by name (`ds_map_find_first`/`_next`/`_find_value`), only when it is current, and prints every entry whose `itemType` (or key class suffix) is `<class>` and whose `itemDefinitionStruct.b` is `<b>`: `mapkeep find: key=<key> itemType=<t> b=<b> o=<o>`, then `mapkeep find: entries walked=<n> matched=<m> (size=<N> items=<k>)`. It is how the trial names an item by its key, and how a stack shows as one entry. A non-current map prints its reason and reads nothing | 4000 entries; 40 key lines | the map's item structs are read directly, no lookup - the path `item-struct-control` vouched for in Live 1d |
+| `mapkeep off`, `mapkeep clear` | `off` stops keeping (the hooks stay installed and keep counting); `clear` releases the kept map (the global set to `undefined`) and resets its currency to `not-kept` | - | - |
+| `craftprobe hook` beside `mapkeep` | a row whose function `mapkeep` installed prints `craftprobe hook: <row> held by mapkeep (...)` and is counted neither as detoured nor as failed; the summary reads `<N> detoured, 0 failed, 2 held by mapkeep` on a clean session | - | `CpResolve` would refuse such an entry as not the game's code; that is not a failure of the row. The `GetItemMap` and `LoadStash` rows then report `calls=n/a` in `show all` - their counts are `mapkeep stat`'s |
+| 29 new rows (`### Phase 1e rows` under `## Static search`) and the marker | the same `hook`/`arm`/`show` lines; a bare `craftprobe` answers `craftprobe: phase1e rows=252 - ...` | one detour per row | the marker is the build's control: without `phase1e` the installed plugin is not this build, and nothing from the session counts. `CheckPlayerInteraction`, as before |
+| `node var` entry cap | 2000 entries per `node var` (was 1000), so the 1626-entry stash map is read whole: `entries read=<n>` with no `(cap ...)` note | 2000 | as `### Phase 1c readers` |
+| `craftprobe call` forms | `call <Row> id:<n> [args ...] confirm` takes an instance number as self (after `instance_exists`, resolved by name) in place of `<Obj> <nth>`. New arguments: `fp9:<fingerprint>` - the item the game's own `GetItemFromFingerprint(fp, 9)` returns with the call's self, refused unless a plain struct; `map9` - the kept map itself; `map9:<key>` - its entry for that key (`ds_map_exists`, then `ds_map_find_value`; the key tried as text, then as a number when it is one, since the key's form is not established); `path:<root>.<a.b.c>`, the root an `<Obj>`, `global` or `id:<n>` - the value `var`'s walk reaches (`<Obj>` is its first instance), e.g. `path:id:<stashGrid>.nodeGrid`. `map9` and `map9:` are refused unless `mapkeep` calls the kept map current. Every refusal names what was supplied and ends `nothing was called`; the call line, `before:`, `dispatched -> ret=` or `NOT dispatched`, and `after:` are as before | still exactly one by-name call per command, behind `confirm` | every precondition and argument is resolved after the `confirm` gate and before the one call (`test_craftprobe_writes_are_confirm_gated`) |
+
 ## Live procedure
 
 Owner-run; the agent drives the command channel (`hs-drive`) and reads
@@ -867,6 +912,70 @@ fixes is its shape:
   `ds_exists` no longer finds is "the kept reference is gone closed", which says
   nothing about whether the game's store is. A `fail` or `not-observed` is a
   finding, recorded under `### Phase 1d results`; no live outcome is an
+  acceptance criterion.
+
+### Live procedure 1e
+
+Live 1e runs the Phase 1e research build (`### Phase 1e results` records its
+hash) under `live-operator`; the step-by-step procedure is `### Live procedure
+1` in the workorder's context file,
+`.claude/workorders/forgepact-issue-14-phase1e-context.md`, which stays on the
+owner's machine. It asks two questions: (1) can the stash map be kept through
+`HookOneScript` - with its control, the moment in a launch the game first calls
+`GetItemMap(9)`, the whole map read, and the currency rule across a room
+change? (2) is there a by-name route that removes one unit of one stackable
+from a stash special tab and answers success, and does the kept map show the
+take? What this document fixes is its shape:
+
+- **The Phase 1e build, installed by the owner**; the installed plugin's
+  SHA-256 is checked first. Character slot 14 ("Sorak"). Auto-prospect off;
+  saves backed up before and restored after; `tools/stash_tab_counts.py` reads
+  both tabs before the launch and after it.
+- **`mapkeep on` before `craftprobe hook`**, both before the character loads,
+  so the keeper sees the load's `LoadStash` calls and every `GetItemMap` call
+  of the launch, and craftprobe reports the two rows it holds as held.
+- **Hand moves, one unit each, the owner stating every count by eye**: one Ol
+  out of the stash's Socketable tab to the bag, one Unstable Dust out of the
+  Materials tab to the bag, one unit of a bag material the owner names (X, from
+  a stack of two or more) into the stash's Materials tab, and one craft at the
+  cube with bag inputs - each with `craftprobe arm budget=8` before and `show`
+  after, and the kept map read after each move.
+- **The take trial, by name, under `confirm`, on one unit**: T1 is
+  `GridRemoveItem` - the one remove shape on record that answered `true`
+  (Phase 1 `M-craft`) - on the Materials tab's grid (`path:id:<stashGrid>.nodeGrid`)
+  against X's fingerprint; T2 is `RemoveItemFromMap`, only if this session logs
+  its argument shape (two arguments, a string second, a whole number or a
+  `ref ds_map` first); T3 is a stack routine, only if one fires on a hand take
+  from a stash tab this session, replayed with its logged arguments and the
+  Ol's item. A refusal is quoted with what was supplied; a shape not run is
+  "not observed (<why>)".
+- **One room change and back**, then a reopen: the kept map must read not
+  current after the zone change and current again once the stash's own call
+  returns a map.
+- **Cases**: the Socketable tab (the ordinary case: a hand take, T3 if a shape
+  appears) and the Materials tab (the outlier: a plain grid object, its hand
+  take never observed before; T1 and T2).
+- **The capture** is `.claude/workorders/forgepact-issue-14-phase1e-live-1.md`,
+  ending with a `## Checks` section of one line per check, exactly
+  `- <name> | expected: <text> | observed: <quoted, short> | pass|fail|not-observed`,
+  for these twenty-two checks in this order: `dll-hash`, `marker`,
+  `counts-tool-before`, `keeper-install`, `hook`, `control`, `keeper-control`,
+  `map-first-call`, `map-kept-open`, `map-whole`, `hand-take-socket`,
+  `map-follows-socket`, `hand-take-material`, `map-follows-material`,
+  `hand-craft`, `take-trial-grid`, `take-trial-map`, `take-trial-stack`,
+  `map-follows-trial`, `room-invalidate`, `map-refresh` and
+  `counts-tool-after`.
+- **Which control vouches for which read.** The armed row lines rest on
+  `dll-hash`, `marker` and `control` (`CheckPlayerInteraction` non-zero after
+  the load). The keeper's `a0=9` and `kept=` lines rest on `keeper-install` and
+  `keeper-control` (`mapkeep stat`'s `a0=0 calls=` non-zero after the load - the
+  keeper's own proof that its `GetItemMap` hook sees calls at all). A `node
+  var` or `mapkeep find` read over the kept map (item structs, no lookup) rests
+  on `map-kept-open`, whose same-session instance read (`node socket a1=9` /
+  `node id:<stashGrid> a1=9`) rests on `node-bag-control`'s shape from Live 1d
+  - a `sum` equal to a count by eye. A row that did not fire while its control
+  climbed is "not observed", never "does not fire". A `fail` or `not-observed`
+  is a finding, recorded under `### Phase 1e results`; no live outcome is an
   acceptance criterion.
 
 ## Results
@@ -1251,6 +1360,50 @@ were among them.
   values is `ref ds_map 1049`; 19 `map` matches and the `socket`, `material`,
   `inv` and `tab` matches were listed by name only. The map was reached only as
   the return of the game's call.
+
+### Phase 1e results
+
+Research DLL: `plugin_build\BloodPactPlugin_rel.dll`, built 2026-09-23 with
+`plugin_build\build.bat dev` from ForgePact `c12dca0` (SHA-256
+`7c0cc7c5743f5c1f2243b7db1933a92143930527f1c19fb090e837ce90785232`). The
+player build (`build.bat release`) from the same commit carries no `phase1e`,
+`mapkeep` or `craftprobe` string. The owner installs it as
+`mods\aurie\BloodPactPlugin.dll` before Live 1e; `### Live procedure 1e`'s
+`dll-hash` check compares the installed plugin against this hash before
+anything else counts, so the Phase 1c build still installed from Live 1c/1d
+(`e9d32ec3...`) fails it on purpose.
+
+The session has not run (`phase1e-status: pending` at the top). The table below
+has one row per check, in the procedure's order; the Observed and Verdict cells
+are filled from the capture, `.claude/workorders/forgepact-issue-14-phase1e-live-1.md`,
+cited by its step headings. A `fail` or `not-observed` is a finding; a rejected
+or refused call shape is recorded with what was supplied, and a shape not run
+is "not observed (<why>)".
+
+| Check | What it measures | Observed | Verdict |
+|---|---|---|---|
+| dll-hash | The installed plugin's SHA-256 equals the Phase 1e hash above | | |
+| marker | A bare `craftprobe` answers `phase1e rows=` (this build) | | |
+| counts-tool-before | `tools/stash_tab_counts.py` before launch: exit 0, a `socket_tab` and a `material_tab` line; X not yet on the Materials tab | | |
+| keeper-install | `mapkeep on` prints one line each for `GetItemMap` and `LoadStash`: `both-routes` or `TABLE-ONLY (...)` - either wording is the finding | | |
+| hook | `craftprobe hook` after `mapkeep on`: `0 failed`, with `GetItemMap` and `LoadStash` reported as held by mapkeep | | |
+| control | `CheckPlayerInteraction` non-zero after the character loads | | |
+| keeper-control | `mapkeep stat` after the load: `a0=0 calls=` non-zero (the keeper's hook sees calls), and `LoadStash calls=` with its install wording | | |
+| map-first-call | The moment of the first `GetItemMap(9)` call in the launch: `first9:` with its call, self and room - at load, at the first stash open, or elsewhere | | |
+| map-kept-open | Stash open on the Socketable tab: `mapkeep stat` reads current, and `node var` over `__cp_mapkeep_9` gives the Ol `def.o` equal to the count by eye and to `node socket a1=9`'s | | |
+| map-whole | The same read's `entries read=` equals the map's `size=` with no cap note, and `mapkeep find 15 1` prints exactly one key | | |
+| hand-take-socket | The rows that fire when the owner moves one Ol from the stash's Socketable tab to the bag, with their `ret=` | | |
+| map-follows-socket | After that take, the kept map's Ol entry reads one less (or the map is not current - the reason quoted) | | |
+| hand-take-material | The rows that fire when the owner moves one Unstable Dust from the stash's Materials tab to the bag, with their `ret=` | | |
+| map-follows-material | After that take, the kept map's Unstable Dust entry reads one less | | |
+| hand-craft | The rows that fire on one craft with bag inputs, with their arguments and `ret=` (the self of `GridRemoveItem`, the shape of `RemoveItemFromMap`) | | |
+| take-trial-grid | T1: `craftprobe call GridRemoveItem` on the Materials tab's `nodeGrid` against X's fingerprint, under `confirm`: dispatched with a `ret=`, or refused with what was supplied | | |
+| take-trial-map | T2: `craftprobe call RemoveItemFromMap` with the logged shape, only when this session logged one | | |
+| take-trial-stack | T3: a stack routine replayed with its logged arguments and the Ol's item, only when one fired on a hand take from a stash tab | | |
+| map-follows-trial | After a take that answered `true` and emptied X's cell, X's key is no longer in the kept map | | |
+| room-invalidate | After a zone change and back, `mapkeep stat` reads `current=no reason=room-changed` | | |
+| map-refresh | After the stash reopens, `mapkeep stat` reads current again with `refreshed=` grown; the index recorded as an index, never as identity | | |
+| counts-tool-after | `tools/stash_tab_counts.py` after the game exits: the Ol and Unstable Dust stacks equal the last counts stated, and X's line absent or present as the trial left it | | |
 
 ## Decision gate
 
