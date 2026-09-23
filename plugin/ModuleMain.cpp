@@ -390,6 +390,15 @@ struct ApRollDropScope {
     ApRollDropScope(const ApRollDropScope&) = delete;
     ApRollDropScope& operator=(const ApRollDropScope&) = delete;
 };
+// The probe's own DropItem detour (route 2 fallback) holds the drop-item depth
+// with this guard, for the same reason as the angelic-chance guard below.
+struct ApRollDropDepthHold {
+    bool held;
+    explicit ApRollDropDepthHold(bool hold) : held(hold) { if (held) ++g_ApRollDropItemDepth; }
+    ~ApRollDropDepthHold() { if (held) --g_ApRollDropItemDepth; }
+    ApRollDropDepthHold(const ApRollDropDepthHold&) = delete;
+    ApRollDropDepthHold& operator=(const ApRollDropDepthHold&) = delete;
+};
 // HookAngelicChance holds the angelic-chance depth with this guard rather than
 // a bare ++/--, so a call that throws out of the original cannot leave the
 // depth raised and mark every later row as inside the roll.
@@ -18224,11 +18233,8 @@ static RValue& ApRollDetourBody(int idx, CInstance* S, CInstance* O, RValue& R, 
     ApRollCount(r, S, argc, A);
     // Only reached for DropItem when DropManager's own hook fell back to
     // table-only (route 2): then this detour, not the note, holds the depth.
-    const bool holdsDropItem = (idx == kApRowDropItem);
-    if (holdsDropItem) ++g_ApRollDropItemDepth;
-    RValue& res = r.tramp ? r.tramp(S, O, R, argc, A) : R;
-    if (holdsDropItem) --g_ApRollDropItemDepth;
-    return res;
+    ApRollDropDepthHold dropDepth(idx == kApRowDropItem);
+    return r.tramp ? r.tramp(S, O, R, argc, A) : R;
 }
 
 // BP_ANGELIC_PROBE_SCOPE's entry, from the top of every DropManager hook body.

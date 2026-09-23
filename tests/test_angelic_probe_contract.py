@@ -360,6 +360,14 @@ class AngelicProbeSourceTests(unittest.TestCase):
         self.assertRegex(struct.group(1), r"~ApRollChanceDepthScope\(\)\s*\{\s*--g_ApRollChanceDepth;")
         self.assertNotIn("ApRollChanceDepthScope", self.shipped)
 
+    def test_the_probe_detour_holds_the_drop_item_depth_with_a_guard(self):
+        body = strip_comments(function_body(self.plugin, "static RValue& ApRollDetourBody("))
+        self.assertNotIn("++g_ApRollDropItemDepth", body)
+        self.assertNotIn("--g_ApRollDropItemDepth", body)
+        guard = re.search(r"\bApRollDropDepthHold\s+\w+\s*\(", body)
+        self.assertIsNotNone(guard, "ApRollDetourBody holds the drop-item depth with a guard")
+        self.assertLess(guard.start(), body.index("r.tramp("))
+
     def test_the_gate_is_found_before_drop_manager_hides_drop_item(self):
         full = strip_comments(function_body(self.plugin, "static void InstallHook()"))
         shipped = strip_comments(function_body(self.shipped, "static void InstallHook()"))
