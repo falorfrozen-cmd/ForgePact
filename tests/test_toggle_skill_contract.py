@@ -30,6 +30,14 @@ REPO_ROOT = FORGEPACT_DIR.parent
 PLUGIN_SRC = FORGEPACT_DIR / "plugin" / "ModuleMain.cpp"
 SDK_INCLUDE = REPO_ROOT / "hs-game-sdk" / "cpp" / "include" / "hs_game_sdk"
 SRC_DIR = FORGEPACT_DIR / "src"
+# forgepact-notes-cleanup.yml deletes release-notes-v*.md from main once that
+# version is published (the release page keeps the text). The player-text
+# checks read the notes while they exist and leave only the notes out after.
+RELEASE_NOTES = FORGEPACT_DIR / "release-notes-v1.4.5.md"
+
+
+def read_release_notes():
+    return RELEASE_NOTES.read_text(encoding="utf-8") if RELEASE_NOTES.is_file() else None
 SDK_PY_PATH = REPO_ROOT / "hs-game-sdk" / "python"
 TOOLS_DIR = FORGEPACT_DIR / "tools"
 
@@ -1063,7 +1071,7 @@ class SkillTimerShipContractTests(unittest.TestCase):
         cls.header = (FORGEPACT_DIR / "plugin" / "include" / "ForgePact" / "SkillTimerMod.hpp").read_text(encoding="utf-8")
         cls.panel = (SRC_DIR / "forgepact.py").read_text(encoding="utf-8")
         cls.research_doc = (FORGEPACT_DIR / "docs" / "toggle-skills-research.md").read_text(encoding="utf-8")
-        cls.release_notes = (FORGEPACT_DIR / "release-notes-v1.4.5.md").read_text(encoding="utf-8")
+        cls.release_notes = read_release_notes()
         cls.readme = (FORGEPACT_DIR / "README.md").read_text(encoding="utf-8")
 
     def test_skilltimer_is_a_player_command(self):
@@ -1232,7 +1240,8 @@ class SkillTimerShipContractTests(unittest.TestCase):
         # facing documents so a reader can match the control to the note.
         label = "Timed skill countdown"
         self.assertIn(f'<span class="lbl" style="width:auto;flex:1">{label}', self.panel)
-        self.assertIn(label, self.release_notes)
+        if self.release_notes is not None:
+            self.assertIn(label, self.release_notes)
         self.assertIn(label, self.readme)
 
     # ---- session 8: the countdown's own table (D-S1) ----------------------
@@ -1438,7 +1447,7 @@ class SkillTimerRuleContractTests(unittest.TestCase):
             encoding="utf-8")
         cls.panel = (SRC_DIR / "forgepact.py").read_text(encoding="utf-8")
         cls.research_doc = (FORGEPACT_DIR / "docs" / "toggle-skills-research.md").read_text(encoding="utf-8")
-        cls.release_notes = (FORGEPACT_DIR / "release-notes-v1.4.5.md").read_text(encoding="utf-8")
+        cls.release_notes = read_release_notes()
         cls.readme = (FORGEPACT_DIR / "README.md").read_text(encoding="utf-8")
 
     DENY_LIST = {
@@ -1666,15 +1675,18 @@ class SkillTimerRuleContractTests(unittest.TestCase):
         return re.compile(r"\b(?:" + "|".join(alternatives) + r")\b", re.IGNORECASE)
 
     def _countdown_text_blocks(self):
-        release = self.release_notes[self.release_notes.index("**Timed skill countdown.**"):]
-        cut = release.find("\n- **")
-        if cut >= 0:
-            release = release[:cut]
         readme_row = next(line for line in self.readme.split("\n")
                            if line.startswith("| **Timed skill countdown**"))
         panel = self.panel[self.panel.index("Timed skill countdown<br>"):]
         panel = panel[:panel.index("</span></span>") + len("</span></span>")]
-        return {"release notes": release, "README": readme_row, "panel": panel}
+        blocks = {"README": readme_row, "panel": panel}
+        if self.release_notes is not None:
+            release = self.release_notes[self.release_notes.index("**Timed skill countdown.**"):]
+            cut = release.find("\n- **")
+            if cut >= 0:
+                release = release[:cut]
+            blocks["release notes"] = release
+        return blocks
 
     def _toggle_text_blocks(self):
         # Round 1 (name-free player text): the toggle marker/guard blocks -
@@ -1689,17 +1701,19 @@ class SkillTimerRuleContractTests(unittest.TestCase):
         panel_marker = panel_marker[:panel_marker.index("</span></span>") + len("</span></span>")]
         panel_guard = self.panel[self.panel.index("Stop double cast re-casting a toggle skill<br>"):]
         panel_guard = panel_guard[:panel_guard.index("</span></span>") + len("</span></span>")]
-        notes_marker = self.release_notes[self.release_notes.index("- **Mark a running toggle skill"):]
-        notes_marker = notes_marker[:notes_marker.index("\n- **", 5)]
-        notes_guard = self.release_notes[self.release_notes.index("- **Stop double cast re-casting"):]
-        notes_guard = notes_guard[:notes_guard.index("\n- **", 5)]
-        intro = self.release_notes[:self.release_notes.index("## New")]
-        return {
+        blocks = {
             "README marker": readme_marker, "README guard": readme_guard,
             "panel marker": panel_marker, "panel guard": panel_guard,
-            "release notes marker": notes_marker, "release notes guard": notes_guard,
-            "intro": intro,
         }
+        if self.release_notes is not None:
+            notes_marker = self.release_notes[self.release_notes.index("- **Mark a running toggle skill"):]
+            notes_marker = notes_marker[:notes_marker.index("\n- **", 5)]
+            notes_guard = self.release_notes[self.release_notes.index("- **Stop double cast re-casting"):]
+            notes_guard = notes_guard[:notes_guard.index("\n- **", 5)]
+            intro = self.release_notes[:self.release_notes.index("## New")]
+            blocks.update({"release notes marker": notes_marker, "release notes guard": notes_guard,
+                           "intro": intro})
+        return blocks
 
     def test_player_text_names_no_skill(self):
         pattern = self._forbidden_pattern()
@@ -1723,10 +1737,15 @@ class SkillTimerRuleContractTests(unittest.TestCase):
         # which stay true unreworded because Bushido has no plain cast.
         blocks = self._toggle_text_blocks()
         phrase = "toggle on its own"
+        notes_gone = self.release_notes is None   # published notes leave main
         for label in ("README marker", "README guard", "panel guard", "release notes guard"):
+            if notes_gone and label.startswith("release notes"):
+                continue
             self.assertIn(phrase, " ".join(blocks[label].split()), label)
         self.assertNotIn("each with its toggle sub-talent allocated", blocks["README marker"])
         for label in ("panel marker", "release notes marker"):
+            if notes_gone and label.startswith("release notes"):
+                continue
             self.assertNotIn(phrase, " ".join(blocks[label].split()), label)
 
     def test_player_text_states_behaviour_without_overclaim(self):
@@ -2456,7 +2475,7 @@ class SkillTimerBuffContractTests(unittest.TestCase):
         cls.toggle_header = (FORGEPACT_DIR / "plugin" / "include" / "ForgePact" / "ToggleSkillMod.hpp").read_text(
             encoding="utf-8")
         cls.research_doc = (FORGEPACT_DIR / "docs" / "toggle-skills-research.md").read_text(encoding="utf-8")
-        cls.release_notes = (FORGEPACT_DIR / "release-notes-v1.4.5.md").read_text(encoding="utf-8")
+        cls.release_notes = read_release_notes()
         cls.readme = (FORGEPACT_DIR / "README.md").read_text(encoding="utf-8")
         cls.panel = (SRC_DIR / "forgepact.py").read_text(encoding="utf-8")
 
@@ -2472,15 +2491,18 @@ class SkillTimerBuffContractTests(unittest.TestCase):
         # Same three blocks SkillTimerRuleContractTests reads - duplicated
         # rather than imported across classes, the way this file already
         # duplicates small helpers (guide: match the file's own shape).
-        release = self.release_notes[self.release_notes.index("**Timed skill countdown.**"):]
-        cut = release.find("\n- **")
-        if cut >= 0:
-            release = release[:cut]
         readme_row = next(line for line in self.readme.split("\n")
                            if line.startswith("| **Timed skill countdown**"))
         panel = self.panel[self.panel.index("Timed skill countdown<br>"):]
         panel = panel[:panel.index("</span></span>") + len("</span></span>")]
-        return {"release notes": release, "README": readme_row, "panel": panel}
+        blocks = {"README": readme_row, "panel": panel}
+        if self.release_notes is not None:
+            release = self.release_notes[self.release_notes.index("**Timed skill countdown.**"):]
+            cut = release.find("\n- **")
+            if cut >= 0:
+                release = release[:cut]
+            blocks["release notes"] = release
+        return blocks
 
     # ---- 1: every shipped row was measured (AC10) ---------------------------
 

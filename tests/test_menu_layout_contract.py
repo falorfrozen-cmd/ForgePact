@@ -202,6 +202,8 @@ class MenuLayoutContract(unittest.TestCase):
     # --- documentation ------------------------------------------------------------
 
     def test_release_notes_name_the_command(self):
+        if not NOTES.is_file():   # published notes leave main (forgepact-notes-cleanup.yml)
+            self.skipTest(f"{NOTES.name} is published and no longer on main")
         self.assertIn("menulayout", NOTES.read_text(encoding="utf-8"))
 
 

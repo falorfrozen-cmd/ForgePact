@@ -954,10 +954,11 @@ class RestartAnytimeContractTests(unittest.TestCase):
         self.assertIn("Restart zone at any time", forgepact.HTML)
 
     def test_release_notes_readme_and_guide_record_the_mod(self):
-        notes = NOTES.read_text(encoding="utf-8").replace("\r\n", "\n")
-        new = notes[notes.index("\n## New\n"):notes.index("\n## ", notes.index("\n## New\n") + 1)]
-        bullets = re.split(r"(?m)^- ", new)[1:]
-        self.assertTrue([b for b in bullets if "Restart" in b and "off by default" in b])
+        if NOTES.is_file():   # published notes leave main (forgepact-notes-cleanup.yml)
+            notes = NOTES.read_text(encoding="utf-8").replace("\r\n", "\n")
+            new = notes[notes.index("\n## New\n"):notes.index("\n## ", notes.index("\n## New\n") + 1)]
+            bullets = re.split(r"(?m)^- ", new)[1:]
+            self.assertTrue([b for b in bullets if "Restart" in b and "off by default" in b])
         readme = README.read_text(encoding="utf-8").replace("\r\n", "\n")
         rows = [line for line in readme.splitlines() if line.startswith("| **")]
         self.assertTrue([r for r in rows if "Restart" in r and "off by default" in r])
