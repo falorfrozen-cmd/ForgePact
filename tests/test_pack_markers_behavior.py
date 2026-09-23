@@ -115,6 +115,12 @@ class PackMarkersBehaviorTests(unittest.TestCase):
         self.assertScenario("draw/kind_selects_icon")
         self.assertScenario("draw/bad_args_skip")
 
+    def test_the_games_draw_state_is_put_back(self):
+        # PR #67 review: the sprite path used to leave the badge colour and a
+        # guessed alpha behind.
+        self.assertScenario("draw/state_restored_on_sprite_path")
+        self.assertScenario("draw/state_restored_on_primitive_path")
+
 
 if __name__ == "__main__":
     unittest.main()

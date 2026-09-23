@@ -39,6 +39,7 @@ struct World {
     bool refuseRelative = false;          // the sandbox refuses the relative path: only the absolute one works
     std::vector<std::string> addedPaths;
     std::vector<std::string> drawn;       // "subimg,x,y,scale,colour,alpha" per sprite draw
+    double drawAlpha = 1.0, drawColour = 16777215.0, drawFont = 0.0;   // the runner's global draw state
 };
 static World world;
 static int familyIndex(const std::string& name) { auto it = world.objects.find(name); return it == world.objects.end() ? -1 : it->second; }
@@ -79,11 +80,12 @@ struct Runner {
             return RValue();
         }
         if (name == "draw_circle") { ++world.rings; return RValue(); }
-        if (name == "draw_set_alpha" || name == "draw_set_colour") return RValue();
-        if (name == "draw_get_alpha") return RValue(1.0);
-        if (name == "draw_get_colour") return RValue(16777215.0);
-        if (name == "draw_get_font") return RValue(0.0);
-        if (name == "draw_set_font") return RValue();
+        if (name == "draw_set_alpha") { world.drawAlpha = args[0].number; return RValue(); }
+        if (name == "draw_set_colour") { world.drawColour = args[0].number; return RValue(); }
+        if (name == "draw_get_alpha") return RValue(world.drawAlpha);
+        if (name == "draw_get_colour") return RValue(world.drawColour);
+        if (name == "draw_get_font") return RValue(world.drawFont);
+        if (name == "draw_set_font") { world.drawFont = args[0].number; return RValue(); }
         if (name == "draw_text") { ++world.texts; return RValue(); }
         if (name == "sprite_add") {
             ++world.spriteAdds; world.addedPaths.push_back(args[0].text);
@@ -277,6 +279,23 @@ int main() {
     check("draw/bad_args_skip", world.draws == 0 && world.rings == 0, "draws=" + std::to_string(world.draws) + " rings=" + std::to_string(world.rings));
     pm().Draw(sx, sy, off, RValue("nope"));
     check("draw/bad_sprite_rings", world.draws == 0 && world.rings == (long)pm().Count(), "rings=" + std::to_string(world.rings));
+    // Draw state is the game's: whatever colour, alpha and font the layer had
+    // before the markers, it has again after them, on the sprite path (ring and
+    // icons off, a usable sprite) as well as on the dot path, badges included.
+    auto drawStateKept = [&](const char* label) {
+        pm().StyleRef().clusterPx = 96; pm().StyleChanged();
+        world.drawAlpha = 0.35; world.drawColour = 1193046.0; world.drawFont = 7.0; world.texts = 0;
+        pm().Draw(sx, sy, off, sprite);
+        check(label, world.texts > 0 && world.drawAlpha == 0.35 && world.drawColour == 1193046.0 && world.drawFont == 7.0,
+            "texts=" + std::to_string(world.texts) + " alpha=" + std::to_string(world.drawAlpha)
+            + " colour=" + std::to_string(world.drawColour) + " font=" + std::to_string(world.drawFont));
+        world.drawAlpha = 1.0; world.drawColour = 16777215.0; world.drawFont = 0.0;
+        pm().StyleRef().clusterPx = 0; pm().StyleChanged();
+    };
+    drawStateKept("draw/state_restored_on_sprite_path");
+    pm().StyleRef().ring = true;
+    drawStateKept("draw/state_restored_on_primitive_path");
+    pm().StyleRef().ring = false;
     pm().StyleRef().ring = true; world.rings = 0;   // outline still off from above
     pm().Draw(sx, sy, RValue(), sprite);
     check("draw/ring_style", world.rings == (long)pm().Count());

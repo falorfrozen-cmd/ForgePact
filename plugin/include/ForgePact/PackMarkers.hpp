@@ -182,14 +182,25 @@ public:
             const bool useIcons = m_Style.icons && m_IconsLoaded > 0;
             const bool spriteOk = IsNumber(sprite) || sprite.m_Kind == VALUE_REF;
             const bool primitives = useIcons || m_Style.ring || !spriteOk;
-            // Primitives and badges use the runner's global draw state, so it is
-            // saved and put back: the game's own layer code reads draw_get_alpha.
-            double savedAlpha = 1.0, savedColour = 16777215.0;
-            if (primitives) {
-                try { RValue a = g_Yytk->CallBuiltin("draw_get_alpha", {}); if (IsNumber(a)) savedAlpha = a.ToDouble(); } catch (...) {}
-                try { RValue c = g_Yytk->CallBuiltin("draw_get_colour", {}); if (IsNumber(c)) savedColour = c.ToDouble(); } catch (...) {}
-                g_Yytk->CallBuiltin("draw_set_alpha", { RValue(m_Style.alpha) });
-            }
+            // Primitives and badges change the runner's global draw state, and the
+            // game's own layer code reads it (draw_get_alpha), so it is read up
+            // front on every path and the guard puts colour, alpha and font back
+            // when Draw leaves - whichever pass changed them, and even if a draw
+            // call throws. (PR #67 review: the sprite path with badges used to
+            // leave the badge colour and a guessed alpha behind.)
+            struct DrawStateGuard {
+                double alpha = 1.0, colour = 16777215.0;
+                bool fontSaved = false;
+                RValue font;
+                ~DrawStateGuard() {
+                    try { if (fontSaved && IsNumber(font)) g_Yytk->CallBuiltin("draw_set_font", { font }); } catch (...) {}
+                    try { g_Yytk->CallBuiltin("draw_set_colour", { RValue(colour) }); } catch (...) {}
+                    try { g_Yytk->CallBuiltin("draw_set_alpha", { RValue(alpha) }); } catch (...) {}
+                }
+            } saved;
+            try { RValue a = g_Yytk->CallBuiltin("draw_get_alpha", {}); if (IsNumber(a)) saved.alpha = a.ToDouble(); } catch (...) {}
+            try { RValue c = g_Yytk->CallBuiltin("draw_get_colour", {}); if (IsNumber(c)) saved.colour = c.ToDouble(); } catch (...) {}
+            if (primitives) g_Yytk->CallBuiltin("draw_set_alpha", { RValue(m_Style.alpha) });
             uint32_t lastColour = 0xFFFFFFFFu;
             auto setColour = [&](uint32_t c) {
                 if (c != lastColour) { g_Yytk->CallBuiltin("draw_set_colour", { RValue((double)c) }); lastColour = c; }
@@ -226,12 +237,13 @@ public:
             }
             // Pass 3: the count badge on collapsed clusters, top-right of the marker.
             if (m_Style.badge) {
-                bool fontSet = false; RValue savedFont;
+                bool fontSet = false;
                 for (const Cluster& c : m_Clusters) {
                     if (c.count < 2) continue;
                     if (!fontSet) {
                         try {
-                            savedFont = g_Yytk->CallBuiltin("draw_get_font", {});
+                            saved.font = g_Yytk->CallBuiltin("draw_get_font", {});
+                            saved.fontSaved = true;
                             RValue smallFont = g_Yytk->CallBuiltin("variable_global_get", { RValue("font_smallest") });
                             if (IsNumber(smallFont) && smallFont.ToDouble() >= 0) g_Yytk->CallBuiltin("draw_set_font", { smallFont });
                         } catch (...) {}
@@ -248,15 +260,8 @@ public:
                     g_Yytk->CallBuiltin("draw_text", { RValue(bx), RValue(by), RValue(text.c_str()) });
                     ++m_BadgeDraws;
                 }
-                if (fontSet) {
-                    try { if (IsNumber(savedFont)) g_Yytk->CallBuiltin("draw_set_font", { savedFont }); } catch (...) {}
-                    if (!primitives) g_Yytk->CallBuiltin("draw_set_alpha", { RValue(savedAlpha) });
-                }
             }
-            if (primitives) {
-                g_Yytk->CallBuiltin("draw_set_colour", { RValue(savedColour) });
-                g_Yytk->CallBuiltin("draw_set_alpha", { RValue(savedAlpha) });
-            }
+            // `saved` restores colour, alpha and font as it goes out of scope here.
         } catch (...) { ++m_DrawErrors; }
     }
 
