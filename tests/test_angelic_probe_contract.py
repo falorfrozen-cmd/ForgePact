@@ -13,10 +13,10 @@ These tests pin what would otherwise rot quietly.
 1. **The verb never reaches a player build.** The literal disappears when the
    research blocks are stripped; the three places the player build compiles
    around it (`HookAngelicChance`, DropManager's `FP_DROP_HOOK` and
-   `InstallHook`) compile to exactly what they compiled to at `137a403` - the
-   player-build comparison class below, run with `FORGEPACT_TEST_BASE_DIR`
-   naming a directory that holds that commit's `ModuleMain.cpp` and
-   `DropManager.hpp`.
+   `InstallHook`) compile to exactly what they compiled to at `be3a723`, the
+   ForgePact `main` commit this branch merged in - the player-build comparison
+   class below, run with `FORGEPACT_TEST_BASE_DIR` naming a directory that
+   holds that commit's `ModuleMain.cpp` and `DropManager.hpp`.
 2. **Every row is attached by a route that can see compiled GML's direct
    calls, or says it cannot.** Seven of the seventeen candidate scripts are
    already held by a ForgePact hook when the research build finishes starting
@@ -362,9 +362,11 @@ class AngelicProbeSourceTests(unittest.TestCase):
 
 
 @unittest.skipUnless(BASE_DIR, "set FORGEPACT_TEST_BASE_DIR to a directory holding "
-                               "137a403's ModuleMain.cpp and DropManager.hpp")
+                               "be3a723's ModuleMain.cpp and DropManager.hpp "
+                               "(the ForgePact main commit this branch merged in)")
 class PlayerBuildUnchangedTests(unittest.TestCase):
-    """The player build compiles to what it compiled to at 137a403."""
+    """The player build compiles to what it compiled to at be3a723, the
+    ForgePact main commit this branch merged in."""
 
     @classmethod
     def setUpClass(cls):
