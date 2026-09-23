@@ -93,6 +93,7 @@ STRICT_DOCS = (
     # Written to this standard from the start (issue #64): the route and
     # attribution of each probe row in words, no offsets from the log lines.
     "angelic-roll-hook-research.md",
+    "restart-always-available-research.md",
 )
 
 # One known-bad sample per category, built in pieces.

@@ -70,14 +70,14 @@ class MapRevealBehaviorTests(unittest.TestCase):
             batch = out / "compile.cmd"
             batch.write_text(
                 f'@echo off\ncall "{vcvars}" >nul\nif errorlevel 1 exit /b 1\n'
-                f'cl /nologo /std:c++20 /EHsc /O2 "{cpp}" /Fe:"{cls.binary}" /Fo:"{out / "mapreveal.obj"}"\n'
+                f'cl /nologo /std:c++20 /EHsc /O2 /I "{ROOT / "plugin/include"}" "{cpp}" /Fe:"{cls.binary}" /Fo:"{out / "mapreveal.obj"}"\n'
                 f'exit /b %errorlevel%\n', encoding="utf-8")
             command = ["cmd", "/d", "/c", str(batch)]
         else:
             compiler = shutil.which("c++")
             if not compiler:
                 raise unittest.SkipTest("A C++20 compiler is required for native behavior tests")
-            command = [compiler, "-std=c++20", "-O2", str(cpp), "-o", str(cls.binary)]
+            command = [compiler, "-std=c++20", "-O2", "-I", str(ROOT / "plugin/include"), str(cpp), "-o", str(cls.binary)]
 
         result = subprocess.run(command, cwd=out, capture_output=True, text=True)
         (out / "compile.log").write_text(result.stdout + result.stderr, encoding="utf-8")
@@ -93,6 +93,10 @@ class MapRevealBehaviorTests(unittest.TestCase):
             if line.split(" ")[1:2] == [label]:
                 return line
         raise AssertionError(f"scenario {label!r} not in harness output:\n{self.output}")
+
+    def test_five_second_production_deadline(self):
+        for name in ('production_groups','production_under_five_seconds','production_not_reported_late','production_no_tail'):
+            self.assertTrue(self.line('deadline/'+name).startswith('PASS '),self.output)
 
     def assertScenario(self, label):
         self.assertTrue(self.line(label).startswith("PASS "), self.line(label))
@@ -169,13 +173,25 @@ class MapRevealBehaviorTests(unittest.TestCase):
         self.assertScenario("beacon_and_window/timer_reads")
 
     def test_the_lied_to_path_cost_is_printed(self):
-        # Finding 8's first threshold condition: after the dedup a lied-to
-        # creator costs exactly two runtime calls, so the object_index read is
-        # 50% of what is left. The threshold is 33%, so this passes - which
-        # deliberately moves the decision onto the measured timing ratio the
-        # research probe produces live.
+        # Object type, readiness, and stable id: three calls during the window.
         self.assertScenario("liedto/callbuiltins")
         self.assertScenario("liedto/object_index_share_pct")
+
+    def test_capacity_gates_only_early_population(self):
+        for case in ("unavailable_window", "unavailable_distance", "fog_still_revealed", "recovered", "exhausted_reserve"):
+            self.assertScenario("capacity/" + case)
+
+    def test_late_creators_and_ready_siblings_are_not_abandoned(self):
+        for case in ("late_creators/still_pending", "late_creators/no_early_window",
+                     "late_creators/unready_untouched", "late_creators/eventually_admitted",
+                     "ready_sibling/bounded_probe", "ready_sibling/admitted",
+                     "ready_sibling/unready_untouched", "empty_zone/eventually_stops_polling",
+                     "empty_zone/no_spawn_window"):
+            self.assertScenario(case)
+
+    def test_dense_queue_completes_without_exceeding_frame_budget(self):
+        for case in ("tail_survives_timeout", "all_groups", "per_frame_limit", "no_tail", "closes_when_done", "disabled_clears", "staggered_448_eventually_complete"):
+            self.assertScenario("queue/" + case)
 
     def test_the_beacon_lie_is_gated_by_the_same_invariant(self):
         # "Never answer 0 to an uninitialised creator" is a property of the

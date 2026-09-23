@@ -30,6 +30,14 @@ REPO_ROOT = FORGEPACT_DIR.parent
 PLUGIN_SRC = FORGEPACT_DIR / "plugin" / "ModuleMain.cpp"
 SDK_INCLUDE = REPO_ROOT / "hs-game-sdk" / "cpp" / "include" / "hs_game_sdk"
 SRC_DIR = FORGEPACT_DIR / "src"
+# forgepact-notes-cleanup.yml deletes release-notes-v*.md from main once that
+# version is published (the release page keeps the text). The player-text
+# checks read the notes while they exist and leave only the notes out after.
+RELEASE_NOTES = FORGEPACT_DIR / "release-notes-v1.4.5.md"
+
+
+def read_release_notes():
+    return RELEASE_NOTES.read_text(encoding="utf-8") if RELEASE_NOTES.is_file() else None
 SDK_PY_PATH = REPO_ROOT / "hs-game-sdk" / "python"
 TOOLS_DIR = FORGEPACT_DIR / "tools"
 
@@ -398,7 +406,13 @@ class ToggleDeepReadContractTests(unittest.TestCase):
 
     def test_research_build_only(self):
         self.assertGreater(self.block.count("TgProbeDeep"), 0)
-        self.assertEqual(self.plugin.count("TgProbeDeep"), self.block.count("TgProbeDeep"))
+        # One other research instrument reuses the path reader, read-only:
+        # restartprobe's `path` scope (issue #8, round 2). Every use outside
+        # this block is inside that research block and names only the reader.
+        rp_start = self.plugin.index("// ---- restartprobe: pause-menu Restart gate research")
+        rp = self.plugin[rp_start:self.plugin.index("#endif // FORGEPACT_RELEASE (restartprobe)", rp_start)]
+        self.assertEqual(self.plugin.count("TgProbeDeep"), self.block.count("TgProbeDeep") + rp.count("TgProbeDeep"))
+        self.assertEqual(set(re.findall(r"\bTgProbeDeep\w*", rp)), {"TgProbeDeepGet"})
         self.assertNotIn("TgProbeDeep", strip_research_blocks(self.plugin))
 
     def test_walker_expands_every_container_kind_within_caps(self):
@@ -755,7 +769,7 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
         self.assertNotIn("TgProbeMark", self.stripped)
         self.assertNotIn("TgProbeSpurnAfterDraw", self.stripped)
 
-    def test_kplayercommands_is_unchanged_from_7aa3c66_plus_toggleborder(self):
+    def test_kplayercommands_contains_only_documented_player_commands(self):
         # P2 (ToggleIndicatorShipContractTests below) adds `toggleborder` -
         # the one entry this set has ever gained since 7aa3c66 - so this
         # class's own P1b-era assertion (which held through session 4) is
@@ -787,6 +801,14 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
             # Another feature in the same table, named rather than ignored:
             # the read-only menu listing (test_menu_layout_contract.py).
             "menulayout",
+            # And "Restart zone at any time" (issue #8,
+            # test_restart_anytime_contract.py).
+            "restartanytime",
+            # Explicit new player command, covered by test_mining_ore_behavior.
+            "miningore", "minerhelm",
+            # Pack markers (map reveal's monster half since 1.4.5): marker
+            # look and counters only; test_map_reveal_contract.py covers it.
+            "packmarks",
         }
         self.assertEqual(entries, expected)
 
@@ -1049,7 +1071,7 @@ class SkillTimerShipContractTests(unittest.TestCase):
         cls.header = (FORGEPACT_DIR / "plugin" / "include" / "ForgePact" / "SkillTimerMod.hpp").read_text(encoding="utf-8")
         cls.panel = (SRC_DIR / "forgepact.py").read_text(encoding="utf-8")
         cls.research_doc = (FORGEPACT_DIR / "docs" / "toggle-skills-research.md").read_text(encoding="utf-8")
-        cls.release_notes = (FORGEPACT_DIR / "release-notes-v1.4.5.md").read_text(encoding="utf-8")
+        cls.release_notes = read_release_notes()
         cls.readme = (FORGEPACT_DIR / "README.md").read_text(encoding="utf-8")
 
     def test_skilltimer_is_a_player_command(self):
@@ -1218,7 +1240,8 @@ class SkillTimerShipContractTests(unittest.TestCase):
         # facing documents so a reader can match the control to the note.
         label = "Timed skill countdown"
         self.assertIn(f'<span class="lbl" style="width:auto;flex:1">{label}', self.panel)
-        self.assertIn(label, self.release_notes)
+        if self.release_notes is not None:
+            self.assertIn(label, self.release_notes)
         self.assertIn(label, self.readme)
 
     # ---- session 8: the countdown's own table (D-S1) ----------------------
@@ -1424,7 +1447,7 @@ class SkillTimerRuleContractTests(unittest.TestCase):
             encoding="utf-8")
         cls.panel = (SRC_DIR / "forgepact.py").read_text(encoding="utf-8")
         cls.research_doc = (FORGEPACT_DIR / "docs" / "toggle-skills-research.md").read_text(encoding="utf-8")
-        cls.release_notes = (FORGEPACT_DIR / "release-notes-v1.4.5.md").read_text(encoding="utf-8")
+        cls.release_notes = read_release_notes()
         cls.readme = (FORGEPACT_DIR / "README.md").read_text(encoding="utf-8")
 
     DENY_LIST = {
@@ -1652,15 +1675,18 @@ class SkillTimerRuleContractTests(unittest.TestCase):
         return re.compile(r"\b(?:" + "|".join(alternatives) + r")\b", re.IGNORECASE)
 
     def _countdown_text_blocks(self):
-        release = self.release_notes[self.release_notes.index("**Timed skill countdown.**"):]
-        cut = release.find("\n- **")
-        if cut >= 0:
-            release = release[:cut]
         readme_row = next(line for line in self.readme.split("\n")
                            if line.startswith("| **Timed skill countdown**"))
         panel = self.panel[self.panel.index("Timed skill countdown<br>"):]
         panel = panel[:panel.index("</span></span>") + len("</span></span>")]
-        return {"release notes": release, "README": readme_row, "panel": panel}
+        blocks = {"README": readme_row, "panel": panel}
+        if self.release_notes is not None:
+            release = self.release_notes[self.release_notes.index("**Timed skill countdown.**"):]
+            cut = release.find("\n- **")
+            if cut >= 0:
+                release = release[:cut]
+            blocks["release notes"] = release
+        return blocks
 
     def _toggle_text_blocks(self):
         # Round 1 (name-free player text): the toggle marker/guard blocks -
@@ -1675,17 +1701,19 @@ class SkillTimerRuleContractTests(unittest.TestCase):
         panel_marker = panel_marker[:panel_marker.index("</span></span>") + len("</span></span>")]
         panel_guard = self.panel[self.panel.index("Stop double cast re-casting a toggle skill<br>"):]
         panel_guard = panel_guard[:panel_guard.index("</span></span>") + len("</span></span>")]
-        notes_marker = self.release_notes[self.release_notes.index("- **Mark a running toggle skill"):]
-        notes_marker = notes_marker[:notes_marker.index("\n- **", 5)]
-        notes_guard = self.release_notes[self.release_notes.index("- **Stop double cast re-casting"):]
-        notes_guard = notes_guard[:notes_guard.index("\n- **", 5)]
-        intro = self.release_notes[:self.release_notes.index("## New")]
-        return {
+        blocks = {
             "README marker": readme_marker, "README guard": readme_guard,
             "panel marker": panel_marker, "panel guard": panel_guard,
-            "release notes marker": notes_marker, "release notes guard": notes_guard,
-            "intro": intro,
         }
+        if self.release_notes is not None:
+            notes_marker = self.release_notes[self.release_notes.index("- **Mark a running toggle skill"):]
+            notes_marker = notes_marker[:notes_marker.index("\n- **", 5)]
+            notes_guard = self.release_notes[self.release_notes.index("- **Stop double cast re-casting"):]
+            notes_guard = notes_guard[:notes_guard.index("\n- **", 5)]
+            intro = self.release_notes[:self.release_notes.index("## New")]
+            blocks.update({"release notes marker": notes_marker, "release notes guard": notes_guard,
+                           "intro": intro})
+        return blocks
 
     def test_player_text_names_no_skill(self):
         pattern = self._forbidden_pattern()
@@ -1709,10 +1737,15 @@ class SkillTimerRuleContractTests(unittest.TestCase):
         # which stay true unreworded because Bushido has no plain cast.
         blocks = self._toggle_text_blocks()
         phrase = "toggle on its own"
+        notes_gone = self.release_notes is None   # published notes leave main
         for label in ("README marker", "README guard", "panel guard", "release notes guard"):
+            if notes_gone and label.startswith("release notes"):
+                continue
             self.assertIn(phrase, " ".join(blocks[label].split()), label)
         self.assertNotIn("each with its toggle sub-talent allocated", blocks["README marker"])
         for label in ("panel marker", "release notes marker"):
+            if notes_gone and label.startswith("release notes"):
+                continue
             self.assertNotIn(phrase, " ".join(blocks[label].split()), label)
 
     def test_player_text_states_behaviour_without_overclaim(self):
@@ -1730,9 +1763,6 @@ class SkillTimerRuleContractTests(unittest.TestCase):
                 self.assertIn(word, low, (label, word))
             self.assertIsNone(overclaim_skill.search(text), (label, text))
             self.assertIsNone(overclaim_toggle.search(text), (label, text))
-        self.assertEqual(subprocess.run(
-            ["git", "tag", "--list", "v1.4.5"], cwd=FORGEPACT_DIR, capture_output=True, text=True
-        ).stdout.strip(), "")
 
 
 class ToggleSkillTableContractTests(unittest.TestCase):
@@ -2390,6 +2420,10 @@ UNCHANGED_SINCE_T1 = (
 # research block, no new hook (context "Draw site, and the pins it moves").
 SKILL_TIMER_DRAW_CALL_LINE = "    SkillTimerDraw();"
 
+# The Miner's Helmet (1.4.5) draws its cosmetic pulse from the same callback,
+# on the line straight after the countdown's; it is removed the same way.
+MINER_HELMET_DRAW_CALL_LINE = "    ForgePact::MinerHelmet::Draw();"
+
 
 def assert_hook_draw_hud_buffs_unchanged_plus_skilltimer(testcase, new_body, old_body):
     """NARROWED for issue #55, not deleted: `Hook_DrawHudBuffs` was the one
@@ -2402,7 +2436,9 @@ def assert_hook_draw_hud_buffs_unchanged_plus_skilltimer(testcase, new_body, old
     testcase.assertEqual(lines.count(SKILL_TIMER_DRAW_CALL_LINE), 1, new_body)
     call_at = lines.index(SKILL_TIMER_DRAW_CALL_LINE)
     testcase.assertEqual(lines[call_at - 1].strip(), "ToggleIndicatorDraw();", new_body)
-    del lines[call_at]
+    testcase.assertEqual(lines.count(MINER_HELMET_DRAW_CALL_LINE), 1, new_body)
+    testcase.assertEqual(lines[call_at + 1], MINER_HELMET_DRAW_CALL_LINE, new_body)
+    del lines[call_at:call_at + 2]
     testcase.assertEqual("\n".join(lines), old_body)
 
 # The research block phase S must not touch at all: the sprite look probe the
@@ -2439,7 +2475,7 @@ class SkillTimerBuffContractTests(unittest.TestCase):
         cls.toggle_header = (FORGEPACT_DIR / "plugin" / "include" / "ForgePact" / "ToggleSkillMod.hpp").read_text(
             encoding="utf-8")
         cls.research_doc = (FORGEPACT_DIR / "docs" / "toggle-skills-research.md").read_text(encoding="utf-8")
-        cls.release_notes = (FORGEPACT_DIR / "release-notes-v1.4.5.md").read_text(encoding="utf-8")
+        cls.release_notes = read_release_notes()
         cls.readme = (FORGEPACT_DIR / "README.md").read_text(encoding="utf-8")
         cls.panel = (SRC_DIR / "forgepact.py").read_text(encoding="utf-8")
 
@@ -2455,15 +2491,18 @@ class SkillTimerBuffContractTests(unittest.TestCase):
         # Same three blocks SkillTimerRuleContractTests reads - duplicated
         # rather than imported across classes, the way this file already
         # duplicates small helpers (guide: match the file's own shape).
-        release = self.release_notes[self.release_notes.index("**Timed skill countdown.**"):]
-        cut = release.find("\n- **")
-        if cut >= 0:
-            release = release[:cut]
         readme_row = next(line for line in self.readme.split("\n")
                            if line.startswith("| **Timed skill countdown**"))
         panel = self.panel[self.panel.index("Timed skill countdown<br>"):]
         panel = panel[:panel.index("</span></span>") + len("</span></span>")]
-        return {"release notes": release, "README": readme_row, "panel": panel}
+        blocks = {"README": readme_row, "panel": panel}
+        if self.release_notes is not None:
+            release = self.release_notes[self.release_notes.index("**Timed skill countdown.**"):]
+            cut = release.find("\n- **")
+            if cut >= 0:
+                release = release[:cut]
+            blocks["release notes"] = release
+        return blocks
 
     # ---- 1: every shipped row was measured (AC10) ---------------------------
 
@@ -2863,8 +2902,12 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         now = as_set(re.search(pattern, self.plugin, re.S).group(1))
         before = as_set(re.search(pattern, old, re.S).group(1))
         # `menulayout` is the read-only menu listing, another feature landing
-        # in the same table (test_menu_layout_contract.py pins it).
-        self.assertEqual(now - before, {"autoprospect", "skilltimer", "menulayout"})
+        # in the same table (test_menu_layout_contract.py pins it), and
+        # `restartanytime` is issue #8's (test_restart_anytime_contract.py).
+        # `miningore`, `minerhelm` and `packmarks` are 1.4.5's mining slider,
+        # Miner's Helmet and map pack markers (their own tests cover them).
+        self.assertEqual(now - before, {"autoprospect", "skilltimer", "menulayout", "restartanytime",
+                                        "miningore", "minerhelm", "packmarks"})
         self.assertEqual(before - now, set())
 
     # ---- Sprite look probe (R round 3, issue #11): `tgprobe sprite ...` ----
