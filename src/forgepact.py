@@ -196,10 +196,10 @@ DEFAULTS = {
     "density_on": False,
     "auto_apply": True,
     "map_reveal": False,
-    # Sub-toggle of map_reveal.  Only meaningful while map_reveal is on. Since
-    # 1.4.5 it marks every pack's spot on the map (one icon per unspawned
-    # spawner, no monster created); on by default because that is what
-    # revealing a map is expected to show.
+    # Sub-toggle of map_reveal.  Only meaningful while map_reveal is on. It
+    # marks every pack's spot on the map (one icon per unspawned spawner,
+    # no monster created); on by default because that is what revealing a
+    # map is expected to show.
     "map_reveal_packs": True,
     # Second sub-toggle of map_reveal: the old "fill the map" pass that really
     # spawns every pack on arrival. Off by default - the living monsters are
@@ -742,8 +742,10 @@ def build_cmds(cfg: dict) -> list:
         # this function - emit only what is actually needed).
         if not cfg.get("map_reveal_packs", True):
             out.append("reveal packs 0")
-        # The old "fill the map" pass is opt-in since 1.4.5: the plugin
-        # defaults it off, so it is only ever emitted to turn it ON.
+        # The old "fill the map" pass is opt-in now that the pack markers
+        # exist: the plugin defaults it off, so it is only ever emitted to
+        # turn it ON. (No version number here: the panel's version must
+        # appear exactly once, on the __version__ line.)
         if cfg.get("map_reveal_spawn", False):
             out.append("reveal spawn 1")
     if cfg.get("headhunter", False):

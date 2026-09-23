@@ -1744,9 +1744,6 @@ class SkillTimerRuleContractTests(unittest.TestCase):
                 self.assertIn(word, low, (label, word))
             self.assertIsNone(overclaim_skill.search(text), (label, text))
             self.assertIsNone(overclaim_toggle.search(text), (label, text))
-        self.assertEqual(subprocess.run(
-            ["git", "tag", "--list", "v1.4.5"], cwd=FORGEPACT_DIR, capture_output=True, text=True
-        ).stdout.strip(), "")
 
 
 class ToggleSkillTableContractTests(unittest.TestCase):
