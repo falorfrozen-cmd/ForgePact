@@ -871,7 +871,14 @@ are hook observations and rest on the hook controls (`dll-hash`, `marker`,
 
 ### Phase 1c results
 
-Research DLL: PHASE1C-DLL-HEADER
+Research DLL: `plugin_build\BloodPactPlugin_rel.dll`, built 2026-09-23 with
+`plugin_build\build.bat dev` from ForgePact `a7795ca` (SHA-256
+`e9d32ec3adb3238fe7c2b3284498591ae8af416da21302946e034a71712e6429`). The player
+build (`build.bat release`) from the same commit carries no `phase1c` string.
+It is installed as `mods\aurie\BloodPactPlugin.dll` only on the owner's word;
+`### Live procedure 1c`'s `dll-hash` check compares the installed plugin
+against this hash before anything else counts, so a Phase 1b plugin (or any
+other build) fails it.
 
 Filled from the Live 1c capture, one row per check (the names and the
 `## Checks` line format are fixed by `### Live procedure 1c`). Every cell stays
