@@ -20514,6 +20514,19 @@ static bool ApItemFromFingerprint(CInstance* gridInst, const RValue& fp, RValue&
     return ApCallScript(kApFromFpName, gridInst, { fp, RValue(0.0) }, item) && ApIsPlainStruct(item);
 }
 
+#ifndef FORGEPACT_RELEASE
+// craftprobe's `node` (issue #14, Phase 1c): the same by-name lookup, with the
+// self and the second argument chosen by the caller. A bag cell resolves with
+// the fixed shape above; the special-tab cells tried in Phase 1b did not, and
+// whether the game's own stash draws vary the self or the second argument is
+// not measured yet (docs/crafting-materials-research.md, § Phase 1c readers).
+// Research build only: the player build keeps the shape above.
+static bool ApItemFromFingerprintAs(CInstance* self, const RValue& fp, const RValue& a1, RValue& item)
+{
+    return ApCallScript(kApFromFpName, self, { fp, a1 }, item) && ApIsPlainStruct(item);
+}
+#endif
+
 // Each filled cell with its material flag, for the core's move decision. Only
 // on frames NeedsMaterials() asks for (an insert pending, the pass on and not
 // yet run for it): one lookup per filled cell, at most one grid's worth.
@@ -21397,20 +21410,31 @@ static std::atomic<bool> g_CpArmed{ false };
 static volatile long g_CpLogBudget = kCpDefaultLogBudget;
 static std::atomic<bool> g_CpBacking{ false };
 static bool g_CpInCapture = false;                 // game thread only; a capture never nests
+// Game thread only: set while `node` makes its own GetItemFromFingerprint
+// lookup, so a detoured lookup row neither logs nor keeps the instrument's
+// call as if the game had made it (Phase 1c keeps the game's own call shape).
+static bool g_CpOwnLookup = false;
 
 // Phase 1b: in Phase 1 GetInventoryArray(1) returned the bag's main tab, and
 // whether the game ever asks it - or CountInventoryItem - about a special tab
 // (-2, -4) is unknown. Those two rows (CpKeepsPerArgument) therefore also keep
 // the latest return per distinct first argument, up to this many signatures;
-// `backing dump` writes one file per signature.
+// `backing dump` writes one file per signature. Phase 1c keys each row on its
+// own argument (CpBackingArgIndex): GetItemFromFingerprint on its second, so
+// the game's own lookup shape for a stash cell is kept without a hand move.
 static constexpr int kCpBackingMaxArgs = 8;
+static constexpr int kCpBackingMaxSelves = 6;      // distinct self objects one signature names
+static constexpr size_t kCpBackingA0Max = 96;      // a0's text (a fingerprint keeps its class suffix)
 
 struct CpArgKept {
-    std::string sig;               // the first argument as text (`1`, `-2`, `undefined`, ...)
+    std::string sig;               // the keyed argument as text (`1`, `-2`, `undefined`, ...)
     RValue*     value = nullptr;   // heap-held and never deleted, as CpKept::value
     long        call = 0;          // the row's call number of the kept return
     std::string self;
     std::string root;
+    long        calls = 0;         // Phase 1c: returns kept under this signature
+    std::string a0;                // Phase 1c: the latest call's first argument, as text
+    std::vector<std::string> selves;   // Phase 1c: distinct self objects, up to kCpBackingMaxSelves
 };
 
 // One row's kept return while `backing` is on: the latest call's value. An
@@ -21424,13 +21448,14 @@ struct CpKept {
     std::string self;
     std::string root;
     bool        perArg = false;    // set by `backing on` for the rows CpKeepsPerArgument names
+    int         argIndex = 0;      // Phase 1c: which argument the signatures key on (CpBackingArgIndex)
     std::vector<CpArgKept> perArgs;
-    long        perArgFull = 0;    // returns whose first argument found no free signature slot
+    long        perArgFull = 0;    // returns whose keyed argument found no free signature slot
 };
 
-// A first argument as the text `backing` keys on: a whole number without its
+// An argument as the text `backing` keys on: a whole number without its
 // decimals, anything else as Describe prints it, cut short.
-static std::string CpArgSignature(const RValue& a)
+static std::string CpArgSignature(const RValue& a, size_t cut = 48)
 {
     try {
         if (PpIsNumber(a)) {
@@ -21438,7 +21463,7 @@ static std::string CpArgSignature(const RValue& a)
             if (std::isfinite(d) && d == std::floor(d) && std::fabs(d) < 1e15) return std::to_string((long long)d);
         }
         std::string s = Describe(a);
-        if (s.size() > 48) s = s.substr(0, 48) + "...";
+        if (s.size() > cut) s = s.substr(0, cut) + "...";
         return s;
     } catch (...) { return "<unreadable>"; }
 }
@@ -21449,7 +21474,7 @@ static std::string CpArgSignature(const RValue& a)
 static bool CpObserve(const char* label, long n, volatile long* logged, volatile long* logOn,
                       CInstance* S, CInstance* O, int argc, RValue** A)
 {
-    if (!g_CpArmed.load() || !*logOn) return false;
+    if (g_CpOwnLookup || !g_CpArmed.load() || !*logOn) return false;
     const long budget = g_CpLogBudget;
     if (*logged >= budget || InterlockedIncrement(logged) > budget) return false;
     try {
@@ -21463,7 +21488,9 @@ static bool CpObserve(const char* label, long n, volatile long* logged, volatile
 // After the trampoline, on a row `backing` selected: keep what the game's own
 // call returned. The research global is set first, and the slot only after it
 // succeeded, so the slot never holds an unrooted value. A per-argument row
-// also keeps it under its first argument's signature, the same way.
+// also keeps it under its keyed argument's signature (argument argIndex), the
+// same way, with the signature's call count, the latest first argument as text
+// and the distinct self objects that made it.
 static void CpCapture(const char* safe, const char* label, long n, CpKept& kept, CInstance* S, int argc, RValue** A,
                       const RValue& result)
 {
@@ -21481,16 +21508,18 @@ static void CpCapture(const char* safe, const char* label, long n, CpKept& kept,
             Out(std::string("craftprobe backing ") + label + " #" + std::to_string(n) + " self=" + kept.self
                 + " kept " + PpBackingShape(result) + " (the latest return is kept; `backing dump` writes it)");
         if (kept.perArg) {
-            const std::string sig = (argc > 0 && A && A[0]) ? CpArgSignature(*A[0]) : std::string("(no argument)");
+            const int k = kept.argIndex;
+            const std::string sig = (argc > k && A && A[k]) ? CpArgSignature(*A[k]) : "(no argument " + std::to_string(k) + ")";
             CpArgKept* slot = nullptr;
-            for (CpArgKept& k : kept.perArgs) if (k.sig == sig) { slot = &k; break; }
+            for (CpArgKept& s : kept.perArgs) if (s.sig == sig) { slot = &s; break; }
             if (!slot && (int)kept.perArgs.size() < kCpBackingMaxArgs) {
                 kept.perArgs.push_back(CpArgKept());
                 slot = &kept.perArgs.back();
                 slot->sig = sig;
                 slot->root = root + "_arg" + std::to_string(kept.perArgs.size() - 1);
-                Out(std::string("craftprobe backing ") + label + " #" + std::to_string(n) + " new first argument a0=" + sig
-                    + " (" + std::to_string(kept.perArgs.size()) + "/" + std::to_string(kCpBackingMaxArgs) + " signatures kept)");
+                Out(std::string("craftprobe backing ") + label + " #" + std::to_string(n) + " new argument a" + std::to_string(k)
+                    + "=" + sig + " self=" + kept.self + " (" + std::to_string(kept.perArgs.size()) + "/"
+                    + std::to_string(kCpBackingMaxArgs) + " signatures kept)");
             }
             if (!slot) ++kept.perArgFull;
             else {
@@ -21499,6 +21528,13 @@ static void CpCapture(const char* safe, const char* label, long n, CpKept& kept,
                 *slot->value = result;
                 slot->call = n;
                 slot->self = kept.self;
+                ++slot->calls;
+                slot->a0 = (argc > 0 && A && A[0]) ? CpArgSignature(*A[0], kCpBackingA0Max) : std::string("(none)");
+                std::string obj = PpObjectName(S);
+                if (obj.empty()) obj = "(no object)";
+                if ((int)slot->selves.size() < kCpBackingMaxSelves
+                    && std::find(slot->selves.begin(), slot->selves.end(), obj) == slot->selves.end())
+                    slot->selves.push_back(obj);
             }
         }
     } catch (...) {}
@@ -21512,7 +21548,7 @@ static void CpAfter(const char* safe, const char* label, long n, bool logged, bo
         try { Out(std::string("craftprobe ") + label + " #" + std::to_string(n) + " ret=" + PpRetText(result)); }
         catch (...) { Out(std::string("craftprobe ") + label + " #" + std::to_string(n) + " ret=<read failed>"); }
     }
-    if (capture && g_CpBacking.load()) CpCapture(safe, label, n, kept, S, argc, A, result);
+    if (capture && g_CpBacking.load() && !g_CpOwnLookup) CpCapture(safe, label, n, kept, S, argc, A, result);
 }
 
 #define CRAFTPROBE_DETOUR(SAFE, LABEL) \
@@ -21770,6 +21806,33 @@ static void CpAfter(const char* safe, const char* label, long n, bool logged, bo
     X(LoadInv752, "Load_Inventory_obj anon@752", gml_Script_anon_752_gml_Object_Load_Inventory_obj_Create_0) \
     X(LoadInv877, "Load_Inventory_obj anon@877", gml_Script_anon_877_gml_Object_Load_Inventory_obj_Create_0) \
     X(SplitStack1285, "UI_Split_Stack_obj anon@1285", gml_Script_anon_1285_gml_Object_UI_Split_Stack_obj_Create_0) \
+    /* Phase 1c (research doc, Static search, "Phase 1c rows"): LoadStash ran  */ \
+    /* at character load and returned true, so the stash went somewhere while */ \
+    /* its window is closed. Town_Stash_obj's only Create closure, anon@663,  */ \
+    /* is already a row above and is armed again rather than added.           */ \
+    X(GetItemMap, "GetItemMap", gml_Script_GetItemMap) \
+    X(GetInventoryMapPos, "GetInventoryMapPos", gml_Script_GetInventoryMapPos) \
+    X(SaveInventoryMap, "SaveInventoryMap", gml_Script_SaveInventoryMap) \
+    X(LoadInventoryOrderNew, "LoadInventoryOrderNew", gml_Script_LoadInventoryOrderNew) \
+    X(SSaveStashConstants, "s_SaveStashConstants", gml_Script_s_SaveStashConstants) \
+    /* Phase 1c: closures of Console_Save_obj (LoadStash's self at load) */ \
+    X(ConsoleSave1640, "Console_Save_obj anon@1640", gml_Script_anon_1640_gml_Object_Console_Save_obj_Create_0) \
+    X(ConsoleSave1828, "Console_Save_obj anon@1828", gml_Script_anon_1828_gml_Object_Console_Save_obj_Create_0) \
+    X(ConsoleSave2004, "Console_Save_obj anon@2004", gml_Script_anon_2004_gml_Object_Console_Save_obj_Create_0) \
+    X(ConsoleSave2587, "Console_Save_obj anon@2587", gml_Script_anon_2587_gml_Object_Console_Save_obj_Create_0) \
+    X(ConsoleSave3249, "Console_Save_obj anon@3249", gml_Script_anon_3249_gml_Object_Console_Save_obj_Create_0) \
+    X(ConsoleSave3848, "Console_Save_obj anon@3848", gml_Script_anon_3848_gml_Object_Console_Save_obj_Create_0) \
+    /* Phase 1c: closures of Profile_Manager_obj (citrace names them too: one instrument per session) */ \
+    X(ProfileManager2012, "Profile_Manager_obj anon@2012", gml_Script_anon_2012_gml_Object_Profile_Manager_obj_Create_0) \
+    X(ProfileManager2520, "Profile_Manager_obj anon@2520", gml_Script_anon_2520_gml_Object_Profile_Manager_obj_Create_0) \
+    X(ProfileManager3454, "Profile_Manager_obj anon@3454", gml_Script_anon_3454_gml_Object_Profile_Manager_obj_Create_0) \
+    X(ProfileManager5201, "Profile_Manager_obj anon@5201", gml_Script_anon_5201_gml_Object_Profile_Manager_obj_Create_0) \
+    X(ProfileManager5349, "Profile_Manager_obj anon@5349", gml_Script_anon_5349_gml_Object_Profile_Manager_obj_Create_0) \
+    X(ProfileManager5835, "Profile_Manager_obj anon@5835", gml_Script_anon_5835_gml_Object_Profile_Manager_obj_Create_0) \
+    X(ProfileManager6549, "Profile_Manager_obj anon@6549", gml_Script_anon_6549_gml_Object_Profile_Manager_obj_Create_0) \
+    X(ProfileManager6879, "Profile_Manager_obj anon@6879", gml_Script_anon_6879_gml_Object_Profile_Manager_obj_Create_0) \
+    X(ProfileManager8168, "Profile_Manager_obj anon@8168", gml_Script_anon_8168_gml_Object_Profile_Manager_obj_Create_0) \
+    X(ProfileManager9994, "Profile_Manager_obj anon@9994", gml_Script_anon_9994_gml_Object_Profile_Manager_obj_Create_0) \
     /* positive control: fires from every interactable's Step event */ \
     X(CheckPlayerInteraction, "CheckPlayerInteraction", gml_Script_CheckPlayerInteraction)
 
@@ -22224,6 +22287,83 @@ static void CpFollowInstance(const std::string& indent, const RValue& inst, long
     }
 }
 
+// A dotted path (`stashGrid.nodeGrid`) as its names; an empty name stays in
+// so the caller can refuse it.
+static std::vector<std::string> CpSplitPath(const std::string& text)
+{
+    std::vector<std::string> path;
+    std::string seg;
+    for (char c : text) {
+        if (c == '.') { path.push_back(seg); seg.clear(); } else seg += c;
+    }
+    path.push_back(seg);
+    return path;
+}
+
+// The root `var` and `node var` start from: `id:<n>` (after instance_exists),
+// `<Obj> <nth>` (MpResolve) or `global`. Prints why and returns false when it
+// cannot be had.
+static bool CpVarRoot(const std::string& tag, const std::vector<std::string>& tok, bool byId, bool global,
+                      RValue& cur, long long& rootId, std::string& where)
+{
+    rootId = -1;
+    if (byId) {
+        try { rootId = std::stoll(tok[1].substr(3)); } catch (...) { Out(tag + ": id:<n> needs a whole number; nothing read"); return false; }
+        cur = RValue((double)rootId);
+        if (!g_Yytk->CallBuiltin("instance_exists", { cur }).ToBoolean()) { Out(tag + ": instance_exists(" + std::to_string(rootId) + ") is false; nothing read"); return false; }
+        where = "id:" + std::to_string(rootId);
+    } else if (!global) {
+        int nth = 0;
+        try { nth = std::stoi(tok[2]); } catch (...) { Out(tag + ": nth must be a whole number; nothing read"); return false; }
+        CInstance* inst = nullptr; int total = 0;
+        if (!MpResolve(tag, tok[1], nth, cur, inst, total)) return false;
+        double id = -1;
+        PpInstanceId(cur, id);
+        rootId = (long long)id;
+        where = PpDescribeSelf(inst);
+    } else {
+        where = "global";
+    }
+    return true;
+}
+
+// Walks `path` from the root: every step but the last must land on a live
+// instance (instance_exists at each step) or a plain struct. `cur` ends on the
+// value reached, `holder` on the last live instance a name was read from
+// (unset for a global path that never reached one). Prints why and returns
+// false when a step fails.
+static bool CpVarWalk(const std::string& tag, bool global, const std::vector<std::string>& path, RValue& cur,
+                      RValue& holder, bool& haveHolder, std::string& walked)
+{
+    bool atInstance = !global;
+    haveHolder = false;
+    walked.clear();
+    for (size_t i = 0; i < path.size(); ++i) {
+        const std::string& seg = path[i];
+        walked += (i ? "." : "") + seg;
+        RValue next;
+        if (global && i == 0) {
+            if (!g_Yytk->CallBuiltin("variable_global_exists", { RValue(seg) }).ToBoolean()) { Out(tag + ": no such global; nothing read"); return false; }
+            next = g_Yytk->CallBuiltin("variable_global_get", { RValue(seg) });
+        } else if (atInstance) {
+            if (!g_Yytk->CallBuiltin("instance_exists", { cur }).ToBoolean()) { Out(tag + ": at " + walked + " the instance is gone (instance_exists is false); stopped"); return false; }
+            if (!g_Yytk->CallBuiltin("variable_instance_exists", { cur, RValue(seg) }).ToBoolean()) { Out(tag + ": the instance has no variable " + walked + "; nothing read"); return false; }
+            next = g_Yytk->CallBuiltin("variable_instance_get", { cur, RValue(seg) });
+            holder = cur;
+            haveHolder = true;
+        } else if (ApIsPlainStruct(cur)) {
+            if (!g_Yytk->CallBuiltin("variable_struct_exists", { cur, RValue(seg) }).ToBoolean()) { Out(tag + ": the struct has no member " + walked + "; nothing read"); return false; }
+            next = g_Yytk->CallBuiltin("variable_struct_get", { cur, RValue(seg) });
+        } else {
+            Out(tag + ": before " + walked + " the value is " + Describe(cur) + " - neither a live instance nor a plain struct; stopped");
+            return false;
+        }
+        cur = next;
+        atInstance = CpClassifyRef(cur).kind == CpRefKind::Instance;
+    }
+    return true;
+}
+
 // `var <Obj|global> <nth> <path|*> [json]` or `var id:<n> <path|*> [json]`:
 // one variable, deeper - an array's first kCpVarArrayPreview entries, a data
 // structure's first kCpDsPreview - where <path> is a name or a dotted path
@@ -22245,14 +22385,7 @@ static void CpVar(const std::vector<std::string>& tok)
     std::string tag = "craftprobe var";
     for (size_t i = 1; i <= pathAt; ++i) tag += " " + tok[i];
 
-    std::vector<std::string> path;
-    {
-        std::string seg;
-        for (char c : tok[pathAt]) {
-            if (c == '.') { path.push_back(seg); seg.clear(); } else seg += c;
-        }
-        path.push_back(seg);
-    }
+    const std::vector<std::string> path = CpSplitPath(tok[pathAt]);
     for (const std::string& seg : path) if (seg.empty()) { Out(tag + ": an empty name in the path; nothing read"); return; }
     const bool all = path.size() == 1 && path[0] == "*";
     if (all && global) { Out(tag + ": `*` needs an instance root (`var <Obj> <nth> *` or `var id:<n> *`); nothing read"); return; }
@@ -22261,49 +22394,14 @@ static void CpVar(const std::vector<std::string>& tok)
         RValue cur;
         long long rootId = -1;
         std::string where;
-        if (byId) {
-            try { rootId = std::stoll(tok[1].substr(3)); } catch (...) { Out(tag + ": id:<n> needs a whole number; nothing read"); return; }
-            cur = RValue((double)rootId);
-            if (!g_Yytk->CallBuiltin("instance_exists", { cur }).ToBoolean()) { Out(tag + ": instance_exists(" + std::to_string(rootId) + ") is false; nothing read"); return; }
-            where = "id:" + std::to_string(rootId);
-        } else if (!global) {
-            int nth = 0;
-            try { nth = std::stoi(tok[2]); } catch (...) { Out(tag + ": nth must be a whole number; nothing read"); return; }
-            CInstance* inst = nullptr; int total = 0;
-            if (!MpResolve(tag, tok[1], nth, cur, inst, total)) return;
-            double id = -1;
-            PpInstanceId(cur, id);
-            rootId = (long long)id;
-            where = PpDescribeSelf(inst);
-        } else {
-            where = "global";
-        }
+        if (!CpVarRoot(tag, tok, byId, global, cur, rootId, where)) return;
         std::set<long long> visited;
         if (all) { CpFollowInstance("  ", cur, rootId, { "*" }, 0, visited); return; }
 
-        bool atInstance = !global;
+        RValue holder;
+        bool haveHolder = false;
         std::string walked;
-        for (size_t i = 0; i < path.size(); ++i) {
-            const std::string& seg = path[i];
-            walked += (i ? "." : "") + seg;
-            RValue next;
-            if (global && i == 0) {
-                if (!g_Yytk->CallBuiltin("variable_global_exists", { RValue(seg) }).ToBoolean()) { Out(tag + ": no such global; nothing read"); return; }
-                next = g_Yytk->CallBuiltin("variable_global_get", { RValue(seg) });
-            } else if (atInstance) {
-                if (!g_Yytk->CallBuiltin("instance_exists", { cur }).ToBoolean()) { Out(tag + ": at " + walked + " the instance is gone (instance_exists is false); stopped"); return; }
-                if (!g_Yytk->CallBuiltin("variable_instance_exists", { cur, RValue(seg) }).ToBoolean()) { Out(tag + ": the instance has no variable " + walked + "; nothing read"); return; }
-                next = g_Yytk->CallBuiltin("variable_instance_get", { cur, RValue(seg) });
-            } else if (ApIsPlainStruct(cur)) {
-                if (!g_Yytk->CallBuiltin("variable_struct_exists", { cur, RValue(seg) }).ToBoolean()) { Out(tag + ": the struct has no member " + walked + "; nothing read"); return; }
-                next = g_Yytk->CallBuiltin("variable_struct_get", { cur, RValue(seg) });
-            } else {
-                Out(tag + ": before " + walked + " the value is " + Describe(cur) + " - neither a live instance nor a plain struct; stopped");
-                return;
-            }
-            cur = next;
-            atInstance = CpClassifyRef(cur).kind == CpRefKind::Instance;
-        }
+        if (!CpVarWalk(tag, global, path, cur, holder, haveHolder, walked)) return;
         const CpRef r = CpClassifyRef(cur);
         std::string text = CpValueText(cur, kCpVarArrayPreview);
         if (r.kind == CpRefKind::DsGrid || r.kind == CpRefKind::DsList || r.kind == CpRefKind::DsMap) text += CpDsText(cur, r);
@@ -22334,179 +22432,542 @@ static void CpVar(const std::vector<std::string>& tok)
 // says which one matched a count seen by eye, and tools/stash_tab_counts.py
 // is the save-side count it is compared with. An instance without nodeGrid
 // prints its variable names, never nothing. Nothing is written.
-static constexpr int kCpNodeMaxLookups = 64;         // GetItemFromFingerprint calls one `node` makes
+//
+// Phase 1c: the lookup's self and second argument are chosen per command
+// (`self=id:<n>`, `a1=<v>`; by default the grid each fingerprint was read
+// from, and 0), `class=<c>` spends the lookups on one class suffix only,
+// `node socket` walks the Socketable tab's one-instance-per-cell grid into one
+// sum table, and `node var` sums a container `var` reaches, whatever its
+// shape. The instrument's own lookups are flagged (g_CpOwnLookup), so a
+// detoured lookup row neither logs nor keeps them as the game's.
+static constexpr int kCpNodeMaxLookups = 160;        // lookups one `node` makes: a whole bag grid (90 cells) or the Socketable tab (140)
 static constexpr int kCpNodeMaxInstances = 12;       // instances one `node stash|bag` reads
-static constexpr int kCpNodeFingerprintsShown = 40;  // fingerprint lines one instance prints
+static constexpr int kCpNodeFingerprintsShown = 40;  // fingerprint (and item) lines one run prints
 static constexpr int kCpNodeDefMembersShown = 24;    // numeric definition members listed when none is stack-named
+static constexpr int kCpNodeMaxCells = 400;          // cell instances one `node socket` reads
+static constexpr int kCpNodeMaxEntries = 1000;       // entries one `node var` reads from an array, list, map or struct
 
-static void CpNodeRead(const std::string& label, const RValue& inst, int& lookups)
+// How one `node` makes its lookups: the options after its selector.
+struct CpNodeOpts {
+    RValue      a1 = RValue(0.0);   // the lookup's second argument
+    std::string a1Text = "0";
+    bool        selfGiven = false;  // `self=id:<n>`; otherwise the grid each fingerprint was read from
+    CInstance*  selfInst = nullptr;
+    std::string selfText;
+    std::string cls;                // `class=<c>`: look up only fingerprints with this class suffix
+};
+
+// One distinct fingerprint: how many cells carry it, the first such cell, and
+// the grid instance it was first read from (the lookup's default self).
+struct CpNodeFp { RValue value; std::string text; int cells = 0; RValue firstCell; CInstance* grid = nullptr; std::string gridText; };
+struct CpNodeCounts { int filled = 0; int empty = 0; int noFp = 0; };
+// Per (class, b): fingerprints, the cells carrying them, item structs read
+// directly (`node var`), and each candidate member's sum.
+struct CpNodeSum { int fingerprints = 0; int cells = 0; int items = 0; std::map<std::string, double> members; };
+using CpNodeSums = std::map<std::string, CpNodeSum>;
+using CpNodeMembers = std::vector<std::pair<std::string, double>>;
+
+// Numeric members that may be the stack count, of one struct, prefixed: the
+// exact name `o` (exact only - as a substring it would take color, bonus, ...)
+// or a name containing a stack-like word.
+static void CpNodeStackMembers(const RValue& s, const std::string& prefix, CpNodeMembers& out)
+{
+    static const char* const kStackWords[] = { "stack", "amount", "count", "qty" };
+    if (!ApIsPlainStruct(s)) return;
+    const RValue names = g_Yytk->CallBuiltin("variable_struct_get_names", { s });
+    const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+    for (int i = 0; i < n; ++i) {
+        const std::string name = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) }).ToString();
+        const std::string ln = Lower(name);
+        bool match = name == "o";
+        for (const char* w : kStackWords) if (ln.find(w) != std::string::npos) match = true;
+        if (!match) continue;
+        const RValue m = g_Yytk->CallBuiltin("variable_struct_get", { s, RValue(name) });
+        if (PpIsNumber(m)) out.push_back({ prefix + name, m.ToDouble() });
+    }
+}
+
+// Every numeric member of one struct, capped - printed for a definition struct
+// with no candidate above, so the stack's real name is visible.
+static std::string CpNodeNumericMembers(const RValue& s)
+{
+    std::string list;
+    if (!ApIsPlainStruct(s)) return list;
+    const RValue names = g_Yytk->CallBuiltin("variable_struct_get_names", { s });
+    const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+    int listed = 0, more = 0;
+    for (int i = 0; i < n; ++i) {
+        const std::string name = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) }).ToString();
+        const RValue m = g_Yytk->CallBuiltin("variable_struct_get", { s, RValue(name) });
+        if (!PpIsNumber(m)) continue;
+        if (listed >= kCpNodeDefMembersShown) { ++more; continue; }
+        list += (listed++ ? " " : "") + name + "=" + CpArgSignature(m);
+    }
+    if (more) list += " ... " + std::to_string(more) + " more";
+    return list.empty() ? std::string("none") : list;
+}
+
+// A fingerprint's class: the text after its last '-', or `?`.
+static std::string CpNodeClass(const std::string& text)
+{
+    const size_t dash = text.rfind('-');
+    return dash == std::string::npos ? std::string("?") : text.substr(dash + 1);
+}
+
+// An item struct's itemType, its definition's `b` and every stack-like member
+// (`def.o` is the stack count, docs/RUNTIME_DATA_MODELS.md § 2) - the same
+// read for an item the lookup returned and one a container holds directly.
+// `defNumeric` is set only when the definition struct has no candidate.
+static void CpNodeReadItem(const RValue& item, RValue& type, std::string& b, CpNodeMembers& cand, std::string& defNumeric)
+{
+    type = g_Yytk->CallBuiltin("variable_struct_exists", { item, RValue("itemType") }).ToBoolean()
+        ? g_Yytk->CallBuiltin("variable_struct_get", { item, RValue("itemType") }) : RValue();
+    if (g_Yytk->CallBuiltin("variable_struct_exists", { item, RValue("itemDefinitionStruct") }).ToBoolean()) {
+        const RValue def = g_Yytk->CallBuiltin("variable_struct_get", { item, RValue("itemDefinitionStruct") });
+        if (ApIsPlainStruct(def) && g_Yytk->CallBuiltin("variable_struct_exists", { def, RValue("b") }).ToBoolean()) {
+            const RValue bv = g_Yytk->CallBuiltin("variable_struct_get", { def, RValue("b") });
+            b = PpIsNumber(bv) ? CpArgSignature(bv) : Describe(bv);
+        }
+        const size_t before = cand.size();
+        CpNodeStackMembers(def, "def.", cand);
+        if (cand.size() == before) defNumeric = CpNodeNumericMembers(def);
+    }
+    CpNodeStackMembers(item, "item.", cand);
+}
+
+// One instance's nodeGrid into `fps` - distinct fingerprints, first seen
+// first, merged across calls - with filled/empty by ApIsEmptyCell's rule
+// counted into `c`. Unless `quiet`, prints the size and fill or, with no
+// nodeGrid, the instance's variable names - never nothing. False when there
+// was no grid to read.
+static bool CpNodeCollect(const std::string& tag, const RValue& inst, std::vector<CpNodeFp>& fps, CpNodeCounts& c, bool quiet)
+{
+    if (!g_Yytk->CallBuiltin("instance_exists", { inst }).ToBoolean()) { if (!quiet) Out(tag + ": instance_exists is false - nothing read"); return false; }
+    double id = -1;
+    PpInstanceId(inst, id);
+    CInstance* self = HhResolveInstance(inst);
+    const std::string who = PpDescribeSelf(self) + " id=" + PpIdText(id);
+    if (!g_Yytk->CallBuiltin("variable_instance_exists", { inst, RValue("nodeGrid") }).ToBoolean()) {
+        if (quiet) return false;
+        const RValue names = g_Yytk->CallBuiltin("variable_instance_get_names", { inst });
+        const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+        std::string list;
+        for (int i = 0; i < n && i < kCpReaderMaxLines; ++i)
+            list += (i ? ", " : "") + g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) }).ToString();
+        if (n > kCpReaderMaxLines) list += ", ...";
+        Out(tag + ": " + who + " has no nodeGrid - its " + std::to_string(n) + " variables: " + list);
+        return false;
+    }
+    const RValue grid = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("nodeGrid") });
+    if (grid.m_Kind != VALUE_ARRAY) { if (!quiet) Out(tag + ": " + who + " nodeGrid is " + Describe(grid) + " - not an array, not read"); return false; }
+
+    CpNodeCounts here;
+    const size_t before = fps.size();
+    const int rows = (int)g_Yytk->CallBuiltin("array_length", { grid }).ToDouble();
+    for (int i = 0; i < rows; ++i) {
+        const RValue row = g_Yytk->CallBuiltin("array_get", { grid, RValue((double)i) });
+        if (row.m_Kind != VALUE_ARRAY) { if (!quiet) Out(tag + ": " + who + " nodeGrid row " + std::to_string(i) + " is " + Describe(row) + " - not read"); return false; }
+        const int cols = (int)g_Yytk->CallBuiltin("array_length", { row }).ToDouble();
+        for (int j = 0; j < cols; ++j) {
+            const RValue cell = g_Yytk->CallBuiltin("array_get", { row, RValue((double)j) });
+            if (ApIsEmptyCell(cell)) { ++here.empty; continue; }
+            ++here.filled;
+            if (!ApIsPlainStruct(cell) || !g_Yytk->CallBuiltin("variable_struct_exists", { cell, RValue("nodeFingerprint") }).ToBoolean()) { ++here.noFp; continue; }
+            const RValue f = g_Yytk->CallBuiltin("variable_struct_get", { cell, RValue("nodeFingerprint") });
+            const std::string text = f.m_Kind == VALUE_STRING ? f.ToString() : Describe(f);
+            if (f.m_Kind == VALUE_UNDEFINED || text.empty()) { ++here.noFp; continue; }
+            CpNodeFp* hit = nullptr;
+            for (CpNodeFp& e : fps) if (e.text == text) { hit = &e; break; }
+            if (!hit) {
+                fps.push_back(CpNodeFp());
+                hit = &fps.back();
+                hit->value = f; hit->text = text; hit->firstCell = cell; hit->grid = self; hit->gridText = who;
+            }
+            ++hit->cells;
+        }
+    }
+    c.filled += here.filled;
+    c.empty += here.empty;
+    c.noFp += here.noFp;
+    if (!quiet)
+        Out(tag + ": " + who + " w=" + PpSnapVar(inst, "nodeGridWidth") + " h=" + PpSnapVar(inst, "nodeGridHeight")
+            + " filled=" + std::to_string(here.filled) + " empty=" + std::to_string(here.empty) + " distinct fingerprints="
+            + std::to_string(fps.size() - before) + (here.noFp ? " (" + std::to_string(here.noFp) + " filled without one)" : std::string()));
+    return true;
+}
+
+// Per distinct fingerprint, ONE by-name lookup - the game's own
+// GetItemFromFingerprint(fp, a1), self = the grid it was read from or the
+// `self=id:` instance - capped per run; then the item's type, its
+// definition's `b`, the class suffix and every stack-like member, each added
+// to its (class, b) sum. With `class=`, only that class is looked up; the
+// rest are summed as b=?.
+static void CpNodeLookupAndSum(const std::vector<CpNodeFp>& fps, const CpNodeOpts& o, int& lookups, CpNodeSums& sums,
+                               int& shown, int& notLooked)
+{
+    for (const CpNodeFp& e : fps) {
+        const std::string cls = CpNodeClass(e.text);
+        CInstance* self = o.selfGiven ? o.selfInst : e.grid;
+        const std::string selfText = o.selfGiven ? o.selfText : e.gridText;
+        std::string line = "  fp=" + e.text + " class=" + cls + " cells=" + std::to_string(e.cells);
+        std::string b = "?";
+        std::string defNumeric;  // set only when the definition struct has no candidate
+        CpNodeMembers cand;
+        CpNodeStackMembers(e.firstCell, "cell.", cand);
+        if (!o.cls.empty() && cls != o.cls) {
+            ++notLooked;
+            line += " (lookup not made: class=" + o.cls + " selected)";
+        } else if (lookups >= kCpNodeMaxLookups || !self) {
+            ++notLooked;
+            line += self ? " (lookup not made: " + std::to_string(kCpNodeMaxLookups) + " per run)" : std::string(" (lookup not made: no instance for self)");
+        } else {
+            ++lookups;
+            RValue item;
+            bool found = false;
+            // What was supplied goes on the miss line: a miss is "not
+            // resolved with this self and this a1", never "not resolvable".
+            g_CpOwnLookup = true;
+            try { found = ApItemFromFingerprintAs(self, e.value, o.a1, item); } catch (...) { found = false; }
+            g_CpOwnLookup = false;
+            if (!found)
+                line += " GetItemFromFingerprint(fp, " + o.a1Text + ") returned no struct (self=" + selfText + ", a1=" + o.a1Text + ")";
+            else {
+                RValue type;
+                CpNodeReadItem(item, type, b, cand, defNumeric);
+                line += " itemType=" + Describe(type);
+            }
+        }
+        line += " b=" + b;
+        for (const auto& m : cand) line += " " + m.first + "=" + CpArgSignature(RValue(m.second));
+        if (cand.empty()) line += " (no numeric o/stack/amount/count/qty member)";
+        if (!defNumeric.empty()) line += " | def numeric members (none stack-named): " + defNumeric;
+        if (++shown <= kCpNodeFingerprintsShown) Out(line);
+        CpNodeSum& s = sums["class=" + cls + " b=" + b];
+        ++s.fingerprints;
+        s.cells += e.cells;
+        for (const auto& m : cand) s.members[m.first] += m.second;
+    }
+}
+
+// The `sum class=<c> b=<b>` lines, after the note on lines not printed and
+// before the count of fingerprints no lookup was made for.
+static void CpNodePrintSums(const CpNodeSums& sums, int shown, int notLooked)
+{
+    if (shown > kCpNodeFingerprintsShown)
+        Out("  ... " + std::to_string(shown - kCpNodeFingerprintsShown) + " more fingerprint/item line(s) not printed (the sums below count them)");
+    for (const auto& kv : sums) {
+        std::string line = "  sum " + kv.first + ": fingerprints=" + std::to_string(kv.second.fingerprints)
+            + " cells=" + std::to_string(kv.second.cells);
+        if (kv.second.items) line += " items=" + std::to_string(kv.second.items);
+        for (const auto& m : kv.second.members) line += " " + m.first + "=" + CpArgSignature(RValue(m.second));
+        Out(line);
+    }
+    if (notLooked) Out("  " + std::to_string(notLooked) + " fingerprint(s) summed with b=? (no lookup made for them)");
+}
+
+// One container instance: its grid, its lookups, its sums.
+static void CpNodeRead(const std::string& label, const RValue& inst, const CpNodeOpts& o, int& lookups)
 {
     const std::string tag = "craftprobe node " + label;
     try {
-        if (!g_Yytk->CallBuiltin("instance_exists", { inst }).ToBoolean()) { Out(tag + ": instance_exists is false - nothing read"); return; }
-        double id = -1;
-        PpInstanceId(inst, id);
-        CInstance* self = HhResolveInstance(inst);
-        const std::string who = PpDescribeSelf(self) + " id=" + PpIdText(id);
-        if (!g_Yytk->CallBuiltin("variable_instance_exists", { inst, RValue("nodeGrid") }).ToBoolean()) {
-            const RValue names = g_Yytk->CallBuiltin("variable_instance_get_names", { inst });
-            const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
-            std::string list;
-            for (int i = 0; i < n && i < kCpReaderMaxLines; ++i)
-                list += (i ? ", " : "") + g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) }).ToString();
-            if (n > kCpReaderMaxLines) list += ", ...";
-            Out(tag + ": " + who + " has no nodeGrid - its " + std::to_string(n) + " variables: " + list);
-            return;
-        }
-        const RValue grid = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("nodeGrid") });
-        if (grid.m_Kind != VALUE_ARRAY) { Out(tag + ": " + who + " nodeGrid is " + Describe(grid) + " - not an array, not read"); return; }
-
-        // Cells: filled/empty by ApIsEmptyCell's rule, distinct fingerprints
-        // first seen first, with how many cells carry each and the first cell.
-        struct Fp { RValue value; std::string text; int cells = 0; RValue firstCell; };
-        std::vector<Fp> fps;
-        int filled = 0, empty = 0, noFp = 0;
-        const int rows = (int)g_Yytk->CallBuiltin("array_length", { grid }).ToDouble();
-        for (int i = 0; i < rows; ++i) {
-            const RValue row = g_Yytk->CallBuiltin("array_get", { grid, RValue((double)i) });
-            if (row.m_Kind != VALUE_ARRAY) { Out(tag + ": " + who + " nodeGrid row " + std::to_string(i) + " is " + Describe(row) + " - not read"); return; }
-            const int cols = (int)g_Yytk->CallBuiltin("array_length", { row }).ToDouble();
-            for (int j = 0; j < cols; ++j) {
-                const RValue cell = g_Yytk->CallBuiltin("array_get", { row, RValue((double)j) });
-                if (ApIsEmptyCell(cell)) { ++empty; continue; }
-                ++filled;
-                if (!ApIsPlainStruct(cell) || !g_Yytk->CallBuiltin("variable_struct_exists", { cell, RValue("nodeFingerprint") }).ToBoolean()) { ++noFp; continue; }
-                const RValue f = g_Yytk->CallBuiltin("variable_struct_get", { cell, RValue("nodeFingerprint") });
-                const std::string text = f.m_Kind == VALUE_STRING ? f.ToString() : Describe(f);
-                if (f.m_Kind == VALUE_UNDEFINED || text.empty()) { ++noFp; continue; }
-                Fp* hit = nullptr;
-                for (Fp& e : fps) if (e.text == text) { hit = &e; break; }
-                if (!hit) { fps.push_back(Fp()); hit = &fps.back(); hit->value = f; hit->text = text; hit->firstCell = cell; }
-                ++hit->cells;
-            }
-        }
-        Out(tag + ": " + who + " w=" + PpSnapVar(inst, "nodeGridWidth") + " h=" + PpSnapVar(inst, "nodeGridHeight")
-            + " filled=" + std::to_string(filled) + " empty=" + std::to_string(empty) + " distinct fingerprints="
-            + std::to_string(fps.size()) + (noFp ? " (" + std::to_string(noFp) + " filled without one)" : std::string()));
-
-        // Numeric members that may be the stack count, of one struct, prefixed:
-        // the exact name `o` (exact only - as a substring it would take color,
-        // bonus, ...) or a name containing a stack-like word.
-        static const char* const kStackWords[] = { "stack", "amount", "count", "qty" };
-        auto stackMembers = [&](const RValue& s, const std::string& prefix, std::vector<std::pair<std::string, double>>& out) {
-            if (!ApIsPlainStruct(s)) return;
-            const RValue names = g_Yytk->CallBuiltin("variable_struct_get_names", { s });
-            const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
-            for (int i = 0; i < n; ++i) {
-                const std::string name = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) }).ToString();
-                const std::string ln = Lower(name);
-                bool match = name == "o";
-                for (const char* w : kStackWords) if (ln.find(w) != std::string::npos) match = true;
-                if (!match) continue;
-                const RValue m = g_Yytk->CallBuiltin("variable_struct_get", { s, RValue(name) });
-                if (PpIsNumber(m)) out.push_back({ prefix + name, m.ToDouble() });
-            }
-        };
-        // Every numeric member of one struct, capped - printed for a definition
-        // struct with no candidate above, so the stack's real name is visible.
-        auto numericMembers = [&](const RValue& s) {
-            std::string list;
-            if (!ApIsPlainStruct(s)) return list;
-            const RValue names = g_Yytk->CallBuiltin("variable_struct_get_names", { s });
-            const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
-            int listed = 0, more = 0;
-            for (int i = 0; i < n; ++i) {
-                const std::string name = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) }).ToString();
-                const RValue m = g_Yytk->CallBuiltin("variable_struct_get", { s, RValue(name) });
-                if (!PpIsNumber(m)) continue;
-                if (listed >= kCpNodeDefMembersShown) { ++more; continue; }
-                list += (listed++ ? " " : "") + name + "=" + CpArgSignature(m);
-            }
-            if (more) list += " ... " + std::to_string(more) + " more";
-            return list.empty() ? std::string("none") : list;
-        };
-
-        // Per (class, b): fingerprints, cells, and each candidate member's sum.
-        struct Sum { int fingerprints = 0; int cells = 0; std::map<std::string, double> members; };
-        std::map<std::string, Sum> sums;
+        std::vector<CpNodeFp> fps;
+        CpNodeCounts c;
+        if (!CpNodeCollect(tag, inst, fps, c, false)) return;
+        CpNodeSums sums;
         int shown = 0, notLooked = 0;
-        for (const Fp& e : fps) {
-            const size_t dash = e.text.rfind('-');
-            const std::string cls = dash == std::string::npos ? std::string("?") : e.text.substr(dash + 1);
-            std::string line = "  fp=" + e.text + " class=" + cls + " cells=" + std::to_string(e.cells);
-            std::string b = "?";
-            std::string defNumeric;  // set only when the definition struct has no candidate
-            std::vector<std::pair<std::string, double>> cand;
-            stackMembers(e.firstCell, "cell.", cand);
-            if (lookups >= kCpNodeMaxLookups || !self) {
-                ++notLooked;
-                line += self ? " (lookup not made: " + std::to_string(kCpNodeMaxLookups) + " per run)" : std::string(" (lookup not made: no instance for self)");
-            } else {
-                ++lookups;
-                RValue item;
-                // What was supplied goes on the miss line: a miss is "not
-                // resolved with this self and a1=0", never "not resolvable".
-                if (!ApItemFromFingerprint(self, e.value, item))
-                    line += " GetItemFromFingerprint(fp, 0) returned no struct (self=" + PpDescribeSelf(self) + " id=" + PpIdText(id) + ", a1=0)";
-                else {
-                    const RValue type = g_Yytk->CallBuiltin("variable_struct_exists", { item, RValue("itemType") }).ToBoolean()
-                        ? g_Yytk->CallBuiltin("variable_struct_get", { item, RValue("itemType") }) : RValue();
-                    line += " itemType=" + Describe(type);
-                    if (g_Yytk->CallBuiltin("variable_struct_exists", { item, RValue("itemDefinitionStruct") }).ToBoolean()) {
-                        const RValue def = g_Yytk->CallBuiltin("variable_struct_get", { item, RValue("itemDefinitionStruct") });
-                        if (ApIsPlainStruct(def) && g_Yytk->CallBuiltin("variable_struct_exists", { def, RValue("b") }).ToBoolean()) {
-                            const RValue bv = g_Yytk->CallBuiltin("variable_struct_get", { def, RValue("b") });
-                            b = PpIsNumber(bv) ? CpArgSignature(bv) : Describe(bv);
-                        }
-                        const size_t before = cand.size();
-                        stackMembers(def, "def.", cand);
-                        if (cand.size() == before) defNumeric = numericMembers(def);
-                    }
-                    stackMembers(item, "item.", cand);
-                }
-            }
-            line += " b=" + b;
-            for (const auto& c : cand) line += " " + c.first + "=" + CpArgSignature(RValue(c.second));
-            if (cand.empty()) line += " (no numeric o/stack/amount/count/qty member)";
-            if (!defNumeric.empty()) line += " | def numeric members (none stack-named): " + defNumeric;
-            if (++shown <= kCpNodeFingerprintsShown) Out(line);
-            Sum& s = sums["class=" + cls + " b=" + b];
-            ++s.fingerprints;
-            s.cells += e.cells;
-            for (const auto& c : cand) s.members[c.first] += c.second;
-        }
-        if (shown > kCpNodeFingerprintsShown)
-            Out("  ... " + std::to_string(shown - kCpNodeFingerprintsShown) + " more fingerprint line(s) not printed (the sums below count them)");
-        for (const auto& kv : sums) {
-            std::string line = "  sum " + kv.first + ": fingerprints=" + std::to_string(kv.second.fingerprints)
-                + " cells=" + std::to_string(kv.second.cells);
-            for (const auto& m : kv.second.members) line += " " + m.first + "=" + CpArgSignature(RValue(m.second));
-            Out(line);
-        }
-        if (notLooked) Out("  " + std::to_string(notLooked) + " fingerprint(s) summed with b=? (no lookup made for them)");
+        CpNodeLookupAndSum(fps, o, lookups, sums, shown, notLooked);
+        CpNodePrintSums(sums, shown, notLooked);
     } catch (...) { Out(tag + ": EXCEPTION while reading - unreadable, not empty"); }
 }
 
-// `node <id:<n> | <Obj> <nth> | stash | bag>`. `stash`: every variable of the
-// open stash window that is a live instance reference (stashGrid,
-// uiStashContainer, invMaterialTab, ...), each read as above. `bag`: every
-// UI_Inventory_Grid_obj instance with its uiNodeCallstack - the known-good
-// grid read a special-tab miss is judged against.
+// `node socket [id:<n>]`: the Socketable tab is not one grid. Its window
+// (UI_Stash_Socket_New_obj) holds `grid`, an array - read one level of rows
+// deep - of UI_Inventory_Grid_obj instances, one per cell (research doc,
+// § Phase 1c readers), which is why `node id:<window>` prints "has no
+// nodeGrid". Each cell instance is taken once (a visited set), read only
+// after instance_exists, and not followed further; every cell's fingerprints
+// go into ONE lookup pass and ONE sum table.
+static void CpNodeSocket(const RValue& window, const CpNodeOpts& o, int& lookups)
+{
+    const std::string tag = "craftprobe node socket";
+    try {
+        if (!g_Yytk->CallBuiltin("instance_exists", { window }).ToBoolean()) { Out(tag + ": instance_exists is false - nothing read"); return; }
+        double wid = -1;
+        PpInstanceId(window, wid);
+        const std::string who = PpDescribeSelf(HhResolveInstance(window)) + " id=" + PpIdText(wid);
+        if (!g_Yytk->CallBuiltin("variable_instance_exists", { window, RValue("grid") }).ToBoolean()) { Out(tag + ": " + who + " has no `grid` - nothing read"); return; }
+        const RValue grid = g_Yytk->CallBuiltin("variable_instance_get", { window, RValue("grid") });
+        if (grid.m_Kind != VALUE_ARRAY) { Out(tag + ": " + who + " grid is " + Describe(grid) + " - not an array, not read"); return; }
+
+        std::vector<RValue> cells;
+        std::set<long long> visited;
+        int entries = 0, notInstance = 0, repeated = 0, over = 0;
+        auto take = [&](const RValue& v) {
+            ++entries;
+            const CpRef r = CpClassifyRef(v);
+            if (r.kind != CpRefKind::Instance) { ++notInstance; return; }
+            if (visited.count(r.id)) { ++repeated; return; }
+            if ((int)cells.size() >= kCpNodeMaxCells) { ++over; return; }
+            visited.insert(r.id);
+            cells.push_back(v);
+        };
+        const int rows = (int)g_Yytk->CallBuiltin("array_length", { grid }).ToDouble();
+        for (int i = 0; i < rows; ++i) {
+            const RValue e = g_Yytk->CallBuiltin("array_get", { grid, RValue((double)i) });
+            if (e.m_Kind != VALUE_ARRAY) { take(e); continue; }
+            const int cols = (int)g_Yytk->CallBuiltin("array_length", { e }).ToDouble();
+            for (int j = 0; j < cols; ++j) take(g_Yytk->CallBuiltin("array_get", { e, RValue((double)j) }));
+        }
+
+        std::vector<CpNodeFp> fps;
+        CpNodeCounts c;
+        int read = 0, gone = 0, noGrid = 0;
+        for (const RValue& cell : cells) {
+            if (!g_Yytk->CallBuiltin("instance_exists", { cell }).ToBoolean()) { ++gone; continue; }
+            if (CpNodeCollect(tag, cell, fps, c, true)) ++read; else ++noGrid;
+        }
+        Out(tag + ": " + who + " grid entries=" + std::to_string(entries) + " cell instances=" + std::to_string(cells.size())
+            + " read=" + std::to_string(read) + " gone=" + std::to_string(gone) + " without nodeGrid=" + std::to_string(noGrid)
+            + " not an instance=" + std::to_string(notInstance)
+            + (repeated ? " repeated=" + std::to_string(repeated) : std::string())
+            + (over ? " not read (cap " + std::to_string(kCpNodeMaxCells) + ")=" + std::to_string(over) : std::string())
+            + " | filled=" + std::to_string(c.filled) + " empty=" + std::to_string(c.empty)
+            + " distinct fingerprints=" + std::to_string(fps.size())
+            + (c.noFp ? " (" + std::to_string(c.noFp) + " filled without one)" : std::string()));
+        CpNodeSums sums;
+        int shown = 0, notLooked = 0;
+        CpNodeLookupAndSum(fps, o, lookups, sums, shown, notLooked);
+        CpNodePrintSums(sums, shown, notLooked);
+    } catch (...) { Out(tag + ": EXCEPTION while reading - unreadable, not empty"); }
+}
+
+// What `node var` gathers from a container's entries: fingerprints (looked up
+// like grid cells, the default self being the instance the path's last name
+// was read from) and item structs (read directly, no lookup).
+struct CpNodeEntries {
+    std::vector<CpNodeFp> fps;
+    CpNodeSums sums;
+    int read = 0, fingerprints = 0, items = 0, other = 0, shown = 0;
+    CInstance* holder = nullptr;
+    std::string holderText;
+};
+
+// One entry of a container `node var` reads, with its key when it has one (a
+// map's key, a struct's member name): a fingerprint string, a cell struct
+// carrying `nodeFingerprint`, or an item struct carrying
+// `itemDefinitionStruct`, whose class is its key's suffix when the key is a
+// fingerprint and its itemType otherwise, and whose `b` and stack members are
+// read directly. A row array is read one level down; anything else is
+// counted, not guessed at.
+static void CpNodeTakeEntry(const RValue& v, const std::string& key, CpNodeEntries& acc, int depth)
+{
+    if (acc.read >= kCpNodeMaxEntries) return;
+    if (v.m_Kind == VALUE_ARRAY && depth == 0) {
+        const int n = (int)g_Yytk->CallBuiltin("array_length", { v }).ToDouble();
+        for (int i = 0; i < n && acc.read < kCpNodeMaxEntries; ++i)
+            CpNodeTakeEntry(g_Yytk->CallBuiltin("array_get", { v, RValue((double)i) }), std::string(), acc, depth + 1);
+        return;
+    }
+    ++acc.read;
+    RValue fp, cell;
+    if (v.m_Kind == VALUE_STRING) fp = v;
+    else if (ApIsPlainStruct(v) && g_Yytk->CallBuiltin("variable_struct_exists", { v, RValue("nodeFingerprint") }).ToBoolean()) {
+        fp = g_Yytk->CallBuiltin("variable_struct_get", { v, RValue("nodeFingerprint") });
+        cell = v;
+    }
+    if (fp.m_Kind != VALUE_UNDEFINED) {
+        const std::string text = fp.m_Kind == VALUE_STRING ? fp.ToString() : Describe(fp);
+        if (text.empty()) { ++acc.other; return; }
+        ++acc.fingerprints;
+        CpNodeFp* hit = nullptr;
+        for (CpNodeFp& e : acc.fps) if (e.text == text) { hit = &e; break; }
+        if (!hit) {
+            acc.fps.push_back(CpNodeFp());
+            hit = &acc.fps.back();
+            hit->value = fp; hit->text = text; hit->firstCell = cell; hit->grid = acc.holder; hit->gridText = acc.holderText;
+        }
+        ++hit->cells;
+        return;
+    }
+    if (!ApIsPlainStruct(v) || !g_Yytk->CallBuiltin("variable_struct_exists", { v, RValue("itemDefinitionStruct") }).ToBoolean()) { ++acc.other; return; }
+    ++acc.items;
+    RValue type;
+    std::string b = "?", defNumeric;
+    CpNodeMembers cand;
+    CpNodeReadItem(v, type, b, cand, defNumeric);
+    const std::string cls = key.find('-') != std::string::npos ? CpNodeClass(key)
+        : type.m_Kind == VALUE_UNDEFINED ? std::string("?") : CpArgSignature(type);
+    std::string line = "  item" + (key.empty() ? std::string() : " key=" + key) + " class=" + cls + " itemType=" + Describe(type) + " b=" + b;
+    for (const auto& m : cand) line += " " + m.first + "=" + CpArgSignature(RValue(m.second));
+    if (cand.empty()) line += " (no numeric o/stack/amount/count/qty member)";
+    if (!defNumeric.empty()) line += " | def numeric members (none stack-named): " + defNumeric;
+    if (++acc.shown <= kCpNodeFingerprintsShown) Out(line);
+    CpNodeSum& s = acc.sums["class=" + cls + " b=" + b];
+    ++s.items;
+    for (const auto& m : cand) s.members[m.first] += m.second;
+}
+
+// `node var <Obj|global> <nth> <a.b.c>` / `node var id:<n> <a.b.c>`: sums
+// what a `var` path reaches (the same root and walk as `var`), whatever its
+// shape - a live instance with nodeGrid (read as `node id:`), or an array, a
+// ds_list or ds_map (each read only after ds_exists answers true for its
+// type) or a struct, entry by entry (CpNodeTakeEntry). Same caps, same
+// lookup pass, same sum lines. Reads only.
+static void CpNodeVar(const std::vector<std::string>& sel, const CpNodeOpts& o, int& lookups)
+{
+    const char* usage = "craftprobe node var: usage -> node var <Obj|global> <nth> <a.b.c> | node var id:<n> <a.b.c>; nothing read";
+    const bool byId = sel.size() >= 2 && Lower(sel[1]).rfind("id:", 0) == 0;
+    const size_t pathAt = byId ? 2 : 3;
+    if (sel.size() != pathAt + 1) { Out(usage); return; }
+    const bool global = !byId && Lower(sel[1]) == "global";
+    std::string tag = "craftprobe node var";
+    for (size_t i = 1; i <= pathAt; ++i) tag += " " + sel[i];
+    const std::vector<std::string> path = CpSplitPath(sel[pathAt]);
+    for (const std::string& seg : path) {
+        if (seg.empty() || seg == "*") { Out(tag + ": one named path is summed (`var ... *` lists names); nothing read"); return; }
+    }
+    try {
+        RValue cur;
+        long long rootId = -1;
+        std::string where;
+        if (!CpVarRoot(tag, sel, byId, global, cur, rootId, where)) return;
+        RValue holder;
+        bool haveHolder = false;
+        std::string walked;
+        if (!CpVarWalk(tag, global, path, cur, holder, haveHolder, walked)) return;
+        const CpRef r = CpClassifyRef(cur);
+        if (r.kind == CpRefKind::Instance) { CpNodeRead("var " + walked + " (" + where + ")", cur, o, lookups); return; }
+
+        CpNodeEntries acc;
+        if (haveHolder) {
+            double hid = -1;
+            PpInstanceId(holder, hid);
+            acc.holder = HhResolveInstance(holder);
+            acc.holderText = PpDescribeSelf(acc.holder) + " id=" + PpIdText(hid);
+        }
+        const std::string head = tag + " (" + where + "): " + walked + " is ";
+        if (cur.m_Kind == VALUE_ARRAY) {
+            const int n = (int)g_Yytk->CallBuiltin("array_length", { cur }).ToDouble();
+            Out(head + "array len=" + std::to_string(n));
+            for (int i = 0; i < n && acc.read < kCpNodeMaxEntries; ++i)
+                CpNodeTakeEntry(g_Yytk->CallBuiltin("array_get", { cur, RValue((double)i) }), std::string(), acc, 0);
+        } else if (r.kind == CpRefKind::DsList) {
+            if (!g_Yytk->CallBuiltin("ds_exists", { cur, RValue(kCpDsTypeList) }).ToBoolean()) { Out(head + r.text + " - ds_exists(ds_type_list) is false; nothing read"); return; }
+            const int n = (int)g_Yytk->CallBuiltin("ds_list_size", { cur }).ToDouble();
+            Out(head + r.text + " size=" + std::to_string(n));
+            for (int i = 0; i < n && acc.read < kCpNodeMaxEntries; ++i)
+                CpNodeTakeEntry(g_Yytk->CallBuiltin("ds_list_find_value", { cur, RValue((double)i) }), std::string(), acc, 0);
+        } else if (r.kind == CpRefKind::DsMap) {
+            if (!g_Yytk->CallBuiltin("ds_exists", { cur, RValue(kCpDsTypeMap) }).ToBoolean()) { Out(head + r.text + " - ds_exists(ds_type_map) is false; nothing read"); return; }
+            const int n = (int)g_Yytk->CallBuiltin("ds_map_size", { cur }).ToDouble();
+            Out(head + r.text + " size=" + std::to_string(n));
+            RValue key = g_Yytk->CallBuiltin("ds_map_find_first", { cur });
+            for (int i = 0; i < n && acc.read < kCpNodeMaxEntries && key.m_Kind != VALUE_UNDEFINED; ++i) {
+                const std::string keyText = key.m_Kind == VALUE_STRING ? key.ToString() : Describe(key);
+                CpNodeTakeEntry(g_Yytk->CallBuiltin("ds_map_find_value", { cur, key }), keyText, acc, 0);
+                key = g_Yytk->CallBuiltin("ds_map_find_next", { cur, key });
+            }
+        } else if (ApIsPlainStruct(cur)) {
+            const RValue names = g_Yytk->CallBuiltin("variable_struct_get_names", { cur });
+            const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+            Out(head + "struct members=" + std::to_string(n));
+            for (int i = 0; i < n && acc.read < kCpNodeMaxEntries; ++i) {
+                const std::string name = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) }).ToString();
+                CpNodeTakeEntry(g_Yytk->CallBuiltin("variable_struct_get", { cur, RValue(name) }), name, acc, 0);
+            }
+        } else {
+            Out(head + Describe(cur) + " - not a container `node var` sums; nothing summed");
+            return;
+        }
+        Out(tag + ": entries read=" + std::to_string(acc.read)
+            + (acc.read >= kCpNodeMaxEntries ? " (cap " + std::to_string(kCpNodeMaxEntries) + ")" : std::string())
+            + " fingerprints=" + std::to_string(acc.fingerprints) + " (distinct " + std::to_string(acc.fps.size()) + ")"
+            + " items=" + std::to_string(acc.items) + " other=" + std::to_string(acc.other)
+            + " | default lookup self=" + (acc.holder ? acc.holderText : std::string("none (a global path; `self=id:<n>` gives one)")));
+        int notLooked = 0;
+        CpNodeLookupAndSum(acc.fps, o, lookups, acc.sums, acc.shown, notLooked);
+        CpNodePrintSums(acc.sums, acc.shown, notLooked);
+    } catch (...) { Out(tag + ": EXCEPTION while reading - unreadable, not empty"); }
+}
+
+// `node <id:<n> | <Obj> <nth> | stash | bag | socket [id:<n>] | var ...>`,
+// then any of `a1=<v>`, `self=id:<n>`, `class=<c>` (Phase 1c). `stash`: every
+// variable of the open stash window that is a live instance reference
+// (stashGrid, uiStashContainer, invMaterialTab, ...), each read as above.
+// `bag`: every UI_Inventory_Grid_obj instance with its uiNodeCallstack - the
+// known-good grid read a special-tab miss is judged against; the bag's grid
+// holds whichever bag tab is on show (research doc, § Phase 1c readers).
 static void CpNodeCommand(const std::vector<std::string>& tok)
 {
-    if (tok.size() < 2 || tok.size() > 3) { Out("craftprobe node: usage -> node id:<n> | node <Obj> <nth> | node stash | node bag; nothing read"); return; }
-    const std::string sel = Lower(tok[1]);
+    const char* usage = "craftprobe node: usage -> node id:<n> | node <Obj> <nth> | node stash | node bag | node socket [id:<n>]"
+                        " | node var <Obj|global> <nth> <a.b.c> | node var id:<n> <a.b.c>, then any of a1=<v> self=id:<n> class=<c>;"
+                        " nothing read";
+    // The options, in any order after the selector. A named self is used only
+    // once the runtime says it exists and it resolves by name to an instance.
+    CpNodeOpts o;
+    std::vector<std::string> sel;
+    for (size_t i = 1; i < tok.size(); ++i) {
+        const std::string l = Lower(tok[i]);
+        if (l.rfind("a1=", 0) == 0) {
+            const std::string v = tok[i].substr(3);
+            if (v.empty()) { Out(usage); return; }
+            o.a1 = l == "a1=undefined" ? RValue() : MpArg(v);
+            o.a1Text = v;
+        } else if (l.rfind("self=id:", 0) == 0) {
+            long long id = -1;
+            try { id = std::stoll(tok[i].substr(8)); } catch (...) { Out("craftprobe node: self=id:<n> needs a whole number; nothing read"); return; }
+            const RValue h((double)id);
+            if (!g_Yytk->CallBuiltin("instance_exists", { h }).ToBoolean()) {
+                Out("craftprobe node: self=id:" + std::to_string(id) + " - instance_exists is false; nothing read");
+                return;
+            }
+            o.selfInst = HhResolveInstance(h);
+            if (!o.selfInst) { Out("craftprobe node: self=id:" + std::to_string(id) + " did not resolve to an instance; nothing read"); return; }
+            o.selfGiven = true;
+            o.selfText = PpDescribeSelf(o.selfInst) + " id=" + std::to_string(id);
+        } else if (l.rfind("class=", 0) == 0) {
+            o.cls = tok[i].substr(6);
+            if (o.cls.empty()) { Out(usage); return; }
+        } else {
+            sel.push_back(tok[i]);
+        }
+    }
+    if (sel.empty()) { Out(usage); return; }
+    const std::string what = Lower(sel[0]);
     int lookups = 0;
     auto objectIndex = [](HeroSiege::Objects::GameObject obj) {
         try { return (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(HeroSiege::Objects::GetObjectName(obj))) }).ToDouble(); }
         catch (...) { return -1; }
     };
+    Out("craftprobe node: lookups are GetItemFromFingerprint(fp, " + o.a1Text + ") with self="
+        + (o.selfGiven ? o.selfText : std::string("the grid each fingerprint was read from"))
+        + (o.cls.empty() ? std::string(", every class") : ", class=" + o.cls + " only"));
     try {
-        if (tok.size() == 2 && sel.rfind("id:", 0) == 0) {
+        if (sel.size() == 1 && what.rfind("id:", 0) == 0) {
             long long id = -1;
-            try { id = std::stoll(tok[1].substr(3)); } catch (...) { Out("craftprobe node: id:<n> needs a whole number; nothing read"); return; }
-            CpNodeRead("id:" + std::to_string(id), RValue((double)id), lookups);
-        } else if (tok.size() == 2 && sel == "stash") {
+            try { id = std::stoll(sel[0].substr(3)); } catch (...) { Out("craftprobe node: id:<n> needs a whole number; nothing read"); return; }
+            CpNodeRead("id:" + std::to_string(id), RValue((double)id), o, lookups);
+        } else if (what == "socket" && sel.size() <= 2) {
+            RValue window;
+            if (sel.size() == 2) {
+                long long id = -1;
+                if (Lower(sel[1]).rfind("id:", 0) != 0) { Out(usage); return; }
+                try { id = std::stoll(sel[1].substr(3)); } catch (...) { Out("craftprobe node socket: id:<n> needs a whole number; nothing read"); return; }
+                window = RValue((double)id);
+            } else {
+                const int idx = objectIndex(HeroSiege::Objects::GameObject::UI_Stash_Socket_New_obj);
+                const int total = idx < 0 ? 0 : (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)idx) }).ToDouble();
+                if (total <= 0) {
+                    Out("craftprobe node socket: UI_Stash_Socket_New_obj has no live instance (the Socketable tab is not on show) - nothing read;"
+                        " `node socket id:<n>` reads one by id");
+                    return;
+                }
+                window = g_Yytk->CallBuiltin("instance_find", { RValue((double)idx), RValue(0.0) });
+            }
+            CpNodeSocket(window, o, lookups);
+        } else if (what == "var") {
+            CpNodeVar(sel, o, lookups);
+        } else if (sel.size() == 1 && what == "stash") {
             const int idx = objectIndex(HeroSiege::Objects::GameObject::UI_Stash_obj);
             const int total = idx < 0 ? 0 : (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)idx) }).ToDouble();
             if (total <= 0) { Out("craftprobe node stash: UI_Stash_obj has no live instance (the stash is closed) - nothing read; `node id:<n>` reads a container by id"); return; }
@@ -22524,10 +22985,10 @@ static void CpNodeCommand(const std::vector<std::string>& tok)
                 if (read.count(r.id)) { Out("craftprobe node UI_Stash_obj." + name + ": instance " + std::to_string(r.id) + " already read above"); continue; }
                 if ((int)read.size() >= kCpNodeMaxInstances) { Out("craftprobe node stash: " + std::to_string(kCpNodeMaxInstances) + " instances read; the rest not (`node id:<n>`)"); break; }
                 read.insert(r.id);
-                CpNodeRead("UI_Stash_obj." + name, v, lookups);
+                CpNodeRead("UI_Stash_obj." + name, v, o, lookups);
             }
             if (read.empty()) Out("craftprobe node stash: the window holds no live instance reference");
-        } else if (tok.size() == 2 && sel == "bag") {
+        } else if (sel.size() == 1 && what == "bag") {
             const int idx = objectIndex(HeroSiege::Objects::GameObject::UI_Inventory_Grid_obj);
             const int total = idx < 0 ? 0 : (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)idx) }).ToDouble();
             Out("craftprobe node bag: " + std::to_string(total) + " UI_Inventory_Grid_obj instance(s)");
@@ -22540,17 +23001,17 @@ static void CpNodeCommand(const std::vector<std::string>& tok)
                     stack = s.m_Kind == VALUE_ARRAY ? CiExpandContainer(s) : Describe(s);
                     if (stack.size() > 160) stack = stack.substr(0, 160) + "...";
                 }
-                CpNodeRead("bag:" + std::to_string(k) + " uiNodeCallstack=" + stack, node, lookups);
+                CpNodeRead("bag:" + std::to_string(k) + " uiNodeCallstack=" + stack, node, o, lookups);
             }
             if (total > kCpNodeMaxInstances) Out("craftprobe node bag: " + std::to_string(total - kCpNodeMaxInstances) + " more not read (`node id:<n>`)");
-        } else if (tok.size() == 3) {
+        } else if (sel.size() == 2) {
             int nth = 0;
-            try { nth = std::stoi(tok[2]); } catch (...) { Out("craftprobe node: nth must be a whole number; nothing read"); return; }
+            try { nth = std::stoi(sel[1]); } catch (...) { Out("craftprobe node: nth must be a whole number; nothing read"); return; }
             RValue handle; CInstance* inst = nullptr; int total = 0;
-            if (!MpResolve("craftprobe node " + tok[1] + " " + tok[2], tok[1], nth, handle, inst, total)) return;
-            CpNodeRead(tok[1] + " " + tok[2], handle, lookups);
+            if (!MpResolve("craftprobe node " + sel[0] + " " + sel[1], sel[0], nth, handle, inst, total)) return;
+            CpNodeRead(sel[0] + " " + sel[1], handle, o, lookups);
         } else {
-            Out("craftprobe node: usage -> node id:<n> | node <Obj> <nth> | node stash | node bag; nothing read");
+            Out(usage);
             return;
         }
     } catch (...) { Out("craftprobe node: EXCEPTION while reading - unreadable, not empty"); }
@@ -22558,9 +23019,162 @@ static void CpNodeCommand(const std::vector<std::string>& tok)
         + std::to_string(kCpNodeMaxLookups) + "); nothing written");
 }
 
+// ---- Phase 1c: `store` - where the stash may live while its window is closed
+// LoadStash ran twice at character load (self Console_Save_obj) and returned
+// true: the contents went somewhere, not back to the caller (research doc,
+// § Phase 1c readers). `store [substr ...]` lists, for the first live
+// instance of each object below, for the instance the kept
+// GetProfileInventoryData return refers to, and for the globals, every
+// variable whose name matches - one line each, with its shape (a live
+// instance reference with its object's name, a data structure's size), values
+// shallow, kCpReaderMaxLines per holder. `store names [substr ...]` prints the
+// matching names only, ten per line and up to kCpStoreMaxNames per holder, so
+// a search is never cut at kCpReaderMaxLines. Objects are named through the
+// SDK; a holder is read only after instance_number / instance_exists say it
+// is live; the instrument's own research globals (`__cp_*`) are skipped, not
+// reported as a finding. Hook-free, and nothing is written.
+static constexpr int kCpStoreMaxNames = 400;         // names `store names` prints per holder
+static constexpr int kCpStoreNamesPerLine = 10;
+static constexpr const char* kCpResearchGlobalPrefix = "__cp_";
+
+static const HeroSiege::Objects::GameObject kCpStoreHolders[] = {
+    HeroSiege::Objects::GameObject::Console_Save_obj,        // LoadStash's self at load
+    HeroSiege::Objects::GameObject::Profile_Manager_obj,
+    HeroSiege::Objects::GameObject::Town_Stash_obj,          // the world stash (a holder here, not a new row)
+    HeroSiege::Objects::GameObject::Player_obj,              // GetInventoryArray's self
+    HeroSiege::Objects::GameObject::New_Inventory_Data_obj,
+    HeroSiege::Objects::GameObject::Inventory_Loading_obj,
+    HeroSiege::Objects::GameObject::Load_Inventory_obj,
+};
+
+// A live instance's object name (object_get_name of its object_index), or a
+// note saying why there is none. The caller has checked instance_exists.
+static std::string CpInstanceObjectName(const RValue& inst)
+{
+    try {
+        const RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("object_index") });
+        int objIdx = -1;
+        if (!N1ObjectIndex(oi, objIdx)) return "(object_index " + Describe(oi) + ")";
+        return g_Yytk->CallBuiltin("object_get_name", { RValue((double)objIdx) }).ToString();
+    } catch (...) { return "(object_index unreadable)"; }
+}
+
+// The matching names of one holder, each with its value (or, `namesOnly`,
+// the names alone), then how many matched. `get` reads one name's value.
+template <class Get>
+static void CpStoreList(const std::string& tag, const RValue& names, int n, const std::vector<std::string>& filters,
+                        bool namesOnly, Get get)
+{
+    int matched = 0, skipped = 0, onLine = 0;
+    std::string line;
+    for (int i = 0; i < n; ++i) {
+        std::string name;
+        try { name = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) }).ToString(); } catch (...) { continue; }
+        if (name.rfind(kCpResearchGlobalPrefix, 0) == 0) { ++skipped; continue; }
+        if (!CpNameMatches(name, filters)) continue;
+        ++matched;
+        if (namesOnly) {
+            if (matched > kCpStoreMaxNames) continue;   // counted below, not printed
+            line += (onLine ? " " : "") + name;
+            if (++onLine == kCpStoreNamesPerLine) { Out("  " + line); line.clear(); onLine = 0; }
+            continue;
+        }
+        if (matched > kCpReaderMaxLines) continue;
+        try {
+            const RValue v = get(name);
+            const CpRef r = CpClassifyRef(v);
+            std::string text;
+            if (r.kind == CpRefKind::Instance) {
+                text = g_Yytk->CallBuiltin("instance_exists", { v }).ToBoolean()
+                    ? r.text + " (" + CpInstanceObjectName(v) + ")" : r.text + " (instance_exists is false)";
+            } else if (r.kind == CpRefKind::DsGrid || r.kind == CpRefKind::DsList || r.kind == CpRefKind::DsMap) {
+                text = r.text + CpDsText(v, r);
+            } else {
+                text = CpValueText(v, kCpReaderArrayPreview);
+            }
+            Out("  " + name + "=" + text);
+        } catch (...) { Out("  " + name + "=<read failed>"); }
+    }
+    if (onLine) Out("  " + line);
+    const int cap = namesOnly ? kCpStoreMaxNames : kCpReaderMaxLines;
+    Out(tag + ": " + std::to_string(matched) + " of " + std::to_string(n) + " matched"
+        + (matched > cap ? " (" + std::to_string(cap) + " printed; "
+                           + (namesOnly ? std::string("narrow the filter") : std::string("`store names` lists every one")) + ")"
+                         : std::string())
+        + (skipped ? ", " + std::to_string(skipped) + " research global(s) `__cp_*` skipped" : std::string()));
+}
+
+// One instance holder, after instance_exists.
+static void CpStoreHolder(const std::string& tag, const RValue& inst, const std::vector<std::string>& filters, bool namesOnly)
+{
+    try {
+        if (!g_Yytk->CallBuiltin("instance_exists", { inst }).ToBoolean()) { Out(tag + ": instance_exists is false - nothing read"); return; }
+        double id = -1;
+        PpInstanceId(inst, id);
+        const RValue names = g_Yytk->CallBuiltin("variable_instance_get_names", { inst });
+        const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+        Out(tag + ": " + PpDescribeSelf(HhResolveInstance(inst)) + " id=" + PpIdText(id) + " vars=" + std::to_string(n));
+        CpStoreList(tag, names, n, filters, namesOnly,
+                    [&](const std::string& name) { return g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(name) }); });
+    } catch (...) { Out(tag + ": read failed"); }
+}
+
+// The globals (the pseudo-instance -5, as CpListGlobals reads them).
+static void CpStoreGlobals(const std::string& tag, const std::vector<std::string>& filters, bool namesOnly)
+{
+    try {
+        const RValue names = g_Yytk->CallBuiltin("variable_instance_get_names", { RValue(-5.0) });
+        const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+        Out(tag + ": " + std::to_string(n) + " globals");
+        CpStoreList(tag, names, n, filters, namesOnly,
+                    [](const std::string& name) { return g_Yytk->CallBuiltin("variable_global_get", { RValue(name) }); });
+    } catch (...) { Out(tag + ": globals could not be read"); }
+}
+
+static void CpStore(const std::vector<std::string>& tok)
+{
+    const bool namesOnly = tok.size() > 1 && Lower(tok[1]) == "names";
+    std::vector<std::string> filters(tok.begin() + (namesOnly ? 2 : 1), tok.end());
+    if (filters.empty()) filters = { "stash", "socket", "material", "item", "map", "inv", "tab" };
+    const std::string tag = namesOnly ? "craftprobe store names" : "craftprobe store";
+    std::string list;
+    for (const std::string& f : filters) list += " " + f;
+    Out(tag + ": filters" + list + " - hook-free, nothing written");
+    for (const HeroSiege::Objects::GameObject obj : kCpStoreHolders) {
+        const std::string objName(HeroSiege::Objects::GetObjectName(obj));
+        const std::string t = tag + " " + objName;
+        try {
+            const int idx = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(objName) }).ToDouble();
+            if (idx < 0) { Out(t + ": not found (asset_get_index)"); continue; }
+            const int total = (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)idx) }).ToDouble();
+            if (total <= 0) { Out(t + ": no live instance - nothing read"); continue; }
+            const RValue h = g_Yytk->CallBuiltin("instance_find", { RValue((double)idx), RValue(0.0) });
+            CpStoreHolder(t + " nth=0" + (total > 1 ? " (of " + std::to_string(total) + ")" : std::string()), h, filters, namesOnly);
+        } catch (...) { Out(t + ": read failed"); }
+    }
+    // The instance the game's own GetProfileInventoryData call returned - kept
+    // by `backing`, never invoked here (a blind call crashed the game).
+    const CpTarget* profile = nullptr;
+    for (const CpTarget& t : g_CpTargets)
+        if (std::string_view(t.runtimeName) == HeroSiege::Scripts::gml_Script_GetProfileInventoryData) { profile = &t; break; }
+    const std::string pt = tag + " GetProfileInventoryData return";
+    if (!profile || !profile->kept || !profile->kept->value || profile->kept->call <= 0) {
+        Out(pt + ": none kept (`hook`, `backing on`, then open the bag so the game makes the call)");
+    } else {
+        const RValue kept = *profile->kept->value;
+        const CpRef r = CpClassifyRef(kept);
+        if (r.kind != CpRefKind::Instance) Out(pt + " (kept #" + std::to_string(profile->kept->call) + "): " + PpBackingShape(kept) + " - not an instance reference");
+        else CpStoreHolder(pt + " (kept #" + std::to_string(profile->kept->call) + ", " + r.text + ")", kept, filters, namesOnly);
+    }
+    CpStoreGlobals(tag + " global", filters, namesOnly);
+}
+
 // ---- backing: keep what the game's own calls returned ------------------------
 // Default rows: the four profile getters, the stash getters and the crafting
-// availability/count rows - the returns that may hold the materials tabs.
+// availability/count rows - the returns that may hold the materials tabs -
+// and, from Phase 1c, the fingerprint lookup and GetItemMap. The lookup runs
+// whenever the bag or the stash draws (~20k calls a minute in Phase 1b), so a
+// stutter while it is kept is expected; `backing off` stops the keeping.
 static bool CpDefaultBackingRow(const CpTarget& t)
 {
     const std::string_view name(t.runtimeName);
@@ -22571,15 +23185,29 @@ static bool CpDefaultBackingRow(const CpTarget& t)
         || name == HeroSiege::Scripts::gml_Script_GetCraftItemsAvailable
         || name == HeroSiege::Scripts::gml_Script_CraftFindRecipeItems
         || name == HeroSiege::Scripts::gml_Script_CountInventoryItem
-        || name == HeroSiege::Scripts::gml_Script_FindInventoryItemData;
+        || name == HeroSiege::Scripts::gml_Script_FindInventoryItemData
+        || name == HeroSiege::Scripts::gml_Script_GetItemFromFingerprint
+        || name == HeroSiege::Scripts::gml_Script_GetItemMap;
 }
 
-// Phase 1b: the two rows whose returns are also kept per first argument.
-static bool CpKeepsPerArgument(const CpTarget& t)
+// Which argument a row's returns are also kept under, or -1 for none: the
+// first for GetInventoryArray and CountInventoryItem (Phase 1b) and for
+// GetItemMap; the second for GetItemFromFingerprint (Phase 1c) - the one
+// `node a1=` takes, so a stash draw's own a1 and self show up by signature.
+static int CpBackingArgIndex(const CpTarget& t)
 {
     const std::string_view name(t.runtimeName);
-    return name == HeroSiege::Scripts::gml_Script_GetInventoryArray
-        || name == HeroSiege::Scripts::gml_Script_CountInventoryItem;
+    if (name == HeroSiege::Scripts::gml_Script_GetItemFromFingerprint) return 1;
+    if (name == HeroSiege::Scripts::gml_Script_GetItemMap) return 0;
+    if (name == HeroSiege::Scripts::gml_Script_GetInventoryArray
+        || name == HeroSiege::Scripts::gml_Script_CountInventoryItem) return 0;
+    return -1;
+}
+
+// The rows whose returns are also kept per signature of one argument.
+static bool CpKeepsPerArgument(const CpTarget& t)
+{
+    return CpBackingArgIndex(t) >= 0;
 }
 
 static void CpBackingDump()
@@ -22593,22 +23221,31 @@ static void CpBackingDump()
                 + PpBackingJsonFile(std::string("cp_backing_") + t.safe + ".json", t.label, t.kept->call, t.kept->self, *t.kept->value));
             ++written;
         } catch (...) { Out(std::string("craftprobe backing dump ") + t.label + ": read failed"); }
-        // One file per first-argument signature: `_arg<k>` in the order first seen.
+        // One file per keyed-argument signature: `_arg<k>` in the order first
+        // seen. The line also says how many calls the signature kept, the
+        // latest first argument, and which self objects made them.
         if (!t.kept->perArg && t.kept->perArgs.empty()) continue;
+        const std::string key = "a" + std::to_string(t.kept->argIndex) + "=";
         int sigs = 0;
         for (size_t k = 0; k < t.kept->perArgs.size(); ++k) {
             const CpArgKept& a = t.kept->perArgs[k];
             if (!a.value || a.call <= 0) continue;
+            std::string selves;
+            for (const std::string& s : a.selves) selves += (selves.empty() ? "" : ",") + s;
             try {
-                Out(std::string("craftprobe backing dump ") + t.label + " a0=" + a.sig + " #" + std::to_string(a.call)
+                Out(std::string("craftprobe backing dump ") + t.label + " " + key + a.sig + " #" + std::to_string(a.call)
+                    + " calls=" + std::to_string(a.calls) + " a0=" + a.a0
+                    + " selves=" + (selves.empty() ? std::string("?") : selves)
+                    + ((int)a.selves.size() >= kCpBackingMaxSelves ? "(cap)" : "")
                     + " self=" + a.self + " shape=" + PpBackingShape(*a.value) + " -> "
                     + PpBackingJsonFile(std::string("cp_backing_") + t.safe + "_arg" + std::to_string(k) + ".json",
-                                        std::string(t.label) + " a0=" + a.sig, a.call, a.self, *a.value));
+                                        std::string(t.label) + " " + key + a.sig, a.call, a.self, *a.value));
                 ++sigs;
                 ++written;
-            } catch (...) { Out(std::string("craftprobe backing dump ") + t.label + " a0=" + a.sig + ": read failed"); }
+            } catch (...) { Out(std::string("craftprobe backing dump ") + t.label + " " + key + a.sig + ": read failed"); }
         }
-        Out(std::string("craftprobe backing dump ") + t.label + ": " + std::to_string(sigs) + " first-argument signature(s)"
+        Out(std::string("craftprobe backing dump ") + t.label + ": " + std::to_string(sigs) + " signature(s) of argument "
+            + std::to_string(t.kept->argIndex)
             + (t.kept->perArgFull ? " (" + std::to_string(t.kept->perArgFull) + " return(s) found every one of the "
                                     + std::to_string(kCpBackingMaxArgs) + " slots taken)" : std::string()));
     }
@@ -22626,14 +23263,17 @@ static void CpBackingCommand(const std::vector<std::string>& tok)
         for (CpTarget& t : g_CpTargets) {
             const bool on = filters.empty() ? CpDefaultBackingRow(t) : CpLabelMatches(t, filters);
             InterlockedExchange(t.capture, on ? 1 : 0);
-            if (t.kept) t.kept->perArg = on && CpKeepsPerArgument(t);
+            if (t.kept) {
+                t.kept->perArg = on && CpKeepsPerArgument(t);
+                t.kept->argIndex = CpBackingArgIndex(t) < 0 ? 0 : CpBackingArgIndex(t);
+            }
             if (on) { ++selected; if (!t.installed.load()) ++notDetoured; if (CpKeepsPerArgument(t)) ++perArg; }
         }
         g_CpBacking.store(true);
         Out("craftprobe backing: on - the latest return of " + std::to_string(selected) + " row(s) is kept"
             + (notDetoured ? " (" + std::to_string(notDetoured) + " of them not detoured: `hook` first)" : std::string())
-            + (perArg ? ", " + std::to_string(perArg) + " of them also per first argument (up to "
-                        + std::to_string(kCpBackingMaxArgs) + " each)" : std::string())
+            + (perArg ? ", " + std::to_string(perArg) + " of them also per argument signature (up to "
+                        + std::to_string(kCpBackingMaxArgs) + " each; GetItemFromFingerprint on its second)" : std::string())
             + ". Nothing is invoked; `backing dump` writes the json files.");
     } else if (what == "off") {
         g_CpBacking.store(false);
@@ -22757,10 +23397,11 @@ static void CpCall(const std::vector<std::string>& tok)
 }
 
 // The first line is the build's marker: a live session tells this build
-// (Phase 1b, 202 rows) from aa0c72a's (97 rows) in one bare `craftprobe`.
+// (Phase 1c, 223 rows) from Phase 1b's (202 rows, marker `phase1b`) and
+// aa0c72a's (97 rows, no marker) in one bare `craftprobe`.
 static void CpUsage()
 {
-    Out("craftprobe: phase1b rows=" + std::to_string(kCpTargetCount) + " - research instrument for docs/crafting-materials-research.md (research build only)");
+    Out("craftprobe: phase1c rows=" + std::to_string(kCpTargetCount) + " - research instrument for docs/crafting-materials-research.md (research build only)");
     Out("  hook [substr ...]                 native-detour every row (or the matching ones); one instrument per session");
     Out("  arm [budget=N] [substr ...]       reset counters; log the next N calls of each selected row (default: all but the control)");
     Out("  show [all]                        calls since `arm`, logged vs unlogged per row; CheckPlayerInteraction is the control");
@@ -22769,7 +23410,13 @@ static void CpUsage()
     Out("  var <Obj|global> <nth> <name|a.b.c|*> [json]   hook-free: one variable, deeper; a live `ref instance` is followed by name");
     Out("  var id:<n> <name|a.b.c|*> [json]  the same from an instance id (json -> bp_ipc\\cp_var_<name>.json)");
     Out("  node id:<n>|<Obj> <nth>|stash|bag  hook-free: a container's cells, one GetItemFromFingerprint per fingerprint (capped), sums per (class, b)");
-    Out("  backing on [substr ...]|off|dump|clear  keep the game's own returns (default: profile, stash and count rows; GetInventoryArray and CountInventoryItem also per first argument)");
+    Out("  node socket [id:<n>]              the Socketable tab: every cell instance of its window's `grid`, one sum table");
+    Out("  node var <Obj|global> <nth> <a.b.c> | node var id:<n> <a.b.c>   sums what `var` reaches: a nodeGrid, fingerprints or item structs");
+    Out("    any node, after the selector: a1=<v> (lookup's 2nd argument, default 0) self=id:<n> (lookup's self) class=<c> (look up that class only)");
+    Out("  store [substr ...]                hook-free: the objects and globals that may hold the stash while it is closed, each variable's shape");
+    Out("  store names [substr ...]          the matching names only, up to 400 per holder (never cut at 80)");
+    Out("  backing on [substr ...]|off|dump|clear  keep the game's own returns (default: profile, stash, count, fingerprint-lookup and GetItemMap rows;"
+        " per argument signature: GetItemFromFingerprint on a1, GetItemMap, GetInventoryArray, CountInventoryItem on a0)");
     Out("  dump                              craftprobe_rows.json + backing dump");
     Out("  call <Row> <Obj> <nth> [args ...] confirm   ONE by-name call of one row; refuses before it on any missing precondition");
 }
@@ -22788,6 +23435,7 @@ static void CpCommand(const std::string& rest)
     if (sub == "bag" || sub == "stash" || sub == "recipe") { CpReader(sub, tail); return; }
     if (sub == "var") { CpVar(tok); return; }
     if (sub == "node") { CpNodeCommand(tok); return; }
+    if (sub == "store") { CpStore(tok); return; }
     if (sub == "backing") { CpBackingCommand(tok); return; }
     if (sub == "dump") { CpDump(); return; }
     if (sub == "call") { CpCall(tok); return; }

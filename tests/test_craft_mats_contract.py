@@ -10,7 +10,9 @@ fill in. These tests pin the shape of all three, so the instrument cannot
 quietly reach the player build, go blind, or write where it should refuse, and
 so the switch cannot start doing work on the frame path before a mechanism is
 chosen. Phase 1b widened the table to 202 rows and taught the readers to follow
-instance references by name; the tests for that are marked below.
+instance references by name; Phase 1c added 21 rows, a selectable lookup shape,
+the Socketable tab's per-cell walk, `node var` and the `store` reader. The tests
+for each are marked below.
 """
 import importlib.util
 import re
@@ -56,6 +58,24 @@ class CraftMatsContractTests(unittest.TestCase):
 
     def body(self, signature):
         return strip_comments(function_body(self.plugin, signature))
+
+    # Phase 1c split `node` into a collector, a lookup-and-sum pass, a printer and
+    # the member readers they share, so a claim about "the node reader" is made
+    # on all of them together.
+    NODE_FUNCTIONS = (
+        "static void CpNodeStackMembers(", "static std::string CpNodeNumericMembers(",
+        "static std::string CpNodeClass(", "static void CpNodeReadItem(", "static bool CpNodeCollect(",
+        "static void CpNodeLookupAndSum(", "static void CpNodePrintSums(", "static void CpNodeRead(",
+        "static void CpNodeTakeEntry(", "static void CpNodeSocket(", "static void CpNodeVar(",
+        "static void CpNodeCommand(",
+    )
+    STORE_FUNCTIONS = (
+        "static std::string CpInstanceObjectName(", "static void CpStoreList(", "static void CpStoreHolder(",
+        "static void CpStoreGlobals(", "static void CpStore(",
+    )
+
+    def node_code(self):
+        return "\n".join(self.body(fn) for fn in self.NODE_FUNCTIONS)
 
     def runtime_name(self, constant):
         match = re.search(
@@ -103,8 +123,9 @@ class CraftMatsContractTests(unittest.TestCase):
 
     def test_craftprobe_table_names_every_candidate(self):
         # 97 Phase 0 rows + 105 from Phase 1b's widened search (research doc,
-        # § Static search, "Phase 1b additions").
-        self.assertGreaterEqual(len(self.rows), 202)
+        # § Static search, "Phase 1b additions") + 21 from Phase 1c's search for
+        # the closed-window store ("Phase 1c rows").
+        self.assertGreaterEqual(len(self.rows), 223)
         labels = [label for _, label, _ in self.rows]
         self.assertEqual(len(labels), len(set(labels)), "duplicate probe label")
         safes = [safe for safe, _, _ in self.rows]
@@ -167,6 +188,8 @@ class CraftMatsContractTests(unittest.TestCase):
             "___struct___187@InventorySortTab@InventoryGrid", "UiAInventoryTabClick", "InventoryLogAddItem",
             "InventoryUpdateExtAddItemStats", "anon@403@gml_Object_UI_Button_Inventory_Tab_obj_Step_0",
             "___struct___448@gml_Object_Load_Inventory_obj_Other_62",
+            # Phase 1c: where LoadStash may put the stash while its window is closed
+            "GetItemMap", "GetInventoryMapPos", "SaveInventoryMap", "LoadInventoryOrderNew", "s_SaveStashConstants",
         ):
             self.assertIn("gml_Script_" + anchor, names)
         # Every row's runtime name is written down where the live session reads it.
@@ -188,6 +211,8 @@ class CraftMatsContractTests(unittest.TestCase):
         # Phase 1b: the grid, inventory and stash-tab objects the hand move may run through
         "UI_Inventory_Grid_obj", "UI_Grid_obj", "UI_Node_Parent_obj", "UI_Inventory_obj", "UI_Inventory_Parent_obj",
         "UI_Stash_Socket_New_obj", "UI_Stash_Unique_Items_obj", "Load_Inventory_obj", "UI_Split_Stack_obj",
+        # Phase 1c: LoadStash's self at character load, and the profile manager
+        "Console_Save_obj", "Profile_Manager_obj",
     )
 
     def test_craftprobe_table_covers_every_sdk_closure_of_its_objects(self):
@@ -197,8 +222,9 @@ class CraftMatsContractTests(unittest.TestCase):
             if any("@gml_Object_" + obj + "_Create_0" in value for obj in self.CLOSURE_OBJECTS):
                 expected.append(constant)
         # A scan that finds nothing would pass the check below vacuously.
-        # 29 cube/stash closures + 52 on the nine Phase 1b objects.
-        self.assertGreaterEqual(len(expected), 81, "SDK closure scan found too few constants - the regex is blind")
+        # 29 cube/stash closures + 52 on the nine Phase 1b objects + 16 on the
+        # two Phase 1c objects (6 Console_Save_obj, 10 Profile_Manager_obj).
+        self.assertGreaterEqual(len(expected), 97, "SDK closure scan found too few constants - the regex is blind")
         missing = [c for c in expected if c not in table]
         self.assertEqual(missing, [], "SDK closures missing from CRAFTPROBE_TARGETS: " + ", ".join(missing))
         # Negative control: an object with no closure row must not be covered by accident.
@@ -263,9 +289,10 @@ class CraftMatsContractTests(unittest.TestCase):
 
     def test_craftprobe_readers_are_hook_free_and_never_write(self):
         for fn in ("static void CpReader(", "static void CpListObjectVars(", "static void CpListGlobals(",
-                   "static void CpVar(", "static std::string CpValueText(", "static CpRef CpClassifyRef(",
-                   "static std::string CpDsText(", "static void CpFollowInstance(", "static void CpNodeRead(",
-                   "static void CpNodeCommand("):
+                   "static void CpVar(", "static std::vector<std::string> CpSplitPath(", "static bool CpVarRoot(",
+                   "static bool CpVarWalk(", "static std::string CpValueText(", "static CpRef CpClassifyRef(",
+                   "static std::string CpDsText(", "static void CpFollowInstance(") \
+                + self.NODE_FUNCTIONS + self.STORE_FUNCTIONS:
             body = self.body(fn)
             for forbidden in ("MmCreateHook", "HookOneScript", "ApCallScript", "script_execute", '"variable_instance_set"',
                               '"variable_struct_set"', '"variable_global_set"', '"array_set"'):
@@ -281,15 +308,17 @@ class CraftMatsContractTests(unittest.TestCase):
     def test_craftprobe_reports_its_phase_marker(self):
         # A bare `craftprobe` answers the usage, whose FIRST line names this
         # build's phase and row count - so a live session tells this build from
-        # aa0c72a's (97 rows) in one command, before anything else counts.
+        # Phase 1b's (202 rows) and aa0c72a's (97) in one command, before
+        # anything else counts.
         command = self.body("static void CpCommand(")
         self.assertIn("if (tok.empty()) { CpUsage(); return; }", command)
         usage = self.body("static void CpUsage(")
         first = usage[usage.index("Out("):]
         first = first[:first.index(";")]
-        self.assertIn("phase1b rows=", first)
+        self.assertIn("phase1c rows=", first)
         self.assertIn("kCpTargetCount", first)
-        self.assertEqual(self.plugin.count("phase1b rows="), 1)
+        self.assertEqual(self.plugin.count("phase1c rows="), 1)
+        self.assertEqual(self.plugin.count("phase1b rows="), 0)
 
     def test_craftprobe_var_follows_instance_refs_by_name_only(self):
         classify = self.body("static CpRef CpClassifyRef(")
@@ -324,19 +353,23 @@ class CraftMatsContractTests(unittest.TestCase):
         var = self.body("static void CpVar(")
         # `id:<n>` and a dotted path are both roots the command takes.
         self.assertIn('"id:"', var)
-        self.assertIn("'.'", var)
+        self.assertIn("CpSplitPath(", var)
+        self.assertIn("'.'", self.body("static std::vector<std::string> CpSplitPath("))
         self.assertIn("CpFollowInstance(", var)
+        # The walk `var` and `node var` share checks the instance at every step.
+        walk = self.body("static bool CpVarWalk(")
+        self.assertLess(walk.index('"instance_exists"'), walk.index('"variable_instance_get"'))
 
     def test_craftprobe_node_reader_is_hook_free_and_calls_only_the_fingerprint_lookup(self):
-        node = self.body("static void CpNodeRead(")
+        node = self.node_code()
         command = self.body("static void CpNodeCommand(")
-        both = node + command
         for forbidden in ("MmCreateHook", "HookOneScript", "ApCallScript", "script_execute", "CallBuiltinEx",
                           '"variable_instance_set"', '"variable_struct_set"', '"array_set"', "m_Pointer"):
-            self.assertNotIn(forbidden, both)
-        # The one game script it calls is the fingerprint lookup, through the
-        # same by-name helper `call`'s fp: argument uses - capped per run.
-        self.assertEqual(both.count("ApItemFromFingerprint("), 1)
+            self.assertNotIn(forbidden, node)
+        # The one game script it calls is the fingerprint lookup, through a
+        # by-name helper beside the one `call`'s fp: argument uses - capped per run.
+        self.assertEqual(node.count("ApItemFromFingerprintAs("), 1)
+        self.assertEqual(node.count("ApItemFromFingerprint("), 0)
         self.assertIn("ApItemFromFingerprint(", self.body("static void CpCall("))
         lookup = function_body(self.plugin, "static bool ApItemFromFingerprint(")
         self.assertIn("ApCallScript(kApFromFpName", lookup)
@@ -352,7 +385,7 @@ class CraftMatsContractTests(unittest.TestCase):
         self.assertIn("no nodeGrid", node)
         self.assertIn('"variable_instance_get_names"', node)
         # stash / bag / id:<n> / <Obj> <nth>, objects named through the SDK.
-        for sel in ('"stash"', '"bag"', '"id:"'):
+        for sel in ('"stash"', '"bag"', '"id:"', '"socket"', '"var"'):
             self.assertIn(sel, command)
         self.assertIn("HeroSiege::Objects::GameObject::UI_Stash_obj", command)
         self.assertIn("HeroSiege::Objects::GameObject::UI_Inventory_Grid_obj", command)
@@ -364,7 +397,7 @@ class CraftMatsContractTests(unittest.TestCase):
         # (docs/RUNTIME_DATA_MODELS.md § 2; the hub's stash_tab_counts.py sums
         # data.o). A filter of stack-like words alone can never match that
         # one-letter name, so a right container would read as no count at all.
-        node = self.body("static void CpNodeRead(")
+        node = self.node_code()
         self.assertRegex(node, r'name\s*==\s*"o"')
         # Exact match only: `o` as a substring would take color, bonus, ...
         self.assertNotRegex(node, r'find\("o"\)')
@@ -377,9 +410,9 @@ class CraftMatsContractTests(unittest.TestCase):
         self.assertIn("kCpNodeDefMembersShown", node)
         self.assertIn("numeric members", node)
         # A lookup miss names what was supplied, so it reads "not resolved with
-        # self=<obj>, a1=0" and never "not resolvable".
+        # self=<obj>, a1=<a1>" and never "not resolvable".
         self.assertIn("returned no struct (self=", node)
-        self.assertIn("a1=0", node)
+        self.assertIn('", a1=" + o.a1Text', node)
         # The bag control proves the count half too: it passes only on a
         # per-(class, b) sum equal to a bag stack the owner can see.
         row = next(l for l in self.doc.splitlines() if l.startswith("| node-bag-control |"))
@@ -387,9 +420,10 @@ class CraftMatsContractTests(unittest.TestCase):
         self.assertIn("by eye", row)
 
     def test_craftprobe_backing_keeps_getter_returns_per_first_argument(self):
-        per = self.body("static bool CpKeepsPerArgument(")
+        per = self.body("static int CpBackingArgIndex(")
         self.assertIn("HeroSiege::Scripts::gml_Script_GetInventoryArray", per)
         self.assertIn("HeroSiege::Scripts::gml_Script_CountInventoryItem", per)
+        self.assertIn("CpBackingArgIndex(t) >= 0", self.body("static bool CpKeepsPerArgument("))
         self.assertRegex(self.block, r"static constexpr int kCpBackingMaxArgs = 8;")
         capture = self.body("static void CpCapture(")
         self.assertIn("A[0]", capture)
@@ -404,6 +438,139 @@ class CraftMatsContractTests(unittest.TestCase):
         self.assertIn('"_arg"', dump)
         on = self.body("static void CpBackingCommand(")
         self.assertIn("CpKeepsPerArgument(t)", on)
+
+    # ---- Phase 1c: the lookup shape, backing per a1, node var, store ---------
+
+    def test_craftprobe_node_lookup_takes_a_selectable_self_and_second_argument(self):
+        # Bag cells resolve with GetItemFromFingerprint(fp, 0) on the grid read;
+        # the three special-tab cells tried did not. Which of self and a1 the
+        # game varies for a stash cell is not known, so both are selectable.
+        helper = self.body("static bool ApItemFromFingerprintAs(")
+        self.assertIn("static bool ApItemFromFingerprintAs(CInstance* self, const RValue& fp, const RValue& a1, RValue& item)",
+                      self.plugin)
+        self.assertIn("ApCallScript(kApFromFpName, self, { fp, a1 }, item)", helper)
+        self.assertIn("ApIsPlainStruct(item)", helper)
+        # Research build only; the player build's lookup keeps its fixed shape.
+        self.assertNotIn("ApItemFromFingerprintAs", strip_research_blocks(self.plugin))
+        self.assertIn("ApCallScript(kApFromFpName, gridInst, { fp, RValue(0.0) }, item)",
+                      self.body("static bool ApItemFromFingerprint("))
+        command = self.body("static void CpNodeCommand(")
+        for option in ('"a1="', '"self=id:"', '"class="'):
+            self.assertIn(option, command)
+        # A named self is read only after the runtime says it exists.
+        self.assertLess(command.index('"instance_exists"'), command.index("HhResolveInstance("))
+        sweep = self.body("static void CpNodeLookupAndSum(")
+        self.assertIn("ApItemFromFingerprintAs(self, e.value, o.a1, item)", sweep)
+        self.assertIn("o.selfGiven ? o.selfInst : e.grid", sweep)
+        self.assertIn("o.cls", sweep)
+        # The instrument's own lookups are neither logged nor kept as the game's.
+        self.assertLess(sweep.index("g_CpOwnLookup = true"), sweep.index("ApItemFromFingerprintAs("))
+        self.assertLess(sweep.index("ApItemFromFingerprintAs("), sweep.index("g_CpOwnLookup = false"))
+        self.assertIn("g_CpOwnLookup", self.body("static bool CpObserve("))
+        self.assertIn("!g_CpOwnLookup", self.body("static void CpAfter("))
+        # The cap covers the Socketable tab's 140 cells and a whole bag grid.
+        cap = re.search(r"static constexpr int kCpNodeMaxLookups = (\d+);", self.block)
+        self.assertGreaterEqual(int(cap.group(1)), 160)
+        # `node socket`: the tab's window through the SDK, its `grid` walked one
+        # level, each cell instance read only after instance_exists, once.
+        socket = self.body("static void CpNodeSocket(")
+        self.assertIn('"grid"', socket)
+        self.assertIn("visited", socket)
+        self.assertLess(socket.index('"instance_exists"'), socket.index("CpNodeCollect("))
+        self.assertIn("HeroSiege::Objects::GameObject::UI_Stash_Socket_New_obj", command)
+        self.assertIn("CpNodePrintSums(", socket)
+
+    def test_craftprobe_backing_keeps_fingerprint_lookups_per_second_argument(self):
+        per = self.body("static int CpBackingArgIndex(")
+        self.assertRegex(per, r"gml_Script_GetItemFromFingerprint\)\s*return 1;")
+        self.assertRegex(per, r"gml_Script_GetItemMap\)\s*return 0;")
+        default = self.body("static bool CpDefaultBackingRow(")
+        for row in ("gml_Script_GetItemFromFingerprint", "gml_Script_GetItemMap"):
+            self.assertIn("HeroSiege::Scripts::" + row, default)
+        on = self.body("static void CpBackingCommand(")
+        self.assertIn("t.kept->argIndex = CpBackingArgIndex(t)", on)
+        # The capture keys on the row's own argument, and per signature keeps a
+        # call count, the latest a0 as text and up to six distinct self objects.
+        capture = self.body("static void CpCapture(")
+        self.assertIn("A[k]", capture)
+        self.assertIn("kept.argIndex", capture)
+        self.assertIn("++slot->calls", capture)
+        self.assertIn("slot->a0 =", capture)
+        self.assertIn("kCpBackingMaxSelves", capture)
+        self.assertRegex(self.block, r"static constexpr int kCpBackingMaxSelves = 6;")
+        dump = self.body("static void CpBackingDump(")
+        for field in ('" calls="', '" a0="', '" selves="'):
+            self.assertIn(field, dump)
+
+    def test_craftprobe_store_reader_is_hook_free_and_names_its_objects_through_the_sdk(self):
+        code = "\n".join(self.body(fn) for fn in self.STORE_FUNCTIONS)
+        holders = self.block[self.block.index("kCpStoreHolders[] = {"):]
+        holders = holders[:holders.index("};")]
+        for obj in ("Console_Save_obj", "Profile_Manager_obj", "Town_Stash_obj", "Player_obj",
+                    "New_Inventory_Data_obj", "Inventory_Loading_obj", "Load_Inventory_obj"):
+            self.assertIn("HeroSiege::Objects::GameObject::" + obj, holders)
+            self.assertNotIn('"' + obj + '"', code)
+        store = self.body("static void CpStore(")
+        self.assertIn("kCpStoreHolders", store)
+        # A live instance is found before anything is read off it.
+        self.assertLess(store.index('"instance_number"'), store.index('"instance_find"'))
+        holder = self.body("static void CpStoreHolder(")
+        self.assertLess(holder.index('"instance_exists"'), holder.index('"variable_instance_get_names"'))
+        # The kept GetProfileInventoryData return is followed only when it is an
+        # instance reference, never invoked (capture only).
+        self.assertIn("HeroSiege::Scripts::gml_Script_GetProfileInventoryData", store)
+        self.assertIn("CpRefKind::Instance", store)
+        # A ref's shape: its object's name after instance_exists, a data
+        # structure's size after ds_exists (through CpDsText).
+        listing = self.body("static void CpStoreList(")
+        self.assertIn("CpDsText(", listing)
+        self.assertIn("CpInstanceObjectName(", listing)
+        self.assertLess(listing.index('"instance_exists"'), listing.index("CpInstanceObjectName("))
+        self.assertIn('"object_get_name"', self.body("static std::string CpInstanceObjectName("))
+        # `store names` is never cut at the reader's 80 lines; the research
+        # globals the instrument itself set are not a finding.
+        self.assertRegex(self.block, r"static constexpr int kCpStoreMaxNames = 400;")
+        self.assertIn("kCpStoreMaxNames", listing)
+        self.assertIn("kCpResearchGlobalPrefix", listing)
+        self.assertIn('"__cp_"', self.block)
+        self.assertIn('"names"', store)
+        self.assertIn("RValue(-5.0)", self.body("static void CpStoreGlobals("))
+        for forbidden in ("MmCreateHook", "HookOneScript", "ApCallScript", "script_execute", '"variable_instance_set"',
+                          '"variable_struct_set"', '"variable_global_set"', '"array_set"', "m_Pointer"):
+            self.assertNotIn(forbidden, code)
+        self.assertIn('if (sub == "store") { CpStore(tok); return; }', self.body("static void CpCommand("))
+
+    def test_craftprobe_node_sums_an_array_or_map_container_the_same_way(self):
+        var = self.body("static void CpNodeVar(")
+        # The path is resolved the way `var` resolves it.
+        self.assertIn("CpVarRoot(", var)
+        self.assertIn("CpVarWalk(", var)
+        # A live instance is read as a grid; an array, ds_list or ds_map (after
+        # ds_exists with its own type) or a struct is read entry by entry.
+        self.assertIn("CpNodeRead(", var)
+        self.assertIn('"array_get"', var)
+        for ds, read in (("kCpDsTypeList", '"ds_list_find_value"'), ("kCpDsTypeMap", '"ds_map_find_first"')):
+            guard = var.index('"ds_exists", { cur, RValue(' + ds + ') }')
+            self.assertLess(guard, var.index(read), read)
+        self.assertIn('"ds_map_find_next"', var)
+        self.assertIn("kCpNodeMaxEntries", var)
+        # An entry is a fingerprint (one lookup, like a grid cell) or an item
+        # struct, whose definition's b and o are read directly - no lookup.
+        take = self.body("static void CpNodeTakeEntry(")
+        self.assertIn('"nodeFingerprint"', take)
+        self.assertIn('"itemDefinitionStruct"', take)
+        self.assertIn("CpNodeReadItem(", take)
+        self.assertNotIn("ApItemFromFingerprint", take)
+        item = self.body("static void CpNodeReadItem(")
+        self.assertIn('"b"', item)
+        self.assertIn("CpNodeStackMembers(def", item)
+        self.assertRegex(self.body("static void CpNodeStackMembers("), r'name\s*==\s*"o"')
+        # Both routes end in the same lookup pass and the same sum lines.
+        for fn in ("static void CpNodeRead(", "static void CpNodeVar("):
+            body = self.body(fn)
+            self.assertIn("CpNodePrintSums(", body, fn)
+        self.assertIn("CpNodeLookupAndSum(", var)
+        self.assertIn("CpNodeLookupAndSum(", self.body("static void CpNodeRead("))
 
     # ---- the switch ----------------------------------------------------------
 
@@ -443,14 +610,16 @@ class CraftMatsContractTests(unittest.TestCase):
     # ---- the research document -------------------------------------------------
 
     def test_research_doc_has_its_sections_and_status(self):
-        head = "\n".join(self.doc.split("\n")[:5])
+        head = "\n".join(self.doc.split("\n")[:7])
         self.assertIn("phase0-status: complete", head)
         self.assertRegex(head, r"phase1-status: (pending|complete)")
         self.assertRegex(head, r"phase1b-status: (pending|complete)")
+        self.assertRegex(head, r"phase1c-status: (pending|complete)")
         for heading in ("## Interpretation", "## Static search", "### Negative results, sourced",
                         "## Baseline (vanilla) to measure", "## Hypotheses", "## Instrument", "## Live procedure",
                         "## Results", "### Constraints from Phase 1", "### Live procedure 1b",
-                        "### Phase 1b results", "## Decision gate"):
+                        "### Phase 1b results", "### Phase 1c rows", "### Phase 1c readers",
+                        "### Live procedure 1c", "### Phase 1c results", "## Decision gate"):
             self.assertIn("\n" + heading + "\n", self.doc, heading)
         results = self.doc[self.doc.index("\n## Results\n"):self.doc.index("\n## Decision gate\n")]
         for row in ("| B0-vanilla |", "| C-control |", "| H-A |", "| H-B |", "| H-C |"):
