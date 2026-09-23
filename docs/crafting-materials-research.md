@@ -4,6 +4,7 @@ phase0-status: complete
 phase1-status: complete
 phase1b-status: complete
 phase1c-status: complete
+phase1d-status: pending
 
 **Status: Phase 0 done (static search, instrument, decision core); Phase 1 (the
 first live session, 2026-09-22) done; Phase 1b (a widened instrument and a
@@ -716,6 +717,74 @@ bag, and no craft**. What this document fixes is its shape:
   observed by <reader> (<what it printed>)"; no live outcome is an acceptance
   criterion of the build.
 
+### Live procedure 1d
+
+Live 1d reuses the Phase 1c build under `live-operator`; the step-by-step
+procedure is `### Live procedure 1` in the workorder's context file,
+`.claude/workorders/forgepact-issue-14-phase1d-context.md`, which stays on the
+owner's machine. It asks one question - can the special tabs' contents be read
+while the stash window is closed? - and it is a reader round like Live 1c:
+**no hand moves between tabs and the bag, and no craft**. What this document
+fixes is its shape:
+
+- **The Phase 1c build, no rebuild.** The installed plugin is the research DLL
+  recorded under `### Phase 1c results` (ForgePact `a7795ca`); every command
+  the session uses was already run in Live 1c. Nothing is installed for it, and
+  nothing calls `GetItemMap`, `GetProfileInventoryData` or any other getter:
+  the session reads the returns `backing` kept and instance or global variables
+  only, and the one script the instrument calls is the fingerprint lookup, in
+  the two (self, second argument) shapes Live 1c proved - a live stash cell with
+  `a1=9` while the stash is open, the bag's grid with `a1=0` while the bag is
+  open. Every `node var` carries `class=15` or `class=14`; no `backing clear`,
+  no `call`.
+- **Controls first**: the installed plugin's SHA-256 equals the Phase 1c hash,
+  a bare `craftprobe` answers `phase1c rows=`, and `CheckPlayerInteraction` is
+  non-zero once the character is loaded; without those three nothing else in
+  the file counts. Auto-prospect is off, the saves are backed up first, and
+  `tools/stash_tab_counts.py` reads both tabs before the launch and after it.
+- **The decisive closed reads come before any window is opened in the launch,
+  and again after the stash closes**: the kept `GetItemMap` returns (`backing
+  dump`, then `var`/`node var` on the kept global), `New_Inventory_Data_obj`'s
+  `inventorySocketGrid` and `inventoryMaterialGrid` with no lookup self, and
+  after the close a `store names` pass over the globals.
+- **The hand-backs are reads only**: the bag open on its Socketable tab (the
+  three path controls below), the stash open on the Socketable tab and then the
+  Materials tab (each open read of the kept map and the arrays, judged against
+  the same-session instance read of that tab), the stash closed (the same reads
+  through the same references, with `GetItemMap` armed and its per-signature
+  `calls=` counted across two dumps), and one reopen for whether the kept map's
+  index and call count change.
+- **Cases**: the Socketable tab (the ordinary case) and the Materials tab (the
+  outlier: an ordinary grid object, a different draw family).
+- **The capture** is `.claude/workorders/forgepact-issue-14-phase1d-live-1.md`,
+  ending with a `## Checks` section of one line per check, exactly
+  `- <name> | expected: <text> | observed: <quoted, short> | pass|fail|not-observed`,
+  for these seventeen checks in this order: `dll-hash`, `marker`, `control`,
+  `counts-tool-before`, `node-bag-control`, `item-struct-control`,
+  `fp-array-control`, `map0-identity`, `map-open-socket`, `map-open-material`,
+  `invgrid-open`, `map-closed`, `invgrid-closed`, `map-live-closed`,
+  `store-names-globals`, `map-reopen` and `counts-tool-after`.
+- **Which control vouches for which read.** The `backing` signature lines and
+  armed lines rest on `dll-hash`, `marker` and `control`. A reader miss counts
+  only once the control for the path it took passed in the same session, and
+  this round declares a control for each path: through an instance grid
+  (`node bag`, `node socket`, `node id:`), `node-bag-control`; through `node
+  var` over item structs read directly (`items=N`, no lookup),
+  `item-struct-control` - `node var` over `New_Inventory_Data_obj.localItemMap`
+  with `class=15`, bag open on its Socketable tab, gives the same `sum class=15
+  b=<b>` pairs and `def.o` as `node bag` on that tab; through `node var` over
+  fingerprint entries with lookups, `fp-array-control` - `node var` over
+  `New_Inventory_Data_obj.inventorySocketGrid` with the bag grid as self and
+  `a1=0` gives the same sums as `node bag` (it replaces Live 1c's failed
+  `node-var-control`, whose array held the equipped items). A miss whose control
+  did not pass is recorded "not observed (uncontrolled path)". A closed read that
+  makes no lookup is recorded by what it lists (distinct fingerprints, classes,
+  cells) against the open read of the same container, and a kept map that
+  `ds_exists` no longer finds is "the kept reference is gone closed", which says
+  nothing about whether the game's store is. A `fail` or `not-observed` is a
+  finding, recorded under `### Phase 1d results`; no live outcome is an
+  acceptance criterion.
+
 ## Results
 
 Research DLL: `plugin_build\BloodPactPlugin_rel.dll`, built 2026-09-22 with
@@ -978,6 +1047,62 @@ counts only once the control for the path it took passed (`### Live procedure
   80 were printed, with no `store names` pass over them. `stashPersonalGrid`,
   which was read, holds classes 3 and 10, which says it holds an ordinary
   stash tab rather than a special one (not established).
+
+### Phase 1d results
+
+Research DLL: the Phase 1c build, unchanged - `plugin_build\BloodPactPlugin_rel.dll`
+from ForgePact `a7795ca` (SHA-256
+`e9d32ec3adb3238fe7c2b3284498591ae8af416da21302946e034a71712e6429`), installed as
+`mods\aurie\BloodPactPlugin.dll` since Live 1c. Phase 1d rebuilt nothing and
+installed nothing; `### Live procedure 1d`'s `dll-hash` check compares the
+installed plugin against this hash before anything else counts. The session's
+capture, `.claude/workorders/forgepact-issue-14-phase1d-live-1.md`, stays on the
+owner's machine with the workorder and is cited by its step headings.
+
+**What Live 1c left on disk.** Live 1c's last `craftprobe dump` wrote the kept
+returns to `<game bin>\bp_ipc\cp_backing_*.json` (the instrument's own output).
+For `GetItemMap` they record two signatures of its first argument: `a0=9`, self
+`UI_Inventory_Grid_obj` id 266430, returning `ref ds_map 1050`; and `a0=0`, self
+`UI_Inventory_Grid_obj` id 266363, returning `ref ds_map 1056` - the index
+`localItemMap` printed in every read of that session. The kept
+`GetPlayerItemOwner` return is `0`. So the first-argument-`9` map is a
+different map from the bag's, and Phase 1c never summed it. Readings, not
+established: `0` is the player's item-owner value and `9` the stash's (the
+second argument of the stash's own `GetItemFromFingerprint` calls and of Phase
+1b's `StashAddToStack`), so `GetItemMap(<owner>)` would be that owner's map from
+fingerprint to item struct, `localItemMap` being owner 0's; since `ds_map`
+indices are handed out in creation order, map 1050 was made before map 1056,
+plausibly at character load rather than when a window opened; and id 266430 is
+a cell of the Socketable container made at Live 1c's reopen, so at least the
+reopen made that call - whether the first open or the load did is not on
+record. `map0-identity` settles the `0`/`localItemMap` identity at one moment.
+
+Filled from that capture once the session has run (until then the Observed and
+Verdict cells are empty), one row per check (the names and the `## Checks` line
+format are fixed by `### Live procedure 1d`). A `fail` or `not-observed` is a
+finding, written as "not observed by <reader> (<what it printed>)"; a reader
+miss counts only once the control for the path it took passed (`### Live
+procedure 1d`).
+
+| Check | What it measures | Observed | Verdict |
+|---|---|---|---|
+| dll-hash | The installed plugin's SHA-256 equals the Phase 1c hash above | | |
+| marker | A bare `craftprobe` answers `phase1c rows=` (the Phase 1c build) | | |
+| control | `CheckPlayerInteraction` non-zero after the character loads | | |
+| counts-tool-before | `tools/stash_tab_counts.py` before launch: exit 0, a `socket_tab` and a `material_tab` line | | |
+| node-bag-control | `node bag class=15` on the bag's Socketable tab prints a `sum class=15 b=<b>` line whose `def.o` equals the Tor count the owner states | | |
+| item-struct-control | `node var` over `localItemMap` with `class=15`, bag open on its Socketable tab, gives the same `b` pairs and `def.o` as `node bag` (the control for item-struct reads) | | |
+| fp-array-control | `node var` over `inventorySocketGrid` with the bag grid as self and `a1=0` gives the same sums as `node bag` (the control for fingerprint reads) | | |
+| map0-identity | With no window open, `localItemMap`'s `ds_map` index equals the kept `GetItemMap(0)` return's | | |
+| map-open-socket | The kept `GetItemMap(9)` map, stash open on the Socketable tab, gives `sum class=15 b=1` with `def.o` equal to the Ol count and to `node socket a1=9`'s | | |
+| map-open-material | The same map, stash open on the Materials tab, gives `sum class=14 b=50` with `def.o` equal to the Unstable Dust count and to `node id:<stashGrid> a1=9`'s | | |
+| invgrid-open | `inventorySocketGrid` / `inventoryMaterialGrid` with a window open: a sum equal to a count by eye, and which window's tabs the arrays hold | | |
+| map-closed | The kept `GetItemMap(9)` map read through the same reference with the stash closed (and before any window, if kept then): the same two sums as the open reads | | |
+| invgrid-closed | The two arrays read with the stash closed (and before any window): the same entries and sums or fingerprints as the open read that matched a count | | |
+| map-live-closed | The `GetItemMap a0=9` per-signature `calls=` across two dumps with the stash closed, any armed `a0=int64:9` call and its returned map index | | |
+| store-names-globals | The six `store names` runs and two `store` runs over the globals with the stash closed: the names found, and which variable (if any) holds the kept map | | |
+| map-reopen | At the stash's reopen: the `a0=9` map index and `calls=` against the closed reads | | |
+| counts-tool-after | `tools/stash_tab_counts.py` after the game exits: the socket and material lines equal the counts the owner stated (nothing was moved) | | |
 
 ## Decision gate
 

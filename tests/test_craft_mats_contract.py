@@ -615,11 +615,13 @@ class CraftMatsContractTests(unittest.TestCase):
         self.assertRegex(head, r"phase1-status: (pending|complete)")
         self.assertRegex(head, r"phase1b-status: (pending|complete)")
         self.assertRegex(head, r"phase1c-status: (pending|complete)")
+        self.assertRegex(head, r"phase1d-status: (pending|complete)")
         for heading in ("## Interpretation", "## Static search", "### Negative results, sourced",
                         "## Baseline (vanilla) to measure", "## Hypotheses", "## Instrument", "## Live procedure",
                         "## Results", "### Constraints from Phase 1", "### Live procedure 1b",
                         "### Phase 1b results", "### Phase 1c rows", "### Phase 1c readers",
-                        "### Live procedure 1c", "### Phase 1c results", "## Decision gate"):
+                        "### Live procedure 1c", "### Phase 1c results", "### Live procedure 1d",
+                        "### Phase 1d results", "## Decision gate"):
             self.assertIn("\n" + heading + "\n", self.doc, heading)
         results = self.doc[self.doc.index("\n## Results\n"):self.doc.index("\n## Decision gate\n")]
         for row in ("| B0-vanilla |", "| C-control |", "| H-A |", "| H-B |", "| H-C |"):
