@@ -21509,12 +21509,16 @@ static void MkRoomTick()
 // A game a0=9 return: kept when it is a `ref ds_map` and it is new - the first,
 // a different index, or the same index after an invalidation. Rooted in a
 // research global first, so the value the core calls current is one the
-// collector sees.
+// collector sees. The room is read here too, before the "already current"
+// return: a game refresh made in a new room before the next frame poll then
+// counts as the refresh after the change, instead of being dropped and the map
+// invalidated by that poll a few frames later.
 static void MkKeep(long n, CInstance* S, const RValue& result)
 {
     try {
         long long index = -1;
         if (!MkMapIndex(result, index)) { ++g_MkNotAMap; return; }
+        MkRoomPoll();
         if (g_MkCore.IsCurrent() && g_MkCore.Index() == index) return;
         g_Yytk->CallBuiltin("variable_global_set", { RValue(std::string(kMkGlobal)), result });
         if (!g_MkKept) g_MkKept = new RValue();
@@ -21584,6 +21588,8 @@ static RValue& MkHookLoadStash(CInstance* S, CInstance* O, RValue& R, int argc, 
 static bool MkCurrentMap(RValue& map, std::string& reason)
 {
     MkRoomPoll();
+    // MkKeep and MkClear set and clear the core and g_MkKept together, so
+    // "current but nothing kept" is never produced; not-kept covers it anyway.
     if (!g_MkCore.IsCurrent() || !g_MkKept) {
         reason = ForgePact::CraftMatsKeptMap::ReasonName(
             g_MkCore.IsCurrent() ? ForgePact::CraftMatsMapReason::NotKept : g_MkCore.Reason());

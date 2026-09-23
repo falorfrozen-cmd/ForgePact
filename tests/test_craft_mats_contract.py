@@ -696,6 +696,16 @@ class CraftMatsContractTests(unittest.TestCase):
         self.assertRegex(self.plugin, r"static constexpr int kMkFindMaxEntries = 4000;")
         self.assertIn("entries walked=", find)
 
+    def test_mapkeep_notices_a_room_change_on_the_keep_path(self):
+        # A game GetItemMap(9) return in a new room can arrive before the
+        # 30-frame poll has run. The keep path reads the room first, so that
+        # return counts as the refresh after the change instead of being
+        # dropped as "already current" and invalidated by the next poll.
+        keep = self.body("static void MkKeep(")
+        self.assertIn("MkRoomPoll()", keep)
+        self.assertLess(keep.index("MkRoomPoll()"), keep.index("g_MkCore.IsCurrent()"))
+        self.assertLess(keep.index("MkRoomPoll()"), keep.index("g_MkCore.Refreshed(index)"))
+
     def test_craftprobe_hook_reports_rows_mapkeep_holds_as_held_not_failed(self):
         install = self.body("static void CpInstall(")
         self.assertIn("held by mapkeep", install)
