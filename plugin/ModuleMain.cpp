@@ -21905,10 +21905,14 @@ static std::string CpArgSignature(const RValue& a, size_t cut = 48)
 // a row that encloses BOTH, and Live 1e logged the craft route's call order,
 // not its nesting. So the detours of these rows bracket their trampoline with
 // a depth per row (CpRouteFrame), and each one's armed line says which of them
-// was already on the game thread's stack when it was entered: `within=<row>`,
-// the outermost (entered first), or `within=none`. Game thread only, like
-// g_CpInCapture; tracked whether or not the row is armed, so arming mid-craft
-// cannot misreport the nesting.
+// was already on the game thread's stack when it was entered:
+// `within=<row>#<n>`, the outermost (entered first) and the call number of its
+// frame - the `#n` of that row's own entry and `ret=` lines - or `within=none`.
+// The number is what tells one enclosing frame from two: at an amount-2 craft
+// a consume and a production both reading `within=DoCraftResult` may sit in
+// one call of it or in one each, and only the same `#n` says they share one.
+// Game thread only, like g_CpInCapture; tracked whether or not the row is
+// armed, so arming mid-craft cannot misreport the nesting.
 static const char* const kCpCraftRouteRows[] = {
     "CraftFindRecipeItems", "DoCraftResult", "CraftEditGrid", "CraftEditPlayerInventory",
     "s_CraftItem", "GridAddItem", "GridAddToStack", "s_ItemOperation", "GetInventoryGridNode",
@@ -21916,6 +21920,7 @@ static const char* const kCpCraftRouteRows[] = {
 static constexpr int kCpCraftRouteCount = (int)(sizeof(kCpCraftRouteRows) / sizeof(kCpCraftRouteRows[0]));
 static long g_CpRouteDepth[kCpCraftRouteCount] = {};    // frames of that row now on the stack
 static long g_CpRouteEntered[kCpCraftRouteCount] = {};  // entry order of its outermost frame
+static long g_CpRouteCall[kCpCraftRouteCount] = {};     // the row's call number of its outermost frame
 static long g_CpRouteSeq = 0;
 
 // The row's slot in kCpCraftRouteRows, or -1 for a row that is not on the route.
@@ -21926,22 +21931,27 @@ static int CpCraftRouteSlot(const char* label)
     return -1;
 }
 
-// The outermost craft-route row on the stack now, or "none".
+// The outermost craft-route row on the stack now, as `<row>#<n>`, or "none".
 static std::string CpWithin()
 {
     int outer = -1;
     for (int i = 0; i < kCpCraftRouteCount; ++i)
         if (g_CpRouteDepth[i] > 0 && (outer < 0 || g_CpRouteEntered[i] < g_CpRouteEntered[outer])) outer = i;
-    return outer < 0 ? std::string("none") : std::string(kCpCraftRouteRows[outer]);
+    return outer < 0 ? std::string("none")
+                     : std::string(kCpCraftRouteRows[outer]) + "#" + std::to_string(g_CpRouteCall[outer]);
 }
 
 // Entered before the trampoline, left after it - on unwinding too, so a game
 // error inside the call cannot leave a row counted as still on the stack.
+// `call` is the detour's own call number, kept for the row's outermost frame.
 struct CpRouteFrame {
     int slot;
-    explicit CpRouteFrame(int s) : slot(s)
+    CpRouteFrame(int s, long call) : slot(s)
     {
-        if (slot >= 0 && ++g_CpRouteDepth[slot] == 1) g_CpRouteEntered[slot] = ++g_CpRouteSeq;
+        if (slot >= 0 && ++g_CpRouteDepth[slot] == 1) {
+            g_CpRouteEntered[slot] = ++g_CpRouteSeq;
+            g_CpRouteCall[slot] = call;
+        }
     }
     ~CpRouteFrame()
     {
@@ -22048,7 +22058,7 @@ static void CpAfter(const char* safe, const char* label, long n, bool logged, bo
         const long n = InterlockedIncrement(&g_CpCalls_##SAFE); \
         const bool logged = CpObserve(LABEL, n, &g_CpLogged_##SAFE, &g_CpLogOn_##SAFE, route, S, O, argc, A); \
         RValue& r = [&]() -> RValue& { \
-            CpRouteFrame frame(route); \
+            CpRouteFrame frame(route, n); \
             return g_CpOrig_##SAFE ? g_CpOrig_##SAFE(S, O, R, argc, A) : R; \
         }(); \
         CpAfter(#SAFE, LABEL, n, logged, g_CpCapture_##SAFE != 0, g_CpKept_##SAFE, S, argc, A, r); \
@@ -24053,7 +24063,8 @@ static void CpUsage()
         " | kept:<row> | map9 | map9:<key> (the kept stash map, only while `mapkeep stat` says current)"
         " | path:<Obj|global|id:n>.<a.b.c> (what `var` reaches)");
     Out("  hook reports a row `mapkeep on` installed as `held by mapkeep` - neither detoured nor failed; run `mapkeep on` first");
-    Out("  a craft-route row's logged line carries within=<row|none>: the outermost craft-route row on the stack when it was entered");
+    Out("  a craft-route row's logged line carries within=<row>#<n>|none: the outermost craft-route row on the stack when it was entered,"
+        " and which call of it (the #n of its own entry and ret= lines)");
 }
 
 static void CpCommand(const std::string& rest)

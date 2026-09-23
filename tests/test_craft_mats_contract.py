@@ -784,14 +784,22 @@ class CraftMatsContractTests(unittest.TestCase):
         guard = self.body("struct CpRouteFrame")
         self.assertIn("++g_CpRouteDepth[", guard)
         self.assertIn("--g_CpRouteDepth[", guard)
+        # The frame is entered with this call's own number, kept only when it is
+        # the row's outermost frame (depth 0 -> 1), so `within=<row>#<n>` names
+        # which call of the enclosing row: two lines reading the same `#n` sat
+        # inside one frame, two different `#n` inside two.
+        self.assertRegex(detour, r"CpRouteFrame frame\(route, n\);")
+        self.assertRegex(guard, r"\+\+g_CpRouteDepth\[slot\] == 1\)\s*\{[^}]*g_CpRouteCall\[slot\] = call;")
         # The field is on the armed line of craft-route rows only.
         line = self.body("static bool CpObserve(")
         self.assertIn('" within="', line)
         self.assertRegex(line, r'route >= 0 \? .*" within="\)? \+ CpWithin\(\)')
-        self.assertIn('"none"', self.body("static std::string CpWithin("))
+        within = self.body("static std::string CpWithin(")
+        self.assertIn('"none"', within)
+        self.assertRegex(within, r'kCpCraftRouteRows\[outer\]\) \+ "#" \+ std::to_string\(g_CpRouteCall\[outer\]\)')
         # Research build only: nothing of it reaches a player.
         shipped = strip_research_blocks(self.plugin)
-        for symbol in ("within=", "CpRouteFrame", "kCpCraftRouteRows", "g_CpRouteDepth"):
+        for symbol in ("within=", "CpRouteFrame", "kCpCraftRouteRows", "g_CpRouteDepth", "g_CpRouteCall"):
             self.assertNotIn(symbol, shipped, symbol)
 
     # ---- the switch ----------------------------------------------------------
