@@ -2,14 +2,18 @@
 
 phase0-status: complete
 phase1-status: complete
-phase1b-status: pending
+phase1b-status: complete
 
 **Status: Phase 0 done (static search, instrument, decision core); Phase 1 (the
 first live session, 2026-09-22) done; Phase 1b (a widened instrument and a
-second session) pending.** Phase 1 measured the vanilla baseline, the cube's
-craft route and a vanilla duplication, but its instrument reached neither the
-stash's special-tab container nor the route a hand move between a special tab
-and the bag takes (`## Results`). Nothing player-visible changes yet: the
+second session, 2026-09-22/23) done; the mechanism is not decided.** Phase 1
+measured the vanilla baseline, the cube's craft route and a vanilla duplication,
+but its instrument reached neither the stash's special-tab container nor the
+route a hand move between a special tab and the bag takes (`## Results`).
+Phase 1b saw that move route by name in both directions and located both tabs'
+window objects, but no reader reproduced a special-tab count, and the window's
+container is gone once the stash closes (`### Phase 1b results`); no hypothesis
+is eligible yet (`## Decision gate`). Nothing player-visible changes yet: the
 `craftmats` switch exists but nothing is wired to crafting, and the player
 build refuses it. A result is only ever recorded as a negative with its
 positive control from the same session (repo-root `AGENTS.md`, "Prove the
@@ -644,32 +648,74 @@ Research DLL: `plugin_build\BloodPactPlugin_rel.dll`, built 2026-09-22 with
 the `a64cdbf` build (`774b2df5...`), whose `node` reader could not see the `o`
 stack member; a plugin with that older hash fails `dll-hash`. The player build
 (`build.bat release`) from the same commit carries no `phase1b` string.
-Not installed into the game's `mods` folder: that, and the session, are the
-owner's call. `### Live procedure 1b`'s `dll-hash` check compares the installed
-plugin against this hash before anything else counts.
+The owner had it installed as `mods\aurie\BloodPactPlugin.dll` for Live 2;
+`### Live procedure 1b`'s `dll-hash` check compared the installed plugin against
+this hash before anything else counted.
 
-Filled from the Live 2 capture, one row per check it carries (the check names
-and their `## Checks` line format are fixed by `### Live procedure 1b`). A
-`fail` or `not-observed` verdict is a finding, not a defect; a mechanism row
-counts only when `dll-hash`, `marker`, `control` and, for a special-tab miss,
-`node-bag-control` passed in the same session.
+**Live 2, 2026-09-22/23.** The owner at the keyboard for the hand moves and
+`live-operator` on the command channel (`hs-drive`). Character slot 14 ("Sorak");
+slot 13, Phase 1's character, was loaded first by mistake and relaunched before
+any hand-back counted. Three launches: slot 13 (abandoned), slot 14 (hand-backs
+A to C), and, after an overnight interruption, a resumed slot-14 launch (a repeat
+of C, then D to F). The saves were backed up before each night's part (an
+independent copy and an `hs-drive` backup) and restored afterwards; no ForgePact
+mod was toggled, and no craft was pressed. The resumed launch's starting bag
+count was corrected by the owner's count (1 Ol left over from hand-back C, not
+0); every count below uses the corrected figure. The capture,
+`.claude/workorders/forgepact-issue-14-phase1b-live-2.md`, stays on the owner's
+machine with the workorder and is cited below by its step headings; nothing of
+it is committed.
+
+Filled from that capture, one row per check it carries (the check names and
+their `## Checks` line format are fixed by `### Live procedure 1b`). A `fail` or
+`not-observed` verdict is a finding, not a defect; a mechanism row counts only
+when `dll-hash`, `marker`, `control` and, for a special-tab miss,
+`node-bag-control` passed in the same session. Coordinates `(x, y)` are the
+first two arguments of the call named; `o` and `b` are the members of the
+`itemDefinitionStruct` inside the item struct the call received.
 
 | Check | What it measures | Observed | Verdict |
 |---|---|---|---|
-| dll-hash | The installed plugin's SHA-256 equals the hash above | | |
-| marker | A bare `craftprobe` answers `phase1b rows=202` (this build, not `aa0c72a`) | | |
-| control | `CheckPlayerInteraction` non-zero after the character loads | | |
-| node-bag-control | `craftprobe node bag` prints a `sum class=<c> b=<b>` line whose member value is equal to a bag stack (two or more) the owner states by eye - the known-good read of both the cells and the count member, which is named here | | |
-| counts-tool-before | `tools/stash_tab_counts.py` before launch: exit 0, a `socket_tab` and a `material_tab` line | | |
-| stash-open-socket | A reader prints a per-(class, b) sum, in the member `node-bag-control` named, equal to the Socketable tab's Ol count by eye; the container's object and id | | |
-| stash-open-material | The same on the Materials tab, for one named material | | |
-| move-socket-to-bag | Rows that fire on a whole-stack pick-up/put-back and a 1-Ol move Socketable -> bag, with self/other/arguments/return | | |
-| move-bag-to-socket | Rows that fire on the 1-Ol move bag -> Socketable | | |
-| move-material-to-bag | Rows that fire on 1 material Materials -> bag -> Materials | | |
-| stash-closed | The container found open is still readable by id, with the same sum, once the stash window is closed | | |
-| load-capture | `LoadStash`, `s_StashTabData` or a `Load_Inventory_obj` row fires during the character load, with a kept return | | |
-| backing-per-arg | `backing dump` names >= 2 distinct first-argument signatures for `GetInventoryArray` or `CountInventoryItem` | | |
-| counts-tool-after | `tools/stash_tab_counts.py` after the game exits: the Socketable tab's sum equals the count the owner stated last | | |
+| dll-hash | The installed plugin's SHA-256 equals the hash above | `D38586443197...060D957`, equal to the hash above, before the first launch and again before the resumed launch (another session had swapped the plugin overnight, and it was reinstalled) (capture, Step 0 and Resume) | pass |
+| marker | A bare `craftprobe` answers `phase1b rows=202` (this build, not `aa0c72a`) | `craftprobe: phase1b rows=202 - research instrument ...` at each of the three launches, before the character loaded; `craftprobe hook` answered `202 detoured, 0 failed` each time | pass |
+| control | `CheckPlayerInteraction` non-zero after the character loads | Non-zero at every `craftprobe show`: 14896 and 14812 after the two first-night loads, 13090 after the resumed load, 132720 to 335160 during the hand-backs | pass |
+| node-bag-control | `craftprobe node bag` prints a `sum class=<c> b=<b>` line whose member value is equal to a bag stack (two or more) the owner states by eye - the known-good read of both the cells and the count member, which is named here | Scored **fail**. The owner stated Tor 173, from the bag's Socketable tab (hand-back A). `node bag` and `node id:262489` read the bag's `InventoryGrid` (`UI_Inventory_Grid_obj` id 262489, 15x6, 73 filled cells, 73 fingerprints, classes 13 and 14 only) and resolved 64 of the 73 fingerprints (the per-command cap; the same 9 were left on a repeat); every resolved item printed a `def.o` value, and no sum equalled 173 - the grid read held no socketable, so the stack stated was not in it (the grid appears to hold whichever bag tab is on show; not established). In the resumed launch, with the bag's Socketable tab on show, `node bag` read `sum class=15 b=1 ... def.o=2` on the bag's `InventoryGrid` (id 262423), equal to the 2 Ol the owner counted by eye (capture, Step 5b): the control's shape, met after the special-tab reads below had run, which were not repeated after it | fail |
+| counts-tool-before | `tools/stash_tab_counts.py` before launch: exit 0, a `socket_tab` and a `material_tab` line | Exit 0: `socket_tab: entries=90`, among them `class=15 b=1 stack=217` (Ol; the owner saw 217), and `material_tab: entries=1`, `class=14 b=50 stack=13` (Unstable Dust; the owner saw 13). The same before the resumed launch | pass |
+| stash-open-socket | A reader prints a per-(class, b) sum, in the member `node-bag-control` named, equal to the Socketable tab's Ol count by eye; the container's object and id | Not observed by `node`: no read printed a class-15 sum of 217 while the owner saw Ol 217 (hand-back A). Container located: the Socketable tab is `UI_Stash_Socket_New_obj` (id 262965), reached from `UI_Stash_obj.activeNode` through a `UI_Container_obj`'s `content`, and its `anon@1305` fires on the tab. Its `grid` is a 10x14 array of separate `UI_Inventory_Grid_obj` instances, one per socketable (cells tagged `StashSocketGrid`, `itemTypeExclusive` [15]; `nodeList` of 106), not one fingerprint-keyed `nodeGrid`. On two of those cells (ids 262970, 262971, both class 15) `GetItemFromFingerprint` was not resolved with self = the `StashSocketGrid` cell (`UI_Inventory_Grid_obj`) and `a1=0`, with a fresh lookup budget, so no count member was read. `UI_Stash_obj.stashGrid` (id 262533) held 1 filled cell; `node stash`'s only item grid was `invGrid`, the bag. `node-bag-control` had not passed when this ran, so this is not a "not readable" | not-observed |
+| stash-open-material | The same on the Materials tab, for one named material | Not observed by `node`: the owner saw Unstable Dust 13, the tab's only stack (hand-back B). With the Materials tab on show, `UI_Stash_obj.activeNode` is `stashGrid` itself (`UI_Inventory_Grid_obj` id 262533, 17x18, 1 filled cell, class 14 - the class `tools/stash_tab_counts.py` gives Unstable Dust): this tab uses the ordinary grid object, not a dedicated one like the Socketable tab. `GetItemFromFingerprint` on that cell was not resolved with self = `UI_Inventory_Grid_obj` id 262533 and `a1=0` (fresh budget), so no count member was read. `node-bag-control` had not passed | not-observed |
+| move-socket-to-bag | Rows that fire on a whole-stack pick-up/put-back and a 1-Ol move Socketable -> bag, with self/other/arguments/return | Two variants, both seen by name; neither returns a success answer. **Into an empty bag cell** (bag held no Ol): the whole-stack pick-up and put-back and then a 1-Ol move fired `UiASplitStack` and `UI_Split_Stack_obj` `anon@1285` (2 each), `UiAInventorySocketTabClick`, `UI_Stash_Socket_New_obj` `anon@1305`, and `s_InvNode` twice - first with other = a Socketable cell (`UI_Inventory_Grid_obj`) at (0, 0) and the whole stack (`o=217`, `b=1`), then with other = the bag's `InventoryGrid` at (7, 3) and `o=1`, `b=1`; self was not an instance and both returned `undefined`. Stash 217 to 216, bag 0 to 1, by eye. **Onto an existing bag stack** (resumed launch, bag held 1 Ol): `s_InventoryDrag`, `GetInventoryGridNode` 3 times (each returning the bag grid, id 262423), the same split rows, then `InventorySwapItemsNew` at (7, 3) with the Ol's node and, inside it, `InventorySocketItem` with `o=1`, `b=1`, self = other = the bag grid; `InventorySocketItem` returned `false` although the unit arrived (stash 217 to 216, bag 1 to 2 by eye, and `node bag` read `def.o=2`), and no `s_InvNode` fired. Which variant runs follows whether the destination cell already holds that item | pass |
+| move-bag-to-socket | Rows that fire on the 1-Ol move bag -> Socketable | 1 Ol bag to Socketable (resumed launch; bag 2 to 1, stash 216 to 217, by eye): `s_InvNode` with the bag stack (`o=2`, `b=1`, other = the bag grid, at (7, 2)); `UiASplitStack` and `anon@1285`; `s_InvNode` with the split unit (`o=1`); then `StashAddToStack` (self = other = the bag grid; six arguments: an array of length 1, `9`, `2`, the item struct with `o=1`, `b=1`, `1`, `8`) returning `true`; then `InvGridClearItemNode` on the emptied bag cell. `StashAddToStack` answering `true` is the game's own bag-to-stash write with a success signal | pass |
+| move-material-to-bag | Rows that fire on 1 material Materials -> bag -> Materials | The owner moved 1 Unstable Dust Materials to bag and back (stash 13, bag 0 at the end, by eye). **Bag to Materials leg**: `UiASplitStack` and `anon@1285`, `s_InvNode` (`o=1`, `b=50`, other = the bag grid, at (12, 2)), `StashAddToStack` (an array of length 18, `9`, `2`, the item struct with `o=1`, `b=50`, `1`, `0`) returning `true`, then `InvGridClearItemNode` - the same shape as `move-bag-to-socket`. **Materials to bag leg**: not observed - `s_InvNode`, `StashAddToStack` and `InvGridClearItemNode` counted one call each in the window, all on the other leg; only tab clicks (`UiAStashMaterialTabClick`, `UiAInventoryMaterialTabClick`, `GetInventoryGridNode`, `UI_Stash_obj` closures) and `ProcessInventoryGridInput` calls (on the bag grid and a Materials grid, id 262467, with no item among their arguments) were logged for it | pass (bag to Materials leg); not-observed (Materials to bag leg) |
+| stash-closed | The container found open is still readable by id, with the same sum, once the stash window is closed | Not observed. With the stash window closed, `craftprobe stash` printed `UI_Stash_obj has no live instance`, and `node id:262525` and `var id:262525 *` printed `instance_exists is false` for `UI_Stash_Socket_New_obj` id 262525, the Socketable container the same launch had logged as `anon@1305`'s self while the window was open: the window's container object is destroyed on close. Where the tabs' contents are held while the window is closed is not observed: no special-tab count was reproduced with the window open (rule (a)), and `LoadStash` ran at character load, not when the window opened (`load-capture`) | not-observed |
+| load-capture | `LoadStash`, `s_StashTabData` or a `Load_Inventory_obj` row fires during the character load, with a kept return | `LoadStash`: 2 calls during each character load, self `Console_Save_obj`, returning `true` (`cp_backing_LoadStash.json`, 101 bytes - the return is a bool, not the contents); no further call through the resumed launch's stash openings and closings (`backing dump` at the end still kept call 2). `s_StashTabData` and the `Load_Inventory_obj` closures are not among the rows the capture quotes as having fired | pass |
+| backing-per-arg | `backing dump` names >= 2 distinct first-argument signatures for `GetInventoryArray` or `CountInventoryItem` | `backing dump`: `GetInventoryArray: 1 first-argument signature(s)` - only `a0=1` (self `Player_obj`, an array of 18 bag fingerprints); `CountInventoryItem` kept nothing - the cube, where Phase 1 saw it called, was never opened in this session | not-observed |
+| counts-tool-after | `tools/stash_tab_counts.py` after the game exits: the Socketable tab's sum equals the count the owner stated last | Exit 0: `class=15 b=1 stack=217` and `class=14 b=50 stack=13`, equal to the counts the owner stated last (every unit moved was put back) | pass |
+
+**What Phase 1b settles, and what it leaves open.**
+
+- **`o` is the stack count on a stackable special-tab item.** Every move above
+  handed the game's own routines an item struct whose `o` was the stack, or the
+  part of it being moved (217 for the picked-up Ol stack, 2 for the bag stack
+  before a split, 1 for a one-unit move), with `b` the base id
+  `tools/stash_tab_counts.py` prints (1 for Ol, 50 for Unstable Dust); `node
+  bag`'s `def.o` equalled the owner's count once the right grid was read. On a
+  relic the same key is the upgrade level (repo-root
+  `docs/RUNTIME_DATA_MODELS.md` § 2), so it is read as a stack only on an item
+  already identified as a stackable.
+- **The special-tab move route is outside Phase 1's table, and now seen by
+  name.** Into the stash: `s_InvNode`, then `StashAddToStack` answering `true`,
+  then `InvGridClearItemNode`, for both tabs. Out of the Socketable tab:
+  `s_InvNode` into an empty cell, or `InventorySwapItemsNew` with
+  `InventorySocketItem` onto an existing stack - neither answers success
+  (`undefined`, and a `false` on a unit that arrived). Out of the Materials tab:
+  not observed.
+- **Both tabs live in window objects that exist only while the stash is open.**
+  The Socketable tab is `UI_Stash_Socket_New_obj` with one grid instance per
+  socketable; the Materials tab is the stash window's ordinary `stashGrid`. The
+  item lookup by fingerprint, with each of those grid cells as self and `a1=0`,
+  answered no struct. The game's `LoadStash` ran during character load and not
+  when the stash window opened, so the contents are held somewhere between the load and the window opening;
+  where is not observed, and no Phase 1b reader was pointed there.
 
 ## Decision gate
 
@@ -690,3 +736,50 @@ under `## Results`); a miss recorded as "not observed by `craftprobe ...`" does
 not block - it sends the search to a wider reader (`var`, `backing`, other
 filters) - and neither does it, alone, move the owner to the "stash must be
 open" fallback.
+
+**After Phase 1b (2026-09-23): no hypothesis is eligible yet, and this is not a
+block.** Per hypothesis, the rows it rests on and where they stand:
+
+- **H-A (count and consume through a hook)** rests on `M-craft` (Phase 1: the
+  availability and consume rows fire by name, with recorded shapes), on
+  `stash-open-socket`, `stash-open-material` and `stash-closed` (the tab's count
+  readable where the craft runs - with the stash window closed, since the cube
+  cannot be open beside it), and on a stash-side take with a success answer
+  (`move-socket-to-bag`, and `move-material-to-bag`'s Materials-to-bag leg). No
+  reading row passed, and neither route out of a special tab answers success.
+  Cost to the player: the stash tab changes at the craft press, a moment the
+  game chose for the bag only.
+- **H-B (pull on demand)** rests on `move-socket-to-bag` and the Materials-to-bag
+  leg of `move-material-to-bag` (a by-name stash-to-bag shape that answers
+  success) and on `stash-closed` (the move needs the tab's grid instances at the
+  press). The Socketable leg is seen by name with its arguments but answers no
+  success; the Materials leg is not observed; and the grid instances every
+  observed move ran against belong to the stash window, which is closed
+  whenever the cube is open. Cost: a stash-to-bag move at the craft press, a
+  moment the game did not choose, which also changes the bag the player sees.
+- **H-C (count only)** rests on H-A's reading rows (`stash-open-socket`,
+  `stash-open-material`, `stash-closed`) and `M-craft`, and has H-A's reading
+  gap. Cost: a recipe the cube shows as craftable fails at the press unless the
+  materials are also pulled.
+
+Why this is not a block: each gap is a read recorded "not observed", not a miss
+whose control passed. `node-bag-control` failed when the special-tab reads ran
+(its shape was met only later, on a different bag tab), and the fingerprint
+lookup was not resolved with the special-tab cells as self and `a1=0` - a
+statement about that call shape, not about the items. `stash-closed` shows
+that the window's container is destroyed, not that the contents are
+unreadable: `LoadStash` ran at character load and not when the window opened,
+so the game holds the tabs' contents somewhere between the two.
+
+Recommended (the owner decides): no mechanism yet. First a wider-reader round,
+in the order the evidence points: (1) `node-bag-control` first, on the bag tab
+whose stack the owner names; (2) read a special-tab cell's item without the
+fingerprint lookup - `var id:<cell> *` on a `StashSocketGrid` cell, since the
+item struct `s_InvNode` received from such a cell carried `o` - or with a self
+that already resolved (the bag grid); (3) look for the closed-window store:
+`GetProfileInventoryData`'s `ref instance 257725`, kept by `backing` but never
+followed with `var id:`, and the instance `LoadStash` ran on
+(`Console_Save_obj`), read with `var ... *`. If that round finds the store readable closed,
+H-A is the one this evidence leans towards, because every stash-side move seen
+so far ran on window instances that do not exist while the cube is open,
+which H-B's pull would need.
