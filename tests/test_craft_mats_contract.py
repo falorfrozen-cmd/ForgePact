@@ -1245,6 +1245,10 @@ class CraftMatsContractTests(unittest.TestCase):
             verdicts = sum(results.count(v) for v in ("| pass |", "| fail |", "| not-observed |"))
             self.assertEqual(verdicts, len(checks))
             self.assertIn("forgepact-issue-14-phase1i-live-1.md", results)
+            # The two stash containers Live 1i named by content are recorded
+            # by name, since no static reading had them.
+            for name in ("stashMaterialTab", "stashSocketItemSlot", "stashInventoryMap"):
+                self.assertIn(name, results, name)
             gate = self.doc[at("## Decision gate"):]
             self.assertLess(0, gate.find("After Phase 1i"))
             self.assertLess(gate.find("After Phase 1i"), gate.find("After Phase 1h"))

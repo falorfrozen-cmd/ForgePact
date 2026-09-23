@@ -9,7 +9,7 @@ phase1e-status: complete
 phase1f-status: complete
 phase1g-status: complete
 phase1h-status: complete
-phase1i-status: pending
+phase1i-status: complete
 
 **Status: Phase 0 done (static search, instrument, decision core); Phase 1 (the
 first live session, 2026-09-22) done; Phase 1b (a widened instrument and a
@@ -19,9 +19,12 @@ H-A on 2026-09-23 (`## Decision gate`); Phase 1e, the consume-research round
 asked for before any player build, done (2026-09-23); Phase 1f, the owner's
 build-design round on the installed Phase 1e build, done (2026-09-23);
 Phase 1g, the closed-stash move, save and craft-route measurement, done
-(2026-09-23); and Phase 1h, the Ghidra-read take, its save and the recipe's
-shape, done (2026-09-23), leave a player build blocked on a stash save after
-the move and the recipe's readable shape.** Phase 1
+(2026-09-23); Phase 1h, the Ghidra-read take, its save and the recipe's
+shape, done (2026-09-23); and Phase 1i, reaching `Controller_obj`, the
+complete take and the recipe tie, done (2026-09-24), leave the complete
+by-name take, a stash close after it and the selected recipe's amount
+measured once each, with the stash file written only by the game's own save
+at the next stash close.** Phase 1
 measured the vanilla baseline, the cube's craft route and a vanilla duplication,
 but its instrument reached neither the stash's special-tab container nor the
 route a hand move between a special tab and the bag takes (`## Results`).
@@ -109,6 +112,19 @@ decoded amount were not observed - the instrument could not list the
 `Controller_obj` variables past 80, and the selected recipe's calls were not
 told apart from the rest of the Cube's list - so the "After Phase 1h" paragraph keeps a player build blocked and names
 what the next research build needs.
+Phase 1i (done 2026-09-24) ran one research build - a paged `var`, a
+content search `find` and an `inroute` gate (`### Phase 1i instrument`) - and
+one session (`### Live procedure 1i`, `### Phase 1i results`). Its session
+(Live 1i) named the stash's containers on `Controller_obj` by content
+(`stashMaterialTab` and `stashSocketItemSlot`, beside the map
+`stashInventoryMap`), ran the complete by-name take - bag side, map side and
+stash-cell clear - on one Materials entry and one Socketable stack, and read
+the selected recipe's required amount, 5, at the craft press. Each by-name
+save after a take returned with one item fewer and no fault, but no by-name
+save wrote the file, the one before any take included; the owner's stash
+close after both takes kept the game running and wrote a file holding
+neither. The "After Phase 1i" paragraph records what a player build now has
+and still lacks.
 Nothing player-visible changes yet: the
 `craftmats` switch exists but nothing is wired to crafting, and the player
 build refuses it. A result is only ever recorded as a negative with its
@@ -2815,7 +2831,138 @@ line naming the next page, the `find` content search, and `within=` on
 `plugin_build\build.bat release` from the same commit produced a ship DLL with
 no `craftprobe`, `mapkeep`, `phase1i` or `inroute` string. The build control
 is `dll-hash` against this hash plus the `phase1i rows=254` marker. `### Live
-procedure 1i` gives the session's shape; the session has not run yet.
+procedure 1i` gives the session's shape.
+
+**Live 1i, 2026-09-24.** One launch, character slot 14 ("Sorak"),
+`live-operator` on the command channel (`hs-drive`) and the owner at the
+keyboard for the hand move of X into the Materials tab, the Cube, the one
+craft press, the one stash open and close, and the counts by eye. The saves
+were backed up first (an independent copy and the `hs-drive` backup
+`20260923T223814Z_forgepact-issue-14-phase1i-live-1`) and restored by the
+driver afterwards from that backup, verified by hash (the workorder's Log,
+`### Live 1`). `mapkeep on` and `craftprobe hook` ran before the character
+loaded, and auto-prospect was off. The trial material X was again one Greater
+Unstable Dust (class 14, `b=51`), moved by hand into the Materials tab
+(fingerprint `0-0-212370161000-14`, a new unit's, not Live 1h's); the
+Socketable entry was the class-15 `b=51` stack of 10, Pristine Ruby
+(`0-0-200921844065-15`). Every step of the procedure ran, in order, and the
+launch ended with a graceful stop. Three things the capture records beyond
+the procedure. First, every by-name `SaveStash` returned but none wrote
+`stash.hss`: the one before any take (`save-by-name-control`) left the file's
+write time unchanged too, so both saves after a take read not-observed rather
+than fail, and the file side of each take was read only after the game's own
+save at the owner's stash close. Second, the by-name saves'
+`CreateItemSaveStruct` counts - 1627 before any take, 1626 after the first,
+1625 after the second - each equal the kept map's size at that point, while
+the `save-control` window (the owner's stash open, move and close) counted
+1993 calls; what the difference is made of is not measured. Third, the
+close's own `SaveStash` in `close-after-takes` was counted
+(`SaveStash calls=1 (+1 since last show) logged=0 unlogged=1 (not selected)`)
+but not traced, because the arm active then (`recipe-shape`'s) did not select
+it; that save rests on the counter, the advanced write time and the file's
+counts, not on a `SaveStash #<n> ... ret=` line.
+
+Filled from the capture, `.claude/workorders/forgepact-issue-14-phase1i-live-1.md`,
+cited by its step headings, one row per check, in the procedure's order, the
+verdict the capture's `## Checks` line gives. A `fail` or `not-observed` is a
+finding; a call shape is recorded with what was supplied. `ds_map` 1049 is
+this session's stash map index and is compared as an index only. `<K_X>` and
+`<K_S>` stand for the two fingerprints above. Every `find` quoted walked all
+221 of `Controller_obj`'s variables with no visit-cap line, so each 0 is a
+complete search beside `find-control`'s.
+
+| Check | What it measures | Observed | Verdict |
+|---|---|---|---|
+| dll-hash | The installed plugin's SHA-256, read with the game closed, equals the hash above | `EAF6E7B8...28A3FED` on the installed plugin before the launch, equal to the hash above (capture, Before launch: dll-hash) | pass |
+| marker | A bare `craftprobe` answers `phase1i rows=254` (this build) | `craftprobe: phase1i rows=254 - research instrument for docs/crafting-materials-research.md (research build only)` (capture, Launch and character load: craftprobe / mapkeep on / craftprobe hook) | pass |
+| counts-tool-before | `tools/stash_tab_counts.py` before the launch: exit 0, `class=14 b=50 stack=13`, `class=15 b=1 stack=216`, `class=15 b=51 stack=10`, no `class=14 b=51`; file time T0 | Exit 0, all four as expected; T0 `2026-09-22T22:18:18.9022398Z` (capture, Before launch: counts-tool-before; T0 at Step 2) | pass |
+| hook | `mapkeep on` prints `GetItemMap` and `LoadStash` `both-routes`, then `craftprobe hook` reads `252 detoured, 0 failed, 2 held by mapkeep` | `mapkeep on: GetItemMap both-routes (table swap and inline detour at the function's own address)` and the same for `LoadStash`, no `TABLE-ONLY`; `craftprobe hook: 252 detoured, 0 failed, 2 held by mapkeep.`, read from the IPC tail because the immediate reply was cut by size (capture, Launch and character load: craftprobe / mapkeep on / craftprobe hook) | pass |
+| control | After the load: `CheckPlayerInteraction calls=` and `mapkeep stat`'s `a0=0 calls=` non-zero; `a0=9 calls=0`, `kept=none` as the baseline | `CheckPlayerInteraction calls=19978`, `a0=0 calls=26219`, `a0=9 calls=0`, `kept=none`; `show` also reads `inroute gate off` (capture, Launch and character load: control (after load)) | pass |
+| save-control | The owner's hand move of X into the Materials tab and stash close, with `SaveStash`, `CreateItemSaveStruct` and `___struct___359` armed at `budget=5000`: the healthy save's signature | Supplied: `arm budget=5000 SaveStash CreateItemSaveStruct ___struct___359`, then the owner's move and close ("done, dust moved and stash closed"). `SaveStash calls=1`, `CreateItemSaveStruct calls=1993` (N0); `SaveStash #1 self=Console_Save_obj ... argc=0`; no `a0=undefined` entry; `___struct___359@SaveStash #1` Dust (`o=13`, `b=50`) and `#2` X (`o=1`, `b=51`), each `ret=undefined`; `SaveStash #1 ret=undefined`; T1 `2026-09-23T22:42:48.5539572Z`, later than T0; the counts tool `class=14 b=51 stack=1` (capture, Step 2) | pass |
+| map-at-cube | With the Cube open on the Greater Unstable Dust recipe and the stash closed: `GetItemMap` by name (self `Console_Save_obj`, argument `9`) dispatched, kept current, and `mapkeep find` naming `K_X` and `K_S` | Supplied: `call GetItemMap Console_Save_obj 0 9 confirm`. `dispatched #1 -> ret=kind=15 str=ref ds_map 1049`; `mapkeep stat`: `kept=ref ds_map 1049 size=1627 current=yes`, `a0=9 calls=3136`, `first9: #1 self=UI_Stash_obj`; `find 14 51` `key=0-0-212370161000-14 ... o=1`, `matched=1`; `find 15 51` `key=0-0-200921844065-15 ... o=10`, `matched=1` (capture, Step 3) | pass |
+| save-by-name-control | A by-name `SaveStash` before any take: it returns, and its `CreateItemSaveStruct calls=` (N1) with no `a0=undefined` entry is the by-name signature later saves are read against; T read before and after | Supplied: the same `arm`, then `call SaveStash Console_Save_obj 0 confirm` (no argument). `dispatched #1 -> ret=undefined`; `SaveStash #1 self=Console_Save_obj ... argc=0` and `SaveStash #1 ret=undefined`; `CreateItemSaveStruct calls=1627` (N1); 0 `a0=undefined` entries across the call's 6518 reply lines. T3, and T3b about 5 s later, equal T2 (`2026-09-23T22:42:48.5539572Z`): no write. The verdict is on the return and the signature; the no-write is what reads the later saves' no-writes as not-observed (capture, Step 4) | pass |
+| find-control | `find` on `Controller_obj` for the kept map's runtime text gives at least one match; for a text nothing holds, 0 matches with values visited above 0 | Supplied: `find Controller_obj 0 ref ds_map 1049` -> `match 1: stashInventoryMap (reference)`, `1 match(es), 44966 values visited, 221 of 221 variables walked (from=0)`; `find Controller_obj 0 no-such-text-phase1i` -> `0 match(es), 44966 values visited, 221 of 221 variables walked (from=0)`; no visit-cap line on either (capture, Step 5) | pass |
+| var-pages | `var Controller_obj 0 *`, following each cap line, lists as many variables as `vars=`, the map among them | `vars=221`; page 1 indices 0..79 (80), its cap line naming `craftprobe var Controller_obj 0 * from=80` and 141 more; page 2 indices 80..159 (80), naming `from=160` and 61 more, `stashInventoryMap` on it; page 3 indices 160..220 (61), no cap line; 80 + 80 + 61 = 221 (capture, Step 6) | pass |
+| holders | `find` for `K_X` gives one match `<M>.<x>.<y>.<member>`, for `K_S` one match `<S>.<k>.0.0.<member>`, and `var` on `<S>.<k>` reads an array | Supplied: `find Controller_obj 0 <K_X>` -> `match 1: stashMaterialTab.0.1.nodeFingerprint (string)`; `find Controller_obj 0 <K_S>` -> `match 1: stashSocketItemSlot.73.0.0.nodeFingerprint (string)`; each `1 match(es)`, 221 of 221 walked; `var Controller_obj 0 stashSocketItemSlot.73` -> `array len=1 len0=1 [0]=array[1]={object/struct}`. `<M>` is `stashMaterialTab`, `<S>` `stashSocketItemSlot`, `k` 73 (capture, Step 7) | pass |
+| lookup-closed | `GetItemFromFingerprint(<K_X>, 9)` with the stash closed returns X's struct | Supplied: self `Console_Save_obj` 0, `a0` the string `0-0-212370161000-14`, `a1` `9`. `dispatched #1108800 -> ret=struct{itemDataHash=..., itemType=real:14.000000, itemInfoStruct=struct members=20}` (capture, Step 8) | pass |
+| take-material | On X, the stacked case, stash closed, Cube open, self `Console_Save_obj` 0: the bag's add, `RemoveItemFromMap` on map 9 with the kept map dropping X, then `GridRemoveItem` on `<M>` and a `find` for `K_X` giving 0 matches | Supplied, after `arm budget=8`: `InventoryGridCanAddToStack 1 undefined fp9:<K_X>` -> an item struct, `itemType=14`; `InventoryGridAddToStack 1 fp9:<K_X>` -> `struct{tabNumber=0, x=7, y=0, tabType=-4, success=true}`; `RemoveItemFromMap map9 <K_X>` -> `ret=undefined`, then `mapkeep find 14 51` `matched=0`, `size=1626`; `GridRemoveItem path:Controller_obj.stashMaterialTab <K_X>` -> `ret=bool:true`, then `find Controller_obj 0 <K_X>` -> `0 match(es), 44961 values visited, 221 of 221 variables walked` (capture, Step 9) | pass |
+| save-after-take | After `take-material`, the by-name `SaveStash` returns with one `CreateItemSaveStruct` call fewer than `save-by-name-control`, no `a0=undefined` entry, and writes a file without X | Supplied: the same `arm budget=5000 ...` and `call SaveStash Console_Save_obj 0 confirm`. `dispatched #1 -> ret=undefined`, `SaveStash #1 ret=undefined`; one `___struct___359@SaveStash` entry, Dust's (`o=13`, `b=50`), none for X; `CreateItemSaveStruct calls=1626` (N1 - 1); 0 `a0=undefined` entries across 6514 reply lines. T5, and T5b about 5 s later, equal T4: no write, so the counts tool still read X from the unchanged file. Not observed (the file side: no by-name `SaveStash` wrote the file this session, `save-by-name-control` included) (capture, Step 10) | not-observed |
+| take-socket | On S, the no-stack case: `InventoryGridCanAddToStack` answers `undefined`; `GetItemPreferredGrid` and the bag's `inventorySocketGrid` read; `GridAddItem` into it, `ChangeItemOwner(9, 0, <K_S>)` with the map dropping S, then `GridRemoveItem` on `<S>.<k>` and a `find` giving 0 matches | Supplied, after `arm budget=8`: `InventoryGridCanAddToStack 1 undefined fp9:<K_S>` -> `ret=undefined`; `GetItemPreferredGrid 1 fp9:<K_S>` -> `struct{gridBits=0, grid=array len=6 len0=15}`; `var New_Inventory_Data_obj 0 inventorySocketGrid` -> a 6x15 array of item structs and `undefined`; `GridAddItem path:New_Inventory_Data_obj.inventorySocketGrid fp9:<K_S> 0 undefined` -> `struct{tabNumber=0, x=3, y=1, tabType=0, success=true}`; `ChangeItemOwner 9 0 <K_S>` -> `ret=undefined`, then `mapkeep find 15 51` `matched=0`, `size=1625`; `GridRemoveItem path:Controller_obj.stashSocketItemSlot.73 <K_S>` -> `ret=bool:true`, then `find Controller_obj 0 <K_S>` -> `0 match(es), 44956 values visited, 221 of 221 variables walked`. The placement: the owner counted 10 rubies in the bag at `close-after-takes` (capture, Step 11) | pass |
+| save-after-socket | After `take-socket`, the by-name `SaveStash` returns with one call fewer again and writes a file without `class=15 b=51` | Supplied as in `save-after-take`. `dispatched #1 -> ret=undefined`, `SaveStash #1 ret=undefined`; one `___struct___359@SaveStash` entry, Dust's; `CreateItemSaveStruct calls=1625` (N2 - 1); 0 `a0=undefined` entries. T6b, about 5 s after T6, unchanged: no write, the counts tool still reading X and the ruby stack. Not observed (the file side, for the same reason) (capture, Step 12) | not-observed |
+| recipe-shape | `arm budget=200 inroute` on `PilipaliDecrypt`, `CountInventoryItem`, `CraftFindRecipeItems` and `DoCraftResult`; `show all` before the press is the gate's control; one craft press; the in-route decode beside the Dust count against the owner's 5 | Supplied: `arm budget=200 inroute PilipaliDecrypt CountInventoryItem CraftFindRecipeItems DoCraftResult` (reply: `inroute gate ON`). Before the press: `PilipaliDecrypt calls=82500 logged=0`. The owner pressed craft once ("crafted once, got a destiny shard fragment, recipe selected again"). After: `CraftFindRecipeItems calls=1 logged=1`, `DoCraftResult calls=1 logged=1`, `PilipaliDecrypt calls=672588 logged=200`, `CountInventoryItem calls=492 logged=200`. `CraftFindRecipeItems #1 within=none self=UI_Craft_Recipe_List_Item_obj#5055@264097 other=UI_Grid_obj#5081@264066 argc=4`; inside it `PilipaliDecrypt #502253 within=CraftFindRecipeItems#1`, the same self and other, `a0=int64:29 a1=int64:46 a2=undefined` -> `ret=real:5.000000`, beside `CountInventoryItem #1 within=CraftFindRecipeItems#1 ... a0=real:1.000000 a1=real:14.000000 a2=int64:1 a3=int64:51` -> `ret=real:155.000000`; `CraftFindRecipeItems #1 ret=struct{a=real:31.000000, e=undefined}`; then `DoCraftResult #1 within=none` with the same self, and 199 decode and count pairs `within=DoCraftResult#1` before the budget ran out. The decode equals the owner's 5 (capture, Step 13) | pass |
+| close-after-takes | Only if every clear answered `true`: the owner closes the Cube, opens the stash on the Materials and the Socketable tab and closes it; the game running after it, a later T, the file without X or `class=15 b=51` | Both `GridRemoveItem` calls had answered `bool:true`. The owner: "materials 13 dust, no rubies in stash, bag has 10 rubies. no crash on exit". `hs_status` `game_state=running`, pid 95716 as at the launch; T `2026-09-23T22:59:54.3034104Z`, later than every earlier T; `craftprobe show` `SaveStash calls=1 (+1 since last show) logged=0 unlogged=1 (not selected)`, counted but not traced; the counts tool `class=14 b=50 stack=13` only, no `class=15 b=51` (capture, Step 14) | pass |
+| counts-tool-after | `tools/stash_tab_counts.py` after a graceful stop, against the owner's last controlled counts | `hs_stop_game`: `exited=true`, `forced=false`. Exit 0: `material_tab: entries=1`, `class=14 b=50 stack=13`, no `class=15 b=51`, equal to `close-after-takes`' read. `hs_saves_inspect`: `herosiege13.hss`, `inventory_order_13.hss`, `shop.ini` and `stash.hss` changed, none added or missing (capture, Step 15) | pass |
+
+**Question 1: the complete take, stacked case (a Materials entry the bag
+stacks).** Observed, once. With the stash closed and the Cube open, self
+`Console_Save_obj` 0 throughout, the four by-name calls ran on X in order and
+each answered success: `InventoryGridCanAddToStack` found a bag stack,
+`InventoryGridAddToStack` answered `success=true`, `RemoveItemFromMap` on map
+9 dropped X on the same kept index (1627 entries to 1626), and
+`GridRemoveItem` on `Controller_obj.stashMaterialTab` with X's fingerprint
+answered `true`, after which a complete content search of `Controller_obj`
+no longer found the fingerprint (`take-material`). The cell had been named by
+that same search before the take: X's fingerprint sat once in
+`Controller_obj`, as the `nodeFingerprint` member of
+`stashMaterialTab.0.1` (`holders`). At the owner's stash close afterwards the
+Materials tab showed 13 Dust and no X, the game kept running, and the file
+the close wrote held no X (`close-after-takes`).
+
+**Question 2: the complete take, no-stack case (a Socketable entry).**
+Observed, once. On the ruby stack of 10, `InventoryGridCanAddToStack`
+answered `undefined` (no bag stack to add to); `GetItemPreferredGrid`
+answered a struct whose `grid` is a 6x15 array, the shape of the bag's
+`inventorySocketGrid` (a match on shape only - that the two are one array is
+not established); `GridAddItem` into `inventorySocketGrid`, with the default
+last two arguments, placed it (`success=true`, cell 3,1);
+`ChangeItemOwner(9, 0, <K_S>)` dropped it from the kept map (1626 entries to
+1625); and `GridRemoveItem` on `Controller_obj.stashSocketItemSlot.73`
+answered `true`, a complete search then no longer finding its fingerprint
+(`take-socket`). The row had been named by content as
+`stashSocketItemSlot.73.0.0` (`holders`). After the owner's stash close the
+bag held 10 rubies and the stash none, by the owner's eye, and the written
+file held no `class=15 b=51` (`close-after-takes`) - so the add carried the
+whole stack's `o`, which had stayed not observed since Phase 1g.
+
+**Question 3: the save after the take.** The save after each complete take
+returned, with no fault; its file side is not observed by name. Each by-name
+`SaveStash` after a take returned (`ret=undefined`), made exactly one
+`CreateItemSaveStruct` call fewer than the save before it (1627, 1626, 1625)
+with no `a0=undefined` entry, and logged a `___struct___359` entry for Dust
+and none for the taken item (`save-after-take`, `save-after-socket`, both
+read against `save-by-name-control`). Live 1h's by-name save after a take
+that left the cell threw after Dust's cell instead; this fits the static
+reading that the stash cell, not the map call, decides the fault (`### Phase
+1h results`, "The crash, as measured"). The fault site itself stays the
+reading's: no save faulted, so no `a0=undefined` line printed. No by-name
+`SaveStash` wrote `stash.hss`, though, the one before any take included,
+although each used the close's own shape (self `Console_Save_obj`, no
+argument, as `save-control` logged it) - as Live 1f's by-name save with the
+stash closed did not either. So the file after the takes was read only after
+the game's own save at the owner's stash close, which wrote it, without X or
+the ruby stack, and did not end the game (`close-after-takes`). What makes
+the close's save write while the by-name one does not - `SaveStash` itself or
+something the close runs around it - is not measured.
+
+**Question 4: the selected recipe's decoded amount.** Observed, once. With
+`arm`'s `inroute` gate on, 82,500 `PilipaliDecrypt` calls ran between the arm
+and the read before the press, none logged (the gate's control). At the one
+press, `CraftFindRecipeItems` ran once with the recipe-list row as self
+(`UI_Craft_Recipe_List_Item_obj`, other `UI_Grid_obj`), and inside it one
+`PilipaliDecrypt(29, 46, undefined)` answered 5, beside
+`CountInventoryItem(1, 14, 1, 51)` - the Greater Unstable Dust identity -
+answering 155; the owner states this recipe uses 5 (`recipe-shape`). So the
+selected recipe's required amount is readable by name, in the craft route, as
+the decode inside `CraftFindRecipeItems` at the press. The bag count, 155,
+is one more than Live 1h's 154, read in that session with X already moved
+into the stash and before its take, the saves restored to the same start
+between the two: that fits the unit `take-material` put in the bag being
+counted by the game, an inference not measured separately. `DoCraftResult`
+then ran with the same self, and 199 decode and count pairs inside it were
+logged before the 200-line budget ran out; which recipe each belongs to was
+not read. The row's own variables were not read either: `var id:264097 *`
+after the craft found the row instance gone. A recipe with more than one
+input, and a craft of more than one unit, are not observed.
 
 ## Decision gate
 
@@ -2825,6 +2972,86 @@ The owner set this on 2026-09-23 ("H-A, research consume first"), choosing
 H-A and asking that Phase 1e, the consume-research round, come before any
 player build. During Live 1f the owner also set the design an H-A build is to
 follow, below.
+
+**After Phase 1i (2026-09-24): H-A stays the decision. The complete by-name
+take, with its stash-cell clear, is now measured for one Materials entry the
+bag stacks and one Socketable stack it does not, and the owner's stash close
+after both kept the game running and wrote a stash file holding neither; the
+selected recipe's required amount is readable by name at the craft press.
+What the design's save step rests on is now the game's own save: a by-name
+`SaveStash` returns cleanly after a complete take but writes no file, so the
+stash file is written at the game's next own save - measured here at the
+next stash close.** Whether and how a player build follows is the owner's
+decision (the next workorder). This replaces the "After Phase 1h" list of
+what the design lacked, kept below as it stood then. By measurement in Live
+1i - one launch, the representative cases only - with `control`, the keeper's
+control and `find-control` non-zero (`### Phase 1i results`), for a later
+player build:
+
+- *Where the stash's cells live.* `Controller_obj` holds the stash map as
+  `stashInventoryMap` and the two special tabs' cells as `stashMaterialTab`
+  (a two-level `[x][y]` array; X was at `0.1`) and `stashSocketItemSlot` (an
+  array of rows; the ruby stack at row 73, `.73.0.0`); a cell holds its
+  item's fingerprint in its `nodeFingerprint` member (`holders`,
+  `find-control`, `var-pages`). These names were found live, by content: the
+  Ghidra reading had no member names from the executable to name them by.
+  They are this build's runtime names, read in one launch.
+- *The complete take, stacked case.* Self `Console_Save_obj` 0, stash closed,
+  Cube open: `InventoryGridCanAddToStack(1, undefined, <item>)` (a struct),
+  `InventoryGridAddToStack(1, <item>)` (`success=true`), `RemoveItemFromMap`
+  on map 9, then `GridRemoveItem(Controller_obj.stashMaterialTab,
+  <fingerprint>)` (`true`); the kept map and a complete content search both
+  then lacked the entry (`take-material`). The item is the game's own
+  `GetItemFromFingerprint(<fingerprint>, 9)` return with that self
+  (`lookup-closed`).
+- *The complete take, no-stack case.* The same self:
+  `InventoryGridCanAddToStack` `undefined`, then `GridAddItem(<the bag's
+  inventorySocketGrid>, <item>, 0, undefined)` (`success=true`, the whole
+  stack of 10 arriving in the bag), `ChangeItemOwner(9, 0, <fingerprint>)`,
+  and `GridRemoveItem(Controller_obj.stashSocketItemSlot.<row>,
+  <fingerprint>)` (`true`) (`take-socket`, and the owner's count at
+  `close-after-takes`). That `inventorySocketGrid` is the grid
+  `GetItemPreferredGrid` answers is a match on shape only.
+- *A save after a complete take does not fault.* Each by-name `SaveStash`
+  after a take returned, one `CreateItemSaveStruct` call fewer each time and
+  no `a0=undefined` entry (`save-after-take`, `save-after-socket`, read
+  against `save-by-name-control`), and the owner's stash close after both
+  takes kept the game running and wrote a file with neither item
+  (`close-after-takes`) - where Live 1g's and Live 1h's closes, after a take
+  that left the cell, ended the game. One close, one launch.
+- *The selected recipe's amount, by name.* At the press, the
+  `PilipaliDecrypt` call inside `CraftFindRecipeItems` (self the selected
+  recipe row) answered 5 beside `CountInventoryItem` for the Dust, and the
+  owner's figure is 5 (`recipe-shape`). Outside the craft route the Cube's
+  list decodes all the time (82,500 calls before the press, none in route), so
+  the amount is read in route, not from the list.
+- *The hook point, unchanged: `DoCraftResult`* ran once at the press, after
+  `CraftFindRecipeItems` and with the same self (`recipe-shape`), as in Phase
+  1g's `craft-order`.
+
+What it still lacks, as far as observed:
+
+- *A by-name stash save that writes.* No by-name `SaveStash` wrote
+  `stash.hss` in this session, the one before any take included, though each
+  used the close's own shape (self `Console_Save_obj`, no argument); Live 1f
+  saw the same with the stash closed. Only the game's own save at the stash
+  close wrote the file. For a player build this means the stash side of a
+  take reaches the file at the game's next own save - measured here as the
+  next stash close - and what the character's save and the stash file hold if
+  the game ends between a take and that save is not observed, nor what at the
+  close does the writing. How a build handles that window is not decided
+  here.
+- *The fault site inside `SaveStash`* stays the static reading's: no save
+  faulted, so no `a0=undefined` line printed.
+- *A take of part of a stack* - the design's "move the shortfall" - is not
+  observed: X was a one-unit entry and the ruby stack was taken whole.
+- *More than one input, more than one unit.* One press of a one-input
+  recipe was read; the 199 decode and count pairs logged inside
+  `DoCraftResult` were not tied to a recipe, and a craft of more than one
+  unit is not observed.
+- *`CraftEditPlayerInventory`'s `a0`* stays undecoded (Phase 1g).
+- *The duplication constraint* (`### Constraints from Phase 1`) still holds:
+  the count comes from the map only, never from the cube's `a`.
 
 **After Phase 1h (2026-09-23): H-A stays the decision, and a player build is
 still blocked on the stash save after a by-name move and on the recipe's
