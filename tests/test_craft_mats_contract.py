@@ -1074,6 +1074,14 @@ class CraftMatsContractTests(unittest.TestCase):
         if status.group(1) == "complete":
             for check in checks:
                 self.assertIn("| " + check + " |", results, check)
+            # One verdict per check, the capture cited, and the gate's
+            # "After Phase 1h" paragraph above the "After Phase 1g" one.
+            verdicts = sum(results.count(v) for v in ("| pass |", "| fail |", "| not-observed |"))
+            self.assertEqual(verdicts, len(checks))
+            self.assertIn("forgepact-issue-14-phase1h-live-1.md", results)
+            gate = self.doc[at("## Decision gate"):]
+            self.assertLess(0, gate.find("After Phase 1h"))
+            self.assertLess(gate.find("After Phase 1h"), gate.find("After Phase 1g"))
         results = self.doc[self.doc.index("\n## Results\n"):self.doc.index("\n## Decision gate\n")]
         for row in ("| B0-vanilla |", "| C-control |", "| H-A |", "| H-B |", "| H-C |"):
             self.assertIn(row, results)

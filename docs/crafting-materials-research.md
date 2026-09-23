@@ -8,7 +8,7 @@ phase1d-status: complete
 phase1e-status: complete
 phase1f-status: complete
 phase1g-status: complete
-phase1h-status: pending
+phase1h-status: complete
 
 **Status: Phase 0 done (static search, instrument, decision core); Phase 1 (the
 first live session, 2026-09-22) done; Phase 1b (a widened instrument and a
@@ -16,10 +16,11 @@ second session, 2026-09-22/23) done; Phase 1c (a reader round, 2026-09-23)
 done; Phase 1d (a closed-window reader round, 2026-09-23) done; the owner chose
 H-A on 2026-09-23 (`## Decision gate`); Phase 1e, the consume-research round
 asked for before any player build, done (2026-09-23); Phase 1f, the owner's
-build-design round on the installed Phase 1e build, done (2026-09-23); and
+build-design round on the installed Phase 1e build, done (2026-09-23);
 Phase 1g, the closed-stash move, save and craft-route measurement, done
-(2026-09-23), leave a player build blocked on a stash save after the move and
-the recipe's readable shape.** Phase 1
+(2026-09-23); and Phase 1h, the Ghidra-read take, its save and the recipe's
+shape, done (2026-09-23), leave a player build blocked on a stash save after
+the move and the recipe's readable shape.** Phase 1
 measured the vanilla baseline, the cube's craft route and a vanilla duplication,
 but its instrument reached neither the stash's special-tab container nor the
 route a hand move between a special tab and the bag takes (`## Results`).
@@ -91,6 +92,22 @@ game then crashed inside its own save at the next stash close, and the
 recipe's input members and a move of an entry the bag has no stack for were
 not observed - so the `## Decision gate` now reads a player build as blocked
 on the save and on the recipe's shape.
+Phase 1h (done 2026-09-23) read the game's code in a local Ghidra project
+first - where the closed stash's cells live (`Controller_obj`), why the save
+after Live 1g's take faulted (on that reading, the take left the stash cell
+the save looks up), and the complete by-name take per case - then ran one
+research build (two rows, a split `call` reply, array path segments) and one
+session (`### Phase 1h rows`, `### Phase 1h instrument`,
+`### Live procedure 1h`, `### Phase 1h results`). Its session (Live 1h) took a Materials entry's
+bag side and map side by name again (now with `RemoveItemFromMap`), and
+measured the save after that half-take stopping by name with an exception
+after the Dust cell and before X's, the game surviving, while the game's own
+save at the next stash close stopped at the same point and ended the game
+again. The stash-cell clear, the Socketable case and the selected recipe's
+decoded amount were not observed - the instrument could not list the
+`Controller_obj` variables past 80, and the selected recipe's calls were not
+told apart from the rest of the Cube's list - so the "After Phase 1h" paragraph keeps a player build blocked and names
+what the next research build needs.
 Nothing player-visible changes yet: the
 `craftmats` switch exists but nothing is wired to crafting, and the player
 build refuses it. A result is only ever recorded as a negative with its
@@ -858,7 +875,7 @@ target or call path is added beyond the two rows, and all of it is inside
 |---|---|---|---|
 | The marker | a bare `craftprobe` answers `craftprobe: phase1h rows=254 - ...`, the count still derived from the table (`kCpTargetCount`) | - | the build's control: without `phase1h` the installed plugin is not this build (the Phase 1g build prints `phase1g rows=252`), and nothing from the session counts |
 | Rows `PilipaliDecrypt` and `CreateItemSaveStruct` (`### Phase 1h rows`) | their armed lines and `ret=` lines, like every row's: the first gives the decoded amount and its argument shapes, the second one entry per item a save writes | the rows' own `arm` budgets | `hook`'s `252 detoured, 0 failed, 2 held by mapkeep`; `save-control` is the healthy `CreateItemSaveStruct` signature (a struct `a0` on every entry, then `SaveStash #<n> ret=`) every later save is compared with |
-| `craftprobe call`'s reply, split | one of four lines, each naming the row's call number - the `#<n>` the row's own detour prints on its entry line for this call (its next count, read on the game thread just before the dispatch): `NOT dispatched #<n>: asset_get_index found no script` (decided before any `script_execute`), `entered #<n>, script_execute threw` (a GML runtime error inside the call unwinds as a C++ exception, which the dispatcher's catch takes), `entered #<n>, script_execute returned st=<s>` (a failure status), or `dispatched #<n> -> ret=<value>`. Before, the first three printed one merged `NOT dispatched` line, which is how Live 1g's faulting by-name `SaveStash` read the same as a name that never resolved | still exactly one by-name call per command, behind `confirm`; the dispatch is the one auto-prospect's `ApCallScript` makes (`asset_get_index`, then `script_execute` with self = other = the instance), with its failures kept apart | `test_craftprobe_call_reply_splits_three_outcomes_with_call_number`; live, the reply's `#<n>` against the row's own `<Row> #<n>` entry line - a row `mapkeep` holds, or one not detoured, prints no entry line, so its number has nothing to match |
+| `craftprobe call`'s reply, split | one of four lines, each naming the row's call number - the `#<n>` the row's own detour prints on its entry line for this call (its next count, read on the game thread just before the dispatch): `NOT dispatched #<n>: asset_get_index found no script` (decided before any `script_execute`), `entered #<n>, script_execute threw` (the dispatcher's `catch (...)` took an exception - how a GML runtime error inside the call reaches it is the static reading's inference, not measured; Live 1h's `error-baseline` printed this line, beside the row's own entry line, with the game still running), `entered #<n>, script_execute returned st=<s>` (a failure status), or `dispatched #<n> -> ret=<value>`. Before, the first three printed one merged `NOT dispatched` line, which is how Live 1g's faulting by-name `SaveStash` read the same as a name that never resolved | still exactly one by-name call per command, behind `confirm`; the dispatch is the one auto-prospect's `ApCallScript` makes (`asset_get_index`, then `script_execute` with self = other = the instance), with its failures kept apart | `test_craftprobe_call_reply_splits_three_outcomes_with_call_number`; live, the reply's `#<n>` against the row's own `<Row> #<n>` entry line - a row `mapkeep` holds, or one not detoured, prints no entry line, so its number has nothing to match |
 | Numeric `var` / `path:` segments | a whole-number segment (digits only) on a value `is_array` calls an array reads that element, inside `array_length`, so `var Controller_obj 0 <S>.<k>.0.0` and `path:Controller_obj.<S>.<k>` reach a row of the stash's Socketable structure. On anything that is not an array, or past its end, the walk stops naming the segment, as it does for a missing member. A global's name is never taken as an index | the walk's existing caps (`json`'s depth cap of 10 included) | `test_craftprobe_var_walk_takes_an_index_only_on_an_array`; live, `holders` reads the cell's fingerprint back as `K_S` |
 
 **What the local Ghidra reading showed, in this document's words.** Read on
@@ -896,16 +913,19 @@ next phase re-reads them there; nothing below quotes them.
   maps only, no grid. `RemoveItemFromMap(map, fp)`, offline, deletes the entry.
   `InventoryGridAddToStack(1, item)` works on the bag's profile grids only.
   None of them reads its self.
-- **The crash, as that reading explains it.** Live 1g's take moved X's entry
-  out of map 9 and raised the bag's stack, and nothing cleared X's cell in
-  `Controller_obj`'s Materials array. Every later `SaveStash` saved the Dust
-  cell (the one `___struct___359` line all three calls logged), reached X's
-  cell, got `undefined` from map 9, and faulted in `CreateItemSaveStruct`.
-  Called by name, the fault unwound into the dispatcher's catch - `/EHsc`
-  catches C++ exceptions, which is how a GML runtime error propagates, not
-  access violations - and printed the merged `NOT dispatched`; the game's own
-  call at the owner's close had no catch. Live 1f's same by-name call returned
-  because the grid and the map still agreed.
+- **The crash, as that reading explains it** - an inference from the static
+  reading, not a measurement; `### Phase 1h results` says which part Live 1h
+  measured. Live 1g's take moved X's entry out of map 9 and raised the bag's
+  stack, and nothing cleared X's cell in `Controller_obj`'s Materials array.
+  On this reading, every later `SaveStash` saved the Dust cell (the one
+  `___struct___359` line all three calls logged), reached X's cell, got
+  `undefined` from map 9, and faulted in `CreateItemSaveStruct`. Called by
+  name, the fault would reach the dispatcher's `catch (...)` - which under
+  `/EHsc` takes C++ exceptions and not access violations; that a GML runtime
+  error arrives as one is inferred, not measured - and printed the merged
+  `NOT dispatched`; the game's own call at the owner's close had no catch.
+  Live 1f's same by-name call returned because the grid and the map still
+  agreed.
 - **The game's hand move** clears the source cell in the stash window's own UI
   code, not in any hooked row (Live 1f: `GridRemoveItem` and
   `InvGridClearItemNode` 0 calls). `GridRemoveItem(grid, fp)` reads no
@@ -2442,8 +2462,137 @@ whole-number `var`/`path:` segments on arrays. `plugin_build\build.bat
 release` from the same commit produced a ship DLL with no `craftprobe`,
 `mapkeep`, `phase1h` or `PilipaliDecrypt` string. The build control is
 `dll-hash` against this hash plus the `phase1h rows=254` marker. `### Live
-procedure 1h` gives the session's shape; the session's results follow here
-once it has run.
+procedure 1h` gives the session's shape.
+
+**Live 1h, 2026-09-23.** One launch, character slot 14 ("Sorak"),
+`live-operator` on the command channel (`hs-drive`) and the owner at the
+keyboard for the hand move of X into the Materials tab, the Cube, the stash's
+open and close and the counts by eye. The saves were backed up first (an
+independent copy and the `hs-drive` backup
+`20260923T205636Z_forgepact-issue-14-phase1h-live-1`) and restored by the
+driver afterwards from that backup, verified by hash (the workorder's Log,
+`### Live 1`). `mapkeep on` and `craftprobe hook` ran before the character
+loaded. The trial material X was again one Greater Unstable Dust (class 14,
+`b=51`), moved by hand into the Materials tab (fingerprint
+`0-0-212364006000-14`); the Socketable entry was the class-15 `b=51` stack of
+10, Pristine Ruby (`0-0-200921844065-15`). Four things the capture records
+beyond the procedure. `craftprobe var Controller_obj 0 *` resolved the
+instance (221 variables) but printed only the first 80 - the `var` reader's
+cap, with no filter to narrow it - and none of those 80 was the stash map or
+an array shaped like a tab, so neither stash container was named (`holders`)
+and neither stash-cell clear could run. That is a limit of the instrument's
+listing, not a finding that the containers are absent: 141 variables were
+never listed. `CreateItemSaveStruct`'s `arm` budget of 12 was spent on the
+ordinary tabs' items, which a save writes before the Materials tab, so the
+per-item line the static reading predicts for the fault (an entry with
+`a0=undefined`) could not print. The game ended at the owner's stash close
+after the take, inside its own `SaveStash`, at the same point as Live 1g. And
+after that crash the owner relaunched the game and closed it again, outside
+the procedure, before the post-session reads - so `counts-tool-after` reads a
+file that launch wrote, not this session's end state.
+
+Filled from the capture, `.claude/workorders/forgepact-issue-14-phase1h-live-1.md`,
+cited by its step headings, one row per check, in the procedure's order. A
+`fail` or `not-observed` is a finding; a refused or failed call shape is
+recorded with what was supplied, and a shape not run is "not observed
+(<why>)". The capture's `## Checks` block also carries a `TABLE-ONLY` line
+(folded into `hook` below) and has no line for `save-after-socket`, which its
+`Steps 11-12` heading covers. `ds_map` 1049 is this session's stash map index
+and is compared as an index only. A `call` reply's `#<n>` is read against the
+row's own entry line: a row `mapkeep` holds or one `hook` did not detour
+prints none, so its number has nothing to match.
+
+| Check | What it measures | Observed | Verdict |
+|---|---|---|---|
+| dll-hash | The installed plugin's SHA-256, read with the game closed, equals the hash above | `EE896D9F...8B99C71` on the installed plugin before the launch, equal to the hash above (capture, the header) | pass |
+| marker | A bare `craftprobe` answers `phase1h rows=254` (this build) | `craftprobe: phase1h rows=254 - research instrument for docs/crafting-materials-research.md (research build only)` (capture, Step 1) | pass |
+| counts-tool-before | `tools/stash_tab_counts.py` before the launch: exit 0, `class=14 b=50 stack=13`, `class=15 b=1 stack=216`, `class=15 b=51 stack=10`, no `class=14 b=51`; file time T0 | Exit 0, all four as expected; T0 `2026-09-22T22:18:18.9022398Z` (capture, Pre-launch: counts-tool-before, T0) | pass |
+| hook | `mapkeep on` prints `GetItemMap` and `LoadStash` `both-routes` (a `TABLE-ONLY` quoted as the finding), then `craftprobe hook` reads `252 detoured, 0 failed, 2 held by mapkeep` | `mapkeep on: GetItemMap both-routes (table swap and inline detour at the function's own address)` and the same for `LoadStash`, no `TABLE-ONLY`; `craftprobe hook: 252 detoured, 0 failed, 2 held by mapkeep.` (capture, Step 1) | pass |
+| control | After the load: `CheckPlayerInteraction calls=` and `mapkeep stat`'s `a0=0 calls=` non-zero; `a0=9 calls=0`, `kept=none` as the baseline | `CheckPlayerInteraction calls=18620`, `a0=0 calls=25439`, `a0=9 calls=0`, `kept=none`; the control still non-zero later (`calls=292320`, Step 4) (capture, Step 1) | pass |
+| save-control | The owner's hand move of X into the Materials tab and stash close, with `SaveStash`, `CreateItemSaveStruct` and `___struct___359` armed: the healthy save's signature | Supplied: `arm budget=12 SaveStash CreateItemSaveStruct ___struct___359`, then the owner's move and close. `SaveStash #1 self=Console_Save_obj ... argc=0`; `CreateItemSaveStruct #1` to `#12`, each `a0=struct{...}` and `ret=struct{...}`; `___struct___359@SaveStash #1` Dust (`o=13`, `b=50`) and `#2` X (`o=1`, `b=51`); `SaveStash #1 ret=undefined`; T1 `2026-09-23T21:00:10.8049402Z`, later than T0 (capture, Step 2) | pass |
+| map-at-cube | With the Cube open and the stash closed: `GetItemMap` by name (self `Console_Save_obj`, argument `9`) dispatched, kept current, and `mapkeep find` naming `K_X` and `K_S` | Supplied: `call GetItemMap Console_Save_obj 0 9 confirm`. `dispatched #1 -> ret=kind=15 str=ref ds_map 1049`; `mapkeep stat`: `kept=ref ds_map 1049 size=1627 current=yes refreshed=1`, `a0=9 calls=3619` (the game's own `GetItemMap(9)` calls since the step-2 stash open, `first9: #1 self=UI_Stash_obj`, so this was not the launch's first); `find 14 51` `key=0-0-212364006000-14 ... o=1 matched=1`; `find 15 51` `key=0-0-200921844065-15 ... o=10 matched=1` (capture, Step 3) | pass |
+| holders | `Controller_obj`'s stash map, `<M>` (the Materials two-level array holding `K_X`) and `<S>` (the Socketable array of rows, `K_S` at row `k`), named by shape from `craftprobe var Controller_obj 0 *` | Supplied: `var Controller_obj 0 *`. `Controller_obj id=257721 vars=221`, the reply `...(capped at 80; narrow the filter)`; `var` takes `*` or one exact name (`var Controller_obj 0 stash`: no such variable), and `craftprobe store` does not list `Controller_obj`. None of the 80 listed was a `ref ds_map` 1049 or a tab-shaped array (HUD, quest and view state). Not observed (the listing's 80-variable cap; 141 variables never listed) (capture, Step 5) | not-observed |
+| lookup-closed | `GetItemFromFingerprint(<K_X>, 9)` with the stash closed returns X's struct | Supplied: self `Console_Save_obj` 0, `a0` the string `0-0-212364006000-14`, `a1` `9`. `dispatched #3451335 -> ret=struct{itemDataHash=..., itemType=real:14.000000, itemInfoStruct=struct members=20}` (capture, Step 6) | pass |
+| take-material | On X, the stacked case, stash closed, Cube open, self `Console_Save_obj` 0: the bag's add, then `RemoveItemFromMap` on map 9, the kept map dropping X on the same index | Supplied, after `arm budget=8`: `InventoryGridCanAddToStack 1 undefined fp9:<K_X>` -> an item struct, `itemType=14`; `InventoryGridAddToStack 1 fp9:<K_X>` -> `struct{tabNumber=0, x=7, y=0, tabType=-4, success=true}`; `RemoveItemFromMap map9 <K_X>` -> `ret=undefined`. After: `find 14 51` `matched=0`, `size=1626` (was 1627), index 1049 unchanged - `dropped` (capture, Step 7) | pass |
+| error-baseline | Before X's stash cell is cleared, `SaveStash` by name reproduces Live 1g's fault inside the instrument's catch: `entered #<n>, script_execute threw` (or `returned <status>`), the `SaveStash #<n>` entry, Dust's `___struct___359`, a `CreateItemSaveStruct` line with `a0=undefined`, no `SaveStash #<n> ret=`, no write | Supplied: `arm budget=12 SaveStash CreateItemSaveStruct ___struct___359`, then `call SaveStash Console_Save_obj 0 confirm` (no argument). `SaveStash #1 self=Console_Save_obj ... argc=0` (the row's own entry line, matching the reply's `#1`); `CreateItemSaveStruct #1` to `#12`, every one `a0=struct{...}`; `___struct___357@SaveStash #1` to `#12`; one `___struct___359@SaveStash #1`, Dust (`o=13`, `b=50`), `ret=undefined`; then `entered #1, script_execute threw` and no `SaveStash #1 ret=`. No `___struct___359` entry for X. T3 equal T2 (`21:00:10.8049402Z`): no write; `hs_status` running, same pid. The `a0=undefined` line was not observable: the row's budget of 12 was spent on the ordinary tabs' items first (capture, Step 8) | pass |
+| save-after-take | `GridRemoveItem(path:Controller_obj.<M>, <K_X>)`, then the by-name `SaveStash` returns and writes, the file without X | Not run as written: `<M>` was not named (`holders`), so X's stash cell was not cleared. Supplied instead, the same `arm` and `call SaveStash Console_Save_obj 0 confirm` as `error-baseline`, on the same state: the identical lines, ending `entered #1, script_execute threw`, no `SaveStash #1 ret=`; T5 equal T4, no write. Not observed (the cell clear never ran) (capture, Step 9) | not-observed |
+| close-after-take | The owner's stash open on the Materials tab and close: the game running after it, the close's `SaveStash #<n> ... ret=` line, the file without X | The owner: "materials shows 13 dust", then the game ended at the stash close. The log's last lines are the close's own `s_SaveStashConstants` pair, `SaveStash #2 self=Console_Save_obj ... argc=0` (the game's call - no `dispatched`/`before`/`after` lines around it), one `___struct___359@SaveStash #2` for Dust (`o=13`, `b=50`) and its `ret=undefined`; then no `SaveStash #2 ret=`, no `___struct___359` for X, no crash text, and the next line is a fresh plugin banner. The launch's pid 89248 was gone; the pid then running, 81172, was the owner's own relaunch (capture, Step 10, Establishing the crash) | fail |
+| take-socket | On S, the no-stack case: `GridAddItem` into the bag's `inventorySocketGrid`, `ChangeItemOwner(9, 0, <K_S>)`, the map dropping S, then the stash cell clear on `<S>.<k>` | Not run: the launch ended at `close-after-take`, and `<S>` and `k` were not named (`holders`). Not observed (capture, Steps 11-12) | not-observed |
+| save-after-socket | The by-name `SaveStash` after `take-socket` returns and writes | Not run: the launch ended at `close-after-take`. Not observed (capture, Steps 11-12) | not-observed |
+| close-after-socket | The owner's stash open on the Socketable tab and close: running, the close's `ret=` line, a later T, the file without `class=15 b=51` | Not run: the launch ended at `close-after-take`. Not observed (capture, Steps 11-12) | not-observed |
+| recipe-shape | Part 1, the Cube open on the Greater Unstable Dust recipe: one input's `PilipaliDecrypt` and `CountInventoryItem` arguments and returns, and the row member holding the entry `PilipaliDecrypt` received; part 2, `CraftFindRecipeItems` at the craft press | Supplied: `arm budget=60 PilipaliDecrypt CountInventoryItem CraftFindRecipeItems`, then the owner opened the Cube on that recipe. `show all`: `PilipaliDecrypt calls=532552 logged=60`, `CountInventoryItem calls=490 logged=60`, `CraftFindRecipeItems calls=0`. Each logged pair: `PilipaliDecrypt #<n> self=UI_Craft_obj other=Player_obj argc=3 a0=int64:<m> a1=int64:46 a2=undefined` -> a real, next to `CountInventoryItem #<n> self=UI_Craft_obj other=Player_obj argc=4 a0=1 a1=<class> a2=1 a3=<base>` -> a real. Three pairs name the Dust identity (`a1=14`, `a3=51`) with `CountInventoryItem ret=154`, the owner's bag count by eye; their `PilipaliDecrypt` returns were 100 (`a0=940`), 200 (`968`) and 30 (`98`), and the owner stated the recipe uses 5. `var id:264274 *` (`UI_Craft_obj`): `recipeList` a `UI_Grid_obj` whose `itemGrid` is a `ds_grid` 4x37 of recipe-row instances; the member holding an input entry was not named. Part 2 not run (the launch ended at `close-after-take`). Not observed: the selected recipe's row was not isolated among the list's calls (capture, Step 4; `recipe-shape` (part 2, at step 11's craft)) | not-observed |
+| counts-tool-after | `tools/stash_tab_counts.py` after the launch, against the owner's last controlled counts | Exit 0: `class=14 b=50 stack=13`, `class=14 b=51 stack=1`, the Socketable tab as before; T6 `2026-09-23T21:21:18.9618695Z`. That write came after the crash, when the owner relaunched and closed the game outside the procedure, so the file is not this session's end state. `hs_saves_inspect`: `herosiege13.hss`, `inventory_order_13.hss`, `shop.ini` and `stash.hss` changed. Not observed (the owner's relaunch intervened) (capture, Step 13) | not-observed |
+
+**Question 1: the complete take, stacked case (a Materials entry the bag
+stacks).** Half observed. The bag side and the map took X by name with the
+stash closed, self `Console_Save_obj` 0: `InventoryGridCanAddToStack` found a
+bag stack, `InventoryGridAddToStack` answered `success=true`, and
+`RemoveItemFromMap` on map 9 dropped X on the same kept index
+(`take-material`). The last step, clearing X's cell in `Controller_obj`'s
+Materials array with `GridRemoveItem`, did not run: that array's member name
+was not among the 80 variables the `var` reader lists (`holders`: not
+observed, an instrument limit). So the complete take is not on record, and
+neither is a take the stash cell and the map both follow.
+
+**Question 2: the complete take, no-stack case (a Socketable entry).** Not
+observed. Nothing of it ran: the launch ended at `close-after-take`, and the
+Socketable structure's name and the ruby's row were not named either
+(`take-socket`, `save-after-socket`, `close-after-socket`: not observed).
+A by-name move of an entry the bag has no stack for, and whether an add
+carries a whole stack's `o`, stay not observed since Phase 1g.
+
+**Question 3: the save after the take.** Not observed after a complete take,
+because no complete take ran (`save-after-take`: not observed). What was
+measured is the save after the take's first half, with X's stash cell left in
+place. Called by name, `SaveStash` was entered (its own `SaveStash #1` entry
+line), logged the ordinary tabs' entries and the Dust cell, and then
+`script_execute` threw before any `___struct___359` entry for X and before the
+call's `ret=`; the game kept running and `stash.hss` was not written - twice,
+the same lines each time (`error-baseline`, and the `save-after-take`
+attempt). The split reply makes that distinguishable from a name that never
+resolved, which is what Live 1g's merged `NOT dispatched` could not. The
+healthy signature it is read against is `save-control`: the same rows, one
+`___struct___359` entry for Dust and one for X, then `SaveStash #1
+ret=undefined` and a write (T0 -> T1). The route's own positive control stays
+Live 1f's by-name `SaveStash`, which returned (`save-by-name-closed`).
+
+**Question 4: the recipe's readable shape.** Not observed for the selected
+recipe; part of the shape was read. With the Cube open on a recipe,
+`PilipaliDecrypt` ran with self `UI_Craft_obj`, other `Player_obj` and three
+arguments (a whole number that varies, `46`, `undefined`), answering a real
+number, and next to each call `CountInventoryItem(1, <class>, 1, <base>)` with
+the same self and other answered the bag's count - 154 for the Dust identity,
+the owner's count by eye. The three decodes logged next to a Dust count were
+100, 200 and 30, not the 5 the owner stated this recipe uses. The calls read
+as the Cube's list counting inputs across its recipe rows, not only the
+selected one (`PilipaliDecrypt` 532552 calls in the window,
+`CountInventoryItem` 490, the list a 4x37 grid of recipe-row instances) - the
+capture's reading, not established - and within a budget of 60 the selected recipe's row was not isolated.
+That is not a contradiction of the reading's decoder, only a row not found;
+which member of a recipe row holds the entry `PilipaliDecrypt` receives was not
+named, and `CraftFindRecipeItems` never ran (0 calls; no craft was pressed).
+
+**The crash, as measured.** The static reading (`### Phase 1h instrument`,
+"The crash, as that reading explains it") says a `SaveStash` after a take that
+leaves the stash cell faults when it looks the vanished entry up in map 9 and
+hands the miss to `CreateItemSaveStruct`. Live 1h measured part of that. By
+name, after a take that left X's cell, `SaveStash` stopped with an exception
+inside `script_execute` after Dust's cell and before X's, and the game
+survived it (`error-baseline`). The game's own `SaveStash` at the owner's next
+stash close stopped at the same point - after Dust's `___struct___359` entry,
+before any for X - and the game ended (`close-after-take`: fail), the same end
+as Live 1g's close. Live 1g's take used `ChangeItemOwner` for the map step and
+this one `RemoveItemFromMap`; both left the stash cell, and both closes ended
+at that point, which fits the reading that the cell rather than the map call
+decides it. Not measured: the fault site inside `SaveStash` - the
+`CreateItemSaveStruct` entry with `a0=undefined` that would show it could not
+print (the row's budget was spent on the ordinary tabs) - so the site is the
+static reading's, not a measurement; that the thrown exception is a GML
+runtime error rather than another exception; and whether the two by-name
+calls that threw before the close contributed, which no control here
+separates. A save after a take that also clears the cell - the reading's
+prediction that the save then returns and writes - is not observed. Each
+close crash is one occurrence per launch, two launches in all.
 
 ## Decision gate
 
@@ -2453,6 +2602,87 @@ The owner set this on 2026-09-23 ("H-A, research consume first"), choosing
 H-A and asking that Phase 1e, the consume-research round, come before any
 player build. During Live 1f the owner also set the design an H-A build is to
 follow, below.
+
+**After Phase 1h (2026-09-23): H-A stays the decision, and a player build is
+still blocked on the stash save after a by-name move and on the recipe's
+readable shape. Phase 1h measured where the save stops after a take that
+leaves the stash cell, but the complete take - the stash-cell clear that the
+Ghidra reading says the save needs - did not run, because the research
+instrument could not list the `Controller_obj` variable that holds the cell;
+the next step is another research build, not a player build** (the next
+workorder is the owner's decision). This replaces the "After Phase 1g" list
+of what the design still lacked, kept below as it stood then. By measurement
+in Live 1h, with `control` and the keeper's own control non-zero
+(`### Phase 1h results`), for a later player build:
+
+- *The take's bag side and map side, for a Materials entry the bag already
+  stacks.* With the stash closed and the Cube open, self `Console_Save_obj` 0
+  throughout: `InventoryGridCanAddToStack(1, undefined, <item>)` (a struct),
+  `InventoryGridAddToStack(1, <item>)` (`success=true`), then
+  `RemoveItemFromMap` on map 9, the kept map dropping the entry on the same
+  index (`take-material`); the item is the game's own
+  `GetItemFromFingerprint(<fingerprint>, 9)` return with that self
+  (`lookup-closed`). Phase 1g confirmed the same bag side with
+  `ChangeItemOwner` as the map step.
+- *Where a save after that half-take stops.* By name, `SaveStash` was entered,
+  logged Dust's Materials cell, then threw inside `script_execute` before X's
+  cell, with no write and the game running (`error-baseline`, twice); the
+  game's own `SaveStash` at the next stash close stopped at the same point and
+  ended the game (`close-after-take`: fail), as in Live 1g. **The bag-side
+  and map-side moves without the stash-cell clear are not safe to ship: both
+  times they were measured, the next stash close ended the game** - once
+  after each map step (`ChangeItemOwner` in Live 1g, `RemoveItemFromMap`
+  here), one launch each. The fault site inside `SaveStash` is the static
+  reading's, not measured (`### Phase 1h results`, "The crash, as measured").
+- *A healthy save's per-item signature* to read later saves against: every
+  `CreateItemSaveStruct` entry a struct, one `___struct___359` entry per
+  Materials item, then the call's `ret=` and a write (`save-control`).
+- *The recipe's counting calls, by name.* At the Cube, `PilipaliDecrypt`
+  (self `UI_Craft_obj`, three arguments) answers a decoded amount, and
+  `CountInventoryItem(1, <class>, 1, <base>)` beside it answers the bag's
+  count, 154 for the Dust matching the owner's count by eye (`recipe-shape`,
+  part 1). Which decoded amount belongs to the selected recipe was not
+  isolated.
+- *The hook point, unchanged from Phase 1g: `DoCraftResult`* enclosed both the
+  consume and the result's production in the one one-unit craft measured
+  (Phase 1g `craft-order`). Phase 1h pressed no craft, so it neither adds to
+  nor weakens that; a craft of more than one unit is not observed.
+
+What it still lacks, as far as observed:
+
+- *The stash-cell clear, and so the complete take and a save after it.*
+  `Controller_obj` resolved with 221 variables, but `craftprobe var ... *`
+  lists 80 and takes no filter, so the Materials and Socketable containers
+  were not named (`holders`: not observed - the listing's limit, not a
+  finding that they are absent), `GridRemoveItem` on the stash cell never ran,
+  and no by-name save after a complete take is on record (`save-after-take`:
+  not observed). The design's save step rests on it.
+- *The no-stack case* (a Socketable entry): nothing of it ran (`take-socket`,
+  `save-after-socket`, `close-after-socket`: not observed), and whether an add
+  carries a whole stack's `o` stays not observed.
+- *The recipe's inputs for the selected recipe.* The three decodes logged next
+  to a Dust count were 100, 200 and 30, not the 5 the owner stated: the calls
+  read as the Cube's list counting inputs across its recipe rows, and within
+  a budget of 60 the selected row was not isolated - not a contradiction of
+  the decoder. The member of a recipe
+  row that holds the entry was not named, and `CraftFindRecipeItems` did not
+  run (`recipe-shape`: not observed). The design's count step rests on it.
+- *The end state after the crash*: `counts-tool-after` read a file written by
+  the owner's own relaunch after the crash (not observed), and whether the
+  character's save held the unit the add put in the bag was not read.
+- *`CraftEditPlayerInventory`'s `a0`* stays undecoded (Phase 1g).
+- *The duplication constraint* (`### Constraints from Phase 1`) still holds:
+  the count comes from the map only, never from the cube's `a`.
+
+What the next research build needs, from this session's gaps: a
+`craftprobe var` listing that reaches past 80 variables (paged, or filtered by
+name or by the kind of value), so `holders` can name the containers; a larger
+`CreateItemSaveStruct` budget, or one armed to start at the Materials tab, so
+a faulting save's per-item line prints; and a way to tie a `PilipaliDecrypt`
+call to the selected recipe row (the row as self or argument, or a read of the
+selected row's entries), so the decoded amount can be compared with the
+recipe's stated one. Phase 1h's procedure can then run again on the same two
+cases.
 
 **After Phase 1g (2026-09-23): H-A stays the decision, and the owner's
 design now has a hook point, a lookup self and a by-name move with the stash
