@@ -7,6 +7,7 @@ phase1c-status: complete
 phase1d-status: complete
 phase1e-status: complete
 phase1f-status: complete
+phase1g-status: pending
 
 **Status: Phase 0 done (static search, instrument, decision core); Phase 1 (the
 first live session, 2026-09-22) done; Phase 1b (a widened instrument and a
@@ -69,6 +70,12 @@ map by name with `GetItemMap(9)` before any stash open, its counts equal to
 the file. The owner then redirected the round and set the build design under
 `## Decision gate`: at the cube, count from the map obtained by name, move the
 shortfall into the bag for the game to consume, then save the stash by name.
+Phase 1g (pending), one research build with three instrument additions and one
+session, measures what that design still rests on: a move of a whole stash
+entry into the bag by name with the stash closed, whether a by-name `SaveStash`
+then writes, the recipe's readable shape, and whether the consume and the
+result's production run inside one craft-route row (`### Phase 1g instrument`,
+`### Live procedure 1g`, `### Phase 1g results`).
 Nothing player-visible changes yet: the
 `craftmats` switch exists but nothing is wired to crafting, and the player
 build refuses it. A result is only ever recorded as a negative with its
@@ -767,6 +774,34 @@ the install line reads `both-routes` and `a0=0` is non-zero in the same session.
 | `node var` entry cap | 2000 entries per `node var` (was 1000), so the 1626-entry stash map is read whole: `entries read=<n>` with no `(cap ...)` note | 2000 | as `### Phase 1c readers` |
 | `craftprobe call` forms | `call <Row> id:<n> [args ...] confirm` takes an instance number as self (after `instance_exists`, resolved by name) in place of `<Obj> <nth>`. New arguments: `fp9:<fingerprint>` - the item the game's own `GetItemFromFingerprint(fp, 9)` returns with the call's self, refused unless a plain struct; `map9` - the kept map itself; `map9:<key>` - its entry for that key (`ds_map_exists`, then `ds_map_find_value`; the key tried as text, then as a number when it is one, since the key's form is not established); `path:<root>.<a.b.c>`, the root an `<Obj>`, `global` or `id:<n>` - the value `var`'s walk reaches (`<Obj>` is its first instance), e.g. `path:id:<stashGrid>.nodeGrid`. `map9` and `map9:` are refused unless `mapkeep` calls the kept map current. Every refusal names what was supplied and ends `nothing was called`; the call line, `before:`, `dispatched -> ret=` or `NOT dispatched`, and `after:` are as before | still exactly one by-name call per command, behind `confirm` | every precondition and argument is resolved after the `confirm` gate and before the one call (`test_craftprobe_writes_are_confirm_gated`) |
 
+### Phase 1g instrument
+
+The owner's build design (`## Decision gate`, "After Phase 1f") rests on four
+things no session has measured: a move of a stash entry into the bag, by name,
+with the stash window closed; whether a by-name `SaveStash` writes the file
+after such a move; which members of the recipe name an input's type, base and
+amount; and whether the consume and the result's production both run inside
+one craft-route row, which is the only place a later hook could refuse a craft
+by not calling the game's own function. Phase 1g adds three things to the
+research build for that, and nothing else: no row (the table stays at 252), no
+hook target and no new by-name call path. Every `craftprobe`/`mapkeep`
+subcommand, cap and refusal above stays as it was. All of it is inside
+`#ifndef FORGEPACT_RELEASE`; the player build answers `command unavailable`.
+
+The move trial reuses what `craftprobe call` already dispatches (`fp9:`,
+`map9`, `path:`, `id:<n>`) plus the one argument kind it could not supply.
+Auto-prospect's proven move - `GetItemFromFingerprint(fp, 0)`, then
+`InventoryGridCanAddToStack(1, undefined, item)`, `InventoryGridAddToStack(1,
+item)` and, only on its `success`, `InvGridClearItemNode(cell, undefined)` -
+passes a value of kind undefined twice, and `call` typed every other token as
+a number, a bool or a string, so the word `undefined` reached the game as text.
+
+| Addition | What it prints | Cap | Control |
+|---|---|---|---|
+| The marker | a bare `craftprobe` answers `craftprobe: phase1g rows=252 - ...` | - | the build's control: without `phase1g` the installed plugin is not this build (the Phase 1e build, which Phase 1f also ran, prints `phase1e` with the same 252 rows), and nothing from the session counts |
+| `craftprobe call` argument `undefined` | the literal token `undefined` (any case) is a value of kind undefined, where it was the string `undefined`; the call line shows it as `a<i>=undefined(undefined)`. Resolved with the other forms, after the `confirm` gate and before the one call | still exactly one by-name call per command, behind `confirm` | `test_craftprobe_call_takes_the_literal_undefined`; live, the argument's kind is the one the call line prints |
+| `within=<row\|none>` on the craft-route rows | the armed line of `CraftFindRecipeItems`, `DoCraftResult`, `CraftEditGrid`, `CraftEditPlayerInventory`, `s_CraftItem`, `GridAddItem`, `GridAddToStack`, `s_ItemOperation` and `GetInventoryGridNode` names, after the call number, the outermost of those nine rows that was already on the game thread's stack when this call was entered, or `none`. The detours track it themselves: each of the nine rows keeps a depth, raised just before its trampoline and lowered just after it returns (also when it unwinds), and the entry order of its outermost frame. The field is read before the call's own frame is entered, so a row never names itself unless it is recursing. The other 243 rows' lines are unchanged | the rows' own `arm` budgets; tracking runs on every call of the nine rows whether or not they are armed, so arming during a craft cannot misreport the nesting | only rows `craftprobe hook` detoured take part: a row that did not detour cannot appear as `within=`, so a `within=none` is read beside `hook`'s `0 failed` and the enclosing row's own `calls=` in `show all`. Live 1e's call order on a bag-stack craft (`CraftFindRecipeItems`, `DoCraftResult`, `CraftEditGrid`, `CraftEditPlayerInventory`, `s_CraftItem`, `GridAddItem`/`GridAddToStack`) is the comparison: a line whose row logged before `DoCraftResult` in that order reading `within=DoCraftResult` would be the instrument's error |
+
 ## Live procedure
 
 Owner-run; the agent drives the command channel (`hs-drive`) and reads
@@ -1164,6 +1199,100 @@ fixes is its shape:
   while its control climbed is "not observed", never "does not fire". A `fail`
   or `not-observed` is a finding, recorded under `### Phase 1f results`; no
   live outcome is an acceptance criterion.
+
+### Live procedure 1g
+
+Live 1g runs the Phase 1g research build (`### Phase 1g instrument`; its hash
+is in `### Phase 1g results`), one launch, under `live-operator`; the
+step-by-step procedure is `### Live procedure 1` in the workorder's context
+file, `.claude/workorders/forgepact-issue-14-phaseA-context.md`, which stays on
+the owner's machine. It asks four questions, all with the stash window closed
+and the Crafting Cube open, since the two are never open together: (1) which
+recipe members name an input's type, base and amount, read by name; (2) at one
+craft, which craft-route row encloses the consume and the result's production
+(`within=`), and what `CraftEditPlayerInventory`'s `a0` is at amount 2; (3)
+whether a whole stash entry moves into the bag by name through the routes the
+game's own moves were seen to use, confirmed by the kept map dropping the
+entry on the same index; (4) whether a by-name `SaveStash` then writes
+`stash.hss`, and whether the stash window draws as usual afterwards. What this
+document fixes is its shape:
+
+- **The Phase 1g build, one launch.** The installed plugin's SHA-256 is
+  checked first; a different hash stops the session, and installing is the
+  owner's call. Character slot 14 ("Sorak"). Auto-prospect off (one instrument
+  per session). The saves are backed up before the launch (an independent copy
+  and the `hs-drive` backup) and restored after it. `tools/stash_tab_counts.py`
+  reads both tabs before the launch and after it, and the file's
+  `LastWriteTimeUtc` is read before the launch (T0), at the stash's close (T1),
+  and directly before (T2) and after (T3) the by-name save.
+- **`mapkeep on` before `craftprobe hook`**, both before the character loads.
+- **The map at the Cube**: with the Cube open and the stash not yet opened in
+  the launch, `GetItemMap` by name with self `Console_Save_obj` and the one
+  argument `9` (Live 1f's `map-by-name` shape), then `mapkeep stat` and
+  `mapkeep find` on the Ol and Unstable Dust entries against the file.
+- **The recipe's shape, hook-free**: `craftprobe recipe`, `craftprobe var` on
+  `UI_Craft_Recipe_List_Item_obj` and `UI_Craft_obj`, and `craftprobe bag` for
+  the bag's grid instances (the candidate selves for the move).
+- **One craft, at amount 2**, of the Greater Unstable Dust recipe from bag
+  inputs, with the rows armed: each craft-route row's `within=` and
+  `CraftEditPlayerInventory`'s `a0` are quoted. `a0` still `1.0` at amount 2
+  reads as an owner value, `2.0` as the amount.
+- **The move, by name, under `confirm`, one Materials entry and then one
+  Socketable entry.** The lookup with the stash closed comes first
+  (`GetItemFromFingerprint(<key>, 9)` with self `Console_Save_obj`, else a bag
+  grid instance); then, with the self that resolved it,
+  `InventoryGridCanAddToStack(1, undefined, <item>)`,
+  `InventoryGridAddToStack(1, <item>)` and `ChangeItemOwner(9, 0, <key>)` -
+  the game's own order, placement then owner change - and `RemoveItemFromMap`
+  on the kept map only if the entry is still there. Each is followed by
+  `mapkeep stat` and `mapkeep find` on the same index. The Materials entry is
+  one Greater Unstable Dust (class 14, `b=51`) the owner moves into the
+  Materials tab by hand during the session; the Socketable entry is the
+  class-15 `b=51` stack of 10, or a one-unit socketable the owner names, and
+  runs only if the Materials move was confirmed. Ol (`b=1`, 216) is never
+  moved. No partial-stack decrement is replayed: `take-partial` records the
+  shapes the craft logged.
+- **The save, by name, only after a confirmed move**: `SaveStash` with self
+  `Console_Save_obj` and no argument (Live 1f's `save-shape`), judged on T2 ->
+  T3 and on `tools/stash_tab_counts.py` no longer listing the moved entry.
+- **What would make a trial unsafe, and the mitigation.** A wrong self or
+  argument is a GML error inside `script_execute` that ends the launch; a
+  by-name move the map does not follow, once saved, could write a duplicate or
+  lose an item; `SaveStash` writes the player's real `stash.hss` from whatever
+  the game serialises. Mitigation: shapes the game itself used, one entry at a
+  time, `confirm`, the save only after a confirmed move, saves backed up and
+  restored, and results read from the file rather than assumed. A crash during
+  a trial is that trial's result, recorded with the shape supplied; the later
+  checks read `not-observed (launch ended at <check>)`.
+- **Unverified going in, stated as such**: that `craftprobe var` reaches the
+  recipe array's entry deeply enough to read its members; that
+  `GetItemFromFingerprint(<key>, 9)` resolves with self `Console_Save_obj`
+  (Live 1f used a grid self); that `InventoryGridAddToStack(1, <item>)` accepts
+  a non-grid self and carries a stack's `o`; that a bag grid instance exists
+  while the Cube is open. A not-observed result on any of them is a finding.
+- **The capture** is `.claude/workorders/forgepact-issue-14-phaseA-live-1.md`,
+  ending with a `## Checks` section of one line per check, exactly
+  `- <check> | expected: <text> | observed: <text> | pass|fail|not-observed`,
+  for these fifteen checks in this order: `dll-hash`, `marker`,
+  `counts-tool-before`, `hook`, `control`, `map-at-cube`, `recipe-shape`,
+  `craft-order`, `lookup-closed`, `take-material`, `take-socket`,
+  `take-partial`, `save-closed`, `stash-window-after` and `counts-tool-after`.
+- **Which control vouches for which read.** The armed row lines, `within=`
+  included, rest on `dll-hash`, `marker` (`phase1g rows=252`) and `control`
+  (`CheckPlayerInteraction` non-zero after the load), and a `within=none`
+  also on `hook`'s `0 failed`. `mapkeep find` and `mapkeep stat` reads rest on
+  `hook` (`both-routes` for both keeper hooks) and on `control`'s `a0=0
+  calls=` being non-zero; `map-at-cube` rests on `counts-tool-before`'s file
+  counts. A move's `dropped` read counts as the map's own behaviour only when
+  the kept index and `refreshed=` are unchanged across it (Live 1f's same-map
+  rule; otherwise it is `re-kept`, which proves nothing). `lookup-closed`
+  rests on Live 1f's grid-self lookup having returned the struct; a lookup
+  that returns `undefined` is not-observed, with the self supplied. The
+  by-name save's write rests on T2, read directly before the call, and on the
+  game's own close moving T0 -> T1 in the same session. A row that did not
+  fire while its control climbed is "not observed", never "does not fire". A
+  `fail` or `not-observed` is a finding, recorded under `### Phase 1g
+  results`; no live outcome is an acceptance criterion.
 
 ## Results
 
@@ -1855,6 +1984,42 @@ index is not observed, and no second map was seen (`map-by-name-vs-game`).
   instances that exist only while the window is open); what `SaveStash` writes
   with the window closed; `CraftEditPlayerInventory`'s `a0`; and why the
   game's own stash open made no `GetItemMap(9)` call after ours.
+
+### Phase 1g results
+
+Research DLL: `plugin_build\BloodPactPlugin_rel.dll`, built with
+`plugin_build\build.bat dev` from ForgePact `38ab6ca` (SHA-256
+`8af07609090db69b0f59d393b6be83b3845010c65ee5a34f5261dcab2a07ff2d`), the
+Phase 1g research build (`### Phase 1g instrument`): the Phase 1e build's 252
+rows with the `phase1g` marker, `craftprobe call`'s `undefined` argument and
+`within=` on the craft-route rows. `plugin_build\build.bat release` from the
+same commit produced a ship DLL with no `craftprobe`, `mapkeep` or `phase1g`
+string. The build control is `dll-hash` against this hash plus the
+`phase1g rows=252` marker. `### Live procedure 1g` gives the session's shape.
+
+Not yet run: the rows are filled from the capture,
+`.claude/workorders/forgepact-issue-14-phaseA-live-1.md`, cited by its step
+headings, one row per check, in the procedure's order. A `fail` or
+`not-observed` is a finding; a rejected or refused call shape is recorded with
+what was supplied, and a shape not run is "not observed (<why>)".
+
+| Check | What it measures | Observed | Verdict |
+|---|---|---|---|
+| dll-hash | The installed plugin's SHA-256, read with the game closed, equals the hash above | | |
+| marker | A bare `craftprobe` answers `phase1g rows=252` (this build) | | |
+| counts-tool-before | `tools/stash_tab_counts.py` before the launch: exit 0, `class=14 b=50 stack=13`, `class=15 b=1 stack=216`, `class=15 b=51 stack=10`, no `class=14 b=51` line; file time T0 | | |
+| hook | `mapkeep on` prints `GetItemMap` and `LoadStash` `both-routes` (a `TABLE-ONLY` is quoted as the finding), then `craftprobe hook` reads `0 failed` with two rows held by mapkeep | | |
+| control | After the load: `CheckPlayerInteraction calls=` and `mapkeep stat`'s `a0=0 calls=` both non-zero; `a0=9 calls=0`, `kept=none`, `first9: none` as the baseline | | |
+| map-at-cube | With the Cube open and the stash not yet opened: `GetItemMap` by name (self `Console_Save_obj`, argument `9`) dispatched, kept current, and `mapkeep find` reading Ol 216 and Unstable Dust 13, equal to the file | | |
+| recipe-shape | The members of the recipe array's entry and of `UI_Craft_Recipe_List_Item_obj` that name the selected recipe's input type/base and amount, read by name, or the member names listed when none does | | |
+| craft-order | One craft at amount 2: every craft-route row's `within=`, and `CraftEditPlayerInventory`'s `a0` (owner value or amount) | | |
+| lookup-closed | `GetItemFromFingerprint(<X>, 9)` with the stash closed returns X's struct, with self `Console_Save_obj` or a bag grid instance; the self that resolved it | | |
+| take-material | On X (one Greater Unstable Dust in the Materials tab): the add's answer, `ChangeItemOwner`'s `ret=`, and the kept map on the same index (`dropped`, `kept` or `re-kept`); `RemoveItemFromMap` only if kept; the bag by eye | | |
+| take-socket | The sequence `take-material` confirmed, on the Socketable entry (the `b=51` stack of 10 or the owner's one-unit socketable): the same reads, and whether the add carried `o` | | |
+| take-partial | The argument shapes `s_ItemOperation` and any stack-family row logged at the craft; nothing replayed | | |
+| save-closed | `SaveStash` by name with the stash closed after a confirmed move: T2 -> T3 and `tools/stash_tab_counts.py` without the moved entry | | |
+| stash-window-after | The stash window after the by-name `GetItemMap(9)` and the move: both special tabs drawn, their counts by eye against the map's last reads; `mapkeep stat`'s `a0=9 calls=` and `latest-keep:` | | |
+| counts-tool-after | `tools/stash_tab_counts.py` after the graceful exit, against the owner's last counts | | |
 
 ## Decision gate
 
