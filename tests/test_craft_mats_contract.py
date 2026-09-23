@@ -346,12 +346,15 @@ class CraftMatsContractTests(unittest.TestCase):
         usage = self.body("static void CpUsage(")
         first = usage[usage.index("Out("):]
         first = first[:first.index(";")]
-        # Phase 1h adds two rows (254), the `call` reply split and the numeric
-        # path segment; Phase 1g (the Phase A research build) kept Phase 1e's
-        # 252 rows and changed only the marker, `undefined` and `within=`.
-        self.assertIn("phase1h rows=", first)
+        # Phase 1i keeps Phase 1h's 254 rows and adds the paged `var`, `find`
+        # and the `inroute` gate; Phase 1h added two rows (254), the `call`
+        # reply split and the numeric path segment; Phase 1g (the Phase A
+        # research build) kept Phase 1e's 252 rows and changed only the marker,
+        # `undefined` and `within=`.
+        self.assertIn("phase1i rows=", first)
         self.assertIn("kCpTargetCount", first)
-        self.assertEqual(self.plugin.count("phase1h rows="), 1)
+        self.assertEqual(self.plugin.count("phase1i rows="), 1)
+        self.assertEqual(self.plugin.count("phase1h rows="), 0)
         self.assertEqual(self.plugin.count("phase1g rows="), 0)
         self.assertEqual(self.plugin.count("phase1e rows="), 0)
         self.assertEqual(self.plugin.count("phase1c rows="), 0)
@@ -801,10 +804,12 @@ class CraftMatsContractTests(unittest.TestCase):
         # inside one frame, two different `#n` inside two.
         self.assertRegex(detour, r"CpRouteFrame frame\(route, n\);")
         self.assertRegex(guard, r"\+\+g_CpRouteDepth\[slot\] == 1\)\s*\{[^}]*g_CpRouteCall\[slot\] = call;")
-        # The field is on the armed line of craft-route rows only.
+        # The field is on the armed line of craft-route rows and (Phase 1i) of
+        # the rows that only read the route, kCpInRouteRows - no other row.
         line = self.body("static bool CpObserve(")
         self.assertIn('" within="', line)
-        self.assertRegex(line, r'route >= 0 \? .*" within="\)? \+ CpWithin\(\)')
+        self.assertIn("(route >= 0 || readsRoute) ? CpWithin() : std::string()", line)
+        self.assertRegex(line, r'within\.empty\(\) \? std::string\(\) : std::string\(" within="\) \+ within')
         within = self.body("static std::string CpWithin(")
         self.assertIn('"none"', within)
         self.assertRegex(within, r'kCpCraftRouteRows\[outer\]\) \+ "#" \+ std::to_string\(g_CpRouteCall\[outer\]\)')
@@ -904,6 +909,119 @@ class CraftMatsContractTests(unittest.TestCase):
         block = block[:block.index("};")]
         self.assertEqual(re.findall(r'"([^"]+)"', block), list(self.CRAFT_ROUTE_ROWS))
         self.assertNotIn("SdkShortScriptName", block)
+
+    # ---- Phase 1i: the paged `var`, `find`, the `inroute` gate ---------------
+
+    FIND_FUNCTIONS = ("static void CpFindMatch(", "static void CpFindWalk(", "static void CpFind(")
+
+    def test_craftprobe_var_pages_every_variable_and_names_the_next_page(self):
+        # Live 1h's `var Controller_obj 0 *` listed 80 of 221 variables and
+        # told the reader to "narrow the filter", which `var` has no way to
+        # take. `* from=<i>` now starts the listing at the i-th name, and the
+        # cap line names the exact command for the next page and how many
+        # variables remain.
+        follow = self.body("static void CpFollowInstance(")
+        self.assertNotIn("narrow the filter", follow)
+        self.assertIn("std::set<long long>& visited,\n                             int from = 0, const std::string& pageCmd = std::string())",
+                      self.plugin)
+        self.assertIn("for (int i = from; i < n; ++i)", follow)
+        self.assertIn('" * from=" + std::to_string(i)', follow)
+        self.assertIn("std::to_string(n - i)", follow)
+        # A followed instance's next page is named by its id; the root's by the
+        # command the reader typed.
+        self.assertIn('"craftprobe var id:" + std::to_string(id)', follow)
+        self.assertIn("pageCmd", follow)
+        self.assertIn("kCpReaderMaxLines", follow)
+        var = self.body("static void CpVar(")
+        self.assertIn('"from="', var)
+        # from= pages `*` only, and refuses anything that is not a whole number.
+        self.assertIn("fromGiven && !all", var)
+        self.assertRegex(var, r'CpFollowInstance\("  ", cur, rootId, \{ "\*" \}, 0, visited, from, pageCmd\)')
+        # The readers that DO take a filter keep their text.
+        for fn in ("static void CpListObjectVars(", "static void CpListGlobals("):
+            self.assertIn("narrow the filter", self.body(fn), fn)
+        self.assertIn("narrow the filter", self.body("static void CpStoreList("))
+        usage = self.body("static void CpUsage(")
+        self.assertIn("* from=<i>", usage)
+
+    def test_craftprobe_find_is_a_hook_free_read_only_content_search(self):
+        # `find` names a container from a value it holds: a string equal to the
+        # text, or a reference whose runtime text is it. It walks the root's
+        # variables into arrays and plain structs only - never into an
+        # instance or a data structure, and a method value is never called.
+        self.assertIn('if (sub == "find") { CpFind(tok); return; }', self.body("static void CpCommand("))
+        code = "\n".join(self.body(fn) for fn in self.FIND_FUNCTIONS)
+        for forbidden in ("MmCreateHook", "HookOneScript", "ApCallScript", "script_execute", "CallBuiltinEx",
+                          '"method_call"', '"variable_instance_set"', '"variable_struct_set"', '"variable_global_set"',
+                          '"array_set"', '"ds_', "CpDsText(", "CpFollowInstance(", "CpCall", "CpNode"):
+            self.assertNotIn(forbidden, code, forbidden)
+        walk = self.body("static void CpFindWalk(")
+        # The walk reads nothing off an instance: only the root's own
+        # variables are read, by CpFind, after CpVarRoot resolved it.
+        self.assertNotIn("variable_instance_get", walk)
+        self.assertNotIn("instance_exists", walk)
+        # A method is recognised, and counted, before a struct is entered.
+        self.assertLess(walk.index('"is_method"'), walk.index("ApIsPlainStruct("))
+        self.assertLess(walk.index("ApIsPlainStruct("), walk.index('"variable_struct_get_names"'))
+        # Arrays inside their own length, as the `var` walk reads them.
+        self.assertLess(walk.index('"array_length"'), walk.index('"array_get"'))
+        # A string by equality, a reference by the runtime's text for it.
+        self.assertIn("VALUE_STRING", walk)
+        self.assertIn("CpClassifyRef(v)", walk)
+        # Paths are the dotted whole-number form `var` and `path:` accept.
+        self.assertIn('path + "." + std::to_string(i)', walk)
+        self.assertIn('path + "." + name', walk)
+        # Three caps, each declared and each naming itself when it is reached.
+        for cap in ("kCpFindMaxDepth", "kCpFindMaxVisits", "kCpFindMaxMatches"):
+            self.assertRegex(self.block, r"static constexpr (int|long) " + cap + r" = \d+;")
+            self.assertIn(cap, code, cap)
+        find = self.body("static void CpFind(")
+        self.assertIn("CpVarRoot(", find)
+        self.assertIn("from=", find)
+        self.assertIn("variables walked", find)
+        self.assertIn("values visited", find)
+        usage = self.body("static void CpUsage(")
+        self.assertIn("find <Obj> <nth>|id:<n> [from=<i>] <text>", usage)
+        shipped = strip_research_blocks(self.plugin)
+        for symbol in ("CpFind", "kCpFindMax"):
+            self.assertNotIn(symbol, shipped, symbol)
+
+    def test_craftprobe_inroute_gate_holds_back_calls_outside_the_craft_route(self):
+        # Live 1h logged 532,552 PilipaliDecrypt calls with the Cube open, so
+        # no budget reached the selected recipe's decode at the press. The two
+        # rows the recipe row reads through carry `within=`, declared through
+        # the SDK (never a retyped name), and `arm inroute` logs them only while
+        # a craft-route row is on the stack; a call outside counts in `calls=`
+        # but spends no budget. They push no frame and are not route rows.
+        decl = self.plugin[self.plugin.index("static constexpr const char* kCpInRouteRows[] = {"):]
+        decl = decl[:decl.index("};")]
+        self.assertEqual(re.findall(r"SdkShortScriptName\(HeroSiege::Scripts::(gml_Script_\w+)\)", decl),
+                         ["gml_Script_PilipaliDecrypt", "gml_Script_CountInventoryItem"])
+        self.assertNotIn('"', decl)
+        for name in ("PilipaliDecrypt", "CountInventoryItem"):
+            self.assertEqual(self.plugin.count('"' + name + '"'), 1, name + " is retyped outside its row")
+        detour = self.plugin[self.plugin.index("#define CRAFTPROBE_DETOUR(SAFE, LABEL)"):]
+        detour = detour[:detour.index("#define CRAFTPROBE_TARGETS(X)")]
+        self.assertIn("static const bool readsRoute = CpReadsRoute(LABEL);", detour)
+        # The count is taken before the gate is asked; the frame stays the
+        # route rows' own (route = -1 for these two pushes nothing).
+        self.assertLess(detour.index("InterlockedIncrement(&g_CpCalls_##SAFE)"), detour.index("CpObserve("))
+        self.assertIn("CpRouteFrame frame(route, n);", detour)
+        self.assertIn("kCpInRouteRows", self.body("static bool CpReadsRoute("))
+        line = self.body("static bool CpObserve(")
+        gate = line.index('readsRoute && g_CpInRouteGate.load() && within == "none"')
+        # The gate refuses before the budget is spent.
+        self.assertLess(gate, line.index("InterlockedIncrement(logged)"))
+        arm = self.body("static void CpArm(")
+        self.assertIn('la == "inroute"', arm)
+        self.assertIn("g_CpInRouteGate.store(inRoute)", arm)
+        self.assertIn("inroute gate", arm)
+        self.assertIn("inroute", self.body("static void CpShow("))
+        usage = self.body("static void CpUsage(")
+        self.assertIn("inroute", usage)
+        shipped = strip_research_blocks(self.plugin)
+        for symbol in ("kCpInRouteRows", "g_CpInRouteGate", "CpReadsRoute", "inroute"):
+            self.assertNotIn(symbol, shipped, symbol)
 
     # ---- the switch ----------------------------------------------------------
 

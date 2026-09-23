@@ -21931,6 +21931,27 @@ static int CpCraftRouteSlot(const char* label)
     return -1;
 }
 
+// Phase 1i: the rows the recipe list reads a recipe's inputs through. Live 1h
+// logged 532,552 PilipaliDecrypt calls with the Cube open - the list, not the
+// press - so no budget reached the selected recipe's decode. These rows read
+// the route (their armed line carries `within=` too) but push no frame and are
+// not route rows, so Phase 1g's `within=` answers are unchanged. Under
+// `arm inroute` they log a call only while a craft-route row is on the stack;
+// a call outside still counts in `calls=` and spends no budget, so `show`'s
+// `unlogged=` is what the gate held back. Named through the SDK.
+static constexpr const char* kCpInRouteRows[] = {
+    SdkShortScriptName(HeroSiege::Scripts::gml_Script_PilipaliDecrypt),
+    SdkShortScriptName(HeroSiege::Scripts::gml_Script_CountInventoryItem),
+};
+static std::atomic<bool> g_CpInRouteGate{ false };   // set by `arm inroute`, cleared by any other `arm`
+
+static bool CpReadsRoute(const char* label)
+{
+    for (const char* row : kCpInRouteRows)
+        if (std::strcmp(label, row) == 0) return true;
+    return false;
+}
+
 // The outermost craft-route row on the stack now, as `<row>#<n>`, or "none".
 static std::string CpWithin()
 {
@@ -21962,18 +21983,23 @@ struct CpRouteFrame {
 };
 
 // Before the trampoline: one budgeted line naming self, other and every
-// argument - and, on a craft-route row (route >= 0), `within=`, read before
-// this call's own frame is entered. Returns whether it was logged, so the
+// argument - and, on a craft-route row (route >= 0) or a row that reads the
+// route (readsRoute, Phase 1i), `within=`, read before this call's own frame
+// is entered. Under `arm inroute` a reading row outside the route is refused
+// here, before the budget is spent. Returns whether it was logged, so the
 // `ret=` line follows exactly the calls that were.
-static bool CpObserve(const char* label, long n, volatile long* logged, volatile long* logOn, int route,
+static bool CpObserve(const char* label, long n, volatile long* logged, volatile long* logOn, int route, bool readsRoute,
                       CInstance* S, CInstance* O, int argc, RValue** A)
 {
     if (g_CpOwnLookup || !g_CpArmed.load() || !*logOn) return false;
     const long budget = g_CpLogBudget;
-    if (*logged >= budget || InterlockedIncrement(logged) > budget) return false;
+    if (*logged >= budget) return false;
+    const std::string within = (route >= 0 || readsRoute) ? CpWithin() : std::string();
+    if (readsRoute && g_CpInRouteGate.load() && within == "none") return false;   // counted by the detour, not logged
+    if (InterlockedIncrement(logged) > budget) return false;
     try {
         Out(std::string("craftprobe ") + label + " #" + std::to_string(n)
-            + (route >= 0 ? std::string(" within=") + CpWithin() : std::string())
+            + (within.empty() ? std::string() : std::string(" within=") + within)
             + " self=" + PpDescribeSelf(S) + " other=" + PpDescribeSelf(O)
             + " argc=" + std::to_string(argc) + AggroArgs(argc, A) + PpArgIdentities(argc, A));
     } catch (...) {}
@@ -22055,8 +22081,9 @@ static void CpAfter(const char* safe, const char* label, long n, bool logged, bo
     static CpKept g_CpKept_##SAFE; \
     static RValue& CpDetour_##SAFE(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) { \
         static const int route = CpCraftRouteSlot(LABEL); \
+        static const bool readsRoute = CpReadsRoute(LABEL); \
         const long n = InterlockedIncrement(&g_CpCalls_##SAFE); \
-        const bool logged = CpObserve(LABEL, n, &g_CpLogged_##SAFE, &g_CpLogOn_##SAFE, route, S, O, argc, A); \
+        const bool logged = CpObserve(LABEL, n, &g_CpLogged_##SAFE, &g_CpLogOn_##SAFE, route, readsRoute, S, O, argc, A); \
         RValue& r = [&]() -> RValue& { \
             CpRouteFrame frame(route, n); \
             return g_CpOrig_##SAFE ? g_CpOrig_##SAFE(S, O, R, argc, A) : R; \
@@ -22521,15 +22548,19 @@ static void CpZeroCounters()
     }
 }
 
-// `arm [budget=N] [substr ...]`: with no substrings every row except the
-// CheckPlayerInteraction control logs (it fires every frame from every
+// `arm [budget=N] [inroute] [substr ...]`: with no substrings every row except
+// the CheckPlayerInteraction control logs (it fires every frame from every
 // interactable; its count is the measurement, and naming it logs it too).
+// Phase 1i: the keyword `inroute` (not a filter) turns on the gate for
+// kCpInRouteRows; an `arm` without it turns the gate off.
 static void CpArm(const std::vector<std::string>& args)
 {
     long budget = kCpDefaultLogBudget;
+    bool inRoute = false;
     std::vector<std::string> filters;
     for (const std::string& a : args) {
         const std::string la = Lower(a);
+        if (la == "inroute") { inRoute = true; continue; }
         if (la.rfind("budget=", 0) == 0) {
             try { budget = std::stol(la.substr(7)); }
             catch (...) { Out("craftprobe arm: budget=N needs a whole number; not armed"); return; }
@@ -22547,11 +22578,18 @@ static void CpArm(const std::vector<std::string>& args)
         if (on && t.installed.load()) ++selected;
     }
     InterlockedExchange(&g_CpLogBudget, budget);
+    g_CpInRouteGate.store(inRoute);
     g_CpArmed.store(true);
     Out("craftprobe arm: counters reset; the next " + std::to_string(budget) + " calls of each of "
         + std::to_string(selected) + " selected detoured row(s) are logged"
         + (filters.empty() ? " (all but the CheckPlayerInteraction control)" : " (label filters)")
         + ". Then `craftprobe show` - a row reporting unlogged calls is `not observed (budget spent)`.");
+    std::string rows;
+    for (const char* row : kCpInRouteRows) rows += (rows.empty() ? "" : " and ") + std::string(row);
+    Out(inRoute
+        ? "craftprobe arm: inroute gate ON - " + rows + " log a call only while a craft-route row is on the stack;"
+          " a call outside counts in calls= and spends no budget (`show`'s unlogged= is what the gate held back)"
+        : "craftprobe arm: inroute gate off - " + rows + " log like every row (their lines still carry within=)");
 }
 
 // Every detoured row that was called since `arm`, with how many of its calls
@@ -22563,7 +22601,7 @@ static void CpShow(bool all)
     for (const CpTarget& t : g_CpTargets) if (t.installed.load()) ++installed;
     Out("craftprobe show: " + std::to_string(installed) + "/" + std::to_string(kCpTargetCount) + " rows detoured, "
         + (g_CpArmed.load() ? "armed" : "not armed") + ", budget=" + std::to_string(g_CpLogBudget)
-        + ", backing " + (g_CpBacking.load() ? "on" : "off"));
+        + ", backing " + (g_CpBacking.load() ? "on" : "off") + ", inroute gate " + (g_CpInRouteGate.load() ? "on" : "off"));
     const CpTarget* control = CpFindRow("CheckPlayerInteraction");
     if (control)
         Out(std::string("  control CheckPlayerInteraction calls=")
@@ -22790,8 +22828,16 @@ static std::string CpDsText(const RValue& v, const CpRef& r)
 // reference is followed the same way one level down, to kCpRefMaxDepth; an
 // instance already printed (one grid hung off three variables in Phase 1) is
 // named, not read again.
+//
+// Phase 1i: `var` takes no filter, so the cap no longer says to narrow one
+// (Live 1h listed 80 of Controller_obj's 221 variables and could not reach
+// the rest). The listing starts at the from-th name variable_instance_get_names
+// returns, and the cap line names the exact command for the next page - the
+// root's as the reader typed it (pageCmd), a followed instance's by its id -
+// and how many variables remain.
 static void CpFollowInstance(const std::string& indent, const RValue& inst, long long id,
-                             const std::vector<std::string>& filters, int depth, std::set<long long>& visited)
+                             const std::vector<std::string>& filters, int depth, std::set<long long>& visited,
+                             int from = 0, const std::string& pageCmd = std::string())
 {
     const std::string who = "instance " + std::to_string(id);
     bool alive = false;
@@ -22818,14 +22864,27 @@ static void CpFollowInstance(const std::string& indent, const RValue& inst, long
         n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
     } catch (...) { Out(indent + objName + " id=" + std::to_string(id) + ": variable names could not be read"); return; }
     Out(indent + objName + " id=" + std::to_string(id) + " vars=" + std::to_string(n)
-        + (depth > 0 ? " (followed, depth " + std::to_string(depth) + ")" : std::string()));
+        + (depth > 0 ? " (followed, depth " + std::to_string(depth) + ")" : std::string())
+        + (from > 0 ? " from=" + std::to_string(from) : std::string()));
+    if (from > 0 && from >= n) {
+        Out(indent + "  from=" + std::to_string(from) + " is past the last variable (vars=" + std::to_string(n) + "); nothing listed");
+        return;
+    }
+    const std::string next = pageCmd.empty() ? "craftprobe var id:" + std::to_string(id) : pageCmd;
     std::vector<std::pair<std::string, RValue>> refs;   // live-instance refs, followed after this instance's lines
     int shown = 0;
-    for (int i = 0; i < n; ++i) {
+    int listedTo = from;                                 // one past the last index this page reached
+    for (int i = from; i < n; ++i) {
         std::string name;
+        listedTo = i + 1;
         try { name = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) }).ToString(); } catch (...) { continue; }
         if (!CpNameMatches(name, filters)) continue;
-        if (++shown > kCpReaderMaxLines) { Out(indent + "  ...(capped at " + std::to_string(kCpReaderMaxLines) + "; narrow the filter)"); break; }
+        if (++shown > kCpReaderMaxLines) {
+            listedTo = i;
+            Out(indent + "  ...(capped at " + std::to_string(kCpReaderMaxLines) + "; " + std::to_string(n - i)
+                + " more variable(s) - `" + next + " * from=" + std::to_string(i) + "` lists the next page)");
+            break;
+        }
         try {
             const RValue v = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(name) });
             const CpRef r = CpClassifyRef(v);
@@ -22835,6 +22894,8 @@ static void CpFollowInstance(const std::string& indent, const RValue& inst, long
             if (r.kind == CpRefKind::Instance) refs.push_back({ name, v });
         } catch (...) { Out(indent + "  " + name + "=<read failed>"); }
     }
+    Out(indent + "  (indices " + std::to_string(from) + ".." + std::to_string(listedTo - 1) + " of vars=" + std::to_string(n)
+        + " read, " + std::to_string((std::min)(shown, kCpReaderMaxLines)) + " printed)");
     for (const auto& ref : refs) {
         const CpRef r = CpClassifyRef(ref.second);
         if (depth + 1 > kCpRefMaxDepth) {
@@ -22962,13 +23023,18 @@ static bool CpVarWalk(const std::string& tag, bool global, const std::vector<std
 // number, which instance_exists and variable_instance_get accept. With `json`
 // the value is written to bp_ipc\cp_var_<last name>.json when a depth-capped
 // walk finds no cycle. Reads only.
+//
+// Phase 1i: `* from=<i>` lists kCpReaderMaxLines variables starting at the
+// i-th name, and every capped page names the command for the next one.
 static void CpVar(const std::vector<std::string>& tok)
 {
-    const char* usage = "craftprobe var: usage -> var <Obj|global> <nth> <name|a.b.c|*> [json] | var id:<n> <name|a.b.c|*> [json]; nothing read";
+    const char* usage = "craftprobe var: usage -> var <Obj|global> <nth> <name|a.b.c|*> [json] | var <Obj> <nth> * from=<i>"
+                        " | var id:<n> <name|a.b.c|*> [json] | var id:<n> * from=<i>; nothing read";
     const bool byId = tok.size() >= 2 && Lower(tok[1]).rfind("id:", 0) == 0;
     const size_t pathAt = byId ? 2 : 3;
-    if (tok.size() != pathAt + 1 && !(tok.size() == pathAt + 2 && Lower(tok[pathAt + 1]) == "json")) { Out(usage); return; }
-    const bool json = tok.size() == pathAt + 2;
+    const bool fromGiven = tok.size() == pathAt + 2 && Lower(tok[pathAt + 1]).rfind("from=", 0) == 0;
+    if (tok.size() != pathAt + 1 && !(tok.size() == pathAt + 2 && (Lower(tok[pathAt + 1]) == "json" || fromGiven))) { Out(usage); return; }
+    const bool json = tok.size() == pathAt + 2 && !fromGiven;
     const bool global = !byId && Lower(tok[1]) == "global";
     std::string tag = "craftprobe var";
     for (size_t i = 1; i <= pathAt; ++i) tag += " " + tok[i];
@@ -22977,6 +23043,16 @@ static void CpVar(const std::vector<std::string>& tok)
     for (const std::string& seg : path) if (seg.empty()) { Out(tag + ": an empty name in the path; nothing read"); return; }
     const bool all = path.size() == 1 && path[0] == "*";
     if (all && global) { Out(tag + ": `*` needs an instance root (`var <Obj> <nth> *` or `var id:<n> *`); nothing read"); return; }
+    if (fromGiven && !all) { Out(tag + ": from=<i> pages `*` only; nothing read"); return; }
+    long long fromIndex = 0;
+    if (fromGiven && !CpIndexSegment(tok[pathAt + 1].substr(5), fromIndex)) {
+        Out(tag + ": from=<i> needs a whole number; nothing read");
+        return;
+    }
+    const int from = (int)fromIndex;
+    // The next page's command, as typed: `craftprobe var <Obj> <nth>` or `craftprobe var id:<n>`.
+    std::string pageCmd = "craftprobe var";
+    for (size_t i = 1; i < pathAt; ++i) pageCmd += " " + tok[i];
 
     try {
         RValue cur;
@@ -22984,7 +23060,7 @@ static void CpVar(const std::vector<std::string>& tok)
         std::string where;
         if (!CpVarRoot(tag, tok, byId, global, cur, rootId, where)) return;
         std::set<long long> visited;
-        if (all) { CpFollowInstance("  ", cur, rootId, { "*" }, 0, visited); return; }
+        if (all) { CpFollowInstance("  ", cur, rootId, { "*" }, 0, visited, from, pageCmd); return; }
 
         RValue holder;
         bool haveHolder = false;
@@ -23000,6 +23076,140 @@ static void CpVar(const std::vector<std::string>& tok)
         }
         if (json) Out(tag + " -> " + PpBackingJsonFile("cp_var_" + path.back() + ".json", walked, 0, where, cur));
     } catch (...) { Out(tag + ": read failed"); }
+}
+
+// ---- Phase 1i: `find` - which variable holds a value -------------------------
+// Live 1h could not name Controller_obj's stash containers: `var *` showed 80
+// of 221 variables, and a 3-entry preview of an array does not say which one
+// holds a stash cell. Every cell the save walks is a struct carrying its
+// item's fingerprint (or the runtime's undefined value), and the stash map is a
+// `ref ds_map`, so a search for the text names the container and the cell in
+// one step. `find <Obj> <nth>|id:<n> [from=<i>] <text>` walks every variable of
+// the root into arrays (inside array_length) and plain structs, and prints the
+// path - the dotted whole-number-segment form `var` and `path:` take - of every
+// string equal to <text> and every reference whose runtime text is <text>. It
+// never enters an instance or a data structure (a reference is compared by its
+// text only), never calls a method (one is counted), and writes nothing. A
+// struct cycle is bounded by the depth cap, as PpBackingJsonFile's walk is.
+static constexpr int kCpFindMaxDepth = 8;          // segments below a root variable the walk descends
+static constexpr long kCpFindMaxVisits = 100000;   // values one `find` visits; the cap names the from= that resumes
+static constexpr int kCpFindMaxMatches = 40;       // match lines printed (every match is still counted)
+
+struct CpFindState {
+    std::string text;
+    long visits = 0;
+    long matches = 0;
+    long depthCapped = 0;          // arrays/structs at kCpFindMaxDepth, not entered
+    long methods = 0;              // method values met, never called
+    long notEntered = 0;           // instance/data-structure references and non-struct objects, compared by text only
+    long unreadable = 0;
+    bool visitCapped = false;
+};
+
+static void CpFindMatch(const std::string& path, const char* what, CpFindState& st)
+{
+    if (++st.matches <= kCpFindMaxMatches) Out("  match " + std::to_string(st.matches) + ": " + path + " (" + what + ")");
+    else if (st.matches == kCpFindMaxMatches + 1)
+        Out("  ...(match lines capped at " + std::to_string(kCpFindMaxMatches) + "; the summary counts every match)");
+}
+
+// One value at `path`, `depth` segments below its root variable. Reads only.
+static void CpFindWalk(const RValue& v, const std::string& path, int depth, CpFindState& st)
+{
+    if (st.visitCapped) return;
+    if (++st.visits > kCpFindMaxVisits) { st.visitCapped = true; return; }
+    try {
+        if (v.m_Kind == VALUE_STRING) {
+            if (v.ToString() == st.text) CpFindMatch(path, "string", st);
+            return;
+        }
+        if (v.m_Kind == VALUE_REF) {
+            const CpRef r = CpClassifyRef(v);
+            if (r.text == st.text) CpFindMatch(path, "reference", st);
+            ++st.notEntered;
+            return;
+        }
+        const bool isArray = v.m_Kind == VALUE_ARRAY;
+        if (!isArray && v.m_Kind != VALUE_OBJECT) return;   // a number, a bool, undefined: nothing to find
+        if (!isArray) {
+            if (g_Yytk->CallBuiltin("is_method", { v }).ToBoolean()) { ++st.methods; return; }   // never called
+            if (!ApIsPlainStruct(v)) { ++st.notEntered; return; }
+        }
+        if (depth >= kCpFindMaxDepth) {
+            if (++st.depthCapped == 1)
+                Out("  ...(depth cap " + std::to_string(kCpFindMaxDepth) + " at " + path + "; not entered - `var` reads below it)");
+            return;
+        }
+        if (isArray) {
+            const long long n = (long long)g_Yytk->CallBuiltin("array_length", { v }).ToDouble();
+            for (long long i = 0; i < n && !st.visitCapped; ++i)
+                CpFindWalk(g_Yytk->CallBuiltin("array_get", { v, RValue((double)i) }), path + "." + std::to_string(i), depth + 1, st);
+            return;
+        }
+        const RValue names = g_Yytk->CallBuiltin("variable_struct_get_names", { v });
+        const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+        for (int i = 0; i < n && !st.visitCapped; ++i) {
+            const std::string name = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) }).ToString();
+            CpFindWalk(g_Yytk->CallBuiltin("variable_struct_get", { v, RValue(name) }), path + "." + name, depth + 1, st);
+        }
+    } catch (...) { ++st.unreadable; }
+}
+
+static void CpFind(const std::vector<std::string>& tok)
+{
+    const char* usage = "craftprobe find: usage -> find <Obj> <nth> [from=<i>] <text> | find id:<n> [from=<i>] <text>; nothing searched";
+    const bool byId = tok.size() >= 2 && Lower(tok[1]).rfind("id:", 0) == 0;
+    size_t at = byId ? 2 : 3;
+    if (tok.size() < at + 1) { Out(usage); return; }
+    std::string rootArgs;
+    for (size_t i = 1; i < at; ++i) rootArgs += (i > 1 ? " " : "") + tok[i];
+    const std::string tag = "craftprobe find " + rootArgs;
+    if (!byId && Lower(tok[1]) == "global") { Out(tag + ": needs an instance root (`find <Obj> <nth>` or `find id:<n>`); nothing searched"); return; }
+    long long fromIndex = 0;
+    if (Lower(tok[at]).rfind("from=", 0) == 0) {
+        if (!CpIndexSegment(tok[at].substr(5), fromIndex)) { Out(tag + ": from=<i> needs a whole number; nothing searched"); return; }
+        ++at;
+    }
+    if (tok.size() < at + 1) { Out(usage); return; }
+    std::string text;   // the rest of the line, single-spaced
+    for (size_t i = at; i < tok.size(); ++i) text += (i > at ? " " : "") + tok[i];
+    const int from = (int)fromIndex;
+
+    try {
+        RValue cur;
+        long long rootId = -1;
+        std::string where;
+        if (!CpVarRoot(tag, tok, byId, false, cur, rootId, where)) return;
+        const RValue names = g_Yytk->CallBuiltin("variable_instance_get_names", { cur });
+        const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+        Out(tag + " (" + where + "): vars=" + std::to_string(n) + " from=" + std::to_string(from) + ", searching for \"" + text
+            + "\" (strings and reference text, into arrays and plain structs only)");
+        CpFindState st;
+        st.text = text;
+        int walked = 0;
+        for (int i = from; i < n; ++i) {
+            std::string name;
+            try { name = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) }).ToString(); } catch (...) { ++st.unreadable; continue; }
+            if (!g_Yytk->CallBuiltin("instance_exists", { cur }).ToBoolean()) { Out(tag + ": the instance is gone (instance_exists is false); stopped"); break; }
+            CpFindWalk(g_Yytk->CallBuiltin("variable_instance_get", { cur, RValue(name) }), name, 0, st);
+            if (st.visitCapped) {
+                // Resume at this variable, from its start - unless it is the
+                // first one walked, which alone exceeds the cap.
+                const int resume = i > from ? i : i + 1;
+                Out("  ...(visit cap " + std::to_string(kCpFindMaxVisits) + " reached in variable " + std::to_string(i) + " " + name
+                    + (i > from ? std::string() : std::string(", which alone exceeds it and is not searched to its end"))
+                    + " - `" + tag + " from=" + std::to_string(resume) + " " + text + "` resumes)");
+                break;
+            }
+            ++walked;
+        }
+        Out(tag + ": " + std::to_string(st.matches) + " match(es), " + std::to_string((std::min)(st.visits, kCpFindMaxVisits))
+            + " values visited, " + std::to_string(walked) + " of " + std::to_string(n) + " variables walked (from=" + std::to_string(from) + ")"
+            + (st.depthCapped ? ", " + std::to_string(st.depthCapped) + " not entered at the depth cap" : std::string())
+            + (st.methods ? ", " + std::to_string(st.methods) + " method(s) not called" : std::string())
+            + (st.notEntered ? ", " + std::to_string(st.notEntered) + " reference(s)/object(s) compared, not entered" : std::string())
+            + (st.unreadable ? ", " + std::to_string(st.unreadable) + " unreadable" : std::string()));
+    } catch (...) { Out(tag + ": search failed"); }
 }
 
 // ---- Phase 1b: `node` - a container's contents, summed per (class, b) -------
@@ -24099,8 +24309,10 @@ static void CpCall(const std::vector<std::string>& tok)
 }
 
 // The first line is the build's marker: a live session tells this build
-// (Phase 1h, 254 rows: PilipaliDecrypt and CreateItemSaveStruct added, the
-// `call` reply split and numeric path segments) from Phase 1g's (252 rows,
+// (Phase 1i, Phase 1h's 254 rows with the paged `var *`, `find` and the
+// `inroute` gate) from Phase 1h's (254 rows, marker `phase1h`:
+// PilipaliDecrypt and CreateItemSaveStruct added, the
+// `call` reply split and numeric path segments), Phase 1g's (252 rows,
 // marker `phase1g`, with `mapkeep`, `within=` and the `undefined` argument),
 // Phase 1e's (the same 252 rows, marker `phase1e`, also the build Phase 1f
 // ran), Phase 1c's (223 rows, marker `phase1c`, also the build Phase 1d ran),
@@ -24108,15 +24320,21 @@ static void CpCall(const std::vector<std::string>& tok)
 // in one bare `craftprobe`.
 static void CpUsage()
 {
-    Out("craftprobe: phase1h rows=" + std::to_string(kCpTargetCount) + " - research instrument for docs/crafting-materials-research.md (research build only)");
+    Out("craftprobe: phase1i rows=" + std::to_string(kCpTargetCount) + " - research instrument for docs/crafting-materials-research.md (research build only)");
     Out("  hook [substr ...]                 native-detour every row (or the matching ones); one instrument per session");
-    Out("  arm [budget=N] [substr ...]       reset counters; log the next N calls of each selected row (default: all but the control)");
+    Out("  arm [budget=N] [inroute] [substr ...]  reset counters; log the next N calls of each selected row (default: all but the control)");
+    Out("    inroute: PilipaliDecrypt and CountInventoryItem log a call only while a craft-route row is on the stack;"
+        " a call outside counts in calls= and spends no budget (`show`'s unlogged= is what the gate held back)");
     Out("  show [all]                        calls since `arm`, logged vs unlogged per row; CheckPlayerInteraction is the control");
     Out("  reset                             zero every counter");
     Out("  bag|stash|recipe [substr ...]     hook-free: the bag window, stash window + world stash + globals, cube window");
     Out("  var <Obj|global> <nth> <name|a.b.c|*> [json]   hook-free: one variable, deeper; a live `ref instance` is followed by name");
     Out("  var id:<n> <name|a.b.c|*> [json]  the same from an instance id (json -> bp_ipc\\cp_var_<name>.json)");
     Out("    a whole-number segment (a.3.0) reads that element of an array, inside its length; `path:` walks the same way");
+    Out("    `*` lists " + std::to_string(kCpReaderMaxLines) + " variables at a time: `* from=<i>` starts at the i-th; a capped page names the command for the next");
+    Out("  find <Obj> <nth>|id:<n> [from=<i>] <text>   hook-free: the path (as `var`/`path:` take it) of every string equal to <text>"
+        " and every reference whose runtime text is <text>, in the root's variables, arrays and plain structs"
+        " (never instances, data structures or methods); caps on depth, values visited and match lines, the visit cap naming the from= that resumes");
     Out("  node id:<n>|<Obj> <nth>|stash|bag  hook-free: a container's cells, one GetItemFromFingerprint per fingerprint (capped), sums per (class, b)");
     Out("  node socket [id:<n>]              the Socketable tab: every cell instance of its window's `grid`, one sum table");
     Out("  node var <Obj|global> <nth> <a.b.c> | node var id:<n> <a.b.c>   sums what `var` reaches: a nodeGrid, fingerprints or item structs");
@@ -24134,7 +24352,7 @@ static void CpUsage()
         " | entered #<n>, script_execute threw | entered #<n>, script_execute returned st=<s> | dispatched #<n> -> ret=");
     Out("  hook reports a row `mapkeep on` installed as `held by mapkeep` - neither detoured nor failed; run `mapkeep on` first");
     Out("  a craft-route row's logged line carries within=<row>#<n>|none: the outermost craft-route row on the stack when it was entered,"
-        " and which call of it (the #n of its own entry and ret= lines)");
+        " and which call of it (the #n of its own entry and ret= lines); PilipaliDecrypt's and CountInventoryItem's lines carry it too");
 }
 
 static void CpCommand(const std::string& rest)
@@ -24150,6 +24368,7 @@ static void CpCommand(const std::string& rest)
     if (sub == "reset") { CpZeroCounters(); Out("craftprobe reset: counters zeroed (detours, selection and kept values unchanged)"); return; }
     if (sub == "bag" || sub == "stash" || sub == "recipe") { CpReader(sub, tail); return; }
     if (sub == "var") { CpVar(tok); return; }
+    if (sub == "find") { CpFind(tok); return; }
     if (sub == "node") { CpNodeCommand(tok); return; }
     if (sub == "store") { CpStore(tok); return; }
     if (sub == "backing") { CpBackingCommand(tok); return; }
