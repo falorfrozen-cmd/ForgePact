@@ -2063,9 +2063,9 @@ gone when the operator next looked (`hs_status`: not running). `stash.hss`
 kept its T1 write time. So `counts-tool-after` was read after a crash, not a
 graceful exit. What caused the crash is not established: the capture gives the
 order of events (the take, the two by-name `SaveStash` calls, the close's own
-save), and the leading unconfirmed lead is the take's after-state, which
-`SaveStash` does not finish - not the by-name call route, which Live 1f's own
-control already showed can dispatch and return.
+save), and the leading unconfirmed lead is the take's after-state, after which
+no `SaveStash` was observed to finish; the aborted by-name `SaveStash #1`/`#2`
+before it are not excluded either.
 
 Filled from the capture, `.claude/workorders/forgepact-issue-14-phaseA-live-1.md`,
 cited by its step headings, one row per check, in the procedure's order. A
@@ -2148,11 +2148,14 @@ not observed). The open-stash call is a window control: it ran on the same
 post-take state as the closed-stash call, so both failing controls for the
 window, not for the route. The route's own control is Live 1f's by-name
 `SaveStash` in the same supplied shape (self `Console_Save_obj` 0, no
-argument), run before any by-name take or owner change: it dispatched and
-returned, `dispatched -> ret=undefined` (`save-by-name-closed`), and its
+argument), run after a by-name `GridRemoveItem` take (`take-1stack`) but
+before any by-name add or owner change: it dispatched and returned,
+`dispatched -> ret=undefined` (`save-by-name-closed`), and its
 `___struct___359@SaveStash` closure logged the Materials tab. So the route
 itself does dispatch and return on this runtime; the two `NOT dispatched`
-results here do not fault it. The owner's next stash close then ran the
+results here do not fault the route's ability to dispatch, but the two
+aborted by-name `SaveStash #1`/`#2` calls before the crash are a cause not
+yet excluded. The owner's next stash close then ran the
 game's own `SaveStash #3`, and the game ended inside it after one
 `___struct___359@SaveStash` closure returned, with no `ret=` for the call, no
 crash-handler text and no closing line (`counts-tool-after`: fail). All three
@@ -2232,12 +2235,13 @@ What it still lacks, as far as observed:
   time did not move in either state (`save-closed`: not observed). The open
   call is a window control only - it ran on the same post-take state as the
   closed call, not a different route - the route's own control is Live 1f's
-  by-name `SaveStash` in the same supplied shape before any take, which
-  printed `dispatched -> ret=undefined`. Neither `SaveStash #1` nor
-  `SaveStash #2` logged a `ret=` for the call itself. The owner's next stash
-  close then ran the game's own `SaveStash #3`, and the game ended inside it
-  after one closure, with no `ret=` for that call either, the file unwritten
-  and still listing X (`counts-tool-after`: fail). The leading lead,
+  by-name `SaveStash` in the same supplied shape, run after a by-name
+  `GridRemoveItem` take (`take-1stack`) but before any by-name add or owner
+  change, which printed `dispatched -> ret=undefined`. Neither `SaveStash #1`
+  nor `SaveStash #2` logged a `ret=` for the call itself. The owner's next
+  stash close then ran the game's own `SaveStash #3`, and the game ended
+  inside it after one closure, with no `ret=` for that call either, the file
+  unwritten and still listing X (`counts-tool-after`: fail). The leading lead,
   unconfirmed, is that the take's after-state leaves the stash in a state
   `SaveStash` does not finish; it happened once, no control isolates it, and
   its cause is not established. Whether the character's save then held the
