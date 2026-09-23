@@ -610,12 +610,13 @@ class CraftMatsContractTests(unittest.TestCase):
     # ---- the research document -------------------------------------------------
 
     def test_research_doc_has_its_sections_and_status(self):
-        head = "\n".join(self.doc.split("\n")[:7])
+        head = "\n".join(self.doc.split("\n")[:8])
         self.assertIn("phase0-status: complete", head)
         self.assertRegex(head, r"phase1-status: (pending|complete)")
         self.assertRegex(head, r"phase1b-status: (pending|complete)")
         self.assertRegex(head, r"phase1c-status: (pending|complete)")
         self.assertRegex(head, r"phase1d-status: (pending|complete)")
+        self.assertRegex(head, r"(?m)^phase1e-status: (pending|complete)$")
         for heading in ("## Interpretation", "## Static search", "### Negative results, sourced",
                         "## Baseline (vanilla) to measure", "## Hypotheses", "## Instrument", "## Live procedure",
                         "## Results", "### Constraints from Phase 1", "### Live procedure 1b",
