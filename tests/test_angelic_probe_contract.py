@@ -342,16 +342,23 @@ class AngelicProbeSourceTests(unittest.TestCase):
     def test_the_angelic_chance_depth_is_research_only(self):
         full = function_body(self.plugin, "static RValue& HookAngelicChance(")
         shipped = function_body(self.shipped, "static RValue& HookAngelicChance(")
-        for token in ("++g_ApRollChanceDepth", "--g_ApRollChanceDepth"):
-            self.assertIn(token, full)
-            self.assertNotIn(token, shipped)
         self.assertNotIn("ApRoll", shipped)
         code = strip_comments(full)
-        first_call = code.index("g_OrigAngChance(S")
-        last_call = code.rindex("g_OrigAngChance(S")
-        self.assertLess(code.index("++g_ApRollChanceDepth"), first_call)
-        self.assertGreater(code.index("--g_ApRollChanceDepth"), last_call,
-                           "the extra-roll loop stays inside the depth")
+        # The depth is held by a scope guard, not a bare ++/--, so a throw out
+        # of the original call cannot leave it raised (PR #71 review).
+        for token in ("++g_ApRollChanceDepth", "--g_ApRollChanceDepth"):
+            self.assertNotIn(token, code)
+        guard = re.search(r"\bApRollChanceDepthScope\s+\w+\s*;", code)
+        self.assertIsNotNone(guard, "HookAngelicChance declares the depth guard")
+        self.assertLess(guard.start(), code.index("g_OrigAngChance(S"),
+                        "the guard is raised before the first original call and, "
+                        "living to the end of the function, covers the extra-roll loop")
+        struct = re.search(r"struct ApRollChanceDepthScope \{(.*?)\n\};",
+                           strip_comments(self.plugin), re.S)
+        self.assertIsNotNone(struct)
+        self.assertRegex(struct.group(1), r"ApRollChanceDepthScope\(\)\s*\{\s*\+\+g_ApRollChanceDepth;")
+        self.assertRegex(struct.group(1), r"~ApRollChanceDepthScope\(\)\s*\{\s*--g_ApRollChanceDepth;")
+        self.assertNotIn("ApRollChanceDepthScope", self.shipped)
 
     def test_the_gate_is_found_before_drop_manager_hides_drop_item(self):
         full = strip_comments(function_body(self.plugin, "static void InstallHook()"))

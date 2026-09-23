@@ -390,6 +390,15 @@ struct ApRollDropScope {
     ApRollDropScope(const ApRollDropScope&) = delete;
     ApRollDropScope& operator=(const ApRollDropScope&) = delete;
 };
+// HookAngelicChance holds the angelic-chance depth with this guard rather than
+// a bare ++/--, so a call that throws out of the original cannot leave the
+// depth raised and mark every later row as inside the roll.
+struct ApRollChanceDepthScope {
+    ApRollChanceDepthScope() { ++g_ApRollChanceDepth; }
+    ~ApRollChanceDepthScope() { --g_ApRollChanceDepth; }
+    ApRollChanceDepthScope(const ApRollChanceDepthScope&) = delete;
+    ApRollChanceDepthScope& operator=(const ApRollChanceDepthScope&) = delete;
+};
 // The research build finds the Angelic gate once at startup, before its own
 // DropManager hooks replace DropItem's script-table entry (InstallHook).
 static unsigned char* FindAngelicGate();
@@ -17999,9 +18008,9 @@ static RValue& HookAngelicChance(CInstance* S, CInstance* O, RValue& R, int argc
     // angelicprobe: count this call for the angelic-chance row (while the probe
     // is attached), then hold the angelic-chance depth over every original
     // call below, extra rolls included, so the rows those calls reach are
-    // counted as inside it.
+    // counted as inside it. The guard lowers it again on every way out.
     ApRollNoteChance(S, argc, A);
-    ++g_ApRollChanceDepth;
+    ApRollChanceDepthScope apChanceDepth;
 #endif
     // Multiplying the chance argument in place broke the game's own check (x99 -> zero
     // drops, 2026-09-05).  Since 1.3.13 the multiplier is a number of ROLLS: every extra roll
@@ -18017,9 +18026,6 @@ static RValue& HookAngelicChance(CInstance* S, CInstance* O, RValue& R, int argc
         g_InAngelicExtra = false;
         InterlockedIncrement(&g_AngRateHits);
     }
-#ifndef FORGEPACT_RELEASE
-    --g_ApRollChanceDepth;
-#endif
     return r;
 }
 
