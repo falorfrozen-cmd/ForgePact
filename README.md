@@ -45,6 +45,7 @@ none of these diagnostic hooks or the recorder. See
 | **Timed skill countdown** | For a small set of timed skills measured and tested in-game, plus most other skills with both a duration and a real cooldown, covered by rule and untested: draws how much of the cast is left over its skill-bar slot, in one of four looks (arc / bar / number / fade), disappearing at zero. A few skills are left out where a measurement showed the timer on the skill's own object is not the skill's duration. Companion skills (turrets, totems, hydra) are not covered. A few skills whose duration is a buff on you, measured in-game, are covered too, and other buff-only skills are not. In a fight, hits can add a little time to some skills (roughly 0.2 s each in our test) and the countdown rises slightly to match. A skill switched on as a toggle never gets a countdown. Off by default; a cast already running when you turn it on shows as full until the next cast |
 | **Satanic Zone Mods** | Pick which of the game's 25 positive / 26 negative World Section mods can roll onto a Satanic Zone; everything is on by default |
 | **Auto-prospect** | Off by default. Every item you drag or click into the Prospect Cube's grid is prospected at once by the game's own Prospect, so the 9×6 grid stops being the limit on a batch. Before each prospect the previous prospect's batch of materials goes to your materials tab (a sub-switch, on by default), so only the newest batch stays in the grid; the item you put in, ore included, is prospected, not moved (one exception: a batch material swapped out and dropped straight back in still goes to the tab); anything left in it when the game saves is lost ([details](#auto-prospect)) |
+| **Craft from the stash** | Off by default. At the game's own Crafting Cube, a recipe also counts the materials and socketables in your shared stash's Materials and Socketable tabs, so a recipe the stash covers is no longer greyed out; the game greys a recipe exactly as before, on the bag and those two tabs together. When you craft, only what your bag is short of leaves the stash - onto your bag's stack of it, into a new bag stack, or into the Cube's own grid when the bag has no room - and the game uses it up as it would from the bag; the stash is saved right after. Other stash tabs are never touched, and a move that cannot be confirmed refuses the craft instead ([details](#craft-from-the-stash)) |
 | **Remove Owned Relics** | Relics already at maximum level (10 out of 10) in your equipped slots, backpack or inventory stop dropping again, so a relic drop is one you can still use |
 | **Auto-apply** | Saved settings are re-sent every time the game starts |
 
@@ -501,6 +502,40 @@ the cursor is on it, and moving the mouse away puts the wait back.
 
 How the value was found, over three research rounds, is in
 [`docs/restart-always-available-research.md`](docs/restart-always-available-research.md).
+
+## Craft from the stash
+
+Mods tab → Quality of Life → **Craft from the stash**. Off by default.
+
+The Crafting Cube counts only what is in your bag, so a recipe stays greyed
+out while what it needs sits in your shared stash. With this on, a recipe also
+counts what the stash's **Materials** and **Socketable** tabs hold, and the
+game greys a recipe exactly as it does today, on the bag and those two tabs
+together. ForgePact does not craft anything itself:
+
+- **At the craft**, only the amount your bag is short of moves out of those
+  tabs, by the game's own routines: onto your bag's stack of it, into a new
+  stack in the bag, or into the Cube's own grid when the bag has no room. The
+  game then uses it up exactly as it would from the bag. A shortfall that
+  spans several stash stacks empties whole stacks first.
+- **The stash is saved** right after the craft, the way closing the stash
+  saves it. Your character is saved by the game as usual.
+- **Never a source:** the ordinary stash tabs, the guild stash and the Unique
+  tab.
+- **Refused, not guessed.** If a move cannot be confirmed on both sides, or a
+  recipe's amounts cannot be read, the craft is refused and the log says
+  `refused`. If the game's craft did not use up exactly what it needed, the
+  mod turns itself off until the game is restarted (`consume mismatch`), and
+  so does a move that could not be put back (`off for this session`).
+- Each craft that moved something writes one line to the log naming the
+  units, the material, the tab, where they went and whether the stash was
+  saved, for example `craftmats: moved 2 class=15 b=1 from socketable to
+  bag-stack; saved=yes`.
+
+How the game counts, consumes and saves was measured over several research
+rounds, in
+[`docs/crafting-materials-research.md`](docs/crafting-materials-research.md);
+its `## Ship design` describes this mod and what has not been observed live.
 
 ## Menu layout (for tools that drive the menus)
 
