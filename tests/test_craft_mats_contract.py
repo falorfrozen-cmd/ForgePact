@@ -1521,8 +1521,7 @@ class CraftMatsContractTests(unittest.TestCase):
         dispatch = call.index("CpDispatchScript(name, inst, args, res, st)")
         forget = call.index("CpForgetCallReturn(*t,")
         self.assertLess(forget, dispatch, "the slot is emptied before the dispatch")
-        # Arguments are resolved - `kept:` read - before the slot is emptied,
-        # so a call may name its own row's kept return.
+        # Arguments are resolved - `kept:` read - before the slot is emptied.
         self.assertLess(call.index("CpResolveArg("), forget)
         # Each outcome that did not return names itself in the slot.
         after = call[dispatch:]

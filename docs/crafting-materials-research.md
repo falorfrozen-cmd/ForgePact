@@ -11,7 +11,7 @@ phase1g-status: complete
 phase1h-status: complete
 phase1i-status: complete
 phase1j-status: complete
-phase1k-status: pending
+phase1k-status: complete
 
 **Status: Phase 0 done (static search, instrument, decision core); Phase 1 (the
 first live session, 2026-09-22) done; Phase 1b (a widened instrument and a
@@ -40,13 +40,17 @@ since ruled out as the build's route, leaving the partial take for a further
 research round (Phase 1k); it proved a count injection reaching the game's
 own availability check, and a whole-item placement into the Crafting Cube's
 own input grid by name; whether the game's own count walks that grid stayed
-not observed. Phase 1k - one research build and one session for a by-name
-partial take, the split's own per-unit edit with the item's methods re-bound
-to the item through the runtime's `method` builtin (or an inline write plus
-`ItemCheckHash`) for a stack the destination already holds, and a new unit
-made by the game's own loader route for one it does not - is pending
-(`### Phase 1k rows`, `### Phase 1k instrument`, `### Live procedure 1k`,
-`### Phase 1k results`). Phase 1
+not observed. Phase 1k - one research build and one session (Live 1k,
+2026-09-24) for a by-name partial take, the split's own per-unit edit with
+the item's methods re-bound to the item through the runtime's `method`
+builtin (or an inline write plus `ItemCheckHash`) for a stack the
+destination already holds, and a new unit made by the game's own loader
+route for one it does not - is done: Live 1k rejected the one bound-call
+shape tried, proved the inline stacked take and the json no-stack creation
+with its placement into the bag or the Cube's `craftGrid`, and left the
+game's own hash acceptance of an edited or created item on a drag, a merge,
+a save and a reload not observed (`### Phase 1k rows`, `### Phase 1k
+instrument`, `### Live procedure 1k`, `### Phase 1k results`). Phase 1
 measured the vanilla baseline, the cube's craft route and a vanilla duplication,
 but its instrument reached neither the stash's special-tab container nor the
 route a hand move between a special tab and the bag takes (`## Results`).
@@ -1404,11 +1408,20 @@ call, the game's latest return under `backing`. After a thrown `call
 InitItemFromJson` in `partial-cube`, the next `call AddItemToMap ...
 kept:InitItemFromJson` would have re-added the unit `partial-nostack` made,
 and the result read as the game's. The slot is now emptied before every
-dispatch (after the arguments are read, so a call may still name its own
-row's kept return), a dispatch that did not return records why, and `kept:`
-refuses on that. The reply also counts the row's by-name calls itself
-(`by-name call <k>`), since `GetItemMap`'s `#<n>` comes from a detour mapkeep's
-hold keeps at zero and would read `#1` on every call.
+dispatch (after the arguments are read), a dispatch that did not return
+records why, and `kept:` refuses on that. One limit is recorded here rather
+than fixed, because fixing it needs a rebuild that would break the match
+between this source and the DLL Live 1k ran (`### Phase 1k results`): a
+`call` naming its own row's `kept:` argument passes a struct that is
+**not rooted** during that same dispatch (a copy held only by an
+`RValue`), and nothing refuses the case - no Live 1k step named a row's own
+kept return, so the limit never touched a measurement. A second, narrower
+gap: if `variable_global_set` throws inside
+`CpKeepCallReturn`, the slot keeps the pre-dispatch reason "did not return",
+even though the console's `ret=` line shows the call did in fact return. The
+reply also counts the row's by-name calls itself (`by-name call <k>`), since
+`GetItemMap`'s `#<n>` comes from a detour mapkeep's hold keeps at zero and
+would read `#1` on every call.
 
 **Why Live 1j's partial take threw, and what changes.** Live 1j ran
 `SetItemDef` and `GenerateItemHash` through `callm` with self = other =
@@ -3735,8 +3748,9 @@ stash entry stayed `o=2`, the bag stack's hash was unchanged, the map size
 stayed 1627, and the stash cell was kept at the same path - no state
 changed, and the game did not crash (`partial-stacked`). The rejected shape
 is recorded next to what the control showed: the game's own split runs
-these same methods with the struct itself as self and other
-`UI_Split_Stack_obj`, a self `callm` cannot supply; the inline `set` route on
+these same methods with a self that reads `not an instance` (inferred, not
+probed, to be the item's own struct) and other `UI_Split_Stack_obj`, a self
+`callm` cannot supply; the inline `set` route on
 `itemDefinitionStruct.o` was never tried, because the control showed a
 method, not an inline write.
 
@@ -3842,31 +3856,137 @@ the Phase 1j build installed until now, and both earlier Phase 1k builds,
 fail `dll-hash`. `### Live procedure 1k` gives
 the session's shape.
 
-Not run yet. Each row is filled from the capture,
+**Live 1k, 2026-09-24.** One character (slot 14, "Sorak"), live-operator
+`ae806ceef4c39ecb4` on the command channel (`hs-drive`). The owner said
+"start again" before step 2 was confirmed done; the driver restored the
+saves and the procedure re-ran in full from step 1. The reload the owner
+asked for at step 13 ran after that. Each row is filled from the capture,
 `.claude/workorders/forgepact-issue-14-phase1k-live-1.md`, cited by its step
 headings, with the verdict its `## Checks` line gives; a call shape is
 recorded with what was supplied, and a negative only beside its control.
 
 | Check | What it measures | Observed | Verdict |
 |---|---|---|---|
-| dll-hash | The installed plugin's SHA-256, read with the game closed, equals the hash above | | |
-| marker | A bare `craftprobe` answers `phase1k rows=282` (this build) | | |
-| counts-tool-before | `tools/stash_tab_counts.py` before the launch: exit 0, `class=14 b=50 stack=13`, `class=15 b=1 stack=216`, `class=15 b=51 stack=10`, no `class=14 b=51`; file time T0 | | |
-| hook | `mapkeep on` prints `GetItemMap` and `LoadStash` `both-routes`, then `craftprobe hook` reads `280 detoured, 0 failed, 2 held by mapkeep` | | |
-| control | After the load: `CheckPlayerInteraction calls=` and `mapkeep stat`'s `a0=0 calls=` non-zero | | |
-| save-control | The owner's move of two X into the Materials tab and stash close, with the save route's rows armed: the `SaveLocalFile` line with self `Console_Save_obj`, `a0=4`, `a1=1` and its `SaveStash`, T1 later than T0, and the counts tool reading `class=14 b=51 stack=2` | | |
-| map-at-cube | With the Cube open and the stash closed: `GetItemMap` by name dispatched and kept current; `mapkeep find` naming `K_X` (`o=2`) and `K_D` (`o=13`) | | |
-| holders | `find` on `Controller_obj` names the `stashMaterialTab` cell of `K_X` and of `K_D`, one match each | | |
-| bag-stack | The bag's Greater Unstable Dust stack `K_B`: its count `k` equal to the owner's, its `itemDataHash`, and no Unstable Dust (`b=50`) in the bag | | |
-| bind-control | `callm ... fp9:<K_X> GetItemDef o confirm` throws (the negative control), then `... GetItemDef o bind confirm` answers `ret=real:2`, with the `bind=` line's `method_get_self` reading | | |
-| partial-stacked | One unit of X into the bag stack by the bound branch (or the inline one): `K_X` `o` 2 -> 1 on the same key, index and cell with the map's size unchanged, `K_B` `k` -> `k+1`, both hashes changed, the owner's count `k+1` | | |
-| hash-accept | The owner's drag of the edited bag stack away and back: `ItemCheckHash` answers true and `ReportClient` (a detoured row) reads `calls=0` | | |
-| partial-nostack | One Unstable Dust into a bag that holds none, by the json branch (or the clone branch): the new key's lookup in map 0 reads `o=1`, the bag's grid holds it, `K_D` 13 -> 12 on the same cell; every order tried | | |
-| partial-cube | A second created unit placed into `New_Inventory_Data_obj.craftGrid`, `K_D` 12 -> 11: drawn in the Cube, and merged by the owner's drag onto the bag's Unstable Dust (bag 2) with `ItemCheckHash` true and no `ReportClient` | | |
-| save-route | `SaveLocalFile` by name with `save-control`'s shape, stash closed: the file's write time moves and the counts tool reads `class=14 b=51 stack=1` and the Unstable Dust at 11 or 12 | | |
-| close-after | The owner's Cube close and stash open and close: the counts by eye (Greater Unstable Dust 1; Unstable Dust 11 or 12; the bag's `k+1` and 2 or 1), the game running, a later write time, the counts tool unchanged from `save-route` | | |
-| reload-after | After a graceful stop and a new launch (the owner's call): the same counts by eye | | |
-| counts-tool-after | `tools/stash_tab_counts.py` after a graceful stop, equal to `close-after`'s read | | |
+| dll-hash | The installed plugin's SHA-256, read with the game closed, equals the hash above | Recomputed SHA-256 of the installed DLL, `38717043CBAF78484E2C05E5EDA3D74C2F4667618DFC8DFE5B4AD3B309CACF9B`, equals the hash above case-insensitively, both before the first launch and again after the owner-requested restart (capture, Before launch: dll-hash; Re-verification before relaunch) | pass |
+| marker | A bare `craftprobe` answers `phase1k rows=282` (this build) | `craftprobe: phase1k rows=282 - research instrument for docs/crafting-materials-research.md (research build only)`, confirmed on both the first attempt and the final attempt after the restart (capture, Launch and character load: craftprobe / mapkeep on / craftprobe hook, attempt 2) | pass |
+| counts-tool-before | `tools/stash_tab_counts.py` before the launch: exit 0, `class=14 b=50 stack=13`, `class=15 b=1 stack=216`, `class=15 b=51 stack=10`, no `class=14 b=51`; file time T0 | Exit 0, all four as expected; T0 `2026-09-22T22:18:18.9022398Z`, re-confirmed identical after the restore (capture, Before launch: counts-tool-before; Re-verification before relaunch) | pass |
+| hook | `mapkeep on` prints `GetItemMap` and `LoadStash` `both-routes`, then `craftprobe hook` reads `280 detoured, 0 failed, 2 held by mapkeep` | `mapkeep on` read `GetItemMap both-routes` and `LoadStash both-routes`; `craftprobe hook: 280 detoured, 0 failed, 2 held by mapkeep.` (capture, attempt 2: craftprobe / mapkeep on / craftprobe hook) | pass |
+| control | After the load: `CheckPlayerInteraction calls=` and `mapkeep stat`'s `a0=0 calls=` non-zero | `CheckPlayerInteraction calls=19432`; `mapkeep stat a0=0 calls=25909`; `a0=9 calls=0`, `kept=none` (capture, attempt 2: control) | pass |
+| save-control | The owner's move of two X into the Materials tab and stash close, with the save route's rows armed: the `SaveLocalFile` line with self `Console_Save_obj`, `a0=4`, `a1=1` and its `SaveStash`, T1 later than T0, and the counts tool reading `class=14 b=51 stack=2` | All 7 `SaveLocalFile` calls traced in order; only `SaveLocalFile #7` (self `Console_Save_obj#980@199951`, `a0=4`, `a1=1`) ran `SaveStash #1`; T1 `2026-09-24T14:35:44.4021723Z` later than T0; counts tool read `class=14 b=51 stack=2` (capture, Step 2: save-control, attempt 2) | pass |
+| map-at-cube | With the Cube open and the stash closed: `GetItemMap` by name dispatched and kept current; `mapkeep find` naming `K_X` (`o=2`) and `K_D` (`o=13`) | `GetItemMap Console_Save_obj 0 9` dispatched by name, kept as `kept:GetItemMap #1`, `ret=ref ds_map 1050` with 1627 entries; `mapkeep stat` read `current=yes`; `mapkeep find` named K_X (`o=2`) and K_D (`o=13`), each `matched=1` (capture, Step 3: map-at-cube) | pass |
+| holders | `find` on `Controller_obj` names the `stashMaterialTab` cell of `K_X` and of `K_D`, one match each | `find Controller_obj 0 <K_X>` matched `stashMaterialTab.0.1.nodeFingerprint`; `<K_D>` matched `stashMaterialTab.0.0.nodeFingerprint`; each 1 match, all 221 variables walked, no visit-cap line (capture, Step 4: holders) | pass |
+| bag-stack | The bag's Greater Unstable Dust stack `K_B`: its count `k` equal to the owner's, its `itemDataHash`, and no Unstable Dust (`b=50`) in the bag | `node var` summed K_B (`0-0-200937046200-14`) to `def.o=153`, no `class=14 b=50` line anywhere in the bag; the owner's eye-count (153, column 7, row 0) matched; `var ... inventoryMaterialGrid.0.7` read `nodeStartX=7, nodeStartY=0` (capture, Step 5: bag-stack) | pass |
+| bind-control | `callm ... fp9:<K_X> GetItemDef o confirm` throws (the negative control), then `... GetItemDef o bind confirm` answers `ret=real:2`, with the `bind=` line's `method_get_self` reading | Unbound `callm Console_Save_obj 0 fp9:<K_X> GetItemDef o confirm` entered `script_execute` and threw (the negative control reproduced Live 1j). Bound (`bind`), the reply showed `bind=yes` and `method_get_self` reading `before=undefined` `after=struct members=11` (the rebind was applied), but the one `script_execute` also threw and did not answer the entry's count. Recorded as a rejected shape - `script_execute` of the bound value with an instance self, self=other=`Console_Save_obj#980@199951`, one argument `"o"` - not a finding that the method route is impossible; no other way to dispatch a bound method was tried (capture, Step 6: bind-control) | fail |
+| partial-stacked | One unit of X into the bag stack by the bound branch (or the inline one): `K_X` `o` 2 -> 1 on the same key, index and cell with the map's size unchanged, `K_B` `k` -> `k+1`, both hashes changed, the owner's count `k+1` | Bind-control failed, so the inline branch ran: `set fp9:<K_X>.itemDefinitionStruct o 1` (`before=2 after=1`), `call ItemCheckHash Console_Save_obj 0 fp9:<K_X>` answered `bool:false`; `set fp:<K_B>.itemDefinitionStruct o 154` (`before=153 after=154`), `call ItemCheckHash Console_Save_obj 0 fp:<K_B>` also answered `bool:false`. K_X stayed on the same key and cell (`stashMaterialTab.0.1.nodeFingerprint`), the map size stayed 1627, and the owner confirmed the bag count 154. K_B's `itemDataHash` changed from step 5's earlier read; K_X's hash was read only after the edit, so a K_X hash change is supplied by the reading, not itself observed against an earlier value (capture, Step 7: partial-stacked) | pass |
+| hash-accept | The owner's drag of the edited bag stack away and back: `ItemCheckHash` answers true and `ReportClient` (a detoured row) reads `calls=0` | During the owner's drag of the edited bag stack away and back, `ItemCheckHash`, `ReportClient`, `GridAddToStack` and `InventoryGridAddToStack` all logged 0 calls, while `CheckPlayerInteraction` and background inventory rows climbed, confirming the instrument was live and the drag produced game activity. Per the procedure, the check rests on `ItemCheckHash`'s own line appearing; with none, this reads not observed, never a pass. `ReportClient` never fired at all this session, so it has no positive control - its 0 is not evidence that no flag was raised (capture, Step 8: hash-accept) | not-observed |
+| partial-nostack | One Unstable Dust into a bag that holds none, by the json branch (or the clone branch): the new key's lookup in map 0 reads `o=1`, the bag's grid holds it, `K_D` 13 -> 12 on the same cell; every order tried | The json branch succeeded on the first order tried at every stage, self `Console_Save_obj 0` throughout: `CreateItemSaveStruct` kept (struct members=6); `set kept:CreateItemSaveStruct o 1`; `LootTimestamp` returned `<S>`=212428116002; `InitItemFromJson` on the kept struct and the new key `0-0-<S>-14` returned an item with `b=50 o=1`; `GetItemMap(0)` returned map 0 (`ds_map 1056`); `AddItemToMap` on that map, key and item answered `undefined` with no throw; the new key's lookup in map 0 read `o=1`; `GetItemPreferredGrid` then `GridAddItem` into `New_Inventory_Data_obj.inventoryMaterialGrid` answered `success=true` at x=7, y=1. `K_D` was then lowered 13 -> 12 by the same inline route as `partial-stacked`. The owner confirmed 1 unit at column 7, row 1. The clone branch (`StructCopy`) was not run (capture, Step 9: partial-nostack) | pass |
+| partial-cube | A second created unit placed into `New_Inventory_Data_obj.craftGrid`, `K_D` 12 -> 11: drawn in the Cube, and merged by the owner's drag onto the bag's Unstable Dust (bag 2) with `ItemCheckHash` true and no `ReportClient` | The same json route made a second unit (K_N2), then `GridAddItem` placed it into `New_Inventory_Data_obj.craftGrid` at [0][0] (`success=true`), and `find` named `craftGrid.0.0.nodeFingerprint`. `K_D` went 12 -> 11; no `ChangeItemOwner` was needed, since the unit was made directly in map 0. A screenshot showed the unit drawn, and the owner confirmed the drag merged it into the bag's Unstable Dust, now 2. `InventorySwapItemsNew`, `InventorySocketItem` and `RemoveItemFromMap` each logged one call in that window, recorded as logged without interpreting them; `ItemCheckHash` and `ReportClient` logged zero, the same gap as `hash-accept` (capture, Step 10: partial-cube) | pass |
+| save-route | `SaveLocalFile` by name with `save-control`'s shape, stash closed: the file's write time moves and the counts tool reads `class=14 b=51 stack=1` and the Unstable Dust at 11 or 12 | `craftprobe call SaveLocalFile Console_Save_obj 0 4 1 confirm` ran `SaveStart` (`stash.hss`), `SaveStash #1`, `SaveCommit #1`; T3 `2026-09-24T14:54:45.2649220Z` later than T2; counts tool read `class=14 b=51 stack=1`, `class=14 b=50 stack=11` (capture, Step 11: save-route) | pass |
+| close-after | The owner's Cube close and stash open and close: the counts by eye (Greater Unstable Dust 1; Unstable Dust 11 or 12; the bag's `k+1` and 2 or 1), the game running, a later write time, the counts tool unchanged from `save-route` | The owner reported stash Greater Unstable Dust 1, Unstable Dust 11; bag Greater Unstable Dust 154, Unstable Dust 2, matching expected exactly; a screenshot confirmed the town view; T4 `2026-09-24T14:56:33.5930943Z` later than T3; counts tool identical to `save-route`'s read (capture, Step 12: close-after) | pass |
+| reload-after | After a graceful stop and a new launch (the owner's call): the same counts by eye | After a graceful `hs_stop_game` and a fresh `hs_launch`/`hs_wait_ready`/`hs_select_character(14)` (the owner's call: "run the reload now"), the owner reported the same counts again, stash 1 and 11, bag 154 and 2, exactly matching the pre-reload state (capture, Step 13: reload-after) | pass |
+| counts-tool-after | `tools/stash_tab_counts.py` after a graceful stop, equal to `close-after`'s read | After a final graceful stop, the counts tool read `class=14 b=50 stack=11`, `class=14 b=51 stack=1`, identical to `close-after`'s read (capture, Step 14: stop, counts-tool-after) | pass |
+
+**Question 1: the bound call.** Observed, once, negative. `callm ... GetItemDef
+o confirm` unbound entered `script_execute` and threw, reproducing Live 1j's
+negative control. Bound (`bind`), `bind=yes` and `method_get_self`
+(`before=undefined`, `after=struct members=11`) confirmed the rebind was
+applied, but the one `script_execute` also threw and did not answer the
+entry's count (`ret=real:2`). This is a rejected shape - `script_execute` of
+the bound value with an instance self, self=other=`Console_Save_obj#980@199951`,
+one argument `"o"` - not a finding that the method route is impossible; no
+other way to dispatch a bound method was tried (`bind-control`).
+
+**Question 2: the stacked partial take.** Observed, once, on the inline
+branch (bind-control's failure sent it there, per the procedure's own
+fallback). `set fp9:<K_X>.itemDefinitionStruct o 1` and
+`set fp:<K_B>.itemDefinitionStruct o 154` each read back cleanly; `call
+ItemCheckHash` on each side answered `bool:false`. K_X stayed on the same
+key, index and cell (`stashMaterialTab.0.1.nodeFingerprint`) with the map's
+size unchanged at 1627; K_B's count read 154, the owner's own count. K_B's
+`itemDataHash` changed from step 5's earlier read; K_X's hash was read only
+after the edit, so a K_X hash change is supplied, not itself observed against
+an earlier reading. Why `ItemCheckHash` answered `false` on an item that then
+carries a new hash is an inference (R), not itself probed: the reading is
+that `ItemCheckHash` re-runs the item's own hash method for comparison and
+`GenerateItemHash` is what stores the new digest, consistent with a stale-
+versus-new mismatch, but that mechanism was not measured directly.
+`ItemCheckHash`'s own counter numbered the two by-name calls `#1` and `#2` in
+one arm window, so its detour saw a call routed through `script_execute` - a
+both-routes control for this row's detour only, not evidence a direct
+compiled call would be seen the same way (`partial-stacked`).
+
+**Question 3: the hash acceptance.** Not observed, twice. During the owner's
+drag of the edited bag stack away and back, none of the four armed rows
+(`ItemCheckHash`, `ReportClient`, `GridAddToStack`, `InventoryGridAddToStack`)
+logged a call, while `CheckPlayerInteraction` and background inventory rows
+climbed, confirming the instrument was live. The same four rows stayed at
+zero again during the Cube merge of Question 5. Per the procedure, the check
+rests on `ItemCheckHash`'s own line appearing; with none, this reads not
+observed, never a pass. What was seen alongside: the edited K_B stack and
+both created units survived the drag, the merge, the save and a reload.
+`ReportClient` never fired at all this session, so it has no positive
+control - its zero is not evidence that no flag was raised, and whether the
+game hash-checks an edited item on any of these paths stays not observed
+(`hash-accept`, `partial-cube`).
+
+**Question 4: the no-stack partial take.** Observed, once, on the json
+branch, first order at every stage. Self `Console_Save_obj 0` throughout:
+`CreateItemSaveStruct` kept a struct (members=6); `set
+kept:CreateItemSaveStruct o 1`; `LootTimestamp` returned `<S>`=212428116002;
+`InitItemFromJson` on the kept struct and the new key `0-0-<S>-14` returned an
+item with `b=50 o=1`; `GetItemMap(0)` returned map 0 (`ds_map 1056`);
+`AddItemToMap` on that map, key and item answered `undefined` with no throw;
+the new key's lookup in map 0 read `o=1`; `GetItemPreferredGrid` then
+`GridAddItem` into `New_Inventory_Data_obj.inventoryMaterialGrid` answered
+`success=true` at x=7, y=1 - the cell directly under K_B. `K_D` was then
+lowered 13 -> 12 by the same inline route as Question 2. The owner confirmed
+1 unit at column 7, row 1. The clone branch (`StructCopy`) was not run, so
+its nested-struct sharing and its clone's stamp member stay not observed
+(`partial-nostack`).
+
+**Question 5: the Cube placement and the merge.** Observed, once. The same
+json route made a second unit (K_N2) by the same calls, then `GridAddItem`
+placed it into `New_Inventory_Data_obj.craftGrid` at [0][0] (`success=true`),
+and `find` named `craftGrid.0.0.nodeFingerprint`. `K_D` went 12 -> 11. No
+`ChangeItemOwner` was needed, since the unit was made directly in map 0. A
+screenshot showed the unit drawn, and the owner confirmed the drag merged it
+into the bag's Unstable Dust, now 2. In that drag window
+`InventorySwapItemsNew`, `InventorySocketItem` and `RemoveItemFromMap` each
+logged one call, recorded as logged without interpreting them; the four
+merge/hash rows (`ItemCheckHash` included) logged zero, the same gap as
+Question 3 (`partial-cube`).
+
+**Question 6: the save, the close and the reload.** Observed, twice. The
+by-name `SaveLocalFile Console_Save_obj 0 4 1` ran `SaveStart` (`stash.hss`),
+`SaveStash`, `SaveCommit`, moved `stash.hss`'s write time past T2, and the
+counts tool read `class=14 b=51 stack=1`, `class=14 b=50 stack=11`
+(`save-route`). The owner's Cube close and stash open-and-close read stash 1
+and 11, bag 154 and 2, exactly as expected, with a later write time and the
+counts tool unchanged (`close-after`). After a graceful stop and the owner's
+requested reload, `hs_select_character` succeeded and the owner reported the
+same counts again, exactly matching the pre-reload state, and the final
+`counts-tool-after` read was identical to `close-after`'s (`reload-after`,
+`counts-tool-after`).
+
+**Unverified going in, after Live 1k.** Of `### Phase 1k instrument`'s list:
+that `method` re-binds the item's methods on this runtime is now measured as
+applied (`method_get_self` reading `before=undefined` `after=struct
+members=11`), but the one bound `script_execute` still threw, so whether a
+bound call can complete stays not observed. `AddItemToMap`'s argument order
+(map, key, item) is now measured as accepted with no throw. That
+`InitItemFromJson` accepts `CreateItemSaveStruct`'s struct with `o` edited and
+a `0-0-<S>-14` key and returns an item is now measured, on the first order
+tried both times it was run. Whether `StructCopy`'s clone shares its nested
+structs with its source, and the name of the clone's stamp member, stay not
+observed - the clone branch was never run. That an edited stack passes the
+game's own `ItemCheckHash` when the owner moves it, and whether `ReportClient`
+fires, stay not observed - `ItemCheckHash`'s own line never appeared for the
+drag, and `ReportClient` never fired all session. That the game's own merge
+accepts a unit this toolkit created is now measured as true for the
+Cube-placed unit, merged into the bag's existing stack by the owner's drag
+(Question 5); the bag-placed unit (Question 4) was added directly to the
+grid by `GridAddItem`, not merged, so a bag-side merge of a created unit
+stays not observed.
 
 ## Decision gate
 
@@ -3876,6 +3996,36 @@ The owner set this on 2026-09-23 ("H-A, research consume first"), choosing
 H-A and asking that Phase 1e, the consume-research round, come before any
 player build. During Live 1f the owner also set the design an H-A build is to
 follow, below.
+
+**After Phase 1k (2026-09-24): the record proposes three route tokens; H-A
+stays the decision.** Live 1k measured the by-name partial take left open by
+the round before it (RD `### Phase 1k results`):
+
+- `partial-stacked: inline` - bind-control's one shape (`script_execute` of a
+  `method`-bound value, self=other=`Console_Save_obj#980@199951`, one
+  argument `"o"`) threw and did not answer the count, so `partial-stacked`
+  passed on the inline branch instead: `set fp9:<K_X>.itemDefinitionStruct o
+  1` then `call ItemCheckHash Console_Save_obj 0 fp9:<K_X>`, and the same
+  shape on the bag stack (`K_B`, `o` 153 -> 154). `bound` is not proposed,
+  because the bind-control shape failed.
+- `partial-nostack: json` - the loader route (`CreateItemSaveStruct` ->
+  `InitItemFromJson` -> `GetItemMap(0)` -> `AddItemToMap` ->
+  `GetItemPreferredGrid` -> `GridAddItem`) passed on the first order tried at
+  every stage; the `StructCopy` clone branch was never run.
+- `partial-cube: proven` - the same json route placed a second unit into
+  `New_Inventory_Data_obj.craftGrid`, and the owner's drag merged it into the
+  bag's existing Unstable Dust stack, now 2.
+
+Each of these rests on an edit or a creation whose acceptance by the game's
+own hash check was not observed (`hash-accept`): during the owner's drag of
+the edited K_B stack and again during the Cube merge, `ItemCheckHash` and
+`ReportClient` both logged zero calls, while the edited and created items
+survived the drag, the merge, the save and a reload (`### Phase 1k results`,
+Question 3).
+These three tokens are proposed, not set: the owner confirms them
+(`## Needs human judgement` 1), and whether to build on the inline route
+while that hash acceptance is unobserved is a separate question for the
+owner (`## Needs human judgement` 2).
 
 **After Phase 1j (2026-09-24): the record proposes five route tokens; H-A
 stays the decision.** Live 1j measured a by-name save route (`SaveLocalFile`,
@@ -3894,12 +4044,13 @@ Crafting Cube's own grid (RD `### Phase 1j results`):
   `SetItemDef`/`GenerateItemHash` on the item's own struct, was tried by
   name with self `Console_Save_obj` on both the stash entry and the bag
   stack; all four calls entered `script_execute` and threw, safely, with no
-  state change. The game's own split instead ran these methods with the
-  struct itself as self and other `UI_Split_Stack_obj` (`split-control`), a
-  self `callm` cannot supply; the inline `set` route was never run because
+  state change. The game's own split instead ran these methods with a self
+  that reads `not an instance` (inferred, not probed, to be the item's own
+  struct) and other `UI_Split_Stack_obj` (`split-control`), a self `callm`
+  cannot supply; the inline `set` route was never run because
   the control showed a method. This is a rejected shape, not a finding that
   the take is impossible (`partial-stacked`).
-- `partial-nostack: none` - no by-name creation shape exists to replay
+- `partial-nostack: none` - no creation shape was available to try
   (the split's creating rows' self reads `not an instance`), and the owner
   has rejected this record's first draft (`partial-nostack: return`, the
   proven whole-item take-and-return, `return-socket`) as the build's route
