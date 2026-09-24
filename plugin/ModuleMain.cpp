@@ -23191,7 +23191,7 @@ static bool CmMember(const RValue& s, const char* name, RValue& out)
 }
 
 // What an item is - its itemType and its definition's base id `b` - and its
-// count, the definition's `o` (RUNTIME_DATA_MODELS § 16, "The item"). False
+// count, the definition's `o` (RUNTIME_DATA_MODELS § 17, "The item"). False
 // when any of them is missing or not a whole number.
 static bool CmReadItem(const RValue& item, int64_t& cls, int64_t& base, int64_t& count)
 {
@@ -23687,7 +23687,7 @@ static CmTakeResult CmTake(CInstance* save, const ForgePact::CraftMatsEntryTake&
 
     // A source step that did not land undoes the destination. A whole entry
     // taken out of the map whose cell stayed is put back in the map first, so
-    // no cell is left without its entry (the save crash, § 16); a partial
+    // no cell is left without its entry (the save crash, RUNTIME_DATA_MODELS § 17); a partial
     // entry gets its count back.
     if (!sourceDone) {
         RValue res;

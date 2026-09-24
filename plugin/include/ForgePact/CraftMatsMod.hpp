@@ -418,7 +418,7 @@ public:
     // its map entry and its cell are both gone) and the destination rose by
     // exactly `asked`. NotTaken: both sides read as they were. Anything else,
     // including a read that could not be made or an entry left without its
-    // cell (the save crash, RUNTIME_DATA_MODELS § 16), is a loss.
+    // cell (the save crash, RUNTIME_DATA_MODELS § 17), is a loss.
     static CraftMatsOutcome ClassifyMove(const CraftMatsMoveReport& r) {
         if (r.asked <= 0 || r.sourceBefore < 0 || r.destBefore < 0 || r.destAfter < 0) return CraftMatsOutcome::Loss;
         const bool bothThere = !r.sourceEntryGone && !r.sourceCellGone;
