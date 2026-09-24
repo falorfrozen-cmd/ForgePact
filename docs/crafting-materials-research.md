@@ -3826,18 +3826,20 @@ stays not observed.
 ### Phase 1k results
 
 Research DLL: `plugin_build\BloodPactPlugin_rel.dll`, built with
-`plugin_build\build.bat dev` from ForgePact `0d58d5c` (SHA-256
-`88b2f2a82ae1837abfc839505e6bf16ab293b577c3caa989f803ab664a7d54bf`), the
+`plugin_build\build.bat dev` from ForgePact `9a1de0c` (SHA-256
+`38717043cbaf78484e2c05e5eda3d74c2f4667618dfc8dfe5b4ad3b309cacf9b`), the
 Phase 1k research build (`### Phase 1k instrument`): Phase 1j's 278 rows plus
 the four of `### Phase 1k rows`, 282 in all, the `phase1k` marker, `callm`'s
-`bind`, `set`'s `kept:` form and `call` keeping its own return. It replaces
-the first Phase 1k build (`d6a5582`, 281 rows), which was never installed:
-its `kept:` could not be filled for `GetItemMap` (`### Phase 1k instrument`,
-the build's review round). `plugin_build\build.bat release` from the same
-commit produced a ship DLL with no `craftprobe`, `mapkeep`, `phase1k`,
-`callm` or `kept:` string. The build control is `dll-hash` against this hash
-plus the `phase1k rows=282` marker; the Phase 1j build installed until now,
-and the first Phase 1k build, fail `dll-hash`. `### Live procedure 1k` gives
+`bind`, `set`'s `kept:` form and `call` keeping its own return, emptied when
+a dispatch does not return. It replaces two Phase 1k builds, neither ever
+installed: the first (`d6a5582`, 281 rows), whose `kept:` could not be filled
+for `GetItemMap`, and the second (`0d58d5c`), whose `kept:` survived a `call`
+that threw (`### Phase 1k instrument`, the build's review rounds).
+`plugin_build\build.bat release` from the same commit produced a ship DLL with
+no `craftprobe`, `mapkeep`, `phase1k`, `callm` or `kept:` string. The build
+control is `dll-hash` against this hash plus the `phase1k rows=282` marker;
+the Phase 1j build installed until now, and both earlier Phase 1k builds,
+fail `dll-hash`. `### Live procedure 1k` gives
 the session's shape.
 
 Not run yet. Each row is filled from the capture,
