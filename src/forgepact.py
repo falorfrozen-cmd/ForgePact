@@ -1,7 +1,8 @@
 ﻿#!/usr/bin/env python3
 """ForgePact - Hero Siege Game Mods control panel.
 
-Local web app: http://127.0.0.1:8766 (artwork in sibling panel_icons.py)
+Local web app: http://127.0.0.1:8766 (frontend: ../panel, a Svelte + Vite
+build served from PANEL_DIST)
 Talks to BloodPactPlugin (Aurie/YYTK) over bp_ipc:
 - settings apply instantly while the game is running
 - while the game is closed, commands are queued in cmd.txt (the plugin
@@ -27,7 +28,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 from panel_icons import ICON_SPRITE, ICON_MAP_JS
 import offline_launcher
 
@@ -1673,9 +1674,70 @@ def launch_modded_game(cfg: dict) -> dict:
     return offline_launcher.launch_game(exe_path(cfg), validate_extra=validate_plugin)
 
 
+def _panel_dist() -> Path:
+    """Where the built panel frontend (panel/, Svelte + Vite) lives.
+
+    FORGEPACT_PANEL_DIST wins when set (tests and the sandbox server use it);
+    a frozen exe reads the copy build_release.py bundled with --add-data
+    "<panel/dist>;panel"; from source it is the checkout's panel/dist, written
+    by `npm --prefix panel run build`.
+    """
+    override = os.environ.get("FORGEPACT_PANEL_DIST")
+    if override:
+        return Path(override)
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return Path(sys._MEIPASS) / "panel"
+    return Path(__file__).resolve().parent.parent / "panel" / "dist"
+
+
+# Resolved once; do_GET reads this global on every request, so a test can patch it.
+PANEL_DIST = _panel_dist()
+# The suffixes a Vite build of the panel produces. Anything else is served as
+# opaque bytes rather than guessed at.
+PANEL_MIME = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "text/javascript",
+    ".css": "text/css",
+    ".svg": "image/svg+xml",
+    ".woff2": "font/woff2",
+    ".png": "image/png",
+    ".json": "application/json",
+    ".ico": "image/x-icon",
+}
+
+
+def panel_file(url_path: str):
+    """The file under PANEL_DIST a GET path names, or None.
+
+    None for anything whose resolved path leaves PANEL_DIST (``..``, encoded
+    separators, a drive letter), for directories, and for names the OS rejects,
+    so the handler answers all of them with the same 404.
+    """
+    try:
+        root = Path(PANEL_DIST).resolve()
+        target = (root / unquote(url_path).lstrip("/\\")).resolve()
+        if target.is_relative_to(root) and target.is_file():
+            return target
+    except (OSError, ValueError):
+        pass
+    return None
+
+
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
+
+    def _file(self, path: Path):
+        b = path.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", PANEL_MIME.get(path.suffix.lower(), "application/octet-stream"))
+        self.send_header("Content-Length", str(len(b)))
+        if path.suffix.lower() == ".html":
+            # The page names its hashed assets; a cached copy would keep asking
+            # for the previous build's files after an update.
+            self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        self.wfile.write(b)
 
     def _json(self, obj, code=200):
         b = json.dumps(obj, ensure_ascii=False).encode("utf-8")
@@ -1687,7 +1749,12 @@ class H(BaseHTTPRequestHandler):
 
     def do_GET(self):
         u = urlparse(self.path)
-        if u.path == "/":
+        index = Path(PANEL_DIST) / "index.html"
+        if u.path == "/" and index.is_file():
+            self._file(index)
+        elif u.path == "/":
+            # No build yet: the page embedded below still answers, so the
+            # frontend port can record its behaviour from it.
             b = HTML.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -1716,6 +1783,8 @@ class H(BaseHTTPRequestHandler):
                         "minEnabledSatanicDebuffs": MIN_ENABLED_SATANIC_DEBUFFS,
                         "lastApplied": LAST["applied"], "queued": LAST["queued"],
                         "launch": offline_launcher.launch_status()})
+        elif u.path != "/api" and not u.path.startswith("/api/") and (f := panel_file(u.path)):
+            self._file(f)
         else:
             self._json({"err": "not found"}, 404)
 

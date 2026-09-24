@@ -2,6 +2,13 @@ __pycache__/
 *.pyc
 dist/
 build/
+
+# The panel's frontend (panel/, Svelte + Vite): its installed packages and its
+# build output (npm --prefix panel run build). dist/ above already covers
+# panel/dist; it is named on its own so narrowing the generic line never
+# starts tracking a build.
+node_modules/
+panel/dist/
 obj_*/
 *.zip
 *.dll

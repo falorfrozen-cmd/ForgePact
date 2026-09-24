@@ -118,13 +118,9 @@ Reveal full map; its switch is unavailable while the parent is off. All
 settings still use the existing local configuration and game plugin. The
 panel adds no UI dependencies.
 
-The reusable icon pack lives in `src/panel_icons.py`, beside `forgepact.py`.
-Keep both files together when copying the Python source. To export the 69
-individual SVGs and an offline preview gallery, run from the ForgePact folder:
-
-```powershell
-py src/panel_icons.py "C:\path\to\ForgePact-Icon-Pack"
-```
+The icon pack (the SVG sprite and which setting uses which icon) lives in
+`panel/src/icons.js` and is compiled into the panel's page by `npm --prefix panel
+run build`, so a packaged panel carries it with no separate file.
 
 Special content is spawned through the game's **own** mechanic: ForgePact multiplies
 the `Spawn_<Name>_obj` marker objects and opens the shared `eSt` gate, then the game
@@ -637,7 +633,15 @@ load there anyway.
 
 ## 📦 Source layout
 
-- `src/forgepact.py` — the control panel (Python; packaged with PyInstaller for releases).
+- `src/forgepact.py` — the control panel's backend (Python; packaged with PyInstaller for
+  releases): the local HTTP server, its `/api` routes, the plugin commands, the launcher
+  and backups. It serves the built frontend from `panel/dist` (`PANEL_DIST`; the
+  `FORGEPACT_PANEL_DIST` environment variable points it elsewhere).
+- `panel/` — the control panel's frontend: a Svelte 5 + Vite project (`src/App.svelte`,
+  one component per tab under `src/tabs/`, the stylesheet in `src/app.css`). `npm --prefix
+  panel run build` writes the static page to `panel/dist/` (not tracked). Its browser
+  tests (`npm --prefix panel test`, `run e2e`, `run oracle:replay`) drive the installed
+  Microsoft Edge headless through `playwright-core`; nothing downloads a browser.
 - `plugin/ModuleMain.cpp` — **the mod plugin** (BloodPactPlugin). This is the active
   implementation: it hooks the GameMaker runtime through YYToolkit and receives the
   panel's commands over `bp_ipc`.
@@ -657,8 +661,11 @@ load there anyway.
   *shipping* build, not a development or profile one.
 - `build_release.py` — packages `dist/ForgePact/` (the release zip contents).
 - `tools/` — developer helpers, not shipped to players: `ipc.ps1` sends one command to
-  the running plugin and prints only its reply, and `ghidra/ImportSymbols.java` names the
-  stripped game binary in Ghidra from the game's own script table.
+  the running plugin and prints only its reply, `ghidra/ImportSymbols.java` names the
+  stripped game binary in Ghidra from the game's own script table, `panel_smoke.py`
+  starts a packaged `ForgePact.exe` and checks it opens its window and serves the built
+  panel, and `package_size.py` builds the exe from a git ref or a working tree in a
+  temporary directory and prints its size.
 - `docs/S10-special-content-notes.md` — the Season 10 reverse-engineering log, in our own
   words: object, script and variable names with their indices, the special-content gates
   and what opens each, measured values and crash thresholds, our own commands and hooks,
@@ -698,6 +705,28 @@ documented contracts and does not compile it, so a green test run does not confi
 plugin actually builds.
 
 ### Packaging the panel
+
+The panel's page is built first, with Node 20.19+ or 22.12+:
+
+```
+npm --prefix panel ci
+npm --prefix panel run build      # writes panel/dist/
+py build_release.py
+```
+
+`build_release.py` refuses to package while `panel/dist/index.html` is missing, and
+otherwise bundles `panel/dist` inside `ForgePact.exe` (PyInstaller `--add-data`), where
+the frozen panel serves it from its unpack directory. The page loads nothing from the
+network: every script, stylesheet and font is in the build. `forgepact-release.yml` runs
+the same two `npm` steps before the contract tests. To check a finished package, `py
+tools/panel_smoke.py --exe dist/ForgePact/ForgePact.exe` starts it, finds its port, fetches
+the page, one script and `/api/state`, looks for the `ForgePact` window, prints one line
+(`window=found url=… index=ok assets=ok api=ok`) and stops only the processes it started.
+
+For working on the page, run the backend and Vite's dev server side by side: `py
+src/forgepact.py` (listens on `127.0.0.1:8766`) and `npm --prefix panel run dev` (serves
+the page on `127.0.0.1:5178` and forwards `/api` to 8766), so an edit to a `.svelte` file
+shows without a rebuild.
 
 `src/offline_launcher.py` is a normal Python import bundled into ForgePact.exe.
 Keep it beside `src/forgepact.py` when running from source. Its launch engine is

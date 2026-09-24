@@ -177,6 +177,27 @@ jobs:
           VERSION: ${{ steps.tag.outputs.version }}
         run: python tools/cut_release.py --check --expect "$VERSION" --allow-missing-notes
 
+      # The panel's frontend (panel/, Svelte + Vite) is tracked as source only.
+      # The packaging script refuses to run without panel/dist, and the
+      # contract tests below read the panel, so the tag's own tree is built
+      # here, installing exactly its own lockfile rather than resolving
+      # newer versions at release time.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: ForgePact/panel/package-lock.json
+
+      - name: Install the panel's build dependencies
+        shell: bash
+        working-directory: ForgePact/panel
+        run: npm ci
+
+      - name: Build the panel (panel/dist)
+        shell: bash
+        working-directory: ForgePact/panel
+        run: npm run build
+
       # The native harnesses (test_headhunter_dispatch.py, etc.) find MSVC
       # via vswhere themselves -- see AGENTS.md's "Prove the instrument"; they
       # are not skipped on a runner that has a compiler.
