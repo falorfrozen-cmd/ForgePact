@@ -186,8 +186,11 @@ and the `raredrop angelic` command works again when a drop multiplier is set.
   after the craft. The other stash tabs, the guild stash and the Unique tab
   are never touched. If a move cannot be confirmed, the craft is refused
   rather than risk an item, and if a craft does not use up exactly what it
-  needed, the mod turns itself off until you restart the game. It is **off
-  by default**, and like every ForgePact mod it is for offline play.
+  needed, the mod turns itself off until you restart the game. The Cube
+  works out which recipes are available when you open it, so if you switch
+  **Craft from the stash** on or off with the Cube already open, reopen it
+  to see the updated list. It is **off by default**, and like every
+  ForgePact mod it is for offline play.
 - **Timed skill countdown.** A new **Timed skill countdown** dropdown in Mods
   (off by default) draws how much of a timed cast is left over that skill's
   slot on the skill bar, and it disappears the moment the cast ends. A small
