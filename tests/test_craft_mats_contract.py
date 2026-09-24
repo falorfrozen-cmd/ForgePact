@@ -360,15 +360,17 @@ class CraftMatsContractTests(unittest.TestCase):
         usage = self.body("static void CpUsage(")
         first = usage[usage.index("Out("):]
         first = first[:first.index(";")]
-        # Phase 1j adds 24 rows (278), `callm`, `set` and `inject`; Phase 1i
-        # kept Phase 1h's 254 rows and added the paged `var`, `find` and the
-        # `inroute` gate; Phase 1h added two rows (254), the `call` reply split
-        # and the numeric path segment; Phase 1g (the Phase A research build)
-        # kept Phase 1e's 252 rows and changed only the marker, `undefined` and
-        # `within=`.
-        self.assertIn("phase1j rows=", first)
+        # Phase 1k adds 3 rows (281), `callm`'s `bind` and `set`'s `kept:`
+        # form; Phase 1j added 24 rows (278), `callm`, `set` and `inject`;
+        # Phase 1i kept Phase 1h's 254 rows and added the paged `var`, `find`
+        # and the `inroute` gate; Phase 1h added two rows (254), the `call`
+        # reply split and the numeric path segment; Phase 1g (the Phase A
+        # research build) kept Phase 1e's 252 rows and changed only the marker,
+        # `undefined` and `within=`.
+        self.assertIn("phase1k rows=", first)
         self.assertIn("kCpTargetCount", first)
-        self.assertEqual(self.plugin.count("phase1j rows="), 1)
+        self.assertEqual(self.plugin.count("phase1k rows="), 1)
+        self.assertEqual(self.plugin.count("phase1j rows="), 0)
         self.assertEqual(self.plugin.count("phase1i rows="), 0)
         self.assertEqual(self.plugin.count("phase1h rows="), 0)
         self.assertEqual(self.plugin.count("phase1g rows="), 0)
@@ -808,9 +810,9 @@ class CraftMatsContractTests(unittest.TestCase):
         labels = {label for _, label, _ in self.rows}
         for row in self.CRAFT_ROUTE_ROWS:
             self.assertIn(row, labels, row + " is not a craftprobe row")
-        # Phase 1e's 252 rows (none added for Phase 1g), Phase 1h's two and
-        # Phase 1j's 24 (none for Phase 1i).
-        self.assertEqual(len(self.rows), 278)
+        # Phase 1e's 252 rows (none added for Phase 1g), Phase 1h's two,
+        # Phase 1j's 24 (none for Phase 1i) and Phase 1k's three.
+        self.assertEqual(len(self.rows), 281)
         detour = self.plugin[self.plugin.index("#define CRAFTPROBE_DETOUR(SAFE, LABEL)"):]
         detour = detour[:detour.index("#define CRAFTPROBE_TARGETS(X)")]
         # The enclosing row is read before this call's own frame is entered, the
@@ -1088,7 +1090,8 @@ class CraftMatsContractTests(unittest.TestCase):
         at = [constants.index(c) for c in self.PHASE1J_ROWS]
         self.assertEqual(at, list(range(at[0], at[0] + 24)), "the Phase 1j rows sit together, in the doc's order")
         self.assertEqual(constants[-1], "gml_Script_CheckPlayerInteraction", "the control stays the table's last row")
-        self.assertEqual(at[-1] + 1, len(constants) - 1)
+        # Phase 1k's three rows sit between them and the control.
+        self.assertEqual(at[-1] + 1 + len(self.PHASE1K_ROWS), len(constants) - 1)
         labels = {constant: label for _, label, constant in self.rows}
         for constant in self.PHASE1J_ROWS:
             self.assertNotIn(labels[constant], self.CRAFT_ROUTE_ROWS)
@@ -1184,7 +1187,7 @@ class CraftMatsContractTests(unittest.TestCase):
         write = cpset.index('"variable_struct_set"')
         self.assertEqual(cpset.count('"variable_struct_set"'), 1)
         for step in ("std::stod(numberText, &used)", "std::isfinite(number)", "MpResolve(",
-                     'CpResolveStruct("craftprobe set", spec, lookupSelf, target, "nothing was written")',
+                     'CpResolveStruct("craftprobe set", spec, lookupSelf, target, "nothing was written", true)',
                      '"variable_struct_exists", { target, RValue(member) }', "const RValue before =",
                      "!PpIsNumber(before)"):
             self.assertLess(gate, cpset.index(step), step)
@@ -1307,6 +1310,133 @@ class CraftMatsContractTests(unittest.TestCase):
                        "g_CpAvailabilityDepth", "CpIsRecipeListRow", "CpIsAvailabilityRow", "CpIsCountRow",
                        "CpRouteOnStack"):
             self.assertNotIn(symbol, shipped, symbol)
+
+    # ---- Phase 1k: the loaders' rows, callm's bind, set's kept: form ---------
+
+    PHASE1K_ROWS = ("gml_Script_InitItemFromJson", "gml_Script_ReCreateItem", "gml_Script_ParseItemToGrid")
+
+    def test_craftprobe_phase1k_rows_are_sdk_declared_and_research_only(self):
+        # The three rows of the research doc's `### Phase 1k rows`: the game's
+        # loader route that makes an item without its constructor. Each goes
+        # through its hs-game-sdk constant, one row per constant, sitting
+        # together right after the Phase 1j rows and before the control, and
+        # hooked by the same one `hook`. None is a craft-route row or a
+        # closure, so `within=` and the closure coverage are unchanged, and
+        # `call` reaches each by name (no `@` in the runtime name).
+        self.assertEqual(len(self.PHASE1K_ROWS), 3)
+        constants = [constant for _, _, constant in self.rows]
+        doc_rows = self.doc[self.doc.index("\n### Phase 1k rows\n"):self.doc.index("\n### Negative results, sourced\n")]
+        for constant in self.PHASE1K_ROWS:
+            self.assertEqual(constants.count(constant), 1, constant + " is not exactly one craftprobe row")
+            name = self.runtime_name(constant)
+            self.assertNotIn("@", name, constant + " is a closure or method, not a script `call` reaches by name")
+            self.assertIn(name, doc_rows, name + " missing from the research doc's `### Phase 1k rows`")
+        at = [constants.index(c) for c in self.PHASE1K_ROWS]
+        self.assertEqual(at, list(range(at[0], at[0] + 3)), "the Phase 1k rows sit together, in the doc's order")
+        self.assertEqual(at[0], constants.index(self.PHASE1J_ROWS[-1]) + 1, "the Phase 1k rows follow the Phase 1j rows")
+        self.assertEqual(constants[-1], "gml_Script_CheckPlayerInteraction", "the control stays the table's last row")
+        self.assertEqual(at[-1] + 1, len(constants) - 1)
+        labels = {constant: label for _, label, constant in self.rows}
+        getter = self.body("static bool CpIsProfileGetter(")
+        for constant in self.PHASE1K_ROWS:
+            self.assertNotIn(labels[constant], self.CRAFT_ROUTE_ROWS)
+            self.assertNotIn(constant, getter, constant + " must stay callable by `call`")
+        shipped = strip_research_blocks(self.plugin)
+        self.assertIn("kPlayerCommands", shipped)   # negative control: the strip keeps player code
+        for safe, label, constant in self.rows:
+            if constant in self.PHASE1K_ROWS:
+                self.assertNotIn(f'X({safe}, "{label}", {constant})', shipped, label + " reaches the player build")
+
+    def test_craftprobe_callm_bind_rebinds_through_the_runtime_method_builtin(self):
+        # Live 1j's four `callm` calls threw: the item's methods are stored
+        # unbound, so script_execute ran them with the instance as self. `bind`,
+        # the token directly before `confirm`, re-binds the member to the struct
+        # it was read from through the runtime's own `method` builtin, by name,
+        # after every existing precondition (the confirm gate, the struct, the
+        # method check, the arguments) and before the one dispatch - which is
+        # handed the bound value. No CScriptRef, no address, no second call.
+        callm = self.body("static void CpCallMethod(")
+        gate = callm.index('Lower(tok.back()) != "confirm"')
+        token = callm.index('== "bind"')
+        is_method = callm.index("CpIsMethod(method, via)")
+        args = callm.index('CpResolveArg("craftprobe callm", a, inst, v)')
+        rebind = callm.index('"method", { target, method }')
+        dispatch = callm.index("CpDispatchMethod(")
+        self.assertLess(gate, token)
+        self.assertLess(gate, is_method)
+        self.assertLess(is_method, rebind)
+        self.assertLess(args, rebind)
+        self.assertLess(rebind, dispatch)
+        self.assertEqual(callm.count('"method", {'), 1, "one re-bind, through the builtin by name")
+        self.assertEqual(callm.count("CpDispatchMethod("), 1, "still one dispatch per command")
+        # The token sits directly before `confirm`, and is never an argument.
+        self.assertIn("tok[tok.size() - 2]", callm)
+        self.assertIn("i < argsEnd", callm)
+        # The dispatch gets the bound value when `bind` was given, and the
+        # member as read otherwise (Live 1j's shape, unchanged).
+        self.assertIn("RValue callee = method;", callm)
+        self.assertIn("callee = bound;", callm)
+        self.assertIn("CpDispatchMethod(callee, inst, args, res, st)", callm)
+        self.assertLess(callm.index("RValue callee = method;"), callm.index("callee = bound;"))
+        # The bound value is a method or the command is refused, naming what was
+        # supplied; nothing is called.
+        self.assertIn("CpIsMethod(bound, boundVia)", callm)
+        lines = callm.split("\n")
+        rebind_refusals = [i for i, l in enumerate(lines) if "refused" in l and "method(" in l]
+        self.assertGreaterEqual(len(rebind_refusals), 2)
+        for i in rebind_refusals:
+            self.assertIn("nothing was called", lines[i] + lines[i + 1] + lines[i + 2])
+            self.assertIn("return", lines[i] + lines[i + 1] + lines[i + 2] + lines[i + 3], lines[i])
+        # The reply names bind= and method_get_self's reading before and after,
+        # which is read-only and decides nothing.
+        self.assertIn('"  bind=yes', callm)
+        self.assertEqual(callm.count("CpMethodSelfText("), 2)
+        self_text = self.body("static std::string CpMethodSelfText(")
+        self.assertIn('"method_get_self"', self_text)
+        self.assertIn('"<not answered>"', self_text)
+        code = "\n".join((callm, self_text))
+        for forbidden in ("CScriptRef", "m_CallScript", "m_CallYYC", "MethodValueFunction", "InvokeMethodValue(",
+                          "asset_get_index", '"variable_struct_set"', "MmCreateHook", "Rva", "GetModuleHandle",
+                          "reinterpret_cast", "m_Object"):
+            self.assertNotIn(forbidden, code, forbidden)
+        usage = self.body("static void CpUsage(")
+        self.assertIn("[args ...] [bind] confirm", usage)
+        shipped = strip_research_blocks(self.plugin)
+        self.assertNotIn("CpMethodSelfText", shipped)
+
+    def test_craftprobe_set_accepts_a_kept_return(self):
+        # `set kept:<row>[.a.b] <member> <number> confirm`: the struct a row's
+        # kept return holds (`backing on <row>` first; a by-name call's return
+        # is kept too), walked through plain structs as the fp: tail is. Only
+        # `set` asks for it - `callm`'s struct forms are Live 1j's - and it is
+        # resolved after the confirm gate and before the one write. With
+        # nothing kept it is refused, naming what was supplied.
+        struct = self.body("static bool CpResolveStruct(")
+        signature = self.plugin[self.plugin.index("static bool CpResolveStruct("):]
+        self.assertIn("bool keptForm = false", signature[:signature.index("{")], "off unless the caller asks for it")
+        self.assertIn('keptForm && ls.rfind("kept:", 0) == 0', struct)
+        kept = struct[struct.index("if (kept) {"):]
+        self.assertLess(kept.index("CpFindRow(key)"), kept.index("out = *k->kept->value;"))
+        self.assertIn("k->kept->call <= 0", kept[:kept.index("out = *k->kept->value;")])
+        refusal = kept[kept.index("refused"):]
+        self.assertIn("+ spec +", refusal[:refusal.index(";")], "the refusal names what was supplied")
+        self.assertIn("names no kept return", refusal)
+        # The kept value walks the same tail as fp:/fp9: - one walk, after the
+        # branch - and ends at the same plain-struct check.
+        self.assertLess(struct.index("if (kept) {"), struct.index("CpSplitPath("))
+        self.assertEqual(struct.count("CpSplitPath("), 1)
+        # `set` asks for the form; `callm` does not (its call is Live 1j's).
+        cpset = self.body("static void CpSet(")
+        gate = cpset.index('tok.size() != 5 || Lower(tok.back()) != "confirm"')
+        resolve = cpset.index('CpResolveStruct("craftprobe set", spec, lookupSelf, target, "nothing was written", true)')
+        self.assertLess(gate, resolve)
+        self.assertLess(resolve, cpset.index('"variable_struct_set"'))
+        self.assertIn('CpResolveStruct("craftprobe callm", spec, inst, target, "nothing was called")',
+                      self.body("static void CpCallMethod("))
+        # Nothing is called to reach it: the kept value is read, never invoked.
+        for forbidden in ("script_execute", "CpDispatch", "ApCallScript", '"variable_struct_set"'):
+            self.assertNotIn(forbidden, struct, forbidden)
+        self.assertIn("kept:<row>[.a.b]", self.body("static void CpUsage("))
 
     # ---- the switch ----------------------------------------------------------
 
@@ -1558,21 +1688,21 @@ class CraftMatsContractTests(unittest.TestCase):
         self.assertLess(at("### Live procedure 1j"), at("## Results"))
         self.assertLess(at("### Phase 1i results"), at("### Phase 1j results"))
         self.assertLess(at("### Phase 1j results"), at("## Decision gate"))
-        results = self.doc[at("### Phase 1j results"):at("## Decision gate")]
+        results = self.doc[at("### Phase 1j results"):at("### Phase 1k results")]
         hashes = re.findall(r"\b[0-9a-f]{64}\b", results)
         self.assertEqual(len(hashes), 1, hashes)
         self.assertNotEqual(hashes[0], "eaf6e7b8a423191a27d8307be65a50d7b2eab4270efc300e51d5bb30828a3fed")
         self.assertIn("| Check | What it measures | Observed | Verdict |", results)
-        rows = self.doc[at("### Phase 1j rows"):at("### Negative results, sourced")]
+        rows = self.doc[at("### Phase 1j rows"):at("### Phase 1k rows")]
         for constant in self.PHASE1J_ROWS:
             self.assertIn(self.runtime_name(constant), rows, constant)
-        instrument = self.doc[at("### Phase 1j instrument"):at("## Live procedure")]
+        instrument = self.doc[at("### Phase 1j instrument"):at("### Phase 1k instrument")]
         # The additions, and where the reading came from.
         for token in ("phase1j rows=", "craftprobe callm", "craftprobe set", "craftprobe inject", "is_method",
                       "InvokeMethodValue", "anon@840", "SaveLocalFile", "Unverified going in", "hs-decomp",
                       "ghidra_projects", "DecompileTo.java", "FindCallers.java"):
             self.assertIn(token, instrument, token)
-        procedure = self.doc[at("### Live procedure 1j"):at("## Results")]
+        procedure = self.doc[at("### Live procedure 1j"):at("### Live procedure 1k")]
         self.assertIn("twenty-one checks", procedure)
         self.assertIn("forgepact-issue-14-phase1j-context.md", procedure)
         self.assertIn("### Live procedure 1", procedure)
@@ -1598,6 +1728,66 @@ class CraftMatsContractTests(unittest.TestCase):
             self.assertLess(after, gate.find("After Phase 1i"))
             for token in ("save-route:", "partial-stacked:", "partial-nostack:", "inject:", "cube-destination:"):
                 self.assertIn(token, gate[after:gate.find("After Phase 1i")], token)
+        # Phase 1k (a by-name partial take: the loaders' three rows, `callm`'s
+        # `bind` and `set`'s `kept:` form; one research build, one session)
+        # adds rows, an instrument, a procedure and a results section, each
+        # after its Phase 1j counterpart. The results name the Phase 1k
+        # research DLL (one hash, not the Phase 1j one) and carry one row per
+        # check from the start; the procedure names the eighteen checks in the
+        # capture's order, points at the workorder's step-by-step file and
+        # names the marker. Each row gets its verdict once the status is
+        # complete, and the gate's "After Phase 1k" paragraph proposes the
+        # three route tokens above the "After Phase 1j" one.
+        status = re.search(r"(?m)^phase1k-status: (pending|complete)$", "\n".join(self.doc.split("\n")[:15]))
+        self.assertIsNotNone(status, "phase1k-status missing from the frontmatter")
+        for heading in ("### Phase 1k rows", "### Phase 1k instrument", "### Live procedure 1k", "### Phase 1k results"):
+            self.assertIn("\n" + heading + "\n", self.doc, heading)
+        self.assertLess(at("### Phase 1j rows"), at("### Phase 1k rows"))
+        self.assertLess(at("### Phase 1k rows"), at("### Negative results, sourced"))
+        self.assertLess(at("### Phase 1j instrument"), at("### Phase 1k instrument"))
+        self.assertLess(at("### Phase 1k instrument"), at("## Live procedure"))
+        self.assertLess(at("### Live procedure 1j"), at("### Live procedure 1k"))
+        self.assertLess(at("### Live procedure 1k"), at("## Results"))
+        self.assertLess(at("### Phase 1j results"), at("### Phase 1k results"))
+        self.assertLess(at("### Phase 1k results"), at("## Decision gate"))
+        results = self.doc[at("### Phase 1k results"):at("## Decision gate")]
+        hashes = re.findall(r"\b[0-9a-f]{64}\b", results)
+        self.assertEqual(len(hashes), 1, hashes)
+        self.assertNotEqual(hashes[0], "63f41bd74246ec26eb435de3780244c0f8e00822f78d870f7a1f730be6c87850")
+        self.assertIn("| Check | What it measures | Observed | Verdict |", results)
+        rows = self.doc[at("### Phase 1k rows"):at("### Negative results, sourced")]
+        for constant in self.PHASE1K_ROWS:
+            self.assertIn(self.runtime_name(constant), rows, constant)
+        instrument = self.doc[at("### Phase 1k instrument"):at("## Live procedure")]
+        # The additions, and where the reading came from.
+        for token in ("phase1k rows=", "bind", "method_get_self", "kept:", "InitItemFromJson", "ItemCheckHash",
+                      "StructCopy", "Unverified going in", "hs-decomp", "ghidra_projects"):
+            self.assertIn(token, instrument, token)
+        procedure = self.doc[at("### Live procedure 1k"):at("## Results")]
+        self.assertIn("eighteen checks", procedure)
+        self.assertIn("forgepact-issue-14-phase1k-context.md", procedure)
+        self.assertIn("### Live procedure 1", procedure)
+        self.assertIn("phase1k rows=", procedure)
+        self.assertIn("## Checks", procedure)
+        checks = ("dll-hash", "marker", "counts-tool-before", "hook", "control", "save-control", "map-at-cube",
+                  "holders", "bag-stack", "bind-control", "partial-stacked", "hash-accept", "partial-nostack",
+                  "partial-cube", "save-route", "close-after", "reload-after", "counts-tool-after")
+        self.assertEqual(len(checks), 18)
+        order = procedure[procedure.index("eighteen checks"):]
+        at_check = [order.index("`" + check + "`") for check in checks]
+        self.assertEqual(at_check, sorted(at_check), "the eighteen checks are named in the capture's order")
+        for check in checks:
+            self.assertIn("| " + check + " |", results, check)
+        if status.group(1) == "complete":
+            verdicts = sum(results.count(v) for v in ("| pass |", "| fail |", "| not-observed |"))
+            self.assertEqual(verdicts, len(checks))
+            self.assertIn("forgepact-issue-14-phase1k-live-1.md", results)
+            gate = self.doc[at("## Decision gate"):]
+            after = gate.find("After Phase 1k")
+            self.assertLess(0, after)
+            self.assertLess(after, gate.find("After Phase 1j"))
+            for token in ("partial-stacked:", "partial-nostack:", "partial-cube:"):
+                self.assertIn(token, gate[after:gate.find("After Phase 1j")], token)
         results = self.doc[self.doc.index("\n## Results\n"):self.doc.index("\n## Decision gate\n")]
         for row in ("| B0-vanilla |", "| C-control |", "| H-A |", "| H-B |", "| H-C |"):
             self.assertIn(row, results)

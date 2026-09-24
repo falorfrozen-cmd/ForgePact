@@ -23808,6 +23808,12 @@ static void CpAfter(const char* safe, const char* label, long n, bool logged, bo
     /* Phase 1j: the Cube grid's binding (prospectprobe's table names these too - one instrument per session) */ \
     X(UiSetGrid, "UiSetGrid", gml_Script_UiSetGrid) \
     X(UiSetGridArray, "UiSetGridArray", gml_Script_UiSetGridArray) \
+    /* Phase 1k (research doc, Static search, "Phase 1k rows"): the loaders'  */ \
+    /* route that makes an item without its constructor, the no-stack take's  */ \
+    /* creation (prospectprobe's table names ParseItemToGrid too).            */ \
+    X(InitItemFromJson, "InitItemFromJson", gml_Script_InitItemFromJson) \
+    X(ReCreateItem, "ReCreateItem", gml_Script_ReCreateItem) \
+    X(ParseItemToGrid, "ParseItemToGrid", gml_Script_ParseItemToGrid) \
     /* positive control: fires from every interactable's Step event */ \
     X(CheckPlayerInteraction, "CheckPlayerInteraction", gml_Script_CheckPlayerInteraction)
 
@@ -25801,35 +25807,60 @@ static CpTarget* CpRowForMethod(const RValue& method, std::string& scriptName)
     return nullptr;
 }
 
+// Phase 1k: what the runtime's method_get_self answers for a method value -
+// the self's shape and GML type - or `<not answered>` when the call throws.
+// Read-only and UNVERIFIED on this runtime: `undefined` reads the same for an
+// unbound method and for a runtime that answers nothing, so `callm ... bind`
+// reports it and never depends on it.
+static std::string CpMethodSelfText(const RValue& m)
+{
+    try {
+        const RValue self = g_Yytk->CallBuiltin("method_get_self", { m });
+        return PpBackingShape(self) + " (" + CpTypeOf(self) + ")";
+    } catch (...) { return "<not answered>"; }
+}
+
 // `<struct>` for `callm` and `set`: `fp:<K>` (the game's own lookup, map 0),
 // `fp9:<K>` (a1=9, the stash map), either optionally followed by a dotted tail
 // walked through plain structs only (`fp9:<K>.itemDefinitionStruct`), or
-// `path:<Obj|global|id:n>.<a.b.c>` walked as `var` walks. The value reached must
-// be a plain struct. Prints the refusal, ending in `nothing`, and returns false
-// when it cannot be had.
+// `path:<Obj|global|id:n>.<a.b.c>` walked as `var` walks. Phase 1k: with
+// `keptForm` (only `set` asks), also `kept:<row>[.a.b]` - the row's kept return
+// (`backing on <row>` first; CpCapture keeps a by-name call's return too),
+// walked by the same tail. The value reached must be a plain struct. Prints the
+// refusal, ending in `nothing`, and returns false when it cannot be had.
 static bool CpResolveStruct(const std::string& tag, const std::string& spec, CInstance* lookupSelf, RValue& out,
-                            const std::string& nothing)
+                            const std::string& nothing, bool keptForm = false)
 {
     const std::string ls = Lower(spec);
     const bool fp0 = ls.rfind("fp:", 0) == 0;
     const bool fp9 = ls.rfind("fp9:", 0) == 0;
+    const bool kept = keptForm && ls.rfind("kept:", 0) == 0;
     if (ls.rfind("path:", 0) == 0) {
         if (!CpCallPathArg(spec.substr(5), out)) {
             Out(tag + ": refused - " + spec + " did not resolve (the walk's line above says where); " + nothing);
             return false;
         }
-    } else if (fp0 || fp9) {
-        const std::string rest = spec.substr(fp9 ? 4 : 3);
+    } else if (fp0 || fp9 || kept) {
+        const std::string rest = spec.substr(fp9 ? 4 : fp0 ? 3 : 5);
         const size_t dot = rest.find('.');
         const std::string key = rest.substr(0, dot);
-        if (key.empty()) { Out(tag + ": refused - " + spec + " names no fingerprint; " + nothing); return false; }
-        if (!lookupSelf) { Out(tag + ": refused - " + spec + ": no self for the lookup; " + nothing); return false; }
-        const bool found = fp9 ? ApItemFromFingerprintAs(lookupSelf, RValue(key), RValue(9.0), out)
-                               : ApItemFromFingerprint(lookupSelf, RValue(key), out);
-        if (!found) {
-            Out(tag + ": refused - " + spec + " (lookup self=" + PpDescribeSelf(lookupSelf) + ", a1=" + (fp9 ? "9" : "0")
-                + ") returned no item struct; " + nothing);
-            return false;
+        if (key.empty()) { Out(tag + ": refused - " + spec + " names no " + (kept ? "row" : "fingerprint") + "; " + nothing); return false; }
+        if (kept) {
+            const CpTarget* k = CpFindRow(key);
+            if (!k || !k->kept || !k->kept->value || k->kept->call <= 0) {
+                Out(tag + ": refused - " + spec + " names no kept return (`backing on " + key + "` first, then the call); " + nothing);
+                return false;
+            }
+            out = *k->kept->value;
+        } else {
+            if (!lookupSelf) { Out(tag + ": refused - " + spec + ": no self for the lookup; " + nothing); return false; }
+            const bool found = fp9 ? ApItemFromFingerprintAs(lookupSelf, RValue(key), RValue(9.0), out)
+                                   : ApItemFromFingerprint(lookupSelf, RValue(key), out);
+            if (!found) {
+                Out(tag + ": refused - " + spec + " (lookup self=" + PpDescribeSelf(lookupSelf) + ", a1=" + (fp9 ? "9" : "0")
+                    + ") returned no item struct; " + nothing);
+                return false;
+            }
         }
         if (dot != std::string::npos) {
             std::string walked = key;
@@ -25849,7 +25880,8 @@ static bool CpResolveStruct(const std::string& tag, const std::string& spec, CIn
             }
         }
     } else {
-        Out(tag + ": refused - " + spec + " is not fp:<K>[.a.b], fp9:<K>[.a.b] or path:<Obj|global|id:n>.<a.b.c>; " + nothing);
+        Out(tag + ": refused - " + spec + " is not fp:<K>[.a.b], fp9:<K>[.a.b]" + (keptForm ? ", kept:<row>[.a.b]" : "")
+            + " or path:<Obj|global|id:n>.<a.b.c>; " + nothing);
         return false;
     }
     if (!ApIsPlainStruct(out)) {
@@ -25859,14 +25891,24 @@ static bool CpResolveStruct(const std::string& tag, const std::string& spec, CIn
     return true;
 }
 
-// `callm <Obj> <nth>|id:<n> <struct> <member> [args ...] confirm`: ONE
+// `callm <Obj> <nth>|id:<n> <struct> <member> [args ...] [bind] confirm`: ONE
 // invocation of a method-valued member of a struct, by name, self = other = the
 // named instance, whose `fp:`/`fp9:` lookups are also made with that self.
+//
+// Phase 1k (research doc, `### Phase 1k instrument`): Live 1j's four calls of
+// the item's own methods threw. On the Ghidra reading the constructor stores
+// them unbound, so script_execute ran each with the instance as self, while
+// the game's own member call supplies the struct. `bind`, the word directly
+// before `confirm`, re-binds the member to the struct it was read from through
+// the runtime's own `method` builtin - HashRouteMethod's route, by name - after
+// every precondition below and before the one dispatch, which then gets the
+// bound value. Without `bind` the command is Live 1j's, unchanged.
 static void CpCallMethod(const std::vector<std::string>& tok)
 {
-    const char* usage = "craftprobe callm: usage -> callm <Obj> <nth> <struct> <member> [args ...] confirm"
-                        " | callm id:<n> <struct> <member> [args ...] confirm"
-                        " (struct: fp:<K>[.a.b] | fp9:<K>[.a.b] | path:<Obj|global|id:n>.<a.b.c>; args as `call` takes them)";
+    const char* usage = "craftprobe callm: usage -> callm <Obj> <nth> <struct> <member> [args ...] [bind] confirm"
+                        " | callm id:<n> <struct> <member> [args ...] [bind] confirm"
+                        " (struct: fp:<K>[.a.b] | fp9:<K>[.a.b] | path:<Obj|global|id:n>.<a.b.c>; args as `call` takes them;"
+                        " bind: re-bind the member to its struct with the runtime's method() first)";
     if (tok.size() < 5 || Lower(tok.back()) != "confirm") {
         Out(std::string("craftprobe callm: refused - this calls a game method; nothing was called. ") + usage);
         return;
@@ -25874,6 +25916,10 @@ static void CpCallMethod(const std::vector<std::string>& tok)
     const bool byId = Lower(tok[1]).rfind("id:", 0) == 0;
     const size_t structAt = byId ? 2 : 3;
     if (tok.size() < structAt + 3) { Out(std::string("craftprobe callm: refused - no struct or member given; nothing was called. ") + usage); return; }
+    // `bind` counts only directly before `confirm` and after the member, so it
+    // is never an argument, and a member named `bind` is still a member.
+    const bool bind = tok.size() >= structAt + 4 && Lower(tok[tok.size() - 2]) == "bind";
+    const size_t argsEnd = tok.size() - (bind ? 2 : 1);
     int nth = 0;
     RValue handle; CInstance* inst = nullptr; int total = 0;
     if (byId) {
@@ -25906,17 +25952,39 @@ static void CpCallMethod(const std::vector<std::string>& tok)
     }
     std::vector<RValue> args;
     std::string supplied;
-    for (size_t i = structAt + 2; i + 1 < tok.size(); ++i) {
+    for (size_t i = structAt + 2; i < argsEnd; ++i) {
         const std::string& a = tok[i];
         RValue v;
         if (!CpResolveArg("craftprobe callm", a, inst, v)) return;
         supplied += " a" + std::to_string(i - structAt - 2) + "=" + a + "(" + PpBackingShape(v) + ")";
         args.push_back(v);
     }
+    // The value script_execute gets: the member as read (Live 1j's shape), or,
+    // with `bind`, method(<struct>, <member>) - refused unless the runtime
+    // answers a method. method_get_self is read either side, for the reply only.
+    RValue callee = method;
+    std::string bindLine;
+    if (bind) {
+        const std::string selfBefore = CpMethodSelfText(method);
+        RValue bound;
+        try { bound = g_Yytk->CallBuiltin("method", { target, method }); }
+        catch (...) { Out("craftprobe callm: refused - method(" + spec + ", " + spec + "." + member + ") threw (supplied: bind); nothing was called"); return; }
+        std::string boundVia;
+        if (!CpIsMethod(bound, boundVia)) {
+            Out("craftprobe callm: refused - method(" + spec + ", " + spec + "." + member + ") gave " + CpTypeOf(bound) + " ("
+                + Describe(bound) + "), not a method (asked " + boundVia + ", supplied: bind); nothing was called");
+            return;
+        }
+        callee = bound;
+        bindLine = "  bind=yes method(" + spec + ", " + spec + "." + member + ") method_get_self: before=" + selfBefore
+                 + " after=" + CpMethodSelfText(bound) + " (read only; the dispatch does not depend on it)";
+    }
     std::string scriptName;
     CpTarget* row = CpRowForMethod(method, scriptName);
     Out("craftprobe callm: " + spec + "." + member + " (" + (scriptName.empty() ? std::string("method, script not named") : scriptName)
-        + ", asked " + via + ") self=other=" + PpDescribeSelf(inst) + " argc=" + std::to_string(args.size()) + supplied);
+        + ", asked " + via + ") self=other=" + PpDescribeSelf(inst) + " argc=" + std::to_string(args.size()) + supplied
+        + (bind ? " bind" : ""));
+    if (bind) Out(bindLine);
     Out("  before: " + where());
     // The method's own row, when one names its script and is detoured, prints
     // its entry line with this number - as `call`'s reply names its row's.
@@ -25924,7 +25992,7 @@ static void CpCallMethod(const std::vector<std::string>& tok)
                                                           : std::string("(no detoured row names this method)");
     RValue res;
     AurieStatus st = AURIE_SUCCESS;
-    const CpCallOutcome outcome = CpDispatchMethod(method, inst, args, res, st);
+    const CpCallOutcome outcome = CpDispatchMethod(callee, inst, args, res, st);
     if (outcome == CpCallOutcome::Threw) Out("  entered " + no + ", script_execute threw");
     else if (outcome == CpCallOutcome::Failed) Out("  entered " + no + ", script_execute returned st=" + std::to_string((int)st));
     else {
@@ -25938,11 +26006,14 @@ static void CpCallMethod(const std::vector<std::string>& tok)
 // `set <struct> <member> <number> confirm`: ONE write of one existing member
 // that already holds a number, read back. `fp:`/`fp9:` look the item up with
 // self the first Console_Save_obj instance - the self every by-name trial since
-// Phase 1h used, and one the lookup does not read (Phase 1h reading).
+// Phase 1h used, and one the lookup does not read (Phase 1h reading). Phase 1k:
+// `kept:<row>[.a.b]` writes into a row's kept return (the save-shaped struct
+// CreateItemSaveStruct returned, a StructCopy clone), resolved in
+// CpResolveStruct after the gate like every other form.
 static void CpSet(const std::vector<std::string>& tok)
 {
     const char* usage = "craftprobe set: usage -> set <struct> <member> <number> confirm"
-                        " (struct: fp:<K>[.a.b] | fp9:<K>[.a.b] | path:<Obj|global|id:n>.<a.b.c>)";
+                        " (struct: fp:<K>[.a.b] | fp9:<K>[.a.b] | kept:<row>[.a.b] | path:<Obj|global|id:n>.<a.b.c>)";
     if (tok.size() != 5 || Lower(tok.back()) != "confirm") {
         Out(std::string("craftprobe set: refused - this writes a member of a game struct; nothing was written. ") + usage);
         return;
@@ -25963,7 +26034,7 @@ static void CpSet(const std::vector<std::string>& tok)
         if (!MpResolve("craftprobe set (refused, nothing was written)", holder, 0, handle, lookupSelf, total)) return;
     }
     RValue target;
-    if (!CpResolveStruct("craftprobe set", spec, lookupSelf, target, "nothing was written")) return;
+    if (!CpResolveStruct("craftprobe set", spec, lookupSelf, target, "nothing was written", true)) return;
     if (!g_Yytk->CallBuiltin("variable_struct_exists", { target, RValue(member) }).ToBoolean()) {
         Out("craftprobe set: refused - " + spec + " has no member " + member + " (set writes only an existing member); nothing was written");
         return;
@@ -26054,9 +26125,11 @@ static void CpInjectCommand(const std::vector<std::string>& tok)
 }
 
 // The first line is the build's marker: a live session tells this build
-// (Phase 1j, 278 rows: Phase 1i's 254 plus the save route, the item struct's
-// methods, the creation candidates and the Cube grid's binding, with `callm`,
-// `set` and `inject`) from Phase 1i's (254 rows, marker `phase1i`, with the
+// (Phase 1k, 281 rows: Phase 1j's 278 plus the loaders' InitItemFromJson,
+// ReCreateItem and ParseItemToGrid, with `callm`'s `bind` and `set`'s `kept:`
+// form) from Phase 1j's (278 rows, marker `phase1j`: Phase 1i's 254 plus the
+// save route, the item struct's methods, the creation candidates and the Cube
+// grid's binding, with `callm`, `set` and `inject`), Phase 1i's (254 rows, marker `phase1i`, with the
 // paged `var *`, `find` and the `inroute` gate), Phase 1h's (254 rows, marker
 // `phase1h`:
 // PilipaliDecrypt and CreateItemSaveStruct added, the
@@ -26068,7 +26141,7 @@ static void CpInjectCommand(const std::vector<std::string>& tok)
 // in one bare `craftprobe`.
 static void CpUsage()
 {
-    Out("craftprobe: phase1j rows=" + std::to_string(kCpTargetCount) + " - research instrument for docs/crafting-materials-research.md (research build only)");
+    Out("craftprobe: phase1k rows=" + std::to_string(kCpTargetCount) + " - research instrument for docs/crafting-materials-research.md (research build only)");
     Out("  hook [substr ...]                 native-detour every row (or the matching ones); one instrument per session");
     Out("  arm [budget=N] [inroute] [substr ...]  reset counters; log the next N calls of each selected row (default: all but the control)");
     Out("    inroute: PilipaliDecrypt and CountInventoryItem log a call only while a craft-route row is on the stack;"
@@ -26102,8 +26175,10 @@ static void CpUsage()
         " (script_execute, self = other = the instance); args as `call` takes them");
     Out("    struct: fp:<fp> | fp9:<fp>, either optionally .a.b through plain structs (fp9:<fp>.itemDefinitionStruct), or path:<Obj|global|id:n>.<a.b.c>;"
         " refused unless the member is a method; reply as `call`'s, #<n> from the row that names the method's script, if any");
+    Out("    callm ... [args ...] [bind] confirm: bind re-binds the member to its struct with the runtime's method() before the one"
+        " dispatch; the reply adds bind=yes and method_get_self before/after (read only)");
     Out("  set <struct> <member> <number> confirm   ONE write of an existing member that holds a number, read back: before=<v> after=<v>"
-        " (fp:/fp9: looked up with self Console_Save_obj 0)");
+        " (fp:/fp9: looked up with self Console_Save_obj 0; also kept:<row>[.a.b], a row's kept return - `backing on <row>` first)");
     Out("  inject <class> <b> <extra> [owner=<a0>] | inject off   while on, CountInventoryItem(<owner, default 1>, <class>, _, <b>)"
         " called inside GetCraftItemsAvailable, the recipe row's closure or a craft-route row returns the game's count + <extra>;"
         " `show` prints injected= per frame, outside-route= and other-owner=; needs all three rows detoured");
