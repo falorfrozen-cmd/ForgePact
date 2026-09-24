@@ -12,8 +12,10 @@ A fixed set of toggle skills, each measured in-game, is covered by the toggle
 marker and the double-cast guard. The countdown below covers a different set
 of its own - see that bullet for what it draws on.
 
-Two fixes as well: entering the Underground Garden no longer freezes the game,
-and the `raredrop angelic` command works again when a drop multiplier is set.
+Three fixes as well: entering the Underground Garden no longer freezes the game,
+the `raredrop angelic` command works again when a drop multiplier is set, and the
+Item Forge's base stats include the socket count again. And the Item Editor can
+now show your items exactly as the game builds and draws them.
 
 ## New
 
@@ -210,6 +212,22 @@ and the `raredrop angelic` command works again when a drop multiplier is set.
   `Play local`, first- and second-save-slot and `PLAY` positions all worked
   and loaded the chosen character. Nothing in play changes, and there is no
   new switch in the panel.
+- **Item truth for the Item Editor.** While Item Editor 2.16.0 or newer asks for
+  it, ForgePact writes down each item the game finishes building - its stats,
+  random affixes, rarity, name and tier - so the editor's tooltips show the
+  game's own values instead of its own calculation. The editor can also ask the
+  game to check items it has not loaded (other characters, the Vault): the game
+  builds them in memory with its own save loader, a few milliseconds per frame,
+  and records them - nothing is dropped, placed or saved. It only reads finished
+  items; nothing is changed in the game or the saves, and nothing runs when the
+  editor does not ask for it.
+- **Tooltips read exactly as in the game.** ForgePact also records the text the
+  game draws in an item's tooltip, so the Item Editor shows the tooltip row by row,
+  in the game's words and colours. For items you never hover (a whole Vault), the
+  game draws their tooltips off screen while you have any item tooltip open, a few
+  per frame (at most 3 ms): hovering an item for a minute or two covers thousands
+  of items. Your own tooltip is always drawn last, as usual; nothing on screen
+  changes.
 
 ## Changed
 
@@ -232,6 +250,9 @@ and the `raredrop angelic` command works again when a drop multiplier is set.
 
 ## Fixed
 
+- **Custom Forge base stats include the socket count.** The snapshot the Item
+  Forge shows as an item's base stats was taken before the game had finished the
+  item, so it could miss the socket count. It is now taken once the item is done.
 - **Entering the Underground Garden no longer freezes the game.** With the mod
   plugin installed, going from Misty Swamp into the Underground Garden froze
   the game on "Generating Zone..." for half a minute or more, even with every
