@@ -12,7 +12,7 @@ phase1h-status: complete
 phase1i-status: complete
 phase1j-status: complete
 phase1k-status: complete
-phaseC-status: pending
+phaseC-status: complete
 
 **Status: Phase 0 done (static search, instrument, decision core); Phase 1 (the
 first live session, 2026-09-22) done; Phase 1b (a widened instrument and a
@@ -55,7 +55,9 @@ instrument`, `### Live procedure 1k`, `### Phase 1k results`). The owner
 confirmed Phase 1k's three route tokens and chose to build on the inline
 edit, and the player build is written (`## Ship design`: ForgePact 1.4.5,
 `craftmats`, off by default); Phase C, its one live verification session, is
-pending (`## Phase C live procedure`, `## Phase C results`). Phase 1
+done (2026-09-24, `## Phase C results`): 13 of its fourteen checks pass, and
+`bag-control` fails on the produced item's name only, an exception the owner
+accepted as a game bug. Phase 1
 measured the vanilla baseline, the cube's craft route and a vanilla duplication,
 but its instrument reached neither the stash's special-tab container nor the
 route a hand move between a special tab and the bag takes (`## Results`).
@@ -4796,19 +4798,118 @@ reads `not-observed (launch ended at <check>)`.
 
 ## Phase C results
 
+**Live Phase C, 2026-09-24, 17:54-18:18 UTC.** One character (slot 14,
+"Sorak"), two launches, `live-operator` on the command channel (`hs-drive`),
+on the player DLL `## Ship design` names (sha256 `eedc27c3...`, built from
+ForgePact `6f45abe`), installed in the game's mods folder. The saves were
+backed up before the first launch and restored after the session. Each row
+is filled from the capture,
+`.claude/workorders/forgepact-issue-14-player-build-live-1.md`, cited by its
+step headings, with the verdict its `## Checks` line gives. 13 checks pass;
+`bag-control` fails on the produced item's name, an exception the owner
+accepted (below).
+
 | Check | What it measures | Observed | Verdict |
 |---|---|---|---|
-| dll-hash | The installed DLL is the player DLL `## Ship design` names | | |
-| control | `ping` answers and `craftprobe` is unavailable: the IPC works and this is the player build | | |
-| off-stacked | The switch never on: the Ol recipe the bag cannot cover is unavailable and a press produces nothing | | |
-| hooks | `craftmats 1`: all six hooks `both-routes`, the mod on | | |
-| bag-control | A recipe the bag covers crafts once from the bag, with no move line (the positive control) | | |
-| on-stacked | The Ol recipe available, one Old produced, the bag's Ol used up, one move line (`socketable`, `bag-stack`, `saved=yes`), no refusal | | |
-| stash-saved | `stash.hss` written after each on-press, and the counts tool reads the lowered stacks, before any stash open | | |
-| off-nostack | `craftmats 0`: the Dust recipe unavailable and a press produces nothing, with the hooks installed | | |
-| on-nostack | The Dust recipe available, one Destiny Shard Fragment produced, one move line (`materials`, `bag-new`, `saved=yes`), no refusal | | |
-| no-duplicate | Each on-press and `bag-control` produced exactly one result, and each off-press none | | |
-| stash-window-after | The stash window shows the lowered counts | | |
-| no-flag | Dragging the edited stacks shows nothing wrong (no positive control exists: "no flag observed") | | |
-| reload-after | After the game's own quit and reload the stash and the bag match | | |
-| counts-tool-after | With the game stopped, the counts tool reads the lowered stacks | | |
+| dll-hash | The installed DLL is the player DLL `## Ship design` names | `hs_lease_acquire` hashed the installed DLL as `eedc27c3...` (`dll_status hashed`), equal to `## Ship design`'s hash (capture, dll-hash check) | pass |
+| control | `ping` answers and `craftprobe` is unavailable: the IPC works and this is the player build | `ping` answered `pong (YYTK 4.0.1)`; `craftprobe` answered `command unavailable in player build: craftprobe` (capture, Control) | pass |
+| off-stacked | The switch never on: the Ol recipe the bag cannot cover is unavailable and a press produces nothing | With the bag's Ol at 1 of the recipe's 3 and the switch never on, the owner read the Ol recipe as unavailable; nothing was pressed and nothing produced (capture, Step 1 result; Step 2 - off-stacked) | pass |
+| hooks | `craftmats 1`: all six hooks `both-routes`, the mod on | `craftmats 1` answered that its hooks install once the game has settled; then `HOOK INSTALLED` for each of the six and `craftmats: hooks CountInventoryItem=both-routes GetCraftItemsAvailable=both-routes anon@840@...=both-routes CraftFindRecipeItems=both-routes PilipaliDecrypt=both-routes DoCraftResult=both-routes -> ON` (capture, Step 3 - hooks) | pass |
+| bag-control | A recipe the bag covers crafts once from the bag, with no move line (the positive control) | With the mod on and the bag's 155 Greater Unstable Dust covering the recipe: available, one press, one result item, the bag's Dust at 150 (155 - 5), and no new output at all in the IPC log after the press, so no `craftmats:` move line. The item produced was a Satanic Crystal Fragment, not the expected Destiny Shard Fragment; the owner attributes it to an unrelated game bug (below) (capture, Step 4 - bag-control) | fail |
+| on-stacked | The Ol recipe available, one Old produced, the bag's Ol used up, one move line (`socketable`, `bag-stack`, `saved=yes`), no refusal | Owner: "available, produced 1 Old, 0 ol left."; `craftmats: moved 2 class=15 b=1 from socketable to bag-stack; saved=yes`; no refusal, `off for this session` or `consume mismatch` line (capture, Step 5 - on-stacked) | pass |
+| stash-saved | `stash.hss` written after each on-press, and the counts tool reads the lowered stacks, before any stash open | `stash.hss`'s write time moved after each on-press (18:01:42 after `on-stacked`, later than T1 of 2026-09-22; 18:10:57 after `on-nostack`, later than T2 18:07:40), and the counts tool, before any stash open, read `class=15 b=1 stack=214` (216 - 2) and then `class=14 b=51 stack=145` (150 - 5) (capture, Step 6 - stash-saved, first half; Step 6/9 - stash-saved, second half and overall) | pass |
+| off-nostack | `craftmats 0`: the Dust recipe unavailable and a press produces nothing, with the hooks installed | `craftmats 0` answered `craftmats: off - crafting is unchanged`. The Cube, opened while the mod was on, still read the Dust recipe as available; after a Cube reopen the recipe read greyed out. Nothing was pressed in either part (capture, Step 8 - off-nostack; Step 8 result - off-nostack) | pass |
+| on-nostack | The Dust recipe available, one Destiny Shard Fragment produced, one move line (`materials`, `bag-new`, `saved=yes`), no refusal | After `craftmats 1` and a Cube reopen, owner: "available, produced 1 destiny shard fragment, 0 dust left"; `craftmats: moved 5 class=14 b=51 from materials to bag-new; saved=yes`; no refusal, loss or mismatch line (capture, Step 9 result - on-nostack) | pass |
+| no-duplicate | Each on-press and `bag-control` produced exactly one result, and each off-press none | Steps 2 and 8 (off) produced nothing; steps 4, 5 and 9 (`bag-control`, `on-stacked`, `on-nostack`) produced exactly one result each (capture, Step 10 - no-duplicate) | pass |
+| stash-window-after | The stash window shows the lowered counts | Owner: "214 ol, 145 dust, drag looked fine"; a screenshot of the Materials tab shows the 145 stack (capture, Step 11 result - stash-window-after) | pass |
+| no-flag | Dragging the edited stacks shows nothing wrong (no positive control exists: "no flag observed") | The owner dragged the Ol and Dust stacks away and back: "drag looked fine", no missing or changed stack, no mark, no message. No flag observed; no positive control for a flag exists (`ReportClient` never fired, Live 1k) (capture, Step 12 result - no-flag) | pass |
+| reload-after | After the game's own quit and reload the stash and the bag match | After a quit through the game's menu, a relaunch and the character's load, owner: "214 ol, 145 dust, all items in bag, nothing marked". The bag was judged against what this session produced - 1 Old, 1 Destiny Shard Fragment, 1 Satanic Crystal Fragment (`bag-control`'s result) and 4 Nuts (the two extras below) - not the procedure's "two Destiny Shard Fragments" (capture, Step 13 - reload-after, relaunch; Step 13 result - reload-after, part 2) | pass |
+| counts-tool-after | With the game stopped, the counts tool reads the lowered stacks | After a graceful `hs_stop_game`, `class=15 b=1 stack=214` and `class=14 b=51 stack=145`; `hs_saves_inspect` against the session's backup: changed `herosiege13.hss`, `inventory_order_13.hss`, `shop.ini` and `stash.hss`, nothing added or missing (capture, Step 14 - counts-tool-after, hs_saves_inspect) | pass |
+
+**`bag-control`, the one fail, an owner-accepted exception.** The Greater
+Unstable Dust recipe, pressed with the mod on and the bag's own Dust covering
+it, produced a Satanic Crystal Fragment where the procedure expected a
+Destiny Shard Fragment. The owner said at the press "different result caused
+by the game bug, disregard", and after the session answered "Accept as game
+bug (Recommended)". So the check stays `fail` here and in the capture, and is
+recorded as that exception rather than re-labelled. What it controls for
+held: the bag's count went 155 to 150, exactly the recipe's 5, the IPC log
+gained no output after the press, so no `craftmats:` move line, and one
+result was produced - the mod did not touch that craft. Whether the same
+recipe produces the other item with the mod off was not measured; no game
+bug is filed (the owner's rule).
+
+**The count at the press.** With the switch on, each recipe the bag alone
+could not cover read available and crafted on one press: Ol (the bag's 1 of
+3, the stash's 216), Greater Unstable Dust (none of 5 in the bag, the
+stash's 150) and the owner's Nut (neither input in the bag). Each move line
+names exactly the bag's shortfall - 2 Ol, 5 Dust, then 3 Sal and 1 Chipped
+Sapphire - so the amount the mod paired with each input from the decode
+inside `CraftFindRecipeItems`, less the bag's own count, matched the recipe
+each time. With the switch never on (`off-stacked`), and after `craftmats 0` and a
+Cube reopen (`off-nostack`), the same recipes read unavailable: the game's
+own count.
+
+**The moves, per case.** The stacked case moved onto the bag's existing
+stack (`bag-stack`: 2 Ol onto the bag's 1). The no-stack cases created new
+bag stacks (`bag-new`: 5 Dust; the Nut's two inputs, both in one line).
+Every take was a partial one: each source stack stayed non-empty (Ol 214,
+Dust 145, Sal 187 then 178, Chipped Sapphire 208 then 205), so no
+whole-entry take ran, and the bag always had room, so the Cube fallback
+(`cube`) did not run.
+
+**The consume.** After each on-press the bag held none of the input: the
+game consumed the moved and the created units together with the bag's own,
+and produced one result per unit crafted. No `consume mismatch` line
+appeared, and the mod stayed on for the whole session - every later press
+still logged its moves.
+
+**The save.** Each on-press logged `saved=yes`, `stash.hss`'s write time
+moved after it, and the counts tool read the lowered stacks with the stash
+never opened (`stash-saved`). The same counts read in the stash window
+(`stash-window-after`), after the game's own quit and reload
+(`reload-after`) and with the game stopped (`counts-tool-after`), and
+`hs_saves_inspect` names `stash.hss` among the changed files.
+
+**The flag watch.** The owner's drag of the edited stacks and the reload
+showed nothing marked, missing or changed (`no-flag`, `reload-after`). With
+no positive control for a flag, this is "no flag observed": the game's own
+hash acceptance of an edited or created item beyond this watch stays not
+observed.
+
+**The two extras, observed live once each.** The owner added two cases
+during the session. They are in the capture's `## Extra checks`, which the
+check tool does not read, and both passed there.
+- `extra-nut-multi-input`, a multi-input recipe. The owner asked: "i want to
+  try to produce nut too - 3 sal, 1 chip sapphire (none in the bag). this
+  recipe is shown available too". One press gave one line, `craftmats: moved
+  3 class=15 b=12 from socketable to bag-new, 1 class=15 b=52 from socketable
+  to bag-new; saved=yes`; the stash's Sal went 190 to 187 and its Chipped
+  Sapphire 209 to 208, `stash.hss`'s write time moved, and one Nut was
+  produced (capture, extra-nut-multi-input - after-reads).
+- `extra-nut-multi-craft-x3`, a multi-unit press of the same recipe. The
+  owner asked: "let me also try the same nut craft but multiple at the time -
+  for example 3". At the Cube's quantity 3, one press gave one combined line
+  moving 9 Sal and 3 Chipped Sapphire with `saved=yes`; the stash went 187 to
+  178 and 208 to 205, 3 Nuts were produced, and the Cube's craftable maximum
+  read 62 before and 59 after. The capture shows no refusal, `off for this
+  session` or `consume mismatch` line (capture, Extra checks -
+  extra-nut-multi-craft-x3, after-reads; extra-nut-multi-craft-x3 - final).
+
+These show that the pairing and the moved amount were right for this recipe
+at quantities 1 and 3. They do not show how the Cube's quantity reaches the
+need the mod recorded, or how many `DoCraftResult` calls one quantity-3 press
+makes. The `unreadable` refusal line is printed once per session, so "no
+refusal line" is what the capture records, and no more.
+
+**The Cube reopen.** The Cube builds its recipe-availability list when it
+opens, so a `craftmats` toggle takes effect at the next Cube open, not while
+the window stays open: after `craftmats 0` the Dust recipe still read
+available until the owner reopened the Cube (`off-nostack`). Observed once.
+
+**`## Ship design`'s "Not covered", after Phase C.** Phase C has now observed
+a multi-input recipe and a multi-unit press (the two extras above, once each,
+for one recipe); the Cube fallback, a whole-entry take and the game's hash
+acceptance beyond the `no-flag`/`reload-after` watch remain not observed
+live, as do the undo shapes a failed take runs. `## Ship design` itself is
+left as built, since it records the DLL this session ran.
