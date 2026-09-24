@@ -67,6 +67,9 @@ EXPECTED_PLAYER_COMMANDS = {
     # Pack markers (map reveal's monster half since 1.4.5): the look of the
     # markers and their counters, nothing that changes gameplay.
     "packmarks",
+    # Craft from the stash (issue #14, the panel's switch;
+    # test_craft_mats_contract.py pins it).
+    "craftmats",
 }
 
 

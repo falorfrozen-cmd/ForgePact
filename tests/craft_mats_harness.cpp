@@ -5,9 +5,8 @@
 // game-independent by contract - it names no runtime interface - so it compiles
 // here with no runtime stub.
 //
-// The game mechanism is not measured yet (docs/crafting-materials-research.md,
-// Phase 1 pending), so these scenarios drive only the arithmetic every
-// hypothesis shares: per material, need N, bag count k, stash-tab count s ->
+// Phase 0's scenarios drive the arithmetic every hypothesis shared: per
+// material, need N, bag count k, stash-tab count s ->
 // take min(N-k, s) from the stash's material tab only when the switch is on
 // and k < N; an unreadable count refuses; a loss signal turns the mod off for
 // the session. Whichever mechanism the owner picks, its adapter feeds Plan()
@@ -23,6 +22,25 @@
 // or a room change is not current either. Target: the game's own refresh makes
 // it current, again after an invalidation (same index or a new one), and a
 // clear is not current.
+//
+// The player build (2026-09-24, the Phase C build) adds the decisions its
+// adapter acts on: the count, the per-frame walk, the needs pairing, the press
+// gate, the split across entries, the move outcome, the consume check and the
+// save. Baseline: off, or outside the crafting route, the count is the game's
+// own; off, the press is the game's own. Target: the rest, below. The source
+// enum widens to the two special tabs (Socketable joins Materials); no Phase 0
+// or 1e scenario's rule is replaced, so none is renamed - the refusal lines
+// keep their `craftmats: <reason> - ` heads and now say the craft was refused.
+//
+// Red first: with the new scenarios written and the core not yet extended, this
+// file did not compile. The first error was the using-declarations' `error
+// C2039: 'CraftMatsDestination': is not a member of 'ForgePact'`, and the first
+// line naming each target's missing decision was: count_* `'CountAnswer': is
+// not a member of 'ForgePact::CraftMatsMod'` (and `'StashSocketTab': illegal
+// qualified name`); the walk, needs, split, move, press, consume and save
+// targets used `MustWalk`, `BeginFind`/`Needs`, `Split`, `OnMoveReport`,
+// `MayCraft`/`PressStep`, `OnConsume` and `SaveDue`/`PressLine`, beyond the
+// compiler's 100-error cap, so their own lines were not printed.
 #include <atomic>
 #include <cstdint>
 #include <iostream>
@@ -40,6 +58,15 @@ using ForgePact::CraftMatsSource;
 using ForgePact::CraftMatsTakeReport;
 using ForgePact::CraftMatsKeptMap;
 using ForgePact::CraftMatsMapReason;
+using ForgePact::CraftMatsDestination;
+using ForgePact::CraftMatsEntry;
+using ForgePact::CraftMatsEntryTake;
+using ForgePact::CraftMatsMoveReport;
+using ForgePact::CraftMatsMoved;
+using ForgePact::CraftMatsNeeds;
+using ForgePact::CraftMatsPressStep;
+using ForgePact::CraftMatsSave;
+using ForgePact::CraftMatsWalk;
 
 static int g_Failures = 0;
 
@@ -398,6 +425,374 @@ static void TargetKeptMapReasonNamesAreTheStatTokens()
     Check("target/kept_map_reason_names_are_the_stat_tokens", ok, "");
 }
 
+// ---- the player build: the count, the needs, the press (Phase C build) --------
+//
+// The adapter hooks CountInventoryItem, PilipaliDecrypt and the crafting route's
+// scripts; every decision it acts on is made here. Materials are named the way
+// the per-press line names them, "class=<c> b=<b>".
+
+static CraftMatsEntry Entry(const std::string& material, const std::string& key, int64_t count, CraftMatsSource from, int row)
+{
+    CraftMatsEntry e;
+    e.material = material;
+    e.key = key;
+    e.count = count;
+    e.from = from;
+    e.row = row;
+    return e;
+}
+
+// The Socketable tab holds Ol (class 15, b 1) in two entries, the Materials tab
+// Greater Unstable Dust (class 14, b 51) in one.
+static CraftMatsWalk SampleWalk()
+{
+    CraftMatsWalk w;
+    w.readable = true;
+    w.entries = {
+        Entry(CraftMatsMod::Material(15, 1), "0-0-11-15", 200, CraftMatsSource::StashSocketTab, 73),
+        Entry(CraftMatsMod::Material(15, 1), "0-0-12-15", 16, CraftMatsSource::StashSocketTab, 74),
+        Entry(CraftMatsMod::Material(14, 51), "0-0-13-14", 153, CraftMatsSource::StashMaterialTab, -1),
+    };
+    return w;
+}
+
+static CraftMatsMoveReport Move(int64_t asked, int64_t srcBefore, int64_t srcAfter, bool entryGone, bool cellGone,
+                                int64_t dstBefore, int64_t dstAfter)
+{
+    CraftMatsMoveReport r;
+    r.asked = asked;
+    r.sourceBefore = srcBefore;
+    r.sourceAfter = srcAfter;
+    r.sourceEntryGone = entryGone;
+    r.sourceCellGone = cellGone;
+    r.destBefore = dstBefore;
+    r.destAfter = dstAfter;
+    return r;
+}
+
+static std::string Describe(const CraftMatsNeeds& n)
+{
+    std::string s = "readable=" + N(n.readable) + " stash-added=" + N(n.stashAdded) + " self=" + N(n.self) + " rows=[";
+    for (size_t i = 0; i < n.rows.size(); ++i)
+        s += (i ? "," : "") + n.rows[i].material + ":need=" + N(n.rows[i].need) + ":k=" + N(n.rows[i].bag);
+    return s + "]";
+}
+
+static void BaselineCountOffOrOutsideTheRouteIsTheGamesOwn()
+{
+    CraftMatsMod off;                                     // off by default
+    const int64_t a = off.CountAnswer(true, 2, 216);      // in the route, but off
+    CraftMatsMod on;
+    on.SetEnabled(true);
+    const int64_t b = on.CountAnswer(false, 2, 216);      // on, outside every route frame
+    const int64_t c = on.CountAnswer(false, 2, -1);       // outside the route an unreadable stash is never asked about
+    Check("baseline/count_off_or_outside_the_route_is_the_games_own",
+          a == 2 && b == 2 && c == 2 && off.CountsRaised() == 0 && on.CountsRaised() == 0
+              && on.TakeFirstRefusal() == CraftMatsRefusal::None && off.TakeFirstRefusal() == CraftMatsRefusal::None,
+          "a=" + N(a) + " b=" + N(b) + " c=" + N(c) + " raised=" + N(on.CountsRaised()));
+}
+
+static void TargetCountOnInRouteAddsTheSpecialTabsStash()
+{
+    CraftMatsMod mod;
+    mod.SetEnabled(true);
+    const CraftMatsWalk w = SampleWalk();
+    const int64_t ol = w.Count(CraftMatsMod::Material(15, 1));
+    const int64_t dust = w.Count(CraftMatsMod::Material(14, 51));
+    const int64_t none = w.Count(CraftMatsMod::Material(14, 50));
+    const int64_t k = mod.CountAnswer(true, 2, ol);       // the bag's 2 Ol plus the stash's 216
+    const int64_t zero = mod.CountAnswer(true, 1, none);  // nothing in the stash: the game's own number
+    CraftMatsWalk unread;                                 // a walk that failed answers -1, never 0
+    const bool sourcesOk = (int)CraftMatsSource::StashMaterialTab == 1 && (int)CraftMatsSource::StashSocketTab == 2
+        && std::string(CraftMatsMod::SourceName(CraftMatsSource::StashMaterialTab)) == "materials"
+        && std::string(CraftMatsMod::SourceName(CraftMatsSource::StashSocketTab)) == "socketable";
+    Check("target/count_on_in_route_adds_the_special_tabs_stash",
+          ol == 216 && dust == 153 && none == 0 && k == 218 && zero == 1 && mod.CountsRaised() == 1
+              && unread.Count(CraftMatsMod::Material(15, 1)) == -1 && CraftMatsMod::Material(15, 1) == "class=15 b=1"
+              && sourcesOk,
+          "ol=" + N(ol) + " dust=" + N(dust) + " none=" + N(none) + " k=" + N(k) + " zero=" + N(zero)
+              + " raised=" + N(mod.CountsRaised()));
+}
+
+static void TargetCountUnreadableStashLeavesTheGamesCountAndIsNamedOnce()
+{
+    CraftMatsMod mod;
+    mod.SetEnabled(true);
+    const int64_t a = mod.CountAnswer(true, 2, -1);
+    const CraftMatsRefusal first = mod.TakeFirstRefusal();
+    const std::string line = mod.RefusalLine(first);
+    const int64_t b = mod.CountAnswer(true, 3, -1);
+    const CraftMatsRefusal second = mod.TakeFirstRefusal();
+    Check("target/count_unreadable_stash_leaves_the_games_count_and_is_named_once",
+          a == 2 && b == 3 && first == CraftMatsRefusal::StashUnreadable && second == CraftMatsRefusal::None
+              && mod.Refused(CraftMatsRefusal::StashUnreadable) == 2 && mod.IsEnabled() && mod.CountsRaised() == 0
+              && line.rfind("craftmats: stash-unreadable - ", 0) == 0,
+          "a=" + N(a) + " b=" + N(b) + " first=" + CraftMatsMod::RefusalName(first) + " second="
+              + CraftMatsMod::RefusalName(second) + " line=\"" + line + "\"");
+}
+
+static void TargetDisplayCountReusesOneWalkPerFrameAndThePressWalksFresh()
+{
+    CraftMatsMod mod;
+    mod.SetEnabled(true);
+    const bool nothingKept = mod.MustWalk(10, false);
+    mod.KeepWalk(10, SampleWalk());
+    const bool sameFrame = mod.MustWalk(10, false);       // a display count in the same frame reuses it
+    const bool press = mod.MustWalk(10, true);            // CraftFindRecipeItems / DoCraftResult never reuse
+    const bool nextFrame = mod.MustWalk(11, false);
+    const int64_t kept = mod.KeptWalk().Count(CraftMatsMod::Material(15, 1));
+    Check("target/display_count_reuses_one_walk_per_frame_and_the_press_walks_fresh",
+          nothingKept && !sameFrame && press && nextFrame && kept == 216 && mod.Walks() == 1,
+          "nothing-kept=" + N(nothingKept) + " same-frame=" + N(sameFrame) + " press=" + N(press)
+              + " next-frame=" + N(nextFrame) + " kept=" + N(kept));
+}
+
+static void TargetNeedsPairEachCountWithTheDecodeBeforeIt()
+{
+    CraftMatsMod mod;
+    mod.SetEnabled(true);
+    mod.BeginFind(7);
+    mod.OnDecode(3);                                              // input 1: 3 Ol
+    mod.OnFindCount(CraftMatsMod::Material(15, 1), 2, true);
+    mod.OnDecode(5);                                              // input 2 accepts two bases: counted one at a time,
+    mod.OnFindCount(CraftMatsMod::Material(14, 50), 0, false);    // and the last count is the one the game used
+    mod.OnFindCount(CraftMatsMod::Material(14, 51), 1, true);
+    mod.OnDecode(99);                                             // a decode no count follows names no input
+    const CraftMatsNeeds n = mod.Needs();
+    const bool ok = n.readable && n.stashAdded && n.self == 7 && n.rows.size() == 2
+        && n.rows[0].material == "class=15 b=1" && n.rows[0].need == 3 && n.rows[0].bag == 2
+        && n.rows[1].material == "class=14 b=51" && n.rows[1].need == 5 && n.rows[1].bag == 1;
+    // The next CraftFindRecipeItems entry discards the record.
+    mod.BeginFind(8);
+    mod.OnDecode(4);
+    mod.OnFindCount(CraftMatsMod::Material(14, 51), 4, false);
+    const CraftMatsNeeds next = mod.Needs();
+    const bool nextOk = next.readable && !next.stashAdded && next.self == 8 && next.rows.size() == 1 && next.rows[0].need == 4;
+    Check("target/needs_pair_each_count_with_the_decode_before_it", ok && nextOk, Describe(n) + " | " + Describe(next));
+}
+
+static void TargetNeedsWithNoDecodeAreUnreadable()
+{
+    CraftMatsMod mod;
+    mod.SetEnabled(true);
+    mod.BeginFind(7);
+    mod.OnFindCount(CraftMatsMod::Material(15, 1), 2, true);      // a count with no decode before it
+    const CraftMatsNeeds none = mod.Needs();
+    mod.BeginFind(7);
+    mod.OnFindCount(CraftMatsMod::Material(15, 1), 2, true);      // the first of two inputs has no decode
+    mod.OnDecode(3);
+    mod.OnFindCount(CraftMatsMod::Material(14, 51), 1, true);
+    const CraftMatsNeeds firstMissing = mod.Needs();
+    mod.BeginFind(7);
+    mod.OnDecode(-1);                                             // a decode that did not read as a whole amount
+    mod.OnFindCount(CraftMatsMod::Material(15, 1), 2, true);
+    const CraftMatsNeeds badAmount = mod.Needs();
+    // Negative control: the same count after a decode is readable.
+    mod.BeginFind(7);
+    mod.OnDecode(3);
+    mod.OnFindCount(CraftMatsMod::Material(15, 1), 2, true);
+    const CraftMatsNeeds control = mod.Needs();
+    Check("target/needs_with_no_decode_are_unreadable",
+          !none.readable && !firstMissing.readable && !badAmount.readable && control.readable && control.rows.size() == 1,
+          Describe(none) + " | " + Describe(firstMissing) + " | " + Describe(badAmount) + " | " + Describe(control));
+}
+
+static std::string Describe(const std::vector<CraftMatsEntryTake>& takes)
+{
+    std::string s = "[";
+    for (size_t i = 0; i < takes.size(); ++i)
+        s += (i ? "," : "") + takes[i].entry.key + ":" + N(takes[i].amount) + (takes[i].whole ? "whole" : "partial");
+    return s + "]";
+}
+
+static void TargetTakeSplitsAcrossEntriesWholeThenPartial()
+{
+    CraftMatsWalk w;
+    w.readable = true;
+    w.entries = {
+        Entry(CraftMatsMod::Material(14, 51), "a", 2, CraftMatsSource::StashMaterialTab, -1),
+        Entry(CraftMatsMod::Material(15, 1), "other", 50, CraftMatsSource::StashSocketTab, 3),   // another material: never taken
+        Entry(CraftMatsMod::Material(14, 51), "b", 3, CraftMatsSource::StashMaterialTab, -1),
+        Entry(CraftMatsMod::Material(14, 51), "c", 10, CraftMatsSource::StashMaterialTab, -1),
+    };
+    const std::string m = CraftMatsMod::Material(14, 51);
+    std::vector<CraftMatsEntryTake> four, five, one, tooMany, nothing;
+    const bool fourOk = CraftMatsMod::Split(m, 4, w, four);
+    const bool fiveOk = CraftMatsMod::Split(m, 5, w, five);
+    const bool oneOk = CraftMatsMod::Split(m, 1, w, one);
+    const bool tooManyOk = CraftMatsMod::Split(m, 16, w, tooMany);   // the tabs hold 15
+    const bool nothingOk = CraftMatsMod::Split(m, 0, w, nothing);
+    CraftMatsWalk unread;
+    std::vector<CraftMatsEntryTake> blind;
+    const bool blindOk = CraftMatsMod::Split(m, 1, unread, blind);
+    const bool ok = fourOk && four.size() == 2 && four[0].entry.key == "a" && four[0].amount == 2 && four[0].whole
+        && four[1].entry.key == "b" && four[1].amount == 2 && !four[1].whole
+        && fiveOk && five.size() == 2 && five[0].whole && five[1].whole && five[1].amount == 3
+        && oneOk && one.size() == 1 && one[0].entry.key == "a" && one[0].amount == 1 && !one[0].whole
+        && !tooManyOk && tooMany.empty() && !nothingOk && nothing.empty() && !blindOk && blind.empty();
+    Check("target/take_splits_across_entries_whole_then_partial", ok,
+          "4=" + Describe(four) + " 5=" + Describe(five) + " 1=" + Describe(one) + " 16=" + Describe(tooMany));
+}
+
+static void TargetMoveConfirmedOnlyWhenSourceAndDestinationMovedByTheAmount()
+{
+    CraftMatsMod mod;
+    mod.SetEnabled(true);
+    const CraftMatsOutcome partial = mod.OnMoveReport(Move(2, 216, 214, false, false, 1, 3));   // stack 1 -> 3
+    const CraftMatsOutcome whole = mod.OnMoveReport(Move(3, 3, 0, true, true, 0, 3));          // new unit of 3
+    const CraftMatsOutcome declined = mod.OnMoveReport(Move(2, 216, 216, false, false, 1, 1));
+    const bool onOk = partial == CraftMatsOutcome::Taken && whole == CraftMatsOutcome::Taken
+        && declined == CraftMatsOutcome::NotTaken && mod.IsEnabled() && mod.Taken() == 2 && mod.TakenUnits() == 5
+        && mod.Refused(CraftMatsRefusal::NotTaken) == 1;
+    // Each of these is a loss and turns the mod off for the session.
+    const CraftMatsMoveReport losses[] = {
+        Move(2, 216, 214, false, false, 1, 1),   // the stash dropped, the bag did not rise
+        Move(2, 216, 216, false, false, 1, 3),   // the bag rose, the stash did not drop
+        Move(2, 216, 213, false, false, 1, 3),   // the stash dropped by more than the amount
+        Move(2, 216, 214, false, false, 1, 4),   // the bag rose by more than the amount
+        Move(3, 3, 0, true, false, 0, 3),        // the entry is gone but its cell is not: the save crash
+        Move(3, 3, 3, false, true, 0, 3),        // the cell is gone but the entry is not
+        Move(2, 3, 0, true, true, 0, 2),         // a whole entry of 3 gone for an amount of 2
+        Move(2, 216, 214, false, false, 1, -1),  // the destination could not be re-read
+        Move(2, -1, 214, false, false, 1, 3),    // the source was never read before
+    };
+    bool lossOk = true;
+    std::string detail;
+    for (const CraftMatsMoveReport& r : losses) {
+        CraftMatsMod m;
+        m.SetEnabled(true);
+        const CraftMatsOutcome o = m.OnMoveReport(r);
+        const bool due = m.TakeFirstLoss();
+        const std::string line = m.LossLine();
+        const bool one = o == CraftMatsOutcome::Loss && m.OffThisSession() && !m.IsEnabled() && due
+            && line.rfind("craftmats: off for this session - ", 0) == 0 && !m.SetEnabled(true);
+        lossOk = lossOk && one;
+        detail += " " + N((int)o);
+    }
+    Check("target/move_confirmed_only_when_source_and_destination_moved_by_the_amount", onOk && lossOk,
+          "partial=" + N((int)partial) + " whole=" + N((int)whole) + " declined=" + N((int)declined) + " losses:" + detail);
+}
+
+static void TargetPressCraftsOnlyWhenEveryTakeIsConfirmed()
+{
+    CraftMatsMod mod;
+    mod.SetEnabled(true);
+    const bool bagCovers = mod.MayCraft({});   // no take planned: the game crafts from the bag
+    const bool allTaken = mod.MayCraft({ CraftMatsOutcome::Taken, CraftMatsOutcome::Taken });
+    const bool oneDeclined = mod.MayCraft({ CraftMatsOutcome::Taken, CraftMatsOutcome::NotTaken });
+    const bool oneLost = mod.MayCraft({ CraftMatsOutcome::Loss });
+    Check("target/press_crafts_only_when_every_take_is_confirmed",
+          bagCovers && allTaken && !oneDeclined && !oneLost && mod.PressesRefused() == 2,
+          "bag=" + N(bagCovers) + " all=" + N(allTaken) + " declined=" + N(oneDeclined) + " lost=" + N(oneLost)
+              + " refused=" + N(mod.PressesRefused()));
+
+    // The gate before any take. No record, or no stash count added during this
+    // press's CraftFindRecipeItems: the game's own press, untouched.
+    CraftMatsMod gate;
+    gate.SetEnabled(true);
+    const CraftMatsPressStep noFind = gate.PressStep(7);
+    gate.BeginFind(7);
+    gate.OnDecode(3);
+    gate.OnFindCount(CraftMatsMod::Material(15, 1), 3, false);
+    const CraftMatsPressStep bagOnly = gate.PressStep(7);
+    gate.BeginFind(7);
+    gate.OnDecode(3);
+    gate.OnFindCount(CraftMatsMod::Material(15, 1), 2, true);
+    const CraftMatsPressStep plan = gate.PressStep(7);
+    const CraftMatsPressStep reused = gate.PressStep(7);   // one record serves one press
+    gate.BeginFind(7);
+    gate.OnDecode(3);
+    gate.OnFindCount(CraftMatsMod::Material(15, 1), 2, true);
+    const CraftMatsPressStep otherSelf = gate.PressStep(8);
+    gate.BeginFind(7);
+    gate.OnFindCount(CraftMatsMod::Material(15, 1), 2, true);
+    const CraftMatsPressStep noDecode = gate.PressStep(7);
+    // A recipe row the adapter could not number matches nothing, itself included.
+    gate.BeginFind(-1);
+    gate.OnDecode(3);
+    gate.OnFindCount(CraftMatsMod::Material(15, 1), 2, true);
+    const CraftMatsPressStep unnumbered = gate.PressStep(-1);
+    const CraftMatsRefusal first = gate.TakeFirstRefusal();
+    const std::string line = gate.RefusalLine(first);
+    // A plan the core refused refuses the press before any take.
+    CraftMatsPlan refusedPlan;
+    refusedPlan.refused = true;
+    const bool refusedPlanCrafts = gate.MayCraft(refusedPlan, {});
+    Check("target/press_gate_is_vanilla_without_a_stash_count_and_refuses_what_it_cannot_pair",
+          noFind == CraftMatsPressStep::Vanilla && bagOnly == CraftMatsPressStep::Vanilla
+              && plan == CraftMatsPressStep::Plan && reused == CraftMatsPressStep::Refuse
+              && otherSelf == CraftMatsPressStep::Refuse && noDecode == CraftMatsPressStep::Refuse
+              && unnumbered == CraftMatsPressStep::Refuse && !refusedPlanCrafts
+              && gate.PressesRefused() == 5 && first == CraftMatsRefusal::Unreadable
+              && line.find("refused") != std::string::npos && gate.IsEnabled(),
+          "no-find=" + N((int)noFind) + " bag-only=" + N((int)bagOnly) + " plan=" + N((int)plan) + " reused="
+              + N((int)reused) + " other-self=" + N((int)otherSelf) + " no-decode=" + N((int)noDecode)
+              + " unnumbered=" + N((int)unnumbered) + " line=\"" + line + "\"");
+}
+
+static void BaselinePressOffIsVanilla()
+{
+    CraftMatsMod mod;   // off
+    mod.BeginFind(7);
+    mod.OnDecode(3);
+    mod.OnFindCount(CraftMatsMod::Material(15, 1), 2, true);
+    const CraftMatsPressStep step = mod.PressStep(7);
+    Check("baseline/press_off_is_vanilla",
+          step == CraftMatsPressStep::Vanilla && mod.PressesRefused() == 0 && mod.TakeFirstRefusal() == CraftMatsRefusal::None,
+          "step=" + N((int)step));
+}
+
+static void TargetConsumeMismatchTurnsTheModOffForTheSession()
+{
+    CraftMatsMod ok;
+    ok.SetEnabled(true);
+    const std::string m = CraftMatsMod::Material(15, 1);
+    // The bag held 1, 2 came from the stash, the recipe needs 3: 0 after.
+    const bool matched = ok.OnConsume(m, 1, 2, 3, 0);
+    const bool matchedOk = matched && ok.IsEnabled() && !ok.TakeFirstMismatch();
+    // The game's own duplication: it produced, and consumed nothing.
+    CraftMatsMod dup;
+    dup.SetEnabled(true);
+    const bool dupMatched = dup.OnConsume(m, 1, 2, 3, 3);
+    const bool due = dup.TakeFirstMismatch();
+    const bool dueAgain = dup.TakeFirstMismatch();
+    const std::string line = dup.MismatchLine();
+    const bool dupOk = !dupMatched && dup.OffThisSession() && !dup.IsEnabled() && due && !dueAgain && !dup.SetEnabled(true)
+        && line.rfind("craftmats: consume mismatch - ", 0) == 0 && line.find("off for this session") != std::string::npos
+        && line.find("class=15 b=1") != std::string::npos;
+    // A total that could not be re-read is not a match either.
+    CraftMatsMod blind;
+    blind.SetEnabled(true);
+    const bool blindMatched = blind.OnConsume(m, 1, 2, 3, -1);
+    Check("target/consume_mismatch_turns_the_mod_off_for_the_session",
+          matchedOk && dupOk && !blindMatched && blind.OffThisSession(),
+          "matched=" + N(matched) + " dup=" + N(dupMatched) + " blind=" + N(blindMatched) + " line=\"" + line + "\"");
+}
+
+static void TargetSaveRequestedOnlyAfterAConfirmedMove()
+{
+    CraftMatsMoved a;
+    a.material = CraftMatsMod::Material(15, 1);
+    a.from = CraftMatsSource::StashSocketTab;
+    a.to = CraftMatsDestination::BagStack;
+    a.units = 2;
+    CraftMatsMoved b = a;
+    b.units = 1;   // a second entry of the same material, same route: one figure
+    CraftMatsMoved c;
+    c.material = CraftMatsMod::Material(14, 51);
+    c.from = CraftMatsSource::StashMaterialTab;
+    c.to = CraftMatsDestination::Cube;
+    c.units = 5;
+    const std::string one = CraftMatsMod::PressLine({ a, b }, CraftMatsSave::Yes);
+    const std::string two = CraftMatsMod::PressLine({ a, c }, CraftMatsSave::Failed);
+    const bool ok = !CraftMatsMod::SaveDue(0) && CraftMatsMod::SaveDue(3)
+        && one == "craftmats: moved 3 class=15 b=1 from socketable to bag-stack; saved=yes"
+        && two == "craftmats: moved 2 class=15 b=1 from socketable to bag-stack, 5 class=14 b=51 from materials to cube; saved=failed"
+        && std::string(CraftMatsMod::SaveName(CraftMatsSave::No)) == "no"
+        && std::string(CraftMatsMod::DestinationName(CraftMatsDestination::BagNew)) == "bag-new";
+    Check("target/save_requested_only_after_a_confirmed_move", ok, "one=\"" + one + "\" two=\"" + two + "\"");
+}
+
 int main()
 {
     BaselineOffByDefault();
@@ -419,6 +814,18 @@ int main()
     TargetKeptMapRefreshAfterAnInvalidationIsCurrentAgain();
     TargetKeptMapClearIsNotCurrent();
     TargetKeptMapReasonNamesAreTheStatTokens();
+    BaselineCountOffOrOutsideTheRouteIsTheGamesOwn();
+    TargetCountOnInRouteAddsTheSpecialTabsStash();
+    TargetCountUnreadableStashLeavesTheGamesCountAndIsNamedOnce();
+    TargetDisplayCountReusesOneWalkPerFrameAndThePressWalksFresh();
+    TargetNeedsPairEachCountWithTheDecodeBeforeIt();
+    TargetNeedsWithNoDecodeAreUnreadable();
+    TargetTakeSplitsAcrossEntriesWholeThenPartial();
+    TargetMoveConfirmedOnlyWhenSourceAndDestinationMovedByTheAmount();
+    TargetPressCraftsOnlyWhenEveryTakeIsConfirmed();
+    BaselinePressOffIsVanilla();
+    TargetConsumeMismatchTurnsTheModOffForTheSession();
+    TargetSaveRequestedOnlyAfterAConfirmedMove();
     std::cout << (g_Failures ? "RESULT FAIL " + std::to_string(g_Failures) : std::string("RESULT OK")) << "\n";
     return g_Failures ? 1 : 0;
 }

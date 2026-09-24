@@ -22303,6 +22303,845 @@ static bool HandleProspectCommand(const std::string& lc, const std::string& rest
     return false;
 }
 
+// ---- craftmats: crafting from the stash's special tabs (issue #14) ------------
+// The player build of the mod whose decisions live in ForgePact::CraftMatsMod
+// (game-independent, pinned by tests/craft_mats_harness.cpp). Everything here
+// touches the game, and only by name: six hooks through HookOneScript, both
+// routes or the mod goes off, and by-name calls through script_execute with
+// self = other = Console_Save_obj in the shapes the research doc measured
+// (docs/crafting-materials-research.md, `## Ship design` lists each one).
+// Nothing runs while the switch is off: the hooks go in on the first frame
+// after setup with it on, and each body only forwards until it is.
+//
+// The count. CountInventoryItem's answer gains the stash's count of the same
+// material only inside one of the crafting route's three frames - the
+// window's availability call (GetCraftItemsAvailable), the recipe row's Create
+// closure, and CraftFindRecipeItems at the press - and only for the bag owner
+// (a0 == 1, as Live 1i logged). The stash's count walks Controller_obj's
+// stashMaterialTab and stashSocketItemSlot cell by cell and resolves each
+// cell's fingerprint in the stash map GetItemMap(9) returns, read by name at
+// the point of use. The ordinary tabs share that map and are never a source,
+// so the map itself is never walked.
+//
+// The needs. Inside CraftFindRecipeItems, and only there, PilipaliDecrypt's
+// answers and the counts go into the core's record (its pairing rule turns
+// them into need and bag count per input). Outside that frame PilipaliDecrypt
+// only forwards: it runs hundreds of thousands of times a session.
+//
+// The press. DoCraftResult: the core's gate, then the plan (need - k per
+// input, capped by a fresh walk), each take and its confirmation, all before
+// the game's own press - a refusal returns before it. After it, the consume
+// check and, after a confirmed move, the stash save through the game's own
+// route, SaveLocalFile(4, 1). Threading: every body runs on the game thread,
+// inside the game's own call, like the core.
+static constexpr const char* kCmCountName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_CountInventoryItem);
+static constexpr const char* kCmAvailabilityName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_GetCraftItemsAvailable);
+static constexpr const char* kCmRecipeRowName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_840_gml_Object_UI_Craft_Recipe_List_Item_obj_Create_0);
+static constexpr const char* kCmFindName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_CraftFindRecipeItems);
+static constexpr const char* kCmDecodeName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_PilipaliDecrypt);
+static constexpr const char* kCmPressName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_DoCraftResult);
+// The by-name calls.
+static constexpr const char* kCmItemMapName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_GetItemMap);
+static constexpr const char* kCmFromFpName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_GetItemFromFingerprint);
+static constexpr const char* kCmCheckHashName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_ItemCheckHash);
+static constexpr const char* kCmSaveStructName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_CreateItemSaveStruct);
+static constexpr const char* kCmTimestampName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_LootTimestamp);
+static constexpr const char* kCmFromJsonName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_InitItemFromJson);
+static constexpr const char* kCmAddToMapName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_AddItemToMap);
+static constexpr const char* kCmRemoveFromMapName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_RemoveItemFromMap);
+static constexpr const char* kCmPreferredName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_GetItemPreferredGrid);
+static constexpr const char* kCmPlaceName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_GridAddItem);
+static constexpr const char* kCmGridRemoveName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_GridRemoveItem);
+static constexpr const char* kCmSaveName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_SaveLocalFile);
+
+static constexpr double kCmBagOwner = 1.0;         // CountInventoryItem's a0 in the craft route (Live 1i: a0=1)
+static constexpr double kCmStashOwner = 9.0;       // GetItemMap(9): the stash's map
+static constexpr double kCmCharacterOwner = 0.0;   // GetItemMap(0): the character's map
+static constexpr double kCmPreferredOwner = 1.0;   // GetItemPreferredGrid(1, item): the bag's grid for it
+static constexpr double kCmSaveKind = 4.0;         // SaveLocalFile(4, 1): the stash close's own save (stash_kind 4)
+static constexpr double kCmSaveArg = 1.0;
+static constexpr const char* kCmMaterialTabVar = "stashMaterialTab";      // Controller_obj, [x][y] cells
+static constexpr const char* kCmSocketTabVar = "stashSocketItemSlot";     // Controller_obj, rows of [x][y] cells
+static constexpr const char* kCmCraftGridVar = "craftGrid";               // New_Inventory_Data_obj, the Cube's grid
+static constexpr int kCmMaxMapEntries = 4000;      // entries one character total walks (map 0)
+
+// Game thread only, like the core.
+static PFUNC_YYGMLScript g_CmOrigCount = nullptr;
+static PFUNC_YYGMLScript g_CmOrigAvailability = nullptr;
+static PFUNC_YYGMLScript g_CmOrigRecipeRow = nullptr;
+static PFUNC_YYGMLScript g_CmOrigFind = nullptr;
+static PFUNC_YYGMLScript g_CmOrigDecode = nullptr;
+static PFUNC_YYGMLScript g_CmOrigPress = nullptr;
+static bool g_CmInstallTried = false;
+static bool g_CmInstalled = false;       // all six on both routes
+static long g_CmAvailabilityDepth = 0;   // inside GetCraftItemsAvailable, with the mod on
+static long g_CmRecipeRowDepth = 0;      // inside the recipe row's Create closure, with the mod on
+static long g_CmFindDepth = 0;           // inside CraftFindRecipeItems, with the mod on
+static long g_CmOwnCalls = 0;            // inside one of this mod's own by-name calls
+
+// Entered before the trampoline, left after it - on unwinding too, so a game
+// error inside the call cannot leave a frame counted as still on the stack.
+// Only raised while the mod is on.
+struct CmRouteFrame {
+    long* depth;
+    CmRouteFrame(long& d, bool on) : depth(on ? &d : nullptr) { if (depth) ++*depth; }
+    ~CmRouteFrame() { if (depth && *depth > 0) --*depth; }
+    CmRouteFrame(const CmRouteFrame&) = delete;
+    CmRouteFrame& operator=(const CmRouteFrame&) = delete;
+};
+
+// One by-name call with self = other = Console_Save_obj. The count and decode
+// hooks forward untouched while it runs, so nothing the mod calls itself can
+// be taken for the game's own counting.
+static bool CmCall(const char* name, CInstance* save, const std::vector<RValue>& args, RValue& res)
+{
+    if (!save) return false;
+    CmRouteFrame own(g_CmOwnCalls, true);
+    return ApCallScript(name, save, args, res);
+}
+
+// A whole, finite, non-negative number read as a count; -1 otherwise (an
+// instance reference is not a count).
+static int64_t CmWhole(const RValue& v)
+{
+    double d = -1;
+    if (v.m_Kind == VALUE_REF || !ApNumber(v, d) || d < 0 || d != std::floor(d) || d > 1e15) return -1;
+    return (int64_t)d;
+}
+
+// The first instance of an SDK object - as the handle variable_instance_get
+// takes and as the CInstance* a by-name call takes as self - by
+// asset_get_index and instance_find. HhResolveInstance decides whether the
+// handle is a live instance, whatever kind the runner returns it as.
+static bool CmInstance(HeroSiege::Objects::GameObject obj, RValue& handle, CInstance*& inst)
+{
+    inst = nullptr;
+    try {
+        double idx = -1;
+        const RValue index = g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(HeroSiege::Objects::GetObjectName(obj))) });
+        if (!ApNumber(index, idx) || idx < 0) return false;
+        if (g_Yytk->CallBuiltin("instance_number", { RValue(idx) }).ToDouble() < 1.0) return false;
+        handle = g_Yytk->CallBuiltin("instance_find", { RValue(idx), RValue(0.0) });
+        inst = HhResolveInstance(handle);
+    } catch (...) { inst = nullptr; }
+    return inst != nullptr;
+}
+
+static CInstance* CmSaveInstance()
+{
+    RValue handle;
+    CInstance* inst = nullptr;
+    return CmInstance(HeroSiege::Objects::GameObject::Console_Save_obj, handle, inst) ? inst : nullptr;
+}
+
+// The recipe row a crafting call ran on, by its instance id; -1 when it has
+// none (the core matches -1 to nothing).
+static long long CmSelfId(CInstance* S)
+{
+    if (!S) return -1;
+    try {
+        double id = -1;
+        return ApNumber(g_Yytk->CallBuiltin("variable_instance_get", { S->ToRValue(), RValue("id") }), id) ? (long long)id : -1;
+    } catch (...) { return -1; }
+}
+
+// A member of a plain struct; false when it is not one or has no such member.
+static bool CmMember(const RValue& s, const char* name, RValue& out)
+{
+    if (!ApIsPlainStruct(s)) return false;
+    if (!g_Yytk->CallBuiltin("variable_struct_exists", { s, RValue(name) }).ToBoolean()) return false;
+    out = g_Yytk->CallBuiltin("variable_struct_get", { s, RValue(name) });
+    return true;
+}
+
+// What an item is - its itemType and its definition's base id `b` - and its
+// count, the definition's `o` (RUNTIME_DATA_MODELS § 16, "The item"). False
+// when any of them is missing or not a whole number.
+static bool CmReadItem(const RValue& item, int64_t& cls, int64_t& base, int64_t& count)
+{
+    RValue type, def, b, o;
+    if (!CmMember(item, "itemType", type) || !CmMember(item, "itemDefinitionStruct", def)) return false;
+    if (!CmMember(def, "b", b) || !CmMember(def, "o", o)) return false;
+    cls = CmWhole(type);
+    base = CmWhole(b);
+    count = CmWhole(o);
+    return cls >= 0 && base >= 0 && count >= 0;
+}
+
+static std::string CmMaterialOf(const RValue& item, int64_t& count)
+{
+    int64_t cls = -1, base = -1;
+    count = -1;
+    return CmReadItem(item, cls, base, count) ? ForgePact::CraftMatsMod::Material(cls, base) : std::string();
+}
+
+// A `ref ds_map` - the runtime's own text for it, never its bytes.
+static bool CmIsMap(const RValue& v)
+{
+    if (v.m_Kind != VALUE_REF) return false;
+    try { return v.ToString().rfind("ref ds_map ", 0) == 0; } catch (...) { return false; }
+}
+
+// GetItemMap(<owner>) by name: 9 the stash's map, 0 the character's.
+static bool CmItemMap(CInstance* save, double owner, RValue& map)
+{
+    return CmCall(kCmItemMapName, save, { RValue(owner) }, map) && CmIsMap(map);
+}
+
+// One map entry by its key, read (ds_map_exists, then ds_map_find_value).
+static bool CmMapItem(const RValue& map, const RValue& key, RValue& item)
+{
+    try {
+        if (!g_Yytk->CallBuiltin("ds_map_exists", { map, key }).ToBoolean()) return false;
+        item = g_Yytk->CallBuiltin("ds_map_find_value", { map, key });
+        return ApIsPlainStruct(item);
+    } catch (...) { return false; }
+}
+
+// 1 the map holds the key, 0 it does not, -1 the read failed.
+static int CmMapHas(const RValue& map, const RValue& key)
+{
+    try { return g_Yytk->CallBuiltin("ds_map_exists", { map, key }).ToBoolean() ? 1 : 0; } catch (...) { return -1; }
+}
+
+// An item's count, re-read by its key through the game's own lookup,
+// GetItemFromFingerprint(key, owner); -1 when that gives no item.
+static int64_t CmCountByKey(CInstance* save, const std::string& key, double owner)
+{
+    RValue item, def, o;
+    if (!CmCall(kCmFromFpName, save, { RValue(key), RValue(owner) }, item)) return -1;
+    if (!CmMember(item, "itemDefinitionStruct", def) || !CmMember(def, "o", o)) return -1;
+    return CmWhole(o);
+}
+
+// An instance variable that is an array.
+static bool CmArrayVar(const RValue& holder, const char* name, RValue& out)
+{
+    try {
+        if (!g_Yytk->CallBuiltin("variable_instance_exists", { holder, RValue(name) }).ToBoolean()) return false;
+        out = g_Yytk->CallBuiltin("variable_instance_get", { holder, RValue(name) });
+        return out.m_Kind == VALUE_ARRAY;
+    } catch (...) { return false; }
+}
+
+static int CmLength(const RValue& a)
+{
+    return (int)g_Yytk->CallBuiltin("array_length", { a }).ToDouble();
+}
+
+static RValue CmAt(const RValue& a, int i)
+{
+    return g_Yytk->CallBuiltin("array_get", { a, RValue((double)i) });
+}
+
+// One entry's cell array: the whole Materials tab, or its Socketable row. It
+// is what GridRemoveItem takes, and what the cell re-read walks.
+static bool CmCellArray(const ForgePact::CraftMatsEntry& e, RValue& cells)
+{
+    RValue handle, tab;
+    CInstance* inst = nullptr;
+    if (!CmInstance(HeroSiege::Objects::GameObject::Controller_obj, handle, inst)) return false;
+    if (e.from == ForgePact::CraftMatsSource::StashMaterialTab) return CmArrayVar(handle, kCmMaterialTabVar, cells);
+    if (!CmArrayVar(handle, kCmSocketTabVar, tab) || e.row < 0 || e.row >= CmLength(tab)) return false;
+    cells = CmAt(tab, e.row);
+    return cells.m_Kind == VALUE_ARRAY;
+}
+
+// Whether any cell of a two-level cell array holds `key`: 1 yes, 0 no, -1 a
+// level was not an array. Also the bag's and the Cube's grids.
+static int CmCellsHold(const RValue& cells, const std::string& key)
+{
+    try {
+        if (cells.m_Kind != VALUE_ARRAY) return -1;
+        const int n = CmLength(cells);
+        for (int i = 0; i < n; ++i) {
+            const RValue line = CmAt(cells, i);
+            if (line.m_Kind != VALUE_ARRAY) return -1;
+            const int m = CmLength(line);
+            for (int j = 0; j < m; ++j) {
+                RValue fp;
+                std::string text;
+                if (ApCellFingerprint(CmAt(line, j), fp, text) && text == key) return 1;
+            }
+        }
+        return 0;
+    } catch (...) { return -1; }
+}
+
+// Whether a two-level grid has a cell that holds no item.
+static bool CmHasEmptyCell(const RValue& grid)
+{
+    try {
+        const int n = CmLength(grid);
+        for (int i = 0; i < n; ++i) {
+            const RValue line = CmAt(grid, i);
+            if (line.m_Kind != VALUE_ARRAY) return false;
+            const int m = CmLength(line);
+            for (int j = 0; j < m; ++j) if (!ApIsPlainStruct(CmAt(line, j))) return true;
+        }
+    } catch (...) {}
+    return false;
+}
+
+// One cell array's entries into the walk: each filled cell's fingerprint,
+// once, resolved in the stash map. A cell whose fingerprint the map does not
+// hold is no source. False when a level is not an array.
+static bool CmWalkCells(const RValue& cells, const RValue& map, ForgePact::CraftMatsSource from, int row,
+                        std::vector<std::string>& seen, std::vector<ForgePact::CraftMatsEntry>& out)
+{
+    const int n = CmLength(cells);
+    for (int i = 0; i < n; ++i) {
+        const RValue line = CmAt(cells, i);
+        if (line.m_Kind != VALUE_ARRAY) return false;
+        const int m = CmLength(line);
+        for (int j = 0; j < m; ++j) {
+            RValue fp, item;
+            std::string text;
+            if (!ApCellFingerprint(CmAt(line, j), fp, text)) continue;
+            if (std::find(seen.begin(), seen.end(), text) != seen.end()) continue;
+            seen.push_back(text);
+            if (!CmMapItem(map, fp, item)) continue;
+            ForgePact::CraftMatsEntry e;
+            e.material = CmMaterialOf(item, e.count);
+            if (e.material.empty() || e.count <= 0) continue;
+            e.key = text;
+            e.from = from;
+            e.row = row;
+            out.push_back(e);
+        }
+    }
+    return true;
+}
+
+// One walk of the two special tabs, and of nothing else: Controller_obj's
+// stashMaterialTab and every stashSocketItemSlot row, each filled cell
+// resolved in GetItemMap(9), read by name now. Unreadable (readable=false)
+// when the save instance, the controller, the map or a level of either tab
+// could not be read.
+static ForgePact::CraftMatsWalk CmWalkStash()
+{
+    ForgePact::CraftMatsWalk w;
+    try {
+        RValue controller, map, materials, sockets;
+        CInstance* ctrl = nullptr;
+        CInstance* save = CmSaveInstance();
+        if (!save || !CmInstance(HeroSiege::Objects::GameObject::Controller_obj, controller, ctrl)) return w;
+        if (!CmItemMap(save, kCmStashOwner, map)) return w;
+        if (!CmArrayVar(controller, kCmMaterialTabVar, materials) || !CmArrayVar(controller, kCmSocketTabVar, sockets)) return w;
+        std::vector<std::string> seen;
+        if (!CmWalkCells(materials, map, ForgePact::CraftMatsSource::StashMaterialTab, -1, seen, w.entries)) { w.entries.clear(); return w; }
+        const int rows = CmLength(sockets);
+        for (int k = 0; k < rows; ++k) {
+            const RValue row = CmAt(sockets, k);
+            if (row.m_Kind != VALUE_ARRAY
+                || !CmWalkCells(row, map, ForgePact::CraftMatsSource::StashSocketTab, k, seen, w.entries)) {
+                w.entries.clear();
+                return w;
+            }
+        }
+        w.readable = true;
+    } catch (...) { w.readable = false; w.entries.clear(); }
+    return w;
+}
+
+// The character's total of one material over its own item map (GetItemMap(0):
+// the bag and the Cube's grid alike), for the consume check; -1 when it could
+// not be read. This walks map 0 only - never the stash's.
+static int64_t CmCharacterTotal(CInstance* save, const std::string& material)
+{
+    try {
+        RValue map;
+        if (!CmItemMap(save, kCmCharacterOwner, map)) return -1;
+        const int size = (int)g_Yytk->CallBuiltin("ds_map_size", { map }).ToDouble();
+        if (size < 0 || size > kCmMaxMapEntries) return -1;
+        int64_t total = 0;
+        int walked = 0;
+        RValue key = g_Yytk->CallBuiltin("ds_map_find_first", { map });
+        for (; walked < size && key.m_Kind != VALUE_UNDEFINED; ++walked) {
+            const RValue item = g_Yytk->CallBuiltin("ds_map_find_value", { map, key });
+            key = g_Yytk->CallBuiltin("ds_map_find_next", { map, key });
+            int64_t count = -1;
+            if (CmMaterialOf(item, count) == material) total += count;
+        }
+        return walked == size ? total : -1;
+    } catch (...) { return -1; }
+}
+
+// The stash's count of one material for a count inside the route: a fresh walk
+// at the press, otherwise the walk this game frame already made.
+static int64_t CmStashCount(const std::string& material, bool press)
+{
+    ForgePact::CraftMatsMod& mod = ForgePact::CraftMatsMod::Instance();
+    if (mod.MustWalk(g_RuntimeFrame, press)) mod.KeepWalk(g_RuntimeFrame, CmWalkStash());
+    return mod.KeptWalk().Count(material);
+}
+
+// Each reason the core has not said yet, once per session.
+static void CmSayPending()
+{
+    ForgePact::CraftMatsMod& mod = ForgePact::CraftMatsMod::Instance();
+    for (ForgePact::CraftMatsRefusal r = mod.TakeFirstRefusal(); r != ForgePact::CraftMatsRefusal::None; r = mod.TakeFirstRefusal())
+        Out(mod.RefusalLine(r));
+    if (mod.TakeFirstLoss()) Out(mod.LossLine());
+    if (mod.TakeFirstMismatch()) Out(mod.MismatchLine());
+}
+
+// After CountInventoryItem's trampoline, inside a route frame with the mod on:
+// the bag owner's count of one material gains the stash's count of it. Inside
+// CraftFindRecipeItems the count also goes into the core's needs record. A
+// call that cannot be read keeps the game's own return; inside
+// CraftFindRecipeItems it makes the needs unreadable.
+static void CmCountInRoute(bool inFind, int argc, RValue** A, RValue& r)
+{
+    ForgePact::CraftMatsMod& mod = ForgePact::CraftMatsMod::Instance();
+    double owner = -1;
+    if (argc < 4 || !A || !A[0] || !A[1] || !A[3] || !ApNumber(*A[0], owner)) {
+        if (inFind) mod.OnFindCount(std::string(), -1, false);
+        return;
+    }
+    if (owner != kCmBagOwner) return;
+    const int64_t cls = CmWhole(*A[1]), base = CmWhole(*A[3]), game = CmWhole(r);
+    if (cls < 0 || base < 0 || game < 0) {
+        if (inFind) mod.OnFindCount(std::string(), -1, false);
+        return;
+    }
+    const std::string material = ForgePact::CraftMatsMod::Material(cls, base);
+    const int64_t answer = mod.CountAnswer(true, game, CmStashCount(material, inFind));
+    if (inFind) mod.OnFindCount(material, game, answer != game);
+    if (answer != game) r = RValue((double)answer);
+    CmSayPending();
+}
+
+static RValue& CmHookCount(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    RValue& r = g_CmOrigCount ? g_CmOrigCount(S, O, R, argc, A) : R;
+    if (!ForgePact::CraftMatsMod::Instance().IsEnabled() || g_CmOwnCalls > 0) return r;
+    const bool inFind = g_CmFindDepth > 0;
+    if (!inFind && g_CmAvailabilityDepth == 0 && g_CmRecipeRowDepth == 0) return r;
+    try { CmCountInRoute(inFind, argc, A, r); } catch (...) {}
+    return r;
+}
+
+static RValue& CmHookAvailability(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    CmRouteFrame frame(g_CmAvailabilityDepth, ForgePact::CraftMatsMod::Instance().IsEnabled());
+    return g_CmOrigAvailability ? g_CmOrigAvailability(S, O, R, argc, A) : R;
+}
+
+static RValue& CmHookRecipeRow(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    CmRouteFrame frame(g_CmRecipeRowDepth, ForgePact::CraftMatsMod::Instance().IsEnabled());
+    return g_CmOrigRecipeRow ? g_CmOrigRecipeRow(S, O, R, argc, A) : R;
+}
+
+// At the press: a new needs record for this recipe row (the previous one is
+// discarded), then the game's own search with the route frame raised.
+static RValue& CmHookFind(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    ForgePact::CraftMatsMod& mod = ForgePact::CraftMatsMod::Instance();
+    const bool on = mod.IsEnabled();
+    if (on) mod.BeginFind(CmSelfId(S));
+    CmRouteFrame frame(g_CmFindDepth, on);
+    return g_CmOrigFind ? g_CmOrigFind(S, O, R, argc, A) : R;
+}
+
+// A hot game function: outside CraftFindRecipeItems' frame (and inside the
+// mod's own calls) this only forwards.
+static RValue& CmHookDecode(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    RValue& r = g_CmOrigDecode ? g_CmOrigDecode(S, O, R, argc, A) : R;
+    if (g_CmFindDepth > 0 && g_CmOwnCalls == 0 && ForgePact::CraftMatsMod::Instance().IsEnabled()) {
+        try { ForgePact::CraftMatsMod::Instance().OnDecode(CmWhole(r)); }
+        catch (...) { ForgePact::CraftMatsMod::Instance().OnDecode(-1); }
+    }
+    return r;
+}
+
+// One entry's take, as the calls left it: the report the core classifies,
+// and where the units went.
+struct CmTakeResult {
+    ForgePact::CraftMatsMoveReport report;
+    ForgePact::CraftMatsDestination to = ForgePact::CraftMatsDestination::BagStack;
+};
+
+// No call changed anything: both sides are as they were.
+static void CmNothingDone(ForgePact::CraftMatsMoveReport& r, int64_t sourceCount)
+{
+    r.sourceBefore = r.sourceAfter = sourceCount;
+    r.sourceEntryGone = r.sourceCellGone = false;
+    r.destBefore = r.destAfter = 0;
+}
+
+// The inline edit Live 1k measured on a stash entry and on a bag stack: the
+// definition's `o` set, then ItemCheckHash(item) by name.
+static bool CmSetCount(CInstance* save, const RValue& item, int64_t count)
+{
+    RValue def, res;
+    if (!CmMember(item, "itemDefinitionStruct", def) || !ApIsPlainStruct(def)) return false;
+    try { g_Yytk->CallBuiltin("variable_struct_set", { def, RValue("o"), RValue((double)count) }); }
+    catch (...) { return false; }
+    CmCall(kCmCheckHashName, save, { item }, res);
+    return true;
+}
+
+// The bag's own stack of a material in the grid the game prefers for it: its
+// cells' fingerprints resolved in map 0 (Live 1k's bag-stack read).
+static bool CmBagStack(const RValue& grid, const RValue& map0, const std::string& material, std::string& key, RValue& item)
+{
+    try {
+        const int n = CmLength(grid);
+        for (int i = 0; i < n; ++i) {
+            const RValue line = CmAt(grid, i);
+            if (line.m_Kind != VALUE_ARRAY) return false;
+            const int m = CmLength(line);
+            for (int j = 0; j < m; ++j) {
+                RValue fp, candidate;
+                std::string text;
+                if (!ApCellFingerprint(CmAt(line, j), fp, text) || !CmMapItem(map0, fp, candidate)) continue;
+                int64_t count = -1;
+                if (CmMaterialOf(candidate, count) != material) continue;
+                key = text;
+                item = candidate;
+                return true;
+            }
+        }
+    } catch (...) {}
+    return false;
+}
+
+// A new unit of `amount` made by the game's own loader route (Live 1k's json
+// branch): CreateItemSaveStruct(<stash item>), `o` set on that struct,
+// LootTimestamp(), InitItemFromJson(struct, "0-0-<stamp>-<class>"),
+// AddItemToMap(map 0, key, item), then GridAddItem(grid, item, 0, undefined)
+// into the bag's preferred grid - or, when it has no empty cell or answers
+// success=false, into the Crafting Cube's own grid. A unit no grid took is
+// taken out of map 0 again (RemoveItemFromMap), so no map entry is left
+// without a cell.
+struct CmNewUnit {
+    bool        mapped = false;   // map 0 holds the key
+    bool        placed = false;   // a grid holds it
+    std::string key;
+    RValue      grid;
+    ForgePact::CraftMatsDestination to = ForgePact::CraftMatsDestination::BagNew;
+};
+
+static CmNewUnit CmMakeUnit(CInstance* save, const RValue& source, int64_t cls, int64_t amount, const RValue& bagGrid,
+                            bool bagReadable, const RValue& map0)
+{
+    CmNewUnit u;
+    RValue saved, stamp, item, added, count;
+    if (!CmCall(kCmSaveStructName, save, { source }, saved) || !CmMember(saved, "o", count)) return u;
+    try { g_Yytk->CallBuiltin("variable_struct_set", { saved, RValue("o"), RValue((double)amount) }); }
+    catch (...) { return u; }
+    if (!CmCall(kCmTimestampName, save, {}, stamp) || CmWhole(stamp) < 0) return u;
+    const std::string key = "0-0-" + std::to_string((long long)CmWhole(stamp)) + "-" + std::to_string(cls);
+    if (CmMapHas(map0, RValue(key)) != 0) return u;   // taken already, or unreadable: nothing made
+    if (!CmCall(kCmFromJsonName, save, { saved, RValue(key) }, item) || !ApIsPlainStruct(item)) return u;
+    CmCall(kCmAddToMapName, save, { map0, RValue(key), item }, added);
+    u.key = key;
+    u.mapped = CmMapHas(map0, RValue(key)) == 1;
+    if (!u.mapped) return u;
+    RValue res;
+    if (bagReadable && CmHasEmptyCell(bagGrid)
+        && CmCall(kCmPlaceName, save, { bagGrid, item, RValue(0.0), RValue() }, res) && ApAddSucceeded(res)) {
+        u.placed = true;
+        u.grid = bagGrid;
+        u.to = ForgePact::CraftMatsDestination::BagNew;
+        return u;
+    }
+    RValue data, cube;
+    CInstance* inst = nullptr;
+    if (CmInstance(HeroSiege::Objects::GameObject::New_Inventory_Data_obj, data, inst) && CmArrayVar(data, kCmCraftGridVar, cube)
+        && CmCall(kCmPlaceName, save, { cube, item, RValue(0.0), RValue() }, res) && ApAddSucceeded(res)) {
+        u.placed = true;
+        u.grid = cube;
+        u.to = ForgePact::CraftMatsDestination::Cube;
+        return u;
+    }
+    // No grid took it: out of map 0 again.
+    CmCall(kCmRemoveFromMapName, save, { map0, RValue(key) }, res);
+    u.mapped = CmMapHas(map0, RValue(key)) != 0;
+    return u;
+}
+
+// One take of `t.amount` from one stash entry, destination first and source
+// second (`### The take, per case`): the bag's stack of the material (inline,
+// o += n), else a new unit (the json route) in the bag or the Cube; then the
+// stash entry (inline, o -= n) or, for a whole entry, the removal pair -
+// RemoveItemFromMap(map 9, key), then GridRemoveItem(<its cell array>, key).
+// A source step that did not land undoes the destination. Both sides are then
+// re-read on their keys and cells, and the core classifies what they say.
+static CmTakeResult CmTake(CInstance* save, const ForgePact::CraftMatsEntryTake& t)
+{
+    CmTakeResult out;
+    ForgePact::CraftMatsMoveReport& r = out.report;
+    r.asked = t.amount;
+    const std::string& key = t.entry.key;
+    RValue map9, map0, cells, source;
+    int64_t cls = -1, base = -1, have = -1;
+    if (!CmItemMap(save, kCmStashOwner, map9) || !CmItemMap(save, kCmCharacterOwner, map0) || !CmCellArray(t.entry, cells)
+        || !CmMapItem(map9, RValue(key), source) || !CmReadItem(source, cls, base, have)
+        || ForgePact::CraftMatsMod::Material(cls, base) != t.entry.material || have < t.amount || CmCellsHold(cells, key) != 1) {
+        CmNothingDone(r, t.entry.count);
+        return out;
+    }
+    r.sourceBefore = have;
+
+    // The destination.
+    RValue pref, bagGrid, stackItem;
+    std::string stackKey;
+    const bool bagReadable = CmCall(kCmPreferredName, save, { RValue(kCmPreferredOwner), source }, pref) && ApPreferredGrid(pref, bagGrid);
+    const bool stacked = bagReadable && CmBagStack(bagGrid, map0, t.entry.material, stackKey, stackItem);
+    int64_t stackBefore = -1;
+    CmNewUnit unit;
+    if (stacked) {
+        int64_t sc = -1, sb = -1;
+        if (!CmReadItem(stackItem, sc, sb, stackBefore) || !CmSetCount(save, stackItem, stackBefore + t.amount)) {
+            CmNothingDone(r, have);
+            return out;
+        }
+        out.to = ForgePact::CraftMatsDestination::BagStack;
+        r.destBefore = stackBefore;
+    } else {
+        unit = CmMakeUnit(save, source, cls, t.amount, bagGrid, bagReadable, map0);
+        r.destBefore = 0;
+        if (!unit.placed) {
+            // Nothing is left behind unless the unit's map entry could not be
+            // taken out again - then the destination reads as risen, a loss.
+            r.sourceAfter = have;
+            r.destAfter = unit.mapped ? t.amount : 0;
+            return out;
+        }
+        out.to = unit.to;
+    }
+    auto destNow = [&]() -> int64_t {
+        if (stacked) return CmCountByKey(save, stackKey, kCmCharacterOwner);
+        if (CmMapHas(map0, RValue(unit.key)) != 1) return 0;
+        const int held = CmCellsHold(unit.grid, unit.key);
+        return held == 1 ? CmCountByKey(save, unit.key, kCmCharacterOwner) : held == 0 ? 0 : -1;
+    };
+
+    // The source, only once the destination reads as risen by the amount.
+    bool sourceDone = false;
+    const bool destRose = destNow() == r.destBefore + t.amount;
+    if (destRose) {
+        RValue res;
+        if (t.whole) {
+            CmCall(kCmRemoveFromMapName, save, { map9, RValue(key) }, res);
+            if (CmMapHas(map9, RValue(key)) == 0) {
+                RValue cellsNow, removed;
+                if (CmCellArray(t.entry, cellsNow)) CmCall(kCmGridRemoveName, save, { cellsNow, RValue(key) }, removed);
+            }
+        } else {
+            CmSetCount(save, source, have - t.amount);
+        }
+    }
+    auto sourceRead = [&]() {
+        RValue cellsNow;
+        const int inMap = CmMapHas(map9, RValue(key));
+        const int inCell = CmCellArray(t.entry, cellsNow) ? CmCellsHold(cellsNow, key) : -1;
+        r.sourceEntryGone = inMap == 0;
+        r.sourceCellGone = inCell == 0;
+        r.sourceAfter = inMap == 1 ? CmCountByKey(save, key, kCmStashOwner) : inMap == 0 ? 0 : -1;
+        if (inCell < 0) r.sourceAfter = -1;
+    };
+    sourceRead();
+    sourceDone = t.whole ? (r.sourceEntryGone && r.sourceCellGone)
+                         : (!r.sourceEntryGone && !r.sourceCellGone && r.sourceAfter == have - t.amount);
+
+    // A source step that did not land undoes the destination. A whole entry
+    // taken out of the map whose cell stayed is put back in the map first, so
+    // no cell is left without its entry (the save crash, § 16); a partial
+    // entry gets its count back.
+    if (!sourceDone) {
+        RValue res;
+        if (t.whole && r.sourceEntryGone && !r.sourceCellGone) CmCall(kCmAddToMapName, save, { map9, RValue(key), source }, res);
+        if (!t.whole && destRose) CmSetCount(save, source, have);
+        if (stacked) {
+            CmSetCount(save, stackItem, stackBefore);
+        } else {
+            CmCall(kCmGridRemoveName, save, { unit.grid, RValue(unit.key) }, res);
+            if (CmCellsHold(unit.grid, unit.key) == 0) CmCall(kCmRemoveFromMapName, save, { map0, RValue(unit.key) }, res);
+        }
+        sourceRead();
+    }
+    r.destAfter = destNow();
+    return out;
+}
+
+// What one press did, from the gate to the save.
+struct CmPressState {
+    ForgePact::CraftMatsPressStep step = ForgePact::CraftMatsPressStep::Vanilla;
+    CInstance* save = nullptr;
+    struct Consume { std::string material; int64_t before = -1; int64_t moved = 0; int64_t need = 0; };
+    std::vector<Consume> consume;
+    std::vector<ForgePact::CraftMatsMoved> moved;
+    int64_t movedUnits = 0;
+};
+
+// Before the game's own press: the gate, the plan from a fresh walk, and each
+// take in turn, stopping at the first that is not confirmed. True: let the
+// game press. False: refuse - the hook returns before the game's call.
+static bool CmBeforePress(CInstance* S, CmPressState& press)
+{
+    ForgePact::CraftMatsMod& mod = ForgePact::CraftMatsMod::Instance();
+    press.step = mod.PressStep(CmSelfId(S));
+    if (press.step == ForgePact::CraftMatsPressStep::Vanilla) return true;
+    if (press.step == ForgePact::CraftMatsPressStep::Refuse) return false;
+    const ForgePact::CraftMatsWalk walk = CmWalkStash();
+    mod.KeepWalk(g_RuntimeFrame, walk);
+    ForgePact::CraftMatsNeeds needs = mod.Needs();
+    for (ForgePact::CraftMatsNeed& row : needs.rows) row.stash = walk.Count(row.material);
+    const ForgePact::CraftMatsPlan plan = mod.Plan(needs.rows);
+    std::vector<ForgePact::CraftMatsOutcome> outcomes;
+    press.save = CmSaveInstance();
+    for (const ForgePact::CraftMatsTake& take : plan.takes) {
+        std::vector<ForgePact::CraftMatsEntryTake> split;
+        if (!press.save || !ForgePact::CraftMatsMod::Split(take.material, take.amount, walk, split)) {
+            outcomes.push_back(ForgePact::CraftMatsOutcome::NotTaken);
+            break;
+        }
+        CmPressState::Consume c;
+        c.material = take.material;
+        for (const ForgePact::CraftMatsNeed& row : needs.rows) if (row.material == take.material) c.need += row.need;
+        c.before = CmCharacterTotal(press.save, take.material);
+        bool stop = false;
+        for (const ForgePact::CraftMatsEntryTake& t : split) {
+            const CmTakeResult res = CmTake(press.save, t);
+            const ForgePact::CraftMatsOutcome o = mod.OnMoveReport(res.report);
+            outcomes.push_back(o);
+            if (o != ForgePact::CraftMatsOutcome::Taken) { stop = true; break; }
+            c.moved += t.amount;
+            press.movedUnits += t.amount;
+            ForgePact::CraftMatsMoved m;
+            m.material = take.material;
+            m.from = t.entry.from;
+            m.to = res.to;
+            m.units = t.amount;
+            press.moved.push_back(m);
+        }
+        press.consume.push_back(c);
+        if (stop) break;
+    }
+    return mod.MayCraft(plan, outcomes);
+}
+
+// The stash save through the game's own route: SaveLocalFile(4, 1), self
+// Console_Save_obj - the call the stash close makes (Live 1j).
+static ForgePact::CraftMatsSave CmSaveStash(CInstance* save)
+{
+    RValue res;
+    return CmCall(kCmSaveName, save ? save : CmSaveInstance(), { RValue(kCmSaveKind), RValue(kCmSaveArg) }, res)
+        ? ForgePact::CraftMatsSave::Yes : ForgePact::CraftMatsSave::Failed;
+}
+
+// After a confirmed move, whether the game then pressed or the press was
+// refused: the stash as it now is in memory is saved, then the one line.
+static void CmFinishPress(CmPressState& press)
+{
+    ForgePact::CraftMatsSave saved = ForgePact::CraftMatsSave::No;
+    if (ForgePact::CraftMatsMod::SaveDue(press.movedUnits)) saved = CmSaveStash(press.save);
+    if (!press.moved.empty()) Out(ForgePact::CraftMatsMod::PressLine(press.moved, saved));
+    CmSayPending();
+}
+
+// DoCraftResult. Off: the game's own press, untouched. On: everything the
+// press needs happens before the game's call, and every refusal returns
+// before it; the consume check follows it.
+static RValue& CmHookPress(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    ForgePact::CraftMatsMod& mod = ForgePact::CraftMatsMod::Instance();
+    if (!mod.IsEnabled() || !g_CmOrigPress) return g_CmOrigPress ? g_CmOrigPress(S, O, R, argc, A) : R;
+    CmPressState press;
+    bool craft = false;
+    try { craft = CmBeforePress(S, press); }
+    catch (...) {
+        craft = false;
+        mod.TurnOffForSession();
+        Out("craftmats: off for this session - an error interrupted the press; the craft was refused");
+    }
+    if (!craft) {
+        try { CmFinishPress(press); } catch (...) {}
+        return R;
+    }
+    RValue& r = g_CmOrigPress(S, O, R, argc, A);
+    try {
+        for (const CmPressState::Consume& c : press.consume)
+            if (c.moved > 0) mod.OnConsume(c.material, c.before, c.moved, c.need, CmCharacterTotal(press.save, c.material));
+        CmFinishPress(press);
+    } catch (...) {}
+    return r;
+}
+
+// The six hooks, each by its SDK constant.
+struct CmHook {
+    const char*        name;
+    const char*        id;
+    PVOID              dest;
+    PFUNC_YYGMLScript* orig;
+    std::string_view   runtime;
+};
+static const CmHook g_CmHooks[] = {
+    { kCmCountName, "fp_cm_count", (PVOID)CmHookCount, &g_CmOrigCount, HeroSiege::Scripts::gml_Script_CountInventoryItem },
+    { kCmAvailabilityName, "fp_cm_availability", (PVOID)CmHookAvailability, &g_CmOrigAvailability, HeroSiege::Scripts::gml_Script_GetCraftItemsAvailable },
+    { kCmRecipeRowName, "fp_cm_reciperow", (PVOID)CmHookRecipeRow, &g_CmOrigRecipeRow, HeroSiege::Scripts::gml_Script_anon_840_gml_Object_UI_Craft_Recipe_List_Item_obj_Create_0 },
+    { kCmFindName, "fp_cm_find", (PVOID)CmHookFind, &g_CmOrigFind, HeroSiege::Scripts::gml_Script_CraftFindRecipeItems },
+    { kCmDecodeName, "fp_cm_decode", (PVOID)CmHookDecode, &g_CmOrigDecode, HeroSiege::Scripts::gml_Script_PilipaliDecrypt },
+    { kCmPressName, "fp_cm_press", (PVOID)CmHookPress, &g_CmOrigPress, HeroSiege::Scripts::gml_Script_DoCraftResult },
+};
+
+#ifndef FORGEPACT_RELEASE
+// The research instrument's own detours (defined with it, below). A second
+// detour on a function it already holds would fail and read as a false
+// TABLE-ONLY, so craftmats refuses while it holds any of the six, and it
+// reports the rows craftmats holds as held.
+static bool CpHoldsRow(std::string_view runtimeName);
+
+static bool CmHolds(std::string_view runtimeName)
+{
+    for (const CmHook& h : g_CmHooks) if (*h.orig && runtimeName == h.runtime) return true;
+    return false;
+}
+
+static std::string CmHeldByResearch()
+{
+    std::string held;
+    for (const CmHook& h : g_CmHooks) if (CpHoldsRow(h.runtime)) held += (held.empty() ? "" : ", ") + std::string(h.name);
+    return held;
+}
+#endif
+
+// The one install attempt, from FrameCallback once setup has run and the mod
+// is on. Both routes on all six, or the mod goes off for the session: a table
+// swap alone never sees the compiled calls the crafting route makes.
+static void CraftMatsInstall()
+{
+    g_CmInstallTried = true;
+    ForgePact::CraftMatsMod& mod = ForgePact::CraftMatsMod::Instance();
+#ifndef FORGEPACT_RELEASE
+    const std::string held = CmHeldByResearch();
+    if (!held.empty()) {
+        mod.TurnOffForSession();
+        Out("craftmats: off for this session - the research instrument already detours " + held
+            + "; nothing installed (relaunch, and turn craftmats on before hooking it)");
+        return;
+    }
+#endif
+    std::string line = "craftmats: hooks";
+    bool all = true;
+    for (const CmHook& h : g_CmHooks) {
+        bool native = false;
+        const bool ok = HookOneScript(h.name, h.id, h.dest, h.orig, &native);
+        line += std::string(" ") + h.name + "=" + (!ok ? "NOT-INSTALLED" : native ? "both-routes" : "TABLE-ONLY");
+        all = all && ok && native;
+    }
+    g_CmInstalled = all;
+    if (all) { Out(line + " -> ON"); return; }
+    mod.TurnOffForSession();
+    Out(line + " -> off for this session: a hook the game's own crafting calls would bypass cannot count the stash or"
+        " move it, so crafting stays the game's own");
+}
+
 // ---- the character-select research instrument ----------------------------
 // Everything from here to the matching #endif is research-build only, this
 // comment included: the verb's own name must vanish from a player build, and
@@ -24028,6 +24867,14 @@ static void CpInstall(const std::vector<std::string>& filters)
             ++held;
             continue;
         }
+        // The player build's craftmats owns its six functions the same way once
+        // it is on: a second detour would fail and read as a false TABLE-ONLY.
+        if (CmHolds(t.runtimeName)) {
+            Out(std::string("craftprobe hook: ") + t.label + " held by craftmats (its install owns this function; neither"
+                " detoured nor failed here)");
+            ++held;
+            continue;
+        }
         std::string why;
         PVOID src = CpResolve(t, why);
         if (!src) { Out(std::string("craftprobe hook: ") + t.label + " " + why); ++failed; continue; }
@@ -24047,7 +24894,7 @@ static void CpInstall(const std::vector<std::string>& filters)
         ++ok;
     }
     Out("craftprobe hook: " + std::to_string(ok) + " detoured, " + std::to_string(failed) + " failed"
-        + (held ? ", " + std::to_string(held) + " held by mapkeep" : std::string())
+        + (held ? ", " + std::to_string(held) + " held by mapkeep or craftmats" : std::string())
         + (skipped ? ", " + std::to_string(skipped) + " not selected" : std::string()) + ".");
     Out("  Next: `craftprobe arm budget=N`, then `craftprobe show` - CheckPlayerInteraction must already be climbing, or nothing here counts.");
 }
@@ -26339,22 +27186,36 @@ static void CpCommand(const std::string& rest)
 }
 #endif // FORGEPACT_RELEASE (craftprobe)
 
-// Crafting from the stash's material tab (issue #14). `craftmats 1|0` sets the
-// core's switch (ForgePact::CraftMatsMod, game-independent); `stat` is research
-// build only. Phase 0: the game's crafting routines are not measured yet, so
-// nothing is wired to them - no hook, no call, nothing on the frame path - and
-// the reply says so rather than reporting the mod as working.
+// Crafting from the stash's special tabs (issue #14). `craftmats 1|0` - the
+// panel's "Craft from the stash" switch, a player command - sets the core's
+// switch (ForgePact::CraftMatsMod); the six hooks go in on the next frame
+// after setup with it on (CraftMatsInstall, from FrameCallback), never here.
+// `stat` is research build only (the owner's rule: no debug tooling in a
+// player build); the per-press line names the work done instead.
 static void CraftMatsCommand(const std::string& rest)
 {
     ForgePact::CraftMatsMod& mod = ForgePact::CraftMatsMod::Instance();
     const std::string v = Lower(TrimCopy(rest));
 #ifndef FORGEPACT_RELEASE
-    if (v == "stat") { Out(mod.StatLine()); return; }
+    if (v == "stat") { Out(mod.StatLine() + " hooks=" + (g_CmInstalled ? "both-routes" : g_CmInstallTried ? "off" : "not-yet")); return; }
 #endif
     if (v == "1" || v == "on") {
-        if (!mod.SetEnabled(true)) { Out("craftmats: stays off for this session - " + mod.StatLine()); return; }
-        Out("craftmats: switch on, but nothing is wired to crafting yet (issue #14: the game's crafting is still being"
-            " measured) - crafting is unchanged");
+#ifndef FORGEPACT_RELEASE
+        const std::string held = CmHeldByResearch();
+        if (!held.empty()) {
+            Out("craftmats: refused - the research instrument already detours " + held
+                + " this session, so a second detour would read as a false TABLE-ONLY; relaunch and turn craftmats on"
+                " before hooking it. Nothing changed");
+            return;
+        }
+#endif
+        if (!mod.SetEnabled(true)) {
+            Out("craftmats: stays off for this session - an earlier craftmats line says why; crafting is unchanged until"
+                " the game is restarted");
+            return;
+        }
+        Out(g_CmInstalled ? "craftmats: on - a Crafting Cube recipe also counts the stash's Materials and Socketable tabs"
+                          : "craftmats: on - its hooks install once the game has settled");
         return;
     }
     if (v == "0" || v == "off") { mod.SetEnabled(false); Out("craftmats: off - crafting is unchanged"); return; }
@@ -34104,7 +34965,8 @@ static void RunCommand(const std::string& line)
         "stat", "statadd", "raredrop", "droprate", "dungeonkey",
         "headhunter", "hhdur", "hhmap", "hhdefault", "hhlabel", "tyrant", "beacon", "beaconrange", "beaconmode", "beaconwake", "beaconspawn", "beaconfarstep", "tyrantchance", "tyrantaffix", "hhlabelfont", "hhlabeloffset", "hhlabelmax",
         "enemyspeed", "rarity", "sigdrop", "angelicdrop", "relicfilter", "orbpickup", "satmods", "petquest",
-        "autoprospect", "toggleborder", "toggleguard", "skilltimer", "menulayout", "restartanytime", "miningore", "minerhelm", "packmarks"
+        "autoprospect", "toggleborder", "toggleguard", "skilltimer", "menulayout", "restartanytime", "miningore", "minerhelm", "packmarks",
+        "craftmats"
     };
     if (kPlayerCommands.find(lc) == kPlayerCommands.end()) {
         Out("command unavailable in player build: " + cmd);
@@ -35453,6 +36315,12 @@ void FrameCallback(FWFrame& FrameContext)
         if (!g_AutoProspectInstallTried) AutoProspectInstall();
         if (g_Orig_AutoProspectInsert && ForgePact::AutoProspectMod::Instance().IsEnabled()) AutoProspectTick();
     }
+
+    // Crafting from the stash, toggled by `craftmats 1`: its six hooks go in
+    // once, here, after setup (the auto-prospect pattern). Nothing else of it
+    // runs on the frame path - its work happens inside the game's own crafting
+    // calls, and only while the switch is on.
+    if (ForgePact::CraftMatsMod::Instance().IsEnabled() && g_Setup && !g_CmInstallTried) CraftMatsInstall();
 
 #ifndef FORGEPACT_RELEASE
     // Gelistirici kisayollari.  Yayin derlemesinde YOK: F6 oyuncunun

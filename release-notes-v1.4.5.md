@@ -173,6 +173,21 @@ and the `raredrop angelic` command works again when a drop multiplier is set.
   navigation does not reach the pause menu's buttons, and a controller has
   not been tried. It is **off by default**, and like every ForgePact mod it
   is for offline play.
+- **Craft from the stash.** The Crafting Cube only counts what is in your
+  bag, so a recipe stays greyed out while the materials or socketables it
+  needs sit in your shared stash, and crafting meant opening the stash,
+  moving them over and coming back. With the new **Craft from the stash**
+  switch in Quality of Life, a recipe also counts what the stash's Materials
+  and Socketable tabs hold, and the game greys it out exactly as before, only
+  on the bag and those two tabs together. When you craft, only the amount
+  your bag is short of leaves the stash: onto your bag's stack of it, into a
+  new stack in the bag, or into the Cube's own grid when the bag has no room,
+  and the game uses it up as it would from the bag. The stash is saved right
+  after the craft. The other stash tabs, the guild stash and the Unique tab
+  are never touched. If a move cannot be confirmed, the craft is refused
+  rather than risk an item, and if a craft does not use up exactly what it
+  needed, the mod turns itself off until you restart the game. It is **off
+  by default**, and like every ForgePact mod it is for offline play.
 - **Timed skill countdown.** A new **Timed skill countdown** dropdown in Mods
   (off by default) draws how much of a timed cast is left over that skill's
   slot on the skill bar, and it disappears the moment the cast ends. A small

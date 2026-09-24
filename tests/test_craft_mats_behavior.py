@@ -1,12 +1,14 @@
 """Run the real crafting-materials core against its baseline and target.
 
 Companion to craft_mats_harness.cpp. ForgePact issue #14 asks that crafting at
-the game's Crafting Cube can use materials held in the shared stash's
-purchasable material tab. How the game counts and consumes a recipe's
-materials is not measured yet (docs/crafting-materials-research.md, Phase 1
-pending), so what is pinned here is the arithmetic every hypothesis shares,
-which lives in plugin/include/ForgePact/CraftMatsMod.hpp - a header that is
-game-independent by contract, spliced in whole with no runtime stub.
+the game's Crafting Cube can use materials held in the shared stash's special
+tabs (Materials and Socketable). Every decision the player build's adapter acts
+on lives in plugin/include/ForgePact/CraftMatsMod.hpp - a header that is
+game-independent by contract, spliced in whole with no runtime stub. Phase 0
+pinned the arithmetic every hypothesis shared; the player build (the Phase C
+build) adds the count, the per-frame walk, the needs pairing, the press gate,
+the split across entries, the move outcome, the consume check and the save,
+each marked below.
 
 Owner's decisions (2026-09-22): count and consume; bag first, then the stash
 tab, which supplies only the shortfall.
@@ -168,6 +170,58 @@ class CraftMatsBehaviorTests(unittest.TestCase):
 
     def test_kept_map_target_clear_is_not_current(self):
         self.assertScenario("target/kept_map_clear_is_not_current")
+
+    # ---- the player build: the count ------------------------------------------
+    #
+    # CountInventoryItem's answer: the game's own number unless the mod is on
+    # and the call is inside one of the crafting route's frames, where the two
+    # special tabs' stash count is added; an unreadable stash leaves the game's
+    # number and is named once. Display frames reuse one walk per game frame;
+    # the press always walks fresh.
+
+    def test_baseline_count_off_or_outside_the_route_is_the_games_own(self):
+        self.assertScenario("baseline/count_off_or_outside_the_route_is_the_games_own")
+
+    def test_target_count_on_in_route_adds_the_special_tabs_stash(self):
+        self.assertScenario("target/count_on_in_route_adds_the_special_tabs_stash")
+
+    def test_target_count_unreadable_stash_leaves_the_games_count_and_is_named_once(self):
+        self.assertScenario("target/count_unreadable_stash_leaves_the_games_count_and_is_named_once")
+
+    def test_target_display_count_reuses_one_walk_per_frame_and_the_press_walks_fresh(self):
+        self.assertScenario("target/display_count_reuses_one_walk_per_frame_and_the_press_walks_fresh")
+
+    # ---- the player build: the needs --------------------------------------------
+    #
+    # Inside CraftFindRecipeItems each count takes the amount of the latest
+    # decode before it, and of a run of counts after one decode the last is the
+    # one the game used (a static reading, observed only for a one-input
+    # recipe). A count with no decode before it makes the needs unreadable.
+
+    def test_target_needs_pair_each_count_with_the_decode_before_it(self):
+        self.assertScenario("target/needs_pair_each_count_with_the_decode_before_it")
+
+    def test_target_needs_with_no_decode_are_unreadable(self):
+        self.assertScenario("target/needs_with_no_decode_are_unreadable")
+
+    # ---- the player build: the press --------------------------------------------
+
+    def test_target_take_splits_across_entries_whole_then_partial(self):
+        self.assertScenario("target/take_splits_across_entries_whole_then_partial")
+
+    def test_target_move_confirmed_only_when_source_and_destination_moved_by_the_amount(self):
+        self.assertScenario("target/move_confirmed_only_when_source_and_destination_moved_by_the_amount")
+
+    def test_target_press_crafts_only_when_every_take_is_confirmed(self):
+        self.assertScenario("target/press_crafts_only_when_every_take_is_confirmed")
+        self.assertScenario("target/press_gate_is_vanilla_without_a_stash_count_and_refuses_what_it_cannot_pair")
+        self.assertScenario("baseline/press_off_is_vanilla")
+
+    def test_target_consume_mismatch_turns_the_mod_off_for_the_session(self):
+        self.assertScenario("target/consume_mismatch_turns_the_mod_off_for_the_session")
+
+    def test_target_save_requested_only_after_a_confirmed_move(self):
+        self.assertScenario("target/save_requested_only_after_a_confirmed_move")
 
 
 if __name__ == "__main__":

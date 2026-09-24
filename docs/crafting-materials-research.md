@@ -12,6 +12,7 @@ phase1h-status: complete
 phase1i-status: complete
 phase1j-status: complete
 phase1k-status: complete
+phaseC-status: pending
 
 **Status: Phase 0 done (static search, instrument, decision core); Phase 1 (the
 first live session, 2026-09-22) done; Phase 1b (a widened instrument and a
@@ -50,7 +51,11 @@ shape tried, proved the inline stacked take and the json no-stack creation
 with its placement into the bag or the Cube's `craftGrid`, and left the
 game's own hash acceptance of an edited or created item on a drag, a merge,
 a save and a reload not observed (`### Phase 1k rows`, `### Phase 1k
-instrument`, `### Live procedure 1k`, `### Phase 1k results`). Phase 1
+instrument`, `### Live procedure 1k`, `### Phase 1k results`). The owner
+confirmed Phase 1k's three route tokens and chose to build on the inline
+edit, and the player build is written (`## Ship design`: ForgePact 1.4.5,
+`craftmats`, off by default); Phase C, its one live verification session, is
+pending (`## Phase C live procedure`, `## Phase C results`). Phase 1
 measured the vanilla baseline, the cube's craft route and a vanilla duplication,
 but its instrument reached neither the stash's special-tab container nor the
 route a hand move between a special tab and the bag takes (`## Results`).
@@ -4001,7 +4006,7 @@ H-A and asking that Phase 1e, the consume-research round, come before any
 player build. During Live 1f the owner also set the design an H-A build is to
 follow, below.
 
-**After Phase 1k (2026-09-24): the record proposes three route tokens; H-A
+**After Phase 1k (2026-09-24): three route tokens, confirmed by the owner; H-A
 stays the decision.** Live 1k measured the by-name partial take left open by
 the round before it (RD `### Phase 1k results`):
 
@@ -4026,10 +4031,12 @@ the edited K_B stack and again during the Cube merge, `ItemCheckHash` and
 `ReportClient` both logged zero calls, while the edited and created items
 survived the drag, the merge, the save and a reload (`### Phase 1k results`,
 Question 3).
-These three tokens are proposed, not set: the owner confirms them (the
-workorder's `## Needs human judgement` 1), and whether to build on the
-inline route while that hash acceptance is unobserved is a separate
-question for the owner (the workorder's `## Needs human judgement` 2).
+The owner confirmed the three tokens on 2026-09-24 ("Confirm all three"),
+so `partial-stacked: inline`, `partial-nostack: json` and `partial-cube:
+proven` are set, and chose to build on the inline route while that hash
+acceptance is unobserved ("Build on it"): Phase C's `no-flag` and
+`reload-after` checks watch for a flagged item on the player build
+(`## Phase C live procedure`). The player build is `## Ship design`.
 
 **After Phase 1j (2026-09-24): the record proposes five route tokens; H-A
 stays the decision.** Live 1j measured a by-name save route (`SaveLocalFile`,
@@ -4615,3 +4622,187 @@ the research build; (3) the whole map read past the reader's 1000-entry cap, to
 show each stack is one entry. If (1) finds no take with a success answer, what
 remains is a count with no take, which the duplication constraint rules out on
 its own, and whether anything short of H-A is worth having is the owner's call.
+
+## Ship design
+
+The player build of H-A: ForgePact 1.4.5, `craftmats` (panel: Quality of
+Life, **Craft from the stash**, `mod_craft_mats`, off by default). It rests on
+the route tokens in force - `save-route: proven`, `inject: proven` and
+`cube-destination: proven` (Phase 1j), and `partial-stacked: inline`,
+`partial-nostack: json` and `partial-cube: proven` (Phase 1k, confirmed by the
+owner, `## Decision gate`) - and on the owner's design: count the two special
+tabs in the game's own availability check, move only the shortfall at the
+press, save the stash by the game's own route right after, and never widen
+the vanilla duplication (`### Constraints from Phase 1`).
+
+- **Core:** `plugin/include/ForgePact/CraftMatsMod.hpp`, game-independent (it
+  names no runtime interface), pinned by `tests/test_craft_mats_behavior.py`
+  + `tests/craft_mats_harness.cpp` (baseline and target scenarios; the
+  targets' first failing lines are recorded in the harness comment) and
+  `tests/test_craft_mats_contract.py`. Its source enum is the two special
+  tabs and nothing else: `StashMaterialTab = 1`, `StashSocketTab = 2`.
+- **Hooks:** six, each through `HookOneScript` by its `HeroSiege::Scripts`
+  constant (`SdkShortScriptName`), installed once from `FrameCallback` on the
+  first frame after setup with the switch on (the auto-prospect pattern):
+  `CountInventoryItem`, `GetCraftItemsAvailable`, the recipe row's Create
+  closure (`anon@840`, `UI_Craft_Recipe_List_Item_obj`),
+  `CraftFindRecipeItems`, `PilipaliDecrypt` and `DoCraftResult`. One line
+  names each hook's route: `craftmats: hooks CountInventoryItem=both-routes
+  ... -> ON`. A `TABLE-ONLY` or `NOT-INSTALLED` hook turns the mod off for the
+  session on the same line (`-> off for this session: ...`): a table swap
+  never sees the compiled calls the crafting route makes. Every body calls the
+  game's function through its trampoline, and with the switch off every body
+  only forwards.
+- **The route frames:** `GetCraftItemsAvailable`, the recipe row's closure and
+  `CraftFindRecipeItems` each raise their own depth around their trampoline,
+  only while the switch is on, and lower it on unwinding too.
+- **The count:** after the game's own `CountInventoryItem`, only with the
+  switch on, only inside one of the three frames, and only for `a0 = 1` (the
+  bag owner, as Live 1i logged), the return becomes the game's count `k` plus
+  the stash's count `s` of the same identity (`a1` the class, `a3` the base).
+  `s` is the sum of `o` over the entries of the two special tabs only:
+  `Controller_obj.stashMaterialTab` (`[x][y]` cells) and every row of
+  `Controller_obj.stashSocketItemSlot` (each its own `[x][y]` cells). Each
+  filled cell's `nodeFingerprint` is resolved in the map `GetItemMap(9)`
+  returns, called by name at the point of use; an item's identity is its
+  `itemType` and its `itemDefinitionStruct.b`. The ordinary tabs share that
+  map and are never a source, so the map itself is never walked. A display
+  count reuses one walk per game frame; inside `CraftFindRecipeItems` every
+  count walks fresh. An unreadable walk leaves `k` and is named once:
+  `craftmats: stash-unreadable - ...`.
+- **The needs:** inside `CraftFindRecipeItems`, and only there, each
+  `PilipaliDecrypt` answer and each count (identity, the game's own `k`) go
+  into the core's record, and the core pairs them. R, a static reading in
+  this document's own words, observed only for a one-input recipe: each
+  input's amount is decoded before that input is counted, and an input that
+  accepts several bases is counted one base at a time after its one decode,
+  stopping at the first base whose count reaches the amount - so a count's
+  amount is the latest decode before it, and of a run of counts after one
+  decode the last is the one the game used. A count with no decode before it
+  makes the needs unreadable. The next `CraftFindRecipeItems` entry discards
+  the record; the press after it uses it once, for the same recipe row (by
+  instance id; a row with no id matches nothing). Outside that frame the
+  decode hook only forwards: `PilipaliDecrypt` ran 672,588 times in one
+  session (`### Phase 1i results`, `recipe-shape`). The mod's own by-name
+  calls are never recorded as the game's.
+- **The press (`DoCraftResult`), in order:**
+  1. The gate. Switch off, no record, or no stash count added during that
+     `CraftFindRecipeItems` call: the game's own press, untouched. A record
+     that cannot be paired, belongs to another recipe row, or already served a
+     press: refused.
+  2. The plan: `need - k` per input, capped by a fresh walk's count, and never
+     more (the core's `Plan`: rows of one material summed; two reads of one
+     material that disagree refuse).
+  3. The takes, per input: split across the material's entries, whole entries
+     first and then a partial from the last one needed; each take moves and
+     is confirmed (below). The first take that is not confirmed stops the rest.
+  4. Any refusal returns before the game's `DoCraftResult`; otherwise the
+     game's press runs.
+  5. After it, per material moved: the character's total over `GetItemMap(0)`
+     (the bag and the Cube's grid alike) must equal the total before the move,
+     plus what moved, minus what the recipe needs. A mismatch - the game's own
+     produce-without-consuming duplication included - is named once and turns
+     the mod off for the session: `craftmats: consume mismatch - ...`.
+  6. After at least one confirmed move - following the game's press, or a
+     refusal that came after a move - `SaveLocalFile(4, 1)`, self
+     `Console_Save_obj`, the stash close's own save (`save-route: proven`).
+     Never when nothing moved.
+  7. One line per press that moved something: `craftmats: moved <n>
+     class=<c> b=<b> from <materials|socketable> to
+     <bag-stack|bag-new|cube>; saved=<yes|no|failed>`.
+- **The take, per case.** Every call is by name through `script_execute`,
+  self = other = `Console_Save_obj` (resolved by `asset_get_index` and
+  `instance_find`), in the shapes Live 1i, 1j and 1k measured:
+  - *Destination first.* `GetItemPreferredGrid(1, <stash item>)`'s `grid`,
+    its cells resolved in map 0 for a stack of the same identity. Stacked
+    (`partial-stacked: inline`): the stack's `itemDefinitionStruct.o += n`,
+    then `ItemCheckHash(<stack>)`. No stack (`partial-nostack: json`):
+    `CreateItemSaveStruct(<stash item>)`, its `o` set to `n`, `LootTimestamp()`
+    for `<S>`, `InitItemFromJson(<struct>, "0-0-<S>-<class>")`,
+    `AddItemToMap(<map 0>, <key>, <item>)`, then `GridAddItem(<bag grid>,
+    <item>, 0, undefined)` - or, when the bag grid has no empty cell or
+    answers `success=false`, `GridAddItem(New_Inventory_Data_obj.craftGrid,
+    ...)` (`partial-cube: proven`). A unit no grid took is taken out of map 0
+    again, `RemoveItemFromMap(<map 0>, <key>)`.
+  - *Then the source,* only once the destination re-reads as risen by `n`: a
+    partial take `o -= n` then `ItemCheckHash(<stash item>)`; a whole entry
+    `RemoveItemFromMap(<map 9>, <key>)` then `GridRemoveItem(<its cell
+    array>, <key>)` - the Materials tab whole, or the entry's Socketable row
+    (Phase 1i's pair, which keeps the save invariant).
+  - *Confirmation:* both sides re-read on their keys (`GetItemFromFingerprint(
+    <key>, 9)` or `(<key>, 0)`, and the map's own `ds_map_exists`) and their
+    cells. Confirmed: the source dropped by exactly `n` (or its entry and its
+    cell are both gone) and the destination rose by exactly `n`. Not-taken:
+    both sides as they were; the craft is refused. Anything else is a loss.
+  - *Undo:* a source step that did not land undoes the destination - the
+    stack's `o` put back and `ItemCheckHash`, or the new unit's
+    `GridRemoveItem` from its grid and `RemoveItemFromMap` from map 0 - and a
+    whole entry whose map entry went while its cell stayed is put back into
+    map 9 first, `AddItemToMap(<map 9>, <key>, <item>)`, so no cell is left
+    without its entry. These undo shapes reuse the measured scripts on
+    another map or grid and were not run live; they run only on a failed
+    take. An undo that cannot be confirmed is a loss.
+- **Refusal and loss lines,** each reason once per session: `craftmats:
+  unreadable - ... the craft was refused ...` (needs unpaired, another recipe
+  row, or a count that did not read); `craftmats: not-taken - ... the craft
+  was refused` (the game declined a move and both sides read as before);
+  `craftmats: off for this session - ...` (a loss, an error inside the press,
+  or an install without both routes); `craftmats: consume mismatch - ...;
+  off for this session ...`. A player build carries no `craftmats stat` (the
+  owner's rule); the per-press line names the work done instead.
+- **Research build only:** `craftmats stat`; `craftmats 1` refuses, and the
+  install stays off, while `craftprobe` detours any of the six (a second
+  detour on one function reads as a false `TABLE-ONLY`); `craftprobe hook`
+  reports the rows craftmats holds as `held by craftmats`.
+- **Not covered, recorded as not observed live:** the Cube fallback (a full
+  bag), a whole-entry take (a shortfall that empties a stash stack),
+  multi-input and multi-unit recipes (the pairing reading), and the game's
+  hash acceptance of an edited or created item beyond Phase C's watch
+  (`no-flag`, `reload-after`; R, a static reading: `ItemCheckHash` itself
+  calls no reporting script, and `ReportClient` has no positive control,
+  Live 1k). The character's own save after a press-time
+  stash save is left to the game; a crash in between loses that craft's
+  stash-supplied materials (accepted by the owner, the hub guide's Known
+  Limitations item 23).
+- **Player DLL:** `plugin_build/BloodPactPlugin_ship.dll`, sha256 recorded
+  after the build, built by `plugin_build\build.bat release`.
+
+## Phase C live procedure
+
+One session on the player DLL named in `## Ship design`, run by
+`live-operator`, two launches, slot 14 ("Sorak"): a Socketable recipe (Ol ->
+Old, the bag's Ol stacked onto) and a Materials recipe (Greater Unstable Dust
+-> Destiny Shard Fragment, a new bag stack), the switch off and on, one press
+each, and a watch for a flagged item. It is verification of shipped
+behaviour, not research: every check is an acceptance check, and `dll-hash`
+and `control` show the session measured anything at all. The step-by-step is
+the workorder's `forgepact-issue-14-player-build-context.md` › `### Live
+procedure 1`; saves are backed up before the launch and restored after it.
+
+The capture is `forgepact-issue-14-player-build-live-1.md`, whose `## Checks`
+section carries one line per check, `- <check> | expected: <text> |
+observed: <text> | pass|fail|not-observed`, the fourteen checks in this
+order: `dll-hash`, `control`, `off-stacked`, `hooks`, `bag-control`,
+`on-stacked`, `stash-saved`, `off-nostack`, `on-nostack`, `no-duplicate`,
+`stash-window-after`, `no-flag`, `reload-after`, `counts-tool-after`. A crash
+ends the session: the check in progress is `fail`, and every later check
+reads `not-observed (launch ended at <check>)`.
+
+## Phase C results
+
+| Check | What it measures | Observed | Verdict |
+|---|---|---|---|
+| dll-hash | The installed DLL is the player DLL `## Ship design` names | | |
+| control | `ping` answers and `craftprobe` is unavailable: the IPC works and this is the player build | | |
+| off-stacked | The switch never on: the Ol recipe the bag cannot cover is unavailable and a press produces nothing | | |
+| hooks | `craftmats 1`: all six hooks `both-routes`, the mod on | | |
+| bag-control | A recipe the bag covers crafts once from the bag, with no move line (the positive control) | | |
+| on-stacked | The Ol recipe available, one Old produced, the bag's Ol used up, one move line (`socketable`, `bag-stack`, `saved=yes`), no refusal | | |
+| stash-saved | `stash.hss` written after each on-press, and the counts tool reads the lowered stacks, before any stash open | | |
+| off-nostack | `craftmats 0`: the Dust recipe unavailable and a press produces nothing, with the hooks installed | | |
+| on-nostack | The Dust recipe available, one Destiny Shard Fragment produced, one move line (`materials`, `bag-new`, `saved=yes`), no refusal | | |
+| no-duplicate | Each on-press and `bag-control` produced exactly one result, and each off-press none | | |
+| stash-window-after | The stash window shows the lowered counts | | |
+| no-flag | Dragging the edited stacks shows nothing wrong (no positive control exists: "no flag observed") | | |
+| reload-after | After the game's own quit and reload the stash and the bag match | | |
+| counts-tool-after | With the game stopped, the counts tool reads the lowered stacks | | |

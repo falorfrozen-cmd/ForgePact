@@ -16,13 +16,25 @@ the Socketable tab's per-cell walk, `node var` and the `store` reader. Phase 1e
 through HookOneScript, the player-build installer, with the currency rule of
 CraftMatsKeptMap - and the take trial's `call` forms. The tests for each are
 marked below.
+
+The player build (the Phase C build) ships the mod: `craftmats` joins the
+player commands, six hooks go in through HookOneScript by SDK constant (both
+routes or off), the count changes only inside the crafting route with the mod
+on, the decode is recorded only inside CraftFindRecipeItems, the stash count
+reads only the two special tabs, every by-name call is a measured shape, every
+refusal returns before the game's DoCraftResult, and the stash save follows a
+confirmed move only. The instrument above stays research-only, and it and the
+mod never detour the same script. The panel's switch and the research doc's
+ship design and Phase C sections are pinned at the end.
 """
 import importlib.util
 import re
+import sys
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+SRC_DIR = ROOT / "src"
 PLUGIN = ROOT / "plugin" / "ModuleMain.cpp"
 HEADER = ROOT / "plugin" / "include" / "ForgePact" / "CraftMatsMod.hpp"
 DOC = ROOT / "docs" / "crafting-materials-research.md"
@@ -104,8 +116,9 @@ class CraftMatsContractTests(unittest.TestCase):
     def test_craftprobe_absent_from_player_commands(self):
         entries = self.player_commands()
         self.assertNotIn("craftprobe", entries)
-        self.assertEqual([e for e in entries if "craft" in e], [],
-                         "no crafting verb is a player command before a mechanism is chosen and shipped")
+        # The shipped mod's switch is the one crafting verb a player build takes.
+        self.assertEqual([e for e in entries if "craft" in e], ["craftmats"],
+                         "the only crafting player command is the shipped mod's switch")
 
     def test_craftprobe_dispatched_from_handle_craft_command(self):
         # RunCommand's else-if chain is at MSVC's nesting limit (C1061), so the
@@ -113,11 +126,14 @@ class CraftMatsContractTests(unittest.TestCase):
         run = function_body(self.plugin, "static void RunCommand(const std::string& line)")
         self.assertIn("if (HandleMenuLayoutCommand(lc, rest)) return;\n    if (HandleCraftCommand(lc, rest)) return;", run)
         self.assertNotIn('"craftprobe"', run)
-        self.assertNotIn('"craftmats"', run)
+        # RunCommand names `craftmats` only in kPlayerCommands (the player
+        # build's whitelist), never as a branch of its own chain.
+        self.assertNotIn('lc == "craftmats"', run)
+        self.assertEqual(run.count('"craftmats"'), 1)
         handler = function_body(self.plugin, "static bool HandleCraftCommand(")
         self.assertIn('lc == "craftprobe"', handler)
         self.assertEqual(self.plugin.count('"craftprobe"'), 1)
-        self.assertEqual(self.plugin.count('"craftmats"'), 1)
+        self.assertEqual(self.plugin.count('"craftmats"'), 2)
         shipped_handler = strip_research_blocks(handler)
         self.assertIn('lc == "craftmats"', shipped_handler)
         self.assertNotIn("craftprobe", shipped_handler)
@@ -871,9 +887,17 @@ class CraftMatsContractTests(unittest.TestCase):
         # Negative control: the strip keeps player code, so an absence below
         # is the strip working, not an empty string.
         self.assertIn("kPlayerCommands", shipped)
-        for symbol in ("PilipaliDecrypt", "CreateItemSaveStruct"):
-            self.assertIn(symbol, self.plugin)
-            self.assertNotIn(symbol, shipped, symbol + " reaches the player build")
+        # The rows stay research-only. The player build's craftmats reaches the
+        # same two scripts by its own SDK constants (the decode hook and the
+        # json route's first call), and nowhere else.
+        for name in ("PilipaliDecrypt", "CreateItemSaveStruct"):
+            safe, _ = rows[name]
+            self.assertNotIn(f'X({safe}, "{name}", gml_Script_{name})', shipped, name + "'s row reaches the player build")
+        code = strip_comments(shipped)
+        for symbol, constant in (("PilipaliDecrypt", "kCmDecodeName"), ("CreateItemSaveStruct", "kCmSaveStructName")):
+            self.assertEqual(code.count("gml_Script_" + symbol), 1 + (symbol == "PilipaliDecrypt"), symbol)
+            self.assertIn(f"static constexpr const char* {constant} = SdkShortScriptName(HeroSiege::Scripts::gml_Script_{symbol});",
+                          code)
 
     def test_craftprobe_call_reply_splits_three_outcomes_with_call_number(self):
         # Live 1g read a by-name SaveStash that faulted inside the game as the
@@ -1105,10 +1129,15 @@ class CraftMatsContractTests(unittest.TestCase):
         for safe, label, constant in self.rows:
             if constant in self.PHASE1J_ROWS:
                 self.assertNotIn(f'X({safe}, "{label}", {constant})', shipped, label + " reaches the player build")
-        for constant in ("gml_Script_SaveLocalFile", "gml_Script_SaveStart", "gml_Script_SaveCommit",
+        for constant in ("gml_Script_SaveStart", "gml_Script_SaveCommit",
                          "gml_Script_SaveFileGMAsync", "gml_Script_EncryptStringSave"):
             self.assertIn(constant, self.plugin)
             self.assertNotIn(constant, shipped, constant + " reaches the player build")
+        # SaveLocalFile is the player build's stash save (craftmats, after a
+        # confirmed move) - by its own constant, never through the row.
+        self.assertEqual(strip_comments(shipped).count("gml_Script_SaveLocalFile"), 1)
+        self.assertIn("static constexpr const char* kCmSaveName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_SaveLocalFile);",
+                      shipped)
 
     def test_craftprobe_callm_invokes_a_method_value_by_name_behind_confirm(self):
         # The split dialog edits a stack through the item struct's own methods
@@ -1562,25 +1591,380 @@ class CraftMatsContractTests(unittest.TestCase):
 
     def test_craftmats_off_by_default_and_frame_path_gated(self):
         self.assertIn("std::atomic<bool> m_Enabled{ false };", self.header)
-        # The frame callback does nothing for this mod unless the switch is on.
-        # Phase 0 wires nothing at all; a shipped adapter must sit behind the gate.
+        # The player build puts one thing on the frame path: the install, once,
+        # behind the IsEnabled() gate (the auto-prospect pattern). Everything
+        # else happens inside the game's own crafting calls.
         frame = strip_comments(function_body(self.plugin, "void FrameCallback(FWFrame& FrameContext)"))
         mentions = [m.start() for m in re.finditer(r"CraftMats|HandleCraftCommand|Cp[A-Z]\w*\(", frame)]
-        if mentions:
-            gate = frame.find("ForgePact::CraftMatsMod::Instance().IsEnabled()")
-            self.assertGreaterEqual(gate, 0, "craftmats work on the frame path without the IsEnabled() gate")
-            self.assertLessEqual(gate, mentions[0])
-        # The command only flips the core's switch: no hook, no game call.
+        self.assertTrue(mentions, "the install is on the frame path")
+        gate = frame.find("ForgePact::CraftMatsMod::Instance().IsEnabled()")
+        self.assertGreaterEqual(gate, 0, "craftmats work on the frame path without the IsEnabled() gate")
+        self.assertLessEqual(gate, mentions[0])
+        self.assertIn("if (ForgePact::CraftMatsMod::Instance().IsEnabled() && g_Setup && !g_CmInstallTried) CraftMatsInstall();",
+                      frame)
+        self.assertEqual(frame.count("CraftMatsInstall()"), 1)
+        for work in ("CmWalkStash", "CmTake", "CmSaveStash", "CmCharacterTotal", "CmBeforePress"):
+            self.assertNotIn(work, frame)
+        # The command only flips the core's switch: no hook, no game call, and
+        # it never installs - the frame path does, once.
         command = self.body("static void CraftMatsCommand(")
         self.assertIn("mod.SetEnabled(true)", command)
         self.assertIn("mod.SetEnabled(false)", command)
-        for forbidden in ("HookOneScript", "MmCreateHook", "CallBuiltin", "ApCallScript", "script_execute", "CallGameScript"):
+        for forbidden in ("HookOneScript", "MmCreateHook", "CallBuiltin", "ApCallScript", "CmCall(", "script_execute",
+                          "CallGameScript", "CraftMatsInstall"):
             self.assertNotIn(forbidden, command)
         # `craftmats stat` is research-build only (the user's rule that player
-        # builds carry no debug tooling); the reply never claims work was done.
+        # builds carry no debug tooling); `0` says crafting is unchanged.
         shipped = strip_research_blocks(function_body(self.plugin, "static void CraftMatsCommand("))
         self.assertNotIn('"stat"', shipped)
-        self.assertIn("crafting is unchanged", command)
+        self.assertIn('"craftmats: off - crafting is unchanged"', command)
+        # Off, every hook body only forwards: the switch is read before any work.
+        for hook in ("CmHookCount", "CmHookDecode", "CmHookPress"):
+            body = self.body("static RValue& " + hook + "(")
+            self.assertIn("IsEnabled()", body, hook)
+        press = self.body("static RValue& CmHookPress(")
+        self.assertTrue(press.lstrip().startswith("ForgePact::CraftMatsMod& mod = ForgePact::CraftMatsMod::Instance();\n"
+                                                  "    if (!mod.IsEnabled() || !g_CmOrigPress) return"), press[:200])
+
+    # ---- the player build: craftmats (the Phase C build) ------------------------
+    #
+    # The adapter's code, on comment-stripped source: from its section marker to
+    # the install, all of it player code except the research-build holds rule.
+
+    CM_START = "// ---- craftmats: crafting from the stash's special tabs (issue #14)"
+    CM_END = "// ---- the character-select research instrument"
+
+    CM_HOOKS = (
+        ("kCmCountName", "gml_Script_CountInventoryItem", "CmHookCount", "g_CmOrigCount"),
+        ("kCmAvailabilityName", "gml_Script_GetCraftItemsAvailable", "CmHookAvailability", "g_CmOrigAvailability"),
+        ("kCmRecipeRowName", "gml_Script_anon_840_gml_Object_UI_Craft_Recipe_List_Item_obj_Create_0", "CmHookRecipeRow",
+         "g_CmOrigRecipeRow"),
+        ("kCmFindName", "gml_Script_CraftFindRecipeItems", "CmHookFind", "g_CmOrigFind"),
+        ("kCmDecodeName", "gml_Script_PilipaliDecrypt", "CmHookDecode", "g_CmOrigDecode"),
+        ("kCmPressName", "gml_Script_DoCraftResult", "CmHookPress", "g_CmOrigPress"),
+    )
+
+    def cm_code(self, shipped=False):
+        block = self.plugin[self.plugin.index(self.CM_START):self.plugin.index(self.CM_END)]
+        return strip_comments(strip_research_blocks(block) if shipped else block)
+
+    def test_craftmats_is_a_player_command_and_stat_stays_research_only(self):
+        self.assertIn("craftmats", self.player_commands())
+        for verb in ("craftprobe", "mapkeep"):
+            self.assertNotIn(verb, self.player_commands())
+        handler = strip_research_blocks(function_body(self.plugin, "static bool HandleCraftCommand("))
+        self.assertIn('if (lc == "craftmats") { CraftMatsCommand(rest); return true; }', handler)
+        command = function_body(self.plugin, "static void CraftMatsCommand(")
+        self.assertIn('if (v == "stat")', command)   # the research build keeps it
+        shipped = strip_comments(strip_research_blocks(command))
+        self.assertNotIn('"stat"', shipped)
+        self.assertNotIn("StatLine", shipped)
+        self.assertIn('if (v == "0" || v == "off") { mod.SetEnabled(false); Out("craftmats: off - crafting is unchanged"); return; }',
+                      shipped)
+        self.assertIn('if (v == "1" || v == "on")', shipped)
+        # The adapter itself is player code: the shipped strip keeps it whole
+        # apart from the holds rule.
+        self.assertIn("static void CraftMatsInstall()", self.cm_code(shipped=True))
+        self.assertIn("static RValue& CmHookPress(", self.cm_code(shipped=True))
+
+    def test_craftmats_hooks_install_through_hookonescript_by_sdk_constant(self):
+        code = self.cm_code()
+        for const, sdk, hook, orig in self.CM_HOOKS:
+            self.assertTrue(self.runtime_name(sdk).startswith("gml_Script_"), sdk)   # an SDK constant (anon@840 has `@`s)
+            self.assertIn(f"static constexpr const char* {const} = SdkShortScriptName(HeroSiege::Scripts::{sdk});", code)
+            row = re.findall(r"\{ " + const + r', "fp_cm_\w+", \(PVOID\)' + hook + ", &" + orig
+                             + r", HeroSiege::Scripts::" + sdk + r" \}", code)
+            self.assertEqual(len(row), 1, const)
+            # Every body calls the game's function through its trampoline.
+            self.assertIn(f"{orig}(S, O, R, argc, A)", self.body(f"static RValue& {hook}("), hook)
+        self.assertEqual(len(re.findall(r'"fp_cm_\w+"', code)), 6)
+        install = self.body("static void CraftMatsInstall(")
+        self.assertEqual(install.count("HookOneScript("), 1)
+        self.assertIn("for (const CmHook& h : g_CmHooks) {", install)
+        self.assertIn("const bool ok = HookOneScript(h.name, h.id, h.dest, h.orig, &native);", install)
+        self.assertTrue(install.lstrip().startswith("g_CmInstallTried = true;"))
+        # Both routes on all six or off: the line names each hook's route.
+        self.assertIn("all = all && ok && native;", install)
+        for word in ('"NOT-INSTALLED"', '"both-routes"', '"TABLE-ONLY"', '" -> ON"', "off for this session"):
+            self.assertIn(word, install, word)
+        self.assertLess(install.index("if (all)"), install.index("mod.TurnOffForSession();\n    Out(line"))
+        # Once: from the frame path only.
+        self.assertEqual(strip_comments(self.plugin).count("CraftMatsInstall();"), 1)
+        # Never the blind installer, and never a hand-made detour.
+        for forbidden in ("HookOneScriptTable", "MmCreateHook", "GetNamedRoutinePointer"):
+            self.assertNotIn(forbidden, code)
+
+    def test_craftmats_never_detours_a_script_craftprobe_holds(self):
+        # Each of the six is a research-instrument row too, so the conflict is real.
+        constants = [constant for _, _, constant in self.rows]
+        for _, sdk, _, _ in self.CM_HOOKS:
+            self.assertIn(sdk, constants, sdk)
+        # `craftmats 1` and the install refuse while the instrument holds one...
+        command = self.body("static void CraftMatsCommand(")
+        self.assertLess(command.index("CmHeldByResearch()"), command.index("mod.SetEnabled(true)"))
+        install = self.body("static void CraftMatsInstall(")
+        self.assertLess(install.index("CmHeldByResearch()"), install.index("HookOneScript("))
+        self.assertIn("CpHoldsRow(h.runtime)", self.body("static std::string CmHeldByResearch("))
+        # ...and `craftprobe hook` reports the rows craftmats holds as held.
+        self.assertIn("*h.orig && runtimeName == h.runtime", self.body("static bool CmHolds("))
+        cp = self.body("static void CpInstall(")
+        self.assertIn("held by craftmats", cp)
+        self.assertLess(cp.index("CmHolds(t.runtimeName)"), cp.index("CpResolve(t, why)"))
+        self.assertLess(cp.index("CmHolds(t.runtimeName)"), cp.index("MmCreateHook("))
+        # The rule is research-build only: a player build has no instrument.
+        shipped = strip_research_blocks(self.plugin)
+        for symbol in ("CmHolds", "CmHeldByResearch", "CpHoldsRow"):
+            self.assertIsNone(re.search(r"\b" + symbol + r"\b", shipped), symbol)
+
+    def test_craftmats_count_hook_changes_its_return_only_in_route_and_on(self):
+        count = self.body("static RValue& CmHookCount(")
+        call = count.index("CmCountInRoute(inFind, argc, A, r)")
+        self.assertLess(count.index("g_CmOrigCount(S, O, R, argc, A)"), call)
+        self.assertLess(count.index("if (!ForgePact::CraftMatsMod::Instance().IsEnabled() || g_CmOwnCalls > 0) return r;"), call)
+        self.assertLess(count.index("if (!inFind && g_CmAvailabilityDepth == 0 && g_CmRecipeRowDepth == 0) return r;"), call)
+        self.assertNotIn("r = RValue(", count)
+        # The return changes in one place, for the bag owner, by the core's answer.
+        inroute = self.body("static void CmCountInRoute(")
+        self.assertEqual(self.cm_code().count("r = RValue("), 1)
+        self.assertIn("if (owner != kCmBagOwner) return;", inroute)
+        self.assertLess(inroute.index("if (owner != kCmBagOwner) return;"), inroute.index("r = RValue("))
+        self.assertIn("const int64_t answer = mod.CountAnswer(true, game, CmStashCount(material, inFind));", inroute)
+        self.assertIn("if (answer != game) r = RValue((double)answer);", inroute)
+        self.assertRegex(self.plugin, r"static constexpr double kCmBagOwner = 1\.0;")
+        # The three route frames raise their depth only while on, and lower it
+        # on unwinding too.
+        for hook, depth in (("CmHookAvailability", "g_CmAvailabilityDepth"), ("CmHookRecipeRow", "g_CmRecipeRowDepth"),
+                            ("CmHookFind", "g_CmFindDepth")):
+            body = self.body(f"static RValue& {hook}(")
+            self.assertRegex(body, r"CmRouteFrame frame\(" + depth + r", (on|ForgePact::CraftMatsMod::Instance\(\)\.IsEnabled\(\))\);")
+            self.assertLess(body.index("CmRouteFrame frame("), body.index("(S, O, R, argc, A)"))
+        self.assertIn("CmRouteFrame(long& d, bool on) : depth(on ? &d : nullptr) { if (depth) ++*depth; }", self.plugin)
+        self.assertIn("~CmRouteFrame() { if (depth && *depth > 0) --*depth; }", self.plugin)
+        # Display frames reuse a walk per game frame; inside CraftFindRecipeItems
+        # the count walks fresh.
+        self.assertIn("if (mod.MustWalk(g_RuntimeFrame, press)) mod.KeepWalk(g_RuntimeFrame, CmWalkStash());",
+                      self.body("static int64_t CmStashCount("))
+
+    def test_craftmats_decode_hook_records_only_inside_craftfindrecipeitems(self):
+        decode = self.body("static RValue& CmHookDecode(")
+        gate = decode.index("if (g_CmFindDepth > 0 && g_CmOwnCalls == 0 && ForgePact::CraftMatsMod::Instance().IsEnabled()) {")
+        self.assertLess(decode.index("g_CmOrigDecode(S, O, R, argc, A)"), gate)
+        for m in re.finditer(r"OnDecode\(", decode):
+            self.assertGreater(m.start(), gate)
+        code = self.cm_code()
+        self.assertEqual(code.count("OnDecode("), 2)   # the hook's read, and its catch
+        # The record opens only at CraftFindRecipeItems' entry, while on.
+        find = self.body("static RValue& CmHookFind(")
+        self.assertIn("if (on) mod.BeginFind(CmSelfId(S));", find)
+        self.assertLess(find.index("mod.BeginFind("), find.index("g_CmOrigFind(S, O, R, argc, A)"))
+        self.assertEqual(code.count("BeginFind("), 1)
+        # A count goes into the record only inside that frame.
+        inroute = self.body("static void CmCountInRoute(")
+        self.assertEqual(inroute.count("mod.OnFindCount("), inroute.count("if (inFind) mod.OnFindCount("))
+        self.assertEqual(code.count("OnFindCount("), 3)
+        self.assertIn("const bool inFind = g_CmFindDepth > 0;", self.body("static RValue& CmHookCount("))
+
+    def test_craftmats_stash_count_reads_only_the_two_special_tabs(self):
+        walk = self.body("static ForgePact::CraftMatsWalk CmWalkStash(")
+        self.assertIn("CmItemMap(save, kCmStashOwner, map)", walk)
+        self.assertIn("CmArrayVar(controller, kCmMaterialTabVar, materials)", walk)
+        self.assertIn("CmArrayVar(controller, kCmSocketTabVar, sockets)", walk)
+        self.assertIn("CmWalkCells(materials, map, ForgePact::CraftMatsSource::StashMaterialTab, -1, seen, w.entries)", walk)
+        self.assertIn("CmWalkCells(row, map, ForgePact::CraftMatsSource::StashSocketTab, k, seen, w.entries)", walk)
+        self.assertIn('static constexpr const char* kCmMaterialTabVar = "stashMaterialTab";', self.plugin)
+        self.assertIn('static constexpr const char* kCmSocketTabVar = "stashSocketItemSlot";', self.plugin)
+        self.assertRegex(self.plugin, r"static constexpr double kCmStashOwner = 9\.0;")
+        self.assertIn("HeroSiege::Objects::GameObject::Controller_obj", walk)
+        # Each cell is resolved in the map by its fingerprint; the stash map is
+        # never walked. The one map walk is the character's own (map 0).
+        cells = self.body("static bool CmWalkCells(")
+        self.assertIn("CmMapItem(map, fp, item)", cells)
+        code = self.cm_code()
+        self.assertEqual(code.count('"ds_map_find_first"'), 1)
+        total = self.body("static int64_t CmCharacterTotal(")
+        self.assertIn('"ds_map_find_first"', total)
+        self.assertIn("CmItemMap(save, kCmCharacterOwner, map)", total)
+        self.assertRegex(self.plugin, r"static constexpr double kCmCharacterOwner = 0\.0;")
+        for fn in (walk, cells):
+            self.assertNotIn("ds_map_find", fn)
+        # No other container is named: not the ordinary tabs, the guild stash or
+        # the Unique tab.
+        for other in ("stashInventoryMap", "guild", "Guild", "Unique", "stashTab"):
+            self.assertNotIn(other, code, other)
+        # What an item is: its itemType and its definition's `b` - never a field
+        # it merely carries.
+        read = self.body("static bool CmReadItem(")
+        for member in ('"itemType"', '"itemDefinitionStruct"', '"b"', '"o"'):
+            self.assertIn(member, read)
+
+    CM_SHAPES = {
+        ("kCmItemMapName", "RValue(owner)"),
+        ("kCmFromFpName", "RValue(key), RValue(owner)"),
+        ("kCmCheckHashName", "item"),
+        ("kCmSaveStructName", "source"),
+        ("kCmTimestampName", ""),
+        ("kCmFromJsonName", "saved, RValue(key)"),
+        ("kCmAddToMapName", "map0, RValue(key), item"),
+        ("kCmAddToMapName", "map9, RValue(key), source"),
+        ("kCmPreferredName", "RValue(kCmPreferredOwner), source"),
+        ("kCmPlaceName", "bagGrid, item, RValue(0.0), RValue()"),
+        ("kCmPlaceName", "cube, item, RValue(0.0), RValue()"),
+        ("kCmRemoveFromMapName", "map0, RValue(key)"),
+        ("kCmRemoveFromMapName", "map9, RValue(key)"),
+        ("kCmRemoveFromMapName", "map0, RValue(unit.key)"),
+        ("kCmGridRemoveName", "cellsNow, RValue(key)"),
+        ("kCmGridRemoveName", "unit.grid, RValue(unit.key)"),
+        ("kCmSaveName", "RValue(kCmSaveKind), RValue(kCmSaveArg)"),
+    }
+
+    def test_craftmats_by_name_calls_are_the_recorded_shapes(self):
+        code = self.cm_code()
+        # One dispatcher: script_execute with self = other = Console_Save_obj,
+        # resolved by asset_get_index and instance_find.
+        self.assertEqual(code.count("ApCallScript("), 1)
+        self.assertIn("return ApCallScript(name, save, args, res);", self.body("static bool CmCall("))
+        self.assertIn("HeroSiege::Objects::GameObject::Console_Save_obj", self.body("static CInstance* CmSaveInstance("))
+        inst = self.body("static bool CmInstance(")
+        for step in ('"asset_get_index"', '"instance_number"', '"instance_find"', "HhResolveInstance(handle)"):
+            self.assertIn(step, inst)
+        # Every call is one of the shapes the research doc measured.
+        calls = {(name, " ".join(args.split())) for name, args in re.findall(r"CmCall\((kCm\w+), [^,]+, \{([^}]*)\}", code)}
+        self.assertEqual(calls, self.CM_SHAPES)
+        for name, _ in self.CM_SHAPES:
+            decl = re.search(r"static constexpr const char\* " + name + r" = SdkShortScriptName\(HeroSiege::Scripts::(\w+)\);", code)
+            self.assertIsNotNone(decl, name)
+            self.runtime_name(decl.group(1))
+        for constant, value in (("kCmSaveKind", "4.0"), ("kCmSaveArg", "1.0"), ("kCmPreferredOwner", "1.0")):
+            self.assertIn(f"static constexpr double {constant} = {value};", code)
+        # The inline edits are the only struct writes: a definition's `o`, then
+        # ItemCheckHash; and the json route's `o` on the save-shaped struct.
+        self.assertEqual(code.count('"variable_struct_set"'), 2)
+        setcount = self.body("static bool CmSetCount(")
+        self.assertLess(setcount.index('{ def, RValue("o"), RValue((double)count) }'), setcount.index("kCmCheckHashName"))
+        unit = self.body("static CmNewUnit CmMakeUnit(")
+        self.assertIn('"0-0-" + std::to_string((long long)CmWhole(stamp)) + "-" + std::to_string(cls)', unit)
+        self.assertLess(unit.index("kCmFromJsonName"), unit.index("kCmAddToMapName"))
+        self.assertLess(unit.index("kCmAddToMapName"), unit.index("kCmPlaceName"))
+        self.assertLess(unit.index("CmHasEmptyCell(bagGrid)"), unit.index("kCmCraftGridVar"))
+        self.assertIn('static constexpr const char* kCmCraftGridVar = "craftGrid";', code)
+        # Ruled out: the method bind, HashRouteMethod, ds_map writes, the save
+        # file, a hand-resolved address.
+        for forbidden in ('"method"', "HashRouteMethod", '"script_execute"', '"ds_map_add"', '"ds_map_replace"',
+                          '"ds_map_delete"', '"ds_map_set"', "stash.hss", "MmCreateHook", "m_Pointer", "Rva",
+                          "GetModuleHandle", "CallGameScript"):
+            self.assertNotIn(forbidden, code, forbidden)
+
+    def test_craftmats_refuses_before_calling_the_trampoline_when_a_move_is_unconfirmed(self):
+        press = self.body("static RValue& CmHookPress(")
+        before = press.index("craft = CmBeforePress(S, press);")
+        refuse = press.index("if (!craft) {")
+        tramp = press.index("RValue& r = g_CmOrigPress(S, O, R, argc, A);")
+        self.assertLess(before, refuse)
+        self.assertLess(refuse, tramp)
+        # Every refusal returns before the game's press; the consume check
+        # follows it.
+        returns = [m.start() for m in re.finditer(r"return R;", press)]
+        self.assertTrue(returns)
+        for at in returns:
+            self.assertLess(at, tramp)
+        self.assertEqual(press.count("g_CmOrigPress(S, O, R, argc, A)"), 2)   # the off path, and the press
+        self.assertLess(tramp, press.index("mod.OnConsume("))
+        # Before the press: the gate, the plan, each take reported to the core,
+        # stopping at the first that is not confirmed, then the core's verdict.
+        bp = self.body("static bool CmBeforePress(")
+        self.assertNotIn("g_CmOrigPress", bp)
+        self.assertIn("if (press.step == ForgePact::CraftMatsPressStep::Refuse) return false;", bp)
+        self.assertIn("const ForgePact::CraftMatsOutcome o = mod.OnMoveReport(res.report);", bp)
+        self.assertIn("if (o != ForgePact::CraftMatsOutcome::Taken) { stop = true; break; }", bp)
+        self.assertTrue(bp.rstrip().endswith("return mod.MayCraft(plan, outcomes);"))
+        self.assertIn("row.stash = walk.Count(row.material);", bp)
+        # A take: destination first, then the source only once the destination
+        # reads as risen; a source that did not land undoes the destination;
+        # both sides re-read on their keys and cells.
+        take = self.body("static CmTakeResult CmTake(")
+        self.assertLess(take.index("CmBagStack(bagGrid"), take.index("if (destRose) {"))
+        self.assertLess(take.index("CmMakeUnit("), take.index("if (destRose) {"))
+        self.assertLess(take.index("kCmRemoveFromMapName, save, { map9, RValue(key) }"),
+                        take.index("kCmGridRemoveName, save, { cellsNow, RValue(key) }"))
+        self.assertLess(take.index("if (destRose) {"), take.index("if (!sourceDone) {"))
+        self.assertIn("CmCountByKey(save, key, kCmStashOwner)", take)
+        self.assertIn("CmCountByKey(save, stackKey, kCmCharacterOwner)", take)
+        self.assertIn("CmCellsHold(cellsNow, key)", take)
+
+    def test_craftmats_save_follows_a_confirmed_move_only(self):
+        code = self.cm_code()
+        # SaveLocalFile is reached through CmSaveStash alone, and CmSaveStash
+        # only when the core says a confirmed move happened.
+        self.assertEqual(code.count("kCmSaveName"), 2)   # its declaration, and the call
+        self.assertIn("CmCall(kCmSaveName,", self.body("static ForgePact::CraftMatsSave CmSaveStash("))
+        self.assertEqual(code.count("CmSaveStash("), 2)   # its definition, and the call
+        finish = self.body("static void CmFinishPress(")
+        self.assertIn("if (ForgePact::CraftMatsMod::SaveDue(press.movedUnits)) saved = CmSaveStash(press.save);", finish)
+        self.assertLess(finish.index("CmSaveStash("), finish.index("PressLine("))
+        # The units grow only after a confirmed move.
+        bp = self.body("static bool CmBeforePress(")
+        self.assertEqual(code.count("movedUnits +="), 1)
+        self.assertLess(bp.index("if (o != ForgePact::CraftMatsOutcome::Taken) { stop = true; break; }"),
+                        bp.index("press.movedUnits += t.amount;"))
+        # Saved after the game's press, and on a refusal after a move (the
+        # in-memory stash is what gets saved).
+        self.assertEqual(self.body("static RValue& CmHookPress(").count("CmFinishPress(press)"), 2)
+        self.assertIn("static bool SaveDue(int64_t confirmedUnits) { return confirmedUnits > 0; }", self.header)
+
+    # ---- the panel's switch -----------------------------------------------------
+
+    def panel_module(self):
+        if str(SRC_DIR) not in sys.path:
+            sys.path.insert(0, str(SRC_DIR))
+        import forgepact  # noqa: E402 - the panel, imported only here
+        return forgepact
+
+    def test_panel_toggle_defaults_off_and_emits_craftmats(self):
+        forgepact = self.panel_module()
+        panel = (SRC_DIR / "forgepact.py").read_text(encoding="utf-8-sig")
+        self.assertIs(forgepact.DEFAULTS["mod_craft_mats"], False)
+        # A saved config from before the switch existed (no key at all) and the
+        # defaults both emit nothing for it. (build_cmds needs the other keys a
+        # saved config carries, so "no key" is the defaults without this one.)
+        legacy = {k: v for k, v in forgepact.DEFAULTS.items() if k != "mod_craft_mats"}
+        self.assertFalse([c for c in forgepact.build_cmds(legacy) if "craftmats" in c])
+        self.assertFalse([c for c in forgepact.build_cmds(dict(forgepact.DEFAULTS)) if "craftmats" in c])
+        cfg = dict(forgepact.DEFAULTS)
+        cfg["mod_craft_mats"] = True
+        self.assertEqual([c for c in forgepact.build_cmds(cfg) if "craftmats" in c], ["craftmats 1"])
+        # The live change handler sends craftmats 1|0, beside restartanytime's.
+        self.assertIn("f\"craftmats {1 if cfg['mod_craft_mats'] else 0}\"", panel)
+        live = panel[panel.index('elif key == "mod_restart_anytime":'):]
+        self.assertLess(live.index('elif key == "mod_craft_mats":'), live.index('elif key == "mod_skill_timer_style":'))
+        # Every site restartanytime's switch has, this one has too.
+        self.assertEqual(panel.count("mod_craft_mats"), panel.count("mod_restart_anytime"))
+        self.assertIn('id="mod_craft_mats"', forgepact.HTML)
+        self.assertIn('id="mcmval"', forgepact.HTML)
+        # A Quality of Life row, just after the Auto-prospect group.
+        qol = forgepact.HTML[forgepact.HTML.index('id="qolCard"'):forgepact.HTML.index('id="itemsCard"')]
+        self.assertLess(qol.index('id="mod_auto_prospect_bag_row"'), qol.index('id="mod_craft_mats"'))
+        self.assertLess(qol.index('id="mod_craft_mats"'), qol.index('id="mod_toggle_indicator"'))
+
+    def craft_span(self, html):
+        row = html[:html.index('id="mod_craft_mats"')]
+        row = row[row.rindex('<div class="row"'):]
+        label = re.search(r'<span class="lbl"[^>]*>([^<]*)<br><span [^>]*>(.*?)</span></span>', row)
+        self.assertIsNotNone(label, row)
+        return label.group(1), label.group(2)
+
+    def test_panel_text_is_player_facing_and_short(self):
+        forgepact = self.panel_module()
+        title, span = self.craft_span(forgepact.HTML)
+        self.assertEqual(title, "Craft from the stash")
+        text = re.sub(r"<[^>]+>", "", span)
+        self.assertLessEqual(len(text), 300, text)
+        self.assertIn("stash", text)
+        self.assertIn("off by default", text.lower())
+        for word in ("measured", "Phase", "hook", "ds_map", "GetItemMap", "SaveLocalFile", "PilipaliDecrypt"):
+            self.assertNotIn(word, text, word)
+        # Negative control: the same checks see a coverage report for what it is.
+        report = "Off by default. Hooks PilipaliDecrypt, measured in Phase C; saves through SaveLocalFile."
+        self.assertTrue(any(w in report for w in ("measured", "Phase", "hook", "Hook", "SaveLocalFile")))
 
     # ---- the core ------------------------------------------------------------
 
@@ -1590,8 +1974,10 @@ class CraftMatsContractTests(unittest.TestCase):
         includes = [l.strip() for l in self.header.split("\n") if l.strip().startswith("#include")]
         self.assertEqual(includes, ["#include <atomic>", "#include <cstdint>", "#include <string>", "#include <vector>"])
         self.assertIn("#include <ForgePact/CraftMatsMod.hpp>", self.plugin)
-        # One source, by design: nothing an adapter passes can name another container.
-        self.assertIn("enum class CraftMatsSource : int { StashMaterialTab = 1 };", self.header)
+        # The two special tabs and nothing else, by design: nothing an adapter
+        # passes can name an ordinary stash tab, the guild stash or the Unique tab.
+        self.assertIn("enum class CraftMatsSource : int { StashMaterialTab = 1, StashSocketTab = 2 };", self.header)
+        self.assertEqual(len(re.findall(r"enum class CraftMatsSource\b", self.header)), 1)
 
     # ---- the research document -------------------------------------------------
 
@@ -1914,6 +2300,62 @@ class CraftMatsContractTests(unittest.TestCase):
         # The decision is the owner's; the document never pre-decides it.
         self.assertRegex(self.doc, r"(?m)^`decision: pending`|^decision: (H-[ABC]|none)$")
         # A negative is "not observed", never "does not happen".
+        self.assertNotIn("does not happen", self.doc)
+
+    PHASE_C_CHECKS = ("dll-hash", "control", "off-stacked", "hooks", "bag-control", "on-stacked", "stash-saved",
+                      "off-nostack", "on-nostack", "no-duplicate", "stash-window-after", "no-flag", "reload-after",
+                      "counts-tool-after")
+
+    def test_research_doc_has_its_ship_design_and_phase_c_sections(self):
+        head = "\n".join(self.doc.split("\n")[:20])
+        status = re.search(r"(?m)^phaseC-status: (pending|complete)$", head)
+        self.assertIsNotNone(status, "phaseC-status missing from the frontmatter")
+        self.assertLess(head.index("phase1k-status:"), head.index("phaseC-status:"))
+        at = lambda heading: self.doc.index("\n" + heading + "\n")
+        self.assertLess(at("## Decision gate"), at("## Ship design"))
+        self.assertLess(at("## Ship design"), at("## Phase C live procedure"))
+        self.assertLess(at("## Phase C live procedure"), at("## Phase C results"))
+        # The ship design: the hooks, the count, the needs, the press, every
+        # call shape, the refusals, what is not covered, and exactly one DLL.
+        design = self.doc[at("## Ship design"):at("## Phase C live procedure")]
+        for _, sdk, _, _ in self.CM_HOOKS:
+            name = sdk[len("gml_Script_"):]
+            self.assertIn("anon@840" if name.startswith("anon_840") else name, design, name)
+        for token in ("HookOneScript", "both-routes", "TABLE-ONLY", "stashMaterialTab", "stashSocketItemSlot",
+                      "GetItemMap(9)", "GetItemMap(0)", "PilipaliDecrypt", "R, a static reading", "need - k",
+                      "whole entries first", "SaveLocalFile(4, 1)", "Console_Save_obj", "ItemCheckHash",
+                      "CreateItemSaveStruct", "LootTimestamp", "InitItemFromJson", "AddItemToMap", "GridAddItem",
+                      "craftGrid", "RemoveItemFromMap", "GridRemoveItem", "GetItemFromFingerprint", "refused",
+                      "consume mismatch", "off for this session", "not observed live", "were not run live",
+                      "craftmats: moved", "BloodPactPlugin_ship.dll"):
+            self.assertIn(token, collapse(design), token)
+        self.assertLessEqual(len(re.findall(r"\b[0-9a-f]{64}\b", design)), 1)
+        # The procedure: fourteen checks in the capture's order, the line
+        # format, and the step-by-step's home.
+        procedure = self.doc[at("## Phase C live procedure"):at("## Phase C results")]
+        self.assertIn("fourteen checks", procedure)
+        self.assertIn("forgepact-issue-14-player-build-context.md", procedure)
+        self.assertIn("`### Live procedure 1`", collapse(procedure))
+        self.assertIn("## Checks", procedure)
+        self.assertIn("pass|fail|not-observed", procedure)
+        order = procedure[procedure.index("fourteen checks"):]
+        places = [order.index("`" + check + "`") for check in self.PHASE_C_CHECKS]
+        self.assertEqual(places, sorted(places), "the fourteen checks are named in the capture's order")
+        # The results: one row per check; verdicts and the capture once complete.
+        results = self.doc[at("## Phase C results"):]
+        self.assertIn("| Check | What it measures | Observed | Verdict |", results)
+        for check in self.PHASE_C_CHECKS:
+            self.assertIn("| " + check + " |", results, check)
+        if status.group(1) == "complete":
+            verdicts = sum(results.count(v) for v in ("| pass |", "| fail |", "| not-observed |"))
+            self.assertEqual(verdicts, len(self.PHASE_C_CHECKS))
+            self.assertIn("forgepact-issue-14-player-build-live-1.md", results)
+        # The gate records the owner's confirmation of Phase 1k's tokens.
+        gate = self.doc[at("## Decision gate"):at("## Ship design")]
+        after = gate[gate.find("After Phase 1k"):gate.find("After Phase 1j")]
+        self.assertIn("Confirm all three", after)
+        self.assertIn("Build on it", after)
+        self.assertNotIn("These three tokens are proposed, not set", after)
         self.assertNotIn("does not happen", self.doc)
 
     def test_research_doc_procedure_runs_the_vanilla_check_and_readers_before_the_hook(self):
