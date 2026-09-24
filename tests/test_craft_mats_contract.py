@@ -1508,6 +1508,57 @@ class CraftMatsContractTests(unittest.TestCase):
         procedure = self.doc[self.doc.index("\n### Live procedure 1k\n"):self.doc.index("\n## Results\n")]
         self.assertIn("`mapkeep on` before `craftprobe hook`", procedure)
 
+    def test_craftprobe_call_that_did_not_return_leaves_kept_empty(self):
+        # Round 2 of Phase 1k (instrument-blindness review): a `call` that
+        # threw, failed or found no script left the row's slot holding the
+        # previous call's return, and `kept:` then fell through to the game's
+        # latest return - so after a thrown `call InitItemFromJson` the next
+        # `call AddItemToMap ... kept:InitItemFromJson` would re-add the unit
+        # an earlier trial made. Now the slot is emptied before every dispatch
+        # and names why when the dispatch did not return, and `kept:` refuses
+        # on that rather than answering with anything else.
+        call = self.body("static void CpCall(")
+        dispatch = call.index("CpDispatchScript(name, inst, args, res, st)")
+        forget = call.index("CpForgetCallReturn(*t,")
+        self.assertLess(forget, dispatch, "the slot is emptied before the dispatch")
+        # Arguments are resolved - `kept:` read - before the slot is emptied,
+        # so a call may name its own row's kept return.
+        self.assertLess(call.index("CpResolveArg("), forget)
+        # Each outcome that did not return names itself in the slot.
+        after = call[dispatch:]
+        for outcome in ("NoScript", "Threw", "Failed"):
+            branch = after[after.index("CpCallOutcome::" + outcome):]
+            self.assertIn("lost = ", branch[:branch.index("\n    else")], outcome)
+        self.assertIn("CpForgetCallReturn(*t, ", after)
+        forgetter = self.body("static void CpForgetCallReturn(")
+        self.assertIn("c.call = 0;", forgetter)
+        self.assertIn("c.lost = ", forgetter)
+        # The slot is emptied before its root global is released, so it never
+        # holds an unrooted struct.
+        self.assertLess(forgetter.index("*c.value = RValue();"), forgetter.index('"variable_global_set"'))
+        # A kept return clears the reason; the by-name ordinal is printed,
+        # since a row mapkeep holds never advances the detour's `#<n>`.
+        keeper = self.body("static void CpKeepCallReturn(")
+        self.assertIn("c.lost.clear();", keeper)
+        self.assertIn("by-name call ", keeper)
+        self.assertIn("++slot.attempt", call)
+        # `kept:` refuses on a lost call before it would read the game's return.
+        value = self.body("static bool CpKeptValue(")
+        self.assertLess(value.index("c.lost.empty()"), value.index("t->kept->value"))
+        self.assertIn("not used in its place", value)
+        self.assertIn("by-name call ", value[:value.index("t->kept->value")])
+        # `backing clear` releases a lost call's reason too.
+        backing = self.body("static void CpBackingCommand(")
+        clear = backing[backing.index('what == "clear"'):]
+        self.assertIn("c.lost.clear();", clear)
+        shipped = strip_research_blocks(self.plugin)
+        self.assertIn("kPlayerCommands", shipped)   # negative control: the strip keeps player code
+        self.assertNotIn("CpForgetCallReturn", shipped)
+        # The doc says so where it describes `kept:`.
+        instrument = self.doc[self.doc.index("\n### Phase 1k instrument\n"):self.doc.index("\n## Live procedure\n")]
+        self.assertIn("did not return", instrument)
+        self.assertIn("by-name call <k>", instrument)
+
     # ---- the switch ----------------------------------------------------------
 
     def test_craftmats_off_by_default_and_frame_path_gated(self):

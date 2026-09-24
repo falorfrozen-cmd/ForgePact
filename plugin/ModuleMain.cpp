@@ -23886,9 +23886,15 @@ static CpTarget* CpFindRow(const std::string& text)
 // `call`, after a dispatch that ran, and read first by `kept:`; no detour
 // touches it. Rooted the same way: the research global `__cp_call_<row>` is
 // set before the slot.
+// Round 2: the slot is emptied before every dispatch, and a dispatch that did
+// not return (no script, threw, failed) leaves `lost` naming why, so `kept:`
+// refuses rather than handing on an earlier call's return or the game's.
 struct CpCallKept {
     RValue*     value = nullptr;   // heap-held and never deleted, as CpKept::value
     long        call = 0;          // the row's call number `call` printed; 0 = nothing kept
+    long        attempt = 0;       // this row's by-name dispatches, counted here: a row mapkeep
+                                   // holds is never detoured, so its `#<n>` never moves
+    std::string lost;              // why the latest dispatch kept nothing; empty when it kept
     std::string root;
     std::string self;
 };
@@ -23904,8 +23910,21 @@ static void CpKeepCallReturn(const CpTarget& t, const RValue& res, long callNo)
         *c.value = res;
         c.root = root;
         c.call = callNo;
-        Out(std::string("  kept as kept:") + t.label + " #" + std::to_string(callNo) + " (" + PpBackingShape(res) + "; this call's own return, which no game call replaces)");
+        c.lost.clear();
+        Out(std::string("  kept as kept:") + t.label + " #" + std::to_string(callNo) + " (by-name call " + std::to_string(c.attempt)
+            + "; " + PpBackingShape(res) + "; this call's own return, which no game call replaces)");
     } catch (...) { Out(std::string("  kept:") + t.label + " not kept (variable_global_set threw)"); }
+}
+
+// Empties the row's slot and says why: the slot first, then its root global,
+// so the slot never holds a struct nothing roots.
+static void CpForgetCallReturn(const CpTarget& t, const std::string& why)
+{
+    CpCallKept& c = g_CpCallKept[&t - g_CpTargets];
+    if (c.value) *c.value = RValue();
+    try { if (!c.root.empty()) g_Yytk->CallBuiltin("variable_global_set", { RValue(c.root), RValue() }); } catch (...) {}
+    c.call = 0;
+    c.lost = why;
 }
 
 // `kept:<row>` for `call`, `callm` and `set`: the row's by-name `call` return
@@ -23918,8 +23937,16 @@ static bool CpKeptValue(const std::string& rowText, RValue& out, std::string& fr
     const CpCallKept& c = g_CpCallKept[t - g_CpTargets];
     if (c.value && c.call > 0) {
         out = *c.value;
-        from = std::string("the by-name `call ") + t->label + "` #" + std::to_string(c.call) + " return (" + PpBackingShape(out) + ")";
+        from = std::string("the by-name `call ") + t->label + "` #" + std::to_string(c.call) + " return (by-name call "
+             + std::to_string(c.attempt) + ", " + PpBackingShape(out) + ")";
         return true;
+    }
+    // The latest by-name call did not return: refuse, never fall back to an
+    // earlier call's value or the game's, which the trial did not make.
+    if (!c.lost.empty()) {
+        why = "the latest by-name `call " + std::string(t->label) + "` kept nothing - " + c.lost
+            + "; the game's return is not used in its place (run that `call` again)";
+        return false;
     }
     if (t->kept && t->kept->value && t->kept->call > 0) {
         out = *t->kept->value;
@@ -25584,6 +25611,7 @@ static void CpBackingCommand(const std::vector<std::string>& tok)
         }
         // Phase 1k round 1: `call`'s own kept returns, released the same way.
         for (CpCallKept& c : g_CpCallKept) {
+            c.lost.clear();   // round 2: a lost call's reason goes too
             if (c.call <= 0) continue;
             try { if (!c.root.empty()) g_Yytk->CallBuiltin("variable_global_set", { RValue(c.root), RValue() }); } catch (...) {}
             if (c.value) *c.value = RValue();
@@ -25801,17 +25829,38 @@ static void CpCall(const std::vector<std::string>& tok)
     // detour, so the call's own lines are never mistaken for the game's.
     const long callNo = *t->calls + 1;
     const std::string no = "#" + std::to_string(callNo);
+    // Round 2: the arguments above are resolved (a `kept:` of this row read
+    // already), so the row's slot is emptied now; only a dispatch that
+    // returns refills it, and one that does not says why in the slot.
+    CpCallKept& slot = g_CpCallKept[t - g_CpTargets];
+    const long attempt = ++slot.attempt;
+    const std::string tried = "by-name call " + std::to_string(attempt) + " (" + no + ")";
+    CpForgetCallReturn(*t, tried + " did not return");
     RValue res;
     AurieStatus st = AURIE_SUCCESS;
     const CpCallOutcome outcome = CpDispatchScript(name, inst, args, res, st);
-    if (outcome == CpCallOutcome::NoScript) Out("  NOT dispatched " + no + ": asset_get_index found no script");
-    else if (outcome == CpCallOutcome::Threw) Out("  entered " + no + ", script_execute threw");
-    else if (outcome == CpCallOutcome::Failed) Out("  entered " + no + ", script_execute returned st=" + std::to_string((int)st));
+    std::string lost;
+    if (outcome == CpCallOutcome::NoScript) {
+        Out("  NOT dispatched " + no + ": asset_get_index found no script");
+        lost = "asset_get_index found no script";
+    }
+    else if (outcome == CpCallOutcome::Threw) {
+        Out("  entered " + no + ", script_execute threw");
+        lost = "script_execute threw";
+    }
+    else if (outcome == CpCallOutcome::Failed) {
+        Out("  entered " + no + ", script_execute returned st=" + std::to_string((int)st));
+        lost = "script_execute returned st=" + std::to_string((int)st);
+    }
     else {
         std::string ret;
         try { ret = PpRetText(res); } catch (...) { ret = "<read failed>"; }
         Out("  dispatched " + no + " -> ret=" + ret);
         CpKeepCallReturn(*t, res, callNo);
+    }
+    if (!lost.empty()) {
+        CpForgetCallReturn(*t, tried + ": " + lost);
+        Out(std::string("  kept:") + t->label + " is empty (" + tried + ": " + lost + "); `kept:" + t->label + "` refuses until a `call` returns");
     }
     Out("  after:  " + where());
 }
@@ -26199,9 +26248,12 @@ static void CpInjectCommand(const std::vector<std::string>& tok)
 }
 
 // The first line is the build's marker: a live session tells this build
-// (Phase 1k, 281 rows: Phase 1j's 278 plus the loaders' InitItemFromJson,
-// ReCreateItem and ParseItemToGrid, with `callm`'s `bind` and `set`'s `kept:`
-// form) from Phase 1j's (278 rows, marker `phase1j`: Phase 1i's 254 plus the
+// (Phase 1k, 282 rows: Phase 1j's 278 plus the loaders' InitItemFromJson,
+// ReCreateItem and ParseItemToGrid, and ReportClient, added in the build's
+// review round so `hash-accept` rests on a detoured row; with `callm`'s
+// `bind`, `set`'s `kept:` form and `call` keeping its own dispatch's return
+// for `kept:`, emptied when a dispatch does not return; the first Phase 1k
+// build printed 281 rows and was never installed) from Phase 1j's (278 rows, marker `phase1j`: Phase 1i's 254 plus the
 // save route, the item struct's methods, the creation candidates and the Cube
 // grid's binding, with `callm`, `set` and `inject`), Phase 1i's (254 rows, marker `phase1i`, with the
 // paged `var *`, `find` and the `inroute` gate), Phase 1h's (254 rows, marker
