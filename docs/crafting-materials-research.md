@@ -4764,8 +4764,14 @@ the vanilla duplication (`### Constraints from Phase 1`).
   stash save is left to the game; a crash in between loses that craft's
   stash-supplied materials (accepted by the owner, the hub guide's Known
   Limitations item 23).
-- **Player DLL:** `plugin_build/BloodPactPlugin_ship.dll`, sha256 recorded
-  after the build, built by `plugin_build\build.bat release`.
+- **Player DLL:** `plugin_build/BloodPactPlugin_ship.dll`, sha256
+  `eedc27c30c57236ecbf0e1dd8c04a423e257aaea927911e6e9d932edb01c46f3`, built
+  on 2026-09-24 by `plugin_build\build.bat release` from ForgePact `6f45abe`
+  (the code commit; this line is a doc-only commit after it). The build is not
+  byte-reproducible: a second `build.bat release` of the same commit, run
+  minutes apart, gave a different sha256 (`a8822c4b...`; the two files first
+  differ in the PE header), so this hash names this one file, and Phase C's
+  `dll-hash` compares the installed DLL against it, not against a rebuild.
 
 ## Phase C live procedure
 
