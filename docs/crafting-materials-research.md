@@ -3890,8 +3890,8 @@ recorded with what was supplied, and a negative only beside its control.
 o confirm` unbound entered `script_execute` and threw, reproducing Live 1j's
 negative control. Bound (`bind`), `bind=yes` and `method_get_self`
 (`before=undefined`, `after=struct members=11`) confirmed the rebind was
-applied, but the one `script_execute` also threw and did not answer the
-entry's count (`ret=real:2`). This is a rejected shape - `script_execute` of
+applied, but the one `script_execute` also threw without answering the
+expected `ret=real:2`. This is a rejected shape - `script_execute` of
 the bound value with an instance self, self=other=`Console_Save_obj#980@199951`,
 one argument `"o"` - not a finding that the method route is impossible; no
 other way to dispatch a bound method was tried (`bind-control`).
@@ -3954,7 +3954,9 @@ into the bag's Unstable Dust, now 2. In that drag window
 `InventorySwapItemsNew`, `InventorySocketItem` and `RemoveItemFromMap` each
 logged one call, recorded as logged without interpreting them; the four
 merge/hash rows (`ItemCheckHash` included) logged zero, the same gap as
-Question 3 (`partial-cube`).
+Question 3. `GridAddToStack` and `InventoryGridAddToStack` fired on no merge
+this session, so their zero here has no positive control either and is not
+evidence the merge avoids them (`partial-cube`).
 
 **Question 6: the save, the close and the reload.** Observed, twice. The
 by-name `SaveLocalFile Console_Save_obj 0 4 1` ran `SaveStart` (`stash.hss`),
@@ -4022,10 +4024,10 @@ the edited K_B stack and again during the Cube merge, `ItemCheckHash` and
 `ReportClient` both logged zero calls, while the edited and created items
 survived the drag, the merge, the save and a reload (`### Phase 1k results`,
 Question 3).
-These three tokens are proposed, not set: the owner confirms them
-(`## Needs human judgement` 1), and whether to build on the inline route
-while that hash acceptance is unobserved is a separate question for the
-owner (`## Needs human judgement` 2).
+These three tokens are proposed, not set: the owner confirms them (the
+workorder's `## Needs human judgement` 1), and whether to build on the
+inline route while that hash acceptance is unobserved is a separate
+question for the owner (the workorder's `## Needs human judgement` 2).
 
 **After Phase 1j (2026-09-24): the record proposes five route tokens; H-A
 stays the decision.** Live 1j measured a by-name save route (`SaveLocalFile`,
