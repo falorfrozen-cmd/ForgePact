@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Common.hpp"
+#include <hs_game_sdk/reward_scope.hpp>
 
 namespace ForgePact {
 
@@ -82,6 +83,7 @@ public:
             if (!*hedef->orig) { Out(std::string("stat: ") + hedef->name + " kancasi kurulamadi"); return; }
         }
         *hedef->mult = c;
+        if (std::string(hedef->name) == "EnemyCalculateExperience") HeroSiege::RewardScope::SetForgePactXp(c);
         // XP carpani acilinca baloncuk metnini de duzelt (yalnizca gorsel).
         if (c != 1.0 && std::string(hedef->name) == "EnemyCalculateExperience" && !m_OrigCombatText)
             HookOneScript("CombatText", "fp_ctext", (void*)Hook_CombatText, &m_OrigCombatText);
@@ -162,7 +164,8 @@ private:
         auto& mgr = Instance(); \
         BP_DIAG_INCREMENT(mgr.m_Calls_##NAME); \
         RValue& _r = mgr.m_Orig_##NAME ? mgr.m_Orig_##NAME(S, O, R, argc, A) : R; \
-        if (mgr.m_Mult_##NAME != 1.0) { try { _r = Scale(_r, mgr.m_Mult_##NAME); } catch (...) {} } \
+        const bool rewardStat = std::string_view(#NAME)=="StatMagicFind" || std::string_view(#NAME)=="EnemyCalculateExperience" || std::string_view(#NAME)=="StatExtraGold" || std::string_view(#NAME)=="StatExperienceGain"; \
+        if (mgr.m_Mult_##NAME != 1.0 && !(rewardStat && HeroSiege::RewardScope::Active())) { try { _r = Scale(_r, mgr.m_Mult_##NAME); } catch (...) {} } \
         return _r; \
     }
 
@@ -211,7 +214,7 @@ private:
         RValue yeni;
         std::vector<RValue*> A2;
         double c = mgr.m_Mult_EnemyCalculateExperience;
-        if (c != 1.0 && A && argc > 0 && A[0] && A[0]->m_Kind == VALUE_STRING) {
+        if (!HeroSiege::RewardScope::Active() && c != 1.0 && A && argc > 0 && A[0] && A[0]->m_Kind == VALUE_STRING) {
             try {
                 std::string s = A[0]->ToString();
                 static const std::string sonek = " XP";

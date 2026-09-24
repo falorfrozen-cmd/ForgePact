@@ -45,7 +45,7 @@ one of three with `activationFunc`), and `press exec-index button:activationArgs
 self=found confirm` printed `prospected` with `invoked=yes` and `inner=yes`, seen by eye
 (§ Stage B results, P-shapes). That is the one shape the ship rule accepts, and the only
 one the player build uses. The mod is `autoprospect 1|0` (a player command; the panel's
-**Auto-prospect** switch in Gameplay Mods, off by default): a both-route hook on
+**Auto-prospect** switch in Quality of Life, off by default): a both-route hook on
 `m_MoveItemToGrid` tells the decision core an insert happened, and `FrameCallback`
 re-finds the window, the grid and the button and invokes the handler once per landed
 insert (§ Stage B ship design). `autoprospect stat` is research-build only.

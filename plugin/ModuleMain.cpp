@@ -23,6 +23,8 @@
 #include <YYToolkit/YYTK_Shared.hpp>
 #include <hs_game_sdk/hs_game_sdk.hpp>
 #include <ForgePact/Version.hpp>
+#include <ForgePact/AdaptivePopulationBudget.hpp>
+#include <ForgePact/DeferredDensityCopies.hpp>
 #include <windows.h>
 #include <algorithm>
 #include <fstream>
@@ -75,6 +77,20 @@ static void LogDrop(const char* fn, RValue& res, int argc, RValue** A);
   #define BP_LOGDROP(a,b,c,d) ((void)0)
 #else
   #define BP_LOGDROP(a,b,c,d) LogDrop(a,b,c,d)
+#endif
+
+// The Angelic roll research probe's note from inside ForgePact::DropManager's
+// hook bodies (docs/angelic-roll-hook-research.md), placed here beside
+// BP_LOGDROP for the same reason. The player build compiles it to nothing, so
+// those hook bodies compile exactly as they did before it existed.
+#ifdef FORGEPACT_RELEASE
+  #define BP_ANGELIC_PROBE_SCOPE(name, s, argc, a) ((void)0)
+#else
+  // A scope object: it counts the call for the matching probe row (only when
+  // that row is attached `via` the hook) and, for DropItem, keeps the probe's
+  // drop-item depth raised until the hook body returns. Declared with the
+  // tgprobe forward declarations below, before DropManager.hpp is included.
+  #define BP_ANGELIC_PROBE_SCOPE(name, s, argc, a) ApRollDropScope _apRollScope(name, s, argc, a)
 #endif
 
 // ===== Hook state =====
@@ -328,6 +344,9 @@ static bool HookOneScript(const char* shortName, const char* id, PVOID dest, PFU
                           bool* nativeOut = nullptr);
 static bool AddrIsExecutableInModule(HMODULE mod, const void* addr);   // defined with the pet-quest collect call
 static bool HhResolveLocalPlayer(RValue& out, std::string* how = nullptr);
+static CInstance* HhResolveInstance(const RValue& value);
+static void ResetDeferredDensity(bool all);
+static size_t DeferredDensityPending();
 static void InstallCreateHooks();
 static void InstallDensityLifecycleHooks();
 static void OpenDensityWindow();
@@ -352,7 +371,51 @@ static void TgProbeSpurnAfterDraw();
 // (`tgprobe sprite layer hud|buffs`) actually draws.
 static void TgProbeDrawMark(bool fromHudLayer);
 static void TgProbeSpriteDraw(bool fromHudLayer);
+// angelicprobe (docs/angelic-roll-hook-research.md, issue #64), defined with
+// the rest of the probe just after HookAngelicChance. The two depths are
+// written only by the probe's own detour bodies, by the scope object below
+// (DropManager's hook bodies, through BP_ANGELIC_PROBE_SCOPE) and by research
+// blocks inside HookAngelicChance; every other probe row reads them to count
+// the calls it saw inside DropItem / inside DropItemAngelicChance.
+static thread_local int g_ApRollDropItemDepth = 0;
+static thread_local int g_ApRollChanceDepth = 0;
+static bool ApRollDropScopeEnter(const char* hookName, CInstance* S, int argc, RValue** A);
+static void ApRollNoteChance(CInstance* S, int argc, RValue** A);
+static void ApRollNoteChanceReturn(const RValue& result);
+struct ApRollDropScope {
+    bool raised;
+    ApRollDropScope(const char* hookName, CInstance* S, int argc, RValue** A)
+        : raised(ApRollDropScopeEnter(hookName, S, argc, A)) {}
+    ~ApRollDropScope() { if (raised) --g_ApRollDropItemDepth; }
+    ApRollDropScope(const ApRollDropScope&) = delete;
+    ApRollDropScope& operator=(const ApRollDropScope&) = delete;
+};
+// The probe's own DropItem detour (route 2 fallback) holds the drop-item depth
+// with this guard, for the same reason as the angelic-chance guard below.
+struct ApRollDropDepthHold {
+    bool held;
+    explicit ApRollDropDepthHold(bool hold) : held(hold) { if (held) ++g_ApRollDropItemDepth; }
+    ~ApRollDropDepthHold() { if (held) --g_ApRollDropItemDepth; }
+    ApRollDropDepthHold(const ApRollDropDepthHold&) = delete;
+    ApRollDropDepthHold& operator=(const ApRollDropDepthHold&) = delete;
+};
+// HookAngelicChance holds the angelic-chance depth with this guard rather than
+// a bare ++/--, so a call that throws out of the original cannot leave the
+// depth raised and mark every later row as inside the roll.
+struct ApRollChanceDepthScope {
+    ApRollChanceDepthScope() { ++g_ApRollChanceDepth; }
+    ~ApRollChanceDepthScope() { --g_ApRollChanceDepth; }
+    ApRollChanceDepthScope(const ApRollChanceDepthScope&) = delete;
+    ApRollChanceDepthScope& operator=(const ApRollChanceDepthScope&) = delete;
+};
+// The research build finds the Angelic gate once at startup, before its own
+// DropManager hooks replace DropItem's script-table entry (InstallHook).
+static unsigned char* FindAngelicGate();
 #endif
+// #69: InstallHook records DropItem's and DropItemAngelicChance's own code in
+// both builds, before any hook swaps their script-table entries; the Angelic
+// gate finder scans that record. Defined with FindAngelicGate.
+static void CaptureAngelicScriptCode();
 
 // HookOneScript/HookOneScriptTable prepend "gml_Script_" themselves, so a
 // closure hooked by an hs-game-sdk constant needs the prefix peeled back off.
@@ -376,10 +439,16 @@ static consteval const char* SdkShortScriptName(std::string_view sdkConstant)
 }
 
 #include <ForgePact/Common.hpp>
+#include <ForgePact/ProtectedPoolRuntime.hpp>
+static bool PreparePopulationCapacity();
+static bool PopulationCapacityAvailable() { return ForgePact::ProtectedPool::Runtime::CanPopulate(); }
 #include <ForgePact/MapRevealManager.hpp>
+#include <ForgePact/PackMarkers.hpp>
+#include <ForgePact/PackMarkerIcons.hpp>
 #include <ForgePact/StatsManager.hpp>
 #include <ForgePact/RelicFilterMod.hpp>
 #include <ForgePact/ToggleSkillMod.hpp>
+#include <ForgePact/RestartAnytimeMod.hpp>
 #include <ForgePact/SkillTimerMod.hpp>
 // Issue #55 follow-up (D-S4): the generated rule table - kept as its own
 // include, never folded into SkillTimerMod.hpp, so that header (spliced
@@ -1081,6 +1150,7 @@ static bool RememberDensityPlacement(const DensityPlacementKey& key)
 
 static void ForgetDensityPlacements()
 {
+    ResetDeferredDensity(true);
     std::lock_guard<std::mutex> lock(g_DensityPlacementMutex);
     g_DensityKnownPlacements.clear();
     ForgePact::DensityManager::Instance().Frac = 0.0;
@@ -1201,6 +1271,95 @@ struct GecikmeliYaratim { bool katman; double x, y; RValue yuva; RValue nesne; u
 static std::deque<GecikmeliYaratim> g_Kuyruk;
 static int  g_KareBasina = 3;          // 0 = kapali (aninda yarat)
 static bool g_KuyruktanYaratim = false; // yeniden girisi engeller
+
+struct DensityContext { int kind=0; int64_t id=-1; }; // null, global, live instance id
+struct DensityRecipe {
+    bool layer=false;double x=0,y=0;
+    RValue plane,object; // validated scalar asset/layer values only, never instances/structs
+    DensityContext self,other;
+};
+static ForgePact::DeferredDensityCopies<DensityPlacementKey,DensityRecipe,DensityPlacementHash> g_DensityCopies;
+static int64_t g_DensityCopyRoom=INT64_MIN;
+static uint64_t g_DensityCopyCompleted=0,g_DensityCopyRefused=0,g_DensityCopyFailures=0;
+static std::string g_DensityCopyReason;
+static size_t DeferredDensityPending(){return g_DensityCopies.Pending();}
+static void ResetDeferredDensity(bool all){
+    if(all)g_DensityCopies.Reset();else g_DensityCopies.NewZone();
+    g_DensityCopyRoom=INT64_MIN;g_DensityCopyReason.clear();
+}
+static bool ObserveDensityRoom(){
+    const auto room=CurrentRoomKey();
+    if(room==INT64_MIN)return false;
+    if(g_DensityCopyRoom!=INT64_MIN && room!=g_DensityCopyRoom)g_DensityCopies.NewZone();
+    g_DensityCopyRoom=room;return true;
+}
+static bool CaptureDensityContext(CInstance* ptr,DensityContext& context){
+    if(!ptr){context={};return true;}
+    CInstance* global=nullptr;g_Yytk->GetGlobalInstance(&global);
+    if(ptr==global){context={1,-1};return true;}
+    try{
+        RValue id=g_Yytk->CallBuiltin("variable_instance_get",{ptr->ToRValue(),RValue("id")});
+        if(id.m_Kind!=VALUE_REAL && id.m_Kind!=VALUE_INT32 && id.m_Kind!=VALUE_INT64 && id.m_Kind!=VALUE_REF)return false;
+        const double n=id.ToDouble();
+        if(!std::isfinite(n) || n<0 || n>INT32_MAX || std::floor(n)!=n)return false;
+        context={2,static_cast<int64_t>(n)};return true;
+    }catch(...){return false;}
+}
+static bool ResolveDensityContext(const DensityContext& context,CInstance*& ptr){
+    ptr=nullptr;
+    if(context.kind==0)return true;
+    if(context.kind==1)return AurieSuccess(g_Yytk->GetGlobalInstance(&ptr)) && ptr;
+    ptr=HhResolveInstance(RValue(static_cast<double>(context.id)));return ptr!=nullptr;
+}
+static bool QueueDensityCopies(const DensityPlacementKey& key,bool layer,CInstance* self,CInstance* other,int argc,RValue* args,unsigned extras){
+    // Optional initialization structs may be mutated by their caller. Keep that
+    // unknown call shape synchronous rather than retaining a game-owned object.
+    if(argc!=4 || !args || extras>4 || !ObserveDensityRoom())return false;
+    auto scalar=[](const RValue& v){return v.m_Kind==VALUE_REAL || v.m_Kind==VALUE_INT32 || v.m_Kind==VALUE_INT64 || v.m_Kind==VALUE_REF;};
+    if(!scalar(args[0]) || !scalar(args[1]) || !scalar(args[3]) || (!scalar(args[2]) && args[2].m_Kind!=VALUE_STRING))return false;
+    DensityRecipe recipe;recipe.layer=layer;recipe.x=args[0].ToDouble();recipe.y=args[1].ToDouble();
+    if(!std::isfinite(recipe.x) || !std::isfinite(recipe.y))return false;
+    recipe.plane=args[2];recipe.object=args[3];
+    if(!CaptureDensityContext(self,recipe.self) || !CaptureDensityContext(other,recipe.other))return false;
+    if(!g_DensityCopies.Schedule(key,recipe,extras))return false;
+    ForgePact::AdaptivePopulationBudget::Instance().Activate();return true;
+}
+
+static void DensityCopiesTick(){
+    if(!g_DensityCopies.Pending() || !g_Yytk || !ObserveDensityRoom())return;
+    if(!ForgePact::MapRevealManager::Instance().HasReadableMap())return;
+    RValue player;if(!HhResolveLocalPlayer(player))return;
+    double x=0,y=0;
+    try{x=g_Yytk->CallBuiltin("variable_instance_get",{player,RValue("x")}).ToDouble();
+        y=g_Yytk->CallBuiltin("variable_instance_get",{player,RValue("y")}).ToDouble();}catch(...){return;}
+    auto& budget=ForgePact::AdaptivePopulationBudget::Instance();
+    for(unsigned attempts=0;attempts<ForgePact::AdaptivePopulationBudget::kMaxCopies && budget.CanCopy(ForgePact::MapRevealManager::Instance().WantsPackSpawn());++attempts){
+        if(!ObserveDensityRoom())break;
+        if(ForgePact::MapRevealManager::Instance().IsEnabled() && ForgePact::MapRevealManager::Instance().PacksEnabled() && !PopulationCapacityAvailable())break;
+        auto job=g_DensityCopies.TakeNearest(x,y,g_RuntimeFrame);if(!job)break;
+        CInstance* self=nullptr;CInstance* other=nullptr;
+        if(!ResolveDensityContext(job->recipe.self,self) || !ResolveDensityContext(job->recipe.other,other)){
+            g_DensityCopyReason="Waiting for native creation context";
+            g_DensityCopies.Retry(*job,g_RuntimeFrame+60);continue;
+        }
+        const int n=static_cast<int>(job->ordinal);
+        RValue args[4]={RValue(job->recipe.x+((n%5)-2)*28.0),RValue(job->recipe.y+((n/5)-2)*28.0),job->recipe.plane,job->recipe.object};
+        TRoutine orig=job->recipe.layer?g_OrigICL:g_OrigICD;
+        if(!orig){g_DensityCopies.Retry(*job,g_RuntimeFrame+60);continue;}
+        budget.CopyStarted();
+        // Mark before native code can serialize the copy. Never retain a raw
+        // caller across frames, and never replay a call after an uncertain fault.
+        RememberDensityPlacement(MakeDensityPlacementKey(static_cast<int>(args[3].ToDouble()),args,4));
+        const bool prior=g_KuyruktanYaratim;g_KuyruktanYaratim=true;
+        try{
+            ForgePact::PopulationNativeScope measured(true);
+            measured.SetObject(args[3].ToDouble());
+            RValue result;orig(result,self,other,4,args);
+            ++g_DensityCopyCompleted;BP_DIAG_INCREMENT(g_ExtraCreators);g_DensityCopyReason.clear();
+        }catch(...){++g_DensityCopyFailures;g_DensityCopyReason="Native density copy failed; not retried";}
+        g_KuyruktanYaratim=prior;g_DensityCopies.Complete(*job);
+    }
+}
 static uint64_t g_KuyrukToplam = 0;
 
 static int g_OrnekButce = 14000;  // 0 = sinirsiz
@@ -1229,12 +1388,21 @@ static int ToplamOrnek()
 
 
 #ifdef FORGEPACT_RELEASE
-// YYToolkit'in "YYToolkit Log" konsolu oyuncuya gorunmesin.
-// (sinif ConsoleWindowClass, oyunun kendi surecinde AllocConsole ile aciliyor)
-static void KonsoluGizle()
+// The player build detaches the game from YYToolkit's "YYToolkit Log"
+// console instead of hiding its window (#58). YYToolkit opens that console
+// inside the game's own process (AllocConsole), which makes it the game's
+// standard output, so GameMaker writes every runtime warning to it
+// synchronously - hidden or not. Underground Garden's zone generation
+// (entered from Misty Swamp) emits thousands of "tilemap_get() - couldn't find
+// specified tilemap" warnings, and writing them to the console froze the load
+// for 30-70 seconds. MEASURED 2026-09-23 with an external stack sampler: the
+// main thread sat in WriteFile, called from the game's own code, for the whole
+// freeze, and the console buffer held nothing but that warning. The unmodded
+// game has no console, so there those writes fail at once; detaching restores
+// that. Players never saw this console, and the research build keeps it.
+static void DetachConsole()
 {
-    HWND h = GetConsoleWindow();
-    if (h && IsWindowVisible(h)) ShowWindow(h, SW_HIDE);
+    if (GetConsoleWindow()) FreeConsole();
 }
 #endif
 
@@ -1303,6 +1471,12 @@ static void DoMultiCreate(TRoutine orig, RValue& Result, CInstance* S, CInstance
         }
     }
     if (isCreator && !specialChild) NoteDensityCreator();
+    // Restoring a partly populated zone resumes only its remaining copies.
+    // It does not advance the fractional multiplier or repeat completed work.
+    if(isCreator && densityAlreadyApplied && !specialChild && !g_KuyruktanYaratim && !g_CallerIsEnemy){
+        const auto key=MakeDensityPlacementKey(objIdx,Args,argc);
+        if(g_DensityCopies.HasPlan(key))QueueDensityCopies(key,katman,S,O,argc,Args,g_DensityCopies.Target(key));
+    }
     // density: multiply all Enemy_Creator* spawners (produces fully-configured enemies)
     if (g_CallerIsEnemy && isCreator) InterlockedIncrement(&g_DensitySkippedEnemyBorn);
 #ifndef FORGEPACT_RELEASE
@@ -1332,7 +1506,12 @@ static void DoMultiCreate(TRoutine orig, RValue& Result, CInstance* S, CInstance
     // (optional) direct enemy-descendant multiplier — off by default, creators are the right layer
     else if (g_EnemyMultAll > 1 && IsEnemyObject(objIdx) && g_EnemyMultAll > mult)
         mult = g_EnemyMultAll;
-    if (mult > 1 && argc >= 4 && orig && !g_KuyruktanYaratim) {
+    bool densityQueued=false;
+    if(mult>1 && isCreator && !ozelIcerik && !specialChild && !g_CallerIsEnemy && !g_KuyruktanYaratim){
+        densityQueued=QueueDensityCopies(MakeDensityPlacementKey(objIdx,Args,argc),katman,S,O,argc,Args,static_cast<unsigned>(mult-1));
+        if(!densityQueued)++g_DensityCopyRefused;
+    }
+    if (mult > 1 && argc >= 4 && orig && !g_KuyruktanYaratim && !densityQueued) {
         for (int i = 1; i < mult; i++) {
             try {
                 // Ozel icerik marker'i: kuyruga al, karelere yay.
@@ -1536,6 +1715,66 @@ static double InstanceIdOf(const RValue& inst)
 {
     try { RValue v = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("id") }); return v.ToDouble(); } catch (...) { return -1.0; }
 }
+// Shared only by guards in one create-hook invocation, before native code runs.
+// Never cache an instance pointer or classification across native calls/frames.
+struct CreationCallerInfo {
+    CInstance* self;
+    int object=-1;
+    bool read=false;
+    explicit CreationCallerInfo(CInstance* value):self(value){}
+    int ObjectIndex(){
+        if(!read){read=true;object=CallerObjectIndex(self);}
+        return object;
+    }
+};
+// Pack markers: a spawner that creates a monster has given birth, so its map
+// marker goes now instead of when the rotating check reaches it. One
+// object_index read of the caller (shared through CreationCallerInfo) and,
+// only for a known spawner creating a monster, one id read. Nothing runs
+// while the markers are off.
+static void PackMarkerBirth(CInstance* S, int argc, RValue* Args, CreationCallerInfo& caller)
+{
+    if (!S || argc < 4 || !Args || !ForgePact::PackMarkers::Instance().Enabled()) return;
+    try {
+        if (!IsEnemyObject((int)Args[3].ToDouble())) return;
+        if (!IsCachedCreatorObject(caller.ObjectIndex())) return;
+        const double id = InstanceIdOf(S->ToRValue());
+        if (std::isfinite(id) && id >= 0 && id <= 9007199254740991.0)
+            ForgePact::PackMarkers::Instance().MarkSpawned(static_cast<int64_t>(id));
+    } catch (...) {}
+}
+// Observe native success through the already-installed creation hooks. Store
+// only the caller identity before the call: native creation may remove self.
+// No event is replayed and no instance pointer survives the native call.
+struct PopulationBirthScope {
+    RValue& result;
+    int64_t creator=-1;
+    uint64_t generation=0;
+    bool completed=false;
+    PopulationBirthScope(RValue& r,CInstance* self,int argc,RValue* args,CreationCallerInfo& caller):result(r){
+        auto& reveal=ForgePact::MapRevealManager::Instance();
+        if(!self || argc<4 || !args || !reveal.NeedsBirthObservation())return;
+        generation=reveal.PopulationGeneration();
+        try {
+            const int object=static_cast<int>(args[3].ToDouble());
+            if(!IsEnemyObject(object) || !IsCachedCreatorObject(caller.ObjectIndex()))return;
+            const double id=InstanceIdOf(self->ToRValue());
+            if(std::isfinite(id) && id>=0 && id<=9007199254740991.0 && std::floor(id)==id
+               && reveal.TracksCreator(static_cast<int64_t>(id)))creator=static_cast<int64_t>(id);
+        }catch(...){}
+    }
+    void Completed(){completed=true;}
+    ~PopulationBirthScope(){
+        if(creator<0 || !completed)return;
+        try {
+            if(generation!=ForgePact::MapRevealManager::Instance().PopulationGeneration())return;
+            if(result.m_Kind!=VALUE_REAL && result.m_Kind!=VALUE_INT32 && result.m_Kind!=VALUE_INT64 && result.m_Kind!=VALUE_REF)return;
+            const double id=result.ToDouble();
+            if(std::isfinite(id) && id>=0 && id<=9007199254740991.0 && std::floor(id)==id)
+                ForgePact::MapRevealManager::Instance().ObserveNativeBirth(creator);
+        }catch(...){}
+    }
+};
 // A spawner created by a monster OR by another spawner is a runtime chain link, not part of
 // the zone's layout: density leaves it alone, otherwise every generation multiplies again.
 static bool CallerIsEnemyOrCreator(CInstance* S)
@@ -1552,12 +1791,12 @@ static bool CallerIsEnemyOrCreator(CInstance* S)
 struct EnemyBornScope
 {
     RValue& result; int objIdx = -1; bool active = false; bool prevCreating = false, prevCaller = false;
-    EnemyBornScope(RValue& r, CInstance* S, int argc, RValue* Args) : result(r)
+    EnemyBornScope(RValue& r, CInstance* S, int argc, RValue* Args, CreationCallerInfo& caller) : result(r)
     {
         try { if (argc >= 4) objIdx = (int)Args[3].ToDouble(); } catch (...) {}
         if (!(RarityFloorActive() || TyrantActive() || ForgePact::DensityManager::Instance().Mult > 1.0)) return;
         if (!(IsEnemyObject(objIdx) || IsCachedCreatorObject(objIdx))) return;
-        if (!CallerIsEnemyInstance(S)) return;   // only a real monster starts a chain
+        if (!IsEnemyObject(caller.ObjectIndex())) return;   // only a real monster starts a chain
         active = true; prevCreating = g_CreatingFromEnemy; prevCaller = g_CallerIsEnemy;
         g_CreatingFromEnemy = g_CreatingFromEnemy || IsEnemyObject(objIdx);
         g_CallerIsEnemy = true;
@@ -1579,15 +1818,20 @@ static void HhDeathEffectTrigger(CInstance* S, int objIdx);   // defined with th
 static bool HeadhunterRunning();                              // same
 static void HookICD(RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)
 {
+    ForgePact::PopulationNativeScope populationWork;
+    try { if(populationWork.Measuring() && argc>=4 && Args)populationWork.SetObject(Args[3].ToDouble()); } catch(...) {}
+    CreationCallerInfo callerInfo(S);
+    PopulationBirthScope populationBirth(Result,S,argc,Args,callerInfo);
     PERF_SCOPE(g_PerfICD);
-    EnemyBornScope _born(Result, S, argc, Args);
+    EnemyBornScope _born(Result, S, argc, Args, callerInfo);
+    PackMarkerBirth(S, argc, Args, callerInfo);
     if (argc >= 4 && HeadhunterRunning()) { try { HhDeathEffectTrigger(S, (int)Args[3].ToDouble()); } catch (...) {} }
 #ifdef FORGEPACT_RELEASE
     // A hook installed earlier in this process cannot be removed safely while
     // the game is running.  With every related feature Off, take a true native
     // pass-through path: no object lookup, cache access or post-create work.
     if (ForgePact::DensityManager::Instance().Mult <= 1.0 && g_EnemyMultAll <= 1 && g_ObjMult.empty()) {
-        if (g_OrigICD) g_OrigICD(Result, S, O, argc, Args);
+        if (g_OrigICD) { g_OrigICD(Result, S, O, argc, Args); populationBirth.Completed(); }
         return;
     }
 #endif
@@ -1604,23 +1848,28 @@ static void HookICD(RValue& Result, CInstance* S, CInstance* O, int argc, RValue
         && (DensityWindowActive() || IsCachedCreatorObject(objIdx));
     if (!densityCreate && g_EnemyMultAll <= 1 && g_SpecialCreateDepth == 0
         && ObjectMultiplier(objIdx) <= 1) {
-        if (g_OrigICD) g_OrigICD(Result, S, O, argc, Args);
+        if (g_OrigICD) { g_OrigICD(Result, S, O, argc, Args); populationBirth.Completed(); }
         return;
     }
 #endif
 #ifndef FORGEPACT_RELEASE
     WatchLog(ret, objIdx);
 #endif
-    if (g_OrigICD) DoMultiCreate(g_OrigICD, Result, S, O, argc, Args, objIdx, false);
+    if (g_OrigICD) { DoMultiCreate(g_OrigICD, Result, S, O, argc, Args, objIdx, false); populationBirth.Completed(); }
 }
 static void HookICL(RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)
 {
+    ForgePact::PopulationNativeScope populationWork;
+    try { if(populationWork.Measuring() && argc>=4 && Args)populationWork.SetObject(Args[3].ToDouble()); } catch(...) {}
+    CreationCallerInfo callerInfo(S);
+    PopulationBirthScope populationBirth(Result,S,argc,Args,callerInfo);
     PERF_SCOPE(g_PerfICD);
-    EnemyBornScope _born(Result, S, argc, Args);
+    EnemyBornScope _born(Result, S, argc, Args, callerInfo);
+    PackMarkerBirth(S, argc, Args, callerInfo);
     if (argc >= 4 && HeadhunterRunning()) { try { HhDeathEffectTrigger(S, (int)Args[3].ToDouble()); } catch (...) {} }
 #ifdef FORGEPACT_RELEASE
     if (ForgePact::DensityManager::Instance().Mult <= 1.0 && g_EnemyMultAll <= 1 && g_ObjMult.empty()) {
-        if (g_OrigICL) g_OrigICL(Result, S, O, argc, Args);
+        if (g_OrigICL) { g_OrigICL(Result, S, O, argc, Args); populationBirth.Completed(); }
         return;
     }
 #endif
@@ -1634,14 +1883,14 @@ static void HookICL(RValue& Result, CInstance* S, CInstance* O, int argc, RValue
         && (DensityWindowActive() || IsCachedCreatorObject(objIdx));
     if (!densityCreate && g_EnemyMultAll <= 1 && g_SpecialCreateDepth == 0
         && ObjectMultiplier(objIdx) <= 1) {
-        if (g_OrigICL) g_OrigICL(Result, S, O, argc, Args);
+        if (g_OrigICL) { g_OrigICL(Result, S, O, argc, Args); populationBirth.Completed(); }
         return;
     }
 #endif
 #ifndef FORGEPACT_RELEASE
     WatchLog(ret, objIdx);
 #endif
-    if (g_OrigICL) DoMultiCreate(g_OrigICL, Result, S, O, argc, Args, objIdx, true);
+    if (g_OrigICL) { DoMultiCreate(g_OrigICL, Result, S, O, argc, Args, objIdx, true); populationBirth.Completed(); }
 }
 
 static bool HookBuiltin(const char* name, const char* id, PVOID dest, TRoutine* origOut)
@@ -1844,6 +2093,9 @@ static bool HookOneScript(const char* shortName, const char* id, PVOID dest, PFU
     return true;
 }
 
+#include <ForgePact/MiningOreMod.hpp>
+#include <ForgePact/MinerHelmetState.hpp>
+
 // MEASURED 2026-09-10, session 7: every hook this file installs goes through
 // HookOneScript above, which always prepends "gml_Script_" - correct for
 // script assets and the anonymous closures GameMaker nests inside an
@@ -1892,6 +2144,7 @@ static RValue& HookZoneStateResetSingleDensityWindow(
 {
     // A single-zone reset marks a transition. It must never clear the stable
     // placement set: doing that is what caused density to multiply on revisit.
+    ResetDeferredDensity(false);
     OpenDensityWindow();
     return g_OrigZoneStateResetSingleDensityWindow
         ? g_OrigZoneStateResetSingleDensityWindow(S, O, R, argc, A) : R;
@@ -3373,6 +3626,17 @@ static bool HasCustomForgeSelector(double t, double a, double b)
 }
 static void AddBuiltInSignatureEntries()
 {
+    if (!HasCustomForgeSelector(0.0, ForgePact::MinerRules::Seed, 7.0)) {
+        CustomForgeEntry helmet;
+        helmet.selector = {{"t", 0}, {"a", ForgePact::MinerRules::Seed}, {"b", 7}, {"c", 0}, {"j", 0}};
+        helmet.stats = {{154, 1000}, {29, 500}, {25, 20}, {173, 20}, {281, 5}};
+        helmet.keepNative = false; helmet.rarity = 10; helmet.tier = 5;
+        helmet.mechanic = "miner"; helmet.name = "Miner's Helmet";
+        helmet.affix = "4x mining ore while equipped\nVein Resonance: a golden pulse when a vein yields ore";
+        helmet.lore = "Below the mountain, every glimmer is a promise.";
+        helmet.builtin = true;
+        g_CustomForgeEntries.push_back(std::move(helmet));
+    }
     if (!HasCustomForgeSelector(0.0, kSigCrownSeed, 7.0)) {
         CustomForgeEntry crown;
         crown.selector = { {"t", 0.0}, {"a", kSigCrownSeed}, {"b", 7.0}, {"c", 0.0}, {"j", 0.0} };
@@ -3692,6 +3956,7 @@ static double VanilyaBase(int kategori, int indeks, RValue& st, RValue& drOut)
         double v = simdi.ToDouble();
         if (!std::isfinite(v)) v = -1.0;
         g_DropRateVanilya[anahtar] = v;
+        HeroSiege::RewardScope::PublishBase(kategori, indeks, v);
         return v;
     }
     return it->second;
@@ -3949,6 +4214,7 @@ static bool TryApplyCustomForge(RValue* candidate, bool finalPass = false)
                 InterlockedIncrement(&g_CustomForgeMechanicTags);
                 if (entry.mechanic == "tyrant") g_TyItemTagged = true;
                 if (entry.mechanic == "beacon") g_BeItemTagged = true;
+                if (entry.mechanic == "miner") ForgePact::MinerHelmet::pending = true;
             }
             if (finalPass) {
                 size_t rk = 0, sk = 0;
@@ -6352,6 +6618,132 @@ static void ToggleGuardStats()
     Out("toggleguard stat: " + ToggleTableRowsLine());
 }
 
+// ===== Restart zone at any time (issue #8; `restartanytime`) ===================
+// Changes one value inside a call the game is already making: while the
+// pause menu's Restart button is the node the game's own `UiSetFocus` call is
+// handed, its `manualDisable` is written back to false before the game's body
+// runs, so a press in combat reaches the Restart activation instead of being
+// refused (docs/restart-always-available-research.md, round 3, T2/T3). It
+// restarts nothing itself and restores nothing: the game recomputes the
+// member every frame (ForgePact::RestartAnytimeModel, RestartAnytimeMod.hpp).
+// Off by default; installed only once armed (FrameCallback, the toggleguard
+// shape), through both of HookOneScript's routes - a TABLE-ONLY install
+// turns the mod off for the session and says so.
+static PFUNC_YYGMLScript g_OrigUiSetFocus = nullptr;
+static std::atomic<bool> g_RestartAnytimeInstallFailed{ false };
+
+// The Restart button's gate member, read at the call from the button the call
+// was handed. Only the kinds a gate can be written back in are accepted: the
+// bool the game was measured to hold, or a real. Anything else - absent,
+// undefined, a string, an integer kind nobody measured, a throw - is not
+// readable, and an unreadable gate is never written.
+static bool RestartAnytimeReadGate(const RValue& button, RValue& entry)
+{
+    try {
+        entry = g_Yytk->CallBuiltin("variable_instance_get", { button, RValue(ForgePact::kRestartGateMember) });
+    } catch (...) { return false; }
+    const auto kind = static_cast<uint32_t>(entry.m_Kind) & 0x0FFFFFFFU;
+    return kind == VALUE_BOOL || kind == VALUE_REAL;
+}
+
+static RValue& HookRestartAnytimeSetFocus(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    ForgePact::RestartAnytimeMod& mod = ForgePact::RestartAnytimeMod::Instance();
+    if (!mod.IsEnabled()) return g_OrigUiSetFocus(S, O, R, argc, A);
+
+    // Which node has focus is the call's own first argument (round 3, T1:
+    // the Restart button itself, handed over as VALUE_REF). It is accepted by
+    // reading through it, not by its kind, and identified by what it is - its
+    // own `uiNodeCallstack` - never by position, instance id or `self`: the
+    // menu is rebuilt on every open, and `self` is the pause menu.
+    bool isRestartButton = false;
+    if (argc > 0 && A && A[0] && HhUsableInstance(*A[0])) {
+        try {
+            RValue key = g_Yytk->CallBuiltin("variable_instance_get", { *A[0], RValue(ForgePact::kRestartButtonIdMember) });
+            const auto kind = static_cast<uint32_t>(key.m_Kind) & 0x0FFFFFFFU;
+            isRestartButton = kind == VALUE_STRING && key.ToString() == ForgePact::kRestartButtonIdValue;
+        } catch (...) {}
+    }
+    // The gate, read here at the point of use from the button being acted on,
+    // and only once that button is known to be Restart.
+    RValue entry;
+    bool memberReadOk = false, alreadyReady = false;
+    if (isRestartButton) {
+        memberReadOk = RestartAnytimeReadGate(*A[0], entry);
+        if (memberReadOk) {
+            const auto kind = static_cast<uint32_t>(entry.m_Kind) & 0x0FFFFFFFU;
+            alreadyReady = kind == VALUE_BOOL ? entry.ToBoolean() == ForgePact::kRestartGateReadyValue
+                                              : (entry.ToDouble() != 0.0) == ForgePact::kRestartGateReadyValue;
+        }
+    }
+
+    // `enabled` is true here: the off fast path above has already returned.
+    if (ForgePact::RestartAnytimeModel::Decide(true, isRestartButton, memberReadOk, alreadyReady)
+            == ForgePact::RestartAnytimeDecision::Write) {
+        // In the kind read at entry: the game's own bool stays a bool.
+        const auto kind = static_cast<uint32_t>(entry.m_Kind) & 0x0FFFFFFFU;
+        const RValue ready = kind == VALUE_BOOL ? RValue(ForgePact::kRestartGateReadyValue)
+                                                : RValue(ForgePact::kRestartGateReadyValue ? 1.0 : 0.0);
+        bool wrote = false;
+        try {
+            g_Yytk->CallBuiltin("variable_instance_set", { *A[0], RValue(ForgePact::kRestartGateMember), ready });
+            wrote = true;
+        } catch (...) {}
+        if (wrote) {
+            mod.NoteWritten();
+            if (mod.TakeFirstWrite())
+                Out(std::string("restartanytime: first write - the pause menu's Restart button had ")
+                    + ForgePact::kRestartGateMember + "=" + Describe(entry)
+                    + " (the game's in-combat wait); written open, so a press now goes through");
+        } else {
+            mod.NoteUnreadable();   // the write threw: nothing was changed
+        }
+    } else if (!isRestartButton) {
+        mod.NoteOtherNode();
+    } else if (!memberReadOk) {
+        mod.NoteUnreadable();
+    } else {
+        mod.NotePassed();           // the gate was already open
+    }
+    return g_OrigUiSetFocus(S, O, R, argc, A);
+}
+
+// hook=not installed|installed|TABLE-ONLY|FAILED, the toggleguard shape.
+// HookOneScript leaves the trampoline in g_OrigUiSetFocus when its native
+// detour went in, and the game's own function (code inside Hero_Siege.exe)
+// when it fell back to the table swap alone.
+static std::string RestartAnytimeHookState()
+{
+    if (g_RestartAnytimeInstallFailed.load()) return "FAILED (UiSetFocus not found)";
+    if (!g_OrigUiSetFocus) return "not installed";
+    if (AddrIsExecutableInModule(GetModuleHandleA(nullptr), (const void*)g_OrigUiSetFocus)) return "TABLE-ONLY";
+    return "installed";
+}
+
+// Printed by `restartanytime 0` and `restartanytime stat`.
+static std::string RestartAnytimeCountersLine()
+{
+    const ForgePact::RestartAnytimeMod& mod = ForgePact::RestartAnytimeMod::Instance();
+    return "written=" + std::to_string(mod.Written()) + " passed=" + std::to_string(mod.Passed())
+        + " otherNode=" + std::to_string(mod.OtherNode()) + " unreadable=" + std::to_string(mod.Unreadable())
+        + " hook=" + RestartAnytimeHookState();
+}
+
+// The one install attempt, from FrameCallback once the mod is armed, setup
+// has run and a player exists. Both routes or nothing: `UiSetFocus` is called
+// by compiled GML directly, which the table swap alone never sees.
+static void RestartAnytimeInstall()
+{
+    bool native = false;
+    const bool ok = HookOneScript(SdkShortScriptName(ForgePact::kRestartAnytimeSiteScript), "bp_restartanytime",
+                                  (PVOID)HookRestartAnytimeSetFocus, &g_OrigUiSetFocus, &native);
+    g_RestartAnytimeInstallFailed.store(!ok);
+    if (ok && native) { Out("restartanytime: hook installed -> ON"); return; }
+    ForgePact::RestartAnytimeMod::Instance().MarkBlind();
+    Out(std::string("restartanytime: hook ") + (ok ? "TABLE-ONLY" : "not installed (UiSetFocus not found)")
+        + " -> OFF: the game's own calls would never reach it, so Restart keeps its in-combat wait this session");
+}
+
 static long g_HhHudCalls = 0, g_HhLabelDraws = 0;
 static std::string g_HhLabelLastErr;
 // Draw GUI phase: project the player's position through the active camera and draw the
@@ -6427,6 +6819,7 @@ static RValue& Hook_DrawHudBuffs(CInstance* S, CInstance* O, RValue& R, int argc
     HhDrawHeadLabels();
     ToggleIndicatorDraw();
     SkillTimerDraw();
+    ForgePact::MinerHelmet::Draw();
 #ifndef FORGEPACT_RELEASE
     TgProbeSpurnAfterDraw();
 #endif
@@ -6784,6 +7177,7 @@ static bool HuntWants(const RValue& inst, int policy)
 static long g_BeScanNear = 0, g_BeScanMid = 0, g_BeScanFar = 0;   // scanning monsters by distance to the player
 static RValue& Hook_PathFindScanTick(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
+    FP_POP_SCOPE(HuntScan);
     ++g_BeScans;
 #ifndef FORGEPACT_RELEASE
     // research telemetry: distance histogram of scans
@@ -6843,6 +7237,7 @@ static RValue& Hook_PathFindScanTick(CInstance* S, CInstance* O, RValue& R, int 
 }
 static RValue& Hook_PathFindLeashCheck(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
+    FP_POP_SCOPE(HuntLeash);
     if (S) {
         const int policy = HuntPolicy();
         if (policy != 0 && HuntWants(S->ToRValue(), policy)) { ++g_BeLeashSkips; return R; }   // no leash: they never turn back
@@ -6869,23 +7264,78 @@ static const char* const kBeCreatorObjects[] = {
 // sleep.  radius < 0 keeps them all awake.  Returns the number left awake.
 // policy: 2 = wake every instance of obj inside the radius, 1 = only enemyRarity >= 2.
 // Instances the game itself left active are never touched.
+//
+// MEASURED 2026-09-22 (creator census, plus the game's own monster pass read
+// from a local decompilation - docs/population-performance-analysis.md): the
+// game never deactivates monsters. Far ones are merely left out of the
+// 30-frame player-box list. So instance_activate_object never changes the
+// count in vanilla, and the identity snapshot taken before it - two runtime
+// calls per monster, every sixth frame, ~10k calls a pass at 4x - was pure
+// cost. The snapshot is now taken only once a count change has proved that
+// something in this session does deactivate monsters.
+//
+// The call that discovers it has no snapshot, so it cannot tell the instances
+// it just woke from the ones the game left active, and it leaves all of them
+// awake. The always-snapshot walk would have sent the unwanted ones back to
+// sleep in that same call; this one call does not. Waking too many is the only
+// safe direction: if an instance the game left active were put to sleep here,
+// it would count as asleep from then on, and under the rares-only policy later
+// passes would keep an ordinary monster asleep even beside the player.
+// What that one call woke stays awake until whatever put it to sleep does so
+// again; from then on every pass takes the snapshot and filters exactly.
+static bool g_BeWakeSnapshot = false;   // a count change was seen: keep the full snapshot walk from now on
 static long BeWakeObject(const RValue& obj, double px, double py, double radius, int policy)
 {
-    std::unordered_set<int> gameActive;
+    FP_POP_SCOPE(HuntWakeObject);
+    // The unlimited all-enemy policy never filters anything. Enumerating
+    // both the old and new active sets cannot change its answer.
+    if (policy == 2 && radius < 0.0) {
+        g_Yytk->CallBuiltin("instance_activate_object", { obj });
+        return static_cast<long>(g_Yytk->CallBuiltin("instance_number", { obj }).ToDouble());
+    }
+    if (!g_BeWakeSnapshot) {
+        const int before = (int)g_Yytk->CallBuiltin("instance_number", { obj }).ToDouble();
+        g_Yytk->CallBuiltin("instance_activate_object", { obj });
+        const int after = (int)g_Yytk->CallBuiltin("instance_number", { obj }).ToDouble();
+        if (after == before) return after;   // nothing was asleep: the vanilla case, no walk at all
+        g_BeWakeSnapshot = true;
+        return after;
+    }
+    // instance_find already returns an identity on this runner (including
+    // VALUE_REF). Asking variable_instance_get("id") for every identity
+    // repeats the lookup. Object-valued handles retain the original route.
+    const auto identity = [](const RValue& inst) -> int64_t {
+        const bool direct = inst.m_Kind == VALUE_REAL || inst.m_Kind == VALUE_INT32
+            || inst.m_Kind == VALUE_INT64 || inst.m_Kind == VALUE_REF;
+        const double value = direct ? inst.ToDouble()
+            : g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("id") }).ToDouble();
+        if (!std::isfinite(value) || value < 0 || value > 9007199254740991.0 || std::floor(value) != value)
+            throw std::runtime_error("Unreadable hunt instance identity");
+        return static_cast<int64_t>(value);
+    };
+    // One contiguous allocation replaces a hash-node allocation per enemy on
+    // every wake pass. This snapshot lives only for this synchronous call.
+    std::vector<int64_t> gameActive;
+    const int n0 = (int)g_Yytk->CallBuiltin("instance_number", { obj }).ToDouble();
+    gameActive.reserve((std::max)(0, n0));
     {
-        const int n0 = (int)g_Yytk->CallBuiltin("instance_number", { obj }).ToDouble();
         for (int i = 0; i < n0; ++i) {
             RValue inst = g_Yytk->CallBuiltin("instance_find", { obj, RValue((double)i) });
-            gameActive.insert((int)g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("id") }).ToDouble());
+            gameActive.push_back(identity(inst));
         }
     }
     g_Yytk->CallBuiltin("instance_activate_object", { obj });
     const int n = (int)g_Yytk->CallBuiltin("instance_number", { obj }).ToDouble();
+    // Activation is synchronous and only adds active instances. If it added
+    // none, every instance is native-active and the filter must preserve it.
+    // Avoid the identical second full lookup walk in this common case.
+    if (n == n0) return n;
+    std::sort(gameActive.begin(), gameActive.end());
     long awake = 0;
     for (int i = n - 1; i >= 0; --i) {
         RValue inst = g_Yytk->CallBuiltin("instance_find", { obj, RValue((double)i) });
-        const int id = (int)g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("id") }).ToDouble();
-        if (gameActive.count(id)) { ++awake; continue; }
+        const int64_t id = identity(inst);
+        if (std::binary_search(gameActive.begin(), gameActive.end(), id)) { ++awake; continue; }
         bool keep = HuntWants(inst, policy);
         if (keep && radius >= 0.0) {
             const double ex = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("x") }).ToDouble();
@@ -6901,6 +7351,7 @@ static PFUNC_YYGMLScript g_Orig_ActivateDeactivateProps = nullptr;
 static PFUNC_YYGMLScript g_Orig_LocalActivateDeactivateProps = nullptr;
 static void BeaconWakeEnemies()
 {
+    FP_POP_SCOPE(HuntWake);
     const int policy = HuntPolicy();
     if (policy == 0 || g_BeWakeRadius == 0.0) return;
     try {
@@ -6973,6 +7424,7 @@ static void BeaconStepFarHunters()
 }
 static RValue& Hook_ActivateDeactivateProps(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
+    FP_POP_SCOPE(ActivateProps);
     BeaconStepFarHunters();
     if (!BeaconFreezeGate()) return R;
     RValue& r = g_Orig_ActivateDeactivateProps ? g_Orig_ActivateDeactivateProps(S, O, R, argc, A) : R;
@@ -6981,6 +7433,7 @@ static RValue& Hook_ActivateDeactivateProps(CInstance* S, CInstance* O, RValue& 
 }
 static RValue& Hook_LocalActivateDeactivateProps(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
+    FP_POP_SCOPE(ActivateProps);
     BeaconStepFarHunters();
     if (!BeaconFreezeGate()) return R;
     RValue& r = g_Orig_LocalActivateDeactivateProps ? g_Orig_LocalActivateDeactivateProps(S, O, R, argc, A) : R;
@@ -7156,7 +7609,8 @@ static void ObjIdxProbeReset()
 
 static void Hook_distance_to_object(RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)
 {
-    if (g_OrigDistanceToObject) g_OrigDistanceToObject(Result, S, O, argc, Args);
+    if (g_OrigDistanceToObject) { FP_POP_SCOPE(DistanceNative); g_OrigDistanceToObject(Result, S, O, argc, Args); }
+    FP_POP_SCOPE(DistanceExtra);
 
     // Two independent callers want the same lie, for different reasons:
     //   - the Beacon, continuously, so awake spawners inside the wake radius
@@ -7245,6 +7699,87 @@ static void InstallBeaconHook()
     HookOneScript("ActivateDeactivateProps",      "fp_beacon_wake",  (PVOID)Hook_ActivateDeactivateProps,      &g_Orig_ActivateDeactivateProps);
     HookOneScript("LocalActivateDeactivateProps", "fp_beacon_wakel", (PVOID)Hook_LocalActivateDeactivateProps, &g_Orig_LocalActivateDeactivateProps);
     g_BeHookInstalled = a && b;
+}
+
+// ===== Pack markers: map reveal's monster half since 1.4.5 =====================
+// One icon per unspawned Enemy_Creator_* on the game's own minimap layer,
+// instead of creating the zone's monsters (docs/population-performance-
+// analysis.md: a zone's worth of living monsters is what costs 30-80 ms a
+// frame at 4x, whichever way they were born).
+//
+// DrawMinimap calls DrawMinimapDynamic once per icon family, with the family's
+// object index as the first argument and the layer transform in the rest
+// (measured 2026-09-22 from the game's own placement: x' = 32 + x*args[2],
+// y' = 32 + (y+args[7])*args[3], icon sprite args[4]). The hook lets the game
+// draw its monsters, then draws the markers for the same family with the same
+// arguments, so they land in the same surface the HUD minimap and the map
+// screen are composited from. Other families draw nothing extra, and nothing
+// at all runs while the feature is off or the zone has no markers.
+static PFUNC_YYGMLScript g_Orig_DrawMinimapDynamic = nullptr;
+static bool g_PackMarkerHookAttempted = false, g_PackMarkerHookNative = false;
+static volatile long g_PackMarkerFamilyCalls = 0;
+static bool PackMarkerFamilyIsEnemy(const RValue& family)
+{
+    if (g_EnemyParentIdx < 0) return false;
+    if (family.m_Kind == VALUE_REAL || family.m_Kind == VALUE_INT32 || family.m_Kind == VALUE_INT64)
+        return static_cast<int>(family.ToDouble()) == g_EnemyParentIdx;
+    if (family.m_Kind == VALUE_REF) {
+        // An asset reference carries the index in its low 32 bits; the runner's
+        // own conversion is asked first, the raw field is the fallback.
+        try { if (static_cast<int>(family.ToDouble()) == g_EnemyParentIdx) return true; } catch (...) {}
+        return static_cast<int>(family.m_i64 & 0xffffffff) == g_EnemyParentIdx;
+    }
+    return false;
+}
+static RValue& Hook_DrawMinimapDynamic(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    RValue& r = g_Orig_DrawMinimapDynamic ? g_Orig_DrawMinimapDynamic(S, O, R, argc, A) : R;
+    auto& markers = ForgePact::PackMarkers::Instance();
+    if (!markers.Enabled() || markers.Count() == 0 || argc < 5 || !A || !A[0] || !A[2] || !A[3] || !A[4]) return r;
+    try {
+        if (!PackMarkerFamilyIsEnemy(*A[0])) return r;
+        InterlockedIncrement(&g_PackMarkerFamilyCalls);
+        static const RValue kUndefined;
+        markers.Draw(*A[2], *A[3], (argc > 7 && A[7]) ? *A[7] : kUndefined, *A[4]);
+    } catch (...) {}
+    return r;
+}
+// The icon for one pack kind, as a path GameMaker can open. The embedded
+// default PNG (tools/make_packmark_icons.py) is written to bp_ipc\packmarks\
+// only when no file of that name is there, so a player's own design of the
+// same name is kept and used. GameMaker's file sandbox reads relative paths
+// from its working directory, which is the game's bin folder - where bp_ipc
+// lives - so the path handed back is relative to that.
+static volatile long g_PackMarkerIconWrites = 0, g_PackMarkerIconWriteErrors = 0;
+static bool PackMarkerIconPath(int kind, std::string& gmlPath, std::string& absolutePath)
+{
+    if (kind < 0 || kind >= static_cast<int>(ForgePact::PackMarkerIcons::kIconCount)) return false;
+    const auto& icon = ForgePact::PackMarkerIcons::kIcons[kind];
+    const std::string dir = IPC_DIR + "\\packmarks";
+    const std::string file = dir + "\\" + icon.name + ".png";
+    try {
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+        if (!std::filesystem::exists(file, ec)) {
+            std::ofstream f(file, std::ios::binary | std::ios::trunc);
+            if (!f) { InterlockedIncrement(&g_PackMarkerIconWriteErrors); return false; }
+            f.write(reinterpret_cast<const char*>(icon.data), static_cast<std::streamsize>(icon.size));
+            if (!f) { InterlockedIncrement(&g_PackMarkerIconWriteErrors); return false; }
+            InterlockedIncrement(&g_PackMarkerIconWrites);
+        }
+    } catch (...) { InterlockedIncrement(&g_PackMarkerIconWriteErrors); return false; }
+    gmlPath = std::string("bp_ipc\\packmarks\\") + icon.name + ".png";
+    absolutePath = file;
+    return true;
+}
+static void InstallPackMarkerHook()
+{
+    if (g_PackMarkerHookAttempted) return;
+    g_PackMarkerHookAttempted = true;
+    ForgePact::PackMarkers::Instance().SetIconProvider(&PackMarkerIconPath);
+    InstallCreateHooks();   // births reach PackMarkerBirth through the existing create hooks
+    HookOneScript("DrawMinimapDynamic", "fp_packmarks_draw", (PVOID)Hook_DrawMinimapDynamic, &g_Orig_DrawMinimapDynamic, &g_PackMarkerHookNative);
+    Out(std::string("packmarks: minimap hook ") + (g_Orig_DrawMinimapDynamic ? (g_PackMarkerHookNative ? "native" : "TABLE-ONLY (the game calls this layer directly; markers may not draw)") : "FAILED (DrawMinimapDynamic not found)"));
 }
 
 // ---- orb (globe) pickup radius --------------------------------------------
@@ -9545,6 +10080,8 @@ static CInstance* HhResolveInstance(const RValue& value)
     } catch (...) {}
     return nullptr;
 }
+
+#include <ForgePact/MinerHelmetMod.hpp>
 
 // Bodies for the snapshot/diff research commands forward-declared near
 // CiDiffSnapshot above - defined here because they need HhResolveInstance,
@@ -15640,6 +16177,7 @@ static bool InChaosTowerCached()
 
 static RValue& Hook_PathFindStartPath(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
+    FP_POP_SCOPE(HuntStartPath);
     // Real counters even in player builds: a path start is a per-enemy,
     // per-second event, not a per-frame hot path, and the status line is the
     // only way a player can prove the hook is doing something.
@@ -15706,6 +16244,7 @@ static int g_mult_DropRelic = 1;
 // than migrated into ForgePact::RelicFilterMod.)
 
 static RValue& Hook_DropRelic(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) {
+    if (HeroSiege::RewardScope::Active()) return g_Orig_DropRelic ? g_Orig_DropRelic(S,O,R,argc,A) : R;
     BP_DIAG_INCREMENT(g_cnt_DropRelic);
 
     std::unordered_set<int> maxedRelics;
@@ -16750,6 +17289,13 @@ static void InstallHook()
     }
     g_Base = (uintptr_t)GetModuleHandleA(nullptr);
 
+    // #69: record DropItem's and DropItemAngelicChance's own code before any
+    // hook swaps their script-table entries for ForgePact's functions -
+    // InstallDropMultHooks below in the research build, `dropmult` or
+    // `angelicwatch` later in either build. FindAngelicGate scans this
+    // record. Reads two table entries; patches nothing.
+    CaptureAngelicScriptCode();
+
     // Load the editor-authored sidecar before choosing the release hook set.
     // This remains inert when the user has not forged any custom items.
     // Runs in every build - a release build with no forged items just finds
@@ -16772,6 +17318,14 @@ static void InstallHook()
 #else
     // Development builds install the complete research surface eagerly.
     InstallCreateHooks();
+    // Find the Angelic gate now, before the next line hands DropItem's
+    // script-table entry to DropManager's Hook_DropItem. Since #69 the finder
+    // scans the code CaptureAngelicScriptCode recorded at the top of
+    // InstallHook, so the order no longer decides whether it works; finding
+    // it here keeps the probe's startup log line. The finder caches what it
+    // found and patches nothing; OpenAngelicGate reuses it.
+    // (docs/angelic-roll-hook-research.md, "Instrument".)
+    FindAngelicGate();
     InstallDropMultHooks();
     InstallNecroBalanceHooks();
 
@@ -17222,7 +17776,10 @@ static std::mutex g_ProbeLock;
 
 static double __cdecl HookProtGet(double key)
 {
-    double v = g_OrigProtGet ? g_OrigProtGet(key) : 0.0;
+    FP_POP_SCOPE(PoolGet);
+    double v = ForgePact::ProtectedPool::Runtime::active.load(std::memory_order_acquire)
+        ? ForgePact::ProtectedPool::Runtime::Get(key)
+        : (g_OrigProtGet ? g_OrigProtGet(key) : 0.0);
 #ifndef FORGEPACT_RELEASE
     InterlockedIncrement(&g_ProtGetCalls);
     if (key == 175.0) InterlockedIncrement(&g_Seen175);
@@ -17268,6 +17825,23 @@ static bool EnsureProtGetHook()
     g_OrigProtGet = reinterpret_cast<AcGetVariableFn>(tramp);
     Out("HOOK INSTALLED on ac_dll_gm!GetVariable (native store)");
     return true;
+}
+
+static bool PreparePopulationCapacity()
+{
+    // Reuse the existing drop-rate getter hook; never put two independent
+    // detours on the same export. Its trampoline remains the bank-zero getter.
+    return ForgePact::ProtectedPool::Runtime::Install(GetModuleHandleW(L"ac_dll_gm.dll"),
+        fs::path(IPC_DIR) / "population-cache",
+        [](const char* name, void* target, void* replacement, void** original) {
+            if (std::strcmp(name, "GetVariable") == 0) {
+                if (!EnsureProtGetHook()) return false;
+                *original = reinterpret_cast<void*>(g_OrigProtGet);
+                return true;
+            }
+            const std::string id = std::string("fp_population_") + name;
+            return AurieSuccess(MmCreateHook(g_ArSelfModule, id.c_str(), target, replacement, original));
+        }, [](const std::string& line) { Out(line); });
 }
 
 static RValue& HookGpvRate(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
@@ -17355,18 +17929,57 @@ static unsigned char* ScriptCode(const char* fullName)
     catch (...) { return nullptr; }
 }
 
+// #69: the game's own code for the two scripts FindAngelicGate reads. It used
+// to read them through ScriptCode, the live script-table entry. HookOneScript
+// swaps that entry for ForgePact's own function: once `dropmult` has hooked
+// DropItem (or `angelicwatch` DropItemAngelicChance), the finder scanned
+// ForgePact's code and answered "call site not found". InstallHook now
+// records both before any hook runs. Only an address inside Hero_Siege.exe's
+// executable image is recorded - an entry that points anywhere else is some
+// hook's, not the game's - and a refusal is not recorded, so a later call can
+// still record an entry that reads as game code then.
+static unsigned char* g_DropItemCode = nullptr;
+static unsigned char* g_AngelicChanceCode = nullptr;
+
+static unsigned char* GameScriptCode(const char* fullName, unsigned char*& recorded)
+{
+    if (!recorded) {
+        unsigned char* code = ScriptCode(fullName);
+        if (code && AddrIsExecutableInModule(GetModuleHandleA(nullptr), code)) recorded = code;
+    }
+    return recorded;
+}
+
+static bool AngelicScriptCodeReady()
+{
+    const bool drop = GameScriptCode("gml_Script_DropItem", g_DropItemCode) != nullptr;
+    const bool chance = GameScriptCode("gml_Script_DropItemAngelicChance", g_AngelicChanceCode) != nullptr;
+    return drop && chance;
+}
+
+// First thing in InstallHook, in both builds.
+static void CaptureAngelicScriptCode()
+{
+    AngelicScriptCodeReady();
+}
+
 // Locate the branch that skips the DropItemAngelicChance call.  Found by
 // meaning, not by a fixed address, so it survives game updates:
 //   1. find the real `call gml_Script_DropItemAngelicChance` inside DropItem
 //   2. look back for a `test al,al` + `je rel32` whose target lands just after
 //      that call
 //   3. accept only if exactly ONE candidate matches
+// It scans the code recorded at startup (#69), never the live table entry.
 static unsigned char* FindAngelicGate()
 {
     if (g_AngelicGate) return g_AngelicGate;
-    unsigned char* drop   = ScriptCode("gml_Script_DropItem");
-    unsigned char* chance = ScriptCode("gml_Script_DropItemAngelicChance");
-    if (!drop || !chance) { Out("angelic: DropItem/DropItemAngelicChance not found"); return nullptr; }
+    if (!AngelicScriptCodeReady()) {
+        Out("angelic: DropItem/DropItemAngelicChance not found as the game's own code "
+            "(missing, or already hooked when ForgePact started) - nothing patched");
+        return nullptr;
+    }
+    unsigned char* drop = g_DropItemCode;
+    unsigned char* chance = g_AngelicChanceCode;
 
     const size_t kScan = 0x30000;          // DropItem is about 0x24A50 bytes
     unsigned char* call = nullptr;
@@ -17461,10 +18074,21 @@ static RValue& HookAngelicChance(CInstance* S, CInstance* O, RValue& R, int argc
         } catch (...) {}
     }
 #endif
+#ifndef FORGEPACT_RELEASE
+    // angelicprobe: count this call for the angelic-chance row (while the probe
+    // is attached), then hold the angelic-chance depth over every original
+    // call below, extra rolls included, so the rows those calls reach are
+    // counted as inside it. The guard lowers it again on every way out.
+    ApRollNoteChance(S, argc, A);
+    ApRollChanceDepthScope apChanceDepth;
+#endif
     // Multiplying the chance argument in place broke the game's own check (x99 -> zero
     // drops, 2026-09-05).  Since 1.3.13 the multiplier is a number of ROLLS: every extra roll
     // is the game's own function with the game's own chance, so x2 really is two 1-in-N dice.
     RValue& r = g_OrigAngChance ? g_OrigAngChance(S, O, R, argc, A) : R;
+#ifndef FORGEPACT_RELEASE
+    ApRollNoteChanceReturn(r);   // the game's own roll's result: kind, and value if numeric
+#endif
     const int extra = (int)std::lround(g_AngelicRateMult) - 1;   // rate x1 = the game's roll only
     if (!g_InAngelicExtra && extra > 0 && g_OrigAngChance) {
         g_InAngelicExtra = true;
@@ -17473,6 +18097,551 @@ static RValue& HookAngelicChance(CInstance* S, CInstance* O, RValue& R, int argc
         InterlockedIncrement(&g_AngRateHits);
     }
     return r;
+}
+
+#ifndef FORGEPACT_RELEASE
+// Research instrument for docs/angelic-roll-hook-research.md (issue #64):
+// `angelicprobe on|show|reset|list`. Where the game's own Angelic roll picks a
+// unique is known from a static reading (docs/angelic-drop-research.md) but was
+// never measured on this build, so this observes every plausible named step of
+// the roll in one build - counted, the first three calls of each row logged,
+// and each call attributed to "inside DropItem" / "inside
+// DropItemAngelicChance" through the two thread-local depths declared with the
+// tgprobe forward declarations near the top of the file.
+//
+// Seventeen rows, one per candidate script, each attached by the first rule
+// that applies (the tgprobe order, TgProbeAttach):
+//   1. `detoured` - the script-table entry is code inside Hero_Siege.exe, so
+//      nothing here holds it: the probe's own inline detour on that function.
+//      The angelic-chance row instead reuses `raredrop angelic`'s own hook
+//      (HookAngelicChance, g_OrigAngChance, id fp_angch) and reports the
+//      route HookOneScript's nativeOut gives it.
+//   2. `detoured (under table-only <hook>)` - a ForgePact table-only hook holds
+//      the entry and its saved original is the game's function: detour that
+//      saved original, so a direct call and the table hook's own call both
+//      pass through the probe exactly once (LootGroundCreate and
+//      LootGroundCreateFromItem, table-hooked by InstallItemInspectHooks).
+//   3. `via <hook> (native)` - a native ForgePact hook holds it (its saved
+//      original is a trampoline), so the hook body's own note counts the call:
+//      the five DropManager rows, noted by BP_ANGELIC_PROBE_SCOPE.
+// Anything else is `TABLE-ONLY (...)`, `blocked: ...` or `not found (...)`,
+// and `show` prints that row as calls=n/a - a row the probe cannot see never
+// reports a count, least of all 0 (AGENTS.md, "Prove the Instrument").
+//
+// Every detour target is a named table entry or a saved original a named
+// install captured, checked to be code inside the game before it is patched;
+// the hooking library is reached from one place (ApRollAttach). The probe
+// never calls a candidate - DropItemAngelic in particular loops forever on an
+// empty zone list - and nothing of it is on the per-frame path: the command
+// runs inside PollCommands() like every other command, and after that only
+// the hooked calls themselves run probe code.
+enum ApRollRoute : long {
+    kApRollUnattached = 0,
+    kApRollDetoured,
+    kApRollDetouredUnder,
+    kApRollVia,
+    kApRollTableOnly,
+    kApRollBlocked,
+    kApRollNotFound,
+};
+
+// Marks a row whose script DropManager::InstallHooks holds from startup; its
+// saved original is read through DropManager's research-only accessor.
+static constexpr bool kApRollHeldByDropManager = true;
+static constexpr long kApRollLogCalls = 3;
+enum : int { kApRowDropItem = 0, kApRowAngelicChance = 1 };
+
+struct ApRollRow {
+    const char*        id;
+    const char*        script;              // short name, from the SDK constant
+    bool               heldByDropManager;
+    PFUNC_YYGMLScript* existingOrig;        // a ForgePact table hook's saved original
+    const char*        holder;              // the ForgePact hook that holds the entry
+    const char*        hookId;              // the probe's own detour id
+    PVOID              detour;
+    PFUNC_YYGMLScript  tramp = nullptr;
+    volatile long      route = kApRollUnattached;
+    std::string        routeText = "not attached (send `angelicprobe on`)";
+    volatile long      calls = 0;
+    volatile long      insideDropItem = 0;
+    volatile long      insideChance = 0;
+};
+
+static RValue& ApRollDetourBody(int idx, CInstance* S, CInstance* O, RValue& R, int argc, RValue** A);
+#define APROLL_DETOUR(N) \
+    static RValue& ApRollDetour##N(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) \
+    { return ApRollDetourBody(N, S, O, R, argc, A); }
+APROLL_DETOUR(0)  APROLL_DETOUR(2)  APROLL_DETOUR(3)  APROLL_DETOUR(4)
+APROLL_DETOUR(5)  APROLL_DETOUR(6)  APROLL_DETOUR(7)  APROLL_DETOUR(8)
+APROLL_DETOUR(9)  APROLL_DETOUR(10) APROLL_DETOUR(11) APROLL_DETOUR(12)
+APROLL_DETOUR(13) APROLL_DETOUR(14) APROLL_DETOUR(15) APROLL_DETOUR(16)
+#undef APROLL_DETOUR
+
+// Index N of this table is ApRollDetourN's row; kApRowDropItem and
+// kApRowAngelicChance name the first two. Row 1 has no detour of its own.
+static ApRollRow g_ApRollRows[] = {
+    { "drop-item",        SdkShortScriptName(HeroSiege::Scripts::gml_Script_DropItem),                 kApRollHeldByDropManager, nullptr, "Hook_DropItem",         "fp_ap_ditem",   (PVOID)ApRollDetour0 },
+    { "angelic-chance",   SdkShortScriptName(HeroSiege::Scripts::gml_Script_DropItemAngelicChance),    false, nullptr, nullptr, nullptr, nullptr },
+    { "angelic-forced",   SdkShortScriptName(HeroSiege::Scripts::gml_Script_DropItemAngelic),          kApRollHeldByDropManager, nullptr, "Hook_DropItemAngelic",  "fp_ap_dangit",  (PVOID)ApRollDetour2 },
+    { "drop-boss",        SdkShortScriptName(HeroSiege::Scripts::gml_Script_DropItemBoss),             kApRollHeldByDropManager, nullptr, "Hook_DropItemBoss",     "fp_ap_dibos",   (PVOID)ApRollDetour3 },
+    { "drop-heroic",      SdkShortScriptName(HeroSiege::Scripts::gml_Script_DropItemHeroic),           false, nullptr, nullptr, "fp_ap_dihero",  (PVOID)ApRollDetour4 },
+    { "drop-debug",       SdkShortScriptName(HeroSiege::Scripts::gml_Script_DropItemDebug),            false, nullptr, nullptr, "fp_ap_didebug", (PVOID)ApRollDetour5 },
+    { "drop-unique",      SdkShortScriptName(HeroSiege::Scripts::gml_Script_DropUniqueItems),          false, nullptr, nullptr, "fp_ap_duniq",   (PVOID)ApRollDetour6 },
+    { "unique-random-id", SdkShortScriptName(HeroSiege::Scripts::gml_Script_GetUniqueRandomItemID),    false, nullptr, nullptr, "fp_ap_urand",   (PVOID)ApRollDetour7 },
+    { "unique-repo",      SdkShortScriptName(HeroSiege::Scripts::gml_Script_GetUniqueRepoStruct),      false, nullptr, nullptr, "fp_ap_urepo",   (PVOID)ApRollDetour8 },
+    { "unique-charm",     SdkShortScriptName(HeroSiege::Scripts::gml_Script_GetUniqueCharm),           false, nullptr, nullptr, "fp_ap_ucharm",  (PVOID)ApRollDetour9 },
+    { "angelic-charm",    SdkShortScriptName(HeroSiege::Scripts::gml_Script_DropAngelicCharm),         kApRollHeldByDropManager, nullptr, "Hook_DropAngelicCharm", "fp_ap_dangchm", (PVOID)ApRollDetour10 },
+    { "angelic-key",      SdkShortScriptName(HeroSiege::Scripts::gml_Script_DropAngelicKey),           kApRollHeldByDropManager, nullptr, "Hook_DropAngelicKey",   "fp_ap_dangkey", (PVOID)ApRollDetour11 },
+    { "default-params",   SdkShortScriptName(HeroSiege::Scripts::gml_Script_CreateDefaultParams),      false, nullptr, nullptr, "fp_ap_cdparams",(PVOID)ApRollDetour12 },
+    { "loot-create",      SdkShortScriptName(HeroSiege::Scripts::gml_Script_LootGroundCreate),         false, &g_Orig_LootGroundCreate,         "Hook_LootGroundCreate",         "fp_ap_lgc",   (PVOID)ApRollDetour13 },
+    { "loot-create-item", SdkShortScriptName(HeroSiege::Scripts::gml_Script_LootGroundCreateFromItem), false, &g_Orig_LootGroundCreateFromItem, "Hook_LootGroundCreateFromItem", "fp_ap_lgcfi", (PVOID)ApRollDetour14 },
+    { "loot-drop",        SdkShortScriptName(HeroSiege::Scripts::gml_Script_LootGroundDrop),           false, nullptr, nullptr, "fp_ap_lgdrop",  (PVOID)ApRollDetour15 },
+    { "rare-announce",    SdkShortScriptName(HeroSiege::Scripts::gml_Script_GetRareDropAnnouncement),  false, nullptr, nullptr, "fp_ap_rareann", (PVOID)ApRollDetour16 },
+};
+static_assert(sizeof(g_ApRollRows) / sizeof(g_ApRollRows[0]) == 17, "one row per candidate, ApRollDetour0..16");
+
+static std::atomic<bool> g_ApRollAttached{ false };
+// Baselines, so `reset` zeroes what `show` prints without touching the
+// counters angelicwatch and `raredrop list` read.
+static long g_ApRollKillsBase = 0;
+static long g_ApRollChanceCallsBase = 0;
+static long g_ApRollExtraBase = 0;
+// The game's own DropItemAngelicChance result, captured after its first
+// original call: the last one, and how many came back zero / nonzero /
+// non-numeric, so a hit is still visible after the misses that follow it.
+static int    g_ApRollLastRetKind = -1;
+static double g_ApRollLastRetValue = 0.0;
+static bool   g_ApRollLastRetNumeric = false;
+static int    g_ApRollNonZeroKind = -1;
+static double g_ApRollNonZeroValue = 0.0;
+static volatile long g_ApRollRetZero = 0;
+static volatile long g_ApRollRetNonZero = 0;
+static volatile long g_ApRollRetOther = 0;
+
+// Bounded: %g of a finite double, never %f (Known Limitations item 10).
+static std::string ApRollNum(double v)
+{
+    if (!std::isfinite(v)) return "non-finite";
+    char b[48];
+    sprintf_s(b, "%g", v);
+    return b;
+}
+
+static std::string ApRollKindName(int kind)
+{
+    switch (kind) {
+    case VALUE_REAL:      return "real";
+    case VALUE_INT32:     return "int32";
+    case VALUE_INT64:     return "int64";
+    case VALUE_BOOL:      return "bool";
+    case VALUE_STRING:    return "string";
+    case VALUE_OBJECT:    return "struct";
+    case VALUE_ARRAY:     return "array";
+    case VALUE_PTR:       return "ptr";
+    case VALUE_UNDEFINED: return "undefined";
+    case VALUE_NULL:      return "null";
+    case VALUE_REF:       return "ref";
+    default:              return "kind" + std::to_string(kind);
+    }
+}
+
+static bool ApRollNumeric(const RValue& v, double& out)
+{
+    if (v.m_Kind != VALUE_REAL && v.m_Kind != VALUE_INT32 && v.m_Kind != VALUE_INT64 && v.m_Kind != VALUE_BOOL)
+        return false;
+    try { out = v.ToDouble(); } catch (...) { return false; }
+    return std::isfinite(out);
+}
+
+static std::string ApRollArgs(int argc, RValue** A)
+{
+    std::string out;
+    for (int i = 0; i < argc && i < 6; ++i) {
+        const RValue* a = A ? A[i] : nullptr;
+        if (!a) { out += " a" + std::to_string(i) + "=null"; continue; }
+        double v = 0.0;
+        out += " a" + std::to_string(i) + "=" + ApRollKindName((int)a->m_Kind);
+        if (ApRollNumeric(*a, v)) out += ":" + ApRollNum(v);
+    }
+    if (argc > 6) out += " ...";
+    return out;
+}
+
+// Entry bookkeeping shared by the detours and the notes. The hot path is up
+// to three interlocked increments; a row logs its first three calls only.
+static void ApRollCount(ApRollRow& r, CInstance* S, int argc, RValue** A)
+{
+    const long n = InterlockedIncrement(&r.calls);
+    const bool inDrop = g_ApRollDropItemDepth > 0;
+    const bool inChance = g_ApRollChanceDepth > 0;
+    if (inDrop) InterlockedIncrement(&r.insideDropItem);
+    if (inChance) InterlockedIncrement(&r.insideChance);
+    if (n > kApRollLogCalls) return;
+    try {
+        std::string who = "none";
+        if (S) who = TyInstName(S->ToRValue());
+        Out(std::string("angelicprobe ") + r.id + " #" + std::to_string(n)
+            + " argc=" + std::to_string(argc) + ApRollArgs(argc, A)
+            + " self=" + who.substr(0, 60)
+            + " insideDropItem=" + (inDrop ? "1" : "0")
+            + " insideAngelicChance=" + (inChance ? "1" : "0"));
+    } catch (...) {}
+}
+
+static RValue& ApRollDetourBody(int idx, CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    ApRollRow& r = g_ApRollRows[idx];
+    ApRollCount(r, S, argc, A);
+    // Only reached for DropItem when DropManager's own hook fell back to
+    // table-only (route 2): then this detour, not the note, holds the depth.
+    ApRollDropDepthHold dropDepth(idx == kApRowDropItem);
+    return r.tramp ? r.tramp(S, O, R, argc, A) : R;
+}
+
+// BP_ANGELIC_PROBE_SCOPE's entry, from the top of every DropManager hook body.
+// Counts the call only for a row attached `via` that hook, so a row that got a
+// detour of its own is never counted twice; for DropItem it also raises the
+// drop-item depth, and ApRollDropScope's destructor lowers it again when the
+// hook body returns.
+static bool ApRollDropScopeEnter(const char* hookName, CInstance* S, int argc, RValue** A)
+{
+    if (!hookName || !g_ApRollAttached.load(std::memory_order_relaxed)) return false;
+    for (int i = 0; i < (int)(sizeof(g_ApRollRows) / sizeof(g_ApRollRows[0])); ++i) {
+        ApRollRow& r = g_ApRollRows[i];
+        if (!r.heldByDropManager || std::string_view(r.script) != hookName) continue;
+        if (r.route == kApRollVia) ApRollCount(r, S, argc, A);
+        if (i != kApRowDropItem) return false;
+        ++g_ApRollDropItemDepth;
+        return true;
+    }
+    return false;
+}
+
+// From HookAngelicChance, before its first original call.
+static void ApRollNoteChance(CInstance* S, int argc, RValue** A)
+{
+    if (!g_ApRollAttached.load(std::memory_order_relaxed)) return;
+    ApRollRow& r = g_ApRollRows[kApRowAngelicChance];
+    if (r.route == kApRollDetoured) ApRollCount(r, S, argc, A);
+}
+
+// From HookAngelicChance, right after the game's own roll returned.
+static void ApRollNoteChanceReturn(const RValue& result)
+{
+    if (!g_ApRollAttached.load(std::memory_order_relaxed)) return;
+    double v = 0.0;
+    const bool numeric = ApRollNumeric(result, v);
+    g_ApRollLastRetKind = (int)result.m_Kind;
+    g_ApRollLastRetNumeric = numeric;
+    g_ApRollLastRetValue = numeric ? v : 0.0;
+    if (!numeric) {
+        InterlockedIncrement(&g_ApRollRetOther);
+    } else if (v == 0.0) {
+        InterlockedIncrement(&g_ApRollRetZero);
+    } else {
+        InterlockedIncrement(&g_ApRollRetNonZero);
+        g_ApRollNonZeroKind = (int)result.m_Kind;
+        g_ApRollNonZeroValue = v;
+    }
+}
+
+static void ApRollSetRoute(ApRollRow& r, long route, const std::string& text)
+{
+    r.routeText = text;
+    InterlockedExchange(&r.route, route);
+}
+
+// The route rule above, in order; tgprobe's TgProbeAttach is the precedent.
+static void ApRollAttach(ApRollRow& r)
+{
+    const std::string full = "gml_Script_" + std::string(r.script);
+    PVOID p = nullptr;
+    const AurieStatus st = g_Yytk->GetNamedRoutinePointer(full.c_str(), &p);
+    CScript* sc = (AurieSuccess(st) && p) ? reinterpret_cast<CScript*>(p) : nullptr;
+    if (!sc || !sc->m_Functions || !sc->m_Functions->m_ScriptFunction) {
+        ApRollSetRoute(r, kApRollNotFound, "not found (" + full + " st=" + std::to_string((int)st) + ")");
+        return;
+    }
+    const PVOID tableEntry = (PVOID)sc->m_Functions->m_ScriptFunction;
+
+    // The one place the probe reaches the hooking library, and only on a
+    // pointer just checked to be code inside Hero_Siege.exe.
+    auto detourAt = [&](PVOID src, std::string& why) -> bool {
+        if (AddrIsExecutableInModule(GetModuleHandleA(nullptr), (const void*)src)) {
+            PVOID tramp = nullptr;
+            const AurieStatus hs = MmCreateHook(g_ArSelfModule, r.hookId, src, r.detour, &tramp);
+            if (AurieSuccess(hs) && tramp) {
+                r.tramp = reinterpret_cast<PFUNC_YYGMLScript>(tramp);
+                return true;
+            }
+            why = "MmCreateHook st=" + std::to_string((int)hs);
+            return false;
+        }
+        why = "target is not code inside Hero_Siege.exe";
+        return false;
+    };
+
+    std::string why;
+    // Rule 1: nothing in this module holds the entry.
+    if (AddrIsExecutableInModule(GetModuleHandleA(nullptr), (const void*)tableEntry)) {
+        if (!r.detour) ApRollSetRoute(r, kApRollBlocked, "blocked: this row has no detour of its own");
+        else if (detourAt(tableEntry, why)) ApRollSetRoute(r, kApRollDetoured, "detoured");
+        else ApRollSetRoute(r, kApRollBlocked, "blocked: " + why);
+        return;
+    }
+    PFUNC_YYGMLScript* heldSlot = r.heldByDropManager
+        ? ForgePact::DropManager::Instance().ResearchHeldOriginal(r.script)
+        : r.existingOrig;
+    const PVOID held = (heldSlot && *heldSlot) ? (PVOID)*heldSlot : nullptr;
+    const std::string holder = r.holder ? r.holder : "an unnamed ForgePact hook";
+    // Rule 2: a ForgePact hook holds the entry table-only; its saved original
+    // is still the game's own function.
+    if (held && AddrIsExecutableInModule(GetModuleHandleA(nullptr), (const void*)held)) {
+        if (r.detour && detourAt(held, why))
+            ApRollSetRoute(r, kApRollDetouredUnder, "detoured (under table-only " + holder + ")");
+        else
+            ApRollSetRoute(r, kApRollTableOnly, "TABLE-ONLY (" + holder + " is table-only and the detour under it failed: "
+                + (why.empty() ? std::string("no detour") : why) + ")");
+        return;
+    }
+    // Rule 3: a native ForgePact hook holds it, and its body carries the note.
+    if (held && r.heldByDropManager) {
+        ApRollSetRoute(r, kApRollVia, "via " + holder + " (native)");
+        return;
+    }
+    ApRollSetRoute(r, kApRollBlocked, held
+        ? "blocked: " + holder + " holds a trampoline and carries no note"
+        : std::string("blocked: table entry is not code inside Hero_Siege.exe and no hook's saved original is known"));
+}
+
+// The angelic-chance row: the existing hook, never a second one on that name.
+static void ApRollAttachChance(ApRollRow& r)
+{
+    const std::string full = "gml_Script_" + std::string(r.script);
+    PVOID p = nullptr;
+    const AurieStatus st = g_Yytk->GetNamedRoutinePointer(full.c_str(), &p);
+    CScript* sc = (AurieSuccess(st) && p) ? reinterpret_cast<CScript*>(p) : nullptr;
+    if (!sc || !sc->m_Functions || !sc->m_Functions->m_ScriptFunction) {
+        ApRollSetRoute(r, kApRollNotFound, "not found (" + full + " st=" + std::to_string((int)st) + ")");
+        return;
+    }
+    if (g_OrigAngChance) {
+        // `raredrop angelic` or `angelicwatch` installed it earlier this session.
+        if (AddrIsExecutableInModule(GetModuleHandleA(nullptr), (const void*)g_OrigAngChance))
+            ApRollSetRoute(r, kApRollTableOnly, "TABLE-ONLY (HookAngelicChance, installed earlier this session, holds the game's own function)");
+        else
+            ApRollSetRoute(r, kApRollDetoured, "detoured (HookAngelicChance, installed earlier this session)");
+        return;
+    }
+    const bool gameCode = AddrIsExecutableInModule(GetModuleHandleA(nullptr),
+                                                   (const void*)sc->m_Functions->m_ScriptFunction);
+    bool native = false;
+    if (!HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_DropItemAngelicChance), "fp_angch",
+                       (PVOID)HookAngelicChance, &g_OrigAngChance, &native)) {
+        ApRollSetRoute(r, kApRollBlocked, "blocked: HookOneScript refused (see its line above)");
+        return;
+    }
+    if (native) ApRollSetRoute(r, kApRollDetoured, "detoured (HookAngelicChance)");
+    else ApRollSetRoute(r, kApRollTableOnly, std::string("TABLE-ONLY (")
+        + (gameCode ? "HookOneScript's inline detour failed; see its line above" : "table entry is not code inside Hero_Siege.exe") + ")");
+}
+
+// The kill control (EnemyDestroyKillProc) by the same test as every row.
+static std::string ApRollKillControlRoute()
+{
+    if (!g_HhHookInstalled || !g_Orig_EnemyDestroyKillProc) return "not installed - kills= does not count";
+    if (AddrIsExecutableInModule(GetModuleHandleA(nullptr), (const void*)g_Orig_EnemyDestroyKillProc))
+        return "TABLE-ONLY (Hook_EnemyDestroyKillProc holds the game's own function)";
+    return "native (Hook_EnemyDestroyKillProc holds a trampoline)";
+}
+
+static bool ApRollCounted(const ApRollRow& r)
+{
+    return r.route == kApRollDetoured || r.route == kApRollDetouredUnder || r.route == kApRollVia;
+}
+
+static void ApRollReset()
+{
+    for (ApRollRow& r : g_ApRollRows) {
+        InterlockedExchange(&r.calls, 0);
+        InterlockedExchange(&r.insideDropItem, 0);
+        InterlockedExchange(&r.insideChance, 0);
+    }
+    g_ApRollKillsBase = g_KillsSeen;
+    g_ApRollChanceCallsBase = g_AngChanceCalls;
+    g_ApRollExtraBase = g_AngRateHits;
+    g_ApRollLastRetKind = -1;
+    g_ApRollLastRetNumeric = false;
+    g_ApRollLastRetValue = 0.0;
+    g_ApRollNonZeroKind = -1;
+    g_ApRollNonZeroValue = 0.0;
+    InterlockedExchange(&g_ApRollRetZero, 0);
+    InterlockedExchange(&g_ApRollRetNonZero, 0);
+    InterlockedExchange(&g_ApRollRetOther, 0);
+}
+
+static void ApRollOn()
+{
+    InstallHeadhunterHook();   // the kill control: kills= counts through its hook
+    const bool first = !g_ApRollAttached.load();
+    int counted = 0, notCounted = 0;
+    for (int i = 0; i < (int)(sizeof(g_ApRollRows) / sizeof(g_ApRollRows[0])); ++i) {
+        ApRollRow& r = g_ApRollRows[i];
+        if (r.route == kApRollUnattached) {
+            if (i == kApRowAngelicChance) ApRollAttachChance(r);
+            else ApRollAttach(r);
+        }
+        if (ApRollCounted(r)) ++counted; else ++notCounted;
+    }
+    if (first) ApRollReset();
+    g_ApRollAttached.store(true);
+    Out("angelicprobe on: " + std::to_string(counted) + " row(s) counted, "
+        + std::to_string(notCounted) + " not (calls=n/a)");
+    for (const ApRollRow& r : g_ApRollRows)
+        Out(std::string("  ") + r.id + " (" + r.script + "): " + r.routeText);
+    Out("  kill control EnemyDestroyKillProc: " + ApRollKillControlRoute());
+}
+
+static void ApRollShow()
+{
+    Out(std::string("angelicprobe show: ") + (g_ApRollAttached.load() ? "attached" : "not attached - send `angelicprobe on` first"));
+    for (const ApRollRow& r : g_ApRollRows) {
+        std::string line = std::string("  ") + r.id + " (" + r.script + "): " + r.routeText;
+        if (ApRollCounted(r)) {
+            line += " calls=" + std::to_string(r.calls)
+                + " insideDropItem=" + std::to_string(r.insideDropItem)
+                + " insideAngelicChance=" + std::to_string(r.insideChance);
+        } else {
+            line += " calls=n/a";
+        }
+        Out(line);
+    }
+    Out("  kills=" + std::to_string(g_KillsSeen - g_ApRollKillsBase)
+        + " (kill control: " + ApRollKillControlRoute() + ")");
+    std::string lastReturn = "none";
+    if (g_ApRollLastRetKind >= 0)
+        lastReturn = ApRollKindName(g_ApRollLastRetKind) + ":" + (g_ApRollLastRetNumeric ? ApRollNum(g_ApRollLastRetValue) : std::string("-"));
+    std::string nonZero = "none";
+    if (g_ApRollNonZeroKind >= 0)
+        nonZero = ApRollKindName(g_ApRollNonZeroKind) + ":" + ApRollNum(g_ApRollNonZeroValue);
+    Out("  DropItemAngelicChance: hookCalls=" + std::to_string(g_AngChanceCalls - g_ApRollChanceCallsBase)
+        + " extraRollBatches=" + std::to_string(g_AngRateHits - g_ApRollExtraBase)
+        + " lastChance=" + (g_AngLastChance >= 0.0 ? ApRollNum(g_AngLastChance) : std::string("none"))
+        + " lastReturn=" + lastReturn
+        + " returns: zero=" + std::to_string(g_ApRollRetZero)
+        + " nonzero=" + std::to_string(g_ApRollRetNonZero)
+        + " nonNumeric=" + std::to_string(g_ApRollRetOther)
+        + " lastNonZero=" + nonZero);
+}
+
+// One value's shape: its kind, an array's length and first elements, a
+// struct's key names. Read-only builtins only.
+static std::string ApRollShape(const RValue& v)
+{
+    double d = 0.0;
+    try {
+        if (ApRollNumeric(v, d)) return ApRollKindName((int)v.m_Kind) + ":" + ApRollNum(d);
+        if (v.m_Kind == VALUE_STRING) return "string:\"" + v.ToString().substr(0, 60) + "\"";
+        if (v.m_Kind == VALUE_ARRAY) {
+            const int len = (int)g_Yytk->CallBuiltin("array_length", { v }).ToDouble();
+            std::string s = "array len=" + std::to_string(len) + " [";
+            for (int i = 0; i < len && i < 8; ++i) {
+                const RValue e = g_Yytk->CallBuiltin("array_get", { v, RValue((double)i) });
+                double ed = 0.0;
+                s += (i ? ", " : "") + (ApRollNumeric(e, ed) ? ApRollNum(ed) : ApRollKindName((int)e.m_Kind));
+            }
+            return s + (len > 8 ? ", ...]" : "]");
+        }
+        if (v.m_Kind == VALUE_OBJECT) {
+            const RValue names = g_Yytk->CallBuiltin("variable_struct_get_names", { v });
+            const int len = names.m_Kind == VALUE_ARRAY ? (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble() : -1;
+            if (len < 0) return "struct (variable_struct_get_names returned " + ApRollKindName((int)names.m_Kind) + ")";
+            std::string s = "struct keys=" + std::to_string(len) + " {";
+            for (int i = 0; i < len && i < 12; ++i)
+                s += (i ? ", " : "") + g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) }).ToString().substr(0, 60);
+            return s + (len > 12 ? ", ...}" : "}");
+        }
+    } catch (...) { return ApRollKindName((int)v.m_Kind) + " <read-failed>"; }
+    return ApRollKindName((int)v.m_Kind);
+}
+
+// `angelicprobe list`: the game's own unique loot list, read by name and
+// read-only. A missing object, instance or variable prints one refusal line.
+static void ApRollList()
+{
+    const std::string objName(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Loot_Manager_obj));
+    double idx = -1.0;
+    try { idx = g_Yytk->CallBuiltin("asset_get_index", { RValue(objName) }).ToDouble(); } catch (...) { idx = -1.0; }
+    if (idx < 0.0) { Out("angelicprobe list: " + objName + " not found (asset_get_index) - nothing read"); return; }
+    int total = 0;
+    try { total = (int)g_Yytk->CallBuiltin("instance_number", { RValue(idx) }).ToDouble(); } catch (...) { total = 0; }
+    if (total < 1) { Out("angelicprobe list: no live " + objName + " instance (instance_number=" + std::to_string(total) + ") - nothing read"); return; }
+    RValue handle;
+    try { handle = g_Yytk->CallBuiltin("instance_find", { RValue(idx), RValue(0.0) }); }
+    catch (...) { Out("angelicprobe list: instance_find threw for " + objName + " - nothing read"); return; }
+    if (!HhResolveInstance(handle)) { Out("angelicprobe list: " + objName + " instance 0 is not a live instance (HhResolveInstance) - nothing read"); return; }
+    bool has = false;
+    try { has = g_Yytk->CallBuiltin("variable_instance_exists", { handle, RValue("lootListUnique") }).ToBoolean(); } catch (...) { has = false; }
+    if (!has) { Out("angelicprobe list: " + objName + " carries no lootListUnique (variable_instance_exists false) - nothing read"); return; }
+    RValue list;
+    try { list = g_Yytk->CallBuiltin("variable_instance_get", { handle, RValue("lootListUnique") }); }
+    catch (...) { Out("angelicprobe list: reading lootListUnique threw - nothing read"); return; }
+
+    Out("angelicprobe list: " + objName + " (" + std::to_string(total) + " instance(s)) lootListUnique kind="
+        + ApRollKindName((int)list.m_Kind));
+    try {
+        if (list.m_Kind == VALUE_ARRAY) {
+            const int len = (int)g_Yytk->CallBuiltin("array_length", { list }).ToDouble();
+            for (int i = 0; i < len && i < 8; ++i)
+                Out("  [" + std::to_string(i) + "] " + ApRollShape(g_Yytk->CallBuiltin("array_get", { list, RValue((double)i) })));
+            Out("angelicprobe list: array_length=" + std::to_string(len) + " (" + std::to_string(len < 8 ? len : 8) + " shown)");
+            return;
+        }
+        double id = 0.0;
+        // ds_type_list is 2. A number here may be a ds_list id; ask before reading.
+        if (ApRollNumeric(list, id) && g_Yytk->CallBuiltin("ds_exists", { RValue(id), RValue(2.0) }).ToBoolean()) {
+            const int len = (int)g_Yytk->CallBuiltin("ds_list_size", { RValue(id) }).ToDouble();
+            for (int i = 0; i < len && i < 8; ++i)
+                Out("  [" + std::to_string(i) + "] " + ApRollShape(g_Yytk->CallBuiltin("ds_list_find_value", { RValue(id), RValue((double)i) })));
+            Out("angelicprobe list: ds_list " + ApRollNum(id) + " ds_list_size=" + std::to_string(len) + " (" + std::to_string(len < 8 ? len : 8) + " shown)");
+            return;
+        }
+        Out("  " + ApRollShape(list));
+        Out("angelicprobe list: not an array or a ds_list - shape above, no entries read");
+    } catch (...) { Out("angelicprobe list: EXCEPTION while reading the entries"); }
+}
+
+static void ApRollUsage()
+{
+    Out("angelicprobe: research instrument for docs/angelic-roll-hook-research.md (research build only)");
+    Out("  angelicprobe on    - attach every candidate row once (and the kill control), print each row's route");
+    Out("  angelicprobe show  - per row: route, calls=, insideDropItem=, insideAngelicChance= (calls=n/a when the row has no route)");
+    Out("  angelicprobe reset - zero the counters; routes stay attached");
+    Out("  angelicprobe list  - read-only: Loot_Manager_obj's lootListUnique, kind, length and the first eight entries' shape");
+}
+
+static void ApRollCommand(const std::string& rest)
+{
+    const std::string sub = Lower(TrimCopy(rest));
+    if (sub == "on") ApRollOn();
+    else if (sub == "show") ApRollShow();
+    else if (sub == "reset") { ApRollReset(); Out("angelicprobe reset: counters zeroed, routes kept"); }
+    else if (sub == "list") ApRollList();
+    else ApRollUsage();
+}
+#endif // FORGEPACT_RELEASE (angelicprobe)
+
+// Dispatched from its own function, like HandleMenuProbeCommand: RunCommand's
+// else-if chain is at MSVC's nesting limit (C1061). The function exists in
+// both builds and answers false in the player build, so its call site in
+// RunCommand compiles without a guard around it.
+static bool HandleAngelicProbeCommand(const std::string& lc, const std::string& rest)
+{
+#ifndef FORGEPACT_RELEASE
+    if (lc == "angelicprobe") { ApRollCommand(rest); return true; }
+#endif
+    (void)lc; (void)rest;
+    return false;
 }
 
 // raredrop heroic|ceiling|satanic|angelic <multiplier>   |   raredrop list
@@ -19697,6 +20866,7 @@ static void OranlariGeriAl(const std::vector<std::pair<int, int>>& dokunulan)
 
 static RValue& Hook_LoadDrops(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
+    if (HeroSiege::RewardScope::Active()) return g_OrigLoadDrops ? g_OrigLoadDrops(S,O,R,argc,A) : R;
     // 1) Once VANILYA davranis, hicbir sey degistirmeden.
     RValue& res = g_OrigLoadDrops ? g_OrigLoadDrops(S, O, R, argc, A) : R;
 #ifdef FORGEPACT_RELEASE
@@ -20170,7 +21340,71 @@ static void FlushModState(uint32_t frame)
         body += ",\"hookBlind\":"; body += (g_AutoProspectBlind ? "true" : "false");
         body += ",\"bagPreference\":"; body += (mod.BagEnabled() ? "true" : "false");
         body += ",\"movePass\":"; body += (mod.MovePassOn() ? "true" : "false");
-        body += ",\"reason\":\""; body += ModStateEscape(reason); body += "\"}}";
+        body += ",\"reason\":\""; body += ModStateEscape(reason); body += "\"}";
+        body += ",\"miningOre\":{\"multiplier\":" + std::to_string(ForgePact::MiningOre::multiplier);
+        body += ",\"ready\":"; body += ForgePact::MiningOre::ready ? "true" : "false";
+        body += ",\"unavailable\":"; body += ForgePact::MiningOre::unavailable ? "true" : "false";
+        body += ",\"stepObserved\":"; body += ForgePact::MiningOre::stepObserved ? "true" : "false";
+        body += ",\"oreObserved\":"; body += ForgePact::MiningOre::oreObserved ? "true" : "false";
+        body += "},\"minerHelmet\":{\"available\":true,\"enabled\":";
+        body += ForgePact::MinerHelmet::enabled ? "true" : "false";
+        body += ",\"worn\":"; body += ForgePact::MinerHelmet::worn ? "true" : "false";
+        body += ",\"equipmentReadable\":"; body += ForgePact::MinerHelmet::equipmentReadable ? "true" : "false";
+        body += ",\"hudReady\":"; body += ForgePact::MinerHelmet::hudNative ? "true" : "false";
+        body += ",\"rewards\":" + std::to_string(ForgePact::MinerHelmet::rewards);
+        body += ",\"pulses\":" + std::to_string(ForgePact::MinerHelmet::wavesStarted);
+        body += ",\"bonusVeins\":" + std::to_string(ForgePact::MinerHelmet::bonusVeins);
+        body += ",\"veinResonance\":"; body += ForgePact::MinerHelmet::veinResonance ? "true" : "false";
+        body += ",\"lastRewardReason\":\"" + ModStateEscape(ForgePact::MinerHelmet::lastRewardReason) + "\"";
+        body += ",\"reason\":\"" + ModStateEscape(ForgePact::MinerHelmet::equipmentReason) + "\"}";
+        namespace pool = ForgePact::ProtectedPool::Runtime;
+        auto& reveal = ForgePact::MapRevealManager::Instance();
+        body += ",\"population\":{\"capacityReady\":"; body += pool::active.load() ? "true" : "false";
+        body += ",\"canPopulate\":"; body += pool::CanPopulate() ? "true" : "false";
+        body += ",\"banks\":" + std::to_string(pool::router.BankCount());
+        body += ",\"overflowLive\":" + std::to_string(pool::router.OverflowLive());
+        body += ",\"reserveSlots\":" + std::to_string(pool::router.Headroom());
+        body += ",\"allocationFailures\":" + std::to_string(pool::router.Failures());
+        body += ",\"invalidHandles\":" + std::to_string(pool::router.InvalidHandles());
+        body += ",\"queuedPacks\":" + std::to_string(reveal.QueuedPacks());
+        auto& budget=ForgePact::AdaptivePopulationBudget::Instance();
+        body += ",\"queuedDensityCopies\":" + std::to_string(DeferredDensityPending());
+        body += ",\"observedNativeBirthPacks\":" + std::to_string(reveal.NativeBirthPacks());
+        body += ",\"completedDensityCopies\":" + std::to_string(g_DensityCopyCompleted);
+        body += ",\"synchronousDensityFallbacks\":" + std::to_string(g_DensityCopyRefused);
+        body += ",\"densityCopyFailures\":" + std::to_string(g_DensityCopyFailures);
+        body += ",\"densityCopyReason\":\"" + ModStateEscape(g_DensityCopyReason) + "\"";
+        body += ",\"workBudgetUs\":" + std::to_string(budget.BudgetUs());
+        body += ",\"targetMs\":" + std::to_string(budget.kTargetUs/1000);
+        body += ",\"passElapsedMs\":" + std::to_string(budget.PassElapsedMs());
+        body += ",\"lastProgressMs\":" + std::to_string(budget.LastProgressMs());
+        body += ",\"targetExceeded\":"; body += budget.TargetExceeded()?"true":"false";
+        body += ",\"lastFrameUs\":" + std::to_string(budget.LastFrameUs());
+        body += ",\"peakFrameUs\":" + std::to_string(budget.PeakFrameUs());
+        body += ",\"peakNativeCreateUs\":" + std::to_string(budget.PeakNativeUs());
+        body += ",\"peakNativeCreateObject\":" + std::to_string(budget.PeakNativeObject());
+        body += ",\"peakNativeWasDensityCopy\":"; body += budget.PeakWasDensityCopy()?"true":"false";
+        body += ",\"measuredNativeCalls\":" + std::to_string(budget.MeasuredCalls());
+        body += ",\"slowFrames\":" + std::to_string(budget.SlowFrames());
+        body += ",\"peakPacksPerFrame\":" + std::to_string(reveal.PeakPacksPerFrame());
+        body += ",\"budgetLimitedFrames\":" + std::to_string(reveal.PopulationBudgetFrames());
+        body += ",\"lastAdmissionMs\":" + std::to_string(reveal.LastPackAdmissionMs());
+        body += ",\"admittedPacks\":" + std::to_string(reveal.AdmittedPacks());
+        body += ",\"unconfirmedPacks\":" + std::to_string(reveal.UnconfirmedPacks());
+        body += ",\"windowFrames\":" + std::to_string(reveal.SpawnWindowLeft());
+        body += ",\"spawnPass\":"; body += reveal.PacksEnabled() ? "true" : "false";
+        body += ",\"reason\":\"" + ModStateEscape(pool::reason) + "\"}";
+        // Pack markers: counts that move only as packs are born or zones
+        // change, never per-frame counters, so idle frames do not rewrite
+        // this file.
+        auto& marks = ForgePact::PackMarkers::Instance();
+        body += ",\"packMarkers\":{\"enabled\":"; body += marks.Enabled() ? "true" : "false";
+        body += ",\"hook\":\""; body += g_Orig_DrawMinimapDynamic ? (g_PackMarkerHookNative ? "native" : "table") : (g_PackMarkerHookAttempted ? "failed" : "pending"); body += "\"";
+        body += ",\"marked\":" + std::to_string(marks.Count());
+        body += ",\"spawned\":" + std::to_string(marks.Spawned());
+        body += ",\"enumerations\":" + std::to_string(marks.Enumerations());
+        body += ",\"iconsLoaded\":" + std::to_string(marks.IconsLoaded());
+        body += ",\"drawErrors\":" + std::to_string(marks.DrawErrors()) + "}}";
         if (body == g_ModStateLast) return;
         g_ModStateLast = body;
         const std::string path = IPC_DIR + "\\modstate.json", tmp = path + ".tmp";
@@ -30457,6 +31691,87 @@ static void TgProbeCommand(const std::string& rest)
 }
 #endif // FORGEPACT_RELEASE (tgprobe)
 
+// Player command: tune the pack-marker look live until the defaults are
+// confirmed by eye, and read the marker accounting. A standalone early
+// return from RunCommand rather than one more `else if` in its chain,
+// which is at MSVC's block-nesting limit (C1061) - the same reason
+// `toggleborder` and `toggleguard` are.
+static void PackMarksCommand(const std::string& rest)
+{
+        // Research: tune the pack-marker look live until the defaults are
+        // confirmed by eye, and read the marker accounting.
+        //   packmarks stat
+        //   packmarks style <kind|all> <subimage> <r> <g> <b>   kind 0..6 = normal, ambush, ancient, champion, colossal chest, legion, miniboss
+        //   packmarks alpha <0..1> | scale <mult> | ring 0|1
+        //   packmarks radius <kind|all> <px> | fill <kind|all> 0|1   (primitive look: dot size and filled/outline per kind)
+        //   packmarks outline 0|1 [extra px]                          (the dark disc under every dot)
+        //   packmarks icons 0|1 | iconscale <mult> | reload           (the PNG icons; reload after replacing a file)
+        //   packmarks cluster <world px|0> | badge 0|1                (nearby spawners drawn as one marker, with a count)
+        //   packmarks list [n]   - the first n markers (id, kind, x, y, armed)
+        auto& pm = ForgePact::PackMarkers::Instance();
+        auto& st = pm.StyleRef();
+        std::string a2; const std::string a1 = Lower(FirstToken(rest, a2));
+        auto number = [](const std::string& s, double fallback) { try { return std::stod(s); } catch (...) { return fallback; } };
+        if (a1 == "style") {
+            std::string k, r; k = Lower(FirstToken(a2, r));
+            std::string sub, r2; sub = FirstToken(r, r2);
+            std::string cr, r3; cr = FirstToken(r2, r3);
+            std::string cg, r4; cg = FirstToken(r3, r4);
+            std::string cb, r5; cb = FirstToken(r4, r5);
+            const double subimage = number(sub, 0.0);
+            const uint32_t colour = (uint32_t)std::clamp((int)number(cr, 255), 0, 255) | ((uint32_t)std::clamp((int)number(cg, 255), 0, 255) << 8) | ((uint32_t)std::clamp((int)number(cb, 255), 0, 255) << 16);
+            const int from = (k == "all") ? 0 : std::clamp((int)number(k, 0), 0, (int)ForgePact::PackMarkers::KindCount - 1);
+            const int to = (k == "all") ? (int)ForgePact::PackMarkers::KindCount - 1 : from;
+            for (int i = from; i <= to; ++i) { st.subimage[i] = subimage; st.colour[i] = colour; }
+            Out("packmarks style: kinds " + std::to_string(from) + ".." + std::to_string(to) + " subimage=" + std::to_string(subimage) + " colour(bgr)=" + std::to_string(colour));
+        } else if (a1 == "alpha") { st.alpha = std::clamp(number(a2, st.alpha), 0.0, 1.0); Out("packmarks alpha -> " + std::to_string(st.alpha)); }
+        else if (a1 == "scale") { st.scale = std::clamp(number(a2, st.scale), 0.05, 10.0); Out("packmarks scale -> " + std::to_string(st.scale)); }
+        else if (a1 == "ring") { const std::string v = Lower(TrimCopy(a2)); st.ring = !(v == "0" || v == "off" || v == "false"); Out(std::string("packmarks ring -> ") + (st.ring ? "on" : "off")); }
+        else if (a1 == "icons") { const std::string v = Lower(TrimCopy(a2)); st.icons = !(v == "0" || v == "off" || v == "false"); pm.StyleChanged(); Out(std::string("packmarks icons -> ") + (st.icons ? "on" : "off")); }
+        else if (a1 == "iconscale") { st.iconScale = std::clamp(number(a2, st.iconScale), 0.1, 8.0); Out("packmarks iconscale -> " + std::to_string(st.iconScale)); }
+        else if (a1 == "reload") { pm.ReloadIcons(); Out("packmarks: icons will reload on the next map draw"); }
+        else if (a1 == "cluster") { st.clusterPx = std::clamp(number(a2, st.clusterPx), 0.0, 2048.0); pm.StyleChanged(); Out("packmarks cluster -> " + std::to_string(st.clusterPx) + " px"); }
+        else if (a1 == "badge") { const std::string v = Lower(TrimCopy(a2)); st.badge = !(v == "0" || v == "off" || v == "false"); Out(std::string("packmarks badge -> ") + (st.badge ? "on" : "off")); }
+        else if (a1 == "outline") {
+            std::string v, extra; v = Lower(FirstToken(a2, extra)); extra = TrimCopy(extra);
+            st.outline = !(v == "0" || v == "off" || v == "false");
+            if (!extra.empty()) st.outlineExtra = std::clamp(number(extra, st.outlineExtra), 0.0, 16.0);
+            Out(std::string("packmarks outline -> ") + (st.outline ? "on" : "off") + " extra=" + std::to_string(st.outlineExtra));
+        }
+        else if (a1 == "radius" || a1 == "fill") {
+            std::string k, v; k = Lower(FirstToken(a2, v)); v = Lower(TrimCopy(v));
+            const int from = (k == "all") ? 0 : std::clamp((int)number(k, 0), 0, (int)ForgePact::PackMarkers::KindCount - 1);
+            const int to = (k == "all") ? (int)ForgePact::PackMarkers::KindCount - 1 : from;
+            for (int i = from; i <= to; ++i) {
+                if (a1 == "radius") st.radius[i] = std::clamp(number(v, st.radius[i]), 0.5, 64.0);
+                else st.filled[i] = !(v == "0" || v == "off" || v == "false");
+            }
+            Out("packmarks " + a1 + ": kinds " + std::to_string(from) + ".." + std::to_string(to) + " -> " + v);
+        }
+        else if (a1 == "list") {
+            const size_t n = (size_t)std::clamp((int)number(a2, 20), 1, 200);
+            size_t shown = 0;
+            for (const auto& m : pm.Markers()) {
+                if (shown >= n) break;
+                ++shown;
+                Out("  marker id=" + std::to_string(m.id) + " kind=" + std::to_string(m.kind) + " x=" + std::to_string((long long)m.x) + " y=" + std::to_string((long long)m.y) + (m.armed ? " armed" : " unarmed") + " seen=" + std::to_string(m.firstSeen));
+            }
+            Out("packmarks list: " + std::to_string(shown) + " of " + std::to_string(pm.Count()));
+        } else {
+            Out(std::string("packmarks: ") + (pm.Enabled() ? "ON" : "off")
+                + " hook=" + (g_Orig_DrawMinimapDynamic ? (g_PackMarkerHookNative ? "native" : "table-only") : (g_PackMarkerHookAttempted ? "failed" : "pending"))
+                + " marked=" + std::to_string(pm.Count()) + " spawned=" + std::to_string(pm.Spawned()) + " removed=" + std::to_string(pm.Removed())
+                + " enumerations=" + std::to_string(pm.Enumerations()) + " familyCalls=" + std::to_string(g_PackMarkerFamilyCalls)
+                + " draws=" + std::to_string(pm.Draws()) + " iconDraws=" + std::to_string(pm.IconDraws()) + " badgeDraws=" + std::to_string(pm.BadgeDraws()) + " drawErrors=" + std::to_string(pm.DrawErrors())
+                + " clusters=" + std::to_string(pm.Clusters()) + " clusterPx=" + std::to_string(st.clusterPx)
+                + " icons=" + (st.icons ? "on" : "off") + " loaded=" + std::to_string(pm.IconsLoaded()) + "/" + std::to_string((int)ForgePact::PackMarkers::KindCount)
+                + (pm.IconsTried() ? "" : " (not loaded yet)") + " viaAbsolute=" + std::to_string(pm.IconsViaAbsolute())
+                + " lastAddKind=" + std::to_string(pm.IconLastKind()) + " lastAddValue=" + std::to_string(pm.IconLastValue()) + " addThrows=" + std::to_string(pm.IconLoadThrows())
+                + " iconWrites=" + std::to_string(g_PackMarkerIconWrites) + " iconWriteErrors=" + std::to_string(g_PackMarkerIconWriteErrors)
+                + " alpha=" + std::to_string(st.alpha) + " iconscale=" + std::to_string(st.iconScale) + " ring=" + (st.ring ? "on" : "off") + " outline=" + (st.outline ? "on" : "off"));
+        }
+}
+
 // ---------------------------------------------------------------------------
 // menulayout (player build, read-only): where the main-menu and
 // character-select buttons are, in window (client) coordinates, so a tool
@@ -30706,6 +32021,1346 @@ static bool HandleMenuLayoutCommand(const std::string& lc, const std::string& re
     return false;
 }
 
+#ifndef FORGEPACT_RELEASE
+// ---- restartprobe: pause-menu Restart gate research (ForgePact issue #8) ---
+// docs/restart-always-available-research.md. The pause menu's Restart refuses
+// while the game counts the player as in combat; which value it reads, on
+// which owner, and what "ready" looks like are all unmeasured. This is the
+// one batched instrument for that: a hook-free read of every candidate
+// variable on every candidate scope, a native detour on every candidate
+// script in one command, and one confirm-gated write so the leading
+// hypothesis is decided by an experiment instead of inferred from a draw.
+//
+// Nothing here runs from FrameCallback. `vars` and `set` run on the frame
+// that consumes cmd.txt; the hook rows sample the candidates inside the
+// hooked call itself, because a frame-boundary read answers for the previous
+// frame (guide Known Limitations item 13).
+//
+// Rows attach the way `tgprobe` rows do (TgProbeAttach): resolve by SDK name,
+// prove the target is executable code inside Hero_Siege.exe, then detour it -
+// never a table-only swap, which is blind to this build's direct calls. A row
+// that could not attach reports calls=n/a, never 0.
+//
+// Round 2 (round 1 showed a refused press never reaches UiAIngameRestart, so
+// the gate sits on the button/node side): the UI node API rows, `dump` of the
+// Restart button's own instance taken inside its draw call, `hold` - a write
+// made inside a hooked call before the game's own body runs, on every call,
+// so a value the game recomputes each step is in place when the next reader
+// could see it - `argset` for one argument of one row, and a `path` scope
+// resolved by the deep reader (TgProbeDeepGet). Every write and every
+// point-of-use read is inside a detour before the trampoline, or on the frame
+// that consumes cmd.txt.
+//
+// Round 3 (round 2 showed the Restart button's own enabled/manualDisable flip
+// with combat, and a draw-time hold of either was rewritten before the next
+// call): the hold gains scope `arg0` - the site call's argument 0, which at
+// UiSetFocus is the Restart button, at step time - a label read off the
+// instance it resolved to, two slots, a per-slot entry ring printed
+// run-length collapsed, and a disarm keyed to the Restart draw's own calls
+// rather than to the site's, so a hover gap on UiSetFocus disarms nothing.
+static constexpr long kRpLogBudget = 20;   // call lines kept per row between resets
+static constexpr uint64_t kRpHoldGapFrames = 3;     // a draw call later than this after the previous one: the menu closed and reopened
+static constexpr long kRpHoldMaxWrites = 20000;     // about 2.3 minutes of draws at 144 fps
+static constexpr int kRpHoldSlots = 2;              // holds armed at once (enabled and manualDisable, say)
+static constexpr size_t kRpHoldRing = 1024;         // entries kept per slot, about 7 s at 144 fps
+static constexpr size_t kRpHoldRingLines = 32;      // run-length lines `hold stat` prints per slot, newest last
+static constexpr long kRpArgsetMaxCalls = 20000;    // the largest calls=N `argset` accepts
+static constexpr size_t kRpDumpMaxNames = 512;      // instance variables read per dump
+static constexpr size_t kRpDumpMaxLabels = 8;       // dumps kept, oldest evicted
+static constexpr size_t kRpDumpDiffLines = 300;     // lines `dump diff` prints
+static constexpr size_t kRpSelfIdCap = 8;           // distinct draw-row self ids kept
+
+enum : uint32_t {
+    kRpCount   = 0,   // count and log the call
+    kRpSample  = 1,   // also read every candidate variable at the call
+    kRpControl = 2,   // the positive control `show` prints first
+};
+
+enum : long {
+    kRpUnhooked = 0,
+    kRpNative,
+    kRpBlocked,
+    kRpNotFound,
+};
+
+// Script rows: X(SAFE, SDK CONSTANT, LABEL, FLAGS, EXISTING ORIGINAL, HELD BY).
+// The static search set of the research doc, every name an hs-game-sdk
+// constant. ZoneGenRestart is held table-only by `zonegenlog` when that is
+// on; its saved original is then the game body, and the row detours that.
+// The last thirteen are round 2's UI node API rows, count-only. UiCreate,
+// UiCreateNode, UiSetRef and UiRemoveNode are also `prospectprobe hook` rows:
+// run one of the two instruments per session, or the second attach reports
+// `blocked` for those four.
+#define RESTARTPROBE_SCRIPTS(X) \
+    X(UiAIngameRestart, HeroSiege::Scripts::gml_Script_UiAIngameRestart, "UiAIngameRestart", kRpSample, nullptr, nullptr) \
+    X(UiDrawIngameRestart, HeroSiege::Scripts::gml_Script_UiDrawIngameRestart, "UiDrawIngameRestart(control)", kRpSample | kRpControl, nullptr, nullptr) \
+    X(ZoneGenRestart, HeroSiege::Scripts::gml_Script_ZoneGenRestart, "ZoneGenRestart", kRpCount, &g_OrigZg_ZoneGenRestart, "zonegenlog") \
+    X(PauseAnon1402, HeroSiege::Scripts::gml_Script_anon_1402_gml_Object_UI_Pause_obj_Create_0, "UI_Pause_obj.anon@1402", kRpCount, nullptr, nullptr) \
+    X(PauseAnon1714, HeroSiege::Scripts::gml_Script_anon_1714_gml_Object_UI_Pause_obj_Create_0, "UI_Pause_obj.anon@1714", kRpCount, nullptr, nullptr) \
+    X(PauseAnon1867, HeroSiege::Scripts::gml_Script_anon_1867_gml_Object_UI_Pause_obj_Create_0, "UI_Pause_obj.anon@1867", kRpCount, nullptr, nullptr) \
+    X(PauseAnon2018, HeroSiege::Scripts::gml_Script_anon_2018_gml_Object_UI_Pause_obj_Create_0, "UI_Pause_obj.anon@2018", kRpCount, nullptr, nullptr) \
+    X(PauseAnon2582, HeroSiege::Scripts::gml_Script_anon_2582_gml_Object_UI_Pause_obj_Create_0, "UI_Pause_obj.anon@2582", kRpCount, nullptr, nullptr) \
+    X(PauseAnon6013, HeroSiege::Scripts::gml_Script_anon_6013_gml_Object_UI_Pause_obj_Create_0, "UI_Pause_obj.anon@6013", kRpCount, nullptr, nullptr) \
+    X(UiSetRowEnabled, HeroSiege::Scripts::gml_Script_UiSetRowEnabled, "UiSetRowEnabled", kRpCount, nullptr, nullptr) \
+    X(SetGlobalUiEnable, HeroSiege::Scripts::gml_Script_SetGlobalUiEnable, "SetGlobalUiEnable", kRpCount, nullptr, nullptr) \
+    X(EnableNav, HeroSiege::Scripts::gml_Script_EnableNav, "EnableNav", kRpCount, nullptr, nullptr) \
+    X(UiSetActivationFunc, HeroSiege::Scripts::gml_Script_UiSetActivationFunc, "UiSetActivationFunc", kRpCount, nullptr, nullptr) \
+    X(UiSetUpdateFunc, HeroSiege::Scripts::gml_Script_UiSetUpdateFunc, "UiSetUpdateFunc", kRpCount, nullptr, nullptr) \
+    X(UiCreate, HeroSiege::Scripts::gml_Script_UiCreate, "UiCreate", kRpCount, nullptr, nullptr) \
+    X(UiCreateNode, HeroSiege::Scripts::gml_Script_UiCreateNode, "UiCreateNode", kRpCount, nullptr, nullptr) \
+    X(UiRemoveNode, HeroSiege::Scripts::gml_Script_UiRemoveNode, "UiRemoveNode", kRpCount, nullptr, nullptr) \
+    X(UiSetFocus, HeroSiege::Scripts::gml_Script_UiSetFocus, "UiSetFocus", kRpCount, nullptr, nullptr) \
+    X(UiSetRef, HeroSiege::Scripts::gml_Script_UiSetRef, "UiSetRef", kRpCount, nullptr, nullptr) \
+    X(UiDrawPauseButtonInfo, HeroSiege::Scripts::gml_Script_UiDrawPauseButtonInfo, "UiDrawPauseButtonInfo", kRpCount, nullptr, nullptr) \
+    X(UiDrawPauseButtonJournalInfo, HeroSiege::Scripts::gml_Script_UiDrawPauseButtonJournalInfo, "UiDrawPauseButtonJournalInfo", kRpCount, nullptr, nullptr) \
+    X(UiACloseButton, HeroSiege::Scripts::gml_Script_UiACloseButton, "UiACloseButton", kRpCount, nullptr, nullptr)
+
+enum RestartProbeRowId : int {
+#define RP_SCRIPT_ID(SAFE, NAME, LABEL, FLAGS, ORIG, HELD) kRp_##SAFE,
+    RESTARTPROBE_SCRIPTS(RP_SCRIPT_ID)
+#undef RP_SCRIPT_ID
+    kRpRowCount
+};
+
+#define RP_SCRIPT_DECL(SAFE, NAME, LABEL, FLAGS, ORIG, HELD) \
+    static RValue& RpNat_##SAFE(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A);
+RESTARTPROBE_SCRIPTS(RP_SCRIPT_DECL)
+#undef RP_SCRIPT_DECL
+
+struct RestartProbeRow {
+    const char*               label;
+    std::string_view          script;         // SDK constant
+    uint32_t                  flags;
+    PFUNC_YYGMLScript*        existingOrig;   // a ForgePact hook that may already hold this entry
+    const char*               heldBy;         // that hook's command, for the attach line
+    const char*               hookId;
+    PVOID                     detour;
+    PFUNC_YYGMLScript         tramp;
+    volatile long             mode;
+    std::string               modeText;
+    volatile long             calls;
+    volatile long             logged;
+    std::vector<std::string>  log;
+    // Game thread only, stamped by the detour on every call. The Restart
+    // draw row's pair is the hold's menu oracle (C3: the draw stops with the
+    // menu closed): lastCallFrame is its latest call, gapFrom..gapTo its
+    // latest pause longer than kRpHoldGapFrames (the menu closed, reopened).
+    uint64_t                  lastCallFrame = 0;
+    uint64_t                  gapFrom = 0, gapTo = 0;
+};
+
+static RestartProbeRow g_RpRows[kRpRowCount] = {
+#define RP_SCRIPT_ROW(SAFE, NAME, LABEL, FLAGS, ORIG, HELD) \
+    { LABEL, NAME, FLAGS, ORIG, HELD, "fp_rp_" #SAFE, (PVOID)RpNat_##SAFE, nullptr, kRpUnhooked, "unhooked", 0, 0, {} },
+    RESTARTPROBE_SCRIPTS(RP_SCRIPT_ROW)
+#undef RP_SCRIPT_ROW
+};
+
+static std::mutex g_RpLogMutex;
+
+// The candidate variable names: identifier names from the executable's
+// string table (research doc, § Static search). Case matters - `in_combat`
+// and `isCombat` are distinct candidates.
+static const char* const kRpVarNames[] = {
+    "in_combat", "isCombat", "wasInCombat", "lastHit", "combatRefresh", "aggroTimer", "dpsMeterResetCombat",
+};
+
+// Scopes, by the word `set` takes. Every object is an SDK name; `global` is
+// read with the global builtins rather than through an instance.
+struct RpScope {
+    const char* word;
+    bool isGlobal;
+    HeroSiege::Objects::GameObject object;
+};
+static const RpScope kRpScopes[] = {
+    { "global",     true,  HeroSiege::Objects::GameObject(0) },
+    { "controller", false, HeroSiege::Objects::GameObject::Controller_obj },
+    { "player",     false, HeroSiege::Objects::GameObject::Player_obj },
+    { "pause",      false, HeroSiege::Objects::GameObject::UI_Pause_obj },
+};
+
+static const RpScope* RpFindScope(const std::string& word)
+{
+    for (const RpScope& s : kRpScopes) if (word == s.word) return &s;
+    return nullptr;
+}
+
+// The first instance of the scope's object, found by name and accepted by
+// reading a variable through it (HhUsableInstance) - instance_find hands out
+// VALUE_REF on this runner, so no kind check decides anything here.
+static bool RpScopeInstance(const RpScope& s, RValue& out)
+{
+    try {
+        const double idx = g_Yytk->CallBuiltin("asset_get_index",
+            { RValue(std::string(HeroSiege::Objects::GetObjectName(s.object))) }).ToDouble();
+        if (idx < 0) return false;
+        const double count = g_Yytk->CallBuiltin("instance_number", { RValue(idx) }).ToDouble();
+        if (!std::isfinite(count) || count < 1) return false;
+        out = g_Yytk->CallBuiltin("instance_find", { RValue(idx), RValue(0.0) });
+        return HhUsableInstance(out);
+    } catch (...) { return false; }
+}
+
+static std::string RpScopeLabel(const RpScope& s)
+{
+    return s.isGlobal ? std::string("global") : std::string(HeroSiege::Objects::GetObjectName(s.object));
+}
+
+enum class RpReadResult { Ok, Absent, Unreadable };
+
+static RpReadResult RpReadVar(const RpScope& s, const RValue& inst, const char* name, RValue& value)
+{
+    try {
+        const bool exists = s.isGlobal
+            ? g_Yytk->CallBuiltin("variable_global_exists", { RValue(name) }).ToBoolean()
+            : g_Yytk->CallBuiltin("variable_instance_exists", { inst, RValue(name) }).ToBoolean();
+        if (!exists) return RpReadResult::Absent;
+        value = s.isGlobal
+            ? g_Yytk->CallBuiltin("variable_global_get", { RValue(name) })
+            : g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(name) });
+        return RpReadResult::Ok;
+    } catch (...) { return RpReadResult::Unreadable; }
+}
+
+static bool RpIsNumeric(const RValue& v)
+{
+    const auto kind = static_cast<uint32_t>(v.m_Kind) & 0x0FFFFFFFU;
+    return kind == VALUE_REAL || kind == VALUE_INT32 || kind == VALUE_INT64 || kind == VALUE_BOOL;
+}
+
+// A number in the kind `like` holds: a bool stays a bool, an int stays an
+// int, anything else is a real. Round 1's `set` wrote a real over the game's
+// bool; the hold and `argset` write the kind the game itself left there.
+static RValue RpNumberInKind(const RValue& like, double value)
+{
+    const auto kind = static_cast<uint32_t>(like.m_Kind) & 0x0FFFFFFFU;
+    if (kind == VALUE_BOOL) return RValue(value != 0.0);
+    if (kind == VALUE_INT64) return RValue(static_cast<int64_t>(value));
+    if (kind == VALUE_INT32) {
+        RValue r(static_cast<int64_t>(value));
+        r.m_Kind = VALUE_INT32;
+        r.m_i32 = static_cast<int32_t>(value);
+        return r;
+    }
+    return RValue(value);
+}
+
+static std::string RpNumberText(double value)
+{
+    char b[48];
+    sprintf_s(b, "%g", value);
+    return b;
+}
+
+// Paths sampled beside the names: round 1's fight snapshot showed
+// `global.tupm[1].in_combat=real:432` (3.0 s at 144 fps, the length of the
+// wait) and it was gone at the allowed press. A path, not a name, so it is
+// resolved by the deep reader - one resolver, no second grammar.
+static const char* const kRpVarPaths[] = {
+    "global.tupm[1].in_combat",
+};
+
+static std::string RpPathLine(const char* path)
+{
+    RValue v;
+    std::string err;
+    const bool ok = TgProbeDeepGet(path, v, err);
+    return std::string("path:") + path + "=" + (ok ? Describe(v) : std::string("unresolved: ") + err);
+}
+
+// Where `set` and `hold` put a number. A scope word gives a global or an
+// instance variable; scope `path` gives whatever holds the path's last
+// segment, and is read back through the full path again.
+struct RpTarget {
+    enum Kind { kGlobal, kInstance, kStruct, kArray };
+    Kind        kind = kGlobal;
+    RValue      holder;       // the instance, struct or array; unused for kGlobal
+    std::string name;         // variable or field name (every kind but kArray)
+    int         index = -1;   // element index (kArray)
+    std::string path;         // scope `path`: the full path; empty otherwise
+    std::string label;        // what the output lines call it
+};
+
+static RpTarget RpScopeTarget(const RpScope& s, const RValue& inst, const std::string& name)
+{
+    RpTarget t;
+    t.kind = s.isGlobal ? RpTarget::kGlobal : RpTarget::kInstance;
+    t.holder = inst;
+    t.name = name;
+    t.label = RpScopeLabel(s) + "." + name;
+    return t;
+}
+
+// Scope `path`: resolve the parent (the path minus its last segment) with the
+// deep reader, then pick the setter from what the parent is. Only a `.name`
+// or `[i]` last segment can be written; a ds_map key cannot.
+static bool RpPathTarget(const std::string& path, RpTarget& t, std::string& why)
+{
+    t = RpTarget();
+    t.path = path;
+    t.label = "path:" + path;
+    const size_t last = path.find_last_of(kTgDeepSegmentStarts);
+    if (last == std::string::npos || last == 0) { why = "a path needs a root and at least one segment"; return false; }
+    const std::string parent = path.substr(0, last);
+    if (path[last] == '.') {
+        t.name = path.substr(last + 1);
+        if (t.name.empty()) { why = "the last segment is empty"; return false; }
+        if (parent == "global") { t.kind = RpTarget::kGlobal; return true; }
+    } else if (path[last] == '[') {
+        const size_t close = path.find(']', last);
+        if (close != path.size() - 1) { why = "the last segment must be .name or [i]"; return false; }
+        try {
+            size_t used = 0;
+            const std::string text = path.substr(last + 1, close - last - 1);
+            t.index = std::stoi(text, &used);
+            if (used != text.size() || t.index < 0) throw std::invalid_argument("index");
+        } catch (...) { why = "bad index in the last segment"; return false; }
+    } else {
+        why = "the last segment must be .name or [i] (a ds_map key cannot be written)";
+        return false;
+    }
+    std::string err;
+    if (!TgProbeDeepGet(parent, t.holder, err)) { why = "parent " + parent + ": " + err; return false; }
+    try {
+        if (path[last] == '[') {
+            if (t.holder.m_Kind != VALUE_ARRAY) { why = "parent " + parent + " is " + Describe(t.holder) + ", not an array"; return false; }
+            t.kind = RpTarget::kArray;
+        } else if (t.holder.m_Kind == VALUE_OBJECT && g_Yytk->CallBuiltin("is_struct", { t.holder }).ToBoolean()) {
+            t.kind = RpTarget::kStruct;
+        } else {
+            t.kind = RpTarget::kInstance;
+        }
+    } catch (...) { why = "parent " + parent + ": is_struct threw"; return false; }
+    return true;
+}
+
+static RpReadResult RpReadTarget(const RpTarget& t, RValue& value, std::string* why = nullptr)
+{
+    if (!t.path.empty()) {
+        std::string err;
+        if (TgProbeDeepGet(t.path, value, err)) return RpReadResult::Ok;
+        if (why) *why = err;
+        return RpReadResult::Absent;
+    }
+    try {
+        const bool global = t.kind == RpTarget::kGlobal;
+        const bool exists = global
+            ? g_Yytk->CallBuiltin("variable_global_exists", { RValue(t.name) }).ToBoolean()
+            : g_Yytk->CallBuiltin("variable_instance_exists", { t.holder, RValue(t.name) }).ToBoolean();
+        if (!exists) return RpReadResult::Absent;
+        value = global
+            ? g_Yytk->CallBuiltin("variable_global_get", { RValue(t.name) })
+            : g_Yytk->CallBuiltin("variable_instance_get", { t.holder, RValue(t.name) });
+        return RpReadResult::Ok;
+    } catch (...) { return RpReadResult::Unreadable; }
+}
+
+// The one place the probe writes a variable. `set` and the hold's apply
+// function are its only callers; `argset` replaces an argument on the stack
+// and never comes here. False when the builtin threw.
+static bool RpWrite(const RpTarget& t, const RValue& v)
+{
+    try {
+        switch (t.kind) {
+        case RpTarget::kGlobal:   g_Yytk->CallBuiltin("variable_global_set", { RValue(t.name), v }); return true;
+        case RpTarget::kInstance: g_Yytk->CallBuiltin("variable_instance_set", { t.holder, RValue(t.name), v }); return true;
+        case RpTarget::kStruct:   g_Yytk->CallBuiltin("variable_struct_set", { t.holder, RValue(t.name), v }); return true;
+        case RpTarget::kArray:    g_Yytk->CallBuiltin("array_set", { t.holder, RValue((double)t.index), v }); return true;
+        }
+    } catch (...) {}
+    return false;
+}
+
+// Every candidate on one scope, as `<scope>.<name>=<kind:value>|absent|unreadable`.
+static std::string RpScopeLine(const RpScope& s)
+{
+    RValue inst;
+    if (!s.isGlobal && !RpScopeInstance(s, inst)) return RpScopeLabel(s) + ": no instance";
+    std::string line;
+    for (const char* name : kRpVarNames) {
+        RValue v;
+        const RpReadResult rr = RpReadVar(s, inst, name, v);
+        line += (line.empty() ? "" : " ") + RpScopeLabel(s) + "." + name + "="
+            + (rr == RpReadResult::Ok ? Describe(v) : rr == RpReadResult::Absent ? std::string("absent") : std::string("unreadable"));
+    }
+    return line;
+}
+
+static void RestartProbeVars()
+{
+    Out("restartprobe vars: frame=" + std::to_string((unsigned long long)g_RuntimeFrame));
+    for (const RpScope& s : kRpScopes) Out("  " + RpScopeLine(s));
+    for (const char* p : kRpVarPaths) Out("  " + RpPathLine(p));
+}
+
+// The caller's object name, read through its object_index.
+static std::string RpDescribeSelf(CInstance* S)
+{
+    if (!S) return "(null)";
+    try {
+        RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { S->ToRValue(), RValue("object_index") });
+        int idx = -1;
+        if (!N1ObjectIndex(oi, idx)) return "(no object_index: " + Describe(oi) + ")";
+        return g_Yytk->CallBuiltin("object_get_name", { RValue((double)idx) }).ToString() + "#" + std::to_string(idx);
+    } catch (...) { return "(unresolved)"; }
+}
+
+// What a hold's output calls an instance target: `<object name>#<id>.<member>`,
+// both read by name off the instance the call resolved, so a write is
+// attributed to what it reached - at a site other than the draw, the call's
+// self is the pause menu, not the button.
+static std::string RpInstanceLabel(const RValue& inst, const std::string& member)
+{
+    std::string object = "(unresolved)";
+    std::string id = "?";
+    try {
+        RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("object_index") });
+        int idx = -1;
+        object = N1ObjectIndex(oi, idx)
+            ? g_Yytk->CallBuiltin("object_get_name", { RValue((double)idx) }).ToString()
+            : "(no object_index: " + Describe(oi) + ")";
+    } catch (...) {}
+    // Whole digits: %g would print an id above 999999 as 1e+06.
+    try { id = std::to_string((long long)g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("id") }).ToDouble()); } catch (...) {}
+    return object + "#" + id + "." + member;
+}
+
+// A row by the name `hold ... at <row>` and `argset <row>` take: its label
+// without the "(control)" suffix, or its full SDK name.
+static int RpFindRow(const std::string& text)
+{
+    const std::string want = Lower(text);
+    for (int i = 0; i < kRpRowCount; ++i) {
+        if (want == Lower(std::string(g_RpRows[i].script))) return i;
+        std::string label = g_RpRows[i].label;
+        const size_t paren = label.find('(');
+        if (paren != std::string::npos) label = label.substr(0, paren);
+        if (want == Lower(label)) return i;
+    }
+    return -1;
+}
+
+static std::string RpRowName(int idx)
+{
+    if (idx < 0 || idx >= kRpRowCount) return "none";
+    std::string label = g_RpRows[idx].label;
+    const size_t paren = label.find('(');
+    return paren == std::string::npos ? label : label.substr(0, paren);
+}
+
+static void RpRowLog(int idx, std::string line)
+{
+    std::lock_guard<std::mutex> lock(g_RpLogMutex);
+    g_RpRows[idx].log.push_back(std::move(line));
+}
+
+// ---- selfIds: which UI_Button_obj instances reach the Restart draw ----
+// Round 1 printed the caller as UI_Button_obj#5003, which is the object
+// index. The distinct instance ids, read by name through the self the game
+// handed the draw, answer "one button or several" without assuming an nth.
+static std::vector<double> g_RpSelfIds;   // game thread only
+static bool g_RpSelfIdsMore = false;      // a further id arrived after the cap
+
+static void RpNoteSelfId(int idx, CInstance* S)
+{
+    if (idx != kRp_UiDrawIngameRestart || !S) return;
+    try {
+        const double id = g_Yytk->CallBuiltin("variable_instance_get", { S->ToRValue(), RValue("id") }).ToDouble();
+        for (double seen : g_RpSelfIds) if (seen == id) return;
+        if (g_RpSelfIds.size() < kRpSelfIdCap) g_RpSelfIds.push_back(id);
+        else g_RpSelfIdsMore = true;
+    } catch (...) {}
+}
+
+static std::string RpSelfIdsText()
+{
+    std::string ids;
+    for (double id : g_RpSelfIds) ids += (ids.empty() ? "" : ",") + RpNumberText(id);
+    return "selfIds=" + (ids.empty() ? std::string("none") : ids) + (g_RpSelfIdsMore ? ",more" : "");
+}
+
+// ---- dump: every member of the Restart button, or of the pause menu ----
+struct RpDump {
+    std::string label;
+    std::string kind;          // button | pause
+    std::string error;         // set when the capture could not read the instance
+    double      id = -1.0;
+    uint64_t    frame = 0;
+    bool        captured = false;
+    bool        truncated = false;
+    size_t      names = 0;     // instance variables read, after the builtins
+    std::vector<std::pair<std::string, std::string>> values;   // builtins first, then the variables
+};
+// Keyed by kind and label, so one label ("town", "fight") names a button dump
+// and a pause dump side by side, and `dump diff town fight` compares each kind
+// with itself. At most kRpDumpMaxLabels labels per kind; the oldest goes.
+static std::vector<RpDump> g_RpDumps;     // oldest first; game thread only
+static std::string g_RpDumpArmed;         // label of the pending `dump button` capture
+static const char* const kRpDumpKinds[] = { "button", "pause" };
+
+static RpDump* RpFindDump(const std::string& label, const std::string& kind)
+{
+    for (RpDump& d : g_RpDumps) if (d.label == label && d.kind == kind) return &d;
+    return nullptr;
+}
+
+static RpDump& RpStoreDump(const std::string& label, const char* kind)
+{
+    size_t sameKind = 0;
+    for (auto it = g_RpDumps.begin(); it != g_RpDumps.end();) {
+        if (it->kind == kind && it->label == label) { it = g_RpDumps.erase(it); continue; }
+        if (it->kind == kind) ++sameKind;
+        ++it;
+    }
+    if (sameKind >= kRpDumpMaxLabels) {
+        for (auto it = g_RpDumps.begin(); it != g_RpDumps.end(); ++it) {
+            if (it->kind != kind) continue;
+            Out("restartprobe dump: evicted the oldest " + std::string(kind) + " dump '" + it->label + "' (keeps "
+                + std::to_string(kRpDumpMaxLabels) + " per kind)");
+            g_RpDumps.erase(it);
+            break;
+        }
+    }
+    g_RpDumps.push_back(RpDump());
+    g_RpDumps.back().label = label;
+    g_RpDumps.back().kind = kind;
+    return g_RpDumps.back();
+}
+
+// Accepts the instance by reading through it (HhUsableInstance), never by the
+// kind of handle it arrived as, then reads a short fixed builtin list and
+// every instance variable the runtime names.
+static bool RpDumpCapture(const RValue& inst, RpDump& d)
+{
+    d.values.clear();
+    d.frame = g_RuntimeFrame;
+    d.captured = true;
+    if (!HhUsableInstance(inst)) { d.error = "not a usable instance (" + Describe(inst) + ")"; return false; }
+    static const char* const kBuiltins[] = {
+        "id", "object_index", "visible", "sprite_index", "image_index", "image_alpha", "depth", "x", "y",
+    };
+    for (const char* b : kBuiltins) {
+        try {
+            const RValue v = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(b) });
+            d.values.emplace_back(b, TgProbeDescribeShort(v, 120));
+            if (std::strcmp(b, "id") == 0) { try { d.id = v.ToDouble(); } catch (...) {} }
+        } catch (...) { d.values.emplace_back(b, "<unreadable>"); }
+    }
+    try {
+        const RValue names = g_Yytk->CallBuiltin("variable_instance_get_names", { inst });
+        const size_t n = (size_t)(std::max)(0.0, g_Yytk->CallBuiltin("array_length", { names }).ToDouble());
+        d.truncated = n > kRpDumpMaxNames;
+        for (size_t i = 0; i < n && i < kRpDumpMaxNames; ++i) {
+            std::string name = "?";
+            try {
+                const RValue nm = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) });
+                name = nm.ToString();
+                const RValue v = g_Yytk->CallBuiltin("variable_instance_get", { inst, nm });
+                d.values.emplace_back(name, TgProbeDescribeShort(v, 120));
+            } catch (...) { d.values.emplace_back(name, "<unreadable>"); }
+            ++d.names;
+        }
+    } catch (...) { d.error = "variable_instance_get_names threw"; }
+    return true;
+}
+
+// `dump button` runs here, inside the Restart draw's next call, on the self
+// the game handed that call.
+static void RpDumpFromDetour(int idx, CInstance* S)
+{
+    if (idx != kRp_UiDrawIngameRestart || g_RpDumpArmed.empty() || !S) return;
+    const std::string label = g_RpDumpArmed;
+    g_RpDumpArmed.clear();
+    RpDump* d = RpFindDump(label, "button");
+    if (!d) return;   // evicted while armed
+    const bool ok = RpDumpCapture(S->ToRValue(), *d);
+    Out("restartprobe dump button " + label + ": " + (ok ? "captured" : "capture failed: " + d->error)
+        + " frame=" + std::to_string((unsigned long long)d->frame) + " names=" + std::to_string(d->names));
+}
+
+static void RpDumpShow(const RpDump& d)
+{
+    if (!d.captured) { Out("restartprobe dump show " + d.label + " (" + d.kind + "): not captured yet"); return; }
+    Out(d.label + ": kind=" + d.kind + " id=" + RpNumberText(d.id)
+        + " frame=" + std::to_string((unsigned long long)d.frame) + " names=" + std::to_string(d.names)
+        + (d.truncated ? " (truncated at " + std::to_string(kRpDumpMaxNames) + ")" : "")
+        + (d.error.empty() ? "" : " error=" + d.error));
+    for (const auto& kv : d.values) Out("  " + kv.first + "=" + kv.second);
+}
+
+static void RpDumpDiff(const RpDump& da, const RpDump& db)
+{
+    const std::string& a = da.label;
+    const std::string& b = db.label;
+    if (!da.captured || !db.captured) { Out("restartprobe dump diff (" + da.kind + "): '" + (da.captured ? b : a) + "' not captured yet"); return; }
+    const std::map<std::string, std::string> ma(da.values.begin(), da.values.end());
+    const std::map<std::string, std::string> mb(db.values.begin(), db.values.end());
+    size_t changed = 0, added = 0, removed = 0, printed = 0;
+    Out("restartprobe dump diff " + da.kind + " " + a + " -> " + b + ":");
+    for (const auto& kv : mb) {
+        const auto it = ma.find(kv.first);
+        if (it == ma.end()) {
+            ++added;
+            if (printed++ < kRpDumpDiffLines) Out(std::string("  ") + "+ " + kv.first + "=" + kv.second);
+        } else if (it->second != kv.second) {
+            ++changed;
+            if (printed++ < kRpDumpDiffLines) Out(std::string("  ") + "~ " + kv.first + ": " + it->second + " -> " + kv.second);
+        }
+    }
+    for (const auto& kv : ma) {
+        if (mb.count(kv.first)) continue;
+        ++removed;
+        if (printed++ < kRpDumpDiffLines) Out(std::string("  ") + "- " + kv.first + " (was " + kv.second + ")");
+    }
+    Out("  changed=" + std::to_string(changed) + " added=" + std::to_string(added) + " removed=" + std::to_string(removed)
+        + (printed > kRpDumpDiffLines ? " (first " + std::to_string(kRpDumpDiffLines) + " lines shown)" : ""));
+}
+
+// ---- hold: a write inside a hooked call, before the game's own body ----
+// Round 1 wrote wasInCombat once at command time and the game had put it
+// back 14 frames later, before the press. The hold writes on every call of
+// its site row instead, and counts what it found there first: entryHeld (the
+// previous write survived to this call) against entryOther (something
+// rewrote it in between) is what decides whether a press during the hold
+// tests the value at all.
+//
+// Round 3: two slots, so enabled and manualDisable can be held together, each
+// with its own counters and an entry ring - one entry per write: the frame,
+// the target, the value found at entry, whether that already was the held
+// value, what was written and the read-back. A human cannot run `hold stat`
+// within a tenth of a second of a refused press; seven seconds of entries,
+// collapsed into runs, still show what the game did to the value on the
+// frames around it.
+struct RpHoldEntry {
+    uint64_t    frame = 0;
+    std::string label, entry, wrote;
+    bool        held = false, readbackOk = false;
+};
+struct RpHoldState {
+    bool        armed = false;
+    int         site = -1;
+    std::string scope;            // global|controller|player|pause|button|arg0|path
+    std::string name;
+    double      value = 0.0;
+    long        writes = 0, readbackOk = 0, entryHeld = 0, entryOther = 0, unreadable = 0, skipped = 0;
+    long        logged = 0;
+    uint64_t    lastWriteFrame = 0;
+    std::vector<RpHoldEntry> ring;   // at most kRpHoldRing entries; the oldest is overwritten
+    size_t      ringPushed = 0;      // entries pushed since arming
+};
+static RpHoldState g_RpHold[kRpHoldSlots];   // game thread only: the command and the detours both run there
+
+static std::string RpHoldStatLine(int slot)
+{
+    const RpHoldState& h = g_RpHold[slot];
+    return std::string("hold[") + std::to_string(slot) + "]: " + "armed=" + (h.armed ? "yes" : "no")
+        + " site=" + RpRowName(h.site)
+        + " scope=" + (h.scope.empty() ? std::string("none") : h.scope)
+        + " name=" + (h.name.empty() ? std::string("none") : h.name)
+        + " value=" + RpNumberText(h.value)
+        + " writes=" + std::to_string(h.writes)
+        + " readbackOk=" + std::to_string(h.readbackOk)
+        + " entryHeld=" + std::to_string(h.entryHeld)
+        + " entryOther=" + std::to_string(h.entryOther)
+        + " unreadable=" + std::to_string(h.unreadable)
+        + " skipped=" + std::to_string(h.skipped)
+        + " lastWriteFrame=" + std::to_string((unsigned long long)h.lastWriteFrame);
+}
+
+static void RpHoldDisarm(int slot, const std::string& why)
+{
+    g_RpHold[slot].armed = false;
+    Out("restartprobe " + why + "; " + RpHoldStatLine(slot));
+}
+
+static void RpHoldRingPush(RpHoldState& h, RpHoldEntry e)
+{
+    if (h.ring.size() < kRpHoldRing) h.ring.push_back(std::move(e));
+    else h.ring[h.ringPushed % kRpHoldRing] = std::move(e);
+    ++h.ringPushed;
+}
+
+// `hold stat`'s ring lines for one slot, oldest first: consecutive entries
+// that differ only in their frame are one run, and only the newest
+// kRpHoldRingLines runs are printed. One unbroken `held=no` run is "the game
+// rewrote it between every two writes"; a change of run near the press frame
+// is what the press saw.
+static std::vector<std::string> RpHoldRingLines(int slot)
+{
+    const RpHoldState& h = g_RpHold[slot];
+    const std::string prefix = "hold[" + std::to_string(slot) + "]";
+    std::vector<std::string> lines;
+    const size_t n = h.ring.size();
+    if (n == 0) { lines.push_back(prefix + " ring: empty (no write since arming)"); return lines; }
+    const size_t start = n < kRpHoldRing ? 0 : h.ringPushed % kRpHoldRing;
+    struct Run { const RpHoldEntry* e; uint64_t first; uint64_t last; size_t count; };
+    std::vector<Run> runs;
+    for (size_t i = 0; i < n; ++i) {
+        const RpHoldEntry& e = h.ring[(start + i) % n];
+        if (!runs.empty()) {
+            const RpHoldEntry& p = *runs.back().e;
+            if (p.label == e.label && p.entry == e.entry && p.held == e.held && p.wrote == e.wrote && p.readbackOk == e.readbackOk) {
+                runs.back().last = e.frame;
+                ++runs.back().count;
+                continue;
+            }
+        }
+        runs.push_back({ &e, e.frame, e.frame, 1 });
+    }
+    const size_t from = runs.size() > kRpHoldRingLines ? runs.size() - kRpHoldRingLines : 0;
+    if (from > 0) lines.push_back(prefix + " ring: " + std::to_string(from) + " older run(s) not shown");
+    for (size_t i = from; i < runs.size(); ++i) {
+        const Run& r = runs[i];
+        lines.push_back("hold[" + std::to_string(slot) + "] ring: frames " + std::to_string((unsigned long long)r.first)
+            + ".." + std::to_string((unsigned long long)r.last) + " x" + std::to_string(r.count) + " " + r.e->label
+            + " entry=" + r.e->entry + " held=" + (r.e->held ? "yes" : "no") + " wrote=" + r.e->wrote
+            + " readback=" + (r.e->readbackOk ? "ok" : "mismatch"));
+    }
+    return lines;
+}
+
+// Runs inside the site row's detour, before the trampoline, for every armed
+// slot on this row, in slot order. The disarm rules are decided here, where
+// the calls arrive, and not in a command. At the draw site, a draw after a
+// gap means the menu was closed and reopened (control C3). Any other site -
+// UiSetFocus is only called while the cursor hovers a button - says nothing
+// about the menu by its own gaps, so the draw row's calls decide: no draw for
+// longer than the gap, or a draw gap since this slot's last write, is the
+// menu closed.
+static void RpHoldApply(int idx, CInstance* S, int argc, RValue** A)
+{
+    for (int slot = 0; slot < kRpHoldSlots; ++slot) {
+        RpHoldState& h = g_RpHold[slot];
+        if (!h.armed || idx != h.site) continue;
+        if (h.site == kRp_UiDrawIngameRestart) {
+            if (h.writes > 0 && g_RuntimeFrame - h.lastWriteFrame > kRpHoldGapFrames) {
+                RpHoldDisarm(slot, "hold: disarmed (menu closed at frame " + std::to_string((unsigned long long)h.lastWriteFrame)
+                    + "; writes=" + std::to_string(h.writes) + ")");
+                continue;
+            }
+        } else if (h.writes > 0) {
+            const RestartProbeRow& draw = g_RpRows[kRp_UiDrawIngameRestart];
+            const bool stale = g_RuntimeFrame - draw.lastCallFrame > kRpHoldGapFrames;
+            const bool reopened = draw.gapTo > h.lastWriteFrame;
+            if (stale || reopened) {
+                RpHoldDisarm(slot, "hold: disarmed (menu not drawing since frame "
+                    + std::to_string((unsigned long long)(stale ? draw.lastCallFrame : draw.gapFrom))
+                    + "; writes=" + std::to_string(h.writes) + ")");
+                continue;
+            }
+        }
+        if (h.writes >= kRpHoldMaxWrites) { RpHoldDisarm(slot, "hold: disarmed (cap)"); continue; }
+
+        // The target, resolved at this call: `button` is this call's own
+        // self, `arg0` its first argument, each accepted by reading through
+        // it rather than by its kind, and labelled from what it resolved to.
+        RpTarget target;
+        std::string why;
+        bool resolved = false;
+        if (h.scope == "button") {
+            const RValue self = S ? S->ToRValue() : RValue();
+            if (S && HhUsableInstance(self)) {
+                target.kind = RpTarget::kInstance;
+                target.holder = self;
+                target.name = h.name;
+                target.label = RpInstanceLabel(self, h.name);
+                resolved = true;
+            } else {
+                why = "the call's self is not a usable instance";
+            }
+        } else if (h.scope == "arg0") {
+            // At UiSetFocus this is the Restart button, handed over at step
+            // time; this runner passes it as VALUE_REF.
+            if (argc > 0 && A && A[0] && HhUsableInstance(*A[0])) {
+                target.kind = RpTarget::kInstance;
+                target.holder = *A[0];
+                target.name = h.name;
+                target.label = RpInstanceLabel(*A[0], h.name);
+                resolved = true;
+            } else {
+                why = (argc > 0 && A && A[0]) ? "argument 0 is not a usable instance (" + Describe(*A[0]) + ")"
+                                              : std::string("the call has no argument 0");
+            }
+        } else if (h.scope == "path") {
+            resolved = RpPathTarget(h.name, target, why);
+        } else if (const RpScope* s = RpFindScope(h.scope)) {
+            RValue inst;
+            resolved = s->isGlobal || RpScopeInstance(*s, inst);
+            if (resolved) target = RpScopeTarget(*s, inst, h.name);
+            else why = RpScopeLabel(*s) + " has no instance";
+        }
+        const std::string tag = "hold[" + std::to_string(slot) + "]: frame=" + std::to_string((unsigned long long)g_RuntimeFrame);
+        const bool log = h.logged < kRpLogBudget;
+        if (!resolved) {
+            ++h.unreadable;
+            if (log) { ++h.logged; RpRowLog(idx, tag + " unreadable (" + why + ")"); }
+            continue;
+        }
+
+        RValue entry;
+        const RpReadResult rr = RpReadTarget(target, entry, &why);
+        if (rr != RpReadResult::Ok || !RpIsNumeric(entry)) {
+            const std::string what = rr != RpReadResult::Ok
+                ? std::string(rr == RpReadResult::Absent ? "absent" : "unreadable") + (why.empty() ? "" : " (" + why + ")")
+                : Describe(entry) + ", not a number";
+            if (h.scope == "button" || h.scope == "arg0") {
+                // The member could not be checked at arming time; the first
+                // call that finds it absent or not a number disarms.
+                ++h.skipped;
+                if (h.writes == 0) { RpHoldDisarm(slot, "hold: disarmed (" + target.label + " is " + what + " on the first call)"); continue; }
+            } else {
+                ++h.unreadable;
+            }
+            if (log) { ++h.logged; RpRowLog(idx, tag + " " + target.label + " is " + what + "; not written"); }
+            continue;
+        }
+
+        const RValue held = RpNumberInKind(entry, h.value);
+        double heldNumber = h.value;
+        try { heldNumber = held.ToDouble(); } catch (...) {}
+        bool atHeld = false;
+        try { atHeld = entry.ToDouble() == heldNumber; } catch (...) {}
+        if (atHeld) ++h.entryHeld;
+        else ++h.entryOther;
+        const bool wrote = RpWrite(target, held);
+        RValue back;
+        bool backOk = false;
+        if (wrote && RpReadTarget(target, back) == RpReadResult::Ok && RpIsNumeric(back)) {
+            try { backOk = back.ToDouble() == heldNumber; } catch (...) {}
+        }
+        if (backOk) ++h.readbackOk;
+        ++h.writes;
+        h.lastWriteFrame = g_RuntimeFrame;
+        RpHoldEntry e;
+        e.frame = g_RuntimeFrame;
+        e.label = target.label;
+        e.entry = Describe(entry);
+        e.held = atHeld;
+        e.wrote = wrote ? Describe(held) : std::string("no (the write threw)");
+        e.readbackOk = backOk;
+        if (log) {
+            ++h.logged;
+            RpRowLog(idx, tag + " " + target.label + " entry=" + e.entry + " wrote=" + e.wrote
+                + " readback=" + (backOk ? std::string("ok") : "mismatch (" + Describe(back) + ")"));
+        }
+        RpHoldRingPush(h, std::move(e));
+    }
+}
+
+// ---- argset: one numeric argument of one row, for the next N calls ----
+// It replaces the argument on the stack, in the argument's own kind, before
+// the game's own body reads it; it writes no variable.
+struct RpArgsetState {
+    bool     armed = false;
+    int      row = -1;
+    int      index = 0;
+    double   value = 0.0;
+    long     calls = 0;       // the budget it was armed with
+    long     remaining = 0;
+    long     applied = 0, skipped = 0, skippedArgc = 0, logged = 0;
+    uint64_t lastFrame = 0;
+};
+static RpArgsetState g_RpArgset;  // game thread only
+
+static std::string RpArgsetStatLine()
+{
+    const RpArgsetState& a = g_RpArgset;
+    return std::string("argset: ") + "armed=" + (a.armed ? "yes" : "no")
+        + " row=" + RpRowName(a.row) + " a" + std::to_string(a.index) + "=" + RpNumberText(a.value)
+        + " calls=" + std::to_string(a.calls) + " remaining=" + std::to_string(a.remaining)
+        + " applied=" + std::to_string(a.applied) + " skipped=" + std::to_string(a.skipped)
+        + " skippedArgc=" + std::to_string(a.skippedArgc)
+        + " lastFrame=" + std::to_string((unsigned long long)a.lastFrame);
+}
+
+static void RpArgsetApply(int idx, int argc, RValue** A)
+{
+    RpArgsetState& a = g_RpArgset;
+    if (!a.armed || idx != a.row) return;
+    if (a.applied + a.skipped + a.skippedArgc > 0 && g_RuntimeFrame - a.lastFrame > kRpHoldGapFrames) {
+        a.armed = false;
+        Out("restartprobe argset: cleared (no call since frame " + std::to_string((unsigned long long)a.lastFrame) + "); " + RpArgsetStatLine());
+        return;
+    }
+    a.lastFrame = g_RuntimeFrame;
+    const bool log = a.logged < kRpLogBudget;
+    if (!A || argc <= a.index || !A[a.index]) {
+        ++a.skippedArgc;
+    } else if (!RpIsNumeric(*A[a.index])) {
+        ++a.skipped;
+        if (log) { ++a.logged; RpRowLog(idx, "argset: frame=" + std::to_string((unsigned long long)g_RuntimeFrame) + " a" + std::to_string(a.index) + "=" + Describe(*A[a.index]) + " is not a number; skipped"); }
+    } else {
+        const std::string before = Describe(*A[a.index]);
+        *A[a.index] = RpNumberInKind(*A[a.index], a.value);
+        ++a.applied;
+        if (log) {
+            ++a.logged;
+            RpRowLog(idx, "argset: frame=" + std::to_string((unsigned long long)g_RuntimeFrame) + " a" + std::to_string(a.index)
+                + " before=" + before + " after=" + Describe(*A[a.index]));
+        }
+    }
+    if (--a.remaining <= 0) {
+        a.armed = false;
+        Out("restartprobe argset: done; " + RpArgsetStatLine());
+    }
+}
+
+// Counts every call; keeps the first kRpLogBudget calls' lines. A sampling
+// row reads the candidates before the original runs - the value the game's
+// own body is about to read. The round-2 steps (selfIds, a pending dump, the
+// hold, argset) run here too, in that order, all before the trampoline; the
+// sample is taken after them, so it shows what the game's body will see.
+// Every row stamps its call frame first, and its latest gap; the draw row's
+// pair is what a hold at any other site reads as "the menu is open".
+static RValue& RpDetourBody(int idx, CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    RestartProbeRow& t = g_RpRows[idx];
+    const long n = InterlockedIncrement(&t.calls);
+    const bool keep = t.logged < kRpLogBudget && InterlockedIncrement(&t.logged) <= kRpLogBudget;
+    if (t.lastCallFrame != 0 && g_RuntimeFrame - t.lastCallFrame > kRpHoldGapFrames) {
+        t.gapFrom = t.lastCallFrame;
+        t.gapTo = g_RuntimeFrame;
+    }
+    t.lastCallFrame = g_RuntimeFrame;
+    RpNoteSelfId(idx, S);
+    RpDumpFromDetour(idx, S);
+    RpHoldApply(idx, S, argc, A);
+    RpArgsetApply(idx, argc, A);
+    std::string line;
+    if (keep) {
+        try {
+            line = std::string(t.label) + " #" + std::to_string(n)
+                + " frame=" + std::to_string((unsigned long long)g_RuntimeFrame)
+                + " self=" + RpDescribeSelf(S) + " argc=" + std::to_string(argc);
+            for (int i = 0; i < argc && i < 3; ++i)
+                line += " a" + std::to_string(i) + "=" + (A && A[i] ? Describe(*A[i]) : std::string("?"));
+            if (t.flags & kRpSample) {
+                for (const RpScope& s : kRpScopes) line += " | " + RpScopeLine(s);
+                for (const char* p : kRpVarPaths) line += " | " + RpPathLine(p);
+            }
+        } catch (...) { line += " <describe-failed>"; }
+    }
+    RValue& r = t.tramp ? t.tramp(S, O, R, argc, A) : R;
+    if (keep) {
+        try { line += " ret=" + Describe(r); } catch (...) {}
+        std::lock_guard<std::mutex> lock(g_RpLogMutex);
+        t.log.push_back(std::move(line));
+    }
+    return r;
+}
+
+#define RP_SCRIPT_DETOUR(SAFE, NAME, LABEL, FLAGS, ORIG, HELD) \
+    static RValue& RpNat_##SAFE(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) \
+    { return RpDetourBody(kRp_##SAFE, S, O, R, argc, A); }
+RESTARTPROBE_SCRIPTS(RP_SCRIPT_DETOUR)
+#undef RP_SCRIPT_DETOUR
+
+static void RpSetMode(RestartProbeRow& t, long mode, const std::string& text)
+{
+    t.modeText = text;
+    InterlockedExchange(&t.mode, mode);
+}
+
+// TgProbeAttach's decision order without its entry-note cases:
+//   (a) resolve by SDK name; nothing there -> not found
+//   (b) the table entry is game code -> native detour on it
+//   (c) a ForgePact hook holds the table and its saved original is game
+//       code -> native detour on that original, "under" the hook
+//   (d) anything else -> blocked, with the reason
+// Every pointer handed to the hooking library has just been checked to be
+// executable code inside Hero_Siege.exe, and the hooking library is called
+// from exactly one place: the lambda below.
+static void RestartProbeAttach(RestartProbeRow& t)
+{
+    const std::string runtimeName(t.script);
+    PVOID p = nullptr;
+    AurieStatus st = g_Yytk->GetNamedRoutinePointer(runtimeName.c_str(), &p);
+    CScript* sc = (AurieSuccess(st) && p) ? reinterpret_cast<CScript*>(p) : nullptr;
+    if (!sc || !sc->m_Functions || !sc->m_Functions->m_ScriptFunction) {
+        RpSetMode(t, kRpNotFound, "not found (" + runtimeName + " st=" + std::to_string((int)st) + ")");
+        return;
+    }
+    const PVOID tableEntry = (PVOID)sc->m_Functions->m_ScriptFunction;
+
+    auto detourAt = [&](PVOID src, std::string& why) -> bool {
+        if (!AddrIsExecutableInModule(GetModuleHandleA(nullptr), (const void*)src)) {
+            why = "target is not code inside Hero_Siege.exe";
+            return false;
+        }
+        PVOID tramp = nullptr;
+        AurieStatus hs = MmCreateHook(g_ArSelfModule, t.hookId, src, t.detour, &tramp);
+        if (!AurieSuccess(hs) || !tramp) {
+            why = "MmCreateHook st=" + std::to_string((int)hs);
+            return false;
+        }
+        t.tramp = reinterpret_cast<PFUNC_YYGMLScript>(tramp);
+        return true;
+    };
+
+    std::string why;
+    if (AddrIsExecutableInModule(GetModuleHandleA(nullptr), (const void*)tableEntry)) {
+        if (detourAt(tableEntry, why)) RpSetMode(t, kRpNative, "native");
+        else RpSetMode(t, kRpBlocked, "blocked: " + why);
+        return;
+    }
+    const PVOID held = (t.existingOrig && *t.existingOrig) ? (PVOID)*t.existingOrig : nullptr;
+    if (held && AddrIsExecutableInModule(GetModuleHandleA(nullptr), (const void*)held)) {
+        if (detourAt(held, why)) RpSetMode(t, kRpNative, "native (under table-only " + std::string(t.heldBy ? t.heldBy : "hook") + ")");
+        else RpSetMode(t, kRpBlocked, "blocked: " + why);
+        return;
+    }
+    RpSetMode(t, kRpBlocked, "blocked: table entry is not code inside Hero_Siege.exe");
+}
+
+static void RestartProbeHook()
+{
+    int native = 0, blocked = 0, notFound = 0;
+    for (RestartProbeRow& t : g_RpRows) {
+        if (t.mode == kRpUnhooked) RestartProbeAttach(t);
+        if (t.mode == kRpNative) ++native;
+        else if (t.mode == kRpBlocked) ++blocked;
+        else if (t.mode == kRpNotFound) ++notFound;
+    }
+    Out("restartprobe hook: " + std::to_string(native) + " native, " + std::to_string(blocked) + " blocked, "
+        + std::to_string(notFound) + " not found");
+    for (const RestartProbeRow& t : g_RpRows) Out(std::string("  ") + t.label + ": " + t.modeText);
+    Out("  control: UiDrawIngameRestart must count while the pause menu is open (C1); if it does not, every row is unmeasured.");
+}
+
+static std::string RpCallsText(const RestartProbeRow& t)
+{
+    // Not attached: there is no count, and printing 0 would be a claim about the game.
+    return t.mode == kRpNative ? std::to_string(t.calls) : std::string("n/a");
+}
+
+static void RestartProbeShow()
+{
+    Out("restartprobe show: frame=" + std::to_string((unsigned long long)g_RuntimeFrame)
+        + " control=" + RpCallsText(g_RpRows[kRp_UiDrawIngameRestart])
+        + " (UiDrawIngameRestart calls; must be > 0 with the pause menu open, unchanged with it closed)");
+    Out("  " + RpSelfIdsText() + " (distinct UiDrawIngameRestart self ids)");
+    for (int slot = 0; slot < kRpHoldSlots; ++slot) Out("  " + RpHoldStatLine(slot));
+    Out("  " + RpArgsetStatLine());
+    for (const RestartProbeRow& t : g_RpRows)
+        Out(std::string("  ") + t.label + " mode=" + t.modeText + " calls=" + RpCallsText(t));
+    std::lock_guard<std::mutex> lock(g_RpLogMutex);
+    for (const RestartProbeRow& t : g_RpRows)
+        for (const std::string& l : t.log) Out("  " + l);
+}
+
+static void RestartProbeReset()
+{
+    std::lock_guard<std::mutex> lock(g_RpLogMutex);
+    for (RestartProbeRow& t : g_RpRows) {
+        InterlockedExchange(&t.calls, 0);
+        InterlockedExchange(&t.logged, 0);
+        t.log.clear();
+    }
+    g_RpSelfIds.clear();
+    g_RpSelfIdsMore = false;
+    Out("restartprobe reset: counters, call log and selfIds cleared; attached rows stay attached, dumps are kept,"
+        " a hold or argset stays armed (hold off / argset clear)");
+}
+
+// The one write. Every refusal comes before it, in a fixed order, and the
+// value is read back afterwards so `wrote=` is a measurement, not an echo.
+static void RestartProbeSet(const std::string& rest)
+{
+    std::string r = rest;
+    const std::string scopeWord = Lower(FirstToken(r, r));
+    const std::string name = FirstToken(r, r);
+    const std::string numberText = FirstToken(r, r);
+    const std::string confirm = Lower(FirstToken(r, r));
+
+    const bool isPath = scopeWord == "path";
+    const RpScope* s = isPath ? nullptr : RpFindScope(scopeWord);
+    if (!isPath && !s) { Out("restartprobe set: unknown scope '" + scopeWord + "' (global|controller|player|pause|path); nothing written"); return; }
+    RpTarget target;
+    if (s) {
+        RValue inst;
+        if (!s->isGlobal && !RpScopeInstance(*s, inst)) { Out("restartprobe set: " + RpScopeLabel(*s) + " has no instance; nothing written"); return; }
+        target = RpScopeTarget(*s, inst, name);
+    } else {
+        std::string why;
+        if (!RpPathTarget(name, target, why)) { Out("restartprobe set: path " + name + " is unresolved (" + why + "); nothing written"); return; }
+    }
+    RValue before;
+    std::string why;
+    const RpReadResult rr = RpReadTarget(target, before, &why);
+    if (rr != RpReadResult::Ok) {
+        Out("restartprobe set: " + target.label + " is "
+            + (rr == RpReadResult::Absent ? "absent" : "unreadable") + (why.empty() ? "" : " (" + why + ")") + "; nothing written");
+        return;
+    }
+    if (!RpIsNumeric(before)) { Out("restartprobe set: " + target.label + " is " + Describe(before) + ", not a number; nothing written"); return; }
+    if (confirm != "confirm") { Out("restartprobe set: add `confirm` to write; nothing written"); return; }
+    double value = 0.0;
+    try {
+        size_t used = 0;
+        value = std::stod(numberText, &used);
+        if (used != numberText.size() || !std::isfinite(value)) throw std::invalid_argument("number");
+    } catch (...) { Out("restartprobe set: '" + numberText + "' is not a number; nothing written"); return; }
+
+    // `set` writes a real, as in round 1 (the hold keeps the kind instead).
+    const bool threw = !RpWrite(target, RValue(value));
+    RValue after;
+    const bool readBack = RpReadTarget(target, after) == RpReadResult::Ok;
+    bool wrote = false;
+    if (!threw && readBack && RpIsNumeric(after)) {
+        try { wrote = after.ToDouble() == value; } catch (...) {}
+    }
+    // wrote=yes alone cannot tell a write from a no-op when the variable
+    // already held the value, so changed= compares the read-back with the
+    // value read before. Only wrote=yes changed=yes proves the write route.
+    bool changed = false;
+    if (readBack && RpIsNumeric(after)) {
+        try { changed = after.ToDouble() != before.ToDouble(); } catch (...) {}
+    }
+    Out("restartprobe set: " + target.label + " wrote=" + (wrote ? "yes" : "no")
+        + " changed=" + (changed ? "yes" : "no")
+        + " before=" + Describe(before) + " after=" + (readBack ? Describe(after) : std::string("unreadable"))
+        + (threw ? " (the write threw)" : ""));
+}
+
+// `hold <scope> <name> <number> [at <row>] confirm` arms the first free slot;
+// it writes nothing itself. Every refusal comes first, in a fixed order; the
+// writes start with the site row's next call (RpHoldApply).
+static void RestartProbeHold(const std::string& rest)
+{
+    std::string r = rest;
+    const std::string first = Lower(FirstToken(r, r));
+    if (first == "off") {
+        for (int slot = 0; slot < kRpHoldSlots; ++slot) {
+            const bool was = g_RpHold[slot].armed;
+            g_RpHold[slot].armed = false;
+            Out(std::string("restartprobe hold: ") + (was ? "off" : "was not armed") + "; " + RpHoldStatLine(slot));
+        }
+        return;
+    }
+    if (first == "stat") {
+        for (int slot = 0; slot < kRpHoldSlots; ++slot) {
+            Out("restartprobe " + RpHoldStatLine(slot));
+            for (const std::string& line : RpHoldRingLines(slot)) Out("  " + line);
+        }
+        return;
+    }
+    const std::string scopeWord = first;
+    const std::string name = FirstToken(r, r);
+    const std::string numberText = FirstToken(r, r);
+    std::string next = Lower(FirstToken(r, r));
+    std::string siteText = RpRowName(kRp_UiDrawIngameRestart);
+    if (next == "at") { siteText = FirstToken(r, r); next = Lower(FirstToken(r, r)); }
+    const std::string confirm = next;
+
+    // `button` (the call's self) and `arg0` (its first argument) exist only
+    // inside a site call, so both are resolved there, not here.
+    const bool isButton = scopeWord == "button" || scopeWord == "arg0";
+    const bool isPath = scopeWord == "path";
+    const RpScope* s = (isButton || isPath) ? nullptr : RpFindScope(scopeWord);
+    if (!isButton && !isPath && !s) {
+        Out("restartprobe hold: unknown scope '" + scopeWord + "' (global|controller|player|pause|button|arg0|path); nothing armed");
+        return;
+    }
+    RpTarget target;
+    if (s) {
+        RValue inst;
+        if (!s->isGlobal && !RpScopeInstance(*s, inst)) { Out("restartprobe hold: " + RpScopeLabel(*s) + " has no instance; nothing armed"); return; }
+        target = RpScopeTarget(*s, inst, name);
+    } else if (isPath) {
+        std::string why;
+        if (!RpPathTarget(name, target, why)) { Out("restartprobe hold: path " + name + " is unresolved (" + why + "); nothing armed"); return; }
+    }
+    // `button` and `arg0` do not exist at command time: their member is
+    // checked on the first call instead (RpHoldApply).
+    if (!isButton) {
+        RValue before;
+        std::string why;
+        const RpReadResult rr = RpReadTarget(target, before, &why);
+        if (rr != RpReadResult::Ok) {
+            Out("restartprobe hold: " + target.label + (rr == RpReadResult::Absent ? " is absent" : " is unreadable")
+                + (why.empty() ? "" : " (" + why + ")") + "; nothing armed");
+            return;
+        }
+        if (!RpIsNumeric(before)) { Out("restartprobe hold: " + target.label + " is " + Describe(before) + ", not a number; nothing armed"); return; }
+    }
+    // A hold on a row that cannot be called would be armed and doing nothing.
+    const int site = RpFindRow(siteText);
+    if (site < 0 || g_RpRows[site].mode != kRpNative) {
+        Out("restartprobe hold: '" + siteText + "' is not an attached native row (restartprobe hook first); nothing armed");
+        return;
+    }
+    // A hold at any other site disarms on the Restart draw's calls, so it
+    // needs that row attached; without it the hold could never tell the
+    // menu closed.
+    if (site != kRp_UiDrawIngameRestart && g_RpRows[kRp_UiDrawIngameRestart].mode != kRpNative) {
+        Out("restartprobe hold: needs the Restart draw attached (restartprobe hook first); nothing armed");
+        return;
+    }
+    if (confirm != "confirm") { Out("restartprobe hold: add `confirm` to arm; nothing armed"); return; }
+    double value = 0.0;
+    try {
+        size_t used = 0;
+        value = std::stod(numberText, &used);
+        if (used != numberText.size() || !std::isfinite(value)) throw std::invalid_argument("number");
+    } catch (...) { Out("restartprobe hold: '" + numberText + "' is not a number; nothing armed"); return; }
+    int slot = -1;
+    for (int i = 0; i < kRpHoldSlots && slot < 0; ++i) if (!g_RpHold[i].armed) slot = i;
+    if (slot < 0) { Out("restartprobe hold: two holds armed; hold off first; nothing armed"); return; }
+
+    // A fresh state: counters, log budget and ring all start at zero.
+    g_RpHold[slot] = RpHoldState();
+    g_RpHold[slot].site = site;
+    g_RpHold[slot].scope = scopeWord;
+    g_RpHold[slot].name = name;
+    g_RpHold[slot].value = value;
+    g_RpHold[slot].armed = true;
+    Out("restartprobe hold armed: " + scopeWord + "." + name + "=" + RpNumberText(value) + " at " + RpRowName(site)
+        + " in hold[" + std::to_string(slot) + "]; writes start with the next call");
+}
+
+// `argset <row> a<i> <number> [calls=N] confirm` / `argset clear` / `argset stat`.
+static void RestartProbeArgset(const std::string& rest)
+{
+    std::string r = rest;
+    const std::string rowText = FirstToken(r, r);
+    if (Lower(rowText) == "clear") {
+        const bool was = g_RpArgset.armed;
+        g_RpArgset.armed = false;
+        Out(std::string("restartprobe argset: ") + (was ? "cleared" : "was not armed") + "; " + RpArgsetStatLine());
+        return;
+    }
+    if (Lower(rowText) == "stat") { Out("restartprobe " + RpArgsetStatLine()); return; }
+    const std::string argText = Lower(FirstToken(r, r));
+    const std::string numberText = FirstToken(r, r);
+    std::string next = FirstToken(r, r);
+    std::string callsText;
+    if (Lower(next).rfind("calls=", 0) == 0) { callsText = next.substr(6); next = FirstToken(r, r); }
+    const std::string confirm = Lower(next);
+
+    const int row = RpFindRow(rowText);
+    if (row < 0 || g_RpRows[row].mode != kRpNative) {
+        Out("restartprobe argset: '" + rowText + "' is not an attached native row (restartprobe hook first); nothing armed");
+        return;
+    }
+    int index = -1;
+    try {
+        size_t used = 0;
+        if (argText.size() < 2 || argText[0] != 'a') throw std::invalid_argument("a<i>");
+        index = std::stoi(argText.substr(1), &used);
+        if (used != argText.size() - 1 || index < 0 || index > 15) throw std::invalid_argument("a<i>");
+    } catch (...) { Out("restartprobe argset: '" + argText + "' is not a<i> (a0..a15); nothing armed"); return; }
+    double value = 0.0;
+    try {
+        size_t used = 0;
+        value = std::stod(numberText, &used);
+        if (used != numberText.size() || !std::isfinite(value)) throw std::invalid_argument("number");
+    } catch (...) { Out("restartprobe argset: '" + numberText + "' is not a number; nothing armed"); return; }
+    long calls = 1;
+    if (!callsText.empty()) {
+        try {
+            size_t used = 0;
+            calls = std::stol(callsText, &used);
+            if (used != callsText.size() || calls < 1 || calls > kRpArgsetMaxCalls) throw std::invalid_argument("calls");
+        } catch (...) { Out("restartprobe argset: calls=" + callsText + " is not 1.." + std::to_string(kRpArgsetMaxCalls) + "; nothing armed"); return; }
+    }
+    if (confirm != "confirm") { Out("restartprobe argset: add `confirm` to arm; nothing armed"); return; }
+
+    g_RpArgset = RpArgsetState();
+    g_RpArgset.row = row;
+    g_RpArgset.index = index;
+    g_RpArgset.value = value;
+    g_RpArgset.calls = calls;
+    g_RpArgset.remaining = calls;
+    g_RpArgset.armed = true;
+    Out("restartprobe argset armed: " + RpRowName(row) + " a" + std::to_string(index) + "=" + RpNumberText(value)
+        + " for the next " + std::to_string(calls) + " call(s); numeric arguments only, in their own kind");
+}
+
+// `dump button <label>` / `dump pause <label>` / `dump show <label>` / `dump diff <a> <b>`.
+static void RestartProbeDump(const std::string& rest)
+{
+    std::string r = rest;
+    const std::string sub = Lower(FirstToken(r, r));
+    const std::string label = FirstToken(r, r);
+    if (sub == "button" && !label.empty()) {
+        if (g_RpRows[kRp_UiDrawIngameRestart].mode != kRpNative) {
+            Out("restartprobe dump button: the UiDrawIngameRestart row is not attached (restartprobe hook first); nothing armed");
+            return;
+        }
+        if (!g_RpDumpArmed.empty() && g_RpDumpArmed != label) {
+            RpDump* old = RpFindDump(g_RpDumpArmed, "button");
+            if (old && !old->captured) Out("restartprobe dump button: '" + g_RpDumpArmed + "' was still pending and is replaced");
+        }
+        RpStoreDump(label, "button");
+        g_RpDumpArmed = label;
+        Out("restartprobe dump button " + label + ": armed; open the pause menu, then: restartprobe dump show " + label);
+        return;
+    }
+    if (sub == "pause" && !label.empty()) {
+        const RpScope* s = RpFindScope("pause");
+        RValue inst;
+        if (!s || !RpScopeInstance(*s, inst)) { Out("restartprobe dump pause " + label + ": no instance (open the pause menu first)"); return; }
+        RpDump& d = RpStoreDump(label, "pause");
+        const bool ok = RpDumpCapture(inst, d);
+        Out("restartprobe dump pause " + label + ": " + (ok ? "captured" : "capture failed: " + d.error)
+            + " frame=" + std::to_string((unsigned long long)d.frame) + " names=" + std::to_string(d.names));
+        return;
+    }
+    // show and diff take every kind the label exists under, button first.
+    if (sub == "show" && !label.empty()) {
+        bool any = false;
+        for (const char* kind : kRpDumpKinds)
+            if (const RpDump* d = RpFindDump(label, kind)) { RpDumpShow(*d); any = true; }
+        if (!any) Out("restartprobe dump show: no dump named '" + label + "'");
+        return;
+    }
+    if (sub == "diff" && !label.empty()) {
+        const std::string other = FirstToken(r, r);
+        if (!other.empty()) {
+            bool any = false;
+            for (const char* kind : kRpDumpKinds) {
+                const RpDump* da = RpFindDump(label, kind);
+                const RpDump* db = RpFindDump(other, kind);
+                if (da && db) { RpDumpDiff(*da, *db); any = true; }
+            }
+            if (!any) Out("restartprobe dump diff: no kind has both '" + label + "' and '" + other + "'");
+            return;
+        }
+    }
+    Out("restartprobe dump: button <label> | pause <label> | show <label> | diff <a> <b>");
+}
+
+static void RestartProbeCommand(const std::string& rest)
+{
+    std::string r = rest;
+    const std::string sub = Lower(FirstToken(r, r));
+    if (sub == "vars")   { RestartProbeVars(); return; }
+    if (sub == "hook")   { RestartProbeHook(); return; }
+    if (sub == "show")   { RestartProbeShow(); return; }
+    if (sub == "reset")  { RestartProbeReset(); return; }
+    if (sub == "set")    { RestartProbeSet(r); return; }
+    if (sub == "dump")   { RestartProbeDump(r); return; }
+    if (sub == "hold")   { RestartProbeHold(r); return; }
+    if (sub == "argset") { RestartProbeArgset(r); return; }
+    Out("restartprobe: vars | hook | show | reset | set <global|controller|player|pause|path> <name> <number> confirm"
+        " | dump button|pause|show <label> | dump diff <a> <b>"
+        " | hold <global|controller|player|pause|button|arg0|path> <name> <number> [at <row>] confirm | hold off | hold stat"
+        " | argset <row> a<i> <number> [calls=N] confirm | argset clear | argset stat");
+}
+#endif // FORGEPACT_RELEASE (restartprobe)
+
+// Dispatched from its own function for the same C1061 reason as
+// HandleMenuLayoutCommand. It exists in both builds and answers false in the
+// player build, so the call site in RunCommand needs no guard around it.
+static bool HandleRestartProbeCommand(const std::string& lc, const std::string& rest)
+{
+#ifndef FORGEPACT_RELEASE
+    if (lc == "restartprobe") { RestartProbeCommand(rest); return true; }
+#endif
+    (void)lc; (void)rest;
+    return false;
+}
+
 static void RunCommand(const std::string& line)
 {
     std::string rest;
@@ -30722,7 +33377,7 @@ static void RunCommand(const std::string& line)
         "stat", "statadd", "raredrop", "droprate", "dungeonkey",
         "headhunter", "hhdur", "hhmap", "hhdefault", "hhlabel", "tyrant", "beacon", "beaconrange", "beaconmode", "beaconwake", "beaconspawn", "beaconfarstep", "tyrantchance", "tyrantaffix", "hhlabelfont", "hhlabeloffset", "hhlabelmax",
         "enemyspeed", "rarity", "sigdrop", "angelicdrop", "relicfilter", "orbpickup", "satmods", "petquest",
-        "autoprospect", "toggleborder", "toggleguard", "skilltimer", "menulayout"
+        "autoprospect", "toggleborder", "toggleguard", "skilltimer", "menulayout", "restartanytime", "miningore", "minerhelm", "packmarks"
     };
     if (kPlayerCommands.find(lc) == kPlayerCommands.end()) {
         Out("command unavailable in player build: " + cmd);
@@ -30733,8 +33388,10 @@ static void RunCommand(const std::string& line)
     if (HandleHeadhunterCommand(lc, rest)) return;
     if (HandleProspectCommand(lc, rest)) return;
     if (HandleMenuProbeCommand(lc, rest)) return;
+    if (HandleAngelicProbeCommand(lc, rest)) return;
     if (HandleMenuLayoutCommand(lc, rest)) return;
     if (HandleCraftCommand(lc, rest)) return;
+    if (HandleRestartProbeCommand(lc, rest)) return;
 #ifndef FORGEPACT_RELEASE
     // Toggle-skill research (issue #11), docs/toggle-skills-research.md. A
     // standalone early return rather than one more `else if` below: that chain
@@ -30763,6 +33420,14 @@ static void RunCommand(const std::string& line)
         Out("usage: skilltimer off|arc|bar|number|fade|stat");
         return;
     }
+    // Pack markers (map reveal's monster half): cosmetics and counters only,
+    // so the player build accepts it; a standalone early return for the
+    // C1061 reason above.
+    if (lc == "packmarks") { PackMarksCommand(rest); return; }
+    // Mining ore amount and the Miner's Helmet: standalone early returns for
+    // the same reason, so the else-if chain below keeps main's length.
+    if (lc == "miningore") { ForgePact::MiningOre::Command(rest); return; }
+    if (lc == "minerhelm") { ForgePact::MinerHelmet::Command(rest); return; }
     // Toggle-skill re-cast guard (issue #11, Track A). A standalone early
     // return for the same C1061 reason as `toggleborder` below. `1` only arms
     // it: FrameCallback installs the TalentUseClass hook once a player exists
@@ -30782,6 +33447,31 @@ static void RunCommand(const std::string& line)
                 + " (a double-cast proc no longer switches one of the "
                 + std::to_string(ForgePact::kToggleSkillRowCount)
                 + " covered toggle skills back on - `toggleguard stat` lists them)");
+        }
+        return;
+    }
+    // Restart zone at any time (issue #8). A standalone early return for the
+    // same C1061 reason as `toggleguard` above. `1` only arms it: FrameCallback
+    // installs the UiSetFocus hook once a player exists (guide Known
+    // Limitations item 8), so the panel can send it at launch.
+    if (lc == "restartanytime") {
+        std::string v = Lower(TrimCopy(rest));
+        if (v == "stat") {   // read-only: stores nothing
+            Out(std::string("restartanytime stat: enabled=")
+                + (ForgePact::RestartAnytimeMod::Instance().IsEnabled() ? "on" : "off") + " " + RestartAnytimeCountersLine());
+            return;
+        }
+        if (v == "off" || v == "0") {
+            ForgePact::RestartAnytimeMod::Instance().SetEnabled(false, g_OrigUiSetFocus != nullptr);
+            Out("restartanytime -> off " + RestartAnytimeCountersLine());
+        } else if (ForgePact::RestartAnytimeMod::Instance().IsBlind()) {
+            Out("restartanytime -> OFF: the UiSetFocus hook went in without its inline detour this session, so it "
+                "could not see the game's own calls " + RestartAnytimeCountersLine());
+        } else {
+            const bool hooked = g_OrigUiSetFocus != nullptr;
+            ForgePact::RestartAnytimeMod::Instance().SetEnabled(true, hooked);
+            Out(std::string("restartanytime -> ") + (hooked ? "ON" : "ON (armed, applies once you are in-game)")
+                + " (the pause menu's Restart works in combat while the mouse is on it)");
         }
         return;
     }
@@ -31431,10 +34121,19 @@ static void RunCommand(const std::string& line)
         while (!v.empty() && (v.back()=='\r'||v.back()=='\n'||v.back()==' ')) v.pop_back();
         auto& mr = ForgePact::MapRevealManager::Instance();
         if (v.rfind("packs", 0) == 0) {
-            // `reveal packs 0|1` - the monster half on its own.  The panel
-            // has a nested checkbox for it under "Reveal full map", and
-            // build_cmds only emits this line to turn it OFF (the plugin
-            // defaults it on).
+            // `reveal packs 0|1` - the monster half of the map: one marker per
+            // unspawned pack, no monster created (PackMarkers).  The panel has
+            // a nested checkbox for it under "Reveal full map", and build_cmds
+            // only emits this line to turn it OFF (the plugin defaults it on).
+            std::string p = Lower(TrimCopy(v.substr(5)));
+            mr.SetMarks(!(p == "0" || p == "off" || p == "false"));
+            return;
+        }
+        if (v.rfind("spawn", 0) == 0) {
+            // `reveal spawn 0|1` - the old "fill the map" pass: every spawner
+            // really gives birth on arrival.  Opt-in since 1.4.5 (panel:
+            // `map_reveal_spawn`), because the living monsters are what the
+            // game cannot afford per frame at high density.
             std::string p = Lower(TrimCopy(v.substr(5)));
             mr.SetPacks(!(p == "0" || p == "off" || p == "false"));
             if (mr.PacksEnabled()) InstallDistanceLieHook();
@@ -31442,8 +34141,18 @@ static void RunCommand(const std::string& line)
         }
 #ifndef FORGEPACT_RELEASE
         if (v == "stat" || v == "status") {
+            const auto& pm = ForgePact::PackMarkers::Instance();
             Out(std::string("reveal: ") + (mr.IsEnabled() ? "ON" : "off")
-                + " | packs=" + (mr.PacksEnabled() ? "on" : "off")
+                + " | markers=" + (mr.MarksEnabled() ? "on" : "off")
+                + " marked=" + std::to_string(pm.Count())
+                + " markSpawned=" + std::to_string(pm.Spawned())
+                + " markRemoved=" + std::to_string(pm.Removed())
+                + " enumerations=" + std::to_string(pm.Enumerations())
+                + " familyCalls=" + std::to_string(g_PackMarkerFamilyCalls)
+                + " draws=" + std::to_string(pm.Draws())
+                + " drawErrors=" + std::to_string(pm.DrawErrors())
+                + " hook=" + (g_Orig_DrawMinimapDynamic ? (g_PackMarkerHookNative ? "native" : "table-only") : (g_PackMarkerHookAttempted ? "failed" : "pending"))
+                + " | spawn=" + (mr.PacksEnabled() ? "on" : "off")
                 + " zonesPopulated=" + std::to_string(mr.PacksZones())
                 + " spawnWindowLeft=" + std::to_string(mr.SpawnWindowLeft()) + " frames"
                 + " pending=" + (mr.PacksPending() ? ("yes(" + std::to_string(mr.PendingTicks()) + " ticks)") : "no")
@@ -31793,11 +34502,81 @@ static void StartStallWatchdog()
 }
 #endif // FORGEPACT_RELEASE (stall watchdog)
 
+#include <ForgePact/PopulationScriptProfile.hpp>
+
+#ifdef FORGEPACT_POPULATION_PROFILE
+// Local-only, bounded measurement on the existing callback. Metrics overlap:
+// nested native/protected work is included in caller timing, never sum them.
+static int64_t PopulationCpuMicros(bool process)
+{
+    FILETIME born{}, exited{}, kernel{}, user{};
+    const BOOL ok = process ? GetProcessTimes(GetCurrentProcess(), &born, &exited, &kernel, &user)
+                            : GetThreadTimes(GetCurrentThread(), &born, &exited, &kernel, &user);
+    if (!ok) return -1;
+    ULARGE_INTEGER k{}, u{};
+    k.LowPart=kernel.dwLowDateTime;k.HighPart=kernel.dwHighDateTime;
+    u.LowPart=user.dwLowDateTime;u.HighPart=user.dwHighDateTime;
+    return static_cast<int64_t>((k.QuadPart+u.QuadPart)/10);
+}
+static void PopulationProfileTick()
+{
+    namespace pp=ForgePact::PopulationProfile;
+    auto& profile=pp::Instance();
+    if(!profile.Active())return;
+    profile.Frame();
+    const bool final=profile.Expire();
+    const auto elapsed=profile.ElapsedUs();
+    static uint64_t nextReport=0;
+    if(!final && elapsed<nextReport)return;
+    nextReport=elapsed+1000000;
+    try {
+        auto& reveal=ForgePact::MapRevealManager::Instance();
+        namespace pool=ForgePact::ProtectedPool::Runtime;
+        std::ostringstream line;
+        line << "{\"elapsedUs\":" << elapsed << ",\"final\":" << (final?"true":"false")
+             << ",\"captureStart\":\"" << profile.StartedAt() << '\"'
+             << ",\"frames\":" << profile.FrameCount() << ",\"lastFrameUs\":" << profile.LastFrameUs()
+             << ",\"peakFrameUs\":" << profile.PeakFrameUs()
+             << ",\"queuedPacks\":" << reveal.QueuedPacks() << ",\"queuedCopies\":" << DeferredDensityPending()
+             << ",\"unconfirmedPacks\":" << reveal.UnconfirmedPacks()
+             << ",\"observedNativeBirthPacks\":" << reveal.NativeBirthPacks()
+             << ",\"admitted\":" << reveal.AdmittedPacks() << ",\"windowFrames\":" << reveal.SpawnWindowLeft()
+             << ",\"overflowLive\":" << pool::router.OverflowLive()
+             << ",\"room\":" << CurrentRoomKey()
+             << ",\"frameThread\":" << GetCurrentThreadId()
+             << ",\"frameThreadCpuUs\":" << PopulationCpuMicros(false)
+             << ",\"processCpuUs\":" << PopulationCpuMicros(true) << ",\"metrics\":{";
+        for(unsigned i=0;i<unsigned(pp::Metric::Count);++i){
+            const auto v=profile.Read(static_cast<pp::Metric>(i));
+            if(i)line << ',';
+            line << '\"' << pp::Names[i] << "\":{\"calls\":" << v.calls << ",\"samples\":" << v.samples
+                 << ",\"sampledUs\":" << v.sampledUs << ",\"sampleEvery\":" << v.period << '}';
+        }
+        line << "},\"scriptCoverage\":";
+        pp::WriteScriptCoverage(line);
+        line << "}\n";
+        static bool first=true;
+        std::ofstream out(IPC_DIR+"\\population-profile.jsonl",std::ios::binary|(first?std::ios::trunc:std::ios::app));
+        if(out){out << line.str();first=false;}
+        if(final)Out("population profile: bounded capture finished; bp_ipc/population-profile.jsonl");
+    }catch(...){}
+}
+#endif
+
 void FrameCallback(FWFrame& FrameContext)
 {
     UNREFERENCED_PARAMETER(FrameContext);
+#ifdef FORGEPACT_POPULATION_PROFILE
+    PopulationProfileTick();
+#endif
+    FP_POP_SCOPE(FrameCallback);
     static uint32_t fc = 0;
     g_RuntimeFrame = fc;
+    auto& populationBudget=ForgePact::AdaptivePopulationBudget::Instance();
+    auto& populationReveal=ForgePact::MapRevealManager::Instance();
+    populationBudget.ObserveBacklog(populationReveal.QueuedPacks(),DeferredDensityPending());
+    populationBudget.BeginFrame(fc,DeferredDensityPending()>0 || populationReveal.WantsPackSpawn() || populationReveal.PacksPending());
+    { FP_POP_SCOPE(DensityTick); DensityCopiesTick(); }
 
 #ifndef FORGEPACT_RELEASE
     // Watchdog heartbeat.  One tick read + one atomic store per frame.
@@ -31811,6 +34590,7 @@ void FrameCallback(FWFrame& FrameContext)
     PERF_SCOPE(g_PerfFrame);
     FlushItemStats(fc);
     FlushModState(fc);
+    if (g_Setup) { FP_POP_SCOPE(MinerTick); ForgePact::MinerHelmet::Tick(); }
     if (fc == 1) Trace("0-framecallback-running");
 
     // Special Content uses the game's eSt gates.  The helper is also safe in
@@ -31833,6 +34613,9 @@ void FrameCallback(FWFrame& FrameContext)
         Trace("1-setup-start");
         try { LoadConfig(); Trace("2-loadconfig-ok"); InstallHook(); Trace("3-installhook-ok"); }
         catch (...) { Out("setup EXCEPTION"); Trace("X-setup-cppexception"); }
+#ifdef FORGEPACT_POPULATION_PROFILE
+        ForgePact::PopulationProfile::InstallScriptTimings();
+#endif
 #ifndef FORGEPACT_RELEASE
         try { LoadCoopConfigAndMaybeStart(); Trace("4-coop-ok"); }
         catch (...) { Out("coop auto-start EXCEPTION"); Trace("X-coop-cppexception"); }
@@ -31924,6 +34707,17 @@ void FrameCallback(FWFrame& FrameContext)
         }
     }
 
+    // Restart zone at any time, armed by `restartanytime 1`: the UiSetFocus
+    // hook goes in on the same terms as the re-cast guard's just above -
+    // runner settled, a real player exists, checked once a second at most.
+    if (ForgePact::RestartAnytimeMod::Instance().IsPending() && g_Setup && (fc % 60) == 0) {
+        RValue player;
+        if (HhResolveLocalPlayer(player)) {
+            ForgePact::RestartAnytimeMod::Instance().ClearPending();
+            RestartAnytimeInstall();
+        }
+    }
+
     // Auto-prospect, toggled by `autoprospect 1`: the m_MoveItemToGrid hook
     // goes in once, here, after setup (the relicfilter pattern), and the
     // invoke happens here too - at the point of use, on objects re-found this
@@ -31983,7 +34777,23 @@ void FrameCallback(FWFrame& FrameContext)
 
 #endif
     // auto map reveal (throttled internally to every ~20 frames)
-    ForgePact::MapRevealManager::Instance().OnFrame(g_RuntimeFrame);
+    {
+        FP_POP_SCOPE(MapTick);
+        ForgePact::ProtectedPool::Runtime::Maintain(g_RuntimeFrame);
+        ForgePact::MapRevealManager::Instance().OnFrame(g_RuntimeFrame);
+        // Pack markers follow reveal + `reveal packs`. The minimap hook goes in
+        // once, after setup, on the same once-a-second cadence as the other
+        // lazy installs; until it is in, nothing is enumerated either.
+        auto& reveal = ForgePact::MapRevealManager::Instance();
+        auto& marks = ForgePact::PackMarkers::Instance();
+        const bool wantMarks = reveal.IsEnabled() && reveal.MarksEnabled();
+        if (wantMarks != marks.Enabled()) marks.SetEnabled(wantMarks);
+        if (wantMarks) {
+            if (!g_PackMarkerHookAttempted && g_Setup && (g_RuntimeFrame % 60) == 0) InstallPackMarkerHook();
+            if (g_Orig_DrawMinimapDynamic)
+                marks.OnFrame(g_RuntimeFrame, reveal.ZoneGeneration(), [&reveal] { return reveal.HasReadableMap(); });
+        }
+    }
 
 #ifndef FORGEPACT_RELEASE
     static bool f5p = false;
@@ -32100,9 +34910,10 @@ EXPORTED AurieStatus ModuleInitialize(
     // class split) - see the header's own comment for why ModuleInitialize
     // itself stays here.
     ForgePact::ModManager::Instance().Initialize();
+    HeroSiege::RewardScope::RegisterForgePact();
     LoadStartup();   // oyun kodu calismadan once uygulanmasi gereken ayarlar
 #ifdef FORGEPACT_RELEASE
-    KonsoluGizle();
+    DetachConsole();
 #endif
 
     AurieStatus st = g_Yytk->CreateCallback(Module, EVENT_FRAME, (PVOID)FrameCallback, 0);

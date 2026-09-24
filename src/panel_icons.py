@@ -156,7 +156,7 @@ ICONS = {
 }
 
 CONTROL_ICONS = {
-    'drops': {'gold':'gold'},
+    'drops': {'gold':'gold', 'mining_ore':'gem'},
     'spawners': dict(zip(['rift','battlefield','cursedorb','summonportal','chaospillars','chaostower','shadowrealm'],
                          ['rift','battlefield','cursed-orb','summon-portal','chaos-pillar','chaos-tower','shadow-realm'])),
     'keys': dict(zip(['dungeon','angelic','chaos','bifrost','relic','rune','stone','bossgem','orb','scrollofra','dimshard','battlefrag','colosfrag','ruby'],
@@ -175,7 +175,7 @@ STATIC_ICONS = {
 SECTION_ICONS = {
     'setupCard':'settings','densityCard':'density','speedCard':'boots',
     'spawnsCard':'rift','dropsCard':'chest','angelicCard':'angelic',
-    'rarityCard':'rare','satanicMods':'cursed-orb','gameplayCard':'settings','itemsCard':'relic',
+    'rarityCard':'rare','satanicMods':'cursed-orb','qolCard':'settings','itemsCard':'relic',
 }
 ACTION_ICONS = {'exebrowse':'folder','exesave':'save','installmod':'install',
                 'removeplugin':'remove','launchgame':'play','applyall':'auto-apply'}

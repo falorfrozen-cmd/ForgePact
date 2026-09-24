@@ -80,12 +80,14 @@ class RelicFilterBehaviorTests(unittest.TestCase):
                 raise unittest.SkipTest("A C++20 compiler is required for native behavior tests")
             command = [compiler, "-std=c++20", "-O2", str(cpp), "-o", str(cls.binary)]
 
-        result = subprocess.run(command, cwd=out, capture_output=True, text=True)
+        # The compiler speaks the machine's locale; decode leniently so a
+        # localized diagnostic cannot itself crash the test.
+        result = subprocess.run(command, cwd=out, capture_output=True, text=True, encoding="utf-8", errors="replace")
         (out / "compile.log").write_text(result.stdout + result.stderr, encoding="utf-8")
         if result.returncode:
             raise AssertionError(result.stdout + result.stderr)
 
-        run = subprocess.run([str(cls.binary)], capture_output=True, text=True)
+        run = subprocess.run([str(cls.binary)], capture_output=True, text=True, encoding="utf-8", errors="replace")
         cls.output = run.stdout
         (out / "run.log").write_text(run.stdout + run.stderr, encoding="utf-8")
 
@@ -163,6 +165,12 @@ class RelicFilterBehaviorTests(unittest.TestCase):
         self.assertNotIn("holding back", logged)
         self.assertIn("found 2 maxed relic(s) but held back none", logged)
         self.assertIn("drop table write failed", logged)
+
+    def test_afk_farm_reward_scope_passes_the_game_drop_through(self):
+        counts = self.counts("reward_scope_passthrough")
+        self.assertEqual(counts["suppressed"], 0, self.output)
+        self.assertEqual(counts["restored"], 0, self.output)
+        self.assertEqual(counts["origcalls"], 1, self.output)
 
     def test_a_partial_write_reports_the_confirmed_count_and_names_the_shortfall(self):
         counts = self.counts("partial_write")

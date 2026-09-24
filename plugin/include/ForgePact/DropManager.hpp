@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Common.hpp"
+#include <hs_game_sdk/reward_scope.hpp>
 
 namespace ForgePact {
 
@@ -123,6 +124,22 @@ public:
         Out(b);
     }
 
+#ifndef FORGEPACT_RELEASE
+    // Research build only (docs/angelic-roll-hook-research.md): the saved
+    // original of five of the hooks below, by the name each was installed
+    // under, so a research instrument can tell a trampoline (the hook is
+    // native) from the game's own function (it fell back to table-only).
+    // Read-only; nullptr for any other name.
+    PFUNC_YYGMLScript* ResearchHeldOriginal(std::string_view shortName) {
+        if (shortName == "DropItem")         return &m_Orig_DropItem;
+        if (shortName == "DropItemBoss")     return &m_Orig_DropItemBoss;
+        if (shortName == "DropItemAngelic")  return &m_Orig_DropItemAngelic;
+        if (shortName == "DropAngelicKey")   return &m_Orig_DropAngelicKey;
+        if (shortName == "DropAngelicCharm") return &m_Orig_DropAngelicCharm;
+        return nullptr;
+    }
+#endif
+
 private:
     DropManager() = default;
     bool m_HooksInstalled{ false };
@@ -132,9 +149,10 @@ private:
     volatile long m_Cnt_##NAME{ 0 }; \
     int m_Mult_##NAME{ 1 }; \
     static RValue& Hook_##NAME(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) { \
+        BP_ANGELIC_PROBE_SCOPE(#NAME, S, argc, A); \
         auto& mgr = Instance(); \
         BP_DIAG_INCREMENT(mgr.m_Cnt_##NAME); \
-        for (int i = 1; i < mgr.m_Mult_##NAME; i++) { RValue t; if (mgr.m_Orig_##NAME) mgr.m_Orig_##NAME(S, O, t, argc, A); } \
+        for (int i = 1, n = HeroSiege::RewardScope::Active() ? 1 : mgr.m_Mult_##NAME; i < n; i++) { RValue t; if (mgr.m_Orig_##NAME) mgr.m_Orig_##NAME(S, O, t, argc, A); } \
         RValue& _res = mgr.m_Orig_##NAME ? mgr.m_Orig_##NAME(S, O, R, argc, A) : R; \
         BP_LOGDROP(#NAME, _res, argc, A); \
         return _res; \
@@ -171,7 +189,7 @@ private:
     static RValue& Hook_DropKeys(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) {
         auto& mgr = Instance();
         BP_DIAG_INCREMENT(mgr.m_Cnt_DropKeys);
-        for (int i = 1; i < mgr.m_Mult_DropKeys; i++) { RValue t; if (mgr.m_Orig_DropKeys) mgr.m_Orig_DropKeys(S, O, t, argc, A); }
+        for (int i = 1, n = HeroSiege::RewardScope::Active() ? 1 : mgr.m_Mult_DropKeys; i < n; i++) { RValue t; if (mgr.m_Orig_DropKeys) mgr.m_Orig_DropKeys(S, O, t, argc, A); }
         RValue& _res = mgr.m_Orig_DropKeys ? mgr.m_Orig_DropKeys(S, O, R, argc, A) : R;
         BP_LOGDROP("DropKeys", _res, argc, A);
 #ifndef FORGEPACT_RELEASE
