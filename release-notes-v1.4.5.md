@@ -12,6 +12,9 @@ A fixed set of toggle skills, each measured in-game, is covered by the toggle
 marker and the double-cast guard. The countdown below covers a different set
 of its own - see that bullet for what it draws on.
 
+Two fixes as well: entering the Underground Garden no longer freezes the game,
+and the `raredrop angelic` command works again when a drop multiplier is set.
+
 ## New
 
 - **"Reveal full map" now marks every monster pack instead of spawning it.**
@@ -226,6 +229,24 @@ of its own - see that bullet for what it draws on.
   every other Angelic / Unholy item is very slightly rarer. The game's own Angelic drops (from a
   Blood Pact or dungeon "Angelic item drop chance" modifier) still do not include either item -
   only ForgePact's own die does.
+
+## Fixed
+
+- **Entering the Underground Garden no longer freezes the game.** With the mod
+  plugin installed, going from Misty Swamp into the Underground Garden froze
+  the game on "Generating Zone..." for half a minute or more, even with every
+  mod switched off. Building that dungeon makes the game report a harmless
+  warning thousands of times, and the hidden log window the mod framework
+  opens made the game write out every one of them before it could go on.
+  ForgePact now closes that hidden window instead of only hiding it, so the
+  warnings cost nothing, as in the unmodded game: the Underground Garden loads
+  in a second or two. Players never saw that window, so nothing else changes.
+- **`raredrop angelic` works again when a drop multiplier is set.** The
+  command opens the game's own Angelic item roll. Once any drop multiplier
+  above x1 was active (the panel sets those when the game starts), it answered
+  "call site not found - game build changed" and changed nothing, because it
+  looked for the roll in ForgePact's own drop code instead of the game's. It
+  now finds it however the drop multipliers are set.
 
 ## How to update
 
