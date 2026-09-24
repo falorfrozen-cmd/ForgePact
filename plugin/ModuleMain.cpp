@@ -463,6 +463,7 @@ static bool PopulationCapacityAvailable() { return ForgePact::ProtectedPool::Run
 #include <ForgePact/DropManager.hpp>
 #include <ForgePact/IpcServer.hpp>
 #include <ForgePact/ModManager.hpp>
+#include <ForgePact/ItemTruth.hpp>
 
 static void DoScriptLookup(const std::string& name)
 {
@@ -4122,7 +4123,12 @@ static bool TryApplyCustomForge(RValue* candidate, bool finalPass = false)
         if (definition.m_Kind != VALUE_OBJECT || stats.m_Kind != VALUE_OBJECT) return false;
         std::map<std::string, double> statsAtEntry;
         if (finalPass) statsAtEntry = StructNumbers(stats);
-        {   // record the stat struct once, before any forge entry touches it: the editor wants the item's own values
+        // Record the stat struct once, before any forge entry touches it: the editor wants the
+        // item's own values. Only on CreateItemNew's own return (finalPass): CreateItemInit and
+        // GenerateItemRandomStats reach this function too, and a snapshot taken there misses what
+        // CreateItemNew adds after them - the socket count (20) and key 21 were absent from 121
+        // of 386 AFK items compared with their spool copies (2026-09-24).
+        if (finalPass) {
             RValue recorded = g_Yytk->CallBuiltin("variable_struct_exists", { *candidate, RValue("fp_recorded") });
             if (!recorded.ToBoolean()) { RecordItemStats(*candidate, stats); g_Yytk->CallBuiltin("variable_struct_set", { *candidate, RValue("fp_recorded"), RValue(true) }); }
         }
@@ -4304,6 +4310,91 @@ static void CustomForgePostProcess(RValue& result, int argc, RValue** args, bool
     // small, bounded prefix; TryApply requires all three canonical item fields.
     for (int i = 0; i < argc && i < 8; ++i)
         if (args && TryApplyCustomForge(args[i], finalPass)) return;
+}
+
+// ===== Item truth: the game's finished items for the Item Editor ==============
+// ForgePact::ItemTruth (plugin/include/ForgePact/ItemTruth.hpp) explains the
+// record. This part runs on the game thread inside Hook_CreateItemNew: it only
+// reads the finished struct, serialises it and queues one line; the journal's
+// own thread writes it. Off unless the Item Editor created
+// %LOCALAPPDATA%\Hero_Siege\itemtruth\capture.request (InstallItemTruth).
+static ForgePact::ItemTruth::Journal* g_TruthJournal = nullptr;   // never deleted, see ItemTruth.hpp
+static ForgePact::ItemTruth::Seen g_TruthSeen;
+static bool g_TruthOn = false;
+static std::string g_TruthBuild;
+static volatile long g_TruthCaptured = 0;
+// Non-empty only while ItemTruthEvalTick has the game build an item the Item
+// Editor asked about: that record is tagged with the request and always written.
+static std::string g_TruthEvalRequest;
+// CreateItemNew nesting on this thread. Only the outermost call is a finished
+// item: an item built inside another item's construction is part of it.
+static thread_local int g_TruthDepth = 0;
+struct TruthDepthGuard {
+    bool on;
+    explicit TruthDepthGuard(bool active) : on(active) { if (on) ++g_TruthDepth; }
+    ~TruthDepthGuard() { if (on) --g_TruthDepth; }
+};
+
+static std::string TruthStringify(const RValue& value)
+{
+    try {
+        if (value.m_Kind != VALUE_OBJECT) return {};
+        CInstance* g = nullptr; g_Yytk->GetGlobalInstance(&g);
+        RValue js; g_Yytk->CallBuiltinEx(js, "json_stringify", g, g, { value });
+        return js.m_Kind == VALUE_STRING ? js.ToString() : std::string();
+    } catch (...) { return {}; }
+}
+
+static std::string TruthWholeNumber(const RValue& value)
+{
+    try {
+        if (value.m_Kind == VALUE_STRING) {
+            const std::string text = value.ToString();
+            return ForgePact::ItemTruth::IsDigits(text) ? text : std::string();
+        }
+        if (value.m_Kind == VALUE_REAL || value.m_Kind == VALUE_INT32 || value.m_Kind == VALUE_INT64)
+            return ForgePact::ItemTruth::WholeNumberText(value.ToDouble());
+    } catch (...) {}
+    return {};
+}
+
+// The stat struct as it left the game, taken before CustomForgePostProcess
+// dresses it - only when a forge entry could apply, "" otherwise.
+static std::string ItemTruthNativeSnapshot(const RValue& item)
+{
+    if (!g_TruthOn || item.m_Kind != VALUE_OBJECT || g_CustomForgeEntries.empty()) return {};
+    try {
+        if (!ForgeCouldMatch(item)) return {};
+        return TruthStringify(g_Yytk->CallBuiltin("variable_struct_get", { item, RValue("itemStatStruct") }));
+    } catch (...) { return {}; }
+}
+
+static void ItemTruthCapture(const RValue& item, const std::string& nativeStats)
+{
+    if (!g_TruthOn || !g_TruthJournal || item.m_Kind != VALUE_OBJECT) return;
+    try {
+        auto field = [&](const char* name) { return g_Yytk->CallBuiltin("variable_struct_get", { item, RValue(name) }); };
+        const RValue def = field("itemDefinitionStruct");
+        const RValue stats = field("itemStatStruct");
+        if (def.m_Kind != VALUE_OBJECT || stats.m_Kind != VALUE_OBJECT) return;
+        ForgePact::ItemTruth::Record r;
+        r.timestamp = TruthWholeNumber(field("itemTimeStamp"));
+        if (r.timestamp.empty()) return;   // nothing the editor could match it to
+        const RValue hash = field("itemDataHash");
+        r.hash = hash.m_Kind == VALUE_STRING ? hash.ToString() : std::string();
+        r.stats = TruthStringify(stats);
+        const bool evaluating = !g_TruthEvalRequest.empty();
+        if (!g_TruthSeen.Insert(r.timestamp + "|" + (r.hash.empty() ? r.stats : r.hash)) && !evaluating) return;
+        if (evaluating) { r.source = "eval"; r.request = g_TruthEvalRequest; }
+        r.type = TruthWholeNumber(field("itemType"));
+        r.def = TruthStringify(def);
+        r.native = nativeStats;
+        r.info = TruthStringify(field("itemInfoStruct"));
+        r.build = g_TruthBuild;
+        r.unixMs = ForgePact::ItemTruth::UnixMsNow();
+        std::string line = ForgePact::ItemTruth::FormatRecord(r);
+        if (!line.empty() && g_TruthJournal->Enqueue(std::move(line))) InterlockedIncrement(&g_TruthCaptured);
+    } catch (...) {}
 }
 
 
@@ -16128,6 +16219,10 @@ static void HeadhunterActivityTick()
 #else
   #define HH_CREATE_TRACE(NAME) ((void)0)
 #endif
+// CreateItemNew is the one constructor whose return is a finished item, so it
+// alone is the final pass: the Custom Forge dressing applies there, and Item
+// Truth records the outermost call (before the dressing when a forge entry can
+// match, and after it - what the game will show).
 #define ITEM_CREATE_HOOK(NAME) \
     static PFUNC_YYGMLScript g_Orig_##NAME = nullptr; \
     static volatile long g_cnt_##NAME = 0; \
@@ -16135,8 +16230,17 @@ static void HeadhunterActivityTick()
     static RValue& Hook_##NAME(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) { \
         BP_DIAG_INCREMENT(g_cnt_##NAME); \
         HH_CREATE_TRACE(NAME); \
-        RValue& _res = g_Orig_##NAME ? g_Orig_##NAME(S, O, R, argc, A) : R; \
-        CustomForgePostProcess(_res, argc, A, strcmp(#NAME, "CreateItemNew") == 0); \
+        constexpr bool _final = std::string_view(#NAME) == std::string_view("CreateItemNew"); \
+        RValue* _resp = &R; \
+        { \
+            TruthDepthGuard _depth(_final); \
+            if (g_Orig_##NAME) _resp = &g_Orig_##NAME(S, O, R, argc, A); \
+        } \
+        RValue& _res = *_resp; \
+        const bool _outermost = _final && g_TruthDepth == 0; \
+        const std::string _native = _outermost ? ItemTruthNativeSnapshot(_res) : std::string(); \
+        CustomForgePostProcess(_res, argc, A, _final); \
+        if (_outermost) ItemTruthCapture(_res, _native); \
         BP_LOGDROP(#NAME, _res, argc, A); \
         return _res; \
     }
@@ -16812,6 +16916,162 @@ static void InstallCustomForgeItemHooks()
                                                      : "runtime hook installation failed");
 }
 
+// Item Truth (see ItemTruthCapture): only while the Item Editor asks for it.
+// Needs nothing but the CreateItemNew hook, which the Custom Forge may have
+// installed already - the same Hook_CreateItemNew either way. Called from
+// InstallHook at setup and then every ~10 s (ItemTruthTick), so an editor
+// started after the game still gets its items, and removing the request file
+// pauses the capture (the hook stays; it records nothing).
+static bool g_TruthFailed = false;
+static void InstallItemTruth()
+{
+    if (g_TruthFailed) return;
+    const std::filesystem::path root = ForgePact::ItemTruth::Root();
+    const bool requested = ForgePact::ItemTruth::CaptureRequested(root);
+    if (!requested) {
+        if (g_TruthOn) { g_TruthOn = false; Out("item truth: paused (the Item Editor withdrew its request)"); }
+        return;
+    }
+    if (g_TruthOn) return;
+    if (!g_TruthJournal) {
+        g_TruthBuild = ForgePact::ItemTruth::BuildIdOfProcess();
+        auto* journal = new ForgePact::ItemTruth::Journal();
+        if (!journal->Start(root, g_TruthBuild, GetCurrentProcessId(), FORGEPACT_VERSION)) {
+            delete journal;   // its thread never started
+            g_TruthFailed = true;
+            Out("item truth: journal folder could not be created - capture stays off");
+            return;
+        }
+        g_TruthJournal = journal;
+        const size_t stopped = ForgePact::ItemTruth::AbandonWorking(root / L"requests");
+        if (stopped) Out("item truth: " + std::to_string(stopped) + " unfinished check(s) from the last session set aside");
+    }
+    if (!g_Orig_CreateItemNew)
+        HookOneScript("CreateItemNew", "fp_itemtruth_new", (PVOID)Hook_CreateItemNew, &g_Orig_CreateItemNew);
+    if (!g_Orig_CreateItemNew) {
+        g_TruthFailed = true;
+        Out("item truth: CreateItemNew could not be hooked - capture stays off");
+        return;
+    }
+    g_TruthOn = true;
+    Out("item truth: capturing finished items for the Item Editor (build " + g_TruthBuild + ")");
+}
+
+static void ItemTruthTick(uint32_t frame)
+{
+    if (frame % 600 == 0) InstallItemTruth();
+}
+
+// ---- Item Truth evaluation: the game builds items the editor asks about ------
+// The Item Editor writes itemtruth\requests\<id>.req (ItemTruth.hpp, "evaluation
+// requests"). Each item goes through the game's own save loader exactly as
+// BuildAngelicPool builds its probe items - json_parse, then
+// InitItemFromJson(json, key) with the global instance as self - so
+// CreateItemNew runs and ItemTruthCapture records the finished item. The item
+// is never dropped, placed or saved; the struct is left to the collector. A
+// few milliseconds per frame, so a whole Vault takes seconds without a stall.
+struct TruthEvalState {
+    std::string id;
+    std::filesystem::path file;   // the claimed <id>.working
+    std::vector<ForgePact::ItemTruth::EvalItem> items;
+    size_t next = 0, ok = 0, failed = 0, rejected = 0, reported = 0;
+    bool active = false;
+};
+static TruthEvalState g_TruthEval;
+static constexpr double kTruthEvalBudgetSeconds = 0.004;
+static constexpr size_t kTruthEvalMaxPerFrame = 200;
+
+static bool TruthEvalOne(const ForgePact::ItemTruth::EvalItem& entry)
+{
+    CInstance* g = nullptr; g_Yytk->GetGlobalInstance(&g);
+    if (!g) return false;
+    RValue parsed; g_Yytk->CallBuiltinEx(parsed, "json_parse", g, g, { RValue(entry.json) });
+    if (parsed.m_Kind != VALUE_OBJECT) return false;
+    RValue item;
+    const AurieStatus st = g_Yytk->CallGameScriptEx(item, "gml_Script_InitItemFromJson", g, g, { parsed, RValue(entry.key) });
+    return AurieSuccess(st) && item.m_Kind == VALUE_OBJECT;
+}
+
+static void TruthEvalReport(bool finished)
+{
+    ForgePact::ItemTruth::EvalProgress p;
+    p.request = g_TruthEval.id;
+    p.build = g_TruthBuild;
+    p.unixMs = ForgePact::ItemTruth::UnixMsNow();
+    p.total = g_TruthEval.items.size();
+    p.done = g_TruthEval.next;
+    p.ok = g_TruthEval.ok;
+    p.failed = g_TruthEval.failed;
+    p.rejected = g_TruthEval.rejected;
+    p.finished = finished;
+    g_TruthJournal->Enqueue(ForgePact::ItemTruth::FormatEvalProgress(p));
+    g_TruthEval.reported = g_TruthEval.next;
+}
+
+static void ItemTruthEvalTick(uint32_t frame)
+{
+    if (!g_TruthOn || !g_TruthJournal) return;
+    try {
+        if (!g_TruthEval.active) {
+            if (frame % 120 != 0) return;
+            const std::filesystem::path dir = ForgePact::ItemTruth::Root() / L"requests";
+            const std::filesystem::path next = ForgePact::ItemTruth::NextRequest(dir);
+            if (next.empty()) return;
+            std::filesystem::path working = next;
+            working.replace_extension(L".working");
+            std::error_code ec;
+            std::filesystem::rename(next, working, ec);   // claim it; a request is built once
+            if (ec) return;
+            std::string text;
+            if (std::filesystem::file_size(working, ec) <= ForgePact::ItemTruth::kMaxRequestBytes && !ec) {
+                std::ifstream in(working, std::ios::binary);
+                text.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+            }
+            g_TruthEval = TruthEvalState{};
+            g_TruthEval.id = ForgePact::ItemTruth::RequestIdOf(next);
+            g_TruthEval.file = working;
+            g_TruthEval.items = ForgePact::ItemTruth::ParseRequest(text, ForgePact::ItemTruth::kMaxEvalItems, &g_TruthEval.rejected);
+            g_TruthEval.active = true;
+            Out("item truth: the Item Editor asked the game to check " + std::to_string(g_TruthEval.items.size())
+                + " items (request " + g_TruthEval.id + ")");
+            TruthEvalReport(false);
+            return;
+        }
+        const auto start = std::chrono::steady_clock::now();
+        size_t built = 0;
+        while (g_TruthEval.next < g_TruthEval.items.size()) {
+            const ForgePact::ItemTruth::EvalItem& entry = g_TruthEval.items[g_TruthEval.next++];
+            bool ok = false;
+            g_TruthEvalRequest = g_TruthEval.id;
+            try { ok = TruthEvalOne(entry); } catch (...) { ok = false; }
+            g_TruthEvalRequest.clear();
+            if (ok) ++g_TruthEval.ok; else ++g_TruthEval.failed;
+            const double spent = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+            if (++built >= kTruthEvalMaxPerFrame || spent >= kTruthEvalBudgetSeconds)
+                break;
+        }
+        const bool finished = g_TruthEval.next >= g_TruthEval.items.size();
+        if (finished || g_TruthEval.next - g_TruthEval.reported >= 250) TruthEvalReport(finished);
+        if (finished) {
+            std::error_code ec;
+            std::filesystem::remove(g_TruthEval.file, ec);
+            Out("item truth: request " + g_TruthEval.id + " done - " + std::to_string(g_TruthEval.ok) + " built, "
+                + std::to_string(g_TruthEval.failed) + " failed, " + std::to_string(g_TruthEval.rejected) + " unreadable");
+            g_TruthEval = TruthEvalState{};
+        }
+    } catch (...) {
+        g_TruthEvalRequest.clear();
+        if (!g_TruthEval.file.empty()) {
+            std::error_code ec;
+            std::filesystem::path stopped = g_TruthEval.file;
+            stopped.replace_extension(L".stopped");
+            std::filesystem::rename(g_TruthEval.file, stopped, ec);
+        }
+        g_TruthEval = TruthEvalState{};
+        Out("item truth: an evaluation request failed and was set aside");
+    }
+}
+
 
 static void DropStats()
 {
@@ -17303,6 +17563,7 @@ static void InstallHook()
     // Crown/Beacon auto-arm for players who used the Item Editor.
     LoadCustomForgeEntries();
     InstallCustomForgeItemHooks();
+    InstallItemTruth();
     HeadhunterAutoArm();
     TyrantAutoArm();
     BeaconAutoArm();
@@ -31529,6 +31790,7 @@ void FrameCallback(FWFrame& FrameContext)
 #endif
     PERF_SCOPE(g_PerfFrame);
     FlushItemStats(fc);
+    if (g_Setup) { ItemTruthTick(fc); ItemTruthEvalTick(fc); }
     FlushModState(fc);
     if (g_Setup) { FP_POP_SCOPE(MinerTick); ForgePact::MinerHelmet::Tick(); }
     if (fc == 1) Trace("0-framecallback-running");

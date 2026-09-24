@@ -731,6 +731,47 @@ not reproduced in those sessions; its cause was never identified. Design,
 evidence and tests: [docs/miner-helmet-prototype.md](docs/miner-helmet-prototype.md).
 
 
+## Item truth for the Item Editor
+
+A save keeps only an item's seeds; the game computes every line of it each time it
+builds the item, and game updates change that computation. So that the Item Editor
+(2.16.0+) can show an item exactly as the game does, ForgePact writes down what the
+game built:
+
+- **When:** only while the Item Editor asks for it, by the file
+  `%LOCALAPPDATA%\Hero_Siege\itemtruth\capture.request` (checked at setup and every
+  ~10 s; removing it pauses the capture). With no such file nothing is hooked.
+- **What:** after the outermost `CreateItemNew` returns - random stats, runewords,
+  sockets and the display name done, the Custom Forge dressing applied - one line
+  with the item's `itemTimeStamp`, `itemType`, `itemDataHash`, and its definition,
+  stat and info structs as the game serialises them (plus the stats before the
+  dressing when a forge entry changed them), and the game build
+  (`pe-<link stamp>-<.text size>`, the same for a clean and an Aurie-patched exe).
+- **Where:** `itemtruth\journal\live-<build>-<start>-<pid>-<part>.ndjson` (16 MB
+  parts) and `itemtruth\status.json`. The game thread only serialises and queues;
+  a background thread writes. A distinct item is written once per session; a full
+  queue drops lines and counts them instead of growing.
+- Nothing is written into the game or the saves; the Item Editor reads the files
+  and deletes journals it has fully read after three days.
+- **Checks on request.** The editor can ask the game to build items it has not
+  built yet (a character not loaded, the Vault): `itemtruth\requests\<id>.req`,
+  one `<item key>\t<save data json>` per line. Once setup has run and capture is
+  on, ForgePact claims the oldest request, builds its items through the game's
+  own save loader (`InitItemFromJson`, as `BuildAngelicPool` does) for at most
+  4 ms per frame, journals each finished item with `"src":"eval"`, writes progress
+  lines into the same journal and deletes the request. The items are never
+  dropped, placed or saved. A request that was being built when the game closed is
+  renamed `.stopped` at the next start and never resumed on its own. Measured:
+  342 items in about 2 s at the main menu.
+- `status.json` is refreshed at least every 30 s while the game runs, so the
+  editor knows the game is there.
+
+The older `bp_ipc\itemstats.json` snapshot (Custom Forge base stats) is now taken
+on the same final pass; it used to be taken halfway and missed the socket count.
+Code: `plugin/include/ForgePact/ItemTruth.hpp`; tests:
+`tests/test_item_truth_behavior.py` (compiled harness) and
+`tests/test_item_truth_contract.py`.
+
 ## AFK FARM independent reward compatibility (local, 2026-09-22)
 
 AFK FARM 0.5.0 owns its MF, XP, Gold and loot settings. During its short native
