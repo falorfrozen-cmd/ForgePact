@@ -118,11 +118,15 @@ class ItemTruthContractTests(unittest.TestCase):
         raise AssertionError("unterminated block")
 
     def test_evaluation_builds_through_the_games_save_loader_and_never_drops_the_item(self):
-        body = function_body(self.release, "static bool TruthEvalOne(")
+        body = function_body(self.release, "static RValue TruthBuildItem(")
         self.assertIn('CallBuiltinEx(parsed, "json_parse", g, g, { RValue(entry.json) })', body)
         self.assertIn('"gml_Script_InitItemFromJson", g, g, { parsed, RValue(entry.key) }', body)
         for forbidden in ("LootGroundCreate", "InventoryGridAdd", "GridAddItem", "SaveGame", "ds_list_add"):
             self.assertNotIn(forbidden, body)
+        self.assertIn("return TruthBuildItem(entry).m_Kind == VALUE_OBJECT;",
+                      function_body(self.release, "static bool TruthEvalOne("))
+        self.assertIn("RValue item = TruthBuildItem(entry);", function_body(self.release, "static bool TipDrawOne("),
+                      "drawing requests build their items the same way")
 
     def test_evaluation_runs_only_while_capturing_and_within_a_frame_budget(self):
         tick = function_body(self.release, "static void ItemTruthEvalTick(")
@@ -145,14 +149,119 @@ class ItemTruthContractTests(unittest.TestCase):
     def test_an_unfinished_check_is_never_resumed_on_its_own(self):
         install = function_body(self.release, "static void InstallItemTruth(")
         self.assertIn('ForgePact::ItemTruth::AbandonWorking(root / L"requests")', install)
+        self.assertIn('ForgePact::ItemTruth::AbandonWorking(root / L"tips")', install)
         self.assertNotIn("ResumeWorking", self.release)
         self.assertNotIn("ResumeWorking", self.header)
+
+    def test_requested_tooltips_are_drawn_off_screen_before_the_players_tooltip(self):
+        hook = function_body(self.release, "static RValue& Hook_DrawInventoryItemV2(")
+        self.assertTrue(hook.lstrip().startswith("TipDrawBatch(S, O, argc, A);"),
+                        "the batch runs before the game draws the tooltip the player sees")
+        self.assertLess(hook.index("TipDrawBatch(S, O, argc, A);"), hook.index("TipCaptureBegin(argc, A);"))
+        batch = function_body(self.release, "static void TipDrawBatch(")
+        self.assertTrue(batch.lstrip().startswith(
+            "if (!g_TruthOn || !g_TruthJournal || g_Tip.itemDepth != 0 || !g_Orig_DrawInventoryItemV2) return;"))
+        self.assertIn("g_TipDrawFrame == g_RuntimeFrame) return;", batch, "one batch per frame")
+        self.assertIn("kTipDrawBudgetSeconds", batch)
+        self.assertIn("kTipDrawMaxPerFrame", batch)
+        self.assertIn("static constexpr double kTipDrawBudgetSeconds = 0.003;", self.release)
+        self.assertIn("static constexpr size_t kTipDrawMaxPerFrame = 6;", self.release)
+        guard = batch.index("TipDrawStateGuard state;")
+        target = batch.index("if (!TipDrawTarget(state)) return;")
+        draw = batch.index("ok = TipDrawOne(S, O, argc, A, entry);")
+        self.assertLess(guard, target)
+        self.assertLess(target, draw, "nothing is drawn unless the off-screen surface is the target")
+        self.assertIn("std::filesystem::remove(g_TipDraw.file, ec);", batch)
+        self.assertIn('stopped.replace_extension(L".stopped");', batch, "a failing request is set aside, not retried")
+        claim = function_body(self.release, "static void TipDrawClaim(")
+        self.assertLess(claim.index("std::filesystem::rename(next, working, ec);"), claim.index("ParseRequest("),
+                        "a request is claimed before it is read")
+        self.assertIn('ForgePact::ItemTruth::Root() / L"tips"', claim)
+        surface = function_body(self.release, "static bool TipDrawTarget(")
+        self.assertIn('state.target = g_Yytk->CallBuiltin("surface_set_target", { surface }).ToBoolean();', surface)
+        self.assertIn('"surface_create", { RValue(16.0), RValue(16.0) }', surface)
+        restore = self.release[self.release.index("~TipDrawStateGuard()"):]
+        restore = restore[:restore.index("\n    }\n")]
+        self.assertLess(restore.index('if (target) g_Yytk->CallBuiltin("surface_reset_target", {});'),
+                        restore.index('put("draw_set_colour", colour);'), "the target is popped before the state returns")
+        for setter in ("draw_set_colour", "draw_set_alpha", "draw_set_font", "draw_set_halign", "draw_set_valign"):
+            self.assertIn(f'put("{setter}", ', restore)
+
+    def test_a_requested_tooltip_is_captured_like_the_players_own(self):
+        one = function_body(self.release, "static bool TipDrawOne(")
+        begin = one.index("if (!TipCaptureBegin(argc, args.data(), true)) return false;")
+        guard = one.index("TipDepthGuard depth(g_Tip.itemDepth);")
+        call = one.index("g_Orig_DrawInventoryItemV2(S, O, result, argc, args.data());")
+        end = one.index("TipCaptureEnd();")
+        self.assertLess(begin, guard)
+        self.assertLess(guard, call)
+        self.assertLess(call, end)
+        self.assertIn("args[3] = &item;", one, "only the item differs from the tooltip on screen")
+        self.assertIn("g_Tip.request = g_TipDraw.id;", one)
+        self.assertIsNone(DISK_IO.search(one))
 
     def test_evaluated_items_are_tagged_and_always_written(self):
         body = function_body(self.release, "static void ItemTruthCapture(")
         self.assertIn("const bool evaluating = !g_TruthEvalRequest.empty();", body)
         self.assertIn("&& !evaluating) return;", body)
         self.assertIn('if (evaluating) { r.source = "eval"; r.request = g_TruthEvalRequest; }', body)
+
+    def test_a_tooltip_is_recorded_once_per_item_and_only_from_the_outer_pass(self):
+        begin = function_body(self.release, "static bool TipCaptureBegin(")
+        self.assertTrue(begin.lstrip().startswith("if (!g_TruthOn || !g_TruthJournal || g_Tip.itemDepth != 0) return false;"))
+        self.assertIn('if (!g_TipSeen.Insert(ts + "|" + h) && !table && !force) return false;', begin)
+        self.assertIn("static bool TipCaptureBegin(int argc, RValue** A, bool force = false)", self.release)
+        wants = function_body(self.release, "static bool TipWantsText(")
+        self.assertIn("return g_Tip.active && g_Tip.itemDepth == 1 && g_Tip.textDepth == 0 && g_Tip.rowCount < 600;", wants)
+        for overload in ("static void TipNoteText(const char* fn, int argc, RValue** A)",
+                         "static void TipNoteText(const char* fn, int argc, RValue* Args)"):
+            self.assertIn("if (TipWantsText()) TipNoteRow(", function_body(self.release, overload))
+        stat = function_body(self.release, "static void TipNoteStat(")
+        self.assertIn("if (!g_Tip.active || g_Tip.itemDepth != 1) return;", stat)
+        for helper in ("static void TipNoteRow(", "static void TipNoteStat(", "static bool TipCaptureBegin(",
+                       "static void TipCaptureEnd("):
+            body = function_body(self.release, helper)
+            self.assertIsNone(DISK_IO.search(body), helper)
+            self.assertNotRegex(body, r"draw_set_|draw_text\b|DrawInventory", helper + " only reads")
+
+    def test_the_tooltip_hooks_wrap_the_games_own_pass(self):
+        item = function_body(self.release, "static RValue& Hook_DrawInventoryItemV2(")
+        begin = item.index("const bool capturing = TipCaptureBegin(argc, A);")
+        guard = item.index("TipDepthGuard depth(g_Tip.itemDepth);")
+        call = item.index("rp = &g_Orig_DrawInventoryItemV2(S, O, R, argc, A);")
+        end = item.index("if (capturing) TipCaptureEnd();")
+        self.assertLess(begin, guard)
+        self.assertLess(guard, call)
+        self.assertLess(call, end)
+        stat = function_body(self.release, "static RValue& Hook_DrawInventoryStatsNew(")
+        self.assertEqual(2, stat.count("TipNoteStat("), "both return paths record the call")
+        self.assertEqual(2, stat.count("g_Tip.statId = outerStat;"), "both return paths restore the stat")
+        for name, orig in (("Hook_TipTextOutline", "g_Orig_TipTextOutline"), ("Hook_TipTextOutlineExt", "g_Orig_TipTextOutlineExt")):
+            hook = function_body(self.release, f"static RValue& {name}(")
+            self.assertLess(hook.index("TipNoteText("), hook.index("TipDepthGuard depth(g_Tip.textDepth);"))
+            self.assertIn(f"return {orig} ? {orig}(S, O, R, argc, A) : R;", hook)
+
+    def test_tooltip_hooks_come_with_the_capture(self):
+        install = function_body(self.release, "static void InstallItemTruth(")
+        self.assertLess(install.index('HookOneScript("CreateItemNew", "fp_itemtruth_new"'),
+                        install.index("InstallForgedTooltipHooks();"))
+        self.assertLess(install.index("InstallForgedTooltipHooks();"), install.index("InstallTipTextHooks();"))
+        self.assertLess(install.index("InstallTipTextHooks();"), install.index("g_TruthOn = true;"))
+        hooks = function_body(self.release, "static void InstallTipTextHooks(")
+        self.assertIn('HookOneScript("draw_text_outline", "fp_truth_text"', hooks)
+        self.assertIn('HookOneScript("draw_text_outline_ext", "fp_truth_text_ext"', hooks)
+        self.assertIn('HookOneScript("DrawTooltipRichText", "fp_truth_rich"', hooks)
+        self.assertIn("InstallTipBuiltinTextHooks(std::make_index_sequence<kTipBuiltinTextCount>{});", hooks)
+
+    def test_builtin_text_hooks_only_record_and_pass_everything_on(self):
+        hook = self.release[self.release.index("static void Hook_TipBuiltinText("):]
+        hook = hook[:hook.index("\n}\n") + 2]
+        self.assertIn("TipNoteText(kTipBuiltinText[N], argc, Args);", hook)
+        self.assertIn("if (g_Orig_TipBuiltinText[N]) g_Orig_TipBuiltinText[N](Result, S, O, argc, Args);", hook)
+        ids = self.release[self.release.index("kTipBuiltinTextIds[kTipBuiltinTextCount] = {"):]
+        ids = ids[:ids.index("};")]
+        self.assertEqual(8, len(re.findall(r'"fp_truth_\w+"', ids)), "hook ids are literals that outlive the hooks")
+        self.assertNotIn("std::string(\"fp_truth_\")", self.release)
 
     def test_the_header_keeps_all_disk_io_on_the_writer_thread(self):
         enqueue = function_body(self.header, "bool Enqueue(std::string line)")

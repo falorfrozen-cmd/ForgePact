@@ -12,9 +12,10 @@ A fixed set of toggle skills, each measured in-game, is covered by the toggle
 marker and the double-cast guard. The countdown below covers a different set
 of its own - see that bullet for what it draws on.
 
-Two fixes as well: entering the Underground Garden no longer freezes the game,
-and the `raredrop angelic` command works again when a drop multiplier is set.
-And the Item Editor can now show your items exactly as the game builds them.
+Three fixes as well: entering the Underground Garden no longer freezes the game,
+the `raredrop angelic` command works again when a drop multiplier is set, and the
+Item Forge's base stats include the socket count again. And the Item Editor can
+now show your items exactly as the game builds and draws them.
 
 ## New
 
@@ -220,6 +221,13 @@ And the Item Editor can now show your items exactly as the game builds them.
   and records them - nothing is dropped, placed or saved. It only reads finished
   items; nothing is changed in the game or the saves, and nothing runs when the
   editor does not ask for it.
+- **Tooltips read exactly as in the game.** ForgePact also records the text the
+  game draws in an item's tooltip, so the Item Editor shows the tooltip row by row,
+  in the game's words and colours. For items you never hover (a whole Vault), the
+  game draws their tooltips off screen while you have any item tooltip open, a few
+  per frame (at most 3 ms): hovering an item for a minute or two covers thousands
+  of items. Your own tooltip is always drawn last, as usual; nothing on screen
+  changes.
 
 ## Changed
 

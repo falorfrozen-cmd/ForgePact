@@ -765,6 +765,22 @@ game built:
   342 items in about 2 s at the main menu.
 - `status.json` is refreshed at least every 30 s while the game runs, so the
   editor knows the game is there.
+- **The game's own tooltip text.** The first time in a session the game draws an
+  item's inventory tooltip (`DrawInventoryItemV2`), ForgePact records every text
+  draw of that pass - text, position, colour, alignment and the
+  `DrawInventoryStatsNew` call it belongs to - as one `"kind":"tooltip"` line, and
+  once per session every stat call of one pass (`"kind":"tooltip-table"`: the stat
+  lines a tooltip can draw, with label, format and colour). The hooks only read;
+  nothing is drawn differently.
+- **Drawing requests.** For items the player never hovers, the editor writes
+  `itemtruth\tips\<id>.req` (lines like a check request). While the player has an
+  item tooltip open, the game's own tooltip pass also builds a few of those items
+  through the save loader and draws their tooltips into a small surface nobody
+  sees - at most 6 items and 3 ms per frame, before the player's tooltip, which is
+  drawn last as always - and the draw state is put back. Each drawing is journaled
+  with `"req":"<id>"`; progress lines are `"kind":"tipdraw"`; a request cut short
+  is set aside as `.stopped` at the next start. Measured: 7,607 tooltips in about
+  2 minutes, no failures.
 
 The older `bp_ipc\itemstats.json` snapshot (Custom Forge base stats) is now taken
 on the same final pass; it used to be taken halfway and missed the socket count.

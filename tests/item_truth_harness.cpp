@@ -220,6 +220,9 @@ int main()
               "progress: one journal line");
         p.finished = true;
         Check(FormatEvalProgress(p).find("\"finished\":true") != std::string::npos, "progress: the last line says finished");
+        p.drawing = true;
+        Check(FormatEvalProgress(p).rfind(R"({"v":1,"kind":"tipdraw","req":"r1",)", 0) == 0,
+              "progress: a drawing request says so");
 
         const fs::path requests = root / "requests";
         fs::create_directories(requests, ec);
@@ -236,6 +239,25 @@ int main()
               "queue: an unfinished check is set aside, never resumed on its own");
         Check(NextRequest(requests).filename() == "1790000000001-a.req", "queue: a set-aside check is not picked up");
         fs::remove_all(root, ec);
+    }
+
+    // ---- tooltip text ----
+    {
+        const std::string tip = FormatTooltipRecord("pe-1", 7, "212409236228", "h\"", "[10,20,1,null]",
+            R"({"fn":"o","s":28,"c":16777215,"ha":1,"a":[1,2,"+773% Enhanced Damage"]})",
+            R"({"id":28,"h":30,"a":[1,2,null,28,"Enhanced Damage",2,8]})");
+        Check(tip == R"({"v":1,"kind":"tooltip","build":"pe-1","t":7,"ts":"212409236228","hash":"h\"","args":[10,20,1,null],"rows":[{"fn":"o","s":28,"c":16777215,"ha":1,"a":[1,2,"+773% Enhanced Damage"]}],"stats":[{"id":28,"h":30,"a":[1,2,null,28,"Enhanced Damage",2,8]}]})",
+              "tooltip: one line with the drawn rows and the stat calls");
+        Check(FormatTooltipRecord("pe-1", 7, "1", "", "[]", "", "", "UI_Inventory_Tooltip_obj").find(R"("hash":"","by":"UI_Inventory_Tooltip_obj","args":[])") != std::string::npos,
+              "tooltip: the object that drew it");
+        Check(FormatTooltipRecord("pe-1", 7, "1", "", "[]", "", "", "UI", "1790000000001-a").find(R"("by":"UI","req":"1790000000001-a","args":[])") != std::string::npos,
+              "tooltip: the drawing request it served");
+        Check(FormatTooltipRecord("pe-1", 7, "1", "", "[]", "", "", "UI", "bad id\"").find("\"req\"") == std::string::npos,
+              "tooltip: a malformed request id is left out");
+        Check(FormatTooltipRecord("pe-1", 7, "x", "", "[]", "", "").empty(), "tooltip: needs a timestamp");
+        Check(FormatTooltipRecord("pe-1", 7, "1", "", "[]", "{\"a\":\"x\ny\"}", "").empty(), "tooltip: a raw line break is refused");
+        Check(FormatTooltipTable("pe-1", 8, R"({"id":1,"h":0,"a":[]})") == R"({"v":1,"kind":"tooltip-table","build":"pe-1","t":8,"stats":[{"id":1,"h":0,"a":[]}]})",
+              "tooltip table: every stat call of one pass");
     }
 
     // ---- capture request ----

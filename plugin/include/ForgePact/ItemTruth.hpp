@@ -231,6 +231,55 @@ inline long long UnixMsNow()
     return duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
 }
 
+// ---- the game's own tooltip text ----------------------------------------------
+// While capture is on, the first time the game draws an item's inventory tooltip
+// in a session, ModuleMain records what it drew: every text row in draw order
+// (the draw_text_outline(_ext) arguments, the draw colour and alignment, and the
+// stat whose DrawInventoryStatsNew call drew it) and each stat call that drew a
+// row. The arguments arrive as JSON fragments; strings in them are already
+// escaped. Once per session one tooltip's complete stat table is recorded too -
+// the game calls DrawInventoryStatsNew for every stat it knows, drawn or not.
+//   {"v":1,"kind":"tooltip","build":...,"t":...,"ts":"...","hash":"...",
+//    "args":[...],"rows":[{"fn":"o","s":28,"c":16777215,"ha":1,"a":[...]}],
+//    "stats":[{"id":28,"h":30,"a":[...]}]}
+//   {"v":1,"kind":"tooltip-table","build":...,"t":...,"stats":[...]}
+// A tooltip drawn for a drawing request (below) also carries "req":"<id>".
+inline bool IsRequestId(std::string_view id);
+inline std::string FormatTooltipRecord(const std::string& build, long long unixMs, const std::string& timestamp,
+                                       const std::string& hash, const std::string& argsJson,
+                                       const std::string& rowsJson, const std::string& statsJson,
+                                       const std::string& drawnBy = std::string(),
+                                       const std::string& request = std::string())
+{
+    if (!IsDigits(timestamp) || argsJson.empty() || argsJson.front() != '[') return {};
+    std::string out = "{\"v\":" + std::to_string(kSchema) + ",\"kind\":\"tooltip\",\"build\":";
+    AppendJsonString(out, build);
+    out += ",\"t\":" + std::to_string(unixMs) + ",\"ts\":";
+    AppendJsonString(out, timestamp);
+    out += ",\"hash\":";
+    AppendJsonString(out, hash);
+    if (!drawnBy.empty()) {
+        out += ",\"by\":";
+        AppendJsonString(out, drawnBy);
+    }
+    if (IsRequestId(request)) {
+        out += ",\"req\":";
+        AppendJsonString(out, request);
+    }
+    out += ",\"args\":" + argsJson + ",\"rows\":[" + rowsJson + "],\"stats\":[" + statsJson + "]}";
+    if (out.find('\n') != std::string::npos || out.find('\r') != std::string::npos) return {};
+    return out.size() <= kMaxLineBytes ? out : std::string();
+}
+
+inline std::string FormatTooltipTable(const std::string& build, long long unixMs, const std::string& statsJson)
+{
+    std::string out = "{\"v\":" + std::to_string(kSchema) + ",\"kind\":\"tooltip-table\",\"build\":";
+    AppendJsonString(out, build);
+    out += ",\"t\":" + std::to_string(unixMs) + ",\"stats\":[" + statsJson + "]}";
+    if (out.find('\n') != std::string::npos || out.find('\r') != std::string::npos) return {};
+    return out.size() <= kMaxLineBytes ? out : std::string();
+}
+
 // ---- evaluation requests -------------------------------------------------------
 // The Item Editor asks the game to build items it has not built yet:
 // <root>\requests\<id>.req, one item per line, "<item key>\t<save data json>"
@@ -241,6 +290,10 @@ inline long long UnixMsNow()
 // the editor reads records and progress in order:
 //   {"v":1,"kind":"eval","req":"<id>","build":"...","t":<ms>,
 //    "total":N,"done":N,"ok":N,"failed":N,"rejected":N,"finished":true|false}
+// Drawing requests, <root>\tips\<id>.req, have the same lines: the game builds
+// each item the same way and draws its tooltip off screen while the player has
+// a tooltip open, so the editor gets the game's own text for items the player
+// never hovers. Their progress lines are "kind":"tipdraw".
 constexpr size_t kMaxEvalItems = 50000;
 constexpr size_t kMaxRequestBytes = 64ull * 1024 * 1024;
 
@@ -309,11 +362,13 @@ struct EvalProgress {
     long long unixMs = 0;
     size_t total = 0, done = 0, ok = 0, failed = 0, rejected = 0;
     bool finished = false;
+    bool drawing = false;   // a drawing request ("tipdraw") rather than a build check ("eval")
 };
 
 inline std::string FormatEvalProgress(const EvalProgress& p)
 {
-    std::string out = "{\"v\":" + std::to_string(kSchema) + ",\"kind\":\"eval\",\"req\":";
+    std::string out = "{\"v\":" + std::to_string(kSchema) + ",\"kind\":\""
+        + (p.drawing ? "tipdraw" : "eval") + "\",\"req\":";
     AppendJsonString(out, p.request);
     out += ",\"build\":";
     AppendJsonString(out, p.build);
