@@ -1,0 +1,8431 @@
+{
+ "recordedFrom": "legacy",
+ "recordedAt": "2026-09-24T21:45:52.549Z",
+ "viewport": {
+  "width": 1280,
+  "height": 800
+ },
+ "controls": [
+  "#autoapply",
+  "#applyall",
+  "#exebrowse",
+  "#exesave",
+  "#installmod",
+  "#removeplugin",
+  "#launchgame",
+  "input[type=range][data-sec=\"stats\"][data-key=\"exp\"]",
+  "input[type=range][data-sec=\"stats\"][data-key=\"magicfind\"]",
+  "input[type=range][data-sec=\"stats\"][data-key=\"movespeed\"]",
+  "input[type=range][data-sec=\"percent_stats\"][data-key=\"damage\"]",
+  "input[type=range][data-sec=\"percent_stats\"][data-key=\"attackspeed\"]",
+  "input[type=range][data-sec=\"percent_stats\"][data-key=\"castrate\"]",
+  "input[type=range][data-sec=\"percent_stats\"][data-key=\"lifereplenish\"]",
+  "input[type=range][data-sec=\"percent_stats\"][data-key=\"manareplenish\"]",
+  "input[type=range][data-sec=\"percent_stats\"][data-key=\"defense\"]",
+  "input[type=range][data-sec=\"percent_stats\"][data-key=\"critdamage\"]",
+  "input[type=range][data-sec=\"percent_stats\"][data-key=\"critchance\"]",
+  "input[type=range][data-sec=\"percent_stats\"][data-key=\"spellcritdamage\"]",
+  "input[type=range][data-sec=\"percent_stats\"][data-key=\"spellcritchance\"]",
+  "#den_on",
+  "#den",
+  "#rarity_rare",
+  "#rarity_ancient",
+  "#satRestore",
+  "#satbuffAll",
+  "input[data-sat-polarity=\"buff\"][data-sat-id=\"1\"]",
+  "input[data-sat-polarity=\"buff\"][data-sat-id=\"2\"]",
+  "input[data-sat-polarity=\"buff\"][data-sat-id=\"3\"]",
+  "input[data-sat-polarity=\"buff\"][data-sat-id=\"4\"]",
+  "input[data-sat-polarity=\"buff\"][data-sat-id=\"5\"]",
+  "input[data-sat-polarity=\"buff\"][data-sat-id=\"6\"]",
+  "input[data-sat-polarity=\"buff\"][data-sat-id=\"7\"]",
+  "input[data-sat-polarity=\"buff\"][data-sat-id=\"8\"]",
+  "input[data-sat-polarity=\"buff\"][data-sat-id=\"9\"]",
+  "input[data-sat-polarity=\"buff\"][data-sat-id=\"10\"]",
+  "input[data-sat-polarity=\"buff\"][data-sat-id=\"11\"]",
+  "input[data-sat-polarity=\"buff\"][data-sat-id=\"12\"]",
+  "input[data-sat-polarity=\"buff\"][data-sat-id=\"13\"]",
+  "input[data-sat-polarity=\"buff\"][data-sat-id=\"14\"]",
+  "input[data-sat-polarity=\"buff\"][data-sat-id=\"15\"]",
+  "input[data-sat-polarity=\"buff\"][data-sat-id=\"16\"]",
+  "input[data-sat-polarity=\"buff\"][data-sat-id=\"17\"]",
+  "input[data-sat-polarity=\"buff\"][data-sat-id=\"18\"]",
+  "input[data-sat-polarity=\"buff\"][data-sat-id=\"19\"]",
+  "input[data-sat-polarity=\"buff\"][data-sat-id=\"20\"]",
+  "input[data-sat-polarity=\"buff\"][data-sat-id=\"21\"]",
+  "input[data-sat-polarity=\"buff\"][data-sat-id=\"22\"]",
+  "input[data-sat-polarity=\"buff\"][data-sat-id=\"23\"]",
+  "input[data-sat-polarity=\"buff\"][data-sat-id=\"24\"]",
+  "input[data-sat-polarity=\"buff\"][data-sat-id=\"25\"]",
+  "#satdebuffAll",
+  "input[data-sat-polarity=\"debuff\"][data-sat-id=\"1\"]",
+  "input[data-sat-polarity=\"debuff\"][data-sat-id=\"2\"]",
+  "input[data-sat-polarity=\"debuff\"][data-sat-id=\"3\"]",
+  "input[data-sat-polarity=\"debuff\"][data-sat-id=\"4\"]",
+  "input[data-sat-polarity=\"debuff\"][data-sat-id=\"5\"]",
+  "input[data-sat-polarity=\"debuff\"][data-sat-id=\"6\"]",
+  "input[data-sat-polarity=\"debuff\"][data-sat-id=\"7\"]",
+  "input[data-sat-polarity=\"debuff\"][data-sat-id=\"8\"]",
+  "input[data-sat-polarity=\"debuff\"][data-sat-id=\"9\"]",
+  "input[data-sat-polarity=\"debuff\"][data-sat-id=\"10\"]",
+  "input[data-sat-polarity=\"debuff\"][data-sat-id=\"11\"]",
+  "input[data-sat-polarity=\"debuff\"][data-sat-id=\"12\"]",
+  "input[data-sat-polarity=\"debuff\"][data-sat-id=\"13\"]",
+  "input[data-sat-polarity=\"debuff\"][data-sat-id=\"14\"]",
+  "input[data-sat-polarity=\"debuff\"][data-sat-id=\"15\"]",
+  "input[data-sat-polarity=\"debuff\"][data-sat-id=\"16\"]",
+  "input[data-sat-polarity=\"debuff\"][data-sat-id=\"17\"]",
+  "input[data-sat-polarity=\"debuff\"][data-sat-id=\"18\"]",
+  "input[data-sat-polarity=\"debuff\"][data-sat-id=\"19\"]",
+  "input[data-sat-polarity=\"debuff\"][data-sat-id=\"20\"]",
+  "input[data-sat-polarity=\"debuff\"][data-sat-id=\"21\"]",
+  "input[data-sat-polarity=\"debuff\"][data-sat-id=\"22\"]",
+  "input[data-sat-polarity=\"debuff\"][data-sat-id=\"23\"]",
+  "input[data-sat-polarity=\"debuff\"][data-sat-id=\"24\"]",
+  "input[data-sat-polarity=\"debuff\"][data-sat-id=\"25\"]",
+  "input[data-sat-polarity=\"debuff\"][data-sat-id=\"26\"]",
+  "#enemyspeed",
+  "#enemyspeed_ct",
+  "input[type=range][data-sec=\"spawners\"][data-key=\"rift\"]",
+  "input[type=range][data-sec=\"spawners\"][data-key=\"battlefield\"]",
+  "input[type=range][data-sec=\"spawners\"][data-key=\"cursedorb\"]",
+  "input[type=range][data-sec=\"spawners\"][data-key=\"summonportal\"]",
+  "input[type=range][data-sec=\"spawners\"][data-key=\"chaospillars\"]",
+  "input[type=range][data-sec=\"spawners\"][data-key=\"chaostower\"]",
+  "input[type=range][data-sec=\"spawners\"][data-key=\"shadowrealm\"]",
+  "input[type=range][data-sec=\"drops\"][data-key=\"gold\"]",
+  "input[type=range][data-sec=\"drops\"][data-key=\"mining_ore\"]",
+  "input[type=range][data-sec=\"keys\"][data-key=\"dungeon\"]",
+  "input[type=range][data-sec=\"keys\"][data-key=\"angelic\"]",
+  "input[type=range][data-sec=\"keys\"][data-key=\"chaos\"]",
+  "input[type=range][data-sec=\"keys\"][data-key=\"bifrost\"]",
+  "input[type=range][data-sec=\"keys\"][data-key=\"relic\"]",
+  "input[type=range][data-sec=\"keys\"][data-key=\"rune\"]",
+  "input[type=range][data-sec=\"keys\"][data-key=\"stone\"]",
+  "input[type=range][data-sec=\"keys\"][data-key=\"bossgem\"]",
+  "input[type=range][data-sec=\"keys\"][data-key=\"orb\"]",
+  "input[type=range][data-sec=\"keys\"][data-key=\"scrollofra\"]",
+  "input[type=range][data-sec=\"keys\"][data-key=\"dimshard\"]",
+  "input[type=range][data-sec=\"keys\"][data-key=\"battlefrag\"]",
+  "input[type=range][data-sec=\"keys\"][data-key=\"colosfrag\"]",
+  "input[type=range][data-sec=\"keys\"][data-key=\"ruby\"]",
+  "#angelic_items",
+  "#mod_filter_max_relics",
+  "#mod_orb_pickup_radius",
+  "#map_reveal",
+  "#map_reveal_packs",
+  "#map_reveal_spawn",
+  "#mod_pet_quest_pickup",
+  "#mod_auto_prospect",
+  "#mod_auto_prospect_bag",
+  "#mod_craft_mats",
+  "#mod_toggle_indicator",
+  "#mod_toggle_guard",
+  "#mod_restart_anytime",
+  "#mod_skill_timer_style",
+  "#headhunter",
+  "#tyrant",
+  "#beacon"
+ ],
+ "steps": [
+  {
+   "step": 0,
+   "control": "#autoapply",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "auto_apply",
+      "value": true
+     }
+    }
+   ],
+   "cmds": []
+  },
+  {
+   "step": 1,
+   "control": "#autoapply",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "auto_apply",
+      "value": false
+     }
+    }
+   ],
+   "cmds": []
+  },
+  {
+   "step": 2,
+   "control": "#applyall",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/applyall",
+     "body": {}
+    }
+   ],
+   "cmds": []
+  },
+  {
+   "step": 3,
+   "control": "tab:setup",
+   "action": "click",
+   "posts": [],
+   "cmds": []
+  },
+  {
+   "step": 4,
+   "control": "#exebrowse",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/browseexe",
+     "body": {}
+    }
+   ],
+   "cmds": []
+  },
+  {
+   "step": 5,
+   "control": "#exepath",
+   "action": "type-exe-path",
+   "posts": [],
+   "cmds": []
+  },
+  {
+   "step": 6,
+   "control": "#exesave",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/setexe",
+     "body": {
+      "path": "<sandbox>\\Hero_Siege.exe"
+     }
+    }
+   ],
+   "cmds": []
+  },
+  {
+   "step": 7,
+   "control": "#installmod",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/installmod",
+     "body": {}
+    }
+   ],
+   "cmds": []
+  },
+  {
+   "step": 8,
+   "control": "#removeplugin",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/removeplugin",
+     "body": {}
+    }
+   ],
+   "cmds": []
+  },
+  {
+   "step": 9,
+   "control": "#launchgame",
+   "action": "skipped-disabled",
+   "intended": "click",
+   "posts": [],
+   "cmds": []
+  },
+  {
+   "step": 10,
+   "control": "tab:modifiers",
+   "action": "click",
+   "posts": [],
+   "cmds": []
+  },
+  {
+   "step": 11,
+   "control": "input[type=range][data-sec=\"stats\"][data-key=\"exp\"]",
+   "action": "max",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "stats",
+      "key": "exp",
+      "value": 100
+     }
+    }
+   ],
+   "cmds": [
+    "stat exp 100"
+   ]
+  },
+  {
+   "step": 12,
+   "control": "input[type=range][data-sec=\"stats\"][data-key=\"exp\"]",
+   "action": "min",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "stats",
+      "key": "exp",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "stat exp 1"
+   ]
+  },
+  {
+   "step": 13,
+   "control": "input[type=range][data-sec=\"stats\"][data-key=\"exp\"]",
+   "action": "increment",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "stats",
+      "key": "exp",
+      "value": 2
+     }
+    }
+   ],
+   "cmds": [
+    "stat exp 2"
+   ]
+  },
+  {
+   "step": 14,
+   "control": "input[type=range][data-sec=\"stats\"][data-key=\"exp\"]",
+   "action": "decrement",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "stats",
+      "key": "exp",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "stat exp 1"
+   ]
+  },
+  {
+   "step": 15,
+   "control": "input[type=range][data-sec=\"stats\"][data-key=\"exp\"]",
+   "action": "type",
+   "value": "50.5",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "stats",
+      "key": "exp",
+      "value": 50.5
+     }
+    }
+   ],
+   "cmds": [
+    "stat exp 50.5"
+   ]
+  },
+  {
+   "step": 16,
+   "control": "input[type=range][data-sec=\"stats\"][data-key=\"magicfind\"]",
+   "action": "max",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "stats",
+      "key": "magicfind",
+      "value": 100
+     }
+    }
+   ],
+   "cmds": [
+    "stat magicfind 100"
+   ]
+  },
+  {
+   "step": 17,
+   "control": "input[type=range][data-sec=\"stats\"][data-key=\"magicfind\"]",
+   "action": "min",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "stats",
+      "key": "magicfind",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "stat magicfind 1"
+   ]
+  },
+  {
+   "step": 18,
+   "control": "input[type=range][data-sec=\"stats\"][data-key=\"magicfind\"]",
+   "action": "increment",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "stats",
+      "key": "magicfind",
+      "value": 1.5
+     }
+    }
+   ],
+   "cmds": [
+    "stat magicfind 1.5"
+   ]
+  },
+  {
+   "step": 19,
+   "control": "input[type=range][data-sec=\"stats\"][data-key=\"magicfind\"]",
+   "action": "decrement",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "stats",
+      "key": "magicfind",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "stat magicfind 1"
+   ]
+  },
+  {
+   "step": 20,
+   "control": "input[type=range][data-sec=\"stats\"][data-key=\"magicfind\"]",
+   "action": "type",
+   "value": "50.5",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "stats",
+      "key": "magicfind",
+      "value": 50.5
+     }
+    }
+   ],
+   "cmds": [
+    "stat magicfind 50.5"
+   ]
+  },
+  {
+   "step": 21,
+   "control": "input[type=range][data-sec=\"stats\"][data-key=\"movespeed\"]",
+   "action": "max",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "stats",
+      "key": "movespeed",
+      "value": 10
+     }
+    }
+   ],
+   "cmds": [
+    "stat movespeed 10"
+   ]
+  },
+  {
+   "step": 22,
+   "control": "input[type=range][data-sec=\"stats\"][data-key=\"movespeed\"]",
+   "action": "min",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "stats",
+      "key": "movespeed",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "stat movespeed 1"
+   ]
+  },
+  {
+   "step": 23,
+   "control": "input[type=range][data-sec=\"stats\"][data-key=\"movespeed\"]",
+   "action": "increment",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "stats",
+      "key": "movespeed",
+      "value": 1.5
+     }
+    }
+   ],
+   "cmds": [
+    "stat movespeed 1.5"
+   ]
+  },
+  {
+   "step": 24,
+   "control": "input[type=range][data-sec=\"stats\"][data-key=\"movespeed\"]",
+   "action": "decrement",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "stats",
+      "key": "movespeed",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "stat movespeed 1"
+   ]
+  },
+  {
+   "step": 25,
+   "control": "input[type=range][data-sec=\"stats\"][data-key=\"movespeed\"]",
+   "action": "type",
+   "value": "5.5",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "stats",
+      "key": "movespeed",
+      "value": 5.5
+     }
+    }
+   ],
+   "cmds": [
+    "stat movespeed 5.5"
+   ]
+  },
+  {
+   "step": 26,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"damage\"]",
+   "action": "max",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "damage",
+      "value": 1000
+     }
+    }
+   ],
+   "cmds": [
+    "stat damage 11"
+   ]
+  },
+  {
+   "step": 27,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"damage\"]",
+   "action": "min",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "damage",
+      "value": 0
+     }
+    }
+   ],
+   "cmds": [
+    "stat damage 1"
+   ]
+  },
+  {
+   "step": 28,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"damage\"]",
+   "action": "increment",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "damage",
+      "value": 5
+     }
+    }
+   ],
+   "cmds": [
+    "stat damage 1.05"
+   ]
+  },
+  {
+   "step": 29,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"damage\"]",
+   "action": "decrement",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "damage",
+      "value": 0
+     }
+    }
+   ],
+   "cmds": [
+    "stat damage 1"
+   ]
+  },
+  {
+   "step": 30,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"damage\"]",
+   "action": "type",
+   "value": "500",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "damage",
+      "value": 500
+     }
+    }
+   ],
+   "cmds": [
+    "stat damage 6"
+   ]
+  },
+  {
+   "step": 31,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"attackspeed\"]",
+   "action": "max",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "attackspeed",
+      "value": 500
+     }
+    }
+   ],
+   "cmds": [
+    "stat attackspeed 6"
+   ]
+  },
+  {
+   "step": 32,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"attackspeed\"]",
+   "action": "min",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "attackspeed",
+      "value": 0
+     }
+    }
+   ],
+   "cmds": [
+    "stat attackspeed 1"
+   ]
+  },
+  {
+   "step": 33,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"attackspeed\"]",
+   "action": "increment",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "attackspeed",
+      "value": 5
+     }
+    }
+   ],
+   "cmds": [
+    "stat attackspeed 1.05"
+   ]
+  },
+  {
+   "step": 34,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"attackspeed\"]",
+   "action": "decrement",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "attackspeed",
+      "value": 0
+     }
+    }
+   ],
+   "cmds": [
+    "stat attackspeed 1"
+   ]
+  },
+  {
+   "step": 35,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"attackspeed\"]",
+   "action": "type",
+   "value": "250",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "attackspeed",
+      "value": 250
+     }
+    }
+   ],
+   "cmds": [
+    "stat attackspeed 3.5"
+   ]
+  },
+  {
+   "step": 36,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"castrate\"]",
+   "action": "max",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "castrate",
+      "value": 500
+     }
+    }
+   ],
+   "cmds": [
+    "statadd castrate 500"
+   ]
+  },
+  {
+   "step": 37,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"castrate\"]",
+   "action": "min",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "castrate",
+      "value": 0
+     }
+    }
+   ],
+   "cmds": [
+    "statadd castrate 0"
+   ]
+  },
+  {
+   "step": 38,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"castrate\"]",
+   "action": "increment",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "castrate",
+      "value": 5
+     }
+    }
+   ],
+   "cmds": [
+    "statadd castrate 5"
+   ]
+  },
+  {
+   "step": 39,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"castrate\"]",
+   "action": "decrement",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "castrate",
+      "value": 0
+     }
+    }
+   ],
+   "cmds": [
+    "statadd castrate 0"
+   ]
+  },
+  {
+   "step": 40,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"castrate\"]",
+   "action": "type",
+   "value": "250",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "castrate",
+      "value": 250
+     }
+    }
+   ],
+   "cmds": [
+    "statadd castrate 250"
+   ]
+  },
+  {
+   "step": 41,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"lifereplenish\"]",
+   "action": "max",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "lifereplenish",
+      "value": 1000
+     }
+    }
+   ],
+   "cmds": [
+    "stat lifereplenish 11"
+   ]
+  },
+  {
+   "step": 42,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"lifereplenish\"]",
+   "action": "min",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "lifereplenish",
+      "value": 0
+     }
+    }
+   ],
+   "cmds": [
+    "stat lifereplenish 1"
+   ]
+  },
+  {
+   "step": 43,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"lifereplenish\"]",
+   "action": "increment",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "lifereplenish",
+      "value": 5
+     }
+    }
+   ],
+   "cmds": [
+    "stat lifereplenish 1.05"
+   ]
+  },
+  {
+   "step": 44,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"lifereplenish\"]",
+   "action": "decrement",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "lifereplenish",
+      "value": 0
+     }
+    }
+   ],
+   "cmds": [
+    "stat lifereplenish 1"
+   ]
+  },
+  {
+   "step": 45,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"lifereplenish\"]",
+   "action": "type",
+   "value": "500",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "lifereplenish",
+      "value": 500
+     }
+    }
+   ],
+   "cmds": [
+    "stat lifereplenish 6"
+   ]
+  },
+  {
+   "step": 46,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"manareplenish\"]",
+   "action": "max",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "manareplenish",
+      "value": 1000
+     }
+    }
+   ],
+   "cmds": [
+    "stat manareplenish 11"
+   ]
+  },
+  {
+   "step": 47,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"manareplenish\"]",
+   "action": "min",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "manareplenish",
+      "value": 0
+     }
+    }
+   ],
+   "cmds": [
+    "stat manareplenish 1"
+   ]
+  },
+  {
+   "step": 48,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"manareplenish\"]",
+   "action": "increment",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "manareplenish",
+      "value": 5
+     }
+    }
+   ],
+   "cmds": [
+    "stat manareplenish 1.05"
+   ]
+  },
+  {
+   "step": 49,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"manareplenish\"]",
+   "action": "decrement",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "manareplenish",
+      "value": 0
+     }
+    }
+   ],
+   "cmds": [
+    "stat manareplenish 1"
+   ]
+  },
+  {
+   "step": 50,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"manareplenish\"]",
+   "action": "type",
+   "value": "500",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "manareplenish",
+      "value": 500
+     }
+    }
+   ],
+   "cmds": [
+    "stat manareplenish 6"
+   ]
+  },
+  {
+   "step": 51,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"defense\"]",
+   "action": "max",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "defense",
+      "value": 1000
+     }
+    }
+   ],
+   "cmds": [
+    "stat defense 11"
+   ]
+  },
+  {
+   "step": 52,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"defense\"]",
+   "action": "min",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "defense",
+      "value": 0
+     }
+    }
+   ],
+   "cmds": [
+    "stat defense 1"
+   ]
+  },
+  {
+   "step": 53,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"defense\"]",
+   "action": "increment",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "defense",
+      "value": 5
+     }
+    }
+   ],
+   "cmds": [
+    "stat defense 1.05"
+   ]
+  },
+  {
+   "step": 54,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"defense\"]",
+   "action": "decrement",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "defense",
+      "value": 0
+     }
+    }
+   ],
+   "cmds": [
+    "stat defense 1"
+   ]
+  },
+  {
+   "step": 55,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"defense\"]",
+   "action": "type",
+   "value": "500",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "defense",
+      "value": 500
+     }
+    }
+   ],
+   "cmds": [
+    "stat defense 6"
+   ]
+  },
+  {
+   "step": 56,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"critdamage\"]",
+   "action": "max",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "critdamage",
+      "value": 1000
+     }
+    }
+   ],
+   "cmds": [
+    "stat critdamage 11"
+   ]
+  },
+  {
+   "step": 57,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"critdamage\"]",
+   "action": "min",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "critdamage",
+      "value": 0
+     }
+    }
+   ],
+   "cmds": [
+    "stat critdamage 1"
+   ]
+  },
+  {
+   "step": 58,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"critdamage\"]",
+   "action": "increment",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "critdamage",
+      "value": 5
+     }
+    }
+   ],
+   "cmds": [
+    "stat critdamage 1.05"
+   ]
+  },
+  {
+   "step": 59,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"critdamage\"]",
+   "action": "decrement",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "critdamage",
+      "value": 0
+     }
+    }
+   ],
+   "cmds": [
+    "stat critdamage 1"
+   ]
+  },
+  {
+   "step": 60,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"critdamage\"]",
+   "action": "type",
+   "value": "500",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "critdamage",
+      "value": 500
+     }
+    }
+   ],
+   "cmds": [
+    "stat critdamage 6"
+   ]
+  },
+  {
+   "step": 61,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"critchance\"]",
+   "action": "max",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "critchance",
+      "value": 500
+     }
+    }
+   ],
+   "cmds": [
+    "stat critchance 6"
+   ]
+  },
+  {
+   "step": 62,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"critchance\"]",
+   "action": "min",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "critchance",
+      "value": 0
+     }
+    }
+   ],
+   "cmds": [
+    "stat critchance 1"
+   ]
+  },
+  {
+   "step": 63,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"critchance\"]",
+   "action": "increment",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "critchance",
+      "value": 5
+     }
+    }
+   ],
+   "cmds": [
+    "stat critchance 1.05"
+   ]
+  },
+  {
+   "step": 64,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"critchance\"]",
+   "action": "decrement",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "critchance",
+      "value": 0
+     }
+    }
+   ],
+   "cmds": [
+    "stat critchance 1"
+   ]
+  },
+  {
+   "step": 65,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"critchance\"]",
+   "action": "type",
+   "value": "250",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "critchance",
+      "value": 250
+     }
+    }
+   ],
+   "cmds": [
+    "stat critchance 3.5"
+   ]
+  },
+  {
+   "step": 66,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"spellcritdamage\"]",
+   "action": "max",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "spellcritdamage",
+      "value": 1000
+     }
+    }
+   ],
+   "cmds": [
+    "stat spellcritdamage 11"
+   ]
+  },
+  {
+   "step": 67,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"spellcritdamage\"]",
+   "action": "min",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "spellcritdamage",
+      "value": 0
+     }
+    }
+   ],
+   "cmds": [
+    "stat spellcritdamage 1"
+   ]
+  },
+  {
+   "step": 68,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"spellcritdamage\"]",
+   "action": "increment",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "spellcritdamage",
+      "value": 5
+     }
+    }
+   ],
+   "cmds": [
+    "stat spellcritdamage 1.05"
+   ]
+  },
+  {
+   "step": 69,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"spellcritdamage\"]",
+   "action": "decrement",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "spellcritdamage",
+      "value": 0
+     }
+    }
+   ],
+   "cmds": [
+    "stat spellcritdamage 1"
+   ]
+  },
+  {
+   "step": 70,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"spellcritdamage\"]",
+   "action": "type",
+   "value": "500",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "spellcritdamage",
+      "value": 500
+     }
+    }
+   ],
+   "cmds": [
+    "stat spellcritdamage 6"
+   ]
+  },
+  {
+   "step": 71,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"spellcritchance\"]",
+   "action": "max",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "spellcritchance",
+      "value": 500
+     }
+    }
+   ],
+   "cmds": [
+    "stat spellcritchance 6"
+   ]
+  },
+  {
+   "step": 72,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"spellcritchance\"]",
+   "action": "min",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "spellcritchance",
+      "value": 0
+     }
+    }
+   ],
+   "cmds": [
+    "stat spellcritchance 1"
+   ]
+  },
+  {
+   "step": 73,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"spellcritchance\"]",
+   "action": "increment",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "spellcritchance",
+      "value": 5
+     }
+    }
+   ],
+   "cmds": [
+    "stat spellcritchance 1.05"
+   ]
+  },
+  {
+   "step": 74,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"spellcritchance\"]",
+   "action": "decrement",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "spellcritchance",
+      "value": 0
+     }
+    }
+   ],
+   "cmds": [
+    "stat spellcritchance 1"
+   ]
+  },
+  {
+   "step": 75,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"spellcritchance\"]",
+   "action": "type",
+   "value": "250",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "percent_stats",
+      "key": "spellcritchance",
+      "value": 250
+     }
+    }
+   ],
+   "cmds": [
+    "stat spellcritchance 3.5"
+   ]
+  },
+  {
+   "step": 76,
+   "control": "#controlSearch",
+   "action": "search",
+   "value": "x",
+   "posts": [],
+   "cmds": []
+  },
+  {
+   "step": 77,
+   "control": "#controlSearch",
+   "action": "search",
+   "value": "",
+   "posts": [],
+   "cmds": []
+  },
+  {
+   "step": 78,
+   "control": "[data-control-filter=\"modified\"]",
+   "action": "click",
+   "posts": [],
+   "cmds": []
+  },
+  {
+   "step": 79,
+   "control": "[data-control-filter=\"all\"]",
+   "action": "click",
+   "posts": [],
+   "cmds": []
+  },
+  {
+   "step": 80,
+   "control": "tab:world",
+   "action": "click",
+   "posts": [],
+   "cmds": []
+  },
+  {
+   "step": 81,
+   "control": "#den_on",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "density_on",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "density 3"
+   ]
+  },
+  {
+   "step": 82,
+   "control": "#den_on",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "density_on",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "density 1"
+   ]
+  },
+  {
+   "step": 83,
+   "control": "#den",
+   "action": "max",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "density",
+      "value": 5
+     }
+    }
+   ],
+   "cmds": [
+    "density 1"
+   ]
+  },
+  {
+   "step": 84,
+   "control": "#den",
+   "action": "min",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "density",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "density 1"
+   ]
+  },
+  {
+   "step": 85,
+   "control": "#den",
+   "action": "increment",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "density",
+      "value": 1.5
+     }
+    }
+   ],
+   "cmds": [
+    "density 1"
+   ]
+  },
+  {
+   "step": 86,
+   "control": "#den",
+   "action": "decrement",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "density",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "density 1"
+   ]
+  },
+  {
+   "step": 87,
+   "control": "#den",
+   "action": "type",
+   "value": "3",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "density",
+      "value": 3
+     }
+    }
+   ],
+   "cmds": [
+    "density 1"
+   ]
+  },
+  {
+   "step": 88,
+   "control": "#rarity_rare",
+   "action": "max",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "rarity_rare",
+      "value": 100
+     }
+    }
+   ],
+   "cmds": [
+    "rarity 100 0"
+   ]
+  },
+  {
+   "step": 89,
+   "control": "#rarity_rare",
+   "action": "min",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "rarity_rare",
+      "value": 0
+     }
+    }
+   ],
+   "cmds": [
+    "rarity off"
+   ]
+  },
+  {
+   "step": 90,
+   "control": "#rarity_rare",
+   "action": "increment",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "rarity_rare",
+      "value": 5
+     }
+    }
+   ],
+   "cmds": [
+    "rarity 5 0"
+   ]
+  },
+  {
+   "step": 91,
+   "control": "#rarity_rare",
+   "action": "decrement",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "rarity_rare",
+      "value": 0
+     }
+    }
+   ],
+   "cmds": [
+    "rarity off"
+   ]
+  },
+  {
+   "step": 92,
+   "control": "#rarity_rare",
+   "action": "type",
+   "value": "50",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "rarity_rare",
+      "value": 50
+     }
+    }
+   ],
+   "cmds": [
+    "rarity 50 0"
+   ]
+  },
+  {
+   "step": 93,
+   "control": "#rarity_ancient",
+   "action": "max",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "rarity_ancient",
+      "value": 100
+     }
+    }
+   ],
+   "cmds": [
+    "rarity 0 100"
+   ]
+  },
+  {
+   "step": 94,
+   "control": "#rarity_ancient",
+   "action": "min",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "rarity_ancient",
+      "value": 0
+     }
+    }
+   ],
+   "cmds": [
+    "rarity off"
+   ]
+  },
+  {
+   "step": 95,
+   "control": "#rarity_ancient",
+   "action": "increment",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "rarity_ancient",
+      "value": 5
+     }
+    }
+   ],
+   "cmds": [
+    "rarity 0 5"
+   ]
+  },
+  {
+   "step": 96,
+   "control": "#rarity_ancient",
+   "action": "decrement",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "rarity_ancient",
+      "value": 0
+     }
+    }
+   ],
+   "cmds": [
+    "rarity off"
+   ]
+  },
+  {
+   "step": 97,
+   "control": "#rarity_ancient",
+   "action": "type",
+   "value": "50",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "rarity_ancient",
+      "value": 50
+     }
+    }
+   ],
+   "cmds": [
+    "rarity 0 50"
+   ]
+  },
+  {
+   "step": 98,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"1\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "1",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff 1"
+   ]
+  },
+  {
+   "step": 99,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"1\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "1",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff "
+   ]
+  },
+  {
+   "step": 100,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"2\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "2",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff 2"
+   ]
+  },
+  {
+   "step": 101,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"2\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "2",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff "
+   ]
+  },
+  {
+   "step": 102,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"3\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "3",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff 3"
+   ]
+  },
+  {
+   "step": 103,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"3\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "3",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff "
+   ]
+  },
+  {
+   "step": 104,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"4\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "4",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff 4"
+   ]
+  },
+  {
+   "step": 105,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"4\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "4",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff "
+   ]
+  },
+  {
+   "step": 106,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"5\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "5",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff 5"
+   ]
+  },
+  {
+   "step": 107,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"5\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "5",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff "
+   ]
+  },
+  {
+   "step": 108,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"6\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "6",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff 6"
+   ]
+  },
+  {
+   "step": 109,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"6\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "6",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff "
+   ]
+  },
+  {
+   "step": 110,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"7\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "7",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff 7"
+   ]
+  },
+  {
+   "step": 111,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"7\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "7",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff "
+   ]
+  },
+  {
+   "step": 112,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"8\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "8",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff 8"
+   ]
+  },
+  {
+   "step": 113,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"8\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "8",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff "
+   ]
+  },
+  {
+   "step": 114,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"9\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "9",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff 9"
+   ]
+  },
+  {
+   "step": 115,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"9\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "9",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff "
+   ]
+  },
+  {
+   "step": 116,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"10\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "10",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff 10"
+   ]
+  },
+  {
+   "step": 117,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"10\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "10",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff "
+   ]
+  },
+  {
+   "step": 118,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"11\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "11",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff 11"
+   ]
+  },
+  {
+   "step": 119,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"11\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "11",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff "
+   ]
+  },
+  {
+   "step": 120,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"12\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "12",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff 12"
+   ]
+  },
+  {
+   "step": 121,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"12\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "12",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff "
+   ]
+  },
+  {
+   "step": 122,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"13\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "13",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff 13"
+   ]
+  },
+  {
+   "step": 123,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"13\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "13",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff "
+   ]
+  },
+  {
+   "step": 124,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"14\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "14",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff 14"
+   ]
+  },
+  {
+   "step": 125,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"14\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "14",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff "
+   ]
+  },
+  {
+   "step": 126,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"15\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "15",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff 15"
+   ]
+  },
+  {
+   "step": 127,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"15\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "15",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff "
+   ]
+  },
+  {
+   "step": 128,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"16\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "16",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff 16"
+   ]
+  },
+  {
+   "step": 129,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"16\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "16",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff "
+   ]
+  },
+  {
+   "step": 130,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"17\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "17",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff 17"
+   ]
+  },
+  {
+   "step": 131,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"17\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "17",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff "
+   ]
+  },
+  {
+   "step": 132,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"18\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "18",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff 18"
+   ]
+  },
+  {
+   "step": 133,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"18\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "18",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff "
+   ]
+  },
+  {
+   "step": 134,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"19\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "19",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff 19"
+   ]
+  },
+  {
+   "step": 135,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"19\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "19",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff "
+   ]
+  },
+  {
+   "step": 136,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"20\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "20",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff 20"
+   ]
+  },
+  {
+   "step": 137,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"20\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "20",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff "
+   ]
+  },
+  {
+   "step": 138,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"21\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "21",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff 21"
+   ]
+  },
+  {
+   "step": 139,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"21\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "21",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff "
+   ]
+  },
+  {
+   "step": 140,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"22\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "22",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff 22"
+   ]
+  },
+  {
+   "step": 141,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"22\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "22",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff "
+   ]
+  },
+  {
+   "step": 142,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"23\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "23",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff 23"
+   ]
+  },
+  {
+   "step": 143,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"23\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "23",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff "
+   ]
+  },
+  {
+   "step": 144,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"24\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "24",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff 24"
+   ]
+  },
+  {
+   "step": 145,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"24\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "24",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff "
+   ]
+  },
+  {
+   "step": 146,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"25\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "25",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff 25"
+   ]
+  },
+  {
+   "step": 147,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"25\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "25",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff "
+   ]
+  },
+  {
+   "step": 148,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"1\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "1",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff 1"
+   ]
+  },
+  {
+   "step": 149,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"1\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "1",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff "
+   ]
+  },
+  {
+   "step": 150,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"2\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "2",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff 2"
+   ]
+  },
+  {
+   "step": 151,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"2\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "2",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff "
+   ]
+  },
+  {
+   "step": 152,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"3\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "3",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff 3"
+   ]
+  },
+  {
+   "step": 153,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"3\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "3",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff "
+   ]
+  },
+  {
+   "step": 154,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"4\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "4",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff 4"
+   ]
+  },
+  {
+   "step": 155,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"4\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "4",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff "
+   ]
+  },
+  {
+   "step": 156,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"5\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "5",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff 5"
+   ]
+  },
+  {
+   "step": 157,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"5\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "5",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff "
+   ]
+  },
+  {
+   "step": 158,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"6\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "6",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff 6"
+   ]
+  },
+  {
+   "step": 159,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"6\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "6",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff "
+   ]
+  },
+  {
+   "step": 160,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"7\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "7",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff 7"
+   ]
+  },
+  {
+   "step": 161,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"7\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "7",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff "
+   ]
+  },
+  {
+   "step": 162,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"8\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "8",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff 8"
+   ]
+  },
+  {
+   "step": 163,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"8\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "8",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff "
+   ]
+  },
+  {
+   "step": 164,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"9\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "9",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff 9"
+   ]
+  },
+  {
+   "step": 165,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"9\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "9",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff "
+   ]
+  },
+  {
+   "step": 166,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"10\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "10",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff 10"
+   ]
+  },
+  {
+   "step": 167,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"10\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "10",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff "
+   ]
+  },
+  {
+   "step": 168,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"11\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "11",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff 11"
+   ]
+  },
+  {
+   "step": 169,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"11\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "11",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff "
+   ]
+  },
+  {
+   "step": 170,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"12\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "12",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff 12"
+   ]
+  },
+  {
+   "step": 171,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"12\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "12",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff "
+   ]
+  },
+  {
+   "step": 172,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"13\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "13",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff 13"
+   ]
+  },
+  {
+   "step": 173,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"13\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "13",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff "
+   ]
+  },
+  {
+   "step": 174,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"14\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "14",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff 14"
+   ]
+  },
+  {
+   "step": 175,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"14\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "14",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff "
+   ]
+  },
+  {
+   "step": 176,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"15\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "15",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff 15"
+   ]
+  },
+  {
+   "step": 177,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"15\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "15",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff "
+   ]
+  },
+  {
+   "step": 178,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"16\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "16",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff 16"
+   ]
+  },
+  {
+   "step": 179,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"16\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "16",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff "
+   ]
+  },
+  {
+   "step": 180,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"17\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "17",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff 17"
+   ]
+  },
+  {
+   "step": 181,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"17\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "17",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff "
+   ]
+  },
+  {
+   "step": 182,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"18\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "18",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff 18"
+   ]
+  },
+  {
+   "step": 183,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"18\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "18",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff "
+   ]
+  },
+  {
+   "step": 184,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"19\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "19",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff 19"
+   ]
+  },
+  {
+   "step": 185,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"19\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "19",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff "
+   ]
+  },
+  {
+   "step": 186,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"20\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "20",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff 20"
+   ]
+  },
+  {
+   "step": 187,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"20\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "20",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff "
+   ]
+  },
+  {
+   "step": 188,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"21\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "21",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff 21"
+   ]
+  },
+  {
+   "step": 189,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"21\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "21",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff "
+   ]
+  },
+  {
+   "step": 190,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"22\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "22",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff 22"
+   ]
+  },
+  {
+   "step": 191,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"22\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "22",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff "
+   ]
+  },
+  {
+   "step": 192,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"23\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "23",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff 23"
+   ]
+  },
+  {
+   "step": 193,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"23\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "23",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff "
+   ]
+  },
+  {
+   "step": 194,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"24\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "24",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff 24"
+   ]
+  },
+  {
+   "step": 195,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"24\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "24",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff "
+   ]
+  },
+  {
+   "step": 196,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"25\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "25",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff 25"
+   ]
+  },
+  {
+   "step": 197,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"25\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "25",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff "
+   ]
+  },
+  {
+   "step": 198,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"26\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "26",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff 26"
+   ]
+  },
+  {
+   "step": 199,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"26\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "26",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff "
+   ]
+  },
+  {
+   "step": 200,
+   "control": "#enemyspeed",
+   "action": "max",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "enemy_speed",
+      "value": 300
+     }
+    }
+   ],
+   "cmds": [
+    "enemyspeed 4 ct"
+   ]
+  },
+  {
+   "step": 201,
+   "control": "#enemyspeed",
+   "action": "min",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "enemy_speed",
+      "value": 0
+     }
+    }
+   ],
+   "cmds": [
+    "enemyspeed 1 ct"
+   ]
+  },
+  {
+   "step": 202,
+   "control": "#enemyspeed",
+   "action": "increment",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "enemy_speed",
+      "value": 5
+     }
+    }
+   ],
+   "cmds": [
+    "enemyspeed 1.05 ct"
+   ]
+  },
+  {
+   "step": 203,
+   "control": "#enemyspeed",
+   "action": "decrement",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "enemy_speed",
+      "value": 0
+     }
+    }
+   ],
+   "cmds": [
+    "enemyspeed 1 ct"
+   ]
+  },
+  {
+   "step": 204,
+   "control": "#enemyspeed",
+   "action": "type",
+   "value": "150",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "enemy_speed",
+      "value": 150
+     }
+    }
+   ],
+   "cmds": [
+    "enemyspeed 2.5 ct"
+   ]
+  },
+  {
+   "step": 205,
+   "control": "#enemyspeed_ct",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "enemy_speed_ct",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "enemyspeed 2.5 all"
+   ]
+  },
+  {
+   "step": 206,
+   "control": "#enemyspeed_ct",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "enemy_speed_ct",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "enemyspeed 2.5 ct"
+   ]
+  },
+  {
+   "step": 207,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"rift\"]",
+   "action": "max",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "spawners",
+      "key": "rift",
+      "value": 100
+     }
+    }
+   ],
+   "cmds": [
+    "specialrate rift 100"
+   ]
+  },
+  {
+   "step": 208,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"rift\"]",
+   "action": "min",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "spawners",
+      "key": "rift",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "specialrate rift 1"
+   ]
+  },
+  {
+   "step": 209,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"rift\"]",
+   "action": "increment",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "spawners",
+      "key": "rift",
+      "value": 2
+     }
+    }
+   ],
+   "cmds": [
+    "specialrate rift 2"
+   ]
+  },
+  {
+   "step": 210,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"rift\"]",
+   "action": "decrement",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "spawners",
+      "key": "rift",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "specialrate rift 1"
+   ]
+  },
+  {
+   "step": 211,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"rift\"]",
+   "action": "type",
+   "value": "50.5",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "spawners",
+      "key": "rift",
+      "value": 50.5
+     }
+    }
+   ],
+   "cmds": [
+    "specialrate rift 50"
+   ]
+  },
+  {
+   "step": 212,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"battlefield\"]",
+   "action": "max",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "spawners",
+      "key": "battlefield",
+      "value": 100
+     }
+    }
+   ],
+   "cmds": [
+    "specialrate battlefield 100"
+   ]
+  },
+  {
+   "step": 213,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"battlefield\"]",
+   "action": "min",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "spawners",
+      "key": "battlefield",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "specialrate battlefield 1"
+   ]
+  },
+  {
+   "step": 214,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"battlefield\"]",
+   "action": "increment",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "spawners",
+      "key": "battlefield",
+      "value": 2
+     }
+    }
+   ],
+   "cmds": [
+    "specialrate battlefield 2"
+   ]
+  },
+  {
+   "step": 215,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"battlefield\"]",
+   "action": "decrement",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "spawners",
+      "key": "battlefield",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "specialrate battlefield 1"
+   ]
+  },
+  {
+   "step": 216,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"battlefield\"]",
+   "action": "type",
+   "value": "50.5",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "spawners",
+      "key": "battlefield",
+      "value": 50.5
+     }
+    }
+   ],
+   "cmds": [
+    "specialrate battlefield 50"
+   ]
+  },
+  {
+   "step": 217,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"cursedorb\"]",
+   "action": "max",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "spawners",
+      "key": "cursedorb",
+      "value": 100
+     }
+    }
+   ],
+   "cmds": [
+    "specialrate cursedorb 100"
+   ]
+  },
+  {
+   "step": 218,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"cursedorb\"]",
+   "action": "min",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "spawners",
+      "key": "cursedorb",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "specialrate cursedorb 1"
+   ]
+  },
+  {
+   "step": 219,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"cursedorb\"]",
+   "action": "increment",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "spawners",
+      "key": "cursedorb",
+      "value": 2
+     }
+    }
+   ],
+   "cmds": [
+    "specialrate cursedorb 2"
+   ]
+  },
+  {
+   "step": 220,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"cursedorb\"]",
+   "action": "decrement",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "spawners",
+      "key": "cursedorb",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "specialrate cursedorb 1"
+   ]
+  },
+  {
+   "step": 221,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"cursedorb\"]",
+   "action": "type",
+   "value": "50.5",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "spawners",
+      "key": "cursedorb",
+      "value": 50.5
+     }
+    }
+   ],
+   "cmds": [
+    "specialrate cursedorb 50"
+   ]
+  },
+  {
+   "step": 222,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"summonportal\"]",
+   "action": "max",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "spawners",
+      "key": "summonportal",
+      "value": 100
+     }
+    }
+   ],
+   "cmds": [
+    "specialrate summonportal 100"
+   ]
+  },
+  {
+   "step": 223,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"summonportal\"]",
+   "action": "min",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "spawners",
+      "key": "summonportal",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "specialrate summonportal 1"
+   ]
+  },
+  {
+   "step": 224,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"summonportal\"]",
+   "action": "increment",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "spawners",
+      "key": "summonportal",
+      "value": 2
+     }
+    }
+   ],
+   "cmds": [
+    "specialrate summonportal 2"
+   ]
+  },
+  {
+   "step": 225,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"summonportal\"]",
+   "action": "decrement",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "spawners",
+      "key": "summonportal",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "specialrate summonportal 1"
+   ]
+  },
+  {
+   "step": 226,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"summonportal\"]",
+   "action": "type",
+   "value": "50.5",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "spawners",
+      "key": "summonportal",
+      "value": 50.5
+     }
+    }
+   ],
+   "cmds": [
+    "specialrate summonportal 50"
+   ]
+  },
+  {
+   "step": 227,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"chaospillars\"]",
+   "action": "max",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "spawners",
+      "key": "chaospillars",
+      "value": 100
+     }
+    }
+   ],
+   "cmds": [
+    "specialrate chaospillars 100"
+   ]
+  },
+  {
+   "step": 228,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"chaospillars\"]",
+   "action": "min",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "spawners",
+      "key": "chaospillars",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "specialrate chaospillars 1"
+   ]
+  },
+  {
+   "step": 229,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"chaospillars\"]",
+   "action": "increment",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "spawners",
+      "key": "chaospillars",
+      "value": 2
+     }
+    }
+   ],
+   "cmds": [
+    "specialrate chaospillars 2"
+   ]
+  },
+  {
+   "step": 230,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"chaospillars\"]",
+   "action": "decrement",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "spawners",
+      "key": "chaospillars",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "specialrate chaospillars 1"
+   ]
+  },
+  {
+   "step": 231,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"chaospillars\"]",
+   "action": "type",
+   "value": "50.5",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "spawners",
+      "key": "chaospillars",
+      "value": 50.5
+     }
+    }
+   ],
+   "cmds": [
+    "specialrate chaospillars 50"
+   ]
+  },
+  {
+   "step": 232,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"chaostower\"]",
+   "action": "max",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "spawners",
+      "key": "chaostower",
+      "value": 100
+     }
+    }
+   ],
+   "cmds": [
+    "specialrate chaostower 100"
+   ]
+  },
+  {
+   "step": 233,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"chaostower\"]",
+   "action": "min",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "spawners",
+      "key": "chaostower",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "specialrate chaostower 1"
+   ]
+  },
+  {
+   "step": 234,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"chaostower\"]",
+   "action": "increment",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "spawners",
+      "key": "chaostower",
+      "value": 2
+     }
+    }
+   ],
+   "cmds": [
+    "specialrate chaostower 2"
+   ]
+  },
+  {
+   "step": 235,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"chaostower\"]",
+   "action": "decrement",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "spawners",
+      "key": "chaostower",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "specialrate chaostower 1"
+   ]
+  },
+  {
+   "step": 236,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"chaostower\"]",
+   "action": "type",
+   "value": "50.5",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "spawners",
+      "key": "chaostower",
+      "value": 50.5
+     }
+    }
+   ],
+   "cmds": [
+    "specialrate chaostower 50"
+   ]
+  },
+  {
+   "step": 237,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"shadowrealm\"]",
+   "action": "max",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "spawners",
+      "key": "shadowrealm",
+      "value": 100
+     }
+    }
+   ],
+   "cmds": [
+    "specialrate shadowrealm 100"
+   ]
+  },
+  {
+   "step": 238,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"shadowrealm\"]",
+   "action": "min",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "spawners",
+      "key": "shadowrealm",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "specialrate shadowrealm 1"
+   ]
+  },
+  {
+   "step": 239,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"shadowrealm\"]",
+   "action": "increment",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "spawners",
+      "key": "shadowrealm",
+      "value": 2
+     }
+    }
+   ],
+   "cmds": [
+    "specialrate shadowrealm 2"
+   ]
+  },
+  {
+   "step": 240,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"shadowrealm\"]",
+   "action": "decrement",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "spawners",
+      "key": "shadowrealm",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "specialrate shadowrealm 1"
+   ]
+  },
+  {
+   "step": 241,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"shadowrealm\"]",
+   "action": "type",
+   "value": "50.5",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "spawners",
+      "key": "shadowrealm",
+      "value": 50.5
+     }
+    }
+   ],
+   "cmds": [
+    "specialrate shadowrealm 50"
+   ]
+  },
+  {
+   "step": 242,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"1\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "1",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff 1"
+   ]
+  },
+  {
+   "step": 243,
+   "control": "#satbuffAll",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "keys": [
+       "1",
+       "2",
+       "3",
+       "4",
+       "5",
+       "6",
+       "7",
+       "8",
+       "9",
+       "10",
+       "11",
+       "12",
+       "13",
+       "14",
+       "15",
+       "16",
+       "17",
+       "18",
+       "19",
+       "20",
+       "21",
+       "22",
+       "23",
+       "24",
+       "25"
+      ],
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff "
+   ]
+  },
+  {
+   "step": 244,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"1\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "1",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff 1"
+   ]
+  },
+  {
+   "step": 245,
+   "control": "#satdebuffAll",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "keys": [
+       "1",
+       "2",
+       "3",
+       "4",
+       "5",
+       "6",
+       "7",
+       "8",
+       "9",
+       "10",
+       "11",
+       "12",
+       "13",
+       "14",
+       "15",
+       "16",
+       "17",
+       "18",
+       "19",
+       "20",
+       "21",
+       "22",
+       "23",
+       "24",
+       "25",
+       "26"
+      ],
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff "
+   ]
+  },
+  {
+   "step": 246,
+   "control": "input[data-sat-polarity=\"buff\"][data-sat-id=\"1\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "key": "1",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff 1"
+   ]
+  },
+  {
+   "step": 247,
+   "control": "input[data-sat-polarity=\"debuff\"][data-sat-id=\"1\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "key": "1",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "satmods debuff 1"
+   ]
+  },
+  {
+   "step": 248,
+   "control": "#satRestore",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "buff",
+      "keys": [
+       "1",
+       "2",
+       "3",
+       "4",
+       "5",
+       "6",
+       "7",
+       "8",
+       "9",
+       "10",
+       "11",
+       "12",
+       "13",
+       "14",
+       "15",
+       "16",
+       "17",
+       "18",
+       "19",
+       "20",
+       "21",
+       "22",
+       "23",
+       "24",
+       "25"
+      ],
+      "value": true
+     }
+    },
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "satanic_mods",
+      "polarity": "debuff",
+      "keys": [
+       "1",
+       "2",
+       "3",
+       "4",
+       "5",
+       "6",
+       "7",
+       "8",
+       "9",
+       "10",
+       "11",
+       "12",
+       "13",
+       "14",
+       "15",
+       "16",
+       "17",
+       "18",
+       "19",
+       "20",
+       "21",
+       "22",
+       "23",
+       "24",
+       "25",
+       "26"
+      ],
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "satmods buff ",
+    "satmods debuff "
+   ]
+  },
+  {
+   "step": 249,
+   "control": "tab:loot",
+   "action": "click",
+   "posts": [],
+   "cmds": []
+  },
+  {
+   "step": 250,
+   "control": "input[type=range][data-sec=\"drops\"][data-key=\"gold\"]",
+   "action": "max",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "drops",
+      "key": "gold",
+      "value": 100
+     }
+    }
+   ],
+   "cmds": [
+    "dropmult gold 100"
+   ]
+  },
+  {
+   "step": 251,
+   "control": "input[type=range][data-sec=\"drops\"][data-key=\"gold\"]",
+   "action": "min",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "drops",
+      "key": "gold",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "dropmult gold 1"
+   ]
+  },
+  {
+   "step": 252,
+   "control": "input[type=range][data-sec=\"drops\"][data-key=\"gold\"]",
+   "action": "increment",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "drops",
+      "key": "gold",
+      "value": 2
+     }
+    }
+   ],
+   "cmds": [
+    "dropmult gold 2"
+   ]
+  },
+  {
+   "step": 253,
+   "control": "input[type=range][data-sec=\"drops\"][data-key=\"gold\"]",
+   "action": "decrement",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "drops",
+      "key": "gold",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "dropmult gold 1"
+   ]
+  },
+  {
+   "step": 254,
+   "control": "input[type=range][data-sec=\"drops\"][data-key=\"gold\"]",
+   "action": "type",
+   "value": "50.5",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "drops",
+      "key": "gold",
+      "value": 50.5
+     }
+    }
+   ],
+   "cmds": [
+    "dropmult gold 50"
+   ]
+  },
+  {
+   "step": 255,
+   "control": "input[type=range][data-sec=\"drops\"][data-key=\"mining_ore\"]",
+   "action": "max",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "drops",
+      "key": "mining_ore",
+      "value": 10
+     }
+    }
+   ],
+   "cmds": [
+    "miningore 10"
+   ]
+  },
+  {
+   "step": 256,
+   "control": "input[type=range][data-sec=\"drops\"][data-key=\"mining_ore\"]",
+   "action": "min",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "drops",
+      "key": "mining_ore",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "miningore 1"
+   ]
+  },
+  {
+   "step": 257,
+   "control": "input[type=range][data-sec=\"drops\"][data-key=\"mining_ore\"]",
+   "action": "increment",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "drops",
+      "key": "mining_ore",
+      "value": 2
+     }
+    }
+   ],
+   "cmds": [
+    "miningore 2"
+   ]
+  },
+  {
+   "step": 258,
+   "control": "input[type=range][data-sec=\"drops\"][data-key=\"mining_ore\"]",
+   "action": "decrement",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "drops",
+      "key": "mining_ore",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "miningore 1"
+   ]
+  },
+  {
+   "step": 259,
+   "control": "input[type=range][data-sec=\"drops\"][data-key=\"mining_ore\"]",
+   "action": "type",
+   "value": "5.5",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "drops",
+      "key": "mining_ore",
+      "value": 5.5
+     }
+    }
+   ],
+   "cmds": [
+    "miningore 5"
+   ]
+  },
+  {
+   "step": 260,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"dungeon\"]",
+   "action": "max",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "dungeon",
+      "value": 100
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 100",
+    "droprate group angelic 1",
+    "droprate group chaos 1",
+    "droprate group bifrost 1",
+    "droprate group relic 1",
+    "droprate group rune 1",
+    "droprate group stone 1",
+    "droprate group bossgem 1",
+    "droprate group orb 1",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 261,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"dungeon\"]",
+   "action": "min",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "dungeon",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey off",
+    "droprate group dungeon 1",
+    "droprate group angelic 1",
+    "droprate group chaos 1",
+    "droprate group bifrost 1",
+    "droprate group relic 1",
+    "droprate group rune 1",
+    "droprate group stone 1",
+    "droprate group bossgem 1",
+    "droprate group orb 1",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 262,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"dungeon\"]",
+   "action": "increment",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "dungeon",
+      "value": 2
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 2",
+    "droprate group angelic 1",
+    "droprate group chaos 1",
+    "droprate group bifrost 1",
+    "droprate group relic 1",
+    "droprate group rune 1",
+    "droprate group stone 1",
+    "droprate group bossgem 1",
+    "droprate group orb 1",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 263,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"dungeon\"]",
+   "action": "decrement",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "dungeon",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey off",
+    "droprate group dungeon 1",
+    "droprate group angelic 1",
+    "droprate group chaos 1",
+    "droprate group bifrost 1",
+    "droprate group relic 1",
+    "droprate group rune 1",
+    "droprate group stone 1",
+    "droprate group bossgem 1",
+    "droprate group orb 1",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 264,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"dungeon\"]",
+   "action": "type",
+   "value": "50.5",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "dungeon",
+      "value": 50.5
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 1",
+    "droprate group chaos 1",
+    "droprate group bifrost 1",
+    "droprate group relic 1",
+    "droprate group rune 1",
+    "droprate group stone 1",
+    "droprate group bossgem 1",
+    "droprate group orb 1",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 265,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"angelic\"]",
+   "action": "max",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "angelic",
+      "value": 100
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 100",
+    "droprate group chaos 1",
+    "droprate group bifrost 1",
+    "droprate group relic 1",
+    "droprate group rune 1",
+    "droprate group stone 1",
+    "droprate group bossgem 1",
+    "droprate group orb 1",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 266,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"angelic\"]",
+   "action": "min",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "angelic",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 1",
+    "droprate group chaos 1",
+    "droprate group bifrost 1",
+    "droprate group relic 1",
+    "droprate group rune 1",
+    "droprate group stone 1",
+    "droprate group bossgem 1",
+    "droprate group orb 1",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 267,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"angelic\"]",
+   "action": "increment",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "angelic",
+      "value": 2
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 2",
+    "droprate group chaos 1",
+    "droprate group bifrost 1",
+    "droprate group relic 1",
+    "droprate group rune 1",
+    "droprate group stone 1",
+    "droprate group bossgem 1",
+    "droprate group orb 1",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 268,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"angelic\"]",
+   "action": "decrement",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "angelic",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 1",
+    "droprate group chaos 1",
+    "droprate group bifrost 1",
+    "droprate group relic 1",
+    "droprate group rune 1",
+    "droprate group stone 1",
+    "droprate group bossgem 1",
+    "droprate group orb 1",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 269,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"angelic\"]",
+   "action": "type",
+   "value": "50.5",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "angelic",
+      "value": 50.5
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 1",
+    "droprate group bifrost 1",
+    "droprate group relic 1",
+    "droprate group rune 1",
+    "droprate group stone 1",
+    "droprate group bossgem 1",
+    "droprate group orb 1",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 270,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"chaos\"]",
+   "action": "max",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "chaos",
+      "value": 100
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 100",
+    "droprate group bifrost 1",
+    "droprate group relic 1",
+    "droprate group rune 1",
+    "droprate group stone 1",
+    "droprate group bossgem 1",
+    "droprate group orb 1",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 271,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"chaos\"]",
+   "action": "min",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "chaos",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 1",
+    "droprate group bifrost 1",
+    "droprate group relic 1",
+    "droprate group rune 1",
+    "droprate group stone 1",
+    "droprate group bossgem 1",
+    "droprate group orb 1",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 272,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"chaos\"]",
+   "action": "increment",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "chaos",
+      "value": 2
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 2",
+    "droprate group bifrost 1",
+    "droprate group relic 1",
+    "droprate group rune 1",
+    "droprate group stone 1",
+    "droprate group bossgem 1",
+    "droprate group orb 1",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 273,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"chaos\"]",
+   "action": "decrement",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "chaos",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 1",
+    "droprate group bifrost 1",
+    "droprate group relic 1",
+    "droprate group rune 1",
+    "droprate group stone 1",
+    "droprate group bossgem 1",
+    "droprate group orb 1",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 274,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"chaos\"]",
+   "action": "type",
+   "value": "50.5",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "chaos",
+      "value": 50.5
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 1",
+    "droprate group relic 1",
+    "droprate group rune 1",
+    "droprate group stone 1",
+    "droprate group bossgem 1",
+    "droprate group orb 1",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 275,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"bifrost\"]",
+   "action": "max",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "bifrost",
+      "value": 100
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 100",
+    "droprate group relic 1",
+    "droprate group rune 1",
+    "droprate group stone 1",
+    "droprate group bossgem 1",
+    "droprate group orb 1",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 276,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"bifrost\"]",
+   "action": "min",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "bifrost",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 1",
+    "droprate group relic 1",
+    "droprate group rune 1",
+    "droprate group stone 1",
+    "droprate group bossgem 1",
+    "droprate group orb 1",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 277,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"bifrost\"]",
+   "action": "increment",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "bifrost",
+      "value": 2
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 2",
+    "droprate group relic 1",
+    "droprate group rune 1",
+    "droprate group stone 1",
+    "droprate group bossgem 1",
+    "droprate group orb 1",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 278,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"bifrost\"]",
+   "action": "decrement",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "bifrost",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 1",
+    "droprate group relic 1",
+    "droprate group rune 1",
+    "droprate group stone 1",
+    "droprate group bossgem 1",
+    "droprate group orb 1",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 279,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"bifrost\"]",
+   "action": "type",
+   "value": "50.5",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "bifrost",
+      "value": 50.5
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 1",
+    "droprate group rune 1",
+    "droprate group stone 1",
+    "droprate group bossgem 1",
+    "droprate group orb 1",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 280,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"relic\"]",
+   "action": "max",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "relic",
+      "value": 100
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 100",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 100",
+    "droprate group rune 1",
+    "droprate group stone 1",
+    "droprate group bossgem 1",
+    "droprate group orb 1",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 281,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"relic\"]",
+   "action": "min",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "relic",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 1",
+    "droprate group rune 1",
+    "droprate group stone 1",
+    "droprate group bossgem 1",
+    "droprate group orb 1",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 282,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"relic\"]",
+   "action": "increment",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "relic",
+      "value": 2
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 2",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 2",
+    "droprate group rune 1",
+    "droprate group stone 1",
+    "droprate group bossgem 1",
+    "droprate group orb 1",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 283,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"relic\"]",
+   "action": "decrement",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "relic",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 1",
+    "droprate group rune 1",
+    "droprate group stone 1",
+    "droprate group bossgem 1",
+    "droprate group orb 1",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 284,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"relic\"]",
+   "action": "type",
+   "value": "50.5",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "relic",
+      "value": 50.5
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 1",
+    "droprate group stone 1",
+    "droprate group bossgem 1",
+    "droprate group orb 1",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 285,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"rune\"]",
+   "action": "max",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "rune",
+      "value": 100
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 100",
+    "droprate group stone 1",
+    "droprate group bossgem 1",
+    "droprate group orb 1",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 286,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"rune\"]",
+   "action": "min",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "rune",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 1",
+    "droprate group stone 1",
+    "droprate group bossgem 1",
+    "droprate group orb 1",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 287,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"rune\"]",
+   "action": "increment",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "rune",
+      "value": 2
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 2",
+    "droprate group stone 1",
+    "droprate group bossgem 1",
+    "droprate group orb 1",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 288,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"rune\"]",
+   "action": "decrement",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "rune",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 1",
+    "droprate group stone 1",
+    "droprate group bossgem 1",
+    "droprate group orb 1",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 289,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"rune\"]",
+   "action": "type",
+   "value": "50.5",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "rune",
+      "value": 50.5
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 50",
+    "droprate group stone 1",
+    "droprate group bossgem 1",
+    "droprate group orb 1",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 290,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"stone\"]",
+   "action": "max",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "stone",
+      "value": 100
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 50",
+    "droprate group stone 100",
+    "droprate group bossgem 1",
+    "droprate group orb 1",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 291,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"stone\"]",
+   "action": "min",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "stone",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 50",
+    "droprate group stone 1",
+    "droprate group bossgem 1",
+    "droprate group orb 1",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 292,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"stone\"]",
+   "action": "increment",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "stone",
+      "value": 2
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 50",
+    "droprate group stone 2",
+    "droprate group bossgem 1",
+    "droprate group orb 1",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 293,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"stone\"]",
+   "action": "decrement",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "stone",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 50",
+    "droprate group stone 1",
+    "droprate group bossgem 1",
+    "droprate group orb 1",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 294,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"stone\"]",
+   "action": "type",
+   "value": "50.5",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "stone",
+      "value": 50.5
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 50",
+    "droprate group stone 50",
+    "droprate group bossgem 1",
+    "droprate group orb 1",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 295,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"bossgem\"]",
+   "action": "max",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "bossgem",
+      "value": 100
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 50",
+    "droprate group stone 50",
+    "droprate group bossgem 100",
+    "droprate group orb 1",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 296,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"bossgem\"]",
+   "action": "min",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "bossgem",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 50",
+    "droprate group stone 50",
+    "droprate group bossgem 1",
+    "droprate group orb 1",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 297,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"bossgem\"]",
+   "action": "increment",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "bossgem",
+      "value": 2
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 50",
+    "droprate group stone 50",
+    "droprate group bossgem 2",
+    "droprate group orb 1",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 298,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"bossgem\"]",
+   "action": "decrement",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "bossgem",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 50",
+    "droprate group stone 50",
+    "droprate group bossgem 1",
+    "droprate group orb 1",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 299,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"bossgem\"]",
+   "action": "type",
+   "value": "50.5",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "bossgem",
+      "value": 50.5
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 50",
+    "droprate group stone 50",
+    "droprate group bossgem 50",
+    "droprate group orb 1",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 300,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"orb\"]",
+   "action": "max",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "orb",
+      "value": 100
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 50",
+    "droprate group stone 50",
+    "droprate group bossgem 50",
+    "droprate group orb 100",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 301,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"orb\"]",
+   "action": "min",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "orb",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 50",
+    "droprate group stone 50",
+    "droprate group bossgem 50",
+    "droprate group orb 1",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 302,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"orb\"]",
+   "action": "increment",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "orb",
+      "value": 2
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 50",
+    "droprate group stone 50",
+    "droprate group bossgem 50",
+    "droprate group orb 2",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 303,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"orb\"]",
+   "action": "decrement",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "orb",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 50",
+    "droprate group stone 50",
+    "droprate group bossgem 50",
+    "droprate group orb 1",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 304,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"orb\"]",
+   "action": "type",
+   "value": "50.5",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "orb",
+      "value": 50.5
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 50",
+    "droprate group stone 50",
+    "droprate group bossgem 50",
+    "droprate group orb 50",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 305,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"scrollofra\"]",
+   "action": "max",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "scrollofra",
+      "value": 100
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 50",
+    "droprate group stone 50",
+    "droprate group bossgem 50",
+    "droprate group orb 50",
+    "droprate group scrollofra 100",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 306,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"scrollofra\"]",
+   "action": "min",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "scrollofra",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 50",
+    "droprate group stone 50",
+    "droprate group bossgem 50",
+    "droprate group orb 50",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 307,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"scrollofra\"]",
+   "action": "increment",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "scrollofra",
+      "value": 2
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 50",
+    "droprate group stone 50",
+    "droprate group bossgem 50",
+    "droprate group orb 50",
+    "droprate group scrollofra 2",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 308,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"scrollofra\"]",
+   "action": "decrement",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "scrollofra",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 50",
+    "droprate group stone 50",
+    "droprate group bossgem 50",
+    "droprate group orb 50",
+    "droprate group scrollofra 1",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 309,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"scrollofra\"]",
+   "action": "type",
+   "value": "50.5",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "scrollofra",
+      "value": 50.5
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 50",
+    "droprate group stone 50",
+    "droprate group bossgem 50",
+    "droprate group orb 50",
+    "droprate group scrollofra 50",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 310,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"dimshard\"]",
+   "action": "max",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "dimshard",
+      "value": 100
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 50",
+    "droprate group stone 50",
+    "droprate group bossgem 50",
+    "droprate group orb 50",
+    "droprate group scrollofra 50",
+    "droprate group dimshard 100",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 311,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"dimshard\"]",
+   "action": "min",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "dimshard",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 50",
+    "droprate group stone 50",
+    "droprate group bossgem 50",
+    "droprate group orb 50",
+    "droprate group scrollofra 50",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 312,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"dimshard\"]",
+   "action": "increment",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "dimshard",
+      "value": 2
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 50",
+    "droprate group stone 50",
+    "droprate group bossgem 50",
+    "droprate group orb 50",
+    "droprate group scrollofra 50",
+    "droprate group dimshard 2",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 313,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"dimshard\"]",
+   "action": "decrement",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "dimshard",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 50",
+    "droprate group stone 50",
+    "droprate group bossgem 50",
+    "droprate group orb 50",
+    "droprate group scrollofra 50",
+    "droprate group dimshard 1",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 314,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"dimshard\"]",
+   "action": "type",
+   "value": "50.5",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "dimshard",
+      "value": 50.5
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 50",
+    "droprate group stone 50",
+    "droprate group bossgem 50",
+    "droprate group orb 50",
+    "droprate group scrollofra 50",
+    "droprate group dimshard 50",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 315,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"battlefrag\"]",
+   "action": "max",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "battlefrag",
+      "value": 100
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 50",
+    "droprate group stone 50",
+    "droprate group bossgem 50",
+    "droprate group orb 50",
+    "droprate group scrollofra 50",
+    "droprate group dimshard 50",
+    "droprate group battlefrag 100",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 316,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"battlefrag\"]",
+   "action": "min",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "battlefrag",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 50",
+    "droprate group stone 50",
+    "droprate group bossgem 50",
+    "droprate group orb 50",
+    "droprate group scrollofra 50",
+    "droprate group dimshard 50",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 317,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"battlefrag\"]",
+   "action": "increment",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "battlefrag",
+      "value": 2
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 50",
+    "droprate group stone 50",
+    "droprate group bossgem 50",
+    "droprate group orb 50",
+    "droprate group scrollofra 50",
+    "droprate group dimshard 50",
+    "droprate group battlefrag 2",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 318,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"battlefrag\"]",
+   "action": "decrement",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "battlefrag",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 50",
+    "droprate group stone 50",
+    "droprate group bossgem 50",
+    "droprate group orb 50",
+    "droprate group scrollofra 50",
+    "droprate group dimshard 50",
+    "droprate group battlefrag 1",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 319,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"battlefrag\"]",
+   "action": "type",
+   "value": "50.5",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "battlefrag",
+      "value": 50.5
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 50",
+    "droprate group stone 50",
+    "droprate group bossgem 50",
+    "droprate group orb 50",
+    "droprate group scrollofra 50",
+    "droprate group dimshard 50",
+    "droprate group battlefrag 50",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 320,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"colosfrag\"]",
+   "action": "max",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "colosfrag",
+      "value": 100
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 50",
+    "droprate group stone 50",
+    "droprate group bossgem 50",
+    "droprate group orb 50",
+    "droprate group scrollofra 50",
+    "droprate group dimshard 50",
+    "droprate group battlefrag 50",
+    "droprate group colosfrag 100",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 321,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"colosfrag\"]",
+   "action": "min",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "colosfrag",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 50",
+    "droprate group stone 50",
+    "droprate group bossgem 50",
+    "droprate group orb 50",
+    "droprate group scrollofra 50",
+    "droprate group dimshard 50",
+    "droprate group battlefrag 50",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 322,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"colosfrag\"]",
+   "action": "increment",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "colosfrag",
+      "value": 2
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 50",
+    "droprate group stone 50",
+    "droprate group bossgem 50",
+    "droprate group orb 50",
+    "droprate group scrollofra 50",
+    "droprate group dimshard 50",
+    "droprate group battlefrag 50",
+    "droprate group colosfrag 2",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 323,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"colosfrag\"]",
+   "action": "decrement",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "colosfrag",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 50",
+    "droprate group stone 50",
+    "droprate group bossgem 50",
+    "droprate group orb 50",
+    "droprate group scrollofra 50",
+    "droprate group dimshard 50",
+    "droprate group battlefrag 50",
+    "droprate group colosfrag 1",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 324,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"colosfrag\"]",
+   "action": "type",
+   "value": "50.5",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "colosfrag",
+      "value": 50.5
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 50",
+    "droprate group stone 50",
+    "droprate group bossgem 50",
+    "droprate group orb 50",
+    "droprate group scrollofra 50",
+    "droprate group dimshard 50",
+    "droprate group battlefrag 50",
+    "droprate group colosfrag 50",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 325,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"ruby\"]",
+   "action": "max",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "ruby",
+      "value": 100
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 50",
+    "droprate group stone 50",
+    "droprate group bossgem 50",
+    "droprate group orb 50",
+    "droprate group scrollofra 50",
+    "droprate group dimshard 50",
+    "droprate group battlefrag 50",
+    "droprate group colosfrag 50",
+    "droprate group ruby 100"
+   ]
+  },
+  {
+   "step": 326,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"ruby\"]",
+   "action": "min",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "ruby",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 50",
+    "droprate group stone 50",
+    "droprate group bossgem 50",
+    "droprate group orb 50",
+    "droprate group scrollofra 50",
+    "droprate group dimshard 50",
+    "droprate group battlefrag 50",
+    "droprate group colosfrag 50",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 327,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"ruby\"]",
+   "action": "increment",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "ruby",
+      "value": 2
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 50",
+    "droprate group stone 50",
+    "droprate group bossgem 50",
+    "droprate group orb 50",
+    "droprate group scrollofra 50",
+    "droprate group dimshard 50",
+    "droprate group battlefrag 50",
+    "droprate group colosfrag 50",
+    "droprate group ruby 2"
+   ]
+  },
+  {
+   "step": 328,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"ruby\"]",
+   "action": "decrement",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "ruby",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 50",
+    "droprate group stone 50",
+    "droprate group bossgem 50",
+    "droprate group orb 50",
+    "droprate group scrollofra 50",
+    "droprate group dimshard 50",
+    "droprate group battlefrag 50",
+    "droprate group colosfrag 50",
+    "droprate group ruby 1"
+   ]
+  },
+  {
+   "step": 329,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"ruby\"]",
+   "action": "type",
+   "value": "50.5",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "section": "keys",
+      "key": "ruby",
+      "value": 50.5
+     }
+    }
+   ],
+   "cmds": [
+    "dungeonkey del 12",
+    "dungeonkey del 16",
+    "dungeonkey del 41",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 50",
+    "droprate group stone 50",
+    "droprate group bossgem 50",
+    "droprate group orb 50",
+    "droprate group scrollofra 50",
+    "droprate group dimshard 50",
+    "droprate group battlefrag 50",
+    "droprate group colosfrag 50",
+    "droprate group ruby 50"
+   ]
+  },
+  {
+   "step": 330,
+   "control": "#angelic_items",
+   "action": "max",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "angelic_items",
+      "value": 100
+     }
+    }
+   ],
+   "cmds": [
+    "angelicdrop 76"
+   ]
+  },
+  {
+   "step": 331,
+   "control": "#angelic_items",
+   "action": "min",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "angelic_items",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "angelicdrop off"
+   ]
+  },
+  {
+   "step": 332,
+   "control": "#angelic_items",
+   "action": "increment",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "angelic_items",
+      "value": 2
+     }
+    }
+   ],
+   "cmds": [
+    "angelicdrop 7500"
+   ]
+  },
+  {
+   "step": 333,
+   "control": "#angelic_items",
+   "action": "decrement",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "angelic_items",
+      "value": 1
+     }
+    }
+   ],
+   "cmds": [
+    "angelicdrop off"
+   ]
+  },
+  {
+   "step": 334,
+   "control": "#angelic_items",
+   "action": "type",
+   "value": "50.5",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "angelic_items",
+      "value": 50.5
+     }
+    }
+   ],
+   "cmds": [
+    "angelicdrop 153"
+   ]
+  },
+  {
+   "step": 335,
+   "control": "#controlSearch",
+   "action": "search",
+   "value": "x",
+   "posts": [],
+   "cmds": []
+  },
+  {
+   "step": 336,
+   "control": "#controlSearch",
+   "action": "search",
+   "value": "",
+   "posts": [],
+   "cmds": []
+  },
+  {
+   "step": 337,
+   "control": "[data-control-filter=\"modified\"]",
+   "action": "click",
+   "posts": [],
+   "cmds": []
+  },
+  {
+   "step": 338,
+   "control": "[data-control-filter=\"all\"]",
+   "action": "click",
+   "posts": [],
+   "cmds": []
+  },
+  {
+   "step": 339,
+   "control": "tab:mods",
+   "action": "click",
+   "posts": [],
+   "cmds": []
+  },
+  {
+   "step": 340,
+   "control": "subtab:qol",
+   "action": "click",
+   "posts": [],
+   "cmds": []
+  },
+  {
+   "step": 341,
+   "control": "#mod_filter_max_relics",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "mod_filter_max_relics",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "relicfilter 1"
+   ]
+  },
+  {
+   "step": 342,
+   "control": "#mod_filter_max_relics",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "mod_filter_max_relics",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "relicfilter 0"
+   ]
+  },
+  {
+   "step": 343,
+   "control": "#mod_orb_pickup_radius",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "mod_orb_pickup_radius",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "orbpickup 10"
+   ]
+  },
+  {
+   "step": 344,
+   "control": "#mod_orb_pickup_radius",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "mod_orb_pickup_radius",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "orbpickup 0"
+   ]
+  },
+  {
+   "step": 345,
+   "control": "#map_reveal",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "map_reveal",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "reveal 1",
+    "reveal packs 1",
+    "reveal spawn 0"
+   ]
+  },
+  {
+   "step": 346,
+   "control": "#map_reveal_packs",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "map_reveal_packs",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "reveal packs 0"
+   ]
+  },
+  {
+   "step": 347,
+   "control": "#map_reveal_packs",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "map_reveal_packs",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "reveal packs 1"
+   ]
+  },
+  {
+   "step": 348,
+   "control": "#map_reveal_spawn",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "map_reveal_spawn",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "reveal spawn 1"
+   ]
+  },
+  {
+   "step": 349,
+   "control": "#map_reveal_spawn",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "map_reveal_spawn",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "reveal spawn 0"
+   ]
+  },
+  {
+   "step": 350,
+   "control": "#map_reveal",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "map_reveal",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "reveal 0"
+   ]
+  },
+  {
+   "step": 351,
+   "control": "#map_reveal_packs",
+   "action": "skipped-disabled",
+   "intended": "click",
+   "posts": [],
+   "cmds": []
+  },
+  {
+   "step": 352,
+   "control": "#map_reveal_spawn",
+   "action": "skipped-disabled",
+   "intended": "click",
+   "posts": [],
+   "cmds": []
+  },
+  {
+   "step": 353,
+   "control": "#mod_pet_quest_pickup",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "mod_pet_quest_pickup",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "petquest 1"
+   ]
+  },
+  {
+   "step": 354,
+   "control": "#mod_pet_quest_pickup",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "mod_pet_quest_pickup",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "petquest 0"
+   ]
+  },
+  {
+   "step": 355,
+   "control": "#mod_auto_prospect",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "mod_auto_prospect",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "autoprospect 1",
+    "autoprospect bag 1"
+   ]
+  },
+  {
+   "step": 356,
+   "control": "#mod_auto_prospect_bag",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "mod_auto_prospect_bag",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "autoprospect bag 0"
+   ]
+  },
+  {
+   "step": 357,
+   "control": "#mod_auto_prospect_bag",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "mod_auto_prospect_bag",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "autoprospect bag 1"
+   ]
+  },
+  {
+   "step": 358,
+   "control": "#mod_auto_prospect",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "mod_auto_prospect",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "autoprospect 0"
+   ]
+  },
+  {
+   "step": 359,
+   "control": "#mod_auto_prospect_bag",
+   "action": "skipped-disabled",
+   "intended": "click",
+   "posts": [],
+   "cmds": []
+  },
+  {
+   "step": 360,
+   "control": "#mod_craft_mats",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "mod_craft_mats",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "craftmats 1"
+   ]
+  },
+  {
+   "step": 361,
+   "control": "#mod_craft_mats",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "mod_craft_mats",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "craftmats 0"
+   ]
+  },
+  {
+   "step": 362,
+   "control": "#mod_toggle_indicator",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "mod_toggle_indicator",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "toggleborder 1"
+   ]
+  },
+  {
+   "step": 363,
+   "control": "#mod_toggle_indicator",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "mod_toggle_indicator",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "toggleborder 0"
+   ]
+  },
+  {
+   "step": 364,
+   "control": "#mod_toggle_guard",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "mod_toggle_guard",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "toggleguard 1"
+   ]
+  },
+  {
+   "step": 365,
+   "control": "#mod_toggle_guard",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "mod_toggle_guard",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "toggleguard 0"
+   ]
+  },
+  {
+   "step": 366,
+   "control": "#mod_restart_anytime",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "mod_restart_anytime",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "restartanytime 1"
+   ]
+  },
+  {
+   "step": 367,
+   "control": "#mod_restart_anytime",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "mod_restart_anytime",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "restartanytime 0"
+   ]
+  },
+  {
+   "step": 368,
+   "control": "#mod_skill_timer_style",
+   "action": "select",
+   "value": "off",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "mod_skill_timer_style",
+      "value": "off"
+     }
+    }
+   ],
+   "cmds": [
+    "skilltimer off"
+   ]
+  },
+  {
+   "step": 369,
+   "control": "#mod_skill_timer_style",
+   "action": "select",
+   "value": "arc",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "mod_skill_timer_style",
+      "value": "arc"
+     }
+    }
+   ],
+   "cmds": [
+    "skilltimer arc"
+   ]
+  },
+  {
+   "step": 370,
+   "control": "#mod_skill_timer_style",
+   "action": "select",
+   "value": "bar",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "mod_skill_timer_style",
+      "value": "bar"
+     }
+    }
+   ],
+   "cmds": [
+    "skilltimer bar"
+   ]
+  },
+  {
+   "step": 371,
+   "control": "#mod_skill_timer_style",
+   "action": "select",
+   "value": "number",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "mod_skill_timer_style",
+      "value": "number"
+     }
+    }
+   ],
+   "cmds": [
+    "skilltimer number"
+   ]
+  },
+  {
+   "step": 372,
+   "control": "#mod_skill_timer_style",
+   "action": "select",
+   "value": "fade",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "mod_skill_timer_style",
+      "value": "fade"
+     }
+    }
+   ],
+   "cmds": [
+    "skilltimer fade"
+   ]
+  },
+  {
+   "step": 373,
+   "control": "subtab:items",
+   "action": "click",
+   "posts": [],
+   "cmds": []
+  },
+  {
+   "step": 374,
+   "control": "#headhunter",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "headhunter",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "headhunter force"
+   ]
+  },
+  {
+   "step": 375,
+   "control": "#headhunter",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "headhunter",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "headhunter off"
+   ]
+  },
+  {
+   "step": 376,
+   "control": "#tyrant",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "tyrant",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "tyrant force"
+   ]
+  },
+  {
+   "step": 377,
+   "control": "#tyrant",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "tyrant",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "tyrant off"
+   ]
+  },
+  {
+   "step": 378,
+   "control": "#beacon",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "beacon",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "beacon force"
+   ]
+  },
+  {
+   "step": 379,
+   "control": "#beacon",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "beacon",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "beacon off"
+   ]
+  },
+  {
+   "step": 380,
+   "control": "#applyall",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/applyall",
+     "body": {}
+    }
+   ],
+   "cmds": [
+    "skilltimer fade",
+    "rarity 0 50",
+    "angelicdrop 153",
+    "enemyspeed 2.5 ct",
+    "specialrate rift 50",
+    "specialrate battlefield 50",
+    "specialrate cursedorb 50",
+    "specialrate summonportal 50",
+    "specialrate chaospillars 50",
+    "specialrate chaostower 50",
+    "specialrate shadowrealm 50",
+    "dropmult gold 50",
+    "miningore 5",
+    "stat exp 50",
+    "stat magicfind 50.5",
+    "stat movespeed 5.5",
+    "stat damage 6",
+    "stat attackspeed 3.5",
+    "statadd castrate 250",
+    "stat lifereplenish 6",
+    "stat manareplenish 6",
+    "stat defense 6",
+    "stat critdamage 6",
+    "stat critchance 3.5",
+    "stat spellcritdamage 6",
+    "stat spellcritchance 3.5",
+    "dungeonkey add 12 1",
+    "dungeonkey add 16 1",
+    "dungeonkey add 41 50",
+    "dungeonkey chance auto",
+    "dungeonkey on",
+    "droprate group dungeon 50",
+    "droprate group angelic 50",
+    "droprate group chaos 50",
+    "droprate group bifrost 50",
+    "droprate group relic 50",
+    "droprate group rune 50",
+    "droprate group stone 50",
+    "droprate group bossgem 50",
+    "droprate group orb 50",
+    "droprate group scrollofra 50",
+    "droprate group dimshard 50",
+    "droprate group battlefrag 50",
+    "droprate group colosfrag 50",
+    "droprate group ruby 50"
+   ]
+  }
+ ]
+}

@@ -39,6 +39,9 @@ if str(SDK_PY_PATH) not in sys.path:
 
 import forgepact  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from panel_source import panel_file  # noqa: E402
+
 
 def slice_function(source, signature, next_signature):
     """Text of `signature`'s definition up to (not including) `next_signature`.
@@ -177,8 +180,9 @@ class TestRarityBossExclusionContract(unittest.TestCase):
     # ---- panel text ---------------------------------------------------
 
     def test_panel_hint_says_bosses_are_left_alone(self):
-        idx = forgepact.HTML.index("Monster Rarity</h2>")
-        hint = forgepact.HTML[idx: idx + 1200]
+        world = panel_file("tabs/World.svelte")
+        idx = world.index("Monster Rarity</h2>")
+        hint = world[idx: idx + 1200]
         self.assertIn("bosses", hint)
         self.assertIn("left alone", hint)
 

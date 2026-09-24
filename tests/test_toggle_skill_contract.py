@@ -53,6 +53,11 @@ if str(TOOLS_DIR) not in sys.path:
 from test_release_hook_contract import function_body, strip_research_blocks  # noqa: E402
 
 import forgepact  # noqa: E402
+from panel_source import panel_source  # noqa: E402
+
+# The page itself (markup and script) is the Svelte project in panel/src;
+# each class's `panel` keeps the Python side (settings, commands, /api/set).
+PANEL_PAGE = panel_source()
 
 BLOCK_START = "// ---- tgprobe: toggle-skill research instrument"
 BLOCK_END = "#endif // FORGEPACT_RELEASE (tgprobe)"
@@ -990,7 +995,7 @@ class ToggleIndicatorShipContractTests(unittest.TestCase):
         self.assertIn("toggleborder 1", forgepact.build_cmds(cfg))
 
     def test_html_has_the_mods_tab_control(self):
-        self.assertIn('id="mod_toggle_indicator"', forgepact.HTML)
+        self.assertIn('id="mod_toggle_indicator"', PANEL_PAGE)
 
     def test_panel_sends_the_live_command(self):
         self.assertIn(
@@ -1206,10 +1211,10 @@ class SkillTimerShipContractTests(unittest.TestCase):
         self.assertIn('self._json({"err": "invalid skilltimer style"}, 400)', self.panel)
 
     def test_html_has_one_select_with_five_styles_in_order(self):
-        self.assertEqual(forgepact.HTML.count("<select"), 1)
+        self.assertEqual(PANEL_PAGE.count("<select"), 1)
         m = re.search(
             r'<select class="style-select" id="mod_skill_timer_style">(.*?)</select>',
-            forgepact.HTML, re.S)
+            PANEL_PAGE, re.S)
         self.assertIsNotNone(m)
         values = re.findall(r'<option value="(\w+)">', m.group(1))
         self.assertEqual(values, ["off", "arc", "bar", "number", "fade"])
@@ -1222,10 +1227,10 @@ class SkillTimerShipContractTests(unittest.TestCase):
 
     def test_select_painted_in_both_render_paths(self):
         self.assertEqual(
-            self.panel.count("document.getElementById('mod_skill_timer_style').value="), 2)
+            PANEL_PAGE.count("document.getElementById('mod_skill_timer_style').value="), 2)
         # Never in the boolean/on-off maps: those set .checked, not .value.
-        booleans_start = self.panel.index("const booleans={")
-        booleans_line = self.panel[booleans_start:self.panel.index("};", booleans_start)]
+        booleans_start = PANEL_PAGE.index("const booleans={")
+        booleans_line = PANEL_PAGE[booleans_start:PANEL_PAGE.index("};", booleans_start)]
         self.assertNotIn("mod_skill_timer_style", booleans_line)
 
     def test_research_decision_records_route_b(self):
@@ -1241,7 +1246,7 @@ class SkillTimerShipContractTests(unittest.TestCase):
         # The contract: the panel's own visible label appears in both player-
         # facing documents so a reader can match the control to the note.
         label = "Timed skill countdown"
-        self.assertIn(f'<span class="lbl" style="width:auto;flex:1">{label}', self.panel)
+        self.assertIn(f'<span class="lbl" style="width:auto;flex:1">{label}', PANEL_PAGE)
         if self.release_notes is not None:
             self.assertIn(label, self.release_notes)
         self.assertIn(label, self.readme)
@@ -1684,7 +1689,7 @@ class SkillTimerRuleContractTests(unittest.TestCase):
     def _countdown_text_blocks(self):
         readme_row = next(line for line in self.readme.split("\n")
                            if line.startswith("| **Timed skill countdown**"))
-        panel = self.panel[self.panel.index("Timed skill countdown<br>"):]
+        panel = PANEL_PAGE[PANEL_PAGE.index("Timed skill countdown<br>"):]
         panel = panel[:panel.index("</span></span>") + len("</span></span>")]
         blocks = {"README": readme_row, "panel": panel}
         if self.release_notes is not None:
@@ -1704,9 +1709,9 @@ class SkillTimerRuleContractTests(unittest.TestCase):
                               if line.startswith("| **Mark A Running Toggle Skill**"))
         readme_guard = next(line for line in self.readme.split("\n")
                              if line.startswith("| **Stop Double Cast Re-casting A Toggle Skill**"))
-        panel_marker = self.panel[self.panel.index("Mark a running toggle skill<br>"):]
+        panel_marker = PANEL_PAGE[PANEL_PAGE.index("Mark a running toggle skill<br>"):]
         panel_marker = panel_marker[:panel_marker.index("</span></span>") + len("</span></span>")]
-        panel_guard = self.panel[self.panel.index("Stop double cast re-casting a toggle skill<br>"):]
+        panel_guard = PANEL_PAGE[PANEL_PAGE.index("Stop double cast re-casting a toggle skill<br>"):]
         panel_guard = panel_guard[:panel_guard.index("</span></span>") + len("</span></span>")]
         blocks = {
             "README marker": readme_marker, "README guard": readme_guard,
@@ -2377,7 +2382,7 @@ class ToggleGuardContractTests(unittest.TestCase):
         self.assertIn("toggleguard 1", forgepact.build_cmds(cfg))
 
     def test_html_has_the_mods_tab_control(self):
-        self.assertIn('id="mod_toggle_guard"', forgepact.HTML)
+        self.assertIn('id="mod_toggle_guard"', PANEL_PAGE)
 
     def test_panel_sends_the_live_command(self):
         self.assertIn("f\"toggleguard {1 if cfg['mod_toggle_guard'] else 0}\"", self.panel)
@@ -2500,7 +2505,7 @@ class SkillTimerBuffContractTests(unittest.TestCase):
         # duplicates small helpers (guide: match the file's own shape).
         readme_row = next(line for line in self.readme.split("\n")
                            if line.startswith("| **Timed skill countdown**"))
-        panel = self.panel[self.panel.index("Timed skill countdown<br>"):]
+        panel = PANEL_PAGE[PANEL_PAGE.index("Timed skill countdown<br>"):]
         panel = panel[:panel.index("</span></span>") + len("</span></span>")]
         blocks = {"README": readme_row, "panel": panel}
         if self.release_notes is not None:

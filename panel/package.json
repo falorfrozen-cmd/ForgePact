@@ -1,0 +1,29 @@
+{
+  "name": "forgepact-panel",
+  "version": "0.0.0",
+  "description": "ForgePact's control panel frontend: built to static files that src/forgepact.py serves and PyInstaller bundles.",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "test": "node scripts/test.mjs",
+    "oracle:record": "node tests/oracle.mjs record --legacy --out tests/behaviour-oracle.json",
+    "oracle:replay": "node tests/oracle.mjs replay --oracle tests/behaviour-oracle.json",
+    "e2e": "node tests/ui.e2e.mjs",
+    "screens": "node tests/screens.mjs",
+    "icons": "node scripts/export-icons.mjs"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^7.3.0",
+    "pixelmatch": "^7.2.0",
+    "playwright-core": "^1.63.0",
+    "pngjs": "^7.0.0",
+    "svelte": "^5.46.4",
+    "vite": "^8.2.2"
+  },
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  }
+}

@@ -17,6 +17,12 @@ if str(SRC_DIR) not in sys.path:
 
 import forgepact
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from panel_source import panel_file, panel_source  # noqa: E402
+
+# The page (markup and script) is the Svelte project in panel/src.
+PANEL_PAGE = panel_source()
+
 
 def body(source, signature):
     """The whole of `signature`'s definition, brace-matched.
@@ -69,10 +75,10 @@ class TestRelicFilterContract(unittest.TestCase):
         self.assertNotIn("relicfilter 1", cmds)
 
     def test_html_contains_mods_tab_and_control(self):
-        self.assertIn('data-tab="mods"', forgepact.HTML)
-        self.assertIn('id="mod_filter_max_relics"', forgepact.HTML)
-        self.assertIn("Remove owned relics from drop pool", forgepact.HTML)
-        self.assertIn("10 out of 10", forgepact.HTML)
+        self.assertIn('data-tab="mods"', PANEL_PAGE)
+        self.assertIn('id="mod_filter_max_relics"', PANEL_PAGE)
+        self.assertIn("Remove owned relics from drop pool", PANEL_PAGE)
+        self.assertIn("10 out of 10", PANEL_PAGE)
 
     def test_panel_imports_hs_game_sdk(self):
         self.assertIn("from hs_game_sdk import", self.panel_code)
@@ -122,7 +128,7 @@ class TestRelicFilterContract(unittest.TestCase):
         cfg = dict(forgepact.DEFAULTS)
         cfg["mod_orb_pickup_radius"] = True
         self.assertIn("orbpickup 10", forgepact.build_cmds(cfg))
-        self.assertIn('id="mod_orb_pickup_radius"', forgepact.HTML)
+        self.assertIn('id="mod_orb_pickup_radius"', PANEL_PAGE)
 
     def test_release_setup_is_delayed_past_character_selection(self):
         self.assertIn("if (!g_Setup && fc > 300)", self.plugin_code)
@@ -238,7 +244,7 @@ class TestRelicFilterContract(unittest.TestCase):
     def test_world_mods_relocated_to_mods_tab(self):
         # User request 2026-09-10: Map Reveal, Headhunter, Tyrant's Crown and
         # Beacon move out of the World tab and into the Mods tab.
-        html = forgepact.HTML
+        html = PANEL_PAGE
         for control_id_attr, must_not_be in (
             ('id="map_reveal"', "world"),
             ('id="headhunter"', "world"),
@@ -255,7 +261,7 @@ class TestRelicFilterContract(unittest.TestCase):
         # relic filter and orb pickup. `test_mods_categories.py` covers the
         # card boundaries and assignment rule in full; this just keeps the
         # one fact this module already depended on.
-        html = forgepact.HTML
+        html = PANEL_PAGE
         qol_start = html.index('id="qolCard"')
         qol_end = html.index('id="itemsCard"', qol_start + 1)
         self.assertIn('id="map_reveal"', html[qol_start:qol_end])
@@ -264,13 +270,15 @@ class TestRelicFilterContract(unittest.TestCase):
         # ...and Headhunter/Tyrant's Crown/Beacon get their own "Items" card,
         # distinct from "Quality of Life" (they are mechanics tied to items
         # forged in the Item Editor, not standalone plugin toggles).
-        html = forgepact.HTML
-        items_start = html.index("Items</h2>")
-        qol_start = html.index('id="qolCard"')
-        self.assertGreater(items_start, qol_start, "Items section should follow Quality of Life")
-        items_section = html[items_start:]
+        html = PANEL_PAGE
+        mods = panel_file("tabs/Mods.svelte")
+        items_start = mods.index("Items</h2>")
+        self.assertGreater(items_start, mods.index('id="qolCard"'), "Items section should follow Quality of Life")
+        # The Items section runs to the end of the Mods tab's markup.
+        items_section = mods[items_start:]
         for control_id_attr in ('id="headhunter"', 'id="tyrant"', 'id="beacon"'):
-            self.assertIn(control_id_attr, items_section[:items_section.index("</script>")])
+            self.assertIn(control_id_attr, items_section)
+        qol_start = html.index('id="qolCard"')
         # And NOT inside the Quality of Life card itself.
         qol_end = html.index('id="itemsCard"', qol_start + 1)
         for control_id_attr in ('id="headhunter"', 'id="tyrant"', 'id="beacon"'):
@@ -283,7 +291,7 @@ class TestRelicFilterContract(unittest.TestCase):
         # cards instead. (The plain mechanic names, e.g. "Tyrant's Crown", can
         # still appear in OTHER cards' prose - Monster Rarity cross-references
         # it - so this checks the specific old/new headings, not bare names.)
-        html = forgepact.HTML
+        html = PANEL_PAGE
         for old_heading in (
             "<h2>&#128506; Map Reveal</h2>",
             "<h2>&#129686; Headhunter</h2>",
