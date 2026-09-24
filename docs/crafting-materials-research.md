@@ -4902,10 +4902,14 @@ need the mod recorded, or how many `DoCraftResult` calls one quantity-3 press
 makes. The `unreadable` refusal line is printed once per session, so "no
 refusal line" is what the capture records, and no more.
 
-**The Cube reopen.** The Cube builds its recipe-availability list when it
-opens, so a `craftmats` toggle takes effect at the next Cube open, not while
-the window stays open: after `craftmats 0` the Dust recipe still read
-available until the owner reopened the Cube (`off-nostack`). Observed once.
+**The Cube reopen.** The Cube's recipe list shows availability as computed
+when the Cube opened: after `craftmats 0` the Dust recipe still read
+available while the window stayed open, and read greyed out at the next Cube
+open, after the owner reopened the Cube (`off-nostack`). Observed once, on to
+off. Nothing was pressed on the stale row, so a press on a row whose shown
+availability is stale was not observed; the count at a press is taken inside
+`CraftFindRecipeItems`, and what the game does on such a press is not
+measured.
 
 **`## Ship design`'s "Not covered", after Phase C.** Phase C has now observed
 a multi-input recipe and a multi-unit press (the two extras above, once each,
