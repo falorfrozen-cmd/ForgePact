@@ -1192,7 +1192,7 @@ FORGEPACT_RELEASE`; the player build answers `command unavailable`.
 | 24 rows (`### Phase 1j rows`) | their armed and `ret=` lines, like every row's: the close's `SaveLocalFile #<n> self=... argc=... a0=... a1=...` is the save's shape; the hand split's rows, in call order, are the split's mechanism | the rows' own `arm` budgets | `hook`'s `276 detoured, 0 failed, 2 held by mapkeep`; `CheckPlayerInteraction` climbing after the load |
 | `craftprobe callm <Obj> <nth>\|id:<n> <struct> <member> [args ...] confirm` | ONE invocation of a method-valued member of a struct, by name. `<struct>` is `fp:<K>` (the game's own lookup, map 0), `fp9:<K>` (a1=9, the stash map), either optionally followed by a dotted tail through plain structs only (`fp9:<K>.itemDefinitionStruct`), or `path:<root>.<a.b>` walked as `var` walks; the value reached must be a plain struct. The member is read with `variable_struct_exists` then `variable_struct_get` and must be a method - `is_method`, or `typeof` if the runtime does not answer `is_method`. The dispatch is `script_execute(<method>, args...)` with self = other = the named instance, which also makes the `fp:`/`fp9:` lookups: the route `InvokeMethodValue` proved live on 2026-09-11 for a bound method (its route A), reused, never a `CScriptRef` read. Arguments take `call`'s forms (the two now share one resolver). The reply is `call`'s: `entered <no>, script_execute threw`, `entered <no>, script_execute returned st=<s>` or `dispatched <no> -> ret=`, where `<no>` is the call number of the row that names the method's script (read with `method_get_index` and `script_get_name`), so the reply matches that row's own entry line; a refusal names the member's kind and what was supplied, and says nothing was called | one invocation per command, behind `confirm`; every precondition after the gate and before the call | `test_craftprobe_callm_invokes_a_method_value_by_name_behind_confirm`; live, the method's own row printing its entry line with the reply's number |
 | `craftprobe set <struct> <member> <number> confirm` | ONE write of one existing member that already holds a number (`variable_struct_set`), read back: `before=<v> after=<v>`. `<struct>` as `callm`'s; `fp:`/`fp9:` look the item up with self the first `Console_Save_obj` instance, the self every by-name trial since Phase 1h used. A missing member, or one that holds anything but a number, is refused naming its kind; nothing is called. It exists for the case the split control shows the game's own edit is inline, when a member write is the game's own step | one member per command, behind `confirm` | `test_craftprobe_set_writes_one_existing_number_member_behind_confirm`; live, the same member re-read by `mapkeep find` or the lookup |
-| `craftprobe inject <class> <b> <extra>` / `inject off` | while on, `CountInventoryItem`'s detour replaces the game's own return with return + `<extra>` - after the trampoline, after the row's own `ret=` line and `backing` have kept the game's value - only for a call with `a0` 1 (the owner value Live 1i logged), `a1` the class and `a3` the base, made while the recipe row's Create closure (`UI_Craft_Recipe_List_Item_obj anon@840`, its own depth counter, not a craft-route row) or a craft-route row is on the game thread's stack. A logged call prints `injected: game ret=<v> -> <v>`. `show` prints `inject: class=<c> b=<b> extra=<e> injected=<n>` (then `outside-route=` and `not-a-number=`, the calls of that identity it left alone) or `inject: off`. Refused unless both rows are detoured, so `injected=0` cannot be the instrument's blindness. Nothing is written: it changes one return value inside a call the game is already making | one identity at a time; `inject off` ends it; counters reset on every `inject` | `test_craftprobe_inject_scopes_the_count_to_the_craft_route`; live, the Ol recipe unavailable without, available with, unavailable again after `inject off` |
+| `craftprobe inject <class> <b> <extra> [owner=<a0>]` / `inject off` | while on, `CountInventoryItem`'s detour replaces the game's own return with return + `<extra>` - after the trampoline, after the row's own `ret=` line and `backing` have kept the game's value - only for a call with `a0` the owner (1 by default, the value Live 1i logged in the craft route; `owner=` sets another), `a1` the class and `a3` the base, made while one of the game's three counting frames is on the game thread's stack: the window's availability call `GetCraftItemsAvailable` (run by `UI_Craft_obj anon@1834`, not inside `anon@840`), the recipe row's Create closure (`UI_Craft_Recipe_List_Item_obj anon@840`), or a craft-route row. The first two keep their own depth counters and are not craft-route rows. A logged call prints `injected: game ret=<v> -> <v>` and the frame. `show` prints `inject: class=<c> b=<b> extra=<e> owner=<o> injected=<n> (availability=<a> recipe-row=<r> craft-route=<c>)`, then the calls of that class and base it left alone - `outside-route=` (outside all three frames), `other-owner=` (another `a0`, with the latest value) and `not-a-number=` - or `inject: off`. Refused unless all three frames' rows and the count row are detoured, so `injected=0` cannot be the instrument's blindness. Nothing is written: it changes one return value inside a call the game is already making | one identity at a time; `inject off` ends it; counters reset on every `inject` | `test_craftprobe_inject_scopes_the_count_to_the_craft_route`; live, the Ol recipe unavailable without, available with, unavailable again after `inject off` |
 
 **What the local Ghidra reading showed, in this document's words.** Read on
 2026-09-24 in the same named local project as Phases 1h and 1i: Ghidra 12.1.4
@@ -1208,10 +1208,12 @@ found with a new local scanner, `C:\Users\stann\ghidra_scripts\FindCallers.java`
 `hs-decomp\run_callers.cmd <Name> ...`. All of it stays on the owner's
 machine; nothing below quotes it.
 
-- **Why a by-name `SaveStash` never wrote.** `SaveStash` builds the save
-  struct, walks the stash containers and ends by handing the encrypted text to
-  a buffer the game keeps in a global: it serialises, and never commits a
-  file. Its one direct call site is inside `SaveLocalFile`, which matches its
+- **Why a by-name `SaveStash` wrote no file.** Measured: four by-name calls
+  across Live 1f and 1i returned and moved no file. The reading of why:
+  `SaveStash` builds the save struct, walks the stash containers and ends by
+  handing the encrypted text to a buffer the game keeps in a global - on this
+  reading it serialises, and the file is committed elsewhere, not by
+  `SaveStash`. Its one direct call site is inside `SaveLocalFile`, which matches its
   first argument against a table of seventeen save kinds and, per kind, runs
   `SaveStart` with the kind's name and its own second argument, then - only if
   that answered true - the kind's saver (`SaveStash` among `SaveSlot`,
@@ -1254,12 +1256,19 @@ machine; nothing below quotes it.
   on the hand split. Not a route.
 - **Where the availability check runs.** The recipe row's Create closure
   (`anon@840`) decodes each input's amount and counts it with
-  `CountInventoryItem`, storing whether the count reaches it;
-  `CraftFindRecipeItems` counts again at the press. Both pass the owner 1, the
-  class and the base (Live 1i: `a0=1 a1=14 a2=1 a3=51`). `CountInventoryItem`
-  itself walks members of the profile data - the bag's grids, not the item
-  map. A count raised inside those two frames only is the owner's "inject
-  count into the crafting check".
+  `CountInventoryItem`, storing whether the count reaches it; the window's own
+  availability call, `GetCraftItemsAvailable` (run by `UI_Craft_obj`'s
+  `anon@1834`, not from inside `anon@840`), reads the profile data and the
+  owner, looks items up by fingerprint and counts with `CountInventoryItem`
+  too; and `CraftFindRecipeItems` counts again at the press. Which of the
+  three the window's display reads is not on record, so the injection covers
+  all three. At the press the owner is 1, with the class and the base (Live
+  1i: `a0=1 a1=14 a2=1 a3=51`, logged inside the craft route); the owner the
+  other two pass is not on record, so `inject` counts calls with another
+  owner (`other-owner=`) instead of dropping them silently.
+  `CountInventoryItem` itself walks members of the profile data - the bag's
+  grids, not the item map. A count raised inside those three frames only is
+  the owner's "inject count into the crafting check".
 - **The Cube's input grid.** `CraftFindRecipeItems` and `CraftEditGrid` take
   the Cube's grid as an array argument (Live 1e/1g: `a1=array len=6`, `a2`
   the bag's map, other `UI_Grid_obj`), and `CraftEditGrid` looks each cell's
@@ -1296,7 +1305,10 @@ clears `inventorySocketGrid` - each measured on another container only; the
 axis order of `inventoryMaterialGrid.<x>.<y>`; whether the Cube's grid is a
 profile array and whether `CountInventoryItem` walks it; and whether the
 Cube's grid persists across a save (Phase 1 recorded that the Prospect grid's
-contents do not). A not-observed result on any of them is a finding.
+contents do not); which of the three counting frames the window's display
+reads, and the owner `a0` the recipe row's closure and `GetCraftItemsAvailable`
+pass to `CountInventoryItem` (only the craft route's `a0=1` is on record). A
+not-observed result on any of them is a finding.
 
 ## Live procedure
 
@@ -2098,8 +2110,11 @@ test. What this document fixes is its shape:
   Cube's grid on its own.
 - **The count injection** on the Ol -> Old recipe (3 Ol; bag 2, stash 216):
   unavailable without, `inject 15 1 216`, available with it and
-  `injected=` above 0 in `show`, unavailable again after `inject off`, a
-  screenshot at each. No press.
+  `injected=` above 0 in `show` (quoted whole: the per-frame split,
+  `outside-route=` and `other-owner=`), unavailable again after `inject off`,
+  a screenshot at each. If `show` reports `other-owner=` above 0 with
+  `injected=0`, the injection is re-armed once with `owner=<the a0 it
+  names>` and the recipe reselected, in the same launch. No press.
 - **The by-name save** runs once, after every take's re-read and with the
   stash closed: exactly the close's `SaveLocalFile` shape, by name, with the
   save rows armed; the file's write time before and after, and the counts
@@ -2141,8 +2156,14 @@ test. What this document fixes is its shape:
   `save-route` rests on `save-control`'s close moving the write time and
   logging `SaveLocalFile`; with no such line it is not-observed, never a
   fail. `count-inject` rests on `injected=` above 0 - with 0 the display is
-  not evidence and the check reads not-observed - and on the same recipe read
-  unavailable before and after. `cube-count`'s reading counts either way.
+  not evidence and the check reads not-observed, naming `other-owner=` and
+  `outside-route=` - and on the same recipe read unavailable before and
+  after. It is a `fail` only when the display did not change with
+  `injected=` above 0 and both `outside-route=0` and `other-owner=0`: a
+  matching count the injection did not reach (`outside-route=` or
+  `other-owner=` above 0) may be the one the display reads, so an unchanged
+  display beside one reads not-observed, with the counters quoted.
+  `cube-count`'s reading counts either way.
   `cube-place` rests on `cube-holder` naming a holder reachable by `path:`.
   A `fail` or `not-observed` is a finding, recorded under `### Phase 1j
   results`; no live outcome is an acceptance criterion.
@@ -3285,11 +3306,13 @@ input, and a craft of more than one unit, are not observed.
 ### Phase 1j results
 
 Research DLL: `plugin_build\BloodPactPlugin_rel.dll`, built with
-`plugin_build\build.bat dev` from ForgePact `01e33ab` (SHA-256
-`349d7911ae00b68dab28c1fb76ae1b494873574e42f05fba61375cb6fa736ac2`), the
+`plugin_build\build.bat dev` from ForgePact `fd61bc6` (SHA-256
+`63f41bd74246ec26eb435de3780244c0f8e00822f78d870f7a1f730be6c87850`), the
 Phase 1j research build (`### Phase 1j instrument`): Phase 1i's 254 rows plus
 the 24 of `### Phase 1j rows`, 278 in all, the `phase1j` marker, `callm`,
-`set` and `inject`. `plugin_build\build.bat release` from the same commit
+`set` and `inject`. It supersedes the first Phase 1j build (`01e33ab`, no
+session run on it), whose `inject` did not reach `GetCraftItemsAvailable`'s
+count; a session on that build's hash fails `dll-hash`. `plugin_build\build.bat release` from the same commit
 produced a ship DLL with no `craftprobe`, `mapkeep`, `phase1j`, `callm` or
 `inject` string. The build control is `dll-hash` against this hash plus the
 `phase1j rows=278` marker. `### Live procedure 1j` gives the session's shape.
@@ -3317,7 +3340,7 @@ recorded with what was supplied, and a negative only beside its control.
 | cube-holder | The owner's drag of the split unit into the Cube's input grid: the rows that fired, the holder array by content search, and the map its entry is in | | |
 | cube-place | The ruby stack placed into the Cube's grid by name (only if the holder is reachable by `path:`): placed, dropped from map 9, the stash cell cleared, drawn in the grid by the owner's eye | | |
 | cube-count | One Ol placed in the Cube's grid by hand (bag 1, grid 1): whether the Ol recipe reads available, and `CountInventoryItem`'s logged return | | |
-| count-inject | The Ol recipe unavailable without, available with `inject 15 1 216` and `injected=` above 0, unavailable again after `inject off`; no press | | |
+| count-inject | The Ol recipe unavailable without, available with `inject 15 1 216` and `injected=` above 0 (per frame: availability, recipe row, craft route; with `outside-route=` and `other-owner=` quoted), unavailable again after `inject off`; no press | | |
 | save-route | `SaveLocalFile` by name with `save-control`'s shape, stash closed: the file's write time moves and the counts tool reads the map's last reads | | |
 | close-after | The owner's stash open on both tabs and close after every trial: the counts by eye, the game running, a later write time, the counts tool unchanged from `save-route` | | |
 | reload-after | After a graceful stop and a new launch (the owner's call): the same counts by eye | | |
