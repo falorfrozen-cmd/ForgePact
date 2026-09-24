@@ -30,13 +30,16 @@ measuring a by-name save route through `SaveLocalFile`, a take of part of a
 stack, the mod's count inside the game's own availability check and the
 Crafting Cube's input grid as a destination - is done (2026-09-24,
 `### Phase 1j results`). Its session (Live 1j) proved the close's own
-`SaveLocalFile` save route by name, rejected the one by-name shape the split
-control offered for a partial-stack take (all four calls threw safely, so
-the "After Phase 1j" paragraph proposes a whole-item take-and-return
-fallback instead), proved a count injection reaching the game's own
-availability check, and proved a whole-item placement into the Crafting
-Cube's own input grid by name; whether the game's own count walks that grid
-stayed not observed. Phase 1
+`SaveLocalFile` save route by name, rejected the one `callm` shape tried for
+a partial-stack take (self `Console_Save_obj`; the control's struct self and
+`UI_Split_Stack_obj` other were not supplied, so it is not replayable
+through `callm`, which supplies an instance self - a struct self was not
+tried) and also proved a whole-item take-and-return, which the owner has
+since ruled out as the build's route, leaving the partial take for a further
+research round (Phase 1k); it proved a count injection reaching the game's
+own availability check, and a whole-item placement into the Crafting Cube's
+own input grid by name; whether the game's own count walks that grid stayed
+not observed. Phase 1
 measured the vanilla baseline, the cube's craft route and a vanilla duplication,
 but its instrument reached neither the stash's special-tab container nor the
 route a hand move between a special tab and the bag takes (`## Results`).
@@ -3382,7 +3385,8 @@ then `SetItemDef` (self not an instance, other `UI_Split_Stack_obj`, key
 new one-unit struct (`s_ItemInstanceStruct`, `LootTimestamp` for the new
 fingerprint, 22 `SetItemInfo` calls, `GenerateItemHash`, `s_InvNode` at grid
 x=7,y=1). Every creating row's self reads `(not an instance: object/struct
-object_index=undefined)`, so the creation is not replayable by name
+object_index=undefined)`, so the creation is not replayable through `callm`,
+which supplies an instance self; a struct self was not tried
 (`split-control`).
 
 **Question 3: the stacked partial take.** Observed, once, and it failed
@@ -3399,8 +3403,9 @@ these same methods with the struct itself as self and other
 method, not an inline write.
 
 **Question 4: the no-stack partial take.** Not observed: Question 2 found
-the split's creating rows unresolvable by name, so no by-name creation shape
-exists to try a one-unit item into a bag that holds none of that base
+the split's creating rows unresolvable through `callm`, which supplies an
+instance self, and a struct self was not tried, so no creation shape was
+available to try a one-unit item into a bag that holds none of that base
 (`partial-nostack`).
 
 **Question 5: the return.** Observed, once, both directions. The take moved
@@ -3492,10 +3497,10 @@ follow, below.
 **After Phase 1j (2026-09-24): the record proposes five route tokens; H-A
 stays the decision.** Live 1j measured a by-name save route (`SaveLocalFile`,
 self `Console_Save_obj`, `a0=4`, `a1=1`, stash closed, writes `stash.hss`), a
-rejected partial-stack take, a proven whole-item take-and-return for the
-no-stack case, a count injection that reaches the game's own availability
-check, and a whole-item placement into the Crafting Cube's own grid (RD
-`### Phase 1j results`):
+rejected partial-stack take, a proven whole-item take-and-return the owner
+has since ruled out as the build's route, a count injection that reaches the
+game's own availability display, and a whole-item placement into the
+Crafting Cube's own grid (RD `### Phase 1j results`):
 
 - `save-route: proven` - the close's own `SaveLocalFile` shape (self
   `Console_Save_obj`, `a0=4`, `a1=1`) replayed by name with the stash closed
@@ -3511,27 +3516,40 @@ check, and a whole-item placement into the Crafting Cube's own grid (RD
   self `callm` cannot supply; the inline `set` route was never run because
   the control showed a method. This is a rejected shape, not a finding that
   the take is impossible (`partial-stacked`).
-- `partial-nostack: return` - no by-name creation shape exists to replay
-  (the split's creating rows' self reads `not an instance`), so the
-  no-stack partial falls back to the proven whole-item take-and-return
-  (`return-socket`): `ChangeItemOwner` both directions, `GridAddItem`/
-  `GridRemoveItem` on both the stash cell and the bag cell, both maps read
-  back.
-- `inject: proven` - `craftprobe inject 15 1 216` moved the Ol recipe from
-  unavailable to available and back after `inject off`, with `injected=2`,
-  `outside-route=0`, `other-owner=0` (`count-inject`).
+- `partial-nostack: none` - no by-name creation shape exists to replay
+  (the split's creating rows' self reads `not an instance`), and the owner
+  has rejected this record's first draft (`partial-nostack: return`, the
+  proven whole-item take-and-return, `return-socket`) as the build's route
+  for this case ("partial take is what we want"). The build is blocked on a
+  partial take, and the next research round (Phase 1k) tries what Live 1j
+  did not: the item's own methods (`SetItemDef`/`GenerateItemHash`) with a
+  struct self and other `UI_Split_Stack_obj`, the shape the split control
+  actually showed, and the untried inline `set` route on
+  `itemDefinitionStruct.o`.
+- `inject: proven` - scoped to the availability display: `craftprobe inject
+  15 1 216` moved the Ol recipe from unavailable to available and back
+  after `inject off`, with `injected=2 (availability=1 recipe-row=1
+  craft-route=0)`, `outside-route=0`, `other-owner=0` (`count-inject`); no
+  craft was pressed, so the injection's effect inside the craft route was
+  not observed. *The duplication constraint* (`### Constraints from Phase
+  1`) still holds: the count comes from the map only, never from the
+  cube's `a`.
 - `cube-destination: proven` - a stash stack was placed into the Cube's own
   grid (`path:New_Inventory_Data_obj.craftGrid`) by name, `success=true`,
   dropped from map 9, the stash cell cleared, and drawn in the grid
   (`cube-place`). The game's own counting of that grid remains not observed
   (`cube-count`): the bag/grid setup available (1/0 to 0/1) never approached
   the recipe's requirement of 3 either way, so no reading discriminated
-  bag-only from bag-plus-grid counting.
+  bag-only from bag-plus-grid counting. The owner's reason for standing on
+  `proven` regardless: only the craft's own items are placed into the grid,
+  at the press, and consumed at once, so the grid's persistence across a
+  save is not needed by the build.
 
 These five tokens are proposed, not set: the owner confirms them (this
-workorder's `## Needs human judgement` 1), and the partial-take choice (2)
-and the Cube's grid (3) are the owner's decisions before a build plan is
-written.
+workorder's `## Needs human judgement` 1), and the Cube's grid (3) is still
+the owner's decision before a build plan is written. The partial-take
+choice (2) is resolved by the owner's 2026-09-24 decision above; what
+remains is Phase 1k proving a route for it.
 
 **After Phase 1i (2026-09-24): H-A stays the decision. The complete by-name
 take, with its stash-cell clear, is now measured for one Materials entry the
