@@ -3781,7 +3781,7 @@ stays not observed.
 ### Phase 1k results
 
 Research DLL: `plugin_build\BloodPactPlugin_rel.dll`, built with
-`plugin_build\build.bat dev` from the ForgePact commit that adds this section (SHA-256
+`plugin_build\build.bat dev` from ForgePact `d6a5582` (SHA-256
 `4e8ff1936761f21950cf7239da612594066cdec1f597dc6e473b4a1c17a85eec`), the
 Phase 1k research build (`### Phase 1k instrument`): Phase 1j's 278 rows plus
 the three of `### Phase 1k rows`, 281 in all, the `phase1k` marker, `callm`'s
