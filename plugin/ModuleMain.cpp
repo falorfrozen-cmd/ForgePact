@@ -23219,35 +23219,49 @@ struct CpRouteFrame {
 // Phase 1j: `inject <class> <b> <extra>` (research doc, `### Phase 1j
 // instrument`). The owner's design puts the mod's own count into the game's own
 // availability check, so a short recipe stays disabled by the game rather than
-// refused at the press. The Ghidra reading places that check in two frames: the
-// recipe row's Create closure (UI_Craft_Recipe_List_Item_obj anon@840), which
-// counts each input with CountInventoryItem and stores whether it reaches the
-// amount, and CraftFindRecipeItems at the press (a craft-route row). While
+// refused at the press. The Ghidra reading places that check in three frames:
+// the recipe row's Create closure (UI_Craft_Recipe_List_Item_obj anon@840),
+// which counts each input with CountInventoryItem and stores whether it
+// reaches the amount; the window's own availability call,
+// GetCraftItemsAvailable, which UI_Craft_obj's anon@1834 runs (not inside
+// anon@840) and which counts with CountInventoryItem too; and
+// CraftFindRecipeItems at the press (a craft-route row). Which of them the
+// window's display reads is what the session measures, so the injection must
+// reach all three: a count left out would read as "the game ignores the
+// injection" when it measured only where the instrument attaches. While
 // `inject` is on, CountInventoryItem's detour adds <extra> to the game's own
 // return - after the trampoline, so the game computed it first - only for a
-// call of that identity (a0 the owner 1 Live 1i logged, a1 the class, a3 the
-// base) made while the recipe row's closure or a craft-route row is on the game
-// thread's stack. Nothing is written; one return value inside a call the game
-// is already making is changed, and only while the research command says so.
-// The closure gets its own depth, not a slot in kCpCraftRouteRows, so Phase
-// 1g's and 1i's `within=` answers are unchanged. Game thread only, like the
-// route depths; tracked whether or not `inject` is on.
+// call of that identity (a0 the owner, 1 as Live 1i logged unless `owner=`
+// says otherwise; a1 the class; a3 the base) made while one of those frames is
+// on the game thread's stack. Nothing is written; one return value inside a
+// call the game is already making is changed, and only while the research
+// command says so. The closure and the availability call get their own
+// depths, not slots in kCpCraftRouteRows, so Phase 1g's and 1i's `within=`
+// answers are unchanged. Game thread only, like the route depths; tracked
+// whether or not `inject` is on.
 static long g_CpRecipeListDepth = 0;
-struct CpRecipeListFrame {
-    bool on;
-    explicit CpRecipeListFrame(bool isRecipeList) : on(isRecipeList) { if (on) ++g_CpRecipeListDepth; }
-    ~CpRecipeListFrame() { if (on && g_CpRecipeListDepth > 0) --g_CpRecipeListDepth; }
-    CpRecipeListFrame(const CpRecipeListFrame&) = delete;
-    CpRecipeListFrame& operator=(const CpRecipeListFrame&) = delete;
+static long g_CpAvailabilityDepth = 0;
+struct CpCountFrame {
+    long* depth;
+    CpCountFrame(long& d, bool on) : depth(on ? &d : nullptr) { if (depth) ++*depth; }
+    ~CpCountFrame() { if (depth && *depth > 0) --*depth; }
+    CpCountFrame(const CpCountFrame&) = delete;
+    CpCountFrame& operator=(const CpCountFrame&) = delete;
 };
 
-static constexpr double kCpInjectOwner = 1.0;   // CountInventoryItem's a0 in the craft route (Live 1i: a0=1)
+static constexpr double kCpInjectOwner = 1.0;   // CountInventoryItem's a0 in the craft route (Live 1i: a0=1), the default
 static std::atomic<bool> g_CpInjectOn{ false };
+static std::atomic<double> g_CpInjectOwner{ kCpInjectOwner };
 static std::atomic<double> g_CpInjectClass{ -1.0 };
 static std::atomic<double> g_CpInjectB{ -1.0 };
 static std::atomic<double> g_CpInjectExtra{ 0.0 };
 static volatile long g_CpInjected = 0;         // returns raised since the last `inject` on
-static volatile long g_CpInjectOutside = 0;    // calls of that identity outside both frames, left alone
+static volatile long g_CpInjectedAvailability = 0;  // ... of them inside GetCraftItemsAvailable
+static volatile long g_CpInjectedRecipeRow = 0;     // ... inside the recipe row's closure (and no availability call)
+static volatile long g_CpInjectedRoute = 0;         // ... inside a craft-route row only
+static volatile long g_CpInjectOutside = 0;    // calls of that identity outside every frame, left alone
+static volatile long g_CpInjectOtherOwner = 0; // calls of that class and base with another a0, left alone
+static std::atomic<double> g_CpInjectLastOwner{ 0.0 };  // the latest such a0, for `owner=`
 static volatile long g_CpInjectNotNumber = 0;  // calls of that identity whose return was not a number, left alone
 
 // Defined after the table (it reads g_CpTargets): whether the row with this
@@ -23257,6 +23271,11 @@ static bool CpRowIsScript(const char* label, std::string_view runtimeName);
 static bool CpIsRecipeListRow(const char* label)
 {
     return CpRowIsScript(label, HeroSiege::Scripts::gml_Script_anon_840_gml_Object_UI_Craft_Recipe_List_Item_obj_Create_0);
+}
+
+static bool CpIsAvailabilityRow(const char* label)
+{
+    return CpRowIsScript(label, HeroSiege::Scripts::gml_Script_GetCraftItemsAvailable);
 }
 
 static bool CpIsCountRow(const char* label)
@@ -23271,13 +23290,21 @@ static std::string CpNumText(double v)
     return std::to_string(v);
 }
 
-// `show`'s inject line: `inject: class=<c> b=<b> extra=<e> injected=<n>`, or `inject: off`.
+// `show`'s inject line: `inject: class=<c> b=<b> extra=<e> owner=<o> injected=<n>
+// (availability=<a> recipe-row=<r> craft-route=<c>)` and the calls it left
+// alone, or `inject: off`.
 static std::string CpInjectText()
 {
     if (!g_CpInjectOn.load()) return "inject: off";
     return "inject: class=" + CpNumText(g_CpInjectClass.load()) + " b=" + CpNumText(g_CpInjectB.load())
-        + " extra=" + CpNumText(g_CpInjectExtra.load()) + " injected=" + std::to_string(g_CpInjected)
-        + " outside-route=" + std::to_string(g_CpInjectOutside) + " not-a-number=" + std::to_string(g_CpInjectNotNumber);
+        + " extra=" + CpNumText(g_CpInjectExtra.load()) + " owner=" + CpNumText(g_CpInjectOwner.load())
+        + " injected=" + std::to_string(g_CpInjected)
+        + " (availability=" + std::to_string(g_CpInjectedAvailability) + " recipe-row=" + std::to_string(g_CpInjectedRecipeRow)
+        + " craft-route=" + std::to_string(g_CpInjectedRoute) + ")"
+        + " outside-route=" + std::to_string(g_CpInjectOutside)
+        + " other-owner=" + std::to_string(g_CpInjectOtherOwner)
+        + (g_CpInjectOtherOwner > 0 ? " (last a0=" + CpNumText(g_CpInjectLastOwner.load()) + ")" : std::string())
+        + " not-a-number=" + std::to_string(g_CpInjectNotNumber);
 }
 
 static bool CpRouteOnStack()
@@ -23288,29 +23315,37 @@ static bool CpRouteOnStack()
 
 // After CountInventoryItem's trampoline. Every condition is read from the call
 // itself, at the point of use; a call that fails any of them keeps the game's
-// own return untouched.
+// own return untouched. A call of the item's class and base that is left alone
+// is counted by why (another owner, outside every frame, not a number), so
+// `injected=0` in `show` always says which of those it was.
 static void CpInject(const char* label, long n, bool logged, int argc, RValue** A, RValue& r)
 {
     if (!g_CpInjectOn.load()) return;
     if (argc < 4 || !A || !A[0] || !A[1] || !A[3]) return;
     double owner = -1, cls = -1, base = -1;
     if (!ApNumber(*A[0], owner) || !ApNumber(*A[1], cls) || !ApNumber(*A[3], base)) return;
-    if (owner != kCpInjectOwner || cls != g_CpInjectClass.load() || base != g_CpInjectB.load()) return;
-    if (g_CpRecipeListDepth <= 0 && !CpRouteOnStack()) { InterlockedIncrement(&g_CpInjectOutside); return; }
-    if (r.m_Kind != VALUE_REAL && r.m_Kind != VALUE_INT32 && r.m_Kind != VALUE_INT64) {
-        InterlockedIncrement(&g_CpInjectNotNumber);
+    if (cls != g_CpInjectClass.load() || base != g_CpInjectB.load()) return;
+    if (owner != g_CpInjectOwner.load()) {
+        InterlockedIncrement(&g_CpInjectOtherOwner);
+        g_CpInjectLastOwner.store(owner);
         return;
     }
+    const bool inAvailability = g_CpAvailabilityDepth > 0;
+    const bool inRecipeRow = g_CpRecipeListDepth > 0;
+    const bool inRoute = CpRouteOnStack();
+    if (!inAvailability && !inRecipeRow && !inRoute) { InterlockedIncrement(&g_CpInjectOutside); return; }
+    if (!PpIsNumber(r)) { InterlockedIncrement(&g_CpInjectNotNumber); return; }
     const double game = r.ToDouble();
     if (!std::isfinite(game)) { InterlockedIncrement(&g_CpInjectNotNumber); return; }
     const double raised = game + g_CpInjectExtra.load();
     r = RValue(raised);
     const long k = InterlockedIncrement(&g_CpInjected);
+    InterlockedIncrement(inAvailability ? &g_CpInjectedAvailability : inRecipeRow ? &g_CpInjectedRecipeRow : &g_CpInjectedRoute);
     if (logged) {
         try {
             Out(std::string("craftprobe ") + label + " #" + std::to_string(n) + " injected: game ret=" + std::to_string(game)
                 + " -> " + std::to_string(raised) + " (injected=" + std::to_string(k) + ", "
-                + (g_CpRecipeListDepth > 0 ? "recipe row" : "craft route") + ")");
+                + (inAvailability ? "availability call" : inRecipeRow ? "recipe row" : "craft route") + ")");
         } catch (...) {}
     }
 }
@@ -23416,12 +23451,14 @@ static void CpAfter(const char* safe, const char* label, long n, bool logged, bo
         static const int route = CpCraftRouteSlot(LABEL); \
         static const bool readsRoute = CpReadsRoute(LABEL); \
         static const bool recipeList = CpIsRecipeListRow(LABEL); \
+        static const bool availability = CpIsAvailabilityRow(LABEL); \
         static const bool countRow = CpIsCountRow(LABEL); \
         const long n = InterlockedIncrement(&g_CpCalls_##SAFE); \
         const bool logged = CpObserve(LABEL, n, &g_CpLogged_##SAFE, &g_CpLogOn_##SAFE, route, readsRoute, S, O, argc, A); \
         RValue& r = [&]() -> RValue& { \
             CpRouteFrame frame(route, n); \
-            CpRecipeListFrame list(recipeList); \
+            CpCountFrame list(g_CpRecipeListDepth, recipeList); \
+            CpCountFrame avail(g_CpAvailabilityDepth, availability); \
             return g_CpOrig_##SAFE ? g_CpOrig_##SAFE(S, O, R, argc, A) : R; \
         }(); \
         CpAfter(#SAFE, LABEL, n, logged, g_CpCapture_##SAFE != 0, g_CpKept_##SAFE, S, argc, A, r); \
@@ -25932,7 +25969,7 @@ static void CpSet(const std::vector<std::string>& tok)
         return;
     }
     const RValue before = g_Yytk->CallBuiltin("variable_struct_get", { target, RValue(member) });
-    if (before.m_Kind != VALUE_REAL && before.m_Kind != VALUE_INT32 && before.m_Kind != VALUE_INT64) {
+    if (!PpIsNumber(before)) {
         Out("craftprobe set: refused - " + spec + "." + member + " holds " + CpTypeOf(before) + " (" + Describe(before)
             + "), not a number; nothing was written");
         return;
@@ -25946,26 +25983,34 @@ static void CpSet(const std::vector<std::string>& tok)
     Out("  before=" + CpNumText(before.ToDouble()) + " after=" + (ApNumber(after, a) ? CpNumText(a) : Describe(after)));
 }
 
-// `inject <class> <b> <extra>` / `inject off`: the research global the
-// CountInventoryItem detour reads (CpInject, above the table). Refused unless
-// both frames it depends on - CountInventoryItem's row and the recipe row's
-// closure - are detoured, so an `injected=0` cannot be the instrument's
-// blindness. Nothing is called and nothing is written by the command itself.
+// `inject <class> <b> <extra> [owner=<a0>]` / `inject off`: the research global
+// the CountInventoryItem detour reads (CpInject, above the table). Refused
+// unless every frame it depends on - CountInventoryItem's row, the recipe row's
+// closure and GetCraftItemsAvailable - is detoured, so an `injected=0` cannot
+// be the instrument's blindness. The owner defaults to Live 1i's a0=1; when
+// `show` reports `other-owner=` with a0 some other value, `owner=<that value>`
+// re-arms for it in the same launch. Nothing is called and nothing is written
+// by the command itself.
 static void CpInjectCommand(const std::vector<std::string>& tok)
 {
     CpTarget* count = CpFindRow(SdkShortScriptName(HeroSiege::Scripts::gml_Script_CountInventoryItem));
+    CpTarget* avail = CpFindRow(SdkShortScriptName(HeroSiege::Scripts::gml_Script_GetCraftItemsAvailable));
     CpTarget* list = nullptr;
     for (CpTarget& t : g_CpTargets)
         if (std::string_view(t.runtimeName) == HeroSiege::Scripts::gml_Script_anon_840_gml_Object_UI_Craft_Recipe_List_Item_obj_Create_0) list = &t;
     if (tok.size() == 2 && Lower(tok[1]) == "off") {
         const bool was = g_CpInjectOn.exchange(false);
         Out(std::string("craftprobe inject: off") + (was ? " (it had raised " + std::to_string(g_CpInjected) + " return(s), left "
-            + std::to_string(g_CpInjectOutside) + " outside the route)" : std::string(" (it was off)"))
+            + std::to_string(g_CpInjectOutside) + " outside every frame and " + std::to_string(g_CpInjectOtherOwner)
+            + " with another owner)" : std::string(" (it was off)"))
             + " - every CountInventoryItem return is the game's own");
         return;
     }
-    if (tok.size() != 4) { Out("craftprobe inject: usage -> inject <class> <b> <extra> | inject off; nothing changed"); return; }
-    double cls = 0, base = 0, extra = 0;
+    if (tok.size() != 4 && tok.size() != 5) {
+        Out("craftprobe inject: usage -> inject <class> <b> <extra> [owner=<a0>] | inject off; nothing changed");
+        return;
+    }
+    double cls = 0, base = 0, extra = 0, owner = kCpInjectOwner;
     auto number = [](const std::string& text, double& out) {
         try { size_t used = 0; out = std::stod(text, &used); return used == text.size() && std::isfinite(out); }
         catch (...) { return false; }
@@ -25975,23 +26020,37 @@ static void CpInjectCommand(const std::vector<std::string>& tok)
             + tok[2] + " " + tok[3] + "); nothing changed");
         return;
     }
-    if (!count || !count->installed.load() || !list || !list->installed.load()) {
+    if (tok.size() == 5 && (Lower(tok[4]).rfind("owner=", 0) != 0 || !number(tok[4].substr(6), owner) || owner != std::floor(owner))) {
+        Out("craftprobe inject: refused - the fifth word must be owner=<whole number> (supplied: " + tok[4] + "); nothing changed");
+        return;
+    }
+    const bool countOn = count && count->installed.load();
+    const bool listOn = list && list->installed.load();
+    const bool availOn = avail && avail->installed.load();
+    if (!countOn || !listOn || !availOn) {
         Out(std::string("craftprobe inject: refused - ") + (count ? count->label : "the count row") + " is "
-            + (count && count->installed.load() ? "detoured" : "NOT detoured") + " and " + (list ? list->label : "the recipe row's closure")
-            + " is " + (list && list->installed.load() ? "detoured" : "NOT detoured") + "; both must be (`craftprobe hook`); nothing changed");
+            + (countOn ? "detoured" : "NOT detoured") + ", " + (list ? list->label : "the recipe row's closure")
+            + " is " + (listOn ? "detoured" : "NOT detoured") + " and " + (avail ? avail->label : "the availability call")
+            + " is " + (availOn ? "detoured" : "NOT detoured") + "; all three must be (`craftprobe hook`); nothing changed");
         return;
     }
     g_CpInjectOn.store(false);
+    g_CpInjectOwner.store(owner);
     g_CpInjectClass.store(cls);
     g_CpInjectB.store(base);
     g_CpInjectExtra.store(extra);
     InterlockedExchange(&g_CpInjected, 0);
+    InterlockedExchange(&g_CpInjectedAvailability, 0);
+    InterlockedExchange(&g_CpInjectedRecipeRow, 0);
+    InterlockedExchange(&g_CpInjectedRoute, 0);
     InterlockedExchange(&g_CpInjectOutside, 0);
+    InterlockedExchange(&g_CpInjectOtherOwner, 0);
     InterlockedExchange(&g_CpInjectNotNumber, 0);
     g_CpInjectOn.store(true);
-    Out("craftprobe inject: on - " + std::string(count->label) + " calls with a0=" + CpNumText(kCpInjectOwner) + " a1=" + CpNumText(cls)
-        + " a3=" + CpNumText(base) + " made inside " + list->label + " or a craft-route row now return the game's count + "
-        + CpNumText(extra) + "; `show` prints injected=, `inject off` ends it. No press is needed to read it.");
+    Out("craftprobe inject: on - " + std::string(count->label) + " calls with a0=" + CpNumText(owner) + " a1=" + CpNumText(cls)
+        + " a3=" + CpNumText(base) + " made inside " + avail->label + ", " + list->label
+        + " or a craft-route row now return the game's count + " + CpNumText(extra)
+        + "; `show` prints injected= per frame and every call it left alone, `inject off` ends it. No press is needed to read it.");
 }
 
 // The first line is the build's marker: a live session tells this build
@@ -26045,8 +26104,9 @@ static void CpUsage()
         " refused unless the member is a method; reply as `call`'s, #<n> from the row that names the method's script, if any");
     Out("  set <struct> <member> <number> confirm   ONE write of an existing member that holds a number, read back: before=<v> after=<v>"
         " (fp:/fp9: looked up with self Console_Save_obj 0)");
-    Out("  inject <class> <b> <extra> | inject off   while on, CountInventoryItem(1, <class>, _, <b>) called inside the recipe row's closure"
-        " or a craft-route row returns the game's count + <extra>; `show` prints injected=; needs both rows detoured");
+    Out("  inject <class> <b> <extra> [owner=<a0>] | inject off   while on, CountInventoryItem(<owner, default 1>, <class>, _, <b>)"
+        " called inside GetCraftItemsAvailable, the recipe row's closure or a craft-route row returns the game's count + <extra>;"
+        " `show` prints injected= per frame, outside-route= and other-owner=; needs all three rows detoured");
     Out("  hook reports a row `mapkeep on` installed as `held by mapkeep` - neither detoured nor failed; run `mapkeep on` first");
     Out("  a craft-route row's logged line carries within=<row>#<n>|none: the outermost craft-route row on the stack when it was entered,"
         " and which call of it (the #n of its own entry and ret= lines); PilipaliDecrypt's and CountInventoryItem's lines carry it too");

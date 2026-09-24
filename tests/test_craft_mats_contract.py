@@ -1186,7 +1186,7 @@ class CraftMatsContractTests(unittest.TestCase):
         for step in ("std::stod(numberText, &used)", "std::isfinite(number)", "MpResolve(",
                      'CpResolveStruct("craftprobe set", spec, lookupSelf, target, "nothing was written")',
                      '"variable_struct_exists", { target, RValue(member) }', "const RValue before =",
-                     "before.m_Kind != VALUE_REAL && before.m_Kind != VALUE_INT32 && before.m_Kind != VALUE_INT64"):
+                     "!PpIsNumber(before)"):
             self.assertLess(gate, cpset.index(step), step)
             self.assertLess(cpset.index(step), write, step)
         # Read back after the write, and both values in the reply.
@@ -1213,66 +1213,99 @@ class CraftMatsContractTests(unittest.TestCase):
     def test_craftprobe_inject_scopes_the_count_to_the_craft_route(self):
         # The owner's "inject count into the crafting check": while `inject` is
         # on, CountInventoryItem's detour raises the game's own return for one
-        # identity, and only for a call made while the recipe row's closure or a
-        # craft-route row is on the stack. The closure gets its own depth - it is
-        # not added to kCpCraftRouteRows, so `within=` is unchanged.
+        # identity, and only for a call made while one of the game's three
+        # counting frames is on the stack: the recipe row's closure, the
+        # window's availability call (GetCraftItemsAvailable, which UI_Craft_obj's
+        # anon@1834 runs - not inside anon@840, and not a craft-route row), or a
+        # craft-route row. The first two get their own depths - neither is added
+        # to kCpCraftRouteRows, so `within=` is unchanged.
         detour = self.plugin[self.plugin.index("#define CRAFTPROBE_DETOUR(SAFE, LABEL)"):]
         detour = detour[:detour.index("#define CRAFTPROBE_TARGETS(X)")]
         self.assertIn("static const bool recipeList = CpIsRecipeListRow(LABEL);", detour)
+        self.assertIn("static const bool availability = CpIsAvailabilityRow(LABEL);", detour)
         self.assertIn("static const bool countRow = CpIsCountRow(LABEL);", detour)
         frame = detour.index("CpRouteFrame frame(route, n);")
-        listed = detour.index("CpRecipeListFrame list(recipeList);")
+        listed = detour.index("CpCountFrame list(g_CpRecipeListDepth, recipeList);")
+        avail = detour.index("CpCountFrame avail(g_CpAvailabilityDepth, availability);")
         trampoline = detour.index("g_CpOrig_##SAFE(S, O, R, argc, A)")
         self.assertLess(frame, listed)
         self.assertLess(listed, trampoline)
+        self.assertLess(avail, trampoline)
         # After the trampoline and after the game's own return was logged and kept.
         inject = detour.index("if (countRow) CpInject(LABEL, n, logged, argc, A, r);")
         self.assertLess(trampoline, inject)
         self.assertLess(detour.index("CpAfter("), inject)
-        # Both frames identified through their SDK constants, never a retyped name.
+        # Every frame identified through its SDK constant, never a retyped name.
         self.assertIn("HeroSiege::Scripts::gml_Script_CountInventoryItem", self.body("static bool CpIsCountRow("))
         self.assertIn("HeroSiege::Scripts::gml_Script_anon_840_gml_Object_UI_Craft_Recipe_List_Item_obj_Create_0",
                       self.body("static bool CpIsRecipeListRow("))
+        self.assertIn("HeroSiege::Scripts::gml_Script_GetCraftItemsAvailable", self.body("static bool CpIsAvailabilityRow("))
         self.assertEqual(self.plugin.count('"CountInventoryItem"'), 1)
-        guard = self.body("struct CpRecipeListFrame")
-        self.assertIn("++g_CpRecipeListDepth", guard)
-        self.assertIn("--g_CpRecipeListDepth", guard)
+        guard = self.body("struct CpCountFrame")
+        self.assertIn("++*depth", guard)
+        self.assertIn("--*depth", guard)
         self.assertNotIn("g_CpRouteDepth", guard)
         self.assertNotIn("anon@840", "".join(self.CRAFT_ROUTE_ROWS))
+        self.assertNotIn("GetCraftItemsAvailable", "".join(self.CRAFT_ROUTE_ROWS))
         body = self.body("static void CpInject(")
         on = body.index("g_CpInjectOn.load()")
-        identity = body.index("owner != kCpInjectOwner || cls != g_CpInjectClass.load() || base != g_CpInjectB.load()")
-        scope = body.index("g_CpRecipeListDepth <= 0 && !CpRouteOnStack()")
+        identity = body.index("cls != g_CpInjectClass.load() || base != g_CpInjectB.load()")
+        owner = body.index("owner != g_CpInjectOwner.load()")
+        scope = body.index("!inAvailability && !inRecipeRow && !inRoute")
+        number = body.index("!PpIsNumber(r)")
         rewrite = body.index("r = RValue(raised);")
         for step in ("ApNumber(*A[0], owner)", "ApNumber(*A[1], cls)", "ApNumber(*A[3], base)"):
             self.assertLess(on, body.index(step), step)
             self.assertLess(body.index(step), identity, step)
         self.assertLess(on, identity)
-        self.assertLess(identity, scope)
-        self.assertLess(scope, rewrite)
+        self.assertLess(identity, owner)
+        self.assertLess(owner, scope)
+        self.assertLess(scope, number)
+        self.assertLess(number, rewrite)
         self.assertLess(rewrite, body.index("InterlockedIncrement(&g_CpInjected)"))
+        # Every call of the item's class and base that is left alone is counted,
+        # so `show` separates "no matching call was made" from "calls were made
+        # with another owner" and from "calls were made outside every frame".
+        for counter in ("InterlockedIncrement(&g_CpInjectOtherOwner)", "g_CpInjectLastOwner.store(owner)",
+                        "InterlockedIncrement(&g_CpInjectOutside)", "InterlockedIncrement(&g_CpInjectNotNumber)"):
+            self.assertIn(counter, body, counter)
+        self.assertLess(body.index("InterlockedIncrement(&g_CpInjectOtherOwner)"), scope)
+        self.assertIn("g_CpAvailabilityDepth > 0", body)
+        self.assertIn("g_CpRecipeListDepth > 0", body)
+        self.assertIn("CpRouteOnStack()", body)
+        for frameCounter in ("g_CpInjectedAvailability", "g_CpInjectedRecipeRow", "g_CpInjectedRoute"):
+            self.assertIn(frameCounter, body, frameCounter)
         self.assertRegex(self.block, r"static constexpr double kCpInjectOwner = 1\.0;")
         self.assertIn("g_CpRouteDepth[i] > 0", self.body("static bool CpRouteOnStack("))
         # Only the return value changes: no call, no write anywhere else.
         for forbidden in ("CallBuiltin", "script_execute", "variable_", "array_set", "ds_"):
             self.assertNotIn(forbidden, body, forbidden)
-        # `show` prints the counter; the command refuses unless both frames are
+        # `show` prints the counters; the command refuses unless every frame is
         # detoured, so `injected=0` cannot be the instrument's blindness.
         self.assertIn("CpInjectText()", self.body("static void CpShow("))
         text = self.body("static std::string CpInjectText(")
         self.assertIn('"inject: off"', text)
         self.assertIn('"inject: class="', text)
-        self.assertIn('" injected="', text)
+        for field in ('" injected="', '" (availability="', '" recipe-row="', '" craft-route="', '" outside-route="',
+                      '" other-owner="', '" not-a-number="'):
+            self.assertIn(field, text, field)
         command = self.body("static void CpInjectCommand(")
         self.assertIn('Lower(tok[1]) == "off"', command)
         self.assertLess(command.index("list->installed.load()"), command.index("g_CpInjectOn.store(true)"))
+        self.assertLess(command.index("avail->installed.load()"), command.index("g_CpInjectOn.store(true)"))
         self.assertLess(command.index("count->installed.load()"), command.index("g_CpInjectOn.store(true)"))
         self.assertIn("SdkShortScriptName(HeroSiege::Scripts::gml_Script_CountInventoryItem)", command)
+        self.assertIn("SdkShortScriptName(HeroSiege::Scripts::gml_Script_GetCraftItemsAvailable)", command)
+        # The owner defaults to Live 1i's a0=1; `owner=<a0>` takes the value
+        # `other-owner` reported, so a session can recover in the same launch.
+        self.assertIn('"owner="', command)
+        self.assertIn("g_CpInjectOwner.store(", command)
         self.assertIn('if (sub == "inject") { CpInjectCommand(tok); return; }', self.body("static void CpCommand("))
-        self.assertIn("inject <class> <b> <extra> | inject off", self.body("static void CpUsage("))
+        self.assertIn("inject <class> <b> <extra> [owner=<a0>] | inject off", self.body("static void CpUsage("))
         shipped = strip_research_blocks(self.plugin)
-        for symbol in ("CpInject", "g_CpInject", "kCpInjectOwner", "CpRecipeListFrame", "g_CpRecipeListDepth",
-                       "CpIsRecipeListRow", "CpIsCountRow", "CpRouteOnStack"):
+        for symbol in ("CpInject", "g_CpInject", "kCpInjectOwner", "CpCountFrame", "g_CpRecipeListDepth",
+                       "g_CpAvailabilityDepth", "CpIsRecipeListRow", "CpIsAvailabilityRow", "CpIsCountRow",
+                       "CpRouteOnStack"):
             self.assertNotIn(symbol, shipped, symbol)
 
     # ---- the switch ----------------------------------------------------------
