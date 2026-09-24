@@ -123,10 +123,13 @@ the selected recipe's required amount, 5, at the craft press. Each by-name
 `SaveStash` (self `Console_Save_obj`, no argument, stash closed, Cube open)
 after a take returned with one item fewer and no fault, but wrote no file in
 this one launch, the one before any take included, making 1627
-`CreateItemSaveStruct` calls against the 1993 the owner's stash close made
-afterward - a gap not yet explained; that close, after both takes, kept the
-game running and wrote a file holding neither. The "After Phase 1i" paragraph
-records what a player build now has and still lacks.
+`CreateItemSaveStruct` calls; a separate save-control window - the owner's
+stash open, hand move and close, run before any by-name call - counted 1993
+`CreateItemSaveStruct` calls, a different window in scope, so the gap
+between them is not yet explained and may be the open and the move rather
+than the by-name save itself. The owner's own stash close after both takes
+kept the game running and wrote a file holding neither. The "After Phase 1i"
+paragraph records what a player build now has and still lacks.
 Nothing player-visible changes yet: the
 `craftmats` switch exists but nothing is wired to crafting, and the player
 build refuses it. A result is only ever recorded as a negative with its
@@ -2993,10 +2996,12 @@ selected recipe's required amount is readable by name at the craft press.
 What the design's save step rests on is now the game's own save: a by-name
 `SaveStash` (self `Console_Save_obj` 0, no argument, stash closed, Cube open)
 returned cleanly but wrote no file in this one launch, making 1627
-`CreateItemSaveStruct` calls against the 1993 the owner's own stash close made
-afterward - that gap is the lead to follow before this route is treated as
-closed - so the stash file is written at the game's next own save - measured
-here at the next stash close.** Whether and how a player build follows is the owner's
+`CreateItemSaveStruct` calls; a separate save-control window, the owner's
+stash open, hand move and close before any by-name call, counted 1993
+`CreateItemSaveStruct` calls - the two windows differ in scope, so that gap
+is the lead to follow before this route is treated as closed - so the stash
+file is written at the game's next own save - measured here at the next
+stash close.** Whether and how a player build follows is the owner's
 decision (the next workorder). This replaces the "After Phase 1h" list of
 what the design lacked, kept below as it stood then. By measurement in Live
 1i - one launch, the representative cases only - with `control`, the keeper's
@@ -3047,9 +3052,11 @@ player build:
 What it still lacks, as far as observed:
 
 - *A by-name stash save that writes.* The lead to follow before this route is
-  treated as closed: a by-name save made 1627 `CreateItemSaveStruct` calls
-  against the 1993 the owner's own stash close made in the same window, and
-  what that gap consists of is not measured. No by-name `SaveStash` wrote
+  treated as closed: a by-name save made 1627 `CreateItemSaveStruct` calls; a
+  separate save-control window, the owner's stash open, hand move and close
+  before any by-name call, counted 1993 - a different window in scope, so
+  what that gap consists of is not measured, and may be the open and the
+  move rather than the save. No by-name `SaveStash` wrote
   `stash.hss` in this session, the one before any take included, though each
   used the close's own shape (self `Console_Save_obj`, no argument); Live 1f
   saw the same with the stash closed. Only the game's own save at the stash
