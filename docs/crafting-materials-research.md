@@ -602,6 +602,50 @@ is why it missed both names. Neither is a row or a call target here: a name
 the SDK already carries needs no regeneration, only a citation
 (`AGENTS.md` § "HS Game SDK Usage").
 
+### Phase 1j rows
+
+Phase 1i left the owner's design resting on three things no session had
+measured a mechanism for, and the owner added a fourth (`## Decision gate`,
+"After Phase 1i", and the owner's answers of 2026-09-24): a by-name route that
+makes the game itself write `stash.hss` with the stash closed, a take that
+moves only part of a stack, the mod's count inside the game's own availability
+check, and the Crafting Cube's own input grid as a destination when the bag is
+full. The local Ghidra reading (`### Phase 1j instrument`) named the functions
+behind each. Twenty-four rows, 278 in all, each named by its SDK constant like
+every other row and hooked by the same one `craftprobe hook`; they sit
+together, just before the `CheckPlayerInteraction` control. None is a
+craft-route row, so `within=` and `kCpCraftRouteRows` are unchanged, and no
+object's closures were added, so the closure-coverage test is unchanged.
+`UiSetGrid` and `UiSetGridArray` are also in `prospectprobe`'s table, a
+different instrument; one instrument per session, as `hook` already warns.
+
+| Row label | Group | Runtime name (the SDK constant's value) | Why |
+|---|---|---|---|
+| SaveLocalFile | save route | `gml_Script_SaveLocalFile` | the one direct caller of `SaveStash` in the image (the reading); per kind it brackets a saver with `SaveStart` and `SaveCommit`. The close's call gives the shape (`self`, `argc`, `a0`, `a1`) the by-name save replays |
+| SaveStart | save route | `gml_Script_SaveStart` | runs before the kind's saver; `SaveLocalFile` runs the saver only if it answered true |
+| SaveCommit | save route | `gml_Script_SaveCommit` | runs after the saver; the step a by-name `SaveStash` never reached, which is why it wrote no file (the reading) |
+| SaveFileGMAsync | save route | `gml_Script_SaveFileGMAsync` | a file-save script by its name, not followed by the reading; whether the stash's save reaches it is read from the close |
+| EncryptStringSave | save route | `gml_Script_EncryptStringSave` | shared by every saver; its count at the close says how many savers ran |
+| GenerateItemHash@s_ItemInstanceStruct | item method | `gml_Script_GenerateItemHash@anon@4791@s_ItemInstanceStruct@InventoryV2Funcs` | by shape the split's no-argument call; the hash step after an edit is one of the questions |
+| GetItemInfo@s_ItemInstanceStruct | item method | `gml_Script_GetItemInfo@anon@5277@s_ItemInstanceStruct@InventoryV2Funcs` | a string-keyed getter, a candidate for the split's first call |
+| GetItemStat@s_ItemInstanceStruct | item method | `gml_Script_GetItemStat@anon@5523@s_ItemInstanceStruct@InventoryV2Funcs` | the stat getter, named so a stat call is not mistaken for the split's |
+| GetItemStatArray@s_ItemInstanceStruct | item method | `gml_Script_GetItemStatArray@anon@5844@s_ItemInstanceStruct@InventoryV2Funcs` | the item's remaining method family, for the same reason |
+| ___struct___240@GetItemStatArray@s_ItemInstanceStruct | item method | `gml_Script____struct___240@GetItemStatArray@anon@5844@s_ItemInstanceStruct@InventoryV2Funcs` | the struct `GetItemStatArray` builds |
+| GetItemDef@s_ItemInstanceStruct | item method | `gml_Script_GetItemDef@anon@7191@s_ItemInstanceStruct@InventoryV2Funcs` | a string-keyed getter on the definition struct, where the stack count `o` lives (measured, Live 1i); the likeliest first split call |
+| SetItemDef@s_ItemInstanceStruct | item method | `gml_Script_SetItemDef@anon@7339@s_ItemInstanceStruct@InventoryV2Funcs` | its two-argument setter; the likeliest second split call (the key, then the count minus the amount) |
+| SetItemStat@s_ItemInstanceStruct | item method | `gml_Script_SetItemStat@anon@7507@s_ItemInstanceStruct@InventoryV2Funcs` | a two-argument setter, a candidate by shape |
+| AddStat@s_ItemInstanceStruct | item method | `gml_Script_AddStat@anon@7675@s_ItemInstanceStruct@InventoryV2Funcs` | named so a stat edit is told apart from a count edit |
+| SetItemInfo@s_ItemInstanceStruct | item method | `gml_Script_SetItemInfo@anon@7965@s_ItemInstanceStruct@InventoryV2Funcs` | the info setter, a candidate for the split's second call |
+| s_ItemInstanceStruct | creation | `gml_Script_s_ItemInstanceStruct` | the item constructor; a candidate for how the split unit's item is made at the drop |
+| StructCopy | creation | `gml_Script_StructCopy` | a copy of the source item is the other way the unit's item could be made |
+| AddItemToMap | creation | `gml_Script_AddItemToMap` | how a new item enters a map |
+| ItemCheckHash | identity | `gml_Script_ItemCheckHash` | the hash step the game's own merge (`GridAddToStack`, `InventoryGridAddToStack`) runs after its inline count edit |
+| LootTimestamp | identity | `gml_Script_LootTimestamp` | a new item's stamp; a creation marker |
+| GetCounterHash | identity | `gml_Script_GetCounterHash` | a counter-based hash a new fingerprint may come from |
+| EditItemData | identity | `gml_Script_EditItemData` | an item edit by name, a candidate for the unit's or the source's edit |
+| UiSetGrid | Cube grid | `gml_Script_UiSetGrid` | the Cube window's Create closures bind its grids through it; the drop into the Cube's input grid names which array it binds |
+| UiSetGridArray | Cube grid | `gml_Script_UiSetGridArray` | the array form of the same binding |
+
 ### Negative results, sourced
 
 These are "not found by name" in the SDK tables above, not "does not exist":
