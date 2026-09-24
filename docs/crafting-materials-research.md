@@ -3925,9 +3925,11 @@ rests on `ItemCheckHash`'s own line appearing; with none, this reads not
 observed, never a pass. What was seen alongside: the edited K_B stack and
 both created units survived the drag, the merge, the save and a reload.
 `ReportClient` never fired at all this session, so it has no positive
-control - its zero is not evidence that no flag was raised, and whether the
-game hash-checks an edited item on any of these paths stays not observed
-(`hash-accept`, `partial-cube`).
+control - its zero is not evidence that no flag was raised; `GridAddToStack`
+and `InventoryGridAddToStack` fired on no merge this session either, so
+their zero here has no positive control and is not evidence the merge
+avoids them - and whether the game hash-checks an edited item on any of
+these paths stays not observed (`hash-accept`, `partial-cube`).
 
 **Question 4: the no-stack partial take.** Observed, once, on the json
 branch, first order at every stage. Self `Console_Save_obj 0` throughout:
