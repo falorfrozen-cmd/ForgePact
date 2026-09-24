@@ -1469,16 +1469,16 @@ class CraftMatsContractTests(unittest.TestCase):
         self.assertLess(at("### Live procedure 1i"), at("## Results"))
         self.assertLess(at("### Phase 1h results"), at("### Phase 1i results"))
         self.assertLess(at("### Phase 1i results"), at("## Decision gate"))
-        results = self.doc[at("### Phase 1i results"):at("## Decision gate")]
+        results = self.doc[at("### Phase 1i results"):at("### Phase 1j results")]
         hashes = re.findall(r"\b[0-9a-f]{64}\b", results)
         self.assertEqual(len(hashes), 1, hashes)
         self.assertNotEqual(hashes[0], "ee896d9f19a2e98c9bab51b1df155c4079168a45a8ce39e3ad134506c8b99c71")
-        instrument = self.doc[at("### Phase 1i instrument"):at("## Live procedure")]
+        instrument = self.doc[at("### Phase 1i instrument"):at("### Phase 1j instrument")]
         # The four additions, and where the reading came from.
         for token in ("phase1i rows=", "from=", "craftprobe find", "inroute", "within=", "kCpFindMaxVisits",
                       "hs-decomp", "ghidra_projects", "GridRemoveItem", "CraftFindRecipeItems", "Controller_obj"):
             self.assertIn(token, instrument, token)
-        procedure = self.doc[at("### Live procedure 1i"):at("## Results")]
+        procedure = self.doc[at("### Live procedure 1i"):at("### Live procedure 1j")]
         self.assertIn("nineteen checks", procedure)
         self.assertIn("forgepact-issue-14-phase1i-context.md", procedure)
         self.assertIn("### Live procedure 1", procedure)
@@ -1504,6 +1504,67 @@ class CraftMatsContractTests(unittest.TestCase):
             gate = self.doc[at("## Decision gate"):]
             self.assertLess(0, gate.find("After Phase 1i"))
             self.assertLess(gate.find("After Phase 1i"), gate.find("After Phase 1h"))
+        # Phase 1j (the save route, the partial take, the count injection and
+        # the Cube as a destination: one research build, one session) adds
+        # rows, an instrument, a procedure and a results section, each after
+        # its Phase 1h/1i counterpart. The results name the Phase 1j research
+        # DLL (one hash, not the Phase 1i one) and carry one row per check
+        # from the start; the procedure names the twenty-one checks in the
+        # capture's order, points at the workorder's step-by-step file and
+        # names the marker. Each row gets its verdict once the status is
+        # complete.
+        status = re.search(r"(?m)^phase1j-status: (pending|complete)$", "\n".join(self.doc.split("\n")[:14]))
+        self.assertIsNotNone(status, "phase1j-status missing from the frontmatter")
+        for heading in ("### Phase 1j rows", "### Phase 1j instrument", "### Live procedure 1j", "### Phase 1j results"):
+            self.assertIn("\n" + heading + "\n", self.doc, heading)
+        self.assertLess(at("### Phase 1h rows"), at("### Phase 1j rows"))
+        self.assertLess(at("### Phase 1j rows"), at("### Negative results, sourced"))
+        self.assertLess(at("### Phase 1i instrument"), at("### Phase 1j instrument"))
+        self.assertLess(at("### Phase 1j instrument"), at("## Live procedure"))
+        self.assertLess(at("### Live procedure 1i"), at("### Live procedure 1j"))
+        self.assertLess(at("### Live procedure 1j"), at("## Results"))
+        self.assertLess(at("### Phase 1i results"), at("### Phase 1j results"))
+        self.assertLess(at("### Phase 1j results"), at("## Decision gate"))
+        results = self.doc[at("### Phase 1j results"):at("## Decision gate")]
+        hashes = re.findall(r"\b[0-9a-f]{64}\b", results)
+        self.assertEqual(len(hashes), 1, hashes)
+        self.assertNotEqual(hashes[0], "eaf6e7b8a423191a27d8307be65a50d7b2eab4270efc300e51d5bb30828a3fed")
+        self.assertIn("| Check | What it measures | Observed | Verdict |", results)
+        rows = self.doc[at("### Phase 1j rows"):at("### Negative results, sourced")]
+        for constant in self.PHASE1J_ROWS:
+            self.assertIn(self.runtime_name(constant), rows, constant)
+        instrument = self.doc[at("### Phase 1j instrument"):at("## Live procedure")]
+        # The additions, and where the reading came from.
+        for token in ("phase1j rows=", "craftprobe callm", "craftprobe set", "craftprobe inject", "is_method",
+                      "InvokeMethodValue", "anon@840", "SaveLocalFile", "Unverified going in", "hs-decomp",
+                      "ghidra_projects", "DecompileTo.java", "FindCallers.java"):
+            self.assertIn(token, instrument, token)
+        procedure = self.doc[at("### Live procedure 1j"):at("## Results")]
+        self.assertIn("twenty-one checks", procedure)
+        self.assertIn("forgepact-issue-14-phase1j-context.md", procedure)
+        self.assertIn("### Live procedure 1", procedure)
+        self.assertIn("phase1j rows=", procedure)
+        self.assertIn("## Checks", procedure)
+        checks = ("dll-hash", "marker", "counts-tool-before", "hook", "control", "save-control", "map-at-cube",
+                  "holders", "bag-stack", "split-control", "partial-stacked", "partial-nostack", "return-socket",
+                  "cube-holder", "cube-place", "cube-count", "count-inject", "save-route", "close-after",
+                  "reload-after", "counts-tool-after")
+        self.assertEqual(len(checks), 21)
+        order = procedure[procedure.index("twenty-one checks"):]
+        at_check = [order.index("`" + check + "`") for check in checks]
+        self.assertEqual(at_check, sorted(at_check), "the twenty-one checks are named in the capture's order")
+        for check in checks:
+            self.assertIn("| " + check + " |", results, check)
+        if status.group(1) == "complete":
+            verdicts = sum(results.count(v) for v in ("| pass |", "| fail |", "| not-observed |"))
+            self.assertEqual(verdicts, len(checks))
+            self.assertIn("forgepact-issue-14-phase1j-live-1.md", results)
+            gate = self.doc[at("## Decision gate"):]
+            after = gate.find("After Phase 1j")
+            self.assertLess(0, after)
+            self.assertLess(after, gate.find("After Phase 1i"))
+            for token in ("save-route:", "partial-stacked:", "partial-nostack:", "inject:", "cube-destination:"):
+                self.assertIn(token, gate[after:gate.find("After Phase 1i")], token)
         results = self.doc[self.doc.index("\n## Results\n"):self.doc.index("\n## Decision gate\n")]
         for row in ("| B0-vanilla |", "| C-control |", "| H-A |", "| H-B |", "| H-C |"):
             self.assertIn(row, results)
