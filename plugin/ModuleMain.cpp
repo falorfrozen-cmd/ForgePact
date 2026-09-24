@@ -23814,6 +23814,9 @@ static void CpAfter(const char* safe, const char* label, long n, bool logged, bo
     X(InitItemFromJson, "InitItemFromJson", gml_Script_InitItemFromJson) \
     X(ReCreateItem, "ReCreateItem", gml_Script_ReCreateItem) \
     X(ParseItemToGrid, "ParseItemToGrid", gml_Script_ParseItemToGrid) \
+    /* Phase 1k round 1: the flag a failed hash check raises, so `hash-accept`'s */ \
+    /* "ReportClient did not fire" rests on a row that would have seen it.     */ \
+    X(ReportClient, "ReportClient", gml_Script_ReportClient) \
     /* positive control: fires from every interactable's Step event */ \
     X(CheckPlayerInteraction, "CheckPlayerInteraction", gml_Script_CheckPlayerInteraction)
 
@@ -23872,6 +23875,68 @@ static CpTarget* CpFindRow(const std::string& text)
     const std::string l = Lower(text);
     for (CpTarget& t : g_CpTargets) if (Lower(t.label) == l || Lower(t.safe) == l) return &t;
     return nullptr;
+}
+
+// Phase 1k round 1: what a by-name `call` of a row returned, kept apart from
+// CpKept. A CpKept holds the game's latest return, written only from inside a
+// craftprobe detour, so it cannot hold a by-name call of a row mapkeep holds
+// (GetItemMap: never detoured here), and the game's own calls - GetItemMap(0)
+// nearly every frame, a save's CreateItemSaveStruct - replace it between the
+// by-name call and the command that names it. This slot is written only by
+// `call`, after a dispatch that ran, and read first by `kept:`; no detour
+// touches it. Rooted the same way: the research global `__cp_call_<row>` is
+// set before the slot.
+struct CpCallKept {
+    RValue*     value = nullptr;   // heap-held and never deleted, as CpKept::value
+    long        call = 0;          // the row's call number `call` printed; 0 = nothing kept
+    std::string root;
+    std::string self;
+};
+static CpCallKept g_CpCallKept[kCpTargetCount];
+
+static void CpKeepCallReturn(const CpTarget& t, const RValue& res, long callNo)
+{
+    CpCallKept& c = g_CpCallKept[&t - g_CpTargets];
+    try {
+        const std::string root = std::string("__cp_call_") + t.safe;
+        g_Yytk->CallBuiltin("variable_global_set", { RValue(root), res });
+        if (!c.value) c.value = new RValue();
+        *c.value = res;
+        c.root = root;
+        c.call = callNo;
+        Out(std::string("  kept as kept:") + t.label + " #" + std::to_string(callNo) + " (" + PpBackingShape(res) + "; this call's own return, which no game call replaces)");
+    } catch (...) { Out(std::string("  kept:") + t.label + " not kept (variable_global_set threw)"); }
+}
+
+// `kept:<row>` for `call`, `callm` and `set`: the row's by-name `call` return
+// first, else the game's latest return `backing` kept. `from` names which
+// answered; with neither, `why` names the cause the operator can act on.
+static bool CpKeptValue(const std::string& rowText, RValue& out, std::string& from, std::string& why)
+{
+    const CpTarget* t = CpFindRow(rowText);
+    if (!t) { why = "'" + rowText + "' is not a craftprobe row"; return false; }
+    const CpCallKept& c = g_CpCallKept[t - g_CpTargets];
+    if (c.value && c.call > 0) {
+        out = *c.value;
+        from = std::string("the by-name `call ") + t->label + "` #" + std::to_string(c.call) + " return (" + PpBackingShape(out) + ")";
+        return true;
+    }
+    if (t->kept && t->kept->value && t->kept->call > 0) {
+        out = *t->kept->value;
+        from = std::string("the game's call #") + std::to_string(t->kept->call) + " self=" + t->kept->self
+             + ", kept by `backing` (" + PpBackingShape(out) + ")";
+        return true;
+    }
+    if (MkHolds(t->runtimeName) && !t->installed.load())
+        why = "no by-name `call` return, and the row is held by mapkeep, so `backing` never sees the game's calls (`call "
+            + std::string(t->label) + " ... confirm` first)";
+    else if (!t->installed.load())
+        why = "no by-name `call` return, and the row is not detoured (`hook` first, or `call " + std::string(t->label) + " ... confirm`)";
+    else if (!g_CpBacking.load() || !*t->capture)
+        why = "no by-name `call` return, and `backing on " + std::string(t->label) + "` was not run";
+    else
+        why = "no by-name `call` return, and the game has not called it since `backing on`";
+    return false;
 }
 
 static bool CpLabelMatches(const CpTarget& t, const std::vector<std::string>& filters)
@@ -25517,6 +25582,14 @@ static void CpBackingCommand(const std::vector<std::string>& tok)
             t.kept->perArgFull = 0;
             ++cleared;
         }
+        // Phase 1k round 1: `call`'s own kept returns, released the same way.
+        for (CpCallKept& c : g_CpCallKept) {
+            if (c.call <= 0) continue;
+            try { if (!c.root.empty()) g_Yytk->CallBuiltin("variable_global_set", { RValue(c.root), RValue() }); } catch (...) {}
+            if (c.value) *c.value = RValue();
+            c.call = 0;
+            ++cleared;
+        }
         Out("craftprobe backing clear: released " + std::to_string(cleared) + " kept value(s)");
     } else {
         Out("craftprobe backing on [substr ...] | off | dump | clear");
@@ -25648,12 +25721,12 @@ static bool CpResolveArg(const std::string& tag, const std::string& a, CInstance
     } else if (la.rfind("path:", 0) == 0) {
         if (!CpCallPathArg(a.substr(5), v)) { Out(tag + ": refused - " + a + " did not resolve (path:<Obj|global|id:n>.<a.b.c>; the walk's line above says where); nothing was called"); return false; }
     } else if (la.rfind("kept:", 0) == 0) {
-        const CpTarget* k = CpFindRow(a.substr(5));
-        if (!k || !k->kept || !k->kept->value || k->kept->call <= 0) {
-            Out(tag + ": refused - " + a + " names no kept return (`backing on` first); nothing was called");
+        std::string from, why;
+        if (!CpKeptValue(a.substr(5), v, from, why)) {
+            Out(tag + ": refused - " + a + ": " + why + "; nothing was called");
             return false;
         }
-        v = *k->kept->value;
+        Out(tag + ": " + a + " is " + from);
     } else if (la == "undefined") {
         v = RValue();   // Phase 1g: kind undefined, as auto-prospect's add and clear pass it (not MpArg's text)
     } else {
@@ -25738,6 +25811,7 @@ static void CpCall(const std::vector<std::string>& tok)
         std::string ret;
         try { ret = PpRetText(res); } catch (...) { ret = "<read failed>"; }
         Out("  dispatched " + no + " -> ret=" + ret);
+        CpKeepCallReturn(*t, res, callNo);
     }
     Out("  after:  " + where());
 }
@@ -25846,12 +25920,12 @@ static bool CpResolveStruct(const std::string& tag, const std::string& spec, CIn
         const std::string key = rest.substr(0, dot);
         if (key.empty()) { Out(tag + ": refused - " + spec + " names no " + (kept ? "row" : "fingerprint") + "; " + nothing); return false; }
         if (kept) {
-            const CpTarget* k = CpFindRow(key);
-            if (!k || !k->kept || !k->kept->value || k->kept->call <= 0) {
-                Out(tag + ": refused - " + spec + " names no kept return (`backing on " + key + "` first, then the call); " + nothing);
+            std::string from, why;
+            if (!CpKeptValue(key, out, from, why)) {
+                Out(tag + ": refused - " + spec + ": " + why + "; " + nothing);
                 return false;
             }
-            out = *k->kept->value;
+            Out(tag + ": kept:" + key + " is " + from);
         } else {
             if (!lookupSelf) { Out(tag + ": refused - " + spec + ": no self for the lookup; " + nothing); return false; }
             const bool found = fp9 ? ApItemFromFingerprintAs(lookupSelf, RValue(key), RValue(9.0), out)

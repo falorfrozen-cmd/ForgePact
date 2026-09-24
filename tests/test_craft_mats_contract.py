@@ -306,7 +306,9 @@ class CraftMatsContractTests(unittest.TestCase):
             self.assertLess(gate, call.index(step), step)
             self.assertLess(call.index(step), write, step)
         resolve = self.body("static bool CpResolveArg(")
-        for step in ("ApItemFromFingerprint(", "k->kept->call <= 0", "MpArg(a)",
+        # `kept:` resolves through CpKeptValue (Phase 1k round 1), which reads
+        # a kept slot and calls nothing.
+        for step in ("ApItemFromFingerprint(", "CpKeptValue(a.substr(5), v, from, why)", "MpArg(a)",
                      "ApItemFromFingerprintAs(inst, RValue(a.substr(4)), RValue(9.0), v)", "MkCurrentMap(map, why)",
                      "MkMapEntry(map, key, v, form)", "CpCallPathArg(a.substr(5), v)"):
             self.assertIn(step, resolve, step)
@@ -360,8 +362,8 @@ class CraftMatsContractTests(unittest.TestCase):
         usage = self.body("static void CpUsage(")
         first = usage[usage.index("Out("):]
         first = first[:first.index(";")]
-        # Phase 1k adds 3 rows (281), `callm`'s `bind` and `set`'s `kept:`
-        # form; Phase 1j added 24 rows (278), `callm`, `set` and `inject`;
+        # Phase 1k adds 4 rows (282), `callm`'s `bind`, `set`'s `kept:` form
+        # and `call`'s own kept return; Phase 1j added 24 rows (278), `callm`, `set` and `inject`;
         # Phase 1i kept Phase 1h's 254 rows and added the paged `var`, `find`
         # and the `inroute` gate; Phase 1h added two rows (254), the `call`
         # reply split and the numeric path segment; Phase 1g (the Phase A
@@ -811,8 +813,8 @@ class CraftMatsContractTests(unittest.TestCase):
         for row in self.CRAFT_ROUTE_ROWS:
             self.assertIn(row, labels, row + " is not a craftprobe row")
         # Phase 1e's 252 rows (none added for Phase 1g), Phase 1h's two,
-        # Phase 1j's 24 (none for Phase 1i) and Phase 1k's three.
-        self.assertEqual(len(self.rows), 281)
+        # Phase 1j's 24 (none for Phase 1i) and Phase 1k's four.
+        self.assertEqual(len(self.rows), 282)
         detour = self.plugin[self.plugin.index("#define CRAFTPROBE_DETOUR(SAFE, LABEL)"):]
         detour = detour[:detour.index("#define CRAFTPROBE_TARGETS(X)")]
         # The enclosing row is read before this call's own frame is entered, the
@@ -1090,7 +1092,7 @@ class CraftMatsContractTests(unittest.TestCase):
         at = [constants.index(c) for c in self.PHASE1J_ROWS]
         self.assertEqual(at, list(range(at[0], at[0] + 24)), "the Phase 1j rows sit together, in the doc's order")
         self.assertEqual(constants[-1], "gml_Script_CheckPlayerInteraction", "the control stays the table's last row")
-        # Phase 1k's three rows sit between them and the control.
+        # Phase 1k's four rows sit between them and the control.
         self.assertEqual(at[-1] + 1 + len(self.PHASE1K_ROWS), len(constants) - 1)
         labels = {constant: label for _, label, constant in self.rows}
         for constant in self.PHASE1J_ROWS:
@@ -1313,17 +1315,20 @@ class CraftMatsContractTests(unittest.TestCase):
 
     # ---- Phase 1k: the loaders' rows, callm's bind, set's kept: form ---------
 
-    PHASE1K_ROWS = ("gml_Script_InitItemFromJson", "gml_Script_ReCreateItem", "gml_Script_ParseItemToGrid")
+    PHASE1K_ROWS = ("gml_Script_InitItemFromJson", "gml_Script_ReCreateItem", "gml_Script_ParseItemToGrid",
+                    "gml_Script_ReportClient")
 
     def test_craftprobe_phase1k_rows_are_sdk_declared_and_research_only(self):
-        # The three rows of the research doc's `### Phase 1k rows`: the game's
-        # loader route that makes an item without its constructor. Each goes
+        # The four rows of the research doc's `### Phase 1k rows`: the game's
+        # loader route that makes an item without its constructor, and (round
+        # 1) ReportClient, so `hash-accept`'s "does not fire" has an
+        # instrument that could have seen it fire. Each goes
         # through its hs-game-sdk constant, one row per constant, sitting
         # together right after the Phase 1j rows and before the control, and
         # hooked by the same one `hook`. None is a craft-route row or a
         # closure, so `within=` and the closure coverage are unchanged, and
         # `call` reaches each by name (no `@` in the runtime name).
-        self.assertEqual(len(self.PHASE1K_ROWS), 3)
+        self.assertEqual(len(self.PHASE1K_ROWS), 4)
         constants = [constant for _, _, constant in self.rows]
         doc_rows = self.doc[self.doc.index("\n### Phase 1k rows\n"):self.doc.index("\n### Negative results, sourced\n")]
         for constant in self.PHASE1K_ROWS:
@@ -1332,7 +1337,7 @@ class CraftMatsContractTests(unittest.TestCase):
             self.assertNotIn("@", name, constant + " is a closure or method, not a script `call` reaches by name")
             self.assertIn(name, doc_rows, name + " missing from the research doc's `### Phase 1k rows`")
         at = [constants.index(c) for c in self.PHASE1K_ROWS]
-        self.assertEqual(at, list(range(at[0], at[0] + 3)), "the Phase 1k rows sit together, in the doc's order")
+        self.assertEqual(at, list(range(at[0], at[0] + 4)), "the Phase 1k rows sit together, in the doc's order")
         self.assertEqual(at[0], constants.index(self.PHASE1J_ROWS[-1]) + 1, "the Phase 1k rows follow the Phase 1j rows")
         self.assertEqual(constants[-1], "gml_Script_CheckPlayerInteraction", "the control stays the table's last row")
         self.assertEqual(at[-1] + 1, len(constants) - 1)
@@ -1416,11 +1421,13 @@ class CraftMatsContractTests(unittest.TestCase):
         self.assertIn("bool keptForm = false", signature[:signature.index("{")], "off unless the caller asks for it")
         self.assertIn('keptForm && ls.rfind("kept:", 0) == 0', struct)
         kept = struct[struct.index("if (kept) {"):]
-        self.assertLess(kept.index("CpFindRow(key)"), kept.index("out = *k->kept->value;"))
-        self.assertIn("k->kept->call <= 0", kept[:kept.index("out = *k->kept->value;")])
+        # Round 1: the one resolver `call`'s `kept:` argument uses too
+        # (test_craftprobe_call_keeps_its_own_return_for_kept pins its order).
+        self.assertIn("CpKeptValue(key, out, from, why)", kept)
+        self.assertNotIn("k->kept->value", struct, "the kept slot is read only through CpKeptValue")
         refusal = kept[kept.index("refused"):]
         self.assertIn("+ spec +", refusal[:refusal.index(";")], "the refusal names what was supplied")
-        self.assertIn("names no kept return", refusal)
+        self.assertIn("+ why +", refusal[:refusal.index(";")], "the refusal names its cause")
         # The kept value walks the same tail as fp:/fp9: - one walk, after the
         # branch - and ends at the same plain-struct check.
         self.assertLess(struct.index("if (kept) {"), struct.index("CpSplitPath("))
@@ -1437,6 +1444,69 @@ class CraftMatsContractTests(unittest.TestCase):
         for forbidden in ("script_execute", "CpDispatch", "ApCallScript", '"variable_struct_set"'):
             self.assertNotIn(forbidden, struct, forbidden)
         self.assertIn("kept:<row>[.a.b]", self.body("static void CpUsage("))
+
+    def test_craftprobe_call_keeps_its_own_return_for_kept(self):
+        # Round 1 of Phase 1k (instrument-blindness review): the no-stack take
+        # names `kept:GetItemMap`, `kept:CreateItemSaveStruct` and
+        # `kept:InitItemFromJson`, but a kept return was only ever written
+        # from inside a craftprobe detour. mapkeep holds GetItemMap's row, so
+        # it is never detoured and nothing could fill that slot; and the
+        # game's own calls (GetItemMap(0) nearly every frame, a save's
+        # CreateItemSaveStruct) replace the latest return between the by-name
+        # call and its use. So `call` keeps what its own dispatch returned, in
+        # a slot of its own that no detour writes, and `kept:` reads it first.
+        call = self.body("static void CpCall(")
+        dispatch = call.index("CpDispatchScript(name, inst, args, res, st)")
+        keep = call.index("CpKeepCallReturn(*t, res, callNo)")
+        self.assertLess(dispatch, keep)
+        # Only a call that ran keeps anything: the keep sits in the branch
+        # after the three failure outcomes.
+        ran = call[call.index("CpCallOutcome::Failed"):]
+        self.assertIn("CpKeepCallReturn(*t, res, callNo)", ran[ran.index("else {"):])
+        self.assertEqual(call.count("CpKeepCallReturn("), 1)
+        # Rooted first, as CpCapture roots the game's: the research global is
+        # set before the slot, so the slot never holds an unrooted struct.
+        keeper = self.body("static void CpKeepCallReturn(")
+        self.assertIn('"__cp_call_"', keeper)
+        self.assertLess(keeper.index('"variable_global_set"'), keeper.index("*c.value = res;"))
+        self.assertIn("g_CpCallKept[", keeper)
+        # No detour writes the call's slot: a game call cannot replace it.
+        for body in ("static void CpCapture(", "static void CpAfter("):
+            self.assertNotIn("g_CpCallKept", self.body(body), body)
+        self.assertNotIn("g_CpCallKept", self.plugin[self.plugin.index("#define CRAFTPROBE_DETOUR(SAFE, LABEL)"):
+                                                       self.plugin.index("#define CRAFTPROBE_TARGETS(X)")])
+        # `kept:` - both forms - resolves through one reader, the by-name
+        # call's slot first and the game's kept return second, and a refusal
+        # names why nothing is there: mapkeep holds the row, the row is not
+        # detoured, `backing` never selected it, or nothing has called it.
+        value = self.body("static bool CpKeptValue(")
+        self.assertLess(value.index("g_CpCallKept["), value.index("t->kept->value"))
+        self.assertIn("MkHolds(t->runtimeName)", value)
+        for cause in ("held by mapkeep", "`hook`", "`backing on", "since `backing on`"):
+            self.assertIn(cause, value, cause)
+        self.assertIn("from =", value, "the reply says which slot answered")
+        arg = self.body("static bool CpResolveArg(")
+        self.assertIn("CpKeptValue(a.substr(5), v, from, why)", arg)
+        self.assertNotIn("k->kept->value", arg)
+        # `backing clear` releases the call slots too, the same way.
+        backing = self.body("static void CpBackingCommand(")
+        clear = backing[backing.index('what == "clear"'):]
+        self.assertIn("for (CpCallKept& c : g_CpCallKept)", clear)
+        # Nothing is called to read a kept value, and nothing of it ships.
+        for forbidden in ("script_execute", "CpDispatch", "ApCallScript"):
+            self.assertNotIn(forbidden, value, forbidden)
+            self.assertNotIn(forbidden, keeper, forbidden)
+        shipped = strip_research_blocks(self.plugin)
+        self.assertIn("kPlayerCommands", shipped)   # negative control: the strip keeps player code
+        for symbol in ("g_CpCallKept", "CpKeepCallReturn", "CpKeptValue", "__cp_call_"):
+            self.assertNotIn(symbol, shipped, symbol)
+        # The research doc says where `kept:` reads from, and the order the
+        # session runs mapkeep and the hook in.
+        instrument = self.doc[self.doc.index("\n### Phase 1k instrument\n"):self.doc.index("\n## Live procedure\n")]
+        self.assertIn("__cp_call_", instrument)
+        self.assertNotIn("a by-name `call`'s return is kept too", self.doc)
+        procedure = self.doc[self.doc.index("\n### Live procedure 1k\n"):self.doc.index("\n## Results\n")]
+        self.assertIn("`mapkeep on` before `craftprobe hook`", procedure)
 
     # ---- the switch ----------------------------------------------------------
 
