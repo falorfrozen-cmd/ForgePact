@@ -2112,8 +2112,12 @@ test. What this document fixes is its shape:
   unavailable without, `inject 15 1 216`, available with it and
   `injected=` above 0 in `show` (quoted whole: the per-frame split,
   `outside-route=` and `other-owner=`), unavailable again after `inject off`,
-  a screenshot at each. If `show` reports `other-owner=` above 0 with
-  `injected=0`, the injection is re-armed once with `owner=<the a0 it
+  a screenshot at each. The recipe is reselected (or the Cube closed and
+  reopened on it) after every `inject` and after `inject off`, before the
+  display and `show` are read: the counting frames run when the window builds
+  or selects a row, so arming over an already-open window runs none of them
+  and `injected=0` would measure the procedure. If `show` reports
+  `other-owner=` above 0 with `injected=0`, the injection is re-armed once with `owner=<the a0 it
   names>` and the recipe reselected, in the same launch. No press.
 - **The by-name save** runs once, after every take's re-read and with the
   stash closed: exactly the close's `SaveLocalFile` shape, by name, with the
