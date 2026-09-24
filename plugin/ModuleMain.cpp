@@ -464,6 +464,7 @@ static bool PopulationCapacityAvailable() { return ForgePact::ProtectedPool::Run
 #include <ForgePact/DropManager.hpp>
 #include <ForgePact/IpcServer.hpp>
 #include <ForgePact/ModManager.hpp>
+#include <ForgePact/ItemTruth.hpp>
 
 static void DoScriptLookup(const std::string& name)
 {
@@ -4123,7 +4124,12 @@ static bool TryApplyCustomForge(RValue* candidate, bool finalPass = false)
         if (definition.m_Kind != VALUE_OBJECT || stats.m_Kind != VALUE_OBJECT) return false;
         std::map<std::string, double> statsAtEntry;
         if (finalPass) statsAtEntry = StructNumbers(stats);
-        {   // record the stat struct once, before any forge entry touches it: the editor wants the item's own values
+        // Record the stat struct once, before any forge entry touches it: the editor wants the
+        // item's own values. Only on CreateItemNew's own return (finalPass): CreateItemInit and
+        // GenerateItemRandomStats reach this function too, and a snapshot taken there misses what
+        // CreateItemNew adds after them - the socket count (20) and key 21 were absent from 121
+        // of 386 AFK items compared with their spool copies (2026-09-24).
+        if (finalPass) {
             RValue recorded = g_Yytk->CallBuiltin("variable_struct_exists", { *candidate, RValue("fp_recorded") });
             if (!recorded.ToBoolean()) { RecordItemStats(*candidate, stats); g_Yytk->CallBuiltin("variable_struct_set", { *candidate, RValue("fp_recorded"), RValue(true) }); }
         }
@@ -4305,6 +4311,107 @@ static void CustomForgePostProcess(RValue& result, int argc, RValue** args, bool
     // small, bounded prefix; TryApply requires all three canonical item fields.
     for (int i = 0; i < argc && i < 8; ++i)
         if (args && TryApplyCustomForge(args[i], finalPass)) return;
+}
+
+// ===== Item truth: the game's finished items for the Item Editor ==============
+// ForgePact::ItemTruth (plugin/include/ForgePact/ItemTruth.hpp) explains the
+// record. This part runs on the game thread inside Hook_CreateItemNew: it only
+// reads the finished struct, serialises it and queues one line; the journal's
+// own thread writes it. Off unless the Item Editor created
+// %LOCALAPPDATA%\Hero_Siege\itemtruth\capture.request (InstallItemTruth).
+static ForgePact::ItemTruth::Journal* g_TruthJournal = nullptr;   // never deleted, see ItemTruth.hpp
+static ForgePact::ItemTruth::Seen g_TruthSeen;
+static bool g_TruthOn = false;
+static std::string g_TruthBuild;
+static volatile long g_TruthCaptured = 0;
+// Non-empty only while ItemTruthEvalTick has the game build an item the Item
+// Editor asked about: that record is tagged with the request and always written.
+static std::string g_TruthEvalRequest;
+// CreateItemNew nesting on this thread. Only the outermost call is a finished
+// item: an item built inside another item's construction is part of it.
+static thread_local int g_TruthDepth = 0;
+struct TruthDepthGuard {
+    bool on;
+    explicit TruthDepthGuard(bool active) : on(active) { if (on) ++g_TruthDepth; }
+    ~TruthDepthGuard() { if (on) --g_TruthDepth; }
+};
+
+static std::string TruthStringify(const RValue& value)
+{
+    try {
+        if (value.m_Kind != VALUE_OBJECT) return {};
+        CInstance* g = nullptr; g_Yytk->GetGlobalInstance(&g);
+        RValue js; g_Yytk->CallBuiltinEx(js, "json_stringify", g, g, { value });
+        return js.m_Kind == VALUE_STRING ? js.ToString() : std::string();
+    } catch (...) { return {}; }
+}
+
+static std::string TruthWholeNumber(const RValue& value)
+{
+    try {
+        if (value.m_Kind == VALUE_STRING) {
+            const std::string text = value.ToString();
+            return ForgePact::ItemTruth::IsDigits(text) ? text : std::string();
+        }
+        if (value.m_Kind == VALUE_REAL || value.m_Kind == VALUE_INT32 || value.m_Kind == VALUE_INT64)
+            return ForgePact::ItemTruth::WholeNumberText(value.ToDouble());
+    } catch (...) {}
+    return {};
+}
+
+// The stat struct as it left the game, taken before CustomForgePostProcess
+// dresses it - only when a forge entry could apply, "" otherwise.
+static std::string ItemTruthNativeSnapshot(const RValue& item)
+{
+    if (!g_TruthOn || item.m_Kind != VALUE_OBJECT || g_CustomForgeEntries.empty()) return {};
+    try {
+        if (!ForgeCouldMatch(item)) return {};
+        return TruthStringify(g_Yytk->CallBuiltin("variable_struct_get", { item, RValue("itemStatStruct") }));
+    } catch (...) { return {}; }
+}
+
+static void ItemTruthCapture(const RValue& item, const std::string& nativeStats)
+{
+    if (!g_TruthOn || !g_TruthJournal || item.m_Kind != VALUE_OBJECT) return;
+    try {
+        auto field = [&](const char* name) { return g_Yytk->CallBuiltin("variable_struct_get", { item, RValue(name) }); };
+        const RValue def = field("itemDefinitionStruct");
+        const RValue stats = field("itemStatStruct");
+        if (def.m_Kind != VALUE_OBJECT || stats.m_Kind != VALUE_OBJECT) return;
+        ForgePact::ItemTruth::Record r;
+        r.timestamp = TruthWholeNumber(field("itemTimeStamp"));
+        if (r.timestamp.empty()) return;   // nothing the editor could match it to
+        const RValue hash = field("itemDataHash");
+        r.hash = hash.m_Kind == VALUE_STRING ? hash.ToString() : std::string();
+        r.stats = TruthStringify(stats);
+        const bool evaluating = !g_TruthEvalRequest.empty();
+        if (!g_TruthSeen.Insert(r.timestamp + "|" + (r.hash.empty() ? r.stats : r.hash)) && !evaluating) return;
+        if (evaluating) { r.source = "eval"; r.request = g_TruthEvalRequest; }
+        r.type = TruthWholeNumber(field("itemType"));
+        r.def = TruthStringify(def);
+        r.native = nativeStats;
+        r.info = TruthStringify(field("itemInfoStruct"));
+        r.build = g_TruthBuild;
+        r.unixMs = ForgePact::ItemTruth::UnixMsNow();
+        std::string line = ForgePact::ItemTruth::FormatRecord(r);
+        if (!line.empty() && g_TruthJournal->Enqueue(std::move(line))) InterlockedIncrement(&g_TruthCaptured);
+    } catch (...) {}
+}
+
+// One item of an Item Editor request, built through the game's own save loader
+// exactly as BuildAngelicPool builds its probe items: json_parse, then
+// InitItemFromJson(json, key) with the global instance as self. CreateItemNew
+// runs, so ItemTruthCapture records it. The struct is never dropped, placed or
+// saved; once the caller lets it go, the collector takes it.
+static RValue TruthBuildItem(const ForgePact::ItemTruth::EvalItem& entry)
+{
+    CInstance* g = nullptr; g_Yytk->GetGlobalInstance(&g);
+    if (!g) return RValue();
+    RValue parsed; g_Yytk->CallBuiltinEx(parsed, "json_parse", g, g, { RValue(entry.json) });
+    if (parsed.m_Kind != VALUE_OBJECT) return RValue();
+    RValue item;
+    const AurieStatus st = g_Yytk->CallGameScriptEx(item, "gml_Script_InitItemFromJson", g, g, { parsed, RValue(entry.key) });
+    return AurieSuccess(st) && item.m_Kind == VALUE_OBJECT ? item : RValue();
 }
 
 
@@ -16129,6 +16236,10 @@ static void HeadhunterActivityTick()
 #else
   #define HH_CREATE_TRACE(NAME) ((void)0)
 #endif
+// CreateItemNew is the one constructor whose return is a finished item, so it
+// alone is the final pass: the Custom Forge dressing applies there, and Item
+// Truth records the outermost call (before the dressing when a forge entry can
+// match, and after it - what the game will show).
 #define ITEM_CREATE_HOOK(NAME) \
     static PFUNC_YYGMLScript g_Orig_##NAME = nullptr; \
     static volatile long g_cnt_##NAME = 0; \
@@ -16136,8 +16247,17 @@ static void HeadhunterActivityTick()
     static RValue& Hook_##NAME(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) { \
         BP_DIAG_INCREMENT(g_cnt_##NAME); \
         HH_CREATE_TRACE(NAME); \
-        RValue& _res = g_Orig_##NAME ? g_Orig_##NAME(S, O, R, argc, A) : R; \
-        CustomForgePostProcess(_res, argc, A, strcmp(#NAME, "CreateItemNew") == 0); \
+        constexpr bool _final = std::string_view(#NAME) == std::string_view("CreateItemNew"); \
+        RValue* _resp = &R; \
+        { \
+            TruthDepthGuard _depth(_final); \
+            if (g_Orig_##NAME) _resp = &g_Orig_##NAME(S, O, R, argc, A); \
+        } \
+        RValue& _res = *_resp; \
+        const bool _outermost = _final && g_TruthDepth == 0; \
+        const std::string _native = _outermost ? ItemTruthNativeSnapshot(_res) : std::string(); \
+        CustomForgePostProcess(_res, argc, A, _final); \
+        if (_outermost) ItemTruthCapture(_res, _native); \
         BP_LOGDROP(#NAME, _res, argc, A); \
         return _res; \
     }
@@ -16552,6 +16672,195 @@ static void InstallDropMultHooks()
 // 3 = flat): ours are drawn at y, the game's row is handed y + rows*30, and the combined
 // height is returned so everything below (stats, lore, requirements, the box itself)
 // moves down with it.
+// ---- Item truth: the game's own tooltip text (ItemTruth.hpp, "tooltip") -----------
+// Recording rides on the two hooks below plus draw_text_outline(_ext): the first
+// time this session the game draws a given item's tooltip, every text row of that
+// pass and every stat call that drew a row are kept, then written as one journal
+// line when the pass ends. Nothing is drawn differently; the hooks only read.
+struct TipCaptureState {
+    bool active = false;       // recording the current DrawInventoryItemV2 pass
+    bool wantTable = false;    // this pass also records every stat call (once a session)
+    int itemDepth = 0;         // DrawInventoryItemV2 nesting; only the outer pass is recorded
+    int textDepth = 0;         // inside a text call: its nested text calls are part of it
+    long long statId = -1;     // inside DrawInventoryStatsNew: the stat it draws
+    std::string ts, hash, args, rows, stats, table, drawnBy;
+    std::string request;       // the drawing request this pass serves (TipDrawBatch), else ""
+    size_t rowCount = 0, statCount = 0, tableCount = 0;
+};
+static TipCaptureState g_Tip;
+static ForgePact::ItemTruth::Seen g_TipSeen(50000);
+static bool g_TipTableWritten = false;
+struct TipDepthGuard {
+    int& depth;
+    explicit TipDepthGuard(int& d) : depth(d) { ++depth; }
+    ~TipDepthGuard() { --depth; }
+};
+
+static std::string TipJson(const RValue* v)
+{
+    if (!v) return "null";
+    try {
+        switch (v->m_Kind) {
+        case VALUE_REAL: case VALUE_INT32: case VALUE_INT64: {
+            const double d = v->ToDouble();
+            if (!std::isfinite(d)) return "null";
+            char text[40];
+            std::snprintf(text, sizeof text, "%.15g", d);
+            return text;
+        }
+        case VALUE_BOOL: return v->ToBoolean() ? "true" : "false";
+        case VALUE_STRING: {
+            std::string s = v->ToString();
+            if (s.size() > 2000) s.resize(2000);
+            std::string out;
+            ForgePact::ItemTruth::AppendJsonString(out, s);
+            return out;
+        }
+        default: return "null";   // structs (the item itself), arrays, references
+        }
+    } catch (...) { return "null"; }
+}
+
+static std::string TipJsonArgs(int argc, RValue** A)
+{
+    std::string out = "[";
+    for (int i = 0; i < argc && i < 16; ++i) {
+        if (i) out += ',';
+        out += TipJson(A ? A[i] : nullptr);
+    }
+    return out + "]";
+}
+
+// Builtin routines receive their arguments as one array.
+static std::string TipJsonArgs(int argc, RValue* Args)
+{
+    std::string out = "[";
+    for (int i = 0; i < argc && i < 16; ++i) {
+        if (i) out += ',';
+        out += TipJson(Args ? &Args[i] : nullptr);
+    }
+    return out + "]";
+}
+
+// The object whose code drew the tooltip (e.g. the inventory tooltip object).
+static std::string TipObjectName(CInstance* S)
+{
+    if (!S) return {};
+    try {
+        const RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { S->ToRValue(), RValue("object_index") });
+        const RValue name = g_Yytk->CallBuiltin("object_get_name", { oi });
+        return name.m_Kind == VALUE_STRING ? name.ToString() : std::string();
+    } catch (...) { return {}; }
+}
+
+// DrawInventoryItemV2(x, y, scale, item, ...): start recording when this item's
+// tooltip has not been recorded this session (the first pass also records the
+// table), or always for an item a drawing request asked for (force).
+static bool TipCaptureBegin(int argc, RValue** A, bool force = false)
+{
+    if (!g_TruthOn || !g_TruthJournal || g_Tip.itemDepth != 0) return false;
+    try {
+        if (argc <= 3 || !A || !A[3] || A[3]->m_Kind != VALUE_OBJECT) return false;
+        const RValue& item = *A[3];
+        const std::string ts = TruthWholeNumber(g_Yytk->CallBuiltin("variable_struct_get", { item, RValue("itemTimeStamp") }));
+        if (ts.empty()) return false;
+        const RValue hash = g_Yytk->CallBuiltin("variable_struct_get", { item, RValue("itemDataHash") });
+        const std::string h = hash.m_Kind == VALUE_STRING ? hash.ToString() : std::string();
+        const bool table = !g_TipTableWritten;
+        if (!g_TipSeen.Insert(ts + "|" + h) && !table && !force) return false;
+        g_Tip = TipCaptureState{};
+        g_Tip.active = true;
+        g_Tip.wantTable = table;
+        g_Tip.ts = ts;
+        g_Tip.hash = h;
+        g_Tip.args = TipJsonArgs(argc, A);
+        return true;
+    } catch (...) { return false; }
+}
+
+static void TipCaptureEnd()
+{
+    if (!g_Tip.active) return;
+    g_Tip.active = false;
+    try {
+        const long long now = ForgePact::ItemTruth::UnixMsNow();
+        if (g_Tip.rowCount || g_Tip.statCount) {
+            std::string line = ForgePact::ItemTruth::FormatTooltipRecord(
+                g_TruthBuild, now, g_Tip.ts, g_Tip.hash, g_Tip.args, g_Tip.rows, g_Tip.stats, g_Tip.drawnBy,
+                g_Tip.request);
+            if (!line.empty()) g_TruthJournal->Enqueue(std::move(line));
+        }
+        if (g_Tip.wantTable && g_Tip.tableCount) {
+            std::string table = ForgePact::ItemTruth::FormatTooltipTable(g_TruthBuild, now, g_Tip.table);
+            if (!table.empty() && g_TruthJournal->Enqueue(std::move(table))) g_TipTableWritten = true;
+        }
+    } catch (...) {}
+    g_Tip.rows.clear(); g_Tip.stats.clear(); g_Tip.table.clear();
+}
+
+// One text row of the tooltip being recorded: the call's arguments (x, y, text, ...),
+// the draw colour and alignment in effect, and the stat that drew it. The game's own
+// outline text draws each string several times (dark copies, then the colour one);
+// every call is kept and the editor keeps the last copy of a string at a spot.
+static bool TipWantsText()
+{
+    return g_Tip.active && g_Tip.itemDepth == 1 && g_Tip.textDepth == 0 && g_Tip.rowCount < 600;
+}
+static void TipNoteRow(const char* fn, const std::string& argsJson)
+{
+    try {
+        const RValue colour = g_Yytk->CallBuiltin("draw_get_colour", {});
+        const RValue halign = g_Yytk->CallBuiltin("draw_get_halign", {});
+        const RValue valign = g_Yytk->CallBuiltin("draw_get_valign", {});
+        std::string row = std::string("{\"fn\":\"") + fn + "\",\"s\":" + std::to_string(g_Tip.statId)
+            + ",\"c\":" + TipJson(&colour) + ",\"ha\":" + TipJson(&halign) + ",\"va\":" + TipJson(&valign)
+            + ",\"a\":" + argsJson + "}";
+        if (g_Tip.rowCount) g_Tip.rows += ',';
+        g_Tip.rows += row;
+        ++g_Tip.rowCount;
+    } catch (...) {}
+}
+static void TipNoteText(const char* fn, int argc, RValue** A)
+{
+    if (TipWantsText()) TipNoteRow(fn, TipJsonArgs(argc, A));
+}
+static void TipNoteText(const char* fn, int argc, RValue* Args)
+{
+    if (TipWantsText()) TipNoteRow(fn, TipJsonArgs(argc, Args));
+}
+
+// One DrawInventoryStatsNew call of the pass: kept when it drew a row, and every
+// call on the table pass.
+static void TipNoteStat(int argc, RValue** A, const RValue& result)
+{
+    if (!g_Tip.active || g_Tip.itemDepth != 1) return;
+    try {
+        const bool numeric = result.m_Kind == VALUE_REAL || result.m_Kind == VALUE_INT32 || result.m_Kind == VALUE_INT64;
+        const double height = numeric ? result.ToDouble() : 0.0;
+        const std::string entry = "{\"id\":" + std::to_string(g_Tip.statId) + ",\"h\":" + TipJson(&result)
+            + ",\"a\":" + TipJsonArgs(argc, A) + "}";
+        if (height > 0.0 && g_Tip.statCount < 400) {
+            if (g_Tip.statCount) g_Tip.stats += ',';
+            g_Tip.stats += entry;
+            ++g_Tip.statCount;
+        }
+        if (g_Tip.wantTable && g_Tip.tableCount < 1500) {
+            if (g_Tip.tableCount) g_Tip.table += ',';
+            g_Tip.table += entry;
+            ++g_Tip.tableCount;
+        }
+    } catch (...) {}
+}
+
+static long long TipStatIdOf(int argc, RValue** A)
+{
+    try {
+        if (argc > 3 && A && A[3] && (A[3]->m_Kind == VALUE_REAL || A[3]->m_Kind == VALUE_INT32 || A[3]->m_Kind == VALUE_INT64))
+            return static_cast<long long>(A[3]->ToDouble());
+    } catch (...) {}
+    return -1;
+}
+
 static PFUNC_YYGMLScript g_Orig_DrawInventoryItemV2 = nullptr;
 static PFUNC_YYGMLScript g_Orig_DrawInventoryStatsNew = nullptr;
 static int g_TipStatCallsInTooltip = 0;
@@ -16622,7 +16931,204 @@ static bool TipStatPresent(RValue** A, int argc)
     } catch (...) { return false; }
 }
 
+// ---- Item truth: tooltips the game draws for the Item Editor ------------------
+// The editor asks for the tooltips of items the player never hovers (a Vault
+// holds thousands) in itemtruth\tips\<id>.req, lines like an evaluation request.
+// While the player has an item tooltip open, the game's own tooltip pass - this
+// hook, with the tooltip's own instance - also builds a few of those items through
+// the save loader and draws their tooltips into a small off-screen surface, where
+// the tooltip capture records them: at most kTipDrawMaxPerFrame items and
+// kTipDrawBudgetSeconds per frame, before the game draws the real tooltip, so the
+// player's tooltip is always the last one drawn. The draw state the batch found is
+// put back. A request cut short (the game closed or failed) is set aside at the
+// next start, like an evaluation request (AbandonWorking).
+struct TipDrawState {
+    std::string id;
+    std::filesystem::path file;   // the claimed <id>.working
+    std::vector<ForgePact::ItemTruth::EvalItem> items;
+    size_t next = 0, ok = 0, failed = 0, rejected = 0, reported = 0;
+    bool active = false;
+};
+static TipDrawState g_TipDraw;
+static uint64_t g_TipDrawFrame = UINT64_MAX;   // one batch per frame
+static std::chrono::steady_clock::time_point g_TipDrawLook{};
+static RValue* g_TipDrawSurface = nullptr;     // never deleted: the runtime may be gone at exit
+static constexpr double kTipDrawBudgetSeconds = 0.003;
+static constexpr size_t kTipDrawMaxPerFrame = 6;
+
+static void TipDrawReport(bool finished)
+{
+    ForgePact::ItemTruth::EvalProgress p;
+    p.drawing = true;
+    p.request = g_TipDraw.id;
+    p.build = g_TruthBuild;
+    p.unixMs = ForgePact::ItemTruth::UnixMsNow();
+    p.total = g_TipDraw.items.size();
+    p.done = g_TipDraw.next;
+    p.ok = g_TipDraw.ok;
+    p.failed = g_TipDraw.failed;
+    p.rejected = g_TipDraw.rejected;
+    p.finished = finished;
+    g_TruthJournal->Enqueue(ForgePact::ItemTruth::FormatEvalProgress(p));
+    g_TipDraw.reported = g_TipDraw.next;
+}
+
+// The oldest drawing request, claimed (renamed) before it is read; looked for at
+// most every two seconds of open tooltips.
+static void TipDrawClaim()
+{
+    const auto now = std::chrono::steady_clock::now();
+    if (now - g_TipDrawLook < std::chrono::seconds(2)) return;
+    g_TipDrawLook = now;
+    const std::filesystem::path next = ForgePact::ItemTruth::NextRequest(ForgePact::ItemTruth::Root() / L"tips");
+    if (next.empty()) return;
+    std::filesystem::path working = next;
+    working.replace_extension(L".working");
+    std::error_code ec;
+    std::filesystem::rename(next, working, ec);
+    if (ec) return;
+    std::string text;
+    if (std::filesystem::file_size(working, ec) <= ForgePact::ItemTruth::kMaxRequestBytes && !ec) {
+        std::ifstream in(working, std::ios::binary);
+        text.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    g_TipDraw = TipDrawState{};
+    g_TipDraw.id = ForgePact::ItemTruth::RequestIdOf(next);
+    g_TipDraw.file = working;
+    g_TipDraw.items = ForgePact::ItemTruth::ParseRequest(text, ForgePact::ItemTruth::kMaxEvalItems, &g_TipDraw.rejected);
+    g_TipDraw.active = true;
+    Out("item truth: drawing " + std::to_string(g_TipDraw.items.size()) + " tooltips for the Item Editor (request "
+        + g_TipDraw.id + ")");
+    TipDrawReport(false);
+}
+
+// The draw state a batch found, put back when it ends; the batch's surface target
+// is popped first.
+struct TipDrawStateGuard {
+    RValue colour, alpha, font, halign, valign;
+    bool target = false;
+    TipDrawStateGuard()
+    {
+        try {
+            colour = g_Yytk->CallBuiltin("draw_get_colour", {});
+            alpha = g_Yytk->CallBuiltin("draw_get_alpha", {});
+            font = g_Yytk->CallBuiltin("draw_get_font", {});
+            halign = g_Yytk->CallBuiltin("draw_get_halign", {});
+            valign = g_Yytk->CallBuiltin("draw_get_valign", {});
+        } catch (...) {}
+    }
+    ~TipDrawStateGuard()
+    {
+        try {
+            if (target) g_Yytk->CallBuiltin("surface_reset_target", {});
+            auto put = [](const char* setter, const RValue& value) {
+                if (value.m_Kind != VALUE_UNDEFINED && value.m_Kind != VALUE_UNSET) g_Yytk->CallBuiltin(setter, { value });
+            };
+            put("draw_set_colour", colour);
+            put("draw_set_alpha", alpha);
+            put("draw_set_font", font);
+            put("draw_set_halign", halign);
+            put("draw_set_valign", valign);
+        } catch (...) {}
+    }
+};
+
+// Everything the batch draws goes to a 16x16 surface nobody shows; surfaces are
+// lost with the window, so it is made again when needed.
+static bool TipDrawTarget(TipDrawStateGuard& state)
+{
+    if (!g_TipDrawSurface) g_TipDrawSurface = new RValue();
+    RValue& surface = *g_TipDrawSurface;
+    bool exists = false;
+    try {
+        exists = surface.m_Kind != VALUE_UNDEFINED && surface.m_Kind != VALUE_UNSET
+            && g_Yytk->CallBuiltin("surface_exists", { surface }).ToBoolean();
+    } catch (...) { exists = false; }
+    if (!exists) {
+        surface = g_Yytk->CallBuiltin("surface_create", { RValue(16.0), RValue(16.0) });
+        if (!g_Yytk->CallBuiltin("surface_exists", { surface }).ToBoolean()) {
+            surface = RValue();
+            return false;
+        }
+    }
+    state.target = g_Yytk->CallBuiltin("surface_set_target", { surface }).ToBoolean();
+    return state.target;
+}
+
+// One requested item: built through the save loader, then drawn by the game's own
+// tooltip pass with the arguments of the tooltip on screen, its forged rows
+// included. True when the pass drew text.
+static bool TipDrawOne(CInstance* S, CInstance* O, int argc, RValue** A, const ForgePact::ItemTruth::EvalItem& entry)
+{
+    RValue item = TruthBuildItem(entry);
+    if (item.m_Kind != VALUE_OBJECT) return false;
+    std::vector<RValue*> args(A, A + argc);
+    args[3] = &item;
+    if (!TipCaptureBegin(argc, args.data(), true)) return false;
+    g_Tip.drawnBy = TipObjectName(S);
+    g_Tip.request = g_TipDraw.id;
+    g_TipRows = ForgedTooltipRows(item);
+    g_TipRowsPending = !g_TipRows.empty();
+    RValue result;
+    try {
+        TipDepthGuard depth(g_Tip.itemDepth);
+        g_Orig_DrawInventoryItemV2(S, O, result, argc, args.data());
+    } catch (...) {}
+    g_TipRows.clear();
+    g_TipRowsPending = false;
+    const bool drew = g_Tip.rowCount > 0;
+    TipCaptureEnd();
+    return drew;
+}
+
+static void TipDrawBatch(CInstance* S, CInstance* O, int argc, RValue** A)
+{
+    if (!g_TruthOn || !g_TruthJournal || g_Tip.itemDepth != 0 || !g_Orig_DrawInventoryItemV2) return;
+    if (argc <= 3 || argc > 16 || !A || !A[3] || g_TipDrawFrame == g_RuntimeFrame) return;
+    g_TipDrawFrame = g_RuntimeFrame;
+    try {
+        if (!g_TipDraw.active) {
+            TipDrawClaim();
+            return;
+        }
+        {
+            TipDrawStateGuard state;
+            if (!TipDrawTarget(state)) return;
+            const auto start = std::chrono::steady_clock::now();
+            size_t drawn = 0;
+            while (g_TipDraw.next < g_TipDraw.items.size()) {
+                const ForgePact::ItemTruth::EvalItem& entry = g_TipDraw.items[g_TipDraw.next++];
+                bool ok = false;
+                try { ok = TipDrawOne(S, O, argc, A, entry); } catch (...) { ok = false; }
+                if (ok) ++g_TipDraw.ok; else ++g_TipDraw.failed;
+                const double spent = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+                if (++drawn >= kTipDrawMaxPerFrame || spent >= kTipDrawBudgetSeconds)
+                    break;
+            }
+        }
+        const bool finished = g_TipDraw.next >= g_TipDraw.items.size();
+        if (finished || g_TipDraw.next - g_TipDraw.reported >= 60) TipDrawReport(finished);
+        if (finished) {
+            std::error_code ec;
+            std::filesystem::remove(g_TipDraw.file, ec);
+            Out("item truth: drawing request " + g_TipDraw.id + " done - " + std::to_string(g_TipDraw.ok) + " drawn, "
+                + std::to_string(g_TipDraw.failed) + " failed, " + std::to_string(g_TipDraw.rejected) + " unreadable");
+            g_TipDraw = TipDrawState{};
+        }
+    } catch (...) {
+        if (!g_TipDraw.file.empty()) {
+            std::error_code ec;
+            std::filesystem::path stopped = g_TipDraw.file;
+            stopped.replace_extension(L".stopped");
+            std::filesystem::rename(g_TipDraw.file, stopped, ec);
+        }
+        g_TipDraw = TipDrawState{};
+        Out("item truth: a drawing request failed and was set aside");
+    }
+}
+
 static RValue& Hook_DrawInventoryItemV2(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) {
+    TipDrawBatch(S, O, argc, A);
 #ifndef FORGEPACT_RELEASE
     bool trace = g_TipTraceLeft > 0;
     if (trace) {
@@ -16636,7 +17142,15 @@ static RValue& Hook_DrawInventoryItemV2(CInstance* S, CInstance* O, RValue& R, i
         if (argc > 3 && A && A[3]) { g_TipRows = ForgedTooltipRows(*A[3]); g_TipRowsPending = !g_TipRows.empty(); }
     } catch (...) { g_TipRows.clear(); g_TipRowsPending = false; }
     g_TipStatCallsInTooltip = 0;
-    RValue& r = g_Orig_DrawInventoryItemV2 ? g_Orig_DrawInventoryItemV2(S, O, R, argc, A) : R;
+    const bool capturing = TipCaptureBegin(argc, A);
+    if (capturing) g_Tip.drawnBy = TipObjectName(S);
+    RValue* rp = &R;
+    {
+        TipDepthGuard depth(g_Tip.itemDepth);
+        if (g_Orig_DrawInventoryItemV2) rp = &g_Orig_DrawInventoryItemV2(S, O, R, argc, A);
+    }
+    RValue& r = *rp;
+    if (capturing) TipCaptureEnd();
 #ifndef FORGEPACT_RELEASE
     if (trace) Out("   DrawInventoryItemV2 -> " + Describe(r) + " statLines=" + std::to_string(g_TipStatCallsInTooltip) + " forgedRows=" + std::to_string(g_TipRows.size()));
 #endif
@@ -16655,6 +17169,9 @@ static RValue& Hook_DrawInventoryStatsNew(CInstance* S, CInstance* O, RValue& R,
     }
 #endif
     auto isNum = [](const RValue* v) { return v && (v->m_Kind == VALUE_REAL || v->m_Kind == VALUE_INT32 || v->m_Kind == VALUE_INT64); };
+    // Item truth: rows drawn inside this call belong to its stat.
+    const long long outerStat = g_Tip.statId;
+    if (g_Tip.active) g_Tip.statId = TipStatIdOf(argc, A);
     if (g_TipRowsPending && argc > 5 && A && isNum(A[0]) && isNum(A[1]) && isNum(A[5])) {
         double fmt = -1.0; try { fmt = A[5]->ToDouble(); } catch (...) { fmt = -1.0; }
         if ((fmt == 2.0 || fmt == 3.0) && TipStatPresent(A, argc)) {
@@ -16671,6 +17188,8 @@ static RValue& Hook_DrawInventoryStatsNew(CInstance* S, CInstance* O, RValue& R,
 #ifndef FORGEPACT_RELEASE
                 if (g_TipTraceLeft > 0) Out("tiptrace forged rows at y=" + std::to_string(y) + " (" + std::to_string(g_TipRows.size()) + " rows), game row moved to y=" + std::to_string(y + extra) + " -> " + Describe(rr));
 #endif
+                TipNoteStat(argc, A, rr);
+                g_Tip.statId = outerStat;
                 R = RValue(rr.ToDouble() + extra);
                 return R;
             } catch (...) { g_TipRowsPending = false; }
@@ -16679,6 +17198,8 @@ static RValue& Hook_DrawInventoryStatsNew(CInstance* S, CInstance* O, RValue& R,
     g_TipInsideStat = g_TipRowsPending;
     RValue& r = g_Orig_DrawInventoryStatsNew ? g_Orig_DrawInventoryStatsNew(S, O, R, argc, A) : R;
     g_TipInsideStat = false;
+    TipNoteStat(argc, A, r);
+    g_Tip.statId = outerStat;
 #ifndef FORGEPACT_RELEASE
     if (trace) Out("tiptrace DrawInventoryStatsNew #" + std::to_string(g_TipStatCallsInTooltip) + " present=" + (TipStatPresent(A, argc) ? "yes" : "no") + " argc=" + std::to_string(argc) + TipTraceArgs(argc, A) + " -> " + Describe(r));
 #endif
@@ -16692,6 +17213,68 @@ static void InstallForgedTooltipHooks()
     g_ForgedTooltipHooksAttempted = true;
     HookOneScript("DrawInventoryItemV2",  "fp_tip_item", (PVOID)Hook_DrawInventoryItemV2,  &g_Orig_DrawInventoryItemV2);
     HookOneScript("DrawInventoryStatsNew","fp_tip_stat", (PVOID)Hook_DrawInventoryStatsNew,&g_Orig_DrawInventoryStatsNew);
+}
+
+// Item truth: the text rows of a tooltip being recorded (TipNoteText). Every other
+// call passes straight through; nested text calls are part of the outer one.
+static PFUNC_YYGMLScript g_Orig_TipTextOutline = nullptr;
+static PFUNC_YYGMLScript g_Orig_TipTextOutlineExt = nullptr;
+static RValue& Hook_TipTextOutline(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    TipNoteText("o", argc, A);
+    TipDepthGuard depth(g_Tip.textDepth);
+    return g_Orig_TipTextOutline ? g_Orig_TipTextOutline(S, O, R, argc, A) : R;
+}
+static RValue& Hook_TipTextOutlineExt(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    TipNoteText("oe", argc, A);
+    TipDepthGuard depth(g_Tip.textDepth);
+    return g_Orig_TipTextOutlineExt ? g_Orig_TipTextOutlineExt(S, O, R, argc, A) : R;
+}
+static PFUNC_YYGMLScript g_Orig_TipRichText = nullptr;
+static RValue& Hook_TipRichText(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    TipNoteText("rich", argc, A);
+    TipDepthGuard depth(g_Tip.textDepth);
+    return g_Orig_TipRichText ? g_Orig_TipRichText(S, O, R, argc, A) : R;
+}
+
+// The runner's own text routines. Measured 2026-09-24: an inventory tooltip pass
+// drew nothing through draw_text_outline(_ext), so its rows come from these.
+// Outside a recorded pass each hook is one test and a jump.
+static constexpr const char* kTipBuiltinText[] = {
+    "draw_text", "draw_text_ext", "draw_text_transformed", "draw_text_ext_transformed",
+    "draw_text_colour", "draw_text_ext_colour", "draw_text_transformed_colour", "draw_text_ext_transformed_colour",
+};
+static constexpr size_t kTipBuiltinTextCount = sizeof(kTipBuiltinText) / sizeof(kTipBuiltinText[0]);
+// Hook ids live as long as the hooks: string literals, never temporaries.
+static constexpr const char* kTipBuiltinTextIds[kTipBuiltinTextCount] = {
+    "fp_truth_dt", "fp_truth_dte", "fp_truth_dtt", "fp_truth_dtet",
+    "fp_truth_dtc", "fp_truth_dtec", "fp_truth_dttc", "fp_truth_dtetc",
+};
+static TRoutine g_Orig_TipBuiltinText[kTipBuiltinTextCount] = {};
+template <size_t N>
+static void Hook_TipBuiltinText(RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)
+{
+    TipNoteText(kTipBuiltinText[N], argc, Args);
+    TipDepthGuard depth(g_Tip.textDepth);
+    if (g_Orig_TipBuiltinText[N]) g_Orig_TipBuiltinText[N](Result, S, O, argc, Args);
+}
+template <size_t... I>
+static void InstallTipBuiltinTextHooks(std::index_sequence<I...>)
+{
+    (HookBuiltin(kTipBuiltinText[I], kTipBuiltinTextIds[I], (PVOID)&Hook_TipBuiltinText<I>, &g_Orig_TipBuiltinText[I]), ...);
+}
+
+static bool g_TipTextHooksAttempted = false;
+static void InstallTipTextHooks()
+{
+    if (g_TipTextHooksAttempted) return;
+    g_TipTextHooksAttempted = true;
+    HookOneScript("draw_text_outline", "fp_truth_text", (PVOID)Hook_TipTextOutline, &g_Orig_TipTextOutline);
+    HookOneScript("draw_text_outline_ext", "fp_truth_text_ext", (PVOID)Hook_TipTextOutlineExt, &g_Orig_TipTextOutlineExt);
+    HookOneScript("DrawTooltipRichText", "fp_truth_rich", (PVOID)Hook_TipRichText, &g_Orig_TipRichText);
+    InstallTipBuiltinTextHooks(std::make_index_sequence<kTipBuiltinTextCount>{});
 }
 
 #ifndef FORGEPACT_RELEASE
@@ -16811,6 +17394,158 @@ static void InstallCustomForgeItemHooks()
     }
     WriteCustomForgeStatus(g_CustomForgeHooksActive ? "runtime hooks installed"
                                                      : "runtime hook installation failed");
+}
+
+// Item Truth (see ItemTruthCapture): only while the Item Editor asks for it.
+// Needs nothing but the CreateItemNew hook, which the Custom Forge may have
+// installed already - the same Hook_CreateItemNew either way. Called from
+// InstallHook at setup and then every ~10 s (ItemTruthTick), so an editor
+// started after the game still gets its items, and removing the request file
+// pauses the capture (the hook stays; it records nothing).
+static bool g_TruthFailed = false;
+static void InstallItemTruth()
+{
+    if (g_TruthFailed) return;
+    const std::filesystem::path root = ForgePact::ItemTruth::Root();
+    const bool requested = ForgePact::ItemTruth::CaptureRequested(root);
+    if (!requested) {
+        if (g_TruthOn) { g_TruthOn = false; Out("item truth: paused (the Item Editor withdrew its request)"); }
+        return;
+    }
+    if (g_TruthOn) return;
+    if (!g_TruthJournal) {
+        g_TruthBuild = ForgePact::ItemTruth::BuildIdOfProcess();
+        auto* journal = new ForgePact::ItemTruth::Journal();
+        if (!journal->Start(root, g_TruthBuild, GetCurrentProcessId(), FORGEPACT_VERSION)) {
+            delete journal;   // its thread never started
+            g_TruthFailed = true;
+            Out("item truth: journal folder could not be created - capture stays off");
+            return;
+        }
+        g_TruthJournal = journal;
+        const size_t stopped = ForgePact::ItemTruth::AbandonWorking(root / L"requests")
+                             + ForgePact::ItemTruth::AbandonWorking(root / L"tips");
+        if (stopped) Out("item truth: " + std::to_string(stopped) + " unfinished request(s) from the last session set aside");
+    }
+    if (!g_Orig_CreateItemNew)
+        HookOneScript("CreateItemNew", "fp_itemtruth_new", (PVOID)Hook_CreateItemNew, &g_Orig_CreateItemNew);
+    if (!g_Orig_CreateItemNew) {
+        g_TruthFailed = true;
+        Out("item truth: CreateItemNew could not be hooked - capture stays off");
+        return;
+    }
+    // The game's own tooltip text: the tooltip hooks (shared with forged rows) and
+    // its text calls. Their failure only leaves tooltips unrecorded.
+    InstallForgedTooltipHooks();
+    InstallTipTextHooks();
+    g_TruthOn = true;
+    Out("item truth: capturing finished items for the Item Editor (build " + g_TruthBuild + ")");
+}
+
+static void ItemTruthTick(uint32_t frame)
+{
+    if (frame % 600 == 0) InstallItemTruth();
+}
+
+// ---- Item Truth evaluation: the game builds items the editor asks about ------
+// The Item Editor writes itemtruth\requests\<id>.req (ItemTruth.hpp, "evaluation
+// requests"). Each item goes through the game's own save loader (TruthBuildItem),
+// so CreateItemNew runs and ItemTruthCapture records the finished item. A few
+// milliseconds per frame, so a whole Vault takes seconds without a stall.
+struct TruthEvalState {
+    std::string id;
+    std::filesystem::path file;   // the claimed <id>.working
+    std::vector<ForgePact::ItemTruth::EvalItem> items;
+    size_t next = 0, ok = 0, failed = 0, rejected = 0, reported = 0;
+    bool active = false;
+};
+static TruthEvalState g_TruthEval;
+static constexpr double kTruthEvalBudgetSeconds = 0.004;
+static constexpr size_t kTruthEvalMaxPerFrame = 200;
+
+static bool TruthEvalOne(const ForgePact::ItemTruth::EvalItem& entry)
+{
+    return TruthBuildItem(entry).m_Kind == VALUE_OBJECT;
+}
+
+static void TruthEvalReport(bool finished)
+{
+    ForgePact::ItemTruth::EvalProgress p;
+    p.request = g_TruthEval.id;
+    p.build = g_TruthBuild;
+    p.unixMs = ForgePact::ItemTruth::UnixMsNow();
+    p.total = g_TruthEval.items.size();
+    p.done = g_TruthEval.next;
+    p.ok = g_TruthEval.ok;
+    p.failed = g_TruthEval.failed;
+    p.rejected = g_TruthEval.rejected;
+    p.finished = finished;
+    g_TruthJournal->Enqueue(ForgePact::ItemTruth::FormatEvalProgress(p));
+    g_TruthEval.reported = g_TruthEval.next;
+}
+
+static void ItemTruthEvalTick(uint32_t frame)
+{
+    if (!g_TruthOn || !g_TruthJournal) return;
+    try {
+        if (!g_TruthEval.active) {
+            if (frame % 120 != 0) return;
+            const std::filesystem::path dir = ForgePact::ItemTruth::Root() / L"requests";
+            const std::filesystem::path next = ForgePact::ItemTruth::NextRequest(dir);
+            if (next.empty()) return;
+            std::filesystem::path working = next;
+            working.replace_extension(L".working");
+            std::error_code ec;
+            std::filesystem::rename(next, working, ec);   // claim it; a request is built once
+            if (ec) return;
+            std::string text;
+            if (std::filesystem::file_size(working, ec) <= ForgePact::ItemTruth::kMaxRequestBytes && !ec) {
+                std::ifstream in(working, std::ios::binary);
+                text.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+            }
+            g_TruthEval = TruthEvalState{};
+            g_TruthEval.id = ForgePact::ItemTruth::RequestIdOf(next);
+            g_TruthEval.file = working;
+            g_TruthEval.items = ForgePact::ItemTruth::ParseRequest(text, ForgePact::ItemTruth::kMaxEvalItems, &g_TruthEval.rejected);
+            g_TruthEval.active = true;
+            Out("item truth: the Item Editor asked the game to check " + std::to_string(g_TruthEval.items.size())
+                + " items (request " + g_TruthEval.id + ")");
+            TruthEvalReport(false);
+            return;
+        }
+        const auto start = std::chrono::steady_clock::now();
+        size_t built = 0;
+        while (g_TruthEval.next < g_TruthEval.items.size()) {
+            const ForgePact::ItemTruth::EvalItem& entry = g_TruthEval.items[g_TruthEval.next++];
+            bool ok = false;
+            g_TruthEvalRequest = g_TruthEval.id;
+            try { ok = TruthEvalOne(entry); } catch (...) { ok = false; }
+            g_TruthEvalRequest.clear();
+            if (ok) ++g_TruthEval.ok; else ++g_TruthEval.failed;
+            const double spent = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+            if (++built >= kTruthEvalMaxPerFrame || spent >= kTruthEvalBudgetSeconds)
+                break;
+        }
+        const bool finished = g_TruthEval.next >= g_TruthEval.items.size();
+        if (finished || g_TruthEval.next - g_TruthEval.reported >= 250) TruthEvalReport(finished);
+        if (finished) {
+            std::error_code ec;
+            std::filesystem::remove(g_TruthEval.file, ec);
+            Out("item truth: request " + g_TruthEval.id + " done - " + std::to_string(g_TruthEval.ok) + " built, "
+                + std::to_string(g_TruthEval.failed) + " failed, " + std::to_string(g_TruthEval.rejected) + " unreadable");
+            g_TruthEval = TruthEvalState{};
+        }
+    } catch (...) {
+        g_TruthEvalRequest.clear();
+        if (!g_TruthEval.file.empty()) {
+            std::error_code ec;
+            std::filesystem::path stopped = g_TruthEval.file;
+            stopped.replace_extension(L".stopped");
+            std::filesystem::rename(g_TruthEval.file, stopped, ec);
+        }
+        g_TruthEval = TruthEvalState{};
+        Out("item truth: an evaluation request failed and was set aside");
+    }
 }
 
 
@@ -17304,6 +18039,7 @@ static void InstallHook()
     // Crown/Beacon auto-arm for players who used the Item Editor.
     LoadCustomForgeEntries();
     InstallCustomForgeItemHooks();
+    InstallItemTruth();
     HeadhunterAutoArm();
     TyrantAutoArm();
     BeaconAutoArm();
@@ -36178,6 +36914,7 @@ void FrameCallback(FWFrame& FrameContext)
 #endif
     PERF_SCOPE(g_PerfFrame);
     FlushItemStats(fc);
+    if (g_Setup) { ItemTruthTick(fc); ItemTruthEvalTick(fc); }
     FlushModState(fc);
     if (g_Setup) { FP_POP_SCOPE(MinerTick); ForgePact::MinerHelmet::Tick(); }
     if (fc == 1) Trace("0-framecallback-running");
