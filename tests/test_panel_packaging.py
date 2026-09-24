@@ -181,17 +181,48 @@ class StaticServingTests(unittest.TestCase):
             self.assertEqual(status, 404, path)
             self.assertEqual(json.loads(body), {"err": "not found"}, path)
 
-    def test_missing_build_falls_back_to_the_legacy_page_until_the_port_lands(self):
-        # Lane state: while the port is in flight the old page still answers /,
-        # so the behaviour oracle can be recorded from it. The join replaces
-        # this with a 503 naming the build command.
+    def test_missing_build_answers_503_naming_the_build_command(self):
+        # There is no page to fall back to any more: without a build, / says
+        # what to run instead of answering 200 with nothing a player can use.
+        # Assets stay 404 and the API keeps answering.
         with patch.object(forgepact, "PANEL_DIST", Path(self.temp.name) / "no-such-dist"):
-            status, headers, body = self.get("/")
-            self.assertEqual(status, 200)
-            self.assertEqual(headers["Content-Type"], "text/html; charset=utf-8")
-            self.assertEqual(body, forgepact.HTML.encode("utf-8"))
+            for path in ("/", "/?t=1"):
+                status, headers, body = self.get(path)
+                self.assertEqual(status, 503, path)
+                self.assertTrue(headers["Content-Type"].startswith("application/json"), path)
+                self.assertEqual(json.loads(body),
+                                 {"err": "panel not built: run npm --prefix panel run build"}, path)
             status, _, _ = self.get("/assets/index-abc123.js")
             self.assertEqual(status, 404)
+            status, _, body = self.get("/api/state")
+            self.assertEqual(status, 200)
+            self.assertIn("version", json.loads(body))
+
+
+class LegacyPageRemovedTests(unittest.TestCase):
+    """The page that used to be embedded in forgepact.py is gone, with the
+    icon module only it imported; panel/ is the only frontend."""
+
+    SOURCE = (REPO / "src" / "forgepact.py").read_text(encoding="utf-8-sig")
+
+    def test_the_module_no_longer_carries_the_page(self):
+        for name in ("HTML", "ICON_SPRITE", "ICON_MAP_JS"):
+            self.assertFalse(hasattr(forgepact, name), name)
+        self.assertNotIn('HTML = r"""', self.SOURCE)
+        self.assertNotIn("</html>", self.SOURCE)
+
+    def test_only_the_watched_fields_remain_of_the_poll_policy(self):
+        # The policy itself lives in panel/src/poll-policy.js; Python keeps the
+        # field list the parity tests compare against.
+        self.assertEqual(sorted(n for n in dir(forgepact) if n.startswith("POLL_")),
+                         ["POLL_WATCHED_FIELDS"])
+        self.assertEqual(forgepact.POLL_WATCHED_FIELDS,
+                         ["gameRunning", "ipcOk", "lastApplied", "queued"])
+
+    def test_the_icon_module_is_deleted_and_not_imported(self):
+        self.assertFalse((REPO / "src" / "panel_icons.py").exists())
+        self.assertNotIn("panel_icons", self.SOURCE)
+        self.assertTrue((REPO / "panel" / "src" / "icons.js").is_file())
 
 
 class BuildReleaseGuardTests(unittest.TestCase):

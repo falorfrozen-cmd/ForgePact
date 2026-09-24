@@ -23,8 +23,11 @@ debuffs enabled, the Satanic card's floor), the fixture the Satanic checks
 need.
 
 `--legacy` points `forgepact.PANEL_DIST` at a directory that does not exist,
-so `/` serves the page embedded in `forgepact.py` for as long as that page
-exists; `--dist <dir>` serves that build; neither serves `panel/dist`.
+so `/` serves the page embedded in `forgepact.py`. That page was removed once
+the port landed, so `--legacy` now refuses (exit 2) unless the imported
+`forgepact` still carries it: the behaviour oracle and the baseline screens
+were recorded from it before then, and re-recording needs a tree from before
+the port. `--dist <dir>` serves that build; neither serves `panel/dist`.
 
 Prints `port=<n>` then `cmds=<path>` and serves until stdin closes. No route
 is added to the product for testing: everything here is a patch on the
@@ -53,6 +56,11 @@ def main(argv=None):
     parser.add_argument("--satanic-minimum", action="store_true",
                         help="start with only 3 buffs and 2 debuffs enabled (PanelSandbox.at_minimum)")
     args = parser.parse_args(argv)
+    if args.legacy and not hasattr(forgepact, "HTML"):
+        # Without this, / answers the 503 "panel not built" JSON and a caller
+        # waiting for the page reports a timeout instead of the reason.
+        parser.error("--legacy: this forgepact.py no longer embeds the old page "
+                     "(removed by the UI port); record from a tree before the port")
 
     with PanelSandbox() as sandbox:
         if args.satanic_minimum:

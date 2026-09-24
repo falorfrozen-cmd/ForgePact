@@ -120,7 +120,14 @@ panel adds no UI dependencies.
 
 The icon pack (the SVG sprite and which setting uses which icon) lives in
 `panel/src/icons.js` and is compiled into the panel's page by `npm --prefix panel
-run build`, so a packaged panel carries it with no separate file.
+run build`, so a packaged panel carries it with no separate file. To export the
+69 individual SVGs and an offline preview gallery, run from the ForgePact folder
+(after `npm --prefix panel ci`; a relative path resolves against the folder you
+run it from):
+
+```powershell
+npm --prefix panel run icons -- "C:\path\to\ForgePact-Icon-Pack"
+```
 
 Special content is spawned through the game's **own** mechanic: ForgePact multiplies
 the `Spawn_<Name>_obj` marker objects and opens the shared `eSt` gate, then the game

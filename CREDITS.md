@@ -36,7 +36,7 @@ It is adapted inline in `src/forgepact.py`, retaining the stroke and gradient
 colors. The body outline is closed and its top face is drawn continuously to
 correct the missing upper-left surface. No download is needed.
 
-The 69 setting icons in `src/panel_icons.py` are original vector illustrations
+The 69 setting icons in `panel/src/icons.js` are original vector illustrations
 created for ForgePact/Falor and distributed under this project's AGPL-3.0
 license. They depict the corresponding gameplay concepts; they are not
 extracted game sprites. The export command produces standalone SVG files and

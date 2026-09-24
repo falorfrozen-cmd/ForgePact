@@ -1024,7 +1024,7 @@ class ClosureNameContractTests(unittest.TestCase):
 class PanelAllOffContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        # The panel imports its sibling modules (panel_icons, ...). Under
+        # The panel imports its sibling modules (offline_launcher). Under
         # `discover` another test has already put src/ on the path; run on its
         # own, this class must do it itself - `spec_from_file_location` does
         # not add the module's own directory the way a package import would.

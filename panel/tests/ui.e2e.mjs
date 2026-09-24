@@ -22,6 +22,8 @@
 // Each group gets its own sandbox server, so nothing needs putting back.
 // --legacy runs the same checks against the page embedded in forgepact.py:
 // the positive control that the checks pass on the page they were written for.
+// That page is gone since the port landed, so the sandbox refuses --legacy on
+// this tree; it ran 19/19 before the removal.
 
 import { launchBrowser, openPanel, parseArgs, startSandbox, waitBooted, waitSaved } from './lib/browser.mjs';
 
