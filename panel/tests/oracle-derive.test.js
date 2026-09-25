@@ -35,13 +35,19 @@ test('the source path is named relative to panel/, wherever it was run from', ()
 test('the supplement\'s boolean mods get on, off, on and Turn off, on the tab it reached them on', () => {
   const gems = SUPPLEMENT.controls.filter((c) => BOOLEAN_MODS.includes(c.slice(1)));
   assert.deepEqual(gems, ['#mod_gem_mythic', '#mod_gem_maxroll']);
+  // The supplement was recorded on Mods › Quality of Life; relocated
+  // (tests/lib/oracle-relocate.mjs), it reaches the gems on the Loot tab.
+  const first = DERIVED.steps.findIndex((s) => s.control === gems[0]);
+  const lastNav = DERIVED.steps.slice(0, first).findLastIndex((s) => /^(tab|subtab):/.test(s.control));
+  assert.equal(lastNav, first - 1);
+  assert.equal(DERIVED.steps[lastNav].control, 'tab:loot');
   for (const control of gems) {
     const at = DERIVED.steps.findIndex((s) => s.control === control);
     assert.deepEqual(DERIVED.steps.slice(at, at + 4).map((s) => s.control), [control, control, control, quickDisable(control.slice(1))]);
     assert.deepEqual(DERIVED.steps[at + 3].expect, { posts: { same: at + 1 }, cmds: { same: at + 1 } });
     const before = DERIVED.steps.slice(0, at).map((s) => s.control);
-    assert.equal(before.filter((c) => c.startsWith('tab:')).at(-1), 'tab:mods');
-    assert.equal(before.filter((c) => c.startsWith('subtab:')).at(-1), 'subtab:qol');
+    assert.equal(before.filter((c) => c.startsWith('tab:')).at(-1), 'tab:loot');
+    assert.ok(!before.slice(lastNav).some((c) => c.startsWith('subtab:')), `${control}: a sub-tab step after tab:loot`);
   }
   // Without a supplement, nothing of it is derived.
   const bare = derive(LEGACY, 'tests/behaviour-oracle.json');

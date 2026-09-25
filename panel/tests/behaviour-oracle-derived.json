@@ -4443,7 +4443,7 @@
   },
   {
    "step": 384,
-   "control": "subtab:qol",
+   "control": "tab:loot",
    "action": "click"
   },
   {

@@ -14,7 +14,11 @@
 // `--supplement` adds a recording of controls the legacy page gained after
 // behaviour-oracle.json was recorded (Gems of Incarnation, from origin/main's
 // last pre-port page): its steps run on a third fresh sandbox, compared exactly
-// as the legacy steps are, and coverage counts its `controls` too. It is
+// as the legacy steps are, and coverage counts its `controls` too. Its two
+// navigation steps (`tab:mods`, `subtab:qol`) are replayed as `tab:loot`,
+// where the Gems controls now sit, through tests/lib/oracle-relocate.mjs's
+// SUPPLEMENT_RELOCATION; the file itself is never edited, and the legacy
+// recording and the recorder are never relocated. It is
 // recorded by `record --only gems`, a fixed scenario rather than the walk,
 // from the tree `--src` names (a `git archive <sha> src` extracted outside the
 // checkout, served with `--legacy`), and it names that tree as `sourceRev`.
@@ -48,6 +52,7 @@ import { resolve } from 'node:path';
 import {
   PANEL_DIR, TABS, VIEWPORTS, launchBrowser, openPanel, parseArgs, startSandbox, waitSaved,
 } from './lib/browser.mjs';
+import { SUPPLEMENT_RELOCATION, relocate } from './lib/oracle-relocate.mjs';
 
 const DEPENDENTS = {
   map_reveal: ['map_reveal_packs', 'map_reveal_spawn'],
@@ -434,11 +439,16 @@ async function replayRecorded(page, sandbox, oracle, mismatches, prefix = '') {
 }
 
 // The supplement's steps, on a sandbox of their own at the product defaults.
+// The Gems controls moved from Mods › Quality of Life to the Loot tab after
+// the supplement was recorded, so its two navigation steps are relocated
+// (tests/lib/oracle-relocate.mjs: navigation only, and only steps that sent
+// nothing); every other step, and every post and command, is compared as
+// recorded.
 async function replaySupplement(browser, supplement, args, mismatches) {
   const sandbox = await startSandbox({ legacy: !!args.legacy, dist: args.dist });
   try {
     const page = await openPanel(browser, sandbox, supplement.viewport);
-    await replayRecorded(page, sandbox, supplement, mismatches, 'supplement');
+    await replayRecorded(page, sandbox, relocate(supplement, SUPPLEMENT_RELOCATION), mismatches, 'supplement');
   } finally {
     await sandbox.stop();
   }

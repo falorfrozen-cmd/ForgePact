@@ -8,8 +8,10 @@
 // `--supplement` names a recording of controls the legacy page gained later
 // (tests/behaviour-oracle-gems.json, the Gems of Incarnation switches): every
 // boolean mod in its `controls` gets the same on/off/on/Turn off steps a
-// legacy boolean does, entered on the tab the supplement first reached it on,
-// and the derived file names it as `supplementFrom`.
+// legacy boolean does, entered on the tab the supplement first reached it on
+// once its navigation steps are relocated to where the controls sit now
+// (tests/lib/oracle-relocate.mjs, SUPPLEMENT_RELOCATION: the Loot tab), and
+// the derived file names it as `supplementFrom`.
 //
 // tests/behaviour-oracle.json was recorded from the legacy page and is never
 // re-recorded: it is the proof that the port changed nothing. The new controls
@@ -33,6 +35,7 @@ import { dirname, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { BOOLEAN_MODS, switchControlId } from '../src/enabled-mods.js';
 import { THEMES } from '../src/theme.js';
+import { SUPPLEMENT_RELOCATION, relocate } from './lib/oracle-relocate.mjs';
 
 export const PANEL_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -132,9 +135,12 @@ export function derive(legacy, derivedFrom, supplement = null, supplementFrom = 
     }
   }
   // The supplement's boolean mods: their own recording covers them, and their
-  // Turn off buttons are derived exactly as a legacy boolean's are.
-  for (const selector of supplement ? supplement.controls : []) {
-    if (BOOLEAN_MODS.includes(selector.slice(1))) booleanMod(selector, supplement.steps);
+  // Turn off buttons are derived exactly as a legacy boolean's are, on the tab
+  // the relocated supplement reaches them on (the Loot tab; see
+  // tests/lib/oracle-relocate.mjs).
+  const relocated = supplement ? relocate(supplement, SUPPLEMENT_RELOCATION) : null;
+  for (const selector of relocated ? relocated.controls : []) {
+    if (BOOLEAN_MODS.includes(selector.slice(1))) booleanMod(selector, relocated.steps);
   }
   // The theme sits in the status bar, on every tab. It is a panel setting:
   // saved, and never a command.
