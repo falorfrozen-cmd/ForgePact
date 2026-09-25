@@ -230,9 +230,9 @@ class StashBagResearchDoc(unittest.TestCase):
         self.assertEqual(sorted(keys), sorted(DECISION_KEYS))
 
     def test_candidate_table_is_documented(self):
-        from test_menu_layout_contract import PLANNED_OBJECTS
+        from test_menu_layout_contract import CHARACTER_SELECT_OBJECTS, STASH_BAG_OBJECTS
         static = doc_section(self.doc, "## Static search")
-        for name in PLANNED_OBJECTS:
+        for name in CHARACTER_SELECT_OBJECTS | STASH_BAG_OBJECTS:
             self.assertIn(f"`{name}`", static, name)
 
     def test_optional_fields_are_documented(self):

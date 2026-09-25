@@ -34741,6 +34741,12 @@ static void PackMarksCommand(const std::string& rest)
 // grids and dialogs, the inventory data holder, the cursor-held item (which
 // has no parent, so only its own name reaches it), and two room-space objects
 // - the stash itself and the player - whose gui= is a room position.
+//
+// The third group is the skill bar and the talent screen
+// (docs/skill-actions-research.md): the bar, whose row is followed by one
+// `  slot=` row per bar element (MenuLayoutSlotRows), the talent screen, its
+// talent, allocate and sub-talent buttons, the sub-talent panel and the node
+// tree.
 static const HeroSiege::Objects::GameObject kMenuLayoutObjects[] = {
     HeroSiege::Objects::GameObject::UI_Node_Parent_obj,
     HeroSiege::Objects::GameObject::UI_Parent_obj,
@@ -34771,6 +34777,15 @@ static const HeroSiege::Objects::GameObject kMenuLayoutObjects[] = {
     HeroSiege::Objects::GameObject::UI_Inventory_Drag_obj,
     HeroSiege::Objects::GameObject::Town_Stash_obj,
     HeroSiege::Objects::GameObject::Player_obj,
+    HeroSiege::Objects::GameObject::UI_Hud_Talent_obj,
+    HeroSiege::Objects::GameObject::UI_Talent_Screen_obj,
+    HeroSiege::Objects::GameObject::UI_Talent_Button_obj,
+    HeroSiege::Objects::GameObject::UI_Button_Talent_Player_obj,
+    HeroSiege::Objects::GameObject::UI_Button_Subtalent_obj,
+    HeroSiege::Objects::GameObject::UI_Talent_Screen_Allocate_obj,
+    HeroSiege::Objects::GameObject::UI_Sub_Talents_obj,
+    HeroSiege::Objects::GameObject::UI_Talent_Node_Tree_Parent_obj,
+    HeroSiege::Objects::GameObject::UI_Button_Sub_Skill_obj,
 };
 static constexpr int kMenuLayoutMaxRows = 200;
 static constexpr int kMenuLayoutMaxArrayItems = 32;
@@ -34954,12 +34969,86 @@ static std::string MenuLayoutRow(const RValue& inst, const MenuLayoutScale& sc)
         const std::string v = MenuLayoutOptional(inst, var, present);
         if (present) row += std::string(" ") + var + "=" + v;
     }
+    // The talent screen's candidates (docs/skill-actions-research.md,
+    // Instrument), hypotheses until phase 0 shows which a button carries. A
+    // list of their own, printed after the stash and bag list and the same
+    // way, so that list keeps its pinned order.
+    static const char* const kTalentOptional[] = { "talentId", "subTalentId", "talentLevel", "treeIndex",
+        "slotIndex", "allocated", "pointsAvailable" };
+    for (const char* var : kTalentOptional) {
+        bool present = false;
+        const std::string v = MenuLayoutOptional(inst, var, present);
+        if (present) row += std::string(" ") + var + "=" + v;
+    }
     // text= is always last and always present: a label may hold spaces,
     // quotes and '=', so the hub takes it to the end of the line.
     bool hasText = false;
     const std::string text = MenuLayoutOptional(inst, "text", hasText);
     row += " text=" + (hasText ? text : std::string());
     return row;
+}
+
+// One field of one skill-bar element: `none` when the element does not carry
+// it (variable_struct_get answers undefined for a missing member), its text
+// otherwise. `number` is NaN unless the field is a finite number, so a window
+// point is only ever computed from a value that was read.
+static std::string MenuLayoutSlotField(const RValue& element, bool isStruct, const char* name, double& number)
+{
+    number = std::numeric_limits<double>::quiet_NaN();
+    if (!isStruct) return "none";
+    try {
+        const RValue v = g_Yytk->CallBuiltin("variable_struct_get", { element, RValue(name) });
+        if (v.m_Kind == VALUE_UNDEFINED) return "none";
+        if (v.m_Kind == VALUE_REAL || v.m_Kind == VALUE_INT32 || v.m_Kind == VALUE_INT64) number = v.ToDouble();
+        return MenuLayoutValueText(v);
+    } catch (...) { return kMenuLayoutReadFailed; }
+}
+
+// After a UI_Hud_Talent_obj row: one `  slot=<row>,<i>` row per element of
+// its row0 and row1 arrays (docs/skill-actions-research.md, Instrument), with
+// the element's talentId and the point its navBboxX/navBboxY name - the
+// fields the toggle-skill research measured, navBbox being where the slot's
+// button draws in GUI space - scaled to the window as MenuLayoutRow scales an
+// instance's position. Read only through variable_instance_get, array_length,
+// array_get and variable_struct_get. An array that is not there prints no
+// rows; an element that is not a struct prints `none` in every field. Both
+// kinds this runner hands a struct back as are read, as ToggleReadSubTalent
+// reads them. At most kMenuLayoutMaxArrayItems rows per array.
+static void MenuLayoutSlotRows(const RValue& inst, const MenuLayoutScale& sc)
+{
+    static const char* const kRows[] = { "row0", "row1" };
+    for (int r = 0; r < 2; ++r) {
+        RValue arr;
+        try { arr = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(kRows[r]) }); }
+        catch (...) { Out("  slot=" + std::to_string(r) + ",* " + kMenuLayoutReadFailed); continue; }
+        if (arr.m_Kind != VALUE_ARRAY) continue;
+        double n = 0;
+        try { n = g_Yytk->CallBuiltin("array_length", { arr }).ToDouble(); } catch (...) { n = -1; }
+        if (!std::isfinite(n) || n < 0) { Out("  slot=" + std::to_string(r) + ",* " + kMenuLayoutReadFailed); continue; }
+        const int shown = n > kMenuLayoutMaxArrayItems ? kMenuLayoutMaxArrayItems : (int)n;
+        for (int i = 0; i < shown; ++i) {
+            RValue e;
+            bool isStruct = false;
+            try {
+                e = g_Yytk->CallBuiltin("array_get", { arr, RValue((double)i) });
+                isStruct = e.m_Kind == VALUE_OBJECT || e.m_Kind == VALUE_REF;
+            } catch (...) {}
+            double talentNumber = 0, gx = 0, gy = 0;
+            const std::string talent = MenuLayoutSlotField(e, isStruct, "talentId", talentNumber);
+            std::string guiX = MenuLayoutSlotField(e, isStruct, "navBboxX", gx);
+            std::string guiY = MenuLayoutSlotField(e, isStruct, "navBboxY", gy);
+            // A number prints with one decimal, as a row's gui= does.
+            if (std::isfinite(gx)) guiX = MenuLayoutDecimal(gx);
+            if (std::isfinite(gy)) guiY = MenuLayoutDecimal(gy);
+            std::string winX = "none", winY = "none";
+            if (std::isfinite(gx)) winX = (std::isfinite(sc.gw) && sc.gw > 0 && std::isfinite(sc.ww)) ? MenuLayoutInteger(gx * sc.ww / sc.gw) : kMenuLayoutReadFailed;
+            if (std::isfinite(gy)) winY = (std::isfinite(sc.gh) && sc.gh > 0 && std::isfinite(sc.wh)) ? MenuLayoutInteger(gy * sc.wh / sc.gh) : kMenuLayoutReadFailed;
+            Out("  slot=" + std::to_string(r) + "," + std::to_string(i)
+                + " talent=" + talent
+                + " gui=" + guiX + "," + guiY
+                + " win=" + winX + "," + winY);
+        }
+    }
 }
 
 static void MenuLayoutCommand(const std::string& rest)
@@ -34996,6 +35085,10 @@ static void MenuLayoutCommand(const std::string& rest)
     std::string absent;
     int listed = 0;
     bool capped = false;
+    // The skill bar's object index, so its row - however it was reached, its
+    // own name or a parent's - is followed by its slot rows.
+    const double hudIdx = MenuLayoutObjectIndex(
+        std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::UI_Hud_Talent_obj)));
     for (const std::string& name : names) {
         const double idx = MenuLayoutObjectIndex(name);
         if (idx < 0) { absent += (absent.empty() ? "" : ",") + name; continue; }
@@ -35010,6 +35103,7 @@ static void MenuLayoutCommand(const std::string& rest)
             if (std::isfinite(id) && !seen.insert((long long)std::llround(id)).second) continue;
             Out(MenuLayoutRow(inst, sc));
             ++listed;
+            if (hudIdx >= 0 && MenuLayoutRead(inst, "object_index") == hudIdx) MenuLayoutSlotRows(inst, sc);
         }
         if (capped) break;
     }
@@ -36366,6 +36460,994 @@ static bool HandleRestartProbeCommand(const std::string& lc, const std::string& 
     return false;
 }
 
+#ifndef FORGEPACT_RELEASE
+// ---- skillprobe: the skill bar and talent tree phase 0 instrument (toolkit #147) ----
+// docs/skill-actions-research.md holds the static search, the readings, the
+// live procedure and the decision keys this instrument serves. Research build
+// only, never in kPlayerCommands, dispatched from HandleSkillProbeCommand;
+// this comment sits inside the guard so the verb's name vanishes from a
+// player build.
+//
+// Which routine a cast, a binding, an allocation and a reset run through, and
+// which store each of them changes first, are unmeasured. Every candidate the
+// static search found - the cast and talent scripts, the bar's and the talent
+// screen's activation constructors, the network and consistency updates, the
+// controls loader and every Create closure of the nine talent objects - is
+// native-detoured in ONE build by one `hook`, the way craftprobe attaches:
+// MmCreateHook at the function's own address, and only once
+// AddrIsExecutableInModule has said the address is game code, because a
+// table-only hook is blind to this build's direct `call rel32` sites.
+// CheckPlayerInteraction rides last as the positive control, as it does in
+// craftprobe's table: a 0 there voids every other row's count.
+//
+// A function another install in this plugin already detours - craftprobe,
+// tgprobe, prospectprobe, restartprobe, citrace nativetrace, mapkeep,
+// craftmats, or a ForgePact hook such as toggleguard's - is reported `held`
+// and is never detoured a second time: a second MmCreateHook on one address
+// fails, and would read as a false negative. Its count is the holder's own,
+// read from that probe's counter where it keeps one. So `skillprobe hook`
+// runs after the other instruments and after `toggleguard 1`.
+//
+// The calls into the game are `call ... confirm` (one by-name dispatch of one
+// plain-script row) and `state`'s ReturnTalentLevel read. Both go through
+// craftprobe's CpDispatchScript, and `call`'s other through craftprobe's
+// CpResolveOther - called from here, never copied. `state`, `keys` and
+// `slots` read by name and install nothing.
+static constexpr long kSpDefaultBudget = 3;     // logged calls per armed row unless `arm <Row> <n>`
+static constexpr long kSpMaxBudget = 500;       // out.txt stays readable
+static constexpr int kSpMaxItems = 32;          // array entries and struct members one value prints
+static constexpr int kSpMaxDepth = 3;           // nesting one value prints
+static constexpr size_t kSpLineMax = 1500;      // one value's text, before it is cut
+
+// Game thread only: set while `state` runs ReturnTalentLevel itself, so a
+// detoured row neither logs that call nor spends its budget on it as if the
+// game had made it (craftprobe's g_CpOwnLookup, for the same reason).
+static bool g_SpOwnCall = false;
+
+// Before the trampoline: one budgeted line naming self, other and every
+// argument, in craftprobe's armed-line form (Obj#index@id, AggroArgs, array
+// identities). Returns whether it logged, so the ret= line follows exactly
+// the calls that were.
+static bool SpObserve(const char* label, long n, volatile long* logged, volatile long* budget,
+                      CInstance* S, CInstance* O, int argc, RValue** A)
+{
+    if (g_SpOwnCall) return false;
+    const long limit = *budget;
+    if (limit <= 0 || *logged >= limit) return false;
+    if (InterlockedIncrement(logged) > limit) return false;
+    try {
+        Out(std::string("skillprobe ") + label + " #" + std::to_string(n)
+            + " self=" + PpDescribeSelf(S) + " other=" + PpDescribeSelf(O)
+            + " argc=" + std::to_string(argc) + AggroArgs(argc, A) + PpArgIdentities(argc, A));
+    } catch (...) {}
+    return true;
+}
+
+static void SpAfter(const char* label, long n, const RValue& result)
+{
+    try { Out(std::string("skillprobe ") + label + " #" + std::to_string(n) + " ret=" + PpRetText(result)); }
+    catch (...) { Out(std::string("skillprobe ") + label + " #" + std::to_string(n) + " ret=<read failed>"); }
+}
+
+#define SKILLPROBE_DETOUR(SAFE, LABEL) \
+    static PFUNC_YYGMLScript g_SpOrig_##SAFE = nullptr; \
+    static volatile long g_SpCalls_##SAFE = 0; \
+    static volatile long g_SpLogged_##SAFE = 0; \
+    static volatile long g_SpBudget_##SAFE = 0; \
+    static RValue& SpDetour_##SAFE(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) { \
+        const long n = InterlockedIncrement(&g_SpCalls_##SAFE); \
+        const bool logged = SpObserve(LABEL, n, &g_SpLogged_##SAFE, &g_SpBudget_##SAFE, S, O, argc, A); \
+        RValue& r = g_SpOrig_##SAFE ? g_SpOrig_##SAFE(S, O, R, argc, A) : R; \
+        if (logged) SpAfter(LABEL, n, r); \
+        return r; \
+    }
+
+// One row per candidate in docs/skill-actions-research.md § Static search.
+// SAFE, label, SDK constant. The runtime name is always the hs-game-sdk
+// constant's own value - never retyped here. Six constructor-style scripts
+// carry no gml_Script_ prefix in the SDK and are spelled as it spells them;
+// `hook` resolves each by that name and then, if it does not resolve, by the
+// same name with the prefix, and a row neither finds is reported `not found`
+// - a finding about the runtime, not a typo.
+#define SKILLPROBE_TARGETS(X) \
+    /* the cast: the input's check, the cast, the class body's call, its requirement and cooldown */ \
+    X(CheckTalentUse, "CheckTalentUse", gml_Script_CheckTalentUse) \
+    X(TalentUse, "TalentUse", gml_Script_TalentUse) \
+    X(TalentUseClass, "TalentUseClass", gml_Script_TalentUseClass) \
+    X(TalentRequirement, "TalentRequirement", gml_Script_TalentRequirement) \
+    X(TalentRequirementFunc, "TalentRequirementFunc", TalentRequirementFunc) \
+    X(GetTalentCooldown, "GetTalentCooldown", gml_Script_GetTalentCooldown) \
+    /* talent reads */ \
+    X(GetTalentInfo, "GetTalentInfo", gml_Script_GetTalentInfo) \
+    X(ReturnTalentLevel, "ReturnTalentLevel", gml_Script_ReturnTalentLevel) \
+    X(GetTalentLevelReq, "GetTalentLevelReq", gml_Script_GetTalentLevelReq) \
+    X(ReturnSubTalentLevel, "ReturnSubTalentLevel", gml_Script_ReturnSubTalentLevel) \
+    X(GetSubTalentInfo, "GetSubTalentInfo", gml_Script_GetSubTalentInfo) \
+    /* the bar's and the talent screen's activation and navigation */ \
+    X(UiActivateTalents, "UiActivateTalents", UiActivateTalents) \
+    X(UiActivateHudTalentButtonFuncs, "UiActivateHudTalentButtonFuncs", UiActivateHudTalentButtonFuncs) \
+    X(UiHudTalentNavigationFunc, "UiHudTalentNavigationFunc", UiHudTalentNavigationFunc) \
+    X(UiTalentNavigationFunc, "UiTalentNavigationFunc", UiTalentNavigationFunc) \
+    X(UiHideTalentsWithNoBind, "UiHideTalentsWithNoBind", gml_Script_UiHideTalentsWithNoBind) \
+    X(UiSetActivationFunc, "UiSetActivationFunc", gml_Script_UiSetActivationFunc) \
+    /* network and consistency updates beside the handlers */ \
+    X(NetworkSendTalentUpdate, "NetworkSendTalentUpdate", gml_Script_NetworkSendTalentUpdate) \
+    X(NetworkSendClientAllTalents, "NetworkSendClientAllTalents", gml_Script_NetworkSendClientAllTalents) \
+    X(NetworkSendClientTalentUse, "NetworkSendClientTalentUse", gml_Script_NetworkSendClientTalentUse) \
+    X(CAPlayerTalentUpdate, "CA_playerTalentUpdate", gml_Script_CA_playerTalentUpdate) \
+    X(CAPlayerExtraTalentUpdate, "CA_playerExtraTalentUpdate", gml_Script_CA_playerExtraTalentUpdate) \
+    X(CAPlayerTalentActive, "CA_playerTalentActive", gml_Script_CA_playerTalentActive) \
+    X(ClearPersistSkill, "ClearPersistSkill", gml_Script_ClearPersistSkill) \
+    /* the controls */ \
+    X(LoadControls, "LoadControls", gml_Script_LoadControls) \
+    X(SaveControlsFunc, "SaveControlsFunc", SaveControlsFunc) \
+    /* the getters the bar is built from, and the mana update of a cast */ \
+    X(GetPlayerTalentHudObj, "GetPlayerTalentHudObj", gml_Script_GetPlayerTalentHudObj) \
+    X(GetPlayerProfileObj, "GetPlayerProfileObj", gml_Script_GetPlayerProfileObj) \
+    X(PlayerManaUpdate, "PlayerManaUpdate", gml_Script_PlayerManaUpdate) \
+    /* window creation, focus, and the flag a failed hash check raises */ \
+    X(UiCreate, "UiCreate", gml_Script_UiCreate) \
+    X(UiSetFocus, "UiSetFocus", gml_Script_UiSetFocus) \
+    X(ReportClient, "ReportClient", gml_Script_ReportClient) \
+    /* Create-event closures of the nine talent objects. Derived from the SDK: */ \
+    /* every constant whose value names one of their Create_0, which          */ \
+    /* test_skillprobe_table_covers_every_sdk_closure_of_its_objects enforces. */ \
+    /* UI_Hud_Talent_obj (the skill bar; tgprobe's table names these too)     */ \
+    X(HudTalent1233, "UI_Hud_Talent_obj anon@1233", gml_Script_anon_1233_gml_Object_UI_Hud_Talent_obj_Create_0) \
+    X(HudTalent2503, "UI_Hud_Talent_obj anon@2503", gml_Script_anon_2503_gml_Object_UI_Hud_Talent_obj_Create_0) \
+    X(HudTalent10745, "UI_Hud_Talent_obj anon@10745", gml_Script_anon_10745_gml_Object_UI_Hud_Talent_obj_Create_0) \
+    X(HudTalent11619, "UI_Hud_Talent_obj anon@11619", gml_Script_anon_11619_gml_Object_UI_Hud_Talent_obj_Create_0) \
+    X(HudTalent12025, "UI_Hud_Talent_obj anon@12025", gml_Script_anon_12025_gml_Object_UI_Hud_Talent_obj_Create_0) \
+    X(HudTalent12449, "UI_Hud_Talent_obj anon@12449", gml_Script_anon_12449_gml_Object_UI_Hud_Talent_obj_Create_0) \
+    X(HudTalent12916, "UI_Hud_Talent_obj anon@12916", gml_Script_anon_12916_gml_Object_UI_Hud_Talent_obj_Create_0) \
+    X(HudTalent13435, "UI_Hud_Talent_obj anon@13435", gml_Script_anon_13435_gml_Object_UI_Hud_Talent_obj_Create_0) \
+    /* UI_Talent_Screen_obj (the talent screen) */ \
+    X(TalentScreen4498, "UI_Talent_Screen_obj anon@4498", gml_Script_anon_4498_gml_Object_UI_Talent_Screen_obj_Create_0) \
+    X(TalentScreen9936, "UI_Talent_Screen_obj anon@9936", gml_Script_anon_9936_gml_Object_UI_Talent_Screen_obj_Create_0) \
+    /* UI_Talent_Button_obj */ \
+    X(TalentButton1009, "UI_Talent_Button_obj anon@1009", gml_Script_anon_1009_gml_Object_UI_Talent_Button_obj_Create_0) \
+    X(TalentButton1751, "UI_Talent_Button_obj anon@1751", gml_Script_anon_1751_gml_Object_UI_Talent_Button_obj_Create_0) \
+    X(TalentButton2387, "UI_Talent_Button_obj anon@2387", gml_Script_anon_2387_gml_Object_UI_Talent_Button_obj_Create_0) \
+    X(TalentButton2973, "UI_Talent_Button_obj anon@2973", gml_Script_anon_2973_gml_Object_UI_Talent_Button_obj_Create_0) \
+    X(TalentButton3562, "UI_Talent_Button_obj anon@3562", gml_Script_anon_3562_gml_Object_UI_Talent_Button_obj_Create_0) \
+    X(TalentButton4068, "UI_Talent_Button_obj anon@4068", gml_Script_anon_4068_gml_Object_UI_Talent_Button_obj_Create_0) \
+    /* UI_Button_Talent_Player_obj (the point allocation's button) */ \
+    X(TalentPlayer650, "UI_Button_Talent_Player_obj anon@650", gml_Script_anon_650_gml_Object_UI_Button_Talent_Player_obj_Create_0) \
+    X(TalentPlayer23088, "UI_Button_Talent_Player_obj anon@23088", gml_Script_anon_23088_gml_Object_UI_Button_Talent_Player_obj_Create_0) \
+    X(TalentPlayer23904, "UI_Button_Talent_Player_obj anon@23904", gml_Script_anon_23904_gml_Object_UI_Button_Talent_Player_obj_Create_0) \
+    /* UI_Button_Subtalent_obj (the sub-talent node's button) */ \
+    X(Subtalent535, "UI_Button_Subtalent_obj anon@535", gml_Script_anon_535_gml_Object_UI_Button_Subtalent_obj_Create_0) \
+    X(Subtalent2428, "UI_Button_Subtalent_obj anon@2428", gml_Script_anon_2428_gml_Object_UI_Button_Subtalent_obj_Create_0) \
+    /* UI_Talent_Screen_Allocate_obj, UI_Sub_Talents_obj, UI_Talent_Node_Tree_Parent_obj */ \
+    X(ScreenAllocate643, "UI_Talent_Screen_Allocate_obj anon@643", gml_Script_anon_643_gml_Object_UI_Talent_Screen_Allocate_obj_Create_0) \
+    X(SubTalents6264, "UI_Sub_Talents_obj anon@6264", gml_Script_anon_6264_gml_Object_UI_Sub_Talents_obj_Create_0) \
+    X(SubTalents8060, "UI_Sub_Talents_obj anon@8060", gml_Script_anon_8060_gml_Object_UI_Sub_Talents_obj_Create_0) \
+    X(SubTalents8767, "UI_Sub_Talents_obj anon@8767", gml_Script_anon_8767_gml_Object_UI_Sub_Talents_obj_Create_0) \
+    X(NodeTree1596, "UI_Talent_Node_Tree_Parent_obj anon@1596", gml_Script_anon_1596_gml_Object_UI_Talent_Node_Tree_Parent_obj_Create_0) \
+    X(NodeTree2306, "UI_Talent_Node_Tree_Parent_obj anon@2306", gml_Script_anon_2306_gml_Object_UI_Talent_Node_Tree_Parent_obj_Create_0) \
+    /* UI_Button_Sub_Skill_obj has no Create closure in the SDK */ \
+    /* positive control: fires from every interactable's Step event */ \
+    X(CheckPlayerInteraction, "CheckPlayerInteraction", gml_Script_CheckPlayerInteraction)
+
+#define SP_DEFINE_DETOUR(SAFE, LABEL, CONSTANT) SKILLPROBE_DETOUR(SAFE, LABEL)
+SKILLPROBE_TARGETS(SP_DEFINE_DETOUR)
+#undef SP_DEFINE_DETOUR
+#undef SKILLPROBE_DETOUR
+
+struct SpTarget {
+    const char*        label;
+    const char*        safe;          // the row's identifier, for its hook id
+    const char*        runtimeName;   // the SDK constant's value, used as-is
+    const char*        hookId;
+    PVOID              detour;
+    PFUNC_YYGMLScript* origSlot;
+    volatile long*     calls;
+    volatile long*     logged;
+    volatile long*     budget;        // calls the last `arm` asked this row to log; 0 = not armed
+    std::atomic<bool>  installed;
+    long               lastShown;     // calls at the previous `show`
+    std::string        resolvedName;  // the name `hook` resolved: the SDK value, or it with gml_Script_ in front
+    std::string        heldBy;        // who detours the function instead, when `hook` found it held
+    volatile long*     heldCalls;     // that holder's counter for it; nullptr when it keeps none
+    std::string        status;        // the last `hook`'s answer for this row
+};
+
+#define SP_ENTRY(SAFE, LABEL, CONSTANT) \
+    { LABEL, #SAFE, HeroSiege::Scripts::CONSTANT.data(), "fp_sp_" #SAFE, (PVOID)SpDetour_##SAFE, &g_SpOrig_##SAFE, \
+      &g_SpCalls_##SAFE, &g_SpLogged_##SAFE, &g_SpBudget_##SAFE, false, 0 },
+static SpTarget g_SpTargets[] = {
+    SKILLPROBE_TARGETS(SP_ENTRY)
+};
+#undef SP_ENTRY
+#undef SKILLPROBE_TARGETS
+
+static constexpr int kSpTargetCount = (int)(sizeof(g_SpTargets) / sizeof(g_SpTargets[0]));
+
+static bool SpIsControl(const SpTarget& t)
+{
+    return std::string_view(t.runtimeName) == HeroSiege::Scripts::gml_Script_CheckPlayerInteraction;
+}
+
+// A row by its label or its identifier, either case.
+static SpTarget* SpFindRow(const std::string& text)
+{
+    const std::string l = Lower(text);
+    for (SpTarget& t : g_SpTargets) if (Lower(t.label) == l || Lower(t.safe) == l) return &t;
+    return nullptr;
+}
+
+static bool SpLabelMatches(const SpTarget& t, const std::vector<std::string>& filters)
+{
+    const std::string ll = Lower(t.label);
+    for (const std::string& f : filters) if (ll.find(Lower(f)) != std::string::npos) return true;
+    return false;
+}
+
+// Which other install in this plugin detours this function now, and its
+// counter for it (nullptr when that install keeps none). "" when none does.
+// Decided from each holder's own record, never by trying a second detour.
+// Each holder is named by the command that installed it.
+static std::string SpHolder(std::string_view name, volatile long*& calls)
+{
+    calls = nullptr;
+    for (CpTarget& t : g_CpTargets)
+        if (t.installed.load() && name == t.runtimeName) { calls = t.calls; return "craftprobe hook"; }
+    for (PpTarget& t : g_PpTargets)
+        if (t.installed.load() && name == t.runtimeName) { calls = t.calls; return "prospectprobe hook"; }
+    for (TgProbeTarget& t : g_TgRows)
+        if (!t.eventSuffix && name == t.script && (t.mode == kTgNative || TgProbeIsPiggyback(t.mode))) {
+            calls = &t.calls;
+            return "tgprobe hook";
+        }
+    for (RestartProbeRow& t : g_RpRows)
+        if (name == t.script && t.mode == kRpNative) { calls = &t.calls; return "restartprobe hook"; }
+    for (CiNatTarget& t : g_CiNatTargets)
+        if (name == t.runtimeName && t.origSlot && *t.origSlot) { calls = t.nativeCalls; return "citrace nativetrace"; }
+    if (MkHolds(name)) return "mapkeep on";
+    if (CmHolds(name)) return "craftmats 1";
+    return "";
+}
+
+// The ForgePact hooks that may have taken one of this table's entries, with
+// the original each keeps. A table-only install leaves the game's function
+// there, which is detoured instead (TgProbeAttach's shape); an inline detour
+// leaves a trampoline, and the row is then held by that hook.
+static PFUNC_YYGMLScript* SpKnownOriginal(std::string_view name, const char*& hook)
+{
+    hook = nullptr;
+    if (name == HeroSiege::Scripts::gml_Script_TalentUse) { hook = "HookTalentUse (co-op)"; return &g_OrigTalentUse; }
+    if (name == HeroSiege::Scripts::gml_Script_TalentUseClass) { hook = "HookTalentUseClass (toggleguard 1)"; return &g_OrigTalentUseClass; }
+    if (name == HeroSiege::Scripts::gml_Script_CheckPlayerInteraction) { hook = "citrace's table hook"; return &g_OrigCi_CheckPlayerInteraction; }
+    return nullptr;
+}
+
+// By name only: the SDK value, then - for a constant the SDK spells without
+// it - the same name with gml_Script_ in front. `name` is the one that
+// resolved; false when neither did.
+static bool SpResolveName(const SpTarget& t, std::string& name, PVOID& p, AurieStatus& st)
+{
+    name = t.runtimeName;
+    p = nullptr;
+    st = g_Yytk->GetNamedRoutinePointer(name.c_str(), &p);
+    if ((!AurieSuccess(st) || !p) && name.rfind("gml_Script_", 0) != 0) {
+        name = "gml_Script_" + name;
+        p = nullptr;
+        st = g_Yytk->GetNamedRoutinePointer(name.c_str(), &p);
+    }
+    return AurieSuccess(st) && p;
+}
+
+static void SpInstall(const std::vector<std::string>& filters)
+{
+    HMODULE mainMod = GetModuleHandleA(nullptr);
+    int ok = 0, failed = 0, held = 0, notFound = 0, skipped = 0;
+    for (SpTarget& t : g_SpTargets) {
+        if (!filters.empty() && !SpLabelMatches(t, filters)) { ++skipped; continue; }
+        if (t.installed.load()) { Out(std::string("skillprobe hook: ") + t.label + " already detoured"); ++ok; continue; }
+        t.heldBy.clear();
+        t.heldCalls = nullptr;
+        volatile long* holderCalls = nullptr;
+        const std::string holder = SpHolder(t.runtimeName, holderCalls);
+        if (!holder.empty()) {
+            t.heldBy = holder;
+            t.heldCalls = holderCalls;
+            t.status = "held by " + holder;
+            Out(std::string("skillprobe hook: ") + t.label + " held by " + holder + " (its install owns this function; neither"
+                " detoured nor failed here - " + (holderCalls ? "`show` reads that probe's count" : "its own `stat` counts it") + ")");
+            ++held;
+            continue;
+        }
+        std::string name;
+        PVOID p = nullptr;
+        AurieStatus st = AURIE_SUCCESS;
+        if (!SpResolveName(t, name, p, st)) {
+            t.status = "not found";
+            Out(std::string("skillprobe hook: ") + t.label + " not found by name (" + t.runtimeName
+                + (std::string_view(t.runtimeName).rfind("gml_Script_", 0) != 0 ? ", nor with gml_Script_ in front" : "")
+                + ", st=" + std::to_string((int)st) + ")");
+            ++notFound;
+            continue;
+        }
+        t.resolvedName = name;
+        CScript* sc = reinterpret_cast<CScript*>(p);
+        if (!ReadablePtr(sc, sizeof(CScript)) || !ReadablePtr(sc->m_Functions, sizeof(*sc->m_Functions))
+            || !sc->m_Functions->m_ScriptFunction) {
+            t.status = "failed (name resolved, but not to a readable script record with a function)";
+            Out(std::string("skillprobe hook: ") + t.label + " " + t.status);
+            ++failed;
+            continue;
+        }
+        PVOID src = (PVOID)sc->m_Functions->m_ScriptFunction;
+        std::string under;
+        if (!AddrIsExecutableInModule(mainMod, src)) {
+            // A hook of this plugin took the table entry. Table-only, its
+            // saved original is the game's function, detoured here instead;
+            // otherwise the function is that hook's, and the row is held.
+            const char* hook = nullptr;
+            PFUNC_YYGMLScript* orig = SpKnownOriginal(name, hook);
+            if (orig && *orig && AddrIsExecutableInModule(mainMod, (const void*)*orig)) {
+                src = (PVOID)*orig;
+                under = std::string("under table-only ") + hook;
+            } else {
+                t.heldBy = (orig && *orig) ? std::string(hook) + " (inline detour)" : std::string("a ForgePact hook (the table entry is not game code)");
+                t.status = "held by " + t.heldBy;
+                Out(std::string("skillprobe hook: ") + t.label + " held by " + t.heldBy + " - neither detoured nor failed here;"
+                    " that hook's own `stat` counts it");
+                ++held;
+                continue;
+            }
+        }
+        if (!AddrIsExecutableInModule(mainMod, src)) {
+            t.status = "failed (function address is not executable code inside Hero_Siege.exe)";
+            Out(std::string("skillprobe hook: ") + t.label + " " + t.status);
+            ++failed;
+            continue;
+        }
+        PVOID tramp = nullptr;
+        AurieStatus hs = MmCreateHook(g_ArSelfModule, t.hookId, src, t.detour, &tramp);
+        if (!AurieSuccess(hs) || !tramp) {
+            t.status = "failed (MmCreateHook st=" + std::to_string((int)hs) + ")";
+            Out(std::string("skillprobe hook: ") + t.label + " " + t.status);
+            ++failed;
+            continue;
+        }
+        *t.origSlot = reinterpret_cast<PFUNC_YYGMLScript>(tramp);
+        t.installed.store(true);
+        t.status = under.empty() ? "detoured" : "detoured (" + under + ")";
+        char b[320];
+        sprintf_s(b, "skillprobe hook: detoured %s at exe+0x%llX", t.label,
+                  (unsigned long long)((char*)src - (char*)mainMod));
+        Out(std::string(b) + (under.empty() ? std::string() : " (" + under + ")")
+            + (name != t.runtimeName ? " as " + name : std::string()));
+        ++ok;
+    }
+    Out("skillprobe hook: " + std::to_string(ok) + " detoured, " + std::to_string(failed) + " failed, " + std::to_string(held)
+        + " held" + (notFound ? ", " + std::to_string(notFound) + " not found by name" : std::string())
+        + (skipped ? ", " + std::to_string(skipped) + " not selected" : std::string()) + ".");
+    Out("  Next: `skillprobe arm <Row>|all [n]`, then `skillprobe show` - CheckPlayerInteraction must already be climbing,"
+        " or nothing here counts.");
+}
+
+// The row's count and where it came from: its own detour, or the holder's
+// counter for the same function. False when there is none to read.
+static bool SpCallsOf(const SpTarget& t, long& calls)
+{
+    if (t.installed.load()) { calls = *t.calls; return true; }
+    if (!t.heldBy.empty() && t.heldCalls) { calls = *t.heldCalls; return true; }
+    return false;
+}
+
+// `arm <Row>|all [n]`: the next n calls (default kSpDefaultBudget) of that
+// row, or of every row but the control, are logged; `arm off` stops logging.
+// Counts run whether or not a row is armed.
+static void SpArm(const std::vector<std::string>& tail)
+{
+    if (tail.empty()) { Out("skillprobe arm: usage -> arm <Row>|all [n] | arm off"); return; }
+    const std::string what = Lower(tail[0]);
+    if (what == "off") {
+        for (SpTarget& t : g_SpTargets) InterlockedExchange(t.budget, 0);
+        Out("skillprobe arm: off - no row logs; the counts continue");
+        return;
+    }
+    long n = kSpDefaultBudget;
+    if (tail.size() >= 2) {
+        try { n = std::stol(tail[1]); } catch (...) { Out("skillprobe arm: n must be a whole number; nothing armed"); return; }
+        if (n < 1 || n > kSpMaxBudget) { Out("skillprobe arm: n must be 1.." + std::to_string(kSpMaxBudget) + "; nothing armed"); return; }
+    }
+    const bool all = what == "all";
+    SpTarget* row = all ? nullptr : SpFindRow(tail[0]);
+    if (!all && !row) { Out("skillprobe arm: '" + tail[0] + "' is not a skillprobe row; nothing armed"); return; }
+    int armed = 0, notDetoured = 0;
+    for (SpTarget& t : g_SpTargets) {
+        if (all ? SpIsControl(t) : &t != row) continue;
+        InterlockedExchange(t.logged, 0);
+        InterlockedExchange(t.budget, n);
+        if (t.installed.load()) ++armed; else ++notDetoured;
+    }
+    if (!all && !row->installed.load()) {
+        Out(std::string("skillprobe arm: ") + row->label + " is not detoured by skillprobe (" + (row->status.empty() ? std::string("not hooked") : row->status)
+            + "), so it logs nothing here" + (row->heldBy.empty() ? std::string() : " - its holder's own log does"));
+        return;
+    }
+    Out("skillprobe arm: the next " + std::to_string(n) + " calls of each of " + std::to_string(armed) + " detoured row(s) are logged"
+        + (all ? " (all but the CheckPlayerInteraction control)" : std::string())
+        + (notDetoured ? "; " + std::to_string(notDetoured) + " selected row(s) are not detoured here and log nothing" : std::string())
+        + ". Then `skillprobe show`.");
+}
+
+// Every row called since the previous `show`, the control first. A held
+// row's count is its holder's (and says so); a row with neither a detour nor
+// a holder's counter prints calls=n/a, never 0. `show all` lists the silent
+// rows too.
+static void SpShow(bool all)
+{
+    int installed = 0, held = 0;
+    for (const SpTarget& t : g_SpTargets) {
+        if (t.installed.load()) ++installed;
+        else if (!t.heldBy.empty()) ++held;
+    }
+    Out("skillprobe show: " + std::to_string(installed) + "/" + std::to_string(kSpTargetCount) + " rows detoured, "
+        + std::to_string(held) + " held");
+    int silent = 0;
+    for (int pass = 0; pass < 2; ++pass) {
+        for (SpTarget& t : g_SpTargets) {
+            if ((pass == 0) != SpIsControl(t)) continue;
+            long calls = 0;
+            const bool known = SpCallsOf(t, calls);
+            const std::string prefix = pass == 0 ? "  control " : "  ";
+            if (!known) {
+                if (pass == 0 || all)
+                    Out(prefix + t.label + " calls=n/a (" + (t.status.empty() ? std::string("not hooked") : t.status)
+                        + (t.heldBy.empty() ? std::string() : "; its holder's own `stat` counts it") + ")");
+                continue;
+            }
+            if (pass == 1 && calls == 0) { ++silent; if (all) Out(prefix + t.label + " calls=0"); continue; }
+            std::string line = prefix + t.label + " calls=" + std::to_string(calls) + " (+" + std::to_string(calls - t.lastShown)
+                + " since last show)";
+            if (t.installed.load()) {
+                const long budget = *t.budget;
+                const long logged = budget > 0 ? (std::min)((long)*t.logged, budget) : 0;
+                line += " logged=" + std::to_string(logged) + (budget > 0 ? "/" + std::to_string(budget) : std::string(" (not armed)"));
+            } else {
+                line += " (held by " + t.heldBy + ": that probe's count; its own log names the calls)";
+            }
+            if (pass == 0) line += " - a 0, or a count that does not climb, voids every count below";
+            Out(line);
+            t.lastShown = calls;
+        }
+    }
+    Out("skillprobe show: " + std::to_string(silent) + " counted row(s) with no calls" + (all ? std::string() : std::string(" (`show all` lists them)")));
+}
+
+static void SpZeroCounters()
+{
+    for (SpTarget& t : g_SpTargets) {
+        InterlockedExchange(t.calls, 0);
+        InterlockedExchange(t.logged, 0);
+        t.lastShown = 0;
+    }
+}
+
+// One argument of `call`: `id:<n>` is that instance as the runtime hands its
+// own id back (variable_instance_get(<n>, "id") after instance_exists - the
+// reference kind a logged `player ref` argument has); everything else is
+// craftprobe's CpResolveArg (number, true/false, undefined, text, fp:, fp9:,
+// kept:, map9, path:). Prints the refusal and returns false when it cannot
+// resolve.
+static bool SpResolveArg(const std::string& a, CInstance* inst, RValue& v)
+{
+    if (Lower(a).rfind("id:", 0) == 0) {
+        long long id = -1;
+        size_t used = 0;
+        const std::string text = a.substr(3);
+        try { id = std::stoll(text, &used); } catch (...) { used = 0; }
+        if (text.empty() || used != text.size()) {
+            Out("skillprobe call: refused - " + a + ": id:<n> needs a whole instance id; nothing was called");
+            return false;
+        }
+        const RValue handle((double)id);
+        bool alive = false;
+        try { alive = g_Yytk->CallBuiltin("instance_exists", { handle }).ToBoolean(); } catch (...) {}
+        if (!alive) { Out("skillprobe call: refused - " + a + ": instance_exists is false; nothing was called"); return false; }
+        try { v = g_Yytk->CallBuiltin("variable_instance_get", { handle, RValue("id") }); }
+        catch (...) { Out("skillprobe call: refused - " + a + ": its id could not be read; nothing was called"); return false; }
+        return true;
+    }
+    return CpResolveArg("skillprobe call", a, inst, v);
+}
+
+// `call <Row> <Obj> <nth>|id:<n> [other:<id>] [args ...] confirm`: ONE by-name
+// dispatch of one plain-script row through craftprobe's CpDispatchScript, the
+// other parsed by craftprobe's CpResolveOther. Every precondition is checked,
+// and every argument resolved, before the one call; a failure refuses with
+// nothing called. The reply prints what was supplied in the armed lines'
+// form, so it compares with a logged call field by field, and which of
+// CpDispatchScript's four outcomes it had.
+static void SpCall(const std::vector<std::string>& tok)
+{
+    const char* usage = "skillprobe call: usage -> call <Row> <Obj> <nth>|id:<n> [other:<id>] [args ...] confirm"
+                        " (arg: number | true | false | undefined | text | id:<n> | fp:<fingerprint> | kept:<row>"
+                        " | path:<Obj|global|id:n>.<a.b.c>)";
+    if (tok.size() < 4 || Lower(tok.back()) != "confirm") {
+        Out(std::string("skillprobe call: refused - this calls a game script; nothing was called. ") + usage);
+        return;
+    }
+    SpTarget* t = SpFindRow(tok[1]);
+    if (!t) { Out("skillprobe call: refused - '" + tok[1] + "' is not a skillprobe row; nothing was called"); return; }
+    const std::string runtime(t->runtimeName);
+    if (runtime.find('@') != std::string::npos) {
+        Out(std::string("skillprobe call: refused - ") + t->label + " is a closure, not a script this route calls by name; nothing was called"
+            " (`craftprobe methods <Obj> <nth>|id:<n>` names the variable holding it, then `craftprobe callm <Obj> <nth>|id:<n>"
+            " inst <member> [other:<id>] [args ...] confirm` runs it)");
+        return;
+    }
+    if (runtime == HeroSiege::Scripts::gml_Script_GetPlayerProfileObj) {
+        Out(std::string("skillprobe call: refused - ") + t->label + " is a profile getter: read what the game's own calls return"
+            " (`arm`), never invoke it (a blind profile getter call crashed the game); nothing was called");
+        return;
+    }
+    std::string name;
+    PVOID p = nullptr;
+    AurieStatus rs = AURIE_SUCCESS;
+    if (!SpResolveName(*t, name, p, rs)) {
+        Out(std::string("skillprobe call: refused - ") + t->label + " has no resolved pointer by name (st=" + std::to_string((int)rs)
+            + "); nothing was called");
+        return;
+    }
+    const bool byId = Lower(tok[2]).rfind("id:", 0) == 0;
+    const size_t argsAt = byId ? 3 : 4;
+    if (tok.size() < argsAt + 1) { Out(std::string("skillprobe call: refused - no self given; nothing was called. ") + usage); return; }
+    int nth = 0;
+    RValue handle; CInstance* inst = nullptr; int total = 0;
+    if (byId) {
+        long long id = -1;
+        try { id = std::stoll(tok[2].substr(3)); } catch (...) { Out("skillprobe call: refused - id:<n> needs a whole number; nothing was called"); return; }
+        handle = RValue((double)id);
+        bool alive = false;
+        try { alive = g_Yytk->CallBuiltin("instance_exists", { handle }).ToBoolean(); } catch (...) {}
+        if (!alive) { Out("skillprobe call: refused - " + tok[2] + ": instance_exists is false; nothing was called"); return; }
+        inst = HhResolveInstance(handle);
+        if (!inst) { Out("skillprobe call: refused - " + tok[2] + " exists but did not resolve to an instance; nothing was called"); return; }
+    } else {
+        try { nth = std::stoi(tok[3]); } catch (...) { Out("skillprobe call: refused - nth must be a whole number; nothing was called"); return; }
+        if (!MpResolve("skillprobe call (refused, nothing was called)", tok[2], nth, handle, inst, total)) return;
+    }
+    auto where = [&]() { return byId ? CpWhereId(tok[2], handle) : MpWhere(tok[2], nth, handle); };
+    // `other:<id>` directly after the self; without it the other is the self.
+    size_t argsFrom = argsAt;
+    CInstance* other = inst;
+    const bool otherGiven = argsFrom + 1 < tok.size() && Lower(tok[argsFrom]).rfind("other:", 0) == 0;
+    if (otherGiven) {
+        if (!CpResolveOther("skillprobe call", tok[argsFrom], other)) return;
+        ++argsFrom;
+    }
+    std::vector<RValue> args;
+    std::string supplied;
+    for (size_t i = argsFrom; i + 1 < tok.size(); ++i) {
+        RValue v;
+        if (!SpResolveArg(tok[i], inst, v)) return;
+        supplied += " a" + std::to_string(i - argsFrom) + "=" + tok[i] + "(" + PpBackingShape(v) + ")";
+        args.push_back(v);
+    }
+    // asset_get_index takes the script's own name: the resolved runtime name
+    // without its gml_Script_ prefix (a constructor resolved without one is
+    // already that name).
+    const std::string prefix = "gml_Script_";
+    const std::string script = name.rfind(prefix, 0) == 0 ? name.substr(prefix.size()) : name;
+    const std::string who = otherGiven ? " self=" + PpDescribeSelf(inst) + " other=" + PpDescribeSelf(other)
+                                       : " self=other=" + PpDescribeSelf(inst);
+    Out("skillprobe call: " + script + who + " argc=" + std::to_string(args.size()) + supplied);
+    Out("  before: " + where());
+    // The number the row's own detour gives this call on its `<Row> #<n>`
+    // line; a row not detoured here has none.
+    const std::string no = t->installed.load() ? "#" + std::to_string(*t->calls + 1) : std::string("(row not detoured here)");
+    RValue res;
+    AurieStatus st = AURIE_SUCCESS;
+    const CpCallOutcome outcome = CpDispatchScript(script, inst, other, args, res, st);
+    if (outcome == CpCallOutcome::NoScript) Out("  NOT dispatched " + no + ": asset_get_index found no script");
+    else if (outcome == CpCallOutcome::Threw) Out("  entered " + no + ", script_execute threw");
+    else if (outcome == CpCallOutcome::Failed) Out("  entered " + no + ", script_execute returned st=" + std::to_string((int)st));
+    else {
+        std::string ret;
+        try { ret = PpRetText(res); } catch (...) { ret = "<read failed>"; }
+        Out("  dispatched " + no + " -> ret=" + ret);
+    }
+    Out("  after:  " + where());
+}
+
+// ---- skillprobe's hook-free readers: state, keys, slots ----------------------
+
+// One value as `state` and `keys` print it: numbers and strings as menulayout
+// prints them, an array as [a,b,...] and a plain struct as {name=value,...},
+// each up to kSpMaxItems entries and kSpMaxDepth deep; a method, an instance
+// or data-structure reference and anything else by kind or by the runtime's
+// own reference text. Never a default in place of a failed read.
+static std::string SpValueText(const RValue& v, int depth = 0)
+{
+    try {
+        if (v.m_Kind == VALUE_ARRAY) {
+            if (depth >= kSpMaxDepth) return "<array>";
+            const int n = (int)g_Yytk->CallBuiltin("array_length", { v }).ToDouble();
+            const int shown = n < kSpMaxItems ? n : kSpMaxItems;
+            std::string out = "[";
+            for (int i = 0; i < shown; ++i) {
+                if (i) out += ",";
+                try { out += SpValueText(g_Yytk->CallBuiltin("array_get", { v, RValue((double)i) }), depth + 1); }
+                catch (...) { out += "unreadable"; }
+            }
+            if (n > shown) out += ",...+" + std::to_string(n - shown);
+            return out + "]";
+        }
+        if (v.m_Kind == VALUE_OBJECT || v.m_Kind == VALUE_REF) {
+            if (g_Yytk->CallBuiltin("is_method", { v }).ToBoolean()) return "<method>";
+            if (!g_Yytk->CallBuiltin("is_struct", { v }).ToBoolean())
+                return v.m_Kind == VALUE_REF ? "<" + v.ToString() + ">" : std::string("<object>");
+            if (depth >= kSpMaxDepth) return "<struct>";
+            RValue names = g_Yytk->CallBuiltin("variable_struct_get_names", { v });
+            const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+            const int shown = n < kSpMaxItems ? n : kSpMaxItems;
+            std::string out = "{";
+            for (int i = 0; i < shown; ++i) {
+                if (i) out += ",";
+                try {
+                    const RValue nm = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) });
+                    out += nm.ToString() + "=" + SpValueText(g_Yytk->CallBuiltin("variable_struct_get", { v, nm }), depth + 1);
+                } catch (...) { out += "unreadable"; }
+            }
+            if (n > shown) out += ",...+" + std::to_string(n - shown);
+            return out + "}";
+        }
+        return MenuLayoutValueText(v);
+    } catch (...) { return "unreadable"; }
+}
+
+static std::string SpCut(std::string s)
+{
+    if (s.size() > kSpLineMax) s = s.substr(0, kSpLineMax) + "...(cut)";
+    return s;
+}
+
+// A value by path: `<Obj>` (its first instance), `id:<n>` or `global`,
+// optionally followed by `.a.b.c`, read with craftprobe's `var` walk
+// (CpVarRoot, CpVarWalk), which prints why when a step fails.
+static bool SpPathValue(const std::string& tag, const std::string& spec, RValue& out)
+{
+    const size_t dot = spec.find('.');
+    const std::string root = spec.substr(0, dot);
+    const bool hasPath = dot != std::string::npos && dot + 1 < spec.size();
+    if (root.empty()) { Out(tag + ": " + spec + " names no root; nothing read"); return false; }
+    const bool byId = Lower(root).rfind("id:", 0) == 0;
+    const bool global = !byId && Lower(root) == "global";
+    if (global && !hasPath) { Out(tag + ": global needs a name (global.<name>); nothing read"); return false; }
+    const std::vector<std::string> rootTok = byId ? std::vector<std::string>{ "path", root }
+                                                  : std::vector<std::string>{ "path", root, "0" };
+    RValue cur, holder;
+    long long rootId = -1;
+    bool haveHolder = false;
+    std::string where, walked;
+    if (!CpVarRoot(tag, rootTok, byId, global, cur, rootId, where)) return false;
+    if (hasPath && !CpVarWalk(tag, global, CpSplitPath(spec.substr(dot + 1)), cur, holder, haveHolder, walked)) return false;
+    out = cur;
+    return true;
+}
+
+// The skill bar's instance, by name: the first UI_Hud_Talent_obj.
+static bool SpHud(RValue& hud)
+{
+    const double idx = MenuLayoutObjectIndex(
+        std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::UI_Hud_Talent_obj)));
+    if (idx < 0) return false;
+    try {
+        hud = g_Yytk->CallBuiltin("instance_find", { RValue(idx), RValue(0.0) });
+        return hud.m_Kind != VALUE_UNDEFINED && g_Yytk->CallBuiltin("instance_exists", { hud }).ToBoolean();
+    } catch (...) { return false; }
+}
+
+// A talent's abilityId from global.talentStructMap (the toggle mods' reader).
+static std::string SpAbilityOf(int id)
+{
+    RValue map, talent;
+    std::string why;
+    if (!N1GetTalentMap(map, why) || !N1GetTalentStruct(map, id, talent, why)) return "unreadable";
+    try {
+        const RValue a = g_Yytk->CallBuiltin("variable_struct_get", { talent, RValue("abilityId") });
+        if (a.m_Kind == VALUE_UNDEFINED) return "none";
+        return a.m_Kind == VALUE_STRING ? a.ToString() : SpValueText(a);
+    } catch (...) { return "unreadable"; }
+}
+
+// global.subTalentMap[1].t<id>: every s<NN> member and its level, `none` for a
+// talent with no node (a base-form talent), `unreadable` for any failed step.
+static std::string SpSubText(int id)
+{
+    try {
+        if (!g_Yytk->CallBuiltin("variable_global_exists", { RValue("subTalentMap") }).ToBoolean()) return "unreadable (no global.subTalentMap)";
+        const RValue arr = g_Yytk->CallBuiltin("variable_global_get", { RValue("subTalentMap") });
+        if (arr.m_Kind != VALUE_ARRAY) return "unreadable (global.subTalentMap is not an array)";
+        if (g_Yytk->CallBuiltin("array_length", { arr }).ToDouble() < 2) return "unreadable (global.subTalentMap has no index 1)";
+        const RValue entry = g_Yytk->CallBuiltin("array_get", { arr, RValue(1.0) });
+        if (entry.m_Kind != VALUE_OBJECT && entry.m_Kind != VALUE_REF) return "unreadable (index 1 is not a struct)";
+        const RValue node = g_Yytk->CallBuiltin("variable_struct_get", { entry, RValue("t" + std::to_string(id)) });
+        if (node.m_Kind == VALUE_UNDEFINED) return "none";
+        if (node.m_Kind != VALUE_OBJECT && node.m_Kind != VALUE_REF) return "unreadable (t" + std::to_string(id) + " is not a struct)";
+        const RValue names = g_Yytk->CallBuiltin("variable_struct_get_names", { node });
+        const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+        std::string out;
+        for (int i = 0; i < n && i < kSpMaxItems; ++i) {
+            try {
+                const RValue nm = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) });
+                out += (out.empty() ? "" : " ") + nm.ToString() + "="
+                    + MenuLayoutValueText(g_Yytk->CallBuiltin("variable_struct_get", { node, nm }));
+            } catch (...) { out += (out.empty() ? "" : " ") + std::string("unreadable"); }
+        }
+        return out.empty() ? std::string("(no members)") : out;
+    } catch (...) { return "unreadable"; }
+}
+
+// ReturnTalentLevel(<id>) by name, self = other = the local player, through
+// craftprobe's CpDispatchScript; its own call, so no detoured row logs it.
+static std::string SpLevelText(CInstance* player, int id)
+{
+    if (!player) return "unreadable (no local player)";
+    RValue res;
+    AurieStatus st = AURIE_SUCCESS;
+    CpCallOutcome outcome = CpCallOutcome::Threw;
+    g_SpOwnCall = true;
+    try {
+        outcome = CpDispatchScript(std::string(SdkShortScriptName(HeroSiege::Scripts::gml_Script_ReturnTalentLevel)),
+                                   player, player, { RValue((double)id) }, res, st);
+    } catch (...) { outcome = CpCallOutcome::Threw; }
+    g_SpOwnCall = false;
+    if (outcome == CpCallOutcome::NoScript) return "unreadable (asset_get_index found no script)";
+    if (outcome == CpCallOutcome::Threw) return "unreadable (script_execute threw)";
+    if (outcome == CpCallOutcome::Failed) return "unreadable (script_execute returned st=" + std::to_string((int)st) + ")";
+    return SpValueText(res);
+}
+
+// Every numeric member of an instance whose name contains point, talent or
+// skill, with its path: the points-available candidates (`pointsReader` is
+// whichever moves by exactly one on an allocation and back on a reset).
+static void SpPointCandidates(const std::string& where, const RValue& inst)
+{
+    int found = 0;
+    try {
+        const RValue names = g_Yytk->CallBuiltin("variable_instance_get_names", { inst });
+        const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+        for (int i = 0; i < n; ++i) {
+            std::string nm;
+            try {
+                const RValue key = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) });
+                nm = key.ToString();
+                const std::string l = Lower(nm);
+                if (l.find("point") == std::string::npos && l.find("talent") == std::string::npos && l.find("skill") == std::string::npos) continue;
+                const RValue v = g_Yytk->CallBuiltin("variable_instance_get", { inst, key });
+                if (!PpIsNumber(v)) continue;
+                Out("  points? " + where + "." + nm + "=" + MenuLayoutValueText(v));
+                ++found;
+            } catch (...) { Out("  points? " + where + "." + (nm.empty() ? std::string("<name ") + std::to_string(i) + ">" : nm) + "=unreadable"); }
+        }
+    } catch (...) { Out("  points? " + where + ": unreadable (its variables could not be listed)"); return; }
+    if (!found) Out("  points? " + where + ": no numeric member whose name contains point, talent or skill");
+}
+
+// `state [nolevel] [bind=<path> ...] [profile=<Obj|id:n>]`: the bar, the
+// stores a binding may live in, the sub-talent levels and the level and
+// points candidates, each read by name in its own try. Nothing is written
+// and no hook is installed; ReturnTalentLevel is the one script it runs
+// (`nolevel` skips it).
+static void SpState(const std::vector<std::string>& tok)
+{
+    bool levels = true;
+    std::vector<std::string> binds;
+    std::string profile;
+    for (size_t i = 1; i < tok.size(); ++i) {
+        const std::string l = Lower(tok[i]);
+        if (l == "nolevel") levels = false;
+        else if (l.rfind("bind=", 0) == 0) binds.push_back(tok[i].substr(5));
+        else if (l.rfind("profile=", 0) == 0) profile = tok[i].substr(8);
+        else { Out("skillprobe state: unknown option '" + tok[i] + "' (nolevel | bind=<Obj|global|id:n>.<a.b.c> | profile=<Obj|id:n>); nothing read"); return; }
+    }
+    Out("skillprobe state:");
+    std::vector<int> bar;
+    RValue hud;
+    const bool haveHud = SpHud(hud);
+    if (!haveHud) Out("  slot=unreadable (no UI_Hud_Talent_obj instance)");
+    static const char* const kRows[] = { "row0", "row1" };
+    for (int r = 0; haveHud && r < 2; ++r) {
+        RValue arr;
+        try { arr = g_Yytk->CallBuiltin("variable_instance_get", { hud, RValue(kRows[r]) }); }
+        catch (...) { Out("  slot=" + std::to_string(r) + ",* unreadable"); continue; }
+        if (arr.m_Kind != VALUE_ARRAY) { Out("  slot=" + std::to_string(r) + ",* unreadable (" + kRows[r] + " is not an array)"); continue; }
+        int n = 0;
+        try { n = (int)g_Yytk->CallBuiltin("array_length", { arr }).ToDouble(); } catch (...) { Out("  slot=" + std::to_string(r) + ",* unreadable"); continue; }
+        for (int i = 0; i < n && i < kSpMaxItems; ++i) {
+            const std::string at = "  slot=" + std::to_string(r) + "," + std::to_string(i);
+            try {
+                const RValue e = g_Yytk->CallBuiltin("array_get", { arr, RValue((double)i) });
+                if (e.m_Kind != VALUE_OBJECT && e.m_Kind != VALUE_REF) { Out(at + " talent=unreadable (not a struct)"); continue; }
+                const RValue tid = g_Yytk->CallBuiltin("variable_struct_get", { e, RValue("talentId") });
+                std::string timer = "unreadable";
+                try {
+                    const RValue tv = g_Yytk->CallBuiltin("variable_struct_get", { e, RValue("refreshInfoTimer") });
+                    timer = tv.m_Kind == VALUE_UNDEFINED ? std::string("none") : MenuLayoutValueText(tv);
+                } catch (...) {}
+                if (tid.m_Kind == VALUE_UNDEFINED) { Out(at + " talent=none timer=" + timer); continue; }
+                if (!PpIsNumber(tid)) { Out(at + " talent=" + SpValueText(tid) + " timer=" + timer); continue; }
+                const int id = (int)tid.ToDouble();
+                Out(at + " talent=" + std::to_string(id) + " ability=" + SpAbilityOf(id) + " timer=" + timer);
+                if (id > 0 && std::find(bar.begin(), bar.end(), id) == bar.end()) bar.push_back(id);
+            } catch (...) { Out(at + " unreadable"); }
+        }
+    }
+    try {
+        if (!g_Yytk->CallBuiltin("variable_global_exists", { RValue("mySkills") }).ToBoolean()) Out("  global.mySkills=unreadable (no such global)");
+        else Out("  global.mySkills=" + SpCut(SpValueText(g_Yytk->CallBuiltin("variable_global_get", { RValue("mySkills") }))));
+    } catch (...) { Out("  global.mySkills=unreadable"); }
+    if (haveHud) {
+        try {
+            const RValue ps = g_Yytk->CallBuiltin("variable_instance_get", { hud, RValue("playerSlot") });
+            if (ps.m_Kind != VALUE_OBJECT && ps.m_Kind != VALUE_REF) Out("  hud.playerSlot.bind_skill=unreadable (playerSlot is not a struct)");
+            else Out("  hud.playerSlot.bind_skill="
+                     + SpCut(SpValueText(g_Yytk->CallBuiltin("variable_struct_get", { ps, RValue("bind_skill") }))));
+        } catch (...) { Out("  hud.playerSlot.bind_skill=unreadable"); }
+    }
+    for (const std::string& spec : binds) {
+        RValue v;
+        if (SpPathValue("skillprobe state bind=" + spec, spec, v)) Out("  bind " + spec + "=" + SpCut(SpValueText(v)));
+        else Out("  bind " + spec + "=unreadable");
+    }
+    for (int id : bar) Out("  sub=" + std::to_string(id) + " " + SpSubText(id));
+    RValue player;
+    std::string how;
+    const bool havePlayer = HhResolveLocalPlayer(player, &how);
+    CInstance* self = havePlayer ? HhResolveInstance(player) : nullptr;
+    if (levels) for (int id : bar) Out("  level=" + std::to_string(id) + " " + SpLevelText(self, id));
+    if (havePlayer) SpPointCandidates("player", player);
+    else Out("  points? player: unreadable (no local player)");
+    if (!profile.empty()) {
+        RValue p;
+        if (SpPathValue("skillprobe state profile=" + profile, profile, p)) SpPointCandidates(profile, p);
+        else Out("  points? " + profile + ": unreadable");
+    }
+    Out("skillprobe state: " + std::to_string(bar.size()) + " talent(s) on the bar");
+}
+
+// Every member of one root whose name contains skill, talent or bind, with
+// its value (a controls struct's members carry the key codes).
+static void SpKeysOf(const std::string& spec)
+{
+    RValue v;
+    if (!SpPathValue("skillprobe keys " + spec, spec, v)) return;   // the walk said why
+    bool isInstance = false;
+    try {
+        isInstance = CpClassifyRef(v).kind == CpRefKind::Instance
+            || (PpIsNumber(v) && g_Yytk->CallBuiltin("instance_exists", { v }).ToBoolean());
+    } catch (...) {}
+    RValue names;
+    try {
+        if (isInstance) names = g_Yytk->CallBuiltin("variable_instance_get_names", { v });
+        else if ((v.m_Kind == VALUE_OBJECT || v.m_Kind == VALUE_REF) && g_Yytk->CallBuiltin("is_struct", { v }).ToBoolean()
+                 && !g_Yytk->CallBuiltin("is_method", { v }).ToBoolean())
+            names = g_Yytk->CallBuiltin("variable_struct_get_names", { v });
+        else { Out("  key " + spec + "=" + SpCut(SpValueText(v)) + " (neither an instance nor a struct)"); return; }
+    } catch (...) { Out("  key " + spec + ": unreadable (its members could not be listed)"); return; }
+    int n = 0, matched = 0;
+    try { n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble(); } catch (...) { Out("  key " + spec + ": unreadable"); return; }
+    for (int i = 0; i < n; ++i) {
+        std::string nm;
+        try {
+            const RValue key = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) });
+            nm = key.ToString();
+            const std::string l = Lower(nm);
+            if (l.find("skill") == std::string::npos && l.find("talent") == std::string::npos && l.find("bind") == std::string::npos) continue;
+            ++matched;
+            const RValue m = isInstance ? g_Yytk->CallBuiltin("variable_instance_get", { v, key })
+                                        : g_Yytk->CallBuiltin("variable_struct_get", { v, key });
+            Out("  key " + spec + "." + nm + "=" + SpCut(SpValueText(m)));
+        } catch (...) { Out("  key " + spec + "." + (nm.empty() ? std::string("<name ") + std::to_string(i) + ">" : nm) + "=unreadable"); }
+    }
+    Out("  keys " + spec + ": " + std::to_string(matched) + " of " + std::to_string(n) + " members name skill, talent or bind");
+}
+
+// `keys [<Obj|global|id:n>[.a.b.c] ...]`: Controller_obj and the bar's
+// playerSlot by default, and any root `craftprobe find` located.
+static void SpKeys(const std::vector<std::string>& tok)
+{
+    std::vector<std::string> roots(tok.begin() + 1, tok.end());
+    if (roots.empty()) {
+        roots.emplace_back(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Controller_obj));
+        roots.push_back(std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::UI_Hud_Talent_obj)) + ".playerSlot");
+    }
+    Out("skillprobe keys:");
+    for (const std::string& r : roots) SpKeysOf(r);
+}
+
+// `slots [<row> <i>]`: menulayout's own row and slot rows for the bar, then
+// every member of one element (row 0, index 0 by default).
+static void SpSlots(const std::vector<std::string>& tok)
+{
+    int row = 0, index = 0;
+    if (tok.size() >= 3) {
+        try { row = std::stoi(tok[1]); index = std::stoi(tok[2]); } catch (...) { Out("skillprobe slots: usage -> slots [<row> <i>]"); return; }
+    }
+    if (row < 0 || row > 1 || index < 0) { Out("skillprobe slots: row is 0 or 1 and i is 0 or more"); return; }
+    RValue hud;
+    if (!SpHud(hud)) { Out("skillprobe slots: no UI_Hud_Talent_obj instance"); return; }
+    MenuLayoutScale sc{
+        MenuLayoutNumber("display_get_gui_width"), MenuLayoutNumber("display_get_gui_height"),
+        MenuLayoutNumber("window_get_width"), MenuLayoutNumber("window_get_height") };
+    Out("skillprobe slots: gui=" + MenuLayoutInteger(sc.gw) + "x" + MenuLayoutInteger(sc.gh)
+        + " window=" + MenuLayoutInteger(sc.ww) + "x" + MenuLayoutInteger(sc.wh));
+    Out(MenuLayoutRow(hud, sc));
+    MenuLayoutSlotRows(hud, sc);
+    const std::string at = "row" + std::to_string(row) + "[" + std::to_string(index) + "]";
+    try {
+        const RValue arr = g_Yytk->CallBuiltin("variable_instance_get", { hud, RValue("row" + std::to_string(row)) });
+        if (arr.m_Kind != VALUE_ARRAY) { Out("skillprobe slots: row" + std::to_string(row) + " is not an array"); return; }
+        if (index >= (int)g_Yytk->CallBuiltin("array_length", { arr }).ToDouble()) { Out("skillprobe slots: " + at + " is out of range"); return; }
+        const RValue e = g_Yytk->CallBuiltin("array_get", { arr, RValue((double)index) });
+        if (e.m_Kind != VALUE_OBJECT && e.m_Kind != VALUE_REF) { Out("skillprobe slots: " + at + " is " + Describe(e)); return; }
+        Out("skillprobe slots: " + at + " members:" + TgProbeStructVars(e));
+    } catch (...) { Out("skillprobe slots: " + at + " unreadable"); }
+}
+
+static void SpUsage()
+{
+    int hooked = 0, held = 0;
+    for (const SpTarget& t : g_SpTargets) {
+        if (t.installed.load()) ++hooked;
+        else if (!t.heldBy.empty()) ++held;
+    }
+    Out("skillprobe: rows=" + std::to_string(kSpTargetCount) + " hooked=" + std::to_string(hooked) + " held=" + std::to_string(held)
+        + " - research instrument for docs/skill-actions-research.md (research build only)");
+    Out("  hook [substr ...]                 native-detour every row (or the matching ones); a row another install detours is `held`");
+    Out("    run it after craftprobe/tgprobe/prospectprobe/restartprobe `hook` and after `toggleguard 1`: they do not know this table");
+    Out("  arm <Row>|all [n] | arm off       log the next n (default " + std::to_string(kSpDefaultBudget) + ", at most "
+        + std::to_string(kSpMaxBudget) + ") calls of that row, or of every row but the control; counts run regardless");
+    Out("  show [all]                        calls since the previous show per row, the CheckPlayerInteraction control first;"
+        " a held row's count is its holder's");
+    Out("  reset                             zero every counter");
+    Out("  call <Row> <Obj> <nth>|id:<n> [other:<id>] [args ...] confirm   ONE by-name call of one plain-script row"
+        " (craftprobe's CpDispatchScript; other: parsed by craftprobe's CpResolveOther)");
+    Out("    args: number | true | false | undefined | text | id:<n> (that instance's own id reference) | fp:<fp> | kept:<row>"
+        " | path:<Obj|global|id:n>.<a.b.c>; a closure row is refused: `craftprobe methods`, then `craftprobe callm ... inst`");
+    Out("  state [nolevel] [bind=<Obj|global|id:n>.<a.b.c> ...] [profile=<Obj|id:n>]   hook-free: the bar's slots (talent, ability,"
+        " timer), global.mySkills, the bar's playerSlot.bind_skill, each bind= path, subTalentMap[1] per bar talent,"
+        " ReturnTalentLevel by name per bar talent, the points candidates");
+    Out("  keys [<Obj|global|id:n>[.a.b.c] ...]   hook-free: members naming skill, talent or bind (default: Controller_obj and the bar's playerSlot)");
+    Out("  slots [<row> <i>]                 hook-free: menulayout's bar row and slot rows, then every member of one element");
+}
+
+static void SpCommand(const std::string& rest)
+{
+    std::vector<std::string> tok;
+    { std::stringstream ss(rest); std::string w; while (ss >> w) tok.push_back(w); }
+    if (tok.empty()) { SpUsage(); return; }
+    const std::string sub = Lower(tok[0]);
+    const std::vector<std::string> tail(tok.begin() + 1, tok.end());
+    if (sub == "hook") { SpInstall(tail); return; }
+    if (sub == "arm") { SpArm(tail); return; }
+    if (sub == "show") { SpShow(!tail.empty() && Lower(tail[0]) == "all"); return; }
+    if (sub == "reset") { SpZeroCounters(); Out("skillprobe reset: counters zeroed (detours and arming unchanged)"); return; }
+    if (sub == "call") { SpCall(tok); return; }
+    if (sub == "state") { SpState(tok); return; }
+    if (sub == "keys") { SpKeys(tok); return; }
+    if (sub == "slots") { SpSlots(tok); return; }
+    SpUsage();
+}
+#endif // FORGEPACT_RELEASE (skillprobe)
+
+// Dispatched from its own function for the same C1061 reason as
+// HandleMenuLayoutCommand; answers false in the player build.
+static bool HandleSkillProbeCommand(const std::string& lc, const std::string& rest)
+{
+#ifndef FORGEPACT_RELEASE
+    if (lc == "skillprobe") { SpCommand(rest); return true; }
+#endif
+    (void)lc; (void)rest;
+    return false;
+}
+
 static void RunCommand(const std::string& line)
 {
     std::string rest;
@@ -36398,6 +37480,7 @@ static void RunCommand(const std::string& line)
     if (HandleMenuLayoutCommand(lc, rest)) return;
     if (HandleCraftCommand(lc, rest)) return;
     if (HandleRestartProbeCommand(lc, rest)) return;
+    if (HandleSkillProbeCommand(lc, rest)) return;
 #ifndef FORGEPACT_RELEASE
     // Toggle-skill research (issue #11), docs/toggle-skills-research.md. A
     // standalone early return rather than one more `else if` below: that chain

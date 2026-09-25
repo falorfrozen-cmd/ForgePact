@@ -53,7 +53,18 @@ STASH_BAG_OBJECTS = {
     "Town_Stash_obj", "Player_obj",
 }
 
-PLANNED_OBJECTS = CHARACTER_SELECT_OBJECTS | STASH_BAG_OBJECTS
+# The nine talent objects the skill and talent static search added
+# (docs/skill-actions-research.md, § Static search): the skill bar, the talent
+# screen and its buttons, the sub-talent panel and node tree. The bar's row
+# (UI_Hud_Talent_obj) is followed by one `  slot=` row per bar element.
+TALENT_OBJECTS = {
+    "UI_Hud_Talent_obj", "UI_Talent_Screen_obj", "UI_Talent_Button_obj",
+    "UI_Button_Talent_Player_obj", "UI_Button_Subtalent_obj",
+    "UI_Talent_Screen_Allocate_obj", "UI_Sub_Talents_obj",
+    "UI_Talent_Node_Tree_Parent_obj", "UI_Button_Sub_Skill_obj",
+}
+
+PLANNED_OBJECTS = CHARACTER_SELECT_OBJECTS | STASH_BAG_OBJECTS | TALENT_OBJECTS
 
 # Anything that would make the listing do rather than read: hook, perform an
 # event, create, destroy, write, or run a game script (by name through
