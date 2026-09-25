@@ -10,7 +10,8 @@ core. These pin the wiring around it, so it cannot drift silently:
     it; the tables' own candidates skip everything else in the hook;
   - the player build accepts the two switches and the filter, the research
     verbs stay out;
-  - the panel's two switches: defaults, launch commands, click commands, HTML;
+  - the panel's two switches: off by default (the owner's call, 2026-09-25),
+    launch commands, click commands, HTML;
   - the panel's mod filter: the list is the measured pool, what it saves, what
     it sends and when, and the page that draws it.
 """
@@ -148,16 +149,30 @@ class PluginWiringTests(unittest.TestCase):
 
 
 class PanelTests(unittest.TestCase):
-    def test_defaults_on_until_the_owner_decides(self):
-        self.assertIs(True, forgepact.DEFAULTS['mod_gem_mythic'])
-        self.assertIs(True, forgepact.DEFAULTS['mod_gem_maxroll'])
+    def test_both_switches_are_off_by_default(self):
+        # The owner's call, 2026-09-25: neither gem mod is on by default. Both
+        # the saved default and the launch builder's fallback for a config that
+        # lacks the key (one saved before 1.4.6) must say off, so a fresh or an
+        # older config sends no gem command at launch.
+        self.assertIs(False, forgepact.DEFAULTS['mod_gem_mythic'])
+        self.assertIs(False, forgepact.DEFAULTS['mod_gem_maxroll'])
+        cfg = copy.deepcopy(forgepact.DEFAULTS)
+        del cfg['mod_gem_mythic'], cfg['mod_gem_maxroll']
+        commands = forgepact.build_cmds(cfg)
+        self.assertEqual([], [c for c in commands if c.startswith(('gemmythic', 'gemmaxroll', 'gemfilter'))])
+        cfg['gem_filter'] = [68, 284]
+        self.assertEqual([], [c for c in forgepact.build_cmds(cfg) if c.startswith('gemfilter')])
 
     def test_launch_sends_both_switches_when_on(self):
-        commands = forgepact.build_cmds(copy.deepcopy(forgepact.DEFAULTS))
+        cfg = copy.deepcopy(forgepact.DEFAULTS)
+        cfg['mod_gem_mythic'] = cfg['mod_gem_maxroll'] = True
+        commands = forgepact.build_cmds(cfg)
         self.assertIn('gemmythic 1', commands)
         self.assertIn('gemmaxroll 1', commands)
 
     def test_launch_sends_nothing_when_off(self):
+        commands = forgepact.build_cmds(copy.deepcopy(forgepact.DEFAULTS))
+        self.assertFalse(any(c.startswith(('gemmythic', 'gemmaxroll')) for c in commands))
         cfg = copy.deepcopy(forgepact.DEFAULTS)
         cfg['mod_gem_mythic'] = cfg['mod_gem_maxroll'] = False
         commands = forgepact.build_cmds(cfg)
@@ -176,6 +191,13 @@ class PanelTests(unittest.TestCase):
             self.assertEqual(1, source.count(element), element)
         self.assertIn('Mythic Gems of Incarnation', source)
         self.assertIn('Max-roll Gems of Incarnation', source)
+        # The page draws both switches off until the saved config says true:
+        # the markup starts at off, and a missing key paints off, not on.
+        self.assertIn('<span class="val" id="mgmval">off</span>', source)
+        self.assertIn('<span class="val" id="mgrval">off</span>', source)
+        paint = between(source, "for(const [id,val,key] of [['mod_gem_mythic','mgmval','mod_gem_mythic']", '\n    }\n')
+        self.assertIn('const on=!!c[key];', paint)
+        self.assertNotIn('!==false', paint)
 
 
 
@@ -254,6 +276,7 @@ class GemFilterPanelTests(unittest.TestCase):
 
     def test_launch_sends_a_narrowed_filter_right_after_mythic(self):
         cfg = copy.deepcopy(forgepact.DEFAULTS)
+        cfg['mod_gem_mythic'] = True
         self.assertEqual('all', cfg['gem_filter'])
         self.assertFalse(any(c.startswith('gemfilter') for c in forgepact.build_cmds(cfg)))
         cfg['gem_filter'] = [68, 284]

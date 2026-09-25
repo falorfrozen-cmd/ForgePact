@@ -158,6 +158,10 @@ say gems and runes are picked up by hand. The player's "auto loot" reads as
 
 ## The mod
 
+Both switches are off by default, like every other mod (the owner's call,
+2026-09-25); the panel sends `gemmythic 1` and `gemmaxroll 1` only once a
+player turns them on.
+
 - **`gemmythic`**: while `DropGems` runs, a `CreateItemNew` whose instance is a
   Gem of Incarnation takes a seed from a table of seeds the game itself rolled
   Mythic at the same `n` (4-5 mods). No seeds yet for that `n`: the drop keeps
