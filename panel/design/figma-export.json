@@ -2,7 +2,7 @@
   "fileKey": "75EleO8U3zngY8JU9adWpk",
   "fileUrl": "https://www.figma.com/design/75EleO8U3zngY8JU9adWpk",
   "direction": "Graphite Console",
-  "exportedAt": "2026-09-25T10:26:18+00:00",
+  "exportedAt": "2026-09-25T14:39:02+00:00",
   "palettes": [
     {
       "name": "ledger",
@@ -1424,22 +1424,22 @@
       "variable": "font/size/sm"
     },
     {
-      "selector": ".val",
+      "selector": ".value-stepper>.val",
       "property": "font-family",
       "variable": "font/mono/family"
     },
     {
-      "selector": ".val",
+      "selector": ".value-stepper>.val",
       "property": "color",
       "variable": "color/text/primary"
     },
     {
-      "selector": ".val",
+      "selector": ".value-stepper>.val",
       "property": "background-color",
       "variable": "color/bg/sunken"
     },
     {
-      "selector": ".val.off",
+      "selector": ".value-stepper>.val.off",
       "property": "color",
       "variable": "color/text/muted"
     },
