@@ -13,7 +13,7 @@ shows its best roll.
   gem. Gems you already own keep their mods. The first time the switch is on,
   the game rolls sample gems quietly in the background, under a minute at the
   main menu. Until that is done, a gem that drops keeps the game's own roll.
-  Mods tab → **Mythic Gems of Incarnation**, on by default.
+  Mods tab → **Mythic Gems of Incarnation**, off by default.
 - **Gem mod filter.** Under the two switches, **Filter...** lists every mod a
   Gem of Incarnation can roll - 36, in six groups (Attack, Skills, Elemental
   skills, Defense, Life & mana, Loot). Tick the ones you want and save: every
@@ -25,7 +25,7 @@ shows its best roll.
   reads 12, where a lower tier could have stopped at 8. A skill grant keeps its
   skill. Nothing is written to your save: turn the switch off, and a gem shows
   its own rolls again the next time the game loads it. Mods tab →
-  **Max-roll Gems of Incarnation**, on by default.
+  **Max-roll Gems of Incarnation**, off by default.
 
 ## How to update
 
