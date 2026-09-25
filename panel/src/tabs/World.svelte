@@ -16,6 +16,7 @@
   <div class="hint">Enemies run at you faster, so waves end sooner. Scales the game's own path speed (base speed &times; bonus); slows and debuffs still apply on top, goblins keep their own pace. <b>Only inside Chaos Tower</b> leaves every other zone vanilla - switch it off to speed up enemies everywhere.</div>
   <div class="row">
     <span class="lbl">Speed bonus</span>
+    <label class="switch slider-switch"><input type="checkbox" id="sw_enemy_speed" data-switch="enemy_speed" aria-label="Enable Speed bonus"><span class="sl"></span></label>
     <input type="range" id="enemyspeed" min="0" max="300" step="5">
     <span class="val" id="enemyspeedval">off</span>
   </div>
@@ -37,11 +38,13 @@
   <div class="hint">Raises a share of the normal monsters to <b>Rare</b> (yellow) or <b>Ancient</b> (skull) as they spawn, through the game's own rarity setup: the monster gets that tier's stats, affixes and health bar exactly as if it had rolled that way. The two shares are separate and together stay at 100% or less - 25% Rare with 15% Ancient leaves 60% normal. Champions, the game's own rares, and bosses are left alone - bosses already have their own scripted health and affixes. Stacks with Tyrant's Crown and Density.</div>
   <div class="row" style="border:none">
     <span class="lbl">Rare</span>
+    <label class="switch slider-switch"><input type="checkbox" id="sw_rarity_rare" data-switch="rarity_rare" aria-label="Enable Rare"><span class="sl"></span></label>
     <input type="range" min="0" max="100" step="5" id="rarity_rare" value="0">
     <span class="val off" id="rarityrareval" style="width:64px">off</span>
   </div>
   <div class="row" style="border:none">
     <span class="lbl">Ancient</span>
+    <label class="switch slider-switch"><input type="checkbox" id="sw_rarity_ancient" data-switch="rarity_ancient" aria-label="Enable Ancient"><span class="sl"></span></label>
     <input type="range" min="0" max="100" step="5" id="rarity_ancient" value="0">
     <span class="val off" id="rarityancval" style="width:64px">off</span>
   </div>

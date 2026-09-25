@@ -24,6 +24,10 @@
 // the positive control that the checks pass on the page they were written for.
 // That page is gone since the port landed, so the sandbox refuses --legacy on
 // this tree; it ran 19/19 before the removal.
+//
+// The last group, enabled_mods, covers what the panel gained after the port
+// (slider switches, the Enabled mods list, the theme); its labels are the
+// short kebab-case ones, and the legacy page never had them.
 
 import { launchBrowser, openPanel, parseArgs, startSandbox, waitBooted, waitSaved } from './lib/browser.mjs';
 
@@ -53,6 +57,19 @@ const EXPECTED = [
   'installation refresh, command wording and offline status',
   'double-click guard, visible error, retry, poll consistency',
   'launch response, verification result, already-running state',
+  'enabled-list-empty-by-default',
+  'enabled-list-shows-boolean-mod',
+  'enabled-list-shows-slider-mod',
+  'enabled-list-shows-density',
+  'enabled-list-count',
+  'quick-disable-focus-visible',
+  'quick-disable-removes-entry',
+  'quick-disable-slider-turns-switch-off',
+  'switch-off-keeps-slider-value',
+  'switch-on-restores-command',
+  'applyall-omits-off-slider',
+  'theme-select-saves-and-sets-attribute',
+  'theme-persists-across-reload',
 ];
 
 function assert(ok, message) { if (!ok) throw new Error(message); }
@@ -472,11 +489,127 @@ async function launcher(ctx) {
   passed.push('launch response, verification result, already-running state');
 }
 
+// The slider switches, the "Enabled mods" list and the theme. The game counts
+// as running here (no --offline) and nothing is stubbed, so the sandbox's
+// command file shows what /api/set and Apply all really send. Commands are
+// compared with other captures of the same run, never with a literal, and the
+// page is read through ids and classes only: never an off slider's value text
+// or a computed style (the restyle may draw both differently), and never a
+// theme name (the restyle renames them) - the second option is picked by
+// index and its value read from the page.
+async function enabledMods(ctx) {
+  const { page, sandbox, passed } = ctx;
+  const read = async () => (await sandbox.state()).cfg;
+  const settled = async () => { await wait(30); await waitSaved(page); await wait(30); };
+  const EXP = '[data-sec="stats"][data-key="exp"]';
+  const MF = '[data-sec="stats"][data-key="magicfind"]';
+  // Run an action and answer the command lines it caused.
+  const commands = async (action) => {
+    sandbox.truncateCmds();
+    await action();
+    await settled();
+    return sandbox.readCmds();
+  };
+  const tap = (selector) => commands(() => $(page, (s) => document.querySelector(s).click(), selector));
+  const slide = (selector, which) => commands(() => $(page, ([s, w]) => {
+    const r = document.querySelector(s);
+    r.value = w === 'max' ? r.max : r.min;
+    r.dispatchEvent(new Event('input', { bubbles: true }));
+    r.dispatchEvent(new Event('change', { bubbles: true }));
+  }, [selector, which]));
+  const entries = () => $(page, () => [...document.querySelectorAll('#enabledMods li.enabled-mod')].map((li) => li.dataset.for));
+  const quick = (id) => tap(`#enabledMods .quick-disable[data-for="${id}"]`);
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+  assert(!(await read()).headhunter && await $(page, () => !document.querySelector('#enabledMods ul') &&
+    !!document.querySelector('#enabledMods .enabled-mods-empty')) && (await entries()).length === 0, 'A fresh config lists something as on');
+  passed.push('enabled-list-empty-by-default');
+
+  await tap('#headhunter');
+  assert((await read()).headhunter && (await entries()).includes('headhunter'), 'Boolean mod not listed');
+  assert(await $(page, () => !document.querySelector('#enabledMods .enabled-mods-empty')), 'Empty state shown beside entries');
+  passed.push('enabled-list-shows-boolean-mod');
+
+  const expMax = await slide(EXP, 'max');
+  const expMaxValue = await $(page, (s) => +document.querySelector(s).max, EXP);
+  assert(expMax.length > 0, 'Experience at max sent nothing (the instrument must fire)');
+  assert((await read()).stats.exp === expMaxValue && (await entries()).includes('sw_stats_exp'), 'Slider mod not listed');
+  passed.push('enabled-list-shows-slider-mod');
+
+  await slide('#den', 'max');
+  if (!await $(page, () => document.getElementById('den_on').checked)) await tap('#den_on');
+  assert((await read()).density_on && (await entries()).includes('den_on'), 'Density not listed through its own switch');
+  passed.push('enabled-list-shows-density');
+
+  const listed = await entries();
+  assert(listed.length === 3 && await $(page, (n) => document.getElementById('enabledModsCount').textContent === `${n} on`, listed.length),
+    'Count does not match the entries: ' + listed.join(','));
+  // Document order of the controls: the Modifiers card, the Mods cards, then
+  // World's cards (preparePanelUI() appends those last).
+  assert(same(listed, ['sw_stats_exp', 'headhunter', 'den_on']), 'Entries out of document order: ' + listed.join(','));
+  passed.push('enabled-list-count');
+
+  await page.focus('#theme');
+  await page.keyboard.press('Tab');
+  assert(await $(page, () => {
+    const el = document.activeElement;
+    return el?.classList.contains('quick-disable') && el.closest('#enabledMods') !== null && el.matches(':focus-visible');
+  }), 'Turn off is not reached by keyboard with a visible focus');
+  passed.push('quick-disable-focus-visible');
+
+  await quick('headhunter');
+  assert(!(await read()).headhunter && !(await entries()).includes('headhunter') &&
+    await $(page, () => !document.getElementById('headhunter').checked), 'Turn off left the boolean mod on');
+  passed.push('quick-disable-removes-entry');
+
+  const expOff = await quick('sw_stats_exp');
+  const afterQuick = await read();
+  assert(afterQuick.switches?.['stats.exp'] === false && afterQuick.stats.exp === expMaxValue, 'Turn off did not switch the slider off, value kept');
+  assert(await $(page, () => !document.getElementById('sw_stats_exp').checked) && !(await entries()).includes('sw_stats_exp'), 'Slider entry or switch not updated');
+  assert(expOff.length > 0 && !same(expOff, expMax), 'Switching off still sent the remembered value');
+  passed.push('quick-disable-slider-turns-switch-off');
+
+  const mfMin = await slide(MF, 'min');
+  const mfMax = await slide(MF, 'max');
+  const mfMaxValue = await $(page, (s) => +document.querySelector(s).max, MF);
+  const mfOff = await tap('#sw_stats_magicfind');
+  const offCfg = await read();
+  assert(mfMin.length > 0 && same(mfOff, mfMin), 'Switch off did not send the slider default: ' + mfOff.join('|') + ' vs ' + mfMin.join('|'));
+  assert(offCfg.switches?.['stats.magicfind'] === false && offCfg.stats.magicfind === mfMaxValue, 'Switch off lost the saved value');
+  assert(await $(page, ([s, v]) => { const r = document.querySelector(s); return +r.value === v && !r.disabled; }, [MF, mfMaxValue]),
+    'Switch off moved or disabled the slider');
+  passed.push('switch-off-keeps-slider-value');
+
+  const mfOn = await tap('#sw_stats_magicfind');
+  assert(mfMax.length > 0 && same(mfOn, mfMax), 'Switch on did not restore the remembered value: ' + mfOn.join('|') + ' vs ' + mfMax.join('|'));
+  assert(!('stats.magicfind' in ((await read()).switches || {})) && await $(page, () => document.getElementById('sw_stats_magicfind').checked),
+    'Switch on not saved');
+  passed.push('switch-on-restores-command');
+
+  const applied = await tap('#applyall');
+  assert(mfMax.every((line) => applied.includes(line)), 'Apply all left out an on slider: ' + applied.join('|'));
+  assert(!expMax.some((line) => applied.includes(line)), 'Apply all sent a switched-off slider: ' + applied.join('|'));
+  passed.push('applyall-omits-off-slider');
+
+  const chosen = await $(page, () => document.querySelectorAll('#theme option')[1].value);
+  await page.selectOption('#theme', { index: 1 });
+  await settled();
+  assert((await read()).theme === chosen && await $(page, (v) => document.documentElement.dataset.theme === v, chosen),
+    'Theme not saved or not painted: ' + chosen);
+  passed.push('theme-select-saves-and-sets-attribute');
+
+  await reload(page);
+  assert((await read()).theme === chosen && await $(page, (v) => document.documentElement.dataset.theme === v &&
+    document.getElementById('theme').value === v, chosen), 'Theme lost on reload: ' + chosen);
+  passed.push('theme-persists-across-reload');
+}
+
 const GROUPS = [
   ['panel_ui', panelUi, { offline: true }],
   ['satanic_panel', satanicPanel, { offline: true, satanicMinimum: true }],
   ['panel_install', install, { offline: true }],
   ['panel_launcher', launcher, { offline: true }],
+  ['enabled_mods', enabledMods, {}],
 ];
 
 const browser = await launchBrowser();

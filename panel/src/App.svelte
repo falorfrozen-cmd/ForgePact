@@ -4,8 +4,11 @@
   // for one; src/panel.js wires it up once it is mounted, as the old inline
   // script did. The tab components follow the order the old page's cards
   // ended up in once preparePanelUI() had re-appended World's cards last.
+  // Added since the port: the theme choice in the status bar and the
+  // "Enabled mods" list under the dock.
   import { ICON_SPRITE } from './icons.js';
   import { openTab } from './nav.js';
+  import { THEMES } from './theme.js';
   import Setup from './tabs/Setup.svelte';
   import Loot from './tabs/Loot.svelte';
   import Modifiers from './tabs/Modifiers.svelte';
@@ -29,8 +32,10 @@
 <main id="wrap">
   <div class="control-dock"><div class="topline">
     <div class="breadcrumb">ForgePact / <strong id="breadcrumbPage">Modifiers</strong></div>
-    <div id="statusbar"><span class="chip" id="chipGame">Connecting...</span><span id="saveIndicator" role="status" aria-live="polite">Loading settings...</span></div>
+    <div id="statusbar"><label class="theme-control">Theme <select id="theme">{#each THEMES as theme (theme.value)}<option value={theme.value}>{theme.label}</option>{/each}</select></label><span class="chip" id="chipGame">Connecting...</span><span id="saveIndicator" role="status" aria-live="polite">Loading settings...</span></div>
   </div></div>
+  <!-- Filled by src/lib/enabled-mods-list.js from the saved settings, in boot() and after every save. -->
+  <section id="enabledMods" aria-label="Enabled mods"><h2>Enabled mods</h2><span id="enabledModsCount">0 on</span><p class="enabled-mods-empty">Nothing is on</p></section>
   <div id="pluginWarning" class="plugin-warning" role="status" hidden><span id="pluginWarningText"></span><button class="btn" type="button" onclick={() => openTab('setup')}>Open Setup</button></div>
   <div class="page-heading"><div><h1 id="pageTitle">Character modifiers</h1><p id="pageDescription">Tune your character and combat bonuses.</p></div>
     <div class="page-actions"><label class="auto-control">Auto-apply <span class="switch"><input type="checkbox" id="autoapply" aria-label="Auto-apply on game launch"><span class="sl"></span></span></label><button class="btn" id="applyall" title="Send all saved settings to the game">Apply all now</button></div>

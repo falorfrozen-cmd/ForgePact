@@ -10,7 +10,8 @@
     "build": "vite build",
     "test": "node scripts/test.mjs",
     "oracle:record": "node tests/oracle.mjs record --legacy --out tests/behaviour-oracle.json",
-    "oracle:replay": "node tests/oracle.mjs replay --oracle tests/behaviour-oracle.json",
+    "oracle:replay": "node tests/oracle.mjs replay --oracle tests/behaviour-oracle.json --derived tests/behaviour-oracle-derived.json",
+    "oracle:derive": "node tests/oracle-derive.mjs --from tests/behaviour-oracle.json --out tests/behaviour-oracle-derived.json",
     "e2e": "node tests/ui.e2e.mjs",
     "screens": "node tests/screens.mjs",
     "icons": "node scripts/export-icons.mjs"

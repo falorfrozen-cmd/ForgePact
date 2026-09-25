@@ -2,7 +2,12 @@
 // page sent.
 //
 //   node tests/oracle.mjs record [--legacy] --out tests/behaviour-oracle.json
-//   node tests/oracle.mjs replay --oracle tests/behaviour-oracle.json [--legacy]
+//   node tests/oracle.mjs replay --oracle tests/behaviour-oracle.json [--derived tests/behaviour-oracle-derived.json] [--legacy]
+//
+// `--derived` adds the steps tests/oracle-derive.mjs generates for the controls
+// the legacy page never had (slider switches, the Enabled mods list's Turn off
+// buttons, the theme): they run on a second fresh sandbox after the legacy
+// steps, and coverage counts both files' controls.
 //
 // `record` walks every control the page offers, tab by tab in document order,
 // and writes one step per action: the POST requests the page made (`/api/state`
@@ -72,7 +77,9 @@ function enumerateIn(rootSelector) {
 async function planSteps(page) {
   const plan = [];
   const push = (control, action, extra = {}) => plan.push({ control, action, ...extra });
-  const header = await page.evaluate(enumerateIn, '.page-actions');
+  // The page header's controls, then the status bar's (the theme choice; the
+  // legacy page had none there).
+  const header = [...await page.evaluate(enumerateIn, '.page-actions'), ...await page.evaluate(enumerateIn, '#statusbar')];
   const groups = [];
   for (const tab of TABS) {
     if (tab === 'mods') {
@@ -284,19 +291,62 @@ async function record(args) {
   }
 }
 
+// The derived oracle's steps (tests/oracle-derive.mjs), on a sandbox of their
+// own: each step's capture is kept by index, and its `expect` compares it with
+// an earlier step's capture (`same`) or with a literal (`is`). A reference
+// that captured nothing is a mismatch in itself - a comparison of two empty
+// captures would pass without the instrument ever having fired.
+async function replayDerived(browser, derived, viewport, args, mismatches) {
+  const sandbox = await startSandbox({ legacy: !!args.legacy, dist: args.dist });
+  try {
+    const page = await openPanel(browser, sandbox, viewport);
+    const captured = [];
+    const plan = derived.steps.map((s) => ({ control: s.control, action: s.action, value: s.value }));
+    await runSteps(page, sandbox, plan, (i, step, outcome, posts, cmds) => {
+      captured[i] = { posts, cmds };
+      const label = `derived ${i}`;
+      if (outcome !== 'done') {
+        mismatches.push({ step: label, control: step.control, problem: `expected done, got ${outcome}` });
+        return;
+      }
+      const expect = derived.steps[i].expect || {};
+      for (const field of ['posts', 'cmds']) {
+        const want = expect[field];
+        if (!want) continue;
+        const actual = field === 'posts' ? posts : cmds;
+        if ('same' in want) {
+          const reference = captured[want.same]?.[field];
+          if (!reference || !reference.length) {
+            mismatches.push({ step: label, control: step.control, action: step.action, problem: `${field}: reference sent nothing`, reference: want.same });
+          } else if (!same(reference, actual)) {
+            mismatches.push({ step: label, control: step.control, action: step.action, problem: field, expected: reference, expectedFrom: want.same, actual });
+          }
+        } else if (!same(want.is, actual)) {
+          mismatches.push({ step: label, control: step.control, action: step.action, problem: field, expected: want.is, actual });
+        }
+      }
+    });
+  } finally {
+    await sandbox.stop();
+  }
+}
+
 async function replay(args) {
   const oracle = JSON.parse(readFileSync(resolve(PANEL_DIR, args.oracle || 'tests/behaviour-oracle.json'), 'utf8'));
+  const derived = args.derived ? JSON.parse(readFileSync(resolve(PANEL_DIR, args.derived), 'utf8')) : null;
   const sandbox = await startSandbox({ legacy: !!args.legacy, dist: args.dist });
   const browser = await launchBrowser();
   const mismatches = [];
+  let stopped = false;
   try {
     const page = await openPanel(browser, sandbox, oracle.viewport);
-    // Coverage: a control the build offers that the oracle never exercised is
-    // a behaviour nobody compared.
+    // Coverage: a control the build offers that neither oracle ever exercised
+    // is a behaviour nobody compared.
     const { controls } = await planSteps(page);
-    const recorded = new Set(oracle.controls);
+    const covered = [...oracle.controls, ...(derived ? derived.controls : [])];
+    const recorded = new Set(covered);
     for (const c of controls) if (!recorded.has(c)) mismatches.push({ step: '-', control: c, problem: 'control not in the oracle' });
-    for (const c of oracle.controls) if (!controls.includes(c)) mismatches.push({ step: '-', control: c, problem: 'control missing from this build' });
+    for (const c of covered) if (!controls.includes(c)) mismatches.push({ step: '-', control: c, problem: 'control missing from this build' });
     const plan = oracle.steps.map((s) => ({ control: s.control, action: s.action === 'skipped-disabled' ? s.intended : s.action, value: s.value }));
     await runSteps(page, sandbox, plan, (i, step, outcome, posts, cmds) => {
       const want = oracle.steps[i];
@@ -308,12 +358,17 @@ async function replay(args) {
       if (!same(want.posts, posts)) mismatches.push({ step: i, control: step.control, action: step.action, problem: 'posts', expected: want.posts, actual: posts });
       if (!same(want.cmds, cmds)) mismatches.push({ step: i, control: step.control, action: step.action, problem: 'cmds', expected: want.cmds, actual: cmds });
     });
+    await page.context().close();
+    stopped = true;
+    await sandbox.stop();
+    if (derived) await replayDerived(browser, derived, oracle.viewport, args, mismatches);
   } finally {
     await browser.close();
-    await sandbox.stop();
+    if (!stopped) await sandbox.stop();
   }
   for (const m of mismatches) console.log('mismatch', JSON.stringify(m));
-  console.log(`oracle: ${oracle.steps.length} steps, ${mismatches.length} mismatches`);
+  const total = oracle.steps.length + (derived ? derived.steps.length : 0);
+  console.log(`oracle: ${total} steps, ${mismatches.length} mismatches`);
   return mismatches.length ? 1 : 0;
 }
 
@@ -322,6 +377,6 @@ const mode = args._[0];
 if (mode === 'record') await record(args);
 else if (mode === 'replay') process.exitCode = await replay(args);
 else {
-  console.error('usage: oracle.mjs record [--legacy] [--out <file>] | replay [--oracle <file>] [--legacy]');
+  console.error('usage: oracle.mjs record [--legacy] [--out <file>] | replay [--oracle <file>] [--derived <file>] [--legacy]');
   process.exitCode = 2;
 }

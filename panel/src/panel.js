@@ -13,6 +13,9 @@ import { activeTab, controlFilter, modsSubtab, openTab, bindModsSubtabs, setCont
 import { syncRevealPacks, syncProspectBag } from './mods-sync.js';
 import { setupModsColumns } from './mods-columns.js';
 import { pollDelayMs, pollNextChangeAt } from './poll-policy.js';
+import { switchControlId, switchOn } from './enabled-mods.js';
+import { renderEnabledMods } from './lib/enabled-mods-list.js';
+import { applyTheme } from './theme.js';
 
 let tmr=null;
 function iconMarkup(name){
@@ -45,14 +48,16 @@ function toast(m){const t=document.getElementById('toast');t.textContent=m;t.cla
 function angelicPaint(){
   const el=document.getElementById('angelic_items'); const v=sliderVal(el);
   const dice=Math.max(0,Math.round(v)-1); const oneIn=dice>0?Math.max(1,Math.round(7500/dice)):0;
-  const val=document.getElementById('angelicval'); val.textContent=v>1?'x'+v:'off'; val.className='val '+(v>1?'':'off');
+  const on=v>1&&!switchedOff('angelic_items');
+  const val=document.getElementById('angelicval'); val.textContent=on?'x'+v:'off'; val.className='val '+(on?'':'off');
   document.getElementById('angelicnote').textContent=oneIn>0?`about 1 Angelic or Unholy item in ${oneIn.toLocaleString()} kills (${dice} ${dice>1?'dice':'die'} per kill at 1 in 7,500)`:'off - the game rolls only with an Angelic drop-chance effect';
 }
 function rarityPaint(){
   const r=sliderVal(document.getElementById('rarity_rare')), a=sliderVal(document.getElementById('rarity_ancient'));
   const rv=document.getElementById('rarityrareval'), av=document.getElementById('rarityancval');
-  rv.textContent=r>0?r+'%':'off'; rv.className='val '+(r>0?'':'off');
-  av.textContent=a>0?a+'%':'off'; av.className='val '+(a>0?'':'off');
+  const ron=r>0&&!switchedOff('rarity_rare'), aon=a>0&&!switchedOff('rarity_ancient');
+  rv.textContent=ron?r+'%':'off'; rv.className='val '+(ron?'':'off');
+  av.textContent=aon?a+'%':'off'; av.className='val '+(aon?'':'off');
   document.getElementById('raritynote').textContent=(r>0||a>0)?`of the normal monsters: ${a}% Ancient, ${r}% Rare, ${Math.max(0,100-r-a)}% stay normal`:'off - the game rolls rarity on its own';
 }
 function rarityLoad(c){
@@ -137,10 +142,31 @@ function applyPluginModState(pm){
 }
 function sliderOff(sec,v){return sec==='percent_stats'?v<=0:v<=1}
 function sliderText(sec,v){return sliderOff(sec,v)?'off':(sec==='percent_stats'?'+'+v+'%':'x'+v)}
+// A slider's on/off switch (Monster Density's #den_on, for every other
+// slider): off keeps the value in the range and the saved config, and the
+// value box reads "off" the way density's does, while the backend sends the
+// slider's default. `id` is the config's switch id, "<section>.<key>" or a
+// top-level key; World.svelte/Loot.svelte carry the same markup by hand.
+function switchMarkup(id,label){
+  return `<label class="switch slider-switch"><input type="checkbox" id="${switchControlId(id)}" data-switch="${id}" aria-label="Enable ${label}"><span class="sl"></span></label>`;
+}
+function switchedOff(id){return document.getElementById(switchControlId(id))?.checked===false}
+// The slider a switch belongs to: a table row by its data-sec/data-key, a
+// top-level slider by its element id.
+const TOP_LEVEL_RANGES={enemy_speed:'enemyspeed',angelic_items:'angelic_items',rarity_rare:'rarity_rare',rarity_ancient:'rarity_ancient'};
+function switchRange(id){
+  const dot=id.indexOf('.');
+  return dot<0?document.getElementById(TOP_LEVEL_RANGES[id]):
+    document.querySelector(`input[type=range][data-sec="${id.slice(0,dot)}"][data-key="${id.slice(dot+1)}"]`);
+}
+function paintSwitches(c){
+  document.querySelectorAll('input[data-switch]').forEach(box=>{box.checked=switchOn(c,box.dataset.switch)});
+}
 function row(sec,key,label,val,tagHtml,max,note,step){
   const mx=max||100, off=sliderOff(sec,val), mn=sec==='percent_stats'?0:1;
   const n=note?`<div class="note" data-note="${key}">${note}</div>`:'';
   return `<div class="row"><span class="lbl">${label}${tagHtml||''}</span>
+    ${switchMarkup(sec+'.'+key,label)}
     <input type="range" min="${mn}" max="${mx}" step="${step||1}" value="${val}" data-sec="${sec}" data-key="${key}">
     <span class="val ${off?'off':''}" style="width:64px" title="Click to type a value">${sliderText(sec,val)}</span></div>${n}`;
 }
@@ -340,7 +366,9 @@ async function boot(){
   document.getElementById('offensivestats').innerHTML=percentRows(['damage','attackspeed','castrate']);
   document.getElementById('sustainstats').innerHTML=percentRows(['lifereplenish','manareplenish','defense']);
   document.getElementById('criticalstats').innerHTML=percentRows(['critdamage','critchance','spellcritdamage','spellcritchance']);
-  bind(); preparePanelUI(); refreshSavedControls(); status(); paintVersion();
+  paintSwitches(c);
+  document.getElementById('theme').value=applyTheme(c.theme);
+  bind(); preparePanelUI(); refreshSavedControls(); renderEnabledMods(ST.cfg); status(); paintVersion();
   document.getElementById('saveIndicator').textContent='Settings loaded';
 }
 function paintVersion(){
@@ -396,7 +424,8 @@ function bind(){
     const valEl=r.parentElement.querySelector('.val');
     const noteEl=r.parentElement.parentElement.querySelector(`.note[data-note="${r.dataset.key}"]`);
     const tipOf=(k)=>{const e=(ST.keys||[]).find(x=>x[0]===k);return e?e[2]:undefined;};
-    r.oninput=()=>{const v=sliderVal(r);valEl.textContent=sliderText(r.dataset.sec,v);valEl.className='val '+(sliderOff(r.dataset.sec,v)?'off':'');
+    const swId=r.dataset.sec+'.'+r.dataset.key;
+    r.oninput=()=>{const v=sliderVal(r),off=switchedOff(swId);valEl.textContent=off?'off':sliderText(r.dataset.sec,v);valEl.className='val '+(off||sliderOff(r.dataset.sec,v)?'off':'');
       if(noteEl&&r.dataset.sec==='keys')noteEl.textContent=keyNote(r.dataset.key,tipOf(r.dataset.key),v);
       if(noteEl&&r.dataset.sec==='stats')noteEl.textContent=statNote(r.dataset.key,v);
       if(noteEl&&r.dataset.sec==='percent_stats')noteEl.textContent=percentStatNote(r.dataset.key,v);
@@ -424,7 +453,7 @@ function bind(){
   };
   const esp=document.getElementById('enemyspeed');
   const espText=(v)=>v>0?'+'+v+'%':'off';
-  esp.oninput=()=>{const v=sliderVal(esp);document.getElementById('enemyspeedval').textContent=espText(v);document.getElementById('enemyspeedval').className='val '+(v>0?'':'off');};
+  esp.oninput=()=>{const v=sliderVal(esp),on=v>0&&!switchedOff('enemy_speed');document.getElementById('enemyspeedval').textContent=on?espText(v):'off';document.getElementById('enemyspeedval').className='val '+(on?'':'off');};
   esp.onchange=async()=>{
     const v=sliderVal(esp);
     const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'enemy_speed',value:v})});
@@ -553,6 +582,27 @@ function bind(){
     };
     typable(el,document.getElementById(key==='rarity_rare'?'rarityrareval':'rarityancval'));
   }
+  // Every slider's switch goes through this one handler. The value box is
+  // repainted first, from the range's own value (marked typed so a saved
+  // decimal is not snapped to the drag step); the backend decides what the
+  // game gets - the default while off, the remembered value once on again.
+  document.querySelectorAll('input[data-switch]').forEach(box=>{
+    box.onchange=async()=>{
+      const range=switchRange(box.dataset.switch);
+      if(range?.oninput){const typed=range.dataset.typed;range.dataset.typed='1';range.oninput();if(typed===undefined)delete range.dataset.typed;else range.dataset.typed=typed}
+      const res=await j('/api/set',{method:'POST',body:JSON.stringify({section:'switches',key:box.dataset.switch,value:box.checked})});
+      toast(res.ok||res.err);
+    };
+  });
+  // The theme is a panel setting saved in forgepact.json like any other (the
+  // page's own storage is private to pywebview), painted as data-theme on the
+  // root; the answer's cfg.theme is what stays painted.
+  document.getElementById('theme').onchange=async(e)=>{
+    applyTheme(e.target.value);
+    const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'theme',value:e.target.value})});
+    e.target.value=applyTheme((res.cfg||ST.cfg).theme);
+    toast(res.ok||res.err);
+  };
   document.getElementById('applyall').onclick=async()=>{
     const res=await j('/api/applyall',{method:'POST',body:'{}'});
     toast(res.ok||res.err); if(!res.err)ST.lastApplied=new Date().toTimeString().slice(0,8); status();
@@ -727,6 +777,8 @@ function updateControlDecoration(){
 export function refreshSavedControls(){
   if(!ST?.cfg||document.querySelector('.numedit'))return;
   const c=ST.cfg,map={den:'density',enemyspeed:'enemy_speed',angelic_items:'angelic_items',rarity_rare:'rarity_rare',rarity_ancient:'rarity_ancient'};
+  // Switches first: each range's oninput below reads its switch to paint "off".
+  paintSwitches(c);
   const painted=[];
   document.querySelectorAll('input[type=range]').forEach(range=>{
     const value=range.dataset.sec?c[range.dataset.sec]?.[range.dataset.key]:c[map[range.id]];
@@ -751,7 +803,10 @@ export function refreshSavedControls(){
   syncRevealPacks(!!c.map_reveal,!!c.map_reveal_packs,!!c.map_reveal_spawn);
   syncProspectBag(!!c.mod_auto_prospect,!!c.mod_auto_prospect_bag);
   applyPluginModState(ST.pluginMods);
+  document.getElementById('theme').value=applyTheme(c.theme);
   updateControlDecoration();decoratePanelIcons();
+  // Last: the list reads each entry's value from the row just repainted.
+  renderEnabledMods(c);
 }
 export function filterControlRows(){
   if(!document.getElementById('controlSearch'))return;

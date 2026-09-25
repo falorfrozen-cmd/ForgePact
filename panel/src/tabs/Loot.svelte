@@ -26,6 +26,7 @@
   Click the value to type an exact number. <b>x1</b> is off.</div>
   <div class="row">
     <span class="lbl">Angelic / Unholy items</span>
+    <label class="switch slider-switch"><input type="checkbox" id="sw_angelic_items" data-switch="angelic_items" aria-label="Enable Angelic / Unholy items"><span class="sl"></span></label>
     <input type="range" id="angelic_items" min="1" max="100" step="1" value="1">
     <span class="val off" id="angelicval" style="width:64px">off</span>
   </div>
