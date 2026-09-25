@@ -118,6 +118,22 @@ Reveal full map; its switch is unavailable while the parent is off. All
 settings still use the existing local configuration and game plugin. The
 panel adds no UI dependencies.
 
+**Enabled mods**, just under the Apply controls, lists every mod you have
+turned on, with its current value, and says how many are on (**Nothing is on**
+when none are). Each entry has a **Turn off** button that switches that mod
+off exactly as its own control would, and the entry disappears. Settings that
+are only options of another mod (map population, the auto-prospect material
+move) and the Satanic Zone modifiers are not listed.
+
+Every slider now has its own on/off switch, like Monster Density's. Turning a
+slider off keeps the value you set, while the game plays as if the slider were
+at its default; its value box reads **off**. Turning it back on sends your
+value again, and Apply all leaves a switched-off slider at the default.
+
+**Theme**, next to the game status in the header, picks the panel's colour
+theme. Your choice is saved with the panel's other settings, so it is still
+there the next time you open ForgePact.
+
 The icon pack (the SVG sprite and which setting uses which icon) lives in
 `panel/src/icons.js` and is compiled into the panel's page by `npm --prefix panel
 run build`, so a packaged panel carries it with no separate file. To export the
