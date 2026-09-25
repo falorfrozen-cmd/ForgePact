@@ -22,6 +22,15 @@ of colour theme.
   picks the panel's colour theme. The panel remembers it with its other
   settings, so your choice is still there the next time you open ForgePact.
 
+## Changed
+
+- **Gems of Incarnation moved to the Loot tab.** The two switches and the mod
+  filter now have their own card at the end of the Loot tab, instead of sitting
+  among the Mods tab's Quality of Life switches. They work as before. The mod
+  filter's list can now be searched and narrowed to **Enabled** or
+  **Disabled** mods, like the Satanic Zone mods on the World tab, and it says
+  **Unsaved changes** until you press **Save filter**.
+
 ## How to update
 
 Download and extract the complete release, then reopen ForgePact. Your existing
