@@ -221,6 +221,12 @@ Real drops, the same day, research build, the owner playing a character with
   owner on two of them).
 - The dress also reached the owned gems at the character's load: 23 gems
   dressed in the session.
+- The filter, on real drops: 15 more drops with a filter set, first
+  Increased Attack Speed and Increased Magic Find by command, then Increased
+  Attack Speed alone from the panel's **Filter...** list. The panel's
+  **Save filter** reached the game (`gemfilter: 1 mods`) and was kept in the
+  settings. All 19 drops of the session took a Mythic seed and the filter
+  never missed (`filterMisses` 0). The owner checked the gems on the ground.
 
 ## Open
 
