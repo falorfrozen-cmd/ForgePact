@@ -11,8 +11,8 @@ of colour theme.
   says how many are on (**Nothing is on** when none are). Each entry has a
   **Turn off** button that switches that mod off exactly as its own control
   would, and the mod leaves the list. Settings that are only options of
-  another mod (map population, the auto-prospect material move) and the
-  Satanic Zone modifiers are not listed.
+  another mod (map population, the auto-prospect material move, the
+  gem mod filter) and the Satanic Zone modifiers are not listed.
 - **An on/off switch on every slider.** Every slider now has its own switch,
   like Monster Density's. Turning a slider off keeps the value you set, while
   the game plays as if the slider were at its default; turning it back on
@@ -26,8 +26,9 @@ of colour theme.
 
 Download and extract the complete release, then reopen ForgePact. Your existing
 settings are retained. Source users can run `Prepare-Plugin.bat` if plugin files
-are missing before using **Install Mod Plugin**. This release changes only the
-panel: the mod plugin is the same as in 1.4.5, so you do not need to press
-**Install Mod Plugin** again.
+are missing before using **Install Mod Plugin**. This release's own changes
+are all in the panel and need no new mod plugin. If you are updating from
+1.4.5 or earlier, press **Install Mod Plugin** once anyway: 1.4.6 changed the
+plugin (Gems of Incarnation).
 
 Use ForgePact only with an offline / EAC-disabled copy of Hero Siege.

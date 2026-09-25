@@ -124,7 +124,7 @@ turned on, with its current value, and says how many are on (**Nothing is on**
 when none are). Each entry has a **Turn off** button that switches that mod
 off exactly as its own control would, and the entry disappears. Settings that
 are only options of another mod (map population, the auto-prospect material
-move) and the Satanic Zone modifiers are not listed.
+move, the gem mod filter) and the Satanic Zone modifiers are not listed.
 
 Every slider now has its own on/off switch, like Monster Density's. Turning a
 slider off keeps the value you set, while the game plays as if the slider were
