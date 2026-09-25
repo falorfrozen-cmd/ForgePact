@@ -60,7 +60,13 @@ still leads the code. The owner's polish pass (2026-09-25) went this way:
 - The decision is recorded under `amendments` with the owner's words and the
   date. `amendments.polish` holds one entry per item, each naming what the
   panel now does and the selectors it does it with, including item 9, an idle
-  slider's note shown as a tooltip above its row.
+  slider's note shown as a tooltip above its row. A slider at its default has
+  no note, so an idle row at its default opens no tooltip.
+- The owner's later answers join the same entry with their own date. On
+  2026-09-26 (`decidedRound2`, `ownerWords20260926`): F1, no note for a slider
+  at its default (item 9 and the `idle-switch` state say so); F6, "CT only"
+  stays `color/text/muted` in both, pinned as a `#enemyspeedctval` row in
+  `selectorTokens` and named in item 5, so Figma redraws it muted.
 - Everything the amendment changes is edited where the checks read it: each
   screen's `texts`, the `selectorTokens` rows (a row whose element is gone is
   dropped or re-pointed; a new look gets a row design-match can reach), the
