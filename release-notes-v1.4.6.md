@@ -27,6 +27,16 @@ shows its best roll.
   its own rolls again the next time the game loads it. Mods tab →
   **Max-roll Gems of Incarnation**, off by default.
 
+## Changed
+
+- **The panel's address is now http://127.0.0.1:8780** (it was 8766). 8766 is
+  one of the ten ports the Item Editor keeps for itself. With the editor open,
+  the panel already ended up on 8780, and the Toolkit Hub, checking 8766 for
+  ForgePact, reached the editor instead. The panel now starts on 8780 whether or
+  not the editor is open, and the hub checks it there. If 8780 is taken, it
+  tries 8801, 8899, 9133 and 9777, as before. The panel still opens in its own
+  window; this only matters if you open it in a browser.
+
 ## How to update
 
 Download and extract the complete release, then reopen ForgePact. Your existing
