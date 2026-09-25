@@ -1,6 +1,7 @@
 // `npm test`: the panel's unit tests, `tests/*.test.js`, under node's own
 // runner. They cover the plain-JS modules (poll policy, navigation, column
-// balancer) against stub DOMs, in well under a second, with no browser.
+// balancer, enabled mods, theme) and the derived oracle against stub DOMs,
+// in well under a second, with no browser.
 //
 // Explicit file paths, as hub/scripts/test.mjs does: supported Node 20 does
 // not expand test globs, and directory arguments are not portable across Node
