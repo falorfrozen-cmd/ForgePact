@@ -15,7 +15,7 @@ page. This starts the exe, finds the port it bound, and checks four things:
 
 and prints one line:
 
-    window=found url=http://127.0.0.1:8766 index=ok assets=ok api=ok
+    window=found url=http://127.0.0.1:8780 index=ok assets=ok api=ok
 
 Exit 0 only when all four are good. It stops exactly the processes it started
 (the onefile bootloader and the child it unpacks into), by pid, never by image

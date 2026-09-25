@@ -796,8 +796,8 @@ the page, one script and `/api/state`, looks for the `ForgePact` window, prints 
 (`window=found url=… index=ok assets=ok api=ok`) and stops only the processes it started.
 
 For working on the page, run the backend and Vite's dev server side by side: `py
-src/forgepact.py` (listens on `127.0.0.1:8766`) and `npm --prefix panel run dev` (serves
-the page on `127.0.0.1:5178` and forwards `/api` to 8766), so an edit to a `.svelte` file
+src/forgepact.py` (listens on `127.0.0.1:8780`) and `npm --prefix panel run dev` (serves
+the page on `127.0.0.1:5178` and forwards `/api` to 8780), so an edit to a `.svelte` file
 shows without a rebuild.
 
 The panel's redesign is drawn in Figma, at

@@ -338,8 +338,8 @@ class PackagedPanelToolsTests(unittest.TestCase):
         self.assertFalse(self.smoke.api_ok((200, "text/html", b"<html>")))
 
     def test_the_verdict_line_shape(self):
-        self.assertEqual(self.smoke.verdict_line(True, "http://127.0.0.1:8766", True, True, True),
-                         "window=found url=http://127.0.0.1:8766 index=ok assets=ok api=ok")
+        self.assertEqual(self.smoke.verdict_line(True, "http://127.0.0.1:8780", True, True, True),
+                         "window=found url=http://127.0.0.1:8780 index=ok assets=ok api=ok")
         self.assertEqual(self.smoke.verdict_line(False, None, False, False, False),
                          "window=missing url=none index=bad assets=bad api=bad")
 
