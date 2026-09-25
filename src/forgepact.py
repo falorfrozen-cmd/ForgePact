@@ -1,7 +1,7 @@
 ﻿#!/usr/bin/env python3
 """ForgePact - Hero Siege Game Mods control panel.
 
-Local web app: http://127.0.0.1:8766 (artwork in sibling panel_icons.py)
+Local web app: http://127.0.0.1:8780 (artwork in sibling panel_icons.py)
 Talks to BloodPactPlugin (Aurie/YYTK) over bp_ipc:
 - settings apply instantly while the game is running
 - while the game is closed, commands are queued in cmd.txt (the plugin
@@ -14,7 +14,7 @@ Settings persist in %LOCALAPPDATA%/Hero_Siege/forgepact.json.
 # and works with no compiled DLL at all, so tools/cut_release.py reads the
 # current version from here. Do NOT hand-edit it - `py tools/cut_release.py
 # <version>` moves every site at once and `--check` fails if they disagree.
-__version__ = "1.4.5"
+__version__ = "1.4.6"
 
 import hashlib
 import json
@@ -72,10 +72,15 @@ except ImportError:
         SATANIC_BUFFS = ()
         SATANIC_DEBUFFS = ()
 
-PORT = 8766
+PORT = 8780
 # Windows sometimes reserves a port range (Hyper-V/WSL) and refuses the bind.
 # So free ports are tried in order; whichever works is opened in the browser.
-PORT_CANDIDATES = [8766, 8780, 8801, 8899, 9133, 9777]
+# The list used to begin with 8766. That port is one of 8765-8774, which the
+# Item Editor keeps for itself, so with the editor open the panel landed on
+# 8780 anyway, and the Toolkit Hub's check of 8766 reached the editor. The hub
+# checks the first candidate (catalog/sources.toml): move both together. No
+# version number in this comment: VersionStampTests allow exactly one.
+PORT_CANDIDATES = [8780, 8801, 8899, 9133, 9777]
 ROOT = Path.home() / "AppData" / "Local" / "Hero_Siege"
 CONFIG = ROOT / "forgepact.json"
 DEFAULT_EXE = r""  # set your own Hero_Siege.exe path in the app's "Game Location" field
