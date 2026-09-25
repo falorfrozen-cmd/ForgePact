@@ -25801,6 +25801,9 @@ static void CpAfter(const char* safe, const char* label, long n, bool logged, bo
     X(CreateItemNew, "CreateItemNew", gml_Script_CreateItemNew) \
     X(UiCreate, "UiCreate", gml_Script_UiCreate) \
     X(NetworkSendInventoryUpdate, "NetworkSendInventoryUpdate", gml_Script_NetworkSendInventoryUpdate) \
+    /* Toolkit #147's second stash and bag launch: the close button's      */ \
+    /* routine, logged on the close row's click and replayed by name (P2-7). */ \
+    X(UiACloseButton, "UiACloseButton", gml_Script_UiACloseButton) \
     /* positive control: fires from every interactable's Step event */ \
     X(CheckPlayerInteraction, "CheckPlayerInteraction", gml_Script_CheckPlayerInteraction)
 
@@ -27759,6 +27762,17 @@ static bool CpCallPathArg(const std::string& spec, RValue& out)
 // `fp9:`, `map9`/`map9:<key>`, `path:` and `kept:`, each through the game's own
 // lookup or the instrument's readers. Prints the refusal, naming what was
 // supplied, and returns false when it cannot resolve.
+//
+// Toolkit #147's second stash and bag launch (docs/stash-bag-layout-research.md,
+// Instrument) adds the two reference kinds live 1 could not supply: `id:<n>`,
+// the runtime's own `id` of a live instance (instance_exists, then
+// variable_instance_get(<n>, "id") - the kind a logged `ref instance N`
+// argument has; moved here from skillprobe's SpResolveArg so `call`, `callm`
+// and `skillprobe call` share it), and `obj:<Name>`, what asset_get_index
+// answers for an object name, passed exactly as answered (`ref object <Name>`
+// on this runner, the kind UiCreate's logged first argument has) and refused
+// unless the runtime names that index an object of that name. The reply's
+// supplied shape prints each through Describe, as the armed lines do.
 static bool CpResolveArg(const std::string& tag, const std::string& a, CInstance* inst, RValue& v)
 {
     const std::string la = Lower(a);
@@ -27792,6 +27806,36 @@ static bool CpResolveArg(const std::string& tag, const std::string& a, CInstance
             return false;
         }
         Out(tag + ": " + a + " is " + from);
+    } else if (la.rfind("id:", 0) == 0) {
+        long long id = -1;
+        size_t used = 0;
+        const std::string text = a.substr(3);
+        try { id = std::stoll(text, &used); } catch (...) { used = 0; }
+        if (text.empty() || used != text.size()) { Out(tag + ": refused - " + a + ": id:<n> needs a whole instance id; nothing was called"); return false; }
+        const RValue handle((double)id);
+        bool alive = false;
+        try { alive = g_Yytk->CallBuiltin("instance_exists", { handle }).ToBoolean(); } catch (...) {}
+        if (!alive) { Out(tag + ": refused - " + a + ": instance_exists is false; nothing was called"); return false; }
+        try { v = g_Yytk->CallBuiltin("variable_instance_get", { handle, RValue("id") }); }
+        catch (...) { Out(tag + ": refused - " + a + ": its id could not be read; nothing was called"); return false; }
+    } else if (la.rfind("obj:", 0) == 0) {
+        const std::string objName = a.substr(4);
+        RValue index;
+        std::string named;
+        bool isObject = false;
+        try {
+            index = g_Yytk->CallBuiltin("asset_get_index", { RValue(objName) });
+            double idx = -1;
+            // asset_get_index answers for sprites, sounds, rooms and scripts
+            // too: only an index the runtime calls an object of this name counts.
+            if (!objName.empty() && ApNumber(index, idx) && idx >= 0
+                && g_Yytk->CallBuiltin("object_exists", { RValue(idx) }).ToBoolean()) {
+                named = g_Yytk->CallBuiltin("object_get_name", { RValue(idx) }).ToString();
+                isObject = named == objName;
+            }
+        } catch (...) { isObject = false; }
+        if (!isObject) { Out(tag + ": refused - " + a + ": asset_get_index answered " + Describe(index) + (named.empty() ? std::string() : ", object_get_name " + named) + ", not an object of that name; nothing was called"); return false; }
+        v = index;
     } else if (la == "undefined") {
         v = RValue();   // Phase 1g: kind undefined, as auto-prospect's add and clear pass it (not MpArg's text)
     } else {
@@ -27842,7 +27886,7 @@ static void CpCall(const std::vector<std::string>& tok)
     const char* usage = "craftprobe call: usage -> call <Row> <Obj> <nth> [other:<id>] [args ...] confirm"
                         " | call <Row> id:<n> [other:<id>] [args ...] confirm "
                         "(arg: number | true | false | undefined | text | fp:<fingerprint> | fp9:<fingerprint> | kept:<row> | map9 | map9:<key>"
-                        " | path:<Obj|global|id:n>.<a.b.c>)";
+                        " | path:<Obj|global|id:n>.<a.b.c> | id:<n> (that instance's own id, a ref instance) | obj:<Name> (asset_get_index's answer, a ref object))";
     if (tok.size() < 4 || Lower(tok.back()) != "confirm") {
         Out(std::string("craftprobe call: refused - this calls a game script; nothing was called. ") + usage);
         return;
@@ -28191,7 +28235,7 @@ static void CpCallMethod(const std::vector<std::string>& tok)
     const char* usage = "craftprobe callm: usage -> callm <Obj> <nth> <struct> <member> [other:<id>] [args ...] [bind] confirm"
                         " | callm id:<n> <struct> <member> [other:<id>] [args ...] [bind] confirm"
                         " (struct: inst (the instance itself; its method must be a craftprobe row's) | fp:<K>[.a.b] | fp9:<K>[.a.b]"
-                        " | path:<Obj|global|id:n>.<a.b.c>; args as `call` takes them;"
+                        " | path:<Obj|global|id:n>.<a.b.c>; args as `call` takes them, id:<n> and obj:<Name> included;"
                         " bind: re-bind the member to its holder with the runtime's method() first)";
     if (tok.size() < 5 || Lower(tok.back()) != "confirm") {
         Out(std::string("craftprobe callm: refused - this calls a game method; nothing was called. ") + usage);
@@ -28488,7 +28532,8 @@ static void CpUsage()
         " the reply then prints self= and other= as the armed lines do. A closure row is refused: `methods`, then `callm ... inst`");
     Out("    args: number | true | false | undefined (kind undefined, not text) | text | fp:<fp> | fp9:<fp> (lookup with a1=9)"
         " | kept:<row> | map9 | map9:<key> (the kept stash map, only while `mapkeep stat` says current)"
-        " | path:<Obj|global|id:n>.<a.b.c> (what `var` reaches)");
+        " | path:<Obj|global|id:n>.<a.b.c> (what `var` reaches)"
+        " | id:<n> (that live instance's own id, a ref instance) | obj:<Name> (asset_get_index's answer for an object, a ref object)");
     Out("    reply, with the row's call number #<n> (its detour's entry line): NOT dispatched #<n>: asset_get_index found no script"
         " | entered #<n>, script_execute threw | entered #<n>, script_execute returned st=<s> | dispatched #<n> -> ret=");
     Out("  callm <Obj> <nth>|id:<n> <struct> <member> [args ...] confirm   ONE invocation of a method-valued member, by name"
@@ -36985,31 +37030,13 @@ static void SpZeroCounters()
     }
 }
 
-// One argument of `call`: `id:<n>` is that instance as the runtime hands its
-// own id back (variable_instance_get(<n>, "id") after instance_exists - the
-// reference kind a logged `player ref` argument has); everything else is
-// craftprobe's CpResolveArg (number, true/false, undefined, text, fp:, fp9:,
-// kept:, map9, path:). Prints the refusal and returns false when it cannot
-// resolve.
+// One argument of `call`: craftprobe's CpResolveArg, the one parser (number,
+// true/false, undefined, text, fp:, fp9:, kept:, map9, path:, and - since
+// toolkit #147's second stash and bag launch moved it there - `id:<n>`, the
+// instance's own id as the runtime hands it back, and `obj:<Name>`). Prints
+// the refusal and returns false when it cannot resolve.
 static bool SpResolveArg(const std::string& a, CInstance* inst, RValue& v)
 {
-    if (Lower(a).rfind("id:", 0) == 0) {
-        long long id = -1;
-        size_t used = 0;
-        const std::string text = a.substr(3);
-        try { id = std::stoll(text, &used); } catch (...) { used = 0; }
-        if (text.empty() || used != text.size()) {
-            Out("skillprobe call: refused - " + a + ": id:<n> needs a whole instance id; nothing was called");
-            return false;
-        }
-        const RValue handle((double)id);
-        bool alive = false;
-        try { alive = g_Yytk->CallBuiltin("instance_exists", { handle }).ToBoolean(); } catch (...) {}
-        if (!alive) { Out("skillprobe call: refused - " + a + ": instance_exists is false; nothing was called"); return false; }
-        try { v = g_Yytk->CallBuiltin("variable_instance_get", { handle, RValue("id") }); }
-        catch (...) { Out("skillprobe call: refused - " + a + ": its id could not be read; nothing was called"); return false; }
-        return true;
-    }
     return CpResolveArg("skillprobe call", a, inst, v);
 }
 

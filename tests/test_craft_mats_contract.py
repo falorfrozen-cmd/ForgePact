@@ -51,10 +51,12 @@ function_body = _release.function_body
 strip_comments = _release.strip_comments
 
 STASH_BAG_DOC = ROOT / "docs" / "stash-bag-layout-research.md"
-# The three rows toolkit #147's stash and bag phase 0 added after the Phase 1k
-# rows (tests/test_stash_bag_layout_contract.py pins them); the pins below move
+# The rows toolkit #147's stash and bag research added after the Phase 1k rows
+# - three for its first launch, `UiACloseButton` for its second
+# (tests/test_stash_bag_layout_contract.py pins them); the pins below move
 # only where those rows, or the separate `other` they brought, invalidate them.
-STASH_BAG_ROWS = ("gml_Script_CreateItemNew", "gml_Script_UiCreate", "gml_Script_NetworkSendInventoryUpdate")
+STASH_BAG_ROWS = ("gml_Script_CreateItemNew", "gml_Script_UiCreate", "gml_Script_NetworkSendInventoryUpdate",
+                  "gml_Script_UiACloseButton")
 
 BLOCK_START = "// ---- craftprobe: the crafting-materials Phase 0 instrument (issue #14)"
 BLOCK_END = "#endif // FORGEPACT_RELEASE (craftprobe)"
@@ -235,7 +237,7 @@ class CraftMatsContractTests(unittest.TestCase):
         ):
             self.assertIn("gml_Script_" + anchor, names)
         # Every row's runtime name is written down where the live session reads it.
-        # Toolkit #147's three rows are read by the stash and bag launch, so
+        # Toolkit #147's rows are read by the stash and bag launches, so
         # they are written down in that research; this record stays #14's.
         stash_doc = STASH_BAG_DOC.read_text(encoding="utf-8")
         for label, name in zip(labels, names):
@@ -845,7 +847,7 @@ class CraftMatsContractTests(unittest.TestCase):
             self.assertIn(row, labels, row + " is not a craftprobe row")
         # Phase 1e's 252 rows (none added for Phase 1g), Phase 1h's two,
         # Phase 1j's 24 (none for Phase 1i) and Phase 1k's four; then toolkit
-        # #147's three (STASH_BAG_ROWS).
+        # #147's four (STASH_BAG_ROWS).
         self.assertEqual(len(self.rows), 282 + len(STASH_BAG_ROWS))
         detour = self.plugin[self.plugin.index("#define CRAFTPROBE_DETOUR(SAFE, LABEL)"):]
         detour = detour[:detour.index("#define CRAFTPROBE_TARGETS(X)")]
@@ -1132,7 +1134,7 @@ class CraftMatsContractTests(unittest.TestCase):
         at = [constants.index(c) for c in self.PHASE1J_ROWS]
         self.assertEqual(at, list(range(at[0], at[0] + 24)), "the Phase 1j rows sit together, in the doc's order")
         self.assertEqual(constants[-1], "gml_Script_CheckPlayerInteraction", "the control stays the table's last row")
-        # Phase 1k's four rows, then toolkit #147's three, sit between them
+        # Phase 1k's four rows, then toolkit #147's four, sit between them
         # and the control.
         self.assertEqual(at[-1] + 1 + len(self.PHASE1K_ROWS) + len(STASH_BAG_ROWS), len(constants) - 1)
         labels = {constant: label for _, label, constant in self.rows}
@@ -1388,9 +1390,10 @@ class CraftMatsContractTests(unittest.TestCase):
         self.assertEqual(at, list(range(at[0], at[0] + 4)), "the Phase 1k rows sit together, in the doc's order")
         self.assertEqual(at[0], constants.index(self.PHASE1J_ROWS[-1]) + 1, "the Phase 1k rows follow the Phase 1j rows")
         self.assertEqual(constants[-1], "gml_Script_CheckPlayerInteraction", "the control stays the table's last row")
-        # Toolkit #147's three rows follow them, before the control.
+        # Toolkit #147's rows follow them, before the control.
         self.assertEqual(at[-1] + 1 + len(STASH_BAG_ROWS), len(constants) - 1)
-        self.assertEqual([constants.index(c) for c in STASH_BAG_ROWS], list(range(at[-1] + 1, at[-1] + 4)))
+        self.assertEqual([constants.index(c) for c in STASH_BAG_ROWS],
+                         list(range(at[-1] + 1, at[-1] + 1 + len(STASH_BAG_ROWS))))
         labels = {constant: label for _, label, constant in self.rows}
         getter = self.body("static bool CpIsProfileGetter(")
         for constant in self.PHASE1K_ROWS:

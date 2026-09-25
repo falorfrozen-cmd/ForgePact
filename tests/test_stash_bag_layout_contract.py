@@ -18,10 +18,11 @@ builtin that would run one.
 The mechanisms the hub tools rely on are measured in one research launch and
 recorded in docs/stash-bag-layout-research.md; its headings, its § Results
 columns and its decision keys are pinned here so the hub is never written
-against a key the document lacks. The research-build instrument that launch
-replays the game's calls with (`craftprobe`'s `other:<id>`, `methods`,
-`callm`'s `inst` holder and three rows) is pinned here too, and stays out of
-the player build.
+against a key the document lacks. The research-build instrument those
+launches replay the game's calls with (`craftprobe`'s `other:<id>`,
+`methods`, `callm`'s `inst` holder and three rows for the first; the `id:<n>`
+and `obj:<Name>` arguments and the `UiACloseButton` row for the second) is
+pinned here too, and stays out of the player build.
 """
 import os
 import re
@@ -77,12 +78,21 @@ DECISION_KEYS = (
 RESULTS_HEADER = "| Check | Observation | Logged shape | Supplied shape | Control | Date |"
 # The two outcome labels that are never a route negative (the recording rule).
 RECORDING_LABELS = ("shape not reproduced", "not-run (instrument")
+# § Results' rows: live 1's checks, then live 2's (its dll-hash, marker and
+# control carry "(live 2)" so the live-1 rows stay distinct).
+LIVE1_CHECKS = ["dll-hash", "marker", "control"] + [f"P0-{n}" for n in range(1, 11)]
+LIVE2_CHECKS = ["dll-hash (live 2)", "marker (live 2)", "control (live 2)"] + [f"P2-{n}" for n in range(1, 9)]
+# The six § Decision lines live 1 settled.
+LIVE1_KEYS = ("warpRoute", "stashCloseRoute", "stashTabRule", "stashTabState", "countReader", "itemRule")
 
 # craftprobe's three rows for the stash and bag launch: after the Phase 1k
 # rows, before the control, which stays last.
 CRAFTPROBE_BLOCK = ("// ---- craftprobe: the crafting-materials Phase 0 instrument (issue #14)",
                     "#endif // FORGEPACT_RELEASE (craftprobe)")
 STASH_ROWS = ("gml_Script_CreateItemNew", "gml_Script_UiCreate", "gml_Script_NetworkSendInventoryUpdate")
+# Live procedure 2's row: after those three, directly before the control.
+CLOSE_ROW = "gml_Script_UiACloseButton"
+CP_ROWS = 286
 
 
 class StashBagLayoutContract(unittest.TestCase):
@@ -245,24 +255,49 @@ class StashBagResearchDoc(unittest.TestCase):
         results = doc_section(self.doc, "## Results")
         rows = [line for line in results.split("\n") if line.startswith("|")]
         self.assertEqual(rows[0], RESULTS_HEADER)
-        # One row per check the live procedure names, each with six cells.
+        # One row per check the live procedures name, each with six cells.
         checks = [row.split("|")[1].strip() for row in rows[2:]]
-        self.assertEqual(checks, ["dll-hash", "marker", "control"] + [f"P0-{n}" for n in range(1, 11)])
+        self.assertEqual(checks, LIVE1_CHECKS + LIVE2_CHECKS)
         for row in rows[2:]:
             self.assertEqual(row.count("|"), 7, row)
+
+    def test_live1_rows_are_recorded(self):
+        # Live 1 ran (2026-09-25): none of its rows is left pending, and each
+        # is dated; live 2's rows stay pending until its capture exists.
+        results = doc_section(self.doc, "## Results")
+        rows = {row.split("|")[1].strip(): row for row in results.split("\n") if row.startswith("|")}
+        for check in LIVE1_CHECKS:
+            self.assertNotIn("pending", rows[check], check)
+            self.assertTrue(rows[check].rstrip().endswith("| 2026-09-25 |"), check)
+        # Negative control: the matcher does see a pending row.
+        self.assertIn("pending", rows["P2-1"])
+
+    def test_live1_settled_six_decision_lines(self):
+        decision = doc_section(self.doc, "## Decision")
+        settled = {key for key in DECISION_KEYS
+                   if "pending" not in re.search(r"(?m)^" + key + r": (.+)$", decision).group(1)}
+        self.assertEqual(settled, set(LIVE1_KEYS))
 
     def test_live_procedure_names_the_outcomes_that_are_not_route_negatives(self):
         procedure = doc_section(self.doc, "## Live procedure")
         for label in RECORDING_LABELS:
             self.assertIn(label, procedure, label)
         self.assertIn("reproduced", procedure)
-        # The marker the launch checks first is Step 0c's row count.
+        # Live 1's marker was Step 0c's row count; live 2's is Step 0d's.
         self.assertIn("rows=285", procedure)
+        self.assertIn("rows=286", procedure)
+        for heading in ("\n### Live procedure 1\n", "\n### Live procedure 2\n"):
+            self.assertIn(heading, procedure)
+        # Live 2's capture ends with a block tools/live_checks.py can read.
+        live2 = procedure[procedure.index("\n### Live procedure 2\n"):]
+        self.assertIn("## Checks", live2)
+        for check in LIVE2_CHECKS[3:]:
+            self.assertIn(check, live2, check)
 
     def test_instrument_names_the_phase0_craftprobe_additions(self):
         instrument = doc_section(self.doc, "## Instrument")
         for token in ("other:<id>", "methods", "inst", "CreateItemNew", "UiCreate", "NetworkSendInventoryUpdate",
-                      "held by"):
+                      "held by", "id:<n>", "obj:<Name>", "`UiACloseButton`", "rows=286"):
             self.assertIn(token, instrument, token)
 
 
@@ -286,14 +321,16 @@ class CraftprobePhase0Additions(unittest.TestCase):
 
     def test_three_rows_by_sdk_constant_before_the_control(self):
         constants = [constant for _, _, constant in self.rows]
-        self.assertEqual(len(self.rows), 285)
+        self.assertEqual(len(self.rows), CP_ROWS)
         for constant in STASH_ROWS:
             self.assertEqual(constants.count(constant), 1, constant)
         at = [constants.index(c) for c in STASH_ROWS]
         self.assertEqual(at, list(range(at[0], at[0] + 3)), "the three rows sit together, in this order")
         self.assertEqual(at[0], constants.index("gml_Script_ReportClient") + 1, "after the Phase 1k rows")
         self.assertEqual(constants[-1], "gml_Script_CheckPlayerInteraction", "the control stays last")
-        self.assertEqual(at[-1] + 1, len(constants) - 1)
+        # Step 0d's close row sits between them and the control.
+        self.assertEqual(at[-1] + 1, constants.index(CLOSE_ROW))
+        self.assertEqual(constants.index(CLOSE_ROW), len(constants) - 2)
         # Every row's runtime name is the SDK constant's own value.
         self.assertIn("HeroSiege::Scripts::CONSTANT.data()", self.plugin)
         shipped = strip_research_blocks(self.plugin)
@@ -422,6 +459,100 @@ class CraftprobePhase0Additions(unittest.TestCase):
         inspect = self.body("static void InstallItemInspectHooks(")
         self.assertIn('HookOneScriptTable("CreateItemNew",', inspect)
         self.assertNotIn('HookOneScript("CreateItemNew",', inspect)
+
+
+class CraftprobeLive2Additions(unittest.TestCase):
+    """Step 0d's `craftprobe` additions (research build only). Live 1's by-name
+    open came back `shape not reproduced` twice: `UiCreate`'s first argument is
+    an object reference and the stash closure's is a live instance reference,
+    and no argument form supplied either. `id:<n>` and `obj:<Name>` join the one
+    parser `call`, `callm` and `skillprobe call` share, and the close gets its
+    own row."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.plugin = PLUGIN_SRC.read_text(encoding="utf-8").replace("\r\n", "\n")
+        cls.code = strip_comments(cls.plugin)
+        table = cls.plugin[cls.plugin.index("#define CRAFTPROBE_TARGETS(X)"):]
+        table = table[:table.index("#define CP_DEFINE_DETOUR")]
+        cls.rows = re.findall(r'X\((\w+),\s*"([^"]+)",\s*(\w+)\)', table)
+        cls.arg = strip_comments(function_body(cls.plugin, "static bool CpResolveArg("))
+
+    def body(self, signature):
+        return strip_comments(function_body(self.plugin, signature))
+
+    def branch(self, prefix):
+        # From the prefix test to the next `} else if` / `} else {`.
+        start = self.arg.index(f'la.rfind("{prefix}", 0) == 0')
+        end = self.arg.index("} else", start)
+        return self.arg[start:end]
+
+    def test_id_argument_is_the_instances_own_id(self):
+        branch = self.branch("id:")
+        at = [branch.index(step) for step in ('"instance_exists", { handle }', '"variable_instance_get", { handle, RValue("id") }')]
+        self.assertEqual(at, sorted(at), "alive first, then its own id")
+        self.assertIn("return false;", branch)
+
+    def test_obj_argument_is_asset_get_index_as_returned(self):
+        branch = self.branch("obj:")
+        self.assertIn('"asset_get_index"', branch)
+        # Refused unless the runtime names that index an object of that name.
+        self.assertIn('"object_exists"', branch)
+        self.assertIn('"object_get_name"', branch)
+        self.assertIn("v = index;", branch, "passed exactly as asset_get_index returned it")
+        self.assertLess(branch.index('"object_get_name"'), branch.index("v = index;"))
+
+    def test_each_refusal_says_nothing_was_called_and_returns(self):
+        # id: refuses a malformed id, a dead instance and an unreadable id;
+        # obj: refuses once, whatever made the name not an object's.
+        for prefix, count in (("id:", 3), ("obj:", 1)):
+            lines = self.branch(prefix).split("\n")
+            refusals = [i for i, line in enumerate(lines) if "refused" in line]
+            self.assertEqual(len(refusals), count, prefix)
+            for i in refusals:
+                self.assertIn("nothing was called", lines[i], prefix)
+                self.assertIn("return false;", lines[i], prefix)
+        # The parser dispatches nothing: every refusal precedes the one call.
+        for word in ("script_execute", "CpDispatch"):
+            self.assertNotIn(word, self.arg, word)
+
+    def test_skillprobe_delegates_to_the_one_parser(self):
+        sp = self.body("static bool SpResolveArg(")
+        self.assertIn('CpResolveArg("skillprobe call", a, inst, v)', sp)
+        # The id: logic lives in CpResolveArg only, never a second copy.
+        self.assertNotIn('"variable_instance_get"', sp)
+        self.assertNotIn('"instance_exists"', sp)
+        self.assertNotIn("id:", sp)
+
+    def test_usage_strings_name_both_argument_kinds(self):
+        for fn in ("static void CpCall(", "static void CpCallMethod(", "static void CpUsage("):
+            body = function_body(self.plugin, fn)
+            for token in ("id:<n>", "obj:<Name>"):
+                self.assertIn(token, body, f"{fn} {token}")
+        # `call`'s own argument list names them, not only its self selector.
+        call = function_body(self.plugin, "static void CpCall(")
+        args = call[call.index("(arg: "):]
+        args = args[:args.index(")\";")]
+        for token in ("id:<n>", "obj:<Name>"):
+            self.assertIn(token, args, token)
+
+    def test_close_row_by_sdk_constant_before_the_control(self):
+        constants = [constant for _, _, constant in self.rows]
+        self.assertEqual(len(self.rows), CP_ROWS)
+        self.assertEqual(constants.count(CLOSE_ROW), 1)
+        self.assertEqual(constants.index(CLOSE_ROW), len(constants) - 2)
+        self.assertEqual(constants[-1], "gml_Script_CheckPlayerInteraction")
+        shipped = strip_research_blocks(self.plugin)
+        self.assertIn("kPlayerCommands", shipped)   # negative control: the strip keeps player code
+        for safe, label, constant in self.rows:
+            if constant == CLOSE_ROW:
+                self.assertNotIn(f'X({safe}, "{label}", {constant})', shipped)
+
+    def test_marker_prints_the_row_count(self):
+        usage = self.body("static void CpUsage(")
+        first = usage[usage.index("Out("):]
+        self.assertIn('"craftprobe: phase1k rows=" + std::to_string(kCpTargetCount)', first[:first.index(";")])
+        self.assertEqual(len(self.rows), 286)
 
 
 class StashBagDocumentation(unittest.TestCase):
