@@ -1,0 +1,3104 @@
+{
+  "fileKey": "75EleO8U3zngY8JU9adWpk",
+  "fileUrl": "https://www.figma.com/design/75EleO8U3zngY8JU9adWpk",
+  "direction": "Graphite Console",
+  "exportedAt": "2026-09-25T08:16:28+00:00",
+  "palettes": [
+    {
+      "name": "ledger",
+      "label": "Ledger",
+      "default": true,
+      "source": "VariableCollectionId:4:2"
+    },
+    {
+      "name": "graphite",
+      "label": "Graphite",
+      "default": false,
+      "source": "VariableCollectionId:5:166"
+    },
+    {
+      "name": "sigil",
+      "label": "Sigil",
+      "default": false,
+      "source": "VariableCollectionId:6:390"
+    }
+  ],
+  "variables": [
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "color/bg/base",
+      "type": "COLOR",
+      "value": "#15110d"
+    },
+    {
+      "collection": "tokens",
+      "mode": "graphite",
+      "name": "color/bg/base",
+      "type": "COLOR",
+      "value": "#131517"
+    },
+    {
+      "collection": "tokens",
+      "mode": "sigil",
+      "name": "color/bg/base",
+      "type": "COLOR",
+      "value": "#0e1013"
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "color/bg/raised",
+      "type": "COLOR",
+      "value": "#251e17"
+    },
+    {
+      "collection": "tokens",
+      "mode": "graphite",
+      "name": "color/bg/raised",
+      "type": "COLOR",
+      "value": "#1e2225"
+    },
+    {
+      "collection": "tokens",
+      "mode": "sigil",
+      "name": "color/bg/raised",
+      "type": "COLOR",
+      "value": "#1b1f25"
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "color/bg/sunken",
+      "type": "COLOR",
+      "value": "#100d0a"
+    },
+    {
+      "collection": "tokens",
+      "mode": "graphite",
+      "name": "color/bg/sunken",
+      "type": "COLOR",
+      "value": "#101214"
+    },
+    {
+      "collection": "tokens",
+      "mode": "sigil",
+      "name": "color/bg/sunken",
+      "type": "COLOR",
+      "value": "#0a0b0e"
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "color/bg/hover",
+      "type": "COLOR",
+      "value": "#2d241c"
+    },
+    {
+      "collection": "tokens",
+      "mode": "graphite",
+      "name": "color/bg/hover",
+      "type": "COLOR",
+      "value": "#25282b"
+    },
+    {
+      "collection": "tokens",
+      "mode": "sigil",
+      "name": "color/bg/hover",
+      "type": "COLOR",
+      "value": "#22262e"
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "color/border/subtle",
+      "type": "COLOR",
+      "value": "#3a2f25"
+    },
+    {
+      "collection": "tokens",
+      "mode": "graphite",
+      "name": "color/border/subtle",
+      "type": "COLOR",
+      "value": "#303439"
+    },
+    {
+      "collection": "tokens",
+      "mode": "sigil",
+      "name": "color/border/subtle",
+      "type": "COLOR",
+      "value": "#2a2f38"
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "color/border/strong",
+      "type": "COLOR",
+      "value": "#826848"
+    },
+    {
+      "collection": "tokens",
+      "mode": "graphite",
+      "name": "color/border/strong",
+      "type": "COLOR",
+      "value": "#686f79"
+    },
+    {
+      "collection": "tokens",
+      "mode": "sigil",
+      "name": "color/border/strong",
+      "type": "COLOR",
+      "value": "#616d80"
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "color/text/primary",
+      "type": "COLOR",
+      "value": "#efe4d3"
+    },
+    {
+      "collection": "tokens",
+      "mode": "graphite",
+      "name": "color/text/primary",
+      "type": "COLOR",
+      "value": "#eeedeb"
+    },
+    {
+      "collection": "tokens",
+      "mode": "sigil",
+      "name": "color/text/primary",
+      "type": "COLOR",
+      "value": "#eceef2"
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "color/text/muted",
+      "type": "COLOR",
+      "value": "#b5a794"
+    },
+    {
+      "collection": "tokens",
+      "mode": "graphite",
+      "name": "color/text/muted",
+      "type": "COLOR",
+      "value": "#abb0b8"
+    },
+    {
+      "collection": "tokens",
+      "mode": "sigil",
+      "name": "color/text/muted",
+      "type": "COLOR",
+      "value": "#a9b0bc"
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "color/text/faint",
+      "type": "COLOR",
+      "value": "#948672"
+    },
+    {
+      "collection": "tokens",
+      "mode": "graphite",
+      "name": "color/text/faint",
+      "type": "COLOR",
+      "value": "#9a9fa6"
+    },
+    {
+      "collection": "tokens",
+      "mode": "sigil",
+      "name": "color/text/faint",
+      "type": "COLOR",
+      "value": "#8c94a1"
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "color/text/inverse",
+      "type": "COLOR",
+      "value": "#1a1109"
+    },
+    {
+      "collection": "tokens",
+      "mode": "graphite",
+      "name": "color/text/inverse",
+      "type": "COLOR",
+      "value": "#1a1410"
+    },
+    {
+      "collection": "tokens",
+      "mode": "sigil",
+      "name": "color/text/inverse",
+      "type": "COLOR",
+      "value": "#1a0a0d"
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "color/accent",
+      "type": "COLOR",
+      "value": "#e99a4c"
+    },
+    {
+      "collection": "tokens",
+      "mode": "graphite",
+      "name": "color/accent",
+      "type": "COLOR",
+      "value": "#d89c6b"
+    },
+    {
+      "collection": "tokens",
+      "mode": "sigil",
+      "name": "color/accent",
+      "type": "COLOR",
+      "value": "#e8707a"
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "color/accent/hover",
+      "type": "COLOR",
+      "value": "#f2ae68"
+    },
+    {
+      "collection": "tokens",
+      "mode": "graphite",
+      "name": "color/accent/hover",
+      "type": "COLOR",
+      "value": "#ecc299"
+    },
+    {
+      "collection": "tokens",
+      "mode": "sigil",
+      "name": "color/accent/hover",
+      "type": "COLOR",
+      "value": "#f08c94"
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "color/accent/ink",
+      "type": "COLOR",
+      "value": "#1a1109"
+    },
+    {
+      "collection": "tokens",
+      "mode": "graphite",
+      "name": "color/accent/ink",
+      "type": "COLOR",
+      "value": "#1a1410"
+    },
+    {
+      "collection": "tokens",
+      "mode": "sigil",
+      "name": "color/accent/ink",
+      "type": "COLOR",
+      "value": "#1a0a0d"
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "color/accent/tint",
+      "type": "COLOR",
+      "value": "#2b1e12"
+    },
+    {
+      "collection": "tokens",
+      "mode": "graphite",
+      "name": "color/accent/tint",
+      "type": "COLOR",
+      "value": "#2a2119"
+    },
+    {
+      "collection": "tokens",
+      "mode": "sigil",
+      "name": "color/accent/tint",
+      "type": "COLOR",
+      "value": "#24151a"
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "color/ok",
+      "type": "COLOR",
+      "value": "#8bd3a6"
+    },
+    {
+      "collection": "tokens",
+      "mode": "graphite",
+      "name": "color/ok",
+      "type": "COLOR",
+      "value": "#8fcfa8"
+    },
+    {
+      "collection": "tokens",
+      "mode": "sigil",
+      "name": "color/ok",
+      "type": "COLOR",
+      "value": "#7fd1ae"
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "color/warn",
+      "type": "COLOR",
+      "value": "#e8c06a"
+    },
+    {
+      "collection": "tokens",
+      "mode": "graphite",
+      "name": "color/warn",
+      "type": "COLOR",
+      "value": "#e3bd6f"
+    },
+    {
+      "collection": "tokens",
+      "mode": "sigil",
+      "name": "color/warn",
+      "type": "COLOR",
+      "value": "#e9d86e"
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "color/danger",
+      "type": "COLOR",
+      "value": "#f29ba6"
+    },
+    {
+      "collection": "tokens",
+      "mode": "graphite",
+      "name": "color/danger",
+      "type": "COLOR",
+      "value": "#f08a94"
+    },
+    {
+      "collection": "tokens",
+      "mode": "sigil",
+      "name": "color/danger",
+      "type": "COLOR",
+      "value": "#fa9529"
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "color/focus",
+      "type": "COLOR",
+      "value": "#ffc47e"
+    },
+    {
+      "collection": "tokens",
+      "mode": "graphite",
+      "name": "color/focus",
+      "type": "COLOR",
+      "value": "#ecc299"
+    },
+    {
+      "collection": "tokens",
+      "mode": "sigil",
+      "name": "color/focus",
+      "type": "COLOR",
+      "value": "#f08c94"
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "color/track",
+      "type": "COLOR",
+      "value": "#816852"
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "color/switch/idle",
+      "type": "COLOR",
+      "value": "#79818d"
+    },
+    {
+      "collection": "tokens",
+      "mode": "graphite",
+      "name": "color/track",
+      "type": "COLOR",
+      "value": "#67707a"
+    },
+    {
+      "collection": "tokens",
+      "mode": "graphite",
+      "name": "color/switch/idle",
+      "type": "COLOR",
+      "value": "#7a8492"
+    },
+    {
+      "collection": "tokens",
+      "mode": "sigil",
+      "name": "color/track",
+      "type": "COLOR",
+      "value": "#616d81"
+    },
+    {
+      "collection": "tokens",
+      "mode": "sigil",
+      "name": "color/switch/idle",
+      "type": "COLOR",
+      "value": "#79818d"
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "space/1",
+      "type": "FLOAT",
+      "value": 2
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "space/2",
+      "type": "FLOAT",
+      "value": 4
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "space/3",
+      "type": "FLOAT",
+      "value": 6
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "space/4",
+      "type": "FLOAT",
+      "value": 8
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "space/5",
+      "type": "FLOAT",
+      "value": 10
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "space/6",
+      "type": "FLOAT",
+      "value": 12
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "space/7",
+      "type": "FLOAT",
+      "value": 16
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "space/8",
+      "type": "FLOAT",
+      "value": 20
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "space/9",
+      "type": "FLOAT",
+      "value": 24
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "space/10",
+      "type": "FLOAT",
+      "value": 32
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "space/11",
+      "type": "FLOAT",
+      "value": 40
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "radius/sm",
+      "type": "FLOAT",
+      "value": 4
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "radius/md",
+      "type": "FLOAT",
+      "value": 6
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "radius/lg",
+      "type": "FLOAT",
+      "value": 8
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "radius/pill",
+      "type": "FLOAT",
+      "value": 999
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "font/size/xs",
+      "type": "FLOAT",
+      "value": 12
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "font/size/sm",
+      "type": "FLOAT",
+      "value": 13
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "font/size/md",
+      "type": "FLOAT",
+      "value": 14
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "font/size/lg",
+      "type": "FLOAT",
+      "value": 16
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "font/size/xl",
+      "type": "FLOAT",
+      "value": 20
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "font/size/2xl",
+      "type": "FLOAT",
+      "value": 26
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "font/weight/regular",
+      "type": "FLOAT",
+      "value": 400
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "font/weight/medium",
+      "type": "FLOAT",
+      "value": 500
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "font/weight/semibold",
+      "type": "FLOAT",
+      "value": 600
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "font/line-height/tight",
+      "type": "FLOAT",
+      "value": 1.2
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "font/line-height/base",
+      "type": "FLOAT",
+      "value": 1.45
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "motion/duration/fast",
+      "type": "FLOAT",
+      "value": 120
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "motion/duration/base",
+      "type": "FLOAT",
+      "value": 200
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "font/body/family",
+      "type": "STRING",
+      "value": "IBM Plex Sans"
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "font/mono/family",
+      "type": "STRING",
+      "value": "IBM Plex Mono"
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "motion/easing/standard",
+      "type": "STRING",
+      "value": "cubic-bezier(0.2, 0, 0, 1)"
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "motion/easing/emphasized",
+      "type": "STRING",
+      "value": "cubic-bezier(0.23, 1, 0.32, 1)"
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "motion/easing/hover",
+      "type": "STRING",
+      "value": "cubic-bezier(0.25, 0.1, 0.25, 1)"
+    }
+  ],
+  "amendments": {
+    "enabledModsForm": "dynamic",
+    "flatness": "base",
+    "overflowAfter": null,
+    "enabledMods": {
+      "mode": "dynamic",
+      "whenFits": 1,
+      "whenOverfilled": 2,
+      "threshold": {
+        "fits": "one-line",
+        "measure": "The inline row's natural single-line width (heading, count, and every entry's name, value and Turn off at max-content, plus the gaps between them) compared with the row's available width (the #enabledMods content box: clientWidth minus its horizontal padding) at the current window size.",
+        "hysteresisPx": 160,
+        "toTray": "natural > available",
+        "toInline": "natural <= available - hysteresisPx",
+        "onLoad": "inline when natural <= available, else tray",
+        "measured": {
+          "threeEntriesNatural": 912,
+          "twoEntriesNatural": 709,
+          "available1280": 1216,
+          "available900": 836
+        }
+      },
+      "tray": {
+        "kind": "popover",
+        "anchor": "#enabledModsCount",
+        "openStatePersistsAcrossTabs": false,
+        "closesOn": [
+          "escape",
+          "outside-click",
+          "tab-change"
+        ],
+        "focus": {
+          "openByKeyboard": "first-turn-off",
+          "onEscape": "count-control"
+        },
+        "staysOpenOn": [
+          "click-inside",
+          "turn-off"
+        ],
+        "closedOnLoad": true,
+        "mayCoverHeader": true,
+        "scrollsAfter": 8,
+        "scrollCue": "After scrollsAfter entries the list ends in a bottom fade into the tray surface and shows a thin always-visible scrollbar thumb, so more entries read as below.",
+        "nameWrap": {
+          "maxLines": 2
+        },
+        "motion": {
+          "duration": "motion/duration/base",
+          "easing": "motion/easing/emphasized",
+          "closeDuration": "motion/duration/fast",
+          "closeEasing": "motion/easing/standard",
+          "properties": [
+            "opacity",
+            "transform"
+          ],
+          "fromScale": 0.97,
+          "transformOrigin": "the count control",
+          "keyboard": "none: opened or closed from the keyboard it appears and goes at once",
+          "reducedMotion": "opacity only"
+        }
+      },
+      "afterTurnOff": {
+        "focus": [
+          "next",
+          "previous",
+          "heading"
+        ],
+        "trayFallback": "count-control"
+      },
+      "reflowFreeze": {
+        "until": "pointer-leaves",
+        "maxMs": 2500,
+        "countUpdates": "immediately"
+      },
+      "hold": {
+        "during": [
+          "pointer-down",
+          "key-down",
+          "tray-open"
+        ],
+        "idleMs": 400
+      },
+      "entryTitle": {
+        "joiner": " › ",
+        "example": "Monster Rarity › Rare",
+        "attribute": "title",
+        "pendingOwnerApproval": false,
+        "ownerApproved": "2026-09-25"
+      },
+      "announceAfterTurnOff": "polite live region, separate from #toast and #saveIndicator"
+    },
+    "texts": {
+      "heading": "Enabled mods",
+      "empty": "Nothing is on",
+      "turnOff": "Turn off",
+      "theme": "Theme"
+    },
+    "undoToast": {
+      "texts": {
+        "turnedOff": "{name} turned off",
+        "undo": "Undo",
+        "undoLabel": "Undo turning off {name}",
+        "announceOff": "{name} turned off. Undo is available.",
+        "announceUndo": "{name} turned back on"
+      },
+      "pendingOwnerApproval": false,
+      "ownerApproved": "2026-09-25",
+      "route": "control-change-handler",
+      "visibleMs": 8000,
+      "pausesOn": [
+        "hover",
+        "focus",
+        "document-hidden"
+      ],
+      "replacedBy": "the next Turn off",
+      "placement": "fixed bottom zone above the status bar, stacked above #toast; never over the scrolling content",
+      "motion": {
+        "enter": "motion/duration/base",
+        "exit": "motion/duration/fast",
+        "easing": "motion/easing/standard",
+        "properties": [
+          "opacity",
+          "transform"
+        ]
+      },
+      "component": "UndoToast"
+    },
+    "idleSwitch": {
+      "token": "color/switch/idle",
+      "marker": "data-live",
+      "appliesTo": ".slider-switch",
+      "rule": "An ON slider switch is idle (color/switch/idle) while its mod is not in the Enabled mods list, which is while its value sits at its default; it uses color/accent once the mod is listed, marked by data-live on label.slider-switch. Visual only: what the switch sends is unchanged. Monster Density's #den_on is not a .slider-switch and keeps its own look. OFF keeps the knob left on the quiet color/border/subtle body.",
+      "offBody": "color/border/subtle",
+      "trackSeparation": {
+        "measured": {
+          "ledger": 1.32,
+          "graphite": 1.33,
+          "sigil": 1.33
+        },
+        "round1": {
+          "ledger": 1.17,
+          "graphite": 1.17,
+          "sigil": 1.17
+        },
+        "note": "Round 2 (owner, 2026-09-25): idle is a lighter, cooler neutral than the slider track, so an idle switch no longer blends with the track beside it. Luminance ratio idle:track shown per palette; idle also keeps 3:1 or more on color/bg/raised and the knob (color/text/primary) keeps 3:1 or more on idle."
+      }
+    },
+    "switchLabels": {
+      "rule": "A standalone switch (a toggle row, Density's #den_on) carries its text immediately left of the switch: toggle rows their on/off state, Density its fixed Enabled label. A slider switch carries none, because its value box carries the state. No string changes."
+    },
+    "typeScale": {
+      "rule": "The 12/13/14 steps are separated by weight and colour, not by dropping a size: 12 is notes and meta (regular, color/text/faint or muted), 13 is row labels (medium, color/text/primary) and descriptions (regular, color/text/muted), 14 is body text and values. Sizes are unchanged, so no measured width moved.",
+      "rowLabelWeight": "font/weight/medium"
+    },
+    "setupEmphasis": {
+      "rule": "While the mod chain is incomplete, Install Mod Plugin is the primary button and Launch Modded Game secondary; they swap once the chain is complete.",
+      "chainIncompleteSignal": "the Setup chain warning is shown"
+    },
+    "quietHelpers": {
+      "rule": "A slider row's .note is hidden while its switch is idle, unless the row is hovered or has focus; the pool footer drops its positive/negative counts, which repeat the column heads."
+    },
+    "emptyAndError": {
+      "enabledModsCount": "hidden while the list is empty",
+      "saveError": "Could not finish saving: {reason}; the colon and space are dropped when the backend gives no reason",
+      "modifierData": "Modifier data unavailable. Restart with the complete ForgePact package. (the panel's own string)",
+      "showAllSettings": "not made a control: it would add a behaviour (clearing search and filter), which the restyle's D3 forbids"
+    },
+    "minWindow": {
+      "size": [
+        900,
+        600
+      ],
+      "titleBlock": "subtitle on the title's line (baseline-aligned, space/6 gap) at the 900 layout"
+    },
+    "sigilWarn": {
+      "palette": "sigil",
+      "token": "color/warn",
+      "value": "#e9d86e",
+      "previous": "#e6c170",
+      "danger": "#fa9529",
+      "hueFromDangerDeg": 20.7,
+      "ratioAgainstDanger": 1.54,
+      "rule": "Round 2 (owner, 2026-09-25): Sigil warn moved yellower so pending/warning reads apart from the orange error colour."
+    },
+    "applyAllNow": {
+      "selector": "#applyall",
+      "variant": "secondary",
+      "tokens": {
+        "border-color": "color/border/strong",
+        "color": "color/text/primary"
+      },
+      "rule": "Round 2 (owner, 2026-09-25): Apply all now uses the secondary button style on every screen and state, so each tab keeps a single primary action (impeccable finding 9). Visual only: what the button does and sends is unchanged, and its copy is unchanged. The panel already renders it as .btn without .primary, so the existing .btn selector tokens cover it."
+    }
+  },
+  "borders": [
+    {
+      "selector": ".sidebar",
+      "why": "the top rail's 1px bottom rule (color/border/subtle) separates the fixed navigation from the page; the port's .sidebar is restyled as the rail"
+    },
+    {
+      "selector": ".tabbtn.active",
+      "why": "2px color/accent bottom rule marks the current tab"
+    },
+    {
+      "selector": ".subtabbtn[aria-selected=\"true\"]",
+      "why": "2px color/accent bottom rule marks the selected Mods sub-tab, like the rail's active tab (finding 20)"
+    },
+    {
+      "selector": "#controlSearch",
+      "why": "1px color/border/strong edge marks the field's edit area; 3:1 or more on sunken and raised (finding 7)"
+    },
+    {
+      "selector": "input[type=text]",
+      "why": "the Setup game-path field (#exepath) shows its edit area with the same 1px color/border/strong edge as the search field, 3:1 or more"
+    },
+    {
+      "selector": ".btn:not(.primary)",
+      "why": "1px color/border/strong edge is the secondary button's shape; it has no fill; 3:1 or more on raised and base"
+    },
+    {
+      "selector": ".plugin-warning",
+      "why": "3px color/warn left rule marks a warning, in the warning colour rather than the accent (finding 17); the box itself has no stroke"
+    },
+    {
+      "selector": "#statusbar",
+      "why": "1px color/border/subtle top rule separates the fixed status bar from scrolling content"
+    },
+    {
+      "selector": "#enabledMods[data-form=\"tray\"] > ul",
+      "why": "the tray popover's 1px color/border/subtle edge separates a floating layer from the page it covers (tray form only)"
+    },
+    {
+      "selector": ":focus-visible",
+      "why": "2px color/focus outline with 3px offset shows keyboard focus"
+    }
+  ],
+  "contrastPairs": [
+    {
+      "fg": "color/text/primary",
+      "bg": "color/bg/base",
+      "minRatio": 4.5,
+      "where": "body text on the page",
+      "measured": {
+        "ledger": 14.95,
+        "graphite": 15.64,
+        "sigil": 16.4
+      }
+    },
+    {
+      "fg": "color/text/primary",
+      "bg": "color/bg/raised",
+      "minRatio": 4.5,
+      "where": "section headings and row labels",
+      "measured": {
+        "ledger": 13.09,
+        "graphite": 13.69,
+        "sigil": 14.24
+      }
+    },
+    {
+      "fg": "color/text/primary",
+      "bg": "color/bg/hover",
+      "minRatio": 4.5,
+      "where": "hovered rows, the tray, selected sub-tab",
+      "measured": {
+        "ledger": 12.1,
+        "graphite": 12.67,
+        "sigil": 13.06
+      }
+    },
+    {
+      "fg": "color/text/primary",
+      "bg": "color/bg/sunken",
+      "minRatio": 4.5,
+      "where": "value boxes and the search field",
+      "measured": {
+        "ledger": 15.41,
+        "graphite": 16.04,
+        "sigil": 16.94
+      }
+    },
+    {
+      "fg": "color/text/primary",
+      "bg": "color/accent/tint",
+      "minRatio": 4.5,
+      "where": "plugin warning text",
+      "measured": {
+        "ledger": 12.88,
+        "graphite": 13.5,
+        "sigil": 15.1
+      }
+    },
+    {
+      "fg": "color/text/muted",
+      "bg": "color/bg/base",
+      "minRatio": 4.5,
+      "where": "subtitles, status bar",
+      "measured": {
+        "ledger": 7.98,
+        "graphite": 8.4,
+        "sigil": 8.73
+      }
+    },
+    {
+      "fg": "color/text/muted",
+      "bg": "color/bg/raised",
+      "minRatio": 4.5,
+      "where": "descriptions and Turn off",
+      "measured": {
+        "ledger": 6.99,
+        "graphite": 7.35,
+        "sigil": 7.58
+      }
+    },
+    {
+      "fg": "color/text/muted",
+      "bg": "color/bg/hover",
+      "minRatio": 4.5,
+      "where": "muted text in the tray",
+      "measured": {
+        "ledger": 6.46,
+        "graphite": 6.8,
+        "sigil": 6.95
+      }
+    },
+    {
+      "fg": "color/text/faint",
+      "bg": "color/bg/base",
+      "minRatio": 4.5,
+      "where": "notes on the page",
+      "measured": {
+        "ledger": 5.29,
+        "graphite": 6.87,
+        "sigil": 6.23
+      }
+    },
+    {
+      "fg": "color/text/faint",
+      "bg": "color/bg/raised",
+      "minRatio": 4.5,
+      "where": "hints and notes in sections, Nothing is on",
+      "measured": {
+        "ledger": 4.63,
+        "graphite": 6.01,
+        "sigil": 5.41
+      }
+    },
+    {
+      "fg": "color/accent",
+      "bg": "color/bg/base",
+      "minRatio": 4.5,
+      "where": "active tab, count",
+      "measured": {
+        "ledger": 8.22,
+        "graphite": 7.75,
+        "sigil": 6.38
+      }
+    },
+    {
+      "fg": "color/accent",
+      "bg": "color/bg/raised",
+      "minRatio": 4.5,
+      "where": "enabled-mod values in the list",
+      "measured": {
+        "ledger": 7.2,
+        "graphite": 6.78,
+        "sigil": 5.54
+      }
+    },
+    {
+      "fg": "color/accent",
+      "bg": "color/accent/tint",
+      "minRatio": 4.5,
+      "where": "count control in the rail",
+      "measured": {
+        "ledger": 7.09,
+        "graphite": 6.68,
+        "sigil": 5.87
+      }
+    },
+    {
+      "fg": "color/accent/ink",
+      "bg": "color/accent",
+      "minRatio": 4.5,
+      "where": "primary button label",
+      "measured": {
+        "ledger": 8.15,
+        "graphite": 7.72,
+        "sigil": 6.43
+      }
+    },
+    {
+      "fg": "color/accent/ink",
+      "bg": "color/accent/hover",
+      "minRatio": 4.5,
+      "where": "primary button label on hover",
+      "measured": {
+        "ledger": 9.78,
+        "graphite": 11.07,
+        "sigil": 8.13
+      }
+    },
+    {
+      "fg": "color/ok",
+      "bg": "color/bg/base",
+      "minRatio": 4.5,
+      "where": "saved indicator, ok notes",
+      "measured": {
+        "ledger": 10.7,
+        "graphite": 10.16,
+        "sigil": 10.56
+      }
+    },
+    {
+      "fg": "color/ok",
+      "bg": "color/bg/hover",
+      "minRatio": 4.5,
+      "where": "LIVE MODIFIERS chip",
+      "measured": {
+        "ledger": 8.67,
+        "graphite": 8.23,
+        "sigil": 8.4
+      }
+    },
+    {
+      "fg": "color/warn",
+      "bg": "color/bg/raised",
+      "minRatio": 4.5,
+      "where": "chain warning in Setup",
+      "measured": {
+        "ledger": 9.54,
+        "graphite": 8.98,
+        "sigil": 11.43
+      }
+    },
+    {
+      "fg": "color/warn",
+      "bg": "color/bg/base",
+      "minRatio": 4.5,
+      "where": "queued chip",
+      "measured": {
+        "ledger": 10.89,
+        "graphite": 10.26,
+        "sigil": 13.17
+      }
+    },
+    {
+      "fg": "color/danger",
+      "bg": "color/bg/base",
+      "minRatio": 4.5,
+      "where": "save error",
+      "measured": {
+        "ledger": 8.96,
+        "graphite": 7.64,
+        "sigil": 8.52
+      }
+    },
+    {
+      "fg": "color/focus",
+      "bg": "color/bg/base",
+      "minRatio": 3,
+      "where": "focus ring on the page",
+      "measured": {
+        "ledger": 12.03,
+        "graphite": 11.11,
+        "sigil": 8.06
+      }
+    },
+    {
+      "fg": "color/focus",
+      "bg": "color/bg/raised",
+      "minRatio": 3,
+      "where": "focus ring inside sections and the list",
+      "measured": {
+        "ledger": 10.53,
+        "graphite": 9.72,
+        "sigil": 7.0
+      }
+    },
+    {
+      "fg": "color/switch/idle",
+      "bg": "color/bg/raised",
+      "minRatio": 3,
+      "where": "idle slider switch body (ON at its default, not listed)",
+      "measured": {
+        "ledger": 4.18,
+        "graphite": 4.23,
+        "sigil": 4.21
+      }
+    },
+    {
+      "fg": "color/text/primary",
+      "bg": "color/switch/idle",
+      "minRatio": 3,
+      "where": "idle switch knob on its body",
+      "measured": {
+        "ledger": 3.13,
+        "graphite": 3.24,
+        "sigil": 3.39
+      }
+    },
+    {
+      "fg": "color/track",
+      "bg": "color/bg/raised",
+      "minRatio": 3,
+      "where": "slider track in a section",
+      "measured": {
+        "ledger": 3.16,
+        "graphite": 3.19,
+        "sigil": 3.16
+      }
+    },
+    {
+      "fg": "color/track",
+      "bg": "color/bg/sunken",
+      "minRatio": 3,
+      "where": "slider track on a sunken surface",
+      "measured": {
+        "ledger": 3.72,
+        "graphite": 3.73,
+        "sigil": 3.76
+      }
+    },
+    {
+      "fg": "color/border/strong",
+      "bg": "color/bg/raised",
+      "minRatio": 3,
+      "where": "secondary button edge and the field edge (#controlSearch, #exepath) in a section",
+      "measured": {
+        "ledger": 3.15,
+        "graphite": 3.16,
+        "sigil": 3.16
+      }
+    },
+    {
+      "fg": "color/border/strong",
+      "bg": "color/bg/base",
+      "minRatio": 3,
+      "where": "secondary button edge on the page",
+      "measured": {
+        "ledger": 3.6,
+        "graphite": 3.61,
+        "sigil": 3.64
+      }
+    },
+    {
+      "fg": "color/border/strong",
+      "bg": "color/bg/sunken",
+      "minRatio": 3,
+      "where": "field edge against the field fill",
+      "measured": {
+        "ledger": 3.71,
+        "graphite": 3.7,
+        "sigil": 3.76
+      }
+    },
+    {
+      "fg": "color/text/muted",
+      "bg": "color/border/subtle",
+      "minRatio": 3,
+      "where": "OFF switch knob on its quiet body (the knob carries the state)",
+      "measured": {
+        "ledger": 5.53,
+        "graphite": 5.75,
+        "sigil": 6.16
+      }
+    }
+  ],
+  "selectorTokens": [
+    {
+      "selector": "body",
+      "property": "background-color",
+      "variable": "color/bg/base"
+    },
+    {
+      "selector": "body",
+      "property": "color",
+      "variable": "color/text/primary"
+    },
+    {
+      "selector": "body",
+      "property": "font-family",
+      "variable": "font/body/family"
+    },
+    {
+      "selector": "body",
+      "property": "font-size",
+      "variable": "font/size/md"
+    },
+    {
+      "selector": ".brand",
+      "property": "color",
+      "variable": "color/text/primary"
+    },
+    {
+      "selector": ".tabbtn",
+      "property": "color",
+      "variable": "color/text/muted"
+    },
+    {
+      "selector": ".tabbtn",
+      "property": "gap",
+      "variable": "space/4"
+    },
+    {
+      "selector": ".tabbtn",
+      "property": "padding-left",
+      "variable": "space/6"
+    },
+    {
+      "selector": ".tabbtn.active",
+      "property": "color",
+      "variable": "color/text/primary"
+    },
+    {
+      "selector": ".tabbtn.active",
+      "property": "border-color",
+      "variable": "color/accent"
+    },
+    {
+      "selector": ".subtabbtn",
+      "property": "color",
+      "variable": "color/text/muted"
+    },
+    {
+      "selector": ".subtabbtn[aria-selected=\"true\"]",
+      "property": "background-color",
+      "variable": "color/bg/hover"
+    },
+    {
+      "selector": ".subtabbtn[aria-selected=\"true\"]",
+      "property": "color",
+      "variable": "color/text/primary"
+    },
+    {
+      "selector": ".subtabbtn[aria-selected=\"true\"]",
+      "property": "border-color",
+      "variable": "color/accent"
+    },
+    {
+      "selector": ".card",
+      "property": "background-color",
+      "variable": "color/bg/raised"
+    },
+    {
+      "selector": ".card",
+      "property": "border-radius",
+      "variable": "radius/lg"
+    },
+    {
+      "selector": ".card",
+      "property": "padding-left",
+      "variable": "space/7"
+    },
+    {
+      "selector": ".card",
+      "property": "gap",
+      "variable": "space/7"
+    },
+    {
+      "selector": ".card h2",
+      "property": "color",
+      "variable": "color/text/primary"
+    },
+    {
+      "selector": ".card h2",
+      "property": "font-size",
+      "variable": "font/size/lg"
+    },
+    {
+      "selector": ".row",
+      "property": "gap",
+      "variable": "space/7"
+    },
+    {
+      "selector": ".row .lbl",
+      "property": "color",
+      "variable": "color/text/primary"
+    },
+    {
+      "selector": ".row .lbl",
+      "property": "font-size",
+      "variable": "font/size/sm"
+    },
+    {
+      "selector": ".val",
+      "property": "font-family",
+      "variable": "font/mono/family"
+    },
+    {
+      "selector": ".val",
+      "property": "color",
+      "variable": "color/text/primary"
+    },
+    {
+      "selector": ".val",
+      "property": "background-color",
+      "variable": "color/bg/sunken"
+    },
+    {
+      "selector": ".val.off",
+      "property": "color",
+      "variable": "color/text/muted"
+    },
+    {
+      "selector": ".step-button",
+      "property": "color",
+      "variable": "color/text/muted"
+    },
+    {
+      "selector": ".step-button",
+      "property": "border-radius",
+      "variable": "radius/sm"
+    },
+    {
+      "selector": ".btn",
+      "property": "border-color",
+      "variable": "color/border/strong"
+    },
+    {
+      "selector": ".btn",
+      "property": "border-radius",
+      "variable": "radius/md"
+    },
+    {
+      "selector": ".btn",
+      "property": "color",
+      "variable": "color/text/primary"
+    },
+    {
+      "selector": ".btn",
+      "property": "font-size",
+      "variable": "font/size/sm"
+    },
+    {
+      "selector": ".btn",
+      "property": "padding-left",
+      "variable": "space/7"
+    },
+    {
+      "selector": ".btn.primary",
+      "property": "background-color",
+      "variable": "color/accent"
+    },
+    {
+      "selector": ".btn.primary",
+      "property": "color",
+      "variable": "color/accent/ink"
+    },
+    {
+      "selector": "#saveIndicator",
+      "property": "color",
+      "variable": "color/text/muted"
+    },
+    {
+      "selector": "#saveIndicator",
+      "property": "font-size",
+      "variable": "font/size/xs"
+    },
+    {
+      "selector": "#saveIndicator.saving",
+      "property": "color",
+      "variable": "color/text/muted"
+    },
+    {
+      "selector": "#saveIndicator.error",
+      "property": "color",
+      "variable": "color/danger"
+    },
+    {
+      "selector": "#chipGame",
+      "property": "background-color",
+      "variable": "color/bg/raised"
+    },
+    {
+      "selector": "#chipGame",
+      "property": "border-radius",
+      "variable": "radius/pill"
+    },
+    {
+      "selector": "#chipGame",
+      "property": "color",
+      "variable": "color/text/muted"
+    },
+    {
+      "selector": "#chipApply",
+      "property": "color",
+      "variable": "color/text/muted"
+    },
+    {
+      "selector": ".hint",
+      "property": "color",
+      "variable": "color/text/muted"
+    },
+    {
+      "selector": ".hint",
+      "property": "font-size",
+      "variable": "font/size/sm"
+    },
+    {
+      "selector": ".note",
+      "property": "color",
+      "variable": "color/text/faint"
+    },
+    {
+      "selector": ".note",
+      "property": "font-size",
+      "variable": "font/size/xs"
+    },
+    {
+      "selector": "#toast",
+      "property": "background-color",
+      "variable": "color/bg/hover"
+    },
+    {
+      "selector": "#toast",
+      "property": "color",
+      "variable": "color/text/primary"
+    },
+    {
+      "selector": "#toast",
+      "property": "border-radius",
+      "variable": "radius/md"
+    },
+    {
+      "selector": ".plugin-warning",
+      "property": "background-color",
+      "variable": "color/accent/tint"
+    },
+    {
+      "selector": ".plugin-warning",
+      "property": "border-color",
+      "variable": "color/warn"
+    },
+    {
+      "selector": ".launch-feedback",
+      "property": "color",
+      "variable": "color/text/primary"
+    },
+    {
+      "selector": ".sat-option",
+      "property": "color",
+      "variable": "color/text/primary"
+    },
+    {
+      "selector": "#controlSearch",
+      "property": "background-color",
+      "variable": "color/bg/sunken"
+    },
+    {
+      "selector": "#controlSearch",
+      "property": "border-color",
+      "variable": "color/border/strong"
+    },
+    {
+      "selector": "#controlSearch",
+      "property": "border-radius",
+      "variable": "radius/md"
+    },
+    {
+      "selector": "#exepath",
+      "property": "border-color",
+      "variable": "color/border/strong"
+    },
+    {
+      "selector": "select.style-select",
+      "property": "background-color",
+      "variable": "color/bg/hover"
+    },
+    {
+      "selector": "select.style-select",
+      "property": "border-radius",
+      "variable": "radius/sm"
+    },
+    {
+      "selector": "select.style-select",
+      "property": "color",
+      "variable": "color/text/primary"
+    },
+    {
+      "selector": "input[type=range]",
+      "property": "background-color",
+      "variable": "color/track"
+    },
+    {
+      "selector": "input[type=range]",
+      "property": "color",
+      "variable": "color/accent"
+    },
+    {
+      "selector": "#enabledMods",
+      "property": "gap",
+      "variable": "space/4"
+    },
+    {
+      "selector": "#enabledMods",
+      "property": "padding-left",
+      "variable": "space/10"
+    },
+    {
+      "selector": "#enabledMods",
+      "property": "font-size",
+      "variable": "font/size/xs"
+    },
+    {
+      "selector": "#enabledMods",
+      "property": "color",
+      "variable": "color/text/muted"
+    },
+    {
+      "selector": "#enabledModsCount",
+      "property": "font-family",
+      "variable": "font/mono/family"
+    },
+    {
+      "selector": "#enabledModsCount",
+      "property": "color",
+      "variable": "color/text/primary"
+    },
+    {
+      "selector": ".enabled-mod",
+      "property": "background-color",
+      "variable": "color/bg/raised"
+    },
+    {
+      "selector": ".enabled-mod",
+      "property": "border-radius",
+      "variable": "radius/md"
+    },
+    {
+      "selector": ".enabled-mod",
+      "property": "gap",
+      "variable": "space/4"
+    },
+    {
+      "selector": ".enabled-mod",
+      "property": "padding-left",
+      "variable": "space/5"
+    },
+    {
+      "selector": ".enabled-mod-name",
+      "property": "color",
+      "variable": "color/text/primary"
+    },
+    {
+      "selector": ".enabled-mod-name",
+      "property": "font-size",
+      "variable": "font/size/sm"
+    },
+    {
+      "selector": ".enabled-mod-value",
+      "property": "font-family",
+      "variable": "font/mono/family"
+    },
+    {
+      "selector": ".enabled-mod-value",
+      "property": "color",
+      "variable": "color/accent"
+    },
+    {
+      "selector": ".quick-disable",
+      "property": "color",
+      "variable": "color/text/muted"
+    },
+    {
+      "selector": ".quick-disable",
+      "property": "border-radius",
+      "variable": "radius/sm"
+    },
+    {
+      "selector": ".quick-disable",
+      "property": "font-size",
+      "variable": "font/size/xs"
+    },
+    {
+      "selector": ".enabled-mods-empty",
+      "property": "color",
+      "variable": "color/text/faint"
+    },
+    {
+      "selector": ".slider-switch",
+      "property": "background-color",
+      "variable": "color/switch/idle"
+    },
+    {
+      "selector": ".slider-switch[data-live]",
+      "property": "background-color",
+      "variable": "color/accent"
+    },
+    {
+      "selector": ".theme-control",
+      "property": "color",
+      "variable": "color/text/muted"
+    },
+    {
+      "selector": ".theme-control",
+      "property": "gap",
+      "variable": "space/3"
+    },
+    {
+      "selector": ".theme-control",
+      "property": "font-size",
+      "variable": "font/size/xs"
+    },
+    {
+      "selector": "#theme",
+      "property": "background-color",
+      "variable": "color/bg/hover"
+    },
+    {
+      "selector": "#theme",
+      "property": "color",
+      "variable": "color/text/primary"
+    },
+    {
+      "selector": "#theme",
+      "property": "border-radius",
+      "variable": "radius/sm"
+    }
+  ],
+  "screens": [
+    {
+      "tab": "loot",
+      "width": 1280,
+      "nodeId": "33:463",
+      "screenshot": ".claude/workorders/forgepact-ui-figma-buildout/screens/loot-1280.png",
+      "texts": [
+        "FORGEPACT",
+        "HERO SIEGE TOOLS",
+        "Setup",
+        "Modifiers",
+        "World",
+        "Loot",
+        "Mods",
+        "Game offline",
+        "Enabled mods",
+        "3 on",
+        "Monster Density",
+        "x3",
+        "Turn off",
+        "Experience and Magic Find orb pickup radius",
+        "on",
+        "Turn off",
+        "Reveal full map",
+        "on",
+        "Turn off",
+        "Loot settings",
+        "Adjust drop rates and see exactly what each multiplier changes.",
+        "Auto-apply",
+        "Apply all now",
+        "Choose your Hero_Siege.exe in Setup, then install the plugin to use modifiers.",
+        "Open Setup",
+        "All settings",
+        "Modified",
+        "Drop Rates",
+        "Multiply drop chances. ×1 keeps a drop at its normal rate.",
+        "Gold",
+        "−",
+        "off",
+        "+",
+        "Dungeon Keys",
+        "−",
+        "off",
+        "+",
+        "Chaos + Crystal Keys",
+        "−",
+        "off",
+        "+",
+        "Relics",
+        "−",
+        "off",
+        "+",
+        "Gems (chipped to flawless)",
+        "−",
+        "off",
+        "+",
+        "Orbs",
+        "−",
+        "off",
+        "+",
+        "Dimensional Shards",
+        "−",
+        "off",
+        "+",
+        "Colosseum Fragments",
+        "−",
+        "off",
+        "+",
+        "Mining Ore Amount",
+        "−",
+        "off",
+        "+",
+        "Multiplies ore from mining. x1 is normal. Only the ore amount is rewritten; ore types, mining XP and other drops are left to the game.",
+        "Angelic Keys",
+        "−",
+        "off",
+        "+",
+        "Bifrost Key",
+        "−",
+        "off",
+        "+",
+        "Runes",
+        "−",
+        "off",
+        "+",
+        "Boss Gems",
+        "−",
+        "off",
+        "+",
+        "Scrolls of Ra",
+        "−",
+        "off",
+        "+",
+        "Battle Fragments",
+        "−",
+        "off",
+        "+",
+        "Ruby Keys",
+        "−",
+        "off",
+        "+",
+        "How it works",
+        "Settings loaded",
+        "No settings sent this session",
+        "Theme",
+        "Ledger",
+        "Offline tools",
+        "Created by Falor",
+        "· v1.4.5"
+      ],
+      "placeholders": [
+        "Search settings by name or effect..."
+      ],
+      "enabledModsForm": "inline"
+    },
+    {
+      "tab": "loot",
+      "width": 900,
+      "nodeId": "33:1031",
+      "screenshot": ".claude/workorders/forgepact-ui-figma-buildout/screens/loot-900.png",
+      "texts": [
+        "FORGEPACT",
+        "Setup",
+        "Modifiers",
+        "World",
+        "Loot",
+        "Mods",
+        "3 on",
+        "Game offline",
+        "Loot settings",
+        "Adjust drop rates and see exactly what each multiplier changes.",
+        "Auto-apply",
+        "Apply all now",
+        "Choose your Hero_Siege.exe in Setup, then install the plugin to use modifiers.",
+        "Open Setup",
+        "All settings",
+        "Modified",
+        "Drop Rates",
+        "Multiply drop chances. ×1 keeps a drop at its normal rate.",
+        "Gold",
+        "−",
+        "off",
+        "+",
+        "Mining Ore Amount",
+        "−",
+        "off",
+        "+",
+        "Multiplies ore from mining. x1 is normal. Only the ore amount is rewritten; ore types, mining XP and other drops are left to the game.",
+        "Dungeon Keys",
+        "−",
+        "off",
+        "+",
+        "Angelic Keys",
+        "−",
+        "off",
+        "+",
+        "Chaos + Crystal Keys",
+        "−",
+        "off",
+        "+",
+        "Bifrost Key",
+        "−",
+        "off",
+        "+",
+        "Relics",
+        "−",
+        "off",
+        "+",
+        "Runes",
+        "−",
+        "off",
+        "+",
+        "Gems (chipped to flawless)",
+        "−",
+        "off",
+        "+",
+        "Boss Gems",
+        "−",
+        "off",
+        "+",
+        "Orbs",
+        "−",
+        "off",
+        "+",
+        "Scrolls of Ra",
+        "−",
+        "off",
+        "+",
+        "Dimensional Shards",
+        "−",
+        "off",
+        "+",
+        "Battle Fragments",
+        "−",
+        "off",
+        "+",
+        "Colosseum Fragments",
+        "−",
+        "off",
+        "+",
+        "Ruby Keys",
+        "−",
+        "off",
+        "+",
+        "How it works",
+        "Settings loaded",
+        "No settings sent this session",
+        "Theme",
+        "Ledger",
+        "Created by Falor",
+        "· v1.4.5"
+      ],
+      "placeholders": [
+        "Search settings by name or effect..."
+      ],
+      "enabledModsForm": "tray (collapsed)"
+    },
+    {
+      "tab": "modifiers",
+      "width": 1280,
+      "nodeId": "32:713",
+      "screenshot": ".claude/workorders/forgepact-ui-figma-buildout/screens/modifiers-1280.png",
+      "texts": [
+        "FORGEPACT",
+        "HERO SIEGE TOOLS",
+        "Setup",
+        "Modifiers",
+        "World",
+        "Loot",
+        "Mods",
+        "Game offline",
+        "Enabled mods",
+        "3 on",
+        "Monster Density",
+        "x3",
+        "Turn off",
+        "Experience and Magic Find orb pickup radius",
+        "on",
+        "Turn off",
+        "Reveal full map",
+        "on",
+        "Turn off",
+        "Character modifiers",
+        "Tune your character and combat bonuses.",
+        "Auto-apply",
+        "Apply all now",
+        "Choose your Hero_Siege.exe in Setup, then install the plugin to use modifiers.",
+        "Open Setup",
+        "All settings",
+        "Modified",
+        "Combat & Character Modifiers",
+        "LIVE MODIFIERS",
+        "Live modifiers use the character's current total value, including equipment and other bonuses. Off keeps the game at its normal value.",
+        "Utility",
+        "Experience",
+        "−",
+        "off",
+        "+",
+        "Magic Find",
+        "−",
+        "off",
+        "+",
+        "Movement Speed",
+        "−",
+        "off",
+        "+",
+        "Offense",
+        "Total Damage",
+        "−",
+        "off",
+        "+",
+        "Attack Speed",
+        "−",
+        "off",
+        "+",
+        "Faster Cast Rate",
+        "−",
+        "off",
+        "+",
+        "Defense & Sustain",
+        "Life Replenish",
+        "−",
+        "off",
+        "+",
+        "Mana Replenish",
+        "−",
+        "off",
+        "+",
+        "Defense",
+        "−",
+        "off",
+        "+",
+        "Critical Strikes",
+        "Critical Strike Damage",
+        "−",
+        "off",
+        "+",
+        "Critical Strike Chance",
+        "−",
+        "off",
+        "+",
+        "Spell Critical Strike Damage",
+        "−",
+        "off",
+        "+",
+        "Spell Critical Strike Chance",
+        "−",
+        "off",
+        "+",
+        "Settings loaded",
+        "No settings sent this session",
+        "Theme",
+        "Ledger",
+        "Offline tools",
+        "Created by Falor",
+        "· v1.4.5"
+      ],
+      "placeholders": [
+        "Search settings by name or effect..."
+      ],
+      "enabledModsForm": "inline"
+    },
+    {
+      "tab": "modifiers",
+      "width": 900,
+      "nodeId": "32:1244",
+      "screenshot": ".claude/workorders/forgepact-ui-figma-buildout/screens/modifiers-900.png",
+      "texts": [
+        "FORGEPACT",
+        "Setup",
+        "Modifiers",
+        "World",
+        "Loot",
+        "Mods",
+        "3 on",
+        "Game offline",
+        "Character modifiers",
+        "Tune your character and combat bonuses.",
+        "Auto-apply",
+        "Apply all now",
+        "Choose your Hero_Siege.exe in Setup, then install the plugin to use modifiers.",
+        "Open Setup",
+        "All settings",
+        "Modified",
+        "Combat & Character Modifiers",
+        "LIVE MODIFIERS",
+        "Live modifiers use the character's current total value, including equipment and other bonuses. Off keeps the game at its normal value.",
+        "Utility",
+        "Experience",
+        "−",
+        "off",
+        "+",
+        "Magic Find",
+        "−",
+        "off",
+        "+",
+        "Movement Speed",
+        "−",
+        "off",
+        "+",
+        "Offense",
+        "Total Damage",
+        "−",
+        "off",
+        "+",
+        "Attack Speed",
+        "−",
+        "off",
+        "+",
+        "Faster Cast Rate",
+        "−",
+        "off",
+        "+",
+        "Defense & Sustain",
+        "Life Replenish",
+        "−",
+        "off",
+        "+",
+        "Mana Replenish",
+        "−",
+        "off",
+        "+",
+        "Defense",
+        "−",
+        "off",
+        "+",
+        "Critical Strikes",
+        "Critical Strike Damage",
+        "−",
+        "off",
+        "+",
+        "Critical Strike Chance",
+        "−",
+        "off",
+        "+",
+        "Spell Critical Strike Damage",
+        "−",
+        "off",
+        "+",
+        "Spell Critical Strike Chance",
+        "−",
+        "off",
+        "+",
+        "Settings loaded",
+        "No settings sent this session",
+        "Theme",
+        "Ledger",
+        "Created by Falor",
+        "· v1.4.5"
+      ],
+      "placeholders": [
+        "Search settings by name or effect..."
+      ],
+      "enabledModsForm": "tray (collapsed)"
+    },
+    {
+      "tab": "mods-items",
+      "width": 1280,
+      "nodeId": "33:2387",
+      "screenshot": ".claude/workorders/forgepact-ui-figma-buildout/screens/mods-items-1280.png",
+      "texts": [
+        "FORGEPACT",
+        "HERO SIEGE TOOLS",
+        "Setup",
+        "Modifiers",
+        "World",
+        "Loot",
+        "Mods",
+        "Game offline",
+        "Enabled mods",
+        "3 on",
+        "Monster Density",
+        "x3",
+        "Turn off",
+        "Experience and Magic Find orb pickup radius",
+        "on",
+        "Turn off",
+        "Reveal full map",
+        "on",
+        "Turn off",
+        "Mods",
+        "Choose the features you want for your offline adventure.",
+        "Auto-apply",
+        "Apply all now",
+        "Choose your Hero_Siege.exe in Setup, then install the plugin to use modifiers.",
+        "Open Setup",
+        "Quality of Life",
+        "Items",
+        "Items",
+        "Custom forge mechanics tied to items made in the Item Editor. Settings apply immediately while the game is running.",
+        "Miner's Helmet",
+        "+1000 Defense · +500% Enhanced Defense",
+        "+20% Movement Speed · +20% All Resistances · +5 Light Radius",
+        "While worn, every mining node gives exactly 4× its ore. This replaces the Mining Ore Amount slider instead of stacking with it; with the helmet off, the slider applies as usual.",
+        "Vein Resonance:",
+        "finishing a dig also digs the two nearest veins within 192 units that you could mine yourself, each at 4×, through the game's own dig. A vein dug this way never starts another.",
+        "Forge it in the Item Editor: Item Forge → Forge a signature item → Miner's Helmet.",
+        "Start the game to check the helmet.",
+        "Headhunter buffs on rare kills",
+        "off",
+        "For an item forged with Mechanic: Headhunter. While on, killing a rare or champion monster grants its affixes to you as 20-second buffs (Extra Fast → movement speed, Berserker/Raging/Enraged → attack speed, Vampiric → life replenish, elemental Enchanted → cast rate, others → movement speed for now). The equipped-belt check is still in progress, so the effect is active whenever this switch is on and the forged item exists.",
+        "Tyrant's Crown: more rares, richer rares",
+        "off",
+        "For an item forged with Mechanic: Tyrant's Crown. While on, normal monsters near you rise to rare more often (15% each) and every rare or champion carries one extra affix. Pairs with Headhunter: more rares, more affixes to steal.",
+        "Beacon: every monster hunts you",
+        "off",
+        "For an amulet forged with Mechanic: Beacon. While on, every monster on the map hunts you the moment it spawns and never turns back, through the game's own aggro system. Plugin commands: beaconmode rare limits it to rares and champions, beaconrange <px> caps the distance.",
+        "Settings loaded",
+        "No settings sent this session",
+        "Theme",
+        "Ledger",
+        "Offline tools",
+        "Created by Falor",
+        "· v1.4.5"
+      ],
+      "placeholders": [],
+      "enabledModsForm": "inline"
+    },
+    {
+      "tab": "mods-items",
+      "width": 900,
+      "nodeId": "33:2737",
+      "screenshot": ".claude/workorders/forgepact-ui-figma-buildout/screens/mods-items-900.png",
+      "texts": [
+        "FORGEPACT",
+        "Setup",
+        "Modifiers",
+        "World",
+        "Loot",
+        "Mods",
+        "3 on",
+        "Game offline",
+        "Mods",
+        "Choose the features you want for your offline adventure.",
+        "Auto-apply",
+        "Apply all now",
+        "Choose your Hero_Siege.exe in Setup, then install the plugin to use modifiers.",
+        "Open Setup",
+        "Quality of Life",
+        "Items",
+        "Items",
+        "Custom forge mechanics tied to items made in the Item Editor. Settings apply immediately while the game is running.",
+        "Miner's Helmet",
+        "+1000 Defense · +500% Enhanced Defense",
+        "+20% Movement Speed · +20% All Resistances · +5 Light Radius",
+        "While worn, every mining node gives exactly 4× its ore. This replaces the Mining Ore Amount slider instead of stacking with it; with the helmet off, the slider applies as usual.",
+        "Vein Resonance:",
+        "finishing a dig also digs the two nearest veins within 192 units that you could mine yourself, each at 4×, through the game's own dig. A vein dug this way never starts another.",
+        "Forge it in the Item Editor: Item Forge → Forge a signature item → Miner's Helmet.",
+        "Start the game to check the helmet.",
+        "Headhunter buffs on rare kills",
+        "off",
+        "For an item forged with Mechanic: Headhunter. While on, killing a rare or champion monster grants its affixes to you as 20-second buffs (Extra Fast → movement speed, Berserker/Raging/Enraged → attack speed, Vampiric → life replenish, elemental Enchanted → cast rate, others → movement speed for now). The equipped-belt check is still in progress, so the effect is active whenever this switch is on and the forged item exists.",
+        "Tyrant's Crown: more rares, richer rares",
+        "off",
+        "For an item forged with Mechanic: Tyrant's Crown. While on, normal monsters near you rise to rare more often (15% each) and every rare or champion carries one extra affix. Pairs with Headhunter: more rares, more affixes to steal.",
+        "Beacon: every monster hunts you",
+        "off",
+        "For an amulet forged with Mechanic: Beacon. While on, every monster on the map hunts you the moment it spawns and never turns back, through the game's own aggro system. Plugin commands: beaconmode rare limits it to rares and champions, beaconrange <px> caps the distance.",
+        "Settings loaded",
+        "No settings sent this session",
+        "Theme",
+        "Ledger",
+        "Created by Falor",
+        "· v1.4.5"
+      ],
+      "placeholders": [],
+      "enabledModsForm": "tray (collapsed)"
+    },
+    {
+      "tab": "mods-qol",
+      "width": 1280,
+      "nodeId": "33:1580",
+      "screenshot": ".claude/workorders/forgepact-ui-figma-buildout/screens/mods-qol-1280.png",
+      "texts": [
+        "FORGEPACT",
+        "HERO SIEGE TOOLS",
+        "Setup",
+        "Modifiers",
+        "World",
+        "Loot",
+        "Mods",
+        "Game offline",
+        "Enabled mods",
+        "3 on",
+        "Monster Density",
+        "x3",
+        "Turn off",
+        "Experience and Magic Find orb pickup radius",
+        "on",
+        "Turn off",
+        "Reveal full map",
+        "on",
+        "Turn off",
+        "Mods",
+        "Choose the features you want for your offline adventure.",
+        "Auto-apply",
+        "Apply all now",
+        "Choose your Hero_Siege.exe in Setup, then install the plugin to use modifiers.",
+        "Open Setup",
+        "Quality of Life",
+        "Items",
+        "Quality of Life",
+        "Toggle drop pool adjustments and quality-of-life tweaks for your offline session. Settings apply immediately while the game is running.",
+        "Remove owned relics from drop pool",
+        "off",
+        "When a relic is dropped, prevents relics already at maximum level (10 out of 10) in your equipped slots, backpack, or inventory from dropping.",
+        "Experience and Magic Find orb pickup radius",
+        "on",
+        "Makes the player collect matching orbs from 10 times the normal distance.",
+        "Reveal full map",
+        "on",
+        "Reveals the full minimap in every zone (removes fog of war). Waypoints, dungeon entrances, chests, shrines and mining nodes come with it - they are hidden by the fog, not by anything else.",
+        "↳ Show every monster pack on the map",
+        "off",
+        "Most mob packs do not exist until you walk near them, so the revealed map used to show only the packs you had already met. This marks every pack's spot and kind (normal, champion, ancient, legion, mini boss) on the minimap the moment you arrive, including density copies, without creating a single monster: the pack is still born by the game when you walk near it, and its real dots replace the marker. Costs nothing per frame beyond the markers themselves.",
+        "↳ Really spawn every pack on arrival (heavy)",
+        "off",
+        "The old way: each new zone creates all of its packs, including density copies, as you arrive. Every living monster costs the game frame time on top of the markers, so at high density this lags for the whole zone. Off by default; only for comparing against the markers.",
+        "Pet collects quest items",
+        "off",
+        "While your pet is out, it walks to quest items on screen and picks them up for you - one at a time, crediting the quest objective exactly as collecting it by hand does. Only applies to pick-up quest items; things you activate, break or talk to are left alone.",
+        "Auto-prospect items put in the Prospect Cube",
+        "off",
+        "Every item you drag or click into the Prospect Cube's grid is prospected straight away, as if you had pressed Prospect, so the grid never fills with items waiting their turn. Anything still in the prospect grid when the game saves is lost.",
+        "↳ Move the previous materials to your materials tab",
+        "n/a",
+        "When the next item is prospected, the materials from the prospect before it go from the grid to your materials tab first, the way clicking them does. The newest batch stays in the grid where you can see it. A material the game will not take stays in the grid.",
+        "Enable Auto-prospect first.",
+        "Craft from the stash",
+        "off",
+        "Crafting Cube recipes also count the materials and socketables in your stash's Materials and Socketable tabs. When you craft, only what your bag is short of leaves the stash, and the stash is saved right after. Off by default.",
+        "Mark a running toggle skill",
+        "off",
+        "For a fixed set of toggle skills, each measured in-game: draws a soft red outline around that skill's skill-bar slot while its toggle is running, so you can see at a glance that it is still active. The outline disappears when the toggle ends. A plain cast, made without the skill's toggle sub-talent, lights nothing.",
+        "Stop double cast re-casting a toggle skill",
+        "off",
+        "For that same fixed set of toggle skills: a double cast proc can cast one of them a second time on its own, which flips its toggle straight back to where it was before your press. With this on, that extra cast is skipped, so the toggle stays the way you set it. It only steps in when you actually have the skill's toggle sub-talent, or the skill is a toggle on its own; your own presses are never affected.",
+        "Restart zone at any time",
+        "off",
+        "The pause menu's Restart normally waits until you have been out of combat for a few seconds; with this on it works straight away. Use the mouse: in combat Restart still looks greyed until the cursor is on it, then lights up and works when clicked.",
+        "Timed skill countdown",
+        "Off",
+        "Shows how much time a timed skill has left, over that skill's slot on the skill bar, in the look you pick below. Works for most timed skills; toggles and companions (turrets, totems) don't get one. Off by default.",
+        "Settings loaded",
+        "No settings sent this session",
+        "Theme",
+        "Ledger",
+        "Offline tools",
+        "Created by Falor",
+        "· v1.4.5"
+      ],
+      "placeholders": [],
+      "enabledModsForm": "inline"
+    },
+    {
+      "tab": "mods-qol",
+      "width": 900,
+      "nodeId": "33:1995",
+      "screenshot": ".claude/workorders/forgepact-ui-figma-buildout/screens/mods-qol-900.png",
+      "texts": [
+        "FORGEPACT",
+        "Setup",
+        "Modifiers",
+        "World",
+        "Loot",
+        "Mods",
+        "3 on",
+        "Game offline",
+        "Mods",
+        "Choose the features you want for your offline adventure.",
+        "Auto-apply",
+        "Apply all now",
+        "Choose your Hero_Siege.exe in Setup, then install the plugin to use modifiers.",
+        "Open Setup",
+        "Quality of Life",
+        "Items",
+        "Quality of Life",
+        "Toggle drop pool adjustments and quality-of-life tweaks for your offline session. Settings apply immediately while the game is running.",
+        "Remove owned relics from drop pool",
+        "off",
+        "When a relic is dropped, prevents relics already at maximum level (10 out of 10) in your equipped slots, backpack, or inventory from dropping.",
+        "Experience and Magic Find orb pickup radius",
+        "on",
+        "Makes the player collect matching orbs from 10 times the normal distance.",
+        "Reveal full map",
+        "on",
+        "Reveals the full minimap in every zone (removes fog of war). Waypoints, dungeon entrances, chests, shrines and mining nodes come with it - they are hidden by the fog, not by anything else.",
+        "↳ Show every monster pack on the map",
+        "off",
+        "Most mob packs do not exist until you walk near them, so the revealed map used to show only the packs you had already met. This marks every pack's spot and kind (normal, champion, ancient, legion, mini boss) on the minimap the moment you arrive, including density copies, without creating a single monster: the pack is still born by the game when you walk near it, and its real dots replace the marker. Costs nothing per frame beyond the markers themselves.",
+        "↳ Really spawn every pack on arrival (heavy)",
+        "off",
+        "The old way: each new zone creates all of its packs, including density copies, as you arrive. Every living monster costs the game frame time on top of the markers, so at high density this lags for the whole zone. Off by default; only for comparing against the markers.",
+        "Pet collects quest items",
+        "off",
+        "While your pet is out, it walks to quest items on screen and picks them up for you - one at a time, crediting the quest objective exactly as collecting it by hand does. Only applies to pick-up quest items; things you activate, break or talk to are left alone.",
+        "Auto-prospect items put in the Prospect Cube",
+        "off",
+        "Every item you drag or click into the Prospect Cube's grid is prospected straight away, as if you had pressed Prospect, so the grid never fills with items waiting their turn. Anything still in the prospect grid when the game saves is lost.",
+        "↳ Move the previous materials to your materials tab",
+        "n/a",
+        "When the next item is prospected, the materials from the prospect before it go from the grid to your materials tab first, the way clicking them does. The newest batch stays in the grid where you can see it. A material the game will not take stays in the grid.",
+        "Enable Auto-prospect first.",
+        "Craft from the stash",
+        "off",
+        "Crafting Cube recipes also count the materials and socketables in your stash's Materials and Socketable tabs. When you craft, only what your bag is short of leaves the stash, and the stash is saved right after. Off by default.",
+        "Mark a running toggle skill",
+        "off",
+        "For a fixed set of toggle skills, each measured in-game: draws a soft red outline around that skill's skill-bar slot while its toggle is running, so you can see at a glance that it is still active. The outline disappears when the toggle ends. A plain cast, made without the skill's toggle sub-talent, lights nothing.",
+        "Stop double cast re-casting a toggle skill",
+        "off",
+        "For that same fixed set of toggle skills: a double cast proc can cast one of them a second time on its own, which flips its toggle straight back to where it was before your press. With this on, that extra cast is skipped, so the toggle stays the way you set it. It only steps in when you actually have the skill's toggle sub-talent, or the skill is a toggle on its own; your own presses are never affected.",
+        "Restart zone at any time",
+        "off",
+        "The pause menu's Restart normally waits until you have been out of combat for a few seconds; with this on it works straight away. Use the mouse: in combat Restart still looks greyed until the cursor is on it, then lights up and works when clicked.",
+        "Timed skill countdown",
+        "Off",
+        "Shows how much time a timed skill has left, over that skill's slot on the skill bar, in the look you pick below. Works for most timed skills; toggles and companions (turrets, totems) don't get one. Off by default.",
+        "Settings loaded",
+        "No settings sent this session",
+        "Theme",
+        "Ledger",
+        "Created by Falor",
+        "· v1.4.5"
+      ],
+      "placeholders": [],
+      "enabledModsForm": "tray (collapsed)"
+    },
+    {
+      "tab": "setup",
+      "width": 1280,
+      "nodeId": "32:58",
+      "screenshot": ".claude/workorders/forgepact-ui-figma-buildout/screens/setup-1280.png",
+      "texts": [
+        "FORGEPACT",
+        "HERO SIEGE TOOLS",
+        "Setup",
+        "Modifiers",
+        "World",
+        "Loot",
+        "Mods",
+        "Game offline",
+        "Enabled mods",
+        "3 on",
+        "Monster Density",
+        "x3",
+        "Turn off",
+        "Experience and Magic Find orb pickup radius",
+        "on",
+        "Turn off",
+        "Reveal full map",
+        "on",
+        "Turn off",
+        "Game setup",
+        "Connect your offline game and manage the mod plugin.",
+        "Auto-apply",
+        "Apply all now",
+        "Choose your Hero_Siege.exe in Setup, then install the plugin to use modifiers.",
+        "Open Setup",
+        "Game Location",
+        "ForgePact talks to the mod plugin sitting next to this exe. Change it if your game lives somewhere else.",
+        "C:\\Users\\stann\\AppData\\Local\\Temp\\forgepact-panel-1qtop5_9\\Hero_Siege.exe",
+        "Browse...",
+        "Save",
+        "Install Mod Plugin",
+        "Remove Plugin",
+        "Launch Modded Game",
+        "HS Offline Launcher · Built in",
+        "Starts Steam if needed and launches your selected game with the correct Steam settings. Use offline characters.",
+        "HS Offline Launcher is built in. No separate installation needed.",
+        "bp_ipc appears after the first modded launch",
+        "mod chain incomplete: exe not patched, AurieCore.dll, YYToolkit.dll, mod plugin - click",
+        "Install Mod Plugin",
+        "(game must be closed)",
+        "Settings loaded",
+        "No settings sent this session",
+        "Theme",
+        "Ledger",
+        "Offline tools",
+        "Created by Falor",
+        "· v1.4.5"
+      ],
+      "placeholders": [],
+      "enabledModsForm": "inline"
+    },
+    {
+      "tab": "setup",
+      "width": 900,
+      "nodeId": "32:394",
+      "screenshot": ".claude/workorders/forgepact-ui-figma-buildout/screens/setup-900.png",
+      "texts": [
+        "FORGEPACT",
+        "Setup",
+        "Modifiers",
+        "World",
+        "Loot",
+        "Mods",
+        "3 on",
+        "Game offline",
+        "Game setup",
+        "Connect your offline game and manage the mod plugin.",
+        "Auto-apply",
+        "Apply all now",
+        "Choose your Hero_Siege.exe in Setup, then install the plugin to use modifiers.",
+        "Open Setup",
+        "Game Location",
+        "ForgePact talks to the mod plugin sitting next to this exe. Change it if your game lives somewhere else.",
+        "C:\\Users\\stann\\AppData\\Local\\Temp\\forgepact-panel-1qtop5_9\\Hero_Siege.exe",
+        "Browse...",
+        "Save",
+        "Install Mod Plugin",
+        "Remove Plugin",
+        "Launch Modded Game",
+        "HS Offline Launcher · Built in",
+        "Starts Steam if needed and launches your selected game with the correct Steam settings. Use offline characters.",
+        "HS Offline Launcher is built in. No separate installation needed.",
+        "bp_ipc appears after the first modded launch",
+        "mod chain incomplete: exe not patched, AurieCore.dll, YYToolkit.dll, mod plugin - click",
+        "Install Mod Plugin",
+        "(game must be closed)",
+        "Settings loaded",
+        "No settings sent this session",
+        "Theme",
+        "Ledger",
+        "Created by Falor",
+        "· v1.4.5"
+      ],
+      "placeholders": [],
+      "enabledModsForm": "tray (collapsed)"
+    },
+    {
+      "tab": "world",
+      "width": 1280,
+      "nodeId": "31:661",
+      "screenshot": ".claude/workorders/forgepact-ui-figma-buildout/screens/world-1280.png",
+      "texts": [
+        "FORGEPACT",
+        "HERO SIEGE TOOLS",
+        "Setup",
+        "Modifiers",
+        "World",
+        "Loot",
+        "Mods",
+        "Game offline",
+        "Enabled mods",
+        "3 on",
+        "Monster Density",
+        "x3",
+        "Turn off",
+        "Experience and Magic Find orb pickup radius",
+        "on",
+        "Turn off",
+        "Reveal full map",
+        "on",
+        "Turn off",
+        "World settings",
+        "Shape your zones. Keep every choice in sight.",
+        "Auto-apply",
+        "Apply all now",
+        "Choose your Hero_Siege.exe in Setup, then install the plugin to use modifiers.",
+        "Open Setup",
+        "Monster Density",
+        "Enabled",
+        "Adjust the number of monster packs in newly loaded zones.",
+        "−",
+        "x3",
+        "+",
+        "How it works",
+        "Monster Rarity",
+        "Choose the share of normal monsters upgraded to Rare or Ancient.",
+        "Rare",
+        "−",
+        "off",
+        "+",
+        "Ancient",
+        "−",
+        "off",
+        "+",
+        "How it works",
+        "Enemy Movement Speed",
+        "Increase enemy movement speed. Choose all zones or Chaos Tower only.",
+        "Speed bonus",
+        "−",
+        "off",
+        "+",
+        "Only inside Chaos Tower",
+        "CT only",
+        "Satanic Zone Mods",
+        "↺ Restore defaults",
+        "Choose which modifiers can roll in your zones.",
+        "Enabled mods are eligible, not guaranteed. The game still rolls your zone.",
+        "All mods",
+        "Enabled",
+        "Disabled",
+        "+",
+        "Positive modifiers",
+        "25 enabled",
+        "Keep at least",
+        "3",
+        "enabled",
+        "Enable all",
+        "Loot Goblin I",
+        "+1 Maximum Loot from Enemy Killed",
+        "Loot Goblin II",
+        "+2 Maximum Loot from Enemy Killed",
+        "Rune Master",
+        "Rune Drop Chance increased by 15% + (5% per sub difficulty level)",
+        "Gold Hunger",
+        "Gold from monster kills increased by 40% + (8.75% per sub difficulty level)",
+        "Heroic Windfall",
+        "Heroic Item drop chances increased by 3% + (3% per sub difficulty level)",
+        "Angelic Fortune",
+        "Angelic Item drop chances increased by 4% + (6% per sub difficulty level)",
+        "Zephy’s Grace",
+        "Movement Speed increased by 50%",
+        "−",
+        "Negative modifiers",
+        "26 enabled",
+        "Keep at least",
+        "2",
+        "enabled",
+        "Enable all",
+        "Dusk’s Shroud",
+        "Light Radius decreased",
+        "Elemental Erosion",
+        "All Resistances decreased",
+        "Sundered Armor",
+        "Damage Taken increased",
+        "Vitality Drain",
+        "Life decreased",
+        "Essence Drain",
+        "Mana decreased",
+        "Abyssal Gloom",
+        "Darkness increased",
+        "Skill Debilitation",
+        "All Skills decreased",
+        "✓ Selection valid",
+        "Changes save automatically",
+        "Settings loaded",
+        "No settings sent this session",
+        "Theme",
+        "Ledger",
+        "Offline tools",
+        "Created by Falor",
+        "· v1.4.5"
+      ],
+      "placeholders": [
+        "Search by name or effect..."
+      ],
+      "enabledModsForm": "inline"
+    },
+    {
+      "tab": "world",
+      "width": 900,
+      "nodeId": "31:970",
+      "screenshot": ".claude/workorders/forgepact-ui-figma-buildout/screens/world-900.png",
+      "texts": [
+        "FORGEPACT",
+        "Setup",
+        "Modifiers",
+        "World",
+        "Loot",
+        "Mods",
+        "3 on",
+        "Game offline",
+        "World settings",
+        "Shape your zones. Keep every choice in sight.",
+        "Auto-apply",
+        "Apply all now",
+        "Choose your Hero_Siege.exe in Setup, then install the plugin to use modifiers.",
+        "Open Setup",
+        "Monster Density",
+        "Enabled",
+        "Adjust the number of monster packs in newly loaded zones.",
+        "−",
+        "x3",
+        "+",
+        "How it works",
+        "Monster Rarity",
+        "Choose the share of normal monsters upgraded to Rare or Ancient.",
+        "Rare",
+        "−",
+        "off",
+        "+",
+        "Ancient",
+        "−",
+        "off",
+        "+",
+        "How it works",
+        "Enemy Movement Speed",
+        "Increase enemy movement speed. Choose all zones or Chaos Tower only.",
+        "Speed bonus",
+        "−",
+        "off",
+        "+",
+        "Only inside Chaos Tower",
+        "CT only",
+        "Satanic Zone Mods",
+        "↺ Restore defaults",
+        "Choose which modifiers can roll in your zones.",
+        "Enabled mods are eligible, not guaranteed. The game still rolls your zone.",
+        "All mods",
+        "Enabled",
+        "Disabled",
+        "+",
+        "Positive modifiers",
+        "25 enabled",
+        "Keep at least",
+        "3",
+        "enabled",
+        "Enable all",
+        "Loot Goblin I",
+        "+1 Maximum Loot from Enemy Killed",
+        "Loot Goblin II",
+        "+2 Maximum Loot from Enemy Killed",
+        "Rune Master",
+        "Rune Drop Chance increased by 15% + (5% per sub difficulty level)",
+        "Gold Hunger",
+        "Gold from monster kills increased by 40% + (8.75% per sub difficulty level)",
+        "Heroic Windfall",
+        "Heroic Item drop chances increased by 3% + (3% per sub difficulty level)",
+        "Angelic Fortune",
+        "Angelic Item drop chances increased by 4% + (6% per sub difficulty level)",
+        "Zephy’s Grace",
+        "Movement Speed increased by 50%",
+        "−",
+        "Negative modifiers",
+        "26 enabled",
+        "Keep at least",
+        "2",
+        "enabled",
+        "Enable all",
+        "Dusk’s Shroud",
+        "Light Radius decreased",
+        "Elemental Erosion",
+        "All Resistances decreased",
+        "Sundered Armor",
+        "Damage Taken increased",
+        "Vitality Drain",
+        "Life decreased",
+        "Essence Drain",
+        "Mana decreased",
+        "Abyssal Gloom",
+        "Darkness increased",
+        "Skill Debilitation",
+        "All Skills decreased",
+        "✓ Selection valid",
+        "Changes save automatically",
+        "Settings loaded",
+        "No settings sent this session",
+        "Theme",
+        "Ledger",
+        "Created by Falor",
+        "· v1.4.5"
+      ],
+      "placeholders": [
+        "Search by name or effect..."
+      ],
+      "enabledModsForm": "tray (collapsed)"
+    }
+  ],
+  "states": [
+    {
+      "state": "hover",
+      "nodeId": "36:2",
+      "screenshot": ".claude/workorders/forgepact-ui-figma-buildout/states/hover.png",
+      "notes": "Rail tab, buttons, pool row, select. Hover only under (hover: hover) and (pointer: fine); colour over motion/duration/fast on motion/easing/hover, never moving layout; buttons scale to 0.97 on :active over motion/duration/fast on motion/easing/standard."
+    },
+    {
+      "state": "focus",
+      "nodeId": "36:41",
+      "screenshot": ".claude/workorders/forgepact-ui-figma-buildout/states/focus.png",
+      "notes": "2px color/focus outline with a 3px offset on every focusable control: buttons, the range, the search field, selects, Turn off, the slider switch, the pool toggle, the toggle row switch, the stepper buttons, the rail tab, the segmented filter and sub-tabs, and the tray count control. Never animated. Checked against an ON switch in Sigil: the ring sits outside the control on the page surface, so it stays distinct from the accent."
+    },
+    {
+      "state": "disabled",
+      "nodeId": "36:85",
+      "screenshot": ".claude/workorders/forgepact-ui-figma-buildout/states/disabled.png",
+      "notes": "Child row with parent off reads n/a, dimmed switch, parent hint; disabled buttons at 45% opacity."
+    },
+    {
+      "state": "applied",
+      "nodeId": "36:112",
+      "screenshot": ".claude/workorders/forgepact-ui-figma-buildout/states/applied.png",
+      "notes": "Game open chip, 'commands sent: <time>' chip, Saved indicator."
+    },
+    {
+      "state": "pending",
+      "nodeId": "36:125",
+      "screenshot": ".claude/workorders/forgepact-ui-figma-buildout/states/pending.png",
+      "notes": "Saving changes... with a spinner; queued send marked (queued) in color/warn."
+    },
+    {
+      "state": "empty",
+      "nodeId": "36:135",
+      "screenshot": ".claude/workorders/forgepact-ui-figma-buildout/states/empty.png",
+      "notes": "Modifier data unavailable. Restart with the complete ForgePact package. (the panel's own next step); no-match search texts from panel.js; Setup field placeholder. show all settings stays text: making it a control would add a behaviour."
+    },
+    {
+      "state": "error",
+      "nodeId": "36:155",
+      "screenshot": ".claude/workorders/forgepact-ui-figma-buildout/states/error.png",
+      "notes": "Save error in color/danger with its reason slot, Could not finish saving: {reason} (the restyle drops the colon when there is no reason); plugin warning not-installed text with its color/warn rule; chip Game open · plugin missing."
+    },
+    {
+      "state": "enabled-empty",
+      "nodeId": "36:171",
+      "screenshot": ".claude/workorders/forgepact-ui-figma-buildout/states/enabled-empty.png",
+      "notes": "The heading and Nothing is on; the count is hidden while the list is empty. An empty list always fits one line, so it shows as the inline row."
+    },
+    {
+      "state": "enabled-few",
+      "nodeId": "36:195",
+      "screenshot": ".claude/workorders/forgepact-ui-figma-buildout/states/enabled-few.png",
+      "notes": "Three entries (the set on every screen), both forms."
+    },
+    {
+      "state": "enabled-many",
+      "nodeId": "36:271",
+      "screenshot": ".claude/workorders/forgepact-ui-figma-buildout/states/enabled-many.png",
+      "notes": "Thirteen entries; the dynamic rule puts them in the tray, a popover under the count. It scrolls after 8 entries with a bottom fade and a thin scrollbar, wraps long names to two lines, and never collapses entries."
+    },
+    {
+      "state": "enabled-hover",
+      "nodeId": "36:527",
+      "screenshot": ".claude/workorders/forgepact-ui-figma-buildout/states/enabled-hover.png",
+      "notes": "Turn off hover: color/bg/hover + primary text."
+    },
+    {
+      "state": "enabled-focus",
+      "nodeId": "36:603",
+      "screenshot": ".claude/workorders/forgepact-ui-figma-buildout/states/enabled-focus.png",
+      "notes": "Turn off focus ring."
+    },
+    {
+      "state": "enabled-removed",
+      "nodeId": "36:683",
+      "screenshot": ".claude/workorders/forgepact-ui-figma-buildout/states/enabled-removed.png",
+      "notes": "Exit: opacity 1 to 0 and scale 1 to 0.95 over motion/duration/fast on motion/easing/standard, then removed; the count updates at once (2 on). Reflow freeze: the other entries keep their places until the pointer leaves the list or reflowFreeze.maxMs passes. Focus: when the used Turn off had focus it moves to the next entry's Turn off, else the previous one, else the heading (in the tray, the count control). A polite live region announces it and the undo toast offers Undo. Reduced motion: opacity only."
+    },
+    {
+      "state": "switch-off",
+      "nodeId": "36:759",
+      "screenshot": ".claude/workorders/forgepact-ui-figma-buildout/states/switch-off.png",
+      "notes": "Switch off: the knob sits left on the quiet color/border/subtle body, the slider dims to 35%, .val reads off, and the remembered value is shown beside it. The ON switch here is listed (value +25%), so it keeps the accent."
+    },
+    {
+      "state": "theme-picker",
+      "nodeId": "36:797",
+      "screenshot": ".claude/workorders/forgepact-ui-figma-buildout/states/theme-picker.png",
+      "notes": "Picker open upward from the status bar, plus one section in each palette. Each option's swatch shows border/strong, text/muted and the accent, so the neutral temperature tells Ledger (warm) from Graphite (cool grey) and Sigil (blue grey)."
+    },
+    {
+      "state": "enabled-inline-1280",
+      "nodeId": "37:778",
+      "screenshot": ".claude/workorders/forgepact-ui-figma-buildout/states/enabled-inline-1280.png",
+      "notes": "World 1280, 3 entries, natural 912 <= available 1216: inline. Unlisted ON slider switches are idle; Density's live slider is drawn in the ON style."
+    },
+    {
+      "state": "enabled-inline-900",
+      "nodeId": "37:1074",
+      "screenshot": ".claude/workorders/forgepact-ui-figma-buildout/states/enabled-inline-900.png",
+      "notes": "World 900, 2 entries, natural 709 <= 836: inline on load; inside the hysteresis band when coming from the tray."
+    },
+    {
+      "state": "enabled-tray-1280",
+      "nodeId": "37:1412",
+      "screenshot": ".claude/workorders/forgepact-ui-figma-buildout/states/enabled-tray-1280.png",
+      "notes": "World 1280, 13 entries: the tray popover open under the rail count, floating over the header while open (closes on Escape, an outside click or a tab change). The listed rows Rare +25%, Ancient +10% and Speed bonus x1.5 keep the accent switch."
+    },
+    {
+      "state": "enabled-tray-900",
+      "nodeId": "37:1807",
+      "screenshot": ".claude/workorders/forgepact-ui-figma-buildout/states/enabled-tray-900.png",
+      "notes": "World 900, the same 3 entries as enabled-inline-1280: natural 912 > 836, so the tray; drawn open as the popover."
+    },
+    {
+      "state": "enabled-switch-rule",
+      "nodeId": "37:2131",
+      "screenshot": ".claude/workorders/forgepact-ui-figma-buildout/states/enabled-switch-rule.png",
+      "notes": "The measure, the two thresholds (natural > available -> tray; natural <= available - 160 -> row), the band and the on-load rule. Hold: the switch waits while a pointer button or a key is down and while the popover is open, then for hold.idleMs."
+    },
+    {
+      "state": "idle-switch",
+      "nodeId": "51:983",
+      "screenshot": ".claude/workorders/forgepact-ui-figma-buildout/states/idle-switch.png",
+      "notes": "An ON slider switch is idle (color/switch/idle) while its mod is not listed, and takes the accent once listed (data-live). Idle, on and off rows drawn in all three palettes, with the listed entry. Density's #den_on keeps its look."
+    },
+    {
+      "state": "enabled-tray-popover",
+      "nodeId": "51:1187",
+      "screenshot": ".claude/workorders/forgepact-ui-figma-buildout/states/enabled-tray-popover.png",
+      "notes": "Closed, open and closing. Opens from #enabledModsCount; keyboard open puts focus on the first Turn off; Escape returns focus to the count; an outside click or a tab change closes it. Pointer open scales 0.97 to 1 from the count over motion/duration/base on motion/easing/emphasized, close over motion/duration/fast; from the keyboard it appears at once."
+    },
+    {
+      "state": "enabled-undo",
+      "nodeId": "51:1158",
+      "screenshot": ".claude/workorders/forgepact-ui-figma-buildout/states/enabled-undo.png",
+      "notes": "After Turn off on Reveal full map: the undo toast (Reveal full map turned off, Undo) above the handler's own #toast (map reveal OFF - ok) in the fixed bottom zone; after Undo the undo toast leaves and #toast reads map reveal ON - ok. The polite live-region lines are shown as captions. Enter over motion/duration/base, exit over motion/duration/fast."
+    },
+    {
+      "state": "min-window-900x600",
+      "nodeId": "51:1371",
+      "screenshot": ".claude/workorders/forgepact-ui-figma-buildout/states/min-window-900x600.png",
+      "notes": "Setup at the minimum window, 900x600: the subtitle shares the title's line and the list sits in the rail as the count, so the first setting starts higher."
+    }
+  ],
+  "components": [
+    {
+      "name": "RailTab",
+      "nodeId": "30:309",
+      "variants": [
+        "default",
+        "active",
+        "hover"
+      ]
+    },
+    {
+      "name": "Section",
+      "nodeId": "30:320",
+      "variants": [
+        "default",
+        "with-chip"
+      ]
+    },
+    {
+      "name": "SliderRow",
+      "nodeId": "24:244",
+      "variants": [
+        "default",
+        "set",
+        "off"
+      ]
+    },
+    {
+      "name": "ToggleRow",
+      "nodeId": "29:144",
+      "variants": [
+        "off",
+        "on",
+        "child",
+        "child-disabled"
+      ]
+    },
+    {
+      "name": "Select",
+      "nodeId": "30:334",
+      "variants": [
+        "default",
+        "hover",
+        "focus"
+      ]
+    },
+    {
+      "name": "Button",
+      "nodeId": "29:163",
+      "variants": [
+        "primary-default",
+        "primary-hover",
+        "primary-pressed",
+        "primary-disabled",
+        "secondary-default",
+        "secondary-hover",
+        "secondary-disabled",
+        "quiet-default",
+        "quiet-hover"
+      ]
+    },
+    {
+      "name": "StatusChip",
+      "nodeId": "30:223",
+      "variants": [
+        "offline",
+        "open",
+        "plugin-missing"
+      ]
+    },
+    {
+      "name": "SaveIndicator",
+      "nodeId": "30:244",
+      "variants": [
+        "loaded",
+        "saving",
+        "saved",
+        "error"
+      ]
+    },
+    {
+      "name": "Hint",
+      "nodeId": "30:252",
+      "variants": [
+        "disclosure",
+        "note"
+      ]
+    },
+    {
+      "name": "Toast",
+      "nodeId": "30:257",
+      "variants": [
+        "visible",
+        "leaving"
+      ]
+    },
+    {
+      "name": "PluginWarning",
+      "nodeId": "30:268",
+      "variants": [
+        "no-exe",
+        "not-installed"
+      ]
+    },
+    {
+      "name": "PoolRow",
+      "nodeId": "30:290",
+      "variants": [
+        "enabled",
+        "disabled",
+        "hover"
+      ]
+    },
+    {
+      "name": "SearchField",
+      "nodeId": "30:347",
+      "variants": [
+        "default",
+        "focus"
+      ]
+    },
+    {
+      "name": "Segmented",
+      "nodeId": "30:364",
+      "variants": [
+        "first",
+        "second"
+      ]
+    },
+    {
+      "name": "EnabledModEntry",
+      "nodeId": "22:42",
+      "variants": [
+        "default",
+        "hover",
+        "focus",
+        "removing"
+      ],
+      "forms": [
+        "inline",
+        "tray"
+      ]
+    },
+    {
+      "name": "EnabledMods",
+      "nodeId": "22:380",
+      "variants": [
+        "empty",
+        "few",
+        "many",
+        "hover",
+        "focus",
+        "removing"
+      ],
+      "forms": [
+        "inline",
+        "tray"
+      ]
+    },
+    {
+      "name": "SliderSwitch",
+      "nodeId": "24:210",
+      "variants": [
+        "on",
+        "off",
+        "idle"
+      ]
+    },
+    {
+      "name": "ThemePicker",
+      "nodeId": "24:285",
+      "variants": [
+        "closed",
+        "open"
+      ]
+    },
+    {
+      "name": "UndoToast",
+      "nodeId": "45:220",
+      "variants": [
+        "visible",
+        "leaving"
+      ]
+    }
+  ],
+  "fonts": [
+    {
+      "family": "IBM Plex Sans",
+      "weights": [
+        400,
+        500,
+        600
+      ],
+      "licence": "OFL",
+      "source": "https://fonts.google.com/specimen/IBM+Plex+Sans",
+      "italics": false
+    },
+    {
+      "family": "IBM Plex Mono",
+      "weights": [
+        400,
+        600
+      ],
+      "licence": "OFL",
+      "source": "https://fonts.google.com/specimen/IBM+Plex+Mono",
+      "italics": false
+    }
+  ],
+  "motion": {
+    "notes": "Tokens: motion/duration/fast 120ms, base 200ms; motion/easing/standard cubic-bezier(0.2, 0, 0, 1), emphasized cubic-bezier(0.23, 1, 0.32, 1), hover cubic-bezier(0.25, 0.1, 0.25, 1). Animate only transform and opacity. Hover colour changes: motion/duration/fast on motion/easing/hover, gated by (hover: hover) and (pointer: fine). Buttons scale(0.97) on :active over motion/duration/fast on motion/easing/standard. Focus and keyboard actions are never animated. The tray popover and the theme listbox scale from their trigger (0.97 to 1, with opacity) over motion/duration/base on motion/easing/emphasized and close over motion/duration/fast on motion/easing/standard; opened from the keyboard they appear at once. Toasts enter over motion/duration/base and leave over motion/duration/fast on motion/easing/standard. A removed list entry fades and scales to 0.95 over motion/duration/fast. prefers-reduced-motion keeps opacity only."
+  },
+  "bindingAudit": {
+    "fillsTotal": 4277,
+    "fillsBound": 4277,
+    "textsTotal": 2695,
+    "textsStyled": 2695,
+    "perPage": {
+      "02 Screens": [
+        1915,
+        1915,
+        1137,
+        1137
+      ],
+      "03 States": [
+        1610,
+        1610,
+        1043,
+        1043
+      ],
+      "04 Components": [
+        752,
+        752,
+        515,
+        515
+      ]
+    }
+  }
+}
