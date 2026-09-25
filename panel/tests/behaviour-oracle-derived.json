@@ -1,6 +1,7 @@
 {
  "derivedFrom": "tests/behaviour-oracle.json",
  "legacyRecordedAt": "2026-09-24T21:45:52.549Z",
+ "supplementFrom": "tests/behaviour-oracle-gems.json",
  "controls": [
   "#sw_stats_exp",
   "#sw_stats_magicfind",
@@ -4442,6 +4443,67 @@
   },
   {
    "step": 384,
+   "control": "subtab:qol",
+   "action": "click"
+  },
+  {
+   "step": 385,
+   "control": "#mod_gem_mythic",
+   "action": "click"
+  },
+  {
+   "step": 386,
+   "control": "#mod_gem_mythic",
+   "action": "click"
+  },
+  {
+   "step": 387,
+   "control": "#mod_gem_mythic",
+   "action": "click"
+  },
+  {
+   "step": 388,
+   "control": "#enabledMods .quick-disable[data-for=\"mod_gem_mythic\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 386
+    },
+    "cmds": {
+     "same": 386
+    }
+   }
+  },
+  {
+   "step": 389,
+   "control": "#mod_gem_maxroll",
+   "action": "click"
+  },
+  {
+   "step": 390,
+   "control": "#mod_gem_maxroll",
+   "action": "click"
+  },
+  {
+   "step": 391,
+   "control": "#mod_gem_maxroll",
+   "action": "click"
+  },
+  {
+   "step": 392,
+   "control": "#enabledMods .quick-disable[data-for=\"mod_gem_maxroll\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 390
+    },
+    "cmds": {
+     "same": 390
+    }
+   }
+  },
+  {
+   "step": 393,
    "control": "#theme",
    "action": "select",
    "value": "ledger",
@@ -4463,7 +4525,7 @@
    }
   },
   {
-   "step": 385,
+   "step": 394,
    "control": "#theme",
    "action": "select",
    "value": "graphite",
@@ -4485,7 +4547,7 @@
    }
   },
   {
-   "step": 386,
+   "step": 395,
    "control": "#theme",
    "action": "select",
    "value": "sigil",

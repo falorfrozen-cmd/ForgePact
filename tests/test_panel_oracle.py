@@ -6,11 +6,15 @@ the page it replaced lives in `panel/tests/`:
 
 - `npm run oracle:replay` replays `panel/tests/behaviour-oracle.json` (every
   control's POST bodies and plugin commands, recorded from the old page)
-  against the current build and fails on any difference;
+  against the current build and fails on any difference, and with it
+  `panel/tests/behaviour-oracle-gems.json` (the Gems of Incarnation controls,
+  recorded from origin/main's last pre-port page, named by its `sourceRev`);
 - `npm run e2e` runs the checks ported from the old agent-browser harnesses
-  (saves, failures, filters, keyboard, install and launch paths).
+  (saves, failures, filters, keyboard, install and launch paths);
+- `npm run e2e:gems` checks the Gems of Incarnation controls' place, defaults,
+  Enabled mods entries and mod filter list.
 
-Both drive the installed Edge headless through playwright-core against
+All three drive the installed Edge headless through playwright-core against
 `tests/panel_sandbox_server.py`, which needs a built `panel/dist/`. Each test
 here skips, naming what is missing, when `node`/`npm`, Edge, the installed
 dev dependencies or the build are absent - build first with
@@ -28,6 +32,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PANEL = ROOT / "panel"
 ORACLE = PANEL / "tests" / "behaviour-oracle.json"
+SUPPLEMENT = PANEL / "tests" / "behaviour-oracle-gems.json"
+DERIVED = PANEL / "tests" / "behaviour-oracle-derived.json"
+#: origin/main's merge of PR #84: its last legacy page, with the Gems controls.
+GEMS_SOURCE_REV = "f1e2f57edd60ffbed7ae82b7df087f0ca6b3da95"
 EDGE_PATHS = (
     Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
     Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
@@ -74,6 +82,26 @@ class BehaviourOracleFileTests(unittest.TestCase):
         # Negative control: a disabled control is recorded as such, not as a click.
         self.assertTrue(any(s["action"] == "skipped-disabled" for s in oracle["steps"]))
 
+    def test_gems_supplement_was_recorded_from_mains_legacy_page(self):
+        supplement = json.loads(SUPPLEMENT.read_text(encoding="utf-8"))
+        # Provenance: the legacy page of a named tree, never this build.
+        self.assertEqual(supplement["recordedFrom"], "legacy")
+        self.assertEqual(supplement["sourceRev"], GEMS_SOURCE_REV)
+        self.assertEqual(supplement["controls"], ["#mod_gem_mythic", "#mod_gem_maxroll", "#gemfilter_toggle"])
+        steps = supplement["steps"]
+        saves = [s for s in steps if s["control"].endswith('[data-gf="save"]')]
+        # Negative control: saving with nothing ticked is refused in the page,
+        # so the first save posts nothing and sends nothing.
+        self.assertEqual((saves[0]["posts"], saves[0]["cmds"]), ([], []))
+        # Positive control: the same button, once two mods are ticked, posts
+        # them and the backend sends the filter.
+        self.assertEqual(saves[1]["posts"], [{"url": "/api/set", "body": {"key": "gem_filter", "value": [68, 284]}}])
+        self.assertEqual(saves[1]["cmds"], ["gemfilter 68,284"])
+        self.assertTrue(any(s["cmds"] for s in steps if s["control"] == "#mod_gem_mythic"))
+        # The derived oracle takes the gems' Turn off steps from it.
+        derived = json.loads(DERIVED.read_text(encoding="utf-8"))
+        self.assertEqual(derived["supplementFrom"], "tests/behaviour-oracle-gems.json")
+
 
 class PanelBrowserSuiteTests(unittest.TestCase):
     def setUp(self):
@@ -92,6 +120,12 @@ class PanelBrowserSuiteTests(unittest.TestCase):
         lines = [l for l in out.splitlines() if l.startswith("e2e: ")]
         self.assertEqual(code, 0, out[-4000:])
         self.assertTrue(lines and re.fullmatch(r"e2e: (\d+)/\1 checks passed", lines[-1]), out[-4000:])
+
+    def test_gems_e2e_suite_passes(self):
+        code, out = _npm("e2e:gems")
+        lines = [l for l in out.splitlines() if l.startswith("e2e-gems: ")]
+        self.assertEqual(code, 0, out[-4000:])
+        self.assertTrue(lines and re.fullmatch(r"e2e-gems: (\d+)/\1 checks passed", lines[-1]), out[-4000:])
 
 
 if __name__ == "__main__":

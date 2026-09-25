@@ -2,12 +2,24 @@
 // page sent.
 //
 //   node tests/oracle.mjs record [--legacy] --out tests/behaviour-oracle.json
-//   node tests/oracle.mjs replay --oracle tests/behaviour-oracle.json [--derived tests/behaviour-oracle-derived.json] [--legacy]
+//   node tests/oracle.mjs record --legacy --only gems --src <dir> --source-rev <sha> --out tests/behaviour-oracle-gems.json
+//   node tests/oracle.mjs replay --oracle tests/behaviour-oracle.json [--derived tests/behaviour-oracle-derived.json]
+//                               [--supplement tests/behaviour-oracle-gems.json] [--legacy]
 //
 // `--derived` adds the steps tests/oracle-derive.mjs generates for the controls
 // the legacy page never had (slider switches, the Enabled mods list's Turn off
 // buttons, the theme): they run on a second fresh sandbox after the legacy
 // steps, and coverage counts both files' controls.
+//
+// `--supplement` adds a recording of controls the legacy page gained after
+// behaviour-oracle.json was recorded (Gems of Incarnation, from origin/main's
+// last pre-port page): its steps run on a third fresh sandbox, compared exactly
+// as the legacy steps are, and coverage counts its `controls` too. It is
+// recorded by `record --only gems`, a fixed scenario rather than the walk,
+// from the tree `--src` names (a `git archive <sha> src` extracted outside the
+// checkout, served with `--legacy`), and it names that tree as `sourceRev`.
+// The recorder refuses when the page's enumerated gem controls are not
+// exactly GEM_CONTROLS, and it never writes behaviour-oracle.json.
 //
 // `record` walks every control the page offers, tab by tab in document order,
 // and writes one step per action: the POST requests the page made (`/api/state`
@@ -48,6 +60,29 @@ const SAT_BULK = [
   SAT('debuff', '1'), '#satdebuffAll',
   SAT('buff', '1'), SAT('debuff', '1'), '#satRestore',
 ];
+
+// Gems of Incarnation: the controls the page's walk enumerates (the filter's
+// inner buttons and boxes carry no id), and the fixed scenario the supplement
+// records. Both switches are off by default, so each is turned on before
+// anything that needs it on, and both end off again. In between: the filter's
+// client-side refusal (nothing ticked: a toast, no POST), a narrowed filter
+// saved while Mythic is off, both switches on with it and Apply all, the
+// filter widened back to every mod, and the list closed, reopened from the
+// saved filter and closed.
+const GEM_CONTROLS = ['#mod_gem_mythic', '#mod_gem_maxroll', '#gemfilter_toggle'];
+const GF = (selector) => `#gemfilter_panel ${selector}`;
+const GEMS_SCENARIO = [
+  'tab:mods', 'subtab:qol',
+  '#mod_gem_mythic', '#mod_gem_mythic',
+  '#mod_gem_maxroll', '#mod_gem_maxroll',
+  '#gemfilter_toggle',
+  GF('[data-gf="none"]'), GF('[data-gf="save"]'),
+  GF('[data-gfcat="Loot"][data-gfset="1"]'), GF('input[data-gfstat="68"]'), GF('[data-gf="save"]'),
+  '#mod_gem_mythic', '#mod_gem_maxroll', '#applyall',
+  GF('[data-gfcat="Attack"][data-gfset="0"]'), GF('[data-gf="all"]'), GF('[data-gf="save"]'),
+  '#gemfilter_toggle', '#gemfilter_toggle', '#gemfilter_toggle',
+  '#mod_gem_mythic', '#mod_gem_maxroll',
+].map((control) => ({ control, action: 'click' }));
 
 // Runs in the page: every control under `root`, in document order.
 function enumerateIn(rootSelector) {
@@ -256,7 +291,28 @@ function canonical(value) {
 }
 const same = (a, b) => JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
 
+// Runs `plan` and returns one recorded step per action.
+async function recordSteps(page, sandbox, plan) {
+  const steps = [];
+  await runSteps(page, sandbox, plan, (i, step, outcome, posts, cmds) => {
+    if (outcome === 'missing') throw new Error(`step ${i}: ${step.control} not found while recording`);
+    const entry = { step: i, control: step.control, action: outcome === 'skipped-disabled' ? 'skipped-disabled' : step.action };
+    if (outcome === 'skipped-disabled') entry.intended = step.action;
+    if (step.value !== undefined) entry.value = step.value;
+    entry.posts = posts;
+    entry.cmds = cmds;
+    steps.push(entry);
+  });
+  return steps;
+}
+
+function reportRecorded(steps, out) {
+  const posted = steps.filter((s) => s.posts.length).length;
+  console.log(`oracle: recorded ${steps.length} steps (${posted} with POSTs, ${steps.filter((s) => s.action === 'skipped-disabled').length} skipped-disabled) to ${out}`);
+}
+
 async function record(args) {
+  if (args.only !== undefined) return recordGems(args);
   const out = resolve(PANEL_DIR, args.out || 'tests/behaviour-oracle.json');
   const legacy = !!args.legacy;
   const viewport = VIEWPORTS[1280];
@@ -265,16 +321,7 @@ async function record(args) {
   try {
     const page = await openPanel(browser, sandbox, viewport);
     const { plan, controls } = await planSteps(page);
-    const steps = [];
-    await runSteps(page, sandbox, plan, (i, step, outcome, posts, cmds) => {
-      if (outcome === 'missing') throw new Error(`step ${i}: ${step.control} not found while recording`);
-      const entry = { step: i, control: step.control, action: outcome === 'skipped-disabled' ? 'skipped-disabled' : step.action };
-      if (outcome === 'skipped-disabled') entry.intended = step.action;
-      if (step.value !== undefined) entry.value = step.value;
-      entry.posts = posts;
-      entry.cmds = cmds;
-      steps.push(entry);
-    });
+    const steps = await recordSteps(page, sandbox, plan);
     const oracle = {
       recordedFrom: legacy ? 'legacy' : 'build',
       recordedAt: new Date().toISOString(),
@@ -283,8 +330,46 @@ async function record(args) {
       steps,
     };
     writeFileSync(out, JSON.stringify(oracle, null, 1) + '\n');
-    const posted = steps.filter((s) => s.posts.length).length;
-    console.log(`oracle: recorded ${steps.length} steps (${posted} with POSTs, ${steps.filter((s) => s.action === 'skipped-disabled').length} skipped-disabled) to ${out}`);
+    reportRecorded(steps, out);
+  } finally {
+    await browser.close();
+    await sandbox.stop();
+  }
+}
+
+// The Gems of Incarnation supplement: GEMS_SCENARIO on the legacy page of the
+// tree `--src` names, at that tree's product defaults.
+async function recordGems(args) {
+  const usage = 'record --only gems needs --legacy, --src <dir>, --source-rev <40-hex sha> and --out <file>';
+  if (args.only !== 'gems' || !args.legacy || typeof args.src !== 'string' || typeof args.out !== 'string' ||
+      !/^[0-9a-f]{40}$/.test(String(args['source-rev']))) throw new Error(usage);
+  const out = resolve(PANEL_DIR, args.out);
+  if (out === resolve(PANEL_DIR, 'tests/behaviour-oracle.json')) throw new Error('record --only gems never writes tests/behaviour-oracle.json');
+  const viewport = VIEWPORTS[1280];
+  const sandbox = await startSandbox({ legacy: true, src: resolve(args.src) });
+  const browser = await launchBrowser();
+  try {
+    const page = await openPanel(browser, sandbox, viewport);
+    // Every control that page enumerates beyond the legacy recording's must be
+    // exactly GEM_CONTROLS: one added on that tree would otherwise go
+    // unrecorded. (A plain "contains gem" filter would also catch the Boss
+    // Gems key slider, which the legacy recording already covers.)
+    const legacy = new Set(JSON.parse(readFileSync(resolve(PANEL_DIR, 'tests/behaviour-oracle.json'), 'utf8')).controls);
+    const added = (await planSteps(page)).controls.filter((c) => !legacy.has(c));
+    if (JSON.stringify(added) !== JSON.stringify(GEM_CONTROLS)) {
+      throw new Error(`the page's controls beyond the legacy recording are ${JSON.stringify(added)}, not ${JSON.stringify(GEM_CONTROLS)}`);
+    }
+    const steps = await recordSteps(page, sandbox, GEMS_SCENARIO);
+    const oracle = {
+      recordedFrom: 'legacy',
+      sourceRev: args['source-rev'],
+      recordedAt: new Date().toISOString(),
+      viewport,
+      controls: GEM_CONTROLS,
+      steps,
+    };
+    writeFileSync(out, JSON.stringify(oracle, null, 1) + '\n');
+    reportRecorded(steps, out);
   } finally {
     await browser.close();
     await sandbox.stop();
@@ -331,43 +416,63 @@ async function replayDerived(browser, derived, viewport, args, mismatches) {
   }
 }
 
+// A recorded file's steps (the legacy recording, or the supplement) on `page`:
+// each step's outcome, POST bodies and commands must equal the recording's.
+async function replayRecorded(page, sandbox, oracle, mismatches, prefix = '') {
+  const plan = oracle.steps.map((s) => ({ control: s.control, action: s.action === 'skipped-disabled' ? s.intended : s.action, value: s.value }));
+  await runSteps(page, sandbox, plan, (i, step, outcome, posts, cmds) => {
+    const want = oracle.steps[i];
+    const label = prefix ? `${prefix} ${i}` : i;
+    const wantOutcome = want.action === 'skipped-disabled' ? 'skipped-disabled' : 'done';
+    if (outcome !== wantOutcome) {
+      mismatches.push({ step: label, control: step.control, problem: `expected ${wantOutcome}, got ${outcome}` });
+      return;
+    }
+    if (!same(want.posts, posts)) mismatches.push({ step: label, control: step.control, action: step.action, problem: 'posts', expected: want.posts, actual: posts });
+    if (!same(want.cmds, cmds)) mismatches.push({ step: label, control: step.control, action: step.action, problem: 'cmds', expected: want.cmds, actual: cmds });
+  });
+}
+
+// The supplement's steps, on a sandbox of their own at the product defaults.
+async function replaySupplement(browser, supplement, args, mismatches) {
+  const sandbox = await startSandbox({ legacy: !!args.legacy, dist: args.dist });
+  try {
+    const page = await openPanel(browser, sandbox, supplement.viewport);
+    await replayRecorded(page, sandbox, supplement, mismatches, 'supplement');
+  } finally {
+    await sandbox.stop();
+  }
+}
+
 async function replay(args) {
   const oracle = JSON.parse(readFileSync(resolve(PANEL_DIR, args.oracle || 'tests/behaviour-oracle.json'), 'utf8'));
   const derived = args.derived ? JSON.parse(readFileSync(resolve(PANEL_DIR, args.derived), 'utf8')) : null;
+  const supplement = args.supplement ? JSON.parse(readFileSync(resolve(PANEL_DIR, args.supplement), 'utf8')) : null;
   const sandbox = await startSandbox({ legacy: !!args.legacy, dist: args.dist });
   const browser = await launchBrowser();
   const mismatches = [];
   let stopped = false;
   try {
     const page = await openPanel(browser, sandbox, oracle.viewport);
-    // Coverage: a control the build offers that neither oracle ever exercised
+    // Coverage: a control the build offers that no oracle file ever exercised
     // is a behaviour nobody compared.
     const { controls } = await planSteps(page);
-    const covered = [...oracle.controls, ...(derived ? derived.controls : [])];
+    const covered = [...oracle.controls, ...(derived ? derived.controls : []), ...(supplement ? supplement.controls : [])];
     const recorded = new Set(covered);
     for (const c of controls) if (!recorded.has(c)) mismatches.push({ step: '-', control: c, problem: 'control not in the oracle' });
     for (const c of covered) if (!controls.includes(c)) mismatches.push({ step: '-', control: c, problem: 'control missing from this build' });
-    const plan = oracle.steps.map((s) => ({ control: s.control, action: s.action === 'skipped-disabled' ? s.intended : s.action, value: s.value }));
-    await runSteps(page, sandbox, plan, (i, step, outcome, posts, cmds) => {
-      const want = oracle.steps[i];
-      const wantOutcome = want.action === 'skipped-disabled' ? 'skipped-disabled' : 'done';
-      if (outcome !== wantOutcome) {
-        mismatches.push({ step: i, control: step.control, problem: `expected ${wantOutcome}, got ${outcome}` });
-        return;
-      }
-      if (!same(want.posts, posts)) mismatches.push({ step: i, control: step.control, action: step.action, problem: 'posts', expected: want.posts, actual: posts });
-      if (!same(want.cmds, cmds)) mismatches.push({ step: i, control: step.control, action: step.action, problem: 'cmds', expected: want.cmds, actual: cmds });
-    });
+    await replayRecorded(page, sandbox, oracle, mismatches);
     await page.context().close();
     stopped = true;
     await sandbox.stop();
     if (derived) await replayDerived(browser, derived, oracle.viewport, args, mismatches);
+    if (supplement) await replaySupplement(browser, supplement, args, mismatches);
   } finally {
     await browser.close();
     if (!stopped) await sandbox.stop();
   }
   for (const m of mismatches) console.log('mismatch', JSON.stringify(m));
-  const total = oracle.steps.length + (derived ? derived.steps.length : 0);
+  const total = oracle.steps.length + (derived ? derived.steps.length : 0) + (supplement ? supplement.steps.length : 0);
   console.log(`oracle: ${total} steps, ${mismatches.length} mismatches`);
   return mismatches.length ? 1 : 0;
 }
@@ -377,6 +482,7 @@ const mode = args._[0];
 if (mode === 'record') await record(args);
 else if (mode === 'replay') process.exitCode = await replay(args);
 else {
-  console.error('usage: oracle.mjs record [--legacy] [--out <file>] | replay [--oracle <file>] [--derived <file>] [--legacy]');
+  console.error('usage: oracle.mjs record [--legacy] [--out <file>] | record --legacy --only gems --src <dir> --source-rev <sha> --out <file> | ' +
+    'replay [--oracle <file>] [--derived <file>] [--supplement <file>] [--legacy]');
   process.exitCode = 2;
 }

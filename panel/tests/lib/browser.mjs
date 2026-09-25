@@ -45,9 +45,13 @@ export function parseArgs(argv) {
 // `seed`, an object of forgepact.json keys, is written to a temp file and
 // passed as `--seed` (the server refuses a key it does not know, exit 2, on
 // the inherited stderr); the file goes when the server does.
-export async function startSandbox({ legacy = false, dist = null, offline = false, satanicMinimum = false, seed = null } = {}) {
+// `src`, a directory holding another tree's forgepact.py, is passed as
+// `--src`: the server imports that module instead of this checkout's (with
+// `legacy`, it serves that tree's embedded page).
+export async function startSandbox({ legacy = false, dist = null, offline = false, satanicMinimum = false, seed = null, src = null } = {}) {
   const args = ['-3', SANDBOX];
   if (legacy) args.push('--legacy');
+  if (src) args.push('--src', src);
   if (dist) args.push('--dist', dist);
   if (offline) args.push('--offline');
   if (satanicMinimum) args.push('--satanic-minimum');

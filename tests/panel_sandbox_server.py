@@ -3,6 +3,7 @@
 
     py -3 tests/panel_sandbox_server.py [--legacy] [--dist <dir>] [--offline]
                                         [--satanic-minimum] [--seed <json file>]
+                                        [--src <dir>]
 
 Used by `panel/tests/` (the behaviour oracle, the screenshot tool and the e2e
 suite). It reuses `test_satanic_panel.PanelSandbox` - an isolated
@@ -36,6 +37,15 @@ the port landed, so `--legacy` now refuses (exit 2) unless the imported
 were recorded from it before then, and re-recording needs a tree from before
 the port. `--dist <dir>` serves that build; neither serves `panel/dist`.
 
+`--src <dir>` imports `forgepact` from `<dir>` (the directory holding its
+`forgepact.py`) instead of this checkout's `src/`, with the hub's
+`hs-game-sdk/python` first on `sys.path`, so any older tree can be served: a
+`git archive <ref> src` extracted outside the checkout, with `--legacy`, serves
+that ref's embedded page. The recording of the Gems of Incarnation controls
+(`oracle.mjs record --legacy --only gems --src <dir>`) is made this way from
+main's last pre-port page. It refuses (exit 2) when the module it imported is
+not the one in `<dir>`.
+
 Prints `port=<n>` then `cmds=<path>` and serves until stdin closes. No route
 is added to the product for testing: everything here is a patch on the
 module the product already runs.
@@ -47,10 +57,28 @@ from pathlib import Path
 from unittest.mock import patch
 
 TESTS = Path(__file__).resolve().parent
-sys.path.insert(0, str(TESTS))
-from test_satanic_panel import PanelSandbox, forgepact  # noqa: E402
-
 ROOT = TESTS.parent
+SDK_PYTHON = ROOT.parent / "hs-game-sdk" / "python"
+
+
+def load(parser, src):
+    """PanelSandbox and the forgepact module it drives: this checkout's, or `src`'s."""
+    if src is not None:
+        src = src.resolve()
+        if not (src / "forgepact.py").is_file():
+            parser.error(f"--src: {src} holds no forgepact.py")
+        if not SDK_PYTHON.is_dir():
+            parser.error(f"--src: the hub's {SDK_PYTHON} is missing")
+        sys.path.insert(0, str(src))
+        sys.path.insert(0, str(SDK_PYTHON))
+        # Imported first, so test_satanic_panel's own `import forgepact` finds
+        # this module already loaded instead of this checkout's src/.
+        import forgepact  # noqa: F401
+    sys.path.insert(0, str(TESTS))
+    from test_satanic_panel import PanelSandbox, forgepact  # noqa: E402
+    if src is not None and Path(forgepact.__file__).resolve().parent != src:
+        parser.error(f"--src: imported {forgepact.__file__}, not the one in {src}")
+    return PanelSandbox, forgepact
 
 
 def main(argv=None):
@@ -65,12 +93,16 @@ def main(argv=None):
                         help="start with only 3 buffs and 2 debuffs enabled (PanelSandbox.at_minimum)")
     parser.add_argument("--seed", type=Path, default=None,
                         help="merge this JSON object's top-level keys into the sandbox's forgepact.json")
+    parser.add_argument("--src", type=Path, default=None,
+                        help="import forgepact from this directory (e.g. an extracted git archive of src)")
     args = parser.parse_args(argv)
+    PanelSandbox, forgepact = load(parser, args.src)
     if args.legacy and not hasattr(forgepact, "HTML"):
         # Without this, / answers the 503 "panel not built" JSON and a caller
         # waiting for the page reports a timeout instead of the reason.
         parser.error("--legacy: this forgepact.py no longer embeds the old page "
-                     "(removed by the UI port); record from a tree before the port")
+                     "(removed by the UI port); record from a tree before the port "
+                     "(--src <dir>, an extracted git archive of its src)")
     seed = None
     if args.seed is not None:
         try:

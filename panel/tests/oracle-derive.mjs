@@ -3,6 +3,13 @@
 // mods" list's Turn off buttons and the theme choice.
 //
 //   node tests/oracle-derive.mjs --from tests/behaviour-oracle.json --out tests/behaviour-oracle-derived.json
+//                                [--supplement tests/behaviour-oracle-gems.json]
+//
+// `--supplement` names a recording of controls the legacy page gained later
+// (tests/behaviour-oracle-gems.json, the Gems of Incarnation switches): every
+// boolean mod in its `controls` gets the same on/off/on/Turn off steps a
+// legacy boolean does, entered on the tab the supplement first reached it on,
+// and the derived file names it as `supplementFrom`.
 //
 // tests/behaviour-oracle.json was recorded from the legacy page and is never
 // re-recorded: it is the proof that the port changed nothing. The new controls
@@ -61,7 +68,7 @@ function contextOf(legacySteps, control) {
   return { tab, sub };
 }
 
-export function derive(legacy, derivedFrom) {
+export function derive(legacy, derivedFrom, supplement = null, supplementFrom = null) {
   const steps = [];
   const push = (control, action, extra = {}) => {
     steps.push({ step: steps.length, control, action, ...extra });
@@ -69,10 +76,18 @@ export function derive(legacy, derivedFrom) {
   };
   const controls = [];
   let open = { tab: null, sub: null };
-  const enter = (control) => {
-    const { tab, sub } = contextOf(legacy.steps, control);
+  const enter = (control, recorded = legacy.steps) => {
+    const { tab, sub } = contextOf(recorded, control);
     if (tab && tab !== open.tab) { push(tab, 'click'); open = { tab, sub: null }; }
     if (sub && sub !== open.sub) { push(sub, 'click'); open.sub = sub; }
+  };
+  const booleanMod = (selector, recorded) => {
+    // A boolean mod: on, off (the reference), on, then its Turn off button.
+    enter(selector, recorded);
+    push(selector, 'click');
+    const off = push(selector, 'click');
+    push(selector, 'click');
+    push(quickDisable(selector.slice(1)), 'click', { expect: { posts: { same: off }, cmds: { same: off } } });
   };
   let densityDone = false;
   for (const selector of legacy.controls) {
@@ -97,12 +112,7 @@ export function derive(legacy, derivedFrom) {
       });
       push(selector, 'min');
     } else if (BOOLEAN_MODS.includes(selector.slice(1))) {
-      // A boolean mod: on, off (the reference), on, then its Turn off button.
-      enter(selector);
-      push(selector, 'click');
-      const off = push(selector, 'click');
-      push(selector, 'click');
-      push(quickDisable(selector.slice(1)), 'click', { expect: { posts: { same: off }, cmds: { same: off } } });
+      booleanMod(selector, legacy.steps);
     } else if ((selector === '#den_on' || selector === '#den') && !densityDone) {
       // Monster Density keeps its own switch; the list turns it off through it.
       densityDone = true;
@@ -121,13 +131,18 @@ export function derive(legacy, derivedFrom) {
       push(quickDisable('mod_skill_timer_style'), 'click', { expect: { posts: { same: off }, cmds: { same: off } } });
     }
   }
+  // The supplement's boolean mods: their own recording covers them, and their
+  // Turn off buttons are derived exactly as a legacy boolean's are.
+  for (const selector of supplement ? supplement.controls : []) {
+    if (BOOLEAN_MODS.includes(selector.slice(1))) booleanMod(selector, supplement.steps);
+  }
   // The theme sits in the status bar, on every tab. It is a panel setting:
   // saved, and never a command.
   controls.push('#theme');
   for (const { value } of THEMES) {
     push('#theme', 'select', { value, expect: { posts: { is: setPost({ key: 'theme', value }) }, cmds: { is: [] } } });
   }
-  return { derivedFrom, legacyRecordedAt: legacy.recordedAt, controls, steps };
+  return { derivedFrom, legacyRecordedAt: legacy.recordedAt, ...(supplement ? { supplementFrom } : {}), controls, steps };
 }
 
 export function serialise(derived) {
@@ -149,11 +164,12 @@ function parse(argv) {
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const args = parse(process.argv.slice(2));
   if (!args.from || !args.out) {
-    console.error('usage: oracle-derive.mjs --from <legacy oracle> --out <derived oracle>');
+    console.error('usage: oracle-derive.mjs --from <legacy oracle> --out <derived oracle> [--supplement <recording>]');
     process.exitCode = 2;
   } else {
     const legacy = JSON.parse(readFileSync(resolve(args.from), 'utf8'));
-    const derived = derive(legacy, derivedFromPath(args.from));
+    const supplement = args.supplement ? JSON.parse(readFileSync(resolve(args.supplement), 'utf8')) : null;
+    const derived = derive(legacy, derivedFromPath(args.from), supplement, args.supplement ? derivedFromPath(args.supplement) : null);
     writeFileSync(resolve(args.out), serialise(derived));
     const switches = derived.steps.filter((s) => s.control.startsWith('#sw_')).length;
     console.log(`oracle-derive: ${derived.steps.length} steps (${switches} switch, ` +
