@@ -17,9 +17,11 @@ Settings persist in %LOCALAPPDATA%/Hero_Siege/forgepact.json.
 # <version>` moves every site at once and `--check` fails if they disagree.
 __version__ = "1.4.5"
 
+import copy
 import hashlib
 import json
 import os
+import re
 import socket
 import struct
 import subprocess
@@ -273,7 +275,55 @@ DEFAULTS = {
         "buff": {str(i): True for i, *_ in SATANIC_BUFF_LIST},
         "debuff": {str(i): True for i, *_ in SATANIC_DEBUFF_LIST},
     },
+    # Slider on/off switches, keyed by SLIDER_SWITCH_IDS.  Only switches the
+    # player turned off are stored (`False`); a missing id means on, so every
+    # older saved file reads as all-on.  An off slider keeps its value; the
+    # backend acts as if it stood at its default (effective_cfg).
+    "switches": {},
+    # The panel's colour theme, painted as data-theme on the page's root.  A
+    # panel setting only: no command ever carries it.
+    "theme": "default",
 }
+
+# Every slider that has an on/off switch: "<section>.<key>" for the table rows,
+# the bare key for the four top-level sliders.  Monster Density is not here:
+# `density_on` has always been its switch.  `enemy_speed_ct` is a scope, not a
+# value, so it has no default to fall back to.
+SLIDER_SWITCH_IDS = tuple(
+    [f"stats.{k}" for k, *_ in STATS]
+    + [f"percent_stats.{k}" for k, *_ in PERCENT_STATS]
+    + [f"spawners.{k}" for k, *_ in SPAWNERS]
+    + [f"drops.{k}" for k, *_ in DROPS]
+    + [f"keys.{k}" for k, *_ in KEYS]
+    + ["rarity_rare", "rarity_ancient", "angelic_items", "enemy_speed"])
+
+THEME_NAME = re.compile(r"[a-z][a-z0-9-]{0,31}")
+
+
+def switch_target(switch_id: str):
+    """(section, key) a switch id names; section is None for a top-level slider."""
+    section, _, key = switch_id.rpartition(".")
+    return section or None, key
+
+
+def switch_on(cfg: dict, switch_id: str) -> bool:
+    return (cfg.get("switches") or {}).get(switch_id) is not False
+
+
+def effective_cfg(cfg: dict) -> dict:
+    """A copy of cfg as the game should see it: every slider whose switch is off
+    holds its DEFAULTS value.  cfg itself keeps the remembered values."""
+    eff = copy.deepcopy(cfg)
+    for switch_id in SLIDER_SWITCH_IDS:
+        if switch_on(cfg, switch_id):
+            continue
+        section, key = switch_target(switch_id)
+        if section:
+            eff.setdefault(section, {})[key] = DEFAULTS[section][key]
+        else:
+            eff[key] = DEFAULTS[key]
+    return eff
+
 
 _lock = threading.Lock()
 
@@ -730,6 +780,9 @@ def skill_timer_style_valid(value) -> bool:
 
 
 def build_cmds(cfg: dict) -> list:
+    # A slider whose switch is off stands at its default here, so startup,
+    # auto-apply and the launch watcher all leave it at vanilla.
+    cfg = effective_cfg(cfg)
     d = min(5.0, float(cfg.get("density", 1))) if cfg.get("density_on") else 1.0
     # A new game process already starts at vanilla values.  Sending x1/Off
     # commands was not harmless: x1 stat commands installed pass-through hooks
@@ -1815,6 +1868,17 @@ class H(BaseHTTPRequestHandler):
                         return
                     ceiling = next((mx for k, _i, _l, mx in SPAWNERS if k == key), 100)
                     cfg[sec][key] = max(1, min(ceiling, int(val)))
+                elif sec == "switches":
+                    if not isinstance(key, str) or key not in SLIDER_SWITCH_IDS:
+                        self._json({"err": "unknown switch"}, 400); return
+                    # A fresh dict: load_cfg's copy of DEFAULTS is shallow, so
+                    # editing cfg["switches"] in place could edit DEFAULTS.
+                    switches = dict(cfg.get("switches") or {})
+                    if bool(val):
+                        switches.pop(key, None)   # on is the absence of an entry
+                    else:
+                        switches[key] = False
+                    cfg["switches"] = switches
                 elif sec == "satanic_mods":
                     polarity = body.get("polarity")
                     if polarity not in ("buff", "debuff"):
@@ -1875,20 +1939,38 @@ class H(BaseHTTPRequestHandler):
                         self._json({"err": "invalid skilltimer style"}, 400)
                         return
                     cfg[key] = style
+                elif key == "theme":
+                    if not isinstance(val, str) or not THEME_NAME.fullmatch(val):
+                        self._json({"err": "invalid theme"}, 400)
+                        return
+                    cfg["theme"] = val
                 save_cfg(cfg)
                 live = ""
-                if game_running(cfg):
+                # A theme is a panel setting: nothing to tell the plugin.
+                if game_running(cfg) and not (sec is None and key == "theme"):
+                    # Sliders send what the game should see: a slider whose
+                    # switch is off sends its default's command, as density
+                    # does while density_on is off.
+                    eff = effective_cfg(cfg)
+                    sid = key if sec == "switches" else (f"{sec}.{key}" if sec else key)
+                    if sec == "switches" or (sid in SLIDER_SWITCH_IDS and not switch_on(cfg, sid)):
+                        # A switch takes its slider's own branch below with the
+                        # effective value, so off equals "set to default" and on
+                        # equals "set to the remembered value"; a slider moved
+                        # while off sends its default the same way.
+                        sec, key = switch_target(sid)
+                        val = eff[sec][key] if sec else eff[key]
                     if sec == "keys":
                         # A live change must also restore families moved back to
                         # x1; startup's sparse command list deliberately cannot.
-                        send_cmds(build_key_cmds(cfg.get("keys", {}), include_resets=True), cfg)
+                        send_cmds(build_key_cmds(eff.get("keys", {}), include_resets=True), cfg)
                     elif sec == "drops":
-                        send_cmds([drop_command(key, cfg[sec][key])], cfg)
+                        send_cmds([drop_command(key, eff[sec][key])], cfg)
                     elif sec == "stats":
-                        send_cmds([f"stat {key} {float(cfg['stats'][key]):g}"], cfg)
+                        send_cmds([f"stat {key} {float(eff['stats'][key]):g}"], cfg)
                     elif sec == "percent_stats":
                         mode = next((md for k, _l, _mx, _st, md in PERCENT_STATS if k == key), "multiply")
-                        bonus = float(cfg["percent_stats"][key])
+                        bonus = float(eff["percent_stats"][key])
                         command = f"statadd {key} {bonus:g}" if mode == "add" else f"stat {key} {1.0 + bonus / 100.0:g}"
                         send_cmds([command], cfg)
                     elif sec == "spawners":
@@ -1949,12 +2031,12 @@ class H(BaseHTTPRequestHandler):
                         send_cmds([f"skilltimer {cfg['mod_skill_timer_style']}"], cfg)
                     elif key in ("rarity_rare", "rarity_ancient"):
                         # Always explicit: "rarity off" returns a live hook to vanilla.
-                        send_cmds([rarity_cmd(cfg)], cfg)
+                        send_cmds([rarity_cmd(eff)], cfg)
                     elif key == "angelic_items":
-                        send_cmds([angelic_cmd(cfg)], cfg)
+                        send_cmds([angelic_cmd(eff)], cfg)
                     elif key in ("enemy_speed", "enemy_speed_ct"):
                         # Always explicit: "enemyspeed 1 ct" turns a live hook back to vanilla.
-                        send_cmds([enemy_speed_cmd(cfg)], cfg)
+                        send_cmds([enemy_speed_cmd(eff)], cfg)
                     live = " (commands sent to the plugin)"
                     LAST["applied"] = time.strftime("%H:%M:%S")
                 self._json({"ok": f"saved{live}", "cfg": cfg})
