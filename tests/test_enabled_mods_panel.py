@@ -92,8 +92,11 @@ class EnabledModsPanelTests(unittest.TestCase):
                 self.assertNotIn("localStorage", text)
 
     def test_api_set_call_sites_are_the_old_ones_plus_switch_and_theme(self):
-        self.assertEqual(self.panel.count("j('/api/set'"), 25 + 2)
-        self.assertEqual(self.page.count("j('/api/set'"), 25 + 2)
+        # The old ones: the legacy page's 25, plus the 2 main's legacy page
+        # added for Gems of Incarnation (its switches' handler and the filter's
+        # save) before it was ported here.
+        self.assertEqual(self.panel.count("j('/api/set'"), 27 + 2)
+        self.assertEqual(self.page.count("j('/api/set'"), 27 + 2)
         self.assertIn("section:'switches',key:box.dataset.switch,value:box.checked", self.panel)
         self.assertIn("{key:'theme',value:e.target.value}", self.panel)
         # One handler for every switch, bound by the data attribute.
@@ -187,6 +190,29 @@ class EnabledModsPanelTests(unittest.TestCase):
         self.assertEqual(result["ids"], list(forgepact.SLIDER_SWITCH_IDS))
         self.assertEqual(result["controls"], [])
         self.assertEqual(forgepact.build_cmds(json.loads(cfg)), [])
+
+    def test_gem_switches_are_entries_only_while_on(self):
+        # Both Gems of Incarnation switches are boolean mods, off by default,
+        # so a fresh install lists nothing; turned on, each is its own entry.
+        # The mod filter is an option of the Mythic entry, never one itself.
+        import forgepact  # noqa: E402
+        base = {k: v for k, v in forgepact.DEFAULTS.items() if k != "game_exe"}
+        cases = {
+            "defaults": base,
+            "both_on": {**base, "mod_gem_mythic": True, "mod_gem_maxroll": True},
+            "filter_only": {**base, "gem_filter": [68, 284]},
+        }
+        driver = (f"const cases={json.dumps(cases)};"
+                  "console.log(JSON.stringify(Object.fromEntries(Object.entries(cases)"
+                  ".map(([k,c])=>[k,enabledControls(c)]))));")
+        result = run_node(js_for_node(panel_file("enabled-mods.js")), driver)
+        self.assertEqual(result["defaults"], [])
+        self.assertEqual(result["both_on"], ["mod_gem_mythic", "mod_gem_maxroll"])
+        self.assertEqual(result["filter_only"], [])
+        # The backend agrees: the defaults send no gem command, both on send two.
+        self.assertEqual(forgepact.build_cmds(cases["defaults"]), [])
+        self.assertEqual([c for c in forgepact.build_cmds(cases["both_on"]) if c.startswith("gem")],
+                         ["gemmythic 1", "gemmaxroll 1"])
 
 
 if __name__ == "__main__":

@@ -29,11 +29,23 @@ test('an empty or missing config is not an error', () => {
 });
 
 test('every boolean mod is an entry when true, keyed by its own checkbox', () => {
-  assert.equal(BOOLEAN_MODS.length, 12);
+  assert.equal(BOOLEAN_MODS.length, 14);
   for (const key of BOOLEAN_MODS) {
     assert.deepEqual(enabledControls(cfg({ [key]: true })), [key], key);
     assert.deepEqual(enabledControls(cfg({ [key]: false })), [], key);
   }
+});
+
+test('the two Gems of Incarnation switches are entries; their mod filter never is', () => {
+  assert.deepEqual(BOOLEAN_MODS.slice(-2), ['mod_gem_mythic', 'mod_gem_maxroll']);
+  assert.equal(DEFAULTS.mod_gem_mythic, false);
+  assert.equal(DEFAULTS.mod_gem_maxroll, false);
+  assert.equal(DEFAULTS.gem_filter, 'all');
+  assert.deepEqual(enabledControls(cfg({ mod_gem_mythic: true, mod_gem_maxroll: true })), ['mod_gem_mythic', 'mod_gem_maxroll']);
+  // The filter is an option of the Mythic entry: narrowed, with both off, it
+  // is still nothing on; narrowed with Mythic on, still one entry.
+  assert.deepEqual(enabledControls(cfg({ gem_filter: [68, 284] })), []);
+  assert.deepEqual(enabledControls(cfg({ gem_filter: [68, 284], mod_gem_mythic: true })), ['mod_gem_mythic']);
 });
 
 test('the skill timer is an entry for any style but off', () => {

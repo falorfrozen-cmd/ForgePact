@@ -30,7 +30,10 @@ ROOT = Path(__file__).resolve().parents[1]
 MAIN = (ROOT / 'plugin/ModuleMain.cpp').read_text(encoding='utf-8')
 HEADER = (ROOT / 'plugin/include/ForgePact/IncarnationGemsMod.hpp').read_text(encoding='utf-8')
 sys.path.insert(0, str(ROOT / 'src'))
+sys.path.insert(0, str(ROOT / 'tests'))
 import forgepact  # noqa: E402
+# The page's facts are read from panel/src (the Svelte panel), not forgepact.py.
+from panel_source import panel_source  # noqa: E402
 
 
 def between(text, start, end):
@@ -39,7 +42,7 @@ def between(text, start, end):
 
 
 DOC = (ROOT / 'docs/incarnation-gems-research.md').read_text(encoding='utf-8')
-PANEL = (ROOT / 'src/forgepact.py').read_text(encoding='utf-8-sig')
+PANEL = panel_source()
 
 
 def doc_affixes():
@@ -185,7 +188,7 @@ class PanelTests(unittest.TestCase):
         self.assertRegex(source, r'"mod_craft_mats", "mod_gem_mythic", "mod_gem_maxroll"\):')
 
     def test_switches_on_the_mods_tab(self):
-        source = (ROOT / 'src/forgepact.py').read_text(encoding='utf-8-sig')
+        source = panel_source()
         for element in ('id="mod_gem_mythic"', 'id="mod_gem_maxroll"', 'id="mgmval"', 'id="mgrval"',
                         "mod_gem_mythic:'mod_gem_mythic'", "mgmval:'mod_gem_mythic'", "mgrval:'mod_gem_maxroll'"):
             self.assertEqual(1, source.count(element), element)
