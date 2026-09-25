@@ -33,7 +33,7 @@ sys.path.insert(0, str(ROOT / 'src'))
 sys.path.insert(0, str(ROOT / 'tests'))
 import forgepact  # noqa: E402
 # The page's facts are read from panel/src (the Svelte panel), not forgepact.py.
-from panel_source import panel_source  # noqa: E402
+from panel_source import panel_file, panel_source  # noqa: E402
 
 
 def between(text, start, end):
@@ -187,11 +187,16 @@ class PanelTests(unittest.TestCase):
         self.assertIn('''send_cmds([f"gemmaxroll {1 if cfg['mod_gem_maxroll'] else 0}"], cfg)''', source)
         self.assertRegex(source, r'"mod_craft_mats", "mod_gem_mythic", "mod_gem_maxroll"\):')
 
-    def test_switches_on_the_mods_tab(self):
+    def test_switches_on_the_loot_tab(self):
         source = panel_source()
         for element in ('id="mod_gem_mythic"', 'id="mod_gem_maxroll"', 'id="mgmval"', 'id="mgrval"',
                         "mod_gem_mythic:'mod_gem_mythic'", "mgmval:'mod_gem_mythic'", "mgrval:'mod_gem_maxroll'"):
             self.assertEqual(1, source.count(element), element)
+        # They live on the Loot tab now, and nowhere on the Mods tab.
+        loot, mods = panel_file('tabs/Loot.svelte'), panel_file('tabs/Mods.svelte')
+        for element in ('id="mod_gem_mythic"', 'id="mod_gem_maxroll"', 'id="mgmval"', 'id="mgrval"'):
+            self.assertEqual(1, loot.count(element), element)
+            self.assertNotIn(element, mods)
         self.assertIn('Mythic Gems of Incarnation', source)
         self.assertIn('Max-roll Gems of Incarnation', source)
         # The page draws both switches off until the saved config says true:
@@ -332,15 +337,22 @@ class GemFilterPanelTests(unittest.TestCase):
         for element in ('id="gemfilter_row"', 'id="gemfilter_toggle"', 'id="gemfilter_summary"',
                         'id="gemfilter_panel"', 'Filter&hellip;', "key:'gem_filter'"):
             self.assertEqual(1, PANEL.count(element), element)
-        # The row sits right under the Max-roll switch, and the Mods tab keeps
-        # the switches, the row and its list together as one card (its columns
-        # move rows, never a bare list).
+        # The row sits right under the Max-roll switch, and the Loot tab's
+        # #gemsCard holds the switches, the row and its list together as one
+        # unit, in that order, closing right after the list. Nothing regroups
+        # them at run time: preparePanelUI (which grouped them on Mods) no
+        # longer touches them.
         self.assertLess(PANEL.index('id="mod_gem_maxroll"'), PANEL.index('id="gemfilter_row"'))
         self.assertLess(PANEL.index('id="gemfilter_row"'), PANEL.index('id="gemfilter_panel"'))
         self.assertEqual(1, PANEL.count('id="mod_gem_maxroll_row"'))
-        self.assertIn("gemGroup.append(gemParent,document.getElementById('mod_gem_maxroll_row'),"
-                      "document.getElementById('gemfilter_row'),document.getElementById('gemfilter_panel'));", PANEL)
-        self.assertIn(".feature-with-child>#gemfilter_row{", PANEL)
+        loot = panel_file('tabs/Loot.svelte')
+        card = loot[loot.index('id="gemsCard"'):]
+        card = card[:card.index('\n</div>') + len('\n</div>')]
+        parts = [card.index(p) for p in ('id="mod_gem_mythic"', 'id="mod_gem_maxroll_row"',
+                                         'id="gemfilter_row"', 'id="gemfilter_panel"')]
+        self.assertEqual(sorted(parts), parts)
+        self.assertTrue(card.endswith('<div id="gemfilter_panel" style="display:none"></div>\n</div>'), card[-120:])
+        self.assertNotIn('mod_gem_', between(panel_file('panel.js'), 'function preparePanelUI(){', '\nfunction '))
         # The page draws from /api/state, never a list of its own.
         self.assertIn('ST.gemAffixes', PANEL)
         self.assertIn('ST.gemCategories', PANEL)
