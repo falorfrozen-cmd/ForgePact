@@ -46,6 +46,7 @@ none of these diagnostic hooks or the recorder. See
 | **Satanic Zone Mods** | Pick which of the game's 25 positive / 26 negative World Section mods can roll onto a Satanic Zone; everything is on by default |
 | **Auto-prospect** | Off by default. Every item you drag or click into the Prospect Cube's grid is prospected at once by the game's own Prospect, so the 9×6 grid stops being the limit on a batch. Before each prospect the previous prospect's batch of materials goes to your materials tab (a sub-switch, on by default), so only the newest batch stays in the grid; the item you put in, ore included, is prospected, not moved (one exception: a batch material swapped out and dropped straight back in still goes to the tab); anything left in it when the game saves is lost ([details](#auto-prospect)) |
 | **Craft from the stash** | Off by default. At the game's own Crafting Cube, a recipe also counts the materials and socketables in your shared stash's Materials and Socketable tabs, so a recipe the stash covers is no longer greyed out; the game greys a recipe exactly as before, on the bag and those two tabs together. When you craft, only what your bag is short of leaves the stash - onto your bag's stack of it, into a new bag stack, or into the Cube's own grid when the bag has no room - and the game uses it up as it would from the bag; the stash is saved right after. Other stash tabs are never touched, and a move that cannot be confirmed refuses the craft instead ([details](#craft-from-the-stash)) |
+| **Gems of Incarnation** | On by default. Every Gem of Incarnation that drops is Mythic, with 4 or 5 mods, rolled by the game itself - and with a filter, with the mods you ticked; every mod on every Gem of Incarnation shows the highest value its best tier can roll. Two switches and a mod filter, nothing written to your save ([details](#gems-of-incarnation)) |
 | **Remove Owned Relics** | Relics already at maximum level (10 out of 10) in your equipped slots, backpack or inventory stop dropping again, so a relic drop is one you can still use |
 | **Auto-apply** | Saved settings are re-sent every time the game starts |
 
@@ -536,6 +537,46 @@ How the game counts, consumes and saves was measured over several research
 rounds, in
 [`docs/crafting-materials-research.md`](docs/crafting-materials-research.md);
 its `## Ship design` describes this mod and what has not been observed live.
+
+## Gems of Incarnation
+
+Mods tab → **Mythic Gems of Incarnation** and **Max-roll Gems of Incarnation**,
+and under them **Filter...**, the mod filter. Both switches on by default for
+now; the filter starts with every mod.
+
+A Gem of Incarnation goes into the Incarnation tree's sockets. The game rolls
+most of them Superior with one or two mods; 1 in 50 comes out Mythic, with 4 or
+5.
+
+- **Mythic Gems of Incarnation.** Every gem that drops is Mythic. The game
+  still rolls it: ForgePact hands it a seed the game has already rolled Mythic
+  for the same kind of drop, so the drop is an ordinary Mythic gem. Gems you
+  own keep their seed. The seeds are found by having the game roll sample gems,
+  once per game version, a few milliseconds per frame (most of it at the main
+  menu, under a minute); they are kept in
+  `%LOCALAPPDATA%\Hero_Siege\forgepact_gem_tables.json`. A gem that drops
+  before the seeds for its kind of drop are ready keeps the game's roll, and
+  the log says so once.
+- **Filter...** lists all 36 mods a Gem of Incarnation can roll, in six
+  groups: Attack, Skills, Elemental skills, Defense, Life & mana, Loot. Tick
+  the ones you want and press **Save filter**: every Mythic gem that drops then
+  carries as many of the ticked mods as any Mythic gem the game rolled for
+  that drop does - tick Increased Attack Speed and Increased Magic Find, and
+  the gems have both. Tick many, and each gem has as many of them as fit in its
+  4-5 mods. The rarest mod, +All Skills, is on under 1 in 100 Mythic gems, so
+  gems filtered for it often repeat the same few rolls. Everything ticked means
+  no filter. The filter works with Mythic Gems of Incarnation on.
+- **Max-roll Gems of Incarnation.** Each mod on a gem has a tier, and the tier
+  sets its range. Every mod on every gem - new, owned, in the Vault - shows its
+  best tier's top value, and its range reads as that tier's (in the ALT view
+  too). A skill grant keeps its skill. Nothing is saved: switch it off, and a
+  gem shows its own rolls again the next time the game loads it.
+- **The loot filter** does not look at Gems of Incarnation at all (the game
+  checks only the Uncut Jewels among socketables), so it cannot hide them. With
+  both switches on there is nothing left worth hiding.
+
+How the game rolls these gems, measured on 14,521 of them, and what the mod
+changes: [`docs/incarnation-gems-research.md`](docs/incarnation-gems-research.md).
 
 ## Menu layout (for tools that drive the menus)
 

@@ -459,6 +459,7 @@ static bool PopulationCapacityAvailable() { return ForgePact::ProtectedPool::Run
 #include <ForgePact/ProspectWindowMod.hpp>
 #include <ForgePact/AutoProspectMod.hpp>
 #include <ForgePact/CraftMatsMod.hpp>
+#include <ForgePact/IncarnationGemsMod.hpp>
 #include <ForgePact/PetQuestCollectorMod.hpp>
 #include <ForgePact/DensityManager.hpp>
 #include <ForgePact/DropManager.hpp>
@@ -4412,6 +4413,378 @@ static RValue TruthBuildItem(const ForgePact::ItemTruth::EvalItem& entry)
     RValue item;
     const AurieStatus st = g_Yytk->CallGameScriptEx(item, "gml_Script_InitItemFromJson", g, g, { parsed, RValue(entry.key) });
     return AurieSuccess(st) && item.m_Kind == VALUE_OBJECT ? item : RValue();
+}
+
+// ===== Gems of Incarnation: Mythic drops, a mod filter, best-tier rolls ========
+// The decisions live in ForgePact::IncarnationGems (IncarnationGemsMod.hpp, tested
+// by tests/incarnation_gems_harness.cpp); docs/incarnation-gems-research.md has
+// the facts. This adapter reads and writes the item structs:
+//   - DropGems (drop type 6) is the only thing it hooks. While it runs, a
+//     CreateItemNew whose instance is a Gem of Incarnation is a fresh drop:
+//     LootGroundCreate has just written the drop's random seed into the
+//     definition, and it is swapped for one the game rolled Mythic at the same
+//     `n` - with a mod filter (`gemfilter`), one carrying the most ticked mods.
+//     Loading, the Item Editor's checks and every other build are outside that
+//     scope, so a gem you own keeps its seed.
+//   - Every finished gem, however it was built, gets each affix at its best
+//     tier's top (the switch is a view: off, the next build shows its own rolls).
+//   - The Mythic seeds and the best ranges are learned by having the game build
+//     candidate gems a little each frame, once per game build, and kept in
+//     %LOCALAPPDATA%\Hero_Siege\forgepact_gem_tables.json.
+static ForgePact::IncarnationGems::State g_Gems;
+static ForgePact::IncarnationGems::Tables g_GemTables;
+static bool g_GemTablesLoaded = false;
+static std::string g_GemTablesError;
+static PFUNC_YYGMLScript g_Orig_DropGems = nullptr;
+static bool g_GemDropHookTried = false, g_GemDropHookNative = false;
+static bool g_GemDropPending = false;   // armed; attaches once a player exists (see GemsTick)
+static bool g_GemInPlay = false;
+static thread_local int g_GemDropDepth = 0;
+static thread_local bool g_GemTableBuilding = false;
+static uint64_t g_GemRoll = 0x5DEECE66Dull;
+static uint64_t g_GemDropsInScope = 0;   // CreateItemNew calls seen inside DropGems
+#ifndef FORGEPACT_RELEASE
+static uint64_t g_GemTableBuilds = 0;
+static double g_GemTableSeconds = 0;   // time spent building candidates
+// `gems convert 1`: every socketable a DropGems call makes becomes a Gem of
+// Incarnation before CreateItemNew reads its definition, so a real drop can be
+// tested by killing a few monsters anywhere. Research build only.
+static bool g_GemConvert = false;
+static uint64_t g_GemConverted = 0;
+#endif
+
+static std::filesystem::path GemTablesPath()
+{
+    const std::filesystem::path truth = ForgePact::ItemTruth::Root();   // ...\Hero_Siege\itemtruth
+    return truth.empty() ? std::filesystem::path() : truth.parent_path() / L"forgepact_gem_tables.json";
+}
+
+static void GemTablesLoad()
+{
+    if (g_GemTablesLoaded) return;
+    g_GemTablesLoaded = true;
+    const std::string build = ForgePact::ItemTruth::BuildIdOfProcess();
+    g_GemTables = ForgePact::IncarnationGems::Tables{};
+    g_GemTables.build = build;
+    try {
+        const std::filesystem::path path = GemTablesPath();
+        std::error_code ec;
+        if (!path.empty() && std::filesystem::is_regular_file(path, ec) && std::filesystem::file_size(path, ec) < 1024 * 1024) {
+            std::ifstream in(path, std::ios::binary);
+            const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            g_GemTables = ForgePact::IncarnationGems::Parse(text, build);
+        }
+    } catch (...) { g_GemTables = ForgePact::IncarnationGems::Tables{}; g_GemTables.build = build; }
+    // The drops seen most (measured on real gear: n 3 and 4, and none).
+    for (const char* key : { "4", "3", "none" }) g_GemTables.Plan(key);
+    g_GemRoll ^= static_cast<uint64_t>(GetTickCount64()) * 0x9E3779B97F4A7C15ull;
+    size_t seeds = 0;
+    for (const auto& [key, row] : g_GemTables.rows) seeds += row.seeds.size();
+    Out("incarnation gems: tables for build " + build + " - " + std::to_string(seeds) + " Mythic seeds, "
+        + std::to_string(g_GemTables.best.size()) + " best ranges");
+}
+
+static void GemTablesSave()
+{
+    if (!g_GemTables.dirty) return;
+    try {
+        const std::filesystem::path path = GemTablesPath();
+        if (path.empty()) return;
+        std::filesystem::path tmp = path;
+        tmp += L".tmp";
+        { std::ofstream out(tmp, std::ios::binary | std::ios::trunc); out << ForgePact::IncarnationGems::Serialize(g_GemTables); }
+        std::error_code ec;
+        std::filesystem::rename(tmp, path, ec);
+        if (ec) { g_GemTablesError = "could not save " + path.string(); return; }
+        g_GemTables.dirty = false;
+    } catch (...) { g_GemTablesError = "could not save the gem tables"; }
+}
+
+static uint64_t GemNextRoll()
+{
+    g_GemRoll = ForgePact::IncarnationGems::Mix(g_GemRoll);
+    return g_GemRoll;
+}
+
+static RValue GemField(const RValue& structure, const char* name)
+{
+    if (structure.m_Kind != VALUE_OBJECT) return RValue();
+    if (!g_Yytk->CallBuiltin("variable_struct_exists", { structure, RValue(name) }).ToBoolean()) return RValue();
+    return g_Yytk->CallBuiltin("variable_struct_get", { structure, RValue(name) });
+}
+
+// An item struct's type and definition fields; false when it is not item-shaped.
+static bool GemIdentity(const RValue& item, RValue& def, double& type, double& base, double& c)
+{
+    if (item.m_Kind != VALUE_OBJECT) return false;
+    def = GemField(item, "itemDefinitionStruct");
+    if (def.m_Kind != VALUE_OBJECT || !TryStructNumber(item, "itemType", type) || !TryStructNumber(def, "b", base))
+        return false;
+    c = 0;
+    if (!TryStructNumber(def, "c", c) && g_Yytk->CallBuiltin("variable_struct_exists", { def, RValue("c") }).ToBoolean())
+        return false;   // present but not a number
+    return true;
+}
+
+// The affix slots "10".."14" of a stat struct, with each rolled value.
+static std::vector<ForgePact::IncarnationGems::Affix> GemAffixes(const RValue& stats, std::vector<std::string>& slots)
+{
+    std::vector<ForgePact::IncarnationGems::Affix> out;
+    for (const char* slot : ForgePact::IncarnationGems::kAffixSlots) {
+        const RValue arr = GemField(stats, slot);
+        if (arr.m_Kind != VALUE_ARRAY || g_Yytk->CallBuiltin("array_length", { arr }).ToDouble() != 4) continue;
+        double v[4] = {};
+        bool numbers = true;
+        for (int i = 0; i < 4 && numbers; ++i) {
+            const RValue x = g_Yytk->CallBuiltin("array_get", { arr, RValue((double)i) });
+            if (x.m_Kind != VALUE_REAL && x.m_Kind != VALUE_INT32 && x.m_Kind != VALUE_INT64) numbers = false;
+            else v[i] = x.ToDouble();
+        }
+        if (!numbers || v[0] != std::floor(v[0]) || v[0] < 0) continue;
+        ForgePact::IncarnationGems::Affix a;
+        a.stat = (int)v[0]; a.min = v[1]; a.max = v[2]; a.tier = v[3];
+        TryStructNumber(stats, std::to_string(a.stat).c_str(), a.value);
+        out.push_back(a);
+        slots.push_back(slot);
+    }
+    return out;
+}
+
+// Before CreateItemNew runs: a fresh gem drop takes a Mythic seed for its `n`.
+static void GemsBeforeCreate(int argc, RValue** A)
+{
+    if (!g_Gems.mythic || g_GemDropDepth <= 0 || g_GemTableBuilding || argc < 1 || !A || !A[0]) return;
+    try {
+        ++g_GemDropsInScope;
+        RValue def; double type = -1, base = -1, c = -1;
+        if (!GemIdentity(*A[0], def, type, base, c)) return;
+#ifndef FORGEPACT_RELEASE
+        if (g_GemConvert && type == ForgePact::IncarnationGems::kSocketableType && !ForgePact::IncarnationGems::IsGem(type, base, c)) {
+            const double was = base;
+            g_Yytk->CallBuiltin("variable_struct_set", { def, RValue("b"), RValue((double)ForgePact::IncarnationGems::kGemBase) });
+            g_Yytk->CallBuiltin("variable_struct_set", { def, RValue("c"), RValue(0.0) });
+            g_Yytk->CallBuiltin("variable_struct_set", { def, RValue("j"), RValue(0.0) });
+            base = ForgePact::IncarnationGems::kGemBase;
+            c = 0;
+            if (++g_GemConverted == 1) Out("gems convert: a dropped socketable (b=" + ForgePact::ItemTruth::WholeNumberText(was) + ") becomes a Gem of Incarnation");
+        }
+#endif
+        if (!ForgePact::IncarnationGems::IsGem(type, base, c)) return;
+        std::optional<double> n;
+        double nValue = 0;
+        if (TryStructNumber(def, "n", nValue)) n = nValue;
+        const std::string key = ForgePact::IncarnationGems::NKey(n);
+        bool missed = false;
+        const auto seed = ForgePact::IncarnationGems::DropSeed(g_Gems, g_GemTables, true, type, base, c, key, GemNextRoll(), &missed);
+        if (!seed) {
+            g_GemTables.Plan(key);   // the next drop at this n can have one
+            ++g_Gems.vanillaDrops;
+            if (!g_Gems.loggedVanilla) { g_Gems.loggedVanilla = true; Out("incarnation gems: a gem dropped at n=" + key + " before its Mythic seeds were ready - it keeps the game's roll"); }
+            return;
+        }
+        if (missed) {
+            ++g_Gems.filterMisses;
+            if (!g_Gems.loggedFilterMiss) {
+                g_Gems.loggedFilterMiss = true;
+                Out("incarnation gems: no Mythic gem at n=" + key + " carries a ticked mod yet - this one takes any Mythic roll");
+            }
+        }
+        double before = 0;
+        TryStructNumber(def, "a", before);
+        g_Yytk->CallBuiltin("variable_struct_set", { def, RValue("a"), RValue((double)*seed) });
+        ++g_Gems.swaps;
+        if (!g_Gems.loggedSwap) {
+            g_Gems.loggedSwap = true;
+            Out("incarnation gems: first Mythic drop - n=" + key + " seed " + ForgePact::ItemTruth::WholeNumberText(before)
+                + " -> " + std::to_string(*seed));
+        }
+    } catch (...) {}
+}
+
+// After CreateItemNew returns: every affix of a gem at its best tier's top.
+static void GemsAfterCreate(RValue& item)
+{
+    if (!g_Gems.maxRoll || g_GemTableBuilding || item.m_Kind != VALUE_OBJECT) return;
+    try {
+        RValue def; double type = -1, base = -1, c = -1;
+        if (!GemIdentity(item, def, type, base, c) || !ForgePact::IncarnationGems::IsGem(type, base, c)) return;
+        const RValue stats = GemField(item, "itemStatStruct");
+        if (stats.m_Kind != VALUE_OBJECT) return;
+        std::vector<std::string> slots;
+        std::vector<ForgePact::IncarnationGems::Affix> affixes = GemAffixes(stats, slots);
+        const std::vector<ForgePact::IncarnationGems::Affix> before = affixes;
+        if (!ForgePact::IncarnationGems::Dress(g_Gems, type, base, c, affixes, g_GemTables)) return;
+        for (size_t i = 0; i < affixes.size(); ++i) {
+            const auto& a = affixes[i];
+            const auto& was = before[i];
+            if (a.min == was.min && a.max == was.max && a.tier == was.tier && a.value == was.value) continue;
+            const RValue arr = GemField(stats, slots[i].c_str());
+            g_Yytk->CallBuiltin("array_set", { arr, RValue(1.0), RValue(a.min) });
+            g_Yytk->CallBuiltin("array_set", { arr, RValue(2.0), RValue(a.max) });
+            g_Yytk->CallBuiltin("array_set", { arr, RValue(3.0), RValue(a.tier) });
+            g_Yytk->CallBuiltin("variable_struct_set", { stats, RValue(std::to_string(a.stat)), RValue(a.value) });
+        }
+        RefreshItemHash(item);
+        ++g_Gems.dressed;
+        if (!g_Gems.loggedDress) { g_Gems.loggedDress = true; Out("incarnation gems: first gem at its best rolls (" + std::to_string(affixes.size()) + " affixes)"); }
+    } catch (...) {}
+}
+
+static RValue& Hook_DropGems(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    if (!g_Orig_DropGems) return R;
+    struct Scope { Scope() { ++g_GemDropDepth; } ~Scope() { --g_GemDropDepth; } } scope;
+    return g_Orig_DropGems(S, O, R, argc, A);
+}
+
+// The Mythic switch means nothing unless DropGems is detoured natively: the
+// game's drop code calls it directly, which a table-only hook never sees.
+static bool GemsInstallDropHook()
+{
+    if (g_GemDropHookTried) return g_GemDropHookNative;
+    g_GemDropHookTried = true;
+    HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_DropGems), "fp_gem_drop",
+                  (PVOID)Hook_DropGems, &g_Orig_DropGems, &g_GemDropHookNative);
+    if (!g_GemDropHookNative) Out("incarnation gems: the gem drop could not be hooked - Mythic drops stay off");
+    return g_GemDropHookNative;
+}
+
+// A little of the table work each frame: the game builds one candidate gem per
+// step, out of every drop and dress scope, and the tables learn what it rolled.
+static constexpr double kGemBuildBudgetMenu = 0.004, kGemBuildBudgetPlay = 0.001;
+static void GemsTick(uint32_t frame)
+{
+    if (!g_Gems.mythic && !g_Gems.maxRoll) return;
+    GemTablesLoad();
+    if (frame % 600 == 0) GemTablesSave();
+    if (frame % 60 == 0) { RValue player; g_GemInPlay = HhResolveLocalPlayer(player); }
+    // Like the relic filter's DropRelic hook: a drop hook installed during
+    // character select stalls the runner, so it waits for a player.
+    if (g_Gems.mythic && g_GemDropPending && g_GemInPlay) {
+        g_GemDropPending = false;
+        if (!GemsInstallDropHook()) g_Gems.mythic = false;
+    }
+    std::string key = g_GemTables.NextWork();
+    if (key.empty()) { if (frame % 60 == 0) GemTablesSave(); return; }
+    const double budget = g_GemInPlay ? kGemBuildBudgetPlay : kGemBuildBudgetMenu;
+    const auto start = std::chrono::steady_clock::now();
+    while (!key.empty()) {
+        const uint32_t seed = g_GemTables.NextCandidate(key);
+        ForgePact::ItemTruth::EvalItem entry;
+        entry.key = "0-0-900000000000-15";
+        entry.json = "{\"a\":" + std::to_string(seed) + ",\"b\":136,\"c\":0,\"j\":0,\"o\":1"
+                   + (key == "none" ? std::string() : ",\"n\":" + key) + "}";
+        double rarity = -1;
+        std::vector<ForgePact::IncarnationGems::Affix> affixes;
+        {
+            struct Building { Building() { g_GemTableBuilding = true; } ~Building() { g_GemTableBuilding = false; } } building;
+            try {
+                const RValue item = TruthBuildItem(entry);
+                const RValue info = GemField(item, "itemInfoStruct");
+                TryStructNumber(info, "27", rarity);
+                std::vector<std::string> slots;
+                affixes = GemAffixes(GemField(item, "itemStatStruct"), slots);
+            } catch (...) { rarity = -1; affixes.clear(); }
+        }
+        g_GemTables.Learn(key, seed, rarity, affixes);
+#ifndef FORGEPACT_RELEASE
+        ++g_GemTableBuilds;
+#endif
+        if (g_GemTables.Complete(key)) {
+            Out("incarnation gems: Mythic seeds ready for n=" + key + " (" + std::to_string(g_GemTables.rows[key].tried) + " gems built)");
+            GemTablesSave();
+        }
+        key = g_GemTables.NextWork();
+        if (std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() >= budget) break;
+    }
+#ifndef FORGEPACT_RELEASE
+    g_GemTableSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+#endif
+}
+
+// `gemmythic 0|1` and `gemmaxroll 0|1` (the panel's two switches) and
+// `gemfilter all|<stat,...>` (its mod filter); in the research build also
+// `gems stat`, `gems save`, `gems reset`, `gems drop <n>` and `gems convert 1|0`.
+static void GemsCommand(const std::string& verb, const std::string& rest)
+{
+    const std::string arg = Lower(rest);
+    if (verb == "gemfilter") {
+        const auto filter = ForgePact::IncarnationGems::ParseFilter(arg);
+        if (!filter) { Out("gemfilter: use all, or stat ids separated by commas"); return; }
+        g_Gems.filter = *filter;
+        g_Gems.loggedFilterMiss = false;
+        Out("gemfilter: " + (filter->empty() ? std::string("every mod") : std::to_string(filter->size()) + " mods"));
+        return;
+    }
+    if (verb == "gemmythic" || verb == "gemmaxroll") {
+        if (arg != "0" && arg != "1") { Out(verb + ": use 1 or 0"); return; }
+        const bool on = arg == "1";
+        if (verb == "gemmythic") {
+            if (on && g_GemDropHookTried && !g_GemDropHookNative) {
+                Out("gemmythic: unavailable - the gem drop could not be hooked this session");
+                g_Gems.mythic = false;
+                return;
+            }
+            g_Gems.mythic = on;
+            g_GemDropPending = on && !g_GemDropHookNative;
+        } else {
+            g_Gems.maxRoll = on;
+        }
+        if (on) GemTablesLoad();
+        Out(verb + ": " + (on ? "on" : "off"));
+        return;
+    }
+#ifndef FORGEPACT_RELEASE
+    if (arg == "stat" || arg.empty()) {
+        std::string rows;
+        for (const auto& [key, row] : g_GemTables.rows)
+            rows += " n" + key + "=" + std::to_string(row.seeds.size()) + "/" + std::to_string(row.tried);
+        Out("gems: mythic=" + std::to_string(g_Gems.mythic) + " maxroll=" + std::to_string(g_Gems.maxRoll)
+            + " dropHook=" + (g_GemDropHookNative ? "native" : (g_GemDropHookTried ? "failed" : "off"))
+            + " inScope=" + std::to_string(g_GemDropsInScope) + " swaps=" + std::to_string(g_Gems.swaps)
+            + " vanilla=" + std::to_string(g_Gems.vanillaDrops) + " dressed=" + std::to_string(g_Gems.dressed)
+            + " filter=" + std::to_string(g_Gems.filter.size()) + " filterMisses=" + std::to_string(g_Gems.filterMisses)
+            + " builds=" + std::to_string(g_GemTableBuilds) + " buildMs=" + std::to_string((long long)(g_GemTableSeconds * 1000))
+            + " convert=" + std::to_string(g_GemConvert) + " converted=" + std::to_string(g_GemConverted)
+            + " best=" + std::to_string(g_GemTables.best.size())
+            + " conflicts=" + std::to_string(g_GemTables.conflicts) + " rows:" + rows);
+        return;
+    }
+    if (arg == "save") { g_GemTables.dirty = true; GemTablesSave(); Out("gems: saved" + (g_GemTablesError.empty() ? std::string() : " - " + g_GemTablesError)); return; }
+    if (arg == "convert 1" || arg == "convert 0") {
+        g_GemConvert = arg == "convert 1";
+        Out(std::string("gems convert: ") + (g_GemConvert ? "on - every socketable a monster drops becomes a Gem of Incarnation (with gemmythic on)" : "off"));
+        return;
+    }
+    if (arg == "reset") { g_GemTablesLoaded = false; g_GemTables = ForgePact::IncarnationGems::Tables{}; std::error_code ec; std::filesystem::remove(GemTablesPath(), ec); GemTablesLoad(); Out("gems: tables reset"); return; }
+    if (arg.rfind("drop", 0) == 0) {
+        // One gem built as a fresh drop would be: inside the drop scope, through
+        // the game's own loader and CreateItemNew, so both switches act on it.
+        std::string key = arg.size() > 5 ? arg.substr(5) : std::string("4");
+        ForgePact::ItemTruth::EvalItem entry;
+        entry.key = "0-0-900000000001-15";
+        const uint32_t vanillaSeed = ForgePact::IncarnationGems::Candidate("drop-test", key, GemNextRoll() % 100000);
+        entry.json = "{\"a\":" + std::to_string(vanillaSeed) + ",\"b\":136,\"c\":0,\"j\":0,\"o\":1"
+                   + (key == "none" ? std::string() : ",\"n\":" + key) + "}";
+        RValue item;
+        { struct Scope { Scope() { ++g_GemDropDepth; } ~Scope() { --g_GemDropDepth; } } scope; item = TruthBuildItem(entry); }
+        const RValue def = GemField(item, "itemDefinitionStruct");
+        double a = -1, rarity = -1;
+        TryStructNumber(def, "a", a);
+        TryStructNumber(GemField(item, "itemInfoStruct"), "27", rarity);
+        std::vector<std::string> slots;
+        std::string affixText;
+        for (const auto& x : GemAffixes(GemField(item, "itemStatStruct"), slots))
+            affixText += " [" + std::to_string(x.stat) + " " + ForgePact::IncarnationGems::Number(x.min) + "-" + ForgePact::IncarnationGems::Number(x.max)
+                       + " t" + ForgePact::IncarnationGems::Number(x.tier) + " = " + ForgePact::IncarnationGems::Number(x.value) + "]";
+        Out("gems drop n=" + key + ": seed " + std::to_string(vanillaSeed) + " -> " + ForgePact::ItemTruth::WholeNumberText(a)
+            + ", rarity " + ForgePact::ItemTruth::WholeNumberText(rarity) + affixText);
+        return;
+    }
+    Out("gems: stat | save | reset | drop <n> | convert 1|0");
+#else
+    Out("gems: unavailable in player build");
+#endif
 }
 
 
@@ -16249,14 +16622,17 @@ static void HeadhunterActivityTick()
         HH_CREATE_TRACE(NAME); \
         constexpr bool _final = std::string_view(#NAME) == std::string_view("CreateItemNew"); \
         RValue* _resp = &R; \
+        if (_final && g_TruthDepth == 0) GemsBeforeCreate(argc, A); \
         { \
             TruthDepthGuard _depth(_final); \
             if (g_Orig_##NAME) _resp = &g_Orig_##NAME(S, O, R, argc, A); \
         } \
         RValue& _res = *_resp; \
+        if (g_GemTableBuilding) return _res;   /* the gem tables' own candidates: nothing else sees them */ \
         const bool _outermost = _final && g_TruthDepth == 0; \
         const std::string _native = _outermost ? ItemTruthNativeSnapshot(_res) : std::string(); \
         CustomForgePostProcess(_res, argc, A, _final); \
+        if (_final) GemsAfterCreate(_res); \
         if (_outermost) ItemTruthCapture(_res, _native); \
         BP_LOGDROP(#NAME, _res, argc, A); \
         return _res; \
@@ -22060,6 +22436,32 @@ static std::string ModStateEscape(const std::string& in)
     }
     return out;
 }
+// Gems of Incarnation for the panel: the switches, the drop hook, what this
+// session did, and how far the tables are. Seed counts move only as a row
+// grows, so a finished table does not rewrite the file.
+static std::string GemsModState()
+{
+    std::string s = ",\"incarnationGems\":{\"mythic\":";
+    s += g_Gems.mythic ? "true" : "false";
+    s += ",\"maxRoll\":"; s += g_Gems.maxRoll ? "true" : "false";
+    s += ",\"dropHook\":\"";
+    s += g_GemDropHookNative ? "native" : (g_GemDropHookTried ? "failed" : (g_GemDropPending ? "pending" : "off"));
+    s += "\",\"mythicDrops\":" + std::to_string(g_Gems.swaps);
+    s += ",\"vanillaDrops\":" + std::to_string(g_Gems.vanillaDrops);
+    s += ",\"filter\":" + std::to_string(g_Gems.filter.size());   // 0: every mod
+    s += ",\"filterMisses\":" + std::to_string(g_Gems.filterMisses);
+    s += ",\"build\":\"" + ModStateEscape(g_GemTables.build) + "\",\"seeds\":{";
+    bool first = true;
+    for (const auto& [key, row] : g_GemTables.rows) {
+        if (!first) s += ',';
+        first = false;
+        s += "\"" + ModStateEscape(key) + "\":" + std::to_string(row.seeds.size());
+    }
+    s += "},\"bestRanges\":" + std::to_string(g_GemTables.best.size());
+    s += ",\"ready\":"; s += (g_GemTablesLoaded && g_GemTables.NextWork().empty()) ? "true" : "false";
+    s += ",\"error\":\"" + ModStateEscape(g_GemTablesError) + "\"}";
+    return s;
+}
 static std::string g_ModStateLast;
 static void FlushModState(uint32_t frame)
 {
@@ -22140,7 +22542,8 @@ static void FlushModState(uint32_t frame)
         body += ",\"spawned\":" + std::to_string(marks.Spawned());
         body += ",\"enumerations\":" + std::to_string(marks.Enumerations());
         body += ",\"iconsLoaded\":" + std::to_string(marks.IconsLoaded());
-        body += ",\"drawErrors\":" + std::to_string(marks.DrawErrors()) + "}}";
+        body += ",\"drawErrors\":" + std::to_string(marks.DrawErrors()) + "}";
+        body += GemsModState() + "}";
         if (body == g_ModStateLast) return;
         g_ModStateLast = body;
         const std::string path = IPC_DIR + "\\modstate.json", tmp = path + ".tmp";
@@ -35980,7 +36383,7 @@ static void RunCommand(const std::string& line)
         "headhunter", "hhdur", "hhmap", "hhdefault", "hhlabel", "tyrant", "beacon", "beaconrange", "beaconmode", "beaconwake", "beaconspawn", "beaconfarstep", "tyrantchance", "tyrantaffix", "hhlabelfont", "hhlabeloffset", "hhlabelmax",
         "enemyspeed", "rarity", "sigdrop", "angelicdrop", "relicfilter", "orbpickup", "satmods", "petquest",
         "autoprospect", "toggleborder", "toggleguard", "skilltimer", "menulayout", "restartanytime", "miningore", "minerhelm", "packmarks",
-        "craftmats"
+        "craftmats", "gemmythic", "gemmaxroll", "gemfilter"
     };
     if (kPlayerCommands.find(lc) == kPlayerCommands.end()) {
         Out("command unavailable in player build: " + cmd);
@@ -36030,6 +36433,7 @@ static void RunCommand(const std::string& line)
     // Mining ore amount and the Miner's Helmet: standalone early returns for
     // the same reason, so the else-if chain below keeps main's length.
     if (lc == "miningore") { ForgePact::MiningOre::Command(rest); return; }
+    if (lc == "gemmythic" || lc == "gemmaxroll" || lc == "gemfilter" || lc == "gems") { GemsCommand(lc, rest); return; }
     if (lc == "minerhelm") { ForgePact::MinerHelmet::Command(rest); return; }
     // Toggle-skill re-cast guard (issue #11, Track A). A standalone early
     // return for the same C1061 reason as `toggleborder` below. `1` only arms
@@ -37193,6 +37597,7 @@ void FrameCallback(FWFrame& FrameContext)
     PERF_SCOPE(g_PerfFrame);
     FlushItemStats(fc);
     if (g_Setup) { ItemTruthTick(fc); ItemTruthEvalTick(fc); }
+    if (g_Setup) GemsTick(fc);   // Gems of Incarnation: the tables, a little each frame
     FlushModState(fc);
     if (g_Setup) { FP_POP_SCOPE(MinerTick); ForgePact::MinerHelmet::Tick(); }
     if (fc == 1) Trace("0-framecallback-running");

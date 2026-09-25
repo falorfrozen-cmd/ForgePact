@@ -1036,9 +1036,17 @@ class PanelAllOffContractTests(unittest.TestCase):
         assert spec.loader is not None
         spec.loader.exec_module(cls.panel)
 
+    # Every mod is off by default, with one named exception: the owner turned
+    # both Gems of Incarnation switches on by default on 2026-09-25, whether
+    # they stay on to be decided later (test_incarnation_gems_contract.py pins
+    # them). Anything else a default config sends still fails here.
+    OWNER_DEFAULT_ON = ("gemmythic 1", "gemmaxroll 1")
+
     def test_default_config_emits_no_gameplay_commands(self):
         cfg = copy.deepcopy(self.panel.DEFAULTS)
-        self.assertEqual([], self.panel.build_cmds(cfg))
+        commands = self.panel.build_cmds(cfg)
+        self.assertEqual([], [c for c in commands if c not in self.OWNER_DEFAULT_ON])
+        self.assertEqual(list(self.OWNER_DEFAULT_ON), commands)
 
     def test_once_only_mechanics_are_offered_and_emitted(self):
         # Chaos Tower and Shadow Realm became available once their Season 10
