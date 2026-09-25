@@ -11,7 +11,8 @@
 //
 //   COLOR                                   the hex as exported
 //   FLOAT space/, radius/, font/size/       <n>px
-//   FLOAT font/weight/, line-height/        <n>, unitless
+//   FLOAT font/weight/, line-height/,       <n>, unitless
+//         font/line-height/
 //   FLOAT motion/duration/                  <n>ms
 //   STRING font/<role>/family               quoted: the first family of the
 //                                           stack is quoted, the rest kept
@@ -79,7 +80,7 @@ export function cssValue({ name, type, value }) {
   }
   if (type === 'FLOAT') {
     if (/^(space|radius|font\/size)\//.test(name)) return `${number(value, name)}px`;
-    if (/^(font\/weight|line-height)\//.test(name)) return number(value, name);
+    if (/^(font\/weight|line-height|font\/line-height)\//.test(name)) return number(value, name);
     if (/^motion\/duration\//.test(name)) return `${number(value, name)}ms`;
     throw new Error(`${name}: no unit rule for a FLOAT under this name`);
   }

@@ -19,6 +19,7 @@
     { "collection": "tokens", "mode": "alpha", "name": "font/size/md", "type": "FLOAT", "value": 14 },
     { "collection": "tokens", "mode": "alpha", "name": "font/weight/semibold", "type": "FLOAT", "value": 600 },
     { "collection": "tokens", "mode": "alpha", "name": "line-height/base", "type": "FLOAT", "value": 1.5 },
+    { "collection": "tokens", "mode": "alpha", "name": "font/line-height/tight", "type": "FLOAT", "value": 1.2000000476837158 },
     { "collection": "tokens", "mode": "alpha", "name": "motion/duration/fast", "type": "FLOAT", "value": 120 },
     { "collection": "tokens", "mode": "alpha", "name": "font/body/family", "type": "STRING", "value": "\"Fixture Sans\", \"Segoe UI\", system-ui, sans-serif" },
     { "collection": "tokens", "mode": "alpha", "name": "font/mono/family", "type": "STRING", "value": "Fixture Mono" },

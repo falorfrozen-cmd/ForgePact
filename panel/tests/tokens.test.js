@@ -36,6 +36,7 @@ const EXPECTED = new Map([
     ['--color-text-muted', '#a8a8a8'],
     ['--color-text-primary', '#f0f0f0'],
     ['--font-body-family', '"Fixture Sans", "Segoe UI", system-ui, sans-serif'],
+    ['--font-line-height-tight', '1.2'],
     ['--font-mono-family', '"Fixture Mono"'],
     ['--font-size-md', '14px'],
     ['--font-weight-semibold', '600'],
@@ -97,6 +98,18 @@ test('values with no rule, bad colours and a missing or doubled default are erro
   const exp = loadExport(MINI);
   assert.throws(() => generateTokensCss({ ...exp, palettes: exp.palettes.map((p) => ({ ...p, default: true })) }), /exactly one default/);
   assert.throws(() => generateTokensCss({ ...exp, palettes: exp.palettes.map((p) => ({ ...p, default: false })) }), /exactly one default/);
+});
+
+// The buildout export names its line heights font/line-height/<step>, since its
+// name pattern allows no hyphen in the first segment; line-height/ stays for
+// any export that uses it. Near misses still have no rule.
+test('a FLOAT under font/line-height/ is unitless like line-height/, and a near miss is still an error', () => {
+  assert.equal(cssValue({ name: 'font/line-height/tight', type: 'FLOAT', value: 1.2000000476837158 }), '1.2');
+  assert.equal(cssValue({ name: 'font/line-height/base', type: 'FLOAT', value: 1.4500000476837158 }), '1.45');
+  assert.equal(cssValue({ name: 'line-height/tight', type: 'FLOAT', value: 1.2000000476837158 }), '1.2');
+  for (const name of ['font/line-height', 'font/line-heights/tight', 'font/lineheight/tight', 'type/font/line-height/base']) {
+    assert.throws(() => cssValue({ name, type: 'FLOAT', value: 1.2 }), /no unit rule/, name);
+  }
 });
 
 test('negative control: the comparator reports every planted difference and nothing else', () => {
