@@ -246,10 +246,10 @@ DEFAULTS = {
     "mod_craft_mats": False,
     # Gems of Incarnation (docs/incarnation-gems-research.md): every gem that
     # drops is Mythic (4-5 mods, a seed the game itself rolled Mythic), and every
-    # gem's mods show their best tier's top value. On by default at the owner's
-    # call (2026-09-25); whether they stay on is decided later.
-    "mod_gem_mythic": True,
-    "mod_gem_maxroll": True,
+    # gem's mods show their best tier's top value. Both off by default, like
+    # every mod here (the owner's call, 2026-09-25).
+    "mod_gem_mythic": False,
+    "mod_gem_maxroll": False,
     # Which mods a Mythic gem carries: "all", or the ticked mods (GEM_AFFIXES).
     "gem_filter": "all",
     # Timed-skill countdown (issue #55): one of off/arc/bar/number/fade drawn
@@ -874,14 +874,14 @@ def build_cmds(cfg: dict) -> list:
         # the switch on, and the plugin installs its hooks once the game has
         # settled.
         out.append("craftmats 1")
-    if cfg.get("mod_gem_mythic", True):
+    if cfg.get("mod_gem_mythic", False):
         # Safe to send at launch, like toggleguard: `gemmythic 1` only arms it,
         # and the plugin hooks the gem drop once a player exists.
         out.append("gemmythic 1")
         # Only a narrowed filter is sent: the plugin starts with every mod.
         if (gem_filter_value(cfg.get("gem_filter", "all")) or "all") != "all":
             out.append(gem_filter_command(cfg))
-    if cfg.get("mod_gem_maxroll", True):
+    if cfg.get("mod_gem_maxroll", False):
         # Safe to send at launch: no hook of its own, CreateItemNew is hooked at init.
         out.append("gemmaxroll 1")
     skill_timer_style = str(cfg.get("mod_skill_timer_style", "off")).strip().lower()
@@ -2477,14 +2477,14 @@ input[type=range]::-webkit-slider-thumb{appearance:none;width:17px;height:17px;b
         <span class="val" id="mcmval">off</span>
     </div>
     <div class="row" style="border:none">
-        <span class="lbl" style="width:auto;flex:1">Mythic Gems of Incarnation<br><span style="font-size:11px;color:#8f816e;font-weight:normal">Every Gem of Incarnation that drops is Mythic, with 4 or 5 mods. The game rolls it itself, from a seed it has already rolled Mythic. Gems you own keep their own mods. The first time, the game rolls sample gems in the background, under a minute at the main menu.</span></span>
+        <span class="lbl" style="width:auto;flex:1">Mythic Gems of Incarnation<br><span style="font-size:11px;color:#8f816e;font-weight:normal">Every Gem of Incarnation that drops is Mythic, with 4 or 5 mods. The game rolls it itself, from a seed it has already rolled Mythic. Gems you own keep their own mods. The first time, the game rolls sample gems in the background, under a minute at the main menu. Off by default.</span></span>
         <label class="switch"><input type="checkbox" id="mod_gem_mythic"><span class="sl"></span></label>
-        <span class="val" id="mgmval">on</span>
+        <span class="val" id="mgmval">off</span>
     </div>
     <div class="row" id="mod_gem_maxroll_row" style="border:none">
-        <span class="lbl" style="width:auto;flex:1">Max-roll Gems of Incarnation<br><span style="font-size:11px;color:#8f816e;font-weight:normal">Every mod on every Gem of Incarnation shows the highest value its best tier can roll. Nothing is written to your save: turn it off, and a gem shows its own rolls again the next time the game loads it.</span></span>
+        <span class="lbl" style="width:auto;flex:1">Max-roll Gems of Incarnation<br><span style="font-size:11px;color:#8f816e;font-weight:normal">Every mod on every Gem of Incarnation shows the highest value its best tier can roll. Nothing is written to your save: turn it off, and a gem shows its own rolls again the next time the game loads it. Off by default.</span></span>
         <label class="switch"><input type="checkbox" id="mod_gem_maxroll"><span class="sl"></span></label>
-        <span class="val" id="mgrval">on</span>
+        <span class="val" id="mgrval">off</span>
     </div>
     <div class="row" id="gemfilter_row" style="border:none;margin-left:22px;border-left:1px solid #33261c;padding-left:14px">
         <span class="lbl" style="width:auto;flex:1">Mods on Mythic gems<br><span style="font-size:11px;color:#8f816e;font-weight:normal">Tick the mods you want and save. Every Mythic gem that drops then carries as many of them as the game's own Mythic rolls allow; with everything ticked, any mix. Works with Mythic Gems of Incarnation on.</span></span>
@@ -2967,7 +2967,7 @@ async function boot(){
     document.getElementById('mcmval').textContent=mcm?'on':'off';
     document.getElementById('mcmval').className='val '+(mcm?'':'off');
     for(const [id,val,key] of [['mod_gem_mythic','mgmval','mod_gem_mythic'],['mod_gem_maxroll','mgrval','mod_gem_maxroll']]){
-      const on=c[key]!==false;
+      const on=!!c[key];
       document.getElementById(id).checked=on;
       document.getElementById(val).textContent=on?'on':'off';
       document.getElementById(val).className='val '+(on?'':'off');
