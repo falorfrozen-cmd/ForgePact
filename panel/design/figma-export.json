@@ -928,6 +928,8 @@
       "decided": "2026-09-25",
       "ownerWords": "mining ore amount should be mining ore multiplier, the text underneath it can be removed. sections under mods dont need to have their tab name repeated in the card. each item, qol mod should be on their own card, like its done on other tabs. theme selection should be moved to setup maybe. doesnt have to be visible 24/7. some accented font color is missing in few places, was it intentional? footer can say created by Falor and ST4H. Choose your hero siege exe in setup banner could be a warning icon next to apply all and settings loaded with a tooltip on hover instead. sections inside cards like in modifiers combat & character modifiers (utility, offense etc) could use some light separator",
       "ownerWordsItem9": "text like off and 4x its vanilla drop rate; where the game never rolls this family, the roll is opened at the normal-key chance first (i mean text that displays under the turned on mod or on hover) is rendering a little over mod below it",
+      "decidedRound2": "2026-09-26",
+      "ownerWords20260926": "Answering the impeccable pass: F1 = No note at default (a slider at its default value writes no note, so an idle default row opens no tooltip; the owner saw the Dungeon Keys tooltip \"off\" drawn above its row, over \"Mining\" of the row above, and read it as stray text; a turned-on or switched-off row's note is unchanged). F6 = Muted in both (\"CT only\" stays muted in the panel, and the Figma sync redraws it muted). F2 (aria-describedby for note-carrying ranges) and F4 (a reduced-motion fade for both tooltips) go to forgepact-ui-ship.",
       "items": [
         {
           "item": 1,
@@ -960,9 +962,10 @@
         },
         {
           "item": 5,
-          "what": "Accent audit: the Miner's Helmet stat lines are drawn in color/accent in font/mono/family, on an element of their own (.helmet-stats), as the design draws them. Every other accent place matched or is marked ambiguous for the owner.",
+          "what": "Accent audit: the Miner's Helmet stat lines are drawn in color/accent in font/mono/family, on an element of their own (.helmet-stats), as the design draws them. The Chaos Tower switch's value, CT only, stays color/text/muted, as Monster Density's Enabled beside its switch is (the switch carries the on state): the owner's decision of 2026-09-26 (F6), so the design's tray state is redrawn with it muted. Every other accent place matches the design.",
           "selectors": [
-            "#minerHelmetCard .helmet-stats"
+            "#minerHelmetCard .helmet-stats",
+            "#enemyspeedctval"
           ]
         },
         {
@@ -989,7 +992,7 @@
         },
         {
           "item": 9,
-          "what": "An idle slider row's note (.setting-entry > .note[data-note], switch on, mod not listed) is a tooltip: on hover after 300ms (at once when another note tooltip closed under 400ms ago) and at once on keyboard focus, it is drawn above its row, left-aligned with it and no wider than it, on color/bg/hover with a 1px color/border/subtle edge, radius/md and text in color/text/muted, the same surface as the plugin warning's tooltip. It passes the pointer through, holds nothing to reach, and closes at once on pointer leave, blur, Escape or a change to the row. It covers the row above while shown, never its own row or the row below, and no row moves when it shows or hides (owner, 2026-09-25, after an in-flow hover note moved the rows below up under the pointer as it hid). A turned-on or switched-off row's note stays on its own line below its row, in the flow. amendments.quietHelpers still holds.",
+          "what": "An idle slider row's note (.setting-entry > .note[data-note], switch on, mod not listed) is a tooltip: on hover after 300ms (at once when another note tooltip closed under 400ms ago) and at once on keyboard focus, it is drawn above its row, left-aligned with it and no wider than it, on color/bg/hover with a 1px color/border/subtle edge, radius/md and text in color/text/muted, the same surface as the plugin warning's tooltip. It passes the pointer through, holds nothing to reach, and closes at once on pointer leave, blur, Escape or a change to the row. It covers the row above while shown, never its own row or the row below, and no row moves when it shows or hides (owner, 2026-09-25, after an in-flow hover note moved the rows below up under the pointer as it hid). A turned-on or switched-off row's note stays on its own line below its row, in the flow. A slider at its default has no note (owner, 2026-09-26, F1: its value box already says off), so an idle row at its default opens no tooltip and a switched-off row at its default shows no line under it; an idle row carries a note, and so opens the tooltip, only while its value has been moved and not yet saved. amendments.quietHelpers still holds.",
           "selectors": [
             ".setting-entry",
             ".setting-entry>.note[data-note][data-tooltip]"
@@ -1966,6 +1969,11 @@
       "selector": "#minerHelmetCard .helmet-stats",
       "property": "font-family",
       "variable": "font/mono/family"
+    },
+    {
+      "selector": "#enemyspeedctval",
+      "property": "color",
+      "variable": "color/text/muted"
     }
   ],
   "screens": [
@@ -3161,7 +3169,7 @@
       "state": "idle-switch",
       "nodeId": "51:983",
       "screenshot": ".claude/workorders/forgepact-ui-figma-buildout/states/idle-switch.png",
-      "notes": "An ON slider switch is idle (color/switch/idle) while its mod is not listed, and takes the accent once listed (data-live). Idle, on and off rows drawn in all three palettes, with the listed entry. Density's #den_on keeps its look. A hovered or focused idle row's note is a tooltip above the row: color/bg/hover with a 1px color/border/subtle edge and radius/md, text color/text/muted, left-aligned with the row and no wider than it, its bottom just above the row's top; the row and the next row stay put (owner, 2026-09-25: never drawn over the row below, and nothing moves)."
+      "notes": "An ON slider switch is idle (color/switch/idle) while its mod is not listed, and takes the accent once listed (data-live). Idle, on and off rows drawn in all three palettes, with the listed entry. Density's #den_on keeps its look. A row at its default carries no note (owner, 2026-09-26), so hovering or focusing an idle row at its default shows nothing. A note an idle row does carry (a value moved and not yet saved) is a tooltip above the row: color/bg/hover with a 1px color/border/subtle edge and radius/md, text color/text/muted, left-aligned with the row and no wider than it, its bottom just above the row's top; the row and the next row stay put (owner, 2026-09-25: never drawn over the row below, and nothing moves)."
     },
     {
       "state": "enabled-tray-popover",
