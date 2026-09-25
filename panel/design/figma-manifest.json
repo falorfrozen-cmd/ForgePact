@@ -103,6 +103,7 @@
   "variables": {
     "color/switch/idle": "VariableID:45:211",
     "motion/easing/hover": "VariableID:53:1241",
-    "color/warn": "VariableID:17:780"
+    "color/warn": "VariableID:17:780",
+    "color/warn/tint": "VariableID:61:2"
   }
 }

@@ -21,14 +21,35 @@
 //             the fresh render right, on one canvas as tall as the taller,
 //             written to <out>/compare/<tab>-<w>.png.
 //
+// The design state. A screen may carry `state: {"game": "offline"|"running",
+// "config": {<forgepact.json key>: <value>, ...}}`, the state its Figma frame
+// draws. Screens are grouped by that state (its canonical JSON); each group
+// gets one sandbox, started with --offline when `game` is "offline" and
+// seeded with `config` (panel_sandbox_server.py --seed, which refuses a key
+// forgepact.DEFAULTS lacks with exit 2 and names it on stderr). A screen
+// without `state` is measured on today's sandbox: game running, nothing on.
+// A `state` that is not an object, a `game` that is neither value or a
+// `config` that is not an object is an error line naming the screen, and
+// fails the run; so does a sandbox that will not start.
+//
 // Some selectors exist only in some states. A selector is checked in the
-// first of these where it matches: the page as loaded (the sandbox starts
-// with nothing on); after turning one mod on through the page's own switch
-// (the sandbox's config is a temp file, the real forgepact.json is never
-// touched); then, for a selector that is an existing element plus a trailing
-// .class or [attr] qualifier (`#saveIndicator.error`), with that qualifier
-// put on the element for the measurement and taken off after. A selector no
-// state reaches is `not found`, a mismatch in every palette.
+// first of these where it matches: the page as loaded (the unseeded sandbox
+// starts with nothing on); after turning one mod on through the page's own
+// switch (the sandbox's config is a temp file, the real forgepact.json is
+// never touched); then, for a selector that is an existing element plus a
+// trailing .class or [attr] qualifier (`#saveIndicator.error`), with that
+// qualifier put on the element for the measurement and taken off after;
+// then as loaded on each screen state's sandbox, in export order (the row's
+// state names the first screen carrying it). A selector no state reaches is
+// `not found`, a mismatch in every palette.
+//
+// Variants. When the export lists a variant of a selector S - S followed by
+// .class / [attr] / [attr=value] qualifiers only (`.val.off` of `.val`) - S
+// is measured on the first element that matches S and none of its listed
+// variants, since S's token describes the element in none of those states;
+// if no element does in a state, S falls through to the next state. With no
+// variant listed, S is measured on its first match. lib/design-tokens.mjs
+// holds the rule (variantsOf) and tests/tokens-selftest.mjs proves it.
 //
 // Summary lines, last: `texts: <k> missing`, `tokens: <k> mismatched`,
 // `tokens[<palette>]: <k> mismatched` per other palette in export order,
@@ -45,13 +66,56 @@ import { BOOLEAN_MODS } from '../src/enabled-mods.js';
 import { defaultPalette, here, loadExport } from '../scripts/tokens-from-export.mjs';
 import { TABS, VIEWPORTS, launchBrowser, openPanel, openTab, parseArgs, startSandbox, waitSaved } from './lib/browser.mjs';
 import { flatness } from './lib/design-flatness.mjs';
-import { compareToken, expectedCss, measureTokens } from './lib/design-tokens.mjs';
+import { compareToken, expectedCss, measureTokens, variantsOf } from './lib/design-tokens.mjs';
 
 const ALL_CHECKS = ['texts', 'tokens', 'flatness', 'composites'];
 const USAGE = 'usage: design-match.mjs --export <export.json> --figma-dir <dir> --out <dir> [--checks texts,tokens,flatness,composites]';
 
 const norm = (s) => String(s).toLowerCase().replace(/\s+/g, ' ').trim();
 const viewportFor = (width) => VIEWPORTS[width] || { width: Number(width), height: 800 };
+const screenName = (screen) => `${screen.tab}-${screen.width}`;
+const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+
+// JSON with every object's keys sorted, so two equal states group together.
+function canonical(v) {
+  if (Array.isArray(v)) return `[${v.map(canonical).join(',')}]`;
+  if (isObject(v)) return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canonical(v[k])}`).join(',')}}`;
+  return JSON.stringify(v);
+}
+
+// Why a screen's `state` is unusable, or null when it is absent or valid.
+function stateError(screen) {
+  if (screen.state === undefined) return null;
+  const s = screen.state;
+  if (!isObject(s)) return 'state is not an object';
+  if (s.game !== 'offline' && s.game !== 'running') return `state.game ${JSON.stringify(s.game)} is neither "offline" nor "running"`;
+  if (!isObject(s.config)) return 'state.config is not an object';
+  return null;
+}
+
+// One sandbox per distinct state, started on first use and kept until
+// stopAll(); `undefined` is the unseeded sandbox. A start that fails is
+// remembered, so every screen of that state reports it without a retry.
+function sandboxPool() {
+  const pool = new Map();
+  return {
+    get(state) {
+      const key = state === undefined ? '' : canonical(state);
+      if (!pool.has(key)) {
+        const started = state === undefined ? startSandbox() : startSandbox({ offline: state.game === 'offline', seed: state.config });
+        started.catch(() => {});
+        pool.set(key, started);
+      }
+      return pool.get(key);
+    },
+    async stopAll() {
+      for (const started of pool.values()) {
+        const sandbox = await started.catch(() => null);
+        if (sandbox) await sandbox.stop();
+      }
+    },
+  };
+}
 
 async function showScreen(page, tab) {
   if (TABS.includes(tab)) return openTab(page, tab);
@@ -78,11 +142,19 @@ function sideBySide(left, right) {
   return out;
 }
 
-async function screenChecks(browser, sandbox, exp, checks, figmaDir, outDir, report) {
+async function screenChecks(browser, sandboxes, exp, checks, figmaDir, outDir, report) {
   const screens = Array.isArray(exp.screens) ? exp.screens : [];
   if (screens.length === 0) throw new Error('the export lists no screens');
   for (const screen of screens) {
-    const name = `${screen.tab}-${screen.width}`;
+    const name = screenName(screen);
+    if (stateError(screen)) continue; // reported once, by main
+    let sandbox;
+    try {
+      sandbox = await sandboxes.get(screen.state);
+    } catch (e) {
+      report.errors.push(`screen ${name}: no sandbox for its state: ${e.message}`);
+      continue;
+    }
     const page = await openPanel(browser, sandbox, viewportFor(screen.width));
     try {
       await showScreen(page, screen.tab);
@@ -119,26 +191,29 @@ async function screenChecks(browser, sandbox, exp, checks, figmaDir, outDir, rep
   }
 }
 
-async function tokenChecks(browser, sandbox, exp, report) {
+async function tokenChecks(browser, sandboxes, exp, report) {
   const entries = Array.isArray(exp.selectorTokens) ? exp.selectorTokens : [];
   if (entries.length === 0) throw new Error('the export lists no selectorTokens');
   const base = defaultPalette(exp);
   const palettes = [base, ...exp.palettes.filter((p) => p !== base)];
   const themes = [null, ...palettes.slice(1).map((p) => p.name)];
   const wants = expectedCss(exp, entries, palettes.map((p) => p.name));
+  const selectors = entries.map((e) => e.selector);
+  const variants = entries.map((e) => variantsOf(e.selector, selectors));
   const widest = Math.max(...(exp.screens || []).map((s) => Number(s.width)).filter(Number.isFinite), 1280);
   const found = new Array(entries.length).fill(null);
-  const page = await openPanel(browser, sandbox, viewportFor(widest));
+  const pending = () => entries.map((e, i) => i).filter((i) => !found[i]);
+  const measureOn = async (page, state, qualify) => {
+    const idx = pending();
+    if (!idx.length) return;
+    const list = idx.map((i) => ({ selector: entries[i].selector, property: entries[i].property, css: wants[i].map((w) => w.css ?? null), variants: variants[i] }));
+    const got = await page.evaluate(measureTokens, { list, themes, qualify });
+    got.forEach((r, k) => { if (r) found[idx[k]] = { ...r, state: r.qualifier ? `${state} ${r.qualifier}` : state }; });
+  };
+  const page = await openPanel(browser, await sandboxes.get(undefined), viewportFor(widest));
   try {
     await settle(page);
-    const pending = () => entries.map((e, i) => i).filter((i) => !found[i]);
-    const measure = async (state, qualify) => {
-      const idx = pending();
-      if (!idx.length) return;
-      const list = idx.map((i) => ({ selector: entries[i].selector, property: entries[i].property, css: wants[i].map((w) => w.css ?? null) }));
-      const got = await page.evaluate(measureTokens, { list, themes, qualify });
-      got.forEach((r, k) => { if (r) found[idx[k]] = { ...r, state: r.qualifier ? `${state} ${r.qualifier}` : state }; });
-    };
+    const measure = (state, qualify) => measureOn(page, state, qualify);
     await measure('as loaded', false);
     if (pending().length) {
       // One mod on, through its own switch: the Enabled mods list then shows
@@ -161,6 +236,30 @@ async function tokenChecks(browser, sandbox, exp, report) {
     await measure('qualifier', true);
   } finally {
     await page.context().close();
+  }
+  // The design states, after the three stages above and never instead of
+  // them (`.enabled-mods-empty` exists only while nothing is on).
+  const seen = new Set();
+  for (const screen of exp.screens || []) {
+    if (!pending().length) break;
+    if (screen.state === undefined || stateError(screen)) continue;
+    const key = canonical(screen.state);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    let sandbox;
+    try {
+      sandbox = await sandboxes.get(screen.state);
+    } catch (e) {
+      report.errors.push(`tokens: no sandbox for the state of ${screenName(screen)}: ${e.message}`);
+      continue;
+    }
+    const seeded = await openPanel(browser, sandbox, viewportFor(widest));
+    try {
+      await settle(seeded);
+      await measureOn(seeded, `as loaded, state of ${screenName(screen)}`, false);
+    } finally {
+      await seeded.context().close();
+    }
   }
   palettes.forEach((palette, t) => {
     const rows = entries.map((entry, i) => {
@@ -200,18 +299,22 @@ async function main() {
   mkdirSync(join(outDir, 'compare'), { recursive: true });
 
   const report = { export: here(args.export), checks: [...checks], texts: [], tokens: [], flatness: [], composites: [], errors: [] };
-  const sandbox = await startSandbox();
+  for (const screen of Array.isArray(exp.screens) ? exp.screens : []) {
+    const why = stateError(screen);
+    if (why) report.errors.push(`screen ${screenName(screen)}: ${why}`);
+  }
+  const sandboxes = sandboxPool();
   const browser = await launchBrowser();
   try {
     if (['texts', 'flatness', 'composites'].some((c) => checks.has(c))) {
-      try { await screenChecks(browser, sandbox, exp, checks, figmaDir, outDir, report); } catch (e) { report.errors.push(e.message); }
+      try { await screenChecks(browser, sandboxes, exp, checks, figmaDir, outDir, report); } catch (e) { report.errors.push(e.message); }
     }
     if (checks.has('tokens')) {
-      try { await tokenChecks(browser, sandbox, exp, report); } catch (e) { report.errors.push(e.message); }
+      try { await tokenChecks(browser, sandboxes, exp, report); } catch (e) { report.errors.push(e.message); }
     }
   } finally {
     await browser.close();
-    await sandbox.stop();
+    await sandboxes.stopAll();
   }
   writeFileSync(join(outDir, 'design-match.json'), JSON.stringify(report, null, 2) + '\n');
 

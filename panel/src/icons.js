@@ -201,6 +201,12 @@ export const ICON_SPRITE = '<svg xmlns="http://www.w3.org/2000/svg" class="icon-
   Object.entries(ICONS).map(([name, body]) => `<symbol id="fp-icon-${name}" viewBox="0 0 32 32" fill="none">${group(body)}</symbol>`).join('') +
   '</defs></svg>';
 
+// The plugin warning's decorative triangle: a 16px line icon in currentColor,
+// so the band's CSS gives it `--color-warn`. Kept out of ICONS and the sprite,
+// which hold the full-colour 32px artwork. The same drawing as app.css's
+// --icon-warn mask.
+export const WARN_ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M8 2.5 14.5 13.5h-13ZM8 6.5v3.2M8 11.8v.1"/></svg>';
+
 export const PANEL_ICON_MAP = {
   controls: CONTROL_ICONS, static: STATIC_ICONS, sections: SECTION_ICONS, actions: ACTION_ICONS, satanic: SATANIC_ICONS,
 };

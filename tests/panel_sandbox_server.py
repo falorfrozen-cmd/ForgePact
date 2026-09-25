@@ -2,7 +2,7 @@
 """Serve the real panel HTTP handler against a throwaway config, for browser tests.
 
     py -3 tests/panel_sandbox_server.py [--legacy] [--dist <dir>] [--offline]
-                                        [--satanic-minimum]
+                                        [--satanic-minimum] [--seed <json file>]
 
 Used by `panel/tests/` (the behaviour oracle, the screenshot tool and the e2e
 suite). It reuses `test_satanic_panel.PanelSandbox` - an isolated
@@ -22,6 +22,13 @@ and re-patches it so every control's full path can be recorded:
 debuffs enabled, the Satanic card's floor), the fixture the Satanic checks
 need.
 
+`--seed <json file>` merges that file's top-level keys into the sandbox's
+`forgepact.json` before it serves (after `--satanic-minimum`), so a caller can
+start the panel in a given state - design-match.mjs opens each Figma screen in
+the state its frame draws. The file must hold a JSON object, and every key must
+be one of `forgepact.DEFAULTS`: an unknown key is refused with exit 2 and a
+message naming it, so a misspelt key never passes as "seeded".
+
 `--legacy` points `forgepact.PANEL_DIST` at a directory that does not exist,
 so `/` serves the page embedded in `forgepact.py`. That page was removed once
 the port landed, so `--legacy` now refuses (exit 2) unless the imported
@@ -34,6 +41,7 @@ is added to the product for testing: everything here is a patch on the
 module the product already runs.
 """
 import argparse
+import json
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -55,16 +63,34 @@ def main(argv=None):
                         help="report the game as not running (no live commands)")
     parser.add_argument("--satanic-minimum", action="store_true",
                         help="start with only 3 buffs and 2 debuffs enabled (PanelSandbox.at_minimum)")
+    parser.add_argument("--seed", type=Path, default=None,
+                        help="merge this JSON object's top-level keys into the sandbox's forgepact.json")
     args = parser.parse_args(argv)
     if args.legacy and not hasattr(forgepact, "HTML"):
         # Without this, / answers the 503 "panel not built" JSON and a caller
         # waiting for the page reports a timeout instead of the reason.
         parser.error("--legacy: this forgepact.py no longer embeds the old page "
                      "(removed by the UI port); record from a tree before the port")
+    seed = None
+    if args.seed is not None:
+        try:
+            seed = json.loads(args.seed.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            parser.error(f"--seed: cannot read {args.seed}: {e}")
+        if not isinstance(seed, dict):
+            parser.error(f"--seed: {args.seed} must hold a JSON object")
+        unknown = sorted(k for k in seed if k not in forgepact.DEFAULTS)
+        if unknown:
+            parser.error(f"--seed: unknown config key(s) {', '.join(unknown)} "
+                         "(not in forgepact.DEFAULTS)")
 
     with PanelSandbox() as sandbox:
         if args.satanic_minimum:
             sandbox.at_minimum()
+        if seed:
+            cfg = json.loads(sandbox.config.read_text(encoding="utf-8"))
+            cfg.update(seed)
+            sandbox.config.write_text(json.dumps(cfg), encoding="utf-8")
         temp = Path(sandbox.temp.name)
         exe = temp / "Hero_Siege.exe"
         exe.write_bytes(b"")

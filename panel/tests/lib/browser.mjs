@@ -8,8 +8,9 @@
 // Svelte build has none - so every wait reads state the page already shows.
 
 import { spawn } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { get } from 'node:http';
+import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
@@ -41,12 +42,23 @@ export function parseArgs(argv) {
 // Start tests/panel_sandbox_server.py and wait for its `port=` and `cmds=`
 // lines. `stop()` closes its stdin, which is how the server knows to exit,
 // and kills only the process this call started if it has not gone by then.
-export async function startSandbox({ legacy = false, dist = null, offline = false, satanicMinimum = false } = {}) {
+// `seed`, an object of forgepact.json keys, is written to a temp file and
+// passed as `--seed` (the server refuses a key it does not know, exit 2, on
+// the inherited stderr); the file goes when the server does.
+export async function startSandbox({ legacy = false, dist = null, offline = false, satanicMinimum = false, seed = null } = {}) {
   const args = ['-3', SANDBOX];
   if (legacy) args.push('--legacy');
   if (dist) args.push('--dist', dist);
   if (offline) args.push('--offline');
   if (satanicMinimum) args.push('--satanic-minimum');
+  let seedDir = null;
+  if (seed) {
+    seedDir = mkdtempSync(join(tmpdir(), 'forgepact-seed-'));
+    const file = join(seedDir, 'seed.json');
+    writeFileSync(file, JSON.stringify(seed));
+    args.push('--seed', file);
+  }
+  const dropSeed = () => { if (seedDir) rmSync(seedDir, { recursive: true, force: true }); seedDir = null; };
   const child = spawn('py', args, { stdio: ['pipe', 'pipe', 'inherit'], windowsHide: true });
   const info = await new Promise((resolveInfo, reject) => {
     let buffer = '';
@@ -61,7 +73,7 @@ export async function startSandbox({ legacy = false, dist = null, offline = fals
       }
       if (found.port && found.cmds) { clearTimeout(timer); resolveInfo(found); }
     });
-  });
+  }).catch((e) => { dropSeed(); throw e; });
   child.removeAllListeners('exit');
   const port = Number(info.port);
   const cmds = info.cmds.trim();
@@ -78,11 +90,12 @@ export async function startSandbox({ legacy = false, dist = null, offline = fals
     readCmds() { return readFileSync(cmds, 'utf8').split(/\r?\n/).filter(Boolean); },
     async state() { return getJson(`${url}api/state`); },
     async stop() {
-      if (child.exitCode !== null) return;
+      if (child.exitCode !== null) { dropSeed(); return; }
       const exited = new Promise((r) => child.once('exit', r));
       child.stdin.end();
       const timeout = new Promise((r) => setTimeout(r, 5000, 'timeout'));
       if (await Promise.race([exited, timeout]) === 'timeout') child.kill();
+      dropSeed();
     },
   };
 }

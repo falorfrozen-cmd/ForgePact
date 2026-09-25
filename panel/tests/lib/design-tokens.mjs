@@ -22,14 +22,28 @@ export function expectedCss(exp, entries, paletteNames) {
   }));
 }
 
+// The listed selectors that are variants of `selector`: the selector itself
+// followed by one or more `.class`, `[attr]` or `[attr=value]` qualifiers and
+// nothing else. `.val.off` and `.t[aria-selected="true"]` are variants of
+// `.val` and `.t`; `.card h2` (a descendant) and `.btn:not(.primary)` (a
+// pseudo-class) are not variants of `.card` and `.btn`. A bare selector's
+// token describes the element in none of its listed states, so measureTokens
+// measures it on an element that matches none of these.
+export function variantsOf(selector, selectors) {
+  const QUALIFIERS = /^(?:\.[A-Za-z_][\w-]*|\[[^\]]+\])+$/;
+  return [...new Set(selectors)].filter((v) => v !== selector && v.startsWith(selector) && QUALIFIERS.test(v.slice(selector.length)));
+}
+
 // Runs in the page; must stay self-contained (page.evaluate serialises it).
-// `list`: [{ selector, property, css: [text|null per theme] }]. `themes`:
-// null for "as the page painted it", then a data-theme name per other
-// palette. With `qualify`, a selector that does not match but is an
-// existing element plus a trailing .class or [attr] / [attr=value] gets that
-// qualifier applied to the element for its measurement, and taken off after.
-// Returns per entry null (not found in this state) or { actual[], expected[],
-// qualifier }.
+// `list`: [{ selector, property, css: [text|null per theme], variants? }].
+// `themes`: null for "as the page painted it", then a data-theme name per
+// other palette. A selector is measured on the first element, in document
+// order, that matches it and none of its `variants` (variantsOf); with none
+// listed, on its first match. With `qualify`, a selector that does not match
+// but is an existing element plus a trailing .class or [attr] / [attr=value]
+// gets that qualifier applied to the element for its measurement, and taken
+// off after. Returns per entry null (not found in this state) or { actual[],
+// expected[], qualifier }.
 export function measureTokens({ list, themes, qualify }) {
   const root = document.documentElement;
   const hadTheme = root.hasAttribute('data-theme');
@@ -70,9 +84,18 @@ export function measureTokens({ list, themes, qualify }) {
     };
   };
 
+  // The first element that matches the selector and none of its variants.
+  const pick = (entry) => {
+    const variants = entry.variants || [];
+    if (!variants.length) return document.querySelector(entry.selector);
+    return [...document.querySelectorAll(entry.selector)].find((e) => !variants.some((v) => {
+      try { return e.matches(v); } catch { return false; }
+    })) || null;
+  };
+
   const measureOne = (entry) => {
     let el;
-    try { el = document.querySelector(entry.selector); } catch { return null; }
+    try { el = pick(entry); } catch { return null; }
     if (!el) return null;
     const result = { actual: [], expected: [], qualifier: null };
     themes.forEach((theme, t) => {

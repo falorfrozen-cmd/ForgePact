@@ -21,6 +21,7 @@
   --color-text-primary: #efe4d3;
   --color-track: #816852;
   --color-warn: #e8c06a;
+  --color-warn-tint: #261f14;
   --font-body-family: "IBM Plex Sans";
   --font-line-height-base: 1.45;
   --font-line-height-tight: 1.2;
@@ -77,6 +78,7 @@
   --color-text-primary: #eeedeb;
   --color-track: #67707a;
   --color-warn: #e3bd6f;
+  --color-warn-tint: #24221e;
 }
 
 :root[data-theme="sigil"] {
@@ -100,4 +102,5 @@
   --color-text-primary: #eceef2;
   --color-track: #616d81;
   --color-warn: #e9d86e;
+  --color-warn-tint: #20201a;
 }

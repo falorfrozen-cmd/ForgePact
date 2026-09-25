@@ -2,7 +2,7 @@
   "fileKey": "75EleO8U3zngY8JU9adWpk",
   "fileUrl": "https://www.figma.com/design/75EleO8U3zngY8JU9adWpk",
   "direction": "Graphite Console",
-  "exportedAt": "2026-09-25T08:16:28+00:00",
+  "exportedAt": "2026-09-25T10:26:18+00:00",
   "palettes": [
     {
       "name": "ledger",
@@ -348,6 +348,13 @@
     },
     {
       "collection": "tokens",
+      "mode": "ledger",
+      "name": "color/warn/tint",
+      "type": "COLOR",
+      "value": "#261f14"
+    },
+    {
+      "collection": "tokens",
       "mode": "graphite",
       "name": "color/warn",
       "type": "COLOR",
@@ -355,10 +362,24 @@
     },
     {
       "collection": "tokens",
+      "mode": "graphite",
+      "name": "color/warn/tint",
+      "type": "COLOR",
+      "value": "#24221e"
+    },
+    {
+      "collection": "tokens",
       "mode": "sigil",
       "name": "color/warn",
       "type": "COLOR",
       "value": "#e9d86e"
+    },
+    {
+      "collection": "tokens",
+      "mode": "sigil",
+      "name": "color/warn/tint",
+      "type": "COLOR",
+      "value": "#20201a"
     },
     {
       "collection": "tokens",
@@ -868,6 +889,19 @@
         "color": "color/text/primary"
       },
       "rule": "Round 2 (owner, 2026-09-25): Apply all now uses the secondary button style on every screen and state, so each tab keeps a single primary action (impeccable finding 9). Visual only: what the button does and sends is unchanged, and its copy is unchanged. The panel already renders it as .btn without .primary, so the existing .btn selector tokens cover it."
+    },
+    "pluginWarning": {
+      "kind": "band",
+      "background": "color/warn/tint",
+      "icon": {
+        "selector": ".plugin-warning-icon",
+        "color": "color/warn",
+        "ariaHidden": true
+      },
+      "sideRule": null,
+      "stroke": null,
+      "tint": "color/bg/base mixed with 8% color/warn",
+      "decided": "owner, 2026-09-25, following impeccable: drop the side-tab, mark the warning with a warn-tinted full-width band plus its icon"
     }
   },
   "borders": [
@@ -894,10 +928,6 @@
     {
       "selector": ".btn:not(.primary)",
       "why": "1px color/border/strong edge is the secondary button's shape; it has no fill; 3:1 or more on raised and base"
-    },
-    {
-      "selector": ".plugin-warning",
-      "why": "3px color/warn left rule marks a warning, in the warning colour rather than the accent (finding 17); the box itself has no stroke"
     },
     {
       "selector": "#statusbar",
@@ -1242,6 +1272,39 @@
         "graphite": 5.75,
         "sigil": 6.16
       }
+    },
+    {
+      "fg": "color/text/primary",
+      "bg": "color/warn/tint",
+      "minRatio": 4.5,
+      "where": "plugin warning text on its warn-tinted band",
+      "measured": {
+        "ledger": 12.97,
+        "graphite": 13.57,
+        "sigil": 14.09
+      }
+    },
+    {
+      "fg": "color/warn",
+      "bg": "color/warn/tint",
+      "minRatio": 3,
+      "where": "plugin warning icon on its band (non-text)",
+      "measured": {
+        "ledger": 9.45,
+        "graphite": 8.9,
+        "sigil": 11.31
+      }
+    },
+    {
+      "fg": "color/border/strong",
+      "bg": "color/warn/tint",
+      "minRatio": 3,
+      "where": "Open Setup button edge on the plugin warning band (non-text)",
+      "measured": {
+        "ledger": 3.12,
+        "graphite": 3.13,
+        "sigil": 3.12
+      }
     }
   ],
   "selectorTokens": [
@@ -1503,11 +1566,11 @@
     {
       "selector": ".plugin-warning",
       "property": "background-color",
-      "variable": "color/accent/tint"
+      "variable": "color/warn/tint"
     },
     {
-      "selector": ".plugin-warning",
-      "property": "border-color",
+      "selector": ".plugin-warning-icon",
+      "property": "color",
       "variable": "color/warn"
     },
     {
@@ -1809,7 +1872,16 @@
       "placeholders": [
         "Search settings by name or effect..."
       ],
-      "enabledModsForm": "inline"
+      "enabledModsForm": "inline",
+      "state": {
+        "game": "offline",
+        "config": {
+          "density_on": true,
+          "density": 3,
+          "mod_orb_pickup_radius": true,
+          "map_reveal": true
+        }
+      }
     },
     {
       "tab": "loot",
@@ -1911,7 +1983,16 @@
       "placeholders": [
         "Search settings by name or effect..."
       ],
-      "enabledModsForm": "tray (collapsed)"
+      "enabledModsForm": "tray (collapsed)",
+      "state": {
+        "game": "offline",
+        "config": {
+          "density_on": true,
+          "density": 3,
+          "mod_orb_pickup_radius": true,
+          "map_reveal": true
+        }
+      }
     },
     {
       "tab": "modifiers",
@@ -2016,7 +2097,16 @@
       "placeholders": [
         "Search settings by name or effect..."
       ],
-      "enabledModsForm": "inline"
+      "enabledModsForm": "inline",
+      "state": {
+        "game": "offline",
+        "config": {
+          "density_on": true,
+          "density": 3,
+          "mod_orb_pickup_radius": true,
+          "map_reveal": true
+        }
+      }
     },
     {
       "tab": "modifiers",
@@ -2109,7 +2199,16 @@
       "placeholders": [
         "Search settings by name or effect..."
       ],
-      "enabledModsForm": "tray (collapsed)"
+      "enabledModsForm": "tray (collapsed)",
+      "state": {
+        "game": "offline",
+        "config": {
+          "density_on": true,
+          "density": 3,
+          "mod_orb_pickup_radius": true,
+          "map_reveal": true
+        }
+      }
     },
     {
       "tab": "mods-items",
@@ -2172,7 +2271,16 @@
         "· v1.4.5"
       ],
       "placeholders": [],
-      "enabledModsForm": "inline"
+      "enabledModsForm": "inline",
+      "state": {
+        "game": "offline",
+        "config": {
+          "density_on": true,
+          "density": 3,
+          "mod_orb_pickup_radius": true,
+          "map_reveal": true
+        }
+      }
     },
     {
       "tab": "mods-items",
@@ -2223,7 +2331,16 @@
         "· v1.4.5"
       ],
       "placeholders": [],
-      "enabledModsForm": "tray (collapsed)"
+      "enabledModsForm": "tray (collapsed)",
+      "state": {
+        "game": "offline",
+        "config": {
+          "density_on": true,
+          "density": 3,
+          "mod_orb_pickup_radius": true,
+          "map_reveal": true
+        }
+      }
     },
     {
       "tab": "mods-qol",
@@ -2309,7 +2426,16 @@
         "· v1.4.5"
       ],
       "placeholders": [],
-      "enabledModsForm": "inline"
+      "enabledModsForm": "inline",
+      "state": {
+        "game": "offline",
+        "config": {
+          "density_on": true,
+          "density": 3,
+          "mod_orb_pickup_radius": true,
+          "map_reveal": true
+        }
+      }
     },
     {
       "tab": "mods-qol",
@@ -2383,7 +2509,16 @@
         "· v1.4.5"
       ],
       "placeholders": [],
-      "enabledModsForm": "tray (collapsed)"
+      "enabledModsForm": "tray (collapsed)",
+      "state": {
+        "game": "offline",
+        "config": {
+          "density_on": true,
+          "density": 3,
+          "mod_orb_pickup_radius": true,
+          "map_reveal": true
+        }
+      }
     },
     {
       "tab": "setup",
@@ -2415,10 +2550,8 @@
         "Auto-apply",
         "Apply all now",
         "Choose your Hero_Siege.exe in Setup, then install the plugin to use modifiers.",
-        "Open Setup",
         "Game Location",
         "ForgePact talks to the mod plugin sitting next to this exe. Change it if your game lives somewhere else.",
-        "C:\\Users\\stann\\AppData\\Local\\Temp\\forgepact-panel-1qtop5_9\\Hero_Siege.exe",
         "Browse...",
         "Save",
         "Install Mod Plugin",
@@ -2440,7 +2573,16 @@
         "· v1.4.5"
       ],
       "placeholders": [],
-      "enabledModsForm": "inline"
+      "enabledModsForm": "inline",
+      "state": {
+        "game": "offline",
+        "config": {
+          "density_on": true,
+          "density": 3,
+          "mod_orb_pickup_radius": true,
+          "map_reveal": true
+        }
+      }
     },
     {
       "tab": "setup",
@@ -2461,10 +2603,8 @@
         "Auto-apply",
         "Apply all now",
         "Choose your Hero_Siege.exe in Setup, then install the plugin to use modifiers.",
-        "Open Setup",
         "Game Location",
         "ForgePact talks to the mod plugin sitting next to this exe. Change it if your game lives somewhere else.",
-        "C:\\Users\\stann\\AppData\\Local\\Temp\\forgepact-panel-1qtop5_9\\Hero_Siege.exe",
         "Browse...",
         "Save",
         "Install Mod Plugin",
@@ -2485,7 +2625,16 @@
         "· v1.4.5"
       ],
       "placeholders": [],
-      "enabledModsForm": "tray (collapsed)"
+      "enabledModsForm": "tray (collapsed)",
+      "state": {
+        "game": "offline",
+        "config": {
+          "density_on": true,
+          "density": 3,
+          "mod_orb_pickup_radius": true,
+          "map_reveal": true
+        }
+      }
     },
     {
       "tab": "world",
@@ -2606,7 +2755,16 @@
       "placeholders": [
         "Search by name or effect..."
       ],
-      "enabledModsForm": "inline"
+      "enabledModsForm": "inline",
+      "state": {
+        "game": "offline",
+        "config": {
+          "density_on": true,
+          "density": 3,
+          "mod_orb_pickup_radius": true,
+          "map_reveal": true
+        }
+      }
     },
     {
       "tab": "world",
@@ -2715,7 +2873,16 @@
       "placeholders": [
         "Search by name or effect..."
       ],
-      "enabledModsForm": "tray (collapsed)"
+      "enabledModsForm": "tray (collapsed)",
+      "state": {
+        "game": "offline",
+        "config": {
+          "density_on": true,
+          "density": 3,
+          "mod_orb_pickup_radius": true,
+          "map_reveal": true
+        }
+      }
     }
   ],
   "states": [
@@ -2759,7 +2926,7 @@
       "state": "error",
       "nodeId": "36:155",
       "screenshot": ".claude/workorders/forgepact-ui-figma-buildout/states/error.png",
-      "notes": "Save error in color/danger with its reason slot, Could not finish saving: {reason} (the restyle drops the colon when there is no reason); plugin warning not-installed text with its color/warn rule; chip Game open · plugin missing."
+      "notes": "Save error in color/danger with its reason slot, Could not finish saving: {reason} (the restyle drops the colon when there is no reason); plugin warning not-installed text on its full-width color/warn/tint band, with the warning icon in color/warn before the text; chip Game open · plugin missing."
     },
     {
       "state": "enabled-empty",
@@ -2966,7 +3133,8 @@
       "variants": [
         "no-exe",
         "not-installed"
-      ]
+      ],
+      "notes": "A full-width band in color/warn/tint with the warning icon (color/warn, original vector, decorative: the restyle renders it as span.plugin-warning-icon aria-hidden) before the text; no side rule and no stroke (owner, following impeccable, round 3). On Setup the Open Setup button is hidden (finding 18) and the band carries the text only."
     },
     {
       "name": "PoolRow",
