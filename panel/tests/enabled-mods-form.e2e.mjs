@@ -1,5 +1,6 @@
-// The "Enabled mods" list's two forms and the remembered value on a
-// switched-off slider, in a real (headless) Edge against the sandbox server.
+// The "Enabled mods" list's two forms, its entries' names, and the remembered
+// value on a switched-off slider, in a real (headless) Edge against the
+// sandbox server.
 //
 //   node tests/enabled-mods-form.e2e.mjs [--dist <dir>]      (npm run e2e:form)
 //
@@ -32,6 +33,8 @@ const EXPECTED = [
   'turn-off-tray',
   'remembered-value-when-off',
   'remembered-value-cleared-when-on',
+  'entry-names-from-row-labels',
+  'density-entry-named-monster-density',
 ];
 
 // Three ordinary entries, the most the features' own e2e ever shows at 1280.
@@ -211,9 +214,71 @@ async function remembered(ctx) {
   passed.push('remembered-value-cleared-when-on');
 }
 
+// The design's trio: Monster Density at x3, orb pickup radius and map reveal.
+// Every entry is named by its row's label, except density, whose switch
+// borrows the multiplier's row and is named by its card's heading instead.
+async function names(ctx) {
+  const { page, passed } = ctx;
+  await post(page, { key: 'density', value: 3 });
+  await post(page, { key: 'density_on', value: true });
+  await only(page, ['mod_orb_pickup_radius', 'map_reveal']);
+
+  // Text is read the way a person sees it: the first piece of text, past the
+  // icon the panel prepends to a label or a heading.
+  const { entries, world } = await $(page, () => {
+    const firstText = (el) => {
+      if (!el) return '';
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        const text = node.textContent.trim();
+        if (text) return text;
+      }
+      return '';
+    };
+    const den = document.getElementById('den');
+    return {
+      entries: [...document.querySelectorAll('#enabledMods li.enabled-mod')].map((li) => ({
+        for: li.dataset.for,
+        name: li.querySelector('.enabled-mod-name').textContent.trim(),
+        value: li.querySelector('.enabled-mod-value').textContent.trim(),
+        turnOff: li.querySelector('.quick-disable').getAttribute('aria-label'),
+        label: firstText(document.getElementById(li.dataset.for)?.closest('.row')?.querySelector('.lbl')),
+      })),
+      // preparePanelUI() moves the heading into the card's top bar, so it is
+      // a descendant of #densityCard, not a child.
+      world: {
+        heading: firstText(document.querySelector('#densityCard h2')),
+        rowLabel: firstText(den.closest('.row').querySelector('.lbl')),
+        den: den.getAttribute('aria-label'),
+        denOn: document.getElementById('den_on').getAttribute('aria-label'),
+      },
+    };
+  });
+  const ids = entries.map((e) => e.for).sort();
+  assert(JSON.stringify(ids) === JSON.stringify(['den_on', 'map_reveal', 'mod_orb_pickup_radius']),
+    `The trio is not what is listed: ${ids.join(', ')}`);
+
+  for (const e of entries.filter((x) => x.for !== 'den_on')) {
+    assert(e.label && e.name === e.label, `${e.for}: named ${JSON.stringify(e.name)}, its row's label reads ${JSON.stringify(e.label)}`);
+    assert(e.turnOff === `Turn off ${e.label}`, `${e.for}: Turn off is labelled ${JSON.stringify(e.turnOff)}`);
+  }
+  passed.push('entry-names-from-row-labels');
+
+  const density = entries.find((x) => x.for === 'den_on');
+  assert(density.name === 'Monster Density' && density.name === world.heading,
+    `The density entry is named ${JSON.stringify(density.name)}, the card's heading reads ${JSON.stringify(world.heading)}`);
+  assert(density.value === 'x3', `The density entry's value reads ${JSON.stringify(density.value)}`);
+  assert(density.turnOff === 'Turn off Monster Density', `Density's Turn off is labelled ${JSON.stringify(density.turnOff)}`);
+  assert(world.rowLabel === 'Density multiplier', `The World row's label changed to ${JSON.stringify(world.rowLabel)}`);
+  assert(world.den === 'Density multiplier', `#den's aria-label changed to ${JSON.stringify(world.den)}`);
+  assert(world.denOn === 'Enable monster density', `#den_on's aria-label changed to ${JSON.stringify(world.denOn)}`);
+  passed.push('density-entry-named-monster-density');
+}
+
 const GROUPS = [
   ['forms', forms],
   ['remembered', remembered],
+  ['names', names],
 ];
 
 const browser = await launchBrowser();

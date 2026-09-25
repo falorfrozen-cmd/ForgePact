@@ -10,7 +10,9 @@
 //
 // An entry's name is its row's label and its value the row's value box, read
 // from the page rather than copied, so a label or a value format lives in one
-// place.
+// place. The one exception is a control whose row is borrowed (ROW_OF): it is
+// named by its card's heading instead, so density's entry reads as its
+// section, not as the multiplier row it borrows.
 import { enabledControls } from '../enabled-mods.js';
 
 // Density's switch sits in a heading row of its own; its label and value are
@@ -22,17 +24,23 @@ function rowOf(control) {
   return anchor?.closest('.row') || null;
 }
 
-// The label's first piece of text: the title, before a tag or a description,
-// and past the icon the panel prepends to it.
-function nameOf(row) {
-  const label = row?.querySelector('.lbl');
-  if (!label) return '';
-  const walker = document.createTreeWalker(label, NodeFilter.SHOW_TEXT);
+// An element's first piece of text: a label's title, before a tag or a
+// description, and past the icon the panel prepends to it.
+function firstText(el) {
+  if (!el) return '';
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
     const text = node.textContent.trim();
     if (text) return text;
   }
   return '';
+}
+
+function nameOf(control, row) {
+  // The heading, wherever preparePanelUI() moved it inside the card (density's
+  // sits in the card's top bar beside the switch).
+  if (ROW_OF[control.id]) return firstText(control.closest('.card')?.querySelector('h2'));
+  return firstText(row?.querySelector('.lbl'));
 }
 
 function valueOf(row, control) {
@@ -67,7 +75,7 @@ export function renderEnabledMods(cfg) {
   const list = document.createElement('ul');
   for (const control of controls) {
     const row = rowOf(control);
-    const name = nameOf(row);
+    const name = nameOf(control, row);
     const item = document.createElement('li');
     item.className = 'enabled-mod';
     item.dataset.for = control.id;
