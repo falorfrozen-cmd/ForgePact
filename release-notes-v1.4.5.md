@@ -205,8 +205,14 @@ of its own - see that bullet for what it draws on.
   `Play local`, the save slot and `PLAY`, and stops with a reason instead of
   guessing when a button is not listed. In a test run, clicks at the listed
   `Play local`, first- and second-save-slot and `PLAY` positions all worked
-  and loaded the chosen character. Nothing in play changes, and there is no
-  new switch in the panel.
+  and loaded the chosen character. `menulayout` now also lists the town
+  stash and the bag: the stash window and the stash in town, the stash and
+  bag tab buttons, the item grids, the split-stack dialog, the item on the
+  cursor and your character, and prints a few more of each one's own
+  settings beside its position. That is the groundwork for
+  `hs-drive` opening the stash and moving items in a test session without
+  anyone at the keyboard; those tools are not in this release. Nothing in
+  play changes, and there is no new switch in the panel.
 
 ## Changed
 

@@ -28676,6 +28676,12 @@ static void PackMarksCommand(const std::string& rest)
 // unparented save/menu objects are listed as well and rows are deduplicated by
 // instance id, so the answer does not depend on whether listing a parent
 // includes its children on this runner.
+//
+// The second group is the town stash and the bag (docs/stash-bag-layout-research.md):
+// the windows that show the bag beside their own content, their tab buttons,
+// grids and dialogs, the inventory data holder, the cursor-held item (which
+// has no parent, so only its own name reaches it), and two room-space objects
+// - the stash itself and the player - whose gui= is a room position.
 static const HeroSiege::Objects::GameObject kMenuLayoutObjects[] = {
     HeroSiege::Objects::GameObject::UI_Node_Parent_obj,
     HeroSiege::Objects::GameObject::UI_Parent_obj,
@@ -28690,8 +28696,25 @@ static const HeroSiege::Objects::GameObject kMenuLayoutObjects[] = {
     HeroSiege::Objects::GameObject::Load_Inventory_Char_Select_obj,
     HeroSiege::Objects::GameObject::Menu_Controller_obj,
     HeroSiege::Objects::GameObject::Profile_Manager_obj,
+    HeroSiege::Objects::GameObject::New_Inventory_Data_obj,
+    HeroSiege::Objects::GameObject::UI_Inventory_Parent_obj,
+    HeroSiege::Objects::GameObject::UI_Stash_obj,
+    HeroSiege::Objects::GameObject::UI_Inventory_obj,
+    HeroSiege::Objects::GameObject::UI_Stash_Tab_Bar_Container_obj,
+    HeroSiege::Objects::GameObject::UI_Button_Stash_Tab_obj,
+    HeroSiege::Objects::GameObject::UI_Button_Inventory_Tab_obj,
+    HeroSiege::Objects::GameObject::UI_Button_Inventory_Tab_Small_obj,
+    HeroSiege::Objects::GameObject::UI_Button_Close_obj,
+    HeroSiege::Objects::GameObject::UI_Inventory_Grid_obj,
+    HeroSiege::Objects::GameObject::UI_Split_Stack_obj,
+    HeroSiege::Objects::GameObject::UI_Stash_Dropdown_obj,
+    HeroSiege::Objects::GameObject::UI_Stash_Socket_New_obj,
+    HeroSiege::Objects::GameObject::UI_Inventory_Drag_obj,
+    HeroSiege::Objects::GameObject::Town_Stash_obj,
+    HeroSiege::Objects::GameObject::Player_obj,
 };
 static constexpr int kMenuLayoutMaxRows = 200;
+static constexpr int kMenuLayoutMaxArrayItems = 32;
 static const char* const kMenuLayoutReadFailed = "<read-failed>";
 
 // One decimal, never a bare %f on a runtime-read double (Known Limitations
@@ -28734,12 +28757,23 @@ static std::string MenuLayoutOneLine(std::string s)
     return s;
 }
 
+static std::string MenuLayoutArrayText(const RValue& arr);
+
+// Only strings go through ToString. A reference, struct, method or pointer
+// (an instance handle in a button's activationArgs, say) is named by kind,
+// as the research walkers name one, since what the runner's string
+// conversion makes of one has not been measured; any other kind prints its
+// number.
 static std::string MenuLayoutValueText(const RValue& v)
 {
     try {
         switch (v.m_Kind) {
         case VALUE_STRING: return MenuLayoutOneLine(v.ToString());
         case VALUE_BOOL:   return v.ToBoolean() ? "1" : "0";
+        case VALUE_ARRAY: return MenuLayoutArrayText(v);
+        case VALUE_REF:    return "<ref>";
+        case VALUE_OBJECT: return "<object>";
+        case VALUE_PTR:    return "<ptr>";
         case VALUE_REAL:
         case VALUE_INT32:
         case VALUE_INT64: {
@@ -28748,8 +28782,33 @@ static std::string MenuLayoutValueText(const RValue& v)
             return MenuLayoutDecimal(d);
         }
         case VALUE_UNDEFINED: return "undefined";
-        default: return MenuLayoutOneLine(v.ToString());
+        default: return "<kind " + std::to_string((int)v.m_Kind) + ">";
         }
+    } catch (...) { return kMenuLayoutReadFailed; }
+}
+
+// An array-valued variable (a tab button's activationArgs, say) prints as
+// [a,b,...], each element through MenuLayoutValueText. A nested array prints
+// <array> instead of being walked, and past the first
+// kMenuLayoutMaxArrayItems elements the rest are counted as ,...+N, so one
+// row stays one bounded line; an element that fails to read prints
+// <read-failed> in its place.
+static std::string MenuLayoutArrayText(const RValue& arr)
+{
+    try {
+        const double n = g_Yytk->CallBuiltin("array_length", { arr }).ToDouble();
+        if (!std::isfinite(n) || n < 0) return kMenuLayoutReadFailed;
+        const int shown = n > kMenuLayoutMaxArrayItems ? kMenuLayoutMaxArrayItems : (int)n;
+        std::string out = "[";
+        for (int i = 0; i < shown; ++i) {
+            if (i > 0) out += ",";
+            RValue e;
+            try { e = g_Yytk->CallBuiltin("array_get", { arr, RValue((double)i) }); }
+            catch (...) { out += kMenuLayoutReadFailed; continue; }
+            out += e.m_Kind == VALUE_ARRAY ? std::string("<array>") : MenuLayoutValueText(e);
+        }
+        if (shown < (int)n) out += ",...+" + std::to_string((int)n - shown);
+        return out + "]";
     } catch (...) { return kMenuLayoutReadFailed; }
 }
 
@@ -28824,7 +28883,13 @@ static std::string MenuLayoutRow(const RValue& inst, const MenuLayoutScale& sc)
         + "," + MenuLayoutDecimal(MenuLayoutRead(inst, "bbox_right")) + "," + MenuLayoutDecimal(MenuLayoutRead(inst, "bbox_bottom"))
         + " visible=" + visible
         + " sprite=" + sprite;
-    static const char* const kOptional[] = { "label", "name", "slot", "index", "page", "selected" };
+    // The first six are the character-select set. The rest are what the stash
+    // and bag tools expect to identify a tab, a window or a grid by
+    // (docs/stash-bag-layout-research.md); activationFunc is left out on
+    // purpose, since a method value has no stable text.
+    static const char* const kOptional[] = { "label", "name", "slot", "index", "page", "selected",
+        "uiNodeCallstack", "activationArgs", "enabled", "tabNumber", "tabType",
+        "stashTabSelected", "nodeGridWidth", "nodeGridHeight", "gridScale", "gridName" };
     for (const char* var : kOptional) {
         bool present = false;
         const std::string v = MenuLayoutOptional(inst, var, present);

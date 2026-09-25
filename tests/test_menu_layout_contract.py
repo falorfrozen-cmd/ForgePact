@@ -31,9 +31,10 @@ if str(SDK_PY_PATH) not in sys.path:
 
 from test_release_hook_contract import function_body, strip_research_blocks  # noqa: E402
 
-# The thirteen names of the static search (docs/menu-layout-research.md,
-# § Static search): the three roots, five leaves, five unparented objects.
-PLANNED_OBJECTS = {
+# The thirteen names of the character-select static search
+# (docs/menu-layout-research.md, § Static search): the three roots, five
+# leaves, five unparented objects.
+CHARACTER_SELECT_OBJECTS = {
     "UI_Node_Parent_obj", "UI_Parent_obj", "UI_List_Item_Parent_obj",
     "UI_Button_obj", "UI_Button_Small_obj", "UI_Character_obj",
     "UI_Create_Character_obj", "UI_Main_Menu_obj",
@@ -41,11 +42,27 @@ PLANNED_OBJECTS = {
     "Menu_Controller_obj", "Profile_Manager_obj",
 }
 
-# Anything that would make the listing do rather than read.
+# The sixteen names the stash and bag static search added
+# (docs/stash-bag-layout-research.md, § Static search).
+STASH_BAG_OBJECTS = {
+    "New_Inventory_Data_obj", "UI_Inventory_Parent_obj", "UI_Stash_obj",
+    "UI_Inventory_obj", "UI_Stash_Tab_Bar_Container_obj", "UI_Button_Stash_Tab_obj",
+    "UI_Button_Inventory_Tab_obj", "UI_Button_Inventory_Tab_Small_obj",
+    "UI_Button_Close_obj", "UI_Inventory_Grid_obj", "UI_Split_Stack_obj",
+    "UI_Stash_Dropdown_obj", "UI_Stash_Socket_New_obj", "UI_Inventory_Drag_obj",
+    "Town_Stash_obj", "Player_obj",
+}
+
+PLANNED_OBJECTS = CHARACTER_SELECT_OBJECTS | STASH_BAG_OBJECTS
+
+# Anything that would make the listing do rather than read: hook, perform an
+# event, create, destroy, write, or run a game script (by name through
+# script_execute, or with a supplied self through CallBuiltinEx).
 FORBIDDEN = (
     "MmCreateHook", "HookOneScript", "HookBuiltin", "CallGameScriptEx",
     "event_perform", "Rva", "GetModuleHandle", "instance_create",
-    "instance_destroy", "variable_instance_set",
+    "instance_destroy", "variable_instance_set", "script_execute",
+    "CallBuiltinEx",
 )
 
 
@@ -167,7 +184,7 @@ class MenuLayoutContract(unittest.TestCase):
     def test_row_format(self):
         pieces = ['"  obj="', '" id="', '" gui="', '" win="', '" bbox="',
                   '" visible="', '" sprite="',
-                  '{ "label", "name", "slot", "index", "page", "selected" }',
+                  '{ "label", "name", "slot", "index", "page", "selected",',
                   'row += " text="']
         at = [self.row.index(p) for p in pieces]
         self.assertEqual(at, sorted(at))
@@ -248,7 +265,7 @@ class MenuLayoutResearchDoc(unittest.TestCase):
 
     def test_candidate_table_is_documented(self):
         static = doc_section(self.doc, "## Static search")
-        for name in PLANNED_OBJECTS:
+        for name in CHARACTER_SELECT_OBJECTS:
             self.assertIn(f"`{name}`", static, name)
 
 
