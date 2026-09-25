@@ -31,8 +31,16 @@
 // page.waitForFunction, bounded by the module's own OPEN_DELAY_MS, and never
 // sleeps a fixed time instead.
 //
-// --shots <dir> writes tooltip-open-1280.png, status-tooltip-900.png and
-// note-hover-loot-900.png for the owner.
+// A slider at its default has no note (owner, 2026-09-26), so an idle row
+// holds words only while its range carries a value not yet saved. The tooltip
+// checks put that state on the rows they hover ("an unsaved value": the range
+// moved and `input` dispatched, never `change`, so panel.js's own writer fills
+// the note) and print how many tooltips opened, so none passes on zero.
+// slider-note-none-at-default and slider-note-switched-off-by-value check the
+// rule itself.
+//
+// --shots <dir> writes tooltip-open-1280.png, status-tooltip-900.png,
+// note-hover-loot-900.png and note-default-loot-900.png for the owner.
 
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -72,7 +80,12 @@ const EXPECTED = [
   'slider-note-tooltip-timing',
   'slider-note-clear-world',
   'slider-note-hover-moves-no-row',
+  'slider-note-none-at-default',
+  'slider-note-switched-off-by-value',
 ];
+// Round 1's sentences above the default, byte for byte (D13 leaves them).
+const DUNGEON_AT_4 = '4x its vanilla drop rate; where the game never rolls this family, the roll is opened at the normal-key chance first';
+const DAMAGE_AT_100 = 'adds 100% to the final hit after the game finishes its own calculation (+100% doubles it)';
 // Child rows sit in their parent's card, never in one of their own.
 const CHILD_CONTROLS = ['map_reveal_packs', 'map_reveal_spawn', 'mod_auto_prospect_bag'];
 
@@ -225,19 +238,24 @@ const opensOnHover = (page, selector) => $(page, (s) => { const n = document.que
 
 // Hover each note-carrying entry under `root` in turn: every shown note under
 // `root` is a tooltip or in the flow and clear, and no row moves while it is
-// shown. Answers the number of entries hovered.
+// shown. Answers how many entries it hovered and how many of them opened
+// their note as a tooltip.
 async function sweep(page, root, what) {
   const keys = await $(page, (r) => [...document.querySelectorAll(`${r} .setting-entry`)]
     .filter((e) => e.checkVisibility() && e.querySelector(':scope > .note[data-note]'))
     .map((e) => { const i = e.querySelector('input[type=range]'); return [i.dataset.sec, i.dataset.key]; }), root);
+  let tooltips = 0;
   for (const [sec, key] of keys) {
     const at = `${what}, hovering ${sec}.${key}`;
     await away(page);
     const opens = await opensOnHover(page, noteOf(sec, key));
     const before = await boxes(page);
     await page.hover(`${entryOf(sec, key)} .lbl`);
-    if (opens) await waitShown(page, noteOf(sec, key), at);
-    else await frames(page);
+    if (opens) {
+      await waitShown(page, noteOf(sec, key), at);
+      await mustBeTooltip(page, noteOf(sec, key), at);
+      tooltips++;
+    } else await frames(page);
     const shown = await $(page, (r) => [...document.querySelectorAll(`${r} .setting-entry > .note[data-note]`)]
       .filter((n) => n.checkVisibility()).map((n) => {
         const i = n.closest('.setting-entry').querySelector('input[type=range]');
@@ -251,6 +269,38 @@ async function sweep(page, root, what) {
     }
     mustBeStill(before, await boxes(page), at);
   }
+  return { hovered: keys.length, tooltips };
+}
+
+// An unsaved value: the range moved above its default and `input` dispatched,
+// never `change`, so panel.js's own `oninput` writes the note and nothing is
+// saved. The row stays idle. Any later write repaints every range from the
+// saved config (refreshSavedControls), which clears it, so apply it after the
+// page's last write. `value` null means one drag step above the default (the
+// step panel.js snaps a dragged value to: a repaint leaves step="any" and keeps
+// the drag step in data-step0).
+async function unsaved(page, sec, key, value = null) {
+  const range = `input[type=range][data-sec="${sec}"][data-key="${key}"]`;
+  return $(page, ([s, v]) => {
+    const r = document.querySelector(s);
+    r.value = v === null ? Math.min(+r.max, +r.min + (parseFloat(r.dataset.step0 || r.step) || 1)) : v;
+    r.dispatchEvent(new Event('input', { bubbles: true }));
+    return +r.value;
+  }, [range, value]);
+}
+// Back to the default the same way; the note is empty again.
+async function restoreDefault(page, sec, key) {
+  const range = `input[type=range][data-sec="${sec}"][data-key="${key}"]`;
+  await $(page, (s) => { const r = document.querySelector(s); r.value = r.min; r.dispatchEvent(new Event('input', { bubbles: true })); }, range);
+}
+// The unsaved value on every idle note-carrying entry under `root` (switch on,
+// not listed, not a drop row). Answers how many entries it was applied to.
+async function unsavedIdle(page, root) {
+  const keys = await $(page, (r) => [...document.querySelectorAll(`${r} .setting-entry`)]
+    .filter((e) => e.checkVisibility() && e.querySelector(':scope > .note[data-note]') && !e.querySelector('[data-sec="drops"]')
+      && e.querySelector(':scope .slider-switch:not([data-live]) > input:checked'))
+    .map((e) => { const i = e.querySelector('input[type=range]'); return [i.dataset.sec, i.dataset.key]; }), root);
+  for (const [sec, key] of keys) await unsaved(page, sec, key);
   return keys.length;
 }
 
@@ -267,13 +317,18 @@ async function makeIdle(page, sec, key, what) {
   assert(!await $(page, (s) => document.querySelector(s).closest('label.slider-switch').hasAttribute('data-live'), sw), `${what}: ${sec}.${key} is not idle`);
 }
 
-// One idle entry hovered (a tooltip above its row, nothing moves, gone when
-// the pointer leaves), then live (in the flow and clear), then the sweep.
-async function noteStates(page, sec, key, liveValue, root, what, shot = null) {
+// One idle entry holding an unsaved value hovered (a tooltip above its row,
+// nothing moves, gone when the pointer leaves), then committed and live (in
+// the flow and clear), then the unsaved value on every idle entry and the
+// sweep, which must open a tooltip on each of them.
+async function noteStates(page, sec, key, unsavedValue, liveValue, root, what, shot = null) {
   const range = `input[type=range][data-sec="${sec}"][data-key="${key}"]`;
   const note = noteOf(sec, key);
   await makeIdle(page, sec, key, what);
+  await unsaved(page, sec, key, unsavedValue);
   await away(page);
+  assert(await opensOnHover(page, note), `${what}: idle ${sec}.${key} with an unsaved value has no hidden note with words`);
+  assert(!await $(page, (s) => document.querySelector(s).closest('label.slider-switch').hasAttribute('data-live'), `#sw_${sec}_${key}`), `${what}: ${sec}.${key} with an unsaved value is not idle`);
   const before = await boxes(page);
   await page.hover(`${entryOf(sec, key)} .lbl`);
   await waitShown(page, note, `${what}, idle ${sec}.${key} hovered`);
@@ -294,8 +349,10 @@ async function noteStates(page, sec, key, liveValue, root, what, shot = null) {
   await away(page);
   assert(await $(page, (s) => document.querySelector(s).closest('label.slider-switch').hasAttribute('data-live'), `#sw_${sec}_${key}`), `${what}: ${sec}.${key} at ${liveValue} is not live`);
   const live = await mustBeInFlow(page, note, `${what}, live ${sec}.${key} at ${liveValue}`);
-  const hovered = await sweep(page, root, what);
-  return { live, hovered };
+  const applied = await unsavedIdle(page, root);
+  const swept = await sweep(page, root, what);
+  assert(swept.tooltips >= 1 && swept.tooltips === applied, `${what}: ${swept.tooltips} tooltips opened for ${applied} idle entries holding an unsaved value`);
+  return { live, ...swept };
 }
 
 // The first `#keys` entry with another row directly below it in its column.
@@ -623,9 +680,9 @@ async function noteLoot({ browser }) {
       const key = await firstKeyWithRowBelow(page);
       assert(key, `${width}: no #keys entry has a row below it`);
       const shot = SHOTS && width === 900 ? join(SHOTS, 'note-hover-loot-900.png') : null;
-      const got = await noteStates(page, 'keys', key, 4, '.tab-card[data-tab="loot"]', `Loot ${width}`, shot);
+      const got = await noteStates(page, 'keys', key, 4, 4, '.tab-card[data-tab="loot"]', `Loot ${width}`, shot);
       assert(/^4x /.test(got.live.text), `${width}: the live ${key} note reads "${got.live.text}"`);
-      notes.push(`${width}: keys.${key}, swept ${got.hovered}`);
+      notes.push(`${width}: keys.${key}, ${got.hovered} hovered, ${got.tooltips} tooltips`);
     });
     await withPage(browser, { viewport: VIEWPORTS[width], routes: (page) => patchState(page, helmetOn) }, async ({ page }) => {
       await tab(page, 'loot');
@@ -642,8 +699,8 @@ async function noteModifiers({ browser }) {
     await withPage(browser, { viewport: VIEWPORTS[width] }, async ({ page }) => {
       await tab(page, 'modifiers');
       const max = await $(page, () => document.querySelector('input[type=range][data-sec="stats"][data-key="exp"]').max);
-      const got = await noteStates(page, 'stats', 'exp', +max, '.modifier-card', `Modifiers ${width}`);
-      notes.push(`${width}: swept ${got.hovered}`);
+      const got = await noteStates(page, 'stats', 'exp', null, +max, '.modifier-card', `Modifiers ${width}`);
+      notes.push(`${width}: ${got.hovered} hovered, ${got.tooltips} tooltips`);
     });
   }
   return notes.join('; ');
@@ -654,7 +711,10 @@ async function noteWorld({ browser }) {
   for (const width of [1280, 900]) {
     await withPage(browser, { viewport: VIEWPORTS[width] }, async ({ page }) => {
       await tab(page, 'world');
-      notes.push(`${width}: ${await sweep(page, '#workspace', `World ${width}`)} entries with a note`);
+      const entries = await $(page, () => [...document.querySelectorAll('#workspace .setting-entry')].filter((e) => e.checkVisibility()).length);
+      assert(entries > 0, `World ${width}: no visible .setting-entry to measure`);
+      const { hovered } = await sweep(page, '#workspace', `World ${width}`);
+      notes.push(`${width}: ${entries} entries, ${hovered} with a note${hovered ? '' : ' (a guard for a note added later, not a proof)'}`);
     });
   }
   return notes.join('; ');
@@ -669,6 +729,7 @@ async function noteKeyboard({ page }) {
   const next = keys[keys.indexOf('exp') + 1];
   assert(keys.includes('exp') && next, `${what}: no entry after exp in #stats (${keys.join(',')})`);
   for (const key of ['exp', next]) await makeIdle(page, 'stats', key, what);
+  for (const key of ['exp', next]) await unsaved(page, 'stats', key);
   const range = (k) => `input[type=range][data-sec="stats"][data-key="${k}"]`;
   const note = noteOf('stats', 'exp');
   const focus = (k) => $(page, (s) => document.querySelector(s).focus(), range(k));
@@ -712,6 +773,7 @@ async function noteTiming({ page }) {
   });
   assert(pair, `${what}: no two #keys entries one above the other`);
   for (const key of pair) await makeIdle(page, 'keys', key, what);
+  for (const key of pair) await unsaved(page, 'keys', key);
   await away(page);
   await $(page, (keys) => {
     const log = window.__noteTiming = keys.map(() => ({ enter: [], shown: [] }));
@@ -743,12 +805,14 @@ async function noteTiming({ page }) {
 }
 
 // Hovering any note-carrying row on Modifiers moves no row: not while its
-// tooltip is shown, and not after the pointer leaves and it hides.
+// tooltip is shown, and not after the pointer leaves and it hides. Every idle
+// row holds an unsaved value first, so every hover opens a tooltip.
 async function noteMovesNoRow({ browser }) {
   const notes = [];
   for (const width of [1280, 900]) {
     await withPage(browser, { viewport: VIEWPORTS[width] }, async ({ page }) => {
       await tab(page, 'modifiers');
+      await unsavedIdle(page, '.modifier-card');
       const keys = await $(page, () => [...document.querySelectorAll('.modifier-card .setting-entry')]
         .filter((e) => e.checkVisibility() && e.querySelector(':scope > .note[data-note]'))
         .map((e) => { const i = e.querySelector('input[type=range]'); return [i.dataset.sec, i.dataset.key]; }));
@@ -770,10 +834,139 @@ async function noteMovesNoRow({ browser }) {
         mustBeStill(before, await boxes(page), `${at}, after the pointer left`);
       }
       assert(tooltips > 0, `Modifiers ${width}: no idle row to hover`);
+      assert(tooltips === keys.length, `Modifiers ${width}: ${tooltips} tooltips for ${keys.length} rows hovered`);
       notes.push(`${width}: ${keys.length} hovered, ${tooltips} tooltips`);
     });
   }
   return notes.join('; ');
+}
+
+// No tooltip anywhere in the document within `timeout`: a bounded wait that
+// must time out.
+async function noTooltip(page, timeout, what) {
+  const opened = await page.waitForFunction(() => {
+    const t = document.querySelector('[data-tooltip]');
+    return t ? (t.closest('.setting-entry')?.querySelector('input[type=range]')?.dataset.key || t.className || 'an element') : false;
+  }, null, { timeout }).then((h) => h.jsonValue(), () => null);
+  assert(opened === null, `${what}: a tooltip opened on ${opened}`);
+}
+
+// Every keys, stats and percent_stats range on the open tab sits in a
+// .setting-entry holding its own note element, empty and hidden.
+const defaultNotes = (page, secs) => $(page, (ss) => [...document.querySelectorAll('input[type=range][data-sec]')]
+  .filter((r) => ss.includes(r.dataset.sec) && r.checkVisibility())
+  .map((r) => {
+    const n = r.closest('.setting-entry')?.querySelector(`:scope > .note[data-note="${r.dataset.key}"]`);
+    return { key: `${r.dataset.sec}.${r.dataset.key}`, atDefault: +r.value === +r.min, note: !!n, text: n?.textContent ?? null, visible: !!n?.checkVisibility() };
+  }), secs);
+async function mustHaveEmptyNotes(page, secs, what) {
+  const got = await defaultNotes(page, secs);
+  assert(got.length > 0, `${what}: no ${secs.join('/')} range shown`);
+  const bad = got.filter((g) => !g.atDefault || !g.note || g.text !== '' || g.visible);
+  assert(bad.length === 0, `${what}: a slider at its default has a note: ${JSON.stringify(bad.slice(0, 3))}`);
+  return got.length;
+}
+
+// F1 (owner, 2026-09-26): a slider at its default writes no note, so hovering
+// or focusing an idle row at its default opens nothing. Dungeon Keys is the
+// owner's case, exp an ordinary stat, Total Damage the outlier (default 0 and
+// its own "off" wording). Positive control on the same page: an unsaved value
+// on Dungeon Keys opens its tooltip, so the waits above could have seen one.
+async function noteNoneAtDefault({ browser }) {
+  const notes = [];
+  await withPage(browser, { viewport: VIEWPORTS[1280] }, async ({ page }) => {
+    const what = 'at the default, 1280';
+    await tab(page, 'loot');
+    const first = await $(page, () => document.querySelector('#keys .setting-entry input[type=range]').dataset.key);
+    const counts = [await mustHaveEmptyNotes(page, ['keys'], `Loot ${what}`)];
+    await tab(page, 'modifiers');
+    counts.push(await mustHaveEmptyNotes(page, ['stats', 'percent_stats'], `Modifiers ${what}`));
+    for (const [t, sec, key] of [['loot', 'keys', first], ['modifiers', 'stats', 'exp'], ['modifiers', 'percent_stats', 'damage']]) {
+      const at = `${what}, ${sec}.${key}`;
+      await tab(page, t);
+      await makeIdle(page, sec, key, at);
+      await away(page);
+      const before = await boxes(page);
+      await page.hover(`${entryOf(sec, key)} .lbl`);
+      await noTooltip(page, OPEN_DELAY_MS + 1000, `${at} hovered`);
+      mustBeStill(before, await boxes(page), `${at} hovered`);
+      await away(page);
+      await $(page, (s) => document.querySelector(s).focus(), `input[type=range][data-sec="${sec}"][data-key="${key}"]`);
+      await noTooltip(page, 1000, `${at} focused`);
+      mustBeStill(before, await boxes(page), `${at} focused`);
+      await away(page);
+    }
+    await tab(page, 'loot');
+    await unsaved(page, 'keys', first, 4);
+    await away(page);
+    await page.hover(`${entryOf('keys', first)} .lbl`);
+    await waitShown(page, noteOf('keys', first), `${what}, positive control: keys.${first} with an unsaved value`);
+    await mustBeTooltip(page, noteOf('keys', first), `${what}, positive control`);
+    await away(page);
+    await restoreDefault(page, 'keys', first);
+    const text = await $(page, (s) => document.querySelector(s).textContent, noteOf('keys', first));
+    assert(text === '', `${what}: keys.${first} back at its default still has a note "${text}"`);
+    notes.push(`1280: ${counts[0]} keys and ${counts[1]} modifier notes empty; keys.${first}, stats.exp, percent_stats.damage opened nothing; the control opened`);
+  });
+  await withPage(browser, { viewport: VIEWPORTS[900] }, async ({ page }) => {
+    const what = 'at the default, 900';
+    await tab(page, 'loot');
+    const first = await $(page, () => document.querySelector('#keys .setting-entry input[type=range]').dataset.key);
+    await mustHaveEmptyNotes(page, ['keys'], `Loot ${what}`);
+    await away(page);
+    await page.hover(`${entryOf('keys', first)} .lbl`);
+    await noTooltip(page, OPEN_DELAY_MS + 1000, `${what}, keys.${first} hovered`);
+    if (SHOTS) await page.screenshot({ path: join(SHOTS, 'note-default-loot-900.png') });
+    notes.push(`900: keys.${first} opened nothing`);
+  });
+  return notes.join('; ');
+}
+
+// Switched off at the default: the value box says "off" and there is no line
+// under the row. Switched on above the default, then off again: round 1's
+// sentence, in the flow, both times. Back at the default: empty.
+async function noteSwitchedOffByValue({ page }) {
+  const done = [];
+  for (const [t, sec, key, value, sentence] of [['loot', 'keys', 'dungeon', 4, DUNGEON_AT_4], ['modifiers', 'percent_stats', 'damage', 100, DAMAGE_AT_100]]) {
+    const what = `${sec}.${key}`;
+    const range = `input[type=range][data-sec="${sec}"][data-key="${key}"]`;
+    const sw = `#sw_${sec}_${key}`;
+    const note = noteOf(sec, key);
+    const state = () => $(page, ([n, r]) => {
+      const el = document.querySelector(n);
+      return { text: el.textContent, visible: el.checkVisibility(), val: document.querySelector(r).closest('.row').querySelector('.val').textContent.trim() };
+    }, [note, range]);
+    const click = async () => { await $(page, (s) => document.querySelector(s).click(), sw); await settled(page); await away(page); };
+    const commit = async (v) => {
+      await $(page, ([s, x]) => { const r = document.querySelector(s); r.value = x; r.dispatchEvent(new Event('input', { bubbles: true })); r.dispatchEvent(new Event('change', { bubbles: true })); }, [range, v]);
+      await settled(page);
+      await away(page);
+    };
+    await tab(page, t);
+    await makeIdle(page, sec, key, what);
+    await away(page);
+    const before = await boxes(page);
+    await click();
+    let got = await state();
+    assert(!await $(page, (s) => document.querySelector(s).checked, sw), `${what}: the switch did not turn off`);
+    assert(got.val === 'off' && got.text === '' && !got.visible, `${what} switched off at its default: ${JSON.stringify(got)}`);
+    mustBeStill(before, await boxes(page), `${what} switched off at its default`);
+    await click();
+    await commit(value);
+    const on = await mustBeInFlow(page, note, `${what} on at ${value}`);
+    assert(on.text === sentence, `${what} on at ${value} reads "${on.text}"`);
+    await click();
+    got = await state();
+    assert(got.val === 'off', `${what} switched off at ${value}: the value box reads "${got.val}"`);
+    const off = await mustBeInFlow(page, note, `${what} switched off at ${value}`);
+    assert(off.text === sentence, `${what} switched off at ${value} reads "${off.text}"`);
+    await click();
+    await commit(await $(page, (s) => document.querySelector(s).min, range));
+    got = await state();
+    assert(got.text === '' && !got.visible, `${what} back at its default: ${JSON.stringify(got)}`);
+    done.push(what);
+  }
+  return done.join(', ');
 }
 
 // ---- Harness ----
@@ -816,6 +1009,8 @@ const CHECKS = [
   ['slider-note-tooltip-timing', noteTiming],
   ['slider-note-clear-world', noteWorld, { own: true }],
   ['slider-note-hover-moves-no-row', noteMovesNoRow, { own: true }],
+  ['slider-note-none-at-default', noteNoneAtDefault, { own: true }],
+  ['slider-note-switched-off-by-value', noteSwitchedOffByValue],
 ];
 
 const browser = await launchBrowser();

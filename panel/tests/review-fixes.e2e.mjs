@@ -418,6 +418,16 @@ async function switches(ctx) {
   await page.mouse.move(1, HEIGHT - 60);
   await frames(page);
   const note = '#stats .setting-entry:has([data-key="exp"]) > .note[data-note="exp"]';
+  // A slider at its default has no note (owner, 2026-09-26), so exp gets an
+  // unsaved value: moved above its minimum with `input` only, never `change`,
+  // so panel.js writes the note and nothing is saved; the row stays idle.
+  const unsaved = (above) => $(page, ([s, a]) => {
+    const r = document.querySelector(s);
+    r.value = a ? Math.min(+r.max, +r.min + (parseFloat(r.dataset.step0 || r.step) || 1)) : r.min;
+    r.dispatchEvent(new Event('input', { bubbles: true }));
+  }, [EXP, above]);
+  await unsaved(true);
+  await frames(page);
   assert(!await visible(page, note), 'An idle row shows its note');
   // The note opens as a tooltip after OPEN_DELAY_MS (src/lib/slider-note.js): wait for it, bounded.
   const noteShows = () => page.waitForFunction((s) => !!document.querySelector(s)?.checkVisibility(), note, { timeout: OPEN_DELAY_MS + 2000 }).catch(() => {});
@@ -429,6 +439,7 @@ async function switches(ctx) {
   await noteShows();
   assert(await visible(page, note), 'Focus inside an idle row does not show its note');
   await $(page, () => document.activeElement.blur());
+  await unsaved(false);
   await $(page, () => document.querySelector('.tabbtn[data-tab="world"]').click());
   await frames(page);
   assert(!await visible(page, '.sat-footer-note'), 'The pool footer still repeats its counts');

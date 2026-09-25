@@ -9,6 +9,13 @@
 // next click missed its switch (90 mismatches). A turned-on or switched-off
 // row's note stays in the flow and is not touched here.
 //
+// A slider at its default has no note (owner, 2026-09-26: panel.js writes an
+// empty one, and idleNote() skips it), and an idle row is exactly a row at its
+// saved default. So a settled panel has no idle row with words to show: the
+// tooltip opens only while an idle row's range holds a value not yet saved (a
+// drag between its input events and its change), and that drag's own input
+// closes it again.
+//
 // Opens on pointer enter after OPEN_DELAY_MS, at once and with no animation
 // when another note tooltip closed less than INSTANT_MS ago (moving down a
 // column), and at once when focus enters the row other than by a press.

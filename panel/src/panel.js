@@ -165,7 +165,10 @@ function paintSwitches(c){
 }
 function row(sec,key,label,val,tagHtml,max,note,step){
   const mx=max||100, off=sliderOff(sec,val), mn=sec==='percent_stats'?0:1;
-  const n=note?`<div class="note" data-note="${key}">${note}</div>`:'';
+  // A keys, stats or percent_stats row always carries its note element, empty
+  // at the slider's default: bind() looks it up once, so a later drag can
+  // still write into it. Rows passed no note (drops, spawners) get none.
+  const n=note!=null?`<div class="note" data-note="${key}">${note}</div>`:'';
   return `<div class="row"><span class="lbl">${label}${tagHtml||''}</span>
     ${switchMarkup(sec+'.'+key,label)}
     <input type="range" min="${mn}" max="${mx}" step="${step||1}" value="${val}" data-sec="${sec}" data-key="${key}">
@@ -226,15 +229,18 @@ function typable(r,valEl){
 // Experience is not a drop: the game's own calculation runs untouched and only
 // its RESULT is multiplied, so your own XP bonuses survive and the slider always
 // gives a true multiple.
+// At its default a slider writes no note (owner, 2026-09-26): its value box
+// already says "off", and an idle row's note would otherwise open as a tooltip
+// saying the same.
 function statNote(key,v){
-  if(v<=1) return 'off';
+  if(v<=1) return '';
   if(key==='exp') return `${v}x experience per kill, on top of your own bonuses`;
   if(key==='magicfind') return `${v}x your current total Magic Find, including all bonuses`;
   if(key==='movespeed') return `${v}x your current total Movement Speed, including all bonuses`;
   return `${v}x the current total`;
 }
 function percentStatNote(key,v){
-  if(v<=0) return key==='damage' ? 'off - vanilla damage' : 'off - vanilla value';
+  if(v<=0) return '';
   if(key==='damage') return `adds ${v}% to the final hit after the game finishes its own calculation (+100% doubles it)`;
   if(key==='castrate') return `adds ${v} Faster Cast Rate points to the current value`;
   if(key==='critchance'||key==='spellcritchance') return `increases the current Critical Strike Chance by ${v}% (the game's own cap still applies)`;
@@ -259,7 +265,7 @@ function rareNote(key,v){
   return `${v}x`;
 }
 function keyNote(key,dropType,v){
-  if(v<=1) return 'off';
+  if(v<=1) return '';
   if(key==='ruby') return `${v}x the key's own vanilla roll (base 1,500,000)`;
   if(dropType===null||dropType===undefined) return `${v}x its vanilla drop rate, only where the game drops it anyway`;
   if(key==='relic'){

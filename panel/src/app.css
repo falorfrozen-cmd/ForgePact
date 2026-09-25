@@ -167,7 +167,9 @@ input[type=range]::-moz-range-thumb{width:6px;height:18px;border:0;border-radius
 .val-remembered:empty{display:none}
 .value-stepper:has(>.val-remembered:not(:empty)){margin-left:calc(var(--space-4) + 5ch)}
 .row:has(>.slider-switch>input:not(:checked)) input[type=range],#densityCard:has(#den_on:not(:checked)) #den{opacity:.35}
-/* Finding 19: an idle slider's status note ("off - ...") stays out of the way. Hovering or focusing
+/* Finding 19: an idle slider's status note stays out of the way. A row at its default has no note
+   (owner, 2026-09-26; panel.js writes it empty and .note:empty hides it), so an idle row carries one
+   only while its range holds a value not yet saved, and only then opens a tooltip. Hovering or focusing
    the row shows it as a tooltip above the row (owner, 2026-09-25: the old overlay was drawn over the
    row beneath it). src/lib/slider-note.js owns showing it (after a delay on hover, at once on the next
    row or on keyboard focus, closed by Escape) by setting data-tooltip on the note, which is why the
