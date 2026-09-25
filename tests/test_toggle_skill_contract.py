@@ -811,6 +811,9 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
             "packmarks",
             # Craft from the stash (issue #14; test_craft_mats_contract.py).
             "craftmats",
+            # Gems of Incarnation's two switches and mod filter
+            # (test_incarnation_gems_contract.py).
+            "gemmythic", "gemmaxroll", "gemfilter",
         }
         self.assertEqual(entries, expected)
 
@@ -2914,9 +2917,11 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         # `miningore`, `minerhelm` and `packmarks` are 1.4.5's mining slider,
         # Miner's Helmet and map pack markers (their own tests cover them), and
         # `craftmats` is issue #14's Craft from the stash
-        # (test_craft_mats_contract.py).
+        # (test_craft_mats_contract.py), and `gemmythic`/`gemmaxroll` are the
+        # Gems of Incarnation switches (test_incarnation_gems_contract.py).
         self.assertEqual(now - before, {"autoprospect", "skilltimer", "menulayout", "restartanytime",
-                                        "miningore", "minerhelm", "packmarks", "craftmats"})
+                                        "miningore", "minerhelm", "packmarks", "craftmats",
+                                        "gemmythic", "gemmaxroll", "gemfilter"})
         self.assertEqual(before - now, set())
 
     # ---- Sprite look probe (R round 3, issue #11): `tgprobe sprite ...` ----
