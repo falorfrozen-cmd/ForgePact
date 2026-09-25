@@ -1,19 +1,20 @@
-/* Geist and Geist Mono, bundled so the panel needs no network (OFL-1.1; the
-   licence sits beside each file, and CREDITS.md names the source). Each is
-   one variable file covering every weight. Declared only: no rule uses these
-   families yet, and a face nobody uses is never downloaded. */
+/* IBM Plex Sans and IBM Plex Mono, bundled so the panel needs no network
+   (OFL-1.1; the licence sits beside each file, and CREDITS.md names the
+   source). Each is one upright variable file covering weights 100 to 700.
+   Declared only: no rule uses these families yet, and a face nobody uses is
+   never downloaded. */
 @font-face {
-  font-family: 'Geist';
-  src: url('./fonts/Geist/Geist-Variable.woff2') format('woff2');
-  font-weight: 100 900;
+  font-family: 'IBM Plex Sans';
+  src: url('./fonts/IBMPlexSans/IBMPlexSans-Variable.woff2') format('woff2');
+  font-weight: 100 700;
   font-style: normal;
   font-display: block;
 }
 
 @font-face {
-  font-family: 'Geist Mono';
-  src: url('./fonts/GeistMono/GeistMono-Variable.woff2') format('woff2');
-  font-weight: 100 900;
+  font-family: 'IBM Plex Mono';
+  src: url('./fonts/IBMPlexMono/IBMPlexMono-Variable.woff2') format('woff2');
+  font-weight: 100 700;
   font-style: normal;
   font-display: block;
 }

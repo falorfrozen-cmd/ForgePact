@@ -18,7 +18,7 @@
 import { resolve } from 'node:path';
 import { launchBrowser, openPanel, parseArgs, startSandbox } from './lib/browser.mjs';
 
-const FAMILIES = ['Geist', 'Geist Mono'];
+const FAMILIES = ['IBM Plex Sans', 'IBM Plex Mono'];
 const CONTROL = 'ForgePact Undeclared Control';
 
 const args = parseArgs(process.argv.slice(2));
