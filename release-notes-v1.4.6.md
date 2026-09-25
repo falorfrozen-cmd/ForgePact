@@ -37,6 +37,13 @@ shows its best roll.
   and moving items in a test session without anyone at the keyboard; those
   tools are not in this release. Nothing in play changes, and there is no new
   switch in the panel.
+- **`menulayout` now also lists your skill bar and the talent screen.** The
+  same read-only command now lists the skill bar, the talent screen and its
+  buttons, with one line per skill slot naming the skill bound there and
+  where its button is on the window. That is the groundwork for `hs-drive`
+  reading and using your skill bar in a test session; those tools are not in
+  this release. Nothing in play changes, and there is no new switch in the
+  panel.
 
 ## How to update
 

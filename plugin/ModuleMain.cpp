@@ -35010,8 +35010,10 @@ static std::string MenuLayoutSlotField(const RValue& element, bool isStruct, con
 // fields the toggle-skill research measured, navBbox being where the slot's
 // button draws in GUI space - scaled to the window as MenuLayoutRow scales an
 // instance's position. Read only through variable_instance_get, array_length,
-// array_get and variable_struct_get. An array that is not there prints no
-// rows; an element that is not a struct prints `none` in every field. Both
+// array_get and variable_struct_get. An array that is not there prints one
+// `slot=<row>,* absent` row and an empty one `slot=<row>,* empty`, so a
+// reader can tell those apart from each other and from a row it never got;
+// an element that is not a struct prints `none` in every field. Both
 // kinds this runner hands a struct back as are read, as ToggleReadSubTalent
 // reads them. At most kMenuLayoutMaxArrayItems rows per array.
 static void MenuLayoutSlotRows(const RValue& inst, const MenuLayoutScale& sc)
@@ -35021,10 +35023,11 @@ static void MenuLayoutSlotRows(const RValue& inst, const MenuLayoutScale& sc)
         RValue arr;
         try { arr = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(kRows[r]) }); }
         catch (...) { Out("  slot=" + std::to_string(r) + ",* " + kMenuLayoutReadFailed); continue; }
-        if (arr.m_Kind != VALUE_ARRAY) continue;
+        if (arr.m_Kind != VALUE_ARRAY) { Out("  slot=" + std::to_string(r) + ",* absent"); continue; }
         double n = 0;
         try { n = g_Yytk->CallBuiltin("array_length", { arr }).ToDouble(); } catch (...) { n = -1; }
         if (!std::isfinite(n) || n < 0) { Out("  slot=" + std::to_string(r) + ",* " + kMenuLayoutReadFailed); continue; }
+        if (n < 1) { Out("  slot=" + std::to_string(r) + ",* empty"); continue; }
         const int shown = n > kMenuLayoutMaxArrayItems ? kMenuLayoutMaxArrayItems : (int)n;
         for (int i = 0; i < shown; ++i) {
             RValue e;
@@ -36478,7 +36481,9 @@ static bool HandleRestartProbeCommand(const std::string& lc, const std::string& 
 // AddrIsExecutableInModule has said the address is game code, because a
 // table-only hook is blind to this build's direct `call rel32` sites.
 // CheckPlayerInteraction rides last as the positive control, as it does in
-// craftprobe's table: a 0 there voids every other row's count.
+// craftprobe's table: a 0 there voids every other row's count. When another
+// probe holds it, CheckTalentUse is the control for this table's own detours
+// (SpIsOwnControl).
 //
 // A function another install in this plugin already detours - craftprobe,
 // tgprobe, prospectprobe, restartprobe, citrace nativetrace, mapkeep,
@@ -36500,8 +36505,10 @@ static constexpr int kSpMaxDepth = 3;           // nesting one value prints
 static constexpr size_t kSpLineMax = 1500;      // one value's text, before it is cut
 
 // Game thread only: set while `state` runs ReturnTalentLevel itself, so a
-// detoured row neither logs that call nor spends its budget on it as if the
-// game had made it (craftprobe's g_CpOwnLookup, for the same reason).
+// detoured row neither counts nor logs that call nor spends its budget on it
+// as if the game had made it (craftprobe's g_CpOwnLookup, for the same
+// reason) - S4 reads `state` just before `show`, and a count mixing the
+// game's calls with the instrument's would answer nothing.
 static bool g_SpOwnCall = false;
 
 // Before the trampoline: one budgeted line naming self, other and every
@@ -36535,6 +36542,7 @@ static void SpAfter(const char* label, long n, const RValue& result)
     static volatile long g_SpLogged_##SAFE = 0; \
     static volatile long g_SpBudget_##SAFE = 0; \
     static RValue& SpDetour_##SAFE(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) { \
+        if (g_SpOwnCall) return g_SpOrig_##SAFE ? g_SpOrig_##SAFE(S, O, R, argc, A) : R; \
         const long n = InterlockedIncrement(&g_SpCalls_##SAFE); \
         const bool logged = SpObserve(LABEL, n, &g_SpLogged_##SAFE, &g_SpBudget_##SAFE, S, O, argc, A); \
         RValue& r = g_SpOrig_##SAFE ? g_SpOrig_##SAFE(S, O, R, argc, A) : R; \
@@ -36668,6 +36676,19 @@ static bool SpIsControl(const SpTarget& t)
     return std::string_view(t.runtimeName) == HeroSiege::Scripts::gml_Script_CheckPlayerInteraction;
 }
 
+// The second control. In the launch shared with the stash research
+// craftprobe already holds CheckPlayerInteraction, and its climbing count then
+// proves craftprobe's detours, not these: the detour bodies above, the
+// trampolines `hook` stores and the g_SpCalls counters would be untested. So
+// `show` also reads a row this table detours itself and that runs without any
+// action - CheckTalentUse, measured once per frame (toggle-skills-research.md
+// Session 1), tabled by no other probe but tgprobe. Not detoured here, `show`
+// says every count from a skillprobe detour is unproven.
+static bool SpIsOwnControl(const SpTarget& t)
+{
+    return std::string_view(t.runtimeName) == HeroSiege::Scripts::gml_Script_CheckTalentUse;
+}
+
 // A row by its label or its identifier, either case.
 static SpTarget* SpFindRow(const std::string& text)
 {
@@ -36719,6 +36740,28 @@ static PFUNC_YYGMLScript* SpKnownOriginal(std::string_view name, const char*& ho
     if (name == HeroSiege::Scripts::gml_Script_TalentUseClass) { hook = "HookTalentUseClass (toggleguard 1)"; return &g_OrigTalentUseClass; }
     if (name == HeroSiege::Scripts::gml_Script_CheckPlayerInteraction) { hook = "citrace's table hook"; return &g_OrigCi_CheckPlayerInteraction; }
     return nullptr;
+}
+
+// What counts and logs a row skillprobe does not detour, said wherever that
+// row is reported. A ForgePact hook that took the function inline -
+// toggleguard's HookTalentUseClass once `toggleguard 1` installed both routes
+// - leaves a trampoline no second detour can reach and keeps no counter, and
+// its argument log is tgprobe's entry note, which stays silent until tgprobe
+// attaches that row "via" the hook. Without this the row would just be
+// missing from `show`, and a check expecting it would read as not observed.
+static std::string SpCountHint(const SpTarget& t)
+{
+    if (t.heldBy.empty()) return std::string();
+    if (t.heldCalls) {
+        return t.heldBy == "tgprobe hook"
+            ? std::string("; `tgprobe verbose on` logs its calls (") + std::to_string(kTgLogBudget) + " per `tgprobe reset`)"
+            : std::string("; that probe's own log names the calls");
+    }
+    for (const TgProbeTarget& r : g_TgRows)
+        if (!r.eventSuffix && r.viaHook && r.script == t.runtimeName)
+            return std::string("; nothing counts or logs it yet - `tgprobe hook ") + r.label + "` puts tgprobe's entry note in "
+                + r.viaHook + " and `tgprobe verbose on` logs its calls, then `skillprobe hook " + t.label + "` reads that count";
+    return "; its holder's own `stat` counts it";
 }
 
 // By name only: the SDK value, then - for a constant the SDK spells without
@@ -36791,8 +36834,8 @@ static void SpInstall(const std::vector<std::string>& filters)
             } else {
                 t.heldBy = (orig && *orig) ? std::string(hook) + " (inline detour)" : std::string("a ForgePact hook (the table entry is not game code)");
                 t.status = "held by " + t.heldBy;
-                Out(std::string("skillprobe hook: ") + t.label + " held by " + t.heldBy + " - neither detoured nor failed here;"
-                    " that hook's own `stat` counts it");
+                Out(std::string("skillprobe hook: ") + t.label + " held by " + t.heldBy + " - neither detoured nor failed here"
+                    + SpCountHint(t));
                 ++held;
                 continue;
             }
@@ -36825,7 +36868,7 @@ static void SpInstall(const std::vector<std::string>& filters)
         + " held" + (notFound ? ", " + std::to_string(notFound) + " not found by name" : std::string())
         + (skipped ? ", " + std::to_string(skipped) + " not selected" : std::string()) + ".");
     Out("  Next: `skillprobe arm <Row>|all [n]`, then `skillprobe show` - CheckPlayerInteraction must already be climbing,"
-        " or nothing here counts.");
+        " and CheckTalentUse through skillprobe's own detour, or nothing here counts.");
 }
 
 // The row's count and where it came from: its own detour, or the holder's
@@ -36866,7 +36909,7 @@ static void SpArm(const std::vector<std::string>& tail)
     }
     if (!all && !row->installed.load()) {
         Out(std::string("skillprobe arm: ") + row->label + " is not detoured by skillprobe (" + (row->status.empty() ? std::string("not hooked") : row->status)
-            + "), so it logs nothing here" + (row->heldBy.empty() ? std::string() : " - its holder's own log does"));
+            + "), so it logs nothing here" + SpCountHint(*row));
         return;
     }
     Out("skillprobe arm: the next " + std::to_string(n) + " calls of each of " + std::to_string(armed) + " detoured row(s) are logged"
@@ -36875,10 +36918,11 @@ static void SpArm(const std::vector<std::string>& tail)
         + ". Then `skillprobe show`.");
 }
 
-// Every row called since the previous `show`, the control first. A held
+// Every row called since the previous `show`, the two controls first. A held
 // row's count is its holder's (and says so); a row with neither a detour nor
-// a holder's counter prints calls=n/a, never 0. `show all` lists the silent
-// rows too.
+// a holder's counter prints calls=n/a, never 0, and is never left out - a
+// missing line reads as a row nobody called. `show all` lists the counted
+// rows with no calls too.
 static void SpShow(bool all)
 {
     int installed = 0, held = 0;
@@ -36891,14 +36935,20 @@ static void SpShow(bool all)
     int silent = 0;
     for (int pass = 0; pass < 2; ++pass) {
         for (SpTarget& t : g_SpTargets) {
-            if ((pass == 0) != SpIsControl(t)) continue;
+            const bool own = SpIsOwnControl(t);
+            if ((pass == 0) != (SpIsControl(t) || own)) continue;
+            if (own && !t.installed.load()) {
+                Out(std::string("  own-detour control ") + t.label + " not detoured by skillprobe ("
+                    + (t.status.empty() ? std::string("not hooked") : t.status) + ") - nothing proves skillprobe's own detours,"
+                    " so every count below from a skillprobe detour is unproven: INSTRUMENT-BLIND");
+                continue;
+            }
             long calls = 0;
             const bool known = SpCallsOf(t, calls);
-            const std::string prefix = pass == 0 ? "  control " : "  ";
+            const std::string prefix = pass == 1 ? "  " : own ? "  own-detour control " : "  control ";
             if (!known) {
-                if (pass == 0 || all)
-                    Out(prefix + t.label + " calls=n/a (" + (t.status.empty() ? std::string("not hooked") : t.status)
-                        + (t.heldBy.empty() ? std::string() : "; its holder's own `stat` counts it") + ")");
+                Out(prefix + t.label + " calls=n/a (" + (t.status.empty() ? std::string("not hooked") : t.status)
+                    + SpCountHint(t) + ")");
                 continue;
             }
             if (pass == 1 && calls == 0) { ++silent; if (all) Out(prefix + t.label + " calls=0"); continue; }
@@ -36909,9 +36959,16 @@ static void SpShow(bool all)
                 const long logged = budget > 0 ? (std::min)((long)*t.logged, budget) : 0;
                 line += " logged=" + std::to_string(logged) + (budget > 0 ? "/" + std::to_string(budget) : std::string(" (not armed)"));
             } else {
-                line += " (held by " + t.heldBy + ": that probe's count; its own log names the calls)";
+                line += " (held by " + t.heldBy + ": that probe's count" + SpCountHint(t) + ")";
             }
-            if (pass == 0) line += " - a 0, or a count that does not climb, voids every count below";
+            if (pass == 0 && own) {
+                line += " - skillprobe's own detour: a 0, or a count that does not climb, voids every count below from a"
+                    " skillprobe detour";
+            } else if (pass == 0) {
+                line += " - a 0, or a count that does not climb, voids every count below";
+                if (!t.installed.load())
+                    line += " (held: this proves " + t.heldBy + "'s detours, not skillprobe's - the own-detour control does that)";
+            }
             Out(line);
             t.lastShown = calls;
         }
@@ -37404,8 +37461,8 @@ static void SpUsage()
     Out("    run it after craftprobe/tgprobe/prospectprobe/restartprobe `hook` and after `toggleguard 1`: they do not know this table");
     Out("  arm <Row>|all [n] | arm off       log the next n (default " + std::to_string(kSpDefaultBudget) + ", at most "
         + std::to_string(kSpMaxBudget) + ") calls of that row, or of every row but the control; counts run regardless");
-    Out("  show [all]                        calls since the previous show per row, the CheckPlayerInteraction control first;"
-        " a held row's count is its holder's");
+    Out("  show [all]                        calls since the previous show per row, the CheckPlayerInteraction control and the"
+        " CheckTalentUse own-detour control first; a held row's count is its holder's, a row nobody counts prints calls=n/a");
     Out("  reset                             zero every counter");
     Out("  call <Row> <Obj> <nth>|id:<n> [other:<id>] [args ...] confirm   ONE by-name call of one plain-script row"
         " (craftprobe's CpDispatchScript; other: parsed by craftprobe's CpResolveOther)");

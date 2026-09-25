@@ -617,8 +617,27 @@ these the instance carries, in this order: `label`, `name`, `slot`,
 not be read as `<read-failed>`. Which of those, if any, tells one stash or
 bag tab from another is not measured yet; phase 0 of
 [`docs/stash-bag-layout-research.md`](docs/stash-bag-layout-research.md)
-will record it. An older ForgePact answers `command unavailable in player
-build: menulayout`. How the positions were measured, and which objects are
+will record it.
+
+It also covers the skill bar and the talent screen: the bar
+(`UI_Hud_Talent_obj`), the talent screen and its buttons, the sub-talent
+buttons and panel, the allocate button and the talent tree's node parent.
+After the stash list, those rows print whichever of `talentId`,
+`subTalentId`, `talentLevel`, `treeIndex`, `slotIndex`, `allocated` and
+`pointsAvailable` the instance carries. The bar's row is followed by one row
+per skill slot:
+
+```
+  slot=<row>,<i> talent=<talentId|none> gui=<x>,<y> win=<cx>,<cy>
+```
+
+one for each entry of the bar's two slot rows, with the talent id bound
+there and where that slot's button is drawn (`none` for a field the entry
+does not carry). A slot row the bar does not have prints
+`slot=<row>,* absent`, and an empty one `slot=<row>,* empty`. Which of
+these fields a tool can rely on is measured in phase 0 of
+[`docs/skill-actions-research.md`](docs/skill-actions-research.md). An older
+ForgePact answers `command unavailable in player build: menulayout`. How the positions were measured, and which objects are
 the save cards and `PLAY`, is in
 [`docs/menu-layout-research.md`](docs/menu-layout-research.md).
 

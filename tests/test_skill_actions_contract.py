@@ -231,6 +231,55 @@ class SkillProbeContract(unittest.TestCase):
         self.assertIn("t.heldCalls", self.body("static bool SpCallsOf("))
         self.assertIn('" calls=n/a ("', self.body("static void SpShow("))
 
+    # ---- the controls ------------------------------------------------------------
+
+    def test_show_proves_skillprobes_own_detours_with_a_second_control(self):
+        # In the launch shared with the stash research craftprobe already holds
+        # CheckPlayerInteraction, and its count then proves craftprobe's
+        # detours. A row skillprobe detours itself - CheckTalentUse, measured
+        # running once per frame - is the control for this table's own
+        # detour bodies, trampolines and counters.
+        own = self.body("static bool SpIsOwnControl(")
+        self.assertIn("gml_Script_CheckTalentUse", own)
+        self.assertIn(("CheckTalentUse", "CheckTalentUse", "gml_Script_CheckTalentUse"), self.rows)
+        show = self.body("static void SpShow(")
+        self.assertIn("SpIsOwnControl(t)", show)
+        self.assertIn('"  own-detour control "', show)
+        # Not detoured here, it says the table's own counts are unproven.
+        own_line = show[show.index('"  own-detour control "'):]
+        self.assertIn("INSTRUMENT-BLIND", own_line[:own_line.index("continue;")])
+        # A held CheckPlayerInteraction says whose detours its count proves.
+        self.assertIn("not skillprobe's", show)
+        # Negative control: `arm all` still leaves CheckPlayerInteraction alone.
+        self.assertIn("SpIsControl(t)", self.body("static void SpArm("))
+
+    def test_a_row_with_no_count_is_never_silent(self):
+        show = self.body("static void SpShow(")
+        unknown = show[show.index("if (!known)"):]
+        unknown = unknown[:unknown.index("continue;")]
+        self.assertIn('" calls=n/a ("', unknown)
+        # Printed for every such row, not only for the control or under `show all`.
+        self.assertIsNone(re.search(r"\ball\b", unknown), unknown)
+        self.assertNotIn("pass == 0 ||", show)
+
+    def test_a_row_held_inline_names_the_instrument_that_can_count_it(self):
+        # toggleguard's HookTalentUseClass installs both routes, so the function
+        # holds a trampoline nothing else can detour and no counter; tgprobe's
+        # entry note in that hook's body is what sees those calls.
+        hint = self.body("static std::string SpCountHint(")
+        for part in ("g_TgRows", "viaHook", "`tgprobe hook ", "`skillprobe hook ", "`tgprobe verbose on`"):
+            self.assertIn(part, hint)
+        self.assertIn('"TalentUseClass", kTgArgs | kTgRet, &g_OrigTalentUseClass, "HookTalentUseClass")', self.plugin)
+        self.assertIn("SpCountHint(t)", self.body("static void SpInstall("))
+        self.assertIn("SpCountHint(*row)", self.body("static void SpArm("))
+        self.assertIn("SpCountHint(t)", self.body("static void SpShow("))
+        # The old wording promised a log nobody had turned on.
+        self.assertNotIn("its holder's own log does", self.code)
+
+    def test_the_instruments_own_calls_are_not_counted(self):
+        detour = self.plugin[self.plugin.index("#define SKILLPROBE_DETOUR"):self.plugin.index("#define SKILLPROBE_TARGETS")]
+        self.assertLess(detour.index("if (g_SpOwnCall)"), detour.index("InterlockedIncrement(&g_SpCalls_##SAFE)"))
+
     def test_the_bare_command_prints_the_build_marker(self):
         usage = self.body("static void SpUsage(")
         self.assertIn('"skillprobe: rows=" + std::to_string(kSpTargetCount) + " hooked=" + std::to_string(hooked) + " held="', usage)
@@ -338,6 +387,9 @@ class MenuLayoutSlotRows(unittest.TestCase):
         rows = self.body("static void MenuLayoutSlotRows(")
         for part in ('"  slot="', '" talent="', '" gui="', '" win="', '"row0", "row1"'):
             self.assertIn(part, rows)
+        # A missing array and an empty one each say so, never nothing.
+        self.assertIn('",* absent"', rows)
+        self.assertIn('",* empty"', rows)
 
     def test_slot_rows_read_only_through_four_builtins(self):
         rows = self.body("static void MenuLayoutSlotRows(")
@@ -378,6 +430,14 @@ class SkillActionsResearchDoc(unittest.TestCase):
         static = doc_section(self.doc, "## Static search")
         for name in NINE_OBJECTS + CANDIDATE_SCRIPTS:
             self.assertIn(f"`{name}`", static, name)
+
+    def test_the_control_proves_skillprobes_own_detours(self):
+        for heading in ("## Instrument", "## Live procedure"):
+            section = doc_section(self.doc, heading)
+            self.assertIn("own-detour control", section, heading)
+            self.assertIn("`CheckTalentUse`", section, heading)
+            self.assertIn("`tgprobe hook TalentUseClass`", section, heading)
+            self.assertIn("`tgprobe verbose on`", section, heading)
 
 
 if __name__ == "__main__":

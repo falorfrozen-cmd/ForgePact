@@ -272,7 +272,9 @@ Four readers already in the research (dev) build, and one new command,
   2. **Slot rows.** After a `UI_Hud_Talent_obj` row it prints one row per
      element of that instance's `row0` and `row1` arrays:
      `  slot=<row>,<i> talent=<talentId|none> gui=<navBboxX>,<navBboxY> win=<cx>,<cy>`,
-     with `none` for an absent field. The values are read only through
+     with `none` for an absent field, and one `  slot=<row>,* absent` row
+     for an array the instance does not have (`  slot=<row>,* empty` for an
+     empty one), so no answer is ever silence. The values are read only through
      `variable_instance_get`, `array_length`, `array_get` and
      `variable_struct_get`. That `navBboxX`/`navBboxY` is where the button
      draws was measured by the toggle research; that it is the right point to
@@ -311,11 +313,20 @@ row table: the thirty-three scripts and the twenty-seven closures of
   that probe's own `stat`/`show`. In the launch shared with the stash
   research, `craftprobe hook` has already run, so its `ReportClient`,
   `UiCreate` and `CheckPlayerInteraction` rows are expected `held`, and
-  `TalentUseClass` too when `toggleguard` is armed.
+  `TalentUseClass` too when `toggleguard` is armed. A row held by a ForgePact
+  hook that went in inline (toggleguard's `HookTalentUseClass` installs both
+  routes) has no counter anywhere and no argument log until `tgprobe`
+  attaches that row through the hook's own entry note, so `hook`, `arm` and
+  `show` all name the fix on that row's line: `tgprobe hook TalentUseClass`
+  and `tgprobe verbose on`, then `skillprobe hook TalentUseClass`, after which
+  the row reads `held by tgprobe hook` with a count and `tgprobe`'s verbose
+  lines log its calls (three per `tgprobe reset`).
 - **`arm <Row> [n]`** and **`show`**: per row, `calls=`; for armed calls one
   line per call with self (object and id), argc, and every argument through
   the existing value formatter (instance refs by id, structs by kind), plus
-  `ret=`.
+  `ret=`. A row nobody counts prints `calls=n/a (<why>)` on every `show`,
+  never a 0 and never nothing. The instrument's own `ReturnTalentLevel` calls
+  from `state` are neither counted nor logged.
 - **`call <Row> <Obj> <nth>|id:<n> [other:<id>] [args ...] confirm`**: one
   by-name dispatch of the row's script with that instance as self and
   `other` as given (default: the self). The arguments are parsed as
@@ -375,9 +386,23 @@ and quotes that shape.
 show` twice, 2 s apart, reports a non-zero and climbing `calls=` for the
 `CheckPlayerInteraction` row (the control the crafting-materials research
 used; when the row is `held` by `craftprobe`, the climbing count is the one
-that probe reports for the same row). Any of these failing makes the session
-instrument-blind. A bare `skillprobe` answering `skillprobe: rows=<n>` is the
-build marker.
+that probe reports for the same row) **and** for the `CheckTalentUse` row,
+printed as the *own-detour control*. The second one is needed because a held
+`CheckPlayerInteraction` proves only its holder's detours: in the launch
+shared with the stash research it is `craftprobe`'s. `CheckTalentUse` runs
+once per frame (`toggle-skills-research.md` Session 1) and only `tgprobe`
+tables it besides this probe, so its line carries `logged=`, not `held by`,
+and its climbing count proves `skillprobe`'s own detour bodies, trampolines
+and counters - the plumbing every S2 and S4 row reads. If that row is held
+or not climbing, `show` says `INSTRUMENT-BLIND` itself. When `hook` reports
+`TalentUseClass` held by `HookTalentUseClass (toggleguard 1) (inline
+detour)`, the control also includes running the fix that line names -
+`tgprobe hook TalentUseClass`, `tgprobe verbose on`, then `skillprobe hook
+TalentUseClass` - and seeing the row read `held by tgprobe hook`. Only that
+row name goes to `tgprobe hook`: an unfiltered `tgprobe hook` would take
+`CheckTalentUse` too and leave no own-detour control. Any of these failing
+makes the session instrument-blind. A bare `skillprobe` answering
+`skillprobe: rows=<n>` is the build marker.
 
 **Hypotheses phase 0 tests** (none is a fact yet):
 
@@ -454,9 +479,15 @@ reset if the game offers it. No others.
 - **control.** § Instrument's positive control: `ping` answers
   `pong (YYTK 4.0.1)`; `menulayout UI_Hud_Talent_obj` lists one row followed
   by `slot=` rows; `skillprobe hook` answers `<n> detoured, 0 failed, <h>
-  held`; `skillprobe show` twice, 2 s apart, shows the
-  `CheckPlayerInteraction` count non-zero and climbing. Any of these failing
-  is `INSTRUMENT-BLIND`.
+  held`; if its reply names `tgprobe hook TalentUseClass` on the
+  `TalentUseClass` line (toggleguard's hook went in inline), run
+  `tgprobe hook TalentUseClass`, `tgprobe verbose on` and `skillprobe hook
+  TalentUseClass`, which must answer that row `held by tgprobe hook`;
+  `skillprobe show` twice, 2 s apart, shows the `CheckPlayerInteraction`
+  count non-zero and climbing, and the own-detour control `CheckTalentUse`
+  (its line carries `logged=`, not `held by`) non-zero and climbing. Any of
+  these failing, or `show` printing `INSTRUMENT-BLIND`, is
+  `INSTRUMENT-BLIND`.
 - **Running alone.** If this procedure ever runs outside the shared launch,
   the standing steps come first - a manual copy of the saves,
   `hs_saves_backup`, `hs_launch`, `hs_select_character(14)` - and S8 stops
@@ -471,7 +502,9 @@ reset if the game offers it. No others.
   `tgprobe talents` that is not a toggle (`toggle-skills-research.md`
   § Toggle skill table). Fixture: `menulayout UI_Hud_Talent_obj`.
 - **S2, cast by key.** First `skillprobe arm TalentUse 3`, `arm
-  TalentUseClass 3` and `arm CheckTalentUse 3`, and a `tgprobe deep` snapshot
+  TalentUseClass 3` and `arm CheckTalentUse 3` (and `tgprobe reset` when the
+  control put `TalentUseClass` on `tgprobe`, whose verbose lines are then its
+  log), and a `tgprobe deep` snapshot
   of the `Player_obj` scalars. Then `hs_input` key <that slot's key code>,
   held 120 ms. Expected: `show` gives `CheckTalentUse`, then `TalentUse`
   (self `Player_obj`, a1 the slot's talent id), then `TalentUseClass` within
@@ -481,7 +514,8 @@ reset if the game offers it. No others.
   armed lines may be spent on the frames before the press; the order is then
   read from its count and the other two rows' armed lines, and the capture
   says which. Record `castProof` as the readable signal or signals.
-- **S3, cast by name.** `skillprobe call TalentUse Player_obj 0 id:<player
+- **S3, cast by name.** (`tgprobe reset` first when `TalentUseClass` is
+  `tgprobe`'s.) `skillprobe call TalentUse Player_obj 0 id:<player
   id> <id> 1 false true confirm`. Expected: `TalentUseClass` fires, the
   effect shows, and mana does not fall (`castByNameRoute`). The outcome is
   recorded under the recording rule against S2's logged `TalentUse` line: a
