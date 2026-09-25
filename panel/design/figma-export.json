@@ -891,17 +891,111 @@
       "rule": "Round 2 (owner, 2026-09-25): Apply all now uses the secondary button style on every screen and state, so each tab keeps a single primary action (impeccable finding 9). Visual only: what the button does and sends is unchanged, and its copy is unchanged. The panel already renders it as .btn without .primary, so the existing .btn selector tokens cover it."
     },
     "pluginWarning": {
-      "kind": "band",
-      "background": "color/warn/tint",
+      "kind": "indicator",
+      "places": [
+        "#pluginWarning in .page-actions, beside Apply all now",
+        "the status bar, immediately after #saveIndicator (Settings loaded)"
+      ],
+      "shownWhen": "status() shows #pluginWarning (the mod chain is incomplete); both icons together, on all five tabs",
       "icon": {
-        "selector": ".plugin-warning-icon",
+        "selector": ".plugin-warning-button",
+        "element": "button without an id, aria-label Open Setup, aria-describedby naming the message",
         "color": "color/warn",
-        "ariaHidden": true
+        "size": "16px glyph in a 32px target (24px in the status bar)",
+        "action": "opens Setup"
       },
-      "sideRule": null,
-      "stroke": null,
-      "tint": "color/bg/base mixed with 8% color/warn",
-      "decided": "owner, 2026-09-25, following impeccable: drop the side-tab, mark the warning with a warn-tinted full-width band plus its icon"
+      "tooltip": {
+        "selector": ".plugin-warning-tooltip",
+        "role": "tooltip",
+        "background": "color/bg/hover",
+        "text": "color/text/primary",
+        "radius": "radius/md",
+        "border": "color/border/subtle",
+        "lines": [
+          "the warning message (status()'s two texts, unchanged)",
+          "Open Setup (color/text/muted, font/size/xs; not shown on Setup, finding 18)"
+        ],
+        "opens": "on hover after 300ms (at once when the other tooltip closed under 400ms ago), and at once on keyboard focus",
+        "closes": "pointer leaving the icon and the tooltip (120ms grace), blur, Escape (focus stays)",
+        "interactive": false,
+        "placement": "below the icon beside Apply all, above it in the status bar; clamped into the window, never clipped",
+        "motion": "opacity and scale from 0.97 over motion/duration/fast on motion/easing/emphasized; no motion when opened straight after the other"
+      },
+      "replaces": "the full-width color/warn/tint band with its icon, text and Open Setup button (owner, 2026-09-25, following impeccable)",
+      "decided": "owner, 2026-09-25: \"Choose your hero siege exe in setup banner could be a warning icon next to apply all and settings loaded with a tooltip on hover instead\"; both places confirmed the same day"
+    },
+    "polish": {
+      "decided": "2026-09-25",
+      "ownerWords": "mining ore amount should be mining ore multiplier, the text underneath it can be removed. sections under mods dont need to have their tab name repeated in the card. each item, qol mod should be on their own card, like its done on other tabs. theme selection should be moved to setup maybe. doesnt have to be visible 24/7. some accented font color is missing in few places, was it intentional? footer can say created by Falor and ST4H. Choose your hero siege exe in setup banner could be a warning icon next to apply all and settings loaded with a tooltip on hover instead. sections inside cards like in modifiers combat & character modifiers (utility, offense etc) could use some light separator",
+      "ownerWordsItem9": "text like off and 4x its vanilla drop rate; where the game never rolls this family, the roll is opened at the normal-key chance first (i mean text that displays under the turned on mod or on hover) is rendering a little over mod below it",
+      "items": [
+        {
+          "item": 1,
+          "what": "The Loot slider drops.mining_ore is labelled Mining Ore Multiplier (was Mining Ore Amount; Title Case like the other drop labels), in the Miner's Helmet hint too. The static help sentence under it is gone; its note keeps only the live mining status while the game runs, and is empty otherwise.",
+          "selectors": [
+            ".note[data-note=\"mining_ore\"]"
+          ]
+        },
+        {
+          "item": 2,
+          "what": "The Mods panels repeat no sub-tab name: the Quality of Life and Items headings are gone; the sub-tab strip names them, and each panel's hint comes first.",
+          "selectors": [
+            "#qolCard",
+            "#itemsCard"
+          ]
+        },
+        {
+          "item": 3,
+          "what": "Each top-level Mods mod is a card of its own (color/bg/raised, radius/lg, space/7 padding): 10 on Quality of Life, 4 on Items with the Miner's Helmet as one. A child row stays plain inside its parent's card. #qolCard and #itemsCard keep their ids, roles and tab-card but are not drawn as cards. The column balancer is unchanged.",
+          "selectors": [
+            ".mods-col>*"
+          ]
+        },
+        {
+          "item": 4,
+          "what": "The theme choice moved from the status bar to a new last Setup card headed Appearance, one row: Theme and #theme. Behaviour unchanged (a panel setting saved as theme, never a command).",
+          "selectors": [
+            "#theme"
+          ]
+        },
+        {
+          "item": 5,
+          "what": "Accent audit: the Miner's Helmet stat lines are drawn in color/accent in font/mono/family, on an element of their own (.helmet-stats), as the design draws them. Every other accent place matched or is marked ambiguous for the owner.",
+          "selectors": [
+            "#minerHelmetCard .helmet-stats"
+          ]
+        },
+        {
+          "item": 6,
+          "what": "The status bar credit reads Created by Falor and ST4H; the version beside it stays a runtime value, never listed in screens[].texts.",
+          "selectors": [
+            ".status-foot"
+          ]
+        },
+        {
+          "item": 7,
+          "what": "The plugin warning is an icon beside Apply all now and another beside Settings loaded, with a tooltip (amendments.pluginWarning).",
+          "selectors": [
+            ".plugin-warning-button",
+            ".plugin-warning-tooltip"
+          ]
+        },
+        {
+          "item": 8,
+          "what": "A 1px color/border/subtle rule separates a Modifiers group from the group directly above it in its column: the second row of the two-column grid, and every group but the first in one column. Only the Modifiers card.",
+          "selectors": [
+            ".modifier-group+.modifier-group"
+          ]
+        },
+        {
+          "item": 9,
+          "what": "An idle slider row's note (.setting-entry > .note[data-note], switch on, mod not listed) is a tooltip: on hover after 300ms (at once when another note tooltip closed under 400ms ago) and at once on keyboard focus, it is drawn above its row, left-aligned with it and no wider than it, on color/bg/hover with a 1px color/border/subtle edge, radius/md and text in color/text/muted, the same surface as the plugin warning's tooltip. It passes the pointer through, holds nothing to reach, and closes at once on pointer leave, blur, Escape or a change to the row. It covers the row above while shown, never its own row or the row below, and no row moves when it shows or hides (owner, 2026-09-25, after an in-flow hover note moved the rows below up under the pointer as it hid). A turned-on or switched-off row's note stays on its own line below its row, in the flow. amendments.quietHelpers still holds.",
+          "selectors": [
+            ".setting-entry",
+            ".setting-entry>.note[data-note][data-tooltip]"
+          ]
+        }
+      ]
     }
   },
   "borders": [
@@ -940,6 +1034,18 @@
     {
       "selector": ":focus-visible",
       "why": "2px color/focus outline with 3px offset shows keyboard focus"
+    },
+    {
+      "selector": ".modifier-group+.modifier-group",
+      "why": "a light 1px color/border/subtle top rule separates a Modifiers group from the group above it in its column (owner, 2026-09-25); decorative, so no contrast pair; only the Modifiers card"
+    },
+    {
+      "selector": ".plugin-warning-tooltip",
+      "why": "the plugin warning tooltip's 1px color/border/subtle edge separates a floating layer from the page it covers, like the tray popover; the same edge as an idle slider note's tooltip, so the panel has one tooltip look (owner, 2026-09-25)"
+    },
+    {
+      "selector": ".setting-entry>.note[data-note][data-tooltip]",
+      "why": "an idle slider note's tooltip has a 1px color/border/subtle edge, so it reads as a layer over the row above and not as stray text (owner, 2026-09-25: its own surface with an edge); the same edge as the plugin warning tooltip"
     }
   ],
   "contrastPairs": [
@@ -1275,35 +1381,68 @@
     },
     {
       "fg": "color/text/primary",
-      "bg": "color/warn/tint",
+      "bg": "color/bg/hover",
       "minRatio": 4.5,
-      "where": "plugin warning text on its warn-tinted band",
+      "where": "plugin warning message in its tooltip",
       "measured": {
-        "ledger": 12.97,
-        "graphite": 13.57,
-        "sigil": 14.09
+        "ledger": 12.1,
+        "graphite": 12.67,
+        "sigil": 13.06
+      }
+    },
+    {
+      "fg": "color/text/muted",
+      "bg": "color/bg/hover",
+      "minRatio": 4.5,
+      "where": "the plugin warning tooltip's Open Setup line",
+      "measured": {
+        "ledger": 6.46,
+        "graphite": 6.8,
+        "sigil": 6.95
+      }
+    },
+    {
+      "fg": "color/text/muted",
+      "bg": "color/bg/hover",
+      "minRatio": 4.5,
+      "where": "an idle slider's note in its tooltip",
+      "measured": {
+        "ledger": 6.46,
+        "graphite": 6.8,
+        "sigil": 6.95
       }
     },
     {
       "fg": "color/warn",
-      "bg": "color/warn/tint",
+      "bg": "color/bg/base",
       "minRatio": 3,
-      "where": "plugin warning icon on its band (non-text)",
+      "where": "plugin warning icon beside Apply all and in the status bar (non-text)",
       "measured": {
-        "ledger": 9.45,
-        "graphite": 8.9,
-        "sigil": 11.31
+        "ledger": 10.89,
+        "graphite": 10.26,
+        "sigil": 13.17
       }
     },
     {
-      "fg": "color/border/strong",
-      "bg": "color/warn/tint",
+      "fg": "color/warn",
+      "bg": "color/bg/hover",
       "minRatio": 3,
-      "where": "Open Setup button edge on the plugin warning band (non-text)",
+      "where": "plugin warning icon on its hover fill (non-text)",
       "measured": {
-        "ledger": 3.12,
-        "graphite": 3.13,
-        "sigil": 3.12
+        "ledger": 8.82,
+        "graphite": 8.31,
+        "sigil": 10.48
+      }
+    },
+    {
+      "fg": "color/accent",
+      "bg": "color/bg/raised",
+      "minRatio": 4.5,
+      "where": "the Miner's Helmet stat lines in their card",
+      "measured": {
+        "ledger": 7.2,
+        "graphite": 6.78,
+        "sigil": 5.54
       }
     }
   ],
@@ -1564,14 +1703,64 @@
       "variable": "radius/md"
     },
     {
-      "selector": ".plugin-warning",
-      "property": "background-color",
-      "variable": "color/warn/tint"
-    },
-    {
-      "selector": ".plugin-warning-icon",
+      "selector": ".plugin-warning-button",
       "property": "color",
       "variable": "color/warn"
+    },
+    {
+      "selector": ".plugin-warning-button",
+      "property": "border-radius",
+      "variable": "radius/md"
+    },
+    {
+      "selector": ".plugin-warning-tooltip",
+      "property": "background-color",
+      "variable": "color/bg/hover"
+    },
+    {
+      "selector": ".plugin-warning-tooltip",
+      "property": "color",
+      "variable": "color/text/primary"
+    },
+    {
+      "selector": ".plugin-warning-tooltip",
+      "property": "border-radius",
+      "variable": "radius/md"
+    },
+    {
+      "selector": ".plugin-warning-tooltip",
+      "property": "font-size",
+      "variable": "font/size/sm"
+    },
+    {
+      "selector": ".plugin-warning-tooltip",
+      "property": "border-top-color",
+      "variable": "color/border/subtle"
+    },
+    {
+      "selector": ".setting-entry>.note[data-note][data-tooltip]",
+      "property": "background-color",
+      "variable": "color/bg/hover"
+    },
+    {
+      "selector": ".setting-entry>.note[data-note][data-tooltip]",
+      "property": "border-top-color",
+      "variable": "color/border/subtle"
+    },
+    {
+      "selector": ".setting-entry>.note[data-note][data-tooltip]",
+      "property": "color",
+      "variable": "color/text/muted"
+    },
+    {
+      "selector": ".setting-entry>.note[data-note][data-tooltip]",
+      "property": "border-radius",
+      "variable": "radius/md"
+    },
+    {
+      "selector": ".plugin-warning-action",
+      "property": "color",
+      "variable": "color/text/muted"
     },
     {
       "selector": ".launch-feedback",
@@ -1729,21 +1918,6 @@
       "variable": "color/accent"
     },
     {
-      "selector": ".theme-control",
-      "property": "color",
-      "variable": "color/text/muted"
-    },
-    {
-      "selector": ".theme-control",
-      "property": "gap",
-      "variable": "space/3"
-    },
-    {
-      "selector": ".theme-control",
-      "property": "font-size",
-      "variable": "font/size/xs"
-    },
-    {
       "selector": "#theme",
       "property": "background-color",
       "variable": "color/bg/hover"
@@ -1757,6 +1931,41 @@
       "selector": "#theme",
       "property": "border-radius",
       "variable": "radius/sm"
+    },
+    {
+      "selector": "#theme",
+      "property": "font-size",
+      "variable": "font/size/sm"
+    },
+    {
+      "selector": ".mods-col>*",
+      "property": "background-color",
+      "variable": "color/bg/raised"
+    },
+    {
+      "selector": ".mods-col>*",
+      "property": "border-radius",
+      "variable": "radius/lg"
+    },
+    {
+      "selector": ".mods-col>*",
+      "property": "padding-left",
+      "variable": "space/7"
+    },
+    {
+      "selector": ".modifier-group+.modifier-group",
+      "property": "border-top-color",
+      "variable": "color/border/subtle"
+    },
+    {
+      "selector": "#minerHelmetCard .helmet-stats",
+      "property": "color",
+      "variable": "color/accent"
+    },
+    {
+      "selector": "#minerHelmetCard .helmet-stats",
+      "property": "font-family",
+      "variable": "font/mono/family"
     }
   ],
   "screens": [
@@ -1789,8 +1998,6 @@
         "Adjust drop rates and see exactly what each multiplier changes.",
         "Auto-apply",
         "Apply all now",
-        "Choose your Hero_Siege.exe in Setup, then install the plugin to use modifiers.",
-        "Open Setup",
         "All settings",
         "Modified",
         "Drop Rates",
@@ -1827,11 +2034,10 @@
         "−",
         "off",
         "+",
-        "Mining Ore Amount",
+        "Mining Ore Multiplier",
         "−",
         "off",
         "+",
-        "Multiplies ore from mining. x1 is normal. Only the ore amount is rewritten; ore types, mining XP and other drops are left to the game.",
         "Angelic Keys",
         "−",
         "off",
@@ -1863,10 +2069,8 @@
         "How it works",
         "Settings loaded",
         "No settings sent this session",
-        "Theme",
-        "Ledger",
         "Offline tools",
-        "Created by Falor"
+        "Created by Falor and ST4H"
       ],
       "placeholders": [
         "Search settings by name or effect..."
@@ -1900,8 +2104,6 @@
         "Adjust drop rates and see exactly what each multiplier changes.",
         "Auto-apply",
         "Apply all now",
-        "Choose your Hero_Siege.exe in Setup, then install the plugin to use modifiers.",
-        "Open Setup",
         "All settings",
         "Modified",
         "Drop Rates",
@@ -1910,11 +2112,10 @@
         "−",
         "off",
         "+",
-        "Mining Ore Amount",
+        "Mining Ore Multiplier",
         "−",
         "off",
         "+",
-        "Multiplies ore from mining. x1 is normal. Only the ore amount is rewritten; ore types, mining XP and other drops are left to the game.",
         "Dungeon Keys",
         "−",
         "off",
@@ -1974,9 +2175,7 @@
         "How it works",
         "Settings loaded",
         "No settings sent this session",
-        "Theme",
-        "Ledger",
-        "Created by Falor"
+        "Created by Falor and ST4H"
       ],
       "placeholders": [
         "Search settings by name or effect..."
@@ -2021,8 +2220,6 @@
         "Tune your character and combat bonuses.",
         "Auto-apply",
         "Apply all now",
-        "Choose your Hero_Siege.exe in Setup, then install the plugin to use modifiers.",
-        "Open Setup",
         "All settings",
         "Modified",
         "Combat & Character Modifiers",
@@ -2086,10 +2283,8 @@
         "+",
         "Settings loaded",
         "No settings sent this session",
-        "Theme",
-        "Ledger",
         "Offline tools",
-        "Created by Falor"
+        "Created by Falor and ST4H"
       ],
       "placeholders": [
         "Search settings by name or effect..."
@@ -2123,8 +2318,6 @@
         "Tune your character and combat bonuses.",
         "Auto-apply",
         "Apply all now",
-        "Choose your Hero_Siege.exe in Setup, then install the plugin to use modifiers.",
-        "Open Setup",
         "All settings",
         "Modified",
         "Combat & Character Modifiers",
@@ -2188,9 +2381,7 @@
         "+",
         "Settings loaded",
         "No settings sent this session",
-        "Theme",
-        "Ledger",
-        "Created by Falor"
+        "Created by Falor and ST4H"
       ],
       "placeholders": [
         "Search settings by name or effect..."
@@ -2235,16 +2426,13 @@
         "Choose the features you want for your offline adventure.",
         "Auto-apply",
         "Apply all now",
-        "Choose your Hero_Siege.exe in Setup, then install the plugin to use modifiers.",
-        "Open Setup",
         "Quality of Life",
-        "Items",
         "Items",
         "Custom forge mechanics tied to items made in the Item Editor. Settings apply immediately while the game is running.",
         "Miner's Helmet",
         "+1000 Defense · +500% Enhanced Defense",
         "+20% Movement Speed · +20% All Resistances · +5 Light Radius",
-        "While worn, every mining node gives exactly 4× its ore. This replaces the Mining Ore Amount slider instead of stacking with it; with the helmet off, the slider applies as usual.",
+        "While worn, every mining node gives exactly 4× its ore. This replaces the Mining Ore Multiplier slider instead of stacking with it; with the helmet off, the slider applies as usual.",
         "Vein Resonance:",
         "finishing a dig also digs the two nearest veins within 192 units that you could mine yourself, each at 4×, through the game's own dig. A vein dug this way never starts another.",
         "Forge it in the Item Editor: Item Forge → Forge a signature item → Miner's Helmet.",
@@ -2260,10 +2448,8 @@
         "For an amulet forged with Mechanic: Beacon. While on, every monster on the map hunts you the moment it spawns and never turns back, through the game's own aggro system. Plugin commands: beaconmode rare limits it to rares and champions, beaconrange <px> caps the distance.",
         "Settings loaded",
         "No settings sent this session",
-        "Theme",
-        "Ledger",
         "Offline tools",
-        "Created by Falor"
+        "Created by Falor and ST4H"
       ],
       "placeholders": [],
       "enabledModsForm": "inline",
@@ -2295,16 +2481,13 @@
         "Choose the features you want for your offline adventure.",
         "Auto-apply",
         "Apply all now",
-        "Choose your Hero_Siege.exe in Setup, then install the plugin to use modifiers.",
-        "Open Setup",
         "Quality of Life",
-        "Items",
         "Items",
         "Custom forge mechanics tied to items made in the Item Editor. Settings apply immediately while the game is running.",
         "Miner's Helmet",
         "+1000 Defense · +500% Enhanced Defense",
         "+20% Movement Speed · +20% All Resistances · +5 Light Radius",
-        "While worn, every mining node gives exactly 4× its ore. This replaces the Mining Ore Amount slider instead of stacking with it; with the helmet off, the slider applies as usual.",
+        "While worn, every mining node gives exactly 4× its ore. This replaces the Mining Ore Multiplier slider instead of stacking with it; with the helmet off, the slider applies as usual.",
         "Vein Resonance:",
         "finishing a dig also digs the two nearest veins within 192 units that you could mine yourself, each at 4×, through the game's own dig. A vein dug this way never starts another.",
         "Forge it in the Item Editor: Item Forge → Forge a signature item → Miner's Helmet.",
@@ -2320,9 +2503,7 @@
         "For an amulet forged with Mechanic: Beacon. While on, every monster on the map hunts you the moment it spawns and never turns back, through the game's own aggro system. Plugin commands: beaconmode rare limits it to rares and champions, beaconrange <px> caps the distance.",
         "Settings loaded",
         "No settings sent this session",
-        "Theme",
-        "Ledger",
-        "Created by Falor"
+        "Created by Falor and ST4H"
       ],
       "placeholders": [],
       "enabledModsForm": "tray (collapsed)",
@@ -2365,11 +2546,8 @@
         "Choose the features you want for your offline adventure.",
         "Auto-apply",
         "Apply all now",
-        "Choose your Hero_Siege.exe in Setup, then install the plugin to use modifiers.",
-        "Open Setup",
         "Quality of Life",
         "Items",
-        "Quality of Life",
         "Toggle drop pool adjustments and quality-of-life tweaks for your offline session. Settings apply immediately while the game is running.",
         "Remove owned relics from drop pool",
         "off",
@@ -2413,10 +2591,8 @@
         "Shows how much time a timed skill has left, over that skill's slot on the skill bar, in the look you pick below. Works for most timed skills; toggles and companions (turrets, totems) don't get one. Off by default.",
         "Settings loaded",
         "No settings sent this session",
-        "Theme",
-        "Ledger",
         "Offline tools",
-        "Created by Falor"
+        "Created by Falor and ST4H"
       ],
       "placeholders": [],
       "enabledModsForm": "inline",
@@ -2448,11 +2624,8 @@
         "Choose the features you want for your offline adventure.",
         "Auto-apply",
         "Apply all now",
-        "Choose your Hero_Siege.exe in Setup, then install the plugin to use modifiers.",
-        "Open Setup",
         "Quality of Life",
         "Items",
-        "Quality of Life",
         "Toggle drop pool adjustments and quality-of-life tweaks for your offline session. Settings apply immediately while the game is running.",
         "Remove owned relics from drop pool",
         "off",
@@ -2496,9 +2669,7 @@
         "Shows how much time a timed skill has left, over that skill's slot on the skill bar, in the look you pick below. Works for most timed skills; toggles and companions (turrets, totems) don't get one. Off by default.",
         "Settings loaded",
         "No settings sent this session",
-        "Theme",
-        "Ledger",
-        "Created by Falor"
+        "Created by Falor and ST4H"
       ],
       "placeholders": [],
       "enabledModsForm": "tray (collapsed)",
@@ -2541,7 +2712,6 @@
         "Connect your offline game and manage the mod plugin.",
         "Auto-apply",
         "Apply all now",
-        "Choose your Hero_Siege.exe in Setup, then install the plugin to use modifiers.",
         "Game Location",
         "ForgePact talks to the mod plugin sitting next to this exe. Change it if your game lives somewhere else.",
         "Browse...",
@@ -2556,12 +2726,13 @@
         "mod chain incomplete: exe not patched, AurieCore.dll, YYToolkit.dll, mod plugin - click",
         "Install Mod Plugin",
         "(game must be closed)",
-        "Settings loaded",
-        "No settings sent this session",
+        "Appearance",
         "Theme",
         "Ledger",
+        "Settings loaded",
+        "No settings sent this session",
         "Offline tools",
-        "Created by Falor"
+        "Created by Falor and ST4H"
       ],
       "placeholders": [],
       "enabledModsForm": "inline",
@@ -2593,7 +2764,6 @@
         "Connect your offline game and manage the mod plugin.",
         "Auto-apply",
         "Apply all now",
-        "Choose your Hero_Siege.exe in Setup, then install the plugin to use modifiers.",
         "Game Location",
         "ForgePact talks to the mod plugin sitting next to this exe. Change it if your game lives somewhere else.",
         "Browse...",
@@ -2608,11 +2778,12 @@
         "mod chain incomplete: exe not patched, AurieCore.dll, YYToolkit.dll, mod plugin - click",
         "Install Mod Plugin",
         "(game must be closed)",
-        "Settings loaded",
-        "No settings sent this session",
+        "Appearance",
         "Theme",
         "Ledger",
-        "Created by Falor"
+        "Settings loaded",
+        "No settings sent this session",
+        "Created by Falor and ST4H"
       ],
       "placeholders": [],
       "enabledModsForm": "tray (collapsed)",
@@ -2655,8 +2826,6 @@
         "Shape your zones. Keep every choice in sight.",
         "Auto-apply",
         "Apply all now",
-        "Choose your Hero_Siege.exe in Setup, then install the plugin to use modifiers.",
-        "Open Setup",
         "Monster Density",
         "Enabled",
         "Adjust the number of monster packs in newly loaded zones.",
@@ -2736,10 +2905,8 @@
         "Changes save automatically",
         "Settings loaded",
         "No settings sent this session",
-        "Theme",
-        "Ledger",
         "Offline tools",
-        "Created by Falor"
+        "Created by Falor and ST4H"
       ],
       "placeholders": [
         "Search by name or effect..."
@@ -2773,8 +2940,6 @@
         "Shape your zones. Keep every choice in sight.",
         "Auto-apply",
         "Apply all now",
-        "Choose your Hero_Siege.exe in Setup, then install the plugin to use modifiers.",
-        "Open Setup",
         "Monster Density",
         "Enabled",
         "Adjust the number of monster packs in newly loaded zones.",
@@ -2854,9 +3019,7 @@
         "Changes save automatically",
         "Settings loaded",
         "No settings sent this session",
-        "Theme",
-        "Ledger",
-        "Created by Falor"
+        "Created by Falor and ST4H"
       ],
       "placeholders": [
         "Search by name or effect..."
@@ -2914,7 +3077,7 @@
       "state": "error",
       "nodeId": "36:155",
       "screenshot": ".claude/workorders/forgepact-ui-figma-buildout/states/error.png",
-      "notes": "Save error in color/danger with its reason slot, Could not finish saving: {reason} (the restyle drops the colon when there is no reason); plugin warning not-installed text on its full-width color/warn/tint band, with the warning icon in color/warn before the text; chip Game open · plugin missing."
+      "notes": "Save error in color/danger with its reason slot, Could not finish saving: {reason} (the restyle drops the colon when there is no reason); the plugin warning's not-installed text in the warning icon's tooltip (plugin-warning-tooltip; the full-width band is gone since the owner's polish pass, 2026-09-25); chip Game open · plugin missing."
     },
     {
       "state": "enabled-empty",
@@ -2962,7 +3125,7 @@
       "state": "theme-picker",
       "nodeId": "36:797",
       "screenshot": ".claude/workorders/forgepact-ui-figma-buildout/states/theme-picker.png",
-      "notes": "Picker open upward from the status bar, plus one section in each palette. Each option's swatch shows border/strong, text/muted and the accent, so the neutral temperature tells Ledger (warm) from Graphite (cool grey) and Sigil (blue grey)."
+      "notes": "Picker open from the Theme select in the Setup tab's Appearance card (moved there by the owner's polish pass, 2026-09-25; the panel draws it as the system select list), plus one section in each palette. Each option's swatch shows border/strong, text/muted and the accent, so the neutral temperature tells Ledger (warm) from Graphite (cool grey) and Sigil (blue grey)."
     },
     {
       "state": "enabled-inline-1280",
@@ -2998,7 +3161,7 @@
       "state": "idle-switch",
       "nodeId": "51:983",
       "screenshot": ".claude/workorders/forgepact-ui-figma-buildout/states/idle-switch.png",
-      "notes": "An ON slider switch is idle (color/switch/idle) while its mod is not listed, and takes the accent once listed (data-live). Idle, on and off rows drawn in all three palettes, with the listed entry. Density's #den_on keeps its look."
+      "notes": "An ON slider switch is idle (color/switch/idle) while its mod is not listed, and takes the accent once listed (data-live). Idle, on and off rows drawn in all three palettes, with the listed entry. Density's #den_on keeps its look. A hovered or focused idle row's note is a tooltip above the row: color/bg/hover with a 1px color/border/subtle edge and radius/md, text color/text/muted, left-aligned with the row and no wider than it, its bottom just above the row's top; the row and the next row stay put (owner, 2026-09-25: never drawn over the row below, and nothing moves)."
     },
     {
       "state": "enabled-tray-popover",
@@ -3017,6 +3180,12 @@
       "nodeId": "51:1371",
       "screenshot": ".claude/workorders/forgepact-ui-figma-buildout/states/min-window-900x600.png",
       "notes": "Setup at the minimum window, 900x600: the subtitle shares the title's line and the list sits in the rail as the count, so the first setting starts higher."
+    },
+    {
+      "state": "plugin-warning-tooltip",
+      "nodeId": null,
+      "screenshot": null,
+      "notes": "The plugin warning (owner's polish pass, 2026-09-25): the color/warn icon beside Apply all now, its tooltip open below it on color/bg/hover (radius/md, a 1px color/border/subtle edge, the same surface as an idle slider note's tooltip) with the message in color/text/primary and an Open Setup line in color/text/muted, font/size/xs; the same icon beside Settings loaded in the status bar opens its tooltip upward. On Setup the Open Setup line is not shown. The icon opens Setup; the tooltip holds nothing to click. nodeId and screenshot are filled in when the Figma file is brought in line with this amendment."
     }
   ],
   "components": [

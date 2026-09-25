@@ -19,7 +19,8 @@ modes of one variable collection: **Ledger** (the default), **Graphite** and
 - `figma-export.json` is what the design says: the palettes and their
   variables, the borders, the contrast pairs, the screens and states, the
   components, the fonts, the motion values and the amendments (the
-  enabled-mods list's forms, the undo toast, the idle switch).
+  enabled-mods list's forms, the undo toast, the idle switch, the plugin
+  warning and the owner's polish pass).
 
 ## The export is the contract
 
@@ -49,6 +50,28 @@ To take a new design, copy the new export over `figma-export.json` (and the
 ids over `figma-manifest.json` if nodes moved), regenerate `tokens.css`, and
 run the checks above. A contrast failure is a colour problem to fix in
 Figma, not something to patch around in CSS.
+
+## Amending the export
+
+When the owner decides a change in words, before anyone draws it, the export
+can be amended by hand and Figma brought in line afterwards, so the contract
+still leads the code. The owner's polish pass (2026-09-25) went this way:
+
+- The decision is recorded under `amendments` with the owner's words and the
+  date. `amendments.polish` holds one entry per item, each naming what the
+  panel now does and the selectors it does it with, including item 9, an idle
+  slider's note shown as a tooltip above its row.
+- Everything the amendment changes is edited where the checks read it: each
+  screen's `texts`, the `selectorTokens` rows (a row whose element is gone is
+  dropped or re-pointed; a new look gets a row design-match can reach), the
+  `borders` allowlist with a `why` for each new border, the `contrastPairs`,
+  and the `states` notes. `variables` and `palettes` never change in an
+  amendment, so `tokens.css` does not either.
+- A version number is a runtime value, like any field's value, and is never
+  listed in a screen's `texts`.
+- Then the Figma file is edited to match the amended export and read back,
+  and the new state frames' node ids are written into `figma-manifest.json`
+  and the export's `states`.
 
 ## Regenerating `tokens.css`
 

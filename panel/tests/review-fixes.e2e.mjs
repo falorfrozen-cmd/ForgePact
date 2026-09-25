@@ -29,6 +29,7 @@ import { BOOLEAN_MODS } from '../src/enabled-mods.js';
 import { UNDO_TEXTS, ENTRY_TITLE_JOINER, withName } from '../src/lib/enabled-mods-copy.js';
 import { FREEZE_MAX_MS, UNDO_VISIBLE_MS } from '../src/lib/enabled-mods-undo.js';
 import { HOLD_IDLE_MS } from '../src/lib/enabled-mods-form.js';
+import { OPEN_DELAY_MS } from '../src/lib/slider-note.js';
 
 const args = parseArgs(process.argv.slice(2));
 const SHOTS = typeof args.shots === 'string' ? args.shots : null;
@@ -418,12 +419,14 @@ async function switches(ctx) {
   await frames(page);
   const note = '#stats .setting-entry:has([data-key="exp"]) > .note[data-note="exp"]';
   assert(!await visible(page, note), 'An idle row shows its note');
+  // The note opens as a tooltip after OPEN_DELAY_MS (src/lib/slider-note.js): wait for it, bounded.
+  const noteShows = () => page.waitForFunction((s) => !!document.querySelector(s)?.checkVisibility(), note, { timeout: OPEN_DELAY_MS + 2000 }).catch(() => {});
   await page.hover('#stats .setting-entry:has([data-key="exp"]) .lbl');
-  await frames(page);
+  await noteShows();
   assert(await visible(page, note), 'Hovering an idle row does not show its note');
   await page.mouse.move(1, HEIGHT - 60);
   await $(page, (s) => document.querySelector(s).focus(), EXP);
-  await frames(page);
+  await noteShows();
   assert(await visible(page, note), 'Focus inside an idle row does not show its note');
   await $(page, () => document.activeElement.blur());
   await $(page, () => document.querySelector('.tabbtn[data-tab="world"]').click());
@@ -448,10 +451,22 @@ async function setup(ctx) {
   await $(page, () => document.querySelector('.tabbtn[data-tab="setup"]').click());
   await frames(page);
   assert(await $(page, () => document.getElementById('pluginWarning').getBoundingClientRect().height > 0), 'The sandbox shows no plugin warning');
-  assert(!await visible(page, '#pluginWarning .btn'), 'Open Setup shows on Setup');
+  // The warning is an icon whose tooltip (opened here by focus) ends with an
+  // "Open Setup" line: not on Setup, where it would point at itself.
+  const openTip = async () => {
+    await $(page, () => document.querySelector('#pluginWarning button').focus());
+    await page.waitForFunction(() => !!document.querySelector('#pluginWarning [role="tooltip"]')?.checkVisibility(), null, { timeout: 2000 });
+  };
+  const line = '#pluginWarning [role="tooltip"] .plugin-warning-action';
+  await openTip();
+  assert(await $(page, () => document.querySelector('#pluginWarning [role="tooltip"]').textContent.includes('Open Setup')), 'The tooltip has no Open Setup line');
+  assert(!await visible(page, line), 'Open Setup shows on Setup');
+  await $(page, () => document.activeElement.blur());
   await $(page, () => document.querySelector('.tabbtn[data-tab="world"]').click());
   await frames(page);
-  assert(await visible(page, '#pluginWarning .btn'), 'Open Setup is missing on World');
+  await openTip();
+  assert(await visible(page, line), 'Open Setup is missing on World');
+  await $(page, () => document.activeElement.blur());
   passed.push('open-setup-hidden-on-setup');
 
   await page.route('**/api/state', async (route) => {

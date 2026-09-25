@@ -12,6 +12,8 @@ import { installEnabledModsForm } from './lib/enabled-mods-form.js';
 import { installEnabledModsUndo } from './lib/enabled-mods-undo.js';
 import { installRememberedValues } from './lib/remembered-value.js';
 import { installReviewFixes } from './lib/review-fixes.js';
+import { installPluginWarning } from './lib/plugin-warning.js';
+import { installSliderNotes } from './lib/slider-note.js';
 
 mount(App, { target: document.getElementById('app') });
 // The restyle's additions only watch the DOM panel.js produces, so they go in
@@ -20,4 +22,6 @@ const form = installEnabledModsForm();
 installEnabledModsUndo(form);
 installRememberedValues();
 installReviewFixes();
+installPluginWarning();
+installSliderNotes();
 start();

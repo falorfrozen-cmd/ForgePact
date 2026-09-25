@@ -12,9 +12,13 @@ the page it replaced lives in `panel/tests/`:
 - `npm run e2e` runs the checks ported from the old agent-browser harnesses
   (saves, failures, filters, keyboard, install and launch paths);
 - `npm run e2e:gems` checks the Gems of Incarnation controls' place, defaults,
-  Enabled mods entries and mod filter list.
+  Enabled mods entries and mod filter list;
+- `npm run e2e:polish` checks the owner's polish pass: the Mining Ore
+  Multiplier label, one card per Mods mod, the theme on Setup, the plugin
+  warning icons and their tooltips, the Modifiers separators, the helmet's
+  accent, and an idle slider's note as a tooltip that moves no row.
 
-All three drive the installed Edge headless through playwright-core against
+All four drive the installed Edge headless through playwright-core against
 `tests/panel_sandbox_server.py`, which needs a built `panel/dist/`. Each test
 here skips, naming what is missing, when `node`/`npm`, Edge, the installed
 dev dependencies or the build are absent - build first with
@@ -126,6 +130,12 @@ class PanelBrowserSuiteTests(unittest.TestCase):
         lines = [l for l in out.splitlines() if l.startswith("e2e-gems: ")]
         self.assertEqual(code, 0, out[-4000:])
         self.assertTrue(lines and re.fullmatch(r"e2e-gems: (\d+)/\1 checks passed", lines[-1]), out[-4000:])
+
+    def test_polish_e2e_suite_passes(self):
+        code, out = _npm("e2e:polish")
+        lines = [l for l in out.splitlines() if l.startswith("e2e-polish: ")]
+        self.assertEqual(code, 0, out[-4000:])
+        self.assertTrue(lines and re.fullmatch(r"e2e-polish: (\d+)/\1 checks passed", lines[-1]), out[-4000:])
 
 
 if __name__ == "__main__":
