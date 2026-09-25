@@ -412,6 +412,10 @@ struct ApRollChanceDepthScope {
 // DropManager hooks replace DropItem's script-table entry (InstallHook).
 static unsigned char* FindAngelicGate();
 #endif
+// #69: InstallHook records DropItem's and DropItemAngelicChance's own code in
+// both builds, before any hook swaps their script-table entries; the Angelic
+// gate finder scans that record. Defined with FindAngelicGate.
+static void CaptureAngelicScriptCode();
 
 // HookOneScript/HookOneScriptTable prepend "gml_Script_" themselves, so a
 // closure hooked by an hs-game-sdk constant needs the prefix peeled back off.
@@ -454,11 +458,13 @@ static bool PopulationCapacityAvailable() { return ForgePact::ProtectedPool::Run
 #include <ForgePact/SkillTimerNames.hpp>
 #include <ForgePact/ProspectWindowMod.hpp>
 #include <ForgePact/AutoProspectMod.hpp>
+#include <ForgePact/CraftMatsMod.hpp>
 #include <ForgePact/PetQuestCollectorMod.hpp>
 #include <ForgePact/DensityManager.hpp>
 #include <ForgePact/DropManager.hpp>
 #include <ForgePact/IpcServer.hpp>
 #include <ForgePact/ModManager.hpp>
+#include <ForgePact/ItemTruth.hpp>
 
 static void DoScriptLookup(const std::string& name)
 {
@@ -1383,12 +1389,21 @@ static int ToplamOrnek()
 
 
 #ifdef FORGEPACT_RELEASE
-// YYToolkit'in "YYToolkit Log" konsolu oyuncuya gorunmesin.
-// (sinif ConsoleWindowClass, oyunun kendi surecinde AllocConsole ile aciliyor)
-static void KonsoluGizle()
+// The player build detaches the game from YYToolkit's "YYToolkit Log"
+// console instead of hiding its window (#58). YYToolkit opens that console
+// inside the game's own process (AllocConsole), which makes it the game's
+// standard output, so GameMaker writes every runtime warning to it
+// synchronously - hidden or not. Underground Garden's zone generation
+// (entered from Misty Swamp) emits thousands of "tilemap_get() - couldn't find
+// specified tilemap" warnings, and writing them to the console froze the load
+// for 30-70 seconds. MEASURED 2026-09-23 with an external stack sampler: the
+// main thread sat in WriteFile, called from the game's own code, for the whole
+// freeze, and the console buffer held nothing but that warning. The unmodded
+// game has no console, so there those writes fail at once; detaching restores
+// that. Players never saw this console, and the research build keeps it.
+static void DetachConsole()
 {
-    HWND h = GetConsoleWindow();
-    if (h && IsWindowVisible(h)) ShowWindow(h, SW_HIDE);
+    if (GetConsoleWindow()) FreeConsole();
 }
 #endif
 
@@ -4109,7 +4124,12 @@ static bool TryApplyCustomForge(RValue* candidate, bool finalPass = false)
         if (definition.m_Kind != VALUE_OBJECT || stats.m_Kind != VALUE_OBJECT) return false;
         std::map<std::string, double> statsAtEntry;
         if (finalPass) statsAtEntry = StructNumbers(stats);
-        {   // record the stat struct once, before any forge entry touches it: the editor wants the item's own values
+        // Record the stat struct once, before any forge entry touches it: the editor wants the
+        // item's own values. Only on CreateItemNew's own return (finalPass): CreateItemInit and
+        // GenerateItemRandomStats reach this function too, and a snapshot taken there misses what
+        // CreateItemNew adds after them - the socket count (20) and key 21 were absent from 121
+        // of 386 AFK items compared with their spool copies (2026-09-24).
+        if (finalPass) {
             RValue recorded = g_Yytk->CallBuiltin("variable_struct_exists", { *candidate, RValue("fp_recorded") });
             if (!recorded.ToBoolean()) { RecordItemStats(*candidate, stats); g_Yytk->CallBuiltin("variable_struct_set", { *candidate, RValue("fp_recorded"), RValue(true) }); }
         }
@@ -4291,6 +4311,107 @@ static void CustomForgePostProcess(RValue& result, int argc, RValue** args, bool
     // small, bounded prefix; TryApply requires all three canonical item fields.
     for (int i = 0; i < argc && i < 8; ++i)
         if (args && TryApplyCustomForge(args[i], finalPass)) return;
+}
+
+// ===== Item truth: the game's finished items for the Item Editor ==============
+// ForgePact::ItemTruth (plugin/include/ForgePact/ItemTruth.hpp) explains the
+// record. This part runs on the game thread inside Hook_CreateItemNew: it only
+// reads the finished struct, serialises it and queues one line; the journal's
+// own thread writes it. Off unless the Item Editor created
+// %LOCALAPPDATA%\Hero_Siege\itemtruth\capture.request (InstallItemTruth).
+static ForgePact::ItemTruth::Journal* g_TruthJournal = nullptr;   // never deleted, see ItemTruth.hpp
+static ForgePact::ItemTruth::Seen g_TruthSeen;
+static bool g_TruthOn = false;
+static std::string g_TruthBuild;
+static volatile long g_TruthCaptured = 0;
+// Non-empty only while ItemTruthEvalTick has the game build an item the Item
+// Editor asked about: that record is tagged with the request and always written.
+static std::string g_TruthEvalRequest;
+// CreateItemNew nesting on this thread. Only the outermost call is a finished
+// item: an item built inside another item's construction is part of it.
+static thread_local int g_TruthDepth = 0;
+struct TruthDepthGuard {
+    bool on;
+    explicit TruthDepthGuard(bool active) : on(active) { if (on) ++g_TruthDepth; }
+    ~TruthDepthGuard() { if (on) --g_TruthDepth; }
+};
+
+static std::string TruthStringify(const RValue& value)
+{
+    try {
+        if (value.m_Kind != VALUE_OBJECT) return {};
+        CInstance* g = nullptr; g_Yytk->GetGlobalInstance(&g);
+        RValue js; g_Yytk->CallBuiltinEx(js, "json_stringify", g, g, { value });
+        return js.m_Kind == VALUE_STRING ? js.ToString() : std::string();
+    } catch (...) { return {}; }
+}
+
+static std::string TruthWholeNumber(const RValue& value)
+{
+    try {
+        if (value.m_Kind == VALUE_STRING) {
+            const std::string text = value.ToString();
+            return ForgePact::ItemTruth::IsDigits(text) ? text : std::string();
+        }
+        if (value.m_Kind == VALUE_REAL || value.m_Kind == VALUE_INT32 || value.m_Kind == VALUE_INT64)
+            return ForgePact::ItemTruth::WholeNumberText(value.ToDouble());
+    } catch (...) {}
+    return {};
+}
+
+// The stat struct as it left the game, taken before CustomForgePostProcess
+// dresses it - only when a forge entry could apply, "" otherwise.
+static std::string ItemTruthNativeSnapshot(const RValue& item)
+{
+    if (!g_TruthOn || item.m_Kind != VALUE_OBJECT || g_CustomForgeEntries.empty()) return {};
+    try {
+        if (!ForgeCouldMatch(item)) return {};
+        return TruthStringify(g_Yytk->CallBuiltin("variable_struct_get", { item, RValue("itemStatStruct") }));
+    } catch (...) { return {}; }
+}
+
+static void ItemTruthCapture(const RValue& item, const std::string& nativeStats)
+{
+    if (!g_TruthOn || !g_TruthJournal || item.m_Kind != VALUE_OBJECT) return;
+    try {
+        auto field = [&](const char* name) { return g_Yytk->CallBuiltin("variable_struct_get", { item, RValue(name) }); };
+        const RValue def = field("itemDefinitionStruct");
+        const RValue stats = field("itemStatStruct");
+        if (def.m_Kind != VALUE_OBJECT || stats.m_Kind != VALUE_OBJECT) return;
+        ForgePact::ItemTruth::Record r;
+        r.timestamp = TruthWholeNumber(field("itemTimeStamp"));
+        if (r.timestamp.empty()) return;   // nothing the editor could match it to
+        const RValue hash = field("itemDataHash");
+        r.hash = hash.m_Kind == VALUE_STRING ? hash.ToString() : std::string();
+        r.stats = TruthStringify(stats);
+        const bool evaluating = !g_TruthEvalRequest.empty();
+        if (!g_TruthSeen.Insert(r.timestamp + "|" + (r.hash.empty() ? r.stats : r.hash)) && !evaluating) return;
+        if (evaluating) { r.source = "eval"; r.request = g_TruthEvalRequest; }
+        r.type = TruthWholeNumber(field("itemType"));
+        r.def = TruthStringify(def);
+        r.native = nativeStats;
+        r.info = TruthStringify(field("itemInfoStruct"));
+        r.build = g_TruthBuild;
+        r.unixMs = ForgePact::ItemTruth::UnixMsNow();
+        std::string line = ForgePact::ItemTruth::FormatRecord(r);
+        if (!line.empty() && g_TruthJournal->Enqueue(std::move(line))) InterlockedIncrement(&g_TruthCaptured);
+    } catch (...) {}
+}
+
+// One item of an Item Editor request, built through the game's own save loader
+// exactly as BuildAngelicPool builds its probe items: json_parse, then
+// InitItemFromJson(json, key) with the global instance as self. CreateItemNew
+// runs, so ItemTruthCapture records it. The struct is never dropped, placed or
+// saved; once the caller lets it go, the collector takes it.
+static RValue TruthBuildItem(const ForgePact::ItemTruth::EvalItem& entry)
+{
+    CInstance* g = nullptr; g_Yytk->GetGlobalInstance(&g);
+    if (!g) return RValue();
+    RValue parsed; g_Yytk->CallBuiltinEx(parsed, "json_parse", g, g, { RValue(entry.json) });
+    if (parsed.m_Kind != VALUE_OBJECT) return RValue();
+    RValue item;
+    const AurieStatus st = g_Yytk->CallGameScriptEx(item, "gml_Script_InitItemFromJson", g, g, { parsed, RValue(entry.key) });
+    return AurieSuccess(st) && item.m_Kind == VALUE_OBJECT ? item : RValue();
 }
 
 
@@ -16115,6 +16236,10 @@ static void HeadhunterActivityTick()
 #else
   #define HH_CREATE_TRACE(NAME) ((void)0)
 #endif
+// CreateItemNew is the one constructor whose return is a finished item, so it
+// alone is the final pass: the Custom Forge dressing applies there, and Item
+// Truth records the outermost call (before the dressing when a forge entry can
+// match, and after it - what the game will show).
 #define ITEM_CREATE_HOOK(NAME) \
     static PFUNC_YYGMLScript g_Orig_##NAME = nullptr; \
     static volatile long g_cnt_##NAME = 0; \
@@ -16122,8 +16247,17 @@ static void HeadhunterActivityTick()
     static RValue& Hook_##NAME(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) { \
         BP_DIAG_INCREMENT(g_cnt_##NAME); \
         HH_CREATE_TRACE(NAME); \
-        RValue& _res = g_Orig_##NAME ? g_Orig_##NAME(S, O, R, argc, A) : R; \
-        CustomForgePostProcess(_res, argc, A, strcmp(#NAME, "CreateItemNew") == 0); \
+        constexpr bool _final = std::string_view(#NAME) == std::string_view("CreateItemNew"); \
+        RValue* _resp = &R; \
+        { \
+            TruthDepthGuard _depth(_final); \
+            if (g_Orig_##NAME) _resp = &g_Orig_##NAME(S, O, R, argc, A); \
+        } \
+        RValue& _res = *_resp; \
+        const bool _outermost = _final && g_TruthDepth == 0; \
+        const std::string _native = _outermost ? ItemTruthNativeSnapshot(_res) : std::string(); \
+        CustomForgePostProcess(_res, argc, A, _final); \
+        if (_outermost) ItemTruthCapture(_res, _native); \
         BP_LOGDROP(#NAME, _res, argc, A); \
         return _res; \
     }
@@ -16538,6 +16672,195 @@ static void InstallDropMultHooks()
 // 3 = flat): ours are drawn at y, the game's row is handed y + rows*30, and the combined
 // height is returned so everything below (stats, lore, requirements, the box itself)
 // moves down with it.
+// ---- Item truth: the game's own tooltip text (ItemTruth.hpp, "tooltip") -----------
+// Recording rides on the two hooks below plus draw_text_outline(_ext): the first
+// time this session the game draws a given item's tooltip, every text row of that
+// pass and every stat call that drew a row are kept, then written as one journal
+// line when the pass ends. Nothing is drawn differently; the hooks only read.
+struct TipCaptureState {
+    bool active = false;       // recording the current DrawInventoryItemV2 pass
+    bool wantTable = false;    // this pass also records every stat call (once a session)
+    int itemDepth = 0;         // DrawInventoryItemV2 nesting; only the outer pass is recorded
+    int textDepth = 0;         // inside a text call: its nested text calls are part of it
+    long long statId = -1;     // inside DrawInventoryStatsNew: the stat it draws
+    std::string ts, hash, args, rows, stats, table, drawnBy;
+    std::string request;       // the drawing request this pass serves (TipDrawBatch), else ""
+    size_t rowCount = 0, statCount = 0, tableCount = 0;
+};
+static TipCaptureState g_Tip;
+static ForgePact::ItemTruth::Seen g_TipSeen(50000);
+static bool g_TipTableWritten = false;
+struct TipDepthGuard {
+    int& depth;
+    explicit TipDepthGuard(int& d) : depth(d) { ++depth; }
+    ~TipDepthGuard() { --depth; }
+};
+
+static std::string TipJson(const RValue* v)
+{
+    if (!v) return "null";
+    try {
+        switch (v->m_Kind) {
+        case VALUE_REAL: case VALUE_INT32: case VALUE_INT64: {
+            const double d = v->ToDouble();
+            if (!std::isfinite(d)) return "null";
+            char text[40];
+            std::snprintf(text, sizeof text, "%.15g", d);
+            return text;
+        }
+        case VALUE_BOOL: return v->ToBoolean() ? "true" : "false";
+        case VALUE_STRING: {
+            std::string s = v->ToString();
+            if (s.size() > 2000) s.resize(2000);
+            std::string out;
+            ForgePact::ItemTruth::AppendJsonString(out, s);
+            return out;
+        }
+        default: return "null";   // structs (the item itself), arrays, references
+        }
+    } catch (...) { return "null"; }
+}
+
+static std::string TipJsonArgs(int argc, RValue** A)
+{
+    std::string out = "[";
+    for (int i = 0; i < argc && i < 16; ++i) {
+        if (i) out += ',';
+        out += TipJson(A ? A[i] : nullptr);
+    }
+    return out + "]";
+}
+
+// Builtin routines receive their arguments as one array.
+static std::string TipJsonArgs(int argc, RValue* Args)
+{
+    std::string out = "[";
+    for (int i = 0; i < argc && i < 16; ++i) {
+        if (i) out += ',';
+        out += TipJson(Args ? &Args[i] : nullptr);
+    }
+    return out + "]";
+}
+
+// The object whose code drew the tooltip (e.g. the inventory tooltip object).
+static std::string TipObjectName(CInstance* S)
+{
+    if (!S) return {};
+    try {
+        const RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { S->ToRValue(), RValue("object_index") });
+        const RValue name = g_Yytk->CallBuiltin("object_get_name", { oi });
+        return name.m_Kind == VALUE_STRING ? name.ToString() : std::string();
+    } catch (...) { return {}; }
+}
+
+// DrawInventoryItemV2(x, y, scale, item, ...): start recording when this item's
+// tooltip has not been recorded this session (the first pass also records the
+// table), or always for an item a drawing request asked for (force).
+static bool TipCaptureBegin(int argc, RValue** A, bool force = false)
+{
+    if (!g_TruthOn || !g_TruthJournal || g_Tip.itemDepth != 0) return false;
+    try {
+        if (argc <= 3 || !A || !A[3] || A[3]->m_Kind != VALUE_OBJECT) return false;
+        const RValue& item = *A[3];
+        const std::string ts = TruthWholeNumber(g_Yytk->CallBuiltin("variable_struct_get", { item, RValue("itemTimeStamp") }));
+        if (ts.empty()) return false;
+        const RValue hash = g_Yytk->CallBuiltin("variable_struct_get", { item, RValue("itemDataHash") });
+        const std::string h = hash.m_Kind == VALUE_STRING ? hash.ToString() : std::string();
+        const bool table = !g_TipTableWritten;
+        if (!g_TipSeen.Insert(ts + "|" + h) && !table && !force) return false;
+        g_Tip = TipCaptureState{};
+        g_Tip.active = true;
+        g_Tip.wantTable = table;
+        g_Tip.ts = ts;
+        g_Tip.hash = h;
+        g_Tip.args = TipJsonArgs(argc, A);
+        return true;
+    } catch (...) { return false; }
+}
+
+static void TipCaptureEnd()
+{
+    if (!g_Tip.active) return;
+    g_Tip.active = false;
+    try {
+        const long long now = ForgePact::ItemTruth::UnixMsNow();
+        if (g_Tip.rowCount || g_Tip.statCount) {
+            std::string line = ForgePact::ItemTruth::FormatTooltipRecord(
+                g_TruthBuild, now, g_Tip.ts, g_Tip.hash, g_Tip.args, g_Tip.rows, g_Tip.stats, g_Tip.drawnBy,
+                g_Tip.request);
+            if (!line.empty()) g_TruthJournal->Enqueue(std::move(line));
+        }
+        if (g_Tip.wantTable && g_Tip.tableCount) {
+            std::string table = ForgePact::ItemTruth::FormatTooltipTable(g_TruthBuild, now, g_Tip.table);
+            if (!table.empty() && g_TruthJournal->Enqueue(std::move(table))) g_TipTableWritten = true;
+        }
+    } catch (...) {}
+    g_Tip.rows.clear(); g_Tip.stats.clear(); g_Tip.table.clear();
+}
+
+// One text row of the tooltip being recorded: the call's arguments (x, y, text, ...),
+// the draw colour and alignment in effect, and the stat that drew it. The game's own
+// outline text draws each string several times (dark copies, then the colour one);
+// every call is kept and the editor keeps the last copy of a string at a spot.
+static bool TipWantsText()
+{
+    return g_Tip.active && g_Tip.itemDepth == 1 && g_Tip.textDepth == 0 && g_Tip.rowCount < 600;
+}
+static void TipNoteRow(const char* fn, const std::string& argsJson)
+{
+    try {
+        const RValue colour = g_Yytk->CallBuiltin("draw_get_colour", {});
+        const RValue halign = g_Yytk->CallBuiltin("draw_get_halign", {});
+        const RValue valign = g_Yytk->CallBuiltin("draw_get_valign", {});
+        std::string row = std::string("{\"fn\":\"") + fn + "\",\"s\":" + std::to_string(g_Tip.statId)
+            + ",\"c\":" + TipJson(&colour) + ",\"ha\":" + TipJson(&halign) + ",\"va\":" + TipJson(&valign)
+            + ",\"a\":" + argsJson + "}";
+        if (g_Tip.rowCount) g_Tip.rows += ',';
+        g_Tip.rows += row;
+        ++g_Tip.rowCount;
+    } catch (...) {}
+}
+static void TipNoteText(const char* fn, int argc, RValue** A)
+{
+    if (TipWantsText()) TipNoteRow(fn, TipJsonArgs(argc, A));
+}
+static void TipNoteText(const char* fn, int argc, RValue* Args)
+{
+    if (TipWantsText()) TipNoteRow(fn, TipJsonArgs(argc, Args));
+}
+
+// One DrawInventoryStatsNew call of the pass: kept when it drew a row, and every
+// call on the table pass.
+static void TipNoteStat(int argc, RValue** A, const RValue& result)
+{
+    if (!g_Tip.active || g_Tip.itemDepth != 1) return;
+    try {
+        const bool numeric = result.m_Kind == VALUE_REAL || result.m_Kind == VALUE_INT32 || result.m_Kind == VALUE_INT64;
+        const double height = numeric ? result.ToDouble() : 0.0;
+        const std::string entry = "{\"id\":" + std::to_string(g_Tip.statId) + ",\"h\":" + TipJson(&result)
+            + ",\"a\":" + TipJsonArgs(argc, A) + "}";
+        if (height > 0.0 && g_Tip.statCount < 400) {
+            if (g_Tip.statCount) g_Tip.stats += ',';
+            g_Tip.stats += entry;
+            ++g_Tip.statCount;
+        }
+        if (g_Tip.wantTable && g_Tip.tableCount < 1500) {
+            if (g_Tip.tableCount) g_Tip.table += ',';
+            g_Tip.table += entry;
+            ++g_Tip.tableCount;
+        }
+    } catch (...) {}
+}
+
+static long long TipStatIdOf(int argc, RValue** A)
+{
+    try {
+        if (argc > 3 && A && A[3] && (A[3]->m_Kind == VALUE_REAL || A[3]->m_Kind == VALUE_INT32 || A[3]->m_Kind == VALUE_INT64))
+            return static_cast<long long>(A[3]->ToDouble());
+    } catch (...) {}
+    return -1;
+}
+
 static PFUNC_YYGMLScript g_Orig_DrawInventoryItemV2 = nullptr;
 static PFUNC_YYGMLScript g_Orig_DrawInventoryStatsNew = nullptr;
 static int g_TipStatCallsInTooltip = 0;
@@ -16608,7 +16931,204 @@ static bool TipStatPresent(RValue** A, int argc)
     } catch (...) { return false; }
 }
 
+// ---- Item truth: tooltips the game draws for the Item Editor ------------------
+// The editor asks for the tooltips of items the player never hovers (a Vault
+// holds thousands) in itemtruth\tips\<id>.req, lines like an evaluation request.
+// While the player has an item tooltip open, the game's own tooltip pass - this
+// hook, with the tooltip's own instance - also builds a few of those items through
+// the save loader and draws their tooltips into a small off-screen surface, where
+// the tooltip capture records them: at most kTipDrawMaxPerFrame items and
+// kTipDrawBudgetSeconds per frame, before the game draws the real tooltip, so the
+// player's tooltip is always the last one drawn. The draw state the batch found is
+// put back. A request cut short (the game closed or failed) is set aside at the
+// next start, like an evaluation request (AbandonWorking).
+struct TipDrawState {
+    std::string id;
+    std::filesystem::path file;   // the claimed <id>.working
+    std::vector<ForgePact::ItemTruth::EvalItem> items;
+    size_t next = 0, ok = 0, failed = 0, rejected = 0, reported = 0;
+    bool active = false;
+};
+static TipDrawState g_TipDraw;
+static uint64_t g_TipDrawFrame = UINT64_MAX;   // one batch per frame
+static std::chrono::steady_clock::time_point g_TipDrawLook{};
+static RValue* g_TipDrawSurface = nullptr;     // never deleted: the runtime may be gone at exit
+static constexpr double kTipDrawBudgetSeconds = 0.003;
+static constexpr size_t kTipDrawMaxPerFrame = 6;
+
+static void TipDrawReport(bool finished)
+{
+    ForgePact::ItemTruth::EvalProgress p;
+    p.drawing = true;
+    p.request = g_TipDraw.id;
+    p.build = g_TruthBuild;
+    p.unixMs = ForgePact::ItemTruth::UnixMsNow();
+    p.total = g_TipDraw.items.size();
+    p.done = g_TipDraw.next;
+    p.ok = g_TipDraw.ok;
+    p.failed = g_TipDraw.failed;
+    p.rejected = g_TipDraw.rejected;
+    p.finished = finished;
+    g_TruthJournal->Enqueue(ForgePact::ItemTruth::FormatEvalProgress(p));
+    g_TipDraw.reported = g_TipDraw.next;
+}
+
+// The oldest drawing request, claimed (renamed) before it is read; looked for at
+// most every two seconds of open tooltips.
+static void TipDrawClaim()
+{
+    const auto now = std::chrono::steady_clock::now();
+    if (now - g_TipDrawLook < std::chrono::seconds(2)) return;
+    g_TipDrawLook = now;
+    const std::filesystem::path next = ForgePact::ItemTruth::NextRequest(ForgePact::ItemTruth::Root() / L"tips");
+    if (next.empty()) return;
+    std::filesystem::path working = next;
+    working.replace_extension(L".working");
+    std::error_code ec;
+    std::filesystem::rename(next, working, ec);
+    if (ec) return;
+    std::string text;
+    if (std::filesystem::file_size(working, ec) <= ForgePact::ItemTruth::kMaxRequestBytes && !ec) {
+        std::ifstream in(working, std::ios::binary);
+        text.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    g_TipDraw = TipDrawState{};
+    g_TipDraw.id = ForgePact::ItemTruth::RequestIdOf(next);
+    g_TipDraw.file = working;
+    g_TipDraw.items = ForgePact::ItemTruth::ParseRequest(text, ForgePact::ItemTruth::kMaxEvalItems, &g_TipDraw.rejected);
+    g_TipDraw.active = true;
+    Out("item truth: drawing " + std::to_string(g_TipDraw.items.size()) + " tooltips for the Item Editor (request "
+        + g_TipDraw.id + ")");
+    TipDrawReport(false);
+}
+
+// The draw state a batch found, put back when it ends; the batch's surface target
+// is popped first.
+struct TipDrawStateGuard {
+    RValue colour, alpha, font, halign, valign;
+    bool target = false;
+    TipDrawStateGuard()
+    {
+        try {
+            colour = g_Yytk->CallBuiltin("draw_get_colour", {});
+            alpha = g_Yytk->CallBuiltin("draw_get_alpha", {});
+            font = g_Yytk->CallBuiltin("draw_get_font", {});
+            halign = g_Yytk->CallBuiltin("draw_get_halign", {});
+            valign = g_Yytk->CallBuiltin("draw_get_valign", {});
+        } catch (...) {}
+    }
+    ~TipDrawStateGuard()
+    {
+        try {
+            if (target) g_Yytk->CallBuiltin("surface_reset_target", {});
+            auto put = [](const char* setter, const RValue& value) {
+                if (value.m_Kind != VALUE_UNDEFINED && value.m_Kind != VALUE_UNSET) g_Yytk->CallBuiltin(setter, { value });
+            };
+            put("draw_set_colour", colour);
+            put("draw_set_alpha", alpha);
+            put("draw_set_font", font);
+            put("draw_set_halign", halign);
+            put("draw_set_valign", valign);
+        } catch (...) {}
+    }
+};
+
+// Everything the batch draws goes to a 16x16 surface nobody shows; surfaces are
+// lost with the window, so it is made again when needed.
+static bool TipDrawTarget(TipDrawStateGuard& state)
+{
+    if (!g_TipDrawSurface) g_TipDrawSurface = new RValue();
+    RValue& surface = *g_TipDrawSurface;
+    bool exists = false;
+    try {
+        exists = surface.m_Kind != VALUE_UNDEFINED && surface.m_Kind != VALUE_UNSET
+            && g_Yytk->CallBuiltin("surface_exists", { surface }).ToBoolean();
+    } catch (...) { exists = false; }
+    if (!exists) {
+        surface = g_Yytk->CallBuiltin("surface_create", { RValue(16.0), RValue(16.0) });
+        if (!g_Yytk->CallBuiltin("surface_exists", { surface }).ToBoolean()) {
+            surface = RValue();
+            return false;
+        }
+    }
+    state.target = g_Yytk->CallBuiltin("surface_set_target", { surface }).ToBoolean();
+    return state.target;
+}
+
+// One requested item: built through the save loader, then drawn by the game's own
+// tooltip pass with the arguments of the tooltip on screen, its forged rows
+// included. True when the pass drew text.
+static bool TipDrawOne(CInstance* S, CInstance* O, int argc, RValue** A, const ForgePact::ItemTruth::EvalItem& entry)
+{
+    RValue item = TruthBuildItem(entry);
+    if (item.m_Kind != VALUE_OBJECT) return false;
+    std::vector<RValue*> args(A, A + argc);
+    args[3] = &item;
+    if (!TipCaptureBegin(argc, args.data(), true)) return false;
+    g_Tip.drawnBy = TipObjectName(S);
+    g_Tip.request = g_TipDraw.id;
+    g_TipRows = ForgedTooltipRows(item);
+    g_TipRowsPending = !g_TipRows.empty();
+    RValue result;
+    try {
+        TipDepthGuard depth(g_Tip.itemDepth);
+        g_Orig_DrawInventoryItemV2(S, O, result, argc, args.data());
+    } catch (...) {}
+    g_TipRows.clear();
+    g_TipRowsPending = false;
+    const bool drew = g_Tip.rowCount > 0;
+    TipCaptureEnd();
+    return drew;
+}
+
+static void TipDrawBatch(CInstance* S, CInstance* O, int argc, RValue** A)
+{
+    if (!g_TruthOn || !g_TruthJournal || g_Tip.itemDepth != 0 || !g_Orig_DrawInventoryItemV2) return;
+    if (argc <= 3 || argc > 16 || !A || !A[3] || g_TipDrawFrame == g_RuntimeFrame) return;
+    g_TipDrawFrame = g_RuntimeFrame;
+    try {
+        if (!g_TipDraw.active) {
+            TipDrawClaim();
+            return;
+        }
+        {
+            TipDrawStateGuard state;
+            if (!TipDrawTarget(state)) return;
+            const auto start = std::chrono::steady_clock::now();
+            size_t drawn = 0;
+            while (g_TipDraw.next < g_TipDraw.items.size()) {
+                const ForgePact::ItemTruth::EvalItem& entry = g_TipDraw.items[g_TipDraw.next++];
+                bool ok = false;
+                try { ok = TipDrawOne(S, O, argc, A, entry); } catch (...) { ok = false; }
+                if (ok) ++g_TipDraw.ok; else ++g_TipDraw.failed;
+                const double spent = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+                if (++drawn >= kTipDrawMaxPerFrame || spent >= kTipDrawBudgetSeconds)
+                    break;
+            }
+        }
+        const bool finished = g_TipDraw.next >= g_TipDraw.items.size();
+        if (finished || g_TipDraw.next - g_TipDraw.reported >= 60) TipDrawReport(finished);
+        if (finished) {
+            std::error_code ec;
+            std::filesystem::remove(g_TipDraw.file, ec);
+            Out("item truth: drawing request " + g_TipDraw.id + " done - " + std::to_string(g_TipDraw.ok) + " drawn, "
+                + std::to_string(g_TipDraw.failed) + " failed, " + std::to_string(g_TipDraw.rejected) + " unreadable");
+            g_TipDraw = TipDrawState{};
+        }
+    } catch (...) {
+        if (!g_TipDraw.file.empty()) {
+            std::error_code ec;
+            std::filesystem::path stopped = g_TipDraw.file;
+            stopped.replace_extension(L".stopped");
+            std::filesystem::rename(g_TipDraw.file, stopped, ec);
+        }
+        g_TipDraw = TipDrawState{};
+        Out("item truth: a drawing request failed and was set aside");
+    }
+}
+
 static RValue& Hook_DrawInventoryItemV2(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) {
+    TipDrawBatch(S, O, argc, A);
 #ifndef FORGEPACT_RELEASE
     bool trace = g_TipTraceLeft > 0;
     if (trace) {
@@ -16622,7 +17142,15 @@ static RValue& Hook_DrawInventoryItemV2(CInstance* S, CInstance* O, RValue& R, i
         if (argc > 3 && A && A[3]) { g_TipRows = ForgedTooltipRows(*A[3]); g_TipRowsPending = !g_TipRows.empty(); }
     } catch (...) { g_TipRows.clear(); g_TipRowsPending = false; }
     g_TipStatCallsInTooltip = 0;
-    RValue& r = g_Orig_DrawInventoryItemV2 ? g_Orig_DrawInventoryItemV2(S, O, R, argc, A) : R;
+    const bool capturing = TipCaptureBegin(argc, A);
+    if (capturing) g_Tip.drawnBy = TipObjectName(S);
+    RValue* rp = &R;
+    {
+        TipDepthGuard depth(g_Tip.itemDepth);
+        if (g_Orig_DrawInventoryItemV2) rp = &g_Orig_DrawInventoryItemV2(S, O, R, argc, A);
+    }
+    RValue& r = *rp;
+    if (capturing) TipCaptureEnd();
 #ifndef FORGEPACT_RELEASE
     if (trace) Out("   DrawInventoryItemV2 -> " + Describe(r) + " statLines=" + std::to_string(g_TipStatCallsInTooltip) + " forgedRows=" + std::to_string(g_TipRows.size()));
 #endif
@@ -16641,6 +17169,9 @@ static RValue& Hook_DrawInventoryStatsNew(CInstance* S, CInstance* O, RValue& R,
     }
 #endif
     auto isNum = [](const RValue* v) { return v && (v->m_Kind == VALUE_REAL || v->m_Kind == VALUE_INT32 || v->m_Kind == VALUE_INT64); };
+    // Item truth: rows drawn inside this call belong to its stat.
+    const long long outerStat = g_Tip.statId;
+    if (g_Tip.active) g_Tip.statId = TipStatIdOf(argc, A);
     if (g_TipRowsPending && argc > 5 && A && isNum(A[0]) && isNum(A[1]) && isNum(A[5])) {
         double fmt = -1.0; try { fmt = A[5]->ToDouble(); } catch (...) { fmt = -1.0; }
         if ((fmt == 2.0 || fmt == 3.0) && TipStatPresent(A, argc)) {
@@ -16657,6 +17188,8 @@ static RValue& Hook_DrawInventoryStatsNew(CInstance* S, CInstance* O, RValue& R,
 #ifndef FORGEPACT_RELEASE
                 if (g_TipTraceLeft > 0) Out("tiptrace forged rows at y=" + std::to_string(y) + " (" + std::to_string(g_TipRows.size()) + " rows), game row moved to y=" + std::to_string(y + extra) + " -> " + Describe(rr));
 #endif
+                TipNoteStat(argc, A, rr);
+                g_Tip.statId = outerStat;
                 R = RValue(rr.ToDouble() + extra);
                 return R;
             } catch (...) { g_TipRowsPending = false; }
@@ -16665,6 +17198,8 @@ static RValue& Hook_DrawInventoryStatsNew(CInstance* S, CInstance* O, RValue& R,
     g_TipInsideStat = g_TipRowsPending;
     RValue& r = g_Orig_DrawInventoryStatsNew ? g_Orig_DrawInventoryStatsNew(S, O, R, argc, A) : R;
     g_TipInsideStat = false;
+    TipNoteStat(argc, A, r);
+    g_Tip.statId = outerStat;
 #ifndef FORGEPACT_RELEASE
     if (trace) Out("tiptrace DrawInventoryStatsNew #" + std::to_string(g_TipStatCallsInTooltip) + " present=" + (TipStatPresent(A, argc) ? "yes" : "no") + " argc=" + std::to_string(argc) + TipTraceArgs(argc, A) + " -> " + Describe(r));
 #endif
@@ -16678,6 +17213,68 @@ static void InstallForgedTooltipHooks()
     g_ForgedTooltipHooksAttempted = true;
     HookOneScript("DrawInventoryItemV2",  "fp_tip_item", (PVOID)Hook_DrawInventoryItemV2,  &g_Orig_DrawInventoryItemV2);
     HookOneScript("DrawInventoryStatsNew","fp_tip_stat", (PVOID)Hook_DrawInventoryStatsNew,&g_Orig_DrawInventoryStatsNew);
+}
+
+// Item truth: the text rows of a tooltip being recorded (TipNoteText). Every other
+// call passes straight through; nested text calls are part of the outer one.
+static PFUNC_YYGMLScript g_Orig_TipTextOutline = nullptr;
+static PFUNC_YYGMLScript g_Orig_TipTextOutlineExt = nullptr;
+static RValue& Hook_TipTextOutline(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    TipNoteText("o", argc, A);
+    TipDepthGuard depth(g_Tip.textDepth);
+    return g_Orig_TipTextOutline ? g_Orig_TipTextOutline(S, O, R, argc, A) : R;
+}
+static RValue& Hook_TipTextOutlineExt(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    TipNoteText("oe", argc, A);
+    TipDepthGuard depth(g_Tip.textDepth);
+    return g_Orig_TipTextOutlineExt ? g_Orig_TipTextOutlineExt(S, O, R, argc, A) : R;
+}
+static PFUNC_YYGMLScript g_Orig_TipRichText = nullptr;
+static RValue& Hook_TipRichText(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    TipNoteText("rich", argc, A);
+    TipDepthGuard depth(g_Tip.textDepth);
+    return g_Orig_TipRichText ? g_Orig_TipRichText(S, O, R, argc, A) : R;
+}
+
+// The runner's own text routines. Measured 2026-09-24: an inventory tooltip pass
+// drew nothing through draw_text_outline(_ext), so its rows come from these.
+// Outside a recorded pass each hook is one test and a jump.
+static constexpr const char* kTipBuiltinText[] = {
+    "draw_text", "draw_text_ext", "draw_text_transformed", "draw_text_ext_transformed",
+    "draw_text_colour", "draw_text_ext_colour", "draw_text_transformed_colour", "draw_text_ext_transformed_colour",
+};
+static constexpr size_t kTipBuiltinTextCount = sizeof(kTipBuiltinText) / sizeof(kTipBuiltinText[0]);
+// Hook ids live as long as the hooks: string literals, never temporaries.
+static constexpr const char* kTipBuiltinTextIds[kTipBuiltinTextCount] = {
+    "fp_truth_dt", "fp_truth_dte", "fp_truth_dtt", "fp_truth_dtet",
+    "fp_truth_dtc", "fp_truth_dtec", "fp_truth_dttc", "fp_truth_dtetc",
+};
+static TRoutine g_Orig_TipBuiltinText[kTipBuiltinTextCount] = {};
+template <size_t N>
+static void Hook_TipBuiltinText(RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)
+{
+    TipNoteText(kTipBuiltinText[N], argc, Args);
+    TipDepthGuard depth(g_Tip.textDepth);
+    if (g_Orig_TipBuiltinText[N]) g_Orig_TipBuiltinText[N](Result, S, O, argc, Args);
+}
+template <size_t... I>
+static void InstallTipBuiltinTextHooks(std::index_sequence<I...>)
+{
+    (HookBuiltin(kTipBuiltinText[I], kTipBuiltinTextIds[I], (PVOID)&Hook_TipBuiltinText<I>, &g_Orig_TipBuiltinText[I]), ...);
+}
+
+static bool g_TipTextHooksAttempted = false;
+static void InstallTipTextHooks()
+{
+    if (g_TipTextHooksAttempted) return;
+    g_TipTextHooksAttempted = true;
+    HookOneScript("draw_text_outline", "fp_truth_text", (PVOID)Hook_TipTextOutline, &g_Orig_TipTextOutline);
+    HookOneScript("draw_text_outline_ext", "fp_truth_text_ext", (PVOID)Hook_TipTextOutlineExt, &g_Orig_TipTextOutlineExt);
+    HookOneScript("DrawTooltipRichText", "fp_truth_rich", (PVOID)Hook_TipRichText, &g_Orig_TipRichText);
+    InstallTipBuiltinTextHooks(std::make_index_sequence<kTipBuiltinTextCount>{});
 }
 
 #ifndef FORGEPACT_RELEASE
@@ -16797,6 +17394,158 @@ static void InstallCustomForgeItemHooks()
     }
     WriteCustomForgeStatus(g_CustomForgeHooksActive ? "runtime hooks installed"
                                                      : "runtime hook installation failed");
+}
+
+// Item Truth (see ItemTruthCapture): only while the Item Editor asks for it.
+// Needs nothing but the CreateItemNew hook, which the Custom Forge may have
+// installed already - the same Hook_CreateItemNew either way. Called from
+// InstallHook at setup and then every ~10 s (ItemTruthTick), so an editor
+// started after the game still gets its items, and removing the request file
+// pauses the capture (the hook stays; it records nothing).
+static bool g_TruthFailed = false;
+static void InstallItemTruth()
+{
+    if (g_TruthFailed) return;
+    const std::filesystem::path root = ForgePact::ItemTruth::Root();
+    const bool requested = ForgePact::ItemTruth::CaptureRequested(root);
+    if (!requested) {
+        if (g_TruthOn) { g_TruthOn = false; Out("item truth: paused (the Item Editor withdrew its request)"); }
+        return;
+    }
+    if (g_TruthOn) return;
+    if (!g_TruthJournal) {
+        g_TruthBuild = ForgePact::ItemTruth::BuildIdOfProcess();
+        auto* journal = new ForgePact::ItemTruth::Journal();
+        if (!journal->Start(root, g_TruthBuild, GetCurrentProcessId(), FORGEPACT_VERSION)) {
+            delete journal;   // its thread never started
+            g_TruthFailed = true;
+            Out("item truth: journal folder could not be created - capture stays off");
+            return;
+        }
+        g_TruthJournal = journal;
+        const size_t stopped = ForgePact::ItemTruth::AbandonWorking(root / L"requests")
+                             + ForgePact::ItemTruth::AbandonWorking(root / L"tips");
+        if (stopped) Out("item truth: " + std::to_string(stopped) + " unfinished request(s) from the last session set aside");
+    }
+    if (!g_Orig_CreateItemNew)
+        HookOneScript("CreateItemNew", "fp_itemtruth_new", (PVOID)Hook_CreateItemNew, &g_Orig_CreateItemNew);
+    if (!g_Orig_CreateItemNew) {
+        g_TruthFailed = true;
+        Out("item truth: CreateItemNew could not be hooked - capture stays off");
+        return;
+    }
+    // The game's own tooltip text: the tooltip hooks (shared with forged rows) and
+    // its text calls. Their failure only leaves tooltips unrecorded.
+    InstallForgedTooltipHooks();
+    InstallTipTextHooks();
+    g_TruthOn = true;
+    Out("item truth: capturing finished items for the Item Editor (build " + g_TruthBuild + ")");
+}
+
+static void ItemTruthTick(uint32_t frame)
+{
+    if (frame % 600 == 0) InstallItemTruth();
+}
+
+// ---- Item Truth evaluation: the game builds items the editor asks about ------
+// The Item Editor writes itemtruth\requests\<id>.req (ItemTruth.hpp, "evaluation
+// requests"). Each item goes through the game's own save loader (TruthBuildItem),
+// so CreateItemNew runs and ItemTruthCapture records the finished item. A few
+// milliseconds per frame, so a whole Vault takes seconds without a stall.
+struct TruthEvalState {
+    std::string id;
+    std::filesystem::path file;   // the claimed <id>.working
+    std::vector<ForgePact::ItemTruth::EvalItem> items;
+    size_t next = 0, ok = 0, failed = 0, rejected = 0, reported = 0;
+    bool active = false;
+};
+static TruthEvalState g_TruthEval;
+static constexpr double kTruthEvalBudgetSeconds = 0.004;
+static constexpr size_t kTruthEvalMaxPerFrame = 200;
+
+static bool TruthEvalOne(const ForgePact::ItemTruth::EvalItem& entry)
+{
+    return TruthBuildItem(entry).m_Kind == VALUE_OBJECT;
+}
+
+static void TruthEvalReport(bool finished)
+{
+    ForgePact::ItemTruth::EvalProgress p;
+    p.request = g_TruthEval.id;
+    p.build = g_TruthBuild;
+    p.unixMs = ForgePact::ItemTruth::UnixMsNow();
+    p.total = g_TruthEval.items.size();
+    p.done = g_TruthEval.next;
+    p.ok = g_TruthEval.ok;
+    p.failed = g_TruthEval.failed;
+    p.rejected = g_TruthEval.rejected;
+    p.finished = finished;
+    g_TruthJournal->Enqueue(ForgePact::ItemTruth::FormatEvalProgress(p));
+    g_TruthEval.reported = g_TruthEval.next;
+}
+
+static void ItemTruthEvalTick(uint32_t frame)
+{
+    if (!g_TruthOn || !g_TruthJournal) return;
+    try {
+        if (!g_TruthEval.active) {
+            if (frame % 120 != 0) return;
+            const std::filesystem::path dir = ForgePact::ItemTruth::Root() / L"requests";
+            const std::filesystem::path next = ForgePact::ItemTruth::NextRequest(dir);
+            if (next.empty()) return;
+            std::filesystem::path working = next;
+            working.replace_extension(L".working");
+            std::error_code ec;
+            std::filesystem::rename(next, working, ec);   // claim it; a request is built once
+            if (ec) return;
+            std::string text;
+            if (std::filesystem::file_size(working, ec) <= ForgePact::ItemTruth::kMaxRequestBytes && !ec) {
+                std::ifstream in(working, std::ios::binary);
+                text.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+            }
+            g_TruthEval = TruthEvalState{};
+            g_TruthEval.id = ForgePact::ItemTruth::RequestIdOf(next);
+            g_TruthEval.file = working;
+            g_TruthEval.items = ForgePact::ItemTruth::ParseRequest(text, ForgePact::ItemTruth::kMaxEvalItems, &g_TruthEval.rejected);
+            g_TruthEval.active = true;
+            Out("item truth: the Item Editor asked the game to check " + std::to_string(g_TruthEval.items.size())
+                + " items (request " + g_TruthEval.id + ")");
+            TruthEvalReport(false);
+            return;
+        }
+        const auto start = std::chrono::steady_clock::now();
+        size_t built = 0;
+        while (g_TruthEval.next < g_TruthEval.items.size()) {
+            const ForgePact::ItemTruth::EvalItem& entry = g_TruthEval.items[g_TruthEval.next++];
+            bool ok = false;
+            g_TruthEvalRequest = g_TruthEval.id;
+            try { ok = TruthEvalOne(entry); } catch (...) { ok = false; }
+            g_TruthEvalRequest.clear();
+            if (ok) ++g_TruthEval.ok; else ++g_TruthEval.failed;
+            const double spent = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+            if (++built >= kTruthEvalMaxPerFrame || spent >= kTruthEvalBudgetSeconds)
+                break;
+        }
+        const bool finished = g_TruthEval.next >= g_TruthEval.items.size();
+        if (finished || g_TruthEval.next - g_TruthEval.reported >= 250) TruthEvalReport(finished);
+        if (finished) {
+            std::error_code ec;
+            std::filesystem::remove(g_TruthEval.file, ec);
+            Out("item truth: request " + g_TruthEval.id + " done - " + std::to_string(g_TruthEval.ok) + " built, "
+                + std::to_string(g_TruthEval.failed) + " failed, " + std::to_string(g_TruthEval.rejected) + " unreadable");
+            g_TruthEval = TruthEvalState{};
+        }
+    } catch (...) {
+        g_TruthEvalRequest.clear();
+        if (!g_TruthEval.file.empty()) {
+            std::error_code ec;
+            std::filesystem::path stopped = g_TruthEval.file;
+            stopped.replace_extension(L".stopped");
+            std::filesystem::rename(g_TruthEval.file, stopped, ec);
+        }
+        g_TruthEval = TruthEvalState{};
+        Out("item truth: an evaluation request failed and was set aside");
+    }
 }
 
 
@@ -17275,6 +18024,13 @@ static void InstallHook()
     }
     g_Base = (uintptr_t)GetModuleHandleA(nullptr);
 
+    // #69: record DropItem's and DropItemAngelicChance's own code before any
+    // hook swaps their script-table entries for ForgePact's functions -
+    // InstallDropMultHooks below in the research build, `dropmult` or
+    // `angelicwatch` later in either build. FindAngelicGate scans this
+    // record. Reads two table entries; patches nothing.
+    CaptureAngelicScriptCode();
+
     // Load the editor-authored sidecar before choosing the release hook set.
     // This remains inert when the user has not forged any custom items.
     // Runs in every build - a release build with no forged items just finds
@@ -17283,6 +18039,7 @@ static void InstallHook()
     // Crown/Beacon auto-arm for players who used the Item Editor.
     LoadCustomForgeEntries();
     InstallCustomForgeItemHooks();
+    InstallItemTruth();
     HeadhunterAutoArm();
     TyrantAutoArm();
     BeaconAutoArm();
@@ -17297,11 +18054,12 @@ static void InstallHook()
 #else
     // Development builds install the complete research surface eagerly.
     InstallCreateHooks();
-    // Find the Angelic gate now, while DropItem's script-table entry is still
-    // the game's own function: FindAngelicGate reads code through that entry,
-    // and from the next line on it is DropManager's Hook_DropItem, so a later
-    // `raredrop angelic` would scan ForgePact's code instead. The finder
-    // caches what it found and patches nothing; OpenAngelicGate reuses it.
+    // Find the Angelic gate now, before the next line hands DropItem's
+    // script-table entry to DropManager's Hook_DropItem. Since #69 the finder
+    // scans the code CaptureAngelicScriptCode recorded at the top of
+    // InstallHook, so the order no longer decides whether it works; finding
+    // it here keeps the probe's startup log line. The finder caches what it
+    // found and patches nothing; OpenAngelicGate reuses it.
     // (docs/angelic-roll-hook-research.md, "Instrument".)
     FindAngelicGate();
     InstallDropMultHooks();
@@ -17907,18 +18665,57 @@ static unsigned char* ScriptCode(const char* fullName)
     catch (...) { return nullptr; }
 }
 
+// #69: the game's own code for the two scripts FindAngelicGate reads. It used
+// to read them through ScriptCode, the live script-table entry. HookOneScript
+// swaps that entry for ForgePact's own function: once `dropmult` has hooked
+// DropItem (or `angelicwatch` DropItemAngelicChance), the finder scanned
+// ForgePact's code and answered "call site not found". InstallHook now
+// records both before any hook runs. Only an address inside Hero_Siege.exe's
+// executable image is recorded - an entry that points anywhere else is some
+// hook's, not the game's - and a refusal is not recorded, so a later call can
+// still record an entry that reads as game code then.
+static unsigned char* g_DropItemCode = nullptr;
+static unsigned char* g_AngelicChanceCode = nullptr;
+
+static unsigned char* GameScriptCode(const char* fullName, unsigned char*& recorded)
+{
+    if (!recorded) {
+        unsigned char* code = ScriptCode(fullName);
+        if (code && AddrIsExecutableInModule(GetModuleHandleA(nullptr), code)) recorded = code;
+    }
+    return recorded;
+}
+
+static bool AngelicScriptCodeReady()
+{
+    const bool drop = GameScriptCode("gml_Script_DropItem", g_DropItemCode) != nullptr;
+    const bool chance = GameScriptCode("gml_Script_DropItemAngelicChance", g_AngelicChanceCode) != nullptr;
+    return drop && chance;
+}
+
+// First thing in InstallHook, in both builds.
+static void CaptureAngelicScriptCode()
+{
+    AngelicScriptCodeReady();
+}
+
 // Locate the branch that skips the DropItemAngelicChance call.  Found by
 // meaning, not by a fixed address, so it survives game updates:
 //   1. find the real `call gml_Script_DropItemAngelicChance` inside DropItem
 //   2. look back for a `test al,al` + `je rel32` whose target lands just after
 //      that call
 //   3. accept only if exactly ONE candidate matches
+// It scans the code recorded at startup (#69), never the live table entry.
 static unsigned char* FindAngelicGate()
 {
     if (g_AngelicGate) return g_AngelicGate;
-    unsigned char* drop   = ScriptCode("gml_Script_DropItem");
-    unsigned char* chance = ScriptCode("gml_Script_DropItemAngelicChance");
-    if (!drop || !chance) { Out("angelic: DropItem/DropItemAngelicChance not found"); return nullptr; }
+    if (!AngelicScriptCodeReady()) {
+        Out("angelic: DropItem/DropItemAngelicChance not found as the game's own code "
+            "(missing, or already hooked when ForgePact started) - nothing patched");
+        return nullptr;
+    }
+    unsigned char* drop = g_DropItemCode;
+    unsigned char* chance = g_AngelicChanceCode;
 
     const size_t kScan = 0x30000;          // DropItem is about 0x24A50 bytes
     unsigned char* call = nullptr;
@@ -21687,6 +22484,19 @@ static bool ApItemFromFingerprint(CInstance* gridInst, const RValue& fp, RValue&
     return ApCallScript(kApFromFpName, gridInst, { fp, RValue(0.0) }, item) && ApIsPlainStruct(item);
 }
 
+#ifndef FORGEPACT_RELEASE
+// craftprobe's `node` (issue #14, Phase 1c): the same by-name lookup, with the
+// self and the second argument chosen by the caller. A bag cell resolves with
+// the fixed shape above; the special-tab cells tried in Phase 1b did not, and
+// whether the game's own stash draws vary the self or the second argument is
+// not measured yet (docs/crafting-materials-research.md, § Phase 1c readers).
+// Research build only: the player build keeps the shape above.
+static bool ApItemFromFingerprintAs(CInstance* self, const RValue& fp, const RValue& a1, RValue& item)
+{
+    return ApCallScript(kApFromFpName, self, { fp, a1 }, item) && ApIsPlainStruct(item);
+}
+#endif
+
 // Each filled cell with its material flag, for the core's move decision. Only
 // on frames NeedsMaterials() asks for (an insert pending, the pass on and not
 // yet run for it): one lookup per filled cell, at most one grid's worth.
@@ -22229,6 +23039,845 @@ static bool HandleProspectCommand(const std::string& lc, const std::string& rest
     return false;
 }
 
+// ---- craftmats: crafting from the stash's special tabs (issue #14) ------------
+// The player build of the mod whose decisions live in ForgePact::CraftMatsMod
+// (game-independent, pinned by tests/craft_mats_harness.cpp). Everything here
+// touches the game, and only by name: six hooks through HookOneScript, both
+// routes or the mod goes off, and by-name calls through script_execute with
+// self = other = Console_Save_obj in the shapes the research doc measured
+// (docs/crafting-materials-research.md, `## Ship design` lists each one).
+// Nothing runs while the switch is off: the hooks go in on the first frame
+// after setup with it on, and each body only forwards until it is.
+//
+// The count. CountInventoryItem's answer gains the stash's count of the same
+// material only inside one of the crafting route's three frames - the
+// window's availability call (GetCraftItemsAvailable), the recipe row's Create
+// closure, and CraftFindRecipeItems at the press - and only for the bag owner
+// (a0 == 1, as Live 1i logged). The stash's count walks Controller_obj's
+// stashMaterialTab and stashSocketItemSlot cell by cell and resolves each
+// cell's fingerprint in the stash map GetItemMap(9) returns, read by name at
+// the point of use. The ordinary tabs share that map and are never a source,
+// so the map itself is never walked.
+//
+// The needs. Inside CraftFindRecipeItems, and only there, PilipaliDecrypt's
+// answers and the counts go into the core's record (its pairing rule turns
+// them into need and bag count per input). Outside that frame PilipaliDecrypt
+// only forwards: it runs hundreds of thousands of times a session.
+//
+// The press. DoCraftResult: the core's gate, then the plan (need - k per
+// input, capped by a fresh walk), each take and its confirmation, all before
+// the game's own press - a refusal returns before it. After it, the consume
+// check and, after a confirmed move, the stash save through the game's own
+// route, SaveLocalFile(4, 1). Threading: every body runs on the game thread,
+// inside the game's own call, like the core.
+static constexpr const char* kCmCountName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_CountInventoryItem);
+static constexpr const char* kCmAvailabilityName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_GetCraftItemsAvailable);
+static constexpr const char* kCmRecipeRowName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_840_gml_Object_UI_Craft_Recipe_List_Item_obj_Create_0);
+static constexpr const char* kCmFindName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_CraftFindRecipeItems);
+static constexpr const char* kCmDecodeName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_PilipaliDecrypt);
+static constexpr const char* kCmPressName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_DoCraftResult);
+// The by-name calls.
+static constexpr const char* kCmItemMapName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_GetItemMap);
+static constexpr const char* kCmFromFpName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_GetItemFromFingerprint);
+static constexpr const char* kCmCheckHashName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_ItemCheckHash);
+static constexpr const char* kCmSaveStructName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_CreateItemSaveStruct);
+static constexpr const char* kCmTimestampName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_LootTimestamp);
+static constexpr const char* kCmFromJsonName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_InitItemFromJson);
+static constexpr const char* kCmAddToMapName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_AddItemToMap);
+static constexpr const char* kCmRemoveFromMapName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_RemoveItemFromMap);
+static constexpr const char* kCmPreferredName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_GetItemPreferredGrid);
+static constexpr const char* kCmPlaceName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_GridAddItem);
+static constexpr const char* kCmGridRemoveName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_GridRemoveItem);
+static constexpr const char* kCmSaveName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_SaveLocalFile);
+
+static constexpr double kCmBagOwner = 1.0;         // CountInventoryItem's a0 in the craft route (Live 1i: a0=1)
+static constexpr double kCmStashOwner = 9.0;       // GetItemMap(9): the stash's map
+static constexpr double kCmCharacterOwner = 0.0;   // GetItemMap(0): the character's map
+static constexpr double kCmPreferredOwner = 1.0;   // GetItemPreferredGrid(1, item): the bag's grid for it
+static constexpr double kCmSaveKind = 4.0;         // SaveLocalFile(4, 1): the stash close's own save (stash_kind 4)
+static constexpr double kCmSaveArg = 1.0;
+static constexpr const char* kCmMaterialTabVar = "stashMaterialTab";      // Controller_obj, [x][y] cells
+static constexpr const char* kCmSocketTabVar = "stashSocketItemSlot";     // Controller_obj, rows of [x][y] cells
+static constexpr const char* kCmCraftGridVar = "craftGrid";               // New_Inventory_Data_obj, the Cube's grid
+static constexpr int kCmMaxMapEntries = 4000;      // entries one character total walks (map 0)
+
+// Game thread only, like the core.
+static PFUNC_YYGMLScript g_CmOrigCount = nullptr;
+static PFUNC_YYGMLScript g_CmOrigAvailability = nullptr;
+static PFUNC_YYGMLScript g_CmOrigRecipeRow = nullptr;
+static PFUNC_YYGMLScript g_CmOrigFind = nullptr;
+static PFUNC_YYGMLScript g_CmOrigDecode = nullptr;
+static PFUNC_YYGMLScript g_CmOrigPress = nullptr;
+static bool g_CmInstallTried = false;
+static bool g_CmInstalled = false;       // all six on both routes
+static long g_CmAvailabilityDepth = 0;   // inside GetCraftItemsAvailable, with the mod on
+static long g_CmRecipeRowDepth = 0;      // inside the recipe row's Create closure, with the mod on
+static long g_CmFindDepth = 0;           // inside CraftFindRecipeItems, with the mod on
+static long g_CmOwnCalls = 0;            // inside one of this mod's own by-name calls
+
+// Entered before the trampoline, left after it - on unwinding too, so a game
+// error inside the call cannot leave a frame counted as still on the stack.
+// Only raised while the mod is on.
+struct CmRouteFrame {
+    long* depth;
+    CmRouteFrame(long& d, bool on) : depth(on ? &d : nullptr) { if (depth) ++*depth; }
+    ~CmRouteFrame() { if (depth && *depth > 0) --*depth; }
+    CmRouteFrame(const CmRouteFrame&) = delete;
+    CmRouteFrame& operator=(const CmRouteFrame&) = delete;
+};
+
+// One by-name call with self = other = Console_Save_obj. The count and decode
+// hooks forward untouched while it runs, so nothing the mod calls itself can
+// be taken for the game's own counting.
+static bool CmCall(const char* name, CInstance* save, const std::vector<RValue>& args, RValue& res)
+{
+    if (!save) return false;
+    CmRouteFrame own(g_CmOwnCalls, true);
+    return ApCallScript(name, save, args, res);
+}
+
+// A whole, finite, non-negative number read as a count; -1 otherwise (an
+// instance reference is not a count).
+static int64_t CmWhole(const RValue& v)
+{
+    double d = -1;
+    if (v.m_Kind == VALUE_REF || !ApNumber(v, d) || d < 0 || d != std::floor(d) || d > 1e15) return -1;
+    return (int64_t)d;
+}
+
+// The first instance of an SDK object - as the handle variable_instance_get
+// takes and as the CInstance* a by-name call takes as self - by
+// asset_get_index and instance_find. HhResolveInstance decides whether the
+// handle is a live instance, whatever kind the runner returns it as.
+static bool CmInstance(HeroSiege::Objects::GameObject obj, RValue& handle, CInstance*& inst)
+{
+    inst = nullptr;
+    try {
+        double idx = -1;
+        const RValue index = g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(HeroSiege::Objects::GetObjectName(obj))) });
+        if (!ApNumber(index, idx) || idx < 0) return false;
+        if (g_Yytk->CallBuiltin("instance_number", { RValue(idx) }).ToDouble() < 1.0) return false;
+        handle = g_Yytk->CallBuiltin("instance_find", { RValue(idx), RValue(0.0) });
+        inst = HhResolveInstance(handle);
+    } catch (...) { inst = nullptr; }
+    return inst != nullptr;
+}
+
+static CInstance* CmSaveInstance()
+{
+    RValue handle;
+    CInstance* inst = nullptr;
+    return CmInstance(HeroSiege::Objects::GameObject::Console_Save_obj, handle, inst) ? inst : nullptr;
+}
+
+// The recipe row a crafting call ran on, by its instance id; -1 when it has
+// none (the core matches -1 to nothing).
+static long long CmSelfId(CInstance* S)
+{
+    if (!S) return -1;
+    try {
+        double id = -1;
+        return ApNumber(g_Yytk->CallBuiltin("variable_instance_get", { S->ToRValue(), RValue("id") }), id) ? (long long)id : -1;
+    } catch (...) { return -1; }
+}
+
+// A member of a plain struct; false when it is not one or has no such member.
+static bool CmMember(const RValue& s, const char* name, RValue& out)
+{
+    if (!ApIsPlainStruct(s)) return false;
+    if (!g_Yytk->CallBuiltin("variable_struct_exists", { s, RValue(name) }).ToBoolean()) return false;
+    out = g_Yytk->CallBuiltin("variable_struct_get", { s, RValue(name) });
+    return true;
+}
+
+// What an item is - its itemType and its definition's base id `b` - and its
+// count, the definition's `o` (RUNTIME_DATA_MODELS § 17, "The item"). False
+// when any of them is missing or not a whole number.
+static bool CmReadItem(const RValue& item, int64_t& cls, int64_t& base, int64_t& count)
+{
+    RValue type, def, b, o;
+    if (!CmMember(item, "itemType", type) || !CmMember(item, "itemDefinitionStruct", def)) return false;
+    if (!CmMember(def, "b", b) || !CmMember(def, "o", o)) return false;
+    cls = CmWhole(type);
+    base = CmWhole(b);
+    count = CmWhole(o);
+    return cls >= 0 && base >= 0 && count >= 0;
+}
+
+static std::string CmMaterialOf(const RValue& item, int64_t& count)
+{
+    int64_t cls = -1, base = -1;
+    count = -1;
+    return CmReadItem(item, cls, base, count) ? ForgePact::CraftMatsMod::Material(cls, base) : std::string();
+}
+
+// A `ref ds_map` - the runtime's own text for it, never its bytes.
+static bool CmIsMap(const RValue& v)
+{
+    if (v.m_Kind != VALUE_REF) return false;
+    try { return v.ToString().rfind("ref ds_map ", 0) == 0; } catch (...) { return false; }
+}
+
+// GetItemMap(<owner>) by name: 9 the stash's map, 0 the character's.
+static bool CmItemMap(CInstance* save, double owner, RValue& map)
+{
+    return CmCall(kCmItemMapName, save, { RValue(owner) }, map) && CmIsMap(map);
+}
+
+// One map entry by its key, read (ds_map_exists, then ds_map_find_value).
+static bool CmMapItem(const RValue& map, const RValue& key, RValue& item)
+{
+    try {
+        if (!g_Yytk->CallBuiltin("ds_map_exists", { map, key }).ToBoolean()) return false;
+        item = g_Yytk->CallBuiltin("ds_map_find_value", { map, key });
+        return ApIsPlainStruct(item);
+    } catch (...) { return false; }
+}
+
+// 1 the map holds the key, 0 it does not, -1 the read failed.
+static int CmMapHas(const RValue& map, const RValue& key)
+{
+    try { return g_Yytk->CallBuiltin("ds_map_exists", { map, key }).ToBoolean() ? 1 : 0; } catch (...) { return -1; }
+}
+
+// An item's count, re-read by its key through the game's own lookup,
+// GetItemFromFingerprint(key, owner); -1 when that gives no item.
+static int64_t CmCountByKey(CInstance* save, const std::string& key, double owner)
+{
+    RValue item, def, o;
+    if (!CmCall(kCmFromFpName, save, { RValue(key), RValue(owner) }, item)) return -1;
+    if (!CmMember(item, "itemDefinitionStruct", def) || !CmMember(def, "o", o)) return -1;
+    return CmWhole(o);
+}
+
+// An instance variable that is an array.
+static bool CmArrayVar(const RValue& holder, const char* name, RValue& out)
+{
+    try {
+        if (!g_Yytk->CallBuiltin("variable_instance_exists", { holder, RValue(name) }).ToBoolean()) return false;
+        out = g_Yytk->CallBuiltin("variable_instance_get", { holder, RValue(name) });
+        return out.m_Kind == VALUE_ARRAY;
+    } catch (...) { return false; }
+}
+
+static int CmLength(const RValue& a)
+{
+    return (int)g_Yytk->CallBuiltin("array_length", { a }).ToDouble();
+}
+
+static RValue CmAt(const RValue& a, int i)
+{
+    return g_Yytk->CallBuiltin("array_get", { a, RValue((double)i) });
+}
+
+// One entry's cell array: the whole Materials tab, or its Socketable row. It
+// is what GridRemoveItem takes, and what the cell re-read walks.
+static bool CmCellArray(const ForgePact::CraftMatsEntry& e, RValue& cells)
+{
+    RValue handle, tab;
+    CInstance* inst = nullptr;
+    if (!CmInstance(HeroSiege::Objects::GameObject::Controller_obj, handle, inst)) return false;
+    if (e.from == ForgePact::CraftMatsSource::StashMaterialTab) return CmArrayVar(handle, kCmMaterialTabVar, cells);
+    if (!CmArrayVar(handle, kCmSocketTabVar, tab) || e.row < 0 || e.row >= CmLength(tab)) return false;
+    cells = CmAt(tab, e.row);
+    return cells.m_Kind == VALUE_ARRAY;
+}
+
+// Whether any cell of a two-level cell array holds `key`: 1 yes, 0 no, -1 a
+// level was not an array. Also the bag's and the Cube's grids.
+static int CmCellsHold(const RValue& cells, const std::string& key)
+{
+    try {
+        if (cells.m_Kind != VALUE_ARRAY) return -1;
+        const int n = CmLength(cells);
+        for (int i = 0; i < n; ++i) {
+            const RValue line = CmAt(cells, i);
+            if (line.m_Kind != VALUE_ARRAY) return -1;
+            const int m = CmLength(line);
+            for (int j = 0; j < m; ++j) {
+                RValue fp;
+                std::string text;
+                if (ApCellFingerprint(CmAt(line, j), fp, text) && text == key) return 1;
+            }
+        }
+        return 0;
+    } catch (...) { return -1; }
+}
+
+// Whether a two-level grid has a cell that holds no item.
+static bool CmHasEmptyCell(const RValue& grid)
+{
+    try {
+        const int n = CmLength(grid);
+        for (int i = 0; i < n; ++i) {
+            const RValue line = CmAt(grid, i);
+            if (line.m_Kind != VALUE_ARRAY) return false;
+            const int m = CmLength(line);
+            for (int j = 0; j < m; ++j) if (!ApIsPlainStruct(CmAt(line, j))) return true;
+        }
+    } catch (...) {}
+    return false;
+}
+
+// One cell array's entries into the walk: each filled cell's fingerprint,
+// once, resolved in the stash map. A cell whose fingerprint the map does not
+// hold is no source. False when a level is not an array.
+static bool CmWalkCells(const RValue& cells, const RValue& map, ForgePact::CraftMatsSource from, int row,
+                        std::vector<std::string>& seen, std::vector<ForgePact::CraftMatsEntry>& out)
+{
+    const int n = CmLength(cells);
+    for (int i = 0; i < n; ++i) {
+        const RValue line = CmAt(cells, i);
+        if (line.m_Kind != VALUE_ARRAY) return false;
+        const int m = CmLength(line);
+        for (int j = 0; j < m; ++j) {
+            RValue fp, item;
+            std::string text;
+            if (!ApCellFingerprint(CmAt(line, j), fp, text)) continue;
+            if (std::find(seen.begin(), seen.end(), text) != seen.end()) continue;
+            seen.push_back(text);
+            if (!CmMapItem(map, fp, item)) continue;
+            ForgePact::CraftMatsEntry e;
+            e.material = CmMaterialOf(item, e.count);
+            if (e.material.empty() || e.count <= 0) continue;
+            e.key = text;
+            e.from = from;
+            e.row = row;
+            out.push_back(e);
+        }
+    }
+    return true;
+}
+
+// One walk of the two special tabs, and of nothing else: Controller_obj's
+// stashMaterialTab and every stashSocketItemSlot row, each filled cell
+// resolved in GetItemMap(9), read by name now. Unreadable (readable=false)
+// when the save instance, the controller, the map or a level of either tab
+// could not be read.
+static ForgePact::CraftMatsWalk CmWalkStash()
+{
+    ForgePact::CraftMatsWalk w;
+    try {
+        RValue controller, map, materials, sockets;
+        CInstance* ctrl = nullptr;
+        CInstance* save = CmSaveInstance();
+        if (!save || !CmInstance(HeroSiege::Objects::GameObject::Controller_obj, controller, ctrl)) return w;
+        if (!CmItemMap(save, kCmStashOwner, map)) return w;
+        if (!CmArrayVar(controller, kCmMaterialTabVar, materials) || !CmArrayVar(controller, kCmSocketTabVar, sockets)) return w;
+        std::vector<std::string> seen;
+        if (!CmWalkCells(materials, map, ForgePact::CraftMatsSource::StashMaterialTab, -1, seen, w.entries)) { w.entries.clear(); return w; }
+        const int rows = CmLength(sockets);
+        for (int k = 0; k < rows; ++k) {
+            const RValue row = CmAt(sockets, k);
+            if (row.m_Kind != VALUE_ARRAY
+                || !CmWalkCells(row, map, ForgePact::CraftMatsSource::StashSocketTab, k, seen, w.entries)) {
+                w.entries.clear();
+                return w;
+            }
+        }
+        w.readable = true;
+    } catch (...) { w.readable = false; w.entries.clear(); }
+    return w;
+}
+
+// The character's total of one material over its own item map (GetItemMap(0):
+// the bag and the Cube's grid alike), for the consume check; -1 when it could
+// not be read. This walks map 0 only - never the stash's.
+static int64_t CmCharacterTotal(CInstance* save, const std::string& material)
+{
+    try {
+        RValue map;
+        if (!CmItemMap(save, kCmCharacterOwner, map)) return -1;
+        const int size = (int)g_Yytk->CallBuiltin("ds_map_size", { map }).ToDouble();
+        if (size < 0 || size > kCmMaxMapEntries) return -1;
+        int64_t total = 0;
+        int walked = 0;
+        RValue key = g_Yytk->CallBuiltin("ds_map_find_first", { map });
+        for (; walked < size && key.m_Kind != VALUE_UNDEFINED; ++walked) {
+            const RValue item = g_Yytk->CallBuiltin("ds_map_find_value", { map, key });
+            key = g_Yytk->CallBuiltin("ds_map_find_next", { map, key });
+            int64_t count = -1;
+            if (CmMaterialOf(item, count) == material) total += count;
+        }
+        return walked == size ? total : -1;
+    } catch (...) { return -1; }
+}
+
+// The stash's count of one material for a count inside the route: a fresh walk
+// at the press, otherwise the walk this game frame already made.
+static int64_t CmStashCount(const std::string& material, bool press)
+{
+    ForgePact::CraftMatsMod& mod = ForgePact::CraftMatsMod::Instance();
+    if (mod.MustWalk(g_RuntimeFrame, press)) mod.KeepWalk(g_RuntimeFrame, CmWalkStash());
+    return mod.KeptWalk().Count(material);
+}
+
+// Each reason the core has not said yet, once per session.
+static void CmSayPending()
+{
+    ForgePact::CraftMatsMod& mod = ForgePact::CraftMatsMod::Instance();
+    for (ForgePact::CraftMatsRefusal r = mod.TakeFirstRefusal(); r != ForgePact::CraftMatsRefusal::None; r = mod.TakeFirstRefusal())
+        Out(mod.RefusalLine(r));
+    if (mod.TakeFirstLoss()) Out(mod.LossLine());
+    if (mod.TakeFirstMismatch()) Out(mod.MismatchLine());
+}
+
+// After CountInventoryItem's trampoline, inside a route frame with the mod on:
+// the bag owner's count of one material gains the stash's count of it. Inside
+// CraftFindRecipeItems the count also goes into the core's needs record. A
+// call that cannot be read keeps the game's own return; inside
+// CraftFindRecipeItems it makes the needs unreadable.
+static void CmCountInRoute(bool inFind, int argc, RValue** A, RValue& r)
+{
+    ForgePact::CraftMatsMod& mod = ForgePact::CraftMatsMod::Instance();
+    double owner = -1;
+    if (argc < 4 || !A || !A[0] || !A[1] || !A[3] || !ApNumber(*A[0], owner)) {
+        if (inFind) mod.OnFindCount(std::string(), -1, false);
+        return;
+    }
+    if (owner != kCmBagOwner) return;
+    const int64_t cls = CmWhole(*A[1]), base = CmWhole(*A[3]), game = CmWhole(r);
+    if (cls < 0 || base < 0 || game < 0) {
+        if (inFind) mod.OnFindCount(std::string(), -1, false);
+        return;
+    }
+    const std::string material = ForgePact::CraftMatsMod::Material(cls, base);
+    const int64_t answer = mod.CountAnswer(true, game, CmStashCount(material, inFind));
+    if (inFind) mod.OnFindCount(material, game, answer != game);
+    if (answer != game) r = RValue((double)answer);
+    CmSayPending();
+}
+
+static RValue& CmHookCount(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    RValue& r = g_CmOrigCount ? g_CmOrigCount(S, O, R, argc, A) : R;
+    if (!ForgePact::CraftMatsMod::Instance().IsEnabled() || g_CmOwnCalls > 0) return r;
+    const bool inFind = g_CmFindDepth > 0;
+    if (!inFind && g_CmAvailabilityDepth == 0 && g_CmRecipeRowDepth == 0) return r;
+    try { CmCountInRoute(inFind, argc, A, r); } catch (...) {}
+    return r;
+}
+
+static RValue& CmHookAvailability(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    CmRouteFrame frame(g_CmAvailabilityDepth, ForgePact::CraftMatsMod::Instance().IsEnabled());
+    return g_CmOrigAvailability ? g_CmOrigAvailability(S, O, R, argc, A) : R;
+}
+
+static RValue& CmHookRecipeRow(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    CmRouteFrame frame(g_CmRecipeRowDepth, ForgePact::CraftMatsMod::Instance().IsEnabled());
+    return g_CmOrigRecipeRow ? g_CmOrigRecipeRow(S, O, R, argc, A) : R;
+}
+
+// At the press: a new needs record for this recipe row (the previous one is
+// discarded), then the game's own search with the route frame raised.
+static RValue& CmHookFind(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    ForgePact::CraftMatsMod& mod = ForgePact::CraftMatsMod::Instance();
+    const bool on = mod.IsEnabled();
+    if (on) mod.BeginFind(CmSelfId(S));
+    CmRouteFrame frame(g_CmFindDepth, on);
+    return g_CmOrigFind ? g_CmOrigFind(S, O, R, argc, A) : R;
+}
+
+// A hot game function: outside CraftFindRecipeItems' frame (and inside the
+// mod's own calls) this only forwards.
+static RValue& CmHookDecode(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    RValue& r = g_CmOrigDecode ? g_CmOrigDecode(S, O, R, argc, A) : R;
+    if (g_CmFindDepth > 0 && g_CmOwnCalls == 0 && ForgePact::CraftMatsMod::Instance().IsEnabled()) {
+        try { ForgePact::CraftMatsMod::Instance().OnDecode(CmWhole(r)); }
+        catch (...) { ForgePact::CraftMatsMod::Instance().OnDecode(-1); }
+    }
+    return r;
+}
+
+// One entry's take, as the calls left it: the report the core classifies,
+// and where the units went.
+struct CmTakeResult {
+    ForgePact::CraftMatsMoveReport report;
+    ForgePact::CraftMatsDestination to = ForgePact::CraftMatsDestination::BagStack;
+};
+
+// No call changed anything: both sides are as they were.
+static void CmNothingDone(ForgePact::CraftMatsMoveReport& r, int64_t sourceCount)
+{
+    r.sourceBefore = r.sourceAfter = sourceCount;
+    r.sourceEntryGone = r.sourceCellGone = false;
+    r.destBefore = r.destAfter = 0;
+}
+
+// The inline edit Live 1k measured on a stash entry and on a bag stack: the
+// definition's `o` set, then ItemCheckHash(item) by name.
+static bool CmSetCount(CInstance* save, const RValue& item, int64_t count)
+{
+    RValue def, res;
+    if (!CmMember(item, "itemDefinitionStruct", def) || !ApIsPlainStruct(def)) return false;
+    try { g_Yytk->CallBuiltin("variable_struct_set", { def, RValue("o"), RValue((double)count) }); }
+    catch (...) { return false; }
+    CmCall(kCmCheckHashName, save, { item }, res);
+    return true;
+}
+
+// The bag's own stack of a material in the grid the game prefers for it: its
+// cells' fingerprints resolved in map 0 (Live 1k's bag-stack read).
+static bool CmBagStack(const RValue& grid, const RValue& map0, const std::string& material, std::string& key, RValue& item)
+{
+    try {
+        const int n = CmLength(grid);
+        for (int i = 0; i < n; ++i) {
+            const RValue line = CmAt(grid, i);
+            if (line.m_Kind != VALUE_ARRAY) return false;
+            const int m = CmLength(line);
+            for (int j = 0; j < m; ++j) {
+                RValue fp, candidate;
+                std::string text;
+                if (!ApCellFingerprint(CmAt(line, j), fp, text) || !CmMapItem(map0, fp, candidate)) continue;
+                int64_t count = -1;
+                if (CmMaterialOf(candidate, count) != material) continue;
+                key = text;
+                item = candidate;
+                return true;
+            }
+        }
+    } catch (...) {}
+    return false;
+}
+
+// A new unit of `amount` made by the game's own loader route (Live 1k's json
+// branch): CreateItemSaveStruct(<stash item>), `o` set on that struct,
+// LootTimestamp(), InitItemFromJson(struct, "0-0-<stamp>-<class>"),
+// AddItemToMap(map 0, key, item), then GridAddItem(grid, item, 0, undefined)
+// into the bag's preferred grid - or, when it has no empty cell or answers
+// success=false, into the Crafting Cube's own grid. A unit no grid took is
+// taken out of map 0 again (RemoveItemFromMap), so no map entry is left
+// without a cell.
+struct CmNewUnit {
+    bool        mapped = false;   // map 0 holds the key
+    bool        placed = false;   // a grid holds it
+    std::string key;
+    RValue      grid;
+    ForgePact::CraftMatsDestination to = ForgePact::CraftMatsDestination::BagNew;
+};
+
+static CmNewUnit CmMakeUnit(CInstance* save, const RValue& source, int64_t cls, int64_t amount, const RValue& bagGrid,
+                            bool bagReadable, const RValue& map0)
+{
+    CmNewUnit u;
+    RValue saved, stamp, item, added, count;
+    if (!CmCall(kCmSaveStructName, save, { source }, saved) || !CmMember(saved, "o", count)) return u;
+    try { g_Yytk->CallBuiltin("variable_struct_set", { saved, RValue("o"), RValue((double)amount) }); }
+    catch (...) { return u; }
+    if (!CmCall(kCmTimestampName, save, {}, stamp) || CmWhole(stamp) < 0) return u;
+    const std::string key = "0-0-" + std::to_string((long long)CmWhole(stamp)) + "-" + std::to_string(cls);
+    if (CmMapHas(map0, RValue(key)) != 0) return u;   // taken already, or unreadable: nothing made
+    if (!CmCall(kCmFromJsonName, save, { saved, RValue(key) }, item) || !ApIsPlainStruct(item)) return u;
+    CmCall(kCmAddToMapName, save, { map0, RValue(key), item }, added);
+    u.key = key;
+    u.mapped = CmMapHas(map0, RValue(key)) == 1;
+    if (!u.mapped) return u;
+    RValue res;
+    if (bagReadable && CmHasEmptyCell(bagGrid)
+        && CmCall(kCmPlaceName, save, { bagGrid, item, RValue(0.0), RValue() }, res) && ApAddSucceeded(res)) {
+        u.placed = true;
+        u.grid = bagGrid;
+        u.to = ForgePact::CraftMatsDestination::BagNew;
+        return u;
+    }
+    RValue data, cube;
+    CInstance* inst = nullptr;
+    if (CmInstance(HeroSiege::Objects::GameObject::New_Inventory_Data_obj, data, inst) && CmArrayVar(data, kCmCraftGridVar, cube)
+        && CmCall(kCmPlaceName, save, { cube, item, RValue(0.0), RValue() }, res) && ApAddSucceeded(res)) {
+        u.placed = true;
+        u.grid = cube;
+        u.to = ForgePact::CraftMatsDestination::Cube;
+        return u;
+    }
+    // No grid took it: out of map 0 again.
+    CmCall(kCmRemoveFromMapName, save, { map0, RValue(key) }, res);
+    u.mapped = CmMapHas(map0, RValue(key)) != 0;
+    return u;
+}
+
+// One take of `t.amount` from one stash entry, destination first and source
+// second (`### The take, per case`): the bag's stack of the material (inline,
+// o += n), else a new unit (the json route) in the bag or the Cube; then the
+// stash entry (inline, o -= n) or, for a whole entry, the removal pair -
+// RemoveItemFromMap(map 9, key), then GridRemoveItem(<its cell array>, key).
+// A source step that did not land undoes the destination. Both sides are then
+// re-read on their keys and cells, and the core classifies what they say.
+static CmTakeResult CmTake(CInstance* save, const ForgePact::CraftMatsEntryTake& t)
+{
+    CmTakeResult out;
+    ForgePact::CraftMatsMoveReport& r = out.report;
+    r.asked = t.amount;
+    const std::string& key = t.entry.key;
+    RValue map9, map0, cells, source;
+    int64_t cls = -1, base = -1, have = -1;
+    if (!CmItemMap(save, kCmStashOwner, map9) || !CmItemMap(save, kCmCharacterOwner, map0) || !CmCellArray(t.entry, cells)
+        || !CmMapItem(map9, RValue(key), source) || !CmReadItem(source, cls, base, have)
+        || ForgePact::CraftMatsMod::Material(cls, base) != t.entry.material || have < t.amount || CmCellsHold(cells, key) != 1) {
+        CmNothingDone(r, t.entry.count);
+        return out;
+    }
+    r.sourceBefore = have;
+
+    // The destination.
+    RValue pref, bagGrid, stackItem;
+    std::string stackKey;
+    const bool bagReadable = CmCall(kCmPreferredName, save, { RValue(kCmPreferredOwner), source }, pref) && ApPreferredGrid(pref, bagGrid);
+    const bool stacked = bagReadable && CmBagStack(bagGrid, map0, t.entry.material, stackKey, stackItem);
+    int64_t stackBefore = -1;
+    CmNewUnit unit;
+    if (stacked) {
+        int64_t sc = -1, sb = -1;
+        if (!CmReadItem(stackItem, sc, sb, stackBefore) || !CmSetCount(save, stackItem, stackBefore + t.amount)) {
+            CmNothingDone(r, have);
+            return out;
+        }
+        out.to = ForgePact::CraftMatsDestination::BagStack;
+        r.destBefore = stackBefore;
+    } else {
+        unit = CmMakeUnit(save, source, cls, t.amount, bagGrid, bagReadable, map0);
+        r.destBefore = 0;
+        if (!unit.placed) {
+            // Nothing is left behind unless the unit's map entry could not be
+            // taken out again - then the destination reads as risen, a loss.
+            r.sourceAfter = have;
+            r.destAfter = unit.mapped ? t.amount : 0;
+            return out;
+        }
+        out.to = unit.to;
+    }
+    auto destNow = [&]() -> int64_t {
+        if (stacked) return CmCountByKey(save, stackKey, kCmCharacterOwner);
+        if (CmMapHas(map0, RValue(unit.key)) != 1) return 0;
+        const int held = CmCellsHold(unit.grid, unit.key);
+        return held == 1 ? CmCountByKey(save, unit.key, kCmCharacterOwner) : held == 0 ? 0 : -1;
+    };
+
+    // The source, only once the destination reads as risen by the amount.
+    bool sourceDone = false;
+    const bool destRose = destNow() == r.destBefore + t.amount;
+    if (destRose) {
+        RValue res;
+        if (t.whole) {
+            CmCall(kCmRemoveFromMapName, save, { map9, RValue(key) }, res);
+            if (CmMapHas(map9, RValue(key)) == 0) {
+                RValue cellsNow, removed;
+                if (CmCellArray(t.entry, cellsNow)) CmCall(kCmGridRemoveName, save, { cellsNow, RValue(key) }, removed);
+            }
+        } else {
+            CmSetCount(save, source, have - t.amount);
+        }
+    }
+    auto sourceRead = [&]() {
+        RValue cellsNow;
+        const int inMap = CmMapHas(map9, RValue(key));
+        const int inCell = CmCellArray(t.entry, cellsNow) ? CmCellsHold(cellsNow, key) : -1;
+        r.sourceEntryGone = inMap == 0;
+        r.sourceCellGone = inCell == 0;
+        r.sourceAfter = inMap == 1 ? CmCountByKey(save, key, kCmStashOwner) : inMap == 0 ? 0 : -1;
+        if (inCell < 0) r.sourceAfter = -1;
+    };
+    sourceRead();
+    sourceDone = t.whole ? (r.sourceEntryGone && r.sourceCellGone)
+                         : (!r.sourceEntryGone && !r.sourceCellGone && r.sourceAfter == have - t.amount);
+
+    // A source step that did not land undoes the destination. A whole entry
+    // taken out of the map whose cell stayed is put back in the map first, so
+    // no cell is left without its entry (the save crash, RUNTIME_DATA_MODELS § 17); a partial
+    // entry gets its count back.
+    if (!sourceDone) {
+        RValue res;
+        if (t.whole && r.sourceEntryGone && !r.sourceCellGone) CmCall(kCmAddToMapName, save, { map9, RValue(key), source }, res);
+        if (!t.whole && destRose) CmSetCount(save, source, have);
+        if (stacked) {
+            CmSetCount(save, stackItem, stackBefore);
+        } else {
+            CmCall(kCmGridRemoveName, save, { unit.grid, RValue(unit.key) }, res);
+            if (CmCellsHold(unit.grid, unit.key) == 0) CmCall(kCmRemoveFromMapName, save, { map0, RValue(unit.key) }, res);
+        }
+        sourceRead();
+    }
+    r.destAfter = destNow();
+    return out;
+}
+
+// What one press did, from the gate to the save.
+struct CmPressState {
+    ForgePact::CraftMatsPressStep step = ForgePact::CraftMatsPressStep::Vanilla;
+    CInstance* save = nullptr;
+    struct Consume { std::string material; int64_t before = -1; int64_t moved = 0; int64_t need = 0; };
+    std::vector<Consume> consume;
+    std::vector<ForgePact::CraftMatsMoved> moved;
+    int64_t movedUnits = 0;
+};
+
+// Before the game's own press: the gate, the plan from a fresh walk, and each
+// take in turn, stopping at the first that is not confirmed. True: let the
+// game press. False: refuse - the hook returns before the game's call.
+static bool CmBeforePress(CInstance* S, CmPressState& press)
+{
+    ForgePact::CraftMatsMod& mod = ForgePact::CraftMatsMod::Instance();
+    press.step = mod.PressStep(CmSelfId(S));
+    if (press.step == ForgePact::CraftMatsPressStep::Vanilla) return true;
+    if (press.step == ForgePact::CraftMatsPressStep::Refuse) return false;
+    const ForgePact::CraftMatsWalk walk = CmWalkStash();
+    mod.KeepWalk(g_RuntimeFrame, walk);
+    ForgePact::CraftMatsNeeds needs = mod.Needs();
+    for (ForgePact::CraftMatsNeed& row : needs.rows) row.stash = walk.Count(row.material);
+    const ForgePact::CraftMatsPlan plan = mod.Plan(needs.rows);
+    std::vector<ForgePact::CraftMatsOutcome> outcomes;
+    press.save = CmSaveInstance();
+    for (const ForgePact::CraftMatsTake& take : plan.takes) {
+        std::vector<ForgePact::CraftMatsEntryTake> split;
+        if (!press.save || !ForgePact::CraftMatsMod::Split(take.material, take.amount, walk, split)) {
+            outcomes.push_back(ForgePact::CraftMatsOutcome::NotTaken);
+            break;
+        }
+        CmPressState::Consume c;
+        c.material = take.material;
+        for (const ForgePact::CraftMatsNeed& row : needs.rows) if (row.material == take.material) c.need += row.need;
+        c.before = CmCharacterTotal(press.save, take.material);
+        bool stop = false;
+        for (const ForgePact::CraftMatsEntryTake& t : split) {
+            const CmTakeResult res = CmTake(press.save, t);
+            const ForgePact::CraftMatsOutcome o = mod.OnMoveReport(res.report);
+            outcomes.push_back(o);
+            if (o != ForgePact::CraftMatsOutcome::Taken) { stop = true; break; }
+            c.moved += t.amount;
+            press.movedUnits += t.amount;
+            ForgePact::CraftMatsMoved m;
+            m.material = take.material;
+            m.from = t.entry.from;
+            m.to = res.to;
+            m.units = t.amount;
+            press.moved.push_back(m);
+        }
+        press.consume.push_back(c);
+        if (stop) break;
+    }
+    return mod.MayCraft(plan, outcomes);
+}
+
+// The stash save through the game's own route: SaveLocalFile(4, 1), self
+// Console_Save_obj - the call the stash close makes (Live 1j).
+static ForgePact::CraftMatsSave CmSaveStash(CInstance* save)
+{
+    RValue res;
+    return CmCall(kCmSaveName, save ? save : CmSaveInstance(), { RValue(kCmSaveKind), RValue(kCmSaveArg) }, res)
+        ? ForgePact::CraftMatsSave::Yes : ForgePact::CraftMatsSave::Failed;
+}
+
+// After a confirmed move, whether the game then pressed or the press was
+// refused: the stash as it now is in memory is saved, then the one line.
+static void CmFinishPress(CmPressState& press)
+{
+    ForgePact::CraftMatsSave saved = ForgePact::CraftMatsSave::No;
+    if (ForgePact::CraftMatsMod::SaveDue(press.movedUnits)) saved = CmSaveStash(press.save);
+    if (!press.moved.empty()) Out(ForgePact::CraftMatsMod::PressLine(press.moved, saved));
+    CmSayPending();
+}
+
+// DoCraftResult. Off: the game's own press, untouched. On: everything the
+// press needs happens before the game's call, and every refusal returns
+// before it; the consume check follows it.
+static RValue& CmHookPress(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    ForgePact::CraftMatsMod& mod = ForgePact::CraftMatsMod::Instance();
+    if (!mod.IsEnabled() || !g_CmOrigPress) return g_CmOrigPress ? g_CmOrigPress(S, O, R, argc, A) : R;
+    CmPressState press;
+    bool craft = false;
+    try { craft = CmBeforePress(S, press); }
+    catch (...) {
+        craft = false;
+        mod.TurnOffForSession();
+        Out("craftmats: off for this session - an error interrupted the press; the craft was refused");
+    }
+    if (!craft) {
+        try { CmFinishPress(press); } catch (...) {}
+        return R;
+    }
+    RValue& r = g_CmOrigPress(S, O, R, argc, A);
+    try {
+        for (const CmPressState::Consume& c : press.consume)
+            if (c.moved > 0) mod.OnConsume(c.material, c.before, c.moved, c.need, CmCharacterTotal(press.save, c.material));
+        CmFinishPress(press);
+    } catch (...) {}
+    return r;
+}
+
+// The six hooks, each by its SDK constant.
+struct CmHook {
+    const char*        name;
+    const char*        id;
+    PVOID              dest;
+    PFUNC_YYGMLScript* orig;
+    std::string_view   runtime;
+};
+static const CmHook g_CmHooks[] = {
+    { kCmCountName, "fp_cm_count", (PVOID)CmHookCount, &g_CmOrigCount, HeroSiege::Scripts::gml_Script_CountInventoryItem },
+    { kCmAvailabilityName, "fp_cm_availability", (PVOID)CmHookAvailability, &g_CmOrigAvailability, HeroSiege::Scripts::gml_Script_GetCraftItemsAvailable },
+    { kCmRecipeRowName, "fp_cm_reciperow", (PVOID)CmHookRecipeRow, &g_CmOrigRecipeRow, HeroSiege::Scripts::gml_Script_anon_840_gml_Object_UI_Craft_Recipe_List_Item_obj_Create_0 },
+    { kCmFindName, "fp_cm_find", (PVOID)CmHookFind, &g_CmOrigFind, HeroSiege::Scripts::gml_Script_CraftFindRecipeItems },
+    { kCmDecodeName, "fp_cm_decode", (PVOID)CmHookDecode, &g_CmOrigDecode, HeroSiege::Scripts::gml_Script_PilipaliDecrypt },
+    { kCmPressName, "fp_cm_press", (PVOID)CmHookPress, &g_CmOrigPress, HeroSiege::Scripts::gml_Script_DoCraftResult },
+};
+
+#ifndef FORGEPACT_RELEASE
+// The research instrument's own detours (defined with it, below). A second
+// detour on a function it already holds would fail and read as a false
+// TABLE-ONLY, so craftmats refuses while it holds any of the six, and it
+// reports the rows craftmats holds as held.
+static bool CpHoldsRow(std::string_view runtimeName);
+
+static bool CmHolds(std::string_view runtimeName)
+{
+    for (const CmHook& h : g_CmHooks) if (*h.orig && runtimeName == h.runtime) return true;
+    return false;
+}
+
+static std::string CmHeldByResearch()
+{
+    std::string held;
+    for (const CmHook& h : g_CmHooks) if (CpHoldsRow(h.runtime)) held += (held.empty() ? "" : ", ") + std::string(h.name);
+    return held;
+}
+#endif
+
+// The one install attempt, from FrameCallback once setup has run and the mod
+// is on. Both routes on all six, or the mod goes off for the session: a table
+// swap alone never sees the compiled calls the crafting route makes.
+static void CraftMatsInstall()
+{
+    g_CmInstallTried = true;
+    ForgePact::CraftMatsMod& mod = ForgePact::CraftMatsMod::Instance();
+#ifndef FORGEPACT_RELEASE
+    const std::string held = CmHeldByResearch();
+    if (!held.empty()) {
+        mod.TurnOffForSession();
+        Out("craftmats: off for this session - the research instrument already detours " + held
+            + "; nothing installed (relaunch, and turn craftmats on before hooking it)");
+        return;
+    }
+#endif
+    std::string line = "craftmats: hooks";
+    bool all = true;
+    for (const CmHook& h : g_CmHooks) {
+        bool native = false;
+        const bool ok = HookOneScript(h.name, h.id, h.dest, h.orig, &native);
+        line += std::string(" ") + h.name + "=" + (!ok ? "NOT-INSTALLED" : native ? "both-routes" : "TABLE-ONLY");
+        all = all && ok && native;
+    }
+    g_CmInstalled = all;
+    if (all) { Out(line + " -> ON"); return; }
+    mod.TurnOffForSession();
+    Out(line + " -> off for this session: a hook the game's own crafting calls would bypass cannot count the stash or"
+        " move it, so crafting stays the game's own");
+}
+
 // ---- the character-select research instrument ----------------------------
 // Everything from here to the matching #endif is research-build only, this
 // comment included: the verb's own name must vanish from a player build, and
@@ -22515,6 +24164,438 @@ static void MpCommand(const std::string& rest)
 }
 #endif // FORGEPACT_RELEASE (menuprobe)
 
+#ifndef FORGEPACT_RELEASE
+// ---- mapkeep: the stash map kept through the player-build installer (issue #14, Phase 1e) ----
+// docs/crafting-materials-research.md, `### Phase 1e instrument`. Research
+// build only, never in kPlayerCommands, dispatched from HandleCraftCommand;
+// this comment sits inside the guard so the verb's name vanishes from a player
+// build.
+//
+// Phase 1d read both special stash tabs with the window closed from the map
+// the game's own GetItemMap(9) call returned - kept by craftprobe's research
+// detour, which is not the shape a player build has. This keeper asks the
+// player-build question: installed through HookOneScript (both routes: the
+// table swap and the inline detour at the function's own address, the
+// installer every shipped gameplay hook uses), does the hook see the game's
+// calls, and can the a0=9 return be kept? `on` prints the installer's answer
+// per hook - both-routes or TABLE-ONLY - and that line is the finding either
+// way.
+//
+// Nothing here calls a game script: the hook bodies count, forward through the
+// trampoline and keep what the game's own call returned. Currency is the
+// game-independent core's rule (ForgePact::CraftMatsKeptMap): a kept map is
+// current only when the game's own GetItemMap(9) return refreshed it after the
+// latest character load (LoadStash) or room change. GameMaker reuses a
+// destroyed map's index, so ds_exists alone never restores currency; it is
+// checked as well, at the point of use (`stat`, `find`, craftprobe's `map9`).
+// The frame poll only notices a room change (housekeeping); the point of use
+// polls the room again before answering.
+//
+// Run `mapkeep on` BEFORE `craftprobe hook`: craftprobe's detour on the same
+// function would leave the game's address patched with the table entry
+// unchanged, so the installer would try a second inline detour, fail, and
+// report a false TABLE-ONLY. `on` therefore refuses when craftprobe holds
+// either row, and `craftprobe hook` reports the rows this keeper holds as held.
+static bool CpHoldsRow(std::string_view runtimeName);    // craftprobe, below
+
+static constexpr int kMkKeepLines = 8;             // keep/refresh lines logged per session; later ones are counted
+static constexpr int kMkLoadStashLines = 4;        // LoadStash lines logged per session
+static constexpr int kMkRoomPollFrames = 30;       // frames between two room reads (housekeeping)
+static constexpr int kMkFindMaxEntries = 4000;     // entries one `find` walks (Live 1d's map held 1626)
+static constexpr int kMkFindShown = 40;            // matching key lines one `find` prints
+static constexpr double kMkDsTypeMap = 1.0;        // ds_type_map, as ds_exists takes it
+static constexpr const char* kMkGlobal = "__cp_mapkeep_9";   // research global: roots the kept value for the collector
+
+enum class MkInstall { NotTried, BothRoutes, TableOnly, Failed };
+static const char* MkInstallText(MkInstall s)
+{
+    switch (s) {
+    case MkInstall::BothRoutes: return "both-routes";
+    case MkInstall::TableOnly:  return "TABLE-ONLY";
+    case MkInstall::Failed:     return "NOT-INSTALLED";
+    default:                    return "not-tried";
+    }
+}
+
+// Game thread only (hook bodies, the frame poll, the IPC poll), as the core.
+static PFUNC_YYGMLScript g_MkOrigGetItemMap = nullptr;
+static PFUNC_YYGMLScript g_MkOrigLoadStash = nullptr;
+static MkInstall g_MkGetItemMapInstall = MkInstall::NotTried;
+static MkInstall g_MkLoadStashInstall = MkInstall::NotTried;
+static bool g_MkKeeping = false;                   // `on` keeps a0=9 returns; `off` stops keeping, the hooks stay
+static volatile long g_MkCalls0 = 0;               // GetItemMap calls whose first argument is the number 0
+static volatile long g_MkCalls9 = 0;               // ... the number 9 (int64:9 or real:9.0 - compared numerically)
+static volatile long g_MkCallsOther = 0;           // ... anything else, or no argument
+static volatile long g_MkLoadStashCalls = 0;
+static long g_MkNotAMap = 0;                       // a0=9 returns that were not a `ref ds_map`: counted, never kept
+static long g_MkKeepLogged = 0;
+static long g_MkLoadStashLogged = 0;
+static ForgePact::CraftMatsKeptMap g_MkCore;
+static RValue* g_MkKept = nullptr;                 // heap-held and never deleted, as CpKept::value
+struct MkMoment { long call = 0; std::string self; std::string room; };
+static MkMoment g_MkFirst9;                        // the first a0=9 call since `on`
+static MkMoment g_MkLatestKeep;                    // the latest call that (re)kept the map
+static int64_t g_MkRoomKey = INT64_MIN;            // the last room read; INT64_MIN = none read yet (never compared)
+static long g_MkRoomChanges = 0;
+static long g_MkFrames = 0;
+
+static bool MkInstalled()
+{
+    return g_MkGetItemMapInstall == MkInstall::BothRoutes || g_MkGetItemMapInstall == MkInstall::TableOnly
+        || g_MkLoadStashInstall == MkInstall::BothRoutes || g_MkLoadStashInstall == MkInstall::TableOnly;
+}
+
+// Whether this keeper's install owns the named function's table entry, for
+// `craftprobe hook` (which reports such a row as held, not failed).
+static bool MkHolds(std::string_view runtimeName)
+{
+    const bool map = g_MkGetItemMapInstall == MkInstall::BothRoutes || g_MkGetItemMapInstall == MkInstall::TableOnly;
+    const bool load = g_MkLoadStashInstall == MkInstall::BothRoutes || g_MkLoadStashInstall == MkInstall::TableOnly;
+    return (map && runtimeName == HeroSiege::Scripts::gml_Script_GetItemMap)
+        || (load && runtimeName == HeroSiege::Scripts::gml_Script_LoadStash);
+}
+
+// The room's name, the way the plugin already reads it by name (`room`
+// builtin, then room_get_name).
+static std::string MkRoomName()
+{
+    try {
+        RValue v;
+        if (!AurieSuccess(g_Yytk->GetBuiltin("room", nullptr, NULL_INDEX, v))) return "(unreadable)";
+        return g_Yytk->CallBuiltin("room_get_name", { v }).ToString();
+    } catch (...) { return "(unreadable)"; }
+}
+
+// A whole number without its decimals, anything else as Describe prints it.
+static std::string MkNumText(const RValue& v)
+{
+    try {
+        if (PpIsNumber(v)) {
+            const double d = v.ToDouble();
+            if (std::isfinite(d) && d == std::floor(d) && std::fabs(d) < 1e15) return std::to_string((long long)d);
+        }
+        return Describe(v);
+    } catch (...) { return "<unreadable>"; }
+}
+
+// The index a `ref ds_map N` names, from the runtime's own text for it -
+// never from its bytes. False for anything else.
+static bool MkMapIndex(const RValue& v, long long& index)
+{
+    if (v.m_Kind != VALUE_REF) return false;
+    std::string text;
+    try { text = v.ToString(); } catch (...) { return false; }
+    static const std::string kPrefix = "ref ds_map ";
+    if (text.compare(0, kPrefix.size(), kPrefix) != 0) return false;
+    try { index = std::stoll(text.substr(kPrefix.size())); } catch (...) { return false; }
+    return index >= 0;
+}
+
+// A room change since the last read invalidates the kept map. Unreadable
+// reads are skipped, never compared (a sentinel must not match a sentinel).
+static void MkRoomPoll()
+{
+    if (!MkInstalled()) return;
+    const int64_t key = CurrentRoomKey();
+    if (key == INT64_MIN) return;
+    if (g_MkRoomKey != INT64_MIN && key != g_MkRoomKey) {
+        g_MkCore.Invalidate(ForgePact::CraftMatsMapReason::RoomChanged);
+        ++g_MkRoomChanges;
+    }
+    g_MkRoomKey = key;
+}
+
+// Housekeeping on the frame path: notice a room change every
+// kMkRoomPollFrames frames. Nothing here answers whether the map is current;
+// the point of use does (MkCurrentMap).
+static void MkRoomTick()
+{
+    if (!MkInstalled()) return;
+    if (++g_MkFrames % kMkRoomPollFrames) return;
+    MkRoomPoll();
+}
+
+// A game a0=9 return: kept when it is a `ref ds_map` and it is new - the first,
+// a different index, or the same index after an invalidation. Rooted in a
+// research global first, so the value the core calls current is one the
+// collector sees. The room is read here too, before the "already current"
+// return: a game refresh made in a new room before the next frame poll then
+// counts as the refresh after the change, instead of being dropped and the map
+// invalidated by that poll a few frames later.
+static void MkKeep(long n, CInstance* S, const RValue& result)
+{
+    try {
+        long long index = -1;
+        if (!MkMapIndex(result, index)) { ++g_MkNotAMap; return; }
+        MkRoomPoll();
+        if (g_MkCore.IsCurrent() && g_MkCore.Index() == index) return;
+        g_Yytk->CallBuiltin("variable_global_set", { RValue(std::string(kMkGlobal)), result });
+        if (!g_MkKept) g_MkKept = new RValue();
+        *g_MkKept = result;
+        const char* was = ForgePact::CraftMatsKeptMap::ReasonName(g_MkCore.Reason());
+        g_MkCore.Refreshed(index);
+        g_MkLatestKeep.call = n;
+        g_MkLatestKeep.self = PpObjectName(S);
+        g_MkLatestKeep.room = MkRoomName();
+        if (++g_MkKeepLogged <= kMkKeepLines)
+            Out("mapkeep: kept GetItemMap a0=9 #" + std::to_string(n) + " -> ref ds_map " + std::to_string(index)
+                + " self=" + g_MkLatestKeep.self + " room=" + g_MkLatestKeep.room + " (was " + was
+                + ", refreshed=" + std::to_string(g_MkCore.Refreshes()) + ")");
+    } catch (...) {}
+}
+
+static RValue& MkHookGetItemMap(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    int which = -1;   // 0, 9, or -1 for anything else
+    try {
+        if (argc > 0 && A && A[0] && PpIsNumber(*A[0])) {
+            const double d = A[0]->ToDouble();
+            if (d == 9.0) which = 9;
+            else if (d == 0.0) which = 0;
+        }
+    } catch (...) {}
+    long n = 0;
+    if (which == 9) n = InterlockedIncrement(&g_MkCalls9);
+    else if (which == 0) InterlockedIncrement(&g_MkCalls0);
+    else InterlockedIncrement(&g_MkCallsOther);
+    RValue& r = g_MkOrigGetItemMap ? g_MkOrigGetItemMap(S, O, R, argc, A) : R;
+    if (which == 9) {
+        if (g_MkFirst9.call == 0) {
+            try {
+                g_MkFirst9.call = n;
+                g_MkFirst9.self = PpObjectName(S);
+                g_MkFirst9.room = MkRoomName();
+                Out("mapkeep: first GetItemMap a0=9 call #" + std::to_string(n) + " self=" + g_MkFirst9.self
+                    + " room=" + g_MkFirst9.room + " a0=" + Describe(*A[0]) + " (a0=0 calls so far="
+                    + std::to_string(g_MkCalls0) + ")");
+            } catch (...) {}
+        }
+        if (g_MkKeeping) MkKeep(n, S, r);
+    }
+    return r;
+}
+
+static RValue& MkHookLoadStash(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    const long n = InterlockedIncrement(&g_MkLoadStashCalls);
+    // Before the game's own call: a GetItemMap(9) return during or after the
+    // load is the refresh that makes the map current again.
+    g_MkCore.Invalidate(ForgePact::CraftMatsMapReason::CharacterLoaded);
+    RValue& r = g_MkOrigLoadStash ? g_MkOrigLoadStash(S, O, R, argc, A) : R;
+    if (++g_MkLoadStashLogged <= kMkLoadStashLines) {
+        try {
+            Out("mapkeep: LoadStash #" + std::to_string(n) + " self=" + PpObjectName(S) + " ret=" + Describe(r)
+                + " - the kept map is not current until the game's own GetItemMap(9) returns one");
+        } catch (...) {}
+    }
+    return r;
+}
+
+// The point-of-use answer `stat`, `find` and craftprobe's `map9` share: the
+// room is read again now, the core must call the kept map current, and
+// ds_exists must answer true for it as a map. Otherwise `reason` names why.
+static bool MkCurrentMap(RValue& map, std::string& reason)
+{
+    MkRoomPoll();
+    // MkKeep and MkClear set and clear the core and g_MkKept together, so
+    // "current but nothing kept" is never produced; not-kept covers it anyway.
+    if (!g_MkCore.IsCurrent() || !g_MkKept) {
+        reason = ForgePact::CraftMatsKeptMap::ReasonName(
+            g_MkCore.IsCurrent() ? ForgePact::CraftMatsMapReason::NotKept : g_MkCore.Reason());
+        return false;
+    }
+    try {
+        if (!g_Yytk->CallBuiltin("ds_exists", { *g_MkKept, RValue(kMkDsTypeMap) }).ToBoolean()) { reason = "ds-gone"; return false; }
+    } catch (...) { reason = "ds-gone"; return false; }
+    map = *g_MkKept;
+    reason = "none";
+    return true;
+}
+
+// One entry of the kept map by its key, by name: ds_map_exists first. The key
+// is tried as text, then - when the text is a whole number - as that number,
+// since whether the game keys this map by fingerprint text is not established.
+static bool MkMapEntry(const RValue& map, const std::string& key, RValue& value, std::string& form)
+{
+    try {
+        if (g_Yytk->CallBuiltin("ds_map_exists", { map, RValue(key) }).ToBoolean()) {
+            value = g_Yytk->CallBuiltin("ds_map_find_value", { map, RValue(key) });
+            form = "text";
+            return true;
+        }
+        size_t used = 0;
+        const double d = std::stod(key, &used);
+        if (used == key.size() && g_Yytk->CallBuiltin("ds_map_exists", { map, RValue(d) }).ToBoolean()) {
+            value = g_Yytk->CallBuiltin("ds_map_find_value", { map, RValue(d) });
+            form = "number";
+            return true;
+        }
+    } catch (...) {}
+    return false;
+}
+
+static constexpr const char* kMkGetItemMapName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_GetItemMap);
+static constexpr const char* kMkLoadStashName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_LoadStash);
+
+// One line per hook, the installer's answer. TABLE-ONLY is a finding, not a
+// failure: the installer prints its own reason on the line just before.
+static void MkReportInstall(const char* label, const char* shortName, bool ok, bool native, MkInstall& state)
+{
+    state = !ok ? MkInstall::Failed : native ? MkInstall::BothRoutes : MkInstall::TableOnly;
+    if (!ok)
+        Out(std::string("mapkeep on: ") + label + " NOT-INSTALLED (the installer's `hook " + shortName + ": ...` line above names why)");
+    else if (native)
+        Out(std::string("mapkeep on: ") + label + " both-routes (table swap and inline detour at the function's own address)");
+    else
+        Out(std::string("mapkeep on: ") + label + " TABLE-ONLY (the installer's reason is on its `hook " + shortName
+            + ": TABLE-ONLY (...)` line above) - direct compiled-GML calls bypass this hook");
+}
+
+static void MkOn()
+{
+    if (MkInstalled()) {
+        if (g_MkKeeping) { Out("mapkeep on: already on (GetItemMap " + std::string(MkInstallText(g_MkGetItemMapInstall)) + ", LoadStash "
+                               + MkInstallText(g_MkLoadStashInstall) + ")"); return; }
+        g_MkKeeping = true;
+        Out("mapkeep on: keeping again (the hooks were already installed and stay installed)");
+        return;
+    }
+    if (g_MkGetItemMapInstall == MkInstall::Failed || g_MkLoadStashInstall == MkInstall::Failed) {
+        Out("mapkeep on: refused - an earlier `on` could not install; a second attempt would not be a first install. Nothing installed");
+        return;
+    }
+    const bool cpMap = CpHoldsRow(HeroSiege::Scripts::gml_Script_GetItemMap);
+    const bool cpLoad = CpHoldsRow(HeroSiege::Scripts::gml_Script_LoadStash);
+    if (cpMap || cpLoad) {
+        Out(std::string("mapkeep on: refused - craftprobe already detoured ") + (cpMap ? "GetItemMap" : "") + (cpMap && cpLoad ? " and " : "")
+            + (cpLoad ? "LoadStash" : "") + " this session, so the installer would report a false TABLE-ONLY; relaunch and run"
+            " `mapkeep on` before `craftprobe hook`. Nothing installed");
+        return;
+    }
+    // One install each, with the installer's native flag: that flag is the
+    // answer to whether the player-build shape reaches the game's direct calls.
+    bool mapNative = false;
+    const bool mapOk = HookOneScript(kMkGetItemMapName, "fp_mk_getitemmap", (PVOID)MkHookGetItemMap, &g_MkOrigGetItemMap, &mapNative);
+    MkReportInstall("GetItemMap", kMkGetItemMapName, mapOk, mapNative, g_MkGetItemMapInstall);
+    bool loadNative = false;
+    const bool loadOk = HookOneScript(kMkLoadStashName, "fp_mk_loadstash", (PVOID)MkHookLoadStash, &g_MkOrigLoadStash, &loadNative);
+    MkReportInstall("LoadStash", kMkLoadStashName, loadOk, loadNative, g_MkLoadStashInstall);
+    g_MkKeeping = MkInstalled();
+    g_MkRoomKey = CurrentRoomKey();
+    Out(std::string("mapkeep on: ") + (g_MkKeeping ? "keeping the game's own GetItemMap(9) returns" : "nothing installed, nothing kept")
+        + "; `mapkeep stat` - its a0=0 count is this keeper's control");
+}
+
+static void MkStat()
+{
+    RValue map;
+    std::string reason;
+    const bool current = MkCurrentMap(map, reason);
+    std::string kept = "none";
+    if (g_MkCore.IsKept()) {
+        kept = "ref ds_map " + std::to_string(g_MkCore.Index());
+        if (current) {
+            try { kept += " size=" + MkNumText(g_Yytk->CallBuiltin("ds_map_size", { map })); } catch (...) {}
+        }
+    }
+    std::string first9 = "none";
+    if (g_MkFirst9.call > 0)
+        first9 = "#" + std::to_string(g_MkFirst9.call) + " self=" + g_MkFirst9.self + " room=" + g_MkFirst9.room;
+    std::string latest = "none";
+    if (g_MkLatestKeep.call > 0)
+        latest = "#" + std::to_string(g_MkLatestKeep.call) + " self=" + g_MkLatestKeep.self + " room=" + g_MkLatestKeep.room;
+    Out(std::string("mapkeep stat: GetItemMap=") + MkInstallText(g_MkGetItemMapInstall) + " LoadStash=" + MkInstallText(g_MkLoadStashInstall)
+        + " keeping=" + (g_MkKeeping ? "on" : "off")
+        + " | a0=0 calls=" + std::to_string(g_MkCalls0) + " a0=9 calls=" + std::to_string(g_MkCalls9)
+        + " other calls=" + std::to_string(g_MkCallsOther) + " LoadStash calls=" + std::to_string(g_MkLoadStashCalls)
+        + " | kept=" + kept + " current=" + (current ? "yes" : "no") + " reason=" + reason
+        + " refreshed=" + std::to_string(g_MkCore.Refreshes()) + " room-changes=" + std::to_string(g_MkRoomChanges)
+        + " not-a-map=" + std::to_string(g_MkNotAMap)
+        + " | first9: " + first9 + " | latest-keep: " + latest);
+}
+
+// `find <class> <b>`: hook-free. Walks the kept map by name, only when it is
+// current, and prints every entry whose itemType (or key class suffix) and
+// definition `b` match, with its `o` - how the trial names an item by its key,
+// and how a stack shows up as one entry. Reads only; capped.
+static void MkFind(const std::vector<std::string>& tok)
+{
+    if (tok.size() != 3) { Out("mapkeep find: usage -> mapkeep find <class> <b>; nothing read"); return; }
+    const std::string cls = tok[1], b = tok[2];
+    RValue map;
+    std::string reason;
+    if (!MkCurrentMap(map, reason)) { Out("mapkeep find: the kept map is not current (reason=" + reason + ") - nothing read"); return; }
+    try {
+        const int size = (int)g_Yytk->CallBuiltin("ds_map_size", { map }).ToDouble();
+        int walked = 0, matched = 0, items = 0;
+        RValue key = g_Yytk->CallBuiltin("ds_map_find_first", { map });
+        for (; walked < size && walked < kMkFindMaxEntries && key.m_Kind != VALUE_UNDEFINED; ++walked) {
+            const std::string keyText = key.m_Kind == VALUE_STRING ? key.ToString() : Describe(key);
+            const RValue item = g_Yytk->CallBuiltin("ds_map_find_value", { map, key });
+            key = g_Yytk->CallBuiltin("ds_map_find_next", { map, key });
+            if (!ApIsPlainStruct(item)) continue;
+            ++items;
+            const RValue type = g_Yytk->CallBuiltin("variable_struct_exists", { item, RValue("itemType") }).ToBoolean()
+                ? g_Yytk->CallBuiltin("variable_struct_get", { item, RValue("itemType") }) : RValue();
+            const size_t dash = keyText.rfind('-');
+            const std::string keyCls = dash == std::string::npos ? std::string() : keyText.substr(dash + 1);
+            if (MkNumText(type) != cls && keyCls != cls) continue;
+            if (!g_Yytk->CallBuiltin("variable_struct_exists", { item, RValue("itemDefinitionStruct") }).ToBoolean()) continue;
+            const RValue def = g_Yytk->CallBuiltin("variable_struct_get", { item, RValue("itemDefinitionStruct") });
+            if (!ApIsPlainStruct(def) || !g_Yytk->CallBuiltin("variable_struct_exists", { def, RValue("b") }).ToBoolean()) continue;
+            if (MkNumText(g_Yytk->CallBuiltin("variable_struct_get", { def, RValue("b") })) != b) continue;
+            const std::string o = g_Yytk->CallBuiltin("variable_struct_exists", { def, RValue("o") }).ToBoolean()
+                ? MkNumText(g_Yytk->CallBuiltin("variable_struct_get", { def, RValue("o") })) : std::string("?");
+            if (++matched <= kMkFindShown)
+                Out("mapkeep find: key=" + keyText + " itemType=" + Describe(type) + " b=" + b + " o=" + o);
+        }
+        Out("mapkeep find: entries walked=" + std::to_string(walked) + " matched=" + std::to_string(matched)
+            + " (size=" + std::to_string(size) + " items=" + std::to_string(items)
+            + (walked >= kMkFindMaxEntries ? ", cap " + std::to_string(kMkFindMaxEntries) : std::string()) + ")"
+            + (matched > kMkFindShown ? " - " + std::to_string(matched - kMkFindShown) + " matching keys not printed" : std::string()));
+    } catch (...) { Out("mapkeep find: EXCEPTION while reading - unreadable, not empty"); }
+}
+
+// `clear` releases the kept value and resets the core; the hooks stay.
+static void MkClear()
+{
+    try { g_Yytk->CallBuiltin("variable_global_set", { RValue(std::string(kMkGlobal)), RValue() }); } catch (...) {}
+    if (g_MkKept) *g_MkKept = RValue();
+    g_MkCore.Clear();
+    Out("mapkeep clear: the kept map is released; keeping starts again from the game's next GetItemMap(9) return"
+        + std::string(g_MkKeeping ? "" : " once `mapkeep on`"));
+}
+
+static void MkUsage()
+{
+    Out("mapkeep: research instrument for docs/crafting-materials-research.md, Phase 1e (research build only)");
+    Out("  on              install hooks on GetItemMap and LoadStash through HookOneScript, the player-build installer;"
+        " prints both-routes or TABLE-ONLY per hook. Run it BEFORE `craftprobe hook`");
+    Out("  off             stop keeping (the hooks stay: HookOneScript cannot be undone)");
+    Out("  stat            installs, a0=0 / a0=9 / other and LoadStash counts, kept=, current= and reason=, refreshed=, first9:");
+    Out("  find <class> <b> walk the kept map (only when current) for entries of that class and definition b, with o");
+    Out("  clear           release the kept map and reset its currency");
+}
+
+static void MkCommand(const std::string& rest)
+{
+    std::vector<std::string> tok;
+    { std::stringstream ss(rest); std::string w; while (ss >> w) tok.push_back(w); }
+    if (tok.empty()) { MkUsage(); return; }
+    const std::string sub = Lower(tok[0]);
+    if (sub == "on") { MkOn(); return; }
+    if (sub == "off") {
+        g_MkKeeping = false;
+        Out(std::string("mapkeep off: not keeping") + (MkInstalled() ? " (the hooks stay installed and keep counting)" : ""));
+        return;
+    }
+    if (sub == "stat") { MkStat(); return; }
+    if (sub == "find") { MkFind(tok); return; }
+    if (sub == "clear") { MkClear(); return; }
+    MkUsage();
+}
+#endif // FORGEPACT_RELEASE (mapkeep)
+
 // Dispatched from its own function for the same reason as the two above:
 // RunCommand's else-if chain is at MSVC's nesting limit (C1061). The function
 // itself exists in both builds and answers false in the player build, so the
@@ -22525,6 +24606,3368 @@ static bool HandleMenuProbeCommand(const std::string& lc, const std::string& res
     if (lc == "menuprobe") { MpCommand(rest); return true; }
 #endif
     (void)lc; (void)rest;
+    return false;
+}
+
+#ifndef FORGEPACT_RELEASE
+// ---- craftprobe: the crafting-materials Phase 0 instrument (issue #14) ------
+// docs/crafting-materials-research.md holds the static search, the vanilla
+// baseline B0, the hypotheses and the live procedure this instrument serves.
+// Research build only, never in kPlayerCommands, dispatched from
+// HandleCraftCommand; this comment sits inside the guard so the verb's name
+// vanishes from a player build.
+//
+// How the game counts and consumes a recipe's materials, and where the stash's
+// material tab lives, are unmeasured. Every candidate the static search found
+// is native-detoured in ONE build (agents.md: batch every candidate before
+// asking for a relaunch), with MmCreateHook at the function's own address -
+// the attach route `prospectprobe` and `citrace nativetrace` use, because a
+// table-only hook is blind to this build's direct `call rel32` sites.
+// CheckPlayerInteraction rides in the same table as the positive control: a 0
+// there voids every other row's count.
+//
+// It reuses prospectprobe's read-only helpers (PpDescribeSelf, AggroArgs,
+// PpArgIdentities, PpRetText, PpBackingShape, PpShallow, PpBackingJsonFile)
+// and menuprobe's instance resolution (MpResolve, MpWhere, MpArg), with its
+// own table, counters and budgets. Several rows share an address with
+// prospectprobe's table; a second MmCreateHook on an address already hooked
+// fails for that row, so run one instrument per session - `hook` says so when
+// prospectprobe already holds rows.
+//
+// The only write is `call ... confirm`: exactly one by-name call of one table
+// row (asset_get_index + script_execute, through ApCallScript), refused before
+// that call on any missing precondition. `backing` keeps what the game's OWN
+// calls returned; nothing here ever invokes a profile getter (a blind
+// GetProfileInventoryData call crashed the game - prospect research, Phase 0b).
+static constexpr long kCpDefaultLogBudget = 6;     // logged calls per row per `arm` unless budget=N
+static constexpr long kCpMaxLogBudget = 5000;      // out.txt stays readable
+static constexpr int kCpReaderMaxInstances = 4;    // live instances of one object a reader lists
+static constexpr int kCpReaderMaxLines = 80;       // variables a reader prints per instance
+static constexpr int kCpReaderArrayPreview = 3;    // leading entries of an array a reader prints
+static constexpr int kCpVarArrayPreview = 20;      // leading entries `var` prints
+static constexpr size_t kCpLineMax = 1500;         // one variable's text, before it is cut
+
+static std::atomic<bool> g_CpArmed{ false };
+static volatile long g_CpLogBudget = kCpDefaultLogBudget;
+static std::atomic<bool> g_CpBacking{ false };
+static bool g_CpInCapture = false;                 // game thread only; a capture never nests
+// Game thread only: set while `node` makes its own GetItemFromFingerprint
+// lookup, so a detoured lookup row neither logs nor keeps the instrument's
+// call as if the game had made it (Phase 1c keeps the game's own call shape).
+static bool g_CpOwnLookup = false;
+
+// Phase 1b: in Phase 1 GetInventoryArray(1) returned the bag's main tab, and
+// whether the game ever asks it - or CountInventoryItem - about a special tab
+// (-2, -4) is unknown. Those two rows (CpKeepsPerArgument) therefore also keep
+// the latest return per distinct first argument, up to this many signatures;
+// `backing dump` writes one file per signature. Phase 1c keys each row on its
+// own argument (CpBackingArgIndex): GetItemFromFingerprint on its second, so
+// the game's own lookup shape for a stash cell is kept without a hand move.
+static constexpr int kCpBackingMaxArgs = 8;
+static constexpr int kCpBackingMaxSelves = 6;      // distinct self objects one signature names
+static constexpr size_t kCpBackingA0Max = 96;      // a0's text (a fingerprint keeps its class suffix)
+
+struct CpArgKept {
+    std::string sig;               // the keyed argument as text (`1`, `-2`, `undefined`, ...)
+    RValue*     value = nullptr;   // heap-held and never deleted, as CpKept::value
+    long        call = 0;          // the row's call number of the kept return
+    std::string self;
+    std::string root;
+    long        calls = 0;         // Phase 1c: returns kept under this signature
+    std::string a0;                // Phase 1c: the latest call's first argument, as text
+    std::vector<std::string> selves;   // Phase 1c: distinct self objects, up to kCpBackingMaxSelves
+};
+
+// One row's kept return while `backing` is on: the latest call's value. An
+// RValue copy does not root a struct, so the value is also assigned to a
+// research global (`__cp_backing_<row>`) the collector does see - the same
+// arrangement as PpBackingKept.
+struct CpKept {
+    RValue*     value = nullptr;   // heap-held and never deleted: a global RValue's destructor would run after the runtime is gone
+    long        call = 0;          // the row's call number; 0 = nothing kept
+    long        seen = 0;          // returns captured since the first `backing on`
+    std::string self;
+    std::string root;
+    bool        perArg = false;    // set by `backing on` for the rows CpKeepsPerArgument names
+    int         argIndex = 0;      // Phase 1c: which argument the signatures key on (CpBackingArgIndex)
+    std::vector<CpArgKept> perArgs;
+    long        perArgFull = 0;    // returns whose keyed argument found no free signature slot
+};
+
+// An argument as the text `backing` keys on: a whole number without its
+// decimals, anything else as Describe prints it, cut short.
+static std::string CpArgSignature(const RValue& a, size_t cut = 48)
+{
+    try {
+        if (PpIsNumber(a)) {
+            const double d = a.ToDouble();
+            if (std::isfinite(d) && d == std::floor(d) && std::fabs(d) < 1e15) return std::to_string((long long)d);
+        }
+        std::string s = Describe(a);
+        if (s.size() > cut) s = s.substr(0, cut) + "...";
+        return s;
+    } catch (...) { return "<unreadable>"; }
+}
+
+// Phase 1g: where the consume runs relative to the result's production. A
+// later player build can refuse a craft only by not calling the trampoline of
+// a row that encloses BOTH, and Live 1e logged the craft route's call order,
+// not its nesting. So the detours of these rows bracket their trampoline with
+// a depth per row (CpRouteFrame), and each one's armed line says which of them
+// was already on the game thread's stack when it was entered:
+// `within=<row>#<n>`, the outermost (entered first) and the call number of its
+// frame - the `#n` of that row's own entry and `ret=` lines - or `within=none`.
+// The number is what tells one enclosing frame from two: at an amount-2 craft
+// a consume and a production both reading `within=DoCraftResult` may sit in
+// one call of it or in one each, and only the same `#n` says they share one.
+// Game thread only, like g_CpInCapture; tracked whether or not the row is
+// armed, so arming mid-craft cannot misreport the nesting.
+static const char* const kCpCraftRouteRows[] = {
+    "CraftFindRecipeItems", "DoCraftResult", "CraftEditGrid", "CraftEditPlayerInventory",
+    "s_CraftItem", "GridAddItem", "GridAddToStack", "s_ItemOperation", "GetInventoryGridNode",
+};
+static constexpr int kCpCraftRouteCount = (int)(sizeof(kCpCraftRouteRows) / sizeof(kCpCraftRouteRows[0]));
+static long g_CpRouteDepth[kCpCraftRouteCount] = {};    // frames of that row now on the stack
+static long g_CpRouteEntered[kCpCraftRouteCount] = {};  // entry order of its outermost frame
+static long g_CpRouteCall[kCpCraftRouteCount] = {};     // the row's call number of its outermost frame
+static long g_CpRouteSeq = 0;
+
+// The row's slot in kCpCraftRouteRows, or -1 for a row that is not on the route.
+static int CpCraftRouteSlot(const char* label)
+{
+    for (int i = 0; i < kCpCraftRouteCount; ++i)
+        if (std::strcmp(label, kCpCraftRouteRows[i]) == 0) return i;
+    return -1;
+}
+
+// Phase 1i: the rows the recipe list reads a recipe's inputs through. Live 1h
+// logged 532,552 PilipaliDecrypt calls with the Cube open - the list, not the
+// press - so no budget reached the selected recipe's decode. These rows read
+// the route (their armed line carries `within=` too) but push no frame and are
+// not route rows, so Phase 1g's `within=` answers are unchanged. Under
+// `arm inroute` they log a call only while a craft-route row is on the stack;
+// a call outside still counts in `calls=` and spends no budget, so `show`'s
+// `unlogged=` is what the gate held back. Named through the SDK.
+static constexpr const char* kCpInRouteRows[] = {
+    SdkShortScriptName(HeroSiege::Scripts::gml_Script_PilipaliDecrypt),
+    SdkShortScriptName(HeroSiege::Scripts::gml_Script_CountInventoryItem),
+};
+static std::atomic<bool> g_CpInRouteGate{ false };   // set by `arm inroute`, cleared by any other `arm`
+
+static bool CpReadsRoute(const char* label)
+{
+    for (const char* row : kCpInRouteRows)
+        if (std::strcmp(label, row) == 0) return true;
+    return false;
+}
+
+// The outermost craft-route row on the stack now, as `<row>#<n>`, or "none".
+static std::string CpWithin()
+{
+    int outer = -1;
+    for (int i = 0; i < kCpCraftRouteCount; ++i)
+        if (g_CpRouteDepth[i] > 0 && (outer < 0 || g_CpRouteEntered[i] < g_CpRouteEntered[outer])) outer = i;
+    return outer < 0 ? std::string("none")
+                     : std::string(kCpCraftRouteRows[outer]) + "#" + std::to_string(g_CpRouteCall[outer]);
+}
+
+// Entered before the trampoline, left after it - on unwinding too, so a game
+// error inside the call cannot leave a row counted as still on the stack.
+// `call` is the detour's own call number, kept for the row's outermost frame.
+struct CpRouteFrame {
+    int slot;
+    CpRouteFrame(int s, long call) : slot(s)
+    {
+        if (slot >= 0 && ++g_CpRouteDepth[slot] == 1) {
+            g_CpRouteEntered[slot] = ++g_CpRouteSeq;
+            g_CpRouteCall[slot] = call;
+        }
+    }
+    ~CpRouteFrame()
+    {
+        if (slot >= 0 && g_CpRouteDepth[slot] > 0) --g_CpRouteDepth[slot];
+    }
+    CpRouteFrame(const CpRouteFrame&) = delete;
+    CpRouteFrame& operator=(const CpRouteFrame&) = delete;
+};
+
+// Phase 1j: `inject <class> <b> <extra>` (research doc, `### Phase 1j
+// instrument`). The owner's design puts the mod's own count into the game's own
+// availability check, so a short recipe stays disabled by the game rather than
+// refused at the press. The Ghidra reading places that check in three frames:
+// the recipe row's Create closure (UI_Craft_Recipe_List_Item_obj anon@840),
+// which counts each input with CountInventoryItem and stores whether it
+// reaches the amount; the window's own availability call,
+// GetCraftItemsAvailable, which UI_Craft_obj's anon@1834 runs (not inside
+// anon@840) and which counts with CountInventoryItem too; and
+// CraftFindRecipeItems at the press (a craft-route row). Which of them the
+// window's display reads is what the session measures, so the injection must
+// reach all three: a count left out would read as "the game ignores the
+// injection" when it measured only where the instrument attaches. While
+// `inject` is on, CountInventoryItem's detour adds <extra> to the game's own
+// return - after the trampoline, so the game computed it first - only for a
+// call of that identity (a0 the owner, 1 as Live 1i logged unless `owner=`
+// says otherwise; a1 the class; a3 the base) made while one of those frames is
+// on the game thread's stack. Nothing is written; one return value inside a
+// call the game is already making is changed, and only while the research
+// command says so. The closure and the availability call get their own
+// depths, not slots in kCpCraftRouteRows, so Phase 1g's and 1i's `within=`
+// answers are unchanged. Game thread only, like the route depths; tracked
+// whether or not `inject` is on.
+static long g_CpRecipeListDepth = 0;
+static long g_CpAvailabilityDepth = 0;
+struct CpCountFrame {
+    long* depth;
+    CpCountFrame(long& d, bool on) : depth(on ? &d : nullptr) { if (depth) ++*depth; }
+    ~CpCountFrame() { if (depth && *depth > 0) --*depth; }
+    CpCountFrame(const CpCountFrame&) = delete;
+    CpCountFrame& operator=(const CpCountFrame&) = delete;
+};
+
+static constexpr double kCpInjectOwner = 1.0;   // CountInventoryItem's a0 in the craft route (Live 1i: a0=1), the default
+static std::atomic<bool> g_CpInjectOn{ false };
+static std::atomic<double> g_CpInjectOwner{ kCpInjectOwner };
+static std::atomic<double> g_CpInjectClass{ -1.0 };
+static std::atomic<double> g_CpInjectB{ -1.0 };
+static std::atomic<double> g_CpInjectExtra{ 0.0 };
+static volatile long g_CpInjected = 0;         // returns raised since the last `inject` on
+static volatile long g_CpInjectedAvailability = 0;  // ... of them inside GetCraftItemsAvailable
+static volatile long g_CpInjectedRecipeRow = 0;     // ... inside the recipe row's closure (and no availability call)
+static volatile long g_CpInjectedRoute = 0;         // ... inside a craft-route row only
+static volatile long g_CpInjectOutside = 0;    // calls of that identity outside every frame, left alone
+static volatile long g_CpInjectOtherOwner = 0; // calls of that class and base with another a0, left alone
+static std::atomic<double> g_CpInjectLastOwner{ 0.0 };  // the latest such a0, for `owner=`
+static volatile long g_CpInjectNotNumber = 0;  // calls of that identity whose return was not a number, left alone
+
+// Defined after the table (it reads g_CpTargets): whether the row with this
+// label names that SDK script. Asked once per detour, on its first call.
+static bool CpRowIsScript(const char* label, std::string_view runtimeName);
+
+static bool CpIsRecipeListRow(const char* label)
+{
+    return CpRowIsScript(label, HeroSiege::Scripts::gml_Script_anon_840_gml_Object_UI_Craft_Recipe_List_Item_obj_Create_0);
+}
+
+static bool CpIsAvailabilityRow(const char* label)
+{
+    return CpRowIsScript(label, HeroSiege::Scripts::gml_Script_GetCraftItemsAvailable);
+}
+
+static bool CpIsCountRow(const char* label)
+{
+    return CpRowIsScript(label, HeroSiege::Scripts::gml_Script_CountInventoryItem);
+}
+
+// A whole number without the decimals std::to_string gives it.
+static std::string CpNumText(double v)
+{
+    if (std::isfinite(v) && v == std::floor(v) && std::fabs(v) < 1e15) return std::to_string((long long)v);
+    return std::to_string(v);
+}
+
+// `show`'s inject line: `inject: class=<c> b=<b> extra=<e> owner=<o> injected=<n>
+// (availability=<a> recipe-row=<r> craft-route=<c>)` and the calls it left
+// alone, or `inject: off`.
+static std::string CpInjectText()
+{
+    if (!g_CpInjectOn.load()) return "inject: off";
+    return "inject: class=" + CpNumText(g_CpInjectClass.load()) + " b=" + CpNumText(g_CpInjectB.load())
+        + " extra=" + CpNumText(g_CpInjectExtra.load()) + " owner=" + CpNumText(g_CpInjectOwner.load())
+        + " injected=" + std::to_string(g_CpInjected)
+        + " (availability=" + std::to_string(g_CpInjectedAvailability) + " recipe-row=" + std::to_string(g_CpInjectedRecipeRow)
+        + " craft-route=" + std::to_string(g_CpInjectedRoute) + ")"
+        + " outside-route=" + std::to_string(g_CpInjectOutside)
+        + " other-owner=" + std::to_string(g_CpInjectOtherOwner)
+        + (g_CpInjectOtherOwner > 0 ? " (last a0=" + CpNumText(g_CpInjectLastOwner.load()) + ")" : std::string())
+        + " not-a-number=" + std::to_string(g_CpInjectNotNumber);
+}
+
+static bool CpRouteOnStack()
+{
+    for (int i = 0; i < kCpCraftRouteCount; ++i) if (g_CpRouteDepth[i] > 0) return true;
+    return false;
+}
+
+// After CountInventoryItem's trampoline. Every condition is read from the call
+// itself, at the point of use; a call that fails any of them keeps the game's
+// own return untouched. A call of the item's class and base that is left alone
+// is counted by why (another owner, outside every frame, not a number), so
+// `injected=0` in `show` always says which of those it was.
+static void CpInject(const char* label, long n, bool logged, int argc, RValue** A, RValue& r)
+{
+    if (!g_CpInjectOn.load()) return;
+    if (argc < 4 || !A || !A[0] || !A[1] || !A[3]) return;
+    double owner = -1, cls = -1, base = -1;
+    if (!ApNumber(*A[0], owner) || !ApNumber(*A[1], cls) || !ApNumber(*A[3], base)) return;
+    if (cls != g_CpInjectClass.load() || base != g_CpInjectB.load()) return;
+    if (owner != g_CpInjectOwner.load()) {
+        InterlockedIncrement(&g_CpInjectOtherOwner);
+        g_CpInjectLastOwner.store(owner);
+        return;
+    }
+    const bool inAvailability = g_CpAvailabilityDepth > 0;
+    const bool inRecipeRow = g_CpRecipeListDepth > 0;
+    const bool inRoute = CpRouteOnStack();
+    if (!inAvailability && !inRecipeRow && !inRoute) { InterlockedIncrement(&g_CpInjectOutside); return; }
+    if (!PpIsNumber(r)) { InterlockedIncrement(&g_CpInjectNotNumber); return; }
+    const double game = r.ToDouble();
+    if (!std::isfinite(game)) { InterlockedIncrement(&g_CpInjectNotNumber); return; }
+    const double raised = game + g_CpInjectExtra.load();
+    r = RValue(raised);
+    const long k = InterlockedIncrement(&g_CpInjected);
+    InterlockedIncrement(inAvailability ? &g_CpInjectedAvailability : inRecipeRow ? &g_CpInjectedRecipeRow : &g_CpInjectedRoute);
+    if (logged) {
+        try {
+            Out(std::string("craftprobe ") + label + " #" + std::to_string(n) + " injected: game ret=" + std::to_string(game)
+                + " -> " + std::to_string(raised) + " (injected=" + std::to_string(k) + ", "
+                + (inAvailability ? "availability call" : inRecipeRow ? "recipe row" : "craft route") + ")");
+        } catch (...) {}
+    }
+}
+
+// Before the trampoline: one budgeted line naming self, other and every
+// argument - and, on a craft-route row (route >= 0) or a row that reads the
+// route (readsRoute, Phase 1i), `within=`, read before this call's own frame
+// is entered. Under `arm inroute` a reading row outside the route is refused
+// here, before the budget is spent. Returns whether it was logged, so the
+// `ret=` line follows exactly the calls that were.
+static bool CpObserve(const char* label, long n, volatile long* logged, volatile long* logOn, int route, bool readsRoute,
+                      CInstance* S, CInstance* O, int argc, RValue** A)
+{
+    if (g_CpOwnLookup || !g_CpArmed.load() || !*logOn) return false;
+    const long budget = g_CpLogBudget;
+    if (*logged >= budget) return false;
+    const std::string within = (route >= 0 || readsRoute) ? CpWithin() : std::string();
+    if (readsRoute && g_CpInRouteGate.load() && within == "none") return false;   // counted by the detour, not logged
+    if (InterlockedIncrement(logged) > budget) return false;
+    try {
+        Out(std::string("craftprobe ") + label + " #" + std::to_string(n)
+            + (within.empty() ? std::string() : std::string(" within=") + within)
+            + " self=" + PpDescribeSelf(S) + " other=" + PpDescribeSelf(O)
+            + " argc=" + std::to_string(argc) + AggroArgs(argc, A) + PpArgIdentities(argc, A));
+    } catch (...) {}
+    return true;
+}
+
+// After the trampoline, on a row `backing` selected: keep what the game's own
+// call returned. The research global is set first, and the slot only after it
+// succeeded, so the slot never holds an unrooted value. A per-argument row
+// also keeps it under its keyed argument's signature (argument argIndex), the
+// same way, with the signature's call count, the latest first argument as text
+// and the distinct self objects that made it.
+static void CpCapture(const char* safe, const char* label, long n, CpKept& kept, CInstance* S, int argc, RValue** A,
+                      const RValue& result)
+{
+    if (g_CpInCapture) return;
+    g_CpInCapture = true;
+    try {
+        const std::string root = std::string("__cp_backing_") + safe;
+        g_Yytk->CallBuiltin("variable_global_set", { RValue(root), result });
+        if (!kept.value) kept.value = new RValue();
+        *kept.value = result;
+        kept.root = root;
+        kept.call = n;
+        kept.self = PpDescribeSelf(S);
+        if (++kept.seen == 1)
+            Out(std::string("craftprobe backing ") + label + " #" + std::to_string(n) + " self=" + kept.self
+                + " kept " + PpBackingShape(result) + " (the latest return is kept; `backing dump` writes it)");
+        if (kept.perArg) {
+            const int k = kept.argIndex;
+            const std::string sig = (argc > k && A && A[k]) ? CpArgSignature(*A[k]) : "(no argument " + std::to_string(k) + ")";
+            CpArgKept* slot = nullptr;
+            for (CpArgKept& s : kept.perArgs) if (s.sig == sig) { slot = &s; break; }
+            if (!slot && (int)kept.perArgs.size() < kCpBackingMaxArgs) {
+                kept.perArgs.push_back(CpArgKept());
+                slot = &kept.perArgs.back();
+                slot->sig = sig;
+                slot->root = root + "_arg" + std::to_string(kept.perArgs.size() - 1);
+                Out(std::string("craftprobe backing ") + label + " #" + std::to_string(n) + " new argument a" + std::to_string(k)
+                    + "=" + sig + " self=" + kept.self + " (" + std::to_string(kept.perArgs.size()) + "/"
+                    + std::to_string(kCpBackingMaxArgs) + " signatures kept)");
+            }
+            if (!slot) ++kept.perArgFull;
+            else {
+                g_Yytk->CallBuiltin("variable_global_set", { RValue(slot->root), result });
+                if (!slot->value) slot->value = new RValue();
+                *slot->value = result;
+                slot->call = n;
+                slot->self = kept.self;
+                ++slot->calls;
+                slot->a0 = (argc > 0 && A && A[0]) ? CpArgSignature(*A[0], kCpBackingA0Max) : std::string("(none)");
+                std::string obj = PpObjectName(S);
+                if (obj.empty()) obj = "(no object)";
+                if ((int)slot->selves.size() < kCpBackingMaxSelves
+                    && std::find(slot->selves.begin(), slot->selves.end(), obj) == slot->selves.end())
+                    slot->selves.push_back(obj);
+            }
+        }
+    } catch (...) {}
+    g_CpInCapture = false;
+}
+
+static void CpAfter(const char* safe, const char* label, long n, bool logged, bool capture, CpKept& kept,
+                    CInstance* S, int argc, RValue** A, const RValue& result)
+{
+    if (logged) {
+        try { Out(std::string("craftprobe ") + label + " #" + std::to_string(n) + " ret=" + PpRetText(result)); }
+        catch (...) { Out(std::string("craftprobe ") + label + " #" + std::to_string(n) + " ret=<read failed>"); }
+    }
+    if (capture && g_CpBacking.load() && !g_CpOwnLookup) CpCapture(safe, label, n, kept, S, argc, A, result);
+}
+
+#define CRAFTPROBE_DETOUR(SAFE, LABEL) \
+    static PFUNC_YYGMLScript g_CpOrig_##SAFE = nullptr; \
+    static volatile long g_CpCalls_##SAFE = 0; \
+    static volatile long g_CpLogged_##SAFE = 0; \
+    static volatile long g_CpLogOn_##SAFE = 0; \
+    static volatile long g_CpCapture_##SAFE = 0; \
+    static CpKept g_CpKept_##SAFE; \
+    static RValue& CpDetour_##SAFE(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) { \
+        static const int route = CpCraftRouteSlot(LABEL); \
+        static const bool readsRoute = CpReadsRoute(LABEL); \
+        static const bool recipeList = CpIsRecipeListRow(LABEL); \
+        static const bool availability = CpIsAvailabilityRow(LABEL); \
+        static const bool countRow = CpIsCountRow(LABEL); \
+        const long n = InterlockedIncrement(&g_CpCalls_##SAFE); \
+        const bool logged = CpObserve(LABEL, n, &g_CpLogged_##SAFE, &g_CpLogOn_##SAFE, route, readsRoute, S, O, argc, A); \
+        RValue& r = [&]() -> RValue& { \
+            CpRouteFrame frame(route, n); \
+            CpCountFrame list(g_CpRecipeListDepth, recipeList); \
+            CpCountFrame avail(g_CpAvailabilityDepth, availability); \
+            return g_CpOrig_##SAFE ? g_CpOrig_##SAFE(S, O, R, argc, A) : R; \
+        }(); \
+        CpAfter(#SAFE, LABEL, n, logged, g_CpCapture_##SAFE != 0, g_CpKept_##SAFE, S, argc, A, r); \
+        if (countRow) CpInject(LABEL, n, logged, argc, A, r); \
+        return r; \
+    }
+
+// One row per candidate in docs/crafting-materials-research.md § Static
+// search. SAFE, label, SDK constant. The runtime name is always the
+// hs-game-sdk constant's own value - never retyped here - so a row that prints
+// `not found` is a finding about the runtime, not a typo, and a game patch
+// that renumbers a closure fails the compile once the SDK is regenerated.
+#define CRAFTPROBE_TARGETS(X) \
+    /* crafting (the cube window's scripts and their struct methods) */ \
+    X(GetCraftItemsAvailable, "GetCraftItemsAvailable", gml_Script_GetCraftItemsAvailable) \
+    X(CraftFindRecipeItems, "CraftFindRecipeItems", gml_Script_CraftFindRecipeItems) \
+    X(Struct68, "___struct___68@CraftFindRecipeItems", gml_Script____struct___68_CraftFindRecipeItems_DefineCraftingFuncs) \
+    X(DoCraftResult, "DoCraftResult", gml_Script_DoCraftResult) \
+    X(Struct86, "___struct___86@DoCraftResult", gml_Script____struct___86_DoCraftResult_DefineCraftingFuncs) \
+    X(CraftEditGrid, "CraftEditGrid", gml_Script_CraftEditGrid) \
+    X(Struct87, "___struct___87@CraftEditGrid", gml_Script____struct___87_CraftEditGrid_DefineCraftingFuncs) \
+    X(CraftEditPlayerInventory, "CraftEditPlayerInventory", gml_Script_CraftEditPlayerInventory) \
+    X(Struct88, "___struct___88@CraftEditPlayerInventory", gml_Script____struct___88_CraftEditPlayerInventory_DefineCraftingFuncs) \
+    X(UiACraftButton, "UiACraftButton", gml_Script_UiACraftButton) \
+    X(UiACraftMultiAmountConfirm, "UiACraftMultiAmountConfirm", gml_Script_UiACraftMultiAmountConfirm) \
+    X(GetCraftRecipeName, "GetCraftRecipeName", gml_Script_GetCraftRecipeName) \
+    X(SCraftData, "s_CraftData", gml_Script_s_CraftData) \
+    X(SCraftItem, "s_CraftItem", gml_Script_s_CraftItem) \
+    /* Phase 1h ("Phase 1h rows"): the decoder of a recipe input's stored amount */ \
+    X(PilipaliDecrypt, "PilipaliDecrypt", gml_Script_PilipaliDecrypt) \
+    /* count / find / consume in the inventory */ \
+    X(CountInventoryItem, "CountInventoryItem", gml_Script_CountInventoryItem) \
+    X(FindInventoryItem, "FindInventoryItem", gml_Script_FindInventoryItem) \
+    X(FindInventoryItemData, "FindInventoryItemData", gml_Script_FindInventoryItemData) \
+    X(FindInventoryItemOperation, "FindInventoryItemOperation", gml_Script_FindInventoryItemOperation) \
+    X(Struct152, "___struct___152@FindInventoryItemOperation", gml_Script____struct___152_FindInventoryItemOperation_InventoryFuncs) \
+    X(InventoryStackHandler, "InventoryStackHandler", gml_Script_InventoryStackHandler) \
+    X(InventoryStackUpdateAndRemove, "InventoryStackUpdateAndRemove", gml_Script_InventoryStackUpdateAndRemove) \
+    X(Struct161, "___struct___161@InventoryStackUpdateAndRemove", gml_Script____struct___161_InventoryStackUpdateAndRemove_InventoryFuncs) \
+    X(InventoryStackUpdateAndEdit, "InventoryStackUpdateAndEdit", gml_Script_InventoryStackUpdateAndEdit) \
+    X(Struct172, "___struct___172@InventoryStackUpdateAndEdit", gml_Script____struct___172_InventoryStackUpdateAndEdit_InventoryFuncs) \
+    X(SPendingStackOperation, "s_PendingStackOperation", gml_Script_s_PendingStackOperation) \
+    X(GetStackOpLocationFromGridType, "GetStackOpLocationFromGridType", gml_Script_GetStackOpLocationFromGridType) \
+    X(GetItemOwnerFromStackOpLocation, "GetItemOwnerFromStackOpLocation", gml_Script_GetItemOwnerFromStackOpLocation) \
+    X(GetItemOwnerStr, "GetItemOwnerStr", gml_Script_GetItemOwnerStr) \
+    X(ChangeItemOwner, "ChangeItemOwner", gml_Script_ChangeItemOwner) \
+    X(GetMaxStack, "GetMaxStack", gml_Script_GetMaxStack) \
+    X(IsItemTypeStackable, "IsItemTypeStackable", gml_Script_IsItemTypeStackable) \
+    X(UiAInventoryConsumeItemConfirm, "UiAInventoryConsumeItemConfirm", gml_Script_UiAInventoryConsumeItemConfirm) \
+    X(GetItemFromFingerprint, "GetItemFromFingerprint", gml_Script_GetItemFromFingerprint) \
+    X(ReturnItemTypeFromFingerPrint, "ReturnItemTypeFromFingerPrint", gml_Script_ReturnItemTypeFromFingerPrint) \
+    /* stash */ \
+    X(StashAddToStack, "StashAddToStack", gml_Script_StashAddToStack) \
+    X(StashGridAddItem, "StashGridAddItem", gml_Script_StashGridAddItem) \
+    X(SStashTabData, "s_StashTabData", gml_Script_s_StashTabData) \
+    X(GetStashMaxTabs, "GetStashMaxTabs", gml_Script_GetStashMaxTabs) \
+    X(LoadStash, "LoadStash", gml_Script_LoadStash) \
+    X(SaveStash, "SaveStash", gml_Script_SaveStash) \
+    X(Struct357, "___struct___357@SaveStash", gml_Script____struct___357_SaveStash_SaveStashFunc) \
+    X(Struct359, "___struct___359@SaveStash", gml_Script____struct___359_SaveStash_SaveStashFunc) \
+    X(Struct361, "___struct___361@SaveStash", gml_Script____struct___361_SaveStash_SaveStashFunc) \
+    X(Struct363, "___struct___363@SaveStash", gml_Script____struct___363_SaveStash_SaveStashFunc) \
+    X(Struct364, "___struct___364@SaveStash", gml_Script____struct___364_SaveStash_SaveStashFunc) \
+    /* Phase 1h: the save's per-item step - one entry per item SaveStash writes */ \
+    X(CreateItemSaveStruct, "CreateItemSaveStruct", gml_Script_CreateItemSaveStruct) \
+    X(GetStashMapPos, "GetStashMapPos", gml_Script_GetStashMapPos) \
+    X(UiAStashTabClick, "UiAStashTabClick", gml_Script_UiAStashTabClick) \
+    X(UiAStashMaterialTabClick, "UiAStashMaterialTabClick", gml_Script_UiAStashMaterialTabClick) \
+    X(UiAStashTabMaterialBuy, "UiAStashTabMaterialBuy", gml_Script_UiAStashTabMaterialBuy) \
+    X(UiAStashListBtnActivate, "UiAStashListBtnActivate", gml_Script_UiAStashListBtnActivate) \
+    X(StashListBtn1820, "UiAStashListBtnActivate anon@1820", gml_Script_anon_1820_UiAStashListBtnActivate_UiActivateFuncs) \
+    X(UiDrawStashTabBuy, "UiDrawStashTabBuy", gml_Script_UiDrawStashTabBuy) \
+    /* the bag's materials tab and the click-move route issue #9 measured */ \
+    X(UiAInventoryMaterialTabClick, "UiAInventoryMaterialTabClick", gml_Script_UiAInventoryMaterialTabClick) \
+    X(UiDrawInventoryMaterialTab, "UiDrawInventoryMaterialTab", gml_Script_UiDrawInventoryMaterialTab) \
+    X(InventoryGridAddToStack, "InventoryGridAddToStack", gml_Script_InventoryGridAddToStack) \
+    X(InventoryGridCanAddToStack, "InventoryGridCanAddToStack", gml_Script_InventoryGridCanAddToStack) \
+    X(InvGridClearItemNode, "InvGridClearItemNode", gml_Script_InvGridClearItemNode) \
+    X(GetItemPreferredGrid, "GetItemPreferredGrid", gml_Script_GetItemPreferredGrid) \
+    X(GridAddItem, "GridAddItem", gml_Script_GridAddItem) \
+    X(GetInventoryGridNode, "GetInventoryGridNode", gml_Script_GetInventoryGridNode) \
+    X(InventoryGridRemoveItem, "InventoryGridRemoveItem", gml_Script_InventoryGridRemoveItem) \
+    X(GridRemoveItem, "GridRemoveItem", gml_Script_GridRemoveItem) \
+    /* profile getters: capture only (`backing on`), never invoked by us */ \
+    X(GetProfileInv, "GetProfileInventoryData", gml_Script_GetProfileInventoryData) \
+    X(GetItemOwner, "GetPlayerItemOwner", gml_Script_GetPlayerItemOwner) \
+    X(GetInvArray, "GetInventoryArray", gml_Script_GetInventoryArray) \
+    X(GetProfileObj, "GetPlayerProfileObj", gml_Script_GetPlayerProfileObj) \
+    /* Create-event closures of the cube and stash objects. Derived from the  */ \
+    /* SDK: every constant whose value names one of these eight objects'      */ \
+    /* Create_0, which test_craftprobe_table_covers_every_sdk_closure_of_its_ */ \
+    /* objects enforces.                                                      */ \
+    /* UI_Craft_obj (the cube window) */ \
+    X(Craft1834, "UI_Craft_obj anon@1834", gml_Script_anon_1834_gml_Object_UI_Craft_obj_Create_0) \
+    X(Craft4988, "UI_Craft_obj anon@4988", gml_Script_anon_4988_gml_Object_UI_Craft_obj_Create_0) \
+    X(Craft6782, "UI_Craft_obj anon@6782", gml_Script_anon_6782_gml_Object_UI_Craft_obj_Create_0) \
+    X(Craft7914, "UI_Craft_obj anon@7914", gml_Script_anon_7914_gml_Object_UI_Craft_obj_Create_0) \
+    /* UI_Journal_Crafting_obj, UI_Craft_Recipe_List_Item_obj, Craft_Cube_obj, UI_Button_Journal_Craft_obj */ \
+    X(JournalCrafting1154, "UI_Journal_Crafting_obj anon@1154", gml_Script_anon_1154_gml_Object_UI_Journal_Crafting_obj_Create_0) \
+    X(RecipeItem840, "UI_Craft_Recipe_List_Item_obj anon@840", gml_Script_anon_840_gml_Object_UI_Craft_Recipe_List_Item_obj_Create_0) \
+    X(CraftCube436, "Craft_Cube_obj anon@436", gml_Script_anon_436_gml_Object_Craft_Cube_obj_Create_0) \
+    X(JournalCraftButton525, "UI_Button_Journal_Craft_obj anon@525", gml_Script_anon_525_gml_Object_UI_Button_Journal_Craft_obj_Create_0) \
+    /* UI_Stash_obj (the stash window) */ \
+    X(Stash1649, "UI_Stash_obj anon@1649", gml_Script_anon_1649_gml_Object_UI_Stash_obj_Create_0) \
+    X(Stash2245, "UI_Stash_obj anon@2245", gml_Script_anon_2245_gml_Object_UI_Stash_obj_Create_0) \
+    X(Stash2483, "UI_Stash_obj anon@2483", gml_Script_anon_2483_gml_Object_UI_Stash_obj_Create_0) \
+    X(Stash3835, "UI_Stash_obj anon@3835", gml_Script_anon_3835_gml_Object_UI_Stash_obj_Create_0) \
+    X(Stash4195, "UI_Stash_obj anon@4195", gml_Script_anon_4195_gml_Object_UI_Stash_obj_Create_0) \
+    X(Stash4348, "UI_Stash_obj anon@4348", gml_Script_anon_4348_gml_Object_UI_Stash_obj_Create_0) \
+    X(Stash5662, "UI_Stash_obj anon@5662", gml_Script_anon_5662_gml_Object_UI_Stash_obj_Create_0) \
+    X(Stash6631, "UI_Stash_obj anon@6631", gml_Script_anon_6631_gml_Object_UI_Stash_obj_Create_0) \
+    X(Stash7091, "UI_Stash_obj anon@7091", gml_Script_anon_7091_gml_Object_UI_Stash_obj_Create_0) \
+    X(Stash7525, "UI_Stash_obj anon@7525", gml_Script_anon_7525_gml_Object_UI_Stash_obj_Create_0) \
+    X(Stash8329, "UI_Stash_obj anon@8329", gml_Script_anon_8329_gml_Object_UI_Stash_obj_Create_0) \
+    X(Stash8574, "UI_Stash_obj anon@8574", gml_Script_anon_8574_gml_Object_UI_Stash_obj_Create_0) \
+    /* UI_Stash_Tab_Bar_Container_obj (the stash's tab bar) */ \
+    X(TabBar125, "UI_Stash_Tab_Bar_Container_obj anon@125", gml_Script_anon_125_gml_Object_UI_Stash_Tab_Bar_Container_obj_Create_0) \
+    X(TabBar1018, "UI_Stash_Tab_Bar_Container_obj anon@1018", gml_Script_anon_1018_gml_Object_UI_Stash_Tab_Bar_Container_obj_Create_0) \
+    X(TabBar5497, "UI_Stash_Tab_Bar_Container_obj anon@5497", gml_Script_anon_5497_gml_Object_UI_Stash_Tab_Bar_Container_obj_Create_0) \
+    X(TabBar5778, "UI_Stash_Tab_Bar_Container_obj anon@5778", gml_Script_anon_5778_gml_Object_UI_Stash_Tab_Bar_Container_obj_Create_0) \
+    X(TabBar6037, "UI_Stash_Tab_Bar_Container_obj anon@6037", gml_Script_anon_6037_gml_Object_UI_Stash_Tab_Bar_Container_obj_Create_0) \
+    X(TabBar8477, "UI_Stash_Tab_Bar_Container_obj anon@8477", gml_Script_anon_8477_gml_Object_UI_Stash_Tab_Bar_Container_obj_Create_0) \
+    X(TabBar9733, "UI_Stash_Tab_Bar_Container_obj anon@9733", gml_Script_anon_9733_gml_Object_UI_Stash_Tab_Bar_Container_obj_Create_0) \
+    X(TabBarSort, "UI_Stash_Tab_Bar_Container_obj sortXAscending", gml_Script_sortXAscending_gml_Object_UI_Stash_Tab_Bar_Container_obj_Create_0) \
+    /* Town_Stash_obj (the world object) */ \
+    X(TownStash663, "Town_Stash_obj anon@663", gml_Script_anon_663_gml_Object_Town_Stash_obj_Create_0) \
+    /* UI_Button_Stash_Tab_obj has no Create closure; its one Step closure */ \
+    X(StashTabButton503, "UI_Button_Stash_Tab_obj anon@503 (Step)", gml_Script_anon_503_gml_Object_UI_Button_Stash_Tab_obj_Step_0) \
+    /* Phase 1b (research doc, Static search, "Phase 1b additions"): Phase 1's */ \
+    /* hand move between the Socketable tab and the bag fired none of the rows */ \
+    /* above while the control climbed, so every candidate of the widened     */ \
+    /* search rides the same one `hook`. The closures are every SDK constant  */ \
+    /* on the Create event of the nine objects below (the coverage test).     */ \
+    /* Phase 1b: grid input and drag */ \
+    X(ProcessInventoryGridInput, "ProcessInventoryGridInput", gml_Script_ProcessInventoryGridInput) \
+    X(Struct305, "___struct___305@ProcessInventoryGridInput", gml_Script____struct___305_ProcessInventoryGridInput_ProcessInventoryGridInputFunc) \
+    X(Struct308, "___struct___308@ProcessInventoryGridInput", gml_Script____struct___308_ProcessInventoryGridInput_ProcessInventoryGridInputFunc) \
+    X(InvStartDragging, "InvStartDragging", gml_Script_InvStartDragging) \
+    X(InvCopyItemDragData, "InvCopyItemDragData", gml_Script_InvCopyItemDragData) \
+    X(InvCopyItemToInvDragData, "InvCopyItemToInvDragData", gml_Script_InvCopyItemToInvDragData) \
+    X(SInventoryDrag, "s_InventoryDrag", gml_Script_s_InventoryDrag) \
+    X(ResetDragState, "ResetDragState@s_InventoryDrag", gml_Script_ResetDragState_anon_47432_s_InventoryDrag_DefineStructs) \
+    X(InventorySwapItemsNew, "InventorySwapItemsNew", gml_Script_InventorySwapItemsNew) \
+    X(InvGridEquipV2, "InvGridEquipV2", gml_Script_InvGridEquipV2) \
+    X(InvGridEquipGamepad, "InvGridEquipGamepad", gml_Script_InvGridEquipGamepad) \
+    /* Phase 1b: adds and stacks */ \
+    X(InventoryGridAddItem, "InventoryGridAddItem", gml_Script_InventoryGridAddItem) \
+    X(InventoryGridAddItemPos, "InventoryGridAddItemPos", gml_Script_InventoryGridAddItemPos) \
+    X(InventoryGridAddItemToTab, "InventoryGridAddItemToTab", gml_Script_InventoryGridAddItemToTab) \
+    X(InventoryGridHasSpace, "InventoryGridHasSpace", gml_Script_InventoryGridHasSpace) \
+    X(InventoryGridHasSpaceMulti, "InventoryGridHasSpaceMulti", gml_Script_InventoryGridHasSpaceMulti) \
+    X(GridAddToStack, "GridAddToStack", gml_Script_GridAddToStack) \
+    X(AddToInventory, "AddToInventory", gml_Script_AddToInventory) \
+    X(Struct13, "___struct___13@AddToInventory", gml_Script____struct___13_AddToInventory_AddToInventoryFunc) \
+    X(IsStackable, "IsStackable", gml_Script_IsStackable) \
+    X(ItemsAreStackable, "ItemsAreStackable", gml_Script_ItemsAreStackable) \
+    X(UiASplitStack, "UiASplitStack", gml_Script_UiASplitStack) \
+    X(UiAInventoryMobileStackSplit, "UiAInventoryMobileStackSplit", gml_Script_UiAInventoryMobileStackSplit) \
+    X(GetItemFingerprint, "GetItemFingerprint", gml_Script_GetItemFingerprint) \
+    /* Phase 1b: socket family (the Socketable tab's bag counterpart; the draw row runs every frame) */ \
+    X(InventorySocketItem, "InventorySocketItem", gml_Script_InventorySocketItem) \
+    X(InventorySocketUpdateAndRemove, "InventorySocketUpdateAndRemove", gml_Script_InventorySocketUpdateAndRemove) \
+    X(InventorySocketUpdateAndSubtract, "InventorySocketUpdateAndSubtract", gml_Script_InventorySocketUpdateAndSubtract) \
+    X(Struct169, "___struct___169@InventorySocketUpdateAndSubtract", gml_Script____struct___169_InventorySocketUpdateAndSubtract_InventoryFuncs) \
+    X(UiAInventorySocketTabClick, "UiAInventorySocketTabClick", gml_Script_UiAInventorySocketTabClick) \
+    X(UiDrawInventorySocketTab, "UiDrawInventorySocketTab", gml_Script_UiDrawInventorySocketTab) \
+    X(SSocketData, "s_SocketData", gml_Script_s_SocketData) \
+    X(GetItemSocketDataStruct, "GetItemSocketDataStruct", gml_Script_GetItemSocketDataStruct) \
+    /* Phase 1b: stash tab buys and types */ \
+    X(UiAStashTabSocketableBuy, "UiAStashTabSocketableBuy", gml_Script_UiAStashTabSocketableBuy) \
+    X(UiAStashTabUniqueBuy, "UiAStashTabUniqueBuy", gml_Script_UiAStashTabUniqueBuy) \
+    X(UiAStashTabBuy, "UiAStashTabBuy", gml_Script_UiAStashTabBuy) \
+    X(UiAStashUniqueItemType, "UiAStashUniqueItemType", gml_Script_UiAStashUniqueItemType) \
+    /* Phase 1b: node and tab plumbing */ \
+    X(UiCreateNode, "UiCreateNode", gml_Script_UiCreateNode) \
+    X(Struct409, "___struct___409@UiCreateNode", gml_Script____struct___409_UiCreateNode_UiFuncs) \
+    X(UiRemoveNode, "UiRemoveNode", gml_Script_UiRemoveNode) \
+    X(UiMoveNode, "UiMoveNode", gml_Script_UiMoveNode) \
+    X(ValidateInventoryNode, "ValidateInventoryNode", gml_Script_ValidateInventoryNode) \
+    X(DetectInventoryDuplicateNode, "DetectInventoryDuplicateNode", gml_Script_DetectInventoryDuplicateNode) \
+    X(SInvNode, "s_InvNode", gml_Script_s_InvNode) \
+    X(UiResizeInventoryNodes, "UiResizeInventoryNodes", gml_Script_UiResizeInventoryNodes) \
+    X(GetInventoryMaxTabs, "GetInventoryMaxTabs", gml_Script_GetInventoryMaxTabs) \
+    X(InventoryResetTabs, "InventoryResetTabs", gml_Script_InventoryResetTabs) \
+    X(InventorySortTab, "InventorySortTab", gml_Script_InventorySortTab) \
+    X(Struct187, "___struct___187@InventorySortTab", gml_Script____struct___187_InventorySortTab_InventoryGrid) \
+    X(UiAInventoryTabClick, "UiAInventoryTabClick", gml_Script_UiAInventoryTabClick) \
+    X(InventoryLogAddItem, "InventoryLogAddItem", gml_Script_InventoryLogAddItem) \
+    X(InventoryUpdateExtAddItemStats, "InventoryUpdateExtAddItemStats", gml_Script_InventoryUpdateExtAddItemStats) \
+    X(InvTabButton403, "UI_Button_Inventory_Tab_obj anon@403 (Step)", gml_Script_anon_403_gml_Object_UI_Button_Inventory_Tab_obj_Step_0) \
+    X(LoadInventory448, "Load_Inventory_obj ___struct___448 (Other_62)", gml_Script____struct___448_gml_Object_Load_Inventory_obj_Other_62) \
+    /* Phase 1b: closures of UI_Inventory_Grid_obj (anon@15345 also sits in autoprospect's table) */ \
+    X(InvGrid2143, "UI_Inventory_Grid_obj anon@2143", gml_Script_anon_2143_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGrid2971, "UI_Inventory_Grid_obj anon@2971", gml_Script_anon_2971_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGrid4064, "UI_Inventory_Grid_obj anon@4064", gml_Script_anon_4064_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS517, "UI_Inventory_Grid_obj ___struct___517@anon@8881", gml_Script____struct___517_anon_8881_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS519, "UI_Inventory_Grid_obj ___struct___519@anon@8881", gml_Script____struct___519_anon_8881_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGrid8881, "UI_Inventory_Grid_obj anon@8881", gml_Script_anon_8881_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS522, "UI_Inventory_Grid_obj ___struct___522@anon@15345", gml_Script____struct___522_anon_15345_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS529, "UI_Inventory_Grid_obj ___struct___529@anon@15345", gml_Script____struct___529_anon_15345_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS532, "UI_Inventory_Grid_obj ___struct___532@anon@15345", gml_Script____struct___532_anon_15345_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS536, "UI_Inventory_Grid_obj ___struct___536@anon@15345", gml_Script____struct___536_anon_15345_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS538, "UI_Inventory_Grid_obj ___struct___538@anon@15345", gml_Script____struct___538_anon_15345_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS541, "UI_Inventory_Grid_obj ___struct___541@anon@15345", gml_Script____struct___541_anon_15345_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGrid15345, "UI_Inventory_Grid_obj anon@15345", gml_Script_anon_15345_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGrid34555, "UI_Inventory_Grid_obj anon@34555", gml_Script_anon_34555_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGrid36159, "UI_Inventory_Grid_obj anon@36159", gml_Script_anon_36159_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    /* Phase 1b: closures of UI_Grid_obj */ \
+    X(Grid933, "UI_Grid_obj anon@933", gml_Script_anon_933_gml_Object_UI_Grid_obj_Create_0) \
+    X(Grid1307, "UI_Grid_obj anon@1307", gml_Script_anon_1307_gml_Object_UI_Grid_obj_Create_0) \
+    X(Grid1577, "UI_Grid_obj anon@1577", gml_Script_anon_1577_gml_Object_UI_Grid_obj_Create_0) \
+    X(Grid2086, "UI_Grid_obj anon@2086", gml_Script_anon_2086_gml_Object_UI_Grid_obj_Create_0) \
+    X(Grid2244, "UI_Grid_obj anon@2244", gml_Script_anon_2244_gml_Object_UI_Grid_obj_Create_0) \
+    X(Grid2416, "UI_Grid_obj anon@2416", gml_Script_anon_2416_gml_Object_UI_Grid_obj_Create_0) \
+    /* Phase 1b: closures of UI_Node_Parent_obj */ \
+    X(NodeParent1577, "UI_Node_Parent_obj anon@1577", gml_Script_anon_1577_gml_Object_UI_Node_Parent_obj_Create_0) \
+    X(NodeParent1997, "UI_Node_Parent_obj anon@1997", gml_Script_anon_1997_gml_Object_UI_Node_Parent_obj_Create_0) \
+    /* Phase 1b: closures of UI_Inventory_obj (the bag window) */ \
+    X(Inv495, "UI_Inventory_obj anon@495", gml_Script_anon_495_gml_Object_UI_Inventory_obj_Create_0) \
+    X(Inv2261, "UI_Inventory_obj anon@2261", gml_Script_anon_2261_gml_Object_UI_Inventory_obj_Create_0) \
+    X(Inv2364, "UI_Inventory_obj anon@2364", gml_Script_anon_2364_gml_Object_UI_Inventory_obj_Create_0) \
+    X(Inv4391, "UI_Inventory_obj anon@4391", gml_Script_anon_4391_gml_Object_UI_Inventory_obj_Create_0) \
+    X(Inv5590, "UI_Inventory_obj anon@5590", gml_Script_anon_5590_gml_Object_UI_Inventory_obj_Create_0) \
+    X(Inv7874, "UI_Inventory_obj anon@7874", gml_Script_anon_7874_gml_Object_UI_Inventory_obj_Create_0) \
+    X(Inv14458, "UI_Inventory_obj anon@14458", gml_Script_anon_14458_gml_Object_UI_Inventory_obj_Create_0) \
+    /* Phase 1b: closures of UI_Inventory_Parent_obj */ \
+    X(InvParent1621, "UI_Inventory_Parent_obj anon@1621", gml_Script_anon_1621_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent4028, "UI_Inventory_Parent_obj anon@4028", gml_Script_anon_4028_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent6164, "UI_Inventory_Parent_obj anon@6164", gml_Script_anon_6164_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent6272, "UI_Inventory_Parent_obj anon@6272", gml_Script_anon_6272_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent6754, "UI_Inventory_Parent_obj anon@6754", gml_Script_anon_6754_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent7597, "UI_Inventory_Parent_obj anon@7597", gml_Script_anon_7597_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent8615, "UI_Inventory_Parent_obj anon@8615", gml_Script_anon_8615_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent11250, "UI_Inventory_Parent_obj anon@11250", gml_Script_anon_11250_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent19615, "UI_Inventory_Parent_obj anon@19615", gml_Script_anon_19615_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent22055, "UI_Inventory_Parent_obj anon@22055", gml_Script_anon_22055_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    /* Phase 1b: the Socketable stash tab's window */ \
+    X(StashSocket1305, "UI_Stash_Socket_New_obj anon@1305", gml_Script_anon_1305_gml_Object_UI_Stash_Socket_New_obj_Create_0) \
+    /* Phase 1b: the Unique stash tab's window - candidates for a shared special-tab path only, never acted on */ \
+    X(StashUnique1081, "UI_Stash_Unique_Items_obj anon@1081", gml_Script_anon_1081_gml_Object_UI_Stash_Unique_Items_obj_Create_0) \
+    X(StashUnique3176, "UI_Stash_Unique_Items_obj anon@3176", gml_Script_anon_3176_gml_Object_UI_Stash_Unique_Items_obj_Create_0) \
+    X(StashUnique4465, "UI_Stash_Unique_Items_obj anon@4465", gml_Script_anon_4465_gml_Object_UI_Stash_Unique_Items_obj_Create_0) \
+    X(StashUnique4743, "UI_Stash_Unique_Items_obj anon@4743", gml_Script_anon_4743_gml_Object_UI_Stash_Unique_Items_obj_Create_0) \
+    X(StashUnique5014, "UI_Stash_Unique_Items_obj anon@5014", gml_Script_anon_5014_gml_Object_UI_Stash_Unique_Items_obj_Create_0) \
+    X(StashUnique5993, "UI_Stash_Unique_Items_obj anon@5993", gml_Script_anon_5993_gml_Object_UI_Stash_Unique_Items_obj_Create_0) \
+    X(StashUnique11861, "UI_Stash_Unique_Items_obj anon@11861", gml_Script_anon_11861_gml_Object_UI_Stash_Unique_Items_obj_Create_0) \
+    X(StashUnique15868, "UI_Stash_Unique_Items_obj anon@15868", gml_Script_anon_15868_gml_Object_UI_Stash_Unique_Items_obj_Create_0) \
+    /* Phase 1b: closures of Load_Inventory_obj and UI_Split_Stack_obj */ \
+    X(LoadInv752, "Load_Inventory_obj anon@752", gml_Script_anon_752_gml_Object_Load_Inventory_obj_Create_0) \
+    X(LoadInv877, "Load_Inventory_obj anon@877", gml_Script_anon_877_gml_Object_Load_Inventory_obj_Create_0) \
+    X(SplitStack1285, "UI_Split_Stack_obj anon@1285", gml_Script_anon_1285_gml_Object_UI_Split_Stack_obj_Create_0) \
+    /* Phase 1c (research doc, Static search, "Phase 1c rows"): LoadStash ran  */ \
+    /* at character load and returned true, so the stash went somewhere while */ \
+    /* its window is closed. Town_Stash_obj's only Create closure, anon@663,  */ \
+    /* is already a row above and is armed again rather than added.           */ \
+    X(GetItemMap, "GetItemMap", gml_Script_GetItemMap) \
+    X(GetInventoryMapPos, "GetInventoryMapPos", gml_Script_GetInventoryMapPos) \
+    X(SaveInventoryMap, "SaveInventoryMap", gml_Script_SaveInventoryMap) \
+    X(LoadInventoryOrderNew, "LoadInventoryOrderNew", gml_Script_LoadInventoryOrderNew) \
+    X(SSaveStashConstants, "s_SaveStashConstants", gml_Script_s_SaveStashConstants) \
+    /* Phase 1c: closures of Console_Save_obj (LoadStash's self at load) */ \
+    X(ConsoleSave1640, "Console_Save_obj anon@1640", gml_Script_anon_1640_gml_Object_Console_Save_obj_Create_0) \
+    X(ConsoleSave1828, "Console_Save_obj anon@1828", gml_Script_anon_1828_gml_Object_Console_Save_obj_Create_0) \
+    X(ConsoleSave2004, "Console_Save_obj anon@2004", gml_Script_anon_2004_gml_Object_Console_Save_obj_Create_0) \
+    X(ConsoleSave2587, "Console_Save_obj anon@2587", gml_Script_anon_2587_gml_Object_Console_Save_obj_Create_0) \
+    X(ConsoleSave3249, "Console_Save_obj anon@3249", gml_Script_anon_3249_gml_Object_Console_Save_obj_Create_0) \
+    X(ConsoleSave3848, "Console_Save_obj anon@3848", gml_Script_anon_3848_gml_Object_Console_Save_obj_Create_0) \
+    /* Phase 1c: closures of Profile_Manager_obj (citrace names them too: one instrument per session) */ \
+    X(ProfileManager2012, "Profile_Manager_obj anon@2012", gml_Script_anon_2012_gml_Object_Profile_Manager_obj_Create_0) \
+    X(ProfileManager2520, "Profile_Manager_obj anon@2520", gml_Script_anon_2520_gml_Object_Profile_Manager_obj_Create_0) \
+    X(ProfileManager3454, "Profile_Manager_obj anon@3454", gml_Script_anon_3454_gml_Object_Profile_Manager_obj_Create_0) \
+    X(ProfileManager5201, "Profile_Manager_obj anon@5201", gml_Script_anon_5201_gml_Object_Profile_Manager_obj_Create_0) \
+    X(ProfileManager5349, "Profile_Manager_obj anon@5349", gml_Script_anon_5349_gml_Object_Profile_Manager_obj_Create_0) \
+    X(ProfileManager5835, "Profile_Manager_obj anon@5835", gml_Script_anon_5835_gml_Object_Profile_Manager_obj_Create_0) \
+    X(ProfileManager6549, "Profile_Manager_obj anon@6549", gml_Script_anon_6549_gml_Object_Profile_Manager_obj_Create_0) \
+    X(ProfileManager6879, "Profile_Manager_obj anon@6879", gml_Script_anon_6879_gml_Object_Profile_Manager_obj_Create_0) \
+    X(ProfileManager8168, "Profile_Manager_obj anon@8168", gml_Script_anon_8168_gml_Object_Profile_Manager_obj_Create_0) \
+    X(ProfileManager9994, "Profile_Manager_obj anon@9994", gml_Script_anon_9994_gml_Object_Profile_Manager_obj_Create_0) \
+    /* Phase 1e (research doc, Static search, "Phase 1e rows"): every name that */ \
+    /* takes, removes, splits, validates or converts inventory or stash items   */ \
+    /* the table did not carry. The online-suffixed stash Take family first -   */ \
+    /* whether it runs offline is what the session measures.                    */ \
+    X(StashTakeItemOnline, "StashTakeItemOnline", gml_Script_StashTakeItemOnline) \
+    X(Struct224, "___struct___224@StashTakeItemOnline", gml_Script____struct___224_StashTakeItemOnline_InventoryStashFuncs) \
+    X(Struct225, "___struct___225@StashTakeItemOnline", gml_Script____struct___225_StashTakeItemOnline_InventoryStashFuncs) \
+    X(Struct227, "___struct___227@StashTakeItemOnline", gml_Script____struct___227_StashTakeItemOnline_InventoryStashFuncs) \
+    X(StashUniqueTakeItemOnline, "StashUniqueTakeItemOnline", gml_Script_StashUniqueTakeItemOnline) \
+    X(Struct229, "___struct___229@StashUniqueTakeItemOnline", gml_Script____struct___229_StashUniqueTakeItemOnline_InventoryStashFuncs) \
+    X(Struct230, "___struct___230@StashUniqueTakeItemOnline", gml_Script____struct___230_StashUniqueTakeItemOnline_InventoryStashFuncs) \
+    X(StashGuildTakeItemOnline, "StashGuildTakeItemOnline", gml_Script_StashGuildTakeItemOnline) \
+    X(StashBloodPactTakeItemOnline, "StashBloodPactTakeItemOnline", gml_Script_StashBloodPactTakeItemOnline) \
+    /* Phase 1e: the add counterparts, for the return shape */ \
+    X(StashAddItemOnline, "StashAddItemOnline", gml_Script_StashAddItemOnline) \
+    X(Struct237, "___struct___237@StashAddItemOnline", gml_Script____struct___237_StashAddItemOnline_InventoryStashFuncs) \
+    X(StashUniqueAddItemOnline, "StashUniqueAddItemOnline", gml_Script_StashUniqueAddItemOnline) \
+    /* Phase 1e: the map's own removal and the remove/operation checks */ \
+    X(RemoveItemFromMap, "RemoveItemFromMap", gml_Script_RemoveItemFromMap) \
+    X(OnlineRemoveItem, "OnlineRemoveItem", gml_Script_OnlineRemoveItem) \
+    X(CheckInventoryOperation, "CheckInventoryOperation", gml_Script_CheckInventoryOperation) \
+    /* Phase 1e: the validators a take at a moment the game did not choose may trip */ \
+    X(ValidateInventory, "ValidateInventory", gml_Script_ValidateInventory) \
+    X(DetectInventoryDuplicates, "DetectInventoryDuplicates", gml_Script_DetectInventoryDuplicates) \
+    X(DetectInventoryModifications, "DetectInventoryModifications", gml_Script_DetectInventoryModifications) \
+    /* Phase 1e: the stash to and from its online form */ \
+    X(ConvertOnlineStash, "ConvertOnlineStash", gml_Script_ConvertOnlineStash) \
+    X(ConvertOnlineStashMap, "ConvertOnlineStashMap", gml_Script_ConvertOnlineStashMap) \
+    /* Phase 1e: the stack and split family not yet in this table */ \
+    X(OnlineAddToStack, "OnlineAddToStack", gml_Script_OnlineAddToStack) \
+    X(Struct16, "___struct___16@OnlineAddToStack", gml_Script____struct___16_OnlineAddToStack_AddToInventoryFunc) \
+    X(InventorySplitOperation, "InventorySplitOperation", gml_Script_InventorySplitOperation) \
+    X(Struct158, "___struct___158@InventorySplitOperation", gml_Script____struct___158_InventorySplitOperation_InventoryFuncs) \
+    X(InventorySplitDrop, "InventorySplitDrop", gml_Script_InventorySplitDrop) \
+    X(Struct155, "___struct___155@InventorySplitDrop", gml_Script____struct___155_InventorySplitDrop_InventoryFuncs) \
+    X(SItemOperation, "s_ItemOperation", gml_Script_s_ItemOperation) \
+    X(SItemGridInfo, "s_ItemGridInfo", gml_Script_s_ItemGridInfo) \
+    /* Phase 1e: the online owner lookup beside GetPlayerItemOwner */ \
+    X(GetOnlinePlayerItemOwner, "GetOnlinePlayerItemOwner", gml_Script_GetOnlinePlayerItemOwner) \
+    /* Phase 1j (research doc, Static search, "Phase 1j rows"): the save route */ \
+    /* SaveStash runs inside, the item struct's own methods the split dialog  */ \
+    /* calls, what may make a new unit's item at the drop, and the Cube        */ \
+    /* grid's binding. Hooked by the same one `hook`.                          */ \
+    /* Phase 1j: the save route around SaveStash */ \
+    X(SaveLocalFile, "SaveLocalFile", gml_Script_SaveLocalFile) \
+    X(SaveStart, "SaveStart", gml_Script_SaveStart) \
+    X(SaveCommit, "SaveCommit", gml_Script_SaveCommit) \
+    X(SaveFileGMAsync, "SaveFileGMAsync", gml_Script_SaveFileGMAsync) \
+    X(EncryptStringSave, "EncryptStringSave", gml_Script_EncryptStringSave) \
+    /* Phase 1j: the item struct's methods (UiASplitStack calls two of them and a third) */ \
+    X(ItemGenerateHash, "GenerateItemHash@s_ItemInstanceStruct", gml_Script_GenerateItemHash_anon_4791_s_ItemInstanceStruct_InventoryV2Funcs) \
+    X(ItemGetInfo, "GetItemInfo@s_ItemInstanceStruct", gml_Script_GetItemInfo_anon_5277_s_ItemInstanceStruct_InventoryV2Funcs) \
+    X(ItemGetStat, "GetItemStat@s_ItemInstanceStruct", gml_Script_GetItemStat_anon_5523_s_ItemInstanceStruct_InventoryV2Funcs) \
+    X(ItemGetStatArray, "GetItemStatArray@s_ItemInstanceStruct", gml_Script_GetItemStatArray_anon_5844_s_ItemInstanceStruct_InventoryV2Funcs) \
+    X(Struct240, "___struct___240@GetItemStatArray@s_ItemInstanceStruct", gml_Script____struct___240_GetItemStatArray_anon_5844_s_ItemInstanceStruct_InventoryV2Funcs) \
+    X(ItemGetDef, "GetItemDef@s_ItemInstanceStruct", gml_Script_GetItemDef_anon_7191_s_ItemInstanceStruct_InventoryV2Funcs) \
+    X(ItemSetDef, "SetItemDef@s_ItemInstanceStruct", gml_Script_SetItemDef_anon_7339_s_ItemInstanceStruct_InventoryV2Funcs) \
+    X(ItemSetStat, "SetItemStat@s_ItemInstanceStruct", gml_Script_SetItemStat_anon_7507_s_ItemInstanceStruct_InventoryV2Funcs) \
+    X(ItemAddStat, "AddStat@s_ItemInstanceStruct", gml_Script_AddStat_anon_7675_s_ItemInstanceStruct_InventoryV2Funcs) \
+    X(ItemSetInfo, "SetItemInfo@s_ItemInstanceStruct", gml_Script_SetItemInfo_anon_7965_s_ItemInstanceStruct_InventoryV2Funcs) \
+    /* Phase 1j: creation and identity - candidates for the split unit's item at the drop */ \
+    X(SItemInstanceStruct, "s_ItemInstanceStruct", gml_Script_s_ItemInstanceStruct) \
+    X(StructCopy, "StructCopy", gml_Script_StructCopy) \
+    X(AddItemToMap, "AddItemToMap", gml_Script_AddItemToMap) \
+    X(ItemCheckHash, "ItemCheckHash", gml_Script_ItemCheckHash) \
+    X(LootTimestamp, "LootTimestamp", gml_Script_LootTimestamp) \
+    X(GetCounterHash, "GetCounterHash", gml_Script_GetCounterHash) \
+    X(EditItemData, "EditItemData", gml_Script_EditItemData) \
+    /* Phase 1j: the Cube grid's binding (prospectprobe's table names these too - one instrument per session) */ \
+    X(UiSetGrid, "UiSetGrid", gml_Script_UiSetGrid) \
+    X(UiSetGridArray, "UiSetGridArray", gml_Script_UiSetGridArray) \
+    /* Phase 1k (research doc, Static search, "Phase 1k rows"): the loaders'  */ \
+    /* route that makes an item without its constructor, the no-stack take's  */ \
+    /* creation (prospectprobe's table names ParseItemToGrid too).            */ \
+    X(InitItemFromJson, "InitItemFromJson", gml_Script_InitItemFromJson) \
+    X(ReCreateItem, "ReCreateItem", gml_Script_ReCreateItem) \
+    X(ParseItemToGrid, "ParseItemToGrid", gml_Script_ParseItemToGrid) \
+    /* Phase 1k round 1: the flag a failed hash check raises, so `hash-accept`'s */ \
+    /* "ReportClient did not fire" rests on a row that would have seen it.     */ \
+    X(ReportClient, "ReportClient", gml_Script_ReportClient) \
+    /* positive control: fires from every interactable's Step event */ \
+    X(CheckPlayerInteraction, "CheckPlayerInteraction", gml_Script_CheckPlayerInteraction)
+
+#define CP_DEFINE_DETOUR(SAFE, LABEL, CONSTANT) CRAFTPROBE_DETOUR(SAFE, LABEL)
+CRAFTPROBE_TARGETS(CP_DEFINE_DETOUR)
+#undef CP_DEFINE_DETOUR
+#undef CRAFTPROBE_DETOUR
+
+struct CpTarget {
+    const char*        label;
+    const char*        safe;          // the row's identifier, for file and global names
+    const char*        runtimeName;   // the SDK constant's value, used as-is
+    const char*        hookId;
+    PVOID              detour;
+    PFUNC_YYGMLScript* origSlot;
+    volatile long*     calls;
+    volatile long*     logged;
+    volatile long*     logOn;         // selected for logging by the last `arm`
+    volatile long*     capture;       // selected for capture by the last `backing on`
+    CpKept*            kept;
+    std::atomic<bool>  installed;
+    long               lastShown;     // calls at the previous `show`
+};
+
+#define CP_ENTRY(SAFE, LABEL, CONSTANT) \
+    { LABEL, #SAFE, HeroSiege::Scripts::CONSTANT.data(), "fp_cp_" #SAFE, (PVOID)CpDetour_##SAFE, &g_CpOrig_##SAFE, \
+      &g_CpCalls_##SAFE, &g_CpLogged_##SAFE, &g_CpLogOn_##SAFE, &g_CpCapture_##SAFE, &g_CpKept_##SAFE, false, 0 },
+static CpTarget g_CpTargets[] = {
+    CRAFTPROBE_TARGETS(CP_ENTRY)
+};
+#undef CP_ENTRY
+#undef CRAFTPROBE_TARGETS
+
+static constexpr int kCpTargetCount = (int)(sizeof(g_CpTargets) / sizeof(g_CpTargets[0]));
+
+// Declared above the detours (Phase 1j): the row labelled `label` names that
+// SDK script. A label no row carries names nothing.
+static bool CpRowIsScript(const char* label, std::string_view runtimeName)
+{
+    for (const CpTarget& t : g_CpTargets)
+        if (std::strcmp(t.label, label) == 0) return runtimeName == t.runtimeName;
+    return false;
+}
+
+// Whether a row naming this function is detoured this session - `mapkeep on`
+// refuses then (declared with the keeper, above).
+static bool CpHoldsRow(std::string_view runtimeName)
+{
+    for (const CpTarget& t : g_CpTargets) if (t.installed.load() && runtimeName == t.runtimeName) return true;
+    return false;
+}
+
+// A row by its label or its identifier, either case.
+static CpTarget* CpFindRow(const std::string& text)
+{
+    const std::string l = Lower(text);
+    for (CpTarget& t : g_CpTargets) if (Lower(t.label) == l || Lower(t.safe) == l) return &t;
+    return nullptr;
+}
+
+// Phase 1k round 1: what a by-name `call` of a row returned, kept apart from
+// CpKept. A CpKept holds the game's latest return, written only from inside a
+// craftprobe detour, so it cannot hold a by-name call of a row mapkeep holds
+// (GetItemMap: never detoured here), and the game's own calls - GetItemMap(0)
+// nearly every frame, a save's CreateItemSaveStruct - replace it between the
+// by-name call and the command that names it. This slot is written only by
+// `call`, after a dispatch that ran, and read first by `kept:`; no detour
+// touches it. Rooted the same way: the research global `__cp_call_<row>` is
+// set before the slot.
+// Round 2: the slot is emptied before every dispatch, and a dispatch that did
+// not return (no script, threw, failed) leaves `lost` naming why, so `kept:`
+// refuses rather than handing on an earlier call's return or the game's.
+struct CpCallKept {
+    RValue*     value = nullptr;   // heap-held and never deleted, as CpKept::value
+    long        call = 0;          // the row's call number `call` printed; 0 = nothing kept
+    long        attempt = 0;       // this row's by-name dispatches, counted here: a row mapkeep
+                                   // holds is never detoured, so its `#<n>` never moves
+    std::string lost;              // why the latest dispatch kept nothing; empty when it kept
+    std::string root;
+    std::string self;
+};
+static CpCallKept g_CpCallKept[kCpTargetCount];
+
+static void CpKeepCallReturn(const CpTarget& t, const RValue& res, long callNo)
+{
+    CpCallKept& c = g_CpCallKept[&t - g_CpTargets];
+    try {
+        const std::string root = std::string("__cp_call_") + t.safe;
+        g_Yytk->CallBuiltin("variable_global_set", { RValue(root), res });
+        if (!c.value) c.value = new RValue();
+        *c.value = res;
+        c.root = root;
+        c.call = callNo;
+        c.lost.clear();
+        Out(std::string("  kept as kept:") + t.label + " #" + std::to_string(callNo) + " (by-name call " + std::to_string(c.attempt)
+            + "; " + PpBackingShape(res) + "; this call's own return, which no game call replaces)");
+    } catch (...) { Out(std::string("  kept:") + t.label + " not kept (variable_global_set threw)"); }
+}
+
+// Empties the row's slot and says why: the slot first, then its root global,
+// so the slot never holds a struct nothing roots.
+static void CpForgetCallReturn(const CpTarget& t, const std::string& why)
+{
+    CpCallKept& c = g_CpCallKept[&t - g_CpTargets];
+    if (c.value) *c.value = RValue();
+    try { if (!c.root.empty()) g_Yytk->CallBuiltin("variable_global_set", { RValue(c.root), RValue() }); } catch (...) {}
+    c.call = 0;
+    c.lost = why;
+}
+
+// `kept:<row>` for `call`, `callm` and `set`: the row's by-name `call` return
+// first, else the game's latest return `backing` kept. `from` names which
+// answered; with neither, `why` names the cause the operator can act on.
+static bool CpKeptValue(const std::string& rowText, RValue& out, std::string& from, std::string& why)
+{
+    const CpTarget* t = CpFindRow(rowText);
+    if (!t) { why = "'" + rowText + "' is not a craftprobe row"; return false; }
+    const CpCallKept& c = g_CpCallKept[t - g_CpTargets];
+    if (c.value && c.call > 0) {
+        out = *c.value;
+        from = std::string("the by-name `call ") + t->label + "` #" + std::to_string(c.call) + " return (by-name call "
+             + std::to_string(c.attempt) + ", " + PpBackingShape(out) + ")";
+        return true;
+    }
+    // The latest by-name call did not return: refuse, never fall back to an
+    // earlier call's value or the game's, which the trial did not make.
+    if (!c.lost.empty()) {
+        why = "the latest by-name `call " + std::string(t->label) + "` kept nothing - " + c.lost
+            + "; the game's return is not used in its place (run that `call` again)";
+        return false;
+    }
+    if (t->kept && t->kept->value && t->kept->call > 0) {
+        out = *t->kept->value;
+        from = std::string("the game's call #") + std::to_string(t->kept->call) + " self=" + t->kept->self
+             + ", kept by `backing` (" + PpBackingShape(out) + ")";
+        return true;
+    }
+    if (MkHolds(t->runtimeName) && !t->installed.load())
+        why = "no by-name `call` return, and the row is held by mapkeep, so `backing` never sees the game's calls (`call "
+            + std::string(t->label) + " ... confirm` first)";
+    else if (!t->installed.load())
+        why = "no by-name `call` return, and the row is not detoured (`hook` first, or `call " + std::string(t->label) + " ... confirm`)";
+    else if (!g_CpBacking.load() || !*t->capture)
+        why = "no by-name `call` return, and `backing on " + std::string(t->label) + "` was not run";
+    else
+        why = "no by-name `call` return, and the game has not called it since `backing on`";
+    return false;
+}
+
+static bool CpLabelMatches(const CpTarget& t, const std::vector<std::string>& filters)
+{
+    const std::string ll = Lower(t.label);
+    for (const std::string& f : filters) if (ll.find(Lower(f)) != std::string::npos) return true;
+    return false;
+}
+
+// The four profile getters are capture-only: `call` refuses them.
+static bool CpIsProfileGetter(const CpTarget& t)
+{
+    const std::string_view name(t.runtimeName);
+    return name == HeroSiege::Scripts::gml_Script_GetProfileInventoryData
+        || name == HeroSiege::Scripts::gml_Script_GetPlayerItemOwner
+        || name == HeroSiege::Scripts::gml_Script_GetInventoryArray
+        || name == HeroSiege::Scripts::gml_Script_GetPlayerProfileObj;
+}
+
+// Same resolution as PpResolve: name -> CScript -> the compiled function. The
+// address is refused unless it is committed, executable code inside
+// Hero_Siege.exe's own image - which also refuses an entry some table hook
+// already swapped for a plugin detour. The check comes before MmCreateHook,
+// never after.
+static PVOID CpResolve(const CpTarget& t, std::string& why)
+{
+    PVOID p = nullptr;
+    AurieStatus st = g_Yytk->GetNamedRoutinePointer(t.runtimeName, &p);
+    if (!AurieSuccess(st) || !p) { why = "not found st=" + std::to_string((int)st); return nullptr; }
+    CScript* sc = reinterpret_cast<CScript*>(p);
+    if (!ReadablePtr(sc, sizeof(CScript)) || !ReadablePtr(sc->m_Functions, sizeof(*sc->m_Functions))) {
+        why = "refused (name resolved, but not to a readable script record)";
+        return nullptr;
+    }
+    PVOID fn = (PVOID)sc->m_Functions->m_ScriptFunction;
+    if (!fn) { why = "refused (script record carries no function)"; return nullptr; }
+    if (!AddrIsExecutableInModule(GetModuleHandleA(nullptr), fn)) {
+        why = "refused (function address is not executable code inside Hero_Siege.exe - a table hook may hold this entry)";
+        return nullptr;
+    }
+    return fn;
+}
+
+static void CpInstall(const std::vector<std::string>& filters)
+{
+    int ppHeld = 0;
+    for (const PpTarget& p : g_PpTargets) if (p.installed.load()) ++ppHeld;
+    if (ppHeld > 0)
+        Out("craftprobe hook: prospectprobe already holds " + std::to_string(ppHeld) + " detour(s) this session; rows sharing"
+            " an address with it will fail below - one instrument per session");
+    HMODULE mainMod = GetModuleHandleA(nullptr);
+    int ok = 0, failed = 0, skipped = 0, held = 0;
+    for (CpTarget& t : g_CpTargets) {
+        if (!filters.empty() && !CpLabelMatches(t, filters)) { ++skipped; continue; }
+        if (t.installed.load()) { Out(std::string("craftprobe hook: ") + t.label + " already detoured"); ++ok; continue; }
+        // Phase 1e: `mapkeep on` owns this function's table entry (and, when
+        // it reported both-routes, its address). CpResolve would refuse the
+        // entry as not the game's code, which is not a failure of this row.
+        if (MkHolds(t.runtimeName)) {
+            Out(std::string("craftprobe hook: ") + t.label + " held by mapkeep (its install owns this function; counted by"
+                " `mapkeep stat`, neither detoured nor failed here)");
+            ++held;
+            continue;
+        }
+        // The player build's craftmats owns its six functions the same way once
+        // it is on: a second detour would fail and read as a false TABLE-ONLY.
+        if (CmHolds(t.runtimeName)) {
+            Out(std::string("craftprobe hook: ") + t.label + " held by craftmats (its install owns this function; neither"
+                " detoured nor failed here)");
+            ++held;
+            continue;
+        }
+        std::string why;
+        PVOID src = CpResolve(t, why);
+        if (!src) { Out(std::string("craftprobe hook: ") + t.label + " " + why); ++failed; continue; }
+        PVOID tramp = nullptr;
+        AurieStatus hs = MmCreateHook(g_ArSelfModule, t.hookId, src, t.detour, &tramp);
+        if (!AurieSuccess(hs) || !tramp) {
+            Out(std::string("craftprobe hook: ") + t.label + " MmCreateHook failed st=" + std::to_string((int)hs));
+            ++failed;
+            continue;
+        }
+        *t.origSlot = reinterpret_cast<PFUNC_YYGMLScript>(tramp);
+        t.installed.store(true);
+        char b[320];
+        sprintf_s(b, "craftprobe hook: detoured %s at exe+0x%llX", t.label,
+                  (unsigned long long)((char*)src - (char*)mainMod));
+        Out(b);
+        ++ok;
+    }
+    Out("craftprobe hook: " + std::to_string(ok) + " detoured, " + std::to_string(failed) + " failed"
+        + (held ? ", " + std::to_string(held) + " held by mapkeep or craftmats" : std::string())
+        + (skipped ? ", " + std::to_string(skipped) + " not selected" : std::string()) + ".");
+    Out("  Next: `craftprobe arm budget=N`, then `craftprobe show` - CheckPlayerInteraction must already be climbing, or nothing here counts.");
+}
+
+static void CpZeroCounters()
+{
+    for (CpTarget& t : g_CpTargets) {
+        InterlockedExchange(t.calls, 0);
+        InterlockedExchange(t.logged, 0);
+        t.lastShown = 0;
+    }
+}
+
+// `arm [budget=N] [inroute] [substr ...]`: with no substrings every row except
+// the CheckPlayerInteraction control logs (it fires every frame from every
+// interactable; its count is the measurement, and naming it logs it too).
+// Phase 1i: the keyword `inroute` (not a filter) turns on the gate for
+// kCpInRouteRows; an `arm` without it turns the gate off.
+static void CpArm(const std::vector<std::string>& args)
+{
+    long budget = kCpDefaultLogBudget;
+    bool inRoute = false;
+    std::vector<std::string> filters;
+    for (const std::string& a : args) {
+        const std::string la = Lower(a);
+        if (la == "inroute") { inRoute = true; continue; }
+        if (la.rfind("budget=", 0) == 0) {
+            try { budget = std::stol(la.substr(7)); }
+            catch (...) { Out("craftprobe arm: budget=N needs a whole number; not armed"); return; }
+            if (budget < 1 || budget > kCpMaxLogBudget) {
+                Out("craftprobe arm: budget must be 1.." + std::to_string(kCpMaxLogBudget) + "; not armed");
+                return;
+            }
+        } else filters.push_back(la);
+    }
+    CpZeroCounters();
+    int selected = 0;
+    for (CpTarget& t : g_CpTargets) {
+        const bool on = filters.empty() ? Lower(t.label) != "checkplayerinteraction" : CpLabelMatches(t, filters);
+        InterlockedExchange(t.logOn, on ? 1 : 0);
+        if (on && t.installed.load()) ++selected;
+    }
+    InterlockedExchange(&g_CpLogBudget, budget);
+    g_CpInRouteGate.store(inRoute);
+    g_CpArmed.store(true);
+    Out("craftprobe arm: counters reset; the next " + std::to_string(budget) + " calls of each of "
+        + std::to_string(selected) + " selected detoured row(s) are logged"
+        + (filters.empty() ? " (all but the CheckPlayerInteraction control)" : " (label filters)")
+        + ". Then `craftprobe show` - a row reporting unlogged calls is `not observed (budget spent)`.");
+    std::string rows;
+    for (const char* row : kCpInRouteRows) rows += (rows.empty() ? "" : " and ") + std::string(row);
+    Out(inRoute
+        ? "craftprobe arm: inroute gate ON - " + rows + " log a call only while a craft-route row is on the stack;"
+          " a call outside counts in calls= and spends no budget (`show`'s unlogged= is what the gate held back)"
+        : "craftprobe arm: inroute gate off - " + rows + " log like every row (their lines still carry within=)");
+}
+
+// Every detoured row that was called since `arm`, with how many of its calls
+// were NOT logged, and the control's count first. `show all` adds the rows
+// with no calls and the rows that are not detoured (`calls=n/a`, never 0).
+static void CpShow(bool all)
+{
+    int installed = 0;
+    for (const CpTarget& t : g_CpTargets) if (t.installed.load()) ++installed;
+    Out("craftprobe show: " + std::to_string(installed) + "/" + std::to_string(kCpTargetCount) + " rows detoured, "
+        + (g_CpArmed.load() ? "armed" : "not armed") + ", budget=" + std::to_string(g_CpLogBudget)
+        + ", backing " + (g_CpBacking.load() ? "on" : "off") + ", inroute gate " + (g_CpInRouteGate.load() ? "on" : "off"));
+    const CpTarget* control = CpFindRow("CheckPlayerInteraction");
+    if (control)
+        Out(std::string("  control CheckPlayerInteraction calls=")
+            + (control->installed.load() ? std::to_string(*control->calls) : std::string("n/a (not detoured)"))
+            + " - a 0 here voids every count below");
+    Out("  " + CpInjectText());
+    int silent = 0;
+    for (CpTarget& t : g_CpTargets) {
+        if (!t.installed.load()) { if (all) Out(std::string("  ") + t.label + " calls=n/a (not detoured)"); continue; }
+        const long calls = *t.calls;
+        if (calls == 0) { ++silent; if (all) Out(std::string("  ") + t.label + " calls=0"); continue; }
+        const long logged = *t.logOn ? (std::min)((long)*t.logged, (long)g_CpLogBudget) : 0;
+        Out(std::string("  ") + t.label + " calls=" + std::to_string(calls) + " (+" + std::to_string(calls - t.lastShown)
+            + " since last show) logged=" + std::to_string(logged) + " unlogged=" + std::to_string(calls - logged)
+            + (*t.logOn ? std::string() : std::string(" (not selected)"))
+            + (t.kept && t.kept->call > 0 ? " kept=#" + std::to_string(t.kept->call) : std::string()));
+        t.lastShown = calls;
+    }
+    Out("craftprobe show: " + std::to_string(silent) + " detoured row(s) with no calls since `arm`"
+        + (all ? std::string() : std::string(" (`show all` lists them)")));
+}
+
+// ---- hook-free readers: bag, stash, recipe, var ------------------------------
+// Builtins only: asset_get_index / instance_number / instance_find, then
+// variable_instance_get_names and variable_instance_get on each live
+// instance, printed shallowly. Nothing is written, nothing is invoked, no hook
+// is needed - so these are the checks a session runs first, and "no live
+// instance" is printed as that, never as an empty container.
+
+// One variable for a reader line: its shape, then for an array its leading
+// entries (a stack's own members - itemType, a count - show there when the
+// entries are item structs), for a struct its members. Reads only.
+static std::string CpValueText(const RValue& v, int preview)
+{
+    std::string s;
+    try {
+        // A method value is also VALUE_OBJECT: named with the closure it
+        // resolves to (method_get_index + script_get_name), never called.
+        if (v.m_Kind == VALUE_OBJECT && g_Yytk->CallBuiltin("is_method", { v }).ToBoolean())
+            return "method (described, never called)" + CiTryResolveMethod(v);
+        s = PpBackingShape(v);
+        if (v.m_Kind == VALUE_ARRAY) {
+            const int n = (int)g_Yytk->CallBuiltin("array_length", { v }).ToDouble();
+            for (int i = 0; i < n && i < preview; ++i)
+                s += " [" + std::to_string(i) + "]=" + PpShallow(g_Yytk->CallBuiltin("array_get", { v, RValue((double)i) }));
+        } else if (v.m_Kind == VALUE_OBJECT) {
+            s += " " + PpShallow(v);
+        }
+    } catch (...) { s += " <read failed>"; }
+    if (s.size() > kCpLineMax) s = s.substr(0, kCpLineMax) + "...(cut)";
+    return s;
+}
+
+static bool CpNameMatches(const std::string& name, const std::vector<std::string>& filters)
+{
+    const std::string l = Lower(name);
+    for (const std::string& f : filters) if (f == "*" || l.find(Lower(f)) != std::string::npos) return true;
+    return false;
+}
+
+// Every matching variable of the first kCpReaderMaxInstances live instances of
+// one SDK-named object.
+static void CpListObjectVars(const std::string& tag, HeroSiege::Objects::GameObject obj, const std::vector<std::string>& filters)
+{
+    const std::string objName(HeroSiege::Objects::GetObjectName(obj));
+    int idx = -1;
+    try { idx = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(objName) }).ToDouble(); } catch (...) { idx = -1; }
+    if (idx < 0) { Out(tag + ": " + objName + " not found (asset_get_index)"); return; }
+    int total = 0;
+    try { total = (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)idx) }).ToDouble(); } catch (...) { total = 0; }
+    if (total <= 0) { Out(tag + ": " + objName + " has no live instance (not open / not in this room) - nothing read"); return; }
+    for (int nth = 0; nth < total && nth < kCpReaderMaxInstances; ++nth) {
+        try {
+            const RValue h = g_Yytk->CallBuiltin("instance_find", { RValue((double)idx), RValue((double)nth) });
+            if (h.m_Kind == VALUE_UNDEFINED) { Out(tag + ": " + objName + " nth=" + std::to_string(nth) + " instance_find returned undefined"); continue; }
+            const RValue names = g_Yytk->CallBuiltin("variable_instance_get_names", { h });
+            const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+            Out(tag + ": " + objName + " nth=" + std::to_string(nth) + " " + PpDescribeSelf(HhResolveInstance(h))
+                + " vars=" + std::to_string(n));
+            int shown = 0;
+            for (int i = 0; i < n; ++i) {
+                const std::string name = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) }).ToString();
+                if (!CpNameMatches(name, filters)) continue;
+                if (++shown > kCpReaderMaxLines) { Out("  ...(capped at " + std::to_string(kCpReaderMaxLines) + "; narrow the filter)"); break; }
+                Out("  " + name + "=" + CpValueText(g_Yytk->CallBuiltin("variable_instance_get", { h, RValue(name) }), kCpReaderArrayPreview));
+            }
+            Out(tag + ": " + std::to_string((std::min)(shown, kCpReaderMaxLines)) + " of " + std::to_string(n) + " variables matched");
+        } catch (...) { Out(tag + ": " + objName + " nth=" + std::to_string(nth) + " read failed"); }
+    }
+    if (total > kCpReaderMaxInstances)
+        Out(tag + ": " + std::to_string(total - kCpReaderMaxInstances) + " more instance(s) of " + objName + " not listed");
+}
+
+// Every matching global (the global scope is the pseudo-instance -5, which
+// variable_instance_get_names accepts - `gnames` reads it the same way).
+static void CpListGlobals(const std::string& tag, const std::vector<std::string>& filters)
+{
+    try {
+        const RValue names = g_Yytk->CallBuiltin("variable_instance_get_names", { RValue(-5.0) });
+        const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+        int shown = 0;
+        for (int i = 0; i < n; ++i) {
+            const std::string name = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) }).ToString();
+            if (!CpNameMatches(name, filters)) continue;
+            if (++shown > kCpReaderMaxLines) { Out("  ...(capped at " + std::to_string(kCpReaderMaxLines) + "; narrow the filter)"); break; }
+            Out("  global." + name + "=" + CpValueText(g_Yytk->CallBuiltin("variable_global_get", { RValue(name) }), kCpReaderArrayPreview));
+        }
+        Out(tag + ": " + std::to_string((std::min)(shown, kCpReaderMaxLines)) + " of " + std::to_string(n) + " globals matched");
+    } catch (...) { Out(tag + ": globals could not be read"); }
+}
+
+// `bag|stash|recipe [substr ...]`: the filters replace the defaults; `*` lists
+// every variable (capped).
+static void CpReader(const std::string& sub, const std::vector<std::string>& given)
+{
+    const std::string tag = "craftprobe " + sub;
+    if (sub == "bag") {
+        const std::vector<std::string> f = given.empty() ? std::vector<std::string>{ "mat", "stack", "tab", "inv" } : given;
+        CpListObjectVars(tag, HeroSiege::Objects::GameObject::UI_Inventory_obj, f);
+    } else if (sub == "stash") {
+        // Read with the stash window open AND closed: whether the material tab
+        // is readable while closed is what the owner's "stash open not
+        // required" rests on (research doc, Decisions).
+        const std::vector<std::string> f = given.empty() ? std::vector<std::string>{ "stash", "mat", "tab" } : given;
+        CpListObjectVars(tag, HeroSiege::Objects::GameObject::UI_Stash_obj, f);
+        CpListObjectVars(tag, HeroSiege::Objects::GameObject::Town_Stash_obj, f);
+        CpListGlobals(tag, f);
+    } else {
+        const std::vector<std::string> f = given.empty() ? std::vector<std::string>{ "recipe", "craft", "select", "need", "mat" } : given;
+        CpListObjectVars(tag, HeroSiege::Objects::GameObject::UI_Craft_obj, f);
+    }
+}
+
+// ---- Phase 1b: follow references by name ----------------------------------
+// Phase 1's `var` printed `ref instance N` and stopped, so the stash window's
+// stashGrid / uiStashContainer / invMaterialTab were never opened (research
+// doc, M-stash-open). A reference is recognised from the runtime's own text
+// for it (`ref instance N`, `ref ds_grid N`, ...), never from its bytes. An
+// instance is read only after instance_exists answers true for it, and a data
+// structure only after ds_exists answers true for its type: a ds_grid_* call
+// on the wrong kind is a fatal GML error, and one frame of it is enough to
+// crash (prospect-window-research.md, R5b). A method value is described,
+// never called. Nothing here writes.
+static constexpr int kCpRefMaxDepth = 2;           // instance levels followed below the root
+static constexpr int kCpRefMaxInstances = 12;      // distinct instances one `var` prints
+static constexpr int kCpDsPreview = 12;            // entries (grid cells) one data structure prints
+// GameMaker's ds_type_* values, as ds_exists takes them (N1GetTalentMap passes map = 1).
+static constexpr double kCpDsTypeMap = 1.0;
+static constexpr double kCpDsTypeList = 2.0;
+static constexpr double kCpDsTypeGrid = 5.0;
+
+enum class CpRefKind { NotRef, Instance, DsGrid, DsList, DsMap, OtherRef };
+struct CpRef {
+    CpRefKind   kind = CpRefKind::NotRef;
+    long long   id = -1;           // the number the runtime's text names; -1 = none
+    std::string text;
+};
+
+static CpRef CpClassifyRef(const RValue& v)
+{
+    CpRef r;
+    if (v.m_Kind != VALUE_REF) return r;
+    r.kind = CpRefKind::OtherRef;
+    try { r.text = v.ToString(); } catch (...) { return r; }
+    struct Prefix { const char* text; CpRefKind kind; };
+    static const Prefix kPrefixes[] = {
+        { "ref instance ", CpRefKind::Instance }, { "ref ds_grid ", CpRefKind::DsGrid },
+        { "ref ds_list ", CpRefKind::DsList },    { "ref ds_map ", CpRefKind::DsMap },
+    };
+    for (const Prefix& p : kPrefixes) {
+        const size_t len = std::strlen(p.text);
+        if (r.text.compare(0, len, p.text) != 0) continue;
+        try { r.id = std::stoll(r.text.substr(len)); } catch (...) { return r; }   // unparsable: stays OtherRef
+        r.kind = p.kind;
+        return r;
+    }
+    return r;
+}
+
+// A data-structure reference, read after ds_exists confirms its type: the
+// size and the first kCpDsPreview entries, each shallowly. Reads only.
+static std::string CpDsText(const RValue& v, const CpRef& r)
+{
+    const double type = r.kind == CpRefKind::DsGrid ? kCpDsTypeGrid : r.kind == CpRefKind::DsList ? kCpDsTypeList : kCpDsTypeMap;
+    const char* typeName = r.kind == CpRefKind::DsGrid ? "ds_type_grid" : r.kind == CpRefKind::DsList ? "ds_type_list" : "ds_type_map";
+    try {
+        if (!g_Yytk->CallBuiltin("ds_exists", { v, RValue(type) }).ToBoolean())
+            return std::string(" (ds_exists(") + typeName + ") is false - not read)";
+        std::string s;
+        if (r.kind == CpRefKind::DsGrid) {
+            const int w = (int)g_Yytk->CallBuiltin("ds_grid_width", { v }).ToDouble();
+            const int h = (int)g_Yytk->CallBuiltin("ds_grid_height", { v }).ToDouble();
+            s = " grid " + std::to_string(w) + "x" + std::to_string(h) + ":";
+            int shown = 0;
+            for (int y = 0; y < h && shown < kCpDsPreview; ++y)
+                for (int x = 0; x < w && shown < kCpDsPreview; ++x, ++shown)
+                    s += " [" + std::to_string(x) + "," + std::to_string(y) + "]="
+                        + PpShallow(g_Yytk->CallBuiltin("ds_grid_get", { v, RValue((double)x), RValue((double)y) }));
+            if ((long long)w * h > kCpDsPreview) s += " ...";
+        } else if (r.kind == CpRefKind::DsList) {
+            const int n = (int)g_Yytk->CallBuiltin("ds_list_size", { v }).ToDouble();
+            s = " list size=" + std::to_string(n) + ":";
+            for (int i = 0; i < n && i < kCpDsPreview; ++i)
+                s += " [" + std::to_string(i) + "]=" + PpShallow(g_Yytk->CallBuiltin("ds_list_find_value", { v, RValue((double)i) }));
+            if (n > kCpDsPreview) s += " ...";
+        } else {
+            const int n = (int)g_Yytk->CallBuiltin("ds_map_size", { v }).ToDouble();
+            s = " map size=" + std::to_string(n) + ":";
+            RValue key = g_Yytk->CallBuiltin("ds_map_find_first", { v });
+            for (int i = 0; i < n && i < kCpDsPreview && key.m_Kind != VALUE_UNDEFINED; ++i) {
+                s += " " + (key.m_Kind == VALUE_STRING ? key.ToString() : Describe(key)) + "="
+                    + PpShallow(g_Yytk->CallBuiltin("ds_map_find_value", { v, key }));
+                key = g_Yytk->CallBuiltin("ds_map_find_next", { v, key });
+            }
+            if (n > kCpDsPreview) s += " ...";
+        }
+        if (s.size() > kCpLineMax) s = s.substr(0, kCpLineMax) + "...(cut)";
+        return s;
+    } catch (...) { return " <ds read failed>"; }
+}
+
+// One instance, by name: instance_exists first, then its object's name
+// (object_get_name of its object_index), its id and every variable matching
+// `filters` (`*` = all, capped). A variable that is itself a live instance
+// reference is followed the same way one level down, to kCpRefMaxDepth; an
+// instance already printed (one grid hung off three variables in Phase 1) is
+// named, not read again.
+//
+// Phase 1i: `var` takes no filter, so the cap no longer says to narrow one
+// (Live 1h listed 80 of Controller_obj's 221 variables and could not reach
+// the rest). The listing starts at the from-th name variable_instance_get_names
+// returns, and the cap line names the exact command for the next page - the
+// root's as the reader typed it (pageCmd), a followed instance's by its id -
+// and how many variables remain.
+static void CpFollowInstance(const std::string& indent, const RValue& inst, long long id,
+                             const std::vector<std::string>& filters, int depth, std::set<long long>& visited,
+                             int from = 0, const std::string& pageCmd = std::string())
+{
+    const std::string who = "instance " + std::to_string(id);
+    bool alive = false;
+    try { alive = g_Yytk->CallBuiltin("instance_exists", { inst }).ToBoolean(); } catch (...) { alive = false; }
+    if (!alive) { Out(indent + who + ": instance_exists is false - not read"); return; }
+    if (visited.count(id)) { Out(indent + who + ": already printed above"); return; }
+    if ((int)visited.size() >= kCpRefMaxInstances) {
+        Out(indent + who + ": not read (" + std::to_string(kCpRefMaxInstances) + " instances already printed; `var id:"
+            + std::to_string(id) + " *` reads it)");
+        return;
+    }
+    visited.insert(id);
+    std::string objName = "?";
+    try {
+        const RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("object_index") });
+        int objIdx = -1;
+        if (N1ObjectIndex(oi, objIdx)) objName = g_Yytk->CallBuiltin("object_get_name", { RValue((double)objIdx) }).ToString();
+        else objName = "(object_index " + Describe(oi) + ")";
+    } catch (...) { objName = "(object_index unreadable)"; }
+    RValue names;
+    int n = 0;
+    try {
+        names = g_Yytk->CallBuiltin("variable_instance_get_names", { inst });
+        n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+    } catch (...) { Out(indent + objName + " id=" + std::to_string(id) + ": variable names could not be read"); return; }
+    Out(indent + objName + " id=" + std::to_string(id) + " vars=" + std::to_string(n)
+        + (depth > 0 ? " (followed, depth " + std::to_string(depth) + ")" : std::string())
+        + (from > 0 ? " from=" + std::to_string(from) : std::string()));
+    if (from > 0 && from >= n) {
+        Out(indent + "  from=" + std::to_string(from) + " is past the last variable (vars=" + std::to_string(n) + "); nothing listed");
+        return;
+    }
+    const std::string next = pageCmd.empty() ? "craftprobe var id:" + std::to_string(id) : pageCmd;
+    std::vector<std::pair<std::string, RValue>> refs;   // live-instance refs, followed after this instance's lines
+    int shown = 0;
+    int listedTo = from;                                 // one past the last index this page reached
+    for (int i = from; i < n; ++i) {
+        std::string name;
+        listedTo = i + 1;
+        try { name = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) }).ToString(); } catch (...) { continue; }
+        if (!CpNameMatches(name, filters)) continue;
+        if (++shown > kCpReaderMaxLines) {
+            listedTo = i;
+            Out(indent + "  ...(capped at " + std::to_string(kCpReaderMaxLines) + "; " + std::to_string(n - i)
+                + " more variable(s) - `" + next + " * from=" + std::to_string(i) + "` lists the next page)");
+            break;
+        }
+        try {
+            const RValue v = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(name) });
+            const CpRef r = CpClassifyRef(v);
+            std::string text = CpValueText(v, kCpReaderArrayPreview);
+            if (r.kind == CpRefKind::DsGrid || r.kind == CpRefKind::DsList || r.kind == CpRefKind::DsMap) text += CpDsText(v, r);
+            Out(indent + "  " + name + "=" + text);
+            if (r.kind == CpRefKind::Instance) refs.push_back({ name, v });
+        } catch (...) { Out(indent + "  " + name + "=<read failed>"); }
+    }
+    Out(indent + "  (indices " + std::to_string(from) + ".." + std::to_string(listedTo - 1) + " of vars=" + std::to_string(n)
+        + " read, " + std::to_string((std::min)(shown, kCpReaderMaxLines)) + " printed)");
+    for (const auto& ref : refs) {
+        const CpRef r = CpClassifyRef(ref.second);
+        if (depth + 1 > kCpRefMaxDepth) {
+            Out(indent + "  " + ref.first + " -> instance " + std::to_string(r.id) + " not followed (depth cap "
+                + std::to_string(kCpRefMaxDepth) + "; `var id:" + std::to_string(r.id) + " *` reads it)");
+            continue;
+        }
+        Out(indent + "  " + ref.first + " ->");
+        CpFollowInstance(indent + "    ", ref.second, r.id, filters, depth + 1, visited);
+    }
+}
+
+// A dotted path (`stashGrid.nodeGrid`) as its names; an empty name stays in
+// so the caller can refuse it.
+static std::vector<std::string> CpSplitPath(const std::string& text)
+{
+    std::vector<std::string> path;
+    std::string seg;
+    for (char c : text) {
+        if (c == '.') { path.push_back(seg); seg.clear(); } else seg += c;
+    }
+    path.push_back(seg);
+    return path;
+}
+
+// The root `var` and `node var` start from: `id:<n>` (after instance_exists),
+// `<Obj> <nth>` (MpResolve) or `global`. Prints why and returns false when it
+// cannot be had.
+static bool CpVarRoot(const std::string& tag, const std::vector<std::string>& tok, bool byId, bool global,
+                      RValue& cur, long long& rootId, std::string& where)
+{
+    rootId = -1;
+    if (byId) {
+        try { rootId = std::stoll(tok[1].substr(3)); } catch (...) { Out(tag + ": id:<n> needs a whole number; nothing read"); return false; }
+        cur = RValue((double)rootId);
+        if (!g_Yytk->CallBuiltin("instance_exists", { cur }).ToBoolean()) { Out(tag + ": instance_exists(" + std::to_string(rootId) + ") is false; nothing read"); return false; }
+        where = "id:" + std::to_string(rootId);
+    } else if (!global) {
+        int nth = 0;
+        try { nth = std::stoi(tok[2]); } catch (...) { Out(tag + ": nth must be a whole number; nothing read"); return false; }
+        CInstance* inst = nullptr; int total = 0;
+        if (!MpResolve(tag, tok[1], nth, cur, inst, total)) return false;
+        double id = -1;
+        PpInstanceId(cur, id);
+        rootId = (long long)id;
+        where = PpDescribeSelf(inst);
+    } else {
+        where = "global";
+    }
+    return true;
+}
+
+// Phase 1h: a path segment that is a whole number (digits only, no sign) is an
+// array index, not a name - no GML variable name starts with a digit.
+static bool CpIndexSegment(const std::string& seg, long long& index)
+{
+    if (seg.empty() || seg.size() > 9) return false;
+    for (char c : seg) if (c < '0' || c > '9') return false;
+    index = std::stoll(seg);
+    return true;
+}
+
+// Walks `path` from the root: every step but the last must land on a live
+// instance (instance_exists at each step) or a plain struct. `cur` ends on the
+// value reached, `holder` on the last live instance a name was read from
+// (unset for a global path that never reached one). Prints why and returns
+// false when a step fails.
+//
+// Phase 1h: a whole-number segment reads that element of an array (is_array,
+// then inside array_length), so `<S>.<k>.0.0` reaches a row of the Socketable
+// structure, whose rows are arrays of 1x1 cell arrays. On anything that is not
+// an array, or past its end, the walk stops naming the segment, as it does for
+// a missing member.
+static bool CpVarWalk(const std::string& tag, bool global, const std::vector<std::string>& path, RValue& cur,
+                      RValue& holder, bool& haveHolder, std::string& walked)
+{
+    bool atInstance = !global;
+    haveHolder = false;
+    walked.clear();
+    for (size_t i = 0; i < path.size(); ++i) {
+        const std::string& seg = path[i];
+        walked += (i ? "." : "") + seg;
+        RValue next;
+        long long index = -1;
+        if (!(global && i == 0) && CpIndexSegment(seg, index)) {
+            if (!g_Yytk->CallBuiltin("is_array", { cur }).ToBoolean()) {
+                Out(tag + ": before " + walked + " the value is " + Describe(cur) + " - not an array, so the index " + seg + " reads nothing; stopped");
+                return false;
+            }
+            const long long len = (long long)g_Yytk->CallBuiltin("array_length", { cur }).ToDouble();
+            if (index >= len) {
+                Out(tag + ": at " + walked + " the array has " + std::to_string(len) + " entries, so the index " + seg + " is out of range; stopped");
+                return false;
+            }
+            next = g_Yytk->CallBuiltin("array_get", { cur, RValue((double)index) });
+        } else if (global && i == 0) {
+            if (!g_Yytk->CallBuiltin("variable_global_exists", { RValue(seg) }).ToBoolean()) { Out(tag + ": no such global; nothing read"); return false; }
+            next = g_Yytk->CallBuiltin("variable_global_get", { RValue(seg) });
+        } else if (atInstance) {
+            if (!g_Yytk->CallBuiltin("instance_exists", { cur }).ToBoolean()) { Out(tag + ": at " + walked + " the instance is gone (instance_exists is false); stopped"); return false; }
+            if (!g_Yytk->CallBuiltin("variable_instance_exists", { cur, RValue(seg) }).ToBoolean()) { Out(tag + ": the instance has no variable " + walked + "; nothing read"); return false; }
+            next = g_Yytk->CallBuiltin("variable_instance_get", { cur, RValue(seg) });
+            holder = cur;
+            haveHolder = true;
+        } else if (ApIsPlainStruct(cur)) {
+            if (!g_Yytk->CallBuiltin("variable_struct_exists", { cur, RValue(seg) }).ToBoolean()) { Out(tag + ": the struct has no member " + walked + "; nothing read"); return false; }
+            next = g_Yytk->CallBuiltin("variable_struct_get", { cur, RValue(seg) });
+        } else {
+            Out(tag + ": before " + walked + " the value is " + Describe(cur) + " - neither a live instance nor a plain struct; stopped");
+            return false;
+        }
+        cur = next;
+        atInstance = CpClassifyRef(cur).kind == CpRefKind::Instance;
+    }
+    return true;
+}
+
+// `var <Obj|global> <nth> <path|*> [json]` or `var id:<n> <path|*> [json]`:
+// one variable, deeper - an array's first kCpVarArrayPreview entries, a data
+// structure's first kCpDsPreview - where <path> is a name or a dotted path
+// (`stashGrid.nodeGrid`) whose every step but the last lands on a live
+// instance or a plain struct. A value that is a live instance reference is
+// followed (CpFollowInstance, every variable); `*` lists every variable of
+// the root instance and follows its references. `id:<n>` is a bare instance
+// number, which instance_exists and variable_instance_get accept. With `json`
+// the value is written to bp_ipc\cp_var_<last name>.json when a depth-capped
+// walk finds no cycle. Reads only.
+//
+// Phase 1i: `* from=<i>` lists kCpReaderMaxLines variables starting at the
+// i-th name, and every capped page names the command for the next one.
+static void CpVar(const std::vector<std::string>& tok)
+{
+    const char* usage = "craftprobe var: usage -> var <Obj|global> <nth> <name|a.b.c|*> [json] | var <Obj> <nth> * from=<i>"
+                        " | var id:<n> <name|a.b.c|*> [json] | var id:<n> * from=<i>; nothing read";
+    const bool byId = tok.size() >= 2 && Lower(tok[1]).rfind("id:", 0) == 0;
+    const size_t pathAt = byId ? 2 : 3;
+    const bool fromGiven = tok.size() == pathAt + 2 && Lower(tok[pathAt + 1]).rfind("from=", 0) == 0;
+    if (tok.size() != pathAt + 1 && !(tok.size() == pathAt + 2 && (Lower(tok[pathAt + 1]) == "json" || fromGiven))) { Out(usage); return; }
+    const bool json = tok.size() == pathAt + 2 && !fromGiven;
+    const bool global = !byId && Lower(tok[1]) == "global";
+    std::string tag = "craftprobe var";
+    for (size_t i = 1; i <= pathAt; ++i) tag += " " + tok[i];
+
+    const std::vector<std::string> path = CpSplitPath(tok[pathAt]);
+    for (const std::string& seg : path) if (seg.empty()) { Out(tag + ": an empty name in the path; nothing read"); return; }
+    const bool all = path.size() == 1 && path[0] == "*";
+    if (all && global) { Out(tag + ": `*` needs an instance root (`var <Obj> <nth> *` or `var id:<n> *`); nothing read"); return; }
+    if (fromGiven && !all) { Out(tag + ": from=<i> pages `*` only; nothing read"); return; }
+    long long fromIndex = 0;
+    if (fromGiven && !CpIndexSegment(tok[pathAt + 1].substr(5), fromIndex)) {
+        Out(tag + ": from=<i> needs a whole number; nothing read");
+        return;
+    }
+    const int from = (int)fromIndex;
+    // The next page's command, as typed: `craftprobe var <Obj> <nth>` or `craftprobe var id:<n>`.
+    std::string pageCmd = "craftprobe var";
+    for (size_t i = 1; i < pathAt; ++i) pageCmd += " " + tok[i];
+
+    try {
+        RValue cur;
+        long long rootId = -1;
+        std::string where;
+        if (!CpVarRoot(tag, tok, byId, global, cur, rootId, where)) return;
+        std::set<long long> visited;
+        if (all) { CpFollowInstance("  ", cur, rootId, { "*" }, 0, visited, from, pageCmd); return; }
+
+        RValue holder;
+        bool haveHolder = false;
+        std::string walked;
+        if (!CpVarWalk(tag, global, path, cur, holder, haveHolder, walked)) return;
+        const CpRef r = CpClassifyRef(cur);
+        std::string text = CpValueText(cur, kCpVarArrayPreview);
+        if (r.kind == CpRefKind::DsGrid || r.kind == CpRefKind::DsList || r.kind == CpRefKind::DsMap) text += CpDsText(cur, r);
+        Out(tag + " (" + where + "): " + text);
+        if (r.kind == CpRefKind::Instance) {
+            if (rootId > 0) visited.insert(rootId);   // a ref back to the root is named, not re-read
+            CpFollowInstance("  ", cur, r.id, { "*" }, 1, visited);
+        }
+        if (json) Out(tag + " -> " + PpBackingJsonFile("cp_var_" + path.back() + ".json", walked, 0, where, cur));
+    } catch (...) { Out(tag + ": read failed"); }
+}
+
+// ---- Phase 1i: `find` - which variable holds a value -------------------------
+// Live 1h could not name Controller_obj's stash containers: `var *` showed 80
+// of 221 variables, and a 3-entry preview of an array does not say which one
+// holds a stash cell. Every cell the save walks is a struct carrying its
+// item's fingerprint (or the runtime's undefined value), and the stash map is a
+// `ref ds_map`, so a search for the text names the container and the cell in
+// one step. `find <Obj> <nth>|id:<n> [from=<i>] <text>` walks every variable of
+// the root into arrays (inside array_length) and plain structs, and prints the
+// path - the dotted whole-number-segment form `var` and `path:` take - of every
+// string equal to <text> and every reference whose runtime text is <text>. It
+// never enters an instance or a data structure (a reference is compared by its
+// text only), never calls a method (one is counted), and writes nothing. A
+// struct cycle is bounded by the depth cap, as PpBackingJsonFile's walk is.
+static constexpr int kCpFindMaxDepth = 8;          // segments below a root variable the walk descends
+static constexpr long kCpFindMaxVisits = 100000;   // values one `find` visits; the cap names the from= that resumes
+static constexpr int kCpFindMaxMatches = 40;       // match lines printed (every match is still counted)
+
+struct CpFindState {
+    std::string text;
+    long visits = 0;
+    long matches = 0;
+    long depthCapped = 0;          // arrays/structs at kCpFindMaxDepth, not entered
+    long methods = 0;              // method values met, never called
+    long notEntered = 0;           // instance/data-structure references and non-struct objects, compared by text only
+    long unreadable = 0;
+    bool visitCapped = false;
+};
+
+static void CpFindMatch(const std::string& path, const char* what, CpFindState& st)
+{
+    if (++st.matches <= kCpFindMaxMatches) Out("  match " + std::to_string(st.matches) + ": " + path + " (" + what + ")");
+    else if (st.matches == kCpFindMaxMatches + 1)
+        Out("  ...(match lines capped at " + std::to_string(kCpFindMaxMatches) + "; the summary counts every match)");
+}
+
+// One value at `path`, `depth` segments below its root variable. Reads only.
+static void CpFindWalk(const RValue& v, const std::string& path, int depth, CpFindState& st)
+{
+    if (st.visitCapped) return;
+    if (++st.visits > kCpFindMaxVisits) { st.visitCapped = true; return; }
+    try {
+        if (v.m_Kind == VALUE_STRING) {
+            if (v.ToString() == st.text) CpFindMatch(path, "string", st);
+            return;
+        }
+        if (v.m_Kind == VALUE_REF) {
+            const CpRef r = CpClassifyRef(v);
+            if (r.text == st.text) CpFindMatch(path, "reference", st);
+            ++st.notEntered;
+            return;
+        }
+        const bool isArray = v.m_Kind == VALUE_ARRAY;
+        if (!isArray && v.m_Kind != VALUE_OBJECT) return;   // a number, a bool, undefined: nothing to find
+        if (!isArray) {
+            if (g_Yytk->CallBuiltin("is_method", { v }).ToBoolean()) { ++st.methods; return; }   // never called
+            if (!ApIsPlainStruct(v)) { ++st.notEntered; return; }
+        }
+        if (depth >= kCpFindMaxDepth) {
+            if (++st.depthCapped == 1)
+                Out("  ...(depth cap " + std::to_string(kCpFindMaxDepth) + " at " + path + "; not entered - `var` reads below it)");
+            return;
+        }
+        if (isArray) {
+            const long long n = (long long)g_Yytk->CallBuiltin("array_length", { v }).ToDouble();
+            for (long long i = 0; i < n && !st.visitCapped; ++i)
+                CpFindWalk(g_Yytk->CallBuiltin("array_get", { v, RValue((double)i) }), path + "." + std::to_string(i), depth + 1, st);
+            return;
+        }
+        const RValue names = g_Yytk->CallBuiltin("variable_struct_get_names", { v });
+        const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+        for (int i = 0; i < n && !st.visitCapped; ++i) {
+            const std::string name = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) }).ToString();
+            CpFindWalk(g_Yytk->CallBuiltin("variable_struct_get", { v, RValue(name) }), path + "." + name, depth + 1, st);
+        }
+    } catch (...) { ++st.unreadable; }
+}
+
+static void CpFind(const std::vector<std::string>& tok)
+{
+    const char* usage = "craftprobe find: usage -> find <Obj> <nth> [from=<i>] <text> | find id:<n> [from=<i>] <text>; nothing searched";
+    const bool byId = tok.size() >= 2 && Lower(tok[1]).rfind("id:", 0) == 0;
+    size_t at = byId ? 2 : 3;
+    if (tok.size() < at + 1) { Out(usage); return; }
+    std::string rootArgs;
+    for (size_t i = 1; i < at; ++i) rootArgs += (i > 1 ? " " : "") + tok[i];
+    const std::string tag = "craftprobe find " + rootArgs;
+    if (!byId && Lower(tok[1]) == "global") { Out(tag + ": needs an instance root (`find <Obj> <nth>` or `find id:<n>`); nothing searched"); return; }
+    long long fromIndex = 0;
+    if (Lower(tok[at]).rfind("from=", 0) == 0) {
+        if (!CpIndexSegment(tok[at].substr(5), fromIndex)) { Out(tag + ": from=<i> needs a whole number; nothing searched"); return; }
+        ++at;
+    }
+    if (tok.size() < at + 1) { Out(usage); return; }
+    std::string text;   // the rest of the line, single-spaced
+    for (size_t i = at; i < tok.size(); ++i) text += (i > at ? " " : "") + tok[i];
+    const int from = (int)fromIndex;
+
+    try {
+        RValue cur;
+        long long rootId = -1;
+        std::string where;
+        if (!CpVarRoot(tag, tok, byId, false, cur, rootId, where)) return;
+        const RValue names = g_Yytk->CallBuiltin("variable_instance_get_names", { cur });
+        const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+        Out(tag + " (" + where + "): vars=" + std::to_string(n) + " from=" + std::to_string(from) + ", searching for \"" + text
+            + "\" (strings and reference text, into arrays and plain structs only)");
+        CpFindState st;
+        st.text = text;
+        int walked = 0;
+        for (int i = from; i < n; ++i) {
+            std::string name;
+            try { name = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) }).ToString(); } catch (...) { ++st.unreadable; continue; }
+            if (!g_Yytk->CallBuiltin("instance_exists", { cur }).ToBoolean()) { Out(tag + ": the instance is gone (instance_exists is false); stopped"); break; }
+            CpFindWalk(g_Yytk->CallBuiltin("variable_instance_get", { cur, RValue(name) }), name, 0, st);
+            if (st.visitCapped) {
+                // Resume at this variable, from its start - unless it is the
+                // first one walked, which alone exceeds the cap.
+                const int resume = i > from ? i : i + 1;
+                Out("  ...(visit cap " + std::to_string(kCpFindMaxVisits) + " reached in variable " + std::to_string(i) + " " + name
+                    + (i > from ? std::string() : std::string(", which alone exceeds it and is not searched to its end"))
+                    + " - `" + tag + " from=" + std::to_string(resume) + " " + text + "` resumes)");
+                break;
+            }
+            ++walked;
+        }
+        Out(tag + ": " + std::to_string(st.matches) + " match(es), " + std::to_string((std::min)(st.visits, kCpFindMaxVisits))
+            + " values visited, " + std::to_string(walked) + " of " + std::to_string(n) + " variables walked (from=" + std::to_string(from) + ")"
+            + (st.depthCapped ? ", " + std::to_string(st.depthCapped) + " not entered at the depth cap" : std::string())
+            + (st.methods ? ", " + std::to_string(st.methods) + " method(s) not called" : std::string())
+            + (st.notEntered ? ", " + std::to_string(st.notEntered) + " reference(s)/object(s) compared, not entered" : std::string())
+            + (st.unreadable ? ", " + std::to_string(st.unreadable) + " unreadable" : std::string()));
+    } catch (...) { Out(tag + ": search failed"); }
+}
+
+// ---- Phase 1b: `node` - a container's contents, summed per (class, b) -------
+// `prospectprobe grids`/`contents` read nodeGridWidth/nodeGridHeight and each
+// nodeGrid cell's nodeFingerprint on UI_Inventory_Grid_obj nodes; this reads
+// the same shape on any instance. A cell holds only a fingerprint (issue #9,
+// Stage C), so per distinct fingerprint it makes ONE by-name call - the game's
+// own GetItemFromFingerprint(fp, 0) through ApItemFromFingerprint, the route
+// `call`'s fp: argument uses - capped per run, and prints the item's
+// itemType, its definition struct's `b` (docs/RUNTIME_DATA_MODELS.md § 2),
+// the fingerprint's class suffix and every numeric member that may be the
+// stack count: the exact name `o` (the save's stack key, which the item struct
+// shares with `b`; the hub's stash_tab_counts.py sums data.o) and any name
+// containing a stack-like word. Which member holds the stack is not measured
+// on this runtime yet, so all candidates are listed and summed per (class, b);
+// when the definition struct has none, all its numeric members are printed
+// (capped) so an unexpected name shows up instead of silence. The live session
+// says which one matched a count seen by eye, and tools/stash_tab_counts.py
+// is the save-side count it is compared with. An instance without nodeGrid
+// prints its variable names, never nothing. Nothing is written.
+//
+// Phase 1c: the lookup's self and second argument are chosen per command
+// (`self=id:<n>`, `a1=<v>`; by default the grid each fingerprint was read
+// from, and 0), `class=<c>` spends the lookups on one class suffix only,
+// `node socket` walks the Socketable tab's one-instance-per-cell grid into one
+// sum table, and `node var` sums a container `var` reaches, whatever its
+// shape. The instrument's own lookups are flagged (g_CpOwnLookup), so a
+// detoured lookup row neither logs nor keeps them as the game's.
+static constexpr int kCpNodeMaxLookups = 160;        // lookups one `node` makes: a whole bag grid (90 cells) or the Socketable tab (140)
+static constexpr int kCpNodeMaxInstances = 12;       // instances one `node stash|bag` reads
+static constexpr int kCpNodeFingerprintsShown = 40;  // fingerprint (and item) lines one run prints
+static constexpr int kCpNodeDefMembersShown = 24;    // numeric definition members listed when none is stack-named
+static constexpr int kCpNodeMaxCells = 400;          // cell instances one `node socket` reads
+static constexpr int kCpNodeMaxEntries = 2000;       // entries one `node var` reads from an array, list, map or struct (Phase 1e: the whole 1626-entry stash map)
+
+// How one `node` makes its lookups: the options after its selector.
+struct CpNodeOpts {
+    RValue      a1 = RValue(0.0);   // the lookup's second argument
+    std::string a1Text = "0";
+    bool        selfGiven = false;  // `self=id:<n>`; otherwise the grid each fingerprint was read from
+    CInstance*  selfInst = nullptr;
+    std::string selfText;
+    std::string cls;                // `class=<c>`: look up only fingerprints with this class suffix
+};
+
+// One distinct fingerprint: how many cells carry it, the first such cell, and
+// the grid instance it was first read from (the lookup's default self).
+struct CpNodeFp { RValue value; std::string text; int cells = 0; RValue firstCell; CInstance* grid = nullptr; std::string gridText; };
+struct CpNodeCounts { int filled = 0; int empty = 0; int noFp = 0; };
+// Per (class, b): fingerprints, the cells carrying them, item structs read
+// directly (`node var`), and each candidate member's sum.
+struct CpNodeSum { int fingerprints = 0; int cells = 0; int items = 0; std::map<std::string, double> members; };
+using CpNodeSums = std::map<std::string, CpNodeSum>;
+using CpNodeMembers = std::vector<std::pair<std::string, double>>;
+
+// Numeric members that may be the stack count, of one struct, prefixed: the
+// exact name `o` (exact only - as a substring it would take color, bonus, ...)
+// or a name containing a stack-like word.
+static void CpNodeStackMembers(const RValue& s, const std::string& prefix, CpNodeMembers& out)
+{
+    static const char* const kStackWords[] = { "stack", "amount", "count", "qty" };
+    if (!ApIsPlainStruct(s)) return;
+    const RValue names = g_Yytk->CallBuiltin("variable_struct_get_names", { s });
+    const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+    for (int i = 0; i < n; ++i) {
+        const std::string name = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) }).ToString();
+        const std::string ln = Lower(name);
+        bool match = name == "o";
+        for (const char* w : kStackWords) if (ln.find(w) != std::string::npos) match = true;
+        if (!match) continue;
+        const RValue m = g_Yytk->CallBuiltin("variable_struct_get", { s, RValue(name) });
+        if (PpIsNumber(m)) out.push_back({ prefix + name, m.ToDouble() });
+    }
+}
+
+// Every numeric member of one struct, capped - printed for a definition struct
+// with no candidate above, so the stack's real name is visible.
+static std::string CpNodeNumericMembers(const RValue& s)
+{
+    std::string list;
+    if (!ApIsPlainStruct(s)) return list;
+    const RValue names = g_Yytk->CallBuiltin("variable_struct_get_names", { s });
+    const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+    int listed = 0, more = 0;
+    for (int i = 0; i < n; ++i) {
+        const std::string name = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) }).ToString();
+        const RValue m = g_Yytk->CallBuiltin("variable_struct_get", { s, RValue(name) });
+        if (!PpIsNumber(m)) continue;
+        if (listed >= kCpNodeDefMembersShown) { ++more; continue; }
+        list += (listed++ ? " " : "") + name + "=" + CpArgSignature(m);
+    }
+    if (more) list += " ... " + std::to_string(more) + " more";
+    return list.empty() ? std::string("none") : list;
+}
+
+// A fingerprint's class: the text after its last '-', or `?`.
+static std::string CpNodeClass(const std::string& text)
+{
+    const size_t dash = text.rfind('-');
+    return dash == std::string::npos ? std::string("?") : text.substr(dash + 1);
+}
+
+// An item struct's itemType, its definition's `b` and every stack-like member
+// (`def.o` is the stack count, docs/RUNTIME_DATA_MODELS.md § 2) - the same
+// read for an item the lookup returned and one a container holds directly.
+// `defNumeric` is set only when the definition struct has no candidate.
+static void CpNodeReadItem(const RValue& item, RValue& type, std::string& b, CpNodeMembers& cand, std::string& defNumeric)
+{
+    type = g_Yytk->CallBuiltin("variable_struct_exists", { item, RValue("itemType") }).ToBoolean()
+        ? g_Yytk->CallBuiltin("variable_struct_get", { item, RValue("itemType") }) : RValue();
+    if (g_Yytk->CallBuiltin("variable_struct_exists", { item, RValue("itemDefinitionStruct") }).ToBoolean()) {
+        const RValue def = g_Yytk->CallBuiltin("variable_struct_get", { item, RValue("itemDefinitionStruct") });
+        if (ApIsPlainStruct(def) && g_Yytk->CallBuiltin("variable_struct_exists", { def, RValue("b") }).ToBoolean()) {
+            const RValue bv = g_Yytk->CallBuiltin("variable_struct_get", { def, RValue("b") });
+            b = PpIsNumber(bv) ? CpArgSignature(bv) : Describe(bv);
+        }
+        const size_t before = cand.size();
+        CpNodeStackMembers(def, "def.", cand);
+        if (cand.size() == before) defNumeric = CpNodeNumericMembers(def);
+    }
+    CpNodeStackMembers(item, "item.", cand);
+}
+
+// One instance's nodeGrid into `fps` - distinct fingerprints, first seen
+// first, merged across calls - with filled/empty by ApIsEmptyCell's rule
+// counted into `c`. Unless `quiet`, prints the size and fill or, with no
+// nodeGrid, the instance's variable names - never nothing. False when there
+// was no grid to read.
+static bool CpNodeCollect(const std::string& tag, const RValue& inst, std::vector<CpNodeFp>& fps, CpNodeCounts& c, bool quiet)
+{
+    if (!g_Yytk->CallBuiltin("instance_exists", { inst }).ToBoolean()) { if (!quiet) Out(tag + ": instance_exists is false - nothing read"); return false; }
+    double id = -1;
+    PpInstanceId(inst, id);
+    CInstance* self = HhResolveInstance(inst);
+    const std::string who = PpDescribeSelf(self) + " id=" + PpIdText(id);
+    if (!g_Yytk->CallBuiltin("variable_instance_exists", { inst, RValue("nodeGrid") }).ToBoolean()) {
+        if (quiet) return false;
+        const RValue names = g_Yytk->CallBuiltin("variable_instance_get_names", { inst });
+        const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+        std::string list;
+        for (int i = 0; i < n && i < kCpReaderMaxLines; ++i)
+            list += (i ? ", " : "") + g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) }).ToString();
+        if (n > kCpReaderMaxLines) list += ", ...";
+        Out(tag + ": " + who + " has no nodeGrid - its " + std::to_string(n) + " variables: " + list);
+        return false;
+    }
+    const RValue grid = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("nodeGrid") });
+    if (grid.m_Kind != VALUE_ARRAY) { if (!quiet) Out(tag + ": " + who + " nodeGrid is " + Describe(grid) + " - not an array, not read"); return false; }
+
+    CpNodeCounts here;
+    const size_t before = fps.size();
+    const int rows = (int)g_Yytk->CallBuiltin("array_length", { grid }).ToDouble();
+    for (int i = 0; i < rows; ++i) {
+        const RValue row = g_Yytk->CallBuiltin("array_get", { grid, RValue((double)i) });
+        if (row.m_Kind != VALUE_ARRAY) { if (!quiet) Out(tag + ": " + who + " nodeGrid row " + std::to_string(i) + " is " + Describe(row) + " - not read"); return false; }
+        const int cols = (int)g_Yytk->CallBuiltin("array_length", { row }).ToDouble();
+        for (int j = 0; j < cols; ++j) {
+            const RValue cell = g_Yytk->CallBuiltin("array_get", { row, RValue((double)j) });
+            if (ApIsEmptyCell(cell)) { ++here.empty; continue; }
+            ++here.filled;
+            if (!ApIsPlainStruct(cell) || !g_Yytk->CallBuiltin("variable_struct_exists", { cell, RValue("nodeFingerprint") }).ToBoolean()) { ++here.noFp; continue; }
+            const RValue f = g_Yytk->CallBuiltin("variable_struct_get", { cell, RValue("nodeFingerprint") });
+            const std::string text = f.m_Kind == VALUE_STRING ? f.ToString() : Describe(f);
+            if (f.m_Kind == VALUE_UNDEFINED || text.empty()) { ++here.noFp; continue; }
+            CpNodeFp* hit = nullptr;
+            for (CpNodeFp& e : fps) if (e.text == text) { hit = &e; break; }
+            if (!hit) {
+                fps.push_back(CpNodeFp());
+                hit = &fps.back();
+                hit->value = f; hit->text = text; hit->firstCell = cell; hit->grid = self; hit->gridText = who;
+            }
+            ++hit->cells;
+        }
+    }
+    c.filled += here.filled;
+    c.empty += here.empty;
+    c.noFp += here.noFp;
+    if (!quiet)
+        Out(tag + ": " + who + " w=" + PpSnapVar(inst, "nodeGridWidth") + " h=" + PpSnapVar(inst, "nodeGridHeight")
+            + " filled=" + std::to_string(here.filled) + " empty=" + std::to_string(here.empty) + " distinct fingerprints="
+            + std::to_string(fps.size() - before) + (here.noFp ? " (" + std::to_string(here.noFp) + " filled without one)" : std::string()));
+    return true;
+}
+
+// Per distinct fingerprint, ONE by-name lookup - the game's own
+// GetItemFromFingerprint(fp, a1), self = the grid it was read from or the
+// `self=id:` instance - capped per run; then the item's type, its
+// definition's `b`, the class suffix and every stack-like member, each added
+// to its (class, b) sum. With `class=`, only that class is looked up; the
+// rest are summed as b=?.
+static void CpNodeLookupAndSum(const std::vector<CpNodeFp>& fps, const CpNodeOpts& o, int& lookups, CpNodeSums& sums,
+                               int& shown, int& notLooked)
+{
+    for (const CpNodeFp& e : fps) {
+        const std::string cls = CpNodeClass(e.text);
+        CInstance* self = o.selfGiven ? o.selfInst : e.grid;
+        const std::string selfText = o.selfGiven ? o.selfText : e.gridText;
+        std::string line = "  fp=" + e.text + " class=" + cls + " cells=" + std::to_string(e.cells);
+        std::string b = "?";
+        std::string defNumeric;  // set only when the definition struct has no candidate
+        CpNodeMembers cand;
+        CpNodeStackMembers(e.firstCell, "cell.", cand);
+        if (!o.cls.empty() && cls != o.cls) {
+            ++notLooked;
+            line += " (lookup not made: class=" + o.cls + " selected)";
+        } else if (lookups >= kCpNodeMaxLookups || !self) {
+            ++notLooked;
+            line += self ? " (lookup not made: " + std::to_string(kCpNodeMaxLookups) + " per run)" : std::string(" (lookup not made: no instance for self)");
+        } else {
+            ++lookups;
+            RValue item;
+            bool found = false;
+            // What was supplied goes on the miss line: a miss is "not
+            // resolved with this self and this a1", never "not resolvable".
+            g_CpOwnLookup = true;
+            try { found = ApItemFromFingerprintAs(self, e.value, o.a1, item); } catch (...) { found = false; }
+            g_CpOwnLookup = false;
+            if (!found)
+                line += " GetItemFromFingerprint(fp, " + o.a1Text + ") returned no struct (self=" + selfText + ", a1=" + o.a1Text + ")";
+            else {
+                RValue type;
+                CpNodeReadItem(item, type, b, cand, defNumeric);
+                line += " itemType=" + Describe(type);
+            }
+        }
+        line += " b=" + b;
+        for (const auto& m : cand) line += " " + m.first + "=" + CpArgSignature(RValue(m.second));
+        if (cand.empty()) line += " (no numeric o/stack/amount/count/qty member)";
+        if (!defNumeric.empty()) line += " | def numeric members (none stack-named): " + defNumeric;
+        if (++shown <= kCpNodeFingerprintsShown) Out(line);
+        CpNodeSum& s = sums["class=" + cls + " b=" + b];
+        ++s.fingerprints;
+        s.cells += e.cells;
+        for (const auto& m : cand) s.members[m.first] += m.second;
+    }
+}
+
+// The `sum class=<c> b=<b>` lines, after the note on lines not printed and
+// before the count of fingerprints no lookup was made for.
+static void CpNodePrintSums(const CpNodeSums& sums, int shown, int notLooked)
+{
+    if (shown > kCpNodeFingerprintsShown)
+        Out("  ... " + std::to_string(shown - kCpNodeFingerprintsShown) + " more fingerprint/item line(s) not printed (the sums below count them)");
+    for (const auto& kv : sums) {
+        std::string line = "  sum " + kv.first + ": fingerprints=" + std::to_string(kv.second.fingerprints)
+            + " cells=" + std::to_string(kv.second.cells);
+        if (kv.second.items) line += " items=" + std::to_string(kv.second.items);
+        for (const auto& m : kv.second.members) line += " " + m.first + "=" + CpArgSignature(RValue(m.second));
+        Out(line);
+    }
+    if (notLooked) Out("  " + std::to_string(notLooked) + " fingerprint(s) summed with b=? (no lookup made for them)");
+}
+
+// One container instance: its grid, its lookups, its sums.
+static void CpNodeRead(const std::string& label, const RValue& inst, const CpNodeOpts& o, int& lookups)
+{
+    const std::string tag = "craftprobe node " + label;
+    try {
+        std::vector<CpNodeFp> fps;
+        CpNodeCounts c;
+        if (!CpNodeCollect(tag, inst, fps, c, false)) return;
+        CpNodeSums sums;
+        int shown = 0, notLooked = 0;
+        CpNodeLookupAndSum(fps, o, lookups, sums, shown, notLooked);
+        CpNodePrintSums(sums, shown, notLooked);
+    } catch (...) { Out(tag + ": EXCEPTION while reading - unreadable, not empty"); }
+}
+
+// `node socket [id:<n>]`: the Socketable tab is not one grid. Its window
+// (UI_Stash_Socket_New_obj) holds `grid`, an array - read one level of rows
+// deep - of UI_Inventory_Grid_obj instances, one per cell (research doc,
+// § Phase 1c readers), which is why `node id:<window>` prints "has no
+// nodeGrid". Each cell instance is taken once (a visited set), read only
+// after instance_exists, and not followed further; every cell's fingerprints
+// go into ONE lookup pass and ONE sum table.
+static void CpNodeSocket(const RValue& window, const CpNodeOpts& o, int& lookups)
+{
+    const std::string tag = "craftprobe node socket";
+    try {
+        if (!g_Yytk->CallBuiltin("instance_exists", { window }).ToBoolean()) { Out(tag + ": instance_exists is false - nothing read"); return; }
+        double wid = -1;
+        PpInstanceId(window, wid);
+        const std::string who = PpDescribeSelf(HhResolveInstance(window)) + " id=" + PpIdText(wid);
+        if (!g_Yytk->CallBuiltin("variable_instance_exists", { window, RValue("grid") }).ToBoolean()) { Out(tag + ": " + who + " has no `grid` - nothing read"); return; }
+        const RValue grid = g_Yytk->CallBuiltin("variable_instance_get", { window, RValue("grid") });
+        if (grid.m_Kind != VALUE_ARRAY) { Out(tag + ": " + who + " grid is " + Describe(grid) + " - not an array, not read"); return; }
+
+        std::vector<RValue> cells;
+        std::set<long long> visited;
+        int entries = 0, notInstance = 0, repeated = 0, over = 0;
+        auto take = [&](const RValue& v) {
+            ++entries;
+            const CpRef r = CpClassifyRef(v);
+            if (r.kind != CpRefKind::Instance) { ++notInstance; return; }
+            if (visited.count(r.id)) { ++repeated; return; }
+            if ((int)cells.size() >= kCpNodeMaxCells) { ++over; return; }
+            visited.insert(r.id);
+            cells.push_back(v);
+        };
+        const int rows = (int)g_Yytk->CallBuiltin("array_length", { grid }).ToDouble();
+        for (int i = 0; i < rows; ++i) {
+            const RValue e = g_Yytk->CallBuiltin("array_get", { grid, RValue((double)i) });
+            if (e.m_Kind != VALUE_ARRAY) { take(e); continue; }
+            const int cols = (int)g_Yytk->CallBuiltin("array_length", { e }).ToDouble();
+            for (int j = 0; j < cols; ++j) take(g_Yytk->CallBuiltin("array_get", { e, RValue((double)j) }));
+        }
+
+        std::vector<CpNodeFp> fps;
+        CpNodeCounts c;
+        int read = 0, gone = 0, noGrid = 0;
+        for (const RValue& cell : cells) {
+            if (!g_Yytk->CallBuiltin("instance_exists", { cell }).ToBoolean()) { ++gone; continue; }
+            if (CpNodeCollect(tag, cell, fps, c, true)) ++read; else ++noGrid;
+        }
+        Out(tag + ": " + who + " grid entries=" + std::to_string(entries) + " cell instances=" + std::to_string(cells.size())
+            + " read=" + std::to_string(read) + " gone=" + std::to_string(gone) + " without nodeGrid=" + std::to_string(noGrid)
+            + " not an instance=" + std::to_string(notInstance)
+            + (repeated ? " repeated=" + std::to_string(repeated) : std::string())
+            + (over ? " not read (cap " + std::to_string(kCpNodeMaxCells) + ")=" + std::to_string(over) : std::string())
+            + " | filled=" + std::to_string(c.filled) + " empty=" + std::to_string(c.empty)
+            + " distinct fingerprints=" + std::to_string(fps.size())
+            + (c.noFp ? " (" + std::to_string(c.noFp) + " filled without one)" : std::string()));
+        CpNodeSums sums;
+        int shown = 0, notLooked = 0;
+        CpNodeLookupAndSum(fps, o, lookups, sums, shown, notLooked);
+        CpNodePrintSums(sums, shown, notLooked);
+    } catch (...) { Out(tag + ": EXCEPTION while reading - unreadable, not empty"); }
+}
+
+// What `node var` gathers from a container's entries: fingerprints (looked up
+// like grid cells, the default self being the instance the path's last name
+// was read from) and item structs (read directly, no lookup).
+struct CpNodeEntries {
+    std::vector<CpNodeFp> fps;
+    CpNodeSums sums;
+    int read = 0, fingerprints = 0, items = 0, other = 0, shown = 0;
+    CInstance* holder = nullptr;
+    std::string holderText;
+};
+
+// One entry of a container `node var` reads, with its key when it has one (a
+// map's key, a struct's member name): a fingerprint string, a cell struct
+// carrying `nodeFingerprint`, or an item struct carrying
+// `itemDefinitionStruct`, whose class is its key's suffix when the key is a
+// fingerprint and its itemType otherwise, and whose `b` and stack members are
+// read directly. A row array is read one level down; anything else is
+// counted, not guessed at.
+static void CpNodeTakeEntry(const RValue& v, const std::string& key, CpNodeEntries& acc, int depth)
+{
+    if (acc.read >= kCpNodeMaxEntries) return;
+    if (v.m_Kind == VALUE_ARRAY && depth == 0) {
+        const int n = (int)g_Yytk->CallBuiltin("array_length", { v }).ToDouble();
+        for (int i = 0; i < n && acc.read < kCpNodeMaxEntries; ++i)
+            CpNodeTakeEntry(g_Yytk->CallBuiltin("array_get", { v, RValue((double)i) }), std::string(), acc, depth + 1);
+        return;
+    }
+    ++acc.read;
+    RValue fp, cell;
+    if (v.m_Kind == VALUE_STRING) fp = v;
+    else if (ApIsPlainStruct(v) && g_Yytk->CallBuiltin("variable_struct_exists", { v, RValue("nodeFingerprint") }).ToBoolean()) {
+        fp = g_Yytk->CallBuiltin("variable_struct_get", { v, RValue("nodeFingerprint") });
+        cell = v;
+    }
+    if (fp.m_Kind != VALUE_UNDEFINED) {
+        const std::string text = fp.m_Kind == VALUE_STRING ? fp.ToString() : Describe(fp);
+        if (text.empty()) { ++acc.other; return; }
+        ++acc.fingerprints;
+        CpNodeFp* hit = nullptr;
+        for (CpNodeFp& e : acc.fps) if (e.text == text) { hit = &e; break; }
+        if (!hit) {
+            acc.fps.push_back(CpNodeFp());
+            hit = &acc.fps.back();
+            hit->value = fp; hit->text = text; hit->firstCell = cell; hit->grid = acc.holder; hit->gridText = acc.holderText;
+        }
+        ++hit->cells;
+        return;
+    }
+    if (!ApIsPlainStruct(v) || !g_Yytk->CallBuiltin("variable_struct_exists", { v, RValue("itemDefinitionStruct") }).ToBoolean()) { ++acc.other; return; }
+    ++acc.items;
+    RValue type;
+    std::string b = "?", defNumeric;
+    CpNodeMembers cand;
+    CpNodeReadItem(v, type, b, cand, defNumeric);
+    const std::string cls = key.find('-') != std::string::npos ? CpNodeClass(key)
+        : type.m_Kind == VALUE_UNDEFINED ? std::string("?") : CpArgSignature(type);
+    std::string line = "  item" + (key.empty() ? std::string() : " key=" + key) + " class=" + cls + " itemType=" + Describe(type) + " b=" + b;
+    for (const auto& m : cand) line += " " + m.first + "=" + CpArgSignature(RValue(m.second));
+    if (cand.empty()) line += " (no numeric o/stack/amount/count/qty member)";
+    if (!defNumeric.empty()) line += " | def numeric members (none stack-named): " + defNumeric;
+    if (++acc.shown <= kCpNodeFingerprintsShown) Out(line);
+    CpNodeSum& s = acc.sums["class=" + cls + " b=" + b];
+    ++s.items;
+    for (const auto& m : cand) s.members[m.first] += m.second;
+}
+
+// `node var <Obj|global> <nth> <a.b.c>` / `node var id:<n> <a.b.c>`: sums
+// what a `var` path reaches (the same root and walk as `var`), whatever its
+// shape - a live instance with nodeGrid (read as `node id:`), or an array, a
+// ds_list or ds_map (each read only after ds_exists answers true for its
+// type) or a struct, entry by entry (CpNodeTakeEntry). Same caps, same
+// lookup pass, same sum lines. Reads only.
+static void CpNodeVar(const std::vector<std::string>& sel, const CpNodeOpts& o, int& lookups)
+{
+    const char* usage = "craftprobe node var: usage -> node var <Obj|global> <nth> <a.b.c> | node var id:<n> <a.b.c>; nothing read";
+    const bool byId = sel.size() >= 2 && Lower(sel[1]).rfind("id:", 0) == 0;
+    const size_t pathAt = byId ? 2 : 3;
+    if (sel.size() != pathAt + 1) { Out(usage); return; }
+    const bool global = !byId && Lower(sel[1]) == "global";
+    std::string tag = "craftprobe node var";
+    for (size_t i = 1; i <= pathAt; ++i) tag += " " + sel[i];
+    const std::vector<std::string> path = CpSplitPath(sel[pathAt]);
+    for (const std::string& seg : path) {
+        if (seg.empty() || seg == "*") { Out(tag + ": one named path is summed (`var ... *` lists names); nothing read"); return; }
+    }
+    try {
+        RValue cur;
+        long long rootId = -1;
+        std::string where;
+        if (!CpVarRoot(tag, sel, byId, global, cur, rootId, where)) return;
+        RValue holder;
+        bool haveHolder = false;
+        std::string walked;
+        if (!CpVarWalk(tag, global, path, cur, holder, haveHolder, walked)) return;
+        const CpRef r = CpClassifyRef(cur);
+        if (r.kind == CpRefKind::Instance) { CpNodeRead("var " + walked + " (" + where + ")", cur, o, lookups); return; }
+
+        CpNodeEntries acc;
+        if (haveHolder) {
+            double hid = -1;
+            PpInstanceId(holder, hid);
+            acc.holder = HhResolveInstance(holder);
+            acc.holderText = PpDescribeSelf(acc.holder) + " id=" + PpIdText(hid);
+        }
+        const std::string head = tag + " (" + where + "): " + walked + " is ";
+        if (cur.m_Kind == VALUE_ARRAY) {
+            const int n = (int)g_Yytk->CallBuiltin("array_length", { cur }).ToDouble();
+            Out(head + "array len=" + std::to_string(n));
+            for (int i = 0; i < n && acc.read < kCpNodeMaxEntries; ++i)
+                CpNodeTakeEntry(g_Yytk->CallBuiltin("array_get", { cur, RValue((double)i) }), std::string(), acc, 0);
+        } else if (r.kind == CpRefKind::DsList) {
+            if (!g_Yytk->CallBuiltin("ds_exists", { cur, RValue(kCpDsTypeList) }).ToBoolean()) { Out(head + r.text + " - ds_exists(ds_type_list) is false; nothing read"); return; }
+            const int n = (int)g_Yytk->CallBuiltin("ds_list_size", { cur }).ToDouble();
+            Out(head + r.text + " size=" + std::to_string(n));
+            for (int i = 0; i < n && acc.read < kCpNodeMaxEntries; ++i)
+                CpNodeTakeEntry(g_Yytk->CallBuiltin("ds_list_find_value", { cur, RValue((double)i) }), std::string(), acc, 0);
+        } else if (r.kind == CpRefKind::DsMap) {
+            if (!g_Yytk->CallBuiltin("ds_exists", { cur, RValue(kCpDsTypeMap) }).ToBoolean()) { Out(head + r.text + " - ds_exists(ds_type_map) is false; nothing read"); return; }
+            const int n = (int)g_Yytk->CallBuiltin("ds_map_size", { cur }).ToDouble();
+            Out(head + r.text + " size=" + std::to_string(n));
+            RValue key = g_Yytk->CallBuiltin("ds_map_find_first", { cur });
+            for (int i = 0; i < n && acc.read < kCpNodeMaxEntries && key.m_Kind != VALUE_UNDEFINED; ++i) {
+                const std::string keyText = key.m_Kind == VALUE_STRING ? key.ToString() : Describe(key);
+                CpNodeTakeEntry(g_Yytk->CallBuiltin("ds_map_find_value", { cur, key }), keyText, acc, 0);
+                key = g_Yytk->CallBuiltin("ds_map_find_next", { cur, key });
+            }
+        } else if (ApIsPlainStruct(cur)) {
+            const RValue names = g_Yytk->CallBuiltin("variable_struct_get_names", { cur });
+            const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+            Out(head + "struct members=" + std::to_string(n));
+            for (int i = 0; i < n && acc.read < kCpNodeMaxEntries; ++i) {
+                const std::string name = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) }).ToString();
+                CpNodeTakeEntry(g_Yytk->CallBuiltin("variable_struct_get", { cur, RValue(name) }), name, acc, 0);
+            }
+        } else {
+            Out(head + Describe(cur) + " - not a container `node var` sums; nothing summed");
+            return;
+        }
+        Out(tag + ": entries read=" + std::to_string(acc.read)
+            + (acc.read >= kCpNodeMaxEntries ? " (cap " + std::to_string(kCpNodeMaxEntries) + ")" : std::string())
+            + " fingerprints=" + std::to_string(acc.fingerprints) + " (distinct " + std::to_string(acc.fps.size()) + ")"
+            + " items=" + std::to_string(acc.items) + " other=" + std::to_string(acc.other)
+            + " | default lookup self=" + (acc.holder ? acc.holderText : std::string("none (a global path; `self=id:<n>` gives one)")));
+        int notLooked = 0;
+        CpNodeLookupAndSum(acc.fps, o, lookups, acc.sums, acc.shown, notLooked);
+        CpNodePrintSums(acc.sums, acc.shown, notLooked);
+    } catch (...) { Out(tag + ": EXCEPTION while reading - unreadable, not empty"); }
+}
+
+// `node <id:<n> | <Obj> <nth> | stash | bag | socket [id:<n>] | var ...>`,
+// then any of `a1=<v>`, `self=id:<n>`, `class=<c>` (Phase 1c). `stash`: every
+// variable of the open stash window that is a live instance reference
+// (stashGrid, uiStashContainer, invMaterialTab, ...), each read as above.
+// `bag`: every UI_Inventory_Grid_obj instance with its uiNodeCallstack - the
+// known-good grid read a special-tab miss is judged against; the bag's grid
+// holds whichever bag tab is on show (research doc, § Phase 1c readers).
+static void CpNodeCommand(const std::vector<std::string>& tok)
+{
+    const char* usage = "craftprobe node: usage -> node id:<n> | node <Obj> <nth> | node stash | node bag | node socket [id:<n>]"
+                        " | node var <Obj|global> <nth> <a.b.c> | node var id:<n> <a.b.c>, then any of a1=<v> self=id:<n> class=<c>;"
+                        " nothing read";
+    // The options, in any order after the selector. A named self is used only
+    // once the runtime says it exists and it resolves by name to an instance.
+    CpNodeOpts o;
+    std::vector<std::string> sel;
+    for (size_t i = 1; i < tok.size(); ++i) {
+        const std::string l = Lower(tok[i]);
+        if (l.rfind("a1=", 0) == 0) {
+            const std::string v = tok[i].substr(3);
+            if (v.empty()) { Out(usage); return; }
+            o.a1 = l == "a1=undefined" ? RValue() : MpArg(v);
+            o.a1Text = v;
+        } else if (l.rfind("self=id:", 0) == 0) {
+            long long id = -1;
+            try { id = std::stoll(tok[i].substr(8)); } catch (...) { Out("craftprobe node: self=id:<n> needs a whole number; nothing read"); return; }
+            const RValue h((double)id);
+            if (!g_Yytk->CallBuiltin("instance_exists", { h }).ToBoolean()) {
+                Out("craftprobe node: self=id:" + std::to_string(id) + " - instance_exists is false; nothing read");
+                return;
+            }
+            o.selfInst = HhResolveInstance(h);
+            if (!o.selfInst) { Out("craftprobe node: self=id:" + std::to_string(id) + " did not resolve to an instance; nothing read"); return; }
+            o.selfGiven = true;
+            o.selfText = PpDescribeSelf(o.selfInst) + " id=" + std::to_string(id);
+        } else if (l.rfind("class=", 0) == 0) {
+            o.cls = tok[i].substr(6);
+            if (o.cls.empty()) { Out(usage); return; }
+        } else {
+            sel.push_back(tok[i]);
+        }
+    }
+    if (sel.empty()) { Out(usage); return; }
+    const std::string what = Lower(sel[0]);
+    int lookups = 0;
+    auto objectIndex = [](HeroSiege::Objects::GameObject obj) {
+        try { return (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(HeroSiege::Objects::GetObjectName(obj))) }).ToDouble(); }
+        catch (...) { return -1; }
+    };
+    Out("craftprobe node: lookups are GetItemFromFingerprint(fp, " + o.a1Text + ") with self="
+        + (o.selfGiven ? o.selfText : std::string("the grid each fingerprint was read from"))
+        + (o.cls.empty() ? std::string(", every class") : ", class=" + o.cls + " only"));
+    try {
+        if (sel.size() == 1 && what.rfind("id:", 0) == 0) {
+            long long id = -1;
+            try { id = std::stoll(sel[0].substr(3)); } catch (...) { Out("craftprobe node: id:<n> needs a whole number; nothing read"); return; }
+            CpNodeRead("id:" + std::to_string(id), RValue((double)id), o, lookups);
+        } else if (what == "socket" && sel.size() <= 2) {
+            RValue window;
+            if (sel.size() == 2) {
+                long long id = -1;
+                if (Lower(sel[1]).rfind("id:", 0) != 0) { Out(usage); return; }
+                try { id = std::stoll(sel[1].substr(3)); } catch (...) { Out("craftprobe node socket: id:<n> needs a whole number; nothing read"); return; }
+                window = RValue((double)id);
+            } else {
+                const int idx = objectIndex(HeroSiege::Objects::GameObject::UI_Stash_Socket_New_obj);
+                const int total = idx < 0 ? 0 : (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)idx) }).ToDouble();
+                if (total <= 0) {
+                    Out("craftprobe node socket: UI_Stash_Socket_New_obj has no live instance (the Socketable tab is not on show) - nothing read;"
+                        " `node socket id:<n>` reads one by id");
+                    return;
+                }
+                window = g_Yytk->CallBuiltin("instance_find", { RValue((double)idx), RValue(0.0) });
+            }
+            CpNodeSocket(window, o, lookups);
+        } else if (what == "var") {
+            CpNodeVar(sel, o, lookups);
+        } else if (sel.size() == 1 && what == "stash") {
+            const int idx = objectIndex(HeroSiege::Objects::GameObject::UI_Stash_obj);
+            const int total = idx < 0 ? 0 : (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)idx) }).ToDouble();
+            if (total <= 0) { Out("craftprobe node stash: UI_Stash_obj has no live instance (the stash is closed) - nothing read; `node id:<n>` reads a container by id"); return; }
+            const RValue window = g_Yytk->CallBuiltin("instance_find", { RValue((double)idx), RValue(0.0) });
+            Out("craftprobe node stash: " + PpDescribeSelf(HhResolveInstance(window)) + " stashTabSelected=" + PpSnapVar(window, "stashTabSelected")
+                + " tabSelected=" + PpSnapVar(window, "tabSelected"));
+            const RValue names = g_Yytk->CallBuiltin("variable_instance_get_names", { window });
+            const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+            std::set<long long> read;
+            for (int i = 0; i < n; ++i) {
+                const std::string name = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) }).ToString();
+                const RValue v = g_Yytk->CallBuiltin("variable_instance_get", { window, RValue(name) });
+                const CpRef r = CpClassifyRef(v);
+                if (r.kind != CpRefKind::Instance) continue;
+                if (read.count(r.id)) { Out("craftprobe node UI_Stash_obj." + name + ": instance " + std::to_string(r.id) + " already read above"); continue; }
+                if ((int)read.size() >= kCpNodeMaxInstances) { Out("craftprobe node stash: " + std::to_string(kCpNodeMaxInstances) + " instances read; the rest not (`node id:<n>`)"); break; }
+                read.insert(r.id);
+                CpNodeRead("UI_Stash_obj." + name, v, o, lookups);
+            }
+            if (read.empty()) Out("craftprobe node stash: the window holds no live instance reference");
+        } else if (sel.size() == 1 && what == "bag") {
+            const int idx = objectIndex(HeroSiege::Objects::GameObject::UI_Inventory_Grid_obj);
+            const int total = idx < 0 ? 0 : (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)idx) }).ToDouble();
+            Out("craftprobe node bag: " + std::to_string(total) + " UI_Inventory_Grid_obj instance(s)");
+            for (int k = 0; k < total && k < kCpNodeMaxInstances; ++k) {
+                const RValue node = g_Yytk->CallBuiltin("instance_find", { RValue((double)idx), RValue((double)k) });
+                if (node.m_Kind == VALUE_UNDEFINED) { Out("craftprobe node bag:" + std::to_string(k) + ": instance_find returned undefined"); continue; }
+                std::string stack = "missing";
+                if (g_Yytk->CallBuiltin("variable_instance_exists", { node, RValue("uiNodeCallstack") }).ToBoolean()) {
+                    const RValue s = g_Yytk->CallBuiltin("variable_instance_get", { node, RValue("uiNodeCallstack") });
+                    stack = s.m_Kind == VALUE_ARRAY ? CiExpandContainer(s) : Describe(s);
+                    if (stack.size() > 160) stack = stack.substr(0, 160) + "...";
+                }
+                CpNodeRead("bag:" + std::to_string(k) + " uiNodeCallstack=" + stack, node, o, lookups);
+            }
+            if (total > kCpNodeMaxInstances) Out("craftprobe node bag: " + std::to_string(total - kCpNodeMaxInstances) + " more not read (`node id:<n>`)");
+        } else if (sel.size() == 2) {
+            int nth = 0;
+            try { nth = std::stoi(sel[1]); } catch (...) { Out("craftprobe node: nth must be a whole number; nothing read"); return; }
+            RValue handle; CInstance* inst = nullptr; int total = 0;
+            if (!MpResolve("craftprobe node " + sel[0] + " " + sel[1], sel[0], nth, handle, inst, total)) return;
+            CpNodeRead(sel[0] + " " + sel[1], handle, o, lookups);
+        } else {
+            Out(usage);
+            return;
+        }
+    } catch (...) { Out("craftprobe node: EXCEPTION while reading - unreadable, not empty"); }
+    Out("craftprobe node: " + std::to_string(lookups) + " GetItemFromFingerprint lookup(s) this run (cap "
+        + std::to_string(kCpNodeMaxLookups) + "); nothing written");
+}
+
+// ---- Phase 1c: `store` - where the stash may live while its window is closed
+// LoadStash ran twice at character load (self Console_Save_obj) and returned
+// true: the contents went somewhere, not back to the caller (research doc,
+// § Phase 1c readers). `store [substr ...]` lists, for the first live
+// instance of each object below, for the instance the kept
+// GetProfileInventoryData return refers to, and for the globals, every
+// variable whose name matches - one line each, with its shape (a live
+// instance reference with its object's name, a data structure's size), values
+// shallow, kCpReaderMaxLines per holder. `store names [substr ...]` prints the
+// matching names only, ten per line and up to kCpStoreMaxNames per holder, so
+// a search is never cut at kCpReaderMaxLines. Objects are named through the
+// SDK; a holder is read only after instance_number / instance_exists say it
+// is live; the instrument's own research globals (`__cp_*`) are skipped, not
+// reported as a finding. Hook-free, and nothing is written.
+static constexpr int kCpStoreMaxNames = 400;         // names `store names` prints per holder
+static constexpr int kCpStoreNamesPerLine = 10;
+static constexpr const char* kCpResearchGlobalPrefix = "__cp_";
+
+static const HeroSiege::Objects::GameObject kCpStoreHolders[] = {
+    HeroSiege::Objects::GameObject::Console_Save_obj,        // LoadStash's self at load
+    HeroSiege::Objects::GameObject::Profile_Manager_obj,
+    HeroSiege::Objects::GameObject::Town_Stash_obj,          // the world stash (a holder here, not a new row)
+    HeroSiege::Objects::GameObject::Player_obj,              // GetInventoryArray's self
+    HeroSiege::Objects::GameObject::New_Inventory_Data_obj,
+    HeroSiege::Objects::GameObject::Inventory_Loading_obj,
+    HeroSiege::Objects::GameObject::Load_Inventory_obj,
+};
+
+// A live instance's object name (object_get_name of its object_index), or a
+// note saying why there is none. The caller has checked instance_exists.
+static std::string CpInstanceObjectName(const RValue& inst)
+{
+    try {
+        const RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("object_index") });
+        int objIdx = -1;
+        if (!N1ObjectIndex(oi, objIdx)) return "(object_index " + Describe(oi) + ")";
+        return g_Yytk->CallBuiltin("object_get_name", { RValue((double)objIdx) }).ToString();
+    } catch (...) { return "(object_index unreadable)"; }
+}
+
+// The matching names of one holder, each with its value (or, `namesOnly`,
+// the names alone), then how many matched. `get` reads one name's value.
+template <class Get>
+static void CpStoreList(const std::string& tag, const RValue& names, int n, const std::vector<std::string>& filters,
+                        bool namesOnly, Get get)
+{
+    int matched = 0, skipped = 0, onLine = 0;
+    std::string line;
+    for (int i = 0; i < n; ++i) {
+        std::string name;
+        try { name = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) }).ToString(); } catch (...) { continue; }
+        if (name.rfind(kCpResearchGlobalPrefix, 0) == 0) { ++skipped; continue; }
+        if (!CpNameMatches(name, filters)) continue;
+        ++matched;
+        if (namesOnly) {
+            if (matched > kCpStoreMaxNames) continue;   // counted below, not printed
+            line += (onLine ? " " : "") + name;
+            if (++onLine == kCpStoreNamesPerLine) { Out("  " + line); line.clear(); onLine = 0; }
+            continue;
+        }
+        if (matched > kCpReaderMaxLines) continue;
+        try {
+            const RValue v = get(name);
+            const CpRef r = CpClassifyRef(v);
+            std::string text;
+            if (r.kind == CpRefKind::Instance) {
+                text = g_Yytk->CallBuiltin("instance_exists", { v }).ToBoolean()
+                    ? r.text + " (" + CpInstanceObjectName(v) + ")" : r.text + " (instance_exists is false)";
+            } else if (r.kind == CpRefKind::DsGrid || r.kind == CpRefKind::DsList || r.kind == CpRefKind::DsMap) {
+                text = r.text + CpDsText(v, r);
+            } else {
+                text = CpValueText(v, kCpReaderArrayPreview);
+            }
+            Out("  " + name + "=" + text);
+        } catch (...) { Out("  " + name + "=<read failed>"); }
+    }
+    if (onLine) Out("  " + line);
+    const int cap = namesOnly ? kCpStoreMaxNames : kCpReaderMaxLines;
+    Out(tag + ": " + std::to_string(matched) + " of " + std::to_string(n) + " matched"
+        + (matched > cap ? " (" + std::to_string(cap) + " printed; "
+                           + (namesOnly ? std::string("narrow the filter") : std::string("`store names` lists every one")) + ")"
+                         : std::string())
+        + (skipped ? ", " + std::to_string(skipped) + " research global(s) `__cp_*` skipped" : std::string()));
+}
+
+// One instance holder, after instance_exists.
+static void CpStoreHolder(const std::string& tag, const RValue& inst, const std::vector<std::string>& filters, bool namesOnly)
+{
+    try {
+        if (!g_Yytk->CallBuiltin("instance_exists", { inst }).ToBoolean()) { Out(tag + ": instance_exists is false - nothing read"); return; }
+        double id = -1;
+        PpInstanceId(inst, id);
+        const RValue names = g_Yytk->CallBuiltin("variable_instance_get_names", { inst });
+        const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+        Out(tag + ": " + PpDescribeSelf(HhResolveInstance(inst)) + " id=" + PpIdText(id) + " vars=" + std::to_string(n));
+        CpStoreList(tag, names, n, filters, namesOnly,
+                    [&](const std::string& name) { return g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(name) }); });
+    } catch (...) { Out(tag + ": read failed"); }
+}
+
+// The globals (the pseudo-instance -5, as CpListGlobals reads them).
+static void CpStoreGlobals(const std::string& tag, const std::vector<std::string>& filters, bool namesOnly)
+{
+    try {
+        const RValue names = g_Yytk->CallBuiltin("variable_instance_get_names", { RValue(-5.0) });
+        const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+        Out(tag + ": " + std::to_string(n) + " globals");
+        CpStoreList(tag, names, n, filters, namesOnly,
+                    [](const std::string& name) { return g_Yytk->CallBuiltin("variable_global_get", { RValue(name) }); });
+    } catch (...) { Out(tag + ": globals could not be read"); }
+}
+
+static void CpStore(const std::vector<std::string>& tok)
+{
+    const bool namesOnly = tok.size() > 1 && Lower(tok[1]) == "names";
+    std::vector<std::string> filters(tok.begin() + (namesOnly ? 2 : 1), tok.end());
+    if (filters.empty()) filters = { "stash", "socket", "material", "item", "map", "inv", "tab" };
+    const std::string tag = namesOnly ? "craftprobe store names" : "craftprobe store";
+    std::string list;
+    for (const std::string& f : filters) list += " " + f;
+    Out(tag + ": filters" + list + " - hook-free, nothing written");
+    for (const HeroSiege::Objects::GameObject obj : kCpStoreHolders) {
+        const std::string objName(HeroSiege::Objects::GetObjectName(obj));
+        const std::string t = tag + " " + objName;
+        try {
+            const int idx = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(objName) }).ToDouble();
+            if (idx < 0) { Out(t + ": not found (asset_get_index)"); continue; }
+            const int total = (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)idx) }).ToDouble();
+            if (total <= 0) { Out(t + ": no live instance - nothing read"); continue; }
+            const RValue h = g_Yytk->CallBuiltin("instance_find", { RValue((double)idx), RValue(0.0) });
+            CpStoreHolder(t + " nth=0" + (total > 1 ? " (of " + std::to_string(total) + ")" : std::string()), h, filters, namesOnly);
+        } catch (...) { Out(t + ": read failed"); }
+    }
+    // The instance the game's own GetProfileInventoryData call returned - kept
+    // by `backing`, never invoked here (a blind call crashed the game).
+    const CpTarget* profile = nullptr;
+    for (const CpTarget& t : g_CpTargets)
+        if (std::string_view(t.runtimeName) == HeroSiege::Scripts::gml_Script_GetProfileInventoryData) { profile = &t; break; }
+    const std::string pt = tag + " GetProfileInventoryData return";
+    if (!profile || !profile->kept || !profile->kept->value || profile->kept->call <= 0) {
+        Out(pt + ": none kept (`hook`, `backing on`, then open the bag so the game makes the call)");
+    } else {
+        const RValue kept = *profile->kept->value;
+        const CpRef r = CpClassifyRef(kept);
+        if (r.kind != CpRefKind::Instance) Out(pt + " (kept #" + std::to_string(profile->kept->call) + "): " + PpBackingShape(kept) + " - not an instance reference");
+        else CpStoreHolder(pt + " (kept #" + std::to_string(profile->kept->call) + ", " + r.text + ")", kept, filters, namesOnly);
+    }
+    CpStoreGlobals(tag + " global", filters, namesOnly);
+}
+
+// ---- backing: keep what the game's own calls returned ------------------------
+// Default rows: the four profile getters, the stash getters and the crafting
+// availability/count rows - the returns that may hold the materials tabs -
+// and, from Phase 1c, the fingerprint lookup and GetItemMap. The lookup runs
+// whenever the bag or the stash draws (~20k calls a minute in Phase 1b), so a
+// stutter while it is kept is expected; `backing off` stops the keeping.
+static bool CpDefaultBackingRow(const CpTarget& t)
+{
+    const std::string_view name(t.runtimeName);
+    return CpIsProfileGetter(t)
+        || name == HeroSiege::Scripts::gml_Script_s_StashTabData
+        || name == HeroSiege::Scripts::gml_Script_LoadStash
+        || name == HeroSiege::Scripts::gml_Script_GetStashMaxTabs
+        || name == HeroSiege::Scripts::gml_Script_GetCraftItemsAvailable
+        || name == HeroSiege::Scripts::gml_Script_CraftFindRecipeItems
+        || name == HeroSiege::Scripts::gml_Script_CountInventoryItem
+        || name == HeroSiege::Scripts::gml_Script_FindInventoryItemData
+        || name == HeroSiege::Scripts::gml_Script_GetItemFromFingerprint
+        || name == HeroSiege::Scripts::gml_Script_GetItemMap;
+}
+
+// Which argument a row's returns are also kept under, or -1 for none: the
+// first for GetInventoryArray and CountInventoryItem (Phase 1b) and for
+// GetItemMap; the second for GetItemFromFingerprint (Phase 1c) - the one
+// `node a1=` takes, so a stash draw's own a1 and self show up by signature.
+static int CpBackingArgIndex(const CpTarget& t)
+{
+    const std::string_view name(t.runtimeName);
+    if (name == HeroSiege::Scripts::gml_Script_GetItemFromFingerprint) return 1;
+    if (name == HeroSiege::Scripts::gml_Script_GetItemMap) return 0;
+    if (name == HeroSiege::Scripts::gml_Script_GetInventoryArray
+        || name == HeroSiege::Scripts::gml_Script_CountInventoryItem) return 0;
+    return -1;
+}
+
+// The rows whose returns are also kept per signature of one argument.
+static bool CpKeepsPerArgument(const CpTarget& t)
+{
+    return CpBackingArgIndex(t) >= 0;
+}
+
+static void CpBackingDump()
+{
+    int written = 0;
+    for (const CpTarget& t : g_CpTargets) {
+        if (!t.kept || !t.kept->value || t.kept->call <= 0) continue;
+        try {
+            Out(std::string("craftprobe backing dump ") + t.label + " #" + std::to_string(t.kept->call) + " self=" + t.kept->self
+                + " shape=" + PpBackingShape(*t.kept->value) + " -> "
+                + PpBackingJsonFile(std::string("cp_backing_") + t.safe + ".json", t.label, t.kept->call, t.kept->self, *t.kept->value));
+            ++written;
+        } catch (...) { Out(std::string("craftprobe backing dump ") + t.label + ": read failed"); }
+        // One file per keyed-argument signature: `_arg<k>` in the order first
+        // seen. The line also says how many calls the signature kept, the
+        // latest first argument, and which self objects made them.
+        if (!t.kept->perArg && t.kept->perArgs.empty()) continue;
+        const std::string key = "a" + std::to_string(t.kept->argIndex) + "=";
+        int sigs = 0;
+        for (size_t k = 0; k < t.kept->perArgs.size(); ++k) {
+            const CpArgKept& a = t.kept->perArgs[k];
+            if (!a.value || a.call <= 0) continue;
+            std::string selves;
+            for (const std::string& s : a.selves) selves += (selves.empty() ? "" : ",") + s;
+            try {
+                Out(std::string("craftprobe backing dump ") + t.label + " " + key + a.sig + " #" + std::to_string(a.call)
+                    + " calls=" + std::to_string(a.calls) + " a0=" + a.a0
+                    + " selves=" + (selves.empty() ? std::string("?") : selves)
+                    + ((int)a.selves.size() >= kCpBackingMaxSelves ? "(cap)" : "")
+                    + " self=" + a.self + " shape=" + PpBackingShape(*a.value) + " -> "
+                    + PpBackingJsonFile(std::string("cp_backing_") + t.safe + "_arg" + std::to_string(k) + ".json",
+                                        std::string(t.label) + " " + key + a.sig, a.call, a.self, *a.value));
+                ++sigs;
+                ++written;
+            } catch (...) { Out(std::string("craftprobe backing dump ") + t.label + " " + key + a.sig + ": read failed"); }
+        }
+        Out(std::string("craftprobe backing dump ") + t.label + ": " + std::to_string(sigs) + " signature(s) of argument "
+            + std::to_string(t.kept->argIndex)
+            + (t.kept->perArgFull ? " (" + std::to_string(t.kept->perArgFull) + " return(s) found every one of the "
+                                    + std::to_string(kCpBackingMaxArgs) + " slots taken)" : std::string()));
+    }
+    Out("craftprobe backing dump: " + std::to_string(written) + " kept return(s)"
+        + (written ? std::string() : std::string(" - `backing on`, then open the windows so the game makes its own calls")));
+}
+
+static void CpBackingCommand(const std::vector<std::string>& tok)
+{
+    const std::string what = tok.size() > 1 ? Lower(tok[1]) : std::string();
+    if (what == "on") {
+        const std::vector<std::string> filters(tok.begin() + 2, tok.end());
+        int selected = 0, notDetoured = 0;
+        int perArg = 0;
+        for (CpTarget& t : g_CpTargets) {
+            const bool on = filters.empty() ? CpDefaultBackingRow(t) : CpLabelMatches(t, filters);
+            InterlockedExchange(t.capture, on ? 1 : 0);
+            if (t.kept) {
+                t.kept->perArg = on && CpKeepsPerArgument(t);
+                t.kept->argIndex = CpBackingArgIndex(t) < 0 ? 0 : CpBackingArgIndex(t);
+            }
+            if (on) { ++selected; if (!t.installed.load()) ++notDetoured; if (CpKeepsPerArgument(t)) ++perArg; }
+        }
+        g_CpBacking.store(true);
+        Out("craftprobe backing: on - the latest return of " + std::to_string(selected) + " row(s) is kept"
+            + (notDetoured ? " (" + std::to_string(notDetoured) + " of them not detoured: `hook` first)" : std::string())
+            + (perArg ? ", " + std::to_string(perArg) + " of them also per argument signature (up to "
+                        + std::to_string(kCpBackingMaxArgs) + " each; GetItemFromFingerprint on its second)" : std::string())
+            + ". Nothing is invoked; `backing dump` writes the json files.");
+    } else if (what == "off") {
+        g_CpBacking.store(false);
+        Out("craftprobe backing: off - kept values stay for `backing dump`; `backing clear` releases them.");
+    } else if (what == "dump") {
+        CpBackingDump();
+    } else if (what == "clear") {
+        int cleared = 0;
+        for (CpTarget& t : g_CpTargets) {
+            if (!t.kept || t.kept->call <= 0) continue;
+            try { if (!t.kept->root.empty()) g_Yytk->CallBuiltin("variable_global_set", { RValue(t.kept->root), RValue() }); } catch (...) {}
+            if (t.kept->value) *t.kept->value = RValue();
+            t.kept->call = 0;
+            // Per-argument slots: released the same way; the heap RValues are
+            // left undefined, never deleted (CpKept::value's rule).
+            for (CpArgKept& a : t.kept->perArgs) {
+                try { if (!a.root.empty()) g_Yytk->CallBuiltin("variable_global_set", { RValue(a.root), RValue() }); } catch (...) {}
+                if (a.value) *a.value = RValue();
+            }
+            t.kept->perArgs.clear();
+            t.kept->perArgFull = 0;
+            ++cleared;
+        }
+        // Phase 1k round 1: `call`'s own kept returns, released the same way.
+        for (CpCallKept& c : g_CpCallKept) {
+            c.lost.clear();   // round 2: a lost call's reason goes too
+            if (c.call <= 0) continue;
+            try { if (!c.root.empty()) g_Yytk->CallBuiltin("variable_global_set", { RValue(c.root), RValue() }); } catch (...) {}
+            if (c.value) *c.value = RValue();
+            c.call = 0;
+            ++cleared;
+        }
+        Out("craftprobe backing clear: released " + std::to_string(cleared) + " kept value(s)");
+    } else {
+        Out("craftprobe backing on [substr ...] | off | dump | clear");
+    }
+}
+
+// `dump`: every row's counters to bp_ipc\craftprobe_rows.json, then `backing dump`.
+static void CpDump()
+{
+    std::string text = "{\"armed\":" + std::string(g_CpArmed.load() ? "true" : "false")
+        + ",\"budget\":" + std::to_string(g_CpLogBudget) + ",\"rows\":[";
+    for (int i = 0; i < kCpTargetCount; ++i) {
+        const CpTarget& t = g_CpTargets[i];
+        text += std::string(i ? "," : "") + "{\"label\":\"" + PpBackingEscape(t.label) + "\",\"name\":\"" + PpBackingEscape(t.runtimeName)
+            + "\",\"detoured\":" + (t.installed.load() ? "true" : "false")
+            + ",\"calls\":" + (t.installed.load() ? std::to_string(*t.calls) : std::string("null"))
+            + ",\"logged\":" + std::to_string(*t.logged) + ",\"selected\":" + (*t.logOn ? "true" : "false")
+            + ",\"kept\":" + std::to_string(t.kept ? t.kept->call : 0) + "}";
+    }
+    text += "]}";
+    try {
+        std::ofstream f(IPC_DIR + "\\craftprobe_rows.json", std::ios::binary);
+        f << text;
+        Out("craftprobe dump: craftprobe_rows.json (" + std::to_string(text.size()) + " bytes, " + std::to_string(kCpTargetCount) + " rows)");
+    } catch (...) { Out("craftprobe dump: craftprobe_rows.json could not be written"); }
+    CpBackingDump();
+}
+
+// ---- the one write: call <Row> <Obj> <nth> [args ...] confirm ----------------
+// One by-name call of one plain-script table row, self = other = that
+// instance, through CpDispatchScript (asset_get_index + script_execute). Each
+// argument is typed like menuprobe's (number, true/false, text), or
+// `fp:<fingerprint>` - the item the game's own GetItemFromFingerprint returns
+// for it, which must be a struct - or `kept:<row>` - that row's kept return.
+// Every precondition is checked, and every argument resolved, before the one
+// call; a failure refuses with nothing called. Prints what was supplied, the
+// instance either side and what came back: `dispatched` proves the call ran,
+// never that it did what was hoped.
+//
+// Phase 1e adds, for the take trial (research doc, `### Live procedure 1e`):
+// `id:<n>` in place of `<Obj> <nth>` as the self; `fp9:<fingerprint>` - the
+// item the game's own lookup returns with 9, the stash's owner value, as its
+// second argument; `map9` - the kept stash map itself - and `map9:<key>` - one
+// entry of it, both only while `mapkeep` calls that map current; and
+// `path:<Obj|global|id:n>.<a.b.c>` - the value `var`'s walk reaches. Each one
+// that cannot resolve refuses before the call, naming what was supplied.
+//
+// Phase 1g adds the literal `undefined`: a value of kind undefined, the second
+// argument auto-prospect's proven move passes to InventoryGridCanAddToStack and
+// InvGridClearItemNode (research doc, `### Phase 1g instrument`).
+//
+// Phase 1h splits the reply (research doc, `### Phase 1h instrument`). Live 1g
+// read a by-name SaveStash that faulted inside the game as the same `NOT
+// dispatched` a name that never resolved prints, because ApCallScript answers
+// one bool. CpDispatchScript is that dispatch - asset_get_index, then
+// script_execute with self = other = the instance - with its failures kept
+// apart: no script found (before any script_execute), script_execute threw (a
+// GML runtime error unwinds as a C++ exception, which the catch takes), or it
+// returned a failure status. Every reply names the row's call number.
+
+enum class CpCallOutcome { NoScript, Threw, Failed, Ran };
+
+static CpCallOutcome CpDispatchScript(const std::string& name, CInstance* self, const std::vector<RValue>& args,
+                                      RValue& res, AurieStatus& st)
+{
+    double idx = -1;
+    const RValue index = g_Yytk->CallBuiltin("asset_get_index", { RValue(name) });
+    if (!ApNumber(index, idx) || idx < 0) return CpCallOutcome::NoScript;
+    std::vector<RValue> callArgs{ index };
+    for (const RValue& a : args) callArgs.push_back(a);
+    st = AURIE_EXTERNAL_ERROR;
+    try { st = g_Yytk->CallBuiltinEx(res, "script_execute", self, self, callArgs); }
+    catch (...) { return CpCallOutcome::Threw; }
+    return AurieSuccess(st) ? CpCallOutcome::Ran : CpCallOutcome::Failed;
+}
+
+// `path:<root>.<a.b.c>`: the root as `var` takes it (`<Obj>` is its first
+// instance, nth 0), walked the same way. The walk prints its own reason.
+static bool CpCallPathArg(const std::string& spec, RValue& out)
+{
+    const size_t dot = spec.find('.');
+    if (dot == std::string::npos || dot == 0 || dot + 1 >= spec.size()) return false;
+    const std::string root = spec.substr(0, dot);
+    const bool byId = Lower(root).rfind("id:", 0) == 0;
+    const bool global = !byId && Lower(root) == "global";
+    const std::vector<std::string> rootTok = byId ? std::vector<std::string>{ "path", root }
+                                                  : std::vector<std::string>{ "path", root, "0" };
+    const std::string tag = "craftprobe call path:" + spec;
+    RValue cur, holder;
+    long long rootId = -1;
+    bool haveHolder = false;
+    std::string where, walked;
+    if (!CpVarRoot(tag, rootTok, byId, global, cur, rootId, where)) return false;
+    if (!CpVarWalk(tag, global, CpSplitPath(spec.substr(dot + 1)), cur, holder, haveHolder, walked)) return false;
+    out = cur;
+    return true;
+}
+
+// One argument of `call` (and, Phase 1j, of `callm`), resolved after the
+// command's confirm gate and before its one dispatch: a number, true/false or
+// text (MpArg), the literal `undefined`, or one of the forms above - `fp:`,
+// `fp9:`, `map9`/`map9:<key>`, `path:` and `kept:`, each through the game's own
+// lookup or the instrument's readers. Prints the refusal, naming what was
+// supplied, and returns false when it cannot resolve.
+static bool CpResolveArg(const std::string& tag, const std::string& a, CInstance* inst, RValue& v)
+{
+    const std::string la = Lower(a);
+    if (la.rfind("fp:", 0) == 0) {
+        if (!ApItemFromFingerprint(inst, RValue(a.substr(3)), v)) {
+            Out(tag + ": refused - " + a + " is not an item the game's own lookup returns; nothing was called");
+            return false;
+        }
+    } else if (la.rfind("fp9:", 0) == 0) {
+        if (!ApItemFromFingerprintAs(inst, RValue(a.substr(4)), RValue(9.0), v)) {
+            Out(tag + ": refused - " + a + " (lookup self=" + PpDescribeSelf(inst) + ", a1=9) returned no item struct; nothing was called");
+            return false;
+        }
+    } else if (la == "map9" || la.rfind("map9:", 0) == 0) {
+        RValue map;
+        std::string why;
+        if (!MkCurrentMap(map, why)) { Out(tag + ": refused - " + a + ": the kept map is not current (reason=" + why + ", see `mapkeep stat`); nothing was called"); return false; }
+        if (la == "map9") v = map;
+        else {
+            const std::string key = a.substr(5);
+            std::string form;
+            if (key.empty()) { Out(tag + ": refused - map9: needs a key (`mapkeep find` prints them); nothing was called"); return false; }
+            if (!MkMapEntry(map, key, v, form)) { Out(tag + ": refused - " + a + ": the kept map has no such key (as text or number); nothing was called"); return false; }
+        }
+    } else if (la.rfind("path:", 0) == 0) {
+        if (!CpCallPathArg(a.substr(5), v)) { Out(tag + ": refused - " + a + " did not resolve (path:<Obj|global|id:n>.<a.b.c>; the walk's line above says where); nothing was called"); return false; }
+    } else if (la.rfind("kept:", 0) == 0) {
+        std::string from, why;
+        if (!CpKeptValue(a.substr(5), v, from, why)) {
+            Out(tag + ": refused - " + a + ": " + why + "; nothing was called");
+            return false;
+        }
+        Out(tag + ": " + a + " is " + from);
+    } else if (la == "undefined") {
+        v = RValue();   // Phase 1g: kind undefined, as auto-prospect's add and clear pass it (not MpArg's text)
+    } else {
+        v = MpArg(a);
+    }
+    return true;
+}
+
+// `id:<n>`'s before/after line: whether it is alive, and its id and position.
+static std::string CpWhereId(const std::string& sel, const RValue& handle)
+{
+    bool alive = false;
+    try { alive = g_Yytk->CallBuiltin("instance_exists", { handle }).ToBoolean(); }
+    catch (...) { return sel + " <instance_exists-read-failed>"; }
+    if (!alive) return sel + " <destroyed>";
+    return sel + " " + PpObjectName(HhResolveInstance(handle)) + " x=" + MpVar(handle, "x") + " y=" + MpVar(handle, "y");
+}
+
+static void CpCall(const std::vector<std::string>& tok)
+{
+    const char* usage = "craftprobe call: usage -> call <Row> <Obj> <nth> [args ...] confirm | call <Row> id:<n> [args ...] confirm "
+                        "(arg: number | true | false | undefined | text | fp:<fingerprint> | fp9:<fingerprint> | kept:<row> | map9 | map9:<key>"
+                        " | path:<Obj|global|id:n>.<a.b.c>)";
+    if (tok.size() < 4 || Lower(tok.back()) != "confirm") {
+        Out(std::string("craftprobe call: refused - this calls a game script; nothing was called. ") + usage);
+        return;
+    }
+    const CpTarget* t = CpFindRow(tok[1]);
+    if (!t) { Out("craftprobe call: refused - '" + tok[1] + "' is not a craftprobe row; nothing was called"); return; }
+    const std::string runtime(t->runtimeName);
+    if (runtime.rfind("gml_Script_", 0) != 0 || runtime.find('@') != std::string::npos) {
+        Out(std::string("craftprobe call: refused - ") + t->label + " is a closure or struct method, not a script this route calls by name; nothing was called");
+        return;
+    }
+    if (CpIsProfileGetter(*t)) {
+        Out(std::string("craftprobe call: refused - ") + t->label + " is a profile getter: capture it with `backing on`, never invoke it (a blind call crashed the game); nothing was called");
+        return;
+    }
+    // The self: `id:<n>` (after instance_exists, resolved by name) or `<Obj> <nth>`.
+    const bool byId = Lower(tok[2]).rfind("id:", 0) == 0;
+    const size_t argsAt = byId ? 3 : 4;
+    if (tok.size() < argsAt + 1) { Out(std::string("craftprobe call: refused - no self given; nothing was called. ") + usage); return; }
+    int nth = 0;
+    RValue handle; CInstance* inst = nullptr; int total = 0;
+    if (byId) {
+        long long id = -1;
+        try { id = std::stoll(tok[2].substr(3)); } catch (...) { Out("craftprobe call: refused - id:<n> needs a whole number; nothing was called"); return; }
+        handle = RValue((double)id);
+        if (!g_Yytk->CallBuiltin("instance_exists", { handle }).ToBoolean()) { Out("craftprobe call: refused - " + tok[2] + ": instance_exists is false; nothing was called"); return; }
+        inst = HhResolveInstance(handle);
+        if (!inst) { Out("craftprobe call: refused - " + tok[2] + " exists but did not resolve to an instance; nothing was called"); return; }
+    } else {
+        try { nth = std::stoi(tok[3]); } catch (...) { Out("craftprobe call: refused - nth must be a whole number; nothing was called"); return; }
+        if (!MpResolve("craftprobe call (refused, nothing was called)", tok[2], nth, handle, inst, total)) return;
+    }
+    auto where = [&]() { return byId ? CpWhereId(tok[2], handle) : MpWhere(tok[2], nth, handle); };
+
+    std::vector<RValue> args;
+    std::string supplied;
+    for (size_t i = argsAt; i + 1 < tok.size(); ++i) {
+        const std::string& a = tok[i];
+        RValue v;
+        if (!CpResolveArg("craftprobe call", a, inst, v)) return;
+        supplied += " a" + std::to_string(i - argsAt) + "=" + a + "(" + PpBackingShape(v) + ")";
+        args.push_back(v);
+    }
+    const std::string name = runtime.substr(std::string("gml_Script_").size());
+    Out("craftprobe call: " + name + " self=other=" + PpDescribeSelf(inst) + " argc=" + std::to_string(args.size()) + supplied);
+    Out("  before: " + where());
+    // The number the row's own detour gives this call on its `<Row> #<n>`
+    // entry line: its next count, read here on the game thread that runs the
+    // detour, so the call's own lines are never mistaken for the game's.
+    const long callNo = *t->calls + 1;
+    const std::string no = "#" + std::to_string(callNo);
+    // Round 2: the arguments above are resolved (a `kept:` of this row read
+    // already), so the row's slot is emptied now; only a dispatch that
+    // returns refills it, and one that does not says why in the slot.
+    CpCallKept& slot = g_CpCallKept[t - g_CpTargets];
+    const long attempt = ++slot.attempt;
+    const std::string tried = "by-name call " + std::to_string(attempt) + " (" + no + ")";
+    CpForgetCallReturn(*t, tried + " did not return");
+    RValue res;
+    AurieStatus st = AURIE_SUCCESS;
+    const CpCallOutcome outcome = CpDispatchScript(name, inst, args, res, st);
+    std::string lost;
+    if (outcome == CpCallOutcome::NoScript) {
+        Out("  NOT dispatched " + no + ": asset_get_index found no script");
+        lost = "asset_get_index found no script";
+    }
+    else if (outcome == CpCallOutcome::Threw) {
+        Out("  entered " + no + ", script_execute threw");
+        lost = "script_execute threw";
+    }
+    else if (outcome == CpCallOutcome::Failed) {
+        Out("  entered " + no + ", script_execute returned st=" + std::to_string((int)st));
+        lost = "script_execute returned st=" + std::to_string((int)st);
+    }
+    else {
+        std::string ret;
+        try { ret = PpRetText(res); } catch (...) { ret = "<read failed>"; }
+        Out("  dispatched " + no + " -> ret=" + ret);
+        CpKeepCallReturn(*t, res, callNo);
+    }
+    if (!lost.empty()) {
+        CpForgetCallReturn(*t, tried + ": " + lost);
+        Out(std::string("  kept:") + t->label + " is empty (" + tried + ": " + lost + "); `kept:" + t->label + "` refuses until a `call` returns");
+    }
+    Out("  after:  " + where());
+}
+
+// ---- Phase 1j: callm, set, inject --------------------------------------------
+// The research doc's `### Phase 1j instrument`. Every proven take moved a whole
+// entry; the owner wants only the shortfall moved. The Ghidra reading has the
+// game's split dialog calling two method-valued members of the item struct (a
+// get/set pair keyed by a string) and a third with no argument, while the
+// game's own merge and consume edit the count inline. A hand split in the bag
+// (the session's control) shows which. `callm` replays a method-valued member
+// by name; `set` writes one existing number member, for the case the control
+// shows the edit is inline; `inject` is the count injection the detour above
+// applies. `callm` and `set` are one operation per command, behind `confirm`,
+// with every precondition checked after the gate and before the one call or
+// write, and each refusal naming what was supplied.
+
+// Route A of InvokeMethodValue, reused: the runtime's own dispatcher reached by
+// name, script_execute(method, args...) with self = other = the instance. Never
+// route B - no CScriptRef is read here - and no petquest counter moves. The
+// three outcomes are `call`'s (no script to find: the value is the method).
+static CpCallOutcome CpDispatchMethod(const RValue& method, CInstance* self, const std::vector<RValue>& args,
+                                      RValue& res, AurieStatus& st)
+{
+    std::vector<RValue> callArgs{ method };
+    for (const RValue& a : args) callArgs.push_back(a);
+    st = AURIE_EXTERNAL_ERROR;
+    try { st = g_Yytk->CallBuiltinEx(res, "script_execute", self, self, callArgs); }
+    catch (...) { return CpCallOutcome::Threw; }
+    return AurieSuccess(st) ? CpCallOutcome::Ran : CpCallOutcome::Failed;
+}
+
+// GML's own type name for a value (`number`, `struct`, `method`, ...), for a
+// refusal that says what the member held.
+static std::string CpTypeOf(const RValue& v)
+{
+    try { return g_Yytk->CallBuiltin("typeof", { v }).ToString(); } catch (...) { return "<typeof failed>"; }
+}
+
+// Whether the runtime calls the value a method: is_method, or - if this runtime
+// does not answer is_method - typeof's "method". `via` names which answered.
+static bool CpIsMethod(const RValue& v, std::string& via)
+{
+    try {
+        const RValue r = g_Yytk->CallBuiltin("is_method", { v });
+        if (r.m_Kind != VALUE_UNDEFINED) { via = "is_method"; return r.ToBoolean(); }
+    } catch (...) {}
+    via = "typeof";
+    return CpTypeOf(v) == "method";
+}
+
+// The craftprobe row whose script a method value wraps (method_get_index and
+// script_get_name, both read-only), so `callm`'s reply carries that row's call
+// number the way `call`'s does. nullptr when no row names it.
+static CpTarget* CpRowForMethod(const RValue& method, std::string& scriptName)
+{
+    scriptName.clear();
+    try {
+        double index = -1;
+        if (!ApNumber(g_Yytk->CallBuiltin("method_get_index", { method }), index) || index < 0) return nullptr;
+        const RValue name = g_Yytk->CallBuiltin("script_get_name", { RValue(index) });
+        if (name.m_Kind != VALUE_STRING) return nullptr;
+        scriptName = name.ToString();
+    } catch (...) { return nullptr; }
+    const std::string full = scriptName.rfind("gml_Script_", 0) == 0 ? scriptName : "gml_Script_" + scriptName;
+    for (CpTarget& t : g_CpTargets) if (full == t.runtimeName) return &t;
+    return nullptr;
+}
+
+// Phase 1k: what the runtime's method_get_self answers for a method value -
+// the self's shape and GML type - or `<not answered>` when the call throws.
+// Read-only and UNVERIFIED on this runtime: `undefined` reads the same for an
+// unbound method and for a runtime that answers nothing, so `callm ... bind`
+// reports it and never depends on it.
+static std::string CpMethodSelfText(const RValue& m)
+{
+    try {
+        const RValue self = g_Yytk->CallBuiltin("method_get_self", { m });
+        return PpBackingShape(self) + " (" + CpTypeOf(self) + ")";
+    } catch (...) { return "<not answered>"; }
+}
+
+// `<struct>` for `callm` and `set`: `fp:<K>` (the game's own lookup, map 0),
+// `fp9:<K>` (a1=9, the stash map), either optionally followed by a dotted tail
+// walked through plain structs only (`fp9:<K>.itemDefinitionStruct`), or
+// `path:<Obj|global|id:n>.<a.b.c>` walked as `var` walks. Phase 1k: with
+// `keptForm` (only `set` asks), also `kept:<row>[.a.b]` - the row's kept return
+// (`backing on <row>` first; CpCapture keeps a by-name call's return too),
+// walked by the same tail. The value reached must be a plain struct. Prints the
+// refusal, ending in `nothing`, and returns false when it cannot be had.
+static bool CpResolveStruct(const std::string& tag, const std::string& spec, CInstance* lookupSelf, RValue& out,
+                            const std::string& nothing, bool keptForm = false)
+{
+    const std::string ls = Lower(spec);
+    const bool fp0 = ls.rfind("fp:", 0) == 0;
+    const bool fp9 = ls.rfind("fp9:", 0) == 0;
+    const bool kept = keptForm && ls.rfind("kept:", 0) == 0;
+    if (ls.rfind("path:", 0) == 0) {
+        if (!CpCallPathArg(spec.substr(5), out)) {
+            Out(tag + ": refused - " + spec + " did not resolve (the walk's line above says where); " + nothing);
+            return false;
+        }
+    } else if (fp0 || fp9 || kept) {
+        const std::string rest = spec.substr(fp9 ? 4 : fp0 ? 3 : 5);
+        const size_t dot = rest.find('.');
+        const std::string key = rest.substr(0, dot);
+        if (key.empty()) { Out(tag + ": refused - " + spec + " names no " + (kept ? "row" : "fingerprint") + "; " + nothing); return false; }
+        if (kept) {
+            std::string from, why;
+            if (!CpKeptValue(key, out, from, why)) {
+                Out(tag + ": refused - " + spec + ": " + why + "; " + nothing);
+                return false;
+            }
+            Out(tag + ": kept:" + key + " is " + from);
+        } else {
+            if (!lookupSelf) { Out(tag + ": refused - " + spec + ": no self for the lookup; " + nothing); return false; }
+            const bool found = fp9 ? ApItemFromFingerprintAs(lookupSelf, RValue(key), RValue(9.0), out)
+                                   : ApItemFromFingerprint(lookupSelf, RValue(key), out);
+            if (!found) {
+                Out(tag + ": refused - " + spec + " (lookup self=" + PpDescribeSelf(lookupSelf) + ", a1=" + (fp9 ? "9" : "0")
+                    + ") returned no item struct; " + nothing);
+                return false;
+            }
+        }
+        if (dot != std::string::npos) {
+            std::string walked = key;
+            for (const std::string& seg : CpSplitPath(rest.substr(dot + 1))) {
+                if (seg.empty()) { Out(tag + ": refused - " + spec + " has an empty name in its tail; " + nothing); return false; }
+                if (!ApIsPlainStruct(out)) {
+                    Out(tag + ": refused - before " + walked + "." + seg + " the value is " + Describe(out)
+                        + ", not a plain struct (supplied: " + spec + "); " + nothing);
+                    return false;
+                }
+                walked += "." + seg;
+                if (!g_Yytk->CallBuiltin("variable_struct_exists", { out, RValue(seg) }).ToBoolean()) {
+                    Out(tag + ": refused - the struct has no member " + walked + " (supplied: " + spec + "); " + nothing);
+                    return false;
+                }
+                out = g_Yytk->CallBuiltin("variable_struct_get", { out, RValue(seg) });
+            }
+        }
+    } else {
+        Out(tag + ": refused - " + spec + " is not fp:<K>[.a.b], fp9:<K>[.a.b]" + (keptForm ? ", kept:<row>[.a.b]" : "")
+            + " or path:<Obj|global|id:n>.<a.b.c>; " + nothing);
+        return false;
+    }
+    if (!ApIsPlainStruct(out)) {
+        Out(tag + ": refused - " + spec + " reached " + PpBackingShape(out) + " (" + CpTypeOf(out) + "), not a plain struct; " + nothing);
+        return false;
+    }
+    return true;
+}
+
+// `callm <Obj> <nth>|id:<n> <struct> <member> [args ...] [bind] confirm`: ONE
+// invocation of a method-valued member of a struct, by name, self = other = the
+// named instance, whose `fp:`/`fp9:` lookups are also made with that self.
+//
+// Phase 1k (research doc, `### Phase 1k instrument`): Live 1j's four calls of
+// the item's own methods threw. On the Ghidra reading the constructor stores
+// them unbound, so script_execute ran each with the instance as self, while
+// the game's own member call supplies the struct. `bind`, the word directly
+// before `confirm`, re-binds the member to the struct it was read from through
+// the runtime's own `method` builtin - HashRouteMethod's route, by name - after
+// every precondition below and before the one dispatch, which then gets the
+// bound value. Without `bind` the command is Live 1j's, unchanged.
+static void CpCallMethod(const std::vector<std::string>& tok)
+{
+    const char* usage = "craftprobe callm: usage -> callm <Obj> <nth> <struct> <member> [args ...] [bind] confirm"
+                        " | callm id:<n> <struct> <member> [args ...] [bind] confirm"
+                        " (struct: fp:<K>[.a.b] | fp9:<K>[.a.b] | path:<Obj|global|id:n>.<a.b.c>; args as `call` takes them;"
+                        " bind: re-bind the member to its struct with the runtime's method() first)";
+    if (tok.size() < 5 || Lower(tok.back()) != "confirm") {
+        Out(std::string("craftprobe callm: refused - this calls a game method; nothing was called. ") + usage);
+        return;
+    }
+    const bool byId = Lower(tok[1]).rfind("id:", 0) == 0;
+    const size_t structAt = byId ? 2 : 3;
+    if (tok.size() < structAt + 3) { Out(std::string("craftprobe callm: refused - no struct or member given; nothing was called. ") + usage); return; }
+    // `bind` counts only directly before `confirm` and after the member, so it
+    // is never an argument, and a member named `bind` is still a member.
+    const bool bind = tok.size() >= structAt + 4 && Lower(tok[tok.size() - 2]) == "bind";
+    const size_t argsEnd = tok.size() - (bind ? 2 : 1);
+    int nth = 0;
+    RValue handle; CInstance* inst = nullptr; int total = 0;
+    if (byId) {
+        long long id = -1;
+        try { id = std::stoll(tok[1].substr(3)); } catch (...) { Out("craftprobe callm: refused - id:<n> needs a whole number; nothing was called"); return; }
+        handle = RValue((double)id);
+        if (!g_Yytk->CallBuiltin("instance_exists", { handle }).ToBoolean()) { Out("craftprobe callm: refused - " + tok[1] + ": instance_exists is false; nothing was called"); return; }
+        inst = HhResolveInstance(handle);
+        if (!inst) { Out("craftprobe callm: refused - " + tok[1] + " exists but did not resolve to an instance; nothing was called"); return; }
+    } else {
+        try { nth = std::stoi(tok[2]); } catch (...) { Out("craftprobe callm: refused - nth must be a whole number; nothing was called"); return; }
+        if (!MpResolve("craftprobe callm (refused, nothing was called)", tok[1], nth, handle, inst, total)) return;
+    }
+    auto where = [&]() { return byId ? CpWhereId(tok[1], handle) : MpWhere(tok[1], nth, handle); };
+
+    const std::string& spec = tok[structAt];
+    const std::string& member = tok[structAt + 1];
+    RValue target;
+    if (!CpResolveStruct("craftprobe callm", spec, inst, target, "nothing was called")) return;
+    if (!g_Yytk->CallBuiltin("variable_struct_exists", { target, RValue(member) }).ToBoolean()) {
+        Out("craftprobe callm: refused - " + spec + " has no member " + member + "; nothing was called");
+        return;
+    }
+    const RValue method = g_Yytk->CallBuiltin("variable_struct_get", { target, RValue(member) });
+    std::string via;
+    if (!CpIsMethod(method, via)) {
+        Out("craftprobe callm: refused - " + spec + "." + member + " holds " + CpTypeOf(method) + " (" + Describe(method)
+            + "), not a method (asked " + via + "); nothing was called");
+        return;
+    }
+    std::vector<RValue> args;
+    std::string supplied;
+    for (size_t i = structAt + 2; i < argsEnd; ++i) {
+        const std::string& a = tok[i];
+        RValue v;
+        if (!CpResolveArg("craftprobe callm", a, inst, v)) return;
+        supplied += " a" + std::to_string(i - structAt - 2) + "=" + a + "(" + PpBackingShape(v) + ")";
+        args.push_back(v);
+    }
+    // The value script_execute gets: the member as read (Live 1j's shape), or,
+    // with `bind`, method(<struct>, <member>) - refused unless the runtime
+    // answers a method. method_get_self is read either side, for the reply only.
+    RValue callee = method;
+    std::string bindLine;
+    if (bind) {
+        const std::string selfBefore = CpMethodSelfText(method);
+        RValue bound;
+        try { bound = g_Yytk->CallBuiltin("method", { target, method }); }
+        catch (...) { Out("craftprobe callm: refused - method(" + spec + ", " + spec + "." + member + ") threw (supplied: bind); nothing was called"); return; }
+        std::string boundVia;
+        if (!CpIsMethod(bound, boundVia)) {
+            Out("craftprobe callm: refused - method(" + spec + ", " + spec + "." + member + ") gave " + CpTypeOf(bound) + " ("
+                + Describe(bound) + "), not a method (asked " + boundVia + ", supplied: bind); nothing was called");
+            return;
+        }
+        callee = bound;
+        bindLine = "  bind=yes method(" + spec + ", " + spec + "." + member + ") method_get_self: before=" + selfBefore
+                 + " after=" + CpMethodSelfText(bound) + " (read only; the dispatch does not depend on it)";
+    }
+    std::string scriptName;
+    CpTarget* row = CpRowForMethod(method, scriptName);
+    Out("craftprobe callm: " + spec + "." + member + " (" + (scriptName.empty() ? std::string("method, script not named") : scriptName)
+        + ", asked " + via + ") self=other=" + PpDescribeSelf(inst) + " argc=" + std::to_string(args.size()) + supplied
+        + (bind ? " bind" : ""));
+    if (bind) Out(bindLine);
+    Out("  before: " + where());
+    // The method's own row, when one names its script and is detoured, prints
+    // its entry line with this number - as `call`'s reply names its row's.
+    const std::string no = (row && row->installed.load()) ? "#" + std::to_string(*row->calls + 1) + " (" + row->label + ")"
+                                                          : std::string("(no detoured row names this method)");
+    RValue res;
+    AurieStatus st = AURIE_SUCCESS;
+    const CpCallOutcome outcome = CpDispatchMethod(callee, inst, args, res, st);
+    if (outcome == CpCallOutcome::Threw) Out("  entered " + no + ", script_execute threw");
+    else if (outcome == CpCallOutcome::Failed) Out("  entered " + no + ", script_execute returned st=" + std::to_string((int)st));
+    else {
+        std::string ret;
+        try { ret = PpRetText(res); } catch (...) { ret = "<read failed>"; }
+        Out("  dispatched " + no + " -> ret=" + ret);
+    }
+    Out("  after:  " + where());
+}
+
+// `set <struct> <member> <number> confirm`: ONE write of one existing member
+// that already holds a number, read back. `fp:`/`fp9:` look the item up with
+// self the first Console_Save_obj instance - the self every by-name trial since
+// Phase 1h used, and one the lookup does not read (Phase 1h reading). Phase 1k:
+// `kept:<row>[.a.b]` writes into a row's kept return (the save-shaped struct
+// CreateItemSaveStruct returned, a StructCopy clone), resolved in
+// CpResolveStruct after the gate like every other form.
+static void CpSet(const std::vector<std::string>& tok)
+{
+    const char* usage = "craftprobe set: usage -> set <struct> <member> <number> confirm"
+                        " (struct: fp:<K>[.a.b] | fp9:<K>[.a.b] | kept:<row>[.a.b] | path:<Obj|global|id:n>.<a.b.c>)";
+    if (tok.size() != 5 || Lower(tok.back()) != "confirm") {
+        Out(std::string("craftprobe set: refused - this writes a member of a game struct; nothing was written. ") + usage);
+        return;
+    }
+    const std::string& spec = tok[1];
+    const std::string& member = tok[2];
+    const std::string& numberText = tok[3];
+    double number = 0;
+    bool parsed = false;
+    try { size_t used = 0; number = std::stod(numberText, &used); parsed = used == numberText.size() && std::isfinite(number); }
+    catch (...) { parsed = false; }
+    if (!parsed) { Out("craftprobe set: refused - '" + numberText + "' is not a number; nothing was written"); return; }
+    CInstance* lookupSelf = nullptr;
+    const std::string ls = Lower(spec);
+    if (ls.rfind("fp:", 0) == 0 || ls.rfind("fp9:", 0) == 0) {
+        const std::string holder(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Console_Save_obj));
+        RValue handle; int total = 0;
+        if (!MpResolve("craftprobe set (refused, nothing was written)", holder, 0, handle, lookupSelf, total)) return;
+    }
+    RValue target;
+    if (!CpResolveStruct("craftprobe set", spec, lookupSelf, target, "nothing was written", true)) return;
+    if (!g_Yytk->CallBuiltin("variable_struct_exists", { target, RValue(member) }).ToBoolean()) {
+        Out("craftprobe set: refused - " + spec + " has no member " + member + " (set writes only an existing member); nothing was written");
+        return;
+    }
+    const RValue before = g_Yytk->CallBuiltin("variable_struct_get", { target, RValue(member) });
+    if (!PpIsNumber(before)) {
+        Out("craftprobe set: refused - " + spec + "." + member + " holds " + CpTypeOf(before) + " (" + Describe(before)
+            + "), not a number; nothing was written");
+        return;
+    }
+    Out("craftprobe set: " + spec + "." + member + " <- " + numberText
+        + (lookupSelf ? " (lookup self=" + PpDescribeSelf(lookupSelf) + ")" : std::string()));
+    try { g_Yytk->CallBuiltin("variable_struct_set", { target, RValue(member), RValue(number) }); }
+    catch (...) { Out("  variable_struct_set threw; the read below says what the member holds"); }
+    const RValue after = g_Yytk->CallBuiltin("variable_struct_get", { target, RValue(member) });
+    double a = 0;
+    Out("  before=" + CpNumText(before.ToDouble()) + " after=" + (ApNumber(after, a) ? CpNumText(a) : Describe(after)));
+}
+
+// `inject <class> <b> <extra> [owner=<a0>]` / `inject off`: the research global
+// the CountInventoryItem detour reads (CpInject, above the table). Refused
+// unless every frame it depends on - CountInventoryItem's row, the recipe row's
+// closure and GetCraftItemsAvailable - is detoured, so an `injected=0` cannot
+// be the instrument's blindness. The owner defaults to Live 1i's a0=1; when
+// `show` reports `other-owner=` with a0 some other value, `owner=<that value>`
+// re-arms for it in the same launch. Nothing is called and nothing is written
+// by the command itself.
+static void CpInjectCommand(const std::vector<std::string>& tok)
+{
+    CpTarget* count = CpFindRow(SdkShortScriptName(HeroSiege::Scripts::gml_Script_CountInventoryItem));
+    CpTarget* avail = CpFindRow(SdkShortScriptName(HeroSiege::Scripts::gml_Script_GetCraftItemsAvailable));
+    CpTarget* list = nullptr;
+    for (CpTarget& t : g_CpTargets)
+        if (std::string_view(t.runtimeName) == HeroSiege::Scripts::gml_Script_anon_840_gml_Object_UI_Craft_Recipe_List_Item_obj_Create_0) list = &t;
+    if (tok.size() == 2 && Lower(tok[1]) == "off") {
+        const bool was = g_CpInjectOn.exchange(false);
+        Out(std::string("craftprobe inject: off") + (was ? " (it had raised " + std::to_string(g_CpInjected) + " return(s), left "
+            + std::to_string(g_CpInjectOutside) + " outside every frame and " + std::to_string(g_CpInjectOtherOwner)
+            + " with another owner)" : std::string(" (it was off)"))
+            + " - every CountInventoryItem return is the game's own");
+        return;
+    }
+    if (tok.size() != 4 && tok.size() != 5) {
+        Out("craftprobe inject: usage -> inject <class> <b> <extra> [owner=<a0>] | inject off; nothing changed");
+        return;
+    }
+    double cls = 0, base = 0, extra = 0, owner = kCpInjectOwner;
+    auto number = [](const std::string& text, double& out) {
+        try { size_t used = 0; out = std::stod(text, &used); return used == text.size() && std::isfinite(out); }
+        catch (...) { return false; }
+    };
+    if (!number(tok[1], cls) || cls != std::floor(cls) || !number(tok[2], base) || base != std::floor(base) || !number(tok[3], extra)) {
+        Out("craftprobe inject: refused - <class> and <b> must be whole numbers and <extra> a number (supplied: " + tok[1] + " "
+            + tok[2] + " " + tok[3] + "); nothing changed");
+        return;
+    }
+    if (tok.size() == 5 && (Lower(tok[4]).rfind("owner=", 0) != 0 || !number(tok[4].substr(6), owner) || owner != std::floor(owner))) {
+        Out("craftprobe inject: refused - the fifth word must be owner=<whole number> (supplied: " + tok[4] + "); nothing changed");
+        return;
+    }
+    const bool countOn = count && count->installed.load();
+    const bool listOn = list && list->installed.load();
+    const bool availOn = avail && avail->installed.load();
+    if (!countOn || !listOn || !availOn) {
+        Out(std::string("craftprobe inject: refused - ") + (count ? count->label : "the count row") + " is "
+            + (countOn ? "detoured" : "NOT detoured") + ", " + (list ? list->label : "the recipe row's closure")
+            + " is " + (listOn ? "detoured" : "NOT detoured") + " and " + (avail ? avail->label : "the availability call")
+            + " is " + (availOn ? "detoured" : "NOT detoured") + "; all three must be (`craftprobe hook`); nothing changed");
+        return;
+    }
+    g_CpInjectOn.store(false);
+    g_CpInjectOwner.store(owner);
+    g_CpInjectClass.store(cls);
+    g_CpInjectB.store(base);
+    g_CpInjectExtra.store(extra);
+    InterlockedExchange(&g_CpInjected, 0);
+    InterlockedExchange(&g_CpInjectedAvailability, 0);
+    InterlockedExchange(&g_CpInjectedRecipeRow, 0);
+    InterlockedExchange(&g_CpInjectedRoute, 0);
+    InterlockedExchange(&g_CpInjectOutside, 0);
+    InterlockedExchange(&g_CpInjectOtherOwner, 0);
+    InterlockedExchange(&g_CpInjectNotNumber, 0);
+    g_CpInjectOn.store(true);
+    Out("craftprobe inject: on - " + std::string(count->label) + " calls with a0=" + CpNumText(owner) + " a1=" + CpNumText(cls)
+        + " a3=" + CpNumText(base) + " made inside " + avail->label + ", " + list->label
+        + " or a craft-route row now return the game's count + " + CpNumText(extra)
+        + "; `show` prints injected= per frame and every call it left alone, `inject off` ends it. No press is needed to read it.");
+}
+
+// The first line is the build's marker: a live session tells this build
+// (Phase 1k, 282 rows: Phase 1j's 278 plus the loaders' InitItemFromJson,
+// ReCreateItem and ParseItemToGrid, and ReportClient, added in the build's
+// review round so `hash-accept` rests on a detoured row; with `callm`'s
+// `bind`, `set`'s `kept:` form and `call` keeping its own dispatch's return
+// for `kept:`, emptied when a dispatch does not return; the first Phase 1k
+// build printed 281 rows and was never installed) from Phase 1j's (278 rows, marker `phase1j`: Phase 1i's 254 plus the
+// save route, the item struct's methods, the creation candidates and the Cube
+// grid's binding, with `callm`, `set` and `inject`), Phase 1i's (254 rows, marker `phase1i`, with the
+// paged `var *`, `find` and the `inroute` gate), Phase 1h's (254 rows, marker
+// `phase1h`:
+// PilipaliDecrypt and CreateItemSaveStruct added, the
+// `call` reply split and numeric path segments), Phase 1g's (252 rows,
+// marker `phase1g`, with `mapkeep`, `within=` and the `undefined` argument),
+// Phase 1e's (the same 252 rows, marker `phase1e`, also the build Phase 1f
+// ran), Phase 1c's (223 rows, marker `phase1c`, also the build Phase 1d ran),
+// Phase 1b's (202 rows, marker `phase1b`) and aa0c72a's (97 rows, no marker)
+// in one bare `craftprobe`.
+static void CpUsage()
+{
+    Out("craftprobe: phase1k rows=" + std::to_string(kCpTargetCount) + " - research instrument for docs/crafting-materials-research.md (research build only)");
+    Out("  hook [substr ...]                 native-detour every row (or the matching ones); one instrument per session");
+    Out("  arm [budget=N] [inroute] [substr ...]  reset counters; log the next N calls of each selected row (default: all but the control)");
+    Out("    inroute: PilipaliDecrypt and CountInventoryItem log a call only while a craft-route row is on the stack;"
+        " a call outside counts in calls= and spends no budget (`show`'s unlogged= is what the gate held back)");
+    Out("  show [all]                        calls since `arm`, logged vs unlogged per row; CheckPlayerInteraction is the control");
+    Out("  reset                             zero every counter");
+    Out("  bag|stash|recipe [substr ...]     hook-free: the bag window, stash window + world stash + globals, cube window");
+    Out("  var <Obj|global> <nth> <name|a.b.c|*> [json]   hook-free: one variable, deeper; a live `ref instance` is followed by name");
+    Out("  var id:<n> <name|a.b.c|*> [json]  the same from an instance id (json -> bp_ipc\\cp_var_<name>.json)");
+    Out("    a whole-number segment (a.3.0) reads that element of an array, inside its length; `path:` walks the same way");
+    Out("    `*` lists " + std::to_string(kCpReaderMaxLines) + " variables at a time: `* from=<i>` starts at the i-th; a capped page names the command for the next");
+    Out("  find <Obj> <nth>|id:<n> [from=<i>] <text>   hook-free: the path (as `var`/`path:` take it) of every string equal to <text>"
+        " and every reference whose runtime text is <text>, in the root's variables, arrays and plain structs"
+        " (never instances, data structures or methods); caps on depth, values visited and match lines, the visit cap naming the from= that resumes");
+    Out("  node id:<n>|<Obj> <nth>|stash|bag  hook-free: a container's cells, one GetItemFromFingerprint per fingerprint (capped), sums per (class, b)");
+    Out("  node socket [id:<n>]              the Socketable tab: every cell instance of its window's `grid`, one sum table");
+    Out("  node var <Obj|global> <nth> <a.b.c> | node var id:<n> <a.b.c>   sums what `var` reaches: a nodeGrid, fingerprints or item structs");
+    Out("    any node, after the selector: a1=<v> (lookup's 2nd argument, default 0) self=id:<n> (lookup's self) class=<c> (look up that class only)");
+    Out("  store [substr ...]                hook-free: the objects and globals that may hold the stash while it is closed, each variable's shape");
+    Out("  store names [substr ...]          the matching names only, up to 400 per holder (never cut at 80)");
+    Out("  backing on [substr ...]|off|dump|clear  keep the game's own returns (default: profile, stash, count, fingerprint-lookup and GetItemMap rows;"
+        " per argument signature: GetItemFromFingerprint on a1, GetItemMap, GetInventoryArray, CountInventoryItem on a0)");
+    Out("  dump                              craftprobe_rows.json + backing dump");
+    Out("  call <Row> <Obj> <nth>|id:<n> [args ...] confirm   ONE by-name call of one row; refuses before it on any missing precondition");
+    Out("    args: number | true | false | undefined (kind undefined, not text) | text | fp:<fp> | fp9:<fp> (lookup with a1=9)"
+        " | kept:<row> | map9 | map9:<key> (the kept stash map, only while `mapkeep stat` says current)"
+        " | path:<Obj|global|id:n>.<a.b.c> (what `var` reaches)");
+    Out("    reply, with the row's call number #<n> (its detour's entry line): NOT dispatched #<n>: asset_get_index found no script"
+        " | entered #<n>, script_execute threw | entered #<n>, script_execute returned st=<s> | dispatched #<n> -> ret=");
+    Out("  callm <Obj> <nth>|id:<n> <struct> <member> [args ...] confirm   ONE invocation of a method-valued member, by name"
+        " (script_execute, self = other = the instance); args as `call` takes them");
+    Out("    struct: fp:<fp> | fp9:<fp>, either optionally .a.b through plain structs (fp9:<fp>.itemDefinitionStruct), or path:<Obj|global|id:n>.<a.b.c>;"
+        " refused unless the member is a method; reply as `call`'s, #<n> from the row that names the method's script, if any");
+    Out("    callm ... [args ...] [bind] confirm: bind re-binds the member to its struct with the runtime's method() before the one"
+        " dispatch; the reply adds bind=yes and method_get_self before/after (read only)");
+    Out("  set <struct> <member> <number> confirm   ONE write of an existing member that holds a number, read back: before=<v> after=<v>"
+        " (fp:/fp9: looked up with self Console_Save_obj 0; also kept:<row>[.a.b], a row's kept return - `backing on <row>` first)");
+    Out("  inject <class> <b> <extra> [owner=<a0>] | inject off   while on, CountInventoryItem(<owner, default 1>, <class>, _, <b>)"
+        " called inside GetCraftItemsAvailable, the recipe row's closure or a craft-route row returns the game's count + <extra>;"
+        " `show` prints injected= per frame, outside-route= and other-owner=; needs all three rows detoured");
+    Out("  hook reports a row `mapkeep on` installed as `held by mapkeep` - neither detoured nor failed; run `mapkeep on` first");
+    Out("  a craft-route row's logged line carries within=<row>#<n>|none: the outermost craft-route row on the stack when it was entered,"
+        " and which call of it (the #n of its own entry and ret= lines); PilipaliDecrypt's and CountInventoryItem's lines carry it too");
+}
+
+static void CpCommand(const std::string& rest)
+{
+    std::vector<std::string> tok;
+    { std::stringstream ss(rest); std::string w; while (ss >> w) tok.push_back(w); }
+    if (tok.empty()) { CpUsage(); return; }
+    const std::string sub = Lower(tok[0]);
+    const std::vector<std::string> tail(tok.begin() + 1, tok.end());
+    if (sub == "hook") { CpInstall(tail); return; }
+    if (sub == "arm") { CpArm(tail); return; }
+    if (sub == "show") { CpShow(!tail.empty() && Lower(tail[0]) == "all"); return; }
+    if (sub == "reset") { CpZeroCounters(); Out("craftprobe reset: counters zeroed (detours, selection and kept values unchanged)"); return; }
+    if (sub == "bag" || sub == "stash" || sub == "recipe") { CpReader(sub, tail); return; }
+    if (sub == "var") { CpVar(tok); return; }
+    if (sub == "find") { CpFind(tok); return; }
+    if (sub == "node") { CpNodeCommand(tok); return; }
+    if (sub == "store") { CpStore(tok); return; }
+    if (sub == "backing") { CpBackingCommand(tok); return; }
+    if (sub == "dump") { CpDump(); return; }
+    if (sub == "call") { CpCall(tok); return; }
+    if (sub == "callm") { CpCallMethod(tok); return; }
+    if (sub == "set") { CpSet(tok); return; }
+    if (sub == "inject") { CpInjectCommand(tok); return; }
+    CpUsage();
+}
+#endif // FORGEPACT_RELEASE (craftprobe)
+
+// Crafting from the stash's special tabs (issue #14). `craftmats 1|0` - the
+// panel's "Craft from the stash" switch, a player command - sets the core's
+// switch (ForgePact::CraftMatsMod); the six hooks go in on the next frame
+// after setup with it on (CraftMatsInstall, from FrameCallback), never here.
+// `stat` is research build only (the owner's rule: no debug tooling in a
+// player build); the per-press line names the work done instead.
+static void CraftMatsCommand(const std::string& rest)
+{
+    ForgePact::CraftMatsMod& mod = ForgePact::CraftMatsMod::Instance();
+    const std::string v = Lower(TrimCopy(rest));
+#ifndef FORGEPACT_RELEASE
+    if (v == "stat") { Out(mod.StatLine() + " hooks=" + (g_CmInstalled ? "both-routes" : g_CmInstallTried ? "off" : "not-yet")); return; }
+#endif
+    if (v == "1" || v == "on") {
+#ifndef FORGEPACT_RELEASE
+        const std::string held = CmHeldByResearch();
+        if (!held.empty()) {
+            Out("craftmats: refused - the research instrument already detours " + held
+                + " this session, so a second detour would read as a false TABLE-ONLY; relaunch and turn craftmats on"
+                " before hooking it. Nothing changed");
+            return;
+        }
+#endif
+        if (!mod.SetEnabled(true)) {
+            Out("craftmats: stays off for this session - an earlier craftmats line says why; crafting is unchanged until"
+                " the game is restarted");
+            return;
+        }
+        Out(g_CmInstalled ? "craftmats: on - a Crafting Cube recipe also counts the stash's Materials and Socketable tabs"
+                          : "craftmats: on - its hooks install once the game has settled");
+        return;
+    }
+    if (v == "0" || v == "off") { mod.SetEnabled(false); Out("craftmats: off - crafting is unchanged"); return; }
+    Out("craftmats 1|0");
+}
+
+// Its own helper, called from RunCommand beside the other Handle*Command
+// helpers, for the same C1061 reason: the else-if chain is at MSVC's nesting
+// limit.
+static bool HandleCraftCommand(const std::string& lc, const std::string& rest)
+{
+    if (lc == "craftmats") { CraftMatsCommand(rest); return true; }
+#ifndef FORGEPACT_RELEASE
+    if (lc == "craftprobe") { CpCommand(rest); return true; }
+    if (lc == "mapkeep") { MkCommand(rest); return true; }
+#endif
     return false;
 }
 
@@ -30323,7 +35766,8 @@ static void RunCommand(const std::string& line)
         "stat", "statadd", "raredrop", "droprate", "dungeonkey",
         "headhunter", "hhdur", "hhmap", "hhdefault", "hhlabel", "tyrant", "beacon", "beaconrange", "beaconmode", "beaconwake", "beaconspawn", "beaconfarstep", "tyrantchance", "tyrantaffix", "hhlabelfont", "hhlabeloffset", "hhlabelmax",
         "enemyspeed", "rarity", "sigdrop", "angelicdrop", "relicfilter", "orbpickup", "satmods", "petquest",
-        "autoprospect", "toggleborder", "toggleguard", "skilltimer", "menulayout", "restartanytime", "miningore", "minerhelm", "packmarks"
+        "autoprospect", "toggleborder", "toggleguard", "skilltimer", "menulayout", "restartanytime", "miningore", "minerhelm", "packmarks",
+        "craftmats"
     };
     if (kPlayerCommands.find(lc) == kPlayerCommands.end()) {
         Out("command unavailable in player build: " + cmd);
@@ -30336,6 +35780,7 @@ static void RunCommand(const std::string& line)
     if (HandleMenuProbeCommand(lc, rest)) return;
     if (HandleAngelicProbeCommand(lc, rest)) return;
     if (HandleMenuLayoutCommand(lc, rest)) return;
+    if (HandleCraftCommand(lc, rest)) return;
     if (HandleRestartProbeCommand(lc, rest)) return;
 #ifndef FORGEPACT_RELEASE
     // Toggle-skill research (issue #11), docs/toggle-skills-research.md. A
@@ -31534,6 +36979,7 @@ void FrameCallback(FWFrame& FrameContext)
 #endif
     PERF_SCOPE(g_PerfFrame);
     FlushItemStats(fc);
+    if (g_Setup) { ItemTruthTick(fc); ItemTruthEvalTick(fc); }
     FlushModState(fc);
     if (g_Setup) { FP_POP_SCOPE(MinerTick); ForgePact::MinerHelmet::Tick(); }
     if (fc == 1) Trace("0-framecallback-running");
@@ -31602,6 +37048,10 @@ void FrameCallback(FWFrame& FrameContext)
     // land regardless of whether `citrace <on|off>` tracing itself is armed -
     // see docs/pet-quest-collector-plan-b4-input-simulation.md §3a.
     CiPokeKeyTick();
+    // #14 Phase 1e research: `mapkeep` notices a room change here, as
+    // housekeeping only - whether its kept map is current is answered where
+    // it is used (docs/crafting-materials-research.md, Phase 1e instrument).
+    MkRoomTick();
 #endif
 
     // Relic filter, armed by `relicfilter 1`: the DropRelic hook goes in only
@@ -31667,6 +37117,12 @@ void FrameCallback(FWFrame& FrameContext)
         if (!g_AutoProspectInstallTried) AutoProspectInstall();
         if (g_Orig_AutoProspectInsert && ForgePact::AutoProspectMod::Instance().IsEnabled()) AutoProspectTick();
     }
+
+    // Crafting from the stash, toggled by `craftmats 1`: its six hooks go in
+    // once, here, after setup (the auto-prospect pattern). Nothing else of it
+    // runs on the frame path - its work happens inside the game's own crafting
+    // calls, and only while the switch is on.
+    if (ForgePact::CraftMatsMod::Instance().IsEnabled() && g_Setup && !g_CmInstallTried) CraftMatsInstall();
 
 #ifndef FORGEPACT_RELEASE
     // Gelistirici kisayollari.  Yayin derlemesinde YOK: F6 oyuncunun
@@ -31854,7 +37310,7 @@ EXPORTED AurieStatus ModuleInitialize(
     HeroSiege::RewardScope::RegisterForgePact();
     LoadStartup();   // oyun kodu calismadan once uygulanmasi gereken ayarlar
 #ifdef FORGEPACT_RELEASE
-    KonsoluGizle();
+    DetachConsole();
 #endif
 
     AurieStatus st = g_Yytk->CreateCallback(Module, EVENT_FRAME, (PVOID)FrameCallback, 0);

@@ -809,6 +809,8 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
             # Pack markers (map reveal's monster half since 1.4.5): marker
             # look and counters only; test_map_reveal_contract.py covers it.
             "packmarks",
+            # Craft from the stash (issue #14; test_craft_mats_contract.py).
+            "craftmats",
         }
         self.assertEqual(entries, expected)
 
@@ -1336,8 +1338,13 @@ class SkillTimerShipContractTests(unittest.TestCase):
         self.assertIn("ToggleTableUnresolvedRows() + SkillTimerTableUnresolvedRows() == 0) return false;", due)
         self.assertIn("g_SkillTimerStyle.load() == ForgePact::SkillTimerStyle::Off", due)
         self.assertIn("return g_ToggleResolveWalkedRuleOff;", due)
-        # No second walk anywhere: the countdown's ids come from this one.
-        self.assertEqual(self.stripped.count('"ds_map_find_first", { map }'), 1)
+        # No second talent-map walk anywhere: the countdown's ids come from this
+        # one. The one other map walk in the player build is craftmats' consume
+        # check over the character's item map (issue #14), which reads no
+        # talent - it is counted out here by name, so any further walk fails.
+        craft_walk = function_body(self.plugin, "static int64_t CmCharacterTotal(")
+        self.assertEqual(craft_walk.count('"ds_map_find_first", { map }'), 1)
+        self.assertEqual(self.stripped.count('"ds_map_find_first", { map }') - craft_walk.count('"ds_map_find_first", { map }'), 1)
         self.assertNotIn("ToggleTableResolveIds", function_body(self.plugin, "static void SkillTimerDraw("))
 
     def test_guard_membership_is_toggle_table_only(self):
@@ -2905,9 +2912,11 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         # in the same table (test_menu_layout_contract.py pins it), and
         # `restartanytime` is issue #8's (test_restart_anytime_contract.py).
         # `miningore`, `minerhelm` and `packmarks` are 1.4.5's mining slider,
-        # Miner's Helmet and map pack markers (their own tests cover them).
+        # Miner's Helmet and map pack markers (their own tests cover them), and
+        # `craftmats` is issue #14's Craft from the stash
+        # (test_craft_mats_contract.py).
         self.assertEqual(now - before, {"autoprospect", "skilltimer", "menulayout", "restartanytime",
-                                        "miningore", "minerhelm", "packmarks"})
+                                        "miningore", "minerhelm", "packmarks", "craftmats"})
         self.assertEqual(before - now, set())
 
     # ---- Sprite look probe (R round 3, issue #11): `tgprobe sprite ...` ----

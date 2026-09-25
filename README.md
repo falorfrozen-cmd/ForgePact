@@ -45,6 +45,7 @@ none of these diagnostic hooks or the recorder. See
 | **Timed skill countdown** | For a small set of timed skills measured and tested in-game, plus most other skills with both a duration and a real cooldown, covered by rule and untested: draws how much of the cast is left over its skill-bar slot, in one of four looks (arc / bar / number / fade), disappearing at zero. A few skills are left out where a measurement showed the timer on the skill's own object is not the skill's duration. Companion skills (turrets, totems, hydra) are not covered. A few skills whose duration is a buff on you, measured in-game, are covered too, and other buff-only skills are not. In a fight, hits can add a little time to some skills (roughly 0.2 s each in our test) and the countdown rises slightly to match. A skill switched on as a toggle never gets a countdown. Off by default; a cast already running when you turn it on shows as full until the next cast |
 | **Satanic Zone Mods** | Pick which of the game's 25 positive / 26 negative World Section mods can roll onto a Satanic Zone; everything is on by default |
 | **Auto-prospect** | Off by default. Every item you drag or click into the Prospect Cube's grid is prospected at once by the game's own Prospect, so the 9×6 grid stops being the limit on a batch. Before each prospect the previous prospect's batch of materials goes to your materials tab (a sub-switch, on by default), so only the newest batch stays in the grid; the item you put in, ore included, is prospected, not moved (one exception: a batch material swapped out and dropped straight back in still goes to the tab); anything left in it when the game saves is lost ([details](#auto-prospect)) |
+| **Craft from the stash** | Off by default. At the game's own Crafting Cube, a recipe also counts the materials and socketables in your shared stash's Materials and Socketable tabs, so a recipe the stash covers is no longer greyed out; the game greys a recipe exactly as before, on the bag and those two tabs together. When you craft, only what your bag is short of leaves the stash - onto your bag's stack of it, into a new bag stack, or into the Cube's own grid when the bag has no room - and the game uses it up as it would from the bag; the stash is saved right after. Other stash tabs are never touched, and a move that cannot be confirmed refuses the craft instead ([details](#craft-from-the-stash)) |
 | **Remove Owned Relics** | Relics already at maximum level (10 out of 10) in your equipped slots, backpack or inventory stop dropping again, so a relic drop is one you can still use |
 | **Auto-apply** | Saved settings are re-sent every time the game starts |
 
@@ -502,6 +503,40 @@ the cursor is on it, and moving the mouse away puts the wait back.
 How the value was found, over three research rounds, is in
 [`docs/restart-always-available-research.md`](docs/restart-always-available-research.md).
 
+## Craft from the stash
+
+Mods tab → Quality of Life → **Craft from the stash**. Off by default.
+
+The Crafting Cube counts only what is in your bag, so a recipe stays greyed
+out while what it needs sits in your shared stash. With this on, a recipe also
+counts what the stash's **Materials** and **Socketable** tabs hold, and the
+game greys a recipe exactly as it does today, on the bag and those two tabs
+together. ForgePact does not craft anything itself:
+
+- **At the craft**, only the amount your bag is short of moves out of those
+  tabs, by the game's own routines: onto your bag's stack of it, into a new
+  stack in the bag, or into the Cube's own grid when the bag has no room. The
+  game then uses it up exactly as it would from the bag. A shortfall that
+  spans several stash stacks empties whole stacks first.
+- **The stash is saved** right after the craft, the way closing the stash
+  saves it. Your character is saved by the game as usual.
+- **Never a source:** the ordinary stash tabs, the guild stash and the Unique
+  tab.
+- **Refused, not guessed.** If a move cannot be confirmed on both sides, or a
+  recipe's amounts cannot be read, the craft is refused and the log says
+  `refused`. If the game's craft did not use up exactly what it needed, the
+  mod turns itself off until the game is restarted (`consume mismatch`), and
+  so does a move that could not be put back (`off for this session`).
+- Each craft that moved something writes one line to the log naming the
+  units, the material, the tab, where they went and whether the stash was
+  saved, for example `craftmats: moved 2 class=15 b=1 from socketable to
+  bag-stack; saved=yes`.
+
+How the game counts, consumes and saves was measured over several research
+rounds, in
+[`docs/crafting-materials-research.md`](docs/crafting-materials-research.md);
+its `## Ship design` describes this mod and what has not been observed live.
+
 ## Menu layout (for tools that drive the menus)
 
 `menulayout` is a read-only command for tools that play through the main menu
@@ -748,6 +783,63 @@ screen. An earlier crash report against an experimental build (2026-09-21) was
 not reproduced in those sessions; its cause was never identified. Design,
 evidence and tests: [docs/miner-helmet-prototype.md](docs/miner-helmet-prototype.md).
 
+
+## Item truth for the Item Editor
+
+A save keeps only an item's seeds; the game computes every line of it each time it
+builds the item, and game updates change that computation. So that the Item Editor
+(2.16.0+) can show an item exactly as the game does, ForgePact writes down what the
+game built:
+
+- **When:** only while the Item Editor asks for it, by the file
+  `%LOCALAPPDATA%\Hero_Siege\itemtruth\capture.request` (checked at setup and every
+  ~10 s; removing it pauses the capture). With no such file nothing is hooked.
+- **What:** after the outermost `CreateItemNew` returns - random stats, runewords,
+  sockets and the display name done, the Custom Forge dressing applied - one line
+  with the item's `itemTimeStamp`, `itemType`, `itemDataHash`, and its definition,
+  stat and info structs as the game serialises them (plus the stats before the
+  dressing when a forge entry changed them), and the game build
+  (`pe-<link stamp>-<.text size>`, the same for a clean and an Aurie-patched exe).
+- **Where:** `itemtruth\journal\live-<build>-<start>-<pid>-<part>.ndjson` (16 MB
+  parts) and `itemtruth\status.json`. The game thread only serialises and queues;
+  a background thread writes. A distinct item is written once per session; a full
+  queue drops lines and counts them instead of growing.
+- Nothing is written into the game or the saves; the Item Editor reads the files
+  and deletes journals it has fully read after three days.
+- **Checks on request.** The editor can ask the game to build items it has not
+  built yet (a character not loaded, the Vault): `itemtruth\requests\<id>.req`,
+  one `<item key>\t<save data json>` per line. Once setup has run and capture is
+  on, ForgePact claims the oldest request, builds its items through the game's
+  own save loader (`InitItemFromJson`, as `BuildAngelicPool` does) for at most
+  4 ms per frame, journals each finished item with `"src":"eval"`, writes progress
+  lines into the same journal and deletes the request. The items are never
+  dropped, placed or saved. A request that was being built when the game closed is
+  renamed `.stopped` at the next start and never resumed on its own. Measured:
+  342 items in about 2 s at the main menu.
+- `status.json` is refreshed at least every 30 s while the game runs, so the
+  editor knows the game is there.
+- **The game's own tooltip text.** The first time in a session the game draws an
+  item's inventory tooltip (`DrawInventoryItemV2`), ForgePact records every text
+  draw of that pass - text, position, colour, alignment and the
+  `DrawInventoryStatsNew` call it belongs to - as one `"kind":"tooltip"` line, and
+  once per session every stat call of one pass (`"kind":"tooltip-table"`: the stat
+  lines a tooltip can draw, with label, format and colour). The hooks only read;
+  nothing is drawn differently.
+- **Drawing requests.** For items the player never hovers, the editor writes
+  `itemtruth\tips\<id>.req` (lines like a check request). While the player has an
+  item tooltip open, the game's own tooltip pass also builds a few of those items
+  through the save loader and draws their tooltips into a small surface nobody
+  sees - at most 6 items and 3 ms per frame, before the player's tooltip, which is
+  drawn last as always - and the draw state is put back. Each drawing is journaled
+  with `"req":"<id>"`; progress lines are `"kind":"tipdraw"`; a request cut short
+  is set aside as `.stopped` at the next start. Measured: 7,607 tooltips in about
+  2 minutes, no failures.
+
+The older `bp_ipc\itemstats.json` snapshot (Custom Forge base stats) is now taken
+on the same final pass; it used to be taken halfway and missed the socket count.
+Code: `plugin/include/ForgePact/ItemTruth.hpp`; tests:
+`tests/test_item_truth_behavior.py` (compiled harness) and
+`tests/test_item_truth_contract.py`.
 
 ## AFK FARM independent reward compatibility (local, 2026-09-22)
 

@@ -349,7 +349,7 @@ class AutoProspectContractTests(unittest.TestCase):
         if NOTES.is_file():   # published notes leave main (forgepact-notes-cleanup.yml)
             notes = NOTES.read_text(encoding="utf-8")
             headings = [l for l in notes.split("\n") if l.startswith("## ")]
-            self.assertEqual(headings, ["## New", "## Changed", "## How to update"])
+            self.assertEqual(headings, ["## New", "## Changed", "## Fixed", "## How to update"])
             self.assertIn("off by default", notes.lower())
             self.assertIn("lost", notes.lower())
             self.assertIn("9×6", notes)
@@ -687,7 +687,11 @@ class AutoProspectContractTests(unittest.TestCase):
             self.assertIn("is the game, not the mod", collapse(notes))
             self.assertNotIn("not-stackable", notes)
             self.assertNotIn("we have not seen that happen yet", notes)
-            self.assertNotIn("## Fixed", notes)   # no fix is claimed for the ore
+            # 1.4.5 has a Fixed section (the Underground Garden freeze and
+            # `raredrop angelic`), but none of it is about prospecting.
+            fixed = notes.split("## Fixed", 1)[-1].split("## How to update", 1)[0]
+            self.assertNotRegex(fixed.lower(), r"\bores?\b")   # no fix is claimed for the ore
+            self.assertNotIn("prospect", fixed.lower())
         for name in ("no-preferred-grid", "not-placed", "not-added", "move-failed"):
             self.assertIn(name, section)
         self.assertNotIn("not-stackable", section)
