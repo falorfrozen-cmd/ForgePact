@@ -32,7 +32,7 @@ none of these diagnostic hooks or the recorder. See
 | **Monster Density** | 1–5× more enemies in 0.5 steps (1, 1.5, 2 …), through the game's own `Enemy_Creator` spawners |
 | **Special Content** | Rift Portals, Battlefields, Cursed Orbs, Summon Portals, Chaos Pillars, Chaos Tower — up to 100× per zone |
 | **Drop Rates** | Gold, Dungeon Keys, Angelic Keys, Chaos + Crystal Keys, Bifröst Key and Relics — up to 100× |
-| **Mining Ore Amount** | Loot → Mining Ore Amount, 1–10×. Scales the stack quantity of ore awarded by mining; x1 is normal. A worn Miner's Helmet replaces it with 4× instead of stacking |
+| **Mining Ore Multiplier** | Loot → Mining Ore Multiplier, 1–10×. Scales the stack quantity of ore awarded by mining; x1 is normal. A worn Miner's Helmet replaces it with 4× instead of stacking |
 | **Miner's Helmet** | A signature helmet forged in the Item Editor. While worn: 4× ore from every mining node, and Vein Resonance - finishing a dig also digs the two nearest veins within 192 units that you could mine yourself (4× each, no chaining). Mods → Items shows whether it is worn ([details](#miners-helmet)) |
 | **Angelic / Unholy Drops (Experimental)** | ForgePact's own die per kill; on a hit it builds one of its 49 real Angelic / Unholy uniques, or (since 1.4.5) Tyrant's Crown or Headhunter. x2 = 1 in 7,500 kills, each step adds a die, typable |
 | **Combat Modifiers** | Total Damage, Attack Speed, Faster Cast Rate, Defense, Life/Mana Replenish, physical and spell Critical Chance/Damage |
@@ -66,7 +66,7 @@ likely, still random, still capped by the game's own rules. The vanilla value is
 on first touch, so moving the slider twice never compounds. `x1` restores vanilla
 exactly.
 
-**Mining Ore Amount** is a separate quantity control, not a drop-chance multiplier.
+**Mining Ore Multiplier** is a separate quantity control, not a drop-chance multiplier.
 It changes the amount of Copper, Iron, Gold, Ruby, Jade or Tarethium ore in a
 normal mining reward. It preserves the chosen ore type and is scoped to the
 mining call. By design it rewrites only the ore stack's quantity, so mining XP,
@@ -107,13 +107,13 @@ embedded locally and stays sharp at different display scales.
 
 **Mods** groups related switches in cards. The sidebar shows only the five
 main sections: Setup, Modifiers, World, Loot and Mods. The Mods page itself
-has two sub-tabs at the top, showing one card at a time: **Quality of Life**,
+has two sub-tabs at the top, and each mod sits in its own card: **Quality of Life**,
 everything that is not tied to a specific forged item (the relic drop pool
 filter, orb pickup radius, map reveal, pet quest pickup, auto-prospect, the
 toggle marker/guard and the timed skill countdown), and **Items**, the custom
 forge mechanics tied to items made in the Item Editor (Headhunter, Tyrant's
 Crown, Beacon). Quality of Life opens first; clicking the other sub-tab (or
-using the arrow keys) switches which card you see, and the panel remembers
+using the arrow keys) switches which set of mods you see, and the panel remembers
 the one you last had open until you close it. Map population depends on
 Reveal full map; its switch is unavailable while the parent is off. All
 settings still use the existing local configuration and game plugin. The
@@ -131,8 +131,8 @@ slider off keeps the value you set, while the game plays as if the slider were
 at its default; its value box reads **off**. Turning it back on sends your
 value again, and Apply all leaves a switched-off slider at the default.
 
-**Theme**, next to the game status in the header, picks the panel's colour
-theme. Your choice is saved with the panel's other settings, so it is still
+**Theme**, in the **Appearance** card at the end of the Setup tab, picks the
+panel's colour theme. Your choice is saved with the panel's other settings, so it is still
 there the next time you open ForgePact.
 
 The icon pack (the SVG sprite and which setting uses which icon) lives in
@@ -855,7 +855,7 @@ Enhanced Defense, +20% Movement Speed, +20% All Resistances, +5 Light Radius)
 with two mining mechanics that ForgePact runs while it is worn:
 
 - **4× ore.** Every mining node gives exactly four times its ore. The helmet
-  replaces the Mining Ore Amount slider rather than stacking with it; take it
+  replaces the Mining Ore Multiplier slider rather than stacking with it; take it
   off and the slider applies again. By design it rewrites only ore amounts, so
   mining time and XP are left to the game (not measured separately).
 - **Vein Resonance.** Finishing a dig also digs the two nearest veins within

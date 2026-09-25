@@ -18,8 +18,8 @@ of colour theme.
   the game plays as if the slider were at its default; turning it back on
   sends your value again. **Apply all** leaves a switched-off slider at the
   default.
-- **Theme.** A new **Theme** choice, next to the game status in the header,
-  picks the panel's colour theme. The panel remembers it with its other
+- **Theme.** A new **Theme** choice, in the **Appearance** card at the end of
+  the Setup tab, picks the panel's colour theme. The panel remembers it with its other
   settings, so your choice is still there the next time you open ForgePact.
 
 ## Changed
@@ -30,6 +30,15 @@ of colour theme.
   filter's list can now be searched and narrowed to **Enabled** or
   **Disabled** mods, like the Satanic Zone mods on the World tab, and it says
   **Unsaved changes** until you press **Save filter**.
+- **Mining Ore Amount is now called Mining Ore Multiplier.** The Loot slider
+  works as before; only its name changed, and the help sentence under it is
+  gone. While the game runs, the line under it still says when a worn Miner's
+  Helmet replaces the slider, or when the plugin could not enable it.
+- **The "Choose your Hero_Siege.exe" band is now a warning icon.** Instead of
+  a band across the top of every page, a small warning icon sits beside
+  **Apply all now** and another beside **Settings loaded** at the bottom.
+  Point at either one, or tab to it, to read the same message; click it to go
+  to Setup.
 
 ## How to update
 
