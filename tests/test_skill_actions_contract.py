@@ -521,6 +521,22 @@ class SkillActionsResearchDoc(unittest.TestCase):
             self.assertIn("`tgprobe hook TalentUseClass`", section, heading)
             self.assertIn("`tgprobe verbose on`", section, heading)
 
+    def test_live_procedure_2_cannot_measure_the_instrument_as_the_game(self):
+        # Three ways Live procedure 2 could record an instrument artifact as
+        # a game fact: a key-getter budget spent before the Y slot, `UiCreate`
+        # armed on a probe that does not hold it, and a handler discarded for
+        # taking no arguments when an activation callback reads `self`.
+        procedure = doc_section(self.doc, "## Live procedure")
+        self.assertIn("`skillprobe arm GetSpecificKeyBind 64`", procedure)
+        self.assertNotIn("`skillprobe arm GetSpecificKeyBind 8`", procedure)
+        self.assertIn("not-run (instrument: budget spent before slot 0,6)",
+                      procedure)
+        self.assertIn("`skillprobe arm UiCreate 3`", procedure)
+        self.assertIn("Judge a candidate by its `self`", procedure)
+        self.assertIn("`UI_Talent_Screen_Allocate_obj anon@643`", procedure)
+        self.assertNotIn("fires with no arguments on every action is not the "
+                         "handler", " ".join(procedure.split()))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -43,10 +43,14 @@ a fact until phase 0 records it.
 `menulayout`'s talent rows and HUD slot rows) is built on this branch. The
 first research launch (Live procedure 1) ran on 2026-09-25 and is recorded
 in § Results: it settled three § Decision lines (`castByNameRoute`,
-`slotRule`, `talentIdRule`), and it showed that the button objects' Create
-closures are not the handlers a bind, an allocation or a reset runs - the
-game wires those buttons to named `UiA*` activation scripts, which were not
-rows then and are now (§ Static search, "Replan 3 additions"). The second
+`slotRule`, `talentIdRule`), but it did not isolate the handler a bind, an
+allocation or a reset runs. Every button closure that fired logged no
+arguments, which excludes nothing - an activation callback normally takes
+none and reads its button through `self` - so the two closures that fired
+once on their action (`UI_Talent_Screen_Allocate_obj anon@643`,
+`UI_Button_Subtalent_obj anon@535`) stay candidates, beside the named `UiA*`
+activation scripts the game wires buttons to, which were not rows then and
+are now (§ Static search, "Replan 3 additions"). The second
 research launch (Live procedure 2) has **not run yet**; the other nine
 § Decision lines read `pending` until it has. What § Instrument lists as
 hypotheses, and what § Static readings suggests, are not facts until a
@@ -122,9 +126,11 @@ first two searches missed them because they searched the nine button
 objects' Create closures, not the `UiA*` activation scripts the tab bar and
 the talent screens wire to their buttons through `UiSetActivationFunc`, nor
 the key getters the HUD draws its key letters with. Live 1 showed the gap:
-every closure that fired on the owner's bind, allocation and sub-allocation
-logged no arguments, and the stash's tab buttons run a named activation
-script (`UiAStashTabClick`) the same way.
+it could not isolate a handler among the closures that fired on the owner's
+bind, allocation and sub-allocation (each logged no arguments, which an
+activation callback reading its button through `self` also does), and the
+stash's tab buttons run a named activation script (`UiAStashTabClick`), so
+the talent buttons may too.
 
 | Group | Scripts (SDK index) |
 | --- | --- |
@@ -292,8 +298,9 @@ it):
   `GetTalentInfoFunc` each build a struct of bound methods whose descriptors
   carry a script's name as a string, so the script a button runs is looked up
   by that name at run time. That is why a `UiA*` script can be reached both by
-  `GetNamedRoutinePointer` and by an inline detour, and why the handlers are
-  rows now rather than the buttons' closures.
+  `GetNamedRoutinePointer` and by an inline detour, and why the `UiA*`
+  scripts are rows now beside the buttons' closures (which of them a click
+  runs is Live procedure 2's K4 to measure).
 - **The cast gate, again.** `CheckTalentUse` reads the HUD talent object, the
   input device and the mouse state, then `GetTalentInfo` and
   `TalentRequirement`, and only then calls `TalentUse` with five arguments,
@@ -306,8 +313,9 @@ it):
   and stored. Live 1 showed they are not the click handlers - `anon@23904`
   did not fire on the owner's allocation - so the "Allocation is
   hash-protected" reading above stands for the hash, not for which routine a
-  click enters first; the `UiA*` handler that calls into them is what Live
-  procedure 2's K4 logs.
+  click enters first; the handler that calls into them - a `UiA*` row or a
+  closure that fires once per action with the clicked button as self - is
+  what Live procedure 2's K4 logs.
 - **Keys.** `LoadControls` enqueues the controls load and `s_MultiBindStruct`
   is the per-control struct, as above. The argument the key getters
   (`GetSpecificKeyBind` and its keyboard and gamepad forms) take - a control
@@ -707,19 +715,28 @@ handlers), and one reset if the game offers it. No others.
   `INSTRUMENT-BLIND`.
 - **K1, the key per slot by name.** `skillprobe state`, `skillprobe keys`,
   `skillprobe slots` (fixture: `menulayout UI_Hud_Talent_obj`). Then arm the
-  getters - `skillprobe arm GetSpecificKeyBind 8`, `arm GetSpecificKBKeyBind
-  8`, `arm GetSpecificGPKeyBind 4`, `arm GetPlayerInputBindings 4`, `arm
-  GetControlName 8`, `arm DrawKeyBindSprites 8` - wait 3 s, and `skillprobe
-  show`. Expected: the HUD's own drawing logs calls per slot (self, argument
-  count, each argument, `ret=`), one getter answering a key code or a key
-  name per bar slot. Record the getter, its argument for each bar slot, and
-  its return. The control is the owner's: the slot cast with Y (the
-  expandable slot next to the potions, 0,6 in live 1's numbering) must read
-  89 or `Y`. If no getter names that slot with that key, `castKeyRule` is
-  `fail`, and `craftprobe find Controller_obj 0 89`, `find global 0 89` and
-  `find` on the profile object `GetPlayerProfileObj` names are run, every
-  path holding 89 recorded and cross-checked with 81 and 69 at the same
-  holder. Replay once: `skillprobe call <that getter> <self as logged>
+  getters - `skillprobe arm GetSpecificKeyBind 64`, `arm
+  GetSpecificKBKeyBind 64`, `arm GetSpecificGPKeyBind 64`, `arm
+  GetPlayerInputBindings 64`, `arm GetControlName 64`, `arm
+  DrawKeyBindSprites 64` - wait 3 s, and `skillprobe show`. A budget counts
+  the first n calls from anywhere in the interface and `arm` has no per-slot
+  filter, so 64 is sized to cover one full HUD draw: the thirteen row-0
+  slots plus the potions and the other controls that draw a key letter.
+  Expected: the HUD's own drawing logs calls per slot (self, argument count,
+  each argument, `ret=`), one getter answering a key code or a key name per
+  bar slot. Record the getter, its argument for each bar slot, its return,
+  and each getter's `logged=<x>/<budget>` (what is left of the budget). The
+  control is the owner's: the slot cast with Y (the expandable slot next to
+  the potions, 0,6 in live 1's numbering) must read 89 or `Y`. If no logged
+  call names slot 0,6 and a getter shows `logged=64/64`, the spent getters
+  are re-armed at 256 once and `show` read again; if they are still spent,
+  `castKeyRule` is `not-run (instrument: budget spent before slot 0,6)` - an
+  instrument limit, never a measured failure. `castKeyRule` is `fail` only
+  when budget remained (`logged` below the budget) and no call named that
+  slot with that key; on `fail`, `craftprobe find Controller_obj 0 89`,
+  `find global 0 89` and `find` on the profile object `GetPlayerProfileObj`
+  names are run, every path holding 89 recorded and cross-checked with 81
+  and 69 at the same holder. Replay once: `skillprobe call <that getter> <self as logged>
   <argument as logged for slot 0,2> confirm`, expected to return the logged
   line's value (`reproduced`). `castKeyRule` is the getter's shape.
 - **K2, cast by key.** Slot 0,2 (`chainOfHolyLight`, cooldown 0.25, not an
@@ -736,7 +753,12 @@ handlers), and one reset if the game offers it. No others.
   is a measured refusal, recorded with the reason the reply carries), and
   the other slot is tried once the same way. `castProof` records the
   readable signal (the mana member; in research also the `TalentUse` line).
-- **K3, the talent screen by name.** `craftprobe arm budget=3 UiCreate`;
+- **K3, the talent screen by name.** Arm `UiCreate` on whichever instrument
+  holds it: `craftprobe arm budget=3 UiCreate` when `craftprobe hook` ran
+  this session (the shared launch; `skillprobe hook` then reports `UiCreate`
+  held), else `skillprobe arm UiCreate 3` (a run alone: skillprobe's own row
+  detours it, and `craftprobe arm` would select 0 detoured rows and log
+  nothing). Record which instrument logged the `UiCreate` line. Then
   `skillprobe arm UiAOpenTalents 3`, `arm UiAContextTalents 3`, `arm
   UiATalentsPlayer 3`, `arm ReturnTalentLevel 6`, `arm GetTalentInfo 6`;
   `hs_input` key T (vk 84, held 120 ms); `menulayout UI_Talent_Screen_obj`
@@ -753,8 +775,10 @@ handlers), and one reset if the game offers it. No others.
   way. Record the logged shapes of `ReturnTalentLevel` and `GetTalentInfo`
   (the screen calls them) for K6.
 - **K4, hand-arming** (NEEDS-HUMAN, the one hand-back). `skillprobe arm all
-  5`; `craftprobe arm budget=5 UiCreate`; `skillprobe state`, `skillprobe
-  keys`, and a `tgprobe deep` snapshot of the profile object (the instance
+  5`; `craftprobe arm budget=5 UiCreate` only when `craftprobe hook` ran
+  this session (run alone, `arm all` has already armed skillprobe's own
+  `UiCreate` row; record which instrument logged it); `skillprobe state`,
+  `skillprobe keys`, and a `tgprobe deep` snapshot of the profile object (the instance
   `GetPlayerProfileObj` names, found by `craftprobe find`/`var` on `global`
   in K1 - record its id) before. The request to the owner: "1. With the
   talent screen closed: put a different learned skill into the bar slot
@@ -765,13 +789,22 @@ handlers), and one reset if the game offers it. No others.
   3. If the screen offers a reset or an un-allocate for what you just did,
   use it once and say what you pressed. Close the screen. Reply with what
   you did." Then `skillprobe show` (every armed line, in order), `skillprobe
-  state`, and the `tgprobe deep` diff on the profile. Expected: one `UiA*`
-  row per action with self (object and id), other and arguments; the path
-  `state` or the diff shows changed first (`bindWriteRule`); the three
-  shapes; and the profile member that fell by one on the allocation and rose
-  on the reset (`pointsReader`). A row that fires with no arguments on every
-  action is not the handler; the check is `not-observed` only if no `UiA*`
-  row fired on any of the three actions.
+  state`, and the `tgprobe deep` diff on the profile. Expected: one handler
+  row per action, recorded with self (object and id), other and the
+  argument count beside its arguments; the path `state` or the diff shows
+  changed first (`bindWriteRule`); the three shapes; and the profile member
+  that fell by one on the allocation and rose on the reset (`pointsReader`).
+  Judge a candidate by its `self`, not its argument count: the handler is
+  the row that fires once per action with self the clicked button (the
+  `UI_Talent_Screen_Allocate_obj` for an allocation), and an activation
+  callback with `argc=0` qualifies. The candidates are the `UiA*` rows and
+  the closures `UI_Talent_Screen_Allocate_obj anon@643` and
+  `UI_Button_Subtalent_obj anon@535` (each fired once on its action in live
+  1; a closure replays in K5 by the `craftprobe methods id:<button>` and
+  `callm … inst` route that `skillprobe call` names when it refuses a
+  closure row). A row that fires with the same self on every frame is not
+  the handler. The check is `not-observed` only if no row fired once per
+  action with the clicked self on any of the three actions.
 - **K5, replay by name.** Bind: `skillprobe call <the bind row> <self as
   logged> [other:<id>] <arguments as logged, with another learned skill's
   id> confirm`, then `state` shows the slot changed (`bindRoute: byname`);
@@ -783,9 +816,13 @@ handlers), and one reset if the game offers it. No others.
   shows the level up by one, the `pointsReader` path down by one, and
   `ReportClient calls=0` (`allocRoute: byname`); the sub-node the same way
   (`subAllocRoute`); the reset the same way (`resetRoute`, `not-observed`
-  when the game offered none in K4). Each refusal is recorded under the
-  recording rule: a `reproduced` refusal is the game's answer and a
-  § Decision line, not a defect. Close the screen.
+  when the game offered none in K4). When K4's handler is a closure,
+  `skillprobe call` refuses the row, and the same replay, with the same
+  self, goes through `craftprobe methods id:<button>` (the variable holding
+  the closure) and `craftprobe callm id:<button> inst <that variable>
+  [other:<id>] <arguments as logged> confirm`. Each refusal is recorded
+  under the recording rule: a `reproduced` refusal is the game's answer and
+  a § Decision line, not a defect. Close the screen.
 - **K6, the readers.** `skillprobe call ReturnTalentLevel <self as logged in
   K3> <arguments as logged, with 250> confirm` returns a number (the level
   reader `skillstate` ships); `skillprobe state` prints `points?` for the
@@ -800,8 +837,9 @@ handlers), and one reset if the game offers it. No others.
   before); the restore is the driver's, on the owner's word.
 
 A `not-observed` on K1 (no getter logs a per-slot shape and no store holds
-the owner's Y for the Y slot) or on K4 (no `UiA*` row fires on the owner's
-bind, allocation or reset), or on K2 after both short-cooldown slots, sends
+the owner's Y for the Y slot, with budget left) or on K4 (no candidate row
+fires once per action with the clicked button as self on the owner's bind,
+allocation or reset), or on K2 after both short-cooldown slots, sends
 the plan back for revision. A single by-name replay in K5 recorded as a
 `reproduced` refusal is a § Decision line: that verb is left out of the
 player build and its hub tool refuses `route_not_measured`. `shape not
@@ -852,7 +890,7 @@ no by-name call.
 | S1 | not-observed for the key per slot, the store and the points. Read: row 0 held `0,0=242 darkOath`, `0,2=250 chainOfHolyLight`, `0,3=253 manaOrb`, `0,4=252 healingZone`, `0,5=240 soulSpurn` (`0,1` empty); row 1, the owned-skills list, held 14 entries including `1,1=1 basicAttack`; `global.mySkills=[236,237,239,240,242,245,246,247,250,251,252,253]`; `hud.playerSlot.bind_skill=undefined`; the sub-talent levels per bar talent (`sub=242 s3=5 s4=5 s1=5 s8=2 s11=3 s12=0 s13=0 s10=0` and so on). Not found by name: a key code per slot (`keys`: 10 of `Controller_obj`'s 221 members match skill, talent or bind, and none is a key code; every slot element's `keyBindKey=-1`), the store (`craftprobe find UI_Hud_Talent_obj 0 242`: 0 matches over 79 variables - the id most likely sits in `playerSlot`, a ds_map `find` does not walk), the points (no numeric member of `Player_obj` named like a point count), the levels (`ReturnTalentLevel` by name threw for every one of the 15 bar ids). `tgprobe talents` matches one name per call (a multi-name call matched only the first): `darkOath` is an aura; `healingZone` has the largest cooldown (14), so S1's rule chose slot 0,4 for S2. The HUD screenshot (`20260925T131221195908Z_skill-hud-check.png`) labels three bottom-left slots Q, E, R - read by eye, not by name | - | - | - | 2026-09-25 |
 | S2 | shape not reproduced (key: inferred R from the HUD, not name-resolved; TalentUse 0 calls). `hs_input` key R (vk 82, held 120 ms) with `TalentUse`, `TalentUseClass` and `CheckTalentUse` armed: `TalentUse` and `TalentUseClass` logged no call. `CheckTalentUse` polls thousands of times a second with no key pressed, so its budget was re-armed just before the press. Slot 0,4's `timer` read 113 then 37, and `timer` jitters every frame on every slot, so it is no proof. Two causes stay open: the key read by eye was wrong, and slot 0,4 had a running cooldown (`healingZone`, 14 s - the slot rule picked the worst slot for a cast). `castProof` not established | `CheckTalentUse` (background polling, no key pressed): `self=other=Player_obj argc=3 a0=ref instance 261723 a1=1 a2=1` | - (no call made) | - | 2026-09-25 |
 | S3 | reproduced: `skillprobe call TalentUse Player_obj 0 id:261723 252 1 false true confirm` dispatched with `ret=undefined` and no throw, and `TalentUseClass` then fired three times, self = other = the player: a0 = `252.0` (the talent), then `int64:737`, then `int64:243` (two chained sub-effects), none threw. The HUD's `100/104` resource read the same in the screenshot taken straight after (`20260925T131400942225Z_s3-cast-byname.png`); whether `healingZone` costs that resource is not established. A research fact only: the call skips `CheckTalentUse`'s gate | S2 logged no `TalentUse` call; the shape compared against is the one the toggle research measured on a key press: self `Player_obj`, `argc=5`, (player ref, talent id, 1, false, true) | `TalentUse #1 self=Player_obj#3553@261723 other=Player_obj#3553@261723 argc=5 a0=ref instance 261723 a1=252.0 a2=1.0 a3=false a4=true`, `ret=undefined` | - | 2026-09-25 |
-| S4 | not-observed as an isolated handler; the owner's actions were observed in the state. The owner, with T for the talent screen: moved one point out of `maledictions` into `blackMass`; put 2 points into four `burstOfLight` sub-nodes; left-clicked the slot next to the potions (the right-click slot), which expanded the slots, and picked `satansMark`; then did the same and put `shadowBolt` into the empty Y slot. `state` before and after: `mySkills` 12 → 13 ids with 244 `blackMass`; `sub=246` from none to `s7=2 s2=2 s14=2 s6=2` (which s-number is which named node is not established); `sub=244` appeared (`s8=3 s2=2 s9=5 s11=3 s6=5 s10=2`); slot 0,2 250 → 236 `satansMark`; slot 0,6 empty → 239 `shadowBolt`; slot 0,4 unchanged; `bind_skill=undefined` unchanged. No talent named `maledictions` was identified in the data, so the point's origin is the owner's word. `TalentUse` and `TalentUseClass` logged no call. Every closure that fired logged no arguments; `anon@23904` did not fire; `UiSetActivationFunc` fired 69 times across unrelated navigation; `TalentRequirement` had fired 5 times on `UI_Talent_Button_obj` instances (`ret=bool:true`) before the hand actions. The handlers are the `UiA*` activation scripts, which were not rows (§ Static readings, replan 3) | `NetworkSendClientAllTalents #1 self=UI_Button_Small_obj#5009@271975 other=UI_Talent_Screen_obj#5278@271959 argc=0`; `UI_Talent_Screen_Allocate_obj anon@643 #1 self=UI_Talent_Screen_Allocate_obj#5275@271986 other=UI_Talent_Screen_Attributes_Container_obj#5277@271979 argc=0`; `UI_Button_Talent_Player_obj anon@650 #1 self=UI_Button_Talent_Player_obj#5016@272243 other=Profile_Manager_obj#3673@257017 argc=0`; `UI_Button_Talent_Player_obj anon@23088 #1 self=UI_Button_Talent_Player_obj#5016@272279 other=UI_Talent_Screen_obj#5278@271959 argc=0`; `UI_Button_Subtalent_obj anon@535 #1 self=UI_Button_Subtalent_obj#5013@272463 other=UI_Sub_Talents_obj#5272@272447 argc=0` | - (no call made) | - | 2026-09-25 |
+| S4 | not-observed as an isolated handler; the owner's actions were observed in the state. The owner, with T for the talent screen: moved one point out of `maledictions` into `blackMass`; put 2 points into four `burstOfLight` sub-nodes; left-clicked the slot next to the potions (the right-click slot), which expanded the slots, and picked `satansMark`; then did the same and put `shadowBolt` into the empty Y slot. `state` before and after: `mySkills` 12 → 13 ids with 244 `blackMass`; `sub=246` from none to `s7=2 s2=2 s14=2 s6=2` (which s-number is which named node is not established); `sub=244` appeared (`s8=3 s2=2 s9=5 s11=3 s6=5 s10=2`); slot 0,2 250 → 236 `satansMark`; slot 0,6 empty → 239 `shadowBolt`; slot 0,4 unchanged; `bind_skill=undefined` unchanged. No talent named `maledictions` was identified in the data, so the point's origin is the owner's word. `TalentUse` and `TalentUseClass` logged no call. Every closure that fired logged no arguments; `anon@23904` did not fire; `UiSetActivationFunc` fired 69 times across unrelated navigation; `TalentRequirement` had fired 5 times on `UI_Talent_Button_obj` instances (`ret=bool:true`) before the hand actions. The handlers were not isolated: an activation callback normally takes no arguments and reads its button through `self`, so `argc=0` excludes no closure, and `UI_Talent_Screen_Allocate_obj anon@643` (self the Allocate button) and `UI_Button_Subtalent_obj anon@535` (self the sub-talent button) each fired once on their action and stay candidates, beside the `UiA*` activation scripts, which were not rows (§ Static readings, replan 3; Live procedure 2's K4 judges them by self) | `NetworkSendClientAllTalents #1 self=UI_Button_Small_obj#5009@271975 other=UI_Talent_Screen_obj#5278@271959 argc=0`; `UI_Talent_Screen_Allocate_obj anon@643 #1 self=UI_Talent_Screen_Allocate_obj#5275@271986 other=UI_Talent_Screen_Attributes_Container_obj#5277@271979 argc=0`; `UI_Button_Talent_Player_obj anon@650 #1 self=UI_Button_Talent_Player_obj#5016@272243 other=Profile_Manager_obj#3673@257017 argc=0`; `UI_Button_Talent_Player_obj anon@23088 #1 self=UI_Button_Talent_Player_obj#5016@272279 other=UI_Talent_Screen_obj#5278@271959 argc=0`; `UI_Button_Subtalent_obj anon@535 #1 self=UI_Button_Subtalent_obj#5013@272463 other=UI_Sub_Talents_obj#5272@272447 argc=0` | - (no call made) | - | 2026-09-25 |
 | S5 | not-observed: not attempted. The shared launch's time was kept for the stash procedure's stop, inspect and restore, and S4 isolated no bind handler whose shape could be replayed. Not a route negative | - (no handler isolated) | - (no call made) | - | 2026-09-25 |
 | S6 | not-observed: not attempted, for the same reasons as S5 (no allocation, sub-allocation or reset handler isolated in S4; `NetworkSendClientAllTalents` carries no talent id to replay). Not a route negative | - (no handler isolated) | - (no call made) | - | 2026-09-25 |
 | S7 | pass: `menulayout UI_Talent_Screen_obj` answered `listed=0` (the owner closed the screen at the end of the hand actions). With no S6 run, the state read after S4 is the session's final state | - | - | - | 2026-09-25 |
