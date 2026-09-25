@@ -48,22 +48,6 @@
         <span class="val" id="mcmval">off</span>
     </div>
     <div class="row" style="border:none">
-        <span class="lbl" style="width:auto;flex:1">Mythic Gems of Incarnation<br><span class="feature-description">Every Gem of Incarnation that drops is Mythic, with 4 or 5 mods. The game rolls it itself, from a seed it has already rolled Mythic. Gems you own keep their own mods. The first time, the game rolls sample gems in the background, under a minute at the main menu. Off by default.</span></span>
-        <label class="switch"><input type="checkbox" id="mod_gem_mythic"><span class="sl"></span></label>
-        <span class="val" id="mgmval">off</span>
-    </div>
-    <div class="row" id="mod_gem_maxroll_row" style="border:none">
-        <span class="lbl" style="width:auto;flex:1">Max-roll Gems of Incarnation<br><span class="feature-description">Every mod on every Gem of Incarnation shows the highest value its best tier can roll. Nothing is written to your save: turn it off, and a gem shows its own rolls again the next time the game loads it. Off by default.</span></span>
-        <label class="switch"><input type="checkbox" id="mod_gem_maxroll"><span class="sl"></span></label>
-        <span class="val" id="mgrval">off</span>
-    </div>
-    <div class="row" id="gemfilter_row">
-        <span class="lbl" style="width:auto;flex:1">Mods on Mythic gems<br><span class="feature-description">Tick the mods you want and save. Every Mythic gem that drops then carries as many of them as the game's own Mythic rolls allow; with everything ticked, any mix. Works with Mythic Gems of Incarnation on.</span></span>
-        <button class="btn" id="gemfilter_toggle" type="button">Filter&hellip;</button>
-        <span class="val" id="gemfilter_summary">all</span>
-    </div>
-    <div id="gemfilter_panel" style="display:none"></div>
-    <div class="row" style="border:none">
         <span class="lbl" style="width:auto;flex:1">Mark a running toggle skill<br><span class="feature-description">For a fixed set of toggle skills, each measured in-game: draws a soft red outline around that skill's skill-bar slot while its toggle is running, so you can see at a glance that it is still active. The outline disappears when the toggle ends. A plain cast, made without the skill's toggle sub-talent, lights nothing.</span></span>
         <label class="switch"><input type="checkbox" id="mod_toggle_indicator"><span class="sl"></span></label>
         <span class="val" id="mtival">off</span>

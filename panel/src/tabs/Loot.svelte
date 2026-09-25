@@ -32,3 +32,30 @@
   </div>
   <div class="note" id="angelicnote">off</div>
 </div>
+
+<!-- Gems of Incarnation: both switches, then the mod filter row and its list, written in the Mods rows' final
+     feature-row shape (preparePanelUI converts only the Mods cards). #gemfilter_panel is drawn by panel.js
+     (renderGemFilter) with the Satanic pool's classes each time Filter… opens it. -->
+<div class="card tab-card" data-tab="loot" id="gemsCard">
+  <h2>Gems of Incarnation</h2>
+  <div class="row feature-row" style="border:none">
+    <span class="lbl" style="width:auto;flex:1">Mythic Gems of Incarnation</span>
+    <label class="switch"><input type="checkbox" id="mod_gem_mythic"><span class="sl"></span></label>
+    <span class="val" id="mgmval">off</span>
+    <span class="feature-description">Every Gem of Incarnation that drops is Mythic, with 4 or 5 mods. The game rolls it itself, from a seed it has already rolled Mythic. Gems you own keep their own mods. The first time, the game rolls sample gems in the background, under a minute at the main menu. Off by default.</span>
+  </div>
+  <div class="row feature-row" id="mod_gem_maxroll_row" style="border:none">
+    <span class="lbl" style="width:auto;flex:1">Max-roll Gems of Incarnation</span>
+    <label class="switch"><input type="checkbox" id="mod_gem_maxroll"><span class="sl"></span></label>
+    <span class="val" id="mgrval">off</span>
+    <span class="feature-description">Every mod on every Gem of Incarnation shows the highest value its best tier can roll. Nothing is written to your save: turn it off, and a gem shows its own rolls again the next time the game loads it. Off by default.</span>
+  </div>
+  <div class="row feature-row" id="gemfilter_row">
+    <span class="lbl" style="width:auto;flex:1">Mods on Mythic gems</span>
+    <button class="btn" id="gemfilter_toggle" type="button" aria-expanded="false" aria-controls="gemfilter_panel">Filter&hellip;</button>
+    <span class="val" id="gemfilter_summary">all</span>
+    <span id="gemfilter_unsaved" class="hint" role="status" hidden>Unsaved changes</span>
+    <span class="feature-description">Tick the mods you want and save. Every Mythic gem that drops then carries as many of them as the game's own Mythic rolls allow; with everything ticked, any mix. Works with Mythic Gems of Incarnation on.</span>
+  </div>
+  <div id="gemfilter_panel" style="display:none"></div>
+</div>

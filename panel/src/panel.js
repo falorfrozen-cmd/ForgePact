@@ -569,7 +569,12 @@ function bind(){
         const v=document.getElementById('mcmval');v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
         toast('Craft from the stash '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
     };
-    // Gem mod filter: drawn from /api/state's gemAffixes ([stat, category, label]).
+    // Gem mod filter: drawn from /api/state's gemAffixes ([stat, category, label])
+    // with the World tab's Satanic pool classes, under six category headings.
+    // The search and the All mods / Enabled / Disabled filter only show and
+    // hide rows; Tick all, Untick all, a heading's all / none and Save act on
+    // every row, shown or hidden, and only Save sends anything (no auto-save,
+    // unlike the Satanic pool: nothing ticked is refused at Save).
     const gemFilterSummary=()=>{
         const v=ST.cfg.gem_filter, n=(ST.gemAffixes||[]).length;
         document.getElementById('gemfilter_summary').textContent=Array.isArray(v)?v.length+' of '+n:'all '+n;
@@ -577,29 +582,67 @@ function bind(){
     const renderGemFilter=()=>{
         const box=document.getElementById('gemfilter_panel'), v=ST.cfg.gem_filter, affixes=ST.gemAffixes||[];
         const on=new Set(Array.isArray(v)?v:affixes.map(a=>a[0]));
-        let html='<div class="gf-actions"><button class="btn primary" type="button" data-gf="save">Save filter</button><button class="btn" type="button" data-gf="all">Tick all</button><button class="btn" type="button" data-gf="none">Untick all</button></div>';
+        let html='<div class="gf-actions"><button class="btn primary" type="button" data-gf="save">Save filter</button><button class="sat-button" type="button" data-gf="all">Tick all</button><button class="sat-button" type="button" data-gf="none">Untick all</button></div>';
+        html+='<div class="sat-toolbar"><label class="sat-search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg>'+
+            '<input type="search" id="gemSearch" placeholder="Search by name or effect..." aria-label="Search Gem of Incarnation mods" autocomplete="off"></label>'+
+            '<div class="sat-filters" role="group" aria-label="Filter Gem of Incarnation mods"><button type="button" data-gf-filter="all" aria-pressed="true">All mods</button><button type="button" data-gf-filter="enabled" aria-pressed="false">Enabled</button><button type="button" data-gf-filter="disabled" aria-pressed="false">Disabled</button></div></div>';
+        html+='<div class="sat-list" role="group" aria-label="Gem of Incarnation mods">';
         for(const cat of (ST.gemCategories||[])){
-            html+='<div class="gf-cat">'+cat+'<button class="btn" type="button" data-gfcat="'+cat+'" data-gfset="1">all</button><button class="btn" type="button" data-gfcat="'+cat+'" data-gfset="0">none</button></div><div class="gf-list">';
-            for(const [stat,c,label] of affixes){if(c!==cat)continue;html+='<label><input type="checkbox" data-gfstat="'+stat+'" data-gfc="'+c+'"'+(on.has(stat)?' checked':'')+'>'+label+'</label>';}
-            html+='</div>';
+            html+='<div class="gf-cat" data-gf-group="'+cat+'"><h3>'+cat+'</h3><span class="sat-count"></span><button class="sat-button" type="button" data-gfcat="'+cat+'" data-gfset="1">all</button><button class="sat-button" type="button" data-gfcat="'+cat+'" data-gfset="0">none</button></div>';
+            for(const [stat,c,label] of affixes){if(c!==cat)continue;html+='<label class="sat-option"><input type="checkbox" data-gfstat="'+stat+'" data-gfc="'+c+'"'+(on.has(stat)?' checked':'')+'><span class="sat-name">'+label+'</span></label>';}
         }
+        html+='<p class="sat-empty" hidden>No matching modifiers.<br>Try another search or filter.</p></div>';
         box.innerHTML=html;
         const boxes=()=>[...box.querySelectorAll('input[data-gfstat]')];
-        box.querySelectorAll('[data-gfcat]').forEach(b=>b.onclick=()=>boxes().forEach(i=>{if(i.dataset.gfc===b.dataset.gfcat)i.checked=b.dataset.gfset==='1';}));
+        const list=box.querySelector('.sat-list'), search=document.getElementById('gemSearch'), unsaved=document.getElementById('gemfilter_unsaved');
+        let shown='all';
+        // Repaints what the ticks and the search show; changes no tick.
+        const paint=()=>{
+            const q=search.value.trim().toLocaleLowerCase(), saved=ST.cfg.gem_filter;
+            const savedSet=new Set(Array.isArray(saved)?saved:affixes.map(a=>a[0]));
+            let visible=0, differs=false;
+            for(const i of boxes()){
+                const row=i.closest('.sat-option'), stat=+i.dataset.gfstat;
+                row.classList.toggle('is-enabled',i.checked);
+                if(i.checked!==savedSet.has(stat))differs=true;
+                const match=(row.textContent.toLocaleLowerCase().includes(q)||i.dataset.gfc.toLocaleLowerCase().includes(q))&&(shown==='all'||(shown==='enabled')===i.checked);
+                row.hidden=!match;
+                if(match)visible++;
+            }
+            if(boxes().filter(i=>i.checked).length!==savedSet.size)differs=true;
+            box.querySelectorAll('.gf-cat').forEach(head=>{
+                const rows=boxes().filter(i=>i.dataset.gfc===head.dataset.gfGroup);
+                head.querySelector('.sat-count').textContent=rows.filter(i=>i.checked).length+' enabled';
+                head.hidden=!rows.some(i=>!i.closest('.sat-option').hidden);
+            });
+            box.querySelector('.sat-empty').hidden=visible>0;
+            box.querySelectorAll('[data-gf-filter]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.gfFilter===shown)));
+            unsaved.hidden=!differs;
+            list.toggleAttribute('data-more-below',list.scrollHeight-list.scrollTop-list.clientHeight>1);
+        };
+        search.oninput=paint;
+        list.onscroll=()=>list.toggleAttribute('data-more-below',list.scrollHeight-list.scrollTop-list.clientHeight>1);
+        box.querySelectorAll('[data-gf-filter]').forEach(b=>b.onclick=()=>{shown=b.dataset.gfFilter;paint();});
+        list.onchange=paint;
+        box.querySelectorAll('[data-gfcat]').forEach(b=>b.onclick=()=>{boxes().forEach(i=>{if(i.dataset.gfc===b.dataset.gfcat)i.checked=b.dataset.gfset==='1';});paint();});
         box.querySelectorAll('[data-gf]').forEach(b=>b.onclick=async()=>{
-            if(b.dataset.gf!=='save'){boxes().forEach(i=>i.checked=b.dataset.gf==='all');return;}
+            if(b.dataset.gf!=='save'){boxes().forEach(i=>i.checked=b.dataset.gf==='all');paint();return;}
             const ticked=boxes().filter(i=>i.checked).map(i=>+i.dataset.gfstat);
             if(!ticked.length){toast('Gem filter: tick at least one mod');return;}
             const value=ticked.length===affixes.length?'all':ticked;
             const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'gem_filter',value:value})});
-            if(res.ok){ST.cfg.gem_filter=Array.isArray(value)?[...value].sort((a,b)=>a-b):value;gemFilterSummary();}
+            if(res.ok){ST.cfg.gem_filter=Array.isArray(value)?[...value].sort((a,b)=>a-b):value;gemFilterSummary();paint();}
             toast('Gem filter: '+(value==='all'?'every mod':ticked.length+' mods')+' - '+(res.ok||res.err));
         });
+        paint();
+        // Drawn from the saved filter: nothing unsaved.
+        unsaved.hidden=true;
     };
     document.getElementById('gemfilter_toggle').onclick=()=>{
-        const box=document.getElementById('gemfilter_panel'), open=box.style.display==='none';
-        if(open)renderGemFilter();
+        const toggle=document.getElementById('gemfilter_toggle'), box=document.getElementById('gemfilter_panel'), open=box.style.display==='none';
         box.style.display=open?'block':'none';
+        if(open)renderGemFilter();
+        toggle.setAttribute('aria-expanded',String(open));
     };
     gemFilterSummary();
     for(const [id,val,key,label] of [['mod_gem_mythic','mgmval','mod_gem_mythic','Mythic Gems of Incarnation'],['mod_gem_maxroll','mgrval','mod_gem_maxroll','Max-roll Gems of Incarnation']]){
@@ -755,10 +798,6 @@ function preparePanelUI(){
       const group=document.createElement('div');group.className='feature-with-child';parent.before(group);group.append(parent,child,spawnChild);
       const apParent=document.getElementById('mod_auto_prospect').closest('.row'),apChild=document.getElementById('mod_auto_prospect_bag_row');
       const apGroup=document.createElement('div');apGroup.className='feature-with-child';apParent.before(apGroup);apGroup.append(apParent,apChild);
-      // Gems of Incarnation: both switches, then the mod filter and its list.
-      const gemParent=document.getElementById('mod_gem_mythic').closest('.row');
-      const gemGroup=document.createElement('div');gemGroup.className='feature-with-child';gemParent.before(gemGroup);
-      gemGroup.append(gemParent,document.getElementById('mod_gem_maxroll_row'),document.getElementById('gemfilter_row'),document.getElementById('gemfilter_panel'));
     }
     setupModsColumns(grid);
   }
@@ -876,6 +915,16 @@ export function filterControlRows(){
   if(angelic){
     angelic.hidden=activeTab==='loot'&&(!angelic.textContent.toLowerCase().includes(query)||(controlFilter==='modified'&&+document.getElementById('angelic_items').value<=1));
     if(activeTab==='loot'&&!angelic.hidden)count++;
+  }
+  // So does the Gems of Incarnation card: by its own rows' text (not the mod
+  // filter's list), and under Modified while either switch is on or the saved
+  // filter narrows the mods.
+  const gems=document.getElementById('gemsCard');
+  if(gems){
+    const text=[...gems.children].filter(el=>el.id!=='gemfilter_panel').map(el=>el.textContent).join(' ').toLowerCase();
+    const modified=document.getElementById('mod_gem_mythic').checked||document.getElementById('mod_gem_maxroll').checked||Array.isArray(ST?.cfg?.gem_filter);
+    gems.hidden=activeTab==='loot'&&(!text.includes(query)||(controlFilter==='modified'&&!modified));
+    if(activeTab==='loot'&&!gems.hidden)count++;
   }
   let empty=document.getElementById('emptySettings');
   if(!empty){empty=document.createElement('div');empty.id='emptySettings';empty.className='empty-settings';empty.textContent='No matching settings. Try another search or show all settings.';document.getElementById('workspace').append(empty)}

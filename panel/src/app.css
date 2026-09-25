@@ -111,7 +111,7 @@ body:has(#nav-setup[aria-selected="true"]) #pluginWarning .btn{display:none}
 #controlToolbar{position:relative;display:flex;gap:var(--space-6);margin:0 0 var(--space-7)}
 #controlToolbar:before{content:"";position:absolute;left:var(--space-6);top:8px;width:16px;height:16px;background-color:var(--color-text-muted);mask:var(--icon-search) center/contain no-repeat;pointer-events:none}
 .control-search{flex:1;min-width:0;height:32px;padding:0 var(--space-6) 0 calc(var(--space-6) + 16px + var(--space-4));border:1px solid var(--color-border-strong);border-radius:var(--radius-md);background-color:var(--color-bg-sunken);color:var(--color-text-primary);font-size:var(--font-size-sm)}
-.control-search::placeholder,#satSearch::placeholder,#exepath::placeholder{color:var(--color-text-muted)}
+.control-search::placeholder,#satSearch::placeholder,#gemSearch::placeholder,#exepath::placeholder{color:var(--color-text-muted)}
 .control-filters,.sat-filters{display:flex;gap:var(--space-1);flex:none;padding:var(--space-2);border-radius:var(--radius-md);background-color:var(--color-bg-sunken)}
 .control-filters button,.sat-filters button{padding:0 var(--space-5);min-height:24px;border:0;border-radius:var(--radius-sm);background:none;color:var(--color-text-muted);font-size:var(--font-size-sm);cursor:pointer}
 .control-filters button[aria-pressed=true],.sat-filters button[aria-pressed="true"]{background-color:var(--color-bg-hover);color:var(--color-text-primary)}
@@ -213,17 +213,17 @@ input[type=range]::-moz-range-thumb{width:6px;height:18px;border:0;border-radius
 .sat-intro{margin:var(--space-6) 0 0;color:var(--color-text-muted);font-size:var(--font-size-sm)}
 .sat-intro span{display:block;margin-top:var(--space-2);color:var(--color-text-faint);font-size:var(--font-size-xs)}
 .sat-button{display:inline-flex;align-items:center;gap:var(--space-3);padding:var(--space-2) var(--space-4);border:0;border-radius:var(--radius-sm);background:none;color:var(--color-text-muted);font-size:var(--font-size-sm);white-space:nowrap;cursor:pointer}
-.sat-panel-tools .sat-button{padding:0 var(--space-2);color:var(--color-text-faint);font-size:var(--font-size-xs)}
+.sat-panel-tools .sat-button,.gf-cat .sat-button{padding:0 var(--space-2);color:var(--color-text-faint);font-size:var(--font-size-xs)}
 .sat-toolbar{display:flex;align-items:center;gap:var(--space-6)}
 .sat-search{position:relative;display:flex;align-items:center;flex:1;min-width:0;color:var(--color-text-muted)}
 .sat-search svg{position:absolute;left:var(--space-6);width:16px;height:16px;pointer-events:none}
-#satSearch{width:100%;min-width:0;height:32px;padding:0 var(--space-6) 0 calc(var(--space-6) + 16px + var(--space-4));border:1px solid var(--color-border-strong);border-radius:var(--radius-md);background-color:var(--color-bg-sunken);color:var(--color-text-primary);font-size:var(--font-size-sm)}
+#satSearch,#gemSearch{width:100%;min-width:0;height:32px;padding:0 var(--space-6) 0 calc(var(--space-6) + 16px + var(--space-4));border:1px solid var(--color-border-strong);border-radius:var(--radius-md);background-color:var(--color-bg-sunken);color:var(--color-text-primary);font-size:var(--font-size-sm)}
 .sat-columns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-9)}
 .sat-panel{--sat-accent:var(--color-ok);min-width:0}
 .sat-panel[data-polarity="debuff"]{--sat-accent:var(--color-danger)}
 .sat-panel-head{padding:0 var(--space-3) var(--space-4)}
-.sat-panel-title{display:flex;align-items:center;gap:var(--space-4)}
-.sat-panel h3{margin:0;color:var(--color-text-primary);font-size:var(--font-size-sm);font-weight:var(--font-weight-semibold)}
+.sat-panel-title,.gf-cat{display:flex;align-items:center;gap:var(--space-4)}
+.sat-panel h3,.gf-cat h3{margin:0;color:var(--color-text-primary);font-size:var(--font-size-sm);font-weight:var(--font-weight-semibold)}
 .sat-sign{color:var(--sat-accent);font-weight:var(--font-weight-semibold)}
 .sat-count{margin-left:auto;color:var(--color-text-muted);font-family:var(--font-mono-family),Consolas,monospace;font-size:var(--font-size-xs);white-space:nowrap}
 .sat-panel-tools{display:flex;align-items:center;justify-content:space-between;gap:var(--space-4);margin-top:var(--space-2);color:var(--color-text-muted);font-size:var(--font-size-xs)}
@@ -260,19 +260,21 @@ input[type=range]::-moz-range-thumb{width:6px;height:18px;border:0;border-radius
 .feature-row>.style-select{grid-column:2/-1;grid-row:1}
 .feature-description{grid-column:1/-1;color:var(--color-text-muted);font-size:var(--font-size-sm);font-weight:var(--font-weight-regular)}
 .feature-hint{grid-column:1/-1;color:var(--color-text-faint);font-size:var(--font-size-xs)}
-/* Gems of Incarnation: Max-roll is a second switch at the parent's level; the
-   mod filter row and its list sit at the child indent, flat like every row. */
-.feature-with-child>#mod_gem_maxroll_row{margin-left:0}
-.feature-with-child>#gemfilter_row{grid-template-columns:minmax(0,1fr) auto auto}
-#gemfilter_row>.btn{grid-column:2;grid-row:1}
-#gemfilter_row>.val{grid-column:3;grid-row:1}
-.feature-with-child>#gemfilter_panel{margin:calc(var(--space-9) * -1 + var(--space-4)) 0 0 var(--space-8)}
-#gemfilter_panel .gf-actions{display:flex;flex-wrap:wrap;gap:var(--space-4)}
-#gemfilter_panel .gf-cat{display:flex;align-items:center;gap:var(--space-4);margin:var(--space-7) 0 var(--space-3);color:var(--color-text-muted);font-size:var(--font-size-xs);font-weight:var(--font-weight-semibold)}
-#gemfilter_panel .gf-cat .btn{min-height:24px;padding:0 var(--space-4);font-size:var(--font-size-xs)}
-#gemfilter_panel .gf-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:var(--space-2) var(--space-6)}
-#gemfilter_panel label{display:flex;align-items:center;gap:var(--space-3);color:var(--color-text-primary);font-size:var(--font-size-sm);cursor:pointer}
-#gemfilter_panel input[type=checkbox]{accent-color:var(--color-accent)}
+/* Gems of Incarnation, the Loot tab's #gemsCard: the Mods rows' look, spaced as
+   a Mods column spaces them; the mod filter row and its list sit at the child
+   indent under Mythic. The list is drawn with the Satanic pool's classes (their
+   rules above carry the gem selectors); only what that pool has no rule for is
+   here: the actions row, and the category headings inside its one list. */
+#gemsCard>.feature-row+.feature-row{margin-top:calc(var(--space-9) - var(--space-7))}
+#gemsCard>#gemfilter_row,#gemsCard>#gemfilter_panel{margin-left:var(--space-8)}
+#gemfilter_row{grid-template-columns:minmax(0,1fr) auto auto auto}
+#gemfilter_row>#gemfilter_unsaved{grid-column:2;grid-row:1}
+#gemfilter_row>.btn{grid-column:3;grid-row:1}
+#gemfilter_row>.val{grid-column:4;grid-row:1}
+#gemfilter_panel .gf-actions{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-4)}
+#gemfilter_panel .sat-toolbar{margin:var(--space-6) 0 var(--space-4)}
+#gemfilter_panel .gf-cat{padding:var(--space-6) var(--space-3) var(--space-2)}
+#gemfilter_panel .gf-cat:first-child{padding-top:0}
 select.style-select{min-width:96px;height:28px;padding:0 var(--space-3) 0 var(--space-4);border:0;border-radius:var(--radius-sm);background-color:var(--color-bg-hover);color:var(--color-text-primary);font-size:var(--font-size-sm);cursor:pointer}
 #minerHelmetCard{display:block}
 #minerHelmetCard strong{font-size:var(--font-size-md);font-weight:var(--font-weight-medium)}
