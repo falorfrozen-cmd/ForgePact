@@ -4444,7 +4444,7 @@
    "step": 384,
    "control": "#theme",
    "action": "select",
-   "value": "default",
+   "value": "ledger",
    "expect": {
     "posts": {
      "is": [
@@ -4452,7 +4452,7 @@
        "url": "/api/set",
        "body": {
         "key": "theme",
-        "value": "default"
+        "value": "ledger"
        }
       }
      ]
@@ -4466,7 +4466,7 @@
    "step": 385,
    "control": "#theme",
    "action": "select",
-   "value": "alt",
+   "value": "graphite",
    "expect": {
     "posts": {
      "is": [
@@ -4474,7 +4474,29 @@
        "url": "/api/set",
        "body": {
         "key": "theme",
-        "value": "alt"
+        "value": "graphite"
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": []
+    }
+   }
+  },
+  {
+   "step": 386,
+   "control": "#theme",
+   "action": "select",
+   "value": "sigil",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "theme",
+        "value": "sigil"
        }
       }
      ]
