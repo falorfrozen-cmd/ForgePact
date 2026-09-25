@@ -244,6 +244,14 @@ DEFAULTS = {
     # bag is short of moves over. Off by default; offline only, like every mod
     # here.
     "mod_craft_mats": False,
+    # Gems of Incarnation (docs/incarnation-gems-research.md): every gem that
+    # drops is Mythic (4-5 mods, a seed the game itself rolled Mythic), and every
+    # gem's mods show their best tier's top value. On by default at the owner's
+    # call (2026-09-25); whether they stay on is decided later.
+    "mod_gem_mythic": True,
+    "mod_gem_maxroll": True,
+    # Which mods a Mythic gem carries: "all", or the ticked mods (GEM_AFFIXES).
+    "gem_filter": "all",
     # Timed-skill countdown (issue #55): one of off/arc/bar/number/fade drawn
     # over each timed skill's hotbar slot. Covers the explicit rows of the
     # plugin's kSkillTimerRows, each measured in-game - a toggled-on skill
@@ -729,6 +737,72 @@ def skill_timer_style_valid(value) -> bool:
     return isinstance(value, str) and value.strip().lower() in SKILL_TIMER_STYLES
 
 
+# Every mod a Gem of Incarnation rolls (docs/incarnation-gems-research.md,
+# measured on 14,521 game-built gems): (stat, category, label), worded as the
+# game's tooltip words it. A skill grant is one row, named by its skill slot
+# (462); its levels slot (463) goes with it.
+GEM_CATEGORIES = ("Attack", "Skills", "Elemental skills", "Defense", "Life & mana", "Loot")
+GEM_AFFIXES = (
+    (28, "Attack", "#% Enhanced Damage"),
+    (68, "Attack", "#% Increased Attack Speed"),
+    (74, "Attack", "+# to Attack Rating"),
+    (75, "Attack", "#% Increased Attack Rating"),
+    (95, "Attack", "#% Chance for a Deadly Blow"),
+    (128, "Attack", "+# to Physical Damage"),
+    (448, "Attack", "+# to Minimum Weapon Damage"),
+    (450, "Attack", "+# to Maximum Weapon Damage"),
+    (101, "Skills", "#% Magic Skill Damage increased by"),
+    (196, "Skills", "#% Faster Cast Rate"),
+    (201, "Skills", "+# to All Skills"),
+    (462, "Skills", "+# to a single skill"),
+    (133, "Elemental skills", "+# to Fire Skill Damage"),
+    (134, "Elemental skills", "#% Fire Skill Damage increased by"),
+    (137, "Elemental skills", "+# to Cold Skill Damage"),
+    (138, "Elemental skills", "#% Cold Skill Damage increased by"),
+    (141, "Elemental skills", "+# to Arcane Skill Damage"),
+    (142, "Elemental skills", "#% Arcane Skill Damage increased by"),
+    (145, "Elemental skills", "+# to Lightning Skill Damage"),
+    (146, "Elemental skills", "#% Lightning Skill Damage increased by"),
+    (149, "Elemental skills", "+# to Poison Skill Damage"),
+    (150, "Elemental skills", "#% Poison Skill Damage increased by"),
+    (29, "Defense", "#% Enhanced Defense"),
+    (173, "Defense", "#% to All Resistances"),
+    (175, "Defense", "#% to Fire Resistance"),
+    (177, "Defense", "#% to Cold Resistance"),
+    (179, "Defense", "#% to Lightning Resistance"),
+    (181, "Defense", "#% to Arcane Resistance"),
+    (183, "Defense", "#% to Poison Resistance"),
+    (52, "Life & mana", "+# to Life"),
+    (53, "Life & mana", "#% Life Increased by"),
+    (57, "Life & mana", "#% Life stolen per Hit"),
+    (60, "Life & mana", "+# to Mana"),
+    (61, "Life & mana", "#% Mana Increased by"),
+    (64, "Life & mana", "#% Mana stolen per Hit"),
+    (284, "Loot", "#% Increased Magic Find"),
+)
+GEM_AFFIX_IDS = frozenset(stat for stat, _c, _l in GEM_AFFIXES)
+
+
+def gem_filter_value(value):
+    """The gem mod filter to keep: "all", or the ticked mods (sorted). None: not
+    a filter (junk, an unknown mod, or nothing ticked)."""
+    if value == "all":
+        return "all"
+    if not isinstance(value, list) or not value:
+        return None
+    ids = set()
+    for v in value:
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or v != int(v) or int(v) not in GEM_AFFIX_IDS:
+            return None
+        ids.add(int(v))
+    return "all" if ids == GEM_AFFIX_IDS else sorted(ids)
+
+
+def gem_filter_command(cfg: dict) -> str:
+    value = gem_filter_value(cfg.get("gem_filter", "all")) or "all"
+    return "gemfilter all" if value == "all" else "gemfilter " + ",".join(str(i) for i in value)
+
+
 def build_cmds(cfg: dict) -> list:
     d = min(5.0, float(cfg.get("density", 1))) if cfg.get("density_on") else 1.0
     # A new game process already starts at vanilla values.  Sending x1/Off
@@ -800,6 +874,16 @@ def build_cmds(cfg: dict) -> list:
         # the switch on, and the plugin installs its hooks once the game has
         # settled.
         out.append("craftmats 1")
+    if cfg.get("mod_gem_mythic", True):
+        # Safe to send at launch, like toggleguard: `gemmythic 1` only arms it,
+        # and the plugin hooks the gem drop once a player exists.
+        out.append("gemmythic 1")
+        # Only a narrowed filter is sent: the plugin starts with every mod.
+        if (gem_filter_value(cfg.get("gem_filter", "all")) or "all") != "all":
+            out.append(gem_filter_command(cfg))
+    if cfg.get("mod_gem_maxroll", True):
+        # Safe to send at launch: no hook of its own, CreateItemNew is hooked at init.
+        out.append("gemmaxroll 1")
     skill_timer_style = str(cfg.get("mod_skill_timer_style", "off")).strip().lower()
     if skill_timer_style_valid(skill_timer_style) and skill_timer_style != "off":
         # Safe to send at launch, like toggleborder: the draw call already
@@ -1711,6 +1795,8 @@ class H(BaseHTTPRequestHandler):
                         # differs per family because they do not all mean the same thing.
                         "keys": [[k, l, t] for k, l, t in KEYS],
                         "satanicBuffs": [[i, l, d] for i, l, d in SATANIC_BUFF_LIST],
+                        "gemAffixes": [[s, c, l] for s, c, l in GEM_AFFIXES],
+                        "gemCategories": list(GEM_CATEGORIES),
                         "satanicDebuffs": [[i, l, d] for i, l, d in SATANIC_DEBUFF_LIST],
                         "minEnabledSatanicBuffs": MIN_ENABLED_SATANIC_BUFFS,
                         "minEnabledSatanicDebuffs": MIN_ENABLED_SATANIC_DEBUFFS,
@@ -1804,8 +1890,14 @@ class H(BaseHTTPRequestHandler):
                     # moved wins and the other gives way
                     other = "rarity_ancient" if key == "rarity_rare" else "rarity_rare"
                     cfg[other] = min(_pct(cfg.get(other, 0)), 100 - cfg[key])
-                elif key in ("density_on", "auto_apply", "map_reveal", "map_reveal_packs", "map_reveal_spawn", "headhunter", "tyrant", "beacon", "mod_filter_max_relics", "mod_orb_pickup_radius", "mod_pet_quest_pickup", "mod_auto_prospect", "mod_auto_prospect_bag", "mod_toggle_indicator", "mod_toggle_guard", "mod_restart_anytime", "mod_craft_mats"):
+                elif key in ("density_on", "auto_apply", "map_reveal", "map_reveal_packs", "map_reveal_spawn", "headhunter", "tyrant", "beacon", "mod_filter_max_relics", "mod_orb_pickup_radius", "mod_pet_quest_pickup", "mod_auto_prospect", "mod_auto_prospect_bag", "mod_toggle_indicator", "mod_toggle_guard", "mod_restart_anytime", "mod_craft_mats", "mod_gem_mythic", "mod_gem_maxroll"):
                     cfg[key] = bool(val)
+                elif key == "gem_filter":
+                    value = gem_filter_value(val)
+                    if value is None:
+                        self._json({"err": "tick at least one gem mod"}, 400)
+                        return
+                    cfg[key] = value
                 elif key == "mod_skill_timer_style":
                     style = str(val).strip().lower()
                     if not skill_timer_style_valid(style):
@@ -1880,6 +1972,15 @@ class H(BaseHTTPRequestHandler):
                         send_cmds([f"restartanytime {1 if cfg['mod_restart_anytime'] else 0}"], cfg)
                     elif key == "mod_craft_mats":
                         send_cmds([f"craftmats {1 if cfg['mod_craft_mats'] else 0}"], cfg)
+                    elif key == "mod_gem_mythic":
+                        cmds = [f"gemmythic {1 if cfg['mod_gem_mythic'] else 0}"]
+                        if cfg["mod_gem_mythic"]:
+                            cmds.append(gem_filter_command(cfg))
+                        send_cmds(cmds, cfg)
+                    elif key == "gem_filter":
+                        send_cmds([gem_filter_command(cfg)], cfg)
+                    elif key == "mod_gem_maxroll":
+                        send_cmds([f"gemmaxroll {1 if cfg['mod_gem_maxroll'] else 0}"], cfg)
                     elif key == "mod_skill_timer_style":
                         # Always explicit, including off: a style change (or
                         # turning it off) needs the plugin told either way.
@@ -2058,6 +2159,7 @@ input[type=range]::-webkit-slider-thumb{appearance:none;width:17px;height:17px;b
 #densityCard>.row{border:0;padding:6px 0}#densityCard>.row>.lbl{display:none}.density-scale{display:flex;justify-content:space-between;font-size:11px;color:var(--mut);margin-top:5px}
 #rarityCard .row{border:0;display:flex;padding:12px 0}#rarityCard .lbl{display:block;width:62px;margin:0}#rarityCard .note{font-size:11px}
 .mods-grid{display:flex;gap:12px;align-items:flex-start}.mods-col{flex:1 1 0;min-width:0}.mods-col>.feature-card,.mods-col>.feature-with-child{margin:0 0 12px!important}.feature-card{padding:15px!important;background:#15110e;border:1px solid #45352a!important;border-radius:8px;margin:0!important;align-items:flex-start}.feature-card>.lbl{flex:1!important;width:auto!important;min-width:0}.feature-card .switch{margin-top:1px}.feature-card>.val{min-width:0;width:24px;font-size:11px;margin-top:2px}.feature-card:has(>.switch>input:checked),.feature-with-child:has(>.feature-card:first-child>.switch>input:checked){border-color:#85603a!important}.feature-with-child{border:1px solid #45352a;border-radius:8px;background:#15110e;overflow:hidden}.feature-with-child>.feature-card{border:0!important;border-radius:0}.feature-with-child>#map_reveal_packs_row,.feature-with-child>#map_reveal_spawn_row,.feature-with-child>#mod_auto_prospect_bag_row{border:0!important;border-top:1px solid #45352a!important;margin:0!important;padding:14px!important;background:#1d1711;border-radius:0}
+.feature-with-child>#mod_gem_maxroll_row{border:0!important;border-top:1px solid #45352a!important}.feature-with-child>#gemfilter_row{border:0!important;border-top:1px solid #45352a!important;margin:0!important;padding:14px!important;background:#1d1711;border-radius:0;grid-template-columns:minmax(0,1fr) auto auto}#gemfilter_row>.val{width:auto;white-space:nowrap}#gemfilter_panel{padding:4px 14px 14px;background:#1d1711}#gemfilter_panel .gf-actions{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 4px}#gemfilter_panel .gf-cat{display:flex;align-items:center;gap:8px;margin:12px 0 6px;font-weight:600;font-size:12px;color:var(--ember2)}#gemfilter_panel .gf-cat .btn{padding:3px 8px;font-size:11px}#gemfilter_panel .gf-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:4px 12px}#gemfilter_panel label{display:flex;align-items:center;gap:7px;font-size:12px;color:#d9c7ad;cursor:pointer}
 .feature-card{display:grid;grid-template-columns:minmax(0,1fr) 42px 24px;gap:8px 12px;align-content:start}.feature-card>.lbl{font-weight:600}.feature-description{grid-column:1/-1;color:var(--mut)!important;line-height:1.65;font-size:12px!important;font-weight:normal}.switch input:disabled+.sl{opacity:.4;filter:grayscale(1)}
 #minerHelmetCard{display:block}#minerHelmetCard .hint{margin:10px 0}
 @media(min-width:1700px){#wrap{padding-left:38px;padding-right:38px}}
@@ -2374,6 +2476,22 @@ input[type=range]::-webkit-slider-thumb{appearance:none;width:17px;height:17px;b
         <label class="switch"><input type="checkbox" id="mod_craft_mats"><span class="sl"></span></label>
         <span class="val" id="mcmval">off</span>
     </div>
+    <div class="row" style="border:none">
+        <span class="lbl" style="width:auto;flex:1">Mythic Gems of Incarnation<br><span style="font-size:11px;color:#8f816e;font-weight:normal">Every Gem of Incarnation that drops is Mythic, with 4 or 5 mods. The game rolls it itself, from a seed it has already rolled Mythic. Gems you own keep their own mods. The first time, the game rolls sample gems in the background, under a minute at the main menu.</span></span>
+        <label class="switch"><input type="checkbox" id="mod_gem_mythic"><span class="sl"></span></label>
+        <span class="val" id="mgmval">on</span>
+    </div>
+    <div class="row" id="mod_gem_maxroll_row" style="border:none">
+        <span class="lbl" style="width:auto;flex:1">Max-roll Gems of Incarnation<br><span style="font-size:11px;color:#8f816e;font-weight:normal">Every mod on every Gem of Incarnation shows the highest value its best tier can roll. Nothing is written to your save: turn it off, and a gem shows its own rolls again the next time the game loads it.</span></span>
+        <label class="switch"><input type="checkbox" id="mod_gem_maxroll"><span class="sl"></span></label>
+        <span class="val" id="mgrval">on</span>
+    </div>
+    <div class="row" id="gemfilter_row" style="border:none;margin-left:22px;border-left:1px solid #33261c;padding-left:14px">
+        <span class="lbl" style="width:auto;flex:1">Mods on Mythic gems<br><span style="font-size:11px;color:#8f816e;font-weight:normal">Tick the mods you want and save. Every Mythic gem that drops then carries as many of them as the game's own Mythic rolls allow; with everything ticked, any mix. Works with Mythic Gems of Incarnation on.</span></span>
+        <button class="btn" id="gemfilter_toggle" type="button">Filter&hellip;</button>
+        <span class="val" id="gemfilter_summary">all</span>
+    </div>
+    <div id="gemfilter_panel" style="display:none"></div>
     <div class="row" style="border:none">
         <span class="lbl" style="width:auto;flex:1">Mark a running toggle skill<br><span style="font-size:11px;color:#8f816e;font-weight:normal">For a fixed set of toggle skills, each measured in-game: draws a soft red outline around that skill's skill-bar slot while its toggle is running, so you can see at a glance that it is still active. The outline disappears when the toggle ends. A plain cast, made without the skill's toggle sub-talent, lights nothing.</span></span>
         <label class="switch"><input type="checkbox" id="mod_toggle_indicator"><span class="sl"></span></label>
@@ -2848,6 +2966,12 @@ async function boot(){
     document.getElementById('mod_craft_mats').checked=mcm;
     document.getElementById('mcmval').textContent=mcm?'on':'off';
     document.getElementById('mcmval').className='val '+(mcm?'':'off');
+    for(const [id,val,key] of [['mod_gem_mythic','mgmval','mod_gem_mythic'],['mod_gem_maxroll','mgrval','mod_gem_maxroll']]){
+      const on=c[key]!==false;
+      document.getElementById(id).checked=on;
+      document.getElementById(val).textContent=on?'on':'off';
+      document.getElementById(val).className='val '+(on?'':'off');
+    }
     document.getElementById('mod_skill_timer_style').value=c.mod_skill_timer_style||'off';
   rarityLoad(c);
   document.getElementById('hhval').className='val '+(hh?'':'off');
@@ -3066,6 +3190,46 @@ function bind(){
         const v=document.getElementById('mcmval');v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
         toast('Craft from the stash '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
     };
+    // Gem mod filter: drawn from /api/state's gemAffixes ([stat, category, label]).
+    const gemFilterSummary=()=>{
+        const v=ST.cfg.gem_filter, n=(ST.gemAffixes||[]).length;
+        document.getElementById('gemfilter_summary').textContent=Array.isArray(v)?v.length+' of '+n:'all '+n;
+    };
+    const renderGemFilter=()=>{
+        const box=document.getElementById('gemfilter_panel'), v=ST.cfg.gem_filter, affixes=ST.gemAffixes||[];
+        const on=new Set(Array.isArray(v)?v:affixes.map(a=>a[0]));
+        let html='<div class="gf-actions"><button class="btn primary" type="button" data-gf="save">Save filter</button><button class="btn" type="button" data-gf="all">Tick all</button><button class="btn" type="button" data-gf="none">Untick all</button></div>';
+        for(const cat of (ST.gemCategories||[])){
+            html+='<div class="gf-cat">'+cat+'<button class="btn" type="button" data-gfcat="'+cat+'" data-gfset="1">all</button><button class="btn" type="button" data-gfcat="'+cat+'" data-gfset="0">none</button></div><div class="gf-list">';
+            for(const [stat,c,label] of affixes){if(c!==cat)continue;html+='<label><input type="checkbox" data-gfstat="'+stat+'" data-gfc="'+c+'"'+(on.has(stat)?' checked':'')+'>'+label+'</label>';}
+            html+='</div>';
+        }
+        box.innerHTML=html;
+        const boxes=()=>[...box.querySelectorAll('input[data-gfstat]')];
+        box.querySelectorAll('[data-gfcat]').forEach(b=>b.onclick=()=>boxes().forEach(i=>{if(i.dataset.gfc===b.dataset.gfcat)i.checked=b.dataset.gfset==='1';}));
+        box.querySelectorAll('[data-gf]').forEach(b=>b.onclick=async()=>{
+            if(b.dataset.gf!=='save'){boxes().forEach(i=>i.checked=b.dataset.gf==='all');return;}
+            const ticked=boxes().filter(i=>i.checked).map(i=>+i.dataset.gfstat);
+            if(!ticked.length){toast('Gem filter: tick at least one mod');return;}
+            const value=ticked.length===affixes.length?'all':ticked;
+            const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'gem_filter',value:value})});
+            if(res.ok){ST.cfg.gem_filter=Array.isArray(value)?[...value].sort((a,b)=>a-b):value;gemFilterSummary();}
+            toast('Gem filter: '+(value==='all'?'every mod':ticked.length+' mods')+' - '+(res.ok||res.err));
+        });
+    };
+    document.getElementById('gemfilter_toggle').onclick=()=>{
+        const box=document.getElementById('gemfilter_panel'), open=box.style.display==='none';
+        if(open)renderGemFilter();
+        box.style.display=open?'block':'none';
+    };
+    gemFilterSummary();
+    for(const [id,val,key,label] of [['mod_gem_mythic','mgmval','mod_gem_mythic','Mythic Gems of Incarnation'],['mod_gem_maxroll','mgrval','mod_gem_maxroll','Max-roll Gems of Incarnation']]){
+        document.getElementById(id).onchange=async(e)=>{
+            const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:key,value:e.target.checked})});
+            const v=document.getElementById(val);v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
+            toast(label+' '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
+        };
+    }
     document.getElementById('mod_skill_timer_style').onchange=async(e)=>{
         const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_skill_timer_style',value:e.target.value})});
         toast('Timed skill countdown: '+e.target.value+' - '+(res.ok||res.err));
@@ -3191,6 +3355,10 @@ function preparePanelUI(){
       const group=document.createElement('div');group.className='feature-with-child';parent.before(group);group.append(parent,child,spawnChild);
       const apParent=document.getElementById('mod_auto_prospect').closest('.row'),apChild=document.getElementById('mod_auto_prospect_bag_row');
       const apGroup=document.createElement('div');apGroup.className='feature-with-child';apParent.before(apGroup);apGroup.append(apParent,apChild);
+      // Gems of Incarnation: both switches, then the mod filter and its list.
+      const gemParent=document.getElementById('mod_gem_mythic').closest('.row');
+      const gemGroup=document.createElement('div');gemGroup.className='feature-with-child';gemParent.before(gemGroup);
+      gemGroup.append(gemParent,document.getElementById('mod_gem_maxroll_row'),document.getElementById('gemfilter_row'),document.getElementById('gemfilter_panel'));
     }
     setupModsColumns(grid);
   }
@@ -3271,10 +3439,10 @@ function refreshSavedControls(){
   });
   for(const [range] of painted)if(range.oninput)range.oninput();
   for(const [range,typed] of painted){if(typed===undefined)delete range.dataset.typed;else range.dataset.typed=typed}
-  const booleans={den_on:'density_on',autoapply:'auto_apply',enemyspeed_ct:'enemy_speed_ct',map_reveal:'map_reveal',map_reveal_packs:'map_reveal_packs',map_reveal_spawn:'map_reveal_spawn',headhunter:'headhunter',tyrant:'tyrant',beacon:'beacon',mod_filter_max_relics:'mod_filter_max_relics',mod_orb_pickup_radius:'mod_orb_pickup_radius',mod_pet_quest_pickup:'mod_pet_quest_pickup',mod_auto_prospect:'mod_auto_prospect',mod_auto_prospect_bag:'mod_auto_prospect_bag',mod_toggle_indicator:'mod_toggle_indicator',mod_toggle_guard:'mod_toggle_guard',mod_restart_anytime:'mod_restart_anytime',mod_craft_mats:'mod_craft_mats'};
+  const booleans={den_on:'density_on',autoapply:'auto_apply',enemyspeed_ct:'enemy_speed_ct',map_reveal:'map_reveal',map_reveal_packs:'map_reveal_packs',map_reveal_spawn:'map_reveal_spawn',headhunter:'headhunter',tyrant:'tyrant',beacon:'beacon',mod_filter_max_relics:'mod_filter_max_relics',mod_orb_pickup_radius:'mod_orb_pickup_radius',mod_pet_quest_pickup:'mod_pet_quest_pickup',mod_auto_prospect:'mod_auto_prospect',mod_auto_prospect_bag:'mod_auto_prospect_bag',mod_toggle_indicator:'mod_toggle_indicator',mod_toggle_guard:'mod_toggle_guard',mod_restart_anytime:'mod_restart_anytime',mod_craft_mats:'mod_craft_mats',mod_gem_mythic:'mod_gem_mythic',mod_gem_maxroll:'mod_gem_maxroll'};
   for(const [id,key] of Object.entries(booleans))document.getElementById(id).checked=!!c[key];
   document.getElementById('mod_skill_timer_style').value=c.mod_skill_timer_style||'off';
-  for(const [id,key] of Object.entries({hhval:'headhunter',tyval:'tyrant',beval:'beacon',mfmrval:'mod_filter_max_relics',morval:'mod_orb_pickup_radius',mpqpval:'mod_pet_quest_pickup',autoprospval:'mod_auto_prospect',mtival:'mod_toggle_indicator',mtgval:'mod_toggle_guard',mraval:'mod_restart_anytime',mcmval:'mod_craft_mats',mapval:'map_reveal'})){
+  for(const [id,key] of Object.entries({hhval:'headhunter',tyval:'tyrant',beval:'beacon',mfmrval:'mod_filter_max_relics',morval:'mod_orb_pickup_radius',mpqpval:'mod_pet_quest_pickup',autoprospval:'mod_auto_prospect',mtival:'mod_toggle_indicator',mtgval:'mod_toggle_guard',mraval:'mod_restart_anytime',mcmval:'mod_craft_mats',mgmval:'mod_gem_mythic',mgrval:'mod_gem_maxroll',mapval:'map_reveal'})){
     const value=document.getElementById(id);value.textContent=c[key]?'on':'off';value.className='val '+(c[key]?'':'off');
   }
   document.getElementById('enemyspeedctval').textContent=c.enemy_speed_ct?'CT only':'all zones';
