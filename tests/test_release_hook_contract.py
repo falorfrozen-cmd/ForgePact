@@ -1036,6 +1036,9 @@ class PanelAllOffContractTests(unittest.TestCase):
         assert spec.loader is not None
         spec.loader.exec_module(cls.panel)
 
+    # Every mod is off by default, with no exception: the Gems of Incarnation
+    # switches were briefly on by default and the owner turned them off on
+    # 2026-09-25 (test_incarnation_gems_contract.py pins them).
     def test_default_config_emits_no_gameplay_commands(self):
         cfg = copy.deepcopy(self.panel.DEFAULTS)
         self.assertEqual([], self.panel.build_cmds(cfg))

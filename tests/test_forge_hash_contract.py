@@ -70,6 +70,8 @@ EXPECTED_PLAYER_COMMANDS = {
     # Craft from the stash (issue #14, the panel's switch;
     # test_craft_mats_contract.py pins it).
     "craftmats",
+    # Gems of Incarnation's two switches (test_incarnation_gems_contract.py).
+    "gemmythic", "gemmaxroll", "gemfilter",
 }
 
 

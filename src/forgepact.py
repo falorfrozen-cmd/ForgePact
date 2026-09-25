@@ -246,6 +246,14 @@ DEFAULTS = {
     # bag is short of moves over. Off by default; offline only, like every mod
     # here.
     "mod_craft_mats": False,
+    # Gems of Incarnation (docs/incarnation-gems-research.md): every gem that
+    # drops is Mythic (4-5 mods, a seed the game itself rolled Mythic), and every
+    # gem's mods show their best tier's top value. Both off by default, like
+    # every mod here (the owner's call, 2026-09-25).
+    "mod_gem_mythic": False,
+    "mod_gem_maxroll": False,
+    # Which mods a Mythic gem carries: "all", or the ticked mods (GEM_AFFIXES).
+    "gem_filter": "all",
     # Timed-skill countdown (issue #55): one of off/arc/bar/number/fade drawn
     # over each timed skill's hotbar slot. Covers the explicit rows of the
     # plugin's kSkillTimerRows, each measured in-game - a toggled-on skill
@@ -779,6 +787,72 @@ def skill_timer_style_valid(value) -> bool:
     return isinstance(value, str) and value.strip().lower() in SKILL_TIMER_STYLES
 
 
+# Every mod a Gem of Incarnation rolls (docs/incarnation-gems-research.md,
+# measured on 14,521 game-built gems): (stat, category, label), worded as the
+# game's tooltip words it. A skill grant is one row, named by its skill slot
+# (462); its levels slot (463) goes with it.
+GEM_CATEGORIES = ("Attack", "Skills", "Elemental skills", "Defense", "Life & mana", "Loot")
+GEM_AFFIXES = (
+    (28, "Attack", "#% Enhanced Damage"),
+    (68, "Attack", "#% Increased Attack Speed"),
+    (74, "Attack", "+# to Attack Rating"),
+    (75, "Attack", "#% Increased Attack Rating"),
+    (95, "Attack", "#% Chance for a Deadly Blow"),
+    (128, "Attack", "+# to Physical Damage"),
+    (448, "Attack", "+# to Minimum Weapon Damage"),
+    (450, "Attack", "+# to Maximum Weapon Damage"),
+    (101, "Skills", "#% Magic Skill Damage increased by"),
+    (196, "Skills", "#% Faster Cast Rate"),
+    (201, "Skills", "+# to All Skills"),
+    (462, "Skills", "+# to a single skill"),
+    (133, "Elemental skills", "+# to Fire Skill Damage"),
+    (134, "Elemental skills", "#% Fire Skill Damage increased by"),
+    (137, "Elemental skills", "+# to Cold Skill Damage"),
+    (138, "Elemental skills", "#% Cold Skill Damage increased by"),
+    (141, "Elemental skills", "+# to Arcane Skill Damage"),
+    (142, "Elemental skills", "#% Arcane Skill Damage increased by"),
+    (145, "Elemental skills", "+# to Lightning Skill Damage"),
+    (146, "Elemental skills", "#% Lightning Skill Damage increased by"),
+    (149, "Elemental skills", "+# to Poison Skill Damage"),
+    (150, "Elemental skills", "#% Poison Skill Damage increased by"),
+    (29, "Defense", "#% Enhanced Defense"),
+    (173, "Defense", "#% to All Resistances"),
+    (175, "Defense", "#% to Fire Resistance"),
+    (177, "Defense", "#% to Cold Resistance"),
+    (179, "Defense", "#% to Lightning Resistance"),
+    (181, "Defense", "#% to Arcane Resistance"),
+    (183, "Defense", "#% to Poison Resistance"),
+    (52, "Life & mana", "+# to Life"),
+    (53, "Life & mana", "#% Life Increased by"),
+    (57, "Life & mana", "#% Life stolen per Hit"),
+    (60, "Life & mana", "+# to Mana"),
+    (61, "Life & mana", "#% Mana Increased by"),
+    (64, "Life & mana", "#% Mana stolen per Hit"),
+    (284, "Loot", "#% Increased Magic Find"),
+)
+GEM_AFFIX_IDS = frozenset(stat for stat, _c, _l in GEM_AFFIXES)
+
+
+def gem_filter_value(value):
+    """The gem mod filter to keep: "all", or the ticked mods (sorted). None: not
+    a filter (junk, an unknown mod, or nothing ticked)."""
+    if value == "all":
+        return "all"
+    if not isinstance(value, list) or not value:
+        return None
+    ids = set()
+    for v in value:
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or v != int(v) or int(v) not in GEM_AFFIX_IDS:
+            return None
+        ids.add(int(v))
+    return "all" if ids == GEM_AFFIX_IDS else sorted(ids)
+
+
+def gem_filter_command(cfg: dict) -> str:
+    value = gem_filter_value(cfg.get("gem_filter", "all")) or "all"
+    return "gemfilter all" if value == "all" else "gemfilter " + ",".join(str(i) for i in value)
+
+
 def build_cmds(cfg: dict) -> list:
     # A slider whose switch is off stands at its default here, so startup,
     # auto-apply and the launch watcher all leave it at vanilla.
@@ -853,6 +927,16 @@ def build_cmds(cfg: dict) -> list:
         # the switch on, and the plugin installs its hooks once the game has
         # settled.
         out.append("craftmats 1")
+    if cfg.get("mod_gem_mythic", False):
+        # Safe to send at launch, like toggleguard: `gemmythic 1` only arms it,
+        # and the plugin hooks the gem drop once a player exists.
+        out.append("gemmythic 1")
+        # Only a narrowed filter is sent: the plugin starts with every mod.
+        if (gem_filter_value(cfg.get("gem_filter", "all")) or "all") != "all":
+            out.append(gem_filter_command(cfg))
+    if cfg.get("mod_gem_maxroll", False):
+        # Safe to send at launch: no hook of its own, CreateItemNew is hooked at init.
+        out.append("gemmaxroll 1")
     skill_timer_style = str(cfg.get("mod_skill_timer_style", "off")).strip().lower()
     if skill_timer_style_valid(skill_timer_style) and skill_timer_style != "off":
         # Safe to send at launch, like toggleborder: the draw call already
@@ -1825,6 +1909,8 @@ class H(BaseHTTPRequestHandler):
                         # differs per family because they do not all mean the same thing.
                         "keys": [[k, l, t] for k, l, t in KEYS],
                         "satanicBuffs": [[i, l, d] for i, l, d in SATANIC_BUFF_LIST],
+                        "gemAffixes": [[s, c, l] for s, c, l in GEM_AFFIXES],
+                        "gemCategories": list(GEM_CATEGORIES),
                         "satanicDebuffs": [[i, l, d] for i, l, d in SATANIC_DEBUFF_LIST],
                         "minEnabledSatanicBuffs": MIN_ENABLED_SATANIC_BUFFS,
                         "minEnabledSatanicDebuffs": MIN_ENABLED_SATANIC_DEBUFFS,
@@ -1931,8 +2017,14 @@ class H(BaseHTTPRequestHandler):
                     # moved wins and the other gives way
                     other = "rarity_ancient" if key == "rarity_rare" else "rarity_rare"
                     cfg[other] = min(_pct(cfg.get(other, 0)), 100 - cfg[key])
-                elif key in ("density_on", "auto_apply", "map_reveal", "map_reveal_packs", "map_reveal_spawn", "headhunter", "tyrant", "beacon", "mod_filter_max_relics", "mod_orb_pickup_radius", "mod_pet_quest_pickup", "mod_auto_prospect", "mod_auto_prospect_bag", "mod_toggle_indicator", "mod_toggle_guard", "mod_restart_anytime", "mod_craft_mats"):
+                elif key in ("density_on", "auto_apply", "map_reveal", "map_reveal_packs", "map_reveal_spawn", "headhunter", "tyrant", "beacon", "mod_filter_max_relics", "mod_orb_pickup_radius", "mod_pet_quest_pickup", "mod_auto_prospect", "mod_auto_prospect_bag", "mod_toggle_indicator", "mod_toggle_guard", "mod_restart_anytime", "mod_craft_mats", "mod_gem_mythic", "mod_gem_maxroll"):
                     cfg[key] = bool(val)
+                elif key == "gem_filter":
+                    value = gem_filter_value(val)
+                    if value is None:
+                        self._json({"err": "tick at least one gem mod"}, 400)
+                        return
+                    cfg[key] = value
                 elif key == "mod_skill_timer_style":
                     style = str(val).strip().lower()
                     if not skill_timer_style_valid(style):
@@ -2025,6 +2117,15 @@ class H(BaseHTTPRequestHandler):
                         send_cmds([f"restartanytime {1 if cfg['mod_restart_anytime'] else 0}"], cfg)
                     elif key == "mod_craft_mats":
                         send_cmds([f"craftmats {1 if cfg['mod_craft_mats'] else 0}"], cfg)
+                    elif key == "mod_gem_mythic":
+                        cmds = [f"gemmythic {1 if cfg['mod_gem_mythic'] else 0}"]
+                        if cfg["mod_gem_mythic"]:
+                            cmds.append(gem_filter_command(cfg))
+                        send_cmds(cmds, cfg)
+                    elif key == "gem_filter":
+                        send_cmds([gem_filter_command(cfg)], cfg)
+                    elif key == "mod_gem_maxroll":
+                        send_cmds([f"gemmaxroll {1 if cfg['mod_gem_maxroll'] else 0}"], cfg)
                     elif key == "mod_skill_timer_style":
                         # Always explicit, including off: a style change (or
                         # turning it off) needs the plugin told either way.
