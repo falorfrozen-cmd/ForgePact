@@ -1,6 +1,6 @@
-<!-- Mods tab: the Quality of Life and Items cards, switched by App.svelte's sub-tab strip. -->
+<!-- Mods tab: the Quality of Life and Items panels, switched by App.svelte's sub-tab strip. Neither repeats its
+     sub-tab's name as a heading; each mod is drawn as a card of its own (app.css), and a panel is not drawn as one. -->
 <div class="card tab-card" data-tab="mods" id="qolCard" role="tabpanel" aria-labelledby="subtab-qol">
-  <h2>Quality of Life</h2>
   <div class="hint">Toggle drop pool adjustments and quality-of-life tweaks for your offline session. Settings apply immediately while the game is running.</div>
   <div class="row" style="border:none">
     <span class="lbl" style="width:auto;flex:1">Remove owned relics from drop pool<br><span class="feature-description">When a relic is dropped, prevents relics already at maximum level (10 out of 10) in your equipped slots, backpack, or inventory from dropping.</span></span>
@@ -75,17 +75,16 @@
 </div>
 
 <div class="card tab-card" data-tab="mods" id="itemsCard" role="tabpanel" aria-labelledby="subtab-items">
-  <h2>Items</h2>
+  <div class="hint">Custom forge mechanics tied to items made in the Item Editor. Settings apply immediately while the game is running.</div>
   <div class="row" id="minerHelmetCard">
     <div>
       <strong>Miner's Helmet</strong>
-      <p class="hint">+1000 Defense &middot; +500% Enhanced Defense<br>+20% Movement Speed &middot; +20% All Resistances &middot; +5 Light Radius</p>
-      <p class="hint">While worn, every mining node gives exactly 4&times; its ore. This replaces the Mining Ore Amount slider instead of stacking with it; with the helmet off, the slider applies as usual. <strong>Vein Resonance:</strong> finishing a dig also digs the two nearest veins within 192 units that you could mine yourself, each at 4&times;, through the game's own dig. A vein dug this way never starts another.</p>
+      <p class="helmet-stats">+1000 Defense &middot; +500% Enhanced Defense<br>+20% Movement Speed &middot; +20% All Resistances &middot; +5 Light Radius</p>
+      <p class="hint">While worn, every mining node gives exactly 4&times; its ore. This replaces the Mining Ore Multiplier slider instead of stacking with it; with the helmet off, the slider applies as usual. <strong>Vein Resonance:</strong> finishing a dig also digs the two nearest veins within 192 units that you could mine yourself, each at 4&times;, through the game's own dig. A vein dug this way never starts another.</p>
       <p class="hint">Forge it in the Item Editor: Item Forge &rarr; Forge a signature item &rarr; Miner's Helmet.</p>
       <div id="minerHelmetStatus" role="status" aria-live="polite">Start the game to check the helmet.</div>
     </div>
   </div>
-  <div class="hint">Custom forge mechanics tied to items made in the Item Editor. Settings apply immediately while the game is running.</div>
   <div class="row" style="border:none">
     <span class="lbl" style="width:auto;flex:1">Headhunter buffs on rare kills<br><span class="feature-description">For an item forged with Mechanic: Headhunter. While on, killing a rare or champion monster grants its affixes to you as 20-second buffs (Extra Fast &rarr; movement speed, Berserker/Raging/Enraged &rarr; attack speed, Vampiric &rarr; life replenish, elemental Enchanted &rarr; cast rate, others &rarr; movement speed for now). The equipped-belt check is still in progress, so the effect is active whenever this switch is on and the forged item exists.</span></span>
     <label class="switch"><input type="checkbox" id="headhunter"><span class="sl"></span></label>

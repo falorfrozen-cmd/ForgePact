@@ -549,7 +549,15 @@ async function enabledMods(ctx) {
   assert(same(listed, ['sw_stats_exp', 'headhunter', 'den_on']), 'Entries out of document order: ' + listed.join(','));
   passed.push('enabled-list-count');
 
-  await page.focus('#theme');
+  // The last focusable element before the list in document order (it was the
+  // status bar's theme choice, which is on Setup now), then Tab.
+  await $(page, () => {
+    const list = document.getElementById('enabledMods');
+    const focusable = [...document.querySelectorAll('button, input, select, textarea, a[href], [tabindex]')]
+      .filter((el) => el.tabIndex >= 0 && !el.disabled && el.checkVisibility() &&
+        (list.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_PRECEDING));
+    focusable.at(-1).focus();
+  });
   await page.keyboard.press('Tab');
   assert(await $(page, () => {
     const el = document.activeElement;
@@ -591,6 +599,8 @@ async function enabledMods(ctx) {
   assert(!expMax.some((line) => applied.includes(line)), 'Apply all sent a switched-off slider: ' + applied.join('|'));
   passed.push('applyall-omits-off-slider');
 
+  // The theme is on the Setup tab's Appearance card.
+  await $(page, () => document.querySelector('.tabbtn[data-tab="setup"]').click());
   const chosen = await $(page, () => document.querySelectorAll('#theme option')[1].value);
   await page.selectOption('#theme', { index: 1 });
   await settled();
@@ -599,6 +609,7 @@ async function enabledMods(ctx) {
   passed.push('theme-select-saves-and-sets-attribute');
 
   await reload(page);
+  await $(page, () => document.querySelector('.tabbtn[data-tab="setup"]').click());
   assert((await read()).theme === chosen && await $(page, (v) => document.documentElement.dataset.theme === v &&
     document.getElementById('theme').value === v, chosen), 'Theme lost on reload: ' + chosen);
   passed.push('theme-persists-across-reload');

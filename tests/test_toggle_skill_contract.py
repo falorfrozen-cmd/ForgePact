@@ -1214,7 +1214,7 @@ class SkillTimerShipContractTests(unittest.TestCase):
         self.assertIn('self._json({"err": "invalid skilltimer style"}, 400)', self.panel)
 
     def test_html_has_one_select_with_five_styles_in_order(self):
-        # The status bar's `#theme` select is the page's only other <select>,
+        # The Setup tab's `#theme` select is the page's only other <select>,
         # so the skill timer is still the one select among the controls.
         self.assertEqual(PANEL_PAGE.count("<select"), 2)
         self.assertEqual(PANEL_PAGE.count('<select id="theme">'), 1)

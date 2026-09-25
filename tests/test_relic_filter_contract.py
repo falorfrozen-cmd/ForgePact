@@ -272,7 +272,9 @@ class TestRelicFilterContract(unittest.TestCase):
         # forged in the Item Editor, not standalone plugin toggles).
         html = PANEL_PAGE
         mods = panel_file("tabs/Mods.svelte")
-        items_start = mods.index("Items</h2>")
+        # The Items panel carries no heading of its own since the owner's
+        # polish pass (its sub-tab names it), so the section starts at its id.
+        items_start = mods.index('id="itemsCard"')
         self.assertGreater(items_start, mods.index('id="qolCard"'), "Items section should follow Quality of Life")
         # The Items section runs to the end of the Mods tab's markup.
         items_section = mods[items_start:]

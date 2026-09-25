@@ -2,7 +2,8 @@
 // makes from the legacy recording (so nobody hand-edits it), it carries no
 // recorded values, every `same` looks back, and the step counts are the
 // contract's: three switch clicks per switched slider, one Turn off per mod
-// the list can show, one theme step per THEMES entry.
+// the list can show, one theme step per THEMES entry, after the one step that
+// opens Setup, where the theme is.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -111,6 +112,21 @@ test('a switch off compares with its slider at minimum, on with its slider at ma
   const quick = steps[off.step + 2];
   assert.equal(quick.control, quickDisable('sw_stats_exp'));
   assert.equal(quick.expect.posts.same, off.step);
+});
+
+test('the theme steps come last, after one tab:setup step and nothing else new', () => {
+  // The theme moved from the status bar to the Setup tab's Appearance card:
+  // one navigation step with no expectation opens Setup, then one step per
+  // theme, and they end the file, so no earlier step moved.
+  const steps = DERIVED.steps;
+  const first = steps.findIndex((s) => s.control === '#theme');
+  assert.equal(steps[first - 1].control, 'tab:setup');
+  assert.equal(steps[first - 1].action, 'click');
+  assert.ok(!('expect' in steps[first - 1]), 'the Setup step carries an expectation');
+  assert.equal(steps.filter((s) => s.control === 'tab:setup').length, 1);
+  assert.deepEqual(steps.slice(first).map((s) => s.control), THEMES.map(() => '#theme'));
+  assert.equal(first, steps.length - THEMES.length);
+  assert.ok(!DERIVED.controls.includes('tab:setup'), 'a navigation step is not a control');
 });
 
 test('every control is covered: the switches in legacy order, then the theme', () => {

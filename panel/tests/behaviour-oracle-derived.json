@@ -4504,6 +4504,11 @@
   },
   {
    "step": 393,
+   "control": "tab:setup",
+   "action": "click"
+  },
+  {
+   "step": 394,
    "control": "#theme",
    "action": "select",
    "value": "ledger",
@@ -4525,7 +4530,7 @@
    }
   },
   {
-   "step": 394,
+   "step": 395,
    "control": "#theme",
    "action": "select",
    "value": "graphite",
@@ -4547,7 +4552,7 @@
    }
   },
   {
-   "step": 395,
+   "step": 396,
    "control": "#theme",
    "action": "select",
    "value": "sigil",

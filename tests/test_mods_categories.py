@@ -22,8 +22,9 @@ id except `itemsCard`, because the other card's id changes - so the same
 assertions pass on the pre-change panel and on the result.
 
 `ModsCategorySplitTests` pins the result: two Mods-tab cards named
-`qolCard`/`itemsCard`, in that order, `qolCard` titled "Quality of Life" and
-holding exactly the ten Quality of Life controls in the assignment table's
+`qolCard`/`itemsCard`, in that order, neither repeating its sub-tab's name as
+a heading (the strip names them), `qolCard` holding exactly the ten Quality
+of Life controls in the assignment table's
 order, and no remaining "gameplay" wording or `gameplayCard` id anywhere in
 either source file.
 
@@ -303,9 +304,14 @@ class ModsCategorySplitTests(unittest.TestCase):
             ["qolCard", "itemsCard"],
         )
 
-    def test_qol_card_heading_is_quality_of_life(self):
-        body = _card_by_id(_mods_cards(HTML), "qolCard")
-        self.assertIn("<h2>Quality of Life</h2>", body)
+    def test_mods_panels_repeat_no_subtab_label(self):
+        # The sub-tab strip names each panel ("Quality of Life", "Items"); the
+        # panels themselves carry no heading repeating it (owner, 2026-09-25).
+        cards = _mods_cards(HTML)
+        for cid in ("qolCard", "itemsCard"):
+            body = _card_by_id(cards, cid)
+            self.assertNotIn("<h2", body, f"{cid} still has a heading")
+        self.assertNotIn("<h2>Quality of Life</h2>", HTML)
 
     def test_qol_card_controls_are_exactly_the_ten_qol_ids_in_order(self):
         body = _card_by_id(_mods_cards(HTML), "qolCard")

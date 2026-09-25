@@ -137,7 +137,7 @@ KEYS = [
 
 DROPS = [
     ("gold", "Gold", ""),
-    ("mining_ore", "Mining Ore Amount", ""),
+    ("mining_ore", "Mining Ore Multiplier", ""),
 ]
 
 

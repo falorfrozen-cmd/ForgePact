@@ -17,6 +17,7 @@
     "e2e:form": "node tests/enabled-mods-form.e2e.mjs",
     "e2e:review": "node tests/review-fixes.e2e.mjs",
     "e2e:gems": "node tests/gems.e2e.mjs",
+    "e2e:polish": "node tests/polish.e2e.mjs",
     "screens": "node tests/screens.mjs",
     "icons": "node scripts/export-icons.mjs"
   },

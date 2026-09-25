@@ -5,7 +5,8 @@
 //   - idleSwitch: `data-live` on a `label.slider-switch` exactly while its
 //     mod is listed in #enabledMods, so an ON switch whose value sits at its
 //     default draws neutral (app.css) instead of claiming to do something;
-//   - finding 13: each list entry's `title` is its section and its name;
+//   - finding 13: each list entry's `title` is its section and its name (the
+//     card's heading, or on Mods the sub-tab's label);
 //   - finding 9: on Setup, Install Mod Plugin is the primary button while the
 //     mod chain is incomplete (#chainnote says so), Launch once it is not;
 //   - finding 15: a Satanic pool list with more below carries
@@ -43,6 +44,16 @@ function firstText(el) {
   return '';
 }
 
+// The section an entry's control sits in: its card's heading, or, in a card
+// with none (the Mods panels, which no longer repeat their sub-tab's name),
+// the label of the sub-tab that shows that panel.
+function sectionOf(control) {
+  const card = control?.closest('.card');
+  const heading = firstText(card?.querySelector('h2'));
+  if (heading || !card?.matches('[role="tabpanel"][aria-labelledby]')) return heading;
+  return firstText(document.getElementById(card.getAttribute('aria-labelledby')));
+}
+
 function markMoreBelow(list) {
   list.toggleAttribute('data-more-below', list.scrollHeight - list.scrollTop - list.clientHeight > 1);
 }
@@ -57,9 +68,8 @@ export function installReviewFixes() {
     for (const entry of box.querySelectorAll(':scope > ul > li.enabled-mod')) {
       listed.add(entry.dataset.for);
       const control = document.getElementById(entry.dataset.for);
-      const heading = control?.closest('.card')?.querySelector('h2');
       const name = entry.querySelector('.enabled-mod-name')?.textContent.trim() || '';
-      entry.title = entryTitle(firstText(heading), name);
+      entry.title = entryTitle(sectionOf(control), name);
     }
     for (const label of document.querySelectorAll('label.slider-switch')) {
       label.toggleAttribute('data-live', listed.has(label.querySelector('input')?.id));

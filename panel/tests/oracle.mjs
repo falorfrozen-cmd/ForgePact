@@ -117,8 +117,8 @@ function enumerateIn(rootSelector) {
 async function planSteps(page) {
   const plan = [];
   const push = (control, action, extra = {}) => plan.push({ control, action, ...extra });
-  // The page header's controls, then the status bar's (the theme choice; the
-  // legacy page had none there).
+  // The page header's controls, then the status bar's (the legacy page had
+  // none there; the theme choice, once in it, is on the Setup tab now).
   const header = [...await page.evaluate(enumerateIn, '.page-actions'), ...await page.evaluate(enumerateIn, '#statusbar')];
   const groups = [];
   for (const tab of TABS) {

@@ -1,6 +1,7 @@
 // The derived behaviour oracle: the steps that prove the controls added after
 // the legacy page was recorded - every slider's on/off switch, the "Enabled
-// mods" list's Turn off buttons and the theme choice.
+// mods" list's Turn off buttons and the theme choice (on the Setup tab, which
+// one `tab:setup` step opens before the theme steps).
 //
 //   node tests/oracle-derive.mjs --from tests/behaviour-oracle.json --out tests/behaviour-oracle-derived.json
 //                                [--supplement tests/behaviour-oracle-gems.json]
@@ -142,9 +143,13 @@ export function derive(legacy, derivedFrom, supplement = null, supplementFrom = 
   for (const selector of relocated ? relocated.controls : []) {
     if (BOOLEAN_MODS.includes(selector.slice(1))) booleanMod(selector, relocated.steps);
   }
-  // The theme sits in the status bar, on every tab. It is a panel setting:
-  // saved, and never a command.
+  // The theme sits on the Setup tab (its Appearance card; it was in the
+  // status bar, on every tab, until the owner's polish pass), so one
+  // navigation step opens Setup first - a click with no expectation, like
+  // every `tab:` step here. It is a panel setting: saved, and never a
+  // command. These steps are last, so no earlier step's index moves.
   controls.push('#theme');
+  push('tab:setup', 'click');
   for (const { value } of THEMES) {
     push('#theme', 'select', { value, expect: { posts: { is: setPost({ key: 'theme', value }) }, cmds: { is: [] } } });
   }

@@ -46,14 +46,19 @@ class MinerHelmetPanelTests(unittest.TestCase):
         self.assertNotIn('Prototype', card)
         self.assertIn('Item Editor', card)
         self.assertIn('Vein Resonance', card)
-        self.assertIn('Mining Ore Amount slider', card)
+        # The slider was renamed Mining Ore Multiplier (owner, 2026-09-25).
+        self.assertIn('Mining Ore Multiplier slider', card)
+        self.assertNotIn('Mining Ore Amount', card)
         for gone in ('grantMinerHelmet', 'minerHelmetResult', 'minerHelmetBusy',
                      '/api/miner-helmet', 'minerhelm grant', 'Create test helmet'):
             self.assertNotIn(gone, source)
             self.assertNotIn(gone, page)
 
     def test_mining_slider_is_no_longer_marked_experimental(self):
-        self.assertIn(('mining_ore', 'Mining Ore Amount', ''), forgepact.DROPS)
+        self.assertIn(('mining_ore', 'Mining Ore Multiplier', ''), forgepact.DROPS)
+        # The static help sentence under the slider is gone; only the live
+        # mining status is written into the row's note.
+        self.assertNotIn('Multiplies ore from mining', panel_source())
         self.assertNotIn('In-game verification pending', PANEL.read_text(encoding='utf-8'))
         self.assertNotIn('In-game verification pending', panel_source())
 

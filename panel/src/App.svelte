@@ -5,13 +5,16 @@
   // src/panel.js wires it up once it is mounted, as the old inline script
   // did. The tab components follow the order the old page's cards ended up
   // in once preparePanelUI() had re-appended World's cards last.
-  // Added since the port: the theme choice in the status bar and the
-  // "Enabled mods" list under the dock. The restyle moved the apply chip and
-  // the credits line into the status bar (app.css places #chipGame in the
-  // rail) and left every id where the tests and the oracle look for it.
+  // Added since the port: the "Enabled mods" list under the dock (the theme
+  // choice, first added to the status bar, is on Setup since the owner's
+  // polish pass). The restyle moved the apply chip and the credits line into
+  // the status bar (app.css places #chipGame in the rail) and left every id
+  // where the tests and the oracle look for it. The plugin warning is an icon
+  // beside Apply all, and a second one beside the save indicator, each with a
+  // tooltip (src/lib/plugin-warning.js); status() in panel.js still decides
+  // when #pluginWarning shows and what it says.
   import { ICON_SPRITE, WARN_ICON } from './icons.js';
   import { openTab } from './nav.js';
-  import { THEMES } from './theme.js';
   import Setup from './tabs/Setup.svelte';
   import Loot from './tabs/Loot.svelte';
   import Modifiers from './tabs/Modifiers.svelte';
@@ -34,14 +37,13 @@
 <main id="wrap">
   <div class="control-dock"><div class="topline">
     <div class="breadcrumb">ForgePact / <strong id="breadcrumbPage">Modifiers</strong></div>
-    <div id="statusbar"><label class="theme-control">Theme <select id="theme">{#each THEMES as theme (theme.value)}<option value={theme.value}>{theme.label}</option>{/each}</select></label><span class="chip" id="chipGame">Connecting...</span><span id="saveIndicator" role="status" aria-live="polite">Loading settings...</span><div class="note" id="chipApply" role="status"></div><div class="status-foot"><span class="status-offline">Offline tools</span><span>Created by Falor<span id="panelver"></span></span></div></div>
+    <div id="statusbar"><span class="chip" id="chipGame">Connecting...</span><span id="saveIndicator" role="status" aria-live="polite">Loading settings...</span><span class="plugin-warning status-warning" hidden><button type="button" class="plugin-warning-button" aria-label="Open Setup" aria-describedby="statusWarningText" onclick={() => openTab('setup')}>{@html WARN_ICON}</button><span class="plugin-warning-tooltip" role="tooltip" hidden><span id="statusWarningText"></span><span class="plugin-warning-action">Open Setup</span></span></span><div class="note" id="chipApply" role="status"></div><div class="status-foot"><span class="status-offline">Offline tools</span><span>Created by Falor and ST4H<span id="panelver"></span></span></div></div>
   </div></div>
   <!-- Filled by src/lib/enabled-mods-list.js from the saved settings, in boot() and after every save. -->
   <section id="enabledMods" aria-label="Enabled mods"><h2>Enabled mods</h2><span id="enabledModsCount">0 on</span><p class="enabled-mods-empty">Nothing is on</p></section>
   <div class="page-heading"><div><h1 id="pageTitle">Character modifiers</h1><p id="pageDescription">Tune your character and combat bonuses.</p></div>
-    <div class="page-actions"><label class="auto-control">Auto-apply <span class="switch"><input type="checkbox" id="autoapply" aria-label="Auto-apply on game launch"><span class="sl"></span></span></label><button class="btn" id="applyall" title="Send all saved settings to the game">Apply all now</button></div>
+    <div class="page-actions"><label class="auto-control">Auto-apply <span class="switch"><input type="checkbox" id="autoapply" aria-label="Auto-apply on game launch"><span class="sl"></span></span></label><button class="btn" id="applyall" title="Send all saved settings to the game">Apply all now</button><div id="pluginWarning" class="plugin-warning" role="status" hidden><button type="button" class="plugin-warning-button" aria-label="Open Setup" aria-describedby="pluginWarningText" onclick={() => openTab('setup')}>{@html WARN_ICON}</button><span class="plugin-warning-tooltip" role="tooltip" hidden><span id="pluginWarningText"></span><span class="plugin-warning-action">Open Setup</span></span></div></div>
   </div>
-  <div id="pluginWarning" class="plugin-warning" role="status" hidden><span class="plugin-warning-icon" aria-hidden="true">{@html WARN_ICON}</span><span id="pluginWarningText"></span><button class="btn" type="button" onclick={() => openTab('setup')}>Open Setup</button></div>
   <div id="controlToolbar" hidden><input type="search" id="controlSearch" class="control-search" placeholder="Search settings by name or effect..." aria-label="Search settings in this section"><div class="control-filters" role="group" aria-label="Filter settings"><button data-control-filter="all" aria-pressed="true">All settings</button><button data-control-filter="modified" aria-pressed="false">Modified</button></div></div>
   <div id="workspace" role="tabpanel" aria-labelledby="nav-modifiers">
 <div id="modsSubtabs" class="subtabbar" role="tablist" aria-label="Mods categories" hidden><button type="button" class="subtabbtn" role="tab" id="subtab-qol" aria-controls="qolCard" aria-selected="true" tabindex="0">Quality of Life</button><button type="button" class="subtabbtn" role="tab" id="subtab-items" aria-controls="itemsCard" aria-selected="false" tabindex="-1">Items</button></div>

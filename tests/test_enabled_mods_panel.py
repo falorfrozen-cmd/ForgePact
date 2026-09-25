@@ -7,7 +7,8 @@ the list sits under the control dock with the fixed copy, its Turn off buttons
 reach a control only through that control's own handler (so the list's files
 never name an `/api` route and `/api/set` gains exactly two call sites, the
 switch handler and the theme handler), and the theme is a `<select>` in the
-status bar painted as `data-theme` on the root.
+Setup tab's Appearance card (it was in the status bar until the owner's
+polish pass, 2026-09-25) painted as `data-theme` on the root.
 
 Two parity checks tie the JavaScript to `src/forgepact.py`: the node tests'
 defaults fixture is the real `DEFAULTS`, and the page's list of switched
@@ -47,6 +48,7 @@ class EnabledModsPanelTests(unittest.TestCase):
         self.app = panel_file("App.svelte")
         self.panel = panel_file("panel.js")
         self.lister = panel_file("lib/enabled-mods-list.js")
+        self.setup = panel_file("tabs/Setup.svelte")
 
     def test_list_strings_are_the_fixed_copy(self):
         for text in FIXED_COPY:
@@ -132,7 +134,7 @@ class EnabledModsPanelTests(unittest.TestCase):
         self.assertNotIn('data-switch="density"', self.page)
         # Nothing new is a tab card.
         self.assertEqual(self.page.count('data-tab="mods"'), 3)
-        for tag in (_opening_tag(self.app, 'id="enabledMods"'), _opening_tag(self.app, 'id="theme"')):
+        for tag in (_opening_tag(self.app, 'id="enabledMods"'), _opening_tag(self.setup, 'id="theme"')):
             self.assertNotIn("data-tab", tag)
 
     def test_list_sits_under_the_control_dock(self):
@@ -155,11 +157,19 @@ class EnabledModsPanelTests(unittest.TestCase):
         self.assertLess(refresh.index("paintSwitches(c);"), refresh.index("range.oninput"))
 
     def test_theme_select_and_root_attribute(self):
-        statusbar = self.app[self.app.index('<div id="statusbar">'):]
-        statusbar = statusbar[:statusbar.index("</div>")]
-        self.assertIn('<label class="theme-control">Theme <select id="theme">', statusbar)
-        self.assertLess(statusbar.index('id="theme"'), statusbar.index('id="chipGame"'))
-        self.assertIn("{#each THEMES as theme", statusbar)
+        # The theme is the Setup tab's Appearance card (owner, 2026-09-25),
+        # not the status bar: a Setup tab card after #setupCard, and nowhere
+        # in App.svelte.
+        card = self.setup[self.setup.index('<h2>Appearance</h2>'):]
+        card = card[:card.index("</div>\n</div>")]
+        self.assertIn('<label class="lbl" for="theme">Theme</label><select id="theme">', card)
+        self.assertLess(self.setup.index('id="setupCard"'), self.setup.index('id="theme"'))
+        before = self.setup[:self.setup.index('<h2>Appearance</h2>')]
+        opening = before[before.rindex('<div class="card'):]
+        self.assertIn('data-tab="setup"', opening)
+        self.assertIn("tab-card", opening)
+        self.assertIn("{#each THEMES as theme", card)
+        self.assertNotIn('id="theme"', self.app)
         theme = panel_file("theme.js")
         self.assertIn("document.documentElement.dataset.theme = painted", theme)
         self.assertIn("typeof document !== 'undefined'", theme)
