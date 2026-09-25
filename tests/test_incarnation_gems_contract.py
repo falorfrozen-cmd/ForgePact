@@ -125,6 +125,20 @@ class PluginWiringTests(unittest.TestCase):
         self.assertIn('drop', research)
         self.assertIn('#else', research)
 
+    def test_convert_is_research_build_only(self):
+        # `gems convert` rewrites a real drop's definition: a test tool for the
+        # research build, never in the player build.
+        before = between(MAIN, 'static void GemsBeforeCreate(', '\n}\n')
+        convert = before[before.index('#ifndef FORGEPACT_RELEASE'):before.index('#endif')]
+        self.assertIn('g_GemConvert &&', convert)
+        self.assertIn('variable_struct_set", { def, RValue("b")', convert)
+        self.assertEqual(1, before.count('variable_struct_set", { def, RValue("b")'))
+        declared = MAIN[MAIN.index('static bool g_GemConvert = false;') - 400:MAIN.index('static bool g_GemConvert = false;')]
+        self.assertIn('#ifndef FORGEPACT_RELEASE', declared)
+        command = between(MAIN, 'static void GemsCommand(', '\n}\n')
+        research = command[command.index('#ifndef FORGEPACT_RELEASE'):command.index('#else')]
+        self.assertIn('arg == "convert 1"', research)
+
     def test_mod_state_reports_the_gems(self):
         self.assertIn('body += GemsModState() + "}";', MAIN)
         state = between(MAIN, 'static std::string GemsModState()', '\n}\n')

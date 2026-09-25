@@ -183,6 +183,11 @@ say gems and runes are picked up by hand. The player's "auto loot" reads as
   (47,147 built in 14.4 s of build time). The three first rows took 4,471
   (`n` 4), 8,807 (`n` 3) and 33,869 (none) candidates, about 45 s at the main
   menu, once per game build.
+- **Research build only, `gems convert 1|0`**: while on (with `gemmythic` on),
+  every socketable a `DropGems` call makes has its definition turned into a Gem
+  of Incarnation (`b` 136, `c` 0, `j` 0) before `CreateItemNew` reads it, so a
+  real drop can be tested by killing a few monsters anywhere. `gems stat` shows
+  `convert=` and `converted=`.
 - Tests: `tests/incarnation_gems_harness.cpp` (the core, baseline and target),
   `tests/test_incarnation_gems_contract.py` (the wiring and the panel).
 
@@ -202,9 +207,25 @@ through the game's loader and `CreateItemNew` inside the drop scope):
   were refused and left the filter as it was.
 - Every drop: rarity 5, 4-5 affixes, each at its best tier's top.
 
+Real drops, the same day, research build, the owner playing a character with
+`gemmythic`, `gemmaxroll` and `gems convert` on:
+
+- The `DropGems` hook installed natively as soon as the character was in play.
+- Monsters' gem drops made 4 `CreateItemNew` calls inside `DropGems`. All 4 were
+  converted (the first from socketable base 53), all 4 took a Mythic seed, and
+  none kept the game's roll: the definition is on the item instance when
+  `CreateItemNew` starts, as it is on the loader's path.
+- The first drop carried no `n` (key `none`), and no drop needed a table that
+  was not built yet.
+- On the ground: Mythic, 4 mods, every roll tier S at its top (seen by the
+  owner on two of them).
+- The dress also reached the owned gems at the character's load: 23 gems
+  dressed in the session.
+
 ## Open
 
-- The seed swap on a real drop, and the loot-filter reading, are not yet
-  observed live.
+- A Gem of Incarnation that the game picked itself (no `gems convert`) is not
+  yet seen; it takes the same path. The loot-filter reading is not observed
+  live.
 - Hiding weak gems (the filter gap) is not built: with both switches on, there
   are no weak gems.

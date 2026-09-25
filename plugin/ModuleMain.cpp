@@ -4446,6 +4446,11 @@ static uint64_t g_GemDropsInScope = 0;   // CreateItemNew calls seen inside Drop
 #ifndef FORGEPACT_RELEASE
 static uint64_t g_GemTableBuilds = 0;
 static double g_GemTableSeconds = 0;   // time spent building candidates
+// `gems convert 1`: every socketable a DropGems call makes becomes a Gem of
+// Incarnation before CreateItemNew reads its definition, so a real drop can be
+// tested by killing a few monsters anywhere. Research build only.
+static bool g_GemConvert = false;
+static uint64_t g_GemConverted = 0;
 #endif
 
 static std::filesystem::path GemTablesPath()
@@ -4552,7 +4557,19 @@ static void GemsBeforeCreate(int argc, RValue** A)
     try {
         ++g_GemDropsInScope;
         RValue def; double type = -1, base = -1, c = -1;
-        if (!GemIdentity(*A[0], def, type, base, c) || !ForgePact::IncarnationGems::IsGem(type, base, c)) return;
+        if (!GemIdentity(*A[0], def, type, base, c)) return;
+#ifndef FORGEPACT_RELEASE
+        if (g_GemConvert && type == ForgePact::IncarnationGems::kSocketableType && !ForgePact::IncarnationGems::IsGem(type, base, c)) {
+            const double was = base;
+            g_Yytk->CallBuiltin("variable_struct_set", { def, RValue("b"), RValue((double)ForgePact::IncarnationGems::kGemBase) });
+            g_Yytk->CallBuiltin("variable_struct_set", { def, RValue("c"), RValue(0.0) });
+            g_Yytk->CallBuiltin("variable_struct_set", { def, RValue("j"), RValue(0.0) });
+            base = ForgePact::IncarnationGems::kGemBase;
+            c = 0;
+            if (++g_GemConverted == 1) Out("gems convert: a dropped socketable (b=" + ForgePact::ItemTruth::WholeNumberText(was) + ") becomes a Gem of Incarnation");
+        }
+#endif
+        if (!ForgePact::IncarnationGems::IsGem(type, base, c)) return;
         std::optional<double> n;
         double nValue = 0;
         if (TryStructNumber(def, "n", nValue)) n = nValue;
@@ -4687,7 +4704,7 @@ static void GemsTick(uint32_t frame)
 
 // `gemmythic 0|1` and `gemmaxroll 0|1` (the panel's two switches) and
 // `gemfilter all|<stat,...>` (its mod filter); in the research build also
-// `gems stat`, `gems save`, `gems reset` and `gems drop <n>`.
+// `gems stat`, `gems save`, `gems reset`, `gems drop <n>` and `gems convert 1|0`.
 static void GemsCommand(const std::string& verb, const std::string& rest)
 {
     const std::string arg = Lower(rest);
@@ -4728,11 +4745,17 @@ static void GemsCommand(const std::string& verb, const std::string& rest)
             + " vanilla=" + std::to_string(g_Gems.vanillaDrops) + " dressed=" + std::to_string(g_Gems.dressed)
             + " filter=" + std::to_string(g_Gems.filter.size()) + " filterMisses=" + std::to_string(g_Gems.filterMisses)
             + " builds=" + std::to_string(g_GemTableBuilds) + " buildMs=" + std::to_string((long long)(g_GemTableSeconds * 1000))
+            + " convert=" + std::to_string(g_GemConvert) + " converted=" + std::to_string(g_GemConverted)
             + " best=" + std::to_string(g_GemTables.best.size())
             + " conflicts=" + std::to_string(g_GemTables.conflicts) + " rows:" + rows);
         return;
     }
     if (arg == "save") { g_GemTables.dirty = true; GemTablesSave(); Out("gems: saved" + (g_GemTablesError.empty() ? std::string() : " - " + g_GemTablesError)); return; }
+    if (arg == "convert 1" || arg == "convert 0") {
+        g_GemConvert = arg == "convert 1";
+        Out(std::string("gems convert: ") + (g_GemConvert ? "on - every socketable a monster drops becomes a Gem of Incarnation (with gemmythic on)" : "off"));
+        return;
+    }
     if (arg == "reset") { g_GemTablesLoaded = false; g_GemTables = ForgePact::IncarnationGems::Tables{}; std::error_code ec; std::filesystem::remove(GemTablesPath(), ec); GemTablesLoad(); Out("gems: tables reset"); return; }
     if (arg.rfind("drop", 0) == 0) {
         // One gem built as a fresh drop would be: inside the drop scope, through
@@ -4758,7 +4781,7 @@ static void GemsCommand(const std::string& verb, const std::string& rest)
             + ", rarity " + ForgePact::ItemTruth::WholeNumberText(rarity) + affixText);
         return;
     }
-    Out("gems: stat | save | reset | drop <n>");
+    Out("gems: stat | save | reset | drop <n> | convert 1|0");
 #else
     Out("gems: unavailable in player build");
 #endif
