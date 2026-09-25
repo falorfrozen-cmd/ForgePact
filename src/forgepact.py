@@ -75,10 +75,11 @@ except ImportError:
 PORT = 8780
 # Windows sometimes reserves a port range (Hyper-V/WSL) and refuses the bind.
 # So free ports are tried in order; whichever works is opened in the browser.
-# Until 1.4.6 the list began with 8766. That port is one of 8765-8774, which
-# the Item Editor keeps for itself, so with the editor open the panel landed
-# on 8780 anyway, and the Toolkit Hub's check of 8766 reached the editor. The
-# hub checks the first candidate (catalog/sources.toml): move both together.
+# The list used to begin with 8766. That port is one of 8765-8774, which the
+# Item Editor keeps for itself, so with the editor open the panel landed on
+# 8780 anyway, and the Toolkit Hub's check of 8766 reached the editor. The hub
+# checks the first candidate (catalog/sources.toml): move both together. No
+# version number in this comment: VersionStampTests allow exactly one.
 PORT_CANDIDATES = [8780, 8801, 8899, 9133, 9777]
 ROOT = Path.home() / "AppData" / "Local" / "Hero_Siege"
 CONFIG = ROOT / "forgepact.json"
