@@ -13,6 +13,8 @@
     "oracle:replay": "node tests/oracle.mjs replay --oracle tests/behaviour-oracle.json --derived tests/behaviour-oracle-derived.json",
     "oracle:derive": "node tests/oracle-derive.mjs --from tests/behaviour-oracle.json --out tests/behaviour-oracle-derived.json",
     "e2e": "node tests/ui.e2e.mjs",
+    "e2e:form": "node tests/enabled-mods-form.e2e.mjs",
+    "e2e:review": "node tests/review-fixes.e2e.mjs",
     "screens": "node tests/screens.mjs",
     "icons": "node scripts/export-icons.mjs"
   },

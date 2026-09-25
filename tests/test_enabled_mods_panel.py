@@ -31,7 +31,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from panel_source import js_for_node, panel_file, panel_source  # noqa: E402
 from test_panel_performance import run_node  # noqa: E402
 
-FIXED_COPY = ("Enabled mods", "Nothing is on", "Turn off", "Theme", "Default", "Alternate")
+FIXED_COPY = ("Enabled mods", "Nothing is on", "Turn off", "Theme", "Ledger", "Graphite", "Sigil")
 LIST_FILES = ("enabled-mods.js", "lib/enabled-mods-list.js")
 
 
@@ -62,8 +62,9 @@ class EnabledModsPanelTests(unittest.TestCase):
         self.assertIn("`Turn off ${name}`", self.lister)
         self.assertIn('aria-label="Enable ${label}"', self.panel)
         theme = panel_file("theme.js")
-        self.assertIn("{ value: 'default', label: 'Default' }", theme)
-        self.assertIn("{ value: 'alt', label: 'Alternate' }", theme)
+        self.assertIn("{ value: 'ledger', label: 'Ledger' }", theme)
+        self.assertIn("{ value: 'graphite', label: 'Graphite' }", theme)
+        self.assertIn("{ value: 'sigil', label: 'Sigil' }", theme)
 
     def test_quick_disable_and_entries_carry_data_for(self):
         self.assertIn("item.className = 'enabled-mod';", self.lister)
@@ -159,10 +160,11 @@ class EnabledModsPanelTests(unittest.TestCase):
         theme = panel_file("theme.js")
         self.assertIn("document.documentElement.dataset.theme = painted", theme)
         self.assertIn("typeof document !== 'undefined'", theme)
-        css = panel_file("app.css")
-        block = re.search(r':root\[data-theme="alt"\]\{([^}]*)\}', css)
-        self.assertIsNotNone(block)
-        self.assertGreaterEqual(len(re.findall(r"--[\w-]+:", block.group(1))), 2)
+        css = panel_file("tokens.css")
+        for name in ("graphite", "sigil"):
+            block = re.search(r':root\[data-theme="' + name + r'"\]\s*\{([^}]*)\}', css)
+            self.assertIsNotNone(block)
+            self.assertGreaterEqual(len(re.findall(r"--[\w-]+:", block.group(1))), 2)
         boot = self.panel[self.panel.index("async function boot(){"):self.panel.index("function paintVersion(){")]
         self.assertIn("applyTheme(c.theme)", boot)
         handler = self.panel[self.panel.index("document.getElementById('theme').onchange"):]

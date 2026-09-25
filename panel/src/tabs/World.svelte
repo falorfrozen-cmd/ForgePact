@@ -2,7 +2,7 @@
 <div class="card tab-card" data-tab="world" id="densityCard">
   <h2>Monster Density</h2>
   <div class="hint">Multiplies enemy spawners - applies to newly loaded zones.<br><b>Density and Special Content stack.</b> Each on its own is fine, but a high density together with high special-content rates can overload a heavy zone and crash the game on entry. Verified stable: density x3 with every special content at x20. If a zone crashes, lower density first.</div>
-  <div class="note" style="color:#72d6a5;border:1px solid #245a43;border-radius:6px;padding:8px 12px;margin-bottom:10px">Density is applied once per creator placement. Returning to a previously visited zone does not multiply it again.</div>
+  <div class="note density-once">Density is applied once per creator placement. Returning to a previously visited zone does not multiply it again.</div>
   <div class="row">
     <span class="lbl">Density multiplier</span>
     <label class="switch"><input type="checkbox" id="den_on"><span class="sl"></span></label>

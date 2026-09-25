@@ -141,7 +141,7 @@ function applyPluginModState(pm){
   }
 }
 function sliderOff(sec,v){return sec==='percent_stats'?v<=0:v<=1}
-function sliderText(sec,v){return sliderOff(sec,v)?'off':(sec==='percent_stats'?'+'+v+'%':'x'+v)}
+export function sliderText(sec,v){return sliderOff(sec,v)?'off':(sec==='percent_stats'?'+'+v+'%':'x'+v)}
 // A slider's on/off switch (Monster Density's #den_on, for every other
 // slider): off keeps the value in the range and the saved config, and the
 // value box reads "off" the way density's does, while the backend sends the
@@ -409,12 +409,12 @@ function status(){
     if(!ch.yytk)miss.push('YYToolkit.dll');
     if(!ch.plugin)miss.push('mod plugin');
     cn.textContent='mod chain incomplete: '+miss.join(', ')+' - click "Install Mod Plugin" (game must be closed)';
-    cn.style.color='#ffb347';
+    cn.style.color='var(--color-warn)';
   }
   document.getElementById('ipcnote').textContent=ST.ipcOk?'':'bp_ipc appears after the first modded launch';
-  document.getElementById('ipcnote').style.color='#8a7a64';
+  document.getElementById('ipcnote').style.color='var(--color-text-faint)';
   const en=document.getElementById('eacnote');
-  if(ST.eacStatus==='legit_eac'){en.textContent='Note: this looks like a Steam/EAC copy. If EAC is active, online play may break and the mod may not load (EAC can relaunch the clean exe). Your exe is backed up - Remove Plugin reverts it. For best results use an offline / EAC-off copy. Installing is allowed at your own risk.';en.style.color='#e0b060';}
+  if(ST.eacStatus==='legit_eac'){en.textContent='Note: this looks like a Steam/EAC copy. If EAC is active, online play may break and the mod may not load (EAC can relaunch the clean exe). Your exe is backed up - Remove Plugin reverts it. For best results use an offline / EAC-off copy. Installing is allowed at your own risk.';en.style.color='var(--color-warn)';}
   else if(ST.eacStatus==='eac_free'){en.textContent='';}
   else{en.textContent='';}
   renderLaunchStatus();
@@ -763,7 +763,7 @@ function preparePanelUI(){
 function updateControlDecoration(){
   for(const range of document.querySelectorAll('input[type=range]')){
     const fill=100*(Number(range.value)-Number(range.min))/(Number(range.max)-Number(range.min));
-    range.style.background=`linear-gradient(to right,var(--ember) ${fill}%,#4a3a2b ${fill}%)`;
+    range.style.background=`linear-gradient(to right,var(--color-accent) ${fill}%,var(--color-track) ${fill}%) var(--color-track)`;
     const buttons=range.parentElement.querySelectorAll('.step-button');
     if(buttons.length===2){buttons[0].disabled=+range.value<=+range.min;buttons[1].disabled=+range.value>=+range.max}
   }
