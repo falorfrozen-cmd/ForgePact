@@ -79,9 +79,22 @@ SOFTWARE.
 - Used by: the patcherless Season 10 native runtime for targeted x64 trampolines.
 - Vendored license: `native_s10/third_party/minhook/LICENSE.txt`.
 
+## Geist and Geist Mono (fonts)
+- Repository: https://github.com/vercel/geist-font, tag `v1.7.2`
+- License: SIL Open Font License, Version 1.1 (OFL-1.1)
+- Copyright 2024 The Geist Project Authors (https://github.com/vercel/geist-font)
+- Used as: the control panel's typefaces. The two upstream variable web fonts,
+  `Geist[wght].woff2` and `GeistMono[wght].woff2`, are bundled unmodified
+  (renamed only) as `panel/src/fonts/Geist/Geist-Variable.woff2` and
+  `panel/src/fonts/GeistMono/GeistMono-Variable.woff2`, and ship inside the
+  panel of `ForgePact.exe`, so the panel loads them with no network access.
+- Vendored license: `panel/src/fonts/Geist/LICENSE.txt` and
+  `panel/src/fonts/GeistMono/LICENSE.txt` (upstream `OFL.txt`, unchanged).
+
 ---
 The project continues to be distributed under AGPL-3.0. The full license text
-is in `LICENSE`; MinHook retains its separate BSD 2-Clause notice.
+is in `LICENSE`; MinHook retains its separate BSD 2-Clause notice, and the
+Geist fonts their SIL Open Font License 1.1.
 
 ForgePact is an independent, fan-made project. It is **not affiliated with, sponsored
 by, or endorsed by** AurieFramework, Panic Art Studios, or Hero Siege. All trademarks
