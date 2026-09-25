@@ -1,7 +1,7 @@
 ﻿#!/usr/bin/env python3
 """ForgePact - Hero Siege Game Mods control panel.
 
-Local web app: http://127.0.0.1:8766 (artwork in sibling panel_icons.py)
+Local web app: http://127.0.0.1:8780 (artwork in sibling panel_icons.py)
 Talks to BloodPactPlugin (Aurie/YYTK) over bp_ipc:
 - settings apply instantly while the game is running
 - while the game is closed, commands are queued in cmd.txt (the plugin
@@ -72,10 +72,14 @@ except ImportError:
         SATANIC_BUFFS = ()
         SATANIC_DEBUFFS = ()
 
-PORT = 8766
+PORT = 8780
 # Windows sometimes reserves a port range (Hyper-V/WSL) and refuses the bind.
 # So free ports are tried in order; whichever works is opened in the browser.
-PORT_CANDIDATES = [8766, 8780, 8801, 8899, 9133, 9777]
+# Until 1.4.6 the list began with 8766. That port is one of 8765-8774, which
+# the Item Editor keeps for itself, so with the editor open the panel landed
+# on 8780 anyway, and the Toolkit Hub's check of 8766 reached the editor. The
+# hub checks the first candidate (catalog/sources.toml): move both together.
+PORT_CANDIDATES = [8780, 8801, 8899, 9133, 9777]
 ROOT = Path.home() / "AppData" / "Local" / "Hero_Siege"
 CONFIG = ROOT / "forgepact.json"
 DEFAULT_EXE = r""  # set your own Hero_Siege.exe path in the app's "Game Location" field
