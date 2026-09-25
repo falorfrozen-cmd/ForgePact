@@ -36530,6 +36530,12 @@ static bool HandleRestartProbeCommand(const std::string& lc, const std::string& 
 // probe holds it, CheckTalentUse is the control for this table's own detours
 // (SpIsOwnControl).
 //
+// The first live session found that every closure which fired on a bind, an
+// allocation or a reset logged argc=0: the buttons run named `UiA*`
+// activation scripts the game wires to them through UiSetActivationFunc. So
+// those scripts are rows too, with the key getters the bar draws its key
+// letters with - which key casts which slot is read from their calls.
+//
 // A function another install in this plugin already detours - craftprobe,
 // tgprobe, prospectprobe, restartprobe, citrace nativetrace, mapkeep,
 // craftmats, or a ForgePact hook such as toggleguard's - is reported `held`
@@ -36642,6 +36648,32 @@ static void SpAfter(const char* label, long n, const RValue& result)
     X(UiCreate, "UiCreate", gml_Script_UiCreate) \
     X(UiSetFocus, "UiSetFocus", gml_Script_UiSetFocus) \
     X(ReportClient, "ReportClient", gml_Script_ReportClient) \
+    /* the named activation scripts the talent screen's and the bar's buttons */ \
+    /* are wired to through UiSetActivationFunc (the handlers live 1 missed)  */ \
+    X(UiATalentScreenTalent, "UiATalentScreenTalent", gml_Script_UiATalentScreenTalent) \
+    X(UiATalentScreenAssign, "UiATalentScreenAssign", gml_Script_UiATalentScreenAssign) \
+    X(UiATalentChange, "UiATalentChange", gml_Script_UiATalentChange) \
+    X(UiAActivateSkillSubPoint, "UiAActivateSkillSubPoint", gml_Script_UiAActivateSkillSubPoint) \
+    X(UiAActivateSkillSpecialization, "UiAActivateSkillSpecialization", gml_Script_UiAActivateSkillSpecialization) \
+    X(UiATalentScreenResetTalents, "UiATalentScreenResetTalents", gml_Script_UiATalentScreenResetTalents) \
+    X(UiAResetSubSkillPoints, "UiAResetSubSkillPoints", gml_Script_UiAResetSubSkillPoints) \
+    X(UiATalentsPlayer, "UiATalentsPlayer", gml_Script_UiATalentsPlayer) \
+    X(UiAOpenTalents, "UiAOpenTalents", gml_Script_UiAOpenTalents) \
+    X(UiAActiveTalentSelect, "UiAActiveTalentSelect", gml_Script_UiAActiveTalentSelect) \
+    X(UiAContextTalents, "UiAContextTalents", gml_Script_UiAContextTalents) \
+    X(UiATalentScreenTalentLoadout, "UiATalentScreenTalentLoadout", gml_Script_UiATalentScreenTalentLoadout) \
+    X(UiSetTalentSelectTopRowEnabled, "UiSetTalentSelectTopRowEnabled", gml_Script_UiSetTalentSelectTopRowEnabled) \
+    X(UiHudTalentNavigation, "UiHudTalentNavigation", gml_Script_UiHudTalentNavigation) \
+    /* the key getters the bar draws its key letters with, and the controls' */ \
+    /* keyboard load and save: which key casts which slot, read by name       */ \
+    X(GetSpecificKeyBind, "GetSpecificKeyBind", gml_Script_GetSpecificKeyBind) \
+    X(GetSpecificKBKeyBind, "GetSpecificKBKeyBind", gml_Script_GetSpecificKBKeyBind) \
+    X(GetSpecificGPKeyBind, "GetSpecificGPKeyBind", gml_Script_GetSpecificGPKeyBind) \
+    X(GetPlayerInputBindings, "GetPlayerInputBindings", gml_Script_GetPlayerInputBindings) \
+    X(GetControlName, "GetControlName", gml_Script_GetControlName) \
+    X(DrawKeyBindSprites, "DrawKeyBindSprites", gml_Script_DrawKeyBindSprites) \
+    X(LoadKeyboardControls, "LoadKeyboardControls", gml_Script_LoadKeyboardControls) \
+    X(SaveControls, "SaveControls", gml_Script_SaveControls) \
     /* Create-event closures of the nine talent objects. Derived from the SDK: */ \
     /* every constant whose value names one of their Create_0, which          */ \
     /* test_skillprobe_table_covers_every_sdk_closure_of_its_objects enforces. */ \
@@ -37433,8 +37465,22 @@ static void SpKeysOf(const std::string& spec)
     Out("  keys " + spec + ": " + std::to_string(matched) + " of " + std::to_string(n) + " members name skill, talent or bind");
 }
 
+// The key getters the bar draws its key letters with. The first live session
+// found no member of Controller_obj or of the bar's buttons holding a key
+// code per slot, while the HUD still drew a letter beside each: the game
+// reads the binding through a getter every frame. So `keys` points at the
+// route that answers it - arm the getter's row and read the HUD's own calls.
+static constexpr std::string_view kSpKeyGetters[] = {
+    HeroSiege::Scripts::gml_Script_GetSpecificKeyBind,
+    HeroSiege::Scripts::gml_Script_GetSpecificKBKeyBind,
+    HeroSiege::Scripts::gml_Script_GetSpecificGPKeyBind,
+    HeroSiege::Scripts::gml_Script_GetPlayerInputBindings,
+    HeroSiege::Scripts::gml_Script_GetControlName,
+};
+
 // `keys [<Obj|global|id:n>[.a.b.c] ...]`: Controller_obj and the bar's
-// playerSlot by default, and any root `craftprobe find` located.
+// playerSlot by default, and any root `craftprobe find` located; then one
+// hint line per key getter, saying whether its row is detoured yet.
 static void SpKeys(const std::vector<std::string>& tok)
 {
     std::vector<std::string> roots(tok.begin() + 1, tok.end());
@@ -37444,6 +37490,17 @@ static void SpKeys(const std::vector<std::string>& tok)
     }
     Out("skillprobe keys:");
     for (const std::string& r : roots) SpKeysOf(r);
+    for (std::string_view getter : kSpKeyGetters) {
+        for (const SpTarget& t : g_SpTargets) {
+            if (std::string_view(t.runtimeName) != getter) continue;
+            const std::string row = t.label;
+            const std::string now = t.installed.load() ? std::string("detoured")
+                : !t.heldBy.empty() ? "held by " + t.heldBy
+                : "not detoured yet: `skillprobe hook " + row + "` first";
+            Out("  getter " + row + ": arm it and read the HUD's own calls - `skillprobe arm " + row
+                + " 8`, wait, then `skillprobe show` (" + now + ")");
+        }
+    }
 }
 
 // `slots [<row> <i>]`: menulayout's own row and slot rows for the bar, then
@@ -37493,12 +37550,14 @@ static void SpUsage()
     Out("  reset                             zero every counter");
     Out("  call <Row> <Obj> <nth>|id:<n> [other:<id>] [args ...] confirm   ONE by-name call of one plain-script row"
         " (craftprobe's CpDispatchScript; other: parsed by craftprobe's CpResolveOther)");
-    Out("    args: number | true | false | undefined | text | id:<n> (that instance's own id reference) | fp:<fp> | kept:<row>"
+    Out("    args: craftprobe call's kinds - number | true | false | undefined | text | id:<n> (that instance's own id reference)"
+        " | obj:<Name> (an object reference) | fp:<fp> | kept:<row>"
         " | path:<Obj|global|id:n>.<a.b.c>; a closure row is refused: `craftprobe methods`, then `craftprobe callm ... inst`");
     Out("  state [nolevel] [bind=<Obj|global|id:n>.<a.b.c> ...] [profile=<Obj|id:n>]   hook-free: the bar's slots (talent, ability,"
         " timer), global.mySkills, the bar's playerSlot.bind_skill, each bind= path, subTalentMap[1] per bar talent,"
         " ReturnTalentLevel by name per bar talent, the points candidates");
-    Out("  keys [<Obj|global|id:n>[.a.b.c] ...]   hook-free: members naming skill, talent or bind (default: Controller_obj and the bar's playerSlot)");
+    Out("  keys [<Obj|global|id:n>[.a.b.c] ...]   hook-free: members naming skill, talent or bind (default: Controller_obj and the bar's playerSlot),"
+        " then a hint per key getter row: arm it and read the HUD's own calls");
     Out("  slots [<row> <i>]                 hook-free: menulayout's bar row and slot rows, then every member of one element");
 }
 

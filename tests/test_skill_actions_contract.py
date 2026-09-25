@@ -14,8 +14,15 @@ things for that launch, and these tests pin both:
   every SDK closure of the nine objects, each native-detoured by one
   MmCreateHook behind AddrIsExecutableInModule, a function another install
   already detours reported `held` and never hooked twice, one confirm-gated
-  by-name `call` that reuses craftprobe's `other:` parser and dispatcher, and
-  three hook-free readers (`state`, `keys`, `slots`).
+  by-name `call` that reuses craftprobe's `other:` parser, argument parser and
+  dispatcher, and three hook-free readers (`state`, `keys`, `slots`).
+
+The first live session found every closure that fired on the owner's bind,
+allocation and reset logging `argc=0`: the buttons run named `UiA*`
+activation scripts wired through `UiSetActivationFunc`, and the key per slot
+is read through getters the bar draws with, none of which was a row. Replan 3
+adds those twenty-two scripts (60 rows to 82), and the three Decision lines
+that session settled are pinned as no longer `pending`.
 
 The research doc's headings and its twelve decision keys are pinned so the
 player verbs and the hub tools that follow are never written against a key
@@ -62,6 +69,24 @@ CANDIDATE_SCRIPTS = (
 )
 UNPREFIXED = ("TalentRequirementFunc", "UiActivateTalents", "UiActivateHudTalentButtonFuncs",
               "UiHudTalentNavigationFunc", "UiTalentNavigationFunc", "SaveControlsFunc")
+
+# Replan 3 additions: the activation scripts the talent screen's and the bar's
+# buttons are wired to, then the key getters and the keyboard controls' load
+# and save. Every one a gml_Script_ constant.
+ACTIVATION_SCRIPTS = (
+    "UiATalentScreenTalent", "UiATalentScreenAssign", "UiATalentChange", "UiAActivateSkillSubPoint",
+    "UiAActivateSkillSpecialization", "UiATalentScreenResetTalents", "UiAResetSubSkillPoints",
+    "UiATalentsPlayer", "UiAOpenTalents", "UiAActiveTalentSelect", "UiAContextTalents",
+    "UiATalentScreenTalentLoadout", "UiSetTalentSelectTopRowEnabled", "UiHudTalentNavigation",
+)
+KEY_GETTERS = ("GetSpecificKeyBind", "GetSpecificKBKeyBind", "GetSpecificGPKeyBind",
+               "GetPlayerInputBindings", "GetControlName")
+KEY_SCRIPTS = KEY_GETTERS + ("DrawKeyBindSprites", "LoadKeyboardControls", "SaveControls")
+REPLAN3_SCRIPTS = ACTIVATION_SCRIPTS + KEY_SCRIPTS
+
+# The Decision lines the first live session settled (castByNameRoute
+# reproduced; the slot and talent-id rules measured).
+SETTLED_KEYS = ("castByNameRoute", "slotRule", "talentIdRule")
 
 DOC_HEADINGS = ("## Static search", "## Static readings", "## Instrument",
                 "## Live procedure", "## Results", "## Decision")
@@ -172,6 +197,19 @@ class SkillProbeContract(unittest.TestCase):
         # KeyboardMouseInput is deliberately not a row (a per-frame dispatcher).
         self.assertNotIn("KeyboardMouseInput", self.code)
 
+    def test_table_names_every_activation_script_and_key_getter(self):
+        sdk = sdk_constants()
+        rows = {label: constant for _, label, constant in self.rows}
+        self.assertEqual(len(REPLAN3_SCRIPTS), 22)
+        self.assertEqual(len(set(REPLAN3_SCRIPTS) | set(CANDIDATE_SCRIPTS)), 33 + 22)
+        for name in REPLAN3_SCRIPTS:
+            self.assertIn(name, rows, name + " is not a skillprobe row")
+            self.assertEqual(rows[name], "gml_Script_" + name, name)
+            self.assertIn(rows[name], sdk, rows[name] + " is not an hs-game-sdk constant")
+            self.assertNotIn('"gml_Script_' + name + '"', self.code)
+        # Negative control: the out-of-scope mercenary activation scripts are not rows.
+        self.assertFalse(any("Mercenary" in label for label in rows))
+
     def test_skillprobe_table_covers_every_sdk_closure_of_its_objects(self):
         sdk = sdk_constants()
         table = {constant for _, _, constant in self.rows}
@@ -183,10 +221,11 @@ class SkillProbeContract(unittest.TestCase):
         self.assertEqual(missing, [], "SDK closures missing from SKILLPROBE_TARGETS: " + ", ".join(missing))
         # Negative control: an object outside the nine has no closure row.
         self.assertFalse(any("UI_Craft_obj" in c or "UI_Stash_obj" in c for c in table))
-        # 33 scripts + 27 closures, one row each.
-        self.assertEqual(len(self.rows), 60)
-        self.assertEqual(len({c for _, _, c in self.rows}), 60)
-        self.assertEqual(len({s for s, _, _ in self.rows}), 60)
+        # 33 scripts + 22 activation scripts and key getters + 27 closures, one row each.
+        self.assertEqual(len(self.rows), 82)
+        self.assertEqual(len({c for _, _, c in self.rows}), 82)
+        self.assertEqual(len({s for s, _, _ in self.rows}), 82)
+        self.assertEqual(len({label.lower() for _, label, _ in self.rows}), 82)   # SpFindRow matches either case
 
     # ---- how a row attaches ---------------------------------------------------
 
@@ -313,6 +352,19 @@ class SkillProbeContract(unittest.TestCase):
             segment = before[at:before.index("return;", at)]
             self.assertIn("nothing was called", segment, segment)
 
+    def test_call_has_no_argument_kind_craftprobe_lacks(self):
+        # SpResolveArg only delegates: every kind `skillprobe call` accepts is
+        # one CpResolveArg parses, so a replay shape logged here can be
+        # supplied to `craftprobe call` in the same words, and back.
+        resolve = self.body("static bool SpResolveArg(")
+        statements = [s.strip() for s in resolve.split(";") if s.strip()]
+        self.assertEqual(statements, ['return CpResolveArg("skillprobe call", a, inst, v)'])
+        self.assertIsNone(re.search(r'"\w+:"', resolve))
+        # Negative control: the kinds live in craftprobe's parser, `id:` and `obj:` among them.
+        craft = self.body("static bool CpResolveArg(")
+        for kind in ('"id:"', '"obj:"', '"fp:"', '"kept:"', '"path:"'):
+            self.assertIn(kind, craft, kind)
+
     def test_a_closure_row_is_refused_naming_the_route_that_works(self):
         call = self.body("static void SpCall(")
         closure = call.index("runtime.find('@')")
@@ -350,6 +402,22 @@ class SkillProbeContract(unittest.TestCase):
         command = self.body("static void SpCommand(")
         for sub in ('"state") { SpState(tok)', '"keys") { SpKeys(tok)', '"slots") { SpSlots(tok)'):
             self.assertIn(sub, command)
+
+    def test_keys_points_each_key_getter_at_its_armed_calls(self):
+        # No member held a key code per slot in the first live session; the bar
+        # reads its keys through getters, so `keys` says how to read them.
+        keys = self.body("static void SpKeys(")
+        self.assertIn("kSpKeyGetters", keys)
+        self.assertIn("arm it and read the HUD's own calls", keys)
+        self.assertIn("`skillprobe arm ", keys)
+        getters = self.plugin[self.plugin.index("static constexpr std::string_view kSpKeyGetters[] = {"):]
+        getters = getters[:getters.index("};")]
+        listed = re.findall(r"HeroSiege::Scripts::(\w+)", getters)
+        self.assertEqual(listed, ["gml_Script_" + g for g in KEY_GETTERS])
+        # Each getter is a row, so the hint names something `arm` accepts.
+        constants = {constant for _, _, constant in self.rows}
+        for constant in listed:
+            self.assertIn(constant, constants)
 
     def test_every_state_read_has_its_own_try_and_prints_unreadable(self):
         state = self.body("static void SpState(")
@@ -426,10 +494,24 @@ class SkillActionsResearchDoc(unittest.TestCase):
         self.assertEqual(sorted(keys), sorted(DECISION_KEYS))
         self.assertEqual(len(DECISION_KEYS), 12)
 
+    def test_settled_decision_lines_are_not_pending(self):
+        decision = doc_section(self.doc, "## Decision")
+        for key in SETTLED_KEYS:
+            line = re.search(r"(?m)^" + key + r": (.+)$", decision)
+            self.assertIsNotNone(line, key)
+            self.assertNotIn("pending", line.group(1), key)
+        # Negative control: a key live 1 did not settle may still be pending.
+        self.assertIsNotNone(re.search(r"(?m)^castKeyRule: ", decision))
+
     def test_candidate_table_is_documented(self):
         static = doc_section(self.doc, "## Static search")
-        for name in NINE_OBJECTS + CANDIDATE_SCRIPTS:
+        for name in NINE_OBJECTS + CANDIDATE_SCRIPTS + REPLAN3_SCRIPTS:
             self.assertIn(f"`{name}`", static, name)
+
+    def test_live_procedure_carries_the_recording_rule_and_the_checks_block(self):
+        procedure = doc_section(self.doc, "## Live procedure")
+        for literal in ("shape not reproduced", "not-run (instrument", "## Checks"):
+            self.assertIn(literal, procedure, literal)
 
     def test_the_control_proves_skillprobes_own_detours(self):
         for heading in ("## Instrument", "## Live procedure"):
