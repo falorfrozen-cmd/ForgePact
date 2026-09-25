@@ -37,6 +37,14 @@ const CASES = [
     [['.card', 'rgb(20, 21, 22)'], ['.card h2', 'rgb(23, 24, 25)']], 0],
   // No variant listed: the first match, as before the rule.
   ['no variant listed', VAL_PAGE, [['.val', 'rgb(1, 2, 3)']], 0],
+  // The export's value-box shape: a child combinator and its `.off` variant.
+  // The bare `.val` outside any stepper (the panel's `CT only` value) comes
+  // last and non-off, and must never be the pick for `.value-stepper>.val`.
+  ['a child-combinator selector and its variant',
+    '<div class="value-stepper"><span class="val off" style="color:rgb(30,31,32)">off</span></div>'
+      + '<div class="value-stepper"><span class="val" style="color:rgb(33,34,35)">x3</span></div>'
+      + '<span class="val" style="color:rgb(36,37,38)">CT only</span>',
+    [['.value-stepper>.val', 'rgb(33, 34, 35)'], ['.value-stepper>.val.off', 'rgb(30, 31, 32)']], 0],
 ];
 
 const browser = await launchBrowser();
