@@ -1,4 +1,4 @@
-# ForgePact 1.5.0
+# ForgePact 2.0.0
 
 The panel gets three new controls: a list of the mods you have turned on, with
 a button to turn each one off, an on/off switch on every slider, and a choice
