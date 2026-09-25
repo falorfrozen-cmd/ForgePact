@@ -1,18 +1,27 @@
-"""Contract tests for `menulayout`'s stash and bag rows.
+"""Contract tests for `menulayout`'s stash and bag rows, and for the
+`craftprobe` additions the stash and bag research launch needs.
 
-The hub's stash and bag tools (`hs_stash_open`, `hs_stash_close`,
-`hs_stash_tab`, `hs_bag_tab`, `hs_move_item`) click only what `menulayout`
-lists, and identify a tab, a grid or a window by the variables it prints. So
-the listing grows: the stash, bag and inventory objects join the candidate
-table (tests/test_menu_layout_contract.py pins the set), a row prints more of
-the variables an instance carries, and an array-valued variable prints as
+The hub's six stash and bag tools (`hs_give_item`, `hs_stash_open`,
+`hs_stash_close`, `hs_stash_tab`, `hs_bag_tab`, `hs_move_item`) set up game
+state for other tests, so each acts through the runtime by name - the game's
+own routine, called with the shape the research launch logged - and keeps a
+click on a listed row only as the fallback a § Decision line names.
+`menulayout` is the reader that proves each of them: a tab, a grid or a window
+is identified by the variables it prints. So the listing grows: the stash,
+bag and inventory objects join the candidate table
+(tests/test_menu_layout_contract.py pins the set), a row prints more of the
+variables an instance carries, and an array-valued variable prints as
 `[a,b,...]`. It still ships in the player build, so these tests also pin that
 it stays a reader - and that it calls no game script, directly or through a
 builtin that would run one.
 
 The mechanisms the hub tools rely on are measured in one research launch and
-recorded in docs/stash-bag-layout-research.md; its headings and decision keys
-are pinned here so the hub is never written against a key the document lacks.
+recorded in docs/stash-bag-layout-research.md; its headings, its § Results
+columns and its decision keys are pinned here so the hub is never written
+against a key the document lacks. The research-build instrument that launch
+replays the game's calls with (`craftprobe`'s `other:<id>`, `methods`,
+`callm`'s `inst` holder and three rows) is pinned here too, and stays out of
+the player build.
 """
 import os
 import re
@@ -25,7 +34,7 @@ from pathlib import Path
 TESTS_DIR = Path(__file__).resolve().parent
 FORGEPACT_DIR = TESTS_DIR.parent
 PLUGIN_SRC = FORGEPACT_DIR / "plugin" / "ModuleMain.cpp"
-NOTES = FORGEPACT_DIR / "release-notes-v1.4.5.md"
+NOTES = FORGEPACT_DIR / "release-notes-v1.4.6.md"
 README = FORGEPACT_DIR / "README.md"
 DOC = FORGEPACT_DIR / "docs" / "stash-bag-layout-research.md"
 HARNESS = TESTS_DIR / "menu_layout_value_text.cpp"
@@ -34,7 +43,7 @@ if str(TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(TESTS_DIR))
 
 from test_menu_layout_contract import FORBIDDEN, doc_section, helper_signatures  # noqa: E402
-from test_release_hook_contract import function_body  # noqa: E402
+from test_release_hook_contract import function_body, strip_comments, strip_research_blocks  # noqa: E402
 
 # The optional variables a row prints, in order, each only when the instance
 # carries it; `text` stays last and is not one of them. The six first names
@@ -54,13 +63,26 @@ OPTIONAL_FIELDS = (
 # forbids (hooks, events, create/destroy, writes).
 STASH_FORBIDDEN = tuple(FORBIDDEN) + ("script_execute", "CallBuiltinEx")
 
-DOC_HEADINGS = ("## Static search", "## Instrument", "## Live procedure",
-                "## Results", "## Decision")
+DOC_HEADINGS = ("## Static search", "## Static readings", "## Instrument",
+                "## Live procedure", "## Results", "## Decision")
 DECISION_KEYS = (
-    "stashOpenRoute", "interactKey", "moveKeys", "warpRoute", "stashCloseRoute",
-    "stashTabRule", "stashTabState", "bagTabRule", "bagTabState", "cellRule",
-    "itemRule", "moveWholeRoute", "moveOneRoute", "countReader",
+    "giveItemRoute", "warpRoute", "stashOpenRoute", "stashCloseRoute",
+    "stashTabRoute", "stashTabRule", "stashTabState", "bagTabRoute", "bagTabRule",
+    "bagTabState", "cellRule", "itemRule", "moveWholeRoute", "moveOneRoute",
+    "countReader",
 )
+# § Results carries, per by-name call, the shape the game's own call logged
+# beside the shape the replay supplied, so a mismatch is never read as the
+# game refusing the route.
+RESULTS_HEADER = "| Check | Observation | Logged shape | Supplied shape | Control | Date |"
+# The two outcome labels that are never a route negative (the recording rule).
+RECORDING_LABELS = ("shape not reproduced", "not-run (instrument")
+
+# craftprobe's three rows for the stash and bag launch: after the Phase 1k
+# rows, before the control, which stays last.
+CRAFTPROBE_BLOCK = ("// ---- craftprobe: the crafting-materials Phase 0 instrument (issue #14)",
+                    "#endif // FORGEPACT_RELEASE (craftprobe)")
+STASH_ROWS = ("gml_Script_CreateItemNew", "gml_Script_UiCreate", "gml_Script_NetworkSendInventoryUpdate")
 
 
 class StashBagLayoutContract(unittest.TestCase):
@@ -219,6 +241,188 @@ class StashBagResearchDoc(unittest.TestCase):
             self.assertIn(f"`{name}`", instrument, name)
         self.assertIn("[a,b,...]", instrument)
 
+    def test_results_table_carries_logged_and_supplied_shapes(self):
+        results = doc_section(self.doc, "## Results")
+        rows = [line for line in results.split("\n") if line.startswith("|")]
+        self.assertEqual(rows[0], RESULTS_HEADER)
+        # One row per check the live procedure names, each with six cells.
+        checks = [row.split("|")[1].strip() for row in rows[2:]]
+        self.assertEqual(checks, ["dll-hash", "marker", "control"] + [f"P0-{n}" for n in range(1, 11)])
+        for row in rows[2:]:
+            self.assertEqual(row.count("|"), 7, row)
+
+    def test_live_procedure_names_the_outcomes_that_are_not_route_negatives(self):
+        procedure = doc_section(self.doc, "## Live procedure")
+        for label in RECORDING_LABELS:
+            self.assertIn(label, procedure, label)
+        self.assertIn("reproduced", procedure)
+        # The marker the launch checks first is Step 0c's row count.
+        self.assertIn("rows=285", procedure)
+
+    def test_instrument_names_the_phase0_craftprobe_additions(self):
+        instrument = doc_section(self.doc, "## Instrument")
+        for token in ("other:<id>", "methods", "inst", "CreateItemNew", "UiCreate", "NetworkSendInventoryUpdate",
+                      "held by"):
+            self.assertIn(token, instrument, token)
+
+
+class CraftprobePhase0Additions(unittest.TestCase):
+    """Step 0c's `craftprobe` additions (research build only): the replay of a
+    logged call needs its `other`, a closure on an instance needs a holder,
+    and P0-1 and P0-3 reach three routines no row logged before."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.plugin = PLUGIN_SRC.read_text(encoding="utf-8").replace("\r\n", "\n")
+        cls.code = strip_comments(cls.plugin)
+        start, end = CRAFTPROBE_BLOCK
+        cls.block = strip_comments(cls.plugin[cls.plugin.index(start):cls.plugin.index(end)])
+        table = cls.plugin[cls.plugin.index("#define CRAFTPROBE_TARGETS(X)"):]
+        table = table[:table.index("#define CP_DEFINE_DETOUR")]
+        cls.rows = re.findall(r'X\((\w+),\s*"([^"]+)",\s*(\w+)\)', table)
+
+    def body(self, signature):
+        return strip_comments(function_body(self.plugin, signature))
+
+    def test_three_rows_by_sdk_constant_before_the_control(self):
+        constants = [constant for _, _, constant in self.rows]
+        self.assertEqual(len(self.rows), 285)
+        for constant in STASH_ROWS:
+            self.assertEqual(constants.count(constant), 1, constant)
+        at = [constants.index(c) for c in STASH_ROWS]
+        self.assertEqual(at, list(range(at[0], at[0] + 3)), "the three rows sit together, in this order")
+        self.assertEqual(at[0], constants.index("gml_Script_ReportClient") + 1, "after the Phase 1k rows")
+        self.assertEqual(constants[-1], "gml_Script_CheckPlayerInteraction", "the control stays last")
+        self.assertEqual(at[-1] + 1, len(constants) - 1)
+        # Every row's runtime name is the SDK constant's own value.
+        self.assertIn("HeroSiege::Scripts::CONSTANT.data()", self.plugin)
+        shipped = strip_research_blocks(self.plugin)
+        self.assertIn("kPlayerCommands", shipped)   # negative control: the strip keeps player code
+        for safe, label, constant in self.rows:
+            if constant in STASH_ROWS:
+                self.assertNotIn(f'X({safe}, "{label}", {constant})', shipped, label)
+
+    def test_marker_counts_the_rows(self):
+        usage = self.body("static void CpUsage(")
+        first = usage[usage.index("Out("):]
+        self.assertIn("rows=\" + std::to_string(kCpTargetCount)", first[:first.index(";")])
+
+    def test_one_other_parser_serves_call_and_callm(self):
+        self.assertEqual(self.code.count("static bool CpResolveOther("), 1)
+        other = self.body("static bool CpResolveOther(")
+        # Resolved like an id:<n> self, refused with nothing called.
+        at = [other.index(step) for step in ('"instance_exists"', "HhResolveInstance(")]
+        self.assertEqual(at, sorted(at))
+        self.assertIn("nothing was called", other)
+        self.assertNotIn("script_execute", other)
+        for fn in ("static void CpCall(", "static void CpCallMethod("):
+            body = self.body(fn)
+            self.assertIn("CpResolveOther(", body, fn)
+            self.assertIn('"other:"', body, fn)
+            # The other is resolved before the one dispatch.
+            dispatch = "CpDispatchScript(" if fn == "static void CpCall(" else "CpDispatchMethod("
+            self.assertLess(body.index("CpResolveOther("), body.index(dispatch), fn)
+            # The reply prints self and other as the armed lines do.
+            self.assertIn('" other=" + PpDescribeSelf(other)', body, fn)
+
+    def test_both_dispatchers_pass_a_separate_other(self):
+        for fn in ("static CpCallOutcome CpDispatchScript(", "static CpCallOutcome CpDispatchMethod("):
+            body = self.body(fn)
+            self.assertIn('CallBuiltinEx(res, "script_execute", self, other, callArgs)', body, fn)
+            self.assertNotIn("self, self", body, fn)
+            signature = self.code[self.code.index(fn):]
+            self.assertIn("CInstance* self, CInstance* other,", signature[:signature.index("{")], fn)
+
+    def test_methods_reader_calls_nothing_and_writes_nothing(self):
+        self.assertIn('if (sub == "methods") { CpMethods(tok); return; }', self.body("static void CpCommand("))
+        body = self.body("static void CpMethods(")
+        for word in ("script_execute", "CallBuiltinEx", "MmCreateHook", "variable_instance_set", "variable_struct_set",
+                     "CpDispatch"):
+            self.assertNotIn(word, body, word)
+        # It names the script a method wraps and the row naming it, read-only.
+        self.assertIn("CpIsMethod(", body)
+        self.assertIn("CpRowForMethod(", body)
+
+    def test_callm_inst_holder_is_guarded_by_a_row(self):
+        callm = self.body("static void CpCallMethod(")
+        self.assertIn('== "inst"', callm)
+        self.assertIn('"variable_instance_get", { handle, RValue(member) }', callm)
+        guard = callm.index("CpRowForMethod(")
+        self.assertLess(guard, callm.index("CpDispatchMethod("))
+        # The refusal for a method no row names comes before the dispatch.
+        refusal = callm.index("names no craftprobe row")
+        self.assertLess(guard, refusal)
+        self.assertLess(refusal, callm.index("CpDispatchMethod("))
+
+    def test_call_closure_refusal_names_the_method_route(self):
+        call = self.body("static void CpCall(")
+        refusal = call[call.index("runtime.find('@')"):]
+        refusal = refusal[:refusal.index("return;")]
+        self.assertIn("callm", refusal)
+        self.assertIn("methods", refusal)
+
+    def test_additions_stay_out_of_the_player_build(self):
+        shipped = strip_comments(strip_research_blocks(self.plugin))
+        self.assertIn("kPlayerCommands", shipped)   # negative control: the strip keeps player code
+        for symbol in ("CpResolveOther", "CpMethods", "CpCallMethod", "CpDispatchScript", "CpItemHookName"):
+            self.assertNotIn(symbol, shipped, symbol)
+
+    # --- the CreateItemNew row under this build's own item hooks -------------
+    # The research build's item-inspect hook swaps CreateItemNew's table entry
+    # at setup, table-only. The row detours the saved original instead (the
+    # shape TgProbeAttach ships), and reports the function held when another
+    # install already detoured it inline - decided by the address, never by a
+    # flag - so P0-1's check is `not-run (instrument: held ...)`, not failed.
+
+    def test_resolver_falls_back_to_the_saved_original_only_for_create_item_new(self):
+        resolver = self.body("static PVOID CpResolve(")
+        self.assertEqual(resolver.count("g_Orig_CreateItemNew"), 2, "read in the one fallback only")
+        branch = resolver[:resolver.index("fn = (PVOID)g_Orig_CreateItemNew;")]
+        branch = branch[branch.rindex("if ("):]
+        # Only under the SDK constant, and only when the table entry is not the
+        # game's code.
+        self.assertIn("HeroSiege::Scripts::gml_Script_CreateItemNew", branch)
+        self.assertIn("!AddrIsExecutableInModule(GetModuleHandleA(nullptr), fn)", branch)
+        # The fallback still passes the same executable-code gate before return.
+        gate = resolver.rindex("if (!AddrIsExecutableInModule(GetModuleHandleA(nullptr), fn))")
+        self.assertLess(resolver.index("fn = (PVOID)g_Orig_CreateItemNew;"), gate)
+        self.assertLess(gate, resolver.index("return fn;"))
+        self.assertEqual(resolver.count("return fn;"), 1)
+        # Negative control: the fallback names no other row's original.
+        self.assertIsNone(re.search(r"g_Orig_(?!CreateItemNew)\w+", resolver))
+
+    def test_an_inline_detoured_create_item_new_is_held_before_resolving(self):
+        install = self.body("static void CpInstall(")
+        held = install.index("held by \" + CpItemHookName(true)")
+        condition = install[:held]
+        condition = condition[condition.rindex("if ("):]
+        self.assertIn("HeroSiege::Scripts::gml_Script_CreateItemNew", condition)
+        # Held is decided by the saved original's address, not by a flag.
+        self.assertIn("!AddrIsExecutableInModule(mainMod, (const void*)g_Orig_CreateItemNew)", condition)
+        for flag in ("g_CustomForgeHooksActive", "g_TruthOn"):
+            self.assertNotIn(flag, condition, flag)
+        self.assertLess(held, install.index("CpResolve(t, why)"))
+        self.assertLess(held, install.index("MmCreateHook("))
+        self.assertIn("++held", install[held:install.index("CpResolve(t, why)")])
+        # The flags only name the install in the message.
+        name = self.body("static const char* CpItemHookName(")
+        self.assertIn("g_CustomForgeHooksActive", name)
+        self.assertIn("g_TruthOn", name)
+
+    def test_the_detoured_line_marks_the_table_only_path(self):
+        resolver = self.body("static PVOID CpResolve(")
+        self.assertIn('why = std::string("under table-only ") + CpItemHookName(false);', resolver)
+        install = self.body("static void CpInstall(")
+        detoured = install[install.index('"craftprobe hook: detoured %s at exe+0x%llX"'):]
+        detoured = detoured[:detoured.index("++ok;")]
+        self.assertIn('why.empty() ? std::string() : " (" + why + ")"', detoured)
+        self.assertEqual(self.body("static const char* CpItemHookName(").count('"bp_citemn"'), 1)
+
+    def test_the_item_inspect_hook_still_swaps_create_item_new_table_only(self):
+        inspect = self.body("static void InstallItemInspectHooks(")
+        self.assertIn('HookOneScriptTable("CreateItemNew",', inspect)
+        self.assertNotIn('HookOneScript("CreateItemNew",', inspect)
+
 
 class StashBagDocumentation(unittest.TestCase):
     def test_release_notes_mention_the_stash_and_the_bag(self):
@@ -229,6 +433,7 @@ class StashBagDocumentation(unittest.TestCase):
         bullet = notes[start:notes.find("\n- ", start)]
         self.assertIn("stash", bullet)
         self.assertIn("bag", bullet)
+        self.assertIn("grid cells", bullet)
 
     def test_readme_documents_the_new_fields(self):
         readme = README.read_text(encoding="utf-8").replace("\r\n", "\n")
@@ -238,6 +443,27 @@ class StashBagDocumentation(unittest.TestCase):
             self.assertIn(name, section, name)
         self.assertIn("[a,b,...]", section)
         self.assertIn("stash", section)
+        for token in ("<ref>", "<object>", "<ptr>", "<kind N>", "<read-failed>"):
+            self.assertIn(token, section, token)
+
+    def test_notes_file_is_the_unpublished_version(self):
+        self.assertEqual(NOTES.name, "release-notes-v1.4.6.md")
+
+    def test_readme_and_notes_agree_on_the_drag_object(self):
+        # Whether UI_Inventory_Drag_obj holds the item on the cursor is not
+        # measured (prospect-window-research.md attributes the held item to
+        # s_InventoryDrag), so both name it as what it is and claim no more.
+        readme = README.read_text(encoding="utf-8").replace("\r\n", "\n")
+        start = readme.index("## Menu layout")
+        texts = {"README": readme[start:readme.index("\n## ", start + 1)]}
+        if NOTES.is_file():
+            notes = NOTES.read_text(encoding="utf-8").replace("\r\n", "\n")
+            at = notes.index("`menulayout`")
+            texts["notes"] = notes[at:notes.find("\n- ", at)]
+        for where, text in texts.items():
+            flat = " ".join(text.split())
+            self.assertIn("the inventory's drag object (`UI_Inventory_Drag_obj`)", flat, where)
+            self.assertNotIn("cursor", flat, where)
 
 
 if __name__ == "__main__":

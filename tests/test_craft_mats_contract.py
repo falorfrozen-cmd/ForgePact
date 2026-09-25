@@ -50,6 +50,12 @@ strip_research_blocks = _release.strip_research_blocks
 function_body = _release.function_body
 strip_comments = _release.strip_comments
 
+STASH_BAG_DOC = ROOT / "docs" / "stash-bag-layout-research.md"
+# The three rows toolkit #147's stash and bag phase 0 added after the Phase 1k
+# rows (tests/test_stash_bag_layout_contract.py pins them); the pins below move
+# only where those rows, or the separate `other` they brought, invalidate them.
+STASH_BAG_ROWS = ("gml_Script_CreateItemNew", "gml_Script_UiCreate", "gml_Script_NetworkSendInventoryUpdate")
+
 BLOCK_START = "// ---- craftprobe: the crafting-materials Phase 0 instrument (issue #14)"
 BLOCK_END = "#endif // FORGEPACT_RELEASE (craftprobe)"
 
@@ -229,7 +235,13 @@ class CraftMatsContractTests(unittest.TestCase):
         ):
             self.assertIn("gml_Script_" + anchor, names)
         # Every row's runtime name is written down where the live session reads it.
+        # Toolkit #147's three rows are read by the stash and bag launch, so
+        # they are written down in that research; this record stays #14's.
+        stash_doc = STASH_BAG_DOC.read_text(encoding="utf-8")
         for label, name in zip(labels, names):
+            if name in STASH_BAG_ROWS:
+                self.assertIn(f"`{label}`", stash_doc, f"row {label} missing from {STASH_BAG_DOC.name}")
+                continue
             self.assertIn(name, self.doc, f"row {label}: {name} missing from the research doc")
         # The table spells names through the SDK constant, never as a literal.
         entry = self.plugin[self.plugin.index("#define CP_ENTRY"):self.plugin.index("#undef CP_ENTRY")]
@@ -339,7 +351,10 @@ class CraftMatsContractTests(unittest.TestCase):
             self.assertIn("nothing was called", lines[i])
             self.assertIn("return", lines[i] + lines[i + 1] + lines[i + 2], lines[i])
         # It prints what was supplied, the instance either side and the answer.
-        self.assertLess(call.index('"craftprobe call: " + name + " self=other="'), write)
+        # (Toolkit #147: with `other:<id>` the line prints self= and other=
+        # apart; without it, self=other= as before.)
+        self.assertLess(call.index('"craftprobe call: " + name + who'), write)
+        self.assertIn('" self=other=" + PpDescribeSelf(inst)', call)
         self.assertLess(call.index('"  before: "'), write)
         self.assertGreater(call.index('"  after:  "'), write)
         self.assertIn("NOT dispatched", call)
@@ -829,8 +844,9 @@ class CraftMatsContractTests(unittest.TestCase):
         for row in self.CRAFT_ROUTE_ROWS:
             self.assertIn(row, labels, row + " is not a craftprobe row")
         # Phase 1e's 252 rows (none added for Phase 1g), Phase 1h's two,
-        # Phase 1j's 24 (none for Phase 1i) and Phase 1k's four.
-        self.assertEqual(len(self.rows), 282)
+        # Phase 1j's 24 (none for Phase 1i) and Phase 1k's four; then toolkit
+        # #147's three (STASH_BAG_ROWS).
+        self.assertEqual(len(self.rows), 282 + len(STASH_BAG_ROWS))
         detour = self.plugin[self.plugin.index("#define CRAFTPROBE_DETOUR(SAFE, LABEL)"):]
         detour = detour[:detour.index("#define CRAFTPROBE_TARGETS(X)")]
         # The enclosing row is read before this call's own frame is entered, the
@@ -1116,8 +1132,9 @@ class CraftMatsContractTests(unittest.TestCase):
         at = [constants.index(c) for c in self.PHASE1J_ROWS]
         self.assertEqual(at, list(range(at[0], at[0] + 24)), "the Phase 1j rows sit together, in the doc's order")
         self.assertEqual(constants[-1], "gml_Script_CheckPlayerInteraction", "the control stays the table's last row")
-        # Phase 1k's four rows sit between them and the control.
-        self.assertEqual(at[-1] + 1 + len(self.PHASE1K_ROWS), len(constants) - 1)
+        # Phase 1k's four rows, then toolkit #147's three, sit between them
+        # and the control.
+        self.assertEqual(at[-1] + 1 + len(self.PHASE1K_ROWS) + len(STASH_BAG_ROWS), len(constants) - 1)
         labels = {constant: label for _, label, constant in self.rows}
         for constant in self.PHASE1J_ROWS:
             self.assertNotIn(labels[constant], self.CRAFT_ROUTE_ROWS)
@@ -1149,7 +1166,9 @@ class CraftMatsContractTests(unittest.TestCase):
         self.assertIn('if (sub == "callm") { CpCallMethod(tok); return; }', self.body("static void CpCommand("))
         dispatch = self.body("static CpCallOutcome CpDispatchMethod(")
         self.assertIn("std::vector<RValue> callArgs{ method };", dispatch)
-        self.assertIn('CallBuiltinEx(res, "script_execute", self, self, callArgs)', dispatch)
+        # Toolkit #147: the other is passed separately (the self when `callm`
+        # is given no `other:<id>`).
+        self.assertIn('CallBuiltinEx(res, "script_execute", self, other, callArgs)', dispatch)
         self.assertRegex(dispatch, r'catch \(\.\.\.\) \{ return CpCallOutcome::Threw; \}')
         self.assertIn("AurieSuccess(st) ? CpCallOutcome::Ran : CpCallOutcome::Failed", dispatch)
         code = "\n".join(self.body(fn) for fn in (
@@ -1369,7 +1388,9 @@ class CraftMatsContractTests(unittest.TestCase):
         self.assertEqual(at, list(range(at[0], at[0] + 4)), "the Phase 1k rows sit together, in the doc's order")
         self.assertEqual(at[0], constants.index(self.PHASE1J_ROWS[-1]) + 1, "the Phase 1k rows follow the Phase 1j rows")
         self.assertEqual(constants[-1], "gml_Script_CheckPlayerInteraction", "the control stays the table's last row")
-        self.assertEqual(at[-1] + 1, len(constants) - 1)
+        # Toolkit #147's three rows follow them, before the control.
+        self.assertEqual(at[-1] + 1 + len(STASH_BAG_ROWS), len(constants) - 1)
+        self.assertEqual([constants.index(c) for c in STASH_BAG_ROWS], list(range(at[-1] + 1, at[-1] + 4)))
         labels = {constant: label for _, label, constant in self.rows}
         getter = self.body("static bool CpIsProfileGetter(")
         for constant in self.PHASE1K_ROWS:
@@ -1410,7 +1431,7 @@ class CraftMatsContractTests(unittest.TestCase):
         # member as read otherwise (Live 1j's shape, unchanged).
         self.assertIn("RValue callee = method;", callm)
         self.assertIn("callee = bound;", callm)
-        self.assertIn("CpDispatchMethod(callee, inst, args, res, st)", callm)
+        self.assertIn("CpDispatchMethod(callee, inst, other, args, res, st)", callm)
         self.assertLess(callm.index("RValue callee = method;"), callm.index("callee = bound;"))
         # The bound value is a method or the command is refused, naming what was
         # supplied; nothing is called.
@@ -1485,7 +1506,7 @@ class CraftMatsContractTests(unittest.TestCase):
         # call and its use. So `call` keeps what its own dispatch returned, in
         # a slot of its own that no detour writes, and `kept:` reads it first.
         call = self.body("static void CpCall(")
-        dispatch = call.index("CpDispatchScript(name, inst, args, res, st)")
+        dispatch = call.index("CpDispatchScript(name, inst, other, args, res, st)")
         keep = call.index("CpKeepCallReturn(*t, res, callNo)")
         self.assertLess(dispatch, keep)
         # Only a call that ran keeps anything: the keep sits in the branch
@@ -1547,7 +1568,7 @@ class CraftMatsContractTests(unittest.TestCase):
         # and names why when the dispatch did not return, and `kept:` refuses
         # on that rather than answering with anything else.
         call = self.body("static void CpCall(")
-        dispatch = call.index("CpDispatchScript(name, inst, args, res, st)")
+        dispatch = call.index("CpDispatchScript(name, inst, other, args, res, st)")
         forget = call.index("CpForgetCallReturn(*t,")
         self.assertLess(forget, dispatch, "the slot is emptied before the dispatch")
         # Arguments are resolved - `kept:` read - before the slot is emptied.

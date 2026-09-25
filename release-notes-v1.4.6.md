@@ -7,7 +7,8 @@
   to find buttons on the game window instead of clicking fixed spots. It now
   also lists the stash window and the stash in town, the stash and bag tab
   buttons, the item grids with their size in grid cells, the split-stack
-  dialog and your character, and prints a few more of each one's own settings
+  dialog, the inventory's drag object (`UI_Inventory_Drag_obj`) and your
+  character, and prints a few more of each one's own settings
   beside its position. That is the groundwork for `hs-drive` opening the stash
   and moving items in a test session without anyone at the keyboard; those
   tools are not in this release. Nothing in play changes, and there is no new

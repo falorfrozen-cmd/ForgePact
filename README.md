@@ -561,22 +561,24 @@ same way.
 The listing also covers the town stash and the bag: the windows that show
 the bag (among them the stash window), the stash's tab strip and tab
 buttons, the bag's tab buttons, the item grids, the split-stack dialog, the
-stash drop-down and Socketable container, close buttons, the item held on
-the cursor, the inventory data holder, and two objects that live in the
-room rather than on screen - the stash in town and the player. For those two
-`gui=` is a room position and `win=` means nothing. Where `...` stands in the
-row above, a row prints whichever of these the instance carries, in this
-order: `label`, `name`, `slot`, `index`, `page`, `selected`,
-`uiNodeCallstack`, `activationArgs`, `enabled`, `tabNumber`, `tabType`,
-`stashTabSelected`, `nodeGridWidth`, `nodeGridHeight`, `gridScale`,
-`gridName`. An array value prints as `[a,b,...]` (the first 32 elements,
-then `,...+N`), a nested array as `<array>`, and a reference, struct or
-pointer by kind only, as `<ref>`, `<object>` or `<ptr>`. Which of those, if any, tells one stash or bag tab from another is not
-measured yet; phase 0 of
+stash drop-down and Socketable container, close buttons, the inventory's
+drag object (`UI_Inventory_Drag_obj`), the inventory data holder, and two
+objects that live in the room rather than on screen - the stash in town and
+the player. For those two `gui=` is a room position and `win=` means
+nothing. Where `...` stands in the row above, a row prints whichever of
+these the instance carries, in this order: `label`, `name`, `slot`,
+`index`, `page`, `selected`, `uiNodeCallstack`, `activationArgs`,
+`enabled`, `tabNumber`, `tabType`, `stashTabSelected`, `nodeGridWidth`,
+`nodeGridHeight`, `gridScale`, `gridName`. An array value prints as
+`[a,b,...]` (the first 32 elements, then `,...+N`), a nested array as
+`<array>`, a reference, struct or pointer by kind only, as `<ref>`,
+`<object>` or `<ptr>`, any other kind as `<kind N>`, and a value that could
+not be read as `<read-failed>`. Which of those, if any, tells one stash or
+bag tab from another is not measured yet; phase 0 of
 [`docs/stash-bag-layout-research.md`](docs/stash-bag-layout-research.md)
-will record it. An older ForgePact answers `command unavailable in player build:
-menulayout`. How the positions were measured, and which objects are the save
-cards and `PLAY`, is in
+will record it. An older ForgePact answers `command unavailable in player
+build: menulayout`. How the positions were measured, and which objects are
+the save cards and `PLAY`, is in
 [`docs/menu-layout-research.md`](docs/menu-layout-research.md).
 
 ## 🔧 How to use

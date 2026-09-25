@@ -25392,6 +25392,12 @@ static void CpAfter(const char* safe, const char* label, long n, bool logged, bo
     /* Phase 1k round 1: the flag a failed hash check raises, so `hash-accept`'s */ \
     /* "ReportClient did not fire" rests on a row that would have seen it.     */ \
     X(ReportClient, "ReportClient", gml_Script_ReportClient) \
+    /* Toolkit #147's stash and bag phase 0 (docs/stash-bag-layout-research.md, */ \
+    /* Instrument): the from-definition creator the loader reaches, the window */ \
+    /* creator the stash's open calls, and the grid handlers' network update.  */ \
+    X(CreateItemNew, "CreateItemNew", gml_Script_CreateItemNew) \
+    X(UiCreate, "UiCreate", gml_Script_UiCreate) \
+    X(NetworkSendInventoryUpdate, "NetworkSendInventoryUpdate", gml_Script_NetworkSendInventoryUpdate) \
     /* positive control: fires from every interactable's Step event */ \
     X(CheckPlayerInteraction, "CheckPlayerInteraction", gml_Script_CheckPlayerInteraction)
 
@@ -25558,11 +25564,31 @@ static bool CpIsProfileGetter(const CpTarget& t)
         || name == HeroSiege::Scripts::gml_Script_GetPlayerProfileObj;
 }
 
+// Which install holds CreateItemNew, for a message only (toolkit #147):
+// whether it is held is decided by the addresses (CpInstall, CpResolve), never
+// by these flags. Custom Forge and Item Truth install both routes at setup,
+// before the research build's table-only bp_citemn, which installs only if
+// neither did.
+static const char* CpItemHookName(bool inlineDetour)
+{
+    if (g_CustomForgeHooksActive) return "custom forge";
+    if (g_TruthOn) return "item truth";
+    return inlineDetour ? "custom forge / item truth" : "bp_citemn";
+}
+
 // Same resolution as PpResolve: name -> CScript -> the compiled function. The
 // address is refused unless it is committed, executable code inside
 // Hero_Siege.exe's own image - which also refuses an entry some table hook
 // already swapped for a plugin detour. The check comes before MmCreateHook,
 // never after.
+//
+// One exception, toolkit #147 (docs/stash-bag-layout-research.md, Instrument):
+// this build's own item-inspect hook swaps CreateItemNew's table entry at
+// setup, table-only (bp_citemn), and keeps the game's function as its saved
+// original. That original is detoured instead - TgProbeAttach's shape - so the
+// row sees both routes; it still has to pass the same executable-code check.
+// On that path `why` names it for the detoured line; the address is never
+// read off anything but the saved original the install resolved by name.
 static PVOID CpResolve(const CpTarget& t, std::string& why)
 {
     PVOID p = nullptr;
@@ -25575,6 +25601,11 @@ static PVOID CpResolve(const CpTarget& t, std::string& why)
     }
     PVOID fn = (PVOID)sc->m_Functions->m_ScriptFunction;
     if (!fn) { why = "refused (script record carries no function)"; return nullptr; }
+    if (std::string_view(t.runtimeName) == HeroSiege::Scripts::gml_Script_CreateItemNew && g_Orig_CreateItemNew
+        && !AddrIsExecutableInModule(GetModuleHandleA(nullptr), fn)) {
+        fn = (PVOID)g_Orig_CreateItemNew;
+        why = std::string("under table-only ") + CpItemHookName(false);
+    }
     if (!AddrIsExecutableInModule(GetModuleHandleA(nullptr), fn)) {
         why = "refused (function address is not executable code inside Hero_Siege.exe - a table hook may hold this entry)";
         return nullptr;
@@ -25611,6 +25642,19 @@ static void CpInstall(const std::vector<std::string>& filters)
             ++held;
             continue;
         }
+        // Toolkit #147: Custom Forge or Item Truth installs CreateItemNew
+        // through HookOneScript, whose inline detour leaves its saved
+        // original a trampoline, not the game's code. A second detour would
+        // fail, so the row is held. Decided by that address; a HookOneScript
+        // that fell back to TABLE-ONLY keeps the game's function there, and
+        // CpResolve then detours it.
+        if (std::string_view(t.runtimeName) == HeroSiege::Scripts::gml_Script_CreateItemNew && g_Orig_CreateItemNew
+            && !AddrIsExecutableInModule(mainMod, (const void*)g_Orig_CreateItemNew)) {
+            Out(std::string("craftprobe hook: ") + t.label + " held by " + CpItemHookName(true) + " (inline detour; its install"
+                " owns this function, neither detoured nor failed here)");
+            ++held;
+            continue;
+        }
         std::string why;
         PVOID src = CpResolve(t, why);
         if (!src) { Out(std::string("craftprobe hook: ") + t.label + " " + why); ++failed; continue; }
@@ -25626,11 +25670,12 @@ static void CpInstall(const std::vector<std::string>& filters)
         char b[320];
         sprintf_s(b, "craftprobe hook: detoured %s at exe+0x%llX", t.label,
                   (unsigned long long)((char*)src - (char*)mainMod));
-        Out(b);
+        // CpResolve names the one path it took around a table-only hook.
+        Out(std::string(b) + (why.empty() ? std::string() : " (" + why + ")"));
         ++ok;
     }
     Out("craftprobe hook: " + std::to_string(ok) + " detoured, " + std::to_string(failed) + " failed"
-        + (held ? ", " + std::to_string(held) + " held by mapkeep or craftmats" : std::string())
+        + (held ? ", " + std::to_string(held) + " held by mapkeep, craftmats or an item hook" : std::string())
         + (skipped ? ", " + std::to_string(skipped) + " not selected" : std::string()) + ".");
     Out("  Next: `craftprobe arm budget=N`, then `craftprobe show` - CheckPlayerInteraction must already be climbing, or nothing here counts.");
 }
@@ -27260,11 +27305,17 @@ static void CpDump()
 // apart: no script found (before any script_execute), script_execute threw (a
 // GML runtime error unwinds as a C++ exception, which the catch takes), or it
 // returned a failure status. Every reply names the row's call number.
+//
+// Toolkit #147 (docs/stash-bag-layout-research.md, Instrument): the dispatch
+// takes the other separately. A stash tab click logs its tab button as self
+// and the stash window as other, and a replay that passed the self twice
+// could not reproduce that shape. `call` passes the self as the other when no
+// `other:<id>` is given, which is the shape every earlier trial used.
 
 enum class CpCallOutcome { NoScript, Threw, Failed, Ran };
 
-static CpCallOutcome CpDispatchScript(const std::string& name, CInstance* self, const std::vector<RValue>& args,
-                                      RValue& res, AurieStatus& st)
+static CpCallOutcome CpDispatchScript(const std::string& name, CInstance* self, CInstance* other,
+                                      const std::vector<RValue>& args, RValue& res, AurieStatus& st)
 {
     double idx = -1;
     const RValue index = g_Yytk->CallBuiltin("asset_get_index", { RValue(name) });
@@ -27272,7 +27323,7 @@ static CpCallOutcome CpDispatchScript(const std::string& name, CInstance* self, 
     std::vector<RValue> callArgs{ index };
     for (const RValue& a : args) callArgs.push_back(a);
     st = AURIE_EXTERNAL_ERROR;
-    try { st = g_Yytk->CallBuiltinEx(res, "script_execute", self, self, callArgs); }
+    try { st = g_Yytk->CallBuiltinEx(res, "script_execute", self, other, callArgs); }
     catch (...) { return CpCallOutcome::Threw; }
     return AurieSuccess(st) ? CpCallOutcome::Ran : CpCallOutcome::Failed;
 }
@@ -27356,9 +27407,37 @@ static std::string CpWhereId(const std::string& sel, const RValue& handle)
     return sel + " " + PpObjectName(HhResolveInstance(handle)) + " x=" + MpVar(handle, "x") + " y=" + MpVar(handle, "y");
 }
 
+// `other:<id>` (toolkit #147, docs/stash-bag-layout-research.md, Instrument):
+// the instance `call` and `callm` pass as the other, resolved the way an
+// `id:<n>` self is - instance_exists, then by name through HhResolveInstance.
+// The one parser for both, and for the skill research's `skillprobe call`.
+// `spec` is the whole token. Prints the refusal and returns false, with
+// nothing called, when it does not resolve; a logged other that is not an
+// instance cannot be supplied here at all.
+static bool CpResolveOther(const std::string& tag, const std::string& spec, CInstance*& other)
+{
+    other = nullptr;
+    const std::string idText = spec.substr(std::string("other:").size());
+    long long id = -1;
+    size_t used = 0;
+    try { id = std::stoll(idText, &used); } catch (...) { used = 0; }
+    if (idText.empty() || used != idText.size()) {
+        Out(tag + ": refused - " + spec + ": other:<id> needs a whole instance id; nothing was called");
+        return false;
+    }
+    const RValue handle((double)id);
+    bool alive = false;
+    try { alive = g_Yytk->CallBuiltin("instance_exists", { handle }).ToBoolean(); } catch (...) {}
+    if (!alive) { Out(tag + ": refused - " + spec + ": instance_exists is false; nothing was called"); return false; }
+    other = HhResolveInstance(handle);
+    if (!other) { Out(tag + ": refused - " + spec + " exists but did not resolve to an instance; nothing was called"); return false; }
+    return true;
+}
+
 static void CpCall(const std::vector<std::string>& tok)
 {
-    const char* usage = "craftprobe call: usage -> call <Row> <Obj> <nth> [args ...] confirm | call <Row> id:<n> [args ...] confirm "
+    const char* usage = "craftprobe call: usage -> call <Row> <Obj> <nth> [other:<id>] [args ...] confirm"
+                        " | call <Row> id:<n> [other:<id>] [args ...] confirm "
                         "(arg: number | true | false | undefined | text | fp:<fingerprint> | fp9:<fingerprint> | kept:<row> | map9 | map9:<key>"
                         " | path:<Obj|global|id:n>.<a.b.c>)";
     if (tok.size() < 4 || Lower(tok.back()) != "confirm") {
@@ -27369,7 +27448,7 @@ static void CpCall(const std::vector<std::string>& tok)
     if (!t) { Out("craftprobe call: refused - '" + tok[1] + "' is not a craftprobe row; nothing was called"); return; }
     const std::string runtime(t->runtimeName);
     if (runtime.rfind("gml_Script_", 0) != 0 || runtime.find('@') != std::string::npos) {
-        Out(std::string("craftprobe call: refused - ") + t->label + " is a closure or struct method, not a script this route calls by name; nothing was called");
+        Out(std::string("craftprobe call: refused - ") + t->label + " is a closure or struct method, not a script this route calls by name; nothing was called (a method value runs through `callm`: `craftprobe methods <Obj> <nth>|id:<n>` names the variable holding it, then `callm ... inst <variable>` on the instance or `callm ... path:<...> <member>` in a struct)");
         return;
     }
     if (CpIsProfileGetter(*t)) {
@@ -27394,18 +27473,31 @@ static void CpCall(const std::vector<std::string>& tok)
         if (!MpResolve("craftprobe call (refused, nothing was called)", tok[2], nth, handle, inst, total)) return;
     }
     auto where = [&]() { return byId ? CpWhereId(tok[2], handle) : MpWhere(tok[2], nth, handle); };
+    // Toolkit #147: `other:<id>` directly after the self; without it the
+    // other is the self, the shape every earlier trial used.
+    size_t argsFrom = argsAt;
+    CInstance* other = inst;
+    const bool otherGiven = argsFrom + 1 < tok.size() && Lower(tok[argsFrom]).rfind("other:", 0) == 0;
+    if (otherGiven) {
+        if (!CpResolveOther("craftprobe call", tok[argsFrom], other)) return;
+        ++argsFrom;
+    }
 
     std::vector<RValue> args;
     std::string supplied;
-    for (size_t i = argsAt; i + 1 < tok.size(); ++i) {
+    for (size_t i = argsFrom; i + 1 < tok.size(); ++i) {
         const std::string& a = tok[i];
         RValue v;
         if (!CpResolveArg("craftprobe call", a, inst, v)) return;
-        supplied += " a" + std::to_string(i - argsAt) + "=" + a + "(" + PpBackingShape(v) + ")";
+        supplied += " a" + std::to_string(i - argsFrom) + "=" + a + "(" + PpBackingShape(v) + ")";
         args.push_back(v);
     }
     const std::string name = runtime.substr(std::string("gml_Script_").size());
-    Out("craftprobe call: " + name + " self=other=" + PpDescribeSelf(inst) + " argc=" + std::to_string(args.size()) + supplied);
+    // Self and other in the form the armed lines print them (CpObserve), so
+    // the supplied shape compares with the logged one field by field.
+    const std::string who = otherGiven ? " self=" + PpDescribeSelf(inst) + " other=" + PpDescribeSelf(other)
+                                       : " self=other=" + PpDescribeSelf(inst);
+    Out("craftprobe call: " + name + who + " argc=" + std::to_string(args.size()) + supplied);
     Out("  before: " + where());
     // The number the row's own detour gives this call on its `<Row> #<n>`
     // entry line: its next count, read here on the game thread that runs the
@@ -27421,7 +27513,7 @@ static void CpCall(const std::vector<std::string>& tok)
     CpForgetCallReturn(*t, tried + " did not return");
     RValue res;
     AurieStatus st = AURIE_SUCCESS;
-    const CpCallOutcome outcome = CpDispatchScript(name, inst, args, res, st);
+    const CpCallOutcome outcome = CpDispatchScript(name, inst, other, args, res, st);
     std::string lost;
     if (outcome == CpCallOutcome::NoScript) {
         Out("  NOT dispatched " + no + ": asset_get_index found no script");
@@ -27462,16 +27554,17 @@ static void CpCall(const std::vector<std::string>& tok)
 // write, and each refusal naming what was supplied.
 
 // Route A of InvokeMethodValue, reused: the runtime's own dispatcher reached by
-// name, script_execute(method, args...) with self = other = the instance. Never
-// route B - no CScriptRef is read here - and no petquest counter moves. The
-// three outcomes are `call`'s (no script to find: the value is the method).
-static CpCallOutcome CpDispatchMethod(const RValue& method, CInstance* self, const std::vector<RValue>& args,
-                                      RValue& res, AurieStatus& st)
+// name, script_execute(method, args...) with the instance as self and the
+// other `callm` was given (the self again without `other:<id>`, toolkit #147).
+// Never route B - no CScriptRef is read here - and no petquest counter moves.
+// The three outcomes are `call`'s (no script to find: the value is the method).
+static CpCallOutcome CpDispatchMethod(const RValue& method, CInstance* self, CInstance* other,
+                                      const std::vector<RValue>& args, RValue& res, AurieStatus& st)
 {
     std::vector<RValue> callArgs{ method };
     for (const RValue& a : args) callArgs.push_back(a);
     st = AURIE_EXTERNAL_ERROR;
-    try { st = g_Yytk->CallBuiltinEx(res, "script_execute", self, self, callArgs); }
+    try { st = g_Yytk->CallBuiltinEx(res, "script_execute", self, other, callArgs); }
     catch (...) { return CpCallOutcome::Threw; }
     return AurieSuccess(st) ? CpCallOutcome::Ran : CpCallOutcome::Failed;
 }
@@ -27597,6 +27690,77 @@ static bool CpResolveStruct(const std::string& tag, const std::string& spec, CIn
     return true;
 }
 
+// `methods <Obj> <nth>|id:<n>` (toolkit #147, docs/stash-bag-layout-research.md,
+// Instrument): which variables of an instance hold a method, and the script
+// each wraps, so a closure the Create event stored on the instance (the town
+// stash's own handler) can be handed to `callm ... inst <variable>` by name.
+// Hook-free and call-free: names from variable_instance_get_names and
+// variable_struct_get_names, the method test from CpIsMethod, the script from
+// CpRowForMethod's read-only method_get_index and script_get_name. It looks one
+// level into a plain-struct variable and no further, never into an instance,
+// an array or a data structure.
+static constexpr int kCpMethodsMaxLines = 80;      // method lines one `methods` prints (every one is counted)
+
+static void CpMethods(const std::vector<std::string>& tok)
+{
+    const char* usage = "craftprobe methods: usage -> methods <Obj> <nth> | methods id:<n>; nothing read";
+    const bool byId = tok.size() >= 2 && Lower(tok[1]).rfind("id:", 0) == 0;
+    if (tok.size() != (byId ? 2u : 3u) || (!byId && Lower(tok[1]) == "global")) { Out(usage); return; }
+    const std::string tag = "craftprobe methods " + tok[1] + (byId ? std::string() : " " + tok[2]);
+    try {
+        RValue cur;
+        long long rootId = -1;
+        std::string where;
+        if (!CpVarRoot(tag, tok, byId, false, cur, rootId, where)) return;
+        const std::string sel = byId ? tok[1] : tok[1] + " " + tok[2];
+        const RValue names = g_Yytk->CallBuiltin("variable_instance_get_names", { cur });
+        const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+        Out(tag + " (" + where + "): vars=" + std::to_string(n) + ", method values listed, none called");
+        int found = 0, named = 0, structs = 0, unreadable = 0;
+        // One method value: its script, the row naming it, and the `callm`
+        // holder that reaches it (`inst` only when a row names it).
+        auto report = [&](const std::string& path, const std::string& holder, const RValue& v) {
+            std::string via;
+            if (!CpIsMethod(v, via)) return false;
+            std::string script;
+            const CpTarget* row = CpRowForMethod(v, script);
+            ++found;
+            if (row) ++named;
+            if (found <= kCpMethodsMaxLines)
+                Out("  " + path + " = method (asked " + via + ") script=" + (script.empty() ? std::string("<not named>") : script)
+                    + " row=" + (row ? std::string(row->label) : std::string("none"))
+                    + (row || holder.rfind("path:", 0) == 0 ? " -> callm " + sel + " " + holder : std::string()));
+            return true;
+        };
+        for (int i = 0; i < n; ++i) {
+            std::string name;
+            RValue v;
+            try {
+                name = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) }).ToString();
+                v = g_Yytk->CallBuiltin("variable_instance_get", { cur, RValue(name) });
+            } catch (...) { ++unreadable; continue; }
+            try {
+                if (report(name, "inst " + name, v)) continue;
+                if (!ApIsPlainStruct(v)) continue;
+                ++structs;
+                const RValue members = g_Yytk->CallBuiltin("variable_struct_get_names", { v });
+                const int m = (int)g_Yytk->CallBuiltin("array_length", { members }).ToDouble();
+                for (int j = 0; j < m; ++j) {
+                    try {
+                        const std::string member = g_Yytk->CallBuiltin("array_get", { members, RValue((double)j) }).ToString();
+                        report(name + "." + member, "path:id:" + std::to_string(rootId) + "." + name + " " + member,
+                               g_Yytk->CallBuiltin("variable_struct_get", { v, RValue(member) }));
+                    } catch (...) { ++unreadable; }
+                }
+            } catch (...) { ++unreadable; }
+        }
+        Out(tag + ": " + std::to_string(found) + " method(s), " + std::to_string(named) + " named by a craftprobe row"
+            + (found > kCpMethodsMaxLines ? " (" + std::to_string(kCpMethodsMaxLines) + " printed)" : std::string())
+            + "; " + std::to_string(structs) + " plain-struct variable(s) looked into, one level"
+            + (unreadable ? "; " + std::to_string(unreadable) + " unreadable" : std::string()));
+    } catch (...) { Out(tag + ": read failed"); }
+}
+
 // `callm <Obj> <nth>|id:<n> <struct> <member> [args ...] [bind] confirm`: ONE
 // invocation of a method-valued member of a struct, by name, self = other = the
 // named instance, whose `fp:`/`fp9:` lookups are also made with that self.
@@ -27609,12 +27773,23 @@ static bool CpResolveStruct(const std::string& tag, const std::string& spec, CIn
 // the runtime's own `method` builtin - HashRouteMethod's route, by name - after
 // every precondition below and before the one dispatch, which then gets the
 // bound value. Without `bind` the command is Live 1j's, unchanged.
+//
+// Toolkit #147 (docs/stash-bag-layout-research.md, Instrument) adds two
+// things. The holder `inst` reads the member off the instance itself
+// (variable_instance_exists, variable_instance_get): the other holders reach
+// only plain structs, and a closure the Create event stored sits on the
+// instance, as the town stash's own handler does. Such a member is called
+// only when a craftprobe row names its script (CpRowForMethod), so the reply
+// can say which closure ran; otherwise it is refused before the dispatch.
+// And `other:<id>`, directly after the member, is the dispatch's other
+// (CpResolveOther, `call`'s parser); without it the other is the self.
 static void CpCallMethod(const std::vector<std::string>& tok)
 {
-    const char* usage = "craftprobe callm: usage -> callm <Obj> <nth> <struct> <member> [args ...] [bind] confirm"
-                        " | callm id:<n> <struct> <member> [args ...] [bind] confirm"
-                        " (struct: fp:<K>[.a.b] | fp9:<K>[.a.b] | path:<Obj|global|id:n>.<a.b.c>; args as `call` takes them;"
-                        " bind: re-bind the member to its struct with the runtime's method() first)";
+    const char* usage = "craftprobe callm: usage -> callm <Obj> <nth> <struct> <member> [other:<id>] [args ...] [bind] confirm"
+                        " | callm id:<n> <struct> <member> [other:<id>] [args ...] [bind] confirm"
+                        " (struct: inst (the instance itself; its method must be a craftprobe row's) | fp:<K>[.a.b] | fp9:<K>[.a.b]"
+                        " | path:<Obj|global|id:n>.<a.b.c>; args as `call` takes them;"
+                        " bind: re-bind the member to its holder with the runtime's method() first)";
     if (tok.size() < 5 || Lower(tok.back()) != "confirm") {
         Out(std::string("craftprobe callm: refused - this calls a game method; nothing was called. ") + usage);
         return;
@@ -27643,26 +27818,54 @@ static void CpCallMethod(const std::vector<std::string>& tok)
 
     const std::string& spec = tok[structAt];
     const std::string& member = tok[structAt + 1];
+    // The holder: the instance itself (`inst`), or a plain struct.
+    const bool onInstance = Lower(spec) == "inst";
     RValue target;
-    if (!CpResolveStruct("craftprobe callm", spec, inst, target, "nothing was called")) return;
-    if (!g_Yytk->CallBuiltin("variable_struct_exists", { target, RValue(member) }).ToBoolean()) {
-        Out("craftprobe callm: refused - " + spec + " has no member " + member + "; nothing was called");
-        return;
+    RValue method;
+    if (onInstance) {
+        target = handle;
+        if (!g_Yytk->CallBuiltin("variable_instance_exists", { handle, RValue(member) }).ToBoolean()) {
+            Out("craftprobe callm: refused - the instance has no variable " + member + " (supplied: inst " + member + "); nothing was called");
+            return;
+        }
+        method = g_Yytk->CallBuiltin("variable_instance_get", { handle, RValue(member) });
+    } else {
+        if (!CpResolveStruct("craftprobe callm", spec, inst, target, "nothing was called")) return;
+        if (!g_Yytk->CallBuiltin("variable_struct_exists", { target, RValue(member) }).ToBoolean()) {
+            Out("craftprobe callm: refused - " + spec + " has no member " + member + "; nothing was called");
+            return;
+        }
+        method = g_Yytk->CallBuiltin("variable_struct_get", { target, RValue(member) });
     }
-    const RValue method = g_Yytk->CallBuiltin("variable_struct_get", { target, RValue(member) });
     std::string via;
     if (!CpIsMethod(method, via)) {
         Out("craftprobe callm: refused - " + spec + "." + member + " holds " + CpTypeOf(method) + " (" + Describe(method)
             + "), not a method (asked " + via + "); nothing was called");
         return;
     }
+    std::string scriptName;
+    CpTarget* row = CpRowForMethod(method, scriptName);
+    // A closure on the instance is called only when a row names it, so the
+    // reply can say which one ran.
+    if (onInstance && !row) {
+        Out("craftprobe callm: refused - inst " + member + " holds a method whose script (" + (scriptName.empty() ? std::string("not named") : scriptName)
+            + ") names no craftprobe row, so the reply could not say which closure ran; nothing was called");
+        return;
+    }
+    size_t argsFrom = structAt + 2;
+    CInstance* other = inst;
+    const bool otherGiven = argsFrom < argsEnd && Lower(tok[argsFrom]).rfind("other:", 0) == 0;
+    if (otherGiven) {
+        if (!CpResolveOther("craftprobe callm", tok[argsFrom], other)) return;
+        ++argsFrom;
+    }
     std::vector<RValue> args;
     std::string supplied;
-    for (size_t i = structAt + 2; i < argsEnd; ++i) {
+    for (size_t i = argsFrom; i < argsEnd; ++i) {
         const std::string& a = tok[i];
         RValue v;
         if (!CpResolveArg("craftprobe callm", a, inst, v)) return;
-        supplied += " a" + std::to_string(i - structAt - 2) + "=" + a + "(" + PpBackingShape(v) + ")";
+        supplied += " a" + std::to_string(i - argsFrom) + "=" + a + "(" + PpBackingShape(v) + ")";
         args.push_back(v);
     }
     // The value script_execute gets: the member as read (Live 1j's shape), or,
@@ -27685,10 +27888,10 @@ static void CpCallMethod(const std::vector<std::string>& tok)
         bindLine = "  bind=yes method(" + spec + ", " + spec + "." + member + ") method_get_self: before=" + selfBefore
                  + " after=" + CpMethodSelfText(bound) + " (read only; the dispatch does not depend on it)";
     }
-    std::string scriptName;
-    CpTarget* row = CpRowForMethod(method, scriptName);
+    const std::string who = otherGiven ? " self=" + PpDescribeSelf(inst) + " other=" + PpDescribeSelf(other)
+                                       : " self=other=" + PpDescribeSelf(inst);
     Out("craftprobe callm: " + spec + "." + member + " (" + (scriptName.empty() ? std::string("method, script not named") : scriptName)
-        + ", asked " + via + ") self=other=" + PpDescribeSelf(inst) + " argc=" + std::to_string(args.size()) + supplied
+        + ", asked " + via + ")" + who + " argc=" + std::to_string(args.size()) + supplied
         + (bind ? " bind" : ""));
     if (bind) Out(bindLine);
     Out("  before: " + where());
@@ -27698,7 +27901,7 @@ static void CpCallMethod(const std::vector<std::string>& tok)
                                                           : std::string("(no detoured row names this method)");
     RValue res;
     AurieStatus st = AURIE_SUCCESS;
-    const CpCallOutcome outcome = CpDispatchMethod(callee, inst, args, res, st);
+    const CpCallOutcome outcome = CpDispatchMethod(callee, inst, other, args, res, st);
     if (outcome == CpCallOutcome::Threw) Out("  entered " + no + ", script_execute threw");
     else if (outcome == CpCallOutcome::Failed) Out("  entered " + no + ", script_execute returned st=" + std::to_string((int)st));
     else {
@@ -27831,12 +28034,15 @@ static void CpInjectCommand(const std::vector<std::string>& tok)
 }
 
 // The first line is the build's marker: a live session tells this build
+// (toolkit #147's stash and bag phase 0, 285 rows under the same `phase1k`
+// word: #14's 282 plus CreateItemNew, UiCreate and NetworkSendInventoryUpdate,
+// with `other:<id>`, `methods` and `callm`'s `inst` holder) from #14's own
 // (Phase 1k, 282 rows: Phase 1j's 278 plus the loaders' InitItemFromJson,
 // ReCreateItem and ParseItemToGrid, and ReportClient, added in the build's
 // review round so `hash-accept` rests on a detoured row; with `callm`'s
 // `bind`, `set`'s `kept:` form and `call` keeping its own dispatch's return
 // for `kept:`, emptied when a dispatch does not return; the first Phase 1k
-// build printed 281 rows and was never installed) from Phase 1j's (278 rows, marker `phase1j`: Phase 1i's 254 plus the
+// build printed 281 rows and was never installed), Phase 1j's (278 rows, marker `phase1j`: Phase 1i's 254 plus the
 // save route, the item struct's methods, the creation candidates and the Cube
 // grid's binding, with `callm`, `set` and `inject`), Phase 1i's (254 rows, marker `phase1i`, with the
 // paged `var *`, `find` and the `inroute` gate), Phase 1h's (254 rows, marker
@@ -27875,6 +28081,8 @@ static void CpUsage()
         " per argument signature: GetItemFromFingerprint on a1, GetItemMap, GetInventoryArray, CountInventoryItem on a0)");
     Out("  dump                              craftprobe_rows.json + backing dump");
     Out("  call <Row> <Obj> <nth>|id:<n> [args ...] confirm   ONE by-name call of one row; refuses before it on any missing precondition");
+    Out("    call <Row> <Obj> <nth>|id:<n> other:<id> [args ...] confirm: the instance passed as other (default: the self);"
+        " the reply then prints self= and other= as the armed lines do. A closure row is refused: `methods`, then `callm ... inst`");
     Out("    args: number | true | false | undefined (kind undefined, not text) | text | fp:<fp> | fp9:<fp> (lookup with a1=9)"
         " | kept:<row> | map9 | map9:<key> (the kept stash map, only while `mapkeep stat` says current)"
         " | path:<Obj|global|id:n>.<a.b.c> (what `var` reaches)");
@@ -27886,6 +28094,10 @@ static void CpUsage()
         " refused unless the member is a method; reply as `call`'s, #<n> from the row that names the method's script, if any");
     Out("    callm ... [args ...] [bind] confirm: bind re-binds the member to its struct with the runtime's method() before the one"
         " dispatch; the reply adds bind=yes and method_get_self before/after (read only)");
+    Out("    callm <Obj> <nth>|id:<n> inst <member> ...: the member read off the instance itself (a Create-event closure);"
+        " refused unless a craftprobe row names its script. callm ... <member> other:<id> [args ...]: the other, as `call`'s");
+    Out("  methods <Obj> <nth>|id:<n>        hook-free, call-free: each variable (and plain-struct member, one level) holding a method,"
+        " the script it wraps, the row naming it, and the `callm` holder that reaches it");
     Out("  set <struct> <member> <number> confirm   ONE write of an existing member that holds a number, read back: before=<v> after=<v>"
         " (fp:/fp9: looked up with self Console_Save_obj 0; also kept:<row>[.a.b], a row's kept return - `backing on <row>` first)");
     Out("  inject <class> <b> <extra> [owner=<a0>] | inject off   while on, CountInventoryItem(<owner, default 1>, <class>, _, <b>)"
@@ -27916,6 +28128,7 @@ static void CpCommand(const std::string& rest)
     if (sub == "dump") { CpDump(); return; }
     if (sub == "call") { CpCall(tok); return; }
     if (sub == "callm") { CpCallMethod(tok); return; }
+    if (sub == "methods") { CpMethods(tok); return; }
     if (sub == "set") { CpSet(tok); return; }
     if (sub == "inject") { CpInjectCommand(tok); return; }
     CpUsage();
