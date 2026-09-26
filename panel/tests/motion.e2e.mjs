@@ -37,7 +37,7 @@ const EXPECTED = [
   'tooltip-reduced-motion',
   'plugin-warning-starting-style',
   'keyboard-opens-at-once',
-  'reduced-motion-opacity-only',
+  'reduced-motion-no-movement',
   'motion-M1',
   'motion-M2',
   'motion-M3',
@@ -242,7 +242,7 @@ async function tooltipReduced({ page }) {
   const warn = await hoverWarning(page);
   assert(props(warn).join() === 'opacity', `reduced: the warning tooltip ran ${props(warn).join(',') || 'nothing'}`);
   assert(one(warn, 'opacity').duration > 0, 'reduced: the warning fade is 0 ms');
-  return `both tooltips: opacity only, ${one(warn, 'opacity').duration} ms`;
+  return `both tooltips: an opacity fade and no transform, ${one(warn, 'opacity').duration} ms`;
 }
 
 // E4: no data-starting is ever written while the warning's tooltip opens, and
@@ -309,13 +309,22 @@ async function keyboardAtOnce({ page }) {
   return 'warning tooltip, note tooltip and tray: no transition from the keyboard; the pointer tray ran opacity + transform';
 }
 
-// Under reduce, every implemented motion animates opacity alone (display is
-// the tray's discrete step, not motion): the tooltips, the tray, both toasts,
-// a turned-off entry, a hover and a press. At least one opacity fade ran.
-async function reducedOpacityOnly({ page }) {
+// Under reduce (amendments.ship, the owner's "Keep colour fades too"), nothing
+// moves or scales: no transform, translate, scale or rotate transition runs
+// across the tooltips, the tray, both toasts, a turned-off entry, a hover and
+// a press, while the fades stay. Each fade count is its own positive control:
+// at least two opacity fades (display is the tray's discrete step, neither a
+// fade nor motion) and at least one hover colour fade must have run.
+const MOVING = ['transform', 'translate', 'scale', 'rotate'];
+async function reducedNoMovement({ page }) {
+  // hoverNote/hoverWarning clear the log and the reload in trayOf drops it, so
+  // what ran is kept from each stretch before the next one starts.
+  const all = [];
+  const keep = async () => all.push(...await $(page, () => window.__motion.map((m) => ({ prop: m.prop, el: m.el.id || m.el.className || m.el.tagName }))));
   await reduce(page);
   await record(page);
   await hoverNote(page).catch((e) => { throw new Error('note: ' + e.message); });
+  await keep();
   await tab(page, 'world');
   await hoverWarning(page);
   await away(page);
@@ -331,6 +340,7 @@ async function reducedOpacityOnly({ page }) {
   assert(pressed === 'none', `reduced: a held button is transformed: ${pressed}`);
   await $(page, () => document.getElementById('autoapply').click());
   await wait(400);
+  await keep();
   await trayOf(page);
   await record(page);
   await page.click('.enabled-mods-toggle');
@@ -339,12 +349,17 @@ async function reducedOpacityOnly({ page }) {
   await wait(400);
   await settled(page);
   await wait(300);
-  const all = await $(page, () => window.__motion.map((m) => ({ prop: m.prop, el: m.el.id || m.el.className || m.el.tagName })));
-  const moving = all.filter((m) => m.prop !== 'opacity' && m.prop !== 'display');
+  await keep();
+  const moving = all.filter((m) => MOVING.includes(m.prop));
   assert(moving.length === 0, `reduced: ${moving.slice(0, 5).map((m) => `${m.el} ${m.prop}`).join('; ')}`);
   const opacity = all.filter((m) => m.prop === 'opacity');
-  assert(opacity.length >= 2, `reduced: only ${opacity.length} opacity fades ran (the instrument must fire)`);
-  return `${opacity.length} opacity fades (${[...new Set(opacity.map((m) => String(m.el).split(' ')[0]))].join(', ')}), nothing else moved`;
+  assert(opacity.length >= 2, `reduced: ${opacity.length} opacity fades ran, not at least 2 (the instrument must fire)`);
+  const colour = all.filter((m) => COLOUR.includes(m.prop));
+  assert(colour.length >= 1, 'reduced: no hover colour fade ran (colour fades stay under reduce)');
+  const other = all.filter((m) => !MOVING.includes(m.prop) && m.prop !== 'opacity' && m.prop !== 'display' && !COLOUR.includes(m.prop));
+  assert(other.length === 0, `reduced: unexpected transitions: ${other.slice(0, 5).map((m) => `${m.el} ${m.prop}`).join('; ')}`);
+  const where = (list) => [...new Set(list.map((m) => String(m.el).split(' ')[0]))].join(', ');
+  return `${opacity.length} opacity fades (${where(opacity)}), ${colour.length} colour fades (${where(colour)}), no movement or scale`;
 }
 
 // M1: a hover eases its colour in (fast, hover easing) and snaps back; a
@@ -560,7 +575,7 @@ const CHECKS = [
   ['tooltip-reduced-motion', tooltipReduced],
   ['plugin-warning-starting-style', warningStartingStyle],
   ['keyboard-opens-at-once', keyboardAtOnce],
-  ['reduced-motion-opacity-only', reducedOpacityOnly],
+  ['reduced-motion-no-movement', reducedNoMovement],
   ['motion-M1', m1Hover],
   ['motion-M2', m2Press],
   ['motion-M3', m3Keyboard],
@@ -568,7 +583,7 @@ const CHECKS = [
   ['motion-M6', m6Toasts],
   ['motion-M7', m7Removed],
   // The reduced-motion row, F2, F4 and E4 are the required checks above, run again under the row's name.
-  ['motion-M8', reducedOpacityOnly],
+  ['motion-M8', reducedNoMovement],
   ['motion-M9', noteDescribedby],
   ['motion-M10', tooltipReduced],
   ['motion-M11', warningStartingStyle],
