@@ -56,11 +56,15 @@ code is checked against it rather than the other way round:
 - `motion.notes` is the motion contract, and `src/app.css` implements it with
   the `--motion-*` tokens only (CSS transitions and `@starting-style`, no
   library): hover colours, the press, the tray and tooltips scaling from their
-  trigger, the toasts, the removed entry, and reduced motion keeping opacity
-  only. `tests/motion.e2e.mjs` (`npm run e2e:motion`) checks each motion
-  against the tokens' computed values, and a note the build could not follow
-  (the theme listbox is a native `<select>`, whose list the system draws) is
-  recorded as an owner item rather than approximated.
+  trigger, the toasts, and the removed entry. Under `prefers-reduced-motion:
+  reduce`, every movement and scale goes (transform, translate, scale,
+  rotate) while the opacity fades and the hover colour fades stay: the
+  owner's "Keep colour fades too", recorded as `amendments.ship`, which also
+  took the theme list out of the notes, because the owner keeps the native
+  `<select>`, whose list the system draws ("Keep native select").
+  `tests/motion.e2e.mjs` (`npm run e2e:motion`) checks each motion against the
+  tokens' computed values, and a note the build cannot follow is recorded as
+  an owner item rather than approximated.
 - `src/theme.js`'s theme picker offers the export's palettes, in order.
 
 To take a new design, copy the new export over `figma-export.json` (and the
@@ -92,6 +96,15 @@ still leads the code. The owner's polish pass (2026-09-25) went this way:
   amendment, so `tokens.css` does not either.
 - A version number is a runtime value, like any field's value, and is never
   listed in a screen's `texts`.
+- An amendment may touch only the notes. `amendments.ship` (2026-09-26)
+  carries the owner's "Keep colour fades too" and "Keep native select" and
+  edits two places in `motion.notes`: the reduced-motion sentence (movement
+  and scale are removed, opacity and colour fades stay) and the theme list,
+  which no longer scales from its trigger because it stays a native select.
+  Nothing else moved, so no token changed and no frame was redrawn (whether
+  a Figma annotation repeats the old reduced-motion wording was not checked);
+  the removed-entry state's own reduced-motion note stays as it is, since
+  that motion has no colour.
 - Then the Figma file is edited to match the amended export and read back,
   and the new state frames' node ids are written into `figma-manifest.json`
   and the export's `states`.
