@@ -20,6 +20,7 @@
     "e2e:gems": "node tests/gems.e2e.mjs",
     "e2e:polish": "node tests/polish.e2e.mjs",
     "e2e:perf": "node tests/perf.e2e.mjs",
+    "e2e:motion": "node tests/motion.e2e.mjs",
     "screens": "node tests/screens.mjs",
     "icons": "node scripts/export-icons.mjs"
   },

@@ -204,6 +204,14 @@ class PanelBrowserSuiteTests(unittest.TestCase):
         self.assertEqual(code, 0, out[-4000:])
         self.assertTrue(lines and re.fullmatch(r"e2e-polish: (\d+)/\1 checks passed", lines[-1]), out[-4000:])
 
+    def test_motion_e2e_suite_passes(self):
+        # The export's motion.notes, reduced motion keeping opacity only, and
+        # the owner's F2/F4/E4 (forgepact-ui-ship).
+        code, out = _npm("e2e:motion")
+        lines = [l for l in out.splitlines() if l.startswith("e2e-motion: ")]
+        self.assertEqual(code, 0, out[-4000:])
+        self.assertTrue(lines and re.fullmatch(r"e2e-motion: (\d+)/\1 checks passed", lines[-1]), out[-4000:])
+
     def test_perf_e2e_suite_passes(self):
         # The owner's hard budgets, on medians over five runs; if CI is noisy,
         # raise --runs, never the budgets (forgepact-ui-responsive, D10).
