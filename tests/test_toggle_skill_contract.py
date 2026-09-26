@@ -814,6 +814,12 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
             # Gems of Incarnation's two switches and mod filter
             # (test_incarnation_gems_contract.py).
             "gemmythic", "gemmaxroll", "gemfilter",
+            # Toolkit #147's tool-facing skill verbs: the skill bar reader and
+            # the by-name talent allocation (test_skill_actions_contract.py).
+            "skillstate", "talentalloc",
+            # Toolkit #147's tool-facing stash and bag verbs
+            # (test_stash_bag_layout_contract.py).
+            "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem",
         }
         self.assertEqual(entries, expected)
 
@@ -2918,10 +2924,16 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         # Miner's Helmet and map pack markers (their own tests cover them), and
         # `craftmats` is issue #14's Craft from the stash
         # (test_craft_mats_contract.py), and `gemmythic`/`gemmaxroll` are the
-        # Gems of Incarnation switches (test_incarnation_gems_contract.py).
+        # Gems of Incarnation switches (test_incarnation_gems_contract.py);
+        # `skillstate` and `talentalloc` are toolkit #147's skill verbs
+        # (test_skill_actions_contract.py), and `playerwarp`, `stashtab`,
+        # `bagtab`, `stashclose` and `giveitem` its stash and bag verbs
+        # (test_stash_bag_layout_contract.py).
         self.assertEqual(now - before, {"autoprospect", "skilltimer", "menulayout", "restartanytime",
                                         "miningore", "minerhelm", "packmarks", "craftmats",
-                                        "gemmythic", "gemmaxroll", "gemfilter"})
+                                        "gemmythic", "gemmaxroll", "gemfilter",
+                                        "skillstate", "talentalloc",
+                                        "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem"})
         self.assertEqual(before - now, set())
 
     # ---- Sprite look probe (R round 3, issue #11): `tgprobe sprite ...` ----

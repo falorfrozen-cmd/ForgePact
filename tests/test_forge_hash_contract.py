@@ -72,6 +72,12 @@ EXPECTED_PLAYER_COMMANDS = {
     "craftmats",
     # Gems of Incarnation's two switches (test_incarnation_gems_contract.py).
     "gemmythic", "gemmaxroll", "gemfilter",
+    # Toolkit #147's tool-facing skill verbs, the skill bar reader and the
+    # by-name talent allocation (test_skill_actions_contract.py pins both).
+    "skillstate", "talentalloc",
+    # Toolkit #147's tool-facing stash and bag verbs
+    # (test_stash_bag_layout_contract.py, StashBagPlayerVerbs).
+    "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem",
 }
 
 

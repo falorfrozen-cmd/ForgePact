@@ -608,10 +608,157 @@ menulayout: listed=<n> absent=<names or none> capped=<0|1>
 
 `win` is the point on the window's client area, computed from the game's own
 GUI and window sizes. `menulayout <ObjectName>` lists that one object the
-same way. An older ForgePact answers `command unavailable in player build:
-menulayout`. How the positions were measured, and which objects are the save
-cards and `PLAY`, is in
+same way.
+
+The listing also covers the town stash and the bag: the windows that show
+the bag (among them the stash window), the stash's tab strip and tab
+buttons, the bag's tab buttons, the item grids, the split-stack dialog, the
+stash drop-down and Socketable container, close buttons, the inventory's
+drag object (`UI_Inventory_Drag_obj`), the inventory data holder, and two
+objects that live in the room rather than on screen - the stash in town and
+the player. For those two `gui=` is a room position and `win=` means
+nothing. Where `...` stands in the row above, a row prints whichever of
+these the instance carries, in this order: `label`, `name`, `slot`,
+`index`, `page`, `selected`, `uiNodeCallstack`, `activationArgs`,
+`enabled`, `tabNumber`, `tabType`, `stashTabSelected`, `tabSelected`,
+`nodeGridWidth`, `nodeGridHeight`, `gridScale`, `gridName`. An array value
+prints as `[a,b,...]` (the first 32 elements, then `,...+N`), a nested array
+as `<array>`, a reference, struct or pointer by kind only, as `<ref>`,
+`<object>` or `<ptr>`, any other kind as `<kind N>`, and a value that could
+not be read as `<read-failed>`. A stash tab button is told apart by its
+`tabNumber` (Personal 0, Shared 1-19, Socketable -2, Materials -4, Unique
+-5) and a bag sub-tab button by its `uiNodeCallstack`; on the stash window,
+`stashTabSelected` is the stash tab on show and `tabSelected` the bag
+sub-tab - two different settings
+([`docs/stash-bag-layout-research.md`](docs/stash-bag-layout-research.md)
+§ Decision).
+
+Each item grid's row is followed by one row per filled cell:
+
+```
+  cell=<x>,<y> grid=<grid id> fp=<item fingerprint|none> o=none
+```
+
+`fp` is the key the game files the item under. A cell holds no count, so
+`o` is always `none`; an item that covers several cells prints one row per
+cell. A grid with more than 200 filled cells prints the first 200, row by
+row, and its own row carries `cellcap=1`. Cell rows do not count toward the
+200-row limit on instances.
+
+It also covers the skill bar and the talent screen: the bar
+(`UI_Hud_Talent_obj`), the talent screen and its buttons, the sub-talent
+buttons and panel, the allocate button and the talent tree's node parent.
+After the stash list, those rows print `talentId` when the instance carries
+it - the talent buttons, the sub-skill buttons and the sub-talent panel do
+(the other six candidate fields showed on no row in the skill research's
+second session and were dropped). The bar's row is followed by one row per
+skill slot:
+
+```
+  slot=<row>,<i> talent=<talentId|none> gui=<x>,<y> win=<cx>,<cy>
+```
+
+one for each entry of the bar's two slot rows, with the talent id bound
+there and where that slot's button is drawn (`none` for a field the entry
+does not carry). A slot row the bar does not have prints
+`slot=<row>,* absent`, and an empty one `slot=<row>,* empty`. What these
+fields turned out to mean is in
+[`docs/skill-actions-research.md`](docs/skill-actions-research.md) § Decision
+(`slotRule`). An older
+ForgePact answers `command unavailable in player build: menulayout`. How the positions were measured, and which objects are
+the save cards and `PLAY`, is in
 [`docs/menu-layout-research.md`](docs/menu-layout-research.md).
+
+## Skill bar and talents (for tools that drive a test session)
+
+Two more commands exist for the toolkit's `hs-drive` helper, so a test session
+can read your skills and put a talent point in without anyone at the keyboard.
+Neither has a switch in the panel, and nothing in play changes unless a tool
+sends one.
+
+- **`skillstate`** reads, and changes nothing. It prints one line per skill bar
+  entry, `  slot=<row>,<i> talent=<id> ability=<abilityId> timer=<n>`, ending
+  with ` effect=<n>` when the skill has an effect object the skill-timer mod
+  knows by name - the number of those objects alive right now, which a tool
+  compares before and after a key press. For the toggle skills the toggle
+  research measured, one alive means the toggle is on. The count was measured
+  moving for Mana Orb, a timed effect rather than a toggle (0 to 1 on a
+  press, back to 0 on its own about 13 s later); for the aura Dark Oath it is
+  still not measured - the owner reported that no key switches it, only a
+  click through the bind/expanded-skills popup; then
+  `  global.mySkills=[<id>,...]` (the talents your character has learned),
+  and a `  sub=<id> s<NN>=<n> ...` line per skill on the bar (its sub-talent
+  nodes, `none` when it has none). A value that cannot be read prints
+  `unreadable`. It prints no points left, no talent level and no key: the
+  research found no reader for any of them.
+- **`talentalloc <talentId>`** puts one point into a talent you have not
+  learned yet, and **`talentalloc <talentId> sub <n>`** puts one into the
+  `n`th sub-talent node the talent's panel lists. Both open the talent screen
+  if it is closed and press the talent's own button the way the game does
+  (the game's own handler, so the game checks and records the point itself),
+  then report `talentalloc: before=... after=...` and `confirmed` or
+  `not confirmed` from your learned talents or that talent's sub-talent line.
+  A talent you already have, a talent with no button on the screen, or a
+  screen that will not open is refused with nothing pressed. The screen is
+  left open for the tool to close.
+
+There is no command to bind a skill to a slot or to reset your talents: the
+research could not repeat either by name. How all of this was measured, and
+what it does not cover, is in
+[`docs/skill-actions-research.md`](docs/skill-actions-research.md).
+
+## Stash and bag (for tools that set up a test session)
+
+Five more commands exist for `hs-drive`, so a test session can put your
+character at the town stash, switch its tabs, close it and hand your
+character the items a test needs, without anyone at the keyboard. None has
+a switch in the panel, and nothing in play changes unless a tool sends one.
+Each prints one `<command>: before=... after=...` line from its own re-read,
+or a line starting `<command>: refused - ` that says why nothing (or nothing
+more) was done.
+
+- **`playerwarp <x> <y>`** sets your character's room position - the tool
+  uses the town stash's own position from `menulayout`, 48 below it, then
+  presses the interact key to open the stash. It prints
+  `playerwarp: before=<x>,<y> after=<x>,<y>`.
+- **`stashtab <tabNumber>`** switches the open stash to that tab through
+  the tab button's own handler (the one the button holds, called the way
+  the research repeated it), and prints
+  `stashtab: before=<stashTabSelected> after=<stashTabSelected> handler=<name>`.
+  Personal, Shared, Materials and Socketable were repeated by name in the
+  research; a tab whose handler is none of those is refused.
+- **`bagtab materials|socket`** switches the bag beside the open stash to
+  its Materials or Socket tab through that tab's own handler, and prints
+  `bagtab: before=<tabSelected> after=<tabSelected> activeNode_before=<id> activeNode_after=<id>`.
+  Only those two tabs, and only with the stash open, were measured; any
+  other name is refused `route_not_measured`. It changes the tab setting;
+  whether the bag's keyboard focus (`activeNode`) follows was not observed.
+- **`stashclose`** closes the stash through its close button's own handler,
+  which is the route that saves the stash, and prints
+  `stashclose: before=listed after=none`.
+- **`giveitem bag <fingerprint> <count>`** makes one more copy of an item
+  your character already holds (`<fingerprint>` is its key, as a `cell=`
+  row prints it) with the game's own item loader - the route the crafting
+  materials mod uses to hand a unit back to the bag - and puts it in the
+  bag grid the game prefers for it. A stackable copy gets `<count>` units,
+  up to the stack it was copied from. It prints `giveitem: key=<new key>
+  before=<items> after=<items> o=<count|none>`, counting the items in that
+  grid, then `giveitem: confirmed - ...` when the new key is both in your
+  item map and in the grid, or `giveitem: not confirmed - ...`. The stash is
+  not a destination: `giveitem stash ...` is refused `route_not_measured`.
+  A stackable material at count 1 is confirmed placed in the same session
+  (verification live 3, V0; not dragged, saved or reloaded, and the session's
+  save backup was restored afterward); a non-stackable template (class 18)
+  was tried in the same session (V0b) and was refused `give_refused` - the
+  verb found no grid it could use in what `GetItemPreferredGrid(1, item)`
+  returned, or the call failed - so the non-stackable case is not
+  established as working.
+
+There is no command that opens the stash by name (a by-name open ended the
+game once in the research, so the tool uses the interact key) and none that
+moves an item between the bag and the stash. How each was measured, and
+what it does not cover, is in
+[`docs/stash-bag-layout-research.md`](docs/stash-bag-layout-research.md).
 
 ## 🔧 How to use
 
