@@ -61,9 +61,9 @@ test('density is an entry only while switched on above x1, through den_on', () =
   assert.deepEqual(enabledControls(cfg({ density_on: true, density: 1 })), [], 'x1 is the default');
 });
 
-test('the switch ids: 36 table rows plus four top-level sliders, never density', () => {
+test('the switch ids: 37 table rows plus four top-level sliders, never density', () => {
   const ids = sliderSwitchIds(cfg());
-  assert.equal(ids.length, 40);
+  assert.equal(ids.length, 41);
   assert.deepEqual(ids.slice(-4), TOP_LEVEL_SWITCHES);
   assert.ok(ids.includes('stats.exp') && ids.includes('percent_stats.damage') && ids.includes('keys.ruby'));
   assert.ok(!ids.some((id) => id.includes('density') || id === 'enemy_speed_ct'));
