@@ -1,0 +1,33 @@
+{
+  "_comment": "A hand-made trace in the shape browser.startTracing writes (devtools.timeline, blink.user_timing), for tests/perf-budget.test.js. pid 1 tid 10 is the page's renderer main thread; tid 11 is its compositor and pid 2 tid 20 a spare renderer's main thread, both ignored. Two measured windows, 10000-20000 us and 50000-60000 us; the style event at 30000 lies outside both, and the last style and layout events are cut at the second window's end. Times are microseconds.",
+  "traceEvents": [
+    { "ph": "M", "name": "thread_name", "pid": 1, "tid": 10, "ts": 0, "args": { "name": "CrRendererMain" } },
+    { "ph": "M", "name": "thread_name", "pid": 1, "tid": 11, "ts": 0, "args": { "name": "Compositor" } },
+    { "ph": "M", "name": "thread_name", "pid": 2, "tid": 20, "ts": 0, "args": { "name": "CrRendererMain" } },
+
+    { "ph": "R", "name": "perf-begin", "cat": "blink.user_timing", "pid": 1, "tid": 10, "ts": 10000 },
+    { "ph": "X", "name": "RunTask", "pid": 1, "tid": 10, "ts": 10000, "dur": 9000 },
+    { "ph": "X", "name": "EventDispatch", "pid": 1, "tid": 10, "ts": 10000, "dur": 4000 },
+    { "ph": "X", "name": "FunctionCall", "pid": 1, "tid": 10, "ts": 11000, "dur": 2000 },
+    { "ph": "X", "name": "UpdateLayoutTree", "pid": 1, "tid": 10, "ts": 14000, "dur": 1000 },
+    { "ph": "X", "name": "Layout", "pid": 1, "tid": 10, "ts": 15000, "dur": 1500 },
+    { "ph": "X", "name": "PrePaint", "pid": 1, "tid": 10, "ts": 16500, "dur": 500 },
+    { "ph": "X", "name": "Paint", "pid": 1, "tid": 10, "ts": 17000, "dur": 500 },
+    { "ph": "X", "name": "Layerize", "pid": 1, "tid": 10, "ts": 17500, "dur": 200 },
+    { "ph": "X", "name": "Commit", "pid": 1, "tid": 10, "ts": 17700, "dur": 300 },
+    { "ph": "X", "name": "UpdateLayer", "pid": 1, "tid": 10, "ts": 18000, "dur": 500 },
+    { "ph": "R", "name": "perf-end", "cat": "blink.user_timing", "pid": 1, "tid": 10, "ts": 20000 },
+
+    { "ph": "X", "name": "UpdateLayoutTree", "pid": 1, "tid": 10, "ts": 30000, "dur": 5000 },
+    { "ph": "X", "name": "Layout", "pid": 1, "tid": 11, "ts": 51000, "dur": 5000 },
+    { "ph": "X", "name": "Layout", "pid": 2, "tid": 20, "ts": 51000, "dur": 5000 },
+
+    { "ph": "R", "name": "perf-begin", "cat": "blink.user_timing", "pid": 1, "tid": 10, "ts": 50000 },
+    { "ph": "X", "name": "FireAnimationFrame", "pid": 1, "tid": 10, "ts": 52000, "dur": 3000 },
+    { "ph": "B", "name": "Paint", "pid": 1, "tid": 10, "ts": 56000 },
+    { "ph": "E", "name": "Paint", "pid": 1, "tid": 10, "ts": 57000 },
+    { "ph": "X", "name": "UpdateLayoutTree", "pid": 1, "tid": 10, "ts": 58000, "dur": 4000 },
+    { "ph": "X", "name": "Layout", "pid": 1, "tid": 10, "ts": 59000, "dur": 3000 },
+    { "ph": "R", "name": "perf-end", "cat": "blink.user_timing", "pid": 1, "tid": 10, "ts": 60000 }
+  ]
+}
