@@ -44,6 +44,23 @@ code is checked against it rather than the other way round:
   screen's texts, each `selectorTokens` entry's computed value in every
   palette, and no border outside the export's `borders` allowlist. It also
   writes each Figma screen beside a fresh render for a visual comparison.
+  Each screen is measured in the state its Figma frame draws: a screen's
+  `state` seeds its own sandbox (`--seed` with the screen's `config`, and
+  `--offline` when its `game` is `"offline"`); a screen without one is
+  measured on today's sandbox. It applies the variant rule: when the export
+  lists a variant of a selector (`.value-stepper>.val.off` of
+  `.value-stepper>.val`), the plain selector is measured on the first element
+  that matches it and none of its variants, so the base token is never read
+  off an element in the variant's state (`lib/design-tokens.mjs`, proved by
+  `tests/tokens-selftest.mjs`).
+- `motion.notes` is the motion contract, and `src/app.css` implements it with
+  the `--motion-*` tokens only (CSS transitions and `@starting-style`, no
+  library): hover colours, the press, the tray and tooltips scaling from their
+  trigger, the toasts, the removed entry, and reduced motion keeping opacity
+  only. `tests/motion.e2e.mjs` (`npm run e2e:motion`) checks each motion
+  against the tokens' computed values, and a note the build could not follow
+  (the theme listbox is a native `<select>`, whose list the system draws) is
+  recorded as an owner item rather than approximated.
 - `src/theme.js`'s theme picker offers the export's palettes, in order.
 
 To take a new design, copy the new export over `figma-export.json` (and the
