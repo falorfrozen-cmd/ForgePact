@@ -94,7 +94,8 @@
     "idle-switch": "51:983",
     "enabled-tray-popover": "51:1187",
     "enabled-undo": "51:1158",
-    "min-window-900x600": "51:1371"
+    "min-window-900x600": "51:1371",
+    "plugin-warning-tooltip": "70:1323"
   },
   "stateComponents": {
     "UndoToast": "45:220",

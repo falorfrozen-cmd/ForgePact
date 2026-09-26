@@ -3191,8 +3191,8 @@
     },
     {
       "state": "plugin-warning-tooltip",
-      "nodeId": null,
-      "screenshot": null,
+      "nodeId": "70:1323",
+      "screenshot": ".claude/workorders/forgepact-ui-polish/figma/states/plugin-warning-tooltip.png",
       "notes": "The plugin warning (owner's polish pass, 2026-09-25): the color/warn icon beside Apply all now, its tooltip open below it on color/bg/hover (radius/md, a 1px color/border/subtle edge, the same surface as an idle slider note's tooltip) with the message in color/text/primary and an Open Setup line in color/text/muted, font/size/xs; the same icon beside Settings loaded in the status bar opens its tooltip upward. On Setup the Open Setup line is not shown. The icon opens Setup; the tooltip holds nothing to click. nodeId and screenshot are filled in when the Figma file is brought in line with this amendment."
     }
   ],
