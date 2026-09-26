@@ -162,7 +162,11 @@ class EnabledModsPanelTests(unittest.TestCase):
         # in App.svelte.
         card = self.setup[self.setup.index('<h2>Appearance</h2>'):]
         card = card[:card.index("</div>\n</div>")]
-        self.assertIn('<label class="lbl" for="theme">Theme</label><select id="theme">', card)
+        # The ThemePicker (finish review F2) labels its trigger with the row's
+        # "Theme"; the native select stays inside the picker as the control of
+        # record, hidden from Tab and assistive technology.
+        self.assertIn('<span class="lbl" id="themeLabel">Theme</span><div class="theme-picker">', card)
+        self.assertIn('<select id="theme" class="theme-picker-native" aria-hidden="true" tabindex="-1">', card)
         self.assertLess(self.setup.index('id="setupCard"'), self.setup.index('id="theme"'))
         before = self.setup[:self.setup.index('<h2>Appearance</h2>')]
         opening = before[before.rindex('<div class="card'):]

@@ -14,6 +14,7 @@ import { installRememberedValues } from './lib/remembered-value.js';
 import { installReviewFixes } from './lib/review-fixes.js';
 import { installPluginWarning } from './lib/plugin-warning.js';
 import { installSliderNotes } from './lib/slider-note.js';
+import { installThemePicker } from './lib/theme-picker.js';
 
 mount(App, { target: document.getElementById('app') });
 // The restyle's additions only watch the DOM panel.js produces, so they go in
@@ -24,4 +25,5 @@ installRememberedValues();
 installReviewFixes();
 installPluginWarning();
 installSliderNotes();
+installThemePicker();
 start();

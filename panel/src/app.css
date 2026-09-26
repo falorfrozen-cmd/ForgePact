@@ -7,11 +7,13 @@
    #chipGame and the tray form of #enabledMods are placed in the rail.
    Motion is the export's `motion.notes`, with the motion tokens only: a hover eases its colours in
    (the pointer's own element, and only where there is one), a button scales to .97 while pressed,
-   the tray and both tooltips scale in from their trigger, the toasts rise and fade, a turned-off
-   entry fades and shrinks. Nothing a poll repaints moves, a keyboard action never animates
+   the tray, the theme picker's list and both tooltips scale in from their trigger, the toasts rise
+   and fade, a turned-off entry fades and shrinks. Nothing a poll repaints moves, a keyboard action never animates
    ([data-instant], :focus-visible), and prefers-reduced-motion removes movement and scale while the
    opacity and hover colour fades stay (amendments.ship, at the end). */
-:root{color-scheme:dark;--shell-foot:calc(var(--space-10) + 1px);--toast-h:40px;--undo-h:44px;--rail-h:56px;--page-pad:var(--space-10);--chip-game-w:120px;
+/* --scrollbar-w: #wrap's thin scrollbar as Edge and WebView2 draw it (measured 10px); the page takes it
+   out of its right padding so the gutters read the same on both sides (finish review F7). */
+:root{color-scheme:dark;--shell-foot:calc(var(--space-10) + 1px);--toast-h:40px;--undo-h:44px;--rail-h:56px;--page-pad:var(--space-10);--chip-game-w:120px;--scrollbar-w:10px;
   --icon-refresh:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M13.5 8a5.5 5.5 0 0 1-9.9 3.3M2.5 8a5.5 5.5 0 0 1 9.9-3.3M12.5 2v3h-3M3.5 14v-3h3'/%3E%3C/svg%3E");
   --icon-search:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round'%3E%3Ccircle cx='7' cy='7' r='4.5'/%3E%3Cpath d='m10.5 10.5 3 3'/%3E%3C/svg%3E");
   --icon-chevron:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 4 4 4-4 4'/%3E%3C/svg%3E");
@@ -45,13 +47,15 @@ b,strong{font-weight:var(--font-weight-semibold)}
 .tabbtn.active{color:var(--color-text-primary);border-color:var(--color-accent);font-weight:var(--font-weight-medium)}
 .tabbtn.active svg{color:var(--color-accent)}
 .tabbtn:focus-visible{outline-offset:-2px}
-#wrap{min-width:0;overflow-x:hidden;overflow-y:auto;scrollbar-gutter:stable;padding:0 var(--page-pad) var(--space-10)}
+#wrap{min-width:0;overflow-x:hidden;overflow-y:auto;scrollbar-gutter:stable;padding:0 calc(var(--page-pad) - var(--scrollbar-w)) var(--space-10) var(--page-pad)}
 .control-dock,.topline{display:contents}
 .breadcrumb{display:none}
 #statusbar{position:fixed;left:0;right:0;bottom:0;z-index:30;display:flex;align-items:center;gap:var(--space-7);height:calc(var(--space-10) + 1px);padding:0 var(--space-9);background-color:var(--color-bg-base);border-top:1px solid var(--color-border-subtle);color:var(--color-text-muted);font-size:var(--font-size-xs);white-space:nowrap}
 #saveIndicator{order:1;display:inline-flex;align-items:center;gap:var(--space-3);color:var(--color-text-muted);font-size:var(--font-size-xs)}
 #saveIndicator.saving{color:var(--color-text-muted)}#saveIndicator.error{color:var(--color-danger)}
 #saveIndicator.saving:before{content:"";width:10px;height:10px;border-radius:50%;border:1.5px solid currentColor;border-right-color:transparent}
+/* Settled (neither saving nor failed): the design's drawn check in color/ok (finish review F3). */
+#saveIndicator:not(.saving):not(.error):before{content:"";width:12px;height:12px;flex:none;background-color:var(--color-ok);mask:var(--icon-check) center/contain no-repeat}
 #chipApply{order:2;margin:0;color:var(--color-text-muted);font-size:var(--font-size-xs)}#chipApply.warn{color:var(--color-warn)}
 /* The plugin warning's second icon sits right after "Settings loaded" (same order, next in the DOM). */
 #statusbar .status-warning{order:1}
@@ -64,7 +68,7 @@ b,strong{font-weight:var(--font-weight-semibold)}
 
 /* ---- Enabled mods: the inline row (the base), and the tray in the rail ---- */
 /* The row is as tall empty as with entries, so the first entry moves nothing below it. */
-#enabledMods{display:flex;align-items:center;flex-wrap:wrap;gap:var(--space-4);min-height:calc(28px + var(--space-6));margin:0 calc(-1 * var(--page-pad));padding:var(--space-6) var(--space-10) 0;color:var(--color-text-muted);font-size:var(--font-size-xs)}
+#enabledMods{display:flex;align-items:center;flex-wrap:wrap;gap:var(--space-4);min-height:calc(28px + var(--space-6));margin:0 calc(var(--scrollbar-w) - var(--page-pad)) 0 calc(-1 * var(--page-pad));padding:var(--space-6) var(--space-10) 0;color:var(--color-text-muted);font-size:var(--font-size-xs)}
 #enabledMods>h2{margin:0;font-size:var(--font-size-xs);font-weight:var(--font-weight-regular);color:var(--color-text-muted);white-space:nowrap}
 #enabledMods>h2:focus{outline:none}#enabledMods>h2:focus-visible{outline:2px solid var(--color-focus)}
 #enabledModsCount{margin-right:var(--space-4);font-family:var(--font-mono-family),Consolas,monospace;color:var(--color-text-primary);white-space:nowrap}
@@ -248,6 +252,9 @@ input[type=range]::-moz-range-thumb{width:6px;height:18px;border:0;border-radius
 .density-top .row{min-height:0;gap:var(--space-6)}
 .density-top .lbl{width:auto!important;color:var(--color-text-muted);font-size:var(--font-size-xs);font-weight:var(--font-weight-regular)}
 .hero-number,#densityCard>.row>.lbl{display:none}
+/* Finish review F4: the rarity note is hidden while both rows are off or idle at 0 (their values carry
+   .off). It keeps its words: the toast after a rarity change reads them. */
+#rarityCard:has(#rarityrareval.off):has(#rarityancval.off)>#raritynote{display:none}
 .sat-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:var(--space-7)}
 .sat-intro{margin:var(--space-6) 0 0;color:var(--color-text-muted);font-size:var(--font-size-sm)}
 .sat-intro span{display:block;margin-top:var(--space-2);color:var(--color-text-faint);font-size:var(--font-size-xs)}
@@ -283,7 +290,9 @@ input[type=range]::-moz-range-thumb{width:6px;height:18px;border:0;border-radius
 .sat-panel-foot{position:absolute!important;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .sat-empty{padding:var(--space-10) var(--space-6);text-align:center;color:var(--color-text-muted);font-size:var(--font-size-sm)}
 .sat-footer{display:flex;align-items:center;gap:var(--space-7);flex-wrap:wrap;color:var(--color-text-muted);font-size:var(--font-size-xs)}
-#satSummary{color:var(--color-ok)}
+#satSummary{display:inline-flex;align-items:center;gap:var(--space-3);color:var(--color-ok)}
+/* A valid selection carries the drawn check (finish review F6), never a glyph. */
+#satSummary:not(.is-invalid):not(:empty):before{content:"";width:12px;height:12px;flex:none;background-color:currentColor;mask:var(--icon-check) center/contain no-repeat}
 #satSummary.is-invalid,#satSaveState.is-error{color:var(--color-danger)}
 .sat-footer-note{display:none}
 
@@ -331,8 +340,10 @@ select.style-select{min-width:96px;height:28px;padding:0 var(--space-3) 0 var(--
 /* ---- Setup ---- */
 .setup-path-row,.setup-launch{flex-wrap:wrap}
 #exepath{flex:1 1 100%;min-width:180px;height:38px;padding:0 var(--space-6);border:1px solid var(--color-border-strong);border-radius:var(--radius-md);background-color:var(--color-bg-sunken);color:var(--color-text-primary);font-family:var(--font-mono-family),Consolas,monospace;font-size:var(--font-size-sm)}
-.setup-launch>.note{flex:1;min-width:240px}
-.setup-launch>.note b{color:var(--color-text-primary);font-size:var(--font-size-sm)}
+/* Finish review F8: the launcher's description is body/secondary text (13, text/muted), not a note (and no
+   longer carries .note, whose first match design-match measures for the notes' look). */
+.setup-launch>.launch-description{flex:1;min-width:240px;margin:0;color:var(--color-text-muted);font-size:var(--font-size-sm)}
+.setup-launch>.launch-description b{color:var(--color-text-primary);font-size:var(--font-size-sm)}
 .launch-feedback{display:flex;align-items:center;gap:var(--space-4);color:var(--color-text-primary);font-size:var(--font-size-sm);overflow-wrap:anywhere}
 .launch-feedback:before{content:"";width:14px;height:14px;flex:none;background-color:var(--color-ok);mask:var(--icon-check) center/contain no-repeat}
 .launch-feedback.starting{color:var(--color-warn)}.launch-feedback.starting:before{background-color:var(--color-warn)}
@@ -340,8 +351,31 @@ select.style-select{min-width:96px;height:28px;padding:0 var(--space-3) 0 var(--
 #chainnote,#eacnote{display:flex;align-items:center;gap:var(--space-4);font-size:var(--font-size-sm)}
 #chainnote:before{content:"";width:14px;height:14px;flex:none;background-color:currentColor;mask:var(--icon-warn) center/contain no-repeat}
 #chainnote:empty,#eacnote:empty{display:none}
-/* The Appearance card's theme choice, drawn as the Mods tab's style select is. */
-#theme{min-width:120px;height:28px;padding:0 var(--space-3) 0 var(--space-4);border:0;border-radius:var(--radius-sm);background-color:var(--color-bg-hover);color:var(--color-text-primary);font-size:var(--font-size-sm);cursor:pointer}
+/* Finish review F5: the button's name is a mono run, with no quotes. */
+#chainnote .chain-command{font-family:var(--font-mono-family),Consolas,monospace}
+/* The Appearance card's theme choice: the design's ThemePicker (finish review F2, src/lib/theme-picker.js).
+   The trigger is a compact, quiet "Ledger" with a chevron; the list opens below it on a 1px edge, each
+   palette with three swatches its colours are read into, and the drawn check on the chosen one. The list
+   scales in from the trigger when the pointer opens it (motion row M5) and carries data-instant otherwise.
+   The native select #theme stays the control of record under it: clipped to 1px, never display:none or
+   visibility:hidden (so it keeps a box, and checkVisibility() stays true), with no border. */
+.theme-picker{position:relative;flex:none}
+.theme-picker-trigger{display:inline-flex;align-items:center;gap:var(--space-3);height:28px;padding:0 var(--space-3) 0 var(--space-4);border:0;border-radius:var(--radius-sm);background-color:var(--color-bg-hover);color:var(--color-text-primary);font-size:var(--font-size-sm);cursor:pointer}
+.theme-picker-trigger svg{width:12px;height:12px;flex:none;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;color:var(--color-text-muted)}
+.theme-picker-list{position:absolute;top:calc(100% + var(--space-2));left:0;z-index:20;display:none;min-width:200px;margin:0;padding:var(--space-2);list-style:none;border:1px solid var(--color-border-subtle);border-radius:var(--radius-lg);background-color:var(--color-bg-raised);box-shadow:0 12px 32px color-mix(in srgb,var(--color-bg-sunken) 80%,transparent);
+  opacity:0;transform:scale(.97);transform-origin:top left;pointer-events:none;transition:opacity var(--motion-duration-fast) var(--motion-easing-standard),transform var(--motion-duration-fast) var(--motion-easing-standard),display var(--motion-duration-fast) allow-discrete}
+/* A closing list is still displayed while it fades, so it takes no pointer until it is open again. */
+.theme-picker[data-open]>.theme-picker-list{display:block;opacity:1;transform:none;pointer-events:auto;transition-duration:var(--motion-duration-base);transition-timing-function:var(--motion-easing-emphasized)}
+@starting-style{.theme-picker[data-open]>.theme-picker-list{opacity:0;transform:scale(.97)}}
+.theme-picker>.theme-picker-list[data-instant],.theme-picker[data-open]>.theme-picker-list[data-instant]{transition-duration:0ms}
+.theme-picker-list:focus{outline:none}
+.theme-picker-option{position:relative;display:flex;align-items:center;gap:var(--space-5);min-height:32px;padding:0 calc(var(--space-6) + 14px + var(--space-4)) 0 var(--space-4);border-radius:var(--radius-md);color:var(--color-text-primary);font-size:var(--font-size-sm);cursor:pointer;white-space:nowrap}
+.theme-picker-option[data-active]{background-color:var(--color-bg-hover)}
+.theme-picker-list:focus-visible .theme-picker-option[data-active]{outline:2px solid var(--color-focus);outline-offset:-2px}
+.theme-picker-option[aria-selected="true"]:after{content:"";position:absolute;right:var(--space-4);width:14px;height:14px;background-color:var(--color-accent);mask:var(--icon-check) center/contain no-repeat}
+.theme-picker-swatches{display:flex;flex:none;width:40px;height:16px;overflow:hidden;border-radius:var(--radius-sm)}
+.theme-picker-swatches>span{flex:1;background-color:var(--swatch,transparent)}
+.theme-picker-native{position:absolute;left:0;top:0;width:1px;height:1px;margin:0;padding:0;border:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;pointer-events:none}
 
 /* ---- Toasts: #toast, and the undo toast above it in a band the page makes room for ---- */
 #toast{position:fixed;right:var(--space-9);bottom:calc(var(--space-10) + 1px + var(--space-6));z-index:40;max-width:min(560px,calc(100vw - 2 * var(--space-9)));min-height:var(--toast-h);display:flex;align-items:center;padding:0 var(--space-7);border-radius:var(--radius-md);background-color:var(--color-bg-hover);color:var(--color-text-primary);font-size:var(--font-size-sm);box-shadow:0 8px 24px color-mix(in srgb,var(--color-bg-sunken) 80%,transparent);opacity:0;pointer-events:none;
@@ -366,7 +400,7 @@ select.style-select{min-width:96px;height:28px;padding:0 var(--space-3) 0 var(--
 .undo-toast-button:hover{color:var(--color-accent-hover)}
 .control-filters button:hover,.sat-filters button:hover,.subtabbtn:hover{color:var(--color-text-primary)}
 .sat-option:hover{background-color:var(--color-bg-hover)}
-#theme:hover,select.style-select:hover{background-color:var(--color-border-subtle)}
+.theme-picker-trigger:hover,select.style-select:hover{background-color:var(--color-border-subtle)}
 .plugin-warning-button:hover{background-color:var(--color-bg-hover)}
 .enabled-mods-toggle:hover{color:var(--color-accent-hover)}
 .help-details summary:hover{color:var(--color-text-primary)}
@@ -374,8 +408,8 @@ select.style-select{min-width:96px;height:28px;padding:0 var(--space-3) 0 var(--
 /* A hover eases its colours in on the element under the pointer and snaps back when it leaves, so a
    palette swap, a poll or a state change never runs a colour transition on anything else. The press's
    transform is listed again: a hovered button takes this list, not its own. A list row's highlight (a
-   tray entry, a Satanic or gem pool row) is list navigation and stays instant. */
-:is(.tabbtn,.btn,.quick-disable,.step-button,.sat-button,.undo-toast-button,.control-filters button,.sat-filters button,.subtabbtn,#theme,select.style-select,.plugin-warning-button,.enabled-mods-toggle,.help-details summary):hover{transition:color var(--motion-duration-fast) var(--motion-easing-hover),background-color var(--motion-duration-fast) var(--motion-easing-hover),border-color var(--motion-duration-fast) var(--motion-easing-hover),transform var(--motion-duration-fast) var(--motion-easing-standard)}
+   tray entry, a Satanic or gem pool row, a theme picker option) is list navigation and stays instant. */
+:is(.tabbtn,.btn,.quick-disable,.step-button,.sat-button,.undo-toast-button,.control-filters button,.sat-filters button,.subtabbtn,.theme-picker-trigger,select.style-select,.plugin-warning-button,.enabled-mods-toggle,.help-details summary):hover{transition:color var(--motion-duration-fast) var(--motion-easing-hover),background-color var(--motion-duration-fast) var(--motion-easing-hover),border-color var(--motion-duration-fast) var(--motion-easing-hover),transform var(--motion-duration-fast) var(--motion-easing-standard)}
 }
 
 /* ---- Press: a button scales to .97 while the pointer holds it (never from the keyboard) ---- */
@@ -383,15 +417,15 @@ select.style-select{min-width:96px;height:28px;padding:0 var(--space-3) 0 var(--
 @media(prefers-reduced-motion:no-preference){:is(.btn,.quick-disable,.step-button,.sat-button,.undo-toast-button,.enabled-mods-toggle):active:not(:disabled):not(:focus-visible){transform:scale(.97)}}
 
 /* ---- Reduced motion: no movement and no scale (amendments.ship, the owner's "Keep colour fades
-   too"). The tooltips, the tray, the toasts and a turned-off entry still fade, and a hover still
+   too"). The tooltips, the tray, the theme picker's list, the toasts and a turned-off entry still fade, and a hover still
    eases its colours in; nothing scales or moves, and a press changes nothing. ---- */
 @media(prefers-reduced-motion:reduce){
 :is(.btn,.quick-disable,.step-button,.sat-button,.undo-toast-button,.enabled-mods-toggle){transition:none}
-:is(.tabbtn,.btn,.quick-disable,.step-button,.sat-button,.undo-toast-button,.control-filters button,.sat-filters button,.subtabbtn,#theme,select.style-select,.plugin-warning-button,.enabled-mods-toggle,.help-details summary):hover{transition-property:color,background-color,border-color}
+:is(.tabbtn,.btn,.quick-disable,.step-button,.sat-button,.undo-toast-button,.control-filters button,.sat-filters button,.subtabbtn,.theme-picker-trigger,select.style-select,.plugin-warning-button,.enabled-mods-toggle,.help-details summary):hover{transition-property:color,background-color,border-color}
 .plugin-warning-tooltip,.setting-entry>.note[data-note][data-tooltip],#toast,.undo-toast,.enabled-mod-ghost[data-fading]{transition-property:opacity}
-#enabledMods[data-form="tray"]:not([data-measure])>ul{transition-property:opacity,display}
-#toast,.undo-toast[data-leaving],.enabled-mod-ghost[data-fading],#enabledMods[data-form="tray"]:not([data-measure])>ul{transform:none}
-@starting-style{.plugin-warning-tooltip,.setting-entry>.note[data-note][data-tooltip],.undo-toast,.enabled-mod-ghost[data-fading],#enabledMods[data-form="tray"][data-open]:not([data-measure])>ul{transform:none}}
+#enabledMods[data-form="tray"]:not([data-measure])>ul,.theme-picker-list{transition-property:opacity,display}
+#toast,.undo-toast[data-leaving],.enabled-mod-ghost[data-fading],#enabledMods[data-form="tray"]:not([data-measure])>ul,.theme-picker-list{transform:none}
+@starting-style{.plugin-warning-tooltip,.setting-entry>.note[data-note][data-tooltip],.undo-toast,.enabled-mod-ghost[data-fading],#enabledMods[data-form="tray"][data-open]:not([data-measure])>ul,.theme-picker[data-open]>.theme-picker-list{transform:none}}
 }
 
 /* ---- Narrower windows: one column, the page's own padding ---- */
