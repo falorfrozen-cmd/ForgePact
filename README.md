@@ -748,7 +748,8 @@ dependencies:
 
 Without `hs-game-sdk/cpp/include` on the include path, compilation fails immediately at
 the `#include <hs_game_sdk/hs_game_sdk.hpp>` line (`fatal error C1083`). The Python test
-suite (`py -m unittest discover -s tests`) checks the plugin's *source* against its
+suite (`py -m unittest discover -s tests`, or the same tests on every core with
+`py -3 tools/run_tests_parallel.py`) checks the plugin's *source* against its
 documented contracts and does not compile it, so a green test run does not confirm the
 plugin actually builds.
 
