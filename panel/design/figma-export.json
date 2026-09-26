@@ -1017,8 +1017,32 @@
       "ownerWordsReducedMotion": "Keep colour fades too",
       "reducedMotion": "Under prefers-reduced-motion, movement and scale are removed (transform, translate, scale and rotate: the button press, both tooltips' scale, the tray's scale, the toasts' rise and the removed entry's shrink), while opacity fades and the hover colour fades stay. motion.notes' reduced-motion sentence is rewritten to say so. The removed-entry state's note stays as it is: that motion has no colour.",
       "ownerWordsThemeList": "Keep native select",
-      "themeList": "The theme control stays a native select, whose list the system draws, so motion.notes no longer says the theme list scales from its trigger; the tray popover keeps that motion.",
-      "unchanged": "variables, palettes, screens (texts, selectorTokens, states), borders and every other key: only amendments.ship and motion.notes changed."
+      "themeList": "Superseded by finishReview F2 (owner, 2026-09-26: \"Build the ThemePicker\"): the theme control is the ThemePicker again, a custom listbox over the kept native select, and motion.notes' theme sentence says its listbox scales from its trigger. Replan 5's \"Keep native select\" (ownerWordsThemeList) stood until then.",
+      "unchanged": "variables, palettes, the screens (except the F6 glyph prefixes), the states (except the theme-picker note), contrastPairs, components, fonts and every other key: amendments.ship, motion.notes, the #theme selectorTokens rows, the theme-picker selectorTokens rows and borders entry, and those texts are what changed.",
+      "finishReview": {
+        "decided": "2026-09-26",
+        "source": "impeccable-finish-reviewer on ForgePact 2b46ca2, disposition fix; the owner approved all eight fixes (.claude/workorders/forgepact-ui-ship-finish-review.md)",
+        "ownerWords": {
+          "F1": "F1 rail icons",
+          "F2": "Build the ThemePicker",
+          "F3": "F3 + F6 drawn check marks",
+          "F4": "Hide it at rest",
+          "F5": "Mono run, no quotes",
+          "F6": "F3 + F6 drawn check marks",
+          "F7": "F7 symmetric gutters",
+          "F8": "F8 type drift"
+        },
+        "changes": {
+          "F1": "The Setup and Mods rail icons are the design's ring and 2x2 grid, in the other tabs' stroke.",
+          "F2": "The theme choice is the ThemePicker: a compact, quiet trigger (.theme-picker-trigger, the name and a chevron) and a listbox (.theme-picker-list, a 1px color/border/subtle edge) whose options each show three swatches of their palette (color/border/strong, color/text/muted, color/accent) and the drawn check on the chosen one. The native select #theme stays underneath as the control of record, hidden, so what is saved and sent is unchanged. The four #theme selectorTokens rows are re-pointed to .theme-picker-trigger; theme-picker rows and a borders entry are added.",
+          "F3": "The status bar's settled save state carries a drawn check in color/ok.",
+          "F4": "The Monster Rarity note is hidden while both rows are off or idle at 0; its words stay.",
+          "F5": "The chain warning names Install Mod Plugin as a mono run with no quotes, then (game must be closed).",
+          "F6": "No glyph icons: the sub-item rows are marked by their indent, and Selection valid and Saved carry the drawn check or nothing. The screens' texts lose the leading glyph of those four strings.",
+          "F7": "The page's gutters are symmetric: 32/32 at 1280 and 20/20 at 900 (the right padding gives up the scrollbar's width).",
+          "F8": "The Setup launcher's description is body/secondary text (font/size/sm, color/text/muted), and the Miner's Helmet card puts Vein Resonance on its own line."
+        }
+      }
     }
   },
   "borders": [
@@ -1069,6 +1093,10 @@
     {
       "selector": ".setting-entry>.note[data-note][data-tooltip]",
       "why": "an idle slider note's tooltip has a 1px color/border/subtle edge, so it reads as a layer over the row above and not as stray text (owner, 2026-09-25: its own surface with an edge); the same edge as the plugin warning tooltip"
+    },
+    {
+      "selector": ".theme-picker-list",
+      "why": "the theme picker's open list has a 1px color/border/subtle edge, so it reads as a layer over the Setup card it opens across, like the tray popover and the tooltips (finish review F2)"
     }
   ],
   "contrastPairs": [
@@ -1941,22 +1969,22 @@
       "variable": "color/accent"
     },
     {
-      "selector": "#theme",
+      "selector": ".theme-picker-trigger",
       "property": "background-color",
       "variable": "color/bg/hover"
     },
     {
-      "selector": "#theme",
+      "selector": ".theme-picker-trigger",
       "property": "color",
       "variable": "color/text/primary"
     },
     {
-      "selector": "#theme",
+      "selector": ".theme-picker-trigger",
       "property": "border-radius",
       "variable": "radius/sm"
     },
     {
-      "selector": "#theme",
+      "selector": ".theme-picker-trigger",
       "property": "font-size",
       "variable": "font/size/sm"
     },
@@ -1994,6 +2022,26 @@
       "selector": "#enemyspeedctval",
       "property": "color",
       "variable": "color/text/muted"
+    },
+    {
+      "selector": ".theme-picker-list",
+      "property": "background-color",
+      "variable": "color/bg/raised"
+    },
+    {
+      "selector": ".theme-picker-list",
+      "property": "border-radius",
+      "variable": "radius/lg"
+    },
+    {
+      "selector": ".theme-picker-option",
+      "property": "font-size",
+      "variable": "font/size/sm"
+    },
+    {
+      "selector": ".theme-picker-option",
+      "property": "color",
+      "variable": "color/text/primary"
     }
   ],
   "screens": [
@@ -2588,10 +2636,10 @@
         "Reveal full map",
         "on",
         "Reveals the full minimap in every zone (removes fog of war). Waypoints, dungeon entrances, chests, shrines and mining nodes come with it - they are hidden by the fog, not by anything else.",
-        "↳ Show every monster pack on the map",
+        "Show every monster pack on the map",
         "off",
         "Most mob packs do not exist until you walk near them, so the revealed map used to show only the packs you had already met. This marks every pack's spot and kind (normal, champion, ancient, legion, mini boss) on the minimap the moment you arrive, including density copies, without creating a single monster: the pack is still born by the game when you walk near it, and its real dots replace the marker. Costs nothing per frame beyond the markers themselves.",
-        "↳ Really spawn every pack on arrival (heavy)",
+        "Really spawn every pack on arrival (heavy)",
         "off",
         "The old way: each new zone creates all of its packs, including density copies, as you arrive. Every living monster costs the game frame time on top of the markers, so at high density this lags for the whole zone. Off by default; only for comparing against the markers.",
         "Pet collects quest items",
@@ -2600,7 +2648,7 @@
         "Auto-prospect items put in the Prospect Cube",
         "off",
         "Every item you drag or click into the Prospect Cube's grid is prospected straight away, as if you had pressed Prospect, so the grid never fills with items waiting their turn. Anything still in the prospect grid when the game saves is lost.",
-        "↳ Move the previous materials to your materials tab",
+        "Move the previous materials to your materials tab",
         "n/a",
         "When the next item is prospected, the materials from the prospect before it go from the grid to your materials tab first, the way clicking them does. The newest batch stays in the grid where you can see it. A material the game will not take stays in the grid.",
         "Enable Auto-prospect first.",
@@ -2666,10 +2714,10 @@
         "Reveal full map",
         "on",
         "Reveals the full minimap in every zone (removes fog of war). Waypoints, dungeon entrances, chests, shrines and mining nodes come with it - they are hidden by the fog, not by anything else.",
-        "↳ Show every monster pack on the map",
+        "Show every monster pack on the map",
         "off",
         "Most mob packs do not exist until you walk near them, so the revealed map used to show only the packs you had already met. This marks every pack's spot and kind (normal, champion, ancient, legion, mini boss) on the minimap the moment you arrive, including density copies, without creating a single monster: the pack is still born by the game when you walk near it, and its real dots replace the marker. Costs nothing per frame beyond the markers themselves.",
-        "↳ Really spawn every pack on arrival (heavy)",
+        "Really spawn every pack on arrival (heavy)",
         "off",
         "The old way: each new zone creates all of its packs, including density copies, as you arrive. Every living monster costs the game frame time on top of the markers, so at high density this lags for the whole zone. Off by default; only for comparing against the markers.",
         "Pet collects quest items",
@@ -2678,7 +2726,7 @@
         "Auto-prospect items put in the Prospect Cube",
         "off",
         "Every item you drag or click into the Prospect Cube's grid is prospected straight away, as if you had pressed Prospect, so the grid never fills with items waiting their turn. Anything still in the prospect grid when the game saves is lost.",
-        "↳ Move the previous materials to your materials tab",
+        "Move the previous materials to your materials tab",
         "n/a",
         "When the next item is prospected, the materials from the prospect before it go from the grid to your materials tab first, the way clicking them does. The newest batch stays in the grid where you can see it. A material the game will not take stays in the grid.",
         "Enable Auto-prospect first.",
@@ -2931,7 +2979,7 @@
         "Darkness increased",
         "Skill Debilitation",
         "All Skills decreased",
-        "✓ Selection valid",
+        "Selection valid",
         "Changes save automatically",
         "Settings loaded",
         "No settings sent this session",
@@ -3045,7 +3093,7 @@
         "Darkness increased",
         "Skill Debilitation",
         "All Skills decreased",
-        "✓ Selection valid",
+        "Selection valid",
         "Changes save automatically",
         "Settings loaded",
         "No settings sent this session",
@@ -3155,7 +3203,7 @@
       "state": "theme-picker",
       "nodeId": "36:797",
       "screenshot": ".claude/workorders/forgepact-ui-figma-buildout/states/theme-picker.png",
-      "notes": "Picker open from the Theme select in the Setup tab's Appearance card (moved there by the owner's polish pass, 2026-09-25; the panel draws it as the system select list), plus one section in each palette. Each option's swatch shows border/strong, text/muted and the accent, so the neutral temperature tells Ledger (warm) from Graphite (cool grey) and Sigil (blue grey)."
+      "notes": "Picker open from the Theme control in the Setup tab's Appearance card (moved there by the owner's polish pass, 2026-09-25; the panel draws it as the ThemePicker since the finish review, F2: a trigger and a listbox that opens below it), plus one section in each palette. Each option's swatch shows border/strong, text/muted and the accent, so the neutral temperature tells Ledger (warm) from Graphite (cool grey) and Sigil (blue grey)."
     },
     {
       "state": "enabled-inline-1280",
@@ -3428,7 +3476,7 @@
     }
   ],
   "motion": {
-    "notes": "Tokens: motion/duration/fast 120ms, base 200ms; motion/easing/standard cubic-bezier(0.2, 0, 0, 1), emphasized cubic-bezier(0.23, 1, 0.32, 1), hover cubic-bezier(0.25, 0.1, 0.25, 1). Animate only transform and opacity. Hover colour changes: motion/duration/fast on motion/easing/hover, gated by (hover: hover) and (pointer: fine). Buttons scale(0.97) on :active over motion/duration/fast on motion/easing/standard. Focus and keyboard actions are never animated. The tray popover scales from its trigger (0.97 to 1, with opacity) over motion/duration/base on motion/easing/emphasized and closes over motion/duration/fast on motion/easing/standard; opened from the keyboard it appears at once. The theme control stays a native select, whose list the system draws. Toasts enter over motion/duration/base and leave over motion/duration/fast on motion/easing/standard. A removed list entry fades and scales to 0.95 over motion/duration/fast. prefers-reduced-motion removes movement and scale (transform, translate, scale and rotate), while opacity fades and colour fades stay."
+    "notes": "Tokens: motion/duration/fast 120ms, base 200ms; motion/easing/standard cubic-bezier(0.2, 0, 0, 1), emphasized cubic-bezier(0.23, 1, 0.32, 1), hover cubic-bezier(0.25, 0.1, 0.25, 1). Animate only transform and opacity. Hover colour changes: motion/duration/fast on motion/easing/hover, gated by (hover: hover) and (pointer: fine). Buttons scale(0.97) on :active over motion/duration/fast on motion/easing/standard. Focus and keyboard actions are never animated. The tray popover scales from its trigger (0.97 to 1, with opacity) over motion/duration/base on motion/easing/emphasized and closes over motion/duration/fast on motion/easing/standard; opened from the keyboard it appears at once. The theme picker's listbox scales from its trigger (0.97 to 1, with opacity) over motion/duration/base on motion/easing/emphasized and closes over motion/duration/fast on motion/easing/standard; opened from the keyboard it appears at once. Toasts enter over motion/duration/base and leave over motion/duration/fast on motion/easing/standard. A removed list entry fades and scales to 0.95 over motion/duration/fast. prefers-reduced-motion removes movement and scale (transform, translate, scale and rotate), while opacity fades and colour fades stay."
   },
   "bindingAudit": {
     "fillsTotal": 4277,
