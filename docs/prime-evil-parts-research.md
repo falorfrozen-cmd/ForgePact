@@ -35,7 +35,21 @@ Static reading, Sep-17 build `pe-6aaa6779`, in our own words:
 
   So the part's own `droprate.base`, which `droprate group primeevil` divides,
   takes part in the roll.
-- **`DropUberParts`** reads no drop rate: it creates the part directly.
+- **`DropUberParts`** reads no drop rate, and it creates no Prime Evil part.
+  - It creates one of category 13's items 14-18: Soul of Anguish, Soul of Despair,
+    Soul of Corruption, Scroll of Ra or Colosseum Fragment. It can also create
+    their infernal versions, 49-53.
+  - It places the item with `LootGroundCreate`.
+  - The `primeevil` group covers none of these ten items. `DropUberParts` calls
+    no `GetDropRate`, so no `droprate group` can scale them.
+- **Which drop type runs which script** (`LoadDrops`' switch table):
+  - Type 41 (Relics and the parts) first checks `LoadDrops`' fourth argument. It
+    does nothing when that argument is false.
+  - Type 43 goes to `DropUberParts`, and type 26 to `DropDimensionalShard`.
+    The 2026-08-27 type map ([blood pact §6](blood-pact-values-research.md))
+    recorded a Dimensional Shard for type 43. The two disagree; not resolved.
+- **`Enemy_Parent_obj`'s Destroy** calls `DropItem` only when the monster's
+  protected HP is 0 or less.
 
 ## Measured
 
@@ -71,16 +85,58 @@ What else was seen:
   drops. The drop path needs a real death, HP to 0.
 - **Next to the hero,** Karp King killed the level-100 hero in about 15 s (once;
   softcore, no loss). Spawning it 1200 px away avoided that.
-- **Uber Anubis** did not die from HP 0 (it has phases and dummy objects). All 10
-  test instances were removed with `instance_destroy`.
+- **Uber Anubis** did not die from HP 0. All 10 test instances were removed with
+  `instance_destroy`. "Uber bosses" below has the way that kills it.
+
+## Uber bosses (measured 2026-09-26, afternoon)
+
+This test checked whether the slider does anything for uber bosses. Same research
+build, same hero, Act_01_01. The slider was at x35, where Karp King drops about
+10 parts per kill.
+
+| Boss | how it died | kills | Prime Evil parts | uber items (13:14-18, 49-53) |
+| --- | --- | --- | --- | --- |
+| Karp King (control, before) | HP 0 | 1 | 12 | 0 |
+| Uber Damien | HP 0 | 3 | 0 | 0 |
+| Reaper (`Reaper_Uber_obj`) | HP 0 | 3 | 0 | 0 |
+| Uber Endrixia | HP 0, then `instance_destroy` | 2 | 0 | 0 |
+| Uber Anubis | HP 0, then `instance_destroy` | 2 | 0 | 0 |
+| Karp King (control, after) | HP 0 | 1 | 8 | 0 |
+
+- **No uber boss dropped a Prime Evil part at x35.** The slider does nothing for
+  them, at least outside their own realm. Two of the ten uber kills dropped
+  ordinary gear.
+- **The same at x1,** earlier that afternoon: three Uber Damien kills, one Reaper,
+  one Uber Endrixia and one Uber Anubis. They dropped no part and no uber item,
+  each at a spot where a Karp King kill did drop loot.
+- **How they die.**
+  - Uber Damien and Reaper die from HP 0.
+  - Uber Endrixia, Uber Anubis and Uber Luna do not.
+  - For Endrixia and Anubis, HP 0 followed by `instance_destroy` runs the Destroy
+    event with HP at 0, and the drop path follows.
+- **Not measured:**
+  - **Uber Luna.** `instance_destroy` after HP 0 closed the game, with no crash
+    dump. Its Destroy event decrypts an item from an API string.
+  - **Uber bosses inside their own realm.** `room_goto` to `Uber_Inoya_rm` also
+    closed the game. It is open whether they drop the uber items there, and
+    whether any Prime Evil part comes with them.
+- **A spawned boss must die where loot can land.**
+  - A Karp King spawned past the room's right edge dropped nothing, and no
+    `Loot_Ground_obj` appeared. The same boss 1200 px to the hero's left dropped
+    normally.
+  - In one more entry, with the hero at (7880, 10336), even Karp King dropped
+    nothing. The hero was found dead afterwards. That entry's results were
+    discarded.
+  - So every result above comes from a spot where a Karp King control dropped.
 
 ## Not verified
 
-- **Infernal parts from uber bosses.** `DropUberParts` reads no drop rate, so the
-  slider probably does not change them.
+- **Where the infernal parts drop.** No test dropped one. Every Karp King part
+  was the normal bellybutton, and the uber bosses dropped no parts at all.
+- **Uber bosses in their own realm** (see above).
 - **Stat 736's meaning.**
 - **Which bosses, in which zones, roll type 41 natively.** Only Karp King was
-  measured, spawned by the research command in Act_01_01.
+  measured dropping parts. Four uber bosses dropped none in Act_01_01.
 
 ## What shipped
 
@@ -91,7 +147,9 @@ What else was seen:
   missed `collectible_satans_infernal_horn`. They now use "satans_". In category
   13 that matches only the two horns: 12 of 12 parts, where it used to be 11.
 - **Tests:** `tests/test_prime_evil_parts_contract.py`.
-- **Tool:** `tools/boss_drop_trial.py` repeats the kill loop above. It needs the
+- **Tool:** `tools/boss_drop_trial.py` repeats the kill loop above. `--dx` moves
+  the spawn, `--destroy` adds the HP 0 + `instance_destroy` step for bosses that
+  outlive HP 0, and each kill also counts uber items. It needs the
   research build, a hero in a zone, and the hub's `hs-game-sdk` next to this
   checkout. The hero can be entered without input with HS-AFK-Expedition's
   `tools/game_session.py prepare`, then `travel --room Act_01_01`.

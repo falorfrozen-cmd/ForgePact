@@ -90,7 +90,10 @@ bosses, so this slider works on bosses only, and it never touches Relics.
 
 Checked in play on 2026-09-26: Karp King was killed through the game's own death path, and
 dropped about 0.7 bellybuttons per kill at x1, 3 at x5 and 9 at x35. Above x35 nothing more
-changes. See [research and test scope](docs/prime-evil-parts-research.md).
+changes. Uber bosses (Damien, Reaper, Endrixia, Anubis) dropped no Prime Evil part, even at
+x35. The game's uber drop script (`DropUberParts`) makes Souls, Scrolls of Ra and Colosseum
+Fragments and reads no drop rate, so the slider cannot scale it. See
+[research and test scope](docs/prime-evil-parts-research.md).
 
 ### Using the panel
 
