@@ -46,7 +46,7 @@ Download and extract the complete release, then reopen ForgePact. Your existing
 settings are retained. Source users can run `Prepare-Plugin.bat` if plugin files
 are missing before using **Install Mod Plugin**. This release's own changes
 are all in the panel and need no new mod plugin. If you are updating from
-1.4.5 or earlier, press **Install Mod Plugin** once anyway: 1.4.6 changed the
-plugin (Gems of Incarnation).
+1.4.6 or earlier, press **Install Mod Plugin** once anyway: 1.4.7 changed the
+plugin (Prime Evil Parts).
 
 Use ForgePact only with an offline / EAC-disabled copy of Hero Siege.
