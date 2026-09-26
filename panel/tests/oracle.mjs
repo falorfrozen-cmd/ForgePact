@@ -3,8 +3,10 @@
 //
 //   node tests/oracle.mjs record [--legacy] --out tests/behaviour-oracle.json
 //   node tests/oracle.mjs record --legacy --only gems --src <dir> --source-rev <sha> --out tests/behaviour-oracle-gems.json
+//   node tests/oracle.mjs record --legacy --only primeevil --src <dir> --source-rev <sha> --out tests/behaviour-oracle-primeevil.json
 //   node tests/oracle.mjs replay --oracle tests/behaviour-oracle.json [--derived tests/behaviour-oracle-derived.json]
-//                               [--supplement tests/behaviour-oracle-gems.json] [--legacy]
+//                               [--supplement tests/behaviour-oracle-gems.json]
+//                               [--key-supplement tests/behaviour-oracle-primeevil.json] [--legacy]
 //
 // `--derived` adds the steps tests/oracle-derive.mjs generates for the controls
 // the legacy page never had (slider switches, the Enabled mods list's Turn off
@@ -24,6 +26,20 @@
 // checkout, served with `--legacy`), and it names that tree as `sourceRev`.
 // The recorder refuses when the page's enumerated gem controls are not
 // exactly GEM_CONTROLS, and it never writes behaviour-oracle.json.
+//
+// `--key-supplement` adds a recording of a key slider a later origin/main
+// added to KEYS (Prime Evil Parts, from 1.4.7's page at 841c2db): its steps run
+// on a fourth fresh sandbox, compared exactly as recorded (no relocation, no
+// transform), and coverage counts its `controls`. It is recorded by `record
+// --only primeevil`, a fixed scenario (the Loot tab, the slider's max, min,
+// `+`, `-` and typed midpoint, then Apply all) from the tree `--src` names,
+// and the recorder refuses unless that page's controls beyond the legacy and
+// Gems recordings are exactly the one slider. Because the backend now sends
+// that key's reset line in every full key reset, the legacy recording and the
+// Gems supplement are replayed through tests/lib/oracle-relocate.mjs's
+// insertAddedKeys, which inserts exactly that line and nothing else; neither
+// file is edited, and the key supplement and the recorder never pass through
+// it.
 //
 // `record` walks every control the page offers, tab by tab in document order,
 // and writes one step per action: the POST requests the page made (`/api/state`
@@ -52,7 +68,7 @@ import { resolve } from 'node:path';
 import {
   PANEL_DIR, TABS, VIEWPORTS, launchBrowser, openPanel, parseArgs, startSandbox, waitSaved,
 } from './lib/browser.mjs';
-import { SUPPLEMENT_RELOCATION, relocate } from './lib/oracle-relocate.mjs';
+import { SUPPLEMENT_RELOCATION, insertAddedKeys, relocate } from './lib/oracle-relocate.mjs';
 
 const DEPENDENTS = {
   map_reveal: ['map_reveal_packs', 'map_reveal_spawn'],
@@ -88,6 +104,21 @@ const GEMS_SCENARIO = [
   '#gemfilter_toggle', '#gemfilter_toggle', '#gemfilter_toggle',
   '#mod_gem_mythic', '#mod_gem_maxroll',
 ].map((control) => ({ control, action: 'click' }));
+
+// Prime Evil Parts (1.4.7): the one control main's page added beyond the
+// legacy and Gems recordings, and its fixed scenario - the walk's own range
+// actions on the Loot tab (the typed value is the walk's midpoint), then Apply
+// all, so one step compares the full command list with the slider left raised.
+const PRIMEEVIL_RANGE = 'input[type=range][data-sec="keys"][data-key="primeevil"]';
+const PRIMEEVIL_SCENARIO = (typed) => [
+  { control: 'tab:loot', action: 'click' },
+  { control: PRIMEEVIL_RANGE, action: 'max' },
+  { control: PRIMEEVIL_RANGE, action: 'min' },
+  { control: PRIMEEVIL_RANGE, action: 'increment' },
+  { control: PRIMEEVIL_RANGE, action: 'decrement' },
+  { control: PRIMEEVIL_RANGE, action: 'type', value: typed },
+  { control: '#applyall', action: 'click' },
+];
 
 // Runs in the page: every control under `root`, in document order.
 function enumerateIn(rootSelector) {
@@ -317,6 +348,7 @@ function reportRecorded(steps, out) {
 }
 
 async function record(args) {
+  if (args.only === 'primeevil') return recordPrimeEvil(args);
   if (args.only !== undefined) return recordGems(args);
   const out = resolve(PANEL_DIR, args.out || 'tests/behaviour-oracle.json');
   const legacy = !!args.legacy;
@@ -371,6 +403,50 @@ async function recordGems(args) {
       recordedAt: new Date().toISOString(),
       viewport,
       controls: GEM_CONTROLS,
+      steps,
+    };
+    writeFileSync(out, JSON.stringify(oracle, null, 1) + '\n');
+    reportRecorded(steps, out);
+  } finally {
+    await browser.close();
+    await sandbox.stop();
+  }
+}
+
+// The Prime Evil Parts supplement: PRIMEEVIL_SCENARIO on the legacy page of
+// the tree `--src` names (origin/main at 1.4.7), at that tree's product
+// defaults. Never through insertAddedKeys: this page already sends the key.
+async function recordPrimeEvil(args) {
+  const usage = 'record --only primeevil needs --legacy, --src <dir>, --source-rev <40-hex sha> and --out <file>';
+  if (!args.legacy || typeof args.src !== 'string' || typeof args.out !== 'string' ||
+      !/^[0-9a-f]{40}$/.test(String(args['source-rev']))) throw new Error(usage);
+  const out = resolve(PANEL_DIR, args.out);
+  for (const kept of ['tests/behaviour-oracle.json', 'tests/behaviour-oracle-gems.json']) {
+    if (out === resolve(PANEL_DIR, kept)) throw new Error(`record --only primeevil never writes ${kept}`);
+  }
+  const viewport = VIEWPORTS[1280];
+  const sandbox = await startSandbox({ legacy: true, src: resolve(args.src) });
+  const browser = await launchBrowser();
+  try {
+    const page = await openPanel(browser, sandbox, viewport);
+    // Every control that page enumerates beyond the legacy and Gems recordings
+    // must be exactly the Prime Evil Parts slider: one more added on that tree
+    // would otherwise go unrecorded.
+    const known = new Set(['tests/behaviour-oracle.json', 'tests/behaviour-oracle-gems.json']
+      .flatMap((f) => JSON.parse(readFileSync(resolve(PANEL_DIR, f), 'utf8')).controls));
+    const { plan, controls } = await planSteps(page);
+    const added = controls.filter((c) => !known.has(c));
+    if (JSON.stringify(added) !== JSON.stringify([PRIMEEVIL_RANGE])) {
+      throw new Error(`the page's controls beyond the legacy and Gems recordings are ${JSON.stringify(added)}, not ${JSON.stringify([PRIMEEVIL_RANGE])}`);
+    }
+    const typed = plan.find((p) => p.control === PRIMEEVIL_RANGE && p.action === 'type').value;
+    const steps = await recordSteps(page, sandbox, PRIMEEVIL_SCENARIO(typed));
+    const oracle = {
+      recordedFrom: 'legacy',
+      sourceRev: args['source-rev'],
+      recordedAt: new Date().toISOString(),
+      viewport,
+      controls: [PRIMEEVIL_RANGE],
       steps,
     };
     writeFileSync(out, JSON.stringify(oracle, null, 1) + '\n');
@@ -448,16 +524,33 @@ async function replaySupplement(browser, supplement, args, mismatches) {
   const sandbox = await startSandbox({ legacy: !!args.legacy, dist: args.dist });
   try {
     const page = await openPanel(browser, sandbox, supplement.viewport);
-    await replayRecorded(page, sandbox, relocate(supplement, SUPPLEMENT_RELOCATION), mismatches, 'supplement');
+    await replayRecorded(page, sandbox, relocate(insertAddedKeys(supplement), SUPPLEMENT_RELOCATION), mismatches, 'supplement');
+  } finally {
+    await sandbox.stop();
+  }
+}
+
+// The key supplement's steps (a key slider a later main added), on a sandbox
+// of their own at the product defaults, compared exactly as recorded: it was
+// recorded after the key existed, so neither transform applies to it.
+async function replayKeySupplement(browser, keySupplement, args, mismatches) {
+  const sandbox = await startSandbox({ legacy: !!args.legacy, dist: args.dist });
+  try {
+    const page = await openPanel(browser, sandbox, keySupplement.viewport);
+    await replayRecorded(page, sandbox, keySupplement, mismatches, 'key-supplement');
   } finally {
     await sandbox.stop();
   }
 }
 
 async function replay(args) {
-  const oracle = JSON.parse(readFileSync(resolve(PANEL_DIR, args.oracle || 'tests/behaviour-oracle.json'), 'utf8'));
+  // The legacy recording predates keys a later main added to KEYS: its full
+  // key resets gain exactly those reset lines (insertAddedKeys) and nothing
+  // else; the file itself is never edited.
+  const oracle = insertAddedKeys(JSON.parse(readFileSync(resolve(PANEL_DIR, args.oracle || 'tests/behaviour-oracle.json'), 'utf8')));
   const derived = args.derived ? JSON.parse(readFileSync(resolve(PANEL_DIR, args.derived), 'utf8')) : null;
   const supplement = args.supplement ? JSON.parse(readFileSync(resolve(PANEL_DIR, args.supplement), 'utf8')) : null;
+  const keySupplement = args['key-supplement'] ? JSON.parse(readFileSync(resolve(PANEL_DIR, args['key-supplement']), 'utf8')) : null;
   const sandbox = await startSandbox({ legacy: !!args.legacy, dist: args.dist });
   const browser = await launchBrowser();
   const mismatches = [];
@@ -467,7 +560,8 @@ async function replay(args) {
     // Coverage: a control the build offers that no oracle file ever exercised
     // is a behaviour nobody compared.
     const { controls } = await planSteps(page);
-    const covered = [...oracle.controls, ...(derived ? derived.controls : []), ...(supplement ? supplement.controls : [])];
+    const covered = [...oracle.controls, ...(derived ? derived.controls : []), ...(supplement ? supplement.controls : []),
+      ...(keySupplement ? keySupplement.controls : [])];
     const recorded = new Set(covered);
     for (const c of controls) if (!recorded.has(c)) mismatches.push({ step: '-', control: c, problem: 'control not in the oracle' });
     for (const c of covered) if (!controls.includes(c)) mismatches.push({ step: '-', control: c, problem: 'control missing from this build' });
@@ -477,12 +571,14 @@ async function replay(args) {
     await sandbox.stop();
     if (derived) await replayDerived(browser, derived, oracle.viewport, args, mismatches);
     if (supplement) await replaySupplement(browser, supplement, args, mismatches);
+    if (keySupplement) await replayKeySupplement(browser, keySupplement, args, mismatches);
   } finally {
     await browser.close();
     if (!stopped) await sandbox.stop();
   }
   for (const m of mismatches) console.log('mismatch', JSON.stringify(m));
-  const total = oracle.steps.length + (derived ? derived.steps.length : 0) + (supplement ? supplement.steps.length : 0);
+  const total = oracle.steps.length + (derived ? derived.steps.length : 0) + (supplement ? supplement.steps.length : 0) +
+    (keySupplement ? keySupplement.steps.length : 0);
   console.log(`oracle: ${total} steps, ${mismatches.length} mismatches`);
   return mismatches.length ? 1 : 0;
 }
@@ -492,7 +588,7 @@ const mode = args._[0];
 if (mode === 'record') await record(args);
 else if (mode === 'replay') process.exitCode = await replay(args);
 else {
-  console.error('usage: oracle.mjs record [--legacy] [--out <file>] | record --legacy --only gems --src <dir> --source-rev <sha> --out <file> | ' +
-    'replay [--oracle <file>] [--derived <file>] [--supplement <file>] [--legacy]');
+  console.error('usage: oracle.mjs record [--legacy] [--out <file>] | record --legacy --only gems|primeevil --src <dir> --source-rev <sha> --out <file> | ' +
+    'replay [--oracle <file>] [--derived <file>] [--supplement <file>] [--key-supplement <file>] [--legacy]');
   process.exitCode = 2;
 }

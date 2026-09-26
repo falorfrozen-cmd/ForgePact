@@ -3,7 +3,8 @@
 // recorded values, every `same` looks back, and the step counts are the
 // contract's: three switch clicks per switched slider, one Turn off per mod
 // the list can show, one theme step per THEMES entry, after the one step that
-// opens Setup, where the theme is.
+// opens Setup, where the theme is, and then the key supplement's slider (Prime
+// Evil Parts), entered on the Loot tab.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -18,10 +19,13 @@ const LEGACY = JSON.parse(LEGACY_TEXT);
 const COMMITTED_TEXT = read('./behaviour-oracle-derived.json');
 const DERIVED = JSON.parse(COMMITTED_TEXT);
 const SUPPLEMENT = JSON.parse(read('./behaviour-oracle-gems.json'));
+const KEY_SUPPLEMENT = JSON.parse(read('./behaviour-oracle-primeevil.json'));
 const SLIDERS = LEGACY.controls.filter((c) => switchIdOf(c));
+const KEY_SLIDERS = KEY_SUPPLEMENT.controls.filter((c) => switchIdOf(c));
 
 test('the committed file is byte-identical to a fresh derivation', () => {
-  const fresh = serialise(derive(JSON.parse(LEGACY_TEXT), 'tests/behaviour-oracle.json', SUPPLEMENT, 'tests/behaviour-oracle-gems.json'));
+  const fresh = serialise(derive(JSON.parse(LEGACY_TEXT), 'tests/behaviour-oracle.json', SUPPLEMENT, 'tests/behaviour-oracle-gems.json',
+    KEY_SUPPLEMENT, 'tests/behaviour-oracle-primeevil.json'));
   assert.equal(fresh, COMMITTED_TEXT);
   assert.ok(!COMMITTED_TEXT.includes('\r'), 'LF only');
 });
@@ -31,6 +35,7 @@ test('the source path is named relative to panel/, wherever it was run from', ()
   assert.equal(DERIVED.derivedFrom, 'tests/behaviour-oracle.json');
   assert.equal(DERIVED.legacyRecordedAt, LEGACY.recordedAt);
   assert.equal(DERIVED.supplementFrom, 'tests/behaviour-oracle-gems.json');
+  assert.equal(DERIVED.keySupplementFrom, 'tests/behaviour-oracle-primeevil.json');
 });
 
 test('the supplement\'s boolean mods get on, off, on and Turn off, on the tab it reached them on', () => {
@@ -80,15 +85,15 @@ test('no step carries a recorded value; every expectation is same-earlier or a l
   });
 });
 
-test('the counts: 120 switch clicks, 56 Turn off buttons, one theme step per theme', () => {
+test('the counts: 123 switch clicks, 57 Turn off buttons, one theme step per theme', () => {
   const steps = DERIVED.steps;
   const switches = steps.filter((s) => s.control.startsWith('#sw_'));
   const quick = steps.filter((s) => s.control.startsWith('#enabledMods .quick-disable[data-for='));
   const theme = steps.filter((s) => s.control === '#theme');
-  assert.equal(switches.length, 3 * SLIDERS.length);
-  assert.equal(quick.length, SLIDERS.length + BOOLEAN_MODS.length + 2);
-  assert.equal(switches.length, 120);
-  assert.equal(quick.length, 56);
+  assert.equal(switches.length, 3 * (SLIDERS.length + KEY_SLIDERS.length));
+  assert.equal(quick.length, SLIDERS.length + KEY_SLIDERS.length + BOOLEAN_MODS.length + 2);
+  assert.equal(switches.length, 123);
+  assert.equal(quick.length, 57);
   assert.equal(theme.length, THEMES.length);
   assert.deepEqual(theme.map((s) => s.value), THEMES.map((t) => t.value));
   for (const s of theme) {
@@ -114,23 +119,50 @@ test('a switch off compares with its slider at minimum, on with its slider at ma
   assert.equal(quick.expect.posts.same, off.step);
 });
 
-test('the theme steps come last, after one tab:setup step and nothing else new', () => {
+test('the theme steps come after one tab:setup step, and only the key supplement\'s steps follow them', () => {
   // The theme moved from the status bar to the Setup tab's Appearance card:
   // one navigation step with no expectation opens Setup, then one step per
-  // theme, and they end the file, so no earlier step moved.
+  // theme; only the key supplement's slider (appended later) comes after
+  // them, so no earlier step moved.
   const steps = DERIVED.steps;
   const first = steps.findIndex((s) => s.control === '#theme');
   assert.equal(steps[first - 1].control, 'tab:setup');
   assert.equal(steps[first - 1].action, 'click');
   assert.ok(!('expect' in steps[first - 1]), 'the Setup step carries an expectation');
   assert.equal(steps.filter((s) => s.control === 'tab:setup').length, 1);
-  assert.deepEqual(steps.slice(first).map((s) => s.control), THEMES.map(() => '#theme'));
-  assert.equal(first, steps.length - THEMES.length);
+  assert.deepEqual(steps.slice(first, first + THEMES.length).map((s) => s.control), THEMES.map(() => '#theme'));
+  assert.equal(first, steps.length - THEMES.length - 1 - 8 * KEY_SLIDERS.length);
   assert.ok(!DERIVED.controls.includes('tab:setup'), 'a navigation step is not a control');
+  // Without the key supplement, the theme steps end the file.
+  const bare = derive(LEGACY, 'tests/behaviour-oracle.json', SUPPLEMENT, 'tests/behaviour-oracle-gems.json');
+  assert.equal(bare.steps.findIndex((s) => s.control === '#theme'), bare.steps.length - THEMES.length);
+  assert.ok(!('keySupplementFrom' in bare));
+  assert.deepEqual(bare.steps, DERIVED.steps.slice(0, bare.steps.length));
 });
 
-test('every control is covered: the switches in legacy order, then the theme', () => {
-  assert.deepEqual(DERIVED.controls, [...SLIDERS.map((c) => '#sw_' + switchIdOf(c).replace('.', '_')), '#theme']);
+test('the key supplement\'s slider gets the eight slider steps, entered on the Loot tab after the theme', () => {
+  assert.deepEqual(KEY_SLIDERS, ['input[type=range][data-sec="keys"][data-key="primeevil"]']);
+  const steps = DERIVED.steps;
+  const at = steps.length - 9;
+  // The theme left Setup open, so the Loot tab is entered again first.
+  assert.equal(steps[at - 1].control, '#theme');
+  assert.deepEqual(steps[at], { step: at, control: 'tab:loot', action: 'click' });
+  const [range] = KEY_SLIDERS;
+  const sw = '#sw_keys_primeevil';
+  assert.deepEqual(steps.slice(at + 1).map((s) => [s.control, s.action]), [
+    [range, 'max'], [range, 'min'], [range, 'max'], [sw, 'click'], [sw, 'click'],
+    [quickDisable('sw_keys_primeevil'), 'click'], [sw, 'click'], [range, 'min'],
+  ]);
+  const off = steps[at + 4];
+  assert.deepEqual(off.expect, {
+    posts: { is: [{ url: '/api/set', body: { section: 'switches', key: 'keys.primeevil', value: false } }] },
+    cmds: { same: at + 2 },
+  });
+  assert.equal(steps[at + 5].expect.cmds.same, at + 3);
+});
+
+test('every control is covered: the switches in legacy order, the theme, then the key supplement\'s switch', () => {
+  assert.deepEqual(DERIVED.controls, [...SLIDERS.map((c) => '#sw_' + switchIdOf(c).replace('.', '_')), '#theme', '#sw_keys_primeevil']);
 });
 
 test('each control runs on the tab the legacy walk first reached it on', () => {

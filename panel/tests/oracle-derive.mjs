@@ -5,6 +5,7 @@
 //
 //   node tests/oracle-derive.mjs --from tests/behaviour-oracle.json --out tests/behaviour-oracle-derived.json
 //                                [--supplement tests/behaviour-oracle-gems.json]
+//                                [--key-supplement tests/behaviour-oracle-primeevil.json]
 //
 // `--supplement` names a recording of controls the legacy page gained later
 // (tests/behaviour-oracle-gems.json, the Gems of Incarnation switches): every
@@ -13,6 +14,13 @@
 // once its navigation steps are relocated to where the controls sit now
 // (tests/lib/oracle-relocate.mjs, SUPPLEMENT_RELOCATION: the Loot tab), and
 // the derived file names it as `supplementFrom`.
+//
+// `--key-supplement` names a recording of a key slider a later origin/main
+// added to KEYS (tests/behaviour-oracle-primeevil.json, Prime Evil Parts):
+// every switched slider in its `controls` gets the same eight steps a legacy
+// slider does, entered on the tab the recording reached it on (the Loot tab,
+// no relocation). They come after the theme steps, so no existing step's index
+// moves, and the derived file names the recording as `keySupplementFrom`.
 //
 // tests/behaviour-oracle.json was recorded from the legacy page and is never
 // re-recorded: it is the proof that the port changed nothing. The new controls
@@ -72,7 +80,7 @@ function contextOf(legacySteps, control) {
   return { tab, sub };
 }
 
-export function derive(legacy, derivedFrom, supplement = null, supplementFrom = null) {
+export function derive(legacy, derivedFrom, supplement = null, supplementFrom = null, keySupplement = null, keySupplementFrom = null) {
   const steps = [];
   const push = (control, action, extra = {}) => {
     steps.push({ step: steps.length, control, action, ...extra });
@@ -93,28 +101,31 @@ export function derive(legacy, derivedFrom, supplement = null, supplementFrom = 
     push(selector, 'click');
     push(quickDisable(selector.slice(1)), 'click', { expect: { posts: { same: off }, cmds: { same: off } } });
   };
+  const switchedSlider = (selector, switchId, recorded) => {
+    // A switched slider: its own minimum and maximum first, as references.
+    const sw = '#' + switchControlId(switchId);
+    controls.push(sw);
+    enter(selector, recorded);
+    push(selector, 'max');
+    const atMin = push(selector, 'min');
+    const atMax = push(selector, 'max');
+    const off = push(sw, 'click', {
+      expect: { posts: { is: setPost({ section: 'switches', key: switchId, value: false }) }, cmds: { same: atMin } },
+    });
+    const on = push(sw, 'click', {
+      expect: { posts: { is: setPost({ section: 'switches', key: switchId, value: true }) }, cmds: { same: atMax } },
+    });
+    push(quickDisable(switchControlId(switchId)), 'click', { expect: { posts: { same: off }, cmds: { same: off } } });
+    push(sw, 'click', {
+      expect: { posts: { is: setPost({ section: 'switches', key: switchId, value: true }) }, cmds: { same: on } },
+    });
+    push(selector, 'min');
+  };
   let densityDone = false;
   for (const selector of legacy.controls) {
     const switchId = switchIdOf(selector);
     if (switchId) {
-      // A switched slider: its own minimum and maximum first, as references.
-      const sw = '#' + switchControlId(switchId);
-      controls.push(sw);
-      enter(selector);
-      push(selector, 'max');
-      const atMin = push(selector, 'min');
-      const atMax = push(selector, 'max');
-      const off = push(sw, 'click', {
-        expect: { posts: { is: setPost({ section: 'switches', key: switchId, value: false }) }, cmds: { same: atMin } },
-      });
-      const on = push(sw, 'click', {
-        expect: { posts: { is: setPost({ section: 'switches', key: switchId, value: true }) }, cmds: { same: atMax } },
-      });
-      push(quickDisable(switchControlId(switchId)), 'click', { expect: { posts: { same: off }, cmds: { same: off } } });
-      push(sw, 'click', {
-        expect: { posts: { is: setPost({ section: 'switches', key: switchId, value: true }) }, cmds: { same: on } },
-      });
-      push(selector, 'min');
+      switchedSlider(selector, switchId, legacy.steps);
     } else if (BOOLEAN_MODS.includes(selector.slice(1))) {
       booleanMod(selector, legacy.steps);
     } else if ((selector === '#den_on' || selector === '#den') && !densityDone) {
@@ -150,10 +161,21 @@ export function derive(legacy, derivedFrom, supplement = null, supplementFrom = 
   // command. These steps are last, so no earlier step's index moves.
   controls.push('#theme');
   push('tab:setup', 'click');
+  open = { tab: 'tab:setup', sub: null };
   for (const { value } of THEMES) {
     push('#theme', 'select', { value, expect: { posts: { is: setPost({ key: 'theme', value }) }, cmds: { is: [] } } });
   }
-  return { derivedFrom, legacyRecordedAt: legacy.recordedAt, ...(supplement ? { supplementFrom } : {}), controls, steps };
+  // The key supplement's switched sliders (a key a later main added to KEYS):
+  // the same eight steps a legacy slider gets, on the tab its recording
+  // reached it on, after everything above, so no earlier step's index moves.
+  for (const selector of keySupplement ? keySupplement.controls : []) {
+    const switchId = switchIdOf(selector);
+    if (switchId) switchedSlider(selector, switchId, keySupplement.steps);
+  }
+  return {
+    derivedFrom, legacyRecordedAt: legacy.recordedAt, ...(supplement ? { supplementFrom } : {}),
+    ...(keySupplement ? { keySupplementFrom } : {}), controls, steps,
+  };
 }
 
 export function serialise(derived) {
@@ -175,12 +197,14 @@ function parse(argv) {
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const args = parse(process.argv.slice(2));
   if (!args.from || !args.out) {
-    console.error('usage: oracle-derive.mjs --from <legacy oracle> --out <derived oracle> [--supplement <recording>]');
+    console.error('usage: oracle-derive.mjs --from <legacy oracle> --out <derived oracle> [--supplement <recording>] [--key-supplement <recording>]');
     process.exitCode = 2;
   } else {
     const legacy = JSON.parse(readFileSync(resolve(args.from), 'utf8'));
     const supplement = args.supplement ? JSON.parse(readFileSync(resolve(args.supplement), 'utf8')) : null;
-    const derived = derive(legacy, derivedFromPath(args.from), supplement, args.supplement ? derivedFromPath(args.supplement) : null);
+    const keySupplement = args['key-supplement'] ? JSON.parse(readFileSync(resolve(args['key-supplement']), 'utf8')) : null;
+    const derived = derive(legacy, derivedFromPath(args.from), supplement, args.supplement ? derivedFromPath(args.supplement) : null,
+      keySupplement, args['key-supplement'] ? derivedFromPath(args['key-supplement']) : null);
     writeFileSync(resolve(args.out), serialise(derived));
     const switches = derived.steps.filter((s) => s.control.startsWith('#sw_')).length;
     console.log(`oracle-derive: ${derived.steps.length} steps (${switches} switch, ` +

@@ -2,6 +2,7 @@
  "derivedFrom": "tests/behaviour-oracle.json",
  "legacyRecordedAt": "2026-09-24T21:45:52.549Z",
  "supplementFrom": "tests/behaviour-oracle-gems.json",
+ "keySupplementFrom": "tests/behaviour-oracle-primeevil.json",
  "controls": [
   "#sw_stats_exp",
   "#sw_stats_magicfind",
@@ -43,7 +44,8 @@
   "#sw_keys_colosfrag",
   "#sw_keys_ruby",
   "#sw_angelic_items",
-  "#theme"
+  "#theme",
+  "#sw_keys_primeevil"
  ],
  "steps": [
   {
@@ -4572,6 +4574,110 @@
      "is": []
     }
    }
+  },
+  {
+   "step": 397,
+   "control": "tab:loot",
+   "action": "click"
+  },
+  {
+   "step": 398,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"primeevil\"]",
+   "action": "max"
+  },
+  {
+   "step": 399,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"primeevil\"]",
+   "action": "min"
+  },
+  {
+   "step": 400,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"primeevil\"]",
+   "action": "max"
+  },
+  {
+   "step": 401,
+   "control": "#sw_keys_primeevil",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.primeevil",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 399
+    }
+   }
+  },
+  {
+   "step": 402,
+   "control": "#sw_keys_primeevil",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.primeevil",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 400
+    }
+   }
+  },
+  {
+   "step": 403,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_keys_primeevil\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 401
+    },
+    "cmds": {
+     "same": 401
+    }
+   }
+  },
+  {
+   "step": 404,
+   "control": "#sw_keys_primeevil",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.primeevil",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 402
+    }
+   }
+  },
+  {
+   "step": 405,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"primeevil\"]",
+   "action": "min"
   }
  ]
 }

@@ -8,7 +8,14 @@ the page it replaced lives in `panel/tests/`:
   control's POST bodies and plugin commands, recorded from the old page)
   against the current build and fails on any difference, and with it
   `panel/tests/behaviour-oracle-gems.json` (the Gems of Incarnation controls,
-  recorded from origin/main's last pre-port page, named by its `sourceRev`);
+  recorded from origin/main's last pre-port page, named by its `sourceRev`)
+  and `panel/tests/behaviour-oracle-primeevil.json` (the Prime Evil Parts
+  slider, recorded from origin/main's 1.4.7 page at 841c2db). Because the
+  backend now sends the Prime Evil reset line in every full key reset, the
+  legacy recording and the Gems supplement are replayed through
+  `insertAddedKeys` (panel/tests/lib/oracle-relocate.mjs), which inserts
+  exactly that line; the files themselves are never edited, and the tests
+  below check that the inserted line is what the merged backend sends;
 - `npm run e2e` runs the checks ported from the old agent-browser harnesses
   (saves, failures, filters, keyboard, install and launch paths);
 - `npm run e2e:gems` checks the Gems of Incarnation controls' place, defaults,
@@ -30,6 +37,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import unittest
 from pathlib import Path
 
@@ -38,8 +46,12 @@ PANEL = ROOT / "panel"
 ORACLE = PANEL / "tests" / "behaviour-oracle.json"
 SUPPLEMENT = PANEL / "tests" / "behaviour-oracle-gems.json"
 DERIVED = PANEL / "tests" / "behaviour-oracle-derived.json"
+PRIMEEVIL = PANEL / "tests" / "behaviour-oracle-primeevil.json"
 #: origin/main's merge of PR #84: its last legacy page, with the Gems controls.
 GEMS_SOURCE_REV = "f1e2f57edd60ffbed7ae82b7df087f0ca6b3da95"
+#: origin/main at 1.4.7 plus "uber bosses drop none": its legacy page, with the Prime Evil Parts slider.
+PRIMEEVIL_SOURCE_REV = "841c2db654b374400b47d25790b87c47a58d8461"
+PRIMEEVIL_RANGE = 'input[type=range][data-sec="keys"][data-key="primeevil"]'
 EDGE_PATHS = (
     Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
     Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
@@ -105,6 +117,56 @@ class BehaviourOracleFileTests(unittest.TestCase):
         # The derived oracle takes the gems' Turn off steps from it.
         derived = json.loads(DERIVED.read_text(encoding="utf-8"))
         self.assertEqual(derived["supplementFrom"], "tests/behaviour-oracle-gems.json")
+
+    def test_primeevil_supplement_was_recorded_from_mains_legacy_page(self):
+        supplement = json.loads(PRIMEEVIL.read_text(encoding="utf-8"))
+        # Provenance: main's own 1.4.7 page, never this build.
+        self.assertEqual(supplement["recordedFrom"], "legacy")
+        self.assertEqual(supplement["sourceRev"], PRIMEEVIL_SOURCE_REV)
+        self.assertEqual(supplement["controls"], [PRIMEEVIL_RANGE])
+        steps = supplement["steps"]
+        self.assertEqual([s["control"] for s in (steps[0], steps[-1])], ["tab:loot", "#applyall"])
+        self.assertEqual([s["action"] for s in steps if s["control"] == PRIMEEVIL_RANGE],
+                         ["max", "min", "increment", "decrement", "type"])
+        # The max step: one POST, and the full key reset with the key at x100
+        # exactly where the backend's KEYS puts it, between colosfrag and ruby.
+        top = next(s for s in steps if s["control"] == PRIMEEVIL_RANGE and s["action"] == "max")
+        self.assertEqual(top["posts"], [{"url": "/api/set", "body": {"section": "keys", "key": "primeevil", "value": 100}}])
+        i = top["cmds"].index("droprate group primeevil 100")
+        self.assertEqual(top["cmds"][i - 1:i + 2],
+                         ["droprate group colosfrag 1", "droprate group primeevil 100", "droprate group ruby 1"])
+        # Negative control: at x1 (the min step) the page sends the key at its default.
+        low = next(s for s in steps if s["control"] == PRIMEEVIL_RANGE and s["action"] == "min")
+        self.assertIn("droprate group primeevil 1", low["cmds"])
+        self.assertNotIn("droprate group primeevil 100", low["cmds"])
+        # The derived oracle takes the slider's switch steps from it; the Gems
+        # file stays its `supplementFrom`.
+        derived = json.loads(DERIVED.read_text(encoding="utf-8"))
+        self.assertEqual(derived["keySupplementFrom"], "tests/behaviour-oracle-primeevil.json")
+        self.assertEqual(derived["supplementFrom"], "tests/behaviour-oracle-gems.json")
+        self.assertIn("#sw_keys_primeevil", derived["controls"])
+
+    def test_legacy_key_resets_equal_the_merged_backend_plus_the_primeevil_line(self):
+        # What insertAddedKeys adds at replay is exactly what the merged
+        # backend sends: every full key reset the legacy page recorded equals
+        # build_key_cmds of that step's key values plus primeevil at x1, with
+        # the one line inserted after colosfrag and nothing else moved.
+        sys.path.insert(0, str(ROOT / "src"))
+        import forgepact  # noqa: E402  (only here: the other tests need no hs_game_sdk)
+        oracle = json.loads(ORACLE.read_text(encoding="utf-8"))
+        checked = 0
+        for step in oracle["steps"]:
+            cmds = step["cmds"]
+            if "dungeonkey del 12" not in cmds:
+                continue
+            cfg = {m.group(1): int(m.group(2)) for c in cmds
+                   for m in [re.fullmatch(r"droprate group (\w+) (\d+)", c)] if m}
+            self.assertNotIn("primeevil", cfg, step["step"])
+            k = next(j for j, c in enumerate(cmds) if c.startswith("droprate group colosfrag "))
+            self.assertEqual(forgepact.build_key_cmds(dict(cfg, primeevil=1), include_resets=True),
+                             cmds[:k + 1] + ["droprate group primeevil 1"] + cmds[k + 1:], step["step"])
+            checked += 1
+        self.assertEqual(checked, 70)
 
 
 class PanelBrowserSuiteTests(unittest.TestCase):
