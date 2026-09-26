@@ -14,7 +14,7 @@ Settings persist in %LOCALAPPDATA%/Hero_Siege/forgepact.json.
 # and works with no compiled DLL at all, so tools/cut_release.py reads the
 # current version from here. Do NOT hand-edit it - `py tools/cut_release.py
 # <version>` moves every site at once and `--check` fails if they disagree.
-__version__ = "1.4.6"
+__version__ = "1.4.7"
 
 import hashlib
 import json
@@ -125,9 +125,14 @@ KEYS = [
     ("dimshard", "Dimensional Shards", None),
     ("battlefrag", "Battle Fragments", None),
     ("colosfrag", "Colosseum Fragments", None),
-    # Not offered: Prime Evil parts share LoadDrops type 41 with Relics (the
-    # plugin skips them while the relic gate rolls), and Satanic materials sit at
-    # base 100,000-50,000,000, which no division reaches.
+    # The Key of Terror's six boss parts and their six infernal versions. No
+    # drop type on purpose: the parts share LoadDrops type 41 with Relics, so
+    # opening that gate would drop Relics as well, and the plugin skips the
+    # part scripts while the Relic gate rolls. The slider only scales the
+    # parts' own roll where the game already rolls it, which is on bosses.
+    ("primeevil", "Prime Evil Parts (Key of Terror)", None),
+    # Not offered: Satanic materials sit at base 100,000-50,000,000, which no
+    # division reaches.
     # Ruby Keys: the game's own gate is already open (chances[18] = 1), only the
     # key's 1-in-1,500,000 roll needs scaling.
     ("ruby", "Ruby Keys", None),
@@ -2889,6 +2894,7 @@ function rareNote(key,v){
 function keyNote(key,dropType,v){
   if(v<=1) return 'off';
   if(key==='ruby') return `${v}x the key's own vanilla roll (base 1,500,000)`;
+  if(key==='primeevil') return `${v}x how often bosses drop their Prime Evil part (bosses only; nothing more above x35)`;
   if(dropType===null||dropType===undefined) return `${v}x its vanilla drop rate, only where the game drops it anyway`;
   if(key==='relic'){
     // Same curve as the plugin:  probability = 0.00025 * v^2  (clamped at 1.0)

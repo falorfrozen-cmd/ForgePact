@@ -466,6 +466,7 @@ static bool PopulationCapacityAvailable() { return ForgePact::ProtectedPool::Run
 #include <ForgePact/IpcServer.hpp>
 #include <ForgePact/ModManager.hpp>
 #include <ForgePact/ItemTruth.hpp>
+#include <ForgePact/ExitSafeThread.hpp>
 
 static void DoScriptLookup(const std::string& name)
 {
@@ -3216,6 +3217,11 @@ static RValue& HookGetBloodPactInfo(CInstance* Self, CInstance* Other, RValue& R
 // Auto-decode: log any item struct (return value or arg) that a drop/create passes through.
 // The item here is REAL + fully computed (n-array + computed stats + name) -> full decode.
 static std::unordered_set<std::string> g_SeenDrop;
+// Nonzero while Item Truth builds an item of its own (TruthBuildItem: evaluation and
+// drawing requests, the gem tables). Item Truth journals those itself; logged here as
+// well, each one's full text would stay in g_SeenDrop for the rest of the session and
+// go into itemdrops.jsonl - a seed-table session builds hundreds of thousands.
+static int g_ItemTruthBuilding = 0;
 
 #ifndef FORGEPACT_RELEASE
 // typemap taramasi sirasinda hangi damla tipinin islendigini soyler (-1 = tarama yok).
@@ -3244,6 +3250,7 @@ static std::string EsyaAdiJson(const std::string& js)
 
 static void LogDrop(const char* fn, RValue& res, int argc, RValue** A)
 {
+    if (g_ItemTruthBuilding) return;   // Item Truth journals its own builds
     try {
 #ifndef FORGEPACT_RELEASE
         if (g_TypeMapAktifTip >= 0) g_TypeMapKancaSayaci++;
@@ -4406,6 +4413,9 @@ static void ItemTruthCapture(const RValue& item, const std::string& nativeStats)
 // saved; once the caller lets it go, the collector takes it.
 static RValue TruthBuildItem(const ForgePact::ItemTruth::EvalItem& entry)
 {
+#ifndef FORGEPACT_RELEASE
+    struct Building { Building() { ++g_ItemTruthBuilding; } ~Building() { --g_ItemTruthBuilding; } } building;   // see LogDrop
+#endif
     CInstance* g = nullptr; g_Yytk->GetGlobalInstance(&g);
     if (!g) return RValue();
     RValue parsed; g_Yytk->CallBuiltinEx(parsed, "json_parse", g, g, { RValue(entry.json) });
@@ -17839,8 +17849,117 @@ static TruthEvalState g_TruthEval;
 static constexpr double kTruthEvalBudgetSeconds = 0.004;
 static constexpr size_t kTruthEvalMaxPerFrame = 200;
 
+#ifndef FORGEPACT_RELEASE
+// ---- `truthmem`: what an evaluation leaves behind (research build only) -------
+// Read from inside the game, beside tools/itemtruth_memrun.py, which samples the
+// game's private bytes from outside while it queues evaluation requests:
+//   truthmem [stat]    private bytes, the runtime's collector (gc_is_enabled,
+//                      gc_get_target_frame_time, gc_get_stats) and the instance count
+//   truthmem hold on   the positive control: every item an evaluation request
+//                      builds is also kept in global.fp_truthmem_hold, a struct the
+//                      collector sees, so none can be freed. The harness then reads
+//                      what a real leak of evaluated items would look like.
+//   truthmem hold off  stop holding new items (the held ones stay held)
+//   truthmem release   drop global.fp_truthmem_hold: the held items become garbage
+//   truthmem gc        gc_collect(), then a stat now and 1, 60 and 600 frames later
+#include <psapi.h>
+static bool g_TruthMemHold = false;
+static uint64_t g_TruthMemHeld = 0;
+static std::vector<std::pair<uint64_t, std::string>> g_TruthMemLater;   // (frame, label)
+
+static std::string TruthMemMb(SIZE_T bytes)
+{
+    char text[32];
+    snprintf(text, sizeof text, "%.1f MB", double(bytes) / 1048576.0);
+    return text;
+}
+
+static void TruthMemStat(const std::string& label)
+{
+    PROCESS_MEMORY_COUNTERS_EX pmc{};
+    pmc.cb = sizeof pmc;
+    const bool mem = GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&pmc), sizeof pmc) != 0;
+    auto call = [](const char* name, std::vector<RValue> args) {
+        try { return Describe(g_Yytk->CallBuiltin(name, std::move(args))); } catch (...) { return std::string("<threw>"); }
+    };
+    std::string stats = "<unavailable>";
+    try {
+        const RValue s = g_Yytk->CallBuiltin("gc_get_stats", {});
+        stats = s.m_Kind == VALUE_OBJECT ? TruthStringify(s) : Describe(s);
+    } catch (...) {}
+    Out("truthmem " + label + ": private " + (mem ? TruthMemMb(pmc.PrivateUsage) : std::string("?"))
+        + ", working set " + (mem ? TruthMemMb(pmc.WorkingSetSize) : std::string("?"))
+        + ", held " + std::to_string(g_TruthMemHeld) + (g_TruthMemHold ? " (holding)" : "")
+        + ", gc_is_enabled " + call("gc_is_enabled", {})
+        + ", gc_get_target_frame_time " + call("gc_get_target_frame_time", {})
+        + ", instance_number(all) " + call("instance_number", { RValue(-3.0) })
+        + ", gc_get_stats " + stats);
+}
+
+// TruthEvalOne hands each evaluated item here while `hold on`.
+static void TruthMemHoldItem(const RValue& item)
+{
+    if (item.m_Kind != VALUE_OBJECT) return;
+    try {
+        RValue reg = g_Yytk->CallBuiltin("variable_global_get", { RValue("fp_truthmem_hold") });
+        if (reg.m_Kind != VALUE_OBJECT) {
+            CInstance* g = nullptr; g_Yytk->GetGlobalInstance(&g);
+            if (!g) return;
+            g_Yytk->CallBuiltinEx(reg, "json_parse", g, g, { RValue("{}") });
+            if (reg.m_Kind != VALUE_OBJECT) return;
+            g_Yytk->CallBuiltin("variable_global_set", { RValue("fp_truthmem_hold"), reg });
+        }
+        g_Yytk->CallBuiltin("variable_struct_set", { reg, RValue(std::to_string(g_TruthMemHeld)), item });
+        ++g_TruthMemHeld;
+    } catch (...) {}
+}
+
+static void TruthMemTick(uint64_t frame)
+{
+    for (size_t i = 0; i < g_TruthMemLater.size();) {
+        if (frame < g_TruthMemLater[i].first) { ++i; continue; }
+        const std::string label = g_TruthMemLater[i].second;
+        g_TruthMemLater.erase(g_TruthMemLater.begin() + i);
+        TruthMemStat(label);
+    }
+}
+
+static void TruthMemCommand(const std::string& rest)
+{
+    std::string arg;
+    const std::string verb = Lower(FirstToken(rest, arg));
+    const std::string value = Lower(TrimCopy(arg));
+    if (verb.empty() || verb == "stat") {
+        TruthMemStat("stat");
+    } else if (verb == "hold") {
+        g_TruthMemHold = (value == "on" || value == "1" || value == "true");
+        Out(std::string("truthmem hold -> ") + (g_TruthMemHold ? "ON: every evaluated item is kept in global.fp_truthmem_hold"
+                                                                : "OFF (held items stay until `truthmem release`)"));
+    } else if (verb == "release") {
+        try { g_Yytk->CallBuiltin("variable_global_set", { RValue("fp_truthmem_hold"), RValue() }); } catch (...) {}
+        Out("truthmem release: " + std::to_string(g_TruthMemHeld) + " held items dropped");
+        g_TruthMemHeld = 0;
+    } else if (verb == "gc") {
+        TruthMemStat("before gc_collect");
+        try { g_Yytk->CallBuiltin("gc_collect", {}); } catch (...) { Out("truthmem: gc_collect threw"); }
+        TruthMemStat("right after gc_collect");
+        for (const uint64_t d : { 1ull, 60ull, 600ull })
+            g_TruthMemLater.push_back({ g_RuntimeFrame + d, "gc_collect +" + std::to_string(d) + " frames" });
+    } else {
+        Out("truthmem: usage -> truthmem [stat] | hold on|off | release | gc");
+    }
+}
+#endif
+
 static bool TruthEvalOne(const ForgePact::ItemTruth::EvalItem& entry)
 {
+#ifndef FORGEPACT_RELEASE
+    if (g_TruthMemHold) {   // `truthmem hold on`: the positive control keeps the item
+        const RValue item = TruthBuildItem(entry);
+        TruthMemHoldItem(item);
+        return item.m_Kind == VALUE_OBJECT;
+    }
+#endif
     return TruthBuildItem(entry).m_Kind == VALUE_OBJECT;
 }
 
@@ -20930,7 +21049,14 @@ static std::atomic<bool> g_CoopEnabled{ false };
 static std::atomic<bool> g_CoopRun{ false };
 static SOCKET g_CoopSock = INVALID_SOCKET;
 static sockaddr_in g_CoopPeer{};
-static std::thread g_CoopRecvThread;
+// Not a std::thread (ForgePact/ExitSafeThread.hpp): as one, a receive thread
+// that coopstart started and coopstop never ended was still joinable when the
+// game exited, and its destructor aborted the exit.
+static ForgePact::ExitSafeThread g_CoopRecvThread;
+// How long coopstop waits for the receive thread. Closing its socket ends the
+// recvfrom it waits in, so this is a bound on the game's frame thread, not an
+// expected wait.
+static constexpr std::chrono::milliseconds kCoopStopJoinTimeout{ 2000 };
 static std::mutex g_RemoteMtx;
 static CoopPacket g_Remote{};
 static std::atomic<bool> g_RemoteValid{ false };
@@ -20940,7 +21066,7 @@ static std::atomic<uint32_t> g_CoopSeq{ 0 };
 static std::string g_CoopStatus = "off";
 static char g_CoopName[24] = { 0 };
 
-static void CoopRecvLoop()
+static void CoopRecvLoop() noexcept
 {
     while (g_CoopRun.load()) {
         CoopPacket pkt{};
@@ -20964,7 +21090,14 @@ static void CoopStop()
     g_CoopRun.store(false);
     g_CoopEnabled.store(false);
     if (g_CoopSock != INVALID_SOCKET) { closesocket(g_CoopSock); g_CoopSock = INVALID_SOCKET; }
-    if (g_CoopRecvThread.joinable()) g_CoopRecvThread.join();
+    // A receive thread that does not end in time is kept, not destroyed, and
+    // coopstart refuses until a later coopstop has joined it.
+    if (!g_CoopRecvThread.JoinFor(kCoopStopJoinTimeout)) {
+        g_CoopStatus = "stopping";
+        Out("coop: the receive thread did not end within " + std::to_string(kCoopStopJoinTimeout.count())
+            + " ms; coopstop again to wait for it");
+        return;
+    }
     g_CoopStatus = "off";
     Out("coop: stopped");
 }
@@ -20972,6 +21105,12 @@ static void CoopStop()
 static void CoopStart(int myPort, const std::string& peerIp, int peerPort)
 {
     if (g_CoopRun.load()) { Out("coop: already running (coopstop first)"); return; }
+    // A receive thread an earlier coopstop could not end still reads
+    // g_CoopSock, so no new socket until it has ended.
+    if (!g_CoopRecvThread.JoinFor(std::chrono::milliseconds(0))) {
+        Out("coop: the previous receive thread has not ended yet (coopstop first)");
+        return;
+    }
     WSADATA wsa;
     if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) { Out("coop: WSAStartup failed"); return; }
     g_CoopSock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -20990,7 +21129,13 @@ static void CoopStart(int myPort, const std::string& peerIp, int peerPort)
     g_CoopSent.store(0); g_CoopRecvCount.store(0);
     g_CoopRun.store(true);
     g_CoopEnabled.store(true);
-    g_CoopRecvThread = std::thread(CoopRecvLoop);
+    if (!g_CoopRecvThread.Start(&CoopRecvLoop)) {
+        g_CoopRun.store(false);
+        g_CoopEnabled.store(false);
+        closesocket(g_CoopSock); g_CoopSock = INVALID_SOCKET;
+        Out("coop: could not start the receive thread");
+        return;
+    }
     g_CoopStatus = "ON my:" + std::to_string(myPort) + " -> " + peerIp + ":" + std::to_string(peerPort);
     Out("coop: started " + g_CoopStatus);
 }
@@ -21623,7 +21768,10 @@ static const DropGrup kDropGruplar[] = {
     { "orb",        15, "socketable_orb",                                           37 },
     { "bossgem",    15, "socketable_gem",                                           -1 },
     { "scrollofra", 13, "scroll_of_ra",                                             34 },
-    { "primeevil",  13, "gurags_,deaths_,damiens_,anubis_,karp_kings_,satans_horn", 41 },
+    // The twelve Key of Terror parts, infernal versions included. "satans_horn"
+    // missed collectible_satans_infernal_horn; in category 13 "satans_" matches
+    // only the two horns.
+    { "primeevil",  13, "gurags_,deaths_,damiens_,anubis_,karp_kings_,satans_",     41 },
     { "dimshard",   13, "dimensional_shard",                                        43 },
     { "battlefrag", 13, "battle_fragment",                                          25 },
     { "colosfrag",  13, "colosseum_fragment",                                       38 },
@@ -38496,6 +38644,8 @@ static void RunCommand(const std::string& line)
     // standalone early return rather than one more `else if` below: that chain
     // is already at MSVC's block-nesting limit (C1061).
     if (lc == "tgprobe") { TgProbeCommand(rest); return; }
+    // Item Truth memory research: the same standalone early return (C1061).
+    if (lc == "truthmem") { TruthMemCommand(rest); return; }
 #endif
     // Timed-skill countdown (issue #55). A standalone early return, same
     // MSVC C1061 reason as `toggleborder`/`toggleguard` below.
@@ -39690,6 +39840,9 @@ void FrameCallback(FWFrame& FrameContext)
     PERF_SCOPE(g_PerfFrame);
     FlushItemStats(fc);
     if (g_Setup) { ItemTruthTick(fc); ItemTruthEvalTick(fc); }
+#ifndef FORGEPACT_RELEASE
+    TruthMemTick(g_RuntimeFrame);   // `truthmem gc`'s later readings
+#endif
     if (g_Setup) GemsTick(fc);   // Gems of Incarnation: the tables, a little each frame
     FlushModState(fc);
     if (g_Setup) { FP_POP_SCOPE(MinerTick); ForgePact::MinerHelmet::Tick(); }
