@@ -81,6 +81,24 @@ PORT = 8780
 # checks the first candidate (catalog/sources.toml): move both together. No
 # version number in this comment: VersionStampTests allow exactly one.
 PORT_CANDIDATES = [8780, 8801, 8899, 9133, 9777]
+# Ports Chromium refuses to open, failing with net::ERR_UNSAFE_PORT before it
+# connects. The panel window is pywebview on WebView2, which is Chromium, so a
+# panel bound to one of these shows the player a blank window. The candidates
+# above are clear of it; only a port the OS picks (the port-0 fallback in
+# main()) can land here. On a machine whose dynamic port range is 1024-15000
+# about 0.12% of port-0 binds do; Windows' default 49152-65535 holds none.
+# Source: Chromium's net/base/port_util.cc kRestrictedPorts and the Fetch
+# standard's "bad port" list, checked against installed Edge on 2026-09-26.
+# 4190 and 6679 are Fetch-only so far, kept in case Chromium adopts them.
+CHROMIUM_RESTRICTED_PORTS = frozenset({
+    1, 7, 9, 11, 13, 15, 17, 19, 20, 21, 22, 23, 25, 37, 42, 43, 53, 69, 77,
+    79, 87, 95, 101, 102, 103, 104, 109, 110, 111, 113, 115, 117, 119, 123,
+    135, 137, 139, 143, 161, 179, 389, 427, 465, 512, 513, 514, 515, 526,
+    530, 531, 532, 540, 548, 554, 556, 563, 587, 601, 636, 989, 990, 993,
+    995, 1719, 1720, 1723, 2049, 3659, 4045, 4190, 5060, 5061, 6000, 6566,
+    6665, 6666, 6667, 6668, 6669, 6679, 6697, 10080,
+})
+SAFE_BIND_ATTEMPTS = 10
 ROOT = Path.home() / "AppData" / "Local" / "Hero_Siege"
 CONFIG = ROOT / "forgepact.json"
 DEFAULT_EXE = r""  # set your own Hero_Siege.exe path in the app's "Game Location" field
@@ -3678,6 +3696,42 @@ boot().catch(e=>{try{toast('panel failed to load: '+e)}catch(_){}})
 </script></body></html>"""
 
 
+def bind_safe_server(bind, max_attempts=SAFE_BIND_ATTEMPTS):
+    """Call bind() (no arguments; returns a server with .server_port and
+    .server_close()) until it lands on a port outside
+    CHROMIUM_RESTRICTED_PORTS, then return that server. A rejected server is
+    kept open until a safe one is bound: closing it first could hand the same
+    port straight back if the OS gives out port-0 ports in sequence (6665-6669
+    are consecutive). Raises RuntimeError, naming every port tried, if
+    max_attempts is exhausted first, closing every server bound on the way."""
+    rejected = []
+    for _ in range(max_attempts):
+        server = bind()
+        if server.server_port not in CHROMIUM_RESTRICTED_PORTS:
+            for stale in rejected:
+                stale.server_close()
+            return server
+        rejected.append(server)
+    tried = [stale.server_port for stale in rejected]
+    for stale in rejected:
+        stale.server_close()
+    raise RuntimeError(
+        "no port outside CHROMIUM_RESTRICTED_PORTS after {} attempts, "
+        "tried: {}".format(max_attempts, tried))
+
+
+def refuse_to_start(message):
+    """Say why the panel is not opening. The packaged exe is --windowed, so a
+    print reaches nobody there; a message box does."""
+    print(f"ForgePact: {message}", flush=True)
+    if os.name == "nt":
+        try:
+            # A private handle, not ctypes.windll: see the Win32 note above.
+            _ctypes.WinDLL("user32").MessageBoxW(None, message, "ForgePact", 0x10)
+        except Exception:
+            pass
+
+
 def main():
     global PORT
     srv = None
@@ -3698,9 +3752,20 @@ def main():
         except OSError:
             continue
     if srv is None:
-        # Every candidate port was reserved/busy -> let the OS assign ANY free port (never fails).
-        srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
-        PORT = srv.server_address[1]
+        # Every candidate port was reserved/busy -> let the OS assign a free
+        # port, but never one the panel window refuses to open: that is a
+        # blank window, so say why and stop instead.
+        try:
+            srv = bind_safe_server(lambda: ThreadingHTTPServer(("127.0.0.1", 0), H))
+        except RuntimeError:
+            refuse_to_start(
+                "ForgePact could not open its panel. Ports "
+                + ", ".join(str(p) for p in PORT_CANDIDATES)
+                + " are all in use, and every other port Windows offered is "
+                "one the panel window is not allowed to open. Close programs "
+                "you don't need and start ForgePact again.")
+            return
+        PORT = srv.server_port
     url = f"http://127.0.0.1:{PORT}"
     print(f"ForgePact running at {url}", flush=True)
     threading.Thread(target=watcher, daemon=True).start()
