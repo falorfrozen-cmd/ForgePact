@@ -220,12 +220,27 @@ export function installEnabledModsForm() {
 
   new ResizeObserver(() => decide()).observe(wrap);
   // The tray sits left of #chipGame in the rail; the chip's width follows its
-  // text ("Game offline", "Game open · plugin missing").
+  // text ("Game offline", "Game open · plugin missing"). The width is set on
+  // #enabledMods, its only reader, not on the root: a custom property on
+  // <html> restyles the whole document each time it changes.
   const chip = document.getElementById('chipGame');
-  if (chip) new ResizeObserver(() => document.documentElement.style.setProperty('--chip-game-w', `${chip.offsetWidth}px`)).observe(chip);
+  if (chip) {
+    new ResizeObserver(() => {
+      const w = `${chip.offsetWidth}px`;
+      if (box.style.getPropertyValue('--chip-game-w') !== w) box.style.setProperty('--chip-game-w', w);
+    }).observe(chip);
+  }
   window.addEventListener('resize', decide);
-  document.fonts?.ready?.then(decide);
-  decide();
+  // Nothing lays the page out while main.js evaluates: this runs before
+  // boot() has filled it, and a decide() here, or even reading
+  // document.fonts.ready (Edge brings style and layout up to date to answer
+  // it), forced a pass over the whole empty shell inside boot's longest task
+  // (22 of its 33 ms, forgepact-ui-responsive). The ResizeObserver above
+  // reports #wrap once after the first layout, before the first paint, and
+  // decides then; until then the row is the inline form, which no data-form
+  // draws. fonts.ready is read in the first frame instead, where that layout
+  // is the frame's own, and it then waits for the fonts that layout asked for.
+  requestAnimationFrame(() => document.fonts?.ready?.then(decide));
 
   return {
     get form() { return box.dataset.form || null; },
