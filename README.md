@@ -774,6 +774,21 @@ built without the SDK therefore builds, starts, and looks completely normal — 
 World tab's Satanic Zone section has no rows under its heading. That shipped in every
 release up to 1.3.18.
 
+### AI review of a pull request
+
+Reviews are requested, never automatic: add the `ai-review` label to a pull
+request, or comment `@claude review` (anything after the phrase narrows the
+scope, e.g. `@claude review only plugin/`). `.github/workflows/ai-review.yml`
+runs the code-review plugin and posts one comment. When the pull request changes
+the panel's source under `panel/`, the same comment also carries an
+**impeccable audit** section (the `impeccable` plugin's code-level audit, with
+its detector run over the changed panel files) and a **review-animations**
+section (the vendored motion-review skill from the toolkit hub's
+`.claude/skills/`, applied to any motion change), each with its findings, "No
+findings." or the reason it did not run; the job fails if either is missing.
+There is no browser in that job, so screenshot and live checks
+(`impeccable-finish-reviewer`, the panel's `e2e:*` suites) stay local steps.
+
 ## 📜 License — AGPL-3.0
 
 ForgePact is released under the **GNU Affero General Public License v3.0** (see
