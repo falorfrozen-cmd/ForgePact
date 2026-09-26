@@ -1,5 +1,6 @@
 <!-- Mods tab: the Quality of Life and Items panels, switched by App.svelte's sub-tab strip. Neither repeats its
-     sub-tab's name as a heading; each mod is drawn as a card of its own (app.css), and a panel is not drawn as one. -->
+     sub-tab's name as a heading; each mod is drawn as a card of its own (app.css), and a panel is not drawn as one.
+     A child row is marked by its indent (app.css .feature-with-child), never by a glyph (finish review F6). -->
 <div class="card tab-card" data-tab="mods" id="qolCard" role="tabpanel" aria-labelledby="subtab-qol">
   <div class="hint">Toggle drop pool adjustments and quality-of-life tweaks for your offline session. Settings apply immediately while the game is running.</div>
   <div class="row" style="border:none">
@@ -18,12 +19,12 @@
         <span class="val" id="mapval">on</span>
     </div>
     <div class="row" id="map_reveal_packs_row">
-        <span class="lbl" style="width:auto;flex:1">&#8627; Show every monster pack on the map<br><span class="feature-description">Most mob packs do not exist until you walk near them, so the revealed map used to show only the packs you had already met. This marks every pack's spot and kind (normal, champion, ancient, legion, mini boss) on the minimap the moment you arrive, including density copies, without creating a single monster: the pack is still born by the game when you walk near it, and its real dots replace the marker. Costs nothing per frame beyond the markers themselves.</span><span id="packMarkerStatus" class="hint" role="status" hidden></span></span>
+        <span class="lbl" style="width:auto;flex:1">Show every monster pack on the map<br><span class="feature-description">Most mob packs do not exist until you walk near them, so the revealed map used to show only the packs you had already met. This marks every pack's spot and kind (normal, champion, ancient, legion, mini boss) on the minimap the moment you arrive, including density copies, without creating a single monster: the pack is still born by the game when you walk near it, and its real dots replace the marker. Costs nothing per frame beyond the markers themselves.</span><span id="packMarkerStatus" class="hint" role="status" hidden></span></span>
         <label class="switch"><input type="checkbox" id="map_reveal_packs"><span class="sl"></span></label>
         <span class="val" id="mrpval">on</span>
     </div>
     <div class="row" id="map_reveal_spawn_row">
-        <span class="lbl" style="width:auto;flex:1">&#8627; Really spawn every pack on arrival (heavy)<br><span class="feature-description">The old way: each new zone creates all of its packs, including density copies, as you arrive. Every living monster costs the game frame time on top of the markers, so at high density this lags for the whole zone. Off by default; only for comparing against the markers.</span><span id="populationStatus" class="hint" role="status" hidden></span></span>
+        <span class="lbl" style="width:auto;flex:1">Really spawn every pack on arrival (heavy)<br><span class="feature-description">The old way: each new zone creates all of its packs, including density copies, as you arrive. Every living monster costs the game frame time on top of the markers, so at high density this lags for the whole zone. Off by default; only for comparing against the markers.</span><span id="populationStatus" class="hint" role="status" hidden></span></span>
         <label class="switch"><input type="checkbox" id="map_reveal_spawn"><span class="sl"></span></label>
         <span class="val" id="mrsval">off</span>
     </div>
@@ -38,7 +39,7 @@
         <span class="val" id="autoprospval">off</span>
     </div>
     <div class="row" id="mod_auto_prospect_bag_row">
-        <span class="lbl" style="width:auto;flex:1">&#8627; Move the previous materials to your materials tab<br><span class="feature-description">When the next item is prospected, the materials from the prospect before it go from the grid to your materials tab first, the way clicking them does. The newest batch stays in the grid where you can see it. A material the game will not take stays in the grid.</span></span>
+        <span class="lbl" style="width:auto;flex:1">Move the previous materials to your materials tab<br><span class="feature-description">When the next item is prospected, the materials from the prospect before it go from the grid to your materials tab first, the way clicking them does. The newest batch stays in the grid where you can see it. A material the game will not take stays in the grid.</span></span>
         <label class="switch"><input type="checkbox" id="mod_auto_prospect_bag"><span class="sl"></span></label>
         <span class="val" id="apbagval">on</span>
     </div>
@@ -80,7 +81,7 @@
     <div>
       <strong>Miner's Helmet</strong>
       <p class="helmet-stats">+1000 Defense &middot; +500% Enhanced Defense<br>+20% Movement Speed &middot; +20% All Resistances &middot; +5 Light Radius</p>
-      <p class="hint">While worn, every mining node gives exactly 4&times; its ore. This replaces the Mining Ore Multiplier slider instead of stacking with it; with the helmet off, the slider applies as usual. <strong>Vein Resonance:</strong> finishing a dig also digs the two nearest veins within 192 units that you could mine yourself, each at 4&times;, through the game's own dig. A vein dug this way never starts another.</p>
+      <p class="hint">While worn, every mining node gives exactly 4&times; its ore. This replaces the Mining Ore Multiplier slider instead of stacking with it; with the helmet off, the slider applies as usual.<br><strong>Vein Resonance:</strong><br>finishing a dig also digs the two nearest veins within 192 units that you could mine yourself, each at 4&times;, through the game's own dig. A vein dug this way never starts another.</p>
       <p class="hint">Forge it in the Item Editor: Item Forge &rarr; Forge a signature item &rarr; Miner's Helmet.</p>
       <div id="minerHelmetStatus" role="status" aria-live="polite">Start the game to check the helmet.</div>
     </div>

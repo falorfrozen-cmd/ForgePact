@@ -441,7 +441,11 @@ function status(){
     if(!ch.aurieCore)miss.push('AurieCore.dll');
     if(!ch.yytk)miss.push('YYToolkit.dll');
     if(!ch.plugin)miss.push('mod plugin');
-    setText(cn,'mod chain incomplete: '+miss.join(', ')+' - click "Install Mod Plugin" (game must be closed)');
+    // The button's name is a mono run with no quotes (finish review F5), in one
+    // span so #chainnote's flex row keeps it inline. Written only when the
+    // words change, as setText() does, so an idle poll mutates nothing.
+    const lead='mod chain incomplete: '+miss.join(', ')+' - click ';
+    if(cn.textContent!==lead+'Install Mod Plugin (game must be closed)')cn.innerHTML=`<span>${lead}<span class="chain-command">Install Mod Plugin</span> (game must be closed)</span>`;
     cn.style.color='var(--color-warn)';
   }
   setText(document.getElementById('ipcnote'),ST.ipcOk?'':'bp_ipc appears after the first modded launch');
@@ -1022,7 +1026,8 @@ function syncSatanicMods(){
   document.getElementById('satRestore').disabled=SAT_UI.busy||!available||allEnabled;
   const summary=document.getElementById('satSummary');
   summary.classList.toggle('is-invalid',!valid);
-  summary.innerHTML=`${valid?'&#10003; Selection valid':available?'Selection incomplete':'Modifier data unavailable'} <span class="sat-footer-note">${satCount('buff')} positive &middot; ${satCount('debuff')} negative enabled</span>`;
+  // A valid selection carries app.css's drawn check (finish review F6), not a glyph.
+  summary.innerHTML=`${valid?'Selection valid':available?'Selection incomplete':'Modifier data unavailable'} <span class="sat-footer-note">${satCount('buff')} positive &middot; ${satCount('debuff')} negative enabled</span>`;
   filterSatanicMods();
 }
 async function saveSatanicMods(changes){

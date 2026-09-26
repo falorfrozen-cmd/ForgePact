@@ -20,7 +20,7 @@ export async function j(u,opt){
       const r=await fetch(u,opt),result=await r.json();
       if(!r.ok&&!result.err)result.err='Request failed ('+r.status+')';
       if(result.cfg&&ST)ST.cfg=result.cfg;
-      indicator.textContent=result.err?'Could not save':u==='/api/set'?'✓ Saved':'Request completed';
+      indicator.textContent=result.err?'Could not save':u==='/api/set'?'Saved':'Request completed';
       indicator.className=result.err?'error':'';
       return result;
     }catch(e){
