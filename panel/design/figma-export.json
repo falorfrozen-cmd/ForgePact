@@ -999,6 +999,15 @@
           ]
         }
       ]
+    },
+    "mainMerge3": {
+      "decided": "2026-09-26",
+      "carries": "origin/main's 1.4.7 Prime Evil Parts slider (KEYS key primeevil, no drop type), carried into the redesign by the third main merge: an ordinary Drop Rates slider row on the Loot tab, after Colosseum Fragments and before Ruby Keys, drawn from ST.keys like every key row, so the existing tokens already cover it.",
+      "ownerWordsLabel": "Shorten to 'Prime Evil Parts'",
+      "label": "Prime Evil Parts, on one line at 1280 and 900. The Key of Terror moves into the row's note (panel/src/panel.js keyNote()), which is empty at the default x1 (polish F1), so no screen at the default shows it; above x1 the note names the Key of Terror: bosses only, nothing more above x35.",
+      "ownerWordsFigma": "Right after this merge",
+      "figma": "Figma procedure 1 adds the row to both Loot frames (loot/1280, loot/900) and records the new row's node in each as figmaNodes.",
+      "figmaNodes": null
     }
   },
   "borders": [
@@ -2039,6 +2048,7 @@
         "off",
         "+",
         "Colosseum Fragments",
+        "Prime Evil Parts",
         "−",
         "off",
         "+",
@@ -2173,6 +2183,7 @@
         "off",
         "+",
         "Colosseum Fragments",
+        "Prime Evil Parts",
         "−",
         "off",
         "+",
