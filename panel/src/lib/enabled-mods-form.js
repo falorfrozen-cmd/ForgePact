@@ -56,6 +56,9 @@ export function installEnabledModsForm() {
   // the inline layout forced for one synchronous moment (data-measure), so
   // the tray still measures the row it would be. Nothing paints in between.
   function measure() {
+    // A closed tray's list leaves display:none for this moment and returns to
+    // it: data-instant keeps that return from playing the close.
+    if (!isOpen()) list()?.setAttribute('data-instant', '');
     box.setAttribute('data-measure', '');
     const style = getComputedStyle(box);
     const available = box.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
@@ -104,7 +107,7 @@ export function installEnabledModsForm() {
         toggle.setAttribute('aria-expanded', 'false');
         toggle.addEventListener('click', (e) => {
           const opening = !isOpen();
-          setOpen(opening);
+          setOpen(opening, e.detail === 0);
           // Opened from the keyboard (a click with no pointer behind it):
           // straight to the first Turn off.
           if (opening && e.detail === 0) list()?.querySelector('.quick-disable')?.focus();
@@ -128,8 +131,28 @@ export function installEnabledModsForm() {
     labelList();
   }
 
-  function setOpen(open) {
+  // The tray scales in from the count and out again (app.css) only when the
+  // pointer opened or closed it. Every list carries data-instant otherwise
+  // (enabled-mods-list.js sets it on each one it builds, so a list rebuilt
+  // while the tray is open appears at once); it comes off for a pointer's open
+  // or close and goes back once that transition is over, so the one-moment
+  // layout measure() forces never replays the close.
+  function setOpen(open, instant = true) {
     if (open === isOpen()) return;
+    const ul = list();
+    if (ul) {
+      ul.toggleAttribute('data-instant', instant);
+      if (!instant) {
+        const settle = (e) => {
+          if (e.target !== ul || e.propertyName !== 'opacity') return;
+          ul.removeEventListener('transitionend', settle);
+          ul.removeEventListener('transitioncancel', settle);
+          ul.setAttribute('data-instant', '');
+        };
+        ul.addEventListener('transitionend', settle);
+        ul.addEventListener('transitioncancel', settle);
+      }
+    }
     box.toggleAttribute('data-open', open);
     toggle?.setAttribute('aria-expanded', String(open));
     if (!open) {
@@ -171,7 +194,7 @@ export function installEnabledModsForm() {
   // Interaction that holds the form: pointer buttons and keys, anywhere.
   document.addEventListener('pointerdown', (e) => {
     hold.pointerDown = true;
-    if (isOpen() && !box.contains(e.target)) setOpen(false);
+    if (isOpen() && !box.contains(e.target)) setOpen(false, false);
   }, true);
   const pointerUp = () => {
     if (!hold.pointerDown) return;

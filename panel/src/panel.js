@@ -44,7 +44,12 @@ function decoratePanelIcons(){
   document.querySelectorAll('.group-title').forEach((label,i)=>decorateIconLabel(label,['experience','damage','defense','critical-chance'][i]));
   decorateIconLabel(document.querySelector('.modifier-card h2'),'damage');
 }
-function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(tmr);tmr=setTimeout(()=>t.classList.remove('show'),2200)}
+// The toast rises in and sinks out (app.css), except after a keyboard action:
+// a keyboard action never animates, so the last input decides (data-instant).
+let lastInputKeyboard=false;
+addEventListener('keydown',()=>{lastInputKeyboard=true},true);
+addEventListener('pointerdown',()=>{lastInputKeyboard=false},true);
+function toast(m){const t=document.getElementById('toast');t.toggleAttribute('data-instant',lastInputKeyboard);t.textContent=m;t.classList.add('show');clearTimeout(tmr);tmr=setTimeout(()=>t.classList.remove('show'),2200)}
 function angelicPaint(){
   const el=document.getElementById('angelic_items'); const v=sliderVal(el);
   const dice=Math.max(0,Math.round(v)-1); const oneIn=dice>0?Math.max(1,Math.round(7500/dice)):0;
@@ -176,10 +181,13 @@ function row(sec,key,label,val,tagHtml,max,note,step){
   // A keys, stats or percent_stats row always carries its note element, empty
   // at the slider's default: bind() looks it up once, so a later drag can
   // still write into it. Rows passed no note (drops, spawners) get none.
-  const n=note!=null?`<div class="note" data-note="${key}">${note}</div>`:'';
+  // The note's id carries the section (data-note is the key alone), and the
+  // range names it in aria-describedby, so a screen reader reads the note.
+  const noteId=`note-${sec}-${key}`;
+  const n=note!=null?`<div class="note" data-note="${key}" id="${noteId}">${note}</div>`:'';
   return `<div class="row"><span class="lbl">${label}${tagHtml||''}</span>
     ${switchMarkup(sec+'.'+key,label)}
-    <input type="range" min="${mn}" max="${mx}" step="${step||1}" value="${val}" data-sec="${sec}" data-key="${key}">
+    <input type="range" min="${mn}" max="${mx}" step="${step||1}" value="${val}" data-sec="${sec}" data-key="${key}"${n?` aria-describedby="${noteId}"`:''}>
     <span class="val ${off?'off':''}" style="width:64px" title="Click to type a value">${sliderText(sec,val)}</span></div>${n}`;
 }
 function satRow(polarity,id,name,desc,enabled){
@@ -375,10 +383,10 @@ async function boot(){
     return row('keys',k,l,v,'',100,keyNote(k,t,v));
   }).join('');
   // The mining row keeps an empty note: applyPluginModState() writes the
-  // plugin's live mining status into it while the game runs.
+  // plugin's live mining status into it while the game runs. row() writes it
+  // (an empty note), so it gets its id and the range's aria-describedby too.
   document.getElementById('drops').innerHTML=ST.drops.map(([k,l,h])=>
-    row('drops',k,l,(c.drops&&c.drops[k])||1,h?` <span class="tag">${h}</span>`:'',k==='mining_ore'?10:100)+
-      (k==='mining_ore'?'<div class="note" data-note="mining_ore"></div>':'')).join('');
+    row('drops',k,l,(c.drops&&c.drops[k])||1,h?` <span class="tag">${h}</span>`:'',k==='mining_ore'?10:100,k==='mining_ore'?'':null)).join('');
   document.getElementById('stats').innerHTML=(ST.stats||[]).map(([k,l,mx,step])=>{
     const v=(c.stats&&c.stats[k])||1;
     return row('stats',k,l,v,'',mx,statNote(k,v),step);

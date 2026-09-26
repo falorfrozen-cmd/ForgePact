@@ -90,9 +90,9 @@ export function installEnabledModsUndo(form) {
     };
     if (entry && e.detail !== 0) {
       const rect = entry.getBoundingClientRect();
-      startFreeze({ index: entries.indexOf(entry), width: rect.width, height: rect.height });
+      startFreeze({ index: entries.indexOf(entry), width: rect.width, height: rect.height, copy: fadingCopy(entry) });
     }
-    showToast({ control, prior: stateOf(control), name });
+    showToast({ control, prior: stateOf(control), name, instant: e.detail === 0 });
     announce(withName(UNDO_TEXTS.announceOff, name));
   }, true);
 
@@ -101,6 +101,24 @@ export function installEnabledModsUndo(form) {
     pointerInside = false;
     endFreeze();
   });
+
+  // The pointer's Turn off: the list is rebuilt without the entry within a
+  // frame or two of the click, so the entry itself has no time to fade. The
+  // placeholder that keeps its place starts as a copy of it instead - not an
+  // .enabled-mod, with no data-for, inert and hidden from assistive tech -
+  // which app.css fades and shrinks once ([data-fading]). From the keyboard
+  // there is no placeholder, and the entry simply goes.
+  function fadingCopy(entry) {
+    const copy = entry.cloneNode(true);
+    copy.className = 'enabled-mod-ghost';
+    copy.removeAttribute('data-for');
+    for (const el of copy.querySelectorAll('[data-for], [aria-label]')) {
+      el.removeAttribute('data-for');
+      el.removeAttribute('aria-label');
+    }
+    copy.setAttribute('data-fading', '');
+    return copy;
+  }
 
   function startFreeze(place) {
     endFreeze();
@@ -122,10 +140,14 @@ export function installEnabledModsUndo(form) {
   const afterRender = () => {
     const ul = box.querySelector(':scope > ul');
     if (freeze && pointerInside && ul) {
-      // Not an .enabled-mod and no button: tests and the oracle never see it.
-      const ghost = document.createElement('li');
+      // Not an .enabled-mod, and nothing in it with an id or a data-for: tests
+      // and the oracle never see it. The first one after the Turn off is the
+      // fading copy; a later rebuild inside the same freeze gets a blank one.
+      const ghost = freeze.copy || document.createElement('li');
+      freeze.copy = null;
       ghost.className = 'enabled-mod-ghost';
       ghost.setAttribute('aria-hidden', 'true');
+      ghost.inert = true;
       ghost.style.width = `${freeze.width}px`;
       ghost.style.height = `${freeze.height}px`;
       ul.insertBefore(ghost, ul.children[freeze.index] || null);
@@ -149,10 +171,16 @@ export function installEnabledModsUndo(form) {
   if (form) form.onRender(afterRender);
   else new MutationObserver(afterRender).observe(box, { childList: true });
 
-  function showToast({ control, prior, name }) {
-    hideToast();
+  // The toast rises in and sinks out (app.css). It appears at once when the
+  // keyboard turned the entry off or when it replaces a toast still shown,
+  // and leaves at once for a keyboard Undo; one that is leaving is inert and
+  // is removed when its fade ends, or at once by the next toast.
+  function showToast({ control, prior, name, instant = false }) {
+    const replacing = !!toast;
+    hideToast(true);
     const el = document.createElement('div');
     el.className = 'undo-toast';
+    if (instant || replacing) el.setAttribute('data-instant', '');
     const text = document.createElement('span');
     text.className = 'undo-toast-text';
     text.textContent = withName(UNDO_TEXTS.turnedOff, name);
@@ -189,7 +217,7 @@ export function installEnabledModsUndo(form) {
     el.addEventListener('focusout', (e) => { if (!el.contains(e.relatedTarget) && !el.matches(':hover')) resume(); });
     document.addEventListener('visibilitychange', onVisibility);
 
-    button.addEventListener('click', () => {
+    button.addEventListener('click', (e) => {
       const hadFocus = document.activeElement === button;
       if (isOff(control)) {
         setState(control, prior);
@@ -197,17 +225,33 @@ export function installEnabledModsUndo(form) {
         announce(withName(UNDO_TEXTS.announceUndo, name));
         if (hadFocus) undoFocus = control.id;
       }
-      hideToast();
+      hideToast(e.detail === 0);
     });
 
     toast = { el, cleanup: () => { clearTimeout(timer); document.removeEventListener('visibilitychange', onVisibility); } };
     run();
   }
 
-  function hideToast() {
+  const leaving = new Set();
+  function hideToast(instant = false) {
+    for (const el of leaving) el.remove();
+    leaving.clear();
     if (!toast) return;
     toast.cleanup();
-    toast.el.remove();
+    const { el } = toast;
+    if (instant) el.remove();
+    else {
+      el.inert = true;
+      el.setAttribute('data-leaving', '');
+      leaving.add(el);
+      const gone = (e) => {
+        if (e.target !== el || e.propertyName !== 'opacity') return;
+        leaving.delete(el);
+        el.remove();
+      };
+      el.addEventListener('transitionend', gone);
+      el.addEventListener('transitioncancel', gone);
+    }
     toast = null;
     releaseBand();
   }

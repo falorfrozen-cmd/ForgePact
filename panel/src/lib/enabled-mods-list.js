@@ -73,6 +73,9 @@ export function renderEnabledMods(cfg) {
     return;
   }
   const list = document.createElement('ul');
+  // A rebuilt list is never a hand opening the tray: it appears at once
+  // (enabled-mods-form.js lifts this for the pointer's own open and close).
+  list.setAttribute('data-instant', '');
   for (const control of controls) {
     const row = rowOf(control);
     const name = nameOf(control, row);

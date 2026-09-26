@@ -7,9 +7,10 @@
 // (WAI-ARIA tooltip pattern, WCAG 1.4.13): a link inside it would vanish as
 // the pointer travelled to it and could never be reached by Tab.
 //
-// A tooltip opens on hover after OPEN_DELAY_MS, at once on focus, and at once
-// on hover when the other one closed less than INSTANT_MS ago (no delay, no
-// animation: the second feels as fast as the first was deliberate). It stays
+// A tooltip opens on hover after OPEN_DELAY_MS, at once on focus (with no
+// animation when the focus came from the keyboard), and at once on hover when
+// the other one closed less than INSTANT_MS ago (no delay, no animation: the
+// second feels as fast as the first was deliberate). It stays
 // open while the pointer is on the icon or on the tooltip, and closes when the
 // pointer leaves both (after CLOSE_GRACE_MS, so the gap between them can be
 // crossed), on blur, and on Escape, which leaves focus where it was. It is
@@ -62,17 +63,16 @@ function wire(host, upward) {
     if (isOpen() || dismissed || host.hidden) return;
     for (const other of tooltips) if (other.tip !== tip) other.close();
     tip.toggleAttribute('data-instant', !!instant);
-    tip.setAttribute('data-starting', '');
+    // Clearing `hidden` is the entrance: app.css's @starting-style scales and
+    // fades it in from display:none, so no attribute has to wait a frame.
     tip.hidden = false;
     place();
-    requestAnimationFrame(() => tip.removeAttribute('data-starting'));
   };
   const close = () => {
     clearTimeout(openTimer);
     clearTimeout(closeTimer);
     if (!isOpen()) return;
     tip.hidden = true;
-    tip.removeAttribute('data-starting');
     lastClosed = performance.now();
   };
   tooltips.push({ tip, close });
@@ -91,7 +91,8 @@ function wire(host, upward) {
     dismissed = false;
     closeTimer = setTimeout(close, CLOSE_GRACE_MS);
   });
-  button.addEventListener('focus', () => open(false));
+  // Focus from the keyboard shows it at once: a keyboard action never animates.
+  button.addEventListener('focus', () => open(button.matches(':focus-visible')));
   button.addEventListener('blur', () => {
     dismissed = false;
     if (!hovered) close();
