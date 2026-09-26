@@ -1007,7 +1007,10 @@
       "label": "Prime Evil Parts, on one line at 1280 and 900. The Key of Terror moves into the row's note (panel/src/panel.js keyNote()), which is empty at the default x1 (polish F1), so no screen at the default shows it; above x1 the note names the Key of Terror: bosses only, nothing more above x35.",
       "ownerWordsFigma": "Right after this merge",
       "figma": "Figma procedure 1 adds the row to both Loot frames (loot/1280, loot/900) and records the new row's node in each as figmaNodes.",
-      "figmaNodes": null
+      "figmaNodes": {
+        "loot/1280": "79:1197",
+        "loot/900": "79:1212"
+      }
     }
   },
   "borders": [
