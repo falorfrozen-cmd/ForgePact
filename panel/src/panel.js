@@ -71,34 +71,42 @@ function rarityLoad(c){
 // could not account for. `pluginMods` is what the plugin says it is doing;
 // the switch keeps the saved preference, and the value beside it says what is
 // actually happening, with the reason on hover (review of #54).
+// The status a poll repaints (status(), renderLaunchStatus() and the lines
+// below) is what it already says nearly every time, and a same-value write
+// still queues a mutation and dirties style: an idle poll rewrote 14 of them
+// (forgepact-ui-responsive, 2026-09-26). These write only a change.
+function setText(el,v){const s=v==null?'':String(v);if(el&&el.textContent!==s)el.textContent=s}
+function setClass(el,v){if(el&&el.className!==v)el.className=v}
+function setTitle(el,v){if(el&&el.title!==v)el.title=v}
+function setHidden(el,v){if(el&&el.hidden!==v)el.hidden=v}
 function applyPluginModState(pm){
   const packMarkerStatus=document.getElementById('packMarkerStatus'), packMarkers=pm?.packMarkers;
   if(packMarkerStatus){
-    packMarkerStatus.hidden=!(ST?.gameRunning&&ST?.cfg?.map_reveal&&ST?.cfg?.map_reveal_packs&&packMarkers);
-    packMarkerStatus.textContent=!packMarkers?'':
+    setHidden(packMarkerStatus,!(ST?.gameRunning&&ST?.cfg?.map_reveal&&ST?.cfg?.map_reveal_packs&&packMarkers));
+    setText(packMarkerStatus,!packMarkers?'':
       packMarkers.hook==='failed'?'Pack markers unavailable: the minimap layer could not be hooked on this game version.':
       packMarkers.hook==='table'?'Pack markers may not draw on this game version (minimap hook attached table-only).':
       packMarkers.hook==='pending'?'Pack markers start once the game has settled.':
       packMarkers.marked>0?packMarkers.marked+' packs marked in this zone'+(packMarkers.spawned?' · '+packMarkers.spawned+' born so far':'')+'.':
-      'No unspawned packs marked in this zone.';
+      'No unspawned packs marked in this zone.');
   }
   const populationStatus=document.getElementById('populationStatus'), population=pm?.population;
   if(populationStatus){
-    populationStatus.hidden=!(ST?.gameRunning&&ST?.cfg?.map_reveal&&ST?.cfg?.map_reveal_spawn&&population);
-    populationStatus.textContent=!population?'':!population.capacityReady?'Early population unavailable: '+population.reason:
+    setHidden(populationStatus,!(ST?.gameRunning&&ST?.cfg?.map_reveal&&ST?.cfg?.map_reveal_spawn&&population));
+    setText(populationStatus,!population?'':!population.capacityReady?'Early population unavailable: '+population.reason:
       !population.canPopulate?'Early population paused: '+population.reason:
       population.densityCopyReason?'Population waiting: '+population.densityCopyReason:
       population.unconfirmedPacks>0?'Map population is unverified: '+population.unconfirmedPacks+' groups could not be confirmed.':
       population.targetExceeded?'This zone exceeded the 5 s target.'+(population.queuedPacks?' '+population.queuedPacks+' groups waiting.':'')+(population.queuedDensityCopies?' '+population.queuedDensityCopies+' density copies waiting.':''):
       population.windowFrames>0||population.queuedDensityCopies>0?'Populating the map · 5 s target'+(population.queuedPacks?' · '+population.queuedPacks+' groups waiting':'')+(population.queuedDensityCopies?' · '+population.queuedDensityCopies+' density copies waiting':'')+'.':
-      'Ready for the next zone.';
+      'Ready for the next zone.');
   }
   const helmet=pm?.minerHelmet;
   const helmetStatus=document.getElementById('minerHelmetStatus');
-  if(helmetStatus)helmetStatus.textContent=!ST?.gameRunning?'Start the game to check the helmet.':
+  setText(helmetStatus,!ST?.gameRunning?'Start the game to check the helmet.':
     !helmet?.available?'Waiting for the ForgePact plugin to report the helmet.':
     helmet.enabled?(helmet.reason||'Checking the equipped helmet...')+(helmet.bonusVeins>0?' \u00b7 Vein Resonance has dug '+helmet.bonusVeins+' extra veins this session.':''):
-    'No Miner\'s Helmet loaded yet.';
+    'No Miner\'s Helmet loaded yet.');
   const miningNote=document.querySelector('.note[data-note="mining_ore"]');
   if(miningNote){
     const requested=Number(ST?.cfg?.drops?.mining_ore||1), mining=pm?.miningOre;
@@ -111,7 +119,7 @@ function applyPluginModState(pm){
       else status=' Waiting for the matching mining plugin to confirm the setting.';
     }
     // Only the live status: the note is empty (and hidden) while there is none.
-    miningNote.textContent=status.trim();
+    setText(miningNote,status.trim());
   }
   const ap=(pm&&pm.autoprospect)||null;
   const parentVal=document.getElementById("autoprospval");
@@ -398,41 +406,42 @@ let launcherBusy=false;
 function renderLaunchStatus(){
   const info=ST?.launch;
   const btn=document.getElementById('launchgame');
-  btn.disabled=launcherBusy||!!ST?.gameRunning||info?.phase==='starting';
+  const disabled=launcherBusy||!!ST?.gameRunning||info?.phase==='starting';
+  if(btn.disabled!==disabled)btn.disabled=disabled;
   const box=document.getElementById('launchFeedback');
-  if(info){box.textContent=info.message;box.className='launch-feedback '+info.phase;}
+  if(info){setText(box,info.message);setClass(box,'launch-feedback '+info.phase);}
 }
 function status(){
   const g=document.getElementById('chipGame'), a=document.getElementById('chipApply');
   const ch=ST.chain||{};
   const ok=ch.patched&&ch.aurieCore&&ch.yytk&&ch.plugin;
-  g.textContent=ST.gameRunning?(ok?'Game open':'Game open · plugin missing'):'Game offline';
-  g.title=ST.gameRunning?'This detects the game process. The plugin must be installed and loaded to apply modifiers.':'Settings are saved locally. Auto-apply sends them on game launch when enabled.';
-  g.className='chip '+(ST.gameRunning?(ok?'on':'warn'):'off');
-  a.textContent=ST.lastApplied?('commands sent: '+ST.lastApplied+(ST.queued?' (queued)':'')):'No settings sent this session';
-  a.className='chip '+(ST.lastApplied?'warn':'off');
+  setText(g,ST.gameRunning?(ok?'Game open':'Game open · plugin missing'):'Game offline');
+  setTitle(g,ST.gameRunning?'This detects the game process. The plugin must be installed and loaded to apply modifiers.':'Settings are saved locally. Auto-apply sends them on game launch when enabled.');
+  setClass(g,'chip '+(ST.gameRunning?(ok?'on':'warn'):'off'));
+  setText(a,ST.lastApplied?('commands sent: '+ST.lastApplied+(ST.queued?' (queued)':'')):'No settings sent this session');
+  setClass(a,'chip '+(ST.lastApplied?'warn':'off'));
   const warning=document.getElementById('pluginWarning');
-  warning.hidden=!!ok;
-  document.getElementById('pluginWarningText').textContent=ch.exeExists?
+  setHidden(warning,!!ok);
+  setText(document.getElementById('pluginWarningText'),ch.exeExists?
     'Plugin not installed. Your settings are saved, but modifiers cannot apply. Close the game, then install the plugin in Setup.':
-    'Choose your Hero_Siege.exe in Setup, then install the plugin to use modifiers.';
+    'Choose your Hero_Siege.exe in Setup, then install the plugin to use modifiers.');
   const cn=document.getElementById('chainnote');
-  if(ok){cn.textContent='';}
+  if(ok){setText(cn,'');}
   else{
     const miss=[];
     if(!ch.patched)miss.push('exe not patched');
     if(!ch.aurieCore)miss.push('AurieCore.dll');
     if(!ch.yytk)miss.push('YYToolkit.dll');
     if(!ch.plugin)miss.push('mod plugin');
-    cn.textContent='mod chain incomplete: '+miss.join(', ')+' - click "Install Mod Plugin" (game must be closed)';
+    setText(cn,'mod chain incomplete: '+miss.join(', ')+' - click "Install Mod Plugin" (game must be closed)');
     cn.style.color='var(--color-warn)';
   }
-  document.getElementById('ipcnote').textContent=ST.ipcOk?'':'bp_ipc appears after the first modded launch';
+  setText(document.getElementById('ipcnote'),ST.ipcOk?'':'bp_ipc appears after the first modded launch');
   document.getElementById('ipcnote').style.color='var(--color-text-faint)';
   const en=document.getElementById('eacnote');
-  if(ST.eacStatus==='legit_eac'){en.textContent='Note: this looks like a Steam/EAC copy. If EAC is active, online play may break and the mod may not load (EAC can relaunch the clean exe). Your exe is backed up - Remove Plugin reverts it. For best results use an offline / EAC-off copy. Installing is allowed at your own risk.';en.style.color='var(--color-warn)';}
-  else if(ST.eacStatus==='eac_free'){en.textContent='';}
-  else{en.textContent='';}
+  if(ST.eacStatus==='legit_eac'){setText(en,'Note: this looks like a Steam/EAC copy. If EAC is active, online play may break and the mod may not load (EAC can relaunch the clean exe). Your exe is backed up - Remove Plugin reverts it. For best results use an offline / EAC-off copy. Installing is allowed at your own risk.');en.style.color='var(--color-warn)';}
+  else if(ST.eacStatus==='eac_free'){setText(en,'');}
+  else{setText(en,'');}
   renderLaunchStatus();
 }
 function bind(){
