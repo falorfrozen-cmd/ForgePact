@@ -7,8 +7,10 @@
 
 Used by `panel/tests/` (the behaviour oracle, the screenshot tool and the e2e
 suite). It reuses `test_satanic_panel.PanelSandbox` - an isolated
-`forgepact.json` in a temp directory, `mod_chain` reporting nothing installed -
-and re-patches it so every control's full path can be recorded:
+`forgepact.json` in a temp directory, `mod_chain` reporting nothing installed,
+and a port re-bound off `CHROMIUM_RESTRICTED_PORTS` so the printed port is
+never one headless Edge refuses with `net::ERR_UNSAFE_PORT` - and re-patches
+it so every control's full path can be recorded:
 
 - `game_running` answers True, so `/api/set` takes its live-send branches
   (`--offline` keeps it False, the state the old agent-browser harnesses ran
