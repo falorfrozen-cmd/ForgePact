@@ -36,6 +36,25 @@ name: AI Code Review
 # On a fork pull request GitHub withholds secrets, so the run cannot
 # authenticate and the review does not happen. Branches pushed to this
 # repository are unaffected, which is how work lands here.
+#
+# A pull request that touches the panel (`panel/`) also gets the UI design
+# tooling the panel is developed with, reported in the same review comment
+# under one heading per tool:
+#   - impeccable's code-level audit (the `impeccable@impeccable` plugin, with
+#     its detector run by this workflow over the changed panel files), and
+#   - review-animations, for a change that alters motion, read from the hub
+#     repository's vendored `.claude/skills/` (the Emil Kowalski skills).
+# The `taste-skill@taste-skill` plugin is loaded too, as in the hub's
+# `.claude/settings.json`, for the reviewer to draw on. There is no browser in
+# this job, so anything that needs a running page or captures -- impeccable's
+# live mode and detector overlays, `impeccable-finish-reviewer`, the panel's
+# own `e2e:*` screenshot suites -- is out of scope here and stays a local step.
+# Apart from the repository name and a few comments, everything else matches
+# the hub repository's copy of this file and should stay so. The
+# ForgePact-only parts are the steps named "List the panel
+# files the change touches" through "Run impeccable's launcher", the two design
+# plugins, the second prompt line and the "Fail if the design tools went
+# unreported" step.
 
 on:
   pull_request:
@@ -162,6 +181,155 @@ jobs:
             echo "No requester instructions; full review."
           fi
 
+      # ForgePact only, from here to "Run impeccable's launcher": the UI design
+      # tooling for a change to the panel. `touched` is false for every other
+      # pull request, and then `notes` is empty and nothing below runs.
+      # Only the panel's own source counts; tests, build scripts, the built
+      # `dist/` and dependencies are not UI a person sees.
+      - name: List the panel files the change touches
+        id: panel
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number || github.event.issue.number }}
+        run: |
+          base=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json baseRefName --jq .baseRefName)
+          mapfile -t files < <(
+            git diff --name-only --diff-filter=d "origin/$base...HEAD" -- \
+              'panel/*.svelte' 'panel/*.css' 'panel/*.html' 'panel/*.js' 'panel/*.ts' 'panel/*.mjs' \
+              ':(exclude)panel/tests/*' ':(exclude)panel/scripts/*' \
+              ':(exclude)panel/dist/*' ':(exclude)panel/node_modules/*' \
+              ':(exclude)panel/*.config.js'
+          )
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "touched=false" >> "$GITHUB_OUTPUT"
+            echo "No panel source changed; the design tooling does not run."
+            exit 0
+          fi
+
+          # A keyword scan of the added lines, as a pointer for the reviewer,
+          # who still decides whether a change alters motion.
+          motion=()
+          for f in "${files[@]}"; do
+            if git diff -U0 "origin/$base...HEAD" -- "$f" \
+              | grep -qE '^\+.*(transition|animation|@keyframes|@starting-style|--motion-|data-instant|prefers-reduced-motion|requestAnimationFrame|\.animate\()'; then
+              motion+=("$f")
+            fi
+          done
+
+          mkdir -p .review-tools/out
+          printf '%s\n' "${files[@]}" > .review-tools/out/panel-files.txt
+          {
+            echo "touched=true"
+            echo "first=${files[0]}"
+          } >> "$GITHUB_OUTPUT"
+
+          delim="EOF_$(openssl rand -hex 16)"
+          {
+            echo "notes<<$delim"
+            echo
+            echo "## UI design tooling (this pull request changes the panel)"
+            echo
+            echo "Changed panel source files:"
+            printf -- '- %s\n' "${files[@]}"
+            echo
+            echo "Besides the code review above, check these files with the tools below and report them in the"
+            echo "same final \`gh pr comment\`, after the code review, under one \`###\` heading per tool."
+            echo "This part is not subject to the code-review command's early stops or filter: post the comment"
+            echo "with these sections even when the code review found nothing (step 6) or judged the change simple"
+            echo "(step 1c), and do not drop a design finding for scoring under 80. Report every finding you"
+            echo "verified, with its severity and a link to file and line; mark one you judge a false positive"
+            echo "as such rather than leaving it out. A tool with nothing to report gets an explicit"
+            echo "\"No findings.\" line; a tool that could not run says so and why. If the requester's"
+            echo "instructions exclude the panel, keep the headings and write \"Not run: outside the requested scope.\""
+            echo
+            echo "\`panel/DESIGN.md\` and \`panel/.impeccable/design.json\`, where present, are the panel's design"
+            echo "system as built; judge the change against them."
+            echo
+            echo "### impeccable audit"
+            echo "Load the \`impeccable:impeccable\` skill with the Skill tool, argument \`audit\` followed by the files"
+            echo "above, and follow its \`reference/audit.md\`. This run cannot execute the skill's launcher, so this"
+            echo "workflow already ran it for you, from the same repository the plugin was installed from:"
+            echo "\`.review-tools/out/impeccable-context.txt\` is the output of \`impeccable context\`, and"
+            echo "\`.review-tools/out/impeccable-detect.json\` is \`impeccable detect --json\` over the files above"
+            echo "(its exit status in \`impeccable-detect.exit\`: 0 clean, 2 findings, anything else a failed scan,"
+            echo "with the reason in \`impeccable-detect.stderr\`). Read those instead of running the launcher."
+            echo "This is a code-level audit: there is no browser here, so skip whatever needs a running page"
+            echo "(live mode, detector overlays, screenshots) and say the audit was code-only. Post the health"
+            echo "score table and the findings, P0 to P3."
+            echo
+            echo "### review-animations"
+            if [ "${#motion[@]}" -gt 0 ]; then
+              echo "Added lines that look like motion (a keyword scan; use your own judgement too):"
+              printf -- '- %s\n' "${motion[@]}"
+            else
+              echo "A keyword scan found no added motion lines; confirm that from the diff yourself."
+            fi
+            echo "For any change that alters motion, read \`.review-tools/hub/.claude/skills/review-animations/SKILL.md\`"
+            echo "with the Read tool (it is \`disable-model-invocation\`, so the Skill tool refuses it) and review"
+            echo "the motion against it. The other skills it refers to sit beside it in \`.review-tools/hub/.claude/skills/\`."
+            echo "If nothing in the change alters motion, write \"No motion changes; not run.\""
+            echo
+            echo "The \`taste-skill\` plugin is loaded as well. If you use one of its skills, report what it found"
+            echo "under its own \`### taste-skill\` heading."
+            echo "$delim"
+          } >> "$GITHUB_OUTPUT"
+          printf 'Panel files: %s\n' "${files[*]}"
+          printf 'Motion keywords in: %s\n' "${motion[*]:-(none)}"
+
+      # The hub repository is the one source of truth for the vendored Emil
+      # skills (its `.claude/skills/THIRD_PARTY.md` pins their upstream
+      # commit), so they are read from there rather than copied into this
+      # repository, where a second copy could drift. The hub is public, so the
+      # job's own token reads it; only `.claude/skills` is checked out.
+      - name: Check out the hub's vendored UI skills
+        if: steps.panel.outputs.touched == 'true'
+        uses: actions/checkout@v6
+        with:
+          repository: falorfrozen-cmd/hero-siege-offline-toolkit
+          ref: main
+          path: .review-tools/hub
+          sparse-checkout: .claude/skills
+          persist-credentials: false
+
+      # impeccable's skill starts by running its launcher (`impeccable
+      # context`, then `impeccable detect` for the audit). The launcher sits
+      # under the plugin's versioned install directory, and a Bash permission
+      # rule cannot name that path without a leading `*`, which Claude Code
+      # warns against because it would match far more than the launcher. So the
+      # workflow runs the launcher itself, from the same repository and branch
+      # the plugin is installed from, and hands the reviewer the output: the
+      # detector's result then does not depend on a permission rule matching.
+      - name: Check out impeccable's launcher
+        if: steps.panel.outputs.touched == 'true'
+        uses: actions/checkout@v6
+        with:
+          repository: pbakaus/impeccable
+          path: .review-tools/impeccable
+          sparse-checkout: plugin/skills/impeccable
+          persist-credentials: false
+
+      # The launcher downloads its engine binary for this platform on first
+      # use and refuses one whose SHA-256 does not match the release's. A
+      # failed scan does not fail the job: its exit status and stderr reach
+      # the reviewer, whose section must then say the detector did not run.
+      - name: Run impeccable's launcher
+        if: steps.panel.outputs.touched == 'true'
+        env:
+          FIRST: ${{ steps.panel.outputs.first }}
+        run: |
+          launcher=.review-tools/impeccable/plugin/skills/impeccable/scripts/impeccable
+          out=.review-tools/out
+          echo "impeccable $(git -C .review-tools/impeccable rev-parse HEAD), engine $(cat "${launcher%/*}/VERSION")"
+          sh "$launcher" context --target "$FIRST" > "$out/impeccable-context.txt" 2>&1 \
+            || echo "(impeccable context exited $?)" >> "$out/impeccable-context.txt"
+          mapfile -t files < "$out/panel-files.txt"
+          set +e
+          sh "$launcher" detect --json "${files[@]}" > "$out/impeccable-detect.json" 2> "$out/impeccable-detect.stderr"
+          echo $? > "$out/impeccable-detect.exit"
+          set -e
+          echo "detect exit $(cat "$out/impeccable-detect.exit")"
+          cat "$out/impeccable-detect.stderr"
+
       - uses: anthropics/claude-code-action@v1
         env:
           # Makes every Agent call run in the foreground. The code-review
@@ -178,11 +346,23 @@ jobs:
           # hub repository; the hub's docs/hub/design.md documents it under
           # "Repository secrets".
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          plugin_marketplaces: "https://github.com/anthropics/claude-code.git"
-          plugins: "code-review@claude-code-plugins"
+          # One entry per line. The two design plugins are the ones the hub's
+          # `.claude/settings.json` enables for the project (ForgePact only;
+          # see the header). They load on every run, which keeps this block
+          # plain; only a panel change's prompt asks for them.
+          plugin_marketplaces: |
+            https://github.com/anthropics/claude-code.git
+            https://github.com/pbakaus/impeccable.git
+            https://github.com/Leonxlnx/taste-skill.git
+          plugins: |
+            code-review@claude-code-plugins
+            impeccable@impeccable
+            taste-skill@taste-skill
+          # The second notes line is empty unless the change touches the panel.
           prompt: |
             /code-review:code-review --comment ${{ github.repository }}/pull/${{ github.event.pull_request.number || github.event.issue.number }}
             ${{ steps.request.outputs.notes }}
+            ${{ steps.panel.outputs.notes }}
           # `--allowedTools` is the whole allow-list for the run, not an addition
           # to the skill's own. It must name every tool the code-review command
           # declares in its `allowed-tools` frontmatter. The first version named
@@ -197,6 +377,13 @@ jobs:
           # it that first call is a permission denial (hub #59). The read-only
           # git commands and Read/Grep/Glob let a scoped request read only the
           # part of the change it names.
+          # The panel's design tooling adds nothing to this list, deliberately:
+          # the impeccable skill loads through `Skill`, its reference files and
+          # the launcher output this workflow wrote to `.review-tools/out/` are
+          # read with `Read`, and review-animations is a file read with `Read`.
+          # The one thing the skill would otherwise execute, its launcher (no
+          # Node or npx: a self-contained binary), runs in "Run impeccable's
+          # launcher" above instead, for the reason given there.
           claude_args: '--allowedTools "Skill,Read,Grep,Glob,mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh search:*),Bash(git diff:*),Bash(git log:*),Bash(git blame:*),Bash(git show:*)"'
 
       # The action succeeds whenever the model exits cleanly, which includes
@@ -228,6 +415,30 @@ jobs:
             jq -r '[.[] | select(.type == "result")] | last | .result // "(no result recorded)"' "$RESULT_FILE" || true
             exit 1
           fi
+
+      # ForgePact only. A panel change was reviewed with the design tooling,
+      # so a comment posted since the review started must carry each tool's
+      # heading, with its findings, "No findings." or the reason it did not
+      # run. Without this check a review that skipped the tools, or dropped
+      # their findings, would go green exactly as hub #56 and #59 did.
+      - name: Fail if the design tools went unreported
+        if: steps.panel.outputs.touched == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number || github.event.issue.number }}
+          SINCE: ${{ steps.started.outputs.at }}
+        run: |
+          bodies=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR/comments?since=$SINCE&per_page=100" \
+            --jq ".[] | select(.created_at >= \"$SINCE\") | .body")
+          missing=()
+          for heading in "### impeccable audit" "### review-animations"; do
+            grep -qF "$heading" <<< "$bodies" || missing+=("$heading")
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf '::error::The review changed the panel but posted no section for: %s\n' "${missing[*]}"
+            exit 1
+          fi
+          echo "Both design tool sections were posted."
 
       # The action prints a trimmed result to the log: per-model token counts
       # are dropped, and the full result file stays on the runner, which is
