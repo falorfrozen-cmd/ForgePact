@@ -31,7 +31,7 @@ none of these diagnostic hooks or the recorder. See
 | --- | --- |
 | **Monster Density** | 1–5× more enemies in 0.5 steps (1, 1.5, 2 …), through the game's own `Enemy_Creator` spawners |
 | **Special Content** | Rift Portals, Battlefields, Cursed Orbs, Summon Portals, Chaos Pillars, Chaos Tower — up to 100× per zone |
-| **Drop Rates** | Gold, Dungeon Keys, Angelic Keys, Chaos + Crystal Keys, Bifröst Key and Relics — up to 100× |
+| **Drop Rates** | Gold, Dungeon Keys, Angelic Keys, Chaos + Crystal Keys, Bifröst Key, Relics and Prime Evil Parts (Key of Terror, bosses only) — up to 100× |
 | **Mining Ore Amount** | Loot → Mining Ore Amount, 1–10×. Scales the stack quantity of ore awarded by mining; x1 is normal. A worn Miner's Helmet replaces it with 4× instead of stacking |
 | **Miner's Helmet** | A signature helmet forged in the Item Editor. While worn: 4× ore from every mining node, and Vein Resonance - finishing a dig also digs the two nearest veins within 192 units that you could mine yourself (4× each, no chaining). Mods → Items shows whether it is worn ([details](#miners-helmet)) |
 | **Angelic / Unholy Drops (Experimental)** | ForgePact's own die per kill; on a hit it builds one of its 49 real Angelic / Unholy uniques, or (since 1.4.5) Tyrant's Crown or Headhunter. x2 = 1 in 7,500 kills, each step adds a die, typable |
@@ -81,8 +81,16 @@ zone the game rolls their drop type at zero chance, so the item can never come u
 matter how good its rate is. ForgePact opens that outer roll for those three families
 when you raise them — using the monster's **own** key chance as the base, never a fixed
 number; Prime Evil parts, which share the relic roll, are skipped. Every other family
-(runes, gems, orbs, scrolls, shards, fragments, ruby keys) only scales its own roll where
-the game already drops it, so zone rules stay intact.
+(runes, gems, orbs, scrolls, shards, fragments, ruby keys, Prime Evil parts) only scales its
+own roll where the game already drops it, so zone rules stay intact.
+
+**Prime Evil Parts (Key of Terror)** are Gurag's Soul, Death's Sigil, Damien's Eye, Anubis'
+Ankh, Karp King's Bellybutton, Satan's Horn and their infernal versions. They come from
+bosses, so this slider works on bosses only, and it never touches Relics.
+
+Checked in play on 2026-09-26: Karp King was killed through the game's own death path, and
+dropped about 0.7 bellybuttons per kill at x1, 3 at x5 and 9 at x35. Above x35 nothing more
+changes. See [research and test scope](docs/prime-evil-parts-research.md).
 
 ### Using the panel
 
