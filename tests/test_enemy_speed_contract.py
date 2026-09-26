@@ -1,5 +1,6 @@
 import importlib.util
 import re
+import sys
 import unittest
 from pathlib import Path
 
@@ -26,6 +27,11 @@ def function_body(source: str, signature: str) -> str:
 
 
 def load_panel():
+    # forgepact.py imports its sibling panel_icons, so src/ must be on sys.path.
+    # Serially an earlier module happened to put it there; alone (as the parallel
+    # runner runs each module) this one has to do it itself.
+    if str(PANEL_PATH.parent) not in sys.path:
+        sys.path.insert(0, str(PANEL_PATH.parent))
     spec = importlib.util.spec_from_file_location("forgepact_panel", PANEL_PATH)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
