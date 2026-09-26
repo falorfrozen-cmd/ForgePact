@@ -1011,6 +1011,14 @@
         "loot/1280": "79:1197",
         "loot/900": "79:1212"
       }
+    },
+    "ship": {
+      "decided": "2026-09-26",
+      "ownerWordsReducedMotion": "Keep colour fades too",
+      "reducedMotion": "Under prefers-reduced-motion, movement and scale are removed (transform, translate, scale and rotate: the button press, both tooltips' scale, the tray's scale, the toasts' rise and the removed entry's shrink), while opacity fades and the hover colour fades stay. motion.notes' reduced-motion sentence is rewritten to say so. The removed-entry state's note stays as it is: that motion has no colour.",
+      "ownerWordsThemeList": "Keep native select",
+      "themeList": "The theme control stays a native select, whose list the system draws, so motion.notes no longer says the theme list scales from its trigger; the tray popover keeps that motion.",
+      "unchanged": "variables, palettes, screens (texts, selectorTokens, states), borders and every other key: only amendments.ship and motion.notes changed."
     }
   },
   "borders": [
@@ -3420,7 +3428,7 @@
     }
   ],
   "motion": {
-    "notes": "Tokens: motion/duration/fast 120ms, base 200ms; motion/easing/standard cubic-bezier(0.2, 0, 0, 1), emphasized cubic-bezier(0.23, 1, 0.32, 1), hover cubic-bezier(0.25, 0.1, 0.25, 1). Animate only transform and opacity. Hover colour changes: motion/duration/fast on motion/easing/hover, gated by (hover: hover) and (pointer: fine). Buttons scale(0.97) on :active over motion/duration/fast on motion/easing/standard. Focus and keyboard actions are never animated. The tray popover and the theme listbox scale from their trigger (0.97 to 1, with opacity) over motion/duration/base on motion/easing/emphasized and close over motion/duration/fast on motion/easing/standard; opened from the keyboard they appear at once. Toasts enter over motion/duration/base and leave over motion/duration/fast on motion/easing/standard. A removed list entry fades and scales to 0.95 over motion/duration/fast. prefers-reduced-motion keeps opacity only."
+    "notes": "Tokens: motion/duration/fast 120ms, base 200ms; motion/easing/standard cubic-bezier(0.2, 0, 0, 1), emphasized cubic-bezier(0.23, 1, 0.32, 1), hover cubic-bezier(0.25, 0.1, 0.25, 1). Animate only transform and opacity. Hover colour changes: motion/duration/fast on motion/easing/hover, gated by (hover: hover) and (pointer: fine). Buttons scale(0.97) on :active over motion/duration/fast on motion/easing/standard. Focus and keyboard actions are never animated. The tray popover scales from its trigger (0.97 to 1, with opacity) over motion/duration/base on motion/easing/emphasized and closes over motion/duration/fast on motion/easing/standard; opened from the keyboard it appears at once. The theme control stays a native select, whose list the system draws. Toasts enter over motion/duration/base and leave over motion/duration/fast on motion/easing/standard. A removed list entry fades and scales to 0.95 over motion/duration/fast. prefers-reduced-motion removes movement and scale (transform, translate, scale and rotate), while opacity fades and colour fades stay."
   },
   "bindingAudit": {
     "fillsTotal": 4277,

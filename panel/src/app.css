@@ -9,7 +9,8 @@
    (the pointer's own element, and only where there is one), a button scales to .97 while pressed,
    the tray and both tooltips scale in from their trigger, the toasts rise and fade, a turned-off
    entry fades and shrinks. Nothing a poll repaints moves, a keyboard action never animates
-   ([data-instant], :focus-visible), and prefers-reduced-motion keeps opacity alone (at the end). */
+   ([data-instant], :focus-visible), and prefers-reduced-motion removes movement and scale while the
+   opacity and hover colour fades stay (amendments.ship, at the end). */
 :root{color-scheme:dark;--shell-foot:calc(var(--space-10) + 1px);--toast-h:40px;--undo-h:44px;--rail-h:56px;--page-pad:var(--space-10);--chip-game-w:120px;
   --icon-refresh:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M13.5 8a5.5 5.5 0 0 1-9.9 3.3M2.5 8a5.5 5.5 0 0 1 9.9-3.3M12.5 2v3h-3M3.5 14v-3h3'/%3E%3C/svg%3E");
   --icon-search:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round'%3E%3Ccircle cx='7' cy='7' r='4.5'/%3E%3Cpath d='m10.5 10.5 3 3'/%3E%3C/svg%3E");
@@ -381,10 +382,12 @@ select.style-select{min-width:96px;height:28px;padding:0 var(--space-3) 0 var(--
 :is(.btn,.quick-disable,.step-button,.sat-button,.undo-toast-button,.enabled-mods-toggle){transition:transform var(--motion-duration-fast) var(--motion-easing-standard)}
 @media(prefers-reduced-motion:no-preference){:is(.btn,.quick-disable,.step-button,.sat-button,.undo-toast-button,.enabled-mods-toggle):active:not(:disabled):not(:focus-visible){transform:scale(.97)}}
 
-/* ---- Reduced motion: opacity alone. The tooltips, the tray, the toasts and a turned-off entry
-   still fade; nothing scales or moves, and hover colours and presses change at once. ---- */
+/* ---- Reduced motion: no movement and no scale (amendments.ship, the owner's "Keep colour fades
+   too"). The tooltips, the tray, the toasts and a turned-off entry still fade, and a hover still
+   eases its colours in; nothing scales or moves, and a press changes nothing. ---- */
 @media(prefers-reduced-motion:reduce){
-:is(.btn,.quick-disable,.step-button,.sat-button,.undo-toast-button,.enabled-mods-toggle),:is(.tabbtn,.btn,.quick-disable,.step-button,.sat-button,.undo-toast-button,.control-filters button,.sat-filters button,.subtabbtn,#theme,select.style-select,.plugin-warning-button,.enabled-mods-toggle,.help-details summary):hover{transition:none}
+:is(.btn,.quick-disable,.step-button,.sat-button,.undo-toast-button,.enabled-mods-toggle){transition:none}
+:is(.tabbtn,.btn,.quick-disable,.step-button,.sat-button,.undo-toast-button,.control-filters button,.sat-filters button,.subtabbtn,#theme,select.style-select,.plugin-warning-button,.enabled-mods-toggle,.help-details summary):hover{transition-property:color,background-color,border-color}
 .plugin-warning-tooltip,.setting-entry>.note[data-note][data-tooltip],#toast,.undo-toast,.enabled-mod-ghost[data-fading]{transition-property:opacity}
 #enabledMods[data-form="tray"]:not([data-measure])>ul{transition-property:opacity,display}
 #toast,.undo-toast[data-leaving],.enabled-mod-ghost[data-fading],#enabledMods[data-form="tray"]:not([data-measure])>ul{transform:none}
