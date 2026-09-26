@@ -132,7 +132,7 @@ KEYS = [
     # opening that gate would drop Relics as well, and the plugin skips the
     # part scripts while the Relic gate rolls. The slider only scales the
     # parts' own roll where the game already rolls it, which is on bosses.
-    ("primeevil", "Prime Evil Parts (Key of Terror)", None),
+    ("primeevil", "Prime Evil Parts", None),
     # Not offered: Satanic materials sit at base 100,000-50,000,000, which no
     # division reaches.
     # Ruby Keys: the game's own gate is already open (chances[18] = 1), only the

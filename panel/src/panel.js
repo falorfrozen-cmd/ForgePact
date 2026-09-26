@@ -267,6 +267,7 @@ function rareNote(key,v){
 function keyNote(key,dropType,v){
   if(v<=1) return '';
   if(key==='ruby') return `${v}x the key's own vanilla roll (base 1,500,000)`;
+  if(key==='primeevil') return `${v}x how often bosses drop their Key of Terror part (bosses only; nothing more above x35)`;
   if(dropType===null||dropType===undefined) return `${v}x its vanilla drop rate, only where the game drops it anyway`;
   if(key==='relic'){
     // Same curve as the plugin:  probability = 0.00025 * v^2  (clamped at 1.0)

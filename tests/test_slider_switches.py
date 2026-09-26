@@ -71,7 +71,7 @@ _KEY_TAIL = ["droprate group angelic 1", "droprate group chaos 1", "droprate gro
              "droprate group relic 1", "droprate group rune 1", "droprate group stone 1",
              "droprate group bossgem 1", "droprate group orb 1", "droprate group scrollofra 1",
              "droprate group dimshard 1", "droprate group battlefrag 1",
-             "droprate group colosfrag 1", "droprate group ruby 1"]
+             "droprate group colosfrag 1", "droprate group primeevil 1", "droprate group ruby 1"]
 _KEY_RESETS = ["dungeonkey del 12", "dungeonkey del 16", "dungeonkey del 41"]
 
 # One slider per section: (section, key, max, min, lines at max, lines at min),
@@ -149,8 +149,8 @@ class SliderSwitchTests(unittest.TestCase):
                     + [f"keys.{k}" for k, *_ in forgepact.KEYS]
                     + ["rarity_rare", "rarity_ancient", "angelic_items", "enemy_speed"])
         self.assertEqual(list(ids), expected)
-        self.assertEqual(len(ids), 40)
-        self.assertEqual(len(set(ids)), 40)
+        self.assertEqual(len(ids), 41)
+        self.assertEqual(len(set(ids)), 41)
         for excluded in ("density", "density_on", "enemy_speed_ct"):
             self.assertNotIn(excluded, ids)
 
