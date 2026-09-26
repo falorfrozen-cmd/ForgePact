@@ -698,8 +698,11 @@ load there anyway.
   *shipping* build, not a development or profile one.
 - `build_release.py` — packages `dist/ForgePact/` (the release zip contents).
 - `tools/` — developer helpers, not shipped to players: `ipc.ps1` sends one command to
-  the running plugin and prints only its reply, and `ghidra/ImportSymbols.java` names the
-  stripped game binary in Ghidra from the game's own script table.
+  the running plugin and prints only its reply, `ghidra/ImportSymbols.java` names the
+  stripped game binary in Ghidra from the game's own script table, and
+  `itemtruth_memrun.py` launches the game to the main menu, queues Item Truth checks and
+  samples the game's private memory from outside (with a positive control for the
+  research build).
 - `docs/S10-special-content-notes.md` — the Season 10 reverse-engineering log, in our own
   words: object, script and variable names with their indices, the special-content gates
   and what opens each, measured values and crash thresholds, our own commands and hooks,
@@ -857,6 +860,12 @@ game built:
   with `"req":"<id>"`; progress lines are `"kind":"tipdraw"`; a request cut short
   is set aside as `.stopped` at the next start. Measured: 7,607 tooltips in about
   2 minutes, no failures.
+- **Memory.** A check keeps nothing: the game's own garbage collector frees every
+  item a request builds. Measured on 2026-09-26 at the main menu: 20,000 checks
+  moved the game's private memory by 7-10 MB, and it stayed flat afterwards. So
+  there is no limit on checks per game session. The same 20,000 held on purpose
+  (the positive control) grew it by 106-117 MB. `tools/itemtruth_memrun.py` measures
+  it; the record is [docs/item-truth-memory-research.md](docs/item-truth-memory-research.md).
 
 The older `bp_ipc\itemstats.json` snapshot (Custom Forge base stats) is now taken
 on the same final pass; it used to be taken halfway and missed the socket count.
