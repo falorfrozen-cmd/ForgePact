@@ -20,8 +20,8 @@
 //
 // Every positive has its control beside it: a hover's colour transition next
 // to a palette swap that runs none, a pointer's press next to the keyboard's,
-// a pointer's tray next to the keyboard's and a rebuilt list's, a pointer's
-// Turn off next to the keyboard's. Every check runs on its own sandbox and
+// a pointer's tray and theme picker next to the keyboard's (and the tray's
+// rebuilt list), a pointer's Turn off next to the keyboard's. Every check runs on its own sandbox and
 // page. The last line is `e2e-motion: <n>/<n> checks passed`.
 
 import { launchBrowser, openPanel, parseArgs, startSandbox, waitBooted, waitSaved } from './lib/browser.mjs';
@@ -42,6 +42,7 @@ const EXPECTED = [
   'motion-M2',
   'motion-M3',
   'motion-M4',
+  'motion-M5',
   'motion-M6',
   'motion-M7',
   'motion-M8',
@@ -167,6 +168,9 @@ async function trayOf(page) {
   await page.waitForFunction(() => document.getElementById('enabledMods').dataset.form === 'tray', null, { timeout: 5000 });
 }
 const trayUl = '#enabledMods > ul';
+// The Setup tab's ThemePicker (finish review F2): its trigger and its list.
+const pickerBtn = '.theme-picker-trigger';
+const pickerList = '.theme-picker-list';
 
 // ---- The checks ----
 
@@ -265,10 +269,29 @@ async function warningStartingStyle({ page }) {
   return `no data-starting; entrances ${notes.join(', ')}`;
 }
 
-// Keyboard: a tooltip focused from the keyboard and the tray opened from the
-// keyboard show with no transition; the same tray opened by the pointer runs
-// one (the control).
+// Keyboard: a tooltip focused from the keyboard, and the tray and the theme
+// picker opened from the keyboard, show with no transition; the same tray and
+// picker opened by the pointer run one (the controls).
 async function keyboardAtOnce({ page }) {
+  await tab(page, 'setup');
+  await away(page);
+  await record(page);
+  await $(page, (s) => document.querySelector(s).focus(), pickerBtn);
+  await page.keyboard.press('Enter');
+  await wait(300);
+  const kbPicker = await seen(page, pickerList);
+  assert(await $(page, (s) => document.querySelector(s).checkVisibility() && document.querySelector(s).getAnimations().length === 0, pickerList), 'the keyboard-opened theme picker is not shown at rest');
+  assert(kbPicker.length === 0, `the keyboard-opened theme picker ran ${props(kbPicker).join(',')}`);
+  await page.keyboard.press('Escape');
+  await wait(300);
+  assert(await seen(page, pickerList).then((l) => l.length === 0), 'Escape closing the theme picker ran a transition');
+  await clearLog(page);
+  await page.click(pickerBtn);
+  await wait(300);
+  const ptrPicker = await seen(page, pickerList);
+  assert(props(ptrPicker).includes('opacity') && props(ptrPicker).includes('transform'), `the pointer-opened theme picker ran ${props(ptrPicker).join(',') || 'nothing'} (the control)`);
+  await page.keyboard.press('Escape');
+
   await tab(page, 'world');
   await away(page);
   await record(page);
@@ -306,13 +329,13 @@ async function keyboardAtOnce({ page }) {
   await wait(300);
   const ptr = await seen(page, trayUl);
   assert(props(ptr).includes('opacity') && props(ptr).includes('transform'), `the pointer-opened tray ran ${props(ptr).join(',') || 'nothing'} (the control)`);
-  return 'warning tooltip, note tooltip and tray: no transition from the keyboard; the pointer tray ran opacity + transform';
+  return 'theme picker, warning tooltip, note tooltip and tray: no transition from the keyboard; the pointer picker and tray ran opacity + transform';
 }
 
 // Under reduce (amendments.ship, the owner's "Keep colour fades too"), nothing
 // moves or scales: no transform, translate, scale or rotate transition runs
-// across the tooltips, the tray, both toasts, a turned-off entry, a hover and
-// a press, while the fades stay. Each fade count is its own positive control:
+// across the theme picker, the tooltips, the tray, both toasts, a turned-off
+// entry, a hover and a press, while the fades stay. Each fade count is its own positive control:
 // at least two opacity fades (display is the tray's discrete step, neither a
 // fade nor motion) and at least one hover colour fade must have run.
 const MOVING = ['transform', 'translate', 'scale', 'rotate'];
@@ -323,6 +346,17 @@ async function reducedNoMovement({ page }) {
   const keep = async () => all.push(...await $(page, () => window.__motion.map((m) => ({ prop: m.prop, el: m.el.id || m.el.className || m.el.tagName }))));
   await reduce(page);
   await record(page);
+  // The theme picker, opened and closed by the pointer: it fades, it does not scale.
+  await tab(page, 'setup');
+  await page.click(pickerBtn);
+  await wait(300);
+  const pickerScale = await $(page, (s) => getComputedStyle(document.querySelector(s)).transform, pickerList);
+  assert(pickerScale === 'none', `reduced: the open theme picker is transformed: ${pickerScale}`);
+  await page.click(pickerBtn);
+  await wait(300);
+  const pickerRan = await $(page, (s) => window.__motion.filter((m) => m.el.matches(s)).map((m) => m.prop), pickerList);
+  assert(pickerRan.includes('opacity'), `reduced: the theme picker did not fade (${pickerRan.join(',') || 'nothing'})`);
+  await keep();
   await hoverNote(page).catch((e) => { throw new Error('note: ' + e.message); });
   await keep();
   await tab(page, 'world');
@@ -501,6 +535,45 @@ async function m4Tray({ page }) {
   return `open ${t.base} ms and close ${t.fast} ms, from ${origin}; rebuilt and resized: none`;
 }
 
+// M5: the theme picker's list (finish review F2, the owner's "Build the
+// ThemePicker") scales in from its trigger (opacity and transform over
+// base/emphasized, origin top left, under the trigger) when the pointer opens
+// it, and out over fast/standard when a pointer outside closes it or a palette
+// is chosen with the pointer; the keyboard's open is keyboard-opens-at-once.
+async function m5ThemePicker({ page }) {
+  const t = await tokens(page);
+  await tab(page, 'setup');
+  await away(page);
+  await record(page);
+  await page.click(pickerBtn);
+  await wait(350);
+  const open = await seen(page, pickerList);
+  timed(one(open, 'opacity'), t.base, t.emphasized, 'the theme picker opening');
+  timed(one(open, 'transform'), t.base, t.emphasized, 'the theme picker opening');
+  const origin = await $(page, (s) => getComputedStyle(document.querySelector(s)).transformOrigin, pickerList);
+  assert(/^0px 0px/.test(origin), `the theme picker scales from ${origin}, not its top left`);
+  const under = await $(page, ([b, l]) => { const a = document.querySelector(b).getBoundingClientRect(); const c = document.querySelector(l).getBoundingClientRect(); return c.top >= a.bottom && Math.abs(c.left - a.left) < 1; }, [pickerBtn, pickerList]);
+  assert(under, 'the theme picker does not open below its trigger');
+  await clearLog(page);
+  const outside = await $(page, () => { const r = document.getElementById('pageTitle').getBoundingClientRect(); return { x: r.left + 10, y: r.top + r.height / 2 }; });
+  await page.mouse.click(outside.x, outside.y);
+  await wait(300);
+  const close = await seen(page, pickerList);
+  timed(one(close, 'opacity'), t.fast, t.standard, 'the theme picker closing');
+  timed(one(close, 'transform'), t.fast, t.standard, 'the theme picker closing');
+  assert(await $(page, (s) => !document.querySelector(s).checkVisibility(), pickerList), 'the theme picker is still shown after closing');
+  // Choosing with the pointer closes it the same way; the palette swap itself runs no colour transition (M1).
+  await page.click(pickerBtn);
+  await wait(350);
+  await clearLog(page);
+  await page.click('.theme-picker-option[data-value="graphite"]');
+  await wait(300);
+  const chose = await seen(page, pickerList);
+  timed(one(chose, 'opacity'), t.fast, t.standard, 'the theme picker closing on a choice');
+  await settled(page);
+  return `open ${t.base} ms from ${origin}, close ${t.fast} ms (outside and on a choice)`;
+}
+
 // M6: #toast rises in over base and sinks out over fast; the undo toast the
 // same, and leaves (then is removed) after the pointer's Undo.
 async function m6Toasts({ page }) {
@@ -580,6 +653,7 @@ const CHECKS = [
   ['motion-M2', m2Press],
   ['motion-M3', m3Keyboard],
   ['motion-M4', m4Tray],
+  ['motion-M5', m5ThemePicker],
   ['motion-M6', m6Toasts],
   ['motion-M7', m7Removed],
   // The reduced-motion row, F2, F4 and E4 are the required checks above, run again under the row's name.

@@ -28,9 +28,14 @@ the page it replaced lives in `panel/tests/`:
   mods list and its tray, toggles, sliders, tabs, searches, hovers, idle
   polls) with rendering on, and holds each to the owner's hard budgets
   (longest frame 50 ms, no frame over 50 ms, input-to-next-paint and result
-  paint p95 100 ms, no idle-poll mutation), medians over five runs.
+  paint p95 100 ms, no idle-poll mutation), medians over five runs;
+- `npm run e2e:motion` checks the export's motion (hover, press, the tray,
+  the theme picker, the tooltips, the toasts, the removed entry) and reduced
+  motion removing movement while the fades stay;
+- `npm run e2e:finish` checks the finish review's eight fixes, and holds the
+  ThemePicker's posts to the derived oracle's theme steps.
 
-All five drive the installed Edge headless through playwright-core against
+All of them drive the installed Edge headless through playwright-core against
 `tests/panel_sandbox_server.py`, which needs a built `panel/dist/`. Each test
 here skips, naming what is missing, when `node`/`npm`, Edge, the installed
 dev dependencies or the build are absent - build first with
@@ -212,6 +217,15 @@ class PanelBrowserSuiteTests(unittest.TestCase):
         lines = [l for l in out.splitlines() if l.startswith("e2e-motion: ")]
         self.assertEqual(code, 0, out[-4000:])
         self.assertTrue(lines and re.fullmatch(r"e2e-motion: (\d+)/\1 checks passed", lines[-1]), out[-4000:])
+
+    def test_finish_e2e_suite_passes(self):
+        # The Impeccable finish review's eight owner-approved fixes, the
+        # ThemePicker's posts held to the derived oracle's theme steps
+        # (forgepact-ui-ship, round 2).
+        code, out = _npm("e2e:finish")
+        lines = [l for l in out.splitlines() if l.startswith("e2e-finish: ")]
+        self.assertEqual(code, 0, out[-4000:])
+        self.assertTrue(lines and re.fullmatch(r"e2e-finish: (\d+)/\1 checks passed", lines[-1]), out[-4000:])
 
     def test_perf_e2e_suite_passes(self):
         # The owner's hard budgets, on medians over five runs; if CI is noisy,
