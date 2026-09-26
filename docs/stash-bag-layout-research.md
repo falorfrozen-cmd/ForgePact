@@ -21,6 +21,15 @@ records the static search, what a local static reading suggests, the
 instrument, the one research launch that measures them, and the decision the
 hub tools are written against.
 
+**Note (2026-09-25, D11).** The owner split the whole-stack and one-unit
+moves out of this workorder: `hs_move_item` and the `moveWholeRoute`/
+`moveOneRoute` orders that P2-5 and P2-6 below measured now belong to
+`hs-drive-stash-move-research`, which starts from what those two checks
+found. This document's tools are five: `hs_give_item`, `hs_stash_open`,
+`hs_stash_close`, `hs_stash_tab` and `hs_bag_tab`. The procedure below is
+left as it ran; only the § Decision lines for the two moves record where
+they went.
+
 **Posture.** Everything here is measured runtime behaviour, a reading written
 in our own words, or our own code. Game objects and scripts are named by their
 `hs-game-sdk` names and indices; no game script text appears, and the
@@ -35,11 +44,15 @@ says which stash tab is on show, how a count is read and what an item is
 matched by. It could not replay any by-name call - the instrument had no
 argument kind for a live instance or an object reference, and the drag turned
 out to write its cell through a constructor - so the open, both tab switches,
-both moves, the bag's tab state and the item provisioning are measured again
-by name in Live procedure 2, on a build carrying the additions § Instrument
-lists. Those nine lines read `pending` until it has run. What § Instrument
-lists as hypotheses, and what § Static readings suggests, are not facts until
-a live session records them.
+both moves, the bag's tab state and the item provisioning were measured again
+by name in Live procedure 2 (2026-09-25), on a build carrying the additions §
+Instrument lists. That second launch closed the other nine lines; two of
+them, `moveWholeRoute` and `moveOneRoute`, moved out of this document's scope
+under D11 to `hs-drive-stash-move-research` once their refusals turned out to
+answer a mis-read prerequisite, not a game negative. § Decision now carries
+all fifteen. What § Instrument lists as hypotheses, and what § Static
+readings suggests, stay readings except where a § Decision line or the live
+sessions' own § Results rows confirm them.
 
 ## Static search
 
@@ -191,8 +204,9 @@ confirmed by phase 0, never a fact.
   item up by fingerprint, validate it, check and refresh its hash, stamp it,
   copy it, add it to a stack or a tab, split a drop, edit the item data,
   remove it from its map and send an inventory update. A move that bypasses
-  them has to leave the same map and hash bookkeeping behind. Live 1 found
-  that the hand drag does not go through these handlers at all (below), so
+  them has to leave the same map and hash bookkeeping behind. Live 1 did not
+  observe the hand drag going through these handlers (none of the twelve
+  armed rows fired, with the control climbing; below), so
   the by-name move is the `craftmats` family, never a replay of the drag.
 - **Split.** `UiASplitStack` parses a typed number, reads the item and its
   size, and can report the client: the dialog takes a typed count and
@@ -223,8 +237,9 @@ Live procedure 2 confirms it:
   logged it with the destination grid as other and the cell's x, y and the
   item struct as arguments). The drag's own handling is inline code with no
   named routine of its own - `ProcessInventoryGridInput`, 311 calls in the
-  same window, is the likely holder - so there is nothing to call by name
-  that reproduces it. The two grid closures that call the named grid
+  same window, is the likely holder - so no named routine that reproduces
+  it was found by this reading (`s_InvNode` itself was not replayable: this
+  instrument cannot supply a struct under construction as self). The two grid closures that call the named grid
   routines (the one that checks the hash, stamps, copies and adds to a stack
   or a tab, and the one that edits the item data, splits a drop, sends the
   inventory update and removes from the map) did not run on live 1's drag:
@@ -263,6 +278,39 @@ Live procedure 2 confirms it:
   the persistent cell arrays on `New_Inventory_Data_obj` and each grid
   instance's own mirror, `nodeGrid`; a stash tab's array is found the same
   way (`craftprobe find`).
+
+Live 2 (2026-09-25) confirmed the second reading's items that were still
+readings, not facts:
+
+- **The tab handlers' shapes.** `UiAStashTabClick`'s logged shape (Shared1,
+  self the tab button, other `UI_Stash_Tab_Bar_Container_obj`, `argc=1
+  a0=array len=2`) and `UiAStashMaterialTabClick`'s by-name replay both ran
+  as the second reading described; `UiAInventoryMaterialTabClick`'s logged
+  shape (self the sub-tab button, other `UI_Stash_obj`, `argc=1 a0=array
+  len=0`) left `tabSelected` at -4. No full before/after member diff of
+  either was taken, so "one member and nothing else" is not measured, and
+  the by-name replay's value before the call was not read (see the
+  `bagTabRoute` line), so its -4 does not separate a switch from no change.
+  `tabSelected` is not `stashTabSelected`: the P2-3 dump read -2 on the
+  second beside 0 on the first, and a bag page-tab click moved the first
+  alone, so the second reading's "consistent with both reading the same
+  value" does not hold.
+- **`UiACloseButton` by name reaches the close route.** The reading above
+  left it open whether calling the routine by name reaches the route live 1
+  measured on the close-row click. Live 2's P2-7 called it by name
+  (`craftprobe call UiACloseButton id:<button> other:<window> confirm`) on a
+  reopened window and got the same effect as the click: the window unlisted
+  and `SaveStash` incremented once. The routine is a route, not only a
+  runtime-builtin node removal.
+- **`activeNode` was not observed to follow a by-name bag tab call.** A
+  real click on the bag's Materials sub-tab moved `UI_Stash_obj.activeNode`
+  to that sub-tab's id (the `citrace dumpobj UI_Stash_obj` after it). After
+  the by-name replay of `UiAInventoryMaterialTabClick` the same member still
+  held the previous sub-tab's id. Why is not established: the static reading
+  above says the sub-tab handlers themselves set the focus, and the replay
+  supplied no argument where the logged call passed one empty array - the
+  untried logged shape is the first alternative to test. `hs_bag_tab` proves
+  `tabSelected`, never `activeNode` or the focus.
 
 ## Instrument
 
@@ -306,6 +354,13 @@ The three `menulayout` changes:
    `tabType` are unmeasured on an instance (they were seen on result
    structs); `stashTabSelected` (#14) and the four grid names (the prospect
    research) were read on instances. Phase 0 prunes any name no dump showed.
+   After live 2 (Step 4 of the ship round, 2026-09-26): every one of these
+   showed on a live row, so none was pruned, and `tabSelected` joined after
+   `stashTabSelected` because `bagTabState` depends on it. The same round
+   added the cell rows: after each `UI_Inventory_Grid_obj` row, one
+   `  cell=<x>,<y> grid=<id> fp=<nodeFingerprint|none> o=none` row per
+   occupied node (`cellRule`), the first 200 row-major, the grid's row
+   carrying `cellcap=1` past that.
 3. **Array values** print as `[a,b,...]`: the runtime's `array_length`, then
    each element through `array_get` and the same value formatter as any
    field; a nested array prints `<array>` rather than being walked, past 32
@@ -520,8 +575,11 @@ Two research launches measure the mechanisms, and a third, on the player
 build, verifies the hub tools. Live procedure 1 ran on 2026-09-25 and is kept
 as it was written, so § Results can be read against it; Live procedure 2 is
 the second research session. The third, Live procedure 3, is the
-verification session on the player build; it is not written in this
-document yet, because it exercises hub tools that do not exist yet.
+verification session on the player build; it ran on 2026-09-26 against the
+Step 9 player build and is written in the toolkit's own workorder context
+(`.claude/workorders/hs-drive-stash-bag-actions-context.md` §
+"Live procedure 3 (verification, player build)"), not in this document -
+its results are below in § Results and § Decision.
 
 ### Live procedure 1
 
@@ -730,6 +788,12 @@ logged shape beside the supplied one; the outcome `reproduced`, `shape not
 reproduced (…)` or `not-run (instrument: …)`), and a field a step changes on
 purpose is listed `intended:` before the call.
 
+**Note (2026-09-25, D11).** P2-5 and P2-6 below measured the whole-stack and
+one-unit moves; the owner split that ground out to `hs-drive-stash-move-research`
+after this session, so `moveWholeRoute` and `moveOneRoute` are recorded there
+under § Decision as `moved to hs-drive-stash-move-research`, not as routes
+this workorder ships. The steps below are left exactly as run.
+
 **The capture ends with a `## Checks` block**: one line per check named
 below, in this order, written `- <name> | expected: … | observed: … |
 pass|fail|not-observed [note]`. Live 1's capture had none, so no tool could
@@ -937,48 +1001,66 @@ check makes no by-name call.
 | P0-5 | not-observed: two clicks - at the Materials row's `win=908,71`, and near the stash header's list icon - reached none of the five armed tab-handler rows (0 calls each). The strip is scrolled and clipped by `UI_Stash_Tab_Bar_Container_obj`, and `menulayout` prints the child button's own `win=`, which lies past the panel's visible edge; every `UI_Button_Stash_Tab_obj` row reads `visible=0`, the drawn Personal tab included, so that field does not follow what is drawn. An instrument and coordinate gap, not a game negative. By name: `not-run (instrument: no logged shape - the click reached no handler)`. The Materials value was read later (P0-9: -4, after the owner's hand switch) | - (no handler ran) | - | not-observed: the Socketable control was not run | 2026-09-25 |
 | P0-6 | not-observed: not attempted. The bag's page tabs are `UI_Button_Inventory_Tab_obj` rows with `tabNumber` 0 to 4 (Main and four Extra); its materials and socket sub-tabs are the instances `UI_Stash_obj.invMaterialTab` and `invSocketTab` name | - | - | - | 2026-09-25 |
 | P0-7 | UI drag only. The owner dragged a non-stackable (not K_J) from the bag into the stash's Personal tab, then split one unit of a material (`b=65`, not K_M) from the Materials tab into the bag. The twelve armed grid and map rows stayed at 0 calls, with the control climbing; the only item writes logged were two `s_InvNode` calls and one `UiASplitStack`. By name: `not-run (instrument: s_InvNode's self is a struct under construction, which call and callm cannot name)` | `s_InvNode #1 self=(not an instance: object/struct object_index=undefined) other=UI_Inventory_Grid_obj#5112@264143 argc=3 a0=real:5.000000 a1=real:6.000000 a2=struct{… item, b=29 …}`; `UiASplitStack #1 self=UI_Button_Small_obj#5009@267236 other=UI_Split_Stack_obj#5254@267235 argc=1 a0=array len=0`; `s_InvNode #2` self as #1, `other=UI_Inventory_Grid_obj#5112@264099 argc=3 a0=real:0.000000 a1=real:0.000000 a2=struct{… item, b=65, o=1 …}` | - (no call made) | - | 2026-09-25 |
-| P0-8 | not-observed: not attempted. The order it would have reversed does not exist (the split called no named grid routine), and the json route was left for the session's time | - | - | - | 2026-09-25 |
+| P0-8 | not-observed: not attempted. No order to reverse was observed (none of the armed named grid routines was seen on the split), and the json route was left for the session's time | - | - | - | 2026-09-25 |
 | P0-9 | pass, by the close row: `Esc` did nothing with the Materials tab on show (`stashTabSelected=-4`, still listed; earlier, straight after opening on Personal, `Esc` had closed it). The `UI_Button_Close_obj` row (`uiNodeCallstack=InventoryClose`, `win=1195,27` under 1920x1080, `visible=1`) clicked once: `UI_Stash_obj` unlisted, `SaveStash calls=1`, and one call each of `SaveCommit` and `SaveFileGMAsync` for the close | - | - | - | 2026-09-25 |
 | P0-10 | partly observed: `hs_stop_game` answered `exited: true`, `forced: false`; `hs_saves_inspect` changed `herosiege13.hss`, `inventory_order_13.hss`, `shop.ini` and `stash.hss`, nothing added or missing. The operator could not restore (its toolset has no restore tool), and the lease's release says so; the driver restored the backup afterwards on the owner's word. The DLL hash after equals the hash before | - | - | - | 2026-09-25 |
-| dll-hash (live 2) | pending | - | - | - | - |
-| marker (live 2) | pending | - | - | - | - |
-| control (live 2) | pending | - | - | pending | - |
-| P2-1 | pending | pending | pending | - | - |
-| P2-2 | pending | pending | pending | - | - |
-| P2-3 | pending | pending | pending | pending | - |
-| P2-4 | pending | pending | pending | - | - |
-| P2-5 | pending | pending | pending | - | - |
-| P2-6 | pending | pending | pending | - | - |
-| P2-7 | pending | pending | pending | - | - |
-| P2-8 | pending | - | - | - | - |
+| dll-hash (live 2) | pass: the lease's `dll_sha256` `ea3f38f5…92fa` (ForgePact `01510ed`) equalled the dispatch's research-build hash, and was the same at the lease's release | - | - | - | 2026-09-25 |
+| marker (live 2) | pass: a bare `craftprobe` answered `craftprobe: phase1k rows=286 - research instrument …` | - | - | - | 2026-09-25 |
+| control (live 2) | pass: `ping` answered `pong (YYTK 4.0.1)`; `menulayout Player_obj` printed one row, `gui=912.0,822.0`; `mapkeep on` ran before `craftprobe hook`, which answered `283 detoured, 0 failed, 3 held by mapkeep, craftmats or an item hook` (283+3=286, matching P0-1's held set - `GetItemMap`/`LoadStash` by mapkeep, `CreateItemNew` by Custom Forge's inline detour) | - | - | `CheckPlayerInteraction calls=8820` after the load, climbing to 103320+ | 2026-09-25 |
+| P2-1 | pass: K_J `0-0-209492724983-18` (class 18, `b=19`, cells=2) in the bag's `PotionGrid` (`id=258308`), matching live 1 exactly; K_M `0-0-209564349884-14` (class 14, `b=72`, `def.o=934`) in `New_Inventory_Data_obj.localItemMap` (`id=258288`), matching live 1 exactly. Both already present; `giveItemRoute` left to P2-5 variant B | - (no call made) | - (no call made) | - | 2026-09-25 |
+| P2-2 | pass: warp landed 0 px off (`gui=884.0,628.0`); the F key (vk 70, 120 ms) listed `UI_Stash_obj` (`id=262983`, `stashTabSelected=0`), no crash this attempt. The logged `UiCreate` shape on the key matches live 1's P0-3 line and attempt 1's crashed by-name call exactly. The by-name `UiCreate` open crashed the game once in attempt 1 (`ret=ref instance 262616`), causality not established from one session; not re-called this attempt (`stashOpenRoute: interact`) | `UiCreate #1 self=other=Town_Stash_obj#4852@228465 argc=3 a0=ref object UI_Stash_obj a1=1 a2=1`, `ret=ref instance 262983` (this attempt); attempt 1's crashed call had the same shape, `ret=ref instance 262616` | - (by-name not re-called this attempt) | - | 2026-09-25 |
+| P2-3 | pass: Materials button `id=263032` `activationArgs=[-4,<ref>]` `tabNumber=-4`; Shared1 `id=263035` `activationArgs=[1,<ref>]` `tabNumber=1`. `craftprobe methods` named Materials' handler `UiAStashMaterialTabClick` and Shared1's `UiAStashTabClick`, hook-free. A click on Shared1 (recalibrated to ~1.5x the reported `win=`; the strip's scroll/clip transform is not reflected in `win=`, matching P0-5) logged the shape; the by-name replay of Materials reproduced `stashTabSelected=-4` and the grid contents (`stashTabRoute: byname`) | `UiAStashTabClick #1 self=UI_Button_Stash_Tab_obj#5010@263035 other=UI_Stash_Tab_Bar_Container_obj#5260@263030 argc=1 a0=array len=2 ([1,<ref>])`, `ret=undefined` | `call UiAStashMaterialTabClick id:263032 other:263030 -4 id:263032 confirm`, `argc=2 a0=-4 a1=ref instance 263032` | `-2` in both `menulayout UI_Stash_obj` and `citrace dumpobj UI_Stash_obj 0` (Socketable, replayed through `callm id:263031 inst activationFunc` - its `activationFunc` is a closure, not a named script) | 2026-09-25 |
+| P2-4 | pass: `UI_Stash_obj.invMaterialTab`=263017, `.invSocketTab`=263016; `menulayout UI_Button_Inventory_Tab_Small_obj` gave 7 rows keyed by `uiNodeCallstack` (`bagTabRule`; `text` empty, no `tabNumber`); `craftprobe methods id:263017` named `UiAInventoryMaterialTabClick`. The raw `win=` missed the row (landed on the page tab `UI_Button_Inventory_Tab_obj` above it, a miss reversed by clicking back); `win=` + (54,50) hit it. The click changed `tabSelected` 1 -> -4 (`bagTabState`; the 1 was left by the page-tab miss - the two `citrace dumpobj UI_Stash_obj` replies before the click read it in the session's `bp_ipc\out.txt`; the capture's "0 -> -4" is its summary) and `activeNode` to 263017. The by-name replay read `tabSelected=-4` after it (`bagTabRoute: byname`), with no read between the Socket click and the call, so the switch by name is not separated from no change here; `UI_Stash_obj.activeNode` stayed at the previous sub-tab's id (263016) - not observed to follow; recorded, not a fail | `UiAInventoryMaterialTabClick #1 self=UI_Button_Inventory_Tab_Small_obj#4989@263017 other=UI_Stash_obj#5257@262983 argc=1 a0=array len=0`, `ret=undefined` | `call UiAInventoryMaterialTabClick id:263017 other:262983 confirm`, `argc=0` | - | 2026-09-25 |
+| P2-5 | fail (reproduced refusals, recorded under the recording rule - not a game negative once re-read against #14; moved to `hs-drive-stash-move-research`): variant A - `ChangeItemOwner id:258308 0 9 fp:<K_J>` dispatched (`ret=undefined`, its normal answer), then the `fp9:<K_J>` lookup for `GridAddItem` with self `Console_Save_obj` refused ("returned no item struct"); no read of map 0 or of the kept map 9 followed, so which map held K_J afterwards is not known; `StashGridAddItem` refused identically; the attempted owner change was reversed and `node bag` showed K_J unchanged. Variant B - `CreateItemSaveStruct` (5 members, no `o`: a non-stackable), `LootTimestamp` 212527295000, then `InitItemFromJson Console_Save_obj 0 kept:CreateItemSaveStruct kept:LootTimestamp` -> `undefined` - the second argument was the raw real where #14's proven shape is the key text `0-0-<S>-<class>` (`shape not reproduced (a1)`); `AddItemToMap` and `GridAddItem` inherited the `undefined` (the latter threw) | - (no prior by-name call logged to reproduce; #14's proven json-route key is the text `0-0-<S>-<class>`) | A: `ChangeItemOwner id:258308 0 9 fp:<K_J>` then `GridAddItem … fp9:<K_J> 0 undefined confirm` (refused); B: `CreateItemSaveStruct`, `LootTimestamp`, `InitItemFromJson … kept:CreateItemSaveStruct kept:LootTimestamp confirm` (a1 supplied as the raw real, not the key text) | - | 2026-09-25 |
+| P2-6 | not-observed: `set fp9:<K_M>.itemDefinitionStruct o 933 confirm` refused ("returned no item struct") - the same map-9 lookup P2-5 hit. K_M was never in map 9: live 1 read it from `New_Inventory_Data_obj.localItemMap`, which #14 measured as owner 0's map (`map0-identity`); live 2 found it only in the bag's `inventoryMaterialGrid` (the bag's Materials sub-tab, #14) and resolved it through `fp:` (map 0) in the same session. So the "map-9 lookup limitation" is the lookup answering correctly about map-0 items; the prerequisite was mis-read, not the game. The full move sequence was not re-run given the identical, already-measured blocker; moved to `hs-drive-stash-move-research` | - | `set fp9:<K_M>.itemDefinitionStruct o 933 confirm` (refused) | `fp:<K_M>` (map 0) lookup with the same self resolved and wrote correctly (`set fp:<K_M>.itemDefinitionStruct o 933 confirm` -> `before=934 after=934`, reverted) | 2026-09-25 |
+| P2-7 | pass: `UI_Button_Close_obj` row `id=263010`, `win=1195,27` (matches live 1); `craftprobe methods` named its handler `UiACloseButton`. The click closed the window (`listed=0`, `SaveStash calls=1`); reopened by the F key (new ids 268034/268061); the by-name replay closed the reopened window (`listed=0`, `SaveStash calls=2`, +1) (`stashCloseRoute` by-name reproduced) | `UiACloseButton #1 self=UI_Button_Close_obj#4982@263010 other=UI_Stash_obj#5257@262983 argc=1 a0=array len=0`, `ret=undefined` | `call UiACloseButton id:268061 other:268034 confirm`, `argc=0` | - | 2026-09-25 |
+| P2-8 | pass: `hs_stop_game` answered `exited: true`, `forced: false`; `hs_saves_inspect` changed `herosiege13.hss`, `inventory_order_13.hss`, `shop.ini` and `stash.hss` (the shared skill workorder's K5 replays left a small residual Shadow Bolt allocation on the character save, beyond this session's own writes); the DLL hash after release equals the hash before. The operator could not restore (its toolset has no restore tool); the driver restored the backup afterwards on the owner's word | - | - | - | 2026-09-25 |
+| dll-hash (live 3) | pass: the lease's `dll_sha256` `57aba60c…bffc` (the Step 9 player build) equalled the dispatch's hash at acquire and was unchanged (`dll_changed_since_taken: false`) at release | - | - | - | 2026-09-26 |
+| control (live 3) | pass: main-menu `menulayout` listed `UI_Button_obj` "Play local" at `win=336,534` under `window=1920x1080`; `hs_select_character(slot=14)` reached `character_loaded`, proof "player via GetMyPlayer" | - | - | - | 2026-09-26 |
+| V0 (live 3) | pass: `hs_give_item(to="bag", template=<K_M>, count=1)` -> `confirmed:true`, key `0-0-212584560001-14`, `before=3 after=4 o=1`; the post-V1 `menulayout` read listed no `cell=` row carrying the key; why is not established - one untested explanation is that the Materials sub-tab (where a material's preferred grid lands it, RDM §9.7) was not the active bag sub-tab at read time (Main was), which was not itself checked; V0 did not drag, save or reload the item, and the session's save backup was restored afterward; `hs_give_item(to="stash", ...)` refused `route_not_measured`, nothing sent (this workorder's own control on the bag route: `giveItemRoute`'s bag part) | - | - | - | 2026-09-26 |
+| V0b (live 3) | research, never required: `hs_give_item(to="bag", template=<K_J> (class 18, non-stackable), count=1)` refused `give_refused` - "`GetItemPreferredGrid(1, item)` answered no grid; 0-0-212584570002-18 was taken out of map 0 again (craftmats' undo)" | - | - | - | 2026-09-26 |
+| V1 (live 3) | pass: `hs_stash_open` -> `ok phase:stash_open route:interact`; `playerwarp` `before=912.0,822.0 after=884.0,628.0`; `menulayout UI_Stash_obj` listed=1, `stashTabSelected=0 tabSelected=0` | - | - | - | 2026-09-26 |
+| V2 (live 3) | pass: `hs_stash_tab` materials `0 -> -4` (`UiAStashMaterialTabClick`), socketable `-4 -> -2` (the closure handler), personal `-2 -> 0` (`UiAStashTabClick`) - all three match the procedure's predicted `selected_after` values, including the closure-handler outlier | - | - | - | 2026-09-26 |
+| V3 (live 3) | pass: `hs_bag_tab` materials `0 -> -4`, socket `-4 -> -2`, `activeNode` unchanged at 262324 through both (read, not proven); `vault` refused `route_not_measured`, nothing sent | - | - | - | 2026-09-26 |
+| V4 (live 3) | pass (reason token differs from the procedure's prediction): `hs_stash_tab("materials", backup_id="no-such-backup")` refused `invalid_backup_id` (predicted `backup_incomplete` - there is no directory at all for that id, as opposed to an incomplete one); nothing sent, `verb_trail` and `layout_trail` both empty | - | - | - | 2026-09-26 |
+| V5 (live 3) | pass: `hs_stash_close` -> `ok phase:stash_closed` (one transient "not confirmed" poll frame, resolved); a second `hs_stash_tab` and a second `hs_stash_close` both refused `stash_not_open` | - | - | - | 2026-09-26 |
+| V6 (live 3) | pass: `hs_stop_game` exited cleanly (`forced:false`); `hs_saves_inspect` changed `herosiege13.hss`, `inventory_order_13.hss`, `shop.ini`, `stash.hss`, nothing added or missing; the DLL hash after equalled the hash before | - | - | - | 2026-09-26 |
 
 ## Decision
 
-Fifteen lines, each `pending` until a live session has measured it: live 1
-settled six, and Live procedure 2 measures the other nine. The hub's stash
-and bag tools are written against these lines and against the verbatim
-replies the sessions record, not against the hypotheses above. A route line names
+Fifteen lines. Live 1 (2026-09-25) settled six: `warpRoute`,
+`stashCloseRoute`, `stashTabRule`, `stashTabState`, `itemRule`,
+`countReader`. Live procedure 2 (2026-09-25) measured the other nine and
+closed every line; two of those, `moveWholeRoute` and `moveOneRoute`, record
+that the whole-stack and one-unit by-name moves are out of this document's
+scope from here on - they moved to `hs-drive-stash-move-research`. Neither
+is a game negative: P2-6's refusal answered a mis-read prerequisite (K_M was
+never in the stash's map 9), and P2-5's are one refusal left unexplained
+(which map held K_J after the owner change was never read) and one shape not
+reproduced, quoted below. The hub's stash and
+bag tools are written against these lines and against the verbatim replies
+the sessions record, not against the hypotheses above. A route line names
 the by-name shape (script, self, other, arguments) or the UI route it fell
 back to; `not-observed` only when neither was observed. A line that fell back
 after a by-name call recorded `shape not reproduced` or `not-run
 (instrument …)` says "by-name not tested with the logged shape" and quotes
 that shape.
 
-giveItemRoute: pending
-warpRoute: the player's `x` set to `Town_Stash_obj`'s `gui=` x and `y` to its `gui=` y plus 48 (live 1: `iset x`, `iset y`), both written by name on the player resolved by name; it landed 0 px from the target on the first try, with no collision (P0-2). The player verb `playerwarp` writes the same two variables.
-stashOpenRoute: pending
-stashCloseRoute: close-row - the `UI_Button_Close_obj` row whose `uiNodeCallstack` is `InventoryClose` (`win=1195,27` under 1920x1080), clicked once: the window unlisted and the stash saved (`SaveStash` one call; P0-9). `Esc` closed the window once, straight after opening, and did nothing once with the Materials tab on show, so it is not a route. `UiACloseButton` by name is Live procedure 2's P2-7.
-stashTabRoute: pending
-stashTabRule: `tabNumber` on `UI_Button_Stash_Tab_obj`, equal to `activationArgs[0]`: 23 rows - Socketable -2, Materials -4, Unique -5, Personal 0, Shared 1 to 19 - each with `tabType` 1 or 2 (P0-3's fixture). Every row reads `visible=0` although drawn; that field does not follow what is drawn, and is never matched on.
-stashTabState: `stashTabSelected` on `UI_Stash_obj`, equal to `tabSelected`: 0 on Personal (P0-3, P0-4), -4 on Materials (P0-9, after the owner's hand switch), -2 on Socketable (#14). The bag's page tabs are `tabNumber` 0 to 4 on `UI_Button_Inventory_Tab_obj` (Main, then four Extra); the bag's own tab state is `bagTabState`.
-bagTabRoute: pending
-bagTabRule: pending
-bagTabState: pending
-cellRule: pending
-itemRule: fingerprint - the item map's key, which a cell carries as `nodeFingerprint`, shaped `0-0-<n>-<class>` (class 18 a non-stackable, class 14 a material; P0-1). The hub's move tool takes a fingerprint and its give-item tool answers the new one.
-moveWholeRoute: pending
-moveOneRoute: pending
-countReader: the item definition's `o` on the item struct the map holds under the fingerprint - in the research build, `craftprobe node bag`, `node stash` or `node id:<grid>`'s `def.o` (P0-1, P0-7); in the player build, `itemDefinitionStruct.o` read the way `craftmats` reads an item's count. Never a game getter from `menulayout`.
+giveItemRoute: bag: json (#14 `partial-nostack`, prior measurement on this build, not exercised by live 1 or live 2; confirmed by this workorder's own control, live 3's V0, for a stackable material at count 1: `confirmed:true`, key `0-0-212584560001-14`, `before=3 after=4` - V0 did not drag, save or reload the item, and the session's save backup was restored afterward). A non-stackable template (class 18) was refused in the same session's V0b, token `give_refused` - "`GetItemPreferredGrid(1, item)` answered no grid; 0-0-212584570002-18 was taken out of map 0 again (craftmats' undo)" - ForgePact's reader `ApPreferredGrid` found no array `grid` in that result, or the call failed; its own `RemoveItemFromMap` undo took the unit back out, not the game's loader; one case, not established as working beyond it. A `give_refused` message naming which check failed and the result's kind, or a second non-stackable template, would close the question. stash: not-observed (live 2 P2-5 variant B: `InitItemFromJson` answered `undefined` - shape not reproduced (a1: proven text `0-0-<S>-<class>`, supplied the raw real `S`) - moved to hs-drive-stash-move-research). The player verb `giveitem` and the hub tool `hs_give_item` ship the bag destination on that measurement and refuse `route_not_measured` for the stash.
+warpRoute: the player's `x` set to `Town_Stash_obj`'s `gui=` x and `y` to its `gui=` y plus 48 (live 1: `iset x`, `iset y`), both written by name on the player resolved by name; it landed 0 px from the target on the first try, with no collision (P0-2; re-confirmed 0 px off at 884,628 in live 2's P2-2). The player verb `playerwarp` writes the same two variables.
+stashOpenRoute: interact - key F (vk 70, hold 120 ms) after the warp; `UI_Stash_obj` listed=1 (`id=262983`, `stashTabSelected=0`; live 2 P2-2). The logged `UiCreate` on the key: self = other = `Town_Stash_obj#4852@228465`, argc=3, `a0=ref object UI_Stash_obj`, `a1=1`, `a2=1`, `ret=ref instance 262983` (equal to live 1's P0-3 line). The by-name `UiCreate` open with that exact shape was dispatched once in live 2 attempt 1 (`ret=ref instance 262616`) and the game process died on the next command; causality not established from one session; not re-called; not shipped. The closure replay (`callm … inst m_TalkToNPC`) is `not-run (P2-2 amended to the key open)`. The player verb `stashopen` is not shipped; `hs_stash_open` sends the warp then the key.
+stashCloseRoute: close-row - the `UI_Button_Close_obj` row whose `uiNodeCallstack` is `InventoryClose` (`win=1195,27` under 1920x1080), clicked once: the window unlisted and the stash saved (`SaveStash` one call; P0-9). `Esc` closed the window once, straight after opening, and did nothing once with the Materials tab on show, so it is not a route. `UiACloseButton` by name reproduced it in live 2's P2-7 (self the close-row button, other the window, `argc=1 a0=array len=0`) on the reopened window: `UI_Stash_obj` unlisted, `SaveStash` +1. The player verb `stashclose` ships this by-name shape.
+stashTabRoute: byname - logged (the Shared1 click, live 2 P2-3): self = the `UI_Button_Stash_Tab_obj`, other = `UI_Stash_Tab_Bar_Container_obj#5260@263030`, argc=1, `a0=array len=2` (`activationArgs` `[1,<ref>]`), `ret=undefined`. Supplied and working: `craftprobe call UiAStashMaterialTabClick id:263032 other:263030 -4 id:263032 confirm` (argc=2, `a0=-4`, `a1=ref instance 263032`) -> `stashTabSelected=-4`, screenshot of the Materials grid; Socketable (its `activationFunc` is the closure `UI_Stash_Tab_Bar_Container_obj anon@1018`) through `craftprobe callm id:263031 inst activationFunc -2 id:263031 confirm` -> -2 in both readers; Personal back with `UiAStashTabClick … 0 id:263034`. Each button's handler is read hook-free from its `activationFunc` (`craftprobe methods id:<button>`): Materials -> `UiAStashMaterialTabClick`, Shared1 -> `UiAStashTabClick`. `cycleTabsRightButton` is a `UI_Button_Small_obj` (`uiNodeCallstack="MoveStashRight"`), not clicked. The player verb `stashtab` ships this shape: it reads the button's handler from its `activationFunc`, calls `UiAStashTabClick`/`UiAStashMaterialTabClick` by their SDK constants with other the tab-bar container, calls the tab bar's closure as the method value with self = other = the button, and refuses any other handler as not a measured shape (Unique's handler was never read).
+stashTabRule: `tabNumber` on `UI_Button_Stash_Tab_obj`, equal to `activationArgs[0]`: 23 rows - Socketable -2, Materials -4, Unique -5, Personal 0, Shared 1 to 19 - each with `tabType` 1 or 2 (P0-3's fixture, re-confirmed live 2 P2-3). Every row reads `visible=0` although drawn; that field does not follow what is drawn, and is never matched on.
+stashTabState: `stashTabSelected` on `UI_Stash_obj`, and never `tabSelected` (live 2's P2-3 dump read `stashTabSelected=-2` beside `tabSelected=0` on the same instance, and a bag page-tab click moved `tabSelected` alone to 1; #14's reading of both at -2 was one observation, not a rule): 0 on Personal (P0-3, P0-4), -4 on Materials (P0-9, after the owner's hand switch; live 2 P2-3), -2 on Socketable (#14; re-confirmed live 2 P2-3). The bag's page tabs are `tabNumber` 0 to 4 on `UI_Button_Inventory_Tab_obj` (Main, then four Extra); the bag's own tab state is `bagTabState`.
+bagTabRoute: byname - logged (the Materials click, live 2 P2-4): self = `UI_Button_Inventory_Tab_Small_obj#4989@263017`, other = `UI_Stash_obj#5257@262983`, argc=1, `a0=array len=0`, `ret=undefined`; `activeNode` moved to 263017 on the click. Supplied: `craftprobe call UiAInventoryMaterialTabClick id:263017 other:262983 confirm` (argc=0) -> `tabSelected=-4` after it. Nothing read `tabSelected` between the Socket click that preceded it and this call, so the value after equals the last one read before the Socket click and this record cannot tell "the call switched the sub-tab" from "the call did nothing" from live 2 alone. Live 3's V3, through the shipped verb, separated it with its own before/after: `bagtab materials` moved `tabSelected` 0 -> -4, and `bagtab socket` moved it -4 -> -2, both confirmed switches (`activeNode` unchanged at 262324 through both - read, not proven). **`UI_Stash_obj.activeNode` was not observed to follow the call** (it stayed at the Socket sub-tab's id, 263016; the supplied argc=0 differs from the logged argc=1 with an empty array, an untried alternative; recorded, not a fail). Socket's handler `UiAInventorySocketTabClick` fired on its click (`logged=1`); its by-name replay was not run (the Materials one is the measured case; the verb takes the same path). The main sub-tab (`vault`) was restored by a click at a recalibrated coordinate, never by name, so `vault` is `route_not_measured`. The player verb `bagtab` ships the Materials and Socket routes only.
+bagTabRule: `uiNodeCallstack` on `UI_Button_Inventory_Tab_Small_obj` (7 rows: VaultActive, Vault, Socket = `InventoryTabSocket`, Material = `InventoryTabMaterial`, Key, Tarot, Relic; `text` empty on every row, no `tabNumber` field on this object).
+bagTabState: `tabSelected` on `UI_Stash_obj` (1 -> -4 on the Materials click, live 2 P2-4 - the 1 was left by the page-tab miss, which the click back did not return to 0 - so the page tabs write it too; it is not `stashTabSelected`, which read 0 throughout). `UI_Stash_obj.invMaterialTab`/`invSocketTab` are the Material/Socket rows' ids.
+cellRule: `nodeFingerprint` only - a node struct (`New_Inventory_Data_obj.potionGrid.0.0`, live 2 P2-5) has `nodeStartX`, `nodeStartY`, `nodeLocked`, `nodeIsPermanent`, `nodeFingerprint`; no count member. `stashPersonalGrid` is `array[18]` and `.0.0` read `undefined` (an empty cell or an indexing convention not resolved - recorded as read, never a route: a click on a cell is not a route here).
+itemRule: fingerprint - the item map's key, which a cell carries as `nodeFingerprint`, shaped `0-0-<n>-<class>` (class 18 a non-stackable, class 14 a material; P0-1). The hub's give-item tool answers the new one.
+moveWholeRoute: moved to hs-drive-stash-move-research (docs/stash-move-research.md) - live 2 P2-5: variant A's `ChangeItemOwner id:258308 0 9 fp:<K_J>` dispatched (`ret=undefined`, its normal answer) and the next call's `fp9:<K_J>` lookup with self `Console_Save_obj` refused; no read of map 0 or of the kept map 9 followed, so which map held K_J afterwards is not known; `StashGridAddItem` refused identically; the attempted owner change was reversed and `node bag` showed K_J unchanged. Variant B: `CreateItemSaveStruct` (5 members, no `o`: a non-stackable), `LootTimestamp` 212527295000, then `InitItemFromJson Console_Save_obj 0 kept:CreateItemSaveStruct kept:LootTimestamp` -> `undefined` - the second argument was the raw real where #14's proven shape is the key text `0-0-<S>-<class>` (`shape not reproduced (a1)`); `AddItemToMap` and `GridAddItem` inherited the `undefined` (the latter threw).
+moveOneRoute: moved to hs-drive-stash-move-research (docs/stash-move-research.md) - live 2 P2-6: not-observed - `set fp9:<K_M>.itemDefinitionStruct o 933` refused, and K_M was never in map 9: live 1 read it from `New_Inventory_Data_obj.localItemMap`, which #14 measured as **owner 0's** map (`map0-identity`), live 2 found it only in the bag's `inventoryMaterialGrid` (the bag's Materials sub-tab, #14) and resolved it through `fp:` (map 0) in the same session. So the "map-9 lookup limitation" is the lookup answering correctly about map-0 items; the prerequisite was mis-read, not the game.
+countReader: the item definition's `o` on the item struct the map holds under the fingerprint - in the research build, `craftprobe node bag`, `node stash` or `node id:<grid>`'s `def.o` (P0-1, P0-7); in the player build, `itemDefinitionStruct.o` read the way `craftmats` reads an item's count. Never a game getter from `menulayout`. After D11 no shipped tool reads a stash-side count; `giveitem` prints `o=` from the struct it built.
 
 What each line records:
 
@@ -1000,9 +1082,9 @@ What each line records:
   count if it has one. No geometry: a click on a cell is never a route here
   (P2-5).
 - **itemRule**: the field the hub matches an item by (P0-1).
-- **moveWholeRoute** and **moveOneRoute**: the by-name call order, with self
-  and arguments, that moved a whole stack and exactly one unit (P2-5, P2-6).
-  The drag path is not a candidate: it calls no named routine (§ Static
-  search).
+- **moveWholeRoute** and **moveOneRoute**: measured in P2-5 and P2-6, then
+  moved out of this document's scope under D11 to `hs-drive-stash-move-research`,
+  which starts from those two checks' refusals. The drag path is not a
+  candidate: it calls no named routine (§ Static search).
 - **countReader**: where a count is read on each side, and by which build
   (P0-1, P0-7).

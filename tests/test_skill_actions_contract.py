@@ -21,12 +21,20 @@ The first live session found every closure that fired on the owner's bind,
 allocation and reset logging `argc=0`: the buttons run named `UiA*`
 activation scripts wired through `UiSetActivationFunc`, and the key per slot
 is read through getters the bar draws with, none of which was a row. Replan 3
-adds those twenty-two scripts (60 rows to 82), and the three Decision lines
-that session settled are pinned as no longer `pending`.
+adds those twenty-two scripts (60 rows to 82).
+
+The second live session settled the other nine Decision lines, so none may
+read `pending`. It reproduced the allocation and the sub-node allocation by
+name and neither the binding nor the reset, and found no reader for a slot's
+key or the points left. Two player verbs are built on that (`PlayerVerbs`
+below): `skillstate`, a reader printing `skillprobe state`'s body lines, and
+`talentalloc`, which runs the four `UiA*` scripts live 2 replayed and
+confirms by `global.mySkills` and the sub-talent map, never a point count or
+a level. `skillbind` and `talentreset` are not built.
 
 The research doc's headings and its twelve decision keys are pinned so the
-player verbs and the hub tools that follow are never written against a key
-the document lacks. `pending` is allowed until the phase-0 launch has run.
+player verbs and the hub tools are never written against a key the document
+lacks.
 """
 import re
 import sys
@@ -87,6 +95,25 @@ REPLAN3_SCRIPTS = ACTIVATION_SCRIPTS + KEY_SCRIPTS
 # The Decision lines the first live session settled (castByNameRoute
 # reproduced; the slot and talent-id rules measured).
 SETTLED_KEYS = ("castByNameRoute", "slotRule", "talentIdRule")
+
+# What live 2 left unmeasured, and the two routes it did not reproduce: the
+# player verbs depend on none of them.
+NOT_MEASURED_KEYS = ("castKeyRule", "pointsReader")
+NOT_REPRODUCED_KEYS = ("bindRoute", "resetRoute")
+
+# The player verbs' block, and the four scripts `talentalloc` may run.
+VERBS_START = "// ---- skillstate and talentalloc: the skill bar and talent tree player verbs (toolkit #147)"
+VERBS_END = "// ---- end skillstate and talentalloc"
+TALENTALLOC_SCRIPTS = {"UiAOpenTalents", "UiATalentScreenTalent", "UiAActivateSkillSpecialization",
+                       "UiAActivateSkillSubPoint"}
+# Every builtin the verbs' block may call through CallBuiltin: reads only.
+VERB_READS = {"variable_instance_get", "variable_struct_get", "variable_struct_get_names", "variable_global_get",
+              "variable_global_exists", "array_length", "array_get", "instance_find", "instance_number",
+              "instance_exists", "asset_get_index"}
+SKILLSTATE_FUNCTIONS = (
+    "static void SkillStateCommand(", "static bool SkillStateHud(", "static std::string SkillStateAbility(",
+    "static std::string SkillStateSubText(", "static std::string SkillStateEffect(", "static bool SkillStateNumber(",
+)
 
 DOC_HEADINGS = ("## Static search", "## Static readings", "## Instrument",
                 "## Live procedure", "## Results", "## Decision")
@@ -426,8 +453,15 @@ class SkillProbeContract(unittest.TestCase):
         for part in ('"  global.mySkills="', '"  hud.playerSlot.bind_skill="', '"  bind "', '"  sub="', '"  level="',
                      'SpPointCandidates("player", player)'):
             self.assertIn(part, state)
-        self.assertIn("unreadable", self.body("static std::string SpSubText("))
-        self.assertIn("unreadable", self.body("static std::string SpAbilityOf("))
+        # The bar, the ability and the sub= text are the player reader's, so
+        # `state` and `skillstate` print the same body lines.
+        for signature, player in (("static bool SpHud(", "SkillStateHud(hud)"),
+                                  ("static std::string SpAbilityOf(", "SkillStateAbility(id)"),
+                                  ("static std::string SpSubText(", "SkillStateSubText(id)")):
+            statements = [s.strip() for s in self.body(signature).split(";") if s.strip()]
+            self.assertEqual(statements, ["return " + player], signature)
+        self.assertIn("unreadable", self.body("static std::string SkillStateSubText("))
+        self.assertIn("unreadable", self.body("static std::string SkillStateAbility("))
 
 
 class MenuLayoutSlotRows(unittest.TestCase):
@@ -459,6 +493,14 @@ class MenuLayoutSlotRows(unittest.TestCase):
         self.assertIn('",* absent"', rows)
         self.assertIn('",* empty"', rows)
 
+    def test_the_talent_fields_are_the_one_live_2_printed(self):
+        # Live 2 printed talentId on the talent, sub-skill and sub-panel rows
+        # and none of the six other candidate fields, which were pruned.
+        row = self.body("static std::string MenuLayoutRow(")
+        listed = row[row.index("kTalentOptional[] = {"):]
+        listed = listed[:listed.index("};")]
+        self.assertEqual(re.findall(r'"(\w+)"', listed), ["talentId"])
+
     def test_slot_rows_read_only_through_four_builtins(self):
         rows = self.body("static void MenuLayoutSlotRows(")
         field = self.body("static std::string MenuLayoutSlotField(")
@@ -469,6 +511,147 @@ class MenuLayoutSlotRows(unittest.TestCase):
         self.assertLessEqual(used, SLOT_READS)
         for word in ("CallBuiltinEx", "script_execute", "variable_instance_set", "variable_struct_set", "array_set"):
             self.assertNotIn(word, rows + field)
+
+
+class PlayerVerbs(unittest.TestCase):
+    """`skillstate` and `talentalloc`: player-build, tool-facing, by name."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.plugin = PLUGIN.read_text(encoding="utf-8").replace("\r\n", "\n")
+        cls.block = cls.plugin[cls.plugin.index(VERBS_START):cls.plugin.index(VERBS_END)]
+        cls.code = strip_comments(cls.block)
+        cls.shipped = strip_comments(strip_research_blocks(cls.plugin))
+
+    def body(self, signature):
+        return strip_comments(function_body(self.plugin, signature))
+
+    def player_commands(self):
+        run = function_body(self.plugin, "static void RunCommand(const std::string& line)")
+        commands = run[run.index("kPlayerCommands = {"):]
+        return commands[:commands.index("};")]
+
+    def test_both_verbs_ship_in_the_player_build(self):
+        commands = self.player_commands()
+        self.assertIn('"menulayout"', commands)   # the set is the one read, not an empty slice
+        for verb in ('"skillstate"', '"talentalloc"'):
+            self.assertIn(verb, commands)
+        # The block is player code: the strip keeps it whole.
+        self.assertNotIn("FORGEPACT_RELEASE", self.block)
+        for signature in ("static void SkillStateCommand(", "static void TalentAllocCommand(",
+                          "static TalentAllocCall TalentAllocDispatch("):
+            self.assertIn(signature, self.shipped)
+
+    def test_bind_and_reset_are_not_built(self):
+        commands = self.player_commands()
+        for verb in ('"skillbind"', '"talentreset"'):
+            self.assertNotIn(verb, commands)
+            self.assertNotIn(verb, self.plugin)
+        for symbol in ("HandleSkillBind", "HandleTalentReset", "SkillBind", "TalentReset"):
+            self.assertIsNone(re.search(r"\b" + symbol + r"\w*\(", self.plugin), symbol)
+
+    def test_each_is_dispatched_from_its_own_handler_as_a_standalone_early_return(self):
+        run = function_body(self.plugin, "static void RunCommand(const std::string& line)")
+        self.assertIn("    if (HandleSkillStateCommand(lc, rest)) return;\n", run)
+        self.assertIn("    if (HandleTalentAllocCommand(lc, rest)) return;\n", run)
+        self.assertIn('if (lc == "skillstate") { SkillStateCommand(rest); return true; }',
+                      self.body("static bool HandleSkillStateCommand("))
+        self.assertIn('if (lc == "talentalloc") { TalentAllocCommand(rest); return true; }',
+                      self.body("static bool HandleTalentAllocCommand("))
+        self.assertEqual(self.plugin.count('lc == "skillstate"'), 1)
+        self.assertEqual(self.plugin.count('lc == "talentalloc"'), 1)
+
+    def test_frame_callback_never_mentions_them(self):
+        frame = function_body(self.plugin, "void FrameCallback(")
+        for word in ("skillstate", "talentalloc", "SkillState", "TalentAlloc"):
+            self.assertNotIn(word, frame)
+
+    def test_everything_is_reached_by_name_and_nothing_is_hooked_or_written(self):
+        for word in ("Rva", "GetModuleHandle", "MmCreateHook", "HookOneScript", "HookBuiltin", "HookRawNamedRoutine",
+                     "InstallScriptHook", "instance_create", "instance_destroy", "_set\"", "ds_map_replace",
+                     "event_perform", "CallGameScriptEx"):
+            self.assertNotIn(word, self.code, word)
+        used = set(re.findall(r'CallBuiltin\("(\w+)"', self.code))
+        # Negative control: the scan sees the reads that are there.
+        self.assertIn("instance_find", used)
+        self.assertLessEqual(used, VERB_READS)
+        # The one call into the game is the dispatcher's, through script_execute.
+        self.assertEqual(self.code.count("CallBuiltinEx("), 1)
+        dispatch = self.body("static TalentAllocCall TalentAllocDispatch(")
+        resolved = dispatch.index("GetNamedRoutinePointer(s.routine.data(), &p)")
+        self.assertLess(resolved, dispatch.index('"asset_get_index"'))
+        self.assertLess(dispatch.index('"asset_get_index"'), dispatch.index('CallBuiltinEx(res, "script_execute", self, other, callArgs)'))
+        # Instances: by name, through asset_get_index, instance_number and instance_find.
+        for signature in ("static std::vector<RValue> TalentAllocInstances(", "static bool CmInstance("):
+            body = self.body(signature)
+            for step in ('"asset_get_index"', '"instance_number"', '"instance_find"'):
+                self.assertIn(step, body, signature)
+
+    def test_talentalloc_runs_only_the_four_scripts_live_2_replayed(self):
+        scripts = re.findall(r"HeroSiege::Scripts::gml_Script_(\w+)", self.code)
+        self.assertEqual(set(scripts), TALENTALLOC_SCRIPTS)
+        # Each constant pairs one SDK constant with that constant's own short name.
+        pairs = re.findall(r"TalentAllocScript (\w+)\{ HeroSiege::Scripts::(\w+),\s*"
+                           r"SdkShortScriptName\(HeroSiege::Scripts::(\w+)\) \}", self.code)
+        self.assertEqual(len(pairs), 4)
+        for name, routine, short in pairs:
+            self.assertEqual(routine, short, name)
+        for word in ("ReturnTalentLevel", "ReturnSubTalentLevel", "UiATalentChange", "UiATalentScreenResetTalents",
+                     "ClearPersistSkill"):
+            self.assertNotIn(word, self.code, word)
+
+    def test_talentalloc_confirms_by_learned_ids_and_never_reads_a_point_count(self):
+        main = self.body("static void TalentAllocMain(")
+        sub = self.body("static void TalentAllocSub(")
+        for part in ('"before=mySkills="', '" after=mySkills="', '"confirmed - global.mySkills gained "',
+                     '"not confirmed - global.mySkills did not gain "'):
+            self.assertIn(part, main)
+        for part in ('"before=sub="', '" after=sub="', "TalentAllocSubRose(beforeSub, afterSub)"):
+            self.assertIn(part, sub)
+        # Every line starts with the verb's own tag, and a refusal says so.
+        self.assertIn('const std::string tag = "talentalloc: ";', main)
+        self.assertIn('const std::string tag = "talentalloc: ";', sub)
+        self.assertIsNone(re.search(r'Out\("(?!talentalloc: )', self.body("static void TalentAllocCommand(")))
+        self.assertIn('"refused - "', main)
+        # The already-learned refusal comes before anything is called.
+        learned = main.index("is already learned")
+        self.assertLess(learned, main.index("TalentAllocScreen("))
+        self.assertLess(main.index("TalentAllocScreen("), main.index("TalentAllocDispatch("))
+        # The two refusals the hub maps by their words.
+        self.assertIn("screen not open", self.body("static bool TalentAllocScreen("))
+        self.assertIn("not allocatable", main)
+        self.assertIn("not allocatable", sub)
+        # No member read here names a point count.
+        members = re.findall(r'RValue\("([^"]*)"\)', self.code)
+        self.assertIn("mySkills", members)   # the scan sees the members that are read
+        self.assertEqual([m for m in members if "point" in m.lower()], [])
+
+    def test_skillstate_reads_only(self):
+        for signature in SKILLSTATE_FUNCTIONS:
+            body = self.body(signature)
+            for word in ("CallBuiltinEx", "TalentAllocDispatch", "script_execute", "_set\"", "SpState"):
+                self.assertNotIn(word, body, f"{signature} mentions {word}")
+            self.assertLessEqual(set(re.findall(r'CallBuiltin\("(\w+)"', body)), VERB_READS, signature)
+        # The talent map readers it borrows read too.
+        for signature in ("static bool N1GetTalentMap(", "static bool N1GetTalentStruct("):
+            used = set(re.findall(r'CallBuiltin\("(\w+)"', self.body(signature)))
+            self.assertLessEqual(used, {"variable_global_exists", "variable_global_get", "ds_exists",
+                                        "ds_map_exists", "ds_map_find_value"}, signature)
+
+    def test_skillstate_prints_the_state_lines_and_an_effect_count_by_name(self):
+        command = self.body("static void SkillStateCommand(")
+        for part in ('Out("skillstate:")', '" talent="', '" ability="', '" timer="', '" effect="',
+                     '"  global.mySkills="', '"  sub="', '" talent(s) on the bar"'):
+            self.assertIn(part, command)
+        for word in ("points", "level=", "key=", "bind_skill", "playerSlot"):
+            self.assertNotIn(word, command)
+        # effect= is the instance count of the ability's object, resolved by
+        # name through kSkillTimerNames - never a typed object name.
+        effect = self.body("static std::string SkillStateEffect(")
+        self.assertIn("ForgePact::kSkillTimerNames[i].object", effect)
+        self.assertIn("Lower(ability)", effect)
+        self.assertIn('"instance_number"', effect)
+        self.assertNotIn("GameObject::", effect)
 
 
 class SkillActionsResearchDoc(unittest.TestCase):
@@ -502,6 +685,21 @@ class SkillActionsResearchDoc(unittest.TestCase):
             self.assertNotIn("pending", line.group(1), key)
         # Negative control: a key live 1 did not settle may still be pending.
         self.assertIsNotNone(re.search(r"(?m)^castKeyRule: ", decision))
+
+    def test_no_decision_line_is_pending_after_live_2(self):
+        # Live 2 settled the other nine; the player verbs and the hub tools
+        # are written against these lines.
+        decision = doc_section(self.doc, "## Decision")
+        pending = re.compile(r"(?m)^(" + "|".join(DECISION_KEYS) + r"): .*pending")
+        self.assertEqual(pending.findall(decision), [])
+        # Negative control: the pattern does find a pending line.
+        self.assertEqual(pending.findall("allocRoute: pending (K4, K5)"), ["allocRoute"])
+        for key in NOT_MEASURED_KEYS:
+            self.assertRegex(decision, r"(?m)^" + key + r": not measured")
+        for key in NOT_REPRODUCED_KEYS:
+            self.assertRegex(decision, r"(?m)^" + key + r": shape not reproduced")
+        for key in ("allocRoute", "subAllocRoute", "talentScreenOpenRoute"):
+            self.assertRegex(decision, r"(?m)^" + key + r": byname")
 
     def test_candidate_table_is_documented(self):
         static = doc_section(self.doc, "## Static search")

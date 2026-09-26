@@ -34966,6 +34966,58 @@ static double MenuLayoutObjectIndex(const std::string& name)
     } catch (...) { return -1.0; }
 }
 
+// The cell rows of a UI_Inventory_Grid_obj (docs/stash-bag-layout-research.md,
+// § Decision, cellRule): one `  cell=<x>,<y> grid=<id> fp=<nodeFingerprint|none>
+// o=none` row per occupied node of the instance's nodeGrid, an array of rows
+// of cells (row-major, RUNTIME_DATA_MODELS § 9.1), walked row by row so the
+// rows printed are the first row-major ones. A node carries no count and
+// menulayout calls no getter, so o= is always none; an item that covers
+// several cells fills one node per cell and prints one row per cell. Read
+// only through variable_instance_exists/get, array_length, array_get and
+// variable_struct_exists/get. Answers how many nodes are occupied - all of
+// them, past the cap too, so MenuLayoutRow can mark the grid's own row - and
+// prints the first kMenuLayoutMaxCells only when `print`. Cell rows do not
+// count toward kMenuLayoutMaxRows, which caps instances.
+static constexpr int kMenuLayoutMaxCells = 200;
+static int MenuLayoutCells(const RValue& inst, bool print)
+{
+    RValue rows;
+    try {
+        if (!g_Yytk->CallBuiltin("variable_instance_exists", { inst, RValue("nodeGrid") }).ToBoolean()) return 0;
+        rows = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("nodeGrid") });
+    } catch (...) { return 0; }
+    if (rows.m_Kind != VALUE_ARRAY) return 0;
+    const std::string grid = MenuLayoutInteger(MenuLayoutRead(inst, "id"));
+    int height = 0, occupied = 0;
+    try { height = (int)g_Yytk->CallBuiltin("array_length", { rows }).ToDouble(); } catch (...) { return 0; }
+    for (int y = 0; y < height; ++y) {
+        RValue line;
+        int width = 0;
+        try {
+            line = g_Yytk->CallBuiltin("array_get", { rows, RValue((double)y) });
+            if (line.m_Kind != VALUE_ARRAY) continue;
+            width = (int)g_Yytk->CallBuiltin("array_length", { line }).ToDouble();
+        } catch (...) { continue; }
+        for (int x = 0; x < width; ++x) {
+            RValue cell;
+            try { cell = g_Yytk->CallBuiltin("array_get", { line, RValue((double)x) }); } catch (...) { continue; }
+            // An empty node is undefined (or 0); a filled one is a struct.
+            if (cell.m_Kind != VALUE_OBJECT && cell.m_Kind != VALUE_REF) continue;
+            ++occupied;
+            if (!print || occupied > kMenuLayoutMaxCells) continue;
+            std::string fp = "none";
+            try {
+                if (g_Yytk->CallBuiltin("variable_struct_exists", { cell, RValue("nodeFingerprint") }).ToBoolean()) {
+                    const RValue v = g_Yytk->CallBuiltin("variable_struct_get", { cell, RValue("nodeFingerprint") });
+                    if (v.m_Kind != VALUE_UNDEFINED) fp = MenuLayoutValueText(v);
+                }
+            } catch (...) { fp = kMenuLayoutReadFailed; }
+            Out("  cell=" + std::to_string(x) + "," + std::to_string(y) + " grid=" + grid + " fp=" + fp + " o=none");
+        }
+    }
+    return occupied;
+}
+
 struct MenuLayoutScale { double gw, gh, ww, wh; };
 
 static std::string MenuLayoutRow(const RValue& inst, const MenuLayoutScale& sc)
@@ -35005,26 +35057,33 @@ static std::string MenuLayoutRow(const RValue& inst, const MenuLayoutScale& sc)
     // The first six are the character-select set. The rest are what the stash
     // and bag tools expect to identify a tab, a window or a grid by
     // (docs/stash-bag-layout-research.md); activationFunc is left out on
-    // purpose, since a method value has no stable text.
+    // purpose, since a method value has no stable text. tabSelected joined
+    // after live 2: it is the bag sub-tab state (§ Decision, bagTabState),
+    // which is not stashTabSelected.
     static const char* const kOptional[] = { "label", "name", "slot", "index", "page", "selected",
         "uiNodeCallstack", "activationArgs", "enabled", "tabNumber", "tabType",
-        "stashTabSelected", "nodeGridWidth", "nodeGridHeight", "gridScale", "gridName" };
+        "stashTabSelected", "tabSelected", "nodeGridWidth", "nodeGridHeight", "gridScale", "gridName" };
     for (const char* var : kOptional) {
         bool present = false;
         const std::string v = MenuLayoutOptional(inst, var, present);
         if (present) row += std::string(" ") + var + "=" + v;
     }
-    // The talent screen's candidates (docs/skill-actions-research.md,
-    // Instrument), hypotheses until phase 0 shows which a button carries. A
-    // list of their own, printed after the stash and bag list and the same
-    // way, so that list keeps its pinned order.
-    static const char* const kTalentOptional[] = { "talentId", "subTalentId", "talentLevel", "treeIndex",
-        "slotIndex", "allocated", "pointsAvailable" };
+    // The talent screen's field (docs/skill-actions-research.md, Results):
+    // live 2 printed talentId on the talent, sub-skill and sub-panel rows and
+    // none of the six other candidates on any row, so those were pruned. A
+    // list of its own, printed after the stash and bag list and the same way,
+    // so that list keeps its pinned order.
+    static const char* const kTalentOptional[] = { "talentId" };
     for (const char* var : kTalentOptional) {
         bool present = false;
         const std::string v = MenuLayoutOptional(inst, var, present);
         if (present) row += std::string(" ") + var + "=" + v;
     }
+    // A grid whose occupied nodes are more than its cell rows print says so
+    // on its own row (MenuLayoutCells, below).
+    if (objName == std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::UI_Inventory_Grid_obj))
+        && MenuLayoutCells(inst, false) > kMenuLayoutMaxCells)
+        row += " cellcap=1";
     // text= is always last and always present: a label may hold spaces,
     // quotes and '=', so the hub takes it to the end of the line.
     bool hasText = false;
@@ -35137,6 +35196,9 @@ static void MenuLayoutCommand(const std::string& rest)
     // own name or a parent's - is followed by its slot rows.
     const double hudIdx = MenuLayoutObjectIndex(
         std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::UI_Hud_Talent_obj)));
+    // Likewise a grid's row is followed by its cell rows.
+    const double gridIdx = MenuLayoutObjectIndex(
+        std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::UI_Inventory_Grid_obj)));
     for (const std::string& name : names) {
         const double idx = MenuLayoutObjectIndex(name);
         if (idx < 0) { absent += (absent.empty() ? "" : ",") + name; continue; }
@@ -35152,6 +35214,7 @@ static void MenuLayoutCommand(const std::string& rest)
             Out(MenuLayoutRow(inst, sc));
             ++listed;
             if (hudIdx >= 0 && MenuLayoutRead(inst, "object_index") == hudIdx) MenuLayoutSlotRows(inst, sc);
+            if (gridIdx >= 0 && MenuLayoutRead(inst, "object_index") == gridIdx) MenuLayoutCells(inst, true);
         }
         if (capped) break;
     }
@@ -35167,6 +35230,848 @@ static bool HandleMenuLayoutCommand(const std::string& lc, const std::string& re
     if (lc == "menulayout") { MenuLayoutCommand(rest); return true; }
     return false;
 }
+
+// ---- skillstate and talentalloc: the skill bar and talent tree player verbs (toolkit #147)
+//
+// Two tool-facing commands the hub's hs-drive skill tools send
+// (docs/skill-actions-research.md, § Decision). Nothing here is on the
+// per-frame path, nothing installs a hook, and nothing runs unless a tool
+// sends the command. `skillstate` only reads. `talentalloc` runs the game's
+// own allocation handlers by name - the route live 2 reproduced, with the
+// real button instance as self - and confirms only by re-reading
+// global.mySkills or the sub-talent map: no reader for a point count or a
+// talent level was found, so none is read. Binding and resetting are not
+// here: live 2 did not reproduce either by name (§ Decision, bindRoute and
+// resetRoute).
+
+// A number the runtime holds as one (a reference is not a talent id).
+static bool SkillStateNumber(const RValue& v, double& out)
+{
+    out = -1;
+    if (v.m_Kind != VALUE_REAL && v.m_Kind != VALUE_INT32 && v.m_Kind != VALUE_INT64) return false;
+    const double d = v.ToDouble();
+    if (!std::isfinite(d)) return false;
+    out = d;
+    return true;
+}
+
+// The skill bar's instance, by name: the first UI_Hud_Talent_obj.
+static bool SkillStateHud(RValue& hud)
+{
+    const double idx = MenuLayoutObjectIndex(
+        std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::UI_Hud_Talent_obj)));
+    if (idx < 0) return false;
+    try {
+        hud = g_Yytk->CallBuiltin("instance_find", { RValue(idx), RValue(0.0) });
+        return hud.m_Kind != VALUE_UNDEFINED && g_Yytk->CallBuiltin("instance_exists", { hud }).ToBoolean();
+    } catch (...) { return false; }
+}
+
+// A talent's abilityId from global.talentStructMap (the toggle mods' reader);
+// `unreadable` for an id the map does not hold (an empty slot's 0).
+static std::string SkillStateAbility(int id)
+{
+    RValue map, talent;
+    std::string why;
+    if (!N1GetTalentMap(map, why) || !N1GetTalentStruct(map, id, talent, why)) return "unreadable";
+    try {
+        const RValue a = g_Yytk->CallBuiltin("variable_struct_get", { talent, RValue("abilityId") });
+        if (a.m_Kind == VALUE_UNDEFINED) return "none";
+        return MenuLayoutValueText(a);
+    } catch (...) { return "unreadable"; }
+}
+
+// global.subTalentMap[1].t<id>: every s<NN> member and its level, `none` for a
+// talent with no node (a base-form talent, or one never allocated),
+// `unreadable` for any failed step.
+static std::string SkillStateSubText(int id)
+{
+    try {
+        if (!g_Yytk->CallBuiltin("variable_global_exists", { RValue("subTalentMap") }).ToBoolean()) return "unreadable (no global.subTalentMap)";
+        const RValue arr = g_Yytk->CallBuiltin("variable_global_get", { RValue("subTalentMap") });
+        if (arr.m_Kind != VALUE_ARRAY) return "unreadable (global.subTalentMap is not an array)";
+        if (g_Yytk->CallBuiltin("array_length", { arr }).ToDouble() < 2) return "unreadable (global.subTalentMap has no index 1)";
+        const RValue entry = g_Yytk->CallBuiltin("array_get", { arr, RValue(1.0) });
+        if (entry.m_Kind != VALUE_OBJECT && entry.m_Kind != VALUE_REF) return "unreadable (index 1 is not a struct)";
+        const RValue node = g_Yytk->CallBuiltin("variable_struct_get", { entry, RValue("t" + std::to_string(id)) });
+        if (node.m_Kind == VALUE_UNDEFINED) return "none";
+        if (node.m_Kind != VALUE_OBJECT && node.m_Kind != VALUE_REF) return "unreadable (t" + std::to_string(id) + " is not a struct)";
+        const RValue names = g_Yytk->CallBuiltin("variable_struct_get_names", { node });
+        const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+        std::string out;
+        for (int i = 0; i < n && i < kMenuLayoutMaxArrayItems; ++i) {
+            try {
+                const RValue nm = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) });
+                out += (out.empty() ? "" : " ") + nm.ToString() + "="
+                    + MenuLayoutValueText(g_Yytk->CallBuiltin("variable_struct_get", { node, nm }));
+            } catch (...) { out += (out.empty() ? "" : " ") + std::string("unreadable"); }
+        }
+        return out.empty() ? std::string("(no members)") : out;
+    } catch (...) { return "unreadable"; }
+}
+
+// The live instance count of an ability's effect object, when the ability,
+// lower-cased, is a key of kSkillTimerNames (the table skilltimer resolves
+// through): the toggle research's measured rule, a toggle is on exactly while
+// its effect instance exists (docs/skill-actions-research.md, castProof). The
+// object is resolved by name through that table, never typed here. `known` is
+// false for an ability the table does not list, which prints no effect= at all.
+static std::string SkillStateEffect(const std::string& ability, bool& known)
+{
+    known = false;
+    const std::string key = Lower(ability);
+    for (int i = 0; i < ForgePact::kSkillTimerNameCount; ++i) {
+        if (key != ForgePact::kSkillTimerNames[i].key) continue;
+        known = true;
+        try {
+            double idx = -1;
+            const RValue index = g_Yytk->CallBuiltin("asset_get_index",
+                { RValue(std::string(HeroSiege::Objects::GetObjectName(ForgePact::kSkillTimerNames[i].object))) });
+            if (!ApNumber(index, idx) || idx < 0) return "unreadable";
+            const double n = g_Yytk->CallBuiltin("instance_number", { RValue(idx) }).ToDouble();
+            if (!std::isfinite(n) || n < 0) return "unreadable";
+            return MenuLayoutInteger(n);
+        } catch (...) { return "unreadable"; }
+    }
+    return "";
+}
+
+// `skillstate`: the body lines `skillprobe state` printed in live 2 (one per
+// row0/row1 element, global.mySkills, a sub= line per talent on the bar) under
+// its own header, plus effect= on a slot whose ability has an effect object.
+// No point count, level, key or binding store is printed: live 2 found no
+// reader for any of them. Every read has its own try and prints `unreadable`
+// for that item, never a default.
+static void SkillStateCommand(const std::string& rest)
+{
+    if (!TrimCopy(rest).empty()) { Out("skillstate: takes no argument; nothing read"); return; }
+    Out("skillstate:");
+    std::vector<int> bar;
+    RValue hud;
+    const bool haveHud = SkillStateHud(hud);
+    if (!haveHud) Out("  slot=unreadable (no UI_Hud_Talent_obj instance)");
+    static const char* const kRows[] = { "row0", "row1" };
+    for (int r = 0; haveHud && r < 2; ++r) {
+        RValue arr;
+        try { arr = g_Yytk->CallBuiltin("variable_instance_get", { hud, RValue(kRows[r]) }); }
+        catch (...) { Out("  slot=" + std::to_string(r) + ",* unreadable"); continue; }
+        if (arr.m_Kind != VALUE_ARRAY) { Out("  slot=" + std::to_string(r) + ",* unreadable (" + kRows[r] + " is not an array)"); continue; }
+        int n = 0;
+        try { n = (int)g_Yytk->CallBuiltin("array_length", { arr }).ToDouble(); } catch (...) { Out("  slot=" + std::to_string(r) + ",* unreadable"); continue; }
+        for (int i = 0; i < n && i < kMenuLayoutMaxArrayItems; ++i) {
+            const std::string at = "  slot=" + std::to_string(r) + "," + std::to_string(i);
+            try {
+                const RValue e = g_Yytk->CallBuiltin("array_get", { arr, RValue((double)i) });
+                if (e.m_Kind != VALUE_OBJECT && e.m_Kind != VALUE_REF) { Out(at + " talent=unreadable (not a struct)"); continue; }
+                const RValue tid = g_Yytk->CallBuiltin("variable_struct_get", { e, RValue("talentId") });
+                std::string timer = "unreadable";
+                try {
+                    const RValue tv = g_Yytk->CallBuiltin("variable_struct_get", { e, RValue("refreshInfoTimer") });
+                    timer = tv.m_Kind == VALUE_UNDEFINED ? std::string("none") : MenuLayoutValueText(tv);
+                } catch (...) {}
+                if (tid.m_Kind == VALUE_UNDEFINED) { Out(at + " talent=none timer=" + timer); continue; }
+                double idNumber = 0;
+                if (!SkillStateNumber(tid, idNumber)) { Out(at + " talent=" + MenuLayoutValueText(tid) + " timer=" + timer); continue; }
+                const int id = (int)idNumber;
+                const std::string ability = SkillStateAbility(id);
+                bool known = false;
+                const std::string effect = SkillStateEffect(ability, known);
+                Out(at + " talent=" + std::to_string(id) + " ability=" + ability + " timer=" + timer
+                    + (known ? " effect=" + effect : std::string()));
+                if (id > 0 && std::find(bar.begin(), bar.end(), id) == bar.end()) bar.push_back(id);
+            } catch (...) { Out(at + " unreadable"); }
+        }
+    }
+    try {
+        if (!g_Yytk->CallBuiltin("variable_global_exists", { RValue("mySkills") }).ToBoolean()) Out("  global.mySkills=unreadable (no such global)");
+        else Out("  global.mySkills=" + MenuLayoutValueText(g_Yytk->CallBuiltin("variable_global_get", { RValue("mySkills") })));
+    } catch (...) { Out("  global.mySkills=unreadable"); }
+    for (int id : bar) Out("  sub=" + std::to_string(id) + " " + SkillStateSubText(id));
+    Out("skillstate: " + std::to_string(bar.size()) + " talent(s) on the bar");
+}
+
+static bool HandleSkillStateCommand(const std::string& lc, const std::string& rest)
+{
+    if (lc == "skillstate") { SkillStateCommand(rest); return true; }
+    return false;
+}
+
+// The four scripts `talentalloc` runs, each by its SDK constant: the routine
+// table's own spelling, which must resolve through GetNamedRoutinePointer
+// before anything is called, and the short name script_execute is given.
+struct TalentAllocScript { std::string_view routine; const char* script; };
+static constexpr TalentAllocScript kTalentAllocOpen{ HeroSiege::Scripts::gml_Script_UiAOpenTalents,
+    SdkShortScriptName(HeroSiege::Scripts::gml_Script_UiAOpenTalents) };
+static constexpr TalentAllocScript kTalentAllocTalent{ HeroSiege::Scripts::gml_Script_UiATalentScreenTalent,
+    SdkShortScriptName(HeroSiege::Scripts::gml_Script_UiATalentScreenTalent) };
+static constexpr TalentAllocScript kTalentAllocSubPanel{ HeroSiege::Scripts::gml_Script_UiAActivateSkillSpecialization,
+    SdkShortScriptName(HeroSiege::Scripts::gml_Script_UiAActivateSkillSpecialization) };
+static constexpr TalentAllocScript kTalentAllocSubPoint{ HeroSiege::Scripts::gml_Script_UiAActivateSkillSubPoint,
+    SdkShortScriptName(HeroSiege::Scripts::gml_Script_UiAActivateSkillSubPoint) };
+
+static constexpr int kTalentAllocMaxInstances = 200;   // menulayout's own row cap
+
+enum class TalentAllocCall { NoRoutine, NoScript, Threw, Failed, Ran };
+
+static std::string TalentAllocCallText(const TalentAllocScript& s, TalentAllocCall c)
+{
+    const std::string name(s.script);
+    switch (c) {
+    case TalentAllocCall::NoRoutine: return name + " did not resolve by name, so it was not called";
+    case TalentAllocCall::NoScript:  return "asset_get_index found no " + name + ", so it was not called";
+    case TalentAllocCall::Threw:     return name + " threw inside the game";
+    case TalentAllocCall::Failed:    return name + " returned a failure status";
+    default:                         return name + " ran";
+    }
+}
+
+// One by-name call, self and other passed apart, as the game's own click
+// passes them (§ Decision, allocRoute). Only a dispatch that ran without
+// throwing counts as Ran; the caller still confirms by re-reading.
+static TalentAllocCall TalentAllocDispatch(const TalentAllocScript& s, CInstance* self, CInstance* other,
+                                           const std::vector<RValue>& args)
+{
+    PVOID p = nullptr;
+    if (!AurieSuccess(g_Yytk->GetNamedRoutinePointer(s.routine.data(), &p)) || !p) return TalentAllocCall::NoRoutine;
+    double idx = -1;
+    RValue index;
+    try { index = g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(s.script)) }); }
+    catch (...) { return TalentAllocCall::NoScript; }
+    if (!ApNumber(index, idx) || idx < 0) return TalentAllocCall::NoScript;
+    std::vector<RValue> callArgs{ index };
+    for (const RValue& a : args) callArgs.push_back(a);
+    RValue res;
+    AurieStatus st = AURIE_EXTERNAL_ERROR;
+    try { st = g_Yytk->CallBuiltinEx(res, "script_execute", self, other, callArgs); }
+    catch (...) { return TalentAllocCall::Threw; }
+    return AurieSuccess(st) ? TalentAllocCall::Ran : TalentAllocCall::Failed;
+}
+
+// Every instance of one SDK object, by name (asset_get_index, instance_number,
+// instance_find), in the order `menulayout <Object>` lists them.
+static std::vector<RValue> TalentAllocInstances(HeroSiege::Objects::GameObject obj)
+{
+    std::vector<RValue> out;
+    try {
+        double idx = -1;
+        const RValue index = g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(HeroSiege::Objects::GetObjectName(obj))) });
+        if (!ApNumber(index, idx) || idx < 0) return out;
+        const double n = g_Yytk->CallBuiltin("instance_number", { RValue(idx) }).ToDouble();
+        for (int i = 0; std::isfinite(n) && i < (int)n && i < kTalentAllocMaxInstances; ++i)
+            out.push_back(g_Yytk->CallBuiltin("instance_find", { RValue(idx), RValue((double)i) }));
+    } catch (...) {}
+    return out;
+}
+
+// The instance of `obj` whose own talentId is `id` - the field live 2 printed
+// on the talent buttons, the sub-skill buttons and the sub-panel.
+static bool TalentAllocByTalent(HeroSiege::Objects::GameObject obj, int id, CInstance*& inst)
+{
+    inst = nullptr;
+    for (const RValue& h : TalentAllocInstances(obj)) {
+        try {
+            double t = -1;
+            if (!SkillStateNumber(g_Yytk->CallBuiltin("variable_instance_get", { h, RValue("talentId") }), t) || t != (double)id) continue;
+            inst = HhResolveInstance(h);
+            if (inst) return true;
+        } catch (...) {}
+    }
+    return false;
+}
+
+// global.mySkills as ids and as the text skillstate prints; false when it
+// cannot be read as an array.
+static bool TalentAllocLearned(std::vector<long long>& ids, std::string& text)
+{
+    ids.clear();
+    try {
+        if (!g_Yytk->CallBuiltin("variable_global_exists", { RValue("mySkills") }).ToBoolean()) return false;
+        const RValue arr = g_Yytk->CallBuiltin("variable_global_get", { RValue("mySkills") });
+        if (arr.m_Kind != VALUE_ARRAY) return false;
+        text = MenuLayoutValueText(arr);
+        const int n = (int)g_Yytk->CallBuiltin("array_length", { arr }).ToDouble();
+        for (int i = 0; i < n; ++i) {
+            double d = -1;
+            if (SkillStateNumber(g_Yytk->CallBuiltin("array_get", { arr, RValue((double)i) }), d)) ids.push_back((long long)d);
+        }
+        return true;
+    } catch (...) { return false; }
+}
+
+// The open talent screen; when none is listed, opened by name first
+// (§ Decision, talentScreenOpenRoute: UiAOpenTalents, self = other = the
+// Profile_Manager_obj, arguments 1, 1). `opened` says this call opened it.
+// The screen is left open: no by-name close was measured, and the hub closes
+// it with the key T.
+static bool TalentAllocScreen(CInstance*& screen, bool& opened, std::string& why)
+{
+    opened = false;
+    RValue handle;
+    if (CmInstance(HeroSiege::Objects::GameObject::UI_Talent_Screen_obj, handle, screen)) return true;
+    CInstance* profile = nullptr;
+    if (!CmInstance(HeroSiege::Objects::GameObject::Profile_Manager_obj, handle, profile)) {
+        why = "screen not open (no UI_Talent_Screen_obj is listed, and no Profile_Manager_obj to open it with)";
+        return false;
+    }
+    const TalentAllocCall c = TalentAllocDispatch(kTalentAllocOpen, profile, profile, { RValue(1.0), RValue(1.0) });
+    if (c != TalentAllocCall::Ran) { why = "screen not open (" + TalentAllocCallText(kTalentAllocOpen, c) + ")"; return false; }
+    opened = true;
+    if (!CmInstance(HeroSiege::Objects::GameObject::UI_Talent_Screen_obj, handle, screen)) {
+        why = "screen not open (UiAOpenTalents ran, but no UI_Talent_Screen_obj is listed after it)";
+        return false;
+    }
+    return true;
+}
+
+// Did one s<NN> of a sub= text rise by exactly one? A node absent before
+// counts as 0, since the map adds a talent's node on its first allocation.
+static bool TalentAllocSubRose(const std::string& before, const std::string& after)
+{
+    auto levels = [](const std::string& text) {
+        std::map<std::string, double> out;
+        std::istringstream in(text);
+        for (std::string t; in >> t;) {
+            const size_t eq = t.find('=');
+            if (eq == std::string::npos || t[0] != 's') continue;
+            char* end = nullptr;
+            const double v = std::strtod(t.c_str() + eq + 1, &end);
+            if (end && *end == '\0') out[t.substr(0, eq)] = v;
+        }
+        return out;
+    };
+    const auto was = levels(before);
+    for (const auto& [node, level] : levels(after)) {
+        const auto it = was.find(node);
+        if (level == (it == was.end() ? 0.0 : it->second) + 1.0) return true;
+    }
+    return false;
+}
+
+static void TalentAllocMain(int id)
+{
+    const std::string tag = "talentalloc: ";
+    std::vector<long long> before;
+    std::string beforeText;
+    if (!TalentAllocLearned(before, beforeText)) { Out(tag + "refused - global.mySkills is unreadable, so an allocation could not be confirmed; nothing was called"); return; }
+    if (std::find(before.begin(), before.end(), (long long)id) != before.end()) {
+        Out(tag + "refused - " + std::to_string(id) + " is already learned (global.mySkills=" + beforeText
+            + "; only a first level is measured), not allocatable; nothing was called");
+        return;
+    }
+    CInstance* screen = nullptr;
+    bool opened = false;
+    std::string why;
+    if (!TalentAllocScreen(screen, opened, why)) { Out(tag + "refused - " + why + "; nothing further was called"); return; }
+    CInstance* button = nullptr;
+    if (!TalentAllocByTalent(HeroSiege::Objects::GameObject::UI_Button_Talent_Player_obj, id, button)) {
+        Out(tag + "refused - not allocatable (no UI_Button_Talent_Player_obj carries talentId=" + std::to_string(id)
+            + (opened ? "; the screen was opened by this call" : "") + "); nothing further was called");
+        return;
+    }
+    const TalentAllocCall c = TalentAllocDispatch(kTalentAllocTalent, button, screen, {});
+    std::vector<long long> after;
+    std::string afterText;
+    const bool readAfter = TalentAllocLearned(after, afterText);
+    Out(tag + "before=mySkills=" + beforeText + " after=mySkills=" + (readAfter ? afterText : std::string("unreadable")));
+    if (c != TalentAllocCall::Ran) { Out(tag + "not confirmed - " + TalentAllocCallText(kTalentAllocTalent, c)); return; }
+    if (readAfter && std::find(after.begin(), after.end(), (long long)id) != after.end())
+        Out(tag + "confirmed - global.mySkills gained " + std::to_string(id));
+    else
+        Out(tag + "not confirmed - global.mySkills did not gain " + std::to_string(id)
+            + " (the game's own refusal, a talent with no free point to take, say)");
+}
+
+static void TalentAllocSub(int id, int nth)
+{
+    const std::string tag = "talentalloc: ";
+    CInstance* screen = nullptr;
+    bool opened = false;
+    std::string why;
+    if (!TalentAllocScreen(screen, opened, why)) { Out(tag + "refused - " + why + "; nothing further was called"); return; }
+    const std::string beforeSub = SkillStateSubText(id);
+    CInstance* panel = nullptr;
+    if (!TalentAllocByTalent(HeroSiege::Objects::GameObject::UI_Sub_Talents_obj, id, panel)) {
+        CInstance* subSkill = nullptr;
+        if (!TalentAllocByTalent(HeroSiege::Objects::GameObject::UI_Button_Sub_Skill_obj, id, subSkill)) {
+            Out(tag + "refused - not allocatable (no UI_Button_Sub_Skill_obj carries talentId=" + std::to_string(id)
+                + (opened ? "; the screen was opened by this call" : "") + "); nothing further was called");
+            return;
+        }
+        const TalentAllocCall c = TalentAllocDispatch(kTalentAllocSubPanel, subSkill, screen, {});
+        if (c != TalentAllocCall::Ran) { Out(tag + "refused - not allocatable (" + TalentAllocCallText(kTalentAllocSubPanel, c) + "); nothing further was called"); return; }
+        if (!TalentAllocByTalent(HeroSiege::Objects::GameObject::UI_Sub_Talents_obj, id, panel)) {
+            Out(tag + "refused - not allocatable (UiAActivateSkillSpecialization ran, but no UI_Sub_Talents_obj carries talentId="
+                + std::to_string(id) + " after it); nothing further was called");
+            return;
+        }
+    }
+    const std::vector<RValue> nodes = TalentAllocInstances(HeroSiege::Objects::GameObject::UI_Button_Subtalent_obj);
+    CInstance* node = (int)nodes.size() >= nth ? HhResolveInstance(nodes[nth - 1]) : nullptr;
+    if (!node) {
+        Out(tag + "refused - not allocatable (node " + std::to_string(nth) + " asked, " + std::to_string(nodes.size())
+            + " UI_Button_Subtalent_obj listed); nothing further was called");
+        return;
+    }
+    const TalentAllocCall c = TalentAllocDispatch(kTalentAllocSubPoint, node, panel, {});
+    const std::string afterSub = SkillStateSubText(id);
+    Out(tag + "before=sub=" + std::to_string(id) + " " + beforeSub + " after=sub=" + std::to_string(id) + " " + afterSub);
+    if (c != TalentAllocCall::Ran) { Out(tag + "not confirmed - " + TalentAllocCallText(kTalentAllocSubPoint, c)); return; }
+    if (TalentAllocSubRose(beforeSub, afterSub))
+        Out(tag + "confirmed - a node of sub=" + std::to_string(id) + " rose by one");
+    else
+        Out(tag + "not confirmed - no node of sub=" + std::to_string(id) + " rose by one (the game's own refusal, or a node that takes no level)");
+}
+
+// A whole number in [1, limit], and nothing else.
+static bool TalentAllocWhole(const std::string& s, int limit, int& out)
+{
+    if (s.empty() || s.size() > 9) return false;
+    for (char ch : s) if (ch < '0' || ch > '9') return false;
+    out = std::atoi(s.c_str());
+    return out >= 1 && out <= limit;
+}
+
+// `talentalloc <talentId>` / `talentalloc <talentId> sub <n>` (n 1-based, in
+// the order `menulayout UI_Button_Subtalent_obj` lists the open sub-panel's
+// nodes - the listing names none).
+static void TalentAllocCommand(const std::string& rest)
+{
+    std::istringstream in(rest);
+    std::vector<std::string> tok;
+    for (std::string t; in >> t;) tok.push_back(t);
+    int id = 0, nth = 0;
+    const bool mainForm = tok.size() == 1 && TalentAllocWhole(tok[0], 100000, id);
+    const bool subForm = tok.size() == 3 && TalentAllocWhole(tok[0], 100000, id) && Lower(tok[1]) == "sub"
+        && TalentAllocWhole(tok[2], kTalentAllocMaxInstances, nth);
+    if (mainForm) { TalentAllocMain(id); return; }
+    if (subForm) { TalentAllocSub(id, nth); return; }
+    Out("talentalloc: refused - usage: talentalloc <talentId> | talentalloc <talentId> sub <n>; nothing was called");
+}
+
+static bool HandleTalentAllocCommand(const std::string& lc, const std::string& rest)
+{
+    if (lc == "talentalloc") { TalentAllocCommand(rest); return true; }
+    return false;
+}
+// ---- end skillstate and talentalloc
+
+// ---- playerwarp, stashtab, bagtab, stashclose, giveitem: the stash and bag player verbs (toolkit #147)
+//
+// Five tool-facing commands the hub's hs-drive stash and bag tools send to set
+// up game state for a test (docs/stash-bag-layout-research.md, § Decision).
+// Nothing here is on the per-frame path, nothing installs a hook, and nothing
+// runs unless a tool sends the command. Each resolves every instance by name
+// and every game routine by its SDK constant, calls it with the shape live 2
+// supplied and the game accepted, and prints one `<verb>: before=... after=...`
+// line from its own re-read at the point of use, or a line beginning
+// `<verb>: refused - ` saying why nothing (or nothing more) was called. There
+// is no `stashopen`: the by-name open crashed the game once and the hub opens
+// with the interact key (§ Decision, stashOpenRoute). There is no `stashmove`:
+// the moves are hs-drive-stash-move-research's.
+
+// The routines these verbs call by name, through the by-name dispatcher
+// talentalloc uses (GetNamedRoutinePointer on the SDK constant, then
+// asset_get_index and script_execute with self and other passed apart).
+static constexpr TalentAllocScript kStashVerbClose{ HeroSiege::Scripts::gml_Script_UiACloseButton,
+    SdkShortScriptName(HeroSiege::Scripts::gml_Script_UiACloseButton) };
+static constexpr TalentAllocScript kStashVerbTab{ HeroSiege::Scripts::gml_Script_UiAStashTabClick,
+    SdkShortScriptName(HeroSiege::Scripts::gml_Script_UiAStashTabClick) };
+static constexpr TalentAllocScript kStashVerbMaterialTab{ HeroSiege::Scripts::gml_Script_UiAStashMaterialTabClick,
+    SdkShortScriptName(HeroSiege::Scripts::gml_Script_UiAStashMaterialTabClick) };
+static constexpr TalentAllocScript kStashVerbBagMaterial{ HeroSiege::Scripts::gml_Script_UiAInventoryMaterialTabClick,
+    SdkShortScriptName(HeroSiege::Scripts::gml_Script_UiAInventoryMaterialTabClick) };
+static constexpr TalentAllocScript kStashVerbBagSocket{ HeroSiege::Scripts::gml_Script_UiAInventorySocketTabClick,
+    SdkShortScriptName(HeroSiege::Scripts::gml_Script_UiAInventorySocketTabClick) };
+
+// A variable of an instance as menulayout prints it; `none` when the instance
+// does not carry it.
+static std::string StashVerbVar(const RValue& inst, const char* var)
+{
+    bool present = false;
+    const std::string v = MenuLayoutOptional(inst, var, present);
+    return present ? v : std::string("none");
+}
+
+// The first instance of `obj` whose string variable `var` reads `value`.
+static bool StashVerbByString(HeroSiege::Objects::GameObject obj, const char* var, const std::string& value,
+                              RValue& handle, CInstance*& inst)
+{
+    inst = nullptr;
+    for (const RValue& h : TalentAllocInstances(obj)) {
+        try {
+            const RValue v = g_Yytk->CallBuiltin("variable_instance_get", { h, RValue(var) });
+            if (v.m_Kind != VALUE_STRING || v.ToString() != value) continue;
+            inst = HhResolveInstance(h);
+            if (inst) { handle = h; return true; }
+        } catch (...) {}
+    }
+    return false;
+}
+
+// A finite number, and nothing else after it.
+static bool StashVerbNumber(const std::string& s, double& out)
+{
+    if (s.empty()) return false;
+    char* end = nullptr;
+    out = std::strtod(s.c_str(), &end);
+    return end && *end == '\0' && std::isfinite(out) && std::fabs(out) < 1e7;
+}
+
+// `playerwarp <x> <y>` (§ Decision, warpRoute): the local player's x and y,
+// written by name on the player resolved by name - the position write live 1
+// and live 2 made with `iset`, on the same kind of id `iset` writes through.
+static void PlayerWarpCommand(const std::string& rest)
+{
+    const std::string tag = "playerwarp: ";
+    std::istringstream in(rest);
+    std::vector<std::string> tok;
+    for (std::string t; in >> t;) tok.push_back(t);
+    double x = 0, y = 0;
+    if (tok.size() != 2 || !StashVerbNumber(tok[0], x) || !StashVerbNumber(tok[1], y)) {
+        Out(tag + "refused - usage: playerwarp <x> <y>, two finite room coordinates; nothing was written");
+        return;
+    }
+    RValue player;
+    if (!HhResolveLocalPlayer(player, nullptr)) { Out(tag + "refused - no local player resolves by name; nothing was written"); return; }
+    const double id = MenuLayoutRead(player, "id");
+    if (!std::isfinite(id) || id < 0) { Out(tag + "refused - the player's own id is unreadable; nothing was written"); return; }
+    const double bx = MenuLayoutRead(player, "x"), by = MenuLayoutRead(player, "y");
+    try {
+        g_Yytk->CallBuiltin("variable_instance_set", { RValue(id), RValue("x"), RValue(x) });
+        g_Yytk->CallBuiltin("variable_instance_set", { RValue(id), RValue("y"), RValue(y) });
+    } catch (...) {
+        Out(tag + "refused - variable_instance_set threw (before=" + MenuLayoutDecimal(bx) + "," + MenuLayoutDecimal(by) + ")");
+        return;
+    }
+    Out(tag + "before=" + MenuLayoutDecimal(bx) + "," + MenuLayoutDecimal(by)
+        + " after=" + MenuLayoutDecimal(MenuLayoutRead(player, "x")) + "," + MenuLayoutDecimal(MenuLayoutRead(player, "y")));
+}
+
+// `stashclose` (§ Decision, stashCloseRoute): UiACloseButton by name, self the
+// stash's close button (uiNodeCallstack InventoryClose), other the stash
+// window, no argument - live 2's P2-7 shape. The game's own close route is
+// what saves the stash; the window is never destroyed here.
+static void StashCloseCommand(const std::string& rest)
+{
+    const std::string tag = "stashclose: ";
+    if (!TrimCopy(rest).empty()) { Out(tag + "refused - takes no argument; nothing was called"); return; }
+    RValue window, button;
+    CInstance* stash = nullptr;
+    CInstance* close = nullptr;
+    if (!CmInstance(HeroSiege::Objects::GameObject::UI_Stash_obj, window, stash)) {
+        Out(tag + "refused - stash not open (no UI_Stash_obj is listed); nothing was called");
+        return;
+    }
+    if (!StashVerbByString(HeroSiege::Objects::GameObject::UI_Button_Close_obj, "uiNodeCallstack", "InventoryClose", button, close)) {
+        Out(tag + "refused - no UI_Button_Close_obj carries uiNodeCallstack=InventoryClose; nothing was called");
+        return;
+    }
+    auto listed = []() {
+        RValue h;
+        CInstance* i = nullptr;
+        return CmInstance(HeroSiege::Objects::GameObject::UI_Stash_obj, h, i) ? std::string("listed") : std::string("none");
+    };
+    const std::string before = listed();
+    const TalentAllocCall c = TalentAllocDispatch(kStashVerbClose, close, stash, {});
+    const std::string after = listed();
+    Out(tag + "before=" + before + " after=" + after);
+    if (c != TalentAllocCall::Ran) Out(tag + "not confirmed - " + TalentAllocCallText(kStashVerbClose, c));
+    else if (after != "none") Out(tag + "not confirmed - UI_Stash_obj is still listed after UiACloseButton ran");
+}
+
+// `stashtab <n>` (§ Decision, stashTabRoute): the UI_Button_Stash_Tab_obj
+// whose tabNumber is n, its handler read from its own activationFunc, called
+// with the two scalars live 2 supplied (n, then the button) and self the
+// button. A named handler - UiAStashTabClick for Personal and Shared,
+// UiAStashMaterialTabClick for Materials - is called by its SDK constant with
+// other the tab-bar container. Socketable's is a closure the tab bar made; it
+// is called as the method value the button holds, with other the button again
+// (live 2 supplied it so, through the research build's method-value call). A handler
+// that is neither is not a measured shape and is refused.
+static void StashTabCommand(const std::string& rest)
+{
+    const std::string tag = "stashtab: ";
+    const std::string arg = TrimCopy(rest);
+    double n = 0;
+    if (!StashVerbNumber(arg, n) || n != std::floor(n) || n < -5 || n > 19) {
+        Out(tag + "refused - usage: stashtab <tabNumber>, a whole number -5 to 19; nothing was called");
+        return;
+    }
+    RValue window, container, button;
+    CInstance* stash = nullptr;
+    CInstance* bar = nullptr;
+    CInstance* self = nullptr;
+    if (!CmInstance(HeroSiege::Objects::GameObject::UI_Stash_obj, window, stash)) {
+        Out(tag + "refused - stash not open (no UI_Stash_obj is listed); nothing was called");
+        return;
+    }
+    for (const RValue& h : TalentAllocInstances(HeroSiege::Objects::GameObject::UI_Button_Stash_Tab_obj)) {
+        double t = 0;
+        try {
+            if (!SkillStateNumber(g_Yytk->CallBuiltin("variable_instance_get", { h, RValue("tabNumber") }), t) || t != n) continue;
+        } catch (...) { continue; }
+        self = HhResolveInstance(h);
+        if (self) { button = h; break; }
+    }
+    const std::string number = MenuLayoutInteger(n);
+    if (!self) { Out(tag + "refused - no UI_Button_Stash_Tab_obj carries tabNumber=" + number + "; nothing was called"); return; }
+    RValue method;
+    std::string name;
+    try {
+        method = g_Yytk->CallBuiltin("variable_instance_get", { button, RValue("activationFunc") });
+        if (!g_Yytk->CallBuiltin("is_method", { method }).ToBoolean()) throw 0;
+        double index = -1;
+        if (!ApNumber(g_Yytk->CallBuiltin("method_get_index", { method }), index) || index < 0) throw 0;
+        name = g_Yytk->CallBuiltin("script_get_name", { RValue(index) }).ToString();
+    } catch (...) {
+        Out(tag + "refused - tab " + number + "'s activationFunc is not a readable method; nothing was called");
+        return;
+    }
+    const std::string closureOf = "gml_Object_" + std::string(HeroSiege::Objects::GetObjectName(
+        HeroSiege::Objects::GameObject::UI_Stash_Tab_Bar_Container_obj)) + "_Create_0";
+    const bool closure = name.rfind("anon", 0) == 0 && name.find(closureOf) != std::string::npos;
+    const TalentAllocScript* named = name == kStashVerbTab.script ? &kStashVerbTab
+        : name == kStashVerbMaterialTab.script ? &kStashVerbMaterialTab : nullptr;
+    if (!named && !closure) {
+        Out(tag + "refused - tab " + number + "'s handler " + name + " is not a measured shape; nothing was called");
+        return;
+    }
+    if (named && !CmInstance(HeroSiege::Objects::GameObject::UI_Stash_Tab_Bar_Container_obj, container, bar)) {
+        Out(tag + "refused - no UI_Stash_Tab_Bar_Container_obj is listed; nothing was called");
+        return;
+    }
+    const std::string before = StashVerbVar(window, "stashTabSelected");
+    const std::vector<RValue> args{ RValue(n), button };
+    std::string failed;
+    if (named) {
+        const TalentAllocCall c = TalentAllocDispatch(*named, self, bar, args);
+        if (c != TalentAllocCall::Ran) failed = TalentAllocCallText(*named, c);
+    } else {
+        std::vector<RValue> callArgs{ method };
+        for (const RValue& a : args) callArgs.push_back(a);
+        RValue res;
+        AurieStatus st = AURIE_EXTERNAL_ERROR;
+        try { st = g_Yytk->CallBuiltinEx(res, "script_execute", self, self, callArgs); }
+        catch (...) { failed = name + " threw inside the game"; }
+        if (failed.empty() && !AurieSuccess(st)) failed = name + " returned a failure status";
+    }
+    const std::string after = StashVerbVar(window, "stashTabSelected");
+    Out(tag + "before=" + before + " after=" + after + " handler=" + name);
+    if (!failed.empty()) Out(tag + "refused - " + failed);
+    else if (after == before) Out(tag + "refused - the state did not change (stashTabSelected stayed " + after + ")");
+}
+
+// The instance id an instance variable refers to (activeNode), or its text
+// when it is not an instance.
+static std::string StashVerbRefId(const RValue& inst, const char* var)
+{
+    try {
+        if (!g_Yytk->CallBuiltin("variable_instance_exists", { inst, RValue(var) }).ToBoolean()) return "none";
+        const RValue v = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(var) });
+        if (!HhResolveInstance(v)) return MenuLayoutValueText(v);
+        return MenuLayoutInteger(MenuLayoutRead(v, "id"));
+    } catch (...) { return kMenuLayoutReadFailed; }
+}
+
+// `bagtab materials|socket` (§ Decision, bagTabRoute): the bag sub-tab button
+// whose uiNodeCallstack is InventoryTabMaterial or InventoryTabSocket, its
+// handler called by its SDK constant with self the button, other the stash
+// window and no argument - live 2's supplied shape. Measured with the stash
+// open only, and only these two sub-tabs. The state it proves is tabSelected
+// on the window (bagTabState); activeNode (the focus) is printed beside it,
+// because live 2 did not observe it follow a by-name call.
+static void BagTabCommand(const std::string& rest)
+{
+    const std::string tag = "bagtab: ";
+    const std::string which = Lower(TrimCopy(rest));
+    const TalentAllocScript* script = which == "materials" ? &kStashVerbBagMaterial
+        : which == "socket" ? &kStashVerbBagSocket : nullptr;
+    if (!script) {
+        Out(tag + "refused - route_not_measured: only `bagtab materials` and `bagtab socket` are measured by name; nothing was called");
+        return;
+    }
+    RValue window, button;
+    CInstance* stash = nullptr;
+    CInstance* self = nullptr;
+    if (!CmInstance(HeroSiege::Objects::GameObject::UI_Stash_obj, window, stash)) {
+        Out(tag + "refused - bag not open beside the stash (no UI_Stash_obj is listed); nothing was called");
+        return;
+    }
+    const std::string callstack = which == "materials" ? "InventoryTabMaterial" : "InventoryTabSocket";
+    if (!StashVerbByString(HeroSiege::Objects::GameObject::UI_Button_Inventory_Tab_Small_obj, "uiNodeCallstack", callstack, button, self)) {
+        Out(tag + "refused - no UI_Button_Inventory_Tab_Small_obj carries uiNodeCallstack=" + callstack + "; nothing was called");
+        return;
+    }
+    const std::string before = StashVerbVar(window, "tabSelected");
+    const std::string focusBefore = StashVerbRefId(window, "activeNode");
+    const TalentAllocCall c = TalentAllocDispatch(*script, self, stash, {});
+    const std::string after = StashVerbVar(window, "tabSelected");
+    Out(tag + "before=" + before + " after=" + after
+        + " activeNode_before=" + focusBefore + " activeNode_after=" + StashVerbRefId(window, "activeNode"));
+    if (c != TalentAllocCall::Ran) Out(tag + "refused - " + TalentAllocCallText(*script, c));
+    else if (after == before) Out(tag + "refused - the state did not change (tabSelected stayed " + after + ")");
+}
+
+// Items in a two-level cell array, each counted once however many cells it
+// covers (a node per cell, all carrying its fingerprint); -1 when a level is
+// not an array.
+static int GiveItemHeld(const RValue& cells)
+{
+    try {
+        if (cells.m_Kind != VALUE_ARRAY) return -1;
+        std::vector<std::string> seen;
+        const int n = CmLength(cells);
+        for (int i = 0; i < n; ++i) {
+            const RValue line = CmAt(cells, i);
+            if (line.m_Kind != VALUE_ARRAY) return -1;
+            const int m = CmLength(line);
+            for (int j = 0; j < m; ++j) {
+                RValue fp;
+                std::string text;
+                if (ApCellFingerprint(CmAt(line, j), fp, text) && std::find(seen.begin(), seen.end(), text) == seen.end())
+                    seen.push_back(text);
+            }
+        }
+        return (int)seen.size();
+    } catch (...) { return -1; }
+}
+
+// `giveitem bag <template fingerprint> <count>` (§ Decision, giveItemRoute:
+// bag: json): a copy of an item map 0 already holds, made by the game's own
+// loader in CmMakeUnit's order, all with self Console_Save_obj -
+// CreateItemSaveStruct(<template>), `o` set to the count on that struct (a
+// template whose struct has no `o`, a non-stackable, takes count 1 and no `o`),
+// LootTimestamp() for a fresh key "0-0-<stamp>-<class>", InitItemFromJson,
+// AddItemToMap(map 0), GetItemPreferredGrid(1, item)'s `grid`, and
+// GridAddItem into it. The bag only: the stash destination is not measured
+// (hs-drive-stash-move-research). A step that answers false or undefined
+// stops there and is named; a unit no grid took is taken out of map 0 again
+// (RemoveItemFromMap, craftmats' undo). The proof is this verb's own re-read
+// of map 0 and of the destination cells; nothing edits the item after it is
+// placed.
+static void GiveItemCommand(const std::string& rest)
+{
+    const std::string tag = "giveitem: ";
+    std::istringstream in(rest);
+    std::vector<std::string> tok;
+    for (std::string t; in >> t;) tok.push_back(t);
+    if (!tok.empty() && Lower(tok[0]) == "stash") {
+        Out(tag + "refused - route_not_measured: the stash destination has no measured route (hs-drive-stash-move-research); nothing was called");
+        return;
+    }
+    int count = 0;
+    if (tok.size() != 3 || Lower(tok[0]) != "bag" || !TalentAllocWhole(tok[2], 1000000, count)) {
+        Out(tag + "refused - usage: giveitem bag <template fingerprint> <count>, count a whole number 1 or more; nothing was called");
+        return;
+    }
+    const std::string key = tok[1];
+    CInstance* save = CmSaveInstance();
+    if (!save) { Out(tag + "refused - no Console_Save_obj instance; nothing was called"); return; }
+    RValue map0, source, type;
+    if (!CmItemMap(save, kCmCharacterOwner, map0)) { Out(tag + "refused - GetItemMap(0) answered no map; nothing more was called"); return; }
+    if (!CmMapItem(map0, RValue(key), source)) { Out(tag + "refused - template not found: map 0 holds no item " + key + "; nothing more was called"); return; }
+    const int64_t cls = CmMember(source, "itemType", type) ? CmWhole(type) : -1;
+    if (cls < 0) { Out(tag + "refused - template " + key + " has no whole itemType; nothing more was called"); return; }
+
+    RValue saved, o, stamp, item, added, res;
+    if (!CmCall(kCmSaveStructName, save, { source }, saved) || !ApIsPlainStruct(saved)) {
+        Out(tag + "refused - CreateItemSaveStruct answered no struct; nothing was made");
+        return;
+    }
+    const bool stackable = CmMember(saved, "o", o);
+    if (!stackable && count > 1) {
+        Out(tag + "refused - count above 1: template " + key + "'s save struct has no o (a non-stackable); nothing was made");
+        return;
+    }
+    if (stackable) {
+        RValue def, own;
+        int64_t have = CmWhole(o);
+        if (CmMember(source, "itemDefinitionStruct", def) && CmMember(def, "o", own)) have = CmWhole(own);
+        if (have < 1 || count > have) {
+            Out(tag + "refused - count " + std::to_string(count) + " above the template's own o=" + std::to_string((long long)have)
+                + " (no stack-size reader is measured); nothing was made");
+            return;
+        }
+        try { g_Yytk->CallBuiltin("variable_struct_set", { saved, RValue("o"), RValue((double)count) }); }
+        catch (...) { Out(tag + "refused - the save struct's o could not be set; nothing was made"); return; }
+    }
+    if (!CmCall(kCmTimestampName, save, {}, stamp) || CmWhole(stamp) < 0) { Out(tag + "refused - LootTimestamp answered no whole number; nothing was made"); return; }
+    const std::string made = "0-0-" + std::to_string((long long)CmWhole(stamp)) + "-" + std::to_string((long long)cls);
+    if (CmMapHas(map0, RValue(made)) != 0) { Out(tag + "refused - key " + made + " is taken or unreadable in map 0; nothing was made"); return; }
+    if (!CmCall(kCmFromJsonName, save, { saved, RValue(made) }, item) || !ApIsPlainStruct(item)) {
+        Out(tag + "refused - InitItemFromJson answered no item; nothing was placed");
+        return;
+    }
+    CmCall(kCmAddToMapName, save, { map0, RValue(made), item }, added);
+    if (CmMapHas(map0, RValue(made)) != 1) { Out(tag + "refused - AddItemToMap left no " + made + " in map 0; nothing was placed"); return; }
+
+    // From here a unit that does not land is taken out of map 0 again.
+    auto undo = [&](const std::string& why) {
+        RValue gone;
+        CmCall(kCmRemoveFromMapName, save, { map0, RValue(made) }, gone);
+        const int left = CmMapHas(map0, RValue(made));
+        Out(tag + "refused - " + why + "; " + made + " was taken out of map 0 again (craftmats' undo)"
+            + (left == 0 ? std::string() : " - NOT confirmed: map 0 still answers " + std::to_string(left)));
+    };
+    RValue pref, cells;
+    if (!CmCall(kCmPreferredName, save, { RValue(kCmPreferredOwner), item }, pref) || !ApPreferredGrid(pref, cells)) {
+        undo("GetItemPreferredGrid(1, item) answered no grid");
+        return;
+    }
+    const int before = GiveItemHeld(cells);
+    if (before < 0) { undo("the destination cells are unreadable"); return; }
+    if (!CmHasEmptyCell(cells)) { undo("the destination cells have no empty cell"); return; }
+    if (!CmCall(kCmPlaceName, save, { cells, item, RValue(0.0), RValue() }, res) || !ApAddSucceeded(res)) {
+        undo("GridAddItem answered no success");
+        return;
+    }
+
+    // The proof, re-read at the point of use: map 0 and the destination cells.
+    RValue prefNow, cellsNow;
+    if (!CmCall(kCmPreferredName, save, { RValue(kCmPreferredOwner), item }, prefNow) || !ApPreferredGrid(prefNow, cellsNow)) cellsNow = cells;
+    const int after = GiveItemHeld(cellsNow);
+    const int inMap = CmMapHas(map0, RValue(made));
+    const int inCells = CmCellsHold(cellsNow, made);
+    Out(tag + "key=" + made + " before=" + std::to_string(before) + " after=" + std::to_string(after)
+        + " o=" + (stackable ? std::to_string(count) : std::string("none")));
+    if (inMap == 1 && inCells == 1 && after == before + 1)
+        Out(tag + "confirmed - " + made + " in map 0 and in the destination cells");
+    else
+        Out(tag + "not confirmed - map 0 answers " + std::to_string(inMap) + ", the destination cells answer "
+            + std::to_string(inCells) + " for " + made + ", items " + std::to_string(before) + " -> " + std::to_string(after));
+}
+
+// Each verb from its own helper, for the C1061 reason HandleMenuLayoutCommand gives.
+static bool HandlePlayerWarpCommand(const std::string& lc, const std::string& rest)
+{
+    if (lc == "playerwarp") { PlayerWarpCommand(rest); return true; }
+    return false;
+}
+
+static bool HandleStashTabCommand(const std::string& lc, const std::string& rest)
+{
+    if (lc == "stashtab") { StashTabCommand(rest); return true; }
+    return false;
+}
+
+static bool HandleBagTabCommand(const std::string& lc, const std::string& rest)
+{
+    if (lc == "bagtab") { BagTabCommand(rest); return true; }
+    return false;
+}
+
+static bool HandleStashCloseCommand(const std::string& lc, const std::string& rest)
+{
+    if (lc == "stashclose") { StashCloseCommand(rest); return true; }
+    return false;
+}
+
+static bool HandleGiveItemCommand(const std::string& lc, const std::string& rest)
+{
+    if (lc == "giveitem") { GiveItemCommand(rest); return true; }
+    return false;
+}
+// ---- end stash and bag player verbs
 
 #ifndef FORGEPACT_RELEASE
 // ---- restartprobe: pause-menu Restart gate research (ForgePact issue #8) ---
@@ -37247,58 +38152,12 @@ static bool SpPathValue(const std::string& tag, const std::string& spec, RValue&
     return true;
 }
 
-// The skill bar's instance, by name: the first UI_Hud_Talent_obj.
-static bool SpHud(RValue& hud)
-{
-    const double idx = MenuLayoutObjectIndex(
-        std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::UI_Hud_Talent_obj)));
-    if (idx < 0) return false;
-    try {
-        hud = g_Yytk->CallBuiltin("instance_find", { RValue(idx), RValue(0.0) });
-        return hud.m_Kind != VALUE_UNDEFINED && g_Yytk->CallBuiltin("instance_exists", { hud }).ToBoolean();
-    } catch (...) { return false; }
-}
-
-// A talent's abilityId from global.talentStructMap (the toggle mods' reader).
-static std::string SpAbilityOf(int id)
-{
-    RValue map, talent;
-    std::string why;
-    if (!N1GetTalentMap(map, why) || !N1GetTalentStruct(map, id, talent, why)) return "unreadable";
-    try {
-        const RValue a = g_Yytk->CallBuiltin("variable_struct_get", { talent, RValue("abilityId") });
-        if (a.m_Kind == VALUE_UNDEFINED) return "none";
-        return a.m_Kind == VALUE_STRING ? a.ToString() : SpValueText(a);
-    } catch (...) { return "unreadable"; }
-}
-
-// global.subTalentMap[1].t<id>: every s<NN> member and its level, `none` for a
-// talent with no node (a base-form talent), `unreadable` for any failed step.
-static std::string SpSubText(int id)
-{
-    try {
-        if (!g_Yytk->CallBuiltin("variable_global_exists", { RValue("subTalentMap") }).ToBoolean()) return "unreadable (no global.subTalentMap)";
-        const RValue arr = g_Yytk->CallBuiltin("variable_global_get", { RValue("subTalentMap") });
-        if (arr.m_Kind != VALUE_ARRAY) return "unreadable (global.subTalentMap is not an array)";
-        if (g_Yytk->CallBuiltin("array_length", { arr }).ToDouble() < 2) return "unreadable (global.subTalentMap has no index 1)";
-        const RValue entry = g_Yytk->CallBuiltin("array_get", { arr, RValue(1.0) });
-        if (entry.m_Kind != VALUE_OBJECT && entry.m_Kind != VALUE_REF) return "unreadable (index 1 is not a struct)";
-        const RValue node = g_Yytk->CallBuiltin("variable_struct_get", { entry, RValue("t" + std::to_string(id)) });
-        if (node.m_Kind == VALUE_UNDEFINED) return "none";
-        if (node.m_Kind != VALUE_OBJECT && node.m_Kind != VALUE_REF) return "unreadable (t" + std::to_string(id) + " is not a struct)";
-        const RValue names = g_Yytk->CallBuiltin("variable_struct_get_names", { node });
-        const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
-        std::string out;
-        for (int i = 0; i < n && i < kSpMaxItems; ++i) {
-            try {
-                const RValue nm = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) });
-                out += (out.empty() ? "" : " ") + nm.ToString() + "="
-                    + MenuLayoutValueText(g_Yytk->CallBuiltin("variable_struct_get", { node, nm }));
-            } catch (...) { out += (out.empty() ? "" : " ") + std::string("unreadable"); }
-        }
-        return out.empty() ? std::string("(no members)") : out;
-    } catch (...) { return "unreadable"; }
-}
+// The bar, a talent's abilityId and its sub= text come from the player
+// build's `skillstate` readers, so `state` and `skillstate` print the same
+// body lines (the hub parses both). The player build calls nothing here.
+static bool SpHud(RValue& hud) { return SkillStateHud(hud); }
+static std::string SpAbilityOf(int id) { return SkillStateAbility(id); }
+static std::string SpSubText(int id) { return SkillStateSubText(id); }
 
 // ReturnTalentLevel(<id>) by name, self = other = the local player, through
 // craftprobe's CpDispatchScript; its own call, so no detoured row logs it.
@@ -37608,7 +38467,8 @@ static void RunCommand(const std::string& line)
         "headhunter", "hhdur", "hhmap", "hhdefault", "hhlabel", "tyrant", "beacon", "beaconrange", "beaconmode", "beaconwake", "beaconspawn", "beaconfarstep", "tyrantchance", "tyrantaffix", "hhlabelfont", "hhlabeloffset", "hhlabelmax",
         "enemyspeed", "rarity", "sigdrop", "angelicdrop", "relicfilter", "orbpickup", "satmods", "petquest",
         "autoprospect", "toggleborder", "toggleguard", "skilltimer", "menulayout", "restartanytime", "miningore", "minerhelm", "packmarks",
-        "craftmats", "gemmythic", "gemmaxroll", "gemfilter"
+        "craftmats", "gemmythic", "gemmaxroll", "gemfilter", "skillstate", "talentalloc",
+        "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem"
     };
     if (kPlayerCommands.find(lc) == kPlayerCommands.end()) {
         Out("command unavailable in player build: " + cmd);
@@ -37624,6 +38484,13 @@ static void RunCommand(const std::string& line)
     if (HandleCraftCommand(lc, rest)) return;
     if (HandleRestartProbeCommand(lc, rest)) return;
     if (HandleSkillProbeCommand(lc, rest)) return;
+    if (HandleSkillStateCommand(lc, rest)) return;
+    if (HandleTalentAllocCommand(lc, rest)) return;
+    if (HandlePlayerWarpCommand(lc, rest)) return;
+    if (HandleStashTabCommand(lc, rest)) return;
+    if (HandleBagTabCommand(lc, rest)) return;
+    if (HandleStashCloseCommand(lc, rest)) return;
+    if (HandleGiveItemCommand(lc, rest)) return;
 #ifndef FORGEPACT_RELEASE
     // Toggle-skill research (issue #11), docs/toggle-skills-research.md. A
     // standalone early return rather than one more `else if` below: that chain

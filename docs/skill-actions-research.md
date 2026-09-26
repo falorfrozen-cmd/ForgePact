@@ -13,8 +13,12 @@ in the toolkit) is gaining five tools - `hs_skills_status`, `hs_skill_cast`,
 session can read and change the character's skills with no one at the
 keyboard (toolkit issue #147). Binding, allocating and resetting are *setup*
 for other tests, so they go through the game's own routines by name, through
-player-build verbs (`skillbind`, `talentalloc`, `talentreset`), and are
-confirmed by re-reading the game's state through a read verb (`skillstate`).
+player-build verbs, and are confirmed by re-reading the game's state through a
+read verb (`skillstate`). Of the three write verbs only `talentalloc` (with its
+sub-node form) ships: live 2 reproduced the allocation by name and did not
+reproduce the binding or the reset (§ Decision), so `skillbind` and
+`talentreset` are not compiled in and their hub tools refuse
+`route_not_measured`.
 The cast is the thing a test exercises, so it presses the slot's own key
 through the game's input path and proves the cast from game state. None of
 these mechanisms is measured for this purpose yet. This document records the
@@ -51,10 +55,16 @@ once on their action (`UI_Talent_Screen_Allocate_obj anon@643`,
 `UI_Button_Subtalent_obj anon@535`) stay candidates, beside the named `UiA*`
 activation scripts the game wires buttons to, which were not rows then and
 are now (§ Static search, "Replan 3 additions"). The second
-research launch (Live procedure 2) has **not run yet**; the other nine
-§ Decision lines read `pending` until it has. What § Instrument lists as
-hypotheses, and what § Static readings suggests, are not facts until a
-launch records them.
+research launch (Live procedure 2) ran on 2026-09-25 in the stash research's
+launch and is recorded in § Results: it identified the `UiA*` handler of each
+hand action, reproduced the talent screen's open, the allocation and the
+sub-node allocation by name, and did not reproduce the binding (the popup's
+buttons are gone by the time a replay runs) or the reset (the confirm chain
+dispatched and changed nothing). It found no reader for a slot's key or for
+the points left. Every § Decision line is now settled. The verification
+launch (Live procedure 3) runs on the player build once the verbs and the hub
+tools exist. What § Instrument lists as hypotheses, and what § Static
+readings suggests, are not facts unless a launch recorded them.
 
 ## Static search
 
@@ -847,27 +857,126 @@ reproduced` and `not-run (instrument …)` are never a route negative.
 
 ### Live procedure 3
 
-The verification session, on the player build
-(`modfiles_shipped\BloodPactPlugin.dll` from the final release build, its
-SHA-256 named in the dispatch; the owner installs it and the lease records
-its hash), in two launches, once the hub tools and the player verbs exist. Save slot 14 with K1's prerequisites (two
-learned skills; a free point or a reset). `hs_saves_backup` labelled
-`hs-drive-skill-actions-live-3` **before** `hs_launch` (keep its id); at the
-main menu `menulayout` finds `Play local`, and `hs_select_character(14)`
-answers `character_loaded`. The capture, `hs-drive-skill-actions-live-3`,
-ends with a `## Checks` block, one line per check in this order: `dll-hash`,
-`control`, then W1 `hs_skills_status` (the slots with their keys, the points
-a number); W2 `hs_skill_cast` on K2's slot (its proof per `castProof`); W3
-the identity control, `hs_skill_bind` with `backup_id="no-such-backup"`
-refused `backup_incomplete` with nothing sent; W4 `hs_skill_bind` with the
-live-3 backup id, confirmed and agreeing with `hs_skills_status`, then the
-original bound back; W5 `hs_talent_allocate`, the points down by one; W6 a
-reload (stop, launch, load slot 14) after which the W4 binding and the W5
-allocation are still there; W7 `hs_talent_reset`, the points restored; W8
-stop, inspect, restore with the live-3 backup, inspect clean, release, the
-DLL hash unchanged. A tool whose § Decision line is `not-observed` is
-expected to answer `route_not_measured` in its step. Cases: as Live
-procedure 2.
+The verification session, on the player build, in two launches, once the
+hub tools and the player verbs exist. Nothing in it expects a point count, a
+level or a key read by name (none has a reader, § Decision); the binding and
+the reset are checked as refusals; at most one hand action is asked of the
+owner. `live-operator` runs it as written. The capture,
+`hs-drive-skill-actions-live-3`, quotes every `hs_command` and tool reply as
+it was returned and ends with a `## Checks` block, one line per check below,
+in this order: `- <name> | expected: … | observed: … |
+pass|fail|not-observed|not-run [note]`. The replies used as test fixtures are
+not taken from the capture: straight after the session, before any other
+launch, the plugin's `bp_ipc\out.txt` and `out.prev.txt` are copied byte for
+byte (the second launch rotates the first launch's replies into
+`out.prev.txt`). Nothing is sent while another session holds the lease.
+
+- **Build.** `modfiles_shipped\BloodPactPlugin.dll` from the final release
+  build, its SHA-256 named in the dispatch. The owner installs it on the
+  driver's question, never the operator. `dll-hash` passes when the lease's
+  `dll_sha256` equals the dispatched hash.
+- **Character.** Save slot 14 (Sorak), in the state the driver restored
+  after live 2, which is live 2's K1 read: bar slot 0,0 holds `darkOath`
+  (242, an entry of `kSkillTimerNames` as `darkoath`, whose effect object is
+  `White_Mage_Dark_Oath_obj`), and `global.mySkills` holds twelve ids
+  (`236,237,239,240,242,245,246,247,250,251,252,253`). 239 `shadowBolt` is
+  already learned in that state, so live 2's K5 target is not reused: W5
+  allocates 244 `blackMass`, which is not learned there and whose
+  `UI_Button_Talent_Player_obj` and `UI_Button_Sub_Skill_obj` rows live 2
+  listed. Live 2's K4 screenshot showed "Points Left: 0" for this state, so
+  W5 needs the one hand action in W4 unless the screen shows a point.
+- **Control.** `hs_lease_acquire` labelled `hs-drive-skill-actions-live-3`;
+  `hs_selfcheck`; `hs_saves_backup` labelled `hs-drive-skill-actions-live-3`
+  **before** `hs_launch` - its id is the `backup_id` below, and the tools'
+  backup gate accepts only a backup older than the game process; `hs_launch`;
+  `hs_wait_ready`; `hs_select_character(14)` answers `character_loaded`;
+  `hs_command(["ping"])` answers `pong`; `hs_command(["skillstate"])` answers
+  a reply whose first line is `skillstate:` and whose `slot=0,0` line reads
+  `talent=242 ability=darkOath` and carries `effect=`. `control` passes when
+  all of these hold.
+- **W1.** `hs_skills_status()` answers `ok`, `slots` not empty, the 0,0
+  entry's `ability` `darkOath` with `effect` an integer, `learned` a
+  non-empty list and `subtalents` a dict. The `proof` lines are quoted.
+  Then a second `hs_skills_status()` at least 1 s later, with no key pressed
+  in between: every bar slot's `effect` value from both reads is recorded.
+  This is the negative control - the count without a press - and W1 passes
+  whether or not they are equal; the values are the finding, and any of
+  them at 1 or more is the session's positive control for the `effect=`
+  reader, which W2 needs.
+- **W2.** `hs_skill_cast(key=81, slot="0,0")` (Q, the key the HUD labels
+  that slot with, K2) answers `ok` and `confirmed: true`, its `proof` showing
+  `effect=` differ before and after; `hs_screenshot` after it. Its
+  `effect_samples_before` (the tool's own reads before the press) is quoted.
+  A second `hs_skill_cast(key=81, slot="0,0")` answers `ok` (the toggle
+  back; the effect count returning toward W1's value is recorded, with no
+  expectation beyond `ok`). A `key_not_delivered` is a focus fault:
+  `hs_input` with focus forced once more, then record. A `fail` with the key
+  delivered and a flat pre-press count, or a `proof_unstable` refusal, is
+  classified by this session's positive control for the `effect=` reader,
+  on this build. If the reader returned a count of 1 or more at some point
+  in the session (0,0 already at 1 or more in W1, any bar slot above zero
+  in W1's reads, or the second W2 cast changing the count), it is recorded
+  as `not-observed for darkOath (effect= reader returned <N> on <where>
+  this session)`. If every count stayed 0 all session, it is recorded as
+  `not-observed (effect= reader has no positive control on the player
+  build)`, undetermined, and goes to the owner. Neither is a verdict on
+  auras as a class, and neither rules out a reader defect.
+- **W3.** `hs_skill_bind("0,6", "shadowBolt", backup_id=<the live-3 id>)`
+  refuses `route_not_measured` with an empty `verb_trail` (nothing sent).
+- **W4.** `hs_talent_allocate(244, backup_id="no-such-backup")` refuses
+  `invalid_backup_id` or `backup_incomplete` with an empty `verb_trail` (the
+  gate runs before any send). Then the point check, before any allocation
+  is sent: `hs_input` T (vk 84, held 120 ms), `hs_screenshot`, read "Points
+  Left: N" off the talent screen, `hs_input` T again. If N is 0, the one
+  hand action: the driver asks the owner to click "Reset Skills", confirm,
+  and close the screen (as in live 2's K4); the operator records the owner's
+  words, then `hs_skills_status` reports `learned` shorter than W1's (the
+  bar is recorded - `darkOath` may have left it). W4 passes when both
+  refusals hold and the point check is recorded (N, or the reset).
+- **W5.** `hs_talent_allocate(244, backup_id=<the live-3 id>)` answers `ok`,
+  `confirmed: true`, `learned` containing 244, with `screen_closed`
+  recorded; then `hs_talent_allocate(244, backup_id=<the live-3 id>, sub=2)`
+  answers `ok`, `confirmed: true`, with `subtalents["244"]` holding one
+  `s<NN>` at 1 (the second listed node, as live 2's K5). A main allocation
+  answering `alloc_not_confirmed` with "Points Left" not 0 at W4 is `fail`;
+  with 0 points and no reset it is `not-run (no free point)`.
+- **W6.** A reload: `hs_stop_game`, `hs_launch`, `hs_wait_ready`,
+  `hs_select_character(14)`, then `hs_skills_status` reports `learned` still
+  containing 244 and `subtalents["244"]` still showing the node - the game
+  saved the by-name allocation and loaded it back. A `fail` here is a
+  measured negative for the accepted risk the ForgePact guide's Known
+  Limitations records, never an implementation defect.
+- **W7.** `hs_talent_reset(backup_id=<the live-3 id>)` refuses
+  `route_not_measured` with an empty `verb_trail`.
+- **W8.** `hs_stop_game`, `hs_saves_inspect`, `hs_saves_restore` with the
+  live-3 backup (on the owner's word, relayed by the driver, as for live 1
+  and 2), `hs_saves_inspect` clean, `hs_lease_release`; the lease's DLL hash
+  unchanged since it was taken.
+
+Cases: one toggle skill cast by key (0,0 with Q - the ordinary case, and the
+only one with a player-build proof), one main allocation and one sub-node
+(the hashed, screen-bound handlers), and the two refusals. No others.
+
+### Live procedure 4
+
+Live 3's W2 pressed Q on slot 0,0 (`darkOath`, an aura), which live 3's own
+`skillstate` frame showed moving 0,3's `manaOrb` `effect=` instead: Q is
+0,3's key, not 0,0's. Live 4 re-ran `hs_skill_cast` on the corrected slot to
+give the player build a positive control for the `effect=` reader and for
+the cast route itself, then checked what the count does after a cast without
+another press, and handed Dark Oath's switch to the owner since no key was
+found for it. Same build (`57aba60cc820e6a0362080b84f89d5a0150d0666458638bee8acacb40007bffc`),
+same character (save slot 14, Sorak), one launch. Checks, in the order run:
+`dll-hash`, `control`, `no-press` (the negative control: 0,3's `effect=`
+holds at 0 across two reads with no key pressed), `cast-manaorb`
+(`hs_skill_cast(key=81, slot="0,3")`, the session's required positive
+control), `manaorb-hold` (research: how long the count stays at 1 with no
+further press), `recast-manaorb` (research: a second cast before the first
+one's effect object plausibly ended), `darkoath` (research, an outlier: read
+0,0 before and after the owner's hand action, no key pressed by the tool),
+and `teardown`. `dll-hash`, `control`, `cast-manaorb` and `teardown` were
+required to pass for the gate; the rest were research and are recorded
+whatever they showed.
 
 ## Results
 
@@ -875,8 +984,17 @@ One dated row per check, filled from the live capture: live 1's rows from
 the toolkit's `.claude/workorders/hs-drive-skill-actions-live-1.md`
 (2026-09-25, research DLL SHA-256 `71e9fc54…dee6c`, ForgePact `c2f3805`, save
 slot 14, a launch shared with the stash research, whose capture carries the
-lease, the backup and the restore), the rows marked live 2 from its own
-capture once it has run. For a by-name call, *Logged shape* is the self,
+lease, the backup and the restore); the rows marked live 2, and K1 to K7,
+from `.claude/workorders/hs-drive-skill-actions-live-2.md` (Attempt 2,
+2026-09-25, research DLL SHA-256 `ea3f38f5…92fa`, ForgePact `01510ed`, save
+slot 14, the stash research's second launch, which carries the lease, the
+backup and the restore). That capture names its K4 to K7 check lines by the
+route each measured, and the rows below keep those names as it spells them;
+the W rows are live 3's, from
+`.claude/workorders/hs-drive-skill-actions-live-3.md` (2026-09-26, player DLL
+SHA-256 `57aba60c…bffc`, save slot 14), and the unsuffixed rows after them
+are live 4's, from `.claude/workorders/hs-drive-skill-actions-live-4.md`
+(2026-09-26, same build and slot). For a by-name call, *Logged shape* is the self,
 other, argument count and arguments of the game's own call (its armed line)
 and *Supplied shape* those of the replay (its reply line), with the outcome
 under § Instrument's recording rule in *Observation*; `-` where a check makes
@@ -895,24 +1013,50 @@ no by-name call.
 | S6 | not-observed: not attempted, for the same reasons as S5 (no allocation, sub-allocation or reset handler isolated in S4; `NetworkSendClientAllTalents` carries no talent id to replay). Not a route negative | - (no handler isolated) | - (no call made) | - | 2026-09-25 |
 | S7 | pass: `menulayout UI_Talent_Screen_obj` answered `listed=0` (the owner closed the screen at the end of the hand actions). With no S6 run, the state read after S4 is the session's final state | - | - | - | 2026-09-25 |
 | S8 | pass: the final `state` is S4's (slot 0,2 `satansMark`, 0,6 `shadowBolt`, 0,4 `healingZone`; 244 learned; `sub=246` and `sub=244` populated); handed back to the stash procedure's P0-10: `hs_stop_game` exited cleanly; `hs_saves_inspect` changed `herosiege13.hss`, `inventory_order_13.hss`, `shop.ini` and `stash.hss`. The operator's toolset had no restore tool, so the lease's release recorded the restore as owed; the driver restored the backup afterwards on the owner's word (the stash research's P0-10 row) | - | - | - | 2026-09-25 |
-| dll-hash (live 2) | pending | - | - | - | - |
-| marker (live 2) | pending | - | - | - | - |
-| control (live 2) | pending | - | - | pending | - |
-| K1 | pending | pending | pending | pending | - |
-| K2 | pending | pending | - | - | - |
-| K3 | pending | pending | pending | - | - |
-| K4 | pending | pending | - | - | - |
-| K5 | pending | pending | pending | - | - |
-| K6 | pending | pending | pending | - | - |
-| K7 | pending | - | - | - | - |
+| dll-hash (live 2) | pass: the shared lease (`hs-drive-stash-bag-actions-live-2`) recorded `dll_sha256` `ea3f38f5fb26a38ced75cd8efcdefa26b825c7d1330b33e5b0064d437cda92fa` (`dll_status: hashed`), the dispatched research build. Attempt 1 of the shared launch crashed in the stash procedure before this procedure began, with no `skillprobe` command sent; these rows are Attempt 2's | - | - | - | 2026-09-25 |
+| marker (live 2) | pass: a bare `skillprobe` answered `skillprobe: rows=82 hooked=0 held=0 - research instrument for docs/skill-actions-research.md (research build only)` before `hook` | - | - | - | 2026-09-25 |
+| control (live 2) | pass: `pong (YYTK 4.0.1)`; `menulayout UI_Hud_Talent_obj` listed one row (`id=262341`) and its `slot=` rows - row 0 slots 0-12 and row 1 slots 0-15, 29 in the verbatim reply (the capture's summary says 28); `skillprobe hook` answered `78 detoured, 0 failed, 4 held.` (`GetPlayerProfileObj`, `UiCreate`, `ReportClient`, `CheckPlayerInteraction`, each held by `craftprobe hook`, which ran first), 78 + 4 = 82 | - | - | own-detour control `CheckTalentUse calls=630` then `1710`, `CheckPlayerInteraction calls=140280` then `155400` (held by `craftprobe`), about 2 s apart: both climbing | 2026-09-25 |
+| K1 | not-run (instrument: budget spent before slot 0,6 - the capture's own wording; the cause it records is that slot 0,6 carried no talent). `skillprobe state` read 15 talents on the bar (0,0 `darkOath` 242, 0,2 `chainOfHolyLight` 250, 0,3 `manaOrb` 253, 0,4 `healingZone` 252, 0,5 `soulSpurn` 240, 0,6 empty) and `global.mySkills=[236,237,239,240,242,245,246,247,250,251,252,253]`; `keys`: 10 of `Controller_obj`'s 221 members name a skill, talent or bind and none is a key per slot, `UI_Hud_Talent_obj.playerSlot` is a ds_map (`ref ds_map 300`) `find` does not walk; `slots` dumped `row0[0]` (`talentId=242`, `keyBindKey=-1`, `slotNumber=666`, no key-code member). The six key getters armed at 64: only `GetPlayerInputBindings` fired (64 of 64 logged), each call returning the whole bindings table and none naming slot 0,6; an empty slot draws no key of its own, so a larger budget would not have reached it. The HUD screenshot (`20260925T182639986488Z_k1-hud-keys.png`) was read by eye as labelling slots 0,0, 0,3 and 0,4 Q, E and R - one slot off; `castKeyRule` below now has Q, E and R at 0,3, 0,4 and 0,5, and 0,0 (`darkOath`) draws no key | `GetPlayerInputBindings #42301` (for example): `self=` one of the HUD widgets (`Player_Health_Bar_Parent_obj`, `Controller_obj`, `UI_Talent_Button_obj` instances, `UI_Inventory_Grid_obj`), `other=` the same, `argc=1 a0=real:1.000000`, `ret=array len=78` | - (no call made) | - | 2026-09-25 |
+| K2 | pass (with the capture's recorded slot and key substitution): slot 0,0 `darkOath` with Q (vk 81, held 120 ms) instead of 0,2 or 0,5 with Y - the visible bar was read by eye as drawing three icons (Q, E, R at 0,0, 0,3, 0,4) - one slot off, per `castKeyRule` below (Q, E, R at 0,3, 0,4, 0,5) - so 0,2 and 0,5 could not be pressed. With `TalentRequirement 5`, `TalentUse 5`, `TalentUseClass 5`, `PlayerManaUpdate 5` and `CheckTalentUse 200` armed, one press gave `TalentUse calls=1`, `TalentUseClass calls=2`, `PlayerManaUpdate calls=3`, `NetworkSendClientTalentUse calls=1`. The armed `TalentUse` line itself was not retrieved at the time (buried under `CheckTalentUse`'s 200 lines), and no `tgprobe deep` diff of `Player_obj` was taken, so the mana member was not captured. Correction: live-2 IPC line 11593 carries the armed `TalentUse` line itself, `a1=253` (`manaOrb`, not `darkOath`, and not 252 - the amendment live4-review found 252 was live 1's by-name `skillprobe call` with an operator-supplied argument, at IPC lines 4191-4203); so K2's cast was a `manaOrb` cast, at the slot live 3 and live 4 later confirmed as 0,3 | counts only, as above | - (a key press, no by-name call) | - | 2026-09-25 |
+| K3 | pass: T (vk 84) opened `UI_Talent_Screen_obj` (`listed=1`, id 269398; screenshot `20260925T182821701827Z_k3-talent-screen.png`, which shows "Points Left: 0"). `craftprobe` held `UiCreate` this session and its row logged 0 calls on the open; `UiCreateNode` fired three times building the screen's top tabs. `UiAOpenTalents` logged the open, and replaying it by name opened a new screen (id 270100). T closes the screen; no Esc and no close row was needed | `UiAOpenTalents`: `self=other=Profile_Manager_obj#3673@257017 argc=2 a0=real:1.000000 a1=real:1.000000`, `ret=undefined` | `skillprobe call UiAOpenTalents Profile_Manager_obj 0 1 1 confirm`: `argc=2 a0=1 a1=1`, `ret=undefined`; reproduced | - | 2026-09-25 |
+| bindWriteRule / pointsReader (K4, hand-arming) | pass (handlers identified; pointsReader not found). The owner's hand actions, relayed verbatim in the capture: bound Satan's Mark into the Y-side slot through the expanded bar, then bound it again onto the same slot (emptying it); right-clicked a skill to take a level off, then Reset Skills (which cleared `global.mySkills` to `[236]`); +1 Shadow Bolt and +2 on its Arcane Surge node; took both nodes and the level back; closed every menu. From the raw `out.txt`: bind = `UiATalentChange` (twice), each after `UiAActiveTalentSelect` on a popup button; allocate = `UiATalentScreenTalent`, then `UiAActivateSkillSpecialization` (the sub-panel opening, not a write); sub-allocate = `UiAActivateSkillSubPoint` (twice); reset = `UiATalentScreenResetTalents`, then `ClearPersistSkill` on the confirm dialog's button; sub-node undo = the closure `UI_Button_Subtalent_obj anon@2428` then `ClearPersistSkill` (twice); main undo = the closure `UI_Button_Talent_Player_obj anon@23904` once, with no named dispatch after it. The first right-click (before the reset) matched no armed row. `pointsReader`: `skillprobe state` found no numeric `Player_obj` member named like a point count before or after, and a `tgprobe deep` diff of the `player` scope (`k4before` and after: `changed=20 added=23 removed=23`) changed only animation, sequence and mouse members; the profile object was not walked | `UiATalentChange`: `self=UI_Talent_Button_obj#5273@270501 other=UI_Hud_Talent_obj#5099@262341 argc=1 a0=array len=0`; `UiAActiveTalentSelect`: `self=UI_Talent_Button_obj#5273@270492`/`@270493 other=UI_Hud_Talent_obj#5099@262341`; `UiATalentScreenTalent`: `self=UI_Button_Talent_Player_obj#5016@273502 other=UI_Talent_Screen_obj#5278@273216 argc=1 a0=array len=0`; `UiAActivateSkillSpecialization`: `self=UI_Button_Sub_Skill_obj#5012@273503 other=UI_Talent_Screen_obj#5278@273216`; `UiAActivateSkillSubPoint`: `self=UI_Button_Subtalent_obj#5013@273707 other=UI_Sub_Talents_obj#5272@273703 argc=1 a0=array len=0`; `UiATalentScreenResetTalents`: `self=UI_Button_Small_obj#5009@273230 other=UI_Talent_Screen_obj#5278@273216 argc=1 a0=array len=0`; confirm `ClearPersistSkill`: `self=UI_Button_Small_obj#5009@273609 other=UI_Character_Reset_obj#5026@273608 argc=1 a0=real:1.000000`; undo `ClearPersistSkill`: `self=other=UI_Button_Subtalent_obj#5013@273707 argc=1 a0=real:1.000000` | - (hand actions) | - | 2026-09-25 |
+| bindRoute (K5) | fail (shape not reproduced - stale instance, not a game refusal): `skillprobe call UiATalentChange id:270501 other:262341 confirm` was refused `id:270501: instance_exists is false`. The expanded bar's popup buttons exist only while the popup is open, and the replay ran well after it closed | `UiATalentChange`: `self=UI_Talent_Button_obj#5273@270501 other=UI_Hud_Talent_obj#5099@262341 argc=1 a0=array len=0` | `id:270501 other:262341`, no arguments; refused before the dispatch | - | 2026-09-25 |
+| allocRoute (K5) | pass: the screen reopened by name (`UiAOpenTalents`, new screen id 275195); `menulayout UI_Button_Talent_Player_obj` listed Shadow Bolt's button as `id=275481 talentId=239`; the replay dispatched and `skillprobe state` then read `global.mySkills=[236,239]` (was `[236]`). A fall in the points left was not separately confirmed: no reader was found | `UiATalentScreenTalent`: `self=UI_Button_Talent_Player_obj#5016@273502 other=UI_Talent_Screen_obj#5278@273216 argc=1 a0=array len=0` | `skillprobe call UiATalentScreenTalent id:275481 other:275195 confirm`: `argc=0`, `ret=undefined`; reproduced | - | 2026-09-25 |
+| subAllocRoute (K5) | pass: `UiAActivateSkillSpecialization` on Shadow Bolt's sub-skill button (`id=275482 talentId=239`, other the screen) opened the sub-panel (`UI_Sub_Talents_obj` id 275675); `menulayout UI_Button_Subtalent_obj` listed 15 nodes with no name field. The first listed node (`id=275677`, a `Big` sprite) dispatched and changed nothing; the second (`id=275678`, a `Small` sprite) turned `sub=239 s2=0` into `sub=239 s1=1 s2=0`. A different node from the owner's Arcane Surge, since the listing names none | `UiAActivateSkillSubPoint`: `self=UI_Button_Subtalent_obj#5013@273707 other=UI_Sub_Talents_obj#5272@273703 argc=1 a0=array len=0` | `skillprobe call UiAActivateSkillSpecialization id:275482 other:275195 confirm`, then `skillprobe call UiAActivateSkillSubPoint id:275678 other:275675 confirm`: `argc=0`, dispatched; reproduced | - | 2026-09-25 |
+| resetRoute (K5) | fail (shape not reproduced): `menulayout UI_Button_Small_obj` listed "Reset Skills" (`id=275209`, `uiNodeCallstack=TalentScreenResetTalents`, `enabled=0`); the replay dispatched (`ret=undefined`) and opened the confirm dialog (`UI_Character_Reset_obj` id 275896), whose confirm button (`id=275897`, `uiNodeCallstack=CharacterResetConfirm`) was replayed with `ClearPersistSkill` and also dispatched (`ret=undefined`); `skillprobe state` was unchanged after both (`mySkills=[236,239]`, `sub=239 s1=1 s2=0`), where the owner's click had emptied `mySkills` to `[236]` | `UiATalentScreenResetTalents`: `self=UI_Button_Small_obj#5009@273230 other=UI_Talent_Screen_obj#5278@273216 argc=1 a0=array len=0`; `ClearPersistSkill`: `self=UI_Button_Small_obj#5009@273609 other=UI_Character_Reset_obj#5026@273608 argc=1 a0=real:1.000000` | `skillprobe call UiATalentScreenResetTalents id:275209 other:275195 confirm` (no arguments, where the game passed an empty array), then `skillprobe call ClearPersistSkill id:275897 other:275896 1 confirm`; both dispatched, no state change | - | 2026-09-25 |
+| K6 (readers) | not-observed (`ReturnTalentLevel`, `pointsReader`); pass (the id re-check). `skillprobe call ReturnTalentLevel Player_obj 0 239 confirm` threw (`script_execute threw`), and no armed line of the game's own `ReturnTalentLevel` call was logged to take a shape from (its budget went on the buff draw's background calls); no points reader (K4). `tgprobe talents shadowBolt` answered `talent 239 abilityId=shadowBolt abilityAura=false abilityCooldown=0.250000 abilityLength=320 abilityTags=[15,18,4]`, agreeing with `talentIdRule` | - (no game call logged) | `ReturnTalentLevel`, self `Player_obj` 0, `a0=239`; threw | - | 2026-09-25 |
+| K7 (close-state/hand-over) | pass: the sub-panel was still open (`UI_Sub_Talents_obj` id 275675); a click at its own close button's listed point (`UI_Button_Close_obj` id 275692, `win=1370,252`) closed it, and T then closed the screen (`listed=0`). Final state: `global.mySkills=[236,239]`, `sub=239 s1=1 s2=0`, and the bar had filled `slot=1,3 talent=239 ability=shadowBolt` by itself. The replayed allocation and node could not be undone by name (the undo closures are not rows), so the driver restored the session's backup afterwards | - | - | - | 2026-09-25 |
+| dll-hash (live 3) | pass: the lease's `dll_sha256` matched the dispatched player-build hash `57aba60cc820e6a0362080b84f89d5a0150d0666458638bee8acacb40007bffc` at acquire (`dll_status: hashed`), and `dll_changed_since_taken` was false at release | - | - | - | 2026-09-26 |
+| control (live 3) | pass: `ping` answered `pong (YYTK 4.0.1)`; `skillstate` answered `skillstate:` with `slot=0,0 talent=242 ability=darkOath timer=84 effect=0` | - | - | - | 2026-09-26 |
+| W1 | pass: two `hs_skills_status` reads, 1 s+ apart, both `ok`; 0,0 read `darkOath` with `effect` an integer (0 both times); `learned` twelve ids; `subtalents` a dict. No bar slot's `effect` read above 0 in either read, so W1 alone gave this session no positive control | - | - | - | 2026-09-26 |
+| W2 | not-observed (0,0's own `effect=` count never moved), undetermined, recorded for the owner: both `hs_skill_cast(key=81, slot="0,0")` calls refused `cast_not_confirmed`, the key delivered each time (vk 81 injected), `effect_samples_before=[0,0,0]` both times, and 0,0's count stayed flat throughout. Not a verdict on auras as a class. Correction: Q (vk 81) is not 0,0's key - this session's own `skillstate` reply at frame 13872 (cut into `LIVE3_FIXTURES`) shows the same Q press moved 0,3 `manaOrb`'s `effect=` from 0 to 1 while 0,0 stayed 0, so W2 pressed the wrong slot's key rather than an unproven one, and 0,3's move is this session's own positive control on the `effect=` reader. live 4's `cast-manaorb` check then confirmed `hs_skill_cast(key=81, slot="0,3")` on the player build (see below) | - | - | - | 2026-09-26 |
+| W3 | pass: `hs_skill_bind` refused `route_not_measured` with an empty `verb_trail`; nothing sent | - | - | - | 2026-09-26 |
+| W4 | pass: the invalid-backup call refused `invalid_backup_id` with `verb_trail: []`; the point-check screenshot showed "Points Left: 0"; the owner's hand action (Reset Skills, confirmed) was relayed verbatim ("I clicked Reset Skills and confirmed."); the post-reset `hs_skills_status` showed `learned=[236]`, shorter than W1's twelve ids, `darkOath` dropped off the bar | - | - | - | 2026-09-26 |
+| W5 | pass: `hs_talent_allocate(244, ...)` answered `ok`, `confirmed: true`, `learned=[236,244]`, `screen_closed: true`; then `sub=2` answered `ok`, `confirmed: true`, `subtalents["244"]={"s1":1}`, `screen_closed: false` (the sub-panel needs its own close button) | - | - | - | 2026-09-26 |
+| W6 | pass: after `hs_stop_game`/`hs_launch`/`hs_wait_ready`/`hs_select_character(14)`, `hs_skills_status` still showed `learned=[236,244]` and `subtalents["244"]={"s1":1}`; `blackMass` had filled slot 1,3 on the bar by itself. The by-name allocation and its sub-node survived the game's own save and reload | - | - | - | 2026-09-26 |
+| W7 | pass: `hs_talent_reset` refused `route_not_measured` with an empty `verb_trail`; nothing sent | - | - | - | 2026-09-26 |
+| W8 | pass: `hs_stop_game` exited cleanly; `hs_saves_inspect` recorded `changed=[herosiege13.hss, shop.ini]`, `added=[]`, `missing=[]`; `hs_lease_status` reported `dll_changed_since_taken=false`; `hs_lease_release` answered `released: true`, flagging the saves as still owing a restore, relayed verbatim; `hs_saves_restore` was intentionally not run per this session's dispatch (left to the driver) | - | - | - | 2026-09-26 |
+| dll-hash (live 4) | pass: the lease's `dll_sha256` matched the dispatched hash `57aba60cc820e6a0362080b84f89d5a0150d0666458638bee8acacb40007bffc` at acquire (`dll_status: hashed`); `dll_changed_since_taken` was false at release | - | - | - | 2026-09-26 |
+| control (live 4) | pass: `hs_selfcheck` 6/6, every positive control proven; `ping` answered `pong (YYTK 4.0.1)`; `skillstate` showed `slot=0,0 talent=242 ability=darkOath timer=151 effect=0` and `slot=0,3 talent=253 ability=manaOrb timer=12 effect=0`, matching live 3's control shape | - | - | - | 2026-09-26 |
+| no-press | pass: two `hs_skills_status` reads, 1.5 s+ apart, both showed 0,0 `effect=0` and 0,3 `effect=0`; 0,3 held still with no key pressed - the negative control W1 needed | - | - | - | 2026-09-26 |
+| cast-manaorb | pass (live 4): `hs_skill_cast(key=81, slot="0,3")` answered `confirmed: true`, `effect_before` 0, `effect_after` 1, `effect_samples_before=[0,0,0]`; a full-bar `hs_skills_status` right after showed only 0,3 and 1,13 (both `manaOrb`) move, every other numeric `effect=` unchanged at 0; screenshot `p4-manaorb-cast` shows a visible blue mana-orb effect. This is the player build's positive control for the `effect=` reader and for `hs_skill_cast` itself, on `manaOrb` at 0,3 with Q, not on `darkOath` at 0,0 | - | - | - | 2026-09-26 |
+| manaorb-hold | pass: with no press after the cast, 0,3's `effect=` read 1 at 2026-09-26T12:12:53Z and 0 at 12:13:06Z - about 13 s later (live 4's estimate; the two read times are the finding, not a precise lifetime). `manaOrb` behaves as a timed effect, not a toggle | - | - | - | 2026-09-26 |
+| recast-manaorb | pass: `hs_skill_cast(key=81, slot="0,3", timeout_s=30)` answered `confirmed: true`, `effect_before` 0 (P3 had returned to 0), `effect_after` 2; a full-bar read confirmed only 0,3 and 1,13 moved. Why the recast read 2 instead of 1 is not established | - | - | - | 2026-09-26 |
+| darkoath | not-run (0,0 rebound by the action): the owner's report, verbatim, relayed by the driver: "only way to turn off aura is to click it and select the same aura from expanded skills selection. i did it just now" - a mouse action through the bind/expanded-skills popup, not a keyboard key. Both reads after it show 0,0 `talent=0 ability=unreadable`, and the HUD shows three icons where four showed before, so Dark Oath's own `effect=` count could not be read after the switch-off. Before it, every read this session (control, W1, and this row's own step 2) showed 0,0 `effect=0`, while the owner's report of the action implies the aura was on going in - so that `effect=0` is an inference from the report, not evidence the reader can tell an armed aura from an unarmed one. The switching method is the owner's report, not a measurement; it is not a finding about auras as a class | - | - | - | 2026-09-26 |
+| teardown | pass: `hs_stop_game` exited cleanly (no force); `hs_saves_inspect` recorded `changed=[herosiege13.hss, shop.ini]`, `added=[]`, `missing=[]`; `dll_changed_since_taken=false`; `hs_lease_release` answered `released: true`, flagging the saves as still owing a restore, relayed verbatim; `hs_saves_restore` intentionally not run per this session's dispatch | - | - | - | 2026-09-26 |
 
 ## Decision
 
 Twelve lines. Live procedure 1 settled three (`slotRule`, `castByNameRoute`,
-`talentIdRule`); the other nine read `pending` until Live procedure 2 has
-measured them, the check that settles each named beside it. The player verbs
-and the hub's skill tools are written against these lines and against the
-verbatim replies the launches record, not against the hypotheses above. A route
+`talentIdRule`) and Live procedure 2 the other nine, the check that settled
+each named beside it. Two of those nine are `not measured` (`castKeyRule`,
+`pointsReader`: no reader was found) and two `shape not reproduced`
+(`bindRoute`, `resetRoute`), so nothing ships that depends on them: a caller
+supplies the key, an allocation is confirmed by `global.mySkills` and the
+sub-talent map rather than by a point count, and `skillbind` and
+`talentreset` are not built. The player verbs and the hub's skill tools are
+written against these lines and against the verbatim replies the launches
+recorded, not against the hypotheses above. A route
 line names the by-name shape (script or closure, self, other, arguments) or
 the UI route it fell back to; `not-observed` only when neither was observed.
 A line that fell back after a by-name call recorded `shape not reproduced` or
@@ -920,16 +1064,16 @@ A line that fell back after a by-name call recorded `shape not reproduced` or
 quotes that shape.
 
 slotRule: `UI_Hud_Talent_obj.row0[i]` is the action bar (0,0 draws beside the mana orb, 0,2 to 0,5 in the bottom-left row; the slot next to the potions that casts with Y is 0,6) and `row1[i]` the owned-skills list; each element carries `talentId` (0, or unreadable, for an empty slot), `navBboxX`/`navBboxY` (where the slot's button draws, measured by the toggle research; no slot was clicked at `menulayout`'s `win=` in live 1), `abilityCooldown`, `keyBindKey` (-1 on every slot, so not the key) and `timer` (jitters every frame on every slot, never a proof); `menulayout UI_Hud_Talent_obj` prints one row followed by a `slot=` row per element (live 1, 2026-09-25)
-castKeyRule: pending (K1)
-castProof: pending (K2)
+castKeyRule: not measured - K1 was `not-run (instrument …)`: bar slot 0,6 carried no talent, so no per-slot key draw fired, and the one getter that fired, `GetPlayerInputBindings` (self a HUD widget, `argc=1`, `a0=1`, `ret=array len=78`), returns the whole bindings table and named no slot; `keyBindKey` is -1 on every slot (live 1). Q is now measured as 0,3 `manaOrb`'s key: live 3's own Q press moved 0,3's `effect=` from 0 to 1 while 0,0 stayed at 0 (frame 13872, cut into `LIVE3_FIXTURES`), and live 4's `hs_skill_cast(key=81, slot="0,3")` confirmed it on the player build. Slot 0,0 (`darkOath`) shows no key on the HUD. E and R sit on 0,4 (`healingZone`) and 0,5 (`soulSpurn`), read by eye only from the live-2 `menulayout` geometry and the live-4 `p4-hud` screenshot, never name-resolved. So the caller still supplies the key for the slot it casts, and `skillstate` prints none (live 2 K1, live 3, live 4)
+castProof: on the player build, measured on 0,3 `manaOrb` with Q (live 4): `hs_skill_cast(key=81, slot="0,3")` answered `confirmed: true`, `effect_before` 0, `effect_after` 1, `effect_samples_before=[0,0,0]`, and a full-bar read showed only 0,3 and 1,13 (both `manaOrb`) move - the toggle research's measured rule (`docs/toggle-skills-research.md`; the toolkit's `docs/RUNTIME_DATA_MODELS.md` § 7.2), read as `instance_number` of the ability's effect object, resolved by name through `kSkillTimerNames` (`manaOrb` → `White_Mage_Mana_Orb_obj`), now has a positive control on this build; live 4 also found `manaOrb` a timed effect (about 13 s, live 4's estimate) rather than a toggle. On the research build, K2's chain - one Q press (vk 81, held 120 ms), which live-2 IPC line 11593's armed `TalentUse` line shows carried `a1=253` (`manaOrb`), not `darkOath` - gave `TalentUse` 1, `TalentUseClass` 2, `PlayerManaUpdate` 3 and `NetworkSendClientTalentUse` 1 call (reproduced, with the slot and key substitution the capture records). Dark Oath's own proof is not observed on either build: the owner reported that no key switches it, only a click through the bind/expanded-skills popup (live 4, `darkoath`, reported). Every read of 0,0's `effect=` count before that click, this session and live 3's, showed 0, while the owner's report of the click implies the aura was on going in, so `effect=0` on `darkOath` is an inference from that report, not evidence the reader can tell an armed aura from an unarmed one. `darkOath`'s slot element carries `auraSkill=true`, so it is an aura; the toggle research measured the rule on five toggles and used the aura family as its negative-control class, and still has not measured Dark Oath itself - not a finding about auras as a class either way (live 2 K2, live 3 W2, live 4 cast-manaorb and darkoath)
 castByNameRoute: reproduced - `skillprobe call TalentUse Player_obj 0 id:<player> 252 1 false true confirm` dispatched with self = other = `Player_obj#3553@<player>`, `argc=5`, `a0=ref instance <player>`, `a1=252`, `a2=1`, `a3=false`, `a4=true`, `ret=undefined`; `TalentUseClass` then fired three times (a0 = 252, then `int64:737`, then `int64:243`: the talent and two chained sub-effects), none threw; a research fact only, since the call skips `CheckTalentUse`'s mana and requirement gate, and never the shipped cast (live 1, S3)
-bindWriteRule: pending (K4)
-bindRoute: pending (K4, K5)
-talentScreenOpenRoute: pending (K3; the UI route is key T, vk 84, which the owner used in live 1)
-allocRoute: pending (K4, K5)
-subAllocRoute: pending (K4, K5)
-resetRoute: pending (K4, K5)
-pointsReader: pending (K4, K6)
+bindWriteRule: `UiATalentChange` - self the expanded bar's popup button (`UI_Talent_Button_obj#5273@270501`), other the bar (`UI_Hud_Talent_obj#5099@262341`), `argc=1`, `a0` an empty array, each time after `UiAActiveTalentSelect` on a popup button with the bar as other; it fired on both of the owner's binds (into the Y-side slot, then again to empty it). Which store it writes first was not read apart: `hud.playerSlot.bind_skill` reads `undefined`, `playerSlot` is a ds_map `find` does not walk, and the bar's `row0`/`row1` elements are what `skillstate` reads (live 2, K4)
+bindRoute: shape not reproduced (stale instance) - the replay `skillprobe call UiATalentChange id:270501 other:262341 confirm` was refused `id:270501: instance_exists is false`: the popup's buttons exist only while it is open, and the replay ran after it closed. By-name not tested with the logged shape (self the popup button, other the bar, `argc=1`, `a0` an empty array). No `skillbind` verb is built; the hub's `hs_skill_bind` refuses `route_not_measured` until a session replays it while the popup is open (live 2, K4, K5)
+talentScreenOpenRoute: byname - `UiAOpenTalents` with self = other = `Profile_Manager_obj` (`#3673@257017`), `argc=2`, `a0=1`, `a1=1`, `ret=undefined`, logged on the key T and replayed by name, which listed a new `UI_Talent_Screen_obj`; plain `UiCreate` did not fire on the open (0 calls; `UiCreateNode` built the tabs). T (vk 84) closes the screen. The sub-panel closes only by its own close button (`UI_Button_Close_obj`) or with the screen (live 2, K3, K7)
+allocRoute: byname - `UiATalentScreenTalent` with self the talent's own `UI_Button_Talent_Player_obj` (the one whose `talentId` is the talent's id; K4 `#5016@273502`, K5 `id=275481 talentId=239`) and other the open `UI_Talent_Screen_obj`; the game's click passes `argc=1` with an empty array, the replay passed no arguments and reproduced it: `global.mySkills` went from `[236]` to `[236,239]`. The confirmation is the id joining `global.mySkills`; a fall in the points left was not separately confirmed, since no reader exists. `UiAActivateSkillSpecialization` fired straight after the game's click, opening the sub-panel - a trigger, not a write. Measured for a first level only (0 → 1) (live 2, K4, K5)
+subAllocRoute: byname - `UiAActivateSkillSpecialization` with self the `UI_Button_Sub_Skill_obj` whose `talentId` is the talent's id (`id=275482 talentId=239`) and other the screen opens the sub-panel (`UI_Sub_Talents_obj` with that `talentId`, id 275675); then `UiAActivateSkillSubPoint` with self a listed `UI_Button_Subtalent_obj` and other the sub-panel, no arguments (the game's click passes an empty array): the second listed node (`id=275678`, a `Small` sprite) turned `sub=239 s2=0` into `sub=239 s1=1 s2=0`, while the first (`id=275677`, a `Big` sprite) dispatched and changed nothing. The listing exposes no node name, so a node is chosen by its place in the listing (live 2, K4, K5)
+resetRoute: shape not reproduced - `UiATalentScreenResetTalents` with self the "Reset Skills" `UI_Button_Small_obj` and other the screen, replayed with no arguments where the game passed an empty array, opened the confirm dialog (`UI_Character_Reset_obj`), and `ClearPersistSkill` on its confirm button (`a0=1`, the logged shape) dispatched with `ret=undefined`; neither changed `skillprobe state`, while the owner's click had emptied `global.mySkills` to `[236]`. By-name not tested with the logged shape for the reset button (`argc=1`, `a0` an empty array). No `talentreset` verb is built; the hub's `hs_talent_reset` refuses `route_not_measured` (live 2, K4, K5)
+pointsReader: not measured - no numeric member of `Player_obj` whose name holds `point`, `talent` or `skill` exists before or after an allocation, and a `tgprobe deep` diff of the `player` scope across the owner's allocation changed only animation, sequence and mouse members; the profile object was not walked. `ReturnTalentLevel` by name (self `Player_obj`, `a0=239`) threw, and no game call of it was logged to take a shape from. Nothing ships that needs a point count or a level (live 2, K4, K6)
 talentIdRule: `abilityId` on the talent's info struct in `global.talentStructMap` - `tgprobe talents <one name>` prints `talent <id> abilityId=<name> abilityAura=<bool> abilityCooldown=<n>` (one name per call; a call with several names matched only the first); `global.mySkills` lists the learned ids (live 1, S1)
 
 What each line records:

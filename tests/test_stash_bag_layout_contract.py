@@ -1,11 +1,13 @@
 """Contract tests for `menulayout`'s stash and bag rows, and for the
 `craftprobe` additions the stash and bag research launch needs.
 
-The hub's six stash and bag tools (`hs_give_item`, `hs_stash_open`,
-`hs_stash_close`, `hs_stash_tab`, `hs_bag_tab`, `hs_move_item`) set up game
-state for other tests, so each acts through the runtime by name - the game's
-own routine, called with the shape the research launch logged - and keeps a
-click on a listed row only as the fallback a § Decision line names.
+The hub's five stash and bag tools (`hs_give_item`, `hs_stash_open`,
+`hs_stash_close`, `hs_stash_tab`, `hs_bag_tab`) set up game state for other
+tests, so each acts through the runtime by name - the game's own routine,
+called with the shape the research launch logged - and keeps a click on a
+listed row only as the fallback a § Decision line names. (The by-name move
+between the bag and the stash, `hs_move_item`, was split out to
+`hs-drive-stash-move-research`.)
 `menulayout` is the reader that proves each of them: a tab, a grid or a window
 is identified by the variables it prints. So the listing grows: the stash,
 bag and inventory objects join the candidate table
@@ -35,7 +37,7 @@ from pathlib import Path
 TESTS_DIR = Path(__file__).resolve().parent
 FORGEPACT_DIR = TESTS_DIR.parent
 PLUGIN_SRC = FORGEPACT_DIR / "plugin" / "ModuleMain.cpp"
-NOTES = FORGEPACT_DIR / "release-notes-v1.4.6.md"
+NOTES = FORGEPACT_DIR / "release-notes-v1.4.7.md"
 README = FORGEPACT_DIR / "README.md"
 DOC = FORGEPACT_DIR / "docs" / "stash-bag-layout-research.md"
 HARNESS = TESTS_DIR / "menu_layout_value_text.cpp"
@@ -51,12 +53,39 @@ from test_release_hook_contract import function_body, strip_comments, strip_rese
 # are the character-select set; the rest are what the stash and bag research
 # expects to identify tabs and grids by (docs/stash-bag-layout-research.md,
 # § Instrument). `activationFunc` is deliberately absent: a method value has
-# no stable text.
+# no stable text. `tabSelected` joined after live 2: it is the bag sub-tab
+# state (§ Decision, bagTabState), which `stashTabSelected` is not.
 OPTIONAL_FIELDS = (
     "label", "name", "slot", "index", "page", "selected",
     "uiNodeCallstack", "activationArgs", "enabled", "tabNumber", "tabType",
-    "stashTabSelected", "nodeGridWidth", "nodeGridHeight", "gridScale", "gridName",
+    "stashTabSelected", "tabSelected", "nodeGridWidth", "nodeGridHeight", "gridScale", "gridName",
 )
+
+# The five player verbs (Step 5): verb -> (its Handle* helper, its command function).
+VERBS = {
+    "playerwarp": ("HandlePlayerWarpCommand", "static void PlayerWarpCommand("),
+    "stashtab": ("HandleStashTabCommand", "static void StashTabCommand("),
+    "bagtab": ("HandleBagTabCommand", "static void BagTabCommand("),
+    "stashclose": ("HandleStashCloseCommand", "static void StashCloseCommand("),
+    "giveitem": ("HandleGiveItemCommand", "static void GiveItemCommand("),
+}
+VERBS_BLOCK = ("// ---- playerwarp, stashtab, bagtab, stashclose, giveitem: the stash and bag player verbs (toolkit #147)",
+               "// ---- end stash and bag player verbs")
+# The game routines the tab and close verbs call, each by its SDK constant.
+VERB_SCRIPTS = {"UiACloseButton", "UiAStashTabClick", "UiAStashMaterialTabClick",
+                "UiAInventoryMaterialTabClick", "UiAInventorySocketTabClick"}
+# giveitem's order: craftmats' own constants, CmMakeUnit's order.
+GIVE_ORDER = ("kCmSaveStructName", "kCmTimestampName", "kCmFromJsonName", "kCmAddToMapName",
+              "kCmPreferredName", "kCmPlaceName")
+# The builtins a cell row may read through.
+CELL_READS = {"variable_instance_exists", "variable_instance_get", "array_length", "array_get",
+              "variable_struct_exists", "variable_struct_get"}
+
+
+def results_rows(results):
+    """§ Results' table rows by their check name - the one parse both the
+    document and the negative control go through."""
+    return {row.split("|")[1].strip(): row for row in results.split("\n") if row.startswith("|")}
 
 # A game script run from the player build is out of scope, whichever way it
 # would be reached: by name through script_execute, or with a supplied self
@@ -82,8 +111,10 @@ RECORDING_LABELS = ("shape not reproduced", "not-run (instrument")
 # control carry "(live 2)" so the live-1 rows stay distinct).
 LIVE1_CHECKS = ["dll-hash", "marker", "control"] + [f"P0-{n}" for n in range(1, 11)]
 LIVE2_CHECKS = ["dll-hash (live 2)", "marker (live 2)", "control (live 2)"] + [f"P2-{n}" for n in range(1, 9)]
-# The six § Decision lines live 1 settled.
-LIVE1_KEYS = ("warpRoute", "stashCloseRoute", "stashTabRule", "stashTabState", "countReader", "itemRule")
+# Live 3 (verification, player build, 2026-09-26): no `marker` row (the
+# player build has no `craftprobe`).
+LIVE3_CHECKS = ["dll-hash (live 3)", "control (live 3)", "V0 (live 3)", "V0b (live 3)"] + \
+    [f"V{n} (live 3)" for n in range(1, 7)]
 
 # craftprobe's three rows for the stash and bag launch: after the Phase 1k
 # rows, before the control, which stays last.
@@ -231,7 +262,6 @@ class StashBagResearchDoc(unittest.TestCase):
         for key in DECISION_KEYS:
             lines = re.findall(r"(?m)^" + key + r": (.+)$", decision)
             self.assertEqual(len(lines), 1, key)
-            # `pending` is allowed until the phase-0 launch has measured it.
             self.assertTrue(lines[0].strip(), key)
 
     def test_no_other_decision_key(self):
@@ -257,26 +287,46 @@ class StashBagResearchDoc(unittest.TestCase):
         self.assertEqual(rows[0], RESULTS_HEADER)
         # One row per check the live procedures name, each with six cells.
         checks = [row.split("|")[1].strip() for row in rows[2:]]
-        self.assertEqual(checks, LIVE1_CHECKS + LIVE2_CHECKS)
+        self.assertEqual(checks, LIVE1_CHECKS + LIVE2_CHECKS + LIVE3_CHECKS)
         for row in rows[2:]:
             self.assertEqual(row.count("|"), 7, row)
 
-    def test_live1_rows_are_recorded(self):
-        # Live 1 ran (2026-09-25): none of its rows is left pending, and each
-        # is dated; live 2's rows stay pending until its capture exists.
+    def test_all_results_rows_are_recorded(self):
+        # Live 1 and live 2 have both run (2026-09-25, rescope D11): every
+        # row is filled and dated, none left pending.
         results = doc_section(self.doc, "## Results")
-        rows = {row.split("|")[1].strip(): row for row in results.split("\n") if row.startswith("|")}
-        for check in LIVE1_CHECKS:
+        rows = results_rows(results)
+        for check in LIVE1_CHECKS + LIVE2_CHECKS:
             self.assertNotIn("pending", rows[check], check)
             self.assertTrue(rows[check].rstrip().endswith("| 2026-09-25 |"), check)
-        # Negative control: the matcher does see a pending row.
-        self.assertIn("pending", rows["P2-1"])
+        # Live 3 (verification, player build) ran 2026-09-26.
+        for check in LIVE3_CHECKS:
+            self.assertNotIn("pending", rows[check], check)
+            self.assertTrue(rows[check].rstrip().endswith("| 2026-09-26 |"), check)
+        # Negative control: the same parse, handed a section with one pending
+        # row among filled ones, finds that row by its check and sees it
+        # pending - so an empty or unparsed section cannot pass the loop above.
+        fabricated = results.replace(rows["P2-8"], "| P2-8 | pending | - | - | - | - |")
+        control = results_rows(fabricated)
+        self.assertEqual(set(control), set(rows))
+        self.assertIn("pending", control["P2-8"])
+        self.assertNotIn("pending", control["P2-7"])
 
-    def test_live1_settled_six_decision_lines(self):
+    def test_every_decision_line_settled(self):
+        # Live 1 settled six lines; live procedure 2 settled the other nine
+        # (rescope D11 moved moveWholeRoute/moveOneRoute to
+        # hs-drive-stash-move-research rather than leaving them pending).
         decision = doc_section(self.doc, "## Decision")
-        settled = {key for key in DECISION_KEYS
-                   if "pending" not in re.search(r"(?m)^" + key + r": (.+)$", decision).group(1)}
-        self.assertEqual(settled, set(LIVE1_KEYS))
+        for key in DECISION_KEYS:
+            line = re.search(r"(?m)^" + key + r": (.+)$", decision).group(1)
+            self.assertNotIn("pending", line, key)
+
+    def test_move_decision_lines_record_where_they_went(self):
+        decision = doc_section(self.doc, "## Decision")
+        for key in ("moveWholeRoute", "moveOneRoute"):
+            line = re.search(r"(?m)^" + key + r": (.+)$", decision).group(1)
+            self.assertTrue(
+                line.startswith("moved to hs-drive-stash-move-research"), key)
 
     def test_live_procedure_names_the_outcomes_that_are_not_route_negatives(self):
         procedure = doc_section(self.doc, "## Live procedure")
@@ -555,6 +605,225 @@ class CraftprobeLive2Additions(unittest.TestCase):
         self.assertEqual(len(self.rows), 286)
 
 
+class MenuLayoutCellRows(unittest.TestCase):
+    """Step 5's cell rows: after each `UI_Inventory_Grid_obj` row, one
+    `  cell=<x>,<y> grid=<id> fp=<fingerprint|none> o=none` row per occupied
+    node (§ Decision, cellRule: a node carries its fingerprint and no count)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.plugin = PLUGIN_SRC.read_text(encoding="utf-8").replace("\r\n", "\n")
+
+    def body(self, signature):
+        return strip_comments(function_body(self.plugin, signature))
+
+    def test_cell_rows_follow_each_grid_row(self):
+        command = self.body("static void MenuLayoutCommand(")
+        self.assertIn("HeroSiege::Objects::GameObject::UI_Inventory_Grid_obj", command)
+        row = command.index("Out(MenuLayoutRow(inst, sc));")
+        cells = command.index('if (gridIdx >= 0 && MenuLayoutRead(inst, "object_index") == gridIdx) MenuLayoutCells(inst, true);')
+        self.assertLess(row, cells)
+        # Cell rows are not instances: only an instance row counts toward the cap.
+        self.assertEqual(command.count("++listed;"), 1)
+        self.assertNotIn("listed", self.body("static int MenuLayoutCells("))
+
+    def test_cell_row_format(self):
+        cells = self.body("static int MenuLayoutCells(")
+        at = [cells.index(p) for p in ('"  cell="', '" grid="', '" fp="', '" o=none"')]
+        self.assertEqual(at, sorted(at))
+        self.assertIn('"nodeFingerprint"', cells)
+        # No count is read: o= is the literal none, never a value.
+        self.assertNotIn('"o"', cells)
+        self.assertIn('std::string fp = "none";', cells)
+
+    def test_cell_rows_read_only(self):
+        cells = self.body("static int MenuLayoutCells(")
+        used = set(re.findall(r'CallBuiltin\("(\w+)"', cells))
+        # Negative control: the scan sees the reads that are there.
+        self.assertIn("array_get", used)
+        self.assertIn("variable_struct_get", used)
+        self.assertLessEqual(used, CELL_READS)
+        for word in STASH_FORBIDDEN + ("variable_struct_set", "array_set", "Cm", "Ap"):
+            self.assertNotIn(word, cells, word)
+
+    def test_a_grid_past_the_cap_says_so_on_its_row(self):
+        self.assertIn("static constexpr int kMenuLayoutMaxCells = 200;", self.plugin)
+        cells = self.body("static int MenuLayoutCells(")
+        self.assertIn("if (!print || occupied > kMenuLayoutMaxCells) continue;", cells)
+        row = self.body("static std::string MenuLayoutRow(")
+        cap = row.index('row += " cellcap=1";')
+        self.assertLess(row.index("MenuLayoutCells(inst, false) > kMenuLayoutMaxCells"), cap)
+        self.assertLess(cap, row.index('row += " text="'))
+        # Rows walked before columns: the first rows printed are the first row-major ones.
+        self.assertLess(cells.index("for (int y = 0; y < height; ++y)"), cells.index("for (int x = 0; x < width; ++x)"))
+
+
+class StashBagPlayerVerbs(unittest.TestCase):
+    """Step 5's five player verbs: tool-facing, player build, each from its own
+    helper, everything by name, a before/after line and a refusal line."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.plugin = PLUGIN_SRC.read_text(encoding="utf-8").replace("\r\n", "\n")
+        start, end = VERBS_BLOCK
+        cls.block = cls.plugin[cls.plugin.index(start):cls.plugin.index(end)]
+        cls.code = strip_comments(cls.block)
+        cls.shipped = strip_comments(strip_research_blocks(cls.plugin))
+
+    def body(self, signature):
+        return strip_comments(function_body(self.plugin, signature))
+
+    def player_commands(self):
+        run = function_body(self.plugin, "static void RunCommand(const std::string& line)")
+        commands = run[run.index("kPlayerCommands = {"):]
+        return commands[:commands.index("};")]
+
+    def test_each_verb_ships_in_the_player_build(self):
+        commands = self.player_commands()
+        self.assertIn('"menulayout"', commands)   # the set is the one read, not an empty slice
+        for verb, (_, command) in VERBS.items():
+            self.assertIn(f'"{verb}"', commands, verb)
+            self.assertIn(command, self.shipped, verb)
+        self.assertNotIn("FORGEPACT_RELEASE", self.block)
+        # Neither a by-name open nor a move is a verb here.
+        for verb in ("stashopen", "stashmove"):
+            self.assertNotIn(f'"{verb}"', commands, verb)
+            self.assertNotIn(f'lc == "{verb}"', self.plugin, verb)
+
+    def test_each_is_dispatched_from_its_own_handler_as_a_standalone_early_return(self):
+        run = function_body(self.plugin, "static void RunCommand(const std::string& line)")
+        for verb, (handler, command) in VERBS.items():
+            self.assertIn(f"    if ({handler}(lc, rest)) return;\n", run, verb)
+            name = command[len("static void "):-1]
+            self.assertIn(f'if (lc == "{verb}") {{ {name}(rest); return true; }}',
+                          self.body(f"static bool {handler}("), verb)
+            self.assertEqual(self.plugin.count(f'lc == "{verb}"'), 1, verb)
+
+    def test_frame_callback_never_mentions_them(self):
+        frame = function_body(self.plugin, "void FrameCallback(")
+        for verb, (handler, command) in VERBS.items():
+            name = command[len("static void "):-1]
+            for word in (verb, handler, name):
+                self.assertNotIn(word, frame, word)
+
+    def test_nothing_is_hooked_or_reached_by_address(self):
+        for word in ("Rva", "GetModuleHandle", "MmCreateHook", "HookOneScript", "HookOneScriptTable", "HookBuiltin",
+                     "HookRawNamedRoutine", "InstallScriptHook", "instance_create", "instance_destroy",
+                     "event_perform", "CallGameScriptEx", "ds_map_replace", "array_set"):
+            self.assertNotIn(word, self.code, word)
+
+    def test_instances_are_resolved_by_name(self):
+        # No object is ever typed: every one through the SDK's GameObject enum.
+        self.assertIsNone(re.search(r'"\w+_obj"', self.code))
+        self.assertIn("HeroSiege::Objects::GameObject::UI_Stash_obj", self.code)
+        for signature in ("static std::vector<RValue> TalentAllocInstances(", "static bool CmInstance("):
+            body = self.body(signature)
+            for step in ('"asset_get_index"', '"instance_number"', '"instance_find"'):
+                self.assertIn(step, body, signature)
+        self.assertIn("TalentAllocInstances(obj)", self.body("static bool StashVerbByString("))
+        self.assertIn("HhResolveLocalPlayer(player, nullptr)", self.body("static void PlayerWarpCommand("))
+
+    def test_routines_are_called_by_sdk_constant(self):
+        scripts = set(re.findall(r"HeroSiege::Scripts::gml_Script_(\w+)", self.code))
+        self.assertEqual(scripts, VERB_SCRIPTS)
+        pairs = re.findall(r"TalentAllocScript (\w+)\{ HeroSiege::Scripts::(\w+),\s*"
+                           r"SdkShortScriptName\(HeroSiege::Scripts::(\w+)\) \}", self.code)
+        self.assertEqual(len(pairs), len(VERB_SCRIPTS))
+        for name, routine, short in pairs:
+            self.assertEqual(routine, short, name)
+        # The dispatcher resolves the constant through GetNamedRoutinePointer
+        # before anything is called.
+        dispatch = self.body("static TalentAllocCall TalentAllocDispatch(")
+        self.assertLess(dispatch.index("GetNamedRoutinePointer(s.routine.data(), &p)"), dispatch.index('"asset_get_index"'))
+        self.assertLess(dispatch.index('"asset_get_index"'), dispatch.index('"script_execute"'))
+        # Every by-name dispatch here names one of the verb constants.
+        for call in re.findall(r"TalentAllocDispatch\(([^,]+),", self.code):
+            self.assertIn(call.strip(), ("kStashVerbClose", "*named", "*script"), call)
+        # The one other dispatch is Socketable's closure, the method value the
+        # button itself holds, read from its activationFunc first.
+        self.assertEqual(self.code.count("CallBuiltinEx("), 1)
+        tab = self.body("static void StashTabCommand(")
+        self.assertLess(tab.index('RValue("activationFunc")'), tab.index('CallBuiltinEx(res, "script_execute", self, self, callArgs)'))
+        self.assertIn("std::vector<RValue> callArgs{ method };", tab)
+        # giveitem's calls are craftmats' own constants, through CmCall.
+        give = self.body("static void GiveItemCommand(")
+        for call in re.findall(r"CmCall\((\w+),", give):
+            self.assertIn(call, GIVE_ORDER + ("kCmRemoveFromMapName",), call)
+
+    def test_each_prints_before_after_and_a_refusal_with_its_name(self):
+        for verb, (_, command) in VERBS.items():
+            body = self.body(command)
+            self.assertIn(f'const std::string tag = "{verb}: ";', body, verb)
+            self.assertIsNone(re.search(r"Out\((?!tag \+)", body), verb)
+            self.assertIn('"refused - ', body, verb)
+            self.assertIn('before="', body, verb)
+            self.assertIn('" after="', body, verb)
+
+    def test_what_is_not_measured_is_refused_before_anything_is_called(self):
+        give = self.body("static void GiveItemCommand(")
+        stash = give.index('Lower(tok[0]) == "stash"')
+        self.assertLess(stash, give.index("CmCall("))
+        refusal = give[stash:give.index("return;", stash)]
+        self.assertIn("route_not_measured", refusal)
+        self.assertIn("hs-drive-stash-move-research", refusal)
+        bag = self.body("static void BagTabCommand(")
+        self.assertLess(bag.index("route_not_measured"), bag.index("TalentAllocDispatch("))
+        for name in ('"materials"', '"socket"', '"InventoryTabMaterial"', '"InventoryTabSocket"'):
+            self.assertIn(name, bag)
+        tab = self.body("static void StashTabCommand(")
+        self.assertLess(tab.index("is not a measured shape"), tab.index("TalentAllocDispatch("))
+
+    def test_each_shape_is_live_2s_supplied_one(self):
+        close = self.body("static void StashCloseCommand(")
+        self.assertIn("TalentAllocDispatch(kStashVerbClose, close, stash, {})", close)
+        self.assertIn('"InventoryClose"', close)
+        bag = self.body("static void BagTabCommand(")
+        self.assertIn("TalentAllocDispatch(*script, self, stash, {})", bag)
+        self.assertIn('"tabSelected"', bag)
+        self.assertIn('"activeNode"', bag)
+        tab = self.body("static void StashTabCommand(")
+        self.assertIn("TalentAllocDispatch(*named, self, bar, args)", tab)
+        self.assertIn("const std::vector<RValue> args{ RValue(n), button };", tab)
+        self.assertIn('"stashTabSelected"', tab)
+        self.assertIn('RValue("tabNumber")', tab)
+        # The state did not change: a refusal, never a pass.
+        for body, var in ((tab, "stashTabSelected"), (bag, "tabSelected")):
+            self.assertIn(f'"refused - the state did not change ({var} stayed "', body)
+
+    def test_playerwarp_writes_only_x_and_y(self):
+        warp = self.body("static void PlayerWarpCommand(")
+        writes = re.findall(r'"variable_instance_set", \{ RValue\(id\), RValue\("(\w+)"\)', warp)
+        self.assertEqual(writes, ["x", "y"])
+        self.assertEqual(self.code.count('"variable_instance_set"'), 2)
+        # A non-finite argument is refused before the player is resolved.
+        self.assertLess(warp.index("StashVerbNumber(tok[0], x)"), warp.index("HhResolveLocalPlayer("))
+        self.assertIn("std::isfinite(out)", self.body("static bool StashVerbNumber("))
+
+    def test_giveitem_copies_by_the_loader_into_the_bag_and_moves_nothing(self):
+        give = self.body("static void GiveItemCommand(")
+        for word in ("ChangeItemOwner", "StashGridAddItem", "RemoveItemFromMap", "GridRemoveItem",
+                     "kCmStashOwner", "kCmGridRemoveName", "CmTake(", "CmMakeUnit("):
+            self.assertNotIn(word, give, word)
+        self.assertIn("CmItemMap(save, kCmCharacterOwner, map0)", give)
+        # CmMakeUnit's order.
+        at = [give.index(c) for c in GIVE_ORDER]
+        self.assertEqual(at, sorted(at))
+        # The only write is the save struct's o, before the loader runs:
+        # nothing edits the item after it is made.
+        self.assertEqual(give.count('"variable_struct_set"'), 1)
+        self.assertLess(give.index('"variable_struct_set", { saved, RValue("o")'), give.index("kCmFromJsonName"))
+        # A non-stackable takes count 1; a count above the template's own o is refused.
+        self.assertLess(give.index("!stackable && count > 1"), give.index("kCmTimestampName"))
+        self.assertLess(give.index("count > have"), give.index("kCmTimestampName"))
+        # The undo is the only way out of map 0, and only after the add.
+        self.assertEqual(give.count("kCmRemoveFromMapName"), 1)
+        self.assertLess(give.index("kCmAddToMapName"), give.index("kCmRemoveFromMapName"))
+        # The proof is its own re-read of map 0 and the destination cells.
+        for part in ('"key="', '" before="', '" after="', '" o="', '"confirmed - "', '" in map 0 and in the destination cells"',
+                     '"not confirmed - map 0 answers "', "after == before + 1", "CmCellsHold(cellsNow, made)"):
+            self.assertIn(part, give, part)
+
+
 class StashBagDocumentation(unittest.TestCase):
     def test_release_notes_mention_the_stash_and_the_bag(self):
         if not NOTES.is_file():   # published notes leave main (forgepact-notes-cleanup.yml)
@@ -578,7 +847,7 @@ class StashBagDocumentation(unittest.TestCase):
             self.assertIn(token, section, token)
 
     def test_notes_file_is_the_unpublished_version(self):
-        self.assertEqual(NOTES.name, "release-notes-v1.4.6.md")
+        self.assertEqual(NOTES.name, "release-notes-v1.4.7.md")
 
     def test_readme_and_notes_agree_on_the_drag_object(self):
         # Whether UI_Inventory_Drag_obj holds the item on the cursor is not
