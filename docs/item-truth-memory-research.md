@@ -165,9 +165,11 @@ never held more than 3.14 GB.
 ## What this changes
 
 - **No limit on evaluations per session is needed for memory.** The Item
-  Editor's `build_game_seed_table.py` (`--max-per-run 30000`), its
-  `GAME_TRUTH_DESIGN.md` and the hub's 2.16.3 seed-table notes state the 95 KB
-  figure. They were written before this was measured.
+  Editor 2.16.3 seed-table work first stated the 95 KB figure and stopped
+  `build_game_seed_table.py` after 30,000 evaluations per session. Both were
+  corrected on 2026-09-26, before that work merged: the tool now builds the
+  whole table in one run (`--max-per-run` defaults to no limit), and its notes
+  point here (hero-siege-item-editor#11, hub #206).
 - **The WER reports at game close** come from the tracker producer's shutdown,
   not from the mod or the game; the fix belongs in HS-Offline-Tracker. A crash
   report that names `ucrtbase.dll` with `0xc0000409` needs its dump's stack read
