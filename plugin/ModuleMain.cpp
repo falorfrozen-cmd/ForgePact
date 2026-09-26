@@ -21741,7 +21741,10 @@ static const DropGrup kDropGruplar[] = {
     { "orb",        15, "socketable_orb",                                           37 },
     { "bossgem",    15, "socketable_gem",                                           -1 },
     { "scrollofra", 13, "scroll_of_ra",                                             34 },
-    { "primeevil",  13, "gurags_,deaths_,damiens_,anubis_,karp_kings_,satans_horn", 41 },
+    // The twelve Key of Terror parts, infernal versions included. "satans_horn"
+    // missed collectible_satans_infernal_horn; in category 13 "satans_" matches
+    // only the two horns.
+    { "primeevil",  13, "gurags_,deaths_,damiens_,anubis_,karp_kings_,satans_",     41 },
     { "dimshard",   13, "dimensional_shard",                                        43 },
     { "battlefrag", 13, "battle_fragment",                                          25 },
     { "colosfrag",  13, "colosseum_fragment",                                       38 },
