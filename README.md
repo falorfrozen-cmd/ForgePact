@@ -97,10 +97,29 @@ Fragments and reads no drop rate, so the slider cannot scale it. See
 
 ### Using the panel
 
-Use the sidebar to move between **Setup**, **Modifiers**, **World**, **Loot** and
-**Mods**. On narrow windows these become tabs across the top. The header shows
+Use the tabs along the top to move between **Setup**, **Modifiers**, **World**, **Loot** and
+**Mods**. The header shows
 whether the game is running and whether your latest setting has saved. **Auto-apply**
 and **Apply all now** keep their existing behavior.
+
+The screenshots below are the panel at 1280 wide in its default **Ledger** theme,
+taken from the test sandbox, which reports the game open without the mod plugin
+(hence the warning icon).
+
+![The Modifiers tab](assets/panel/modifiers-1280.png)
+**Modifiers**: the character multipliers in four groups (Utility, Offense, Defense & Sustain, Critical Strikes), each slider with its own switch.
+
+![The World tab](assets/panel/world-1280.png)
+**World**: Monster Density, Monster Rarity and Enemy Movement Speed beside the Satanic Zone mods.
+
+![The Loot tab](assets/panel/loot-1280.png)
+**Loot**: the drop-rate multipliers, keys included, each with its own switch.
+
+![The Mods tab, Quality of Life](assets/panel/mods-qol-1280.png)
+**Mods › Quality of Life**: every mod not tied to a forged item, one card each.
+
+![The Mods tab, Items](assets/panel/mods-items-1280.png)
+**Mods › Items**: the Miner's Helmet and the Custom Forge mechanics for items made in the Item Editor.
 
 Every slider has **− / +** buttons and an editable value. Click the value, or focus
 it and press Enter, to type an exact number; Enter applies and Escape cancels.
