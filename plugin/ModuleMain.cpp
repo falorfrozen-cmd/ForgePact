@@ -466,6 +466,7 @@ static bool PopulationCapacityAvailable() { return ForgePact::ProtectedPool::Run
 #include <ForgePact/IpcServer.hpp>
 #include <ForgePact/ModManager.hpp>
 #include <ForgePact/ItemTruth.hpp>
+#include <ForgePact/ExitSafeThread.hpp>
 
 static void DoScriptLookup(const std::string& name)
 {
@@ -21048,7 +21049,14 @@ static std::atomic<bool> g_CoopEnabled{ false };
 static std::atomic<bool> g_CoopRun{ false };
 static SOCKET g_CoopSock = INVALID_SOCKET;
 static sockaddr_in g_CoopPeer{};
-static std::thread g_CoopRecvThread;
+// Not a std::thread (ForgePact/ExitSafeThread.hpp): as one, a receive thread
+// that coopstart started and coopstop never ended was still joinable when the
+// game exited, and its destructor aborted the exit.
+static ForgePact::ExitSafeThread g_CoopRecvThread;
+// How long coopstop waits for the receive thread. Closing its socket ends the
+// recvfrom it waits in, so this is a bound on the game's frame thread, not an
+// expected wait.
+static constexpr std::chrono::milliseconds kCoopStopJoinTimeout{ 2000 };
 static std::mutex g_RemoteMtx;
 static CoopPacket g_Remote{};
 static std::atomic<bool> g_RemoteValid{ false };
@@ -21058,7 +21066,7 @@ static std::atomic<uint32_t> g_CoopSeq{ 0 };
 static std::string g_CoopStatus = "off";
 static char g_CoopName[24] = { 0 };
 
-static void CoopRecvLoop()
+static void CoopRecvLoop() noexcept
 {
     while (g_CoopRun.load()) {
         CoopPacket pkt{};
@@ -21082,7 +21090,14 @@ static void CoopStop()
     g_CoopRun.store(false);
     g_CoopEnabled.store(false);
     if (g_CoopSock != INVALID_SOCKET) { closesocket(g_CoopSock); g_CoopSock = INVALID_SOCKET; }
-    if (g_CoopRecvThread.joinable()) g_CoopRecvThread.join();
+    // A receive thread that does not end in time is kept, not destroyed, and
+    // coopstart refuses until a later coopstop has joined it.
+    if (!g_CoopRecvThread.JoinFor(kCoopStopJoinTimeout)) {
+        g_CoopStatus = "stopping";
+        Out("coop: the receive thread did not end within " + std::to_string(kCoopStopJoinTimeout.count())
+            + " ms; coopstop again to wait for it");
+        return;
+    }
     g_CoopStatus = "off";
     Out("coop: stopped");
 }
@@ -21090,6 +21105,12 @@ static void CoopStop()
 static void CoopStart(int myPort, const std::string& peerIp, int peerPort)
 {
     if (g_CoopRun.load()) { Out("coop: already running (coopstop first)"); return; }
+    // A receive thread an earlier coopstop could not end still reads
+    // g_CoopSock, so no new socket until it has ended.
+    if (!g_CoopRecvThread.JoinFor(std::chrono::milliseconds(0))) {
+        Out("coop: the previous receive thread has not ended yet (coopstop first)");
+        return;
+    }
     WSADATA wsa;
     if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) { Out("coop: WSAStartup failed"); return; }
     g_CoopSock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -21108,7 +21129,13 @@ static void CoopStart(int myPort, const std::string& peerIp, int peerPort)
     g_CoopSent.store(0); g_CoopRecvCount.store(0);
     g_CoopRun.store(true);
     g_CoopEnabled.store(true);
-    g_CoopRecvThread = std::thread(CoopRecvLoop);
+    if (!g_CoopRecvThread.Start(&CoopRecvLoop)) {
+        g_CoopRun.store(false);
+        g_CoopEnabled.store(false);
+        closesocket(g_CoopSock); g_CoopSock = INVALID_SOCKET;
+        Out("coop: could not start the receive thread");
+        return;
+    }
     g_CoopStatus = "ON my:" + std::to_string(myPort) + " -> " + peerIp + ":" + std::to_string(peerPort);
     Out("coop: started " + g_CoopStatus);
 }
