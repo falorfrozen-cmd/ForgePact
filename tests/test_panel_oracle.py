@@ -23,14 +23,19 @@ the page it replaced lives in `panel/tests/`:
 - `npm run e2e:polish` checks the owner's polish pass: the Mining Ore
   Multiplier label, one card per Mods mod, the theme on Setup, the plugin
   warning icons and their tooltips, the Modifiers separators, the helmet's
-  accent, and an idle slider's note as a tooltip that moves no row.
+  accent, and an idle slider's note as a tooltip that moves no row;
+- `npm run e2e:perf` measures every interaction the owner named (the Enabled
+  mods list and its tray, toggles, sliders, tabs, searches, hovers, idle
+  polls) with rendering on, and holds each to the owner's hard budgets
+  (longest frame 50 ms, no frame over 50 ms, input-to-next-paint and result
+  paint p95 100 ms, no idle-poll mutation), medians over five runs.
 
-All four drive the installed Edge headless through playwright-core against
+All five drive the installed Edge headless through playwright-core against
 `tests/panel_sandbox_server.py`, which needs a built `panel/dist/`. Each test
 here skips, naming what is missing, when `node`/`npm`, Edge, the installed
 dev dependencies or the build are absent - build first with
-`npm --prefix panel ci` and `npm --prefix panel run build`. Together they
-take a couple of minutes.
+`npm --prefix panel ci` and `npm --prefix panel run build`. The first four
+take a couple of minutes; e2e:perf about six more.
 """
 import json
 import os
@@ -198,6 +203,14 @@ class PanelBrowserSuiteTests(unittest.TestCase):
         lines = [l for l in out.splitlines() if l.startswith("e2e-polish: ")]
         self.assertEqual(code, 0, out[-4000:])
         self.assertTrue(lines and re.fullmatch(r"e2e-polish: (\d+)/\1 checks passed", lines[-1]), out[-4000:])
+
+    def test_perf_e2e_suite_passes(self):
+        # The owner's hard budgets, on medians over five runs; if CI is noisy,
+        # raise --runs, never the budgets (forgepact-ui-responsive, D10).
+        code, out = _npm("e2e:perf")
+        lines = [l for l in out.splitlines() if l.startswith("e2e-perf: ")]
+        self.assertEqual(code, 0, out[-4000:])
+        self.assertTrue(lines and re.fullmatch(r"e2e-perf: (\d+)/\1 checks passed", lines[-1]), out[-4000:])
 
 
 if __name__ == "__main__":
