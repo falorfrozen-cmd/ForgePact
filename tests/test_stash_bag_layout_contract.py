@@ -37,7 +37,7 @@ from pathlib import Path
 TESTS_DIR = Path(__file__).resolve().parent
 FORGEPACT_DIR = TESTS_DIR.parent
 PLUGIN_SRC = FORGEPACT_DIR / "plugin" / "ModuleMain.cpp"
-NOTES = FORGEPACT_DIR / "release-notes-v1.4.7.md"
+NOTES = FORGEPACT_DIR / "release-notes-v1.4.8.md"
 README = FORGEPACT_DIR / "README.md"
 DOC = FORGEPACT_DIR / "docs" / "stash-bag-layout-research.md"
 HARNESS = TESTS_DIR / "menu_layout_value_text.cpp"
@@ -847,7 +847,7 @@ class StashBagDocumentation(unittest.TestCase):
             self.assertIn(token, section, token)
 
     def test_notes_file_is_the_unpublished_version(self):
-        self.assertEqual(NOTES.name, "release-notes-v1.4.7.md")
+        self.assertEqual(NOTES.name, "release-notes-v1.4.8.md")
 
     def test_readme_and_notes_agree_on_the_drag_object(self):
         # Whether UI_Inventory_Drag_obj holds the item on the cursor is not
