@@ -35,6 +35,12 @@ afterwards, but only when every line in them belongs to this run's own
 requests: the Item Editor reads every journal file, and a run's items are not
 the player's. --keep-journal leaves them.
 
+The game starts with Windows' default error mode (CREATE_DEFAULT_ERROR_MODE), not
+this tool's: Python run from Git Bash has SEM_NOGPFAULTERRORBOX, and a game that
+inherits it aborts without a dump or an event. The report also gives the game's
+exit code (`exit_code`; 0xC0000409 is an abort), because a missing dump is not a
+clean exit.
+
 Windows only, standard library only. Needs Item Truth on (the Item Editor's
 Game truth switch creates `itemtruth\\capture.request`) and the game closed.
 See AGENTS.md, "Prove the Instrument Before Trusting a Negative Result".
@@ -238,15 +244,37 @@ class _MemoryStatus(ctypes.Structure):
                 ("ullAvailExtendedVirtual", ctypes.c_uint64)]
 
 
+FAST_FAIL_EXIT = 0xC0000409
+
+
+def describe_exit(code: int | None) -> str:
+    """The game's exit code as text. 0xC0000409 is a fast fail - abort() - which on
+    2026-09-26 was a module's exit-time std::thread destructor (docs/item-truth-memory-research.md)."""
+    if code is None:
+        return "exit code unknown (still running or not read)"
+    code &= 0xFFFFFFFF
+    if code == 0:
+        return "exit 0"
+    if code == FAST_FAIL_EXIT:
+        return "exit 0xC0000409: the game aborted (a fast fail) while it ran or exited"
+    return f"exit 0x{code:08X}"
+
+
 class Game:
     """The launched game: memory readings through its own process handle."""
 
     def __init__(self, exe: Path):
         self.exe = exe
+        self.exit_code: int | None = None
         startup = subprocess.STARTUPINFO()
         startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         startup.wShowWindow = 7   # SW_SHOWMINNOACTIVE: in the background
-        self.process = subprocess.Popen([str(exe)], cwd=str(exe.parent), startupinfo=startup)
+        # The default error mode, not this tool's: run from Git Bash, Python has
+        # 0x3 (SEM_NOGPFAULTERRORBOX), and a game that inherits it aborts without
+        # Windows writing a dump or an Application Error event. With the default,
+        # a crash is reported as it would be for a player; the exit code is read too.
+        self.process = subprocess.Popen([str(exe)], cwd=str(exe.parent), startupinfo=startup,
+                                        creationflags=subprocess.CREATE_DEFAULT_ERROR_MODE)
         self.pid = self.process.pid
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
         self._kernel32 = kernel32
@@ -287,6 +315,7 @@ class Game:
             self.process.wait(timeout=5)
         except subprocess.TimeoutExpired:
             return False
+        self.exit_code = self.process.returncode
         self._kernel32.CloseHandle(self.handle)
         return True
 
@@ -409,6 +438,13 @@ class Session:
         closed = self.game.close() if self.game and self.game.alive() else None
         if closed is not None:
             self.note(f"closed normally: {closed}")
+        exit_code = None
+        if self.game:
+            if self.game.exit_code is None:
+                self.game.exit_code = self.game.process.poll()   # it ended by itself
+            exit_code = self.game.exit_code
+            # A missing dump is not a clean exit; the exit code is the one that tells.
+            self.note(describe_exit(exit_code))
         moved = []
         if self.game and not self.args.keep_journal:
             for path in session_files(self.journal, self.game.pid):
@@ -423,7 +459,8 @@ class Session:
             writer.writerow(["t", "phase", "private_mb", "working_set_mb"])
             writer.writerows(self.rows)
         return {"pid": self.game.pid if self.game else None, "exe": str(self.exe), "notes": self.notes,
-                "requests": sorted(self.requests), "journal_moved": moved, "error": error}
+                "requests": sorted(self.requests), "journal_moved": moved, "error": error,
+                "exit_code": None if exit_code is None else f"0x{exit_code & 0xFFFFFFFF:08X}"}
 
 
 def cmd_run(args) -> int:

@@ -250,6 +250,44 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual({"items": 20000, "baseline_mb": 2800.0}, summary)
 
 
+class ExitCodeTests(unittest.TestCase):
+    """A missing dump is not a clean exit: the report reads the exit code."""
+
+    def test_an_abort_is_named_whatever_its_sign(self):
+        for code in (0xC0000409, 3221226505, -1073740791):
+            self.assertIn("0xC0000409: the game aborted", memrun.describe_exit(code))
+
+    def test_other_exits_read_plainly(self):
+        self.assertEqual("exit 0", memrun.describe_exit(0))
+        self.assertEqual("exit 0x00000001", memrun.describe_exit(1))
+        self.assertIn("unknown", memrun.describe_exit(None))
+
+    def test_the_game_is_launched_with_the_default_error_mode(self):
+        source = (ROOT / "tools" / "itemtruth_memrun.py").read_text(encoding="utf-8")
+        launch = source[source.index("class Game:"):source.index("def alive(self)")]
+        self.assertIn("creationflags=subprocess.CREATE_DEFAULT_ERROR_MODE", launch)
+        close = source[source.index("def close(self"):source.index("def game_running()")]
+        self.assertIn("self.exit_code = self.process.returncode", close)
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows error modes")
+    def test_the_flag_is_what_stops_the_inherited_mode(self):
+        """Positive control first: a child inherits SEM_NOGPFAULTERRORBOX (0x2), as a
+        game started from Git Bash does; with CREATE_DEFAULT_ERROR_MODE it does not."""
+        import ctypes
+        import subprocess
+        kernel32 = ctypes.windll.kernel32
+        probe = [sys.executable, "-c", "import ctypes; print(ctypes.windll.kernel32.GetErrorMode())"]
+        before = kernel32.SetErrorMode(0x3)
+        try:
+            inherited = int(subprocess.run(probe, capture_output=True, text=True, check=True).stdout)
+            default = int(subprocess.run(probe, capture_output=True, text=True, check=True,
+                                         creationflags=subprocess.CREATE_DEFAULT_ERROR_MODE).stdout)
+        finally:
+            kernel32.SetErrorMode(before)
+        self.assertTrue(inherited & 0x2, f"control: the child should inherit 0x3, got 0x{inherited:x}")
+        self.assertFalse(default & 0x2, f"with the flag the child must not have 0x2, got 0x{default:x}")
+
+
 class CommandLineTests(unittest.TestCase):
     def test_the_control_is_always_the_mix(self):
         source = (ROOT / "tools" / "itemtruth_memrun.py").read_text(encoding="utf-8")
