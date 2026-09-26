@@ -1,0 +1,731 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-26T18:56:11.714Z",
+  "title": "Design System: ForgePact control panel",
+  "extensions": {
+    "colorMeta": {
+      "accent": {
+        "role": "primary",
+        "displayName": "Forge Amber",
+        "canonical": "#e99a4c",
+        "cssVar": "--color-accent",
+        "oklch": "oklch(75.1% 0.133 62.9)",
+        "tonalRamp": [
+          "oklch(15% 0.133 62.9)",
+          "oklch(26% 0.133 62.9)",
+          "oklch(37% 0.133 62.9)",
+          "oklch(48% 0.133 62.9)",
+          "oklch(59% 0.133 62.9)",
+          "oklch(70% 0.133 62.9)",
+          "oklch(82% 0.133 62.9)",
+          "oklch(95% 0.133 62.9)"
+        ],
+        "palettes": {
+          "ledger": "#e99a4c",
+          "graphite": "#d89c6b",
+          "sigil": "#e8707a"
+        }
+      },
+      "accent-hover": {
+        "role": "primary",
+        "displayName": "Heated Amber",
+        "canonical": "#f2ae68",
+        "cssVar": "--color-accent-hover",
+        "oklch": "oklch(80.1% 0.118 65.6)",
+        "tonalRamp": [
+          "oklch(15% 0.118 65.6)",
+          "oklch(26% 0.118 65.6)",
+          "oklch(37% 0.118 65.6)",
+          "oklch(48% 0.118 65.6)",
+          "oklch(59% 0.118 65.6)",
+          "oklch(70% 0.118 65.6)",
+          "oklch(82% 0.118 65.6)",
+          "oklch(95% 0.118 65.6)"
+        ],
+        "palettes": {
+          "ledger": "#f2ae68",
+          "graphite": "#ecc299",
+          "sigil": "#f08c94"
+        }
+      },
+      "accent-ink": {
+        "role": "primary",
+        "displayName": "Accent Ink",
+        "canonical": "#1a1109",
+        "cssVar": "--color-accent-ink",
+        "oklch": "oklch(18.7% 0.021 62.7)",
+        "tonalRamp": [
+          "oklch(15% 0.021 62.7)",
+          "oklch(26% 0.021 62.7)",
+          "oklch(37% 0.021 62.7)",
+          "oklch(48% 0.021 62.7)",
+          "oklch(59% 0.021 62.7)",
+          "oklch(70% 0.021 62.7)",
+          "oklch(82% 0.021 62.7)",
+          "oklch(95% 0.021 62.7)"
+        ],
+        "palettes": {
+          "ledger": "#1a1109",
+          "graphite": "#1a1410",
+          "sigil": "#1a0a0d"
+        }
+      },
+      "accent-tint": {
+        "role": "primary",
+        "displayName": "Amber Wash",
+        "canonical": "#2b1e12",
+        "cssVar": "--color-accent-tint",
+        "oklch": "oklch(24.7% 0.029 63.5)",
+        "tonalRamp": [
+          "oklch(15% 0.029 63.5)",
+          "oklch(26% 0.029 63.5)",
+          "oklch(37% 0.029 63.5)",
+          "oklch(48% 0.029 63.5)",
+          "oklch(59% 0.029 63.5)",
+          "oklch(70% 0.029 63.5)",
+          "oklch(82% 0.029 63.5)",
+          "oklch(95% 0.029 63.5)"
+        ],
+        "palettes": {
+          "ledger": "#2b1e12",
+          "graphite": "#2a2119",
+          "sigil": "#24151a"
+        }
+      },
+      "bg-base": {
+        "role": "neutral",
+        "displayName": "Soot Umber",
+        "canonical": "#15110d",
+        "cssVar": "--color-bg-base",
+        "oklch": "oklch(18.1% 0.010 67.1)",
+        "tonalRamp": [
+          "oklch(15% 0.010 67.1)",
+          "oklch(26% 0.010 67.1)",
+          "oklch(37% 0.010 67.1)",
+          "oklch(48% 0.010 67.1)",
+          "oklch(59% 0.010 67.1)",
+          "oklch(70% 0.010 67.1)",
+          "oklch(82% 0.010 67.1)",
+          "oklch(95% 0.010 67.1)"
+        ],
+        "palettes": {
+          "ledger": "#15110d",
+          "graphite": "#131517",
+          "sigil": "#0e1013"
+        }
+      },
+      "bg-raised": {
+        "role": "neutral",
+        "displayName": "Raised Umber",
+        "canonical": "#251e17",
+        "cssVar": "--color-bg-raised",
+        "oklch": "oklch(24.1% 0.017 66.9)",
+        "tonalRamp": [
+          "oklch(15% 0.017 66.9)",
+          "oklch(26% 0.017 66.9)",
+          "oklch(37% 0.017 66.9)",
+          "oklch(48% 0.017 66.9)",
+          "oklch(59% 0.017 66.9)",
+          "oklch(70% 0.017 66.9)",
+          "oklch(82% 0.017 66.9)",
+          "oklch(95% 0.017 66.9)"
+        ],
+        "palettes": {
+          "ledger": "#251e17",
+          "graphite": "#1e2225",
+          "sigil": "#1b1f25"
+        }
+      },
+      "bg-hover": {
+        "role": "neutral",
+        "displayName": "Hover Umber",
+        "canonical": "#2d241c",
+        "cssVar": "--color-bg-hover",
+        "oklch": "oklch(26.8% 0.020 63.5)",
+        "tonalRamp": [
+          "oklch(15% 0.020 63.5)",
+          "oklch(26% 0.020 63.5)",
+          "oklch(37% 0.020 63.5)",
+          "oklch(48% 0.020 63.5)",
+          "oklch(59% 0.020 63.5)",
+          "oklch(70% 0.020 63.5)",
+          "oklch(82% 0.020 63.5)",
+          "oklch(95% 0.020 63.5)"
+        ],
+        "palettes": {
+          "ledger": "#2d241c",
+          "graphite": "#25282b",
+          "sigil": "#22262e"
+        }
+      },
+      "bg-sunken": {
+        "role": "neutral",
+        "displayName": "Well Umber",
+        "canonical": "#100d0a",
+        "cssVar": "--color-bg-sunken",
+        "oklch": "oklch(16.2% 0.008 67.2)",
+        "tonalRamp": [
+          "oklch(15% 0.008 67.2)",
+          "oklch(26% 0.008 67.2)",
+          "oklch(37% 0.008 67.2)",
+          "oklch(48% 0.008 67.2)",
+          "oklch(59% 0.008 67.2)",
+          "oklch(70% 0.008 67.2)",
+          "oklch(82% 0.008 67.2)",
+          "oklch(95% 0.008 67.2)"
+        ],
+        "palettes": {
+          "ledger": "#100d0a",
+          "graphite": "#101214",
+          "sigil": "#0a0b0e"
+        }
+      },
+      "border-strong": {
+        "role": "neutral",
+        "displayName": "Strong Edge",
+        "canonical": "#826848",
+        "cssVar": "--color-border-strong",
+        "oklch": "oklch(53.5% 0.057 71.9)",
+        "tonalRamp": [
+          "oklch(15% 0.057 71.9)",
+          "oklch(26% 0.057 71.9)",
+          "oklch(37% 0.057 71.9)",
+          "oklch(48% 0.057 71.9)",
+          "oklch(59% 0.057 71.9)",
+          "oklch(70% 0.057 71.9)",
+          "oklch(82% 0.057 71.9)",
+          "oklch(95% 0.057 71.9)"
+        ],
+        "palettes": {
+          "ledger": "#826848",
+          "graphite": "#686f79",
+          "sigil": "#616d80"
+        }
+      },
+      "border-subtle": {
+        "role": "neutral",
+        "displayName": "Subtle Edge",
+        "canonical": "#3a2f25",
+        "cssVar": "--color-border-subtle",
+        "oklch": "oklch(31.4% 0.023 64.1)",
+        "tonalRamp": [
+          "oklch(15% 0.023 64.1)",
+          "oklch(26% 0.023 64.1)",
+          "oklch(37% 0.023 64.1)",
+          "oklch(48% 0.023 64.1)",
+          "oklch(59% 0.023 64.1)",
+          "oklch(70% 0.023 64.1)",
+          "oklch(82% 0.023 64.1)",
+          "oklch(95% 0.023 64.1)"
+        ],
+        "palettes": {
+          "ledger": "#3a2f25",
+          "graphite": "#303439",
+          "sigil": "#2a2f38"
+        }
+      },
+      "text-primary": {
+        "role": "neutral",
+        "displayName": "Parchment",
+        "canonical": "#efe4d3",
+        "cssVar": "--color-text-primary",
+        "oklch": "oklch(92.3% 0.026 78.9)",
+        "tonalRamp": [
+          "oklch(15% 0.026 78.9)",
+          "oklch(26% 0.026 78.9)",
+          "oklch(37% 0.026 78.9)",
+          "oklch(48% 0.026 78.9)",
+          "oklch(59% 0.026 78.9)",
+          "oklch(70% 0.026 78.9)",
+          "oklch(82% 0.026 78.9)",
+          "oklch(95% 0.026 78.9)"
+        ],
+        "palettes": {
+          "ledger": "#efe4d3",
+          "graphite": "#eeedeb",
+          "sigil": "#eceef2"
+        }
+      },
+      "text-muted": {
+        "role": "neutral",
+        "displayName": "Muted Parchment",
+        "canonical": "#b5a794",
+        "cssVar": "--color-text-muted",
+        "oklch": "oklch(73.5% 0.031 75.6)",
+        "tonalRamp": [
+          "oklch(15% 0.031 75.6)",
+          "oklch(26% 0.031 75.6)",
+          "oklch(37% 0.031 75.6)",
+          "oklch(48% 0.031 75.6)",
+          "oklch(59% 0.031 75.6)",
+          "oklch(70% 0.031 75.6)",
+          "oklch(82% 0.031 75.6)",
+          "oklch(95% 0.031 75.6)"
+        ],
+        "palettes": {
+          "ledger": "#b5a794",
+          "graphite": "#abb0b8",
+          "sigil": "#a9b0bc"
+        }
+      },
+      "text-faint": {
+        "role": "neutral",
+        "displayName": "Faint Parchment",
+        "canonical": "#948672",
+        "cssVar": "--color-text-faint",
+        "oklch": "oklch(62.7% 0.034 76.8)",
+        "tonalRamp": [
+          "oklch(15% 0.034 76.8)",
+          "oklch(26% 0.034 76.8)",
+          "oklch(37% 0.034 76.8)",
+          "oklch(48% 0.034 76.8)",
+          "oklch(59% 0.034 76.8)",
+          "oklch(70% 0.034 76.8)",
+          "oklch(82% 0.034 76.8)",
+          "oklch(95% 0.034 76.8)"
+        ],
+        "palettes": {
+          "ledger": "#948672",
+          "graphite": "#9a9fa6",
+          "sigil": "#8c94a1"
+        }
+      },
+      "text-inverse": {
+        "role": "neutral",
+        "displayName": "Inverse Ink",
+        "canonical": "#1a1109",
+        "cssVar": "--color-text-inverse",
+        "oklch": "oklch(18.7% 0.021 62.7)",
+        "tonalRamp": [
+          "oklch(15% 0.021 62.7)",
+          "oklch(26% 0.021 62.7)",
+          "oklch(37% 0.021 62.7)",
+          "oklch(48% 0.021 62.7)",
+          "oklch(59% 0.021 62.7)",
+          "oklch(70% 0.021 62.7)",
+          "oklch(82% 0.021 62.7)",
+          "oklch(95% 0.021 62.7)"
+        ],
+        "palettes": {
+          "ledger": "#1a1109",
+          "graphite": "#1a1410",
+          "sigil": "#1a0a0d"
+        }
+      },
+      "track": {
+        "role": "neutral",
+        "displayName": "Slider Track",
+        "canonical": "#816852",
+        "cssVar": "--color-track",
+        "oklch": "oklch(53.6% 0.046 63.0)",
+        "tonalRamp": [
+          "oklch(15% 0.046 63.0)",
+          "oklch(26% 0.046 63.0)",
+          "oklch(37% 0.046 63.0)",
+          "oklch(48% 0.046 63.0)",
+          "oklch(59% 0.046 63.0)",
+          "oklch(70% 0.046 63.0)",
+          "oklch(82% 0.046 63.0)",
+          "oklch(95% 0.046 63.0)"
+        ],
+        "palettes": {
+          "ledger": "#816852",
+          "graphite": "#67707a",
+          "sigil": "#616d81"
+        }
+      },
+      "switch-idle": {
+        "role": "neutral",
+        "displayName": "Idle Slate",
+        "canonical": "#79818d",
+        "cssVar": "--color-switch-idle",
+        "oklch": "oklch(60.1% 0.021 258.4)",
+        "tonalRamp": [
+          "oklch(15% 0.021 258.4)",
+          "oklch(26% 0.021 258.4)",
+          "oklch(37% 0.021 258.4)",
+          "oklch(48% 0.021 258.4)",
+          "oklch(59% 0.021 258.4)",
+          "oklch(70% 0.021 258.4)",
+          "oklch(82% 0.021 258.4)",
+          "oklch(95% 0.021 258.4)"
+        ],
+        "palettes": {
+          "ledger": "#79818d",
+          "graphite": "#7a8492",
+          "sigil": "#79818d"
+        }
+      },
+      "focus": {
+        "role": "primary",
+        "displayName": "Focus Glow",
+        "canonical": "#ffc47e",
+        "cssVar": "--color-focus",
+        "oklch": "oklch(85.9% 0.110 70.2)",
+        "tonalRamp": [
+          "oklch(15% 0.110 70.2)",
+          "oklch(26% 0.110 70.2)",
+          "oklch(37% 0.110 70.2)",
+          "oklch(48% 0.110 70.2)",
+          "oklch(59% 0.110 70.2)",
+          "oklch(70% 0.110 70.2)",
+          "oklch(82% 0.110 70.2)",
+          "oklch(95% 0.110 70.2)"
+        ],
+        "palettes": {
+          "ledger": "#ffc47e",
+          "graphite": "#ecc299",
+          "sigil": "#f08c94"
+        }
+      },
+      "ok": {
+        "role": "signal",
+        "displayName": "Signal Green",
+        "canonical": "#8bd3a6",
+        "cssVar": "--color-ok",
+        "oklch": "oklch(80.7% 0.097 156.1)",
+        "tonalRamp": [
+          "oklch(15% 0.097 156.1)",
+          "oklch(26% 0.097 156.1)",
+          "oklch(37% 0.097 156.1)",
+          "oklch(48% 0.097 156.1)",
+          "oklch(59% 0.097 156.1)",
+          "oklch(70% 0.097 156.1)",
+          "oklch(82% 0.097 156.1)",
+          "oklch(95% 0.097 156.1)"
+        ],
+        "palettes": {
+          "ledger": "#8bd3a6",
+          "graphite": "#8fcfa8",
+          "sigil": "#7fd1ae"
+        }
+      },
+      "warn": {
+        "role": "signal",
+        "displayName": "Signal Gold",
+        "canonical": "#e8c06a",
+        "cssVar": "--color-warn",
+        "oklch": "oklch(82.5% 0.114 84.9)",
+        "tonalRamp": [
+          "oklch(15% 0.114 84.9)",
+          "oklch(26% 0.114 84.9)",
+          "oklch(37% 0.114 84.9)",
+          "oklch(48% 0.114 84.9)",
+          "oklch(59% 0.114 84.9)",
+          "oklch(70% 0.114 84.9)",
+          "oklch(82% 0.114 84.9)",
+          "oklch(95% 0.114 84.9)"
+        ],
+        "palettes": {
+          "ledger": "#e8c06a",
+          "graphite": "#e3bd6f",
+          "sigil": "#e9d86e"
+        }
+      },
+      "warn-tint": {
+        "role": "signal",
+        "displayName": "Gold Wash",
+        "canonical": "#261f14",
+        "cssVar": "--color-warn-tint",
+        "oklch": "oklch(24.4% 0.022 78.7)",
+        "tonalRamp": [
+          "oklch(15% 0.022 78.7)",
+          "oklch(26% 0.022 78.7)",
+          "oklch(37% 0.022 78.7)",
+          "oklch(48% 0.022 78.7)",
+          "oklch(59% 0.022 78.7)",
+          "oklch(70% 0.022 78.7)",
+          "oklch(82% 0.022 78.7)",
+          "oklch(95% 0.022 78.7)"
+        ],
+        "palettes": {
+          "ledger": "#261f14",
+          "graphite": "#24221e",
+          "sigil": "#20201a"
+        }
+      },
+      "danger": {
+        "role": "signal",
+        "displayName": "Signal Rose",
+        "canonical": "#f29ba6",
+        "cssVar": "--color-danger",
+        "oklch": "oklch(78.0% 0.105 11.5)",
+        "tonalRamp": [
+          "oklch(15% 0.105 11.5)",
+          "oklch(26% 0.105 11.5)",
+          "oklch(37% 0.105 11.5)",
+          "oklch(48% 0.105 11.5)",
+          "oklch(59% 0.105 11.5)",
+          "oklch(70% 0.105 11.5)",
+          "oklch(82% 0.105 11.5)",
+          "oklch(95% 0.105 11.5)"
+        ],
+        "palettes": {
+          "ledger": "#f29ba6",
+          "graphite": "#f08a94",
+          "sigil": "#fa9529"
+        }
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "The page heading, one per tab."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Card headings."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Mods tab feature labels."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Default text, with tabular numerals."
+      },
+      "body-sm": {
+        "displayName": "Body small",
+        "purpose": "Hints, descriptions, buttons, fields and tooltips."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Status bar, notes, tags and the chip."
+      },
+      "mono-value": {
+        "displayName": "Mono value",
+        "purpose": "Slider values, the path field and the number editor."
+      },
+      "mono-label": {
+        "displayName": "Mono label",
+        "purpose": "Counts, enabled-mod values and the brand subline."
+      }
+    },
+    "shadows": [
+      {
+        "name": "tray",
+        "value": "0 12px 32px color-mix(in srgb, var(--color-bg-sunken) 80%, transparent)",
+        "purpose": "The enabled-mods tray list."
+      },
+      {
+        "name": "float",
+        "value": "0 8px 24px color-mix(in srgb, var(--color-bg-sunken) 80%, transparent)",
+        "purpose": "Both toasts and both tooltips."
+      }
+    ],
+    "motion": [
+      {
+        "name": "motion-duration-fast",
+        "value": "120ms",
+        "purpose": "Hover colour, press, tooltips, tray close, toast exit, removed entry."
+      },
+      {
+        "name": "motion-duration-base",
+        "value": "200ms",
+        "purpose": "Tray open and toast entry."
+      },
+      {
+        "name": "motion-easing-standard",
+        "value": "cubic-bezier(0.2, 0, 0, 1)",
+        "purpose": "Press, toasts, tray close, removed entry."
+      },
+      {
+        "name": "motion-easing-emphasized",
+        "value": "cubic-bezier(0.23, 1, 0.32, 1)",
+        "purpose": "Tray open and tooltips."
+      },
+      {
+        "name": "motion-easing-hover",
+        "value": "cubic-bezier(0.25, 0.1, 0.25, 1)",
+        "purpose": "Hover colour fades, pointer-only."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "prefers-reduced-motion: reduce",
+        "purpose": "Removes transform, translate, scale and rotate; opacity and colour fades stay."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "narrow",
+        "value": "max-width: 1100px"
+      },
+      {
+        "name": "narrow-short",
+        "value": "max-width: 1100px and max-height: 640px"
+      },
+      {
+        "name": "compact",
+        "value": "max-width: 720px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The accent action: accent fill, accent-ink text.",
+      "html": "<button class=\"ds-btn-primary\">Launch game</button>",
+      "css": ".ds-btn-primary{display:inline-flex;align-items:center;gap:var(--space-4);min-height:32px;padding:0 var(--space-7);border:1px solid var(--color-accent);border-radius:var(--radius-md);background:var(--color-accent);color:var(--color-accent-ink);font:var(--font-weight-medium) var(--font-size-sm)/1.45 var(--font-body-family),\"Segoe UI\",system-ui,sans-serif;cursor:pointer;transition:transform var(--motion-duration-fast) var(--motion-easing-standard)}.ds-btn-primary:hover{background:var(--color-accent-hover);border-color:var(--color-accent-hover);transition:color var(--motion-duration-fast) var(--motion-easing-hover),background-color var(--motion-duration-fast) var(--motion-easing-hover),border-color var(--motion-duration-fast) var(--motion-easing-hover)}.ds-btn-primary:active:not(:focus-visible){transform:scale(.97)}.ds-btn-primary:focus-visible{outline:2px solid var(--color-focus);outline-offset:3px}"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Transparent with a 1px strong edge, as Apply all now.",
+      "html": "<button class=\"ds-btn-secondary\">Apply all now</button>",
+      "css": ".ds-btn-secondary{display:inline-flex;align-items:center;min-height:32px;padding:0 var(--space-7);border:1px solid var(--color-border-strong);border-radius:var(--radius-md);background:transparent;color:var(--color-text-primary);font:var(--font-weight-medium) var(--font-size-sm)/1.45 var(--font-body-family),\"Segoe UI\",system-ui,sans-serif;cursor:pointer;transition:transform var(--motion-duration-fast) var(--motion-easing-standard)}.ds-btn-secondary:hover{background:var(--color-bg-hover);transition:color var(--motion-duration-fast) var(--motion-easing-hover),background-color var(--motion-duration-fast) var(--motion-easing-hover),border-color var(--motion-duration-fast) var(--motion-easing-hover)}.ds-btn-secondary:active:not(:focus-visible){transform:scale(.97)}.ds-btn-secondary:focus-visible{outline:2px solid var(--color-focus);outline-offset:3px}"
+    },
+    {
+      "name": "Quiet Button",
+      "kind": "button",
+      "refersTo": "button-quiet",
+      "description": "Muted text with no fill until hovered, as Turn off.",
+      "html": "<button class=\"ds-btn-quiet\">Turn off</button>",
+      "css": ".ds-btn-quiet{padding:var(--space-2) var(--space-3);border:0;border-radius:var(--radius-sm);background:none;color:var(--color-text-muted);font:var(--font-size-xs)/1.45 var(--font-body-family),\"Segoe UI\",system-ui,sans-serif;cursor:pointer;transition:transform var(--motion-duration-fast) var(--motion-easing-standard)}.ds-btn-quiet:hover{background:var(--color-bg-hover);color:var(--color-text-primary);transition:color var(--motion-duration-fast) var(--motion-easing-hover),background-color var(--motion-duration-fast) var(--motion-easing-hover),border-color var(--motion-duration-fast) var(--motion-easing-hover)}.ds-btn-quiet:active:not(:focus-visible){transform:scale(.97)}.ds-btn-quiet:focus-visible{outline:2px solid var(--color-focus);outline-offset:3px}"
+    },
+    {
+      "name": "Switch",
+      "kind": "custom",
+      "refersTo": "switch-on",
+      "description": "A 40x22 pill: off is the subtle edge, on is the accent.",
+      "html": "<label class=\"ds-switch\"><input type=\"checkbox\" checked aria-label=\"Example\"><span></span></label>",
+      "css": ".ds-switch{position:relative;display:inline-block;width:40px;height:22px;border-radius:var(--radius-pill);background:var(--color-border-subtle)}.ds-switch:has(input:checked){background:var(--color-accent)}.ds-switch input{position:absolute;inset:0;z-index:1;margin:0;opacity:0;cursor:pointer}.ds-switch span{position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:var(--color-text-muted);pointer-events:none}.ds-switch input:checked+span{transform:translateX(18px);background:var(--color-accent-ink)}.ds-switch:has(input:focus-visible){outline:2px solid var(--color-focus);outline-offset:3px}"
+    },
+    {
+      "name": "Search Field",
+      "kind": "input",
+      "refersTo": "input-search",
+      "description": "A sunken well with a strong edge.",
+      "html": "<input class=\"ds-search\" type=\"search\" placeholder=\"Search settings by name or effect...\">",
+      "css": ".ds-search{width:100%;height:32px;padding:0 var(--space-6) 0 36px;border:1px solid var(--color-border-strong);border-radius:var(--radius-md);background:var(--color-bg-sunken);color:var(--color-text-primary);caret-color:var(--color-accent);font:var(--font-size-sm)/1.45 var(--font-body-family),\"Segoe UI\",system-ui,sans-serif}.ds-search::placeholder{color:var(--color-text-muted)}.ds-search:focus-visible{outline:2px solid var(--color-focus);outline-offset:3px}"
+    },
+    {
+      "name": "Rail Navigation",
+      "kind": "nav",
+      "refersTo": "rail-tab",
+      "description": "The top rail tabs; the active tab takes a 2px accent underline.",
+      "html": "<nav class=\"ds-rail\"><button class=\"ds-tab ds-tab-active\">Modifiers</button><button class=\"ds-tab\">World</button><button class=\"ds-tab\">Loot</button></nav>",
+      "css": ".ds-rail{display:flex;gap:var(--space-1);height:56px;background:var(--color-bg-base);border-bottom:1px solid var(--color-border-subtle)}.ds-tab{padding:0 var(--space-6);border:0 solid transparent;border-bottom-width:2px;background:none;color:var(--color-text-muted);font:var(--font-size-md)/1.45 var(--font-body-family),\"Segoe UI\",system-ui,sans-serif;cursor:pointer}.ds-tab-active{color:var(--color-text-primary);border-color:var(--color-accent);font-weight:var(--font-weight-medium)}.ds-tab:hover{background:var(--color-bg-hover);color:var(--color-text-primary);transition:color var(--motion-duration-fast) var(--motion-easing-hover),background-color var(--motion-duration-fast) var(--motion-easing-hover),border-color var(--motion-duration-fast) var(--motion-easing-hover)}.ds-tab:focus-visible{outline:2px solid var(--color-focus);outline-offset:-2px}"
+    },
+    {
+      "name": "Segmented Filter",
+      "kind": "chip",
+      "refersTo": "segmented-control",
+      "description": "A sunken trough; the selected segment sits on hover umber.",
+      "html": "<div class=\"ds-seg\"><button aria-pressed=\"true\">All settings</button><button aria-pressed=\"false\">Modified</button></div>",
+      "css": ".ds-seg{display:inline-flex;gap:var(--space-1);padding:var(--space-2);border-radius:var(--radius-md);background:var(--color-bg-sunken)}.ds-seg button{min-height:24px;padding:0 var(--space-5);border:0;border-radius:var(--radius-sm);background:none;color:var(--color-text-muted);font:var(--font-size-sm)/1.45 var(--font-body-family),\"Segoe UI\",system-ui,sans-serif;cursor:pointer}.ds-seg button[aria-pressed=true]{background:var(--color-bg-hover);color:var(--color-text-primary)}.ds-seg button:hover{color:var(--color-text-primary);transition:color var(--motion-duration-fast) var(--motion-easing-hover),background-color var(--motion-duration-fast) var(--motion-easing-hover),border-color var(--motion-duration-fast) var(--motion-easing-hover)}.ds-seg button:focus-visible{outline:2px solid var(--color-focus);outline-offset:3px}"
+    },
+    {
+      "name": "Settings Card with Slider Row",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "A raised card holding a 44px row: label, range and sunken mono stepper.",
+      "html": "<section class=\"ds-card\"><h2>Utility</h2><div class=\"ds-row\"><span class=\"ds-lbl\">Experience</span><input type=\"range\" aria-label=\"Experience\"><span class=\"ds-step\"><button>−</button><span>x2</span><button>+</button></span></div></section>",
+      "css": ".ds-card{display:flex;flex-direction:column;gap:var(--space-7);padding:var(--space-7);border-radius:var(--radius-lg);background:var(--color-bg-raised);color:var(--color-text-primary);font:var(--font-size-md)/1.45 var(--font-body-family),\"Segoe UI\",system-ui,sans-serif}.ds-card h2{margin:0;font-size:var(--font-size-lg);font-weight:var(--font-weight-semibold);line-height:1.2}.ds-row{display:flex;align-items:center;gap:var(--space-7);min-height:44px}.ds-lbl{flex:none;width:168px;font-size:var(--font-size-sm);font-weight:var(--font-weight-medium);line-height:1.2}.ds-row input{flex:1;height:4px;margin:0;appearance:none;border-radius:var(--radius-pill);background:var(--color-track)}.ds-row input::-webkit-slider-thumb{appearance:none;width:6px;height:18px;border-radius:var(--radius-pill);background:var(--color-text-primary)}.ds-row input:focus-visible{outline:2px solid var(--color-focus);outline-offset:3px}.ds-step{display:flex;align-items:center;border-radius:var(--radius-md);background:var(--color-bg-sunken)}.ds-step span{width:60px;text-align:center;font:var(--font-size-sm)/32px var(--font-mono-family),Consolas,monospace}.ds-step button{width:28px;height:32px;border:0;border-radius:var(--radius-sm);background:none;color:var(--color-text-muted);cursor:pointer}.ds-step button:hover{background:var(--color-bg-hover);color:var(--color-text-primary);transition:color var(--motion-duration-fast) var(--motion-easing-hover),background-color var(--motion-duration-fast) var(--motion-easing-hover),border-color var(--motion-duration-fast) var(--motion-easing-hover)}.ds-step button:focus-visible{outline:2px solid var(--color-focus);outline-offset:3px}"
+    },
+    {
+      "name": "Status Chip",
+      "kind": "chip",
+      "refersTo": "status-chip",
+      "description": "A raised pill whose dot carries the game state; the words stay muted.",
+      "html": "<span class=\"ds-chip\">Game open</span>",
+      "css": ".ds-chip{display:inline-flex;align-items:center;gap:var(--space-4);height:28px;padding:0 var(--space-6);border-radius:var(--radius-pill);background:var(--color-bg-raised);color:var(--color-text-muted);font:var(--font-size-xs)/1.45 var(--font-body-family),\"Segoe UI\",system-ui,sans-serif}.ds-chip:before{content:\"\";width:6px;height:6px;border-radius:50%;background:var(--color-ok)}"
+    },
+    {
+      "name": "Toast",
+      "kind": "custom",
+      "refersTo": "toast",
+      "description": "A floating hover-umber message with the float shadow.",
+      "html": "<div class=\"ds-toast\" role=\"status\">Settings sent to the game</div>",
+      "css": ".ds-toast{display:inline-flex;align-items:center;min-height:40px;padding:0 var(--space-7);border-radius:var(--radius-md);background:var(--color-bg-hover);color:var(--color-text-primary);font:var(--font-size-sm)/1.45 var(--font-body-family),\"Segoe UI\",system-ui,sans-serif;box-shadow:0 8px 24px color-mix(in srgb,var(--color-bg-sunken) 80%,transparent)}"
+    },
+    {
+      "name": "Theme Picker",
+      "kind": "select",
+      "refersTo": "theme-picker-trigger",
+      "description": "A compact quiet trigger over a listbox; each option shows three swatches of its palette and the chosen one carries the drawn check.",
+      "html": "<div class=\"ds-theme-picker\"><button type=\"button\" class=\"ds-theme-trigger\" aria-haspopup=\"listbox\" aria-expanded=\"true\">Ledger</button><ul class=\"ds-theme-list\" role=\"listbox\" aria-label=\"Theme\"><li role=\"option\" aria-selected=\"true\"><span class=\"ds-swatches\"><span style=\"background:var(--color-border-strong)\"></span><span style=\"background:var(--color-text-muted)\"></span><span style=\"background:var(--color-accent)\"></span></span>Ledger</li><li role=\"option\" aria-selected=\"false\"><span class=\"ds-swatches\"><span style=\"background:var(--color-border-subtle)\"></span><span style=\"background:var(--color-text-faint)\"></span><span style=\"background:var(--color-accent-hover)\"></span></span>Graphite</li></ul></div>",
+      "css": ".ds-theme-picker{display:inline-flex;flex-direction:column;gap:var(--space-2);font:var(--font-size-sm)/1.45 var(--font-body-family),\"Segoe UI\",system-ui,sans-serif}.ds-theme-trigger{align-self:flex-start;height:28px;padding:0 var(--space-3) 0 var(--space-4);border:0;border-radius:var(--radius-sm);background:var(--color-bg-hover);color:var(--color-text-primary);font:inherit}.ds-theme-list{min-width:200px;margin:0;padding:var(--space-2);list-style:none;border:1px solid var(--color-border-subtle);border-radius:var(--radius-lg);background:var(--color-bg-raised);box-shadow:0 12px 32px color-mix(in srgb,var(--color-bg-sunken) 80%,transparent)}.ds-theme-list li{display:flex;align-items:center;gap:var(--space-5);min-height:32px;padding:0 var(--space-4);border-radius:var(--radius-md);color:var(--color-text-primary)}.ds-theme-list li[aria-selected=true]{background:var(--color-bg-hover)}.ds-swatches{display:flex;width:40px;height:16px;overflow:hidden;border-radius:var(--radius-sm)}.ds-swatches span{flex:1}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Graphite Console",
+    "overview": "The panel is an instrument, not a showcase. It is a dark, flat console of rows: a label, a switch, a slider, a mono value. Each row says what a mod does and whether it is on. Depth comes from four tonal steps of one warm-to-cool dark (sunken, base, raised, hover). There is no imagery, no illustration beside a label, and no ornament. The one warm accent marks what is on, selected or actionable, and it stays scarce enough to find at a glance.\n\nDensity is deliberate. Rows are 44px tall, type runs from 12px to 26px, and a two-column workspace fits a whole tab's settings in one 1280px screen. Colour, radius, space and type all come from custom properties, so a palette switch repaints everything and changes nothing else. There are three palettes, all modes of one variable collection: **Ledger** (warm umber and amber, the default), **Graphite** (neutral grey with a copper accent) and **Sigil** (blue-black with a rose accent).\n\nMotion is quiet and functional. A hover eases its colours in only where there is a real pointer. A button gives under the press. Popovers scale from their trigger, and toasts rise into place. Nothing that a poll repaints moves, and a keyboard action never animates.",
+    "keyCharacteristics": [
+      "Flat surfaces, with depth carried by tonal steps. Shadows appear only under floating layers.",
+      "One accent per palette, reserved for on, selected and primary states.",
+      "IBM Plex Sans for words and IBM Plex Mono for numbers, paths and counts. Both are bundled offline.",
+      "Borders only where the export's `borders` allowlist names one, each with a reason.",
+      "A generated token layer: switching a theme swaps colour variables only."
+    ],
+    "rules": [
+      {
+        "name": "The Token-Only Rule",
+        "body": "No raw colour literal appears in `src/` outside `tokens.css` and `icons.js`. Every style reads a `--color-*` token, and `tokens.css` changes only by regenerating it from the export.",
+        "section": "colors"
+      },
+      {
+        "name": "The Swap Colours Only Rule",
+        "body": "A theme is a `:root[data-theme]` block of colour variables. Space, radius, type and motion never vary by palette.",
+        "section": "colors"
+      },
+      {
+        "name": "The Accent Means On Rule",
+        "body": "The accent marks state (on, selected, primary, live), never decoration. A switch turned on for a mod that is not yet listed stays Idle Slate until the mod goes live.",
+        "section": "colors"
+      },
+      {
+        "name": "The Contrast Pair Rule",
+        "body": "Every text and background pairing is listed in the export's `contrastPairs` and passes WCAG AA in all three palettes (`scripts/contrast-check.mjs`). A failure is fixed in Figma, not patched in CSS.",
+        "section": "colors"
+      },
+      {
+        "name": "The Mono For Numbers Rule",
+        "body": "A value the user reads as a number, count or path is set in Plex Mono. Words are set in Plex Sans.",
+        "section": "typography"
+      },
+      {
+        "name": "The Three Weights Rule",
+        "body": "Only 400, 500 and 600 are used (`--font-weight-regular`, `-medium`, `-semibold`). Emphasis inside prose (`b`, `strong`) uses 600.",
+        "section": "typography"
+      },
+      {
+        "name": "The No Nested Card Rule",
+        "body": "No card sits inside a card. The Mods tab's two sub-tab panels keep their card role but draw no surface, and each mod is its own raised block.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Floating-Only Shadow Rule",
+        "body": "A shadow means \"this layer floats over the page\". Cards, rows and buttons carry none.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Allowlisted Edge Rule",
+        "body": "A new border needs an entry in the export's `borders` list with its `why`. `tests/design-match.mjs` fails on any border outside that list.",
+        "section": "shapes"
+      }
+    ],
+    "dos": [
+      "Do read every colour, space, radius, font and duration from a token (`var(--color-*)`, `--space-*`, `--radius-*`, `--font-*`, `--motion-*`). To change one, change Figma, re-export, and regenerate `tokens.css`.",
+      "Do build settings as rows: a 44px row, a label column (168px), a switch, a slider, a sunken mono stepper.",
+      "Do mark on, selected and primary with the accent and nothing else. Keep status words muted and let a dot or icon carry the signal colour.",
+      "Do step depth tonally: sunken for wells, raised for cards, hover for pointer and floating layers.",
+      "Do gate hover styles behind `(hover: hover) and (pointer: fine)`, and mark any keyboard-triggered appearance `data-instant`.",
+      "Do check a new text and background pairing in all three palettes by adding it to `contrastPairs`."
+    ],
+    "donts": [
+      "Don't hand-edit `src/tokens.css`, or put a colour literal anywhere in `src/` except `tokens.css` and `icons.js`.",
+      "Don't add a border that is not in the export's `borders` allowlist, and don't put a card inside a card.",
+      "Don't put a shadow on anything that does not float over the page.",
+      "Don't draw an illustration beside a label, heading or button. The legacy setting sprite is carried but hidden (`.setting-icon { display: none }`).",
+      "Don't set uppercase tracked labels above headings. The single \"LIVE MODIFIERS\" badge is not a pattern to extend.",
+      "Don't animate anything that a poll repaints, animate on keyboard focus, or move layout during a transition. Animate transform and opacity only, and under reduced motion animate opacity and colour only.",
+      "Don't use a text glyph (an arrow, a tick) as an icon. Draw it (the check mask) or let spacing carry it (the child indent).",
+      "Don't remove the hidden theme select under the theme picker, or give the picker's trigger or options a button id: the behaviour oracle, the browser suites and the panel's change handler drive that select, and the oracle's coverage walk counts every `button[id]`.",
+      "Don't load a font or any other asset from the network. The panel runs offline.",
+      "Don't use game art or game text in the panel's chrome."
+    ]
+  }
+}

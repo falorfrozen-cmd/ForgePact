@@ -55,17 +55,27 @@ code is checked against it rather than the other way round:
   `tests/tokens-selftest.mjs`).
 - `motion.notes` is the motion contract, and `src/app.css` implements it with
   the `--motion-*` tokens only (CSS transitions and `@starting-style`, no
-  library): hover colours, the press, the tray and tooltips scaling from their
-  trigger, the toasts, and the removed entry. Under `prefers-reduced-motion:
-  reduce`, every movement and scale goes (transform, translate, scale,
-  rotate) while the opacity fades and the hover colour fades stay: the
-  owner's "Keep colour fades too", recorded as `amendments.ship`, which also
-  took the theme list out of the notes, because the owner keeps the native
-  `<select>`, whose list the system draws ("Keep native select").
-  `tests/motion.e2e.mjs` (`npm run e2e:motion`) checks each motion against the
+  library): hover colours, the press, the tray, the theme picker's list and
+  the tooltips scaling from their trigger, the toasts, and the removed entry.
+  Under `prefers-reduced-motion: reduce`, every movement and scale goes
+  (transform, translate, scale, rotate) while the opacity fades and the hover
+  colour fades stay: the owner's "Keep colour fades too", recorded as
+  `amendments.ship`. `tests/motion.e2e.mjs` (`npm run e2e:motion`) checks each motion against the
   tokens' computed values, and a note the build cannot follow is recorded as
   an owner item rather than approximated.
-- `src/theme.js`'s theme picker offers the export's palettes, in order.
+- `src/theme.js` lists the export's palettes, in order, and the Setup tab's
+  ThemePicker (`src/lib/theme-picker.js`, the `theme-picker` state and the
+  `ThemePicker` component in Figma) offers them: an id-less
+  `.theme-picker-trigger` and a `.theme-picker-list` listbox, each option
+  with three swatches of its palette read from `tokens.css` at run time, over
+  the hidden native theme select that still saves the choice. Its
+  `selectorTokens` rows and its `borders` entry are the export's, and
+  `tests/finish.e2e.mjs` (`npm run e2e:finish`) holds its posts to the derived
+  oracle's theme steps.
+- `panel/DESIGN.md` (with `panel/.impeccable/design.json`) describes the
+  design system as built, for people and for the Impeccable tooling; the
+  export stays the contract, and a change to either is a change to the
+  export first.
 
 To take a new design, copy the new export over `figma-export.json` (and the
 ids over `figma-manifest.json` if nodes moved), regenerate `tokens.css`, and
@@ -97,14 +107,25 @@ still leads the code. The owner's polish pass (2026-09-25) went this way:
 - A version number is a runtime value, like any field's value, and is never
   listed in a screen's `texts`.
 - An amendment may touch only the notes. `amendments.ship` (2026-09-26)
-  carries the owner's "Keep colour fades too" and "Keep native select" and
-  edits two places in `motion.notes`: the reduced-motion sentence (movement
-  and scale are removed, opacity and colour fades stay) and the theme list,
-  which no longer scales from its trigger because it stays a native select.
-  Nothing else moved, so no token changed and no frame was redrawn (whether
-  a Figma annotation repeats the old reduced-motion wording was not checked);
-  the removed-entry state's own reduced-motion note stays as it is, since
-  that motion has no colour.
+  first carried the owner's "Keep colour fades too" and "Keep native select"
+  and edited two places in `motion.notes`: the reduced-motion sentence
+  (movement and scale are removed, opacity and colour fades stay) and the
+  theme list, taken out because the theme was to stay a native select. The
+  removed-entry state's own reduced-motion note stays as it is, since that
+  motion has no colour.
+- An amendment can also grow. The Impeccable finish review's eight fixes,
+  which the owner approved the same day, are `amendments.ship.finishReview`,
+  each with the owner's answer verbatim ("Build the ThemePicker", "Hide it at
+  rest", "Mono run, no quotes" and the rest) and what it changed. It reverses
+  "Keep native select": `motion.notes`' theme sentence says the theme
+  picker's listbox scales from its trigger and appears at once from the
+  keyboard; the four `#theme` `selectorTokens` rows are re-pointed to
+  `.theme-picker-trigger`, with `theme-picker` rows added at the end and a
+  `.theme-picker-list` entry in `borders`; the screens' `texts` lose the
+  leading `↳ ` and `✓ ` of four strings, since the panel draws those marks
+  instead of printing them; and the `theme-picker` state's note no longer
+  says the system draws the list. `variables` and `palettes` did not move, so
+  `tokens.css` did not either.
 - Then the Figma file is edited to match the amended export and read back,
   and the new state frames' node ids are written into `figma-manifest.json`
   and the export's `states`.

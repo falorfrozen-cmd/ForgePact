@@ -20,8 +20,11 @@ did before.
   sends your value again. **Apply all** leaves a switched-off slider at the
   default.
 - **Theme.** A new **Theme** choice, in the **Appearance** card at the end of
-  the Setup tab, picks the panel's colour theme. The panel remembers it with its other
-  settings, so your choice is still there the next time you open ForgePact.
+  the Setup tab, picks the panel's colour theme. Click it and a short list
+  opens, showing a small colour preview of each theme beside its name, so you
+  can see what you are picking; the keyboard works too. The panel remembers it
+  with its other settings, so your choice is still there the next time you
+  open ForgePact.
 
 ## Changed
 
@@ -34,10 +37,11 @@ did before.
 - **Small touches.** The footer now reads "Created by Falor and ST4H". A light
   line separates the groups on the Modifiers tab. The Miner's Helmet card
   shows the helmet's stats in the accent colour.
-- **Tooltips and menus move gently.** Tooltips, the list of enabled mods and
-  the messages at the bottom fade in; they appear at once when you use the
-  keyboard, and they only fade, without moving, when your system is set to
-  reduce motion. A screen reader now reads the line under a slider along
+- **Tooltips and menus move gently.** Tooltips, the list of enabled mods, the
+  theme list and the messages at the bottom fade in; they appear at once when
+  you use the keyboard, and they only fade, without moving, when your system is
+  set to reduce motion. Buttons and tabs still ease into their hover colour
+  with reduce motion on. A screen reader now reads the line under a slider along
   with the slider.
 - **Gems of Incarnation moved to the Loot tab.** The two switches and the mod
   filter now have their own card at the end of the Loot tab, instead of sitting

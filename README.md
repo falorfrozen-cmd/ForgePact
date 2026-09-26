@@ -162,7 +162,8 @@ at its default; its value box reads **off**. Turning it back on sends your
 value again, and Apply all leaves a switched-off slider at the default.
 
 **Theme**, in the **Appearance** card at the end of the Setup tab, picks the
-panel's colour theme. Your choice is saved with the panel's other settings, so it is still
+panel's colour theme: click it (or press Enter on it) and a short list opens
+with a small colour preview of each theme. Your choice is saved with the panel's other settings, so it is still
 there the next time you open ForgePact.
 
 The icon pack (the SVG sprite and which setting uses which icon) lives in
