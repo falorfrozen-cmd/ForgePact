@@ -2,6 +2,7 @@
 
     py -3 tools/run_tests_parallel.py            # from ForgePact/, all cores
     py -3 tools/run_tests_parallel.py -j 4 -v    # four workers, a line per module
+    py -3 ForgePact/tools/run_tests_parallel.py  # from the hub root: the same run
 
 It runs exactly what `py -3 -m unittest discover -s tests` runs. The parent
 discovers the suite the same way, groups the test ids by module, and hands
@@ -302,7 +303,10 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("-j", "--jobs", type=int, default=os.cpu_count() or 1,
                         help="worker processes (default: os.cpu_count())")
-    parser.add_argument("-s", "--start-dir", default="tests")
+    parser.add_argument("-s", "--start-dir",
+                        help="default: ForgePact's tests/, run from ForgePact/ wherever "
+                             "this is invoked; a given directory is relative to the cwd, "
+                             "as for unittest")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="a line per module instead of a dot")
     parser.add_argument("--group-limit", action="append", default=[], metavar="GROUP=N",
@@ -314,6 +318,11 @@ def main(argv=None):
     parser.add_argument("--worker", metavar="MODULE", help=argparse.SUPPRESS)
     parser.add_argument("--out", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
+    if args.start_dir is None:
+        # The serial reference runs from ForgePact/, and some tests read paths
+        # relative to it; so does this, even when invoked from the hub root.
+        os.chdir(ROOT)
+        args.start_dir = "tests"
     # Run as a script, sys.path[0] is tools/; `python -m unittest` has the cwd
     # there instead. Match it, so no test imports here what it could not there.
     if sys.path and Path(sys.path[0]).resolve() == Path(__file__).resolve().parent:

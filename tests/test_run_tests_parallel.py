@@ -172,6 +172,13 @@ class CoverageTests(unittest.TestCase):
         self.assertGreater(len(discovered), 1000)
         self.assertEqual(Counter(loaded), Counter(discovered))
 
+    def test_the_default_suite_is_forgepacts_from_any_cwd(self):
+        # From the hub root, a bare `tests` would be the hub's suite.
+        with tempfile.TemporaryDirectory(prefix="forgepact-runner-") as tmp:
+            listed = subprocess.run([sys.executable, str(SCRIPT), "--list"], cwd=tmp,
+                                    capture_output=True, text=True, check=True).stdout.split()
+        self.assertEqual(Counter(listed), Counter(runner.discover(ROOT / "tests")))
+
     def test_a_missing_extra_or_doubled_id_is_a_problem(self):
         self.assertEqual(runner.coverage_problems(["a.T.x", "b.T.y"], ["b.T.y", "a.T.x"]), [])
         self.assertTrue(runner.coverage_problems(["a.T.x", "b.T.y"], ["a.T.x"]))
