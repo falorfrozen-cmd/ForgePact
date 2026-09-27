@@ -22,12 +22,18 @@
 // bag and the run keeps asking; a stackable plans a stack when a stack of its
 // identity exists; a refused item is skipped and the next continues; an
 // unconfirmed item stops and turns the mod off; the lines name what moved and
-// what stayed.
+// what stayed. Never overflow (the owner's 2026-09-28 rule, D4): a full shown
+// tab calls nothing and leaves the item in the bag and every other tab as it
+// was, against a stand-in routine that would spill into the next tab; an item
+// re-read on any tab other than the shown one is unconfirmed.
 //
 // Red first: with these scenarios written and the header holding only its
 // namespace, this file did not compile. The first error line was
 // `error C2039: 'StashMoveAllMod': is not a member of 'ForgePact'` (on the
-// first using-declaration), 2026-09-28.
+// first using-declaration), 2026-09-28. The D4 scenarios were written the same
+// way, before the header had a room check or an other-tab read; the first error
+// line was `error C2039: 'keyOnOtherTab': is not a member of
+// 'ForgePact::StashMoveReport'`, 2026-09-28.
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
@@ -109,6 +115,7 @@ static StashMoveReport PlacedCell(int x, int y)
     r.destinationHasKey = 1;
     r.destinationX = x;
     r.destinationY = y;
+    r.keyOnOtherTab = 0;
     return r;
 }
 
@@ -121,6 +128,7 @@ static StashMoveReport Refused(const std::string& answer)
     r.answer = answer;
     r.sourceHasKey = 1;
     r.destinationHasKey = 0;
+    r.keyOnOtherTab = 0;
     return r;
 }
 
@@ -133,7 +141,32 @@ static StashMoveReport Stacked(long long before, long long after, int sourceHasK
     r.sourceHasKey = sourceHasKey;
     r.stackBefore = before;
     r.stackAfter = after;
+    r.keyOnOtherTab = 0;
     return r;
+}
+
+// A stash of grid tabs as the keys each tab holds and how many it has room
+// for, and a stand-in for the game's own quick move as the static reading of
+// the processor's tab walk describes it: into the tab it is given, or, when
+// that tab is full, into the first tab in order that has room. The stand-in is
+// what D4 guards against, so it is written to spill.
+struct FakeStash {
+    std::vector<std::vector<std::string>> tabs;
+    std::vector<int>                      capacity;
+};
+
+static int FakeRoom(const FakeStash& s, int tab)
+{
+    return (int)s.tabs[tab].size() < s.capacity[tab] ? 1 : 0;
+}
+
+// The tab the stand-in placed the key on, or -1 when every tab is full.
+static int FakeQuickMove(FakeStash& s, int tab, const std::string& key)
+{
+    if (FakeRoom(s, tab)) { s.tabs[tab].push_back(key); return tab; }
+    for (int t = 0; t < (int)s.tabs.size(); ++t)
+        if (FakeRoom(s, t)) { s.tabs[t].push_back(key); return t; }
+    return -1;
 }
 
 static bool Has(const std::vector<std::string>& lines, const std::string& text)
@@ -357,7 +390,7 @@ static void TargetConfirmationRule()
     StashMoveReport stackRefusedMoved = stackRefused; stackRefusedMoved.stackAfter = 11;
     want("stack refusal but rose", stackItem, stackRefusedMoved, StashMoveOutcome::Unconfirmed);
     StashMoveReport notDispatched; notDispatched.answered = false; notDispatched.answer = "not dispatched";
-    notDispatched.sourceHasKey = 1; notDispatched.destinationHasKey = 0;
+    notDispatched.sourceHasKey = 1; notDispatched.destinationHasKey = 0; notDispatched.keyOnOtherTab = 0;
     want("not dispatched", cellItem, notDispatched, StashMoveOutcome::Skipped);
     Check("target/moved_only_when_both_sides_confirm", ok, detail);
 }
@@ -386,6 +419,128 @@ static void TargetUnconfirmedStopsAndTurnsOff()
     ok = ok && !mod.KeyEdge(true, true, true);
     Check("target/unconfirmed_item_stops_the_run_and_turns_the_mod_off", ok,
           StashMoveAllMod::SummaryLine(t) + " " + Joined(t.lines));
+}
+
+// ---- target: never overflow (D4) ------------------------------------------
+
+// One run the way the adapter drives it: for each planned item, the shown
+// tab's room re-read first; no room is a skip with nothing called; otherwise
+// the stand-in routine is called with the shown tab and the outcome decided
+// from the re-reads, including whether the key turned up on another tab.
+static int RunAgainst(StashMoveAllMod& mod, const StashMovePlan& p, FakeStash& s,
+                      std::vector<std::string>& bag, StashMoveTally& t)
+{
+    int calls = 0;
+    for (const StashMoveItem& item : p.items) {
+        StashMoveResult skip;
+        if (!StashMoveAllMod::MayCall(item, FakeRoom(s, p.stashTab), skip)) {
+            if (!mod.Record(t, skip)) break;
+            continue;
+        }
+        ++calls;
+        int landed = FakeQuickMove(s, p.stashTab, item.cell.key);
+        StashMoveReport r;
+        r.answered = true;
+        r.accepted = landed >= 0;
+        r.answer = landed >= 0 ? "success=true" : "success=false";
+        if (landed >= 0) bag.erase(std::find(bag.begin(), bag.end(), item.cell.key));
+        r.sourceHasKey = std::find(bag.begin(), bag.end(), item.cell.key) != bag.end() ? 1 : 0;
+        const std::vector<std::string>& shown = s.tabs[p.stashTab];
+        r.destinationHasKey = std::find(shown.begin(), shown.end(), item.cell.key) != shown.end() ? 1 : 0;
+        r.destinationX = (int)shown.size() - 1;
+        r.destinationY = 0;
+        r.keyOnOtherTab = (landed >= 0 && landed != p.stashTab) ? 1 : 0;
+        if (!mod.Record(t, StashMoveAllMod::Decide(item, r))) break;
+    }
+    return calls;
+}
+
+static void TargetFullShownTabKeepsItemInBag()
+{
+    StashMoveAllMod mod;
+    mod.SetEnabled(true);
+    // The shown tab (0) is full; tabs 1 and 2 have room.
+    FakeStash s;
+    s.tabs = { {"s1", "s2"}, {"s3"}, {} };
+    s.capacity = { 2, 4, 4 };
+    const std::vector<std::vector<std::string>> before = s.tabs;
+    StashMoveView v;
+    v.stashListed = true; v.bagTab = 0; v.stashTab = 0;
+    v.cells = { Cell(0, 0, "k1", 18), Cell(1, 0, "k2", 18) };
+    std::vector<std::string> bag = { "k1", "k2" };
+    StashMovePlan p = mod.Plan(v);
+    StashMoveTally t = mod.Begin(p);
+    int calls = RunAgainst(mod, p, s, bag, t);
+    bool ok = calls == 0 && t.moved == 0 && t.skipped == 2 && !t.stopped && mod.IsEnabled();
+    ok = ok && s.tabs == before && bag == std::vector<std::string>({"k1", "k2"});
+    ok = ok && Has(t.lines, "stashmoveall: item k1 -> skipped: no room on the shown tab")
+        && Has(t.lines, "stashmoveall: item k2 -> skipped: no room on the shown tab");
+    ok = ok && StashMoveAllMod::SummaryLine(t) == "stashmoveall: moved 0 of 2 from bag tab 0 to stash tab 0; skipped 2";
+    std::string detail = "calls=" + std::to_string(calls) + " " + Joined(t.lines);
+
+    // One free cell on the shown tab: the first item takes it, the second
+    // stays in the bag, and the other tabs are still unchanged.
+    StashMoveAllMod mod2;
+    mod2.SetEnabled(true);
+    FakeStash s2;
+    s2.tabs = { {"s1"}, {"s3"}, {} };
+    s2.capacity = { 2, 4, 4 };
+    std::vector<std::string> bag2 = { "k1", "k2" };
+    StashMoveTally t2 = mod2.Begin(p);
+    int calls2 = RunAgainst(mod2, p, s2, bag2, t2);
+    ok = ok && calls2 == 1 && t2.moved == 1 && t2.skipped == 1 && !t2.stopped;
+    ok = ok && s2.tabs[0] == std::vector<std::string>({"s1", "k1"}) && s2.tabs[1] == before[1] && s2.tabs[2] == before[2];
+    ok = ok && bag2 == std::vector<std::string>({"k2"});
+    detail += " partial calls=" + std::to_string(calls2) + " " + Joined(t2.lines);
+
+    // A room read that could not be made calls nothing either.
+    StashMoveItem one = p.items[0];
+    StashMoveResult unread;
+    ok = ok && !StashMoveAllMod::MayCall(one, -1, unread) && unread.outcome == StashMoveOutcome::Skipped
+        && unread.answer == "the shown tab's room could not be read";
+    // Negative control: with room, the call goes ahead.
+    StashMoveResult none;
+    ok = ok && StashMoveAllMod::MayCall(one, 1, none);
+    Check("target/full_shown_tab_keeps_item_in_bag_and_other_tabs_unchanged", ok, detail);
+}
+
+static void TargetItemOnAnotherTabIsUnconfirmed()
+{
+    // Had the routine been called with the shown tab full (the room check
+    // skipped), the game's own walk would have put the item on tab 1. The
+    // re-read finds it there: unconfirmed, the run stops and the mod turns off.
+    StashMoveAllMod mod;
+    mod.SetEnabled(true);
+    StashMoveItem item;
+    item.cell = Cell(0, 0, "k1", 18);
+    item.route = StashMoveRoute::Cell;
+    FakeStash s;
+    s.tabs = { {"s1", "s2"}, {}, {} };
+    s.capacity = { 2, 4, 4 };
+    int landed = FakeQuickMove(s, 0, "k1");
+    StashMoveReport r = PlacedCell(0, 0);
+    r.destinationHasKey = 0;
+    r.keyOnOtherTab = landed != 0 ? 1 : 0;
+    StashMoveResult res = StashMoveAllMod::Decide(item, r);
+    bool ok = landed == 1 && res.outcome == StashMoveOutcome::Unconfirmed
+        && res.answer == "the game answered success=true but the item was read on a stash tab other than the shown one";
+    // Even with the shown tab also reading the key, another tab holding it is a loss.
+    StashMoveReport both = PlacedCell(0, 0);
+    both.keyOnOtherTab = 1;
+    ok = ok && StashMoveAllMod::Decide(item, both).outcome == StashMoveOutcome::Unconfirmed;
+    // A refusal whose re-read finds the key on another tab is not a skip.
+    StashMoveReport refusedSpilled = Refused("success=false");
+    refusedSpilled.keyOnOtherTab = 1;
+    ok = ok && StashMoveAllMod::Decide(item, refusedSpilled).outcome == StashMoveOutcome::Unconfirmed;
+    // Other tabs not read is not "not there".
+    StashMoveReport unread = PlacedCell(0, 0);
+    unread.keyOnOtherTab = -1;
+    ok = ok && StashMoveAllMod::Decide(item, unread).outcome == StashMoveOutcome::Unconfirmed;
+    StashMoveTally t;
+    ok = ok && !mod.Record(t, res) && t.stopped && !mod.IsEnabled() && mod.OffThisSession();
+    // Negative control: the key on the shown tab and on no other is moved.
+    ok = ok && StashMoveAllMod::Decide(item, PlacedCell(0, 0)).outcome == StashMoveOutcome::Moved;
+    Check("target/item_read_on_another_tab_is_unconfirmed", ok, res.answer + " " + Joined(t.lines));
 }
 
 static void TargetLines()
@@ -430,6 +585,8 @@ int main()
     TargetRefusedItemSkippedNextContinues();
     TargetConfirmationRule();
     TargetUnconfirmedStopsAndTurnsOff();
+    TargetFullShownTabKeepsItemInBag();
+    TargetItemOnAnotherTabIsUnconfirmed();
     TargetLines();
     std::cout << (g_Failures ? "RESULT FAIL" : "RESULT OK") << "\n";
     return g_Failures ? 1 : 0;

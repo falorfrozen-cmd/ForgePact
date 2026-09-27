@@ -21,7 +21,10 @@ rest in the bag; that a stackable plans a stack when a stack of its identity is
 there and a special tab takes only its own class; that a refused item is
 skipped and the next continues; that an item is moved only when both sides
 confirm it and anything else stops the run and turns the mod off; and that the
-lines name what moved and what stayed.
+lines name what moved and what stayed. The owner's 2026-09-28 rule, never
+overflow: an item the shown stash tab has no room for is skipped with nothing
+called, so it stays in the bag and every other tab is unchanged, and an item
+re-read on any tab other than the shown one is unconfirmed.
 """
 import os
 import shutil
@@ -143,6 +146,21 @@ class StashMoveAllBehaviorTests(unittest.TestCase):
 
     def test_target_unconfirmed_item_stops_the_run_and_turns_the_mod_off(self):
         self.assertScenario("target/unconfirmed_item_stops_the_run_and_turns_the_mod_off")
+
+    # ---- target: never overflow (D4) -----------------------------------------
+
+    def test_full_shown_tab_keeps_item_in_bag_and_other_tabs_unchanged(self):
+        # The owner's 2026-09-28 rule: only what the shown stash tab has room
+        # for moves. Against a stand-in routine that spills into the next tab
+        # with room, a full shown tab calls nothing, the items stay in the bag
+        # and every other tab is unchanged; with one free cell, one item moves
+        # and the rest stay. An unreadable room check calls nothing either.
+        self.assertScenario("target/full_shown_tab_keeps_item_in_bag_and_other_tabs_unchanged")
+
+    def test_target_item_read_on_another_tab_is_unconfirmed(self):
+        # With its negative control: the key on the shown tab and no other is
+        # moved; on any other tab (or the other tabs unread) it is a loss.
+        self.assertScenario("target/item_read_on_another_tab_is_unconfirmed")
 
     def test_target_lines_name_what_moved_and_what_stayed(self):
         self.assertScenario("target/lines_name_what_moved_and_what_stayed")

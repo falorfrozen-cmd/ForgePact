@@ -35,11 +35,17 @@ namespace ForgePact {
 //   through the stack routine; any other class there is a skip that calls
 //   nothing; the Unique tab (-5) and any number not listed here refuse the
 //   run (TabOf, Plan);
+// - never overflow (the owner's 2026-09-28 rule): before each item's call the
+//   adapter re-reads the shown stash tab's room for it, and an item the shown
+//   tab has no room for (or whose room could not be read) is a skip that calls
+//   nothing, so it stays in the bag and every other stash tab is left as it was
+//   (MayCall);
 // - the outcome of each item from the adapter's re-reads (Decide): moved only
-//   when the source cell no longer holds the key and either the destination
-//   holds it (a cell) or the stack rose by exactly the item's count (a stack);
-//   skipped when the game answered no and both sides read unchanged;
-//   unconfirmed otherwise, a read that could not be made included;
+//   when the source cell no longer holds the key, the key is on no stash tab
+//   other than the shown one, and either the destination holds it (a cell) or
+//   the stack rose by exactly the item's count (a stack); skipped when the game
+//   answered no and every side read unchanged; unconfirmed otherwise, a read
+//   that could not be made and an item found on another tab included;
 // - that a skip continues and an unconfirmed item stops the run and turns the
 //   mod off for the session (Record);
 // - the lines: one per item, one per run, the refusal and loss lines, and the
@@ -109,6 +115,7 @@ struct StashMoveReport {
     int         destinationY = -1;
     int64_t     stackBefore = -1;      // the destination stack's count (stack route)
     int64_t     stackAfter = -1;
+    int         keyOnOtherTab = -1;    // 1 the key was read on a stash tab other than the shown one, 0 on none
 };
 
 struct StashMoveResult {
@@ -245,6 +252,25 @@ public:
         return r;
     }
 
+    // Never overflow: whether the game's routine may be called for this item.
+    // shownTabHasRoom is the adapter's re-read of the shown stash tab just
+    // before the call: 1 it has a free cell for the item's size, or (stack
+    // route) a stack of its identity with room; 0 it has neither; -1 the read
+    // could not be made. Anything but 1 fills skip with a skip that called
+    // nothing, and the item stays in the bag. The tab passed to the routine is
+    // always the shown one, and this check comes first, because the game's own
+    // quick move may place into another tab when the one it is given is full.
+    static bool MayCall(const StashMoveItem& item, int shownTabHasRoom, StashMoveResult& skip) {
+        if (item.route == StashMoveRoute::None) { skip = NotAttempted(item); return false; }
+        if (shownTabHasRoom == 1) return true;
+        skip = StashMoveResult();
+        skip.outcome = StashMoveOutcome::Skipped;
+        skip.route = StashMoveRoute::None;
+        skip.key = item.cell.key;
+        skip.answer = shownTabHasRoom == 0 ? "no room on the shown tab" : "the shown tab's room could not be read";
+        return false;
+    }
+
     // The outcome of one item from the adapter's report.
     static StashMoveResult Decide(const StashMoveItem& item, const StashMoveReport& r) {
         StashMoveResult out;
@@ -257,6 +283,13 @@ public:
         };
         const bool stack = item.route == StashMoveRoute::Stack;
         const std::string said = r.answer.empty() ? std::string("no answer") : r.answer;
+        // Never overflow: the key on any stash tab but the shown one is a
+        // loss, whatever the game answered; other tabs not read is not "not
+        // there".
+        if (r.keyOnOtherTab == 1)
+            return unconfirmed("the game answered " + said + " but the item was read on a stash tab other than the shown one");
+        if (r.keyOnOtherTab != 0)
+            return unconfirmed("the game answered " + said + " but the other stash tabs could not be read");
 
         if (!r.answered || !r.accepted) {
             // A refusal is a skip only when both sides read unchanged.

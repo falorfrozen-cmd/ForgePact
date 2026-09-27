@@ -122,7 +122,15 @@ reading** unless it says otherwise.
   two other grids (**not read**: what those two grids are - putting the item
   back where it came from is one possible reading). So on this reading a
   quick move that does not fit the tab on show may land in another stash
-  tab: Live 1's check `grid-move-tab-full` is the measurement.
+  tab. Only the game's own input reaches that walk: `GridAddItem` called by
+  name searches the one grid array it is handed, so a by-name placement into
+  a full tab answers `success=false` whatever the walk would do. Live 1's
+  check `grid-move-tab-full` is therefore the measurement only when it is the
+  hand quick-move gesture (the step-7 gesture that moved an item) repeated
+  against a full tab on show, reading which tab the item lands on; the
+  by-name placement into the same full tab is the instrument check
+  `tab-full-byname`, expected to answer `success=false` by construction and
+  never evidence about the walk.
 - **No map routine in that group.** Between the stack add and the end of the
   tab walk there is no direct call of `ChangeItemOwner`, `AddItemToMap` or
   `RemoveItemFromMap`, and after a successful `GridAddItem` there is no
@@ -154,7 +162,9 @@ reading** unless it says otherwise.
   12 to 15, before it touches a cell; it walks the cell array's two levels,
   looks each cell's item up by fingerprint, checks the item's hash
   (`ItemCheckHash`), and merges through `InventoryStackUpdateAndRemove`,
-  with `ReportClient` on a failed check. It calls no map-owner routine. The
+  with `ReportClient` on a failed check. No direct call of a map-owner
+  routine was read in it (a call dispatched through the script table would
+  not show in this reading). The
   sixth argument is tested for a number and otherwise replaced by a large
   default: **not read** what it bounds. The third (2) and fifth (1)
   arguments: **not read** beyond #14's logged values - the fifth equals the
@@ -163,10 +173,12 @@ reading** unless it says otherwise.
   second the processor passes as undefined. It looks the cell's item up by
   fingerprint and asks its size, and (#14's Phase 1h reading) reads two
   variables of its self, so its self must be the grid that holds the cell -
-  the bag grid for a bag cell. It calls no map routine.
+  the bag grid for a bag cell. No direct call of a map routine was read in
+  it.
 - **`GridAddItem`** (#14's reading, unchanged here) reads no variable of its
   self: it sizes the item, finds a fit in the grid array it is given, writes
-  the node, touches no map, and answers a struct with the tab, the position,
+  the node, makes no direct call of a map routine that was read, and answers
+  a struct with the tab, the position,
   the tab type and `success`. #14 measured it by name into the bag's
   persistent Socketable grid with 0 and undefined as its last two
   arguments.
@@ -203,7 +215,9 @@ a member, `methods id:<n>` names a method value's script, and `call` or
 numbers, `undefined`, `true`/`false`, `id:<n>`, `fp:<key>` (the map 0 item),
 `fp9:<key>` (the map 9 item), `path:<Obj|id:n>.<a.b.c>`, `kept:<Row>`, and a
 key given as plain text (`0-0-<n>-<class>`), which reaches the game as a
-string.
+string. The `fp:` and `fp9:` forms feed an item to a routine; no map check in
+this document uses them, or the stash window as a self (§ Phase A shapes,
+"The map lookup").
 
 The recording rule is `stash-bag-layout-research.md` § Instrument's: every
 by-name call is recorded with the logged shape beside the supplied shape, and
@@ -219,11 +233,13 @@ The lines Live 1 runs, in order. Each line is the command up to and including
 `confirm`; the text after `-> expect:` is the expected reply, not part of the
 command.
 The placeholders are read from `menulayout` in the same session: `<bag>` the
-`UI_Inventory_Grid_obj` whose `gridName` is `InventoryGrid`, `<stash>` the
-`UI_Stash_obj`, `<sg>` the `UI_Inventory_Grid_obj` the stash lists for the
+`UI_Inventory_Grid_obj` whose `gridName` is `InventoryGrid`, `<sg>` the
+`UI_Inventory_Grid_obj` the stash lists for the
 tab on show, `<x>,<y>` the bag cell of the item being moved (the `cell=` of
-its first row), `<K_J>` a non-stackable key (ends `-18`), `<K_M>` a material
-key (ends `-14`) and `<o>` that material stack's count (`node bag`). Before
+its first row), `<K_J>` a non-stackable key (ends `-18`), `<K_J2>` a second
+non-stackable bag key for the full-tab checks, `<K_S>` a key `craftprobe node
+stash` lists in a stash cell, `<K_M>` a material key (ends `-14`) and `<o>`
+that material stack's count (`node bag`). Before
 each block, read the cell array the block names with `craftprobe var` (for
 `path:id:<sg>.nodeGrid`, `craftprobe var id:<sg> nodeGrid`); if
 `nodeGrid.<x>.<y>` reads `undefined` where `menulayout` lists the item, the
@@ -237,19 +253,67 @@ which.
 craftprobe call InventoryGridCanAddToStack id:<bag> other:<bag> 1 undefined fp:<K_M> confirm   -> expect: dispatched #<n> -> ret=undefined, or an item struct (a bag stack of K_M's kind)
 ```
 
-**Grid item into the stash grid tab on show, first order** - the processor's
-own bag-to-stash group, self = other = the bag grid, as `StashAddToStack` was
-logged. The placement, then the source clear, then the owner step only if the
-map re-read below still finds `<K_J>` in map 0 and not in map 9:
+**The map lookup: one form, measured selfs.** Every map check in this
+document, before and after every block, uses exactly these two lines, with
+the key given as text and the owner as a number. The map 0 line runs with
+self = other = the bag grid node, the self `docs/RUNTIME_DATA_MODELS.md`
+§ 9.3 measured for a map 0 lookup. The map 9 line runs with self
+`Console_Save_obj`, given by name as in `crafting-materials-research.md`'s
+`save-route` line; that self was measured with the stash closed, so running
+it with the stash open is exactly what the control below tests. No map check
+uses the stash window as its self (no record measures it, and the research
+build's own lookup helper says the stash-side self is unmeasured), and none
+uses the `fp:` or `fp9:` argument forms, which resolve with the call's own
+self.
+
+```
+craftprobe call GetItemFromFingerprint id:<bag> other:<bag> <key> 0 confirm   -> expect: an item struct while the entry is in map 0, undefined once it has left
+craftprobe call GetItemFromFingerprint Console_Save_obj <key> 9 confirm   -> expect: an item struct while the entry is in map 9, undefined otherwise
+```
+
+**Lookup controls** (check `lookup-control`), after the dispatcher control
+and before any grid block: the map 0 line with `<K_J>` while `<K_J>` is still
+in the bag, and the map 9 line with `<K_S>`, both quoted.
+
+```
+craftprobe call GetItemFromFingerprint id:<bag> other:<bag> <K_J> 0 confirm   -> expect: an item struct (K_J is in the bag)
+craftprobe call GetItemFromFingerprint Console_Save_obj <K_S> 9 confirm   -> expect: an item struct (K_S is in a stash cell)
+```
+
+`lookup-control` is `pass` only when both answer an item struct. If either
+does not, **no grid block runs at all** - neither order below, nor the
+full-tab block - so no stash cell can end up holding an item whose entry is
+still in map 0 (the half state that ends the game at the next stash save);
+`grid-move-byname`, `grid-move-map` and `tab-full-byname` are then recorded
+`not-run (instrument: lookup control failed)` with both replies quoted. The
+stack block still runs (it has no owner step); its map lines are recorded but
+decide nothing.
+
+**Grid item into the stash grid tab on show, first order** - runs only when
+`lookup-control` is `pass`. The processor's own bag-to-stash group, self =
+other = the bag grid, as `StashAddToStack` was logged. The placement, then
+the source clear, then the two lookup lines with `<K_J>`, then the owner step
+only when those lines say the entry is still in map 0 (the map 0 line
+answers an item struct) and not in map 9 (the map 9 line answers
+`undefined`); after the owner step, the two lookup lines once more, and those
+last replies are what `grid-move-map` quotes:
 
 ```
 craftprobe call GridAddItem id:<bag> other:<bag> path:id:<sg>.nodeGrid fp:<K_J> 0 undefined confirm   -> expect: a struct with success=true, tabNumber, x, y; success=false is "no room" and nothing changed
 craftprobe call InvGridClearItemNode id:<bag> other:<bag> path:id:<bag>.nodeGrid.<x>.<y> undefined confirm   -> expect: true or undefined, and menulayout lists no bag cell holding K_J afterwards
-craftprobe call ChangeItemOwner id:<sg> other:<bag> 0 9 <K_J> confirm   -> expect: ret=undefined (its normal answer); only when the map re-read still finds K_J in map 0
+craftprobe call ChangeItemOwner id:<sg> other:<bag> 0 9 <K_J> confirm   -> expect: ret=undefined (its normal answer); only when the two lookup lines put K_J in map 0 and not in map 9
 ```
 
-**Grid item, second order** - only if the first order's placement is refused
-or does not appear in the stash: the destination grid's own
+`GridAddItem`'s third argument is supplied as `0`, the value #14 measured by
+name into the bag's Socketable grid; the processor passes one of two
+constants there that were not read (§ Static reading). Its supplied-shape
+column therefore reads `a2=0 (processor's constant not read)`, and a refusal
+or an odd save after it is recorded as `shape not reproduced (a2)`, never as
+a route negative.
+
+**Grid item, second order** - runs only when `lookup-control` is `pass`, and
+only if the first order's placement is refused or does not appear in the
+stash: the destination grid's own
 `m_MoveItemToGrid`, in the click-in shape the prospect research measured
 (self = the destination grid, other = the source grid, no argument), after
 arming its row (`InvGrid15345` is the row's short name for
@@ -262,6 +326,26 @@ negative:
 craftprobe arm budget=20 InvGrid15345 ChangeItemOwner GridAddItem s_InvNode ValidateItem
 craftprobe callm id:<sg> inst m_MoveItemToGrid other:<bag> confirm   -> expect: dispatched #<n>; K_J listed in a stash cell and in no bag cell, and ChangeItemOwner logged with self <sg>, 0, 9 and K_J
 ```
+
+**Full tab by name, an instrument check** (check `tab-full-byname`) - runs
+only when `lookup-control` is `pass`, and only when a stash grid tab with no
+free cell exists in the slot: show it (`hs_stash_tab`, its free-cell count
+quoted from `menulayout`, the tab remembered for the gesture below), read
+`<sg>` again for that tab, and run the first order's placement for `<K_J2>`:
+
+```
+craftprobe call GridAddItem id:<bag> other:<bag> path:id:<sg>.nodeGrid fp:<K_J2> 0 undefined confirm   -> expect: success=false, and the shown tab and the bag read unchanged
+```
+
+`pass` when it answers `success=false` and both sides read unchanged. That
+answer is expected by construction - the by-name call searches only the one
+array it is handed and cannot reach the processor's tab walk - so this check
+shows only that the mod's own by-name placement cannot spill; it is never
+evidence for `targetTabRule`. `not-run (no full tab in the slot)` when every
+tab has a free cell. Should it answer `success=true` after all, the tab was
+not full: finish the placement as the first order does (the source clear,
+then the owner step decided by the two lookup lines) and record `not-run
+(tab not full)`.
 
 **Stackable into the Materials tab** - the six-argument shape #14 logged for
 the hand move, with the whole stack's count as the fifth argument, then the
@@ -276,17 +360,23 @@ If the whole-stack count is refused (`false`, both sides unchanged), repeat
 the stack add once with `1` as the fifth argument - #14's logged value - and
 record which count the game took.
 
-**The map-owner re-read**, after each block (the game's own lookup, with the
-key given as text and the owner as a number):
+**The map re-read after the stack block** is the two lookup lines above with
+`<K_M>`; for a merged stack the game's own merge deletes the merged unit's
+entry (#14), so `undefined` on both maps is the expected answer there. When
+`lookup-control` failed these replies are recorded and decide nothing.
 
-```
-craftprobe call GetItemFromFingerprint id:<stash> other:<stash> <K_J> 9 confirm   -> expect: an item struct when the entry is in map 9
-craftprobe call GetItemFromFingerprint id:<stash> other:<stash> <K_J> 0 confirm   -> expect: undefined when the entry has left map 0
-```
-
-The same two lines with `<K_M>` follow the stack block; for a merged stack the
-game's own merge deletes the merged unit's entry (#14), so `undefined` on both
-maps is the expected answer there.
+**Full tab through the game's own quick move** (check `grid-move-tab-full`,
+research) - the measurement for `targetTabRule`, and not a by-name line.
+Only the game's own input reaches the processor's tab walk, so this repeats,
+with the full tab of `tab-full-byname` shown (free cells 0 by `menulayout`),
+the hand gesture that quick-moved an item in the gesture checks, on
+`<K_J2>` (its cell point confirmed on a screenshot). Then read the bag, the
+shown tab, and each other stash grid tab in order (`hs_stash_tab` and
+`menulayout`) until `<K_J2>` is found, and the two lookup lines with
+`<K_J2>`. `pass` with the tab quoted: stayed in the bag, the shown tab, or
+tab `<n>` (a spill). `not-run (no full tab in the slot)`, `not-run
+(instrument: no gesture quick-moved an item)` or `not-run (instrument: cell
+point unconfirmed)` otherwise.
 
 ## Live procedure
 
@@ -296,9 +386,11 @@ The procedure is the one in this workorder's context file,
 `.claude/workorders/forgepact-68-move-all-context.md` § "Live procedure 1"
 (kept on the owner's machine with the plan): the research build above,
 positive controls first (the marker, the hook line and a rising
-`CheckPlayerInteraction`, then the dispatcher control), the grid block into
-the personal tab, the full-tab check, the stack block into the Materials tab,
-the bag sub-tab as a source, the three hand gestures, the close and reopen,
+`CheckPlayerInteraction`, then the dispatcher control, then the two lookup
+controls, which gate every grid block), the grid block into the personal
+tab, the full-tab instrument check by name, the stack block into the
+Materials tab, the bag sub-tab as a source, the three hand gestures, the
+full tab through the gesture that quick-moved an item, the close and reopen,
 and the saved files. No person at the keyboard. Every by-name call follows
 the recording rule under § Instrument, and each check is `pass`,
 `not-observed` (with what was supplied) or `not-run (instrument: ...)`.
@@ -316,9 +408,11 @@ supplied shape for every by-name call.
 | marker | `craftprobe` first line | - | - | | |
 | control | `craftprobe hook` line, `CheckPlayerInteraction` rising | - | - | | |
 | byname-control | the dispatcher control line and its `show` entry | | | | |
+| lookup-control | the map 0 line for `<K_J>` in the bag and the map 9 line for `<K_S>`, before any grid block | | | | |
 | grid-move-byname | `<K_J>` in a stash grid cell and in no bag cell | | | | |
-| grid-move-map | the map 9 and map 0 lookups of `<K_J>` | | | | |
-| grid-move-tab-full | where a grid item goes when the tab on show is full | | | | |
+| grid-move-map | the two lookup lines for `<K_J>` after the block (map 9 a struct, map 0 `undefined`) | | | | |
+| tab-full-byname | the by-name placement of `<K_J2>` into a full tab on show: `success=false`, both sides unchanged (instrument check) | | | | |
+| grid-move-tab-full | where `<K_J2>` lands when the gesture that quick-moved an item meets a full tab on show | | - | | |
 | stack-move-byname | the stash sum for `<K_M>`'s kind and the bag cell | | | | |
 | bag-subtab-source | whether the bag's Materials sub-tab lists cells | - | - | | |
 | gesture-rightclick | rows and movement on a right-click | | - | | |
@@ -333,6 +427,12 @@ supplied shape for every by-name call.
 
 Each line is set from Live 1's capture: `byname` with the shape that worked,
 `not-observed` with what was supplied, or `shape not reproduced`.
+`targetTabRule` (what decides the tab an item lands on, and whether it can
+spill to another tab) is set only from `grid-move-tab-full`, never from
+`tab-full-byname`; when `grid-move-tab-full` is `not-run` it reads
+`not-observed (<reason>)`, and the mod's own rule (the shown tab's room is
+checked before any call, and no route that can pick another tab is used)
+stands either way.
 
 gridMoveRoute: pending
 stackMoveRoute: pending
@@ -340,3 +440,4 @@ mapOwnerRule: pending
 bagSubtabRoute: pending
 gestureRoute: pending
 sourceCellClear: pending
+targetTabRule: pending
