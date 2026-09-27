@@ -25,8 +25,12 @@ namespace ForgePact {
 // it sees it, the tick (ModuleMain.cpp's PetLootUnstickTick) hands the item
 // back to the game's own "not yet for the pet" timer (`itemCompanionTimer`,
 // kPetLootHoldFrames), drops the pet's target and clears its loot list, so the
-// game's next scan picks something else. Nothing is collected, destroyed or
-// credited by the mod; there is no hook.
+// game's next scan picks something else. The clear is the load-bearing write:
+// the item timer only keeps an item out of a new scan, so a list left holding
+// the item hands it straight back. It is gated on `ds_exists(lootList,
+// ds_type_list)`, never on the value's kind (a live ds handle may reach us as
+// VALUE_REF), and a clear the tick refuses is counted and logged. Nothing is
+// collected, destroyed or credited by the mod; there is no hook.
 //
 // PetLootStuckWatch is game-independent by contract - a frame number, a target
 // id and a distance in pixels, never an instance - so
@@ -144,16 +148,75 @@ public:
     // pet's target is dropped, so a coin that sticks again counts again).
     void NoteCoinReleased() { m_CoinsReleased.fetch_add(1); }
 
+    // Where each tick went, so `ticks=0`, "never found the pet", "the target
+    // read failed" and "nothing was ever stuck" read differently. Every tick
+    // while on calls NoteTick() first, then at most one of the routes below
+    // when it returns early; the rest reached the watch.
+    void NoteTick() { m_Ticks.fetch_add(1); }
+    // No Companion_obj instance (a menu, no pet out). A normal state, not a
+    // refusal: counted, never logged.
+    void NoteNoPet() { m_NoPet.fetch_add(1); }
+    // The pet's `lootTarget` is below 0: it has nothing to fetch. Normal.
+    void NoteNoTarget() { m_NoTarget.fetch_add(1); }
+    // `lootTarget` names an instance for which `instance_exists` is false.
+    void NoteTargetGone() { m_TargetGone.fetch_add(1); }
+    // A read the tick needed failed: it threw, or gave a non-finite number.
+    // `field` is a string literal naming it ("lootTarget", "pet x", "target
+    // y", ...); the first such refusal is logged once, the latest is kept
+    // for the stat line.
+    void NoteUnreadable(const char* field) {
+        m_Unreadable.fetch_add(1);
+        m_UnreadableLast.store(field);
+        if (!m_UnreadableLogged.exchange(true))
+            Out(std::string("petunstick: could not read ") + field +
+                " (counted as unreadable=; logged once)");
+    }
+    // A give-up whose `ds_list_clear` the tick did not run: `lootList` threw,
+    // was not a finite number, or `ds_exists(lootList, ds_type_list)` said
+    // no. The target and timer writes still happened, but the pet may take
+    // the same item straight back from the uncleared list. `why` is a string
+    // literal; logged once, the latest kept.
+    void NoteListNotCleared(const char* why) {
+        m_ListNotCleared.fetch_add(1);
+        m_ListNotClearedLast.store(why);
+        if (!m_ListNotClearedLogged.exchange(true))
+            Out(std::string("petunstick: gave up a target but did not clear lootList: ") + why +
+                " (counted as list not cleared=; logged once)");
+    }
+
     long HeldBack() const { return m_HeldBack.load(); }
     long CoinsReleased() const { return m_CoinsReleased.load(); }
     int64_t LongestRun() const { return m_Watch.Longest(); }
+    long Ticks() const { return m_Ticks.load(); }
+    long NoPet() const { return m_NoPet.load(); }
+    long NoTarget() const { return m_NoTarget.load(); }
+    long TargetGone() const { return m_TargetGone.load(); }
+    long Unreadable() const { return m_Unreadable.load(); }
+    long ListNotCleared() const { return m_ListNotCleared.load(); }
 
-    // What `petunstick 0` prints, so a bug report can tell "did nothing"
-    // from "did the wrong thing".
+    // The success paths: what the mod did.
     std::string StatLine() const {
         return "petunstick stat: held back=" + std::to_string(HeldBack()) +
                " coins released=" + std::to_string(CoinsReleased()) +
                " longest same-target=" + std::to_string((long long)LongestRun()) + " frames";
+    }
+
+    // What `petunstick 0` prints: StatLine() followed, on the same line, by
+    // where the ticks went and every refusal with the read it failed on, so a
+    // bug report can tell "did nothing" from "could not look" from "did the
+    // wrong thing".
+    std::string FullStatLine() const {
+        const char* unreadable = m_UnreadableLast.load();
+        const char* notCleared = m_ListNotClearedLast.load();
+        return StatLine() +
+               " ticks=" + std::to_string(Ticks()) +
+               " no pet=" + std::to_string(NoPet()) +
+               " no target=" + std::to_string(NoTarget()) +
+               " target gone=" + std::to_string(TargetGone()) +
+               " unreadable=" + std::to_string(Unreadable()) +
+               (unreadable ? std::string(" (last ") + unreadable + ")" : std::string()) +
+               " list not cleared=" + std::to_string(ListNotCleared()) +
+               (notCleared ? std::string(" (last ") + notCleared + ")" : std::string());
     }
 
 private:
@@ -162,6 +225,16 @@ private:
     PetLootStuckWatch m_Watch;
     std::atomic<long> m_HeldBack{ 0 };
     std::atomic<long> m_CoinsReleased{ 0 };
+    std::atomic<long> m_Ticks{ 0 };
+    std::atomic<long> m_NoPet{ 0 };
+    std::atomic<long> m_NoTarget{ 0 };
+    std::atomic<long> m_TargetGone{ 0 };
+    std::atomic<long> m_Unreadable{ 0 };
+    std::atomic<long> m_ListNotCleared{ 0 };
+    std::atomic<const char*> m_UnreadableLast{ nullptr };
+    std::atomic<const char*> m_ListNotClearedLast{ nullptr };
+    std::atomic<bool> m_UnreadableLogged{ false };
+    std::atomic<bool> m_ListNotClearedLogged{ false };
 };
 
 } // namespace ForgePact
