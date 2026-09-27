@@ -9331,6 +9331,48 @@ static bool PetLootIsOf(int objIdx, int family)
     } catch (...) { return false; }
 }
 
+// Two give-up outcomes PetLootUnstickMod's own counters do not name, kept
+// here and appended to `petunstick 0`'s line: a give-up write that threw (the
+// target was not dropped; the watch forgets it and may try again), and a
+// target of neither the ground-item nor the coin family (dropped with no
+// timer to set). Each logs its first occurrence once, with the reason or the
+// object index, and keeps the latest for the stat line.
+static std::atomic<long> g_PetLootGiveUpFailed{ 0 };
+static std::atomic<const char*> g_PetLootGiveUpFailedLast{ nullptr };
+static std::atomic<bool> g_PetLootGiveUpFailedLogged{ false };
+static std::atomic<long> g_PetLootOtherKind{ 0 };
+static std::atomic<int> g_PetLootOtherKindLast{ -1 };
+static std::atomic<bool> g_PetLootOtherKindLogged{ false };
+
+static void PetLootNoteGiveUpFailed(const char* why)
+{
+    g_PetLootGiveUpFailed.fetch_add(1);
+    g_PetLootGiveUpFailedLast.store(why);
+    if (!g_PetLootGiveUpFailedLogged.exchange(true))
+        Out(std::string("petunstick: could not give up a stuck target: ") + why +
+            " (counted as give-up failed=; logged once)");
+}
+
+static void PetLootNoteOtherKind(int objIdx)
+{
+    g_PetLootOtherKind.fetch_add(1);
+    g_PetLootOtherKindLast.store(objIdx);
+    if (!g_PetLootOtherKindLogged.exchange(true))
+        Out("petunstick: gave up a target that is neither a ground item nor a coin (object_index " +
+            std::to_string(objIdx) + "; counted as other kind=; logged once)");
+}
+
+static std::string PetLootLocalStatSuffix()
+{
+    const char* failed = g_PetLootGiveUpFailedLast.load();
+    std::string s = " give-up failed=" + std::to_string(g_PetLootGiveUpFailed.load());
+    if (failed) s += std::string(" (last ") + failed + ")";
+    s += " other kind=" + std::to_string(g_PetLootOtherKind.load());
+    if (g_PetLootOtherKind.load() > 0)
+        s += " (last object_index " + std::to_string(g_PetLootOtherKindLast.load()) + ")";
+    return s;
+}
+
 // Called once per frame from FrameCallback while `petunstick 1` is on. The
 // watch's clock is g_RuntimeFrame, one per FrameCallback, so frames the mod
 // spent switched off are a gap and a run never straddles off and on.
@@ -9381,21 +9423,41 @@ static void PetLootUnstickTick()
     if (!mod.Observe((int64_t)g_RuntimeFrame, targetId, distancePx)) return;
 
     // Give it up. The item first, so a throw below still leaves it held.
-    try {
-        const int oi = (int)g_Yytk->CallBuiltin("variable_instance_get", { target, RValue("object_index") }).ToDouble();
-        if (PetLootIsOf(oi, g_PetLootGroundObjIdx)) {
+    // Which kind it is decides only whether there is a timer to set, never
+    // whether the target is dropped: the pet is stuck on it either way.
+    double oiD = -1.0;
+    const bool kindRead = readNumber(target, "object_index", oiD);
+    if (!kindRead) mod.NoteUnreadable("target object_index");
+    const int oi = kindRead ? (int)oiD : -1;
+    bool isGround = false;
+    if (PetLootIsOf(oi, g_PetLootGroundObjIdx)) {
+        isGround = true;
+        try {
             g_Yytk->CallBuiltin("variable_instance_set",
                 { target, RValue("itemCompanionTimer"), RValue((double)ForgePact::kPetLootHoldFrames) });
-            mod.NoteHeldBack();
-        } else if (PetLootIsOf(oi, g_PetLootCoinObjIdx)) {
-            // No timer on a coin: only the target is dropped, so a coin that
-            // sticks again is counted again.
-            mod.NoteCoinReleased();
+        } catch (...) {
+            PetLootNoteGiveUpFailed("itemCompanionTimer write threw");
+            mod.Reset();
+            return;
         }
-        g_Yytk->CallBuiltin("variable_instance_set", { pet, RValue("lootTarget"), RValue(-4.0) });
-    } catch (...) {
+        mod.NoteHeldBack();
+    }
+    try { g_Yytk->CallBuiltin("variable_instance_set", { pet, RValue("lootTarget"), RValue(-4.0) }); }
+    catch (...) {
+        PetLootNoteGiveUpFailed("lootTarget write threw");
         mod.Reset();
         return;
+    }
+    // Counted only once the target is actually dropped.
+    if (!isGround && PetLootIsOf(oi, g_PetLootCoinObjIdx)) {
+        // No timer on a coin: only the target is dropped, so a coin that
+        // sticks again is counted again.
+        mod.NoteCoinReleased();
+    } else if (!isGround && kindRead) {
+        // Neither family: no timer to set, the target is still dropped, and
+        // the object index is named once in the log. (An unreadable
+        // object_index was counted above as unreadable= instead.)
+        PetLootNoteOtherKind(oi);
     }
 
     // Empty the list rather than destroy it: it is the game's, and its next
@@ -39017,8 +39079,8 @@ static void RunCommand(const std::string& line)
         const bool enable = (pv == "1" || pv == "true" || pv == "on");
         ForgePact::PetLootUnstickMod::Instance().SetEnabled(enable);
         // SetEnabled prints the `petunstick -> ON|OFF` line itself; off adds
-        // what the mod did and where its ticks went.
-        if (!enable) Out(ForgePact::PetLootUnstickMod::Instance().FullStatLine());
+        // what the mod did, where its ticks went and how each give-up ended.
+        if (!enable) Out(ForgePact::PetLootUnstickMod::Instance().FullStatLine() + PetLootLocalStatSuffix());
         return;
     }
     if (HandleHeadhunterCommand(lc, rest)) return;
