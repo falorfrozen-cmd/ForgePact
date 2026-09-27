@@ -240,8 +240,17 @@ private:
         std::vector<RValue*> args(A, A + argc);
         args[kDropGoldAmountArg] = &scaled;
         if (!mgr.m_GoldScaledLogged) {
+            // The line carries the first coin's numbers so a report (or a live
+            // capture) can hold them against the gold the game credits at
+            // pickup: this hook only proves what DropGold was handed, not that
+            // DropGold credits argument 4 unchanged.
             mgr.m_GoldScaledLogged = true;
-            Out("dropmult gold: x" + std::to_string(mult) + " applied to the coin's amount (one coin per drop)");
+            const auto num = [](double v) {
+                return (std::fabs(v) < 9.0e15 && v == std::floor(v))
+                    ? std::to_string((long long)v) : std::to_string(v);
+            };
+            Out("dropmult gold: x" + std::to_string(mult) + " applied to the coin's amount (one coin per drop): first coin "
+                + num(value) + " -> " + num(scaled.ToDouble()));
         }
         RValue& _res = mgr.m_Orig_DropGold(S, O, R, argc, args.data());
         BP_LOGDROP("DropGold", _res, argc, args.data());
