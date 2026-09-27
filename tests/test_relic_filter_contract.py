@@ -19,6 +19,7 @@ import forgepact
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from panel_source import panel_file, panel_source  # noqa: E402
+from test_release_hook_contract import strip_comments, strip_research_blocks  # noqa: E402
 
 # The page (markup and script) is the Svelte project in panel/src.
 PANEL_PAGE = panel_source()
@@ -308,6 +309,124 @@ class TestRelicFilterContract(unittest.TestCase):
             idx = html.find(row_label)
             self.assertGreaterEqual(idx, mods_first_card,
                 f"{row_label!r} still appears before the Mods tab cards")
+
+
+class TestRelicFilterArmScanLine(unittest.TestCase):
+    """#93: one line when the filter arms, naming what the scan found.
+
+    The filter's only other report is inside `Hook_DropRelic`, at a relic
+    roll, and relics roll only in Satanic zones, so neither a live gate nor a
+    player's log could say what the scan saw. `test_relic_filter_behavior.py`
+    runs the line; this pins where it is emitted from.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.plugin_code = PLUGIN_SRC.read_text(encoding="utf-8")
+        cls.header = (FORGEPACT_INCLUDE_DIR / "RelicFilterMod.hpp").read_text(encoding="utf-8")
+        cls.report = body(cls.plugin_code, "static void RelicFilterReportArmScan(")
+        cls.frame = body(cls.plugin_code, "void FrameCallback(FWFrame& FrameContext)")
+
+    def test_the_line_names_the_count_and_ids_of_the_scans_own_set(self):
+        report = strip_comments(self.report)
+        self.assertIn('"relicfilter: scan found "', report)
+        self.assertIn('" maxed relics (ids "', report)
+        self.assertIn('"none"', report)
+        # The set it counts is the one GetPlayerMaxedRelics just filled, not a
+        # cached or separately computed one.
+        scan = re.search(r"const bool scanRan = rf\.GetPlayerMaxedRelics\((\w+)\);", report)
+        self.assertIsNotNone(scan, report)
+        self.assertIn(f"std::vector<int> ids({scan.group(1)}.begin(), {scan.group(1)}.end());", report)
+        self.assertIn("std::sort(ids.begin(), ids.end());", report)
+        self.assertIn("std::to_string(ids.size())", report)
+
+    def test_a_scan_that_did_not_run_says_so(self):
+        report = strip_comments(self.report)
+        self.assertRegex(report, r'if \(!scanRan\) \{\s*Out\("relicfilter: scan did not run \(no player yet\)"\);\s*return;')
+
+    def test_it_is_emitted_from_the_arm_path_once_per_arm(self):
+        frame = strip_comments(self.frame)
+        call = frame.index("RelicFilterReportArmScan();")
+        guard = frame.rfind("if (ForgePact::RelicFilterMod::Instance().IsArmScanDue()", 0, call)
+        self.assertGreaterEqual(guard, 0, "the report is not guarded by the arm flag")
+        condition = frame[guard:frame.index("{", guard)]
+        self.assertIn("g_Setup", condition)
+        self.assertIn("(fc % 60) == 0", condition)
+        # A pending install goes first, so the line follows the hook install.
+        self.assertIn("!ForgePact::RelicFilterMod::Instance().IsPending()", condition)
+        self.assertLess(frame.index("if (ForgePact::RelicFilterMod::Instance().IsPending() && g_Setup"), guard)
+        self.assertIn("HhResolveLocalPlayer(", frame[guard:call])
+        # The report itself clears the flag, so one arm is one line.
+        self.assertIn("rf.ClearArmScanDue();", strip_comments(self.report))
+        # One call site in the whole plugin, and never from the roll itself.
+        code = strip_comments(self.plugin_code)
+        self.assertEqual(len(re.findall(r"(?<!void )RelicFilterReportArmScan\(\);", code)), 1)
+        self.assertNotIn("RelicFilterReportArmScan", body(self.plugin_code, "static RValue& Hook_DropRelic("))
+
+    def test_arming_makes_the_report_due_and_disarming_cancels_it(self):
+        enable = body(self.header, "void SetEnabled(bool enabled, bool alreadyHooked)")
+        self.assertIn("m_ArmScanDue.store(enabled);", enable)
+        self.assertIn("std::atomic<bool> m_ArmScanDue{ false };", self.header)
+
+    def test_the_line_ships_in_the_player_build(self):
+        player = strip_comments(strip_research_blocks(self.plugin_code))
+        self.assertIn('"relicfilter: scan found "', player)
+        self.assertIn("RelicFilterReportArmScan();", body(player, "void FrameCallback(FWFrame& FrameContext)"))
+
+
+class TestLiveOneResearchInstruments(unittest.TestCase):
+    """`lootcensus` (#95 part 1, #77) and `goldtrace` (#77): research build only.
+
+    Both are read-only instruments for Live 1. Neither may reach the player
+    build: not in `kPlayerCommands`, and not in what the player build compiles.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.plugin_code = PLUGIN_SRC.read_text(encoding="utf-8")
+        cls.player = strip_comments(strip_research_blocks(cls.plugin_code))
+        cls.allowlist = re.search(r"kPlayerCommands\s*=\s*\{(?P<body>.*?)\};", cls.plugin_code, re.S).group("body")
+
+    def test_each_command_has_one_branch(self):
+        self.assertEqual(self.plugin_code.count('lc == "lootcensus"'), 1)
+        self.assertEqual(self.plugin_code.count('lc == "goldtrace"'), 1)
+
+    def test_neither_reaches_the_player_build(self):
+        for name in ("lootcensus", "goldtrace", "LootCensus", "GoldTrace"):
+            self.assertNotIn(name, self.allowlist)
+            self.assertNotIn(name, self.player)
+
+    def test_lootcensus_resolves_both_objects_by_sdk_name(self):
+        census = strip_comments(body(self.plugin_code, "static void LootCensus()"))
+        for obj in ("Loot_Ground_obj", "Coin_obj"):
+            self.assertIn(f"HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::{obj})", census)
+        self.assertIn('"asset_get_index"', census)
+        self.assertIn('"instance_number"', census)
+        self.assertIn('"instance_find"', census)
+        self.assertIn("kLootCensusWalkCap = 2048", self.plugin_code)
+
+    def test_lootcensus_reads_only(self):
+        census = strip_comments(body(self.plugin_code, "static void LootCensus()"))
+        # lootFilterVisible is the game's own variable: checked before it is read.
+        self.assertLess(census.index('RValue("lootFilterVisible")'),
+                        census.index('"variable_instance_get", { inst, RValue("lootFilterVisible")'))
+        self.assertIn('"variable_instance_exists", { inst, RValue("lootFilterVisible") }', census)
+        for write in ("variable_instance_set", "variable_struct_set", "instance_destroy", "instance_create"):
+            self.assertNotIn(write, census)
+        for field in ("ground=", "hidden=", "invisible=", "coins=", "walked="):
+            self.assertIn(field, census)
+
+    def test_goldtrace_is_fed_from_logdrop_for_the_two_gold_scripts_only(self):
+        logdrop = body(self.plugin_code, "static void LogDrop(const char* fn, RValue& res, int argc, RValue** A)")
+        self.assertIn("GoldTraceAppend(fn, argc, A);", logdrop)
+        self.assertNotIn("GoldTraceAppend", strip_research_blocks(logdrop))
+        append = strip_comments(body(self.plugin_code, "static void GoldTraceAppend("))
+        self.assertIn('"DropGold"', append)
+        self.assertIn('"DropMonsterGold"', append)
+        self.assertIn("kGoldTraceMaxLines = 400", self.plugin_code)
+        self.assertIn("kGoldTraceMaxLines", append)
+        self.assertIn("goldtrace.txt", self.plugin_code)
+        self.assertIn('"%.6g"', append)
 
 
 if __name__ == "__main__":

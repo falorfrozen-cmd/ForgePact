@@ -3248,8 +3248,123 @@ static std::string EsyaAdiJson(const std::string& js)
 }
 #endif
 
+#ifndef FORGEPACT_RELEASE
+// ===== Live 1 research instruments (dev2 bug batch: #77, #95 part 1) ========
+// Research build only: neither command is in kPlayerCommands, and the player
+// build compiles none of this. Both only read.
+//
+// `goldtrace on|off|stat` (#77): while on, each DropGold / DropMonsterGold call
+// that passes a ForgePact drop hook appends its arguments to
+// bp_ipc\goldtrace.txt, one line per call, so a session can see which argument
+// is the coin's amount. LogDrop feeds it, and every FP_DROP_HOOK body calls
+// LogDrop after its original. At most kGoldTraceMaxLines lines a session,
+// because at `dropmult gold 100` one monster's gold is 10,000 DropGold calls.
+static bool g_GoldTraceOn = false;
+static bool g_GoldTraceFileFresh = false;   // truncated once, at the session's first `on`
+static long g_GoldTraceLines = 0;
+static long g_GoldTraceOverCap = 0;         // gold calls seen while on, after the cap
+static constexpr long kGoldTraceMaxLines = 400;
+
+static void GoldTraceAppend(const char* fn, int argc, RValue** A)
+{
+    if (!g_GoldTraceOn || !fn) return;
+    const std::string name = fn;
+    if (name != "DropGold" && name != "DropMonsterGold") return;
+    if (g_GoldTraceLines >= kGoldTraceMaxLines) { ++g_GoldTraceOverCap; return; }
+    try {
+        std::string line = name + " argc=" + std::to_string(argc);
+        for (int i = 0; i < argc && i < 32; ++i) {
+            line += " a" + std::to_string(i) + "=";
+            if (!A || !A[i]) { line += "null"; continue; }
+            const RValue& v = *A[i];
+            bool isNumber = true;
+            double number = 0.0;
+            switch (v.m_Kind) {
+            case VALUE_REAL:  number = v.ToDouble(); break;
+            case VALUE_INT32: number = (double)v.ToInt32(); break;
+            case VALUE_INT64: number = (double)v.ToInt64(); break;
+            case VALUE_BOOL:  number = v.ToBoolean() ? 1.0 : 0.0; break;
+            default: isNumber = false; break;
+            }
+            if (isNumber) {
+                char text[64];
+                sprintf_s(text, "%.6g", number);
+                line += text;
+            } else if (v.m_Kind == VALUE_STRING) {
+                std::string s = v.ToString();
+                if (s.size() > 40) s.resize(40);
+                line += "\"" + s + "\"";
+            } else {
+                line += "kind" + std::to_string((int)v.m_Kind);
+            }
+        }
+        std::ofstream f(IPC_DIR + "\\goldtrace.txt", std::ios::app);
+        f << line << "\n";
+        ++g_GoldTraceLines;
+    } catch (...) {}
+}
+
+// `lootcensus` (#95 part 1, #77): one line counting the ground loot and the
+// coins. Loot_Ground_obj and Coin_obj are resolved by their SDK names; the
+// walk reads each ground item's `lootFilterVisible` (the game's loot filter
+// verdict, checked with variable_instance_exists first) and its built-in
+// `visible`, up to kLootCensusWalkCap instances. `visible` is read directly,
+// the way the rest of this file reads it, rather than gated on
+// variable_instance_exists, which a GameMaker built-in may not answer true
+// for; an unreadable one is counted rather than guessed. The two trailing
+// counters say how many items the walk could not classify, so a zero
+// `hidden=` cannot come from an instrument that read nothing.
+static constexpr int kLootCensusWalkCap = 2048;
+
+static void LootCensus()
+{
+    try {
+        const double lootIdx = g_Yytk->CallBuiltin("asset_get_index",
+            { RValue(std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Loot_Ground_obj))) }).ToDouble();
+        const double coinIdx = g_Yytk->CallBuiltin("asset_get_index",
+            { RValue(std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Coin_obj))) }).ToDouble();
+        if (lootIdx < 0 || coinIdx < 0) {
+            Out("lootcensus: object not found (Loot_Ground_obj=" + std::to_string((long)lootIdx)
+                + " Coin_obj=" + std::to_string((long)coinIdx) + ")");
+            return;
+        }
+        const long ground = (long)g_Yytk->CallBuiltin("instance_number", { RValue(lootIdx) }).ToDouble();
+        const long coins = (long)g_Yytk->CallBuiltin("instance_number", { RValue(coinIdx) }).ToDouble();
+        long hidden = 0, invisible = 0, walked = 0, noFilterVar = 0, unreadableVisible = 0;
+        const long toWalk = std::min<long>(ground, kLootCensusWalkCap);
+        for (long i = 0; i < toWalk; ++i) {
+            RValue inst;
+            try { inst = g_Yytk->CallBuiltin("instance_find", { RValue(lootIdx), RValue((double)i) }); }
+            catch (...) { continue; }
+            if (inst.m_Kind == VALUE_UNDEFINED) continue;
+            ++walked;
+            try {
+                if (g_Yytk->CallBuiltin("variable_instance_exists", { inst, RValue("lootFilterVisible") }).ToBoolean()) {
+                    if (!g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("lootFilterVisible") }).ToBoolean()) ++hidden;
+                } else {
+                    ++noFilterVar;
+                }
+            } catch (...) { ++noFilterVar; }
+            try {
+                RValue visible = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("visible") });
+                if (visible.m_Kind == VALUE_UNDEFINED) ++unreadableVisible;
+                else if (!visible.ToBoolean()) ++invisible;
+            } catch (...) { ++unreadableVisible; }
+        }
+        Out("lootcensus: ground=" + std::to_string(ground) + " hidden=" + std::to_string(hidden)
+            + " invisible=" + std::to_string(invisible) + " coins=" + std::to_string(coins)
+            + " walked=" + std::to_string(walked)
+            + " no-filter-var=" + std::to_string(noFilterVar)
+            + " visible-unreadable=" + std::to_string(unreadableVisible));
+    } catch (...) { Out("lootcensus: read threw"); }
+}
+#endif
+
 static void LogDrop(const char* fn, RValue& res, int argc, RValue** A)
 {
+#ifndef FORGEPACT_RELEASE
+    GoldTraceAppend(fn, argc, A);      // #77 research: the gold scripts' arguments
+#endif
     if (g_ItemTruthBuilding) return;   // Item Truth journals its own builds
     try {
 #ifndef FORGEPACT_RELEASE
@@ -16893,6 +17008,33 @@ static RValue& Hook_DropRelic(CInstance* S, CInstance* O, RValue& R, int argc, R
 
     BP_LOGDROP("DropRelic", _res, argc, A);
     return _res;
+}
+
+// The relic filter's arm-time line (#93), both builds. The hook's own report
+// above speaks only at a relic roll, and relics roll only in Satanic zones, so
+// without this nothing said what the scan saw until one dropped. FrameCallback
+// calls it once per `relicfilter 1`, after the DropRelic install, and the count
+// and ids come from the very set the scan just filled. A scan that did not run
+// says so instead of reading as "0 maxed relics" (the dead-scanner shape).
+static void RelicFilterReportArmScan()
+{
+    auto& rf = ForgePact::RelicFilterMod::Instance();
+    rf.ClearArmScanDue();
+    std::unordered_set<int> maxed;
+    const bool scanRan = rf.GetPlayerMaxedRelics(maxed);
+    if (!scanRan) {
+        Out("relicfilter: scan did not run (no player yet)");
+        return;
+    }
+    std::vector<int> ids(maxed.begin(), maxed.end());
+    std::sort(ids.begin(), ids.end());
+    std::string list;
+    for (int id : ids) {
+        if (!list.empty()) list += ",";
+        list += std::to_string(id);
+    }
+    Out("relicfilter: scan found " + std::to_string(ids.size()) + " maxed relics (ids "
+        + (list.empty() ? std::string("none") : list) + ")");
 }
 // The 19 domain hooks above (DropBossGems .. DropOreMaterials, including
 // DropKeys' dev-only diagnostic variant) moved to ForgePact::DropManager
@@ -38598,6 +38740,54 @@ static bool HandleSkillProbeCommand(const std::string& lc, const std::string& re
     return false;
 }
 
+#ifndef FORGEPACT_RELEASE
+// `goldtrace on|off|stat`, the #77 instrument whose writer, GoldTraceAppend,
+// sits above LogDrop.
+static void GoldTraceCommand(const std::string& rest)
+{
+    const std::string v = Lower(TrimCopy(rest));
+    auto status = []() {
+        return std::string("goldtrace: ") + (g_GoldTraceOn ? "ON" : "OFF") + ", "
+            + std::to_string(g_GoldTraceLines) + " of " + std::to_string(kGoldTraceMaxLines)
+            + " lines this session (" + std::to_string(g_GoldTraceOverCap)
+            + " gold calls after the cap) -> bp_ipc\\goldtrace.txt";
+    };
+    if (v == "on" || v == "1") {
+        if (!g_GoldTraceFileFresh) {
+            std::ofstream(IPC_DIR + "\\goldtrace.txt", std::ios::trunc);
+            g_GoldTraceFileFresh = true;
+        }
+        // The gold scripts reach LogDrop only through the drop hooks, which
+        // `dropmult` installs only for a multiplier above 1. Install them here
+        // at their x1 pass-through, so `dropmult gold 1` is traced too;
+        // DropRelic is left to its own installers.
+        ForgePact::DropManager::Instance().InstallHooks();
+        g_GoldTraceOn = true;
+        Out(status());
+    } else if (v == "off" || v == "0") {
+        g_GoldTraceOn = false;
+        Out(status());
+    } else if (v.empty() || v == "stat") {
+        Out(status());
+    } else {
+        Out("goldtrace: usage -> goldtrace on | off | stat");
+    }
+}
+#endif
+
+// The Live 1 research instruments of the dev2 bug batch (`lootcensus`,
+// `goldtrace`), dispatched from their own function for the C1061 reason
+// HandleMenuProbeCommand gives. Answers false in the player build.
+static bool HandleLiveOneResearchCommand(const std::string& lc, const std::string& rest)
+{
+#ifndef FORGEPACT_RELEASE
+    if (lc == "lootcensus") { LootCensus(); return true; }
+    if (lc == "goldtrace") { GoldTraceCommand(rest); return true; }
+#endif
+    (void)lc; (void)rest;
+    return false;
+}
+
 static void RunCommand(const std::string& line)
 {
     std::string rest;
@@ -38632,6 +38822,7 @@ static void RunCommand(const std::string& line)
     if (HandleCraftCommand(lc, rest)) return;
     if (HandleRestartProbeCommand(lc, rest)) return;
     if (HandleSkillProbeCommand(lc, rest)) return;
+    if (HandleLiveOneResearchCommand(lc, rest)) return;
     if (HandleSkillStateCommand(lc, rest)) return;
     if (HandleTalentAllocCommand(lc, rest)) return;
     if (HandlePlayerWarpCommand(lc, rest)) return;
@@ -39930,6 +40121,15 @@ void FrameCallback(FWFrame& FrameContext)
             HookOneScript("DropRelic", "bp_drelic", (PVOID)Hook_DropRelic, &g_Orig_DropRelic);
             Out(std::string("relicfilter: hook installed -> ") + (g_Orig_DropRelic ? "ON" : "FAILED (DropRelic not found)"));
         }
+    }
+    // ...then, once per arm, the scan's own answer (#93): `relicfilter: scan
+    // found <n> maxed relics (ids ...)`. It waits for the install above when
+    // one is pending, and for a player either way, so an arm sent from the
+    // character screen with the hook already in (`dropmult relic`) is not
+    // spent on a scan that cannot run yet.
+    if (ForgePact::RelicFilterMod::Instance().IsArmScanDue() && !ForgePact::RelicFilterMod::Instance().IsPending() && g_Setup && (fc % 60) == 0) {
+        RValue player;
+        if (HhResolveLocalPlayer(player)) RelicFilterReportArmScan();
     }
 
     // The shipped toggle table's talent ids (D-P1), the countdown's own

@@ -10,6 +10,11 @@
 // announced a working filter on paths where nothing was applied. Only a test
 // that runs the hook end to end and compares what was logged against what was
 // actually written to the repository can tell those apart.
+//
+// It also runs the REAL RelicFilterReportArmScan (#93): the one line the
+// filter logs when it arms, naming what the scan found, so a live session can
+// check the scan without waiting for a relic roll in a Satanic zone.
+#include <algorithm>
 #include <atomic>
 #include <cstdlib>
 #include <iostream>
@@ -205,6 +210,19 @@ static void report(const char* label) {
     for (const std::string& line : world.log) std::cout << "LOG " << label << " :: " << line << "\n";
 }
 
+// The arm-time report: whether a report was due before and after it ran, so a
+// scenario can show the line is emitted once per arm and not again.
+static void runArmReport(const char* label) {
+    const bool dueBefore = ForgePact::RelicFilterMod::Instance().IsArmScanDue();
+    RelicFilterReportArmScan();
+    const bool dueAfter = ForgePact::RelicFilterMod::Instance().IsArmScanDue();
+    std::cout << "SCENARIO " << label
+              << " due_before=" << (dueBefore ? 1 : 0)
+              << " due_after=" << (dueAfter ? 1 : 0)
+              << " origcalls=" << world.origCalls << "\n";
+    for (const std::string& line : world.log) std::cout << "LOG " << label << " :: " << line << "\n";
+}
+
 int main() {
     // The report line dedupes on its own text, so each scenario runs in a
     // fresh process-level state only for the world; the static in the hook
@@ -277,6 +295,48 @@ int main() {
     world.rewardScopeActive = true;
     runHook();
     report("reward_scope_passthrough");
+
+    // 10. Arm-time line: `relicfilter 1` arms the filter, and the report names
+    //     the count and the ids from the scan's own set.
+    reset();
+    ForgePact::RelicFilterMod::Instance().SetEnabled(false, false);
+    world.maxed = { 42, 7 };
+    ForgePact::RelicFilterMod::Instance().SetEnabled(true, false);
+    runArmReport("arm_scan_two");
+
+    // 11. Ids are listed in numeric order, not text order (9 before 124).
+    reset();
+    world.maxed = { 135, 9, 124 };
+    ForgePact::RelicFilterMod::Instance().SetEnabled(true, false);
+    runArmReport("arm_scan_sorted");
+
+    // 12. The scan ran and found nothing: an empty set is named as such.
+    reset();
+    ForgePact::RelicFilterMod::Instance().SetEnabled(true, false);
+    runArmReport("arm_scan_empty");
+
+    // 13. No player: the scan did not run, which must not read as "0 maxed".
+    reset();
+    world.maxed = { 42 };
+    world.playerResolves = false;
+    ForgePact::RelicFilterMod::Instance().SetEnabled(true, false);
+    runArmReport("arm_scan_no_player");
+
+    // 14. Armed and then switched off before the report: nothing is due.
+    reset();
+    ForgePact::RelicFilterMod::Instance().SetEnabled(true, false);
+    ForgePact::RelicFilterMod::Instance().SetEnabled(false, false);
+    std::cout << "SCENARIO arm_then_off due="
+              << (ForgePact::RelicFilterMod::Instance().IsArmScanDue() ? 1 : 0) << "\n";
+
+    // 15. Re-armed while the DropRelic hook is already in (`dropmult relic`
+    //     installed it): the install is not pending, the report still is.
+    reset();
+    world.maxed = { 42 };
+    ForgePact::RelicFilterMod::Instance().SetEnabled(true, true);
+    std::cout << "SCENARIO rearm_hooked pending="
+              << (ForgePact::RelicFilterMod::Instance().IsPending() ? 1 : 0)
+              << " due=" << (ForgePact::RelicFilterMod::Instance().IsArmScanDue() ? 1 : 0) << "\n";
 
     std::cout << "HARNESS DONE\n";
     return 0;
