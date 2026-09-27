@@ -2163,7 +2163,12 @@ Instrument Before Trusting a Negative Result" rule (now in the repo-root
 `agents.md`) was written about hooks that could not fire; it applies just as
 much to call shapes that were never given their arguments.
 
-The pet circling one item when many are on screen (#94, ForgePact 2.0.0) is
-fixed in the target selection, which now holds back a target that failed and
-walks the family past the per-tick budget; the reading and the design are in
+ForgePact 2.0.0 improves this collector's target selection: it now holds back
+a quest item it could not collect and walks the family past the per-tick
+budget; the design is in
 [dev2-bug-batch-research.md](dev2-bug-batch-research.md#94-the-pet-circles-one-quest-item-when-many-are-on-screen).
+That change was first filed under #94, but #94 turned out to be the game's own
+companion loot pickup, not this collector (the owner's correction,
+2026-09-27): the pet stays on one ground item it cannot pick up, whatever kind
+of loot it is. That is answered by the separate `petunstick` mod, read in
+[pet-loot-stuck-research.md](pet-loot-stuck-research.md).

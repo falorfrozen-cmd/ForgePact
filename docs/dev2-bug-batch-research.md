@@ -2,13 +2,19 @@
 
 Five findings from the Development 2 round ship together in ForgePact 2.0.0,
 recut from its unpublished draft with no version bump: the relic filter now
-counts relics worn in the equipped slots (#93), the pet works through many quest
-items instead of circling one (#94), `dropmult gold` scales one coin's amount
-instead of creating a hundred or ten thousand coins (#77), Mana Orb with the
-Chosen One upgrade shows the timed-skill countdown (#83), and every refused
-craft press names its own reason (#80). #95 part 1 is a measurement only: what a
-ground item the loot filter hides still costs. This document is what those
-fixes were built on.
+counts relics worn in the equipped slots (#93), the pet moves on from ground
+loot it cannot pick up when the new, off-by-default `petunstick` mod is on (#94,
+the game's own companion loot pickup; its reading is in
+[pet-loot-stuck-research.md](pet-loot-stuck-research.md)), `dropmult gold`
+scales one coin's amount instead of creating a hundred or ten thousand coins
+(#77), Mana Orb with the Chosen One upgrade shows the timed-skill countdown
+(#83), and every refused craft press names its own reason (#80). #95 part 1 is a
+measurement only: what a ground item the loot filter hides still costs. The Pet
+Quest Collector also gained a target selection that holds back a quest item it
+could not collect and walks the whole quest-item family, an improvement of its
+own with no issue number: this batch first read #94 as that collector's bug,
+and the owner corrected the report on 2026-09-27 (§ "#94" below). This document
+is what those fixes were built on.
 
 Everything below is labelled. **Measured** means observed on the running game,
 and each measurement names the check of the session that took it. **Static
@@ -25,7 +31,8 @@ the shared record every module reads.
 | Issue | What was established | Fix | Checked by |
 |---|---|---|---|
 | #93 | **Measured** (Live 1): the equipped relic slots 10-14 are fingerprint strings in a global, and the scan through them found the three maxed relics the save shows | `hs-game-sdk`'s relic scan reads the equipped slots, both bindings | Live 1's `relic-scan-count` (research build); Live 2's `on-relic-scan` (player build) |
-| #94 | **Reading of our own code** only; no session measured it | target selection that remembers a failed target, and a cursor over the quest-item family | the owner's own test on the final player DLL (Live procedure 3) |
+| #94 | **Static reading** of the game's companion loot pickup (`Companion_obj`): a target is replaced only once it ceases to exist, so an item the pickup keeps failing on pins the pet; no session measured it ([pet-loot-stuck-research.md](pet-loot-stuck-research.md)) | `petunstick` (off by default): an item the pet has stayed on for 1.5 s is held back through the game's own `itemCompanionTimer`, and the pet's target and loot list are dropped | Live procedure 1 of the workorder `forgepact-pet-loot-stuck` (player DLL) |
+| Pet Quest Collector (first filed here as #94) | **Reading of our own code** only; no session measured it | target selection that remembers a failed target, and a cursor over the quest-item family (no issue number) | the owner's own test on the final player DLL (Live procedure 3) |
 | #77 | **Measured** (Live 1): `dropmult gold 100` makes 10,000 coins per monster gold drop and stalls the game for seconds, at the drop and again at the pickup | gold multiplies one coin's amount; each gold script runs once | Live 2's `on-gold-amount` |
 | #83 | **Measured** (Live 1) with Chosen One: the orb's own timer counts down across the cast, and the countdown's rule never selected Mana Orb. Without Chosen One: not observed | an explicit countdown row for Mana Orb (`manaorb-route: object-timer`) | Live 2's `on-manaorb-countdown` |
 | #80 | **Reading of our own code**: one refusal kind covered four different causes, and the hash call's result was dropped | one kind, counter and line per cause; `hash-failed` when `ItemCheckHash` did not run | Live 2's `on-craftmats-press` and `no-new-refusal` |
@@ -94,6 +101,18 @@ once per arm, in both builds, so a player's log names what the filter found and,
 for a zero, the stage that stopped.
 
 ## #94: the pet circles one quest item when many are on screen
+
+**Corrected 2026-09-27.** This section is the batch's first reading of #94, and
+that reading was wrong about which pet code the report meant. The owner
+corrected it: #94 happens "when there are lots of things for pet to pick up.
+Not necessarily quest item. Can be gold stacks, runes, other socketables like
+rubys, crafting materials etc." That is the game's own companion loot pickup
+(`Companion_obj`), not the Pet Quest Collector, and it is answered by
+`petunstick`; its static reading and the fix are in
+[pet-loot-stuck-research.md](pet-loot-stuck-research.md). What follows is kept
+as the design record of the Pet Quest Collector's target-selection change,
+which ships as an improvement of its own with no issue number; nothing below is
+the explanation of #94.
 
 Live 1 did not measure #94. What follows is a **reading of our own code** plus
 one earlier **static reading**, and the fix design built from them. The check is
@@ -321,7 +340,7 @@ order, all recorded above: `dll-hash`, `marker`, `control` (pass);
 observed) (#95). Research checks record findings; only the first three had to
 pass.
 
-**Live 2, the fix gate** (player DLL, without #94). Checks: `dll-hash`, `marker`,
+**Live 2, the fix gate** (player DLL, without the quest-collector change). Checks: `dll-hash`, `marker`,
 `control`; `on-craftmats-press` (one Ol to Old press moves from the stash and
 logs one `craftmats: moved` line); `on-gold-amount` (three gold drops at x100,
 exactly one `dropmult gold: x100 applied to the coin's amount` line, no freeze);
@@ -330,8 +349,8 @@ exactly one `dropmult gold: x100 applied to the coin's amount` line, no freeze);
 `no-new-refusal` (none of the five new `craftmats:` refusal lines in the
 session's log). All are acceptance checks.
 
-**Live procedure 3, the owner's own #94 test** (the final player DLL, all five
-fixes). The owner drives the character to a spot with eight or more quest
+**Live procedure 3, the owner's own test of the quest-collector change** (first
+filed as the #94 test; the final player DLL, all five fixes). The owner drives the character to a spot with eight or more quest
 items on screen and one with two or three, and judges the pet; the operator
 reads `petquest 0`'s counter lines before and after each. Checks:
 `on-petquest-many` and `on-petquest-few` (the owner's verdict, with `collected=`

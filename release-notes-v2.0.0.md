@@ -74,6 +74,14 @@ also get new plugin commands for the stash, the bag and your skills.
   during play. Whether the game treats an item made by `giveitem` exactly
   like a dropped one in every check it runs has not been fully confirmed
   yet.
+- **Pet moves on from loot it cannot pick up (#94).** With a lot of loot on
+  the ground, the pet could stay on one item, hopping around it without
+  picking it up or going on to the rest. A new switch on the Mods tab, under
+  Quality of Life, makes the pet give up an item it has stayed on for about a
+  second and a half and go for the others; the pet leaves that item alone for
+  about ten seconds before it tries it again. The switch picks nothing up
+  itself and does not change which items the pet collects. It is off by
+  default: turn it on to use it. Not yet confirmed in a live game.
 
 ## Changed
 
@@ -107,6 +115,11 @@ also get new plugin commands for the stash, the bag and your skills.
   **Apply all now** and another beside **Settings loaded** at the bottom.
   Point at either one, or tab to it, to read the same message; click it to go
   to Setup.
+- **Pet Collects Quest Items works through several quest items.** The pet
+  now takes the quest items on screen one at a time, and when it could not
+  collect one, it goes for another and comes back to that one about ten
+  seconds later. With a lot of quest objects around, it now also looks at
+  all of them, not only the first few.
 
 ## Fixed
 
@@ -143,12 +156,6 @@ also get new plugin commands for the stash, the bag and your skills.
   also refused, with nothing moved from the stash, when the game's own item
   hash step did not run after a stack was changed; before, that move still
   counted as done.
-- **Pet collects quest items could circle one item when many were on screen
-  (#94).** When the pet could not collect an item, it went straight back to
-  that same item, over and over, and never reached the others; with a lot of
-  quest objects around, some items were also never looked at. The pet now
-  works through the items one at a time and moves on from one it cannot
-  collect, coming back to it a few seconds later.
 
 ## How to update
 
