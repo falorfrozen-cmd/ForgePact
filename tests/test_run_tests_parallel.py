@@ -299,6 +299,57 @@ class FixtureSuiteTests(unittest.TestCase):
         self.assertEqual(ran, [])
         self.assertIn("--exclude-module 'test_x_markr' matches no test module", run.stderr)
 
+    # The MARKER module, declaring a PARALLEL_GROUP.
+    GROUPED = 'PARALLEL_GROUP = "browser"\n' + textwrap.dedent(MARKER)
+
+    def run_grouped(self, *extra):
+        files = dict(PASSING)
+        files["test_x_grouped.py"] = self.GROUPED
+        files["test_y_plain.py"] = self.MARKER
+        with tempfile.TemporaryDirectory(prefix="forgepact-runner-") as tmp:
+            tmp = Path(tmp)
+            suite = tmp / "suite"
+            suite.mkdir()
+            write_suite(suite, files)
+            run = subprocess.run([sys.executable, str(SCRIPT), "-j", "3", "--start-dir", "suite",
+                                  "--state-dir", str(tmp / "state"), *extra],
+                                 cwd=tmp, capture_output=True, text=True)
+            ran = sorted(f.name[len("ran-"):] for f in suite.glob("ran-*"))
+        return run, ran
+
+    def test_only_group_and_skip_group_split_the_suite_between_them(self):
+        count = lambda stderr: int(tail(stderr)[0].split()[1])
+        whole, whole_ran = self.run_grouped()
+        only, only_ran = self.run_grouped("--only-group", "browser")
+        rest, rest_ran = self.run_grouped("--skip-group", "browser")
+        for run in (whole, only, rest):
+            self.assertEqual(run.returncode, 0, run.stderr)
+            self.assertNotIn("never loaded", run.stderr)
+        self.assertEqual(whole_ran, ["test_x_grouped", "test_y_plain"])
+        self.assertEqual(only_ran, ["test_x_grouped"])
+        self.assertEqual(rest_ran, ["test_y_plain"])
+        self.assertEqual(count(only.stderr), 2)
+        self.assertEqual(count(only.stderr) + count(rest.stderr), count(whole.stderr))
+
+    def test_a_group_no_module_declares_is_not_refused(self):
+        # An old tagged tree predates the markers: --skip-group then runs the
+        # whole suite and --only-group nothing, still covering it once.
+        only, only_ran = self.run_grouped("--only-group", "no-such-group")
+        rest, rest_ran = self.run_grouped("--skip-group", "no-such-group")
+        self.assertEqual((only.returncode, only_ran), (0, []), only.stderr)
+        self.assertEqual(tail(only.stderr)[0], "Ran 0 tests")
+        self.assertEqual((rest.returncode, rest_ran), (0, ["test_x_grouped", "test_y_plain"]),
+                         rest.stderr)
+
+    def test_only_group_and_skip_group_are_exclusive(self):
+        run, ran = self.run_grouped("--only-group", "browser", "--skip-group", "browser")
+        self.assertEqual((run.returncode, ran), (2, []), run.stderr)
+
+    def test_a_long_left_out_list_is_cut_short(self):
+        line = runner.describe_left_out({f"test_m{i:02}": 1 for i in range(runner.LISTED + 3)})
+        self.assertTrue(line.endswith(", and 3 more"), line)
+        self.assertIn(f"left out {runner.LISTED + 3} module(s)", line)
+
     def test_only_a_top_level_true_marks_a_module_exclusive(self):
         with tempfile.TemporaryDirectory(prefix="forgepact-runner-") as tmp:
             tmp = Path(tmp)
