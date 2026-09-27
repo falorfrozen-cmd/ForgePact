@@ -9022,10 +9022,14 @@ static bool IsPetQuestExcluded(int objIdx)
 // machine, so the collect is something the player can watch happen rather
 // than items silently vanishing across the screen:
 //
-//   Idle   -> pick the nearest eligible on-screen item, remember its id
+//   Idle   -> walk the family from the selector's cursor, hand every eligible
+//             on-screen item to PetQuestSelector::Pick, which chooses the
+//             nearest one not held back; remember its id
 //   Travel -> step the pet toward it each frame (same x/y write PullOneGlobe
 //             uses for globes); on arrival, or on timeout, go to Collect
-//   Collect-> re-read the game's own gates, invoke m_Questpickup, cool down
+//   Collect-> re-read the game's own gates, invoke m_Questpickup, cool down,
+//             and tell the selector how it went: an item the collect left in
+//             place is held back so the next pick is another item (#94)
 //
 // Gates are re-read at collect time, never cached from selection: an item can
 // stop being collectable during the two seconds the pet is walking over.
@@ -9034,6 +9038,10 @@ static PetQuestPhase g_PetQuestPhase = PetQuestPhase::Idle;
 static double g_PetQuestTargetId = -4.0;
 static int    g_PetQuestTravelFrames = 0;
 static int    g_PetQuestCooldown = 0;
+// Issue #94: the selection with memory of failure and the family cursor, and
+// the clock its holds run on - one frame per tick while the mod is on.
+static ForgePact::PetQuestSelector g_PetQuestSelector;
+static int64_t g_PetQuestFrame = 0;
 
 static constexpr double kPetQuestSpeed = 11.0;        // px/frame; a brisk trot, not a teleport
 static constexpr double kPetQuestArriveR = 26.0;      // close enough to read as "the pet is on it"
@@ -9062,22 +9070,26 @@ static bool PetQuestItemIsCollectable(const RValue& inst)
     } catch (...) { return false; }
 }
 
-static bool PetQuestCollectOne(const RValue& inst)
+// Returns how the collect went, for the selector: Collected only when the
+// call ran and the item is gone; NoEffect when it ran and the item stayed;
+// Gate and Refused when it never ran.
+static ForgePact::PetQuestOutcome PetQuestCollectOne(const RValue& inst)
 {
+    using ForgePact::PetQuestOutcome;
     try {
-        if (!PetQuestItemIsCollectable(inst)) { InterlockedIncrement(&g_PetQuestRefusedGate); return false; }
+        if (!PetQuestItemIsCollectable(inst)) { InterlockedIncrement(&g_PetQuestRefusedGate); return PetQuestOutcome::Gate; }
         int lm = 0;
         try { lm = (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)g_LootManagerObjIdx) }).ToDouble(); }
         catch (...) { lm = 0; }
-        if (lm <= 0) { InterlockedIncrement(&g_PetQuestNoLootMgr); return false; }
+        if (lm <= 0) { InterlockedIncrement(&g_PetQuestNoLootMgr); return PetQuestOutcome::Refused; }
         RValue lmInst = g_Yytk->CallBuiltin("instance_find", { RValue((double)g_LootManagerObjIdx), RValue(0.0) });
         CInstance* lootMgr = HhResolveInstance(lmInst);
         CInstance* item = HhResolveInstance(inst);
-        if (!item || !lootMgr) { InterlockedIncrement(&g_PetQuestNoLootMgr); return false; }
+        if (!item || !lootMgr) { InterlockedIncrement(&g_PetQuestNoLootMgr); return PetQuestOutcome::Refused; }
         RValue method = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("m_Questpickup") });
         RValue result;
         std::vector<RValue> args{ RValue(g_PetQuestArg.load()) };
-        if (!InvokeMethodValue(item, lootMgr, method, args, result)) return false;
+        if (!InvokeMethodValue(item, lootMgr, method, args, result)) return PetQuestOutcome::Refused;
         InterlockedIncrement(&g_PetQuestCollected);
         // Did the call actually do anything? m_Questpickup removes the item,
         // so an instance that is still there afterwards means the call
@@ -9087,17 +9099,28 @@ static bool PetQuestCollectOne(const RValue& inst)
         // §4 rule 3 still stands); it only separates "nothing ran" from "ran
         // and did nothing", which are otherwise identical from outside.
         try {
-            if (g_Yytk->CallBuiltin("instance_exists", { inst }).ToBoolean())
+            if (g_Yytk->CallBuiltin("instance_exists", { inst }).ToBoolean()) {
                 InterlockedIncrement(&g_PetQuestNoEffect);
+                return PetQuestOutcome::NoEffect;
+            }
         } catch (...) {}
-        return true;
-    } catch (...) { return false; }
+        return PetQuestOutcome::Collected;
+    } catch (...) { return PetQuestOutcome::Refused; }
+}
+
+// Every travel ends here, so the selector's open travel always closes with
+// the way it ended; an outcome that left the item in place holds it back.
+static void PetQuestEndTravel(ForgePact::PetQuestOutcome outcome)
+{
+    g_PetQuestSelector.Note(outcome, g_PetQuestFrame);
+    g_PetQuestPhase = PetQuestPhase::Idle;
 }
 
 static void PetQuestCollectorTick()
 {
     ResolvePetQuestAssets();
     if (g_QuestObjParentIdx < 0) return;
+    ++g_PetQuestFrame;
 
     CInstance* pet = nullptr;
     RValue petInst;
@@ -9113,7 +9136,10 @@ static void PetQuestCollectorTick()
     // No pet out, no fetching. The mod is "the pet collects quest items", so
     // without one it stays a counter - which is also what stops it running in
     // menus and cutscenes.
-    if (petInst.m_Kind == VALUE_UNDEFINED) { g_PetQuestPhase = PetQuestPhase::Idle; return; }
+    if (petInst.m_Kind == VALUE_UNDEFINED) {
+        if (g_PetQuestPhase == PetQuestPhase::Travel) PetQuestEndTravel(ForgePact::PetQuestOutcome::Abandoned);
+        return;
+    }
 
     if (g_PetQuestCooldown > 0) { --g_PetQuestCooldown; return; }
 
@@ -9136,7 +9162,7 @@ static void PetQuestCollectorTick()
             // These items despawn on their own (deleteTimer), so losing one
             // mid-walk is ordinary, not an error.
             InterlockedIncrement(&g_PetQuestTargetLost);
-            g_PetQuestPhase = PetQuestPhase::Idle;
+            PetQuestEndTravel(ForgePact::PetQuestOutcome::Lost);
             return;
         }
         try {
@@ -9152,9 +9178,11 @@ static void PetQuestCollectorTick()
                 // means something is holding the pet (its own AI winning the
                 // x/y tug-of-war, a teleport, a room change). Collect anyway:
                 // the fetch animation is cosmetic, the credit is the point.
+                // Unless that collect removed the item, the timeout holds it
+                // back: re-picking an item the pet cannot reach is #94's loop.
                 InterlockedIncrement(&g_PetQuestTravelTimeouts);
-                PetQuestCollectOne(target);
-                g_PetQuestPhase = PetQuestPhase::Idle;
+                const ForgePact::PetQuestOutcome r = PetQuestCollectOne(target);
+                PetQuestEndTravel(r == ForgePact::PetQuestOutcome::Collected ? r : ForgePact::PetQuestOutcome::Timeout);
                 g_PetQuestCooldown = kPetQuestCooldownFrames;
                 return;
             }
@@ -9165,15 +9193,21 @@ static void PetQuestCollectorTick()
                 g_Yytk->CallBuiltin("variable_instance_set", { petInst, RValue("y"), RValue(py + dy * t) });
                 return;
             }
-            PetQuestCollectOne(target);
+            PetQuestEndTravel(PetQuestCollectOne(target));
         } catch (...) {}
-        g_PetQuestPhase = PetQuestPhase::Idle;
+        // A position read that threw closes the travel without holding the
+        // item; after a Note this is a no-op for the selector.
+        PetQuestEndTravel(ForgePact::PetQuestOutcome::Abandoned);
         g_PetQuestCooldown = kPetQuestCooldownFrames;
         return;
     }
 
-    // --- Idle: choose the nearest eligible item on screen ------------------
-    int budget = 64;   // a runaway quest-item count on screen cannot cost a frame
+    // --- Idle: choose the nearest eligible item on screen not held back -----
+    // The walk reads at most kBudget family instances per tick (a runaway
+    // quest-item count cannot cost a frame) and starts where the last one
+    // stopped, wrapping, so an item past the budget is reached within a few
+    // ticks instead of never (#94). The static props share the family.
+    constexpr int kBudget = 64;
     int total = 0;
     try { total = (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)g_QuestObjParentIdx) }).ToDouble(); }
     catch (...) { return; }
@@ -9184,8 +9218,11 @@ static void PetQuestCollectorTick()
         petY = g_Yytk->CallBuiltin("variable_instance_get", { petInst, RValue("y") }).ToDouble();
     } catch (...) { return; }
 
-    double bestD2 = -1.0, bestId = -4.0;
-    for (int i = 0; i < total && budget > 0; ++i, --budget) {
+    const int start = g_PetQuestSelector.NextStart(total, kBudget);
+    const int walk = (std::min)(total, kBudget);
+    std::vector<ForgePact::PetQuestCandidate> candidates;
+    for (int k = 0; k < walk; ++k) {
+        const int i = (start + k) % total;
         try {
             RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue((double)g_QuestObjParentIdx), RValue((double)i) });
             if (inst.m_Kind == VALUE_UNDEFINED) continue;
@@ -9198,15 +9235,15 @@ static void PetQuestCollectorTick()
             InterlockedIncrement(&g_PetQuestOnScreen);
             if (!PetQuestItemIsCollectable(inst)) continue;
             const double dx = ix - petX, dy = iy - petY;
-            const double d2 = dx * dx + dy * dy;
-            if (bestD2 < 0.0 || d2 < bestD2) {
-                bestD2 = d2;
-                bestId = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("id") }).ToDouble();
-            }
+            const double id = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("id") }).ToDouble();
+            candidates.push_back({ id, dx * dx + dy * dy });
         } catch (...) {}
     }
-    if (bestD2 < 0.0) return;
-    g_PetQuestTargetId = bestId;
+    // None on screen, or every one held back: stay idle. The pet waits for a
+    // hold to expire rather than walking back to an item that just failed.
+    const std::optional<double> pick = g_PetQuestSelector.Pick(candidates, g_PetQuestFrame);
+    if (!pick) return;
+    g_PetQuestTargetId = *pick;
     g_PetQuestTravelFrames = 0;
     g_PetQuestPhase = PetQuestPhase::Travel;
 }
@@ -9223,9 +9260,12 @@ static void PetQuestCollectorStats()
               g_PetQuestPetSeen, g_PetQuestNoCam);
     Out(b);
     char c[320];
-    sprintf_s(c, "  collected=%ld | skipped(gate)=%ld skipped(no Loot_Manager)=%ld | target lost=%ld travel timeouts=%ld | phase=%s arg=%.2f",
+    // `held back=` (#94): travels that ended with the item still in place
+    // (no effect, a gate refusal, a refused call, a timeout), each of which
+    // kept that item out of the picks for kPetQuestHoldFrames ticks.
+    sprintf_s(c, "  collected=%ld | skipped(gate)=%ld skipped(no Loot_Manager)=%ld | target lost=%ld travel timeouts=%ld | held back=%ld | phase=%s arg=%.2f",
               g_PetQuestCollected, g_PetQuestRefusedGate, g_PetQuestNoLootMgr,
-              g_PetQuestTargetLost, g_PetQuestTravelTimeouts,
+              g_PetQuestTargetLost, g_PetQuestTravelTimeouts, g_PetQuestSelector.HeldBack(),
               (g_PetQuestPhase == PetQuestPhase::Travel ? "travel" : "idle"), g_PetQuestArg.load());
     Out(c);
     // Structural refusals, reported separately from gameplay ones: these two

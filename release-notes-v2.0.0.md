@@ -143,6 +143,12 @@ also get new plugin commands for the stash, the bag and your skills.
   also refused, with nothing moved from the stash, when the game's own item
   hash step did not run after a stack was changed; before, that move still
   counted as done.
+- **Pet collects quest items could circle one item when many were on screen
+  (#94).** When the pet could not collect an item, it went straight back to
+  that same item, over and over, and never reached the others; with a lot of
+  quest objects around, some items were also never looked at. The pet now
+  works through the items one at a time and moves on from one it cannot
+  collect, coming back to it a few seconds later.
 
 ## How to update
 
