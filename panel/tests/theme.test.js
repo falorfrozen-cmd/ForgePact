@@ -51,7 +51,7 @@ test('applyTheme sets data-theme on the root every time, default included', () =
   }
 });
 
-test('tokens.css carries a block for every theme but the default', () => {
+test('tokens.css carries a block for every theme but the base :root palette (THEMES[0])', () => {
   const css = readFileSync(new URL('../src/tokens.css', import.meta.url), 'utf8') + readFileSync(new URL('../src/ember/palette.css', import.meta.url), 'utf8');
   for (const { value } of THEMES.slice(1)) {
     const block = css.match(new RegExp(`:root\\[data-theme="${value}"\\]\\s*\\{([^}]*)\\}`));

@@ -592,10 +592,11 @@
         "name": "Ember Forge",
         "source": "src/ember/",
         "reference": "../design/ember/reference.png",
-        "layout": "Desktop sidebar with Overview and Help; horizontal rail on narrow screens; a constrained scrollable content pane and a separate bottom action row that reserves its actual height.",
+        "layout": "Desktop sidebar with Overview and Help; horizontal rail on narrow screens; a constrained scrollable content pane and a separate bottom action row that reserves its actual height. In-flow theme and Enabled mods menus open/close instantly; apply status text uses at least --font-size-xs.",
         "typography": {
           "display": "EmberFell (IM Fell English), Georgia, serif",
-          "body": "Segoe UI, system-ui, sans-serif"
+          "body": "Segoe UI, Arial, sans-serif",
+          "symbol": "Arial, sans-serif"
         },
         "approvedExceptions": [
           "Local illustrated forge artwork and setting icons",

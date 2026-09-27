@@ -37,6 +37,7 @@ html[data-theme="ember"] .theme-picker-list { position: relative; top: auto; mar
    scroll away with it instead of covering the first choices. */
 html[data-theme="ember"] #wrap:has(.theme-picker[data-open], #enabledMods[data-open]) .control-dock { position: relative; }
 html[data-theme="ember"] .ember-footer .page-actions { margin: 0; }
+html[data-theme="ember"] #chipApply { font-size: var(--font-size-xs); }
 html[data-theme="ember"] #gemfilter_panel { background: #101214; }
 html[data-theme="ember"] .ember-overview { grid-column: 1 / -1; }
 html[data-theme="ember"] .setting-icon { display: inline-block; width: 26px; height: 26px; flex: 0 0 26px; vertical-align: middle; }

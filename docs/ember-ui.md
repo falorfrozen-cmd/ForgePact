@@ -29,6 +29,8 @@ changes reset the content pane to the top.
 Theme choices and the expanded Enabled mods list stay inside that pane, with
 their own scrolling when space is short. Opening either reveals its options
 above the action bar. The Enabled mods heading remains visible when collapsed.
+These in-flow menus open/close instantly; floating menus in the flat palettes
+keep their existing fades. The action is consistently named **Apply all now**.
 
 ## Development
 
@@ -40,7 +42,9 @@ above the action bar. The Enabled mods heading remains visible when collapsed.
   Other palettes keep their existing layout. Native controls are moved with
   their handlers intact and returned to their original positions on theme change.
 - `panel/src/ember/assets/`: the exact 22 approved WebPs (301,192 bytes), bundled
-  font and its license. Vite packages local assets; no remote fonts/images.
+  WOFF2 font and its license. Vite packages local assets; no remote fonts/images.
+  IM Fell English was converted from 194,992-byte TTF to 93,544-byte WOFF2;
+  all 372 glyph outlines, metrics and character mappings were verified equal.
 - `design/ember/`: artwork provenance and full-size reference, excluded from
   the runtime bundle. `tools/pack_ember_relief.cjs` retains the crop recipe.
 

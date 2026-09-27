@@ -273,6 +273,7 @@ async function warningStartingStyle({ page }) {
 // picker opened from the keyboard, show with no transition; the same tray and
 // picker opened by the pointer run one (the controls).
 async function keyboardAtOnce({ page }) {
+  const ember = await $(page, () => document.documentElement.dataset.theme === 'ember');
   await tab(page, 'setup');
   await away(page);
   await record(page);
@@ -289,7 +290,7 @@ async function keyboardAtOnce({ page }) {
   await page.click(pickerBtn);
   await wait(300);
   const ptrPicker = await seen(page, pickerList);
-  assert(props(ptrPicker).includes('opacity') && props(ptrPicker).includes('transform'), `the pointer-opened theme picker ran ${props(ptrPicker).join(',') || 'nothing'} (the control)`);
+  assert(ember ? ptrPicker.length === 0 : props(ptrPicker).includes('opacity') && props(ptrPicker).includes('transform'), `the pointer-opened theme picker ran ${props(ptrPicker).join(',') || 'nothing'} (the control)`);
   await page.keyboard.press('Escape');
 
   await tab(page, 'world');
@@ -328,8 +329,8 @@ async function keyboardAtOnce({ page }) {
   await page.click('.enabled-mods-toggle');
   await wait(300);
   const ptr = await seen(page, trayUl);
-  assert(props(ptr).includes('opacity') && props(ptr).includes('transform'), `the pointer-opened tray ran ${props(ptr).join(',') || 'nothing'} (the control)`);
-  return 'theme picker, warning tooltip, note tooltip and tray: no transition from the keyboard; the pointer picker and tray ran opacity + transform';
+  assert(ember ? ptr.length === 0 : props(ptr).includes('opacity') && props(ptr).includes('transform'), `the pointer-opened tray ran ${props(ptr).join(',') || 'nothing'} (the control)`);
+  return `theme picker, warning tooltip, note tooltip and tray: no transition from the keyboard; pointer menus ${ember ? 'instant in Ember flow' : 'ran opacity + transform'}`;
 }
 
 // Under reduce (amendments.ship, the owner's "Keep colour fades too"), nothing
@@ -355,7 +356,8 @@ async function reducedNoMovement({ page }) {
   await page.click(pickerBtn);
   await wait(300);
   const pickerRan = await $(page, (s) => window.__motion.filter((m) => m.el.matches(s)).map((m) => m.prop), pickerList);
-  assert(pickerRan.includes('opacity'), `reduced: the theme picker did not fade (${pickerRan.join(',') || 'nothing'})`);
+  const ember = await $(page, () => document.documentElement.dataset.theme === 'ember');
+  assert(ember ? pickerRan.length === 0 : pickerRan.includes('opacity'), `reduced: unexpected theme picker transitions (${pickerRan.join(',') || 'nothing'})`);
   await keep();
   await hoverNote(page).catch((e) => { throw new Error('note: ' + e.message); });
   await keep();
@@ -504,13 +506,17 @@ async function m3Keyboard({ page }) {
 // rebuilt while it is open appears at once.
 async function m4Tray({ page }) {
   const t = await tokens(page);
+  const ember = await $(page, () => document.documentElement.dataset.theme === 'ember');
   await trayOf(page);
   await record(page);
   await page.click('.enabled-mods-toggle');
   await wait(350);
   const open = await seen(page, trayUl);
-  timed(one(open, 'opacity'), t.base, t.emphasized, 'the tray opening');
-  timed(one(open, 'transform'), t.base, t.emphasized, 'the tray opening');
+  if (ember) assert(open.length === 0, 'Ember in-flow tray must open instantly');
+  else {
+    timed(one(open, 'opacity'), t.base, t.emphasized, 'the tray opening');
+    timed(one(open, 'transform'), t.base, t.emphasized, 'the tray opening');
+  }
   const origin = await $(page, (s) => getComputedStyle(document.querySelector(s)).transformOrigin, trayUl);
   const w = await $(page, (s) => document.querySelector(s).getBoundingClientRect().width, trayUl);
   assert(origin.startsWith(`${Math.round(w)}`) || origin.startsWith(`${w}`), `the tray scales from ${origin}, not its top right (width ${w})`);
@@ -529,8 +535,11 @@ async function m4Tray({ page }) {
   await page.mouse.click(outside.x, outside.y);
   await wait(300);
   const close = await seen(page, trayUl);
-  timed(one(close, 'opacity'), t.fast, t.standard, 'the tray closing');
-  timed(one(close, 'transform'), t.fast, t.standard, 'the tray closing');
+  if (ember) assert(close.length === 0, 'Ember in-flow tray must close instantly');
+  else {
+    timed(one(close, 'opacity'), t.fast, t.standard, 'the tray closing');
+    timed(one(close, 'transform'), t.fast, t.standard, 'the tray closing');
+  }
   assert(await $(page, (s) => !document.querySelector(s).checkVisibility(), trayUl), 'the tray is still shown after closing');
   // A measure after the close never replays it.
   await clearLog(page);
@@ -538,7 +547,7 @@ async function m4Tray({ page }) {
   await wait(600);
   const replay = await seen(page, trayUl);
   assert(replay.length === 0, `a resize replayed the tray's close: ${props(replay).join(',')}`);
-  return `open ${t.base} ms and close ${t.fast} ms, from ${origin}; rebuilt and resized: none`;
+  return `open ${ember ? 0 : t.base} ms and close ${ember ? 0 : t.fast} ms, from ${origin}; rebuilt and resized: none`;
 }
 
 // M5: the theme picker's list (finish review F2, the owner's "Build the
@@ -548,14 +557,18 @@ async function m4Tray({ page }) {
 // is chosen with the pointer; the keyboard's open is keyboard-opens-at-once.
 async function m5ThemePicker({ page }) {
   const t = await tokens(page);
+  const ember = await $(page, () => document.documentElement.dataset.theme === 'ember');
   await tab(page, 'setup');
   await away(page);
   await record(page);
   await page.click(pickerBtn);
   await wait(350);
   const open = await seen(page, pickerList);
-  timed(one(open, 'opacity'), t.base, t.emphasized, 'the theme picker opening');
-  timed(one(open, 'transform'), t.base, t.emphasized, 'the theme picker opening');
+  if (ember) assert(open.length === 0, 'Ember in-flow theme menu must open instantly');
+  else {
+    timed(one(open, 'opacity'), t.base, t.emphasized, 'the theme picker opening');
+    timed(one(open, 'transform'), t.base, t.emphasized, 'the theme picker opening');
+  }
   const origin = await $(page, (s) => getComputedStyle(document.querySelector(s)).transformOrigin, pickerList);
   assert(/^0px 0px/.test(origin), `the theme picker scales from ${origin}, not its top left`);
   const under = await $(page, ([b, l]) => { const a = document.querySelector(b).getBoundingClientRect(); const c = document.querySelector(l).getBoundingClientRect(); return c.top >= a.bottom && Math.abs(c.left - a.left) < 1; }, [pickerBtn, pickerList]);
@@ -565,8 +578,11 @@ async function m5ThemePicker({ page }) {
   await page.mouse.click(outside.x, outside.y);
   await wait(300);
   const close = await seen(page, pickerList);
-  timed(one(close, 'opacity'), t.fast, t.standard, 'the theme picker closing');
-  timed(one(close, 'transform'), t.fast, t.standard, 'the theme picker closing');
+  if (ember) assert(close.length === 0, 'Ember in-flow theme menu must close instantly');
+  else {
+    timed(one(close, 'opacity'), t.fast, t.standard, 'the theme picker closing');
+    timed(one(close, 'transform'), t.fast, t.standard, 'the theme picker closing');
+  }
   assert(await $(page, (s) => !document.querySelector(s).checkVisibility(), pickerList), 'the theme picker is still shown after closing');
   // Choosing with the pointer closes it the same way; the palette swap itself runs no colour transition (M1).
   await page.click(pickerBtn);
@@ -575,9 +591,10 @@ async function m5ThemePicker({ page }) {
   await page.click('.theme-picker-option[data-value="graphite"]');
   await wait(300);
   const chose = await seen(page, pickerList);
-  timed(one(chose, 'opacity'), t.fast, t.standard, 'the theme picker closing on a choice');
+  if (ember) assert(chose.length === 0, 'Ember theme choice must close instantly');
+  else timed(one(chose, 'opacity'), t.fast, t.standard, 'the theme picker closing on a choice');
   await settled(page);
-  return `open ${t.base} ms from ${origin}, close ${t.fast} ms (outside and on a choice)`;
+  return `open ${ember ? 0 : t.base} ms from ${origin}, close ${ember ? 0 : t.fast} ms (outside and on a choice)`;
 }
 
 // M6: #toast rises in over base and sinks out over fast; the undo toast the
@@ -671,8 +688,8 @@ const CHECKS = [
   ['motion-M11', warningStartingStyle],
 ];
 
-async function withPage(browser, fn) {
-  const sandbox = await startSandbox({ dist: typeof args.dist === 'string' ? args.dist : null });
+async function withPage(browser, fn, seed = null) {
+  const sandbox = await startSandbox({ dist: typeof args.dist === 'string' ? args.dist : null, seed });
   let page = null;
   try {
     page = await openPanel(browser, sandbox);
@@ -691,6 +708,9 @@ try {
   for (const [name, fn] of CHECKS) {
     try {
       const note = await withPage(browser, fn);
+      // Ember expands these menus instantly in flow; the flat popovers must
+      // still keep their original token-based entrance and exit animations.
+      if (fn === m4Tray || fn === m5ThemePicker) await withPage(browser, fn, { theme: 'ledger' });
       passed.push(name);
       console.log(`ok   ${name}${typeof note === 'string' && note ? ' (' + note + ')' : ''}`);
     } catch (e) {

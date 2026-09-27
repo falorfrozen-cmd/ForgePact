@@ -1,7 +1,7 @@
 /* Reference material system. Frames use nine-slice borders: controls stay native. */
 @font-face {
   font-family: EmberFell;
-  src: url("./assets/IMFellEnglish.ttf") format("truetype");
+  src: url("./assets/IMFellEnglish.woff2") format("woff2");
   font-weight: 400;
   font-style: normal;
   font-display: swap;

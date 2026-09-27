@@ -24,6 +24,18 @@ colors:
   warn-tint: "#261f14"
   danger: "#f29ba6"
 typography:
+  ember-display:
+    fontFamily: "EmberFell, IM Fell English, Georgia, serif"
+    fontSize: "26px"
+    fontWeight: 400
+  ember-body:
+    fontFamily: "Segoe UI, Arial, sans-serif"
+    fontSize: "14px"
+    fontWeight: 400
+  ember-symbol:
+    fontFamily: "Arial, sans-serif"
+    fontSize: "23px"
+    fontWeight: 400
   display:
     fontFamily: "IBM Plex Sans, Segoe UI, system-ui, sans-serif"
     fontSize: "26px"
@@ -452,7 +464,7 @@ Tokens: `--motion-duration-fast` (120ms) and `--motion-duration-base` (200ms); `
 - The theme picker's list does the same from its trigger's corner: open over `base` on `emphasized`, close over `fast` on `standard`, at once from the keyboard. A closing list takes no pointer.
 - **Reduced motion** (`prefers-reduced-motion: reduce`): the press, every scale and every rise are removed. The opacity fades of the tray, the theme picker's list, tooltips, toasts and removed entry stay, and so do the hover colour fades (the owner's "Keep colour fades too", `amendments.ship`).
 
-## Ember Forge (owner-approved integration, 2026-09-28)
+## Ember Forge (owner-approved integration)
 
 The owner approved the illustrated forge reference in `../design/ember/` and
 asked to carry it onto the current Svelte panel before any Figma work. Ember
@@ -472,15 +484,22 @@ Every write delegates to an existing setting handler; no game hooks or
 polling loop are added. At narrow widths the sidebar becomes a horizontal
 navigation rail and controls stack. Dialogs use native focus trapping.
 
-Shared tooltips, theme picker, Enabled mods and Undo keep the existing motion
-tokens, keyboard behavior and reduced-motion rules. In reduced motion,
-opacity and colour fades remain while movement is removed. Ember's theme menu
+Shared tooltips and Undo keep the existing motion tokens, keyboard behavior
+and reduced-motion rules. In reduced motion, opacity and colour fades remain
+while movement is removed. Ember's theme menu
 and expanded Enabled mods list participate in the pane's scroll flow, reveal
 themselves on open and cap their list height to the pane. Every palette and
-Turn off action must remain reachable above the separate footer.
+Turn off action must remain reachable above the separate footer. These two
+in-flow menus open and close instantly, including pointer input, so their
+layout space never lingers after a fade. Flat palettes keep floating-menu
+animations. Apply status text uses at least `--font-size-xs` at every width.
 
 The artwork, typography, literal material colours and ornamentation are
 approved exceptions to the flat-panel rules below, confined to Ember. The
+material palette is fixed artwork-matching chrome; `palette.css` supplies the
+semantic colours of shared controls rather than recolouring that artwork.
+Segoe UI is Ember's body face, with Arial as the system fallback; the existing
+arrow/check glyphs explicitly use Arial. No Arial font file is bundled. The
 existing Figma export and generated `tokens.css` are unchanged; shared Figma
 design-library work is deferred. See `../docs/ember-ui.md` for provenance and
 tests. `e2e:finish` retains Ledger's gutter/type baseline and exercises all

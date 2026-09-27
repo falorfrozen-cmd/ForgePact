@@ -118,6 +118,9 @@ export function installThemePicker() {
 
   function setOpen(open, instant) {
     if (open === isOpen()) return;
+    // Ember's menu is in the layout flow: change its space and visibility
+    // together, rather than leaving an empty box until an opacity fade ends.
+    instant ||= document.documentElement.dataset.theme === 'ember';
     list.toggleAttribute('data-instant', instant);
     if (!instant) {
       const settle = (e) => {

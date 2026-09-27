@@ -144,7 +144,7 @@ export function initEmberShell() {
   document.addEventListener('forgepact:status', updateEmberStatus);
   applyThemeLayout();
   const apply = document.getElementById("applyall");
-  apply.textContent = "Apply now";
+  apply.textContent = "Apply all now";
   apply.title =
     "Apply all enabled settings now, or queue them if the game is closed.";
   const auto = document.querySelector(".auto-control");
@@ -429,16 +429,6 @@ function updateEmberStatus() {
     ? "Required plugin files are present. This is not a live connection check."
     : "Choose your game and install its plugin in Setup.";
   if (plugin.title !== title) plugin.title = title;
-}
-function setEmberDisconnected() {
-  for (const id of ["chipGame", "emberPluginStatus"]) {
-    const el = document.getElementById(id);
-    if (el) {
-      el.textContent =
-        id === "chipGame" ? "Panel disconnected" : "Status unknown";
-      el.className = "chip warn";
-    }
-  }
 }
 function openEmberQuickChoices() {
   const box = document.getElementById("emberQuickChoices");

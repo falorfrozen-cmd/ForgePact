@@ -27,5 +27,7 @@ the approved reference as its sole image input and this prompt:
 
 > Edit this exact ForgePact UI reference into a CLEAN EMPTY UI MATERIAL ATLAS for actual software implementation. Preserve the exact layout, camera, dark gritty pixel-detailed fantasy materials, bevels, copper edges, stone relief and especially the hanging chains, torn red banner on the left sidebar and forge illustration. REMOVE ALL text and ALL controls from the entire image: logos, words, headings, numbers, navigation icons, sliders, switches, buttons, item icons, status dots, stars, pentagram and checkmarks. Fill removed areas with the same existing dark iron/stone surface without visible patches. Preserve the empty copper-outlined panel frames (the two large panels side by side, full-width slim panel below, full-width footer panel), sidebar stone structure and its banner/chains, top bar and forge hero background. No new panels, no redesign, keep the exact panel positions from the reference. This is texture artwork only; there must be ZERO lettering, symbols, UI pictograms, switches or sliders anywhere. The decorative diamond rune on the physical forge anvil and cloth banners may remain because they are part of the scenery. Same wide aspect ratio as reference. High fidelity, dark and restrained, never cartoon, no plastic smoothness.
 
-The serif font is IM Fell English by Igino Marini, unmodified from Google
-Fonts. Its OFL notice ships at `panel/src/ember/assets/OFL-IMFellEnglish.txt`; see `CREDITS.md`.
+The serif font is IM Fell English by Igino Marini from Google Fonts, converted
+to WOFF2 with fontTools (194,992 to 93,544 bytes). All 372 glyph outlines,
+horizontal metrics and character mappings are unchanged. Its OFL notice ships
+at `panel/src/ember/assets/OFL-IMFellEnglish.txt`; see `CREDITS.md`.

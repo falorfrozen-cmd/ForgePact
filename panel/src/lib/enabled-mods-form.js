@@ -139,6 +139,8 @@ export function installEnabledModsForm() {
   // layout measure() forces never replays the close.
   function setOpen(open, instant = true) {
     if (open === isOpen()) return;
+    // The Ember list expands in flow; reserve/release its space immediately.
+    instant ||= document.documentElement.dataset.theme === 'ember';
     const ul = list();
     if (ul) {
       ul.toggleAttribute('data-instant', instant);
