@@ -17,6 +17,16 @@
 # compiler discovery come from `main` (checked out into `forgepact-ci`). See
 # the module guide, "The build half (forgepact-release.yml)".
 #
+# Three jobs. `build` checks the tag, runs every contract test except the
+# panel's browser suites, compiles, packages and keeps the zip as an
+# artifact. `panel-browser-tests` runs those browser suites (the modules
+# declaring `PARALLEL_GROUP = "panel-browser"`) beside it, on a runner of its
+# own, because they were most of a 27-minute serial test step once the panel
+# was built here and they stopped skipping. `upload` waits for both, checks
+# the artifact is the zip `build` hashed, and puts it on the draft. Both test
+# jobs run the tag's tests through main's tools/run_tests_parallel.py, whose
+# --skip-group/--only-group split covers the suite exactly once between them.
+#
 # It only ever uploads assets onto an EXISTING DRAFT release -- it never
 # makes a new release object, never edits one, never flips a release out of
 # draft, and never touches which release is "latest". Publishing stays a
@@ -54,9 +64,13 @@ jobs:
   build:
     runs-on: windows-2025-vs2026
     permissions:
-      # Uploading assets to the draft. Nothing here starts another workflow
-      # run, so this job needs no permission over the Actions API itself.
-      contents: write
+      # Reading the draft for guard 1. Only `upload` writes to it.
+      contents: read
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      version: ${{ steps.tag.outputs.version }}
+      source_commit: ${{ steps.source_commit.outputs.sha }}
+      zip_hash: ${{ steps.package.outputs.zip_hash }}
     steps:
       # A release is built from main -- see the header comment for why this
       # workflow does not take the tag ref itself.
@@ -201,10 +215,25 @@ jobs:
       # The native harnesses (test_headhunter_dispatch.py, etc.) find MSVC
       # via vswhere themselves -- see AGENTS.md's "Prove the instrument"; they
       # are not skipped on a runner that has a compiler.
-      - name: Contract tests
+      #
+      # main's runner, not the tag's: a tag cut before it existed still runs
+      # in parallel. The panel's browser suites run in panel-browser-tests.
+      # test_panel_perf is left out on CI: it holds frame timings to hard
+      # budgets, which on a shared 4-core runner measure the runner, not the
+      # panel, and a flaky budget would block a release that main's own runs
+      # already cleared. It runs locally, alone, before a release is cut
+      # (module guide, "The build half (forgepact-release.yml)").
+      - name: Contract tests (all but the panel's browser suites)
         shell: bash
         working-directory: ForgePact
-        run: python -m unittest discover -s tests
+        run: |
+          skip=()
+          if [ -f tests/test_panel_perf.py ]; then
+            skip=(--exclude-module test_panel_perf)
+          fi
+          python ../forgepact-ci/tools/run_tests_parallel.py -s tests -v \
+            --state-dir "$RUNNER_TEMP/test-state" \
+            --skip-group panel-browser "${skip[@]}"
 
       - name: Fetch the pinned toolchain
         shell: bash
@@ -278,62 +307,16 @@ jobs:
           echo "$out"
           echo "zip_hash=$(echo "$out" | tail -1)" >> "$GITHUB_OUTPUT"
 
-      # A dry run never touches the draft; the built zip is only kept as a
-      # downloadable artifact so it can be inspected without re-running.
-      - name: Keep the zip as an artifact on a dry run
-        if: inputs.dry_run
+      # How the zip reaches the upload job; on a dry run, which never touches
+      # the draft, it is also the way to inspect the zip without re-running.
+      - name: Keep the zip as an artifact
         uses: actions/upload-artifact@v4
         with:
-          name: forgepact-release-dry-run
+          name: forgepact-release-zip
           path: |
             ${{ runner.temp }}/out/*
           retention-days: 7
-
-      # Second draft guard, right before the write this job exists to make.
-      # A human can publish the draft while this job was building (~15
-      # minutes), and the upload step below is only safe with --clobber
-      # because both guards ran.
-      #
-      # It also checks the tag still points at the commit this job built.
-      # forgepact-tag.yml's recut deletes a draft and its tag, makes both
-      # again on a newer commit and starts its own build; a build of the old
-      # commit still running would then find a draft on "its" tag and put the
-      # old zip on the new draft. A tag that is gone fails the lookup, which
-      # refuses too.
-      - name: This release is still a draft (guard 2)
-        if: ${{ !inputs.dry_run }}
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          TAG: ${{ steps.tag.outputs.tag }}
-          SOURCE_COMMIT: ${{ steps.source_commit.outputs.sha }}
-        run: |
-          draft=$(gh api "repos/$REPO/releases?per_page=100" \
-            --jq "[.[] | select(.tag_name == \"$TAG\")][0].draft")
-          if [ "$draft" != "true" ]; then
-            echo "::error::$TAG is no longer a draft -- refusing to upload. A human may have published it during this build."
-            exit 1
-          fi
-          tagged=$(gh api "repos/$REPO/commits/refs/tags/$TAG" --jq .sha)
-          if [ "$tagged" != "$SOURCE_COMMIT" ]; then
-            echo "::error::$TAG now points at $tagged, not $SOURCE_COMMIT, which this job built -- refusing to upload. It was recut during this build; the recut's own build fills the new draft."
-            exit 1
-          fi
-
-      - name: Upload to the draft
-        if: ${{ !inputs.dry_run }}
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          TAG: ${{ steps.tag.outputs.tag }}
-          VERSION: ${{ steps.tag.outputs.version }}
-        run: |
-          gh release upload "$TAG" \
-            "$RUNNER_TEMP/out/ForgePact-$VERSION.zip" \
-            "$RUNNER_TEMP/out/ForgePact-$VERSION.zip.sha256" \
-            --clobber --repo "$REPO"
+          if-no-files-found: error
 
       - name: Summary
         if: always()
@@ -354,10 +337,160 @@ jobs:
             if [ "$DRY_RUN" = "true" ]; then
               echo "- dry run: nothing uploaded"
             else
-              echo "- uploaded to the draft"
+              echo "- the upload job puts it on the draft once both test jobs pass"
             fi
             echo
             echo "**Not live-verified.** Install from this zip and launch the"
             echo "game before publishing -- see the module guide's \"CI build"
             echo "launch gate\" table."
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # The panel's browser suites, beside `build` rather than inside it: they
+  # need only the tagged panel built, not the SDK, the Python build
+  # dependencies or a compiler.
+  panel-browser-tests:
+    runs-on: windows-2025-vs2026
+    permissions:
+      contents: read
+    steps:
+      - name: This has to be run from main
+        shell: bash
+        env:
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          if [ "$BRANCH" != "main" ]; then
+            echo "::error::Run this from main. It was started on '$BRANCH'."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          path: forgepact-ci
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Normalise the tag
+        id: tag
+        shell: bash
+        env:
+          TAG_INPUT: ${{ inputs.tag }}
+        run: |
+          plan=$(python forgepact-ci/tools/release_ci.py tag --tag "$TAG_INPUT")
+          echo "$plan"
+          echo "$plan" >> "$GITHUB_OUTPUT"
+
+      - name: Check out the tagged ForgePact tree
+        uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ steps.tag.outputs.tag }}
+          path: ForgePact
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: ForgePact/panel/package-lock.json
+
+      - name: Install the panel's build dependencies
+        shell: bash
+        working-directory: ForgePact/panel
+        run: npm ci
+
+      - name: Build the panel (panel/dist)
+        shell: bash
+        working-directory: ForgePact/panel
+        run: npm run build
+
+      # A browser suite skips when node, Edge, playwright-core or panel/dist
+      # is missing, and a skip reads as OK -- so here, where all of them are
+      # meant to be present, a skip fails the job (AGENTS.md, "Prove the
+      # instrument"). A tag older than the PARALLEL_GROUP markers runs no
+      # module here; build runs all of them instead.
+      - name: Contract tests (the panel's browser suites)
+        shell: bash
+        working-directory: ForgePact
+        run: |
+          set -o pipefail
+          python ../forgepact-ci/tools/run_tests_parallel.py -s tests -v \
+            --state-dir "$RUNNER_TEMP/test-state" \
+            --only-group panel-browser 2>&1 | tee "$RUNNER_TEMP/browser-tests.log"
+          if grep -Eq '^(OK|FAILED) \(.*skipped=' "$RUNNER_TEMP/browser-tests.log"; then
+            echo "::error::a panel browser suite skipped on a runner meant to have everything it needs"
+            exit 1
+          fi
+
+  # The only job that writes to the draft, and only once both test jobs
+  # passed.
+  upload:
+    needs: [build, panel-browser-tests]
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    permissions:
+      # Uploading assets to the draft. Nothing here starts another workflow
+      # run, so this job needs no permission over the Actions API itself.
+      contents: write
+    steps:
+      - name: Fetch the zip build made
+        uses: actions/download-artifact@v4
+        with:
+          name: forgepact-release-zip
+          path: ${{ runner.temp }}/out
+
+      # The artifact is the zip build hashed, or nothing is uploaded.
+      - name: The zip is the one build hashed
+        shell: bash
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          ZIP_HASH: ${{ needs.build.outputs.zip_hash }}
+        run: |
+          got=$(sha256sum "$RUNNER_TEMP/out/ForgePact-$VERSION.zip" | cut -d' ' -f1)
+          if [ -z "$ZIP_HASH" ] || [ "$got" != "$ZIP_HASH" ]; then
+            echo "::error::the artifact hashes to $got, but build reported '$ZIP_HASH' -- refusing to upload."
+            exit 1
+          fi
+
+      # Second draft guard, right before the write this job exists to make.
+      # A human can publish the draft while build was running, and the
+      # upload step below is only safe with --clobber because both guards
+      # ran.
+      #
+      # It also checks the tag still points at the commit build built.
+      # forgepact-tag.yml's recut deletes a draft and its tag, makes both
+      # again on a newer commit and starts its own build; a build of the old
+      # commit still running would then find a draft on "its" tag and put the
+      # old zip on the new draft. A tag that is gone fails the lookup, which
+      # refuses too.
+      - name: This release is still a draft (guard 2)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ needs.build.outputs.tag }}
+          SOURCE_COMMIT: ${{ needs.build.outputs.source_commit }}
+        run: |
+          draft=$(gh api "repos/$REPO/releases?per_page=100" \
+            --jq "[.[] | select(.tag_name == \"$TAG\")][0].draft")
+          if [ "$draft" != "true" ]; then
+            echo "::error::$TAG is no longer a draft -- refusing to upload. A human may have published it during this build."
+            exit 1
+          fi
+          tagged=$(gh api "repos/$REPO/commits/refs/tags/$TAG" --jq .sha)
+          if [ "$tagged" != "$SOURCE_COMMIT" ]; then
+            echo "::error::$TAG now points at $tagged, not $SOURCE_COMMIT, which the build job built -- refusing to upload. It was recut during this build; the recut's own build fills the new draft."
+            exit 1
+          fi
+
+      - name: Upload to the draft
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ needs.build.outputs.tag }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          gh release upload "$TAG" \
+            "$RUNNER_TEMP/out/ForgePact-$VERSION.zip" \
+            "$RUNNER_TEMP/out/ForgePact-$VERSION.zip.sha256" \
+            --clobber --repo "$REPO"

@@ -10,7 +10,16 @@ It runs exactly what `py -3 -m unittest discover -s tests` runs, less any
 module named by `--exclude-module` (a module name or an fnmatch pattern,
 repeatable), for a caller that runs those modules' checks some other way,
 such as a workorder whose criteria run the panel's browser suites directly.
-It names what it left out, and refuses (exit 2) a name that matches nothing. The parent
+It names what it left out, and refuses (exit 2) a name that matches nothing.
+
+`--only-group <name>` runs just the modules that declare that
+`PARALLEL_GROUP`, and `--skip-group <name>` runs everything else, so two
+runs, one with each, cover the suite exactly once between them: how the
+release workflow splits the browser suites into a job of their own. Unlike
+`--exclude-module`, a group that no module declares is not refused, because
+the release workflow runs this against old tagged trees whose modules
+predate the markers; there `--skip-group` runs the whole suite and
+`--only-group` runs nothing, which still covers everything once. The parent
 discovers the suite the same way, groups the test ids by module, and hands
 each module to its own `python run_tests_parallel.py --worker` process, so a
 module's class and module fixtures, its patches and its imports behave as they
@@ -111,6 +120,25 @@ def left_out(modules, patterns):
     return chosen
 
 
+def outside_group(modules, start_dir, group, keep_group):
+    """{module: test count} for every module a group selection leaves out:
+    those outside `group` when keep_group, else those inside it."""
+    return {name: len(tests) for name, tests in modules.items()
+            if (group_of(name, start_dir) == group) != keep_group}
+
+
+def leaving_out(ids, start_dir, exclude=(), only_group=None, skip_group=None):
+    """Every module this run leaves out, with its test count: those an
+    --exclude-module names, then those a group selection leaves out."""
+    modules = shard(ids)
+    chosen = left_out(modules, exclude)
+    if only_group:
+        chosen.update(outside_group(modules, start_dir, only_group, keep_group=True))
+    if skip_group:
+        chosen.update(outside_group(modules, start_dir, skip_group, keep_group=False))
+    return chosen
+
+
 def without(ids, modules):
     """Discovered ids less those of the left-out modules, in order."""
     return [test_id for test_id in ids if module_of(test_id) not in modules]
@@ -203,12 +231,12 @@ def run_worker(start_dir, module, out_path):
 # ---------------------------------------------------------------- parent side
 
 def run_parallel(start_dir, jobs, verbose, group_limits, state=STATE, stream=sys.stderr,
-                 exclude=()):
+                 exclude=(), only_group=None, skip_group=None):
     """Run every module not excluded; returns (merged result dict, the ids
     serial discovery found less the excluded modules'). The merged dict's
     `leftOut` maps each excluded module to its test count."""
     ids = discover(start_dir)
-    skipped_modules = left_out(shard(ids), exclude)
+    skipped_modules = leaving_out(ids, start_dir, exclude, only_group, skip_group)
     ids = without(ids, skipped_modules)
     durations = load_durations(state)
     pending = order(shard(ids), start_dir, durations)
@@ -363,9 +391,17 @@ def parse_limits(values):
     return limits
 
 
+#: How many left-out modules the closing line names; --only-group leaves out
+#: nearly the whole suite, and a hundred names help nobody.
+LISTED = 12
+
+
 def describe_left_out(modules):
     tests = sum(modules.values())
-    names = ", ".join(f"{name} ({count})" for name, count in sorted(modules.items()))
+    listed = sorted(modules.items())
+    names = ", ".join(f"{name} ({count})" for name, count in listed[:LISTED])
+    if len(listed) > LISTED:
+        names += f", and {len(listed) - LISTED} more"
     return f"left out {len(modules)} module(s), {tests} test(s): {names}"
 
 
@@ -386,6 +422,11 @@ def main(argv=None):
                         help="leave out a test module (a name such as test_panel_perf, "
                              "or an fnmatch pattern such as 'test_panel_e2e*'); repeatable. "
                              "The id-set check then expects discovery less those modules")
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument("--only-group", metavar="GROUP",
+                           help="run only the modules declaring PARALLEL_GROUP = GROUP")
+    selection.add_argument("--skip-group", metavar="GROUP",
+                           help="run every module except those declaring PARALLEL_GROUP = GROUP")
     parser.add_argument("--state-dir", type=Path, default=STATE,
                         help="where test-durations.json and failing modules' logs go "
                              "(default: build/)")
@@ -408,7 +449,8 @@ def main(argv=None):
     if args.list:
         ids = discover(args.start_dir)
         try:
-            skipped_modules = left_out(shard(ids), args.exclude_module)
+            skipped_modules = leaving_out(ids, args.start_dir, args.exclude_module,
+                                          args.only_group, args.skip_group)
         except UnknownModule as exc:
             print(f"run_tests_parallel: {exc}", file=sys.stderr)
             return 2
@@ -421,7 +463,9 @@ def main(argv=None):
     try:
         merged, discovered = run_parallel(args.start_dir, max(1, args.jobs), args.verbose,
                                           parse_limits(args.group_limit), args.state_dir,
-                                          exclude=args.exclude_module)
+                                          exclude=args.exclude_module,
+                                          only_group=args.only_group,
+                                          skip_group=args.skip_group)
     except UnknownModule as exc:
         print(f"run_tests_parallel: {exc}", file=sys.stderr)
         return 2

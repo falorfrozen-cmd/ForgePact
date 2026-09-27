@@ -22,6 +22,15 @@ def workflow_text() -> str:
     return WORKFLOW.read_text(encoding="utf-8")
 
 
+def jobs() -> dict:
+    """{job id: its text}, for each job under `jobs:`."""
+    text = workflow_text()
+    body = text[text.index("\njobs:\n"):]
+    heads = list(re.finditer(r"(?m)^  ([\w-]+):\s*$", body))
+    return {m.group(1): body[m.start():(heads[i + 1].start() if i + 1 < len(heads) else len(body))]
+            for i, m in enumerate(heads)}
+
+
 class TheWorkflowExists(unittest.TestCase):
     def test_it_is_there(self):
         self.assertTrue(WORKFLOW.exists(), f"{WORKFLOW} is missing")
@@ -89,7 +98,7 @@ class StepOrderIsTheGuardrail(unittest.TestCase):
             ("setup_node", "actions/setup-node"),
             ("npm_ci", "npm ci"),
             ("npm_run_build", "npm run build"),
-            ("unittest_discover", "unittest discover"),
+            ("contract_tests", "--skip-group panel-browser"),
             ("fetch_toolchain", "fetch_toolchain.py"),
             ("compile_line", "compile-line"),
             ("build_bat_release", "build.bat release"),
@@ -124,7 +133,7 @@ class StepOrderIsTheGuardrail(unittest.TestCase):
         self.assertNotEqual(start, -1, "guard 2 is missing")
         self.assertLess(start, end)
         guard = text[start:end]
-        self.assertIn("SOURCE_COMMIT: ${{ steps.source_commit.outputs.sha }}", guard)
+        self.assertIn("SOURCE_COMMIT: ${{ needs.build.outputs.source_commit }}", guard)
         code = code_lines(guard)
         self.assertTrue(
             any('commits/refs/tags/$TAG' in line for line in code),
@@ -178,24 +187,69 @@ class UploadIsGatedAndClobbers(unittest.TestCase):
         block_end = text.find("\n\n", at)
         self.assertIn("--clobber", text[at:block_end if block_end != -1 else at + 400])
 
-    def test_gh_release_upload_only_appears_in_a_not_dry_run_step(self):
-        text = workflow_text()
-        # The step immediately preceding "gh release upload" must be
-        # conditioned on !inputs.dry_run.
-        upload_at = text.find("gh release upload")
-        preceding = text[:upload_at]
-        step_start = preceding.rfind("- name:")
-        step_text = text[step_start:upload_at]
-        self.assertIn("if: ${{ !inputs.dry_run }}", step_text)
+    def test_gh_release_upload_only_appears_in_the_not_dry_run_upload_job(self):
+        found = {name for name, text in jobs().items() if "gh release upload" in text}
+        self.assertEqual(found, {"upload"})
+        head = jobs()["upload"].split("steps:", 1)[0]
+        self.assertIn("if: ${{ !inputs.dry_run }}", head)
 
-    def test_upload_artifact_only_appears_in_a_dry_run_step(self):
+    def test_the_upload_waits_for_both_test_jobs(self):
+        head = jobs()["upload"].split("steps:", 1)[0]
+        self.assertIn("needs: [build, panel-browser-tests]", head)
+
+    def test_only_the_upload_job_can_write(self):
+        writers = {name for name, text in jobs().items() if "contents: write" in text}
+        self.assertEqual(writers, {"upload"})
+
+    def test_the_zip_is_kept_on_every_run_and_checked_before_upload(self):
+        build, upload = jobs()["build"], jobs()["upload"]
+        step = build[build.rfind("- name:", 0, build.find("upload-artifact")):]
+        self.assertNotIn("if:", step[:step.find("upload-artifact")],
+                         "the upload job has nothing to upload unless every run keeps the zip")
+        self.assertIn("zip_hash: ${{ steps.package.outputs.zip_hash }}", build)
+        self.assertIn("download-artifact", upload)
+        check = upload.find("ZIP_HASH: ${{ needs.build.outputs.zip_hash }}")
+        self.assertNotEqual(check, -1, "the upload job must compare the artifact with build's hash")
+        self.assertLess(check, upload.find("gh release upload"))
+        self.assertTrue(any('"$got" != "$ZIP_HASH"' in line for line in code_lines(upload)))
+
+
+class TheSuiteIsSplitAcrossTwoJobs(unittest.TestCase):
+    """build runs everything but the panel's browser suites, and
+    panel-browser-tests runs just those, through main's parallel runner;
+    --skip-group/--only-group of one group cover the suite once between them."""
+
+    def runner_lines(self, job):
+        """The run block that calls the runner, from that call to the step's end."""
+        text = jobs()[job]
+        lines = [line for line in code_lines(text) if "run_tests_parallel.py" in line]
+        self.assertEqual(len(lines), 1, f"{job} runs the suite once, through the runner")
+        start = text.rfind("python ", 0, text.find("run_tests_parallel.py"))
+        end = text.find("\n      - ", start)
+        return text[start:end if end != -1 else len(text)]
+
+    def test_the_two_jobs_select_complementary_halves_of_one_group(self):
+        self.assertIn("--skip-group panel-browser", self.runner_lines("build"))
+        self.assertIn("--only-group panel-browser", self.runner_lines("panel-browser-tests"))
+
+    def test_both_use_mains_runner_on_the_tagged_tests(self):
+        for job in ("build", "panel-browser-tests"):
+            call = self.runner_lines(job)
+            self.assertIn("../forgepact-ci/tools/run_tests_parallel.py -s tests", call, job)
+
+    def test_nothing_runs_unittest_discover_serially(self):
+        self.assertFalse(any("unittest discover" in line for line in code_lines(workflow_text())))
+
+    def test_only_the_perf_suite_is_left_out_and_only_when_the_tag_has_it(self):
         text = workflow_text()
-        artifact_at = text.find("upload-artifact")
-        self.assertNotEqual(artifact_at, -1)
-        preceding = text[:artifact_at]
-        step_start = preceding.rfind("- name:")
-        step_text = text[step_start:artifact_at]
-        self.assertIn("if: inputs.dry_run", step_text)
+        self.assertEqual(re.findall(r"--exclude-module ([\w.*-]+)", text), ["test_panel_perf"])
+        self.assertIn("if [ -f tests/test_panel_perf.py ]", text)
+
+    def test_a_skipped_browser_suite_fails_its_job(self):
+        call = self.runner_lines("panel-browser-tests")
+        self.assertIn("set -o pipefail", jobs()["panel-browser-tests"])
+        self.assertIn("skipped=", call)
+        self.assertIn("exit 1", call[call.find("skipped="):])
 
 
 class NeverPublishesOrDispatches(unittest.TestCase):
