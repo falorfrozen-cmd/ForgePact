@@ -1,52 +1,26 @@
 #!/usr/bin/env python3
-"""The panel's browser suites, run from the Python suite.
+"""The panel's behaviour-oracle recordings, checked with no browser.
 
-`panel/` is a Svelte + Vite project; what proves a build of it behaves like
-the page it replaced lives in `panel/tests/`:
+`panel/tests/behaviour-oracle.json` (every control's POST bodies and plugin
+commands, recorded from the old page), `behaviour-oracle-gems.json` (the Gems
+of Incarnation controls, from origin/main's last pre-port page) and
+`behaviour-oracle-primeevil.json` (the Prime Evil Parts slider, from
+origin/main's 1.4.7 page at 841c2db) are what `npm run oracle:replay` holds
+the current build to. These tests pin where each was recorded from, that
+their negative and positive controls are in them, and that the Prime Evil
+line `insertAddedKeys` adds at replay is exactly what the merged backend
+sends.
 
-- `npm run oracle:replay` replays `panel/tests/behaviour-oracle.json` (every
-  control's POST bodies and plugin commands, recorded from the old page)
-  against the current build and fails on any difference, and with it
-  `panel/tests/behaviour-oracle-gems.json` (the Gems of Incarnation controls,
-  recorded from origin/main's last pre-port page, named by its `sourceRev`)
-  and `panel/tests/behaviour-oracle-primeevil.json` (the Prime Evil Parts
-  slider, recorded from origin/main's 1.4.7 page at 841c2db). Because the
-  backend now sends the Prime Evil reset line in every full key reset, the
-  legacy recording and the Gems supplement are replayed through
-  `insertAddedKeys` (panel/tests/lib/oracle-relocate.mjs), which inserts
-  exactly that line; the files themselves are never edited, and the tests
-  below check that the inserted line is what the merged backend sends;
-- `npm run e2e` runs the checks ported from the old agent-browser harnesses
-  (saves, failures, filters, keyboard, install and launch paths);
-- `npm run e2e:gems` checks the Gems of Incarnation controls' place, defaults,
-  Enabled mods entries and mod filter list;
-- `npm run e2e:polish` checks the owner's polish pass: the Mining Ore
-  Multiplier label, one card per Mods mod, the theme on Setup, the plugin
-  warning icons and their tooltips, the Modifiers separators, the helmet's
-  accent, and an idle slider's note as a tooltip that moves no row;
-- `npm run e2e:motion` checks the export's motion (hover, press, the tray,
-  the theme picker, the tooltips, the toasts, the removed entry) and reduced
-  motion removing movement while the fades stay;
-- `npm run e2e:finish` checks the finish review's eight fixes, and holds the
-  ThemePicker's posts to the derived oracle's theme steps.
-
-All of them drive the installed Edge headless through playwright-core against
-`tests/panel_sandbox_server.py`, which needs a built `panel/dist/`. Each test
-here skips, naming what is missing, when `node`/`npm`, Edge, the installed
-dev dependencies or the build are absent - build first with
-`npm --prefix panel ci` and `npm --prefix panel run build`. The first four
-take a couple of minutes.
-
-`npm run e2e:perf` (the owner's hard frame budgets) is run from
-`test_panel_perf.py` instead, which reuses `_missing` and `_npm` from here:
-it measures frame timings, so under `tools/run_tests_parallel.py` it declares
-`PARALLEL_EXCLUSIVE` and runs last, with no other module beside it.
+The browser suites themselves each run from a module of their own, so that
+`tools/run_tests_parallel.py` can run them side by side:
+`test_panel_oracle_replay.py` (`npm run oracle:replay`), `test_panel_e2e.py`,
+`test_panel_e2e_gems.py`, `test_panel_e2e_polish.py`,
+`test_panel_e2e_motion.py` and `test_panel_e2e_finish.py`, sharing their skip
+conditions and npm helper from `panel_browser.py`; `test_panel_perf.py`
+(`npm run e2e:perf`) runs last and alone.
 """
 import json
-import os
 import re
-import shutil
-import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -62,32 +36,6 @@ GEMS_SOURCE_REV = "f1e2f57edd60ffbed7ae82b7df087f0ca6b3da95"
 #: origin/main at 1.4.7 plus "uber bosses drop none": its legacy page, with the Prime Evil Parts slider.
 PRIMEEVIL_SOURCE_REV = "841c2db654b374400b47d25790b87c47a58d8461"
 PRIMEEVIL_RANGE = 'input[type=range][data-sec="keys"][data-key="primeevil"]'
-EDGE_PATHS = (
-    Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
-    Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
-)
-
-
-def _missing():
-    """What the browser suites need and this machine lacks, or None."""
-    if not shutil.which("node"):
-        return "node is not on PATH"
-    if not shutil.which("npm"):
-        return "npm is not on PATH"
-    if not any(p.is_file() for p in EDGE_PATHS):
-        return "Microsoft Edge is not installed (playwright-core drives it through channel 'msedge')"
-    if not (PANEL / "node_modules" / "playwright-core").is_dir():
-        return "panel dev dependencies are not installed: run npm --prefix panel ci"
-    if not (PANEL / "dist" / "index.html").is_file():
-        return "panel/dist/index.html is missing: run npm --prefix panel run build"
-    return None
-
-
-def _npm(script):
-    result = subprocess.run([shutil.which("npm"), "--prefix", str(PANEL), "run", script],
-                            capture_output=True, text=True, encoding="utf-8", errors="replace",
-                            timeout=900)
-    return result.returncode, result.stdout + result.stderr
 
 
 class BehaviourOracleFileTests(unittest.TestCase):
@@ -177,55 +125,6 @@ class BehaviourOracleFileTests(unittest.TestCase):
                              cmds[:k + 1] + ["droprate group primeevil 1"] + cmds[k + 1:], step["step"])
             checked += 1
         self.assertEqual(checked, 70)
-
-
-class PanelBrowserSuiteTests(unittest.TestCase):
-    def setUp(self):
-        missing = _missing()
-        if missing:
-            self.skipTest(missing)
-
-    def test_behaviour_oracle_replays_with_no_mismatch(self):
-        code, out = _npm("oracle:replay")
-        lines = [l for l in out.splitlines() if l.startswith("oracle: ")]
-        self.assertEqual(code, 0, out[-4000:])
-        self.assertTrue(lines and re.fullmatch(r"oracle: \d+ steps, 0 mismatches", lines[-1]), out[-4000:])
-
-    def test_e2e_suite_passes(self):
-        code, out = _npm("e2e")
-        lines = [l for l in out.splitlines() if l.startswith("e2e: ")]
-        self.assertEqual(code, 0, out[-4000:])
-        self.assertTrue(lines and re.fullmatch(r"e2e: (\d+)/\1 checks passed", lines[-1]), out[-4000:])
-
-    def test_gems_e2e_suite_passes(self):
-        code, out = _npm("e2e:gems")
-        lines = [l for l in out.splitlines() if l.startswith("e2e-gems: ")]
-        self.assertEqual(code, 0, out[-4000:])
-        self.assertTrue(lines and re.fullmatch(r"e2e-gems: (\d+)/\1 checks passed", lines[-1]), out[-4000:])
-
-    def test_polish_e2e_suite_passes(self):
-        code, out = _npm("e2e:polish")
-        lines = [l for l in out.splitlines() if l.startswith("e2e-polish: ")]
-        self.assertEqual(code, 0, out[-4000:])
-        self.assertTrue(lines and re.fullmatch(r"e2e-polish: (\d+)/\1 checks passed", lines[-1]), out[-4000:])
-
-    def test_motion_e2e_suite_passes(self):
-        # The export's motion.notes, reduced motion removing movement and scale
-        # while opacity and colour fades stay (amendments.ship), and the
-        # owner's F2/F4/E4 (forgepact-ui-ship).
-        code, out = _npm("e2e:motion")
-        lines = [l for l in out.splitlines() if l.startswith("e2e-motion: ")]
-        self.assertEqual(code, 0, out[-4000:])
-        self.assertTrue(lines and re.fullmatch(r"e2e-motion: (\d+)/\1 checks passed", lines[-1]), out[-4000:])
-
-    def test_finish_e2e_suite_passes(self):
-        # The Impeccable finish review's eight owner-approved fixes, the
-        # ThemePicker's posts held to the derived oracle's theme steps
-        # (forgepact-ui-ship, round 2).
-        code, out = _npm("e2e:finish")
-        lines = [l for l in out.splitlines() if l.startswith("e2e-finish: ")]
-        self.assertEqual(code, 0, out[-4000:])
-        self.assertTrue(lines and re.fullmatch(r"e2e-finish: (\d+)/\1 checks passed", lines[-1]), out[-4000:])
 
 
 if __name__ == "__main__":

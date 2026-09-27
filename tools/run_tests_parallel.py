@@ -3,13 +3,20 @@
     py -3 tools/run_tests_parallel.py            # from ForgePact/, all cores
     py -3 tools/run_tests_parallel.py -j 4 -v    # four workers, a line per module
     py -3 ForgePact/tools/run_tests_parallel.py  # from the hub root: the same run
+    py -3 tools/run_tests_parallel.py --exclude-module "test_panel_e2e*" \
+        --exclude-module test_panel_oracle_replay --exclude-module test_panel_perf
 
-It runs exactly what `py -3 -m unittest discover -s tests` runs. The parent
+It runs exactly what `py -3 -m unittest discover -s tests` runs, less any
+module named by `--exclude-module` (a module name or an fnmatch pattern,
+repeatable), for a caller that runs those modules' checks some other way,
+such as a workorder whose criteria run the panel's browser suites directly.
+It names what it left out, and refuses (exit 2) a name that matches nothing. The parent
 discovers the suite the same way, groups the test ids by module, and hands
 each module to its own `python run_tests_parallel.py --worker` process, so a
 module's class and module fixtures, its patches and its imports behave as they
 do serially. After the run it refuses (exit 2) unless the ids the workers
-loaded are exactly the ids serial discovery found, each loaded once.
+loaded are exactly the ids serial discovery found, less the left-out
+modules', each loaded once.
 
 The module is the unit of isolation. Two modules may run at the same time, so
 a module must not share a fixed path, port or cwd with another one; a native
@@ -18,9 +25,9 @@ harness writes into its own `build/<name>` directory for that reason.
 Modules are started longest first, from durations recorded in
 `build/test-durations.json` by the previous run. A module that sets
 `PARALLEL_GROUP = "<name>"` at top level shares a concurrency cap with the
-other modules in that group (`--group-limit <name>=<n>`, default 1), for
-suites that drive something that does not tolerate many copies, such as a
-headless browser. A module that sets `PARALLEL_EXCLUSIVE = True` at top level
+other modules in that group (`--group-limit <name>=<n>`; the default is
+the group's `DEFAULT_GROUP_LIMITS` entry, else 1), for suites that drive
+something that does not tolerate many copies, such as a headless browser. A module that sets `PARALLEL_EXCLUSIVE = True` at top level
 runs with no other worker beside it: exclusive modules start only after every
 other module has finished, one at a time, for a suite that measures timing
 and would otherwise measure the CPU the other workers take.
@@ -28,6 +35,7 @@ and would otherwise measure the CPU the other workers take.
 Standard library only.
 """
 import argparse
+import fnmatch
 import json
 import os
 import re
@@ -43,6 +51,12 @@ ROOT = Path(__file__).resolve().parents[1]
 STATE = ROOT / "build"  # test-durations.json, and test-logs/ for failing modules
 GROUP_RE = re.compile(r"""^PARALLEL_GROUP\s*=\s*["']([\w-]+)["']""", re.M)
 EXCLUSIVE_RE = re.compile(r"^PARALLEL_EXCLUSIVE\s*=\s*True\b", re.M)
+#: A group's cap when no --group-limit names it. The panel's browser suites
+#: (`tests/panel_browser.py`) each start their own sandbox and headless Edge.
+#: Full runs on 12 logical cores (2026-09-27), all OK: cap 2 778 s, 3 723 s,
+#: 4 650 s. At 4 the six suites take as long as `oracle:replay` alone (~259 s),
+#: so a higher cap buys nothing; `test_panel_perf` (~395 s) is the rest.
+DEFAULT_GROUP_LIMITS = {"panel-browser": 4}
 
 
 def iter_tests(suite):
@@ -74,6 +88,32 @@ def shard(ids):
     for test_id in ids:
         modules.setdefault(module_of(test_id), []).append(test_id)
     return modules
+
+
+class UnknownModule(ValueError):
+    """An --exclude-module name or pattern that matches no discovered module."""
+
+
+def left_out(modules, patterns):
+    """{module: test count} for every module a pattern names.
+
+    Raises UnknownModule for a pattern that matches nothing, so a misspelt
+    name fails loudly instead of quietly running what it meant to leave out.
+    """
+    chosen = {}
+    for pattern in patterns:
+        pattern = pattern[:-3] if pattern.endswith(".py") else pattern
+        hits = [name for name in modules if fnmatch.fnmatchcase(name, pattern)]
+        if not hits:
+            raise UnknownModule(f"--exclude-module {pattern!r} matches no test module")
+        for name in hits:
+            chosen[name] = len(modules[name])
+    return chosen
+
+
+def without(ids, modules):
+    """Discovered ids less those of the left-out modules, in order."""
+    return [test_id for test_id in ids if module_of(test_id) not in modules]
 
 
 def load_durations(state):
@@ -162,9 +202,14 @@ def run_worker(start_dir, module, out_path):
 
 # ---------------------------------------------------------------- parent side
 
-def run_parallel(start_dir, jobs, verbose, group_limits, state=STATE, stream=sys.stderr):
-    """Run every module; returns (merged result dict, discovered ids)."""
+def run_parallel(start_dir, jobs, verbose, group_limits, state=STATE, stream=sys.stderr,
+                 exclude=()):
+    """Run every module not excluded; returns (merged result dict, the ids
+    serial discovery found less the excluded modules'). The merged dict's
+    `leftOut` maps each excluded module to its test count."""
     ids = discover(start_dir)
+    skipped_modules = left_out(shard(ids), exclude)
+    ids = without(ids, skipped_modules)
     durations = load_durations(state)
     pending = order(shard(ids), start_dir, durations)
     groups = {name: group_of(name, start_dir) for name in pending}
@@ -246,6 +291,7 @@ def run_parallel(start_dir, jobs, verbose, group_limits, state=STATE, stream=sys
     save_durations(state, durations)
     merged = merge(results)
     merged["wall"] = time.perf_counter() - began
+    merged["leftOut"] = skipped_modules
     return merged, ids
 
 
@@ -309,11 +355,18 @@ def report(merged, stream):
 
 
 def parse_limits(values):
-    limits = {}
+    """DEFAULT_GROUP_LIMITS, with each --group-limit GROUP=N on top."""
+    limits = dict(DEFAULT_GROUP_LIMITS)
     for value in values:
         name, _, count = value.partition("=")
         limits[name] = max(1, int(count))
     return limits
+
+
+def describe_left_out(modules):
+    tests = sum(modules.values())
+    names = ", ".join(f"{name} ({count})" for name, count in sorted(modules.items()))
+    return f"left out {len(modules)} module(s), {tests} test(s): {names}"
 
 
 def main(argv=None):
@@ -327,7 +380,12 @@ def main(argv=None):
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="a line per module instead of a dot")
     parser.add_argument("--group-limit", action="append", default=[], metavar="GROUP=N",
-                        help="cap for modules declaring PARALLEL_GROUP (default 1 each)")
+                        help="cap for modules declaring PARALLEL_GROUP (default: the "
+                             "group's DEFAULT_GROUP_LIMITS entry, else 1)")
+    parser.add_argument("--exclude-module", action="append", default=[], metavar="MODULE",
+                        help="leave out a test module (a name such as test_panel_perf, "
+                             "or an fnmatch pattern such as 'test_panel_e2e*'); repeatable. "
+                             "The id-set check then expects discovery less those modules")
     parser.add_argument("--state-dir", type=Path, default=STATE,
                         help="where test-durations.json and failing modules' logs go "
                              "(default: build/)")
@@ -348,13 +406,28 @@ def main(argv=None):
     if args.worker:
         return run_worker(args.start_dir, args.worker, args.out)
     if args.list:
-        for test_id in discover(args.start_dir):
+        ids = discover(args.start_dir)
+        try:
+            skipped_modules = left_out(shard(ids), args.exclude_module)
+        except UnknownModule as exc:
+            print(f"run_tests_parallel: {exc}", file=sys.stderr)
+            return 2
+        for test_id in without(ids, skipped_modules):
             print(test_id)
+        if skipped_modules:
+            print(f"run_tests_parallel: {describe_left_out(skipped_modules)}", file=sys.stderr)
         return 0
 
-    merged, discovered = run_parallel(args.start_dir, max(1, args.jobs), args.verbose,
-                                      parse_limits(args.group_limit), args.state_dir)
+    try:
+        merged, discovered = run_parallel(args.start_dir, max(1, args.jobs), args.verbose,
+                                          parse_limits(args.group_limit), args.state_dir,
+                                          exclude=args.exclude_module)
+    except UnknownModule as exc:
+        print(f"run_tests_parallel: {exc}", file=sys.stderr)
+        return 2
     report(merged, sys.stderr)
+    if merged["leftOut"]:
+        print(f"run_tests_parallel: {describe_left_out(merged['leftOut'])}", file=sys.stderr)
     problems = coverage_problems(discovered, merged["loaded"])
     for problem in problems:
         print(f"run_tests_parallel: {problem}", file=sys.stderr)
