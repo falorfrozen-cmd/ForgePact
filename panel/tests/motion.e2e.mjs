@@ -468,6 +468,9 @@ async function m2Press({ page }) {
 // with no fade and shows its undo toast with no entrance (the tooltips and the
 // tray from the keyboard are keyboard-opens-at-once).
 async function m3Keyboard({ page }) {
+  // Three long names fit inline with Ember's sidebar at this width. At 1280
+  // the visible scrollbar correctly makes them overflow into a closed tray.
+  await page.setViewportSize({ width: 1600, height: 800 });
   await only(page, THREE);
   await record(page);
   await $(page, () => document.querySelector('#enabledMods .quick-disable[data-for="headhunter"]').focus());
@@ -581,6 +584,7 @@ async function m5ThemePicker({ page }) {
 // same, and leaves (then is removed) after the pointer's Undo.
 async function m6Toasts({ page }) {
   const t = await tokens(page);
+  await page.setViewportSize({ width: 1600, height: 800 });
   await only(page, THREE);
   await record(page);
   await $(page, () => document.getElementById('autoapply').click());
@@ -621,6 +625,7 @@ async function m6Toasts({ page }) {
 // fast/standard, once. The keyboard's Turn off has none (motion-M3).
 async function m7Removed({ page }) {
   const t = await tokens(page);
+  await page.setViewportSize({ width: 1600, height: 800 });
   await only(page, THREE);
   const name = await $(page, () => document.querySelector('#enabledMods li[data-for="headhunter"] .enabled-mod-name').textContent.trim());
   const at = await $(page, () => { const r = document.querySelector('#enabledMods .quick-disable[data-for="headhunter"]').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });

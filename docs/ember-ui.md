@@ -21,6 +21,15 @@ The 2.0 features remain available: Enabled mods with Turn off and Undo, slider
 switches, gem search/filter/save, the plugin warning tooltips, and all four
 themes. The plugin status reports installation files, not a live connection.
 
+Long pages scroll inside the content pane using a visible native scrollbar,
+the mouse wheel or Page Down/End while the pane is focused. The action bar is
+a separate grid row, not an overlay: its actual height is reserved even when
+its controls wrap. Sidebar and filter lists keep independent scrolling. Page
+changes reset the content pane to the top.
+Theme choices and the expanded Enabled mods list stay inside that pane, with
+their own scrolling when space is short. Opening either reveals its options
+above the action bar. The Enabled mods heading remains visible when collapsed.
+
 ## Development
 
 - `panel/src/ember/Overview.svelte`: Overview, Help and native dialogs.
@@ -55,6 +64,7 @@ npm --prefix panel run oracle:replay
 npm --prefix panel run e2e
 npm --prefix panel run e2e:gems
 npm --prefix panel run e2e:ember
+npm --prefix panel run e2e:ember-scroll
 npm --prefix panel run e2e:finish
 npm --prefix panel run e2e:motion
 npm --prefix panel run e2e:polish
@@ -69,3 +79,17 @@ themes and all seven pages at 1600, 1280, 900 and 390 pixels. Screenshots go to
 the derived oracle was regenerated to add the fourth theme selection.
 
 Figma export files are unchanged. A shared Figma library is a separate follow-up.
+
+`e2e:ember-scroll` disables headless Edge's scrollbar-hiding flag and verifies
+wheel scrolling, native thumb dragging, keyboard navigation, last-card reachability,
+independent lists/sidebar and all four themes. It exercises six viewport sizes,
+including a 1093x614 CSS viewport (1366x768 at 125% scaling), 640x400 and mobile.
+`tests/test_panel_e2e_ember_scroll.py` includes it in the release browser-test group.
+The form suite explicitly seeds Ledger for its original 1280px inline-width
+contract; Ember's narrower content area correctly switches three long names to
+the tray at 1280px. The scroll suite covers that transition and both menus down
+to 640x400 and 390x640, using a pointer click on the last theme choice.
+The motion suite uses 1600px for the three long inline entries; the performance
+suite retains 1280px and three real entries (map reveal, Headhunter, Beacon),
+without the long orb-pickup label that now correctly overflows. Sample counts
+and performance budgets are unchanged.

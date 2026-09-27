@@ -592,7 +592,7 @@
         "name": "Ember Forge",
         "source": "src/ember/",
         "reference": "../design/ember/reference.png",
-        "layout": "Desktop sidebar with Overview and Help; horizontal rail on narrow screens; fixed action footer.",
+        "layout": "Desktop sidebar with Overview and Help; horizontal rail on narrow screens; a constrained scrollable content pane and a separate bottom action row that reserves its actual height.",
         "typography": {
           "display": "EmberFell (IM Fell English), Georgia, serif",
           "body": "Segoe UI, system-ui, sans-serif"

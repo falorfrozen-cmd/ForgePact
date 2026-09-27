@@ -117,7 +117,7 @@ export function initEmberShell() {
   );
   saved.append(saveCopy);
   footer.append(saved, document.querySelector(".page-actions"));
-  document.body.append(footer);
+  document.getElementById('appShell').append(footer);
   const credits = document.querySelector('.status-foot');
   credits.classList.add('sidebar-foot');
   const applyThemeLayout = () => {

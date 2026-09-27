@@ -112,6 +112,12 @@ also get new plugin commands for the stash, the bag and your skills.
 
 ## Fixed
 
+- **Reach the bottom of every Ember page.** Long pages now scroll with a visible
+  scrollbar, mouse wheel and keyboard. The bottom action bar no longer covers
+  settings, including in short windows. Changing pages starts at the top again.
+  Theme choices and the expanded Enabled mods list also stay within the
+  scrollable area, so their last options remain reachable.
+
 - **Blank panel window when ForgePact's ports were all in use.** ForgePact
   tries five ports of its own (8780, 8801, 8899, 9133 and 9777). When all five
   were taken, it let Windows pick any free port, and Windows could pick one the

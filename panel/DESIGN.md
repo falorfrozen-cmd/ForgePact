@@ -463,7 +463,10 @@ above and below continue to describe those three palettes.
 Ember's intentional differences are scoped under `html[data-theme="ember"]`
 in `src/ember/`: local copper/stone material textures, the IM Fell English
 display face, illustrated setting icons, a vertical desktop sidebar and a
-fixed action footer. Its seven sections include Overview and Help. Overview
+bottom action footer. The shell uses a constrained content viewport and a
+separate footer grid row, reserving the footer's actual height. A visible
+native scrollbar, wheel and keyboard expose the entire page; sidebar and
+filter-list scrolling remain independent. Its seven sections include Overview and Help. Overview
 offers up to three selectable shortcuts and searches all current controls.
 Every write delegates to an existing setting handler; no game hooks or
 polling loop are added. At narrow widths the sidebar becomes a horizontal
@@ -471,8 +474,10 @@ navigation rail and controls stack. Dialogs use native focus trapping.
 
 Shared tooltips, theme picker, Enabled mods and Undo keep the existing motion
 tokens, keyboard behavior and reduced-motion rules. In reduced motion,
-opacity and colour fades remain while movement is removed. The theme picker
-must render above the fixed footer so every palette remains clickable.
+opacity and colour fades remain while movement is removed. Ember's theme menu
+and expanded Enabled mods list participate in the pane's scroll flow, reveal
+themselves on open and cap their list height to the pane. Every palette and
+Turn off action must remain reachable above the separate footer.
 
 The artwork, typography, literal material colours and ornamentation are
 approved exceptions to the flat-panel rules below, confined to Ember. The

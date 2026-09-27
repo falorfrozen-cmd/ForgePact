@@ -111,6 +111,9 @@ export function installThemePicker() {
     active = Math.max(0, Math.min(options.length - 1, index));
     options.forEach((option, i) => option.toggleAttribute('data-active', i === active));
     list.setAttribute('aria-activedescendant', options[active].id);
+    if (isOpen() && document.documentElement.dataset.theme === 'ember') {
+      options[active].scrollIntoView({ block: 'nearest', behavior: 'instant' });
+    }
   }
 
   function setOpen(open, instant) {
@@ -129,9 +132,17 @@ export function installThemePicker() {
     host.toggleAttribute('data-open', open);
     trigger.setAttribute('aria-expanded', String(open));
     if (open) {
+      // Ember's menu participates in the content pane's scroll flow. Even a
+      // short window can show and scroll it without crossing the action bar.
+      const pane = document.getElementById('wrap');
+      list.style.maxHeight = document.documentElement.dataset.theme === 'ember' && pane
+        ? `${Math.max(32, pane.clientHeight - 16)}px` : '';
       fillSwatches();
       activate(Math.max(0, options.findIndex((o) => o.dataset.value === select.value)));
       list.focus({ preventScroll: true });
+      if (document.documentElement.dataset.theme === 'ember') {
+        list.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+      }
     } else {
       list.removeAttribute('aria-activedescendant');
     }

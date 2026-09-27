@@ -34,6 +34,7 @@ export function openTab(name,remember=true){
   document.getElementById('controlSearch').value='';controlFilter='all';filterControlRows();
   if(remember){try{sessionStorage.setItem('forgepact_tab',name)}catch(e){}}
   window.scrollTo({top:0,behavior:'instant'});
+  document.getElementById('wrap')?.scrollTo?.({top:0,behavior:'instant'});
   document.dispatchEvent?.(new Event('forgepact:navigate'));
 }
 export function openModsSubtab(id,remember=true){
@@ -46,6 +47,7 @@ export function openModsSubtab(id,remember=true){
     if(activeTab==='mods')document.getElementById(b.getAttribute('aria-controls')).classList.toggle('active',on);
   });
   if(remember){try{sessionStorage.setItem('forgepact_mods_subtab',target)}catch(e){}}
+  if(activeTab==='mods')document.getElementById('wrap')?.scrollTo?.({top:0,behavior:'instant'});
 }
 export function bindModsSubtabs(){
   document.querySelectorAll('.subtabbtn').forEach(button=>button.onclick=()=>openModsSubtab(button.getAttribute('aria-controls')));

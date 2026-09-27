@@ -101,6 +101,8 @@ The default **Ember Forge** theme uses the approved forge artwork and a sidebar:
 **Overview**, **Character**, **World**, **Loot**, **Mods**, **Setup** and **Help**.
 Overview has customizable quick controls; **Find a setting** / Ctrl+K searches
 every section. All 2.0 settings and their on/off switches remain available.
+Long pages have a visible scrollbar and support the mouse wheel and keyboard.
+The bottom action bar keeps its own space, so it cannot cover the final settings.
 
 Ledger, Graphite and Sigil remain available in **Setup → Appearance → Theme**,
 with their horizontal tabs. Your explicit theme choice is preserved.

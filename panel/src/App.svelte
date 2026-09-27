@@ -36,7 +36,7 @@
 <button class="tabbtn" data-tab="mods" role="tab" id="nav-mods" aria-controls="workspace"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 4.5h6v6h-6zM13.5 4.5h6v6h-6zM4.5 13.5h6v6h-6zM13.5 13.5h6v6h-6z"/></svg>Mods</button>
 </nav>
 </aside>
-<main id="wrap">
+<main id="wrap" tabindex="0" aria-label="Settings">
   <div class="control-dock"><div class="topline">
     <div class="breadcrumb">ForgePact / <strong id="breadcrumbPage">Modifiers</strong></div>
     <div id="statusbar"><span class="chip" id="chipGame">Connecting...</span><span id="saveIndicator" role="status" aria-live="polite">Loading settings...</span><span class="plugin-warning status-warning" hidden><button type="button" class="plugin-warning-button" aria-label="Open Setup" aria-describedby="statusWarningText" onclick={() => openTab('setup')}>{@html WARN_ICON}</button><span class="plugin-warning-tooltip" role="tooltip" hidden><span id="statusWarningText"></span><span class="plugin-warning-action">Open Setup</span></span></span><div class="note" id="chipApply" role="status"></div><div class="status-foot"><span class="status-offline">Offline tools</span><span>Created by Falor and ST4H<span id="panelver"></span></span></div></div>
