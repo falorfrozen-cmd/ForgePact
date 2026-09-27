@@ -213,7 +213,7 @@ never a route negative.
 
 ### Phase A shapes
 
-Research build `plugin_build\BloodPactPlugin_rel.dll`, build sha256=67f0f85a85e58f86470aad398285f6bf7cf8ae938a4722255487164432fb0a28 (`plugin_build\build.bat dev`, this branch's Phase A commit).
+Research build `plugin_build\BloodPactPlugin_rel.dll`, build sha256=e18d3198e5e24e7357f34a80d91eee0b4b91d679cbdf9d6c80692c3ec5c79a3f (`plugin_build\build.bat dev`, this branch's Phase A commit). The build is not byte-reproducible: every rebuild of the same source gives a new hash, so the session installs the DLL whose hash is written here (a copy is kept beside it as `BloodPactPlugin_rel.phaseA-e18d3198.dll`), or this line is updated to the rebuilt DLL's hash before the session.
 
 The lines Live 1 runs, in order. Each line is the command up to and including
 `confirm`; the text after `-> expect:` is the expected reply, not part of the
