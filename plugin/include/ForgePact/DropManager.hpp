@@ -206,16 +206,58 @@ private:
     long m_Cnt_GoldUnscaled{ 0 };
     bool m_GoldScaledLogged{ false };
     bool m_GoldUnscaledLogged{ false };
+
+    // Per-coin record, the positive control on argument 4 being the amount
+    // the game credits: the first kGoldCoinLogCount coins after each change
+    // of the gold multiplier (and the first ones of a session, at x1) each log
+    // the argument-4 value DropGold was handed and the value passed on, so a
+    // gold reading taken before and after picking one coin up can be held
+    // against its own line (x1: the delta should equal it; x100: about 100x).
+    // Keyed on the configured multiplier, not the one in effect, so AFK
+    // FARM's reward scope switching x100 to x1 and back does not re-arm it.
+    // 0 is "never armed": the multiplier is never below 1.
+    static constexpr long kGoldCoinLogCount = 8;
+    int m_GoldCoinLogMult{ 0 };
+    long m_GoldCoinLogged{ 0 };
+
+    static std::string GoldNum(double v) {
+        return (std::fabs(v) < 9.0e15 && v == std::floor(v))
+            ? std::to_string((long long)v) : std::to_string(v);
+    }
+    static std::string GoldValueText(const RValue* v) {
+        if (!v) return "missing";
+        if (v->m_Kind == VALUE_REAL || v->m_Kind == VALUE_INT32 || v->m_Kind == VALUE_INT64) return GoldNum(v->ToDouble());
+        return "kind " + std::to_string((int)v->m_Kind);
+    }
+    static const RValue* GoldArg(int argc, RValue** A, int i) { return (A && argc > i) ? A[i] : nullptr; }
+    // `passed` is what the original is handed at argument 4: the scaled copy,
+    // or the caller's own value when the hook left it alone.
+    static void LogGoldCoin(DropManager& mgr, int mult, int argc, RValue** A, const RValue* passed) {
+        if (mgr.m_GoldCoinLogMult != mgr.m_Mult_DropGold) {
+            mgr.m_GoldCoinLogMult = mgr.m_Mult_DropGold;
+            mgr.m_GoldCoinLogged = 0;
+        }
+        if (mgr.m_GoldCoinLogged >= kGoldCoinLogCount) return;
+        ++mgr.m_GoldCoinLogged;
+        Out("dropmult gold coin " + std::to_string(mgr.m_GoldCoinLogged) + "/" + std::to_string(kGoldCoinLogCount)
+            + " at x" + std::to_string(mult)
+            + (mult != mgr.m_Mult_DropGold ? " (reward scope; set x" + std::to_string(mgr.m_Mult_DropGold) + ")" : "")
+            + ": argument " + std::to_string(kDropGoldAmountArg) + " "
+            + GoldValueText(GoldArg(argc, A, kDropGoldAmountArg)) + " -> " + GoldValueText(passed)
+            + " (arguments 1,2: " + GoldValueText(GoldArg(argc, A, 1)) + ", " + GoldValueText(GoldArg(argc, A, 2)) + ")");
+    }
+
     static RValue& Hook_DropGold(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) {
         auto& mgr = Instance();
         BP_DIAG_INCREMENT(mgr.m_Cnt_DropGold);
         const int mult = HeroSiege::RewardScope::Active() ? 1 : mgr.m_Mult_DropGold;
+        const RValue* amount = (A && argc > kDropGoldAmountArg) ? A[kDropGoldAmountArg] : nullptr;
         if (mult <= 1 || !mgr.m_Orig_DropGold) {
+            if (mgr.m_Orig_DropGold) LogGoldCoin(mgr, mult, argc, A, amount);
             RValue& _res = mgr.m_Orig_DropGold ? mgr.m_Orig_DropGold(S, O, R, argc, A) : R;
             BP_LOGDROP("DropGold", _res, argc, A);
             return _res;
         }
-        const RValue* amount = (A && argc > kDropGoldAmountArg) ? A[kDropGoldAmountArg] : nullptr;
         const bool numeric = amount && (amount->m_Kind == VALUE_REAL
                                         || amount->m_Kind == VALUE_INT32
                                         || amount->m_Kind == VALUE_INT64);
@@ -230,6 +272,7 @@ private:
                     + (!amount ? std::string("missing") : "not a finite number (kind " + std::to_string((int)amount->m_Kind) + ")")
                     + "; the coin keeps the game's amount");
             }
+            LogGoldCoin(mgr, mult, argc, A, amount);
             RValue& _res = mgr.m_Orig_DropGold(S, O, R, argc, A);
             BP_LOGDROP("DropGold", _res, argc, A);
             return _res;
@@ -243,15 +286,13 @@ private:
             // The line carries the first coin's numbers so a report (or a live
             // capture) can hold them against the gold the game credits at
             // pickup: this hook only proves what DropGold was handed, not that
-            // DropGold credits argument 4 unchanged.
+            // DropGold credits argument 4 unchanged. The per-coin lines
+            // (LogGoldCoin) are what a pickup's gold delta is paired with.
             mgr.m_GoldScaledLogged = true;
-            const auto num = [](double v) {
-                return (std::fabs(v) < 9.0e15 && v == std::floor(v))
-                    ? std::to_string((long long)v) : std::to_string(v);
-            };
             Out("dropmult gold: x" + std::to_string(mult) + " applied to the coin's amount (one coin per drop): first coin "
-                + num(value) + " -> " + num(scaled.ToDouble()));
+                + GoldNum(value) + " -> " + GoldNum(scaled.ToDouble()));
         }
+        LogGoldCoin(mgr, mult, argc, A, &scaled);
         RValue& _res = mgr.m_Orig_DropGold(S, O, R, argc, args.data());
         BP_LOGDROP("DropGold", _res, argc, args.data());
         return _res;
