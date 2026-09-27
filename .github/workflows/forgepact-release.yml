@@ -64,8 +64,11 @@ jobs:
   build:
     runs-on: windows-2025-vs2026
     permissions:
-      # Reading the draft for guard 1. Only `upload` writes to it.
-      contents: read
+      # Guard 1 lists the tag's DRAFT release, and the Releases API lists
+      # drafts only to a token with push access, so `contents: read` would
+      # see none and refuse every run. This job writes nothing; `upload`
+      # does.
+      contents: write
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
       version: ${{ steps.tag.outputs.version }}

@@ -197,9 +197,15 @@ class UploadIsGatedAndClobbers(unittest.TestCase):
         head = jobs()["upload"].split("steps:", 1)[0]
         self.assertIn("needs: [build, panel-browser-tests]", head)
 
-    def test_only_the_upload_job_can_write(self):
+    def test_the_browser_job_cannot_write(self):
+        # build keeps contents: write only because guard 1 must see a
+        # draft, which the Releases API lists only to push access.
         writers = {name for name, text in jobs().items() if "contents: write" in text}
-        self.assertEqual(writers, {"upload"})
+        self.assertEqual(writers, {"build", "upload"})
+        self.assertIn("contents: read", jobs()["panel-browser-tests"])
+
+    def test_gh_release_upload_appears_only_in_upload(self):
+        self.assertNotIn("gh release upload", jobs()["build"])
 
     def test_the_zip_is_kept_on_every_run_and_checked_before_upload(self):
         build, upload = jobs()["build"], jobs()["upload"]
