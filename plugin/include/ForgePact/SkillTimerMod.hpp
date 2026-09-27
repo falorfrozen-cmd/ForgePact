@@ -175,6 +175,12 @@ inline constexpr SkillTimerRow kSkillTimerRows[] = {
       "isMyClient", 576.0, "Pickup Raid (Redneck)" },
     { "dissipatingTornado", HeroSiege::Objects::GameObject::Dissipating_Tornado_obj,
       nullptr, 432.0, "Dissipating Tornado (Nomad)" },
+    // Issue #83: the rule tier never selected Mana Orb (no rule entry on this
+    // build, measured), so it is an explicit row. Measured with the Chosen
+    // One upgrade only (the orb then follows the player; its own timer still
+    // spans the cast); the plain cast was not observed.
+    { "manaOrb", HeroSiege::Objects::GameObject::White_Mage_Mana_Orb_obj,
+      nullptr, 5040.0, "Mana Orb (White Mage)" },
 };
 inline constexpr int kSkillTimerRowCount =
     (int)(sizeof(kSkillTimerRows) / sizeof(kSkillTimerRows[0]));
@@ -229,7 +235,7 @@ inline constexpr int kSkillTimerBuffRowCount =
 // structurally by the generator, never reaches this file), and a cast object
 // resolves by NAME CONVENTION from the abilityId (SkillTimerNames.hpp,
 // generated - never hand-typed, AGENTS.md "Never Call an Address You
-// Resolved by Hand"). A measured deny-list always wins. The seven rows above
+// Resolved by Hand"). A measured deny-list always wins. The eight rows above
 // stay explicit and win over the rule (D-R1): Soul Spurn reads
 // `abilityDuration=0`, so the rule would not select it anyway.
 //
@@ -246,7 +252,7 @@ inline constexpr int kSkillTimerRuleCap = 64;
 // SkillTimerNames.hpp naming convention, see that file's own header comment)
 // and the object it names. No game API here - this struct, and the table
 // built from it, are read by ModuleMain.cpp's rule walk and rule draw, never
-// spelled as a literal `GameObject::` enumerator outside the seven explicit
+// spelled as a literal `GameObject::` enumerator outside the eight explicit
 // rows above and the generated header itself
 // (test_no_hand_typed_object_name_reaches_the_rule_path).
 struct SkillTimerNameEntry {
@@ -309,7 +315,7 @@ inline bool SkillTimerRuleDenied(const std::string& abilityId)
     return false;
 }
 
-// D-R1: the seven object rows above stay explicit and win over the rule - a
+// D-R1: the eight object rows above stay explicit and win over the rule - a
 // talent id matching one of them is never entered into the rule map at all.
 // Session 12 adds the buff-carried rows to the same exclusion: a buff row
 // has no object at all, so the rule (which only ever resolves an object by
@@ -347,7 +353,7 @@ class SkillTimerRuleModel {
 public:
     // The pure decision (D-S4's rule, interpreted): both fields read as
     // numbers, a positive duration, a cooldown above the no-cooldown floor,
-    // not denied, not one of the seven explicit rows. No game call and no
+    // not denied, not one of the eight explicit rows. No game call and no
     // object name here - resolving (or not) an object by name is the
     // caller's job, once eligibility is decided. Pinned truth-table points
     // (context, "Eligibility, read once per room"): cooldown == floor is
