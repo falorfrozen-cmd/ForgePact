@@ -1042,6 +1042,12 @@
           "F7": "The page's gutters are symmetric: 32/32 at 1280 and 20/20 at 900 (the right padding gives up the scrollbar's width).",
           "F8": "The Setup launcher's description is body/secondary text (font/size/sm, color/text/muted), and the Miner's Helmet card puts Vein Resonance on its own line."
         }
+      },
+      "prReview": {
+        "decided": "2026-09-27",
+        "source": "impeccable audit on ForgePact PR #100, P2: World's Satanic Restore defaults button (#satRestore) still drew the text glyph ↺ as its icon, against the rule finishReview F6 applies (no text glyph as an icon); the owner approved fixing it in that PR",
+        "ownerWords": "approved (2026-09-27)",
+        "change": "#satRestore goes through the same icon pipeline as Browse and Launch (decoratePanelIcons, ACTION_ICONS satRestore -> a drawn restore icon, hidden like every setting icon), which takes the ↺ off its label. Its text is Restore defaults; its title and what it sends are unchanged. The two world screens' texts lose the leading ↺ of that string."
       }
     }
   },
@@ -2931,7 +2937,7 @@
         "Only inside Chaos Tower",
         "CT only",
         "Satanic Zone Mods",
-        "↺ Restore defaults",
+        "Restore defaults",
         "Choose which modifiers can roll in your zones.",
         "Enabled mods are eligible, not guaranteed. The game still rolls your zone.",
         "All mods",
@@ -3045,7 +3051,7 @@
         "Only inside Chaos Tower",
         "CT only",
         "Satanic Zone Mods",
-        "↺ Restore defaults",
+        "Restore defaults",
         "Choose which modifiers can roll in your zones.",
         "Enabled mods are eligible, not guaranteed. The game still rolls your zone.",
         "All mods",

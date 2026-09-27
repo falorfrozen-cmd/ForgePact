@@ -150,6 +150,7 @@ export const ICONS = {
   'remove': path('M7 8h18l-2 21H9ZM4 8h24M12 4h8M13 13v10m6-10v10', DARK, RED),
   'play': path('m9 4 20 12-20 12Z', '#775331', GOLD),
   'auto-apply': path('M26 12A11 11 0 0 0 6 8L3 5v9h9l-3-3M6 20a11 11 0 0 0 20 4l3 3v-9h-9l3 3', 'none', GOLD, SW('1.8')),
+  'restore': path('M9 26A11 11 0 1 0 6 8L3 5v9h9l-3-3', 'none', GOLD, SW('1.8')) + circle(16, 17, 1.5, GOLD, GOLD),
 };
 
 const zip = (keys, values) => Object.fromEntries(keys.map((k, i) => [k, values[i]]));
@@ -182,6 +183,7 @@ export const SECTION_ICONS = {
 export const ACTION_ICONS = {
   'exebrowse': 'folder', 'exesave': 'save', 'installmod': 'install',
   'removeplugin': 'remove', 'launchgame': 'play', 'applyall': 'auto-apply',
+  'satRestore': 'restore',
 };
 export const SATANIC_ICONS = {
   'buff': numbered(['chest', 'chest', 'rune', 'gold', 'rare', 'angelic', 'boots', 'attack-speed', 'cast-speed', 'damage', 'spell-damage', 'relic', 'goblin', 'magic-find', 'magic-find', 'magic-find', 'experience', 'experience', 'experience', 'recovery', 'density', 'critical-damage', 'ancient', 'ancient', 'ancient']),

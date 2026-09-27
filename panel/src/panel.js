@@ -37,7 +37,7 @@ function decoratePanelIcons(){
   for(const [id,name] of Object.entries(PANEL_ICON_MAP.actions)){
     const button=document.getElementById(id);
     if(!button.querySelector('.setting-icon')){
-      button.textContent=button.textContent.replace(/^[\u{1F4C1}\u25B6]\s*/u,'');
+      button.textContent=button.textContent.replace(/^[\u{1F4C1}\u25B6\u21BA]\s*/u,'');
       decorateIconLabel(button,name);
     }
   }

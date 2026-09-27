@@ -3,7 +3,9 @@
 // (headless) Edge against the sandbox server: F1 the redrawn Setup and Mods
 // rail icons, F2 the ThemePicker over the kept native select, F3 the status
 // bar's drawn check, F4 the rarity note hidden at rest, F5 the chain warning's
-// mono run, F6 no glyph icons, F7 symmetric gutters and F8 the type drift.
+// mono run, F6 no glyph icons, F7 symmetric gutters and F8 the type drift;
+// then the same rule for World's Restore defaults button (impeccable P2 on
+// ForgePact PR #100, owner-approved 2026-09-27).
 //
 //   node tests/finish.e2e.mjs [--dist <dir>]    (npm run e2e:finish)
 //
@@ -39,6 +41,7 @@ const EXPECTED = [
   'finish-F6-no-glyphs',
   'finish-F7-gutters',
   'finish-F8-type',
+  'finish-restore-icon',
 ];
 const TABS = ['setup', 'modifiers', 'world', 'loot', 'mods'];
 // The derived oracle's theme steps: what choosing each palette posts.
@@ -441,11 +444,11 @@ async function noGlyphs({ page }) {
         await $(page, (s) => document.getElementById('subtab-' + s).click(), sub);
         await frames(page);
         const t = await $(page, () => document.body.innerText);
-        if (/[✓↳]/.test(t)) found.push(`mods-${sub}`);
+        if (/[✓↳↺]/.test(t)) found.push(`mods-${sub}`);
       }
     } else {
       const t = await $(page, () => document.body.innerText);
-      if (/[✓↳]/.test(t)) found.push(name);
+      if (/[✓↳↺]/.test(t)) found.push(name);
     }
   }
   assert(found.length === 0, `glyph icons on ${found.join(', ')}`);
@@ -461,7 +464,36 @@ async function noGlyphs({ page }) {
     return { id, indent: Math.round(row.getBoundingClientRect().left - parent.getBoundingClientRect().left), label: row.querySelector('.lbl').firstChild.textContent.trim() };
   }));
   assert(indent.every((r) => r.indent >= 12 && !/^[↳✓]/.test(r.label)), `sub-item rows: ${JSON.stringify(indent)}`);
-  return `no ✓ or ↳ on any tab; Selection valid carries the drawn check; sub-items indented ${indent[0].indent}px`;
+  return `no ✓, ↳ or ↺ on any tab; Selection valid carries the drawn check; sub-items indented ${indent[0].indent}px`;
+}
+
+// ---- Restore defaults: the drawn icon, not the ↺ glyph (PR #100 review) ----
+// The markup still starts the label with the glyph, as Browse and Launch start
+// theirs, so decoratePanelIcons() is what takes it off: the source line is the
+// control that there was a glyph to strip. Browse's folder icon is the
+// pipeline's existing positive. The title stays, and the click is the
+// oracle's (oracle:replay).
+
+async function restoreIcon({ page }) {
+  const source = readFileSync(new URL('../src/tabs/World.svelte', import.meta.url), 'utf8');
+  assert(/id="satRestore"[^>]*>&#8634; Restore defaults</.test(source), 'World.svelte no longer starts Restore defaults with the glyph; this check has nothing to strip');
+  await tab(page, 'world');
+  const r = await $(page, () => {
+    const b = document.getElementById('satRestore');
+    const icon = b.querySelector(':scope > svg.setting-icon');
+    const href = icon?.querySelector('use')?.getAttribute('href') || '';
+    const symbol = href ? document.querySelector(href) : null;
+    return {
+      text: b.textContent, label: b.querySelector(':scope > .label-copy')?.textContent, title: b.title,
+      icon: icon?.dataset.icon, href, symbol: symbol?.tagName.toLowerCase(), paths: symbol?.querySelectorAll('path').length || 0,
+      browse: document.getElementById('exebrowse').querySelector(':scope > svg.setting-icon')?.dataset.icon,
+    };
+  });
+  assert(r.browse === 'folder', `Browse lost its icon, the pipeline's positive: ${JSON.stringify(r)}`);
+  assert(r.icon === 'restore' && r.href === '#fp-icon-restore' && r.symbol === 'symbol' && r.paths > 0, `Restore defaults carries no drawn icon: ${JSON.stringify(r)}`);
+  assert(r.text === 'Restore defaults' && r.label === 'Restore defaults' && !/↺/.test(r.text), `Restore defaults' text: ${JSON.stringify(r)}`);
+  assert(r.title === 'Enable every positive and negative zone modifier', `Restore defaults' title: ${r.title}`);
+  return `the restore icon (${r.href}), text "${r.text}", no ↺; Browse keeps its folder`;
 }
 
 // ---- F7: symmetric gutters ----
@@ -536,6 +568,7 @@ const CHECKS = [
   ['finish-F6-no-glyphs', noGlyphs],
   ['finish-F7-gutters', gutters, { own: true }],
   ['finish-F8-type', typeDrift],
+  ['finish-restore-icon', restoreIcon],
 ];
 
 const browser = await launchBrowser();
