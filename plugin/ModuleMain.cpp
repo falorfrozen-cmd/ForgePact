@@ -3362,10 +3362,10 @@ static void LootCensus()
 
 static void LogDrop(const char* fn, RValue& res, int argc, RValue** A)
 {
+    if (g_ItemTruthBuilding) return;   // Item Truth journals its own builds
 #ifndef FORGEPACT_RELEASE
     GoldTraceAppend(fn, argc, A);      // #77 research: the gold scripts' arguments
 #endif
-    if (g_ItemTruthBuilding) return;   // Item Truth journals its own builds
     try {
 #ifndef FORGEPACT_RELEASE
         if (g_TypeMapAktifTip >= 0) g_TypeMapKancaSayaci++;
