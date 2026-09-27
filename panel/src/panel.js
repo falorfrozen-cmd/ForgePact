@@ -776,12 +776,9 @@ function bind(){
 }
 function preparePanelUI(){
   const workspace=document.getElementById('workspace');
-  if(!workspace.dataset.navigationReady){
-    workspace.dataset.navigationReady='1';
-    const compact=matchMedia('(max-width:720px)');
-    const orient=()=>document.querySelector('.tabbar').setAttribute('aria-orientation',compact.matches?'horizontal':'vertical');
-    compact.addEventListener('change',orient);orient();
-  }
+  // The tab bar is one horizontal row at every width (App.svelte declares
+  // aria-orientation="horizontal"); the old sidebar's width-driven toggle is gone.
+  if(!workspace.dataset.navigationReady)workspace.dataset.navigationReady='1';
   // Real DOM order matches the visual and keyboard order.
   ['densityCard','rarityCard','satanicMods','speedCard','spawnsCard'].forEach(id=>workspace.appendChild(document.getElementById(id)));
   for(const id of ['densityCard','rarityCard'])document.getElementById(id).classList.add('half');

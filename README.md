@@ -838,9 +838,8 @@ The panel's redesign is drawn in Figma, at
 <https://www.figma.com/design/75EleO8U3zngY8JU9adWpk>, which is the design's source.
 The fonts it uses, IBM Plex Sans and IBM Plex Mono, are already bundled: the two variable `.woff2`
 files sit under `panel/src/fonts/`, each beside its licence (SIL Open Font License 1.1),
-and `CREDITS.md` lists them. `panel/src/fonts.css` declares them, so the build carries
-them and never fetches a font from the network, but no part of the page uses them yet;
-the restyle does.
+and `CREDITS.md` lists them. `panel/src/fonts.css` declares them and `app.css` applies them
+across the page, so the build carries them and never fetches a font from the network.
 
 `src/offline_launcher.py` is a normal Python import bundled into ForgePact.exe.
 Keep it beside `src/forgepact.py` when running from source. Its launch engine is
