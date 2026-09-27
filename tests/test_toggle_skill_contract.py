@@ -793,6 +793,9 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
             "tyrantchance", "tyrantaffix", "hhlabelfont", "hhlabeloffset", "hhlabelmax",
             "enemyspeed", "rarity", "sigdrop", "angelicdrop", "relicfilter", "orbpickup",
             "satmods", "petquest",
+            # "Unstick the companion's loot" (#94, forgepact-pet-loot-stuck;
+            # test_pet_loot_unstick_contract.py).
+            "petunstick",
             # ForgePact #9 Stage B, merged from main: auto-prospect's own
             # player command (test_auto_prospect_contract.py pins it). Added
             # here because this set is an exact match, so another feature
@@ -2941,12 +2944,14 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         # `skillstate` and `talentalloc` are toolkit #147's skill verbs
         # (test_skill_actions_contract.py), and `playerwarp`, `stashtab`,
         # `bagtab`, `stashclose` and `giveitem` its stash and bag verbs
-        # (test_stash_bag_layout_contract.py).
+        # (test_stash_bag_layout_contract.py), and `petunstick` is #94's
+        # companion loot unstick (test_pet_loot_unstick_contract.py).
         self.assertEqual(now - before, {"autoprospect", "skilltimer", "menulayout", "restartanytime",
                                         "miningore", "minerhelm", "packmarks", "craftmats",
                                         "gemmythic", "gemmaxroll", "gemfilter",
                                         "skillstate", "talentalloc",
-                                        "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem"})
+                                        "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem",
+                                        "petunstick"})
         self.assertEqual(before - now, set())
 
     # ---- Sprite look probe (R round 3, issue #11): `tgprobe sprite ...` ----
