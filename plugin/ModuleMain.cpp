@@ -9362,6 +9362,114 @@ static void PetLootNoteOtherKind(int objIdx)
             std::to_string(objIdx) + "; counted as other kind=; logged once)");
 }
 
+// A ground item that does not carry `itemCompanionTimer`. The name comes from
+// a static reading, and variable_instance_set with a name the instance lacks
+// creates a stray variable without an error, so the write would count as held
+// back while holding nothing. The tick asks variable_instance_exists first and
+// on "no" writes nothing, counts it here with the object index (logged once),
+// and still drops the target.
+static std::atomic<long> g_PetLootTimerAbsent{ 0 };
+static std::atomic<int> g_PetLootTimerAbsentLast{ -1 };
+static std::atomic<bool> g_PetLootTimerAbsentLogged{ false };
+
+static void PetLootNoteTimerAbsent(int objIdx)
+{
+    g_PetLootTimerAbsent.fetch_add(1);
+    g_PetLootTimerAbsentLast.store(objIdx);
+    if (!g_PetLootTimerAbsentLogged.exchange(true))
+        Out("petunstick: a ground item has no itemCompanionTimer, so it was not held back, only dropped (object_index " +
+            std::to_string(objIdx) + "; counted as timer absent=; logged once)");
+}
+
+// Whether a give-up held. `held back=` counts the timer write returning, not
+// the item staying out of the pet's next scan, and `longest same-target=` only
+// grows while a target never leaves. After a give-up the pet usually reads -4
+// (noone) on the next tick, the watch forgets the target, and a target the
+// game hands straight back reads as a new one, given up again 90 frames later
+// and counted again. So the tick keeps its last few give-ups, and when the pet
+// takes one of them back as a new target (one it did not have on the previous
+// tick) younger than kPetLootHoldFrames, it counts a re-pick while held, by
+// kind, and logs the first. On a ground item it also reads the timer back: a
+// positive value says the hold took and the pet came back anyway, 0 or less
+// says the game reset it or the write never landed. A `fail` beside a rising
+// `held back=` then reads as "the same item came back" (re-picked > 0) or
+// "distinct items, one after another" (re-picked 0). Ages are in the watch's
+// clock (g_RuntimeFrame, one per FrameCallback), the hold in the game's own
+// frames; both run at the game's frame rate.
+enum class PetLootKind { Other, Ground, Coin };
+struct PetLootGivenUp {
+    double id = -1.0;
+    uint64_t frame = 0;
+    PetLootKind kind = PetLootKind::Other;
+    bool used = false;
+};
+static constexpr int kPetLootGivenUpRing = 8;
+static PetLootGivenUp g_PetLootGivenUp[kPetLootGivenUpRing];   // game thread only
+static int g_PetLootGivenUpNext = 0;
+static double g_PetLootPrevTarget = -1.0;   // the previous tick's live target, -1 for none
+static uint64_t g_PetLootPrevFrame = 0;
+static std::atomic<long> g_PetLootRepicked{ 0 };
+static std::atomic<long> g_PetLootRepickedGround{ 0 };
+static std::atomic<long> g_PetLootRepickedCoin{ 0 };
+// 0: no ground re-pick yet; 1: the timer was read back (value below); 2: it
+// could not be read. A separate state, so "unread" never passes for a value.
+static std::atomic<int> g_PetLootRepickTimerState{ 0 };
+static std::atomic<double> g_PetLootRepickTimerLast{ 0.0 };
+static std::atomic<bool> g_PetLootRepickLogged{ false };
+
+static void PetLootRememberGiveUp(double targetId, PetLootKind kind)
+{
+    PetLootGivenUp& e = g_PetLootGivenUp[g_PetLootGivenUpNext];
+    e.id = targetId;
+    e.frame = g_RuntimeFrame;
+    e.kind = kind;
+    e.used = true;
+    g_PetLootGivenUpNext = (g_PetLootGivenUpNext + 1) % kPetLootGivenUpRing;
+}
+
+// Called by the tick once per tick with the pet's live target, after
+// instance_exists said yes. Every other tick route leaves the previous target
+// at none, so a target that went to noone and came back is a new one.
+static void PetLootNoteTargetSeen(double targetId, const RValue& target, double prevTarget)
+{
+    if (targetId == prevTarget) return;
+    const PetLootGivenUp* hit = nullptr;
+    for (const PetLootGivenUp& e : g_PetLootGivenUp) {
+        if (!e.used || e.id != targetId) continue;
+        if (g_RuntimeFrame - e.frame >= (uint64_t)ForgePact::kPetLootHoldFrames) continue;
+        if (!hit || e.frame > hit->frame) hit = &e;
+    }
+    if (!hit) return;
+    g_PetLootRepicked.fetch_add(1);
+    std::string timerText;
+    if (hit->kind == PetLootKind::Ground) {
+        g_PetLootRepickedGround.fetch_add(1);
+        double timer = 0.0;
+        bool read = false;
+        try {
+            timer = g_Yytk->CallBuiltin("variable_instance_get", { target, RValue("itemCompanionTimer") }).ToDouble();
+            read = std::isfinite(timer);
+        } catch (...) { read = false; }
+        if (read) {
+            g_PetLootRepickTimerLast.store(timer);
+            g_PetLootRepickTimerState.store(1);
+            timerText = ", its itemCompanionTimer reads " + std::to_string((long long)timer);
+        } else {
+            g_PetLootRepickTimerState.store(2);
+            timerText = ", its itemCompanionTimer could not be read";
+        }
+    } else if (hit->kind == PetLootKind::Coin) {
+        g_PetLootRepickedCoin.fetch_add(1);
+    }
+    if (!g_PetLootRepickLogged.exchange(true)) {
+        const char* kind = hit->kind == PetLootKind::Ground ? "ground item"
+                         : hit->kind == PetLootKind::Coin ? "coin" : "other kind";
+        Out(std::string("petunstick: the pet took back a ") + kind + " it gave up " +
+            std::to_string((unsigned long long)(g_RuntimeFrame - hit->frame)) + " frames ago" + timerText +
+            " (counted as re-picked while held=; logged once)");
+    }
+}
+
 static std::string PetLootLocalStatSuffix()
 {
     const char* failed = g_PetLootGiveUpFailedLast.load();
@@ -9370,6 +9478,17 @@ static std::string PetLootLocalStatSuffix()
     s += " other kind=" + std::to_string(g_PetLootOtherKind.load());
     if (g_PetLootOtherKind.load() > 0)
         s += " (last object_index " + std::to_string(g_PetLootOtherKindLast.load()) + ")";
+    s += " timer absent=" + std::to_string(g_PetLootTimerAbsent.load());
+    if (g_PetLootTimerAbsent.load() > 0)
+        s += " (last object_index " + std::to_string(g_PetLootTimerAbsentLast.load()) + ")";
+    s += " re-picked while held=" + std::to_string(g_PetLootRepicked.load()) +
+         " (ground " + std::to_string(g_PetLootRepickedGround.load()) +
+         " coin " + std::to_string(g_PetLootRepickedCoin.load()) + ")";
+    const int timerState = g_PetLootRepickTimerState.load();
+    if (timerState == 1)
+        s += " (last ground timer read " + std::to_string((long long)g_PetLootRepickTimerLast.load()) + ")";
+    else if (timerState == 2)
+        s += " (last ground timer unreadable)";
     return s;
 }
 
@@ -9384,6 +9503,12 @@ static void PetLootUnstickTick()
     // so `petunstick 0` tells "never found the pet" from "could not read it"
     // from "nothing was ever stuck".
     mod.NoteTick();
+
+    // The previous tick's live target, for the re-pick count: none unless
+    // this tick directly follows it and sees a live target again below.
+    const double prevTarget = g_RuntimeFrame == g_PetLootPrevFrame + 1 ? g_PetLootPrevTarget : -1.0;
+    g_PetLootPrevFrame = g_RuntimeFrame;
+    g_PetLootPrevTarget = -1.0;
 
     // One number off an instance, in its own try: false when the read threw
     // or gave something that is not a finite number.
@@ -9413,6 +9538,8 @@ static void PetLootUnstickTick()
     try { targetExists = g_Yytk->CallBuiltin("instance_exists", { target }).ToBoolean(); }
     catch (...) { mod.Reset(); mod.NoteUnreadable("target instance_exists"); return; }
     if (!targetExists) { mod.Reset(); mod.NoteTargetGone(); return; }
+    g_PetLootPrevTarget = targetId;
+    PetLootNoteTargetSeen(targetId, target, prevTarget);
 
     double px = 0.0, py = 0.0, tx = 0.0, ty = 0.0;
     if (!readNumber(pet, "x", px)) { mod.Reset(); mod.NoteUnreadable("pet x"); return; }
@@ -9432,15 +9559,31 @@ static void PetLootUnstickTick()
     bool isGround = false;
     if (PetLootIsOf(oi, g_PetLootGroundObjIdx)) {
         isGround = true;
+        // Positive control on the name before writing it: a set on a name
+        // the instance lacks would create a stray variable and hold nothing.
+        bool hasTimer = false;
         try {
-            g_Yytk->CallBuiltin("variable_instance_set",
-                { target, RValue("itemCompanionTimer"), RValue((double)ForgePact::kPetLootHoldFrames) });
+            hasTimer = g_Yytk->CallBuiltin("variable_instance_exists",
+                { target, RValue("itemCompanionTimer") }).ToBoolean();
         } catch (...) {
-            PetLootNoteGiveUpFailed("itemCompanionTimer write threw");
+            PetLootNoteGiveUpFailed("itemCompanionTimer exists check threw");
             mod.Reset();
             return;
         }
-        mod.NoteHeldBack();
+        if (hasTimer) {
+            try {
+                g_Yytk->CallBuiltin("variable_instance_set",
+                    { target, RValue("itemCompanionTimer"), RValue((double)ForgePact::kPetLootHoldFrames) });
+            } catch (...) {
+                PetLootNoteGiveUpFailed("itemCompanionTimer write threw");
+                mod.Reset();
+                return;
+            }
+            mod.NoteHeldBack();
+        } else {
+            // Not held back, but the target is still dropped below.
+            PetLootNoteTimerAbsent(oi);
+        }
     }
     try { g_Yytk->CallBuiltin("variable_instance_set", { pet, RValue("lootTarget"), RValue(-4.0) }); }
     catch (...) {
@@ -9448,6 +9591,9 @@ static void PetLootUnstickTick()
         mod.Reset();
         return;
     }
+    // Remembered for the re-pick count only once the target is dropped.
+    PetLootRememberGiveUp(targetId, isGround ? PetLootKind::Ground
+        : PetLootIsOf(oi, g_PetLootCoinObjIdx) ? PetLootKind::Coin : PetLootKind::Other);
     // Counted only once the target is actually dropped.
     if (!isGround && PetLootIsOf(oi, g_PetLootCoinObjIdx)) {
         // No timer on a coin: only the target is dropped, so a coin that
