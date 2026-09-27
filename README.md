@@ -97,12 +97,20 @@ Fragments and reads no drop rate, so the slider cannot scale it. See
 
 ### Using the panel
 
-Use the tabs along the top to move between **Setup**, **Modifiers**, **World**, **Loot** and
-**Mods**. The header shows
+The default **Ember Forge** theme uses the approved forge artwork and a sidebar:
+**Overview**, **Character**, **World**, **Loot**, **Mods**, **Setup** and **Help**.
+Overview has customizable quick controls; **Find a setting** / Ctrl+K searches
+every section. All 2.0 settings and their on/off switches remain available.
+
+Ledger, Graphite and Sigil remain available in **Setup → Appearance → Theme**,
+with their horizontal tabs. Your explicit theme choice is preserved.
+![Ember Forge overview](assets/panel/ember-overview.png)
+
+See [Ember integration and source instructions](docs/ember-ui.md). The header shows
 whether the game is running and whether your latest setting has saved. **Auto-apply**
 and **Apply all now** keep their existing behavior.
 
-The screenshots below are the panel at 1280 wide in its default **Ledger** theme,
+The screenshots below are the panel at 1280 wide in the alternative **Ledger** theme,
 taken from the test sandbox, which reports the game open without the mod plugin
 (hence the warning icon).
 

@@ -7,6 +7,8 @@
 import { filterControlRows } from './panel.js';
 
 export const PAGE_INFO={
+  overview:['Your forge. Your rules.','Shape your offline adventure.'],
+  help:['Your offline workshop','Get the most out of ForgePact.'],
   setup:['Game setup','Connect your offline game and manage the mod plugin.'],
   modifiers:['Character modifiers','Tune your character and combat bonuses.'],
   world:['World settings','Shape your zones. Keep every choice in sight.'],
@@ -17,7 +19,8 @@ export let activeTab='modifiers',controlFilter='all',modsSubtab='qolCard';
 export function setControlFilter(value){controlFilter=value}
 export function setModsSubtab(value){modsSubtab=value}
 export function openTab(name,remember=true){
-  if(!document.querySelector(`.tabbtn[data-tab="${name}"]`))name='modifiers';
+  const targetTab=document.querySelector(`.tabbtn[data-tab="${name}"]`);
+  if(!targetTab||targetTab.hidden)name='modifiers';
   activeTab=name;
   document.querySelectorAll('.tabbtn').forEach(b=>{const on=b.dataset.tab===name;b.classList.toggle('active',on);b.setAttribute('aria-selected',on?'true':'false');b.tabIndex=on?0:-1});
   document.querySelectorAll('.tab-card').forEach(c=>{c.hidden=false;c.classList.toggle('active',c.dataset.tab===name)});
@@ -31,6 +34,7 @@ export function openTab(name,remember=true){
   document.getElementById('controlSearch').value='';controlFilter='all';filterControlRows();
   if(remember){try{sessionStorage.setItem('forgepact_tab',name)}catch(e){}}
   window.scrollTo({top:0,behavior:'instant'});
+  document.dispatchEvent?.(new Event('forgepact:navigate'));
 }
 export function openModsSubtab(id,remember=true){
   const buttons=[...document.querySelectorAll('.subtabbtn')];

@@ -30,11 +30,13 @@ shipping path and remains here for its research notes and tools.
 frameworks above.
 
 ### Panel artwork
-The bronze anvil in the panel is the original vector artwork from Falor's
-Hero Siege Toolkit UI source package, `hub/src/ToolIcon.svelte` (`anvil` variant).
-It is adapted inline in `src/forgepact.py`, retaining the stroke and gradient
-colors. The body outline is closed and its top face is drawn continuously to
-correct the missing upper-left surface. No download is needed.
+Ember Forge uses Falor's approved AI-generated forge scene and material atlas.
+The reference, provenance and crop recipe are documented in `design/ember/README.md`;
+the optimized WebPs are bundled from `panel/src/ember/assets/`. They do not
+contain extracted game artwork.
+
+IM Fell English by Igino Marini is bundled unmodified under the SIL Open Font
+License 1.1; see `panel/src/ember/assets/OFL-IMFellEnglish.txt`.
 
 The 69 setting icons in `panel/src/icons.js` are original vector illustrations
 created for ForgePact/Falor and distributed under this project's AGPL-3.0

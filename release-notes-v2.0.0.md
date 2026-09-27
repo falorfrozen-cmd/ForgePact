@@ -78,8 +78,10 @@ also get new plugin commands for the stash, the bag and your skills.
 ## Changed
 
 - **A new look for the whole panel.** The tabs sit in one bar along the top of
-  the window, each page is laid out in cards, and the panel comes in three
-  colour themes: **Ledger** (the default), **Graphite** and **Sigil**. Its
+  the window in Ledger, Graphite and Sigil. **Ember Forge**, the new default,
+  brings the approved anvil artwork, a sidebar, customizable Overview shortcuts
+  and a search across all settings. Your existing explicit theme choice stays
+  selected. Its
   fonts come with ForgePact, so the panel looks the same on every PC and still
   works with no internet connection. Every control sends the same settings to
   the game as before.

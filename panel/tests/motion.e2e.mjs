@@ -406,7 +406,10 @@ async function m1Hover({ page }) {
   await page.hover('#applyall');
   await wait(250);
   const inn = await seen(page, '#applyall');
-  const bg = one(inn, 'background-color');
+  // Ember's primary button uses a static material image/gradient, so its
+  // visible hover feedback fades the lettering instead of a solid fill.
+  const property = await $(page, () => document.documentElement.dataset.theme === 'ember' ? 'color' : 'background-color');
+  const bg = one(inn, property);
   timed(bg, t.fast, t.hover, 'Apply all hovered');
   await clearLog(page);
   await away(page);
@@ -421,7 +424,7 @@ async function m1Hover({ page }) {
   await wait(200);
   const swap = await $(page, (c) => window.__motion.filter((m) => c.includes(m.prop)).map((m) => `${m.el.id || m.el.className} ${m.prop}`), COLOUR);
   assert(swap.length === 0, `a palette swap ran colour transitions: ${swap.slice(0, 5).join('; ')}`);
-  return `hover background-color ${bg.duration} ms; out and ${THEMES.length} palette swaps: none`;
+  return `hover ${property} ${bg.duration} ms; out and ${THEMES.length} palette swaps: none`;
 }
 
 // M2: a button held by the pointer scales to .97 over fast/standard; held

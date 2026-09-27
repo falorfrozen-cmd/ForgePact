@@ -1,0 +1,1370 @@
+/* Reference material system. Frames use nine-slice borders: controls stay native. */
+@font-face {
+  font-family: EmberFell;
+  src: url("./assets/IMFellEnglish.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+:root[data-theme="ember"] {
+  --sidebar: 270px;
+  --relief-sidebar: url("./assets/sidebar.webp");
+  --relief-panel: url("./assets/panel.webp");
+  --relief-iron: url("./assets/iron.webp");
+  --relief-footer: url("./assets/footer.webp");
+  --relief-brand: url("./assets/brand.webp");
+  --relief-anvil: url("./assets/anvil.webp");
+  --relief-rune: url("./assets/rune.webp");
+  --relief-action: url("./assets/action.webp");
+  --nav-overview: url("./assets/nav-overview.webp");
+  --nav-modifiers: url("./assets/nav-modifiers.webp");
+  --nav-world: url("./assets/nav-world.webp");
+  --nav-loot: url("./assets/nav-loot.webp");
+  --nav-mods: url("./assets/nav-mods.webp");
+  --nav-setup: url("./assets/nav-setup.webp");
+  --nav-help: url("./assets/nav-help.webp");
+}
+:where(html[data-theme="ember"]) body {
+  background: #050607;
+  font-size: 16px;
+}
+:where(html[data-theme="ember"]) #appShell {
+  background: #060708;
+}
+:where(html[data-theme="ember"]) #wrap {
+  padding: 0 16px 136px;
+  max-width: 1900px;
+}
+:where(html[data-theme="ember"]) h1,
+:where(html[data-theme="ember"]) h2,
+:where(html[data-theme="ember"]) h3,
+:where(html[data-theme="ember"]) .ember-outline,
+:where(html[data-theme="ember"]) .ember-footer #applyall,
+:where(html[data-theme="ember"]) .ember-number input,
+:where(html[data-theme="ember"]) .ember-count strong {
+  font-family: EmberFell, Georgia, serif;
+  font-weight: 400;
+}
+:where(html[data-theme="ember"]) .sidebar {
+  padding: 0 0 14px;
+  background: var(--relief-sidebar) center/100% 100% no-repeat;
+  border: 0;
+  box-shadow: none;
+}
+:where(html[data-theme="ember"]) .sidebar:after {
+  display: none;
+}
+:where(html[data-theme="ember"]) .brand {
+  height: 230px;
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: var(--relief-brand) center 20px/228px 185px no-repeat;
+  mix-blend-mode: lighten;
+}
+:where(html[data-theme="ember"]) .brand > svg {
+  display: none;
+}
+:where(html[data-theme="ember"]) .brand > div {
+  opacity: 0;
+}
+:where(html[data-theme="ember"]) .tabbar {
+  flex: 0;
+  min-height: 0;
+  padding: 0;
+  gap: 0;
+}
+:where(html[data-theme="ember"]) .tabbtn {
+  min-height: 62px;
+  padding: 11px 30px;
+  gap: 25px;
+  font:
+    18px "Segoe UI",
+    sans-serif;
+  border-width: 1px;
+  border-left-width: 3px;
+  color: #dbd9d5;
+  text-shadow: 0 1px 4px #000;
+}
+:where(html[data-theme="ember"]) .tabbtn > svg {
+  display: none;
+}
+:where(html[data-theme="ember"]) .tabbtn:before {
+  content: "";
+  display: block;
+  flex: none;
+  width: 36px;
+  height: 38px;
+  background: var(--nav-icon) center/contain no-repeat;
+  mix-blend-mode: lighten;
+}
+:where(html[data-theme="ember"]) #nav-overview {
+  --nav-icon: var(--nav-overview);
+}
+:where(html[data-theme="ember"]) #nav-modifiers {
+  --nav-icon: var(--nav-modifiers);
+}
+:where(html[data-theme="ember"]) #nav-world {
+  --nav-icon: var(--nav-world);
+}
+:where(html[data-theme="ember"]) #nav-loot {
+  --nav-icon: var(--nav-loot);
+}
+:where(html[data-theme="ember"]) #nav-mods {
+  --nav-icon: var(--nav-mods);
+}
+:where(html[data-theme="ember"]) #nav-setup {
+  --nav-icon: var(--nav-setup);
+  margin-top: clamp(28px, calc(100vh - 880px), 150px);
+}
+:where(html[data-theme="ember"]) #nav-help {
+  --nav-icon: var(--nav-help);
+}
+:where(html[data-theme="ember"]) .tabbtn.active {
+  border-color: #9a6031;
+  border-left-color: #ffb966;
+  background: linear-gradient(90deg, #a353231f, #19141345);
+  box-shadow:
+    inset 0 0 20px #bb61201a,
+    0 0 7px #ff8d232b;
+  color: #ffe3b2;
+}
+:where(html[data-theme="ember"]) .tabbtn.active:before {
+  position: static;
+  inset: auto;
+  width: 36px;
+  height: 38px;
+  background: var(--nav-icon) center/contain no-repeat;
+  border-radius: 0;
+  filter: brightness(1.3) drop-shadow(0 0 3px #a96220);
+}
+:where(html[data-theme="ember"]) .tabbtn:hover {
+  background-color: #a3642624;
+}
+:where(html[data-theme="ember"]) .sidebar-foot {
+  margin-top: auto;
+  padding: 10px 10px 0;
+  font-family: EmberFell, Georgia, serif;
+  font-size: 16px;
+  letter-spacing: 1px;
+  color: #c9bda9;
+}
+:where(html[data-theme="ember"]) .sidebar-foot hr {
+  display: none;
+}
+:where(html[data-theme="ember"]) .sidebar-foot:after {
+  margin-top: 4px;
+}
+:where(html[data-theme="ember"]) .sidebar-foot #panelver {
+  font-size: 10px;
+}
+:where(html[data-theme="ember"]) .control-dock {
+  height: 50px;
+  padding: 0 24px;
+  margin: 0 -16px 20px;
+  background: #0c0e10;
+  border-color: #4d4036;
+  backdrop-filter: none;
+}
+:where(html[data-theme="ember"]) .topline {
+  gap: 16px;
+}
+:where(html[data-theme="ember"]) .breadcrumb {
+  font-size: 16px;
+}
+:where(html[data-theme="ember"]) .breadcrumb strong {
+  font-weight: 400;
+}
+:where(html[data-theme="ember"]) .chip {
+  font-size: 14px;
+}
+:where(html[data-theme="ember"]) .chip:before {
+  width: 12px;
+  height: 12px;
+}
+:where(html[data-theme="ember"]) .ember-search-button {
+  width: 285px;
+  height: 36px;
+  padding: 7px 12px;
+  font-size: 14px;
+  border-color: #4c5257;
+  background: linear-gradient(#171a1e, #090b0d);
+}
+:where(html[data-theme="ember"]) #statusbar {
+  margin-left: auto;
+  gap: 28px;
+}
+:where(html[data-theme="ember"]) .ember-search-button kbd {
+  display: none;
+}
+:where(html[data-theme="ember"]) .page-heading {
+  margin: 22px 0 26px;
+}
+:where(html[data-theme="ember"]) .page-heading h1 {
+  font-size: 42px;
+  font-weight: 400;
+}
+:where(html[data-theme="ember"]) .page-heading p {
+  font-size: 15px;
+  color: #bfbcb7;
+}
+:where(html[data-theme="ember"]) .ember-hero {
+  min-height: 0;
+  height: clamp(
+    240px,
+    min(calc((100vw - var(--sidebar)) * 0.276), calc(100vh - 628px)),
+    410px
+  );
+  padding: 58px 60px 32px;
+  margin: 0 -16px 0;
+  align-items: flex-start;
+  background: var(--forge) center/cover no-repeat;
+  border: 0;
+}
+:where(html[data-theme="ember"]) .ember-hero-copy {
+  max-width: 530px;
+}
+:where(html[data-theme="ember"]) .ember-hero h1 {
+  font-family: EmberFell, Georgia, serif;
+  font-size: 72px;
+  font-weight: 700;
+  line-height: 0.92;
+  letter-spacing: -1.6px;
+  margin: 0 0 12px;
+  color: #eee5d6;
+  text-shadow: 0 3px 5px #000;
+}
+:where(html[data-theme="ember"]) .ember-hero p {
+  font-family: EmberFell, Georgia, serif;
+  font-size: 29px;
+  color: #c0bcb7;
+  line-height: 1.2;
+  margin: 0 0 22px;
+}
+:where(html[data-theme="ember"]) .ember-hero .btn {
+  font-family: EmberFell, Georgia, serif;
+  font-size: 23px;
+  padding: 9px 22px;
+  min-height: 52px;
+  min-width: 265px;
+  font-weight: 400;
+  border: 2px solid #e59345;
+  border-radius: 2px;
+  box-shadow:
+    inset 0 0 0 2px #351c0f,
+    inset 0 0 14px #95431c26,
+    0 0 7px #ff702522;
+  clip-path: polygon(
+    4px 0,
+    calc(100% - 4px) 0,
+    100% 4px,
+    100% calc(100% - 4px),
+    calc(100% - 4px) 100%,
+    4px 100%,
+    0 calc(100% - 4px),
+    0 4px
+  );
+}
+:where(html[data-theme="ember"]) .ember-outline span {
+  font-size: 27px;
+  margin-left: 16px;
+}
+:where(html[data-theme="ember"]) .ember-overview-grid {
+  grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
+  gap: 12px;
+}
+:where(html[data-theme="ember"]) .ember-panel,
+:where(html[data-theme="ember"]) .card {
+  border: 9px solid transparent;
+  border-image: var(--relief-panel) 12 stretch;
+  border-radius: 0;
+  background:
+    linear-gradient(#07090a8c, #0507099c),
+    var(--relief-iron) repeat;
+  box-shadow: 0 4px 14px #0009;
+  position: relative;
+}
+:where(html[data-theme="ember"]) .ember-panel {
+  padding: 4px 11px;
+}
+:where(html[data-theme="ember"]) .ember-panel:before,
+:where(html[data-theme="ember"]) .ember-panel:after {
+  display: none;
+}
+:where(html[data-theme="ember"]) .card {
+  padding: 18px 20px;
+}
+:where(html[data-theme="ember"]) .card h2 {
+  font-size: 30px;
+  font-weight: 400;
+}
+:where(html[data-theme="ember"]) .ember-section-head {
+  height: 49px;
+  min-height: 49px;
+  padding: 0 0 11px;
+  gap: 12px;
+  border-bottom: 1px solid #5a5449;
+}
+:where(html[data-theme="ember"]) .ember-section-head h2 {
+  font-family: EmberFell, Georgia, serif;
+  font-weight: 400;
+  font-size: 29px;
+  gap: 14px;
+}
+:where(html[data-theme="ember"]) .ember-heading-icon {
+  font-size: 31px;
+  width: 47px;
+  text-align: center;
+}
+:where(html[data-theme="ember"]) .ember-quick .ember-heading-icon {
+  font-size: 0;
+  background: var(--relief-anvil) center/contain no-repeat;
+  height: 37px;
+  mix-blend-mode: lighten;
+}
+:where(html[data-theme="ember"]) .ember-qol .ember-heading-icon {
+  font-size: 0;
+  height: 34px;
+  width: 39px;
+  background: var(--nav-setup) center/contain no-repeat;
+  mix-blend-mode: lighten;
+}
+:where(html[data-theme="ember"]) .ember-star {
+  width: 40px;
+  height: 40px;
+  font-size: 28px;
+  line-height: 32px;
+  box-shadow:
+    inset 0 0 0 2px #060708,
+    0 2px 4px #000;
+  border-color: #846548;
+  flex: none;
+  border-radius: 2px;
+  color: #ffc77b;
+  text-shadow: 0 0 9px #ba672099;
+}
+:where(html[data-theme="ember"]) .ember-quick-row {
+  grid-template-columns: 76px minmax(125px, 0.88fr) minmax(85px, 1fr) 154px;
+  gap: 14px;
+  min-height: 85px;
+  padding: 0;
+  border-color: #4c4c48;
+}
+:where(html[data-theme="ember"]) .ember-item-icon {
+  width: 70px;
+  height: 72px;
+  background-size: contain;
+  mix-blend-mode: lighten;
+  filter: drop-shadow(0 2px 2px #000);
+}
+:where(html[data-theme="ember"]) .ember-control-label > label,
+:where(html[data-theme="ember"]) .ember-control-label > strong {
+  font:
+    400 18px/1.3 "Segoe UI",
+    sans-serif;
+  color: #efeeeb;
+}
+:where(html[data-theme="ember"]) .ember-control-label small {
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.35;
+  color: #b9bec2;
+  margin-top: 3px;
+}
+:where(html[data-theme="ember"]) .ember-control-label > .ember-density-enable {
+  font:
+    10px/1.2 "Segoe UI",
+    sans-serif;
+  margin-top: 4px;
+  color: #aca294;
+}
+:where(html[data-theme="ember"]) .ember-density-enable input {
+  width: 11px;
+  height: 11px;
+}
+:where(html[data-theme="ember"]) .ember-number {
+  height: 48px;
+  border-color: #725a48;
+  border-radius: 3px;
+  background: linear-gradient(#252a30, #090c0f 48%, #07090c);
+  box-shadow:
+    inset 0 0 0 2px #06070a,
+    0 3px 5px #000c;
+}
+:where(html[data-theme="ember"]) .ember-number button {
+  width: 36px;
+  font-size: 27px;
+  background: transparent;
+  color: #ffb05c;
+  text-shadow: 0 1px 2px #000;
+}
+:where(html[data-theme="ember"]) .ember-number input {
+  font-family: Georgia, serif;
+  font-size: 24px;
+  border-color: #4d4e4e;
+  background: #080b0f99;
+  padding-right: 17px;
+}
+:where(html[data-theme="ember"]) .ember-number:after {
+  font-size: 22px;
+  right: 42px;
+}
+:where(html[data-theme="ember"]) .ember-toggle-row {
+  grid-template-columns: 67px minmax(95px, 1fr) 64px 34px;
+  gap: 15px;
+  min-height: 85px;
+  border-color: #4c4c48;
+}
+:where(html[data-theme="ember"]) .ember-toggle-row .ember-item-icon {
+  width: 66px;
+  height: 70px;
+}
+:where(html[data-theme="ember"]) .ember-toggle-state {
+  font-size: 16px;
+  color: #bdbbb7;
+}
+:where(html[data-theme="ember"]) .ember-overview .switch {
+  width: 64px;
+  height: 36px;
+}
+:where(html[data-theme="ember"]) .ember-overview .sl {
+  border: 1px solid #999d9b;
+  background: linear-gradient(110deg, #292b31, #191b21);
+  box-shadow: inset 0 0 4px #000;
+}
+:where(html[data-theme="ember"]) .ember-overview .sl:before {
+  width: 29px;
+  height: 29px;
+  left: 3px;
+  top: 2px;
+  border: 1px solid #cac5ba;
+  background: linear-gradient(135deg, #aca59a, #756e64);
+}
+:where(html[data-theme="ember"]) .ember-overview .switch input:checked + .sl {
+  border-color: #ffbd72;
+  background: linear-gradient(100deg, #834006, #ef861f);
+  box-shadow:
+    0 0 13px #ea712652,
+    inset 0 0 4px #aa4815;
+}
+:where(html[data-theme="ember"]) .ember-overview .switch input:checked + .sl:before {
+  transform: translateX(27px);
+  background: #ffe3a1;
+  border-color: #ffd688;
+  box-shadow: 0 0 9px #ffbf7466;
+}
+:where(html[data-theme="ember"]) input[type="range"] {
+  height: 8px;
+  border: 1px solid #747574;
+  box-shadow:
+    inset 0 1px 1px #ffffff48,
+    0 0 0 2px #14171a,
+    0 0 0 3px #3a3c3d;
+  border-radius: 8px;
+}
+:where(html[data-theme="ember"]) input[type="range"]::-webkit-slider-thumb {
+  height: 18px;
+  width: 18px;
+  border: 2px solid #eaa972;
+  background: linear-gradient(130deg, #efc893, #9b582c);
+  box-shadow:
+    inset 0 0 0 1px #70401f,
+    0 0 0 2px #24170f,
+    0 0 0 3px #c28858,
+    0 2px 5px #000;
+}
+:where(html[data-theme="ember"]) .ember-pool {
+  margin-top: 12px;
+  min-height: 106px;
+  gap: 18px;
+  padding: 6px 15px;
+  flex-wrap: nowrap;
+}
+:where(html[data-theme="ember"]) .ember-rune {
+  display: block;
+  width: 84px;
+  height: 80px;
+  font-size: 0;
+  flex: none;
+  background: var(--relief-rune) center/contain no-repeat;
+  mix-blend-mode: lighten;
+}
+:where(html[data-theme="ember"]) .ember-pool-title {
+  min-width: 195px;
+}
+:where(html[data-theme="ember"]) .ember-pool h2 {
+  font-family: EmberFell, Georgia, serif;
+  font-size: 28px;
+  font-weight: 400;
+  margin: 0 0 4px;
+}
+:where(html[data-theme="ember"]) .ember-pool p {
+  font-size: 17px;
+  color: #b9bdc1;
+}
+:where(html[data-theme="ember"]) .ember-count {
+  min-width: 220px;
+  padding: 10px 17px;
+  background: linear-gradient(#0d1013, #06080b);
+  border: 1px solid #484e53;
+  border-radius: 9px;
+  box-shadow: inset 0 0 0 1px #13171b;
+}
+:where(html[data-theme="ember"]) .ember-count strong {
+  font:
+    20px Georgia,
+    serif;
+}
+:where(html[data-theme="ember"]) .ember-count small {
+  font-size: 14px;
+  color: #aeb9c1;
+  margin-top: 3px;
+}
+:where(html[data-theme="ember"]) .ember-count.positive strong {
+  color: #91e491;
+}
+:where(html[data-theme="ember"]) .ember-count.negative strong {
+  color: #ff997f;
+}
+:where(html[data-theme="ember"]) .ember-pool .btn {
+  font-family: EmberFell, Georgia, serif;
+  font-size: 23px;
+  min-width: 205px;
+  min-height: 54px;
+  padding: 10px 15px;
+  border-color: #ef984f;
+  border-radius: 2px;
+  font-weight: 400;
+}
+:where(html[data-theme="ember"]) .ember-footer {
+  left: calc(var(--sidebar) + 16px);
+  right: 16px;
+  bottom: 16px;
+  min-height: 94px;
+  padding: 5px 7px 5px 17px;
+  border: 8px solid transparent;
+  border-image: var(--relief-footer) 10 stretch;
+  background:
+    linear-gradient(#07090a8c, #0507099c),
+    var(--relief-iron) repeat;
+  box-shadow: 0 0 15px #000b;
+  gap: 15px;
+}
+:where(html[data-theme="ember"]) .ember-footer #applyall {
+  font-family: EmberFell, Georgia, serif;
+  font-weight: 400;
+  border: 8px solid transparent;
+  border-image: var(--relief-action) 9 stretch;
+  min-width: 275px;
+  height: 69px;
+  min-height: 0;
+  padding: 2px 19px;
+  background:
+    radial-gradient(ellipse at 50% 100%, #af532b55, transparent 80%),
+    linear-gradient(135deg, #31180e, #120a09);
+  font-size: 28px;
+  color: #ffca88;
+  box-shadow: 0 0 12px #ec611443;
+  border-radius: 0;
+  white-space: nowrap;
+}
+:where(html[data-theme="ember"]) .ember-footer #applyall:hover {
+  background: linear-gradient(#7d351e88, #29120f);
+  box-shadow: 0 0 18px #f5812255;
+}
+:where(html[data-theme="ember"]) .ember-footer #applyall .setting-icon {
+  display: none;
+}
+:where(html[data-theme="ember"]) .ember-footer #applyall:before {
+  content: "";
+  display: inline-block;
+  width: 40px;
+  height: 31px;
+  background: var(--relief-anvil) center/contain no-repeat;
+  vertical-align: middle;
+  margin-right: 14px;
+  mix-blend-mode: screen;
+}
+:where(html[data-theme="ember"]) .ember-footer .page-actions {
+  gap: 28px;
+}
+:where(html[data-theme="ember"]) .ember-footer .auto-control {
+  font-size: 14px;
+  gap: 12px;
+}
+:where(html[data-theme="ember"]) .ember-footer .auto-control .switch {
+  order: -1;
+  width: 27px;
+  height: 27px;
+}
+:where(html[data-theme="ember"]) .ember-footer .auto-control .sl {
+  border-radius: 3px;
+  border: 1px solid #d99b5e;
+  background: #1a1713;
+}
+:where(html[data-theme="ember"]) .ember-footer .auto-control .sl:before {
+  display: none;
+}
+:where(html[data-theme="ember"]) .ember-footer .auto-control .switch input:checked + .sl {
+  background: #844410;
+}
+:where(html[data-theme="ember"]) .ember-footer .auto-control .switch input:checked + .sl:after {
+  content: "✓";
+  display: block;
+  color: #ffdda6;
+  font-size: 25px;
+  line-height: 24px;
+  text-align: center;
+}
+:where(html[data-theme="ember"]) .ember-save:before {
+  border: 0;
+  width: 45px;
+  height: 45px;
+  background: #102514;
+  color: #61d27b;
+  font-size: 32px;
+}
+:where(html[data-theme="ember"]) .ember-save:has(.saving):before {
+  content: "…";
+  background: #39280e;
+  color: #e9b56b;
+}
+:where(html[data-theme="ember"]) #saveIndicator {
+  font-size: 14px;
+  text-align: left;
+}
+:where(html[data-theme="ember"]) .ember-save-copy #chipApply {
+  font-size: 10px;
+  margin-top: 4px;
+}
+:where(html[data-theme="ember"]) .ember-save:has(.error):before {
+  font-size: 26px;
+}
+:where(html[data-theme="ember"]) .feature-card,
+:where(html[data-theme="ember"]) .feature-with-child,
+:where(html[data-theme="ember"]) .sat-panel,
+:where(html[data-theme="ember"]) .ember-help-grid article {
+  background: linear-gradient(#0c0e10cc, #060709e6), var(--relief-iron);
+  border-color: #555048;
+  border-radius: 2px;
+}
+:where(html[data-theme="ember"]) .feature-card .lbl {
+  font-size: 16px;
+}
+:where(html[data-theme="ember"]) .feature-description {
+  font-size: 14px;
+  line-height: 1.6;
+}
+:where(html[data-theme="ember"]) .sat-option {
+  border-radius: 2px;
+}
+:where(html[data-theme="ember"]) .btn {
+  font-size: 15px;
+}
+:where(html[data-theme="ember"]) .val {
+  font-size: 17px;
+}
+:where(html[data-theme="ember"]) .hint {
+  font-size: 14px;
+}
+:where(html[data-theme="ember"]) .ember-dialog {
+  border: 8px solid transparent;
+  border-image: var(--relief-panel) 12 stretch;
+  background: #0c0f12;
+  box-shadow: 0 20px 90px #000;
+}
+:where(html[data-theme="ember"]) .ember-dialog h2 {
+  font-family: EmberFell, Georgia, serif;
+  font-size: 33px;
+}
+:where(html[data-theme="ember"]) .ember-dialog p {
+  font-size: 14px;
+}
+:where(html[data-theme="ember"]) .ember-search-button:hover {
+  border-color: #ae845c;
+  color: #f0e2d3;
+}
+@media (max-width: 1535px) {
+  :root[data-theme="ember"] {
+    --sidebar: 240px;
+  }
+  :where(html[data-theme="ember"]) .brand {
+    height: 215px;
+    background-size: 212px 172px;
+  }
+  :where(html[data-theme="ember"]) .tabbtn {
+    padding-left: 23px;
+    font-size: 16px;
+    gap: 19px;
+    min-height: 58px;
+  }
+  :where(html[data-theme="ember"]) .ember-hero {
+    padding: 45px 45px 25px;
+  }
+  :where(html[data-theme="ember"]) .ember-hero h1 {
+    font-size: 64px;
+  }
+  :where(html[data-theme="ember"]) .ember-hero p {
+    font-size: 25px;
+  }
+  :where(html[data-theme="ember"]) .ember-hero .btn {
+    min-width: 240px;
+    font-size: 21px;
+    min-height: 46px;
+  }
+  :where(html[data-theme="ember"]) .ember-quick-row {
+    grid-template-columns: 58px minmax(110px, 0.9fr) minmax(65px, 1fr) 125px;
+    gap: 11px;
+  }
+  :where(html[data-theme="ember"]) .ember-item-icon {
+    width: 55px;
+    height: 66px;
+  }
+  :where(html[data-theme="ember"]) .ember-control-label > label {
+    font-size: 16px;
+  }
+  :where(html[data-theme="ember"]) .ember-control-label small {
+    font-size: 12px;
+  }
+  :where(html[data-theme="ember"]) .ember-toggle-row {
+    grid-template-columns: 53px 1fr 57px 27px;
+    gap: 10px;
+  }
+  :where(html[data-theme="ember"]) .ember-toggle-row .ember-item-icon {
+    width: 53px;
+  }
+  :where(html[data-theme="ember"]) .ember-overview .switch {
+    width: 57px;
+    height: 33px;
+  }
+  :where(html[data-theme="ember"]) .ember-overview .sl:before {
+    width: 26px;
+    height: 26px;
+  }
+  :where(html[data-theme="ember"]) .ember-overview .switch input:checked + .sl:before {
+    transform: translateX(23px);
+  }
+  :where(html[data-theme="ember"]) .ember-count {
+    min-width: 164px;
+    padding: 10px 12px;
+  }
+  :where(html[data-theme="ember"]) .ember-count strong {
+    font-size: 18px;
+  }
+  :where(html[data-theme="ember"]) .ember-count small {
+    font-size: 12px;
+  }
+  :where(html[data-theme="ember"]) .ember-pool-title {
+    min-width: 165px;
+  }
+  :where(html[data-theme="ember"]) .ember-pool .btn {
+    min-width: 165px;
+    font-size: 21px;
+  }
+  :where(html[data-theme="ember"]) .ember-rune {
+    width: 68px;
+    height: 70px;
+  }
+  :where(html[data-theme="ember"]) .ember-pool h2 {
+    font-size: 25px;
+  }
+  :where(html[data-theme="ember"]) .ember-pool p {
+    font-size: 14px;
+  }
+  :where(html[data-theme="ember"]) .ember-pool {
+    gap: 13px;
+  }
+  :where(html[data-theme="ember"]) .ember-number {
+    height: 44px;
+  }
+  :where(html[data-theme="ember"]) .ember-number button {
+    width: 30px;
+  }
+  :where(html[data-theme="ember"]) .ember-number:after {
+    right: 35px;
+    font-size: 19px;
+  }
+  :where(html[data-theme="ember"]) .ember-number input {
+    font-size: 21px;
+  }
+  :where(html[data-theme="ember"]) .ember-footer #applyall {
+    min-width: 238px;
+    font-size: 24px;
+  }
+  :where(html[data-theme="ember"]) .ember-footer .page-actions {
+    gap: 20px;
+  }
+  :where(html[data-theme="ember"]) .ember-section-head h2 {
+    font-size: 26px;
+  }
+}
+@media (max-width: 1150px) {
+  :root[data-theme="ember"] {
+    --sidebar: 200px;
+  }
+  :where(html[data-theme="ember"]) .brand {
+    height: 180px;
+    background-size: 180px 146px;
+    background-position: center 15px;
+  }
+  :where(html[data-theme="ember"]) .tabbtn {
+    padding-left: 18px;
+    font-size: 14px;
+    gap: 15px;
+    min-height: 52px;
+  }
+  :where(html[data-theme="ember"]) .tabbtn:before {
+    width: 30px;
+    height: 32px;
+  }
+  :where(html[data-theme="ember"]) .ember-hero h1 {
+    font-size: 57px;
+  }
+  :where(html[data-theme="ember"]) .ember-hero p {
+    font-size: 22px;
+  }
+  :where(html[data-theme="ember"]) .ember-hero {
+    height: 285px;
+    padding: 35px;
+  }
+  :where(html[data-theme="ember"]) .ember-overview-grid {
+    grid-template-columns: 1fr;
+  }
+  :where(html[data-theme="ember"]) .ember-quick-row {
+    grid-template-columns: 66px minmax(145px, 1fr) minmax(110px, 1fr) 140px;
+    min-height: 85px;
+  }
+  :where(html[data-theme="ember"]) .ember-quick-row > .ember-item-icon {
+    grid-column: 1;
+    grid-row: 1;
+    width: 64px;
+  }
+  :where(html[data-theme="ember"]) .ember-quick-row > .ember-control-label {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  :where(html[data-theme="ember"]) .ember-quick-row > .ember-quick-range {
+    grid-column: 3;
+    grid-row: 1;
+    margin: 0;
+  }
+  :where(html[data-theme="ember"]) .ember-quick-row > .ember-number {
+    grid-column: 4;
+    grid-row: 1;
+  }
+  :where(html[data-theme="ember"]) .ember-toggle-row {
+    grid-template-columns: 64px 1fr 57px 28px;
+  }
+  :where(html[data-theme="ember"]) .ember-pool {
+    flex-wrap: wrap;
+  }
+  :where(html[data-theme="ember"]) .ember-pool-title {
+    flex: 1;
+    min-width: 200px;
+  }
+  :where(html[data-theme="ember"]) .ember-rune {
+    width: 64px;
+  }
+  :where(html[data-theme="ember"]) .ember-count {
+    flex: 1;
+    min-width: 150px;
+  }
+  :where(html[data-theme="ember"]) .ember-pool .btn {
+    min-width: 140px;
+  }
+  :where(html[data-theme="ember"]) .ember-footer .page-actions {
+    gap: 12px;
+  }
+  :where(html[data-theme="ember"]) .ember-footer #applyall {
+    min-width: 180px;
+    font-size: 21px;
+    height: 59px;
+    padding: 3px 6px;
+  }
+  :where(html[data-theme="ember"]) .ember-footer #applyall:before {
+    width: 28px;
+    margin-right: 7px;
+  }
+  :where(html[data-theme="ember"]) .ember-footer .auto-control {
+    font-size: 12px;
+  }
+  :where(html[data-theme="ember"]) .ember-footer {
+    min-height: 84px;
+    left: calc(var(--sidebar) + 12px);
+    right: 12px;
+    bottom: 12px;
+    padding-left: 7px;
+  }
+  :where(html[data-theme="ember"]) #saveIndicator {
+    font-size: 12px;
+  }
+  :where(html[data-theme="ember"]) .ember-save:before {
+    width: 31px;
+    height: 31px;
+    font-size: 24px;
+  }
+  :where(html[data-theme="ember"]) .ember-save-copy #chipApply {
+    max-width: 150px;
+  }
+  :where(html[data-theme="ember"]) .ember-search-button {
+    width: 215px;
+  }
+  :where(html[data-theme="ember"]) .chip {
+    font-size: 12px;
+  }
+  :where(html[data-theme="ember"]) #statusbar {
+    gap: 18px;
+  }
+  :where(html[data-theme="ember"]) .breadcrumb {
+    display: none;
+  }
+}
+@media (max-width: 720px) {
+  :root[data-theme="ember"] {
+    --sidebar: 0px;
+  }
+  :where(html[data-theme="ember"]) .sidebar {
+    background:
+      linear-gradient(#0a0d0fa6, #0a0d0fc9),
+      var(--relief-sidebar) center top/100% auto;
+  }
+  :where(html[data-theme="ember"]) .brand {
+    height: 68px;
+    padding: 6px 15px;
+    flex-direction: row;
+    gap: 10px;
+    background: none;
+    mix-blend-mode: normal;
+  }
+  :where(html[data-theme="ember"]) .brand > svg {
+    display: block;
+    width: 43px;
+    height: 43px;
+  }
+  :where(html[data-theme="ember"]) .brand > div {
+    opacity: 1;
+  }
+  :where(html[data-theme="ember"]) .brand-name {
+    font-family: EmberFell, Georgia, serif;
+    font-size: 27px;
+  }
+  :where(html[data-theme="ember"]) .brand-sub {
+    font-size: 8px;
+  }
+  :where(html[data-theme="ember"]) .tabbar {
+    overflow-x: auto;
+    gap: 0;
+    padding: 0 4px 5px;
+  }
+  :where(html[data-theme="ember"]) .tabbtn {
+    min-width: 71px;
+    min-height: 62px;
+    font-size: 10px;
+    gap: 4px;
+    padding: 6px 5px;
+    border-left-width: 1px;
+  }
+  :where(html[data-theme="ember"]) .tabbtn:before {
+    width: 27px;
+    height: 29px;
+  }
+  :where(html[data-theme="ember"]) .tabbtn.active {
+    border-left-width: 1px;
+  }
+  :where(html[data-theme="ember"]) #nav-setup {
+    margin-top: 0;
+  }
+  :where(html[data-theme="ember"]) .sidebar-foot {
+    display: none;
+  }
+  :where(html[data-theme="ember"]) #wrap {
+    padding: 0 12px 145px;
+  }
+  :where(html[data-theme="ember"]) .control-dock {
+    height: auto;
+    min-height: 50px;
+    padding: 0 12px;
+    margin: 0 -12px 16px;
+  }
+  :where(html[data-theme="ember"]) .topline {
+    gap: 8px;
+  }
+  :where(html[data-theme="ember"]) .chip {
+    font-size: 10px;
+  }
+  :where(html[data-theme="ember"]) .chip:before {
+    width: 7px;
+    height: 7px;
+  }
+  :where(html[data-theme="ember"]) #statusbar {
+    margin: 0;
+    gap: 10px;
+  }
+  :where(html[data-theme="ember"]) .ember-search-button {
+    width: 150px;
+    font-size: 11px;
+    margin-left: auto;
+  }
+  :where(html[data-theme="ember"]) .ember-hero {
+    margin: 0 -12px;
+    height: 292px;
+    padding: 30px 23px;
+    background-image:
+      linear-gradient(90deg, #040607b3, transparent), var(--forge);
+    background-position: 62% center;
+  }
+  :where(html[data-theme="ember"]) .ember-hero h1 {
+    font-size: 52px;
+    line-height: 0.96;
+  }
+  :where(html[data-theme="ember"]) .ember-hero p {
+    font-size: 20px;
+    max-width: 235px;
+  }
+  :where(html[data-theme="ember"]) .ember-hero .btn {
+    font-size: 19px;
+    min-width: 218px;
+    min-height: 45px;
+    padding: 8px 14px;
+  }
+  :where(html[data-theme="ember"]) .ember-overview-grid {
+    gap: 12px;
+  }
+  :where(html[data-theme="ember"]) .ember-panel {
+    padding: 4px 8px;
+    border-width: 7px;
+  }
+  :where(html[data-theme="ember"]) .ember-section-head h2 {
+    font-size: 24px;
+    gap: 8px;
+  }
+  :where(html[data-theme="ember"]) .ember-heading-icon {
+    width: 36px;
+  }
+  :where(html[data-theme="ember"]) .ember-star {
+    width: 33px;
+    height: 33px;
+    font-size: 24px;
+  }
+  :where(html[data-theme="ember"]) .ember-quick-row {
+    grid-template-columns: 49px minmax(80px, 1fr) 105px;
+    gap: 10px;
+    min-height: 101px;
+    padding: 9px 0;
+  }
+  :where(html[data-theme="ember"]) .ember-quick-row > .ember-item-icon {
+    grid-row: 1/3;
+    width: 49px;
+    height: 62px;
+  }
+  :where(html[data-theme="ember"]) .ember-quick-row > .ember-control-label {
+    grid-row: 1;
+    grid-column: 2;
+  }
+  :where(html[data-theme="ember"]) .ember-quick-row > .ember-quick-range {
+    grid-row: 2;
+    grid-column: 2;
+    margin: 7px 0;
+  }
+  :where(html[data-theme="ember"]) .ember-quick-row > .ember-number {
+    grid-row: 1/3;
+    grid-column: 3;
+  }
+  :where(html[data-theme="ember"]) .ember-number button {
+    width: 25px;
+  }
+  :where(html[data-theme="ember"]) .ember-number:after {
+    right: 28px;
+    font-size: 16px;
+  }
+  :where(html[data-theme="ember"]) .ember-number input {
+    font-size: 19px;
+    padding-right: 10px;
+  }
+  :where(html[data-theme="ember"]) .ember-control-label > label {
+    font-size: 14px;
+  }
+  :where(html[data-theme="ember"]) .ember-control-label small {
+    font-size: 11px;
+  }
+  :where(html[data-theme="ember"]) .ember-toggle-row {
+    grid-template-columns: 48px minmax(90px, 1fr) 49px 23px;
+    gap: 9px;
+    min-height: 91px;
+  }
+  :where(html[data-theme="ember"]) .ember-toggle-row .ember-item-icon {
+    width: 47px;
+    height: 62px;
+  }
+  :where(html[data-theme="ember"]) .ember-overview .switch {
+    width: 49px;
+    height: 29px;
+  }
+  :where(html[data-theme="ember"]) .ember-overview .sl:before {
+    width: 23px;
+    height: 23px;
+    left: 2px;
+    top: 2px;
+  }
+  :where(html[data-theme="ember"]) .ember-overview .switch input:checked + .sl:before {
+    transform: translateX(20px);
+  }
+  :where(html[data-theme="ember"]) .ember-toggle-state {
+    font-size: 13px;
+  }
+  :where(html[data-theme="ember"]) .ember-pool {
+    padding: 8px;
+    gap: 10px;
+  }
+  :where(html[data-theme="ember"]) .ember-pool-title {
+    min-width: 180px;
+    flex-basis: calc(100% - 75px);
+  }
+  :where(html[data-theme="ember"]) .ember-pool h2 {
+    font-size: 25px;
+  }
+  :where(html[data-theme="ember"]) .ember-pool p {
+    font-size: 13px;
+  }
+  :where(html[data-theme="ember"]) .ember-count {
+    min-width: 0;
+    flex: 1;
+  }
+  :where(html[data-theme="ember"]) .ember-count strong {
+    font-size: 16px;
+  }
+  :where(html[data-theme="ember"]) .ember-count small {
+    font-size: 11px;
+  }
+  :where(html[data-theme="ember"]) .ember-pool .btn {
+    width: 100%;
+    min-height: 46px;
+    font-size: 22px;
+  }
+  :where(html[data-theme="ember"]) .ember-rune {
+    width: 57px;
+    height: 61px;
+  }
+  :where(html[data-theme="ember"]) .ember-footer {
+    left: 5px;
+    right: 5px;
+    bottom: 5px;
+    padding: 6px 7px;
+    min-height: 114px;
+    border-width: 6px;
+    gap: 7px;
+  }
+  :where(html[data-theme="ember"]) .ember-footer .page-actions {
+    gap: 10px;
+    flex-wrap: nowrap;
+  }
+  :where(html[data-theme="ember"]) .ember-footer #applyall {
+    min-width: 170px;
+    height: 48px;
+    font-size: 20px;
+    border-width: 6px;
+    padding: 0 3px;
+  }
+  :where(html[data-theme="ember"]) .ember-footer #applyall:before {
+    width: 26px;
+    height: 25px;
+    margin-right: 5px;
+  }
+  :where(html[data-theme="ember"]) .ember-footer .auto-control {
+    font-size: 10px;
+    gap: 7px;
+    white-space: normal;
+    max-width: 135px;
+  }
+  :where(html[data-theme="ember"]) .ember-footer .auto-control .switch {
+    width: 24px;
+    height: 24px;
+    flex: none;
+    transform: none;
+  }
+  :where(html[data-theme="ember"]) .ember-footer .auto-control .sl:after {
+    font-size: 22px;
+    line-height: 21px;
+  }
+  :where(html[data-theme="ember"]) .ember-save {
+    width: 100%;
+    gap: 8px;
+  }
+  :where(html[data-theme="ember"]) .ember-save:before {
+    width: 26px;
+    height: 26px;
+    font-size: 22px;
+  }
+  :where(html[data-theme="ember"]) .ember-save-copy {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  :where(html[data-theme="ember"]) .ember-save-copy #chipApply {
+    font-size: 9px;
+    margin: 0;
+    max-width: none;
+  }
+  :where(html[data-theme="ember"]) #saveIndicator {
+    font-size: 11px;
+  }
+  :where(html[data-theme="ember"]) .card {
+    border-width: 7px;
+    padding: 12px;
+  }
+  :where(html[data-theme="ember"]) .card h2 {
+    font-size: 27px;
+  }
+  :where(html[data-theme="ember"]) .feature-card .lbl {
+    font-size: 14px;
+  }
+  :where(html[data-theme="ember"]) .feature-description {
+    font-size: 12px;
+  }
+  :where(html[data-theme="ember"]) .ember-dialog {
+    border-width: 6px;
+  }
+  :where(html[data-theme="ember"]) .ember-dialog h2 {
+    font-size: 29px;
+  }
+  :where(html[data-theme="ember"]) #toast {
+    bottom: 138px;
+  }
+}
+@media (hover: hover) and (pointer: fine) {
+  :where(html[data-theme="ember"]) .btn:hover:not(:disabled) {
+    filter: brightness(1.13);
+  }
+}
+
+@media (min-width: 1151px) {
+  :where(html[data-theme="ember"]) .ember-quick-row > .ember-item-icon {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  :where(html[data-theme="ember"]) .ember-quick-row > .ember-control-label {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  :where(html[data-theme="ember"]) .ember-quick-row > .ember-quick-range {
+    grid-column: 3;
+    grid-row: 1;
+    margin: 0;
+  }
+  :where(html[data-theme="ember"]) .ember-quick-row > .ember-number {
+    grid-column: 4;
+    grid-row: 1;
+    height: 48px;
+  }
+}
+@media (min-width: 721px) and (max-width: 1150px) {
+  :where(html[data-theme="ember"]) .tabbtn.active:before {
+    width: 30px;
+    height: 32px;
+  }
+}
+@media (max-width: 720px) {
+  :where(html[data-theme="ember"]) .tabbtn.active:before {
+    width: 27px;
+    height: 29px;
+  }
+}
+
+:where(html[data-theme="ember"]) .ember-item-icon,
+:where(html[data-theme="ember"]) .ember-rune {
+  mask-image:
+    linear-gradient(to right, transparent, #000 11%, #000 89%, transparent),
+    linear-gradient(to bottom, transparent, #000 11%, #000 89%, transparent);
+  mask-composite: intersect;
+}
+/* Secondary pages share the forge atmosphere without competing with controls. */
+:where(html[data-theme="ember"]) body:not([data-ember-tab="overview"]) .control-dock {
+  margin-bottom: 0;
+}
+:where(html[data-theme="ember"]) .page-heading {
+  min-height: 162px;
+  margin: 0 -16px 24px;
+  padding: 32px;
+  border-bottom: 1px solid #514032;
+  background:
+    linear-gradient(90deg, #080a0df5 0%, #080a0dea 35%, #080a0d55 100%),
+    var(--forge) center 45% / cover no-repeat;
+  align-items: center;
+}
+:where(html[data-theme="ember"]) .page-heading h1 {
+  font-size: 43px;
+  text-shadow: 0 2px 5px #000;
+}
+:where(html[data-theme="ember"]) .page-heading p {
+  color: #cbc6be;
+  max-width: 650px;
+  line-height: 1.5;
+  text-shadow: 0 1px 3px #000;
+}
+:where(html[data-theme="ember"]) .feature-description {
+  font-size: 13px !important;
+  color: #bcb7af !important;
+  line-height: 1.65;
+}
+:where(html[data-theme="ember"]) .row .lbl > span[style] {
+  color: #bcb7af !important;
+}
+:where(html[data-theme="ember"]) .feature-card > .lbl {
+  font-weight: 500;
+}
+:where(html[data-theme="ember"]) .feature-with-child > #map_reveal_packs_row,
+:where(html[data-theme="ember"]) .feature-with-child > #map_reveal_spawn_row,
+:where(html[data-theme="ember"]) .feature-with-child > #mod_auto_prospect_bag_row {
+  background: #171615;
+}
+:where(html[data-theme="ember"]) .subtabbar {
+  border-bottom: 1px solid #4d4137;
+  padding-bottom: 10px;
+  gap: 9px;
+  border-radius: 0;
+  background: transparent;
+}
+:where(html[data-theme="ember"]) .subtabbtn {
+  font-size: 14px;
+  min-height: 43px;
+  padding: 10px 22px;
+}
+@media (max-width: 720px) {
+  :where(html[data-theme="ember"]) .page-heading {
+    margin: 0 -12px 18px;
+    min-height: 144px;
+    padding: 24px;
+  }
+  :where(html[data-theme="ember"]) .page-heading h1 {
+    font-size: 36px;
+  }
+  :where(html[data-theme="ember"]) .page-heading p {
+    font-size: 13px;
+  }
+  :where(html[data-theme="ember"]) .feature-description {
+    font-size: 12px !important;
+  }
+  :where(html[data-theme="ember"]) .subtabbtn {
+    font-size: 12px;
+    padding: 9px 12px;
+  }
+}
+/* Keep the hero CTA inside its artwork on short desktop windows. */
+@media (min-width: 1151px) and (max-height: 940px) {
+  :where(html[data-theme="ember"]) .ember-hero {
+    padding: 24px 45px 18px;
+  }
+  :where(html[data-theme="ember"]) .ember-hero h1 {
+    font-size: 54px;
+    margin-bottom: 10px;
+  }
+  :where(html[data-theme="ember"]) .ember-hero p {
+    font-size: 22px;
+    margin-bottom: 16px;
+  }
+  :where(html[data-theme="ember"]) .ember-hero .btn {
+    min-height: 44px;
+    padding: 7px 20px;
+    font-size: 21px;
+  }
+}

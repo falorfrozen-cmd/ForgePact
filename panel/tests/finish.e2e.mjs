@@ -88,7 +88,8 @@ function recordPosts(page) {
 
 // tokens.css's palettes, parsed the plain way, for the swatch check.
 function palettes() {
-  const css = readFileSync(new URL('../src/tokens.css', import.meta.url), 'utf8');
+  const css = readFileSync(new URL('../src/tokens.css', import.meta.url), 'utf8') +
+    readFileSync(new URL('../src/ember/palette.css', import.meta.url), 'utf8');
   const out = {};
   for (const [, selector, body] of css.matchAll(/(:root(?:\[[^\]]+\])?)\s*\{([^}]*)\}/g)) {
     const name = /data-theme="?([\w-]+)"?/.exec(selector)?.[1] || THEMES[0].value;
@@ -171,9 +172,9 @@ async function pickerKeyboard({ page }) {
   await page.keyboard.press('ArrowDown');
   assert(await act() === 'themeOption-graphite', 'ArrowDown did not move');
   await page.keyboard.press('End');
-  assert(await act() === 'themeOption-sigil', 'End did not move to the last');
+  assert(await act() === `themeOption-${THEMES.at(-1).value}`, 'End did not move to the last');
   await page.keyboard.press('ArrowDown');
-  assert(await act() === 'themeOption-sigil', 'ArrowDown moved past the end');
+  assert(await act() === `themeOption-${THEMES.at(-1).value}`, 'ArrowDown moved past the end');
   await page.keyboard.press('Home');
   assert(await act() === 'themeOption-ledger', 'Home did not move to the first');
   await page.keyboard.press('g');
@@ -542,7 +543,9 @@ async function typeDrift({ page }) {
 }
 
 async function withPage(browser, { viewport = VIEWPORTS[1280] } = {}, fn) {
-  const sandbox = await startSandbox({ dist: typeof args.dist === 'string' ? args.dist : null });
+  // These layout assertions retain the approved Ledger contract. The theme
+  // picker still visits all four palettes; Ember's layout has its own suite.
+  const sandbox = await startSandbox({ dist: typeof args.dist === 'string' ? args.dist : null, seed: { theme: 'ledger' } });
   let page = null;
   try {
     page = await openPanel(browser, sandbox, viewport);

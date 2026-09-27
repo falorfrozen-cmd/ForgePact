@@ -1,6 +1,6 @@
 ---
 name: ForgePact control panel
-description: The Graphite Console, a dark, flat, token-driven control surface for Hero Siege offline mods (ForgePact 2.0.0).
+description: ForgePact 2.0's Ember Forge presentation, alongside the preserved Ledger, Graphite and Sigil palettes.
 colors:
   accent: "#e99a4c"
   accent-hover: "#f2ae68"
@@ -451,6 +451,35 @@ Tokens: `--motion-duration-fast` (120ms) and `--motion-duration-base` (200ms); `
 - The tray opens over `base` on `emphasized` (0.97 to 1, with opacity) and closes over `fast` on `standard`. Opened or closed from the keyboard, or rebuilt while open, it appears at once (`data-instant`).
 - The theme picker's list does the same from its trigger's corner: open over `base` on `emphasized`, close over `fast` on `standard`, at once from the keyboard. A closing list takes no pointer.
 - **Reduced motion** (`prefers-reduced-motion: reduce`): the press, every scale and every rise are removed. The opacity fades of the tray, the theme picker's list, tooltips, toasts and removed entry stay, and so do the hover colour fades (the owner's "Keep colour fades too", `amendments.ship`).
+
+## Ember Forge (owner-approved integration, 2026-09-28)
+
+The owner approved the illustrated forge reference in `../design/ember/` and
+asked to carry it onto the current Svelte panel before any Figma work. Ember
+is the default for an unset or unknown theme; explicitly saved Ledger,
+Graphite and Sigil choices remain unchanged. The flat-panel specifications
+above and below continue to describe those three palettes.
+
+Ember's intentional differences are scoped under `html[data-theme="ember"]`
+in `src/ember/`: local copper/stone material textures, the IM Fell English
+display face, illustrated setting icons, a vertical desktop sidebar and a
+fixed action footer. Its seven sections include Overview and Help. Overview
+offers up to three selectable shortcuts and searches all current controls.
+Every write delegates to an existing setting handler; no game hooks or
+polling loop are added. At narrow widths the sidebar becomes a horizontal
+navigation rail and controls stack. Dialogs use native focus trapping.
+
+Shared tooltips, theme picker, Enabled mods and Undo keep the existing motion
+tokens, keyboard behavior and reduced-motion rules. In reduced motion,
+opacity and colour fades remain while movement is removed. The theme picker
+must render above the fixed footer so every palette remains clickable.
+
+The artwork, typography, literal material colours and ornamentation are
+approved exceptions to the flat-panel rules below, confined to Ember. The
+existing Figma export and generated `tokens.css` are unchanged; shared Figma
+design-library work is deferred. See `../docs/ember-ui.md` for provenance and
+tests. `e2e:finish` retains Ledger's gutter/type baseline and exercises all
+four picker options; `e2e:ember` verifies the new layout at four widths.
 
 ## Do's and Don'ts
 
