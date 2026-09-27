@@ -2162,3 +2162,8 @@ the thing it described was the answer. This document's own "Prove the
 Instrument Before Trusting a Negative Result" rule (now in the repo-root
 `agents.md`) was written about hooks that could not fire; it applies just as
 much to call shapes that were never given their arguments.
+
+The pet circling one item when many are on screen (#94, ForgePact 2.0.0) is
+fixed in the target selection, which now holds back a target that failed and
+walks the family past the per-tick budget; the reading and the design are in
+[dev2-bug-batch-research.md](dev2-bug-batch-research.md#94-the-pet-circles-one-quest-item-when-many-are-on-screen).
