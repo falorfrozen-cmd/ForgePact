@@ -60,6 +60,68 @@ class ATakenTagIsRefused(unittest.TestCase):
         with self.assertRaises(SystemExit):
             forgepact_tag.plan("1.3.16", refs, tree="1.3.16")
 
+    def test_the_refusal_names_the_recut_input(self):
+        # Someone re-running for a draft they meant to replace has to be told
+        # the switch exists, rather than to delete the tag by hand.
+        with self.assertRaises(SystemExit) as caught:
+            forgepact_tag.plan("v1.3.16", TAGS, tree="1.3.16")
+        self.assertIn("recut", str(caught.exception))
+
+
+class ARecutMayReuseItsOwnTag(unittest.TestCase):
+    """`recut=True` lifts only the "already exists" refusal, for the tag itself.
+
+    Whether that tag carries nothing but an unpublished draft is the
+    workflow's check, not this tool's (it cannot see releases); every other
+    refusal still stands, and the tag being recut must never count as its
+    own `previous`, or the notes would be composed from an empty range.
+    """
+
+    def test_the_existing_tag_is_accepted(self):
+        got = forgepact_tag.plan("v1.3.16", TAGS, tree="1.3.16", recut=True)
+        self.assertEqual(got.tag, "v1.3.16")
+        self.assertEqual(got.version, "1.3.16")
+
+    def test_a_peeled_ref_of_the_tag_is_accepted_too(self):
+        refs = ["refs/tags/v1.3.10", "refs/tags/v1.3.16", "refs/tags/v1.3.16^{}"]
+        got = forgepact_tag.plan("1.3.16", refs, tree="1.3.16", recut=True)
+        self.assertEqual(got.previous, "v1.3.10")
+
+    def test_previous_is_the_tag_below_never_the_tag_itself(self):
+        got = forgepact_tag.plan("1.3.16", TAGS, tree="1.3.16", recut=True)
+        self.assertEqual(got.previous, "v1.3.10")
+
+    def test_main_already_at_the_version_needs_no_bump(self):
+        # The ordinary recut: the first cut already moved main to this
+        # version, so the bump step is skipped and nothing is committed.
+        got = forgepact_tag.plan("1.3.16", TAGS, tree="1.3.16", recut=True)
+        self.assertFalse(got.bump)
+
+    def test_a_higher_tag_still_refuses(self):
+        with self.assertRaises(SystemExit):
+            forgepact_tag.plan("1.3.10", TAGS, tree="1.3.10", recut=True)
+
+    def test_below_the_tree_still_refuses(self):
+        with self.assertRaises(SystemExit):
+            forgepact_tag.plan("1.3.16", TAGS, tree="1.3.20", recut=True)
+
+    def test_a_malformed_tag_still_refuses(self):
+        for raw in ("vv1.3.16", "V1.3.16", "1.3.16-rc1"):
+            with self.subTest(raw=raw), self.assertRaises(SystemExit):
+                forgepact_tag.plan(raw, TAGS, tree="1.3.16", recut=True)
+
+    def test_a_version_with_no_tag_is_an_ordinary_cut(self):
+        # A draft on a never-pushed tag, or a rerun after a recut that deleted
+        # the old tag and then failed: nothing to reuse, same answer as without.
+        self.assertEqual(
+            forgepact_tag.plan("1.3.21", TAGS, tree="1.3.16", recut=True),
+            forgepact_tag.plan("1.3.21", TAGS, tree="1.3.16"),
+        )
+
+    def test_recut_is_off_by_default(self):
+        with self.assertRaises(SystemExit):
+            forgepact_tag.plan("1.3.16", TAGS, tree="1.3.16")
+
 
 class GoingBackwardsAgainstTagsIsRefused(unittest.TestCase):
     def test_below_the_highest_tag_numerically(self):
@@ -182,6 +244,34 @@ class TheCliPrintsWhatAWorkflowReads(unittest.TestCase):
         ).stdout
         pairs = dict(line.split("=", 1) for line in out.strip().splitlines())
         self.assertEqual(pairs["bump"], "false")
+
+    def test_recut_prints_the_same_four_lines_for_an_existing_tag(self):
+        out = self.run_it(
+            "--tag", "1.3.16", "--recut", "--tree", "1.3.16", "--existing", *TAGS
+        ).stdout
+        pairs = dict(line.split("=", 1) for line in out.strip().splitlines())
+        self.assertEqual(list(pairs), ["version", "tag", "bump", "previous"])
+        self.assertEqual(pairs["tag"], "v1.3.16")
+        self.assertEqual(pairs["bump"], "false")
+        self.assertEqual(pairs["previous"], "v1.3.10")
+
+    def test_without_recut_an_existing_tag_exits_nonzero_with_no_pairs(self):
+        done = self.run_it(
+            "--tag", "1.3.16", "--tree", "1.3.16", "--existing", *TAGS, expect=1
+        )
+        self.assertNotIn("version=", done.stdout)
+        self.assertIn("recut", done.stderr)
+
+    def test_recut_belongs_to_plan_mode_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            generated = Path(tmp) / "generated.md"
+            generated.write_text("x", encoding="utf-8")
+            self.run_it(
+                "--compose-notes", "--recut", "--version", "1.3.16",
+                "--generated", str(generated), "--out", str(Path(tmp) / "out.md"),
+                "--root", tmp,
+                expect=2,
+            )
 
     def test_a_refusal_exits_nonzero_with_no_pairs_and_a_message(self):
         done = self.run_it(

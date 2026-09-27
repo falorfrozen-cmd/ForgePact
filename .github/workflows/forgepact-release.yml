@@ -293,6 +293,13 @@ jobs:
       # A human can publish the draft while this job was building (~15
       # minutes), and the upload step below is only safe with --clobber
       # because both guards ran.
+      #
+      # It also checks the tag still points at the commit this job built.
+      # forgepact-tag.yml's recut deletes a draft and its tag, makes both
+      # again on a newer commit and starts its own build; a build of the old
+      # commit still running would then find a draft on "its" tag and put the
+      # old zip on the new draft. A tag that is gone fails the lookup, which
+      # refuses too.
       - name: This release is still a draft (guard 2)
         if: ${{ !inputs.dry_run }}
         shell: bash
@@ -300,11 +307,17 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           TAG: ${{ steps.tag.outputs.tag }}
+          SOURCE_COMMIT: ${{ steps.source_commit.outputs.sha }}
         run: |
           draft=$(gh api "repos/$REPO/releases?per_page=100" \
             --jq "[.[] | select(.tag_name == \"$TAG\")][0].draft")
           if [ "$draft" != "true" ]; then
             echo "::error::$TAG is no longer a draft -- refusing to upload. A human may have published it during this build."
+            exit 1
+          fi
+          tagged=$(gh api "repos/$REPO/commits/refs/tags/$TAG" --jq .sha)
+          if [ "$tagged" != "$SOURCE_COMMIT" ]; then
+            echo "::error::$TAG now points at $tagged, not $SOURCE_COMMIT, which this job built -- refusing to upload. It was recut during this build; the recut's own build fills the new draft."
             exit 1
           fi
 
