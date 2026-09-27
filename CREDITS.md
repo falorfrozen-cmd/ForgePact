@@ -36,7 +36,7 @@ It is adapted inline in `src/forgepact.py`, retaining the stroke and gradient
 colors. The body outline is closed and its top face is drawn continuously to
 correct the missing upper-left surface. No download is needed.
 
-The 69 setting icons in `src/panel_icons.py` are original vector illustrations
+The 69 setting icons in `panel/src/icons.js` are original vector illustrations
 created for ForgePact/Falor and distributed under this project's AGPL-3.0
 license. They depict the corresponding gameplay concepts; they are not
 extracted game sprites. The export command produces standalone SVG files and
@@ -79,9 +79,27 @@ SOFTWARE.
 - Used by: the patcherless Season 10 native runtime for targeted x64 trampolines.
 - Vendored license: `native_s10/third_party/minhook/LICENSE.txt`.
 
+## IBM Plex Sans and IBM Plex Mono (fonts)
+- Repository: https://github.com/IBM/plex, tags `@ibm/plex-sans-variable@0.2.0`
+  (commit `ceee82fa88781b8310b198fd302480efaeac609e`) and
+  `@ibm/plex-mono-variable@1.0.0` (commit `bf260093582f04622aacc1e9f9ca604d7ccd0c42`)
+- License: SIL Open Font License, Version 1.1 (OFL-1.1)
+- Copyright © 2017 IBM Corp. with Reserved Font Name "Plex"
+- Used as: the control panel's typefaces. The two upstream upright variable web
+  fonts, `packages/plex-sans-variable/fonts/complete/woff2/IBM Plex Sans Var-Roman.woff2`
+  and `packages/plex-mono-variable/fonts/complete/woff2/IBM Plex Mono Var-Roman.woff2`,
+  are bundled unmodified (renamed only) as
+  `panel/src/fonts/IBMPlexSans/IBMPlexSans-Variable.woff2` and
+  `panel/src/fonts/IBMPlexMono/IBMPlexMono-Variable.woff2`, and ship inside the
+  panel of `ForgePact.exe`, so the panel loads them with no network access.
+- Vendored license: `panel/src/fonts/IBMPlexSans/LICENSE.txt` and
+  `panel/src/fonts/IBMPlexMono/LICENSE.txt` (upstream `license.txt` from beside
+  the woff2 files, unchanged; the same file in both packages).
+
 ---
 The project continues to be distributed under AGPL-3.0. The full license text
-is in `LICENSE`; MinHook retains its separate BSD 2-Clause notice.
+is in `LICENSE`; MinHook retains its separate BSD 2-Clause notice, and the
+IBM Plex fonts their SIL Open Font License 1.1.
 
 ForgePact is an independent, fan-made project. It is **not affiliated with, sponsored
 by, or endorsed by** AurieFramework, Panic Art Studios, or Hero Siege. All trademarks

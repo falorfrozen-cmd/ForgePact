@@ -1,0 +1,434 @@
+/* The panel's look: the Graphite Console direction, flattened, from design/figma-export.json.
+   Every colour, space, radius and font is a custom property from tokens.css, which is generated
+   from the export (`:root` is the default palette, one `:root[data-theme]` block per other one),
+   so a palette switch repaints this file without touching it. Only the elements the export's
+   `borders` list names carry a border, and no card sits inside a card.
+   Layout: the rail (.sidebar) on top, #wrap scrolling below it, #statusbar fixed at the bottom;
+   #chipGame and the tray form of #enabledMods are placed in the rail.
+   Motion is the export's `motion.notes`, with the motion tokens only: a hover eases its colours in
+   (the pointer's own element, and only where there is one), a button scales to .97 while pressed,
+   the tray, the theme picker's list and both tooltips scale in from their trigger, the toasts rise
+   and fade, a turned-off entry fades and shrinks. Nothing a poll repaints moves, a keyboard action never animates
+   ([data-instant], :focus-visible), and prefers-reduced-motion removes movement and scale while the
+   opacity and hover colour fades stay (amendments.ship, at the end). */
+/* --scrollbar-w: #wrap's thin scrollbar as Edge and WebView2 draw it (measured 10px); the page takes it
+   out of its right padding so the gutters read the same on both sides (finish review F7). */
+:root{color-scheme:dark;--shell-foot:calc(var(--space-10) + 1px);--toast-h:40px;--undo-h:44px;--rail-h:56px;--page-pad:var(--space-10);--chip-game-w:120px;--scrollbar-w:10px;
+  --icon-refresh:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M13.5 8a5.5 5.5 0 0 1-9.9 3.3M2.5 8a5.5 5.5 0 0 1 9.9-3.3M12.5 2v3h-3M3.5 14v-3h3'/%3E%3C/svg%3E");
+  --icon-search:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round'%3E%3Ccircle cx='7' cy='7' r='4.5'/%3E%3Cpath d='m10.5 10.5 3 3'/%3E%3C/svg%3E");
+  --icon-chevron:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 4 4 4-4 4'/%3E%3C/svg%3E");
+  --icon-check:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m3 8.5 3 3 7-7'/%3E%3C/svg%3E");
+  --icon-warn:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 2.5 14.5 13.5h-13ZM8 6.5v3.2M8 11.8v.1'/%3E%3C/svg%3E")}
+:root[data-undo-open]{--shell-foot:calc(var(--space-10) + 1px + var(--space-6) + var(--toast-h) + var(--space-4) + var(--undo-h) + var(--space-6))}
+*{box-sizing:border-box;scrollbar-width:thin;scrollbar-color:var(--color-border-strong) transparent}
+html,body{height:100%}
+body{margin:0;overflow:hidden;background-color:var(--color-bg-base);color:var(--color-text-primary);font-family:var(--font-body-family),"Segoe UI",system-ui,sans-serif;font-size:var(--font-size-md);font-weight:var(--font-weight-regular);line-height:var(--font-line-height-base);-webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums}
+::selection{background-color:var(--color-accent-tint);color:var(--color-text-primary)}
+input{caret-color:var(--color-accent)}
+button,input,select,textarea{font:inherit;color:inherit}button{touch-action:manipulation}button:disabled{opacity:.45;cursor:default!important}
+:focus-visible{outline:2px solid var(--color-focus);outline-offset:3px}
+[hidden]{display:none!important}
+b,strong{font-weight:var(--font-weight-semibold)}
+.visually-hidden{position:absolute!important;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.icon-definitions{position:absolute;overflow:hidden;pointer-events:none}
+/* The design draws no illustration beside labels, headings or buttons. */
+.setting-icon{display:none}
+
+/* ---- Shell: the rail, the scrolling page and the status bar ---- */
+#appShell{height:100vh;display:grid;grid-template-rows:auto minmax(0,1fr);padding-bottom:var(--shell-foot)}
+.sidebar{position:relative;z-index:30;display:flex;align-items:center;gap:var(--space-10);height:var(--rail-h);padding:0 var(--space-9);background-color:var(--color-bg-base);border-bottom:1px solid var(--color-border-subtle)}
+.brand{display:flex;align-items:center;gap:var(--space-6);flex:none;color:var(--color-text-primary)}
+.brand svg{width:22px;height:22px;flex:none;color:var(--color-accent)}
+.brand-name{font-size:var(--font-size-md);font-weight:var(--font-weight-semibold);letter-spacing:.08em;line-height:var(--font-line-height-tight)}
+.brand-sub{margin-top:var(--space-1);font-family:var(--font-mono-family),Consolas,monospace;font-size:var(--font-size-xs);letter-spacing:.1em;line-height:var(--font-line-height-tight);color:var(--color-text-muted)}
+.tabbar{display:flex;align-self:stretch;gap:var(--space-1);min-width:0;overflow-x:auto;scrollbar-width:none}
+.tabbtn{display:flex;align-items:center;gap:var(--space-4);flex:none;padding:0 var(--space-6);background:none;border:0 solid transparent;border-bottom-width:2px;color:var(--color-text-muted);font-size:var(--font-size-md);cursor:pointer;white-space:nowrap}
+.tabbtn svg{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.tabbtn.active{color:var(--color-text-primary);border-color:var(--color-accent);font-weight:var(--font-weight-medium)}
+.tabbtn.active svg{color:var(--color-accent)}
+.tabbtn:focus-visible{outline-offset:-2px}
+#wrap{min-width:0;overflow-x:hidden;overflow-y:auto;scrollbar-gutter:stable;padding:0 calc(var(--page-pad) - var(--scrollbar-w)) var(--space-10) var(--page-pad)}
+.control-dock,.topline{display:contents}
+.breadcrumb{display:none}
+#statusbar{position:fixed;left:0;right:0;bottom:0;z-index:30;display:flex;align-items:center;gap:var(--space-7);height:calc(var(--space-10) + 1px);padding:0 var(--space-9);background-color:var(--color-bg-base);border-top:1px solid var(--color-border-subtle);color:var(--color-text-muted);font-size:var(--font-size-xs);white-space:nowrap}
+#saveIndicator{order:1;display:inline-flex;align-items:center;gap:var(--space-3);color:var(--color-text-muted);font-size:var(--font-size-xs)}
+#saveIndicator.saving{color:var(--color-text-muted)}#saveIndicator.error{color:var(--color-danger)}
+#saveIndicator.saving:before{content:"";width:10px;height:10px;border-radius:50%;border:1.5px solid currentColor;border-right-color:transparent}
+/* Settled (neither saving nor failed): the design's drawn check in color/ok (finish review F3). */
+#saveIndicator:not(.saving):not(.error):before{content:"";width:12px;height:12px;flex:none;background-color:var(--color-ok);mask:var(--icon-check) center/contain no-repeat}
+#chipApply{order:2;margin:0;color:var(--color-text-muted);font-size:var(--font-size-xs)}#chipApply.warn{color:var(--color-warn)}
+/* The plugin warning's second icon sits right after "Settings loaded" (same order, next in the DOM). */
+#statusbar .status-warning{order:1}
+.status-foot{order:4;margin-left:auto;display:flex;gap:var(--space-9)}
+#chipGame{position:fixed;top:calc((var(--rail-h) - 28px) / 2);right:var(--space-9);z-index:31;display:inline-flex;align-items:center;gap:var(--space-4);height:28px;padding:0 var(--space-6);border-radius:var(--radius-pill);background-color:var(--color-bg-raised);color:var(--color-text-muted);font-size:var(--font-size-xs);white-space:nowrap}
+#chipGame:before{content:"";width:6px;height:6px;border-radius:50%;background-color:var(--color-text-faint)}
+/* The dot carries the game's state; the words stay quiet in every state. */
+#chipGame.on:before{background-color:var(--color-ok)}
+#chipGame.warn:before,#chipGame.err:before{background-color:var(--color-warn)}
+
+/* ---- Enabled mods: the inline row (the base), and the tray in the rail ---- */
+/* The row is as tall empty as with entries, so the first entry moves nothing below it. */
+#enabledMods{display:flex;align-items:center;flex-wrap:wrap;gap:var(--space-4);min-height:calc(28px + var(--space-6));margin:0 calc(var(--scrollbar-w) - var(--page-pad)) 0 calc(-1 * var(--page-pad));padding:var(--space-6) var(--space-10) 0;color:var(--color-text-muted);font-size:var(--font-size-xs)}
+#enabledMods>h2{margin:0;font-size:var(--font-size-xs);font-weight:var(--font-weight-regular);color:var(--color-text-muted);white-space:nowrap}
+#enabledMods>h2:focus{outline:none}#enabledMods>h2:focus-visible{outline:2px solid var(--color-focus)}
+#enabledModsCount{margin-right:var(--space-4);font-family:var(--font-mono-family),Consolas,monospace;color:var(--color-text-primary);white-space:nowrap}
+#enabledMods:not([data-form="tray"]):has(>.enabled-mods-empty) #enabledModsCount{display:none}
+#enabledMods>ul{display:flex;flex-wrap:wrap;gap:var(--space-4);min-width:0;margin:0;padding:0;list-style:none}
+.enabled-mod,.enabled-mod-ghost[data-fading]{display:flex;align-items:center;gap:var(--space-4);flex:none;height:28px;padding:0 var(--space-2) 0 var(--space-5);border-radius:var(--radius-md);background-color:var(--color-bg-raised);white-space:nowrap}
+.enabled-mod-ghost{flex:none;visibility:hidden}
+/* A Turn off pressed with the pointer: the placeholder that keeps the entry's place starts as a copy of
+   it (src/lib/enabled-mods-undo.js), drawn as the entry and faded and shrunk once. */
+.enabled-mod-ghost[data-fading]{visibility:visible;opacity:0;transform:scale(.95);pointer-events:none;transition:opacity var(--motion-duration-fast) var(--motion-easing-standard),transform var(--motion-duration-fast) var(--motion-easing-standard)}
+@starting-style{.enabled-mod-ghost[data-fading]{opacity:1;transform:none}}
+.enabled-mod-name{color:var(--color-text-primary);font-size:var(--font-size-sm);font-weight:var(--font-weight-medium)}
+.enabled-mod-value{font-family:var(--font-mono-family),Consolas,monospace;font-size:var(--font-size-xs);color:var(--color-accent)}
+.quick-disable{padding:var(--space-2) var(--space-3);border:0;border-radius:var(--radius-sm);background:none;color:var(--color-text-muted);font-size:var(--font-size-xs);cursor:pointer;white-space:nowrap}
+.enabled-mods-empty{margin:0;color:var(--color-text-faint)}
+/* data-measure: the form module lays the row out on one line for a moment to measure it. */
+#enabledMods[data-measure],#enabledMods[data-measure]>ul{flex-wrap:nowrap}
+#enabledMods[data-measure]>ul{flex:none}
+#enabledMods[data-measure] .enabled-mods-toggle{display:contents}#enabledMods[data-measure] .enabled-mods-toggle svg{display:none}
+#enabledMods[data-form="tray"]:not([data-measure]){position:fixed;top:calc((var(--rail-h) - 28px) / 2);right:calc(var(--space-9) + var(--chip-game-w) + var(--space-6));z-index:31;min-height:0;margin:0;padding:0 0 0 var(--space-10);flex-wrap:nowrap;pointer-events:none}
+#enabledMods[data-form="tray"]:not([data-measure])>h2{position:absolute!important;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+#enabledMods[data-form="tray"][data-open]:not([data-measure])>h2{z-index:2;top:calc(28px + var(--space-4) + 1px);right:1px;width:318px;height:auto;clip:auto;padding:var(--space-5) var(--space-6) var(--space-3);border-radius:var(--radius-lg) var(--radius-lg) 0 0;background-color:var(--color-bg-raised);color:var(--color-text-primary);font-size:var(--font-size-sm);font-weight:var(--font-weight-semibold)}
+.enabled-mods-toggle{pointer-events:auto;display:inline-flex;align-items:center;gap:var(--space-3);height:28px;padding:0 var(--space-5);border:0;border-radius:var(--radius-pill);background-color:var(--color-accent-tint);color:var(--color-accent);font-size:var(--font-size-xs);cursor:pointer}
+#enabledMods[data-form="tray"] #enabledModsCount{margin:0;color:var(--color-accent)}
+.enabled-mods-toggle svg{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.enabled-mods-toggle[aria-expanded="true"] svg{transform:rotate(180deg)}
+#enabledMods[data-form="tray"]:not([data-measure])>ul{pointer-events:none;position:absolute;top:calc(28px + var(--space-4));right:0;z-index:1;display:none;flex-direction:column;flex-wrap:nowrap;gap:0;width:320px;padding:calc(var(--space-11) - var(--space-2)) var(--space-3) var(--space-3);overflow-y:auto;overscroll-behavior:contain;background-color:var(--color-bg-raised);border:1px solid var(--color-border-subtle);border-radius:var(--radius-lg);box-shadow:0 12px 32px color-mix(in srgb,var(--color-bg-sunken) 80%,transparent);
+  opacity:0;transform:scale(.97);transform-origin:top right;transition:opacity var(--motion-duration-fast) var(--motion-easing-standard),transform var(--motion-duration-fast) var(--motion-easing-standard),display var(--motion-duration-fast) allow-discrete}
+#enabledMods[data-form="tray"][data-open]:not([data-measure])>ul{display:flex;opacity:1;transform:none;pointer-events:auto;transition-duration:var(--motion-duration-base);transition-timing-function:var(--motion-easing-emphasized)}
+/* The tray scales in from the count and out again. A list the keyboard opened or closed, or one rebuilt
+   while the tray was open (src/lib/enabled-mods-form.js, enabled-mods-list.js), carries data-instant. */
+@starting-style{#enabledMods[data-form="tray"][data-open]:not([data-measure])>ul{opacity:0;transform:scale(.97)}}
+#enabledMods[data-form="tray"]:not([data-measure])>ul[data-instant]{transition-duration:0ms}
+#enabledMods[data-form="tray"]:not([data-measure]) .enabled-mod,#enabledMods[data-form="tray"]:not([data-measure]) .enabled-mod-ghost[data-fading]{height:auto;min-height:32px;padding:var(--space-3) var(--space-2) var(--space-3) var(--space-3);background:none;white-space:normal}
+#enabledMods[data-form="tray"]:not([data-measure]) .enabled-mod-name{flex:1;min-width:0;overflow-wrap:anywhere}
+#enabledMods[data-form="tray"]:not([data-measure])>ul[data-more-below]:after{content:"";position:sticky;bottom:calc(-1 * var(--space-3));flex:none;height:var(--space-11);margin-top:calc(-1 * var(--space-11));background:linear-gradient(transparent,var(--color-bg-raised));pointer-events:none}
+
+/* ---- Page heading, plugin warning, toolbar ---- */
+.page-heading{display:flex;align-items:center;justify-content:space-between;gap:var(--space-9);padding:var(--space-8) 0}
+.page-heading h1{margin:0;font-size:var(--font-size-2xl);font-weight:var(--font-weight-semibold);line-height:var(--font-line-height-tight);letter-spacing:-.01em;color:var(--color-text-primary)}
+.page-heading p{margin:var(--space-3) 0 0;font-size:var(--font-size-sm);color:var(--color-text-muted)}
+.page-actions{display:flex;align-items:center;gap:var(--space-7);flex:none}
+.auto-control{display:flex;align-items:center;gap:var(--space-4);font-size:var(--font-size-sm);color:var(--color-text-muted);white-space:nowrap}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:var(--space-4);min-height:32px;padding:0 var(--space-7);border:1px solid var(--color-border-strong);border-radius:var(--radius-md);background-color:transparent;color:var(--color-text-primary);font-size:var(--font-size-sm);font-weight:var(--font-weight-medium);white-space:nowrap;cursor:pointer}
+.btn.primary{background-color:var(--color-accent);border-color:var(--color-accent);color:var(--color-accent-ink)}
+#removeplugin{border-color:transparent;color:var(--color-text-muted)}
+#applyall:before{content:"";width:16px;height:16px;flex:none;background-color:currentColor;mask:var(--icon-refresh) center/contain no-repeat}
+/* The plugin warning: a warn icon beside Apply all (#pluginWarning) and a second one beside
+   "Settings loaded" (owner, 2026-09-25, replacing the full-width band). Each icon is the control
+   (it opens Setup); its tooltip, on hover or keyboard focus, carries the message and an
+   "Open Setup" line, and holds nothing to click (src/lib/plugin-warning.js opens, closes and
+   places it). Its surface and 1px edge are an idle slider note's tooltip's too (Finding 19): one
+   tooltip look. None of these classes may be btn, hint, note, card or row: design-match measures
+   those on their first match, and the page actions and the status bar come first. */
+.plugin-warning{display:inline-flex;flex:none}
+.plugin-warning-button{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;padding:0;border:0;border-radius:var(--radius-md);background:none;color:var(--color-warn);cursor:pointer}
+.plugin-warning-button svg{width:16px;height:16px}
+#statusbar .plugin-warning-button{width:24px;height:24px;margin-left:calc(var(--space-7) * -1 + var(--space-2))}
+.plugin-warning-tooltip{position:fixed;z-index:45;display:flex;flex-direction:column;gap:var(--space-2);width:max-content;max-width:min(320px,calc(100vw - 2 * var(--space-6)));padding:var(--space-4) var(--space-6);border:1px solid var(--color-border-subtle);border-radius:var(--radius-md);background-color:var(--color-bg-hover);color:var(--color-text-primary);font-size:var(--font-size-sm);line-height:var(--font-line-height-base);white-space:normal;text-align:left;box-shadow:0 8px 24px color-mix(in srgb,var(--color-bg-sunken) 80%,transparent);transition:opacity var(--motion-duration-fast) var(--motion-easing-emphasized),transform var(--motion-duration-fast) var(--motion-easing-emphasized);transform-origin:var(--tooltip-origin,top right)}
+/* It enters as the slider note's tooltip does: clearing `hidden` takes it from display:none to shown. */
+@starting-style{.plugin-warning-tooltip{opacity:0;transform:scale(.97)}}
+.plugin-warning-tooltip[data-instant]{transition-duration:0ms}
+.plugin-warning-action{color:var(--color-text-muted);font-size:var(--font-size-xs)}
+/* Finding 18: the pointer to Setup is pointless on Setup. */
+body:has(#nav-setup[aria-selected="true"]) .plugin-warning-action{display:none}
+#controlToolbar{position:relative;display:flex;gap:var(--space-6);margin:0 0 var(--space-7)}
+#controlToolbar:before{content:"";position:absolute;left:var(--space-6);top:8px;width:16px;height:16px;background-color:var(--color-text-muted);mask:var(--icon-search) center/contain no-repeat;pointer-events:none}
+.control-search{flex:1;min-width:0;height:32px;padding:0 var(--space-6) 0 calc(var(--space-6) + 16px + var(--space-4));border:1px solid var(--color-border-strong);border-radius:var(--radius-md);background-color:var(--color-bg-sunken);color:var(--color-text-primary);font-size:var(--font-size-sm)}
+.control-search::placeholder,#satSearch::placeholder,#gemSearch::placeholder,#exepath::placeholder{color:var(--color-text-muted)}
+.control-filters,.sat-filters{display:flex;gap:var(--space-1);flex:none;padding:var(--space-2);border-radius:var(--radius-md);background-color:var(--color-bg-sunken)}
+.control-filters button,.sat-filters button{padding:0 var(--space-5);min-height:24px;border:0;border-radius:var(--radius-sm);background:none;color:var(--color-text-muted);font-size:var(--font-size-sm);cursor:pointer}
+.control-filters button[aria-pressed=true],.sat-filters button[aria-pressed="true"]{background-color:var(--color-bg-hover);color:var(--color-text-primary)}
+
+/* ---- Workspace and cards ---- */
+#workspace{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:var(--space-7) var(--space-9);align-items:start}
+.card{grid-column:1/-1;display:flex;flex-direction:column;gap:var(--space-7);min-width:0;margin:0;padding:var(--space-7);border-radius:var(--radius-lg);background-color:var(--color-bg-raised)}
+.tab-card{display:none}.tab-card.active{display:flex}
+.card h2{display:flex;align-items:center;gap:var(--space-4);margin:0;font-size:var(--font-size-lg);font-weight:var(--font-weight-semibold);line-height:var(--font-line-height-tight);color:var(--color-text-primary)}
+.card>h2+.hint,.density-top+.hint{margin-top:calc(var(--space-6) * -1)}
+.card>.row+.row{margin-top:calc(var(--space-7) * -1)}
+.hint{margin:0;color:var(--color-text-muted);font-size:var(--font-size-sm)}
+.note{margin:0;color:var(--color-text-faint);font-size:var(--font-size-xs)}.note:empty{display:none}
+.subtabbar{display:flex;gap:var(--space-1);grid-column:1/-1;justify-self:start;padding:var(--space-2);border-radius:var(--radius-md);background-color:var(--color-bg-sunken)}
+.subtabbtn{display:flex;align-items:center;justify-content:center;min-height:28px;padding:0 var(--space-5);border:0 solid transparent;border-bottom-width:2px;border-radius:var(--radius-sm);background:none;color:var(--color-text-muted);font-size:var(--font-size-sm);cursor:pointer}
+.subtabbtn[aria-selected="true"]{border-color:var(--color-accent);background-color:var(--color-bg-hover);color:var(--color-text-primary)}
+.help-details{color:var(--color-text-muted);font-size:var(--font-size-sm)}
+.help-details summary{display:flex;align-items:center;gap:var(--space-3);width:fit-content;list-style:none;cursor:pointer}
+.help-details summary::-webkit-details-marker{display:none}
+.help-details summary:before{content:"";width:12px;height:12px;background-color:currentColor;mask:var(--icon-chevron) center/contain no-repeat}
+.help-details[open] summary:before{transform:rotate(90deg)}
+.help-details[open]>summary{margin-bottom:var(--space-4)}
+.help-details>.hint+.note,.help-details>.note{margin-top:var(--space-4)}
+.density-once{color:var(--color-ok)}
+.empty-settings{grid-column:1/-1;padding:var(--space-8);text-align:center;color:var(--color-text-muted)}
+.section-title{display:flex;align-items:flex-start;justify-content:space-between;gap:var(--space-7)}
+.section-title>div{display:flex;flex-direction:column;gap:var(--space-2)}
+.live-badge{flex:none;padding:var(--space-1) var(--space-4);border-radius:var(--radius-sm);background-color:var(--color-bg-hover);color:var(--color-ok);font-family:var(--font-mono-family),Consolas,monospace;font-size:var(--font-size-xs);letter-spacing:.06em;white-space:nowrap}
+
+/* ---- Rows: label, switch, slider, value editor ---- */
+.row{display:flex;align-items:center;gap:var(--space-7);min-width:0;min-height:44px}
+.row .lbl{flex:none;width:168px;color:var(--color-text-primary);font-size:var(--font-size-sm);font-weight:var(--font-weight-medium);line-height:var(--font-line-height-tight)}
+.row .lbl .tag{margin-left:var(--space-3);color:var(--color-text-muted);font-size:var(--font-size-xs);font-weight:var(--font-weight-regular)}
+.range-control{position:relative;display:flex;align-items:center;gap:var(--space-7);flex:1;min-width:0}
+input[type=range]{flex:1;min-width:48px;width:100%;height:4px;margin:0;appearance:none;border-radius:var(--radius-pill);background-color:var(--color-track);color:var(--color-accent);cursor:pointer}
+input[type=range]::-webkit-slider-thumb{appearance:none;width:6px;height:18px;border:0;border-radius:var(--radius-pill);background-color:var(--color-text-primary)}
+input[type=range]::-moz-range-thumb{width:6px;height:18px;border:0;border-radius:var(--radius-pill);background-color:var(--color-text-primary)}
+.value-stepper{position:relative;display:flex;align-items:center;flex:none;border-radius:var(--radius-md);background-color:var(--color-bg-sunken)}
+.step-button{width:28px;height:32px;padding:0;border:0;border-radius:var(--radius-sm);background:none;color:var(--color-text-muted);font-size:var(--font-size-md);line-height:1;cursor:pointer}
+.val{flex:none;min-width:0;width:60px;background-color:var(--color-bg-sunken);color:var(--color-text-primary);font-family:var(--font-mono-family),Consolas,monospace;font-size:var(--font-size-sm);line-height:32px;text-align:center;white-space:nowrap}
+.val.off{color:var(--color-text-muted)}
+.numedit{width:100%;min-width:44px;height:26px;padding:0;border:0;border-radius:var(--radius-sm);background-color:var(--color-bg-hover);color:var(--color-text-primary);font-family:var(--font-mono-family),Consolas,monospace;text-align:center}
+.numedit:focus{outline:none}
+/* A switched-off slider keeps the value it returns to beside `off` (src/lib/remembered-value.js). */
+.val-remembered{position:absolute;right:calc(100% + var(--space-4));top:50%;transform:translateY(-50%);color:var(--color-text-faint);font-family:var(--font-mono-family),Consolas,monospace;font-size:var(--font-size-xs);white-space:nowrap;pointer-events:none}
+.val-remembered:empty{display:none}
+.value-stepper:has(>.val-remembered:not(:empty)){margin-left:calc(var(--space-4) + 5ch)}
+.row:has(>.slider-switch>input:not(:checked)) input[type=range],#densityCard:has(#den_on:not(:checked)) #den{opacity:.35}
+/* Finding 19: an idle slider's status note stays out of the way. A row at its default has no note
+   (owner, 2026-09-26; panel.js writes it empty and .note:empty hides it), so an idle row carries one
+   only while its range holds a value not yet saved, and only then opens a tooltip. Hovering or focusing
+   the row shows it as a tooltip above the row (owner, 2026-09-25: the old overlay was drawn over the
+   row beneath it). src/lib/slider-note.js owns showing it (after a delay on hover, at once on the next
+   row or on keyboard focus, closed by Escape) by setting data-tooltip on the note, which is why the
+   hide rule names no hover or focus state. The tooltip is out of the flow and passes the pointer
+   through, so no row moves when it shows or hides: a note shown in the flow moved the rows below up
+   under the pointer as it hid, and the behaviour oracle's next click missed its switch. It sits
+   inside its row's column, over the row above, never over its own row or the row below. Its surface
+   and edge are keyed on [data-tooltip] alone (design-match measures that selector) and match
+   .plugin-warning-tooltip, so the panel has one tooltip look. A turned-on or switched-off row's note
+   stays on its own line in the flow; a drop row's note describes the row rather than its state, and
+   stays. Hidden is display:none, which checkVisibility() reports. */
+.setting-entry:not(:has([data-sec="drops"])):has(.slider-switch:not([data-live])>input:checked)>.note[data-note]:not([data-tooltip]){display:none}
+.setting-entry>.note[data-note][data-tooltip]{position:absolute;left:0;bottom:calc(100% + var(--space-2));z-index:2;width:max-content;max-width:100%;margin:0;padding:var(--space-4) var(--space-6);border:1px solid var(--color-border-subtle);border-radius:var(--radius-md);background-color:var(--color-bg-hover);color:var(--color-text-muted);line-height:var(--font-line-height-base);box-shadow:0 8px 24px color-mix(in srgb,var(--color-bg-sunken) 80%,transparent);pointer-events:none;transform-origin:bottom left;transition:opacity var(--motion-duration-fast) var(--motion-easing-emphasized),transform var(--motion-duration-fast) var(--motion-easing-emphasized)}
+@starting-style{.setting-entry>.note[data-note][data-tooltip]{opacity:0;transform:scale(.97)}}
+.setting-entry>.note[data-note][data-tooltip][data-instant]{transition-duration:0ms}
+
+/* Switches: OFF is the quiet body with the knob left; a slider switch that is ON but whose mod is not
+   listed (idle) is neutral, and takes the accent once listed (data-live, src/lib/review-fixes.js). */
+.switch{position:relative;display:inline-block;flex:none;width:40px;height:22px;border-radius:var(--radius-pill);background-color:var(--color-border-subtle)}
+.switch input{position:absolute;inset:0;z-index:1;width:100%;height:100%;margin:0;opacity:0;cursor:pointer}
+.switch input:disabled{cursor:not-allowed}
+.switch:has(input:checked){background-color:var(--color-accent)}
+.slider-switch,.slider-switch:has(input:checked){background-color:var(--color-switch-idle)}
+.slider-switch:has(input:not(:checked)){background-color:var(--color-border-subtle)}
+.switch.slider-switch[data-live]{background-color:var(--color-accent)}
+.sl{position:absolute;inset:0;pointer-events:none}
+.sl:before{content:"";position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background-color:var(--color-text-muted)}
+.switch input:checked+.sl:before{transform:translateX(18px);background-color:var(--color-accent-ink)}
+.slider-switch input:checked+.sl:before{background-color:var(--color-text-primary)}
+.switch.slider-switch[data-live] input:checked+.sl:before{background-color:var(--color-accent-ink)}
+/* A switch that cannot be used (a child row while its parent is off) reads as neither on nor off. */
+.switch:has(input:disabled){opacity:.45;background-color:var(--color-border-subtle)}
+.switch input:disabled+.sl:before{transform:none;background-color:var(--color-text-muted)}
+.switch:has(input:focus-visible){outline:2px solid var(--color-focus);outline-offset:3px}
+/* Finding 16: a standalone switch carries its text on its left. */
+.row:has(>.switch:not(.slider-switch))>.lbl{flex:1;width:auto}
+.row:has(>.switch:not(.slider-switch))>.val{order:1;width:auto;background:none;color:var(--color-text-muted);font-size:var(--font-size-xs);line-height:inherit}
+.row:has(>.switch:not(.slider-switch))>.switch{order:2}
+
+/* ---- Modifiers ---- */
+.modifier-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-8) var(--space-10)}
+.modifier-group{min-width:0}
+/* A light 1px rule between the card's groups (owner, 2026-09-25): above a group that has another
+   above it in its column, so the second row of the two-column grid, and every group but the first
+   in one column (below). The colour sits on every group after the first so the rule is only a width. */
+.modifier-group+.modifier-group{border-top:0 solid var(--color-border-subtle)}
+.modifier-group:nth-child(n+3){border-top-width:1px;padding-top:var(--space-8)}
+.group-title{margin-bottom:var(--space-2);color:var(--color-text-muted);font-size:var(--font-size-sm);font-weight:var(--font-weight-medium)}
+.setting-entry{position:relative;min-width:0}
+.setting-entry>.note{margin:calc(var(--space-2) * -1) 0 var(--space-4)}
+.settings-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 var(--space-10)}
+#dropSettings>#drops,#dropSettings>#keys{display:contents}
+
+/* ---- World ---- */
+#workspace[aria-labelledby="nav-world"]{grid-template-columns:minmax(0,500fr) minmax(0,692fr)}
+#workspace[aria-labelledby="nav-world"]>.tab-card{grid-column:1}
+#workspace[aria-labelledby="nav-world"]>#satanicMods{grid-column:2;grid-row:1/span 4}
+#workspace[aria-labelledby="nav-world"] .row .lbl{width:120px}
+#workspace[aria-labelledby="nav-world"] .settings-grid{grid-template-columns:minmax(0,1fr)}
+.density-top{display:flex;align-items:center;justify-content:space-between;gap:var(--space-7)}
+.density-top .row{min-height:0;gap:var(--space-6)}
+.density-top .lbl{width:auto!important;color:var(--color-text-muted);font-size:var(--font-size-xs);font-weight:var(--font-weight-regular)}
+.hero-number,#densityCard>.row>.lbl{display:none}
+/* Finish review F4: the rarity note is hidden while both rows are off or idle at 0 (their values carry
+   .off). It keeps its words: the toast after a rarity change reads them. */
+#rarityCard:has(#rarityrareval.off):has(#rarityancval.off)>#raritynote{display:none}
+.sat-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:var(--space-7)}
+.sat-intro{margin:var(--space-6) 0 0;color:var(--color-text-muted);font-size:var(--font-size-sm)}
+.sat-intro span{display:block;margin-top:var(--space-2);color:var(--color-text-faint);font-size:var(--font-size-xs)}
+.sat-button{display:inline-flex;align-items:center;gap:var(--space-3);padding:var(--space-2) var(--space-4);border:0;border-radius:var(--radius-sm);background:none;color:var(--color-text-muted);font-size:var(--font-size-sm);white-space:nowrap;cursor:pointer}
+.sat-panel-tools .sat-button,.gf-cat .sat-button{padding:0 var(--space-2);color:var(--color-text-faint);font-size:var(--font-size-xs)}
+.sat-toolbar{display:flex;align-items:center;gap:var(--space-6)}
+.sat-search{position:relative;display:flex;align-items:center;flex:1;min-width:0;color:var(--color-text-muted)}
+.sat-search svg{position:absolute;left:var(--space-6);width:16px;height:16px;pointer-events:none}
+#satSearch,#gemSearch{width:100%;min-width:0;height:32px;padding:0 var(--space-6) 0 calc(var(--space-6) + 16px + var(--space-4));border:1px solid var(--color-border-strong);border-radius:var(--radius-md);background-color:var(--color-bg-sunken);color:var(--color-text-primary);font-size:var(--font-size-sm)}
+.sat-columns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-9)}
+.sat-panel{--sat-accent:var(--color-ok);min-width:0}
+.sat-panel[data-polarity="debuff"]{--sat-accent:var(--color-danger)}
+.sat-panel-head{padding:0 var(--space-3) var(--space-4)}
+.sat-panel-title,.gf-cat{display:flex;align-items:center;gap:var(--space-4)}
+.sat-panel h3,.gf-cat h3{margin:0;color:var(--color-text-primary);font-size:var(--font-size-sm);font-weight:var(--font-weight-semibold)}
+.sat-sign{color:var(--sat-accent);font-weight:var(--font-weight-semibold)}
+.sat-count{margin-left:auto;color:var(--color-text-muted);font-family:var(--font-mono-family),Consolas,monospace;font-size:var(--font-size-xs);white-space:nowrap}
+.sat-panel-tools{display:flex;align-items:center;justify-content:space-between;gap:var(--space-4);margin-top:var(--space-2);color:var(--color-text-muted);font-size:var(--font-size-xs)}
+.sat-panel-tools strong{color:var(--color-text-primary)}
+.sat-list{height:300px;overflow-y:auto;overscroll-behavior:contain}
+.sat-list[data-more-below]{mask-image:linear-gradient(to bottom,black calc(100% - 44px),transparent)}
+.sat-option{display:flex;align-items:center;gap:var(--space-6);padding:var(--space-4) var(--space-3);border-radius:var(--radius-md);color:var(--color-text-primary);cursor:pointer}
+.sat-option>span{min-width:0}
+.sat-option input{order:2;position:relative;flex:none;width:40px;height:22px;margin:0 0 0 auto;appearance:none;border:0;border-radius:var(--radius-pill);background-color:var(--color-border-subtle);cursor:inherit}
+.sat-option input:after{content:"";position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background-color:var(--color-text-muted)}
+.sat-option input:checked{background-color:var(--color-accent)}
+.sat-option input:checked:after{transform:translateX(18px);background-color:var(--color-accent-ink)}
+.sat-option.is-locked{cursor:not-allowed}
+.sat-option.is-locked input{opacity:.45}
+#satanicMods[aria-busy="true"] .sat-option{cursor:wait}
+.sat-name{display:block;font-size:var(--font-size-sm);font-weight:var(--font-weight-medium)}
+.sat-desc{display:block;margin-top:var(--space-1);color:var(--color-text-muted);font-size:var(--font-size-xs);overflow-wrap:anywhere}
+.sat-panel-foot{position:absolute!important;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.sat-empty{padding:var(--space-10) var(--space-6);text-align:center;color:var(--color-text-muted);font-size:var(--font-size-sm)}
+.sat-footer{display:flex;align-items:center;gap:var(--space-7);flex-wrap:wrap;color:var(--color-text-muted);font-size:var(--font-size-xs)}
+#satSummary{display:inline-flex;align-items:center;gap:var(--space-3);color:var(--color-ok)}
+/* A valid selection carries the drawn check (finish review F6), never a glyph. */
+#satSummary:not(.is-invalid):not(:empty):before{content:"";width:12px;height:12px;flex:none;background-color:currentColor;mask:var(--icon-check) center/contain no-repeat}
+#satSummary.is-invalid,#satSaveState.is-error{color:var(--color-danger)}
+.sat-footer-note{display:none}
+
+/* ---- Mods: toggle rows in two columns (preparePanelUI builds them; src/lib/review-fixes.js names them) ---- */
+/* Each mod is a card of its own, like every other tab's sections (owner, 2026-09-25): a column's
+   children carry the card look, a child row stays plain inside its parent's, and the two sub-tab
+   panels keep their ids, roles and tab-card (nav.js shows them by it) but are not drawn as cards.
+   The per-mod card's class holds no "card", so no [class*=card] sits inside another. */
+#qolCard,#itemsCard{padding:0;border-radius:0;background-color:transparent}
+.mods-grid{display:flex;gap:var(--space-9);align-items:flex-start}
+.mods-col{display:flex;flex-direction:column;gap:var(--space-7);flex:1 1 0;min-width:0}
+.mods-col>*{padding:var(--space-7);border-radius:var(--radius-lg);background-color:var(--color-bg-raised)}
+.feature-with-child{display:flex;flex-direction:column;gap:var(--space-9)}
+.feature-with-child>.feature-row+.feature-row{margin-left:var(--space-8)}
+.feature-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:var(--space-3) var(--space-6);min-height:0}
+.feature-row>.lbl{grid-column:1;grid-row:1;color:var(--color-text-primary);font-size:var(--font-size-md);font-weight:var(--font-weight-medium)}
+.feature-row>.val{grid-column:2;grid-row:1;width:auto;background:none;color:var(--color-text-muted);font-size:var(--font-size-xs);line-height:inherit}
+.feature-row>.switch{grid-column:3;grid-row:1}
+.feature-row>.style-select{grid-column:2/-1;grid-row:1}
+.feature-description{grid-column:1/-1;color:var(--color-text-muted);font-size:var(--font-size-sm);font-weight:var(--font-weight-regular)}
+.feature-hint{grid-column:1/-1;color:var(--color-text-faint);font-size:var(--font-size-xs)}
+/* Gems of Incarnation, the Loot tab's #gemsCard: the Mods rows' look, spaced as
+   a Mods column spaces them; the mod filter row and its list sit at the child
+   indent under Mythic. The list is drawn with the Satanic pool's classes (their
+   rules above carry the gem selectors); only what that pool has no rule for is
+   here: the actions row, and the category headings inside its one list. */
+#gemsCard>.feature-row+.feature-row{margin-top:calc(var(--space-9) - var(--space-7))}
+#gemsCard>#gemfilter_row,#gemsCard>#gemfilter_panel{margin-left:var(--space-8)}
+#gemfilter_row{grid-template-columns:minmax(0,1fr) auto auto auto}
+#gemfilter_row>#gemfilter_unsaved{grid-column:2;grid-row:1}
+#gemfilter_row>.btn{grid-column:3;grid-row:1}
+#gemfilter_row>.val{grid-column:4;grid-row:1}
+#gemfilter_panel .gf-actions{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-4)}
+#gemfilter_panel .sat-toolbar{margin:var(--space-6) 0 var(--space-4)}
+#gemfilter_panel .gf-cat{padding:var(--space-6) var(--space-3) var(--space-2)}
+#gemfilter_panel .gf-cat:first-child{padding-top:0}
+select.style-select{min-width:96px;height:28px;padding:0 var(--space-3) 0 var(--space-4);border:0;border-radius:var(--radius-sm);background-color:var(--color-bg-hover);color:var(--color-text-primary);font-size:var(--font-size-sm);cursor:pointer}
+#minerHelmetCard{display:block}
+#minerHelmetCard strong{font-size:var(--font-size-md);font-weight:var(--font-weight-medium)}
+#minerHelmetCard .hint{margin-top:var(--space-3)}
+/* The helmet's stat lines, in the accent and the mono face as the design draws them (the accent audit). */
+#minerHelmetCard .helmet-stats{margin:var(--space-3) 0 0;color:var(--color-accent);font-family:var(--font-mono-family),Consolas,monospace;font-size:var(--font-size-xs)}
+#minerHelmetStatus{margin-top:var(--space-4);color:var(--color-text-faint);font-size:var(--font-size-xs)}
+
+/* ---- Setup ---- */
+.setup-path-row,.setup-launch{flex-wrap:wrap}
+#exepath{flex:1 1 100%;min-width:180px;height:38px;padding:0 var(--space-6);border:1px solid var(--color-border-strong);border-radius:var(--radius-md);background-color:var(--color-bg-sunken);color:var(--color-text-primary);font-family:var(--font-mono-family),Consolas,monospace;font-size:var(--font-size-sm)}
+/* Finish review F8: the launcher's description is body/secondary text (13, text/muted), not a note (and no
+   longer carries .note, whose first match design-match measures for the notes' look). */
+.setup-launch>.launch-description{flex:1;min-width:240px;margin:0;color:var(--color-text-muted);font-size:var(--font-size-sm)}
+.setup-launch>.launch-description b{color:var(--color-text-primary);font-size:var(--font-size-sm)}
+.launch-feedback{display:flex;align-items:center;gap:var(--space-4);color:var(--color-text-primary);font-size:var(--font-size-sm);overflow-wrap:anywhere}
+.launch-feedback:before{content:"";width:14px;height:14px;flex:none;background-color:var(--color-ok);mask:var(--icon-check) center/contain no-repeat}
+.launch-feedback.starting{color:var(--color-warn)}.launch-feedback.starting:before{background-color:var(--color-warn)}
+.launch-feedback.error,.launch-feedback.warning{color:var(--color-danger)}.launch-feedback.error:before,.launch-feedback.warning:before{background-color:var(--color-danger);mask-image:var(--icon-warn)}
+#chainnote,#eacnote{display:flex;align-items:center;gap:var(--space-4);font-size:var(--font-size-sm)}
+#chainnote:before{content:"";width:14px;height:14px;flex:none;background-color:currentColor;mask:var(--icon-warn) center/contain no-repeat}
+#chainnote:empty,#eacnote:empty{display:none}
+/* Finish review F5: the button's name is a mono run, with no quotes. */
+#chainnote .chain-command{font-family:var(--font-mono-family),Consolas,monospace}
+/* The Appearance card's theme choice: the design's ThemePicker (finish review F2, src/lib/theme-picker.js).
+   The trigger is a compact, quiet "Ledger" with a chevron; the list opens below it on a 1px edge, each
+   palette with three swatches its colours are read into, and the drawn check on the chosen one. The list
+   scales in from the trigger when the pointer opens it (motion row M5) and carries data-instant otherwise.
+   The native select #theme stays the control of record under it: clipped to 1px, never display:none or
+   visibility:hidden (so it keeps a box, and checkVisibility() stays true), with no border. */
+.theme-picker{position:relative;flex:none}
+.theme-picker-trigger{display:inline-flex;align-items:center;gap:var(--space-3);height:28px;padding:0 var(--space-3) 0 var(--space-4);border:0;border-radius:var(--radius-sm);background-color:var(--color-bg-hover);color:var(--color-text-primary);font-size:var(--font-size-sm);cursor:pointer}
+.theme-picker-trigger svg{width:12px;height:12px;flex:none;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;color:var(--color-text-muted)}
+.theme-picker-list{position:absolute;top:calc(100% + var(--space-2));left:0;z-index:20;display:none;min-width:200px;margin:0;padding:var(--space-2);list-style:none;border:1px solid var(--color-border-subtle);border-radius:var(--radius-lg);background-color:var(--color-bg-raised);box-shadow:0 12px 32px color-mix(in srgb,var(--color-bg-sunken) 80%,transparent);
+  opacity:0;transform:scale(.97);transform-origin:top left;pointer-events:none;transition:opacity var(--motion-duration-fast) var(--motion-easing-standard),transform var(--motion-duration-fast) var(--motion-easing-standard),display var(--motion-duration-fast) allow-discrete}
+/* A closing list is still displayed while it fades, so it takes no pointer until it is open again. */
+.theme-picker[data-open]>.theme-picker-list{display:block;opacity:1;transform:none;pointer-events:auto;transition-duration:var(--motion-duration-base);transition-timing-function:var(--motion-easing-emphasized)}
+@starting-style{.theme-picker[data-open]>.theme-picker-list{opacity:0;transform:scale(.97)}}
+.theme-picker>.theme-picker-list[data-instant],.theme-picker[data-open]>.theme-picker-list[data-instant]{transition-duration:0ms}
+.theme-picker-list:focus{outline:none}
+.theme-picker-option{position:relative;display:flex;align-items:center;gap:var(--space-5);min-height:32px;padding:0 calc(var(--space-6) + 14px + var(--space-4)) 0 var(--space-4);border-radius:var(--radius-md);color:var(--color-text-primary);font-size:var(--font-size-sm);cursor:pointer;white-space:nowrap}
+.theme-picker-option[data-active]{background-color:var(--color-bg-hover)}
+.theme-picker-list:focus-visible .theme-picker-option[data-active]{outline:2px solid var(--color-focus);outline-offset:-2px}
+.theme-picker-option[aria-selected="true"]:after{content:"";position:absolute;right:var(--space-4);width:14px;height:14px;background-color:var(--color-accent);mask:var(--icon-check) center/contain no-repeat}
+.theme-picker-swatches{display:flex;flex:none;width:40px;height:16px;overflow:hidden;border-radius:var(--radius-sm)}
+.theme-picker-swatches>span{flex:1;background-color:var(--swatch,transparent)}
+.theme-picker-native{position:absolute;left:0;top:0;width:1px;height:1px;margin:0;padding:0;border:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;pointer-events:none}
+
+/* ---- Toasts: #toast, and the undo toast above it in a band the page makes room for ---- */
+#toast{position:fixed;right:var(--space-9);bottom:calc(var(--space-10) + 1px + var(--space-6));z-index:40;max-width:min(560px,calc(100vw - 2 * var(--space-9)));min-height:var(--toast-h);display:flex;align-items:center;padding:0 var(--space-7);border-radius:var(--radius-md);background-color:var(--color-bg-hover);color:var(--color-text-primary);font-size:var(--font-size-sm);box-shadow:0 8px 24px color-mix(in srgb,var(--color-bg-sunken) 80%,transparent);opacity:0;pointer-events:none;
+  transform:translateY(var(--space-4));transition:opacity var(--motion-duration-fast) var(--motion-easing-standard),transform var(--motion-duration-fast) var(--motion-easing-standard)}
+#toast.show{opacity:1;transform:none;transition-duration:var(--motion-duration-base)}
+#toast[data-instant]{transition-duration:0ms}
+/* Both toasts rise into place and sink out the way they came: in over base, out over fast. */
+.undo-toast{position:fixed;right:var(--space-9);bottom:calc(var(--space-10) + 1px + var(--space-6) + var(--toast-h) + var(--space-4));z-index:40;display:flex;align-items:center;gap:var(--space-7);min-height:var(--undo-h);max-width:min(560px,calc(100vw - 2 * var(--space-9)));padding:0 var(--space-3) 0 var(--space-7);border-radius:var(--radius-md);background-color:var(--color-bg-hover);color:var(--color-text-primary);font-size:var(--font-size-sm);box-shadow:0 8px 24px color-mix(in srgb,var(--color-bg-sunken) 80%,transparent);
+  transition:opacity var(--motion-duration-base) var(--motion-easing-standard),transform var(--motion-duration-base) var(--motion-easing-standard)}
+@starting-style{.undo-toast{opacity:0;transform:translateY(var(--space-4))}}
+.undo-toast[data-leaving]{opacity:0;transform:translateY(var(--space-4));pointer-events:none;transition-duration:var(--motion-duration-fast)}
+.undo-toast[data-instant]{transition-duration:0ms}
+.undo-toast-button{padding:var(--space-3) var(--space-5);border:0;border-radius:var(--radius-sm);background:none;color:var(--color-accent);font-weight:var(--font-weight-semibold);cursor:pointer}
+
+/* ---- Hover, only where there is a real pointer ---- */
+@media(hover:hover) and (pointer:fine){
+.tabbtn:hover{background-color:var(--color-bg-hover);color:var(--color-text-primary)}
+.btn:hover:not(:disabled){background-color:var(--color-bg-hover)}
+.btn.primary:hover:not(:disabled){background-color:var(--color-accent-hover);border-color:var(--color-accent-hover)}
+#removeplugin:hover:not(:disabled){color:var(--color-text-primary)}
+.quick-disable:hover,.step-button:hover:not(:disabled),.sat-button:hover:not(:disabled),.undo-toast-button:hover{background-color:var(--color-bg-hover);color:var(--color-text-primary)}
+.undo-toast-button:hover{color:var(--color-accent-hover)}
+.control-filters button:hover,.sat-filters button:hover,.subtabbtn:hover{color:var(--color-text-primary)}
+.sat-option:hover{background-color:var(--color-bg-hover)}
+.theme-picker-trigger:hover,select.style-select:hover{background-color:var(--color-border-subtle)}
+.plugin-warning-button:hover{background-color:var(--color-bg-hover)}
+.enabled-mods-toggle:hover{color:var(--color-accent-hover)}
+.help-details summary:hover{color:var(--color-text-primary)}
+#enabledMods[data-form="tray"] .enabled-mod:hover{background-color:var(--color-bg-hover)}
+/* A hover eases its colours in on the element under the pointer and snaps back when it leaves, so a
+   palette swap, a poll or a state change never runs a colour transition on anything else. The press's
+   transform is listed again: a hovered button takes this list, not its own. A list row's highlight (a
+   tray entry, a Satanic or gem pool row, a theme picker option) is list navigation and stays instant. */
+:is(.tabbtn,.btn,.quick-disable,.step-button,.sat-button,.undo-toast-button,.control-filters button,.sat-filters button,.subtabbtn,.theme-picker-trigger,select.style-select,.plugin-warning-button,.enabled-mods-toggle,.help-details summary):hover{transition:color var(--motion-duration-fast) var(--motion-easing-hover),background-color var(--motion-duration-fast) var(--motion-easing-hover),border-color var(--motion-duration-fast) var(--motion-easing-hover),transform var(--motion-duration-fast) var(--motion-easing-standard)}
+}
+
+/* ---- Press: a button scales to .97 while the pointer holds it (never from the keyboard) ---- */
+:is(.btn,.quick-disable,.step-button,.sat-button,.undo-toast-button,.enabled-mods-toggle){transition:transform var(--motion-duration-fast) var(--motion-easing-standard)}
+@media(prefers-reduced-motion:no-preference){:is(.btn,.quick-disable,.step-button,.sat-button,.undo-toast-button,.enabled-mods-toggle):active:not(:disabled):not(:focus-visible){transform:scale(.97)}}
+
+/* ---- Reduced motion: no movement and no scale (amendments.ship, the owner's "Keep colour fades
+   too"). The tooltips, the tray, the theme picker's list, the toasts and a turned-off entry still fade, and a hover still
+   eases its colours in; nothing scales or moves, and a press changes nothing. ---- */
+@media(prefers-reduced-motion:reduce){
+:is(.btn,.quick-disable,.step-button,.sat-button,.undo-toast-button,.enabled-mods-toggle){transition:none}
+:is(.tabbtn,.btn,.quick-disable,.step-button,.sat-button,.undo-toast-button,.control-filters button,.sat-filters button,.subtabbtn,.theme-picker-trigger,select.style-select,.plugin-warning-button,.enabled-mods-toggle,.help-details summary):hover{transition-property:color,background-color,border-color}
+.plugin-warning-tooltip,.setting-entry>.note[data-note][data-tooltip],#toast,.undo-toast,.enabled-mod-ghost[data-fading]{transition-property:opacity}
+#enabledMods[data-form="tray"]:not([data-measure])>ul,.theme-picker-list{transition-property:opacity,display}
+#toast,.undo-toast[data-leaving],.enabled-mod-ghost[data-fading],#enabledMods[data-form="tray"]:not([data-measure])>ul,.theme-picker-list{transform:none}
+@starting-style{.plugin-warning-tooltip,.setting-entry>.note[data-note][data-tooltip],.undo-toast,.enabled-mod-ghost[data-fading],#enabledMods[data-form="tray"][data-open]:not([data-measure])>ul,.theme-picker[data-open]>.theme-picker-list{transform:none}}
+}
+
+/* ---- Narrower windows: one column, the page's own padding ---- */
+@media(max-width:1100px){#wrap{--page-pad:var(--space-8)}.brand-sub,.status-offline{display:none}.sidebar{gap:var(--space-7)}.page-heading{flex-wrap:wrap}.modifier-grid{grid-template-columns:minmax(0,1fr)}.modifier-group+.modifier-group{border-top-width:1px;padding-top:var(--space-8)}.mods-grid{flex-direction:column;align-items:stretch;gap:var(--space-7)}.settings-grid{grid-template-columns:minmax(0,1fr)}#workspace[aria-labelledby="nav-world"]{grid-template-columns:minmax(0,1fr)}#workspace[aria-labelledby="nav-world"]>#satanicMods{grid-column:1;grid-row:auto}#workspace[aria-labelledby="nav-world"] .row .lbl{width:152px}.row .lbl{width:152px}}
+@media(max-width:1100px) and (max-height:640px){.page-heading>div:first-child{display:flex;align-items:baseline;flex-wrap:wrap;gap:0 var(--space-6)}.page-heading p{margin:0}}
+@media(max-width:720px){.sidebar{gap:var(--space-4);padding:0 var(--space-6)}.brand>div{display:none}.tabbtn{padding:0 var(--space-4);gap:var(--space-3);font-size:var(--font-size-sm)}.page-actions{width:100%;justify-content:space-between;flex-wrap:wrap}.row{flex-wrap:wrap}.row .lbl,#workspace[aria-labelledby="nav-world"] .row .lbl{width:100%}.row:has(.range-control)>.range-control{flex-basis:100%}.card,.mods-col>*{padding:var(--space-6)}#qolCard,#itemsCard{padding:0}#controlToolbar,.sat-toolbar{flex-wrap:wrap}.control-search{flex-basis:100%}.control-filters,.sat-filters{width:100%}.control-filters button,.sat-filters button{flex:1}.subtabbar{justify-self:stretch}.subtabbtn{flex:1;justify-content:center;padding:0 var(--space-3);font-size:var(--font-size-xs)}.sat-heading{flex-wrap:wrap}.sat-columns{grid-template-columns:minmax(0,1fr)}.sat-footer{flex-direction:column;align-items:flex-start}#statusbar{gap:var(--space-4);padding:0 var(--space-6)}.status-foot{display:none}#toast,.undo-toast{right:var(--space-6)}}

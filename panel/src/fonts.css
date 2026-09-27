@@ -1,0 +1,21 @@
+/* IBM Plex Sans and IBM Plex Mono, bundled so the panel needs no network
+   (OFL-1.1; the licence sits beside each file, and CREDITS.md names the
+   source). Each is one upright variable file covering weights 100 to 700.
+   tokens.css names them as the body and mono families, app.css uses them on
+   every page, and index.html preloads both files so the first frame is drawn
+   in them (font-display: block, never a fallback flash). */
+@font-face {
+  font-family: 'IBM Plex Sans';
+  src: url('./fonts/IBMPlexSans/IBMPlexSans-Variable.woff2') format('woff2');
+  font-weight: 100 700;
+  font-style: normal;
+  font-display: block;
+}
+
+@font-face {
+  font-family: 'IBM Plex Mono';
+  src: url('./fonts/IBMPlexMono/IBMPlexMono-Variable.woff2') format('woff2');
+  font-weight: 100 700;
+  font-style: normal;
+  font-display: block;
+}

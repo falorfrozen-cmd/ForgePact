@@ -14,6 +14,7 @@ import importlib.util
 import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -27,10 +28,11 @@ _spec.loader.exec_module(cut_release)
 
 class CutReleaseTests(unittest.TestCase):
     def setUp(self):
-        self._tmp = Path(__file__).resolve().parents[1] / "build" / "cut-release-fixture"
-        if self._tmp.exists():
-            shutil.rmtree(self._tmp)
-        self._tmp.mkdir(parents=True)
+        # A fresh directory per test, never a fixed path: the parallel runner
+        # (tools/run_tests_parallel.py) may run two suites side by side.
+        build = Path(__file__).resolve().parents[1] / "build"
+        build.mkdir(exist_ok=True)
+        self._tmp = Path(tempfile.mkdtemp(prefix="cut-release-fixture-", dir=build))
         self.addCleanup(shutil.rmtree, self._tmp, True)
 
         self.version = cut_release.current(ROOT)

@@ -15,7 +15,7 @@ would have to already know the answer to.
 Reuses `function_body`/`strip_research_blocks`/`strip_comments` from
 `test_release_hook_contract`, in the style of
 `test_forgepact_notes_cleanup_workflow.py:12`. Does not import
-`src/forgepact.py` (via that module's own tests) - its `panel_icons`
+`src/forgepact.py` (via that module's own tests) - its `offline_launcher`
 import fails outside a full `unittest discover` run.
 """
 

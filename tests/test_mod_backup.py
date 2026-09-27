@@ -1,5 +1,6 @@
 import importlib.util
 import struct
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,6 +9,11 @@ from unittest import mock
 
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "src" / "forgepact.py"
+# forgepact.py imports its sibling panel_icons, so src/ must be on sys.path.
+# Serially an earlier module happened to put it there; alone (as the parallel
+# runner runs each module) this one has to do it itself.
+if str(MODULE_PATH.parent) not in sys.path:
+    sys.path.insert(0, str(MODULE_PATH.parent))
 SPEC = importlib.util.spec_from_file_location("forgepact_under_test", MODULE_PATH)
 forgepact = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(forgepact)

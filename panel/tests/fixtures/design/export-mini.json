@@ -1,0 +1,67 @@
+{
+  "fileKey": "fixture",
+  "direction": "fixture",
+  "exportedAt": "2026-09-25T00:00:00Z",
+  "palettes": [
+    { "name": "alpha", "label": "Alpha", "default": true, "source": "fixture:alpha" },
+    { "name": "beta", "label": "Beta", "default": false, "source": "fixture:beta" },
+    { "name": "gamma", "label": "Gamma", "default": false, "source": "fixture:gamma" }
+  ],
+  "variables": [
+    { "collection": "tokens", "mode": "alpha", "name": "color/bg/base", "type": "COLOR", "value": "#101214" },
+    { "collection": "tokens", "mode": "alpha", "name": "color/bg/raised", "type": "COLOR", "value": "#ffffff14" },
+    { "collection": "tokens", "mode": "alpha", "name": "color/text/primary", "type": "COLOR", "value": "#f0f0f0" },
+    { "collection": "tokens", "mode": "alpha", "name": "color/text/muted", "type": "COLOR", "value": "#a8a8a8" },
+    { "collection": "tokens", "mode": "alpha", "name": "color/accent", "type": "COLOR", "value": "#4c9be8" },
+    { "collection": "tokens", "mode": "alpha", "name": "color/accent/ink", "type": "COLOR", "value": "#0a0a0a" },
+    { "collection": "tokens", "mode": "alpha", "name": "space/2", "type": "FLOAT", "value": 8 },
+    { "collection": "tokens", "mode": "alpha", "name": "radius/md", "type": "FLOAT", "value": 6 },
+    { "collection": "tokens", "mode": "alpha", "name": "font/size/md", "type": "FLOAT", "value": 14 },
+    { "collection": "tokens", "mode": "alpha", "name": "font/weight/semibold", "type": "FLOAT", "value": 600 },
+    { "collection": "tokens", "mode": "alpha", "name": "line-height/base", "type": "FLOAT", "value": 1.5 },
+    { "collection": "tokens", "mode": "alpha", "name": "font/line-height/tight", "type": "FLOAT", "value": 1.2000000476837158 },
+    { "collection": "tokens", "mode": "alpha", "name": "motion/duration/fast", "type": "FLOAT", "value": 120 },
+    { "collection": "tokens", "mode": "alpha", "name": "font/body/family", "type": "STRING", "value": "\"Fixture Sans\", \"Segoe UI\", system-ui, sans-serif" },
+    { "collection": "tokens", "mode": "alpha", "name": "font/mono/family", "type": "STRING", "value": "Fixture Mono" },
+    { "collection": "tokens", "mode": "alpha", "name": "motion/easing/standard", "type": "STRING", "value": "cubic-bezier(0.2, 0, 0, 1)" },
+    { "collection": "tokens", "mode": "alpha", "name": "shadow/raised", "type": "STRING", "value": "0 1px 2px #00000066" },
+
+    { "collection": "tokens", "mode": "beta", "name": "color/bg/base", "type": "COLOR", "value": "#fafafa" },
+    { "collection": "tokens", "mode": "beta", "name": "color/bg/raised", "type": "COLOR", "value": "#0000000d" },
+    { "collection": "tokens", "mode": "beta", "name": "color/text/primary", "type": "COLOR", "value": "#1a1a1a" },
+    { "collection": "tokens", "mode": "beta", "name": "color/text/muted", "type": "COLOR", "value": "#595959" },
+    { "collection": "tokens", "mode": "beta", "name": "color/accent", "type": "COLOR", "value": "#1f5fa8" },
+    { "collection": "tokens", "mode": "beta", "name": "color/accent/ink", "type": "COLOR", "value": "#ffffff" },
+
+    { "collection": "tokens", "mode": "gamma", "name": "color/bg/base", "type": "COLOR", "value": "#1b1024" },
+    { "collection": "tokens", "mode": "gamma", "name": "color/bg/raised", "type": "COLOR", "value": "#ffffff1a" },
+    { "collection": "tokens", "mode": "gamma", "name": "color/text/primary", "type": "COLOR", "value": "#f4eefa" },
+    { "collection": "tokens", "mode": "gamma", "name": "color/text/muted", "type": "COLOR", "value": "#b9a9c9" },
+    { "collection": "tokens", "mode": "gamma", "name": "color/accent", "type": "COLOR", "value": "#d98cff" },
+    { "collection": "tokens", "mode": "gamma", "name": "color/accent/ink", "type": "COLOR", "value": "#1b1024" }
+  ],
+  "amendments": {
+    "enabledModsForm": 1,
+    "flatness": "base",
+    "overflowAfter": null,
+    "texts": { "heading": "Enabled mods", "empty": "Nothing is on", "turnOff": "Turn off", "theme": "Theme" }
+  },
+  "borders": [
+    { "selector": "#controlSearch", "why": "marks the field's edit area" }
+  ],
+  "contrastPairs": [
+    { "fg": "color/text/primary", "bg": "color/bg/base", "minRatio": 4.5, "where": "body text" },
+    { "fg": "color/text/muted", "bg": "color/bg/base", "minRatio": 4.5, "where": "muted text" },
+    { "fg": "color/text/primary", "bg": "color/bg/raised", "minRatio": 4.5, "where": "text on a raised surface (bg with alpha)" },
+    { "fg": "color/accent/ink", "bg": "color/accent", "minRatio": 4.5, "where": "accent button label" },
+    { "fg": "color/accent", "bg": "color/bg/base", "minRatio": 3.0, "where": "focus ring" }
+  ],
+  "selectorTokens": [
+    { "selector": "body", "property": "background-color", "variable": "color/bg/base" }
+  ],
+  "screens": [],
+  "states": [],
+  "components": [],
+  "fonts": [],
+  "bindingAudit": { "fillsTotal": 0, "fillsBound": 0, "textsTotal": 0, "textsStyled": 0 }
+}

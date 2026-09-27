@@ -1,0 +1,4683 @@
+{
+ "derivedFrom": "tests/behaviour-oracle.json",
+ "legacyRecordedAt": "2026-09-24T21:45:52.549Z",
+ "supplementFrom": "tests/behaviour-oracle-gems.json",
+ "keySupplementFrom": "tests/behaviour-oracle-primeevil.json",
+ "controls": [
+  "#sw_stats_exp",
+  "#sw_stats_magicfind",
+  "#sw_stats_movespeed",
+  "#sw_percent_stats_damage",
+  "#sw_percent_stats_attackspeed",
+  "#sw_percent_stats_castrate",
+  "#sw_percent_stats_lifereplenish",
+  "#sw_percent_stats_manareplenish",
+  "#sw_percent_stats_defense",
+  "#sw_percent_stats_critdamage",
+  "#sw_percent_stats_critchance",
+  "#sw_percent_stats_spellcritdamage",
+  "#sw_percent_stats_spellcritchance",
+  "#sw_rarity_rare",
+  "#sw_rarity_ancient",
+  "#sw_enemy_speed",
+  "#sw_spawners_rift",
+  "#sw_spawners_battlefield",
+  "#sw_spawners_cursedorb",
+  "#sw_spawners_summonportal",
+  "#sw_spawners_chaospillars",
+  "#sw_spawners_chaostower",
+  "#sw_spawners_shadowrealm",
+  "#sw_drops_gold",
+  "#sw_drops_mining_ore",
+  "#sw_keys_dungeon",
+  "#sw_keys_angelic",
+  "#sw_keys_chaos",
+  "#sw_keys_bifrost",
+  "#sw_keys_relic",
+  "#sw_keys_rune",
+  "#sw_keys_stone",
+  "#sw_keys_bossgem",
+  "#sw_keys_orb",
+  "#sw_keys_scrollofra",
+  "#sw_keys_dimshard",
+  "#sw_keys_battlefrag",
+  "#sw_keys_colosfrag",
+  "#sw_keys_ruby",
+  "#sw_angelic_items",
+  "#theme",
+  "#sw_keys_primeevil"
+ ],
+ "steps": [
+  {
+   "step": 0,
+   "control": "tab:modifiers",
+   "action": "click"
+  },
+  {
+   "step": 1,
+   "control": "input[type=range][data-sec=\"stats\"][data-key=\"exp\"]",
+   "action": "max"
+  },
+  {
+   "step": 2,
+   "control": "input[type=range][data-sec=\"stats\"][data-key=\"exp\"]",
+   "action": "min"
+  },
+  {
+   "step": 3,
+   "control": "input[type=range][data-sec=\"stats\"][data-key=\"exp\"]",
+   "action": "max"
+  },
+  {
+   "step": 4,
+   "control": "#sw_stats_exp",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "stats.exp",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 2
+    }
+   }
+  },
+  {
+   "step": 5,
+   "control": "#sw_stats_exp",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "stats.exp",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 3
+    }
+   }
+  },
+  {
+   "step": 6,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_stats_exp\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 4
+    },
+    "cmds": {
+     "same": 4
+    }
+   }
+  },
+  {
+   "step": 7,
+   "control": "#sw_stats_exp",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "stats.exp",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 5
+    }
+   }
+  },
+  {
+   "step": 8,
+   "control": "input[type=range][data-sec=\"stats\"][data-key=\"exp\"]",
+   "action": "min"
+  },
+  {
+   "step": 9,
+   "control": "input[type=range][data-sec=\"stats\"][data-key=\"magicfind\"]",
+   "action": "max"
+  },
+  {
+   "step": 10,
+   "control": "input[type=range][data-sec=\"stats\"][data-key=\"magicfind\"]",
+   "action": "min"
+  },
+  {
+   "step": 11,
+   "control": "input[type=range][data-sec=\"stats\"][data-key=\"magicfind\"]",
+   "action": "max"
+  },
+  {
+   "step": 12,
+   "control": "#sw_stats_magicfind",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "stats.magicfind",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 10
+    }
+   }
+  },
+  {
+   "step": 13,
+   "control": "#sw_stats_magicfind",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "stats.magicfind",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 11
+    }
+   }
+  },
+  {
+   "step": 14,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_stats_magicfind\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 12
+    },
+    "cmds": {
+     "same": 12
+    }
+   }
+  },
+  {
+   "step": 15,
+   "control": "#sw_stats_magicfind",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "stats.magicfind",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 13
+    }
+   }
+  },
+  {
+   "step": 16,
+   "control": "input[type=range][data-sec=\"stats\"][data-key=\"magicfind\"]",
+   "action": "min"
+  },
+  {
+   "step": 17,
+   "control": "input[type=range][data-sec=\"stats\"][data-key=\"movespeed\"]",
+   "action": "max"
+  },
+  {
+   "step": 18,
+   "control": "input[type=range][data-sec=\"stats\"][data-key=\"movespeed\"]",
+   "action": "min"
+  },
+  {
+   "step": 19,
+   "control": "input[type=range][data-sec=\"stats\"][data-key=\"movespeed\"]",
+   "action": "max"
+  },
+  {
+   "step": 20,
+   "control": "#sw_stats_movespeed",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "stats.movespeed",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 18
+    }
+   }
+  },
+  {
+   "step": 21,
+   "control": "#sw_stats_movespeed",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "stats.movespeed",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 19
+    }
+   }
+  },
+  {
+   "step": 22,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_stats_movespeed\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 20
+    },
+    "cmds": {
+     "same": 20
+    }
+   }
+  },
+  {
+   "step": 23,
+   "control": "#sw_stats_movespeed",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "stats.movespeed",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 21
+    }
+   }
+  },
+  {
+   "step": 24,
+   "control": "input[type=range][data-sec=\"stats\"][data-key=\"movespeed\"]",
+   "action": "min"
+  },
+  {
+   "step": 25,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"damage\"]",
+   "action": "max"
+  },
+  {
+   "step": 26,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"damage\"]",
+   "action": "min"
+  },
+  {
+   "step": 27,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"damage\"]",
+   "action": "max"
+  },
+  {
+   "step": 28,
+   "control": "#sw_percent_stats_damage",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "percent_stats.damage",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 26
+    }
+   }
+  },
+  {
+   "step": 29,
+   "control": "#sw_percent_stats_damage",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "percent_stats.damage",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 27
+    }
+   }
+  },
+  {
+   "step": 30,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_percent_stats_damage\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 28
+    },
+    "cmds": {
+     "same": 28
+    }
+   }
+  },
+  {
+   "step": 31,
+   "control": "#sw_percent_stats_damage",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "percent_stats.damage",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 29
+    }
+   }
+  },
+  {
+   "step": 32,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"damage\"]",
+   "action": "min"
+  },
+  {
+   "step": 33,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"attackspeed\"]",
+   "action": "max"
+  },
+  {
+   "step": 34,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"attackspeed\"]",
+   "action": "min"
+  },
+  {
+   "step": 35,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"attackspeed\"]",
+   "action": "max"
+  },
+  {
+   "step": 36,
+   "control": "#sw_percent_stats_attackspeed",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "percent_stats.attackspeed",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 34
+    }
+   }
+  },
+  {
+   "step": 37,
+   "control": "#sw_percent_stats_attackspeed",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "percent_stats.attackspeed",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 35
+    }
+   }
+  },
+  {
+   "step": 38,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_percent_stats_attackspeed\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 36
+    },
+    "cmds": {
+     "same": 36
+    }
+   }
+  },
+  {
+   "step": 39,
+   "control": "#sw_percent_stats_attackspeed",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "percent_stats.attackspeed",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 37
+    }
+   }
+  },
+  {
+   "step": 40,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"attackspeed\"]",
+   "action": "min"
+  },
+  {
+   "step": 41,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"castrate\"]",
+   "action": "max"
+  },
+  {
+   "step": 42,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"castrate\"]",
+   "action": "min"
+  },
+  {
+   "step": 43,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"castrate\"]",
+   "action": "max"
+  },
+  {
+   "step": 44,
+   "control": "#sw_percent_stats_castrate",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "percent_stats.castrate",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 42
+    }
+   }
+  },
+  {
+   "step": 45,
+   "control": "#sw_percent_stats_castrate",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "percent_stats.castrate",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 43
+    }
+   }
+  },
+  {
+   "step": 46,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_percent_stats_castrate\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 44
+    },
+    "cmds": {
+     "same": 44
+    }
+   }
+  },
+  {
+   "step": 47,
+   "control": "#sw_percent_stats_castrate",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "percent_stats.castrate",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 45
+    }
+   }
+  },
+  {
+   "step": 48,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"castrate\"]",
+   "action": "min"
+  },
+  {
+   "step": 49,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"lifereplenish\"]",
+   "action": "max"
+  },
+  {
+   "step": 50,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"lifereplenish\"]",
+   "action": "min"
+  },
+  {
+   "step": 51,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"lifereplenish\"]",
+   "action": "max"
+  },
+  {
+   "step": 52,
+   "control": "#sw_percent_stats_lifereplenish",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "percent_stats.lifereplenish",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 50
+    }
+   }
+  },
+  {
+   "step": 53,
+   "control": "#sw_percent_stats_lifereplenish",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "percent_stats.lifereplenish",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 51
+    }
+   }
+  },
+  {
+   "step": 54,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_percent_stats_lifereplenish\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 52
+    },
+    "cmds": {
+     "same": 52
+    }
+   }
+  },
+  {
+   "step": 55,
+   "control": "#sw_percent_stats_lifereplenish",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "percent_stats.lifereplenish",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 53
+    }
+   }
+  },
+  {
+   "step": 56,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"lifereplenish\"]",
+   "action": "min"
+  },
+  {
+   "step": 57,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"manareplenish\"]",
+   "action": "max"
+  },
+  {
+   "step": 58,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"manareplenish\"]",
+   "action": "min"
+  },
+  {
+   "step": 59,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"manareplenish\"]",
+   "action": "max"
+  },
+  {
+   "step": 60,
+   "control": "#sw_percent_stats_manareplenish",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "percent_stats.manareplenish",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 58
+    }
+   }
+  },
+  {
+   "step": 61,
+   "control": "#sw_percent_stats_manareplenish",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "percent_stats.manareplenish",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 59
+    }
+   }
+  },
+  {
+   "step": 62,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_percent_stats_manareplenish\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 60
+    },
+    "cmds": {
+     "same": 60
+    }
+   }
+  },
+  {
+   "step": 63,
+   "control": "#sw_percent_stats_manareplenish",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "percent_stats.manareplenish",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 61
+    }
+   }
+  },
+  {
+   "step": 64,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"manareplenish\"]",
+   "action": "min"
+  },
+  {
+   "step": 65,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"defense\"]",
+   "action": "max"
+  },
+  {
+   "step": 66,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"defense\"]",
+   "action": "min"
+  },
+  {
+   "step": 67,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"defense\"]",
+   "action": "max"
+  },
+  {
+   "step": 68,
+   "control": "#sw_percent_stats_defense",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "percent_stats.defense",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 66
+    }
+   }
+  },
+  {
+   "step": 69,
+   "control": "#sw_percent_stats_defense",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "percent_stats.defense",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 67
+    }
+   }
+  },
+  {
+   "step": 70,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_percent_stats_defense\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 68
+    },
+    "cmds": {
+     "same": 68
+    }
+   }
+  },
+  {
+   "step": 71,
+   "control": "#sw_percent_stats_defense",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "percent_stats.defense",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 69
+    }
+   }
+  },
+  {
+   "step": 72,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"defense\"]",
+   "action": "min"
+  },
+  {
+   "step": 73,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"critdamage\"]",
+   "action": "max"
+  },
+  {
+   "step": 74,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"critdamage\"]",
+   "action": "min"
+  },
+  {
+   "step": 75,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"critdamage\"]",
+   "action": "max"
+  },
+  {
+   "step": 76,
+   "control": "#sw_percent_stats_critdamage",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "percent_stats.critdamage",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 74
+    }
+   }
+  },
+  {
+   "step": 77,
+   "control": "#sw_percent_stats_critdamage",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "percent_stats.critdamage",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 75
+    }
+   }
+  },
+  {
+   "step": 78,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_percent_stats_critdamage\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 76
+    },
+    "cmds": {
+     "same": 76
+    }
+   }
+  },
+  {
+   "step": 79,
+   "control": "#sw_percent_stats_critdamage",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "percent_stats.critdamage",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 77
+    }
+   }
+  },
+  {
+   "step": 80,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"critdamage\"]",
+   "action": "min"
+  },
+  {
+   "step": 81,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"critchance\"]",
+   "action": "max"
+  },
+  {
+   "step": 82,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"critchance\"]",
+   "action": "min"
+  },
+  {
+   "step": 83,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"critchance\"]",
+   "action": "max"
+  },
+  {
+   "step": 84,
+   "control": "#sw_percent_stats_critchance",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "percent_stats.critchance",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 82
+    }
+   }
+  },
+  {
+   "step": 85,
+   "control": "#sw_percent_stats_critchance",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "percent_stats.critchance",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 83
+    }
+   }
+  },
+  {
+   "step": 86,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_percent_stats_critchance\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 84
+    },
+    "cmds": {
+     "same": 84
+    }
+   }
+  },
+  {
+   "step": 87,
+   "control": "#sw_percent_stats_critchance",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "percent_stats.critchance",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 85
+    }
+   }
+  },
+  {
+   "step": 88,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"critchance\"]",
+   "action": "min"
+  },
+  {
+   "step": 89,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"spellcritdamage\"]",
+   "action": "max"
+  },
+  {
+   "step": 90,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"spellcritdamage\"]",
+   "action": "min"
+  },
+  {
+   "step": 91,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"spellcritdamage\"]",
+   "action": "max"
+  },
+  {
+   "step": 92,
+   "control": "#sw_percent_stats_spellcritdamage",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "percent_stats.spellcritdamage",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 90
+    }
+   }
+  },
+  {
+   "step": 93,
+   "control": "#sw_percent_stats_spellcritdamage",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "percent_stats.spellcritdamage",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 91
+    }
+   }
+  },
+  {
+   "step": 94,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_percent_stats_spellcritdamage\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 92
+    },
+    "cmds": {
+     "same": 92
+    }
+   }
+  },
+  {
+   "step": 95,
+   "control": "#sw_percent_stats_spellcritdamage",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "percent_stats.spellcritdamage",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 93
+    }
+   }
+  },
+  {
+   "step": 96,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"spellcritdamage\"]",
+   "action": "min"
+  },
+  {
+   "step": 97,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"spellcritchance\"]",
+   "action": "max"
+  },
+  {
+   "step": 98,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"spellcritchance\"]",
+   "action": "min"
+  },
+  {
+   "step": 99,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"spellcritchance\"]",
+   "action": "max"
+  },
+  {
+   "step": 100,
+   "control": "#sw_percent_stats_spellcritchance",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "percent_stats.spellcritchance",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 98
+    }
+   }
+  },
+  {
+   "step": 101,
+   "control": "#sw_percent_stats_spellcritchance",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "percent_stats.spellcritchance",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 99
+    }
+   }
+  },
+  {
+   "step": 102,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_percent_stats_spellcritchance\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 100
+    },
+    "cmds": {
+     "same": 100
+    }
+   }
+  },
+  {
+   "step": 103,
+   "control": "#sw_percent_stats_spellcritchance",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "percent_stats.spellcritchance",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 101
+    }
+   }
+  },
+  {
+   "step": 104,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"spellcritchance\"]",
+   "action": "min"
+  },
+  {
+   "step": 105,
+   "control": "tab:world",
+   "action": "click"
+  },
+  {
+   "step": 106,
+   "control": "#den",
+   "action": "max"
+  },
+  {
+   "step": 107,
+   "control": "#den_on",
+   "action": "click"
+  },
+  {
+   "step": 108,
+   "control": "#den_on",
+   "action": "click"
+  },
+  {
+   "step": 109,
+   "control": "#den_on",
+   "action": "click"
+  },
+  {
+   "step": 110,
+   "control": "#enabledMods .quick-disable[data-for=\"den_on\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 108
+    },
+    "cmds": {
+     "same": 108
+    }
+   }
+  },
+  {
+   "step": 111,
+   "control": "#den",
+   "action": "min"
+  },
+  {
+   "step": 112,
+   "control": "#rarity_rare",
+   "action": "max"
+  },
+  {
+   "step": 113,
+   "control": "#rarity_rare",
+   "action": "min"
+  },
+  {
+   "step": 114,
+   "control": "#rarity_rare",
+   "action": "max"
+  },
+  {
+   "step": 115,
+   "control": "#sw_rarity_rare",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "rarity_rare",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 113
+    }
+   }
+  },
+  {
+   "step": 116,
+   "control": "#sw_rarity_rare",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "rarity_rare",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 114
+    }
+   }
+  },
+  {
+   "step": 117,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_rarity_rare\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 115
+    },
+    "cmds": {
+     "same": 115
+    }
+   }
+  },
+  {
+   "step": 118,
+   "control": "#sw_rarity_rare",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "rarity_rare",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 116
+    }
+   }
+  },
+  {
+   "step": 119,
+   "control": "#rarity_rare",
+   "action": "min"
+  },
+  {
+   "step": 120,
+   "control": "#rarity_ancient",
+   "action": "max"
+  },
+  {
+   "step": 121,
+   "control": "#rarity_ancient",
+   "action": "min"
+  },
+  {
+   "step": 122,
+   "control": "#rarity_ancient",
+   "action": "max"
+  },
+  {
+   "step": 123,
+   "control": "#sw_rarity_ancient",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "rarity_ancient",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 121
+    }
+   }
+  },
+  {
+   "step": 124,
+   "control": "#sw_rarity_ancient",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "rarity_ancient",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 122
+    }
+   }
+  },
+  {
+   "step": 125,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_rarity_ancient\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 123
+    },
+    "cmds": {
+     "same": 123
+    }
+   }
+  },
+  {
+   "step": 126,
+   "control": "#sw_rarity_ancient",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "rarity_ancient",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 124
+    }
+   }
+  },
+  {
+   "step": 127,
+   "control": "#rarity_ancient",
+   "action": "min"
+  },
+  {
+   "step": 128,
+   "control": "#enemyspeed",
+   "action": "max"
+  },
+  {
+   "step": 129,
+   "control": "#enemyspeed",
+   "action": "min"
+  },
+  {
+   "step": 130,
+   "control": "#enemyspeed",
+   "action": "max"
+  },
+  {
+   "step": 131,
+   "control": "#sw_enemy_speed",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "enemy_speed",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 129
+    }
+   }
+  },
+  {
+   "step": 132,
+   "control": "#sw_enemy_speed",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "enemy_speed",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 130
+    }
+   }
+  },
+  {
+   "step": 133,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_enemy_speed\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 131
+    },
+    "cmds": {
+     "same": 131
+    }
+   }
+  },
+  {
+   "step": 134,
+   "control": "#sw_enemy_speed",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "enemy_speed",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 132
+    }
+   }
+  },
+  {
+   "step": 135,
+   "control": "#enemyspeed",
+   "action": "min"
+  },
+  {
+   "step": 136,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"rift\"]",
+   "action": "max"
+  },
+  {
+   "step": 137,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"rift\"]",
+   "action": "min"
+  },
+  {
+   "step": 138,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"rift\"]",
+   "action": "max"
+  },
+  {
+   "step": 139,
+   "control": "#sw_spawners_rift",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "spawners.rift",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 137
+    }
+   }
+  },
+  {
+   "step": 140,
+   "control": "#sw_spawners_rift",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "spawners.rift",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 138
+    }
+   }
+  },
+  {
+   "step": 141,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_spawners_rift\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 139
+    },
+    "cmds": {
+     "same": 139
+    }
+   }
+  },
+  {
+   "step": 142,
+   "control": "#sw_spawners_rift",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "spawners.rift",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 140
+    }
+   }
+  },
+  {
+   "step": 143,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"rift\"]",
+   "action": "min"
+  },
+  {
+   "step": 144,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"battlefield\"]",
+   "action": "max"
+  },
+  {
+   "step": 145,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"battlefield\"]",
+   "action": "min"
+  },
+  {
+   "step": 146,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"battlefield\"]",
+   "action": "max"
+  },
+  {
+   "step": 147,
+   "control": "#sw_spawners_battlefield",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "spawners.battlefield",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 145
+    }
+   }
+  },
+  {
+   "step": 148,
+   "control": "#sw_spawners_battlefield",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "spawners.battlefield",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 146
+    }
+   }
+  },
+  {
+   "step": 149,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_spawners_battlefield\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 147
+    },
+    "cmds": {
+     "same": 147
+    }
+   }
+  },
+  {
+   "step": 150,
+   "control": "#sw_spawners_battlefield",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "spawners.battlefield",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 148
+    }
+   }
+  },
+  {
+   "step": 151,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"battlefield\"]",
+   "action": "min"
+  },
+  {
+   "step": 152,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"cursedorb\"]",
+   "action": "max"
+  },
+  {
+   "step": 153,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"cursedorb\"]",
+   "action": "min"
+  },
+  {
+   "step": 154,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"cursedorb\"]",
+   "action": "max"
+  },
+  {
+   "step": 155,
+   "control": "#sw_spawners_cursedorb",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "spawners.cursedorb",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 153
+    }
+   }
+  },
+  {
+   "step": 156,
+   "control": "#sw_spawners_cursedorb",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "spawners.cursedorb",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 154
+    }
+   }
+  },
+  {
+   "step": 157,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_spawners_cursedorb\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 155
+    },
+    "cmds": {
+     "same": 155
+    }
+   }
+  },
+  {
+   "step": 158,
+   "control": "#sw_spawners_cursedorb",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "spawners.cursedorb",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 156
+    }
+   }
+  },
+  {
+   "step": 159,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"cursedorb\"]",
+   "action": "min"
+  },
+  {
+   "step": 160,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"summonportal\"]",
+   "action": "max"
+  },
+  {
+   "step": 161,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"summonportal\"]",
+   "action": "min"
+  },
+  {
+   "step": 162,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"summonportal\"]",
+   "action": "max"
+  },
+  {
+   "step": 163,
+   "control": "#sw_spawners_summonportal",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "spawners.summonportal",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 161
+    }
+   }
+  },
+  {
+   "step": 164,
+   "control": "#sw_spawners_summonportal",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "spawners.summonportal",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 162
+    }
+   }
+  },
+  {
+   "step": 165,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_spawners_summonportal\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 163
+    },
+    "cmds": {
+     "same": 163
+    }
+   }
+  },
+  {
+   "step": 166,
+   "control": "#sw_spawners_summonportal",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "spawners.summonportal",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 164
+    }
+   }
+  },
+  {
+   "step": 167,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"summonportal\"]",
+   "action": "min"
+  },
+  {
+   "step": 168,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"chaospillars\"]",
+   "action": "max"
+  },
+  {
+   "step": 169,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"chaospillars\"]",
+   "action": "min"
+  },
+  {
+   "step": 170,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"chaospillars\"]",
+   "action": "max"
+  },
+  {
+   "step": 171,
+   "control": "#sw_spawners_chaospillars",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "spawners.chaospillars",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 169
+    }
+   }
+  },
+  {
+   "step": 172,
+   "control": "#sw_spawners_chaospillars",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "spawners.chaospillars",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 170
+    }
+   }
+  },
+  {
+   "step": 173,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_spawners_chaospillars\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 171
+    },
+    "cmds": {
+     "same": 171
+    }
+   }
+  },
+  {
+   "step": 174,
+   "control": "#sw_spawners_chaospillars",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "spawners.chaospillars",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 172
+    }
+   }
+  },
+  {
+   "step": 175,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"chaospillars\"]",
+   "action": "min"
+  },
+  {
+   "step": 176,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"chaostower\"]",
+   "action": "max"
+  },
+  {
+   "step": 177,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"chaostower\"]",
+   "action": "min"
+  },
+  {
+   "step": 178,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"chaostower\"]",
+   "action": "max"
+  },
+  {
+   "step": 179,
+   "control": "#sw_spawners_chaostower",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "spawners.chaostower",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 177
+    }
+   }
+  },
+  {
+   "step": 180,
+   "control": "#sw_spawners_chaostower",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "spawners.chaostower",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 178
+    }
+   }
+  },
+  {
+   "step": 181,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_spawners_chaostower\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 179
+    },
+    "cmds": {
+     "same": 179
+    }
+   }
+  },
+  {
+   "step": 182,
+   "control": "#sw_spawners_chaostower",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "spawners.chaostower",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 180
+    }
+   }
+  },
+  {
+   "step": 183,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"chaostower\"]",
+   "action": "min"
+  },
+  {
+   "step": 184,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"shadowrealm\"]",
+   "action": "max"
+  },
+  {
+   "step": 185,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"shadowrealm\"]",
+   "action": "min"
+  },
+  {
+   "step": 186,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"shadowrealm\"]",
+   "action": "max"
+  },
+  {
+   "step": 187,
+   "control": "#sw_spawners_shadowrealm",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "spawners.shadowrealm",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 185
+    }
+   }
+  },
+  {
+   "step": 188,
+   "control": "#sw_spawners_shadowrealm",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "spawners.shadowrealm",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 186
+    }
+   }
+  },
+  {
+   "step": 189,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_spawners_shadowrealm\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 187
+    },
+    "cmds": {
+     "same": 187
+    }
+   }
+  },
+  {
+   "step": 190,
+   "control": "#sw_spawners_shadowrealm",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "spawners.shadowrealm",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 188
+    }
+   }
+  },
+  {
+   "step": 191,
+   "control": "input[type=range][data-sec=\"spawners\"][data-key=\"shadowrealm\"]",
+   "action": "min"
+  },
+  {
+   "step": 192,
+   "control": "tab:loot",
+   "action": "click"
+  },
+  {
+   "step": 193,
+   "control": "input[type=range][data-sec=\"drops\"][data-key=\"gold\"]",
+   "action": "max"
+  },
+  {
+   "step": 194,
+   "control": "input[type=range][data-sec=\"drops\"][data-key=\"gold\"]",
+   "action": "min"
+  },
+  {
+   "step": 195,
+   "control": "input[type=range][data-sec=\"drops\"][data-key=\"gold\"]",
+   "action": "max"
+  },
+  {
+   "step": 196,
+   "control": "#sw_drops_gold",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "drops.gold",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 194
+    }
+   }
+  },
+  {
+   "step": 197,
+   "control": "#sw_drops_gold",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "drops.gold",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 195
+    }
+   }
+  },
+  {
+   "step": 198,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_drops_gold\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 196
+    },
+    "cmds": {
+     "same": 196
+    }
+   }
+  },
+  {
+   "step": 199,
+   "control": "#sw_drops_gold",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "drops.gold",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 197
+    }
+   }
+  },
+  {
+   "step": 200,
+   "control": "input[type=range][data-sec=\"drops\"][data-key=\"gold\"]",
+   "action": "min"
+  },
+  {
+   "step": 201,
+   "control": "input[type=range][data-sec=\"drops\"][data-key=\"mining_ore\"]",
+   "action": "max"
+  },
+  {
+   "step": 202,
+   "control": "input[type=range][data-sec=\"drops\"][data-key=\"mining_ore\"]",
+   "action": "min"
+  },
+  {
+   "step": 203,
+   "control": "input[type=range][data-sec=\"drops\"][data-key=\"mining_ore\"]",
+   "action": "max"
+  },
+  {
+   "step": 204,
+   "control": "#sw_drops_mining_ore",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "drops.mining_ore",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 202
+    }
+   }
+  },
+  {
+   "step": 205,
+   "control": "#sw_drops_mining_ore",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "drops.mining_ore",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 203
+    }
+   }
+  },
+  {
+   "step": 206,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_drops_mining_ore\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 204
+    },
+    "cmds": {
+     "same": 204
+    }
+   }
+  },
+  {
+   "step": 207,
+   "control": "#sw_drops_mining_ore",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "drops.mining_ore",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 205
+    }
+   }
+  },
+  {
+   "step": 208,
+   "control": "input[type=range][data-sec=\"drops\"][data-key=\"mining_ore\"]",
+   "action": "min"
+  },
+  {
+   "step": 209,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"dungeon\"]",
+   "action": "max"
+  },
+  {
+   "step": 210,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"dungeon\"]",
+   "action": "min"
+  },
+  {
+   "step": 211,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"dungeon\"]",
+   "action": "max"
+  },
+  {
+   "step": 212,
+   "control": "#sw_keys_dungeon",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.dungeon",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 210
+    }
+   }
+  },
+  {
+   "step": 213,
+   "control": "#sw_keys_dungeon",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.dungeon",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 211
+    }
+   }
+  },
+  {
+   "step": 214,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_keys_dungeon\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 212
+    },
+    "cmds": {
+     "same": 212
+    }
+   }
+  },
+  {
+   "step": 215,
+   "control": "#sw_keys_dungeon",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.dungeon",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 213
+    }
+   }
+  },
+  {
+   "step": 216,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"dungeon\"]",
+   "action": "min"
+  },
+  {
+   "step": 217,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"angelic\"]",
+   "action": "max"
+  },
+  {
+   "step": 218,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"angelic\"]",
+   "action": "min"
+  },
+  {
+   "step": 219,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"angelic\"]",
+   "action": "max"
+  },
+  {
+   "step": 220,
+   "control": "#sw_keys_angelic",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.angelic",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 218
+    }
+   }
+  },
+  {
+   "step": 221,
+   "control": "#sw_keys_angelic",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.angelic",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 219
+    }
+   }
+  },
+  {
+   "step": 222,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_keys_angelic\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 220
+    },
+    "cmds": {
+     "same": 220
+    }
+   }
+  },
+  {
+   "step": 223,
+   "control": "#sw_keys_angelic",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.angelic",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 221
+    }
+   }
+  },
+  {
+   "step": 224,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"angelic\"]",
+   "action": "min"
+  },
+  {
+   "step": 225,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"chaos\"]",
+   "action": "max"
+  },
+  {
+   "step": 226,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"chaos\"]",
+   "action": "min"
+  },
+  {
+   "step": 227,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"chaos\"]",
+   "action": "max"
+  },
+  {
+   "step": 228,
+   "control": "#sw_keys_chaos",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.chaos",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 226
+    }
+   }
+  },
+  {
+   "step": 229,
+   "control": "#sw_keys_chaos",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.chaos",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 227
+    }
+   }
+  },
+  {
+   "step": 230,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_keys_chaos\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 228
+    },
+    "cmds": {
+     "same": 228
+    }
+   }
+  },
+  {
+   "step": 231,
+   "control": "#sw_keys_chaos",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.chaos",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 229
+    }
+   }
+  },
+  {
+   "step": 232,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"chaos\"]",
+   "action": "min"
+  },
+  {
+   "step": 233,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"bifrost\"]",
+   "action": "max"
+  },
+  {
+   "step": 234,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"bifrost\"]",
+   "action": "min"
+  },
+  {
+   "step": 235,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"bifrost\"]",
+   "action": "max"
+  },
+  {
+   "step": 236,
+   "control": "#sw_keys_bifrost",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.bifrost",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 234
+    }
+   }
+  },
+  {
+   "step": 237,
+   "control": "#sw_keys_bifrost",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.bifrost",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 235
+    }
+   }
+  },
+  {
+   "step": 238,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_keys_bifrost\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 236
+    },
+    "cmds": {
+     "same": 236
+    }
+   }
+  },
+  {
+   "step": 239,
+   "control": "#sw_keys_bifrost",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.bifrost",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 237
+    }
+   }
+  },
+  {
+   "step": 240,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"bifrost\"]",
+   "action": "min"
+  },
+  {
+   "step": 241,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"relic\"]",
+   "action": "max"
+  },
+  {
+   "step": 242,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"relic\"]",
+   "action": "min"
+  },
+  {
+   "step": 243,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"relic\"]",
+   "action": "max"
+  },
+  {
+   "step": 244,
+   "control": "#sw_keys_relic",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.relic",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 242
+    }
+   }
+  },
+  {
+   "step": 245,
+   "control": "#sw_keys_relic",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.relic",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 243
+    }
+   }
+  },
+  {
+   "step": 246,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_keys_relic\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 244
+    },
+    "cmds": {
+     "same": 244
+    }
+   }
+  },
+  {
+   "step": 247,
+   "control": "#sw_keys_relic",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.relic",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 245
+    }
+   }
+  },
+  {
+   "step": 248,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"relic\"]",
+   "action": "min"
+  },
+  {
+   "step": 249,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"rune\"]",
+   "action": "max"
+  },
+  {
+   "step": 250,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"rune\"]",
+   "action": "min"
+  },
+  {
+   "step": 251,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"rune\"]",
+   "action": "max"
+  },
+  {
+   "step": 252,
+   "control": "#sw_keys_rune",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.rune",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 250
+    }
+   }
+  },
+  {
+   "step": 253,
+   "control": "#sw_keys_rune",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.rune",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 251
+    }
+   }
+  },
+  {
+   "step": 254,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_keys_rune\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 252
+    },
+    "cmds": {
+     "same": 252
+    }
+   }
+  },
+  {
+   "step": 255,
+   "control": "#sw_keys_rune",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.rune",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 253
+    }
+   }
+  },
+  {
+   "step": 256,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"rune\"]",
+   "action": "min"
+  },
+  {
+   "step": 257,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"stone\"]",
+   "action": "max"
+  },
+  {
+   "step": 258,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"stone\"]",
+   "action": "min"
+  },
+  {
+   "step": 259,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"stone\"]",
+   "action": "max"
+  },
+  {
+   "step": 260,
+   "control": "#sw_keys_stone",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.stone",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 258
+    }
+   }
+  },
+  {
+   "step": 261,
+   "control": "#sw_keys_stone",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.stone",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 259
+    }
+   }
+  },
+  {
+   "step": 262,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_keys_stone\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 260
+    },
+    "cmds": {
+     "same": 260
+    }
+   }
+  },
+  {
+   "step": 263,
+   "control": "#sw_keys_stone",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.stone",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 261
+    }
+   }
+  },
+  {
+   "step": 264,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"stone\"]",
+   "action": "min"
+  },
+  {
+   "step": 265,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"bossgem\"]",
+   "action": "max"
+  },
+  {
+   "step": 266,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"bossgem\"]",
+   "action": "min"
+  },
+  {
+   "step": 267,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"bossgem\"]",
+   "action": "max"
+  },
+  {
+   "step": 268,
+   "control": "#sw_keys_bossgem",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.bossgem",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 266
+    }
+   }
+  },
+  {
+   "step": 269,
+   "control": "#sw_keys_bossgem",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.bossgem",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 267
+    }
+   }
+  },
+  {
+   "step": 270,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_keys_bossgem\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 268
+    },
+    "cmds": {
+     "same": 268
+    }
+   }
+  },
+  {
+   "step": 271,
+   "control": "#sw_keys_bossgem",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.bossgem",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 269
+    }
+   }
+  },
+  {
+   "step": 272,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"bossgem\"]",
+   "action": "min"
+  },
+  {
+   "step": 273,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"orb\"]",
+   "action": "max"
+  },
+  {
+   "step": 274,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"orb\"]",
+   "action": "min"
+  },
+  {
+   "step": 275,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"orb\"]",
+   "action": "max"
+  },
+  {
+   "step": 276,
+   "control": "#sw_keys_orb",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.orb",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 274
+    }
+   }
+  },
+  {
+   "step": 277,
+   "control": "#sw_keys_orb",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.orb",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 275
+    }
+   }
+  },
+  {
+   "step": 278,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_keys_orb\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 276
+    },
+    "cmds": {
+     "same": 276
+    }
+   }
+  },
+  {
+   "step": 279,
+   "control": "#sw_keys_orb",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.orb",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 277
+    }
+   }
+  },
+  {
+   "step": 280,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"orb\"]",
+   "action": "min"
+  },
+  {
+   "step": 281,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"scrollofra\"]",
+   "action": "max"
+  },
+  {
+   "step": 282,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"scrollofra\"]",
+   "action": "min"
+  },
+  {
+   "step": 283,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"scrollofra\"]",
+   "action": "max"
+  },
+  {
+   "step": 284,
+   "control": "#sw_keys_scrollofra",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.scrollofra",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 282
+    }
+   }
+  },
+  {
+   "step": 285,
+   "control": "#sw_keys_scrollofra",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.scrollofra",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 283
+    }
+   }
+  },
+  {
+   "step": 286,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_keys_scrollofra\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 284
+    },
+    "cmds": {
+     "same": 284
+    }
+   }
+  },
+  {
+   "step": 287,
+   "control": "#sw_keys_scrollofra",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.scrollofra",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 285
+    }
+   }
+  },
+  {
+   "step": 288,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"scrollofra\"]",
+   "action": "min"
+  },
+  {
+   "step": 289,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"dimshard\"]",
+   "action": "max"
+  },
+  {
+   "step": 290,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"dimshard\"]",
+   "action": "min"
+  },
+  {
+   "step": 291,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"dimshard\"]",
+   "action": "max"
+  },
+  {
+   "step": 292,
+   "control": "#sw_keys_dimshard",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.dimshard",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 290
+    }
+   }
+  },
+  {
+   "step": 293,
+   "control": "#sw_keys_dimshard",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.dimshard",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 291
+    }
+   }
+  },
+  {
+   "step": 294,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_keys_dimshard\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 292
+    },
+    "cmds": {
+     "same": 292
+    }
+   }
+  },
+  {
+   "step": 295,
+   "control": "#sw_keys_dimshard",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.dimshard",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 293
+    }
+   }
+  },
+  {
+   "step": 296,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"dimshard\"]",
+   "action": "min"
+  },
+  {
+   "step": 297,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"battlefrag\"]",
+   "action": "max"
+  },
+  {
+   "step": 298,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"battlefrag\"]",
+   "action": "min"
+  },
+  {
+   "step": 299,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"battlefrag\"]",
+   "action": "max"
+  },
+  {
+   "step": 300,
+   "control": "#sw_keys_battlefrag",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.battlefrag",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 298
+    }
+   }
+  },
+  {
+   "step": 301,
+   "control": "#sw_keys_battlefrag",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.battlefrag",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 299
+    }
+   }
+  },
+  {
+   "step": 302,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_keys_battlefrag\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 300
+    },
+    "cmds": {
+     "same": 300
+    }
+   }
+  },
+  {
+   "step": 303,
+   "control": "#sw_keys_battlefrag",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.battlefrag",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 301
+    }
+   }
+  },
+  {
+   "step": 304,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"battlefrag\"]",
+   "action": "min"
+  },
+  {
+   "step": 305,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"colosfrag\"]",
+   "action": "max"
+  },
+  {
+   "step": 306,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"colosfrag\"]",
+   "action": "min"
+  },
+  {
+   "step": 307,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"colosfrag\"]",
+   "action": "max"
+  },
+  {
+   "step": 308,
+   "control": "#sw_keys_colosfrag",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.colosfrag",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 306
+    }
+   }
+  },
+  {
+   "step": 309,
+   "control": "#sw_keys_colosfrag",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.colosfrag",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 307
+    }
+   }
+  },
+  {
+   "step": 310,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_keys_colosfrag\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 308
+    },
+    "cmds": {
+     "same": 308
+    }
+   }
+  },
+  {
+   "step": 311,
+   "control": "#sw_keys_colosfrag",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.colosfrag",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 309
+    }
+   }
+  },
+  {
+   "step": 312,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"colosfrag\"]",
+   "action": "min"
+  },
+  {
+   "step": 313,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"ruby\"]",
+   "action": "max"
+  },
+  {
+   "step": 314,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"ruby\"]",
+   "action": "min"
+  },
+  {
+   "step": 315,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"ruby\"]",
+   "action": "max"
+  },
+  {
+   "step": 316,
+   "control": "#sw_keys_ruby",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.ruby",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 314
+    }
+   }
+  },
+  {
+   "step": 317,
+   "control": "#sw_keys_ruby",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.ruby",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 315
+    }
+   }
+  },
+  {
+   "step": 318,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_keys_ruby\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 316
+    },
+    "cmds": {
+     "same": 316
+    }
+   }
+  },
+  {
+   "step": 319,
+   "control": "#sw_keys_ruby",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.ruby",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 317
+    }
+   }
+  },
+  {
+   "step": 320,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"ruby\"]",
+   "action": "min"
+  },
+  {
+   "step": 321,
+   "control": "#angelic_items",
+   "action": "max"
+  },
+  {
+   "step": 322,
+   "control": "#angelic_items",
+   "action": "min"
+  },
+  {
+   "step": 323,
+   "control": "#angelic_items",
+   "action": "max"
+  },
+  {
+   "step": 324,
+   "control": "#sw_angelic_items",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "angelic_items",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 322
+    }
+   }
+  },
+  {
+   "step": 325,
+   "control": "#sw_angelic_items",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "angelic_items",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 323
+    }
+   }
+  },
+  {
+   "step": 326,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_angelic_items\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 324
+    },
+    "cmds": {
+     "same": 324
+    }
+   }
+  },
+  {
+   "step": 327,
+   "control": "#sw_angelic_items",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "angelic_items",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 325
+    }
+   }
+  },
+  {
+   "step": 328,
+   "control": "#angelic_items",
+   "action": "min"
+  },
+  {
+   "step": 329,
+   "control": "tab:mods",
+   "action": "click"
+  },
+  {
+   "step": 330,
+   "control": "subtab:qol",
+   "action": "click"
+  },
+  {
+   "step": 331,
+   "control": "#mod_filter_max_relics",
+   "action": "click"
+  },
+  {
+   "step": 332,
+   "control": "#mod_filter_max_relics",
+   "action": "click"
+  },
+  {
+   "step": 333,
+   "control": "#mod_filter_max_relics",
+   "action": "click"
+  },
+  {
+   "step": 334,
+   "control": "#enabledMods .quick-disable[data-for=\"mod_filter_max_relics\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 332
+    },
+    "cmds": {
+     "same": 332
+    }
+   }
+  },
+  {
+   "step": 335,
+   "control": "#mod_orb_pickup_radius",
+   "action": "click"
+  },
+  {
+   "step": 336,
+   "control": "#mod_orb_pickup_radius",
+   "action": "click"
+  },
+  {
+   "step": 337,
+   "control": "#mod_orb_pickup_radius",
+   "action": "click"
+  },
+  {
+   "step": 338,
+   "control": "#enabledMods .quick-disable[data-for=\"mod_orb_pickup_radius\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 336
+    },
+    "cmds": {
+     "same": 336
+    }
+   }
+  },
+  {
+   "step": 339,
+   "control": "#map_reveal",
+   "action": "click"
+  },
+  {
+   "step": 340,
+   "control": "#map_reveal",
+   "action": "click"
+  },
+  {
+   "step": 341,
+   "control": "#map_reveal",
+   "action": "click"
+  },
+  {
+   "step": 342,
+   "control": "#enabledMods .quick-disable[data-for=\"map_reveal\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 340
+    },
+    "cmds": {
+     "same": 340
+    }
+   }
+  },
+  {
+   "step": 343,
+   "control": "#mod_pet_quest_pickup",
+   "action": "click"
+  },
+  {
+   "step": 344,
+   "control": "#mod_pet_quest_pickup",
+   "action": "click"
+  },
+  {
+   "step": 345,
+   "control": "#mod_pet_quest_pickup",
+   "action": "click"
+  },
+  {
+   "step": 346,
+   "control": "#enabledMods .quick-disable[data-for=\"mod_pet_quest_pickup\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 344
+    },
+    "cmds": {
+     "same": 344
+    }
+   }
+  },
+  {
+   "step": 347,
+   "control": "#mod_auto_prospect",
+   "action": "click"
+  },
+  {
+   "step": 348,
+   "control": "#mod_auto_prospect",
+   "action": "click"
+  },
+  {
+   "step": 349,
+   "control": "#mod_auto_prospect",
+   "action": "click"
+  },
+  {
+   "step": 350,
+   "control": "#enabledMods .quick-disable[data-for=\"mod_auto_prospect\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 348
+    },
+    "cmds": {
+     "same": 348
+    }
+   }
+  },
+  {
+   "step": 351,
+   "control": "#mod_craft_mats",
+   "action": "click"
+  },
+  {
+   "step": 352,
+   "control": "#mod_craft_mats",
+   "action": "click"
+  },
+  {
+   "step": 353,
+   "control": "#mod_craft_mats",
+   "action": "click"
+  },
+  {
+   "step": 354,
+   "control": "#enabledMods .quick-disable[data-for=\"mod_craft_mats\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 352
+    },
+    "cmds": {
+     "same": 352
+    }
+   }
+  },
+  {
+   "step": 355,
+   "control": "#mod_toggle_indicator",
+   "action": "click"
+  },
+  {
+   "step": 356,
+   "control": "#mod_toggle_indicator",
+   "action": "click"
+  },
+  {
+   "step": 357,
+   "control": "#mod_toggle_indicator",
+   "action": "click"
+  },
+  {
+   "step": 358,
+   "control": "#enabledMods .quick-disable[data-for=\"mod_toggle_indicator\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 356
+    },
+    "cmds": {
+     "same": 356
+    }
+   }
+  },
+  {
+   "step": 359,
+   "control": "#mod_toggle_guard",
+   "action": "click"
+  },
+  {
+   "step": 360,
+   "control": "#mod_toggle_guard",
+   "action": "click"
+  },
+  {
+   "step": 361,
+   "control": "#mod_toggle_guard",
+   "action": "click"
+  },
+  {
+   "step": 362,
+   "control": "#enabledMods .quick-disable[data-for=\"mod_toggle_guard\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 360
+    },
+    "cmds": {
+     "same": 360
+    }
+   }
+  },
+  {
+   "step": 363,
+   "control": "#mod_restart_anytime",
+   "action": "click"
+  },
+  {
+   "step": 364,
+   "control": "#mod_restart_anytime",
+   "action": "click"
+  },
+  {
+   "step": 365,
+   "control": "#mod_restart_anytime",
+   "action": "click"
+  },
+  {
+   "step": 366,
+   "control": "#enabledMods .quick-disable[data-for=\"mod_restart_anytime\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 364
+    },
+    "cmds": {
+     "same": 364
+    }
+   }
+  },
+  {
+   "step": 367,
+   "control": "#mod_skill_timer_style",
+   "action": "select",
+   "value": "arc"
+  },
+  {
+   "step": 368,
+   "control": "#mod_skill_timer_style",
+   "action": "select",
+   "value": "off"
+  },
+  {
+   "step": 369,
+   "control": "#mod_skill_timer_style",
+   "action": "select",
+   "value": "arc"
+  },
+  {
+   "step": 370,
+   "control": "#enabledMods .quick-disable[data-for=\"mod_skill_timer_style\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 368
+    },
+    "cmds": {
+     "same": 368
+    }
+   }
+  },
+  {
+   "step": 371,
+   "control": "subtab:items",
+   "action": "click"
+  },
+  {
+   "step": 372,
+   "control": "#headhunter",
+   "action": "click"
+  },
+  {
+   "step": 373,
+   "control": "#headhunter",
+   "action": "click"
+  },
+  {
+   "step": 374,
+   "control": "#headhunter",
+   "action": "click"
+  },
+  {
+   "step": 375,
+   "control": "#enabledMods .quick-disable[data-for=\"headhunter\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 373
+    },
+    "cmds": {
+     "same": 373
+    }
+   }
+  },
+  {
+   "step": 376,
+   "control": "#tyrant",
+   "action": "click"
+  },
+  {
+   "step": 377,
+   "control": "#tyrant",
+   "action": "click"
+  },
+  {
+   "step": 378,
+   "control": "#tyrant",
+   "action": "click"
+  },
+  {
+   "step": 379,
+   "control": "#enabledMods .quick-disable[data-for=\"tyrant\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 377
+    },
+    "cmds": {
+     "same": 377
+    }
+   }
+  },
+  {
+   "step": 380,
+   "control": "#beacon",
+   "action": "click"
+  },
+  {
+   "step": 381,
+   "control": "#beacon",
+   "action": "click"
+  },
+  {
+   "step": 382,
+   "control": "#beacon",
+   "action": "click"
+  },
+  {
+   "step": 383,
+   "control": "#enabledMods .quick-disable[data-for=\"beacon\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 381
+    },
+    "cmds": {
+     "same": 381
+    }
+   }
+  },
+  {
+   "step": 384,
+   "control": "tab:loot",
+   "action": "click"
+  },
+  {
+   "step": 385,
+   "control": "#mod_gem_mythic",
+   "action": "click"
+  },
+  {
+   "step": 386,
+   "control": "#mod_gem_mythic",
+   "action": "click"
+  },
+  {
+   "step": 387,
+   "control": "#mod_gem_mythic",
+   "action": "click"
+  },
+  {
+   "step": 388,
+   "control": "#enabledMods .quick-disable[data-for=\"mod_gem_mythic\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 386
+    },
+    "cmds": {
+     "same": 386
+    }
+   }
+  },
+  {
+   "step": 389,
+   "control": "#mod_gem_maxroll",
+   "action": "click"
+  },
+  {
+   "step": 390,
+   "control": "#mod_gem_maxroll",
+   "action": "click"
+  },
+  {
+   "step": 391,
+   "control": "#mod_gem_maxroll",
+   "action": "click"
+  },
+  {
+   "step": 392,
+   "control": "#enabledMods .quick-disable[data-for=\"mod_gem_maxroll\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 390
+    },
+    "cmds": {
+     "same": 390
+    }
+   }
+  },
+  {
+   "step": 393,
+   "control": "tab:setup",
+   "action": "click"
+  },
+  {
+   "step": 394,
+   "control": "#theme",
+   "action": "select",
+   "value": "ledger",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "theme",
+        "value": "ledger"
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": []
+    }
+   }
+  },
+  {
+   "step": 395,
+   "control": "#theme",
+   "action": "select",
+   "value": "graphite",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "theme",
+        "value": "graphite"
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": []
+    }
+   }
+  },
+  {
+   "step": 396,
+   "control": "#theme",
+   "action": "select",
+   "value": "sigil",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "theme",
+        "value": "sigil"
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": []
+    }
+   }
+  },
+  {
+   "step": 397,
+   "control": "tab:loot",
+   "action": "click"
+  },
+  {
+   "step": 398,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"primeevil\"]",
+   "action": "max"
+  },
+  {
+   "step": 399,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"primeevil\"]",
+   "action": "min"
+  },
+  {
+   "step": 400,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"primeevil\"]",
+   "action": "max"
+  },
+  {
+   "step": 401,
+   "control": "#sw_keys_primeevil",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.primeevil",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 399
+    }
+   }
+  },
+  {
+   "step": 402,
+   "control": "#sw_keys_primeevil",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.primeevil",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 400
+    }
+   }
+  },
+  {
+   "step": 403,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_keys_primeevil\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 401
+    },
+    "cmds": {
+     "same": 401
+    }
+   }
+  },
+  {
+   "step": 404,
+   "control": "#sw_keys_primeevil",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "keys.primeevil",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 402
+    }
+   }
+  },
+  {
+   "step": 405,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"primeevil\"]",
+   "action": "min"
+  }
+ ]
+}

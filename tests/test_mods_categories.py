@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Contract tests for the Mods tab's card split (ForgePact issue #12).
 
-Reads `forgepact.py` and `panel_icons.py` as text from
+Reads the panel's frontend source as text through `panel_source.py`
+(`panel/src/`, or `FORGEPACT_TEST_PANEL_SRC`), and `forgepact.py` from
 `FORGEPACT_TEST_PANEL_DIR` (default: `src/`), never by import, so the same
-tests run against an older copy of those two files with no `hs_game_sdk` on
-the path - the "prove the instrument" precedent set by
-`FORGEPACT_TEST_PLUGIN_SOURCE` (`test_signature_drop_contract.py`,
-`test_headhunter_dispatch.py`). `forgepact.py` is UTF-8 with a BOM, so both
-files are read with `utf-8-sig`.
+tests run against an older copy with no `hs_game_sdk` on the path - the
+"prove the instrument" precedent set by `FORGEPACT_TEST_PLUGIN_SOURCE`
+(`test_signature_drop_contract.py`, `test_headhunter_dispatch.py`).
+`forgepact.py` is UTF-8 with a BOM, so it is read with `utf-8-sig`. `HTML`
+is the joined panel source (markup, CSS and script, as the one page string
+used to be) and `ICONS_SOURCE` is `panel/src/icons.js`, which replaced
+`src/panel_icons.py`.
 
 `ModsCategoryBaselineTests` pins what must survive the split: the five-tab
 sidebar, every control's card membership, the Items/Quality-of-Life
@@ -19,8 +22,9 @@ id except `itemsCard`, because the other card's id changes - so the same
 assertions pass on the pre-change panel and on the result.
 
 `ModsCategorySplitTests` pins the result: two Mods-tab cards named
-`qolCard`/`itemsCard`, in that order, `qolCard` titled "Quality of Life" and
-holding exactly the ten Quality of Life controls in the assignment table's
+`qolCard`/`itemsCard`, in that order, neither repeating its sub-tab's name as
+a heading (the strip names them), `qolCard` holding exactly the ten Quality
+of Life controls in the assignment table's
 order, and no remaining "gameplay" wording or `gameplayCard` id anywhere in
 either source file.
 
@@ -46,10 +50,13 @@ import subprocess
 import tempfile
 import unittest
 
+from panel_source import panel_file, panel_source
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PANEL_DIR = pathlib.Path(os.environ.get("FORGEPACT_TEST_PANEL_DIR", str(ROOT / "src")))
-HTML = (PANEL_DIR / "forgepact.py").read_text(encoding="utf-8-sig")
-ICONS_SOURCE = (PANEL_DIR / "panel_icons.py").read_text(encoding="utf-8-sig")
+PYTHON_SOURCE = (PANEL_DIR / "forgepact.py").read_text(encoding="utf-8-sig")
+HTML = panel_source()
+ICONS_SOURCE = panel_file("icons.js")
 
 # The assignment table (context "### Classification rule and assignment"),
 # in the order the rows render.
@@ -297,9 +304,14 @@ class ModsCategorySplitTests(unittest.TestCase):
             ["qolCard", "itemsCard"],
         )
 
-    def test_qol_card_heading_is_quality_of_life(self):
-        body = _card_by_id(_mods_cards(HTML), "qolCard")
-        self.assertIn("<h2>Quality of Life</h2>", body)
+    def test_mods_panels_repeat_no_subtab_label(self):
+        # The sub-tab strip names each panel ("Quality of Life", "Items"); the
+        # panels themselves carry no heading repeating it (owner, 2026-09-25).
+        cards = _mods_cards(HTML)
+        for cid in ("qolCard", "itemsCard"):
+            body = _card_by_id(cards, cid)
+            self.assertNotIn("<h2", body, f"{cid} still has a heading")
+        self.assertNotIn("<h2>Quality of Life</h2>", HTML)
 
     def test_qol_card_controls_are_exactly_the_ten_qol_ids_in_order(self):
         body = _card_by_id(_mods_cards(HTML), "qolCard")
@@ -323,6 +335,7 @@ class ModsCategorySplitTests(unittest.TestCase):
     def test_gameplay_card_id_is_gone(self):
         self.assertNotIn("gameplayCard", HTML)
         self.assertNotIn("gameplayCard", ICONS_SOURCE)
+        self.assertNotIn("gameplayCard", PYTHON_SOURCE)
 
 
 def _brace_block(html, start_marker):

@@ -18,7 +18,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT / "tests"))
 import forgepact
+# The row note is read from panel/src (the Svelte panel), not forgepact.py.
+from panel_source import panel_file  # noqa: E402
 
 PLUGIN = ROOT / "plugin" / "ModuleMain.cpp"
 
@@ -64,6 +67,7 @@ class PrimeEvilPartsSliderTests(unittest.TestCase):
         self.assertEqual(len(entry), 1)
         self.assertIsNone(entry[0][2], "a drop type would open type 41, which drops Relics too")
         self.assertIn("Prime Evil", entry[0][1])
+        self.assertEqual(entry[0][1], "Prime Evil Parts")
 
     def test_the_slider_scales_the_parts_own_roll_and_opens_no_gate(self):
         commands = forgepact.build_key_cmds({"primeevil": 10})
@@ -91,9 +95,10 @@ class PrimeEvilPartsSliderTests(unittest.TestCase):
             self.assertIn("g_DkPartsGuard", body.group(0))
 
     def test_the_row_note_says_bosses_only(self):
-        note = re.search(r"if\(key==='primeevil'\) return `([^`]*)`", forgepact.HTML)
+        note = re.search(r"if\(key==='primeevil'\) return `([^`]*)`", panel_file("panel.js"))
         self.assertIsNotNone(note)
         self.assertIn("bosses", note.group(1))
+        self.assertIn("Key of Terror", note.group(1))
 
 
 if __name__ == "__main__":

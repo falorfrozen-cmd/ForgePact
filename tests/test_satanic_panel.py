@@ -12,6 +12,50 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import forgepact
 
+# Ports Chromium (and so headless Edge, which panel/tests drives through
+# playwright-core with channel msedge) refuses to open, failing page.goto with
+# net::ERR_UNSAFE_PORT before it ever connects. Source: Chromium's
+# net/base/port_util.cc kRestrictedPorts and the Fetch standard's "bad port"
+# list, checked against installed Edge (2026-09-26): every port here but 4190
+# and 6679 reproduces ERR_UNSAFE_PORT on this Edge, those two only
+# ERR_CONNECTION_REFUSED (Fetch-only so far, kept in case Chromium adopts
+# them); every other port in 1-65535 was probed and none is refused.
+CHROMIUM_RESTRICTED_PORTS = frozenset({
+    1, 7, 9, 11, 13, 15, 17, 19, 20, 21, 22, 23, 25, 37, 42, 43, 53, 69, 77,
+    79, 87, 95, 101, 102, 103, 104, 109, 110, 111, 113, 115, 117, 119, 123,
+    135, 137, 139, 143, 161, 179, 389, 427, 465, 512, 513, 514, 515, 526,
+    530, 531, 532, 540, 548, 554, 556, 563, 587, 601, 636, 989, 990, 993,
+    995, 1719, 1720, 1723, 2049, 3659, 4045, 4190, 5060, 5061, 6000, 6566,
+    6665, 6666, 6667, 6668, 6669, 6679, 6697, 10080,
+})
+
+SANDBOX_BIND_ATTEMPTS = 10
+
+
+def bind_safe_server(bind, max_attempts=SANDBOX_BIND_ATTEMPTS):
+    """Call bind() (no arguments; returns a server with .server_port and
+    .server_close()) until it lands on a port outside
+    CHROMIUM_RESTRICTED_PORTS, then return that server. A rejected server is
+    kept open, never closed, until a safe one is bound: closing it first
+    could hand the same port straight back if the OS hands out port-0 ports
+    in sequence (several restricted ports, e.g. 6665-6669, are consecutive).
+    Raises RuntimeError, naming every port tried, if max_attempts is
+    exhausted first (closing every server bound along the way)."""
+    rejected = []
+    for _ in range(max_attempts):
+        server = bind()
+        if server.server_port not in CHROMIUM_RESTRICTED_PORTS:
+            for stale in rejected:
+                stale.server_close()
+            return server
+        rejected.append(server)
+    tried = [stale.server_port for stale in rejected]
+    for stale in rejected:
+        stale.server_close()
+    raise RuntimeError(
+        "no port outside CHROMIUM_RESTRICTED_PORTS after {} attempts, "
+        "tried: {}".format(max_attempts, tried))
+
 
 class PanelSandbox:
     def __enter__(self):
@@ -27,7 +71,8 @@ class PanelSandbox:
                         patch.object(forgepact, "mod_chain", return_value={}),
                         patch.object(forgepact, "send_cmds")]
         self.mocks = [p.start() for p in self.patches]
-        self.server = forgepact.ThreadingHTTPServer(("127.0.0.1", 0), forgepact.H)
+        self.server = bind_safe_server(
+            lambda: forgepact.ThreadingHTTPServer(("127.0.0.1", 0), forgepact.H))
         self.port = self.server.server_port
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()

@@ -29,6 +29,12 @@ if str(SDK_PY_PATH) not in sys.path:
 
 import forgepact  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from panel_source import panel_source  # noqa: E402
+
+# The page (markup and script) is the Svelte project in panel/src.
+PANEL_PAGE = panel_source()
+
 
 class TestPetQuestCollectorContract(unittest.TestCase):
     @classmethod
@@ -139,12 +145,12 @@ class TestPetQuestCollectorContract(unittest.TestCase):
         self.assertIn('pv == "stat"', branch)
 
     def test_html_contains_mods_tab_control(self):
-        self.assertIn('data-tab="mods"', forgepact.HTML)
-        self.assertIn('id="mod_pet_quest_pickup"', forgepact.HTML)
-        self.assertIn("Pet collects quest items", forgepact.HTML)
+        self.assertIn('data-tab="mods"', PANEL_PAGE)
+        self.assertIn('id="mod_pet_quest_pickup"', PANEL_PAGE)
+        self.assertIn("Pet collects quest items", PANEL_PAGE)
 
     def test_control_lives_in_the_mods_tab(self):
-        html = forgepact.HTML
+        html = PANEL_PAGE
         pos = html.index('id="mod_pet_quest_pickup"')
         tab_start = html.rfind('data-tab="', 0, pos)
         self.assertNotEqual(tab_start, -1)

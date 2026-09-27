@@ -46,6 +46,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from test_release_hook_contract import function_body, strip_research_blocks  # noqa: E402
+from panel_source import panel_source  # noqa: E402
 
 BLOCK_START = "// ---- restartprobe: pause-menu Restart gate research"
 BLOCK_END = "#endif // FORGEPACT_RELEASE (restartprobe)"
@@ -942,16 +943,18 @@ class RestartAnytimeContractTests(unittest.TestCase):
     def test_panel_toggle_mirrors_every_mod_toggle_guard_site(self):
         import forgepact  # noqa: E402 - the panel, imported only here
         panel = (SRC_DIR / "forgepact.py").read_text(encoding="utf-8-sig")
+        page = panel_source()   # the page itself: panel/src
         self.assertEqual(panel.count("mod_restart_anytime"), panel.count("mod_toggle_guard"))
+        self.assertEqual(page.count("mod_restart_anytime"), page.count("mod_toggle_guard"))
         self.assertIs(forgepact.DEFAULTS["mod_restart_anytime"], False)
         self.assertFalse([c for c in forgepact.build_cmds(dict(forgepact.DEFAULTS)) if "restartanytime" in c])
         cfg = dict(forgepact.DEFAULTS)
         cfg["mod_restart_anytime"] = True
         self.assertIn("restartanytime 1", forgepact.build_cmds(cfg))
         self.assertIn("f\"restartanytime {1 if cfg['mod_restart_anytime'] else 0}\"", panel)
-        self.assertIn('id="mod_restart_anytime"', forgepact.HTML)
-        self.assertIn('id="mraval"', forgepact.HTML)
-        self.assertIn("Restart zone at any time", forgepact.HTML)
+        self.assertIn('id="mod_restart_anytime"', page)
+        self.assertIn('id="mraval"', page)
+        self.assertIn("Restart zone at any time", page)
 
     def test_release_notes_readme_and_guide_record_the_mod(self):
         if NOTES.is_file():   # published notes leave main (forgepact-notes-cleanup.yml)

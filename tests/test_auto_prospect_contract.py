@@ -41,6 +41,13 @@ PANEL = ROOT / "src" / "forgepact.py"
 NOTES = ROOT / "release-notes-v1.4.5.md"
 README = ROOT / "README.md"
 DOC = ROOT / "docs" / "prospect-window-research.md"
+# The page itself (markup and script) is the Svelte project in panel/src;
+# PANEL keeps the Python side (settings, commands, /api/state).
+_panel_spec = importlib.util.spec_from_file_location("_panel_source_ap", ROOT / "tests" / "panel_source.py")
+_panel_source = importlib.util.module_from_spec(_panel_spec)
+_panel_spec.loader.exec_module(_panel_source)
+panel_source = _panel_source.panel_source
+panel_file = _panel_source.panel_file
 
 _spec = importlib.util.spec_from_file_location(
     "_release_hook_contract_ap", ROOT / "tests" / "test_release_hook_contract.py")
@@ -299,6 +306,7 @@ class AutoProspectContractTests(unittest.TestCase):
         self.assertIn("def plugin_mod_state(", source)
         self.assertIn("modstate.json", source)
         self.assertIn('"pluginMods": plugin_mod_state(cfg),', source)
+        source = panel_source()   # the rest is the page
         self.assertIn("function applyPluginModState(", source)
         self.assertIn("off (plugin)", source)
         # Recovery: a healthy report repaints the labels from the saved
@@ -332,10 +340,16 @@ class AutoProspectContractTests(unittest.TestCase):
         cfg["mod_auto_prospect"] = True
         self.assertIn("autoprospect 1", panel.build_cmds(cfg))
         source = PANEL.read_text(encoding="utf-8")
-        self.assertGreaterEqual(len([l for l in source.split("\n") if "mod_auto_prospect" in l]), 7)
+        page = panel_source()
+        # Every site the switch needs, on both sides of the move to panel/src:
+        # measured on main before the move, 11 lines in Python and 24 in the
+        # page (35 in all, where this used to ask for at least 7).
+        self.assertGreaterEqual(len([l for l in source.split("\n") if "mod_auto_prospect" in l]), 11)
+        self.assertGreaterEqual(len([l for l in page.split("\n") if "mod_auto_prospect" in l]), 24)
         # The live send; turning it on also restates the Stage C sub-option.
         self.assertIn('cmds = [f"autoprospect {1 if cfg[\'mod_auto_prospect\'] else 0}"]', source)
-        self.assertIn('id="mod_auto_prospect"', source)
+        self.assertIn('id="mod_auto_prospect"', page)
+        python_source, source = source, page
         # The switch's copy: what is left in the grid when the game saves is
         # lost. It no longer tells the player to take the materials out -
         # Stage C's sub-switch moves them to the materials tab.
@@ -344,6 +358,7 @@ class AutoProspectContractTests(unittest.TestCase):
         self.assertNotIn("Materials stay in the grid", row)
         self.assertNotIn("take them out", row)
         self.assertNotIn("take the materials out", source)
+        self.assertNotIn("take the materials out", python_source)
 
     def test_release_notes_and_docs_record_the_feature(self):
         if NOTES.is_file():   # published notes leave main (forgepact-notes-cleanup.yml)
@@ -623,8 +638,9 @@ class AutoProspectContractTests(unittest.TestCase):
         source = PANEL.read_text(encoding="utf-8")
         self.assertIn("cmds.append(f\"autoprospect bag {1 if cfg.get('mod_auto_prospect_bag', True) else 0}\")", source)
         self.assertIn('send_cmds([f"autoprospect bag {1 if cfg[\'mod_auto_prospect_bag\'] else 0}"], cfg)', source)
+        source = panel_source()   # the rest is the page
         self.assertIn('id="mod_auto_prospect_bag_row"', source)
-        self.assertIn("function syncProspectBag(parentOn,bagOn){", source)
+        self.assertIn("function syncProspectBag(parentOn,bagOn){", panel_file("mods-sync.js"))
         self.assertIn("mod_auto_prospect_bag:'mod_auto_prospect_bag'", source)
         self.assertIn("apGroup.className='feature-with-child'", source)
         row = source[source.index('id="mod_auto_prospect_bag_row"'):source.index('id="mod_auto_prospect_bag"')]

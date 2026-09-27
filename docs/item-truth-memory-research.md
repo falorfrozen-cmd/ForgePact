@@ -46,10 +46,12 @@ research-build positive control, and the facts below.
   one-time release (below), queues one evaluation request the way the Item Editor
   does and samples the game's private bytes and working set once a second from
   outside the process. At the end it closes the game with `CloseMainWindow`, as a
-  player would. `run` is the measurement and `control` the positive control
-  (research build). The run's own journal files are moved out of the Item
-  Editor's folder afterwards, but only when every line in them belongs to the
-  run's requests.
+  player would, and reports the exit code (`0xC0000409` is an abort). It starts
+  the game with Windows' default error mode, so a crash is reported as it would
+  be for a player (below, "A plain close aborts too"). `run` is the measurement
+  and `control` the positive control (research build). The run's own journal
+  files are moved out of the Item Editor's folder afterwards, but only when
+  every line in them belongs to the run's requests.
 - **`truthmem`** (research build only). `truthmem stat` prints private bytes, the
   runtime's collector (`gc_is_enabled`, `gc_get_target_frame_time`,
   `gc_get_stats`) and the instance count. `truthmem hold on` keeps every item an
@@ -153,9 +155,20 @@ request, at item 13,836 of 20,000. Its dump,
   thread by never destroying the `Journal`. ForgePact ships this DLL
   (`modfiles_shipped/HSOfflineTrackerProducer.dll`, pinned from the 1.3.16
   package, a 2026-09-07-or-earlier build).
-- **Not every exit aborts.** None of the five games this investigation closed
-  with `CloseMainWindow` left a dump, nor did another session's close at about
-  02:15. What makes one exit abort and another not was not determined.
+- **A plain close aborts too; a missing dump hid it.** None of the five games
+  this investigation closed with `CloseMainWindow` left a dump, nor did another
+  session's close at about 02:15. That does not show a clean exit. The games
+  were started by Python run from Git Bash. That Python reports
+  `GetErrorMode()` = `0x3` (`SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX`,
+  measured afterwards), and a child inherits it. With it, Windows writes no
+  dump and no Application Error event for the fast fail; the exit code (not
+  read then) is still `0xC0000409`. HS-Offline-Tracker PR #8's live check
+  launched with `CREATE_DEFAULT_ERROR_MODE` instead: the old producer aborted
+  on a `CloseMainWindow` at the main menu (exit `0xC0000409`, dump `56756`
+  with this stack), and the fixed one exited `0` three times out of three. So
+  the old producer most likely aborts every exit once its publisher runs.
+  `itemtruth_memrun.py` now launches with the default error mode and reports
+  the exit code.
 
 **Not established:** why session 8836 exited at 01:36:27. Its exit path is the
 game's ordinary one, and the dump cannot tell a close by a person or a tool from
@@ -188,6 +201,7 @@ py -3 tools/itemtruth_memrun.py run --items 20000 --mix --out <folder>
 py -3 tools/itemtruth_memrun.py control --items 20000 --out <folder>
 ```
 
-Each run takes 5-8 minutes and writes `samples.csv` and `summary.json`; `control`
-also writes the `truthmem` lines as `truthmem.txt`. Keep the installed DLL's
-backup outside `mods\aurie`: Aurie loads every `.dll` there.
+Each run takes 5-8 minutes and writes `samples.csv` and `summary.json` (with
+the game's `exit_code`); `control` also writes the `truthmem` lines as
+`truthmem.txt`. Keep the installed DLL's backup outside `mods\aurie`: Aurie
+loads every `.dll` there.

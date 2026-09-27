@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Build the ForgePact release package:  dist/ForgePact/  -> ready to zip.
 
+    npm --prefix panel ci && npm --prefix panel run build    (writes panel/dist)
     py build_release.py
+
+The panel frontend (panel/dist) is bundled INSIDE ForgePact.exe; packaging is
+refused while it is missing.
 
 Layout produced (when frozen, the panel looks for the modfiles/ folder NEXT TO
 the exe - see MODFILE_SOURCES in src/forgepact.py):
@@ -40,6 +44,11 @@ OFFLINE_LAUNCHER = ROOT / "src" / "offline_launcher.py"
 # the packaged panel served empty pool lists - the World tab's Satanic Zone
 # section rendered its heading with no rows under it (user report 2026-09-14).
 SDK_PY = ROOT.parent / "hs-game-sdk" / "python"
+# The panel's frontend, built by `npm --prefix panel run build` into panel/dist
+# and bundled into the exe with --add-data, where src/forgepact.py's PANEL_DIST
+# finds it (sys._MEIPASS/panel). An exe built without it starts, listens and
+# shows a player an empty window, so its absence refuses packaging outright.
+PANEL_DIST = ROOT / "panel" / "dist"
 MODFILES = ROOT / "modfiles_shipped"
 DIST = ROOT / "dist" / "ForgePact"
 NEEDED = ["AurieCore.dll", "AuriePatcher.exe", "YYToolkit.dll", "BloodPactPlugin.dll"]
@@ -96,11 +105,43 @@ def version_info(version: str) -> str:
 """
 
 
+def pyinstaller_command(build: Path, version_file: Path) -> list[str]:
+    """The PyInstaller invocation, as a list so a test can read it back."""
+    cmd = [
+        sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean",
+        "--onefile", "--windowed", "--name", "ForgePact",
+        "--distpath", str(DIST.parent), "--workpath", str(build),
+        "--specpath", str(build),
+        "--paths", str(SDK_PY),
+        "--version-file", str(version_file),
+        # panel/dist -> <unpack dir>/panel. Absolute, because --specpath build/
+        # re-roots a relative source; ';' is PyInstaller's Windows separator.
+        "--add-data", f"{PANEL_DIST};panel",
+    ]
+    # tkinter is only used by the file picker, and only as a FALLBACK: the primary
+    # picker opens through comdlg32 (Win32), and failing that the path can be typed
+    # by hand.  Bundling tkinter drags PIL in with it and adds ~30 MB to the package.
+    for mod in ("tkinter", "PIL", "numpy", "pandas", "matplotlib", "scipy",
+                "PyQt5", "PyQt6", "PySide2", "PySide6", "IPython",
+                "pytest", "setuptools", "pip"):
+        cmd += ["--exclude-module", mod]
+    cmd.append(str(SRC))
+    return cmd
+
+
 def main() -> int:
     if not SRC.is_file():
         print(f"ERROR: {SRC} does not exist"); return 1
     if not OFFLINE_LAUNCHER.is_file():
         print("ERROR: src/offline_launcher.py is missing; the built-in launch button needs it.")
+        return 1
+
+    # Checked first because it is the one a fresh checkout always lacks: the
+    # panel/dist build is not tracked, and without it the exe has no page.
+    if not (PANEL_DIST / "index.html").is_file():
+        print(f"ERROR: the panel is not built ({PANEL_DIST / 'index.html'} is missing)")
+        print("       Run  npm --prefix panel ci  then  npm --prefix panel run build")
+        print("       (Node 20.19+ or 22.12+) before packaging.")
         return 1
 
     missing = [n for n in NEEDED if not (MODFILES / n).is_file()]
@@ -164,23 +205,7 @@ def main() -> int:
     build.mkdir(parents=True, exist_ok=True)
     version_file = build / "version_info.txt"
     version_file.write_text(version_info(panel_version()), encoding="utf-8")
-    cmd = [
-        sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean",
-        "--onefile", "--windowed", "--name", "ForgePact",
-        "--distpath", str(DIST.parent), "--workpath", str(build),
-        "--specpath", str(build),
-        "--paths", str(SDK_PY),
-        "--version-file", str(version_file),
-    ]
-    # tkinter is only used by the file picker, and only as a FALLBACK: the primary
-    # picker opens through comdlg32 (Win32), and failing that the path can be typed
-    # by hand.  Bundling tkinter drags PIL in with it and adds ~30 MB to the package.
-    for mod in ("tkinter", "PIL", "numpy", "pandas", "matplotlib", "scipy",
-                "PyQt5", "PyQt6", "PySide2", "PySide6", "IPython",
-                "pytest", "setuptools", "pip"):
-        cmd += ["--exclude-module", mod]
-    cmd.append(str(SRC))
-    r = subprocess.run(cmd)
+    r = subprocess.run(pyinstaller_command(build, version_file))
     if r.returncode != 0:
         print("ERROR: PyInstaller failed"); return r.returncode
 

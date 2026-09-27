@@ -1,0 +1,110 @@
+{
+  "fileKey": "75EleO8U3zngY8JU9adWpk",
+  "fileUrl": "https://www.figma.com/design/75EleO8U3zngY8JU9adWpk",
+  "chosenDirection": "Graphite Console",
+  "baseSection": "5:205",
+  "baseFrames": {
+    "world1280": "5:355",
+    "world900": "5:632",
+    "components": "5:206"
+  },
+  "tokens": {
+    "collection": "VariableCollectionId:17:764",
+    "modes": {
+      "ledger": "17:1",
+      "graphite": "17:2",
+      "sigil": "17:3"
+    },
+    "defaultMode": "ledger",
+    "variableCount": 51
+  },
+  "pages": {
+    "cover": "0:1",
+    "directions": "2:2",
+    "checkpoint2": "18:2",
+    "screens": "28:6",
+    "states": "28:7",
+    "components": "28:8"
+  },
+  "checkpoint2": {
+    "page": "18:2",
+    "form1World1280": "25:305",
+    "form1World900": "25:608",
+    "form2World1280": "25:910",
+    "form2World900": "25:1221",
+    "flatnessVariantWorld1280": "25:1531",
+    "enabledModsStates": "26:412",
+    "flatBaseWorld1280": "18:765",
+    "flatBaseWorld900": "18:930",
+    "newControls": "24:286"
+  },
+  "components": {
+    "EnabledModEntry": "22:42",
+    "EnabledMods": "22:380",
+    "SliderSwitch": "24:210",
+    "SliderRow": "24:244",
+    "ThemePicker": "24:285"
+  },
+  "screens": {
+    "setup/1280": "32:58",
+    "setup/900": "32:394",
+    "modifiers/1280": "32:713",
+    "modifiers/900": "32:1244",
+    "world/1280": "31:661",
+    "world/900": "31:970",
+    "loot/1280": "33:463",
+    "loot/900": "33:1031",
+    "mods-qol/1280": "33:1580",
+    "mods-qol/900": "33:1995",
+    "mods-items/1280": "33:2387",
+    "mods-items/900": "33:2737"
+  },
+  "shells": {
+    "shell/1280": "31:34",
+    "shell/900": "31:318"
+  },
+  "componentsOverview": "38:682",
+  "tokenSheets": {
+    "ledger": "38:211",
+    "graphite": "38:368",
+    "sigil": "38:525"
+  },
+  "componentSets": {
+    "EnabledModEntry": "22:42",
+    "EnabledMods": "22:380",
+    "SliderSwitch": "24:210",
+    "SliderRow": "24:244",
+    "ThemePicker": "24:285",
+    "ToggleRow": "29:144",
+    "Button": "29:163",
+    "StatusChip": "30:223",
+    "SaveIndicator": "30:244",
+    "Hint": "30:252",
+    "Toast": "30:257",
+    "PluginWarning": "30:268",
+    "PoolRow": "30:290",
+    "RailTab": "30:309",
+    "Section": "30:320",
+    "Select": "30:334",
+    "SearchField": "30:347",
+    "Segmented": "30:364",
+    "UndoToast": "45:220"
+  },
+  "states": {
+    "idle-switch": "51:983",
+    "enabled-tray-popover": "51:1187",
+    "enabled-undo": "51:1158",
+    "min-window-900x600": "51:1371",
+    "plugin-warning-tooltip": "70:1323"
+  },
+  "stateComponents": {
+    "UndoToast": "45:220",
+    "SliderSwitch/state=idle": "45:212"
+  },
+  "variables": {
+    "color/switch/idle": "VariableID:45:211",
+    "motion/easing/hover": "VariableID:53:1241",
+    "color/warn": "VariableID:17:780",
+    "color/warn/tint": "VariableID:61:2"
+  }
+}

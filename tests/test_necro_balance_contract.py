@@ -3,6 +3,8 @@ import re
 import unittest
 from pathlib import Path
 
+from panel_source import panel_source
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PANEL_PATH = PROJECT_ROOT / "src" / "forgepact.py"
@@ -46,6 +48,8 @@ class NecromancerN1ContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.panel = PANEL_PATH.read_text(encoding="utf-8-sig")
+        # The page itself (markup and script) is the Svelte project in panel/src.
+        cls.page = panel_source()
         cls.plugin = PLUGIN_PATH.read_text(encoding="utf-8")
 
     def n1(self, suffix: str) -> float:
@@ -70,6 +74,7 @@ class NecromancerN1ContractTests(unittest.TestCase):
             "document.getElementById('necro_balance').onchange",
         ):
             self.assertNotIn(fragment, self.panel)
+            self.assertNotIn(fragment, self.page)
         self.assertNotIn('out.append("necrobal 1")', self.panel)
         self.assertNotIn('f"necrobal {1 if', self.panel)
 

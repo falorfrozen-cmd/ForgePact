@@ -1,0 +1,291 @@
+{
+ "recordedFrom": "legacy",
+ "sourceRev": "f1e2f57edd60ffbed7ae82b7df087f0ca6b3da95",
+ "recordedAt": "2026-09-25T12:42:11.441Z",
+ "viewport": {
+  "width": 1280,
+  "height": 800
+ },
+ "controls": [
+  "#mod_gem_mythic",
+  "#mod_gem_maxroll",
+  "#gemfilter_toggle"
+ ],
+ "steps": [
+  {
+   "step": 0,
+   "control": "tab:mods",
+   "action": "click",
+   "posts": [],
+   "cmds": []
+  },
+  {
+   "step": 1,
+   "control": "subtab:qol",
+   "action": "click",
+   "posts": [],
+   "cmds": []
+  },
+  {
+   "step": 2,
+   "control": "#mod_gem_mythic",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "mod_gem_mythic",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "gemmythic 1",
+    "gemfilter all"
+   ]
+  },
+  {
+   "step": 3,
+   "control": "#mod_gem_mythic",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "mod_gem_mythic",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "gemmythic 0"
+   ]
+  },
+  {
+   "step": 4,
+   "control": "#mod_gem_maxroll",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "mod_gem_maxroll",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "gemmaxroll 1"
+   ]
+  },
+  {
+   "step": 5,
+   "control": "#mod_gem_maxroll",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "mod_gem_maxroll",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "gemmaxroll 0"
+   ]
+  },
+  {
+   "step": 6,
+   "control": "#gemfilter_toggle",
+   "action": "click",
+   "posts": [],
+   "cmds": []
+  },
+  {
+   "step": 7,
+   "control": "#gemfilter_panel [data-gf=\"none\"]",
+   "action": "click",
+   "posts": [],
+   "cmds": []
+  },
+  {
+   "step": 8,
+   "control": "#gemfilter_panel [data-gf=\"save\"]",
+   "action": "click",
+   "posts": [],
+   "cmds": []
+  },
+  {
+   "step": 9,
+   "control": "#gemfilter_panel [data-gfcat=\"Loot\"][data-gfset=\"1\"]",
+   "action": "click",
+   "posts": [],
+   "cmds": []
+  },
+  {
+   "step": 10,
+   "control": "#gemfilter_panel input[data-gfstat=\"68\"]",
+   "action": "click",
+   "posts": [],
+   "cmds": []
+  },
+  {
+   "step": 11,
+   "control": "#gemfilter_panel [data-gf=\"save\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "gem_filter",
+      "value": [
+       68,
+       284
+      ]
+     }
+    }
+   ],
+   "cmds": [
+    "gemfilter 68,284"
+   ]
+  },
+  {
+   "step": 12,
+   "control": "#mod_gem_mythic",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "mod_gem_mythic",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "gemmythic 1",
+    "gemfilter 68,284"
+   ]
+  },
+  {
+   "step": 13,
+   "control": "#mod_gem_maxroll",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "mod_gem_maxroll",
+      "value": true
+     }
+    }
+   ],
+   "cmds": [
+    "gemmaxroll 1"
+   ]
+  },
+  {
+   "step": 14,
+   "control": "#applyall",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/applyall",
+     "body": {}
+    }
+   ],
+   "cmds": [
+    "gemmythic 1",
+    "gemfilter 68,284",
+    "gemmaxroll 1"
+   ]
+  },
+  {
+   "step": 15,
+   "control": "#gemfilter_panel [data-gfcat=\"Attack\"][data-gfset=\"0\"]",
+   "action": "click",
+   "posts": [],
+   "cmds": []
+  },
+  {
+   "step": 16,
+   "control": "#gemfilter_panel [data-gf=\"all\"]",
+   "action": "click",
+   "posts": [],
+   "cmds": []
+  },
+  {
+   "step": 17,
+   "control": "#gemfilter_panel [data-gf=\"save\"]",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "gem_filter",
+      "value": "all"
+     }
+    }
+   ],
+   "cmds": [
+    "gemfilter all"
+   ]
+  },
+  {
+   "step": 18,
+   "control": "#gemfilter_toggle",
+   "action": "click",
+   "posts": [],
+   "cmds": []
+  },
+  {
+   "step": 19,
+   "control": "#gemfilter_toggle",
+   "action": "click",
+   "posts": [],
+   "cmds": []
+  },
+  {
+   "step": 20,
+   "control": "#gemfilter_toggle",
+   "action": "click",
+   "posts": [],
+   "cmds": []
+  },
+  {
+   "step": 21,
+   "control": "#mod_gem_mythic",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "mod_gem_mythic",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "gemmythic 0"
+   ]
+  },
+  {
+   "step": 22,
+   "control": "#mod_gem_maxroll",
+   "action": "click",
+   "posts": [
+    {
+     "url": "/api/set",
+     "body": {
+      "key": "mod_gem_maxroll",
+      "value": false
+     }
+    }
+   ],
+   "cmds": [
+    "gemmaxroll 0"
+   ]
+  }
+ ]
+}

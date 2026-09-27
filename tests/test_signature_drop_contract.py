@@ -20,10 +20,12 @@ import pathlib
 import re
 import unittest
 
+from panel_source import panel_file
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SOURCE = pathlib.Path(os.environ.get("FORGEPACT_TEST_PLUGIN_SOURCE", ROOT / "plugin" / "ModuleMain.cpp")).read_text(encoding="utf-8")
-PANEL = (ROOT / "src" / "forgepact.py").read_text(encoding="utf-8")
+# The Loot tab's markup (panel/src/tabs/Loot.svelte, or FORGEPACT_TEST_PANEL_SRC).
+PANEL = panel_file("tabs/Loot.svelte")
 # Scoped to the Angelic/Unholy card's own hint, not the whole panel - both names also
 # appear, unrelated, in the Custom Forge Headhunter/Tyrant's Crown mechanic rows.
 _ANGELIC_CARD = re.search(r'id="angelicCard".*?id="angelicnote"', PANEL, re.S)
