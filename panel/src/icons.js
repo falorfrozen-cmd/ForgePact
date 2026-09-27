@@ -170,7 +170,7 @@ export const STATIC_ICONS = {
   'den': 'density', 'enemyspeed': 'boots', 'enemyspeed_ct': 'chaos-tower',
   'angelic_items': 'angelic', 'rarity_rare': 'rare', 'rarity_ancient': 'ancient',
   'map_reveal': 'map', 'map_reveal_packs': 'density', 'mod_filter_max_relics': 'relic-filter',
-  'mod_orb_pickup_radius': 'pickup-orbs', 'mod_pet_quest_pickup': 'pet',
+  'mod_orb_pickup_radius': 'pickup-orbs', 'mod_pet_quest_pickup': 'pet', 'mod_pet_loot_unstick': 'pet',
   'headhunter': 'headhunter', 'tyrant': 'tyrant', 'beacon': 'beacon',
 };
 // Card id -> the icon beside its heading. Every Mods card needs an entry

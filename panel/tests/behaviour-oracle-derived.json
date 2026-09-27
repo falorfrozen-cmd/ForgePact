@@ -45,7 +45,8 @@
   "#sw_keys_ruby",
   "#sw_angelic_items",
   "#theme",
-  "#sw_keys_primeevil"
+  "#sw_keys_primeevil",
+  "#mod_pet_loot_unstick"
  ],
  "steps": [
   {
@@ -4678,6 +4679,98 @@
    "step": 405,
    "control": "input[type=range][data-sec=\"keys\"][data-key=\"primeevil\"]",
    "action": "min"
+  },
+  {
+   "step": 406,
+   "control": "tab:mods",
+   "action": "click"
+  },
+  {
+   "step": 407,
+   "control": "subtab:qol",
+   "action": "click"
+  },
+  {
+   "step": 408,
+   "control": "#mod_pet_loot_unstick",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "mod_pet_loot_unstick",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "petunstick 1"
+     ]
+    }
+   }
+  },
+  {
+   "step": 409,
+   "control": "#mod_pet_loot_unstick",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "mod_pet_loot_unstick",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "petunstick 0"
+     ]
+    }
+   }
+  },
+  {
+   "step": 410,
+   "control": "#mod_pet_loot_unstick",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "mod_pet_loot_unstick",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "petunstick 1"
+     ]
+    }
+   }
+  },
+  {
+   "step": 411,
+   "control": "#enabledMods .quick-disable[data-for=\"mod_pet_loot_unstick\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 409
+    },
+    "cmds": {
+     "same": 409
+    }
+   }
   }
  ]
 }

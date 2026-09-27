@@ -22,6 +22,14 @@
 // no relocation). They come after the theme steps, so no existing step's index
 // moves, and the derived file names the recording as `keySupplementFrom`.
 //
+// ADDED_BOOLEANS are boolean mods no page was ever recorded with (the Pet
+// moves on switch, forgepact-pet-loot-stuck): no recording lists them, so
+// their steps come from the contract alone - on, off, on and Turn off, each
+// click expected to post its key and value and send its one command, the
+// shape the legacy recording holds for #mod_pet_quest_pickup. They are
+// entered on the tab named here and come after the key supplement, last, so
+// no existing step's index moves.
+//
 // tests/behaviour-oracle.json was recorded from the legacy page and is never
 // re-recorded: it is the proof that the port changed nothing. The new controls
 // have no legacy recording to compare against, so this file holds no recorded
@@ -56,6 +64,12 @@ const TOP_LEVEL = {
   '#rarity_ancient': 'rarity_ancient',
   '#angelic_items': 'angelic_items',
 };
+// Boolean mods added after every recording: the checkbox, the tab and Mods
+// sub-tab it sits on, and the command src/forgepact.py's /api/set sends for
+// it (`<command> 1` on, `<command> 0` off).
+export const ADDED_BOOLEANS = [
+  { selector: '#mod_pet_loot_unstick', tab: 'tab:mods', sub: 'subtab:qol', command: 'petunstick' },
+];
 const TABLE_RANGE = /^input\[type=range\]\[data-sec="([^"]+)"\]\[data-key="([^"]+)"\]$/;
 
 export function switchIdOf(selector) {
@@ -171,6 +185,21 @@ export function derive(legacy, derivedFrom, supplement = null, supplementFrom = 
   for (const selector of keySupplement ? keySupplement.controls : []) {
     const switchId = switchIdOf(selector);
     if (switchId) switchedSlider(selector, switchId, keySupplement.steps);
+  }
+  // The added booleans: literal expectations, since no recording holds a
+  // reference for them, and the Turn off button compared with the off click.
+  for (const { selector, tab, sub, command } of ADDED_BOOLEANS) {
+    controls.push(selector);
+    const key = selector.slice(1);
+    const click = (value) => push(selector, 'click', {
+      expect: { posts: { is: setPost({ key, value }) }, cmds: { is: [`${command} ${value ? 1 : 0}`] } },
+    });
+    if (tab !== open.tab) { push(tab, 'click'); open = { tab, sub: null }; }
+    if (sub !== open.sub) { push(sub, 'click'); open.sub = sub; }
+    click(true);
+    const off = click(false);
+    click(true);
+    push(quickDisable(key), 'click', { expect: { posts: { same: off }, cmds: { same: off } } });
   }
   return {
     derivedFrom, legacyRecordedAt: legacy.recordedAt, ...(supplement ? { supplementFrom } : {}),

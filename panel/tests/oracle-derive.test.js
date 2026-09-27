@@ -3,13 +3,14 @@
 // recorded values, every `same` looks back, and the step counts are the
 // contract's: three switch clicks per switched slider, one Turn off per mod
 // the list can show, one theme step per THEMES entry, after the one step that
-// opens Setup, where the theme is, and then the key supplement's slider (Prime
-// Evil Parts), entered on the Loot tab.
+// opens Setup, where the theme is, then the key supplement's slider (Prime
+// Evil Parts), entered on the Loot tab, and last the boolean mods no recording
+// has (ADDED_BOOLEANS), entered on Mods › Quality of Life.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { derive, derivedFromPath, quickDisable, serialise, switchIdOf } from './oracle-derive.mjs';
+import { ADDED_BOOLEANS, derive, derivedFromPath, quickDisable, serialise, switchIdOf } from './oracle-derive.mjs';
 import { BOOLEAN_MODS } from '../src/enabled-mods.js';
 import { THEMES } from '../src/theme.js';
 
@@ -22,6 +23,9 @@ const SUPPLEMENT = JSON.parse(read('./behaviour-oracle-gems.json'));
 const KEY_SUPPLEMENT = JSON.parse(read('./behaviour-oracle-primeevil.json'));
 const SLIDERS = LEGACY.controls.filter((c) => switchIdOf(c));
 const KEY_SLIDERS = KEY_SUPPLEMENT.controls.filter((c) => switchIdOf(c));
+// The added booleans all sit on Mods › Quality of Life: two navigation steps,
+// then four per switch.
+const ADDED_STEPS = 2 + 4 * ADDED_BOOLEANS.length;
 
 test('the committed file is byte-identical to a fresh derivation', () => {
   const fresh = serialise(derive(JSON.parse(LEGACY_TEXT), 'tests/behaviour-oracle.json', SUPPLEMENT, 'tests/behaviour-oracle-gems.json',
@@ -85,7 +89,7 @@ test('no step carries a recorded value; every expectation is same-earlier or a l
   });
 });
 
-test('the counts: 123 switch clicks, 57 Turn off buttons, one theme step per theme', () => {
+test('the counts: 123 switch clicks, 58 Turn off buttons, one theme step per theme', () => {
   const steps = DERIVED.steps;
   const switches = steps.filter((s) => s.control.startsWith('#sw_'));
   const quick = steps.filter((s) => s.control.startsWith('#enabledMods .quick-disable[data-for='));
@@ -93,7 +97,7 @@ test('the counts: 123 switch clicks, 57 Turn off buttons, one theme step per the
   assert.equal(switches.length, 3 * (SLIDERS.length + KEY_SLIDERS.length));
   assert.equal(quick.length, SLIDERS.length + KEY_SLIDERS.length + BOOLEAN_MODS.length + 2);
   assert.equal(switches.length, 123);
-  assert.equal(quick.length, 57);
+  assert.equal(quick.length, 58);
   assert.equal(theme.length, THEMES.length);
   assert.deepEqual(theme.map((s) => s.value), THEMES.map((t) => t.value));
   for (const s of theme) {
@@ -119,11 +123,11 @@ test('a switch off compares with its slider at minimum, on with its slider at ma
   assert.equal(quick.expect.posts.same, off.step);
 });
 
-test('the theme steps come after one tab:setup step, and only the key supplement\'s steps follow them', () => {
+test('the theme steps come after one tab:setup step, and only the key supplement\'s and the added booleans\' steps follow them', () => {
   // The theme moved from the status bar to the Setup tab's Appearance card:
   // one navigation step with no expectation opens Setup, then one step per
-  // theme; only the key supplement's slider (appended later) comes after
-  // them, so no earlier step moved.
+  // theme; only the key supplement's slider and the added booleans (both
+  // appended later) come after them, so no earlier step moved.
   const steps = DERIVED.steps;
   const first = steps.findIndex((s) => s.control === '#theme');
   assert.equal(steps[first - 1].control, 'tab:setup');
@@ -131,25 +135,26 @@ test('the theme steps come after one tab:setup step, and only the key supplement
   assert.ok(!('expect' in steps[first - 1]), 'the Setup step carries an expectation');
   assert.equal(steps.filter((s) => s.control === 'tab:setup').length, 1);
   assert.deepEqual(steps.slice(first, first + THEMES.length).map((s) => s.control), THEMES.map(() => '#theme'));
-  assert.equal(first, steps.length - THEMES.length - 1 - 8 * KEY_SLIDERS.length);
+  assert.equal(first, steps.length - THEMES.length - 1 - 8 * KEY_SLIDERS.length - ADDED_STEPS);
   assert.ok(!DERIVED.controls.includes('tab:setup'), 'a navigation step is not a control');
-  // Without the key supplement, the theme steps end the file.
+  // Without the key supplement, only the added booleans follow the theme.
   const bare = derive(LEGACY, 'tests/behaviour-oracle.json', SUPPLEMENT, 'tests/behaviour-oracle-gems.json');
-  assert.equal(bare.steps.findIndex((s) => s.control === '#theme'), bare.steps.length - THEMES.length);
+  const themeEnd = bare.steps.length - ADDED_STEPS;
+  assert.equal(bare.steps.findIndex((s) => s.control === '#theme'), themeEnd - THEMES.length);
   assert.ok(!('keySupplementFrom' in bare));
-  assert.deepEqual(bare.steps, DERIVED.steps.slice(0, bare.steps.length));
+  assert.deepEqual(bare.steps.slice(0, themeEnd), DERIVED.steps.slice(0, themeEnd));
 });
 
 test('the key supplement\'s slider gets the eight slider steps, entered on the Loot tab after the theme', () => {
   assert.deepEqual(KEY_SLIDERS, ['input[type=range][data-sec="keys"][data-key="primeevil"]']);
   const steps = DERIVED.steps;
-  const at = steps.length - 9;
+  const at = steps.length - 9 - ADDED_STEPS;
   // The theme left Setup open, so the Loot tab is entered again first.
   assert.equal(steps[at - 1].control, '#theme');
   assert.deepEqual(steps[at], { step: at, control: 'tab:loot', action: 'click' });
   const [range] = KEY_SLIDERS;
   const sw = '#sw_keys_primeevil';
-  assert.deepEqual(steps.slice(at + 1).map((s) => [s.control, s.action]), [
+  assert.deepEqual(steps.slice(at + 1, at + 9).map((s) => [s.control, s.action]), [
     [range, 'max'], [range, 'min'], [range, 'max'], [sw, 'click'], [sw, 'click'],
     [quickDisable('sw_keys_primeevil'), 'click'], [sw, 'click'], [range, 'min'],
   ]);
@@ -161,8 +166,44 @@ test('the key supplement\'s slider gets the eight slider steps, entered on the L
   assert.equal(steps[at + 5].expect.cmds.same, at + 3);
 });
 
-test('every control is covered: the switches in legacy order, the theme, then the key supplement\'s switch', () => {
-  assert.deepEqual(DERIVED.controls, [...SLIDERS.map((c) => '#sw_' + switchIdOf(c).replace('.', '_')), '#theme', '#sw_keys_primeevil']);
+test('every control is covered: the switches in legacy order, the theme, the key supplement\'s switch, then the added booleans', () => {
+  assert.deepEqual(DERIVED.controls, [
+    ...SLIDERS.map((c) => '#sw_' + switchIdOf(c).replace('.', '_')), '#theme', '#sw_keys_primeevil', '#mod_pet_loot_unstick',
+  ]);
+});
+
+test('the added booleans get on, off, on and Turn off on Mods › Quality of Life, after every earlier step', () => {
+  assert.deepEqual(ADDED_BOOLEANS.map((b) => b.selector), ['#mod_pet_loot_unstick']);
+  assert.ok(BOOLEAN_MODS.includes('mod_pet_loot_unstick'), 'the Enabled mods list shows it, so it has a Turn off button');
+  assert.ok(!LEGACY.controls.includes('#mod_pet_loot_unstick') && !SUPPLEMENT.controls.includes('#mod_pet_loot_unstick')
+    && !KEY_SUPPLEMENT.controls.includes('#mod_pet_loot_unstick'), 'a recording lists it: derive it from there instead');
+  // The legacy walk reached its neighbour, Pet collects quest items, on the
+  // same tab and sub-tab this switch is entered on.
+  const neighbour = LEGACY.steps.findIndex((s) => s.control === '#mod_pet_quest_pickup');
+  const nav = LEGACY.steps.slice(0, neighbour).filter((s) => /^(tab|subtab):/.test(s.control)).map((s) => s.control);
+  assert.equal(nav.findLast((c) => c.startsWith('tab:')), 'tab:mods');
+  assert.equal(nav.at(-1), 'subtab:qol');
+  const steps = DERIVED.steps;
+  const at = steps.length - ADDED_STEPS;
+  // Every earlier step (the key supplement's last one included) comes first,
+  // so none of their indexes moved.
+  assert.equal(steps[at - 1].control, KEY_SLIDERS[0]);
+  assert.equal(steps[at - 1].action, 'min');
+  assert.ok(!steps.slice(0, at).some((s) => s.control.includes('mod_pet_loot_unstick')));
+  const cb = '#mod_pet_loot_unstick';
+  assert.deepEqual(steps.slice(at).map((s) => [s.control, s.action]), [
+    ['tab:mods', 'click'], ['subtab:qol', 'click'], [cb, 'click'], [cb, 'click'], [cb, 'click'],
+    [quickDisable('mod_pet_loot_unstick'), 'click'],
+  ]);
+  assert.ok(!('expect' in steps[at]) && !('expect' in steps[at + 1]), 'a navigation step carries an expectation');
+  const click = (value) => ({
+    posts: { is: [{ url: '/api/set', body: { key: 'mod_pet_loot_unstick', value } }] },
+    cmds: { is: [`petunstick ${value ? 1 : 0}`] },
+  });
+  assert.deepEqual(steps[at + 2].expect, click(true));
+  assert.deepEqual(steps[at + 3].expect, click(false));
+  assert.deepEqual(steps[at + 4].expect, click(true));
+  assert.deepEqual(steps[at + 5].expect, { posts: { same: at + 3 }, cmds: { same: at + 3 } });
 });
 
 test('each control runs on the tab the legacy walk first reached it on', () => {
