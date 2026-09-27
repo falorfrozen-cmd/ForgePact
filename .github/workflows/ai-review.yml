@@ -110,7 +110,14 @@ jobs:
         }}
       cancel-in-progress: true
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # A whole review of a large pull request takes longer than 30 minutes:
+    # ForgePact #105 (67 files, 5,003 added lines, most of it panel CSS, plus
+    # the design tooling) was cancelled at 30 with nothing posted, while a
+    # scoped `@claude review` of one of its commits finished in 8. The review
+    # step below has a shorter limit of its own, so a review that runs out of
+    # time fails that step and the job still reaches the result upload,
+    # rather than the whole job being cancelled.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
         with:
@@ -331,6 +338,7 @@ jobs:
           cat "$out/impeccable-detect.stderr"
 
       - uses: anthropics/claude-code-action@v1
+        timeout-minutes: 55
         env:
           # Makes every Agent call run in the foreground. The code-review
           # command runs its whole review through subagents, and agents run in
