@@ -121,9 +121,11 @@ LIVE3_CHECKS = ["dll-hash (live 3)", "control (live 3)", "V0 (live 3)", "V0b (li
 CRAFTPROBE_BLOCK = ("// ---- craftprobe: the crafting-materials Phase 0 instrument (issue #14)",
                     "#endif // FORGEPACT_RELEASE (craftprobe)")
 STASH_ROWS = ("gml_Script_CreateItemNew", "gml_Script_UiCreate", "gml_Script_NetworkSendInventoryUpdate")
-# Live procedure 2's row: after those three, directly before the control.
+# Live procedure 2's row: after those three; then ForgePact #68's row
+# (docs/stash-move-research.md), directly before the control.
 CLOSE_ROW = "gml_Script_UiACloseButton"
-CP_ROWS = 286
+STASH_MOVE_ROW = "gml_Script_ValidateItem"
+CP_ROWS = 287
 
 
 class StashBagLayoutContract(unittest.TestCase):
@@ -378,9 +380,10 @@ class CraftprobePhase0Additions(unittest.TestCase):
         self.assertEqual(at, list(range(at[0], at[0] + 3)), "the three rows sit together, in this order")
         self.assertEqual(at[0], constants.index("gml_Script_ReportClient") + 1, "after the Phase 1k rows")
         self.assertEqual(constants[-1], "gml_Script_CheckPlayerInteraction", "the control stays last")
-        # Step 0d's close row sits between them and the control.
+        # Step 0d's close row, then #68's row, sit between them and the control.
         self.assertEqual(at[-1] + 1, constants.index(CLOSE_ROW))
-        self.assertEqual(constants.index(CLOSE_ROW), len(constants) - 2)
+        self.assertEqual(constants.index(CLOSE_ROW), len(constants) - 3)
+        self.assertEqual(constants.index(STASH_MOVE_ROW), len(constants) - 2)
         # Every row's runtime name is the SDK constant's own value.
         self.assertIn("HeroSiege::Scripts::CONSTANT.data()", self.plugin)
         shipped = strip_research_blocks(self.plugin)
@@ -590,19 +593,21 @@ class CraftprobeLive2Additions(unittest.TestCase):
         constants = [constant for _, _, constant in self.rows]
         self.assertEqual(len(self.rows), CP_ROWS)
         self.assertEqual(constants.count(CLOSE_ROW), 1)
-        self.assertEqual(constants.index(CLOSE_ROW), len(constants) - 2)
+        self.assertEqual(constants.index(CLOSE_ROW), len(constants) - 3)
+        self.assertEqual(constants.count(STASH_MOVE_ROW), 1)
+        self.assertEqual(constants.index(STASH_MOVE_ROW), len(constants) - 2)
         self.assertEqual(constants[-1], "gml_Script_CheckPlayerInteraction")
         shipped = strip_research_blocks(self.plugin)
         self.assertIn("kPlayerCommands", shipped)   # negative control: the strip keeps player code
         for safe, label, constant in self.rows:
-            if constant == CLOSE_ROW:
+            if constant in (CLOSE_ROW, STASH_MOVE_ROW):
                 self.assertNotIn(f'X({safe}, "{label}", {constant})', shipped)
 
     def test_marker_prints_the_row_count(self):
         usage = self.body("static void CpUsage(")
         first = usage[usage.index("Out("):]
         self.assertIn('"craftprobe: phase1k rows=" + std::to_string(kCpTargetCount)', first[:first.index(";")])
-        self.assertEqual(len(self.rows), 286)
+        self.assertEqual(len(self.rows), CP_ROWS)
 
 
 class MenuLayoutCellRows(unittest.TestCase):

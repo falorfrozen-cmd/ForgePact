@@ -57,6 +57,11 @@ STASH_BAG_DOC = ROOT / "docs" / "stash-bag-layout-research.md"
 # only where those rows, or the separate `other` they brought, invalidate them.
 STASH_BAG_ROWS = ("gml_Script_CreateItemNew", "gml_Script_UiCreate", "gml_Script_NetworkSendInventoryUpdate",
                   "gml_Script_UiACloseButton")
+# ForgePact #68's row, after #147's, before the control; written down in
+# its own research doc (docs/stash-move-research.md).
+STASH_MOVE_DOC = ROOT / "docs" / "stash-move-research.md"
+STASH_MOVE_ROWS = ("gml_Script_ValidateItem",)
+LATER_ROWS = STASH_BAG_ROWS + STASH_MOVE_ROWS
 
 BLOCK_START = "// ---- craftprobe: the crafting-materials Phase 0 instrument (issue #14)"
 BLOCK_END = "#endif // FORGEPACT_RELEASE (craftprobe)"
@@ -240,9 +245,13 @@ class CraftMatsContractTests(unittest.TestCase):
         # Toolkit #147's rows are read by the stash and bag launches, so
         # they are written down in that research; this record stays #14's.
         stash_doc = STASH_BAG_DOC.read_text(encoding="utf-8")
+        move_doc = STASH_MOVE_DOC.read_text(encoding="utf-8")
         for label, name in zip(labels, names):
             if name in STASH_BAG_ROWS:
                 self.assertIn(f"`{label}`", stash_doc, f"row {label} missing from {STASH_BAG_DOC.name}")
+                continue
+            if name in STASH_MOVE_ROWS:
+                self.assertIn(f"`{label}`", move_doc, f"row {label} missing from {STASH_MOVE_DOC.name}")
                 continue
             self.assertIn(name, self.doc, f"row {label}: {name} missing from the research doc")
         # The table spells names through the SDK constant, never as a literal.
@@ -847,8 +856,8 @@ class CraftMatsContractTests(unittest.TestCase):
             self.assertIn(row, labels, row + " is not a craftprobe row")
         # Phase 1e's 252 rows (none added for Phase 1g), Phase 1h's two,
         # Phase 1j's 24 (none for Phase 1i) and Phase 1k's four; then toolkit
-        # #147's four (STASH_BAG_ROWS).
-        self.assertEqual(len(self.rows), 282 + len(STASH_BAG_ROWS))
+        # #147's four (STASH_BAG_ROWS) and #68's one (STASH_MOVE_ROWS).
+        self.assertEqual(len(self.rows), 282 + len(LATER_ROWS))
         detour = self.plugin[self.plugin.index("#define CRAFTPROBE_DETOUR(SAFE, LABEL)"):]
         detour = detour[:detour.index("#define CRAFTPROBE_TARGETS(X)")]
         # The enclosing row is read before this call's own frame is entered, the
@@ -1134,9 +1143,9 @@ class CraftMatsContractTests(unittest.TestCase):
         at = [constants.index(c) for c in self.PHASE1J_ROWS]
         self.assertEqual(at, list(range(at[0], at[0] + 24)), "the Phase 1j rows sit together, in the doc's order")
         self.assertEqual(constants[-1], "gml_Script_CheckPlayerInteraction", "the control stays the table's last row")
-        # Phase 1k's four rows, then toolkit #147's four, sit between them
-        # and the control.
-        self.assertEqual(at[-1] + 1 + len(self.PHASE1K_ROWS) + len(STASH_BAG_ROWS), len(constants) - 1)
+        # Phase 1k's four rows, then toolkit #147's four and #68's one, sit
+        # between them and the control.
+        self.assertEqual(at[-1] + 1 + len(self.PHASE1K_ROWS) + len(LATER_ROWS), len(constants) - 1)
         labels = {constant: label for _, label, constant in self.rows}
         for constant in self.PHASE1J_ROWS:
             self.assertNotIn(labels[constant], self.CRAFT_ROUTE_ROWS)
@@ -1390,10 +1399,10 @@ class CraftMatsContractTests(unittest.TestCase):
         self.assertEqual(at, list(range(at[0], at[0] + 4)), "the Phase 1k rows sit together, in the doc's order")
         self.assertEqual(at[0], constants.index(self.PHASE1J_ROWS[-1]) + 1, "the Phase 1k rows follow the Phase 1j rows")
         self.assertEqual(constants[-1], "gml_Script_CheckPlayerInteraction", "the control stays the table's last row")
-        # Toolkit #147's rows follow them, before the control.
-        self.assertEqual(at[-1] + 1 + len(STASH_BAG_ROWS), len(constants) - 1)
-        self.assertEqual([constants.index(c) for c in STASH_BAG_ROWS],
-                         list(range(at[-1] + 1, at[-1] + 1 + len(STASH_BAG_ROWS))))
+        # Toolkit #147's rows follow them, then #68's, before the control.
+        self.assertEqual(at[-1] + 1 + len(LATER_ROWS), len(constants) - 1)
+        self.assertEqual([constants.index(c) for c in LATER_ROWS],
+                         list(range(at[-1] + 1, at[-1] + 1 + len(LATER_ROWS))))
         labels = {constant: label for _, label, constant in self.rows}
         getter = self.body("static bool CpIsProfileGetter(")
         for constant in self.PHASE1K_ROWS:

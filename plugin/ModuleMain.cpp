@@ -25952,6 +25952,9 @@ static void CpAfter(const char* safe, const char* label, long n, bool logged, bo
     /* Toolkit #147's second stash and bag launch: the close button's      */ \
     /* routine, logged on the close row's click and replayed by name (P2-7). */ \
     X(UiACloseButton, "UiACloseButton", gml_Script_UiACloseButton) \
+    /* ForgePact #68 (docs/stash-move-research.md, Instrument): the item check */ \
+    /* the grid input processor runs around every bag-to-stash move.           */ \
+    X(ValidateItem, "ValidateItem", gml_Script_ValidateItem) \
     /* positive control: fires from every interactable's Step event */ \
     X(CheckPlayerInteraction, "CheckPlayerInteraction", gml_Script_CheckPlayerInteraction)
 
