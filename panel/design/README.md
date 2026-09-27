@@ -53,6 +53,25 @@ code is checked against it rather than the other way round:
   that matches it and none of its variants, so the base token is never read
   off an element in the variant's state (`lib/design-tokens.mjs`, proved by
   `tests/tokens-selftest.mjs`).
+- `tests/design-match.mjs --structure` is its structure-only mode, run when an
+  export is made rather than at restyle. It compares no pixels or tokens and
+  needs no `--figma-dir`:
+
+  ```bash
+  node tests/design-match.mjs --structure --export design/figma-export.json --out <dir>
+  ```
+
+  It checks each screen's texts, as above. It then checks placement: every
+  `selectorTokens` entry that names a `component` (a `components` entry
+  carrying the `selector` it is drawn as) must have its first match inside
+  that component on every screen where it matches. Last, it checks runtime
+  values: no screen text or placeholder may hold a version, a filesystem path
+  or a port the running panel supplies. Any failure exits 1 and names the
+  screen and element. An export should give each component its `selector`
+  and each entry that belongs to one its `component`. Placement fails while
+  no entry names a component, which is true of the current export
+  (`lib/design-structure.mjs`, proved by `tests/design-structure.test.js`
+  and `tests/structure-selftest.mjs`).
 - `motion.notes` is the motion contract, and `src/app.css` implements it with
   the `--motion-*` tokens only (CSS transitions and `@starting-style`, no
   library): hover colours, the press, the tray, the theme picker's list and
