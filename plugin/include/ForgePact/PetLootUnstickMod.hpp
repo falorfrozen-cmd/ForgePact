@@ -150,8 +150,11 @@ public:
 
     // Where each tick went, so `ticks=0`, "never found the pet", "the target
     // read failed" and "nothing was ever stuck" read differently. Every tick
-    // while on calls NoteTick() first, then at most one of the routes below
-    // when it returns early; the rest reached the watch.
+    // while on calls NoteTick() first. A tick that returns before the watch
+    // calls exactly one of NoteNoPet/NoteNoTarget/NoteTargetGone/
+    // NoteUnreadable; the rest reached the watch. After a give-up the tick
+    // may also count an unreadable `object_index` (the target is still
+    // dropped) and a refused `lootList` clear (NoteListNotCleared).
     void NoteTick() { m_Ticks.fetch_add(1); }
     // No Companion_obj instance (a menu, no pet out). A normal state, not a
     // refusal: counted, never logged.
