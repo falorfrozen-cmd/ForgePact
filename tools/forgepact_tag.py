@@ -4,6 +4,7 @@ Run it:
 
     py tools/forgepact_tag.py --tag v1.3.21 --existing v1.3.16
     py tools/forgepact_tag.py --tag 1.3.21 --tree 1.3.20 --existing $(git tag --list 'v*')
+    py tools/forgepact_tag.py --tag v2.0.0 --recut --existing v1.4.7 v2.0.0
     py tools/forgepact_tag.py --compose-notes --version 1.3.20 --previous v1.3.16 \
         --generated generated.md --out release-notes.md
 
@@ -37,6 +38,17 @@ draft or published -- gives that tag two release objects, and GitHub's own
 `releases/latest` then resolves to whichever one it calls latest. The
 workflow's own "no release yet" step catches the draft case this alone
 cannot see (a draft does not create its tag).
+
+`--recut` lifts this one refusal, for the tag being cut and nothing else. It
+is what the workflow passes when its `recut` input is on: the workflow checks
+that the tag's only release is an unpublished draft, then deletes that draft
+and the tag before tagging again, so a second release object never exists.
+This tool cannot see releases, so it trusts that check and does not repeat
+it. The tag being recut is dropped from the list before the checks below,
+since it is about to disappear: it is neither a tag to stay above nor the
+`previous` its own notes are bounded by (counting it would leave the notes an
+empty range). Every other refusal still applies, and with no such tag
+`--recut` changes nothing.
 
 **A version below one already tagged.** `releases/latest` would point at it,
 telling every hub asking for the newest ForgePact version something older
@@ -196,7 +208,7 @@ def as_numbers(version: str) -> tuple:
     return tuple(int(part) for part in version.split("."))
 
 
-def plan(raw: str, refs: Iterable[str], tree: str) -> Plan:
+def plan(raw: str, refs: Iterable[str], tree: str, recut: bool = False) -> Plan:
     version = raw.strip()
     if version.startswith(PREFIX):
         version = version[len(PREFIX):]
@@ -219,12 +231,17 @@ def plan(raw: str, refs: Iterable[str], tree: str) -> Plan:
     tag = PREFIX + version
     taken = tag_names(refs)
     if tag in taken:
-        raise SystemExit(
-            f"{tag} already exists. Tagging it again would give it a second "
-            f"release, and releases/latest would resolve to whichever one "
-            f"GitHub calls latest. Pick a higher version, or delete that tag "
-            f"and its release first."
-        )
+        if not recut:
+            raise SystemExit(
+                f"{tag} already exists. Tagging it again would give it a second "
+                f"release, and releases/latest would resolve to whichever one "
+                f"GitHub calls latest. If its release is still an unpublished "
+                f"draft, run ForgePact tag again with recut on to replace it; "
+                f"otherwise pick a higher version."
+            )
+        # The tag is about to be deleted and made again, so it is neither a
+        # tag to stay above nor the `previous` its own notes are bounded by.
+        taken.discard(tag)
 
     released = [
         name for name in taken if name.startswith(PREFIX) and SHAPE.match(name[len(PREFIX):])
@@ -446,6 +463,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="tags that already exist, as names or refs",
     )
     parser.add_argument("--root", type=Path, default=ROOT)
+    parser.add_argument(
+        "--recut",
+        action="store_true",
+        help="the tag may already exist: the workflow has checked that its "
+             "release is an unpublished draft, and will delete both first",
+    )
 
     parser.add_argument(
         "--compose-notes",
@@ -468,6 +491,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
 
     args = parser.parse_args(argv)
+
+    if args.recut and (args.published_notes or args.compose_notes):
+        parser.error("--recut is only for planning a tag")
 
     if args.published_notes:
         if args.compose_notes:
@@ -500,7 +526,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         parser.error("give --tag, or --compose-notes")
 
     tree = args.tree or cut_release.current(args.root)
-    chosen = plan(args.tag, args.existing, tree)
+    chosen = plan(args.tag, args.existing, tree, recut=args.recut)
 
     # Four bare lines: this is appended straight to `$GITHUB_OUTPUT`, and
     # `bump` is compared as a string because that is the only shape a step's

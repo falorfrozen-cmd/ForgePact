@@ -113,6 +113,30 @@ class StepOrderIsTheGuardrail(unittest.TestCase):
         self.assertLess(package_at, second_draft_at)
         self.assertLess(second_draft_at, upload_at)
 
+    def test_the_second_guard_requires_the_tag_to_still_be_the_built_commit(self):
+        # forgepact-tag.yml's recut deletes a draft and its tag and makes both
+        # again on a newer commit. A build of the old commit still running
+        # then finds a draft on "its" tag, so the draft flag alone would let
+        # it put the old zip on the new draft.
+        text = workflow_text()
+        start = text.find("- name: This release is still a draft (guard 2)")
+        end = text.find("- name: Upload to the draft")
+        self.assertNotEqual(start, -1, "guard 2 is missing")
+        self.assertLess(start, end)
+        guard = text[start:end]
+        self.assertIn("SOURCE_COMMIT: ${{ steps.source_commit.outputs.sha }}", guard)
+        code = code_lines(guard)
+        self.assertTrue(
+            any('commits/refs/tags/$TAG' in line for line in code),
+            "guard 2 must ask where the tag points now",
+        )
+        at = next(
+            (i for i, line in enumerate(code) if '"$tagged" != "$SOURCE_COMMIT"' in line),
+            None,
+        )
+        self.assertIsNotNone(at, "guard 2 must compare the tag with the commit it built")
+        self.assertIn("exit 1", code[at:at + 3])
+
 
 class ThePanelIsBuiltBeforeItIsTested(unittest.TestCase):
     """The panel's frontend (panel/, Svelte + Vite) is not tracked as built

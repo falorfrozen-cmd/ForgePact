@@ -275,6 +275,161 @@ class TheBuildIsDispatchedAfterTheDraft(unittest.TestCase):
         self.assertIn("-f dry_run=false", dispatch)
 
 
+def step_block(text: str, name: str) -> str:
+    """The text of the step whose `- name:` starts with `name`, up to the next step."""
+    start = text.find(f"- name: {name}")
+    if start == -1:
+        raise AssertionError(f"no step named {name!r}")
+    end = text.find("\n      - ", start)
+    return text[start:end if end != -1 else len(text)]
+
+
+def steps(text: str) -> list[str]:
+    """Every step in the job, as text, in order."""
+    jobs_at = text.find("\n    steps:\n")
+    parts = re.split(r"\n(?=      - )", text[jobs_at:])
+    return [part for part in parts[1:] if part.lstrip().startswith("- ")]
+
+
+GUARD_1 = "This version has no release yet"
+GUARD_2 = "The draft is still a draft (guard 2)"
+DELETE = "Delete the old draft and its tag"
+REPLACE_ONLY = "if: steps.release.outputs.replace == 'true'"
+
+
+class RecutIsAnExplicitInput(unittest.TestCase):
+    """Replacing a draft deletes a release and a tag, so it never happens
+    because a version was typed that happened to be taken."""
+
+    def recut_block(self) -> str:
+        match = re.search(r"(?m)^ {6}recut:\s*\n((?: {8}.*\n)+)", workflow_text())
+        self.assertIsNotNone(match, "there is no recut input")
+        return match.group(1)
+
+    def test_it_is_a_boolean_that_defaults_to_false(self):
+        block = self.recut_block()
+        self.assertRegex(block, r"(?m)^ {8}type: boolean\s*$")
+        self.assertRegex(block, r"(?m)^ {8}default: false\s*$")
+        self.assertNotRegex(block, r"required: true")
+
+    def test_it_reaches_the_shell_only_through_the_environment(self):
+        text = workflow_text()
+        self.assertIn("RECUT: ${{ inputs.recut }}", text)
+        for line in run_lines(text):
+            self.assertNotIn("inputs.recut", line, f"interpolated into a shell: {line.strip()!r}")
+
+    def test_the_tool_is_told_only_when_the_input_is_true(self):
+        code = code_lines(step_block(workflow_text(), "Is this a tag we can release"))
+        self.assertIn('if [ "$RECUT" = "true" ]; then', code)
+        self.assertIn("recut=(--recut)", code)
+        plan = next((line for line in code if "tools/forgepact_tag.py" in line), "")
+        self.assertIn('"${recut[@]}"', plan)
+
+
+class RecutReplacesOnlyADraft(unittest.TestCase):
+    def guard_1(self) -> list[str]:
+        return code_lines(step_block(workflow_text(), GUARD_1))
+
+    def error_after(self, code: list[str], condition: str) -> str:
+        at = next((i for i, line in enumerate(code) if condition in line), None)
+        self.assertIsNotNone(at, f"no check {condition!r}")
+        following = code[at + 1:at + 3]
+        self.assertTrue(any(line == "exit 1" for line in following), f"{condition!r} does not stop")
+        return next(line for line in following if "::error::" in line)
+
+    def test_the_run_block_reader_finds_the_guard(self):
+        """Positive control for the step reader these tests use."""
+        self.assertTrue(any("releases?per_page=100" in line for line in self.guard_1()))
+
+    def test_with_recut_off_a_release_still_refuses_and_names_the_input(self):
+        message = self.error_after(self.guard_1(), '"$RECUT" != "true"')
+        self.assertIn("recut", message)
+
+    def test_recut_wants_exactly_one_release(self):
+        self.error_after(self.guard_1(), '"$existing" != "1"')
+
+    def test_a_published_release_is_refused(self):
+        message = self.error_after(self.guard_1(), '"$draft" != "true"')
+        self.assertIn("published", message)
+        self.assertIn("never deleted or moved", message)
+
+    def test_a_tag_with_no_release_is_refused(self):
+        code = self.guard_1()
+        at = next((i for i, line in enumerate(code) if '*" refs/tags/$TAG "*)' in line), None)
+        self.assertIsNotNone(at, "a tag with no release must be told apart from no tag")
+        self.assertIn("exit 1", code[at:at + 4])
+
+    def test_replace_is_only_set_after_every_check(self):
+        code = self.guard_1()
+        replace_at = code.index('echo "replace=true" >> "$GITHUB_OUTPUT"')
+        for condition in ('"$RECUT" != "true"', '"$existing" != "1"', '"$draft" != "true"'):
+            check_at = next(i for i, line in enumerate(code) if condition in line)
+            self.assertLess(check_at, replace_at, f"{condition} is checked after replace is set")
+
+    def test_the_count_draft_and_id_come_from_one_query(self):
+        queries = [line for line in self.guard_1() if "gh api" in line]
+        self.assertEqual(len(queries), 1, "two queries can describe two different moments")
+
+
+class ASecondGuardRunsRightBeforeTheDelete(unittest.TestCase):
+    def test_guard_2_rechecks_the_same_draft(self):
+        block = step_block(workflow_text(), GUARD_2)
+        self.assertIn(REPLACE_ONLY, block)
+        code = code_lines(block)
+        self.assertTrue(any("releases?per_page=100" in line for line in code), "guard 2 must ask again")
+        condition = next((line for line in code if '"$draft" != "true"' in line), "")
+        self.assertIn('"$existing" != "1"', condition)
+        self.assertIn('"$id" != "$ID"', condition)
+        at = code.index(condition)
+        self.assertIn("exit 1", code[at:at + 3])
+
+    def test_guard_2_is_the_step_right_before_the_delete(self):
+        names = [re.match(r"\s*- (?:name: )?(.*)", part).group(1) for part in steps(workflow_text())]
+        guard_at = next(i for i, name in enumerate(names) if name.startswith(GUARD_2))
+        self.assertTrue(names[guard_at + 1].startswith(DELETE), names[guard_at + 1])
+        self.assertTrue(names[guard_at - 1].startswith(GUARD_1), names[guard_at - 1])
+
+
+class DeletionOnlyFollowsTheDraftChecks(unittest.TestCase):
+    DELETIONS = ("-X DELETE", "--delete", "git tag -d", "release delete")
+
+    def test_every_deletion_is_in_the_replace_only_delete_step(self):
+        for part in steps(workflow_text()):
+            code = code_lines(part)
+            if any(word in line for line in code for word in self.DELETIONS):
+                self.assertIn(f"- name: {DELETE}", part)
+                self.assertIn(REPLACE_ONLY, part)
+
+    def test_the_delete_step_deletes_the_checked_release_then_its_tag(self):
+        code = code_lines(step_block(workflow_text(), DELETE))
+        asked = next(i for i, line in enumerate(code) if "git ls-remote --exit-code" in line)
+        release = code.index('gh api -X DELETE "repos/$REPO/releases/$ID"')
+        remote_tag = code.index('git push origin --delete "refs/tags/$TAG"')
+        local_tag = code.index('git tag -d "$TAG"')
+        self.assertLess(asked, release, "a failed tag query must come before anything is deleted")
+        self.assertLess(release, remote_tag, "deleting the tag first leaves the draft behind")
+        self.assertLess(remote_tag, local_tag)
+
+    def test_the_delete_follows_both_guards_and_precedes_the_notes_and_the_tag(self):
+        text = workflow_text()
+        order = [
+            text.find(f"- name: {GUARD_1}"),
+            text.find(f"- name: {GUARD_2}"),
+            text.find("-X DELETE"),
+            # After the old tag is gone, so generate-notes honours
+            # target_commitish instead of measuring up to the old tag.
+            text.find('gh api -X POST "repos/$REPO/releases/generate-notes"'),
+            text.find("git tag -a"),
+            text.find("gh release create"),
+        ]
+        self.assertNotIn(-1, order)
+        self.assertEqual(order, sorted(order))
+
+    def test_the_summary_says_when_a_draft_was_replaced(self):
+        block = step_block(workflow_text(), "Say what still needs a human")
+        self.assertIn("REPLACED: ${{ steps.release.outputs.replace }}", block)
+
+
 class ThePrefixAgreesWithTheTool(unittest.TestCase):
     def test_the_workflow_and_the_tool_agree_on_v(self):
         self.assertEqual(forgepact_tag.PREFIX, "v")
