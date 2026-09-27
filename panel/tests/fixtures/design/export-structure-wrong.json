@@ -1,0 +1,163 @@
+{
+  "fileKey": "fixture",
+  "direction": "fixture: structure mode, one renamed text and one misplaced selector",
+  "exportedAt": "2026-09-25T00:00:00Z",
+  "palettes": [
+    {
+      "name": "alpha",
+      "label": "Alpha",
+      "default": true,
+      "source": "fixture:alpha"
+    },
+    {
+      "name": "beta",
+      "label": "Beta",
+      "default": false,
+      "source": "fixture:beta"
+    }
+  ],
+  "variables": [
+    {
+      "collection": "tokens",
+      "mode": "alpha",
+      "name": "color/bg/base",
+      "type": "COLOR",
+      "value": "#010203"
+    },
+    {
+      "collection": "tokens",
+      "mode": "alpha",
+      "name": "color/text/primary",
+      "type": "COLOR",
+      "value": "#333333"
+    },
+    {
+      "collection": "tokens",
+      "mode": "beta",
+      "name": "color/bg/base",
+      "type": "COLOR",
+      "value": "#010204"
+    },
+    {
+      "collection": "tokens",
+      "mode": "beta",
+      "name": "color/text/primary",
+      "type": "COLOR",
+      "value": "#343434"
+    }
+  ],
+  "amendments": {
+    "enabledModsForm": 1,
+    "flatness": "base",
+    "overflowAfter": null,
+    "texts": {
+      "heading": "Enabled mods",
+      "empty": "Nothing is on",
+      "turnOff": "Turn off",
+      "theme": "Theme"
+    }
+  },
+  "borders": [],
+  "contrastPairs": [
+    {
+      "fg": "color/text/primary",
+      "bg": "color/bg/base",
+      "minRatio": 4.5,
+      "where": "body text, planted to fail"
+    }
+  ],
+  "selectorTokens": [
+    {
+      "selector": "body",
+      "property": "background-color",
+      "variable": "color/bg/base"
+    },
+    {
+      "selector": ".tabbtn",
+      "property": "color",
+      "variable": "color/text/primary",
+      "component": "Rail"
+    },
+    {
+      "selector": ".enabled-mod",
+      "property": "color",
+      "variable": "color/text/primary",
+      "component": "EnabledMods"
+    },
+    {
+      "selector": "#enabledModsCount",
+      "property": "color",
+      "variable": "color/text/primary",
+      "component": "EnabledMods"
+    },
+    {
+      "selector": "#controlSearch",
+      "property": "color",
+      "variable": "color/text/primary",
+      "component": "EnabledMods"
+    }
+  ],
+  "screens": [
+    {
+      "tab": "world",
+      "width": 1280,
+      "nodeId": "fixture",
+      "screenshot": "screens/world-1280.png",
+      "state": {
+        "game": "offline",
+        "config": {
+          "density_on": true,
+          "density": 3,
+          "map_reveal": true
+        }
+      },
+      "texts": [
+        "Game offline",
+        "2 on",
+        "Turn off",
+        "Reveal full map",
+        "World options"
+      ]
+    },
+    {
+      "tab": "mods-items",
+      "width": 900,
+      "nodeId": "fixture",
+      "screenshot": "screens/mods-items-900.png",
+      "state": {
+        "game": "offline",
+        "config": {
+          "density_on": true,
+          "density": 3,
+          "map_reveal": true
+        }
+      },
+      "texts": [
+        "Start the game to check the helmet.",
+        "2 on",
+        "Game offline",
+        "Miner's Helmet"
+      ]
+    }
+  ],
+  "states": [],
+  "components": [
+    {
+      "name": "Rail",
+      "nodeId": "fixture",
+      "selector": ".tabbar"
+    },
+    {
+      "name": "EnabledMods",
+      "nodeId": "fixture",
+      "selector": "#enabledMods"
+    }
+  ],
+  "fonts": [],
+  "bindingAudit": {
+    "fillsTotal": 0,
+    "fillsBound": 0,
+    "textsTotal": 0,
+    "textsStyled": 0
+  }
+}

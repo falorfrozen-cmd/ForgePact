@@ -1,8 +1,15 @@
-// Does the built panel match the Figma export? Four checks, run against
+// Does the built panel match the Figma export? Six checks, run against
 // panel/dist through the sandbox server and the installed Edge:
 //
 //   node tests/design-match.mjs --export <export.json> --figma-dir <dir> --out <dir>
-//                               [--checks texts,tokens,flatness,composites]
+//                               [--checks texts,tokens,flatness,composites,placement,runtime]
+//   node tests/design-match.mjs --structure --export <export.json> --out <dir>
+//
+// Without --checks the first four run, as they always have. --structure is
+// --checks texts,placement,runtime, the structure-only mode: it compares the
+// export's shape with the current panel build and never a pixel or a token,
+// so it needs no --figma-dir. A design-export workorder runs it when the
+// export is made, not at restyle (hub SKILL.md rule 9).
 //
 // texts       for each `screens[]` entry, the tab (and sub-tab: `mods-items`
 //             is the mods tab plus #subtab-items) at that width; every
@@ -20,6 +27,16 @@
 // composites  the Figma image (<figma-dir>/screens/<tab>-<w>.png) left and
 //             the fresh render right, on one canvas as tall as the taller,
 //             written to <out>/compare/<tab>-<w>.png.
+// placement   each `selectorTokens[]` entry that names a `component` (whose
+//             `components[]` entry carries the `selector` that component is
+//             drawn as): on each screen, the entry's first match must be that
+//             element or inside it, and it must match on some screen. An
+//             entry without `component` is counted as unscoped, not checked.
+// runtime     no screen `texts` or `placeholders` entry may hold a value the
+//             running panel supplies: its version (src/forgepact.py
+//             `__version__`, or any x.y.z), a filesystem path, or a port
+//             (`PORT_CANDIDATES`, localhost). Needs no browser.
+//             lib/design-structure.mjs holds both rules.
 //
 // The design state. A screen may carry `state: {"game": "offline"|"running",
 // "config": {<forgepact.json key>: <value>, ...}}`, the state its Figma frame
@@ -54,7 +71,8 @@
 // Summary lines, last: `texts: <k> missing`, `tokens: <k> mismatched`,
 // `tokens[<palette>]: <k> mismatched` per other palette in export order,
 // `flatness: <k> violations`, `composites: <n> written, <m> without a Figma
-// image`; a check left out of --checks prints `<name>: skipped` instead.
+// image`, `placement: <k> misplaced, <n> not found, <u> unscoped`, `runtime:
+// <k> values`; a check left out of --checks prints `<name>: skipped` instead.
 // Exits 1 if any k or m is above 0, or a requested check has nothing to
 // check. <out>/design-match.json holds every row. Nothing here knows a
 // palette by name.
@@ -67,9 +85,15 @@ import { defaultPalette, here, loadExport } from '../scripts/tokens-from-export.
 import { TABS, VIEWPORTS, launchBrowser, openPanel, openTab, parseArgs, startSandbox, waitSaved } from './lib/browser.mjs';
 import { flatness } from './lib/design-flatness.mjs';
 import { compareToken, expectedCss, measureTokens, variantsOf } from './lib/design-tokens.mjs';
+import { panelRuntime, placeEntries, runtimeValues, scopedEntries } from './lib/design-structure.mjs';
 
-const ALL_CHECKS = ['texts', 'tokens', 'flatness', 'composites'];
-const USAGE = 'usage: design-match.mjs --export <export.json> --figma-dir <dir> --out <dir> [--checks texts,tokens,flatness,composites]';
+const DEFAULT_CHECKS = ['texts', 'tokens', 'flatness', 'composites'];
+const ALL_CHECKS = [...DEFAULT_CHECKS, 'placement', 'runtime'];
+const STRUCTURE_CHECKS = ['texts', 'placement', 'runtime'];
+const SCREEN_CHECKS = ['texts', 'flatness', 'composites', 'placement'];
+const USAGE = 'usage: design-match.mjs --export <export.json> --figma-dir <dir> --out <dir> [--checks texts,tokens,flatness,composites,placement,runtime]\n' +
+  '       design-match.mjs --structure --export <export.json> --out <dir>';
+const PANEL_SOURCE = new URL('../../src/forgepact.py', import.meta.url);
 
 const norm = (s) => String(s).toLowerCase().replace(/\s+/g, ' ').trim();
 const viewportFor = (width) => VIEWPORTS[width] || { width: Number(width), height: 800 };
@@ -142,9 +166,10 @@ function sideBySide(left, right) {
   return out;
 }
 
-async function screenChecks(browser, sandboxes, exp, checks, figmaDir, outDir, report) {
+async function screenChecks(browser, sandboxes, exp, checks, figmaDir, outDir, report, scoped) {
   const screens = Array.isArray(exp.screens) ? exp.screens : [];
   if (screens.length === 0) throw new Error('the export lists no screens');
+  const placed = scoped.map(() => ({ found: [], misplaced: [] }));
   for (const screen of screens) {
     const name = screenName(screen);
     if (stateError(screen)) continue; // reported once, by main
@@ -167,6 +192,18 @@ async function screenChecks(browser, sandboxes, exp, checks, figmaDir, outDir, r
           if (!ok) console.log(`texts ${name}: missing ${JSON.stringify(want)}`);
         }
       }
+      if (checks.has('placement') && scoped.length) {
+        const got = await page.evaluate(placeEntries, scoped.map(({ selector, within }) => ({ selector, within })));
+        got.forEach((r, i) => {
+          if (r.invalid) { report.errors.push(`placement ${name}: ${scoped[i].selector} (${scoped[i].component}): invalid ${r.invalid}`); return; }
+          if (!r.found) return;
+          placed[i].found.push(name);
+          if (!r.inside) {
+            placed[i].misplaced.push({ screen: name, where: r.where });
+            console.log(`placement ${name}: ${scoped[i].selector} is not inside ${scoped[i].component} (${scoped[i].within}); first match: ${r.where}`);
+          }
+        });
+      }
       if (checks.has('flatness')) {
         const r = await page.evaluate(flatness, exp.borders || []);
         report.flatness.push({ screen: name, ...r });
@@ -187,6 +224,29 @@ async function screenChecks(browser, sandboxes, exp, checks, figmaDir, outDir, r
       }
     } finally {
       await page.context().close();
+    }
+  }
+  if (checks.has('placement')) {
+    scoped.forEach((s, i) => {
+      const row = { selector: s.selector, component: s.component, within: s.within, screens: placed[i].found, misplaced: placed[i].misplaced };
+      report.placement.push(row);
+      if (!placed[i].found.length) console.log(`placement: ${s.selector} (${s.component}) matches on no screen`);
+    });
+  }
+}
+
+// Screen texts and placeholders that carry a value the running panel supplies.
+function runtimeChecks(exp, report) {
+  const known = panelRuntime(existsSync(PANEL_SOURCE) ? readFileSync(PANEL_SOURCE, 'utf8') : '');
+  for (const screen of Array.isArray(exp.screens) ? exp.screens : []) {
+    const name = screenName(screen);
+    for (const [field, list] of [['texts', screen.texts], ['placeholders', screen.placeholders]]) {
+      for (const text of Array.isArray(list) ? list : []) {
+        for (const hit of runtimeValues(text, known)) {
+          report.runtime.push({ screen: name, field, text, ...hit });
+          console.log(`runtime ${name}: ${field} ${JSON.stringify(text)} holds a ${hit.kind} (${JSON.stringify(hit.value)})`);
+        }
+      }
     }
   }
 }
@@ -276,11 +336,17 @@ async function tokenChecks(browser, sandboxes, exp, report) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  if (typeof args.export !== 'string' || typeof args['figma-dir'] !== 'string' || typeof args.out !== 'string') {
+  if (args.structure && args.checks !== undefined) {
+    console.error(`design-match: --structure is --checks ${STRUCTURE_CHECKS.join(',')}; give one or the other\n${USAGE}`);
+    return 2;
+  }
+  const checks = new Set(args.structure ? STRUCTURE_CHECKS
+    : typeof args.checks === 'string' ? args.checks.split(',').map((s) => s.trim()).filter(Boolean) : DEFAULT_CHECKS);
+  const needsFigma = checks.has('composites');
+  if (typeof args.export !== 'string' || typeof args.out !== 'string' || (needsFigma && typeof args['figma-dir'] !== 'string')) {
     console.error(USAGE);
     return 2;
   }
-  const checks = new Set(typeof args.checks === 'string' ? args.checks.split(',').map((s) => s.trim()).filter(Boolean) : ALL_CHECKS);
   const unknown = [...checks].filter((c) => !ALL_CHECKS.includes(c));
   if (unknown.length || checks.size === 0) {
     console.error(`design-match: unknown check(s) ${unknown.join(', ')}\n${USAGE}`);
@@ -294,20 +360,26 @@ async function main() {
     console.error(`design-match: cannot read ${args.export}: ${e.message}`);
     return 1;
   }
-  const figmaDir = here(args['figma-dir']);
+  const figmaDir = typeof args['figma-dir'] === 'string' ? here(args['figma-dir']) : null;
   const outDir = here(args.out);
   mkdirSync(join(outDir, 'compare'), { recursive: true });
 
-  const report = { export: here(args.export), checks: [...checks], texts: [], tokens: [], flatness: [], composites: [], errors: [] };
+  const report = { export: here(args.export), checks: [...checks], texts: [], tokens: [], flatness: [], composites: [], placement: [], runtime: [], errors: [] };
   for (const screen of Array.isArray(exp.screens) ? exp.screens : []) {
     const why = stateError(screen);
     if (why) report.errors.push(`screen ${screenName(screen)}: ${why}`);
   }
+  const placement = scopedEntries(exp);
+  if (checks.has('placement')) {
+    for (const e of placement.errors) report.errors.push(`placement: ${e}`);
+    if (!placement.scoped.length && !placement.errors.length) report.errors.push('placement: no selectorTokens entry names a component');
+  }
+  if (checks.has('runtime')) runtimeChecks(exp, report);
   const sandboxes = sandboxPool();
   const browser = await launchBrowser();
   try {
-    if (['texts', 'flatness', 'composites'].some((c) => checks.has(c))) {
-      try { await screenChecks(browser, sandboxes, exp, checks, figmaDir, outDir, report); } catch (e) { report.errors.push(e.message); }
+    if (SCREEN_CHECKS.some((c) => checks.has(c))) {
+      try { await screenChecks(browser, sandboxes, exp, checks, figmaDir, outDir, report, placement.scoped); } catch (e) { report.errors.push(e.message); }
     }
     if (checks.has('tokens')) {
       try { await tokenChecks(browser, sandboxes, exp, report); } catch (e) { report.errors.push(e.message); }
@@ -345,6 +417,16 @@ async function main() {
     bad += missing;
     summary.push(`composites: ${written} written, ${missing} without a Figma image`);
   } else summary.push('composites: skipped');
+  if (checks.has('placement')) {
+    const misplaced = report.placement.reduce((n, r) => n + r.misplaced.length, 0);
+    const missing = report.placement.filter((r) => !r.screens.length).length;
+    bad += misplaced + missing;
+    summary.push(`placement: ${misplaced} misplaced, ${missing} not found, ${placement.unscoped} unscoped`);
+  } else summary.push('placement: skipped');
+  if (checks.has('runtime')) {
+    bad += report.runtime.length;
+    summary.push(`runtime: ${report.runtime.length} values`);
+  } else summary.push('runtime: skipped');
   for (const line of summary) console.log(line);
   return bad > 0 ? 1 : 0;
 }
