@@ -9338,30 +9338,50 @@ static void PetLootUnstickTick()
 {
     ResolvePetLootUnstickAssets();
     ForgePact::PetLootUnstickMod& mod = ForgePact::PetLootUnstickMod::Instance();
+    // Every tick is counted, and every early return below names its route,
+    // so `petunstick 0` tells "never found the pet" from "could not read it"
+    // from "nothing was ever stuck".
+    mod.NoteTick();
+
+    // One number off an instance, in its own try: false when the read threw
+    // or gave something that is not a finite number.
+    auto readNumber = [](const RValue& inst, const char* name, double& out) -> bool {
+        try { out = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(name) }).ToDouble(); }
+        catch (...) { return false; }
+        return std::isfinite(out);
+    };
+
+    // No pet out (menus, town without a companion): nothing to watch.
+    int n = 0;
+    try { n = (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)g_PetLootCompanionObjIdx) }).ToDouble(); }
+    catch (...) { mod.Reset(); mod.NoteUnreadable("pet count"); return; }
+    if (n <= 0) { mod.Reset(); mod.NoteNoPet(); return; }
+    RValue pet;
+    try { pet = g_Yytk->CallBuiltin("instance_find", { RValue((double)g_PetLootCompanionObjIdx), RValue(0.0) }); }
+    catch (...) { mod.Reset(); mod.NoteUnreadable("pet instance"); return; }
+
+    // The game writes `lootTarget` as a real: -4 (noone) at Create, an
+    // instance id after. Read the number, whatever kind carries it, and
+    // let instance_exists say whether it names something.
+    double targetId = 0.0;
+    if (!readNumber(pet, "lootTarget", targetId)) { mod.Reset(); mod.NoteUnreadable("lootTarget"); return; }
+    if (targetId < 0.0) { mod.Reset(); mod.NoteNoTarget(); return; }
+    RValue target = RValue(targetId);
+    bool targetExists = false;
+    try { targetExists = g_Yytk->CallBuiltin("instance_exists", { target }).ToBoolean(); }
+    catch (...) { mod.Reset(); mod.NoteUnreadable("target instance_exists"); return; }
+    if (!targetExists) { mod.Reset(); mod.NoteTargetGone(); return; }
+
+    double px = 0.0, py = 0.0, tx = 0.0, ty = 0.0;
+    if (!readNumber(pet, "x", px)) { mod.Reset(); mod.NoteUnreadable("pet x"); return; }
+    if (!readNumber(pet, "y", py)) { mod.Reset(); mod.NoteUnreadable("pet y"); return; }
+    if (!readNumber(target, "x", tx)) { mod.Reset(); mod.NoteUnreadable("target x"); return; }
+    if (!readNumber(target, "y", ty)) { mod.Reset(); mod.NoteUnreadable("target y"); return; }
+    const double distancePx = std::sqrt((tx - px) * (tx - px) + (ty - py) * (ty - py));
+    if (!mod.Observe((int64_t)g_RuntimeFrame, targetId, distancePx)) return;
+
+    // Give it up. The item first, so a throw below still leaves it held.
     try {
-        // No pet out (menus, town without a companion): nothing to watch.
-        int n = 0;
-        try { n = (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)g_PetLootCompanionObjIdx) }).ToDouble(); }
-        catch (...) { n = 0; }
-        if (n <= 0) { mod.Reset(); return; }
-        RValue pet = g_Yytk->CallBuiltin("instance_find", { RValue((double)g_PetLootCompanionObjIdx), RValue(0.0) });
-
-        // The game writes `lootTarget` as a real: -4 (noone) at Create, an
-        // instance id after. Read the number, whatever kind carries it, and
-        // let instance_exists say whether it names something.
-        const double targetId = g_Yytk->CallBuiltin("variable_instance_get", { pet, RValue("lootTarget") }).ToDouble();
-        if (!(targetId >= 0.0)) { mod.Reset(); return; }
-        RValue target = RValue(targetId);
-        if (!g_Yytk->CallBuiltin("instance_exists", { target }).ToBoolean()) { mod.Reset(); return; }
-
-        const double tx = g_Yytk->CallBuiltin("variable_instance_get", { target, RValue("x") }).ToDouble();
-        const double ty = g_Yytk->CallBuiltin("variable_instance_get", { target, RValue("y") }).ToDouble();
-        const double px = g_Yytk->CallBuiltin("variable_instance_get", { pet, RValue("x") }).ToDouble();
-        const double py = g_Yytk->CallBuiltin("variable_instance_get", { pet, RValue("y") }).ToDouble();
-        const double distancePx = std::sqrt((tx - px) * (tx - px) + (ty - py) * (ty - py));
-        if (!mod.Observe((int64_t)g_RuntimeFrame, targetId, distancePx)) return;
-
-        // Give it up. The item first, so a throw below still leaves it held.
         const int oi = (int)g_Yytk->CallBuiltin("variable_instance_get", { target, RValue("object_index") }).ToDouble();
         if (PetLootIsOf(oi, g_PetLootGroundObjIdx)) {
             g_Yytk->CallBuiltin("variable_instance_set",
@@ -9373,15 +9393,34 @@ static void PetLootUnstickTick()
             mod.NoteCoinReleased();
         }
         g_Yytk->CallBuiltin("variable_instance_set", { pet, RValue("lootTarget"), RValue(-4.0) });
-        // Empty the list rather than destroy it: it is the game's, and its
-        // next scan refills it. Anything but a list id is left alone.
-        const double lootList = g_Yytk->CallBuiltin("variable_instance_get", { pet, RValue("lootList") }).ToDouble();
-        if (lootList >= 0.0) {
-            g_Yytk->CallBuiltin("ds_list_clear", { RValue(lootList) });
-        }
     } catch (...) {
         mod.Reset();
+        return;
     }
+
+    // Empty the list rather than destroy it: it is the game's, and its next
+    // scan refills it. The gate is ds_exists(lootList, ds_type_list), never
+    // the value's kind (a live ds handle can arrive as a reference), and the
+    // clear is handed the RValue that was read, not a rebuilt real. Each
+    // refusal is counted with its reason: an uncleared list can hand the pet
+    // the held item straight back.
+    RValue lootListV;
+    try { lootListV = g_Yytk->CallBuiltin("variable_instance_get", { pet, RValue("lootList") }); }
+    catch (...) { mod.NoteListNotCleared("lootList read threw"); return; }
+    double listId = 0.0;
+    bool listFinite = false;
+    try { listId = lootListV.ToDouble(); listFinite = std::isfinite(listId); }
+    catch (...) { listFinite = false; }
+    if (!listFinite) { mod.NoteListNotCleared("lootList not a finite number"); return; }
+    bool listLive = false;
+    try {
+        // 2 is ds_type_list.
+        listLive = listId >= 0.0 &&
+            g_Yytk->CallBuiltin("ds_exists", { lootListV, RValue(2.0) }).ToBoolean();
+    } catch (...) { mod.NoteListNotCleared("ds_exists threw"); return; }
+    if (!listLive) { mod.NoteListNotCleared("lootList is not a live ds_list"); return; }
+    try { g_Yytk->CallBuiltin("ds_list_clear", { lootListV }); }
+    catch (...) { mod.NoteListNotCleared("ds_list_clear threw"); }
 }
 
 // ---- interaction/pickup trace (Phase 0.1 research, dev build only) --------
@@ -38977,7 +39016,9 @@ static void RunCommand(const std::string& line)
         while (!pv.empty() && std::isspace((unsigned char)pv.back())) pv.pop_back();
         const bool enable = (pv == "1" || pv == "true" || pv == "on");
         ForgePact::PetLootUnstickMod::Instance().SetEnabled(enable);
-        if (!enable) Out(ForgePact::PetLootUnstickMod::Instance().StatLine());
+        // SetEnabled prints the `petunstick -> ON|OFF` line itself; off adds
+        // what the mod did and where its ticks went.
+        if (!enable) Out(ForgePact::PetLootUnstickMod::Instance().FullStatLine());
         return;
     }
     if (HandleHeadhunterCommand(lc, rest)) return;
