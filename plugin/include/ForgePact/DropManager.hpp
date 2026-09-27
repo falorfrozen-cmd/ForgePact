@@ -9,6 +9,9 @@ namespace ForgePact {
 // calls the game's own drop roll N times instead of once, so every extra copy
 // is the game's own dice, not a synthetic roll.
 //
+// Gold is the exception (#77): "dropmult gold N" multiplies the amount of the
+// one coin the game creates, not the number of coins. See Hook_DropGold below.
+//
 // DropRelic is deliberately NOT here even though the panel treats it as one
 // more "dropmult" target: Hook_DropRelic is a shared chokepoint also used by
 // RelicFilterMod's max-relic exclusion, and splitting a single installed hook
@@ -124,6 +127,11 @@ public:
         Out(b);
     }
 
+    // How many DropGold calls reached the hook with a multiplier above 1 and
+    // an amount it could not scale (no argument at the index, not a number,
+    // or not finite); each one kept the game's own amount.
+    long GoldUnscaledCount() const { return m_Cnt_GoldUnscaled; }
+
 #ifndef FORGEPACT_RELEASE
     // Research build only (docs/angelic-roll-hook-research.md): the saved
     // original of five of the hooks below, by the name each was installed
@@ -164,19 +172,93 @@ private:
     FP_DROP_HOOK(DropBattleFragments)
     FP_DROP_HOOK(DropDimensionalShard)
     FP_DROP_HOOK(DropBifrostKey)
-    FP_DROP_HOOK(DropGold)
     FP_DROP_HOOK(DropItemBoss)
     FP_DROP_HOOK(DropItem)
     FP_DROP_HOOK(CreateItemDrop)
     FP_DROP_HOOK(DropItemAngelic)
     FP_DROP_HOOK(DropAngelicKey)
     FP_DROP_HOOK(DropAngelicCharm)
-    FP_DROP_HOOK(DropMonsterGold)
     FP_DROP_HOOK(DropChaosKey)
     FP_DROP_HOOK(DropRubyKey)
     FP_DROP_HOOK(DropOres)
     FP_DROP_HOOK(DropOreMaterials)
 #undef FP_DROP_HOOK
+
+    // Gold (#77): an amount multiplier, not a count one. DropMonsterGold
+    // works out an amount and calls DropGold once, directly (the inline
+    // detour sees that call); DropGold creates one coin carrying the amount it
+    // was handed. Run through FP_DROP_HOOK, "dropmult gold 100" ran the
+    // DropMonsterGold original 100 times and each reached a DropGold hook
+    // that ran its own original 100 times: 10,000 coins for one monster's
+    // gold, measured in Live 1 (2026-09-27) with an 8.4 s stall at spawn and
+    // another at pickup. So both originals run exactly once, and DropGold's
+    // amount argument is multiplied instead. SetMultiplier("gold") still sets
+    // m_Mult_DropMonsterGold, which only "dropstats" reports.
+    //
+    // DropGold's argument 4 is the coin's amount: measured 2026-09-27
+    // (Live 1, `goldtrace`), it was the one argument that varied per coin
+    // (51, 59, 31, 29) while the others stayed constant.
+    static constexpr int kDropGoldAmountArg = 4;
+
+    PFUNC_YYGMLScript m_Orig_DropGold{ nullptr };
+    volatile long m_Cnt_DropGold{ 0 };
+    int m_Mult_DropGold{ 1 };
+    long m_Cnt_GoldUnscaled{ 0 };
+    bool m_GoldScaledLogged{ false };
+    bool m_GoldUnscaledLogged{ false };
+    static RValue& Hook_DropGold(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) {
+        auto& mgr = Instance();
+        BP_DIAG_INCREMENT(mgr.m_Cnt_DropGold);
+        const int mult = HeroSiege::RewardScope::Active() ? 1 : mgr.m_Mult_DropGold;
+        if (mult <= 1 || !mgr.m_Orig_DropGold) {
+            RValue& _res = mgr.m_Orig_DropGold ? mgr.m_Orig_DropGold(S, O, R, argc, A) : R;
+            BP_LOGDROP("DropGold", _res, argc, A);
+            return _res;
+        }
+        const RValue* amount = (A && argc > kDropGoldAmountArg) ? A[kDropGoldAmountArg] : nullptr;
+        const bool numeric = amount && (amount->m_Kind == VALUE_REAL
+                                        || amount->m_Kind == VALUE_INT32
+                                        || amount->m_Kind == VALUE_INT64);
+        const double value = numeric ? amount->ToDouble() : 0.0;
+        if (!numeric || !std::isfinite(value)) {
+            // Refused, and said once: the coin keeps the game's own amount.
+            ++mgr.m_Cnt_GoldUnscaled;
+            if (!mgr.m_GoldUnscaledLogged) {
+                mgr.m_GoldUnscaledLogged = true;
+                Out("dropmult gold: x" + std::to_string(mult) + " not applied - DropGold's amount (argument "
+                    + std::to_string(kDropGoldAmountArg) + ") was "
+                    + (!amount ? std::string("missing") : "not a finite number (kind " + std::to_string((int)amount->m_Kind) + ")")
+                    + "; the coin keeps the game's amount");
+            }
+            RValue& _res = mgr.m_Orig_DropGold(S, O, R, argc, A);
+            BP_LOGDROP("DropGold", _res, argc, A);
+            return _res;
+        }
+        // A copy of the argument array with the amount slot replaced; the
+        // caller's own RValue is never written.
+        RValue scaled(value * (double)mult);
+        std::vector<RValue*> args(A, A + argc);
+        args[kDropGoldAmountArg] = &scaled;
+        if (!mgr.m_GoldScaledLogged) {
+            mgr.m_GoldScaledLogged = true;
+            Out("dropmult gold: x" + std::to_string(mult) + " applied to the coin's amount (one coin per drop)");
+        }
+        RValue& _res = mgr.m_Orig_DropGold(S, O, R, argc, args.data());
+        BP_LOGDROP("DropGold", _res, argc, args.data());
+        return _res;
+    }
+
+    PFUNC_YYGMLScript m_Orig_DropMonsterGold{ nullptr };
+    volatile long m_Cnt_DropMonsterGold{ 0 };
+    int m_Mult_DropMonsterGold{ 1 };
+    static RValue& Hook_DropMonsterGold(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) {
+        auto& mgr = Instance();
+        BP_DIAG_INCREMENT(mgr.m_Cnt_DropMonsterGold);
+        // Once, whatever the multiplier: its one coin is scaled in DropGold.
+        RValue& _res = mgr.m_Orig_DropMonsterGold ? mgr.m_Orig_DropMonsterGold(S, O, R, argc, A) : R;
+        BP_LOGDROP("DropMonsterGold", _res, argc, A);
+        return _res;
+    }
 
     // DropKeys carries real traffic (measured: DropGold 4 calls, DropDungeonKeys
     // never called - keys actually come from here) and gets an extra research
