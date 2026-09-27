@@ -196,10 +196,13 @@ export function installEnabledModsUndo(form) {
     let left = UNDO_VISIBLE_MS;
     let startedAt = 0;
     let timer = 0;
+    // Once hidden, the pointer or focus leaving this toast must not start its
+    // timer again: hideToast hides whichever toast is showing by then.
+    let closed = false;
     const paused = () => el.matches(':hover') || el.contains(document.activeElement) || document.hidden;
     const run = () => {
       clearTimeout(timer);
-      if (paused()) return;
+      if (closed || paused()) return;
       startedAt = performance.now();
       timer = setTimeout(hideToast, left);
     };
@@ -228,7 +231,7 @@ export function installEnabledModsUndo(form) {
       hideToast(e.detail === 0);
     });
 
-    toast = { el, cleanup: () => { clearTimeout(timer); document.removeEventListener('visibilitychange', onVisibility); } };
+    toast = { el, cleanup: () => { closed = true; clearTimeout(timer); document.removeEventListener('visibilitychange', onVisibility); } };
     run();
   }
 

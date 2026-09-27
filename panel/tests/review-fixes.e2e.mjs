@@ -51,6 +51,7 @@ const EXPECTED = [
   'undo-select-same-posts',
   'undo-density-same-posts',
   'undo-toast-times-out',
+  'undo-toast-own-timer',
   'turn-off-announced',
   'turn-off-focus-next',
   'turn-off-focus-previous',
@@ -282,6 +283,34 @@ async function undo(ctx) {
   passed.push('undo-toast-times-out');
 }
 
+// A toast that was hovered and then used keeps no timer of its own: hovered
+// late (LATE ms left) and left after its Undo, it must not hide the next Turn
+// off's toast when those LATE ms run out. That toast keeps its full time, so
+// it is still up at LATE + 2 s. (Hovering paused the used toast's timer and
+// leaving it started that timer again, which then hid whichever toast was
+// showing: the perf suite's third Undo found no toast.)
+async function undoTimer(ctx) {
+  const { page, passed } = ctx;
+  const LATE = 1500;
+  await only(page, ['map_reveal', 'headhunter']);
+  assert(await formOf(page) === 'inline', 'Two entries at 1280 are not inline');
+  const name = await $(page, () => document.querySelector('#enabledMods li[data-for="headhunter"] .enabled-mod-name').textContent.trim());
+  await page.click('#enabledMods .quick-disable[data-for="map_reveal"]');
+  await page.mouse.move(1, HEIGHT / 2);
+  await wait(UNDO_VISIBLE_MS - LATE);
+  await page.hover('.undo-toast-button');
+  await page.click('.undo-toast-button');
+  await page.mouse.move(1, HEIGHT / 2);
+  await settled(page);
+  await page.click('#enabledMods .quick-disable[data-for="headhunter"]');
+  await page.mouse.move(1, HEIGHT / 2);
+  await wait(LATE + 2000);
+  const next = await $(page, () => document.querySelector('.undo-toast:not([data-leaving]) .undo-toast-text')?.textContent ?? null);
+  assert(next === withName(UNDO_TEXTS.turnedOff, name),
+    `The next Turn off's toast was hidden by the used toast's timer: ${JSON.stringify(next)} at ${LATE + 2000} ms of ${UNDO_VISIBLE_MS}`);
+  passed.push('undo-toast-own-timer');
+}
+
 async function focus(ctx) {
   const { page, passed } = ctx;
   const byKeyboard = async (id) => {
@@ -511,6 +540,7 @@ async function pool(ctx) {
 const GROUPS = [
   ['popover', popover],
   ['undo', undo],
+  ['undo-timer', undoTimer],
   ['focus', focus],
   ['hold', hold],
   ['switches', switches],
