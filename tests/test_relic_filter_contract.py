@@ -334,7 +334,7 @@ class TestRelicFilterArmScanLine(unittest.TestCase):
         self.assertIn('"none"', report)
         # The set it counts is the one GetPlayerMaxedRelics just filled, not a
         # cached or separately computed one.
-        scan = re.search(r"const bool scanRan = rf\.GetPlayerMaxedRelics\((\w+)\);", report)
+        scan = re.search(r"const bool scanRan = rf\.GetPlayerMaxedRelics\((\w+), &\w+\);", report)
         self.assertIsNotNone(scan, report)
         self.assertIn(f"std::vector<int> ids({scan.group(1)}.begin(), {scan.group(1)}.end());", report)
         self.assertIn("std::sort(ids.begin(), ids.end());", report)
@@ -371,7 +371,35 @@ class TestRelicFilterArmScanLine(unittest.TestCase):
     def test_the_line_ships_in_the_player_build(self):
         player = strip_comments(strip_research_blocks(self.plugin_code))
         self.assertIn('"relicfilter: scan found "', player)
+        self.assertIn('"relicfilter: equipped slots "', player)
         self.assertIn("RelicFilterReportArmScan();", body(player, "void FrameCallback(FWFrame& FrameContext)"))
+
+    # The SDK's equipped-slot read (hs_game_sdk/player.hpp) fills an
+    # EquippedSlotScanReport only when a caller passes one, and a `scan found 0`
+    # alone cannot say whether the slots were read. The arm line asks for it.
+
+    def test_the_arm_scan_asks_for_the_equipped_slot_report(self):
+        report = strip_comments(self.report)
+        declared = re.search(r"HeroSiege::Player::EquippedSlotScanReport (\w+);", report)
+        self.assertIsNotNone(declared, report)
+        name = declared.group(1)
+        self.assertRegex(report, rf"const bool scanRan = rf\.GetPlayerMaxedRelics\(\w+, &{name}\);")
+        line = f'Out("relicfilter: equipped slots " + HeroSiege::Player::FormatEquippedSlotScanReport({name}));'
+        self.assertIn(line, report)
+        # Right after the `scan found` line, and never for a scan that did not run.
+        self.assertLess(report.index('"relicfilter: scan found "'), report.index(line))
+        self.assertLess(report.index("if (!scanRan)"), report.index(line))
+        self.assertEqual(report.count("relicfilter: equipped slots"), 1)
+
+    def test_the_filter_forwards_the_report_to_the_sdk_scan(self):
+        header = strip_comments(self.header)
+        get = body(header, "bool GetPlayerMaxedRelics(")
+        signature = header[header.index("bool GetPlayerMaxedRelics("):header.index("{", header.index("bool GetPlayerMaxedRelics("))]
+        self.assertIn("HeroSiege::Player::EquippedSlotScanReport* equippedReport = nullptr", signature)
+        self.assertIn("HeroSiege::Player::GetMaxedRelicIds(g_Yytk, player, equippedReport)", get)
+        # The roll itself asks for no report: its scan runs at every relic roll.
+        hook = strip_comments(body(self.plugin_code, "static RValue& Hook_DropRelic("))
+        self.assertNotIn("EquippedSlotScanReport", hook)
 
 
 class TestLiveOneResearchInstruments(unittest.TestCase):

@@ -62,13 +62,20 @@ public:
     // yet, or the read threw). A caller that cannot tell those apart reports
     // "0 maxed relics" for a scan that never happened - which is exactly how
     // the dead scanner went unnoticed before 2026-09-14.
-    bool GetPlayerMaxedRelics(std::unordered_set<int>& outMaxed) const {
+    //
+    // `equippedReport`, when given, receives what the SDK's equipped-slot read
+    // did (#93: the stage it stopped at, what it resolved, and its slot-0
+    // positive control), so a scan that ran and found nothing can still say
+    // whether the relic slots were read. Only the once-per-arm line asks for
+    // it; Hook_DropRelic's scan at every roll passes none.
+    bool GetPlayerMaxedRelics(std::unordered_set<int>& outMaxed,
+                              HeroSiege::Player::EquippedSlotScanReport* equippedReport = nullptr) const {
         outMaxed.clear();
         if (!m_Enabled.load()) return false;
         try {
             RValue player;
             if (!HhResolveLocalPlayer(player)) return false;
-            outMaxed = HeroSiege::Player::GetMaxedRelicIds(g_Yytk, player);
+            outMaxed = HeroSiege::Player::GetMaxedRelicIds(g_Yytk, player, equippedReport);
             return true;
         } catch (...) { return false; }
     }

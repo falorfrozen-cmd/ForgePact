@@ -17016,12 +17016,17 @@ static RValue& Hook_DropRelic(CInstance* S, CInstance* O, RValue& R, int argc, R
 // calls it once per `relicfilter 1`, after the DropRelic install, and the count
 // and ids come from the very set the scan just filled. A scan that did not run
 // says so instead of reading as "0 maxed relics" (the dead-scanner shape).
+// The line after it is the SDK's own report on the equipped relic slots
+// (`relicfilter: equipped slots mplr=.. owner=.. relic=.. control=..
+// stopped=..`), so a zero names the stage that stopped rather than reading
+// the same as a player with nothing maxed.
 static void RelicFilterReportArmScan()
 {
     auto& rf = ForgePact::RelicFilterMod::Instance();
     rf.ClearArmScanDue();
     std::unordered_set<int> maxed;
-    const bool scanRan = rf.GetPlayerMaxedRelics(maxed);
+    HeroSiege::Player::EquippedSlotScanReport equipped;
+    const bool scanRan = rf.GetPlayerMaxedRelics(maxed, &equipped);
     if (!scanRan) {
         Out("relicfilter: scan did not run (no player yet)");
         return;
@@ -17035,6 +17040,7 @@ static void RelicFilterReportArmScan()
     }
     Out("relicfilter: scan found " + std::to_string(ids.size()) + " maxed relics (ids "
         + (list.empty() ? std::string("none") : list) + ")");
+    Out("relicfilter: equipped slots " + HeroSiege::Player::FormatEquippedSlotScanReport(equipped));
 }
 // The 19 domain hooks above (DropBossGems .. DropOreMaterials, including
 // DropKeys' dev-only diagnostic variant) moved to ForgePact::DropManager

@@ -244,6 +244,46 @@ class RelicFilterBehaviorTests(unittest.TestCase):
         self.assertEqual(counts["pending"], 0, self.output)
         self.assertEqual(counts["due"], 1, self.output)
 
+    # ---- #93: the equipped-slot read's own report, on the line after --------
+    # A `scan found 0` alone cannot tell "nothing maxed" from "the equipped-slot
+    # read stopped at a stage"; the line after it names the stage.
+
+    def test_the_equipped_slot_report_follows_the_scan_line(self):
+        logged = self.logs("arm_scan_two")
+        self.assertEqual(logged[-2:], [
+            "relicfilter: scan found 2 maxed relics (ids 7,42)",
+            "relicfilter: equipped slots relic=2 stopped=none",
+        ], self.output)
+        self.assertEqual(self.counts("arm_scan_two")["reports"], 1, self.output)
+
+    def test_a_stopped_read_names_its_stage_beside_the_zero(self):
+        logged = self.logs("arm_scan_stopped_owner")
+        self.assertEqual(logged[-2:], [
+            "relicfilter: scan found 0 maxed relics (ids none)",
+            "relicfilter: equipped slots relic=0 stopped=owner",
+        ], self.output)
+        # The same zero from a complete read says so: the two are told apart.
+        self.assertIn("relicfilter: equipped slots relic=0 stopped=none",
+                      self.logs("arm_scan_empty"), self.output)
+
+    def test_one_equipped_slot_line_per_arm(self):
+        for label in ("arm_scan_two", "arm_scan_sorted", "arm_scan_empty", "arm_scan_stopped_owner"):
+            self.assertEqual(
+                len([line for line in self.logs(label) if line.startswith("relicfilter: equipped slots ")]), 1,
+                self.logs(label))
+
+    def test_a_scan_that_did_not_run_claims_no_equipped_slot_stage(self):
+        for label in ("arm_scan_no_player", "arm_scan_throws"):
+            logged = self.logs(label)
+            self.assertIn("relicfilter: scan did not run (no player yet)", logged, self.output)
+            self.assertFalse([line for line in logged if "equipped slots" in line], logged)
+
+    def test_the_roll_itself_asks_for_no_report(self):
+        """The hook's scan runs at every relic roll; the report (and its slot-0
+        control call) belongs to the once-per-arm line only."""
+        for label in ("positive_control", "all_maxed", "scanned_none_maxed", "partial_write"):
+            self.assertEqual(self.counts(label)["reports"], 0, self.output)
+
 
 if __name__ == "__main__":
     unittest.main()
