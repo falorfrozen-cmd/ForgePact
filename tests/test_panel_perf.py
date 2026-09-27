@@ -12,8 +12,9 @@ modules: under `tools/run_tests_parallel.py` a native harness's compile or
 another browser suite beside it put one frame over the budget, which measured
 the machine, not the panel. `PARALLEL_EXCLUSIVE` makes that runner start this
 module last and alone; the serial run is unaffected. The other browser suites
-stay in `test_panel_oracle.py`, whose skip conditions and npm helper this
-module shares. About six minutes.
+each have a module of their own (`test_panel_oracle_replay.py`,
+`test_panel_e2e*.py`), and all of them share `panel_browser.py`'s skip
+conditions and npm helper. About six minutes.
 """
 import re
 import sys
@@ -24,7 +25,7 @@ PARALLEL_EXCLUSIVE = True
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from test_panel_oracle import _missing, _npm  # noqa: E402
+from panel_browser import _missing, _npm  # noqa: E402
 
 
 class PanelPerfSuiteTests(unittest.TestCase):

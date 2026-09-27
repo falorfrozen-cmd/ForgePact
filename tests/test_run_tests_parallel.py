@@ -7,6 +7,7 @@ id-set equality, and small fixture suites are run both ways, serially with
 compared line for line (minus the timing).
 """
 import importlib.util
+import re
 import subprocess
 import sys
 import tempfile
@@ -231,6 +232,73 @@ class FixtureSuiteTests(unittest.TestCase):
         self.assertEqual(run.returncode, 1, run.stderr)
         self.assertIn("an ordinary module had not finished", run.stderr)
 
+    # Leaves a marker named after itself when it runs, so a run that left it
+    # out can be told from a run that loaded it and reported nothing.
+    MARKER = """
+        import os, unittest
+        HERE = os.path.dirname(os.path.abspath(__file__))
+        NAME = os.path.splitext(os.path.basename(__file__))[0]
+        class Marker(unittest.TestCase):
+            def test_leaves_a_mark(self):
+                open(os.path.join(HERE, "ran-" + NAME), "w").close()
+            def test_second(self): pass
+    """
+
+    def run_excluding(self, *extra, markers=("test_x_marker",)):
+        files = dict(PASSING)
+        files.update({f"{name}.py": self.MARKER for name in markers})
+        with tempfile.TemporaryDirectory(prefix="forgepact-runner-") as tmp:
+            tmp = Path(tmp)
+            suite = tmp / "suite"
+            suite.mkdir()
+            write_suite(suite, files)
+            run = subprocess.run([sys.executable, str(SCRIPT), "-j", "3", "--start-dir", "suite",
+                                  "--state-dir", str(tmp / "state"), *extra],
+                                 cwd=tmp, capture_output=True, text=True)
+            ran = sorted(f.name[len("ran-"):] for f in suite.glob("ran-*"))
+            reference = tmp / "reference"
+            reference.mkdir()
+            write_suite(reference, PASSING)
+            serial = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "reference"],
+                                    cwd=tmp, capture_output=True, text=True)
+        return run, ran, serial
+
+    def test_an_excluded_module_does_not_run_and_is_named(self):
+        run, ran, serial = self.run_excluding("--exclude-module", "test_x_marker")
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(ran, [])
+        # What ran is what serial runs on the suite without that module, and
+        # the id-set check is satisfied by discovery less that module.
+        self.assertEqual(tail(run.stderr), tail(serial.stderr), run.stderr)
+        self.assertNotIn("never loaded", run.stderr)
+        self.assertIn("run_tests_parallel: left out 1 module(s), 2 test(s): test_x_marker (2)",
+                      run.stderr)
+
+    def test_the_marker_probe_does_mark_a_module_that_ran(self):
+        # Positive control: without --exclude-module the same module runs,
+        # leaves its marker and is counted, and nothing is reported left out.
+        run, ran, serial = self.run_excluding()
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(ran, ["test_x_marker"])
+        count = lambda stderr: int(tail(stderr)[0].split()[1])
+        self.assertEqual(count(run.stderr), count(serial.stderr) + 2)
+        self.assertNotIn("left out", run.stderr)
+
+    def test_a_pattern_or_a_py_name_excludes_every_module_it_names(self):
+        run, ran, _serial = self.run_excluding("--exclude-module", "test_x_*",
+                                               markers=("test_x_one", "test_x_two", "test_y_kept"))
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(ran, ["test_y_kept"])
+        self.assertIn("left out 2 module(s), 4 test(s): test_x_one (2), test_x_two (2)", run.stderr)
+        run, ran, _serial = self.run_excluding("--exclude-module", "test_x_marker.py")
+        self.assertEqual((run.returncode, ran), (0, []), run.stderr)
+
+    def test_an_exclusion_that_matches_nothing_is_refused_before_anything_runs(self):
+        run, ran, _serial = self.run_excluding("--exclude-module", "test_x_markr")
+        self.assertEqual(run.returncode, 2, run.stderr)
+        self.assertEqual(ran, [])
+        self.assertIn("--exclude-module 'test_x_markr' matches no test module", run.stderr)
+
     def test_only_a_top_level_true_marks_a_module_exclusive(self):
         with tempfile.TemporaryDirectory(prefix="forgepact-runner-") as tmp:
             tmp = Path(tmp)
@@ -267,6 +335,52 @@ class CoverageTests(unittest.TestCase):
         self.assertTrue(runner.coverage_problems(["a.T.x", "b.T.y"], ["a.T.x"]))
         self.assertTrue(runner.coverage_problems(["a.T.x"], ["a.T.x", "c.T.z"]))
         self.assertTrue(runner.coverage_problems(["a.T.x"], ["a.T.x", "a.T.x"]))
+
+    def test_the_id_set_check_still_catches_a_missing_id_beside_an_exclusion(self):
+        ids = ["a.T.x", "a.T.y", "b.T.z", "c.T.w"]
+        chosen = runner.left_out(runner.shard(ids), ["b"])
+        self.assertEqual(chosen, {"b": 1})
+        expected = runner.without(ids, chosen)
+        self.assertEqual(expected, ["a.T.x", "a.T.y", "c.T.w"])
+        self.assertEqual(runner.coverage_problems(expected, ["c.T.w", "a.T.y", "a.T.x"]), [])
+        # A module that was not left out still has to load every id.
+        self.assertTrue(runner.coverage_problems(expected, ["a.T.x", "c.T.w"]))
+        # And an excluded module's id turning up is still an extra.
+        self.assertTrue(runner.coverage_problems(expected, ["a.T.x", "a.T.y", "c.T.w", "b.T.z"]))
+        with self.assertRaises(runner.UnknownModule):
+            runner.left_out(runner.shard(ids), ["d*"])
+
+    def test_the_real_suite_lists_less_the_excluded_modules(self):
+        full = runner.discover(ROOT / "tests")
+        run = subprocess.run([sys.executable, str(SCRIPT), "--list", "--exclude-module", "test_panel_e2e*",
+                              "--exclude-module", "test_panel_perf"],
+                             capture_output=True, text=True, check=True)
+        listed = run.stdout.split()
+        gone = [i for i in full if runner.module_of(i) == "test_panel_perf"
+                or runner.module_of(i).startswith("test_panel_e2e")]
+        self.assertGreaterEqual(len(gone), 6)
+        self.assertEqual(Counter(listed) + Counter(gone), Counter(full))
+        self.assertIn("left out 6 module(s)", run.stderr)
+
+    def test_every_panel_browser_module_is_capped_or_alone(self):
+        # A module that drives the panel's browser suites (through
+        # panel_browser's npm helper) shares the panel-browser cap, or, if it
+        # measures timing, runs alone; never as an ordinary module on every core.
+        tests = ROOT / "tests"
+        drivers = sorted(p.stem for p in tests.glob("test_*.py")
+                         if re.search(r"^from panel_browser import", p.read_text(encoding="utf-8"), re.M))
+        self.assertGreaterEqual(len(drivers), 7, drivers)
+        for name in drivers:
+            with self.subTest(module=name):
+                self.assertTrue(runner.group_of(name, tests) == "panel-browser"
+                                or runner.exclusive_of(name, tests))
+        self.assertTrue(runner.exclusive_of("test_panel_perf", tests))
+        self.assertIsNone(runner.group_of("test_panel_oracle", tests))
+
+    def test_the_panel_browser_cap_has_a_default_and_can_be_overridden(self):
+        self.assertEqual(runner.parse_limits([])["panel-browser"], 4)
+        self.assertEqual(runner.parse_limits(["panel-browser=1"])["panel-browser"], 1)
+        self.assertEqual(runner.parse_limits(["solo=2"]), {"panel-browser": 4, "solo": 2})
 
     def test_an_import_failure_stays_with_its_module(self):
         self.assertEqual(runner.module_of("unittest.loader._FailedTest.test_broken"), "test_broken")
